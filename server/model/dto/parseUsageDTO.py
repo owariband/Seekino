@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from types import MappingProxyType
@@ -120,6 +120,16 @@ class UsageObservationBatch:
 
 
 @dataclass(frozen=True, slots=True)
+class UsageCostSummary:
+    currency: Literal["CNY"] = "CNY"
+    estimated_amount: str | None = None
+    known_amount: str | None = None
+    priced_call_count: int = 0
+    unpriced_call_count: int = 0
+    excluded_call_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class UsageTotals:
     call_count: int | None
     input_tokens: int | None
@@ -130,6 +140,7 @@ class UsageTotals:
     total_tokens: int | None
     known_tokens: int
     missing_usage_count: int
+    cost: UsageCostSummary | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +149,7 @@ class UsageModelRow(UsageTotals):
     model: str | None
     category: str | None
     operation: str | None
+    src: str | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

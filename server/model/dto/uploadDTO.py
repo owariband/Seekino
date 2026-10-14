@@ -2,14 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 
-from ...config.parse_profile import ParseConfig
+from ...config.parse_profile import ParseConfig, validate_video_parse_schedule
 from ...schema import ContractModel
 from ..upload import UploadSessionStatus
+
+
+_ValidatedVideoParseConfig = Annotated[
+    VideoParseV2Config, AfterValidator(validate_video_parse_schedule),
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,8 +111,8 @@ class UploadSessionCreateRequest(ContractModel):
     total_size_bytes: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     parse_config: ParseConfig | None = None
-    video_parse_config: VideoParseV2Config | None = None
+    video_parse_config: _ValidatedVideoParseConfig | None = None
 
 
 class UploadReparseRequest(ContractModel):
-    video_parse_config: VideoParseV2Config | None = None
+    video_parse_config: _ValidatedVideoParseConfig | None = None

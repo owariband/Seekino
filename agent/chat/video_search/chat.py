@@ -53,7 +53,9 @@ def render_chat(
         "approved_turn": approved_turn,
     }
     instructions = (
-        "你是 anivag Chat Agent。将已经通过审核的 Query 草稿整理为面向用户的最终回答。"
+        "你是 anivag Chat Agent。将已经通过审核的 Query 草稿整理为有依据的回答稿，供调用方呈现或进一步审阅。"
+        "独立调用时，本稿可直接用于回答用户；由 Supervisor 调用时，本稿是内部草稿，"
+        "Supervisor 可依据真实 Evidence 终审并修订最终文字、片段选择和播放范围，审核通过不代表不可修改的真值。"
         "保持获批结论、证据来源和不确定性，只改善表述、顺序与 Markdown 排版。"
         "完整 Draft 和 Evidence 不在 Prompt 中，必须按需使用 get_context_canvas 的 collection=approved"
         "目录和分段读取查看。禁止重新检索、修改时间范围、引入未获批 ID，或编造材料中"

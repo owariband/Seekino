@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
@@ -36,6 +38,7 @@ from server.repository.video_parse import (
     invalidate_series_prefixes_from,
 )
 from server.repository.video import SeriesNotReadyError, VideoChunkNotFoundError
+from server.service.video_parse import VideoParseRuntimeService
 from server.utils.time import datetime_to_unix_time_ms
 
 
@@ -58,7 +61,6 @@ def _fixture_event(value, *, sequence_no=0):
 
 def test_execution_timing_is_monotonic_frozen_and_preserves_runtime(repository):
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
     lease = queue.claim_chunk("timed", lease_duration=timedelta(minutes=5), now=NOW)
     started = datetime_to_unix_time_ms(NOW)
     with factory.begin() as session:
@@ -106,7 +108,6 @@ def test_execution_timing_is_monotonic_frozen_and_preserves_runtime(repository):
 
 def test_execution_timing_rejects_expired_and_replaced_lease_samples(repository):
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
     first = queue.claim_chunk("first", lease_duration=timedelta(seconds=10), now=NOW)
     started = datetime_to_unix_time_ms(NOW)
     assert repo.record_execution_timing(first, started_at_ms=started, elapsed_ms=5000, now=NOW)
@@ -115,15 +116,13 @@ def test_execution_timing_rejects_expired_and_replaced_lease_samples(repository)
         finished=True, outcome="cancelled", now=NOW + timedelta(seconds=12),
     )
     assert queue.reap_expired_chunks(
-        retry_delay=timedelta(0), now=NOW + timedelta(seconds=12),
+        now=NOW + timedelta(seconds=12),
     ) == 1
-    assert queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[0], video_lease, now=NOW + timedelta(seconds=12),
-    )
-    second = queue.claim_chunk("second", lease_duration=timedelta(minutes=5), now=NOW + timedelta(seconds=12))
+    resumed_at = NOW + timedelta(seconds=12 + first.retry_initial_delay_seconds)
+    second = queue.claim_chunk("second", lease_duration=timedelta(minutes=5), now=resumed_at)
     assert second is not None and second.lease_version > first.lease_version
     assert repo.record_execution_timing(
-        second, started_at_ms=started + 12000, elapsed_ms=300, now=NOW + timedelta(seconds=12),
+        second, started_at_ms=datetime_to_unix_time_ms(resumed_at), elapsed_ms=300, now=resumed_at,
     )
     assert not repo.record_execution_timing(
         first, started_at_ms=started, elapsed_ms=13000,
@@ -143,7 +142,6 @@ def test_execution_timing_closes_only_an_observed_successful_chunk(repository):
         first, started_at_ms=started, elapsed_ms=1000,
         finished=True, outcome="completed", now=NOW + timedelta(seconds=3),
     )
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[1], video_lease, now=NOW + timedelta(seconds=3))
     second = queue.claim_chunk("second", lease_duration=timedelta(minutes=5), now=NOW + timedelta(seconds=3))
     assert second is not None
     assert repo.record_execution_timing(second, started_at_ms=started, elapsed_ms=0, now=NOW + timedelta(seconds=3))
@@ -316,7 +314,6 @@ def test_index_timing_preserves_failures_and_rejects_uncommitted_stale_leases(re
 ])
 def test_execution_timing_rejects_invalid_sample_parameters(repository, values):
     _factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
     lease = queue.claim_chunk("timed", lease_duration=timedelta(minutes=5), now=NOW)
     with pytest.raises(ValueError):
         repo.record_execution_timing(
@@ -426,10 +423,10 @@ def test_original_36_event_canvas_result_is_committed_without_losing_other_event
     prepared = repo.ensure_parse_tasks(lease, [chunk.video_chunk_id for chunk in chunks], [(0, 2)], now=NOW)
     repo.activate_video_task(lease, now=NOW)
     members = {}
-    for member in fixture["members"]:
+    for member in sorted(fixture["members"], key=lambda member: member["sequence_no"]):
         task = prepared.chunk_parse_task_ids[member["sequence_no"]]
-        assert queue.dispatch_chunk(task, lease, now=NOW)
         child = queue.claim_chunk("understand", lease_duration=timedelta(minutes=5), now=NOW)
+        assert child is not None and child.chunk_parse_task_id == task
         repo.commit_chunk_result(child, content=member["content"], detail={"evidence": {"asr": None, "ocr": None}}, now=NOW)
         members[task] = {"sequence_no": member["sequence_no"], "version": 1, "bounds": member["bounds"], "content": member["content"]}
     refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=NOW)
@@ -569,9 +566,6 @@ def test_preparation_preserves_fractional_last_chunk_boundary(repository):
 def _commit_all_chunks(factory, queue, repo, video_lease, prepared, *, count: int = 4):
     leases = []
     for index, task_id in enumerate(prepared.chunk_parse_task_ids[:count]):
-        assert queue.dispatch_chunk(
-            task_id, video_lease, now=NOW + timedelta(seconds=index)
-        )
         lease = queue.claim_chunk(
             f"chunk-{index}", lease_duration=timedelta(minutes=10), now=NOW + timedelta(seconds=index)
         )
@@ -829,31 +823,27 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
 def test_stale_chunk_lease_cannot_commit(repository):
     _factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
     task_id = prepared.chunk_parse_task_ids[0]
-    assert queue.dispatch_chunk(task_id, video_lease, now=NOW)
     lease = queue.claim_chunk(
         "old", lease_duration=timedelta(seconds=5), now=NOW
     )
-    assert lease is not None
-    assert queue.reap_expired(
-        retry_delay=timedelta(0), now=NOW + timedelta(seconds=6)
-    ) == 1
-    assert queue.dispatch_chunk(
-        task_id, video_lease, now=NOW + timedelta(seconds=6)
-    )
+    assert lease is not None and lease.chunk_parse_task_id == task_id
+    assert queue.reap_expired_chunks(now=NOW + timedelta(seconds=6)) == 1
+    resumed_at = NOW + timedelta(seconds=6 + lease.retry_initial_delay_seconds)
     replacement = queue.claim_chunk(
-        "new", lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=6)
+        "new", lease_duration=timedelta(minutes=1), now=resumed_at
     )
     assert replacement is not None and replacement.lease_version > lease.lease_version
+    assert replacement.chunk_parse_task_id == lease.chunk_parse_task_id
     with pytest.raises(VideoParseLeaseLostError):
         repo.commit_chunk_result(
             lease,
             content={"persons": [], "timeline": []},
-            now=NOW + timedelta(seconds=7),
+            now=resumed_at + timedelta(seconds=1),
         )
     repo.commit_chunk_result(
         replacement,
         content={"persons": [], "timeline": []},
-        now=NOW + timedelta(seconds=7),
+        now=resumed_at + timedelta(seconds=1),
     )
 
 
@@ -862,12 +852,14 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository)
     claimed_at = NOW + timedelta(minutes=1)
     if phase == "chunk":
-        assert queue.dispatch_chunk(
-            prepared.chunk_parse_task_ids[1], video_lease, now=claimed_at
-        )
+        with factory.begin() as session:
+            session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).next_execute_time = (
+                claimed_at + timedelta(minutes=1)
+            )
         inflight = queue.claim_chunk(
             "inflight-chunk", lease_duration=timedelta(minutes=5), now=claimed_at
         )
+        assert inflight is not None and inflight.chunk_parse_task_id == prepared.chunk_parse_task_ids[1]
     else:
         _commit_all_chunks(factory, queue, repo, video_lease, prepared)
         inflight = queue.claim_interval_refine(
@@ -1006,9 +998,6 @@ def test_failure_does_not_treat_expired_but_unreleased_child_as_drained(reposito
 def test_chunk_lease_rejects_forged_parent_and_media_identity(repository):
     _factory, queue, repo, _task_id, video_lease, prepared = _prepare(
         repository, chunk_count=2
-    )
-    assert queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[0], video_lease, now=NOW
     )
     lease = queue.claim_chunk(
         "chunk-identity", lease_duration=timedelta(minutes=5), now=NOW
@@ -1450,7 +1439,6 @@ def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(reposit
     factory, queue, repo, task_id, video_lease, prepared = _prepare(
         repository, chunk_count=2
     )
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
     chunk_lease = queue.claim_chunk(
         "chunk-model", lease_duration=timedelta(minutes=5), now=NOW
     )
@@ -1489,9 +1477,6 @@ def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(reposit
     )
     assert queue.is_execution_lease_committed(chunk_lease)
 
-    assert queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[1], video_lease, now=NOW + timedelta(seconds=33)
-    )
     second = queue.claim_chunk(
         "chunk-second",
         lease_duration=timedelta(minutes=5),
@@ -1587,11 +1572,10 @@ def test_v2_snapshots_always_expose_the_whole_video_media_source(repository):
 
     for index, child_id in enumerate(prepared.chunk_parse_task_ids):
         at = NOW + timedelta(seconds=index)
-        assert queue.dispatch_chunk(child_id, video_lease, now=at)
         lease = queue.claim_chunk(
             f"source-{index}", lease_duration=timedelta(minutes=5), now=at
         )
-        assert lease is not None
+        assert lease is not None and lease.chunk_parse_task_id == child_id
         execution = repo.load_chunk_execution(lease, now=at)
         assert execution.source_media_ref == proxy_ref
         assert execution.chunk_media_ref.startswith("artifact://v1/")
@@ -1672,29 +1656,32 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
         )
     with factory.begin() as session:
         session.get(VideoParseTask, task_id).is_deleted = False
+    with factory() as session:
+        initial_delay = session.get(VideoParseTask, task_id).parse_config["execution"]["retry_initial_delay_seconds"]
+    failed_at = NOW + timedelta(minutes=2, milliseconds=300)
+    retry_at = failed_at + timedelta(seconds=initial_delay)
     assert repo.retry_prefix(
         first,
         error="previous failure",
-        retry_at=NOW + timedelta(minutes=2, seconds=1),
-        now=NOW + timedelta(minutes=2, milliseconds=300),
+        now=failed_at,
     )
     retried = repo.claim_next_prefix_any(
         "prefix-retried",
         lease_duration=timedelta(minutes=5),
-        now=NOW + timedelta(minutes=2, seconds=1),
+        now=retry_at,
     )
     assert retried is not None and retried.retry_count == 1
     assert repo.release_prefix(
         retried,
-        now=NOW + timedelta(minutes=2, seconds=1, milliseconds=100),
+        now=retry_at + timedelta(milliseconds=100),
     )
     assert not repo.release_prefix(
         retried,
-        now=NOW + timedelta(minutes=2, seconds=1, milliseconds=200),
+        now=retry_at + timedelta(milliseconds=200),
     )
     assert not repo.release_prefix(
         first,
-        now=NOW + timedelta(minutes=2, seconds=1, milliseconds=200),
+        now=retry_at + timedelta(milliseconds=200),
     )
     with factory() as session:
         task = session.get(VideoParseTask, task_id)
@@ -1703,7 +1690,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
         assert prefix["lease_expire_time_ms"] is None
         assert prefix["execution_task_id"] is None
         assert prefix["next_execute_time_ms"] == int(
-            (NOW + timedelta(minutes=2, seconds=1, milliseconds=100)).timestamp()
+            (retry_at + timedelta(milliseconds=100)).timestamp()
             * 1000
         )
         assert prefix["retry_count"] == 1
@@ -1711,7 +1698,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
     first = repo.claim_next_prefix_any(
         "prefix-after-cancel",
         lease_duration=timedelta(minutes=5),
-        now=NOW + timedelta(minutes=2, seconds=1, milliseconds=100),
+        now=retry_at + timedelta(milliseconds=100),
     )
     assert first is not None
     assert first.retry_count == 1
@@ -1719,13 +1706,13 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
         first,
         content_updates={},
         video_prefix_compact="chunk zero",
-        now=NOW + timedelta(minutes=2, seconds=1, milliseconds=200),
+        now=retry_at + timedelta(milliseconds=200),
     )
     assert queue.is_execution_lease_committed(first)
     second = repo.claim_next_prefix_any(
         "prefix",
         lease_duration=timedelta(minutes=5),
-        now=NOW + timedelta(minutes=2, seconds=2),
+        now=retry_at + timedelta(seconds=1),
     )
     assert second is not None and second.sequence_no == 1
     assert queue.is_execution_lease_committed(first)
@@ -1734,7 +1721,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
         content_updates={"persons": ["P"]},
         video_prefix_compact="chunk zero and one",
         series_prefix_compact="episode summary",
-        now=NOW + timedelta(minutes=2, seconds=3),
+        now=retry_at + timedelta(seconds=2),
     )
     assert queue.is_execution_lease_committed(first)
     assert queue.is_execution_lease_committed(second)
@@ -1753,6 +1740,73 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
         assert prefix["lease_owner"] is None
         assert task.status == "INDEXING"
         assert task.lease_owner is None
+
+
+def test_prefix_load_failure_and_expiry_follow_saved_retry_policy(tmp_path, monkeypatch):
+    from server.database import create_database_engine, create_schema
+
+    engine = create_database_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'prefix-retry.sqlite'}", environment="test",
+    )
+    create_schema(engine)
+    factory, _queue, repo, task_id = _prepare_two_chunk_prefix_chain((engine, None))
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        task.parse_config = {**task.parse_config, "execution": {
+            **task.parse_config["execution"], "retry_initial_delay_seconds": 7.0,
+            "retry_max_delay_seconds": 11.0, "max_retry_count": 2,
+        }}
+        original_status = task.status
+    start = NOW + timedelta(minutes=2)
+    first = repo.claim_next_prefix_any("first", lease_duration=timedelta(seconds=3), now=start)
+    assert first is not None
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._repository = repo
+    runtime._prefix_lease = ContextVar("prefix_retry_test", default=None)
+
+    def fail_to_load(_task_id):
+        raise RuntimeError("task input unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repo, "load_task_input", fail_to_load)
+        patch.setattr("server.repository.video_parse.now_utc", lambda: start)
+        asyncio.run(runtime._execute_prefix(first))
+    assert runtime._prefix_lease.get() is None
+    with factory() as session:
+        prefix = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["prefix"]
+        assert prefix["retry_count"] == 1 and prefix["lease_owner"] is None
+        assert prefix["next_execute_time_ms"] == datetime_to_unix_time_ms(start + timedelta(seconds=7))
+        assert prefix["last_error"] == {"message": "task input unavailable"}
+    assert repo.claim_next_prefix_any(
+        "too-early", lease_duration=timedelta(seconds=3), now=start + timedelta(seconds=7, milliseconds=-1),
+    ) is None
+    second = repo.claim_next_prefix_any(
+        "second", lease_duration=timedelta(seconds=3), now=start + timedelta(seconds=7),
+    )
+    assert second is not None and second.retry_count == 1
+    expired_at = start + timedelta(seconds=10)
+    assert repo.claim_next_prefix_any(
+        "reaper", lease_duration=timedelta(seconds=3), now=expired_at,
+    ) is None
+    with factory() as session:
+        prefix = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["prefix"]
+        assert prefix["retry_count"] == 2 and prefix["lease_owner"] is None
+        assert prefix["next_execute_time_ms"] == datetime_to_unix_time_ms(expired_at + timedelta(seconds=11))
+    assert repo.claim_next_prefix_any(
+        "still-early", lease_duration=timedelta(seconds=3), now=expired_at + timedelta(seconds=11, milliseconds=-1),
+    ) is None
+    third = repo.claim_next_prefix_any(
+        "third", lease_duration=timedelta(seconds=3), now=expired_at + timedelta(seconds=11),
+    )
+    assert third is not None and third.retry_count == 2
+    assert repo.retry_prefix(third, error="retry exhausted", now=expired_at + timedelta(seconds=12))
+    assert repo.claim_next_prefix_any(
+        "over-budget", lease_duration=timedelta(seconds=3), now=expired_at + timedelta(minutes=1),
+    ) is None
+    with factory() as session:
+        task = session.get(VideoParseTask, task_id)
+        assert task.detail["_worker_runtime_v2"]["prefix"]["retry_count"] == 3
+        assert task.status == original_status
 
 
 @pytest.mark.parametrize("failure_status", ["PARSING_FAILED", "INDEXING_FAILED"])
@@ -2090,7 +2144,6 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
     assert not repo.retry_prefix(
         stale_lease,
         error="late worker",
-        retry_at=NOW + timedelta(minutes=2),
         now=NOW + timedelta(minutes=1, seconds=1),
     )
     with pytest.raises(VideoParseLeaseLostError):
@@ -2215,7 +2268,6 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
     assert not repo.retry_prefix(
         old_lease,
         error="stale retry",
-        retry_at=stale_attempt_at + timedelta(minutes=1),
         now=stale_attempt_at,
     )
     assert persisted_chain_state() == before_stale_attempts

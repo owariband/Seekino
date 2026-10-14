@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
 from langgraph.checkpoint.base import empty_checkpoint
 
 import gateway.agent_model.factory as agent_factory
+from gateway.agent_model.errors import AgentModelTimeoutError
 from gateway.config import (
     AgentFallbackConfig,
     AgentModelConfig,
@@ -509,20 +511,26 @@ def test_supervisor_close_preserves_checkpoint_until_factory_shutdown() -> None:
 
 
 @pytest.mark.parametrize("primary", [_openai_source(), ArkModelSourceConfig()])
-def test_explicit_deepagents_supervisor_retains_shared_sessions_and_provider_controls(primary):
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_explicit_deepagents_supervisor_retains_shared_sessions_and_provider_controls(primary, total_timeout_enabled):
     factory = agent_factory.AgentModelFactory(
         _agent_config(), {"primary": primary},
         environ={"DEEPSEEK_API_KEY": "deepseek-secret", "ARK_API_KEY": "ark-secret"},
     )
-    first = factory.build_supervisor(harness="deepagents", **_build_arguments())
+    first = factory.build_supervisor(
+        harness="deepagents", **_build_arguments(), total_timeout_enabled=total_timeout_enabled,
+    )
     try:
         first.close()
-        replacement = factory.build_supervisor(harness="deepagents", **_build_arguments())
+        replacement = factory.build_supervisor(
+            harness="deepagents", **_build_arguments(), total_timeout_enabled=total_timeout_enabled,
+        )
         assert replacement.session_store is first.session_store
         assert replacement.provider_name == primary.provider
         assert replacement.model_name == "role-model"
         assert replacement._request_timeout_seconds == 60
         assert replacement._max_input_chars == 120_000
+        assert replacement.total_timeout_enabled is total_timeout_enabled
         replacement.close()
     finally:
         factory.close()
@@ -544,7 +552,8 @@ def test_supervisor_rejects_harness_source_mismatch(source, harness, reason):
         factory.close()
 
 
-def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkeypatch):
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkeypatch, total_timeout_enabled):
     adapters = []
 
     class NativeModel:
@@ -575,8 +584,12 @@ def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkey
     factory = agent_factory.AgentModelFactory(
         config, {"primary": CodexModelSourceConfig(max_concurrency=2)}, binding=binding, environ={},
     )
-    model = factory.build_supervisor(harness="codex", **_build_arguments())
-    replacement = factory.build_supervisor(harness="codex", **_build_arguments())
+    model = factory.build_supervisor(
+        harness="codex", **_build_arguments(), total_timeout_enabled=total_timeout_enabled,
+    )
+    replacement = factory.build_supervisor(
+        harness="codex", **_build_arguments(), total_timeout_enabled=total_timeout_enabled,
+    )
     try:
         assert isinstance(model, CodexSupervisorModel)
         assert model.model_name == "role-model" and model.provider_name == "codex"
@@ -586,6 +599,7 @@ def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkey
         assert adapters[0].options["max_output_tokens"] == 1_024
         assert adapters[0].options["max_input_chars"] == 5_000
         assert adapters[0].options["context_window_policy"].context_window_tokens == 32_000
+        assert all(adapter.options["total_timeout_enabled"] is total_timeout_enabled for adapter in adapters)
         texts = []
         model.run_agent(
             "Supervisor instruction", thread_id="conversation", message_id="answer",
@@ -614,3 +628,68 @@ def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkey
     assert adapters[0].options["executor"]._shutdown is True
     with pytest.raises(RuntimeError, match="factory is closed"):
         factory.build_supervisor(harness="codex", **_build_arguments())
+
+
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_bound_codex_supervisor_total_timeout_switch_leaves_stage_models_enabled(monkeypatch, total_timeout_enabled):
+    clock = [100.0]
+    started, release = Event(), Event()
+    monkeypatch.setattr("gateway.codex.agent.monotonic", lambda: clock[0])
+
+    class Session:
+        closed = False
+
+        def run_turn(self, prompt, *, output_schema=None):
+            started.set()
+            assert release.wait(timeout=1)
+            return SimpleNamespace(final_response="Native answer", usage=None)
+
+        def close(self):
+            self.closed = True
+            release.set()
+
+    session = Session()
+    monkeypatch.setattr("gateway.codex.agent.CodexSession", lambda **_options: session)
+    binding = ModelBinding(
+        source="primary", model="model", request_timeout_seconds=7, max_output_tokens=4_096,
+        max_input_chars=120_000, context_window_tokens=64_000,
+        context_safety_margin_tokens=4_096, auto_compact_tokens=48_000, compact_target_tokens=24_000,
+    )
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": CodexModelSourceConfig()}, binding=binding, environ={},
+    )
+    model = factory.build_supervisor(
+        harness="codex", **_build_arguments(), total_timeout_enabled=total_timeout_enabled,
+    )
+    structured = factory.build_structured(**_build_arguments())
+    loop = factory.build_loop(**_build_arguments())
+
+    def check():
+        if started.is_set():
+            clock[0] = 140.0
+            release.set()
+
+    texts = []
+    try:
+        assert structured.total_timeout_enabled is True
+        assert loop.total_timeout_enabled is True
+        assert model._agent_model._timeout == 7
+        options = dict(
+            thread_id="conversation", message_id="answer", user_message="question", history=[],
+            tools=[], max_model_calls=2, handle_text=texts.append, check_control=check,
+            request_timeout_seconds=None,
+        )
+        if total_timeout_enabled:
+            with pytest.raises(AgentModelTimeoutError):
+                model.run_agent("instruction", **options)
+        else:
+            model.run_agent("instruction", **options)
+            assert texts == ["Native answer"]
+        assert clock[0] == 140
+        assert session.closed
+    finally:
+        release.set()
+        model.close()
+        structured.close()
+        loop.close()
+        factory.close()

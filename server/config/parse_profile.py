@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import Field, model_serializer, model_validator
@@ -22,6 +23,7 @@ from gateway.multimodal import adapter_capabilities
 
 from ..schema import ContractModel
 from .media import ImageUploadConfig
+from .mq import MQConsumerConfig
 from .upload import UploadServiceConfig
 
 
@@ -29,6 +31,30 @@ _MODEL_POLICY_FIELDS = (
     "context_window_tokens", "context_safety_margin_tokens", "auto_compact_tokens",
     "compact_target_tokens", "max_input_chars",
 )
+_EXECUTION_POLICY_FIELDS = (
+    "batch_max_size", "dispatch_interval_seconds",
+    "retry_initial_delay_seconds", "retry_max_delay_seconds",
+)
+
+
+def _validate_schedule_delay(seconds: float | None) -> None:
+    if seconds is None:
+        return
+    try:
+        datetime.now(UTC) + timedelta(seconds=seconds)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("scheduling delay exceeds the supported datetime range") from exc
+
+
+def validate_video_parse_schedule(config: VideoParseV2Config) -> VideoParseV2Config:
+    """Reject non-executable delays at the Server request boundary."""
+    for seconds in (
+        config.dispatch_interval_seconds,
+        config.execution.retry_initial_delay_seconds,
+        config.execution.retry_max_delay_seconds,
+    ):
+        _validate_schedule_delay(seconds)
+    return config
 
 
 def _model_policy(model) -> dict[str, Any]:
@@ -143,7 +169,41 @@ class ParseEmbeddingConfig(ContractModel):
 
 class ParseExecutionConfig(ContractModel):
     request_timeout_seconds: float = Field(gt=0)
-    max_attempts: int = Field(ge=1)
+    max_attempts: int = Field(ge=1, strict=True)
+    batch_max_size: int | None = Field(default=None, gt=0, strict=True)
+    dispatch_interval_seconds: float | None = Field(
+        default=None, ge=0, strict=True, allow_inf_nan=False,
+    )
+    retry_initial_delay_seconds: float | None = Field(
+        default=None, gt=0, strict=True, allow_inf_nan=False,
+    )
+    retry_max_delay_seconds: float | None = Field(
+        default=None, gt=0, strict=True, allow_inf_nan=False,
+    )
+
+    @model_validator(mode="after")
+    def validate_retry_delays(self) -> "ParseExecutionConfig":
+        for name in _EXECUTION_POLICY_FIELDS[1:]:
+            _validate_schedule_delay(getattr(self, name))
+        if (
+            self.retry_initial_delay_seconds is not None
+            and self.retry_max_delay_seconds is not None
+            and self.retry_max_delay_seconds < self.retry_initial_delay_seconds
+        ):
+            raise ValueError("retry_max_delay_seconds must be at least retry_initial_delay_seconds")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_execution(self, handler):
+        values = handler(self)
+        # Older upload requests must keep their original idempotency fingerprint.
+        for name in _EXECUTION_POLICY_FIELDS:
+            if getattr(self, name) is None:
+                values.pop(name, None)
+                alias = self.__class__.model_fields[name].alias
+                if alias is not None:
+                    values.pop(alias, None)
+        return values
 
 
 class ParseConfig(ContractModel):
@@ -156,6 +216,30 @@ class ParseConfig(ContractModel):
     embedding: ParseEmbeddingConfig
     execution: ParseExecutionConfig
 
+    def resolve_execution(self, defaults: "ParseConfig | None") -> "ParseConfig":
+        """Fill only missing legacy request fields before freezing the task."""
+        missing = {
+            name for name in _EXECUTION_POLICY_FIELDS
+            if getattr(self.execution, name) is None
+        }
+        if not missing:
+            return self
+        upstream = (
+            defaults.to_video_parse_v2()
+            if defaults is not None else default_video_parse_v2_config()
+        )
+        values = {
+            "batch_max_size": upstream.batch_max_size,
+            "dispatch_interval_seconds": upstream.dispatch_interval_seconds,
+            "retry_initial_delay_seconds": upstream.execution.retry_initial_delay_seconds,
+            "retry_max_delay_seconds": upstream.execution.retry_max_delay_seconds,
+        }
+        execution = ParseExecutionConfig.model_validate({
+            **self.execution.model_dump(),
+            **{name: values[name] for name in missing},
+        })
+        return self.model_copy(update={"execution": execution})
+
     def to_video_parse_v2(self) -> VideoParseV2Config:
         """Freeze this effective server profile into the V2 task contract.
 
@@ -164,6 +248,8 @@ class ParseConfig(ContractModel):
         harness persists only the values that affect its execution plan.
         """
 
+        if any(getattr(self.execution, name) is None for name in _EXECUTION_POLICY_FIELDS):
+            raise ValueError("parse execution configuration must be resolved before creating a V2 task")
         maximum_frames = self.vision.max_frames_per_window
         if maximum_frames is None:
             maximum_frames = min(
@@ -178,8 +264,8 @@ class ParseConfig(ContractModel):
         return VideoParseV2Config(
             chunk_duration=self.window.chunk_duration_seconds,
             interval_duration=self.window.chunk_duration_seconds * 3,
-            batch_max_size=10,
-            dispatch_interval_seconds=0,
+            batch_max_size=self.execution.batch_max_size,
+            dispatch_interval_seconds=self.execution.dispatch_interval_seconds,
             models=VideoParseV2ModelSnapshot(
                 asr=VideoParseV2ASRModelConfig(
                     source=self.asr.source,
@@ -237,9 +323,9 @@ class ParseConfig(ContractModel):
             prefix_context=None,
             execution=VideoParseV2ExecutionConfig(
                 max_concurrent_model_calls=self.asr.concurrency,
-                max_retry_count=max(0, self.execution.max_attempts - 1),
-                retry_initial_delay_seconds=1,
-                retry_max_delay_seconds=30,
+                max_retry_count=self.execution.max_attempts - 1,
+                retry_initial_delay_seconds=self.execution.retry_initial_delay_seconds,
+                retry_max_delay_seconds=self.execution.retry_max_delay_seconds,
                 max_model_calls=100,
             ),
         )
@@ -267,7 +353,9 @@ class ParseConfig(ContractModel):
         embedding_model: str | None,
         embedding_dimensions: int,
         embedding_fps: float | None,
+        mq: MQConsumerConfig | None = None,
     ) -> "ParseConfig":
+        mq = mq if mq is not None else MQConsumerConfig(consumer_id="parse-config-defaults")
         parser = gateway.video_parser
         fallback = parser.fallback
         asr_binding = gateway.resolve_model_binding("transcription")
@@ -347,6 +435,10 @@ class ParseConfig(ContractModel):
             execution=ParseExecutionConfig(
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 max_attempts=upload.max_job_attempts,
+                batch_max_size=runtime.batch_max_size,
+                dispatch_interval_seconds=runtime.dispatch_interval_seconds,
+                retry_initial_delay_seconds=mq.retry_base.total_seconds(),
+                retry_max_delay_seconds=mq.retry_max.total_seconds(),
             ),
         )
 

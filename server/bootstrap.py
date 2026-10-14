@@ -23,6 +23,7 @@ from .common.storage import (
 from .config.agent import AgentServiceConfig
 from .config.global_agent_settings import read_global_agent_settings
 from .config.parse_profile import ParseConfig
+from .config.usage import load_model_pricing
 from .mq.video_parse_consumer import (
     VideoParseConsumer,
     VideoParseConsumerHandlers,
@@ -92,6 +93,16 @@ class ApplicationServices:
                 cleanup.callback(self.parse_consumer.close)
 
 
+def _validate_cloud_agent_timeout(
+    settings: ServerSettings, agent_config: AgentServiceConfig,
+) -> None:
+    if settings.auth.mode == "cloud":
+        if not agent_config.total_timeout_enabled:
+            raise ValueError("cloud Agent requires total_timeout_enabled for the query lease")
+        if agent_config.execution_timeout_seconds >= settings.auth.query_lease_seconds:
+            raise ValueError("cloud Agent execution timeout must be shorter than the query lease")
+
+
 def prepare_service_configuration(
     settings: ServerSettings,
 ) -> tuple[GatewayConfig, ParseConfig]:
@@ -102,10 +113,12 @@ def prepare_service_configuration(
             "Video Parse V2 requires ANIVAG_ELASTICSEARCH_URL and "
             "ANIVAG_ELASTICSEARCH_INDEX"
         )
+    _validate_cloud_agent_timeout(settings, settings.agent)
     gateway_config = load_config(settings.model_config_path)
     validate_rerank_source(gateway_config, settings.retrieval)
     parse_defaults = ParseConfig.from_defaults(
         runtime=settings.parse,
+        mq=settings.mq,
         gateway=gateway_config,
         upload=settings.upload,
         images=settings.images,
@@ -182,7 +195,10 @@ def _build_application_services(
         execution_mode=settings.parse_execution_mode,
     )
     tracing = None
-    parse_usage = ParseUsageService(ModelUsageRepository(session_factory))
+    parse_usage = ParseUsageService(
+        ModelUsageRepository(session_factory),
+        pricing=load_model_pricing(settings.model_pricing_path),
+    )
     construction_cleanup.callback(parse_usage.close)
     video_repository = VideoRepository(session_factory)
     video_parse_repository = VideoParseRepository(session_factory)
@@ -249,9 +265,8 @@ def _build_application_services(
     evaluator_model_name = settings.agent_evaluator_model or agent_model_config.model
     chat_model_name = settings.agent_chat_model or agent_model_config.model
     def build_agent_runtime(agent_config: AgentServiceConfig) -> AgentRuntime:
+        _validate_cloud_agent_timeout(settings, agent_config)
         if settings.auth.mode == "cloud":
-            if agent_config.execution_timeout_seconds >= settings.auth.query_lease_seconds:
-                raise ValueError("cloud Agent execution timeout must be shorter than the query lease")
             agent_config = replace(agent_config, limits_enabled=True)
         request_timeout = min(
             timeout for timeout in (
@@ -310,17 +325,19 @@ def _build_application_services(
             evaluator_stage_timeout_seconds=agent_config.evaluator_stage_timeout_seconds,
             chat_timeout_seconds=agent_config.chat_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
+            total_timeout_enabled=agent_config.total_timeout_enabled,
             retrieval_channel="lexical",
         )
     def build_supervisor_runtime(
         video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
     ) -> SupervisorRuntime:
+        _validate_cloud_agent_timeout(settings, agent_config)
         if settings.auth.mode == "cloud":
             agent_config = replace(agent_config, limits_enabled=True)
         request_timeout = min(
             timeout for timeout in (
                 settings.agent_request_timeout_seconds,
-                agent_config.execution_timeout_seconds,
+                agent_config.execution_timeout_seconds if agent_config.total_timeout_enabled else None,
                 supervisor_binding.request_timeout_seconds,
             ) if timeout is not None
         )
@@ -344,6 +361,7 @@ def _build_application_services(
                 max_output_tokens=max_output_tokens,
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
+                total_timeout_enabled=agent_config.total_timeout_enabled,
                 reasoning_effort=(
                     supervisor_binding.reasoning_effort
                     if independent_supervisor and supervisor_binding.reasoning_effort is not None
@@ -360,6 +378,7 @@ def _build_application_services(
             web_timeout_seconds=agent_config.web_search_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
             supervisor_timeout_seconds=agent_config.supervisor_timeout_seconds,
+            total_timeout_enabled=agent_config.total_timeout_enabled,
             limits_enabled=agent_config.limits_enabled,
             max_tool_result_bytes=agent_config.max_tool_result_bytes,
             max_prompt_chars=agent_config.max_prompt_chars,

@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ..bootstrap import ApplicationServices
 from ..config import ServerSettings
 from ..config.auth import AuthConfig
+from ..config.retrieval import RetrievalConfig
 from ..config.sse import SSEConfig
 from ..router import router
 from .errors import register_exception_handlers
@@ -51,6 +52,7 @@ def build_app(
         getattr(services, "auth", None), "config", AuthConfig()
     )
     app.state.sse_config = resolved_settings.sse if resolved_settings else SSEConfig()
+    app.state.retrieval_config = getattr(resolved_settings, "retrieval", RetrievalConfig())
     app.state.model_config_path = getattr(resolved_settings, "model_config_path", None)
 
     @app.middleware("http")

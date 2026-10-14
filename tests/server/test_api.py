@@ -27,6 +27,7 @@ from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig
+from server.config.retrieval import RetrievalConfig
 from server.utils.logging import RequestIdFilter, request_id_context
 from server.database import (
     DatabaseEnvironment,
@@ -65,9 +66,9 @@ from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 
 
-def _read_all(tool, video_chunk_id: str) -> dict:
+def _read_all(tool, video_chunk_id: str, *, collection: str = "retrieval") -> dict:
     overview = json.loads(tool.invoke({
-        "video_chunk_id": video_chunk_id,
+        "collection": collection, "reference": video_chunk_id,
         "section": "overview",
     }))
     sections = {}
@@ -79,7 +80,7 @@ def _read_all(tool, video_chunk_id: str) -> dict:
             end = total
             while True:
                 page = json.loads(tool.invoke({
-                    "video_chunk_id": video_chunk_id,
+                    "collection": collection, "reference": video_chunk_id,
                     "section": name,
                     "start": start,
                     "end": end,
@@ -95,6 +96,17 @@ def _read_all(tool, video_chunk_id: str) -> dict:
             start = end
         sections[name] = json.loads("".join(content))
     return sections
+
+
+def _write_canvas(tools_by_name, operation: str, fields: dict) -> dict:
+    collection = "draft" if "draft" in operation else "approved"
+    current = json.loads(tools_by_name["get_context_canvas"].invoke({"collection": collection}))
+    receipt = json.loads(tools_by_name["write_context_canvas"].invoke({
+        "batch_id": uuid4().hex, "expected_revision": current["revision"],
+        "operations": [{"operation": operation, **fields}],
+    }))
+    assert "error" not in receipt
+    return receipt["results"][0]
 
 
 @dataclass
@@ -269,9 +281,19 @@ class _AgentModelStub:
     ):
         tools_by_name = {tool.name: tool for tool in tools}
         if "action" in result_type.model_fields:
-            catalog = json.loads(tools_by_name["get_draft_catelog"].invoke({}))
-            for item in catalog["items"]:
-                _read_all(tools_by_name["read_draft_item"], item["video_chunk_id"])
+            cursor = None
+            while True:
+                catalog = json.loads(tools_by_name["get_context_canvas"].invoke({
+                    "collection": "draft", "cursor": cursor,
+                }))
+                for item in catalog["items"]:
+                    _read_all(
+                        tools_by_name["get_context_canvas"], item["video_chunk_id"],
+                        collection="draft",
+                    )
+                cursor = catalog["next_cursor"]
+                if cursor is None:
+                    break
             return result_type.model_validate({
                 "action": "complete", "advice": "回答与证据一致，可以交付。",
             })
@@ -294,8 +316,11 @@ class _AgentModelStub:
     ):
         import json
 
-        update_video_item = next(tool for tool in tools if tool.name == "update_video_item")
-        assert set(update_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
+        tools_by_name = {tool.name: tool for tool in tools}
+        assert set(tools_by_name) == {"get_context_canvas", "write_context_canvas"}
+        assert set(tools_by_name["write_context_canvas"].args_schema.model_fields) == {
+            "batch_id", "expected_revision", "operations",
+        }
         assert max_model_calls is None or (type(max_model_calls) is int and max_model_calls > 0)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
@@ -309,7 +334,7 @@ class _AgentModelStub:
         handle_text("以下片段支持这个结论。")
         for video_chunk_id in chunk_ids:
             check_control and check_control()
-            update_video_item.invoke({
+            _write_canvas(tools_by_name, "upsert_video_item", {
                 "video_chunk_id": video_chunk_id,
                 "claim": f"片段 {video_chunk_id} 支持结论。",
             })
@@ -448,6 +473,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/messages/options",
         "/api/agent/global-settings",
         "/api/agent/messages/send",
+        "/api/agent/messages/cancel",
         "/api/agent/messages/events",
     } == paths
     assert {
@@ -512,6 +538,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         },
         ("/api/agent/messages/list", "get"): {"conversationId"},
         ("/api/agent/messages/send", "post"): {"conversationId"},
+        ("/api/agent/messages/cancel", "post"): {"conversationId", "tenantId", "messageId"},
         ("/api/agent/messages/events", "get"): {"conversationId"},
     }
     for (path, method), identifiers in query_identifiers.items():
@@ -616,6 +643,7 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
     assert response.json()["vision"]["fps"] == 1.0
 
     invalid = response.json()
+    invalid["vision"]["inputMode"] = "video"
     invalid["vision"]["maxFramesPerWindow"] = 12
     rejected = client.post(
         "/api/uploads/create?seriesId=invalid",
@@ -649,6 +677,92 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
         params={"tenantId": "local-default", "uploadSessionId": created.json()["uploadSessionId"]},
     )
     assert restored.json()["parseConfig"] == created.json()["parseConfig"]
+
+
+@pytest.mark.parametrize("entry", ["profile", "v2", "reparse"])
+@pytest.mark.parametrize("field,value", [
+    ("batch_max_size", 0),
+    ("batch_max_size", True),
+    ("batch_max_size", 2.5),
+    ("dispatch_interval_seconds", -1),
+    ("dispatch_interval_seconds", 1e308),
+    ("retry_initial_delay_seconds", 0),
+    ("retry_max_delay_seconds", 0.5),
+    ("retry_max_delay_seconds", 1e300),
+])
+def test_parse_execution_values_are_rejected_at_every_http_entry(
+    tmp_path: Path, entry: str, field: str, value: object,
+) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    defaults = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+        upload=UploadServiceConfig(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024,
+        embedding_fps=1.0,
+    )
+    if entry == "profile":
+        config = defaults.model_dump(mode="json")
+        config["execution"][field] = value
+        body_key = "parseConfig"
+    else:
+        config = defaults.to_video_parse_v2().model_dump(mode="json")
+        target = config if field in {"batch_max_size", "dispatch_interval_seconds"} else config["execution"]
+        target[field] = value
+        body_key = "videoParseConfig"
+    if entry == "reparse":
+        rejected = client.post(
+            "/api/uploads/reparse",
+            params={"tenantId": "local-default", "uploadSessionId": str(uuid4()), "expectedJobVersion": 1},
+            json={body_key: config},
+        )
+    else:
+        rejected = client.post(
+            "/api/uploads/create?seriesId=invalid",
+            headers={"Idempotency-Key": "invalid-execution"},
+            json={
+                "tenantId": "local-default", "episodeOrder": 1,
+                "originalFilename": "ep.mp4", "mediaType": "video/mp4",
+                "totalSizeBytes": 10, body_key: config,
+            },
+        )
+    assert rejected.status_code == 422, rejected.text
+
+
+def test_upload_api_preserves_explicit_execution_values_and_normalizes_old_profile(
+    tmp_path: Path,
+) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    defaults = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(batch_max_size=7, dispatch_interval_seconds=0.25),
+        gateway=load_config(), upload=UploadServiceConfig(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024, embedding_fps=1.0,
+    )
+    client.app.state.services.uploads._parse_defaults = defaults
+    series_id = _create_series(client)
+    original = defaults.model_dump(mode="json", by_alias=True)
+    original["execution"]["batchMaxSize"] = 6
+    original["execution"]["dispatchIntervalSeconds"] = 0.5
+    original["execution"]["retryInitialDelaySeconds"] = 2.5
+    original["execution"]["retryMaxDelaySeconds"] = 12.5
+    for episode_order, legacy in ((1, False), (2, True)):
+        selected = json.loads(json.dumps(original))
+        if legacy:
+            for field in ("batchMaxSize", "dispatchIntervalSeconds", "retryInitialDelaySeconds", "retryMaxDelaySeconds"):
+                selected["execution"].pop(field)
+        payload = {
+            "tenantId": "local-default", "episodeOrder": episode_order,
+            "originalFilename": "ep.mp4", "mediaType": "video/mp4",
+            "totalSizeBytes": 10, "parseConfig": selected,
+        }
+        for _attempt in range(2):
+            created = client.post(
+                f"/api/uploads/create?seriesId={series_id}",
+                headers={"Idempotency-Key": f"execution-{episode_order}"}, json=payload,
+            )
+            assert created.status_code == 201, created.text
+            execution = created.json()["parseConfig"]["execution"]
+            expected = defaults.execution.model_dump(mode="json", by_alias=True) if legacy else original["execution"]
+            assert execution == expected
 
 
 def test_series_background_upload_save_and_read_back(tmp_path: Path) -> None:
@@ -1157,7 +1271,7 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
     assert retrieval.calls == [("她为什么哭", [series_id], 5, "local-default")]
 
 
-def test_search_top_k_defaults_and_bounds_follow_current_configuration(tmp_path: Path) -> None:
+def test_search_top_k_uses_retrieval_default_and_preserves_explicit_values(tmp_path: Path) -> None:
     client, retrieval, _jobs = _client(tmp_path)
     service = client.app.state.services.agent
     series_id = _create_series(client)
@@ -1166,33 +1280,40 @@ def test_search_top_k_defaults_and_bounds_follow_current_configuration(tmp_path:
         service._config = replace(service._config, default_top_k=3, maximum_top_k=5)
         response = client.post("/api/search", json=body)
         assert response.status_code == 200
-        assert retrieval.calls[-1][2] == 3
+        assert retrieval.calls[-1][2] == 30
 
-        for top_k in (1, 5):
+        for top_k in (1, 5, 21, 101):
             response = client.post("/api/search", json={**body, "topK": top_k})
             assert response.status_code == 200
             assert retrieval.calls[-1][2] == top_k
 
-        before = len(retrieval.calls)
-        response = client.post("/api/search", json={**body, "topK": 6})
-        assert response.status_code == 400
-        assert "between 1 and 5" in response.json()["message"]
-        assert len(retrieval.calls) == before
-
         service._config = replace(service._config, default_top_k=4, maximum_top_k=100)
-        response = client.post("/api/search", json={**body, "topK": 100})
+        response = client.post("/api/search", json=body)
         assert response.status_code == 200
-        assert retrieval.calls[-1][2] == 100
+        assert retrieval.calls[-1][2] == 30
         response = client.post("/api/search", json={**body, "topK": None})
         assert response.status_code == 200
-        assert retrieval.calls[-1][2] == 4
+        assert retrieval.calls[-1][2] == 30
+
+        client = TestClient(create_app(
+            client.app.state.services,
+            settings=SimpleNamespace(
+                auth=client.app.state.auth_config,
+                sse=client.app.state.sse_config,
+                retrieval=RetrievalConfig(search_default_top_k=120),
+                model_config_path=client.app.state.model_config_path,
+                allowed_origins=(),
+            ),
+        ))
+        for overrides in ({}, {"topK": None}):
+            response = client.post("/api/search", json={**body, **overrides})
+            assert response.status_code == 200
+            assert retrieval.calls[-1][2] == 120
 
         before = len(retrieval.calls)
         for top_k in (0, -1, True, 1.5, "2"):
             response = client.post("/api/search", json={**body, "topK": top_k})
             assert response.status_code == 422
-        response = client.post("/api/search", json={**body, "topK": 101})
-        assert response.status_code == 400
         assert len(retrieval.calls) == before
     finally:
         service.close()
@@ -1678,7 +1799,10 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     )
     assert video_parse_task.status_code == 200, video_parse_task.text
     assert video_parse_task.json()["status"] == "PENDING"
-    assert video_parse_task.json()["detail"] == {}
+    detail = video_parse_task.json()["detail"]
+    assert detail["progress"]["completedChunks"] == 0
+    assert detail["progress"]["topologyReady"] is False
+    assert detail["timing"]["activeExecutions"] == 0
     assert video_parse_task.json()["tenantId"] == "local-default"
     assert video_parse_task.json()["seriesId"] == series_id
     assert video_parse_task.json()["seriesName"] == "Test Series"
@@ -2178,8 +2302,8 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 },
             }))
             for item in result["items"]:
-                _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
-                tools_by_name["update_draft_item"].invoke({
+                _read_all(tools_by_name["get_context_canvas"], item["video_chunk_id"])
+                _write_canvas(tools_by_name, "upsert_draft_item", {
                     "video_chunk_id": item["video_chunk_id"],
                     "start_seconds": item["start_seconds"],
                     "end_seconds": item["end_seconds"],
@@ -2233,7 +2357,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         assert "query" not in final["searchResult"]
         assert final["searchResult"]["retrievalTrace"] == [{
             "query": "找动作片段",
-            "topK": min(5, service.default_top_k),
+            "topK": 5,
             "strategyVersion": "query-adaptive-three-channel-rrf-v2",
             "requestedWeights": {"lexical": 0.2, "semantic": 0.2, "visual": 0.6},
             "effectiveWeights": {"lexical": 0.2, "semantic": 0.2, "visual": 0.6},
@@ -2331,6 +2455,70 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     content = client.get("/openapi.json").json()["paths"]["/api/agent/messages/send"]["post"]["responses"]["200"]["content"]
     assert {"application/json", "text/event-stream"}.issubset(content)
     client.app.state.services.agent.close()
+
+
+def test_manual_cancel_api_checks_scope_and_returns_the_current_message_pair(tmp_path, monkeypatch):
+    from threading import Event
+    from agent.chat.common.errors import AgentModelInvocationError
+
+    client, _, _ = _client(tmp_path)
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
+    service = client.app.state.services.agent
+    entered, release = Event(), Event()
+    query = service._runtime._query_model.run_structured
+
+    def blocked_query(*args, **kwargs):
+        result = query(*args, **kwargs)
+        entered.set()
+        assert release.wait(5), "test did not release Query"
+        return result
+
+    monkeypatch.setattr(service._runtime._query_model, "run_structured", blocked_query)
+    execution = service.start_message(
+        conversation_id, tenant_id="local-default", content="找画面",
+        idempotency_key="api-cancel",
+    )
+    params = {
+        "conversationId": conversation_id, "tenantId": "local-default",
+        "messageId": execution.initial.assistant_message.message_id,
+    }
+    try:
+        assert entered.wait(5), "Query did not start"
+        assert client.post("/api/agent/messages/cancel", params={**params, "tenantId": "other"}).status_code == 404
+        assert client.post("/api/agent/messages/cancel", params={**params, "messageId": str(uuid4())}).status_code == 404
+        assert client.post("/api/agent/messages/cancel", params={
+            **params, "messageId": execution.initial.user_message.message_id,
+        }).status_code == 400
+        assert client.post("/api/agent/messages/cancel", params={"conversationId": conversation_id}).status_code == 422
+        with monkeypatch.context() as scoped:
+            scoped.setattr("server.api.agent.get_identity", lambda _request: SimpleNamespace(
+                mode="cloud", user_id="other-user", tenant_id="local-default", public_tenant_id="public",
+            ))
+            assert client.post("/api/agent/messages/cancel", params=params).status_code == 404
+        assert not execution.cancellation.is_set()
+
+        response = client.post("/api/agent/messages/cancel", params=params)
+        assert response.status_code == 200, response.text
+        pair = response.json()
+        assert pair["userMessage"]["messageId"] == execution.initial.user_message.message_id
+        assert pair["assistantMessage"]["messageId"] == params["messageId"]
+        assert pair["assistantMessage"]["status"] == "PROCESSING"
+        assert execution.cancellation.is_set() and not execution.future.done()
+        assert client.post("/api/agent/messages/cancel", params=params).json() == pair
+    finally:
+        release.set()
+        service.close()
+
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        execution.result()
+    final = client.get("/api/agent/messages/get", params=params)
+    assert final.status_code == 200
+    assert final.json()["assistantMessage"]["status"] == "FAILED"
+    assert final.json()["assistantMessage"]["lastError"] == {
+        "code": "AGENT_CANCELLED", "message": "已停止生成回答。",
+    }
+    assert client.post("/api/agent/messages/cancel", params=params).json() == final.json()
 
 
 def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):

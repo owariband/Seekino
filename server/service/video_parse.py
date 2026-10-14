@@ -373,20 +373,11 @@ class VideoParseRuntimeService:
                     chunk_parse_task_id=item.chunk_parse_task_id,
                     sequence_no=item.sequence_no,
                     status=ChunkTaskStatus(item.status),
-                    dispatchable=item.dispatchable,
                 )
                 for item in state.tasks
             ),
             wait_timeout_seconds=state.wait_timeout_seconds,
             terminal_error=state.terminal_error,
-        )
-
-    async def dispatch_chunk(
-        self, chunk_parse_task_id: str, lease: LeaseToken
-    ) -> bool:
-        current = self._require_video_token(None, lease)
-        return await asyncio.to_thread(
-            self._queue.dispatch_chunk, chunk_parse_task_id, current
         )
 
     async def wait_for_video_change(
@@ -831,7 +822,6 @@ class VideoParseRuntimeService:
 
     async def _execute_prefix(self, lease: PrefixParseLease) -> None:
         token = self._prefix_lease.set(lease)
-        task_input: VideoParseTaskInputState | None = None
         try:
             task_input = await asyncio.to_thread(
                 self._repository.load_task_input, lease.video_parse_task_id
@@ -850,22 +840,10 @@ class VideoParseRuntimeService:
             await asyncio.to_thread(self._repository.release_prefix, lease)
             raise
         except Exception as error:
-            if task_input is None:
-                retry_seconds = 1.0
-            else:
-                execution = self._parse_input(task_input).parse_config.execution
-                retry_seconds = min(
-                    execution.retry_max_delay_seconds,
-                    execution.retry_initial_delay_seconds
-                    * (2 ** min(lease.retry_count, 30)),
-                )
-            from ..utils.time import now_utc
-
             await asyncio.to_thread(
                 self._repository.retry_prefix,
                 lease,
                 error=str(error),
-                retry_at=now_utc() + timedelta(seconds=retry_seconds),
             )
         finally:
             self._prefix_lease.reset(token)

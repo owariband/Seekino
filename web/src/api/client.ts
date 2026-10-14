@@ -592,6 +592,12 @@ export function sendAgentMessage(
   });
 }
 
+export function cancelAgentMessage(conversationId: string, messageId: string): Promise<AgentMessageSendView> {
+  return requestJson(`/api/agent/messages/cancel?${new URLSearchParams({ conversationId, messageId, tenantId: TENANT_ID })}`, {
+    method: "POST",
+  });
+}
+
 export async function streamAgentMessage(
   conversationId: string,
   content: string,

@@ -179,9 +179,14 @@ def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
         value = inputs.get(key)
         if type(value) is int:
             summary[key] = value
-    section = inputs.get("section")
-    if isinstance(section, str):
-        summary["section"] = section[:64]
+    for key in ("collection", "reference", "section"):
+        value = inputs.get(key)
+        if isinstance(value, str):
+            summary[key] = value[:64]
+    references = inputs.get("references")
+    if isinstance(references, list):
+        summary["reference_count"] = len(references)
+        summary["references"] = [value[:64] for value in references[:20] if isinstance(value, str)]
     for key in ("query", "claim"):
         value = inputs.get(key)
         if isinstance(value, str):

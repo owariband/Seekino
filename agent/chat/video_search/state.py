@@ -226,12 +226,12 @@ class ChatRenderDraft(BaseModel):
 
 class RetrievalTraceEntry(_AgentContractModel):
     query: _Text
-    top_k: int = Field(ge=1, le=100)
+    top_k: int = Field(ge=1)
     strategy_version: str = Field(min_length=1, max_length=255)
     requested_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
     effective_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
     result_count: int = Field(ge=0)
-    video_chunk_ids: list[_VideoChunkId] = Field(max_length=100)
+    video_chunk_ids: list[_VideoChunkId]
 
     @model_validator(mode="after")
     def require_matching_weight_channels(self) -> "RetrievalTraceEntry":

@@ -211,7 +211,8 @@ class VideoSearchContextCanvas(ContextCanvas):
 
     def _check_collection(self, collection: str, role: str) -> None:
         allowed = {"query": {"retrieval", "draft"}, "evaluator": {"retrieval", "draft"},
-                   "chat": {"approved", "render"}}
+                   "chat": {"approved", "render"},
+                   "supervisor": {"retrieval", "draft", "approved", "render", "review"}}
         if collection not in allowed.get(role, set()):
             raise AgentToolFeedbackError(
                 "FORBIDDEN_COLLECTION", f"{role!r} cannot read {collection!r}.",
@@ -226,15 +227,21 @@ class VideoSearchContextCanvas(ContextCanvas):
             return [{"reference": reference, "type": value["type"],
                      "description": (value.get("claim") or value.get("markdown", ""))[:500]}
                     for reference, value in self.items(collection)]
+        if collection == "review":
+            return [{"reference": reference, "turn_number": value["turn_number"],
+                     "action": value["action"], "description": value["advice"][:500]}
+                    for reference, value in self.items(collection)]
         if collection == "retrieval":
             cards = []
             for reference, value in self.items(collection):
-                evidence = self.retrieval_snapshot(reference).evidence
+                snapshot = self.retrieval_snapshot(reference)
+                evidence = snapshot.evidence
                 cards.append({
                     "reference": reference, "video_chunk_id": reference,
                     "episode_order": evidence.episode_order,
                     "start_seconds": evidence.start_seconds, "end_seconds": evidence.end_seconds,
-                    "description": value["selection_reason"]["summary"][:500],
+                    "description": (snapshot.selection_reason.summary if role == "supervisor"
+                                    else value["selection_reason"]["summary"])[:500],
                 })
             return cards
         return [{"reference": reference, "video_chunk_id": reference,
@@ -250,6 +257,8 @@ class VideoSearchContextCanvas(ContextCanvas):
         try:
             if collection == "render":
                 return {"render": json.dumps(self.get(collection, reference), ensure_ascii=False)}
+            if collection == "review":
+                return {"review": json.dumps(self.get(collection, reference), ensure_ascii=False)}
             if collection == "retrieval":
                 return detail_sections(self.retrieval_snapshot(reference))
             approved = collection == "approved"

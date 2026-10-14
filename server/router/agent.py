@@ -69,6 +69,12 @@ router.add_api_route(
     response_model=AgentMessageSendView,
 )
 router.add_api_route(
+    "/api/agent/messages/cancel",
+    agent.cancel_agent_message,
+    methods=["POST"],
+    response_model=AgentMessageSendView,
+)
+router.add_api_route(
     "/api/agent/messages/send",
     agent.send_agent_message,
     methods=["POST"],

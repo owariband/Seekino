@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from functools import partial
+from functools import partial, wraps
 from collections.abc import Callable, Mapping, Sequence
 from threading import Lock
 from time import monotonic
@@ -22,6 +22,7 @@ from gateway.multimodal import (
     ImageInput, MultimodalInput, TextInput, VideoInput, adapter_capabilities,
     validate_generate_request,
 )
+from gateway.usage import model_call_context
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
@@ -34,14 +35,29 @@ _Result = TypeVar("_Result", bound=BaseModel)
 class _OwnedResource:
     """Remove closed models from the client's live resource registry."""
 
-    def __init__(self, delegate: Any, release: Callable[[_OwnedResource], None]) -> None:
+    def __init__(
+        self, delegate: Any, release: Callable[[_OwnedResource], None], *,
+        source: str | None = None,
+    ) -> None:
         self._delegate = delegate
         self._release = release
+        self._binding_source = source
         self._lock = Lock()
         self._closed = False
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._delegate, name)
+        value = getattr(self._delegate, name)
+        if self._binding_source is None or not callable(value) or name not in {
+            "generate", "transcribe", "embed_text", "embed_query", "embed_image", "embed_video", "embed_sparse",
+        }:
+            return value
+
+        @wraps(value)
+        def invoke(*args: Any, **kwargs: Any) -> Any:
+            with model_call_context({"src": self._binding_source}):
+                return value(*args, **kwargs)
+
+        return invoke
 
     def close(self) -> None:
         with self._lock:
@@ -221,14 +237,16 @@ class GenerativeModel:
         )
         try:
             if isinstance(self._source, ClaudeCodeModelSourceConfig):
-                result = self._delegate.run_structured(
-                    "\n\n".join(item.text for item in inputs), tools=tools,
-                    result_type=result_type, max_model_calls=max_model_calls,
-                    request_timeout_seconds=timeout, check_control=check_run,
-                    context_checkpoint=context_checkpoint, max_input_chars=input_limit,
-                )
+                with model_call_context({"src": self.binding.source}):
+                    result = self._delegate.run_structured(
+                        "\n\n".join(item.text for item in inputs), tools=tools,
+                        result_type=result_type, max_model_calls=max_model_calls,
+                        request_timeout_seconds=timeout, check_control=check_run,
+                        context_checkpoint=context_checkpoint, max_input_chars=input_limit,
+                    )
             elif self._native:
-                result = self._delegate.generate(inputs, **common)
+                with model_call_context({"src": self.binding.source}):
+                    result = self._delegate.generate(inputs, **common)
             else:
                 if tools:
                     arguments = {**common, **dict(
@@ -243,7 +261,9 @@ class GenerativeModel:
                     invoke = partial(generate_with_deepagents, self._delegate)
                 else:
                     invoke = self._delegate.generate
-                result = invoke(inputs, **arguments)
+                # A shared session chooses its actual fallback inside the harness.
+                with model_call_context({"src": None if shared_fallback else self.binding.source}):
+                    result = invoke(inputs, **arguments)
         except BaseException as error:
             if control_failure is not None:
                 raise control_failure
@@ -295,8 +315,8 @@ class GatewayClient:
         self._lock = Lock()
         self._closed = False
 
-    def _own(self, resource: Any) -> Any:
-        owned = _OwnedResource(resource, self._release)
+    def _own(self, resource: Any, *, source: str | None = None) -> Any:
+        owned = _OwnedResource(resource, self._release, source=source)
         with self._lock:
             if not self._closed:
                 self._resources.add(owned)
@@ -389,7 +409,10 @@ class GatewayClient:
         self._check_open()
         binding = self.config.resolve_embedding_binding(ref, environ=self._environ)
         source = self.config.source(binding.source)
-        return self._own(build_embedding_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ)))
+        return self._own(
+            build_embedding_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ)),
+            source=binding.source,
+        )
 
     def describe_embedding(self, ref: str | EmbeddingModelBinding = "embedding") -> Any:
         from gateway.embedding import describe_embedding_model
@@ -401,7 +424,10 @@ class GatewayClient:
         from gateway.transcription import build_transcription_model
         binding = self._binding(ref, "transcription")
         source = self.config.source(binding.source)
-        return self._own(build_transcription_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ)))
+        return self._own(
+            build_transcription_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ)),
+            source=binding.source,
+        )
 
     def create_rerank_model(self, ref: str | ModelBinding = "rerank") -> Any:
         from gateway.rerank import StructuredRerankModel

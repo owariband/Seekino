@@ -4,12 +4,20 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { getUsageOverview, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
-import type { UsageOverviewVO } from "../../api/contracts";
+import type { UsageOverviewVO, UsageTotals } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { formatTokens } from "../../shared/format";
 import styles from "./usage.module.css";
 
 const displayTokens = (value: number | null) => value === null ? "—" : formatTokens(value);
+const displayApiCost = (cost: UsageTotals["cost"], truncated: boolean) => {
+  if (!cost) return "未计价";
+  if (cost.excludedCallCount > 0 && cost.pricedCallCount === 0 && cost.unpricedCallCount === 0) return "不适用（Codex订阅）";
+  if (cost.pricedCallCount === 0 && cost.unpricedCallCount > 0) return "未计价";
+  const subtotal = truncated || cost.unpricedCallCount > 0 || cost.estimatedAmount === null;
+  const amount = subtotal ? cost.knownAmount : cost.estimatedAmount;
+  return amount === null ? "未计价" : `¥${amount}${subtotal ? "（小计）" : ""}`;
+};
 
 const operationLabels: Record<string, string> = {
   candidate_transcript: "对白识别",
@@ -18,6 +26,10 @@ const operationLabels: Record<string, string> = {
   fallback_video_timeline: "备用时间线解析",
   text_embedding: "文本向量化",
   video_embedding: "视频向量化",
+  understand: "理解",
+  refine: "Refine",
+  index: "索引发布",
+  sdk_turn_run: "原生 Agent 执行",
 };
 const categoryLabels: Record<string, string> = { parse: "解析", embedding: "向量化", chat: "Chat" };
 const taskTypeLabels = { video_parse: "解析任务", chat_retrieval: "Chat" };
@@ -43,6 +55,9 @@ export function UsagePage() {
   const series = [...new Set((allOverview?.runs ?? overview?.runs ?? []).flatMap((run) => run.seriesId ? [run.seriesId] : []))];
   if (seriesId && !series.includes(seriesId)) series.push(seriesId);
   const knownTokenSubtotal = totals?.totalTokens === null || overview?.truncated;
+  const knownCostSubtotal = Boolean(overview?.truncated || (totals?.cost && (
+    totals.cost.unpricedCallCount > 0 || totals.cost.pricedCallCount > 0 && totals.cost.estimatedAmount === null
+  )));
 
   return (
     <main className="page">
@@ -64,10 +79,12 @@ export function UsagePage() {
       </div>
 
       <dl className={styles.totals} aria-label="模型消耗概况">
-        <div><dt>{knownTokenSubtotal ? "已知 Token 小计" : "累计 Token"}</dt><dd>{totals ? displayTokens(totals.totalTokens ?? totals.knownTokens) : "—"}</dd><small>{knownTokenSubtotal ? "记录不完整，不能代表总消耗" : "仅包含已记录调用"}</small></div>
-        <div><dt>输入 / 输出 Token</dt><dd>{totals ? `${displayTokens(totals.inputTokens)} / ${displayTokens(totals.outputTokens)}` : "—"}</dd><small>{isDebug ? "输入包含缓存，输出包含推理" : "已记录的输入与输出"}</small></div>
+        <div><dt>{knownTokenSubtotal ? "已知 Token 小计" : "累计 Token"}</dt><dd>{totals ? displayTokens(totals.totalTokens ?? totals.knownTokens) : "—"}</dd><small>{knownTokenSubtotal ? "记录不完整，不能代表总消耗" : "仅包含已记录调用"}</small><small>输入 / 输出 Token：{totals ? `${displayTokens(totals.inputTokens)} / ${displayTokens(totals.outputTokens)}` : "—"}</small></div>
+        <div><dt>{knownCostSubtotal ? "已计价API小计" : "API预估费用"}</dt><dd>{totals ? displayApiCost(totals.cost, overview?.truncated ?? false) : "—"}</dd><small>按配置单价估算，人民币显示，不含 Codex 订阅费用</small></div>
         <div><dt>已记录调用</dt><dd>{totals ? displayTokens(totals.callCount) : "—"}</dd><small>仅统计已记录调用；历史未记录用量无法还原</small></div>
       </dl>
+      <p className={styles.tableNote}>Codex 仅统计 Token；Token 不能直接换算为每周额度百分比。</p>
+      {totals?.cost?.unpricedCallCount ? <p className={styles.warning}>{totals.cost.unpricedCallCount} 条 API 调用未计价，费用仅显示已计价部分。</p> : null}
 
       {usageQuery.error instanceof Error ? <div className={styles.error} role="alert"><CircleAlert size={16} /><div><strong>用量更新失败</strong><p>{usageQuery.error.message}{overview ? "。以下保留上次读取的状态与记录。" : ""}</p></div></div> : null}
       {overview && !available ? <div className={styles.notice} role="status"><CircleAlert size={16} /><div><p>{overview.message ?? "模型消耗暂时无法读取，请稍后刷新重试。"}</p></div></div> : null}
@@ -90,11 +107,13 @@ export function UsagePage() {
       {isDebug && available && overview.totals.callCount !== 0 && view === "models" ? <section className={styles.tablePanel} aria-label="按模型统计用量">
         <div className={styles.tableScroll} role="region" aria-label="模型用量明细" tabIndex={0}>
           <table className={styles.table}>
-            <thead><tr><th>模型 / 服务商</th><th>用途</th><th>调用记录</th><th>输入 Token</th><th>输出 Token</th><th>缓存输入</th><th>缓存写入</th><th>推理 Token</th><th>总 Token</th></tr></thead>
-            <tbody>{overview.models.map((item) => <tr key={JSON.stringify([item.provider, item.model, item.category, item.operation])}>
+            <thead><tr><th>模型 / 服务商</th><th>来源（src）</th><th>用途</th><th>调用记录</th><th>输入 Token</th><th>输出 Token</th><th>缓存输入</th><th>缓存写入</th><th>推理 Token</th><th>总 Token</th><th>API预估费用</th></tr></thead>
+            <tbody>{overview.models.map((item) => <tr key={JSON.stringify([item.provider, item.src, item.model, item.category, item.operation])}>
               <th scope="row">{item.model ?? "未知模型"}<small>{item.provider ?? "未知服务商"}</small></th>
+              <td>{item.src?.trim() || "未记录"}</td>
               <td>{item.operation ? operationLabels[item.operation] ?? item.operation : "未知用途"}<small>{item.category ? categoryLabels[item.category] ?? item.category : "未分类"}</small></td>
               <td>{displayTokens(item.callCount)}</td><td>{displayTokens(item.inputTokens)}</td><td>{displayTokens(item.outputTokens)}</td><td>{displayTokens(item.cachedInputTokens)}</td><td>{displayTokens(item.cacheWriteInputTokens)}</td><td>{displayTokens(item.reasoningTokens)}</td><td>{displayTokens(item.totalTokens)}{item.totalTokens === null ? <small className={styles.warning}>已知小计 {displayTokens(item.knownTokens)}</small> : null}</td>
+              <td>{displayApiCost(item.cost, overview.truncated)}{item.cost?.unpricedCallCount ? <small>{item.cost.unpricedCallCount} 条未计价</small> : null}</td>
             </tr>)}</tbody>
           </table>
           {overview.models.length === 0 ? <p className={styles.noRows}>暂无已记录的模型明细。</p> : null}
@@ -105,10 +124,11 @@ export function UsagePage() {
       {isDebug && available && overview.totals.callCount !== 0 && view === "runs" ? <section className={styles.tablePanel} aria-label="任务与 Chat 用量">
         <div className={styles.tableScroll} role="region" aria-label="任务与 Chat 明细" tabIndex={0}>
           <table className={styles.table}>
-            <thead><tr><th>任务 / Chat</th><th>类型</th><th>调用记录</th><th>总 Token</th><th>记录状态</th></tr></thead>
+            <thead><tr><th>任务 / Chat</th><th>类型</th><th>调用记录</th><th>总 Token</th><th>API预估费用</th><th>记录状态</th></tr></thead>
             <tbody>{overview.runs.map((run) => <tr key={JSON.stringify([run.taskType, run.runId])}>
               <th scope="row">{run.runId}<small>{run.seriesId ?? "无视频系列"}{run.videoId ? ` · ${run.videoId}` : ""}</small></th>
               <td>{taskTypeLabels[run.taskType]}</td><td>{displayTokens(run.callCount)}</td><td>{displayTokens(run.totalTokens)}{run.totalTokens === null ? <small>已知小计 {displayTokens(run.knownTokens)}</small> : null}</td>
+              <td>{displayApiCost(run.cost, overview.truncated)}{run.cost?.unpricedCallCount ? <small>{run.cost.unpricedCallCount} 条未计价</small> : null}</td>
               <td className={run.missingUsageCount || overview.truncated ? styles.warning : undefined}>{overview.truncated ? "已读取部分" : run.missingUsageCount ? "记录不完整" : "已记录"}{run.missingUsageCount ? <small>{run.missingUsageCount} 条缺少完整用量</small> : null}</td>
             </tr>)}</tbody>
           </table>

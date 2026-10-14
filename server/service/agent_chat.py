@@ -12,7 +12,8 @@ from time import monotonic_ns
 from uuid import uuid4
 
 from agent.chat.common.errors import (
-    AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
+    AgentContextBudgetError, AgentExecutionTimeoutError,
+    AgentModelInvocationError, AgentToolInvocationError,
 )
 from agent.chat.common.state import AnswerPhase, RunInputs
 from agent.chat.supervisor import SupervisorRuntime
@@ -671,6 +672,32 @@ class AgentChatService:
         )
         return AgentMessageSendState(pair.user_message, pair.assistant_message)
 
+    def cancel_message(
+        self, conversation_id: str, *, tenant_id: str, message_id: str,
+        owner_user_id: str = LOCAL_USER_ID,
+    ) -> AgentMessageSendState:
+        with self._lock:
+            pair = self.get_message(
+                conversation_id, tenant_id=tenant_id, message_id=message_id,
+                owner_user_id=owner_user_id,
+            )
+            assistant = pair.assistant_message
+            if assistant.message_id != canonical_uuid(message_id, "message_id"):
+                raise ValueError("only assistant messages can be cancelled")
+            if assistant.status != "PROCESSING":
+                return pair
+            execution = self._executions.get(assistant.message_id)
+            if execution is not None:
+                execution.cancellation.set()
+                return pair
+            # A stopped Server can leave a persisted reply without a live task.
+            failed = self._repository.fail_assistant_message(
+                assistant.message_id, error="Agent execution cancelled",
+                now=self._clock(), public_code="AGENT_CANCELLED",
+                public_message="已停止生成回答。",
+            )
+            return AgentMessageSendState(pair.user_message, failed)
+
     def _load_reference(self, reference, conversation_id, tenant_id, scope, *, owner_user_id: str = LOCAL_USER_ID, source_tenant_id: str | None = None):
         if reference is None:
             return None
@@ -760,7 +787,8 @@ class AgentChatService:
                 )
                 event = {**event, "timing": asdict(timing)}
             elif event_type in {"answer.evidence", "answer.block", "answer.delta"}:
-                pending_answer_events.append(event)
+                if not isinstance(runtime, SupervisorRuntime):
+                    pending_answer_events.append(event)
                 return
             execution.publish(event)
         try:
@@ -858,23 +886,21 @@ class AgentChatService:
                     video_result.model_dump(mode="json", by_alias=True)
                     if video_result is not None else None
                 )
-                if search_result is not None and content != video_result.agent_reply.message:
-                    video_answer = video_result.agent_reply.message
-                    if not content.startswith(video_answer):
-                        raise AgentModelInvocationError(
-                            "Supervisor changed the approved video answer"
-                        )
-                    supplement = content[len(video_answer):].strip()
-                    if supplement:
-                        search_result["renderBlocks"].append({
-                            "type": "markdown", "markdown": supplement,
-                        })
-                    search_result["agentReply"]["message"] = content
+                if search_result is not None:
+                    pending_answer_events.append({
+                        "type": "answer.evidence", "searchResult": search_result,
+                    })
+                    pending_answer_events.extend({
+                        "type": "answer.block", "block": block,
+                    } for block in search_result["renderBlocks"])
+                pending_answer_events.append({"type": "answer.delta", "delta": content})
             else:
                 content = final.agent_reply.message
                 search_result = final.model_dump(mode="json", by_alias=True)
             # Keep a new turn or deletion behind SQL and harness confirmation.
             with self._lock:
+                if execution.cancellation.is_set():
+                    raise AgentModelInvocationError("Agent execution cancelled")
                 assistant = self._repository.complete_assistant_message(
                     assistant_id, content=content,
                     search_result=search_result, now=self._clock(),
@@ -899,7 +925,7 @@ class AgentChatService:
                                 conversation_id,
                                 exc_info=True,
                             )
-            for event in pending_answer_events if search_result is not None else ():
+            for event in pending_answer_events:
                 if event["type"] == "answer.evidence":
                     hits = event["searchResult"].get("hits")
                     evidence_hit_count = len(hits) if isinstance(hits, list) else 0
@@ -938,6 +964,12 @@ class AgentChatService:
                 public_message = (
                     "本次上下文较多，请缩小系列范围、减少候选、精简系列背景或新建对话后重试。"
                 )
+            elif isinstance(exc, AgentExecutionTimeoutError):
+                public_code = "AGENT_EXECUTION_TIMEOUT"
+                public_message = "本次处理超时，已停止生成，请缩小问题后重试。"
+            elif execution.cancellation.is_set():
+                public_code = "AGENT_CANCELLED"
+                public_message = "已停止生成回答。"
             elif isinstance(exc, AgentModelInvocationError):
                 public_code = "AGENT_MODEL_ERROR"
                 public_message = "这次对话未能完成，请稍后重试。"

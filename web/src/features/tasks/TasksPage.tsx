@@ -27,6 +27,7 @@ import type {
 import { useWorkspace } from "../../app/workspace";
 import { episodeLabel } from "../../shared/format";
 import { useUploads } from "../uploads/UploadProvider";
+import { ParseUsageDetails } from "./ParseUsageDetails";
 import styles from "./tasks.module.css";
 
 type Filter = "all" | VideoParseTaskStatus;
@@ -339,6 +340,7 @@ export function TasksPage() {
           const filename = task.originalFilename || task.videoId;
           const episodeOrder = task.episodeOrder ?? 1;
           const pendingTakeover = task.status === "PENDING" && task.canReparse;
+          const failed = task.status === "PARSING_FAILED" || task.status === "INDEXING_FAILED";
           return (
             <article className={styles.job} key={task.videoParseTaskId}>
               <header className={styles.jobHeader}>
@@ -482,8 +484,14 @@ export function TasksPage() {
                 </dl>
               </div>
 
-              {task.lastError ? (
-                <div className={styles.jobError}><CircleAlert size={15} /><div><strong>最近一次错误</strong><p>{task.lastError.message}</p></div></div>
+              {isDebug ? <ParseUsageDetails runId={task.videoParseTaskId} status={task.status} /> : null}
+
+              {failed ? (
+                <div className={styles.jobError}><CircleAlert size={15} /><div><strong>失败原因</strong><p>{
+                  task.lastError?.message || (task.status === "INDEXING_FAILED"
+                    ? "检索索引发布失败，请重试"
+                    : "视频解析失败，请重试")
+                }</p></div></div>
               ) : null}
               {task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />等待开始解析。</p> : null}
             </article>

@@ -222,6 +222,25 @@ def get_agent_message(
     )
 
 
+def cancel_agent_message(
+    request: Request,
+    conversation_id: str = Query(alias="conversationId"),
+    tenant_id: str = Query(alias="tenantId"),
+    message_id: str = Query(alias="messageId"),
+) -> AgentMessageSendView:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
+    services = get_services(request)
+    pair = services.agent.cancel_message(
+        conversation_id, tenant_id=tenant_id, message_id=message_id,
+        owner_user_id=identity.user_id,
+    )
+    return AgentMessageSendView(
+        user_message=_agent_message_view(pair.user_message, media=services.media, tenant_id=tenant_id, identity=identity),
+        assistant_message=_agent_message_view(pair.assistant_message, media=services.media, tenant_id=tenant_id, identity=identity),
+    )
+
+
 async def send_agent_message(
     request: Request,
     body: AgentMessageSendRequest,

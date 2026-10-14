@@ -110,6 +110,7 @@ class CodexAgentModel:
         cwd: str | None = None,
         executor: ThreadPoolExecutor | None = None,
         session_factory: SessionFactory | None = None,
+        total_timeout_enabled: bool = True,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -117,6 +118,8 @@ class CodexAgentModel:
             raise ValueError("unsupported reasoning_effort")
         if request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be greater than zero")
+        if not isinstance(total_timeout_enabled, bool):
+            raise ValueError("total_timeout_enabled must be a boolean")
         if max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be greater than zero")
         if max_input_chars is not None and (
@@ -135,6 +138,7 @@ class CodexAgentModel:
         self.model_name = model
         self.reasoning_effort = reasoning_effort
         self.request_timeout_seconds = request_timeout_seconds
+        self.total_timeout_enabled = total_timeout_enabled
         self.max_output_tokens = max_output_tokens
         self.max_input_chars = max_input_chars
         self.context_window_policy = context_window_policy
@@ -452,7 +456,7 @@ class CodexAgentModel:
         operation: str,
         latest_turn: Callable[[], object | None],
     ) -> Any:
-        deadline = monotonic() + timeout
+        deadline = monotonic() + timeout if self.total_timeout_enabled else None
         future: Future[Any] | None = None
         try:
             with track_model_call(
@@ -475,14 +479,16 @@ class CodexAgentModel:
                             except Exception:
                                 self._cancel_session(session, future)
                                 raise
-                        remaining = deadline - monotonic()
-                        if remaining <= 0:
+                        remaining = deadline - monotonic() if deadline is not None else None
+                        if remaining is not None and remaining <= 0:
                             self._cancel_session(session, future)
                             raise AgentModelTimeoutError(
                                 "Codex Agent execution deadline expired"
                             )
                         try:
-                            result = future.result(timeout=min(remaining, 0.05))
+                            result = future.result(
+                                timeout=min(remaining, 0.05) if remaining is not None else 0.05,
+                            )
                             break
                         except FutureTimeout:
                             continue

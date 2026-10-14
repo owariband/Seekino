@@ -540,7 +540,8 @@ def test_invocation_timeout_force_closes_without_waiting_for_interrupt() -> None
     assert session.closed is True
 
 
-def test_generate_usage_cancellation_closes_native_transport_without_tools() -> None:
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_generate_usage_cancellation_closes_native_transport_without_tools(total_timeout_enabled) -> None:
     started = Event()
     calls = []
     released = []
@@ -552,7 +553,7 @@ def test_generate_usage_cancellation_closes_native_transport_without_tools() -> 
             return super().run_turn(prompt, output_schema=output_schema)
 
     session = Session()
-    model = _model_for(session, request_timeout_seconds=5)
+    model = _model_for(session, request_timeout_seconds=5, total_timeout_enabled=total_timeout_enabled)
     control = SimpleNamespace(acquire=calls.append, release=released.append)
 
     def generate():

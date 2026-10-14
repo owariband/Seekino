@@ -118,36 +118,24 @@ def test_video_claim_requires_explicit_v2_acceptance(repository):
         assert session.get(VideoParseTask, legacy_id).status == "PENDING"
 
 
-def test_dispatch_and_claim_enforce_ninety_percent_batch_gate(repository):
+def test_claim_enforces_ninety_percent_batch_gate_without_dispatch(repository):
     engine, _unused = repository
     factory = create_session_factory(engine)
     task_id = _task(factory, chunk_count=12, accepted=True, batch_size=10)
     queue = MySqlVideoParseQueue(factory)
     _repo, _lease, prepared = _prepare(factory, queue, task_id, chunk_count=12)
 
-    schedule = queue.load_chunk_schedule(task_id, now=NOW)
-    assert [item.dispatchable for item in schedule.tasks[:10]] == [True] * 10
-    assert [item.dispatchable for item in schedule.tasks[10:]] == [False, False]
-
     with factory.begin() as session:
         for child_id in prepared.chunk_parse_task_ids[:8]:
             session.get(ChunkParseTask, child_id).status = "COMPLETE"
-    assert not queue.load_chunk_schedule(task_id, now=NOW).tasks[10].dispatchable
+        for child_id in prepared.chunk_parse_task_ids[8:10]:
+            session.get(ChunkParseTask, child_id).next_execute_time = NOW + timedelta(minutes=1)
+    assert queue.claim_chunk("worker", lease_duration=timedelta(minutes=1), now=NOW) is None
 
     with factory.begin() as session:
         session.get(
             ChunkParseTask, prepared.chunk_parse_task_ids[8]
         ).status = "COMPLETE"
-    opened = queue.load_chunk_schedule(task_id, now=NOW)
-    assert opened.tasks[10].dispatchable and opened.tasks[11].dispatchable
-
-    # Queue consumption still requires the scheduler's durable dispatch marker.
-    assert queue.claim_chunk(
-        "chunk-worker", lease_duration=timedelta(minutes=1), now=NOW
-    ) is None
-    assert queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[10], _lease, now=NOW
-    )
     claimed = queue.claim_chunk(
         "chunk-worker", lease_duration=timedelta(minutes=1), now=NOW
     )
@@ -155,18 +143,13 @@ def test_dispatch_and_claim_enforce_ninety_percent_batch_gate(repository):
     assert claimed.chunk_parse_task_id == prepared.chunk_parse_task_ids[10]
 
 
-def test_active_and_dispatched_chunks_share_capacity(repository):
+def test_claims_share_active_chunk_capacity(repository):
     engine, _unused = repository
     factory = create_session_factory(engine)
     task_id = _task(factory, chunk_count=4, accepted=True, batch_size=2)
     queue = MySqlVideoParseQueue(factory)
     _repo, _lease, prepared = _prepare(factory, queue, task_id, chunk_count=4)
 
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], _lease, now=NOW)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[1], _lease, now=NOW)
-    assert not queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[2], _lease, now=NOW
-    )
     first = queue.claim_chunk(
         "worker-0", lease_duration=timedelta(minutes=1), now=NOW
     )
@@ -177,6 +160,45 @@ def test_active_and_dispatched_chunks_share_capacity(repository):
     assert queue.claim_chunk(
         "worker-2", lease_duration=timedelta(minutes=1), now=NOW
     ) is None
+
+
+@pytest.mark.parametrize("legacy_marker", [None, False, True])
+def test_queued_chunk_claim_ignores_legacy_dispatch_markers(repository, legacy_marker):
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    task_id = _task(factory, chunk_count=1, accepted=True, batch_size=1)
+    queue = MySqlVideoParseQueue(factory)
+    _repo, _lease, prepared = _prepare(factory, queue, task_id, chunk_count=1)
+    if legacy_marker is not None:
+        with factory.begin() as session:
+            child = session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0])
+            child.detail = {**(child.detail or {}), "dispatch_requested": legacy_marker}
+    claimed = queue.claim_chunk("worker", lease_duration=timedelta(minutes=1), now=NOW)
+    assert claimed is not None
+    assert claimed.chunk_parse_task_id == prepared.chunk_parse_task_ids[0]
+
+
+def test_chunk_claim_interval_and_retry_backoff_are_independent(repository):
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    task_id = _task(factory, chunk_count=2, accepted=True, batch_size=2)
+    queue = MySqlVideoParseQueue(factory)
+    _repo, _lease, prepared = _prepare(factory, queue, task_id, chunk_count=2)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.parse_config = {**parent.parse_config, "dispatch_interval_seconds": 5}
+    first = queue.claim_chunk("first", lease_duration=timedelta(minutes=1), now=NOW)
+    assert first is not None
+    assert queue.claim_chunk("early", lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=4)) is None
+    second = queue.claim_chunk("second", lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=5))
+    assert second is not None and second.chunk_parse_task_id == prepared.chunk_parse_task_ids[1]
+    retry_at = NOW + timedelta(seconds=20)
+    assert queue.retry_chunk(first, error="transient", retry_at=retry_at, now=NOW + timedelta(seconds=6))
+    assert queue.claim_chunk("early-retry", lease_duration=timedelta(minutes=1), now=retry_at - timedelta(seconds=1)) is None
+    retried = queue.claim_chunk("retry", lease_duration=timedelta(minutes=1), now=retry_at)
+    assert retried is not None and retried.chunk_parse_task_id == first.chunk_parse_task_id
+    assert retried.lease_version > first.lease_version
+    assert retried.retry_count == 1
 
 
 def test_video_lease_survives_activation_and_can_be_reclaimed_after_expiry(repository):
@@ -211,9 +233,6 @@ def test_reaper_limits_are_independent_across_video_and_chunk_families(repositor
     _repo, video_lease, prepared = _prepare(
         factory, queue, task_id, chunk_count=1
     )
-    assert queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[0], video_lease, now=NOW
-    )
     chunk_lease = queue.claim_chunk(
         "chunk", lease_duration=timedelta(seconds=5), now=NOW
     )
@@ -237,9 +256,14 @@ def test_reaper_limits_are_independent_across_video_and_chunk_families(repositor
         assert parent.lease_owner is None
         assert child.status == "QUEUED"
         assert child.retry_count == 1
+    resumed = queue.claim_chunk(
+        "replacement", lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=6 + chunk_lease.retry_initial_delay_seconds),
+    )
+    assert resumed is not None and resumed.chunk_parse_task_id == chunk_lease.chunk_parse_task_id
+    assert resumed.lease_version > chunk_lease.lease_version
 
 
-def test_reclaimed_coordinator_fences_old_dispatch_and_aggregate(repository):
+def test_reclaimed_coordinator_fences_old_aggregate_without_blocking_chunks(repository):
     engine, _unused = repository
     factory = create_session_factory(engine)
     task_id = _task(factory, chunk_count=1, accepted=True, batch_size=1)
@@ -250,6 +274,11 @@ def test_reclaimed_coordinator_fences_old_dispatch_and_aggregate(repository):
     assert queue.reap_expired(
         retry_delay=timedelta(0), now=reclaimed_at
     ) == 1
+    child = queue.claim_chunk(
+        "child-worker", lease_duration=timedelta(minutes=1), now=reclaimed_at,
+    )
+    assert child is not None
+    assert child.chunk_parse_task_id == prepared.chunk_parse_task_ids[0]
     replacement = queue.claim_video(
         "replacement",
         lease_duration=timedelta(minutes=5),
@@ -258,9 +287,6 @@ def test_reclaimed_coordinator_fences_old_dispatch_and_aggregate(repository):
     assert replacement is not None
     assert replacement.lease_version > old.lease_version
 
-    assert not queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[0], old, now=reclaimed_at
-    )
     with pytest.raises(VideoParseLeaseLostError):
         repo.aggregate_task(old, now=reclaimed_at)
     with pytest.raises(VideoParseLeaseLostError):
@@ -270,9 +296,6 @@ def test_reclaimed_coordinator_fences_old_dispatch_and_aggregate(repository):
             lease_duration=timedelta(minutes=1),
             now=reclaimed_at,
         )
-    assert queue.dispatch_chunk(
-        prepared.chunk_parse_task_ids[0], replacement, now=reclaimed_at
-    )
 
 
 @pytest.mark.parametrize("failure_entry", ["retry", "expiry"])
@@ -290,7 +313,6 @@ def test_exhausted_coordinator_drains_and_a_new_consumer_finalizes_without_recla
         session.get(VideoParseTask, task_id).max_attempts = 1
     queue = MySqlVideoParseQueue(factory)
     repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=2)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
     child = queue.claim_chunk("in-flight", lease_duration=timedelta(minutes=1), now=NOW)
     assert child is not None
     failed_at = NOW + timedelta(seconds=6)
@@ -355,15 +377,15 @@ def test_failure_intent_blocks_each_delivery_but_not_existing_chunk_execution(
     task_id = _task(factory, chunk_count=6, accepted=True, batch_size=6)
     queue = MySqlVideoParseQueue(factory)
     repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=6)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
     in_flight = queue.claim_chunk("existing", lease_duration=timedelta(minutes=1), now=NOW)
     assert in_flight is not None
+    with factory.begin() as session:
+        for child_id in prepared.chunk_parse_task_ids[1:3]:
+            session.get(ChunkParseTask, child_id).next_execute_time = NOW + timedelta(minutes=1)
     for child_id in prepared.chunk_parse_task_ids[3:]:
-        assert queue.dispatch_chunk(child_id, video_lease, now=NOW)
         lease = queue.claim_chunk("completed", lease_duration=timedelta(minutes=1), now=NOW)
         assert lease is not None and lease.chunk_parse_task_id == child_id
         repo.commit_chunk_result(lease, content={"persons": [], "timeline": []}, now=NOW)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[2], video_lease, now=NOW)
     if interval_phase == "index":
         refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
         assert refine is not None
@@ -371,9 +393,10 @@ def test_failure_intent_blocks_each_delivery_but_not_existing_chunk_execution(
     with factory.begin() as session:
         parent = session.get(VideoParseTask, task_id)
         parent.detail = {"_worker_runtime_v2": {"accepted": True, "failure_status": "PARSING_FAILED"}}
+        for child_id in prepared.chunk_parse_task_ids[1:3]:
+            session.get(ChunkParseTask, child_id).next_execute_time = NOW
 
-    assert not any(item.dispatchable for item in queue.load_chunk_schedule(task_id, now=NOW).tasks)
-    assert not queue.dispatch_chunk(prepared.chunk_parse_task_ids[1], video_lease, now=NOW)
+    assert queue.load_chunk_schedule(task_id, now=NOW).terminal_error is not None
     assert queue.claim_chunk("new", lease_duration=timedelta(minutes=1), now=NOW) is None
     claim_interval = queue.claim_interval_refine if interval_phase == "refine" else queue.claim_interval_index
     assert claim_interval("new", lease_duration=timedelta(minutes=1), now=NOW) is None
@@ -406,8 +429,6 @@ def test_exhausted_chunk_stops_sibling_redelivery_after_an_underbudget_error(rep
     _repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=3)
     with factory.begin() as session:
         session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).retry_count = 1
-    for child_id in prepared.chunk_parse_task_ids[:2]:
-        assert queue.dispatch_chunk(child_id, video_lease, now=NOW)
     failed = queue.claim_chunk("failed", lease_duration=timedelta(minutes=1), now=NOW)
     sibling = queue.claim_chunk("sibling", lease_duration=timedelta(minutes=1), now=NOW)
     assert failed is not None and sibling is not None
@@ -427,7 +448,6 @@ def test_exhausted_chunk_stops_sibling_redelivery_after_an_underbudget_error(rep
         assert child.status == "QUEUED"
         assert child.retry_count == 1
         assert child.lease_owner is None
-    assert not queue.dispatch_chunk(prepared.chunk_parse_task_ids[2], video_lease, now=NOW)
     assert queue.claim_chunk("new", lease_duration=timedelta(minutes=1), now=NOW) is None
     MySqlVideoParseQueue(factory).reap_expired(retry_delay=timedelta(0), now=NOW)
     with factory() as session:
@@ -441,7 +461,6 @@ def test_expired_child_owner_must_be_reaped_before_failure_is_published(reposito
     task_id = _task(factory, chunk_count=1, accepted=True, batch_size=1)
     queue = MySqlVideoParseQueue(factory)
     repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=1)
-    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
     old = queue.claim_chunk("lost", lease_duration=timedelta(seconds=5), now=NOW)
     assert old is not None
     with factory.begin() as session:
@@ -482,11 +501,14 @@ def test_interval_failure_intent_respects_the_still_running_parse_phase(reposito
         session.get(VideoParseTask, task_id).parse_config = config
     queue = MySqlVideoParseQueue(factory)
     repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=4)
+    with factory.begin() as session:
+        session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).next_execute_time = NOW + timedelta(minutes=1)
     for child_id in prepared.chunk_parse_task_ids[1:]:
-        assert queue.dispatch_chunk(child_id, video_lease, now=NOW)
         lease = queue.claim_chunk("completed", lease_duration=timedelta(minutes=1), now=NOW)
         assert lease is not None and lease.chunk_parse_task_id == child_id
         repo.commit_chunk_result(lease, content={"persons": [], "timeline": []}, now=NOW)
+    with factory.begin() as session:
+        session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).next_execute_time = NOW
     refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
     assert refine is not None
     if failed_phase == "index":
@@ -494,7 +516,6 @@ def test_interval_failure_intent_respects_the_still_running_parse_phase(reposito
         failed = queue.claim_interval_index("index", lease_duration=timedelta(minutes=1), now=NOW)
         assert failed is not None
     else:
-        assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
         in_flight = queue.claim_chunk("existing", lease_duration=timedelta(minutes=1), now=NOW)
         assert in_flight is not None
         failed = refine
@@ -511,7 +532,6 @@ def test_interval_failure_intent_respects_the_still_running_parse_phase(reposito
         else:
             assert runtime["failure_status"] == "PARSING_FAILED"
     if failed_phase == "index":
-        assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
         assert queue.claim_chunk("remaining", lease_duration=timedelta(minutes=1), now=NOW) is not None
     else:
         assert queue.retry_video(
@@ -550,6 +570,107 @@ def test_consumer_heartbeat_interval_is_bounded_by_lease(repository):
         )
 
 
+@pytest.mark.parametrize("realtime", [False, True])
+def test_chunk_lease_carries_saved_retry_configuration(repository, realtime):
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    task_id = _task(factory, chunk_count=1, accepted=True)
+    queue = MySqlVideoParseQueue(factory)
+    _repo, _lease, prepared = _prepare(factory, queue, task_id, chunk_count=1)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        config = dict(parent.parse_config)
+        config["execution"] = {**config["execution"],
+            "retry_initial_delay_seconds": 2.5, "retry_max_delay_seconds": 7.0,
+        }
+        parent.parse_config = config
+    lease = (
+        queue.claim_realtime_chunk(prepared.chunk_parse_task_ids[0], "worker", lease_duration=timedelta(minutes=1), now=NOW)
+        if realtime else queue.claim_chunk("worker", lease_duration=timedelta(minutes=1), now=NOW)
+    )
+    assert lease is not None
+    assert (lease.retry_initial_delay_seconds, lease.retry_max_delay_seconds) == (2.5, 7.0)
+
+
+@pytest.mark.parametrize("phase,retry_count,task_delay", [
+    (phase, count, delay)
+    for phase in ("understand", "refine", "index")
+    for count, delay in ((0, 2.5), (2, 7.0), (10000, 7.0))
+    if phase != "index" or count < 10000
+])
+def test_worker_retry_uses_task_policy_without_changing_index(
+    phase, retry_count, task_delay, monkeypatch,
+):
+    monkeypatch.setattr("server.mq.video_parse_consumer.now_utc", lambda: NOW)
+    common = dict(
+        video_parse_task_id="task", worker_id="worker", lease_version=1,
+        lease_expire_time=NOW + timedelta(minutes=1), retry_count=retry_count,
+        max_retry_count=10001, retry_initial_delay_seconds=2.5, retry_max_delay_seconds=7.0,
+    )
+    if phase == "understand":
+        lease = ChunkParseLease(**common, chunk_parse_task_id="chunk-task", video_chunk_id="chunk")
+    else:
+        lease = IntervalParseLease(**common, interval_parse_task_id="interval",
+            chunk_parse_task_ids=("chunk-task",), start_sequence_no=0, chunk_count=1,
+            phase="REFINING" if phase == "refine" else "INDEXING")
+    calls = []
+
+    class Queue:
+        def heartbeat_chunk(self, *_args, **_kwargs):
+            return True
+
+        heartbeat_interval = heartbeat_chunk
+
+        def retry_chunk(self, actual, **kwargs):
+            calls.append((actual, kwargs))
+            return True
+
+        retry_interval = retry_chunk
+
+    async def fail(_lease):
+        raise RuntimeError("transient")
+
+    consumer = VideoParseConsumer(Queue(), VideoParseConsumerHandlers(fail, fail, fail, fail),
+        worker_id="worker", retry_initial_delay=timedelta(seconds=50), retry_max_delay=timedelta(seconds=500))
+    asyncio.run(consumer._run_chunk(lease) if phase == "understand" else consumer._run_interval(lease, fail))
+    expected = min(50 * 2 ** retry_count, 500) if phase == "index" else task_delay
+    assert calls == [(lease, {"error": "transient", "retry_at": NOW + timedelta(seconds=expected)})]
+
+
+@pytest.mark.parametrize("phase", ["understand", "refine", "index"])
+@pytest.mark.parametrize("retry_count,task_delay", [(0, 2.5), (2, 7.0)])
+def test_expired_lease_uses_task_backoff_without_changing_index(repository, phase, retry_count, task_delay):
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    task_id = _task(factory, chunk_count=1, accepted=True)
+    queue = MySqlVideoParseQueue(factory)
+    _repo, _lease, prepared = _prepare(factory, queue, task_id, chunk_count=1)
+    model = ChunkParseTask if phase == "understand" else IntervalParseTask
+    child_id = prepared.chunk_parse_task_ids[0] if phase == "understand" else prepared.interval_parse_task_ids[0]
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        config = dict(parent.parse_config)
+        config["execution"] = {**config["execution"], "max_retry_count": 5,
+            "retry_initial_delay_seconds": 2.5, "retry_max_delay_seconds": 7.0}
+        parent.parse_config = config
+        child = session.get(model, child_id)
+        child.status = {"understand": "UNDERSTANDING", "refine": "REFINING", "index": "INDEXING"}[phase]
+        child.retry_count = retry_count
+        child.lease_owner = "interrupted-worker"
+        child.lease_expire_time = NOW + timedelta(seconds=1)
+    reaped_at = NOW + timedelta(seconds=2)
+    if phase == "understand":
+        assert queue.reap_expired_chunks(now=reaped_at) == 1
+    else:
+        assert queue.reap_expired_intervals(now=reaped_at, retry_delay=timedelta(seconds=99)) == 1
+    with factory() as session:
+        child = session.get(model, child_id)
+        assert child.retry_count == retry_count + 1
+        assert child.lease_owner is None
+        expected = 99 if phase == "index" else task_delay
+        assert child.next_execute_time == reaped_at + timedelta(seconds=expected)
+
+
 @pytest.mark.parametrize("phase", ["prepare", "understand", "refine", "index"])
 @pytest.mark.parametrize("recorded", [True, False])
 @pytest.mark.parametrize("failure_kind", ["sdk", "sdk_nested", "sse", "private", "cancel"])
@@ -571,6 +692,7 @@ def test_consumer_logs_retry_cause_without_sensitive_payloads(
         lease = ChunkParseLease(
             **common, chunk_parse_task_id="chunk-task", video_chunk_id="chunk",
             retry_count=1, max_retry_count=2,
+            retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
         )
     else:
         lease = IntervalParseLease(
@@ -578,6 +700,7 @@ def test_consumer_logs_retry_cause_without_sensitive_payloads(
             chunk_parse_task_ids=("chunk-task",), start_sequence_no=0, chunk_count=1,
             phase="REFINING" if phase == "refine" else "INDEXING",
             retry_count=1, max_retry_count=2,
+            retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
         )
     calls = []
 
@@ -982,10 +1105,6 @@ def test_one_consumer_keeps_coordinator_alive_while_processing_children(tmp_path
         )
         repo.activate_video_task(lease)
         while True:
-            schedule = queue.load_chunk_schedule(task_id)
-            for item in schedule.tasks:
-                if item.dispatchable:
-                    queue.dispatch_chunk(item.chunk_parse_task_id, lease)
             state = repo.aggregate_task(lease)
             if state.status == "COMPLETE":
                 return

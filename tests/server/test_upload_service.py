@@ -17,6 +17,7 @@ from engine.rag import EncoderContract
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
+from server.config.mq import MQConsumerConfig
 from server.config.parse_profile import ParseConfig, default_video_parse_v2_config
 from server.database import create_session_factory
 from server.model.dto.parseDTO import PreparedEmbedding
@@ -670,6 +671,105 @@ def test_new_upload_and_retry_keep_ready_sibling_searchable(
     )
     with session_factory() as session:
         assert session.get(Series, series_id).status == "READY"
+
+
+def test_legacy_parse_execution_resolves_defaults_without_changing_request_fingerprint(
+    repository, tmp_path,
+):
+    defaults = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(batch_max_size=7, dispatch_interval_seconds=0.25),
+        mq=MQConsumerConfig(
+            consumer_id="test", retry_base=timedelta(seconds=9), retry_max=timedelta(seconds=81),
+        ),
+        gateway=load_config(), upload=_config(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024, embedding_fps=1.0,
+    )
+    raw = defaults.model_dump(mode="json")
+    for name in (
+        "batch_max_size", "dispatch_interval_seconds",
+        "retry_initial_delay_seconds", "retry_max_delay_seconds",
+    ):
+        raw["execution"].pop(name)
+    legacy = ParseConfig.model_validate(raw)
+    assert legacy.model_dump(mode="json") == raw
+    assert legacy.model_dump(by_alias=True)["execution"] == {
+        "requestTimeoutSeconds": raw["execution"]["request_timeout_seconds"],
+        "maxAttempts": raw["execution"]["max_attempts"],
+    }
+    with pytest.raises(ValueError, match="must be resolved"):
+        legacy.to_video_parse_v2()
+    _engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, parse_defaults=defaults,
+    )
+    request = dict(
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="legacy-execution-policy", parse_config=legacy,
+    )
+    upload = service.create_session(**request)
+    assert upload.video_parse_config == defaults.to_video_parse_v2().model_dump(mode="json")
+    assert upload.parse_config == defaults.model_dump(mode="json")
+    assert legacy.model_dump(mode="json") == raw
+
+    service._parse_defaults = defaults.model_copy(update={
+        "execution": defaults.execution.model_copy(update={"batch_max_size": 5}),
+    })
+    replay = service.create_session(**request)
+    assert replay.upload_session_id == upload.upload_session_id
+    assert replay.video_parse_config == upload.video_parse_config
+    assert legacy.resolve_execution(None).execution.batch_max_size == VideoParseRuntimeConfig().batch_max_size
+
+    raw["execution"]["retry_initial_delay_seconds"] = 100
+    with pytest.raises(ValueError, match="retry_max_delay_seconds"):
+        service.create_session(**{
+            **request, "episode_order": 8, "idempotency_key": "invalid-execution-policy",
+            "parse_config": ParseConfig.model_validate(raw),
+        })
+
+
+def test_partial_retry_policy_replay_preserves_snapshot_after_defaults_change(
+    repository, tmp_path,
+):
+    defaults = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+        mq=MQConsumerConfig(consumer_id="test"),
+        upload=_config(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024, embedding_fps=1.0,
+    )
+    raw = defaults.model_dump(mode="json")
+    for name in (
+        "batch_max_size", "dispatch_interval_seconds",
+        "retry_initial_delay_seconds", "retry_max_delay_seconds",
+    ):
+        raw["execution"].pop(name)
+    raw["execution"]["retry_max_delay_seconds"] = 60
+    partial = ParseConfig.model_validate(raw)
+    _engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, parse_defaults=defaults,
+    )
+    request = dict(
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="partial-retry-policy", parse_config=partial,
+    )
+    upload = service.create_session(**request)
+    assert upload.video_parse_config["execution"]["retry_initial_delay_seconds"] == 30
+    assert upload.video_parse_config["execution"]["retry_max_delay_seconds"] == 60
+
+    service._parse_defaults = defaults.model_copy(update={
+        "execution": defaults.execution.model_copy(update={"retry_initial_delay_seconds": 90}),
+    })
+    replay = service.create_session(**request)
+    assert replay.upload_session_id == upload.upload_session_id
+    assert replay.parse_config == upload.parse_config
+    assert replay.video_parse_config == upload.video_parse_config
+    assert partial.model_dump(mode="json") == raw
+
+    with pytest.raises(ValueError, match="retry_max_delay_seconds"):
+        service.create_session(**{
+            **request, "episode_order": 8, "idempotency_key": "new-partial-retry-policy",
+        })
+    assert len(service.list_sessions(tenant_id="local-default")) == 1
 
 
 def test_selected_parse_config_survives_upload_completion_and_job_claim(

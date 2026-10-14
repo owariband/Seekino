@@ -119,7 +119,6 @@ def project_inputs(
         "series_context": list(inputs["series_context"]),
         "user_message": inputs["user_message"],
         "history": [_project_history_message(item) for item in inputs["history"]],
-        "requested_top_k": inputs["requested_top_k"],
         "reference_context": _project_reference(
             inputs.get("reference_context"), include_evidence=include_reference_evidence,
         ),

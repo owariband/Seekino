@@ -619,7 +619,7 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
         )
         repository = VideoParseRepository(factory)
         assert not repository.heartbeat_prefix(stale, lease_duration=timedelta(minutes=1), now=now)
-        assert not repository.retry_prefix(stale, error="late", retry_at=now, now=now)
+        assert not repository.retry_prefix(stale, error="late", now=now)
         with pytest.raises(VideoParseLeaseLostError):
             repository.commit_prefix(
                 stale, content_updates={"persons": ["late"]},
@@ -640,7 +640,6 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
         interval = session.get(IntervalParseTask, target["interval_id"])
         if kind == "chunk":
             chunk.status = "QUEUED"
-            chunk.detail = {"dispatch_requested": True}
             interval.status = "WAITING"
             interval.ready_mask = 0
         elif kind == "refine":
@@ -786,6 +785,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
                 chunk_parse_task_id=target["chunk_task_id"], video_parse_task_id=target["task_id"],
                 video_chunk_id=target["chunk_id"], worker_id="commit-worker", lease_version=1,
                 lease_expire_time=expires, retry_count=0, max_retry_count=2,
+                retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
             )
             return repository.commit_chunk_result(
                 lease, content={"persons": ["worker"], "timeline": []}, now=now,
@@ -795,6 +795,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
             chunk_parse_task_ids=(target["chunk_task_id"],), start_sequence_no=0, chunk_count=1,
             phase="REFINING", worker_id="commit-worker", lease_version=1,
             lease_expire_time=expires, retry_count=0, max_retry_count=2,
+                retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
         )
         return repository.commit_interval_refinement(
             lease, **_refinement_inputs(repository, lease, now=now), interval_content={"refined": True},
@@ -895,6 +896,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 video_parse_task_id=target["task_id"], video_chunk_id=target["chunk_id"],
                 worker_id="draining-worker", lease_version=1,
                 lease_expire_time=expires, retry_count=0, max_retry_count=2,
+                retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
             )
             return repository.commit_chunk_result(
                 lease, content={"persons": ["drained"], "timeline": []}, now=committed_at,
@@ -907,6 +909,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
             phase="INDEXING" if kind == "index" else "REFINING",
             worker_id="draining-worker", lease_version=1,
             lease_expire_time=expires, retry_count=0, max_retry_count=2,
+                retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
         )
         if kind == "index":
             return repository.complete_interval_indexing(
@@ -1221,6 +1224,129 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
             assert session.get(ParseUsageAttempt, (completed.job_id, 1, 1)) is None
             assert session.get(ParseModelCall, call_id) is None
     finally:
+        with session_factory.begin() as session:
+            session.execute(delete(Series).where(Series.id == series.series_id))
+        engine.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.parametrize("execution_mode", ["v1", "v2"])
+def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
+    tmp_path, execution_mode,
+):
+    engine = create_database_engine(
+        TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST,
+    )
+    assert engine.dialect.name == "mysql", "Upload lock evidence requires real MySQL"
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    tenant_id = f"mysql-complete-{uuid4()}"
+    series = LibraryService(LibraryRepository(session_factory)).create_series(
+        tenant_id=tenant_id, name=f"Concurrent Upload Completion {uuid4()}",
+    )
+    uploads = UploadService(
+        UploadRepository(session_factory),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+        config=UploadServiceConfig(
+            preferred_segment_size_bytes=4,
+            maximum_upload_size_bytes=1024,
+            pipeline_version="mysql-concurrent-complete",
+        ),
+        probe_duration=lambda _path: 10_000,
+        execution_mode=execution_mode,
+    )
+    barrier = Barrier(3)
+    all_inserted = Event()
+    connections = set()
+
+    def bounded_lock_wait(dbapi_connection, _record, _proxy):
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute("SET SESSION innodb_lock_wait_timeout = 5")
+
+    def after_insert(connection, _cursor, statement, parameters, _context, _many):
+        sql = " ".join(statement.lower().replace("`", "").split())
+        values = parameters.values() if isinstance(parameters, dict) else (parameters or ())
+        if (
+            current_thread().name.startswith("mysql-upload-complete")
+            and sql.startswith("insert into video ")
+            and series.series_id in values
+        ):
+            connections.add(id(connection.connection.driver_connection))
+            if len(connections) == 3:
+                all_inserted.set()
+            # Let concurrent inserts hold their foreign-key shared locks before
+            # updating Series. Serial completion must not need this rendezvous.
+            all_inserted.wait(1)
+
+    def complete(upload):
+        barrier.wait(timeout=5)
+        return uploads.complete(upload.upload_session_id, tenant_id=tenant_id)
+
+    event.listen(engine, "checkout", bounded_lock_wait)
+    event.listen(engine, "after_cursor_execute", after_insert)
+    try:
+        pending = []
+        for order, source in enumerate((b"aaaa", b"bbbb", b"cccc"), start=1):
+            upload = uploads.create_session(
+                tenant_id=tenant_id, series_id=series.series_id,
+                episode_order=order, original_filename=f"episode-{order}.mp4",
+                media_type="video/mp4", total_size_bytes=len(source),
+                idempotency_key=f"complete-{order}",
+            )
+            uploads.upload_segment(
+                upload.upload_session_id, 0, source, tenant_id=tenant_id,
+                checksum_sha256=hashlib.sha256(source).hexdigest(),
+                start_byte=0, end_byte_exclusive=len(source),
+                total_size_bytes=len(source),
+            )
+            pending.append(upload)
+
+        with ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix="mysql-upload-complete",
+        ) as executor:
+            futures = [executor.submit(complete, upload) for upload in pending]
+            completed = [future.result(timeout=15) for future in futures]
+
+        assert len(connections) == 3
+        assert all(item.session.status == "COMPLETED" for item in completed)
+        assert len({item.video_id for item in completed}) == 3
+        assert len({item.video_parse_task_id for item in completed}) == 3
+        replayed = [
+            uploads.complete(upload.upload_session_id, tenant_id=tenant_id)
+            for upload in pending
+        ]
+        assert [
+            (item.video_id, item.job_id, item.video_parse_task_id)
+            for item in replayed
+        ] == [
+            (item.video_id, item.job_id, item.video_parse_task_id)
+            for item in completed
+        ]
+        with session_factory() as session:
+            videos = list(session.scalars(select(Video).where(
+                Video.series_id == series.series_id,
+            )))
+            assert len(videos) == 3
+            assert {video.episode_order for video in videos} == {1, 2, 3}
+            tasks = list(session.scalars(select(VideoParseTask).where(
+                VideoParseTask.video_id.in_([video.id for video in videos]),
+            )))
+            assert len(tasks) == 3
+            assert {task.video_id for task in tasks} == {video.id for video in videos}
+            assert {task.id for task in tasks} == {
+                item.video_parse_task_id for item in completed
+            }
+            jobs = list(session.scalars(select(SeriesParseJob).where(
+                SeriesParseJob.series_id == series.series_id,
+            )))
+            assert len(jobs) == (3 if execution_mode == "v1" else 0)
+            assert {job.id for job in jobs} == {
+                item.job_id for item in completed if item.job_id is not None
+            }
+    finally:
+        all_inserted.set()
+        event.remove(engine, "after_cursor_execute", after_insert)
+        event.remove(engine, "checkout", bounded_lock_wait)
         with session_factory.begin() as session:
             session.execute(delete(Series).where(Series.id == series.series_id))
         engine.dispose()

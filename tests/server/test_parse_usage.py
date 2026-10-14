@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from gateway.usage import SDKModelUsage, TokenUsage, capture_model_usage, model_call_context, track_model_call
 from server.api.app import create_app
 from server.api.parse_usage import project_usage_overview
+from server.config.usage import ModelPricingConfig
 from server.database import DatabaseEnvironment, create_database_engine, create_session_factory
 from server.model.dto.parseUsageDTO import ModelCallUsageBatch, ModelUsageState
 from server.model.parse_usage import ModelUsage
@@ -41,8 +42,8 @@ class Repository:
         return state
 
 
-def service(repository):
-    return ParseUsageService(repository, clock=lambda: _NOW)
+def service(repository, *, pricing=None):
+    return ParseUsageService(repository, clock=lambda: _NOW, pricing=pricing)
 
 
 def video_scope(capture):
@@ -469,3 +470,126 @@ def test_historical_parse_without_runtime_actor_stays_unknown():
         with track_model_call(provider="provider", model="actual", operation="chat") as tracker:
             tracker.usage = TokenUsage(1, 2, 3, None, None)
     assert repository.appended[0].actor_user_id is None
+
+
+def api_pricing():
+    return ModelPricingConfig.model_validate({"models": [{
+        "provider": "provider", "model": "actual", "category": "parse",
+        "source_url": "https://example.test/prices", "checked_at": "2026-10-01T00:00:00Z",
+        "effective_from": "2026-10-01T00:00:00Z", "tiers": [{
+            "input_cny_per_unit": "1", "output_cny_per_unit": "3",
+            "cached_input_cny_per_unit": "0.2",
+        }],
+    }]})
+
+
+def test_api_cost_excludes_codex_but_preserves_all_tokens_and_nested_contract():
+    rows = [recorded("api", metadata={"src": "api-source"}),
+            recorded("subscription", metadata={"provider": "codex", "src": "codex-source"})]
+    state = service(Repository(rows), pricing=api_pricing()).overview(tenant_id="workspace")
+    assert state.totals.total_tokens == 240
+    assert asdict(state.totals.cost) == {
+        "currency": "CNY", "estimated_amount": "0.000136", "known_amount": "0.000136",
+        "priced_call_count": 1, "unpriced_call_count": 0, "excluded_call_count": 1,
+    }
+    codex = next(row for row in state.models if row.provider == "codex")
+    assert codex.src == "codex-source" and codex.cost.known_amount is None
+    assert codex.cost.estimated_amount is None and codex.cost.excluded_call_count == 1
+    public = project_usage_overview(state).model_dump(by_alias=True)
+    assert public["totals"]["cost"]["estimatedAmount"] == "0.000136"
+    assert public["runs"][0]["cost"]["excludedCallCount"] == 1
+    assert all("quota" not in key.lower() for key in public["totals"]["cost"])
+
+
+def test_model_src_remains_unknown_or_separate_and_never_uses_provider_as_src():
+    rows = [recorded("one", metadata={"src": "one"}), recorded("two", metadata={"src": "two"}),
+            recorded("unknown")]
+    state = service(Repository(rows), pricing=api_pricing()).overview(tenant_id="workspace")
+    assert len(state.models) == 3 and {row.src for row in state.models} == {None, "one", "two"}
+    assert all(row.provider == "provider" and row.cost.priced_call_count == 1 for row in state.models)
+    assert state.totals.cost.known_amount == "0.000408"
+
+
+def test_historical_metadata_without_src_stays_unknown():
+    row = recorded()
+    row = replace(row, metadata={key: value for key, value in row.metadata.items() if key != "src"})
+    state = service(Repository([row]), pricing=api_pricing()).overview(tenant_id="workspace")
+    assert state.models[0].src is None
+    assert state.models[0].cost.estimated_amount == "0.000136"
+
+
+@pytest.mark.parametrize("unknown", [
+    recorded("missing-model", metadata={"model_name": "not-configured"}),
+    recorded("missing-tokens", unknown=True),
+    recorded("missing-cache", tokens=TokenUsage(100, 20, 120, None, None)),
+])
+def test_unpriced_call_keeps_known_cost_but_nulls_complete_estimate(unknown):
+    state = service(Repository([recorded(), unknown]), pricing=api_pricing()).overview(tenant_id="workspace")
+    assert state.totals.cost.known_amount == "0.000136"
+    assert state.totals.cost.estimated_amount is None
+    assert state.totals.cost.priced_call_count == state.totals.cost.unpriced_call_count == 1
+    assert state.runs[0].cost == state.totals.cost
+
+
+@pytest.mark.parametrize("scope,truncated", [("main_loop", False), (None, True)])
+def test_partial_scope_and_truncation_keep_only_known_cost(scope, truncated):
+    row = recorded(metadata={"usage_scope": scope})
+    state = service(Repository([row], truncated=truncated), pricing=api_pricing()).overview(tenant_id="workspace")
+    for totals in (state.totals, state.models[0], state.runs[0]):
+        assert totals.cost.known_amount == "0.000136"
+        assert totals.cost.estimated_amount is None and totals.cost.priced_call_count == 1
+
+
+def test_sdk_cost_uses_child_usage_once_and_repeated_call_id_does_not_double_count():
+    row = recorded(sdk=(("actual", TokenUsage(10, 2, 12, 0, 0)),
+                        ("actual", TokenUsage(20, 4, 24, 0, 0))))
+    state = service(Repository([row, row]), pricing=api_pricing()).overview(tenant_id="workspace")
+    assert state.totals.total_tokens == 36 and state.totals.call_count == 1
+    assert state.totals.cost.estimated_amount == "0.000048"
+    assert state.models[0].cost.priced_call_count == 1
+
+
+def test_partial_sdk_cost_classifies_one_unpriced_call_and_keeps_priced_child_subtotal():
+    row = recorded(sdk=(("actual", TokenUsage(10, 2, 12, 0, 0)), ("unknown", None)))
+    state = service(Repository([row, row]), pricing=api_pricing()).overview(tenant_id="workspace")
+    assert state.totals.cost.known_amount == "0.000016" and state.totals.cost.estimated_amount is None
+    assert state.totals.cost.priced_call_count == 0 and state.totals.cost.unpriced_call_count == 1
+    assert next(row for row in state.models if row.model == "actual").cost.priced_call_count == 1
+
+
+@pytest.mark.parametrize("kind", ["empty", "unavailable", "codex-only", "unpriced-only"])
+def test_no_priced_records_do_not_fabricate_zero_cost(kind):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    rows = [recorded(metadata={"provider": "codex"})] if kind == "codex-only" else []
+    if kind == "unpriced-only":
+        rows = [recorded(metadata={"model_name": "not-configured"})]
+    repository = Repository(rows, error=SQLAlchemyError("private") if kind == "unavailable" else None)
+    state = service(repository, pricing=api_pricing()).overview(tenant_id="workspace")
+    assert state.totals.cost.estimated_amount is state.totals.cost.known_amount is None
+    assert state.totals.cost.priced_call_count == 0
+    assert state.totals.cost.excluded_call_count == int(kind == "codex-only")
+    assert state.totals.cost.unpriced_call_count == int(kind == "unpriced-only")
+
+
+def test_failed_api_call_still_counts_confirmed_billable_tokens():
+    state = service(Repository([recorded(metadata={"status": "failed"})]), pricing=api_pricing()).overview(tenant_id="workspace")
+    assert state.totals.cost.estimated_amount == "0.000136" and state.totals.total_tokens == 120
+
+
+def test_cost_estimate_preserves_actor_and_exact_run_isolation(tmp_path):
+    from uuid import uuid4
+
+    engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'cost-isolation.db'}", environment=DatabaseEnvironment.TEST)
+    ModelUsage.__table__.create(engine)
+    repository = ModelUsageRepository(create_session_factory(engine))
+    try:
+        for actor, run in (("alice", "task"), ("alice", "other"), ("bob", "task")):
+            repository.record_call(recorded(str(uuid4()), actor_user_id=actor, run_id=run))
+        state = service(repository, pricing=api_pricing()).overview(
+            tenant_id="workspace", run_id="task", actor_user_id="alice",
+        )
+        assert state.totals.call_count == 1 and state.totals.cost.estimated_amount == "0.000136"
+        assert [row.run_id for row in state.runs] == ["task"]
+    finally:
+        engine.dispose()

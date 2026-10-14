@@ -79,7 +79,6 @@ class ChunkScheduleEntry:
     chunk_parse_task_id: str
     sequence_no: int
     status: ChunkTaskStatus
-    dispatchable: bool = False
 
 
 @dataclass(frozen=True, slots=True)

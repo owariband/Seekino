@@ -242,17 +242,6 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
                 <p>{explanation.summary}</p>
               </div>
             </section>
-            <section className={styles.factSection}>
-              <h3>命中的可核验事实</h3>
-              <ul>
-                {explanation.matchedFacts.map((fact) => <li key={fact}>{fact}</li>)}
-              </ul>
-            </section>
-            <section className={styles.sourceGrid}>
-              {explanation.sources.map((source) => (
-                <div key={source}><ScanSearch size={14} /><span>{source}</span></div>
-              ))}
-            </section>
             {explanation.limitations.length > 0 ? (
               <section className={styles.limitations}>
                 <CircleAlert size={16} />

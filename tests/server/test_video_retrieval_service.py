@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import subprocess
 import sys
 from dataclasses import replace
@@ -753,3 +755,40 @@ def test_v2_retrieval_rejects_index_event_text_not_in_current_formal_content():
         text_weight=0.0, vision_weight=0.0)
     with pytest.raises(RetrievalIndexConsistencyError, match="formal projection source"):
         service.search("不存在的事件", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
+
+
+def test_v2_retrieval_logs_match_sources_with_bounded_text(caplog):
+    caplog.set_level(logging.INFO, logger="server.service.video_retrieval")
+    scope, match, evidence = _v2_retrieval_fixture()
+    description = "角色拿起杯子并走向门口。" * 40
+    evidence = evidence.model_copy(update={"all_time_events": [
+        {**evidence.all_time_events[0], "description": description},
+    ]})
+    match = replace(match, matched_fields=(LexicalField(
+        field="event_description", raw_text=description,
+        start_seconds=1, end_seconds=4, timeline_index=0,
+    ),))
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence), _V2Store([match], [], []),
+        FakeQueryEmbedder([1.0, 0.0]), semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation, lexical_weight=1.0,
+        text_weight=0.0, vision_weight=0.0,
+    )
+    query = "private-query-only-for-diagnostics-test"
+    result = service.search(query, tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
+
+    logged = next(record.getMessage() for record in caplog.records
+                  if record.getMessage().startswith("event=video_retrieval_lexical_matches "))
+    assert f"video_chunk_id={match.video_chunk_id}" in logged
+    assert "lexical_rank=1" in logged and "matched_field_count=1" in logged
+    identity = json.loads(logged.split("retrieval_identity=", 1)[1].split(" matched_field_count=", 1)[0])
+    assert identity["parse_task_id"] == match.parse_task_id
+    assert identity["content_version"] == match.content_version
+    source = json.loads(logged.split(" matched_fields=", 1)[1])[0]
+    assert (source["field"], source["timeline_index"], source["start_seconds"], source["end_seconds"]) == (
+        "event_description", 0, 1, 4,
+    )
+    assert source["text_preview"] == description[:256]
+    assert source["text_chars"] == len(description)
+    assert query not in logged and description not in logged
+    assert result.hits[0].selection_reason.matched_evidence[0].text == description

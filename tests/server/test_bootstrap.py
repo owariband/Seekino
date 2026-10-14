@@ -140,6 +140,9 @@ def test_application_construction_closes_allocated_clients_when_setup_fails(
         monkeypatch.setenv("ANIVAG_SMTP_HOST", "smtp.example.com")
         monkeypatch.setenv("ANIVAG_SMTP_SENDER", "noreply@example.com")
     settings = ServerSettings.from_environment()
+    settings = replace(settings, agent=replace(
+        settings.agent, total_timeout_enabled=True, execution_timeout_seconds=480,
+    ))
     closed = []
     engine = SimpleNamespace(dispose=lambda: closed.append("database"))
     monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_a, **_k: engine)
@@ -171,6 +174,19 @@ def test_application_construction_closes_allocated_clients_when_setup_fails(
     with pytest.raises(RuntimeError, match=message):
         main_module.init_application(settings)
     assert closed == (["elasticsearch"] if failure != "redis" else []) + (["redis"] if mode == "cloud" else []) + ["database"]
+
+
+@pytest.mark.parametrize(("agent_config", "message"), [
+    (AgentServiceConfig(total_timeout_enabled=False), "requires total_timeout_enabled"),
+    (AgentServiceConfig(execution_timeout_seconds=600), "shorter than the query lease"),
+])
+def test_cloud_timeout_validation_runs_before_creating_external_clients(agent_config, message):
+    settings = SimpleNamespace(
+        parse_execution_mode="v2", elasticsearch=object(), agent=agent_config,
+        auth=SimpleNamespace(mode="cloud", query_lease_seconds=600),
+    )
+    with pytest.raises(ValueError, match=message):
+        bootstrap.prepare_service_configuration(settings)
 
 
 @pytest.mark.parametrize("kind", ["database", "elasticsearch"])
@@ -229,14 +245,36 @@ def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations
     assert config.execution.max_attempts == 12
 
 
+def test_parse_execution_settings_reach_the_frozen_task(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
+    monkeypatch.setenv("ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'config.sqlite'}")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "config_test")
+    monkeypatch.setenv("ANIVAG_PARSE_BATCH_MAX_SIZE", "7")
+    monkeypatch.setenv("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "0.25")
+    monkeypatch.setenv("ANIVAG_MQ_RETRY_BASE_SECONDS", "9")
+    monkeypatch.setenv("ANIVAG_MQ_RETRY_MAX_SECONDS", "81")
+
+    settings = ServerSettings.from_environment()
+    _gateway, profile = bootstrap.prepare_service_configuration(settings)
+    frozen = profile.to_video_parse_v2()
+
+    assert frozen.batch_max_size == 7
+    assert frozen.dispatch_interval_seconds == 0.25
+    assert frozen.execution.retry_initial_delay_seconds == 9
+    assert frozen.execution.retry_max_delay_seconds == 81
+
+
 @pytest.mark.parametrize("supervisor_backend", ["legacy", "deepagents", "codex"])
 @pytest.mark.parametrize(
-    ("global_timeout", "supervisor_timeout", "execution_timeout", "expected_agent_timeout", "expected_independent_timeout", "expected_retrieval_timeout"),
+    ("total_timeout_enabled", "global_timeout", "supervisor_timeout", "execution_timeout", "expected_agent_timeout", "expected_independent_timeout", "expected_retrieval_timeout"),
     [
-        pytest.param(120, 75, 90, 90, 75, 90, id="existing-runtime-controls"),
-        pytest.param(None, 600, 480, 180, 480, 480, id="config-budget-without-global-override"),
-        pytest.param(None, 75, 480, 180, 75, 480, id="smaller-config-model-budget"),
-        pytest.param(60, 600, 480, 60, 60, 60, id="explicit-smaller-global-override"),
+        pytest.param(True, 120, 75, 90, 90, 75, 90, id="existing-runtime-controls"),
+        pytest.param(True, None, 600, 480, 180, 480, 480, id="config-budget-without-global-override"),
+        pytest.param(True, None, 75, 480, 180, 75, 480, id="smaller-config-model-budget"),
+        pytest.param(True, 60, 600, 480, 60, 60, 60, id="explicit-smaller-global-override"),
+        pytest.param(False, None, 600, 480, 180, 600, 480, id="no-total-deadline-keeps-model-budget"),
+        pytest.param(False, 60, 600, 480, 60, 60, 60, id="no-total-deadline-keeps-request-override"),
     ],
 )
 @pytest.mark.parametrize(
@@ -262,6 +300,7 @@ def test_process_assembly_receives_runtime_configuration(
     configured_models,
     expected_models,
     supervisor_backend,
+    total_timeout_enabled,
     global_timeout,
     supervisor_timeout,
     execution_timeout,
@@ -286,7 +325,11 @@ def test_process_assembly_receives_runtime_configuration(
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
-    configuration["models"]["agent"]["request_timeout_seconds"] = 180
+    configuration["models"]["agent"] = {
+        "source": "deepseek_api", "model": "deepseek-flash",
+        "max_output_tokens": 8192, "request_timeout_seconds": 180,
+        "fallback": {"source": "ark_default", "model": "doubao-seed-2-0-lite-260428"},
+    }
     if supervisor_backend == "legacy":
         configuration.pop("supervisor_harness", None)
         configuration["models"].pop("supervisor", None)
@@ -325,6 +368,7 @@ def test_process_assembly_receives_runtime_configuration(
         agent=AgentServiceConfig(
             max_loop_turns=2, max_model_calls_per_turn=4,
             max_tool_calls_per_turn=2, limits_enabled=True,
+            total_timeout_enabled=total_timeout_enabled,
             query_reasoning_effort="low",
             evaluator_reasoning_effort="high",
             chat_reasoning_effort="max",
@@ -422,6 +466,8 @@ def test_process_assembly_receives_runtime_configuration(
         assert supervisor_builds[0]["reasoning_effort"] == ("high" if supervisor_backend == "legacy" else "low")
         expected_supervisor_timeout = expected_agent_timeout if supervisor_backend == "legacy" else expected_independent_timeout
         assert supervisor_builds[0]["request_timeout_seconds"] == expected_supervisor_timeout
+        assert supervisor_builds[0]["total_timeout_enabled"] is total_timeout_enabled
+        assert services.agent._supervisor_runtime._total_timeout_enabled is total_timeout_enabled
         actual_supervisor_timeout = (
             supervisor_model._agent_model.request_timeout_seconds
             if supervisor_backend == "codex" else supervisor_model._request_timeout_seconds
@@ -455,6 +501,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._max_model_calls == 4
         assert runtime._max_tool_calls == 2
         assert runtime._limits_enabled is True
+        assert runtime._total_timeout_enabled is total_timeout_enabled
         assert runtime._max_prompt_chars == 120_000
         assert runtime._max_tool_result_bytes == 16_384
         assert runtime._max_read_chars_per_call == 16_384
@@ -465,6 +512,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.agent._executor._max_workers == 2
         updated = replace(
             settings.agent, evaluator_stage_timeout_seconds=240,
+            total_timeout_enabled=not total_timeout_enabled,
             max_tool_result_bytes=8_192, max_read_chars_per_call=4_096,
             query_reasoning_effort="max", evaluator_reasoning_effort="none",
             chat_reasoning_effort="low",
@@ -475,6 +523,7 @@ def test_process_assembly_receives_runtime_configuration(
         replacement_supervisor = None
         try:
             assert replacement._evaluator_stage_timeout == 240
+            assert replacement._total_timeout_enabled is updated.total_timeout_enabled
             assert replacement._max_tool_result_bytes == 8_192
             assert replacement._max_read_chars_per_call == 4_096
             assert replacement._query_model.reasoning_effort == "max"
@@ -485,7 +534,16 @@ def test_process_assembly_receives_runtime_configuration(
             if supervisor_backend != "codex":
                 assert replacement_supervisor._model.session_store is supervisor_model.session_store
             assert supervisor_builds[1]["reasoning_effort"] == ("none" if supervisor_backend == "legacy" else "low")
-            assert supervisor_builds[1]["request_timeout_seconds"] == expected_supervisor_timeout
+            replacement_request_timeout = min(
+                timeout for timeout in (
+                    global_timeout,
+                    execution_timeout if updated.total_timeout_enabled else None,
+                    180 if supervisor_backend == "legacy" else supervisor_timeout,
+                ) if timeout is not None
+            )
+            assert supervisor_builds[1]["request_timeout_seconds"] == replacement_request_timeout
+            assert supervisor_builds[1]["total_timeout_enabled"] is updated.total_timeout_enabled
+            assert replacement_supervisor._total_timeout_enabled is updated.total_timeout_enabled
             assert services.agent.active_maximum_concurrent_kicks == 2
         finally:
             if replacement_supervisor is not None:
@@ -1076,6 +1134,7 @@ def test_unsupported_retrieval_options_fail_before_allocating_services(monkeypat
         model_config_path=None,
         parse_execution_mode="v2" if option == "unsupported_source" else "v1",
         elasticsearch=object() if option == "unsupported_source" else None,
+        agent=AgentServiceConfig(), auth=SimpleNamespace(mode="local"),
         retrieval=RetrievalConfig(
             sparse_weight=0.5 if option == "sparse" else 0,
             rerank_enabled=option != "sparse",

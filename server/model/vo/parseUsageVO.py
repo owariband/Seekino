@@ -8,6 +8,15 @@ from ...schema import ContractModel
 from .commonVO import UnixTimeMs
 
 
+class UsageCostSummaryVO(ContractModel):
+    currency: Literal["CNY"] = "CNY"
+    estimated_amount: str | None = None
+    known_amount: str | None = None
+    priced_call_count: int = Field(default=0, ge=0)
+    unpriced_call_count: int = Field(default=0, ge=0)
+    excluded_call_count: int = Field(default=0, ge=0)
+
+
 class UsageTotalsVO(ContractModel):
     call_count: int | None = Field(ge=0)
     input_tokens: int | None = Field(ge=0)
@@ -18,6 +27,7 @@ class UsageTotalsVO(ContractModel):
     total_tokens: int | None = Field(ge=0)
     known_tokens: int = Field(ge=0)
     missing_usage_count: int = Field(ge=0)
+    cost: UsageCostSummaryVO | None = None
 
 
 class UsageModelRowVO(UsageTotalsVO):
@@ -25,6 +35,7 @@ class UsageModelRowVO(UsageTotalsVO):
     model: str | None
     category: str | None
     operation: str | None
+    src: str | None = None
 
 
 class UsageRunRowVO(UsageTotalsVO):

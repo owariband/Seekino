@@ -56,6 +56,7 @@ from ..model.job import (
     validate_interval_parse_task_members,
 )
 from ..model.video import Series, VideoChunk, Video
+from ..utils.retry import task_retry_delay
 from ..utils.time import (
     datetime_to_unix_time_ms,
     now_utc,
@@ -2053,8 +2054,9 @@ class VideoParseRepository:
             next_execute_ms = prefix.get("next_execute_time_ms", 0)
             if isinstance(next_execute_ms, int) and next_execute_ms > now_ms:
                 return None
+            execution = _execution_config(config)
             max_retries = _nonnegative_int(
-                _execution_config(config).get("max_retry_count"),
+                execution.get("max_retry_count"),
                 "max_retry_count",
             )
             cursor = int(prefix["next_chunk_sequence_no"])
@@ -2076,7 +2078,14 @@ class VideoParseRepository:
                 prefix["lease_expire_time_ms"] = None
                 prefix["execution_task_id"] = None
                 prefix["last_error"] = _error_detail("worker lease expired")
-            if int(prefix.get("retry_count", 0)) > max_retries:
+                prefix["next_execute_time_ms"] = datetime_to_unix_time_ms(
+                    claimed_at + task_retry_delay(
+                        initial_delay_seconds=execution["retry_initial_delay_seconds"],
+                        max_delay_seconds=execution["retry_max_delay_seconds"],
+                        failure_count=prefix["retry_count"],
+                    )
+                )
+            if owner is not None or int(prefix.get("retry_count", 0)) > max_retries:
                 runtime["prefix"] = prefix
                 detail[RUNTIME_DETAIL_KEY] = runtime
                 task.detail = detail
@@ -2346,7 +2355,6 @@ class VideoParseRepository:
         lease: PrefixParseLease,
         *,
         error: str,
-        retry_at: datetime,
         now: datetime | None = None,
     ) -> bool:
         failed_at = now if now is not None else now_utc()
@@ -2364,13 +2372,20 @@ class VideoParseRepository:
             prefix = _current_prefix_lease(task, lease, failed_at)
             if prefix is None:
                 return False
+            execution = _execution_config(task.parse_config)
+            failure_count = int(prefix.get("retry_count", 0)) + 1
+            retry_at = failed_at + task_retry_delay(
+                initial_delay_seconds=execution["retry_initial_delay_seconds"],
+                max_delay_seconds=execution["retry_max_delay_seconds"],
+                failure_count=failure_count,
+            )
             detail = _ensure_runtime(task.detail)
             runtime = deepcopy(detail[RUNTIME_DETAIL_KEY])
             prefix["lease_owner"] = None
             prefix["lease_expire_time_ms"] = None
             prefix["execution_task_id"] = None
             prefix["next_execute_time_ms"] = datetime_to_unix_time_ms(retry_at)
-            prefix["retry_count"] = int(prefix.get("retry_count", 0)) + 1
+            prefix["retry_count"] = failure_count
             prefix["last_error"] = _error_detail(error)
             runtime["prefix"] = prefix
             detail[RUNTIME_DETAIL_KEY] = runtime

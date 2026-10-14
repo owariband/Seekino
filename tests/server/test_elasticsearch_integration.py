@@ -216,7 +216,6 @@ def _indexing_case(tmp_path, store):
         )
         repository.activate_video_task(video_lease)
         for sequence, child_id in enumerate(prepared.chunk_parse_task_ids):
-            assert queue.dispatch_chunk(child_id, video_lease)
             lease = queue.claim_chunk("understand", lease_duration=timedelta(minutes=10))
             assert lease is not None and lease.chunk_parse_task_id == child_id
             repository.commit_chunk_result(lease, content={

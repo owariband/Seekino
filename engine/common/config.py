@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -26,8 +27,19 @@ class VideoParseRuntimeConfig:
     video_max_frames_per_window: int | None = None
     transcript_max_output_tokens: int | None = None
     video_max_output_tokens: int | None = None
+    batch_max_size: int = 10
+    dispatch_interval_seconds: float = 0
 
     def __post_init__(self) -> None:
+        if type(self.batch_max_size) is not int or self.batch_max_size <= 0:
+            raise ValueError("batch_max_size must be a positive integer")
+        if (
+            isinstance(self.dispatch_interval_seconds, bool)
+            or not isinstance(self.dispatch_interval_seconds, (float, int))
+            or not math.isfinite(self.dispatch_interval_seconds)
+            or self.dispatch_interval_seconds < 0
+        ):
+            raise ValueError("dispatch_interval_seconds must be finite and nonnegative")
         if self.chunk_duration_seconds <= 0:
             raise ValueError("chunk_duration_seconds must be greater than zero")
         if self.context_overlap_seconds < 0:

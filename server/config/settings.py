@@ -157,6 +157,13 @@ class ServerSettings:
                 ),
             ),
             parse=VideoParseRuntimeConfig(
+                batch_max_size=_environment_int(
+                    "ANIVAG_PARSE_BATCH_MAX_SIZE", parse_defaults.batch_max_size,
+                ),
+                dispatch_interval_seconds=float(os.getenv(
+                    "ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS",
+                    str(parse_defaults.dispatch_interval_seconds),
+                )),
                 chunk_duration_seconds=_environment_int(
                     "ANIVAG_CHUNK_DURATION_SECONDS",
                     parse_defaults.chunk_duration_seconds,

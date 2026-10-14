@@ -11,7 +11,7 @@ from agent.common.chunk_understanding import understand_chunk
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion
 from agent.video_parse_v2.prompts import build_canvas_understanding_prompt
-from agent.video_parse_v2.scheduler import ChunkScheduler
+from agent.video_parse_v2.scheduler import ChunkScheduler, claimable_chunk_sequences
 from agent.video_parse_v2.understanding import ChunkUnderstandingWorkflow
 from agent.video_parse_v2.input import ParseInput
 from agent.video_parse_v2.prefix import PrefixContextAgent
@@ -183,48 +183,34 @@ def test_index_only_resume_never_prepares_or_schedules_chunks() -> None:
 
 
 def test_scheduler_opens_next_batch_only_at_ninety_percent() -> None:
-    runtime = SimpleNamespace(dispatch_chunk=AsyncMock(return_value=True))
-    scheduler = ChunkScheduler(runtime=runtime)
-    state = {
-        "video_parse_task_id": "video-task-1",
-        "inputs": _inputs(),
-        "lease": _lease(),
-    }
-
     first_eight = tuple(
-        ChunkScheduleEntry(
-            f"task-{index}",
-            index,
-            ChunkTaskStatus.COMPLETE if index < 8 else ChunkTaskStatus.QUEUED,
-            dispatchable=True,
-        )
+        (index, ChunkTaskStatus.COMPLETE if index < 8 else ChunkTaskStatus.QUEUED)
         for index in range(20)
     )
-    asyncio.run(scheduler._dispatch_ready_chunks(
-        state,
-        ChunkScheduleSnapshot(first_eight, wait_timeout_seconds=1),
-    ))
-    assert all(
-        call.args[0] in {"task-8", "task-9"}
-        for call in runtime.dispatch_chunk.await_args_list
-    )
-    assert all(call.args[1].version == 3 for call in runtime.dispatch_chunk.await_args_list)
-
-    runtime.dispatch_chunk.reset_mock()
+    assert claimable_chunk_sequences(first_eight, 10) == {8, 9}
     first_nine = tuple(
-        ChunkScheduleEntry(
-            f"task-{index}",
-            index,
-            ChunkTaskStatus.COMPLETE if index < 9 else ChunkTaskStatus.QUEUED,
-            dispatchable=True,
-        )
+        (index, ChunkTaskStatus.COMPLETE if index < 9 else ChunkTaskStatus.QUEUED)
         for index in range(20)
     )
-    asyncio.run(scheduler._dispatch_ready_chunks(
-        state,
-        ChunkScheduleSnapshot(first_nine, wait_timeout_seconds=1),
-    ))
-    assert "task-10" in [call.args[0] for call in runtime.dispatch_chunk.await_args_list]
+    assert claimable_chunk_sequences(first_nine, 10) == set(range(9, 20))
+    active = tuple(
+        (index, ChunkTaskStatus.UNDERSTANDING if 9 <= index < 19 else status)
+        for index, status in first_nine
+    )
+    assert claimable_chunk_sequences(active, 10) == set()
+
+
+def test_scheduler_observes_progress_without_a_dispatch_permission() -> None:
+    runtime = SimpleNamespace(
+        load_chunk_schedule=AsyncMock(side_effect=[
+            ChunkScheduleSnapshot((ChunkScheduleEntry("chunk", 0, ChunkTaskStatus.QUEUED),), 0),
+            ChunkScheduleSnapshot((ChunkScheduleEntry("chunk", 0, ChunkTaskStatus.COMPLETE),), 0),
+        ]),
+        wait_for_video_change=AsyncMock(),
+    )
+    state = {"video_parse_task_id": "video-task"}
+    assert asyncio.run(ChunkScheduler(runtime=runtime).run(state)) == state
+    runtime.wait_for_video_change.assert_awaited_once_with("video-task", timeout_seconds=0)
 
 
 @pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])

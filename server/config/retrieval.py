@@ -20,6 +20,7 @@ class RetrievalConfig:
     candidate_budget: int | None = None
     sparse_weight: float = 0.0
     rerank_enabled: bool = False
+    search_default_top_k: int = 30
 
     @classmethod
     def from_environment(
@@ -31,8 +32,14 @@ class RetrievalConfig:
         candidate_budget: int | str | None = None,
         sparse_weight: float | str | None = None,
         rerank_enabled: bool | str | None = None,
+        search_default_top_k: int | str | None = None,
     ) -> "RetrievalConfig":
         defaults = cls()
+        raw_search_default_top_k = (
+            search_default_top_k if search_default_top_k is not None else os.getenv(
+                "ANIVAG_RETRIEVAL_SEARCH_DEFAULT_TOP_K", str(defaults.search_default_top_k),
+            )
+        )
         raw_candidate_budget = (
             candidate_budget if candidate_budget is not None
             else os.getenv("ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", "").strip() or None
@@ -69,9 +76,15 @@ class RetrievalConfig:
                 "ANIVAG_RETRIEVAL_SPARSE_WEIGHT", str(defaults.sparse_weight),
             )),
             rerank_enabled=rerank,
+            search_default_top_k=(
+                int(raw_search_default_top_k)
+                if isinstance(raw_search_default_top_k, str) else raw_search_default_top_k
+            ),
         )
 
     def __post_init__(self) -> None:
+        if type(self.search_default_top_k) is not int or self.search_default_top_k <= 0:
+            raise ValueError("search_default_top_k must be a positive integer")
         RetrievalPolicy(
             lexical_weight=self.lexical_weight,
             channel_top_k=self.channel_top_k,

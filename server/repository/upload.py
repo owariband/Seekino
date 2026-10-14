@@ -109,6 +109,7 @@ class UploadRepository:
         video_parse_config: dict | None = None,
         requested_video_parse_config: dict | None = None,
         created_by_user_id: str | None = None,
+        config_resolver: Callable[[], tuple[dict | None, dict]] | None = None,
     ) -> UploadSessionState:
         if (
             isinstance(episode_order, bool)
@@ -117,7 +118,7 @@ class UploadRepository:
             or episode_order > 2_147_483_647
         ):
             raise ValueError("episode_order must be a positive 32-bit integer")
-        if not isinstance(video_parse_config, dict):
+        if config_resolver is None and not isinstance(video_parse_config, dict):
             raise ValueError(
                 "video_parse_config is required for a new upload session"
             )
@@ -173,6 +174,15 @@ class UploadRepository:
                     if existing is not None:
                         # Release Series before returning to the Upload-only replay.
                         continue
+
+                    # Resolve only new uploads: replays retain their frozen config.
+                    # The callback must perform local configuration work only.
+                    if config_resolver is not None:
+                        parse_config, video_parse_config = config_resolver()
+                        if not isinstance(video_parse_config, dict):
+                            raise ValueError(
+                                "video_parse_config is required for a new upload session"
+                            )
 
                     occupying_uploads = session.scalars(
                         select(UploadSession)
@@ -1249,6 +1259,18 @@ class UploadRepository:
                     "upload completion claim is no longer current"
                 )
 
+            # Keep Upload -> Series ordering with deletion, but take Series X
+            # before Video's foreign-key check can acquire a shared parent lock.
+            series = session.scalar(
+                select(Series)
+                .where(Series.id == upload.series_id)
+                .with_for_update()
+            )
+            if series is None:
+                raise UploadSeriesNotFoundError(
+                    f"seriesId {upload.series_id!r} disappeared during completion"
+                )
+
             conflict = session.scalar(
                 select(Video).where(
                     Video.series_id == upload.series_id,
@@ -1350,11 +1372,6 @@ class UploadRepository:
                     )
                     session.add(job)
 
-            series = session.get(Series, upload.series_id)
-            if series is None:
-                raise UploadSeriesNotFoundError(
-                    f"seriesId {upload.series_id!r} disappeared during completion"
-                )
             upload.status = UploadSessionStatus.COMPLETED.value
             upload.video_id = video_id
             upload.finish_time = completed_at

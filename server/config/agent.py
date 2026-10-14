@@ -16,6 +16,7 @@ class AgentServiceConfig:
     max_tool_calls_per_turn: int = 24
     maximum_tool_calls_per_turn: int = 48
     limits_enabled: bool = False
+    total_timeout_enabled: bool = True
     query_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     evaluator_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     chat_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
@@ -51,6 +52,8 @@ class AgentServiceConfig:
             raise ValueError("max_loop_turns must be between 1 and 3")
         if not isinstance(self.limits_enabled, bool):
             raise ValueError("limits_enabled must be a boolean")
+        if not isinstance(self.total_timeout_enabled, bool):
+            raise ValueError("total_timeout_enabled must be a boolean")
         for name in (
             "query_reasoning_effort", "evaluator_reasoning_effort",
             "chat_reasoning_effort", "supervisor_reasoning_effort",

@@ -14,7 +14,7 @@ from pydantic import PrivateAttr
 
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.deepagents import DeepAgentSessionStore, DeepAgentsSupervisorModel
-from gateway.agent_model.errors import ModelFailureError, ModelFailureReason, ModelInputTooLargeError
+from gateway.agent_model.errors import AgentModelTimeoutError, ModelFailureError, ModelFailureReason, ModelInputTooLargeError
 from gateway.ark.agent import ArkFunctionCallingFallback, ArkFunctionCallingModel
 from gateway.media import ToolImage, ToolImageArtifact
 from gateway.openai.agent import OpenAIAgentModel
@@ -38,11 +38,12 @@ class ScriptedModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=response)])
 
 
-def _model(script, *, store=None, policy=None, vision=False):
+def _model(script, *, store=None, policy=None, vision=False, total_timeout_enabled=True):
     return DeepAgentsSupervisorModel(
         session_store=store or DeepAgentSessionStore(), model="fake", provider_name="fake",
         request_timeout_seconds=30, max_input_chars=120_000,
         context_window_policy=policy, supports_vision_input=vision, chat_model=script,
+        total_timeout_enabled=total_timeout_enabled,
     )
 
 
@@ -136,7 +137,8 @@ def test_unconfirmed_turn_cannot_resume_and_discard_bootstraps_completed_history
     assert "Database history" in texts
 
 
-def test_cancelled_tool_clears_checkpoint_and_does_not_execute_next_tool():
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_cancelled_tool_clears_checkpoint_and_does_not_execute_next_tool(total_timeout_enabled):
     cancelled = False
     calls = []
 
@@ -155,7 +157,7 @@ def test_cancelled_tool_clears_checkpoint_and_does_not_execute_next_tool():
         {"name": tool.name, "args": {"query": "first"}, "id": "one"},
         {"name": tool.name, "args": {"query": "second"}, "id": "two"},
     ])])
-    model = _model(script)
+    model = _model(script, total_timeout_enabled=total_timeout_enabled)
     with pytest.raises(RuntimeError, match="Cancelled by user"):
         _run(model, tools=[tool], check=check)
 
@@ -296,6 +298,45 @@ class FakeClient:
         if isinstance(response, BaseException):
             raise response
         return response
+
+
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_supervisor_total_timeout_switch_preserves_finite_http_budget(monkeypatch, total_timeout_enabled):
+    clock = [100.0]
+    monkeypatch.setattr("gateway.agent_model.deepagents.monotonic", lambda: clock[0])
+
+    def search(query: str) -> str:
+        clock[0] += 40
+        return "fact"
+
+    tool = StructuredTool.from_function(search, description="Search evidence.")
+    client = FakeClient([
+        _completion(content="", calls=[("search-1", "search", {"query": "q"})], finish="tool_calls"),
+        _completion(content="Answer after a slow tool"),
+    ])
+    adapter = OpenAIAgentModel(
+        "model", base_url="https://unused.invalid", api_key="test", max_output_tokens=100,
+        request_timeout_seconds=2, client=client,
+    )
+    model = DeepAgentsSupervisorModel(
+        session_store=DeepAgentSessionStore(), model="model", provider_name="openai",
+        request_timeout_seconds=3, max_input_chars=120_000, context_window_policy=None,
+        agent_model=adapter, total_timeout_enabled=total_timeout_enabled,
+    )
+    try:
+        if total_timeout_enabled:
+            with pytest.raises(AgentModelTimeoutError, match="execution deadline expired"):
+                _run(model, tools=[tool])
+            assert len(client.calls) == 1
+            assert not model.session_store.pending
+        else:
+            assert _run(model, tools=[tool]) == ["Answer after a slow tool"]
+            assert len(client.calls) == 2
+        assert clock[0] == 140
+        assert all(0 < request["timeout"] <= 2 for request in client.calls)
+    finally:
+        model.close()
+        model.session_store.close()
 
 
 def test_api_adapter_retains_profile_tokens_usage_and_never_calls_old_loop(monkeypatch):

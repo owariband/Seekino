@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiClientError,
+  cancelAgentMessage,
   createAgentConversation,
   errorMessage,
   getAgentConversation,
@@ -140,6 +141,7 @@ interface ConversationState {
   progress: Record<string, AgentProgressEvent[]>;
   loading: boolean;
   sending: boolean;
+  cancellingMessageId: string | null;
   error: string | null;
 }
 export type AgentProgressEvent = Extract<AgentAnswerEvent, { type: "answer.progress" }>;
@@ -148,20 +150,23 @@ interface ActiveConversation {
   controller: AbortController;
   unsubscribe?: () => void;
   sending: boolean;
+  sendController: AbortController | null;
+  cancellingMessageId: string | null;
+  identityKey: string;
   recoveryMessageId: string | null;
   streamedMessageId: string | null;
 }
 
 export function useAgentConversation(requestedId: string | null = null) {
   const [state, setState] = useState<ConversationState>({
-    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
 
   useEffect(() => {
-    const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, recoveryMessageId: null, streamedMessageId: null };
+    const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null, identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null };
     activeRef.current = active;
-    setState({ requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, error: null });
+    setState({ requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, cancellingMessageId: null, error: null });
     void (async () => {
       try {
         const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
@@ -205,9 +210,55 @@ export function useAgentConversation(requestedId: string | null = null) {
       progress: {},
       loading: false,
       sending: false,
+      cancellingMessageId: null,
       error: null,
     }));
   }, []);
+
+  useEffect(() => {
+    const active = activeRef.current;
+    if (!active || state.requestedId !== requestedId || active.identityKey !== conversationStorageKey() || !state.cancellingMessageId || !state.messages.some((message) => message.messageId === state.cancellingMessageId && message.status !== "PROCESSING")) return;
+    const finishedSend = active.streamedMessageId === state.cancellingMessageId;
+    if (finishedSend) {
+      active.sendController?.abort();
+      active.sendController = null;
+      active.sending = false;
+      active.streamedMessageId = null;
+    }
+    if (active?.cancellingMessageId === state.cancellingMessageId) active.cancellingMessageId = null;
+    setState((current) => ({ ...current, sending: finishedSend ? false : current.sending, cancellingMessageId: null }));
+  }, [requestedId, state.requestedId, state.cancellingMessageId, state.messages]);
+
+  const stop = useCallback(async () => {
+    const active = activeRef.current;
+    const message = [...state.messages].reverse().find((item) => item.role === "ASSISTANT" && item.status === "PROCESSING");
+    if (!active?.conversationId || !message || active.cancellingMessageId || state.requestedId !== requestedId || active.identityKey !== conversationStorageKey()) return;
+    const conversationId = active.conversationId;
+    active.cancellingMessageId = message.messageId;
+    setState((current) => ({ ...current, cancellingMessageId: message.messageId, error: null }));
+    try {
+      const pair = await cancelAgentMessage(conversationId, message.messageId);
+      if (activeRef.current !== active || active.identityKey !== conversationStorageKey() || active.cancellingMessageId !== message.messageId) return;
+      const terminal = pair.assistantMessage.status !== "PROCESSING";
+      if (terminal) {
+        active.cancellingMessageId = null;
+        active.sendController?.abort();
+        active.sendController = null;
+        active.sending = false;
+        active.streamedMessageId = null;
+      }
+      setState((current) => ({
+        ...current, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId, active.streamedMessageId),
+        sending: terminal ? false : current.sending,
+        cancellingMessageId: terminal ? null : message.messageId,
+        error: terminal ? pair.assistantMessage.lastError?.message ?? null : current.error,
+      }));
+    } catch (error) {
+      if (activeRef.current !== active || active.identityKey !== conversationStorageKey() || active.cancellingMessageId !== message.messageId) return;
+      active.cancellingMessageId = null;
+      setState((current) => ({ ...current, cancellingMessageId: null, error: errorMessage(error) }));
+    }
+  }, [requestedId, state.messages, state.requestedId]);
 
   const send = useCallback(async (
     content: string,
@@ -224,15 +275,19 @@ export function useAgentConversation(requestedId: string | null = null) {
     const frozenOptions = { ...options };
     const frozenExtraContext = extraContext === null ? null : structuredClone(extraContext);
     active.sending = true;
+    active.cancellingMessageId = null;
+    const sendController = new AbortController();
+    active.sendController = sendController;
+    const signal = AbortSignal.any([active.controller.signal, sendController.signal]);
     active.recoveryMessageId = null;
-    setState((current) => ({ ...current, sending: true, error: null }));
+    setState((current) => ({ ...current, sending: true, cancellingMessageId: null, error: null }));
     let messageId: string | null = null;
     let deltaBuffer = "";
     let blockBuffer: AgentRenderBlock[] = [];
     const idempotencyKey = crypto.randomUUID();
     let sequence = -1;
     const onEvent = (event: AgentAnswerEvent) => {
-      if (activeRef.current !== active || event.conversationId !== conversationId) return;
+      if (activeRef.current !== active || active.sendController !== sendController || event.conversationId !== conversationId) return;
       if (!Number.isInteger(event.sequence) || event.sequence <= 0 || event.sequence <= sequence) return;
       if (event.type === "answer.started") {
         if (messageId && event.messageId !== messageId) return;
@@ -284,14 +339,14 @@ export function useAgentConversation(requestedId: string | null = null) {
         content.trim(),
         idempotencyKey,
         onEvent,
-        active.controller.signal,
+        signal,
         scope,
         frozenReference,
         frozenOptions,
         frozenExtraContext,
       );
     } catch (error) {
-      if (activeRef.current === active && !active.controller.signal.aborted) {
+      if (activeRef.current === active && active.sendController === sendController && !signal.aborted) {
         active.recoveryMessageId = messageId;
         setState((current) => ({ ...current, error: errorMessage(error) }));
         if (!messageId) {
@@ -305,6 +360,8 @@ export function useAgentConversation(requestedId: string | null = null) {
         }
       }
     } finally {
+      if (active.sendController !== sendController) return;
+      active.sendController = null;
       active.sending = false;
       active.streamedMessageId = null;
       if (activeRef.current === active) {
@@ -325,12 +382,14 @@ export function useAgentConversation(requestedId: string | null = null) {
   }, [requestedId, state.requestedId, state.messages]);
 
   const visible = state.requestedId === requestedId ? state : {
-    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
   };
   return {
     ...visible,
     searching: visible.sending || visible.messages.some((message) => message.status === "PROCESSING"),
+    cancelling: Boolean(visible.cancellingMessageId),
     clear,
     send,
+    stop,
   };
 }

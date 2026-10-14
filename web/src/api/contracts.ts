@@ -384,10 +384,19 @@ export interface UsageTotals {
   totalTokens: number | null;
   knownTokens: number;
   missingUsageCount: number;
+  cost?: {
+    currency: "CNY";
+    estimatedAmount: string | null;
+    knownAmount: string | null;
+    pricedCallCount: number;
+    unpricedCallCount: number;
+    excludedCallCount: number;
+  } | null;
 }
 
 export interface UsageModelRow extends UsageTotals {
   provider: string | null;
+  src?: string | null;
   model: string | null;
   category: string | null;
   operation: string | null;

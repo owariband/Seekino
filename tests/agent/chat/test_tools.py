@@ -38,6 +38,7 @@ from agent.chat.video_search.tools import (
     build_chat_tools, build_evaluator_tools, build_query_tools,
 )
 from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
+from agent.chat.video_search.tools.canvas import build_video_search_canvas_tools
 from agent.utils.tool import AgentTool as SharedAgentTool
 class _CanvasReader:
     """Bind a collection while exercising the registered shared read Tool."""
@@ -536,6 +537,70 @@ def test_retrieve_tool_keeps_v1_transcript_and_v2_lexical_contracts_separate() -
     assert seen == [("transcript", 1.0), ("lexical", 1.0)]
 
 
+@pytest.mark.parametrize("build_tools", [build_query_tools, build_evaluator_tools])
+@pytest.mark.parametrize("channel", ["transcript", "lexical"])
+@pytest.mark.parametrize("requested,available", [(8, 8), (101, 101), (8, 2), (8, 0)])
+def test_retrieve_honors_agent_quantity_and_pages_all_hits(
+    build_tools, channel, requested, available,
+) -> None:
+    inputs = {**_inputs(), "requested_top_k": 3}
+    retrieval = Retrieval([_hit(f"chunk-{index}") for index in range(available)])
+    searched_top_k = []
+
+    def search(query, *, top_k, **kwargs):
+        searched_top_k.append(top_k)
+        if channel == "transcript":
+            kwargs["lexical_weight"] = kwargs.pop("transcript_weight")
+        return retrieval.search(query, top_k=top_k, **kwargs)
+
+    canvas = VideoSearchContextCanvas("workspace", ("series",))
+    calls = []
+    maximum_result_bytes = 1_024
+    tool = build_tools(
+        search, canvas=canvas, inputs=inputs, control=_control(), calls=calls,
+        maximum_top_k=2, maximum_tool_calls=None,
+        maximum_result_bytes=maximum_result_bytes, maximum_catalog_items=3,
+        retrieval_channel=channel,
+    )[0]
+    raw = tool.invoke({
+        "query": "broken cup", "top_k": requested,
+        "channel_weights": {channel: 0, "semantic": 0.7, "visual": 0.3},
+    })
+    found_ids = []
+    while True:
+        assert len(raw.encode("utf-8")) <= maximum_result_bytes
+        page = json.loads(raw)
+        assert page["requested_top_k"] == requested
+        assert page["result_count"] == page["total"] == available
+        assert page["warnings"] == []
+        assert page["partial"] is False
+        assert len(page["items"]) <= 3
+        assert all("evidence" not in item for item in page["items"])
+        found_ids.extend(item["video_chunk_id"] for item in page["items"])
+        if page["next_cursor"] is None:
+            break
+        raw = tool.invoke({"cursor": page["next_cursor"]})
+
+    assert found_ids == [f"chunk-{index}" for index in range(available)]
+    assert searched_top_k == [requested]
+    assert retrieval.calls == len(calls) == 1
+    assert calls[0].top_k == requested
+    if available:
+        assert canvas.retrieval_item(found_ids[-1]).evidence.video_chunk_id == found_ids[-1]
+
+
+@pytest.mark.parametrize("schema,channel", [
+    (RetrieveArguments, "transcript"), (LexicalRetrieveArguments, "lexical"),
+])
+@pytest.mark.parametrize("top_k", [0, -1, True, 1.5, "8"])
+def test_retrieve_quantity_must_be_a_positive_integer(schema, channel, top_k) -> None:
+    with pytest.raises(ValueError):
+        schema.model_validate({
+            "query": "broken cup", "top_k": top_k,
+            "channel_weights": {channel: 1, "semantic": 0, "visual": 0},
+        })
+
+
 def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> None:
     caplog.set_level(logging.INFO, logger="agent.chat.common.tool")
     tools, _calls = _query_tools(
@@ -547,6 +612,9 @@ def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> N
     _retrieve(tools, top_k=1)
     _reader(tools, "retrieval").invoke({
         "video_chunk_id": "chunk-1", "section": "evidence.text", "end": 10,
+    })
+    tools["get_context_canvas"].invoke({
+        "collection": "retrieval", "references": ["chunk-1"], "section": "candidate",
     })
     _writer(tools, "upsert_draft_item").invoke({
         "video_chunk_id": "chunk-1",
@@ -566,6 +634,11 @@ def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> N
     assert '"top_k":1' in caplog.text
     assert '"item_video_chunk_ids":["chunk-1"]' in caplog.text
     assert '"content_chars":' in caplog.text
+    assert '"collection":"retrieval"' in caplog.text
+    assert '"reference":"chunk-1"' in caplog.text
+    assert '"section":"evidence.text"' in caplog.text
+    assert '"references":["chunk-1"]' in caplog.text
+    assert '"reference_count":1' in caplog.text
     assert "tool=write_context_canvas" in caplog.text
     assert "status=error" in caplog.text
     assert '"error_code":"UNKNOWN_ITEM"' in caplog.text
@@ -575,7 +648,7 @@ def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> N
 
 
 def test_retrieve_returns_catalog_and_read_trieve_item_ranges_full_evidence() -> None:
-    maximum_result_bytes = 700
+    maximum_result_bytes = 768
     lexical_hit = _hit("chunk-1", episode=1, large_text="杯子碎裂。" * 500)
     lexical_hit.candidate.lexical_rank = 3
     retrieval = Retrieval([
@@ -1219,6 +1292,59 @@ def test_canvas_role_permissions_and_approved_evidence_are_frozen() -> None:
     assert denied["error"]["code"] == "INVALID_ARGUMENTS"
     with pytest.raises(AgentToolFeedbackError, match="read-only"):
         canvas.mutate(lambda draft: draft["approved"]["chunk-1"].update(claim="changed"))
+
+
+def test_supervisor_reads_canonical_candidates_and_review_without_write_access() -> None:
+    from agent.utils.errors import AgentToolFeedbackError
+
+    canvas = VideoSearchContextCanvas("workspace", ("series",))
+    original = _hit("chunk-1", large_text="original evidence")
+    original.selection_reason.summary = "original summary"
+    retrieval = Retrieval([original, _hit("chunk-2")])
+    query, _ = _query_tools(retrieval, canvas)
+    _retrieve(query, top_k=2)
+    canvas.upsert_draft_item(video_chunk_id="chunk-1", start_seconds=11,
+                             end_seconds=19, claim="approved claim")
+    canvas.approve_draft()
+    canvas.append_markdown("Child answer.")
+    canvas.put("review", "latest", {
+        "turn_number": 1, "action": "complete", "advice": "supported",
+        "selected_video_ranges": [{"video_chunk_id": "chunk-1", "start_seconds": 11,
+                                   "end_seconds": 19}],
+    }, readonly=True)
+    newer = _hit("chunk-1", large_text="newer evidence")
+    newer.selection_reason.summary = "newer summary"
+    retrieval.hits = [newer]
+    _retrieve(query, top_k=1)
+    tools = {tool.name: tool for tool in as_langchain_tools(build_video_search_canvas_tools(
+        canvas=canvas, role="supervisor", control=_control(),
+        maximum_result_bytes=2048, maximum_catalog_items=20, maximum_read_chars=1024,
+    ))}
+    assert set(tools) == {"get_context_canvas"}
+    read = tools["get_context_canvas"]
+    catalog = json.loads(read.invoke({"collection": "retrieval"}))
+    assert catalog["items"][0]["description"] == "original summary"
+    assert canvas.catalog("retrieval", role="query")[0]["description"] == "newer summary"
+    for collection in ("retrieval", "draft", "approved", "render", "review"):
+        assert "error" not in json.loads(read.invoke({"collection": collection}))
+    evidence = json.loads(read.invoke({
+        "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
+    }))
+    assert "original evidence" in evidence["content"]
+    assert "newer evidence" not in evidence["content"]
+    assert "error" not in json.loads(read.invoke({
+        "collection": "retrieval", "reference": "chunk-2",
+    }))
+    review = json.loads(read.invoke({
+        "collection": "review", "reference": "latest", "section": "review",
+    }))
+    assert json.loads(review["content"])["action"] == "complete"
+    assert json.loads(review["content"])["selected_video_ranges"][0]["start_seconds"] == 11
+    forbidden = json.loads(read.invoke({"collection": "evidence"}))
+    assert forbidden["error"]["code"] == "FORBIDDEN_COLLECTION"
+    for role in ("query", "evaluator", "chat"):
+        with pytest.raises(AgentToolFeedbackError, match="cannot read"):
+            canvas.catalog("review", role=role)
 
 
 def test_canvas_audit_rejects_skipped_catalog_page_and_changed_revision() -> None:

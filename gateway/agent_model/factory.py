@@ -213,6 +213,7 @@ class AgentModelFactory:
         max_output_tokens: int,
         max_input_chars: int,
         context_window_policy: ContextWindowPolicy,
+        total_timeout_enabled: bool = True,
     ) -> SupervisorAgentModel:
         """Bind the internal Supervisor harness to the configured API model."""
         controls = self._controls(
@@ -247,6 +248,7 @@ class AgentModelFactory:
                 max_input_chars=controls["max_input_chars"],
                 context_window_policy=controls["context_window_policy"],
                 supports_vision_input=self._config.supports_vision_input,
+                total_timeout_enabled=total_timeout_enabled,
             ), controls)
 
     def build_supervisor(
@@ -259,6 +261,7 @@ class AgentModelFactory:
         max_output_tokens: int,
         max_input_chars: int,
         context_window_policy: ContextWindowPolicy,
+        total_timeout_enabled: bool = True,
     ) -> SupervisorAgentModel:
         options = dict(
             model=model, reasoning_effort=reasoning_effort,
@@ -267,12 +270,20 @@ class AgentModelFactory:
             context_window_policy=context_window_policy,
         )
         if harness == "deepagents":
-            return self.build_deep_agent(**options)
+            return self.build_deep_agent(**options, total_timeout_enabled=total_timeout_enabled)
         if harness != "codex":
             raise ValueError("Supervisor harness must be deepagents or codex")
         if not isinstance(self._primary, CodexModelSourceConfig):
             raise ValueError("Codex Supervisor requires a codex_app_server source")
-        return CodexSupervisorModel(agent_model=self.build_loop(**options))
+        controls = self._controls(
+            request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
+            max_input_chars=max_input_chars, context_window_policy=context_window_policy,
+        )
+        adapter = self._build_loop(
+            model=model, reasoning_effort=reasoning_effort,
+            **controls, total_timeout_enabled=total_timeout_enabled,
+        )
+        return CodexSupervisorModel(agent_model=self._bound(adapter, controls))
 
     def build_structured(
         self,
@@ -363,7 +374,7 @@ class AgentModelFactory:
 
     def _build_loop(
         self, *, model, reasoning_effort, request_timeout_seconds, max_output_tokens,
-        max_input_chars, context_window_policy,
+        max_input_chars, context_window_policy, total_timeout_enabled=True,
     ):
         source = self._primary
         if isinstance(source, OpenAIModelSourceConfig):
@@ -414,6 +425,7 @@ class AgentModelFactory:
                 codex_bin=source.codex_bin,
                 max_concurrency=source.max_concurrency,
                 executor=self._codex_executor,
+                total_timeout_enabled=total_timeout_enabled,
             )
             adapter.supports_vision_input = self._config.supports_vision_input
             return adapter

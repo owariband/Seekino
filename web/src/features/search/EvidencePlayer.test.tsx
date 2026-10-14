@@ -89,6 +89,55 @@ const playbackRange = { startSeconds: 12_000, endSeconds: 15_000 };
 const nextPlaybackRange = { startSeconds: 25_000, endSeconds: 27_000 };
 
 describe("Evidence range playback", () => {
+  it("shows the Agent reason and original evidence without retrieval matches or badges", () => {
+    const reasonHit: VideoChunkSearchHit = {
+      ...hit,
+      candidate: { ...hit.candidate, lexicalRank: 1, lexicalScore: 3 },
+      selectionReason: {
+        ...hit.selectionReason,
+        matchedEvidence: [
+          ...hit.selectionReason.matchedEvidence,
+          { kind: "CONTEXT", text: "高松燈", startSeconds: 12_000, endSeconds: 14_000 },
+        ],
+        lexicalMatches: [{
+          field: "person_names",
+          rawText: "高松燈",
+          language: null,
+          role: null,
+          speaker: null,
+          startSeconds: 12_000,
+          endSeconds: 14_000,
+          timelineIndex: 0,
+          enrichmentIndex: null,
+        }],
+        limitations: ["片段只覆盖当前时间范围。"],
+      },
+    };
+    render(<EvidencePlayer hit={reasonHit} playbackRange={playbackRange} />);
+
+    expect(screen.getByText(reasonHit.selectionReason.summary)).toBeInTheDocument();
+    expect(screen.getByText("片段只覆盖当前时间范围。")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "命中的可核验事实" })).not.toBeInTheDocument();
+    expect(screen.queryByText("高松燈")).not.toBeInTheDocument();
+    expect(screen.queryByText(/召回第|词项命中|ASR 原话|剧情语义|画面事件|BM25/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "原始证据" }));
+    expect(screen.getByText("角色甲：我们在门口等你。")).toBeInTheDocument();
+    expect(screen.getByText("人物手持雨伞站在门口。")).toBeInTheDocument();
+    expect(screen.queryByText("高松燈")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "前后语境" }));
+    expect(screen.getByText("室外开始下雨。")).toBeInTheDocument();
+    expect(screen.getByText(hit.evidence.videoCompact)).toBeInTheDocument();
+    expect(screen.getByText("另一人从走廊出现。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "选择理由" }));
+    expect(screen.getByText(reasonHit.selectionReason.summary)).toBeInTheDocument();
+    expect(screen.getByText("片段只覆盖当前时间范围。")).toBeInTheDocument();
+    expect(screen.queryByText("高松燈")).not.toBeInTheDocument();
+    expect(screen.queryByText(/召回第|词项命中|ASR 原话|剧情语义|画面事件|BM25/)).not.toBeInTheDocument();
+  });
+
   it("keeps the exact millisecond range while rounding the displayed seconds", () => {
     render(<EvidencePlayer hit={hit} playbackRange={{ startSeconds: 8_008, endSeconds: 8_250 }} />);
     const video = screen.getByLabelText<HTMLVideoElement>("视频证据");

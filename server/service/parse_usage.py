@@ -6,6 +6,7 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 
 from gateway.tracing import LangfuseTracing
@@ -18,12 +19,14 @@ from ..model.dto.jobDTO import (
 )
 from ..model.dto.parseUsageDTO import (
     ModelUsageState,
-    UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,
+    UsageCostSummary, UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,
 )
+from ..config.usage import ModelPricingConfig
 from ..repository.video_parse import RUNTIME_DETAIL_KEY
 from ..repository.model_usage import ModelUsageRepository
 from ..utils.time import datetime_to_unix_time_ms, now_utc, unix_time_ms_to_datetime
 from ..utils.validation import require_nonempty_text
+from .model_pricing import estimate_model_cost
 
 _logger = logging.getLogger(__name__)
 _TOKEN_FIELDS = (
@@ -45,8 +48,10 @@ class ParseUsageService:
     def __init__(
         self, repository: ModelUsageRepository, *, tracing: LangfuseTracing | None = None,
         clock: Callable[[], datetime] = now_utc,
+        pricing: ModelPricingConfig | None = None,
     ) -> None:
         self._repository, self._tracing, self._clock = repository, tracing, clock
+        self._pricing = pricing if pricing is not None else ModelPricingConfig()
         # Gateway de-duplicates subscribers by callable identity across nested scopes.
         self._observer = self._record_call
         self._owner: ContextVar[tuple[str, str, str, str | None] | None] = ContextVar("local_usage_owner", default=None)
@@ -202,22 +207,22 @@ class ParseUsageService:
             seen.add(state.call_id)
             details = state.usage["sdk_model_usage"]
             if details:
-                records.extend(_model_usage(state, detail["model_name"], detail["tokens"]) for detail in details)
+                records.extend(_model_usage(state, detail["model_name"], detail["tokens"], self._pricing) for detail in details)
             else:
-                records.append(_model_usage(state, state.metadata["model_name"], state.usage["tokens"]))
+                records.append(_model_usage(state, state.metadata["model_name"], state.usage["tokens"], self._pricing))
         models: dict[tuple, list[dict]] = {}
         runs: dict[tuple[str, str], list[dict]] = {}
         for record in records:
-            key = tuple(record[name] for name in ("provider", "model", "category", "operation"))
+            key = tuple(record[name] for name in ("provider", "model", "category", "operation", "src"))
             models.setdefault(key, []).append(record)
             runs.setdefault((record["task_type"], record["run_id"]), []).append(record)
         model_rows = tuple(
-            UsageModelRow(**asdict(_totals(group, truncated=batch.truncated)),
-                          provider=key[0], model=key[1], category=key[2], operation=key[3])
+            UsageModelRow(**_total_fields(_totals(group, truncated=batch.truncated)),
+                          provider=key[0], model=key[1], category=key[2], operation=key[3], src=key[4])
             for key, group in sorted(models.items(), key=lambda pair: tuple(value or "" for value in pair[0]))
         )
         run_rows = tuple(
-            UsageRunRow(**asdict(_totals(group, truncated=batch.truncated)), run_id=identity,
+            UsageRunRow(**_total_fields(_totals(group, truncated=batch.truncated)), run_id=identity,
                         task_type=task_type, series_id=_unique(group, "series_id"), video_id=_unique(group, "video_id"))
             for (task_type, identity), group in sorted(runs.items())
         )
@@ -232,7 +237,9 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _model_usage(state: ModelUsageState, model: Any, tokens: Mapping | None) -> dict[str, Any]:
+def _model_usage(
+    state: ModelUsageState, model: Any, tokens: Mapping | None, pricing: ModelPricingConfig,
+) -> dict[str, Any]:
     # Persisted tokens follow Gateway's inclusive contract; subsets never enter total twice.
     usage = None
     if tokens is not None:
@@ -247,12 +254,19 @@ def _model_usage(state: ModelUsageState, model: Any, tokens: Mapping | None) -> 
         series_id = _text(series_ids[0])
     return {
         "call_id": state.call_id, "provider": _text(metadata["provider"]), "model": _text(model),
+        "src": _text(metadata.get("src")),
         "category": _text(context.get("category")), "operation": _text(metadata["operation"]),
         "run_id": state.run_id, "task_type": state.task_type,
         "series_id": series_id, "video_id": _text(context.get("video_id")),
         **{name: getattr(usage, name) if usage is not None else None for name in _TOKEN_FIELDS},
         "known_tokens": usage.total_tokens if usage is not None else 0,
         "usage_complete": usage is not None and metadata["usage_scope"] != "main_loop",
+        "cost_amount": estimate_model_cost(
+            pricing, provider=_text(metadata["provider"]), model=_text(model),
+            category=_text(context.get("category")), operation=_text(metadata["operation"]),
+            started_at=datetime_to_unix_time_ms(state.started_at), usage=usage,
+        ),
+        "cost_excluded": metadata["provider"] == "codex",
     }
 
 
@@ -270,16 +284,40 @@ def _totals(records: list[dict], *, truncated: bool) -> UsageTotals:
     if any(not record["usage_complete"] for record in records):
         for name in ("input_tokens", "output_tokens", "total_tokens"):
             token_totals[name] = None
+    priced, unpriced, excluded = set(), set(), set()
+    amounts = []
+    for record in records:
+        if record["cost_excluded"]:
+            excluded.add(record["call_id"])
+        elif record["cost_amount"] is None:
+            unpriced.add(record["call_id"])
+        else:
+            priced.add(record["call_id"])
+            amounts.append(record["cost_amount"])
+    known = format(sum(amounts, Decimal(0)), "f") if amounts else None
+    cost = UsageCostSummary(
+        estimated_amount=known if not truncated and not unpriced and all(
+            record["cost_excluded"] or record["usage_complete"] for record in records
+        ) else None,
+        known_amount=known, priced_call_count=len(priced - unpriced),
+        unpriced_call_count=len(unpriced), excluded_call_count=len(excluded),
+    )
     return UsageTotals(
         call_count=len({record["call_id"] for record in records}), **token_totals,
         known_tokens=sum(record["known_tokens"] for record in records),
         missing_usage_count=len({record["call_id"] for record in records if not record["usage_complete"]}),
+        cost=cost,
     )
+
+
+def _total_fields(totals: UsageTotals) -> dict[str, Any]:
+    # Preserve the typed nested cost summary when constructing derived rows.
+    return {name: getattr(totals, name) for name in UsageTotals.__dataclass_fields__}
 
 
 def _unknown_totals() -> UsageTotals:
     return UsageTotals(
         call_count=None, input_tokens=None, output_tokens=None,
         cached_input_tokens=None, cache_write_input_tokens=None, reasoning_tokens=None,
-        total_tokens=None, known_tokens=0, missing_usage_count=0,
+        total_tokens=None, known_tokens=0, missing_usage_count=0, cost=UsageCostSummary(),
     )

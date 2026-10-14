@@ -95,12 +95,79 @@ describe("local Token usage page", () => {
     expect(screen.getByText(/解析、向量化与 Chat/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?tenantId=local-default");
-    expect(screen.queryByText(/人民币/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Langfuse|USD|费用/)).not.toBeInTheDocument();
+    expect(summary.getByText("API预估费用")).toBeInTheDocument();
+    expect(summary.getByText("未计价")).toBeInTheDocument();
+    expect(screen.queryByText(/Langfuse|USD/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "任务与 Chat" }));
     expect(screen.getByText("parse-A")).toBeInTheDocument();
     expect(screen.getByText("chat-B")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("shows precise API estimates and source grouping while excluding Codex subscription costs", async () => {
+    const cost = { currency: "CNY" as const, estimatedAmount: "0.12345678901234567890", knownAmount: "0.12345678901234567890",
+      pricedCallCount: 1, unpricedCallCount: 0, excludedCallCount: 1 };
+    const excluded = { ...cost, estimatedAmount: "0", knownAmount: "0", pricedCallCount: 0 };
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ totals: totals({ cost }), models: [
+      { ...overview().models[0]!, src: "endpoint-A", cost: { ...cost, excludedCallCount: 0 } },
+      { ...overview().models[0]!, src: "endpoint-B", cost: null },
+      { ...totals({ callCount: 1 }), model: "gpt-6-astra", provider: "codex_local", src: null, category: "parse", operation: "refine", cost: excluded },
+    ], runs: [{ ...overview().runs[0]!, cost }, { ...overview().runs[1]!, cost: excluded }] }))));
+    renderPage();
+    expect(await screen.findByText("endpoint-A")).toBeInTheDocument();
+    expect(screen.getByText("endpoint-B")).toBeInTheDocument();
+    expect(screen.getAllByText("model-A")).toHaveLength(2);
+    const summary = within(screen.getByLabelText("模型消耗概况"));
+    expect(summary.getByText("¥0.12345678901234567890")).toBeInTheDocument();
+    const models = within(screen.getByRole("region", { name: "模型用量明细" }));
+    expect(models.getByText("不适用（Codex订阅）")).toBeInTheDocument();
+    expect(models.getByText("未记录")).toBeInTheDocument();
+    expect(models.getByText("未计价")).toBeInTheDocument();
+    expect(screen.queryByText(/^¥0$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Token 不能直接换算为每周额度百分比/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "任务与 Chat" }));
+    const runs = within(screen.getByRole("region", { name: "任务与 Chat 明细" }));
+    expect(runs.getByText("¥0.12345678901234567890")).toBeInTheDocument();
+    expect(runs.getByText("不适用（Codex订阅）")).toBeInTheDocument();
+  });
+
+  it("keeps partial pricing distinct from complete API amounts and token coverage", async () => {
+    const cost = { currency: "CNY" as const, estimatedAmount: null, knownAmount: "0.18",
+      pricedCallCount: 1, unpricedCallCount: 2, excludedCallCount: 1 };
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ truncated: true,
+      totals: totals({ cost, totalTokens: null, missingUsageCount: 1 }),
+      models: [{ ...overview().models[0]!, cost }], runs: [{ ...overview().runs[0]!, cost }],
+    }))));
+    renderPage();
+    expect(await screen.findByText("已计价API小计")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("模型消耗概况")).getByText("¥0.18（小计）")).toBeInTheDocument();
+    expect(screen.getByText(/2 条 API 调用未计价/)).toBeInTheDocument();
+    expect(screen.getByText(/1 条调用记录缺少完整 Token 用量/)).toBeInTheDocument();
+    expect(screen.getByText(/当前结果被截断/)).toBeInTheDocument();
+  });
+
+  it("shows subscription-only totals without inventing API money", async () => {
+    const cost = { currency: "CNY" as const, estimatedAmount: "0", knownAmount: "0",
+      pricedCallCount: 0, unpricedCallCount: 0, excludedCallCount: 2 };
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ totals: totals({ cost }), models: [], runs: [] }))));
+    renderPage();
+    expect(await screen.findByText("不适用（Codex订阅）")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("模型消耗概况")).getByText("1,200")).toBeInTheDocument();
+    expect(screen.queryByText(/^¥/)).not.toBeInTheDocument();
+  });
+
+  it("does not turn wholly unpriced API calls into a zero estimate", async () => {
+    const cost = { currency: "CNY" as const, estimatedAmount: null, knownAmount: "0",
+      pricedCallCount: 0, unpricedCallCount: 2, excludedCallCount: 0 };
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ totals: totals({ cost }),
+      models: [{ ...overview().models[0]!, cost }],
+    }))));
+    renderPage();
+    await screen.findByText("model-A");
+    expect(within(screen.getByLabelText("模型消耗概况")).getByText("未计价")).toBeInTheDocument();
+    expect(screen.getByText(/2 条 API 调用未计价/)).toBeInTheDocument();
+    expect(screen.queryByText(/^¥/)).not.toBeInTheDocument();
   });
 
   it("requests a series filter from the server while retaining the complete series options", async () => {

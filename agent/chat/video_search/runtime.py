@@ -15,6 +15,8 @@ from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langgraph.graph import END, START, StateGraph
 
+from agent.utils.tool import AgentTool
+
 from ..common.errors import AgentContextBudgetError, AgentModelInvocationError
 from ..common.tool import as_langchain_tools, attach_agent_tool_logging
 from .chat import render_chat
@@ -29,14 +31,15 @@ from .output import (
 )
 from .query import run_query
 from .state import (
-    AgentFinalOutput, AnswerPhase, EvalDecision, ExecutionControl, LoopTurn,
+    AgentFinalOutput, AnswerPhase, ExecutionControl, LoopTurn,
     ModelContextBudget, QueryDraft, RunInputs, RunLimits, RunState,
     RetrievalChannelContract, SelectedVideoRange, context_json,
 )
 from .skills import LEXICAL_RETRIEVAL_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
 from .tools import (
-    DraftReadAudit, build_chat_tools, build_evaluator_tools, build_query_tools,
+    build_chat_tools, build_evaluator_tools, build_query_tools,
 )
+from .tools.canvas import build_video_search_canvas_tools
 from .video_search_canvas import VideoSearchContextCanvas
 
 _logger = logging.getLogger(__name__)
@@ -56,6 +59,7 @@ class AgentRuntime:
         max_model_calls_per_turn: int = 6,
         max_tool_calls_per_turn: int = 24,
         limits_enabled: bool = False,
+        total_timeout_enabled: bool = True,
         maximum_top_k: int = 20,
         max_prompt_chars: int = 200_000,
         max_tool_result_bytes: int = 16_384,
@@ -93,6 +97,8 @@ class AgentRuntime:
             raise ValueError("max_tool_result_bytes must be at least 512")
         if not isinstance(limits_enabled, bool):
             raise ValueError("limits_enabled must be a boolean")
+        if not isinstance(total_timeout_enabled, bool):
+            raise ValueError("total_timeout_enabled must be a boolean")
         if retrieval_channel not in ("transcript", "lexical"):
             raise ValueError("retrieval_channel must be transcript or lexical")
         for name, value in (
@@ -111,6 +117,7 @@ class AgentRuntime:
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
         self._limits_enabled = limits_enabled
+        self._total_timeout_enabled = total_timeout_enabled
         self._maximum_top_k = maximum_top_k
         self._max_prompt_chars = max_prompt_chars
         self._max_tool_result_bytes = max_tool_result_bytes
@@ -167,6 +174,7 @@ class AgentRuntime:
         max_tool_calls_per_turn: int | None = None,
         max_loop_turns: int | None = None,
         deadline: float | None = None,
+        on_handoff: Callable[[VideoSearchContextCanvas, LoopTurn], None] | None = None,
     ) -> AgentFinalOutput:
         if (
             not inputs["tenant_id"].strip()
@@ -211,12 +219,16 @@ class AgentRuntime:
                 tool_call_limit if legacy_limits_enabled else None
             ),
         )
-        own_deadline = monotonic() + self._execution_timeout
+        run_deadline = (
+            monotonic() + self._execution_timeout
+            if self._total_timeout_enabled else None
+        )
         if deadline is not None and (not isfinite(deadline) or deadline <= 0):
             raise ValueError("deadline must be positive and finite")
+        if deadline is not None:
+            run_deadline = deadline if run_deadline is None else min(run_deadline, deadline)
         control = ExecutionControl(
-            min(own_deadline, deadline) if deadline is not None else own_deadline,
-            cancellation, emit,
+            run_deadline, cancellation, emit,
         )
         canvas = VideoSearchContextCanvas(
             tenant_id=inputs["tenant_id"],
@@ -237,7 +249,55 @@ class AgentRuntime:
             },
         )
         control.check()
+        if on_handoff is not None:
+            turn = result["turns"][-1]
+            final_output = result["final_output"]
+            partial = final_output.partial
+            warnings = list(final_output.warnings)
+            searched_video_ids = set(final_output.searched_video_ids or [])
+            scope_recorded = final_output.searched_video_ids is not None
+            for completed_turn in result["turns"]:
+                for call in completed_turn.retrieval_calls:
+                    partial = partial or call.result.partial
+                    warnings.extend(call.result.warnings)
+                    scope_recorded = scope_recorded and call.result.searched_video_ids is not None
+                    searched_video_ids.update(call.result.searched_video_ids or [])
+            coverage = {
+                "partial": partial,
+                "warnings": list(dict.fromkeys(warnings)),
+                "searched_video_ids": sorted(searched_video_ids) if scope_recorded else None,
+            }
+            turn = replace(turn, retrieval_result=turn.retrieval_result.model_copy(
+                update=coverage, deep=True,
+            ))
+            canvas.put("review", "latest", {
+                "turn_number": turn.number,
+                "action": turn.review.action,
+                "advice": turn.review.advice,
+                "selected_video_ranges": [
+                    item.model_dump(mode="json")
+                    for item in turn.query_draft.selected_video_ranges
+                ],
+                **coverage,
+            }, readonly=True)
+            control.check()
+            on_handoff(canvas, turn)
+            control.check()
         return result["final_output"]
+
+    def build_supervisor_read_tools(
+        self, canvas: VideoSearchContextCanvas, control: ExecutionControl,
+        *, maximum_result_bytes: int | None = None,
+    ) -> list[AgentTool]:
+        return build_video_search_canvas_tools(
+            canvas=canvas, role="supervisor", control=control,
+            maximum_result_bytes=(
+                self._max_tool_result_bytes if maximum_result_bytes is None
+                else min(self._max_tool_result_bytes, maximum_result_bytes)
+            ),
+            maximum_catalog_items=self._max_catalog_items,
+            maximum_read_chars=self._max_read_chars_per_call,
+        )
 
     def turn(self, state: RunState) -> dict:
         control = state["control"]
@@ -260,13 +320,11 @@ class AgentRuntime:
         })
         calls = []
         context_budget = ModelContextBudget(self._max_prompt_chars)
-        query_control = replace(
-            control,
-            deadline=min(
-                control.deadline,
-                monotonic() + self._stage_timeout,
-            ),
-        )
+        query_deadline = monotonic() + self._stage_timeout
+        query_control = replace(control, deadline=(
+            query_deadline if control.deadline is None
+            else min(control.deadline, query_deadline)
+        ))
         query_tools = build_query_tools(
             self._retrieve,
             canvas=canvas,
@@ -326,14 +384,11 @@ class AgentRuntime:
             "type": "answer.progress",
             "phase": AnswerPhase.EVALUATING,
         })
-        audit = DraftReadAudit()
-        evaluator_control = replace(
-            control,
-            deadline=min(
-                control.deadline,
-                monotonic() + self._evaluator_stage_timeout,
-            ),
-        )
+        evaluator_deadline = monotonic() + self._evaluator_stage_timeout
+        evaluator_control = replace(control, deadline=(
+            evaluator_deadline if control.deadline is None
+            else min(control.deadline, evaluator_deadline)
+        ))
         evaluator_tools = build_evaluator_tools(
             self._retrieve,
             canvas=canvas,
@@ -345,7 +400,6 @@ class AgentRuntime:
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
-            audit=audit,
             retrieval_channel=self._retrieval_channel,
         )
         attach_agent_tool_logging(evaluator_tools, role="Evaluator", inputs=inputs)
@@ -377,33 +431,12 @@ class AgentRuntime:
         review_source = "evaluator"
         if review.action == "complete":
             with canvas._lock:
-                approval_revision = canvas.revision
-                if canvas.draft_items() != draft_items or not audit.covers(
-                    [item.video_chunk_id for item in draft_items], revision=approval_revision,
-                ):
-                    review = EvalDecision(
-                        action="continue",
-                        advice=("Evaluator must read every page of the current Draft catalog "
-                                "and every section of each current Draft item before approval. "
-                                "Repeat the audit using get_context_canvas."),
-                    )
-                    review_source = "draft_read_guard"
-                else:
-                    # Output uses the same immutable evidence that was actually audited.
-                    selected = selected.model_copy(update={"hits": [
-                        canvas.retrieval_snapshot(item.video_chunk_id) for item in draft_items
-                    ]}, deep=True)
-                    try:
-                        validate_approved_video_ranges(selected, draft)
-                    except AgentModelInvocationError as exc:
-                        review = EvalDecision(
-                            action="continue",
-                            advice=("Approved range validation rejected the draft: "
-                                    f"{exc}. Revise the Draft Item ranges before resubmitting."),
-                        )
-                        review_source = "range_validation"
-                    if review.action == "complete":
-                        canvas.approve_draft(expected_revision=approval_revision)
+                # Freeze canonical evidence after the Evaluator approves the draft.
+                selected = selected.model_copy(update={"hits": [
+                    canvas.retrieval_snapshot(item.video_chunk_id) for item in draft_items
+                ]}, deep=True)
+                validate_approved_video_ranges(selected, draft)
+                canvas.approve_draft(expected_revision=canvas.revision)
 
         current = LoopTurn(
             number=len(previous) + 1,
@@ -458,13 +491,11 @@ class AgentRuntime:
             "type": "answer.progress",
             "phase": AnswerPhase.RESPONDING,
         })
-        chat_control = replace(
-            control,
-            deadline=min(
-                control.deadline,
-                monotonic() + self._chat_timeout,
-            ),
-        )
+        chat_deadline = monotonic() + self._chat_timeout
+        chat_control = replace(control, deadline=(
+            chat_deadline if control.deadline is None
+            else min(control.deadline, chat_deadline)
+        ))
         chat_tools = build_chat_tools(
             canvas=state["canvas"],
             control=chat_control,

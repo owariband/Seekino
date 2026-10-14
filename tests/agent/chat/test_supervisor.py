@@ -15,7 +15,8 @@ from gateway.web_search import WebSearchError, WebSearchHit
 from gateway.errors import ContentFilterError
 from gateway.openai.agent import OpenAIAgentModel
 from agent.chat.common.errors import (
-    AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
+    AgentContextBudgetError, AgentExecutionTimeoutError,
+    AgentModelInvocationError, AgentToolInvocationError,
 )
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.realtime_understanding.runtime import RealtimeUnderstandingRuntime
@@ -25,7 +26,7 @@ from agent.chat.video_search.errors import (
     VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
 )
 from tests.agent.chat.test_realtime_understanding import _context, _evidence, _host
-from tests.agent.chat.test_runtime import Chat, Evaluator, Query, Retrieval
+from tests.agent.chat.test_runtime import Chat, Evaluator, Query, Retrieval, _runtime as _video_runtime
 from tests.gateway.test_deepagents import FakeClient, ScriptedModel, _completion
 
 
@@ -40,17 +41,23 @@ def _inputs(*, series_ids=None):
 
 
 class FakeVideoRuntime:
-    def __init__(self):
+    def __init__(self, *, query=None, retrieval=None):
         self.calls = []
+        # Exercise the real Canvas handoff with local test agents, not a
+        # production fallback that reconstructs evidence from the child answer.
+        self.runtime, *_ = _video_runtime(query=query, retrieval=retrieval)
+        self.last_result = None
 
     def kick(self, inputs, **kwargs):
         self.calls.append((inputs, kwargs))
-        return SimpleNamespace(agent_reply=SimpleNamespace(
-            message="Approved video explanation.", result_count=1,
-        ))
+        self.last_result = self.runtime.kick(inputs, **kwargs)
+        return self.last_result
+
+    def build_supervisor_read_tools(self, *args, **kwargs):
+        return self.runtime.build_supervisor_read_tools(*args, **kwargs)
 
     def close(self):
-        pass
+        self.runtime.close()
 
 
 class FakeWebSearcher:
@@ -69,9 +76,10 @@ class FakeSupervisorModel:
     model_name = "supervisor-test"
     provider_name = "fake"
 
-    def __init__(self, *, calls=(), queries=None, answer="Direct answer."):
+    def __init__(self, *, calls=(), queries=None, arguments=None, answer="Direct answer."):
         self.calls = calls
         self.queries = queries
+        self.arguments = arguments
         self.answer = answer
         self.tool_results = []
         self.prompts = []
@@ -89,14 +97,18 @@ class FakeSupervisorModel:
         self.runs.append((thread_id, message_id, user_message, history))
         self.model_call_limits.append(max_model_calls)
         self.request_timeouts.append(request_timeout_seconds)
-        assert request_timeout_seconds > 0
+        assert request_timeout_seconds is None or request_timeout_seconds > 0
         assert max_input_chars > 0
         check_control()
         available = {tool.name: tool for tool in tools}
-        assert set(available) == {"search_web", "search_video_graph"}
+        assert set(available) == {
+            "search_web", "search_video_graph", "get_context_canvas",
+            "submit_video_item", "remove_video_item",
+        }
         for index, name in enumerate(self.calls):
             query = self.queries[index] if self.queries is not None else "question"
-            self.tool_results.append(json.loads(available[name].invoke({"query": query})))
+            arguments = self.arguments[index] if self.arguments is not None else {"query": query}
+            self.tool_results.append(json.loads(available[name].invoke(arguments)))
         handle_text(self.answer)
 
     def confirm_turn(self, thread_id, message_id, content):
@@ -112,12 +124,14 @@ class FakeSupervisorModel:
 def _runtime(
     model, *, video=None, web=None, execution_timeout_seconds=60,
     supervisor_timeout_seconds=480, limits_enabled=False,
+    total_timeout_enabled=True,
 ):
     return SupervisorRuntime(
         video or FakeVideoRuntime(), model, web or FakeWebSearcher(),
         max_web_results=5, web_timeout_seconds=12,
         execution_timeout_seconds=execution_timeout_seconds,
         supervisor_timeout_seconds=supervisor_timeout_seconds,
+        total_timeout_enabled=total_timeout_enabled,
         limits_enabled=limits_enabled, max_tool_result_bytes=4096,
         max_prompt_chars=10000,
     )
@@ -204,7 +218,222 @@ def test_parallel_video_tool_calls_share_one_approved_result():
     )
 
     assert len(video.calls) == len(loads) == 1
-    assert result.content == "Approved video explanation."
+    assert result.content == "Rewritten video answer."
+    assert result.video_result.hits == []
+
+
+def test_supervisor_reads_real_handoff_canvas_without_mutating_child_draft():
+    collections = ("retrieval", "draft", "approved", "render", "review")
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", *("get_context_canvas" for _ in collections),
+               "get_context_canvas", "submit_video_item", "get_context_canvas"),
+        arguments=(
+            {"query": "find the cup"},
+            *({"collection": collection} for collection in collections),
+            {"collection": "retrieval", "reference": "chunk-1", "section": "evidence.text"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20,
+             "claim": "Supervisor checked the original text evidence."},
+            {"collection": "approved"},
+        ),
+        answer="Supervisor corrected the draft using the original evidence.",
+    )
+    video = FakeVideoRuntime()
+    result = _runtime(model, video=video).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+
+    assert all("error" not in receipt for receipt in model.tool_results)
+    assert "cup action" in model.tool_results[6]["content"]
+    assert model.tool_results[3]["revision"] == model.tool_results[-1]["revision"]
+    assert result.content == model.answer
+    assert result.video_result.agent_reply.message == model.answer
+    assert result.video_result.hits[0].selection_reason.summary == (
+        "Supervisor checked the original text evidence."
+    )
+    assert video.last_result.agent_reply.message == "## Final answer\n\nGrounded answer."
+    assert video.last_result.hits[0].selection_reason.summary == "Grounded evidence for chunk-1."
+    assert [(block.start_seconds, block.end_seconds) for block in video.last_result.render_blocks
+            if block.type == "video"] == [(11, 19)]
+
+
+@pytest.mark.parametrize("start,end", [(10, 20), (12, 18)])
+def test_supervisor_can_expand_or_narrow_the_child_range_inside_canonical_evidence(start, end):
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": start, "end_seconds": end,
+             "claim": "Revised scope after Supervisor review."},
+        ),
+        answer="The final explanation is written by Supervisor.",
+    )
+    result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+    assert "error" not in model.tool_results[1]
+    assert result.content == model.answer
+    assert result.video_result.agent_reply.result_count == 1
+    assert [block.type for block in result.video_result.render_blocks] == ["markdown", "video"]
+    block = result.video_result.render_blocks[1]
+    assert (block.video_chunk_id, block.start_seconds, block.end_seconds) == ("chunk-1", start, end)
+
+
+@pytest.mark.parametrize("remove_second", [False, True])
+def test_supervisor_updates_submitted_ids_in_place_and_can_remove_them(remove_second):
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item", "submit_video_item", "submit_video_item")
+        + (("remove_video_item",) if remove_second else ()),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "First."},
+            {"video_chunk_id": "chunk-2", "start_seconds": 10, "end_seconds": 20, "claim": "Second."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18, "claim": "Updated."},
+        ) + (({"video_chunk_id": "chunk-2"},) if remove_second else ()),
+    )
+    result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+    assert all("error" not in receipt for receipt in model.tool_results)
+    assert [hit.candidate.video_chunk_id for hit in result.video_result.hits] == (
+        ["chunk-1"] if remove_second else ["chunk-1", "chunk-2"]
+    )
+    assert result.video_result.hits[0].selection_reason.summary == "Updated."
+    assert [(block.video_chunk_id, block.start_seconds, block.end_seconds)
+            for block in result.video_result.render_blocks if block.type == "video"] == (
+        [("chunk-1", 12, 18)] if remove_second else [("chunk-1", 12, 18), ("chunk-2", 10, 20)]
+    )
+
+
+@pytest.mark.parametrize("arguments,code", [
+    ({"video_chunk_id": "unknown", "start_seconds": 10, "end_seconds": 20, "claim": "Wrong ID."}, "UNKNOWN_ITEM"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 9, "end_seconds": 20, "claim": "Outside."}, "INVALID_VIDEO_RANGE"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 21, "claim": "Outside."}, "INVALID_VIDEO_RANGE"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 12, "claim": "Empty."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 18, "end_seconds": 12, "claim": "Reversed."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 10.5, "end_seconds": 20, "claim": "Fraction."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": True, "end_seconds": 20, "claim": "Boolean."}, "INVALID_ARGUMENTS"),
+])
+def test_invalid_supervisor_submission_is_feedback_and_does_not_replace_valid_selection(arguments, code):
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19, "claim": "Valid."},
+            arguments,
+        ),
+    )
+    result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+    assert model.tool_results[2]["error"]["code"] == code
+    assert result.video_result.hits[0].selection_reason.summary == "Valid."
+    assert [(block.start_seconds, block.end_seconds) for block in result.video_result.render_blocks
+            if block.type == "video"] == [(11, 19)]
+
+
+@pytest.mark.parametrize("name,arguments", [
+    ("get_context_canvas", {"collection": "retrieval"}),
+    ("submit_video_item", {"video_chunk_id": "chunk-1", "start_seconds": 10,
+                           "end_seconds": 20, "claim": "No handoff."}),
+])
+def test_supervisor_review_tools_before_handoff_return_feedback(name, arguments):
+    model = FakeSupervisorModel(calls=(name,), arguments=(arguments,))
+    result = _runtime(model).kick(_inputs(), load_video_context=lambda: [])
+
+    assert model.tool_results[0]["error"]["code"] == "VIDEO_REVIEW_UNAVAILABLE"
+    assert result.content == model.answer
+    assert result.video_result is None
+
+
+def test_removing_an_unsubmitted_video_before_handoff_is_idempotent():
+    model = FakeSupervisorModel(
+        calls=("remove_video_item", "remove_video_item"),
+        arguments=({"video_chunk_id": "chunk-1"}, {"video_chunk_id": "chunk-1"}),
+    )
+    result = _runtime(model).kick(_inputs(), load_video_context=lambda: [])
+
+    assert all(receipt["removed"] is False and receipt["video_item_count"] == 0
+               for receipt in model.tool_results)
+    assert result.video_result is None
+
+
+@pytest.mark.parametrize("empty_retrieval", [False, True])
+def test_supervisor_can_deliver_only_final_text_without_child_video_fallback(empty_retrieval):
+    video = FakeVideoRuntime(
+        query=Query(selected=()) if empty_retrieval else None,
+        retrieval=Retrieval([]) if empty_retrieval else None,
+    )
+    model = FakeSupervisorModel(calls=("search_video_graph",), answer="No reliable clip is selected.")
+    result = _runtime(model, video=video).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+    assert result.content == model.answer
+    assert result.video_result.agent_reply.result_count == 0
+    assert result.video_result.hits == []
+    assert [block.type for block in result.video_result.render_blocks] == ["markdown"]
+    assert result.video_result.render_blocks[0].markdown == model.answer
+
+
+def test_supervisor_can_remove_every_submitted_video_item():
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item", "remove_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Candidate."},
+            {"video_chunk_id": "chunk-1"},
+        ),
+        answer="Supervisor decided that only a qualified text answer is supported.",
+    )
+    result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+    assert all("error" not in receipt for receipt in model.tool_results)
+    assert result.video_result.hits == []
+    assert [block.type for block in result.video_result.render_blocks] == ["markdown"]
+
+
+def test_cancelled_supervisor_cannot_deliver_its_submitted_video_selection():
+    cancellation = Event()
+
+    class CancelledModel(FakeSupervisorModel):
+        def run_agent(self, prompt, **kwargs):
+            super().run_agent(prompt, **kwargs)
+            cancellation.set()
+
+    model = CancelledModel(
+        calls=("search_video_graph", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Submitted."},
+        ),
+    )
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        _runtime(model).kick(
+            _inputs(series_ids=["series"]), load_video_context=lambda: [], cancellation=cancellation,
+        )
+    assert "error" not in model.tool_results[1]
+
+
+def test_supervisor_requires_its_own_nonempty_text_even_with_a_submitted_video():
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Submitted."},
+        ),
+        answer="   ",
+    )
+    with pytest.raises(AgentModelInvocationError, match="completed without an answer"):
+        _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+
+@pytest.mark.parametrize("use_video", [False, True])
+def test_web_source_list_cannot_replace_an_empty_supervisor_final_answer(use_video):
+    model = FakeSupervisorModel(
+        calls=("search_web", "search_video_graph") if use_video else ("search_web",),
+        answer="   ",
+    )
+    with pytest.raises(AgentModelInvocationError, match="completed without an answer"):
+        _runtime(model).kick(
+            _inputs(series_ids=["series"] if use_video else []),
+            load_video_context=lambda: [],
+        )
+    assert model.tool_results[0]["result_count"] == 1
 
 
 @pytest.mark.parametrize("vision", [False, True])
@@ -362,7 +591,7 @@ def test_realtime_budget_preserves_anchor_facts_captions_and_missing_coverage(tm
     ("search_video_graph", "understand_current_video", "search_web"),
     ("understand_current_video", "search_web", "search_video_graph"),
 ])
-def test_three_tools_preserve_approved_answer_and_current_video_explanation(order):
+def test_three_tools_deliver_supervisor_final_answer_and_current_video_explanation(order):
     class Realtime:
         def kick(self, runtime_inputs, **kwargs):
             return SimpleNamespace(
@@ -377,8 +606,8 @@ def test_three_tools_preserve_approved_answer_and_current_video_explanation(orde
         model_name = "configured-model"
 
         def run_agent(self, prompt, *, tools, handle_text, **kwargs):
-            assert "最终文本必须包含根据其证据组织的当前视频解释" in prompt
-            assert "不复述或改写其批准答案，网页信息另作补充" in prompt
+            assert "实时理解和网页结果如有使用，应融入这份最终回答" in prompt
+            assert "不复述或改写其批准答案，网页信息另作补充" not in prompt
             assert "最终文本只写网页补充" not in prompt
             available = {tool.name: tool for tool in tools}
             for name in order:
@@ -395,11 +624,12 @@ def test_three_tools_preserve_approved_answer_and_current_video_explanation(orde
         max_tool_result_bytes=4096, max_prompt_chars=10000,
     )
     result = runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
-    assert result.content.startswith("Approved video explanation.\n\n")
-    assert result.content.count("Approved video explanation.") == 1
+    assert "Approved video explanation." not in result.content
     assert "Current-video explanation: lambda is the coefficient." in result.content
     assert "Web supplement" in result.content
     assert result.video_result is not None
+    assert result.video_result.hits == []
+    assert result.video_result.agent_reply.message == result.content
     assert result.web_sources[0].url == "https://example.org/source"
 
 
@@ -441,8 +671,9 @@ def test_video_tool_preserves_full_user_request_across_different_queries():
         inputs,
         load_video_context=lambda: loads.append(True) or [{"seriesId": "series", "videos": []}],
     )
-    assert result.content == "Approved video explanation."
+    assert result.content == "Rewritten"
     assert result.video_result is not None
+    assert result.video_result.hits == []
     assert len(loads) == len(video.calls) == 1
     delegated = video.calls[0][0]
     assert delegated["user_message"] == inputs["user_message"]
@@ -477,7 +708,7 @@ def test_supervisor_video_time_counts_toward_its_configured_deadline(monkeypatch
     result = runtime.kick(
         _inputs(series_ids=["series"]), load_video_context=lambda: [],
     )
-    assert result.content == "Approved video explanation."
+    assert result.content == "Direct answer."
     assert model.request_timeouts == [pytest.approx(300)]
 
     clock[0] = 100.0
@@ -490,13 +721,87 @@ def test_supervisor_video_time_counts_toward_its_configured_deadline(monkeypatch
         runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
 
 
+@pytest.mark.parametrize("video_duration", [599.9, 600.0])
+def test_supervisor_enforces_ten_minute_deadline_including_video_time(monkeypatch, video_duration):
+    clock = [100.0]
+    monkeypatch.setattr("agent.chat.supervisor.monotonic", lambda: clock[0])
+    monkeypatch.setattr("agent.chat.common.state.monotonic", lambda: clock[0])
+
+    class SlowVideo(FakeVideoRuntime):
+        def kick(self, inputs, **kwargs):
+            clock[0] += video_duration
+            return super().kick(inputs, **kwargs)
+
+    video = SlowVideo()
+    model = FakeSupervisorModel(calls=("search_video_graph",))
+    runtime = _runtime(
+        model, video=video, execution_timeout_seconds=600,
+        supervisor_timeout_seconds=600,
+    )
+
+    if video_duration < 600:
+        result = runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+        assert result.content == "Direct answer."
+    else:
+        with pytest.raises(AgentExecutionTimeoutError, match="deadline exceeded"):
+            runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+    assert clock[0] == pytest.approx(100 + video_duration)
+    assert video.calls[0][1]["deadline"] == 700.0
+    assert model.request_timeouts == [pytest.approx(600)]
+
+
+def test_disabled_supervisor_total_timeout_keeps_web_budget_after_long_video_run(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("agent.chat.supervisor.monotonic", lambda: clock[0])
+    monkeypatch.setattr("agent.chat.common.state.monotonic", lambda: clock[0])
+
+    class SlowVideo(FakeVideoRuntime):
+        def kick(self, inputs, **kwargs):
+            clock[0] += 600
+            return super().kick(inputs, **kwargs)
+
+    video = SlowVideo()
+    web = FakeWebSearcher()
+    model = FakeSupervisorModel(calls=("search_video_graph", "search_web"))
+    runtime = _runtime(
+        model, video=video, web=web, total_timeout_enabled=False,
+        execution_timeout_seconds=1, supervisor_timeout_seconds=2,
+    )
+
+    result = runtime.kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+
+    assert result.content.startswith("Direct answer.")
+    assert clock[0] == 700.0
+    assert video.calls[0][1]["deadline"] is None
+    assert model.request_timeouts == [None]
+    assert web.calls == [("question", 5, 12)]
+
+
+def test_disabled_supervisor_total_timeout_preserves_cancellation():
+    cancellation = Event()
+
+    class CancellingModel(FakeSupervisorModel):
+        def run_agent(self, prompt, **kwargs):
+            assert kwargs["request_timeout_seconds"] is None
+            super().run_agent(prompt, **kwargs)
+            cancellation.set()
+
+    runtime = _runtime(CancellingModel(), total_timeout_enabled=False)
+
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        runtime.kick(_inputs(), load_video_context=lambda: [], cancellation=cancellation)
+
+
 def test_supervisor_ignores_call_limits_when_disabled():
     model = FakeSupervisorModel(calls=("search_video_graph", "search_video_graph"))
     result = _runtime(model).kick(
         _inputs(series_ids=["series"]), load_video_context=lambda: [],
         max_model_calls_per_turn=1, max_tool_calls_per_turn=1,
     )
-    assert result.content == "Approved video explanation."
+    assert result.content == "Direct answer."
     assert model.model_call_limits == [None]
 
 
@@ -508,8 +813,9 @@ def test_supervisor_can_use_web_and_video_in_same_turn():
     result = _runtime(model).kick(
         _inputs(series_ids=["series"]), load_video_context=lambda: [],
     )
-    assert result.content.startswith("Approved video explanation.")
-    assert "### 网页补充" in result.content
+    assert result.content.startswith("Current context from")
+    assert "### 网页补充" not in result.content
+    assert result.video_result.hits == []
     assert "https://example.org/source" in result.content
     assert len(result.web_sources) == 1
 
@@ -623,13 +929,22 @@ def test_video_tool_without_scope_returns_feedback():
 
 @pytest.mark.parametrize("tool_name", ["understand_current_video", "search_video_graph"])
 def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_name):
-    script = ScriptedModel(responses=[
+    responses = [
         AIMessage(content="", tool_calls=[{
             "name": tool_name, "args": {"query": "a shortened query"}, "id": "video-tool",
         }]),
+    ]
+    if tool_name == "search_video_graph":
+        responses.append(AIMessage(content="", tool_calls=[{
+            "name": "submit_video_item", "id": "submit-video",
+            "args": {"video_chunk_id": "chunk-1", "start_seconds": 12,
+                     "end_seconds": 18, "claim": "Supervisor reviewed the original evidence."},
+        }]))
+    responses.extend([
         AIMessage(content="Current-video explanation from the verified evidence."),
         AIMessage(content="Second turn answer."),
     ])
+    script = ScriptedModel(responses=responses)
     store = DeepAgentSessionStore()
     model = DeepAgentsSupervisorModel(
         session_store=store, model="fake", provider_name="fake",
@@ -643,7 +958,7 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
         video, model, FakeWebSearcher(),
         realtime_runtime=RealtimeUnderstandingRuntime(host=host),
         max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
-        max_tool_result_bytes=4096, max_prompt_chars=10000,
+        max_tool_result_bytes=4096, max_prompt_chars=120_000,
     )
     inputs = _inputs(series_ids=["series"])
     inputs["extra_context"] = {"playback": {"videoId": "video", "positionSeconds": 90_123}}
@@ -671,10 +986,12 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
         assert len(query.contexts) == len(evaluator.contexts) == len(chat.contexts) == 1
         assert len(retrieval.calls) == 1
         assert payload["result_count"] == 1
-        assert first.content == first.video_result.agent_reply.message == "## Final answer\n\nGrounded answer."
+        assert first.content == first.video_result.agent_reply.message == (
+            "Current-video explanation from the verified evidence."
+        )
         assert first.video_result.hits[0].evidence.video_chunk_id == "chunk-1"
-        assert first.video_result.render_blocks[1].start_seconds == 11
-        assert first.video_result.render_blocks[1].end_seconds == 19
+        assert first.video_result.render_blocks[1].start_seconds == 12
+        assert first.video_result.render_blocks[1].end_seconds == 18
         host.prepare_context.assert_not_awaited()
 
     config = {"configurable": {"thread_id": inputs["conversation_id"]}}

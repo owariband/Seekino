@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import nullcontext
+from hashlib import sha256
+import json
 import logging
 from typing import Protocol
 
@@ -43,6 +45,7 @@ from ..storage.elasticsearch import (
 from .retrieval_rerank import StructuredTextReranker
 
 _DEFAULT_RETRIEVAL_CONFIG = RetrievalConfig()
+_logger = logging.getLogger(__name__)
 
 
 class QueryEmbedder(Protocol):
@@ -233,6 +236,26 @@ class VideoParseRetrievalService:
             candidate = VideoChunkCandidate.model_validate(
                 ranking.model_dump(include=set(VideoChunkCandidate.model_fields)),
             )
+            if item.candidate.lexical_matches:
+                _logger.info(
+                    "event=video_retrieval_lexical_matches query_sha256=%s "
+                    "video_chunk_id=%s lexical_rank=%s lexical_score=%s "
+                    "retrieval_identity=%s matched_field_count=%s matched_fields=%s",
+                    sha256(query.encode("utf-8")).hexdigest()[:16],
+                    ranking.video_chunk_id, candidate.lexical_rank, candidate.lexical_score,
+                    json.dumps(ranking.retrieval_identity.model_dump(mode="json"),
+                               ensure_ascii=False, separators=(",", ":")),
+                    len(item.candidate.lexical_matches),
+                    json.dumps([
+                        {
+                            **source.model_dump(mode="json", exclude={"raw_text"}),
+                            "text_preview": source.raw_text[:256],
+                            "text_chars": len(source.raw_text),
+                            "text_sha256": sha256(source.raw_text.encode("utf-8")).hexdigest()[:16],
+                        }
+                        for source in item.candidate.lexical_matches
+                    ], ensure_ascii=False, separators=(",", ":")),
+                )
             hits.append(VideoChunkSearchHit(
                 candidate=candidate, selection_reason=_v2_selection_reason(item),
                 evidence=displays[ranking.video_chunk_id],

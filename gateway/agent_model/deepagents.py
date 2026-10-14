@@ -164,7 +164,9 @@ class _GatewayChatModel(BaseChatModel):
             raise ModelFailureError("Supervisor exhausted max_model_calls", reason=ModelFailureReason.LOOP_LIMIT)
         self._model_calls += 1
         if self._delegate is not None:
-            result = self._delegate._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            result = self._delegate._generate(
+                messages, stop=stop, run_manager=run_manager, **{**kwargs, "timeout": timeout},
+            )
             self._check()
             return result
         adapter = self._adapter
@@ -324,9 +326,12 @@ class DeepAgentsSupervisorModel:
         context_window_policy: ContextWindowPolicy | None,
         supports_vision_input: bool = False, agent_model: AgentLoopModel | None = None,
         chat_model: BaseChatModel | None = None,
+        total_timeout_enabled: bool = True,
     ) -> None:
         if not model.strip() or request_timeout_seconds <= 0:
             raise ValueError("model and positive request_timeout_seconds are required")
+        if not isinstance(total_timeout_enabled, bool):
+            raise ValueError("total_timeout_enabled must be a boolean")
         if (agent_model is None) == (chat_model is None):
             raise ValueError("provide exactly one of agent_model and chat_model")
         self.model_name = model
@@ -336,6 +341,7 @@ class DeepAgentsSupervisorModel:
         self._agent_model = agent_model
         self._chat_model = chat_model
         self._request_timeout_seconds = request_timeout_seconds
+        self.total_timeout_enabled = total_timeout_enabled
         self._max_input_chars = max_input_chars
         self._context_window_policy = context_window_policy
 
@@ -354,9 +360,11 @@ class DeepAgentsSupervisorModel:
         timeout = self._request_timeout_seconds if request_timeout_seconds is None else request_timeout_seconds
         if timeout <= 0:
             raise ValueError("request_timeout_seconds must be positive")
-        deadline = monotonic() + timeout
+        deadline = monotonic() + timeout if self.total_timeout_enabled else None
 
         def remaining() -> float:
+            if deadline is None:
+                return min(timeout, self._request_timeout_seconds)
             seconds = deadline - monotonic()
             if seconds <= 0:
                 raise AgentModelTimeoutError("Supervisor execution deadline expired")

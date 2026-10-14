@@ -152,31 +152,39 @@ class UploadService:
         if content_sha256 is not None and not _SHA256_PATTERN.fullmatch(content_sha256):
             raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
-        selected_config = parse_config or self._parse_defaults
-        if selected_config is not None and self._parse_defaults is not None:
-            selected_config.require_active_index(
-                embedding_model=self._parse_defaults.embedding.model,
-                dimensions=self._parse_defaults.embedding.dimensions,
-                image_max_edge=self._parse_defaults.context.background_image_max_edge,
+        def resolve_config() -> tuple[dict | None, dict]:
+            selected_config = parse_config or self._parse_defaults
+            if selected_config is not None:
+                selected_config = selected_config.resolve_execution(self._parse_defaults)
+            if selected_config is not None and self._parse_defaults is not None:
+                selected_config.require_active_index(
+                    embedding_model=self._parse_defaults.embedding.model,
+                    dimensions=self._parse_defaults.embedding.dimensions,
+                    image_max_edge=self._parse_defaults.context.background_image_max_edge,
+                )
+
+            selected_video_parse_config = video_parse_config or (
+                selected_config.to_video_parse_v2()
+                if selected_config is not None
+                else default_video_parse_v2_config()
+            )
+            if (
+                selected_config is not None
+                and selected_video_parse_config.chunk_duration
+                != selected_config.window.chunk_duration_seconds
+            ):
+                raise ValueError(
+                    "video_parse_config.chunk_duration must match "
+                    "the upload parse configuration's fixed chunk duration"
+                )
+            selected_video_parse_config = self._require_video_parse_index_compatibility(
+                selected_video_parse_config
+            )
+            return (
+                selected_config.model_dump(mode="json") if selected_config else None,
+                selected_video_parse_config.model_dump(mode="json"),
             )
 
-        selected_video_parse_config = video_parse_config or (
-            selected_config.to_video_parse_v2()
-            if selected_config is not None
-            else default_video_parse_v2_config()
-        )
-        if (
-            selected_config is not None
-            and selected_video_parse_config.chunk_duration
-            != selected_config.window.chunk_duration_seconds
-        ):
-            raise ValueError(
-                "video_parse_config.chunk_duration must match "
-                "the upload parse configuration's fixed chunk duration"
-            )
-        selected_video_parse_config = self._require_video_parse_index_compatibility(
-            selected_video_parse_config
-        )
         # Preserve older request hashes while keeping all existing nullable fields.
         requested_parse_config = parse_config.model_dump(mode="json") if parse_config else None
         if requested_parse_config is not None and parse_config.embedding.encoder_model is None:
@@ -205,10 +213,9 @@ class UploadService:
             expires_at=now + self._config.session_ttl,
             now=now,
             content_sha256=content_sha256,
-            parse_config=(selected_config.model_dump(mode="json") if selected_config else None),
             requested_parse_config=requested_parse_config,
-            video_parse_config=selected_video_parse_config.model_dump(mode="json"),
             requested_video_parse_config=requested_video_parse_config,
+            config_resolver=resolve_config,
         )
         _logger.info(
             "upload_session_created upload_session_id=%s series_id=%s episode_order=%s size_bytes=%s segments=%s status=%s",

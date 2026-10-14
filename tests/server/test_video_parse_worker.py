@@ -1815,10 +1815,10 @@ def test_execution_timing_records_short_runs_without_changing_results(monkeypatc
     runtime._parse_usage = runtime._tracing = None
     runtime._model_manager = ContextVar("timing_test_manager", default=None)
     if kind == "chunk":
-        lease = ChunkParseLease("chunk", "task", "media", "worker", 3, datetime.now(UTC), 1, 3)
+        lease = ChunkParseLease("chunk", "task", "media", "worker", 3, datetime.now(UTC), 1, 3, 5.0, 300.0)
     elif kind in {"refine", "index"}:
         lease = IntervalParseLease("interval", "task", ("chunk",), 0, 1,
-            "REFINING" if kind == "refine" else "INDEXING", "worker", 3, datetime.now(UTC), 1, 3)
+            "REFINING" if kind == "refine" else "INDEXING", "worker", 3, datetime.now(UTC), 1, 3, 5.0, 300.0)
     else:
         lease = VideoParseLease("task", "video", "worker", 3, datetime.now(UTC), 1, 3, {})
     error = RuntimeError("business failure") if outcome == "failed" else asyncio.CancelledError()
@@ -1890,7 +1890,7 @@ def test_execution_timing_heartbeats_and_storage_errors_preserve_business_work(m
     runtime._heartbeat_interval = timedelta(milliseconds=1)
     runtime._parse_usage = runtime._tracing = None
     runtime._model_manager = ContextVar("timing_heartbeat_test_manager", default=None)
-    lease = ChunkParseLease("chunk", "task", "media", "worker", 1, datetime.now(UTC), 0, 3)
+    lease = ChunkParseLease("chunk", "task", "media", "worker", 1, datetime.now(UTC), 0, 3, 5.0, 300.0)
 
     async def execute():
         nonlocal loop, sampled

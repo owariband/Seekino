@@ -8,7 +8,7 @@ from threading import Event
 from time import monotonic
 from typing import NotRequired, TypedDict
 
-from .errors import AgentModelInvocationError
+from .errors import AgentExecutionTimeoutError, AgentModelInvocationError
 
 
 class AnswerPhase(StrEnum):
@@ -33,24 +33,26 @@ class RunInputs(TypedDict):
 
 @dataclass(slots=True)
 class ExecutionControl:
-    deadline: float
+    deadline: float | None
     cancellation: Event | None = None
     emit: Callable[[dict], None] | None = None
 
     def check(self) -> None:
         if self.cancellation is not None and self.cancellation.is_set():
             raise AgentModelInvocationError("Agent execution cancelled")
-        if monotonic() >= self.deadline:
-            raise AgentModelInvocationError("Agent execution deadline exceeded")
+        if self.deadline is not None and monotonic() >= self.deadline:
+            raise AgentExecutionTimeoutError("Agent execution deadline exceeded")
 
-    def remaining_seconds(self) -> float:
-        """Return the current Provider budget without extending the Kick deadline."""
+    def remaining_seconds(self) -> float | None:
+        """Return the remaining budget, or None when no deadline is configured."""
 
         if self.cancellation is not None and self.cancellation.is_set():
             raise AgentModelInvocationError("Agent execution cancelled")
+        if self.deadline is None:
+            return None
         remaining = self.deadline - monotonic()
         if remaining <= 0:
-            raise AgentModelInvocationError("Agent execution deadline exceeded")
+            raise AgentExecutionTimeoutError("Agent execution deadline exceeded")
         return remaining
 
     def publish(self, inputs: RunInputs, event: dict) -> None:

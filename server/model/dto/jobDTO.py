@@ -185,6 +185,8 @@ class ChunkParseLease:
     lease_expire_time: datetime
     retry_count: int
     max_retry_count: int
+    retry_initial_delay_seconds: float
+    retry_max_delay_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +202,8 @@ class IntervalParseLease:
     lease_expire_time: datetime
     retry_count: int
     max_retry_count: int
+    retry_initial_delay_seconds: float
+    retry_max_delay_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,7 +319,6 @@ class ChunkScheduleEntryState:
     chunk_parse_task_id: str
     sequence_no: int
     status: str
-    dispatchable: bool
 
 
 @dataclass(frozen=True, slots=True)

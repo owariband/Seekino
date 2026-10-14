@@ -940,7 +940,10 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "发送问题" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止生成" })).toBeEnabled();
+    await user.type(composer, "继续追问{Enter}");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"))).toHaveLength(1);
     act(finishAnswer);
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     expect(await screen.findByText("回答已完成")).toHaveAttribute("role", "status");
@@ -977,8 +980,7 @@ describe("application shell", () => {
     expect(screen.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("slider", { name: "模型调用上限" })).not.toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: "工具调用上限" })).not.toBeInTheDocument();
-    expect(screen.getByText("每次检索最多返回多少段候选片段")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("slider", { name: "单次检索候选片段数量" }), { target: { value: "7" } });
+    expect(screen.queryByRole("slider", { name: "单次检索候选片段数量" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "自定义" }));
     expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveAttribute("max", "100");
     expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveValue("100");
@@ -994,14 +996,13 @@ describe("application shell", () => {
       String(input).includes("/api/agent/messages/send?conversationId=conversation"),
     );
     expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({
-      topK: 7,
       maxLoopTurns: 100,
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 36,
     });
+    expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("topK");
     expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({
       overrides: {
-        topK: 7,
         maxLoopTurns: 100,
         maxModelCallsPerTurn: 9,
         maxToolCallsPerTurn: 36,
@@ -1020,39 +1021,43 @@ describe("application shell", () => {
     const { fetchMock, setMessageOptions, finishAnswer } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     expect(await screen.findByText("服务端默认")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByLabelText("配置本次回答"));
-    fireEvent.change(screen.getByRole("slider", { name: "单次检索候选片段数量" }), { target: { value: "7" } });
-    expect(screen.getByText("每次检索 7 段")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "自定义" }));
+    fireEvent.change(screen.getByRole("slider", { name: "最多运行轮次" }), { target: { value: "7" } });
+    expect(screen.getByText("最多 7 轮")).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event("focus")));
-    expect(screen.getByText("每次检索 7 段")).toBeInTheDocument();
+    expect(screen.getByText("最多 7 轮")).toBeInTheDocument();
 
     setMessageOptions({
       ...initialMessageOptions,
-      topK: { ...initialMessageOptions.topK, defaultValue: 8 },
+      maxLoopTurns: { ...initialMessageOptions.maxLoopTurns, defaultValue: 8 },
     });
     act(() => window.dispatchEvent(new Event("focus")));
-    expect(await screen.findByText("每次检索 7 段")).toBeInTheDocument();
+    expect(await screen.findByText("最多 7 轮")).toBeInTheDocument();
     await userEvent.setup().type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "雨天门口");
     await userEvent.setup().click(screen.getByRole("button", { name: "发送问题" }));
     const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
-    expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({ topK: 7 });
+    expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({ maxLoopTurns: 7 });
+    expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("topK");
     expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("maxModelCallsPerTurn");
     act(finishAnswer);
   });
 
-  it("uses a refreshed server default when Chat has no override", async () => {
+  it("keeps refreshed server settings implicit when Chat has no override", async () => {
     const { fetchMock, setMessageOptions, finishAnswer } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     expect(await screen.findByText("服务端默认")).toBeInTheDocument();
     setMessageOptions({
       ...initialMessageOptions,
-      topK: { ...initialMessageOptions.topK, defaultValue: 8 },
+      maxLoopTurns: { ...initialMessageOptions.maxLoopTurns, defaultValue: 8, maximum: 80 },
     });
     act(() => window.dispatchEvent(new Event("focus")));
     await userEvent.setup().click(screen.getByLabelText("配置本次回答"));
-    expect(screen.getByRole("slider", { name: "单次检索候选片段数量" })).toHaveValue("8");
+    expect(await screen.findByText("自定义最多可设 80 轮")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
     await userEvent.setup().type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "雨天门口");
     await userEvent.setup().click(screen.getByRole("button", { name: "发送问题" }));
     const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
     expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("topK");
+    expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("maxLoopTurns");
     expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({ overrides: {} });
     act(finishAnswer);
   });

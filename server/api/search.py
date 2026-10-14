@@ -6,6 +6,7 @@ from engine.rag.contracts import VideoChunkSearchEvidence
 
 from .context import get_identity, get_services, revalidate_identity
 from .library import read_series
+from ..config.retrieval import RetrievalConfig
 from ..service.access import model_query, require_tenant_read
 from ..model.dto.mediaDTO import PlaybackMedia
 from ..model.dto.searchDTO import VideoSearchRequest
@@ -30,12 +31,8 @@ def search_video_chunks(
     services = get_services(request)
     identity = get_identity(request)
     require_tenant_read(identity, body.tenant_id)
-    top_k_options = services.agent.message_options().top_k
-    top_k = top_k_options.default_value if body.top_k is None else body.top_k
-    if not top_k_options.minimum <= top_k <= top_k_options.maximum:
-        raise ValueError(
-            f"top_k must be between {top_k_options.minimum} and {top_k_options.maximum}"
-        )
+    config = getattr(request.app.state, "retrieval_config", RetrievalConfig())
+    top_k = config.search_default_top_k if body.top_k is None else body.top_k
     series_ids = list(body.series_ids)
     if identity.mode == "cloud":
         if not series_ids:
@@ -169,6 +166,8 @@ def search_evidence_fields(
         evidence, limitations = evidence_view(source, media, tenant_id=tenant_id, playback=playback_by_video[source.video_id])
         warnings.extend(f"片段 {source.video_chunk_id}：{message}" for message in limitations)
         reason = hit.selection_reason.model_copy(update={
+            "matched_evidence": [],
+            "lexical_matches": [],
             "limitations": list(dict.fromkeys([*hit.selection_reason.limitations, *limitations])),
         })
         hits.append(SearchHitView(

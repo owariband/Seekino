@@ -63,6 +63,8 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.upload.pipeline_version == "m2-seconds"
     assert settings.parse.chunk_duration_seconds == 60
     assert settings.parse.context_overlap_seconds == 3
+    assert settings.parse.batch_max_size == 10
+    assert settings.parse.dispatch_interval_seconds == 0
     assert settings.agent.history_message_limit == 12
     assert settings.agent.default_top_k == 3
     assert settings.agent.maximum_top_k == 20
@@ -72,6 +74,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.max_tool_calls_per_turn == 24
     assert settings.agent.maximum_tool_calls_per_turn == 48
     assert settings.agent.limits_enabled is False
+    assert settings.agent.total_timeout_enabled is True
     assert settings.agent.query_reasoning_effort == "none"
     assert settings.agent.evaluator_reasoning_effort == "none"
     assert settings.agent.chat_reasoning_effort == "none"
@@ -103,6 +106,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.sse.poll_interval_seconds == 1.0
     assert settings.sse.keepalive_interval_seconds == 15.0
     assert settings.retrieval.channel_top_k == 20
+    assert settings.retrieval.search_default_top_k == 30
     assert settings.retrieval.rrf_k == 60
     assert settings.retrieval.lexical_weight == 1.0
     assert settings.retrieval.text_weight == settings.retrieval.vision_weight == 1.0
@@ -135,6 +139,21 @@ def test_server_settings_select_exactly_one_parse_worker_family(monkeypatch) -> 
 
     monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "both")
     with pytest.raises(ValueError, match="must be 'v2'"):
+        ServerSettings.from_environment()
+
+
+@pytest.mark.parametrize(("name", "value"), [
+    ("ANIVAG_PARSE_BATCH_MAX_SIZE", "0"),
+    ("ANIVAG_PARSE_BATCH_MAX_SIZE", "-1"),
+    ("ANIVAG_PARSE_BATCH_MAX_SIZE", "1.5"),
+    ("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "-0.5"),
+    ("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "nan"),
+    ("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "inf"),
+])
+def test_parse_scheduler_environment_rejects_invalid_values(monkeypatch, name, value):
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
         ServerSettings.from_environment()
 
 
@@ -218,13 +237,15 @@ def test_config_yaml_exposes_agent_timeouts() -> None:
     source = Path(__file__).resolve().parents[2] / "config.yaml"
     settings, _ = read_global_agent_settings(source)
 
+    assert settings.limits_enabled is False
+    assert settings.total_timeout_enabled is True
     assert (
         settings.stage_timeout_seconds,
         settings.evaluator_stage_timeout_seconds,
         settings.chat_timeout_seconds,
         settings.supervisor_timeout_seconds,
         settings.execution_timeout_seconds,
-    ) == (480, 480, 480, 480, 480)
+    ) == (480, 480, 480, 600, 600)
 
 
 def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> None:
@@ -242,6 +263,7 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         "ANIVAG_SSE_POLL_SECONDS": "0.5",
         "ANIVAG_SSE_KEEPALIVE_SECONDS": "8",
         "ANIVAG_RETRIEVAL_CHANNEL_TOP_K": "32",
+        "ANIVAG_RETRIEVAL_SEARCH_DEFAULT_TOP_K": "45",
         "ANIVAG_RETRIEVAL_RRF_K": "45",
         "ANIVAG_RETRIEVAL_LEXICAL_WEIGHT": "2.0",
         "ANIVAG_RETRIEVAL_TEXT_WEIGHT": "0",
@@ -276,6 +298,7 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
     assert settings.sse.poll_interval_seconds == 0.5
     assert settings.sse.keepalive_interval_seconds == 8
     assert settings.retrieval.channel_top_k == 32
+    assert settings.retrieval.search_default_top_k == 45
     assert settings.retrieval.rrf_k == 45
     assert settings.retrieval.lexical_weight == 2.0
     assert settings.retrieval.text_weight == 0
@@ -482,17 +505,19 @@ def test_vector_dimensions_override_bad_environment_and_preserve_index_initializ
 def test_retrieval_overrides_precede_invalid_environment_and_keep_zero_values(monkeypatch):
     for name in (
         "CHANNEL_TOP_K", "RRF_K", "LEXICAL_WEIGHT", "TEXT_WEIGHT", "VISION_WEIGHT",
-        "CANDIDATE_BUDGET", "SPARSE_WEIGHT", "RERANK_ENABLED",
+        "CANDIDATE_BUDGET", "SPARSE_WEIGHT", "RERANK_ENABLED", "SEARCH_DEFAULT_TOP_K",
     ):
         monkeypatch.setenv("ANIVAG_RETRIEVAL_" + name, "invalid")
 
     config = RetrievalConfig.from_environment(
         channel_top_k=30, rrf_k=45, lexical_weight=1, text_weight=0,
         vision_weight=0, candidate_budget=80, sparse_weight=0, rerank_enabled=False,
+        search_default_top_k=120,
     )
     assert config == RetrievalConfig(
         channel_top_k=30, rrf_k=45, lexical_weight=1, text_weight=0,
         vision_weight=0, candidate_budget=80, sparse_weight=0, rerank_enabled=False,
+        search_default_top_k=120,
     )
 
 
@@ -508,6 +533,21 @@ def test_retrieval_partial_overrides_inherit_other_environment_values(monkeypatc
     assert (config.channel_top_k, config.rrf_k, config.lexical_weight) == (32, 20, 2)
     assert config.candidate_budget == 80 and config.sparse_weight == 0.75
     assert config.rerank_enabled is True
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_retrieval_search_default_rejects_non_positive_or_non_integer_values(value):
+    with pytest.raises(ValueError, match="search_default_top_k must be a positive integer"):
+        RetrievalConfig(search_default_top_k=value)
+    with pytest.raises(ValueError, match="search_default_top_k must be a positive integer"):
+        RetrievalConfig.from_environment(search_default_top_k=value)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "invalid"])
+def test_retrieval_search_default_rejects_invalid_environment(monkeypatch, value):
+    monkeypatch.setenv("ANIVAG_RETRIEVAL_SEARCH_DEFAULT_TOP_K", value)
+    with pytest.raises(ValueError):
+        RetrievalConfig.from_environment()
 
 
 def test_embedding_resolution_shares_endpoint_identity_and_explicit_overrides(monkeypatch):
@@ -844,6 +884,28 @@ def test_global_agent_reasoning_settings_support_yaml_patch_and_environment(
     }
 
 
+def test_total_timeout_switch_supports_environment_yaml_and_settings_patch(monkeypatch):
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    monkeypatch.setenv("ANIVAG_AGENT_TOTAL_TIMEOUT_ENABLED", "false")
+    config, revision = read_global_agent_settings(config_path)
+    assert config.total_timeout_enabled is False
+    assert config.execution_timeout_seconds == 480
+
+    updated, next_revision = patch_global_agent_settings(
+        {"total_timeout_enabled": True}, revision, config_path,
+    )
+    assert updated.total_timeout_enabled is True
+    assert ServerSettings.from_environment().agent.total_timeout_enabled is True
+
+    updated, _ = patch_global_agent_settings(
+        {"total_timeout_enabled": False}, next_revision, config_path,
+    )
+    assert read_global_agent_settings(config_path)[0] == updated
+    assert updated.total_timeout_enabled is False
+    assert updated.stage_timeout_seconds == 480
+
+
 def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
     monkeypatch,
 ) -> None:
@@ -941,6 +1003,8 @@ def test_global_agent_settings_patch_rejects_external_alias_dependency(
         {"query_reasoning_effort": "medium"},
         {"evaluator_reasoning_effort": 1},
         {"chat_reasoning_effort": None},
+        {"total_timeout_enabled": "false"},
+        {"total_timeout_enabled": 0},
     ],
 )
 def test_global_agent_settings_reject_invalid_patch_without_writing(

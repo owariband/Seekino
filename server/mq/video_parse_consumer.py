@@ -16,6 +16,7 @@ from gateway.errors import SSEProxyError
 
 from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from ..utils.time import now_utc
+from ..utils.retry import task_retry_delay
 from .video_parse_queue import MySqlVideoParseQueue
 
 
@@ -422,7 +423,11 @@ class VideoParseConsumer:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            retry_at = now_utc() + self._retry_delay(lease.retry_count + 1)
+            retry_at = now_utc() + task_retry_delay(
+                lease.retry_initial_delay_seconds,
+                lease.retry_max_delay_seconds,
+                lease.retry_count + 1,
+            )
             recorded = await asyncio.to_thread(
                 self._queue.retry_chunk,
                 lease,
@@ -448,7 +453,16 @@ class VideoParseConsumer:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            retry_at = now_utc() + self._retry_delay(lease.retry_count + 1)
+            delay = (
+                task_retry_delay(
+                    lease.retry_initial_delay_seconds,
+                    lease.retry_max_delay_seconds,
+                    lease.retry_count + 1,
+                )
+                if lease.phase == "REFINING"
+                else self._retry_delay(lease.retry_count + 1)
+            )
+            retry_at = now_utc() + delay
             recorded = await asyncio.to_thread(
                 self._queue.retry_interval,
                 lease,

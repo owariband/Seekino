@@ -24,8 +24,6 @@ const reasoningOptions: ReadonlyArray<readonly [AgentReasoningEffort, string]> =
 const settingGroups: ReadonlyArray<{ title: string; fields: ReadonlyArray<SettingField> }> = [
   { title: "回答与检索", fields: [
     ["history_message_limit", "历史消息数量", "条"],
-    ["default_top_k", "默认候选片段", "段"],
-    ["maximum_top_k", "候选片段上限", "段"],
     ["max_loop_turns", "启用调用限制时的最多轮次", "轮"],
     ["max_model_calls_per_turn", "每轮默认模型调用", "次"],
     ["maximum_model_calls_per_turn", "每轮模型调用上限", "次"],
@@ -179,7 +177,7 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
                   {group.fields.map(([key, label, unit]) => (
                     <label className={styles.globalSettingField} key={key}>
                       <span><strong>{label}</strong>{key === "maximum_concurrent_kicks" ? <em className={styles.restartBadge}>重启后生效</em> : null}<small>{key}</small></span>
-                      <span className={styles.globalSettingInput}><input className="field" name={key} type="number" required min={key === "max_tool_result_bytes" ? 512 : 1} max={key === "max_loop_turns" ? 3 : key === "maximum_top_k" || key === "max_catalog_items_per_page" ? 100 : undefined} step={key.endsWith("seconds") ? "any" : 1} defaultValue={settings.values[key]} disabled={saving || loading || mode !== "live"} /><small>{unit}</small></span>
+                      <span className={styles.globalSettingInput}><input className="field" name={key} type="number" required min={key === "max_tool_result_bytes" ? 512 : 1} max={key === "max_loop_turns" ? 3 : key === "max_catalog_items_per_page" ? 100 : undefined} step={key.endsWith("seconds") ? "any" : 1} defaultValue={settings.values[key]} disabled={saving || loading || mode !== "live"} /><small>{unit}</small></span>
                     </label>
                   ))}
                 </div>

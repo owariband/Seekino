@@ -41,7 +41,7 @@ class RetrieveArguments(BaseModel):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
     ] | None = None
-    top_k: int | None = Field(default=None, ge=1, le=100)
+    top_k: int | None = Field(default=None, ge=1, strict=True)
     channel_weights: RetrievalChannelWeights | None = None
     cursor: _OptionalCursor = None
 
@@ -64,7 +64,7 @@ class LexicalRetrieveArguments(BaseModel):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
     ] | None = None
-    top_k: int | None = Field(default=None, ge=1, le=100)
+    top_k: int | None = Field(default=None, ge=1, strict=True)
     channel_weights: LexicalRetrievalChannelWeights | None = None
     cursor: _OptionalCursor = None
 
@@ -107,7 +107,10 @@ def build_retrieve_tool(
     retrieval_channel: RetrievalChannelContract = "transcript",
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
-    """Return bounded discovery cards while retaining canonical hits in Canvas."""
+    """Page discovery cards while retaining canonical hits in Canvas.
+
+    maximum_top_k is accepted for legacy callers; the Agent owns top_k.
+    """
 
     if retrieval_channel not in ("transcript", "lexical"):
         raise ValueError("retrieval_channel must be transcript or lexical")
@@ -158,7 +161,6 @@ def build_retrieve_tool(
                 raise AgentToolInvocationError(
                     "retrieve requires query, top_k and channel_weights"
                 )
-            bounded_top_k = min(top_k, inputs["requested_top_k"], maximum_top_k)
             if retrieval_channel == "lexical":
                 requested_weights = LexicalRetrievalChannelWeights.model_validate(
                     channel_weights
@@ -197,7 +199,7 @@ def build_retrieve_tool(
                     query,
                     tenant_id=inputs["tenant_id"],
                     series_ids=list(inputs["series_ids"]),
-                    top_k=bounded_top_k,
+                    top_k=top_k,
                     text_weight=semantic_weight,
                     vision_weight=visual_weight,
                     **first_weight_argument,
@@ -213,13 +215,13 @@ def build_retrieve_tool(
                 raise AgentModelInvocationError(
                     "Retrieval result query does not match the actual call"
                 )
-            if len(result.hits) > bounded_top_k:
-                raise AgentModelInvocationError("Retrieval result exceeds its top_k budget")
+            if len(result.hits) > top_k:
+                raise AgentModelInvocationError("Retrieval result exceeds the requested top_k")
 
             canvas.record_retrieval(result)
             calls.append(RetrievalCall(
                 query=query,
-                top_k=bounded_top_k,
+                top_k=top_k,
                 requested_weights=requested_weights.model_copy(deep=True),
                 effective_weights=effective_weights,
                 result=result,
@@ -228,6 +230,7 @@ def build_retrieve_tool(
             items = [_retrieval_card(hit) for hit in result.hits]
             metadata = {
                 "query": query,
+                "requested_top_k": top_k,
                 "result_count": len(items),
                 "draft_item_count": canvas.draft_item_count(),
                 "partial": result.partial,

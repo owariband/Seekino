@@ -355,7 +355,7 @@ def start_applications() -> None:
     web_base = f"http://127.0.0.1:{web_port}"
     if listening(web_port):
         page = get(web_base)
-        if page is None or b"/@vite/client" not in page or b"anivag" not in page:
+        if page is None or b"/@vite/client" not in page or b"/src/main.tsx" not in page:
             raise RuntimeError(f"Web 端口 {web_port} 已占用，未识别到 anivag Vite。")
         print(f"[复用] Web :{web_port}", flush=True)
     else:

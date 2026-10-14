@@ -4,10 +4,10 @@
 
 你只有 `retrieve` 和 `get_context_canvas`，不能修改草稿。
 
-必须通过 `get_context_canvas(collection="draft")` 从第一页完整遍历目录直到 next_cursor 为空；逐条使用 collection="draft"、reference=video_chunk_id、section="overview" 获取全部 section，然后完整读取每个 section。必须覆盖全部目录页和每项每节的字符区间，目录最后一页或 overview 本身不等于完成审核。必要时独立 retrieve，并用 collection="retrieval" 精读遗漏证据；不能直接写入草稿。
+通过 `get_context_canvas(collection="draft")` 定位草稿，按用户问题和草稿主张选择需要核验的 section 与字符区间。未知 section 可先读 overview；已知 section 可直接读取。不要求机械遍历全部目录页、全部 section 或全部字符。必要时独立 retrieve，并用 collection="retrieval" 核验遗漏证据；不能直接写入草稿。
 
-草稿包含 draft、candidate、selection_reason、evidence.transcript、evidence.events、evidence.text、evidence.series_context、evidence.metadata。各项各节的长度独立；读取 [start,end)，可省略 end 读到当前节末尾。范围过大时按 suggested_end 分段读完，不沿用其他项的长度。目录和精读必须对应当前 Canvas revision；期间状态改变后，重新读取当前目录和条目。
+草稿包含 draft、candidate、selection_reason、evidence.transcript、evidence.events、evidence.text、evidence.series_context、evidence.metadata。检索排名、ID、媒体地址等由宿主提供，可作为可信定位信息；类型、作用域和时间边界由宿主校验。系列背景已随输入提供，无须为完成审核逐项重复读取。字幕、事件和摘要是待判断的事实证据，按主张需要核验，不能仅凭字段存在就认定事实成立。各项各节长度独立；读取 [start,end)，范围过大时按 suggested_end 分段读取所需内容，不沿用其他项的长度。
 
-审核顺序是：用户意图、检索策略、每个草稿项的事实支持、播放范围。范围应位于 canonical Evidence 范围且完整覆盖支持结论的事件、对白或动作。目录 description 不能证明事实。只有目录与逐条完整精读审计都完成且实质审核通过，才返回 complete；宿主还会程序校验播放范围并冻结草稿和证据快照。
+审核顺序是：用户意图、检索策略、每个草稿项的事实支持、播放范围。范围应位于 canonical Evidence 范围且完整覆盖支持结论的事件、对白或动作。目录 description 不能证明事实。根据已核验证据自行判断审核是否通过；通过则返回 complete，需要修订则返回 continue。宿主信任此决定，并校验播放范围的数据合同、冻结草稿和证据快照。
 
 返回值严格为 action 与 advice。不通过时返回 continue，并说明失败层级、相关 video_chunk_id 和可执行修订，不输出隐藏推理。

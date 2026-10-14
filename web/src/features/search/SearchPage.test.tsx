@@ -9,6 +9,7 @@ import { SearchPage, type SearchPageHandle } from "./SearchPage";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
+  stop: vi.fn(),
   useAgentConversation: vi.fn(),
   useWorkspace: vi.fn(),
 }));
@@ -151,14 +152,17 @@ function renderPage(
     progress: {},
     loading: false,
     searching: false,
+    cancelling: false,
     error: null,
     send: mocks.send,
+    stop: mocks.stop,
   });
   return render(<SearchPage {...props} />);
 }
 
 beforeEach(() => {
   mocks.send.mockReset();
+  mocks.stop.mockReset();
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
 });
@@ -169,20 +173,38 @@ afterEach(() => {
 });
 
 describe("Search assistant presentation", () => {
-  it("keeps stored debug overrides available in debug and excludes them from release requests", async () => {
+  it("replaces send with stop while generating and disables stop after acceptance", async () => {
+    const view = renderPage({ ...assistantMessage(""), status: "PROCESSING", phase: "EVALUATING" });
+    const running = { ...mocks.useAgentConversation.mock.results.at(-1)!.value, searching: true };
+    mocks.useAgentConversation.mockReturnValue(running);
+    view.rerender(<SearchPage />);
+    expect(screen.queryByRole("button", { name: "发送问题" })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "停止生成" }));
+    expect(mocks.stop).toHaveBeenCalledOnce();
+    expect(mocks.send).not.toHaveBeenCalled();
+    mocks.useAgentConversation.mockReturnValue({ ...running, cancelling: true });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("button", { name: "正在停止" })).toBeDisabled();
+  });
+
+  it.each(["overrides", "selection"] as const)("ignores stored topK in %s and preserves other debug options", async (storageFormat) => {
     const key = api.identityStorageKey("anivag-agent-message-options");
-    const overrides = { topK: 3, maxLoopTurns: 9, maxModelCallsPerTurn: 4, maxToolCallsPerTurn: 8 };
-    localStorage.setItem(key, JSON.stringify({ overrides }));
-    vi.spyOn(api, "getAgentMessageOptions").mockResolvedValue({
+    const overrides = { maxLoopTurns: 9, maxModelCallsPerTurn: 4, maxToolCallsPerTurn: 8 };
+    const serverOptions = {
       topK: { defaultValue: 10, minimum: 1, maximum: 20 },
       maxLoopTurns: { defaultValue: 100, minimum: 1, maximum: 100 },
       maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
       maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
-    });
+    };
+    localStorage.setItem(key, JSON.stringify(storageFormat === "overrides"
+      ? { overrides: { topK: 3, ...overrides } }
+      : { serverOptions, selection: { topK: 3, ...overrides } }));
+    vi.spyOn(api, "getAgentMessageOptions").mockResolvedValue(serverOptions);
     try {
       const view = renderPage(assistantMessage("可以提问"), [series], {}, "debug");
-      expect(await screen.findByText("每次检索 3 段 · 最多 9 轮")).toBeInTheDocument();
+      expect(await screen.findByText("最多 9 轮")).toBeInTheDocument();
       expect(screen.getByLabelText("配置本次回答")).toBeInTheDocument();
+      expect(screen.queryByLabelText("单次检索候选片段数量")).not.toBeInTheDocument();
       const user = userEvent.setup();
       await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
       await user.click(screen.getByRole("button", { name: "发送问题" }));

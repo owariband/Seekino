@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import math
 from copy import deepcopy
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, literal, select, tuple_, update
 from sqlalchemy.orm import Session, sessionmaker
+
+from agent.video_parse_v2.scheduler import claimable_chunk_sequences
 
 from ..model.dto.jobDTO import (
     ChunkScheduleEntryState,
@@ -36,12 +37,12 @@ from ..repository.video_parse import (
     _execution_config,
     _indexed_versions,
     _latest_video_task_id,
-    _positive_int,
     _submitted_intervals_by_member,
     _video_failure_status,
 )
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from ..utils.validation import require_nonempty_text
+from ..utils.retry import task_retry_delay
 
 
 class MySqlVideoParseQueue:
@@ -127,7 +128,7 @@ class MySqlVideoParseQueue:
                 ChunkParseTask.video_task_id == parent.id,
                 ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
             )) or 0)
-            if active >= _positive_int(parent.parse_config.get("batch_max_size"), "batch_max_size"):
+            if active >= parent.parse_config["batch_max_size"]:
                 return None
             child.status = ChunkParseTaskStatus.UNDERSTANDING.value
             child.lease_owner = worker
@@ -137,14 +138,16 @@ class MySqlVideoParseQueue:
             child.finish_time = None
             child.last_error = None
             child.update_time = datetime_to_unix_time_ms(claimed_at)
-            child.detail = _set_dispatch_requested(child.detail, False)
             session.flush()
+            execution = _execution_config(parent.parse_config)
             return ChunkParseLease(
                 chunk_parse_task_id=child.id, video_parse_task_id=parent.id,
                 video_chunk_id=child.chunk_id, worker_id=worker,
                 lease_version=child.lease_version, lease_expire_time=child.lease_expire_time,
                 retry_count=child.retry_count,
-                max_retry_count=_nonnegative_int(_execution_config(parent.parse_config).get("max_retry_count"), "max_retry_count"),
+                max_retry_count=_nonnegative_int(execution.get("max_retry_count"), "max_retry_count"),
+                retry_initial_delay_seconds=execution["retry_initial_delay_seconds"],
+                retry_max_delay_seconds=execution["retry_max_delay_seconds"],
             )
 
     def claim_video(
@@ -280,9 +283,6 @@ class MySqlVideoParseQueue:
                         VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"]
                         .as_boolean()
                         .is_(True),
-                        ChunkParseTask.detail["dispatch_requested"]
-                        .as_boolean()
-                        .is_(True),
                     )
                     .order_by(*ordering)
                     .limit(200)
@@ -330,9 +330,8 @@ class MySqlVideoParseQueue:
                         or parent.is_deleted
                         or not _accepted(parent)
                         or _video_failure_status(parent) is not None
-                        or not _dispatch_requested(child)
                         or not _chunk_claim_allowed(
-                            session, parent, chunk.sequence_no
+                            session, parent, chunk.sequence_no, claimed_at
                         )
                     ):
                         continue
@@ -348,7 +347,7 @@ class MySqlVideoParseQueue:
                     child.finish_time = None
                     child.last_error = None
                     child.update_time = datetime_to_unix_time_ms(claimed_at)
-                    child.detail = _set_dispatch_requested(child.detail, False)
+                    _record_chunk_dispatch(parent, claimed_at)
                     session.flush()
                     return ChunkParseLease(
                         chunk_parse_task_id=child.id,
@@ -359,6 +358,8 @@ class MySqlVideoParseQueue:
                         lease_expire_time=expires_at,
                         retry_count=child.retry_count,
                         max_retry_count=max_retries,
+                        retry_initial_delay_seconds=execution["retry_initial_delay_seconds"],
+                        retry_max_delay_seconds=execution["retry_max_delay_seconds"],
                     )
             cursor = tuple(candidates[-1])
 
@@ -389,64 +390,11 @@ class MySqlVideoParseQueue:
                     chunk_parse_task_id=task.id,
                     sequence_no=chunk.sequence_no,
                     status=task.status,
-                    dispatchable=(
-                        task.status == ChunkParseTaskStatus.QUEUED.value
-                        and task.next_execute_time <= loaded_at
-                        and not _dispatch_requested(task)
-                        and _chunk_dispatch_allowed(
-                            session, parent, chunk.sequence_no, loaded_at
-                        )
-                    ),
                 )
                 for task, chunk in rows
             )
             timeout = _schedule_wait_seconds(parent, rows, loaded_at)
             return ChunkScheduleState(entries, timeout, terminal)
-
-    def dispatch_chunk(
-        self,
-        chunk_parse_task_id: str,
-        video_lease: VideoParseLease,
-        *,
-        now: datetime | None = None,
-    ) -> bool:
-        dispatched_at = now if now is not None else now_utc()
-        with self._session_factory.begin() as session:
-            child = session.scalar(
-                select(ChunkParseTask)
-                .where(ChunkParseTask.id == chunk_parse_task_id)
-                .with_for_update()
-            )
-            if child is None:
-                return False
-            parent = session.scalar(
-                select(VideoParseTask)
-                .where(VideoParseTask.id == child.video_task_id)
-                .with_for_update()
-            )
-            chunk = session.get(VideoChunk, child.chunk_id)
-            if (
-                parent is None
-                or chunk is None
-                or parent.id != video_lease.video_parse_task_id
-                or parent.is_deleted
-                or parent.lease_owner != video_lease.worker_id
-                or parent.lease_version != video_lease.lease_version
-                or parent.lease_expire_time is None
-                or parent.lease_expire_time <= dispatched_at
-                or child.status != ChunkParseTaskStatus.QUEUED.value
-                or child.next_execute_time > dispatched_at
-                or _dispatch_requested(child)
-                or not _accepted(parent)
-                or not _chunk_dispatch_allowed(
-                    session, parent, chunk.sequence_no, dispatched_at
-                )
-            ):
-                return False
-            child.detail = _set_dispatch_requested(child.detail, True)
-            child.update_time = datetime_to_unix_time_ms(dispatched_at)
-            _record_chunk_dispatch(parent, dispatched_at)
-            return True
 
     def claim_interval_refine(
         self,
@@ -597,10 +545,9 @@ class MySqlVideoParseQueue:
                             continue
                     elif not _interval_has_index_work(session, interval):
                         continue
+                    execution = _execution_config(parent.parse_config)
                     max_retries = _nonnegative_int(
-                        _execution_config(parent.parse_config).get(
-                            "max_retry_count"
-                        ),
+                        execution.get("max_retry_count"),
                         "max_retry_count",
                     )
                     interval.status = phase
@@ -626,6 +573,8 @@ class MySqlVideoParseQueue:
                         lease_expire_time=expires_at,
                         retry_count=interval.retry_count,
                         max_retry_count=max_retries,
+                        retry_initial_delay_seconds=execution["retry_initial_delay_seconds"],
+                        retry_max_delay_seconds=execution["retry_max_delay_seconds"],
                     )
             cursor = tuple(candidates[-1])
 
@@ -1070,7 +1019,7 @@ class MySqlVideoParseQueue:
                 retry_delay=retry_delay, now=reaped_at, limit=limit
             ),
             self.reap_expired_chunks(
-                retry_delay=retry_delay, now=reaped_at, limit=limit
+                now=reaped_at, limit=limit
             ),
             self.reap_expired_intervals(
                 retry_delay=retry_delay, now=reaped_at, limit=limit
@@ -1190,16 +1139,12 @@ class MySqlVideoParseQueue:
     def reap_expired_chunks(
         self,
         *,
-        retry_delay: timedelta,
         now: datetime | None = None,
         limit: int = 100,
     ) -> int:
-        if retry_delay < timedelta(0):
-            raise ValueError("retry_delay cannot be negative")
         if limit <= 0:
             raise ValueError("limit must be positive")
         reaped_at = now if now is not None else now_utc()
-        retry_at = reaped_at + retry_delay
         with self._session_factory() as session:
             candidate_ids = list(session.scalars(
                 select(ChunkParseTask.id)
@@ -1234,10 +1179,9 @@ class MySqlVideoParseQueue:
                 )
                 if parent is None:
                     continue
+                execution = _execution_config(parent.parse_config)
                 max_retries = _nonnegative_int(
-                    _execution_config(parent.parse_config).get(
-                        "max_retry_count"
-                    ),
+                    execution.get("max_retry_count"),
                     "max_retry_count",
                 )
                 task.retry_count += 1
@@ -1247,7 +1191,11 @@ class MySqlVideoParseQueue:
                     if exhausted
                     else ChunkParseTaskStatus.QUEUED.value
                 )
-                task.next_execute_time = retry_at
+                task.next_execute_time = reaped_at + task_retry_delay(
+                    execution["retry_initial_delay_seconds"],
+                    execution["retry_max_delay_seconds"],
+                    task.retry_count,
+                )
                 task.lease_owner = None
                 task.lease_expire_time = None
                 task.finish_time = reaped_at if exhausted else None
@@ -1310,10 +1258,9 @@ class MySqlVideoParseQueue:
                 )
                 if parent is None:
                     continue
+                execution = _execution_config(parent.parse_config)
                 max_retries = _nonnegative_int(
-                    _execution_config(parent.parse_config).get(
-                        "max_retry_count"
-                    ),
+                    execution.get("max_retry_count"),
                     "max_retry_count",
                 )
                 phase = interval.status
@@ -1331,7 +1278,15 @@ class MySqlVideoParseQueue:
                         if exhausted
                         else IntervalParseTaskStatus.INDEXING.value
                     )
-                interval.next_execute_time = retry_at
+                interval.next_execute_time = (
+                    reaped_at + task_retry_delay(
+                        execution["retry_initial_delay_seconds"],
+                        execution["retry_max_delay_seconds"],
+                        interval.retry_count,
+                    )
+                    if phase == IntervalParseTaskStatus.REFINING.value
+                    else retry_at
+                )
                 interval.lease_owner = None
                 interval.lease_expire_time = None
                 interval.finish_time = reaped_at if exhausted else None
@@ -1366,7 +1321,7 @@ def _is_latest_video_task(
     return latest_id == task.id
 
 
-def _chunk_dispatch_allowed(
+def _chunk_claim_allowed(
     session: Session,
     parent: VideoParseTask,
     candidate_sequence: int,
@@ -1374,52 +1329,16 @@ def _chunk_dispatch_allowed(
 ) -> bool:
     if _video_failure_status(parent) is not None:
         return False
-    batch_size = _positive_int(parent.parse_config.get("batch_max_size"), "batch_max_size")
-    active_count = int(session.scalar(
-        select(func.count(ChunkParseTask.id))
-        .where(
-            ChunkParseTask.video_task_id == parent.id,
-            ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
-        )
-    ) or 0)
-    requested = list(session.scalars(
-        select(ChunkParseTask)
-        .where(
-            ChunkParseTask.video_task_id == parent.id,
-            ChunkParseTask.status == ChunkParseTaskStatus.QUEUED.value,
-        )
-    ))
-    reserved_count = sum(_dispatch_requested(item) for item in requested)
-    if active_count + reserved_count >= batch_size:
-        return False
+    batch_size = parent.parse_config["batch_max_size"]
     rows = list(session.execute(
         select(VideoChunk.sequence_no, ChunkParseTask.status)
         .join(ChunkParseTask, ChunkParseTask.chunk_id == VideoChunk.id)
         .where(ChunkParseTask.video_task_id == parent.id)
         .order_by(VideoChunk.sequence_no)
     ))
-    opened_through = min(batch_size, len(rows)) - 1
-    batch_start = 0
-    while batch_start < len(rows):
-        batch = rows[batch_start:batch_start + batch_size]
-        if batch_start == 0:
-            opened_through = batch[-1][0]
-        else:
-            previous = rows[max(0, batch_start - batch_size):batch_start]
-            required = math.ceil(len(previous) * 0.9)
-            completed = sum(
-                status == ChunkParseTaskStatus.COMPLETE.value
-                for _sequence, status in previous
-            )
-            if completed < required:
-                break
-            opened_through = batch[-1][0]
-        batch_start += batch_size
-    if candidate_sequence > opened_through:
+    if candidate_sequence not in claimable_chunk_sequences(rows, batch_size):
         return False
-    dispatch_interval = parent.parse_config.get("dispatch_interval_seconds", 0)
-    if isinstance(dispatch_interval, bool) or not isinstance(dispatch_interval, (int, float)) or dispatch_interval < 0:
-        raise ValueError("parse_config.dispatch_interval_seconds must be nonnegative")
+    dispatch_interval = parent.parse_config["dispatch_interval_seconds"]
     runtime = _ensure_runtime(parent.detail)[RUNTIME_DETAIL_KEY]
     scheduler = runtime.get("chunk_scheduler", {})
     last_ms = scheduler.get("last_dispatch_time_ms") if isinstance(scheduler, dict) else None
@@ -1428,42 +1347,6 @@ def _chunk_dispatch_allowed(
         if datetime_to_unix_time_ms(now) < next_ms:
             return False
     return True
-
-
-def _chunk_claim_allowed(
-    session: Session,
-    parent: VideoParseTask,
-    candidate_sequence: int,
-) -> bool:
-    batch_size = _positive_int(parent.parse_config.get("batch_max_size"), "batch_max_size")
-    active_count = int(session.scalar(
-        select(func.count(ChunkParseTask.id)).where(
-            ChunkParseTask.video_task_id == parent.id,
-            ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
-        )
-    ) or 0)
-    if active_count >= batch_size:
-        return False
-    rows = list(session.execute(
-        select(VideoChunk.sequence_no, ChunkParseTask.status)
-        .join(ChunkParseTask, ChunkParseTask.chunk_id == VideoChunk.id)
-        .where(ChunkParseTask.video_task_id == parent.id)
-        .order_by(VideoChunk.sequence_no)
-    ))
-    opened_through = min(batch_size, len(rows)) - 1
-    batch_start = batch_size
-    while batch_start < len(rows):
-        previous = rows[batch_start - batch_size:batch_start]
-        required = math.ceil(len(previous) * 0.9)
-        completed = sum(
-            status == ChunkParseTaskStatus.COMPLETE.value
-            for _sequence, status in previous
-        )
-        if completed < required:
-            break
-        opened_through = rows[min(batch_start + batch_size, len(rows)) - 1][0]
-        batch_start += batch_size
-    return candidate_sequence <= opened_through
 
 
 def _record_chunk_dispatch(parent: VideoParseTask, now: datetime) -> None:
@@ -1477,18 +1360,6 @@ def _record_chunk_dispatch(parent: VideoParseTask, now: datetime) -> None:
     parent.update_time = datetime_to_unix_time_ms(now)
 
 
-def _dispatch_requested(task: ChunkParseTask) -> bool:
-    return isinstance(task.detail, dict) and task.detail.get("dispatch_requested") is True
-
-
-def _set_dispatch_requested(
-    detail_value: dict | None, requested: bool
-) -> dict:
-    detail = deepcopy(dict(detail_value or {}))
-    detail["dispatch_requested"] = requested
-    return detail
-
-
 def _schedule_wait_seconds(
     parent: VideoParseTask,
     rows: list[tuple[ChunkParseTask, VideoChunk]],
@@ -1498,11 +1369,9 @@ def _schedule_wait_seconds(
         task.next_execute_time
         for task, _chunk in rows
         if task.status == ChunkParseTaskStatus.QUEUED.value
-        and not _dispatch_requested(task)
         and task.next_execute_time > now
     ]
-    interval = parent.parse_config.get("dispatch_interval_seconds", 0)
-    configured = float(interval) if isinstance(interval, (int, float)) and not isinstance(interval, bool) else 0.0
+    configured = parent.parse_config["dispatch_interval_seconds"]
     if due:
         seconds = min((value - now).total_seconds() for value in due)
         return max(0.05, min(2.0, seconds, configured or 2.0))

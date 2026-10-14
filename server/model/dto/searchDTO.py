@@ -11,5 +11,5 @@ class VideoSearchRequest(ContractModel):
     series_ids: list[str] = Field(min_length=1)
     top_k: int | None = Field(
         default=None, ge=1, strict=True,
-        description="Omitted values and the upper limit follow the current topK configuration",
+        description="Omitted or null values use the retrieval search default; explicit positive integers are passed through",
     )

@@ -75,6 +75,7 @@ def _lease(video_task_id, interval_id, chunk_task_id):
         lease_expire_time=now_utc() + timedelta(minutes=5),
         retry_count=0,
         max_retry_count=2,
+        retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
     )
 
 

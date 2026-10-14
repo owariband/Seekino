@@ -2,11 +2,11 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  ApiClientError, createAgentConversation, getAgentConversation,
+  ApiClientError, cancelAgentMessage, createAgentConversation, getAgentConversation,
   listAgentMessages, streamAgentMessage, subscribeAgentMessages,
 } from "../../api/client";
 import type {
-  AgentAnswerEvent, AgentConversationView, AgentMessageEventView,
+  AgentAnswerEvent, AgentConversationView, AgentMessageEventView, AgentMessageSendView,
   AgentMessageView, VideoChunkSearchHit,
 } from "../../api/contracts";
 import {
@@ -16,7 +16,7 @@ import {
 
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
-  createAgentConversation: vi.fn(), getAgentConversation: vi.fn(),
+  cancelAgentMessage: vi.fn(), createAgentConversation: vi.fn(), getAgentConversation: vi.fn(),
   listAgentMessages: vi.fn(), streamAgentMessage: vi.fn(), subscribeAgentMessages: vi.fn(),
 }));
 
@@ -34,6 +34,12 @@ function message(conversationId: string, overrides: Partial<AgentMessageView> = 
     ...overrides, version: overrides.version ?? (overrides.status && overrides.status !== "PROCESSING" ? 2 : 1),
   };
 }
+function messagePair(assistantMessage: AgentMessageView): AgentMessageSendView {
+  return {
+    userMessage: message(assistantMessage.conversationId, { messageId: "user", role: "USER", sequenceNo: 0, status: "COMPLETED", content: "query" }),
+    assistantMessage,
+  };
+}
 function started(conversationId: string): AgentAnswerEvent {
   return {
     type: "answer.started", occurredAt: now, conversationId, messageId: "assistant", sequence: 1,
@@ -47,6 +53,7 @@ const streams = new Map<string, { emit: (event: AgentAnswerEvent) => void; signa
 
 beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); snapshots.clear(); streams.clear();
+  vi.mocked(cancelAgentMessage).mockReset();
   vi.mocked(createAgentConversation).mockImplementation(async () => conversation());
   vi.mocked(getAgentConversation).mockImplementation(async (id) => conversation(id));
   vi.mocked(listAgentMessages).mockResolvedValue(page([]));
@@ -75,6 +82,76 @@ async function send(result: { current: ReturnType<typeof useAgentConversation> }
 }
 
 describe("Conversation state", () => {
+  it("requests backend cancellation and keeps subscriptions until durable termination", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    vi.mocked(cancelAgentMessage).mockResolvedValue(messagePair(message("conv-A")));
+    await act(async () => { await result.current.stop(); });
+    expect(cancelAgentMessage).toHaveBeenCalledWith("conv-A", "assistant");
+    expect(stream.signal.aborted).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    expect(result.current.cancelling).toBe(true);
+    expect(result.current.searching).toBe(true);
+    await act(async () => { await result.current.stop(); });
+    expect(cancelAgentMessage).toHaveBeenCalledOnce();
+    act(() => {
+      snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A", { status: "FAILED", lastError: { code: "AGENT_CANCELLED", message: "已停止生成回答" } })] });
+    });
+    await waitFor(() => expect(result.current.searching).toBe(false));
+    expect(result.current.cancelling).toBe(false);
+    expect(result.current.messages[1]?.lastError?.code).toBe("AGENT_CANCELLED");
+    expect(stream.signal.aborted).toBe(true);
+    act(() => { void result.current.send("second query"); });
+    await waitFor(() => expect(streamAgentMessage).toHaveBeenCalledTimes(2));
+    act(() => stream.finish());
+    expect(result.current.sending).toBe(true);
+  });
+
+  it.each(["FAILED", "COMPLETED"] as const)("applies a %s cancellation response and permits the next send without waiting for the old stream", async (status) => {
+    const { result } = await ready();
+    const stream = await send(result);
+    vi.mocked(cancelAgentMessage).mockResolvedValue(messagePair(message("conv-A", { status })));
+    await act(async () => { await result.current.stop(); });
+    expect(result.current.messages[1]?.status).toBe(status);
+    expect(result.current.searching).toBe(false);
+    expect(result.current.cancelling).toBe(false);
+    expect(stream.signal.aborted).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    act(() => { void result.current.send("second query"); });
+    await waitFor(() => expect(streamAgentMessage).toHaveBeenCalledTimes(2));
+    act(() => stream.finish());
+    expect(result.current.sending).toBe(true);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("shows cancellation errors and allows retrying without detaching the stream", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    vi.mocked(cancelAgentMessage).mockRejectedValueOnce(new Error("stop unavailable")).mockResolvedValue(messagePair(message("conv-A")));
+    await act(async () => { await result.current.stop(); });
+    expect(result.current.error).toBe("stop unavailable");
+    expect(result.current.cancelling).toBe(false);
+    expect(stream.signal.aborted).toBe(false);
+    await act(async () => { await result.current.stop(); });
+    expect(cancelAgentMessage).toHaveBeenCalledTimes(2);
+    expect(result.current.cancelling).toBe(true);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("ignores cancellation responses after switching conversations", async () => {
+    const { result, rerender } = await ready();
+    await send(result);
+    let resolve!: (pair: AgentMessageSendView) => void;
+    vi.mocked(cancelAgentMessage).mockImplementationOnce(() => new Promise((finish) => { resolve = finish; }));
+    act(() => { void result.current.stop(); });
+    rerender({ id: "conv-B" });
+    await waitFor(() => expect(result.current.conversationId).toBe("conv-B"));
+    await act(async () => resolve(messagePair(message("conv-A", { status: "FAILED" }))));
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.cancelling).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
   it("records genuine repeated retrieval/review steps without replaying duplicate or late events", async () => {
     const { result } = await ready();
     const stream = await send(result);

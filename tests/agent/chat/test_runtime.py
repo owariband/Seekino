@@ -23,8 +23,9 @@ from engine.rag.contracts import (
 from gateway.agent_model.errors import (
     ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError,
 )
-from agent.chat.common.errors import AgentModelInvocationError
+from agent.chat.common.errors import AgentExecutionTimeoutError, AgentModelInvocationError
 from agent.chat.common.state import RunInputs
+from agent.chat.common.tool import as_langchain_tools
 from agent.chat.video_search.runtime import AgentRuntime
 from agent.chat.video_search.errors import (
     VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
@@ -236,12 +237,14 @@ class Query:
         selected_ranges=None,
         searches_per_round=1,
         channel_weights=(0.0, 0.5, 0.5),
+        top_k=8,
     ):
         self.search_rounds = search_rounds
         self.selected = selected
         self.selected_ranges = selected_ranges
         self.searches_per_round = searches_per_round
         self.channel_weights = channel_weights
+        self.top_k = top_k
         self.prompts = []
         self.contexts = []
         self.tool_results = []
@@ -266,7 +269,7 @@ class Query:
                 self.tool_results.append(
                     _invoke_json(tools_by_name["retrieve"], _retrieval_args(
                         f"query-{number}-{index}",
-                        8,
+                        self.top_k,
                         lexical=self.channel_weights[0],
                         semantic=self.channel_weights[1],
                         visual=self.channel_weights[2],
@@ -404,14 +407,150 @@ def test_runtime_rejects_nonpositive_read_character_limit() -> None:
         _runtime(max_read_chars_per_call=0)
 
 
+def test_successful_handoff_exposes_last_review_and_frozen_canonical_evidence():
+    from agent.utils.errors import AgentToolFeedbackError
+
+    class PartialRetrieval(Retrieval):
+        def search(self, *args, **kwargs):
+            result = super().search(*args, **kwargs)
+            result.partial = True
+            result.warnings = ["one video unavailable"]
+            result.searched_video_ids = ["video-chunk-1", "video-chunk-2"]
+            return result
+
+    runtime, _, _, _, _ = _runtime(evaluator=Evaluator(2), retrieval=PartialRetrieval())
+    handoffs = []
+
+    def handoff(canvas, turn):
+        handoffs.append((canvas, turn))
+        assert turn.number == 2
+        assert turn.rendered_answer.answer_markdown == "## Final answer\n\nGrounded answer."
+        assert canvas.get("review", "latest") == {
+            "turn_number": 2, "action": "complete", "advice": "approved",
+            "selected_video_ranges": [_selected_range("chunk-1")],
+            "partial": True, "warnings": ["one video unavailable"],
+            "searched_video_ids": ["video-chunk-1", "video-chunk-2"],
+        }
+        assert canvas.draft_item("chunk-1", approved=True).start_seconds == 11
+        assert canvas.approved_hit("chunk-1").evidence.start_seconds == 10
+        with pytest.raises(AgentToolFeedbackError, match="read-only"):
+            canvas.mutate(lambda draft: draft["review"]["latest"].update(action="continue"))
+        with pytest.raises(AgentToolFeedbackError, match="read-only"):
+            canvas.mutate(lambda draft: draft["approved"]["chunk-1"].update(start_seconds=10))
+
+    result = runtime.kick(_inputs(), on_handoff=handoff)
+
+    assert len(handoffs) == 1
+    assert result.render_blocks[1].start_seconds == 11
+    assert result.render_blocks[1].end_seconds == 19
+    assert result.hits[0].evidence.start_seconds == 10
+    assert result.hits[0].evidence.end_seconds == 20
+
+
+def test_cancelled_graph_completion_does_not_handoff(monkeypatch):
+    runtime, _, _, _, _ = _runtime()
+    cancellation = Event()
+    invoke = runtime._graph.invoke
+    handoffs = []
+
+    def cancelled_completion(*args, **kwargs):
+        result = invoke(*args, **kwargs)
+        cancellation.set()
+        return result
+
+    monkeypatch.setattr(runtime._graph, "invoke", cancelled_completion)
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        runtime.kick(_inputs(), cancellation=cancellation,
+                     on_handoff=lambda *values: handoffs.append(values))
+    assert handoffs == []
+
+
+@pytest.mark.parametrize("evaluator_scope_known", [True, False])
+def test_handoff_includes_evaluator_retrieval_coverage_without_changing_standalone_output(evaluator_scope_known):
+    class CoverageRetrieval(Retrieval):
+        def search(self, query, **kwargs):
+            result = super().search(query, **kwargs)
+            result.searched_video_ids = ["video-chunk-1"]
+            result.warnings = ["query warning"]
+            if query == "eval-only":
+                result.hits = [_hit("chunk-eval")]
+                result.partial = True
+                result.warnings = ["query warning", "eval warning"]
+                result.searched_video_ids = ["video-chunk-eval"] if evaluator_scope_known else None
+            return result
+
+    class ExtraRetrievalEvaluator(Evaluator):
+        def run_structured(self, prompt, **kwargs):
+            completion = super().run_structured(prompt, **kwargs)
+            _invoke_json(_tool_map(kwargs["tools"])["retrieve"], _retrieval_args("eval-only", 1))
+            return completion
+
+    runtime, _, _, _, _ = _runtime(
+        evaluator=ExtraRetrievalEvaluator(), retrieval=CoverageRetrieval([_hit("chunk-1")]),
+    )
+    handoffs = []
+    result = runtime.kick(_inputs(), on_handoff=lambda *values: handoffs.append(values))
+
+    canvas, turn = handoffs[0]
+    coverage = {
+        "partial": True, "warnings": ["query warning", "eval warning"],
+        "searched_video_ids": ["video-chunk-1", "video-chunk-eval"] if evaluator_scope_known else None,
+    }
+    assert len(turn.retrieval_calls) == 2
+    assert canvas.retrieval_snapshot("chunk-eval").evidence.video_chunk_id == "chunk-eval"
+    assert [hit.evidence.video_chunk_id for hit in turn.retrieval_result.hits] == ["chunk-1"]
+    assert {key: getattr(turn.retrieval_result, key) for key in coverage} == coverage
+    assert {key: canvas.get("review", "latest")[key] for key in coverage} == coverage
+    assert result.partial is False
+    assert result.warnings == ["query warning"]
+    assert result.searched_video_ids == ["video-chunk-1"]
+
+
+@pytest.mark.parametrize("runtime_bytes,caller_bytes", [(1200, 800), (800, 1200), (800, None)])
+def test_supervisor_read_tools_preserve_paging_and_use_the_narrower_budget(runtime_bytes, caller_bytes):
+    from agent.chat.common.state import ExecutionControl
+    from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
+
+    runtime, _, _, _, _ = _runtime(
+        max_tool_result_bytes=runtime_bytes, max_catalog_items_per_page=1,
+        max_read_chars_per_call=40,
+    )
+    canvas = VideoSearchContextCanvas("workspace", ("series",))
+    canvas.record_retrieval(VideoChunkSearchResult(
+        query="query", series_ids=["series"],
+        agent_reply=AgentReply(message="evidence", result_count=2),
+        hits=[_hit("chunk-1"), _hit("chunk-2")],
+    ))
+    tools = _tool_map(as_langchain_tools(runtime.build_supervisor_read_tools(
+        canvas, ExecutionControl(None), maximum_result_bytes=caller_bytes,
+    )))
+    assert set(tools) == {"get_context_canvas"}
+    first = tools["get_context_canvas"].invoke({"collection": "retrieval"})
+    page = json.loads(first)
+    assert len(page["items"]) == 1
+    assert page["next_cursor"] is not None
+    second = tools["get_context_canvas"].invoke({
+        "collection": "retrieval", "cursor": page["next_cursor"],
+    })
+    assert json.loads(second)["items"][0]["video_chunk_id"] == "chunk-2"
+    detail = tools["get_context_canvas"].invoke({
+        "collection": "retrieval", "reference": "chunk-1",
+        "section": "evidence.text", "start": 0, "end": 40,
+    })
+    assert json.loads(detail)["end"] - json.loads(detail)["start"] <= 40
+    limit = min(runtime_bytes, caller_bytes) if caller_bytes is not None else runtime_bytes
+    assert all(len(value.encode("utf-8")) <= limit for value in (first, second, detail))
+
+
 @pytest.mark.parametrize("value", [0, float("inf"), float("nan")])
 def test_runtime_rejects_invalid_chat_timeout(value) -> None:
     with pytest.raises(ValueError, match="chat_timeout_seconds"):
         _runtime(chat_timeout_seconds=value)
 
 
-def test_runtime_obeys_outer_deadline_before_starting_video_graph():
-    runtime, query, _, _, _ = _runtime()
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_runtime_obeys_outer_deadline_before_starting_video_graph(total_timeout_enabled):
+    runtime, query, _, _, _ = _runtime(total_timeout_enabled=total_timeout_enabled)
     with pytest.raises(AgentModelInvocationError, match="deadline exceeded"):
         runtime.kick(_inputs(), deadline=monotonic() - 1)
     assert query.prompts == []
@@ -624,7 +763,8 @@ def test_kick_rejects_invalid_loop_turn_limit(value) -> None:
     assert query.contexts == evaluator.contexts == chat.contexts == []
 
 
-def test_evaluator_cannot_complete_without_reading_the_full_draft(caplog) -> None:
+@pytest.mark.parametrize("sections_to_read", [(), ("draft", "evidence.transcript", "evidence.events")])
+def test_evaluator_complete_is_trusted_without_full_section_reads(caplog, sections_to_read) -> None:
     caplog.set_level(logging.INFO)
 
     class BlindEvaluator:
@@ -633,29 +773,36 @@ def test_evaluator_cannot_complete_without_reading_the_full_draft(caplog) -> Non
         def __init__(self) -> None:
             self.calls = 0
 
-        def run_structured(self, _prompt, *, result_type, **_kwargs):
+        def run_structured(self, _prompt, *, tools, result_type, **_kwargs):
             self.calls += 1
+            if sections_to_read:
+                reader = _reader(_tool_map(tools), "draft")
+                catalog = _invoke_json(reader, {})
+                for item in catalog["items"]:
+                    for section in sections_to_read:
+                        _invoke_json(reader, {
+                            "video_chunk_id": item["video_chunk_id"], "section": section,
+                        })
             return result_type.model_validate({
                 "action": "complete",
                 "advice": "approved without reading",
             })
 
     evaluator = BlindEvaluator()
-    runtime, _query, _evaluator, chat, _retrieval = _runtime(
+    runtime, query, _evaluator, chat, _retrieval = _runtime(
         evaluator=evaluator, limits_enabled=True,
     )
 
-    with pytest.raises(VideoSearchFailure) as captured:
-        runtime.kick(_inputs())
-    assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
-    assert captured.value.phase is VideoSearchFailurePhase.EVALUATOR
+    result = runtime.kick(_inputs())
 
-    assert evaluator.calls == 3
-    assert chat.contexts == []
+    assert evaluator.calls == 1
+    assert len(query.contexts) == len(chat.contexts) == 1
+    assert result.agent_reply.result_count == 1
     assert (
-        'review_action=continue review_source=draft_read_guard '
+        'review_action=complete review_source=evaluator '
         'evaluator_action=complete evaluator_advice="approved without reading"'
     ) in caplog.text
+    assert "review_source=draft_read_guard" not in caplog.text
 
 
 def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
@@ -1053,7 +1200,7 @@ def test_empty_real_retrieval_can_deliver_an_approved_uncertain_answer():
     assert [block.type for block in result.render_blocks] == ["markdown"]
 
 
-def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
+def test_tool_scope_is_fixed_and_model_top_k_ignores_legacy_limits():
     class InspectQuery(Query):
         def run_structured(self, prompt, *, tools, result_type, **kwargs):
             assert "# Video Retrieval Skill" in prompt
@@ -1067,14 +1214,45 @@ def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
                 **kwargs,
             )
 
-    runtime, query, _evaluator, _chat, retrieval = _runtime(
+    runtime, query, evaluator, _chat, retrieval = _runtime(
         query=InspectQuery(), maximum_top_k=2, max_model_calls_per_turn=5,
         limits_enabled=True,
     )
-    runtime.kick(_inputs())
-    assert retrieval.calls == [("query-1-0", "workspace", ["series"], 2)]
+    inputs = _inputs()
+    inputs["requested_top_k"] = 3
+    runtime.kick(inputs)
+    assert retrieval.calls == [("query-1-0", "workspace", ["series"], 8)]
     assert retrieval.weights == [(0.0, 0.5, 0.5)]
     assert query.budgets == [5]
+    assert "requested_top_k" not in query.contexts[0]["inputs"]
+    assert "requested_top_k" not in evaluator.contexts[0]["inputs"]
+
+
+def test_model_can_retrieve_more_than_100_hits_and_complete_with_full_trace():
+    chunk_ids = [f"chunk-{number}" for number in range(1, 102)]
+    runtime, query, evaluator, chat, retrieval = _runtime(
+        query=Query(top_k=101, selected=(chunk_ids[-1],)),
+        retrieval=Retrieval([_hit(chunk_id) for chunk_id in chunk_ids]),
+        maximum_top_k=2,
+    )
+    inputs = _inputs()
+    inputs["requested_top_k"] = 3
+
+    result = runtime.kick(inputs)
+
+    assert retrieval.calls == [("query-1-0", "workspace", ["series"], 101)]
+    assert query.tool_results[0]["requested_top_k"] == 101
+    assert query.tool_results[0]["result_count"] == 101
+    assert query.tool_results[0]["total"] == 101
+    assert query.tool_results[0]["next_cursor"] is not None
+    assert len(evaluator.contexts) == len(chat.contexts) == 1
+    assert result.agent_reply.result_count == 1
+    assert result.hits[0].evidence.video_chunk_id == chunk_ids[-1]
+    trace = json.loads(result.model_dump_json(by_alias=True))["retrievalTrace"]
+    assert len(trace) == 1
+    assert trace[0]["topK"] == 101
+    assert trace[0]["resultCount"] == 101
+    assert trace[0]["videoChunkIds"] == chunk_ids
 
 
 def test_kick_run_limits_override_only_the_current_execution():
@@ -1160,6 +1338,157 @@ def test_query_stage_deadline_stops_before_evaluator(monkeypatch):
     with pytest.raises(AgentModelInvocationError, match="deadline exceeded"):
         runtime.kick(_inputs())
     assert evaluator.contexts == chat.contexts == []
+
+
+def test_ten_minute_deadline_stops_repeated_query_evaluator_turns_before_chat(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("agent.chat.video_search.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("agent.chat.common.state.monotonic", lambda: clock[0])
+
+    class SlowEvaluator(Evaluator):
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
+            clock[0] += 100
+            return result
+
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        evaluator=SlowEvaluator(99), total_timeout_enabled=True,
+        limits_enabled=False, execution_timeout_seconds=600,
+    )
+
+    with pytest.raises(AgentExecutionTimeoutError, match="deadline exceeded"):
+        runtime.kick(_inputs(), max_loop_turns=100)
+
+    assert clock[0] == 700.0
+    assert [context["turn_number"] for context in query.contexts] == list(range(1, 7))
+    assert len(evaluator.contexts) == 6
+    assert evaluator.request_timeouts == [pytest.approx(value) for value in [480, 480, 400, 300, 200, 100]]
+    assert query.budgets == evaluator.budgets == [None] * 6
+    assert chat.contexts == []
+
+
+def test_disabled_total_timeout_keeps_finite_stages_after_more_than_three_turns(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("agent.chat.video_search.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("agent.chat.common.state.monotonic", lambda: clock[0])
+
+    class SlowQuery(Query):
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
+            clock[0] += 2
+            return result
+
+    class SlowEvaluator(Evaluator):
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
+            clock[0] += 2
+            return result
+
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        query=SlowQuery(), evaluator=SlowEvaluator(4),
+        total_timeout_enabled=False, limits_enabled=False,
+        execution_timeout_seconds=1, stage_timeout_seconds=5,
+        evaluator_stage_timeout_seconds=7, chat_timeout_seconds=9,
+    )
+
+    result = runtime.kick(_inputs())
+
+    assert result.agent_reply.result_count == 1
+    assert clock[0] == 116.0
+    assert len(query.contexts) == len(evaluator.contexts) == 4
+    assert query.request_timeouts == [pytest.approx(5)] * 4
+    assert evaluator.request_timeouts == [pytest.approx(7)] * 4
+    assert chat.request_timeouts == [pytest.approx(9)]
+    assert query.budgets == evaluator.budgets == [None] * 4
+    assert chat.model_call_budgets == [None]
+
+
+def test_disabled_total_timeout_still_clamps_stages_to_parent_deadline(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("agent.chat.video_search.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("agent.chat.common.state.monotonic", lambda: clock[0])
+
+    class SlowQuery(Query):
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
+            clock[0] += 2
+            return result
+
+    class SlowEvaluator(Evaluator):
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
+            clock[0] += 2
+            return result
+
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        query=SlowQuery(), evaluator=SlowEvaluator(),
+        total_timeout_enabled=False, execution_timeout_seconds=1,
+        stage_timeout_seconds=10, evaluator_stage_timeout_seconds=10,
+        chat_timeout_seconds=10,
+    )
+
+    runtime.kick(_inputs(), deadline=108.0)
+
+    assert query.request_timeouts == [pytest.approx(8)]
+    assert evaluator.request_timeouts == [pytest.approx(6)]
+    assert chat.request_timeouts == [pytest.approx(4)]
+
+
+@pytest.mark.parametrize("phase", ["query", "evaluator", "chat"])
+def test_disabled_total_timeout_still_enforces_each_stage_deadline(monkeypatch, phase):
+    clock = [100.0]
+    monkeypatch.setattr("agent.chat.video_search.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("agent.chat.common.state.monotonic", lambda: clock[0])
+
+    class SlowQuery(Query):
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
+            if phase == "query":
+                clock[0] += 6
+            return result
+
+    class SlowEvaluator(Evaluator):
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
+            if phase == "evaluator":
+                clock[0] += 8
+            return result
+
+    class SlowChat(Chat):
+        def run_agent_loop(self, prompt, **kwargs):
+            super().run_agent_loop(prompt, **kwargs)
+            if phase == "chat":
+                clock[0] += 10
+
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        query=SlowQuery(), evaluator=SlowEvaluator(), chat=SlowChat(),
+        total_timeout_enabled=False, execution_timeout_seconds=1,
+        stage_timeout_seconds=5, evaluator_stage_timeout_seconds=7,
+        chat_timeout_seconds=9,
+    )
+
+    with pytest.raises(AgentModelInvocationError, match="deadline exceeded"):
+        runtime.kick(_inputs())
+
+    assert query.request_timeouts == [pytest.approx(5)]
+    assert evaluator.request_timeouts == ([] if phase == "query" else [pytest.approx(7)])
+    assert chat.request_timeouts == ([pytest.approx(9)] if phase == "chat" else [])
+
+
+def test_execution_control_without_deadline_keeps_cancellation_checks():
+    from agent.chat.common.state import ExecutionControl
+
+    cancellation = Event()
+    control = ExecutionControl(None, cancellation)
+    control.check()
+    assert control.remaining_seconds() is None
+
+    cancellation.set()
+
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        control.check()
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        control.remaining_seconds()
 
 
 def test_model_selected_weights_are_normalized_recorded_and_returned_to_agent():
@@ -1727,7 +2056,8 @@ def test_out_of_chunk_range_can_be_discarded_without_crashing_chat() -> None:
     assert result.hits == []
 
 
-def test_cancel_after_agent_loop_stops_before_output():
+@pytest.mark.parametrize("total_timeout_enabled", [True, False])
+def test_cancel_after_agent_loop_stops_before_output(total_timeout_enabled):
     cancellation = Event()
 
     class CancelChat(Chat):
@@ -1735,7 +2065,9 @@ def test_cancel_after_agent_loop_stops_before_output():
             super().run_agent_loop(prompt, **kwargs)
             cancellation.set()
 
-    runtime, *_ = _runtime(chat=CancelChat())
+    runtime, *_ = _runtime(
+        chat=CancelChat(), total_timeout_enabled=total_timeout_enabled,
+    )
     events = []
 
     with pytest.raises(AgentModelInvocationError, match="cancelled"):
@@ -1774,7 +2106,9 @@ def test_cancelled_kick_does_not_call_any_agent_or_tool():
 
 def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separate():
     rendezvous = Barrier(2)
+    handoff_rendezvous = Barrier(2)
     events = {"a": [], "b": []}
+    handoffs = {}
 
     class ScopedQuery:
         model_name = "scoped-query"
@@ -1851,14 +2185,32 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
         ScopedQuery(), Approve(), EchoChat(), search,
         retrieval_channel="lexical",
     )
+
+    def handoff(canvas, turn):
+        from agent.chat.common.state import ExecutionControl
+
+        name = turn.plan_context
+        handoff_rendezvous.wait(timeout=5)
+        tools = _tool_map(as_langchain_tools(runtime.build_supervisor_read_tools(
+            canvas, ExecutionControl(None),
+        )))
+        page = _invoke_json(tools["get_context_canvas"], {"collection": "retrieval"})
+        assert [item["video_chunk_id"] for item in page["items"]] == [f"chunk-{name}"]
+        foreign = _invoke_json(tools["get_context_canvas"], {
+            "collection": "retrieval", "reference": f"chunk-{'b' if name == 'a' else 'a'}",
+        })
+        assert foreign["error"]["code"] == "UNKNOWN_ITEM"
+        handoffs[name] = canvas
+
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {
             name: executor.submit(runtime.kick,
                 _inputs(name, workspace=f"workspace-{name}", series=f"series-{name}"),
-                emit=events[name].append)
+                emit=events[name].append, on_handoff=handoff)
             for name in ("a", "b")
         }
         results = {name: future.result(timeout=5) for name, future in futures.items()}
+    assert handoffs["a"].id != handoffs["b"].id
     for name in ("a", "b"):
         assert results[name].agent_reply.message == name
         assert results[name].hits[0].evidence.video_chunk_id == f"chunk-{name}"
@@ -1883,14 +2235,14 @@ def test_multiple_searches_can_select_more_unique_hits_than_one_search(requested
     inputs["requested_top_k"] = requested
     result = runtime.kick(inputs)
     assert len(retrieval.calls) == 2
-    assert [call[3] for call in retrieval.calls] == [1, 1]
+    assert [call[3] for call in retrieval.calls] == [8, 8]
     assert "selection_limit" not in query.contexts[0]
     assert len(evaluator.contexts) == len(chat.contexts) == 1
     assert result.agent_reply.result_count == 2
     assert [hit.evidence.video_chunk_id for hit in result.hits] == ["chunk-1", "chunk-2"]
 
 
-def test_multiple_searches_may_choose_one_valid_hit_within_budget():
+def test_multiple_searches_may_choose_one_valid_hit():
     runtime, _, evaluator, _, _ = _runtime(
         query=Query(searches_per_round=2, selected=("chunk-2",)),
         retrieval=DisjointRetrieval(), maximum_top_k=1,

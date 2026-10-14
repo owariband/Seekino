@@ -254,7 +254,6 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
         )
         repository.activate_video_task(video_lease)
         child_id = prepared.chunk_parse_task_ids[0]
-        assert queue.dispatch_chunk(child_id, video_lease)
         chunk_lease = queue.claim_chunk(
             "agent-test-understand", lease_duration=timedelta(minutes=10),
             video_parse_task_id=task_id,

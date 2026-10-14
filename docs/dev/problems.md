@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-10-12。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。此前补充 B07 的 Codex 原生 Refine 超时诊断及 B08 的数值编码改动；随后记录 B08 的索引版本策略、Embedding 独立存储要求与精度／差异来源的证据边界。本轮在 B07 最新日期条目记录 MYGO EP03 完整完成的耗时收敛里程碑，以及索引进度权重降至 5%。其余条目保留各自日期下的历史状态，未作为当前工作区的全量复核。
+更新日期：2026-10-14。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。此前补充 B07 的 Codex 原生 Refine 超时诊断及 B08 的数值编码改动；随后记录 B08 的索引版本策略、Embedding 独立存储要求与精度／差异来源的证据边界。2026-10-12 在 B07 记录 MYGO EP03 完整完成的耗时收敛里程碑，以及索引进度权重降至 5%。2026-10-14 新增 B09，记录同剧集并发完成上传时的 MySQL 死锁、锁定对象、最小修复和真实 MySQL 回归；运行服务尚未重启加载修复。新增 B10，记录解析停服交接、重试预算和恢复调度缺口及当时任务快照，并补充 DB Queue／Redis 取舍、本地 RagFlow 两条执行路径和分批修复验收。其余条目保留各自日期下的历史状态，未作为当前工作区的全量复核。
 
 ## frontend
 
@@ -584,6 +584,305 @@ ES 已有 ID／版本 V、向量 A
 
 依据：[缓存保存与索引 receipt](../../server/repository/video_parse.py)、[索引协调与缓存恢复](../../server/service/video_parse_index_coordinator.py)、[ES external version 与完整 source 校验](../../server/storage/elasticsearch.py)、[Interval 重试计数](../../server/mq/video_parse_queue.py)、[消费者错误日志](../../server/mq/video_parse_consumer.py)、[模型 JSON 类型回归](../../tests/server/test_model_json.py)、[V2 Repository 回归](../../tests/server/test_video_parse_repository.py)、[Legacy IndexSync 回归](../../tests/server/test_index_sync_repository.py)，以及 `outputs/local-services/api.log` 中上述时间段记录和当日只读 MySQL／ES 比对结果。
 
+### B09：同剧集并发完成上传时，父记录 S → X 锁升级导致死锁
+
+优先级：高。类型：上传完成事务的并发锁冲突。状态：最小代码修复与真实 MySQL 回归已通过，运行服务尚未重启加载修复。记录日期：2026-10-14；以下故障时间均为 `+0800`。
+
+#### 现象与影响
+
+用户一次批量上传 13 个视频，首批 3 个文件并发上传收尾时出现错误。`2026-10-13 23:34:49`，其中两个请求在 `CREATING_JOB` 阶段报 MySQL `1213 Deadlock found when trying to get lock; try restarting transaction`，`POST /api/uploads/complete` 返回 HTTP 500。分片传输、合并、校验与媒体探测已经通过，失败发生在 Video／待执行解析任务记录的数据库提交阶段，尚未提交成功，也尚未执行这些文件的解析；与 B02 的提交后清理失败是独立问题。
+
+| 上传会话 | 失败请求 ID | 后续恢复 |
+| --- | --- | --- |
+| `8c8d1954-5789-4e7a-9ca1-2471b107eb53` | `7535ac6a-b44e-4fac-846e-9d76fff363f4` | `23:36:05` 原会话重试完成 |
+| `88e54a7d-7752-44f3-9dbe-34f241abe67b` | `e9ab99c2-7799-4f7e-97c2-df30eb454b54` | `23:35:15` 原会话重试完成 |
+
+统计窗口为 `2026-10-13 23:34:43–23:36:06`，只统计 `outputs/server/logs/development/api.log*`，不与重复写入的 `outputs/local-services/api.log` 累加：
+
+- 分片 PUT 共 293 次，全部 HTTP 200。
+- 完成请求含重试共 8 次，其中 2 次 HTTP 500，请求失败率 25%。
+- 首批同时完成的 3 个文件中，2 个首次失败，比例为 66.7%；不能将该比例外推为所有文件的最终失败率。
+- 已进入完成阶段的 6 个文件在重试后均完成；窗口内另外两个新建会话尚未进入完成阶段，不计入该结果。
+- 排查时保留日志中共 7 条 `upload_completion_failed`：6 条死锁（9 月 18 日、9 月 22 日、10 月 13 日各两条），另 1 条为视频身份冲突。历史错误按各自原因处理。
+
+#### 两种锁分别锁什么
+
+S（Shared，共享）和 X（Exclusive，排他）描述的是锁的**访问模式**，不是不同的数据对象，也不单独决定锁的粒度。本次发生冲突的两种锁都落在同一个数据库对象上：
+
+```text
+数据库：anivag_local_20261010_development
+表／索引：series / PRIMARY
+记录：id = 836fa9f0-2bf4-50fb-9c64-75526fa1dea9（mygo）
+粒度：这一条主键索引记录，对应这一行 Series
+```
+
+| 模式 | 本次加锁来源 | 锁住的对象及目的 |
+| --- | --- | --- |
+| S 共享记录锁 | `INSERT video` 的 `video.series_id → series.id` 外键检查，由 InnoDB 自动取得 | 父表的上述 Series 记录；保证检查过的父引用在事务期间受到保护，阻止其他事务对该记录取得 X 锁 |
+| X 排他记录锁 | `refresh_series_statuses()` 中 `SELECT series ... WHERE id = ... FOR UPDATE` | 同一条 Series 记录；为重新计算并更新剧集状态取得排他访问 |
+
+虽然一个操作检查 `series.id`，另一个操作要更新 `series.status`，锁的单位仍是同一条记录，不是分别锁两个字段。每个文件还会锁各自的 UploadSession、插入各自的 Video，但本次等待环出现在它们共同引用的父记录 Series 上。死锁报告明确为 `locks rec but not gap`，因此这里是记录锁，不能解释成文件锁、整表锁、整页锁或范围／间隙锁。
+
+对**不同事务在同一条记录上**申请的记录锁，兼容关系为：
+
+| 已持有的锁／另一事务申请的锁 | S | X |
+| --- | --- | --- |
+| S | 兼容，可同时持有 | 不兼容，需等待 |
+| X | 不兼容，需等待 | 不兼容，需等待 |
+
+事务自己的 S 锁不阻止自己申请 X；阻止升级的是其他事务仍持有的 S 锁。本次外键检查得到的 S 锁不会在 INSERT 语句结束后立即释放，而是持有到事务提交／回滚。上述兼容表针对记录锁请求；当前 `REPEATABLE-READ` 下普通 SELECT 可以通过 MVCC 读取快照，不能把 X 锁理解为阻止所有普通查询。
+
+#### 死锁如何形成及直接证据
+
+前端 `MAX_PARALLEL_FILES = 3`。文件大小接近时，多个完成请求会在接近的时间进入 `UploadRepository.complete_upload()`。故障版本的事务先锁自己的 UploadSession，再插入并 flush Video，最后才通过 `refresh_series_statuses()` 对 Series 申请 X 锁。
+
+```text
+事务 A：插入 Video A → 持有 Series R 的 S 锁
+事务 B：插入 Video B → 持有 Series R 的 S 锁（S 与 S 兼容）
+事务 A：申请 Series R 的 X 锁 → 等 B 释放 S；A 自己的 S 仍保留
+事务 B：申请 Series R 的 X 锁 → 等 A 释放 S；B 自己的 S 仍保留
+结果：A 等 B，B 等 A；InnoDB 检测到死锁并回滚一个事务
+```
+
+2026-10-13 排查时只读执行 `SHOW ENGINE INNODB STATUS`，最新死锁时间与应用日志同为 `23:34:49`。实际版本为 MySQL `8.4.11`、隔离级别为 `REPEATABLE-READ`。报告中的事务 `2306436` 与 `2306437` 均持有上述 `series / PRIMARY` 记录的 S 锁，并等待同一记录的 X 锁，随后记录 `WE ROLL BACK TRANSACTION (2)`。摘要如下，原报告当时未另存文件：
+
+```text
+TRANSACTION 2306436: HOLDS lock mode S locks rec but not gap
+                    WAITING lock_mode X locks rec but not gap waiting
+TRANSACTION 2306437: HOLDS lock mode S locks rec but not gap
+                    WAITING lock_mode X locks rec but not gap waiting
+SQL（两者相同）: SELECT ... FROM series WHERE series.id = '836fa9f0-2bf4-50fb-9c64-75526fa1dea9' FOR UPDATE
+```
+
+等待环由数据库报告直接证实；S 锁的来源由事务代码中的 Video 插入、外键定义和 InnoDB 外键加锁规则共同解释。最新报告只保留最后一次死锁，两个失败请求则分别由应用日志确认，不把一份报告解释成完整记录了三个事务的全部冲突。
+
+当前后端没有对 1213 做事务级自动重试；异常沿 `UploadService.complete()` 失败路径返回，释放完成认领并将会话恢复为 UPLOADING，保留已确认分片。前端完成接口异常直接标记整个上传任务失败，因此本地传输成功也会显示“上传失败”；原会话重试可复用已有分片。
+
+#### 已实施的最小修复（2026-10-14）
+
+- 仅调整 `server/repository/upload.py` 的 `complete_upload()`：锁住 UploadSession 并复核 `COMPLETING`／completion token 后，立即通过 `SELECT Series ... FOR UPDATE` 取得父记录 X 锁，再查询冲突、插入 Video 和任务，最后提交。原 Series 存在性检查前移并复用结果，生产代码新增 12 行、删除 5 行。
+- 保留既有 `UploadSession → Series` 锁顺序，与删除收尾一致；未改成全路径 `Series → UploadSession`，也未调整删除和旧版索引回写的锁顺序。各并发完成请求在插入 Video 之前排队，避免先同时取得父行 S 再升级 X。
+- 取得 Series X 后，后续 INSERT 的外键检查不会把它降为 S；排他锁持续到同一事务提交／回滚。串行范围仅为同剧集上传完成的数据库事务，分片传输、合并与媒体探测仍在锁外执行。
+- 上传／删除竞争仍由原有加锁与状态机制保护：`begin_delete_session()` 锁住 UploadSession 后拒绝 `COMPLETING`；允许删除时将其置为 `EXPIRED`、清除 token 并保存删除标记；完成事务在锁内复核 status/token，拒绝失效请求。此机制不是检查一个 `Series.status = DELETED` 字段。
+- 不新增事务重试，不改变 API、Schema、配置或前端并发数。运行中的 API 未重启，本条验证不等于已对原 13 个真实视频重新上传验收。
+
+#### 验证结果
+
+- `.venv/bin/python -m pytest -q tests/server/test_upload_service.py`：**87 passed**，包含完成幂等、删除拒绝 COMPLETING、分片与删除竞争及清理恢复等既有行为。
+- 新增 `test_mysql_completes_distinct_uploads_in_one_series_concurrently[v1/v2]`：同一 Series 的 3 个不同文件通过 3 个独立数据库连接并发完成；SQLAlchemy 事件在 INSERT Video 后最多等待 1 秒以放大旧版竞争窗口，修复后串行路径无需等待其他 INSERT 到齐。验证三个上传均完成、视频和任务唯一，重复 complete 复用原 ID。
+- 在新建的临时独立 MySQL 测试库中，将 HEAD 的旧 `complete_upload()` 方法仅加载到测试子进程执行上述新增用例：**2 failed**，V1／V2 均复现原 `SELECT Series ... FOR UPDATE` 的 **1213 死锁**。此为预期失败的回归有效性验证，未回写或回滚工作区源码。
+- 随后运行修复版新增两项，以及 `test_mysql_delete_fences_in_flight_upload_and_preserves_order`、`test_mysql_delete_completed_upload_removes_video_job_and_usage`、`test_mysql_enforces_episode_order_under_concurrent_requests`、`test_mysql_chunked_upload_claim_and_lease_fencing`：**6 passed**。测试结束后仅删除本次新建的临时库，没有修改现有业务库；未运行解析 Worker 或模型调用。
+- `git diff --check` 通过。未执行服务重启、业务库迁移、commit 或 push。
+
+#### 观察到但本次未改
+
+- `create_session()` 的幂等重放已避免同时持有 Series 再等待原 Upload；真正新建路径仍存在 `Series → occupying Upload` 顺序，与完成路径的反向取锁是既有独立风险，需要单独核对冲突序号及扫描范围。上述回归不代表覆盖了所有新建与完成交错，也不宣称消除所有数据库死锁。
+- 上传收尾是否需要每次重算整部剧状态，以及 1213 的有限事务重试，留作独立评估；本次保持业务状态规则，专门修复已证实的父记录 S → X 升级冲突。
+
+依据：[上传事务](../../server/repository/upload.py) 的 `complete_upload()`、[剧集状态刷新](../../server/repository/index_sync.py) 的 `refresh_series_statuses()`、[Video 外键](../../server/model/video.py)、[上传失败收尾](../../server/service/upload.py)、[前端上传调度](../../web/src/features/uploads/UploadProvider.tsx)；本机应用轮转日志中的上述 request_id／upload_session_id 与当时只读获取的 InnoDB 死锁报告。锁语义参考 [MySQL 8.4 InnoDB Locking](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html)、[各 SQL 语句的加锁规则](https://dev.mysql.com/doc/refman/8.4/en/innodb-locks-set.html)。
+
+### B10：正常停服没有解析任务交接，恢复消耗重试且整集收尾受调度阻塞
+
+优先级：高。类型：V2 解析生命周期与恢复调度缺陷。状态：诊断已确认；10:20 已通过现有接口恢复第 7、8 集的调度资格，解析生命周期／调度代码尚未修复，本轮没有重启 API。最初记录时间：2026-10-14 02:28–02:31（`+0800`）；10:13–10:22 的新现场见下方补充。这是解析阶段问题，与 B09 上传完成事务的死锁分开处理。
+
+#### 02:28 历史任务快照与当时的重启判断
+
+本机 MySQL 的 13 个未删除、非测试 VideoParseTask：
+
+| 视频 | 数据库状态 | 本次核验的执行情况 |
+|---|---|---|
+| 第 1、2、3、4、6 集 | COMPLETE | 已完成，不因重启重做 |
+| 第 5 集 | PARSING | 唯一活跃整集租约，owner=`local-consumer-10201`，attempt=1/max=3；02:28 快照有 10 个 COMPLETE、4 个 UNDERSTANDING、10 个 QUEUED Chunk，4 个在途 Chunk 的 retry 均为 0/max=2 |
+| 第 7、8 集 | PARSING | 主任务无 owner，last_error=`worker lease expired`，attempt=1/max=3；已完成 Chunk 分别 8/24、19/24，等待整集调度恢复后继续派发 |
+| 第 9 集 | INDEXING | 主任务无 owner，last_error=`worker lease expired`，attempt=1/max=3；24/24 Chunk 和 22/22 Interval 已 COMPLETE，整集成功状态尚未收尾 |
+| 第 10–13 集 | PENDING | 尚未开始，attempt=0/max=3 |
+
+按该快照，重启一次不会仅因上述活跃任务的重试预算直接耗尽而失败，但不能描述为无损、立即续跑：第 5 集尚未提交的在途 Chunk 会重做，并消耗重试；已提交结果保留。快照会随运行变化，执行重启前必须重新读取在途状态，不能把这组次数当作永久保证。
+
+02:31 的待领取主任务顺序为第 8 → 9 → 7 → 11 → 10 → 12 → 13 集；第 5 集仍占据唯一主调度名额。如果此时再中断第 5 集，回收会把它的 next_execute_time 推到当时的“现在 + 30 秒”，可能排在这些已有任务之后。日志显示上一进程在 01:15:22 开始 shutdown，新进程 10201 在 01:43:13 启动；这些是既有记录，本轮没有操作重启。
+
+#### 已确认的原因
+
+1. **API 与解析 Consumer 在同一进程，重启 API 同时中断解析。** Consumer 虽在独立线程运行，生命周期仍由 API lifespan 管理。
+2. **正常停止直接取消在途任务，没有归还 Video／Chunk／Interval 租约。** `run_forever()` 的 finally 调用 cancel + gather，三个执行入口对 CancelledError 仅重新抛出。新进程依靠 reap_expired 处理旧租约；当前默认租约 300 秒、失败退避 30 秒，还要等待调度名额。Prefix 的正常取消已有主动归还逻辑，是例外。
+3. **计划停服被当作失联，消耗失败预算。** Video 重新领取增加 attempt；过期时 attempt 已达 max 则停止自动恢复。Chunk／Refine／Index 过期直接增加 retry，超过冻结配置中的 max_retry_count 则失败。当前业务任务上限分别是 3 次领取、2 次重试；反复中断可以耗尽预算，已有成果并不会因此被删除。
+4. **持久化边界是完成一个 Chunk，不是完成一次 ASR／模型调用。** ASR／OCR／Canvas 在理解期间只存内存；整段理解结束才提交。取消清理本租约临时媒体，所以未提交 Chunk 的媒体准备和 ASR／理解需要重做。已提交 Chunk、Refine 结果、索引回执会保留，不能说重启必然整片从头解析。
+5. **整集恢复及成功收尾共用唯一主调度名额。** 一个 Video handler 一直持有名额直到整集完成。领取按 next_execute_time、create_date、id 排序，不按恢复优先。子任务可以跨视频继续领取，但未派发或需要重新派发的 Chunk 依赖各自父调度；Interval 索引提交只更新子任务，不归并父成功状态，过期回收也不补成功归并。这解释了第 9 集子任务全完成却仍显示 INDEXING：重新领取父任务后可直接收尾，无需重跑已经完成的内容。
+
+#### 证据边界与后续验收要求
+
+- **系统记录确认了停服前的两次自动睡眠。** 只读 `pmset -g log`：00:16:34 进入 Idle Sleep，00:21:02 唤醒（268 秒）；01:02:59 进入 Idle Sleep，01:14:30 唤醒（691 秒）。第 8 集 00:21:43、第 9 集 01:14:30 的主任务租约丢失均在相应唤醒后，且早于 01:15:22 停服。应用同时存在约 267／688 秒的墙钟与 monotonic 执行耗时差，与系统暂停吻合。睡眠期间无法续心跳，而数据库租约按 UTC 墙钟到期；这些已有失联不能归因于后来的服务重启。第一段睡眠虽小于 300 秒，叠加入睡前已消耗的心跳周期仍可能越过租约期限；未拿到入睡前逐次心跳时间，不声称精确还原了该段到期瞬间。
+- 已有单元测试覆盖过期接管、旧 owner 隔离、部分成果复用等；没有找到“真实在途任务 → SIGTERM → 新进程恢复 → 不扣计划停服重试”的完整验收。本轮只读测试源码，没有运行真实模型或中断业务任务。
+- 修复首先应让计划停服具备明确交接：停止领取、在受控期限内完成或取消在途工作、以当前租约版本归还可续跑任务，并与真实执行失败的重试计数分开。还需要让已完成子任务的整集成功收尾不被长时间运行的另一个 Video 阻塞。ASR 等细粒度成果复用是独立的重做成本优化，不能替代停服交接。
+
+#### 10:13–10:22 现场：服务存活，但恢复等待没有明确状态和手动入口
+
+本轮按用户要求执行 `./start.sh status` 和 `./start.sh start`。MySQL、API／Parse Consumer、Web、Elasticsearch 均在运行；启动流程复用原进程，API PID 仍为 10201，未中断第 13 集的在途执行。`/healthz` 返回 HTTP 200，`parseConsumer.status=running`、`failure=null`；直连 API 与 Web 代理的任务列表一致。B09 的上传事务修复仍只是磁盘代码，本轮没有通过重启加载。
+
+| 视频 | 10:13 现场 | 本轮处理与 10:21 验证 |
+|---|---|---|
+| 第 1–6、9 集 | COMPLETE，共 7 集 | 已完成成果保留 |
+| 第 7 集 | PARSING_FAILED，attempt=3/max=3，主租约已清空，last_error=`worker lease expired`；8/24 Chunk、2/22 Interval COMPLETE | 10:20 调用现有 `retry-parse` 返回 200，原 task ID／version=1 保持，max_attempts 补到 4；上述成果数量不变，等待整集恢复调度 |
+| 第 8 集 | PARSING_FAILED，同样因主任务租约失效耗尽 3 次领取；19/24 Chunk、9/22 Interval COMPLETE | 同样返回 200，原任务不变、max_attempts=4；已完成成果数量不变，10:21 已有两个 Chunk 进入 UNDERSTANDING |
+| 第 10–12 集 | PARSING，但主任务 owner／expiry 均为空，attempt=2/max=3，last_error 同为租约过期；已完成 Chunk 分别为 4／0／10 | 已到可领取时间，仍等待整集协调器；已有可执行子任务不一定完全停止，例如第 12 集有一个 Interval 新完成。不能把“主任务无 owner”等同于“所有子任务无人执行” |
+| 第 13 集 | PARSING，有效 owner=`local-consumer-10201`；24/24 Chunk COMPLETE，正在精修 | 10:21 精修结果达到 20/22，另外两个 Interval 为 REFINING；主租约持续续期。Consumer 没有整体停摆 |
+
+10:24 最后复核：四项服务状态仍正常，第 13 集已从 PARSING 推进到 INDEXING；第 7、8、10–12 集仍无主任务 owner。以上恢复等待尚未全部解除。
+
+10:21 主任务的到期候选顺序为第 11 → 10 → 12 → 7 → 8 集。`VideoParseConsumer.run_once()` 仅在 `_video_tasks` 为空时领取下一个整集任务；第 13 集仍持有唯一协调器名额，因此其他集即使 `next_execute_time` 已到，也不会立即领取主租约。已派发的部分子任务仍能跨视频执行；需要重新派发的 Chunk 则依赖父协调器。这是代码中的调度策略限制，不是发现了新的 MySQL 死锁，也不能从“服务健康”推导出“每个任务都在推进”。
+
+**今晨租约失效另有新的睡眠证据。** `pmset -g log` 显示 02:49:14 进入 Clamshell Sleep（合盖），之后反复 Maintenance Sleep／DarkWake，直到 09:41:21／09:41:27 才记录完整 Wake；本轮不能称为 Idle Sleep。第 8 集第三次主任务失败在 08:49:38，恰逢 08:41:02 起睡眠 516 秒后的 DarkWake；第 7 集第三次失败在 08:54:53，前面先睡 252 秒、短暂唤醒后又睡 38 秒，最后于 08:54:52 DarkWake。第 11、10、12 集的主任务失败分别在 09:07:00、09:31:19、09:39:55，也紧邻短暂唤醒。结合 DB 的 `worker lease expired`，这些记录强烈支持反复睡眠导致续租中断；尚未逐条取得最后一次成功 heartbeat，不声称每个失败都只有这一个原因。应用日志里的阶段标签 `prepare` 覆盖整集协调器，不表示故障发生在上传或尚未解析。
+
+上述主任务失败日志均为 `retry_recorded=false`：当前 owner／租约已不符合续排写入条件，不能把日志中计算出的 retry_at 当成成功重新排队。09:41 完整唤醒后另外出现 Ark API 连接失败／DNS `gaierror`，且 `retry_recorded=true`；这是模型调用的网络故障，须与睡眠时的租约失效分开记录。本轮没有修改系统睡眠设置，也没有通过反复重启来尝试恢复。
+
+**手动入口缺口已同时由页面、接口和源码确认：**
+
+- 第 7、8 集在本轮恢复前，任务页确实有“重试解析”按钮，列表 `canRetry=true`。`POST /api/uploads/retry-parse` 以 `uploadSessionId + tenantId + expectedJobVersion` 恢复最新失败任务；它保留已完成成果及执行历史，为父任务补足至少一次领取额度。它不建立新解析版本，也不等于抢占当前整集协调器。
+- 第 10–12 集仍是 PARSING，列表同时返回 `canRetry=false`、`canReparse=false`。前端据此隐藏操作，后端也只允许失败终态走 retry；直接调用接口不能绕过。当前没有为“已接受、非终态、主租约已释放、等待恢复”提供专门的手动继续入口。
+- 同一条记录却仍返回“视频解析失败，请重试”的公共错误，任务卡显示“正在解析画面与对白”。第 7、8 集续跑成功后也暂时保留旧 `last_error`，直到父任务再次领取时才清空。当前页面混淆了正在执行、恢复排队、最终失败，无法帮助用户判断是否需要操作。
+- 上传弹窗的“重试”调用上传恢复／`completeUpload`，不是解析 `retry-parse`；已经上传成功的解析卡住问题不能靠重复完成上传来修复。
+
+**待实施的恢复入口必须与调度一起设计。** 对最新任务校验版本、删除状态、失败意图及父／子／Prefix 租约；正在执行时返回明确原因，已经排队时返回幂等的排队结果，确需恢复时保留完成产物并唤醒有界恢复调度。不能仅以 `lease_owner=NULL` 就清空子任务或强制重做，也不能只是新增一个把状态改成 PARSING 的按钮——这两集调用现有 retry 后仍需等待父协调器，已证明“重新排队”与“马上续跑”不是一回事。页面需要直接展示恢复等待原因、下一次调度时间和可执行操作；验收须覆盖“另一个长任务仍运行时，中断任务也能在有界时间内恢复”，并保持模型调用并发限制。
+
+本轮另修复了一个启动脚本的小问题：Web 页面品牌已是 Seekino，旧探针硬编码 HTML 必须包含 `anivag`，错误拒绝复用正常的 5173 端口。`scripts/local_services.py` 改为检查 Vite 客户端与 `/src/main.tsx` 入口，随后仍验证 Web 的资料库 API 代理；修改后 `./start.sh start` 成功。此探针错误与解析调度缺陷分别处理。现有启动脚本测试为 24 passed／8 failed；8 个失败都来自 `_model_config()` 测试替身缺少当前配置函数使用的 `normalized_models`。在测试进程内恢复旧探针后，仍得到同样的 8 个失败，未修改这些无关测试或配置代码。
+
+补充依据：[手动续跑接口](../../server/api/uploads.py)、[续跑状态校验和成果保留](../../server/repository/upload.py)、[操作能力投影](../../server/api/jobs.py)、[任务页按钮](../../web/src/features/tasks/TasksPage.tsx)、[上传恢复入口](../../web/src/features/uploads/UploadProvider.tsx)、[启动探针](../../scripts/local_services.py)；本机 10:13、10:21 MySQL 快照、10:20 两次续跑 HTTP 200 与 10:22 健康／任务列表检查。这里记录的是恢复资格与已观察到的子任务推进，不代表六个未完成视频已经解析完成。
+
+#### 10:43–10:47 新现场：已恢复调度，但模型账号欠费导致失败
+
+本次再次检查时，问题已变化，不能继续把所有失败解释为租约或排队：
+
+- 10:43 第 13 集已 COMPLETE，第 12 集已经领取第三次主租约；第 10、11 集陆续出现失败 Chunk。它们父任务的 `VideoParseTask is draining after a terminal failure` 只是发现子任务失败后停止派发的结果。
+- 读取失败 Chunk 的原始 `last_error`，第 10、11、12 集均为 HTTP 403、`AccountOverdueError`，供应商明确返回 `account has an overdue balance`。10:47 再检查，第 7 集四个失败 Chunk 也都是相同欠费错误；这些 Chunk 的 retry_count 均为 3。
+- 10:47 第 8、13 集已 COMPLETE；第 7、10、11、12 集均为 PARSING_FAILED，任务列表 `canRetry=true`。失败任务目前已有安全的手动重试入口。本轮没有继续对欠费任务重试、切换模型或重启服务。
+- 第 8 集在 10:43 已有 24/24 Chunk 和 22/22 Interval COMPLETE，但父任务仍为 PARSING；10:47 才通过第四次领取完成父状态收尾。说明自动成功归并缺口仍在，只是本次最终轮到了它。
+
+**即时恢复顺序：** 如果沿用现有模型，先恢复实际使用的 Ark 账号服务，再通过任务页“重试解析”或原 `retry-parse` 恢复第 7、10、11、12 集。保留已完成成果和原任务版本，不需要重新上传或整集重新解析。服务重启不能修复账号欠费。若要切换模型，需要先确认可用来源及对应阶段；第 10 集冻结配置中 ASR 和 Embedding 来源均为 `ark_default`，理解来源为 `codex_local`，仅更换理解模型不会替换 Ark ASR／Embedding。
+
+当前 `VideoParseConsumer._run_chunk()` 对所有 Exception 走同一 `retry_chunk()`，队列每次增加 retry_count，所以欠费错误也会耗尽自动重试额度。当前生成模型 fallback 只接收 `ContentFilterError`，transcription／embedding 则没有对应 fallback，不能据“配置了备用模型”断言欠费可自动绕过。后续需要给欠费／认证等人工干预错误明确分类和可操作提示，避免按临时网络错误反复重试；本轮尚未修改该机制。
+
+**具体失败模型已由请求 Trace 确认。** 第 10、11、12 集失败调用的 operation 均为 `candidate_transcript`（ASR 转写），provider=`ark`、source=`ark_default`、request.model=`ep-20260911212241-gg8bm`，响应均为 403／`AccountOverdueError`。同一端点在当日 10:37:56 的成功响应明确返回 model=`doubao-seed-2-0-lite-260428`，因此可定位为 ASR 使用的豆包 Seed 2.0 Lite 所属 Ark 账号返回欠费；这些调用不是本地 Codex 理解调用，也不是 Embedding。连接来源配置使用 `ARK_API_KEY`。失败证据：[EP10 请求／错误](../../outputs/model-traces/b2fac332-22cd-4769-9563-9cad42f02534/events.jsonl)、[EP11 请求／错误](../../outputs/model-traces/b5d9df7e-bbb5-44ab-a586-6242de1e564c/events.jsonl)、[EP12 请求／错误](../../outputs/model-traces/4bc3bc1c-1db3-4533-9ecc-b374f1d1800a/events.jsonl)；端点模型名依据：[紧邻的成功请求／响应](../../outputs/model-traces/7de40feb-965d-4554-951e-c9f59f51d290/events.jsonl)。上述判断使用实际请求与响应，没有拿当前 YAML 的新模型名替代历史调用证据。
+
+**页面为何只报“视频解析失败，请重试”：错误上报链存在两层信息丢失。** Chunk 的 last_error 保存了欠费原文，但 `_aggregate_video_task()` 只归并状态／failure_status，没有将失败子任务的根因传到父任务；父协调器随后因 failure drain 退出，`retry_video()` 将父 last_error 写成 `VideoParseTask is draining after a terminal failure`。`project_video_parse_task()` 又完全不使用错误内容，只要 last_error 存在就生成固定 `PROCESSING_FAILED` 文案。`TasksPage` 原样显示这段后端 message，前端没有进一步吞掉欠费信息。
+
+这处展示缺陷需要沿后端错误链修复：保存和保留可识别的供应商错误码、实际失败阶段与调用模型，避免后续收尾异常覆盖首要根因；API 将已知欠费错误映射为明确的公开文案，未知异常才使用通用提示，保留内部原文不直接透出的边界。现存失败任务也应能从失败子任务补出根因，不能要求用户再次触发欠费。现有 `Failure.code/message` 和前端展示已足够承载准确提示，不必为此新增按钮。验收须覆盖“ASR 欠费 → 子任务失败 → 父任务收尾 → 页面仍显示账号欠费”，同时保留敏感原文不泄露的测试；当前投影测试 `test_video_parse_task_projection_hides_internal_failure_detail` 将所有错误固定泛化，需要同步调整预期。此修复尚未实施。
+
+最小独立代码修复可先补无主父任务的成功归并：扩展现有 Queue 周期收尾，在新的事务中锁定符合条件的父任务，复用既有归并规则；全部子任务完成时直接完成父任务，不再为了收尾领取一次主租约。保持失败优先、在途子任务保护和旧租约隔离；候选筛选及 limit 不能使完成任务长期排在不会变化的等待任务之后。这一补丁与账号恢复分别处理，多父协调器、停服交接和页面等待展示随后按独立范围实施。
+
+依据：[Consumer 异常处理](../../server/mq/video_parse_consumer.py)、[重试计数与周期归并](../../server/mq/video_parse_queue.py)、[Fallback 触发条件](../../gateway/model_factory.py)、[模型阶段约束](../../gateway/config.py)；10:43–10:47 本机数据库的失败 Chunk、冻结配置及任务列表只读快照。供应商账号实际余额未直接查询，欠费判断依据是其明确返回的错误码与错误消息。
+
+#### DB Queue 与 Redis 的判断（2026-10-14 补充调研）
+
+**当前建议：先修复任务生命周期与恢复语义，保留 MySQL 队列；将 API 与解析 Worker 拆成独立进程。Redis 可作为后续消息分发优化，但不是本次脆弱性的必要修复条件。** 本段为待实施方案，尚未调整解析架构或迁移 Redis。
+
+需要区分三件事：队列负责“哪项工作该交给哪个 Worker”；任务状态机负责“中断后从哪里继续、什么时候算失败”；进程部署决定“重启 API 会不会同时停止 Worker”。换 Redis 主要改变第一件事，后两件事仍要由应用实现。
+
+| 当前问题 | 所属机制 | 只换 Redis 能否解决 |
+|---|---|---|
+| 重启 API 同时取消解析 | API 与 Worker 共进程 | 不能；独立 Worker 使用 MySQL 队列同样能隔离 API 重启 |
+| 正常停服不归还租约，等待过期 | Worker 停止与交接流程 | 不能；Redis pending 消息也需要明确的恢复／接管逻辑 |
+| 计划停服、睡眠消耗失败预算 | 领取次数／失败次数混用 | 不能；Redis 投递次数也不应直接当业务失败次数 |
+| ASR 成功后中断仍重做 ASR | 片段内中间成果未持久化 | 不能；队列不保存内存中的解析成果 |
+| 第 9 集全部子任务完成，父仍 INDEXING | 成功归并依赖唯一主调度名额 | 不能；要调整归并触发和恢复调度 |
+| 空闲轮询、任务量增大后的 DB 调度负担 | 消息发现与分发 | Redis Streams 的阻塞读取和消费组可能有帮助；本轮没有吞吐／锁等待基准证明这里是瓶颈 |
+| 电脑自动睡眠，Worker 无法续心跳 | 执行宿主暂停 | 不能；同机 Redis 不能让睡眠中的 Worker 工作，异机接管仍需要可访问的媒体和正确的旧执行隔离 |
+
+MySQL 本身并不排斥队列表：官方明确将 `SKIP LOCKED` 用于多会话访问队列表时避开已锁记录。AniVAG 的领取逻辑已经使用它；当前还拥有“创建业务记录和待执行任务可在同一数据库事务提交”的便利。需要修复的是我们在其上实现的停止、重试和调度规则，不能由这次故障推导出 MySQL 队列必然不可靠。[MySQL 锁定读取](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)、[当前领取代码](../../server/mq/video_parse_queue.py)。B09 的 Video 外键／Series 事务锁顺序也是独立问题：换成 Redis 分发任务不会消除这些业务 SQL。
+
+#### 本地 RagFlow 实际怎么做
+
+核对对象是同级 `../ragflow` 的本地源码，HEAD=`313ca90f6abd7682fe8523e16fd67b3653a3fa84`，核对时该工作区干净；不是对所有 RagFlow 发布版本或线上配置的概括。它的 Python 和 Go ingestion 路径必须分开看。
+
+**Python 路径使用 Redis 协议 Streams，当前 Compose 对应服务是 Valkey。** `queue_product()` 用 XADD 入队，`queue_consumer()` 用 XREADGROUP 消费，`RedisMsg.ack()` 用 XACK 确认。启动时先读取同名 consumer 的未 ACK 消息，再取新消息；业务 Task、进度和 retry_count 仍保存在关系数据库，解析成果也由业务存储承接。API 与 task executor 有独立启动进程，这种部署隔离值得借鉴。[Redis 封装](../../../ragflow/rag/utils/redis_conn.py)、[任务接收与执行](../../../ragflow/rag/svr/task_executor.py)、[TaskService](../../../ragflow/api/db/services/task_service.py)、[启动脚本](../../../ragflow/docker/entrypoint.sh)。
+
+但该 Python 路径并不自动提供我们缺少的全部能力：
+
+- 未 ACK 回放仍会经过 `TaskService.get_task()` 并增加数据库 retry_count；前三次领取可执行，第四次领取读到 `retry_count >= 3` 时标记失败并放弃。`TE_RUN_MODE=0` 的重构执行器也共用这层领取和 ACK 逻辑。
+- 当前可达消费路径没有找到 XCLAIM／XAUTOCLAIM 的跨 consumer pending 接管；`get_pending_msg()`／`requeue_msg()` 有定义但未找到调用。失联 Worker 清理删除注册与心跳，不等于已将其消息转给其他 consumer。不能把“同名 Worker 重启可回放”说成“任意 Worker 都能自动接管”。
+- 普通执行异常会记录失败后走 ACK；协程 CancelledError 则跳过尾部 ACK，留下 pending。有限等待在途完成只在启用 `MAX_TASKS_PER_WORKER > 0` 的退出流程中执行，默认值是 0，不能概括为默认优雅停服都会等待任务完成。
+
+**本地 Go ingestion 的现行队列是 NATS JetStream，已经不是 Redis 队列。** `InitMessageQueue()` 只装配 NATS；KVrocks 中虽然保留 Redis Streams helper，但没有发现 Go 业务调用。消息主要携带 task_id/task_type，业务状态仍查数据库。值得参考的是它明确区分“停服中断”和“用户取消”：停服保留非终态，交给 broker 再投递；终态通常 ACK，未终态 NACK；Stop 先停取新任务，再取消执行并有期限地等待清理，超时留下未确认任务。长任务仍需心跳续期。[MQ 装配](../../../ragflow/internal/engine/global.go)、[Go 任务执行与停止](../../../ragflow/internal/ingestion/service/ingestion_service.go)、[消息合同](../../../ragflow/internal/common/task.go)。
+
+这仍不等于模型调用中间位置可继续：Go pipeline 明确从图入口重放，由组件缓存决定复用哪些已有成果；另有已写 DB、尚未确认入队任务的启动补发。**可借鉴的是停服语义、消息确认与业务终态的关系、结果复用和补发机制，而不是仅复制一个 Redis 依赖。** [Pipeline 重放边界](../../../ragflow/internal/ingestion/pipeline/pipeline.go)、[持久任务补发](../../../ragflow/internal/service/ingestion_task_service.go)。
+
+#### Redis 能额外提供什么，以及增加什么成本
+
+Redis Streams 消费组提供消息分摊、待确认记录和阻塞等待；XPENDING 可查看已投递但尚未确认的消息，XCLAIM／XAUTOCLAIM 可用于转移符合条件的未确认消息。它可以减少用业务 DB 高频轮询发现任务的需要，并为更多独立 Worker 提供统一消息分发能力。多 Worker 本身不是 Redis 独有能力，当前 DB 领取也有并发隔离；是否值得迁移应看领取延迟、调度 SQL 成本和实际扩展需求。[XREADGROUP](https://redis.io/docs/latest/commands/xreadgroup/)、[XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/)。
+
+如果后续采用 Redis，应选择具备确认／恢复语义的 Streams 消费组或经过验证的任务框架；普通 Pub/Sub 断连时会丢消息，不适合作为持久任务队列的唯一来源。[Redis Pub/Sub 投递语义](https://redis.io/docs/latest/develop/pubsub/)。还必须设计以下边界：
+
+1. **数据库与消息发布的一致性。** “任务已在 MySQL 提交，进程在 XADD 前退出”会留下没有消息的任务。可采用与业务任务同事务保存的待投递记录，再由发布者重试发送；或以 DB 待执行状态为依据做可重放的投递和补偿扫描。不能只写 `commit(); xadd()` 就宣布可靠。
+2. **允许消息重复，成果提交必须幂等。** “成果已提交，XACK 前退出”会重复投递。新 Worker 应先读任务版本和完成状态，已完成则确认跳过；未完成才领取执行。Redis 的消息 ownership 不会替旧进程撤销已经发出的模型请求，仍需保留任务版本／租约校验和索引版本保护，拒绝旧执行迟到提交。这是跨 DB、模型和索引写入边界的设计要求。
+3. **Redis 自身的持久化和运行维护。** 需要配置并验证重启恢复、持久化、容量及清理策略。RDB 是定时快照，AOF 的刷盘策略也有不同的丢失窗口；不能把内存队列当成天然比现有 DB 更耐故障。任务可由 DB 补投时，可降低消息层丢失对业务的影响。[Redis 持久化](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)。
+
+AniVAG 虽已有 `redis>=5,<7` 客户端依赖，目前 Redis 接入属于 cloud auth 的 OTP／限流／查询并发控制；local 模式不创建该客户端。它不是已经部署好的解析队列，迁移仍需独立的队列配置与生命周期管理，不能把认证 Redis 的职责直接混进解析队列。[当前 Redis 接入](../../server/caller/redis.py)、[认证配置](../../server/config/auth.py)。
+
+#### 建议分批解决与验收
+
+以下是待实施的职责划分，不代表本轮已经改代码或授权迁移。先完成不依赖新中间件的修复，每批单独验证；不把 Redis 迁移作为这些修复的前置条件。
+
+| 批次 | 具体目标与归属 | 必须通过的验收 |
+|---|---|---|
+| 1：停服交接与次数语义 | Consumer 停止领取并冻结新派发，继续维持在途租约心跳；在有限期限内让在途步骤提交或取消，确认本地执行及其受管子进程已退出；之后按 owner + lease_version 条件归还未完成任务。Queue 区分计划停服、失联恢复与真实执行错误，正常停服不扣业务失败预算 | 有在途 Chunk／Refine／Index 时正常停启，保留已提交成果，不因计划停服耗尽预算；归还后立即具备领取条件；旧 owner 的迟到提交被拒绝 |
+| 2：成功收尾与恢复调度 | Repository／Consumer 让子任务完成后的成功归并不再依赖唯一整集名额；加入有界的恢复调度，兼顾已有任务与新任务，保持当前并发预算 | 一个视频长时间运行时，另一个子任务全完成的视频能及时变为 COMPLETE；中断的第 7／8 集能继续派发；新任务也不会永久饿死 |
+| 3：独立解析 Worker | 复用现有业务装配和 DB Queue，提供独立 Worker 进程入口，API 不再默认拥有该 Worker 的生命周期；启动脚本分别管理 PID／退出与健康状态 | 只重启 API 时 Worker PID、在途执行和失败预算不变；单独重启 Worker 时满足第 1 批；同机源码变更仍应遵守任务配置／代码版本边界 |
+| 4：片段内成果复用 | 在语音识别等昂贵步骤成功后保存完整结果，按原视频身份、片段范围、步骤配置／模型及任务版本校验后复用；沿用现有持久存储，不依赖临时目录 | ASR 已成功、理解未完成时中断，恢复跳过 ASR，仅重做未完成理解；输入／配置变化不误用旧结果；模型用量记录不因复用重复记账 |
+
+第 1 批有两个不能漏掉的细节：一是 `claim_video()` 每次领取都会增加 attempt_count，**只增加 release、却保留原来的领取与 max_attempts 判定，仍会因正常停启耗尽预算**；必须一起明确执行历史与失败余额的口径。正常交接不回退已发生的模型用量／调用预算，每次重新领取仍递增 lease_version。二是不能在旧执行还可能写入时先归还租约；本地执行无法在期限内停止时，不主动清空租约，应停止续租并退出或终止旧进程，由租约过期接管兜底。已发出的远端请求可能仍在执行，接管后仍须以租约版本和索引版本拒绝迟到写入，不能降低版本校验来强行续跑。失联恢复也应有独立的次数／速率限制和告警，避免把确定性崩溃变成无限重放。
+
+独立 Worker 目前没有正式常驻入口：`tests/manual/server_mq_once.py` 只是单次消费的测试入口，不应直接当生产 Worker 启动。未来需要修改进程装配与启动脚本，这一批应单独评估；同机独立进程也不能消除整台电脑睡眠。[现有装配](../../server/main.py)、[本地服务脚本](../../scripts/local_services.py)、[单次测试入口](../../tests/manual/server_mq_once.py)。
+
+共同验收还应包括：强制退出或暂停超过租约后可接管；旧进程恢复不能覆盖新结果；在“结果提交成功但确认／响应丢失”的窗口重复执行不会重复发布；日志区分 shutdown／lease_expired／model_error，并能看到剩余重试、恢复等待和重复调用成本。停机测试应先在隔离数据库与可控模型替身中执行，不拿当前 13 个真实视频做破坏性演练。只有在上述行为正确后，仍测得队列 SQL 开销或领取延迟显著、或者需要更复杂的分布式消息分发，才单独评估 Redis Streams／其他 broker。
+
+依据：[API 生命周期](../../server/main.py)、[Consumer 停止／领取／心跳](../../server/mq/video_parse_consumer.py)、[租约回收与重试预算](../../server/mq/video_parse_queue.py)、[持久结果提交与整集归并](../../server/repository/video_parse.py)、[整集调度](../../agent/video_parse_v2/runtime.py)、[Chunk 理解提交边界](../../agent/video_parse_v2/understanding/workflow.py)；本机 MySQL 的上述只读快照，以及 `outputs/server/logs/development/api.log` 的既有记录。
+
+#### 2026-10-14 专用ASR替代调研
+
+状态：已核对官方价格与接口文档，尚未接入或对 MYGO 音频做质量实测。范围仅为日语对白转写及时间戳，不替换画面理解／Refine。以下国内方案价格为人民币常规按量价格，不含免费额度、资源包折扣或额外存储／流量。
+
+**现有 Lite 用量审计，不能与充值金额直接画等号。** 按当前 13 个 VideoParseTask ID 关联本地 `outputs/model-traces/*/events.jsonl`，找到 377 次 `candidate_transcript` 请求：280 次 provider completed 且有完整 usage，94 次 error（73 次欠费 403、15 次连接错误、4 次 ReadTimeout、2 次 ArkTimeout），3 次没有完整终态／usage。以下只计算 280 次成功返回的用量，未获得用量的请求不计入估算，但不据此承诺供应商没有计费；也未查询供应商余额、整账号账单或其他项目消费。
+
+| 已返回的 ASR 用量 | Token 数量 | 按普通在线、输入 ≤32K 的官方刊例价估算 |
+|---|---:|---:|
+| 非音频输入（视频／文字） | 6,876,544 | 0.6 元／百万，约 4.13 元 |
+| 音频输入 | 103,642 | 9 元／百万，约 0.93 元 |
+| 输出（包含推理 Token） | 395,787 | 3.6 元／百万，约 1.42 元 |
+| 合计 | 输入总计 6,980,186；输出 395,787 | **约 6.48 元，属有记录调用的估算，不是供应商账单** |
+
+280 次成功调用均在 32K 输入档内、cached_tokens=0。输出中 reasoning_tokens=218,031，约占输出 55.1%，已经包含在输出总数内，不能重复收费估算；请求中未传 thinking／reasoning 关闭参数，实际响应确有推理用量。同一批任务中存在 30 次重复成功 ASR 调用，主要集中于第 1、2 集，不能把所有重复请求或所有 403 都算成付费重做。2026-10-13 23:00 后的 179 次成功调用按同一口径约 4.13 元；2026-10-14 当天的 155 次约 3.59 元。[普通在线计价及分模态费率](https://docs.volcengine.com/docs/ark/model-pricing?lang=en&redirect=1)
+
+全部 377 次 ASR 请求都使用 `input_video`、fps=1；当前 `VideoASRAgent` 将视频窗口送给通用多模态模型，即便业务只要求转写。ASR 成果仅在整个 Chunk Understanding 完成时一起提交，中途失败会重新转写。这分别带来视频输入开销和重复调用开销；更换专用音频 ASR 与增加 ASR checkpoint 是两项不同的降本措施。[视频转写输入](../../engine/common/transcription.py)、[片段内成果提交](../../agent/video_parse_v2/understanding/workflow.py)
+
+**同批次 Embedding 的已记录费用更高。** MySQL `model_usage` 中，关联上述 13 个任务的成功 Embedding 均为 `ark / doubao-embedding-vision-250615`，按不同 call ID 记录；成功视频 Embedding 为 449 次，图像输入 17,377,605 Token、文本输入 245,204 Token；成功纯文本 Embedding 为 400 次、文本输入 722,738 Token。按官方图像 1.8 元／百万、文本 0.7 元／百万估算，合计 **31.9572484 元，约 31.96 元**，其中图像输入约 31.28 元。另有 1 次失败视频 Embedding 缺少 usage，未计入估算。2026-10-13 23:00 后的 Embedding 按同一口径约 22.62 元。还存在较早的 Pro 视觉理解调用，本段并非整个账户的账单核对；目前只能判断这批已记录用量中 Embedding 比 ASR 更贵，不能据此解释全部充值去向。换 ASR 不会减少检索索引的 Embedding 费用。[方舟向量模型官方价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=en&redirect=1)
+
+DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时**；当前 312 个 Chunk 的 window 长度总和等于原片段长度总和，没有实际重叠，不应把默认 overlap 配置当作本批费用成因。上述 30 次额外成功 ASR 均为同一 Chunk、相同媒体 SHA／接入点在不同 lease_version 下重新调用，估算约 0.70 元，确有浪费但不是全部消费的大头。按完整音频只转写一遍、无重试／额外精修计算，下面三个国内方案整批约为 Paraformer **1.48 元**、Qwen3 **4.06 元**、豆包录音 2.0 **4.10 元**；这是全量一次转写的对照预算，不能与当前尚未全部完成、且含重试的 Lite 估算直接相减作为实际节省。
+
+| 候选 | 常规单价与服务地域 | 日语与时间戳 | 非实时文件输入限制／调用方式 |
+|---|---|---|---|
+| 阿里百炼 `paraformer-v2` | 华北 2（北京）：0.00008 元／秒，折合 **0.288 元／音频小时** | 支持日语；句级和字／词级毫秒时间戳 | ≤12 小时、≤2 GB；公网可访问音频 URL，HTTP 异步提交／查询 |
+| 阿里百炼 `qwen3-asr-flash-filetrans` | 华北 2（北京）：0.00022 元／秒，折合 **0.792 元／音频小时** | 支持日语；默认句级，`enable_words=true` 开启字级，日语在字级支持名单内 | ≤12 小时、≤2 GB；DashScope 异步文件转写，不是同名实时或 Chat 接口 |
+| 火山豆包录音文件识别模型 2.0，`volc.seedasr.auc` | 火山引擎国内语音服务：**0.8 元／音频小时** | 指定 `audio.language=ja-JP`；`show_utterances=true` 返回句／词级毫秒时间戳 | <5 小时、<512 MB；音频 URL，`/api/v3/auc/bigmodel/submit` 提交后查询 |
+
+表格依据：百炼 [Paraformer 模型信息](https://help.aliyun.com/zh/model-studio/paraformer-v2)、[模型价格](https://help.aliyun.com/zh/model-studio/model-pricing)、[语言及音频规格](https://help.aliyun.com/zh/model-studio/asr-model)、[非实时语音识别／时间戳](https://help.aliyun.com/zh/model-studio/non-realtime-speech-recognition-user-guide)；火山 [计费说明](https://docs.volcengine.com/docs/DoubaoVoice/Billinginstructions-21?lang=zh)、[录音文件标准版 API](https://docs.volcengine.com/docs/DoubaoVoice/LargemodelrecordingfilerecognitionstandardversionAPI?lang=zh)、[产品规格](https://docs.volcengine.com/docs/DoubaoVoice/ProductOverview-6?lang=zh)。核对日期：2026-10-14。
+
+价格和版本须分开看：
+
+- 百炼 `paraformer-8k-v2` 面向中文电话音频，不能替代本项目日语转写；`paraformer-v2` 才是此处候选。百炼官方将 Paraformer 定位为较早一代模型，因此低价只构成测试理由，不能直接证明动漫对白效果足够。[模型及语言](https://help.aliyun.com/zh/model-studio/asr-model)
+- `qwen3-asr-flash` 的 OpenAI 兼容 Chat 接口不返回时间戳；本项目应比较 `filetrans`。更新的 `qwen-audio-3.1-asr-flash-filetrans` 已按输入／输出 Token 计费，不能套用上述每秒价格。[时间戳接口](https://help.aliyun.com/zh/model-studio/non-realtime-speech-recognition-user-guide)、[价格](https://help.aliyun.com/zh/model-studio/model-pricing)
+- 火山旧大模型标准版 2.3 元／小时、极速版 4.5 元／小时列在计费页的历史模型价格中；不要把它们当成 2.0 标准版价格。`volc.bigasr.auc_turbo` 是另一资源：同步返回，≤2 小时／100 MB，支持 `ja-JP`；不能仅因“极速”就套用 0.8 元单价。[计费说明](https://docs.volcengine.com/docs/DoubaoVoice/Billinginstructions-21?lang=zh)、[极速版 API](https://docs.volcengine.com/docs/DoubaoVoice/recording-file-recognition-lite-http?lang=zh)
+- 免费额度单列：北京 `paraformer-v2` 当前为每月发放 10 小时、当月有效；`qwen3-asr-flash-filetrans` 为 10 小时、按开通／发布等规则起算 90 天有效。它们不代表常规调用免费；火山资源包也是预付费而非免费额度。[百炼额度及规则](https://help.aliyun.com/zh/model-studio/model-pricing)
+
+接入边界与建议：
+
+1. 先用相同的短样本比较 Paraformer、Qwen3 和豆包 2.0，覆盖日语人名、重叠对白、背景音乐、长静音及歌曲；检查漏字／幻觉、时间戳偏移和真实耗时。先验证便宜的 Paraformer 是否够用，再决定是否选择约 0.8 元／小时的两种方案；尚无本项目实测质量排名。
+2. 这些专用 ASR 使用各自的语音 HTTP／SDK 协议和结构化转写结果。需要适配鉴权、提交／查询、错误状态及 Cue 时间戳转换，不能只把现有 Chat 模型 ID 改成 ASR 名称；火山语音服务的开通和密钥也应独立核对。
+3. 异步供应商任务 ID 和已成功的转写结果应持久保存；重启后先查询／复用原任务，避免重新提交同一音频。结果仍按视频身份、音频范围和模型配置校验后交给理解阶段，和本项片段内成果复用一起设计。
+4. 本轮不更换模型、不重跑视频、不调用付费 ASR；实际节省比例应以当前任务的 ASR 用量审计和音频时长为基准，不能把理解／Refine 的成本算进 ASR 对照。
+
+另一个接入成本较低的云候选是 Groq `whisper-large-v3-turbo`：官方价 **0.04 美元／音频小时**，支持多语种、`verbose_json` 句段时间戳及 OpenAI Audio Transcriptions 协议；`whisper-large-v3` 为 0.111 美元／小时。可用账号和网络需实际核对，未将美元按假设汇率换算成人民币。[Groq 官方模型与价格／协议](https://console.groq.com/docs/speech-to-text)。本地 Whisper 可避免按调用支付 API 费用，但需要本地计算资源及 adapter／兼容服务，当前项目没有直接的本地 Whisper 执行入口。[Whisper 官方实现](https://github.com/openai/whisper)
+
+**切换边界：** AniVAG 已有 `openai_audio` 适配器，可发送准备好的 16kHz 单声道 WAV 并读取 `verbose_json.segments`；兼容服务可复用这条通路。只有 `json.text` 的响应会退化为整个 Chunk 一个时间范围，不能当作等价的句段字幕。国内上述异步接口仍需适配。已有失败任务的 `retry_parse()` 明确保留 ASR 冻结配置，只刷新理解／Refine，因此修改 YAML 后按原按钮重试不会切换这批任务的 ASR；需要单独定义保留完成 Chunk、只对未完成部分更新 ASR 的恢复策略，并保留配置与成果来源记录。[现有音频适配器](../../gateway/transcription.py)、[时间戳规范化](../../engine/common/transcription.py)、[重试冻结配置](../../server/service/upload.py)
+
 ## Chat 联调问题（2026-09-21）
 
 ### C01：草稿引用未召回的 Evidence 导致回答失败
@@ -828,3 +1127,70 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 - 实时结果仍为 `partial=true`，不表示 C10 的基础片段失败已修复；模型工具列表仍含默认 `task`，C09 继续独立待处理。浏览器自动化没有可用实例，未验证浏览器／SSE，也没有对截图的 `10:27.52` 位置发起新的真实模型测试。
 
 依据：[GatewayConfig](../../gateway/config.py)、[适配器能力](../../gateway/multimodal.py)、[全局设置读取](../../server/config/global_agent_settings.py)、[Chat 配置读取](../../server/service/agent_chat.py)、[实时 host](../../server/service/realtime_understanding.py)；本机 `outputs/local-services/api.log` 与 `outputs/server/logs/development/api.log` 中上述请求编号、Conversation／Message 与进程启动记录；消息与模型用量只读 API。
+
+## Chat 联调问题（2026-10-14）
+
+### C12：Supervisor 没有最终证据审核与时间范围决定权，内层答案被程序强制原样输出
+
+优先级：高。类型：Agent 职责、证据供给与最终输出契约缺口。状态：已实施 Supervisor 最终提交修复，离线回归通过；真实模型选段质量待样本验收。
+
+#### 现象与证据边界
+
+- 用户预期 Supervisor 对最终回答、选择理由及每个视频片段的 `start/end` 负责；即使 Query 选段过宽或过窄，Supervisor 也应依据文字 Timeline、对白修正后再交付前端。
+- 2026-10-13 的截图请求为 Conversation `d8226119-4624-45a8-b440-39c0de491f25`、Assistant Message `2d3b482e-b33d-42a5-a6f2-6262e71c945e`。首段显示 `04:00–05:00`，与该 Chunk 的 canonical 范围 `240000–300000 ms` 相同。不能仅凭完整 Chunk 范围断言它必然错误；需要核对支撑用户问题及最终主张的事件边界。
+- 该请求日志中 Query 成功写入两项草稿，Evaluator 返回 `complete`，审核意见称“所有播放范围均位于 canonical 证据边界内”。工具日志没有记录 `write_context_canvas.operations` 内的实际时间值，不能据此复原模型每次提交、修改范围的完整过程。
+- 前一轮只读复核时，本机 API 9621 和 MySQL 3306 均未监听，因此未重新取得这条消息的数据库原始 `renderBlocks`。不将两个 canonical Chunk 范围冒充两项已重新核实的最终播放范围。
+- 此历史请求的 Query/Evaluator/Chat 经 DeepSeek 402 后实际使用 Ark 豆包 Lite；外层 Supervisor 使用 Astra。当前角色绑定已另行调整，该历史样本不能当作“内层 Astra 已完成本次审核”的证据，也不能仅以模型名称解释缺陷。
+
+#### 修复前已确认的代码原因
+
+1. **Supervisor 只拿到摘要。** `search_video_graph` 的模型可见返回仅包含结果数、复用标记、最多 1000 字的 `answer_preview` 和提示语，没有逐项 canonical 范围、Query 选段、完整 Timeline、对白或 Evaluator advice。宿主内存中有完整结果，不等于模型已收到或能按需读取它。
+2. **Prompt 禁止最终修订。** Supervisor 当前被要求不得重写、否定内部 Query/Evaluator/Chat 的结论，并原文呈现内部批准答案。
+3. **程序绕过 Supervisor 的视频回答。** 有 `video_result` 时，Supervisor Runtime 直接使用 `video_result.agent_reply.message`，只在特定分支追加实时解释或网页补充；Service 对不以前述答案开头的改写抛出 `Supervisor changed the approved video answer`。
+4. **最终范围固定为 Query 的获批范围。** Query 新草稿必须填写 start/end；缺失会失败，没有自动补成整 Chunk 的逻辑。Evaluator 放行后冻结草稿，Chat 工具不能修改时间，`build_chat_output()` 将 Query 范围直接写入最终 `renderBlocks`。
+5. **最终事件也来自内层答案。** Service 已将 `answer.evidence/block/delta` 缓存在 `pending_answer_events`，SQL 提交后发送；若只让 Supervisor 修改返回值而仍发送这些旧事件，SSE 会与数据库最终结果不一致。
+
+前端已按 `renderBlocks.startSeconds/endSeconds` 显示时间、定位和控制播放；`hit.evidence.start/end` 则保留完整 canonical 证据范围。两者语义不同。历史命名的 `*_seconds` / `*Seconds` 媒体时间字段实际单位均为整数毫秒。
+
+通用 Retrieval Skill 已要求完整覆盖支持结论的事件、动作或对白，并去掉明显无关的前后内容。因此不能把问题简单归结为“Prompt 从未要求精确选段”，也不能仅加强 Query 提示而保持 Supervisor 的上述限制。
+
+#### 修复实现：数据供给、Tool、Prompt
+
+| 层 | 已实施调整 | 边界 |
+| --- | --- | --- |
+| 数据供给 | 内层完成后向 Supervisor 交接本次真实召回的证据快照、原草稿与范围、Evaluator advice、内部 Chat 草稿及检索覆盖信息。工具首屏只给有界目录和读取入口；Timeline、对白、背景按需分页／分段读取。 | 复用已有 Canvas 和读取机制；不把完整证据塞入单次工具返回，不把内部交接对象塞进 HTTP VO 或数据库公开结果；同一 Chunk 的来源与版本保持一致。 |
+| Tool | Supervisor 使用 `get_context_canvas` 按需读取文字证据，通过 `submit_video_item(video_chunk_id, start_seconds, end_seconds, claim)` 提交最终视频项；重复 ID 原位更新，`remove_video_item` 撤回。模型最后的非空正文与提交项统一组装为既有 `AgentFinalOutput/renderBlocks`。 | 源证据和内部审核快照只读；提交项按请求隔离。程序校验租户／Series／已提供证据 ID、整数毫秒和 canonical 范围，不限制为 Query 原先选定的范围。不新增 `replace_final_answer` 或前端协议。 |
+| Prompt | 明确 Query/Evaluator/内部 Chat 提供证据与经过审核的草稿；Supervisor 对最终事实表述、片段选择和时间范围负责。要求按用户主张核对文字 Timeline、对白，既避免截断必要内容，也去掉明显无关内容。 | 移除 Supervisor 不得修订和必须原样输出的指令；不要求看完所有 section，不以整 Chunk 范围为程序拒绝条件，不增加自动循环审核层。 |
+| 输出接入 | 解除保存层的原文前缀限制；从 Supervisor 最终结果统一生成保存的正文、选择理由、`renderBlocks`、SSE 和下一轮历史。 | 保留 SQL 提交后确认 harness 的顺序、10 分钟总预算和手动停止；不能静默退回内层旧答案并声称 Supervisor 已完成最终审核。 |
+
+Supervisor 可以把 Query 过宽的范围收窄，也可以在已提供的 canonical 证据范围内修复过窄的范围；不能把允许的修改错误限制成 `Query.start <= final.start < final.end <= Query.end`。跨出已提供证据覆盖或引入未知 ID 仍应反馈错误，不能臆造支持。
+
+最终 Markdown、选择理由和片段范围应由同一个最终草稿产出；不能同时保存 Supervisor 新正文与内部 Chat 旧视频块。无命中、全部候选不支持问题、网页与实时理解混合回答也要明确处理，不强制保留不支持答案的视频块。
+
+日志已补齐 Canvas 读取的 collection/reference/section 和有界批量 references；Supervisor 的 `submit_video_item` 使用顶层 ID/start/end，现有工具日志可记录每次最终范围提交及成功／失败回执。Evaluator 结论继续沿用原有日志。工具调用回执不证明模型已理解证据，不记录隐藏推理；历史 Query 批量写入未记录的 operations 时间不能事后恢复。
+
+#### 2026-10-14 实施记录
+
+- 旧 `submit_video_item` 原属 Chat（`862c269`，2026-09-17）；`d71358b` 在 2026-09-20 改为 Workspace 的 update/remove，`2d5ce92` 在 2026-10-10 又合并到 Canvas 写操作。Supervisor 首次加入于 `5a30db0`（2026-09-22），当时没有最终视频提交工具。本次按用户指令给 Supervisor 补上显式提交能力，内层 Chat 保留独立调用能力。
+- Runtime 成功后通过本次调用的 callback 交出 Canvas 与最后审核轮次，冻结 `review/latest`。覆盖信息合并本次所有 Query/Evaluator 检索，避免漏掉 Evaluator 补查带来的 partial、warnings 和已搜索视频范围。读工具沿用既有分页／字符范围预算；Supervisor 候选目录和详细证据使用同一固定快照。
+- 内层 Chat 正文／视频块作为审阅草稿。服务层忽略这些草稿内容事件，从 Supervisor 最终结果统一生成正文、claim、播放范围和 SSE；只在 SQL 提交及现有 harness 确认后发布。没有最终视频提交时允许明确的纯文字答复，不自动补回内层视频。
+- 保留既有租户／Series 隔离、canonical 边界、10 分钟总预算和停止能力；允许合法改写、范围扩大／缩小、撤回全部视频。最终模型正文为空时失败，不能拿程序追加的网页来源列表冒充完整回答。
+- 离线验证覆盖真实 Runtime／Canvas／服务组装链，但使用本地模型替身；未调用真实 Astra 或其他模型，未重启服务、迁移数据库或改写历史消息。验证数量见本次交付记录；真实剧情与选段语义仍需真实样本验收。
+
+#### 本次范围与相邻问题
+
+- 本项先使用已有文字 Timeline；自选帧数的看图 Tool 暂不增加，抽帧、Redis 图片缓存和 Parse V2 关键帧持久化不作为本项修复前提。
+- BM25 命中姓名对应的公开 `matchedEvidence/lexicalMatches` 已在前序修改中清空，前端列表已移除；内部检索证据仍保留。该展示调整不等于删掉 Timeline，也不会自动改善 Agent 选段或补齐缩略图。
+- 空缩略图与缺关键帧提示属于独立媒体预览缺口；本项保持既有前端时间范围合同，不借此重写媒体服务或全站预览。
+- 本轮未重跑真实模型、未重启服务、未迁移数据库，未改写历史消息。
+
+#### 验收条件
+
+- 构造 Query 整 Chunk 草稿，Supervisor 读取已有文字 Timeline 后提交更精确范围；验证其文本、claim、起止时间真正成为最终结果。
+- 构造 Query 过窄草稿，Supervisor 在同一 canonical 范围内补回必要上下文；验证程序不会按旧 Query 边界拒绝。
+- 目录分页及长 Timeline 分段可读，证据缺失和覆盖限制可见；未提供的 ID、跨租户／Series、越界、非整数或空范围被拒绝，合法改写不再被原文前缀限制拒绝。
+- 最终 SQL、REST、SSE evidence/block/completed、harness 确认内容和下一轮引用保持同一版本；失败或取消时不发布内层草稿作为最终答案。
+- 无命中、删除全部视频项、纯聊天、纯网页、实时理解以及混合回答保持正常；检索重复调用复用当前请求，不重跑模型来代替最终审核。
+- 保留既有超时、停止、原始证据不可改写及幂等语义。离线测试保护数据合同与传递；真实样本的选段语义质量另行验收，不能以 fake-model 测试证明真实模型一定选段正确。
+
+依据：[Supervisor](../../agent/chat/supervisor.py) 的 `search_video_graph`、Prompt 与最终内容选择；[Canvas 草稿与冻结](../../agent/chat/video_search/video_search_canvas.py)；[范围组装](../../agent/chat/video_search/output.py)；[通用检索要求](../../agent/chat/video_search/skills/retrieval/SKILL.md)；[Service 保存与 SSE](../../server/service/agent_chat.py)；[工具日志摘要](../../agent/chat/common/tool.py)；[SearchPage](../../web/src/features/search/SearchPage.tsx)；本机 `outputs/server/logs/development/api.log` 中该 Message 的 `agent_tool_started/finished`、`agent_turn_evaluated` 和完成记录。

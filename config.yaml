@@ -28,13 +28,10 @@ model_sources:
 
 models:
   agent:
-    source: deepseek_api
-    model: deepseek-flash
+    source: codex_local
+    model: gpt-6-astra
     max_output_tokens: 8192
-    request_timeout_seconds: 180
-    fallback:
-      source: ark_default
-      model: doubao-seed-2-0-lite-260428
+    request_timeout_seconds: 600
   supervisor:
     source: codex_local
     model: gpt-6-astra
@@ -95,6 +92,7 @@ agent_runtime:
   max_tool_calls_per_turn: 24
   maximum_tool_calls_per_turn: 48
   limits_enabled: false
+  total_timeout_enabled: true
   query_reasoning_effort: low
   evaluator_reasoning_effort: low
   chat_reasoning_effort: low
@@ -114,8 +112,8 @@ agent_runtime:
   stage_timeout_seconds: 480
   evaluator_stage_timeout_seconds: 480
   chat_timeout_seconds: 480
-  supervisor_timeout_seconds: 480
-  execution_timeout_seconds: 480
+  supervisor_timeout_seconds: 600
+  execution_timeout_seconds: 600
   maximum_concurrent_kicks: 4
 
 video_parser:

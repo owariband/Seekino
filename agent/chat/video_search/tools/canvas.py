@@ -65,14 +65,19 @@ class ChatWriteCanvasArguments(WriteCanvasArguments):
 
 
 def build_video_search_canvas_tools(
-    *, canvas: VideoSearchContextCanvas, role: Literal["query", "evaluator", "chat"],
+    *, canvas: VideoSearchContextCanvas, role: Literal["query", "evaluator", "chat", "supervisor"],
     control: ExecutionControl, maximum_result_bytes: int, maximum_catalog_items: int,
     maximum_read_chars: int, budget: _ToolCallBudget | None = None,
     audit: DraftReadAudit | None = None,
 ) -> list[AgentTool]:
     return build_context_canvas_tools(
         canvas, role=role,
-        read_collections=("approved", "render") if role == "chat" else ("retrieval", "draft"),
+        read_collections={
+            "query": ("retrieval", "draft"),
+            "evaluator": ("retrieval", "draft"),
+            "chat": ("approved", "render"),
+            "supervisor": ("retrieval", "draft", "approved", "render", "review"),
+        }[role],
         write_args_schema={"query": QueryWriteCanvasArguments,
                            "chat": ChatWriteCanvasArguments}.get(role),
         maximum_result_bytes=maximum_result_bytes,

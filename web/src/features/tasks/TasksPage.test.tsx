@@ -106,20 +106,50 @@ describe("V2 task observation", () => {
         },
       },
     };
-    vi.stubGlobal("fetch", vi.fn(async () => response({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => response({
       items: [failed], total: 1, hasMore: false, nextCursor: null,
-    })));
+    }));
+    vi.stubGlobal("fetch", fetchMock);
     const { container } = renderPage();
 
     expect(await screen.findByRole("heading", { name: "解析异常" })).toBeInTheDocument();
     expect(screen.getByLabelText("解析进度")).toHaveTextContent("66.1%");
     expect(screen.queryByLabelText("解析任务进度")).not.toBeInTheDocument();
+    expect(screen.queryByText("模型消耗")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/usage/overview"))).toBe(false);
     expect(container).not.toHaveTextContent(/固定切片|理解|Refine|索引\s*0\s*\/\s*22|完成单元|有效解析时长/);
     expect(screen.getByText("解析失败")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: `重试解析 ${failed.originalFilename}` })).toBeEnabled();
     expect(screen.getByRole("button", { name: `整集重新解析 ${failed.originalFilename}` })).toBeEnabled();
     expect(screen.getByRole("button", { name: `删除任务 ${failed.originalFilename}` })).toBeEnabled();
     expect(screen.getByRole("button", { name: "管理上传" })).toBeEnabled();
+  });
+
+  it("loads PPE model usage for the actual V2 task only after expanding its panel", async () => {
+    const parsing = task("PARSING", "ppe");
+    const cost = { currency: "CNY", estimatedAmount: "0.12", knownAmount: "0.12",
+      pricedCallCount: 1, unpricedCallCount: 0, excludedCallCount: 0 };
+    const totals = { callCount: 1, inputTokens: 100, outputTokens: 20, cachedInputTokens: 10,
+      cacheWriteInputTokens: 0, reasoningTokens: 0, totalTokens: 120, knownTokens: 120, missingUsageCount: 0, cost };
+    const usage = { source: "local", status: "available", message: null, fromStartTime: 1, toStartTime: 2,
+      fetchedAt: 2, truncated: false, totals,
+      models: [{ ...totals, provider: "ark", src: "endpoint-ppe", model: "api-model", category: "parse", operation: "understand" }], runs: [] };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => response(String(input).includes("/api/usage/overview")
+      ? usage : { items: [parsing], total: 1, hasMore: false, nextCursor: null }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+    await screen.findByText(parsing.originalFilename!);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/usage/overview"))).toBe(false);
+
+    await userEvent.setup().click(screen.getByText("模型消耗"));
+    expect(await screen.findByText("endpoint-ppe")).toBeInTheDocument();
+    expect(screen.getByText("api-model")).toBeInTheDocument();
+    expect(screen.getByText("ark")).toBeInTheDocument();
+    expect(screen.getAllByText("¥0.12")).toHaveLength(2);
+    expect(screen.getAllByText("120")).toHaveLength(2);
+    const usageCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/usage/overview"));
+    expect(usageCalls).toHaveLength(1);
+    expect(String(usageCalls[0]![0])).toBe(`/api/usage/overview?tenantId=local-default&runId=${parsing.videoParseTaskId}`);
   });
 
   it("reads V2 tasks and filters each persisted status without adapting them to V1 jobs", async () => {
@@ -163,6 +193,28 @@ describe("V2 task observation", () => {
       await user.click(screen.getByRole("button", { name: label }));
       expect(screen.getByText(filename)).toBeInTheDocument();
     }
+  });
+
+  it("uses task status for failure panels even when error details are stale or missing", async () => {
+    const statuses: VideoParseTaskStatus[] = ["PENDING", "PREPARING", "PARSING", "INDEXING", "COMPLETE"];
+    const tasks = [
+      ...statuses.map((status) => ({
+        ...task(status),
+        lastError: { code: "PROCESSING_FAILED", message: "历史租约过期错误" },
+      })),
+      { ...task("PARSING_FAILED"), lastError: null },
+      { ...task("INDEXING_FAILED"), lastError: null },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: tasks, total: tasks.length, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+
+    await screen.findByText("parsing.mp4");
+    expect(screen.queryAllByText("历史租约过期错误")).toHaveLength(0);
+    expect(screen.getAllByText("失败原因")).toHaveLength(2);
+    expect(screen.getByText("视频解析失败，请重试")).toBeInTheDocument();
+    expect(screen.getByText("检索索引发布失败，请重试")).toBeInTheDocument();
   });
 
   it("keeps the persisted-status fallback for responses without progress statistics", async () => {

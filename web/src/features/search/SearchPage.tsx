@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, SlidersHorizontal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link, useInRouterContext } from "react-router";
@@ -17,8 +17,8 @@ import { explainHit, readableTranscript } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
 
-type SelectedMessageOptions = Required<AgentMessageRunOptions>;
-type MessageOptionOverrides = AgentMessageRunOptions;
+type MessageOptionOverrides = Omit<AgentMessageRunOptions, "topK">;
+type SelectedMessageOptions = Required<MessageOptionOverrides>;
 /** Dispatched on window to focus the standalone search composer (⌘K / Ctrl K). */
 export const FOCUS_SEARCH_EVENT = "seekino:focus-search";
 
@@ -39,11 +39,10 @@ export interface SearchPageHandle {
 }
 const messageOptionsStorageKey = () => identityStorageKey("anivag-agent-message-options");
 type StoredMessageOptions = { overrides?: MessageOptionOverrides; serverOptions?: AgentMessageOptions; selection?: SelectedMessageOptions };
-const messageOptionNames = ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"] as const;
+const messageOptionNames = ["maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"] as const;
 
 function defaultMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
   return {
-    topK: options.topK.defaultValue,
     maxLoopTurns: 0,
     maxModelCallsPerTurn: options.maxModelCallsPerTurn.defaultValue,
     maxToolCallsPerTurn: options.maxToolCallsPerTurn.defaultValue,
@@ -214,7 +213,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     ? { ...defaultMessageOptions(messageOptionConfig), ...messageOptionOverrides }
     : null;
   const messageOptionSummary = !messageOptions || !messageOptionOverrides ? "服务端默认" : [
-    messageOptionOverrides.topK === undefined ? null : `每次检索 ${messageOptions.topK} 段`,
     messageOptionOverrides.maxLoopTurns === undefined ? null : `最多 ${messageOptions.maxLoopTurns} 轮`,
   ].filter(Boolean).join(" · ") || (Object.keys(messageOptionOverrides).length ? "已自定义" : "服务端默认");
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string; startSeconds: number; endSeconds: number } | null>(null);
@@ -244,7 +242,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     window.addEventListener(FOCUS_SEARCH_EVENT, focus);
     return () => window.removeEventListener(FOCUS_SEARCH_EVENT, focus);
   }, [embedded]);
-  const { conversationId, messages, progress, loading, searching, error, clear: clearConversation, send } = useAgentConversation(requestedConversationId);
+  const { conversationId, messages, progress, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
   useReportAssistantBusy(searching || messages.some((message) => message.status === "PROCESSING"));
   const pendingExampleRef = useRef(false);
   useEffect(() => {
@@ -731,9 +729,15 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 rows={2}
                 aria-label="向 Seekino 助手提问"
               />
-              <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label="发送问题">
-                {searching ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <ArrowUp size={19} aria-hidden="true" />}
-              </button>
+              {searching ? (
+                <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? "正在停止" : "停止生成"} title={cancelling ? "正在停止" : "停止生成"}>
+                  {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
+                </button>
+              ) : (
+                <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label="发送问题">
+                  <ArrowUp size={19} aria-hidden="true" />
+                </button>
+              )}
             </form>
             {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
             <div className={styles.composerToolbar}>
@@ -796,28 +800,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     </header>
                     {messageOptionConfig && messageOptions ? (
                       <>
-                        <label className={styles.answerSettingRow}>
-                          <span><strong>单次检索候选片段</strong><small>每次检索最多返回多少段候选片段</small></span>
-                          <span className={styles.answerSettingValue}>{messageOptions.topK}</span>
-                          <input
-                            aria-label="单次检索候选片段数量"
-                            type="range"
-                            min={messageOptionConfig.topK.minimum}
-                            max={messageOptionConfig.topK.maximum}
-                            value={messageOptions.topK}
-                            disabled={searching}
-                            onChange={(event) => {
-                              const topK = event.currentTarget.valueAsNumber;
-                              setMessageOptionOverrides((current) => {
-                                if (!current) return current;
-                                const next = { ...current };
-                                if (topK === messageOptionConfig.topK.defaultValue) delete next.topK;
-                                else next.topK = topK;
-                                return next;
-                              });
-                            }}
-                          />
-                        </label>
                         <div className={styles.answerMode}>
                           <span><strong>运行轮次</strong><small>自定义最多可设 {messageOptionConfig.maxLoopTurns.maximum} 轮</small></span>
                           <div className={styles.answerModeChoices} role="group" aria-label="运行轮次模式">

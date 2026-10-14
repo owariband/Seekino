@@ -9,6 +9,10 @@ class AgentModelInvocationError(RuntimeError):
     """A bounded execution could not produce an approved, valid answer."""
 
 
+class AgentExecutionTimeoutError(AgentModelInvocationError):
+    """The Agent exhausted its configured execution deadline."""
+
+
 class AgentContextBudgetError(AgentModelInvocationError):
     """Model context exceeded the configured explicit character budget."""
 

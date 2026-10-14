@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
+from threading import Barrier
 
 import pytest
 from pydantic import BaseModel
@@ -17,6 +19,7 @@ from gateway.config import (
 )
 from gateway.errors import ContentFilterError
 from gateway.multimodal import ImageInput, TextInput, VideoInput
+from gateway.usage import SDKModelUsage, TokenUsage, capture_model_usage, model_call_context, track_model_call
 
 
 class Result(BaseModel):
@@ -587,3 +590,207 @@ assert 'gateway.claude_code.agent' not in sys.modules
 """
     completed = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=15)
     assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize(("source", "module", "name"), [
+    ("api", "gateway.ark.multimodal", "ArkMultimodalModel"),
+    ("vision_api", "gateway.openai.vision", "OpenAIVisionModel"),
+    ("deepseek_api", "gateway.openai.multimodal", "DeepSeekMultimodalModel"),
+    ("native", "gateway.codex.agent", "CodexAgentModel"),
+    ("claude", "gateway.claude_code.agent", "ClaudeAgentModel"),
+])
+def test_generation_records_actual_binding_source_and_restores_caller_context(monkeypatch, source, module, name):
+    delegates, calls = [], []
+    _replace(monkeypatch, module, name, delegates)
+    config = _config()
+    client = model_factory.GatewayClient(config, environ={"API_KEY": "a", "VISION_KEY": "v", "DS_KEY": "d"})
+    model = client.create_generative_model(_binding(source))
+
+    def generate(_inputs, **kwargs):
+        with track_model_call(provider=config.source(source).provider, model=model.model_name, operation="answer") as call:
+            if source == "claude":
+                call.sdk_model_usage = (SDKModelUsage("actual-sdk-model", TokenUsage(10, 2, 12, None, None), 0.1),)
+                call.usage_scope = "main_loop"
+            return kwargs["result_type"](answer="ok")
+
+    delegates[0].generate = delegates[0].run_structured = generate
+    try:
+        with capture_model_usage(calls.append), model_call_context({"src": "caller", "task_id": "task"}):
+            model.generate([TextInput("evidence")], schema_name="answer", result_type=Result, tool_harness="deepagents")
+            with track_model_call(provider="other", model="other", operation="check"):
+                pass
+        assert calls[0].context == {"src": source, "task_id": "task"}
+        assert calls[1].context == {"src": "caller", "task_id": "task"}
+        if source == "claude":
+            assert calls[0].sdk_model_usage == (SDKModelUsage("actual-sdk-model", TokenUsage(10, 2, 12, None, None), 0.1),)
+            assert calls[0].usage_scope == "main_loop"
+    finally:
+        client.close()
+    assert delegates[0].closed == 1
+
+
+def test_outer_fallback_records_separate_sources_and_keeps_native_sdk_usage(monkeypatch):
+    native, fallback, calls = [], [], []
+    _replace(monkeypatch, "gateway.codex.agent", "CodexAgentModel", native)
+    _replace(monkeypatch, "gateway.ark.multimodal", "ArkMultimodalModel", fallback)
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "a"})
+    model = client.create_generative_model(_binding(fallback=_binding("api")))
+
+    def filtered(_inputs, **kwargs):
+        with track_model_call(provider="codex", model="actual-native", operation="answer", granularity="sdk_turn_run"):
+            raise ContentFilterError("filtered", code="content_filter")
+
+    def generate(_inputs, **kwargs):
+        with track_model_call(provider="ark", model="actual-api", operation="answer"):
+            return kwargs["result_type"](answer="ok")
+
+    native[0].generate, fallback[0].generate = filtered, generate
+    try:
+        with capture_model_usage(calls.append), model_call_context({"task_id": "task"}):
+            assert model.generate([TextInput("evidence")], schema_name="answer", result_type=Result).answer == "ok"
+        assert [(call.model, call.context["src"], call.status) for call in calls] == [
+            ("actual-native", "native", "failed"), ("actual-api", "api", "completed"),
+        ]
+        assert calls[0].granularity == "sdk_turn_run"
+        assert all(call.context["task_id"] == "task" for call in calls)
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("tool_harness", ["legacy", "deepagents"])
+def test_shared_tool_fallback_does_not_invent_primary_source(monkeypatch, tool_harness):
+    primary, fallback, calls = [], [], []
+    _replace(monkeypatch, "gateway.ark.multimodal", "ArkMultimodalModel", primary)
+    _replace(monkeypatch, "gateway.openai.vision", "OpenAIVisionModel", fallback)
+    from langchain_core.tools import StructuredTool
+    tool = StructuredTool.from_function(lambda: "{}", name="read", description="Read evidence")
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "a", "VISION_KEY": "b"})
+    model = client.create_generative_model(_binding("api", fallback=_binding("vision_api")))
+
+    def generate(_inputs, **kwargs):
+        for provider in ("ark", "vision-provider"):
+            with track_model_call(provider=provider, model="configured-model", operation="answer"):
+                pass
+        assert kwargs["fallback_model"] is fallback[0]
+        return Result(answer="ok")
+
+    primary[0].generate = generate
+    monkeypatch.setattr("gateway.agent_model.deepagents_multimodal.generate_with_deepagents",
+                        lambda adapter, inputs, **kwargs: adapter.generate(inputs, **kwargs))
+    try:
+        with capture_model_usage(calls.append), model_call_context({"src": "caller"}):
+            model.generate([TextInput("evidence")], schema_name="answer", result_type=Result,
+                           tools=[tool], tool_harness=tool_harness)
+            with track_model_call(provider="other", model="other", operation="check"):
+                pass
+        assert len(calls) == 3 and all(call.context["src"] is None for call in calls[:2])
+        assert calls[2].context["src"] == "caller"
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(("kind", "source", "method"), [
+    ("embedding", "api", "embed_text"), ("embedding", "api", "embed_query"),
+    ("embedding", "api", "embed_image"), ("embedding", "api", "embed_video"),
+    ("embedding", "api", "embed_sparse"), ("transcription", "audio", "transcribe"),
+    ("transcription", "api", "generate"),
+])
+def test_embedding_and_asr_calls_record_configured_source(monkeypatch, kind, source, method):
+    calls, closed = [], []
+
+    def build(binding, source_config, **kwargs):
+        def invoke(*args, **kwargs):
+            with track_model_call(provider=source_config.provider, model=binding.model, operation=method):
+                return "result"
+        return SimpleNamespace(**{method: invoke}, close=lambda: closed.append(binding.source))
+
+    monkeypatch.setattr(f"gateway.{kind}.build_{kind}_model", build)
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "a", "SPEECH_KEY": "s"})
+    binding = (EmbeddingModelBinding(source=source, model="encoder", dimensions=1024, video_fps=0.5)
+               if kind == "embedding" else _binding(source, kind="transcription"))
+    model = client.create(kind, binding)
+    try:
+        with capture_model_usage(calls.append), model_call_context({"task_id": "task", "src": "caller"}):
+            assert getattr(model, method)("input") == "result"
+        assert calls[0].context == {"task_id": "task", "src": source}
+        model.close()
+    finally:
+        client.close()
+    assert closed == [source]
+
+
+def test_owned_source_scope_restores_caller_after_failed_call(monkeypatch):
+    calls = []
+
+    def fail(*args, **kwargs):
+        with track_model_call(provider="speech", model="configured-model", operation="transcription"):
+            raise RuntimeError("provider failed")
+
+    monkeypatch.setattr("gateway.transcription.build_transcription_model",
+                        lambda *args, **kwargs: SimpleNamespace(transcribe=fail, close=lambda: None))
+    client = model_factory.GatewayClient(_config(), environ={"SPEECH_KEY": "s"})
+    model = client.create_transcription_model(_binding("audio", kind="transcription"))
+    try:
+        with capture_model_usage(calls.append), model_call_context({"src": "caller"}):
+            with pytest.raises(RuntimeError, match="provider failed"):
+                model.transcribe("audio")
+            with track_model_call(provider="other", model="other", operation="check"):
+                pass
+        assert [(call.context["src"], call.status) for call in calls] == [("audio", "failed"), ("caller", "completed")]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("tool_harness", ["legacy", "deepagents"])
+def test_single_api_tool_session_records_known_source(monkeypatch, tool_harness):
+    delegates, calls = [], []
+    _replace(monkeypatch, "gateway.ark.multimodal", "ArkMultimodalModel", delegates)
+    from langchain_core.tools import StructuredTool
+    tool = StructuredTool.from_function(lambda: "{}", name="read", description="Read evidence")
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "a"})
+    model = client.create_generative_model(_binding("api"))
+
+    def generate(_inputs, **kwargs):
+        with track_model_call(provider="ark", model="configured-model", operation="answer"):
+            return Result(answer="ok")
+
+    delegates[0].generate = generate
+    monkeypatch.setattr("gateway.agent_model.deepagents_multimodal.generate_with_deepagents",
+                        lambda adapter, inputs, **kwargs: adapter.generate(inputs, **kwargs))
+    try:
+        with capture_model_usage(calls.append):
+            model.generate([TextInput("evidence")], schema_name="answer", result_type=Result,
+                           tools=[tool], tool_harness=tool_harness)
+        assert calls[0].context["src"] == "api"
+    finally:
+        client.close()
+
+
+def test_same_provider_and_model_bindings_keep_sources_isolated_in_parallel(monkeypatch):
+    delegates, calls = [], []
+    _replace(monkeypatch, "gateway.ark.multimodal", "ArkMultimodalModel", delegates)
+    config = _config()
+    config.model_sources["second_api"] = config.model_sources["api"]
+    client = model_factory.GatewayClient(config, environ={"API_KEY": "a"})
+    barrier = Barrier(2)
+    models = {source: client.create_generative_model(_binding(source)) for source in ("api", "second_api")}
+
+    def generate(_inputs, **kwargs):
+        with track_model_call(provider="ark", model="configured-model", operation="answer"):
+            barrier.wait(timeout=5)
+            return Result(answer="ok")
+
+    for delegate in delegates:
+        delegate.generate = generate
+
+    def run(source):
+        with capture_model_usage(calls.append), model_call_context({"task_id": source}):
+            return models[source].generate([TextInput("evidence")], schema_name="answer", result_type=Result)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert all(result.answer == "ok" for result in pool.map(run, models))
+        assert {call.context["src"] for call in calls} == {"api", "second_api"}
+        assert all(call.context["src"] == call.context["task_id"] for call in calls)
+    finally:
+        client.close()
