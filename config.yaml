@@ -24,12 +24,13 @@ model_sources:
   codex_local:
     adapter: codex_app_server
     provider: codex
-    max_concurrency: 4
+    max_concurrency: 10
 
 models:
   agent:
     source: codex_local
     model: gpt-6-astra
+    supports_vision_input: true
     max_output_tokens: 8192
     request_timeout_seconds: 600
   supervisor:
