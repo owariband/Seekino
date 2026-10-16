@@ -85,7 +85,7 @@ def _inputs(**switches: bool) -> ParseInput:
                 "video_compact_max_chars": 2000,
                 "max_tool_calls": 1,
             } if compact else None),
-            "indexing": {"sparse_enabled": False, "contract_fingerprint": "0" * 64},
+            "indexing": {"index_generation": 1, "sparse_enabled": False, "contract_fingerprint": "0" * 64},
             "execution": {
                 "parse_concurrency": 10,
                 "refine_concurrency": 10,

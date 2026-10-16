@@ -10,7 +10,11 @@ import yaml
 from gateway.config import ArkModelSourceConfig, GatewayConfig, load_config
 from server.config import ServerSettings
 from server.config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
-from server.config.parse_profile import ParseConfig, ParseVisionConfig, resolve_embedding_config
+from server.config.parse_profile import (
+    ParseConfig, ParseVisionConfig, default_video_parse_v2_config,
+    resolve_embedding_config, validate_video_parse_schedule,
+)
+from server.constants.parse import MAX_INDEX_GENERATION
 from server.config.retrieval import RetrievalConfig, resolve_retrieval_model_limits
 from server.config.settings import (
     resolve_agent_request_timeout_seconds,
@@ -581,9 +585,24 @@ def test_parse_defaults_preserve_settings_snapshot_after_embedding_environment_c
         embedding_model=settings.video_embedding_model,
         embedding_dimensions=settings.text_vector_dimensions,
         embedding_fps=settings.video_embedding_fps,
+        index_generation=7,
     )
     assert defaults.embedding.model == gateway.multimodal_embedding.model
     assert defaults.embedding.video_fps == gateway.multimodal_embedding.fps
+    assert defaults.to_video_parse_v2().indexing.index_generation == 7
+
+
+def test_request_generation_uses_the_es_version_boundary():
+    config = default_video_parse_v2_config()
+    for generation in (None, 1, MAX_INDEX_GENERATION):
+        candidate = config.model_copy(update={
+            "indexing": config.indexing.model_copy(update={"index_generation": generation}),
+        })
+        assert validate_video_parse_schedule(candidate) is candidate
+    with pytest.raises(ValueError, match="outside the Elasticsearch version contract"):
+        validate_video_parse_schedule(config.model_copy(update={
+            "indexing": config.indexing.model_copy(update={"index_generation": MAX_INDEX_GENERATION + 1}),
+        }))
 
 
 def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):

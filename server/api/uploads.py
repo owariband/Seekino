@@ -52,7 +52,6 @@ def create_upload_session(
         idempotency_key=idempotency_key,
         content_sha256=body.content_sha256,
         parse_config=body.parse_config,
-        video_parse_config=body.video_parse_config,
         created_by_user_id=identity.user_id,
     )
     detail = service.get_detail(
@@ -141,7 +140,7 @@ def reparse_upload(
         upload_session_id,
         tenant_id=tenant_id,
         expected_job_version=expected_job_version,
-        video_parse_config=(body.video_parse_config if body is not None else None),
+        parse_config=(body.parse_config if body is not None else None),
         actor_user_id=identity.user_id,
     )
     return project_video_parse_task(task)
@@ -276,5 +275,4 @@ def project_upload_session(state: UploadSessionState) -> UploadSessionView:
         created_at=datetime_to_unix_time_ms(state.created_at),
         updated_at=datetime_to_unix_time_ms(state.updated_at),
         parse_config=state.parse_config,
-        video_parse_config=state.video_parse_config,
     )

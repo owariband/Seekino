@@ -348,7 +348,7 @@ def test_pending_upload_counts_expiry_and_full_detail(repository):
             total_size_bytes=10, preferred_segment_size_bytes=4, total_segments=3,
             idempotency_key=f"upload-{episode}", expires_at=expires,
             now=now - timedelta(days=1),
-            video_parse_config=default_video_parse_v2_config().model_dump(
+            parse_config=default_video_parse_v2_config().model_dump(
                 mode="json"
             ),
         )

@@ -75,14 +75,12 @@ _UNIX_TIME_MS_COLUMNS = {
 
 _UTC_TIMESTAMP_COLUMNS = {
     "chunk_parse_task": {
-        "execution_deadline",
         "finish_time",
         "lease_expire_time",
         "next_execute_time",
         "start_time",
     },
     "interval_parse_task": {
-        "execution_deadline",
         "finish_time",
         "lease_expire_time",
         "next_execute_time",
@@ -104,7 +102,6 @@ _UTC_TIMESTAMP_COLUMNS = {
 
 _V2_TASK_COLUMNS = {
     "video_parse_task": {
-        "scheduler_slot", "target_index_generation", "prepare_retry_count",
         "attempt_count",
         "chunk_count",
         "create_date",
@@ -133,7 +130,7 @@ _V2_TASK_COLUMNS = {
         "video_id",
     },
     "chunk_parse_task": {
-        "phase", "execution_deadline", "indexed_content_version", "indexed_generation",
+        "phase", "indexed_content_version",
         "chunk_id",
         "create_date",
         "create_time",
@@ -164,7 +161,6 @@ _V2_TASK_COLUMNS = {
         "version",
     },
     "interval_parse_task": {
-        "execution_deadline",
         "chunk_count",
         "chunk_task_id",
         "chunk_task_ids",
@@ -198,7 +194,7 @@ _V2_TASK_COLUMNS = {
 }
 
 _V2_LINK_COLUMNS = {
-    "upload_session": {"detail", "initial_task_id", "video_parse_config"},
+    "upload_session": {"detail", "initial_task_id", "parse_config"},
     "parse_usage_attempt": {"video_task_id"},
     "parse_model_call": {"video_task_id"},
 }
@@ -533,6 +529,12 @@ def create_schema(engine: Engine) -> None:
             actual_columns = {
                 column["name"] for column in inspector.get_columns(table_name)
             }
+            if table_name == "upload_session" and "video_parse_config" in actual_columns:
+                raise SchemaUpgradeRequiredError(
+                    "Upload parse configuration requires the controlled migration "
+                    "scripts/migrate_video_parse_chunk_tasks.py before startup; "
+                    "retire upload_session.video_parse_config after preserving its snapshot"
+                )
             missing_v2_schema.update(
                 f"{table_name}.{name}"
                 for name in required_columns - actual_columns

@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, event, func, select
+from sqlalchemy import delete, event, func, select, text
 
 from server.database import (
     DatabaseEnvironment,
@@ -17,7 +18,8 @@ from server.database import (
 from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
-from server.repository.video_parse import VideoParseLeaseLostError
+from server.repository.video_parse import VideoParseLeaseLostError, VideoParseRepository
+from server.utils.database import serialized_transaction
 from tests.server.test_video_parse_queue import NOW, _prepare, _task
 from tests.server.test_video_parse_repository import _refinement_inputs
 
@@ -71,7 +73,150 @@ def _race(operation, *, workers=6, attempts=20):
         return [value for values in executor.map(run, range(workers)) for value in values]
 
 
-def test_mysql_three_slots_are_atomic_and_recovery_precedes_new_admission(mysql_capacity):
+@pytest.mark.parametrize("outcome", ["commit", "rollback"])
+def test_mysql_serialized_transaction_holds_mutex_through_transaction_boundary(mysql_capacity, outcome):
+    engine, factory, create_task, _connections = mysql_capacity
+    task_id = create_task()
+    name = f"transaction-boundary-{uuid4()}"
+    marker = f"pause-{uuid4()}"
+    boundary_entered, continue_boundary = Event(), Event()
+    lock_connections = []
+
+    def pause_boundary(connection):
+        if connection.info.pop(marker, False):
+            boundary_entered.set()
+            assert continue_boundary.wait(5), "test did not release the transaction boundary"
+
+    def record_lock_connection(connection, _cursor, statement, _parameters, _context, _many):
+        if "GET_LOCK(" in statement:
+            lock_connections.append(connection.connection.driver_connection.thread_id())
+
+    def hold_transaction():
+        try:
+            with serialized_transaction(factory, name) as session:
+                assert session is not None
+                parent = session.get(VideoParseTask, task_id)
+                parent.last_error = {"message": "uncommitted business change"}
+                session.flush()
+                session.connection().info[marker] = True
+                if outcome == "rollback":
+                    raise ValueError("simulated business failure")
+        except ValueError as error:
+            assert outcome == "rollback" and str(error) == "simulated business failure"
+
+    event.listen(engine, outcome, pause_boundary)
+    event.listen(engine, "after_cursor_execute", record_lock_connection)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            holder = executor.submit(hold_transaction)
+            try:
+                assert boundary_entered.wait(5), "holder never reached commit/rollback"
+                # SQLAlchemy emits this event before the DBAPI transaction
+                # boundary. A different connection must still see the mutex.
+                with serialized_transaction(factory, name) as contender:
+                    assert contender is None
+                assert len(set(lock_connections)) == 2
+                with factory() as observer:
+                    assert observer.get(VideoParseTask, task_id).last_error is None
+            finally:
+                continue_boundary.set()
+            holder.result(timeout=5)
+        with serialized_transaction(factory, name) as resumed:
+            assert resumed is not None
+            saved = resumed.get(VideoParseTask, task_id).last_error
+            assert saved == ({"message": "uncommitted business change"} if outcome == "commit" else None)
+    finally:
+        continue_boundary.set()
+        event.remove(engine, outcome, pause_boundary)
+        event.remove(engine, "after_cursor_execute", record_lock_connection)
+
+
+def test_mysql_serialized_transaction_releases_mutex_if_first_commit_fails(mysql_capacity):
+    engine, factory, _create_task, _connections = mysql_capacity
+    name = f"acquisition-commit-error-{uuid4()}"
+    acquired_name = []
+    releases = []
+    pending_failure = False
+
+    def record_statement(_connection, _cursor, statement, parameters, _context, _many):
+        nonlocal pending_failure
+        if "GET_LOCK(" in statement and not acquired_name:
+            acquired_name.append(parameters["name"])
+            pending_failure = True
+        elif "RELEASE_LOCK(" in statement:
+            releases.append(parameters["name"])
+
+    def fail_first_commit(_connection):
+        nonlocal pending_failure
+        if pending_failure:
+            pending_failure = False
+            raise RuntimeError("simulated first commit failure")
+
+    event.listen(engine, "after_cursor_execute", record_statement)
+    event.listen(engine, "commit", fail_first_commit)
+    try:
+        with pytest.raises(RuntimeError, match="simulated first commit failure"):
+            with serialized_transaction(factory, name):
+                pytest.fail("business transaction must not start after acquisition commit fails")
+        assert releases == acquired_name and len(acquired_name) == 1
+        # Query lock ownership directly: a pooled connection can reacquire its
+        # own leaked MySQL lock, so reacquisition alone cannot prove cleanup.
+        with engine.connect() as observer:
+            assert observer.scalar(text("SELECT IS_FREE_LOCK(:name)"), {"name": acquired_name[0]}) == 1
+        with serialized_transaction(factory, name) as resumed:
+            assert resumed is not None
+    finally:
+        event.remove(engine, "commit", fail_first_commit)
+        event.remove(engine, "after_cursor_execute", record_statement)
+
+
+@pytest.mark.parametrize("lost_response", ["GET_LOCK", "RELEASE_LOCK"])
+def test_mysql_serialized_transaction_invalidates_connection_after_lost_mutex_response(mysql_capacity, lost_response):
+    engine, factory, create_task, _connections = mysql_capacity
+    task_id = create_task()
+    name = f"lost-mutex-response-{uuid4()}"
+    lost_connection = []
+    invalidated = []
+    lock_name = []
+
+    def lose_response(connection, _cursor, statement, parameters, _context, _many):
+        if f"{lost_response}(" in statement and not lost_connection:
+            # The real server statement has executed. Simulate losing its
+            # response before serialized_transaction can inspect the result.
+            lost_connection.append(connection.connection.driver_connection.thread_id())
+            lock_name.append(parameters["name"])
+            raise RuntimeError("simulated lost mutex response")
+
+    def record_invalidation(connection, _record, _error):
+        invalidated.append(connection.thread_id())
+
+    event.listen(engine, "after_cursor_execute", lose_response)
+    event.listen(engine, "invalidate", record_invalidation)
+    try:
+        with pytest.raises(RuntimeError, match="simulated lost mutex response"):
+            with serialized_transaction(factory, name) as session:
+                assert lost_response == "RELEASE_LOCK" and session is not None
+                session.get(VideoParseTask, task_id).last_error = {"message": "committed before release"}
+        assert invalidated == lost_connection and len(lost_connection) == 1
+        with engine.connect() as observer:
+            assert observer.connection.driver_connection.thread_id() != lost_connection[0]
+            # Allow the server to process the invalidated socket's disconnect;
+            # a new physical connection must acquire the mutex within one second.
+            assert observer.scalar(text("SELECT GET_LOCK(:name, 1)"), {"name": lock_name[0]}) == 1
+            assert observer.scalar(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name[0]}) == 1
+            assert observer.scalar(text("SELECT IS_FREE_LOCK(:name)"), {"name": lock_name[0]}) == 1
+            observer.commit()
+        with serialized_transaction(factory, name) as resumed:
+            assert resumed is not None
+            assert resumed.get(VideoParseTask, task_id).last_error == (
+                {"message": "committed before release"} if lost_response == "RELEASE_LOCK" else None
+            )
+    finally:
+        event.remove(engine, "invalidate", record_invalidation)
+        event.remove(engine, "after_cursor_execute", lose_response)
+
+
+def test_mysql_three_video_admissions_are_atomic_and_recovery_precedes_new_work(mysql_capacity):
     _engine, factory, create_task, connections = mysql_capacity
     task_ids = [create_task() for _ in range(6)]
     queues = [MySqlVideoParseQueue(factory, video_concurrency=3) for _ in range(6)]
@@ -83,14 +228,15 @@ def test_mysql_three_slots_are_atomic_and_recovery_precedes_new_admission(mysql_
     assert len({lease.video_parse_task_id for lease in admitted}) == 3
     with factory() as session:
         rows = session.scalars(select(VideoParseTask).where(VideoParseTask.id.in_(task_ids))).all()
-        assert sorted(row.scheduler_slot for row in rows if row.scheduler_slot is not None) == [1, 2, 3]
-        initial_slots = {row.id: row.scheduler_slot for row in rows}
+        assert sum(row.capacity_acquired for row in rows) == 3
+        initial_capacity = {row.id: row.capacity_acquired for row in rows}
+        assert {row.id for row in rows if row.capacity_acquired} == {lease.video_parse_task_id for lease in admitted}
     assert len(connections) >= 2
 
     expired_at = NOW + timedelta(minutes=2)
     # Concurrent reapers must release each coordinator once without charging business retries.
     _race(lambda worker, _attempt: queues[worker].reap_expired_videos(
-        retry_delay=timedelta(seconds=30), now=expired_at,
+        now=expired_at,
     ), attempts=1)
     resumed = [lease for lease in _race(lambda worker, attempt: queues[worker].claim_video(
         f"recovery-{worker}-{attempt}", lease_duration=timedelta(minutes=1), now=expired_at,
@@ -99,16 +245,61 @@ def test_mysql_three_slots_are_atomic_and_recovery_precedes_new_admission(mysql_
     with factory() as session:
         for task_id in task_ids:
             parent = session.get(VideoParseTask, task_id)
-            assert parent.scheduler_slot == initial_slots[task_id]
-            assert parent.prepare_retry_count == 0
+            assert parent.capacity_acquired is initial_capacity[task_id]
+            assert parent.detail["_worker_runtime_v2"].get("prepare_failures", 0) == 0
         assert all(lease.attempt_count == 2 for lease in resumed)
+
+    # Stopping a coordinator preserves its unfinished Video's capacity; a new
+    # Consumer resumes it before accepting any of the three waiting Videos.
+    stopped = resumed[0]
+    assert queues[0].release_execution(stopped, now=expired_at)
+    with factory() as session:
+        assert session.get(VideoParseTask, stopped.video_parse_task_id).capacity_acquired is True
+    recovered = queues[1].claim_video("normal-stop-recovery", lease_duration=timedelta(minutes=1), now=expired_at)
+    assert recovered is not None and recovered.video_parse_task_id == stopped.video_parse_task_id
+    assert recovered.lease_version > stopped.lease_version
+    assert queues[2].claim_video("still-full", lease_duration=timedelta(minutes=1), now=expired_at) is None
+
+    repo = VideoParseRepository(factory)
+    physical = repo.ensure_video_chunks(recovered, [(0, 0, 10000)], now=expired_at)
+    repo.ensure_parse_tasks(recovered, [physical[0].video_chunk_id], [(0, 1)], now=expired_at)
+    repo.activate_video_task(recovered, now=expired_at)
+    parse = queues[0].claim_chunk("finish-parse", video_parse_task_id=recovered.video_parse_task_id,
+        lease_duration=timedelta(minutes=1), now=expired_at)
+    repo.commit_chunk_result(parse, content={"persons": [], "timeline": []}, now=expired_at)
+    refine = queues[0].claim_interval_refine("finish-refine", video_parse_task_id=recovered.video_parse_task_id,
+        lease_duration=timedelta(minutes=1), now=expired_at)
+    repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=expired_at),
+        interval_content={"updates": []}, member_updates={}, now=expired_at)
+    index = queues[0].claim_chunk_index("finish-index", video_parse_task_id=recovered.video_parse_task_id,
+        lease_duration=timedelta(minutes=1), now=expired_at)
+    snapshot = repo.load_chunk_indexing_snapshot(index, now=expired_at)
+    assert snapshot.target_index_generation == recovered.parse_config["indexing"]["index_generation"]
+    repo.save_index_embeddings(index, index.chunk_parse_task_id, snapshot.chunk.content_version,
+        {"semantic": {"vector": [1.0]}}, receipt={
+            "parse_task_id": recovered.video_parse_task_id, "video_chunk_id": index.video_chunk_id,
+            "content_version": snapshot.chunk.content_version, "index_generation": snapshot.target_index_generation,
+        }, now=expired_at)
+    repo.complete_chunk_indexing(index, snapshot.chunk.content_version, snapshot.target_index_generation, now=expired_at)
+    # Independent maintenance also finishes a Video whose coordinator exits.
+    queues[3].reap_expired(now=expired_at)
+    with factory() as session:
+        completed = session.get(VideoParseTask, recovered.video_parse_task_id)
+        assert completed.status == "COMPLETE" and completed.capacity_acquired is False
+        assert completed.target_index_generation == completed.parse_config["indexing"]["index_generation"] == snapshot.target_index_generation
+        assert session.get(ChunkParseTask, index.chunk_parse_task_id).indexed_content_version == snapshot.chunk.content_version
+    replacement = queues[4].claim_video("new-admission", lease_duration=timedelta(minutes=1), now=expired_at)
+    assert replacement is not None and initial_capacity[replacement.video_parse_task_id] is False
+    with factory() as session:
+        rows = session.scalars(select(VideoParseTask).where(VideoParseTask.id.in_(task_ids))).all()
+        assert sum(row.capacity_acquired for row in rows) == 3
 
 
 def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capacity):
     _engine, factory, create_task, connections = mysql_capacity
     # More than ten eligible candidates in each phase proves the limits, while
     # overlapping Refine windows retain the production dependency topology.
-    queue = MySqlVideoParseQueue(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     task_ids = []
     for _ in range(3):
         task_id = create_task(chunk_count=52)
@@ -124,7 +315,7 @@ def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capac
             repo.commit_interval_refinement(lease, **_refinement_inputs(repo, lease, now=NOW),
                 interval_content={"updates": []}, member_updates={}, now=NOW)
 
-    queues = [MySqlVideoParseQueue(factory) for _ in range(6)]
+    queues = [MySqlVideoParseQueue(factory, video_concurrency=3) for _ in range(6)]
 
     def claim(worker, attempt):
         methods = (queues[worker].claim_chunk, queues[worker].claim_interval_refine,
@@ -162,7 +353,7 @@ def test_mysql_deadline_recovery_fences_heartbeat_and_late_commit(mysql_capacity
         parent.parse_config = {**parent.parse_config, "execution": {
             **parent.parse_config["execution"], phase + "_execution_timeout_seconds": 5.0,
         }}
-    queue = MySqlVideoParseQueue(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     repo, _parent, _prepared = _prepare(factory, queue, task_id, chunk_count=1)
     old = queue.claim_chunk("old", lease_duration=timedelta(minutes=1), now=NOW)
     if phase != "parse":
@@ -175,30 +366,33 @@ def test_mysql_deadline_recovery_fences_heartbeat_and_late_commit(mysql_capacity
     refinement = _refinement_inputs(repo, old, now=NOW) if phase == "refine" else None
     snapshot = repo.load_chunk_indexing_snapshot(old, now=NOW) if phase == "index" else None
     heartbeat = queue.heartbeat_interval if phase == "refine" else queue.heartbeat_chunk
+    assert old.execution_deadline == NOW + timedelta(seconds=5)
     assert heartbeat(old, lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=4))
     model = IntervalParseTask if phase == "refine" else ChunkParseTask
     task_key = old.interval_parse_task_id if phase == "refine" else old.chunk_parse_task_id
     with factory() as session:
-        assert session.get(model, task_key).lease_expire_time == NOW + timedelta(seconds=5)
+        child = session.get(model, task_key)
+        assert child.start_time == NOW
+        assert child.lease_expire_time == child.start_time + timedelta(seconds=5) == old.execution_deadline
 
     at_deadline = NOW + timedelta(seconds=5)
-    queues = [MySqlVideoParseQueue(factory) for _ in range(6)]
+    queues = [MySqlVideoParseQueue(factory, video_concurrency=3) for _ in range(6)]
 
     def expire(worker, _attempt):
         if worker % 2:
             method = queues[worker].heartbeat_interval if phase == "refine" else queues[worker].heartbeat_chunk
             assert not method(old, lease_duration=timedelta(minutes=1), now=at_deadline)
         else:
-            queues[worker].reap_expired(retry_delay=timedelta(0), now=at_deadline)
+            queues[worker].reap_expired(now=at_deadline)
 
     _race(expire, attempts=1)
     # SKIP LOCKED may make every racing maintenance pass yield to a heartbeat;
     # the next independent scan must recover the row, without double charging.
-    queue.reap_expired(retry_delay=timedelta(0), now=at_deadline)
+    queue.reap_expired(now=at_deadline)
     with factory() as session:
         child = session.get(model, task_key)
         assert child.retry_count == 1
-        assert child.lease_owner is None and child.execution_deadline is None
+        assert child.lease_owner is None and child.lease_expire_time is None
         assert child.lease_version == old.lease_version
         retry_at = child.next_execute_time
     names = {"parse": "claim_chunk", "refine": "claim_interval_refine", "index": "claim_chunk_index"}
@@ -208,6 +402,8 @@ def test_mysql_deadline_recovery_fences_heartbeat_and_late_commit(mysql_capacity
     assert len(replacements) == 1
     new = replacements[0]
     assert new.lease_version > old.lease_version and new.retry_count == 1
+    assert new.execution_deadline == retry_at + timedelta(seconds=5)
+    assert new.execution_deadline > old.execution_deadline
     assert not heartbeat(old, lease_duration=timedelta(minutes=1), now=retry_at)
     with pytest.raises(VideoParseLeaseLostError):
         if phase == "parse":
@@ -219,7 +415,9 @@ def test_mysql_deadline_recovery_fences_heartbeat_and_late_commit(mysql_capacity
             repo.complete_chunk_indexing(old, snapshot.chunk.content_version,
                 snapshot.target_index_generation, now=retry_at)
     with factory() as session:
-        assert session.get(model, task_key).lease_version == new.lease_version
+        child = session.get(model, task_key)
+        assert child.lease_version == new.lease_version and child.start_time == retry_at
+        assert child.lease_expire_time == new.execution_deadline
         if phase != "parse":
             assert session.scalar(select(func.count()).select_from(ChunkParseContent).join(
                 ChunkParseTask, ChunkParseTask.id == ChunkParseContent.chunk_task_id,

@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from ..database import DatabaseEnvironment
+from ..constants.parse import MAX_INDEX_GENERATION
 
 
 DEFAULT_INDEX_GENERATION = 1
-_MAX_INDEX_GENERATION = (1 << 31) - 1
 _DEFAULT_VECTOR_DIMENSIONS = 1024
 
 
@@ -91,7 +91,7 @@ class ElasticsearchConfig:
         if (
             isinstance(self.index_generation, bool)
             or not isinstance(self.index_generation, int)
-            or not 1 <= self.index_generation <= _MAX_INDEX_GENERATION
+            or not 1 <= self.index_generation <= MAX_INDEX_GENERATION
         ):
             raise ValueError(
                 "Elasticsearch index_generation must be a positive integer "

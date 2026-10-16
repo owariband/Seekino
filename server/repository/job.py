@@ -17,6 +17,7 @@ from ..model.dto.jobDTO import (
     VideoChunkCheckpointState,
 )
 from ..model.job import (
+    ChunkTaskPhase,
     ChunkParseContent,
     ChunkParseTask,
     IntervalParseContent,
@@ -852,9 +853,6 @@ class ParseJobRepository:
             parse_config=record.parse_config,
             chunk_count=record.chunk_count,
             version=record.version,
-            target_index_generation=record.target_index_generation,
-            scheduler_slot=record.scheduler_slot,
-            prepare_retry_count=record.prepare_retry_count,
             next_execute_time=record.next_execute_time,
             attempt_count=record.attempt_count,
             max_attempts=record.max_attempts,
@@ -1065,9 +1063,8 @@ class ParseJobRepository:
             completed_chunks = sum(content is not None and bool(content.content) for _, content, _, _ in chunk_rows)
             completed_refines = sum(child.status == "COMPLETE" and submitted for child, submitted, _ in interval_rows)
             indexed_chunks = sum(
-                child.phase == 3 and child.status == "COMPLETE" and content is not None
+                child.phase == ChunkTaskPhase.INDEX and child.status == "COMPLETE" and content is not None
                 and child.indexed_content_version == content.version
-                and child.indexed_generation == record.target_index_generation
                 for child, content, _, _ in chunk_rows
             )
             completed_units = completed_chunks + completed_refines + indexed_chunks
@@ -1095,11 +1092,11 @@ class ParseJobRepository:
                 detail = content.detail if content is not None and isinstance(content.detail, dict) else {}
                 bound = detail.get("parse_committed_lease_version")
                 if content is None:
-                    bound = child.lease_version if child.phase == 1 else 0
+                    bound = child.lease_version if child.phase == ChunkTaskPhase.PARSE else 0
                 elif type(bound) is not int or not 1 <= bound <= child.lease_version:
                     covered, bound = False, 0
                 children[("understand", "chunk", child.id)] = (child, 1, bound)
-                if child.phase == 3 and bound:
+                if child.phase == ChunkTaskPhase.INDEX and bound:
                     children[("index", "chunk", child.id)] = (child, bound + 1, child.lease_version)
             for child, submitted, detail in interval_rows:
                 bound = detail.get("refinement_committed_lease_version") if isinstance(detail, dict) else None
@@ -1133,7 +1130,7 @@ class ParseJobRepository:
                 if not entry["finished"]:
                     live = (child.lease_version == version and child.lease_owner == entry["worker_id"]
                         and child.status == ("RUNNING" if entry["execution_kind"] == "chunk" else "REFINING")
-                        and (entry["execution_kind"] != "chunk" or child.phase == (1 if phase == "understand" else 3))
+                        and (entry["execution_kind"] != "chunk" or child.phase == (ChunkTaskPhase.PARSE if phase == "understand" else ChunkTaskPhase.INDEX))
                         and child.lease_expire_time is not None
                         and datetime_to_unix_time_ms(child.lease_expire_time) > observed_at_ms)
                     covered = covered and live

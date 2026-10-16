@@ -45,6 +45,7 @@ from server.model.job import (
 )
 from server.model.dto.agentDTO import AgentMessageState
 from server.model.video import Series, Video
+from server.model.upload import UploadSession
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
@@ -391,6 +392,11 @@ def _client(tmp_path: Path):
                 max_job_attempts=3,
             ),
             probe_duration=lambda _path: 12,
+            parse_defaults=ParseConfig.from_defaults(
+                runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+                upload=UploadServiceConfig(), images=ImageUploadConfig(),
+                embedding_model=None, embedding_dimensions=1024, embedding_fps=None,
+            ),
         ),
         jobs=ParseJobService(job_repository, library),
         media=MediaService(library, artifact_store),
@@ -399,6 +405,25 @@ def _client(tmp_path: Path):
         parse_consumer=_ParseConsumerStub(),  # type: ignore[arg-type]
     )
     return TestClient(create_app(services)), retrieval, job_repository
+
+
+def _retain_historical_v1_job(repository, completed: dict) -> str:
+    """Seed legacy rows for compatibility checks; upload completion is V2-only."""
+    assert completed["jobId"] is None
+    job_id = str(uuid4())
+    with repository._session_factory.begin() as session:
+        task = session.get(VideoParseTask, completed["videoParseTaskId"])
+        video = session.get(Video, completed["videoId"])
+        session.add(SeriesParseJob(
+            id=job_id, series_id=video.series_id, video_id=video.id,
+            pipeline_version="pipeline-v1", status="QUEUED", stage="QUEUED",
+            progress=0, attempt_count=0, max_attempts=3, lease_version=0,
+            next_execute_time=int(task.next_execute_time.timestamp() * 1000),
+        ))
+        session.flush()
+        upload = session.scalar(select(UploadSession).where(UploadSession.initial_task_id == task.id))
+        upload.job_id = job_id
+    return job_id
 
 
 def _create_series(
@@ -671,7 +696,7 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
         },
     )
     assert created.status_code == 201
-    assert created.json()["parseConfig"]["window"]["analysisMaxHeight"] == 480
+    assert created.json()["parseConfig"]["visual_input"]["max_height"] == 480
     restored = client.get(
         "/api/uploads/get",
         params={"tenantId": "local-default", "uploadSessionId": created.json()["uploadSessionId"]},
@@ -761,8 +786,8 @@ def test_upload_api_preserves_explicit_execution_values_and_normalizes_old_profi
             )
             assert created.status_code == 201, created.text
             execution = created.json()["parseConfig"]["execution"]
-            expected = defaults.execution.model_dump(mode="json", by_alias=True) if legacy else original["execution"]
-            assert execution == expected
+            expected = (defaults if legacy else ParseConfig.model_validate(original)).to_video_parse_v2()
+            assert execution == expected.execution.model_dump(mode="json")
 
 
 def test_series_background_upload_save_and_read_back(tmp_path: Path) -> None:
@@ -1523,7 +1548,7 @@ def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_pa
         },
     )
     assert completed.status_code == 200, completed.text
-    job_id = completed.json()["jobId"]
+    job_id = _retain_historical_v1_job(jobs_repository, completed.json())
     video_parse_task_id = completed.json()["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
         job = session.get(SeriesParseJob, job_id)
@@ -1604,7 +1629,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
             "uploadSessionId": upload_session_id,
         },
     ).json()
-    job_id = completed["jobId"]
+    job_id = _retain_historical_v1_job(jobs_repository, completed)
     old_task_id = completed["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
         job = session.get(SeriesParseJob, job_id)
@@ -1789,7 +1814,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     )
     assert completed.status_code == 200, completed.text
     video_id = completed.json()["videoId"]
-    job_id = completed.json()["jobId"]
+    job_id = _retain_historical_v1_job(jobs_repository, completed.json())
     video_parse_task_id = completed.json()["videoParseTaskId"]
     video_parse_task = client.get(
         "/api/jobs/video-parse/get",

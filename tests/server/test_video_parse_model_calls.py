@@ -13,14 +13,12 @@ from server.service.video_parse_model_calls import (
     ModelCallAdmissionError,
     VideoParseModelCallManager,
 )
-from server.repository.video_parse import ModelCallConcurrencyBusyError
 from server.utils.time import now_utc
 
 
 class _Repository:
     def __init__(self):
         self.allow = True
-        self.busy_count = 0
         self.reserved = []
         self.renewed = []
         self.released = []
@@ -31,9 +29,6 @@ class _Repository:
         video_parse_task_id = execution_lease.video_parse_task_id
         worker_id = execution_lease.worker_id
         self.reserved.append((video_parse_task_id, call_id, worker_id))
-        if self.busy_count:
-            self.busy_count -= 1
-            raise ModelCallConcurrencyBusyError("busy")
         if not self.allow:
             return None
         return ModelCallReservation(
@@ -44,7 +39,6 @@ class _Repository:
             used_calls=1,
             max_calls=10,
             active_calls=1,
-            max_concurrent_calls=2,
             lease_expire_time=now_utc() + lease_duration,
         )
 
@@ -174,19 +168,3 @@ def test_heartbeat_cancels_active_transports_when_reservation_is_lost():
         manager.acquire(ModelCallTracker(
             provider="ark", model="embedding", operation="text_embedding"
         ))
-
-
-def test_transient_concurrency_contention_waits_before_request():
-    repository = _Repository()
-    repository.busy_count = 1
-    manager = _manager(repository, concurrency_poll_seconds=0.001)
-    embeddings = _Embeddings()
-    embedder = DoubaoMultimodalEmbedder(
-        "embedding", client=SimpleNamespace(multimodal_embeddings=embeddings)
-    )
-
-    with manager.capture():
-        embedder.embed_text("query")
-
-    assert len(repository.reserved) == 2
-    assert embeddings.calls == 1

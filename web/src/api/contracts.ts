@@ -212,6 +212,16 @@ export interface ParseConfig {
   };
 }
 
+export interface VideoParseConfig {
+  visual_input: {
+    mode: "ordered_frames" | "video";
+    fps: number;
+    max_frames_per_chunk: number;
+    max_height: number;
+  };
+  [key: string]: unknown;
+}
+
 export interface UploadSessionView {
   uploadSessionId: string;
   tenantId: string;
@@ -239,8 +249,7 @@ export interface UploadSessionView {
   version: number;
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;
-  parseConfig?: ParseConfig | null;
-  videoParseConfig?: Record<string, unknown> | null;
+  parseConfig?: VideoParseConfig | null;
 }
 
 export interface UploadCompleteView {

@@ -7,19 +7,18 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 from engine.common.media_probe import probe_video_duration_seconds
 from engine.rag import EncoderContract
-from gateway.model_sources import ModelReference, ModelReferenceType
+from gateway.model_sources import ModelReference
 
-from ..config.parse_profile import ParseConfig, default_video_parse_v2_config, index_contract_fingerprint
+from ..config.parse_profile import ParseConfig, index_contract_fingerprint, validate_video_parse_schedule
 from ..config.upload import UploadServiceConfig
 from ..model.identifiers import derive_video_id
 from ..model.upload import UploadSessionStatus, UploadCompletionStage
 from ..model.dto.uploadDTO import (
-    CompletedUploadState, UploadCompletionClaim, UploadSegmentState, UploadSessionDetail,
+    CompletedUploadState, UploadSegmentState, UploadSessionDetail,
     UploadSessionState,
 )
 from ..model.dto.jobDTO import VideoParseTaskState
@@ -63,14 +62,10 @@ class UploadService:
         probe_duration: Callable[[str | Path], int] = probe_video_duration_seconds,
         clock: Callable[[], datetime | int] | None = None,
         video_parse_index_store: ElasticsearchVideoChunkStore | None = None,
-        parse_defaults: ParseConfig | None = None,
-        parse_defaults_loader: Callable[[], ParseConfig] | None = None,
-        execution_mode: Literal["v1", "v2"] = "v1",
+        parse_defaults: ParseConfig,
         video_parse_query_encoder: EncoderContract | None = None,
         video_parse_query_encoder_source: str | None = None,
     ) -> None:
-        if execution_mode not in {"v1", "v2"}:
-            raise ValueError("execution_mode must be 'v1' or 'v2'")
         if (video_parse_query_encoder is None) != (
             video_parse_query_encoder_source is None
         ):
@@ -93,13 +88,11 @@ class UploadService:
         self._clock = clock or now_utc
         self._video_parse_index_store = video_parse_index_store
         self._parse_defaults = parse_defaults
-        self._parse_defaults_loader = parse_defaults_loader
-        self._execution_mode = execution_mode
         self._video_parse_query_encoder = video_parse_query_encoder
         self._video_parse_query_encoder_source = video_parse_query_encoder_source
 
     @property
-    def parse_defaults(self) -> ParseConfig | None:
+    def parse_defaults(self) -> ParseConfig:
         return self._parse_defaults
 
     def _now(self) -> datetime:
@@ -121,8 +114,7 @@ class UploadService:
         total_size_bytes: int,
         idempotency_key: str,
         content_sha256: str | None = None,
-        parse_config: ParseConfig | None = None,
-        video_parse_config: VideoParseV2Config | None = None,
+        parse_config: ParseConfig | VideoParseV2Config | None = None,
         created_by_user_id: str | None = None,
     ) -> UploadSessionState:
         normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
@@ -152,49 +144,19 @@ class UploadService:
         if content_sha256 is not None and not _SHA256_PATTERN.fullmatch(content_sha256):
             raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
-        def resolve_config() -> tuple[dict | None, dict]:
-            selected_config = parse_config or self._parse_defaults
-            if selected_config is not None:
-                selected_config = selected_config.resolve_execution(self._parse_defaults)
-            if selected_config is not None and self._parse_defaults is not None:
-                selected_config.require_active_index(
-                    embedding_model=self._parse_defaults.embedding.model,
-                    dimensions=self._parse_defaults.embedding.dimensions,
-                    image_max_edge=self._parse_defaults.context.background_image_max_edge,
-                )
+        def resolve_config() -> dict:
+            return self._resolve_parse_config(parse_config or self._parse_defaults).model_dump(mode="json")
 
-            selected_video_parse_config = video_parse_config or (
-                selected_config.to_video_parse_v2()
-                if selected_config is not None
-                else default_video_parse_v2_config()
-            )
-            if (
-                selected_config is not None
-                and selected_video_parse_config.chunk_duration
-                != selected_config.window.chunk_duration_seconds
-            ):
-                raise ValueError(
-                    "video_parse_config.chunk_duration must match "
-                    "the upload parse configuration's fixed chunk duration"
-                )
-            selected_video_parse_config = self._require_video_parse_index_compatibility(
-                selected_video_parse_config
-            )
-            return (
-                selected_config.model_dump(mode="json") if selected_config else None,
-                selected_video_parse_config.model_dump(mode="json"),
-            )
-
-        # Preserve older request hashes while keeping all existing nullable fields.
+        # Fingerprint the submitted form; normalized execution settings may change
+        # independently, but a replay must return the original accepted snapshot.
         requested_parse_config = parse_config.model_dump(mode="json") if parse_config else None
-        if requested_parse_config is not None and parse_config.embedding.encoder_model is None:
-            requested_parse_config["embedding"].pop("encoder_model", None)
-        requested_video_parse_config = (
-            video_parse_config.model_dump(mode="json")
-            if video_parse_config is not None else None
-        )
-        if requested_video_parse_config is not None and video_parse_config.models.embedding.encoder_model is None:
-            requested_video_parse_config["models"]["embedding"].pop("encoder_model", None)
+        if requested_parse_config is not None:
+            embedding = (parse_config.embedding if isinstance(parse_config, ParseConfig)
+                         else parse_config.models.embedding)
+            if embedding.encoder_model is None:
+                target = (requested_parse_config["embedding"] if isinstance(parse_config, ParseConfig)
+                          else requested_parse_config["models"]["embedding"])
+                target.pop("encoder_model", None)
 
         segment_size = self._config.preferred_segment_size_bytes
         total_segments = math.ceil(total_size_bytes / segment_size)
@@ -214,7 +176,6 @@ class UploadService:
             now=now,
             content_sha256=content_sha256,
             requested_parse_config=requested_parse_config,
-            requested_video_parse_config=requested_video_parse_config,
             config_resolver=resolve_config,
         )
         _logger.info(
@@ -301,7 +262,7 @@ class UploadService:
         *,
         tenant_id: str,
         expected_job_version: int,
-        video_parse_config: VideoParseV2Config | None = None,
+        parse_config: ParseConfig | VideoParseV2Config | None = None,
         actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         if (
@@ -318,23 +279,24 @@ class UploadService:
         )
 
         def resolve_snapshot(snapshot: dict) -> dict:
-            return self._require_video_parse_index_compatibility(
-                VideoParseV2Config.model_validate(snapshot)
-            ).model_dump(mode="json")
+            if isinstance(parse_config, ParseConfig):
+                return self._resolve_parse_config(parse_config).model_dump(mode="json")
+            selected = VideoParseV2Config.model_validate(snapshot)
+            if parse_config is None:
+                # A new parse version adopts the active index generation, while
+                # retry keeps its existing task snapshot and never enters here.
+                selected = selected.model_copy(update={"indexing": selected.indexing.model_copy(
+                    update={"index_generation": None},
+                )})
+            return self._resolve_parse_config(selected).model_dump(mode="json")
 
         task = self._repository.reparse(
             session_id,
             tenant_id=normalized_workspace,
             expected_job_version=expected_job_version,
             actor_user_id=actor_user_id,
-            execution_mode=self._execution_mode,
-            video_parse_config=(
-                video_parse_config.model_dump(mode="json")
-                if video_parse_config is not None else None
-            ),
-            snapshot_resolver=(
-                resolve_snapshot if self._video_parse_index_store is not None else None
-            ),
+            parse_config=(parse_config.model_dump(mode="json") if parse_config is not None else None),
+            snapshot_resolver=resolve_snapshot,
             now=self._now(),
         )
         _logger.info(
@@ -522,10 +484,7 @@ class UploadService:
         tenant_id: str,
     ) -> CompletedUploadState:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
-        session = self.get_session(session_id, tenant_id=tenant_id)
-        self._require_video_parse_index_compatibility(
-            _completion_video_parse_config(session)
-        )
+        self.get_session(session_id, tenant_id=tenant_id)
         claim = self._repository.claim_completion(
             session_id,
             now=self._now(),
@@ -540,10 +499,6 @@ class UploadService:
                 raise UploadConflictError(
                     "completed upload is missing its VideoParseTask"
                 )
-            if self._execution_mode == "v1" and claim.existing_job_id is None:
-                raise UploadConflictError(
-                    "completed V1 upload is missing its ParseJob"
-                )
             return CompletedUploadState(
                 session=claim.session,
                 video_id=claim.session.video_id,
@@ -556,7 +511,10 @@ class UploadService:
 
         published_video_id: str | None = None
         try:
-            video_parse_config = _completion_video_parse_config(claim.session)
+            snapshot = _completion_parse_config(claim.session)
+            parse_config = self._resolve_parse_config(snapshot)
+            if snapshot.indexing.contract_fingerprint != parse_config.indexing.contract_fingerprint:
+                raise UploadConflictError("upload index contract differs from its frozen configuration")
             self._repository.set_completion_stage(session_id, claim.completion_token, UploadCompletionStage.ASSEMBLING)
             _logger.info("upload_stage upload_session_id=%s stage=ASSEMBLING", session_id)
             assembled = self._artifact_store.assemble_upload(
@@ -591,16 +549,10 @@ class UploadService:
                 content_hash=published.sha256,
                 duration_seconds=duration_seconds,
                 pipeline_version=self._config.pipeline_version,
-                max_job_attempts=(
-                    ParseConfig.model_validate(claim.session.parse_config).execution.max_attempts
-                    if claim.session.parse_config is not None
-                    else self._config.max_job_attempts
-                ),
-                video_parse_config=video_parse_config.model_dump(mode="json"),
+                parse_config=parse_config.model_dump(mode="json"),
                 max_video_parse_attempts=(
-                    video_parse_config.execution.max_retry_count + 1
+                    parse_config.execution.max_retry_count + 1
                 ),
-                execution_mode=self._execution_mode,
                 now=self._now(),
             )
         except Exception as exc:
@@ -637,6 +589,21 @@ class UploadService:
         )
         return completed
 
+    def _resolve_parse_config(self, config: ParseConfig | VideoParseV2Config) -> VideoParseV2Config:
+        if isinstance(config, ParseConfig):
+            config = config.resolve_execution(self._parse_defaults).to_video_parse_v2()
+        indexing = self._parse_defaults.indexing
+        generation = indexing.index_generation if indexing is not None else None
+        if type(generation) is not int or generation <= 0:
+            raise ValueError("server parse defaults require an index_generation")
+        if config.indexing.index_generation not in (None, generation):
+            raise ValueError("parse_config.indexing.index_generation must match the active index generation")
+        config = config.model_copy(update={"indexing": config.indexing.model_copy(
+            update={"index_generation": generation},
+        )})
+        validate_video_parse_schedule(config)
+        return self._require_video_parse_index_compatibility(config)
+
     def _require_video_parse_index_compatibility(
         self,
         config: VideoParseV2Config,
@@ -651,7 +618,7 @@ class UploadService:
             or dimensions != store.vision_dimensions
         ):
             raise ValueError(
-                "video_parse_config.models.embedding.dimensions must match "
+                "parse_config.models.embedding.dimensions must match "
                 "the active Elasticsearch semantic and vision dimensions"
             )
         active_encoder = self._video_parse_query_encoder
@@ -674,7 +641,7 @@ class UploadService:
             or embedding.dimensions != active_encoder.dimensions
         ):
             raise ValueError(
-                "video_parse_config.models.embedding must match the exact active "
+                "parse_config.models.embedding must match the exact active "
                 "V2 query encoder source, model, and dimensions"
             )
         resolved_embedding = embedding.model_copy(update={"encoder_model": reference.model})
@@ -706,11 +673,11 @@ def _filename(value: str) -> str:
     return normalized
 
 
-def _completion_video_parse_config(
+def _completion_parse_config(
     session: UploadSessionState,
 ) -> VideoParseV2Config:
-    if session.video_parse_config is None:
+    if session.parse_config is None:
         raise UploadConflictError(
             "upload session is missing its fixed V2 parse configuration snapshot"
         )
-    return VideoParseV2Config.model_validate(session.video_parse_config)
+    return VideoParseV2Config.model_validate(session.parse_config)

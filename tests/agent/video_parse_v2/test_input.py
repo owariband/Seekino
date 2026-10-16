@@ -64,7 +64,7 @@ def _input_payload() -> dict:
                 "max_frames_per_chunk": 30,
                 "max_height": 720,
             },
-            "indexing": {"sparse_enabled": False, "contract_fingerprint": "0" * 64},
+            "indexing": {"index_generation": 1, "sparse_enabled": False, "contract_fingerprint": "0" * 64},
             "execution": {
                 "parse_concurrency": 10,
                 "refine_concurrency": 10,
@@ -98,6 +98,14 @@ def test_legacy_model_snapshot_does_not_add_unset_policy_fields():
     assert "context_window_tokens" not in rendered
     assert "supports_vision_input" not in rendered
     assert "max_input_chars" not in rendered
+
+
+def test_historical_indexing_snapshot_remains_readable_without_inventing_generation():
+    payload = _input_payload()
+    payload["parse_config"]["indexing"].pop("index_generation")
+    inputs = ParseInput.model_validate(payload)
+    assert inputs.parse_config.indexing.index_generation is None
+    assert inputs.model_dump(mode="json")["parse_config"]["indexing"] == payload["parse_config"]["indexing"]
 
 
 def test_explicit_model_policy_is_frozen_and_round_trips():

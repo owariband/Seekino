@@ -29,7 +29,11 @@ from engine.rag import (
     VideoClipInputContract,
 )
 from gateway.embedding import EmbeddingResult
-from server.config.parse_profile import default_video_parse_v2_config
+from engine.common.config import VideoParseRuntimeConfig
+from gateway.config import load_config
+from server.config.media import ImageUploadConfig
+from server.config.upload import UploadServiceConfig
+from server.config.parse_profile import ParseConfig, default_video_parse_v2_config
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,
@@ -164,7 +168,7 @@ def _indexing_case(tmp_path, store):
         create_schema(engine)
         factory = create_session_factory(engine)
         repository = VideoParseRepository(factory)
-        queue = MySqlVideoParseQueue(factory)
+        queue = MySqlVideoParseQueue(factory, video_concurrency=3)
         series_id, video_id, task_id, upload_id = (str(uuid4()) for _ in range(4))
         now = datetime.now(UTC) - timedelta(seconds=1)
         source = tmp_path / "episode.mp4"
@@ -668,6 +672,12 @@ def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_cas
         UploadRepository(case.factory),
         LocalArtifactStore(tmp_path / "artifacts", environment="test"),
         video_parse_index_store=store,
+        parse_defaults=ParseConfig.from_defaults(
+            runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+            upload=UploadServiceConfig(), images=ImageUploadConfig(),
+            embedding_model=None, embedding_dimensions=case.encoder.dimensions,
+            embedding_fps=None,
+        ),
         video_parse_query_encoder=case.encoder,
         video_parse_query_encoder_source=case.config["models"]["embedding"]["source"],
         # Legacy cleanup is a local boundary, never a Qdrant client or query fallback.

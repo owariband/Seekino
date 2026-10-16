@@ -23,7 +23,7 @@ from engine.rag.contracts import (
 from engine.rag.indexing.projection import project_chunk_index
 from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 
-from ..config.elasticsearch import DEFAULT_INDEX_GENERATION
+from ..constants.parse import MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY
 from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
     ChunkParseContentState,
@@ -42,6 +42,7 @@ from ..model.dto.jobDTO import (
     VideoChunkState,
 )
 from ..model.job import (
+    ChunkTaskPhase,
     ChunkParseContent,
     ChunkParseTask,
     ChunkParseTaskStatus,
@@ -67,7 +68,6 @@ from ..utils.validation import canonical_uuid, require_nonempty_text
 from .video import SeriesNotReadyError, SeriesScopeNotFoundError, VideoChunkNotFoundError
 
 
-RUNTIME_DETAIL_KEY = "_worker_runtime_v2"
 INDEX_EMBEDDINGS_DETAIL_KEY = "_index_embeddings_v2"
 _REFINE_SUBMITTED = {IntervalParseTaskStatus.COMPLETE.value}
 
@@ -93,10 +93,6 @@ class VideoParseLeaseLostError(VideoParseRepositoryError):
 
 
 class ModelCallBudgetExhaustedError(VideoParseRepositoryError):
-    pass
-
-
-class ModelCallConcurrencyBusyError(VideoParseRepositoryError):
     pass
 
 
@@ -141,7 +137,7 @@ class RealtimeChunkState:
     content_version: int | None
     last_error: dict | None
     parent_error: str | None = None
-    phase: int = 1
+    phase: int = ChunkTaskPhase.PARSE
 
 
 def invalidate_series_prefixes_from(
@@ -262,14 +258,8 @@ class VideoParseRepository:
     mutating method either fences a Worker lease or locks the parent task row.
     """
 
-    def __init__(
-        self, session_factory: sessionmaker[Session],
-        *, target_index_generation: int = DEFAULT_INDEX_GENERATION,
-    ) -> None:
-        if type(target_index_generation) is not int or target_index_generation <= 0:
-            raise ValueError("target_index_generation must be a positive integer")
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
-        self._target_index_generation = target_index_generation
 
     def ensure_realtime_task(
         self,
@@ -350,7 +340,6 @@ class VideoParseRepository:
                         parse_config=config.model_dump(mode="json"),
                         chunk_count=math.ceil(video.duration_ms / (config.chunk_duration * 1000)),
                         version=1 if task is None else task.version + 1,
-                        target_index_generation=self._target_index_generation,
                         next_execute_time=created_at, attempt_count=0,
                         max_attempts=config.execution.max_retry_count + 1,
                         lease_version=0, processing_duration_ms=0,
@@ -388,12 +377,9 @@ class VideoParseRepository:
             )
             if task is None or _latest_video_task_id(session, video_id) != task.id:
                 raise VideoParseConflictError("Realtime Parse task changed; retry with the latest task")
-            runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
-            parent_error = None
-            if runtime.get("accepted") is True:
-                parent_error = _video_failure_status(task)
-                if task.status in {VideoParseTaskStatus.PARSING_FAILED.value, VideoParseTaskStatus.INDEXING_FAILED.value}:
-                    parent_error = task.status
+            parent_error = _video_failure_status(task)
+            if task.status in {VideoParseTaskStatus.PARSING_FAILED.value, VideoParseTaskStatus.INDEXING_FAILED.value}:
+                parent_error = task.status
             rows = session.execute(
                 select(ChunkParseTask, VideoChunk, ChunkParseContent)
                 .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
@@ -428,7 +414,7 @@ class VideoParseRepository:
             task.lease_expire_time = None
             task.heartbeat_time = None
             if not runtime.get("accepted"):
-                task.scheduler_slot = None
+                task.capacity_acquired = False
             task.next_execute_time = finished_at
             task.update_time = datetime_to_unix_time_ms(finished_at)
             video = session.get(Video, task.video_id)
@@ -472,10 +458,9 @@ class VideoParseRepository:
                 .where(
                     ChunkParseTask.video_task_id == task_id,
                     ChunkParseTask.chunk_id == chunk_id,
-                    ChunkParseTask.phase == 3,
+                    ChunkParseTask.phase == ChunkTaskPhase.INDEX,
                     ChunkParseTask.status == ChunkParseTaskStatus.COMPLETE.value,
                     ChunkParseTask.indexed_content_version == ChunkParseContent.version,
-                    ChunkParseTask.indexed_generation == task.target_index_generation,
                 )
             )
             if content is None:
@@ -598,7 +583,7 @@ class VideoParseRepository:
                 )
                 .where(
                     ChunkParseTask.video_task_id.in_(task_ids),
-                    ChunkParseTask.phase == 3,
+                    ChunkParseTask.phase == ChunkTaskPhase.INDEX,
                     ChunkParseTask.status
                     == ChunkParseTaskStatus.COMPLETE.value,
                     ChunkParseTask.indexed_content_version == ChunkParseContent.version,
@@ -631,12 +616,10 @@ class VideoParseRepository:
                     ) from exc
                 embedding = config.models.embedding
                 for _child, chunk, content in rows:
-                    if _child.indexed_generation != task.target_index_generation:
-                        raise VideoParseConflictError("Chunk publication differs from the task target generation")
                     if require_sparse and not config.indexing.sparse_enabled:
                         raise VideoParseConflictError("selected V2 task has no published Sparse representation")
                     contract = (
-                        _child.indexed_generation,
+                        task.target_index_generation,
                         embedding.source,
                         embedding.encoder_model or embedding.model,
                         embedding.dimensions,
@@ -750,8 +733,7 @@ class VideoParseRepository:
                     VideoParseTask.status
                     == VideoParseTaskStatus.COMPLETE.value,
                     VideoParseTask.is_deleted.is_(False),
-                    ChunkParseTask.indexed_generation == VideoParseTask.target_index_generation,
-                    ChunkParseTask.phase == 3,
+                    ChunkParseTask.phase == ChunkTaskPhase.INDEX,
                     ChunkParseTask.status
                     == ChunkParseTaskStatus.COMPLETE.value,
                     ChunkParseTask.indexed_content_version == ChunkParseContent.version,
@@ -810,6 +792,7 @@ class VideoParseRepository:
                     identity,
                     video_chunk_id=video_chunk_id,
                     child=child,
+                    task=task,
                     series=series,
                     video=video,
                     content=content,
@@ -842,17 +825,13 @@ class VideoParseRepository:
                             raise VideoParseConflictError(
                                 "retrieval context is not a contiguous adjacent Chunk"
                             )
-                        if _child.indexed_generation != identity.index_generation:
-                            raise VideoParseConflictError(
-                                "retrieval context uses a different index generation"
-                            )
                         other_identity = VideoChunkRetrievalIdentity(
                             tenant_id=other_series.tenant_id,
                             series_id=other_series.id,
                             video_id=other_video.id,
                             parse_task_id=task.id,
                             content_version=other_content.version,
-                            index_generation=_child.indexed_generation,
+                            index_generation=task.target_index_generation,
                         )
                         contexts.append(_chunk_retrieval_facts(
                             other_chunk, other_content, other_identity
@@ -889,6 +868,9 @@ class VideoParseRepository:
                     f"VideoParseTask {video_parse_task_id!r} does not exist"
                 )
             task, video, series = row
+            generation = task.parse_config.get("indexing", {}).get("index_generation")
+            if type(generation) is not int or not 1 <= generation <= MAX_INDEX_GENERATION:
+                raise VideoParseConflictError("accepted task is missing a valid frozen index generation")
             return _task_input_state(task, video, tenant_id=series.tenant_id, series=series)
 
     def ensure_prepared(
@@ -1187,7 +1169,7 @@ class VideoParseRepository:
                 session, lease.video_parse_task_id
             )
             task = _locked_chunk_lease(session, lease, committed_at)
-            if lease.phase != 1:
+            if lease.phase != ChunkTaskPhase.PARSE:
                 raise VideoParseLeaseLostError("only Parse leases can commit understanding")
             chunk = session.get(VideoChunk, task.chunk_id)
             if chunk is None:
@@ -1245,13 +1227,12 @@ class VideoParseRepository:
                 interval.update_time = datetime_to_unix_time_ms(committed_at)
                 touched.append(interval.id)
 
-            task.phase = 2
+            task.phase = ChunkTaskPhase.REFINE
             task.status = ChunkParseTaskStatus.WAITING.value
             task.retry_count = 0
             task.finish_time = None
             task.lease_owner = None
             task.lease_expire_time = None
-            task.execution_deadline = None
             task.last_error = None
             task.update_time = datetime_to_unix_time_ms(committed_at)
             session.flush()
@@ -1262,7 +1243,7 @@ class VideoParseRepository:
                     ChunkParseTask.video_task_id == parent.id,
                     ChunkParseTask.lease_owner.is_not(None),
                 ).limit(1)) and parent.lease_owner is None:
-                    parent.scheduler_slot = None
+                    parent.capacity_acquired = False
             return tuple(touched)
 
     def load_chunk_execution(
@@ -1429,7 +1410,6 @@ class VideoParseRepository:
             interval.status = IntervalParseTaskStatus.COMPLETE.value
             interval.lease_owner = None
             interval.lease_expire_time = None
-            interval.execution_deadline = None
             interval.last_error = None
             interval.finish_time = committed_at
             interval.next_execute_time = committed_at
@@ -1448,7 +1428,7 @@ class VideoParseRepository:
         loaded_at = now if now is not None else now_utc()
         with self._session_factory() as session:
             child = session.get(ChunkParseTask, lease.chunk_parse_task_id)
-            if lease.phase != 3 or not _matching_chunk_lease(child, lease, loaded_at):
+            if lease.phase != ChunkTaskPhase.INDEX or not _matching_chunk_lease(child, lease, loaded_at):
                 raise VideoParseLeaseLostError("Chunk Index lease is no longer current")
             parent = session.get(VideoParseTask, lease.video_parse_task_id)
             video = session.get(Video, parent.video_id) if parent is not None else None
@@ -1497,7 +1477,7 @@ class VideoParseRepository:
             content = session.scalar(select(ChunkParseContent).where(
                 ChunkParseContent.chunk_task_id == child.id,
             ).with_for_update())
-            if lease.phase != 3 or content is None or content.version != content_version:
+            if lease.phase != ChunkTaskPhase.INDEX or content is None or content.version != content_version:
                 raise VideoParseConflictError("indexed Chunk content or phase changed")
             if parent.target_index_generation != index_generation:
                 raise VideoParseConflictError("indexed Chunk target generation changed")
@@ -1511,12 +1491,10 @@ class VideoParseRepository:
             detail["index_committed_lease_versions"] = committed
             content.detail = detail
             child.indexed_content_version = content_version
-            child.indexed_generation = index_generation
             child.status = ChunkParseTaskStatus.COMPLETE.value
             child.finish_time = completed_at
             child.lease_owner = None
             child.lease_expire_time = None
-            child.execution_deadline = None
             child.last_error = None
             child.update_time = datetime_to_unix_time_ms(completed_at)
             session.flush()
@@ -1546,7 +1524,7 @@ class VideoParseRepository:
         with self._session_factory.begin() as session:
             parent = _locked_parent_task(session, lease.video_parse_task_id)
             child = _locked_chunk_lease(session, lease, saved_at)
-            if lease.phase != 3 or child.id != chunk_parse_task_id:
+            if lease.phase != ChunkTaskPhase.INDEX or child.id != chunk_parse_task_id:
                 raise VideoParseConflictError("embedding target is not the leased Index Chunk")
             content = session.scalar(
                 select(ChunkParseContent)
@@ -1614,7 +1592,7 @@ class VideoParseRepository:
                     "index rebuild requires a settled indexing failure; parsing failures require retry"
                 )
             # Repeating the same request while already queued must not reset its budget.
-            targets = [child.id for child in chunks if child.phase == 3 and child.status != "QUEUED"]
+            targets = [child.id for child in chunks if child.phase == ChunkTaskPhase.INDEX and child.status != "QUEUED"]
             reset = _advance_ready_chunks(
                 session, task.id, targets, requested_at,
                 locked_intervals=intervals, invalidate_index=True,
@@ -1668,7 +1646,7 @@ class VideoParseRepository:
         if not isinstance(outcome, str) or not outcome.strip():
             raise ValueError("outcome must be nonempty text")
         if isinstance(lease, ChunkParseLease):
-            phase = "understand" if lease.phase == 1 else "index"
+            phase = "understand" if lease.phase == ChunkTaskPhase.PARSE else "index"
             kind, task_id = "chunk", lease.chunk_parse_task_id
             model = ChunkParseTask
         elif isinstance(lease, IntervalParseLease) and lease.phase == "REFINING":
@@ -1676,7 +1654,7 @@ class VideoParseRepository:
             kind, task_id = "interval", lease.interval_parse_task_id
             model = IntervalParseTask
         else:
-            raise ValueError("timing supports only Chunk Understanding and Interval Refine/Index")
+            raise ValueError("timing supports only Chunk Parse/Index and Interval Refine")
 
         sampled_at = now if now is not None else now_utc()
         identity = {
@@ -1700,7 +1678,7 @@ class VideoParseRepository:
                 receipt = result.detail if result is not None and isinstance(result.detail, dict) else {}
                 committed = child.chunk_id == lease.video_chunk_id and (
                     receipt.get("parse_committed_lease_version") == lease.lease_version
-                    if lease.phase == 1 else lease.lease_version in receipt.get("index_committed_lease_versions", [])
+                    if lease.phase == ChunkTaskPhase.PARSE else lease.lease_version in receipt.get("index_committed_lease_versions", [])
                 )
             else:
                 active = _matching_interval_lease(child, lease, sampled_at)
@@ -1770,8 +1748,8 @@ class VideoParseRepository:
         with self._session_factory.begin() as session:
             task = _lock_model_execution_lease(session, lease, reserved_at)
             execution = _execution_config(task.parse_config)
+            # Keep the legacy snapshot value for reporting; cumulative calls do not limit admission.
             max_calls = _positive_int(execution.get("max_model_calls"), "max_model_calls")
-            max_concurrent = 0
             detail = _ensure_runtime(task.detail)
             runtime = deepcopy(detail[RUNTIME_DETAIL_KEY])
             model_calls = deepcopy(runtime["model_calls"])
@@ -1792,8 +1770,6 @@ class VideoParseRepository:
                 first = False
             else:
                 first = call_id not in used
-                if first and len(used) >= max_calls:
-                    raise ModelCallBudgetExhaustedError("VideoParseTask model-call budget is exhausted")
                 if first:
                     used.append(call_id)
             active[call_id] = {
@@ -1817,7 +1793,6 @@ class VideoParseRepository:
                 used_calls=len(used),
                 max_calls=max_calls,
                 active_calls=len(active),
-                max_concurrent_calls=max_concurrent,
                 lease_expire_time=expires_at,
             )
 
@@ -2371,9 +2346,6 @@ def _task_state(task: VideoParseTask) -> VideoParseTaskState:
         parse_config=deepcopy(dict(task.parse_config)),
         chunk_count=task.chunk_count,
         version=task.version,
-        scheduler_slot=task.scheduler_slot,
-        target_index_generation=task.target_index_generation,
-        prepare_retry_count=task.prepare_retry_count,
         next_execute_time=task.next_execute_time,
         attempt_count=task.attempt_count,
         max_attempts=task.max_attempts,
@@ -2440,8 +2412,6 @@ def _matching_chunk_lease(
         and task.lease_version == lease.lease_version
         and task.lease_expire_time is not None
         and task.lease_expire_time > now
-        and task.execution_deadline is not None
-        and task.execution_deadline > now
     )
 
 
@@ -2489,8 +2459,6 @@ def _matching_interval_lease(
         and interval.lease_version == lease.lease_version
         and interval.lease_expire_time is not None
         and interval.lease_expire_time > now
-        and interval.execution_deadline is not None
-        and interval.execution_deadline > now
     )
 
 
@@ -2603,9 +2571,9 @@ def _advance_ready_chunks(
             item.status == "COMPLETE" and item.id in refined for item in covering
         ]):
             continue
-        if not invalidate_index and not (child.phase == 2 and child.status == "WAITING"):
+        if not invalidate_index and not (child.phase == ChunkTaskPhase.REFINE and child.status == "WAITING"):
             continue
-        child.phase = 3
+        child.phase = ChunkTaskPhase.INDEX
         child.status = ChunkParseTaskStatus.QUEUED.value
         child.retry_count = 0
         # Revocation is monotonic even when no worker currently owns this row.
@@ -2613,7 +2581,6 @@ def _advance_ready_chunks(
             child.lease_version += 1
         child.lease_owner = None
         child.lease_expire_time = None
-        child.execution_deadline = None
         child.next_execute_time = now
         child.start_time = None
         child.finish_time = None
@@ -2648,11 +2615,12 @@ def _aggregate_video_task(
         IntervalParseTask.video_task_id == task.id,
     ).order_by(IntervalParseTask.start_sequence_no)))
     chunks = [child for child, _chunk, _content in chunk_rows]
-    if runtime.get("realtime_only") is True and runtime.get("accepted") is not True:
-        task.status = "PREPARING" if task.lease_owner is not None else "PENDING"
+    if (runtime.get("realtime_only") is True and runtime.get("accepted") is not True
+        and failure_status is None and _video_failure_status(task) is None):
+        task.status = "PREPARING" if task.status == "PREPARING" or task.lease_owner is not None else "PENDING"
         task.finish_time = None
         if task.lease_owner is None and not any(child.lease_owner for child in chunks):
-            task.scheduler_slot = None
+            task.capacity_acquired = False
         task.update_time = datetime_to_unix_time_ms(now)
         return task
     refined = set(session.scalars(select(IntervalParseContent.interval_task_id).where(
@@ -2672,19 +2640,18 @@ def _aggregate_video_task(
         task.status if task.status in {"PARSING_FAILED", "INDEXING_FAILED"} else None
     )
     parsing_failed = ("PARSING_FAILED" in {failure_status, recorded_failure}
-                      or any(item.phase == 1 and item.status == "FAILED" for item in chunks)
+                      or any(item.phase == ChunkTaskPhase.PARSE and item.status == "FAILED" for item in chunks)
                       or any(item.status == "PARSING_FAILED" for item in intervals))
     indexing_failed = ("INDEXING_FAILED" in {failure_status, recorded_failure}
-                       or any(item.phase == 3 and item.status == "FAILED" for item in chunks))
+                       or any(item.phase == ChunkTaskPhase.INDEX and item.status == "FAILED" for item in chunks))
     status = summarize_video_task(
         topology_complete=topology_complete,
         understanding_complete=all(content is not None and bool(content.content)
                                    for _, _, content in chunk_rows),
         refinement_complete=all(item.status == "COMPLETE" and item.id in refined for item in intervals),
         indexing_complete=all(
-            child.phase == 3 and child.status == "COMPLETE" and content is not None
+            child.phase == ChunkTaskPhase.INDEX and child.status == "COMPLETE" and content is not None
             and child.indexed_content_version == content.version
-            and child.indexed_generation == task.target_index_generation
             for child, _, content in chunk_rows
         ),
         parsing_failed=parsing_failed, indexing_failed=indexing_failed,
@@ -2705,7 +2672,7 @@ def _aggregate_video_task(
     if status in {"COMPLETE", "PARSING_FAILED", "INDEXING_FAILED"}:
         if previous_status != status or task.finish_time is None:
             task.finish_time = now
-        task.scheduler_slot = None
+        task.capacity_acquired = False
         if release_terminal_lease:
             task.lease_owner = None
             task.lease_expire_time = None
@@ -2758,17 +2725,6 @@ def _ordered_int_union(existing: Any, additions: Sequence[int]) -> list[int]:
         values.extend(item for item in existing if isinstance(item, int) and not isinstance(item, bool))
     values.extend(additions)
     return sorted(set(values))
-
-
-def _indexed_versions(detail: Mapping[str, Any] | None) -> dict[str, int]:
-    raw = (detail or {}).get("indexed_versions", {})
-    if not isinstance(raw, dict):
-        return {}
-    return {
-        str(key): value
-        for key, value in raw.items()
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0
-    }
 
 
 def _ensure_runtime(detail_value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -2928,6 +2884,7 @@ def _require_matching_retrieval_identity(
     *,
     video_chunk_id: str,
     child: ChunkParseTask,
+    task: VideoParseTask,
     series: Series,
     video: Video,
     content: ChunkParseContent,
@@ -2940,7 +2897,7 @@ def _require_matching_retrieval_identity(
         ("parseTaskId", identity.parse_task_id, child.video_task_id),
         ("videoChunkId", video_chunk_id, child.chunk_id),
         ("contentVersion", identity.content_version, content.version),
-        ("indexGeneration", identity.index_generation, child.indexed_generation),
+        ("indexGeneration", identity.index_generation, task.target_index_generation),
     ):
         if actual != expected:
             mismatches.append(name)

@@ -40,7 +40,13 @@ function TaskRow({ task }: { task: UploadTask }) {
   const videoParsePosition = task.videoParseTask
     ? `${task.videoParseTask.chunkCount} 个固定切片`
     : null;
-  const selectedConfig = task.job?.parseConfig ?? task.session?.parseConfig ?? task.parseConfig;
+  const draftConfig = task.job?.parseConfig ?? task.parseConfig;
+  const visualConfig = task.session?.parseConfig?.visual_input ?? (draftConfig ? {
+    max_height: draftConfig.window.analysisMaxHeight,
+    fps: draftConfig.vision.fps,
+    mode: draftConfig.vision.inputMode,
+    max_frames_per_chunk: draftConfig.vision.maxFramesPerWindow,
+  } : null);
 
   return (
     <article className={styles.task} data-status={task.status}>
@@ -78,10 +84,10 @@ function TaskRow({ task }: { task: UploadTask }) {
             </span> : null}
           </div>
         ) : null}
-        {isDebug ? selectedConfig ? <p className={styles.taskConfig}>
-          解析配置：{selectedConfig.window.analysisMaxHeight}p · {selectedConfig.vision.fps} FPS ·
-          {selectedConfig.vision.inputMode === "ordered_frames"
-            ? ` 每段最多 ${selectedConfig.vision.maxFramesPerWindow} 帧`
+        {isDebug ? visualConfig ? <p className={styles.taskConfig}>
+          解析配置：{visualConfig.max_height}p · {visualConfig.fps} FPS ·
+          {visualConfig.mode === "ordered_frames"
+            ? ` 每段最多 ${visualConfig.max_frames_per_chunk} 帧`
             : "直传视频"}
         </p> : task.session ? <p className={styles.taskConfig}>历史任务未记录解析配置</p> : null : null}
         {task.error ? <p className={styles.error}>{task.error}</p> : null}

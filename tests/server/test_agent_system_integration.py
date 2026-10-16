@@ -247,7 +247,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
                 create_time=datetime_to_unix_time_ms(now), update_time=datetime_to_unix_time_ms(now),
             ))
         repository = VideoParseRepository(session_factory)
-        queue = MySqlVideoParseQueue(session_factory)
+        queue = MySqlVideoParseQueue(session_factory, video_concurrency=3)
         chunks = repository.ensure_video_chunks(video_lease, [(0, 0, 10)])
         prepared = repository.ensure_parse_tasks(
             video_lease, [chunk.video_chunk_id for chunk in chunks], [(0, 1)],

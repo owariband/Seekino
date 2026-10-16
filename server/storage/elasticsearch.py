@@ -23,6 +23,7 @@ from engine.rag.contracts import VideoChunkRetrievalIdentity
 from engine.rag.encoding import validate_sparse_weights
 
 from ..database import DatabaseEnvironment
+from ..constants.parse import MAX_INDEX_GENERATION
 from ..utils.validation import canonical_uuid, require_nonempty_text
 
 INDEX_CONTRACT_VERSION = "anivag-video-chunk-es-6"
@@ -30,7 +31,6 @@ ANALYSIS_CONTRACT_VERSION = "cjk-1"
 _MAX_EXTERNAL_VERSION = 9_223_372_036_854_775_807
 _EXTERNAL_VERSION_SHIFT = 31
 _MAX_CONTENT_VERSION = (1 << _EXTERNAL_VERSION_SHIFT) - 1
-_MAX_INDEX_GENERATION = (1 << _EXTERNAL_VERSION_SHIFT) - 1
 _SOURCE_FIELDS = (
     "tenant_id",
     "series_id",
@@ -135,7 +135,7 @@ def document_id(parse_task_id: str, video_chunk_id: str) -> str:
 def _external_version(content_version: int, index_generation: int) -> int:
     for name, value, maximum in (
         ("content_version", content_version, _MAX_CONTENT_VERSION),
-        ("index_generation", index_generation, _MAX_INDEX_GENERATION),
+        ("index_generation", index_generation, MAX_INDEX_GENERATION),
     ):
         if (
             isinstance(value, bool)
@@ -848,7 +848,7 @@ class ElasticsearchVideoChunkStore:
                 or not 1 <= version <= _MAX_CONTENT_VERSION
                 or isinstance(generation, bool)
                 or not isinstance(generation, int)
-                or not 1 <= generation <= _MAX_INDEX_GENERATION
+                or not 1 <= generation <= MAX_INDEX_GENERATION
             ):
                 raise ValueError("invalid content_version")
             start = source["chunk_start_seconds"]

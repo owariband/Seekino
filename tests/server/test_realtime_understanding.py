@@ -71,7 +71,7 @@ def realtime(tmp_path, monkeypatch):
     create_schema(engine)
     factory = create_session_factory(engine)
     repository = VideoParseRepository(factory)
-    queue = MySqlVideoParseQueue(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     artifacts = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     series_id, video_id = str(uuid4()), str(uuid4())
     source = tmp_path / "source.mp4"
@@ -126,6 +126,66 @@ def _request(realtime, anchor=25_000, *, seconds=5, question="这个公式是什
 
 def _context(realtime, anchor=25_000):
     return asyncio.run(realtime.service.prepare_context(_request(realtime, anchor)))
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+@pytest.mark.parametrize("failure_method", ["ensure_video_chunks", "finish_realtime_preparation"])
+def test_prepare_failures_use_finite_budget_and_release_capacity(realtime, monkeypatch, accepted, failure_method):
+    task_input = realtime.repository.ensure_realtime_task(
+        tenant_id="mine", video_id=realtime.video_id, default_parse_config=realtime.config,
+    )
+    task_id = task_input.task.video_parse_task_id
+    with realtime.factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.parse_config = {**parent.parse_config, "execution": {
+            **parent.parse_config["execution"], "max_retry_count": 1,
+        }}
+        parent.detail = {**parent.detail, RUNTIME_DETAIL_KEY: {
+            **parent.detail[RUNTIME_DETAIL_KEY], "accepted": accepted, "realtime_only": not accepted,
+        }}
+
+    def fail_preparation(*_args, **_kwargs):
+        raise RuntimeError("topology preparation failed")
+
+    monkeypatch.setattr(realtime.repository, failure_method, fail_preparation)
+    for expected_failures in (1, 2):
+        with pytest.raises(RuntimeError, match="topology preparation failed"):
+            _context(realtime)
+        with realtime.factory.begin() as session:
+            parent = session.get(VideoParseTask, task_id)
+            assert parent.detail[RUNTIME_DETAIL_KEY]["prepare_failures"] == expected_failures
+            assert parent.lease_owner is None
+            if expected_failures == 1:
+                assert parent.status == "PREPARING"
+                assert parent.capacity_acquired is accepted
+                parent.next_execute_time = now_utc()
+            else:
+                assert parent.status == "PARSING_FAILED"
+                assert parent.detail[RUNTIME_DETAIL_KEY]["failure_status"] == "PARSING_FAILED"
+                assert not parent.capacity_acquired
+    if failure_method == "ensure_video_chunks":
+        with pytest.raises(VideoParseConflictError, match="requires retry"):
+            _context(realtime)
+    else:
+        context = _context(realtime)
+        evidence = asyncio.run(realtime.service.ensure_chunk(context, context.targets[0]))
+        assert evidence.result is None and "requires retry" in evidence.error
+
+
+def test_cancelled_prepare_releases_lease_without_charging_failure(realtime, monkeypatch):
+    def cancel_preparation(**_kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("server.service.realtime_understanding.plan_chunks", cancel_preparation)
+    with pytest.raises(asyncio.CancelledError):
+        _context(realtime)
+    with realtime.factory() as session:
+        parent = session.scalar(select(VideoParseTask).where(VideoParseTask.video_id == realtime.video_id))
+        assert parent.lease_owner is None
+        assert parent.status == "PREPARING"
+        assert not parent.capacity_acquired
+        assert parent.detail[RUNTIME_DETAIL_KEY].get("prepare_failures", 0) == 0
+        assert "failure_status" not in parent.detail[RUNTIME_DETAIL_KEY]
 
 
 def _upload(realtime, task_id):
@@ -262,7 +322,7 @@ def test_full_parse_promotion_reuses_identity_content_and_refine_ready_mask(real
     assert all(item.content_version == 1 for item in asyncio.run(complete()))
     assert realtime.queue.claim_interval_refine("refine", lease_duration=timedelta(seconds=2)) is None
     upload_id = _upload(realtime, context.video_parse_task_id)
-    promoted = UploadRepository(realtime.factory).reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc(), execution_mode="v2")
+    promoted = UploadRepository(realtime.factory).reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc())
     assert promoted.video_parse_task_id == context.video_parse_task_id and promoted.version == 1
     lease = realtime.queue.claim_video("full", lease_duration=timedelta(seconds=2))
     assert lease is not None
@@ -290,8 +350,8 @@ def test_promotion_refuses_config_changes_and_recovers_failed_on_demand_children
     upload = UploadRepository(realtime.factory)
     changed = realtime.config.model_copy(update={"understanding_enabled": False}).model_dump(mode="json")
     with pytest.raises(UploadConflictError, match="freezes"):
-        upload.reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc(), execution_mode="v2", video_parse_config=changed)
-    promoted = upload.reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc(), execution_mode="v2")
+        upload.reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc(), parse_config=changed)
+    promoted = upload.reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc())
     assert promoted.video_parse_task_id == context.video_parse_task_id and promoted.status == "PENDING"
     with realtime.factory() as session:
         assert session.get(ChunkParseTask, target.chunk_parse_task_id).status == "QUEUED"

@@ -240,7 +240,6 @@ export function UploadProvider({ children }: PropsWithChildren) {
       sessions.current.set(task.taskId, session);
       updateTask(task.taskId, (current) => ({
         ...current, session, episodeOrder: session.episodeOrder,
-        parseConfig: session.parseConfig ?? current.parseConfig,
       }));
       signal.throwIfAborted();
       if (session.seriesId !== task.seriesId) {
@@ -409,7 +408,6 @@ export function UploadProvider({ children }: PropsWithChildren) {
         inFlightBytes: 0,
         status: session.status === "COMPLETING" ? "completing" : "paused",
         idempotencyKey: "",
-        parseConfig: session.parseConfig ?? undefined,
         session,
         error: session.status === "COMPLETING" ? undefined : session.lastError?.message ?? "请重新选择同一个原视频，系统会从服务端已确认的分片继续上传",
       }))];

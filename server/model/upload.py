@@ -104,7 +104,6 @@ class UploadSession(BaseModel):
     segment_count: Mapped[int] = mapped_column(Integer, nullable=False)
     sha256: Mapped[str | None] = mapped_column(String(64))
     parse_config: Mapped[dict | None] = mapped_column(JSON)
-    video_parse_config: Mapped[dict | None] = mapped_column(JSON)
     detail: Mapped[dict | None] = mapped_column(JSON)
     completion_stage: Mapped[str | None] = mapped_column(String(32))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

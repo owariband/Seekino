@@ -324,6 +324,18 @@ def test_create_schema_adds_model_usage_to_existing_current_schema() -> None:
     create_schema(engine)
 
 
+def test_create_schema_requires_upload_snapshot_migration():
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    assert "parse_config" in UploadSession.__table__.columns
+    assert "video_parse_config" not in UploadSession.__table__.columns
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE upload_session ADD COLUMN video_parse_config JSON"))
+    with pytest.raises(SchemaUpgradeRequiredError, match="retire upload_session.video_parse_config"):
+        create_schema(engine)
+    engine.dispose()
+
+
 @pytest.mark.parametrize("column_name", ["start_time", "create_time", "usage", "run_id"])
 def test_create_schema_rejects_model_usage_type_drift(monkeypatch, column_name) -> None:
     import server.database as database
@@ -560,7 +572,7 @@ def test_interval_task_database_enforces_status_and_lease(status, lease, allowed
         chunk_task_ids=["chunk"], start_sequence_no=0, chunk_count=1,
         status=status, lease_owner="worker" if lease != "none" else None,
         lease_expire_time=datetime(2026, 9, 28, tzinfo=UTC) if lease == "full" else None,
-        execution_deadline=datetime(2026, 9, 28, tzinfo=UTC) if lease == "full" else None,
+        start_time=datetime(2026, 9, 28, tzinfo=UTC) if lease == "full" else None,
     )
     with engine.begin() as connection:
         if allowed:

@@ -28,6 +28,7 @@ from engine.rag import (
     plan_chunk_index,
 )
 from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
+from agent.video_parse_v2.state import ChunkTaskPhase
 
 from ..model.dto.jobDTO import (
     IndexableChunkState,
@@ -131,7 +132,7 @@ class VideoParseIndexCoordinator:
         if snapshot.target_index_generation != self.contract.index_generation:
             raise VideoParseIndexCoordinationError("index contract differs from the task target generation")
         chunk = snapshot.chunk
-        if (lease.phase != 3 or lease.chunk_parse_task_id != chunk.chunk_parse_task_id
+        if (lease.phase != ChunkTaskPhase.INDEX or lease.chunk_parse_task_id != chunk.chunk_parse_task_id
                 or lease.video_parse_task_id != snapshot.video_parse_task_id
                 or lease.video_chunk_id != chunk.video_chunk_id):
             raise VideoParseIndexCoordinationError("index snapshot differs from the Chunk execution")

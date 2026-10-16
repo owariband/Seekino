@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import AfterValidator, Field
+from pydantic import AliasChoices, AfterValidator, Field
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 
@@ -56,7 +56,6 @@ class UploadSessionState:
     missing_segment_numbers: tuple[int, ...] = ()
     last_error_code: str | None = None
     parse_config: dict | None = None
-    video_parse_config: dict | None = None
     detail: dict | None = None
     created_by_user_id: str | None = None
 
@@ -110,9 +109,14 @@ class UploadSessionCreateRequest(ContractModel):
     media_type: str = Field(min_length=1, max_length=255)
     total_size_bytes: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    parse_config: ParseConfig | None = None
-    video_parse_config: _ValidatedVideoParseConfig | None = None
+    parse_config: ParseConfig | _ValidatedVideoParseConfig | None = Field(
+        default=None,
+        validation_alias=AliasChoices("parseConfig", "parse_config", "videoParseConfig", "video_parse_config"),
+    )
 
 
 class UploadReparseRequest(ContractModel):
-    video_parse_config: _ValidatedVideoParseConfig | None = None
+    parse_config: ParseConfig | _ValidatedVideoParseConfig | None = Field(
+        default=None,
+        validation_alias=AliasChoices("parseConfig", "parse_config", "videoParseConfig", "video_parse_config"),
+    )

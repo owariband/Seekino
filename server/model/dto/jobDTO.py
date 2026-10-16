@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from ...config.elasticsearch import DEFAULT_INDEX_GENERATION
+from agent.video_parse_v2.state import ChunkTaskPhase
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +68,10 @@ class VideoParseTaskState:
     create_time: datetime
     update_time: datetime
     created_by_user_id: str | None = None
-    target_index_generation: int = DEFAULT_INDEX_GENERATION
-    scheduler_slot: int | None = None
-    prepare_retry_count: int = 0
+
+    @property
+    def target_index_generation(self) -> int:
+        return self.parse_config["indexing"]["index_generation"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +182,12 @@ class VideoParseLease:
 
 
 @dataclass(frozen=True, slots=True)
+class VideoParseRetryResult:
+    next_execute_time: datetime | None
+    prepare_failure_count: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class ChunkParseLease:
     chunk_parse_task_id: str
     video_parse_task_id: str
@@ -194,7 +201,7 @@ class ChunkParseLease:
     retry_max_delay_seconds: float
 
     execution_deadline: datetime | None = None
-    phase: int = 1
+    phase: int = ChunkTaskPhase.PARSE
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,7 +309,6 @@ class ModelCallReservation:
     used_calls: int
     max_calls: int
     active_calls: int
-    max_concurrent_calls: int
     lease_expire_time: datetime
 
 
@@ -328,7 +334,7 @@ class ChunkScheduleEntryState:
     chunk_parse_task_id: str
     sequence_no: int
     status: str
-    phase: int = 1
+    phase: int = ChunkTaskPhase.PARSE
     understanding_committed: bool = False
 
 

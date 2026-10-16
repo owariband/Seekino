@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 import hashlib
 import json
 import math
-from typing import Literal
 from uuid import uuid4
 
 from sqlalchemy import delete, func, or_, select, update
@@ -15,9 +14,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from engine.parsev2.planning import plan_intervals
 from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
-from ..config.elasticsearch import DEFAULT_INDEX_GENERATION
+from ..constants.parse import PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
 
-from ..model.identifiers import derive_parse_job_id
 from ..model.dto.jobDTO import VideoParseTaskState
 from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadCompletionClaim, UploadSegmentState,
@@ -32,7 +30,6 @@ from ..model.job import (
     IntervalParseContent,
     IntervalParseTask,
     IntervalParseTaskStatus,
-    ParseJobStage,
     ParseJobStatus,
     SeriesParseJob,
     VideoParseTask,
@@ -59,7 +56,6 @@ from ..model.video import (
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from .index_sync import refresh_series_statuses
 from .video_parse import (
-    RUNTIME_DETAIL_KEY,
     VideoParseConflictError,
     invalidate_series_prefixes_from,
 )
@@ -90,11 +86,8 @@ class UploadCompletionLeaseLostError(UploadStateError):
 
 
 class UploadRepository:
-    def __init__(self, session_factory: sessionmaker[Session], *, target_index_generation: int = DEFAULT_INDEX_GENERATION) -> None:
-        if type(target_index_generation) is not int or target_index_generation <= 0:
-            raise ValueError("target_index_generation must be positive")
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
-        self._target_index_generation = target_index_generation
 
     def create_session(
         self,
@@ -113,10 +106,8 @@ class UploadRepository:
         content_sha256: str | None = None,
         parse_config: dict | None = None,
         requested_parse_config: dict | None = None,
-        video_parse_config: dict | None = None,
-        requested_video_parse_config: dict | None = None,
         created_by_user_id: str | None = None,
-        config_resolver: Callable[[], tuple[dict | None, dict]] | None = None,
+        config_resolver: Callable[[], dict] | None = None,
     ) -> UploadSessionState:
         if (
             isinstance(episode_order, bool)
@@ -125,9 +116,9 @@ class UploadRepository:
             or episode_order > 2_147_483_647
         ):
             raise ValueError("episode_order must be a positive 32-bit integer")
-        if config_resolver is None and not isinstance(video_parse_config, dict):
+        if config_resolver is None and not isinstance(parse_config, dict):
             raise ValueError(
-                "video_parse_config is required for a new upload session"
+                "parse_config is required for a new upload session"
             )
         requested = {
             "tenant_id": tenant_id,
@@ -142,8 +133,6 @@ class UploadRepository:
         }
         if requested_parse_config is not None:
             requested["parse_config"] = requested_parse_config
-        if requested_video_parse_config is not None:
-            requested["video_parse_config"] = requested_video_parse_config
         request_fingerprint = hashlib.sha256(json.dumps(requested, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for attempt in range(2):
             try:
@@ -185,10 +174,10 @@ class UploadRepository:
                     # Resolve only new uploads: replays retain their frozen config.
                     # The callback must perform local configuration work only.
                     if config_resolver is not None:
-                        parse_config, video_parse_config = config_resolver()
-                        if not isinstance(video_parse_config, dict):
+                        parse_config = config_resolver()
+                        if not isinstance(parse_config, dict):
                             raise ValueError(
-                                "video_parse_config is required for a new upload session"
+                                "parse_config is required for a new upload session"
                             )
 
                     occupying_uploads = session.scalars(
@@ -236,7 +225,6 @@ class UploadRepository:
                         segment_count=total_segments,
                         sha256=content_sha256,
                         parse_config=parse_config,
-                        video_parse_config=video_parse_config,
                         detail={},
                         status=UploadSessionStatus.UPLOADING.value,
                         idempotency_key=idempotency_key,
@@ -368,19 +356,18 @@ class UploadRepository:
             for child in [*chunks, *intervals]:
                 failed = (child.status == ChunkParseTaskStatus.FAILED.value if isinstance(child, ChunkParseTask)
                           else child.status == IntervalParseTaskStatus.PARSING_FAILED.value)
-                if not failed:
+                pending_retry = child.status in {"QUEUED", "WAITING"} and child.retry_count > 0
+                if not failed and not pending_retry:
                     continue
-                child.status = (ChunkParseTaskStatus.QUEUED.value if isinstance(child, ChunkParseTask)
-                                else IntervalParseTaskStatus.WAITING.value)
+                if failed:
+                    child.status = (ChunkParseTaskStatus.QUEUED.value if isinstance(child, ChunkParseTask)
+                                    else IntervalParseTaskStatus.WAITING.value)
+                    child.lease_version += 1
                 child.retry_count = 0
-                child.lease_version += 1
                 child.next_execute_time = now
                 child.finish_time = None
                 child.last_error = None
-                child.execution_deadline = None
                 child.update_time = datetime_to_unix_time_ms(now)
-            if not prepared:
-                task.prepare_retry_count = 0
             task.status = (VideoParseTaskStatus.PREPARING.value if not prepared else summarize_video_task(
                 topology_complete=prepared,
                 understanding_complete=all(child.id in contents and bool(contents[child.id].content) for child in chunks),
@@ -388,13 +375,13 @@ class UploadRepository:
                 indexing_complete=all(
                     child.phase == ChunkTaskPhase.INDEX and child.status == ChunkParseTaskStatus.COMPLETE.value
                     and child.id in contents and child.indexed_content_version == contents[child.id].version
-                    and child.indexed_generation == task.target_index_generation for child in chunks
+                    for child in chunks
                 ),
                 parsing_failed=False, indexing_failed=False,
             ))
             task.lease_version += 1
             task.next_execute_time = now
-            task.scheduler_slot = None
+            task.capacity_acquired = False
             task.lease_owner = None
             task.lease_expire_time = None
             task.heartbeat_time = None
@@ -402,6 +389,8 @@ class UploadRepository:
             task.last_error = None
             detail = deepcopy(dict(task.detail or {}))
             runtime = dict(detail.get(RUNTIME_DETAIL_KEY) or {})
+            if not prepared:
+                runtime.pop(PREPARE_FAILURES_KEY, None)
             runtime.pop("failure_status", None)
             if actor_user_id is None:
                 runtime.pop("actor_user_id", None)
@@ -420,15 +409,11 @@ class UploadRepository:
         tenant_id: str,
         expected_job_version: int,
         now: datetime,
-        execution_mode: Literal["v1", "v2"] = "v1",
-        video_parse_config: dict | None = None,
+        parse_config: dict | None = None,
         snapshot_resolver: Callable[[dict], dict] | None = None,
         actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         """Create a new V2 task while retaining every prior task and result."""
-
-        if execution_mode not in {"v1", "v2"}:
-            raise ValueError("execution_mode must be 'v1' or 'v2'")
 
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
@@ -487,18 +472,17 @@ class UploadRepository:
                 raise UploadStateError(
                     "the VideoParseTask Prefix worker is active and cannot be reparsed"
                 )
-            snapshot = latest.parse_config if video_parse_config is None else video_parse_config
+            snapshot = latest.parse_config if parse_config is None else parse_config
             if snapshot_resolver is not None:
                 snapshot = snapshot_resolver(deepcopy(snapshot))
             if realtime_only and snapshot != latest.parse_config:
                 raise UploadConflictError(
                     "realtime base Parse freezes its configuration; promotion must use the same snapshot"
                 )
-            runtime = latest.detail.get("_worker_runtime_v2", {})
+            runtime = latest.detail.get(RUNTIME_DETAIL_KEY, {})
             accepted = isinstance(runtime, dict) and runtime.get("accepted") is True
             if (
-                execution_mode == "v2"
-                and (latest.status == VideoParseTaskStatus.PENDING.value or realtime_only)
+                (latest.status == VideoParseTaskStatus.PENDING.value or realtime_only)
                 and not accepted
             ):
                 video = session.get(Video, upload.video_id)
@@ -526,10 +510,9 @@ class UploadRepository:
                         "VideoParseTask parse_config has invalid max_retry_count"
                     )
                 latest.parse_config = snapshot
-                latest.target_index_generation = self._target_index_generation
                 latest.max_attempts = max_retry_count + 1
                 detail = dict(latest.detail)
-                existing_runtime = detail.get("_worker_runtime_v2")
+                existing_runtime = detail.get(RUNTIME_DETAIL_KEY)
                 runtime = (
                     dict(existing_runtime)
                     if isinstance(existing_runtime, dict)
@@ -543,7 +526,7 @@ class UploadRepository:
                     **({"realtime_only": False} if realtime_only else {}),
                 })
                 runtime.pop("failure_status", None)
-                detail["_worker_runtime_v2"] = runtime
+                detail[RUNTIME_DETAIL_KEY] = runtime
                 latest.detail = detail
                 if realtime_only:
                     for child in realtime_chunks:
@@ -556,7 +539,6 @@ class UploadRepository:
                         child.last_error = None
                         child.lease_owner = None
                         child.lease_expire_time = None
-                        child.execution_deadline = None
                         child.lease_version += 1
                         child.update_time = datetime_to_unix_time_ms(now)
                     active_topology = (
@@ -621,7 +603,6 @@ class UploadRepository:
                 pipeline_version=latest.pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
                 parse_config=snapshot,
-                target_index_generation=self._target_index_generation,
                 chunk_count=chunk_count,
                 version=latest.version + 1,
                 next_execute_time=now,
@@ -633,10 +614,10 @@ class UploadRepository:
                 is_test=latest.is_test,
                 is_deleted=False,
                 detail={
-                    "_worker_runtime_v2": {
+                    RUNTIME_DETAIL_KEY: {
                         **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
-                        "accepted": execution_mode == "v2",
-                        "execution_mode": execution_mode,
+                        "accepted": True,
+                        "execution_mode": "v2",
                     }
                 },
                 create_time=datetime_to_unix_time_ms(now),
@@ -807,7 +788,7 @@ class UploadRepository:
                 # removes these rows through their existing cascade.
                 for task in v2_tasks:
                     task.is_deleted = True
-                    task.scheduler_slot = None
+                    task.capacity_acquired = False
                     task.update_time = datetime_to_unix_time_ms(now)
             if jobs and video_id is not None:
                 video = session.get(Video, video_id)
@@ -1195,10 +1176,8 @@ class UploadRepository:
         content_hash: str,
         duration_seconds: int,
         pipeline_version: str,
-        max_job_attempts: int,
-        video_parse_config: dict,
+        parse_config: dict,
         max_video_parse_attempts: int,
-        execution_mode: Literal["v1", "v2"] = "v1",
         now: datetime | None = None,
     ) -> CompletedUploadState:
         if (
@@ -1207,15 +1186,7 @@ class UploadRepository:
             or max_video_parse_attempts <= 0
         ):
             raise ValueError("max_video_parse_attempts must be a positive integer")
-        if execution_mode not in {"v1", "v2"}:
-            raise ValueError("execution_mode must be 'v1' or 'v2'")
         completed_at = now if now is not None else now_utc()
-        legacy_completed_at = datetime_to_unix_time_ms(completed_at)
-        job_id = (
-            derive_parse_job_id(video_id, pipeline_version)
-            if execution_mode == "v1"
-            else None
-        )
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
             if (
@@ -1285,7 +1256,7 @@ class UploadRepository:
             chunk_count = _require_compatible_video_topology(
                 session,
                 video,
-                video_parse_config,
+                parse_config,
             )
 
             video_parse_task_id = str(uuid4())
@@ -1295,8 +1266,7 @@ class UploadRepository:
                 video_id=video_id,
                 pipeline_version=pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
-                parse_config=video_parse_config,
-                target_index_generation=self._target_index_generation,
+                parse_config=parse_config,
                 chunk_count=chunk_count,
                 version=1,
                 next_execute_time=completed_at,
@@ -1308,10 +1278,10 @@ class UploadRepository:
                 is_test=False,
                 is_deleted=False,
                 detail={
-                    "_worker_runtime_v2": {
+                    RUNTIME_DETAIL_KEY: {
                         **({"actor_user_id": upload.creator_id} if upload.creator_id is not None else {}),
-                        "accepted": execution_mode == "v2",
-                        "execution_mode": execution_mode,
+                        "accepted": True,
+                        "execution_mode": "v2",
                     }
                 },
                 create_time=datetime_to_unix_time_ms(completed_at),
@@ -1319,26 +1289,6 @@ class UploadRepository:
             )
             session.add(video_parse_task)
             session.flush()
-
-            if job_id is not None:
-                job = session.get(SeriesParseJob, job_id)
-                if job is None:
-                    job = SeriesParseJob(
-                        id=job_id,
-                        creator_id=upload.creator_id,
-                        series_id=upload.series_id,
-                        video_id=video_id,
-                        pipeline_version=pipeline_version,
-                        parse_config=upload.parse_config,
-                        status=ParseJobStatus.QUEUED.value,
-                        stage=ParseJobStage.QUEUED.value,
-                        progress=0,
-                        attempt_count=0,
-                        max_attempts=max_job_attempts,
-                        next_execute_time=legacy_completed_at,
-                        lease_version=0,
-                    )
-                    session.add(job)
 
             upload.status = UploadSessionStatus.COMPLETED.value
             upload.video_id = video_id
@@ -1348,9 +1298,9 @@ class UploadRepository:
             upload.last_error = None
             upload.last_error_code = None
             upload.sha256 = content_hash
-            upload.job_id = job_id
+            upload.job_id = None
             upload.initial_task_id = video_parse_task_id
-            upload.video_parse_config = video_parse_config
+            upload.parse_config = parse_config
             upload.completion_stage = None
             upload.version += 1
             upload.update_time = datetime_to_unix_time_ms(completed_at)
@@ -1360,7 +1310,7 @@ class UploadRepository:
             return CompletedUploadState(
                 session=self._snapshot(session, upload),
                 video_id=video_id,
-                job_id=job_id,
+                job_id=None,
                 video_parse_task_id=video_parse_task_id,
             )
 
@@ -1454,7 +1404,6 @@ class UploadRepository:
             job_id=upload.job_id,
             initial_video_parse_task_id=upload.initial_task_id,
             parse_config=upload.parse_config,
-            video_parse_config=upload.video_parse_config,
             detail=upload.detail,
             version=upload.version,
             missing_segment_numbers=tuple(n for n in range(upload.segment_count) if n not in present),
@@ -1465,9 +1414,6 @@ class UploadRepository:
     def _task_snapshot(task: VideoParseTask) -> VideoParseTaskState:
         return VideoParseTaskState(
             video_parse_task_id=task.id,
-            target_index_generation=task.target_index_generation,
-            scheduler_slot=task.scheduler_slot,
-            prepare_retry_count=task.prepare_retry_count,
             created_by_user_id=task.creator_id,
             video_id=task.video_id,
             pipeline_version=task.pipeline_version,
@@ -1530,13 +1476,18 @@ class UploadRepository:
         if record.request_fingerprint is not None:
             if record.request_fingerprint == request_fingerprint:
                 return
+            if "parse_config" in requested:
+                legacy_request = dict(requested)
+                legacy_request["video_parse_config"] = legacy_request.pop("parse_config")
+                legacy_hash = hashlib.sha256(json.dumps(
+                    legacy_request, sort_keys=True, separators=(",", ":"),
+                ).encode()).hexdigest()
+                if record.request_fingerprint == legacy_hash:
+                    return
             # Historical rows predate both episode_order and the V2 snapshot in
             # the fingerprint.  They are replayable only with their persisted
             # order; changing that value is always a conflict.
-            if (
-                requested.get("episode_order") == record.episode_order
-                and "video_parse_config" not in requested
-            ):
+            if requested.get("episode_order") == record.episode_order:
                 legacy_fields = dict(requested)
                 legacy_fields.pop("episode_order", None)
                 legacy_fingerprint = hashlib.sha256(
@@ -1595,7 +1546,7 @@ def _has_active_prefix_lease(
     detail = task.detail
     if not isinstance(detail, dict):
         return False
-    runtime = detail.get("_worker_runtime_v2")
+    runtime = detail.get(RUNTIME_DETAIL_KEY)
     if not isinstance(runtime, dict):
         return False
     prefix = runtime.get("prefix")

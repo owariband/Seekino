@@ -126,6 +126,7 @@ def prepare_service_configuration(
         embedding_dimensions=settings.text_vector_dimensions,
         embedding_fps=settings.video_embedding_fps,
         sparse_enabled=settings.retrieval.sparse_weight > 0,
+        index_generation=settings.elasticsearch.index_generation,
     )
     return gateway_config, parse_defaults
 
@@ -202,7 +203,7 @@ def _build_application_services(
     )
     construction_cleanup.callback(parse_usage.close)
     video_repository = VideoRepository(session_factory)
-    video_parse_repository = VideoParseRepository(session_factory, target_index_generation=settings.elasticsearch.index_generation)
+    video_parse_repository = VideoParseRepository(session_factory)
     media = MediaService(
         library, artifact_store, video_repository, config=settings.images,
         video_parse_repository=video_parse_repository if settings.parse_execution_mode == "v2" else None,
@@ -223,13 +224,11 @@ def _build_application_services(
         gateway_client=gateway_client,
     )
     uploads = UploadService(
-        UploadRepository(session_factory, target_index_generation=settings.elasticsearch.index_generation),
+        UploadRepository(session_factory),
         artifact_store,
         config=settings.upload,
         video_parse_index_store=elasticsearch_store,
         parse_defaults=parse_defaults,
-        parse_defaults_loader=lambda: prepare_service_configuration(settings)[1],
-        execution_mode=settings.parse_execution_mode,
         video_parse_query_encoder=video_parse_query_encoder,
         video_parse_query_encoder_source=parse_defaults.embedding.source,
     )
@@ -244,8 +243,6 @@ def _build_application_services(
         ),
         gateway_config,
         elasticsearch_store,
-        index_generation=settings.elasticsearch.index_generation,
-        sparse_enabled=settings.retrieval.sparse_weight > 0,
         worker_id=settings.mq.consumer_id,
         lease_duration=settings.mq.lease_duration,
         heartbeat_interval=settings.mq.heartbeat_interval,
@@ -417,8 +414,6 @@ def _build_application_services(
         worker_id=settings.mq.consumer_id,
         lease_duration=settings.mq.lease_duration,
         heartbeat_interval=settings.mq.heartbeat_interval,
-        retry_initial_delay=settings.mq.retry_base,
-        retry_max_delay=settings.mq.retry_max,
         poll_interval=timedelta(seconds=settings.mq.poll_interval_seconds),
         maintenance_interval=settings.mq.lease_duration,
         video_concurrency=settings.parse.video_concurrency,

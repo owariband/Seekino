@@ -386,7 +386,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
             video_task_id=second_id,
             chunk_id=chunk_id,
             status="RUNNING",
-            execution_deadline=datetime(2099, 1, 1, tzinfo=UTC),
+            start_time=second_time,
             next_execute_time=second_time,
             retry_count=0,
             lease_owner="active-worker",
@@ -408,7 +408,6 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     with factory.begin() as session:
         child = session.get(ChunkParseTask, chunk_task_id)
         child.status = "FAILED"
-        child.execution_deadline = None
         child.lease_owner = None
         child.lease_expire_time = None
 
@@ -1014,7 +1013,7 @@ def test_v2_progress_includes_persisted_index_publication(repository):
     with factory.begin() as session:
         child = session.get(ChunkParseTask, chunks[0])
         child.phase, child.status = 3, "COMPLETE"
-        child.indexed_content_version = child.indexed_generation = 1
+        child.indexed_content_version = 1
     progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
     assert progress["indexedChunks"] == 1 and progress["completedUnits"] == 47
     assert progress["percent"] == pytest.approx(95 + 5 / 24)
@@ -1022,7 +1021,7 @@ def test_v2_progress_includes_persisted_index_publication(repository):
         for child_id in chunks:
             child = session.get(ChunkParseTask, child_id)
             child.phase, child.status = 3, "COMPLETE"
-            child.indexed_content_version = child.indexed_generation = 1
+            child.indexed_content_version = 1
         session.get(VideoParseTask, task_id).status = "COMPLETE"
     progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
     assert progress["indexedChunks"] == 24 and progress["completedUnits"] == progress["totalUnits"] == 70
@@ -1167,7 +1166,7 @@ def test_v2_active_index_timing_is_confirmed_prefix_and_expires(repository, monk
         child = session.get(ChunkParseTask, chunks[0])
         child.phase, child.lease_version = 3, 2
         child.status, child.lease_owner = "RUNNING", "worker"
-        child.execution_deadline = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=2)
+        child.start_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC)
         child.lease_expire_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=1)
     entries = {f"understand:{child}:1": _timing_entry("understand", child, started=now_ms - 5000) for child in chunks}
     entries[f"refine:{intervals[0]}:1"] = _timing_entry("refine", intervals[0], started=now_ms - 3000)
@@ -1190,7 +1189,7 @@ def test_v2_active_timing_is_recorded_prefix_without_clock_extrapolation(reposit
     with factory.begin() as session:
         child = session.get(ChunkParseTask, chunks[1])
         child.status, child.lease_version, child.lease_owner = "RUNNING", 1, "worker"
-        child.execution_deadline = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=2)
+        child.start_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC)
         child.lease_expire_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=1)
     entries = {f"understand:{chunks[0]}:1": _timing_entry("understand", chunks[0], started=now_ms - 2000),
                f"understand:{chunks[1]}:1": _timing_entry("understand", chunks[1], started=now_ms - 500, elapsed=100, finished=False)}

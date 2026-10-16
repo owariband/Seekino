@@ -26,6 +26,7 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import ModelCallControlError, model_call_context
 
 from ..config.retrieval import RetrievalConfig
+from ..constants.parse import MAX_INDEX_GENERATION
 from ..repository.video_parse import (
     VideoParseConflictError,
     VideoParseRepository,
@@ -79,7 +80,7 @@ class VideoParseRetrievalService:
             raise ValueError("query encoder and both store dimensions must match")
         if (isinstance(expected_index_generation, bool)
                 or not isinstance(expected_index_generation, int)
-                or not 1 <= expected_index_generation <= (1 << 31) - 1):
+                or not 1 <= expected_index_generation <= MAX_INDEX_GENERATION):
             raise ValueError("expected_index_generation must fit the Elasticsearch version contract")
         if not isinstance(exact, bool):
             raise ValueError("exact must be a bool")

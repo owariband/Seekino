@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TypeVar
 
-from gateway.errors import SSEProxyError
-from engine.common.config import VideoParseRuntimeConfig
+from agent.video_parse_v2.state import ChunkTaskPhase
 
 from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from ..utils.time import now_utc
@@ -69,7 +68,7 @@ def _failure_log_text(value: object) -> str | int | None:
 
 def _log_retry_failure(
     lease: _Lease, *, phase: str, error: Exception,
-    recorded: bool, retry_at: datetime,
+    recorded: bool, retry_at: datetime | None, prepare_failure_count: int | None = None,
 ) -> None:
     chain: list[BaseException] = []
     seen: set[int] = set()
@@ -79,29 +78,30 @@ def _log_retry_failure(
         chain.append(current)
         current = current.__cause__ or current.__context__
     root = chain[-1]
-    message = None
-    for item in reversed(chain):
-        if isinstance(item, SSEProxyError):
-            message = str(item)
-        elif type(item).__module__.startswith(("arkruntime.", "openai.")):
-            message = getattr(item, "message", None)
-        if isinstance(message, str) and message:
-            break
+    error_chain = [{
+        "error_type": type(item).__name__,
+        "message": _failure_log_text(getattr(item, "message", None) or str(item)),
+    } for item in chain]
     fields = {
         "video_parse_task_id": lease.video_parse_task_id,
         "chunk_parse_task_id": getattr(lease, "chunk_parse_task_id", None),
         "interval_parse_task_id": getattr(lease, "interval_parse_task_id", None),
         "phase": phase,
-        "attempt": getattr(lease, "attempt_count", None)
-        or getattr(lease, "retry_count", 0) + 1,
+        "attempt": None if isinstance(lease, VideoParseLease) else lease.retry_count + 1,
+        "max_retry_count": getattr(lease, "max_retry_count", None),
         "lease_version": lease.lease_version,
         "retry_recorded": bool(recorded),
-        "retry_at": retry_at.isoformat(),
+        "retry_at": retry_at.isoformat() if retry_at is not None else None,
         "error_type": type(error).__name__,
         "reason": _failure_log_text(getattr(error, "reason", None)),
         "root_error_type": type(root).__name__,
-        "root_error_message": _failure_log_text(message),
+        "root_error_message": error_chain[-1]["message"],
+        "error_chain": error_chain,
+        "error_chain_truncated": current is not None and id(current) not in seen,
     }
+    if isinstance(lease, VideoParseLease):
+        fields["coordinator_attempt"] = lease.attempt_count
+        fields["prepare_failure_count"] = prepare_failure_count
     for field, attribute in (
         ("root_error_code", "code"), ("root_status_code", "status_code"),
         ("model_request_id", "request_id"), ("response_id", "response_id"),
@@ -111,13 +111,17 @@ def _log_retry_failure(
             value for item in reversed(chain)
             if (value := _failure_log_text(getattr(item, attribute, None))) is not None
         ), None)
-    _logger.warning(
-        "event=video_parse_v2_retry %s",
-        " ".join(
-            f"{key}={json.dumps(value, ensure_ascii=False)}"
-            for key, value in fields.items()
-        ),
+    details = " ".join(
+        f"{key}={json.dumps(value, ensure_ascii=False)}"
+        for key, value in fields.items()
     )
+    _logger.warning("event=video_parse_v2_retry %s", details)
+    if (recorded and not isinstance(lease, VideoParseLease)
+        and lease.retry_count + 1 > lease.max_retry_count):
+        _logger.error(
+            'event=video_parse_v2_terminal_error terminal_reason="child_retry_budget_exhausted" %s',
+            details,
+        )
 
 
 class VideoParseConsumer:
@@ -133,52 +137,31 @@ class VideoParseConsumer:
         handlers: VideoParseConsumerHandlers,
         *,
         worker_id: str,
-        lease_duration: timedelta = timedelta(minutes=5),
-        heartbeat_interval: timedelta | None = None,
-        retry_initial_delay: timedelta = timedelta(seconds=5),
-        retry_max_delay: timedelta = timedelta(minutes=5),
-        poll_interval: timedelta = timedelta(seconds=2),
-        maintenance_interval: timedelta | None = None,
-        video_concurrency: int | None = None,
+        lease_duration: timedelta,
+        heartbeat_interval: timedelta,
+        poll_interval: timedelta,
+        maintenance_interval: timedelta,
+        video_concurrency: int,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        effective_heartbeat_interval = (
-            lease_duration / 3
-            if heartbeat_interval is None
-            else heartbeat_interval
-        )
-        if not timedelta(0) < effective_heartbeat_interval < lease_duration:
+        if not timedelta(0) < heartbeat_interval < lease_duration:
             raise ValueError("heartbeat_interval must be positive and below lease_duration")
-        if retry_initial_delay <= timedelta(0):
-            raise ValueError("retry_initial_delay must be positive")
-        if retry_max_delay < retry_initial_delay:
-            raise ValueError("retry_max_delay cannot be shorter than initial delay")
         if poll_interval <= timedelta(0):
             raise ValueError("poll_interval must be positive")
-        effective_maintenance_interval = (
-            lease_duration
-            if maintenance_interval is None
-            else maintenance_interval
-        )
-        if effective_maintenance_interval <= timedelta(0):
+        if maintenance_interval <= timedelta(0):
             raise ValueError("maintenance_interval must be positive")
-        effective_video_concurrency = (
-            VideoParseRuntimeConfig().video_concurrency if video_concurrency is None else video_concurrency
-        )
-        if type(effective_video_concurrency) is not int or effective_video_concurrency <= 0:
+        if type(video_concurrency) is not int or video_concurrency <= 0:
             raise ValueError("video_concurrency must be a positive integer")
         self._queue = queue
         self._handlers = handlers
         self._worker_id = worker_id
         self._lease_duration = lease_duration
-        self._heartbeat_interval = effective_heartbeat_interval
-        self._retry_initial_delay = retry_initial_delay
-        self._retry_max_delay = retry_max_delay
+        self._heartbeat_interval = heartbeat_interval
         self._poll_interval = poll_interval
-        self._maintenance_interval = effective_maintenance_interval
+        self._maintenance_interval = maintenance_interval
         self._next_maintenance_at = 0.0
-        self._video_concurrency = effective_video_concurrency
+        self._video_concurrency = video_concurrency
         self._phase_cursor = 0
         self._video_tasks: set[asyncio.Task[None]] = set()
         self._work_tasks: set[asyncio.Task[None]] = set()
@@ -251,7 +234,7 @@ class VideoParseConsumer:
             self._stop_async = None
 
     async def run_once(self) -> bool:
-        await asyncio.to_thread(self._queue.reap_expired, retry_delay=self._retry_initial_delay)
+        await asyncio.to_thread(self._queue.reap_expired)
         await self._run_maintenance_if_due()
         self._video_tasks = {task for task in self._video_tasks if not task.done()}
         self._work_tasks = {task for task in self._work_tasks if not task.done()}
@@ -379,23 +362,23 @@ class VideoParseConsumer:
             await self._release_cancelled(lease, error)
             raise
         except Exception as exc:
-            retry_at = now_utc() + self._retry_delay(lease.attempt_count)
-            recorded = await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 self._queue.retry_video,
                 lease,
                 error=str(exc),
-                retry_at=retry_at,
             )
             _log_retry_failure(
                 lease, phase="prepare", error=exc,
-                recorded=recorded, retry_at=retry_at,
+                recorded=result is not None,
+                retry_at=result.next_execute_time if result is not None else None,
+                prepare_failure_count=result.prepare_failure_count if result is not None else None,
             )
 
     async def _run_chunk(self, lease: ChunkParseLease) -> None:
         try:
             await self._with_heartbeat(
                 lease,
-                self._handlers.understand if lease.phase == 1 else self._handlers.index,
+                self._handlers.understand if lease.phase == ChunkTaskPhase.PARSE else self._handlers.index,
                 self._queue.heartbeat_chunk,
             )
         except asyncio.CancelledError as error:
@@ -414,7 +397,7 @@ class VideoParseConsumer:
                 retry_at=retry_at,
             )
             _log_retry_failure(
-                lease, phase="understand" if lease.phase == 1 else "index", error=exc,
+                lease, phase="understand" if lease.phase == ChunkTaskPhase.PARSE else "index", error=exc,
                 recorded=recorded, retry_at=retry_at,
             )
 
@@ -535,10 +518,3 @@ class VideoParseConsumer:
             # Cleanup is best effort and its active-lease predicate fails
             # closed. A transient scan failure must not stop parse work.
             _logger.exception("Video Parse V2 maintenance failed")
-
-    def _retry_delay(self, failure_count: int) -> timedelta:
-        return task_retry_delay(
-            self._retry_initial_delay.total_seconds(),
-            self._retry_max_delay.total_seconds(),
-            failure_count,
-        )

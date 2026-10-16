@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta
-import math
 from threading import Event, Lock
-from time import monotonic
 from typing import Protocol
 
 from gateway.usage import (
@@ -26,10 +24,7 @@ from ..model.dto.jobDTO import (
     PrefixParseLease,
     VideoParseLease,
 )
-from ..repository.video_parse import (
-    ModelCallConcurrencyBusyError,
-    VideoParseRepositoryError,
-)
+from ..repository.video_parse import VideoParseRepositoryError
 
 
 ExecutionLease = (
@@ -67,7 +62,7 @@ class ModelCallReservationRepository(Protocol):
 
 
 class ModelCallAdmissionError(ModelCallControlError):
-    """The persistent Video budget or concurrency limit denied a new request."""
+    """The persistent Video budget or execution lease denied a new request."""
 
 
 class VideoParseModelCallManager:
@@ -85,8 +80,6 @@ class VideoParseModelCallManager:
         lease_duration: timedelta,
         usage_observer: Callable[[ModelCallUsage], None] | None = None,
         check_active: Callable[[], None] | None = None,
-        concurrency_poll_seconds: float = 0.1,
-        concurrency_wait_timeout: timedelta | None = None,
     ) -> None:
         if (
             not execution_lease.video_parse_task_id.strip()
@@ -95,15 +88,6 @@ class VideoParseModelCallManager:
             raise ValueError("execution lease identities must not be blank")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        if (
-            isinstance(concurrency_poll_seconds, bool)
-            or not isinstance(concurrency_poll_seconds, (int, float))
-            or not math.isfinite(concurrency_poll_seconds)
-            or concurrency_poll_seconds <= 0
-        ):
-            raise ValueError("concurrency_poll_seconds must be positive")
-        if concurrency_wait_timeout is not None and concurrency_wait_timeout <= timedelta(0):
-            raise ValueError("concurrency_wait_timeout must be positive")
         self._repository = repository
         self.execution_lease = execution_lease
         self.video_parse_task_id = execution_lease.video_parse_task_id
@@ -111,8 +95,6 @@ class VideoParseModelCallManager:
         self.lease_duration = lease_duration
         self._usage_observer = usage_observer
         self._check_active = check_active or (lambda: None)
-        self._concurrency_poll_seconds = concurrency_poll_seconds
-        self._concurrency_wait_timeout = concurrency_wait_timeout or lease_duration
         self._cancelled = Event()
         self._lock = Lock()
         self._active: dict[str, ModelCallTracker] = {}
@@ -128,32 +110,20 @@ class VideoParseModelCallManager:
             yield
 
     def acquire(self, call: ModelCallTracker) -> None:
-        deadline = monotonic() + self._concurrency_wait_timeout.total_seconds()
-        while True:
-            self.check_active()
-            try:
-                reservation = self._repository.reserve_model_call(
-                    self.execution_lease,
-                    call.call_id,
-                    lease_duration=self.lease_duration,
-                )
-                break
-            except ModelCallConcurrencyBusyError as error:
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    raise ModelCallAdmissionError(
-                        "model-call concurrency remained full"
-                    ) from error
-                self._cancelled.wait(
-                    min(self._concurrency_poll_seconds, remaining)
-                )
-            except VideoParseRepositoryError as error:
-                raise ModelCallAdmissionError(
-                    "model-call reservation was rejected"
-                ) from error
+        self.check_active()
+        try:
+            reservation = self._repository.reserve_model_call(
+                self.execution_lease,
+                call.call_id,
+                lease_duration=self.lease_duration,
+            )
+        except VideoParseRepositoryError as error:
+            raise ModelCallAdmissionError(
+                "model-call reservation was rejected"
+            ) from error
         if reservation is None:
             raise ModelCallAdmissionError(
-                "model-call budget or concurrency is unavailable for "
+                "model-call budget or execution lease is unavailable for "
                 f"VideoParseTask {self.video_parse_task_id}"
             )
         with self._lock:

@@ -652,7 +652,7 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert received["candidate_budget"] == settings.retrieval.candidate_budget
         assert received["sparse_weight"] == settings.retrieval.sparse_weight
         assert received["expected_embedding_source"] == services.uploads.parse_defaults.embedding.source
-        assert runtime._sparse_enabled is advanced_retrieval
+        assert services.uploads.parse_defaults.indexing.sparse_enabled is advanced_retrieval
         if advanced_retrieval:
             assert isinstance(received["reranker"], StructuredTextReranker)
             assert received["reranker"].model_name == load_config().resolve_model_binding("rerank").model
@@ -676,34 +676,15 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert services.uploads._video_parse_query_encoder_source == (
             services.uploads.parse_defaults.embedding.source
         )
-        assert runtime._index_generation == 7
+        assert services.uploads.parse_defaults.indexing.index_generation == 7
         assert services.agent._runtime._retrieval_channel == "lexical"
         assert services.uploads._video_parse_index_store is runtime._elasticsearch_store
         assert runtime._media_service.base_directory == (
             tmp_path / "artifacts" / "test" / "work" / "video-parse-v2"
         )
-        initial_defaults = services.uploads.parse_defaults
-        initial_config = runtime._gateway_config
-        updated_config = initial_config.model_copy(update={"normalized_models": {
-            **initial_config.normalized_models,
-            "vision": initial_config.normalized_models["vision"].model_copy(
-                update={"model": "updated-vision-model"},
-            ),
-        }})
-        reload_paths = []
-        def reload_config(path):
-            reload_paths.append(path)
-            return updated_config
-        monkeypatch.setattr(bootstrap, "load_config", reload_config)
-        assert callable(services.uploads._parse_defaults_loader)
-        refreshed_defaults = services.uploads._parse_defaults_loader()
-        assert reload_paths == [settings.model_config_path]
-        assert refreshed_defaults.vision.model == "updated-vision-model"
-        assert refreshed_defaults.vision.source == initial_defaults.vision.source
-        assert refreshed_defaults.embedding == initial_defaults.embedding
-        assert services.uploads.parse_defaults is initial_defaults
-        assert initial_defaults.vision.model != refreshed_defaults.vision.model
-        assert runtime._gateway_config is initial_config
+        assert not hasattr(services.uploads, "_parse_defaults_loader")
+        assert consumer._video_concurrency == settings.parse.video_concurrency
+        assert consumer._heartbeat_interval == settings.mq.heartbeat_interval
     finally:
         application.close()
 

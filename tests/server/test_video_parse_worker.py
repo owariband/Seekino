@@ -42,7 +42,9 @@ from gateway.usage import TokenUsage, capture_model_usage, model_call_context, t
 
 from server.api.app import create_app
 from server.bootstrap import ApplicationServices
-from server.config.parse_profile import default_video_parse_v2_config, index_contract_fingerprint
+from engine.common.config import VideoParseRuntimeConfig
+from server.config.media import ImageUploadConfig
+from server.config.parse_profile import ParseConfig, default_video_parse_v2_config, index_contract_fingerprint
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,
@@ -529,6 +531,7 @@ def test_index_builder_binds_frozen_encoder_and_preserves_embedding_route(
         "series_id": "series", "video_id": "video", "parse_config": config,
     })
     config["indexing"] = {
+        "index_generation": 1,
         "sparse_enabled": True,
         "contract_fingerprint": index_contract_fingerprint(
             inputs.parse_config.models.embedding.model_copy(update={"encoder_model": expected_model}),
@@ -567,7 +570,7 @@ def test_index_builder_binds_frozen_encoder_and_preserves_embedding_route(
         VideoParseMediaService(tmp_path / "media"),
         load_config(), _ElasticsearchBoundary(),
         worker_id="endpoint-worker", lease_duration=timedelta(seconds=30),
-        heartbeat_interval=timedelta(seconds=5), sparse_enabled=True,
+        heartbeat_interval=timedelta(seconds=5),
     )
     coordinator, selected_client = runtime._build_index_coordinator(inputs, check_active=lambda: None, index_generation=1)
     try:
@@ -644,7 +647,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     factory = create_session_factory(engine)
     task_id = _create_task(factory, source)
     repository = VideoParseRepository(factory)
-    queue = MySqlVideoParseQueue(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     media = VideoParseMediaService(
         tmp_path / "media-work",
         command_runner=_write_media,
@@ -754,9 +757,9 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         worker_id="component-worker",
         lease_duration=timedelta(seconds=5),
         heartbeat_interval=timedelta(seconds=1),
-        retry_initial_delay=timedelta(milliseconds=10),
-        retry_max_delay=timedelta(milliseconds=100),
         poll_interval=timedelta(milliseconds=10),
+        maintenance_interval=timedelta(seconds=5),
+        video_concurrency=3,
     )
     consumer.start()
     deadline = time.monotonic() + 8
@@ -837,7 +840,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     factory = create_session_factory(engine)
     artifacts = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     repository = VideoParseRepository(factory)
-    queue = MySqlVideoParseQueue(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     store = _RecoveringElasticsearchBoundary()
     media = VideoParseMediaService(
         tmp_path / "media", command_runner=_write_media,
@@ -859,7 +862,12 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             preferred_segment_size_bytes=1024, maximum_upload_size_bytes=1024,
         ),
         probe_duration=lambda _path: 20_000,
-        execution_mode="v2", video_parse_index_store=store,
+        parse_defaults=ParseConfig.from_defaults(
+            runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+            upload=UploadServiceConfig(), images=ImageUploadConfig(),
+            embedding_model=None, embedding_dimensions=2, embedding_fps=None,
+        ),
+        video_parse_index_store=store,
         video_parse_query_encoder=encoder,
         video_parse_query_encoder_source=parse_config["models"]["embedding"]["source"],
     )
@@ -937,9 +945,9 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         ),
         worker_id="pipeline-worker", lease_duration=timedelta(seconds=10),
         heartbeat_interval=timedelta(seconds=1), poll_interval=timedelta(milliseconds=10),
-        retry_initial_delay=timedelta(milliseconds=10),
         # SQLite cannot enforce FOR UPDATE; true lock competition is a MySQL case.
-        retry_max_delay=timedelta(milliseconds=100),
+        maintenance_interval=timedelta(seconds=10),
+        video_concurrency=3,
     )
     try:
         with TestClient(create_app(services)) as client:

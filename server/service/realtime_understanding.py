@@ -122,20 +122,27 @@ class RealtimeUnderstandingService:
                 await asyncio.sleep(min(0.1, self._remaining(request)))
                 continue
             # No media/model work runs under this brief topology-only lease.
-            plans = plan_chunks(duration_seconds=task_input.duration_seconds, chunk_duration=config.chunk_duration)
-            chunks = await asyncio.to_thread(
-                self._repository.ensure_video_chunks, lease,
-                [(item.sequence_no, item.start_seconds, item.end_seconds) for item in plans],
-            )
-            intervals = plan_intervals(chunk_count=len(chunks), size=interval_size(
-                interval_duration=config.interval_duration, chunk_duration=config.chunk_duration,
-            ))
-            await asyncio.to_thread(
-                self._repository.ensure_parse_tasks, lease,
-                [item.video_chunk_id for item in chunks],
-                [(item.start_sequence_no, item.chunk_count) for item in intervals],
-            )
-            await asyncio.to_thread(self._repository.finish_realtime_preparation, lease)
+            try:
+                plans = plan_chunks(duration_seconds=task_input.duration_seconds, chunk_duration=config.chunk_duration)
+                chunks = await asyncio.to_thread(
+                    self._repository.ensure_video_chunks, lease,
+                    [(item.sequence_no, item.start_seconds, item.end_seconds) for item in plans],
+                )
+                intervals = plan_intervals(chunk_count=len(chunks), size=interval_size(
+                    interval_duration=config.interval_duration, chunk_duration=config.chunk_duration,
+                ))
+                await asyncio.to_thread(
+                    self._repository.ensure_parse_tasks, lease,
+                    [item.video_chunk_id for item in chunks],
+                    [(item.start_sequence_no, item.chunk_count) for item in intervals],
+                )
+                await asyncio.to_thread(self._repository.finish_realtime_preparation, lease)
+            except asyncio.CancelledError:
+                await asyncio.shield(asyncio.to_thread(self._queue.release_execution, lease))
+                raise
+            except Exception as error:
+                await asyncio.to_thread(self._queue.retry_video, lease, error=str(error))
+                raise
         anchor = min(request.anchor_ms, task_input.duration_seconds - 1)
         center = next((row.sequence_no for row in rows if row.start_ms <= anchor < row.end_ms), None)
         if center is None:
@@ -307,10 +314,8 @@ class RealtimeUnderstandingService:
         except (Exception, asyncio.CancelledError) as error:
             if await asyncio.to_thread(self._queue.is_execution_lease_committed, lease):
                 return
-            task_input = await asyncio.to_thread(self._repository.load_task_input, lease.video_parse_task_id)
-            execution = ParseConfig.model_validate(task_input.task.parse_config).execution
             delay = task_retry_delay(
-                execution.retry_initial_delay_seconds, execution.retry_max_delay_seconds,
+                lease.retry_initial_delay_seconds, lease.retry_max_delay_seconds,
                 lease.retry_count + 1,
             )
             await asyncio.to_thread(self._queue.retry_chunk, lease, error=str(error), retry_at=now_utc() + delay)

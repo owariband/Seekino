@@ -144,8 +144,11 @@ beforeEach(() => {
   );
 });
 
-it("sends the selected frame rate and analysis height with an upload in debug", async () => {
+it("sends the draft profile and displays the canonical V2 upload configuration", async () => {
   mocks.displayMode = "debug";
+  mocks.createUploadSession.mockResolvedValue({ ...session, parseConfig: {
+    visual_input: { mode: "ordered_frames", max_height: 360, fps: 0.25, max_frames_per_chunk: 8 },
+  } });
   const { container } = render(<UploadProvider><Controls /></UploadProvider>);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "上传面板" }));
@@ -166,6 +169,7 @@ it("sends the selected frame rate and analysis height with an upload in debug", 
     window: { analysisMaxHeight: 480, canonicalMaxHeight: 720 },
     vision: { fps: 0.5 },
   });
+  expect(await screen.findByText(/解析配置：360p.*0.25 FPS.*每段最多 8 帧/)).toBeInTheDocument();
 });
 
 it("uploads with server defaults in release without loading debug configuration", async () => {

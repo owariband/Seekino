@@ -127,8 +127,6 @@ class VideoParseRuntimeService:
         worker_id: str,
         lease_duration: timedelta,
         heartbeat_interval: timedelta,
-        index_generation: int = 1,
-        sparse_enabled: bool = False,
         parse_usage: ParseUsageService | None = None,
         tracing: LangfuseTracing | None = None,
         gateway_client: GatewayClient | None = None,
@@ -139,16 +137,6 @@ class VideoParseRuntimeService:
             raise ValueError("lease_duration must be positive")
         if not timedelta(0) < heartbeat_interval < lease_duration:
             raise ValueError("heartbeat_interval must be below the lease duration")
-        if (
-            isinstance(index_generation, bool)
-            or not isinstance(index_generation, int)
-            or not 1 <= index_generation <= (1 << 31) - 1
-        ):
-            raise ValueError(
-                "index_generation must fit the Elasticsearch version contract"
-            )
-        if not isinstance(sparse_enabled, bool):
-            raise ValueError("sparse_enabled must be a boolean")
         self._repository = repository
         self._queue = queue
         self._artifact_store = artifact_store
@@ -159,8 +147,6 @@ class VideoParseRuntimeService:
         self._worker_id = worker_id.strip()
         self._lease_duration = lease_duration
         self._heartbeat_interval = heartbeat_interval
-        self._index_generation = index_generation
-        self._sparse_enabled = sparse_enabled
         self._parse_usage = parse_usage
         self._tracing = tracing
         self._video_lease: ContextVar[VideoParseLease | None] = ContextVar(

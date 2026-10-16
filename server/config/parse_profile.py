@@ -27,11 +27,12 @@ from engine.rag import VIDEO_CLIP_PREPROCESS_REVISION
 from engine.rag.encoding import DEFAULT_ENCODER_OUTPUT_CONTRACT
 from engine.rag.indexing.pipeline import INDEX_SOURCE_VERSION
 from engine.rag.indexing.projection import INDEX_PROJECTION_VERSION
-from ..constants.parse import PARSE_RETRIEVAL_CONTRACT
+from ..constants.parse import MAX_INDEX_GENERATION, PARSE_RETRIEVAL_CONTRACT
 from gateway.multimodal import adapter_capabilities
 
 from ..schema import ContractModel
 from .media import ImageUploadConfig
+from .elasticsearch import DEFAULT_INDEX_GENERATION
 from .mq import MQConsumerConfig
 from .upload import UploadServiceConfig
 
@@ -60,6 +61,9 @@ def _validate_schedule_delay(seconds: float | None) -> None:
 
 def validate_video_parse_schedule(config: VideoParseV2Config) -> VideoParseV2Config:
     """Reject non-executable delays at the Server request boundary."""
+    generation = config.indexing.index_generation
+    if generation is not None and not 1 <= generation <= MAX_INDEX_GENERATION:
+        raise ValueError("index_generation is outside the Elasticsearch version contract")
     for seconds in (
         config.dispatch_interval_seconds,
         config.execution.retry_initial_delay_seconds,
@@ -266,10 +270,9 @@ class ParseConfig(ContractModel):
         }
         if not missing and self.indexing is not None:
             return self
-        upstream = (
-            defaults.to_video_parse_v2()
-            if defaults is not None else default_video_parse_v2_config()
-        )
+        if defaults is None:
+            raise ValueError("incomplete parse configuration requires explicitly supplied defaults")
+        upstream = defaults.to_video_parse_v2()
         values = {
             "batch_max_size": upstream.batch_max_size,
             "dispatch_interval_seconds": upstream.dispatch_interval_seconds,
@@ -404,6 +407,7 @@ class ParseConfig(ContractModel):
         embedding_fps: float | None,
         mq: MQConsumerConfig | None = None,
         sparse_enabled: bool = False,
+        index_generation: int = DEFAULT_INDEX_GENERATION,
     ) -> "ParseConfig":
         mq = mq if mq is not None else MQConsumerConfig(consumer_id="parse-config-defaults")
         parser = gateway.video_parser
@@ -484,6 +488,7 @@ class ParseConfig(ContractModel):
             ),
             embedding=effective_embedding,
             indexing=VideoParseV2IndexingConfig(
+                index_generation=index_generation,
                 sparse_enabled=sparse_enabled,
                 contract_fingerprint=index_contract_fingerprint(
                     effective_embedding, provider=embedding_info.provider_name,

@@ -58,7 +58,10 @@ from server.repository.index_sync import IndexSyncRepository
 from server.model.dto.jobDTO import (
     ChunkParseLease, IntervalParseLease, PrefixParseLease, VideoChunkCheckpointState,
 )
-from server.config.parse_profile import default_video_parse_v2_config
+from engine.common.config import VideoParseRuntimeConfig
+from gateway.config import load_config
+from server.config.media import ImageUploadConfig
+from server.config.parse_profile import ParseConfig, default_video_parse_v2_config
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadConflictError, UploadRepository, UploadStateError
 from server.repository.video import VideoRepository
@@ -74,6 +77,27 @@ from server.storage.artifact import LocalArtifactStore
 from server.utils.time import datetime_to_unix_time_ms
 
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
+
+
+def _upload_defaults():
+    gateway = load_config()
+    return ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=gateway,
+        upload=UploadServiceConfig(), images=ImageUploadConfig(), embedding_model=None,
+        embedding_dimensions=gateway.resolve_embedding_binding().dimensions,
+        embedding_fps=None,
+    )
+
+
+def _seed_legacy_job(factory, *, video_id, series_id):
+    """Preserve historical V1 queue/cleanup coverage after uploads became V2-only."""
+    job_id = str(uuid4())
+    with factory.begin() as session:
+        session.add(SeriesParseJob(
+            id=job_id, video_id=video_id, series_id=series_id,
+            pipeline_version="historical-v1", status="QUEUED", stage="QUEUED", progress=0,
+        ))
+    return job_id
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
@@ -164,7 +188,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
     store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     uploads = UploadService(
         UploadRepository(session_factory),
-        store,
+        store, parse_defaults=_upload_defaults(),
         config=UploadServiceConfig(
             preferred_segment_size_bytes=4,
             maximum_upload_size_bytes=1024,
@@ -197,9 +221,8 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         tenant_id="mysql-manual-retry",
     )
     assert completed.video_parse_task_id is not None
+    assert completed.job_id is None
     with session_factory.begin() as session:
-        job = session.get(SeriesParseJob, completed.job_id)
-        legacy_job_before = (job.status, job.attempt_count, job.version)
         task = session.get(VideoParseTask, completed.video_parse_task_id)
         original_config = task.parse_config
         task.status = "PARSING_FAILED"
@@ -243,8 +266,9 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
             )
             assert task.version == 1
             assert task.parse_config == original_config
-            job = session.get(SeriesParseJob, completed.job_id)
-            assert (job.status, job.attempt_count, job.version) == legacy_job_before
+            assert session.scalar(select(func.count(SeriesParseJob.id)).where(
+                SeriesParseJob.series_id == series.series_id,
+            )) == 0
     finally:
         with session_factory.begin() as session:
             session.execute(delete(Series).where(Series.id == series.series_id))
@@ -267,7 +291,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
     )
     uploads = UploadService(
         UploadRepository(session_factory),
-        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"), parse_defaults=_upload_defaults(),
         config=UploadServiceConfig(
             preferred_segment_size_bytes=4,
             maximum_upload_size_bytes=1024,
@@ -306,8 +330,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
         )
         original_config = initial.parse_config
         initial.status = "COMPLETE"
-        job = session.get(SeriesParseJob, completed.job_id)
-        legacy_job_before = (job.status, job.version, job.attempt_count)
+        assert completed.job_id is None
 
     barrier = Barrier(2)
 
@@ -350,8 +373,9 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
             ]
             assert [task.version for task in tasks] == [1, 2]
             assert tasks[0].parse_config == tasks[1].parse_config == original_config
-            job = session.get(SeriesParseJob, completed.job_id)
-            assert (job.status, job.version, job.attempt_count) == legacy_job_before
+            assert session.scalar(select(func.count(SeriesParseJob.id)).where(
+                SeriesParseJob.series_id == series.series_id,
+            )) == 0
     finally:
         with session_factory.begin() as session:
             session.execute(
@@ -449,7 +473,7 @@ def mysql_v2_series():
                 session.add(ChunkParseTask(
                     id=ids["chunk_task_id"], video_task_id=ids["task_id"],
                     chunk_id=ids["chunk_id"], phase=3, status="COMPLETE",
-                    indexed_content_version=1, indexed_generation=1,
+                    indexed_content_version=1,
                     next_execute_time=now, lease_version=1,
                 ))
                 session.flush()
@@ -477,7 +501,7 @@ def mysql_v2_series():
                     status="COMPLETED", idempotency_key=str(uuid4()),
                     expire_time=now + timedelta(hours=1), finish_time=now,
                     video_id=ids["video_id"], initial_task_id=ids["task_id"],
-                    video_parse_config=deepcopy(config),
+                    parse_config=deepcopy(config),
                 ))
         yield engine, factory, series_id, tenant_id, now, episodes
     finally:
@@ -556,7 +580,7 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
                 future = contenders.submit(
                     UploadRepository(factory).reparse, first["upload_id"],
                     tenant_id=tenant_id, expected_job_version=1,
-                    execution_mode="v2", now=now,
+                    now=now,
                 )
                 assert observed.wait(5), "uncommitted entry changes were not observed"
             finally:
@@ -632,27 +656,27 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
 def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series, kind):
     engine, factory, _series_id, tenant_id, now, episodes = mysql_v2_series
     target = episodes[0]
-    queue = MySqlVideoParseQueue(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     table = "video_parse_task"
     with factory.begin() as session:
         parent = session.get(VideoParseTask, target["task_id"])
         parent.status = "INDEXING" if kind == "index" else "PARSING"
-        parent.scheduler_slot = 1
+        parent.capacity_acquired = True
         chunk = session.get(ChunkParseTask, target["chunk_task_id"])
         interval = session.get(IntervalParseTask, target["interval_id"])
         if kind == "chunk":
             chunk.phase, chunk.status = 1, "QUEUED"
-            chunk.indexed_content_version = chunk.indexed_generation = None
+            chunk.indexed_content_version = None
             session.execute(delete(ChunkParseContent).where(ChunkParseContent.chunk_task_id == chunk.id))
             interval.status = "WAITING"
             interval.ready_mask = 0
         elif kind == "refine":
             chunk.phase, chunk.status = 2, "WAITING"
-            chunk.indexed_content_version = chunk.indexed_generation = None
+            chunk.indexed_content_version = None
             interval.status = "WAITING"
         else:
             chunk.phase, chunk.status = 3, "QUEUED"
-            chunk.indexed_content_version = chunk.indexed_generation = None
+            chunk.indexed_content_version = None
         if kind != "index":
             session.execute(delete(IntervalParseContent).where(
                 IntervalParseContent.interval_task_id == target["interval_id"],
@@ -743,18 +767,20 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
     expires = now + timedelta(minutes=5)
     with factory.begin() as session:
         parent = session.get(VideoParseTask, target["task_id"])
-        parent.status, parent.scheduler_slot = "PARSING", 1
+        parent.status, parent.capacity_acquired = "PARSING", True
         detail = deepcopy(parent.detail)
         detail["_worker_runtime_v2"]["failure_status"] = "PARSING_FAILED"
         parent.detail = detail
         chunk = session.get(ChunkParseTask, target["chunk_task_id"])
         interval = session.get(IntervalParseTask, target["interval_id"])
         chunk.phase, chunk.status = (1, "RUNNING") if kind == "chunk" else (2, "WAITING")
-        chunk.indexed_content_version = chunk.indexed_generation = None
+        chunk.indexed_content_version = None
         active = chunk if kind == "chunk" else interval
         active.status = "RUNNING" if kind == "chunk" else "REFINING"
         active.lease_owner, active.lease_expire_time = "commit-worker", expires
-        active.execution_deadline = expires
+        active.start_time = now
+        phase = {"chunk": "parse", "refine": "refine", "index": "index"}[kind]
+        deadline = now + timedelta(seconds=parent.parse_config["execution"][phase + "_execution_timeout_seconds"])
         if kind == "chunk":
             interval.status, interval.ready_mask = "WAITING", 0
             session.execute(delete(ChunkParseContent).where(ChunkParseContent.chunk_task_id == chunk.id))
@@ -763,7 +789,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
         ))
     repository = VideoParseRepository(factory)
     common = dict(video_parse_task_id=target["task_id"], worker_id="commit-worker", lease_version=1,
-        lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
+        lease_expire_time=expires, execution_deadline=deadline, retry_count=0, max_retry_count=2,
         retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0)
     lease = (ChunkParseLease(**common, chunk_parse_task_id=target["chunk_task_id"],
         video_chunk_id=target["chunk_id"]) if kind == "chunk" else IntervalParseLease(**common,
@@ -814,7 +840,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
             finally:
                 resume_worker.set()
         assert connections["worker"] != connections["retry"]
-        MySqlVideoParseQueue(factory).reap_expired(retry_delay=timedelta(0), now=now)
+        MySqlVideoParseQueue(factory, video_concurrency=3).reap_expired(now=now)
         restored = UploadRepository(factory).retry_parse(target["upload_id"], tenant_id=tenant_id,
             expected_job_version=1, expected_lease_version=0, now=now)
         assert restored.video_parse_task_id == target["task_id"]
@@ -846,8 +872,9 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
     running = "INDEXING" if kind == "index" else "PARSING"
     with factory.begin() as session:
         parent = session.get(VideoParseTask, target["task_id"])
+        index_generation = parent.parse_config["indexing"]["index_generation"]
         parent.status = running
-        parent.scheduler_slot = 1
+        parent.capacity_acquired = True
         detail = deepcopy(parent.detail)
         detail["_worker_runtime_v2"]["failure_status"] = failure
         parent.detail = detail
@@ -859,11 +886,13 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
         }[kind]
         active.lease_owner = "draining-worker"
         active.lease_expire_time = expires
-        active.execution_deadline = expires
+        active.start_time = now
+        phase = {"chunk": "parse", "refine": "refine", "index": "index"}[kind]
+        deadline = now + timedelta(seconds=parent.parse_config["execution"][phase + "_execution_timeout_seconds"])
         chunk.phase = 1 if kind == "chunk" else (2 if kind == "refine" else 3)
         if kind == "refine":
             chunk.status = "WAITING"
-        chunk.indexed_content_version = chunk.indexed_generation = None
+        chunk.indexed_content_version = None
         if kind == "chunk":
             interval.status = "WAITING"
             interval.ready_mask = 0
@@ -872,7 +901,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 IntervalParseContent.interval_task_id == target["interval_id"],
             ))
 
-    queue, repository = MySqlVideoParseQueue(factory), VideoParseRepository(factory)
+    queue, repository = MySqlVideoParseQueue(factory, video_concurrency=3), VideoParseRepository(factory)
     update_pending, release_commit = Event(), Event()
     table = "interval_parse_task" if kind == "refine" else "chunk_parse_task"
     connections = {}
@@ -900,7 +929,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 chunk_parse_task_id=target["chunk_task_id"],
                 video_parse_task_id=target["task_id"], video_chunk_id=target["chunk_id"],
                 worker_id="draining-worker", lease_version=1,
-                lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
+                lease_expire_time=expires, execution_deadline=deadline, retry_count=0, max_retry_count=2,
                 retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
             )
             return repository.commit_chunk_result(
@@ -910,15 +939,15 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
             lease = ChunkParseLease(
                 chunk_parse_task_id=target["chunk_task_id"], video_parse_task_id=target["task_id"],
                 video_chunk_id=target["chunk_id"], phase=3, worker_id="draining-worker", lease_version=1,
-                lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
+                lease_expire_time=expires, execution_deadline=deadline, retry_count=0, max_retry_count=2,
                 retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
             )
             repository.save_index_embeddings(lease, target["chunk_task_id"], 1,
                 {"semantic": {"vector": [1.0]}}, receipt={
                     "parse_task_id": target["task_id"], "video_chunk_id": target["chunk_id"],
-                    "content_version": 1, "index_generation": 1,
+                    "content_version": 1, "index_generation": index_generation,
                 }, now=committed_at)
-            return repository.complete_chunk_indexing(lease, 1, 1, now=committed_at)
+            return repository.complete_chunk_indexing(lease, 1, index_generation, now=committed_at)
         lease = IntervalParseLease(
             interval_parse_task_id=target["interval_id"],
             video_parse_task_id=target["task_id"],
@@ -926,7 +955,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
             start_sequence_no=0, chunk_count=1,
             phase="REFINING",
             worker_id="draining-worker", lease_version=1,
-            lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
+            lease_expire_time=expires, execution_deadline=deadline, retry_count=0, max_retry_count=2,
                 retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
         )
         return repository.commit_interval_refinement(
@@ -943,7 +972,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
             try:
                 assert update_pending.wait(5), "result commit never updated its child row"
                 publishers.submit(
-                    queue.reap_expired, retry_delay=timedelta(0), now=checked_at,
+                    queue.reap_expired, now=checked_at,
                 ).result(timeout=5)
                 assert connections["worker"] != connections["publisher"]
                 assert not worker.done(), "result commit was not held during the drain scan"
@@ -962,13 +991,13 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 release_commit.set()
             worker.result(timeout=5)
             publishers.submit(
-                queue.reap_expired, retry_delay=timedelta(0), now=checked_at,
+                queue.reap_expired, now=checked_at,
             ).result(timeout=5)
 
         with factory() as session:
             parent = session.get(VideoParseTask, target["task_id"])
             assert parent.status == failure and parent.finish_time is not None
-            assert parent.finish_time <= checked_at and parent.scheduler_slot is None
+            assert parent.finish_time <= checked_at and parent.capacity_acquired is False
             chunk = session.get(ChunkParseTask, target["chunk_task_id"])
             interval = session.get(IntervalParseTask, target["interval_id"])
             assert (chunk.phase, chunk.status) == {
@@ -988,7 +1017,8 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 }
             elif kind == "index":
                 assert interval.status == "COMPLETE"
-                assert (chunk.indexed_content_version, chunk.indexed_generation) == (1, 1)
+                assert chunk.indexed_content_version == content.version == 1
+                assert parent.target_index_generation == parent.parse_config["indexing"]["index_generation"] == index_generation
                 assert content.detail["index_committed_lease_versions"] == [1]
     finally:
         release_commit.set()
@@ -1106,7 +1136,7 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
         tenant_id="mysql-delete", name=f"Upload Delete {uuid4()}",
     )
     store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
-    uploads = UploadService(UploadRepository(session_factory), store,
+    uploads = UploadService(UploadRepository(session_factory), store, parse_defaults=_upload_defaults(),
         config=UploadServiceConfig(preferred_segment_size_bytes=4, maximum_upload_size_bytes=1024))
     entered = Event()
     release = Event()
@@ -1165,7 +1195,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     uploads = UploadService(
         UploadRepository(session_factory),
-        store,
+        store, parse_defaults=_upload_defaults(),
         config=UploadServiceConfig(
             preferred_segment_size_bytes=4,
             maximum_upload_size_bytes=1024,
@@ -1198,9 +1228,12 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     )
     now = now_unix_time_ms()
     call_id = str(uuid4())
+    legacy_job_id = _seed_legacy_job(
+        session_factory, video_id=completed.video_id, series_id=series.series_id,
+    )
     with session_factory.begin() as session:
         session.add(ParseUsageAttempt(
-            job_id=completed.job_id,
+            job_id=legacy_job_id,
             attempt_count=1,
             lease_version=1,
             start_time=unix_time_ms_to_datetime(now),
@@ -1208,7 +1241,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
         ))
         session.add(ParseModelCall(
             id=call_id,
-            job_id=completed.job_id,
+            job_id=legacy_job_id,
             attempt_count=1,
             lease_version=1,
             tenant_id="mysql-completed-delete",
@@ -1238,8 +1271,8 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
             assert tombstone.video_id is None and tombstone.job_id is None
             assert tombstone.last_error_code is None
             assert session.get(Video, completed.video_id) is None
-            assert session.get(SeriesParseJob, completed.job_id) is None
-            assert session.get(ParseUsageAttempt, (completed.job_id, 1, 1)) is None
+            assert session.get(SeriesParseJob, legacy_job_id) is None
+            assert session.get(ParseUsageAttempt, (legacy_job_id, 1, 1)) is None
             assert session.get(ParseModelCall, call_id) is None
     finally:
         with session_factory.begin() as session:
@@ -1248,9 +1281,8 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
-@pytest.mark.parametrize("execution_mode", ["v1", "v2"])
 def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
-    tmp_path, execution_mode,
+    tmp_path,
 ):
     engine = create_database_engine(
         TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST,
@@ -1264,14 +1296,13 @@ def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
     )
     uploads = UploadService(
         UploadRepository(session_factory),
-        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"), parse_defaults=_upload_defaults(),
         config=UploadServiceConfig(
             preferred_segment_size_bytes=4,
             maximum_upload_size_bytes=1024,
             pipeline_version="mysql-concurrent-complete",
         ),
         probe_duration=lambda _path: 10_000,
-        execution_mode=execution_mode,
     )
     barrier = Barrier(3)
     all_inserted = Event()
@@ -1357,7 +1388,7 @@ def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
             jobs = list(session.scalars(select(SeriesParseJob).where(
                 SeriesParseJob.series_id == series.series_id,
             )))
-            assert len(jobs) == (3 if execution_mode == "v1" else 0)
+            assert jobs == []
             assert {job.id for job in jobs} == {
                 item.job_id for item in completed if item.job_id is not None
             }
@@ -1380,7 +1411,7 @@ def test_mysql_enforces_episode_order_under_concurrent_requests(tmp_path) -> Non
     )
     uploads = UploadService(
         UploadRepository(session_factory),
-        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"), parse_defaults=_upload_defaults(),
     )
     barrier = Barrier(4)
 
@@ -1665,7 +1696,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
     artifacts = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     uploads = UploadService(
         UploadRepository(session_factory),
-        artifacts,
+        artifacts, parse_defaults=_upload_defaults(),
         config=UploadServiceConfig(
             preferred_segment_size_bytes=4,
             maximum_upload_size_bytes=1024,
@@ -1725,6 +1756,12 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         second_upload.upload_session_id,
         tenant_id="mysql-integration",
     )
+    first_job_id = _seed_legacy_job(
+        session_factory, video_id=completed.video_id, series_id=series.series_id,
+    )
+    second_job_id = _seed_legacy_job(
+        session_factory, video_id=second_completed.video_id, series_id=series.series_id,
+    )
     jobs = ParseJobRepository(session_factory)
     queue = MySqlParseJobQueue(session_factory)
     now = now_unix_time_ms() + timedelta_to_ms(timedelta(seconds=1))
@@ -1748,7 +1785,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         claimed = [item for item in leases if item is not None]
         assert len(claimed) == 1
         first = claimed[0]
-        assert first.job_id == completed.job_id
+        assert first.job_id == first_job_id
         checkpoint = jobs.save_checkpoint(
             first,
             VideoChunkCheckpointState(
@@ -1788,7 +1825,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         sibling = queue.claim_next(
             "worker-e", lease_duration=timedelta(minutes=2), now=retry_at,
         )
-        assert sibling is not None and sibling.job_id == second_completed.job_id
+        assert sibling is not None and sibling.job_id == second_job_id
     finally:
         with engine.begin() as connection:
             connection.execute(

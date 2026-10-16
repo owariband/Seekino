@@ -115,8 +115,18 @@ class ExecutionConfig(_InputModel):
 
 
 class IndexingConfig(_InputModel):
+    # Requests and historical snapshots may predate this server-owned value.
+    # The host binds it before accepting an executable task.
+    index_generation: int | None = Field(default=None, gt=0)
     sparse_enabled: bool
     contract_fingerprint: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
+
+    @model_serializer(mode="wrap")
+    def serialize_indexing(self, handler):
+        values = handler(self)
+        if self.index_generation is None:
+            values.pop("index_generation", None)
+        return values
 
 
 class ParseConfig(_InputModel):
