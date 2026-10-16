@@ -1,3 +1,12 @@
+/* Inter 750, subset to the wordmark; kept local and isolated from body typography. */
+@font-face {
+  font-family: "Seekino Brand";
+  src: url("/assets/fonts/inter-wordmark-750.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 750;
+  font-display: swap;
+}
+
 .shell {
   --app-header-height: 76px;
   display: grid;
@@ -27,16 +36,21 @@
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
+.primary:has(.content > [data-fullscreen="false"]) > .topbar { border-bottom-color: transparent; }
 
 .brand {
+  --brand-dot: #fff;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  flex-shrink: 0;
+  gap: 9px;
   color: var(--brand-wordmark);
   text-decoration: none;
+  white-space: nowrap;
 }
 .brandMark { width: 40px; height: 40px; }
-.brand strong { font: 750 1.45rem/1 var(--display); letter-spacing: -.03em; }
+.brand strong { font: 750 1.5rem/1 "Seekino Brand", var(--sans); letter-spacing: -.055em; }
+.brandI { background: linear-gradient(var(--brand-dot) .45em, currentColor .45em); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 
 .searchTrigger {
   display: flex;
@@ -189,4 +203,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .shell { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .brandI { background: none; -webkit-text-fill-color: currentColor; }
 }

@@ -118,7 +118,8 @@ export function AppShell() {
       <div className={styles.primary}>
       <header className={styles.topbar} aria-label="全站导航">
         <NavLink className={styles.brand} to="/watch" aria-label="Seekino 首页">
-          <Mascot className={styles.brandMark} mood={assistantBusy ? "seek" : "hop"} size={40} /><strong>Seekino</strong>
+          <Mascot className={styles.brandMark} mood={assistantBusy ? "seek" : "hop"} size={40} />
+          <strong>Seek<span className={styles.brandI}>i</span>no</strong>
         </NavLink>
         <nav className={styles.navigation} aria-label="主导航">
           {visibleNavigation.map(({ to, label, icon: Icon }) => (

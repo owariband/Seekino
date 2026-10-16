@@ -10,12 +10,6 @@
   overflow: visible;
 }
 
-/* The ink outline vanishes on dark surfaces; a faint rim keeps the silhouette and a softer belly stops it glaring. */
-:global(:root[data-theme="dark"]) .mascot {
-  --mascot-belly: #e9f0eb;
-  filter: drop-shadow(0 0 1px rgb(231 239 236 / 55%));
-}
-
 .mascot g, .mascot path, .mascot circle { transform-box: fill-box; }
 .root, .float { transform-origin: 50% 100%; }
 .tilt { transform-origin: 50% 100%; }
