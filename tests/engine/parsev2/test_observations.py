@@ -7,10 +7,12 @@ from engine.parsev2.observations import OCRResult, build_chunk_without_understan
 from engine.parsev2.validation import validate_result_time_range
 
 
-def test_asr_mapping_preserves_unknown_attribution_and_original_language() -> None:
+@pytest.mark.parametrize("speaker_fields", [{}, {"speaker_id": None}, {"speaker_id": "speaker1"}])
+def test_asr_mapping_preserves_unknown_attribution_and_original_language(speaker_fields) -> None:
     result = build_chunk_without_understanding(
         asr_result={"transcript": [{
             "start_seconds": 13_500, "end_seconds": 15_000, "text": " hello ",
+            **speaker_fields,
         }]},
         ocr_result=None,
     )

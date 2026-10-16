@@ -505,6 +505,7 @@ class VideoParseRuntimeService:
                     "start_seconds": cue.start_seconds + execution.allowed_start_seconds,
                     "end_seconds": cue.end_seconds + execution.allowed_start_seconds,
                     "text": cue.text,
+                    "speaker_id": cue.speaker_id,
                 }
                 for cue in analysis.transcript
             ]

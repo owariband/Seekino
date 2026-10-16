@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,6 +14,7 @@ class ASRCue(TypedDict):
     start_seconds: int
     end_seconds: int
     text: str
+    speaker_id: NotRequired[str | None]
 
 
 class ASRResult(TypedDict):

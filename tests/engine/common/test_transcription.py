@@ -26,14 +26,15 @@ def test_asr_segments_are_sorted_clamped_and_converted_to_integer_milliseconds()
         duration_seconds=3000,
     )
     assert [cue.model_dump() for cue in result.transcript] == [
-        {"start_seconds": 0, "end_seconds": 1200, "text": "first"},
-        {"start_seconds": 1500, "end_seconds": 3000, "text": "second"},
+        {"start_seconds": 0, "end_seconds": 1200, "text": "first", "speaker_id": None},
+        {"start_seconds": 1500, "end_seconds": 3000, "text": "second", "speaker_id": None},
     ]
 
 
 def test_json_only_asr_retains_honest_window_level_timing():
     result = normalize_transcription({"text": "hello"}, duration_seconds=2000)
     assert result.transcript[0].end_seconds == 2000
+    assert result.transcript[0].speaker_id is None
     assert normalize_transcription({"text": " "}, duration_seconds=2000).transcript == []
     assert (
         normalize_transcription(
@@ -97,12 +98,12 @@ def test_video_asr_converts_model_seconds_once_and_clamps_to_millisecond_duratio
     video = tmp_path / "video.mp4"
     video.write_bytes(b"video")
     payload = {"transcript": [
-        {"start_seconds": 1.5, "end_seconds": 4, "text": "second"},
-        {"start_seconds": 1.2346, "end_seconds": 1.7, "text": "rounded"},
-        {"start_seconds": 0, "end_seconds": 1, "text": " first "},
-        {"start_seconds": 0.5, "end_seconds": 0.5, "text": "zero width"},
-        {"start_seconds": 1.0001, "end_seconds": 1.0002, "text": "rounds to zero width"},
-        {"start_seconds": 3, "end_seconds": 4, "text": "outside"},
+        {"start_seconds": 1.5, "end_seconds": 4, "text": "second", "speaker_id": "speaker1"},
+        {"start_seconds": 1.2346, "end_seconds": 1.7, "text": "rounded", "speaker_id": "speaker2"},
+        {"start_seconds": 0, "end_seconds": 1, "text": " first ", "speaker_id": "speaker1"},
+        {"start_seconds": 0.5, "end_seconds": 0.5, "text": "zero width", "speaker_id": None},
+        {"start_seconds": 1.0001, "end_seconds": 1.0002, "text": "rounds to zero width", "speaker_id": None},
+        {"start_seconds": 3, "end_seconds": 4, "text": "outside", "speaker_id": None},
     ]}
     originals = []
     probed = []
@@ -118,11 +119,17 @@ def test_video_asr_converts_model_seconds_once_and_clamps_to_millisecond_duratio
         cue_schema = schema["$defs"][schema["properties"]["transcript"]["items"]["$ref"].rsplit("/", 1)[1]]
         assert cue_schema["properties"]["start_seconds"]["type"] == "number"
         assert cue_schema["properties"]["end_seconds"]["type"] == "number"
+        assert "speaker_id" in cue_schema["required"]
+        assert {"type": "null"} in cue_schema["properties"]["speaker_id"]["anyOf"]
         assert inputs[0] == VideoInput(path=video, fps=0.5)
         assert isinstance(inputs[1], TextInput)
         assert "秒" in inputs[1].text and "小数" in inputs[1].text
         assert "整数毫秒" not in inputs[1].text
         assert "不要根据画面、字幕" in inputs[1].text
+        assert "speaker1、speaker2" in inputs[1].text
+        assert "说话人切换时必须拆成不同条目" in inputs[1].text
+        assert "只区分匿名说话人，不匹配真实姓名" in inputs[1].text
+        assert "不要识别说话者身份" not in inputs[1].text
         original = result_type.model_validate(payload)
         originals.append((original, original.model_dump()))
         return original
@@ -133,9 +140,9 @@ def test_video_asr_converts_model_seconds_once_and_clamps_to_millisecond_duratio
 
     assert isinstance(result, TranscriptAnalysis)
     assert [cue.model_dump() for cue in result.transcript] == [
-        {"start_seconds": 0, "end_seconds": 1000, "text": "first"},
-        {"start_seconds": 1235, "end_seconds": 1700, "text": "rounded"},
-        {"start_seconds": 1500, "end_seconds": 3000, "text": "second"},
+        {"start_seconds": 0, "end_seconds": 1000, "text": "first", "speaker_id": "speaker1"},
+        {"start_seconds": 1235, "end_seconds": 1700, "text": "rounded", "speaker_id": "speaker2"},
+        {"start_seconds": 1500, "end_seconds": 3000, "text": "second", "speaker_id": "speaker1"},
     ]
     assert all(type(cue.start_seconds) is type(cue.end_seconds) is int for cue in result.transcript)
     original, snapshot = originals[0]
@@ -158,7 +165,9 @@ def test_video_asr_returns_no_cues_for_empty_or_unusable_seconds(transcript, tmp
 
     def generate(_inputs, *, schema_name, result_type):
         assert schema_name == "candidate_transcript"
-        return result_type.model_validate({"transcript": transcript})
+        return result_type.model_validate({"transcript": [
+            {**cue, "speaker_id": None} for cue in transcript
+        ]})
 
     agent = VideoASRAgent(SimpleNamespace(model_name="lite", generate=generate), fps=1)
     assert agent.transcribe(video, duration_seconds=3000).transcript == []
@@ -169,7 +178,7 @@ def test_video_asr_returns_no_cues_for_empty_or_unusable_seconds(transcript, tmp
 def test_video_asr_rejects_invalid_model_seconds(field, invalid, tmp_path):
     video = tmp_path / "video.mp4"
     video.write_bytes(b"video")
-    cue = {"start_seconds": 1, "end_seconds": 2, "text": "hello", field: invalid}
+    cue = {"start_seconds": 1, "end_seconds": 2, "text": "hello", "speaker_id": None, field: invalid}
 
     def generate(_inputs, *, schema_name, result_type):
         assert schema_name == "candidate_transcript"
@@ -187,7 +196,7 @@ def test_video_asr_rejects_reversed_model_seconds(tmp_path):
     def generate(_inputs, *, schema_name, result_type):
         assert schema_name == "candidate_transcript"
         return result_type.model_validate({"transcript": [{
-            "start_seconds": 2, "end_seconds": 1, "text": "reversed",
+            "start_seconds": 2, "end_seconds": 1, "text": "reversed", "speaker_id": None,
         }]})
 
     agent = VideoASRAgent(SimpleNamespace(model_name="lite", generate=generate), fps=1)

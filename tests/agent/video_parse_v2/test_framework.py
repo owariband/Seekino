@@ -235,6 +235,7 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
         "start_seconds": offset_ms + 1000,
         "end_seconds": offset_ms + 3000,
         "text": "hello",
+        "speaker_id": "speaker1",
     }]}
     calls: list[str] = []
 
@@ -269,6 +270,9 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             assert "integer source-video milliseconds" in kwargs["prompt"]
             assert evidence["asr"]["transcript"][0]["start_seconds"] == offset_ms + 1000
             assert evidence["asr"]["transcript"][0]["end_seconds"] == offset_ms + 3000
+            assert evidence["asr"]["transcript"][0]["speaker_id"] == "speaker1"
+            assert "speaker_id" in kwargs["prompt"]
+            assert "current input clip only" in kwargs["prompt"]
             time_contract = kwargs["prompt"].lower()
             assert "already normalized" in time_contract
             assert "legacy" in time_contract
@@ -287,6 +291,7 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             assert result.timeline[0].start_seconds == offset_ms + 1000
             assert result.timeline[0].end_seconds == offset_ms + 3000
             assert evidence["asr"] == asr_result
+            assert evidence["asr"]["transcript"][0]["speaker_id"] == "speaker1"
             calls.append("commit")
 
         async def notify_chunk_committed(self, loaded):
@@ -516,6 +521,7 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
     assert '"scope": [0, 1]' in prompt
     assert f'"start_ms": {offset_ms}' in prompt
     assert f'"end_ms": {offset_ms + 20_000}' in prompt
+    assert "Matching labels across chunks do not establish the same person" in prompt
     time_contract = prompt.lower()
     assert "absolute integer source-video milliseconds" in time_contract
     assert "legacy" in time_contract

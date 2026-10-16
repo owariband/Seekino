@@ -412,7 +412,7 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
         assert path == media.audio_path
         calls.append(("audio", kwargs))
         return {"segments": [
-            {"start": 1.5, "end": 4, "text": "hello"},
+            {"start": 1.5, "end": 4, "text": "hello", "speaker_id": "speaker1"},
             {"start": 3, "end": 4, "text": "outside"},
         ]}
 
@@ -426,8 +426,8 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
             assert schema_name == "candidate_transcript"
             assert result_type is not TranscriptAnalysis
             return result_type.model_validate({"transcript": [
-                {"start_seconds": 1.5, "end_seconds": 4, "text": "hello"},
-                {"start_seconds": 3, "end_seconds": 4, "text": "outside"},
+                {"start_seconds": 1.5, "end_seconds": 4, "text": "hello", "speaker_id": "speaker1"},
+                {"start_seconds": 3, "end_seconds": 4, "text": "outside", "speaker_id": None},
             ]})
 
         return SimpleNamespace(model_name=model, generate=generate)
@@ -438,7 +438,7 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
     result = asyncio.run(runtime.transcribe_chunk(execution))
 
     assert result == {"transcript": [] if adapter == "none" else [{
-        "start_seconds": 13_500, "end_seconds": 15_000, "text": "hello",
+        "start_seconds": 13_500, "end_seconds": 15_000, "text": "hello", "speaker_id": "speaker1",
     }]}
     if adapter == "openai_audio":
         assert calls == [("audio", {

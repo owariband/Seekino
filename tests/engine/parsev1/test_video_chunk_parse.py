@@ -229,6 +229,7 @@ def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) 
             "start_seconds": 0.0,
             "end_seconds": 2.0,
             "text": "真是高高在上呢",
+            "speaker_id": None,
         }]}},
     )
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
@@ -265,7 +266,8 @@ def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) 
     assert isinstance(transcript_inputs[0], VideoInput)
     assert transcript_inputs[0].fps == 0.5
     assert isinstance(transcript_inputs[1], TextInput)
-    assert "不要识别说话者身份" in transcript_inputs[1].text
+    assert "speaker1、speaker2" in transcript_inputs[1].text
+    assert "只区分匿名说话人，不匹配真实姓名" in transcript_inputs[1].text
 
     video_inputs = video_model.calls[0]["inputs"]
     assert video_model.calls[0]["schema_name"] == "video_timeline"
