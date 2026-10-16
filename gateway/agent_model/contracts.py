@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
 
 from langchain_core.tools import BaseTool
@@ -11,9 +12,20 @@ from .context import ContextCheckpoint
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
 
 
+@dataclass(frozen=True, slots=True)
+class SupervisorSessionContext:
+    """Host-owned session bindings and committed history, separate from model input."""
+
+    states: dict[str, dict[str, Any]]
+    message_sequence_no: int
+    load_history: Callable[[int], Sequence[dict[str, Any]]]
+    save_state: Callable[[str, dict[str, Any]], None]
+
+
 class StructuredToolAgentModel(Protocol):
     provider_name: str
     model_name: str
+    supports_vision_input: bool
 
     def run_structured(
         self,
@@ -27,6 +39,7 @@ class StructuredToolAgentModel(Protocol):
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
+        image_urls: Sequence[str] = (),
     ) -> _ResultModel: ...
 
 
@@ -49,6 +62,7 @@ class AgentLoopModel(Protocol):
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
+        image_urls: Sequence[str] = (),
     ) -> None: ...
 
 
@@ -71,6 +85,8 @@ class SupervisorAgentModel(Protocol):
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
+        image_urls: Sequence[str] = (),
+        session_context: SupervisorSessionContext | None = None,
     ) -> None: ...
 
     def confirm_turn(self, thread_id: str, message_id: str, content: str) -> None: ...
@@ -80,4 +96,4 @@ class SupervisorAgentModel(Protocol):
     def delete_thread(self, thread_id: str) -> None: ...
 
 
-__all__ = ["AgentLoopModel", "StructuredToolAgentModel", "SupervisorAgentModel"]
+__all__ = ["AgentLoopModel", "StructuredToolAgentModel", "SupervisorAgentModel", "SupervisorSessionContext"]

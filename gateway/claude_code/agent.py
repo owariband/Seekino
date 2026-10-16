@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from threading import BoundedSemaphore, Event, Lock
 from time import monotonic
@@ -36,6 +36,7 @@ from gateway.agent_model.context import (
     preflight_context,
 )
 from gateway.schema_normalization import inline_schema_refs
+from gateway.media import prepare_input_messages, require_vision_input
 from gateway.usage import ModelCallTracker, SDKModelUsage, TokenUsage, track_model_call
 
 from .tools import ToolBridge, build_tool_bridge
@@ -72,6 +73,7 @@ class ClaudeAgentModel:
     """Adapt Claude Agent SDK to AniVAG's structured and tool-loop protocols."""
 
     provider_name = CLAUDE_CODE_PROVIDER
+    supports_vision_input = True
     supports_context_checkpoints = False
     supports_context_messages = False
     supports_stop_feedback = True
@@ -162,7 +164,9 @@ class ClaudeAgentModel:
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
+        image_urls: Sequence[str] = (),
     ) -> _ResultModel:
+        prompt, image_content = self._prepare_input(prompt, initial_messages=initial_messages, image_urls=image_urls)
         timeout, effective_input_limit = self._validate_call(
             prompt,
             tools=tools,
@@ -171,7 +175,6 @@ class ClaudeAgentModel:
             check_control=check_control,
             max_input_chars=max_input_chars,
             context_checkpoint=context_checkpoint,
-            initial_messages=initial_messages,
         )
         schema = inline_schema_refs(result_type.model_json_schema())
         bridge = build_tool_bridge(tools)
@@ -180,6 +183,7 @@ class ClaudeAgentModel:
             prompt,
             bridge=bridge,
             output_format=output_format,
+            image_content=image_content,
         )
         options = self._options(
             bridge,
@@ -192,6 +196,7 @@ class ClaudeAgentModel:
                 lambda remaining: self._run_async(
                     options=options,
                     initial_prompt=prompt,
+                    image_content=image_content,
                     timeout_seconds=min(timeout, remaining),
                     check_control=check_control,
                     max_input_chars=effective_input_limit,
@@ -231,7 +236,9 @@ class ClaudeAgentModel:
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
+        image_urls: Sequence[str] = (),
     ) -> None:
+        prompt, image_content = self._prepare_input(prompt, initial_messages=initial_messages, image_urls=image_urls)
         timeout, effective_input_limit = self._validate_call(
             prompt,
             tools=tools,
@@ -240,16 +247,16 @@ class ClaudeAgentModel:
             check_control=check_control,
             max_input_chars=max_input_chars,
             context_checkpoint=context_checkpoint,
-            initial_messages=initial_messages,
         )
         bridge = build_tool_bridge(tools)
-        self._preflight_context(prompt, bridge=bridge)
+        self._preflight_context(prompt, bridge=bridge, image_content=image_content)
         options = self._options(bridge, max_model_calls=max_model_calls)
         try:
             responses = self._run_with_capacity(
                 lambda remaining: self._run_async(
                     options=options,
                     initial_prompt=prompt,
+                    image_content=image_content,
                     timeout_seconds=min(timeout, remaining),
                     check_control=check_control,
                     bridge=bridge,
@@ -273,6 +280,33 @@ class ClaudeAgentModel:
         with self._close_lock:
             self._closed.set()
 
+    def _prepare_input(
+        self, prompt: str, *, initial_messages: Sequence[dict[str, Any]] | None,
+        image_urls: Sequence[str],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        messages = prepare_input_messages(prompt, initial_messages=initial_messages, image_urls=image_urls)
+        require_vision_input(messages, supports_vision_input=self.supports_vision_input, model_name=self.model_name)
+        rendered, image_content = [], []
+        for index, message in enumerate(messages, start=1):
+            content = message.get("content", "")
+            if isinstance(content, list):
+                texts, images = [], []
+                for block in content:
+                    if block["type"] in {"text", "input_text", "output_text"}:
+                        texts.append(block["text"])
+                    elif block["type"] in {"image_url", "input_image"}:
+                        images.append(block)
+                    else:
+                        raise ValueError(f"Unsupported Claude input block: {block['type']}")
+                rendered.append({**message, "content": "\n".join(texts), "imageCount": len(images)})
+                if images:
+                    image_content.extend([{"type": "text", "text": f"Attached images for conversation message {index}:"}, *images])
+            else:
+                rendered.append(message)
+        if initial_messages is not None:
+            prompt = "Existing conversation messages (JSON):\n" + json.dumps(rendered, ensure_ascii=False) + "\n\nCurrent instruction:\n" + prompt
+        return prompt, image_content
+
     def _validate_call(
         self,
         prompt: str,
@@ -283,7 +317,6 @@ class ClaudeAgentModel:
         check_control: Callable[[], None] | None,
         max_input_chars: int | None,
         context_checkpoint: ContextCheckpoint | None,
-        initial_messages: Sequence[dict[str, Any]] | None,
     ) -> tuple[float, int]:
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
@@ -306,7 +339,7 @@ class ClaudeAgentModel:
             or max_input_chars <= 0
         ):
             raise ValueError("max_input_chars must be positive when provided")
-        if context_checkpoint is not None or initial_messages is not None:
+        if context_checkpoint is not None:
             raise ValueError("Claude Agent provider does not accept external context messages")
         effective_input_limit = min(self.max_input_chars, max_input_chars or self.max_input_chars)
         if len(prompt) > effective_input_limit:
@@ -362,6 +395,7 @@ class ClaudeAgentModel:
         *,
         bridge: ToolBridge,
         output_format: dict[str, Any] | None = None,
+        image_content: Sequence[dict[str, Any]] = (),
     ) -> None:
         contract: dict[str, Any] = {
             "tools": bridge.contract,
@@ -373,7 +407,7 @@ class ClaudeAgentModel:
             preflight_context(
                 [
                     {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": [{"type": "text", "text": prompt}, *image_content] if image_content else prompt},
                 ],
                 contract,
                 policy=self.context_window_policy,
@@ -417,6 +451,7 @@ class ClaudeAgentModel:
         *,
         options: ClaudeAgentOptions,
         initial_prompt: str,
+        image_content: Sequence[dict[str, Any]],
         timeout_seconds: float,
         check_control: Callable[[], None] | None,
         bridge: ToolBridge | None = None,
@@ -469,7 +504,7 @@ class ClaudeAgentModel:
                 entered = True
                 before_tools = bridge.state.count if bridge is not None else 0
                 await self._await_with_control(
-                    client.query(prompt),
+                    client.query(_image_prompt(prompt, image_content) if image_content else prompt),
                     client=client,
                     deadline=deadline,
                     check_control=check_control,
@@ -674,6 +709,27 @@ def _response_from_messages(messages: list[Any]) -> _Response:
     if not text and isinstance(result.result, str):
         text = result.result.strip()
     return _Response(messages, result, text)
+
+
+async def _image_prompt(prompt: str, image_content: Sequence[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+    content = [{"type": "text", "text": prompt}]
+    for block in image_content:
+        if block["type"] == "text":
+            content.append(block)
+            continue
+        image = block["image_url"]
+        url = image["url"] if isinstance(image, dict) else image
+        if url.startswith("data:"):
+            header, data = url.split(",", 1)
+            if not header.endswith(";base64"):
+                raise ValueError("Claude image data URLs must contain base64 data")
+            source = {"type": "base64", "media_type": header[5:-7], "data": data}
+        elif url.startswith(("https://", "http://")):
+            source = {"type": "url", "url": url}
+        else:
+            raise ValueError("Claude images require data or HTTP URLs")
+        content.append({"type": "image", "source": source})
+    yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
 
 
 def _follow_up_prompt(

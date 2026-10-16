@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
-from threading import Barrier
+from threading import Barrier, Event, Lock
 
 import pytest
 from pydantic import BaseModel
@@ -48,8 +48,8 @@ def _config():
     return config
 
 
-def _binding(source="native", **kwargs):
-    return ModelBinding(source=source, model="configured-model", request_timeout_seconds=10, **kwargs)
+def _binding(source="native", model="configured-model", **kwargs):
+    return ModelBinding(source=source, model=model, request_timeout_seconds=10, **kwargs)
 
 
 class _Delegate:
@@ -72,6 +72,163 @@ def _replace(monkeypatch, module, name, constructed):
         constructed.append(delegate)
         return delegate
     monkeypatch.setattr(importlib.import_module(module), name, construct)
+
+
+def _mock_native_turns(monkeypatch, on_run, on_create=lambda _name: None):
+    from gateway.codex.agent import CodexAgentModel
+
+    def construct(**options):
+        class Session:
+            tool_call_count = successful_tool_call_count = 0
+
+            def run_turn(self, _inputs, **_kwargs):
+                on_run(options["model"])
+                return SimpleNamespace(final_response='{"answer":"ok"}', usage=None)
+
+            def close(self):
+                pass
+
+        def create_session(**_kwargs):
+            on_create(options["model"])
+            return Session()
+
+        return CodexAgentModel(**options, session_factory=create_session)
+
+    monkeypatch.setattr("gateway.codex.agent.CodexAgentModel", construct)
+    monkeypatch.setattr("gateway.agent_model.factory.CodexAgentModel", construct)
+
+
+def test_codex_source_bounds_mixed_parse_supervisor_and_second_factory(monkeypatch):
+    from gateway.agent_model.context import ContextWindowPolicy
+
+    started = {name: Event() for name in ("parse", "chat", "structured")}
+    created = {name: Event() for name in started}
+    release = {name: Event() for name in started}
+    active = peak = 0
+    lock = Lock()
+
+    def run(name):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        started[name].set()
+        try:
+            assert release[name].wait(timeout=5)
+        finally:
+            with lock:
+                active -= 1
+
+    _mock_native_turns(monkeypatch, run, lambda name: created[name].set())
+    config = _config()
+    config.model_sources["native"] = CodexModelSourceConfig(max_concurrency=2)
+    client = model_factory.GatewayClient(config, environ={})
+    parse = client.create_generative_model(_binding(model="parse"))
+    first_factory = client.create_agent_factory(_binding())
+    second_factory = client.create_agent_factory(_binding())
+    options = dict(
+        reasoning_effort="none", request_timeout_seconds=5,
+        max_output_tokens=1024, max_input_chars=10_000,
+        context_window_policy=ContextWindowPolicy(64000, 1024, 4096, 48000, 24000),
+    )
+    chat = first_factory.build_supervisor(harness="codex", model="chat", **options)
+    structured = second_factory.build_structured(model="structured", **options)
+    callers = ThreadPoolExecutor(max_workers=3)
+    try:
+        parsing = callers.submit(parse.generate, [TextInput("evidence")],
+                                 schema_name="answer", result_type=Result)
+        assert started["parse"].wait(timeout=1)
+        chatting = callers.submit(
+            chat.run_agent, "instruction", thread_id="conversation", message_id="answer",
+            user_message="question", history=[], tools=[], max_model_calls=1,
+            handle_text=lambda _text: None,
+        )
+        assert started["chat"].wait(timeout=1)
+        queued = callers.submit(structured.run_structured, "question",
+                                tools=[], result_type=Result, max_model_calls=1)
+        assert created["structured"].wait(timeout=1)
+        assert not started["structured"].wait(timeout=0.05)
+        with lock:
+            assert active == peak == 2
+        release["parse"].set()
+        assert started["structured"].wait(timeout=1)
+        release["chat"].set()
+        release["structured"].set()
+        assert parsing.result(timeout=1) == queued.result(timeout=1) == Result(answer="ok")
+        chatting.result(timeout=1)
+        assert peak == 2
+    finally:
+        for event in release.values():
+            event.set()
+        callers.shutdown(wait=True, cancel_futures=True)
+        chat.close()
+        structured.close()
+        client.close()
+
+
+def test_codex_sources_do_not_block_each_others_pool(monkeypatch):
+    first_started, second_started, release = Event(), Event(), Event()
+
+    def run(name):
+        if name == "blocked":
+            first_started.set()
+            assert release.wait(timeout=5)
+        else:
+            second_started.set()
+
+    _mock_native_turns(monkeypatch, run)
+    config = _config()
+    config.model_sources["native"] = CodexModelSourceConfig(max_concurrency=1)
+    config.model_sources["other_native"] = CodexModelSourceConfig(max_concurrency=1)
+    client = model_factory.GatewayClient(config, environ={})
+    first = client.create_generative_model(_binding(model="blocked"))
+    second = client.create_generative_model(_binding("other_native", model="independent"))
+    callers = ThreadPoolExecutor(max_workers=2)
+    try:
+        blocked = callers.submit(first.generate, [TextInput("evidence")],
+                                 schema_name="answer", result_type=Result)
+        assert first_started.wait(timeout=1)
+        independent = callers.submit(second.generate, [TextInput("evidence")],
+                                     schema_name="answer", result_type=Result)
+        assert second_started.wait(timeout=1)
+        assert independent.result(timeout=1) == Result(answer="ok")
+        assert not blocked.done()
+        release.set()
+        assert blocked.result(timeout=1) == Result(answer="ok")
+    finally:
+        release.set()
+        callers.shutdown(wait=True, cancel_futures=True)
+        client.close()
+
+
+def test_codex_model_supervisor_and_factory_close_preserve_gateway_pool(monkeypatch):
+    from gateway.agent_model.context import ContextWindowPolicy
+
+    _mock_native_turns(monkeypatch, lambda _name: None)
+    client = model_factory.GatewayClient(_config(), environ={})
+    model = client.create_generative_model(_binding())
+    factory = client.create_agent_factory(_binding())
+    supervisor = factory.build_supervisor(
+        harness="codex", model="chat", reasoning_effort="none",
+        request_timeout_seconds=5, max_output_tokens=1024, max_input_chars=10_000,
+        context_window_policy=ContextWindowPolicy(64000, 1024, 4096, 48000, 24000),
+    )
+    pool = client._codex_executors["native"]
+    try:
+        model.close()
+        assert pool.submit(lambda: "open").result(timeout=1) == "open"
+        supervisor.close()
+        assert pool.submit(lambda: "open").result(timeout=1) == "open"
+        factory.close()
+        assert pool.submit(lambda: "open").result(timeout=1) == "open"
+        replacement = client.create_generative_model(_binding())
+        assert replacement.generate([TextInput("evidence")], schema_name="answer",
+                                    result_type=Result) == Result(answer="ok")
+    finally:
+        client.close()
+        client.close()
+    with pytest.raises(RuntimeError, match="shutdown"):
+        pool.submit(lambda: None)
 
 
 @pytest.mark.parametrize(("source", "module", "name"), [
@@ -379,9 +536,12 @@ def test_failure_building_fallback_closes_primary(monkeypatch):
 def test_client_close_attempts_every_resource_after_one_close_fails(monkeypatch):
     delegates = []
     _replace(monkeypatch, "gateway.codex.agent", "CodexAgentModel", delegates)
-    client = model_factory.GatewayClient(_config(), environ={})
+    config = _config()
+    config.model_sources["other_native"] = CodexModelSourceConfig(max_concurrency=1)
+    client = model_factory.GatewayClient(config, environ={})
     client.create_generative_model(_binding())
-    client.create_generative_model(_binding())
+    client.create_generative_model(_binding("other_native"))
+    pools = tuple(client._codex_executors.values())
     def fail():
         delegates[0].closed += 1
         raise RuntimeError("close failed")
@@ -390,6 +550,11 @@ def test_client_close_attempts_every_resource_after_one_close_fails(monkeypatch)
         client.close()
     assert [delegate.closed for delegate in delegates] == [1, 1]
     assert client._resources == set()
+    assert client._codex_executors == {}
+    for pool in pools:
+        with pytest.raises(RuntimeError, match="shutdown"):
+            pool.submit(lambda: None)
+    client.close()
 
 
 def test_embedding_and_transcription_use_resolved_typed_bindings(monkeypatch):

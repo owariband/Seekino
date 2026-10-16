@@ -965,6 +965,180 @@ def test_generate_preserves_image_order_and_uses_media_budget(tmp_path) -> None:
     assert records[0].usage.total_tokens == 14
 
 
+def test_agent_loop_submits_ordered_history_images_outside_text_budget() -> None:
+    earlier = "data:image/png;base64," + "A" * 200_000
+    current = "data:image/png;base64," + "B" * 200_000
+    history = [
+        {"role": "user", "content": "Earlier image", "imageUrls": [earlier]},
+        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "user", "content": "Current image", "imageUrls": [current]},
+    ]
+    session = _FakeSession([(_turn("Observed"), 0)])
+    model = _model_for(session, max_input_chars=1_500, context_window_policy=_context_policy(20_000))
+    texts = []
+    try:
+        model.run_agent_loop("Answer", tools=[], max_model_calls=1, handle_text=texts.append, initial_messages=history)
+    finally:
+        model.close()
+
+    inputs, schema = session.prompts[0]
+    assert schema is None and texts == ["Observed"]
+    assert [type(item) for item in inputs] == [
+        CodexTextInput, CodexTextInput, CodexImageInput, CodexTextInput, CodexImageInput,
+    ]
+    assert [inputs[2].url, inputs[4].url] == [earlier, current]
+    assert inputs[1].text.endswith("message 1:") and inputs[3].text.endswith("message 3:")
+    assert '"imageCount": 1' in inputs[0].text
+    assert "Earlier answer" in inputs[0].text and "Current image" in inputs[0].text
+    assert all("data:image" not in item.text for item in inputs if isinstance(item, CodexTextInput))
+    assert history[0]["imageUrls"] == [earlier] and "imageCount" not in history[0]
+    assert history[2]["imageUrls"] == [current] and "imageCount" not in history[2]
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_entries_submit_current_images_and_rich_history_in_order(structured) -> None:
+    earlier = "data:image/png;base64," + "A" * 200_000
+    current = [f"https://example.test/{index}.png" for index in range(6)]
+    history = [{"role": "user", "content": [
+        {"type": "text", "text": "Earlier image"},
+        {"type": "image_url", "image_url": {"url": earlier}},
+    ]}, {"role": "assistant", "content": "Earlier answer"}]
+    session = _FakeSession([(_turn('{"answer":"Observed"}' if structured else "Observed"), 0)])
+    model = _model_for(session, max_input_chars=1_500, context_window_policy=_context_policy(50_000))
+    try:
+        options = dict(tools=[], max_model_calls=1, initial_messages=history, image_urls=current)
+        if structured:
+            assert model.run_structured("Current question", result_type=Result, **options).answer == "Observed"
+        else:
+            texts = []
+            model.run_agent_loop("Current question", handle_text=texts.append, **options)
+            assert texts == ["Observed"]
+    finally:
+        model.close()
+    inputs, _schema = session.prompts[0]
+    assert [item.url for item in inputs if isinstance(item, CodexImageInput)] == [earlier, *current]
+    assert all("data:image" not in item.text for item in inputs if isinstance(item, CodexTextInput))
+    assert "Earlier answer" in inputs[0].text and "Current question" in inputs[0].text
+    assert history[0]["content"][1]["image_url"]["url"] == earlier
+    assert "imageCount" not in history[0]
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("historical", [False, True])
+def test_native_entries_reject_images_when_vision_is_explicitly_disabled(structured, historical) -> None:
+    image = "data:image/png;base64,AAAA"
+    session = _FakeSession([])
+    model = _model_for(session)
+    model.supports_vision_input = False
+    options = dict(tools=[], max_model_calls=1)
+    options.update({"initial_messages": [{"role": "user", "content": "Earlier", "imageUrls": [image]}]}
+                   if historical else {"image_urls": [image]})
+    try:
+        with pytest.raises(ValueError, match="supports_vision_input=False"):
+            if structured:
+                model.run_structured("Question", result_type=Result, **options)
+            else:
+                model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
+        assert session.prompts == []
+    finally:
+        model.close()
+
+
+@pytest.mark.parametrize("fail_preparation", [False, True])
+def test_agent_loop_prepares_persistent_session_before_turn_without_reserializing_history(fail_preparation) -> None:
+    events = []
+    options = {}
+
+    class PersistentSession(_FakeSession):
+        native_thread_id = "native-thread"
+
+        def open(self):
+            events.append("open")
+
+        def run_turn(self, prompt, *, output_schema=None):
+            events.append("turn")
+            return super().run_turn(prompt, output_schema=output_schema)
+
+    session = PersistentSession([(_turn("Observed"), 0)])
+
+    def factory(**kwargs):
+        options.update(kwargs)
+        return session
+
+    def prepare(opened):
+        assert opened is session
+        assert opened.native_thread_id == "native-thread"
+        events.append("prepare")
+        if fail_preparation:
+            raise RuntimeError("history injection failed")
+
+    current = {"role": "user", "content": "already in current prompt", "imageUrls": ["data:image/png;base64,YQ=="]}
+    model = _model_for(session, session_factory=factory)
+    texts = []
+    try:
+        if fail_preparation:
+            with pytest.raises(CodexAgentModelError):
+                model.run_agent_loop(
+                    "Current question", tools=[], max_model_calls=1, handle_text=texts.append,
+                    initial_messages=[current], native_thread_id="native-thread", on_session_ready=prepare,
+                )
+        else:
+            model.run_agent_loop(
+                "Current question", tools=[], max_model_calls=1, handle_text=texts.append,
+                initial_messages=[current], native_thread_id="native-thread", on_session_ready=prepare,
+            )
+    finally:
+        model.close()
+
+    assert options["persistent"] is True and options["native_thread_id"] == "native-thread"
+    assert events == (["open", "prepare"] if fail_preparation else ["open", "prepare", "turn"])
+    assert session.closed
+    if fail_preparation:
+        assert session.prompts == [] and texts == []
+    else:
+        inputs, _schema = session.prompts[0]
+        assert inputs[0].text == "Current question"
+        assert inputs[2].url == current["imageUrls"][0]
+        assert texts == ["Observed"]
+    assert "imageCount" not in current
+
+
+def test_session_key_identifies_codex_storage_without_model_or_plaintext_path(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CODEX_HOME", "sessions")
+    first = _model_for(_FakeSession([]), cwd=str(tmp_path), model="first-model")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "sessions"))
+    second = _model_for(_FakeSession([]), cwd=str(tmp_path / "elsewhere"), model="second-model")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "other-sessions"))
+    other = _model_for(_FakeSession([]), cwd=str(tmp_path))
+    try:
+        assert first.session_key == second.session_key
+        assert first.session_key != other.session_key
+        assert str(tmp_path) not in first.session_key
+        assert first.session_key.startswith("codex:")
+    finally:
+        for model in (first, second, other):
+            model.close()
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_entries_count_attached_image_tokens_before_starting_session(structured) -> None:
+    session = _FakeSession([(_turn("Unexpected"), 0)])
+    model = _model_for(session, context_window_policy=_context_policy(13_100))
+    try:
+        with pytest.raises(ModelInputTooLargeError):
+            options = dict(
+                tools=[], max_model_calls=1,
+                initial_messages=[{"role": "user", "content": "Image", "imageUrls": ["data:image/png;base64,AAAA"]}],
+            )
+            if structured:
+                model.run_structured("Answer", result_type=Result, **options)
+            else:
+                model.run_agent_loop("Answer", handle_text=lambda _text: None, **options)
+        assert session.prompts == []
+    finally:
+        model.close()
+
+
 def test_generate_counts_image_tokens_before_starting_session(tmp_path) -> None:
     image = tmp_path / "frame.png"
     image.write_bytes(b"image")

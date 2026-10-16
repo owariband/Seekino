@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from copy import deepcopy
 from time import monotonic
 from typing import Any
 
 from langchain_core.messages import AIMessage, ToolMessage
-from gateway.media import ToolImageArtifact
+from gateway.media import ToolImageArtifact, prepare_input_messages, require_vision_input
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ValidationError
 
@@ -272,7 +271,9 @@ def _run_function_calling_loop(
     context_window_policy: ContextWindowPolicy | None,
     context_checkpoint: ContextCheckpoint | None,
     initial_messages: Sequence[dict[str, Any]] | None,
+    image_urls: Sequence[str] = (),
     supports_vision_input: bool = False,
+    model_name: str | None = None,
     provider_label: str,
     error_type: type[ModelFailureError],
     request_turn: Callable[
@@ -309,13 +310,8 @@ def _run_function_calling_loop(
     deadline = monotonic() + request_timeout_seconds
     if check_control is not None:
         check_control()
-    messages: list[dict[str, Any]] = (
-        deepcopy(list(initial_messages))
-        if initial_messages is not None
-        else [{"role": "user", "content": prompt}]
-    )
-    if not messages:
-        raise ValueError("initial_messages must not be empty when provided")
+    messages = prepare_input_messages(prompt, initial_messages=initial_messages, image_urls=image_urls)
+    require_vision_input(messages, supports_vision_input=supports_vision_input, model_name=model_name or provider_label)
     tool_specs = [_function_tool_spec(tool) for tool in tools]
     context_window = ContextWindowController(
         policy=context_window_policy,

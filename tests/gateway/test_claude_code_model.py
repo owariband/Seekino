@@ -78,7 +78,7 @@ class _FakeClient:
     def __init__(self, options: Any, batches: list[list[Any]]) -> None:
         self.options = options
         self.batches = deque(batches)
-        self.prompts: list[str] = []
+        self.prompts: list[Any] = []
         self.interrupted = False
 
     async def __aenter__(self):
@@ -87,8 +87,8 @@ class _FakeClient:
     async def __aexit__(self, *_args: Any) -> bool:
         return False
 
-    async def query(self, prompt: str) -> None:
-        self.prompts.append(prompt)
+    async def query(self, prompt) -> None:
+        self.prompts.append(prompt if isinstance(prompt, str) else [message async for message in prompt])
 
     async def receive_response(self):
         for message in self.batches.popleft():
@@ -167,6 +167,89 @@ def test_structured_result_uses_sdk_json_schema_without_network() -> None:
     assert options.skills == []
     assert options.effort == "high"
     assert options.thinking is None
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_entries_send_ordered_real_images_outside_text_budget(structured) -> None:
+    created = []
+
+    def factory(options):
+        client = _FakeClient(options, [[_assistant("ok"), _result(text="ok", structured={"answer": "ok"})]])
+        created.append(client)
+        return client
+
+    current = ["data:image/png;base64," + ("A" * 200_000 if index == 0 else f"image-{index}") for index in range(6)]
+    history = [{"role": "user", "content": [
+        {"type": "text", "text": "Earlier image"},
+        {"type": "image_url", "image_url": {"url": "https://example.test/prior.png"}},
+    ]}, {"role": "assistant", "content": "Earlier answer"}]
+    model = _model(factory, max_input_chars=2_000, context_window_policy=_context_policy(30_000))
+    options = dict(tools=[_tool()], max_model_calls=1, initial_messages=history, image_urls=current)
+    if structured:
+        assert model.run_structured("Current question", result_type=_Answer, **options).answer == "ok"
+    else:
+        emitted = []
+        model.run_agent_loop("Current question", handle_text=emitted.append, **options)
+        assert emitted == ["ok"]
+    envelope, = created[0].prompts[0]
+    assert envelope["type"] == "user" and envelope["message"]["role"] == "user"
+    content = envelope["message"]["content"]
+    sources = [block["source"] for block in content if block["type"] == "image"]
+    assert sources[0] == {"type": "url", "url": "https://example.test/prior.png"}
+    assert sources[1:] == [{"type": "base64", "media_type": "image/png", "data": url.split(",", 1)[1]} for url in current]
+    assert all("data:image" not in block["text"] for block in content if block["type"] == "text")
+    assert "Earlier answer" in content[0]["text"] and "Current question" in content[0]["text"]
+    assert "imageCount" not in history[0] and len(history[0]["content"]) == 2
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("historical", [False, True])
+def test_native_entries_reject_disabled_vision_before_creating_client(structured, historical) -> None:
+    model = _model(lambda _options: pytest.fail("client must not be created"))
+    model.supports_vision_input = False
+    image = "data:image/png;base64,AAAA"
+    options = dict(tools=[_tool()], max_model_calls=1)
+    options.update({"initial_messages": [{"role": "user", "content": "Earlier", "imageUrls": [image]}]}
+                   if historical else {"image_urls": [image]})
+    with pytest.raises(ValueError, match="supports_vision_input=False"):
+        if structured:
+            model.run_structured("Question", result_type=_Answer, **options)
+        else:
+            model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
+
+
+def test_feedback_round_recreates_image_input_stream_for_fresh_client() -> None:
+    created = []
+
+    def factory(options):
+        client = _FakeClient(options, [[_assistant("answer"), _result(text="answer")]])
+        created.append(client)
+        return client
+
+    feedback = iter(["Check the image again", None])
+    image = "data:image/png;base64,YQ=="
+    _model(factory).run_agent_loop(
+        "Describe the image", tools=[_tool()], max_model_calls=3, image_urls=[image],
+        handle_text=lambda _text: None, stop_feedback=lambda: next(feedback),
+    )
+    assert len(created) == 2
+    for client in created:
+        envelope, = client.prompts[0]
+        assert [block["source"] for block in envelope["message"]["content"] if block["type"] == "image"] == [
+            {"type": "base64", "media_type": "image/png", "data": "YQ=="},
+        ]
+    assert "Check the image again" in created[1].prompts[0][0]["message"]["content"][0]["text"]
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_image_tokens_are_counted_before_creating_client(structured) -> None:
+    model = _model(lambda _options: pytest.fail("client must not be created"), context_window_policy=_context_policy(2_000))
+    options = dict(tools=[_tool()], max_model_calls=1, image_urls=["data:image/png;base64,AAAA"])
+    with pytest.raises(ModelInputTooLargeError, match="initial context"):
+        if structured:
+            model.run_structured("Question", result_type=_Answer, **options)
+        else:
+            model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
 
 
 def test_context_preflight_counts_mcp_tool_contract_before_starting_client() -> None:

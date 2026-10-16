@@ -91,6 +91,45 @@ def test_factory_fails_fast_when_selected_key_is_missing() -> None:
         )
 
 
+@pytest.mark.parametrize("primary", [_openai_source(), ArkModelSourceConfig(), CodexModelSourceConfig(), ClaudeCodeModelSourceConfig()])
+@pytest.mark.parametrize("supports_vision_input", [True, False])
+def test_factory_preserves_vision_capability_for_every_agent_transport(
+    primary, supports_vision_input,
+) -> None:
+    factory = agent_factory.AgentModelFactory(
+        _agent_config().model_copy(update={"supports_vision_input": supports_vision_input}),
+        {"primary": primary},
+        environ={"DEEPSEEK_API_KEY": "test-key", "ARK_API_KEY": "test-key"},
+    )
+    try:
+        for builder in (factory.build_structured, factory.build_loop):
+            adapter = builder(**_build_arguments())
+            assert adapter.supports_vision_input is supports_vision_input
+    finally:
+        factory.close()
+
+
+@pytest.mark.parametrize("primary", [_openai_source(), ArkModelSourceConfig()])
+@pytest.mark.parametrize("supports_vision_input", [True, False])
+def test_structured_fallback_uses_its_own_vision_capability(primary, supports_vision_input) -> None:
+    config = _agent_config(fallback=True).model_copy(update={
+        "supports_vision_input": not supports_vision_input,
+        "fallback": AgentFallbackConfig(
+            source="fallback", model="fallback-model", supports_vision_input=supports_vision_input,
+        ),
+    })
+    factory = agent_factory.AgentModelFactory(
+        config, {"primary": primary, "fallback": ArkModelSourceConfig()},
+        environ={"DEEPSEEK_API_KEY": "test-key", "ARK_API_KEY": "test-key"},
+    )
+    try:
+        adapter = factory.build_structured(**_build_arguments())
+        assert adapter.supports_vision_input is not supports_vision_input
+        assert adapter._fallback_adapter.supports_vision_input is supports_vision_input
+    finally:
+        factory.close()
+
+
 def test_openai_factory_composes_ark_fallback_with_explicit_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

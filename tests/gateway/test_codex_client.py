@@ -4,12 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from queue import Queue
 from threading import Barrier, Event, Thread
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
 from langchain_core.tools import StructuredTool
 from openai_codex import ImageInput, TextInput
-from openai_codex.generated.v2_all import ReasoningEffort
+from openai_codex.generated.v2_all import ReasoningEffort, ThreadResumeResponse
 from openai_codex.errors import TransportClosedError
 
 from gateway.codex.client import (
@@ -90,6 +91,120 @@ def test_codex_session_starts_ephemeral_read_only_dynamic_tool_thread() -> None:
     assert captured["handler"](
         "item/commandExecution/requestApproval", {}
     ) == {"decision": "cancel"}
+
+
+@pytest.mark.parametrize("native_thread_id", [None, "thread-1"])
+@pytest.mark.parametrize("rich_content", [False, True])
+def test_persistent_session_starts_or_resumes_native_thread_and_injects_messages(native_thread_id, rich_content) -> None:
+    class PersistentClient(_FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.resumed = []
+            self.requests = []
+
+        def thread_resume(self, thread_id, params=None):
+            self.resumed.append((thread_id, params))
+            return {"thread": {"id": thread_id, "turns": [{"id": "prior-turn"}]}}
+
+        def request_history(self, method, params, *, response_model, timeout_seconds):
+            self.history_timeout = timeout_seconds
+            self.requests.append((method, params))
+            return response_model.model_validate({})
+
+    fake = PersistentClient()
+    tool = StructuredTool.from_function(lambda value: value, name="lookup", description="Look up a value.")
+    session = CodexSession(
+        model="changed-model", tools=[tool], reasoning_effort="high", codex_bin=None,
+        cwd=None, max_tool_calls=None, check_control=None,
+        persistent=True, native_thread_id=native_thread_id,
+        client_factory=lambda *_args: fake,
+    )
+    history = [
+        {"role": "USER", "content": "look at this", "messageId": "u1", "imageUrls": ["data:image/png;base64,YQ=="]},
+        {"role": "ASSISTANT", "content": "observed", "messageId": "a1"},
+    ]
+    if rich_content:
+        history[0]["content"] = [
+            {"type": "text", "text": "look at this"},
+            {"type": "image_url", "image_url": {"url": history[0].pop("imageUrls")[0]}},
+        ]
+    try:
+        session.open()
+        assert session.native_thread_id == "thread-1"
+        assert session.native_last_turn_id == ("prior-turn" if native_thread_id else None)
+        session.inject_messages(history)
+        assert session._handle_request("item/tool/call", {
+            "callId": "rebound-call", "tool": "lookup", "arguments": {"value": "rebound"},
+        })["success"]
+    finally:
+        session.close()
+
+    if native_thread_id:
+        assert fake.thread_params is None
+        assert fake.resumed[0][0] == native_thread_id
+        assert fake.resumed[0][1]["model"] == "changed-model"
+        assert "dynamicTools" not in fake.resumed[0][1]
+    else:
+        assert fake.thread_params["ephemeral"] is False
+        assert fake.thread_params["dynamicTools"][0]["name"] == "lookup"
+        assert fake.resumed == []
+    assert fake.requests == [("thread/inject_items", {
+        "threadId": "thread-1",
+        "items": [
+            {"type": "message", "role": "user", "id": "u1", "content": [
+                {"type": "input_text", "text": "look at this"},
+                {"type": "input_image", "image_url": "data:image/png;base64,YQ=="},
+            ]},
+            {"type": "message", "role": "assistant", "id": "a1", "content": [
+                {"type": "output_text", "text": "observed"},
+            ]},
+        ],
+    })]
+    assert history[0]["role"] == "USER"
+    assert fake.history_timeout == 2.0
+    assert session.native_thread_id == "thread-1" and fake.closed
+
+
+def test_persistent_session_reverts_uncommitted_turn_then_resumes_same_thread() -> None:
+    class RevertClient(_FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+            self.timeouts = []
+
+        def thread_resume(self, thread_id, params=None):
+            self.calls.append(("resume", thread_id))
+            last_id = "pending-turn" if len(self.calls) == 1 else "committed-turn"
+            return SimpleNamespace(thread=SimpleNamespace(id=thread_id, turns=[SimpleNamespace(id=last_id)]))
+
+        def request_history(self, method, params, *, response_model, timeout_seconds):
+            self.timeouts.append(timeout_seconds)
+            if method == "thread/resume":
+                assert response_model is ThreadResumeResponse
+                self.calls.append((method, params["threadId"]))
+                return SimpleNamespace(thread=SimpleNamespace(id=params["threadId"], turns=[SimpleNamespace(id="committed-turn")]))
+            self.calls.append((method, params))
+            return response_model.model_validate({})
+
+    fake = RevertClient()
+    session = CodexSession(
+        model="model", tools=[], reasoning_effort="none", codex_bin=None,
+        cwd=None, max_tool_calls=None, check_control=None,
+        persistent=True, native_thread_id="thread-1", client_factory=lambda *_args: fake,
+    )
+    try:
+        session.open()
+        assert session.native_last_turn_id == "pending-turn"
+        session.rollback_last_turn()
+        assert session.native_last_turn_id == "committed-turn"
+    finally:
+        session.close()
+    assert fake.calls == [
+        ("resume", "thread-1"),
+        ("thread/revert", {"threadId": "thread-1", "beforeTurnId": "pending-turn"}),
+        ("thread/resume", "thread-1"),
+    ]
+    assert fake.timeouts == [2.0, 2.0]
 
 
 def test_model_call_budget_has_a_hard_upper_bound() -> None:
@@ -205,7 +320,7 @@ def test_codex_session_passes_real_ordered_images_to_sdk(monkeypatch) -> None:
         def turn(self, inputs, **kwargs):
             captured["inputs"] = inputs
             captured["kwargs"] = kwargs
-            return SimpleNamespace(run=lambda: result)
+            return SimpleNamespace(id="turn-1", run=lambda: result)
 
     monkeypatch.setattr("gateway.codex.client.Thread", FakeThread)
     fake = _FakeClient()
@@ -219,6 +334,7 @@ def test_codex_session_passes_real_ordered_images_to_sdk(monkeypatch) -> None:
     try:
         assert session.run_turn(inputs, output_schema=schema) is result
         assert session.successful_tool_call_count == 0
+        assert session.native_last_turn_id == "turn-1"
     finally:
         session.close()
 
@@ -309,6 +425,72 @@ def _ordered_session(handle_text, submit, on_turn=_turn_messages):
         handle_text=handle_text,
     )
     return session, clients
+
+
+@pytest.mark.parametrize("phase", ["thread/inject_items", "thread/revert", "thread/resume"])
+@pytest.mark.parametrize("late_error", [False, True])
+def test_history_response_timeout_keeps_transport_and_next_turn_usable(phase, late_error) -> None:
+    clients = []
+    turn_count = 0
+
+    def on_turn(client, request):
+        nonlocal turn_count
+        turn_count += 1
+        turn_id = f"turn-{turn_count}"
+        client.incoming.put({"id": request["id"], "result": {
+            "turn": {"id": turn_id, "items": [], "status": "inProgress"},
+        }})
+        message = _message("B")
+        message["params"]["turnId"] = turn_id
+        client.incoming.put(message)
+        client.incoming.put({"method": "turn/completed", "params": {
+            "threadId": "thread-1", "turn": {
+                "id": turn_id, "items": [], "status": "completed",
+            },
+        }})
+
+    class HistoryTransport(_TransportClient):
+        def _write_message(self, message):
+            super()._write_message(message)
+            if message.get("method") == "thread/revert" and phase == "thread/resume":
+                self.incoming.put({"id": message["id"], "result": {}})
+
+    def factory(config, handler):
+        client = HistoryTransport(config, handler, on_turn)
+        clients.append(client)
+        return client
+
+    session = CodexSession(
+        model="fake", tools=[], reasoning_effort="none", codex_bin=None, cwd=None,
+        max_tool_calls=None, check_control=None, persistent=True, client_factory=factory,
+        history_request_timeout_seconds=0.01,
+    )
+    try:
+        if phase != "thread/inject_items":
+            session.run_turn("previous question")
+        started = monotonic()
+        with pytest.raises(TimeoutError, match="history request timed out"):
+            if phase == "thread/inject_items":
+                session.inject_messages([{"role": "user", "content": "earlier question"}])
+            else:
+                session.rollback_last_turn()
+        assert monotonic() - started < 1
+        client = clients[0]
+        history_request = client.sent[-1]
+        assert history_request["method"] == phase
+        assert history_request["id"] not in client._router._response_waiters
+        assert client._reader_thread.is_alive()
+        late = {"id": history_request["id"]}
+        late.update({"error": {"code": -32600, "message": "late history failure"}} if late_error else {"result": {}})
+        client.incoming.put(late)
+
+        assert session.run_turn("current question").final_response == "B"
+        assert client._reader_thread.is_alive()
+        assert client.sent[-1]["method"] == "turn/start"
+    finally:
+        session.close()
+    client._reader_thread.join(timeout=1)
+    assert not client._reader_thread.is_alive()
 
 
 def _error_notification(*, will_retry, status=None, thread_id="thread-1", turn_id="turn-1"):

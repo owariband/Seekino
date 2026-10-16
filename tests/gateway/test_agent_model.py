@@ -3277,3 +3277,85 @@ def test_sdk_query_openai_compatible_providers_use_their_token_parameter(provide
     else:
         assert "thinking" not in requests[0]
     client.close()
+
+
+@pytest.mark.parametrize("provider", ["openai", "ark"])
+@pytest.mark.parametrize("vision", [False, True])
+def test_structured_input_preserves_current_and_historical_images(provider, vision):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion("ReviewDecision", {"action": "accept", "advice": "Checked"}))
+
+    http = httpx.Client(transport=httpx.MockTransport(respond))
+    client = (Ark(api_key="test", http_client=http) if provider == "ark"
+              else OpenAI(api_key="test", base_url="https://example.test/v1", http_client=http))
+    model_type = ArkStructuredToolAgentModel if provider == "ark" else OpenAIStructuredToolAgentModel
+    model = model_type("vision-model", request_timeout_seconds=3, max_output_tokens=400,
+                       max_input_chars=2000, client=client, supports_vision_input=vision)
+    historical = "data:image/png;base64," + "A" * 20_000
+    current = "data:image/png;base64,BBBB"
+    history = [{"role": "user", "content": "Earlier", "imageUrls": [historical]},
+               {"role": "assistant", "content": "Earlier answer"}]
+    before = deepcopy(history)
+    try:
+        options = dict(tools=[], result_type=ReviewDecision, max_model_calls=1,
+                       initial_messages=history, image_urls=[current])
+        if not vision:
+            with pytest.raises(ValueError, match="vision-model.*does not support image input"):
+                model.run_structured("Current", **options)
+            assert requests == []
+        else:
+            result = model.run_structured("Current", **options)
+            assert result.action == "accept"
+            messages = requests[0]["messages"]
+            assert messages[0]["content"][-1]["image_url"]["url"] == historical
+            assert messages[-1]["content"][-1]["image_url"]["url"] == current
+            assert messages[-1]["content"][0]["text"] == "Current"
+        assert history == before
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("fallback_kind", ["same", "cross"])
+@pytest.mark.parametrize("fallback_vision", [False, True])
+def test_structured_fallback_retains_images_or_rejects_unsupported_input(fallback_kind, fallback_vision):
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if payload["model"] == "primary":
+            return httpx.Response(500, json={"error": {"message": "Unavailable", "type": "server_error"}})
+        return httpx.Response(200, json=_completion("ReviewDecision", {"action": "accept", "advice": "Fallback checked"}))
+
+    primary = OpenAI(api_key="test", base_url="https://example.test/v1", max_retries=0,
+                     http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+    fallback = Ark(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+    fallback_options = (
+        {"fallback_model": "fallback", "fallback_supports_vision_input": fallback_vision}
+        if fallback_kind == "same" else {"fallback_adapter": ArkStructuredFallback(
+            "fallback", max_output_tokens=400, request_timeout_seconds=3, client=fallback,
+            supports_vision_input=fallback_vision,
+        )}
+    )
+    model = OpenAIStructuredToolAgentModel(
+        "primary", request_timeout_seconds=3, max_output_tokens=400, client=primary,
+        supports_vision_input=True, **fallback_options,
+    )
+    image = "data:image/png;base64,AAAA"
+    try:
+        options = dict(tools=[], result_type=ReviewDecision, max_model_calls=1, image_urls=[image])
+        if not fallback_vision:
+            with pytest.raises(ValueError, match="fallback.*does not support image input"):
+                model.run_structured("Check image", **options)
+            assert [request["model"] for request in requests] == ["primary"]
+        else:
+            assert model.run_structured("Check image", **options).action == "accept"
+            assert [request["model"] for request in requests] == ["primary", "fallback"]
+            assert all(request["messages"][0]["content"][-1]["image_url"]["url"] == image
+                       for request in requests)
+    finally:
+        primary.close()
+        fallback.close()

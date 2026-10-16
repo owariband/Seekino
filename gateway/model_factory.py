@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial, wraps
 from collections.abc import Callable, Mapping, Sequence
 from threading import Lock
@@ -312,6 +313,7 @@ class GatewayClient:
         self.config = config
         self._environ = os.environ if environ is None else environ
         self._resources: set[_OwnedResource] = set()
+        self._codex_executors: dict[str, ThreadPoolExecutor] = {}
         self._lock = Lock()
         self._closed = False
 
@@ -340,6 +342,21 @@ class GatewayClient:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Gateway client is closed")
+
+    def _codex_executor(self, source_name: str) -> ThreadPoolExecutor | None:
+        source = self.config.source(source_name)
+        if not isinstance(source, CodexModelSourceConfig):
+            return None
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Gateway client is closed")
+            executor = self._codex_executors.get(source_name)
+            if executor is None:
+                executor = ThreadPoolExecutor(
+                    max_workers=source.max_concurrency, thread_name_prefix="anivag-codex",
+                )
+                self._codex_executors[source_name] = executor
+            return executor
 
     def _build_generative(self, binding: ModelBinding) -> GenerativeModel:
         selected = binding
@@ -384,7 +401,10 @@ class GatewayClient:
             )
             if isinstance(source, CodexModelSourceConfig):
                 from gateway.codex.agent import CodexAgentModel
-                delegate = CodexAgentModel(**common, codex_bin=source.codex_bin)
+                delegate = CodexAgentModel(
+                    **common, codex_bin=source.codex_bin,
+                    executor=self._codex_executor(binding.source),
+                )
             else:
                 from gateway.claude_code.agent import ClaudeAgentModel
                 delegate = ClaudeAgentModel(
@@ -452,7 +472,8 @@ class GatewayClient:
             })) if fallback is not None else None),
         )
         return self._own(AgentModelFactory(config, self.config.model_sources,
-                                          environ=self._environ, binding=binding))
+                                          environ=self._environ, binding=binding,
+                                          codex_executor=self._codex_executor(binding.source)))
 
     def create(
         self, kind: Literal["generative", "transcription", "embedding", "rerank"],
@@ -476,10 +497,16 @@ class GatewayClient:
                 return
             self._closed = True
             resources, self._resources = tuple(self._resources), set()
+            executors, self._codex_executors = tuple(self._codex_executors.values()), {}
         failure = None
         for resource in resources:
             try:
                 resource.close()
+            except BaseException as error:
+                failure = failure or error
+        for executor in executors:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
             except BaseException as error:
                 failure = failure or error
         if failure is not None:

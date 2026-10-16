@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
 from contextvars import copy_context
+from hashlib import sha256
+from pathlib import Path
 from threading import Lock
 from time import monotonic
 from types import SimpleNamespace
@@ -30,7 +33,7 @@ from gateway.agent_model.context import (
 )
 from gateway.usage import track_model_call
 from gateway.model_diagnostics import capture_model_diagnostics
-from gateway.media import encode_media_file
+from gateway.media import encode_media_file, prepare_input_messages, require_vision_input
 from gateway.multimodal import (
     ImageInput, MultimodalInput, TextInput, VideoInput, validate_generate_request,
 )
@@ -54,10 +57,22 @@ class CodexAgentModelError(ModelFailureError):
 
 class SessionLike(Protocol):
     @property
+    def native_thread_id(self) -> str | None: ...
+
+    @property
+    def native_last_turn_id(self) -> str | None: ...
+
+    @property
     def tool_call_count(self) -> int: ...
 
     @property
     def successful_tool_call_count(self) -> int: ...
+
+    def open(self) -> None: ...
+
+    def inject_messages(self, messages: Sequence[dict[str, Any]]) -> None: ...
+
+    def rollback_last_turn(self) -> None: ...
 
     def run_turn(
         self,
@@ -93,6 +108,7 @@ class CodexAgentModel:
     """Adapt the local Codex app-server to AniVAG's two Agent model protocols."""
 
     provider_name = CODEX_PROVIDER
+    supports_vision_input = True
     supports_context_checkpoints = False
     supports_context_messages = False
     supports_stop_feedback = True
@@ -146,6 +162,10 @@ class CodexAgentModel:
         self.codex_bin = codex_bin
         self.max_concurrency = max_concurrency
         self.cwd = cwd
+        codex_home = Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+        if not codex_home.is_absolute():
+            codex_home = Path(cwd or Path.cwd()) / codex_home
+        self.session_key = "codex:" + sha256(str(codex_home.resolve()).encode()).hexdigest()
         self._session_factory = session_factory or CodexSession
         self._owns_executor = executor is None
         self._executor = executor or ThreadPoolExecutor(
@@ -190,6 +210,10 @@ class CodexAgentModel:
                 content.append({"type": "input_image", "image_url": url})
             else:
                 raise TypeError(f"unsupported Codex input: {type(item).__name__}")
+        require_vision_input(
+            [{"role": "user", "content": content}],
+            supports_vision_input=self.supports_vision_input, model_name=self.model_name,
+        )
         if max_input_chars is not None and (
             isinstance(max_input_chars, bool)
             or not isinstance(max_input_chars, int)
@@ -226,11 +250,11 @@ class CodexAgentModel:
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
+        image_urls: Sequence[str] = (),
     ) -> _ResultModel:
         del context_checkpoint
-        rendered_prompt = self._validated_prompt(
-            prompt,
-            initial_messages=initial_messages,
+        rendered_prompt, run_input, content = self._prepare_input(
+            prompt, initial_messages=initial_messages, image_urls=image_urls,
             max_input_chars=max_input_chars,
         )
         output_schema = strict_output_schema(result_type.model_json_schema())
@@ -238,11 +262,12 @@ class CodexAgentModel:
             rendered_prompt,
             tools=tools,
             output_schema=output_schema,
+            content=content,
         )
         self._validate_call_limit(max_model_calls)
         timeout = self._effective_timeout(request_timeout_seconds)
         return self._run_structured_invocation(
-            rendered_prompt, tools=tools, result_type=result_type,
+            run_input, tools=tools, result_type=result_type,
             output_schema=output_schema, max_model_calls=max_model_calls,
             timeout=timeout, check_control=check_control,
         )
@@ -336,14 +361,16 @@ class CodexAgentModel:
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
+        image_urls: Sequence[str] = (),
+        native_thread_id: str | None = None,
+        on_session_ready: Callable[[SessionLike], None] | None = None,
     ) -> None:
         del context_checkpoint
-        rendered_prompt = self._validated_prompt(
-            prompt,
-            initial_messages=initial_messages,
-            max_input_chars=max_input_chars,
+        rendered_prompt, run_input, content = self._prepare_input(
+            prompt, initial_messages=initial_messages, image_urls=image_urls,
+            max_input_chars=max_input_chars, render_history=on_session_ready is None,
         )
-        self._preflight_context(rendered_prompt, tools=tools)
+        self._preflight_context(rendered_prompt, tools=tools, content=content)
         self._validate_call_limit(max_model_calls)
         timeout = self._effective_timeout(request_timeout_seconds)
         if check_control is not None:
@@ -362,15 +389,21 @@ class CodexAgentModel:
             # Required-tool repair can reject an entire turn's answer. Keep
             # that path final-only so rejected prose never reaches the host.
             handle_text=None if require_tool_call else accept_text,
+            **({"native_thread_id": native_thread_id, "persistent": True} if on_session_ready is not None else {}),
         )
         latest_turn: object | None = None
 
         def execute() -> object:
             nonlocal latest_turn
             try:
+                if on_session_ready is not None:
+                    session.open()
+                    on_session_ready(session)
+                    if check_control is not None:
+                        check_control()
                 turn_count = 1
                 turn_text_count = visible_count
-                turn = session.run_turn(rendered_prompt)
+                turn = session.run_turn(run_input)
                 latest_turn = turn
                 if require_tool_call and session.tool_call_count == 0:
                     if max_model_calls is not None and turn_count >= max_model_calls:
@@ -442,6 +475,8 @@ class CodexAgentModel:
         max_model_calls: int | None,
         check_control: Callable[[], None] | None,
         handle_text: Callable[[str], None] | None = None,
+        native_thread_id: str | None = None,
+        persistent: bool = False,
     ) -> SessionLike:
         session = self._session_factory(
             model=self.model_name,
@@ -455,6 +490,7 @@ class CodexAgentModel:
             max_model_calls=max_model_calls,
             check_control=check_control,
             **({"handle_text": handle_text} if handle_text is not None else {}),
+            **({"native_thread_id": native_thread_id, "persistent": True} if persistent else {}),
         )
         with self._lock:
             if self._closed:
@@ -581,6 +617,50 @@ class CodexAgentModel:
         # first terminates app-server and makes the waiting turn fail promptly.
         session.close()
         future.cancel()
+
+    def _prepare_input(
+        self,
+        prompt: str,
+        *,
+        initial_messages: Sequence[dict[str, Any]] | None,
+        image_urls: Sequence[str],
+        max_input_chars: int | None,
+        render_history: bool = True,
+    ) -> tuple[str, RunInput, list[dict[str, Any]] | None]:
+        messages = prepare_input_messages(prompt, initial_messages=initial_messages, image_urls=image_urls)
+        require_vision_input(messages, supports_vision_input=self.supports_vision_input, model_name=self.model_name)
+        image_groups = []
+        for index, message in enumerate(messages):
+            if isinstance(message.get("content"), list):
+                texts, urls = [], []
+                for block in message["content"]:
+                    if block["type"] in {"text", "input_text", "output_text"}:
+                        texts.append(block["text"])
+                    elif block["type"] in {"image_url", "input_image"}:
+                        image = block["image_url"]
+                        urls.append(image["url"] if isinstance(image, dict) else image)
+                    else:
+                        raise ValueError(f"Unsupported Codex input block: {block['type']}")
+                message["content"] = "\n".join(texts)
+                if urls:
+                    message["imageCount"] = len(urls)
+                    image_groups.append((index + 1, urls))
+        rendered = self._validated_prompt(
+            prompt, initial_messages=messages if initial_messages is not None and render_history else None,
+            max_input_chars=max_input_chars,
+        )
+        if not image_groups:
+            return rendered, rendered, None
+        sdk_inputs = [CodexTextInput(rendered)]
+        content = [{"type": "input_text", "text": rendered}]
+        for index, urls in image_groups:
+            marker = f"Attached images for conversation message {index}:"
+            sdk_inputs.append(CodexTextInput(marker))
+            content.append({"type": "input_text", "text": marker})
+            for url in urls:
+                sdk_inputs.append(CodexImageInput(url))
+                content.append({"type": "input_image", "image_url": url})
+        return rendered, sdk_inputs, content
 
     def _validated_prompt(
         self,

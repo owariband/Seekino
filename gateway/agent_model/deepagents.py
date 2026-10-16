@@ -38,12 +38,12 @@ from gateway.ark.agent import (
     new_ark_client,
     request_ark_function_turn,
 )
-from gateway.media import ToolImageArtifact, text_only_messages
+from gateway.media import ToolImageArtifact, prepare_input_messages, require_vision_input
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.usage import capture_model_usage
 
 from .context import ContextWindowPolicy, measure_context
-from .contracts import AgentLoopModel
+from .contracts import AgentLoopModel, SupervisorSessionContext
 from .errors import (
     AgentModelTimeoutError,
     ArkFunctionCallingError,
@@ -112,6 +112,7 @@ class _GatewayChatModel(BaseChatModel):
 
     model_name: str
     _adapter: Any = PrivateAttr(default=None)
+    _supports_vision_input: bool = PrivateAttr(default=False)
     _delegate: BaseChatModel | None = PrivateAttr(default=None)
     _stack: ExitStack = PrivateAttr()
     _check: Callable[[], None] = PrivateAttr()
@@ -164,6 +165,7 @@ class _GatewayChatModel(BaseChatModel):
             raise ModelFailureError("Supervisor exhausted max_model_calls", reason=ModelFailureReason.LOOP_LIMIT)
         self._model_calls += 1
         if self._delegate is not None:
+            require_vision_input(payload, supports_vision_input=self._supports_vision_input, model_name=self.model_name)
             result = self._delegate._generate(
                 messages, stop=stop, run_manager=run_manager, **{**kwargs, "timeout": timeout},
             )
@@ -176,15 +178,17 @@ class _GatewayChatModel(BaseChatModel):
             if isinstance(adapter, OpenAIAgentModel):
                 if fallback:
                     provider = adapter._fallback_adapter
+                    require_vision_input(payload, supports_vision_input=provider.supports_vision_input, model_name=provider.model_name)
                     if self._fallback_client is None:
                         self._fallback_client = provider.acquire_client(self._stack)
                     return provider.request_turn(
                         self._fallback_client, tools=tools,
-                        messages=(payload if provider.supports_vision_input else text_only_messages(payload)),
+                        messages=payload,
                         tool_specs=specs or None, tool_choice="auto" if specs else None, timeout=request_timeout,
                         seen_tool_call_ids=self._seen_tool_ids,
                         require_visible_text_on_stop=False,
                     )
+                require_vision_input(payload, supports_vision_input=adapter.supports_vision_input, model_name=adapter.model_name)
                 if self._client is None:
                     self._client = adapter._client
                     if self._client is None:
@@ -195,7 +199,7 @@ class _GatewayChatModel(BaseChatModel):
                         self._stack.callback(self._client.close)
                 return adapter._request_turn(
                     self._client, model_name=adapter.model_name, tools=tools,
-                    messages=(payload if adapter.supports_vision_input else text_only_messages(payload)),
+                    messages=payload,
                     tool_specs=specs or None, tool_choice="auto" if specs else None,
                     timeout=min(request_timeout, adapter._request_timeout_seconds),
                     seen_tool_call_ids=self._seen_tool_ids,
@@ -211,11 +215,15 @@ class _GatewayChatModel(BaseChatModel):
                         )
                         self._stack.callback(self._client.close)
                 vision = adapter._fallback_supports_vision_input if fallback else adapter.supports_vision_input
+                require_vision_input(
+                    payload, supports_vision_input=vision,
+                    model_name=adapter.fallback_model_name if fallback else adapter.model_name,
+                )
                 return request_ark_function_turn(
                     self._client,
                     model_name=adapter.fallback_model_name if fallback else adapter.model_name,
                     max_output_tokens=(adapter._fallback_max_output_tokens if fallback else adapter.max_output_tokens),
-                    tools=tools, messages=payload if vision else text_only_messages(payload),
+                    tools=tools, messages=payload,
                     tool_specs=specs or None, tool_choice="auto" if specs else None,
                     timeout=min(request_timeout, adapter._fallback_request_timeout_seconds if fallback else adapter._request_timeout_seconds),
                     seen_tool_call_ids=self._seen_tool_ids,
@@ -352,7 +360,10 @@ class DeepAgentsSupervisorModel:
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
+        image_urls: Sequence[str] = (),
+        session_context: SupervisorSessionContext | None = None,
     ) -> None:
+        del session_context
         if not prompt.strip() or not thread_id or not message_id:
             raise ValueError("prompt, thread_id and message_id are required")
         if max_model_calls is not None and (isinstance(max_model_calls, bool) or not isinstance(max_model_calls, int) or max_model_calls <= 0):
@@ -382,6 +393,7 @@ class DeepAgentsSupervisorModel:
                 raise RuntimeError("Supervisor previous turn has not been confirmed")
             model = _GatewayChatModel(model_name=f"{_HARNESS_PROVIDER}:{self.model_name}")
             model._adapter = self._agent_model
+            model._supports_vision_input = self.supports_vision_input
             model._delegate = self._chat_model
             model._stack = stack
             model._check = check
@@ -416,7 +428,7 @@ class DeepAgentsSupervisorModel:
                 checkpointer=self.session_store.checkpointer, name="anivag_supervisor",
             )
             state = graph.get_state(config)
-            messages: list[BaseMessage] = []
+            inputs: list[dict[str, Any]] = []
             if not state.values:
                 seen: set[str] = set()
                 for index, item in enumerate(history):
@@ -424,12 +436,17 @@ class DeepAgentsSupervisorModel:
                     status = str(item.get("status", "COMPLETED")).upper()
                     content = item.get("content")
                     identity = str(item.get("messageId") or item.get("id") or f"history:{index}")
-                    if role not in {"user", "assistant"} or status != "COMPLETED" or not isinstance(content, str) or identity in seen:
+                    if role not in {"user", "assistant"} or status != "COMPLETED" or not isinstance(content, (str, list)) or identity in seen:
                         continue
                     seen.add(identity)
-                    message_type = HumanMessage if role == "user" else AIMessage
-                    messages.append(message_type(content=content, id=identity))
-            messages.append(HumanMessage(content=user_message, id=f"{message_id}:user"))
+                    inputs.append({"role": role, "content": content, "id": identity,
+                                   "imageUrls": item.get("imageUrls", ()) if role == "user" else ()})
+            inputs.append({"role": "user", "content": user_message, "id": f"{message_id}:user"})
+            inputs = prepare_input_messages(user_message, initial_messages=inputs, image_urls=image_urls)
+            require_vision_input(inputs, supports_vision_input=self.supports_vision_input, model_name=self.model_name)
+            messages = [(HumanMessage if item["role"] == "user" else AIMessage)(
+                content=item["content"], id=item["id"],
+            ) for item in inputs]
             self.session_store.pending[thread_id] = _PendingTurn(message_id, graph)
             try:
                 # Async durability preserves outer checkpoints without forcing sync

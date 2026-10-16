@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 
 _SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -61,21 +62,53 @@ class ToolImageArtifact:
         return content
 
 
-def text_only_messages(messages: list[dict]) -> list[dict]:
-    """Drop actual image blocks when a fallback cannot consume images."""
-    projected = deepcopy(messages)
-    for message in projected:
-        content = message.get("content")
-        if isinstance(content, list):
-            texts = [item.get("text", "") for item in content
-                     if isinstance(item, dict) and item.get("type") in {"text", "input_text"}]
-            had_images = any(isinstance(item, dict) and item.get("type") in {
-                "image_url", "input_image",
-            } for item in content)
-            if had_images:
-                texts.append("Images are unavailable to this model; answer from the supplied text evidence and state visual uncertainty.")
-            message["content"] = "\n".join(texts)
-    return projected
+def image_message_content(
+    text: str | list[dict[str, Any]], image_urls: Sequence[str] = (),
+) -> str | list[dict[str, Any]]:
+    if not image_urls:
+        return text
+    content = deepcopy(text) if isinstance(text, list) else [{"type": "text", "text": text}]
+    return [*content, *[
+        {"type": "image_url", "image_url": {"url": url}} for url in image_urls
+    ]]
+
+
+def prepare_input_messages(
+    prompt: str,
+    *,
+    initial_messages: Sequence[dict[str, Any]] | None = None,
+    image_urls: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Copy caller messages and attach historical and current images as content."""
+    messages = (
+        deepcopy(list(initial_messages))
+        if initial_messages is not None else [{"role": "user", "content": prompt}]
+    )
+    if not messages:
+        raise ValueError("initial_messages must not be empty when provided")
+    for message in messages:
+        urls = message.pop("imageUrls", ())
+        if urls:
+            message["content"] = image_message_content(message.get("content", ""), urls)
+    if image_urls:
+        if messages[-1].get("role") != "user":
+            messages.append({"role": "user", "content": prompt})
+        messages[-1]["content"] = image_message_content(messages[-1].get("content", ""), image_urls)
+    return messages
+
+
+def require_vision_input(
+    messages: Sequence[dict[str, Any]], *, supports_vision_input: bool, model_name: str,
+) -> None:
+    """Reject actual image input explicitly instead of silently projecting it to text."""
+    if supports_vision_input:
+        return
+    if any(
+        isinstance(block, dict) and block.get("type") in {"image_url", "input_image", "image"}
+        for message in messages
+        for block in (message.get("content") if isinstance(message.get("content"), list) else ())
+    ):
+        raise ValueError(f"Model {model_name!r} does not support image input (supports_vision_input=False)")
 
 
 def encode_media_file(

@@ -23,7 +23,7 @@ from gateway.agent_model.tool_loop import (
     _validated_agent_turn,
 )
 from gateway.usage import ModelCallTracker, track_model_call
-from gateway.media import text_only_messages
+from gateway.media import require_vision_input
 
 from .profiles import OpenAIProfile, ReasoningEffort, completion_options
 
@@ -105,6 +105,7 @@ class OpenAIAgentModel:
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
+        image_urls: Sequence[str] = (),
     ) -> None:
         effective_timeout = (
             self._request_timeout_seconds
@@ -138,10 +139,14 @@ class OpenAIAgentModel:
                 timeout = min(timeout, self._request_timeout_seconds)
                 if fallback_active:
                     assert self._fallback_adapter is not None
+                    require_vision_input(
+                        messages, supports_vision_input=getattr(self._fallback_adapter, "supports_vision_input", False),
+                        model_name=self._fallback_adapter.model_name,
+                    )
                     return self._fallback_adapter.request_turn(
                         fallback_client,
                         tools=tools,
-                        messages=(messages if getattr(self._fallback_adapter, "supports_vision_input", False) else text_only_messages(messages)),
+                        messages=messages,
                         tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=timeout,
@@ -153,11 +158,12 @@ class OpenAIAgentModel:
                     monotonic() if self._fallback_adapter is not None else None
                 )
                 try:
+                    require_vision_input(messages, supports_vision_input=self.supports_vision_input, model_name=self.model_name)
                     return self._request_turn(
                         client,
                         model_name=self.model_name,
                         tools=tools,
-                        messages=(messages if self.supports_vision_input else text_only_messages(messages)),
+                        messages=messages,
                         tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=timeout,
@@ -184,10 +190,14 @@ class OpenAIAgentModel:
                         error=exc,
                     )
                     fallback_active = True
+                    require_vision_input(
+                        messages, supports_vision_input=getattr(self._fallback_adapter, "supports_vision_input", False),
+                        model_name=self._fallback_adapter.model_name,
+                    )
                     return self._fallback_adapter.request_turn(
                         fallback_client,
                         tools=tools,
-                        messages=(messages if getattr(self._fallback_adapter, "supports_vision_input", False) else text_only_messages(messages)),
+                        messages=messages,
                         tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=fallback_timeout,
@@ -208,7 +218,9 @@ class OpenAIAgentModel:
                 context_window_policy=self.context_window_policy,
                 context_checkpoint=context_checkpoint,
                 initial_messages=initial_messages,
+                image_urls=image_urls,
                 supports_vision_input=self.supports_vision_input,
+                model_name=self.model_name,
                 provider_label="Agent",
                 error_type=OpenAIFunctionCallingError,
                 request_turn=request_turn,

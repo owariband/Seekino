@@ -47,12 +47,12 @@ def _model(script, *, store=None, policy=None, vision=False, total_timeout_enabl
     )
 
 
-def _run(model, *, thread="conversation", message="answer", history=(), tools=(), check=None, limit=10, prompt="Answer from approved course evidence."):
+def _run(model, *, thread="conversation", message="answer", history=(), tools=(), check=None, limit=10, prompt="Answer from approved course evidence.", image_urls=()):
     chunks = []
     model.run_agent(
         prompt, thread_id=thread, message_id=message,
         user_message=f"Question for {message}", history=history, tools=tools,
-        max_model_calls=limit, handle_text=chunks.append, check_control=check,
+        max_model_calls=limit, handle_text=chunks.append, check_control=check, image_urls=image_urls,
     )
     return chunks
 
@@ -126,6 +126,41 @@ def test_warm_thread_keeps_tool_state_and_only_adds_current_user():
     assert texts[-1] == "Question for a2"
     assert "Scope: second course; playback at 50 seconds." in texts[0]
     assert "Scope: first course" not in texts[0]
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_supervisor_rejects_actual_images_when_vision_is_disabled(historical):
+    script = ScriptedModel(responses=[AIMessage(content="Must not run")])
+    model = _model(script)
+    image = "data:image/png;base64,AAAA"
+    history = [{"role": "USER", "content": [{"type": "text", "text": "Earlier"},
+                                               {"type": "image_url", "image_url": {"url": image}}]}] if historical else []
+    with pytest.raises(ValueError, match="fake.*does not support image input"):
+        _run(model, history=history, image_urls=[] if historical else [image])
+    assert script._calls == []
+
+
+def test_current_and_cold_user_history_images_survive_warm_turn_without_duplicates():
+    earlier = "data:image/png;base64," + "A" * 200_000
+    first, second = "data:image/png;base64,BBBB", "data:image/png;base64,CCCC"
+    script = ScriptedModel(responses=[AIMessage(content="First answer"), AIMessage(content="Second answer")])
+    model = _model(script, vision=True)
+    history = [
+        {"messageId": "old", "role": "USER", "content": "Earlier image", "imageUrls": [earlier]},
+        {"messageId": "old", "role": "USER", "content": "Duplicate", "imageUrls": [second]},
+        {"role": "ASSISTANT", "content": "Earlier answer", "imageUrls": [second]},
+        {"role": "USER", "content": "Failed", "status": "FAILED", "imageUrls": [second]},
+    ]
+    assert _run(model, message="first", history=history, image_urls=[first]) == ["First answer"]
+    cold = script._calls[0]["messages"]
+    assert next(message for message in cold if isinstance(message, AIMessage)).content == "Earlier answer"
+    model.confirm_turn("conversation", "first", "Approved first answer")
+    assert _run(model, message="second", history=history, image_urls=[second]) == ["Second answer"]
+    images = [block["image_url"]["url"] for message in script._calls[1]["messages"]
+              if isinstance(message, HumanMessage) and isinstance(message.content, list)
+              for block in message.content if block.get("type") == "image_url"]
+    assert images == [earlier, first, second]
+    assert script._calls[1]["messages"][-1].text == "Question for second"
 
 
 def test_confirmation_keeps_tool_prose_once_and_only_adds_the_final_suffix_to_warm_history():
@@ -471,29 +506,43 @@ def test_invalid_provider_tool_arguments_return_receipt_and_allow_sdk_correction
     assert "Invalid arguments" in receipt["content"]
 
 
-def test_api_fallback_preserves_ark_controls_and_is_sticky_for_turn(monkeypatch):
+@pytest.mark.parametrize("fallback_vision", [False, True])
+def test_api_fallback_preserves_ark_controls_and_is_sticky_for_turn(monkeypatch, fallback_vision):
     primary = FakeClient([_completion(finish="length")])
     fallback = FakeClient([
         _completion(content="", calls=[("search-1", "search", {"query": "q"})], finish="tool_calls"),
         _completion(content="Fallback answer"),
     ])
-    ark = ArkFunctionCallingFallback("fallback-model", max_output_tokens=77, request_timeout_seconds=9, client=fallback)
+    ark = ArkFunctionCallingFallback("fallback-model", max_output_tokens=77, request_timeout_seconds=9,
+                                     client=fallback, supports_vision_input=fallback_vision)
     adapter = OpenAIAgentModel(
         "primary-model", base_url="https://unused.invalid", api_key="test", max_output_tokens=88,
         request_timeout_seconds=20, client=primary, fallback_adapter=ark,
+        supports_vision_input=True,
     )
     monkeypatch.setattr(adapter, "run_agent_loop", lambda *_args, **_kwargs: pytest.fail("old loop called"))
     tool = StructuredTool.from_function(lambda query: "fact", name="search", description="Search evidence.")
     model = DeepAgentsSupervisorModel(
         session_store=DeepAgentSessionStore(), model=adapter.model_name, provider_name=adapter.provider_name,
         request_timeout_seconds=30, max_input_chars=120_000, context_window_policy=None, agent_model=adapter,
+        supports_vision_input=True,
     )
     usage = []
+    image = "data:image/png;base64,AAAA"
+    if not fallback_vision:
+        with pytest.raises(ValueError, match="fallback-model.*does not support image input"):
+            _run(model, tools=[tool], image_urls=[image])
+        assert len(primary.calls) == 1 and fallback.calls == []
+        return
     with capture_model_usage(usage.append):
-        assert _run(model, tools=[tool]) == ["Fallback answer"]
+        assert _run(model, tools=[tool], image_urls=[image]) == ["Fallback answer"]
     assert len(primary.calls) == 1
     assert len(fallback.calls) == 2
     assert all(request["max_completion_tokens"] == 77 and request["timeout"] <= 9 for request in fallback.calls)
+    assert primary.calls[0]["messages"][-1]["content"][-1]["image_url"]["url"] == image
+    for request in fallback.calls:
+        content = next(message["content"] for message in request["messages"] if message["role"] == "user")
+        assert content[-1]["image_url"]["url"] == image
     assert [item.provider for item in usage] == ["openai", "ark", "ark"]
     assert [item.status for item in usage] == ["failed", "completed", "completed"]
 

@@ -90,6 +90,7 @@ class AgentModelFactory:
         fallback_model: str | None = None,
         environ: Mapping[str, str] | None = None,
         binding: ModelBinding | None = None,
+        codex_executor: ThreadPoolExecutor | None = None,
     ) -> None:
         self._config = config
         if binding is not None and binding.source != config.source:
@@ -134,8 +135,9 @@ class AgentModelFactory:
                 self._fallback,
                 environment,
             )
+        self._owns_codex_executor = codex_executor is None
         self._codex_executor = (
-            ThreadPoolExecutor(
+            codex_executor or ThreadPoolExecutor(
                 max_workers=self._primary.max_concurrency,
                 thread_name_prefix="anivag-codex",
             )
@@ -167,7 +169,7 @@ class AgentModelFactory:
             executor = self._codex_executor
             self._codex_executor = None
         try:
-            if executor is not None:
+            if executor is not None and self._owns_codex_executor:
                 executor.shutdown(wait=False, cancel_futures=True)
         finally:
             self._supervisor_sessions.close()
@@ -299,7 +301,9 @@ class AgentModelFactory:
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
         )
-        return self._bound(self._build_structured(model=model, reasoning_effort=reasoning_effort, **controls), controls)
+        adapter = self._build_structured(model=model, reasoning_effort=reasoning_effort, **controls)
+        adapter.supports_vision_input = self._config.supports_vision_input
+        return self._bound(adapter, controls)
 
     def _build_structured(
         self, *, model, reasoning_effort, request_timeout_seconds, max_output_tokens,
@@ -484,6 +488,7 @@ class AgentModelFactory:
                 request_timeout_seconds
             ),
             api_key=self._required_key(self._config.fallback.source),
+            supports_vision_input=self._config.fallback.supports_vision_input,
         )
 
     def _fallback_max_output_tokens(self, primary: int) -> int:

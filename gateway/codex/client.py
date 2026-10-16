@@ -4,18 +4,24 @@ import logging
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from contextvars import copy_context
-from queue import Queue
+from math import isfinite
+from queue import Empty, Queue
 from threading import Lock, Thread as WorkerThread
 from typing import Any, Protocol
+from uuid import uuid4
 
 from langchain_core.tools import BaseTool
 from openai_codex import ApprovalMode, CodexConfig, RunInput, Sandbox, Thread, TurnResult
 from openai_codex.client import CodexClient
+from openai_codex.errors import CodexError
 from openai_codex.generated.v2_all import (
-    AgentMessageThreadItem, ErrorNotification, ItemCompletedNotification,
+    AgentMessageThreadItem, ErrorNotification, ItemCompletedNotification, ThreadResumeResponse,
     ReasoningEffort as CodexReasoningEffort,
 )
 from openai_codex.models import Notification
+from pydantic import BaseModel
+
+from gateway.media import prepare_input_messages
 
 from .protocol import CodexToolBridge, dynamic_tool_specs
 
@@ -60,6 +66,17 @@ class CodexClientLike(Protocol):
 
     def thread_start(self, params: dict[str, Any]) -> object: ...
 
+    def thread_resume(self, thread_id: str, params: dict[str, Any] | None = None) -> object: ...
+
+    def request(
+        self, method: str, params: dict[str, Any], *, response_model: type[BaseModel],
+    ) -> BaseModel: ...
+
+    def request_history(
+        self, method: str, params: dict[str, Any], *,
+        response_model: type[BaseModel], timeout_seconds: float,
+    ) -> BaseModel: ...
+
     def close(self) -> None: ...
 
 
@@ -71,6 +88,10 @@ ClientFactory = Callable[
 
 class CodexModelCallLimitError(RuntimeError):
     """Continuing a Codex session would exceed its model-call budget."""
+
+
+class _EmptyResponse(BaseModel):
+    """Accept an RPC acknowledgement whose payload is not consumed."""
 
 
 class CodexModelCallBudget:
@@ -129,6 +150,31 @@ class _ObservedCodexClient(CodexClient):
             self.notification_handler(notification)
         return notification
 
+    def request_history(
+        self, method: str, params: dict[str, Any], *,
+        response_model: type[BaseModel], timeout_seconds: float,
+    ) -> BaseModel:
+        # SDK 0.156.1 request() waits indefinitely and exposes no timeout.
+        # Reuse its router/transport only for optional history delivery.
+        if method not in {"thread/inject_items", "thread/revert", "thread/resume"}:
+            raise ValueError("Only history maintenance supports a bounded response wait")
+        request_id = str(uuid4())
+        waiter = self._router.create_response_waiter(request_id)
+        try:
+            self._write_message({"id": request_id, "method": method, "params": params})
+            try:
+                result = waiter.get(timeout=timeout_seconds)
+            except Empty as exc:
+                raise TimeoutError(f"Codex history request timed out: {method}") from exc
+        finally:
+            # SDK ignores late responses once their waiter is removed.
+            self._router.discard_response_waiter(request_id)
+        if isinstance(result, BaseException):
+            raise result
+        if not isinstance(result, dict):
+            raise CodexError(f"{method} response must be a JSON object")
+        return response_model.model_validate(result)
+
 
 def _default_client_factory(
     config: CodexConfig,
@@ -154,7 +200,7 @@ def _thread_id(response: object) -> str:
 
 
 class CodexSession:
-    """Own one app-server process and one ephemeral Codex thread."""
+    """Own one app-server process and an ephemeral or resumed Codex thread."""
 
     def __init__(
         self,
@@ -169,10 +215,19 @@ class CodexSession:
         max_model_calls: int | None = None,
         client_factory: ClientFactory = _default_client_factory,
         handle_text: Callable[[str], None] | None = None,
+        native_thread_id: str | None = None,
+        persistent: bool = False,
+        history_request_timeout_seconds: float = 2.0,
     ) -> None:
+        if not isfinite(history_request_timeout_seconds) or history_request_timeout_seconds <= 0:
+            raise ValueError("history_request_timeout_seconds must be finite and positive")
         self._model = model
         self._reasoning_effort = reasoning_effort
         self._cwd = cwd
+        self._persistent = persistent
+        self._history_request_timeout_seconds = history_request_timeout_seconds
+        self._native_thread_id = native_thread_id
+        self._native_last_turn_id: str | None = None
         self._tool_specs = dynamic_tool_specs(tools)
         self._model_call_budget = CodexModelCallBudget(max_model_calls)
         self._tool_bridge = CodexToolBridge(
@@ -211,6 +266,14 @@ class CodexSession:
     def successful_tool_call_count(self) -> int:
         return self._tool_bridge.successful_tool_call_count
 
+    @property
+    def native_thread_id(self) -> str | None:
+        return self._native_thread_id
+
+    @property
+    def native_last_turn_id(self) -> str | None:
+        return self._native_last_turn_id
+
     def __enter__(self) -> CodexSession:
         self.open()
         return self
@@ -240,24 +303,96 @@ class CodexSession:
         try:
             client.start()
             client.initialize()
-            started = client.thread_start({
-                "approvalPolicy": "never",
-                "baseInstructions": _BASE_INSTRUCTIONS,
-                "cwd": self._cwd,
-                "developerInstructions": _BASE_INSTRUCTIONS,
-                "dynamicTools": self._tool_specs,
-                "ephemeral": True,
-                "model": self._model,
-                "sandbox": "read-only",
-            })
-            thread = Thread(client, _thread_id(started))  # type: ignore[arg-type]
-            with self._lock:
-                if self._closed:
-                    raise RuntimeError("Codex session was closed while starting")
-                self._thread = thread
+            if self._persistent and self._native_thread_id is not None:
+                started = client.thread_resume(self._native_thread_id, self._thread_options())
+            else:
+                started = client.thread_start({
+                    **self._thread_options(),
+                    "dynamicTools": self._tool_specs,
+                    "ephemeral": not self._persistent,
+                })
+            self._load_thread(client, started)
         except BaseException:
             self.close()
             raise
+
+    def _thread_options(self) -> dict[str, Any]:
+        return {
+            "approvalPolicy": "never",
+            "baseInstructions": _BASE_INSTRUCTIONS,
+            "cwd": self._cwd,
+            "developerInstructions": _BASE_INSTRUCTIONS,
+            "model": self._model,
+            "sandbox": "read-only",
+        }
+
+    def _load_thread(self, client: CodexClientLike, response: object) -> None:
+        thread_id = _thread_id(response)
+        native_thread = response.get("thread") if isinstance(response, dict) else getattr(response, "thread", None)
+        turns = native_thread.get("turns", []) if isinstance(native_thread, dict) else getattr(native_thread, "turns", [])
+        last_turn = turns[-1] if turns else None
+        last_id = last_turn.get("id") if isinstance(last_turn, dict) else getattr(last_turn, "id", None)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Codex session was closed while starting")
+            self._thread = Thread(client, thread_id)  # type: ignore[arg-type]
+            self._native_thread_id = thread_id
+            self._native_last_turn_id = last_id
+
+    def inject_messages(self, messages: Sequence[dict[str, Any]]) -> None:
+        """Append committed host messages without replaying a model turn."""
+        if not messages:
+            return
+        items = []
+        for message in prepare_input_messages("", initial_messages=messages):
+            role = str(message["role"]).lower()
+            if role not in {"user", "assistant"}:
+                raise ValueError("Codex history injection accepts only user and assistant messages")
+            blocks = message["content"]
+            if isinstance(blocks, str):
+                blocks = [{"type": "text", "text": blocks}]
+            content = []
+            for block in blocks:
+                if block["type"] in {"text", "input_text", "output_text"}:
+                    content.append({"type": "input_text" if role == "user" else "output_text", "text": block["text"]})
+                elif role == "user" and block["type"] in {"image_url", "input_image"}:
+                    image = block["image_url"]
+                    content.append({"type": "input_image", "image_url": image["url"] if isinstance(image, dict) else image})
+                else:
+                    raise ValueError(f"Unsupported Codex history block: {block['type']}")
+            item = {"type": "message", "role": role, "content": content}
+            if message.get("messageId"):
+                item["id"] = message["messageId"]
+            items.append(item)
+        self.open()
+        with self._lock:
+            if self._closed or self._client is None or self._thread is None or self._active_turn is not None:
+                raise RuntimeError("Codex session is unavailable for history injection")
+            client = self._client
+            thread_id = self._thread.id
+        # The pinned SDK exposes request(), but does not generate inject_items.
+        client.request_history("thread/inject_items", {
+            "threadId": thread_id, "items": items,
+        }, response_model=_EmptyResponse, timeout_seconds=self._history_request_timeout_seconds)
+
+    def rollback_last_turn(self) -> None:
+        """Discard an uncommitted native turn, then reload the same thread."""
+        self.open()
+        with self._lock:
+            if self._closed or self._client is None or self._thread is None or self._active_turn is not None:
+                raise RuntimeError("Codex session is unavailable for turn rollback")
+            client = self._client
+            thread_id, turn_id = self._thread.id, self._native_last_turn_id
+        if turn_id is None:
+            return
+        # CLI 0.156.1 calls this revert; beforeTurnId excludes that turn.
+        client.request_history("thread/revert", {
+            "threadId": thread_id, "beforeTurnId": turn_id,
+        }, response_model=_EmptyResponse, timeout_seconds=self._history_request_timeout_seconds)
+        resumed = client.request_history("thread/resume", {
+            **self._thread_options(), "threadId": thread_id,
+        }, response_model=ThreadResumeResponse, timeout_seconds=self._history_request_timeout_seconds)
+        self._load_thread(client, resumed)
 
     def _handle_request(
         self, method: str, params: dict[str, Any] | None,
@@ -368,6 +503,7 @@ class CodexSession:
                 if self._closed:
                     raise RuntimeError("Codex session closed while starting a turn")
                 self._active_turn = turn
+                self._native_last_turn_id = getattr(turn, "id", self._native_last_turn_id)
             self.raise_if_failed()
             result = turn.run()
             self.raise_if_failed()
