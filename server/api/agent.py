@@ -12,6 +12,8 @@ from fastapi import Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from agent.chat.video_search.output import video_range_sources
+
 from ..config.sse import SSEConfig
 from ..model.dto.agentDTO import (
     AgentConversationCreateRequest,
@@ -33,6 +35,7 @@ from ..model.vo.agentVO import (
     AgentGlobalSettingsView,
     AgentMessageOptionsView,
     AgentAnswerStartedView,
+    AgentAnswerSnapshotView,
     AgentAnswerEvidenceView,
     AgentAnswerBlockView,
     AgentAnswerDeltaView,
@@ -504,6 +507,17 @@ def _agent_render_blocks(
         hit.candidate.video_chunk_id: hit
         for hit in result.hits
     } if result is not None else {}
+    evidence_by_id = {
+        identifier: {"startSeconds": hit.evidence.start_seconds,
+                     "endSeconds": hit.evidence.end_seconds}
+        for identifier, hit in hits_by_id.items()
+    }
+    for hit in state.search_result.get("hits") or []:
+        if not isinstance(hit, dict) or not isinstance(hit.get("candidate"), dict):
+            continue
+        identifier = hit["candidate"].get("videoChunkId")
+        if isinstance(identifier, str) and identifier in hits_by_id and isinstance(hit.get("evidence"), dict):
+            evidence_by_id[identifier] = hit["evidence"]
     blocks = []
     seen_video_ids: set[str] = set()
     for raw in raw_blocks:
@@ -531,13 +545,12 @@ def _agent_render_blocks(
                 evidence = hits_by_id[video_chunk_id].evidence
                 start_seconds = raw.get("startSeconds")
                 end_seconds = raw.get("endSeconds")
-                if not (
-                    isinstance(start_seconds, int)
-                    and not isinstance(start_seconds, bool)
-                    and isinstance(end_seconds, int)
-                    and not isinstance(end_seconds, bool)
-                    and evidence.start_seconds <= start_seconds < end_seconds <= evidence.end_seconds
-                ):
+                try:
+                    video_range_sources(
+                        evidence_by_id, video_chunk_id, start_seconds, end_seconds,
+                        source_video_chunk_ids=raw.get("sourceVideoChunkIds"),
+                    )
+                except ValueError:
                     _logger.warning(
                         "event=agent_invalid_video_render_block conversation_id=%s message_id=%s "
                         "video_chunk_id=%s proposed_start_seconds=%r proposed_end_seconds=%r "
@@ -579,6 +592,7 @@ def _agent_search_evidence_view(
 
 _ANSWER_EVENT_MODELS = {
     "answer.started": AgentAnswerStartedView,
+    "answer.snapshot": AgentAnswerSnapshotView,
     "answer.evidence": AgentAnswerEvidenceView,
     "answer.block": AgentAnswerBlockView,
     "answer.delta": AgentAnswerDeltaView,

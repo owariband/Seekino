@@ -137,7 +137,7 @@ def domain_result(repository, prepared_import):
     return VideoChunkSearchResult(query="action", series_ids=[evidence.series_id], searched_video_ids=[evidence.video_id, str(uuid4())], agent_reply=AgentReply(message="结果", result_count=1), hits=[hit])
 
 
-def test_search_view_preserves_actual_scope_rank_and_reports_unknown_frames(repository, prepared_import, tmp_path):
+def test_search_view_preserves_actual_scope_rank_and_media_diagnostics(repository, prepared_import, tmp_path):
     raw = domain_result(repository, prepared_import)
     service, _client, _source, _frame, _state, _probe = media_fixture(tmp_path)
     view = search_result_view(raw, service, tenant_id=prepared_import.tenant_id)
@@ -154,13 +154,44 @@ def test_search_view_preserves_actual_scope_rank_and_reports_unknown_frames(repo
     assert evidence["thumbnail"] is None and evidence["keyframes"] == []
     assert "originalSourceUri" not in evidence and "keyframeUris" not in evidence
     assert "retrievalText" not in evidence and "contentHash" not in evidence
-    assert payload["partial"] and payload["warnings"]
+    assert payload["partial"] is False
+    assert payload["warnings"]
+    assert not any("已登记关键帧" in warning for warning in payload["warnings"])
     old = raw.model_copy(update={"searched_video_ids": None})
     old_view = search_result_view(old, service, tenant_id=prepared_import.tenant_id)
     assert old_view.searched_video_ids == []
+    assert old_view.partial is True
     assert "原始记录缺少检索视频范围" in old_view.warnings
     with pytest.raises(SeriesNotFoundError):
         search_result_view(raw, service, tenant_id="foreign")
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_search_view_supports_video_preview_without_registered_frames(
+    repository, prepared_import, tmp_path, partial,
+):
+    raw = domain_result(repository, prepared_import)
+    service, _client, _source, _frame, state, _probe = media_fixture(tmp_path)
+    hit = raw.hits[0]
+    evidence = hit.evidence.model_copy(update={
+        "original_source_uri": state.original_source_uri,
+        "keyframe_uris": [],
+    })
+    raw = raw.model_copy(update={
+        "hits": [hit.model_copy(update={"evidence": evidence})],
+        "partial": partial,
+        "warnings": ["部分视频尚不可检索"] if partial else [],
+    })
+
+    view = search_result_view(raw, service, tenant_id=prepared_import.tenant_id)
+
+    assert view.hits[0].evidence.playback_status == "READY"
+    assert view.hits[0].evidence.playback_url
+    assert view.hits[0].evidence.thumbnail is None
+    assert view.hits[0].evidence.keyframes == []
+    assert view.partial is partial
+    assert view.warnings == raw.warnings
+    assert view.hits[0].selection_reason.limitations == []
 
 
 def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(

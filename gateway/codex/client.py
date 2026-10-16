@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future
 from contextvars import copy_context
-from threading import Lock
+from queue import Queue
+from threading import Lock, Thread as WorkerThread
 from typing import Any, Protocol
 
 from langchain_core.tools import BaseTool
 from openai_codex import ApprovalMode, CodexConfig, RunInput, Sandbox, Thread, TurnResult
 from openai_codex.client import CodexClient
-from openai_codex.generated.v2_all import ReasoningEffort as CodexReasoningEffort
+from openai_codex.generated.v2_all import (
+    AgentMessageThreadItem, ErrorNotification, ItemCompletedNotification,
+    ReasoningEffort as CodexReasoningEffort,
+)
+from openai_codex.models import Notification
 
 from .protocol import CodexToolBridge, dynamic_tool_specs
+
+
+_logger = logging.getLogger(__name__)
 
 
 _BASE_INSTRUCTIONS = """\
@@ -38,6 +48,7 @@ _DISABLED_FEATURE_OVERRIDES = (
     "features.skill_search=false",
     "features.sleep_tool=false",
     "features.unified_exec=false",
+    "features.unbounded_connection_retries=false",
     "features.view_image=false",
 )
 
@@ -107,11 +118,23 @@ def codex_reasoning_effort(value: str) -> CodexReasoningEffort:
         raise ValueError(f"unsupported Codex reasoning effort: {value!r}") from exc
 
 
+class _ObservedCodexClient(CodexClient):
+    # SDK 0.156.1 has no public notification callback. Observe on its sole
+    # reader before routing, so notifications and tool requests share an order.
+    notification_handler: Callable[[Notification], None] | None = None
+
+    def _coerce_notification(self, method: str, params: object) -> Notification:
+        notification = super()._coerce_notification(method, params)
+        if self.notification_handler is not None:
+            self.notification_handler(notification)
+        return notification
+
+
 def _default_client_factory(
     config: CodexConfig,
     request_handler: Callable[[str, dict[str, Any] | None], dict[str, Any]],
 ) -> CodexClientLike:
-    return CodexClient(config=config, approval_handler=request_handler)
+    return _ObservedCodexClient(config=config, approval_handler=request_handler)
 
 
 def _thread_id(response: object) -> str:
@@ -145,6 +168,7 @@ class CodexSession:
         check_control: Callable[[], None] | None,
         max_model_calls: int | None = None,
         client_factory: ClientFactory = _default_client_factory,
+        handle_text: Callable[[str], None] | None = None,
     ) -> None:
         self._model = model
         self._reasoning_effort = reasoning_effort
@@ -168,8 +192,16 @@ class CodexSession:
         self._client: CodexClientLike | None = None
         self._thread: Thread | None = None
         self._active_turn: object | None = None
+        self.last_turn: TurnResult | None = None
         self._closed = False
         self._lock = Lock()
+        self._handle_text = handle_text
+        self._callbacks: Queue[tuple[Future, Callable, tuple] | None] = Queue()
+        self._pending_callbacks: set[Future] = set()
+        self._callback_error: BaseException | None = None
+        self._turn_errors: dict[str, RuntimeError] = {}
+        self._dispatcher: WorkerThread | None = None
+        self._visible_messages: set[tuple[str, str]] = set()
 
     @property
     def tool_call_count(self) -> int:
@@ -197,6 +229,14 @@ class CodexSession:
                 self._handle_request,
             )
             self._client = client
+            client.notification_handler = self._handle_notification  # type: ignore[attr-defined]
+            if self._handle_text is not None:
+                # Start before turn/start: the reader can receive tools before
+                # its response. Never borrow the model's bounded executor here.
+                self._dispatcher = WorkerThread(
+                    target=self._run_callbacks, name="anivag-codex-events", daemon=True,
+                )
+                self._dispatcher.start()
         try:
             client.start()
             client.initialize()
@@ -222,8 +262,83 @@ class CodexSession:
     def _handle_request(
         self, method: str, params: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        if self._handle_text is not None:
+            return self._dispatch(self._tool_bridge.handle, method, params).result()
         # SDK reader threads do not inherit the host's execution scope.
         return self._tool_context.copy().run(self._tool_bridge.handle, method, params)
+
+    def _handle_notification(self, event: Notification) -> None:
+        payload = event.payload
+        if isinstance(payload, ErrorNotification):
+            info = payload.error.codex_error_info
+            details = info.model_dump(mode="json", by_alias=True) if info is not None else None
+            http_status = None
+            if isinstance(details, dict):
+                for detail in details.values():
+                    if isinstance(detail, dict):
+                        http_status = detail.get("httpStatusCode")
+            fatal = not payload.will_retry or http_status in (401, 403)
+            with self._lock:
+                if self._closed or self._thread is None or payload.thread_id != self._thread.id:
+                    return
+                if fatal:
+                    self._turn_errors.setdefault(payload.turn_id, RuntimeError(payload.error.message))
+            _logger.warning(
+                "codex_turn_error thread_id=%s turn_id=%s will_retry=%s http_status=%s fatal=%s",
+                payload.thread_id, payload.turn_id, payload.will_retry, http_status, fatal,
+            )
+            return
+        if self._handle_text is None or not isinstance(payload, ItemCompletedNotification):
+            return
+        item = payload.item.root
+        key = (payload.turn_id, item.id)
+        if (
+            isinstance(item, AgentMessageThreadItem) and item.text.strip()
+            and key not in self._visible_messages
+        ):
+            self._visible_messages.add(key)
+            self._dispatch(self._handle_text, item.text)
+
+    def raise_if_failed(self) -> None:
+        # Notifications can precede the turn/start response. Match only after
+        # its ID is known, so an early error is retained and an old turn ignored.
+        with self._lock:
+            error = self._turn_errors.get(getattr(self._active_turn, "id", None))
+        if error is not None:
+            raise error
+
+    def _dispatch(self, callback: Callable, *args: Any) -> Future:
+        future: Future = Future()
+        with self._lock:
+            if self._callback_error is not None:
+                raise self._callback_error
+            if self._closed:
+                raise RuntimeError("Codex session is closed")
+            self._pending_callbacks.add(future)
+            self._callbacks.put_nowait((future, callback, args))
+        return future
+
+    def _run_callbacks(self) -> None:
+        while (work := self._callbacks.get()) is not None:
+            future, callback, args = work
+            if future.done():
+                continue
+            try:
+                result = self._tool_context.copy().run(callback, *args)
+            except BaseException as exc:
+                with self._lock:
+                    self._callback_error = exc
+                    if not future.done():
+                        future.set_exception(exc)
+                self.close()
+                return
+            else:
+                with self._lock:
+                    if not future.done():
+                        future.set_result(result)
+            finally:
+                with self._lock:
+                    self._pending_callbacks.discard(future)
 
     def run_turn(
         self,
@@ -239,20 +354,31 @@ class CodexSession:
             if self._closed or self._thread is None:
                 raise RuntimeError("Codex session is unavailable")
             thread = self._thread
-        turn = thread.turn(
-            prompt,
-            approval_mode=ApprovalMode.deny_all,
-            effort=codex_reasoning_effort(self._reasoning_effort),
-            model=self._model,
-            output_schema=output_schema,
-            sandbox=Sandbox.read_only,
-        )
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("Codex session closed while starting a turn")
-            self._active_turn = turn
+        turn = None
         try:
-            return turn.run()
+            turn = thread.turn(
+                prompt,
+                approval_mode=ApprovalMode.deny_all,
+                effort=codex_reasoning_effort(self._reasoning_effort),
+                model=self._model,
+                output_schema=output_schema,
+                sandbox=Sandbox.read_only,
+            )
+            with self._lock:
+                if self._closed:
+                    raise RuntimeError("Codex session closed while starting a turn")
+                self._active_turn = turn
+            self.raise_if_failed()
+            result = turn.run()
+            self.raise_if_failed()
+            self.last_turn = result
+            if self._handle_text is not None:
+                self._dispatch(lambda: None).result()
+            return result
+        except BaseException:
+            if self._callback_error is not None:
+                raise self._callback_error
+            raise
         finally:
             with self._lock:
                 if self._active_turn is turn:
@@ -276,6 +402,12 @@ class CodexSession:
             client = self._client
             self._client = None
             self._thread = None
+            for future in self._pending_callbacks:
+                if not future.done():
+                    future.set_exception(RuntimeError("Codex session is closed"))
+            self._pending_callbacks.clear()
+            if self._dispatcher is not None:
+                self._callbacks.put_nowait(None)
         if client is not None:
             try:
                 client.close()

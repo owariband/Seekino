@@ -26,7 +26,7 @@ from agent.chat.video_search.errors import (
     VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
 )
 from tests.agent.chat.test_realtime_understanding import _context, _evidence, _host
-from tests.agent.chat.test_runtime import Chat, Evaluator, Query, Retrieval, _runtime as _video_runtime
+from tests.agent.chat.test_runtime import Chat, Evaluator, Query, Retrieval, _hit, _runtime as _video_runtime
 from tests.gateway.test_deepagents import FakeClient, ScriptedModel, _completion
 
 
@@ -76,11 +76,13 @@ class FakeSupervisorModel:
     model_name = "supervisor-test"
     provider_name = "fake"
 
-    def __init__(self, *, calls=(), queries=None, arguments=None, answer="Direct answer."):
+    def __init__(self, *, calls=(), queries=None, arguments=None, answer="Direct answer.",
+                 text_before_calls=None):
         self.calls = calls
         self.queries = queries
         self.arguments = arguments
         self.answer = answer
+        self.text_before_calls = text_before_calls or {}
         self.tool_results = []
         self.prompts = []
         self.model_call_limits = []
@@ -106,6 +108,8 @@ class FakeSupervisorModel:
             "submit_video_item", "remove_video_item",
         }
         for index, name in enumerate(self.calls):
+            if index in self.text_before_calls:
+                handle_text(self.text_before_calls[index])
             query = self.queries[index] if self.queries is not None else "question"
             arguments = self.arguments[index] if self.arguments is not None else {"query": query}
             self.tool_results.append(json.loads(available[name].invoke(arguments)))
@@ -272,9 +276,88 @@ def test_supervisor_can_expand_or_narrow_the_child_range_inside_canonical_eviden
     assert "error" not in model.tool_results[1]
     assert result.content == model.answer
     assert result.video_result.agent_reply.result_count == 1
-    assert [block.type for block in result.video_result.render_blocks] == ["markdown", "video"]
-    block = result.video_result.render_blocks[1]
+    assert [block.type for block in result.video_result.render_blocks] == ["video", "markdown"]
+    block = result.video_result.render_blocks[0]
     assert (block.video_chunk_id, block.start_seconds, block.end_seconds) == ("chunk-1", start, end)
+
+
+@pytest.mark.parametrize("anchor", ["chunk-1", "chunk-2"])
+@pytest.mark.parametrize("revision", [None, "narrow", "remove"])
+def test_supervisor_submits_continuous_adjacent_chunks_and_keeps_original_sources(anchor, revision):
+    left, right = _hit("chunk-1"), _hit("chunk-2")
+    right.evidence.video_id = left.evidence.video_id
+    right.evidence.sequence_no = 1
+    right.evidence.start_seconds, right.evidence.end_seconds = 20, 30
+    calls = ["search_video_graph", "submit_video_item"]
+    arguments = [
+        {"query": "find the cup"},
+        {"video_chunk_id": anchor, "start_seconds": 12, "end_seconds": 28,
+         "claim": "The same dialogue continues across the boundary."},
+    ]
+    if revision == "narrow":
+        calls.append("submit_video_item")
+        start, end = (12, 18) if anchor == "chunk-1" else (22, 28)
+        arguments.append({"video_chunk_id": anchor, "start_seconds": start,
+                          "end_seconds": end, "claim": "Revised selection."})
+    elif revision == "remove":
+        calls.append("remove_video_item")
+        arguments.append({"video_chunk_id": anchor})
+    model = FakeSupervisorModel(calls=tuple(calls), arguments=tuple(arguments))
+    video = FakeVideoRuntime(retrieval=Retrieval([left, right]))
+    result = _runtime(model, video=video).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    ).video_result
+
+    assert all("error" not in receipt for receipt in model.tool_results)
+    assert model.tool_results[1]["source_video_chunk_ids"] == ["chunk-1", "chunk-2"]
+    blocks = [block for block in result.render_blocks if block.type == "video"]
+    if revision == "remove":
+        assert blocks == [] and result.hits == []
+        return
+    assert len(blocks) == 1
+    block = blocks[0]
+    assert block.video_chunk_id == anchor
+    if revision == "narrow":
+        assert (block.start_seconds, block.end_seconds) == (start, end)
+        assert "sourceVideoChunkIds" not in block.model_dump(by_alias=True)
+        assert [hit.evidence.video_chunk_id for hit in result.hits] == [anchor]
+    else:
+        assert (block.start_seconds, block.end_seconds) == (12, 28)
+        assert block.source_video_chunk_ids == ["chunk-1", "chunk-2"]
+        assert {hit.evidence.video_chunk_id: (hit.evidence.start_seconds, hit.evidence.end_seconds)
+                for hit in result.hits} == {"chunk-1": (10, 20), "chunk-2": (20, 30)}
+        restored = type(result).model_validate(result.model_dump(mode="json", by_alias=True))
+        assert restored.render_blocks[0].source_video_chunk_ids == ["chunk-1", "chunk-2"]
+    assert video.last_result.render_blocks[1].start_seconds == 11
+    assert video.last_result.render_blocks[1].end_seconds == 19
+
+
+@pytest.mark.parametrize("invalid", ["other-video", "gap", "non-adjacent"])
+def test_supervisor_rejects_unsupported_cross_chunk_range_without_losing_valid_item(invalid):
+    left, right = _hit("chunk-1"), _hit("chunk-2")
+    right.evidence.video_id = left.evidence.video_id
+    right.evidence.sequence_no = 1
+    right.evidence.start_seconds, right.evidence.end_seconds = 20, 30
+    if invalid == "other-video":
+        right.evidence.video_id = "other-video"
+    elif invalid == "gap":
+        right.evidence.start_seconds = 21
+    else:
+        right.evidence.sequence_no = 2
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18, "claim": "Valid."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 28, "claim": "Invalid."},
+        ),
+    )
+    result = _runtime(model, video=FakeVideoRuntime(retrieval=Retrieval([left, right]))).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    ).video_result
+    assert model.tool_results[2]["error"]["code"] == "INVALID_VIDEO_RANGE"
+    assert (result.render_blocks[0].start_seconds, result.render_blocks[0].end_seconds) == (12, 18)
+    assert len(result.hits) == 1
 
 
 @pytest.mark.parametrize("remove_second", [False, True])
@@ -300,6 +383,132 @@ def test_supervisor_updates_submitted_ids_in_place_and_can_remove_them(remove_se
             for block in result.video_result.render_blocks if block.type == "video"] == (
         [("chunk-1", 12, 18)] if remove_second else [("chunk-1", 12, 18), ("chunk-2", 10, 20)]
     )
+
+
+def test_supervisor_streams_text_and_video_at_their_actual_submission_positions():
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19,
+             "claim": "First scene."},
+            {"video_chunk_id": "chunk-2", "start_seconds": 12, "end_seconds": 18,
+             "claim": "Second scene."},
+        ),
+        text_before_calls={1: "Opening explanation.", 2: "Between the scenes."},
+        answer="Closing explanation.",
+    )
+    events = []
+    result = _runtime(model).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=events.append,
+    )
+
+    blocks = result.video_result.render_blocks
+    assert [block.type for block in blocks] == ["markdown", "video", "markdown", "video", "markdown"]
+    assert [block.markdown for block in blocks if block.type == "markdown"] == [
+        "Opening explanation.", "Between the scenes.", "Closing explanation.",
+    ]
+    assert result.content == "Opening explanation.\n\nBetween the scenes.\n\nClosing explanation."
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    assert [[block["type"] for block in event["searchResult"]["renderBlocks"]]
+            for event in snapshots[:5]] == [
+        ["markdown"], ["markdown", "video"], ["markdown", "video", "markdown"],
+        ["markdown", "video", "markdown", "video"],
+        ["markdown", "video", "markdown", "video", "markdown"],
+    ]
+    assert snapshots[1]["content"] == "Opening explanation."
+    assert snapshots[-1]["searchResult"] == result.video_result.model_dump(mode="json", by_alias=True)
+    assert not {"answer.block", "answer.delta", "answer.evidence"} & {event["type"] for event in events}
+    assert "Grounded answer." not in "\n".join(event["content"] for event in snapshots)
+    assert "在需要插入视频卡的位置调用 submit_video_item" in model.prompts[0]
+
+
+def test_supervisor_live_card_revisions_and_removals_keep_the_text_positions():
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item", "submit_video_item",
+               "submit_video_item", "remove_video_item", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "First."},
+            {"video_chunk_id": "chunk-2", "start_seconds": 10, "end_seconds": 20, "claim": "Second."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18, "claim": "Revised."},
+            {"video_chunk_id": "chunk-1"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 13, "end_seconds": 17, "claim": "Reinserted."},
+        ),
+        text_before_calls={2: "Between two cards."}, answer="End.",
+    )
+    events = []
+    result = _runtime(model).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=events.append,
+    )
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    # A card may precede the first text, without any invented placeholder.
+    assert snapshots[0]["content"] == ""
+    assert [block["type"] for block in snapshots[0]["searchResult"]["renderBlocks"]] == ["video"]
+    revised = next(event for event in snapshots if any(
+        block.get("startSeconds") == 12 for block in event["searchResult"]["renderBlocks"]
+    ))
+    assert [block["type"] for block in revised["searchResult"]["renderBlocks"]] == ["video", "markdown", "video"]
+    removed = next(event for event in snapshots if [hit["candidate"]["videoChunkId"]
+                   for hit in event["searchResult"]["hits"]] == ["chunk-2"])
+    assert [block["type"] for block in removed["searchResult"]["renderBlocks"]] == ["markdown", "video"]
+    assert [block.type for block in result.video_result.render_blocks] == ["markdown", "video", "video", "markdown"]
+    assert [block.video_chunk_id for block in result.video_result.render_blocks if block.type == "video"] == ["chunk-2", "chunk-1"]
+    assert result.content == "Between two cards.\n\nEnd."
+    assert snapshots[-1]["searchResult"] == result.video_result.model_dump(mode="json", by_alias=True)
+
+
+def test_supervisor_merges_adjacent_text_messages_without_reprinting_the_answer():
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "get_context_canvas"),
+        arguments=({"query": "find the cup"}, {"collection": "retrieval"}),
+        text_before_calls={0: "First paragraph.", 1: "Second paragraph."}, answer="Final paragraph.",
+    )
+    result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    assert len(result.video_result.render_blocks) == 1
+    assert result.content == "First paragraph.\n\nSecond paragraph.\n\nFinal paragraph."
+    assert result.video_result.render_blocks[0].markdown == result.content
+
+
+def test_supervisor_rejects_oversize_text_before_publishing_or_replacing_the_valid_prefix():
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Scene."},
+        ),
+        text_before_calls={1: "A" * 10_001}, answer="B" * 10_000,
+    )
+    events = []
+    with pytest.raises(AgentModelInvocationError):
+        _runtime(model).kick(
+            _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=events.append,
+        )
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots[-1]["content"] == "A" * 10_001
+    assert [block["type"] for block in snapshots[-1]["searchResult"]["renderBlocks"]] == ["markdown", "video"]
+    assert all("B" not in event["content"] for event in snapshots)
+
+
+def test_supervisor_sanitizes_streamed_web_links_and_appends_sources_after_cards():
+    model = FakeSupervisorModel(
+        calls=("search_web", "search_video_graph", "submit_video_item"),
+        arguments=(
+            {"query": "context"}, {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Scene."},
+        ),
+        text_before_calls={2: "[Source](https://example.org/source) and [unknown](https://unknown.invalid)."},
+        answer="End.",
+    )
+    events = []
+    result = _runtime(model).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=events.append,
+    )
+    assert all("https://unknown.invalid" not in event["content"]
+               for event in events if event["type"] == "answer.snapshot")
+    assert [block.type for block in result.video_result.render_blocks] == ["markdown", "video", "markdown", "markdown"]
+    assert result.video_result.render_blocks[-1].markdown.startswith("网页来源：")
+    assert result.content.count("End.") == 1
 
 
 @pytest.mark.parametrize("arguments,code", [
@@ -990,8 +1199,8 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
             "Current-video explanation from the verified evidence."
         )
         assert first.video_result.hits[0].evidence.video_chunk_id == "chunk-1"
-        assert first.video_result.render_blocks[1].start_seconds == 12
-        assert first.video_result.render_blocks[1].end_seconds == 18
+        assert first.video_result.render_blocks[0].start_seconds == 12
+        assert first.video_result.render_blocks[0].end_seconds == 18
         host.prepare_context.assert_not_awaited()
 
     config = {"configurable": {"thread_id": inputs["conversation_id"]}}

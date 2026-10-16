@@ -720,7 +720,7 @@ interface AgentAnswerEventBase {
 
 export type AgentAnswerEvent =
   | (AgentAnswerEventBase & AgentMessageSendView & {
-      type: "answer.started" | "answer.completed";
+      type: "answer.started" | "answer.snapshot" | "answer.completed";
     })
   | (AgentAnswerEventBase & {
       type: "answer.evidence";

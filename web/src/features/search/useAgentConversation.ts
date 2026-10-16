@@ -19,7 +19,6 @@ import type {
   AgentMessageTiming,
   AgentMessageRunOptions,
   AgentMessageView,
-  AgentRenderBlock,
   EvidenceReference,
 } from "../../api/contracts";
 
@@ -109,6 +108,7 @@ function richerTiming(
 function mergeMessages(
   current: AgentMessageView[], incoming: AgentMessageView[], conversationId: string,
   streamedMessageId: string | null = null,
+  replaceProcessing = false,
 ): AgentMessageView[] {
   const messages = new Map(current.map((message) => [message.messageId, message]));
   for (const next of incoming) {
@@ -118,12 +118,15 @@ function mergeMessages(
     if (previous && previous.status !== "PROCESSING") {
       if (next.status === "PROCESSING") continue;
     }
-    messages.set(next.messageId, previous?.status === "PROCESSING" && next.status === "PROCESSING"
+    messages.set(next.messageId, !replaceProcessing && previous?.status === "PROCESSING" && next.status === "PROCESSING"
       ? {
           ...next,
+          version: next.messageId === streamedMessageId ? previous.version : next.version,
           phase: next.messageId === streamedMessageId ? previous.phase : next.phase,
           content: next.messageId === streamedMessageId ? previous.content : next.content ?? previous.content,
-          searchResult: previous.searchResult ?? next.searchResult,
+          searchResult: next.messageId === streamedMessageId
+            ? previous.searchResult ?? next.searchResult
+            : next.searchResult ?? previous.searchResult,
           timing: richerTiming(previous.timing, next.timing),
           renderBlocks: next.messageId === streamedMessageId
             ? previous.renderBlocks
@@ -282,32 +285,30 @@ export function useAgentConversation(requestedId: string | null = null) {
     active.recoveryMessageId = null;
     setState((current) => ({ ...current, sending: true, cancellingMessageId: null, error: null }));
     let messageId: string | null = null;
-    let deltaBuffer = "";
-    let blockBuffer: AgentRenderBlock[] = [];
     const idempotencyKey = crypto.randomUUID();
     let sequence = -1;
     const onEvent = (event: AgentAnswerEvent) => {
       if (activeRef.current !== active || active.sendController !== sendController || event.conversationId !== conversationId) return;
       if (!Number.isInteger(event.sequence) || event.sequence <= 0 || event.sequence <= sequence) return;
+      if (event.type === "answer.started" || event.type === "answer.snapshot" || event.type === "answer.completed" || event.type === "answer.failed") {
+        if (event.assistantMessage.messageId !== event.messageId || event.assistantMessage.conversationId !== conversationId || event.userMessage.conversationId !== conversationId) return;
+        if (event.type === "answer.snapshot" && event.assistantMessage.status !== "PROCESSING") return;
+      }
       if (event.type === "answer.started") {
         if (messageId && event.messageId !== messageId) return;
-        if (event.assistantMessage.messageId !== event.messageId) return;
         messageId = event.messageId;
         active.streamedMessageId = messageId;
-        blockBuffer = [...(event.assistantMessage.renderBlocks ?? [])];
       } else if (event.messageId !== messageId) return;
       sequence = event.sequence;
-      if (event.type === "answer.delta") deltaBuffer += event.delta;
-      if (event.type === "answer.block") blockBuffer = [...blockBuffer, event.block];
       if (event.type === "answer.interrupted") active.recoveryMessageId = event.messageId;
       setState((current) => {
         if (current.conversationId !== conversationId) return current;
-        if (event.type === "answer.started" || event.type === "answer.completed") {
+        if (event.type === "answer.started" || event.type === "answer.snapshot" || event.type === "answer.completed") {
           const phase = event.assistantMessage.phase;
           const progress = event.type === "answer.started" && phase && !current.progress[event.messageId]
             ? { ...current.progress, [event.messageId]: [{ type: "answer.progress" as const, conversationId, messageId: event.messageId, sequence: event.sequence, occurredAt: event.occurredAt, phase, timing: event.assistantMessage.timing }] }
             : current.progress;
-          return { ...current, progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId) };
+          return { ...current, progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId, null, event.type === "answer.snapshot") };
         }
         if (event.type === "answer.failed") {
           const messages = mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId);
@@ -321,8 +322,8 @@ export function useAgentConversation(requestedId: string | null = null) {
           : current.progress;
         return { ...current, progress, messages: current.messages.map((message) => {
           if (message.messageId !== event.messageId || message.status !== "PROCESSING") return message;
-          if (event.type === "answer.delta") return { ...message, content: deltaBuffer };
-          if (event.type === "answer.block") return { ...message, renderBlocks: blockBuffer };
+          if (event.type === "answer.delta") return { ...message, content: (message.content ?? "") + event.delta };
+          if (event.type === "answer.block") return { ...message, renderBlocks: [...message.renderBlocks, event.block] };
           if (event.type === "answer.evidence") return { ...message, searchResult: event.searchResult };
           if (event.type === "answer.progress") return {
             ...message,

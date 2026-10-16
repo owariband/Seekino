@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -192,6 +193,68 @@ def test_run_structured_uses_json_schema_and_reports_usage() -> None:
     assert usages[0].usage.reasoning_tokens == 1
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_diagnostics_preserve_sdk_error_without_prompt(
+    tmp_path, monkeypatch, enabled, structured,
+) -> None:
+    trace_root = tmp_path / "trace"
+    if enabled:
+        monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(trace_root))
+    else:
+        monkeypatch.delenv("ANIVAG_MODEL_TRACE_DIR", raising=False)
+    sdk_error = RuntimeError("upstream turn failed")
+    sdk_error.code = "upstream_error"
+    sdk_error.status_code = 503
+    sdk_error.__cause__ = RuntimeError("provider disconnected before completion")
+    session = _FakeSession([sdk_error])
+    model = _model_for(session)
+    context = {
+        "video_parse_task_id": "video-task",
+        "interval_parse_task_id": "interval-task",
+        "stage": "refine", "lease_version": 3,
+    }
+    usages = []
+    prompt = "private full prompt must not be captured"
+    try:
+        with model_call_context(context), capture_model_usage(usages.append):
+            with pytest.raises(CodexAgentModelError) as failure:
+                if structured:
+                    model.run_structured(
+                        prompt, tools=[], result_type=Result, max_model_calls=3,
+                    )
+                else:
+                    model.run_agent_loop(
+                        prompt, tools=[], max_model_calls=3, handle_text=lambda _text: None,
+                    )
+    finally:
+        model.close()
+    assert failure.value.__cause__ is sdk_error
+    assert failure.value.reason == ModelFailureReason.INVALID_MODEL_RESPONSE
+    assert session.closed
+    assert len(usages) == 1 and usages[0].status == "failed"
+    if not enabled:
+        assert not trace_root.exists()
+        return
+    directory = trace_root / usages[0].call_id
+    saved = (directory / "events.jsonl").read_text()
+    assert prompt not in saved
+    events = [json.loads(line) for line in saved.splitlines()]
+    assert [event["event"] for event in events] == ["request", "error"]
+    assert all(event["call_id"] == usages[0].call_id for event in events)
+    assert events[0]["payload"]["context"] == context
+    assert events[0]["payload"]["request"] == {
+        "model": model.model_name, "operation": usages[0].operation,
+        "request_timeout_seconds": 2, "total_timeout_enabled": True,
+    }
+    chain = events[1]["payload"]["chain"]
+    assert [entry["message"] for entry in chain[1:]] == [
+        "upstream turn failed", "provider disconnected before completion",
+    ]
+    assert chain[1]["code"] == "upstream_error"
+    assert chain[1]["status_code"] == 503
+
+
 def test_codex_preserves_sdk_cache_write_counts_in_thread_total() -> None:
     session = _FakeSession([(_turn('{"answer":"ok"}', usage=_usage(cache_write_input_tokens=3)), 1)])
     model = _model_for(session)
@@ -222,6 +285,7 @@ def test_context_preflight_reserves_codex_base_input_before_starting_session() -
         max_output_tokens=1_024,
         max_input_chars=10_000,
         context_window_policy=_context_policy(13_000),
+        max_concurrency=1,
         session_factory=factory,
     )
     try:
@@ -260,6 +324,7 @@ def test_context_preflight_counts_dynamic_tool_contract() -> None:
         max_output_tokens=1_024,
         max_input_chars=10_000,
         context_window_policy=_context_policy(20_000),
+        max_concurrency=1,
         session_factory=factory,
     )
     try:
@@ -380,6 +445,41 @@ def test_agent_loop_repairs_a_missing_required_tool_call_once() -> None:
     assert session.prompts[1][0] == "请先调用一个可用工具，再根据工具结果完成回答。"
 
 
+@pytest.mark.parametrize("require_tool_call", [False, True])
+def test_required_tool_repair_does_not_publish_rejected_native_callbacks(require_tool_call) -> None:
+    captured, notified = {}, []
+
+    class ObservedSession(_FakeSession):
+        def run_turn(self, prompt, *, output_schema=None):
+            turn = super().run_turn(prompt, output_schema=output_schema)
+            callback = captured.get("handle_text")
+            if callback is not None:
+                notified.append(turn.final_response)
+                callback(turn.final_response)
+            return turn
+
+    session = ObservedSession([(_turn("premature"), 0), (_turn("grounded answer"), 1)])
+
+    def factory(**kwargs):
+        captured.update(kwargs)
+        return session
+
+    model = _model_for(session, session_factory=factory)
+    texts = []
+    try:
+        model.run_agent_loop(
+            "find evidence", tools=[], max_model_calls=2,
+            require_tool_call=require_tool_call, handle_text=texts.append,
+        )
+    finally:
+        model.close()
+
+    assert texts == (["grounded answer"] if require_tool_call else ["premature"])
+    assert notified == ([] if require_tool_call else ["premature"])
+    assert ("handle_text" in captured) is not require_tool_call
+    assert len(session.prompts) == (2 if require_tool_call else 1)
+
+
 def test_agent_loop_fails_when_required_tool_budget_is_exhausted() -> None:
     session = _FakeSession([(_turn("premature"), 0)])
     model = _model_for(session)
@@ -478,6 +578,61 @@ def test_agent_loop_keeps_returned_usage_when_text_callback_fails() -> None:
     assert len(records) == 1
     assert records[0].status == "failed"
     assert records[0].usage.total_tokens == 14
+
+
+@pytest.mark.parametrize("operation", ["loop", "structured", "generate"])
+def test_only_agent_loop_observes_messages_without_repeating_final_response(operation):
+    captured, texts, records = {}, [], []
+
+    class Session(_FakeSession):
+        def run_turn(self, prompt, *, output_schema=None):
+            if "handle_text" in captured:
+                captured["handle_text"]("A")
+                captured["handle_text"]("B")
+            return super().run_turn(prompt, output_schema=output_schema)
+
+    session = Session([(_turn("B" if operation == "loop" else '{"answer":"ok"}'), 0)])
+
+    def factory(**kwargs):
+        captured.update(kwargs)
+        return session
+
+    model = _model_for(session, session_factory=factory)
+    try:
+        with capture_model_usage(records.append):
+            if operation == "loop":
+                model.run_agent_loop("answer", tools=[], max_model_calls=2, handle_text=texts.append)
+            elif operation == "structured":
+                assert model.run_structured("answer", tools=[], max_model_calls=2, result_type=Result).answer == "ok"
+            else:
+                assert model.generate([TextInput("answer")], schema_name="answer", result_type=Result).answer == "ok"
+    finally:
+        model.close()
+    assert ("handle_text" in captured) == (operation == "loop")
+    assert texts == (["A", "B"] if operation == "loop" else [])
+    assert len(records) == 1 and records[0].usage.total_tokens == 14
+    assert session.closed
+
+
+def test_agent_loop_keeps_usage_when_native_callback_flush_fails():
+    error = RuntimeError("visible callback failed")
+
+    class Session(_FakeSession):
+        last_turn = _turn("B")
+
+        def run_turn(self, prompt, *, output_schema=None):
+            raise error
+
+    session = Session([])
+    model = _model_for(session)
+    records = []
+    try:
+        with capture_model_usage(records.append), pytest.raises(CodexAgentModelError) as caught:
+            model.run_agent_loop("answer", tools=[], max_model_calls=2, handle_text=lambda text: None)
+    finally:
+        model.close()
+    assert caught.value.__cause__ is error
+    assert len(records) == 1 and records[0].usage.total_tokens == 14
 
 
 def test_executor_restores_host_context_for_nested_model_calls() -> None:

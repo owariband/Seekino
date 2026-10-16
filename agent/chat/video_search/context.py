@@ -10,6 +10,8 @@ from engine.rag.contracts import (
     VideoChunkSearchResult,
 )
 
+from .output import video_range_sources
+
 if TYPE_CHECKING:
     from .state import DraftItem, RunInputs
     from .video_search_canvas import VideoSearchContextCanvas
@@ -192,7 +194,7 @@ def _project_history_message(message: dict) -> dict[str, Any]:
 
 def _project_stored_search_result(result: dict) -> dict[str, Any]:
     hits = []
-    evidence_ranges: dict[str, tuple[int, int]] = {}
+    evidence_by_id: dict[str, dict] = {}
     for hit in result.get("hits") or []:
         if not isinstance(hit, dict):
             continue
@@ -202,17 +204,8 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
         if not isinstance(candidate, dict) or not isinstance(evidence, dict):
             continue
         video_chunk_id = candidate.get("videoChunkId")
-        start_seconds = evidence.get("startSeconds")
-        end_seconds = evidence.get("endSeconds")
-        if (
-            isinstance(video_chunk_id, str)
-            and isinstance(start_seconds, int)
-            and not isinstance(start_seconds, bool)
-            and isinstance(end_seconds, int)
-            and not isinstance(end_seconds, bool)
-            and 0 <= start_seconds < end_seconds
-        ):
-            evidence_ranges[video_chunk_id] = (start_seconds, end_seconds)
+        if isinstance(video_chunk_id, str):
+            evidence_by_id[video_chunk_id] = evidence
         hits.append({
             "candidate": {
                 "videoChunkId": candidate.get("videoChunkId"),
@@ -237,7 +230,7 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
         "seriesIds": list(result.get("seriesIds") or []),
         "resultCount": reply.get("resultCount") if isinstance(reply, dict) else len(hits),
         "hits": hits,
-        "videoRanges": _project_stored_video_ranges(result, evidence_ranges),
+        "videoRanges": _project_stored_video_ranges(result, evidence_by_id),
         "partial": bool(result.get("partial", False)),
         "warnings": list(result.get("warnings") or []),
     }
@@ -245,12 +238,12 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
 
 def _project_stored_video_ranges(
     result: dict,
-    evidence_ranges: dict[str, tuple[int, int]],
-) -> list[dict[str, int | str]]:
+    evidence_by_id: dict[str, dict],
+) -> list[dict[str, Any]]:
     raw_blocks = result.get("renderBlocks")
     if not isinstance(raw_blocks, list):
         return []
-    ranges: list[dict[str, int | str]] = []
+    ranges: list[dict[str, Any]] = []
     seen: set[str] = set()
     for block in raw_blocks:
         if not isinstance(block, dict) or block.get("type") != "video":
@@ -259,25 +252,24 @@ def _project_stored_video_ranges(
         if (
             not isinstance(video_chunk_id, str)
             or video_chunk_id in seen
-            or video_chunk_id not in evidence_ranges
+            or video_chunk_id not in evidence_by_id
         ):
             continue
-        evidence_start_seconds, evidence_end_seconds = evidence_ranges[video_chunk_id]
         start_seconds = block.get("startSeconds")
         end_seconds = block.get("endSeconds")
-        if not (
-            isinstance(start_seconds, int)
-            and not isinstance(start_seconds, bool)
-            and isinstance(end_seconds, int)
-            and not isinstance(end_seconds, bool)
-            and evidence_start_seconds <= start_seconds < end_seconds <= evidence_end_seconds
-        ):
+        try:
+            sources = video_range_sources(
+                evidence_by_id, video_chunk_id, start_seconds, end_seconds,
+                source_video_chunk_ids=block.get("sourceVideoChunkIds"),
+            )
+        except ValueError:
             continue
         seen.add(video_chunk_id)
         ranges.append({
             "videoChunkId": video_chunk_id,
             "startSeconds": start_seconds,
             "endSeconds": end_seconds,
+            **({"sourceVideoChunkIds": sources} if block.get("sourceVideoChunkIds") is not None else {}),
         })
     return ranges
 
@@ -319,6 +311,11 @@ def _project_reference(
         projected["evidence"] = {
             key: evidence[key] for key in _EVIDENCE_ALIASES if key in evidence
         }
+    if include_evidence and reference.get("supportingEvidence"):
+        projected["supportingEvidence"] = [
+            {key: item[key] for key in _EVIDENCE_ALIASES if key in item}
+            for item in reference["supportingEvidence"] if isinstance(item, dict)
+        ]
     return projected
 
 

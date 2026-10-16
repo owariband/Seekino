@@ -312,7 +312,7 @@ class _HostControlMiddleware(AgentMiddleware):
     def after_model(self, state: Any, runtime: Any) -> None:
         self._check()
         message = state["messages"][-1]
-        if isinstance(message, AIMessage) and not message.tool_calls:
+        if isinstance(message, AIMessage):
             if message.text:
                 self._handle_text(message.text)
 
@@ -452,8 +452,33 @@ class DeepAgentsSupervisorModel:
             if not messages or not isinstance(messages[-1], AIMessage) or messages[-1].tool_calls:
                 self.session_store.delete_thread(thread_id)
                 raise RuntimeError("Supervisor turn has no completed assistant response")
+            turn_start = next((index for index, message in enumerate(messages)
+                               if message.id == f"{message_id}:user"), None)
+            preceding = [message for message in messages[turn_start + 1:-1]
+                         if isinstance(message, AIMessage) and message.text.strip()] if turn_start is not None else []
+            prefix = "\n\n".join(message.text.strip() for message in preceding)
+            updates = []
+            confirmed_content = content
+            if prefix:
+                if content == prefix or content.startswith(prefix + "\n\n"):
+                    confirmed_content = content[len(prefix):].removeprefix("\n\n")
+                else:
+                    # Keep native tool calls/results while replacing revised prose
+                    # with the canonical stored answer exactly once.
+                    updates = [message.model_copy(update={"content": ""}) for message in preceding]
+                    _logger.warning(
+                        "Supervisor confirmed text differs from streamed prefix "
+                        "thread_id=%s message_id=%s action=replace_turn_text",
+                        thread_id, message_id,
+                    )
+            elif turn_start is None:
+                _logger.warning(
+                    "Supervisor turn anchor missing during confirmation "
+                    "thread_id=%s message_id=%s action=confirm_final_text",
+                    thread_id, message_id,
+                )
             pending.graph.update_state(config, {"messages": [
-                AIMessage(content=content, id=messages[-1].id),
+                *updates, AIMessage(content=confirmed_content, id=messages[-1].id),
             ]}, as_node="model")
             self.session_store.pending.pop(thread_id, None)
 

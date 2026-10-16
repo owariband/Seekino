@@ -131,6 +131,10 @@ class AgentAnswerStartedView(AgentAnswerEventView, AgentMessageSendView):
     type: Literal["answer.started"] = "answer.started"
 
 
+class AgentAnswerSnapshotView(AgentAnswerEventView, AgentMessageSendView):
+    type: Literal["answer.snapshot"] = "answer.snapshot"
+
+
 class AgentAnswerProgressView(AgentAnswerEventView):
     type: Literal["answer.progress"] = "answer.progress"
     phase: AnswerPhase

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -164,6 +164,7 @@ beforeEach(() => {
   mocks.send.mockReset();
   mocks.stop.mockReset();
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
 });
 
@@ -239,7 +240,7 @@ describe("Search assistant presentation", () => {
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(mocks.send).toHaveBeenCalledWith("这段发生了什么？", [series.seriesId], null, {});
 
-    await user.click(screen.getByRole("img", { name: "片段首帧" }));
+    await user.click(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }));
     expect(onOpenVideo).toHaveBeenCalledWith({ seriesId: series.seriesId, videoId: "video-1", startSeconds: hit.evidence.startSeconds });
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
@@ -385,7 +386,7 @@ describe("Search assistant presentation", () => {
     expect(message.content).toBe(content);
   });
 
-  it("shows claims and a coverage notice in release, with original retrieval diagnostics only in PPE", async () => {
+  it("keeps PPE cards concise and shows raw evidence only in the opened detail panel", async () => {
     const hit = searchHit("chunk-1", 1, "首帧");
     hit.evidence.videoCompact = "";
     hit.evidence.windowSummary = "[540000,546800) 原始 Timeline 人物标记";
@@ -397,14 +398,24 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText("09:23–09:57：两人重逢。").tagName).toBe("STRONG");
     expect(screen.getByText("本次回答仅覆盖当前可检索的视频。")).toBeInTheDocument();
     expect(screen.queryByText(/540000|Timeline|角色甲：|已登记关键帧/)).not.toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole("img", { name: "首帧" }));
     expect(screen.queryByRole("button", { name: "原始证据" })).not.toBeInTheDocument();
     mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "debug", series: [series], isLoading: false });
     view.rerender(<SearchPage />);
-    expect(screen.getByText(hit.evidence.windowSummary)).toBeInTheDocument();
+    expect(screen.queryByText(hit.evidence.windowSummary)).not.toBeInTheDocument();
+    expect(screen.queryByText(/角色甲：/)).not.toBeInTheDocument();
     expect(screen.getByText(message.searchResult!.warnings[0]!)).toBeInTheDocument();
     expect(screen.getByText("重逢在09:23.400。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "原始证据" })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }));
     expect(screen.getByRole("button", { name: "原始证据" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "前后语境" }));
+    expect(screen.getByText(hit.evidence.windowSummary)).toBeInTheDocument();
+    const card = screen.getByLabelText("检索助手提交的视频片段");
+    expect(within(card).queryByText(hit.evidence.windowSummary)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "原始证据" }));
+    expect(screen.getByText(/角色甲：/)).toBeInTheDocument();
+    expect(within(card).queryByText(/角色甲：/)).not.toBeInTheDocument();
     mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
     view.rerender(<SearchPage />);
     expect(screen.queryByText(/540000|Timeline|角色甲：|已登记关键帧/)).not.toBeInTheDocument();
@@ -526,12 +537,12 @@ describe("Search assistant presentation", () => {
     renderPage(message);
 
     const introduction = screen.getByRole("heading", { name: "开场说明" });
-    const secondThumbnail = screen.getByRole("img", { name: "第二段首帧" });
+    const secondPreview = screen.getByRole("img", { name: /00:22–00:25 视频片段预览/ });
     const bridge = screen.getByText("两段之间的解释");
-    const firstThumbnail = screen.getByRole("img", { name: "第一段首帧" });
-    expect(introduction.compareDocumentPosition(secondThumbnail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(secondThumbnail.compareDocumentPosition(bridge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(bridge.compareDocumentPosition(firstThumbnail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const firstPreview = screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ });
+    expect(introduction.compareDocumentPosition(secondPreview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(secondPreview.compareDocumentPosition(bridge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bridge.compareDocumentPosition(firstPreview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getAllByRole("img")).toHaveLength(2);
     expect(screen.queryByText("兼容正文")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
@@ -551,7 +562,7 @@ describe("Search assistant presentation", () => {
 
     expect(screen.getByText("00:12–00:13")).toBeInTheDocument();
     expect(screen.queryByText("00:12–00:15")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("img", { name: "精确片段首帧" }));
+    await user.click(screen.getByRole("img", { name: /00:12–00:13 视频片段预览/ }));
     const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
     Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA, configurable: true });
     video.dispatchEvent(new Event("loadedmetadata"));
@@ -563,19 +574,107 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText(/已引用.*00:12–00:13/)).toBeInTheDocument();
   });
 
-  it("drops an out-of-bounds approved range instead of expanding it to the canonical chunk", async () => {
+  it("updates an opened player's range when a streamed video block is revised", async () => {
+    const hit = searchHit("chunk-1", 1, "首帧");
+    const message = {
+      ...assistantMessage("正在说明片段", [hit]), status: "PROCESSING" as const,
+      renderBlocks: [{ type: "video" as const, videoChunkId: "chunk-1", startSeconds: 12_000, endSeconds: 13_000 }],
+    };
+    const view = renderPage(message);
+    await userEvent.setup().click(screen.getByRole("img", { name: /00:12–00:13 视频片段预览/ }));
+    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "1000");
+
+    mocks.useAgentConversation.mockReturnValue({
+      ...mocks.useAgentConversation.mock.results.at(-1)!.value,
+      messages: [{ ...message, version: 2, renderBlocks: [{ type: "video", videoChunkId: "chunk-1", startSeconds: 13_250, endSeconds: 14_500 }] }],
+    });
+    view.rerender(<SearchPage />);
+    const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
+    Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA, configurable: true });
+    fireEvent.loadedMetadata(video);
+
+    expect(video.currentTime).toBe(13.25);
+    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "1250");
+    expect(within(screen.getByLabelText("片段详情")).getByText("片段范围 00:13–00:14")).toBeInTheDocument();
+  });
+
+  it("closes a withdrawn video's detail even when its source hit supports another merged block", async () => {
+    const hits = [searchHit("chunk-1", 1, "第一段首帧"), searchHit("chunk-2", 2, "第二段首帧")];
+    Object.assign(hits[1]!.evidence, { startSeconds: 15_000, endSeconds: 18_000 });
+    const message = { ...assistantMessage("正在说明片段", hits), status: "PROCESSING" as const };
+    const view = renderPage(message);
+    await userEvent.setup().click(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }));
+    expect(screen.getByLabelText("片段详情")).toBeInTheDocument();
+
+    mocks.useAgentConversation.mockReturnValue({
+      ...mocks.useAgentConversation.mock.results.at(-1)!.value,
+      messages: [{ ...message, version: 2, renderBlocks: [{ type: "video", videoChunkId: "chunk-2", startSeconds: 12_000, endSeconds: 18_000 }] }],
+    });
+    view.rerender(<SearchPage />);
+
+    expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /00:12–00:18 视频片段预览/ })).toBeInTheDocument();
+    expect(screen.getByText("1 段")).toBeInTheDocument();
+  });
+
+  it("renders two source chunks as one final clip with the full playback and reference range", async () => {
+    const left = searchHit("chunk-1", 7, "连续片段首帧");
+    const right = searchHit("chunk-2", 8, "相邻来源首帧");
+    Object.assign(left.evidence, { startSeconds: 540_000, endSeconds: 600_000, durationSeconds: 1_440_000 });
+    Object.assign(right.evidence, { startSeconds: 600_000, endSeconds: 660_000, durationSeconds: 1_440_000 });
+    const message = {
+      ...assistantMessage("连续对话", [left, right]),
+      renderBlocks: [
+        { type: "video" as const, videoChunkId: "chunk-1", startSeconds: 564_500, endSeconds: 656_100 },
+      ],
+    };
+    renderPage(message);
+    const user = userEvent.setup();
+
+    expect(screen.getAllByLabelText("检索助手提交的视频片段")).toHaveLength(1);
+    expect(screen.getByText("1 段")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("检索助手提交的视频片段")).getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("09:24–10:56")).toBeInTheDocument();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    await user.click(screen.getByRole("img", { name: /09:24–10:56 视频片段预览/ }));
+    const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
+    Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA, configurable: true });
+    fireEvent.loadedMetadata(video);
+
+    expect(video.currentTime).toBe(564.5);
+    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "91600");
+    video.currentTime = 660;
+    fireEvent.timeUpdate(video);
+    expect(video.currentTime).toBe(656.1);
+    await user.click(screen.getByRole("button", { name: "引用此片段追问" }));
+    expect(screen.getByText(/已引用.*09:24–10:56/)).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续解释这段");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(mocks.send).toHaveBeenCalledWith("继续解释这段", [], { messageId: message.messageId, videoChunkId: "chunk-1" }, {});
+  });
+
+  it.each([
+    { label: "a negative start", startSeconds: -1, endSeconds: 13_000 },
+    { label: "an end beyond the source video", startSeconds: 12_000, endSeconds: 60_001 },
+    { label: "an empty range", startSeconds: 12_000, endSeconds: 12_000 },
+    { label: "a reversed range", startSeconds: 13_000, endSeconds: 12_000 },
+    { label: "a fractional start", startSeconds: 12_000.5, endSeconds: 13_000 },
+    { label: "a fractional end", startSeconds: 12_000, endSeconds: 13_000.5 },
+    { label: "a non-finite end", startSeconds: 12_000, endSeconds: Infinity },
+  ])("drops a final clip with $label", async ({ startSeconds, endSeconds }) => {
     const hit = searchHit("chunk-1", 1, "越界片段首帧");
     const message = {
       ...assistantMessage("越界片段", [hit]),
       renderBlocks: [
         { type: "markdown" as const, markdown: "越界片段" },
-        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startSeconds: 11_000, endSeconds: 13_000 },
+        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startSeconds, endSeconds },
       ],
     };
     renderPage(message);
 
     expect(await screen.findByText("越界片段")).toBeInTheDocument();
-    expect(screen.queryByRole("img", { name: "越界片段首帧" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /视频片段预览/ })).not.toBeInTheDocument();
     expect(screen.queryByText("00:12–00:15")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
   });
@@ -590,11 +689,11 @@ describe("Search assistant presentation", () => {
     renderPage(legacyMessage as AgentMessageView);
 
     expect(screen.getByText("旧消息只有正文")).toBeInTheDocument();
-    expect(screen.queryByRole("img", { name: "旧消息首帧" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /视频片段预览/ })).not.toBeInTheDocument();
     expect(screen.queryByText("00:12–00:15")).not.toBeInTheDocument();
   });
 
-  it("shows only thumbnail images until selection and keeps exactly one selected video mounted", async () => {
+  it("shows paused previews until selection and keeps exactly one selected player mounted", async () => {
     const hits = [searchHit("chunk-1", 1, "第一段首帧"), searchHit("chunk-2", 2, "第二段首帧")];
     renderPage(assistantMessage("找到两个候选片段。", hits));
     const user = userEvent.setup();
@@ -602,14 +701,14 @@ describe("Search assistant presentation", () => {
     expect(screen.getByRole("heading", { name: "视频片段" })).toBeInTheDocument();
     expect(screen.getAllByRole("img")).toHaveLength(2);
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "第一段首帧" })).toHaveAttribute("loading", "lazy");
+    expect(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }).querySelector("video")).not.toHaveAttribute("autoplay");
 
-    await user.click(screen.getByRole("img", { name: "第一段首帧" }));
+    await user.click(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }));
     const firstVideo = screen.getByLabelText<HTMLVideoElement>("视频证据");
     expect(screen.getAllByLabelText("视频证据")).toHaveLength(1);
     expect(firstVideo).toHaveAttribute("preload", "metadata");
 
-    await user.click(screen.getByRole("img", { name: "第二段首帧" }));
+    await user.click(screen.getByRole("img", { name: /00:22–00:25 视频片段预览/ }));
     const secondVideo = screen.getByLabelText<HTMLVideoElement>("视频证据");
     expect(screen.getAllByLabelText("视频证据")).toHaveLength(1);
     expect(secondVideo).not.toBe(firstVideo);
@@ -619,17 +718,66 @@ describe("Search assistant presentation", () => {
     expect(screen.getAllByRole("img")).toHaveLength(2);
   });
 
-  it("keeps a playable card understandable when a historical chunk has no thumbnail", async () => {
-    const hit = searchHit("chunk-without-thumbnail", 1, "不会显示的首帧");
-    hit.evidence.thumbnail = null;
-    renderPage(assistantMessage("找到一个可播放片段。", [hit]));
+  it.each([true, false])("previews the final selected start time with a registered thumbnail: %s", async (hasThumbnail) => {
+    const hit = searchHit("chunk-1", 1, "不会显示的首帧");
+    if (!hasThumbnail) hit.evidence.thumbnail = null;
+    const message = assistantMessage("找到一个可播放片段。", [hit]);
+    message.renderBlocks = [{ type: "video", videoChunkId: hit.evidence.videoChunkId, startSeconds: 13_250, endSeconds: 14_500 }];
+    renderPage(message);
     const user = userEvent.setup();
 
-    expect(screen.getByRole("img", { name: "播放所选片段" })).toHaveTextContent("播放片段");
+    const preview = screen.getByRole("img", { name: /00:13–00:14 视频片段预览/ });
+    const frame = preview.querySelector("video")!;
+    expect(frame).toHaveAttribute("src", hit.evidence.playbackUrl);
+    expect(frame).not.toHaveAttribute("poster");
+    expect(screen.queryByRole("img", { name: "不会显示的首帧" })).not.toBeInTheDocument();
+    expect(frame).not.toHaveAttribute("autoplay");
+    expect(frame.muted).toBe(true);
+    Object.defineProperty(frame, "duration", { value: 60, configurable: true });
+    fireEvent.loadedMetadata(frame);
+    expect(frame.currentTime).toBe(13.25);
+    Object.defineProperty(frame, "readyState", { value: 2, configurable: true });
+    fireEvent.seeked(frame);
+    expect(frame).toBeVisible();
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
     expect(screen.queryByText(/暂无首帧/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("img", { name: "播放所选片段" }));
+    await user.click(preview);
     expect(screen.getByLabelText("视频证据")).toHaveAttribute("preload", "metadata");
+  });
+
+  it("keeps a preview card clickable when loading its video frame fails", async () => {
+    const hit = searchHit("chunk-without-thumbnail", 1, "不会显示的首帧");
+    hit.evidence.thumbnail = null;
+    renderPage(assistantMessage("找到一个可播放片段。", [hit]));
+    const preview = screen.getByRole("img", { name: /视频片段预览/ });
+    fireEvent.error(preview.querySelector("video")!);
+
+    expect(preview.querySelector("video")).toBeNull();
+    await userEvent.setup().click(preview);
+    expect(screen.getByLabelText("视频证据")).toBeInTheDocument();
+  });
+
+  it("does not request a preview for unavailable media", () => {
+    const hit = searchHit("chunk-without-media", 1, "不会显示的首帧");
+    hit.evidence.thumbnail = null;
+    hit.evidence.playbackStatus = "MISSING";
+    hit.evidence.playbackUrl = null;
+    const view = renderPage(assistantMessage("视频暂不可用。", [hit]));
+
+    expect(view.container.querySelector("video")).toBeNull();
+    expect(screen.getByText("视频暂不可播放")).toBeInTheDocument();
+  });
+
+  it("uses a registered thumbnail when playback media is unavailable", () => {
+    const hit = searchHit("chunk-without-media", 1, "已登记首帧");
+    hit.evidence.playbackStatus = "MISSING";
+    hit.evidence.playbackUrl = null;
+    const view = renderPage(assistantMessage("视频暂不可用。", [hit]));
+
+    expect(view.container.querySelector("video")).toBeNull();
+    expect(screen.getByRole("img", { name: "已登记首帧" })).toHaveAttribute("src", hit.evidence.thumbnail!.url);
+    expect(screen.getByRole("img", { name: "已登记首帧" })).toHaveAttribute("loading", "lazy");
   });
 });

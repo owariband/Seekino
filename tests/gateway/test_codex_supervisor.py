@@ -167,7 +167,7 @@ def native_model():
     loop = CodexAgentModel(
         model="configured-native-model", reasoning_effort="low",
         request_timeout_seconds=2, max_output_tokens=1024, max_input_chars=10_000,
-        session_factory=create,
+        max_concurrency=1, session_factory=create,
     )
     loop.supports_vision_input = True
     return CodexSupervisorModel(agent_model=loop), sessions

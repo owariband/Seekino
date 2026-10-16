@@ -8,9 +8,98 @@ from engine.rag.contracts import (
 
 from ..common.errors import AgentModelInvocationError
 from .state import (
-    AgentFinalOutput, ChatRenderDraft, LoopTurn, MarkdownRenderBlock, QueryDraft,
+    AgentFinalOutput, ChatRenderDraft, ChatRenderBlock, ChatVideoBlock, LoopTurn,
+    MarkdownRenderBlock, QueryDraft,
     RetrievalCall, RetrievalTraceEntry, RunInputs, VideoRenderBlock,
 )
+
+
+def video_range_sources(
+    evidence_by_id: dict[str, dict],
+    video_chunk_id: str,
+    start_seconds: object,
+    end_seconds: object,
+    *,
+    source_video_chunk_ids: object = None,
+    allow_adjacent: bool = False,
+) -> list[str]:
+    """Resolve a final range against unchanged canonical source snapshots."""
+    if (
+        not isinstance(start_seconds, int) or isinstance(start_seconds, bool)
+        or not isinstance(end_seconds, int) or isinstance(end_seconds, bool)
+        or not 0 <= start_seconds < end_seconds
+        or video_chunk_id not in evidence_by_id
+    ):
+        raise ValueError("Invalid anchor or playback range")
+    anchor = evidence_by_id[video_chunk_id]
+    if allow_adjacent and source_video_chunk_ids is None:
+        try:
+            return video_range_sources(
+                evidence_by_id, video_chunk_id, start_seconds, end_seconds,
+                source_video_chunk_ids=[video_chunk_id],
+            )
+        except ValueError:
+            for identifier in evidence_by_id:
+                if identifier == video_chunk_id:
+                    continue
+                try:
+                    return video_range_sources(
+                        evidence_by_id, video_chunk_id, start_seconds, end_seconds,
+                        source_video_chunk_ids=[video_chunk_id, identifier],
+                    )
+                except ValueError:
+                    continue
+            raise ValueError("No adjacent retrieved chunks continuously cover the playback range")
+    sources = [video_chunk_id] if source_video_chunk_ids is None else source_video_chunk_ids
+    if (
+        not isinstance(sources, list) or not 1 <= len(sources) <= 2
+        or any(not isinstance(identifier, str) or identifier not in evidence_by_id
+               for identifier in sources)
+        or len(set(sources)) != len(sources) or video_chunk_id not in sources
+    ):
+        raise ValueError("Invalid playback source IDs")
+    source_ranges = []
+    for identifier in sources:
+        evidence = evidence_by_id[identifier]
+        if not isinstance(evidence, dict) or (
+            "videoChunkId" in evidence and evidence["videoChunkId"] != identifier
+        ):
+            raise ValueError("Canonical source ID does not match its evidence")
+        start, end = evidence.get("startSeconds"), evidence.get("endSeconds")
+        if (
+            not isinstance(start, int) or isinstance(start, bool)
+            or not isinstance(end, int) or isinstance(end, bool)
+            or not 0 <= start < end
+        ):
+            raise ValueError("Invalid canonical source range")
+        source_ranges.append((start, end, identifier))
+    source_ranges.sort()
+    ordered = [identifier for _, _, identifier in source_ranges]
+    intervals = [(start, end) for start, end, _ in source_ranges]
+    if not anchor["startSeconds"] < end_seconds or not start_seconds < anchor["endSeconds"]:
+        raise ValueError("Playback range does not intersect its anchor")
+    if len(ordered) == 2:
+        identity = tuple(anchor.get(key) for key in ("tenantId", "seriesId", "videoId"))
+        if any(not isinstance(value, str) or not value for value in identity):
+            raise ValueError("Playback sources lack a video identity")
+        for (_, source_end), identifier in zip(intervals, ordered):
+            evidence = evidence_by_id[identifier]
+            if tuple(evidence.get(key) for key in ("tenantId", "seriesId", "videoId")) != identity:
+                raise ValueError("Playback sources belong to different videos or scopes")
+            duration = evidence.get("durationSeconds")
+            if (not isinstance(duration, int) or isinstance(duration, bool)
+                or not source_end <= duration
+                or not end_seconds <= duration):
+                raise ValueError("Playback range exceeds the source video")
+        sequences = [evidence_by_id[identifier].get("sequenceNo") for identifier in ordered]
+        if (any(not isinstance(value, int) or isinstance(value, bool) for value in sequences)
+            or sequences[1] != sequences[0] + 1):
+            raise ValueError("Playback sources are not adjacent chunks")
+        if intervals[1][0] > intervals[0][1]:
+            raise ValueError("Playback sources contain an uncovered gap")
+    if not intervals[0][0] <= start_seconds < end_seconds <= max(end for _, end in intervals):
+        raise ValueError("Playback range is not covered by its canonical sources")
+    return ordered
 
 
 def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
@@ -119,8 +208,25 @@ def build_chat_output(
     query_draft: QueryDraft,
     rendered: ChatRenderDraft,
     retrieval_trace: list[RetrievalTraceEntry],
+    *,
+    video_sources: dict[str, list[str]] | None = None,
 ) -> AgentFinalOutput:
-    validate_approved_video_ranges(draft, query_draft)
+    return AgentFinalOutput.model_validate(build_chat_snapshot(
+        draft, query_draft, rendered.blocks, retrieval_trace, video_sources=video_sources,
+    ))
+
+
+def build_chat_snapshot(
+    draft: VideoChunkSearchResult,
+    query_draft: QueryDraft,
+    blocks: list[ChatRenderBlock],
+    retrieval_trace: list[RetrievalTraceEntry],
+    *,
+    video_sources: dict[str, list[str]] | None = None,
+) -> dict:
+    """Project accepted render blocks for both prefixes and completed answers."""
+    validate_approved_video_ranges(draft, query_draft, video_sources=video_sources)
+    video_items = [block for block in blocks if isinstance(block, ChatVideoBlock)]
     approved_hits = {
         hit.candidate.video_chunk_id: hit
         for hit in draft.hits
@@ -130,14 +236,14 @@ def build_chat_output(
         for item in query_draft.selected_video_ranges
     }
     if any(
-        item.video_chunk_id not in approved_hits
-        for item in rendered.video_items
+        item.video_chunk_id not in approved_ranges
+        for item in video_items
     ):
         raise AgentModelInvocationError(
             "Chat video items must come from approved evidence"
         )
     hits: list[VideoChunkSearchHit] = []
-    for item in rendered.video_items:
+    for item in video_items:
         approved = approved_hits[item.video_chunk_id]
         hits.append(
             approved.model_copy(
@@ -149,32 +255,51 @@ def build_chat_output(
                 deep=True,
             )
         )
-    return AgentFinalOutput(
-        series_ids=list(draft.series_ids),
-        agent_reply=AgentReply(
-            message=rendered.answer_markdown,
+    if video_sources is not None:
+        included = {hit.candidate.video_chunk_id for hit in hits}
+        for item in video_items:
+            for identifier in video_sources[item.video_chunk_id]:
+                if identifier not in included:
+                    hits.append(approved_hits[identifier].model_copy(deep=True))
+                    included.add(identifier)
+    answer_markdown = "\n\n".join(
+        block.markdown for block in blocks if isinstance(block, MarkdownRenderBlock)
+    )
+    return {
+        "seriesIds": list(draft.series_ids),
+        # The legacy reply field is not exposed by the message API. A card-only
+        # prefix retains the real retrieval reply there, without inventing text.
+        "agentReply": AgentReply(
+            message=answer_markdown or draft.agent_reply.message,
             result_count=len(hits),
-        ),
-        hits=hits,
-        searched_video_ids=draft.searched_video_ids,
-        partial=draft.partial, warnings=list(draft.warnings),
-        render_blocks=[
-            block.model_copy(deep=True)
+        ).model_dump(mode="json", by_alias=True),
+        "hits": [hit.model_dump(mode="json", by_alias=True) for hit in hits],
+        "searchedVideoIds": draft.searched_video_ids,
+        "partial": draft.partial, "warnings": list(draft.warnings),
+        "renderBlocks": [
+            block.model_dump(mode="json", by_alias=True)
             if isinstance(block, MarkdownRenderBlock)
             else VideoRenderBlock(
                 video_chunk_id=block.video_chunk_id,
                 start_seconds=approved_ranges[block.video_chunk_id].start_seconds,
                 end_seconds=approved_ranges[block.video_chunk_id].end_seconds,
-            )
-            for block in rendered.blocks
+                source_video_chunk_ids=(
+                    video_sources[block.video_chunk_id]
+                    if video_sources is not None and len(video_sources[block.video_chunk_id]) > 1
+                    else None
+                ),
+            ).model_dump(mode="json", by_alias=True)
+            for block in blocks
         ],
-        retrieval_trace=[entry.model_copy(deep=True) for entry in retrieval_trace],
-    )
+        "retrievalTrace": [entry.model_dump(mode="json", by_alias=True) for entry in retrieval_trace],
+    }
 
 
 def validate_approved_video_ranges(
     draft: VideoChunkSearchResult,
     query_draft: QueryDraft,
+    *,
+    video_sources: dict[str, list[str]] | None = None,
 ) -> None:
     approved_hits = {
         hit.candidate.video_chunk_id: hit
@@ -187,25 +312,34 @@ def validate_approved_video_ranges(
     if (
         len(approved_ranges) != len(query_draft.selected_video_ranges)
         or len(approved_hits) != len(draft.hits)
-        or set(approved_ranges) != set(approved_hits)
+        or (video_sources is not None and set(video_sources) != set(approved_ranges))
+        or set(approved_hits) != (
+            set(approved_ranges) if video_sources is None
+            else {identifier for sources in video_sources.values() for identifier in sources}
+        )
     ):
         raise AgentModelInvocationError(
             "Approved video ranges do not match approved evidence"
         )
+    evidence_by_id = {
+        identifier: hit.evidence.model_dump(by_alias=True)
+        for identifier, hit in approved_hits.items()
+    }
     for video_chunk_id, approved in approved_ranges.items():
         evidence = approved_hits[video_chunk_id].evidence
-        if not (
-            evidence.start_seconds
-            <= approved.start_seconds
-            < approved.end_seconds
-            <= evidence.end_seconds
-        ):
+        try:
+            video_range_sources(
+                evidence_by_id, video_chunk_id, approved.start_seconds, approved.end_seconds,
+                source_video_chunk_ids=video_sources[video_chunk_id] if video_sources is not None else None,
+            )
+        except ValueError as exc:
             raise AgentModelInvocationError(
                 "Approved range for VideoChunk "
                 f"{video_chunk_id!r} [{approved.start_seconds}, {approved.end_seconds}) "
                 "must be contained in canonical evidence range "
                 f"[{evidence.start_seconds}, {evidence.end_seconds})"
-            )
+                if video_sources is None else f"Invalid final video range: {exc}"
+            ) from exc
 
 
 def build_retrieval_trace(turns: list[LoopTurn]) -> list[RetrievalTraceEntry]:

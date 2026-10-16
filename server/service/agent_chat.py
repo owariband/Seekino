@@ -17,6 +17,7 @@ from agent.chat.common.errors import (
 )
 from agent.chat.common.state import AnswerPhase, RunInputs
 from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.video_search.output import video_range_sources
 from agent.chat.video_search.runtime import AgentRuntime
 from engine.rag.contracts import VideoChunkEvidence
 from gateway.tracing import LangfuseTracing
@@ -727,10 +728,23 @@ class AgentChatService:
                 conversation_id=source.conversation_id,
                 message_id=source.message_id,
             )
+            block = next(block for block in source.search_result["renderBlocks"]
+                         if isinstance(block, dict) and block.get("type") == "video"
+                         and block.get("videoChunkId") == reference["videoChunkId"])
+            supporting_ids = set(block.get("sourceVideoChunkIds") or []) - {reference["videoChunkId"]}
+            try:
+                supporting = [
+                    VideoChunkEvidence.model_validate(item["evidence"]).model_dump(mode="json", by_alias=True)
+                    for item in source.search_result["hits"]
+                    if item["candidate"]["videoChunkId"] in supporting_ids
+                ]
+            except (KeyError, TypeError, ValueError) as exc:
+                raise AgentReferenceInvalidError("引用的历史证据已损坏。") from exc
             return {"reference": reference, "sourceStatus": source.status,
                     "selectionReason": hit["selectionReason"],
                     "selectedRange": selected_range,
-                    "evidence": evidence.model_dump(mode="json", by_alias=True)}
+                    "evidence": evidence.model_dump(mode="json", by_alias=True),
+                    **({"supportingEvidence": supporting} if supporting else {})}
         except AgentMessageNotFoundError as exc:
             raise AgentReferenceInvalidError("引用的消息已失效。") from exc
 
@@ -770,13 +784,15 @@ class AgentChatService:
         pending_answer_events: list[dict] = []
         last_phase = initial.assistant_message.phase
         evidence_hit_count = 0
+        snapshot_count = 0
+        partial_content = ""
         timer = execution.timing
         assert timer is not None
         terminal_timing: AgentMessageTimingState | None = None
         committed_result: AgentMessageSendState | None = None
 
         def publish_runtime(event):
-            nonlocal last_phase
+            nonlocal last_phase, evidence_hit_count, snapshot_count, partial_content
             event_type = event["type"]
             if event_type == "answer.progress":
                 last_phase = event["phase"]
@@ -786,6 +802,29 @@ class AgentChatService:
                     timing=timing,
                 )
                 event = {**event, "timing": asdict(timing)}
+            elif event_type == "answer.snapshot" and isinstance(runtime, SupervisorRuntime):
+                with self._lock:
+                    if execution.cancellation.is_set():
+                        raise AgentModelInvocationError("Agent execution cancelled")
+                    assistant = self._repository.checkpoint_assistant_message(
+                        assistant_id, content=event["content"],
+                        search_result=event["searchResult"], now=self._clock(),
+                    )
+                snapshot_count += 1
+                partial_content = assistant.content or ""
+                hits = (assistant.search_result or {}).get("hits")
+                evidence_hit_count = len(hits) if isinstance(hits, list) else 0
+                _logger.info(
+                    "agent_answer_snapshot conversation_id=%s message_id=%s "
+                    "snapshot_count=%s output_chars=%s evidence_hits=%s version=%s",
+                    conversation_id, assistant_id, snapshot_count, len(partial_content),
+                    evidence_hit_count, assistant.version,
+                )
+                execution.publish({
+                    "type": "answer.snapshot",
+                    **_message_pair(AgentMessageSendState(initial.user_message, assistant)),
+                })
+                return
             elif event_type in {"answer.evidence", "answer.block", "answer.delta"}:
                 if not isinstance(runtime, SupervisorRuntime):
                     pending_answer_events.append(event)
@@ -886,14 +925,6 @@ class AgentChatService:
                     video_result.model_dump(mode="json", by_alias=True)
                     if video_result is not None else None
                 )
-                if search_result is not None:
-                    pending_answer_events.append({
-                        "type": "answer.evidence", "searchResult": search_result,
-                    })
-                    pending_answer_events.extend({
-                        "type": "answer.block", "block": block,
-                    } for block in search_result["renderBlocks"])
-                pending_answer_events.append({"type": "answer.delta", "delta": content})
             else:
                 content = final.agent_reply.message
                 search_result = final.model_dump(mode="json", by_alias=True)
@@ -933,11 +964,11 @@ class AgentChatService:
             _logger.info(
                 "agent_execution_completed conversation_id=%s message_id=%s "
                 "phase=%s duration_ms=%s stage_count=%s output_chars=%s "
-                "evidence_hits=%s max_model_calls_per_turn=%s "
+                "evidence_hits=%s answer_snapshots=%s max_model_calls_per_turn=%s "
                 "max_tool_calls_per_turn=%s",
                 conversation_id, assistant_id, last_phase,
                 terminal_timing.total_duration_ms, len(terminal_timing.stages),
-                len(content), evidence_hit_count,
+                len(content), evidence_hit_count, snapshot_count,
                 run_options.max_model_calls_per_turn,
                 run_options.max_tool_calls_per_turn,
             )
@@ -993,7 +1024,7 @@ class AgentChatService:
                 "max_tool_calls_per_turn=%s",
                 conversation_id, assistant_id, public_code, last_phase,
                 terminal_timing.total_duration_ms, len(terminal_timing.stages),
-                0, evidence_hit_count,
+                len(partial_content), evidence_hit_count,
                 type(exc).__name__, type(root_error).__name__,
                 run_options.max_model_calls_per_turn,
                 run_options.max_tool_calls_per_turn,
@@ -1092,6 +1123,16 @@ def _validated_stored_video_range(
 ) -> dict[str, int]:
     proposed_start_seconds = None
     proposed_end_seconds = None
+    evidence_by_id = {
+        hit["candidate"]["videoChunkId"]: hit["evidence"]
+        for hit in search_result.get("hits") or []
+        if isinstance(hit, dict) and isinstance(hit.get("candidate"), dict)
+        and isinstance(hit["candidate"].get("videoChunkId"), str)
+        and isinstance(hit.get("evidence"), dict)
+    }
+    evidence_by_id.setdefault(video_chunk_id, {
+        "startSeconds": evidence_start_seconds, "endSeconds": evidence_end_seconds,
+    })
     blocks = search_result.get("renderBlocks")
     if isinstance(blocks, list):
         for block in blocks:
@@ -1103,20 +1144,17 @@ def _validated_stored_video_range(
                 continue
             proposed_start_seconds = block.get("startSeconds")
             proposed_end_seconds = block.get("endSeconds")
-            if (
-                isinstance(proposed_start_seconds, int)
-                and not isinstance(proposed_start_seconds, bool)
-                and isinstance(proposed_end_seconds, int)
-                and not isinstance(proposed_end_seconds, bool)
-                and evidence_start_seconds <= proposed_start_seconds
-                and proposed_start_seconds < proposed_end_seconds
-                and proposed_end_seconds <= evidence_end_seconds
-            ):
-                return {
-                    "startSeconds": proposed_start_seconds,
-                    "endSeconds": proposed_end_seconds,
-                }
-            break
+            try:
+                video_range_sources(
+                    evidence_by_id, video_chunk_id, proposed_start_seconds, proposed_end_seconds,
+                    source_video_chunk_ids=block.get("sourceVideoChunkIds"),
+                )
+            except ValueError:
+                break
+            return {
+                "startSeconds": proposed_start_seconds,
+                "endSeconds": proposed_end_seconds,
+            }
     _logger.warning(
         "event=agent_invalid_stored_video_range conversation_id=%s message_id=%s "
         "video_chunk_id=%s proposed_start_seconds=%r proposed_end_seconds=%r "

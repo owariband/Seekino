@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import Any, Annotated, Literal, TypedDict
 
 from pydantic import (
-    BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator,
+    BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo,
+    field_validator, model_serializer, model_validator,
 )
 
 from engine.rag.contracts import VideoChunkSearchEvidence, VideoChunkSearchResult
@@ -165,6 +166,18 @@ class VideoRenderBlock(_AgentContractModel):
     video_chunk_id: _VideoChunkId
     start_seconds: int = Field(strict=True, ge=0)
     end_seconds: int = Field(strict=True, gt=0)
+    # Persisted provenance; the Server projects only the existing public fields.
+    source_video_chunk_ids: list[_VideoChunkId] | None = Field(
+        default=None, min_length=1, max_length=2,
+    )
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        data = handler(self)
+        if self.source_video_chunk_ids is None:
+            data.pop("source_video_chunk_ids", None)
+            data.pop("sourceVideoChunkIds", None)
+        return data
 
     @model_validator(mode="after")
     def validate_time_range(self) -> VideoRenderBlock:
@@ -197,9 +210,9 @@ class ChatRenderDraft(BaseModel):
     blocks: list[ChatRenderBlock] = Field(min_length=1, max_length=200)
 
     @model_validator(mode="after")
-    def validate_blocks(self) -> ChatRenderDraft:
+    def validate_blocks(self, info: ValidationInfo) -> ChatRenderDraft:
         answer_markdown = self.answer_markdown
-        if not answer_markdown.strip():
+        if not answer_markdown.strip() and not (info.context or {}).get("partial"):
             raise ValueError("Chat render requires at least one nonempty Markdown block")
         if len(answer_markdown) > 20_000:
             raise ValueError("Chat Markdown exceeds 20000 characters")
@@ -207,6 +220,13 @@ class ChatRenderDraft(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("video_items must not contain duplicate video_chunk_id values")
         return self
+
+    @classmethod
+    def validate_prefix(cls, blocks: list[ChatRenderBlock]) -> None:
+        # An in-progress answer can be empty or start with a card; all other
+        # render limits remain the same as for the completed answer.
+        if blocks:
+            cls.model_validate({"blocks": blocks}, context={"partial": True})
 
     @property
     def answer_markdown(self) -> str:

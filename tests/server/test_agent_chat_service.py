@@ -448,9 +448,11 @@ class _VideoSupervisorModel(_DirectSupervisorModel):
     model_name = "supervisor-test"
     provider_name = "fake"
 
-    def __init__(self, *, include_web: bool = False):
+    def __init__(self, *, include_web: bool = False, merge_adjacent: bool = False, revise: bool = False):
         super().__init__()
         self.include_web = include_web
+        self.merge_adjacent = merge_adjacent
+        self.revise = revise
         self.submitted_items = []
         self.answer = "终审已根据完整时间线收紧片段，保留支撑结论的完整内容。"
 
@@ -468,17 +470,29 @@ class _VideoSupervisorModel(_DirectSupervisorModel):
         result = json.loads(by_name["search_video_graph"].invoke({"query": "视频里发生了什么？"}))
         assert result["result_count"] > 0
         approved = json.loads(by_name["get_context_canvas"].invoke({"collection": "approved"}))
+        drafts = []
         for item in approved["items"]:
             sections = _read_all(by_name["get_context_canvas"], item["reference"], collection="approved")
-            draft = sections["draft"]
+            drafts.append(sections["draft"])
+        if self.merge_adjacent:
+            drafts = [{**drafts[0], "end_seconds": drafts[-1]["end_seconds"]}]
+        for draft in drafts:
             submitted = {
-                "video_chunk_id": item["reference"],
+                "video_chunk_id": draft["video_chunk_id"],
                 "start_seconds": draft["start_seconds"] + 1,
                 "end_seconds": draft["end_seconds"] - 1,
-                "claim": f"终审片段 {item['reference']} 支持最终回答。",
+                "claim": f"终审片段 {draft['video_chunk_id']} 支持最终回答。",
             }
             receipt = json.loads(by_name["submit_video_item"].invoke(submitted))
             assert receipt["accepted"]
+            if self.revise and not self.submitted_items:
+                handle_text("补充片段说明。")
+                revised = {**submitted, "start_seconds": submitted["start_seconds"] + 1}
+                assert json.loads(by_name["submit_video_item"].invoke(revised))["accepted"]
+                assert json.loads(by_name["remove_video_item"].invoke({
+                    "video_chunk_id": submitted["video_chunk_id"],
+                }))["removed"]
+                assert json.loads(by_name["submit_video_item"].invoke(submitted))["accepted"]
             self.submitted_items.append(submitted)
         handle_text(
             self.answer + " 网页补充 [来源](https://example.org/source)"
@@ -515,7 +529,7 @@ def test_supervisor_chat_without_ready_video_series(build_service):
     assert "没有可检索的视频系列" in prompt_context["video_scope_description"]
 
 
-def test_direct_supervisor_streams_only_its_committed_final_text(build_service):
+def test_direct_supervisor_streams_persisted_prefix_without_replaying_final_text(build_service):
     service, conversation, *_ = build_service(supervisor_model=_DirectSupervisorModel())
     execution = service.start_message(
         conversation.conversation_id, tenant_id="local-default", content="你好",
@@ -524,9 +538,53 @@ def test_direct_supervisor_streams_only_its_committed_final_text(build_service):
     events = _collect(execution)
     completed = execution.result().assistant_message
     assert completed.status == "COMPLETED" and completed.search_result is None
-    assert [event["delta"] for event in events if event["type"] == "answer.delta"] == [completed.content]
-    assert not {"answer.evidence", "answer.block"} & {event["type"] for event in events}
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots and snapshots[-1]["content"] == completed.content
+    assert all(message["status"] == "PROCESSING" for message in snapshots)
+    assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
     assert events[-1]["type"] == "answer.completed"
+
+
+def test_supervisor_prefix_is_readable_before_model_completion_and_survives_disconnect(build_service):
+    entered, release = Event(), Event()
+
+    class BlockingSupervisor(_DirectSupervisorModel):
+        def run_agent(self, prompt, *, handle_text, check_control, **kwargs):
+            super().run_agent(
+                prompt, handle_text=handle_text, check_control=check_control, **kwargs,
+            )
+            entered.set()
+            assert release.wait(5), "test did not release Supervisor"
+            check_control()
+            handle_text("接着解释后续内容。")
+
+    service, conversation, *_ = build_service(supervisor_model=BlockingSupervisor())
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="你好",
+        idempotency_key="supervisor-prefix", stream=True,
+    )
+    try:
+        assert entered.wait(5), "Supervisor did not publish its prefix"
+        while (event := execution.next_event(timeout=2))["type"] != "answer.snapshot":
+            pass
+        persisted = service.get_message(
+            conversation.conversation_id, tenant_id="local-default",
+            message_id=execution.initial.assistant_message.message_id,
+        ).assistant_message
+        assert event["assistantMessage"] == asdict(persisted)
+        assert persisted.content == "你好，我可以直接回答。"
+        assert persisted.status == "PROCESSING" and not execution.future.done()
+        execution.detach()
+        assert not execution.cancellation.is_set()
+    finally:
+        release.set()
+    completed = execution.result().assistant_message
+    assert completed.status == "COMPLETED"
+    assert "你好，我可以直接回答。" in completed.content
+    assert "接着解释后续内容。" in completed.content
+    assert completed == service.list_all_messages(
+        conversation.conversation_id, tenant_id="local-default",
+    )[-1]
 
 
 @pytest.mark.parametrize("playback_change", [
@@ -769,12 +827,13 @@ def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_servi
 
 @pytest.mark.parametrize("include_web", [False, True])
 @pytest.mark.parametrize("commit_failure", [False, True])
+@pytest.mark.parametrize("merge_adjacent", [False, True])
 def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
-    build_service, prepared_import, monkeypatch, include_web, commit_failure,
+    build_service, prepared_import, monkeypatch, include_web, commit_failure, merge_adjacent,
 ):
     from server.service.agent_chat import AgentMessageExecution
 
-    model = _VideoSupervisorModel(include_web=include_web)
+    model = _VideoSupervisorModel(include_web=include_web, merge_adjacent=merge_adjacent, revise=True)
     service, conversation, retrieval, repository, query, *_ = build_service(
         supervisor_model=model,
         web_searcher=_WebSearcherStub(),
@@ -801,19 +860,18 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
 
     publish = AgentMessageExecution.publish
 
-    def publish_after_commit(execution, answer_event):
-        if answer_event["type"] in {"answer.evidence", "answer.block", "answer.delta"}:
+    def publish_after_checkpoint(execution, answer_event):
+        if answer_event["type"] == "answer.snapshot":
             saved = service.get_message(
                 conversation.conversation_id, tenant_id="local-default",
                 message_id=execution.initial.assistant_message.message_id,
             ).assistant_message
-            assert saved.status == "COMPLETED"
-            assert model.confirmed[-1] == (
-                conversation.conversation_id, saved.message_id, saved.content,
-            )
+            assert saved.status == "PROCESSING"
+            assert answer_event["assistantMessage"] == asdict(saved)
+            assert all(message_id != saved.message_id for _, message_id, _ in model.confirmed)
         publish(execution, answer_event)
 
-    monkeypatch.setattr(AgentMessageExecution, "publish", publish_after_commit)
+    monkeypatch.setattr(AgentMessageExecution, "publish", publish_after_checkpoint)
     if commit_failure:
         def fail_commit(*_args, **_kwargs):
             raise RuntimeError("injected final review commit failure")
@@ -830,12 +888,17 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
             conversation.conversation_id, tenant_id="local-default",
             message_id=execution.initial.assistant_message.message_id,
         ).assistant_message
-        assert failed.status == "FAILED" and failed.content is None and failed.search_result is None
+        assert failed.status == "FAILED" and model.answer in failed.content
+        assert failed.search_result is not None
         assert model.submitted_items and not model.confirmed
         assert events[-1]["type"] == "answer.failed"
         assert not {"answer.completed", "answer.evidence", "answer.block", "answer.delta"} & {
             event["type"] for event in events
         }
+        snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+        assert snapshots[-1]["assistantMessage"]["content"] == failed.content
+        assert snapshots[-1]["assistantMessage"]["search_result"] == failed.search_result
+        assert events[-1]["assistantMessage"] == asdict(failed)
         return
     completed = execution.result()
 
@@ -852,25 +915,44 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
     )]
     result = completed.assistant_message.search_result
     video_blocks = [block for block in result["renderBlocks"] if block["type"] == "video"]
-    assert video_blocks == [{
+    public_video_blocks = [{
         "type": "video", "videoChunkId": item["video_chunk_id"],
         "startSeconds": item["start_seconds"], "endSeconds": item["end_seconds"],
     } for item in model.submitted_items]
+    source_ids = [chunk.video_chunk_id for chunk in chunks]
+    assert video_blocks == [
+        {**block, **({"sourceVideoChunkIds": source_ids} if merge_adjacent else {})}
+        for block in public_video_blocks
+    ]
     assert [(block["startSeconds"], block["endSeconds"]) for block in video_blocks] == [
-        (start + 1, end - 1) for _identifier, start, end in query.selected_ranges
+        (start + 1, end - 1) for start, end in (
+            [(chunks[0].start_seconds, chunks[-1].end_seconds)] if merge_adjacent
+            else [(start, end) for _identifier, start, end in query.selected_ranges]
+        )
     ]
-    assert [hit["selectionReason"]["summary"] for hit in result["hits"]] == [
-        item["claim"] for item in model.submitted_items
+    hits_by_id = {hit["candidate"]["videoChunkId"]: hit for hit in result["hits"]}
+    assert set(hits_by_id) == set(source_ids)
+    for item in model.submitted_items:
+        assert hits_by_id[item["video_chunk_id"]]["selectionReason"]["summary"] == item["claim"]
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots[-1]["content"] == completed.assistant_message.content
+    assert snapshots[-1]["search_result"] == result
+    assert snapshots[0]["search_result"]["renderBlocks"][0]["type"] == "video"
+    anchor = model.submitted_items[0]["video_chunk_id"]
+    anchor_versions = [
+        next((block for block in message["search_result"]["renderBlocks"]
+              if block["type"] == "video" and block["videoChunkId"] == anchor), None)
+        for message in snapshots
     ]
-    assert [event["searchResult"] for event in events if event["type"] == "answer.evidence"] == [result]
-    assert [event["block"] for event in events if event["type"] == "answer.block"] == result["renderBlocks"]
-    assert [event["delta"] for event in events if event["type"] == "answer.delta"] == [completed.assistant_message.content]
+    assert anchor_versions[0]["startSeconds"] == model.submitted_items[0]["start_seconds"]
+    assert any(block is not None and block["startSeconds"] == anchor_versions[0]["startSeconds"] + 1
+               for block in anchor_versions)
+    assert None in anchor_versions and anchor_versions[-1] == anchor_versions[0]
+    assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
     assert events[-1]["type"] == "answer.completed"
     if include_web:
-        assert completed.assistant_message.content.startswith(
-            completed.assistant_message.search_result["renderBlocks"][0]["markdown"]
-        )
-        assert "https://example.org/source" in result["renderBlocks"][0]["markdown"]
+        assert result["renderBlocks"][-1]["type"] == "markdown"
+        assert "https://example.org/source" in result["renderBlocks"][-1]["markdown"]
     if not include_web:
         source_id = completed.assistant_message.message_id
         reference = {"messageId": source_id, "videoChunkId": video_blocks[0]["videoChunkId"]}
@@ -880,9 +962,14 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
             "startSeconds": video_blocks[0]["startSeconds"],
             "endSeconds": video_blocks[0]["endSeconds"],
         }
+        if merge_adjacent:
+            supporting = context["reference_context"]["supportingEvidence"]
+            assert [item["videoChunkId"] for item in supporting] == source_ids[1:]
+            assert supporting[0]["windowSummary"] == hits_by_id[source_ids[1]]["evidence"]["windowSummary"]
         assert context["history"][1]["content"] == completed.assistant_message.content
         assert context["history"][1]["searchResult"]["videoRanges"] == [{
-            key: block[key] for key in ("videoChunkId", "startSeconds", "endSeconds")
+            key: block[key] for key in ("videoChunkId", "startSeconds", "endSeconds", "sourceVideoChunkIds")
+            if key in block
         } for block in video_blocks]
         assert model.turns[-1][3][1]["content"] == completed.assistant_message.content
 
@@ -1000,8 +1087,18 @@ def test_supervisor_discards_uncommitted_or_cancelled_turn(
     assert model.discarded == [(conversation.conversation_id, message_id)]
     assert model.confirmed == []
     assert events[-1]["type"] == "answer.failed"
+    failed = service.get_message(
+        conversation.conversation_id, tenant_id="local-default", message_id=message_id,
+    ).assistant_message
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots and failed.content == snapshots[-1]["assistantMessage"]["content"]
+    assert failed.status == "FAILED" and events[-1]["assistantMessage"] == asdict(failed)
+    history = repository.list_recent_completed_messages(
+        conversation.conversation_id, "local-default", before_sequence_no=100, limit=10,
+    )
+    assert all(message.message_id != failed.message_id for message in history)
     saved = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1]
-    assert saved.status == "FAILED" and saved.content is None
+    assert saved == failed
 
 
 @pytest.mark.parametrize("failure", ["confirm", "event", "log"])
@@ -1034,8 +1131,12 @@ def test_supervisor_post_commit_failure_keeps_completed_sql_answer(
 
         monkeypatch.setattr(AgentMessageExecution, "publish", fail_completed_event)
     else:
-        def fail_log(*_args, **_kwargs):
-            raise RuntimeError("injected completion log failure")
+        log_info = logging.getLogger("server.service.agent_chat").info
+
+        def fail_log(message, *args, **kwargs):
+            if message.startswith("agent_execution_completed "):
+                raise RuntimeError("injected completion log failure")
+            log_info(message, *args, **kwargs)
         monkeypatch.setattr("server.service.agent_chat._logger.info", fail_log)
 
     completed = _send(service, conversation, content="你好")
@@ -1306,6 +1407,40 @@ def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
         record for record in caplog.records
         if record.getMessage().startswith("event=agent_invalid_stored_video_range ")
     ]
+
+
+@pytest.mark.parametrize(("sources", "neighbor_start", "accepted"), [
+    (["left", "right"], 20, True),
+    (None, 20, False),
+    (["left", "missing"], 20, False),
+    (["left", "right"], 21, False),
+])
+def test_reference_and_history_validate_saved_adjacent_sources(sources, neighbor_start, accepted):
+    common = {"tenantId": "tenant", "seriesId": "series", "videoId": "video", "durationSeconds": 30}
+    evidence = [
+        {**common, "videoChunkId": "left", "sequenceNo": 0, "startSeconds": 10, "endSeconds": 20},
+        {**common, "videoChunkId": "right", "sequenceNo": 1, "startSeconds": neighbor_start, "endSeconds": 30},
+    ]
+    block = {
+        "type": "video", "videoChunkId": "left", "startSeconds": 15,
+        "endSeconds": 25, "sourceVideoChunkIds": sources,
+    }
+    result = {
+        "hits": [{"candidate": {"videoChunkId": item["videoChunkId"]}, "evidence": item} for item in evidence],
+        "renderBlocks": [block],
+    }
+    if accepted:
+        assert _validated_stored_video_range(
+            result, "left", evidence_start_seconds=10, evidence_end_seconds=20,
+        ) == {"startSeconds": 15, "endSeconds": 25}
+    else:
+        with pytest.raises(AgentReferenceInvalidError):
+            _validated_stored_video_range(
+                result, "left", evidence_start_seconds=10, evidence_end_seconds=20,
+            )
+    assert _project_stored_search_result(result)["videoRanges"] == (
+        [{key: value for key, value in block.items() if key != "type"}] if accepted else []
+    )
 
 
 @pytest.mark.parametrize(("render_blocks", "expected"), [
@@ -1821,6 +1956,73 @@ def test_execution_timeout_persists_specific_failure_and_publishes_terminal_even
     assert not {"answer.completed", "answer.delta", "answer.block", "answer.evidence"} & {
         event["type"] for event in events
     }
+
+
+def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_event(build_service):
+    from gateway.codex.agent import CodexAgentModel
+    from gateway.codex.supervisor import CodexSupervisorModel
+
+    started, closed = Event(), Event()
+    connection_error = RuntimeError("proxy CONNECT failed: HTTP 403 Forbidden")
+
+    class FailedConnectionSession:
+        tool_call_count = 0
+        successful_tool_call_count = 0
+
+        def run_turn(self, _prompt, *, output_schema=None):
+            started.set()
+            assert closed.wait(5), "Codex connection failure did not close its transport"
+            raise RuntimeError("transport closed")
+
+        def raise_if_failed(self):
+            if started.is_set():
+                raise connection_error
+
+        def close(self):
+            closed.set()
+
+    session = FailedConnectionSession()
+    model = CodexAgentModel(
+        model="gpt-6-astra", request_timeout_seconds=600, max_output_tokens=256,
+        max_input_chars=200_000, max_concurrency=1,
+        session_factory=lambda **_kwargs: session,
+    )
+    model.supports_vision_input = True
+    service, conversation, _, repository, query, evaluator, chat = build_service(
+        supervisor_model=CodexSupervisorModel(agent_model=model),
+    )
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="你好",
+        idempotency_key="codex-connection-error", stream=True,
+    )
+    try:
+        assert started.wait(2), "Codex invocation did not start"
+        with pytest.raises(AgentModelInvocationError) as caught:
+            execution.future.result(timeout=3)
+        events = _collect(execution)
+    finally:
+        session.close()
+
+    root_error = caught.value
+    while root_error.__cause__ is not None:
+        root_error = root_error.__cause__
+    assert root_error is connection_error
+    failed = service.get_message(
+        conversation.conversation_id, tenant_id="local-default",
+        message_id=execution.initial.assistant_message.message_id,
+    ).assistant_message
+    assert closed.is_set()
+    assert failed.status == "FAILED" and failed.phase is None
+    assert failed.last_error.code == "AGENT_MODEL_ERROR"
+    assert failed.content is None and failed.search_result is None
+    with repository._session_factory() as sql_session:
+        record = sql_session.get(AgentMessage, failed.message_id)
+        assert record.status == "FAILED" and record.phase is None
+        assert record.last_error_code == "AGENT_MODEL_ERROR"
+    assert events[-1]["type"] == "answer.failed"
+    assert events[-1]["error"] == asdict(failed.last_error)
+    assert "answer.completed" not in {event["type"] for event in events}
+    assert query.prompts == [] and evaluator.calls == 0 and chat.prompts == []
 
 
 def test_manual_cancel_is_scoped_and_stops_before_the_next_model(build_service):

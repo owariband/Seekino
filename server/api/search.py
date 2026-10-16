@@ -91,8 +91,6 @@ def evidence_view(
         )
         for item in media.keyframe_views(evidence, tenant_id=tenant_id)
     ]
-    if not keyframes:
-        warnings.append("缺少带原视频时间位置的已登记关键帧")
     events: list[VisualEventView] = []
     for item in evidence.all_time_events:
         start = item.get("start_seconds", item.get("startSeconds"))
@@ -177,7 +175,7 @@ def search_evidence_fields(
     return SearchEvidenceFieldsView(
         series_ids=result.series_ids,
         searched_video_ids=list(searched_video_ids or []),
-        partial=bool(getattr(result, "partial", False) or warnings),
+        partial=bool(getattr(result, "partial", False) or searched_video_ids is None),
         warnings=list(dict.fromkeys(warnings)), hits=hits,
     )
 

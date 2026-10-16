@@ -76,6 +76,34 @@ def test_sdk_owns_tool_loop_and_exposes_only_virtual_read_file():
     model.confirm_turn("conversation", "answer", "Approved stored answer.")
 
 
+def test_visible_text_with_tool_calls_precedes_tool_execution_without_exposing_reasoning():
+    events = []
+    tool = StructuredTool.from_function(
+        lambda query: events.append(("tool", query)) or "Approved fact",
+        name="submit_video_item", description="Submit an approved video.",
+    )
+    script = ScriptedModel(responses=[
+        AIMessage(
+            content=[{"type": "reasoning", "reasoning": "Private deliberation"},
+                     {"type": "text", "text": "Before the video."}],
+            additional_kwargs={"reasoning_content": "Private provider reasoning"},
+            tool_calls=[{"name": tool.name, "args": {"query": "clip"}, "id": "tool-1"}],
+        ),
+        AIMessage(content=[{"type": "reasoning", "reasoning": "Private conclusion"},
+                           {"type": "text", "text": "After the video."}]),
+    ])
+    model = _model(script)
+    model.run_agent(
+        "Answer from approved evidence.", thread_id="conversation", message_id="answer",
+        user_message="Show the video.", history=(), tools=[tool], max_model_calls=10,
+        handle_text=lambda text: events.append(("text", text)),
+    )
+
+    assert events == [("text", "Before the video."), ("tool", "clip"), ("text", "After the video.")]
+    assert any(isinstance(item, ToolMessage) and item.content == "Approved fact"
+               for item in script._calls[1]["messages"])
+
+
 def test_warm_thread_keeps_tool_state_and_only_adds_current_user():
     script = ScriptedModel(responses=[AIMessage(content="Draft one"), AIMessage(content="Draft two")])
     model = _model(script)
@@ -98,6 +126,58 @@ def test_warm_thread_keeps_tool_state_and_only_adds_current_user():
     assert texts[-1] == "Question for a2"
     assert "Scope: second course; playback at 50 seconds." in texts[0]
     assert "Scope: first course" not in texts[0]
+
+
+def test_confirmation_keeps_tool_prose_once_and_only_adds_the_final_suffix_to_warm_history():
+    tool = StructuredTool.from_function(lambda query: f"Evidence for {query}", name="search", description="Search evidence.")
+    script = ScriptedModel(responses=[
+        AIMessage(content="Before the first video.", tool_calls=[{"name": "search", "args": {"query": "one"}, "id": "one"}]),
+        AIMessage(content="Before the second video.", tool_calls=[{"name": "search", "args": {"query": "two"}, "id": "two"}]),
+        AIMessage(content="Closing text."),
+        AIMessage(content="Next answer."),
+    ])
+    model = _model(script)
+    history = [{"role": "assistant", "messageId": "earlier", "content": "An earlier answer."}]
+    assert _run(model, tools=[tool], history=history) == [
+        "Before the first video.", "Before the second video.", "Closing text.",
+    ]
+    model.confirm_turn("conversation", "answer", "\n\n".join([
+        "Before the first video.", "Before the second video.", "Closing text.", "Sources: approved source.",
+    ]))
+    _run(model, message="next", tools=[tool])
+
+    messages = script._calls[-1]["messages"]
+    assistants = [message for message in messages if isinstance(message, AIMessage)]
+    assert [message.text for message in assistants] == [
+        "An earlier answer.", "Before the first video.", "Before the second video.",
+        "Closing text.\n\nSources: approved source.",
+    ]
+    assert [call["id"] for message in assistants for call in message.tool_calls] == ["one", "two"]
+    assert [message.content for message in messages if isinstance(message, ToolMessage)] == [
+        "Evidence for one", "Evidence for two",
+    ]
+
+
+def test_confirmation_replaces_mismatched_prefix_without_losing_native_tools(caplog):
+    tool = StructuredTool.from_function(lambda query: "Approved evidence", name="search", description="Search evidence.")
+    script = ScriptedModel(responses=[
+        AIMessage(content="See https://unverified.example/", tool_calls=[{"name": "search", "args": {"query": "one"}, "id": "one"}]),
+        AIMessage(content="Closing text."),
+        AIMessage(content="Next answer."),
+    ])
+    model = _model(script)
+    _run(model, tools=[tool])
+    canonical = "See [未核实链接]\n\nClosing text."
+    model.confirm_turn("conversation", "answer", canonical)
+    _run(model, message="next", tools=[tool])
+
+    messages = script._calls[-1]["messages"]
+    assistants = [message for message in messages if isinstance(message, AIMessage)]
+    assert [message.text for message in assistants] == ["", canonical]
+    assert assistants[0].tool_calls[0]["id"] == "one"
+    assert any(isinstance(message, ToolMessage) and message.content == "Approved evidence" for message in messages)
+    assert "action=replace_turn_text" in caplog.text
+    assert "unverified.example" not in caplog.text
 
 
 def test_sdk_state_is_isolated_by_conversation_and_shared_after_model_reload():

@@ -47,6 +47,12 @@ function started(conversationId: string): AgentAnswerEvent {
     assistantMessage: message(conversationId),
   };
 }
+function answerSnapshot(assistantMessage: AgentMessageView, sequence: number): AgentAnswerEvent {
+  return {
+    type: "answer.snapshot", occurredAt: now, conversationId: assistantMessage.conversationId,
+    messageId: assistantMessage.messageId, sequence, ...messagePair(assistantMessage),
+  };
+}
 const snapshots = new Map<string, (snapshot: AgentMessageEventView) => void>();
 const close = vi.fn();
 const streams = new Map<string, { emit: (event: AgentAnswerEvent) => void; signal: AbortSignal; finish: () => void }>();
@@ -278,6 +284,123 @@ describe("Conversation state", () => {
       { type: "markdown", markdown: "片段后的说明" },
     ]);
     expect(result.current.messages[1]?.searchResult?.hits).toEqual([hit]);
+  });
+
+  it("renders cumulative snapshots in order and replaces revised or withdrawn video cards in place", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk" } } as VideoChunkSearchHit;
+    const before = { type: "markdown" as const, markdown: "片段前的说明" };
+    const video = { type: "video" as const, videoChunkId: "chunk", startSeconds: 12, endSeconds: 14 };
+    const after = { type: "markdown" as const, markdown: "片段后的说明" };
+    act(() => stream.emit(answerSnapshot(message("conv-A", { version: 2, content: before.markdown, renderBlocks: [before] }), 2)));
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before]);
+    act(() => stream.emit(answerSnapshot(message("conv-A", { version: 3, content: before.markdown, searchResult: searchResult(["A"], [hit]), renderBlocks: [before, video] }), 3)));
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before, video]);
+    act(() => stream.emit(answerSnapshot(message("conv-A", { version: 4, content: before.markdown + after.markdown, searchResult: searchResult(["A"], [hit]), renderBlocks: [before, video, after] }), 4)));
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before, video, after]);
+    const revised = { ...video, endSeconds: 15 };
+    act(() => stream.emit(answerSnapshot(message("conv-A", { version: 5, content: before.markdown + after.markdown, searchResult: searchResult(["A"], [hit]), renderBlocks: [before, revised, after] }), 5)));
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before, revised, after]);
+    act(() => stream.emit(answerSnapshot(message("conv-A", { version: 6, content: before.markdown + after.markdown, searchResult: null, renderBlocks: [before, after] }), 6)));
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before, after]);
+    expect(result.current.messages[1]?.searchResult).toBeNull();
+  });
+
+  it("rejects stale snapshots and continues legacy events from the accepted snapshot", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const before = { type: "markdown" as const, markdown: "已保存的正文" };
+    const video = { type: "video" as const, videoChunkId: "chunk", startSeconds: 12, endSeconds: 14 };
+    const accepted = message("conv-A", { version: 4, content: before.markdown, renderBlocks: [before] });
+    act(() => {
+      stream.emit(answerSnapshot(accepted, 2));
+      stream.emit(answerSnapshot(message("conv-A", { version: 3, content: "旧正文" }), 3));
+      stream.emit(answerSnapshot(message("conv-A", { version: 5, content: "重复序号" }), 3));
+      stream.emit({ ...answerSnapshot(message("conv-A", { version: 5, content: "错误消息" }), 4), messageId: "other" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, delta: "后续正文" });
+      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 5, block: video });
+    });
+    expect(result.current.messages[1]?.content).toBe(before.markdown + "后续正文");
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before, video]);
+    const replacement = message("conv-A", { version: 5, content: "修订正文", renderBlocks: [] });
+    act(() => {
+      stream.emit(answerSnapshot(replacement, 6));
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 7, delta: "继续" });
+      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 8, block: video });
+    });
+    expect(result.current.messages[1]?.content).toBe("修订正文继续");
+    expect(result.current.messages[1]?.renderBlocks).toEqual([video]);
+  });
+
+  it("does not advance the version of a stream prefix when a newer watch snapshot is held back", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const before = { type: "markdown" as const, markdown: "正文" };
+    const video = { type: "video" as const, videoChunkId: "chunk", startSeconds: 12, endSeconds: 14 };
+    act(() => stream.emit(answerSnapshot(message("conv-A", {
+      version: 2, content: before.markdown, renderBlocks: [before],
+    }), 2)));
+    act(() => snapshots.get("conv-A")!({
+      type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A", {
+        version: 5, content: "更晚的已保存正文", renderBlocks: [before, video],
+      })],
+    }));
+    expect(result.current.messages[1]?.content).toBe(before.markdown);
+    expect(result.current.messages[1]?.version).toBe(2);
+    act(() => stream.emit(answerSnapshot(message("conv-A", {
+      version: 3, content: before.markdown, renderBlocks: [before, video],
+    }), 3)));
+    expect(result.current.messages[1]?.version).toBe(3);
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before, video]);
+  });
+
+  it.each(["COMPLETED", "FAILED"] as const)("preserves snapshot block order in a durable %s response and ignores late processing updates", async (status) => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const blocks = [
+      { type: "markdown" as const, markdown: "前文" },
+      { type: "video" as const, videoChunkId: "chunk", startSeconds: 12, endSeconds: 14 },
+      { type: "markdown" as const, markdown: "后文" },
+    ];
+    const partial = message("conv-A", { version: 2, content: "前文后文", renderBlocks: blocks });
+    const error = { code: "AGENT_MODEL_ERROR", message: "后续请求失败" };
+    const final = { ...partial, version: 3, status, phase: null, lastError: status === "FAILED" ? error : null };
+    act(() => {
+      stream.emit(answerSnapshot(partial, 2));
+      const base = { occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, ...messagePair(final) };
+      stream.emit(status === "FAILED" ? { ...base, type: "answer.failed", error } : { ...base, type: "answer.completed" });
+      stream.emit(answerSnapshot({ ...partial, version: 4, content: "迟到的正文", renderBlocks: [] }, 4));
+      snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [{ ...partial, version: 4 }] });
+      stream.finish();
+    });
+    await waitFor(() => expect(result.current.sending).toBe(false));
+    expect(result.current.messages[1]?.status).toBe(status);
+    expect(result.current.messages[1]?.content).toBe("前文后文");
+    expect(result.current.messages[1]?.renderBlocks).toEqual(blocks);
+  });
+
+  it("adopts newer evidence and ordered blocks from processing snapshots after the stream ends", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const oldHit = { candidate: { videoChunkId: "old" }, evidence: { videoChunkId: "old" } } as VideoChunkSearchHit;
+    const newHit = { candidate: { videoChunkId: "new" }, evidence: { videoChunkId: "new" } } as VideoChunkSearchHit;
+    const partial = message("conv-A", { version: 2, content: "已保存正文", searchResult: searchResult(["A"], [oldHit]) });
+    vi.mocked(listAgentMessages).mockResolvedValue(page([partial]));
+    act(() => {
+      stream.emit(answerSnapshot(partial, 2));
+      stream.emit({ type: "answer.interrupted", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, error: { code: "STREAM_INTERRUPTED", message: "恢复中" } });
+      stream.finish();
+    });
+    await waitFor(() => expect(result.current.sending).toBe(false));
+    const recovered = message("conv-A", {
+      version: 3, content: "已保存正文及后续", searchResult: searchResult(["A"], [oldHit, newHit]),
+      renderBlocks: [{ type: "markdown", markdown: "已保存正文及后续" }, { type: "video", videoChunkId: "new", startSeconds: 12, endSeconds: 14 }],
+    });
+    act(() => snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [recovered] }));
+    expect(result.current.messages[1]?.searchResult?.hits).toEqual([oldHit, newHit]);
+    expect(result.current.messages[1]?.renderBlocks).toEqual(recovered.renderBlocks);
+    expect(result.current.messages[1]?.content).toBe(recovered.content);
   });
 
   it("migrates the previous selected series' saved Conversation once and restores its messages", async () => {

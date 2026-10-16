@@ -21,6 +21,7 @@ from sqlalchemy import select
 from engine.common.config import VideoParseRuntimeConfig
 from gateway.config import load_config
 from server.api.app import create_app
+from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from server.api.agent import _agent_render_blocks, _agent_search_evidence_view
 from server.api.jobs import _job_event_fingerprint, _job_view
@@ -270,6 +271,43 @@ def test_agent_render_blocks_drops_invalid_known_chunk_range(
     assert "video_chunk_id=known" in warning
     assert "evidence_start_seconds=10 evidence_end_seconds=20" in warning
     assert "action=drop_invalid_range" in warning
+
+
+@pytest.mark.parametrize(("sources", "neighbor_change", "accepted"), [
+    (["left", "right"], {}, True),
+    (None, {}, False),
+    (["left", "missing"], {}, False),
+    (["left", "right"], {"videoId": "different-video"}, False),
+    (["left", "right"], {"startSeconds": 21}, False),
+])
+def test_agent_render_blocks_validates_internal_sources_without_exposing_them(
+    sources, neighbor_change, accepted,
+):
+    common = {"tenantId": "tenant", "seriesId": "series", "videoId": "video", "durationSeconds": 30}
+    evidence = [
+        {**common, "videoChunkId": "left", "sequenceNo": 0, "startSeconds": 10, "endSeconds": 20},
+        {**common, "videoChunkId": "right", "sequenceNo": 1, "startSeconds": 20, "endSeconds": 30, **neighbor_change},
+    ]
+    raw = {"type": "video", "videoChunkId": "left", "startSeconds": 15, "endSeconds": 25}
+    state = AgentMessageState(
+        message_id="assistant", conversation_id="conversation", sequence_no=1,
+        role="ASSISTANT", status="COMPLETED", content="正文", series_ids=("series",),
+        model_name="test", last_error=None, created_at=1, updated_at=1,
+        search_result={
+            "renderBlocks": [{**raw, "sourceVideoChunkIds": sources}],
+            "hits": [{"candidate": {"videoChunkId": item["videoChunkId"]}, "evidence": item} for item in evidence],
+        },
+    )
+    projected = SimpleNamespace(hits=[SimpleNamespace(
+        candidate=SimpleNamespace(video_chunk_id=item["videoChunkId"]),
+        evidence=SimpleNamespace(start_seconds=item["startSeconds"], end_seconds=item["endSeconds"]),
+    ) for item in evidence])
+
+    blocks = _agent_render_blocks(state, projected)
+
+    assert [block.model_dump(mode="json", by_alias=True) for block in blocks if block.type == "video"] == (
+        [raw] if accepted else []
+    )
 
 
 @dataclass
@@ -2272,8 +2310,9 @@ def test_agent_evidence_view_reads_legacy_single_query_without_trace():
 
 
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
+@pytest.mark.parametrize("supervised,leading_text", [(False, True), (True, True), (True, False)])
 def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
-    tmp_path, prepared_import, caplog, accept,
+    tmp_path, prepared_import, caplog, accept, supervised, leading_text,
 ):
     caplog.set_level(logging.INFO, logger="server.api.agent")
     client, _, _ = _client(tmp_path)
@@ -2342,6 +2381,41 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
 
     service._runtime._retrieve = joined_search
     service._runtime._query_model = QueryWithEvidence("query-evidence")
+    if supervised:
+        class SupervisorModel:
+            model_name = "supervisor-evidence"
+
+            def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
+                by_name = {tool.name: tool for tool in tools}
+                if leading_text:
+                    handle_text("以下片段支持这个结论。")
+                by_name["search_video_graph"].invoke({"query": "找动作片段"})
+                approved = json.loads(by_name["get_context_canvas"].invoke({"collection": "approved"}))
+                for item in approved["items"]:
+                    draft = _read_all(
+                        by_name["get_context_canvas"], item["reference"], collection="approved",
+                    )["draft"]
+                    by_name["submit_video_item"].invoke({
+                        **draft, "claim": "这些片段包含动作。",
+                    })
+                handle_text("这些片段包含动作。")
+
+            def confirm_turn(self, *_args):
+                pass
+
+            def discard_turn(self, *_args):
+                pass
+
+            def delete_thread(self, *_args):
+                pass
+
+        service._runtime = SupervisorRuntime(
+            service._runtime, SupervisorModel(), SimpleNamespace(),
+            max_web_results=5, web_timeout_seconds=12,
+            execution_timeout_seconds=60, max_tool_result_bytes=16_384,
+            max_prompt_chars=200_000,
+        )
+        service._runtimes = [service._runtime]
     try:
         response = client.post(
             "/api/agent/messages/send", params={"tenantId": "local-default", "conversationId": conversation_id},
@@ -2351,32 +2425,48 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         assert response.status_code == 200, response.text
         if accept == "text/event-stream":
             events = _answer_payloads(response.text)
-            evidence_event = next(event for event in events if event["type"] == "answer.evidence")
-            evidence_hits = evidence_event["searchResult"]["hits"]
-            assert "agentReply" not in evidence_event["searchResult"]
             final = events[-1]["assistantMessage"]
-            assert evidence_hits == final["searchResult"]["hits"]
-            block_events = [
-                event for event in events if event["type"] == "answer.block"
-            ]
-            assert [event["block"] for event in block_events] == final["renderBlocks"]
-            event_types = [event["type"] for event in events]
-            assert event_types.index("answer.evidence") < event_types.index("answer.block")
-            assert max(
-                index for index, value in enumerate(event_types)
-                if value == "answer.block"
-            ) < event_types.index("answer.delta")
-            projection_log = next(
-                record.getMessage() for record in caplog.records
-                if record.name == "server.api.agent"
-                and record.getMessage().startswith("agent_evidence_projected ")
-            )
-            assert f"conversation_id={conversation_id}" in projection_log
-            assert "hit_count=2" in projection_log
-            assert "playable_hits=0" in projection_log
-            assert "thumbnail_hits=0" in projection_log
-            assert "partial=True" in projection_log
-            assert "warning_count=5" in projection_log
+            if supervised:
+                snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+                assert snapshots and all(message["status"] == "PROCESSING" for message in snapshots)
+                if leading_text:
+                    assert snapshots[0]["content"] == "以下片段支持这个结论。"
+                    assert snapshots[0]["searchResult"] is None
+                else:
+                    assert snapshots[0]["content"] == ""
+                    assert [block["type"] for block in snapshots[0]["renderBlocks"]] == ["video"]
+                    assert "agentReply" not in snapshots[0]["searchResult"]
+                assert snapshots[-1]["renderBlocks"] == final["renderBlocks"]
+                assert snapshots[-1]["searchResult"] == final["searchResult"]
+                assert snapshots[-1]["content"] == final["content"]
+                assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
+                assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+            else:
+                evidence_event = next(event for event in events if event["type"] == "answer.evidence")
+                evidence_hits = evidence_event["searchResult"]["hits"]
+                assert "agentReply" not in evidence_event["searchResult"]
+                assert evidence_hits == final["searchResult"]["hits"]
+                block_events = [
+                    event for event in events if event["type"] == "answer.block"
+                ]
+                assert [event["block"] for event in block_events] == final["renderBlocks"]
+                event_types = [event["type"] for event in events]
+                assert event_types.index("answer.evidence") < event_types.index("answer.block")
+                assert max(
+                    index for index, value in enumerate(event_types)
+                    if value == "answer.block"
+                ) < event_types.index("answer.delta")
+                projection_log = next(
+                    record.getMessage() for record in caplog.records
+                    if record.name == "server.api.agent"
+                    and record.getMessage().startswith("agent_evidence_projected ")
+                )
+                assert f"conversation_id={conversation_id}" in projection_log
+                assert "hit_count=2" in projection_log
+                assert "playable_hits=0" in projection_log
+                assert "thumbnail_hits=0" in projection_log
+                assert "partial=True" in projection_log
+                assert "warning_count=3" in projection_log
         else:
             final = response.json()["assistantMessage"]
         assert "agentReply" not in final["searchResult"]
@@ -2390,14 +2480,14 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             "resultCount": len(report.video_chunk_ids),
             "videoChunkIds": list(report.video_chunk_ids),
         }]
-        if accept == "text/event-stream":
+        if accept == "text/event-stream" and not supervised:
             assert evidence_event["searchResult"]["retrievalTrace"] == (
                 final["searchResult"]["retrievalTrace"]
             )
         hits = final["searchResult"]["hits"]
         assert len(hits) == len(report.video_chunk_ids) == 2
         assert final["renderBlocks"] == [
-            {"type": "markdown", "markdown": "以下片段支持这个结论。"},
+            *([{"type": "markdown", "markdown": "以下片段支持这个结论。"}] if leading_text else []),
             *[
                 {
                     "type": "video",

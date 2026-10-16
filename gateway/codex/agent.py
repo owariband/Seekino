@@ -29,6 +29,7 @@ from gateway.agent_model.context import (
     preflight_context,
 )
 from gateway.usage import track_model_call
+from gateway.model_diagnostics import capture_model_diagnostics
 from gateway.media import encode_media_file
 from gateway.multimodal import (
     ImageInput, MultimodalInput, TextInput, VideoInput, validate_generate_request,
@@ -106,7 +107,7 @@ class CodexAgentModel:
         max_input_chars: int | None,
         context_window_policy: ContextWindowPolicy | None = None,
         codex_bin: str | None = None,
-        max_concurrency: int = 4,
+        max_concurrency: int,
         cwd: str | None = None,
         executor: ThreadPoolExecutor | None = None,
         session_factory: SessionFactory | None = None,
@@ -347,10 +348,20 @@ class CodexAgentModel:
         timeout = self._effective_timeout(request_timeout_seconds)
         if check_control is not None:
             check_control()
+        visible_count = 0
+
+        def accept_text(value: str) -> None:
+            nonlocal visible_count
+            handle_text(value)
+            visible_count += 1
+
         session = self._new_session(
             tools=tools,
             max_model_calls=max_model_calls,
             check_control=check_control,
+            # Required-tool repair can reject an entire turn's answer. Keep
+            # that path final-only so rejected prose never reaches the host.
+            handle_text=None if require_tool_call else accept_text,
         )
         latest_turn: object | None = None
 
@@ -358,6 +369,7 @@ class CodexAgentModel:
             nonlocal latest_turn
             try:
                 turn_count = 1
+                turn_text_count = visible_count
                 turn = session.run_turn(rendered_prompt)
                 latest_turn = turn
                 if require_tool_call and session.tool_call_count == 0:
@@ -367,6 +379,7 @@ class CodexAgentModel:
                             reason=ModelFailureReason.LOOP_LIMIT,
                         )
                     turn_count += 1
+                    turn_text_count = visible_count
                     turn = session.run_turn(
                         "请先调用一个可用工具，再根据工具结果完成回答。"
                     )
@@ -378,11 +391,12 @@ class CodexAgentModel:
 
                 while True:
                     response = _turn_field(turn, "final_response")
-                    if not isinstance(response, str) or not response.strip():
-                        raise CodexAgentModelError(
-                            "Codex agent loop completed without visible text"
-                        )
-                    handle_text(response)
+                    if visible_count == turn_text_count:
+                        if not isinstance(response, str) or not response.strip():
+                            raise CodexAgentModelError(
+                                "Codex agent loop completed without visible text"
+                            )
+                        accept_text(response)
                     feedback = (
                         stop_feedback() if stop_feedback is not None else None
                     )
@@ -394,6 +408,7 @@ class CodexAgentModel:
                             reason=ModelFailureReason.LOOP_LIMIT,
                         )
                     turn_count += 1
+                    turn_text_count = visible_count
                     turn = session.run_turn(feedback[:500])
                     latest_turn = turn
             finally:
@@ -405,7 +420,7 @@ class CodexAgentModel:
             timeout=timeout,
             check_control=check_control,
             operation=self._operation("agent_loop", tools),
-            latest_turn=lambda: latest_turn,
+            latest_turn=lambda: latest_turn or getattr(session, "last_turn", None),
         )
 
     def close(self) -> None:
@@ -426,6 +441,7 @@ class CodexAgentModel:
         tools: Sequence[BaseTool],
         max_model_calls: int | None,
         check_control: Callable[[], None] | None,
+        handle_text: Callable[[str], None] | None = None,
     ) -> SessionLike:
         session = self._session_factory(
             model=self.model_name,
@@ -438,6 +454,7 @@ class CodexAgentModel:
             max_tool_calls=None,
             max_model_calls=max_model_calls,
             check_control=check_control,
+            **({"handle_text": handle_text} if handle_text is not None else {}),
         )
         with self._lock:
             if self._closed:
@@ -465,7 +482,12 @@ class CodexAgentModel:
                 operation=operation,
                 granularity="sdk_turn_run",
                 usage_source="codex_thread_total",
-            ) as usage_call:
+            ) as usage_call, capture_model_diagnostics(usage_call, {
+                "model": self.model_name,
+                "operation": operation,
+                "request_timeout_seconds": timeout,
+                "total_timeout_enabled": self.total_timeout_enabled,
+            }):
                 future = self._executor.submit(copy_context().run, execute)
                 unregister_cancel = usage_call.add_cancel_callback(
                     lambda: self._cancel_session(session, future),
@@ -486,6 +508,9 @@ class CodexAgentModel:
                                 "Codex Agent execution deadline expired"
                             )
                         try:
+                            raise_if_failed = getattr(session, "raise_if_failed", None)
+                            if raise_if_failed is not None:
+                                raise_if_failed()
                             result = future.result(
                                 timeout=min(remaining, 0.05) if remaining is not None else 0.05,
                             )
@@ -500,6 +525,7 @@ class CodexAgentModel:
                                 reason=ModelFailureReason.LOOP_LIMIT,
                             ) from exc
                         except Exception as exc:
+                            self._cancel_session(session, future)
                             raise CodexAgentModelError(
                                 f"Codex request failed for model {self.model_name}",
                                 reason=_failure_reason(exc),

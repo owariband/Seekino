@@ -11,9 +11,10 @@ import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TI
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
 import { Mascot } from "../../shared/Mascot";
 import { useAuth } from "../auth/AuthProvider";
+import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
-import { explainHit, readableTranscript } from "./explain";
+import { explainHit } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
 
@@ -94,9 +95,9 @@ function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
       hit
       && Number.isSafeInteger(block.startSeconds)
       && Number.isSafeInteger(block.endSeconds)
-      && hit.evidence.startSeconds <= block.startSeconds
+      && 0 <= block.startSeconds
       && block.startSeconds < block.endSeconds
-      && block.endSeconds <= hit.evidence.endSeconds,
+      && block.endSeconds <= hit.evidence.durationSeconds,
     );
   });
 }
@@ -212,7 +213,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const messageOptionSummary = !messageOptions || !messageOptionOverrides ? "服务端默认" : [
     messageOptionOverrides.maxLoopTurns === undefined ? null : `最多 ${messageOptions.maxLoopTurns} 轮`,
   ].filter(Boolean).join(" · ") || (Object.keys(messageOptionOverrides).length ? "已自定义" : "服务端默认");
-  const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string; startSeconds: number; endSeconds: number } | null>(null);
+  const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string } | null>(null);
   const deleteWarningId = useId();
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const conversationPickerRef = useRef<HTMLDetailsElement>(null);
@@ -266,7 +267,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   }, [query]);
 
   const evidenceMessage = selection?.conversationId === conversationId ? messages.find((message) => message.messageId === selection.messageId) : null;
-  const selectedHit = evidenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === selection?.chunkId) ?? null;
+  const selectedBlock = evidenceMessage ? messageRenderBlocks(evidenceMessage).find((block) => block.type === "video" && block.videoChunkId === selection?.chunkId) : null;
+  const selectedHit = selectedBlock ? evidenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === selection?.chunkId) ?? null : null;
   const referenceMessage = reference ? messages.find((message) => message.messageId === reference.messageId) : null;
   const referenceHit = referenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === reference?.videoChunkId) ?? null;
   const referenceBlock = referenceMessage && reference ? messageRenderBlocks(referenceMessage).find((block) => block.type === "video" && block.videoChunkId === reference.videoChunkId) : null;
@@ -654,10 +656,10 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       const playbackRange = { startSeconds: block.startSeconds, endSeconds: block.endSeconds };
                       const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
                       const thumbnailUrl = hit.evidence.thumbnail ? mediaUrl(hit.evidence.thumbnail.url) : null;
-                      const firstVideo = !blocks.slice(0, index).some((item) => item.type === "video" && message.searchResult?.hits.some((candidate) => candidate.evidence.videoChunkId === item.videoChunkId));
+                      const videoIndex = blocks.slice(0, index).filter((item) => item.type === "video").length;
                       return (
                         <section key={`video:${block.videoChunkId}:${playbackRange.startSeconds}:${playbackRange.endSeconds}:${index}`} className={`${styles.candidatesPanel} ${styles.renderVideoBlock}`} aria-label="检索助手提交的视频片段">
-                          {firstVideo ? <div className={styles.candidateHeading}><h2>视频片段</h2><span>{message.searchResult?.hits.length ?? 0} 段</span></div> : null}
+                          {videoIndex === 0 ? <div className={styles.candidateHeading}><h2>视频片段</h2><span>{blocks.filter((item) => item.type === "video").length} 段</span></div> : null}
                           <div className={styles.candidateList}>
                             <button
                               type="button"
@@ -666,18 +668,23 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                                 if (onOpenVideo) {
                                   onOpenVideo({ seriesId: hit.evidence.seriesId, videoId: hit.evidence.videoId, startSeconds: playbackRange.startSeconds });
                                 } else {
-                                  setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId, ...playbackRange });
+                                  setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId });
                                 }
                               }}
                               aria-pressed={selected}
                               title={onOpenVideo ? "打开整集并定位到片段" : undefined}
                             >
                               <div className={styles.candidateTop}>
-                                <span className={styles.rank}>{hit.candidate.rank}</span>
+                                <span className={styles.rank}>{videoIndex + 1}</span>
                                 <span>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)}</span>
                                 <time>{formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds)}</time>
                               </div>
-                              {thumbnailUrl ? (
+                              {hit.evidence.playbackStatus === "READY" && hit.evidence.playbackUrl ? (
+                                <span className={`${styles.candidateThumbnail} ${styles.candidatePreview}`} role="img" aria-label={`${hit.evidence.seriesName} ${episodeLabel(hit.evidence.episodeOrder)} ${formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds)} 视频片段预览`}>
+                                  <PlaybackFrame className={styles.candidatePreviewFrame} src={mediaUrl(hit.evidence.playbackUrl)} positionSeconds={playbackRange.startSeconds} />
+                                  <Play className={styles.candidatePreviewPlay} size={42} fill="currentColor" aria-hidden="true" />
+                                </span>
+                              ) : thumbnailUrl ? (
                                 <img className={styles.candidateThumbnail} src={thumbnailUrl} alt={hit.evidence.thumbnail?.alt || `${hit.evidence.seriesName} 视频片段首帧`} loading="lazy" />
                               ) : (
                                 <span className={displayMode === "debug" ? styles.candidateThumbnailFallback : styles.whyLine} role="img" aria-label={displayMode === "debug" ? "该片段暂无首帧缩略图" : "播放所选片段"}>
@@ -686,10 +693,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                                 </span>
                               )}
                               <strong>{displayMode === "debug" ? explanation.summary : formatTimeText(explanation.summary)}</strong>
-                              {displayMode === "debug" ? <>
-                                <p>{hit.evidence.videoCompact || hit.evidence.windowSummary}</p>
-                                <blockquote>{readableTranscript(hit)}</blockquote>
-                              </> : null}
                             </button>
                           </div>
                         </section>
@@ -852,7 +855,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           </div>
         </section>
 
-        {!onOpenVideo && selectedHit && evidenceMessage && selection ? (
+        {!onOpenVideo && selectedHit && evidenceMessage && selectedBlock?.type === "video" ? (
           <section className={styles.evidenceColumn} aria-label="片段详情" onKeyDown={(event) => {
             if (event.key === "Escape") setSelection(null);
           }}>
@@ -860,7 +863,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               <strong>片段详情</strong>
               <button type="button" onClick={() => setSelection(null)} aria-label="关闭片段详情"><X size={18} /></button>
             </header>
-            <EvidencePlayer hit={selectedHit} displayMode={displayMode} playbackRange={{ startSeconds: selection.startSeconds, endSeconds: selection.endSeconds }} />
+            <EvidencePlayer hit={selectedHit} displayMode={displayMode} playbackRange={{ startSeconds: selectedBlock.startSeconds, endSeconds: selectedBlock.endSeconds }} />
             <button className={`button-secondary ${styles.referenceButton}`} type="button" onClick={() => {
               setReference({ messageId: evidenceMessage.messageId, videoChunkId: selectedHit.evidence.videoChunkId });
               setSelection(null);

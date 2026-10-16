@@ -191,6 +191,51 @@ def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
     )
 
 
+def test_final_range_requires_explicit_sources_when_restoring_cross_chunk_history():
+    from agent.chat.video_search.output import video_range_sources
+
+    left, right = _hit("chunk-1"), _hit("chunk-2")
+    right.evidence.video_id = left.evidence.video_id
+    right.evidence.sequence_no = 1
+    right.evidence.start_seconds, right.evidence.end_seconds = 20, 30
+    evidence = {hit.evidence.video_chunk_id: hit.evidence.model_dump(by_alias=True)
+                for hit in (left, right)}
+    with pytest.raises(ValueError, match="not covered"):
+        video_range_sources(evidence, "chunk-1", 12, 28)
+    assert video_range_sources(evidence, "chunk-1", 12, 28, allow_adjacent=True) == ["chunk-1", "chunk-2"]
+    assert video_range_sources(
+        evidence, "chunk-2", 12, 28, source_video_chunk_ids=["chunk-2", "chunk-1"],
+    ) == ["chunk-1", "chunk-2"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("startSeconds", "bad"), ("startSeconds", None), ("endSeconds", True),
+    ("tenantId", "other"), ("seriesId", "other"), ("videoId", "other"),
+    ("videoChunkId", "mismatched"), ("sequenceNo", 2), ("durationSeconds", 25),
+])
+def test_final_range_rejects_corrupt_or_unrelated_saved_sources(field, value):
+    from agent.chat.video_search.output import video_range_sources
+
+    left, right = _hit("chunk-1"), _hit("chunk-2")
+    right.evidence.video_id = left.evidence.video_id
+    right.evidence.sequence_no = 1
+    right.evidence.start_seconds, right.evidence.end_seconds = 20, 30
+    evidence = {hit.evidence.video_chunk_id: hit.evidence.model_dump(by_alias=True)
+                for hit in (left, right)}
+    evidence["chunk-2"][field] = value
+    with pytest.raises(ValueError):
+        video_range_sources(evidence, "chunk-1", 12, 28, source_video_chunk_ids=["chunk-1", "chunk-2"])
+
+
+@pytest.mark.parametrize("sources", [[], ["missing"], ["chunk-1", "chunk-1"], "chunk-1"])
+def test_final_range_rejects_invalid_explicit_source_ids(sources):
+    from agent.chat.video_search.output import video_range_sources
+
+    evidence = {"chunk-1": _hit().evidence.model_dump(by_alias=True)}
+    with pytest.raises(ValueError):
+        video_range_sources(evidence, "chunk-1", 12, 18, source_video_chunk_ids=sources)
+
+
 def _selected_range(chunk_id: str, *, start_seconds: int = 11, end_seconds: int = 19) -> dict:
     return {
         "video_chunk_id": chunk_id,
