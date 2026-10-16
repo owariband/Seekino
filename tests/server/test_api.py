@@ -23,7 +23,7 @@ from gateway.config import load_config
 from server.api.app import create_app
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
-from server.api.agent import _agent_render_blocks, _agent_search_evidence_view
+from server.api.agent import _agent_message_view, _agent_render_blocks, _agent_search_evidence_view
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.config.media import ImageUploadConfig
@@ -61,6 +61,7 @@ from server.schema import (
     VideoChunkSearchResult,
 )
 from server.service.agent_chat import AgentChatService
+from server.service.agent_attachments import AgentAttachmentService
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
 from server.service.media import MediaService
@@ -219,6 +220,31 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
     assert [block.type for block in legacy] == ["markdown"]
 
 
+def test_canonical_render_blocks_preserve_inline_tools_without_video_evidence(caplog):
+    state = AgentMessageState(
+        message_id="assistant", conversation_id="conversation", sequence_no=1,
+        role="ASSISTANT", status="PROCESSING", content="旧文字投影", series_ids=(),
+        model_name="chat", search_result=None, last_error=None, created_at=1, updated_at=1,
+        render_blocks=(
+            {"type": "markdown", "markdown": "先查资料。"},
+            {"type": "tool", "callId": "call-1", "tool": "search_web", "status": "inProgress", "query": "MyGO"},
+            {"type": "markdown", "markdown": "找到结果。"},
+            {"type": "tool", "callId": "invalid", "tool": "unknown", "status": "completed"},
+        ),
+    )
+    blocks = _agent_render_blocks(state, None)
+    assert [block.model_dump(mode="json", by_alias=True) for block in blocks] == list(state.render_blocks[:3])
+    wire = _agent_message_view(state).model_dump(mode="json", by_alias=True)
+    assert wire["renderBlocks"] == list(state.render_blocks[:3])
+    nullable = replace(state, render_blocks=({**state.render_blocks[1], "query": None},))
+    tool = _agent_message_view(nullable).model_dump(mode="json", by_alias=True)["renderBlocks"][0]
+    assert tool == {**state.render_blocks[1], "query": None}
+    assert "drop_invalid_tool" in caplog.text
+    assert _agent_render_blocks(replace(state, render_blocks=()), None) == []
+    legacy = _agent_render_blocks(replace(state, render_blocks=None), None)
+    assert legacy[0].markdown == "旧文字投影"
+
+
 @pytest.mark.parametrize(("start_seconds", "end_seconds"), [
     (15, 15),
     (15, 14),
@@ -352,6 +378,7 @@ class _AgentModelStub:
         self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
         require_tool_call=False,
         request_timeout_seconds=None, check_control=None, max_input_chars=None,
+        image_urls=(), initial_messages=None,
     ):
         import json
 
@@ -403,10 +430,12 @@ def _client(tmp_path: Path):
         environment=DatabaseEnvironment.TEST,
     )
     library = LibraryService(LibraryRepository(session_factory), artifact_store)
+    agent_repository = AgentRepository(session_factory)
+    attachments = AgentAttachmentService(agent_repository, artifact_store, config=ImageUploadConfig())
     job_repository = ParseJobRepository(session_factory)
     retrieval = _RetrievalStub([])
     agent = AgentChatService(
-        AgentRepository(session_factory),
+        agent_repository,
         library,
         AgentRuntime(
             _AgentModelStub("query-model-v1"),
@@ -415,6 +444,7 @@ def _client(tmp_path: Path):
             retrieval.search,
             retrieval_channel="lexical",
         ),
+        attachments=attachments,
     )
     services = ApplicationServices(
         library=library,
@@ -440,6 +470,7 @@ def _client(tmp_path: Path):
         media=MediaService(library, artifact_store),
         retrieval=retrieval,  # type: ignore[arg-type]
         agent=agent,
+        agent_attachments=attachments,
         parse_consumer=_ParseConsumerStub(),  # type: ignore[arg-type]
     )
     return TestClient(create_app(services)), retrieval, job_repository
@@ -531,6 +562,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/conversations/list",
         "/api/agent/conversations/get",
         "/api/agent/conversations/delete",
+        "/api/agent/attachments/upload",
+        "/api/agent/attachments/content",
         "/api/agent/messages/list",
         "/api/agent/messages/get",
         "/api/agent/messages/options",
@@ -1108,6 +1141,193 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
     assert len(listed_conversations.json()["items"]) == 1
     assert listed_conversations.json()["items"][0]["messageCount"] == 2
     assert [item["role"] for item in messages_after_user.json()["items"]] == ["ASSISTANT"]
+
+
+def test_agent_attachment_upload_reads_bytes_and_enforces_scope_and_limits(tmp_path):
+    client, _, _ = _client(tmp_path)
+    conversation_id = _create_agent_conversation(client)
+    scope = {"tenantId": "local-default", "conversationId": conversation_id}
+    data = _background_png()
+    uploaded = client.post("/api/agent/attachments/upload", params=scope, content=data)
+    assert uploaded.status_code == 200, uploaded.text
+    attachment = uploaded.json()
+    assert attachment["mediaType"] == "image/png"
+    assert attachment["sizeBytes"] == len(data)
+    assert attachment["mediaUri"].startswith("artifact://test/")
+    content = client.get(attachment["previewUrl"])
+    assert content.status_code == 200 and content.content == data
+    assert content.headers["cache-control"] == "private, no-store"
+    assert content.headers["content-type"] == "image/png"
+
+    service = client.app.state.services.agent_attachments
+    service.image_upload_config = ImageUploadConfig(maximum_upload_size_bytes=128)
+    for body in (b"", b"not an image", b"x" * 129):
+        assert client.post("/api/agent/attachments/upload", params=scope, content=body).status_code == 400
+    assert client.post("/api/agent/attachments/upload", params=scope,
+                       content=iter([b"x" * 100, b"x" * 100])).status_code == 400
+    assert client.post("/api/agent/attachments/upload", params={**scope, "tenantId": "other"},
+                       content=b"x" * 129).status_code == 404
+    assert client.get("/api/agent/attachments/content", params={
+        **scope, "mediaUri": "file:///tmp/unmanaged.png",
+    }).status_code == 400
+    assert client.get("/api/agent/attachments/content", params={
+        **scope, "tenantId": "other", "mediaUri": attachment["mediaUri"],
+    }).status_code == 404
+
+
+@pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
+def test_attachment_send_reaches_video_runtime_in_json_and_sse(tmp_path, accept):
+    client, retrieval, _ = _client(tmp_path)
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
+    scope = {"tenantId": "local-default", "conversationId": conversation_id}
+    uploaded = client.post("/api/agent/attachments/upload", params=scope, content=_background_png()).json()
+    response = client.post(
+        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        headers={"Accept": accept, "Idempotency-Key": "attachment-consumed"},
+        json={"tenantId": "local-default", "content": "这个表情包出自哪一集？",
+              "attachments": [{"mediaUri": uploaded["mediaUri"]}]},
+    )
+    assert response.status_code == 200, response.text
+    completed = _answer_payloads(response.text)[-1] if accept == "text/event-stream" else response.json()
+    assert completed["assistantMessage"]["status"] == "COMPLETED"
+    assert completed["userMessage"]["attachments"] == [uploaded]
+    assert len(retrieval.calls) == 1
+    assert len(client.get("/api/agent/messages/list", params=scope).json()["items"]) == 2
+    assert client.get(uploaded["previewUrl"]).status_code == 200
+
+
+@pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
+def test_vision_attachment_send_and_follow_up_keep_images_in_json_and_sse_history(tmp_path, accept):
+    import base64
+
+    client, retrieval, _ = _client(tmp_path)
+    service = client.app.state.services.agent
+
+    class VisionModel:
+        model_name = "vision-supervisor"
+        supports_vision_input = True
+
+        def __init__(self):
+            self.turns = []
+
+        def run_agent(self, _prompt, *, handle_text, history, **kwargs):
+            self.turns.append((kwargs.get("image_urls"), history))
+            handle_text("这是一张红色图片。")
+
+        def confirm_turn(self, *_args):
+            pass
+
+        def discard_turn(self, *_args):
+            pass
+
+        def delete_thread(self, *_args):
+            pass
+
+    model = VisionModel()
+    service._runtime = SupervisorRuntime(
+        service._runtime, model, SimpleNamespace(),
+        max_web_results=5, web_timeout_seconds=12,
+        execution_timeout_seconds=60, max_tool_result_bytes=16_384, max_prompt_chars=200_000,
+    )
+    service._runtimes = [service._runtime]
+    try:
+        conversation_id = _create_agent_conversation(client)
+        scope = {"tenantId": "local-default", "conversationId": conversation_id}
+        original = _background_png()
+        uploaded = client.post("/api/agent/attachments/upload", params=scope, content=original)
+        assert uploaded.status_code == 200, uploaded.text
+        attachment = uploaded.json()
+        request = {
+            "params": {"conversationId": conversation_id},
+            "headers": {"Accept": accept, "Idempotency-Key": "vision-image"},
+            "json": {"tenantId": "local-default", "content": "这张图片是什么颜色？",
+                     "attachments": [{"mediaUri": attachment["mediaUri"]}]},
+        }
+        response = client.post("/api/agent/messages/send", **request)
+        assert response.status_code == 200, response.text
+        if accept == "text/event-stream":
+            events = _answer_payloads(response.text)
+            assert events[0]["type"] == "answer.started" and events[-1]["type"] == "answer.completed"
+            assert events[0]["userMessage"]["attachments"] == [attachment]
+            first = events[-1]
+        else:
+            first = response.json()
+        assert first["userMessage"]["attachments"] == [attachment]
+        assert first["assistantMessage"]["status"] == "COMPLETED"
+        assert first["assistantMessage"]["attachments"] == []
+        assert len(model.turns[0][0]) == 1
+        assert base64.b64decode(model.turns[0][0][0].split(",", 1)[1]) == original
+
+        follow_up = client.post(
+            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Accept": accept, "Idempotency-Key": "vision-follow-up"},
+            json={"tenantId": "local-default", "content": "刚才的图片呢？"},
+        )
+        assert follow_up.status_code == 200, follow_up.text
+        assert model.turns[1][0] is None
+        assert model.turns[1][1][0]["imageUrls"] == model.turns[0][0]
+        listed = client.get("/api/agent/messages/list", params=scope).json()["items"]
+        assert len(listed) == 4 and listed[0]["attachments"] == [attachment]
+        replay = client.post("/api/agent/messages/send", **request)
+        assert replay.status_code == 200, replay.text
+        assert len(model.turns) == 2 and not retrieval.calls
+        assert client.get(attachment["previewUrl"]).content == original
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("missing", [None, "original", "manifest"])
+def test_saved_attachments_survive_get_list_and_stream_projection(tmp_path, missing, caplog):
+    client, _, _ = _client(tmp_path)
+    conversation_id = _create_agent_conversation(client)
+    scope = {"tenantId": "local-default", "conversationId": conversation_id}
+    attachment = client.post("/api/agent/attachments/upload", params=scope, content=_background_png()).json()
+    service = client.app.state.services.agent
+    options = service.message_options()
+    references = [{"mediaUri": attachment["mediaUri"]}]
+    pair = service._repository.start_message(
+        conversation_id=conversation_id, tenant_id="local-default", content="已保存的图片问题",
+        model_name="saved", requested_top_k=options.top_k.default_value,
+        requested_run_options={
+            "max_model_calls_per_turn": options.max_model_calls_per_turn.default_value,
+            "max_tool_calls_per_turn": options.max_tool_calls_per_turn.default_value,
+        },
+        idempotency_key="saved-attachment", series_ids=[], requested_series_ids=[],
+        user_message_id=str(uuid4()), assistant_message_id=str(uuid4()), now=1_789_603_200_000,
+        attachments=references, source_tenant_id="separate-video-catalog",
+    )
+    service._repository.complete_assistant_message(
+        pair.assistant_message.message_id, content="已保存的回答", search_result=None,
+        now=1_789_603_201_000,
+    )
+    if missing:
+        path = client.app.state.services.media._artifact_store.resolve(attachment["mediaUri"])
+        (path if missing == "original" else path.parent / "manifest.json").unlink()
+        assert client.get(attachment["previewUrl"]).status_code == 410
+    expected = attachment if missing != "manifest" else {
+        "mediaUri": attachment["mediaUri"], "mediaType": None, "sizeBytes": None, "previewUrl": None,
+    }
+    listed = client.get("/api/agent/messages/list", params=scope)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["attachments"] == [expected]
+    assert listed.json()["items"][1]["attachments"] == []
+    loaded = client.get("/api/agent/messages/get", params={**scope, "idempotencyKey": "saved-attachment"})
+    assert loaded.status_code == 200, loaded.text
+    assert loaded.json()["userMessage"]["attachments"] == [expected]
+    replay = client.post(
+        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        headers={"Accept": "text/event-stream", "Idempotency-Key": "saved-attachment"},
+        json={"tenantId": "local-default", "sourceTenantId": "separate-video-catalog",
+              "content": "已保存的图片问题", "attachments": references},
+    )
+    assert replay.status_code == 200, replay.text
+    events = _answer_payloads(replay.text)
+    assert [event["type"] for event in events] == ["answer.started", "answer.completed"]
+    assert all(event["userMessage"]["attachments"] == [expected] for event in events)
+    if missing == "manifest":
+        assert "agent_attachment_unavailable" in caplog.text
+        assert attachment["mediaUri"] in caplog.text
 
 
 def test_agent_conversation_delete_is_workspace_scoped_and_removes_messages(
@@ -2434,8 +2654,9 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                     assert snapshots[0]["searchResult"] is None
                 else:
                     assert snapshots[0]["content"] == ""
-                    assert [block["type"] for block in snapshots[0]["renderBlocks"]] == ["video"]
-                    assert "agentReply" not in snapshots[0]["searchResult"]
+                    assert [block["type"] for block in snapshots[0]["renderBlocks"]] == ["tool"]
+                    assert snapshots[0]["renderBlocks"][0]["status"] == "inProgress"
+                    assert snapshots[0]["searchResult"] is None
                 assert snapshots[-1]["renderBlocks"] == final["renderBlocks"]
                 assert snapshots[-1]["searchResult"] == final["searchResult"]
                 assert snapshots[-1]["content"] == final["content"]
@@ -2486,8 +2707,18 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             )
         hits = final["searchResult"]["hits"]
         assert len(hits) == len(report.video_chunk_ids) == 2
+        tools = [block for block in final["renderBlocks"] if block["type"] == "tool"]
+        if supervised:
+            assert len(tools) == 1 and tools[0]["callId"]
+            assert tools[0] == {
+                "type": "tool", "callId": tools[0]["callId"], "tool": "search_video_graph",
+                "status": "completed", "query": "找动作片段",
+            }
+        else:
+            assert tools == []
         assert final["renderBlocks"] == [
             *([{"type": "markdown", "markdown": "以下片段支持这个结论。"}] if leading_text else []),
+            *tools,
             *[
                 {
                     "type": "video",

@@ -50,6 +50,7 @@ import {
   updateSeries,
   updateAgentGlobalSettings,
   updateVideoEpisode,
+  uploadAgentAttachment,
   uploadSeriesImage,
   uploadSegment,
   verifyEmailCode,
@@ -342,6 +343,66 @@ it("loads the server parse defaults before an upload is configured", async () =>
   vi.stubGlobal("fetch", fetchMock);
   expect(await getParseConfig()).toEqual(defaults);
   expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/uploads/parse-config");
+});
+
+describe("Chat attachments", () => {
+  it("uploads raw bytes under the active conversation with cookies, CSRF and cancellation", async () => {
+    configureApiIdentity({ ...localIdentity, csrfToken: "chat-csrf" }, "tenant/id");
+    const attachment = { mediaUri: "asset://attachment", mediaType: "image/png", sizeBytes: 4, previewUrl: "/api/agent/attachments/content?mediaUri=asset" };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(attachment), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File([new Uint8Array([137, 80, 78, 71])], "参考图.png", { type: "image/png" });
+    const controller = new AbortController();
+    expect(await uploadAgentAttachment("conversation/id", file, controller.signal)).toEqual(attachment);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("/api/agent/attachments/upload?tenantId=tenant%2Fid&conversationId=conversation%2Fid");
+    expect(init?.method).toBe("POST");
+    expect(init?.credentials).toBe("include");
+    expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("chat-csrf");
+    expect(new Headers(init?.headers).get("Content-Type")).toBe("image/png");
+    expect(init?.body).toBe(file);
+    controller.abort();
+    expect(init?.signal?.aborted).toBe(true);
+  });
+
+  it("discards an upload response after changing the active identity", async () => {
+    let resolve!: (response: Response) => void;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>((finish) => { resolve = finish; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const upload = uploadAgentAttachment("conversation/id", new File(["data"], "image.png"));
+    configureApiIdentity({ ...localIdentity, userId: "other-user" }, "other-tenant");
+    resolve(new Response(JSON.stringify({ mediaUri: "asset://old-scope" })));
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+  });
+
+  it("sends identical ordered attachment references in JSON and SSE, without preview metadata", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Headers(init?.headers).get("Accept") === "text/event-stream"
+      ? new Response("", { headers: { "Content-Type": "text/event-stream" } })
+      : new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const attachments = [
+      { mediaUri: "asset://second", previewUrl: "/preview-2" },
+      { mediaUri: "asset://first", previewUrl: "/preview-1" },
+    ];
+    const context = { playback: { positionSeconds: 1000 } };
+    await sendAgentMessage("conversation/id", "出处？", "key", ["series"], null, { topK: 3 }, context, attachments);
+    await streamAgentMessage("conversation/id", "出处？", "key", vi.fn(), new AbortController().signal, ["series"], null, { topK: 3 }, context, attachments);
+    const jsonBody = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    const streamBody = JSON.parse(String(fetchMock.mock.calls[1]![1]?.body));
+    expect(streamBody).toEqual(jsonBody);
+    expect(jsonBody.attachments).toEqual([{ mediaUri: "asset://second" }, { mediaUri: "asset://first" }]);
+    expect(jsonBody.extraContext).toEqual(context);
+  });
+
+  it("preserves attachment validation and unavailable errors", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "ATTACHMENT_INPUT_UNAVAILABLE", message: "图片问答暂未接入" }), { status: 409 })));
+    await expect(streamAgentMessage("conversation/id", "出处？", "key", vi.fn(), new AbortController().signal, [], null, {}, null, [{ mediaUri: "asset://image" }]))
+      .rejects.toMatchObject({ status: 409, code: "ATTACHMENT_INPUT_UNAVAILABLE", message: "图片问答暂未接入" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "INVALID_REQUEST", message: "只支持静态图片" }), { status: 400 })));
+    await expect(uploadAgentAttachment("conversation/id", new File(["GIF89a"], "animated.gif", { type: "image/gif" })))
+      .rejects.toMatchObject({ status: 400, message: "只支持静态图片" });
+  });
 });
 
 describe("Series background routes", () => {

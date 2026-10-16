@@ -15,6 +15,7 @@ import {
 } from "../../api/client";
 import type {
   AgentAnswerEvent,
+  AgentAttachmentReference,
   AgentConversationView,
   AgentMessageTiming,
   AgentMessageRunOptions,
@@ -269,6 +270,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     reference: EvidenceReference | null = null,
     options: AgentMessageRunOptions = {},
     extraContext: Record<string, unknown> | null = null,
+    submission?: { attachments?: AgentAttachmentReference[]; onAccepted?: () => void },
   ) => {
     const active = activeRef.current;
     if (!content.trim() || !active?.conversationId || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
@@ -277,6 +279,8 @@ export function useAgentConversation(requestedId: string | null = null) {
     const frozenReference = reference ? { ...reference } : null;
     const frozenOptions = { ...options };
     const frozenExtraContext = extraContext === null ? null : structuredClone(extraContext);
+    const frozenAttachments = (submission?.attachments ?? []).map(({ mediaUri }) => ({ mediaUri }));
+    const onAccepted = submission?.onAccepted;
     active.sending = true;
     active.cancellingMessageId = null;
     const sendController = new AbortController();
@@ -287,6 +291,13 @@ export function useAgentConversation(requestedId: string | null = null) {
     let messageId: string | null = null;
     const idempotencyKey = crypto.randomUUID();
     let sequence = -1;
+    let accepted = false;
+    let rejected = false;
+    const accept = () => {
+      if (accepted || signal.aborted || activeRef.current !== active || active.identityKey !== conversationStorageKey()) return;
+      accepted = true;
+      onAccepted?.();
+    };
     const onEvent = (event: AgentAnswerEvent) => {
       if (activeRef.current !== active || active.sendController !== sendController || event.conversationId !== conversationId) return;
       if (!Number.isInteger(event.sequence) || event.sequence <= 0 || event.sequence <= sequence) return;
@@ -300,6 +311,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         active.streamedMessageId = messageId;
       } else if (event.messageId !== messageId) return;
       sequence = event.sequence;
+      if (event.type === "answer.started") accept();
       if (event.type === "answer.interrupted") active.recoveryMessageId = event.messageId;
       setState((current) => {
         if (current.conversationId !== conversationId) return current;
@@ -345,22 +357,29 @@ export function useAgentConversation(requestedId: string | null = null) {
         frozenReference,
         frozenOptions,
         frozenExtraContext,
+        frozenAttachments,
       );
     } catch (error) {
+      rejected = error instanceof ApiClientError && error.status >= 400 && error.status < 500;
       if (activeRef.current === active && active.sendController === sendController && !signal.aborted) {
         active.recoveryMessageId = messageId;
         setState((current) => ({ ...current, error: errorMessage(error) }));
-        if (!messageId) {
-          try {
-            const pair = await getAgentMessage(conversationId, { idempotencyKey });
-            if (activeRef.current === active) {
-              active.recoveryMessageId = pair.assistantMessage.status === "PROCESSING" ? pair.assistantMessage.messageId : null;
-              setState((current) => ({ ...current, error: pair.assistantMessage.status === "PROCESSING" ? current.error : null, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId) }));
-            }
-          } catch { /* A missing or unavailable lookup is reconciled by the snapshot below. */ }
-        }
       }
     } finally {
+      if (active.sendController !== sendController) return;
+      // A clean EOF can also lose the first event; only the request key proves acceptance.
+      if (!accepted && !rejected && activeRef.current === active && !signal.aborted) {
+        try {
+          const pair = await getAgentMessage(conversationId, { idempotencyKey });
+          if (activeRef.current === active && active.sendController === sendController && !signal.aborted && pair.userMessage.conversationId === conversationId && pair.assistantMessage.conversationId === conversationId) {
+            accept();
+            active.recoveryMessageId = pair.assistantMessage.status === "PROCESSING" ? pair.assistantMessage.messageId : null;
+            setState((current) => ({ ...current, error: pair.assistantMessage.status === "PROCESSING" ? current.error : null, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId) }));
+          }
+        } catch {
+          if (activeRef.current === active && !signal.aborted) setState((current) => ({ ...current, error: current.error ?? "未能确认消息是否已接收，草稿已保留" }));
+        }
+      }
       if (active.sendController !== sendController) return;
       active.sendController = null;
       active.sending = false;
@@ -376,7 +395,7 @@ export function useAgentConversation(requestedId: string | null = null) {
             setState((current) => ({ ...current, error: recovered ? null : current.error, messages: mergeMessages(current.messages, messages, conversationId) }));
           }
         } catch (error) {
-          if (activeRef.current === active) setState((current) => ({ ...current, error: errorMessage(error) }));
+          if (activeRef.current === active) setState((current) => ({ ...current, error: current.error ?? errorMessage(error) }));
         }
       }
     }

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -11,6 +13,7 @@ from typing import BinaryIO, Protocol
 from urllib.parse import quote, unquote, urlparse
 
 from ..database import DatabaseEnvironment
+from ..constants.media import IMAGE_FORMAT_EXTENSIONS
 from ..utils.validation import canonical_uuid
 from ..utils.media import decode_series_image_id, encode_series_image_id
 
@@ -30,6 +33,13 @@ class StoredArtifact:
     uri: str
     size_bytes: int
     sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredImageAttachment(StoredArtifact):
+    media_type: str
+    width: int
+    height: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +94,19 @@ class ArtifactStore(Protocol):
     def resolve_series_image(
         self, image_id: str, *, series_id: str, variant: str = "original",
     ) -> Path: ...
+
+    def put_conversation_attachment(
+        self, conversation_id: str, data: bytes, *, extension: str,
+        media_type: str, width: int, height: int,
+    ) -> StoredImageAttachment: ...
+
+    def read_conversation_attachment(
+        self, conversation_id: str, uri: str,
+    ) -> StoredImageAttachment: ...
+
+    def list_attachment_conversations(self) -> tuple[str, ...]: ...
+
+    def delete_conversation_artifacts(self, conversation_id: str) -> None: ...
 
     def uri_for_path(self, path: str | Path) -> str: ...
 
@@ -386,6 +409,112 @@ class LocalArtifactStore:
             size_bytes=result.size_bytes,
             sha256=result.sha256,
         )
+
+    def put_conversation_attachment(
+        self, conversation_id: str, data: bytes, *, extension: str,
+        media_type: str, width: int, height: int,
+    ) -> StoredImageAttachment:
+        conversation_id = canonical_uuid(conversation_id, "conversation_id")
+        if not isinstance(data, bytes) or not data:
+            raise ValueError("attachment data must not be empty")
+        if extension not in IMAGE_FORMAT_EXTENSIONS.values():
+            raise ValueError("unsupported attachment extension")
+        if media_type != "image/" + ("jpeg" if extension == "jpg" else extension):
+            raise ValueError("attachment media type and extension disagree")
+        if any(type(value) is not int or value <= 0 for value in (width, height)):
+            raise ValueError("attachment dimensions must be positive integers")
+        checksum = hashlib.sha256(data).hexdigest()
+        relative = PurePosixPath(
+            "media", "conversations", conversation_id, "attachments",
+            checksum, f"original.{extension}",
+        )
+        original = self._conversation_path(relative)
+        manifest = self._conversation_path(relative.parent / "manifest.json")
+        original.parent.mkdir(parents=True, exist_ok=True)
+        uri = self._uri(relative)
+        metadata = {
+            "version": 1, "conversationId": conversation_id, "mediaUri": uri,
+            "mediaType": media_type, "sizeBytes": len(data), "sha256": checksum,
+            "width": width, "height": height,
+        }
+        try:
+            self._write_immutable(original, data)
+            # The immutable manifest is the publication marker; incomplete uploads
+            # cannot be used merely because the original file already exists.
+            self._write_immutable(
+                manifest, json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode(),
+            )
+        except ArtifactIntegrityError as exc:
+            raise ArtifactIntegrityError("stored attachment bytes or metadata changed") from exc
+        return StoredImageAttachment(uri, len(data), checksum, media_type, width, height)
+
+    def read_conversation_attachment(
+        self, conversation_id: str, uri: str,
+    ) -> StoredImageAttachment:
+        conversation_id = canonical_uuid(conversation_id, "conversation_id")
+        if not isinstance(uri, str):
+            raise ValueError("attachment URI must be a string")
+        parsed = urlparse(uri)
+        relative = PurePosixPath(parsed.path.lstrip("/"))
+        parts = relative.parts
+        if (
+            parsed.scheme != "artifact" or parsed.netloc != self.environment.value
+            or parsed.query or parsed.fragment or len(parts) != 6
+            or parts[:4] != ("media", "conversations", conversation_id, "attachments")
+            or re.fullmatch(r"[0-9a-f]{64}", parts[4]) is None
+            or parts[5] not in {f"original.{ext}" for ext in IMAGE_FORMAT_EXTENSIONS.values()}
+            or self._uri(relative) != uri
+        ):
+            raise ValueError("attachment URI does not belong to this conversation")
+        self._conversation_path(relative)
+        manifest = self._conversation_path(relative.parent / "manifest.json")
+        try:
+            metadata = json.loads(manifest.read_bytes())
+            extension = parts[5].removeprefix("original.")
+            media_type = "image/" + ("jpeg" if extension == "jpg" else extension)
+            if (
+                not isinstance(metadata, dict) or type(metadata.get("version")) is not int
+                or metadata["version"] != 1 or metadata.get("conversationId") != conversation_id
+                or metadata.get("mediaUri") != uri or metadata.get("sha256") != parts[4]
+                or metadata.get("mediaType") != media_type
+                or any(type(metadata.get(key)) is not int or metadata[key] <= 0
+                       for key in ("sizeBytes", "width", "height"))
+            ):
+                raise ValueError("attachment manifest fields disagree")
+        except (ValueError, UnicodeError) as exc:
+            raise ArtifactIntegrityError("stored attachment manifest is invalid") from exc
+        return StoredImageAttachment(
+            uri, metadata["sizeBytes"], parts[4], media_type,
+            metadata["width"], metadata["height"],
+        )
+
+    def list_attachment_conversations(self) -> tuple[str, ...]:
+        directory = self._conversation_path(PurePosixPath("media", "conversations"))
+        if not directory.exists():
+            return ()
+        identifiers = []
+        for child in directory.iterdir():
+            if child.is_symlink() or not child.is_dir():
+                continue
+            try:
+                identifier = canonical_uuid(child.name, "conversation_id")
+            except ValueError:
+                continue
+            if identifier == child.name:
+                identifiers.append(identifier)
+        return tuple(sorted(identifiers))
+
+    def delete_conversation_artifacts(self, conversation_id: str) -> None:
+        conversation_id = canonical_uuid(conversation_id, "conversation_id")
+        self._delete_tree(self._conversation_path(PurePosixPath(
+            "media", "conversations", conversation_id,
+        )))
+
+    def _conversation_path(self, relative: PurePosixPath) -> Path:
+        path = self._path(relative)
+        if path != self.base_directory.joinpath(*relative.parts):
+            raise ValueError("attachment path must not contain symbolic links")
+        return path
 
     def resolve(self, uri: str) -> Path:
         parsed = urlparse(uri)

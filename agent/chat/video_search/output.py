@@ -278,7 +278,7 @@ def build_chat_snapshot(
         "partial": draft.partial, "warnings": list(draft.warnings),
         "renderBlocks": [
             block.model_dump(mode="json", by_alias=True)
-            if isinstance(block, MarkdownRenderBlock)
+            if not isinstance(block, ChatVideoBlock)
             else VideoRenderBlock(
                 video_chunk_id=block.video_chunk_id,
                 start_seconds=approved_ranges[block.video_chunk_id].start_seconds,

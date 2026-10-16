@@ -6,7 +6,7 @@ from gateway.agent_model.contracts import StructuredToolAgentModel
 from gateway.agent_model.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
-from .context import build_canvas_checkpoint, project_inputs
+from .context import build_canvas_checkpoint, project_image_history, project_inputs
 from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
@@ -57,11 +57,15 @@ def run_query(
     context_budget.consume("Query Agent prompt", prompt)
     try:
         context_options = {}
+        if inputs.get("image_urls"):
+            context_options["image_urls"] = inputs["image_urls"]
+        supports_context_messages = getattr(model, "supports_context_messages", False)
+        image_history = project_image_history(inputs, include_current_message=not supports_context_messages)
         if getattr(model, "supports_context_checkpoints", False):
             context_options["context_checkpoint"] = lambda: (
                 build_canvas_checkpoint(canvas, role="query")
             )
-        if getattr(model, "supports_context_messages", False):
+        if supports_context_messages:
             context_options["initial_messages"] = [
                 {"role": "system", "content": instructions},
                 {
@@ -82,6 +86,7 @@ def run_query(
                         })
                     ),
                 },
+                *image_history,
                 {
                     "role": "user",
                     "content": (
@@ -91,6 +96,8 @@ def run_query(
                     ),
                 },
             ]
+        elif image_history:
+            context_options["initial_messages"] = image_history
         completion = model.run_structured(
             prompt,
             tools=list(tools),

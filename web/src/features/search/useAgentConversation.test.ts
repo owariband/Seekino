@@ -2,12 +2,12 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  ApiClientError, cancelAgentMessage, createAgentConversation, getAgentConversation,
+  ApiClientError, cancelAgentMessage, createAgentConversation, getAgentConversation, getAgentMessage,
   listAgentMessages, streamAgentMessage, subscribeAgentMessages,
 } from "../../api/client";
 import type {
   AgentAnswerEvent, AgentConversationView, AgentMessageEventView, AgentMessageSendView,
-  AgentMessageView, VideoChunkSearchHit,
+  AgentMessageView, AgentRenderBlock, VideoChunkSearchHit,
 } from "../../api/contracts";
 import {
   type AgentProgressEvent,
@@ -16,7 +16,7 @@ import {
 
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
-  cancelAgentMessage: vi.fn(), createAgentConversation: vi.fn(), getAgentConversation: vi.fn(),
+  cancelAgentMessage: vi.fn(), createAgentConversation: vi.fn(), getAgentConversation: vi.fn(), getAgentMessage: vi.fn(),
   listAgentMessages: vi.fn(), streamAgentMessage: vi.fn(), subscribeAgentMessages: vi.fn(),
 }));
 
@@ -30,7 +30,7 @@ function message(conversationId: string, overrides: Partial<AgentMessageView> = 
   return {
     messageId: "assistant", conversationId, seriesIds: ["A"], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", reference: null, content: null,
     modelName: null, searchResult: null,
-    renderBlocks: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
+    renderBlocks: [], attachments: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
     ...overrides, version: overrides.version ?? (overrides.status && overrides.status !== "PROCESSING" ? 2 : 1),
   };
 }
@@ -60,6 +60,7 @@ const streams = new Map<string, { emit: (event: AgentAnswerEvent) => void; signa
 beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); snapshots.clear(); streams.clear();
   vi.mocked(cancelAgentMessage).mockReset();
+  vi.mocked(getAgentMessage).mockReset().mockRejectedValue(new ApiClientError(404, { message: "missing" }));
   vi.mocked(createAgentConversation).mockImplementation(async () => conversation());
   vi.mocked(getAgentConversation).mockImplementation(async (id) => conversation(id));
   vi.mocked(listAgentMessages).mockResolvedValue(page([]));
@@ -88,6 +89,86 @@ async function send(result: { current: ReturnType<typeof useAgentConversation> }
 }
 
 describe("Conversation state", () => {
+  it("confirms acceptance once before the answer finishes and freezes ordered attachment references", async () => {
+    const { result } = await ready();
+    const onAccepted = vi.fn();
+    const attachments = [{ mediaUri: "asset://second" }, { mediaUri: "asset://first" }];
+    act(() => { void result.current.send("出处？", [], null, {}, null, { attachments, onAccepted }); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    expect(onAccepted).not.toHaveBeenCalled();
+    attachments[0]!.mediaUri = "asset://changed";
+    attachments.reverse();
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![9]).toEqual([{ mediaUri: "asset://second" }, { mediaUri: "asset://first" }]);
+    const stream = streams.get("conv-A")!;
+    act(() => { stream.emit(started("conv-A")); });
+    expect(onAccepted).toHaveBeenCalledOnce();
+    expect(result.current.sending).toBe(true);
+    act(() => {
+      stream.emit({ ...started("conv-A"), sequence: 2 });
+      stream.emit({ type: "answer.failed", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, ...messagePair(message("conv-A", { status: "FAILED" })), error: { code: "AGENT_MODEL_ERROR", message: "模型失败" } });
+      stream.finish();
+    });
+    await waitFor(() => expect(result.current.sending).toBe(false));
+    expect(onAccepted).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an unavailable attachment submission unaccepted without retrying as plain text", async () => {
+    const { result } = await ready();
+    const onAccepted = vi.fn();
+    vi.mocked(streamAgentMessage).mockRejectedValueOnce(new ApiClientError(409, { code: "ATTACHMENT_INPUT_UNAVAILABLE", message: "图片问答暂未接入" }));
+    vi.mocked(listAgentMessages).mockRejectedValueOnce(new Error("refresh failed"));
+    await act(async () => { await result.current.send("出处？", [], null, {}, null, { attachments: [{ mediaUri: "asset://image" }], onAccepted }); });
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(getAgentMessage).not.toHaveBeenCalled();
+    expect(streamAgentMessage).toHaveBeenCalledOnce();
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![9]).toEqual([{ mediaUri: "asset://image" }]);
+    expect(result.current.error).toBe("图片问答暂未接入");
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.searching).toBe(false);
+  });
+
+  it.each(["network error", "clean EOF"])("confirms a persisted submission by idempotency key after %s without a started event", async (ending) => {
+    const { result } = await ready();
+    const onAccepted = vi.fn();
+    const pair = messagePair(message("conv-A", { status: "COMPLETED", content: "回答" }));
+    pair.userMessage.attachments = [{ mediaUri: "asset://image", mediaType: null, sizeBytes: null, previewUrl: null }];
+    if (ending === "network error") vi.mocked(streamAgentMessage).mockRejectedValueOnce(new TypeError("connection lost"));
+    else vi.mocked(streamAgentMessage).mockResolvedValueOnce();
+    vi.mocked(getAgentMessage).mockResolvedValueOnce(pair);
+    await act(async () => { await result.current.send("出处？", [], null, {}, null, { attachments: [{ mediaUri: "asset://image" }], onAccepted }); });
+    expect(getAgentMessage).toHaveBeenCalledWith("conv-A", { idempotencyKey: vi.mocked(streamAgentMessage).mock.calls[0]![2] });
+    expect(onAccepted).toHaveBeenCalledOnce();
+    expect(result.current.messages[0]?.attachments).toEqual(pair.userMessage.attachments);
+    expect(result.current.error).toBeNull();
+    expect(streamAgentMessage).toHaveBeenCalledOnce();
+  });
+
+  it("keeps drafts unaccepted after an empty stream when the request key cannot be recovered", async () => {
+    const { result } = await ready();
+    const onAccepted = vi.fn();
+    vi.mocked(streamAgentMessage).mockResolvedValueOnce();
+    const pair = messagePair(message("conv-A", { status: "COMPLETED", content: "相同正文的历史回答" }));
+    vi.mocked(listAgentMessages).mockResolvedValueOnce(page([pair.userMessage, pair.assistantMessage]));
+    await act(async () => { await result.current.send("query", [], null, {}, null, { onAccepted }); });
+    expect(getAgentMessage).toHaveBeenCalledOnce();
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(result.current.error).toBe("未能确认消息是否已接收，草稿已保留");
+    expect(result.current.searching).toBe(false);
+  });
+
+  it("ignores a late acceptance after switching conversations", async () => {
+    const { result, rerender } = await ready("conv-A");
+    const onAccepted = vi.fn();
+    act(() => { void result.current.send("出处？", [], null, {}, null, { attachments: [{ mediaUri: "asset://image" }], onAccepted }); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    const stream = streams.get("conv-A")!;
+    rerender({ id: "conv-B" });
+    await waitFor(() => expect(result.current.conversationId).toBe("conv-B"));
+    act(() => { stream.emit(started("conv-A")); stream.finish(); });
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(result.current.messages).toEqual([]);
+  });
+
   it("requests backend cancellation and keeps subscriptions until durable termination", async () => {
     const { result } = await ready();
     const stream = await send(result);
@@ -284,6 +365,55 @@ describe("Conversation state", () => {
       { type: "markdown", markdown: "片段后的说明" },
     ]);
     expect(result.current.messages[1]?.searchResult?.hits).toEqual([hit]);
+  });
+
+  it("keeps inline tools in snapshot order and rejects unrelated, duplicate, and terminal-late snapshots", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const before: AgentRenderBlock = { type: "markdown", markdown: "我先检索。" };
+    const tool: AgentRenderBlock = { type: "tool", callId: "call-1", tool: "search_video_graph", status: "inProgress", query: "演出场面" };
+    const after: AgentRenderBlock = { type: "markdown", markdown: "已找到相关片段。" };
+    const partial = message("conv-A", { version: 2, content: "我先检索。", renderBlocks: [before, tool] });
+    act(() => stream.emit(answerSnapshot(partial, 2)));
+    expect(result.current.messages[1]?.renderBlocks).toEqual([before, tool]);
+    const blocks: AgentRenderBlock[] = [before, { ...tool, status: "completed" }, after];
+    const completeTool = message("conv-A", { version: 3, content: "我先检索。已找到相关片段。", renderBlocks: blocks });
+    act(() => {
+      stream.emit(answerSnapshot(completeTool, 3));
+      stream.emit(answerSnapshot({ ...partial, version: 4 }, 3));
+      stream.emit(answerSnapshot({ ...partial, conversationId: "conv-B", version: 4 }, 4));
+      stream.emit(answerSnapshot({ ...partial, messageId: "other", version: 4 }, 4));
+    });
+    expect(result.current.messages[1]?.renderBlocks).toEqual(blocks);
+    const final = { ...completeTool, status: "COMPLETED" as const, phase: null, version: 4 };
+    act(() => {
+      stream.emit({ type: "answer.completed", conversationId: "conv-A", messageId: "assistant", sequence: 4, occurredAt: now, ...messagePair(final) });
+      stream.emit(answerSnapshot({ ...partial, version: 5 }, 5));
+      snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [{ ...partial, version: 5 }] });
+      stream.finish();
+    });
+    await waitFor(() => expect(result.current.sending).toBe(false));
+    expect(result.current.messages[1]?.status).toBe("COMPLETED");
+    expect(result.current.messages[1]?.renderBlocks).toEqual(blocks);
+  });
+
+  it("restores persisted inline tools and their positions on remount without replaying old callbacks", async () => {
+    const blocks: AgentRenderBlock[] = [
+      { type: "markdown", markdown: "先查询网页。" },
+      { type: "tool", callId: "call-web", tool: "search_web", status: "completed", query: "乐队演出" },
+      { type: "markdown", markdown: "查询后的说明。" },
+    ];
+    const stored = message("conv-A", { status: "COMPLETED", content: "先查询网页。查询后的说明。", renderBlocks: blocks });
+    vi.mocked(listAgentMessages).mockResolvedValue(page([stored]));
+    const first = await ready();
+    const oldSnapshot = snapshots.get("conv-A")!;
+    first.unmount();
+    const { result } = await ready();
+    expect(result.current.messages[0]?.renderBlocks).toEqual(blocks);
+    expect(result.current.messages[0]?.searchResult).toBeNull();
+    act(() => oldSnapshot({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A", { version: 9, renderBlocks: [] })] }));
+    expect(result.current.messages[0]?.renderBlocks).toEqual(blocks);
+    expect(streamAgentMessage).not.toHaveBeenCalled();
   });
 
   it("renders cumulative snapshots in order and replaces revised or withdrawn video cards in place", async () => {

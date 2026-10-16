@@ -13,6 +13,7 @@ from engine.rag.retrieval.fusion import AGENT_RETRIEVAL_STRATEGY_VERSION
 
 from ..common.errors import AgentContextBudgetError
 from ..common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
+from ..common.tool import ToolCallStatus
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
 _EvidenceClaim = Annotated[
@@ -159,6 +160,19 @@ class LexicalRetrievalChannelWeights(BaseModel):
 class MarkdownRenderBlock(_AgentContractModel):
     type: Literal["markdown"] = "markdown"
     markdown: _Markdown
+
+
+SupervisorToolName = Literal["search_video_graph", "search_web", "understand_current_video"]
+
+
+class ToolRenderBlock(_AgentContractModel):
+    """Public lifecycle of a real Supervisor tool call; never its result."""
+
+    type: Literal["tool"] = "tool"
+    call_id: str = Field(min_length=1, max_length=128)
+    tool: SupervisorToolName
+    status: ToolCallStatus
+    query: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class VideoRenderBlock(_AgentContractModel):

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -173,6 +176,51 @@ class AgentRepository:
                 last_message_preview=session.scalar(self._preview_query(conversation_id)),
             )
 
+    @contextmanager
+    def lock_conversation(
+        self,
+        conversation_id: str,
+        tenant_id: str,
+        *,
+        owner_user_id: str = LOCAL_USER_ID,
+    ) -> Iterator[AgentConversationState]:
+        """Serialize short attachment publication with conversation deletion."""
+        with self._session_factory.begin() as session:
+            record = self._require_conversation(
+                session, conversation_id, tenant_id,
+                for_update=True, owner_user_id=owner_user_id,
+            )
+            count = session.scalar(select(func.count(AgentMessage.id)).where(
+                AgentMessage.conversation_id == conversation_id,
+            ))
+            yield self._conversation_state(
+                record, message_count=int(count or 0),
+                last_message_preview=session.scalar(self._preview_query(conversation_id)),
+            )
+
+    def conversation_exists(self, conversation_id: str) -> bool:
+        with self._session_factory() as session:
+            return session.scalar(select(AgentConversation.id).where(
+                AgentConversation.id == conversation_id,
+            )) is not None
+
+    def has_message_attachments(
+        self,
+        conversation_id: str,
+        tenant_id: str,
+        *,
+        owner_user_id: str = LOCAL_USER_ID,
+    ) -> bool:
+        with self._session_factory() as session:
+            self._require_conversation(
+                session, conversation_id, tenant_id, owner_user_id=owner_user_id,
+            )
+            return any(session.scalars(select(AgentMessage.attachments).where(
+                AgentMessage.conversation_id == conversation_id,
+                AgentMessage.role == AgentMessageRole.USER.value,
+                AgentMessage.status == AgentMessageStatus.COMPLETED.value,
+            )))
+
     def delete_conversation(
         self,
         conversation_id: str,
@@ -297,7 +345,8 @@ class AgentRepository:
         tenant_id: str,
         *,
         before_sequence_no: int,
-        limit: int,
+        limit: int | None,
+        after_sequence_no: int = -1,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> list[AgentMessageState]:
         with self._session_factory() as session:
@@ -307,12 +356,44 @@ class AgentRepository:
                 .where(
                     AgentMessage.conversation_id == conversation_id,
                     AgentMessage.status == AgentMessageStatus.COMPLETED.value,
+                    AgentMessage.sequence_no > after_sequence_no,
                     AgentMessage.sequence_no < before_sequence_no,
                 )
                 .order_by(AgentMessage.sequence_no.desc())
                 .limit(limit)
             ).all()
             return [self._message_state(record) for record in reversed(records)]
+
+    def save_runtime_session(
+        self,
+        conversation_id: str,
+        tenant_id: str,
+        *,
+        message_id: str,
+        key: str,
+        state: dict,
+        owner_user_id: str = LOCAL_USER_ID,
+    ) -> None:
+        with self._session_factory.begin() as session:
+            record = self._require_conversation(
+                session, conversation_id, tenant_id,
+                for_update=True, owner_user_id=owner_user_id,
+            )
+            message = session.get(AgentMessage, message_id)
+            if (
+                message is None or message.conversation_id != conversation_id
+                or message.role != AgentMessageRole.ASSISTANT.value
+            ):
+                raise AgentMessageNotFoundError("runtime session update requires an assistant in this conversation")
+            if (
+                message.status not in {AgentMessageStatus.PROCESSING.value, AgentMessageStatus.COMPLETED.value}
+                or record.next_message_sequence != message.sequence_no + 1
+            ):
+                raise AgentConflictError("runtime session update is not for the latest active or completed assistant")
+            detail = deepcopy(record.detail or {})
+            sessions = detail.setdefault("runtimeSessions", {})
+            sessions[key] = deepcopy(state)
+            record.detail = detail
 
     def find_idempotent_message(
         self,
@@ -328,6 +409,7 @@ class AgentRepository:
         extra_context: dict | None = None,
         owner_user_id: str = LOCAL_USER_ID,
         source_tenant_id: str | None = None,
+        attachments: list[dict[str, str]] | None = None,
     ) -> StartedAgentMessageState | None:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
@@ -342,6 +424,7 @@ class AgentRepository:
                 reference=reference,
                 extra_context=extra_context,
                 source_tenant_id=source_tenant_id,
+                attachments=attachments,
             )
 
     def get_message_pair(
@@ -395,6 +478,7 @@ class AgentRepository:
         self, message_id: str, *, now: int, phase: str | None = None,
         content: str | None = None, search_result: dict | None = None,
         timing: AgentMessageTimingState | None = None,
+        render_blocks: list[dict] | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
             record = session.get(AgentMessage, message_id, with_for_update=True)
@@ -403,20 +487,26 @@ class AgentRepository:
             if record.role != "ASSISTANT" or record.status != "PROCESSING":
                 raise AgentConflictError("assistant message is not in PROCESSING state")
             changes = {name: value for name, value in {
-                "phase": phase, "content": content, "search_result": search_result,
+                "phase": phase, "content": content if render_blocks is None else None,
+                "search_result": search_result,
             }.items() if value is not None and getattr(record, name) != value}
+            blocks_changed = (
+                self._apply_render_blocks(record, render_blocks)
+                if render_blocks is not None else False
+            )
             if changes:
                 for name, value in changes.items():
                     setattr(record, name, value)
+            if changes or blocks_changed:
                 record.version += 1
                 record.update_time = now
             if timing is not None:
                 self._apply_timing(record, timing)
-                if not changes:
+                if not changes and not blocks_changed:
                     # A timing-only checkpoint did not update the parent Message before
                     # timing moved into its JSON detail column.
                     flag_modified(record, "update_time")
-            if changes or timing is not None:
+            if changes or blocks_changed or timing is not None:
                 session.flush()
             return self._message_state(record)
 
@@ -439,6 +529,7 @@ class AgentRepository:
         extra_context: dict | None = None,
         owner_user_id: str = LOCAL_USER_ID,
         source_tenant_id: str | None = None,
+        attachments: list[dict[str, str]] | None = None,
     ) -> StartedAgentMessageState:
         with self._session_factory.begin() as session:
             conversation = self._require_conversation(
@@ -459,6 +550,7 @@ class AgentRepository:
                 reference=reference,
                 extra_context=extra_context,
                 source_tenant_id=source_tenant_id,
+                attachments=attachments,
             )
             if existing is not None:
                 return existing
@@ -483,6 +575,7 @@ class AgentRepository:
                 role=AgentMessageRole.USER.value,
                 status=AgentMessageStatus.COMPLETED.value,
                 content=content,
+                attachments=[dict(item) for item in attachments or ()],
                 series_ids=series_ids,
                 model=None,
                 requested_top_k=requested_top_k,
@@ -536,6 +629,7 @@ class AgentRepository:
         search_result: dict | None,
         now: int,
         timing: AgentMessageTimingState | None = None,
+        render_blocks: list[dict] | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
             record = session.get(AgentMessage, message_id, with_for_update=True)
@@ -552,6 +646,9 @@ class AgentRepository:
                 )
             current_phase = record.phase
             record.content = content
+            if render_blocks is not None:
+                self._apply_render_blocks(record, render_blocks)
+            self._fail_running_render_blocks(record)
             record.search_result = search_result
             record.status = AgentMessageStatus.COMPLETED.value
             record.phase = None
@@ -593,6 +690,7 @@ class AgentRepository:
                 )
             if record.status == AgentMessageStatus.PROCESSING.value:
                 current_phase = record.phase
+                self._fail_running_render_blocks(record)
                 record.status = AgentMessageStatus.FAILED.value
                 record.phase = None
                 record.version += 1
@@ -628,6 +726,7 @@ class AgentRepository:
         reference: dict[str, str] | None = None,
         extra_context: dict | None = None,
         source_tenant_id: str | None = None,
+        attachments: list[dict[str, str]] | None = None,
     ) -> StartedAgentMessageState | None:
         existing_user = session.scalar(
             select(AgentMessage).where(
@@ -645,6 +744,7 @@ class AgentRepository:
             or existing_user.requested_series_ids != requested_series_ids
             or existing_user.reference != reference
             or existing_user.extra_context != extra_context
+            or (existing_user.attachments or []) != (attachments or [])
             or (existing_user.detail or {}).get("sourceTenantId") != source_tenant_id
         ):
             raise AgentConflictError(
@@ -736,7 +836,37 @@ class AgentRepository:
             timing=AgentRepository._timing_state(record.detail),
             extra_context=record.extra_context,
             source_tenant_id=(record.detail or {}).get("sourceTenantId"),
+            attachments=tuple(dict(item) for item in record.attachments or ()),
+            render_blocks=(
+                tuple(deepcopy(record.detail["renderBlocks"]))
+                if record.detail is not None and "renderBlocks" in record.detail else None
+            ),
         )
+
+    @staticmethod
+    def _apply_render_blocks(record: AgentMessage, blocks: list[dict]) -> bool:
+        blocks = deepcopy(blocks)
+        content = "\n\n".join(
+            block["markdown"] for block in blocks if block.get("type") == "markdown"
+        )
+        if (record.detail or {}).get("renderBlocks") == blocks and record.content == content:
+            return False
+        record.detail = {**(record.detail or {}), "renderBlocks": blocks}
+        record.content = content
+        return True
+
+    @staticmethod
+    def _fail_running_render_blocks(record: AgentMessage) -> None:
+        blocks = (record.detail or {}).get("renderBlocks")
+        if isinstance(blocks, list) and any(
+            block.get("type") == "tool" and block.get("status") == "inProgress"
+            for block in blocks
+        ):
+            AgentRepository._apply_render_blocks(record, [
+                {**block, "status": "failed"}
+                if block.get("type") == "tool" and block.get("status") == "inProgress"
+                else block for block in blocks
+            ])
 
     @staticmethod
     def _normalize_search_result_scope(result: dict | None) -> dict | None:

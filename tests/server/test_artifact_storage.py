@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from io import BytesIO
 from uuid import uuid4
 
@@ -164,3 +165,110 @@ def test_series_image_resolve_rejects_filesystem_escape(tmp_path):
         store.resolve_series_image(image_id, series_id=series_id)
     with pytest.raises(ValueError, match="escapes the configured root"):
         store.put_series_image(series_id, b"original", extension="jpg", model_data=b"model")
+
+
+def test_conversation_attachment_keeps_original_and_manifest_across_store_restart(tmp_path):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    conversation_id = str(uuid4())
+    stored = store.put_conversation_attachment(
+        conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+    )
+    restarted = LocalArtifactStore(store.root, environment="test")
+    assert restarted.read_conversation_attachment(conversation_id, stored.uri) == stored
+    assert restarted.resolve(stored.uri).read_bytes() == b"original"
+    assert restarted.list_attachment_conversations() == (conversation_id,)
+    assert not list(restarted.resolve(stored.uri).parent.glob("model*"))
+    assert restarted.put_conversation_attachment(
+        conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+    ) == stored
+    restarted.delete_conversation_artifacts(conversation_id)
+    restarted.delete_conversation_artifacts(conversation_id)
+    assert restarted.list_attachment_conversations() == ()
+
+
+def test_conversation_attachment_rejects_cross_scope_and_noncanonical_uris(tmp_path):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    conversation_id = str(uuid4())
+    stored = store.put_conversation_attachment(
+        conversation_id, b"original", extension="jpg", media_type="image/jpeg", width=20, height=10,
+    )
+    for uri in (
+        stored.uri.replace("artifact://test/", "artifact://development/"),
+        stored.uri + "?ignored=true", stored.uri + "#fragment",
+        stored.uri.replace("/original.jpg", "/./original.jpg"),
+        stored.uri.replace("/original.jpg", "/%6friginal.jpg"),
+        stored.uri.replace("/original.jpg", "/manifest.json"),
+        "file:///etc/passwd", "https://example.org/image.jpg",
+    ):
+        with pytest.raises(ValueError, match="does not belong"):
+            store.read_conversation_attachment(conversation_id, uri)
+    with pytest.raises(ValueError, match="does not belong"):
+        store.read_conversation_attachment(str(uuid4()), stored.uri)
+
+
+def test_conversation_attachment_manifest_is_the_atomic_publication_marker(tmp_path, monkeypatch):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    conversation_id = str(uuid4())
+    write = store._write_immutable
+
+    def interrupted_write(path, data):
+        if path.name == "manifest.json":
+            raise OSError("interrupted before publication")
+        write(path, data)
+
+    monkeypatch.setattr(store, "_write_immutable", interrupted_write)
+    with pytest.raises(OSError, match="interrupted"):
+        store.put_conversation_attachment(
+            conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+        )
+    original = next(store.base_directory.rglob("original.png"))
+    with pytest.raises(FileNotFoundError):
+        store.read_conversation_attachment(conversation_id, store.uri_for_path(original))
+    monkeypatch.setattr(store, "_write_immutable", write)
+    stored = store.put_conversation_attachment(
+        conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+    )
+    assert store.read_conversation_attachment(conversation_id, stored.uri) == stored
+
+
+def test_conversation_attachment_rejects_changed_bytes_and_manifest(tmp_path):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    conversation_id = str(uuid4())
+    stored = store.put_conversation_attachment(
+        conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+    )
+    original = store.resolve(stored.uri)
+    manifest = original.with_name("manifest.json")
+    metadata = json.loads(manifest.read_bytes())
+    metadata["sizeBytes"] = True
+    manifest.write_text(json.dumps(metadata))
+    with pytest.raises(ArtifactIntegrityError, match="manifest"):
+        store.read_conversation_attachment(conversation_id, stored.uri)
+    with pytest.raises(ArtifactIntegrityError):
+        store.put_conversation_attachment(
+            conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+        )
+    original.write_bytes(b"tampered")
+    with pytest.raises(ArtifactIntegrityError):
+        store.put_conversation_attachment(
+            conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+        )
+
+
+def test_attachment_symlink_cannot_alias_another_conversation_or_leave_store(tmp_path):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    conversation_id = str(uuid4())
+    stored = store.put_conversation_attachment(
+        conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+    )
+    original = store.resolve(stored.uri)
+    other = store.base_directory / "other.png"
+    other.write_bytes(b"private")
+    original.unlink()
+    original.symlink_to(other)
+    with pytest.raises(ValueError, match="symbolic links"):
+        store.read_conversation_attachment(conversation_id, stored.uri)
+    with pytest.raises(ValueError, match="symbolic links"):
+        store.put_conversation_attachment(
+            conversation_id, b"original", extension="png", media_type="image/png", width=20, height=10,
+        )

@@ -4,6 +4,8 @@ import json
 import logging
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from time import monotonic
 from uuid import uuid4
 
@@ -645,6 +647,122 @@ def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> N
     assert "broken cup" not in caplog.text
     assert "private claim text" not in caplog.text
     assert "private evidence" not in caplog.text
+
+
+@pytest.mark.parametrize("outcome", ["success", "feedback", "invalid", "exception"])
+def test_tool_activity_reports_real_calls_and_handled_failures(outcome) -> None:
+    class Arguments(BaseModel):
+        query: str
+
+    executed, activity = [], []
+
+    def search(query):
+        executed.append(query)
+        if outcome == "exception":
+            raise RuntimeError("search unavailable")
+        return JsonToolResult(
+            success=outcome != "feedback", payload={"message": "private tool output"},
+        )
+
+    tool = build_agent_tool(
+        func=search, name="search_web", description="Search external material.",
+        args_schema=Arguments, maximum_result_bytes=1024,
+    )
+    attach_agent_tool_logging(
+        [tool], role="Supervisor", inputs=_inputs(),
+        on_activity=lambda *event: activity.append(event),
+    )
+    arguments = {} if outcome == "invalid" else {"query": "the actual search"}
+    invocation = {"type": "tool_call", "id": "provider-call", "name": tool.name, "args": arguments}
+    if outcome == "exception":
+        with pytest.raises(RuntimeError, match="search unavailable"):
+            tool.invoke(invocation)
+    else:
+        receipt = tool.invoke(invocation)
+        assert receipt.status == ("success" if outcome == "success" else "error")
+
+    assert len(activity) == 2
+    call_id, name, status, inputs = activity[0]
+    assert isinstance(call_id, str) and call_id
+    assert (name, status, inputs) == ("search_web", "inProgress", arguments)
+    assert activity[1] == (
+        call_id, "search_web", "completed" if outcome == "success" else "failed", None,
+    )
+    assert executed == ([] if outcome == "invalid" else ["the actual search"])
+    assert "private tool output" not in repr(activity)
+
+
+def test_tool_activity_keeps_parallel_calls_separate() -> None:
+    class Arguments(BaseModel):
+        query: str
+
+    entered = Barrier(2)
+    activity = []
+
+    def publish(*event):
+        activity.append(event)
+        if event[2] == "inProgress":
+            entered.wait(timeout=5)
+
+    tool = build_agent_tool(
+        func=lambda query: JsonToolResult(success=True, payload={"query": query}),
+        name="search_web", description="Search external material.",
+        args_schema=Arguments, maximum_result_bytes=1024,
+    )
+    attach_agent_tool_logging(
+        [tool], role="Supervisor", inputs=_inputs(), on_activity=publish,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        receipts = list(executor.map(lambda query: tool.invoke({"query": query}), ("first", "second")))
+
+    assert len(receipts) == 2
+    started = {event[0]: event for event in activity if event[2] == "inProgress"}
+    completed = {event[0]: event for event in activity if event[2] == "completed"}
+    assert len(started) == 2 and started.keys() == completed.keys()
+    assert {event[3]["query"] for event in started.values()} == {"first", "second"}
+    assert all(event[3] is None for event in completed.values())
+
+
+@pytest.mark.parametrize("failed_stage", ["start", "end"])
+@pytest.mark.parametrize("success", [False, True])
+def test_tool_activity_publish_errors_preserve_business_results(caplog, failed_stage, success) -> None:
+    class Arguments(BaseModel):
+        query: str
+
+    executed, activity = [], []
+    payload = {"message": "the original business result"}
+    if not success:
+        payload = {"error": {"code": "BUSINESS_UNAVAILABLE", "message": "the original business error"}}
+
+    def publish(_call_id, _tool, status, _arguments):
+        activity.append(status)
+        if (status == "inProgress") == (failed_stage == "start"):
+            raise RuntimeError("activity publication failed")
+
+    def search(query):
+        executed.append(query)
+        return JsonToolResult(success=success, payload=payload)
+
+    tool = build_agent_tool(
+        func=search, name="search_web", description="Search external material.",
+        args_schema=Arguments, maximum_result_bytes=1024,
+    )
+    attach_agent_tool_logging([tool], role="Supervisor", inputs=_inputs(), on_activity=publish)
+
+    receipt = tool.invoke({
+        "type": "tool_call", "id": "provider-call", "name": tool.name,
+        "args": {"query": "the actual search"},
+    })
+
+    assert executed == ["the actual search"]
+    assert receipt.tool_call_id == "provider-call"
+    assert receipt.status == ("success" if success else "error")
+    assert json.loads(receipt.content) == payload
+    assert activity == ["inProgress", "completed" if success else "failed"]
+    assert any(record.name == "agent.chat.common.tool" and record.levelno >= logging.WARNING
+               and record.exc_info and record.exc_info[0] is RuntimeError
+               and "search_web" in record.getMessage()
+               for record in caplog.records)
 
 
 def test_retrieve_returns_catalog_and_read_trieve_item_ranges_full_evidence() -> None:

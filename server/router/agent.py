@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..api import agent
+from ..model.vo.agentVO import AgentAttachmentUploadView
 from ..model.vo.commonVO import Page
 from ..api.schema import (
     AgentConversationView,
@@ -13,6 +14,17 @@ from ..api.schema import (
 )
 
 router = APIRouter()
+router.add_api_route(
+    "/api/agent/attachments/upload",
+    agent.upload_agent_attachment,
+    methods=["POST"],
+    response_model=AgentAttachmentUploadView,
+)
+router.add_api_route(
+    "/api/agent/attachments/content",
+    agent.get_agent_attachment_content,
+    methods=["GET"],
+)
 router.add_api_route(
     "/api/agent/global-settings",
     agent.get_agent_global_settings,

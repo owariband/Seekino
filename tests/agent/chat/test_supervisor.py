@@ -11,6 +11,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from gateway.agent_model.deepagents import DeepAgentSessionStore, DeepAgentsSupervisorModel
+from gateway.agent_model.contracts import SupervisorSessionContext
 from gateway.web_search import WebSearchError, WebSearchHit
 from gateway.errors import ContentFilterError
 from gateway.openai.agent import OpenAIAgentModel
@@ -153,6 +154,191 @@ def test_direct_chat_never_loads_video_context_or_uses_search():
     assert "Course" not in model.prompts[0]
 
 
+@pytest.mark.parametrize("image_urls", [[], [f"data:image/png;base64,current-{index}" for index in range(6)]])
+def test_supervisor_passes_ordered_images_separately_from_the_text_prompt(image_urls):
+    class VisionModel(FakeSupervisorModel):
+        supports_vision_input = True
+
+        def run_agent(self, prompt, **kwargs):
+            self.image_urls = kwargs.pop("image_urls", None)
+            return super().run_agent(prompt, **kwargs)
+
+    model = VisionModel()
+    runtime = _runtime(model)
+    inputs = {**_inputs(), "image_urls": image_urls, "history": [{
+        "role": "USER", "content": "Earlier image question.",
+        "imageUrls": ["data:image/png;base64,historical-image"],
+    }]}
+    result = runtime.kick(inputs, load_video_context=lambda: [])
+
+    assert runtime.supports_vision_input
+    assert not _runtime(FakeSupervisorModel()).supports_vision_input
+    assert result.content == "Direct answer."
+    assert model.image_urls == (image_urls or None)
+    assert model.runs[0][3] == inputs["history"]
+    assert "data:image" not in model.prompts[0]
+    assert "current-" not in model.prompts[0] and "historical-image" not in model.prompts[0]
+
+
+def test_supervisor_shows_opening_and_running_tool_before_search_finishes():
+    entered, release = Barrier(2), Event()
+
+    class BlockingWebSearcher(FakeWebSearcher):
+        def search(self, query, **options):
+            entered.wait(timeout=5)
+            assert release.wait(timeout=5)
+            return super().search(query, **options)
+
+    opening = "我先帮你查一下相关资料。"
+    query = "MyGO live performance"
+    model = FakeSupervisorModel(
+        calls=("search_web",), queries=(query,),
+        text_before_calls={0: opening}, answer="The verified explanation.",
+    )
+    events = []
+    runtime = _runtime(model, web=BlockingWebSearcher())
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        running = executor.submit(
+            runtime.kick, _inputs(), load_video_context=lambda: [],
+            emit=lambda event: events.append(deepcopy(event)),
+        )
+        try:
+            entered.wait(timeout=5)
+            assert not running.done()
+            snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+            assert snapshots[0]["content"] == opening
+            assert [block["type"] for block in snapshots[-1]["renderBlocks"]] == ["markdown", "tool"]
+            pending = snapshots[-1]["renderBlocks"][1]
+            assert pending["tool"] == "search_web" and pending["status"] == "inProgress"
+            assert pending["query"] == query and pending["callId"]
+            assert "The verified explanation." not in snapshots[-1]["content"]
+        finally:
+            release.set()
+        result = running.result(timeout=10)
+
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    finished = snapshots[-1]["renderBlocks"][1]
+    assert finished == {**pending, "status": "completed"}
+    assert [block["type"] for block in result.render_blocks] == ["markdown", "tool", "markdown", "markdown"]
+    assert result.content.startswith(opening + "\n\nThe verified explanation.")
+    assert "Official page" not in json.dumps(finished)
+    assert "https://example.org/source" not in json.dumps(finished)
+    assert "简短" in model.prompts[0] and "内部推理" in model.prompts[0]
+
+
+@pytest.mark.parametrize("tool_name", ["search_web", "search_video_graph"])
+def test_supervisor_marks_handled_search_failure_in_the_existing_tool_position(tool_name):
+    model = FakeSupervisorModel(
+        calls=(tool_name,), queries=("the actual search",),
+        text_before_calls={0: "I will check the source."}, answer="The search is unavailable.",
+    )
+    events = []
+    result = _runtime(model, web=FakeWebSearcher(fail=True)).kick(
+        _inputs(), load_video_context=lambda: [], emit=lambda event: events.append(deepcopy(event)),
+    )
+
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    tool_snapshots = [[block for block in event["renderBlocks"] if block["type"] == "tool"]
+                      for event in snapshots]
+    tool_snapshots = [blocks for blocks in tool_snapshots if blocks]
+    pending = tool_snapshots[0][0]
+    assert pending["status"] == "inProgress"
+    assert all(len(blocks) == 1 and blocks[0]["callId"] == pending["callId"] for blocks in tool_snapshots)
+    assert tool_snapshots[-1][0] == {**pending, "status": "failed"}
+    assert [block["type"] for block in result.render_blocks] == ["markdown", "tool", "markdown"]
+    assert result.content == "I will check the source.\n\nThe search is unavailable."
+
+
+@pytest.mark.parametrize("failed_status", ["inProgress", "completed"])
+def test_supervisor_recovers_full_snapshot_after_tool_activity_publish_error(failed_status):
+    receipts, snapshots = [], []
+    failed_call_id = None
+
+    def publish(event):
+        nonlocal failed_call_id
+        if event["type"] != "answer.snapshot":
+            return
+        tool = next((block for block in event["renderBlocks"]
+                     if block["type"] == "tool" and block["query"] == "search 0"), None)
+        if failed_call_id is None and tool is not None and tool["status"] == failed_status:
+            failed_call_id = tool["callId"]
+            raise RuntimeError("activity checkpoint unavailable")
+        snapshots.append(deepcopy(event))
+
+    class SearchingModel(FakeSupervisorModel):
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            handle_text("I will check the source.")
+            search = next(tool for tool in tools if tool.name == "search_web")
+            for index in range(2):
+                receipt = search.invoke({
+                    "type": "tool_call", "id": f"provider-call-{index}",
+                    "name": search.name, "args": {"query": f"search {index}"},
+                })
+                assert receipt.status == "success" and receipt.tool_call_id == f"provider-call-{index}"
+                receipts.append(json.loads(receipt.content))
+            handle_text("The verified final explanation.")
+
+    web = FakeWebSearcher()
+    result = _runtime(SearchingModel(), web=web).kick(_inputs(), load_video_context=lambda: [], emit=publish)
+
+    assert failed_call_id is not None
+    assert [call[0] for call in web.calls] == ["search 0", "search 1"]
+    assert all(receipt["result_count"] == 1 and receipt["items"][0]["title"] == "Official page"
+               for receipt in receipts)
+    tools = [block for block in result.render_blocks if block["type"] == "tool"]
+    assert len(tools) == 2 and all(block["status"] == "completed" for block in tools)
+    assert tools[0]["callId"] == failed_call_id
+    assert snapshots[-1]["renderBlocks"] == list(result.render_blocks)
+    assert result.content.startswith("I will check the source.\n\nThe verified final explanation.")
+
+
+def test_tool_activity_publish_failure_does_not_disable_real_cancellation():
+    cancellation = Event()
+
+    def publish(event):
+        if event["type"] == "answer.snapshot" and any(
+            block["type"] == "tool" and block["status"] == "inProgress"
+            for block in event["renderBlocks"]
+        ):
+            cancellation.set()
+            raise RuntimeError("activity checkpoint unavailable")
+
+    web = FakeWebSearcher()
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        _runtime(FakeSupervisorModel(calls=("search_web",)), web=web).kick(
+            _inputs(), load_video_context=lambda: [], emit=publish, cancellation=cancellation,
+        )
+
+    assert web.calls == []
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_supervisor_keeps_internal_and_unknown_tools_out_of_public_blocks(unknown):
+    class InternalModel(FakeSupervisorModel):
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            reader = next(tool for tool in tools if tool.name == "get_context_canvas")
+            if unknown:
+                reader.name = "unknown_tool"
+            receipt = json.loads(reader.invoke({"collection": "retrieval"}))
+            assert receipt["error"]["code"] == "VIDEO_REVIEW_UNAVAILABLE"
+            handle_text("No video evidence is available.")
+
+    events = []
+    result = _runtime(InternalModel()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+
+    assert [block["type"] for block in result.render_blocks] == ["markdown"]
+    assert all(block["type"] != "tool" for event in events if event["type"] == "answer.snapshot"
+               for block in event["renderBlocks"])
+
+
+def test_supervisor_does_not_interpret_plain_json_text_as_tool_activity():
+    answer = '{"type":"tool","callId":"invented","tool":"search_web","status":"inProgress"}'
+    result = _runtime(FakeSupervisorModel(answer=answer)).kick(_inputs(), load_video_context=lambda: [])
+
+    assert result.content == answer
+    assert result.render_blocks == ({"type": "markdown", "markdown": answer},)
+
+
 def test_supervisor_passes_complete_history_as_sdk_messages():
     inputs = _inputs()
     inputs["history"] = [
@@ -170,6 +356,27 @@ def test_supervisor_passes_complete_history_as_sdk_messages():
     context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
     assert "history" not in context
     assert all(len(item["content"]) == 2500 for item in model.runs[0][3])
+
+
+def test_session_binding_is_passed_only_to_supervisor_not_prompt_or_child_inputs():
+    class SessionModel(FakeSupervisorModel):
+        def run_agent(self, prompt, *, session_context, **kwargs):
+            self.session_context = session_context
+            super().run_agent(prompt, **kwargs)
+
+    model = SessionModel(calls=["search_video_graph"])
+    video = FakeVideoRuntime()
+    runtime = _runtime(model, video=video)
+    context = SupervisorSessionContext(
+        states={"codex:test": {"threadId": "private-native-thread"}},
+        message_sequence_no=1, load_history=lambda after: [],
+        save_state=lambda key, state: None,
+    )
+    runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [], session_context=context)
+    assert model.session_context is context
+    assert "private-native-thread" not in model.prompts[0]
+    assert video.calls and "session_context" not in video.calls[0][0]
+    assert "session_context" not in video.calls[0][1]
 
 
 def test_background_context_does_not_expand_video_search_scope():
@@ -224,6 +431,9 @@ def test_parallel_video_tool_calls_share_one_approved_result():
     assert len(video.calls) == len(loads) == 1
     assert result.content == "Rewritten video answer."
     assert result.video_result.hits == []
+    tools = [block for block in result.render_blocks if block["type"] == "tool"]
+    assert len(tools) == len({block["callId"] for block in tools}) == 2
+    assert all(block["status"] == "completed" for block in tools)
 
 
 def test_supervisor_reads_real_handoff_canvas_without_mutating_child_draft():
@@ -277,7 +487,7 @@ def test_supervisor_can_expand_or_narrow_the_child_range_inside_canonical_eviden
     assert result.content == model.answer
     assert result.video_result.agent_reply.result_count == 1
     assert [block.type for block in result.video_result.render_blocks] == ["video", "markdown"]
-    block = result.video_result.render_blocks[0]
+    block = next(block for block in result.video_result.render_blocks if block.type == "video")
     assert (block.video_chunk_id, block.start_seconds, block.end_seconds) == ("chunk-1", start, end)
 
 
@@ -327,7 +537,8 @@ def test_supervisor_submits_continuous_adjacent_chunks_and_keeps_original_source
         assert {hit.evidence.video_chunk_id: (hit.evidence.start_seconds, hit.evidence.end_seconds)
                 for hit in result.hits} == {"chunk-1": (10, 20), "chunk-2": (20, 30)}
         restored = type(result).model_validate(result.model_dump(mode="json", by_alias=True))
-        assert restored.render_blocks[0].source_video_chunk_ids == ["chunk-1", "chunk-2"]
+        restored_video = next(block for block in restored.render_blocks if block.type == "video")
+        assert restored_video.source_video_chunk_ids == ["chunk-1", "chunk-2"]
     assert video.last_result.render_blocks[1].start_seconds == 11
     assert video.last_result.render_blocks[1].end_seconds == 19
 
@@ -356,7 +567,8 @@ def test_supervisor_rejects_unsupported_cross_chunk_range_without_losing_valid_i
         _inputs(series_ids=["series"]), load_video_context=lambda: [],
     ).video_result
     assert model.tool_results[2]["error"]["code"] == "INVALID_VIDEO_RANGE"
-    assert (result.render_blocks[0].start_seconds, result.render_blocks[0].end_seconds) == (12, 18)
+    selected = next(block for block in result.render_blocks if block.type == "video")
+    assert (selected.start_seconds, selected.end_seconds) == (12, 18)
     assert len(result.hits) == 1
 
 
@@ -410,13 +622,15 @@ def test_supervisor_streams_text_and_video_at_their_actual_submission_positions(
     ]
     assert result.content == "Opening explanation.\n\nBetween the scenes.\n\nClosing explanation."
     snapshots = [event for event in events if event["type"] == "answer.snapshot"]
-    assert [[block["type"] for block in event["searchResult"]["renderBlocks"]]
-            for event in snapshots[:5]] == [
-        ["markdown"], ["markdown", "video"], ["markdown", "video", "markdown"],
-        ["markdown", "video", "markdown", "video"],
-        ["markdown", "video", "markdown", "video", "markdown"],
+    layouts = [[block["type"] for block in event["renderBlocks"]] for event in snapshots]
+    assert [layout for index, layout in enumerate(layouts) if index == 0 or layout != layouts[index - 1]] == [
+        ["tool"], ["tool", "markdown"], ["tool", "markdown", "video"],
+        ["tool", "markdown", "video", "markdown"],
+        ["tool", "markdown", "video", "markdown", "video"],
+        ["tool", "markdown", "video", "markdown", "video", "markdown"],
     ]
-    assert snapshots[1]["content"] == "Opening explanation."
+    first_card = next(event for event in snapshots if any(block["type"] == "video" for block in event["renderBlocks"]))
+    assert first_card["content"] == "Opening explanation."
     assert snapshots[-1]["searchResult"] == result.video_result.model_dump(mode="json", by_alias=True)
     assert not {"answer.block", "answer.delta", "answer.evidence"} & {event["type"] for event in events}
     assert "Grounded answer." not in "\n".join(event["content"] for event in snapshots)
@@ -443,31 +657,98 @@ def test_supervisor_live_card_revisions_and_removals_keep_the_text_positions():
     )
     snapshots = [event for event in events if event["type"] == "answer.snapshot"]
     # A card may precede the first text, without any invented placeholder.
-    assert snapshots[0]["content"] == ""
-    assert [block["type"] for block in snapshots[0]["searchResult"]["renderBlocks"]] == ["video"]
+    first_card = next(event for event in snapshots if any(block["type"] == "video" for block in event["renderBlocks"]))
+    assert first_card["content"] == ""
+    assert [block["type"] for block in first_card["renderBlocks"]] == ["tool", "video"]
     revised = next(event for event in snapshots if any(
-        block.get("startSeconds") == 12 for block in event["searchResult"]["renderBlocks"]
+        block.get("startSeconds") == 12 for block in event["renderBlocks"]
     ))
-    assert [block["type"] for block in revised["searchResult"]["renderBlocks"]] == ["video", "markdown", "video"]
-    removed = next(event for event in snapshots if [hit["candidate"]["videoChunkId"]
+    assert [block["type"] for block in revised["renderBlocks"]] == ["tool", "video", "markdown", "video"]
+    removed = next(event for event in snapshots if event["searchResult"] is not None and [hit["candidate"]["videoChunkId"]
                    for hit in event["searchResult"]["hits"]] == ["chunk-2"])
-    assert [block["type"] for block in removed["searchResult"]["renderBlocks"]] == ["markdown", "video"]
+    assert [block["type"] for block in removed["renderBlocks"]] == ["tool", "markdown", "video"]
     assert [block.type for block in result.video_result.render_blocks] == ["markdown", "video", "video", "markdown"]
     assert [block.video_chunk_id for block in result.video_result.render_blocks if block.type == "video"] == ["chunk-2", "chunk-1"]
     assert result.content == "Between two cards.\n\nEnd."
     assert snapshots[-1]["searchResult"] == result.video_result.model_dump(mode="json", by_alias=True)
 
 
-def test_supervisor_merges_adjacent_text_messages_without_reprinting_the_answer():
+def test_supervisor_merges_adjacent_text_without_merging_across_a_tool():
     model = FakeSupervisorModel(
         calls=("search_video_graph", "get_context_canvas"),
         arguments=({"query": "find the cup"}, {"collection": "retrieval"}),
         text_before_calls={0: "First paragraph.", 1: "Second paragraph."}, answer="Final paragraph.",
     )
     result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
-    assert len(result.video_result.render_blocks) == 1
+    assert [block["type"] for block in result.render_blocks] == ["markdown", "tool", "markdown"]
     assert result.content == "First paragraph.\n\nSecond paragraph.\n\nFinal paragraph."
+    assert len(result.video_result.render_blocks) == 1
     assert result.video_result.render_blocks[0].markdown == result.content
+
+
+def test_ui_tool_rows_and_openings_do_not_consume_business_block_budget():
+    call_count = 205
+    model = FakeSupervisorModel(
+        calls=("search_video_graph",) * call_count,
+        text_before_calls={index: f"Checking source {index}." for index in range(call_count)},
+        answer="The verified explanation.",
+    )
+    video = FakeVideoRuntime()
+    result = _runtime(model, video=video).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+    assert len(video.calls) == 1
+    assert len(model.tool_results) == call_count
+    assert all("error" not in receipt and "renderBlocks" not in receipt for receipt in model.tool_results)
+    assert all(receipt["reused"] for receipt in model.tool_results[1:])
+    tools = [block for block in result.render_blocks if block["type"] == "tool"]
+    assert len(tools) == call_count and all(block["status"] == "completed" for block in tools)
+    assert len({block["callId"] for block in tools}) == call_count
+    assert len(result.video_result.render_blocks) == 1
+    assert result.video_result.render_blocks[0].markdown == result.content
+    assert len(result.content) < 20_000
+    assert result.content.startswith("Checking source 0.") and result.content.endswith(model.answer)
+    assert "ToolRenderBlock" not in json.dumps(type(result.video_result).model_json_schema())
+
+
+def test_mutating_public_snapshot_blocks_cannot_change_business_evidence_or_results():
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "submit_video_item"),
+        arguments=(
+            {"query": "find the cup"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19,
+             "claim": "Verified evidence."},
+        ),
+        text_before_calls={0: "I will verify the scene."}, answer="The grounded explanation.",
+    )
+    observed = []
+
+    def mutate_display(event):
+        if event["type"] != "answer.snapshot":
+            return
+        before = deepcopy(event["searchResult"])
+        for block in event["renderBlocks"]:
+            if block["type"] == "video":
+                block["startSeconds"], block["endSeconds"] = 0, 1
+            elif block["type"] == "markdown":
+                block["markdown"] = "Display consumer replaced this text."
+            else:
+                block["status"] = "failed"
+        event["renderBlocks"].clear()
+        observed.append((before, deepcopy(event["searchResult"])))
+
+    result = _runtime(model).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=mutate_display,
+    )
+
+    assert observed and any(before is not None for before, _after in observed)
+    assert all(before == after for before, after in observed)
+    assert result.content == "I will verify the scene.\n\nThe grounded explanation."
+    assert result.video_result.agent_reply.message == result.content
+    selected = next(block for block in result.video_result.render_blocks if block.type == "video")
+    assert (selected.start_seconds, selected.end_seconds) == (11, 19)
+    assert result.video_result.hits[0].selection_reason.summary == "Verified evidence."
+    assert all("renderBlocks" not in receipt for receipt in model.tool_results)
+    assert model.tool_results[1]["accepted"] is True
 
 
 def test_supervisor_rejects_oversize_text_before_publishing_or_replacing_the_valid_prefix():
@@ -486,7 +767,7 @@ def test_supervisor_rejects_oversize_text_before_publishing_or_replacing_the_val
         )
     snapshots = [event for event in events if event["type"] == "answer.snapshot"]
     assert snapshots[-1]["content"] == "A" * 10_001
-    assert [block["type"] for block in snapshots[-1]["searchResult"]["renderBlocks"]] == ["markdown", "video"]
+    assert [block["type"] for block in snapshots[-1]["renderBlocks"]] == ["tool", "markdown", "video"]
     assert all("B" not in event["content"] for event in snapshots)
 
 
@@ -506,8 +787,10 @@ def test_supervisor_sanitizes_streamed_web_links_and_appends_sources_after_cards
     )
     assert all("https://unknown.invalid" not in event["content"]
                for event in events if event["type"] == "answer.snapshot")
-    assert [block.type for block in result.video_result.render_blocks] == ["markdown", "video", "markdown", "markdown"]
-    assert result.video_result.render_blocks[-1].markdown.startswith("网页来源：")
+    assert [block["type"] for block in result.render_blocks] == ["tool", "tool", "markdown", "video", "markdown", "markdown"]
+    assert result.render_blocks[-1]["markdown"].startswith("网页来源：")
+    assert [block.type for block in result.video_result.render_blocks] == ["markdown", "video", "markdown"]
+    assert "网页来源：" in result.video_result.render_blocks[-1].markdown
     assert result.content.count("End.") == 1
 
 
@@ -576,7 +859,7 @@ def test_supervisor_can_deliver_only_final_text_without_child_video_fallback(emp
     assert result.video_result.agent_reply.result_count == 0
     assert result.video_result.hits == []
     assert [block.type for block in result.video_result.render_blocks] == ["markdown"]
-    assert result.video_result.render_blocks[0].markdown == model.answer
+    assert result.video_result.render_blocks[-1].markdown == model.answer
 
 
 def test_supervisor_can_remove_every_submitted_video_item():
@@ -1174,6 +1457,9 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
 
     first = runtime.kick(inputs, load_video_context=lambda: [])
 
+    tool_blocks = [block for block in first.render_blocks if block["type"] == "tool"]
+    assert len(tool_blocks) == 1
+    assert tool_blocks[0]["tool"] == tool_name and tool_blocks[0]["status"] == "completed"
     receipt = next(message for message in script._calls[1]["messages"] if isinstance(message, ToolMessage))
     payload = json.loads(receipt.content)
     assert "error" not in payload
@@ -1199,8 +1485,9 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
             "Current-video explanation from the verified evidence."
         )
         assert first.video_result.hits[0].evidence.video_chunk_id == "chunk-1"
-        assert first.video_result.render_blocks[0].start_seconds == 12
-        assert first.video_result.render_blocks[0].end_seconds == 18
+        selected = next(block for block in first.video_result.render_blocks if block.type == "video")
+        assert selected.start_seconds == 12
+        assert selected.end_seconds == 18
         host.prepare_context.assert_not_awaited()
 
     config = {"configurable": {"thread_id": inputs["conversation_id"]}}

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
+from io import BytesIO
 from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from fastapi import Request
+from PIL import Image
 import pytest
 from sqlalchemy import select
 
@@ -23,6 +26,8 @@ from server.repository.identity import IdentityRepository
 from server.repository.library import LibraryRepository
 from server.schema import AgentReply, VideoChunkSearchResult
 from server.service.agent_chat import AgentChatService
+from server.service.agent_attachments import AgentAttachmentService
+from server.config.media import ImageUploadConfig
 from server.service.auth import AuthService
 from server.service.library import LibraryService
 from server.service.media import MediaService
@@ -84,9 +89,12 @@ def cloud_api(tmp_path):
     )
     auth.bootstrap()
     runtime = ModelRuntime()
-    agent = AgentChatService(AgentRepository(sessions), library, runtime)
+    agent_repository = AgentRepository(sessions)
+    attachments = AgentAttachmentService(agent_repository, store, config=ImageUploadConfig())
+    agent = AgentChatService(agent_repository, library, runtime, attachments=attachments)
     services = SimpleNamespace(
         auth=auth, library=library, agent=agent,
+        agent_attachments=attachments,
         media=MediaService(library, store, probe_playback=lambda _path: True),
         uploads=SimpleNamespace(parse_defaults=None), jobs=SimpleNamespace(),
         retrieval=SimpleNamespace(search=lambda *args, **kwargs: None),
@@ -123,6 +131,107 @@ def _conversation(client, identity, tenant_id=None, key=None):
     )
     assert response.status_code == 201, response.text
     return response.json()["conversationId"]
+
+
+def _attachment_png():
+    output = BytesIO()
+    Image.new("RGB", (4, 4), "blue").save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_chat_attachment_upload_and_content_are_owner_scoped_in_shared_tenant(cloud_api):
+    with TestClient(cloud_api.app) as first, TestClient(cloud_api.app) as second:
+        owner, outsider = _guest(first), _guest(second)
+        conversation_id = _conversation(first, owner)
+        scope = {"tenantId": owner["publicTenantId"], "conversationId": conversation_id}
+        assert first.post("/api/agent/attachments/upload", params=scope,
+                          content=_attachment_png()).status_code == 403
+        uploaded = first.post(
+            "/api/agent/attachments/upload", params=scope, content=_attachment_png(),
+            headers={"X-CSRF-Token": owner["csrfToken"]},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        attachment = uploaded.json()
+        assert first.get(attachment["previewUrl"]).content == _attachment_png()
+        assert second.get(attachment["previewUrl"]).status_code == 404
+        assert second.post(
+            "/api/agent/attachments/upload", params=scope, content=_attachment_png(),
+            headers={"X-CSRF-Token": outsider["csrfToken"]},
+        ).status_code == 404
+        another = _conversation(first, owner)
+        assert first.get("/api/agent/attachments/content", params={
+            **scope, "conversationId": another, "mediaUri": attachment["mediaUri"],
+        }).status_code == 400
+        deleted = first.post(
+            "/api/agent/conversations/delete", params=scope,
+            headers={"X-CSRF-Token": owner["csrfToken"]},
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert first.get(attachment["previewUrl"]).status_code == 404
+
+
+def test_attachment_projection_uses_chat_tenant_for_public_source_and_both_streams(cloud_api, monkeypatch):
+    series_id, _ = _course(cloud_api)
+    with TestClient(cloud_api.app) as client:
+        account = _login(cloud_api, client, "attachment-source@example.com")
+        conversation_id = _conversation(client, account, tenant_id=account["tenantId"])
+        scope = {"tenantId": account["tenantId"], "conversationId": conversation_id}
+        headers = {"X-CSRF-Token": account["csrfToken"], "Idempotency-Key": "source-attachment"}
+        attachment = client.post(
+            "/api/agent/attachments/upload", params=scope, content=_attachment_png(), headers=headers,
+        ).json()
+        payload = {"tenantId": account["tenantId"], "sourceTenantId": "platform-public",
+                   "seriesIds": [series_id], "content": "已保存的参考图问题"}
+        sent = client.post("/api/agent/messages/send", params=scope, headers=headers, json=payload)
+        assert sent.status_code == 200, sent.text
+        references = [{"mediaUri": attachment["mediaUri"]}]
+        with cloud_api.sessions.begin() as session:
+            session.get(AgentMessage, sent.json()["userMessage"]["messageId"]).attachments = references
+        listed = client.get("/api/agent/messages/list", params=scope)
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["items"][0]["attachments"] == [attachment]
+        assert client.get(attachment["previewUrl"]).status_code == 200
+        replay = client.post(
+            "/api/agent/messages/send", params=scope,
+            headers={**headers, "Accept": "text/event-stream"},
+            json={**payload, "attachments": references},
+        )
+        assert replay.status_code == 200, replay.text
+        events = [json.loads(line[6:]) for line in replay.text.splitlines() if line.startswith("data: ")]
+        assert all(event["userMessage"]["attachments"] == [attachment] for event in events)
+        assert len(cloud_api.runtime.calls) == 1
+
+        cookie_name = cloud_api.services.auth.config.cookie_name
+        request = Request({
+            "type": "http", "method": "GET", "path": "/api/agent/messages/events",
+            "scheme": "http", "server": ("testserver", 80), "client": ("testclient", 50000),
+            "query_string": b"", "app": cloud_api.app,
+            "headers": [(b"cookie", f"{cookie_name}={client.cookies[cookie_name]}".encode())],
+        })
+
+        async def snapshot():
+            stream = _agent_message_events(
+                request, cloud_api.services.agent, conversation_id, account["tenantId"], SSEConfig(),
+                media=cloud_api.services.media, attachment_service=cloud_api.services.agent_attachments,
+            )
+            try:
+                event = await stream.__anext__()
+                return json.loads(next(line[6:] for line in event.splitlines() if line.startswith("data: ")))
+            finally:
+                await stream.aclose()
+
+        assert asyncio.run(snapshot())["messages"][0]["attachments"] == [attachment]
+        describe = cloud_api.services.agent_attachments.describe
+
+        def deleted_during_projection(*args, **kwargs):
+            cloud_api.services.agent.delete_conversation(
+                conversation_id, tenant_id=account["tenantId"], owner_user_id=account["userId"],
+            )
+            return describe(*args, **kwargs)
+
+        monkeypatch.setattr(cloud_api.services.agent_attachments, "describe", deleted_during_projection)
+        with pytest.raises(StopAsyncIteration):
+            asyncio.run(snapshot())
 
 
 def _course(api):

@@ -9,7 +9,7 @@ from queue import Empty
 from typing import AsyncIterator
 
 from fastapi import Header, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from agent.chat.video_search.output import video_range_sources
@@ -22,15 +22,18 @@ from ..model.dto.agentDTO import (
     AgentMessageState,
 )
 from ..service.agent_chat import AgentChatService, AgentMessageExecution
+from ..service.agent_attachments import AgentAttachmentService
 from ..service.access import model_query, require_admin, require_series_read, require_tenant_read
 from ..error.auth import AuthError
 from ..model.dto.authDTO import AuthIdentity
-from ..service.media import MediaService
+from ..service.media import MediaMissingError, MediaNotReadyError, MediaService
 from ..utils.time import now_unix_time_ms
 from ..model.vo.commonVO import Page
 from .search import search_evidence_fields
 from .context import get_identity, get_services, get_sse_config, revalidate_identity
 from ..model.vo.agentVO import (
+    AgentAttachmentUploadView,
+    AgentAttachmentView,
     AgentConversationView,
     AgentGlobalSettingsView,
     AgentMessageOptionsView,
@@ -51,6 +54,7 @@ from ..model.vo.agentVO import (
     AgentMarkdownRenderBlockView,
     AgentRenderBlockView,
     AgentVideoRenderBlockView,
+    ToolRenderBlock,
 )
 from ..repository.agent import AgentConversationNotFoundError
 from ..repository.library import SeriesNotFoundError
@@ -186,6 +190,66 @@ def delete_agent_conversation(
     return AgentConversationView.model_validate(state)
 
 
+async def upload_agent_attachment(
+    request: Request,
+    conversation_id: str = Query(alias="conversationId"),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+) -> AgentAttachmentUploadView:
+    services = get_services(request)
+    identity = await run_in_threadpool(get_identity, request)
+    require_tenant_read(identity, tenant_id)
+    await run_in_threadpool(
+        services.agent.get_conversation, conversation_id,
+        tenant_id=tenant_id, owner_user_id=identity.user_id,
+    )
+    attachment_service = getattr(services, "agent_attachments", None)
+    if attachment_service is None:
+        raise HTTPException(status_code=503, detail="附件存储服务尚未配置")
+    maximum_bytes = attachment_service.image_upload_config.maximum_upload_size_bytes
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError as exc:
+            raise ValueError("Content-Length must be a nonnegative integer") from exc
+        if declared_size < 0 or declared_size > maximum_bytes:
+            raise ValueError("attachment exceeds the upload size limit")
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > maximum_bytes:
+            raise ValueError("attachment exceeds the upload size limit")
+        chunks.append(chunk)
+    if content_length is not None and size != declared_size:
+        raise ValueError("attachment body size does not match Content-Length")
+    state = await run_in_threadpool(
+        attachment_service.upload, conversation_id, b"".join(chunks),
+        tenant_id=tenant_id, owner_user_id=identity.user_id,
+    )
+    return AgentAttachmentUploadView.model_validate(state)
+
+
+def get_agent_attachment_content(
+    request: Request,
+    conversation_id: str = Query(alias="conversationId"),
+    tenant_id: str = Query(alias="tenantId"),
+    media_uri: str = Query(alias="mediaUri"),
+) -> FileResponse:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
+    attachment_service = getattr(get_services(request), "agent_attachments", None)
+    if attachment_service is None:
+        raise HTTPException(status_code=503, detail="附件存储服务尚未配置")
+    media = attachment_service.get_content(
+        conversation_id, media_uri, tenant_id=tenant_id, owner_user_id=identity.user_id,
+    )
+    return FileResponse(
+        media.path, media_type=media.media_type, content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
 def list_agent_messages(
     request: Request,
     conversation_id: str = Query(alias="conversationId"),
@@ -201,7 +265,9 @@ def list_agent_messages(
                                        after_sequence_no=after_sequence_no, limit=limit, cursor=cursor,
                                        owner_user_id=identity.user_id)
     return Page[AgentMessageView](
-        items=[_agent_message_view(item, media=services.media, tenant_id=tenant_id, identity=identity) for item in page.items],
+        items=[_agent_message_view(item, media=services.media, tenant_id=tenant_id,
+                                   identity=identity, attachment_service=getattr(services, "agent_attachments", None))
+               for item in page.items],
         total=page.total, next_cursor=page.next_cursor, has_more=page.has_more,
     )
 
@@ -220,8 +286,10 @@ def get_agent_message(
                                      message_id=message_id, idempotency_key=idempotency_key,
                                      owner_user_id=identity.user_id)
     return AgentMessageSendView(
-        user_message=_agent_message_view(pair.user_message, media=services.media, tenant_id=tenant_id, identity=identity),
-        assistant_message=_agent_message_view(pair.assistant_message, media=services.media, tenant_id=tenant_id, identity=identity),
+        user_message=_agent_message_view(pair.user_message, media=services.media, tenant_id=tenant_id,
+                                        identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
+        assistant_message=_agent_message_view(pair.assistant_message, media=services.media, tenant_id=tenant_id,
+                                             identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
     )
 
 
@@ -239,8 +307,10 @@ def cancel_agent_message(
         owner_user_id=identity.user_id,
     )
     return AgentMessageSendView(
-        user_message=_agent_message_view(pair.user_message, media=services.media, tenant_id=tenant_id, identity=identity),
-        assistant_message=_agent_message_view(pair.assistant_message, media=services.media, tenant_id=tenant_id, identity=identity),
+        user_message=_agent_message_view(pair.user_message, media=services.media, tenant_id=tenant_id,
+                                        identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
+        assistant_message=_agent_message_view(pair.assistant_message, media=services.media, tenant_id=tenant_id,
+                                             identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
     )
 
 
@@ -287,6 +357,7 @@ async def send_agent_message(
         tenant_id=body.tenant_id, source_tenant_id=source_tenant_id,
         owner_user_id=identity.user_id, content=body.content, series_ids=series_ids,
         reference=body.reference.model_dump(by_alias=True) if body.reference is not None else None,
+        attachments=[item.model_dump(by_alias=True) for item in body.attachments],
         extra_context=body.extra_context, idempotency_key=idempotency_key, top_k=body.top_k,
         max_model_calls_per_turn=max_model_calls, max_tool_calls_per_turn=max_tool_calls,
         max_loop_turns=None if identity.mode == "cloud" else body.max_loop_turns,
@@ -331,7 +402,8 @@ async def send_agent_message(
             await run_in_threadpool(reservation.__exit__, None, None, None)
         return StreamingResponse(
             _answer_events(request, execution, get_sse_config(request),
-                           media=services.media, tenant_id=source_tenant_id, series_ids=series_ids),
+                           media=services.media, tenant_id=source_tenant_id, series_ids=series_ids,
+                           attachment_service=getattr(services, "agent_attachments", None), chat_tenant_id=body.tenant_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "private, no-store", "X-Accel-Buffering": "no"},
         )
@@ -343,8 +415,10 @@ async def send_agent_message(
     result = await run_in_threadpool(send)
     identity = await run_in_threadpool(revalidate_identity, request)
     return AgentMessageSendView(
-        user_message=_agent_message_view(result.user_message, media=services.media, tenant_id=source_tenant_id, identity=identity),
-        assistant_message=_agent_message_view(result.assistant_message, media=services.media, tenant_id=source_tenant_id, identity=identity),
+        user_message=_agent_message_view(result.user_message, media=services.media, tenant_id=body.tenant_id,
+                                        identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
+        assistant_message=_agent_message_view(result.assistant_message, media=services.media, tenant_id=body.tenant_id,
+                                             identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
     )
 
 
@@ -400,6 +474,7 @@ async def stream_agent_messages(
             tenant_id,
             get_sse_config(request),
             media=get_services(request).media,
+            attachment_service=getattr(get_services(request), "agent_attachments", None),
         ),
         media_type="text/event-stream",
         headers={
@@ -416,6 +491,7 @@ async def _agent_message_events(
     tenant_id: str,
     config: SSEConfig,
     *, media: MediaService | None = None,
+    attachment_service: AgentAttachmentService | None = None,
 ) -> AsyncIterator[str]:
     previous_fingerprint: str | None = None
     last_event_at = time.monotonic()
@@ -434,10 +510,11 @@ async def _agent_message_events(
         try:
             view = AgentMessageEventView(
                 conversation_id=conversation_id,
-                messages=[_agent_message_view(item, media=media, tenant_id=tenant_id, identity=identity) for item in states],
+                messages=[_agent_message_view(item, media=media, tenant_id=tenant_id, identity=identity,
+                                              attachment_service=attachment_service) for item in states],
                 occurred_at=now_unix_time_ms(),
             )
-        except (AuthError, SeriesNotFoundError):
+        except (AuthError, AgentConversationNotFoundError, SeriesNotFoundError):
             return
         payload = view.model_dump_json(by_alias=True)
         fingerprint = hashlib.sha256(view.model_dump_json(by_alias=True, exclude={"occurred_at"}).encode("utf-8")).hexdigest()
@@ -456,19 +533,37 @@ async def _agent_message_events(
 def _agent_message_view(
     state: AgentMessageState | dict, *, media: MediaService | None = None,
     tenant_id: str | None = None, identity: AuthIdentity | None = None,
+    attachment_service: AgentAttachmentService | None = None,
 ) -> AgentMessageView:
     state = AgentMessageState(**state) if isinstance(state, dict) else state
-    tenant_id = state.source_tenant_id or tenant_id
+    attachments = []
+    if state.attachments:
+        if attachment_service is None or tenant_id is None or identity is None:
+            raise ValueError("attachment projection requires the conversation Tenant and owner")
+        for reference in state.attachments:
+            try:
+                attachment = attachment_service.describe(
+                    state.conversation_id, reference["mediaUri"],
+                    tenant_id=tenant_id, owner_user_id=identity.user_id,
+                )
+                attachments.append(AgentAttachmentView.model_validate(attachment))
+            except (MediaMissingError, MediaNotReadyError):
+                _logger.warning(
+                    "agent_attachment_unavailable conversation_id=%s media_uri=%s",
+                    state.conversation_id, reference["mediaUri"],
+                )
+                attachments.append(AgentAttachmentView(media_uri=reference["mediaUri"]))
+    source_tenant_id = state.source_tenant_id or tenant_id
     if identity is not None and identity.mode == "cloud":
-        if media is None or tenant_id is None:
+        if media is None or source_tenant_id is None:
             raise ValueError("evidence projection requires the source Tenant and media service")
-        media.require_series_access(identity, list(state.series_ids), tenant_id=tenant_id)
+        media.require_series_access(identity, list(state.series_ids), tenant_id=source_tenant_id)
     result = None
     if state.search_result is not None:
-        if media is None or tenant_id is None:
+        if media is None or source_tenant_id is None:
             raise ValueError("evidence projection requires the source Tenant and media service")
         result = _agent_search_evidence_view(
-            state.search_result, media, tenant_id=tenant_id, identity=identity,
+            state.search_result, media, tenant_id=source_tenant_id, identity=identity,
         )
     render_blocks = _agent_render_blocks(state, result)
     return AgentMessageView(
@@ -476,6 +571,7 @@ def _agent_message_view(
         series_ids=list(state.series_ids), sequence_no=state.sequence_no,
         role=state.role, status=state.status, phase=state.phase, version=state.version,
         reference=state.reference, content=state.content, model_name=state.model_name,
+        attachments=attachments,
         search_result=result, render_blocks=render_blocks,
         timing=(
             AgentMessageTimingView.model_validate(state.timing)
@@ -493,9 +589,8 @@ def _agent_render_blocks(
     if state.role != "ASSISTANT":
         return []
     raw_blocks = (
-        state.search_result.get("renderBlocks")
-        if isinstance(state.search_result, dict)
-        else None
+        list(state.render_blocks) if state.render_blocks is not None else
+        state.search_result.get("renderBlocks") if isinstance(state.search_result, dict) else None
     )
     if not isinstance(raw_blocks, list):
         blocks = []
@@ -512,7 +607,7 @@ def _agent_render_blocks(
                      "endSeconds": hit.evidence.end_seconds}
         for identifier, hit in hits_by_id.items()
     }
-    for hit in state.search_result.get("hits") or []:
+    for hit in (state.search_result or {}).get("hits") or []:
         if not isinstance(hit, dict) or not isinstance(hit.get("candidate"), dict):
             continue
         identifier = hit["candidate"].get("videoChunkId")
@@ -527,6 +622,15 @@ def _agent_render_blocks(
             markdown = raw.get("markdown")
             if isinstance(markdown, str) and markdown.strip():
                 blocks.append(AgentMarkdownRenderBlockView(markdown=markdown))
+            continue
+        if raw.get("type") == "tool":
+            try:
+                blocks.append(ToolRenderBlock.model_validate(raw))
+            except ValueError:
+                _logger.warning(
+                    "event=agent_invalid_tool_render_block conversation_id=%s message_id=%s action=drop_invalid_tool",
+                    state.conversation_id, state.message_id,
+                )
             continue
         if raw.get("type") == "video":
             video_chunk_id = raw.get("videoChunkId")
@@ -566,7 +670,7 @@ def _agent_render_blocks(
                     start_seconds=start_seconds,
                     end_seconds=end_seconds,
                 ))
-    if not any(block.type == "markdown" for block in blocks) and state.content:
+    if state.render_blocks is None and not any(block.type == "markdown" for block in blocks) and state.content:
         blocks.insert(0, AgentMarkdownRenderBlockView(markdown=state.content))
     return blocks
 
@@ -609,6 +713,8 @@ async def _answer_events(
     config: SSEConfig,
     *, media: MediaService | None = None, tenant_id: str | None = None,
     series_ids: list[str] | None = None,
+    attachment_service: AgentAttachmentService | None = None,
+    chat_tenant_id: str | None = None,
 ) -> AsyncIterator[str]:
     last_event_at = time.monotonic()
     try:
@@ -641,7 +747,10 @@ async def _answer_events(
             data = dict(event)
             for field in ("userMessage", "assistantMessage"):
                 if field in data:
-                    data[field] = _agent_message_view(data[field], media=media, tenant_id=tenant_id, identity=identity)
+                    data[field] = _agent_message_view(
+                        data[field], media=media, tenant_id=chat_tenant_id or tenant_id,
+                        identity=identity, attachment_service=attachment_service,
+                    )
             if event_type == "answer.evidence":
                 if media is None or tenant_id is None:
                     raise ValueError("evidence projection requires the source Tenant and media service")
@@ -666,7 +775,7 @@ async def _answer_events(
                 exclude={name for name, value in view if value is None},
             )
             yield f"event: {view.type}\nid: {view.message_id}:{view.sequence}\ndata: {payload}\n\n"
-    except (AuthError, SeriesNotFoundError):
+    except (AuthError, AgentConversationNotFoundError, SeriesNotFoundError):
         execution.cancellation.set()
         return
     finally:

@@ -7,7 +7,7 @@ import logging
 from math import isfinite
 from threading import Lock
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -24,17 +24,23 @@ from .state import RunInputs
 from .tool_result import JsonToolResult, ToolError, ToolResult
 
 _logger = logging.getLogger(__name__)
+ToolCallStatus = Literal["inProgress", "completed", "failed"]
+ToolActivityCallback = Callable[[str, str, ToolCallStatus, dict[str, Any] | None], None]
 
 
 class AgentToolTraceHandler(BaseCallbackHandler):
     """Trace actual Tool calls without logging user text or full Evidence."""
 
-    def __init__(self, role: str, inputs: RunInputs) -> None:
+    def __init__(
+        self, role: str, inputs: RunInputs,
+        on_activity: ToolActivityCallback | None = None,
+    ) -> None:
         self.role = role
         self.conversation_id = inputs["conversation_id"]
         self.message_id = inputs["assistant_message_id"]
         self._active: dict[UUID, tuple[str, float]] = {}
         self._lock = Lock()
+        self._on_activity = on_activity
 
     def on_tool_start(
         self,
@@ -54,6 +60,7 @@ class AgentToolTraceHandler(BaseCallbackHandler):
             self.role, self.conversation_id, self.message_id, name, run_id,
             _trace_json(_trace_tool_arguments(inputs)),
         )
+        self._publish_activity(str(run_id), name, "inProgress", inputs)
 
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
         name, duration_ms = self._finish(run_id)
@@ -63,6 +70,9 @@ class AgentToolTraceHandler(BaseCallbackHandler):
             "tool=%s tool_run_id=%s status=%s duration_ms=%s result_summary=%s",
             self.role, self.conversation_id, self.message_id, name, run_id,
             status, duration_ms, _trace_json(result),
+        )
+        self._publish_activity(
+            str(run_id), name, "failed" if status == "error" else "completed", None,
         )
 
     def on_tool_error(
@@ -80,6 +90,23 @@ class AgentToolTraceHandler(BaseCallbackHandler):
             self.role, self.conversation_id, self.message_id, name, run_id,
             duration_ms, type(error).__name__, error_message,
         )
+        self._publish_activity(str(run_id), name, "failed", None)
+
+    def _publish_activity(
+        self, call_id: str, name: str, status: ToolCallStatus,
+        arguments: dict[str, Any] | None,
+    ) -> None:
+        """Observe execution without changing the Tool result delivered to the model."""
+        if self._on_activity is None:
+            return
+        try:
+            self._on_activity(call_id, name, status, arguments)
+        except Exception:
+            _logger.exception(
+                "event=agent_tool_activity_publish_failed role=%s conversation_id=%s "
+                "message_id=%s tool=%s tool_run_id=%s status=%s",
+                self.role, self.conversation_id, self.message_id, name, call_id, status,
+            )
 
     def _finish(self, run_id: UUID) -> tuple[str, int | None]:
         with self._lock:
@@ -134,8 +161,9 @@ class AgentTool(BaseAgentTool):
 
 def attach_agent_tool_logging(
     tools: Iterable[BaseAgentTool | BaseTool], *, role: str, inputs: RunInputs,
+    on_activity: ToolActivityCallback | None = None,
 ) -> None:
-    handler = AgentToolTraceHandler(role, inputs)
+    handler = AgentToolTraceHandler(role, inputs, on_activity)
     for tool in tools:
         langchain_tool = (
             tool.as_langchain_tool() if isinstance(tool, BaseAgentTool) else tool

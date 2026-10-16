@@ -25,6 +25,7 @@ class RunInputs(TypedDict):
     series_ids: list[str]
     series_context: list[dict]
     user_message: str
+    image_urls: NotRequired[list[str]]
     history: list[dict]
     requested_top_k: int
     reference_context: NotRequired[dict | None]

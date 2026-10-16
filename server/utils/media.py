@@ -4,15 +4,22 @@ import base64
 import binascii
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal
+
+from gateway.media import encode_media_file
 
 from ..constants.media import SERIES_IMAGE_EXTENSIONS, SERIES_IMAGE_ID_PREFIX
 from .validation import canonical_uuid
 
 
 KeyframeImageScope = Literal["video", "video_chunk"]
+
+
+def image_uri_to_data_url(uri: str, *, resolve: Callable[[str], Path]) -> str:
+    """Encode an image through the caller's authorized storage resolver."""
+    return encode_media_file(resolve(uri), expected_kind="image")[0]
 
 
 def encode_series_image_id(series_id: str, sha256: str, extension: str) -> str:

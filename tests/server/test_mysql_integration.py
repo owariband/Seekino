@@ -6,14 +6,15 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 from threading import Barrier, Event, current_thread
 from uuid import uuid4
 
 import pytest
 
 from tests.server.test_video_parse_repository import _refinement_inputs
-from sqlalchemy import delete, event, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import String, delete, event, func, inspect, select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from server.database import (
     DatabaseEnvironment,
@@ -77,6 +78,113 @@ from server.storage.artifact import LocalArtifactStore
 from server.utils.time import datetime_to_unix_time_ms
 
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
+
+
+def test_mysql_agent_attachments_migration_preserves_history_and_is_repeatable():
+    url = os.getenv("ANIVAG_MIGRATION_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("ANIVAG_MIGRATION_TEST_DATABASE_URL is not configured")
+    engine = create_database_engine(url, environment=DatabaseEnvironment.TEST)
+    assert engine.url.database and engine.url.database.endswith("_migration_test"), (
+        "requires dedicated disposable migration test database"
+    )
+    if inspect(engine).get_table_names():
+        engine.dispose()
+        pytest.skip("attachment migration test requires an empty dedicated database")
+    migration = (Path(__file__).parents[2] /
+                 "docs/migrations/20261016_agent_message_attachments.sql").read_text()
+    routine, verification = migration.split("DELIMITER $$", 1)[1].split("DELIMITER ;", 1)
+    statements = [statement.strip() for statement in routine.split("$$") if statement.strip()]
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE agent_message (id VARCHAR(36) PRIMARY KEY, content LONGTEXT, "
+                "detail JSON, update_time BIGINT, update_date DATETIME(3) "
+                "DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))"
+            )
+            connection.execute(text(
+                "INSERT INTO agent_message VALUES (:id, :content, :detail, 1234, '2020-01-01 00:00:00.123')"
+            ), {"id": "kept", "content": "历史正文", "detail": '{"request":{"idempotencyKey":"kept"}}'})
+            connection.commit()
+            before = dict(connection.exec_driver_sql("SELECT * FROM agent_message").mappings().one())
+            for _ in range(2):
+                for statement in statements:
+                    connection.exec_driver_sql(statement).close()
+                column = connection.exec_driver_sql(verification.strip()).mappings().one()
+                assert column["COLUMN_TYPE"] == "json" and column["IS_NULLABLE"] == "YES"
+                after = dict(connection.exec_driver_sql("SELECT * FROM agent_message").mappings().one())
+                assert after.pop("attachments") is None
+                assert after == before
+            connection.execute(text("UPDATE agent_message SET attachments = :refs"),
+                               {"refs": '[{"mediaUri":"artifact://test/kept"}]'})
+            connection.commit()
+            with_attachment = dict(connection.exec_driver_sql("SELECT * FROM agent_message").mappings().one())
+            for statement in statements:
+                connection.exec_driver_sql(statement).close()
+            assert dict(connection.exec_driver_sql("SELECT * FROM agent_message").mappings().one()) == with_attachment
+
+            for definition in ("VARCHAR(255) NULL", "JSON NOT NULL"):
+                connection.exec_driver_sql("ALTER TABLE agent_message DROP COLUMN attachments")
+                connection.exec_driver_sql("DELETE FROM agent_message")
+                connection.commit()
+                connection.exec_driver_sql("ALTER TABLE agent_message ADD COLUMN attachments " + definition)
+                with pytest.raises(DBAPIError, match="incompatible type or nullability"):
+                    for statement in statements:
+                        connection.exec_driver_sql(statement).close()
+                connection.rollback()
+                column = next(column for column in inspect(connection).get_columns("agent_message")
+                              if column["name"] == "attachments")
+                if definition.startswith("VARCHAR"):
+                    assert isinstance(column["type"], String)
+                    assert column["type"].length == 255
+                else:
+                    assert column["nullable"] is False
+    finally:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("DROP PROCEDURE IF EXISTS migrate_agent_message_attachments_20261016")
+            connection.exec_driver_sql("DROP TABLE IF EXISTS agent_message")
+        engine.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_conversation_attachment_publication_lock_serializes_deletion():
+    engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    repository = AgentRepository(session_factory)
+    conversation_id = str(uuid4())
+    requested, finished = Event(), Event()
+
+    def watch_delete(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if (current_thread().name.startswith("mysql-attachment-delete")
+                and "FROM agent_conversation" in statement and "FOR UPDATE" in statement):
+            requested.set()
+
+    def delete_conversation():
+        result = repository.delete_conversation(conversation_id, "mysql-attachments", owner_user_id="owner")
+        finished.set()
+        return result
+
+    event.listen(engine, "before_cursor_execute", watch_delete)
+    try:
+        repository.create_conversation(
+            conversation_id=conversation_id, tenant_id="mysql-attachments", owner_user_id="owner",
+            title="Attachments", idempotency_key=str(uuid4()),
+        )
+        assert repository.conversation_exists(conversation_id)
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-attachment-delete") as executor:
+            with repository.lock_conversation(conversation_id, "mysql-attachments", owner_user_id="owner") as state:
+                assert state.conversation_id == conversation_id
+                future = executor.submit(delete_conversation)
+                assert requested.wait(5), "delete did not request the publication lock"
+                assert not finished.wait(0.1), "delete bypassed the publication lock"
+            assert future.result(timeout=5).conversation_id == conversation_id
+        assert not repository.conversation_exists(conversation_id)
+    finally:
+        event.remove(engine, "before_cursor_execute", watch_delete)
+        with session_factory.begin() as session:
+            session.execute(delete(AgentConversation).where(AgentConversation.id == conversation_id))
+        engine.dispose()
 
 
 def _upload_defaults():

@@ -141,7 +141,7 @@ function renderApp(
   const assistantMessage: AgentMessageView = {
     messageId: "assistant", conversationId: "conversation", seriesIds: [apiSeries.seriesId], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", version: 1, reference: null, content: null,
     modelName: null, searchResult: null,
-    renderBlocks: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
+    renderBlocks: [], attachments: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
   };
   const userMessage = { ...assistantMessage, messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "雨天门口" };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -349,7 +349,7 @@ describe("application shell", () => {
     expect(screen.queryAllByRole("progressbar")).toHaveLength(0);
     expect(screen.queryByRole("region", { name: "解析配置" })).not.toBeInTheDocument();
 
-    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    const input = screen.getByRole("dialog", { name: /把每一集/ }).querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
     await user.upload(input!, [
       new File(["first"], "episode-01.mp4", { type: "video/mp4" }),

@@ -38,6 +38,7 @@ from ..repository.video import (
     VideoChunkNotFoundError,
 )
 from ..service.media import MediaMissingError, MediaNotReadyError
+from ..service.agent_chat import AgentAttachmentInputUnavailableError
 from ..error.auth import AuthError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
@@ -138,6 +139,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _error_response(request, 502, "AGENT_MODEL_ERROR", "Agent 服务暂时无法完成回答，请稍后重试")
 
     for exception_type, status, code, message in (
+        (AgentAttachmentInputUnavailableError, 409, "ATTACHMENT_INPUT_UNAVAILABLE",
+         "附件已上传，当前回答服务尚未接入附件输入。"),
         (AgentReferenceInvalidError, 400, "REFERENCE_INVALID", "所引用的候选片段无效，请重新选择"),
         (AgentMessageInProgressError, 409, "MESSAGE_IN_PROGRESS", "当前对话的回答仍在生成，请等待完成"),
         (SeriesNotReadyError, 409, "SERIES_NOT_READY", "所选系列尚未完成建库，请稍后重试"),

@@ -21,6 +21,10 @@ class EvidenceReference(ContractModel):
     video_chunk_id: str = Field(min_length=1)
 
 
+class AgentAttachmentReference(ContractModel):
+    media_uri: str = Field(min_length=1)
+
+
 class AgentConversationCreateRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     title: str | None = Field(default=None, min_length=1, max_length=255)
@@ -30,6 +34,7 @@ class AgentMessageSendRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     source_tenant_id: str | None = Field(default=None, min_length=1, max_length=64)
     content: str = Field(min_length=1, max_length=20_000)
+    attachments: list[AgentAttachmentReference] = Field(default_factory=list)
     series_ids: list[str] = Field(default_factory=list)
     top_k: int | None = Field(default=None, gt=0, le=100)
     max_model_calls_per_turn: int | None = Field(default=None, gt=0)
@@ -68,6 +73,14 @@ class AgentGlobalSettingsPatchRequest(ContractModel):
 
     revision: str = Field(min_length=1)
     values: dict[str, Any] = Field(min_length=1)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentAttachmentState:
+    media_uri: str
+    media_type: str
+    size_bytes: int
+    preview_url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +157,8 @@ class AgentMessageState:
     timing: AgentMessageTimingState | None = None
     extra_context: dict[str, Any] | None = None
     source_tenant_id: str | None = None
+    attachments: tuple[dict[str, str], ...] = ()
+    render_blocks: tuple[dict[str, Any], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

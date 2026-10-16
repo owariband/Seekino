@@ -472,6 +472,19 @@ def create_schema(engine: Engine) -> None:
         )
     _check_base_model_schema(inspector, existing_tables, engine.dialect.name)
 
+    if "agent_message" in existing_tables:
+        attachment_column = next((column for column in inspector.get_columns("agent_message")
+                                  if column["name"] == "attachments"), None)
+        if (
+            attachment_column is None
+            or not isinstance(attachment_column["type"], JSON)
+            or not attachment_column["nullable"]
+        ):
+            raise SchemaUpgradeRequiredError(
+                "agent_message.attachments requires nullable JSON; apply "
+                "20261016_agent_message_attachments.sql before init-db"
+            )
+
     missing_view_columns: set[str] = set()
     for table_name, required_columns in {
         "series": {"transcript_language_hint", "display_name"},

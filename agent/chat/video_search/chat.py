@@ -7,7 +7,7 @@ from gateway.agent_model.contracts import AgentLoopModel
 from gateway.agent_model.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
-from .context import build_canvas_checkpoint, project_inputs
+from .context import build_canvas_checkpoint, project_image_history, project_inputs
 from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
@@ -78,11 +78,15 @@ def render_chat(
     try:
         control.check()
         context_options = {}
+        if inputs.get("image_urls"):
+            context_options["image_urls"] = inputs["image_urls"]
+        supports_context_messages = getattr(model, "supports_context_messages", False)
+        image_history = project_image_history(inputs, include_current_message=not supports_context_messages)
         if getattr(model, "supports_context_checkpoints", False):
             context_options["context_checkpoint"] = lambda: (
                 build_canvas_checkpoint(canvas, role="chat")
             )
-        if getattr(model, "supports_context_messages", False):
+        if supports_context_messages:
             context_options["initial_messages"] = [
                 {"role": "system", "content": instructions},
                 {
@@ -95,6 +99,7 @@ def render_chat(
                         })
                     ),
                 },
+                *image_history,
                 {
                     "role": "user",
                     "content": (
@@ -104,6 +109,8 @@ def render_chat(
                     ),
                 },
             ]
+        elif image_history:
+            context_options["initial_messages"] = image_history
         if approved_ids and getattr(model, "supports_stop_feedback", False):
             context_options["stop_feedback"] = lambda: (
                 "已有获批视频证据，请先调用 write_context_canvas 的 upsert_video_item 放入至少一个视频块，"

@@ -134,6 +134,71 @@ def test_conversation_detail_is_nullable_json() -> None:
     assert "detail JSON" in ddl and "detail JSON NOT NULL" not in ddl
 
 
+def test_message_attachments_are_nullable_json() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    column = next(column for column in inspect(engine).get_columns("agent_message")
+                  if column["name"] == "attachments")
+    assert column["nullable"] is True
+    assert isinstance(column["type"], JSON)
+    ddl = str(CreateTable(AgentMessage.__table__).compile(dialect=mysql.dialect()))
+    assert "attachments JSON" in ddl and "attachments JSON NOT NULL" not in ddl
+
+
+def test_attachment_schema_upgrade_preserves_existing_messages() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(AgentConversation.__table__.insert().values(
+            id="existing-conversation", tenant_id="local-default", title="Existing conversation",
+            idempotency_key="existing-conversation", next_message_sequence=1,
+        ))
+        connection.execute(AgentMessage.__table__.insert().values(
+            id="existing-message", conversation_id="existing-conversation", sequence_no=0,
+            role="USER", status="COMPLETED", content="原始历史消息", series_ids=[],
+            detail={"request": {"idempotencyKey": "existing-key"}},
+            create_time=1000, update_time=2000,
+        ))
+        connection.execute(text("ALTER TABLE agent_message DROP COLUMN attachments"))
+        before = dict(connection.execute(text("SELECT * FROM agent_message")).mappings().one())
+
+    with pytest.raises(SchemaUpgradeRequiredError, match="20261016_agent_message_attachments.sql"):
+        create_schema(engine)
+
+    assert "attachments" not in {column["name"] for column in inspect(engine).get_columns("agent_message")}
+    with engine.begin() as connection:
+        assert dict(connection.execute(text("SELECT * FROM agent_message")).mappings().one()) == before
+        connection.execute(text("ALTER TABLE agent_message ADD COLUMN attachments JSON NULL"))
+    create_schema(engine)
+    create_schema(engine)
+    with engine.connect() as connection:
+        after = dict(connection.execute(text("SELECT * FROM agent_message")).mappings().one())
+    assert after.pop("attachments") is None
+    assert after == before
+
+
+@pytest.mark.parametrize("difference", ["type", "nullable"])
+def test_attachment_schema_rejects_incompatible_existing_column(monkeypatch, difference) -> None:
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    inspector = inspect(engine)
+    columns = inspector.get_columns
+
+    def reflected_columns(table_name):
+        result = [dict(column) for column in columns(table_name)]
+        if table_name == "agent_message":
+            attachment = next(column for column in result if column["name"] == "attachments")
+            attachment[difference] = String(255) if difference == "type" else False
+        return result
+
+    monkeypatch.setattr(inspector, "get_columns", reflected_columns)
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    with pytest.raises(SchemaUpgradeRequiredError, match="agent_message.attachments requires nullable JSON"):
+        create_schema(engine)
+
+
 def test_create_schema_requires_conversation_detail_migration_without_changing_rows() -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)

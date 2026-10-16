@@ -1,11 +1,14 @@
 import type {
   AgentAnswerEvent,
+  AgentAttachmentReference,
+  AgentAttachmentUploadView,
   AgentConversationView,
   AgentGlobalSettings,
   AgentGlobalSettingsValues,
   AgentMessageEventView,
   AgentMessageOptions,
   AgentMessageRunOptions,
+  AgentMessageSendRequest,
   AgentMessageSendView,
   AgentMessageView,
   ApiErrorPayload,
@@ -571,6 +574,34 @@ export function subscribeAgentMessages(
   return () => { eventSources.delete(source); source.close(); };
 }
 
+export function uploadAgentAttachment(conversationId: string, file: File, signal?: AbortSignal): Promise<AgentAttachmentUploadView> {
+  return requestJson(`/api/agent/attachments/upload?${new URLSearchParams({ tenantId: TENANT_ID, conversationId })}`, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+    signal,
+  });
+}
+
+function agentMessageBody(
+  content: string,
+  seriesIds: string[],
+  reference: EvidenceReference | null,
+  options: AgentMessageRunOptions,
+  extraContext: Record<string, unknown> | null,
+  attachments: AgentAttachmentReference[],
+): AgentMessageSendRequest {
+  return {
+    tenantId: TENANT_ID,
+    content,
+    seriesIds,
+    reference,
+    ...options,
+    ...(extraContext === null ? {} : { extraContext }),
+    ...(attachments.length ? { attachments: attachments.map(({ mediaUri }) => ({ mediaUri })) } : {}),
+  };
+}
+
 export function sendAgentMessage(
   conversationId: string,
   content: string,
@@ -579,18 +610,12 @@ export function sendAgentMessage(
   reference: EvidenceReference | null = null,
   options: AgentMessageRunOptions = {},
   extraContext: Record<string, unknown> | null = null,
+  attachments: AgentAttachmentReference[] = [],
 ): Promise<AgentMessageSendView> {
   return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({
-      tenantId: TENANT_ID,
-      content,
-      seriesIds,
-      reference,
-      ...options,
-      ...(extraContext === null ? {} : { extraContext }),
-    }),
+    body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments)),
   });
 }
 
@@ -610,6 +635,7 @@ export async function streamAgentMessage(
   reference: EvidenceReference | null = null,
   options: AgentMessageRunOptions = {},
   extraContext: Record<string, unknown> | null = null,
+  attachments: AgentAttachmentReference[] = [],
 ): Promise<void> {
   const context = businessContext();
   signal = scopedSignal(signal, context.scopeSignal)!;
@@ -620,14 +646,7 @@ export async function streamAgentMessage(
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey,
       ...(context.identity?.csrfToken ? { "X-CSRF-Token": context.identity.csrfToken } : {}),
     },
-    body: JSON.stringify({
-      tenantId: TENANT_ID,
-      content,
-      seriesIds,
-      reference,
-      ...options,
-      ...(extraContext === null ? {} : { extraContext }),
-    }),
+    body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments)),
     signal,
   });
   signal.throwIfAborted();

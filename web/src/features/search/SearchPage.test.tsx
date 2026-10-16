@@ -1,9 +1,9 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessageView, RetrievalChannelWeights, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
+import type { AgentMessageView, AgentRenderBlock, RetrievalChannelWeights, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
 import * as api from "../../api/client";
 import { SearchPage, type SearchPageHandle } from "./SearchPage";
 
@@ -109,6 +109,7 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
     version: 1,
     reference: null,
     content,
+    attachments: [],
     modelName: "deepseek-flash",
     searchResult: hits.length ? {
       seriesIds: [series.seriesId],
@@ -162,7 +163,10 @@ function renderPage(
 
 beforeEach(() => {
   mocks.send.mockReset();
+  mocks.send.mockImplementation((_content, _scope, _reference, _options, _context, submission) => submission?.onAccepted?.());
   mocks.stop.mockReset();
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:chat-image") });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
@@ -209,13 +213,13 @@ describe("Search assistant presentation", () => {
       const user = userEvent.setup();
       await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
       await user.click(screen.getByRole("button", { name: "发送问题" }));
-      expect(mocks.send).toHaveBeenLastCalledWith("你好", [], null, overrides);
+      expect(mocks.send).toHaveBeenLastCalledWith("你好", [], null, overrides, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
       mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
       view.rerender(<SearchPage />);
       expect(screen.queryByLabelText("配置本次回答")).not.toBeInTheDocument();
       await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
       await user.click(screen.getByRole("button", { name: "发送问题" }));
-      expect(mocks.send).toHaveBeenLastCalledWith("继续", [], null, {});
+      expect(mocks.send).toHaveBeenLastCalledWith("继续", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
       expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ overrides });
     } finally {
       localStorage.removeItem(key);
@@ -238,7 +242,7 @@ describe("Search assistant presentation", () => {
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }).closest(".page")).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "这段发生了什么？");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
-    expect(mocks.send).toHaveBeenCalledWith("这段发生了什么？", [series.seriesId], null, {});
+    expect(mocks.send).toHaveBeenCalledWith("这段发生了什么？", [series.seriesId], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
 
     await user.click(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }));
     expect(onOpenVideo).toHaveBeenCalledWith({ seriesId: series.seriesId, videoId: "video-1", startSeconds: hit.evidence.startSeconds });
@@ -287,6 +291,7 @@ describe("Search assistant presentation", () => {
       null,
       {},
       extraContext,
+      expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }),
     );
   });
 
@@ -313,7 +318,7 @@ describe("Search assistant presentation", () => {
 
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(captureExtraContext).toHaveBeenCalledTimes(2);
-    expect(mocks.send).toHaveBeenCalledWith("开头讲了什么？", [series.seriesId], null, {}, extraContext);
+    expect(mocks.send).toHaveBeenCalledWith("开头讲了什么？", [series.seriesId], null, {}, extraContext, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
   });
 
   it("keeps the question and does not send when playback context is unavailable on submit", async () => {
@@ -344,7 +349,7 @@ describe("Search assistant presentation", () => {
     render(<SearchPage />);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "乐队第一次站上舞台演出" }));
-    expect(mocks.send).toHaveBeenCalledWith("乐队第一次站上舞台演出", [], null, {});
+    expect(mocks.send).toHaveBeenCalledWith("乐队第一次站上舞台演出", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
   });
 
   it("turns answer timestamps into seek buttons for the episode being watched", async () => {
@@ -433,7 +438,7 @@ describe("Search assistant presentation", () => {
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
-    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {});
+    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
   });
 
   it("allows a conversation without ready videos and displays a web source link", async () => {
@@ -450,7 +455,7 @@ describe("Search assistant presentation", () => {
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
-    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {});
+    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
     expect(screen.getByText("问题已发送，正在处理")).toBeInTheDocument();
   });
 
@@ -519,6 +524,109 @@ describe("Search assistant presentation", () => {
     expect(screen.getByRole("link", { name: "安全资料" })).toHaveAttribute("target", "_blank");
     expect(screen.getByRole("link", { name: "安全资料" })).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.getByText("危险链接").closest("a")).toBeNull();
+  });
+
+  it("renders a live tool between Markdown and video parts in the message body", () => {
+    const hit = searchHit("chunk-1", 1, "演出画面");
+    renderPage({
+      ...assistantMessage("兼容正文", [hit]), status: "PROCESSING", phase: "RETRIEVING",
+      renderBlocks: [
+        { type: "markdown", markdown: "我先帮你查找演出场面。" },
+        { type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "inProgress", query: "特别燃的演出" },
+        { type: "markdown", markdown: "接下来核对这段画面。" },
+        { type: "video", videoChunkId: "chunk-1", startSeconds: 12_000, endSeconds: 15_000 },
+      ],
+    });
+    const before = screen.getByText("我先帮你查找演出场面。");
+    const tool = screen.getByRole("status", { name: "查找视频资料" });
+    const after = screen.getByText("接下来核对这段画面。");
+    const video = screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ });
+    expect(before.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tool.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(after.compareDocumentPosition(video) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tool).not.toHaveTextContent("特别燃的演出");
+    expect(tool.querySelector("p")).toBeNull();
+    expect(tool).toHaveAttribute("data-active", "true");
+    expect(tool.closest("details")).toBeNull();
+    expect(screen.queryByText("兼容正文")).not.toBeInTheDocument();
+  });
+
+  it.each(["completed", "failed"] as const)("updates a web tool to %s in place without video evidence", (status) => {
+    const tool: AgentRenderBlock = { type: "tool", callId: "web-lookup", tool: "search_web", status: "inProgress", query: "<img src=x onerror=alert(1)>" };
+    const before: AgentRenderBlock = { type: "markdown", markdown: "我先搜索网页。" };
+    const after: AgentRenderBlock = { type: "markdown", markdown: "搜索后的说明。" };
+    const message: AgentMessageView = { ...assistantMessage(""), status: "PROCESSING", renderBlocks: [before, tool] };
+    const view = renderPage(message);
+    const row = screen.getByRole("status", { name: "搜索网页资料" });
+    expect(row).toHaveAttribute("data-active", "true");
+    expect(row).not.toHaveTextContent(tool.query!);
+    expect(row.querySelector("p")).toBeNull();
+    expect(row.querySelector("img")).toBeNull();
+    mocks.useAgentConversation.mockReturnValue({
+      ...mocks.useAgentConversation.mock.results.at(-1)!.value,
+      messages: [{ ...message, renderBlocks: [before, { ...tool, status }, after] }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("status", { name: "搜索网页资料" })).toBe(row);
+    expect(row).toHaveAttribute("data-active", "false");
+    expect(row).toHaveTextContent(status === "completed" ? "已完成" : "调用失败");
+    expect(row).not.toHaveTextContent(tool.query!);
+    expect(row.compareDocumentPosition(screen.getByText("搜索后的说明。")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows raw tool queries only in debug and removes them immediately when switching to release", () => {
+    const tools = [
+      { tool: "search_video_graph", status: "inProgress", query: "特别燃的演出", label: "查找视频资料", queryLabel: "检索目标", statusLabel: "进行中" },
+      { tool: "search_web", status: "completed", query: "<img src=x onerror=alert(1)>", label: "搜索网页资料", queryLabel: "搜索词", statusLabel: "已完成" },
+      { tool: "understand_current_video", status: "failed", query: "舞台上的人物", label: "查看当前视频", queryLabel: "核验目标", statusLabel: "调用失败" },
+    ] as const;
+    const view = renderPage({
+      ...assistantMessage(""), status: "PROCESSING",
+      renderBlocks: tools.map(({ tool, status, query }, index) => ({ type: "tool", callId: `tool-${index}`, tool, status, query })),
+    }, [series], {}, "debug");
+    const rows = tools.map(({ label, queryLabel, query, statusLabel, status }) => {
+      const row = screen.getByRole("status", { name: label });
+      expect(within(row).getByText(`${queryLabel}：${query}`).tagName).toBe("P");
+      expect(row).toHaveTextContent(statusLabel);
+      expect(row).toHaveAttribute("data-status", status);
+      expect(row.querySelector("img")).toBeNull();
+      return row;
+    });
+
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
+    view.rerender(<SearchPage />);
+
+    tools.forEach(({ label, query, statusLabel, status }, index) => {
+      const row = screen.getByRole("status", { name: label });
+      expect(row).toBe(rows[index]);
+      expect(row).toHaveTextContent(label);
+      expect(row).toHaveTextContent(statusLabel);
+      expect(row).toHaveAttribute("data-status", status);
+      expect(row).not.toHaveTextContent(query);
+      expect(row.querySelector("p")).toBeNull();
+    });
+  });
+
+  it.each(["COMPLETED", "FAILED"] as const)("stops an unconfirmed tool's shimmer when the message is %s", (status) => {
+    renderPage({
+      ...assistantMessage("已保留的说明"), status,
+      renderBlocks: [
+        { type: "markdown", markdown: "已保留的说明" },
+        { type: "tool", callId: "current-video", tool: "understand_current_video", status: "inProgress" },
+      ],
+    });
+    const tool = screen.getByRole("status", { name: "查看当前视频" });
+    expect(tool).toHaveAttribute("data-status", "inProgress");
+    expect(tool).toHaveAttribute("data-active", "false");
+    expect(tool).toHaveTextContent("未确认完成");
+    expect(tool).not.toHaveTextContent("已完成");
+  });
+
+  it("keeps tool-shaped JSON in Markdown as ordinary message text", () => {
+    const json = '{"type":"tool","callId":"fake","tool":"search_web","status":"inProgress"}';
+    renderPage({ ...assistantMessage(json), status: "PROCESSING" });
+    expect(screen.getByText(json)).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "搜索网页资料" })).not.toBeInTheDocument();
   });
 
   it("renders persisted Markdown and trusted video references in agent-selected order", () => {
@@ -651,7 +759,7 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText(/已引用.*09:24–10:56/)).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续解释这段");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
-    expect(mocks.send).toHaveBeenCalledWith("继续解释这段", [], { messageId: message.messageId, videoChunkId: "chunk-1" }, {});
+    expect(mocks.send).toHaveBeenCalledWith("继续解释这段", [], { messageId: message.messageId, videoChunkId: "chunk-1" }, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
   });
 
   it.each([
@@ -779,5 +887,130 @@ describe("Search assistant presentation", () => {
     expect(view.container.querySelector("video")).toBeNull();
     expect(screen.getByRole("img", { name: "已登记首帧" })).toHaveAttribute("src", hit.evidence.thumbnail!.url);
     expect(screen.getByRole("img", { name: "已登记首帧" })).toHaveAttribute("loading", "lazy");
+  });
+});
+
+describe("Chat image attachments", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "listAgentConversations").mockResolvedValue({ items: [], hasMore: false, nextCursor: null, total: 0 });
+  });
+  const uploaded = { mediaUri: "media://image-1", mediaType: "image/png", sizeBytes: 12, previewUrl: "/api/agent/attachments/content?mediaUri=image-1" };
+
+  it("places the plus and send buttons inside the composer and uploads selected files before sending references", async () => {
+    const upload = vi.spyOn(api, "uploadAgentAttachment").mockResolvedValue(uploaded);
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    expect(screen.getByRole("button", { name: "添加图片" }).closest("form")).toBe(textbox.closest("form"));
+    expect(screen.getByRole("button", { name: "发送问题" }).closest("form")).toBe(textbox.closest("form"));
+    const file = new File(["image bytes"], "表情.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("选择聊天图片"), file);
+    expect(upload).toHaveBeenCalledWith("conversation-1", file, expect.any(AbortSignal));
+    expect(screen.getByText("已上传")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    await user.type(textbox, "这张图出自哪里？");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(mocks.send).toHaveBeenCalledWith("这张图出自哪里？", [], null, {}, null, {
+      attachments: [{ mediaUri: uploaded.mediaUri }], onAccepted: expect.any(Function),
+    });
+    expect(textbox).toHaveValue("");
+    expect(screen.queryByLabelText("待发送图片")).not.toBeInTheDocument();
+  });
+
+  it("retains text and uploaded images when the service rejects attachment input", async () => {
+    vi.spyOn(api, "uploadAgentAttachment").mockResolvedValue(uploaded);
+    mocks.send.mockImplementation(() => undefined);
+    const view = renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    await user.upload(screen.getByLabelText("选择聊天图片"), new File(["bytes"], "图.png", { type: "image/png" }));
+    await user.type(textbox, "找到这张图");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    const previous = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({ ...previous, error: "附件已上传，当前回答服务尚未接入附件输入。" });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent("当前回答服务尚未接入附件输入");
+    expect(textbox).toHaveValue("找到这张图");
+    expect(screen.getByRole("img", { name: "图.png" })).toBeInTheDocument();
+    expect(mocks.send).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "移除 图.png" }));
+    expect(textbox).toHaveFocus();
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled();
+  });
+
+  it("blocks sending while uploading or failed and retries the same file", async () => {
+    let rejectUpload!: (error: Error) => void;
+    const upload = vi.spyOn(api, "uploadAgentAttachment")
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectUpload = reject; }))
+      .mockResolvedValue(uploaded);
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    const file = new File(["bytes"], "图.png", { type: "image/png" });
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "找出处");
+    await user.upload(screen.getByLabelText("选择聊天图片"), file);
+    expect(screen.getByText("上传中")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    await act(async () => rejectUpload(new Error("上传连接中断")));
+    expect(screen.getByRole("alert")).toHaveTextContent("上传连接中断");
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "重试上传 图.png" }));
+    expect(upload).toHaveBeenLastCalledWith("conversation-1", file, expect.any(AbortSignal));
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("only clears the submitted attachments when acceptance arrives after further editing", async () => {
+    vi.spyOn(api, "uploadAgentAttachment").mockResolvedValue(uploaded);
+    let accept!: () => void;
+    mocks.send.mockImplementation((_text, _scope, _reference, _options, _context, submission) => { accept = submission.onAccepted; });
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    await user.upload(screen.getByLabelText("选择聊天图片"), new File(["first"], "第一张.png", { type: "image/png" }));
+    await user.type(textbox, "找第一张");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(textbox).toHaveValue("找第一张");
+    await user.clear(textbox);
+    await user.type(textbox, "下一条问题");
+    await user.upload(screen.getByLabelText("选择聊天图片"), new File(["next"], "第二张.png", { type: "image/png" }));
+    act(() => accept());
+    expect(textbox).toHaveValue("下一条问题");
+    expect(screen.queryByRole("img", { name: "第一张.png" })).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "第二张.png" })).toBeInTheDocument();
+  });
+
+  it("pastes image files through the upload path and leaves text paste and composition alone", async () => {
+    const upload = vi.spyOn(api, "uploadAgentAttachment").mockResolvedValue(uploaded);
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    await user.click(textbox);
+    await user.paste("普通文字");
+    expect(textbox).toHaveValue("普通文字");
+    expect(upload).not.toHaveBeenCalled();
+    const file = new File(["clip"], "粘贴.png", { type: "image/png" });
+    fireEvent.paste(textbox, { clipboardData: { files: [file], getData: () => "" } });
+    expect(await screen.findByText("已上传")).toBeInTheDocument();
+    expect(upload).toHaveBeenCalledWith("conversation-1", file, expect.any(AbortSignal));
+    fireEvent.keyDown(textbox, { key: "Enter", isComposing: true });
+    expect(mocks.send).not.toHaveBeenCalled();
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(textbox).toHaveValue("普通文字\n");
+    expect(mocks.send).not.toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+    expect(mocks.send).toHaveBeenCalledOnce();
+  });
+
+  it("renders historical images in user messages and degrades missing metadata or failed previews", () => {
+    const message = { ...assistantMessage("这张图出自哪里？"), role: "USER" as const, attachments: [
+      uploaded,
+      { mediaUri: "media://missing", mediaType: null, sizeBytes: null, previewUrl: null },
+    ] };
+    renderPage(message);
+    expect(screen.getByRole("link", { name: "查看图片 1原图" })).toHaveAttribute("href", api.mediaUrl(uploaded.previewUrl));
+    expect(screen.getByRole("img", { name: "图片 2：附件暂不可用" })).toBeInTheDocument();
+    fireEvent.error(screen.getByRole("img", { name: "图片 1" }));
+    expect(screen.getByRole("img", { name: "图片 1：附件暂不可用" })).toBeInTheDocument();
+    expect(screen.getByText("这张图出自哪里？")).toBeInTheDocument();
   });
 });

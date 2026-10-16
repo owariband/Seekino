@@ -620,7 +620,20 @@ export interface AgentMessageTiming {
 /** Video block range fields use integer milliseconds. */
 export type AgentRenderBlock =
   | { type: "markdown"; markdown: string }
+  | { type: "tool"; callId: string; tool: "search_video_graph" | "search_web" | "understand_current_video"; status: "inProgress" | "completed" | "failed"; query?: string | null }
   | { type: "video"; videoChunkId: string; startSeconds: number; endSeconds: number };
+
+export interface AgentAttachmentReference { mediaUri: string }
+export interface AgentAttachmentView extends AgentAttachmentReference {
+  mediaType: string | null;
+  sizeBytes: number | null;
+  previewUrl: string | null;
+}
+export interface AgentAttachmentUploadView extends AgentAttachmentView {
+  mediaType: string;
+  sizeBytes: number;
+  previewUrl: string;
+}
 
 export interface AgentMessageView {
   messageId: string;
@@ -632,6 +645,7 @@ export interface AgentMessageView {
   phase: AnswerPhase | null;
   version: number;
   reference: EvidenceReference | null;
+  attachments: AgentAttachmentView[];
   content: string | null;
   modelName: string | null;
   searchResult: AgentSearchEvidence | null;
@@ -702,6 +716,15 @@ export interface AgentMessageRunOptions {
   maxLoopTurns?: number;
   maxModelCallsPerTurn?: number;
   maxToolCallsPerTurn?: number;
+}
+
+export interface AgentMessageSendRequest extends AgentMessageRunOptions {
+  tenantId: string;
+  content: string;
+  seriesIds: string[];
+  reference: EvidenceReference | null;
+  attachments?: AgentAttachmentReference[];
+  extraContext?: Record<string, unknown>;
 }
 
 export interface AgentMessageEventView {

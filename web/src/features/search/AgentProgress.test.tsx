@@ -10,7 +10,7 @@ const message: AgentMessageView = {
   messageId: "assistant", conversationId: "conversation", seriesIds: ["series"], sequenceNo: 1,
   role: "ASSISTANT", status: "PROCESSING", phase: "EVALUATING", version: 2, reference: null,
   content: null, modelName: null, searchResult: null,
-  renderBlocks: [], timing: null, lastError: null, createdAt: 1, updatedAt: 2,
+  renderBlocks: [], attachments: [], timing: null, lastError: null, createdAt: 1, updatedAt: 2,
 };
 const steps: AgentProgressEvent[] = ["RETRIEVING", "EVALUATING", "RETRIEVING", "EVALUATING"].map((phase, index) => ({
   type: "answer.progress", conversationId: "conversation", messageId: "assistant", sequence: index + 1,

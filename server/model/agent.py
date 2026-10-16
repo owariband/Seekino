@@ -122,6 +122,7 @@ class AgentMessage(BaseModel):
     extra_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     content: Mapped[str | None] = mapped_column(LONG_TEXT)
+    attachments: Mapped[list[dict[str, str]] | None] = mapped_column(JSON(none_as_null=True))
     series_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     model: Mapped[str | None] = mapped_column(String(255))
     requested_top_k: Mapped[int | None] = mapped_column(Integer)

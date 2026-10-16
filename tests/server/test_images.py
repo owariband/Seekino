@@ -10,7 +10,7 @@ from PIL import Image
 
 from server.config.media import ImageUploadConfig
 from server.constants.media import SERIES_IMAGE_ID_PREFIX
-from server.utils.images import prepare_series_image
+from server.utils.images import inspect_static_image, prepare_series_image
 from server.utils.media import (
     decode_keyframe_image_id,
     decode_series_image_id,
@@ -65,6 +65,28 @@ def test_image_upload_detects_the_actual_format(image_format, extension):
     with Image.open(BytesIO(model_data)) as model:
         model.load()
         assert model.format == "JPEG"
+
+
+@pytest.mark.parametrize("image_format,media_type", [
+    ("JPEG", "image/jpeg"), ("PNG", "image/png"), ("WEBP", "image/webp"),
+])
+def test_static_image_inspection_preserves_original_size_and_bytes(image_format, media_type):
+    data = image_bytes(size=(80, 60), image_format=image_format)
+    original = data
+    info = inspect_static_image(data, config=ImageUploadConfig(model_max_edge=1))
+    assert (info.width, info.height, info.media_type) == (80, 60, media_type)
+    assert data == original
+
+
+@pytest.mark.parametrize("image_format", ["PNG", "WEBP"])
+def test_static_image_inspection_rejects_animated_supported_containers(image_format):
+    output = BytesIO()
+    Image.new("RGB", (20, 20), "red").save(
+        output, format=image_format, save_all=True,
+        append_images=[Image.new("RGB", (20, 20), "blue")], duration=100,
+    )
+    with pytest.raises(ValueError, match="animated"):
+        inspect_static_image(output.getvalue(), config=ImageUploadConfig())
 
 
 def test_image_upload_rejects_corrupt_oversized_and_animated_images():

@@ -8,9 +8,9 @@ from math import isfinite
 import re
 from threading import Event, RLock
 from time import monotonic
-from typing import Annotated
+from typing import Annotated, Any, get_args
 
-from gateway.agent_model.contracts import SupervisorAgentModel
+from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessionContext
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
@@ -20,7 +20,7 @@ from agent.utils.context_canvas_tools import ContextCanvasReadArguments
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
 from .common.tool import (
-    as_langchain_tools, attach_agent_tool_logging, build_agent_tool,
+    ToolCallStatus, as_langchain_tools, attach_agent_tool_logging, build_agent_tool,
 )
 from .common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolFeedbackError,
@@ -33,8 +33,8 @@ from .video_search.output import (
     build_chat_output, build_chat_snapshot, validate_result, video_range_sources,
 )
 from .video_search.state import (
-    AgentFinalOutput, ChatRenderDraft, ChatVideoBlock, DraftItem, LoopTurn,
-    MarkdownRenderBlock, SelectedVideoRange,
+    AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock, DraftItem, LoopTurn,
+    MarkdownRenderBlock, SelectedVideoRange, SupervisorToolName, ToolRenderBlock,
 )
 from .video_search.tools.shared import RemoveItemArguments
 from .video_search.video_search_canvas import VideoSearchContextCanvas
@@ -53,6 +53,7 @@ class SupervisorResult:
     content: str
     video_result: AgentFinalOutput | None
     web_sources: tuple[WebSearchHit, ...]
+    render_blocks: tuple[dict, ...] | None = None
 
 
 class SearchArguments(BaseModel):
@@ -117,6 +118,10 @@ class SupervisorRuntime:
     def realtime_enabled(self) -> bool:
         return self._realtime_runtime is not None
 
+    @property
+    def supports_vision_input(self) -> bool:
+        return bool(getattr(self._model, "supports_vision_input", False))
+
     def confirm_turn(self, thread_id: str, message_id: str, content: str) -> None:
         self._model.confirm_turn(thread_id, message_id, content)
 
@@ -142,6 +147,7 @@ class SupervisorRuntime:
         max_model_calls_per_turn: int | None = None,
         max_tool_calls_per_turn: int | None = None,
         max_loop_turns: int | None = None,
+        session_context: SupervisorSessionContext | None = None,
     ) -> SupervisorResult:
         inputs = deepcopy(inputs)
         if not inputs["tenant_id"].strip() or not inputs["user_message"].strip():
@@ -158,7 +164,7 @@ class SupervisorRuntime:
         review_reader: AgentTool | None = None
         submitted_items: dict[str, SelectedVideoRange] = {}
         submitted_sources: dict[str, list[str]] = {}
-        render_blocks: list[MarkdownRenderBlock | ChatVideoBlock] = []
+        render_blocks: list[ChatRenderBlock | ToolRenderBlock] = []
         realtime_result: RealtimeResult | None = None
         web_sources: dict[str, WebSearchHit] = {}
         web_search_attempted = False
@@ -171,6 +177,20 @@ class SupervisorRuntime:
                 block.markdown for block in render_blocks
                 if isinstance(block, MarkdownRenderBlock)
             )
+
+        def answer_blocks(
+            blocks: list[ChatRenderBlock | ToolRenderBlock],
+        ) -> list[ChatRenderBlock]:
+            # Tool rows divide the UI flow, not the business answer or its budget.
+            answer: list[ChatRenderBlock] = []
+            for block in blocks:
+                if isinstance(block, ToolRenderBlock):
+                    continue
+                if isinstance(block, MarkdownRenderBlock) and answer and isinstance(answer[-1], MarkdownRenderBlock):
+                    answer[-1] = MarkdownRenderBlock(markdown=answer[-1].markdown + "\n\n" + block.markdown)
+                else:
+                    answer.append(block)
+            return answer
 
         def accepted_video_evidence():
             assert review_turn is not None and review_canvas is not None
@@ -188,7 +208,7 @@ class SupervisorRuntime:
             }, deep=True)
             return evidence, selection
 
-        def publish_snapshot(*, completed: bool = False) -> None:
+        def publish_snapshot(*, completed: bool = False) -> tuple[dict, ...]:
             content = answer_markdown()
             search_result = None
             if video_result is not None:
@@ -197,12 +217,54 @@ class SupervisorRuntime:
                 else:
                     evidence, selection = accepted_video_evidence()
                     search_result = build_chat_snapshot(
-                        evidence, selection, render_blocks,
+                        evidence, selection, answer_blocks(render_blocks),
                         video_result.retrieval_trace, video_sources=submitted_sources,
                     )
+            video_blocks = {
+                block["videoChunkId"]: block for block in search_result["renderBlocks"]
+                if block["type"] == "video"
+            } if search_result is not None else {}
+            public_blocks = [
+                deepcopy(video_blocks[block.video_chunk_id])
+                if isinstance(block, ChatVideoBlock)
+                else block.model_dump(mode="json", by_alias=True, exclude_none=True)
+                for block in render_blocks
+            ]
             control.publish(inputs, {
                 "type": "answer.snapshot", "content": content, "searchResult": search_result,
+                "renderBlocks": public_blocks,
             })
+            return tuple(public_blocks)
+
+        def accept_tool_activity(
+            call_id: str, name: str, status: ToolCallStatus,
+            arguments: dict[str, Any] | None,
+        ) -> None:
+            if name not in get_args(SupervisorToolName):
+                return
+            with tool_lock:
+                control.check()
+                index = next((
+                    index for index, block in enumerate(render_blocks)
+                    if isinstance(block, ToolRenderBlock) and block.call_id == call_id
+                ), None)
+                if status == "inProgress":
+                    if index is not None:
+                        return
+                    query = (arguments or {}).get("query")
+                    block = ToolRenderBlock(
+                        call_id=call_id, tool=name, status=status,
+                        query=query.strip()[:500] if isinstance(query, str) and query.strip() else None,
+                    )
+                    render_blocks.append(block)
+                elif index is not None:
+                    block = render_blocks[index]
+                    if block.status != "inProgress":
+                        return
+                    render_blocks[index] = block.model_copy(update={"status": status})
+                else:
+                    return
+                publish_snapshot()
 
         def accept_text(value: str) -> None:
             with tool_lock:
@@ -222,7 +284,7 @@ class SupervisorRuntime:
                     )
                 else:
                     candidate.append(MarkdownRenderBlock(markdown=value))
-                ChatRenderDraft.validate_prefix(candidate)
+                ChatRenderDraft.validate_prefix(answer_blocks(candidate))
                 render_blocks[:] = candidate
                 publish_snapshot()
 
@@ -446,7 +508,7 @@ class SupervisorRuntime:
                         break
                 else:
                     candidate.append(block)
-                ChatRenderDraft.validate_prefix(candidate)
+                ChatRenderDraft.validate_prefix(answer_blocks(candidate))
                 submitted_items[video_chunk_id] = item
                 submitted_sources[video_chunk_id] = source_ids
                 render_blocks[:] = candidate
@@ -625,7 +687,9 @@ class SupervisorRuntime:
                     "Returns verified context and coverage, not a final answer; explain it to the user."
                 ), args_schema=SearchArguments, maximum_result_bytes=self._max_tool_result_bytes,
             ))
-        attach_agent_tool_logging(tools, role="Supervisor", inputs=inputs)
+        attach_agent_tool_logging(
+            tools, role="Supervisor", inputs=inputs, on_activity=accept_tool_activity,
+        )
         scope = [
             {"seriesId": item.get("seriesId"), "name": item.get("name")}
             for item in inputs["series_context"]
@@ -683,7 +747,10 @@ class SupervisorRuntime:
             "在需要插入视频卡的位置调用 submit_video_item，再继续下一段正文。可以多次交替，"
             "不要求先提交全部视频或先写完整正文。工具调用和返回由系统处理，不要输出卡片 schema。"
             "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
-            "公开正文直接回答用户，不输出检索计划、工具操作过程或内部推理。"
+            "调用耗时的视频检索、网页搜索或当前视频理解工具前，先用一句简短自然的正文说明"
+            "准备核验什么，让用户及时知道任务已开始。工具状态由系统根据真实调用展示，"
+            "不要输出工具 JSON、模拟进度或反复播报工具操作。得到证据后，如仍需继续核验，"
+            "可简短说明已发现的内容和下一步核验目标；不泄露内部推理或未经核实的结论。"
             "所有正文要与提交的 claim 和时间一致，整体不能只有完成确认。"
             "实时理解和网页结果如有使用，应融入这份最终回答并区分来源与不确定性。"
             "网页摘要只是线索，准确说明来源和不确定性；只能引用 search_web 实际"
@@ -711,6 +778,8 @@ class SupervisorRuntime:
                 message_id=inputs["assistant_message_id"],
                 user_message=inputs["user_message"],
                 history=inputs["history"],
+                **({"session_context": session_context} if session_context is not None else {}),
+                **({"image_urls": inputs["image_urls"]} if inputs.get("image_urls") else {}),
                 tools=as_langchain_tools(tools),
                 max_model_calls=(
                     max_model_calls_per_turn if self._limits_enabled else None
@@ -750,7 +819,7 @@ class SupervisorRuntime:
             )
             source_heading = "网页来源" if cited else "网页检索结果（未作为回答依据）"
             render_blocks.append(MarkdownRenderBlock(markdown=f"{source_heading}：\n" + links))
-        rendered = ChatRenderDraft(blocks=render_blocks)
+        rendered = ChatRenderDraft(blocks=answer_blocks(render_blocks))
         content = rendered.answer_markdown
         if video_result is not None:
             if review_canvas is None or review_turn is None:
@@ -766,14 +835,14 @@ class SupervisorRuntime:
         control.publish(inputs, {
             "type": "answer.progress", "phase": AnswerPhase.RESPONDING,
         })
-        publish_snapshot(completed=True)
+        public_blocks = publish_snapshot(completed=True)
         _logger.info(
             "event=agent_supervisor_completed conversation_id=%s message_id=%s "
             "video_used=%s submitted_video_count=%s web_source_count=%s answer_chars=%s",
             inputs["conversation_id"], inputs["assistant_message_id"],
             video_result is not None, len(submitted_items), len(web_sources), len(content),
         )
-        return SupervisorResult(content, video_result, tuple(web_sources.values()))
+        return SupervisorResult(content, video_result, tuple(web_sources.values()), public_blocks)
 
 
 def _markdown_label(value: str) -> str:

@@ -416,6 +416,9 @@ def test_process_assembly_receives_runtime_configuration(
     services = application.services
     try:
         assert services.media.image_upload_config == settings.images
+        assert services.agent_attachments.image_upload_config is settings.images
+        assert services.agent._attachments is services.agent_attachments
+        assert services.agent._repository is services.agent_attachments._repository
         assert received["retrieval"]["channel_top_k"] == 35
         assert received["retrieval"]["rrf_k"] == 42
         assert received["retrieval"]["text_weight"] == 0.25

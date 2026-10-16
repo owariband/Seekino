@@ -43,7 +43,9 @@ from server.repository.video import SeriesNotReadyError, VideoRepository
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
-from server.service.agent_chat import AgentChatService, _validated_stored_video_range
+from server.service.agent_chat import (
+    AgentAttachmentInputUnavailableError, AgentChatService, _validated_stored_video_range,
+)
 from server.service.library import LibraryService
 
 
@@ -195,6 +197,7 @@ class _ChatModel:
         self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
         require_tool_call=False,
         request_timeout_seconds=None, check_control=None, max_input_chars=None,
+        image_urls=(), initial_messages=None,
     ):
         tools_by_name = {tool.name: tool for tool in tools}
         assert set(tools_by_name) == {"get_context_canvas", "write_context_canvas"}
@@ -309,11 +312,12 @@ def _send(
     series_ids=None,
     reference=None,
     extra_context=None,
+    attachments=None,
 ):
     return service.send_message(
         conversation.conversation_id, tenant_id="local-default",
         content=content, idempotency_key=key, series_ids=series_ids,
-        reference=reference, extra_context=extra_context,
+        reference=reference, extra_context=extra_context, attachments=attachments,
     )
 
 
@@ -587,6 +591,261 @@ def test_supervisor_prefix_is_readable_before_model_completion_and_survives_disc
     )[-1]
 
 
+@pytest.mark.parametrize("cancel", [False, True])
+def test_inline_tool_snapshot_is_persisted_before_publish_and_survives_detach(
+    build_service, monkeypatch, cancel,
+):
+    from server.service.agent_chat import AgentMessageExecution
+
+    entered, release = Event(), Event()
+
+    class BlockingSearch(_WebSearcherStub):
+        def search(self, query, **kwargs):
+            entered.set()
+            assert release.wait(5)
+            return super().search(query, **kwargs)
+
+    class ToolSupervisor(_DirectSupervisorModel):
+        def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
+            handle_text("我先帮你检索演出资料。")
+            next(tool for tool in tools if tool.name == "search_web").invoke({"query": "MyGO 演出"})
+            handle_text("找到资料了，我来说明。")
+
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=ToolSupervisor(), web_searcher=BlockingSearch(),
+    )
+    publish = AgentMessageExecution.publish
+
+    def publish_after_checkpoint(execution, event):
+        if event["type"] == "answer.snapshot":
+            saved = service.get_message(
+                conversation.conversation_id, tenant_id="local-default",
+                message_id=execution.initial.assistant_message.message_id,
+            ).assistant_message
+            assert event["assistantMessage"] == asdict(saved)
+        publish(execution, event)
+
+    monkeypatch.setattr(AgentMessageExecution, "publish", publish_after_checkpoint)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="找演出",
+        idempotency_key="inline-tool", stream=True,
+    )
+    try:
+        assert entered.wait(5)
+        pending = service.get_message(
+            conversation.conversation_id, tenant_id="local-default",
+            message_id=execution.initial.assistant_message.message_id,
+        ).assistant_message
+        assert [block["type"] for block in pending.render_blocks] == ["markdown", "tool"]
+        tool = pending.render_blocks[1]
+        assert tool["status"] == "inProgress" and tool["query"] == "MyGO 演出"
+        execution.detach()
+        if cancel:
+            service.cancel_message(
+                conversation.conversation_id, tenant_id="local-default", message_id=pending.message_id,
+            )
+    finally:
+        release.set()
+    if cancel:
+        with pytest.raises(AgentModelInvocationError):
+            execution.result()
+    else:
+        execution.result()
+    restored = service.get_message(
+        conversation.conversation_id, tenant_id="local-default", message_id=pending.message_id,
+    ).assistant_message
+    assert restored.render_blocks[1] == {**tool, "status": "failed" if cancel else "completed"}
+    assert restored.version > pending.version
+    assert restored.search_result is None
+    assert restored.content == "\n\n".join(
+        block["markdown"] for block in restored.render_blocks if block["type"] == "markdown"
+    )
+    if not cancel:
+        assert [block["type"] for block in restored.render_blocks[:3]] == ["markdown", "tool", "markdown"]
+    with repository._session_factory() as session:
+        detail = session.get(AgentMessage, pending.message_id).detail
+        assert detail["renderBlocks"] == list(restored.render_blocks)
+        assert detail["timing"]["totalDurationMs"] is not None
+        assert "补充信息。" not in json.dumps(detail, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("terminal", ["complete", "fail"])
+def test_render_blocks_checkpoint_preserves_detail_and_closes_unfinished_tools(build_service, terminal):
+    service, conversation, _, repository, *_ = build_service()
+    pair = repository.start_message(
+        conversation_id=conversation.conversation_id, tenant_id="local-default", content="测试",
+        model_name="fixture", requested_top_k=1, requested_run_options={},
+        idempotency_key="canonical-blocks", series_ids=[], requested_series_ids=[],
+        user_message_id=str(uuid4()), assistant_message_id=str(uuid4()), now=1,
+    )
+    assistant_id = pair.assistant_message.message_id
+    with repository._session_factory.begin() as session:
+        record = session.get(AgentMessage, assistant_id)
+        record.detail = {**record.detail, "request": {"custom": "kept"}}
+        record.attachments = [{"mediaUri": "artifact://untouched"}]
+    blocks = [
+        {"type": "markdown", "markdown": "开场。"},
+        {"type": "tool", "callId": "pending-call", "tool": "search_web", "status": "inProgress"},
+        {"type": "markdown", "markdown": "下一段。"},
+    ]
+    checkpoint = repository.checkpoint_assistant_message(
+        assistant_id, now=2, content="noncanonical text", render_blocks=blocks,
+    )
+    assert checkpoint.content == "开场。\n\n下一段。"
+    assert checkpoint.version == 2
+    repository.checkpoint_assistant_message(
+        assistant_id, now=3, timing=AgentMessageTimingState(1, None, ()),
+    )
+    if terminal == "complete":
+        restored = repository.complete_assistant_message(
+            assistant_id, content=checkpoint.content, search_result=None, now=4,
+            render_blocks=blocks,
+        )
+    else:
+        restored = repository.fail_assistant_message(assistant_id, error="stopped", now=4)
+    assert restored.render_blocks[1]["status"] == "failed"
+    with repository._session_factory() as session:
+        record = session.get(AgentMessage, assistant_id)
+        assert record.detail["request"] == {"custom": "kept"}
+        assert "timing" in record.detail
+        assert record.attachments == [{"mediaUri": "artifact://untouched"}]
+    with pytest.raises(AgentConflictError):
+        repository.checkpoint_assistant_message(assistant_id, now=5, render_blocks=blocks)
+
+
+@pytest.mark.parametrize("fault", ["start_snapshot", "end_snapshot", "phase", "all_checkpoints", "publish"])
+def test_intermediate_delivery_failure_does_not_change_tool_result(build_service, monkeypatch, fault):
+    from server.service.agent_chat import AgentMessageExecution
+
+    class CountingSearch(_WebSearcherStub):
+        def __init__(self):
+            self.calls = []
+
+        def search(self, query, **kwargs):
+            self.calls.append(query)
+            return super().search(query, **kwargs)
+
+    class ToolSupervisor(_DirectSupervisorModel):
+        def __init__(self):
+            super().__init__()
+            self.receipts = []
+
+        def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
+            handle_text("我先检索资料。")
+            result = next(tool for tool in tools if tool.name == "search_web").invoke({"query": "MyGO 演出"})
+            self.receipts.append(json.loads(result))
+            handle_text("查到了，我来介绍。")
+
+    model, search = ToolSupervisor(), CountingSearch()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model, web_searcher=search)
+    checkpoint, publish = repository.checkpoint_assistant_message, AgentMessageExecution.publish
+    failures, published_snapshots = [], []
+
+    def checkpoint_with_fault(message_id, **kwargs):
+        tool = next((block for block in kwargs.get("render_blocks") or () if block["type"] == "tool"), None)
+        matched = (
+            fault == "all_checkpoints"
+            or fault == "phase" and kwargs.get("phase") == AnswerPhase.RETRIEVING
+            or fault == "start_snapshot" and tool is not None and tool["status"] == "inProgress"
+            or fault == "end_snapshot" and tool is not None and tool["status"] == "completed"
+        )
+        if matched and (not failures or fault == "all_checkpoints"):
+            failures.append("checkpoint")
+            raise RuntimeError("injected UI checkpoint failure")
+        return checkpoint(message_id, **kwargs)
+
+    def publish_with_fault(execution, event):
+        if event["type"] == "answer.snapshot":
+            saved = service.get_message(
+                conversation.conversation_id, tenant_id="local-default",
+                message_id=execution.initial.assistant_message.message_id,
+            ).assistant_message
+            published_snapshots.append((event["assistantMessage"], asdict(saved)))
+            if fault == "publish" and not failures and any(
+                block["type"] == "tool" for block in saved.render_blocks
+            ):
+                failures.append("publish")
+                raise RuntimeError("injected UI publication failure")
+        publish(execution, event)
+
+    monkeypatch.setattr(repository, "checkpoint_assistant_message", checkpoint_with_fault)
+    monkeypatch.setattr(AgentMessageExecution, "publish", publish_with_fault)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="找演出资料",
+        idempotency_key="observer-fault", stream=True,
+    )
+    events = _collect(execution)
+    completed = execution.result().assistant_message
+    restored = service.get_message(
+        conversation.conversation_id, tenant_id="local-default", message_id=completed.message_id,
+    ).assistant_message
+    assert failures and (fault == "all_checkpoints" or len(failures) == 1)
+    assert search.calls == ["MyGO 演出"]
+    assert model.receipts == [{
+        "items": [{"title": "网页来源", "url": "https://example.org/source", "snippet": "补充信息。"}],
+        "result_count": 1, "omitted_count": 0,
+    }]
+    assert restored == completed and completed.status == "COMPLETED"
+    assert [block["type"] for block in completed.render_blocks[:3]] == ["markdown", "tool", "markdown"]
+    assert completed.render_blocks[0]["markdown"] == "我先检索资料。"
+    assert completed.render_blocks[2]["markdown"] == "查到了，我来介绍。"
+    tools = [block for block in completed.render_blocks if block["type"] == "tool"]
+    assert len(tools) == 1 and tools[0]["status"] == "completed" and tools[0]["callId"]
+    assert all(sent == saved for sent, saved in published_snapshots)
+    if fault == "all_checkpoints":
+        assert published_snapshots == []
+    assert events[-1]["type"] == "answer.completed"
+    assert not {"answer.failed", "answer.interrupted"} & {event["type"] for event in events}
+
+
+@pytest.mark.parametrize("checkpoint_error", [AgentConflictError, AgentMessageNotFoundError])
+def test_inactive_message_checkpoint_stops_tool_execution(build_service, monkeypatch, checkpoint_error):
+    searched, continued, failures = [], [], []
+
+    class Search(_WebSearcherStub):
+        def search(self, query, **kwargs):
+            searched.append(query)
+            return super().search(query, **kwargs)
+
+    class ToolSupervisor(_DirectSupervisorModel):
+        def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
+            handle_text("我先检索资料。")
+            next(tool for tool in tools if tool.name == "search_web").invoke({"query": "MyGO 演出"})
+            continued.append(True)
+            handle_text("查到了，我来介绍。")
+
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=ToolSupervisor(), web_searcher=Search(),
+    )
+    checkpoint = repository.checkpoint_assistant_message
+
+    def checkpoint_inactive(message_id, **kwargs):
+        if not failures and any(
+            block["type"] == "tool" and block["status"] == "inProgress"
+            for block in kwargs.get("render_blocks") or ()
+        ):
+            failures.append(checkpoint_error)
+            raise checkpoint_error("message no longer active")
+        return checkpoint(message_id, **kwargs)
+
+    monkeypatch.setattr(repository, "checkpoint_assistant_message", checkpoint_inactive)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="找演出资料",
+        idempotency_key="inactive-message", stream=True,
+    )
+    events = _collect(execution)
+    with pytest.raises(AgentModelInvocationError):
+        execution.result()
+    assert failures == [checkpoint_error] and execution.cancellation.is_set()
+    assert searched == [] and continued == []
+    assert not any(event["type"] == "answer.completed" for event in events)
+    failed = service.get_message(
+        conversation.conversation_id, tenant_id="local-default",
+        message_id=execution.initial.assistant_message.message_id,
+    ).assistant_message
+    assert failed.status == "FAILED" and failed.content == "我先检索资料。"
+
+
 @pytest.mark.parametrize("playback_change", [
     None, "position", "series", "tenant", "negative_position", "float_position", "bool_position",
 ])
@@ -825,6 +1084,253 @@ def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_servi
         )
 
 
+def test_attachment_references_roundtrip_and_order_participates_in_idempotency(build_service):
+    service, conversation, _, repository, *_ = build_service()
+    references = [{"mediaUri": "artifact://test/first"}, {"mediaUri": "artifact://test/second"}]
+    request = dict(
+        conversation_id=conversation.conversation_id, tenant_id="local-default",
+        content="这个表情包出自哪里？", model_name="fixture", requested_top_k=5,
+        requested_run_options={}, idempotency_key="attachment-pair",
+        series_ids=[], requested_series_ids=[], user_message_id=str(uuid4()),
+        assistant_message_id=str(uuid4()), now=1_700_000_000_000,
+        attachments=references,
+    )
+    pair = repository.start_message(**request)
+    assert pair.user_message.attachments == tuple(references)
+    assert pair.assistant_message.attachments == ()
+    recovered = repository.get_message_pair(
+        conversation.conversation_id, "local-default", idempotency_key="attachment-pair",
+    )
+    assert recovered.user_message.attachments == tuple(references)
+    assert repository.start_message(**request).reused
+    for changed in ([], references[:1], references[::-1]):
+        with pytest.raises(AgentConflictError):
+            repository.start_message(**{**request, "attachments": changed})
+    with repository._session_factory() as session:
+        user = session.get(AgentMessage, pair.user_message.message_id)
+        assert user.attachments == references
+        assert "attachments" not in user.detail
+        assert session.scalar(select(func.count()).select_from(AgentMessage)) == 2
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("supervised", [False, True])
+def test_uploaded_attachment_reaches_runtime_without_service_vision_gate(
+    build_service, tmp_path, monkeypatch, stream, supervised,
+):
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    from server.config.media import ImageUploadConfig
+    from server.service.agent_attachments import AgentAttachmentService
+    from server.storage.artifact import LocalArtifactStore
+
+    model = _DirectSupervisorModel() if supervised else None
+    service, conversation, retrieval, repository, query, *_ = build_service(supervisor_model=model)
+    observed = []
+    kick = service._runtime.kick
+
+    def capture(inputs, **kwargs):
+        observed.append(inputs)
+        return kick(inputs, **kwargs)
+
+    monkeypatch.setattr(service._runtime, "kick", capture)
+    attachments = AgentAttachmentService(
+        repository, LocalArtifactStore(tmp_path / "media", environment="test"),
+        config=ImageUploadConfig(),
+    )
+    service._attachments = attachments
+    image = BytesIO()
+    Image.new("RGB", (10, 10), "red").save(image, format="PNG")
+    uploaded = attachments.upload(
+        conversation.conversation_id, image.getvalue(), tenant_id="local-default",
+        owner_user_id=conversation.owner_user_id,
+    )
+    call = service.start_message if stream else service.send_message
+    result = call(
+        conversation.conversation_id, tenant_id="local-default", content="这张图出自哪里？",
+        idempotency_key="image-question", attachments=[{"mediaUri": uploaded.media_uri}],
+        **({"stream": True} if stream else {}),
+    )
+    if stream:
+        assert _collect(result)[-1]["type"] == "answer.completed"
+        result = result.result()
+    assert result.assistant_message.status == "COMPLETED"
+    assert len(observed) == 1
+    assert [base64.b64decode(url.split(",", 1)[1]) for url in observed[0]["image_urls"]] == [image.getvalue()]
+    assert len(service.list_all_messages(conversation.conversation_id, tenant_id="local-default")) == 2
+    assert bool(query.prompts) is not supervised
+    assert model is None or len(model.turns) == 1
+    assert attachments.get_content(
+        conversation.conversation_id, uploaded.media_uri, tenant_id="local-default",
+        owner_user_id=conversation.owner_user_id,
+    ).path.read_bytes() == image.getvalue()
+    assert _send(service, conversation).assistant_message.status == "COMPLETED"
+
+
+def test_vision_supervisor_receives_uploaded_bytes_in_order_and_reloads_attachment_history(build_service, tmp_path):
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    from server.config.media import ImageUploadConfig
+    from server.service.agent_attachments import AgentAttachmentService
+    from server.storage.artifact import LocalArtifactStore
+
+    class VisionModel(_DirectSupervisorModel):
+        supports_vision_input = True
+
+        def __init__(self):
+            super().__init__()
+            self.image_inputs = []
+            self.session_histories = []
+
+        def run_agent(self, prompt, **kwargs):
+            self.image_inputs.append(kwargs.get("image_urls"))
+            self.session_histories.append(kwargs["session_context"].load_history(-1))
+            return super().run_agent(prompt, **kwargs)
+
+    model = VisionModel()
+    service, _, retrieval, repository, *_ = build_service(supervisor_model=model)
+    conversation = service.create_conversation(
+        tenant_id="private-chat", owner_user_id="image-owner", idempotency_key="private-images",
+    )
+    scope = {"tenant_id": "private-chat", "owner_user_id": "image-owner"}
+    attachments = AgentAttachmentService(
+        repository, LocalArtifactStore(tmp_path / "images", environment="test"), config=ImageUploadConfig(),
+    )
+    service._attachments = attachments
+    originals, references = [], []
+    for color in ("red", "green", "blue", "yellow", "purple", "orange"):
+        image = BytesIO()
+        Image.new("RGB", (10, 10), color).save(image, format="PNG")
+        originals.append(image.getvalue())
+        uploaded = attachments.upload(conversation.conversation_id, originals[-1], **scope)
+        references.append({"mediaUri": uploaded.media_uri})
+    order = [3, 0, 5, 1, 4, 2]
+    references = [references[index] for index in order]
+    expected_bytes = [originals[index] for index in order]
+    request = {**scope, "source_tenant_id": "local-default", "content": "这些图片有什么不同？",
+               "idempotency_key": "six-images", "attachments": references}
+    first = service.send_message(conversation.conversation_id, **request)
+    assert first.assistant_message.status == "COMPLETED"
+    assert first.user_message.attachments == tuple(references)
+    assert first.assistant_message.source_tenant_id == "local-default"
+    assert len(model.image_inputs[0]) == 6
+    assert all(url.startswith("data:image/png;base64,") for url in model.image_inputs[0])
+    assert [base64.b64decode(url.split(",", 1)[1]) for url in model.image_inputs[0]] == expected_bytes
+    assert model.turns[0][3] == []
+    assert service.send_message(conversation.conversation_id, **request) == first
+    assert len(model.turns) == 1
+
+    second = service.send_message(
+        conversation.conversation_id, **scope, source_tenant_id="local-default",
+        content="再比较一下刚才的图片。", idempotency_key="image-follow-up",
+    )
+    assert second.assistant_message.status == "COMPLETED"
+    assert model.image_inputs[1] is None
+    history = model.turns[1][3]
+    assert [item["role"] for item in history] == ["USER", "ASSISTANT"]
+    assert [base64.b64decode(url.split(",", 1)[1]) for url in history[0]["imageUrls"]] == expected_bytes
+    assert "imageUrls" not in history[1]
+    session_history = model.session_histories[1]
+    assert model.session_histories[0] == []
+    assert [(item["messageId"], item["sequenceNo"]) for item in session_history] == [
+        (first.user_message.message_id, first.user_message.sequence_no),
+        (first.assistant_message.message_id, first.assistant_message.sequence_no),
+    ]
+    assert [base64.b64decode(url.split(",", 1)[1]) for url in session_history[0]["imageUrls"]] == expected_bytes
+    assert "imageUrls" not in session_history[1]
+    assert service.send_message(conversation.conversation_id, **request) == first
+    assert len(model.turns) == 2 and not retrieval.calls
+    assert all("data:image" not in prompt for prompt in model.prompts)
+    with repository._session_factory() as session:
+        rows = session.execute(select(AgentMessage.__table__).where(
+            AgentMessage.conversation_id == conversation.conversation_id,
+        )).mappings().all()
+        user = next(row for row in rows if row["id"] == first.user_message.message_id)
+        assert user["attachments"] == references
+        persisted = json.dumps([dict(row) for row in rows], default=str)
+        assert "data:image" not in persisted and "base64" not in persisted
+        assert all(url.split(",", 1)[1] not in persisted for url in model.image_inputs[0])
+
+
+def test_vision_attachment_input_still_rejects_invalid_and_cross_conversation_references(build_service, tmp_path):
+    from io import BytesIO
+    from PIL import Image
+    from server.config.media import ImageUploadConfig
+    from server.service.agent_attachments import AgentAttachmentService
+    from server.storage.artifact import LocalArtifactStore
+
+    class VisionModel(_DirectSupervisorModel):
+        supports_vision_input = True
+
+    model = VisionModel()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model)
+    attachments = AgentAttachmentService(
+        repository, LocalArtifactStore(tmp_path / "images", environment="test"), config=ImageUploadConfig(),
+    )
+    service._attachments = attachments
+    other = service.create_conversation(tenant_id="local-default", idempotency_key="other-images")
+    image = BytesIO()
+    Image.new("RGB", (10, 10), "red").save(image, format="PNG")
+    uploaded = attachments.upload(other.conversation_id, image.getvalue(), tenant_id="local-default")
+    for media_uri in ("file:///tmp/unmanaged.png", "data:image/png;base64,unmanaged", uploaded.media_uri):
+        with pytest.raises(ValueError, match="does not belong to this conversation"):
+            _send(service, conversation, attachments=[{"mediaUri": media_uri}])
+    with pytest.raises(AgentConversationNotFoundError):
+        service.send_message(
+            conversation.conversation_id, tenant_id="other-tenant", content="图片问题",
+            idempotency_key="wrong-tenant", attachments=[{"mediaUri": uploaded.media_uri}],
+        )
+    assert not model.turns and not service._executions
+    assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default") == []
+
+
+def test_attachment_history_without_storage_blocks_new_inference_but_terminal_replay_recovers(build_service):
+    service, conversation, retrieval, repository, *_ = build_service()
+    completed = _send(service, conversation)
+    references = [{"mediaUri": "artifact://test/historical-image"}]
+    with repository._session_factory.begin() as session:
+        session.get(AgentMessage, completed.user_message.message_id).attachments = references
+    with pytest.raises(AgentAttachmentInputUnavailableError, match="附件存储服务尚未配置"):
+        _send(service, conversation, key="follow-up", content="刚才那张图呢？")
+    recovered = _send(service, conversation, attachments=references)
+    assert recovered.user_message.attachments == tuple(references)
+    assert len(retrieval.calls) == 1
+    assert len(service.list_all_messages(conversation.conversation_id, tenant_id="local-default")) == 2
+
+
+def test_legacy_null_attachments_and_empty_request_have_same_identity(build_service):
+    service, conversation, _, repository, *_ = build_service()
+    first = _send(service, conversation)
+    with repository._session_factory.begin() as session:
+        session.get(AgentMessage, first.user_message.message_id).attachments = None
+    replay = _send(service, conversation, attachments=[])
+    assert replay.user_message.attachments == replay.assistant_message.attachments == ()
+    assert replay.user_message.message_id == first.user_message.message_id
+
+
+@pytest.mark.parametrize("failure", [OSError("storage offline"), RuntimeError("cleanup DB unavailable")])
+def test_attachment_cleanup_failure_does_not_undo_committed_conversation_delete(build_service, caplog, failure):
+    model = _DirectSupervisorModel()
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=model, enforce_foreign_keys=True,
+    )
+
+    class FailingCleanup:
+        def delete_conversation_artifacts(self, conversation_id):
+            assert not repository.conversation_exists(conversation_id)
+            raise failure
+
+    service._attachments = FailingCleanup()
+    with caplog.at_level(logging.WARNING):
+        deleted = service.delete_conversation(conversation.conversation_id, tenant_id="local-default")
+    assert deleted.conversation_id == conversation.conversation_id
+    assert not repository.conversation_exists(conversation.conversation_id)
+    assert model.deleted == [conversation.conversation_id]
+    assert "Could not delete conversation attachments" in caplog.text
+
+
 @pytest.mark.parametrize("include_web", [False, True])
 @pytest.mark.parametrize("commit_failure", [False, True])
 @pytest.mark.parametrize("merge_adjacent", [False, True])
@@ -914,7 +1420,9 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
         completed.assistant_message.content,
     )]
     result = completed.assistant_message.search_result
-    video_blocks = [block for block in result["renderBlocks"] if block["type"] == "video"]
+    assert "renderBlocks" not in result
+    rendered = completed.assistant_message.render_blocks
+    video_blocks = [block for block in rendered if block["type"] == "video"]
     public_video_blocks = [{
         "type": "video", "videoChunkId": item["video_chunk_id"],
         "startSeconds": item["start_seconds"], "endSeconds": item["end_seconds"],
@@ -937,13 +1445,14 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
     snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
     assert snapshots[-1]["content"] == completed.assistant_message.content
     assert snapshots[-1]["search_result"] == result
-    assert snapshots[0]["search_result"]["renderBlocks"][0]["type"] == "video"
+    assert any(block["type"] == "video" for message in snapshots for block in message["render_blocks"])
     anchor = model.submitted_items[0]["video_chunk_id"]
     anchor_versions = [
-        next((block for block in message["search_result"]["renderBlocks"]
+        next((block for block in message["render_blocks"]
               if block["type"] == "video" and block["videoChunkId"] == anchor), None)
         for message in snapshots
     ]
+    anchor_versions = anchor_versions[next(index for index, block in enumerate(anchor_versions) if block is not None):]
     assert anchor_versions[0]["startSeconds"] == model.submitted_items[0]["start_seconds"]
     assert any(block is not None and block["startSeconds"] == anchor_versions[0]["startSeconds"] + 1
                for block in anchor_versions)
@@ -951,8 +1460,8 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
     assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
     assert events[-1]["type"] == "answer.completed"
     if include_web:
-        assert result["renderBlocks"][-1]["type"] == "markdown"
-        assert "https://example.org/source" in result["renderBlocks"][-1]["markdown"]
+        assert rendered[-1]["type"] == "markdown"
+        assert "https://example.org/source" in rendered[-1]["markdown"]
     if not include_web:
         source_id = completed.assistant_message.message_id
         reference = {"messageId": source_id, "videoChunkId": video_blocks[0]["videoChunkId"]}
@@ -1006,6 +1515,242 @@ def test_supervisor_confirms_only_after_sql_commit_and_receives_full_history(
     assert history[0]["content"] == question
     assert history[1]["content"] == first.assistant_message.content
     assert model.discarded == []
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, AgentConversationNotFoundError])
+def test_supervisor_session_state_read_failure_preserves_binding_and_lifecycle_errors(
+    build_service, monkeypatch, caplog, error_type,
+):
+    class ContextModel(_DirectSupervisorModel):
+        def __init__(self):
+            super().__init__()
+            self.contexts = []
+
+        def run_agent(self, prompt, **kwargs):
+            self.contexts.append(kwargs.get("session_context"))
+            return super().run_agent(prompt, **kwargs)
+
+    model = ContextModel()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model)
+    original_detail = {"custom": {"label": "保留"}, "runtimeSessions": {"codex-A": {
+        "threadId": "original-native-thread", "syncedThroughSequence": -1,
+    }}}
+    with repository._session_factory.begin() as session:
+        session.get(AgentConversation, conversation.conversation_id).detail = original_detail
+    get_conversation = repository.get_conversation
+    reads = []
+
+    def fail_metadata_read(*args, **kwargs):
+        reads.append((args, kwargs))
+        raise error_type("injected session metadata read failure")
+
+    monkeypatch.setattr(repository, "get_conversation", fail_metadata_read)
+    if error_type is AgentConversationNotFoundError:
+        with pytest.raises(AgentConversationNotFoundError, match="session metadata"):
+            _send(service, conversation)
+        assert model.contexts == [] and not model.confirmed
+    else:
+        result = _send(service, conversation)
+        assert result.assistant_message.status == "COMPLETED"
+        assert result.assistant_message.content == "你好，我可以直接回答。"
+        assert model.contexts == [None] and len(model.confirmed) == 1
+        assert "Could not load Supervisor session state" in caplog.text
+    assert len(reads) == 1
+    assert get_conversation(conversation.conversation_id, "local-default").detail == original_detail
+
+
+@pytest.mark.parametrize("error_type", [
+    AgentConflictError, AgentMessageNotFoundError, AgentConversationNotFoundError, ConnectionError,
+])
+def test_session_state_save_marks_lifecycle_failure_but_keeps_storage_failure_optional(
+    build_service, monkeypatch, error_type,
+):
+    class SavingModel(_DirectSupervisorModel):
+        def run_agent(self, prompt, *, session_context, **kwargs):
+            try:
+                session_context.save_state("codex-A", {"threadId": "native-thread"})
+            except Exception as exc:
+                self.save_error = exc
+            kwargs["check_control"]()
+            return super().run_agent(prompt, **kwargs)
+
+    model = SavingModel()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model)
+    save_error = error_type("injected session save failure")
+
+    def fail_save(*args, **kwargs):
+        raise save_error
+
+    monkeypatch.setattr(repository, "save_runtime_session", fail_save)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default",
+        content="继续回答当前问题", idempotency_key="session-save-failure",
+    )
+    if error_type is ConnectionError:
+        result = execution.result()
+        assert result.assistant_message.status == "COMPLETED"
+        assert result.assistant_message.content == "你好，我可以直接回答。"
+        assert not execution.cancellation.is_set()
+    else:
+        with pytest.raises(AgentModelInvocationError, match="cancelled"):
+            execution.result()
+        assert execution.cancellation.is_set()
+        assert not model.turns and not model.confirmed
+        assert service.get_message(
+            conversation.conversation_id, tenant_id="local-default",
+            message_id=execution.initial.assistant_message.message_id,
+        ).assistant_message.status == "FAILED"
+    assert model.save_error is save_error
+
+
+def test_supervisor_session_survives_api_switch_and_service_rebuild_with_full_missing_history(build_service):
+    class SessionModel(_DirectSupervisorModel):
+        def run_agent(self, prompt, *, session_context, **kwargs):
+            self.context = session_context
+            self.binding = dict(session_context.states.get("codex-A", {
+                "threadId": "local-native-thread-A", "syncedThroughSequence": -1,
+            }))
+            self.loaded = session_context.load_history(self.binding["syncedThroughSequence"])
+            session_context.save_state("codex-A", self.binding)
+            return super().run_agent(prompt, **kwargs)
+
+        def confirm_turn(self, thread_id, message_id, content):
+            committed = repository.get_message_pair(thread_id, "local-default", message_id=message_id)
+            assert committed.assistant_message.status == "COMPLETED"
+            self.binding["syncedThroughSequence"] = self.context.message_sequence_no
+            self.context.save_state("codex-A", self.binding)
+            super().confirm_turn(thread_id, message_id, content)
+
+    first_model = SessionModel()
+    service, conversation, retrieval, repository, *_ = build_service(supervisor_model=first_model)
+    first = _send(service, conversation, content="先用本地 Codex")
+    binding = service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail
+    assert binding == {"runtimeSessions": {"codex-A": {
+        "threadId": "local-native-thread-A", "syncedThroughSequence": first.assistant_message.sequence_no,
+    }}}
+    assert first_model.loaded == []
+
+    class APIModel(_DirectSupervisorModel):
+        def run_agent(self, prompt, **kwargs):
+            if kwargs["user_message"] == "失败的 API 请求":
+                raise RuntimeError("API unavailable")
+            return super().run_agent(prompt, **kwargs)
+
+    api_model = APIModel()
+    service._runtime._model = api_model
+    api_turns = [_send(service, conversation, key=f"api-{index}", content=f"API 对话 {index}")
+                 for index in range(7)]
+    with pytest.raises(AgentModelInvocationError):
+        _send(service, conversation, key="api-failed", content="失败的 API 请求")
+    assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == binding
+    assert len(api_model.turns[-1][3]) == service._config.history_message_limit == 12
+    committed = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")
+    failed = committed[-1]
+    service.close()
+
+    resumed_model = SessionModel()
+    runtime = SupervisorRuntime(
+        AgentRuntime(_QueryModel(), _EvaluatorModel(), _ChatModel(), retrieval.search, retrieval_channel="lexical"),
+        resumed_model, WebSearcher(), max_web_results=5, web_timeout_seconds=12,
+        execution_timeout_seconds=60, max_tool_result_bytes=16_384, max_prompt_chars=200_000,
+    )
+    rebuilt = AgentChatService(repository, service._library, runtime, config=service._config)
+    try:
+        resumed = _send(rebuilt, conversation, key="codex-resumed", content="切回原来的 Codex")
+        expected = [item for item in committed
+                    if item.status == "COMPLETED" and item.sequence_no > first.assistant_message.sequence_no]
+        assert resumed_model.loaded == [{
+            "role": item.role, "content": item.content or "", "messageId": item.message_id,
+            "sequenceNo": item.sequence_no, "status": "COMPLETED",
+        } for item in expected]
+        assert len(resumed_model.loaded) == 15 > service._config.history_message_limit
+        assert resumed_model.loaded[0]["messageId"] == api_turns[0].user_message.message_id
+        assert failed.message_id not in {item["messageId"] for item in resumed_model.loaded}
+        assert resumed_model.binding == {
+            "threadId": "local-native-thread-A", "syncedThroughSequence": resumed.assistant_message.sequence_no,
+        }
+        assert rebuilt.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == {
+            "runtimeSessions": {"codex-A": resumed_model.binding},
+        }
+        assert all("runtimeSessions" not in prompt for prompt in resumed_model.prompts)
+    finally:
+        rebuilt.close()
+
+
+def test_cancelled_session_callback_cannot_overwrite_a_later_completed_turn(build_service, monkeypatch):
+    from threading import Thread
+
+    saving, release_save, release_model = Event(), Event(), Event()
+    late_errors = []
+
+    class SessionModel(_DirectSupervisorModel):
+        def run_agent(self, prompt, *, session_context, **kwargs):
+            self.context = session_context
+            if kwargs["user_message"] == "cancel this turn":
+                def late_save():
+                    try:
+                        session_context.save_state("codex-A", {"threadId": "stale-thread"})
+                    except Exception as exc:
+                        late_errors.append(exc)
+
+                self.late_worker = Thread(target=late_save)
+                self.late_worker.start()
+                assert release_model.wait(5), "test did not release cancelled model"
+                kwargs["check_control"]()
+            session_context.save_state("codex-A", {"threadId": "current-thread"})
+            return super().run_agent(prompt, **kwargs)
+
+        def confirm_turn(self, thread_id, message_id, content):
+            self.context.save_state("codex-A", {
+                "threadId": "current-thread", "syncedThroughSequence": self.context.message_sequence_no,
+            })
+            return super().confirm_turn(thread_id, message_id, content)
+
+    model = SessionModel()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model)
+    save = repository.save_runtime_session
+
+    def delayed_save(*args, **kwargs):
+        if kwargs["state"].get("threadId") == "stale-thread":
+            saving.set()
+            assert release_save.wait(5), "test did not release stale session save"
+        return save(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "save_runtime_session", delayed_save)
+    cancelled = service.start_message(
+        conversation.conversation_id, tenant_id="local-default",
+        content="cancel this turn", idempotency_key="cancelled-session",
+    )
+    try:
+        assert saving.wait(5), "session callback did not reach repository"
+        service.cancel_message(
+            conversation.conversation_id, tenant_id="local-default",
+            message_id=cancelled.initial.assistant_message.message_id,
+        )
+        release_model.set()
+        with pytest.raises(AgentModelInvocationError, match="cancelled"):
+            cancelled.result()
+        with pytest.raises(AgentConflictError, match="latest"):
+            save(
+                conversation.conversation_id, "local-default",
+                message_id=cancelled.initial.assistant_message.message_id,
+                key="codex-A", state={"threadId": "failed-thread"},
+            )
+        later = _send(service, conversation, key="later-session")
+        expected = {"runtimeSessions": {"codex-A": {
+            "threadId": "current-thread", "syncedThroughSequence": later.assistant_message.sequence_no,
+        }}}
+        assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == expected
+        release_save.set()
+        model.late_worker.join(5)
+        assert not model.late_worker.is_alive()
+        assert len(late_errors) == 1 and isinstance(late_errors[0], AgentConflictError)
+        assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == expected
+    finally:
+        release_model.set()
+        release_save.set()
+        if hasattr(model, "late_worker"):
+            model.late_worker.join(5)
 
 
 def test_next_supervisor_turn_waits_for_previous_harness_confirmation(build_service, monkeypatch):
@@ -1288,7 +2033,7 @@ def test_reference_uses_saved_same_version_evidence_with_ordered_history(evidenc
             "startSeconds": block["startSeconds"],
             "endSeconds": block["endSeconds"],
         }
-        for block in source.assistant_message.search_result["renderBlocks"]
+        for block in source.assistant_message.render_blocks
         if block["type"] == "video"
     ]
     changed = {**reference, "videoChunkId": hits[0]["candidate"]["videoChunkId"]}
@@ -1766,7 +2511,7 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert messages[0].timing is None
     with repository._session_factory() as session:
         stored = session.get(AgentMessage, messages[1].message_id)
-        assert stored.detail == {"timing": {
+        assert stored.detail == {"renderBlocks": list(messages[1].render_blocks), "timing": {
             "startedAt": timing.started_at,
             "totalDurationMs": timing.total_duration_ms,
             "stages": [
@@ -1968,6 +2713,11 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     class FailedConnectionSession:
         tool_call_count = 0
         successful_tool_call_count = 0
+        native_thread_id = "connection-error-thread"
+        native_last_turn_id = None
+
+        def open(self):
+            pass
 
         def run_turn(self, _prompt, *, output_schema=None):
             started.set()
@@ -2388,7 +3138,7 @@ def test_completed_event_observes_committed_snapshot(build_service):
         "videoChunkIds": [],
     }]
     blocks = [event["block"] for event in events if event["type"] == "answer.block"]
-    assert blocks == completed.search_result["renderBlocks"]
+    assert blocks == list(completed.render_blocks)
     assert [event["type"] for event in events[-4:]] == [
         "answer.evidence", "answer.block", "answer.delta", "answer.completed",
     ]
@@ -2714,6 +3464,52 @@ def test_conversation_detail_roundtrips_without_changing_message_detail_or_owner
         messages = session.scalars(select(AgentMessage)).all()
         assert messages and all("runtime" not in (message.detail or {}) for message in messages)
     assert service.delete_conversation(conversation.conversation_id, tenant_id="local-default").detail == detail
+
+
+def test_runtime_session_updates_merge_conversation_detail_and_preserve_owner_scope(build_service):
+    service, conversation, _, repository, *_ = build_service()
+    first = _send(service, conversation)
+    message_id = first.assistant_message.message_id
+    with repository._session_factory.begin() as session:
+        session.get(AgentConversation, conversation.conversation_id).detail = {
+            "custom": {"label": "保留"}, "runtimeSessions": {"other": {"threadId": "other-thread"}},
+        }
+    state = {"threadId": "native-A", "syncedThroughSequence": first.assistant_message.sequence_no}
+    repository.save_runtime_session(
+        conversation.conversation_id, "local-default", message_id=message_id, key="codex-A", state=state,
+    )
+    state["threadId"] = "mutated"
+    repository.save_runtime_session(
+        conversation.conversation_id, "local-default", message_id=message_id,
+        key="codex-B", state={"threadId": "native-B"},
+    )
+    expected = {"custom": {"label": "保留"}, "runtimeSessions": {
+        "other": {"threadId": "other-thread"},
+        "codex-A": {"threadId": "native-A", "syncedThroughSequence": first.assistant_message.sequence_no},
+        "codex-B": {"threadId": "native-B"},
+    }}
+    assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == expected
+    for scope in ({"tenant_id": "other"}, {"tenant_id": "local-default", "owner_user_id": "other"}):
+        with pytest.raises(AgentConversationNotFoundError):
+            repository.save_runtime_session(
+                conversation.conversation_id, message_id=message_id, key="codex-A", state={}, **scope,
+            )
+        with pytest.raises(AgentConversationNotFoundError):
+            repository.list_recent_completed_messages(
+                conversation.conversation_id, before_sequence_no=100, after_sequence_no=-1, limit=None, **scope,
+            )
+    assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == expected
+    _send(service, conversation, key="later-turn")
+    with pytest.raises(AgentConflictError, match="latest"):
+        repository.save_runtime_session(
+            conversation.conversation_id, "local-default", message_id=message_id, key="codex-A", state={},
+        )
+    with pytest.raises(AgentMessageNotFoundError, match="assistant"):
+        repository.save_runtime_session(
+            conversation.conversation_id, "local-default", message_id=first.user_message.message_id,
+            key="codex-A", state={},
+        )
+    assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == expected
 
 
 def test_public_tenant_conversations_are_private_per_owner(build_service):

@@ -127,6 +127,24 @@ def project_inputs(
     }
 
 
+def project_image_history(
+    inputs: RunInputs, *, include_current_message: bool = False,
+) -> list[dict[str, Any]]:
+    """Keep image history outside text context, with an optional current-turn boundary."""
+    messages = [
+        {
+            "role": "user",
+            "content": message.get("content", ""),
+            "imageUrls": list(message["imageUrls"]),
+        }
+        for message in inputs["history"]
+        if str(message.get("role", "")).lower() == "user" and message.get("imageUrls")
+    ]
+    if messages and include_current_message:
+        messages.append({"role": "user", "content": inputs["user_message"]})
+    return messages
+
+
 def project_search_result(
     result: VideoChunkSearchResult,
     *,

@@ -6,7 +6,7 @@ from gateway.agent_model.contracts import StructuredToolAgentModel
 from gateway.agent_model.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
-from .context import build_canvas_checkpoint, project_inputs
+from .context import build_canvas_checkpoint, project_image_history, project_inputs
 from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
@@ -75,11 +75,15 @@ def evaluate(
     ModelContextBudget(max_prompt_chars).consume("Evaluator Agent prompt", prompt)
     try:
         context_options = {}
+        if inputs.get("image_urls"):
+            context_options["image_urls"] = inputs["image_urls"]
+        supports_context_messages = getattr(model, "supports_context_messages", False)
+        image_history = project_image_history(inputs, include_current_message=not supports_context_messages)
         if getattr(model, "supports_context_checkpoints", False):
             context_options["context_checkpoint"] = lambda: (
                 build_canvas_checkpoint(canvas, role="evaluator")
             )
-        if getattr(model, "supports_context_messages", False):
+        if supports_context_messages:
             context_options["initial_messages"] = [
                 {"role": "system", "content": instructions},
                 {
@@ -96,6 +100,7 @@ def evaluate(
                         })
                     ),
                 },
+                *image_history,
                 {
                     "role": "user",
                     "content": (
@@ -105,6 +110,8 @@ def evaluate(
                     ),
                 },
             ]
+        elif image_history:
+            context_options["initial_messages"] = image_history
         decision = model.run_structured(
             prompt,
             tools=list(tools),

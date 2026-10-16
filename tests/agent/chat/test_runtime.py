@@ -439,6 +439,151 @@ def _runtime(query=None, evaluator=None, chat=None, retrieval=None, **kwargs):
     return AgentRuntime(query, evaluator, chat, retrieval.search, **kwargs), query, evaluator, chat, retrieval
 
 
+@pytest.mark.parametrize("context_messages", [False, True])
+@pytest.mark.parametrize("image_source", ["none", "current", "history", "both"])
+def test_roles_forward_current_and_historical_images_outside_text_context(
+    monkeypatch, context_messages, image_source,
+):
+    runtime, query, evaluator, chat, _ = _runtime(evaluator=Evaluator(2))
+    captured = {role: [] for role in ("query", "evaluator", "chat")}
+    for role, model, method in (
+        ("query", query, "run_structured"),
+        ("evaluator", evaluator, "run_structured"),
+        ("chat", chat, "run_agent_loop"),
+    ):
+        model.supports_context_messages = context_messages
+        model.supports_context_checkpoints = True
+        model.supports_vision_input = False
+        original = getattr(model, method)
+
+        def capture(prompt, *, _role=role, _original=original, **options):
+            checkpoint = options.pop("context_checkpoint")
+            media = {key: options.pop(key) for key in ("image_urls", "initial_messages")
+                     if key in options}
+            captured[_role].append((prompt, media, checkpoint()))
+            return _original(prompt, **options)
+
+        monkeypatch.setattr(model, method, capture)
+
+    current = [f"data:image/png;base64,current-{index}" for index in range(6)]
+    history_images = ["data:image/png;base64,old-first", "data:image/png;base64,old-second"]
+    inputs = _inputs()
+    inputs["history"] = [
+        {"role": "USER", "content": "Earlier first image.",
+         **({"imageUrls": history_images[:1]} if image_source in {"history", "both"} else {})},
+        {"role": "ASSISTANT", "content": "Earlier explanation."},
+        {"role": "user", "content": "Earlier second image.",
+         **({"imageUrls": history_images[1:]} if image_source in {"history", "both"} else {})},
+    ]
+    if image_source in {"current", "both"}:
+        inputs["image_urls"] = current
+    result = runtime.kick(inputs)
+
+    assert result.agent_reply.result_count == 1
+    assert [len(captured[role]) for role in captured] == [2, 2, 1]
+    for role, calls in captured.items():
+        for prompt, media, checkpoint in calls:
+            assert "data:image" not in prompt
+            assert media.get("image_urls") == (current if image_source in {"current", "both"} else None)
+            assert checkpoint["role"] == role
+            messages = media.get("initial_messages")
+            expected_history = [
+                {"role": "user", "content": item["content"], "imageUrls": item["imageUrls"]}
+                for item in inputs["history"] if item.get("imageUrls")
+            ]
+            if not context_messages and image_source not in {"history", "both"}:
+                assert messages is None
+                continue
+            if not context_messages:
+                assert messages == [*expected_history, {"role": "user", "content": inputs["user_message"]}]
+                continue
+            assert messages[0]["role"] == "system"
+            assert messages[1]["role"] == "user" and "锚点" in messages[1]["content"]
+            anchor = json.loads(messages[1]["content"].split("\n", 1)[1])
+            assert anchor["user_message"] == inputs["user_message"]
+            assert messages[-1]["content"].startswith("<initial_context_snapshot>")
+            assert messages[2:-1] == expected_history
+            assert all("data:image" not in item["content"] for item in messages)
+        if role == "query":
+            context = json.loads(calls[-1][0].rsplit("\n\n", 1)[1])
+            assert context["original_plan"] == "plan-1"
+            assert context["turns"][-1]["review"]["advice"] == "find broken cup, not picked-up cup"
+        if role == "query" and context_messages:
+            anchor = json.loads(calls[-1][1]["initial_messages"][1]["content"].split("\n", 1)[1])
+            assert anchor["original_plan"] == "plan-1"
+            assert anchor["latest_evaluator_advice"] == "find broken cup, not picked-up cup"
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_query_native_image_history_keeps_one_task_body_within_text_budget(provider):
+    from types import SimpleNamespace
+
+    from agent.chat.common.state import ExecutionControl
+    from agent.chat.video_search.query import run_query
+    from agent.chat.video_search.state import ModelContextBudget
+    from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
+    from gateway.claude_code.agent import ClaudeAgentModel
+    from gateway.codex.agent import CodexAgentModel
+
+    options = dict(model="native-budget-test", request_timeout_seconds=5, max_output_tokens=100,
+                   max_input_chars=100_000)
+    native = (CodexAgentModel(**options, max_concurrency=1) if provider == "codex"
+              else ClaudeAgentModel(**options))
+    inputs = _inputs()
+    inputs["series_context"] = [{"description": "NATIVE_TASK_PAYLOAD:" + "x" * 8000}]
+    historical = "data:image/png;base64," + "A" * 200_000
+    current = [f"https://example.test/current-{index}.png" for index in range(6)]
+    inputs["history"] = [{"role": "USER", "content": "Earlier image.", "imageUrls": [historical]}]
+    inputs["image_urls"] = current
+    advice = "Check the earlier image against the original plan."
+    previous = SimpleNamespace(
+        plan_context="original-plan",
+        review=SimpleNamespace(advice=advice),
+        context=lambda: {"plan_context": "original-plan", "review": {"advice": advice}},
+    )
+
+    class QueryModel:
+        model_name = "native-query-test"
+        supports_context_messages = False
+
+        def run_structured(self, prompt, **kwargs):
+            native.max_input_chars = len(prompt) + 1000
+            messages = kwargs["initial_messages"]
+            assert messages[-1] == {"role": "user", "content": inputs["user_message"]}
+            media_options = dict(initial_messages=messages, image_urls=kwargs["image_urls"])
+            if provider == "codex":
+                rendered, _, media = native._prepare_input(
+                    prompt, max_input_chars=native.max_input_chars, **media_options,
+                )
+                images = [block["image_url"] for block in media if block["type"] == "input_image"]
+                texts = [block["text"] for block in media if block["type"] == "input_text"]
+            else:
+                rendered, media = native._prepare_input(prompt, **media_options)
+                images = [block["image_url"]["url"] for block in media if block["type"] == "image_url"]
+                texts = [rendered, *[block["text"] for block in media if block["type"] == "text"]]
+            assert len(rendered) <= native.max_input_chars
+            assert rendered.count("NATIVE_TASK_PAYLOAD:") == 1
+            assert "<initial_context_snapshot>" not in rendered
+            assert images == [historical, *current]
+            assert all("data:image" not in text for text in texts)
+            assert "conversation message 1:" in texts[1] and "conversation message 2:" in texts[2]
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            assert context["original_plan"] == "original-plan"
+            assert context["turns"][-1]["review"]["advice"] == advice
+            assert "original-plan" in rendered and advice in rendered
+            return kwargs["result_type"](plan_context="updated-plan", message="Checked image.")
+
+    try:
+        result = run_query(
+            QueryModel(), inputs, [previous], tools=[], max_model_calls=1,
+            control=ExecutionControl(monotonic() + 5), context_budget=ModelContextBudget(100_000),
+            canvas=VideoSearchContextCanvas("workspace", ("series",)),
+        )
+        assert result.plan_context == "updated-plan"
+    finally:
+        native.close()
+
+
 def test_runtime_defaults_to_the_v1_transcript_contract() -> None:
     runtime = AgentRuntime(Query(), Evaluator(), Chat(), Retrieval().search)
 

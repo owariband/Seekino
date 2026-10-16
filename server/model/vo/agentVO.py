@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, model_validator
 
 from agent.chat.common.state import AnswerPhase
-from agent.chat.video_search.state import RetrievalTraceEntry
+from agent.chat.video_search.state import RetrievalTraceEntry, ToolRenderBlock
 
 from ...constants.identity import LOCAL_USER_ID
 
@@ -56,7 +56,7 @@ class AgentVideoRenderBlockView(ContractModel):
 
 
 AgentRenderBlockView = Annotated[
-    AgentMarkdownRenderBlockView | AgentVideoRenderBlockView,
+    AgentMarkdownRenderBlockView | AgentVideoRenderBlockView | ToolRenderBlock,
     Field(discriminator="type"),
 ]
 
@@ -88,6 +88,19 @@ class AgentSearchEvidenceView(SearchEvidenceFieldsView):
     retrieval_trace: list[RetrievalTraceEntry]
 
 
+class AgentAttachmentView(ContractModel):
+    media_uri: str
+    media_type: str | None = None
+    size_bytes: int | None = Field(default=None, gt=0)
+    preview_url: str | None = None
+
+
+class AgentAttachmentUploadView(AgentAttachmentView):
+    media_type: str
+    size_bytes: int = Field(gt=0)
+    preview_url: str
+
+
 class AgentMessageView(ContractModel):
     message_id: str
     conversation_id: str
@@ -99,6 +112,7 @@ class AgentMessageView(ContractModel):
     version: int = Field(gt=0)
     reference: EvidenceReference | None
     content: str | None
+    attachments: list[AgentAttachmentView] = Field(default_factory=list)
     model_name: str | None
     search_result: AgentSearchEvidenceView | None
     render_blocks: list[AgentRenderBlockView] = Field(default_factory=list)

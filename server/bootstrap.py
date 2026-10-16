@@ -38,6 +38,7 @@ from .repository.upload import UploadRepository
 from .repository.video import VideoRepository
 from .repository.video_parse import VideoParseRepository
 from .service.agent_chat import AgentChatService
+from .service.agent_attachments import AgentAttachmentService
 from .service.auth import AuthService
 from .service.job import ParseJobService
 from .service.library import LibraryService
@@ -65,6 +66,7 @@ class ApplicationServices:
     tracing: LangfuseTracing | None = None
     realtime_understanding: RealtimeUnderstandingService | None = None
     auth: AuthService | None = None
+    agent_attachments: AgentAttachmentService | None = None
     _closed: bool = field(default=False, init=False, repr=False)
 
     def start(self) -> None:
@@ -389,8 +391,12 @@ def _build_application_services(
         return read_global_agent_settings(settings.model_config_path)
 
     _, config_revision = load_agent_config()
+    agent_repository = AgentRepository(session_factory)
+    agent_attachments = AgentAttachmentService(
+        agent_repository, artifact_store, config=settings.images,
+    )
     agent = AgentChatService(
-        AgentRepository(session_factory), library, runtime,
+        agent_repository, library, runtime,
         supervisor_runtime=supervisor_runtime,
         config=settings.agent,
         config_loader=load_agent_config,
@@ -399,6 +405,7 @@ def _build_application_services(
         config_revision=config_revision,
         tracing=tracing,
         parse_usage=parse_usage,
+        attachments=agent_attachments,
     )
     construction_cleanup.callback(agent.close)
     parse_consumer = VideoParseConsumer(
@@ -421,6 +428,7 @@ def _build_application_services(
     construction_cleanup.callback(parse_consumer.close)
 
     uploads.reconcile_deletions()
+    agent_attachments.reconcile_deletions()
     return ApplicationServices(
         library=library,
         uploads=uploads,
@@ -428,6 +436,7 @@ def _build_application_services(
         media=media,
         retrieval=retrieval,
         agent=agent,
+        agent_attachments=agent_attachments,
         parse_consumer=parse_consumer,
         parse_usage=parse_usage,
         agent_model_factory=agent_model_factory,

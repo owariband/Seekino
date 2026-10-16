@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 
 import { useWorkspace } from "../../app/workspace";
 import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl } from "../../api/client";
-import type { AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference } from "../../api/contracts";
+import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference } from "../../api/contracts";
 import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
 import { Mascot } from "../../shared/Mascot";
@@ -16,6 +16,7 @@ import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { explainHit } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
+import { AGENT_ATTACHMENT_ACCEPT, useAgentAttachments } from "./useAgentAttachments";
 import styles from "./search.module.css";
 
 type MessageOptionOverrides = Omit<AgentMessageRunOptions, "topK">;
@@ -25,6 +26,21 @@ export const FOCUS_SEARCH_EVENT = "seekino:focus-search";
 
 const EXAMPLE_QUESTIONS = ["下雨天有人在门口等待的画面", "乐队第一次站上舞台演出", "两个人在天台吵架的那一段"];
 const EMBEDDED_EXAMPLE_QUESTIONS = ["刚才发生了什么？", "现在画面里的人是谁？", "前面有类似的场景吗？"];
+const toolLabels: Record<Extract<AgentRenderBlock, { type: "tool" }>["tool"], string> = {
+  search_video_graph: "查找视频资料",
+  search_web: "搜索网页资料",
+  understand_current_video: "查看当前视频",
+};
+
+function MessageAttachment({ attachment, index }: { attachment: AgentAttachmentView; index: number }) {
+  const [failed, setFailed] = useState(false);
+  const url = mediaUrl(attachment.previewUrl);
+  const label = `图片 ${index + 1}`;
+  if (!url || failed) return <span className={styles.attachmentUnavailable} role="img" aria-label={`${label}：附件暂不可用`}>{label}<small>附件暂不可用</small></span>;
+  return <a className={styles.messageAttachment} href={url} target="_blank" rel="noreferrer" aria-label={`查看${label}原图`}>
+    <img src={url} alt={label} loading="lazy" onError={() => setFailed(true)} />
+  </a>;
+}
 
 type SearchPageProps = {
   embedded?: boolean;
@@ -90,6 +106,8 @@ function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
   );
   return blocks.filter((block) => {
     if (block.type === "markdown") return Boolean(block.markdown.trim());
+    if (block.type === "tool") return typeof block.callId === "string" && Boolean(block.callId.trim()) && Object.hasOwn(toolLabels, block.tool)
+      && (block.status === "inProgress" || block.status === "completed" || block.status === "failed");
     const hit = hitsById.get(block.videoChunkId);
     return Boolean(
       hit
@@ -201,6 +219,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const scopeTouchedRef = useRef(false);
   const [query, setQuery] = useState("");
+  const draftRevisionRef = useRef(0);
   const [reference, setReference] = useState<EvidenceReference | null>(null);
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
   const [messageOptionOverrides, setMessageOptionOverrides] = useState<MessageOptionOverrides | null>(null);
@@ -216,6 +235,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string } | null>(null);
   const deleteWarningId = useId();
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const conversationPickerRef = useRef<HTMLDetailsElement>(null);
   const scopePickerRef = useRef<HTMLDetailsElement>(null);
   const answerSettingsRef = useRef<HTMLDetailsElement>(null);
@@ -241,6 +261,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     return () => window.removeEventListener(FOCUS_SEARCH_EVENT, focus);
   }, [embedded]);
   const { conversationId, messages, progress, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
+  const attachments = useAgentAttachments(conversationId);
+  const draftContextRef = useRef({ conversationId, identityKey: identityStorageKey("agent-draft") });
+  draftContextRef.current = { conversationId, identityKey: identityStorageKey("agent-draft") };
   useReportAssistantBusy(searching || messages.some((message) => message.status === "PROCESSING"));
   const pendingExampleRef = useRef(false);
   useEffect(() => {
@@ -251,7 +274,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const isSearchable = (status: string) => status === "READY";
   const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
   const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && isSearchable(item.status)));
-  const canSend = Boolean(query.trim() && !loading && !searching && conversationId && !deletedConversationIdsRef.current.has(conversationId) && scopeValid && mode === "live");
+  const canAttach = Boolean(!loading && conversationId && !deletedConversationIdsRef.current.has(conversationId) && mode === "live");
+  const canSend = Boolean(query.trim() && canAttach && !searching && scopeValid && attachments.items.every((item) => item.status === "ready"));
 
   useEffect(() => {
     if (!embedded || !initialSeriesId || scopeTouchedRef.current) return;
@@ -389,14 +413,26 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     }
     setPlaybackContextError(null);
     followThread.current = true;
-    setConversationStatus("问题已发送，正在处理");
+    setConversationStatus("正在发送问题");
     const options = displayMode === "debug" && messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
-    if (extraContext === null) void send(query, selectedSeriesIds, reference, options);
-    else void send(query, selectedSeriesIds, reference, options, extraContext);
-    setQuery("");
-    setReference(null);
+    const revision = draftRevisionRef.current;
+    const context = draftContextRef.current;
+    const submittedIds = attachments.items.map((item) => item.id);
+    void send(query, selectedSeriesIds, reference, options, extraContext, {
+      attachments: attachments.items.map((item) => ({ mediaUri: item.attachment!.mediaUri })),
+      onAccepted: () => {
+        if (draftContextRef.current.conversationId !== context.conversationId
+          || identityStorageKey("agent-draft") !== context.identityKey) return;
+        if (draftRevisionRef.current === revision) {
+          setQuery("");
+          setReference(null);
+        }
+        attachments.clear(submittedIds);
+        setConversationStatus("问题已发送，正在处理");
+      },
+    });
   };
 
   const closeConversationPicker = (restoreFocus = false) => {
@@ -630,6 +666,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 <div className={styles.examples} aria-label="试试这样问">
                   {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || !conversationId} onClick={() => {
                     pendingExampleRef.current = true;
+                    draftRevisionRef.current += 1;
                     setQuery(example);
                   }}>{example}</button>)}
                 </div>
@@ -639,6 +676,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               <article key={message.messageId} className={message.role === "USER" ? styles.userMessage : styles.agentMessage}>
                 {message.role === "USER" ? (
                   <div>
+                    {message.attachments?.length ? <div className={styles.messageAttachments} aria-label="消息图片">
+                      {message.attachments.map((attachment, index) => <MessageAttachment key={`${attachment.mediaUri}:${attachment.previewUrl}`} attachment={attachment} index={index} />)}
+                    </div> : null}
                     <p>{message.content}</p>
                     {message.seriesIds.length ? <small className={styles.messageScope}>可用视频范围：{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join("、")}</small> : null}
                   </div>
@@ -650,6 +690,14 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {displayMode === "debug" && message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : message.searchResult?.partial ? <p className={styles.resultWarnings} role="status">本次回答仅覆盖当前可检索的视频。</p> : null}
                     {messageRenderBlocks(message).map((block, index, blocks) => {
                       if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} /></SeekContext.Provider>;
+                      if (block.type === "tool") {
+                        const active = message.status === "PROCESSING" && block.status === "inProgress";
+                        const status = block.status === "completed" ? "已完成" : block.status === "failed" ? "调用失败" : active ? "进行中" : "未确认完成";
+                        return <div key={`tool:${block.callId}`} className={styles.toolCall} role="status" aria-label={toolLabels[block.tool]} data-status={block.status} data-active={active}>
+                          <div className={styles.toolCallHeading}><span>{toolLabels[block.tool]}</span><small>{status}</small></div>
+                          {displayMode === "debug" && typeof block.query === "string" && block.query.trim() ? <p>{block.tool === "search_web" ? "搜索词" : block.tool === "understand_current_video" ? "核验目标" : "检索目标"}：{block.query}</p> : null}
+                        </div>;
+                      }
                       const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
                       if (!hit) return null;
                       const explanation = explainHit(hit);
@@ -716,11 +764,32 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
           <div className={styles.composerArea}>
             <form className={styles.composer} onSubmit={submit}>
-              {reference ? <div className={styles.referenceChip}><span>已引用{referenceHit && referenceRange ? ` ${referenceHit.evidence.seriesName} · ${episodeLabel(referenceHit.evidence.episodeOrder)} · ${formatTimeRange(referenceRange.startSeconds, referenceRange.endSeconds)}` : "选中片段"}</span><button type="button" onClick={() => setReference(null)} aria-label="取消引用"><X size={13} /></button></div> : null}
+              {attachments.items.length ? <ul className={styles.draftAttachments} aria-label="待发送图片">
+                {attachments.items.map((item) => <li key={item.id} className={styles.draftAttachment}>
+                  <img src={item.previewUrl} alt={item.file.name || "待发送图片"} />
+                  <button type="button" className={styles.removeAttachment} aria-label={`移除 ${item.file.name || "图片"}`} onClick={() => {
+                    attachments.remove(item.id);
+                    composerRef.current?.focus();
+                  }}><X size={13} aria-hidden="true" /></button>
+                  <span className={styles.attachmentName} title={item.file.name}>{item.file.name || "图片"}</span>
+                  {item.status === "uploading" ? <span className={styles.attachmentStatus} role="status"><LoaderCircle size={12} className={styles.spinning} aria-hidden="true" />上传中</span>
+                    : item.status === "failed" ? <div className={styles.attachmentFailure}>
+                      <span role="alert">{item.error}</span>
+                      <button type="button" onClick={() => attachments.retry(item.id)} aria-label={`重试上传 ${item.file.name || "图片"}`}>重试</button>
+                    </div> : <span className={styles.attachmentStatus}>已上传</span>}
+                </li>)}
+              </ul> : null}
+              {reference ? <div className={styles.referenceChip}><span>已引用{referenceHit && referenceRange ? ` ${referenceHit.evidence.seriesName} · ${episodeLabel(referenceHit.evidence.episodeOrder)} · ${formatTimeRange(referenceRange.startSeconds, referenceRange.endSeconds)}` : "选中片段"}</span><button type="button" onClick={() => { draftRevisionRef.current += 1; setReference(null); }} aria-label="取消引用"><X size={13} /></button></div> : null}
               <textarea
                 ref={composerRef}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => { draftRevisionRef.current += 1; setQuery(event.target.value); }}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+                  if (!canAttach || !files.length) return;
+                  if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+                  attachments.addFiles(files);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
@@ -731,119 +800,126 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 rows={2}
                 aria-label="向 Seekino 助手提问"
               />
-              {searching ? (
-                <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? "正在停止" : "停止生成"} title={cancelling ? "正在停止" : "停止生成"}>
-                  {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
-                </button>
-              ) : (
-                <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label="发送问题">
-                  <ArrowUp size={19} aria-hidden="true" />
-                </button>
-              )}
-            </form>
-            {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
-            <div className={styles.composerToolbar}>
-              <div className={styles.composerControls}>
-                <details
-                  className={styles.scopePicker}
-                  ref={scopePickerRef}
-                  onToggle={(event) => {
-                    if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
-                  }}
-                >
-                  <summary aria-label="选择检索视频系列">{embedded && selectedSeriesIds.length === 1
-                    ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? "已选 1 个系列"
-                    : selectedSeriesIds.length ? `已选 ${selectedSeriesIds.length} 个系列` : "全部视频系列"}<ChevronDown size={13} aria-hidden="true" /></summary>
-                  <div className={styles.scopeOptions} role="group" aria-label="检索视频系列多选">
-                    <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>检索全部视频系列</button>
-                    {series.map((item) => (
-                      <label key={item.seriesId}>
-                        <input
-                          type="checkbox"
-                          checked={selectedSeriesIds.includes(item.seriesId)}
-                          disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
-                          onChange={(event) => {
-                            scopeTouchedRef.current = true;
-                            setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId));
+              <div className={styles.composerToolbar}>
+                <div className={styles.composerControls}>
+                  <button className={styles.addAttachment} type="button" disabled={!canAttach} onClick={() => attachmentInputRef.current?.click()} aria-label="添加图片" title="添加图片（也可粘贴）"><Plus size={21} aria-hidden="true" /></button>
+                  <input ref={attachmentInputRef} type="file" hidden multiple accept={AGENT_ATTACHMENT_ACCEPT} aria-label="选择聊天图片" disabled={!canAttach} onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    event.target.value = "";
+                    attachments.addFiles(files);
+                    composerRef.current?.focus();
+                  }} />
+                  <details
+                    className={styles.scopePicker}
+                    ref={scopePickerRef}
+                    onToggle={(event) => {
+                      if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
+                    }}
+                  >
+                    <summary aria-label="选择检索视频系列">{embedded && selectedSeriesIds.length === 1
+                      ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? "已选 1 个系列"
+                      : selectedSeriesIds.length ? `已选 ${selectedSeriesIds.length} 个系列` : "全部视频系列"}<ChevronDown size={13} aria-hidden="true" /></summary>
+                    <div className={styles.scopeOptions} role="group" aria-label="检索视频系列多选">
+                      <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>检索全部视频系列</button>
+                      {series.map((item) => (
+                        <label key={item.seriesId}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSeriesIds.includes(item.seriesId)}
+                            disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
+                            onChange={(event) => {
+                              scopeTouchedRef.current = true;
+                              setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId));
+                            }}
+                          />
+                          <span>{item.name}</span>
+                          <small>{isSearchable(item.status) ? `${item.readyVideoCount} 个视频可检索` : "暂不可检索"}</small>
+                        </label>
+                      ))}
+                      {!series.length ? <p>资料库还没有视频系列</p> : null}
+                    </div>
+                  </details>
+                  {displayMode === "debug" ? <details
+                    className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
+                    ref={answerSettingsRef}
+                    onToggle={(event) => {
+                      if (event.currentTarget.open) scopePickerRef.current?.removeAttribute("open");
+                    }}
+                  >
+                    <summary aria-label="配置本次回答">
+                      <SlidersHorizontal size={13} aria-hidden="true" />
+                      <span>回答设置</span>
+                      <small>{messageOptionSummary}</small>
+                      <ChevronDown size={13} aria-hidden="true" />
+                    </summary>
+                    <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label="本次回答设置">
+                      <header>
+                        <div><strong>本次回答</strong><small>自动使用全局运行限制；自定义可限制最多轮次。</small></div>
+                        <button
+                          type="button"
+                          disabled={!messageOptionConfig || !messageOptions || searching}
+                          onClick={() => {
+                            if (!messageOptionConfig) return;
+                            customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
+                            setMessageOptionOverrides({});
                           }}
-                        />
-                        <span>{item.name}</span>
-                        <small>{isSearchable(item.status) ? `${item.readyVideoCount} 个视频可检索` : "暂不可检索"}</small>
-                      </label>
-                    ))}
-                    {!series.length ? <p>资料库还没有视频系列</p> : null}
-                  </div>
-                </details>
-                {displayMode === "debug" ? <details
-                  className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
-                  ref={answerSettingsRef}
-                  onToggle={(event) => {
-                    if (event.currentTarget.open) scopePickerRef.current?.removeAttribute("open");
-                  }}
-                >
-                  <summary aria-label="配置本次回答">
-                    <SlidersHorizontal size={13} aria-hidden="true" />
-                    <span>回答设置</span>
-                    <small>{messageOptionSummary}</small>
-                    <ChevronDown size={13} aria-hidden="true" />
-                  </summary>
-                  <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label="本次回答设置">
-                    <header>
-                      <div><strong>本次回答</strong><small>自动使用全局运行限制；自定义可限制最多轮次。</small></div>
-                      <button
-                        type="button"
-                        disabled={!messageOptionConfig || !messageOptions || searching}
-                        onClick={() => {
-                          if (!messageOptionConfig) return;
-                          customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
-                          setMessageOptionOverrides({});
-                        }}
-                      >恢复默认</button>
-                    </header>
-                    {messageOptionConfig && messageOptions ? (
-                      <>
-                        <div className={styles.answerMode}>
-                          <span><strong>运行轮次</strong><small>自定义最多可设 {messageOptionConfig.maxLoopTurns.maximum} 轮</small></span>
-                          <div className={styles.answerModeChoices} role="group" aria-label="运行轮次模式">
-                            <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
-                              if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
-                              setMessageOptionOverrides((current) => {
-                                if (!current) return current;
-                                const next = { ...current };
-                                delete next.maxLoopTurns;
-                                return next;
-                              });
-                            }}>自动</button>
-                            <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
-                              setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns: customLoopTurnsRef.current }));
-                            }}>自定义</button>
+                        >恢复默认</button>
+                      </header>
+                      {messageOptionConfig && messageOptions ? (
+                        <>
+                          <div className={styles.answerMode}>
+                            <span><strong>运行轮次</strong><small>自定义最多可设 {messageOptionConfig.maxLoopTurns.maximum} 轮</small></span>
+                            <div className={styles.answerModeChoices} role="group" aria-label="运行轮次模式">
+                              <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
+                                if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
+                                setMessageOptionOverrides((current) => {
+                                  if (!current) return current;
+                                  const next = { ...current };
+                                  delete next.maxLoopTurns;
+                                  return next;
+                                });
+                              }}>自动</button>
+                              <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
+                                setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns: customLoopTurnsRef.current }));
+                              }}>自定义</button>
+                            </div>
                           </div>
-                        </div>
-                        {messageOptions.maxLoopTurns > 0 ? (
-                          <label className={styles.answerSettingRow}>
-                            <span><strong>最多轮次</strong><small>检索与核验的循环上限</small></span>
-                            <span className={styles.answerSettingValue}>{messageOptions.maxLoopTurns}</span>
-                            <input
-                              aria-label="最多运行轮次"
-                              type="range"
-                              min={messageOptionConfig.maxLoopTurns.minimum}
-                              max={messageOptionConfig.maxLoopTurns.maximum}
-                              value={messageOptions.maxLoopTurns}
-                              onChange={(event) => {
-                                const maxLoopTurns = event.currentTarget.valueAsNumber;
-                                customLoopTurnsRef.current = maxLoopTurns;
-                                setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns }));
-                              }}
-                            />
-                          </label>
-                        ) : null}
-                      </>
-                    ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? `暂时无法读取设置：${messageOptionsError}` : "正在读取服务端限制…"}</p>}
-                  </div>
-                </details> : null}
+                          {messageOptions.maxLoopTurns > 0 ? (
+                            <label className={styles.answerSettingRow}>
+                              <span><strong>最多轮次</strong><small>检索与核验的循环上限</small></span>
+                              <span className={styles.answerSettingValue}>{messageOptions.maxLoopTurns}</span>
+                              <input
+                                aria-label="最多运行轮次"
+                                type="range"
+                                min={messageOptionConfig.maxLoopTurns.minimum}
+                                max={messageOptionConfig.maxLoopTurns.maximum}
+                                value={messageOptions.maxLoopTurns}
+                                onChange={(event) => {
+                                  const maxLoopTurns = event.currentTarget.valueAsNumber;
+                                  customLoopTurnsRef.current = maxLoopTurns;
+                                  setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns }));
+                                }}
+                              />
+                            </label>
+                          ) : null}
+                        </>
+                      ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? `暂时无法读取设置：${messageOptionsError}` : "正在读取服务端限制…"}</p>}
+                    </div>
+                  </details> : null}
+                </div>
+                {searching ? (
+                  <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? "正在停止" : "停止生成"} title={cancelling ? "正在停止" : "停止生成"}>
+                    {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
+                  </button>
+                ) : (
+                  <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label="发送问题">
+                    <ArrowUp size={19} aria-hidden="true" />
+                  </button>
+                )}
               </div>
-              <span className={styles.keyboardHint}>Enter 发送 · Shift + Enter 换行</span>
-            </div>
+            </form>
+            <p className={styles.keyboardHint}>Enter 发送 · Shift + Enter 换行</p>
+            {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
             {!scopeValid ? <p className={styles.messageError} role="alert">所选视频系列暂不可检索，请重新选择范围。</p> : null}
             {embedded && initialSeriesId && !workspaceLoading && initialSeries?.status !== "READY" ? (
               <p className={styles.scopeNotice} role="status">
@@ -865,6 +941,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             </header>
             <EvidencePlayer hit={selectedHit} displayMode={displayMode} playbackRange={{ startSeconds: selectedBlock.startSeconds, endSeconds: selectedBlock.endSeconds }} />
             <button className={`button-secondary ${styles.referenceButton}`} type="button" onClick={() => {
+              draftRevisionRef.current += 1;
               setReference({ messageId: evidenceMessage.messageId, videoChunkId: selectedHit.evidence.videoChunkId });
               setSelection(null);
               composerRef.current?.focus();
