@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-10-14。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。此前补充 B07 的 Codex 原生 Refine 超时诊断及 B08 的数值编码改动；随后记录 B08 的索引版本策略、Embedding 独立存储要求与精度／差异来源的证据边界。2026-10-12 在 B07 记录 MYGO EP03 完整完成的耗时收敛里程碑，以及索引进度权重降至 5%。2026-10-14 新增 B09，记录同剧集并发完成上传时的 MySQL 死锁、锁定对象、最小修复和真实 MySQL 回归；运行服务尚未重启加载修复。新增 B10，记录解析停服交接、重试预算和恢复调度缺口及当时任务快照，并补充 DB Queue／Redis 取舍、本地 RagFlow 两条执行路径和分批修复验收。其余条目保留各自日期下的历史状态，未作为当前工作区的全量复核。
+更新日期：2026-10-17。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项日期为准，不扩展当前开发范围。10 月 16 日补充 B01 的取消与失败上抛现状、B07 的 EP04 重叠 Refine 重算、F06 的证据／封面展示，新增 B12 的 ASR 说话人归属、Refine 取帧与追踪缺口，以及 C13 的 Codex 错误通知和 Chat 计时差异。此前 B07／B08 的性能与索引、B09 的上传死锁、B10／B11 的停服恢复与阻塞执行问题保留各自日期下的证据；历史“未重启／待实施”不能直接当作当前部署状态，本文不宣称完成全仓问题的重新验收。
 
 ## frontend
 
@@ -42,11 +42,29 @@
 - 修复方向：文案准确说明定期刷新。不要为匹配文案增加当前未实现的 Workspace 级 SSE。
 - 依据：[TasksPage.tsx](../../web/src/features/tasks/TasksPage.tsx)。
 
+### F06：检索命中姓名、原始时间线与封面缺失混入最终展示
+
+- 2026-10-16 源码核对：前序 `matchedEvidence` 将 BM25 等检索来源命中转换为文本，其中大量是事件里的说话人／参与者姓名；前端曾把它们全部列成“命中的可核验事实”，没有与最终 claim 绑定。公开结果现在清空 `matchedEvidence/lexicalMatches`，页面卡片保留最终 claim；内部检索与诊断数据未删除。姓名命中可帮助定位，不等于支撑“如何相识”等具体主张。
+- Parse V2 的理解帧原本属于临时媒体，未发布到 `keyframe_uris`，因此 `playbackStatus=READY` 可以与 `thumbnail=null / keyframes=[]` 同时成立。当前列表按 Supervisor 最终片段起点用原视频生成小预览；不依赖长期图片 URI，也不要求为旧视频重跑解析才能显示封面。
+- 后端已移除“缺少带原视频时间位置的已登记关键帧”这一展示 warning；`partial` 根据检索覆盖标记和范围记录决定，不再由任意媒体 warning 推导。空图片登记不表示视频不可播或检索不完整。
+- 普通页面时间统一显示 `mm:ss`，底层播放仍保留毫秒精度。PPE／debug 的原始资料只在打开视频详情后展示，列表不再铺开整段 Timeline；Markdown 正文的 debug 文本仍可能保留细节。
+- Supervisor 的最终提交与相邻片段范围见 C12；当前工具已允许最多两个同视频、序号相邻且覆盖连续的已召回 Chunk 共同支持一个范围，保持来源 ID、版本和租户校验，不新增 HTTP VO。此处是当前源码现状，不补造所有历史消息的浏览器验收。
+
+依据：[公开检索投影](../../server/api/search.py)、[卡片与预览](../../web/src/features/search/SearchPage.tsx)、[视频详情](../../web/src/features/search/EvidencePlayer.tsx)、[时间展示](../../web/src/shared/format.ts)、[连续范围校验](../../agent/chat/video_search/output.py)。
+
 ## backend
 
 ### B01：Agent 遗留 PROCESSING 永久阻塞对话
 
-优先级：高。类型：执行生命周期和故障收尾缺失。状态：待修复。
+优先级：高。类型：执行生命周期和故障收尾缺失。状态：历史问题已具备部分退出路径；持久截止时间与跨实例过期扫描方案尚未完成。
+
+#### 2026-10-16 已实施与仍缺失的边界
+
+- 当前 Chat 已有手动停止：有效执行设置 cancellation，等待实际终态；本服务内没有执行对象的遗留消息可通过取消接口保存为 `FAILED / AGENT_CANCELLED`。既有 `FAILED` enum 直接复用，没有为取消新增数据库状态。
+- 当前配置整轮执行预算为 600 秒，超时映射 `AGENT_EXECUTION_TIMEOUT`；模型错误映射 `AGENT_MODEL_ERROR`，保存失败状态、清空 phase 并更新版本后发布终态。Codex 终止错误通知此前没有及时上抛，修复及验收见 C13。
+- 当前源码未见下述 `processingDeadlineAt` 持久字段与独立过期扫描；不能将进程内超时或手动取消说成已实现跨实例自动恢复。下文保留最初诊断和未实施方案，不表示这些字段已部署，也不表示可以自动续接旧模型执行。
+
+依据：[取消与失败收尾](../../server/service/agent_chat.py)、[持久状态](../../server/repository/agent.py)、[消息 enum](../../server/model/agent.py)、[当前配置](../../config.yaml)。
 
 #### 问题是什么
 
@@ -241,6 +259,16 @@ return completed
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
 优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：2026-10-12 已取得真实整集完成的耗时收敛里程碑；历史问题、已实施修复与仍待优化的边界按下列日期分别记录。
+
+#### 2026-10-16：EP04 已完成，但重叠 Refine 仍反复刷新快照
+
+- 隔离任务 `a94be537-6385-4ba9-b99b-ca63477f5982` 最终 `COMPLETE`，理解 24/24、Refine 22/22、索引 24/24；有效处理耗时约 14:41，起止墙钟约 14:45。语义结果并未通过说话人归属验收，详见 B12。
+- 139 个唯一完成 call ID 包含 24 ASR、24 Understanding、43 Refine、24 文本 Embedding、24 视频 Embedding；22 个滑动窗口产生 21 次输入快照刷新，与 21 次额外 Refine 调用对应。
+- 最慢窗口 `seq17` 覆盖 Chunk 17–19，`21:05:18–21:12:56 +0800`，执行日志 `elapsed_ms=457916`。同一 lease 内完成 5 次 Astra invocation，4 次因成员版本／内容指纹变化重新生成，`retry_count=0`；不是供应商错误重试，也不受 `max_retry_count=0` 自动阻止。
+- 提交快照校验是在防止旧结果覆盖，不能删除它消除表面冲突。待处理仍为共享成员的 Refine 调度／写入策略，保留不重叠并发；本轮未修此逻辑。对单次 invocation 的 timeout 也不能当作整窗口的总上限。
+- Codex 记录来自 `codex_thread_total`，包含缓存输入；不能把其累计 Token 直接当作新增付费 Token 或账单金额。
+
+依据：[本轮报告](../../outputs/verification/mygo-ep04-speaker-review-20261016/report.md)、[逐次调用与冲突](../../outputs/verification/mygo-ep04-speaker-review-20261016/latency-summary.json)、[快照校验](../../server/repository/video_parse.py)、[Refine 重算循环](../../agent/video_parse_v2/refine/agent.py)。
 
 #### 2026-10-12：整集解析耗时收敛里程碑，MYGO EP03 完整完成
 
@@ -887,6 +915,14 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 
 优先级：P2。状态：2026-10-14 源码核对与离线最小复现确认，待独立设计执行隔离；本次整理提交不扩大运行时重构范围。当前未测得真实供应商的重叠调用数量或额外费用。
 
+#### 2026-10-16：EP04 复测遇到停机后租约回收失败
+
+- B12 的第二轮复测在一次未知来源的正常停机后恢复，但 7 个 Chunk（`seq10、13–18`）以 `worker lease expired` 失败，冻结配置 `max_retry_count=0`，租约过期的失败计数耗尽可执行预算，主任务最终 `PARSING_FAILED`。这和“Provider 明确报错后重试耗尽”不同，停机造成的取消调用也不能算供应商故障。
+- 该批旧子任务保持 lease 1，未被新进程重领，与停服时 7 条“blocking work still running”撤销记录在数量和执行批次上吻合；撤销日志未带 execution ID，不能逐行直接关联。已提交 13 个 Chunk 和 8 个 Refine 保留，但未提交执行没有全部恢复。主任务 lease 2 已领取不等于所有子任务已完成交接，最终 FAILED 也不是看帧工具报错。
+- 源码链为：取消阻塞调用产生 `BlockingCallCancelled(execution_pending=True)` → Consumer `_release_cancelled()` 只在 completion 上挂延迟归还回调 → 真实阻塞线程退出后才归还租约。工作线程为 daemon，整个 API 进程退出时不能依赖其继续运行并触发回调；旧租约因此可能遗留。新进程 `reap_expired_chunks() → _reap_children() → _fail_child()` 把 retry 从 0 加到 1，因 `1 > max_retry_count=0` 置 FAILED，父任务记录 failure_status 并等待其余执行排空后失败收尾。旧任务事实与该代码链吻合；没有逐回调存活日志，不补造线程最后退出时刻。
+- 回收后 `leaseExpireTime` 被清空，采集器没有保存这 7 条子租约的中间到期快照，因此只确认走了 `worker lease expired` 路径，不声称掌握每条租约的精确到期时间。[失败子任务与源码链明细](../../outputs/verification/mygo-ep04-refine-frames-20261016/failure-details.json) 保留了各自起始和失败落库时刻。关联源码：[取消归还](../../server/mq/video_parse_consumer.py)、[阻塞线程](../../server/utils/execution.py)、[过期回收与失败计数](../../server/mq/video_parse_queue.py)。
+- 这是 B10 的计划停服次数语义和本项取消／实际退出／租约回收边界的真实反例。需在明确执行资源已退出及租约可归还的前提下，让计划停服不消耗业务失败预算，并覆盖取消期间已领取但尚未进入模型调用的任务；本轮只记录，没有扩改 Consumer／Queue。完整终态与证据见 B12。
+
 #### 问题与已确认边界
 
 - `ExecutionCalls.run()` 取消等待时，若阻塞线程仍未退出，会抛出带 `completion` 的 `BlockingCallCancelled`。它表示等待已取消，不表示底层 HTTP／SDK 调用、媒体处理或远端计算已经停止。
@@ -916,6 +952,92 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 - 验证本地子进程与受管资源已退出；对远端取消是否成功、是否继续计费单独核对供应商回执及用量，无法证明时保留未知状态，不声称 exactly-once 或零重复费用。
 
 依据：[阻塞执行与延迟清理](../../server/utils/execution.py)、[Consumer deadline 与取消交接](../../server/mq/video_parse_consumer.py)、[实时基础解析](../../server/service/realtime_understanding.py)、[重试／阶段容量／过期回收](../../server/mq/video_parse_queue.py)、[执行提交校验](../../server/repository/video_parse.py)、[媒体工作区锁](../../server/service/video_parse_media.py)。本项补充 B10 的恢复边界，不将队列中间件迁移作为前置修复。
+
+### B12：ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属
+
+优先级：高。类型：解析语义质量、证据供给与可观测性。状态：新 ASR 标签契约真实生效，但目标换人切分未通过，Canvas 逐次读写审计仍缺失。第二次整集复测遇到停机／租约恢复失败，最终 PARSING_FAILED。第三次开启 Prefix 后主解析完成，目标 Chunk 的 Prefix 也已提交，但目标仍为 `speaker=null`，未识出长崎爽世；用户随后要求停止持续追踪，未验收整轮 Prefix 最终完成情况。记录日期：2026-10-16。
+
+#### 背景与固定问题
+
+- 用户确认 MyGO 第 4 集约 `00:47–00:49` 的「祥ちゃんも悪くない／也不是小祥的错」应是 **长崎爽世** 所说。旧任务 `ac0a6822-79e1-4a23-944b-2c1090603e27` 的正式数据库却记录 `speaker=高松燈`，旧 Refine `updates=[]`。本项以用户纠正为此 case 的标准，未新增独立人工听音标注。
+- 旧 ASR `35.4–48.7s` 把爱音的前文和目标短句合并，且没有 `speaker_id`。不能把正式 Timeline 的错误姓名当作 ASR 已直接识出“灯”，错误出现在基于候选转写与画面的后续归因。
+- 用户只要求按音色区分 `speaker1/speaker2`，不要求 ASR 认识背景人物真名；编号作用域为单个输入片段，跨 Chunk 相同编号不代表同一人。真实人物匹配由理解／复核结合证据完成，不能仅凭人物背景名单强行填名。
+
+#### 已实施 ASR 契约与第一次真实复测
+
+- `15a67a0` 已接通匿名标签：候选输出 schema 要求可空 `speaker_id`；Prompt 明确同声复用编号、换人拆条、不确定留空；规范化与 `detail.evidence.asr` 保留标签。兼容历史无标签结果，不通过补一个字段伪造正确音色分组。
+- 新建独立系列 `bdbf28ae-5404-58e4-8c98-699433499ffc`（「MyGO 第4集 · ASR说话人复核」），视频 `0019c16c-a7b7-5f6c-8275-5019869c1207`；复制原背景文字与 9 张图片，只上传第四集。源 SHA256 `50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814`，时长 `1420127ms`；原 MyGO 13 集、原目标内容版本与更新时间不变。
+- 任务 `a94be537-6385-4ba9-b99b-ca63477f5982` 的 ASR 请求真实包含新 Prompt 和 schema，实际返回模型为豆包 `doubao-seed-2-0-lite-260428`；Understanding／Refine 配置 `codex_local / gpt-6-astra`。该轮删除 fallback、设置自动重试为 0，避免失败反复调用；没有将标准人物名塞入模型输入。
+
+| 环节 | 第一次真实复测结果 | 判断 |
+| --- | --- | --- |
+| 原始 ASR | `35.5–48.7s` 仍合并为 `speaker1`；`53.2–55.2s` 的「誰も悪くないんだよ」为 `speaker3` | 标签已输出，目标换人边界仍未拆出，音色分组未通过 |
+| 首次 Understanding | 目标句 `47.0–48.7s`、`speaker=null`；描述称画面仍在爱音身上，不能凭画面确定声音归属 | 避免旧版错填灯，但未识出爽世 |
+| 首窗口 Refine | 可读 `[0,3)` 三个 Chunk，输入包括后续爽世出现及「谁都没有错」；仅更新 `seq2`，没有修改 `seq0` | 不是窗口太窄；已提供文字前后文，没有完成归因修正 |
+| 最终数据库 | 目标首段仍为 v1，内容与已采集初版一致，`speaker=null` | 没有程序自动清空姓名的证据，也没有正确人物落库 |
+
+首次理解接收抽样图片、ASR 文字和背景，没有原音频；Prompt 要求缺少可靠对应时保留 `null`。这是模型输出本身，不是后端把“爽世”降级为未知。该轮 Refine 只有 `get_context_canvas / write_context_canvas` 和完成信号，纯文字复核没有按需看帧或重新听音；其提示也未明确聚焦未解决 speaker、换人边界和声音分组冲突。存在足够文字前后文不等于能够证明模型逐项核验过它。
+
+#### Chat 答对与 ASR 修复必须分开验收
+
+- 旧问题是“这里说到突然退出的人是指谁？”，锚点 `42.977s`。旧回答“丰川祥子”主结论本来正确，问题在附带声称“灯回应小祥没有错”。新系列新会话答对退出者且不再误归灯，但没有指出目标说话人，不能计为音色识人通过。
+- 独立追问“00:47 左右说‘小祥也没有错’的是谁？”未包含标准人物名，Chat 回答“应该是长崎爽世”，明确属于连续剧情推断、未经音色／口型独立确认。Query／Evaluator 各两次调用 `inspect_video_frames`，同组 4 帧为 `48.025/50.075/52.125/54.175s`，3 次命中缓存；因此不能把最终答对单独归因于 ASR。
+- 两次都是新会话，没有重放旧 EP01 多轮历史。样本只覆盖单集单句，且存在模型随机性、背景简体化和上下文差异，不据此推导 13 集总体准确率，也不以此为依据直接全量重解析。
+
+#### Trace 现状与缺口
+
+- 原始 ASR 的 request、完整 SSE、终态可恢复，目标新 call 为 `48daa7a3-59fd-4bb4-bc44-582292f72b91`；采集器实际捕获 24 个首次 v1，另存最终数据库、Refine delta、输入版本、ModelUsage 及执行计时。
+- 覆盖目标的 Refine call `4352e881-ccb0-4f97-a08d-2890eb3bbe84` 在 `21:01:19–21:02:26 +0800` 成功；模型 trace 只有 `request/completed`，没有完整 Canvas 逐次读取、写入参数及回执。只能确认没有提交目标修正，不能断言“精读后判未知”或“完全没读”；日志也不记录模型隐藏推理。
+- 待补的可观测性属于 Gateway／Canvas 调用链：关联 task、interval、lease、call 与工具输入范围、revision、结果／错误，限制输出体积并排除媒体 base64 和凭据。不能把新增抽帧起止日志描述为已补齐全部 Canvas 审计。
+
+#### Refine 通用看帧接线与第二次复测
+
+- 当前代码已新增 [通用工具](../../agent/utils/video_frames.py)，由 [Refine 宿主](../../server/service/video_parse.py) 绑定原视频、当前授权时间范围和取消／租约检查；复用既有采样、ffmpeg 抽帧、`ToolImageArtifact` 图片传输，不依赖 Chat 会话／召回状态。
+- 工具仍叫 `inspect_video_frames`，接受原视频绝对毫秒 `start_ms/end_ms` 和 `frame_count=1–4`，返回实际图片及采样位置、摘要；超出授权范围明确拒绝。临时图片编码入内存后清理，不登记长期 URI，不新增长期图片存储或数据库字段。
+- [Refine Prompt](../../agent/video_parse_v2/prompts.py) 已要求回查未知归属、换人边界和 ASR 冲突，按需看附近画面；静帧不含音频，不得声称音色确认，不确定时仍可保留 `null` 并说明限制。
+- 本地相关回归 161 项通过；同一第四集真实 ffmpeg 抽取两帧并成功编码为工具图片，0 模型调用。[抽帧记录](../../outputs/verification/refine-frame-tool-20261016/real-frame-smoke.json)。这只证明工具传输和边界，不证明 Astra 实际会调用、会修正目标，或所有回执已完整可追踪。
+- 用户已授权在该独立系列重新解析第四集。API 已重启为 PID `12172`，健康检查、Parse Consumer 和资料库就绪，无数据库迁移，也没有中断在途解析；Astra 真实小探针成功，耗时 `9.303s`。
+- `2026-10-16 22:19:51 +0800` 一次调用已有 reparse 接口，HTTP 200 创建任务 `9406af9e-4ee0-4787-bb9e-609656b19186`、解析 version 2；仍使用上面的独立 Series／Video／同一源 SHA256，未重新上传或覆盖原 MyGO。冻结配置仍为 24 个 Chunk、60s／180s、ASR Ark Lite、理解及 Refine Codex/Astra、无 fallback、`max_retry_count=0 / maxAttempts=1`。
+- 新轮身份、接口响应和源码快照保存到 [本轮身份](../../outputs/verification/mygo-ep04-refine-frames-20261016/identity.json)、[启动响应](../../outputs/verification/mygo-ep04-refine-frames-20261016/reparse-response.json)。下方记录真实终态与已提交的局部语义结果，不以接口受理、抽帧 smoke 或局部完成当作整集通过。
+
+##### 第二次复测的最终结果与中断背景
+
+- `22:23:54 +0800` API PID `12172` 进入正常停机并取消 10 个在途执行（8 Refine、2 Understanding）；`22:24:03` 新 API PID `30878` 启动，同一任务以 lease 2 接续，没有新建第三轮解析。触发该次重启的来源未知，用户也不清楚；不能把取消记录当作供应商故障，也不能把含此次中断的时长当作无中断性能 A/B。仅记录事实，不再据此推测操作者。
+- 本轮 ASR call `bbbf4393-77cf-479c-af56-4935dd5c3eb9` 出现重叠重复：`35.3–48.7s / speaker1` 长段仍含目标句，另以同音异写「咲ちゃんも、悪くない」在 `47.7–49.1s / speaker2` 再列一条；后句 `53.2–55.4s` 为 `speaker3`。不是清晰、正确的换人拆条，音色归组仍未通过。
+- 首次理解把 `47.7–49.1s` 目标句再次写成 `speaker=高松灯`，与上轮未知不同；终态首段仍为相同内容 v1，没有被 Refine 纠正。它是本轮错误归属，不能因为新增工具或实际调用图片就判为改善。
+- 首窗口 `cf247fcc-ddb5-491b-a220-72f1f867b0b2` 已确认真实执行取帧。停服前第一次请求虽然从 `47.7s` 开始，均匀采样最早落在 `49.237s`，已晚于目标句结束，不能声称拍到了说话时画面；恢复后实际又抽取 `48.050s / 48.750s` 及 `48.400s`，这次才覆盖目标发言区间。
+- `22:27:25` 捕获该窗口已提交的 delta，仅更新 `seq2`，未改目标 `seq0`；后续首段快照的增加来自 detail／索引数据变化，语义内容仍为 v1、`speaker=高松灯`。**目标时段图片已成功抽取并编码，宿主供图通路可用，该归属仍未纠正**；本轮没有保存原生图片回执，不能进一步断言模型逐帧核验并采纳了哪些内容。工具可用性与语义修正效果须分别报告。
+- 主任务于 **22:30:56.950 +0800** 进入 **PARSING_FAILED**，理解 **13/24**、Refine **8/22**、索引 **4 个 Chunk**完成；任务墙钟 **11:05.220**，API 有效执行统计 **10:54.161**，`processingTimingComplete=false`。计时账本不完整，不能把统计值当作完整连续处理时长，也不能用本轮与无中断首轮计算工具加速／减速比。API PID `30878` 在任务失败后仍健康。
+- 失败子任务为 `seq10、13–18` 共 7 个，根因均为 `worker lease expired`，与停机撤销的理解执行批次吻合。冻结 `max_retry_count=0` 使租约回收触发失败预算耗尽；主任务的 `draining after a terminal failure` 是子任务终止后收尾信息，不是供应商根因。[失败明细](../../outputs/verification/mygo-ep04-refine-frames-20261016/failure-details.json)。停机恢复的租约边界另见 B11，本轮未修代码或自动重新投递。
+- 已持久化 ModelUsage 按唯一 call ID 统计为 **62 条：52 completed、10 failed**；10 条 failed 对应停机取消，未发现应据此认定的供应商故障。另 7 个受中断的 ASR 诊断调用有 request，其中部分收到 SSE，但缺少终态用量账本，不在这 62 条中，也不能把未知用量当作 0。Refine 取帧日志为 **141 次 started／141 次 success／0 次 failed**，涉及 8 个窗口；重启和反复核验可形成重复，单凭次数不能断言死循环，也不能把工具图片成功当作人物归属正确。
+- 本轮 **未运行新的 Chat 复现**：整集没有完成，避免用未完成／混合版本数据做端到端质量结论。上轮答对的 Chat 保留为上轮证据，不追认成此次看帧接线后的结果。
+- 已核对原 MyGO 13 个视频 ID 不变且全部 COMPLETE，原任务和内容在本次测试开始后均无修改；原 EP04 目标任务、内容的版本／更新时间／正文均保持，上轮独立 parse v1 仍 COMPLETE。新失败任务的父／子／Interval lease owner 均已清空，`active_model_calls={}`，没有记录中的本地运行任务；断连旧请求的远端执行或计费无法由数据库证明停止。[保留与收尾检查](../../outputs/verification/mygo-ep04-refine-frames-20261016/original-preservation-check.json)。
+- 证据：[任务终态](../../outputs/verification/mygo-ep04-refine-frames-20261016/final-task.json)、[终态首段](../../outputs/verification/mygo-ep04-refine-frames-20261016/final-seq0.json)、[模型用量](../../outputs/verification/mygo-ep04-refine-frames-20261016/final-model-usage.json)、[取帧日志](../../outputs/verification/mygo-ep04-refine-frames-20261016/frame-inspection-events.log)、[停机明细](../../outputs/verification/mygo-ep04-refine-frames-20261016/interruption-summary.json)、[版本采集](../../outputs/verification/mygo-ep04-refine-frames-20261016/version-watch/capture-summary.json)。
+
+#### 第三次复测：开启 PrefixContextAgent，目标仍未识别，已停止持续追踪
+
+- 用户明确授权开启 PrefixContextAgent，仅对同一独立系列的第四集重解析。`2026-10-16 22:53:38 +0800` 唯一一次 reparse POST 返回 HTTP 200，创建任务 `c0c6356e-5066-4d7e-a7b3-e7aea563ccc1`、parse version **3**。Series、Video、上传会话及源 SHA256 保持上述身份；前两轮记录保留，不重新解析原 MyGO。
+- 本轮冻结配置将 `compact_enabled=true`，新增 `models.prefix_context` 绑定 `codex_local / gpt-6-astra`，纯文字、180 秒、无 fallback；Prefix 预算为 Series 摘要 8000 字符、Video 摘要 6000 字符、最多 6 次 Canvas 工具调用。ASR、理解、Refine 和 Embedding 沿用上轮配置，不把开启 Prefix 当作切换了 ASR 模型。
+- API PID 仍为 `30878`；提交前健康、无活动解析或 Chat，没有重启服务、数据库迁移或生产代码修改。该设置只冻结在本轮任务，未改默认 YAML；[只读预检](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/preflight.json)、[本轮身份](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/identity.json)、[实际提交响应](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/reparse-response.json)、[冻结配置](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/requested-parse-config.json)。
+- **首段前序摘要仍为空。** 本系列只有 EP04，没有生成或导入 EP01–03 的摘要；目标台词在 `seq0`，其前面没有本集已解析 Chunk。因此不能预期本轮 Prefix 从不存在的前序摘要直接改善目标句，不能把背景资料、后续 Refine 上下文与已生成 Prefix 混称同一输入。
+- 验收方案原定同时核对主任务终态、Prefix 真实模型调用／提交、游标推进 **24/24** 及新版本索引发布；主任务 `COMPLETE` 单独不足以证明 Prefix 链路完成。用户随后要求停止持续追踪、只检查目标 Chunk，故下方只报告已核实的目标结果与已观察状态，不补造全轮 Prefix 的最终验收。
+
+| 环节 | 本轮目标句「祥ちゃんも悪くない／也不是小祥的错」的实际结果 |
+| --- | --- |
+| 原始 ASR | `35.3–48.8s / speaker1` 长段仍合并目标句，未正确拆出换人边界；本轮没有第二轮的重复独立短句 |
+| 首次理解，内容 v1 | `47.1–48.8s / speaker=null`；描述说明画面仍是爱音，ASR 合并使画外接话者不能可靠确定。这发生在 Prefix 前，不能归为 Prefix 的改善 |
+| Refine 后，内容 v2 | 仍为 `null`；新增说明：爱音抬头后爽世出现并接着说「誰も悪くないんだよ」，上下文提示可能是来人接话，但静帧与冲突 ASR 不足以确认画外声音 |
+| Prefix 提交后 | 内容 **v2→v2**，persons、timeline 及整段正文完全不变；只写入 Series 摘要 **126** 字符、Video 摘要 **282** 字符，两类摘要继续保留目标归属未知 |
+
+- **目标人物识别未通过。** 用户要求停止追踪后的一次直接数据库查询确认，该句仍为 `speaker=null`，没有识别为用户已确认的长崎爽世。Prefix 已实际执行并提交摘要，不能解释成开关未生效；也不能把“避免错归灯”当作成功识出了爽世。[首次理解](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/first-seq0.json)、[Refine 后](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/after-refine-seq0.json)、[Prefix 输入](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/prefix-input-seq0.json)、[Prefix 后](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/prefix-after-seq0.json)、[正文差异核对](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/prefix-seq0-effect.json)。
+- 本轮明确给出的保留理由是 **ASR 合并／分组不准、画外声音缺少直接核验依据**；开启 Prefix 没有补充原音频或首段前序摘要。现有 Prefix 按游标单向处理，后续本集摘要不会自动触发首段重审。不能据此推导“有真实前序剧情摘要也无效”，该条件本轮没有测试。
+- 主解析曾于 `23:13:24 +0800` 被观察为 `COMPLETE`，理解 **24/24**、Refine **22/22**、索引 **24/24**；当时 Prefix 尚未全部完成。[主流程首次完成快照](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/main-first-complete.json)。后续 Prefix 的正文修改会使状态短暂回到 `INDEXING`，需重新发布对应内容版本，不应把主流程首次完成当作所有后台工作结束。
+- 附加质量风险：已观察的 `seq3` 中，Prefix 将 **9 条已具名对话改为 `speaker=null`**，保留台词与时间并修改描述，触发正文版本递增和重索引。这证明修改链路可用，但可能过度保守；该段未建立逐条人工标准答案，不能将修改数量计为准确率提升。[已观察的 Prefix 修改汇总](../../outputs/verification/mygo-ep04-prefix-enabled-20261016/prefix-effect-summary.json)。
+- 用户要求后已停止只读采集器，实际为 SIGINT／exit 130，没有续采；采集摘要中的默认 `max_duration` 退出标签未能区分这次人为停止，不能据此认定解析或 Prefix 超时。停止的是追踪，真实解析／Prefix 服务任务未被取消，也未追加新的 Chat 或其他模型实验。整轮后台终态、24/24 Prefix 及最终索引一致性**未继续核验**；后续诊断以现存目标阶段快照为依据，不继续后台追踪。
+
+验收分别检查：新 ASR 是否真的在换人处分条；首次与最终 Timeline 是否纠正为爽世或有依据保留未知；Refine 是否实际取得图片、提交了哪些事件；最终索引／Chat 是否使用新版本。即使 Chat 答对，也保留 ASR 和数据库未修复的判定。相邻窗口重算见 B07，不在本项顺带修改调度。
+
+依据：[第一次完整报告](../../outputs/verification/mygo-ep04-speaker-review-20261016/report.md)、[结构化对照](../../outputs/verification/mygo-ep04-speaker-review-20261016/comparison-summary.json)、[最终首段](../../outputs/verification/mygo-ep04-speaker-review-20261016/final-seq0.json)、[ASR 契约](../../engine/common/transcription.py)、[解析宿主](../../server/service/video_parse.py)、[原系列保留检查](../../outputs/verification/mygo-ep04-speaker-review-20261016/original-preservation-check.json)。
 
 ## Chat 联调问题（2026-09-21）
 
@@ -980,6 +1102,8 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 | 已有数据库升级 | init-db 有旧 Schema guard，不自动 ALTER 历史表；本地当前 Schema 已通过启动校验，但未演练带旧 timing 明细表的历史库升级 | 停止 Worker 后执行受控迁移，并在历史数据副本上核对汇总结果、Incomplete 标记与旧表清理 |
 
 ## 当前能力边界与未纳入范围
+
+以下四项保留 2026-09 的历史边界；2026-10-16 已实现的手动停止、失败上抛、最终提交及视频预览分别见 B01、C13、C12、F06，不将历史“未实现”当作当前现状。
 
 - 媒体：当前用可确认兼容的原视频跳时播放；带原视频 atMs 的关键帧、独立短 Clip 和播放转码生产链未实现。Evidence 对未知关键帧明确返回 null / [] 与限制说明。
 - Agent：模型异常或三轮审核未通过会明确失败，没有自动基础召回降级；执行恢复和跨实例 delta 回放未实现。B01 拟修复方案仅做过期失败收尾，不能描述成从上次 Turn 续跑。
@@ -1228,3 +1352,21 @@ Supervisor 可以把 Query 过宽的范围收窄，也可以在已提供的 cano
 - 保留既有超时、停止、原始证据不可改写及幂等语义。离线测试保护数据合同与传递；真实样本的选段语义质量另行验收，不能以 fake-model 测试证明真实模型一定选段正确。
 
 依据：[Supervisor](../../agent/chat/supervisor.py) 的 `search_video_graph`、Prompt 与最终内容选择；[Canvas 草稿与冻结](../../agent/chat/video_search/video_search_canvas.py)；[范围组装](../../agent/chat/video_search/output.py)；[通用检索要求](../../agent/chat/video_search/skills/retrieval/SKILL.md)；[Service 保存与 SSE](../../server/service/agent_chat.py)；[工具日志摘要](../../agent/chat/common/tool.py)；[SearchPage](../../web/src/features/search/SearchPage.tsx)；本机 `outputs/server/logs/development/api.log` 中该 Message 的 `agent_tool_started/finished`、`agent_turn_evaluated` 和完成记录。
+
+## Chat 联调问题（2026-10-16）
+
+### C13：Codex 已报告终止错误但未及时上抛，阶段累计时长也不能当墙钟
+
+优先级：高。状态：终止错误传播已在 `dd622aa` 提交并 push，API 随后重启；真实 Chat 复测已完成。耗时口径差异及跨实例遗留状态仍独立保留，不能由本项推导全部生命周期问题已解决。
+
+- 先前约 10 分钟 Chat 样本在 Codex 初始连接即收到代理 `CONNECT 403`，Query／Evaluator 和检索工具尚未开始，不能归因于召回 Chunk 太多。旧链路等待最终 turn 事件，未消费结构化终止错误；SDK 的连接重试又可持续到外层 600 秒预算。没有证据是 Astra 额度不足，也未确定代理拒绝的具体策略。
+- 修复在 Codex client 始终订阅 `ErrorNotification`，按 thread／turn 匹配保留错误；`will_retry=false` 或结构化认证 401／403 及时失败，保留可重试错误语义。关闭 `features.unbounded_connection_retries`，Agent 等待循环调用 `raise_if_failed`，关闭受管 transport 后沿既有异常链上抛，不解析任意 stderr 文本伪造终态。
+- `CodexAgentModelError → AgentModelInvocationError → AGENT_MODEL_ERROR → Repository FAILED` 沿用已有 Chat 收尾；清空 phase、递增版本并持久提交后发布失败事件。无需新增数据库 enum；若失败落库也失败，则发 `answer.interrupted` 要求读取快照，不能假装已持久失败。B01 的跨进程遗留收尾仍为另一边界。
+- 离线用真实 SDK 通知替身及 Codex Adapter／Supervisor／ChatService 验证“收到 fatal、没有最终 completed”时，在原 600 秒预算内不足 3 秒即可保存 FAILED；早到错误、其它 thread／旧 turn、503 可重试错误均有回归。实际提交树回归为后端 1808 passed / 56 skipped，前端 398 passed，typecheck／build 通过；这是前次分模块提交的验证，不是本次真实任务的调用次数。
+- 随后的 EP04 连通探针与两轮真实 Astra Chat 成功，说明当时可调用；未通过修改代理绕过控制，也不能据成功反推已定位或修复旧代理策略。
+
+**另一个可测问题是计时口径。** 第一次 EP04 复现问题的 `timing.totalDurationMs=131795`（约 02:12），但 `timing.startedAt → 持久化 updatedAt=197289ms`（约 03:17）。前者为阶段累计值，不能用于宣称用户只等待了两分钟；差额尚未逐段归因，不能直接称为模型推理。针对说话人的第二问分别为 `157659/157662ms`，两种口径约一致。后续应补齐未落入 stage 的等待与编排区间，在页面清晰区分处理统计与请求墙钟；本轮仅记录，没有修改计时实现。
+
+依据：[Codex 通知处理](../../gateway/codex/client.py)、[等待与异常上抛](../../gateway/codex/agent.py)、[Chat 失败收尾](../../server/service/agent_chat.py)、[消息终态持久化](../../server/repository/agent.py)、[两轮 Chat 与计时](../../outputs/verification/mygo-ep04-speaker-review-20261016/comparison-summary.json)、[逐工具记录](../../outputs/verification/mygo-ep04-speaker-review-20261016/chat-replay-original/tool-timeline.json)。
+
+## Chat 联调问题（2026-10-17）
