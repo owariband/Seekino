@@ -1,30 +1,33 @@
-.page { --watch-gutter: clamp(16px, 3cqw, 64px); width: 100%; max-width: none; min-height: calc(100cqh - var(--app-header-height, 76px)); padding: 0 0 64px; }
+.page { --watch-gutter: clamp(16px, 3cqw, 64px); --watch-edge-fade: 12px; width: 100%; max-width: none; min-height: calc(100cqh - var(--app-header-height, 76px)); padding: 0 0 64px; background: var(--canvas); }
 .page[data-fullscreen="true"] { height: 100cqh; overflow: hidden; padding: 0; background: #090c0b; }
-.page[data-fullscreen="true"] .layout { padding: 0; }
-.page[data-fullscreen="true"] .viewer { max-width: none; height: 100cqh; min-height: 0; }
+.page[data-fullscreen="true"] .viewer { height: 100cqh; }
 .page[data-fullscreen="true"] .watchDetails { display: none; }
 .panelToggle { display: inline-flex; width: 42px; height: 42px; align-items: center; justify-content: center; color: var(--ink-soft); border-radius: 6px; background: transparent; cursor: pointer; }
 .panelToggle:hover, .panelToggle[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
 .floatingTools { position: absolute; z-index: 10; top: 12px; left: 16px; }
 .floatingTools .panelToggle { color: #f7f8f7; background: rgb(9 12 11 / 75%); }
-.layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 76px); padding: 20px var(--watch-gutter); background: var(--stage); }
-/* Leave a strip under the player so the episode title peeks above the fold; when height-bound,
-   shrink the width to the video's 16:9 so the controls line up with the picture. */
-.viewer { --viewer-max-height: calc(100cqh - var(--app-header-height, 76px) - 40px - 76px); width: 100%; max-width: calc((var(--viewer-max-height) - 70px) * 16 / 9); min-width: 0; height: min(calc(100cqw * .5625 + 70px), var(--viewer-max-height)); min-height: 180px; margin-inline: auto; }
+.layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 76px); background: var(--stage); }
+.viewer { width: 100%; min-width: 0; aspect-ratio: 16 / 9; }
 .resizeHandle { position: absolute; z-index: 46; top: 0; left: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .resizeHandle::before { position: absolute; top: 35%; bottom: 35%; left: 4px; width: 2px; border-radius: 2px; background: var(--line-strong); content: ""; }
 .resizeHandle:hover::before, .resizeHandle:focus-visible::before { top: 25%; bottom: 25%; background: var(--teal); }
-.videoPlayer { position: relative; display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; color: #f7f8f7; border-radius: 4px; background: #101514; outline: none; }
+.videoPlayer { position: relative; display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; color: #f7f8f7; background: #101514; outline: none; }
 .videoPlayer:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .videoPlayerStage { position: relative; display: grid; width: 100%; min-height: 0; flex: 1; place-items: center; background: #090c0b; }
 .videoPlayerStage video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
-.videoPlayerCenterPlay { position: absolute; display: grid; width: 64px; height: 64px; place-items: center; padding-left: 5px; color: white; border: 1px solid rgb(255 255 255 / 44%); border-radius: 50%; background: rgb(11 20 19 / 70%); backdrop-filter: blur(8px); cursor: pointer; transition: transform 160ms ease, background 160ms ease; }
+/* The edge blend stays when controls fade out; keep it narrow for burned-in subtitles. */
+.page[data-fullscreen="false"] .videoPlayerStage::before, .page[data-fullscreen="false"] .videoPlayerStage::after { position: absolute; z-index: 1; right: 0; left: 0; pointer-events: none; content: ""; }
+.page[data-fullscreen="false"] .videoPlayerStage::before { top: 0; height: 8px; background: linear-gradient(var(--surface), transparent); }
+.page[data-fullscreen="false"] .videoPlayerStage::after { bottom: 0; height: var(--watch-edge-fade); background: linear-gradient(transparent, var(--canvas)); }
+.videoPlayerCenterPlay { position: absolute; z-index: 2; display: grid; width: 64px; height: 64px; place-items: center; padding-left: 5px; color: white; border: 1px solid rgb(255 255 255 / 44%); border-radius: 50%; background: rgb(11 20 19 / 70%); backdrop-filter: blur(8px); cursor: pointer; transition: transform 160ms ease, background 160ms ease; }
 .videoPlayerCenterPlay:hover { transform: scale(1.07); background: rgb(20 94 84 / 90%); }
-.videoPlayerControls { display: grid; gap: 4px; padding: 0 12px 6px; background: #101514; }
+.videoPlayerControls { position: absolute; z-index: 2; inset: auto 0 0; display: grid; gap: 4px; padding: 32px clamp(12px, 2cqw, 28px) 8px; background: linear-gradient(transparent, rgb(0 0 0 / 48%) 40%, rgb(0 0 0 / 80%)); opacity: 1; transition: opacity 160ms ease-out; }
+.page[data-fullscreen="false"] .videoPlayerControls { background: linear-gradient(transparent, rgb(0 0 0 / 48%) 40%, rgb(0 0 0 / 80%) calc(100% - var(--watch-edge-fade)), var(--canvas)); }
+.videoPlayer[data-controls-visible="false"] .videoPlayerControls { opacity: 0; pointer-events: none; transition-duration: 200ms; }
 .videoPlayerTimeline { width: 100%; height: 18px; margin: 0; accent-color: #89d6c8; cursor: pointer; }
 .videoPlayerTimeline:disabled { opacity: .5; cursor: wait; }
 .videoPlayerControlRow { display: flex; min-width: 0; min-height: 44px; align-items: center; gap: 4px; }
-.videoPlayerControlRow button { display: inline-flex; width: 34px; height: 34px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 0; color: #f7f8f7; border-radius: 7px; background: transparent; cursor: pointer; }
+.videoPlayerControlRow button { display: inline-flex; width: 34px; height: 34px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 0; color: inherit; border-radius: 7px; background: transparent; cursor: pointer; }
 .videoPlayerControlRow button:hover:not(:disabled), .videoPlayerControlRow select:hover { background: rgb(255 255 255 / 12%); }
 .videoPlayerControlRow button:disabled { opacity: .4; cursor: wait; }
 .videoPlayerControlRow .videoPlayerSkip { width: 56px; gap: 4px; padding: 0 7px; }
@@ -32,8 +35,9 @@
 .videoPlayerControlRow time { margin-left: 8px; color: #c6d0ce; font: .66rem/1 var(--mono); white-space: nowrap; }
 .videoPlayerControlSpacer { flex: 1; }
 .videoPlayerVolume { width: 70px; accent-color: #89d6c8; cursor: pointer; }
-.videoPlayerControlRow select { width: 57px; height: 32px; padding: 0 3px; color: #f7f8f7; border: 0; border-radius: 6px; background: #101514; cursor: pointer; font: .65rem/1 var(--mono); }
-.videoPlayerError { margin: 0; padding: 8px 16px 12px; color: #ffc5c5; background: #101514; font-size: .72rem; }
+.videoPlayerControlRow select { width: 57px; height: 32px; padding: 0 3px; color: inherit; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font: .65rem/1 var(--mono); }
+.videoPlayerControlRow option { background: #101514; }
+.videoPlayerError { position: absolute; z-index: 2; inset: 0 0 auto; margin: 0; padding: 8px 16px 12px; color: #ffc5c5; background: #101514; font-size: .72rem; }
 .videoPlayerUnavailable { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; padding: 24px; color: #dce3e1; border-radius: 14px; background: #101514; font-size: .82rem; text-align: center; }
 .pageState { display: grid; justify-items: center; gap: 14px; margin: 0; padding: 64px 24px; color: var(--ink-soft); text-align: center; }
 .unavailable { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; margin: 0; padding: 24px; color: #eee; border-radius: 12px; background: #111; font-size: .85rem; text-align: center; }
@@ -91,11 +95,27 @@
   .episodeList a { grid-template-columns: 46px minmax(0, 1fr); }
   .episodeList small { grid-column: 2; }
 }
-@media (max-width: 580px) { .layout { padding: 12px 0; } .watchSynopsis h1 { font-size: 1.15rem; } .panelToggle { width: 36px; flex-shrink: 0; } }
-@container watch-player (max-width: 580px) { .videoPlayerControls { padding: 0 8px 4px; } .videoPlayerControlRow { gap: 1px; } .videoPlayerControlRow .videoPlayerSkip { width: 34px; padding: 0; } .videoPlayerSkip small { display: none; } .videoPlayerControlRow time { margin-left: 2px; font-size: .58rem; } .videoPlayerVolume { display: none; } }
+@media (max-width: 580px) { .watchSynopsis h1 { font-size: 1.15rem; } .panelToggle { width: 36px; flex-shrink: 0; } }
+@container watch-player (max-width: 580px) { .videoPlayerControls { padding: 24px 8px 4px; } .videoPlayerControlRow { gap: 1px; } .videoPlayerControlRow .videoPlayerSkip { width: 34px; padding: 0; } .videoPlayerSkip small { display: none; } .videoPlayerControlRow time { margin-left: 2px; font-size: .58rem; } .videoPlayerVolume { display: none; } }
 
 @media (max-width: 360px) { .panelToggle { width: 32px; } }
 @container watch-player (max-width: 360px) { .videoPlayerControls { padding-inline: 6px; } .videoPlayerControlRow button, .videoPlayerControlRow .videoPlayerSkip { width: 30px; } .videoPlayerControlRow select { width: 48px; } .videoPlayerControlRow time { margin-left: 0; font-size: .55rem; } }
+
+/* Keep persistent touch controls below the picture so they do not cover subtitles. */
+@media (hover: none) {
+  .viewer { aspect-ratio: auto; }
+  .videoPlayer { height: auto; }
+  .videoPlayerStage { flex: none; aspect-ratio: 16 / 9; }
+  .videoPlayerControls { position: relative; padding-top: 0; background: #101514; }
+  .page[data-fullscreen="false"] .videoPlayerControls { color: var(--ink); background: var(--canvas); }
+  .page[data-fullscreen="false"] .videoPlayerControlRow time { color: var(--ink-soft); }
+  .page[data-fullscreen="false"] .videoPlayerControlRow button:hover:not(:disabled), .page[data-fullscreen="false"] .videoPlayerControlRow select:hover { background: var(--surface-muted); }
+  .page[data-fullscreen="false"] .videoPlayerControlRow option { background: var(--canvas); }
+  .page[data-fullscreen="false"] :is(.videoPlayerTimeline, .videoPlayerVolume) { accent-color: var(--teal); }
+  .videoPlayer[data-controls-visible="false"] .videoPlayerControls { opacity: 1; pointer-events: auto; }
+  .page[data-fullscreen="true"] .videoPlayer { height: 100%; }
+  .page[data-fullscreen="true"] .videoPlayerStage { flex: 1; aspect-ratio: auto; }
+}
 
 .home { --home-gutter: clamp(20px, 5vw, 96px); width: 100%; max-width: none; padding: 0 0 64px; }
 .hero { position: relative; isolation: isolate; display: flex; min-height: 520px; height: min(54vw, 720px); align-items: center; overflow: hidden; padding: 64px var(--home-gutter) 100px; color: #f3f8f5; background: #10251f; }
@@ -169,4 +189,4 @@
 .homeError { color: var(--red); }
 @media (max-width: 760px) { .hero { min-height: 590px; height: auto; align-items: end; padding: 230px var(--home-gutter) 70px; } .heroFrame { bottom: 130px; } .hero::before { background: linear-gradient(0deg, #10251f 12%, rgb(5 16 13 / 88%) 40%, rgb(5 16 13 / 4%) 85%); } .hero::after { height: 80px; } .heroContent { width: 100%; } .heroContent h2 { margin: 14px 0; font-size: clamp(2rem, 8vw, 3.5rem); } .heroContent > p { margin: 16px 0 22px; font-size: .85rem; -webkit-line-clamp: 2; } .heroMeta { font-size: .72rem; } .heroPlay, .heroBrowse { padding-inline: 18px; font-size: .8rem; } .heroProgress { margin-top: 22px; } }
 @media (max-width: 580px) { .homeGrid { gap: 24px; } .seriesCards { grid-auto-columns: 76%; gap: 16px; } .seriesCards strong { font-size: .9rem; } .seriesCards small { font-size: .7rem; } .homeEpisode { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; padding-inline: 8px; } .homeEpisodeNumber { font-size: .68rem; } .coverFallback { padding: 15px; gap: 12px; } }
-@media (prefers-reduced-motion: reduce) { .seriesCover, .sidePanel[data-open="false"] { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .seriesCover, .sidePanel[data-open="false"], .videoPlayerControls { transition: none; } }

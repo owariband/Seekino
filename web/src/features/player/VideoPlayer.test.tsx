@@ -51,9 +51,95 @@ beforeEach(() => {
   play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); configureDataSource(localSource); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); configureDataSource(localSource); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("VideoPlayer", () => {
+  it("hides controls five seconds after leaving the whole player and cancels hiding on return", () => {
+    vi.useFakeTimers();
+    render(<VideoPlayer video={video()} />);
+    const shell = screen.getByLabelText("视频播放器");
+    const media = screen.getByLabelText("EP 01 视频");
+    const timeline = screen.getByRole("slider", { name: "播放进度" });
+    fireEvent.pointerEnter(shell);
+    act(() => vi.advanceTimersByTime(6_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    fireEvent.pointerOut(media, { relatedTarget: timeline });
+    fireEvent.pointerOver(timeline, { relatedTarget: media });
+    act(() => vi.advanceTimersByTime(6_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+
+    fireEvent.pointerLeave(shell);
+    act(() => vi.advanceTimersByTime(4_999));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(shell).toHaveAttribute("data-controls-visible", "false");
+    fireEvent.pointerEnter(shell);
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    fireEvent.pointerLeave(shell);
+    act(() => vi.advanceTimersByTime(4_000));
+    fireEvent.pointerEnter(shell);
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+  });
+
+  it("reveals controls for keyboard focus without letting mouse focus prevent hiding", () => {
+    vi.useFakeTimers();
+    render(<VideoPlayer video={video()} />);
+    const shell = screen.getByLabelText("视频播放器");
+    const playButton = screen.getByRole("button", { name: /^播放$/ });
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "false");
+    act(() => playButton.focus());
+    act(() => vi.advanceTimersByTime(6_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    fireEvent.pointerEnter(shell);
+    fireEvent.pointerDown(playButton);
+    fireEvent.pointerUp(playButton);
+    fireEvent.pointerLeave(shell);
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(playButton).toHaveFocus();
+    expect(shell).toHaveAttribute("data-controls-visible", "false");
+    fireEvent.keyDown(playButton, { key: "Tab" });
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    act(() => playButton.blur());
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "false");
+  });
+
+  it.each(["pointerUp", "pointerCancel"] as const)("keeps controls visible during a drag outside until %s", (release) => {
+    vi.useFakeTimers();
+    render(<VideoPlayer video={video()} />);
+    const shell = screen.getByLabelText("视频播放器");
+    metadata(screen.getByLabelText<HTMLVideoElement>("EP 01 视频"));
+    const timeline = screen.getByRole("slider", { name: "播放进度" });
+    fireEvent.pointerEnter(shell);
+    fireEvent.pointerDown(timeline);
+    fireEvent.pointerLeave(shell);
+    act(() => vi.advanceTimersByTime(6_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    fireEvent[release](window);
+    act(() => vi.advanceTimersByTime(4_999));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(shell).toHaveAttribute("data-controls-visible", "false");
+  });
+
+  it("restarts the visibility delay for a new video and clears it on unmount", () => {
+    vi.useFakeTimers();
+    const view = render(<VideoPlayer video={video()} />);
+    const shell = screen.getByLabelText("视频播放器");
+    act(() => vi.advanceTimersByTime(4_000));
+    view.rerender(<VideoPlayer video={video("video-2")} />);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "true");
+    act(() => vi.advanceTimersByTime(4_000));
+    expect(shell).toHaveAttribute("data-controls-visible", "false");
+    fireEvent.pointerEnter(shell);
+    fireEvent.pointerLeave(shell);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("keeps millisecond duration and seek precision while displaying whole seconds", () => {
     const onPlaybackPositionChange = vi.fn();
     render(<VideoPlayer video={{ ...video(), durationSeconds: 8_008 }} atSeconds={3_456} onPlaybackPositionChange={onPlaybackPositionChange} />);

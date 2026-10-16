@@ -24,6 +24,7 @@ export interface VideoPlayerHandle {
 }
 
 const PROGRESS_WRITE_INTERVAL_MS = 5_000;
+const CONTROLS_HIDE_DELAY_MS = 5_000;
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function VideoPlayer(
   { video, atSeconds, fullscreen = false, onToggleFullscreen, onPlaybackPositionChange },
@@ -45,8 +46,33 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const [muted, setMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playError, setPlayError] = useState<string | null>(null);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [pointerInside, setPointerInside] = useState(false);
+  const [pointerHeld, setPointerHeld] = useState(false);
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
   const playbackUrl = video.playbackStatus === "READY" ? mediaUrl(video.playbackUrl) : null;
   const mediaKey = `${video.videoId}:${atSeconds ?? "history"}:${playbackUrl ?? "none"}`;
+
+  useEffect(() => {
+    setControlsVisible(true);
+    if (pointerInside || pointerHeld || keyboardFocus) return;
+    const timeout = window.setTimeout(() => setControlsVisible(false), CONTROLS_HIDE_DELAY_MS);
+    return () => window.clearTimeout(timeout);
+  }, [mediaKey, pointerInside, pointerHeld, keyboardFocus]);
+
+  useEffect(() => {
+    if (!pointerHeld) return;
+    // A seek or volume drag can end outside the player.
+    const release = () => setPointerHeld(false);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+      window.removeEventListener("blur", release);
+    };
+  }, [pointerHeld]);
 
   useEffect(() => {
     positionRef.current = 0;
@@ -194,7 +220,14 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   }
 
   return (
-    <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label="视频播放器">
+    <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label="视频播放器"
+      data-controls-visible={controlsVisible}
+      onPointerEnter={() => setPointerInside(true)}
+      onPointerLeave={() => setPointerInside(false)}
+      onPointerDownCapture={() => { setKeyboardFocus(false); setPointerHeld(true); }}
+      onKeyDownCapture={() => setKeyboardFocus(true)}
+      onFocusCapture={(event) => { if (event.target.matches(":focus-visible")) setKeyboardFocus(true); }}
+      onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false); }}>
       <div className={styles.videoPlayerStage}>
         <video
           key={mediaKey}
