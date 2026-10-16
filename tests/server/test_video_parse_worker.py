@@ -1138,7 +1138,9 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
             assert adapter.options["reasoning_effort"] == "none"
         requests.append((adapter.name, list(request_inputs), options))
         tools = {tool.name: tool for tool in options["tools"]}
-        assert set(tools) == {"get_context_canvas", "write_context_canvas"}
+        assert set(tools) == {"get_context_canvas", "write_context_canvas"} | (
+            {"inspect_video_frames"} if len(requests) > 1 else set()
+        )
         evidence = json.loads(tools["get_context_canvas"].invoke({
             "collection": "evidence", "reference": "member", "section": "asr",
         }))
@@ -1217,8 +1219,16 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
     refine_canvas = ParseContextCanvas(scope="refine:interval", evidence=evidence, members={
         "member": {"sequence_no": 2, "version": 1, "bounds": (20_000, 30_000), "content": result},
     })
+    runtime._repository = SimpleNamespace(load_task_input=lambda _task: SimpleNamespace(
+        series_id="series", task=SimpleNamespace(video_id="video"), duration_seconds=30_000,
+        original_source_uri=str(tmp_path / "source.mp4"), content_hash="source-hash",
+    ))
+    runtime._artifact_store = _ArtifactResolver()
+    monkeypatch.setattr(runtime, "_require_interval_token", lambda *_args, **_kwargs: object())
     assert asyncio.run(runtime.generate_interval_refinement(
-        {"inputs": inputs}, prompt="refine this interval", canvas=refine_canvas,
+        {"inputs": inputs, "video_parse_task_id": "video-task", "interval_parse_task_id": "interval",
+         "lease": execution.lease, "member_bounds": {"member": (20_000, 30_000)}},
+        prompt="refine this interval", canvas=refine_canvas,
     )).complete
     assert [request[0] for request in requests] == [
         "understanding-model", "refine-model" if explicit_refine else "understanding-model",
@@ -1425,7 +1435,7 @@ def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch
     config = default_video_parse_v2_config()
     config = config.model_copy(update={"models": config.models.model_copy(update={
         "understanding": config.models.understanding.model_copy(update={
-            "max_output_tokens": 65536, "reasoning_effort": "none",
+            "max_output_tokens": 65536, "reasoning_effort": "none", "supports_vision_input": False,
         }),
     })})
     assert config.models.refine is None

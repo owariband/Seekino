@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from agent.video_parse_v2 import ParseAgent
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.tool import as_langchain_tools
+from agent.utils.video_frames import build_inspect_video_frames_tool
 from agent.video_parse_v2.timelineEvent_canvas import (
     CanvasCompletion, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
 )
@@ -60,7 +61,7 @@ from engine.rag import (
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
 from gateway.embedding import EmbeddingModel
 from gateway.model_factory import GatewayClient
-from gateway.multimodal import ImageInput, TextInput, VideoInput
+from gateway.multimodal import ImageInput, TextInput, VideoInput, adapter_capabilities
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
@@ -666,10 +667,44 @@ class VideoParseRuntimeService:
             snapshot["inputs"].parse_config.models.refine
             or snapshot["inputs"].parse_config.models.understanding
         )
+        tools = self._canvas_tools(canvas)
+        route = [binding]
+        if binding.fallback is not None:
+            route.append(binding.fallback)
+        if all(model.supports_vision_input is not False
+               and adapter_capabilities(self._gateway_config.source(model.source).adapter).visual_input_mode is not None
+               for model in route):
+            lease = self._require_interval_token(
+                snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING",
+            )
+            source = await asyncio.to_thread(
+                self._repository.load_task_input, snapshot["video_parse_task_id"],
+            )
+            if (source.series_id != snapshot["inputs"].series_id
+                    or source.task.video_id != snapshot["inputs"].video_id):
+                raise VideoParseLeaseLostError("Refine source does not match the bound task")
+            bounds = (min(value[0] for value in snapshot["member_bounds"].values()),
+                      max(value[1] for value in snapshot["member_bounds"].values()))
+            if not 0 <= bounds[0] < bounds[1] <= source.duration_seconds:
+                raise ValueError("Refine frame scope exceeds its source video")
+            manager = self._model_manager.get()
+            tools.extend(as_langchain_tools([build_inspect_video_frames_tool(
+                source_path=self._artifact_store.resolve(source.original_source_uri),
+                read_bounds=bounds, max_height=snapshot["inputs"].parse_config.visual_input.max_height,
+                timeout_seconds=binding.request_timeout_seconds,
+                check_control=manager.check_active if manager is not None else lambda: self._require_interval_active(lease),
+                trace_context={"video_parse_task_id": snapshot["video_parse_task_id"],
+                               "interval_parse_task_id": snapshot["interval_parse_task_id"],
+                               "video_id": snapshot["inputs"].video_id, "content_hash": source.content_hash},
+            )]))
+            fallback = binding.fallback
+            if fallback is not None:
+                fallback = fallback.model_copy(update={"supports_vision_input": True})
+            binding = binding.model_copy(update={"supports_vision_input": True, "fallback": fallback})
         return await self._generate_text_structured(
             binding,
             prompt,
-            tools=self._canvas_tools(canvas), canvas=canvas,
+            tools=tools, canvas=canvas,
             result_type=CanvasCompletion,
             max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
             tool_harness="deepagents",
