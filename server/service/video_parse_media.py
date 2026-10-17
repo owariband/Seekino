@@ -77,6 +77,34 @@ class VideoParseMediaService:
         self._clock = clock
 
     @contextmanager
+    def prepare_speaker_audio(
+        self,
+        identity: MediaLeaseIdentity,
+        *,
+        source_video: str | Path,
+        start_ms: int,
+        end_ms: int,
+        check_active: Callable[[], None],
+    ) -> Iterator[Path]:
+        """Decode original audio directly; the caller owns the execution lifetime."""
+        source = Path(source_video).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        if type(start_ms) is not int or type(end_ms) is not int or not 0 <= start_ms < end_ms:
+            raise ValueError("Speaker audio bounds must be increasing integer milliseconds")
+        with self._workspace(identity) as directory:
+            check_active()
+            audio = directory / "speaker.wav"
+            self._execute([
+                self._ffmpeg_bin, "-v", "error", "-ss", f"{start_ms / 1000:.3f}",
+                "-i", str(source), "-t", f"{(end_ms - start_ms) / 1000:.3f}",
+                "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "pcm_s16le", "-y", str(audio),
+            ], audio)
+            check_active()
+            yield audio
+
+    @contextmanager
     def prepare_video_segment(
         self,
         identity: MediaLeaseIdentity,

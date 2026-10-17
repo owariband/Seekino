@@ -56,6 +56,7 @@ from ..model.video import (
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from .index_sync import refresh_series_statuses
 from .video_parse import (
+    _VOICEPRINT_PREPARATION_KEY,
     VideoParseConflictError,
     invalidate_series_prefixes_from,
 )
@@ -391,6 +392,11 @@ class UploadRepository:
             runtime = dict(detail.get(RUNTIME_DETAIL_KEY) or {})
             if not prepared:
                 runtime.pop(PREPARE_FAILURES_KEY, None)
+            # Voice preparation happens after topology preparation, inside PARSING.
+            phase = dict(runtime.get(_VOICEPRINT_PREPARATION_KEY) or {})
+            if phase:
+                phase.update({"failures": 0, "active": False})
+                runtime[_VOICEPRINT_PREPARATION_KEY] = phase
             runtime.pop("failure_status", None)
             if actor_user_id is None:
                 runtime.pop("actor_user_id", None)

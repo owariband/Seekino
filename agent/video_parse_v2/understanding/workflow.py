@@ -32,7 +32,7 @@ class ChunkUnderstandingWorkflow:
         builder.add_edge("notify", END)
         self._graph = builder.compile()
 
-    async def run(self, chunk_parse_task_id: str) -> None:
+    async def InvokeUnderstanding(self, chunk_parse_task_id: str) -> None:
         """Run an already claimed task and always release its temporary media."""
 
         execution = await self._runtime.load_chunk_execution(chunk_parse_task_id)

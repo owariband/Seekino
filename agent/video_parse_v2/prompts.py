@@ -9,6 +9,7 @@ from agent.common.chunk_understanding import (
     build_understanding_prompt as build_chunk_understanding_prompt,
 )
 from engine.parsev2.observations import ASRResult, OCRResult
+from agent.utils.context_canvas import ContextCanvas
 
 from .state import ChunkExecution
 from .timelineEvent_canvas import ParseContextCanvas
@@ -132,8 +133,24 @@ def build_refine_prompt(
         "Resolve names, references and cross-boundary events only from supplied evidence. Missing original observations are unavailable evidence, not permission to invent them.",
         "Review unresolved speakers, apparent speaker changes and conflicts between ASR voice groups and surrounding events. When inspect_video_frames is available, use it to examine relevant source frames; narrow start_ms/end_ms and choose frame_count=1–4 inside its authorized range.",
         "Frame observations can support visual identity and conversational context, but contain no audio. Do not claim voice confirmation from still images or force an uncertain speaker into a named person. Correct attribution only when the supplied evidence supports it; otherwise retain null and explain the remaining uncertainty in the event description.",
+        "When compare_speaker is available, call it for unresolved dialogue or a named speaker whose attribution conflicts with other evidence. Use the exact target utterance's start_ms/end_ms; narrow merged speech where evidence establishes the boundary. Compare its candidate similarities, margin, reference identity evidence and source/duration quality. Cosine similarity is not a probability: 0.8 does not mean 80% certainty. No reference, close candidates or weak evidence may leave speaker=null. Write any supported correction through write_context_canvas.",
         "After reviewing the relevant members, call the CanvasCompletion tool with {\"complete\":true}. The program assembles the result from Canvas; do not return the completion receipt or events as prose or JSON in your final text.",
         canvas.checkpoint(),
+    ))
+
+
+def build_voiceprint_prompt(*, max_tool_calls: int, canvas: ContextCanvas) -> str:
+    return "\n".join((
+        "Prepare voice references for the bound video's fixed source snapshot. Do not edit timelineEvent.",
+        "First call get_speaker_list for the program-derived names, source chunks and coverage requirement.",
+        "Use get_context_canvas to read sources, member events, ASR/OCR and background. Collections are read-only. Read catalogs without reference, then a reference's value section; use cursor or start/end ranges for bounded reads.",
+        "Choose clean single-speaker speech whose character identity is supported by the existing evidence. A non-null speaker or your own high confidence alone is not independent confirmation. Still frames, dialogue wording and nearby names cannot establish matching voice timbre; the first named anchor still requires credible identity evidence.",
+        "Call register_voiceprint with an issued source_ref, speaker, precise start_ms/end_ms and selection_basis. Times are absolute source-video integer milliseconds; do not multiply or divide legacy start_seconds/end_seconds values by 1000. Shorten a mixed ASR segment to the evidenced single-speaker subrange. Never supply a local path, temporary URI or invented embedding.",
+        "Different aliases are deliberately not automatically merged in this version. Prefer the exact name returned by get_speaker_list and spend evidence on useful characters rather than uncertain NPCs.",
+        "Coverage counts distinct required speakers with valid references, not registration calls or duplicate clips. The registered count must be strictly greater than half the fixed speaker list. An empty speaker list can finish with zero references; otherwise missing evidence cannot bypass the required majority.",
+        "Call finish_voiceprint_preparation with complete=true and optional skip_reasons. If it reports missing coverage, continue within budget. Only a successful host commit makes ready=true; final prose or a completion receipt alone cannot finish preparation.",
+        f"This execution permits at most {max_tool_calls} Tool calls. After successful preparation, return only {{\"complete\":true}}.",
+        "Canvas navigation: " + json.dumps(canvas.checkpoint(), ensure_ascii=False),
     ))
 
 

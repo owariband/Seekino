@@ -12,6 +12,7 @@ from .state import (
 )
 from .state import RunState
 from .prepare import VideoParsePrepare
+from .voiceprint import VoiceprintAgent
 
 
 class ParseAgent:
@@ -33,6 +34,7 @@ class ParseAgent:
             runtime=self.runtime,
         )
         self.scheduler = ChunkScheduler(runtime=self.runtime)
+        self.voiceprint_agent = VoiceprintAgent(runtime=self.runtime)
         self.prepare = VideoParsePrepare(
             runtime=self.runtime,
         )
@@ -41,6 +43,7 @@ class ParseAgent:
         builder.add_node("load", self._load)
         builder.add_node("prepare", self.prepare.run)
         builder.add_node("schedule_chunks", self.scheduler.run)
+        builder.add_node("voiceprint", self._prepare_voiceprint)
         builder.add_node("wait_for_completion", self._wait_for_completion)
         builder.add_edge(START, "load")
         builder.add_conditional_edges(
@@ -54,16 +57,24 @@ class ParseAgent:
             },
         )
         builder.add_edge("prepare", "schedule_chunks")
-        builder.add_edge("schedule_chunks", "wait_for_completion")
+        builder.add_edge("schedule_chunks", "voiceprint")
+        builder.add_edge("voiceprint", "wait_for_completion")
         builder.add_edge("wait_for_completion", END)
         self._graph = builder.compile()
 
-    async def run(self, video_parse_task_id: str) -> RunState:
+    async def InvokeVideoParse(self, video_parse_task_id: str) -> RunState:
         """Run or resume an existing task without replaying committed stages."""
 
         return await self._graph.ainvoke({
             "video_parse_task_id": video_parse_task_id,
         })
+
+    async def _prepare_voiceprint(self, state: RunState) -> RunState:
+        if state["inputs"].parse_config.voiceprint is not None:
+            await self.voiceprint_agent.InvokeVoiceprint(
+                state["video_parse_task_id"], state["lease"],
+            )
+        return state
 
     async def _load(self, state: RunState) -> RunState:
         snapshot = await self.runtime.load_video_run(state["video_parse_task_id"])

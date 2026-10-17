@@ -234,7 +234,7 @@ def test_conflict_refreshes_only_refinement_and_retains_intervening_events():
         commit_interval_refinement=AsyncMock(side_effect=[False, True]), notify_interval_committed=AsyncMock(),
         transcribe_chunk=AsyncMock(), understand_chunk=AsyncMock(),
     )
-    asyncio.run(IntervalRefine(runtime=runtime).run("interval"))
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("interval"))
     assert runtime.generate_interval_refinement.await_count == 2
     assert len(runtime.commit_interval_refinement.await_args.args[1].updates[0].timeline) == 2
     runtime.transcribe_chunk.assert_not_awaited()
@@ -311,7 +311,7 @@ def test_refine_batches_original_event_details_and_commits_once(correct_events):
         generate_interval_refinement=AsyncMock(side_effect=fake_provider),
         commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
     )
-    asyncio.run(IntervalRefine(runtime=runtime).run("interval"))
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("interval"))
     runtime.generate_interval_refinement.assert_awaited_once()
     runtime.commit_interval_refinement.assert_awaited_once()
     runtime.notify_interval_committed.assert_awaited_once()

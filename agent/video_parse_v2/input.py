@@ -30,6 +30,11 @@ class PrefixContextConfig(_InputModel):
     max_tool_calls: int = Field(ge=0)
 
 
+class VoiceprintConfig(_InputModel):
+    max_tool_calls: int = Field(gt=0)
+    execution_timeout_seconds: float = Field(gt=0)
+
+
 class _ModelPolicy(_InputModel):
     """Optional controls keep historical snapshots readable without rewriting them."""
 
@@ -82,6 +87,12 @@ class EmbeddingModelConfig(_InputModel):
     request_timeout_seconds: float = Field(gt=0)
 
 
+class SpeakerEmbeddingModelConfig(_InputModel):
+    source: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    request_timeout_seconds: float = Field(gt=0)
+
+
 class ModelSnapshot(_InputModel):
     """Effective model selection persisted with the task, without credentials."""
 
@@ -90,7 +101,17 @@ class ModelSnapshot(_InputModel):
     refine: GenerativeModelConfig | None = None
     ocr: GenerativeModelConfig | None = None
     prefix_context: GenerativeModelConfig | None = None
+    voiceprint: GenerativeModelConfig | None = None
+    speaker_embedding: SpeakerEmbeddingModelConfig | None = None
     embedding: EmbeddingModelConfig
+
+    @model_serializer(mode="wrap")
+    def serialize_models(self, handler):
+        values = handler(self)
+        for name in ("voiceprint", "speaker_embedding"):
+            if getattr(self, name) is None:
+                values.pop(name, None)
+        return values
 
 
 class ExecutionConfig(_InputModel):
@@ -142,8 +163,16 @@ class ParseConfig(_InputModel):
     understanding_enabled: bool = True
     compact_enabled: bool = False
     prefix_context: PrefixContextConfig | None = None
+    voiceprint: VoiceprintConfig | None = None
     execution: ExecutionConfig
     indexing: IndexingConfig
+
+    @model_serializer(mode="wrap")
+    def serialize_config(self, handler):
+        values = handler(self)
+        if self.voiceprint is None:
+            values.pop("voiceprint", None)
+        return values
 
     @model_validator(mode="after")
     def validate_config_limits(self) -> ParseConfig:
@@ -165,6 +194,12 @@ class ParseConfig(_InputModel):
         if self.compact_enabled and self.models.prefix_context is None:
             raise ValueError(
                 "models.prefix_context is required when compact_enabled is true"
+            )
+        if self.voiceprint is not None and (
+            self.models.voiceprint is None or self.models.speaker_embedding is None
+        ):
+            raise ValueError(
+                "models.voiceprint and models.speaker_embedding are required when voiceprint is enabled"
             )
         return self
 

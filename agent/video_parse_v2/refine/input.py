@@ -27,3 +27,4 @@ class RefineInput(TypedDict):
     background: NotRequired[dict[str, Any]]
     member_fingerprints: NotRequired[dict[str, str]]
     write_bounds: NotRequired[tuple[int, int]]
+    voiceprint_references: NotRequired[list[dict[str, Any]]]

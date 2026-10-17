@@ -43,6 +43,7 @@ from ..repository.video_parse import (
     _error_detail,
     _execution_config,
     _latest_video_task_id,
+    _record_voiceprint_failure,
     _submitted_intervals_by_member,
     _video_failure_status,
 )
@@ -295,7 +296,10 @@ class MySqlVideoParseQueue:
                 parent = session.scalar(select(VideoParseTask).where(
                     VideoParseTask.id == parent_id,
                 ).with_for_update(skip_locked=True))
-                if not _eligible_parent(parent) or not _phase_capacity(session, parent, "refine"):
+                if (not _eligible_parent(parent)
+                    or parent.parse_config.get("voiceprint") is not None
+                    and dict((parent.detail or {}).get("voiceprint") or {}).get("ready") is not True
+                    or not _phase_capacity(session, parent, "refine")):
                     continue
                 candidates = list(session.scalars(select(IntervalParseTask).where(
                     IntervalParseTask.video_task_id == parent.id,
@@ -606,6 +610,12 @@ class MySqlVideoParseQueue:
                     execution["retry_initial_delay_seconds"], execution["retry_max_delay_seconds"],
                     failures,
                 )
+            elif task.status == "PARSING":
+                # An error loading/binding the snapshot can roll back the active
+                # marker itself. Real coordinator failures still have a finite budget.
+                _voiceprint_failures, exhausted = _record_voiceprint_failure(task, failed_at, pending_failure=True)
+                if _voiceprint_failures is not None:
+                    retry_at = task.next_execute_time
             task.next_execute_time = retry_at
             task.lease_owner = None
             task.lease_expire_time = None
@@ -655,7 +665,7 @@ class MySqlVideoParseQueue:
             return True
 
     def release_execution(self, lease, *, now: datetime | None = None) -> bool:
-        """Return stopped local work without charging a business failure."""
+        """Return stopped work; unfinished voice execution retains its failure outcome."""
         released_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             parent = session.scalar(select(VideoParseTask).where(
@@ -663,13 +673,18 @@ class MySqlVideoParseQueue:
             ).with_for_update())
             if parent is None or parent.is_deleted:
                 return False
+            exhausted = False
             if isinstance(lease, VideoParseLease):
                 if parent.lease_owner != lease.worker_id or parent.lease_version != lease.lease_version:
                     return False
+                _failures, exhausted = _record_voiceprint_failure(parent, released_at)
+                if _failures is not None:
+                    parent.last_error = _error_detail("Voiceprint preparation execution interrupted before release")
                 parent.lease_owner = None
                 parent.lease_expire_time = None
                 parent.heartbeat_time = None
-                parent.next_execute_time = released_at
+                if _failures is None:
+                    parent.next_execute_time = released_at
             else:
                 model = ChunkParseTask if isinstance(lease, ChunkParseLease) else IntervalParseTask
                 task_id = lease.chunk_parse_task_id if isinstance(lease, ChunkParseLease) else lease.interval_parse_task_id
@@ -681,7 +696,10 @@ class MySqlVideoParseQueue:
                 child.lease_expire_time = None
                 child.next_execute_time = released_at
                 child.update_time = datetime_to_unix_time_ms(released_at)
-            _aggregate_released_video(session, parent, released_at)
+            _aggregate_released_video(
+                session, parent, released_at,
+                failure_status="PARSING_FAILED" if exhausted else None,
+            )
             return True
 
     def reap_expired(
@@ -741,14 +759,21 @@ class MySqlVideoParseQueue:
                 ).with_for_update(skip_locked=True))
                 if task is None:
                     continue
-                # A coordinator's disappearance is not a failed Prepare attempt.
-                task.next_execute_time = reaped_at
+                # Waiting coordinators are free to resume; interrupted voice preparation
+                # spends the same finite failure budget as an explicit execution error.
+                failures, exhausted = _record_voiceprint_failure(task, reaped_at)
+                if failures is None:
+                    task.next_execute_time = reaped_at
+                else:
+                    task.last_error = _error_detail("Voiceprint preparation coordinator lease expired")
                 task.lease_owner = None
                 task.lease_expire_time = None
                 task.heartbeat_time = None
                 task.processing_timing_complete = False
                 task.update_time = datetime_to_unix_time_ms(reaped_at)
-                _aggregate_released_video(session, task, reaped_at)
+                _aggregate_released_video(
+                    session, task, reaped_at, failure_status="PARSING_FAILED" if exhausted else None,
+                )
                 changed += 1
         return changed
 

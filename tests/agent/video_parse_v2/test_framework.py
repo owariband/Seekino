@@ -161,7 +161,7 @@ def test_main_graph_prepares_fixed_topology_then_completes() -> None:
             calls.append(("advance", lease.version))
             return VideoTaskStatus.COMPLETE
 
-    state = asyncio.run(ParseAgent(runtime=Runtime()).run("video-task-1"))
+    state = asyncio.run(ParseAgent(runtime=Runtime()).InvokeVideoParse("video-task-1"))
     assert state["status"] == VideoTaskStatus.COMPLETE
     assert state["video_chunks"] == chunks
     assert calls[0] == "load"
@@ -181,7 +181,7 @@ def test_index_only_resume_never_prepares_or_schedules_chunks() -> None:
         ensure_video_chunks=AsyncMock(side_effect=AssertionError("must not prepare")),
         load_chunk_schedule=AsyncMock(side_effect=AssertionError("must not parse")),
     )
-    state = asyncio.run(ParseAgent(runtime=runtime).run("video-task-1"))
+    state = asyncio.run(ParseAgent(runtime=runtime).InvokeVideoParse("video-task-1"))
     assert state["status"] == VideoTaskStatus.COMPLETE
     runtime.advance_video_task.assert_awaited_once()
     runtime.ensure_video_chunks.assert_not_awaited()
@@ -302,7 +302,7 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             calls.append("cleanup")
 
     runtime = Runtime()
-    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).run(
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(
         task_id
     ))
     assert calls[-3:] == ["commit", "notify", "cleanup"]
@@ -338,7 +338,7 @@ def test_chunk_workflow_builds_engine_events_without_understanding(
         notify_chunk_committed=AsyncMock(),
         cleanup_chunk_execution=AsyncMock(),
     )
-    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).run(task_id))
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(task_id))
     result = runtime.commit_chunk_result.await_args.args[1]
     assert result.persons == []
     assert [event.description for event in result.timeline] == (
@@ -373,7 +373,7 @@ def test_chunk_workflow_failure_never_notifies_and_always_cleans_media(failure) 
         cleanup_chunk_execution=AsyncMock(),
     )
     with pytest.raises(ValueError if failure == "validation" else RuntimeError):
-        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).run("chunk-task-0"))
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding("chunk-task-0"))
     assert runtime.commit_chunk_result.await_count == int(failure == "commit")
     runtime.notify_chunk_committed.assert_not_awaited()
     runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
@@ -464,7 +464,7 @@ def test_chunk_preparation_failure_finishes_both_branches_before_cleanup(failure
             cleanup_chunk_execution=AsyncMock(side_effect=cleanup),
         )
         task = asyncio.create_task(
-            ChunkUnderstandingWorkflow(runtime=runtime).run("chunk-task-0")
+            ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding("chunk-task-0")
         )
         await asyncio.wait_for(asyncio.gather(
             visual_started.wait(), asr_started.wait(),
@@ -515,7 +515,7 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
         commit_interval_refinement=AsyncMock(),
         notify_interval_committed=AsyncMock(),
     )
-    asyncio.run(IntervalRefine(runtime=runtime).run("interval-1"))
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("interval-1"))
 
     prompt = runtime.generate_interval_refinement.await_args.kwargs["prompt"]
     assert '"scope": [0, 1]' in prompt
@@ -557,7 +557,7 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
     )
     asyncio.run(PrefixContextAgent(
         runtime=runtime,
-    ).run("chunk-task-0"))
+    ).InvokePrefix("chunk-task-0"))
     runtime.generate_prefix_refinement.assert_not_awaited()
 
     enabled = {**disabled, "inputs": _inputs(compact_enabled=True)}
@@ -576,7 +576,7 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
     )
     asyncio.run(PrefixContextAgent(
         runtime=runtime,
-    ).run("chunk-task-0"))
+    ).InvokePrefix("chunk-task-0"))
     committed = runtime.commit_prefix_refinement.await_args.args[1]
     assert committed.update is not None
     assert committed.update.sequence_no == 0

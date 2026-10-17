@@ -1425,6 +1425,739 @@ def test_frozen_codex_visual_model_uses_gateway_native_harness(monkeypatch, tmp_
     runtime._gateway.close()
 
 
+@pytest.fixture
+def voiceprint_host(monkeypatch, tmp_path):
+    import wave
+
+    from agent.utils.context_canvas import ContextCanvas
+    from gateway.speaker_embedding import SpeakerEmbeddingResult
+    from server.utils.execution import ExecutionCalls, execution_calls
+    from server.service.video_parse_model_calls import VideoParseModelCallManager
+
+    values = default_video_parse_v2_config().model_dump(mode="json")
+    values["voiceprint"] = {"max_tool_calls": 12, "execution_timeout_seconds": 2.0}
+    values["models"]["voiceprint"] = {
+        "source": "ark_default", "model": "voice-selector", "request_timeout_seconds": 2.0,
+        "supports_vision_input": False,
+    }
+    values["models"]["speaker_embedding"] = {
+        "source": "speaker_cpu", "model": "campplus", "request_timeout_seconds": 2.0,
+    }
+    values["models"]["understanding"]["supports_vision_input"] = False
+    inputs = ParseInput.model_validate({"series_id": "series", "video_id": "video", "parse_config": values})
+    lease = VideoParseLease(str(uuid4()), "video", "worker", 2, datetime.now(UTC), 1, 3, values)
+    original = tmp_path / "original.mp4"
+    original.write_bytes(b"original video")
+    state = SimpleNamespace(
+        commands=[], audio_paths=[], registrations=[], notifications=[], stages=[], checks=[],
+        closed=False, ready=False, coverage=False, calls=ExecutionCalls(),
+    )
+
+    def write_audio(command):
+        state.commands.append(command)
+        path = Path(command[-1])
+        state.audio_paths.append(path)
+        with wave.open(str(path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b"\x01\x00" * 27200)
+
+    class Encoder:
+        model_name = "iic/speech_campplus_sv_zh-cn_16k-common"
+        encoder_revision = "v1.0.0"
+
+        def embed_audio(self, path):
+            assert Path(path).is_file()
+            return SpeakerEmbeddingResult(
+                model=self.model_name, encoder_revision=self.encoder_revision,
+                vector=[1.0] + [0.0] * 191, duration_ms=1700,
+            )
+
+        def close(self):
+            state.closed = True
+
+    encoder = Encoder()
+    source = SimpleNamespace(
+        duration_seconds=60_000, original_source_uri="artifact://original", series_id="series",
+        task=SimpleNamespace(video_id="video", detail={"voiceprint": {"ready": False}}),
+    )
+
+    def register(_lease, **arguments):
+        assert _lease is lease
+        state.registrations.append(arguments)
+        return {"registered": True, "reference": arguments}
+
+    def finish(_lease, **arguments):
+        assert _lease is lease
+        state.ready = state.coverage
+        source.task.detail["voiceprint"]["ready"] = state.ready
+        return {"ready": state.ready, "missing_speakers": [] if state.ready else ["燈"],
+                "registered_speaker_count": 2 if state.ready else 1, "minimum_speaker_count": 2}
+
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._repository = SimpleNamespace(
+        load_task_input=lambda _task: source,
+        register_voiceprint=register, finish_voiceprint_preparation=finish,
+        get_voiceprint_speaker_list=lambda _lease: {"speaker_list": [{"speaker": "爽世", "chunk_ids": ["chunk-0"]}]},
+    )
+    runtime._artifact_store = SimpleNamespace(resolve=lambda uri: original if uri == "artifact://original" else pytest.fail(uri))
+    runtime._media_service = VideoParseMediaService(tmp_path / "media", command_runner=write_audio)
+    runtime._model_manager = ContextVar("voiceprint-host-manager", default=None)
+    runtime._video_lease = ContextVar("voiceprint-host-lease", default=lease)
+    monkeypatch.setattr(runtime, "_require_video_active", lambda _lease: None)
+    monkeypatch.setattr(runtime, "_speaker_encoder", lambda _binding: encoder)
+    monkeypatch.setattr(runtime, "_notify_change", state.notifications.append)
+
+    @asynccontextmanager
+    async def model_stage(_lease, _source, **options):
+        state.stages.append(options)
+        calls_token = execution_calls.set(state.calls)
+        manager = VideoParseModelCallManager(
+            runtime._repository, execution_lease=lease, lease_duration=timedelta(minutes=2),
+            check_active=lambda: state.checks.append("active"),
+        )
+        state.manager = manager
+        manager_token = runtime._model_manager.set(manager)
+        try:
+            yield manager
+        finally:
+            runtime._model_manager.reset(manager_token)
+            execution_calls.reset(calls_token)
+
+    monkeypatch.setattr(runtime, "_model_stage", model_stage)
+    snapshot = {
+        "video_parse_task_id": lease.video_parse_task_id, "inputs": inputs,
+        "sources": {"source-0": {"speaker": "爽世", "start_ms": 47_000, "end_ms": 50_000}},
+    }
+    canvas = ContextCanvas(scope="voiceprint:host")
+    canvas.mutate(lambda draft: draft.update({"sources": snapshot["sources"]}), readonly_collections=("sources",))
+    return SimpleNamespace(runtime=runtime, snapshot=snapshot, canvas=canvas, lease=lease,
+                           encoder=encoder, source=source, original=original, state=state)
+
+
+def test_voiceprint_host_tools_bind_original_audio_and_persist_before_notification(monkeypatch, voiceprint_host):
+    host = voiceprint_host
+    observed = {}
+
+    async def generate(_binding, _prompt, *, tools, **options):
+        observed.update(options)
+        tools = {tool.name: tool for tool in tools}
+        assert set(tools) == {"get_context_canvas", "get_speaker_list", "register_voiceprint", "finish_voiceprint_preparation"}
+        assert json.loads(tools["get_speaker_list"].invoke({}))["speaker_list"][0]["speaker"] == "爽世"
+        assert "source-0" in tools["get_context_canvas"].invoke({"collection": "sources"})
+        reference = json.loads(tools["register_voiceprint"].invoke({
+            "source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100, "end_ms": 48_800,
+            "selection_basis": "已提交的独立台词，画面人物与前后声音一致", "confidence": 0.9,
+        }))
+        assert reference["dimension"] == 192 and "vector" not in reference["reference"]
+        assert not any(path.exists() for path in host.state.audio_paths)
+        assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"] is False
+        assert host.state.notifications == []
+        host.state.coverage = True
+        assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"] is True
+        assert host.source.task.detail["voiceprint"]["ready"] is True
+        assert host.state.notifications == [host.lease.video_parse_task_id]
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    result = asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+    assert result.complete and host.state.closed
+    assert observed["enforce_model_call_limit"] is True
+    assert observed["max_model_calls"] == host.snapshot["inputs"].parse_config.execution.max_model_calls
+    assert host.state.stages[0]["stage"] == "voiceprint"
+    command = host.state.commands[0]
+    assert command[command.index("-i") + 1] == str(host.original)
+    assert command[command.index("-ss") + 1] == "47.100"
+    assert command[command.index("-t") + 1] == "1.700"
+    assert command[command.index("-ar") + 1] == "16000"
+    registered = host.state.registrations[0]
+    assert (registered["start_ms"], registered["end_ms"]) == (47_100, 48_800)
+    assert len(registered["vector"]) == 192 and len(registered["pcm_sha256"]) == 64
+    asyncio.run(host.runtime.ensure_voiceprint_prepared(host.snapshot))
+
+
+def test_voiceprint_model_completion_cannot_replace_finish_commit(monkeypatch, voiceprint_host):
+    from unittest.mock import AsyncMock
+
+    host = voiceprint_host
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", AsyncMock(return_value=CanvasCompletion(complete=True)))
+    assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="done", canvas=host.canvas)).complete
+    with pytest.raises(ValueError, match="successful finish Tool commit"):
+        asyncio.run(host.runtime.ensure_voiceprint_prepared(host.snapshot))
+    assert not host.state.ready and host.state.notifications == []
+
+
+def test_voiceprint_tool_budget_counts_reads_and_closes_encoder_on_exhaustion(monkeypatch, voiceprint_host):
+    from server.repository.video_parse import ModelCallBudgetExhaustedError
+
+    host = voiceprint_host
+    config = host.snapshot["inputs"].parse_config
+    host.snapshot["inputs"] = host.snapshot["inputs"].model_copy(update={"parse_config": config.model_copy(update={
+        "voiceprint": config.voiceprint.model_copy(update={"max_tool_calls": 1}),
+    })})
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        tools = {tool.name: tool for tool in tools}
+        tools["get_context_canvas"].invoke({"collection": "sources"})
+        tools["get_speaker_list"].invoke({})
+        pytest.fail("A second Tool call exceeded the frozen preparation budget")
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    with pytest.raises(ModelCallBudgetExhaustedError, match="max_tool_calls"):
+        asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+    assert host.state.closed and not host.state.ready
+
+
+@pytest.mark.parametrize("failure_at", ["encoder", "audio", "register", "speaker_list", "finish"])
+@pytest.mark.parametrize("generation_outcome", ["complete", "another_error"])
+def test_voiceprint_host_failure_survives_tool_feedback_and_fences_finish(
+    monkeypatch, voiceprint_host, failure_at, generation_outcome,
+):
+    host = voiceprint_host
+    original = TimeoutError("cold encoder timed out") if failure_at == "encoder" else RuntimeError(failure_at)
+
+    def fail(*_args, **_kwargs):
+        raise original
+
+    if failure_at == "encoder":
+        monkeypatch.setattr(host.encoder, "embed_audio", fail)
+    elif failure_at == "audio":
+        monkeypatch.setattr(host.runtime, "_embed_speaker_segment", fail)
+    else:
+        method = {"register": "register_voiceprint", "speaker_list": "get_voiceprint_speaker_list",
+                  "finish": "finish_voiceprint_preparation"}[failure_at]
+        monkeypatch.setattr(host.runtime._repository, method, fail)
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        tools = {tool.name: tool for tool in tools}
+        name = "get_speaker_list" if failure_at == "speaker_list" else (
+            "finish_voiceprint_preparation" if failure_at == "finish" else "register_voiceprint")
+        values = {} if name == "get_speaker_list" else {"complete": True} if name == "finish_voiceprint_preparation" else {
+            "source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100, "end_ms": 48_800,
+            "selection_basis": "evidence",
+        }
+        # Codex turns exceptions into tool feedback; the host must retain its cause.
+        with pytest.raises(type(original)) as caught:
+            tools[name].invoke(values)
+        assert caught.value is original
+        host.state.coverage = True
+        with pytest.raises(type(original)) as caught:
+            tools["finish_voiceprint_preparation"].invoke({"complete": True})
+        assert caught.value is original
+        if generation_outcome == "another_error":
+            raise RuntimeError("provider stopped after cancelled Tool")
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    with pytest.raises(type(original)) as caught:
+        asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+    assert caught.value is original
+    assert not host.state.ready and host.state.notifications == [] and host.state.closed
+    assert all(not path.exists() for path in host.state.audio_paths)
+
+
+def test_voiceprint_swallowed_tool_budget_failure_still_fails_preparation(monkeypatch, voiceprint_host):
+    from server.repository.video_parse import ModelCallBudgetExhaustedError
+
+    host = voiceprint_host
+    config = host.snapshot["inputs"].parse_config
+    host.snapshot["inputs"] = host.snapshot["inputs"].model_copy(update={"parse_config": config.model_copy(update={
+        "voiceprint": config.voiceprint.model_copy(update={"max_tool_calls": 1}),
+    })})
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        tool = next(tool for tool in tools if tool.name == "get_speaker_list")
+        tool.invoke({})
+        with pytest.raises(ModelCallBudgetExhaustedError):
+            tool.invoke({})
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    with pytest.raises(ModelCallBudgetExhaustedError, match="max_tool_calls"):
+        asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+    assert not host.state.ready and host.state.closed
+
+
+def test_voiceprint_source_feedback_can_be_corrected_before_finish(monkeypatch, voiceprint_host):
+    host = voiceprint_host
+    host.state.coverage = True
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        tools = {tool.name: tool for tool in tools}
+        values = {"source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100, "end_ms": 48_800,
+                  "selection_basis": "evidence"}
+        feedback = json.loads(tools["register_voiceprint"].invoke({**values, "source_ref": "invented"}))
+        assert feedback["error"]["code"] == "INVALID_VOICEPRINT_SOURCE"
+        tools["register_voiceprint"].invoke(values)
+        assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"]
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
+    assert host.state.ready and len(host.state.registrations) == 1
+
+
+def test_voiceprint_normal_model_cancellation_is_not_latched_as_execution_failure(monkeypatch, voiceprint_host):
+    from gateway.usage import ModelCallCancelledError
+
+    host = voiceprint_host
+    cancelled = ModelCallCancelledError("owner cancelled")
+    following = RuntimeError("provider cancelled its turn")
+
+    def embed(_path):
+        raise cancelled
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        register = next(tool for tool in tools if tool.name == "register_voiceprint")
+        with pytest.raises(ModelCallCancelledError) as caught:
+            register.invoke({"source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100,
+                             "end_ms": 48_800, "selection_basis": "evidence"})
+        assert caught.value is cancelled
+        raise following
+
+    monkeypatch.setattr(host.encoder, "embed_audio", embed)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+    assert caught.value is following
+    assert not host.state.ready and host.state.closed
+
+
+def test_voiceprint_failure_cancels_real_manager_but_preserves_original_error(monkeypatch, voiceprint_host):
+    from gateway.usage import ModelCallCancelledError
+
+    host = voiceprint_host
+    original = TimeoutError("encoder cold start timed out")
+
+    def embed(_path):
+        raise original
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        register = next(tool for tool in tools if tool.name == "register_voiceprint")
+        with pytest.raises(TimeoutError):
+            register.invoke({"source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100,
+                             "end_ms": 48_800, "selection_basis": "evidence"})
+        # This is the same control used by Gateway's provider polling loop.
+        host.state.manager.check_active()
+
+    monkeypatch.setattr(host.encoder, "embed_audio", embed)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    with pytest.raises(TimeoutError) as caught:
+        asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+    assert caught.value is original
+    with pytest.raises(ModelCallCancelledError):
+        host.state.manager.check_active()
+    assert not host.state.ready and host.state.closed
+
+
+@pytest.mark.parametrize("blocking_provider", [False, True])
+def test_voiceprint_failure_before_cancel_keeps_failure_budget_and_pending_ownership(
+    monkeypatch, voiceprint_host, blocking_provider,
+):
+    from threading import Event
+
+    from server.utils.execution import BlockingCallCancelled
+
+    host = voiceprint_host
+    original = RuntimeError("encoder failed before cancellation")
+    entered, provider_exit = Event(), Event()
+    stopped = []
+    host.runtime._repository.stop_voiceprint_preparation = stopped.append
+
+    def embed(_path):
+        raise original
+
+    def provider():
+        entered.set()
+        assert provider_exit.wait(timeout=3)
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        register = next(tool for tool in tools if tool.name == "register_voiceprint")
+        with pytest.raises(RuntimeError):
+            register.invoke({"source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100,
+                             "end_ms": 48_800, "selection_basis": "evidence"})
+        if blocking_provider:
+            await host.runtime._run_blocking(provider)
+        else:
+            entered.set()
+            await asyncio.Future()
+
+    async def invoke(_task):
+        await host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)
+
+    async def execute():
+        task = asyncio.create_task(host.runtime.prepare(host.lease))
+        assert await asyncio.to_thread(entered.wait, 1)
+        task.cancel()
+        with pytest.raises(BlockingCallCancelled if blocking_provider else asyncio.CancelledError) as caught:
+            await task
+        assert caught.value.voiceprint_failed is True and caught.value.__cause__ is original
+        assert stopped == [] and not host.state.ready
+        if blocking_provider:
+            assert host.state.calls.pending and not host.state.closed
+            provider_exit.set()
+            await asyncio.wrap_future(caught.value.completion)
+        assert host.state.closed and not host.state.calls.pending
+
+    monkeypatch.setattr(host.encoder, "embed_audio", embed)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    host.runtime.agent = SimpleNamespace(InvokeVideoParse=invoke)
+    try:
+        asyncio.run(execute())
+    finally:
+        provider_exit.set()
+
+
+def test_voiceprint_finish_waits_for_registration_failure_before_committing(monkeypatch, voiceprint_host):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    host = voiceprint_host
+    entered, finish_entered, fail_audio = Event(), Event(), Event()
+    original = RuntimeError("encoder failed during concurrent finish")
+    host.state.coverage = True
+
+    def embed(_path):
+        entered.set()
+        assert finish_entered.wait(timeout=2)
+        assert fail_audio.wait(timeout=2)
+        raise original
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        tools = {tool.name: tool for tool in tools}
+
+        def finish():
+            finish_entered.set()
+            return tools["finish_voiceprint_preparation"].invoke({"complete": True})
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            registration = pool.submit(tools["register_voiceprint"].invoke, {
+                "source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100,
+                "end_ms": 48_800, "selection_basis": "evidence",
+            })
+            assert entered.wait(timeout=2)
+            completion = pool.submit(finish)
+            assert finish_entered.wait(timeout=2)
+            fail_audio.set()
+            for future in (registration, completion):
+                with pytest.raises(RuntimeError) as caught:
+                    future.result(timeout=2)
+                assert caught.value is original
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.encoder, "embed_audio", embed)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+        assert caught.value is original
+        assert not host.state.ready and host.state.notifications == [] and host.state.closed
+    finally:
+        fail_audio.set()
+
+
+def test_voiceprint_notification_failure_preserves_successful_preparation(monkeypatch, voiceprint_host, caplog):
+    host = voiceprint_host
+    host.state.coverage = True
+
+    def notify(_task):
+        raise RuntimeError("notification failed after commit")
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        finish = next(tool for tool in tools if tool.name == "finish_voiceprint_preparation")
+        assert json.loads(finish.invoke({"complete": True}))["ready"]
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_notify_change", notify)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
+    assert host.state.ready and host.state.closed
+    assert "preparation committed; scheduler notification failed" in caplog.text
+
+
+@pytest.mark.parametrize("changes", [
+    {"source_ref": "invented"}, {"speaker": "燈"}, {"start_ms": 46_999}, {"end_ms": 50_001},
+    {"audio_path": "/tmp/agent-selected.wav"}, {"vector": [1.0]},
+])
+def test_voiceprint_registration_rejects_unauthorized_sources_before_audio(monkeypatch, voiceprint_host, changes):
+    host = voiceprint_host
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        register = next(tool for tool in tools if tool.name == "register_voiceprint")
+        result = json.loads(register.invoke({
+            "source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100, "end_ms": 48_800,
+            "selection_basis": "evidence", **changes,
+        }))
+        assert result["error"]["code"] in {"INVALID_VOICEPRINT_SOURCE", "INVALID_ARGUMENTS"}
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
+    assert host.state.registrations == [] and host.state.commands == []
+
+
+@pytest.mark.parametrize("failure", ["encoder", "cancelled"])
+def test_voiceprint_temporary_audio_is_removed_when_embedding_does_not_complete(monkeypatch, voiceprint_host, failure):
+    host = voiceprint_host
+    error = RuntimeError("encoder failed") if failure == "encoder" else asyncio.CancelledError()
+
+    def embed(_path):
+        assert Path(_path).exists()
+        raise error
+
+    monkeypatch.setattr(host.encoder, "embed_audio", embed)
+    with pytest.raises(type(error)):
+        host.runtime._embed_speaker_segment(host.encoder, host.source, host.lease,
+            start_ms=47_100, end_ms=48_800, check_active=lambda: None)
+    assert host.state.audio_paths and all(not path.exists() for path in host.state.audio_paths)
+
+
+@pytest.mark.parametrize("blocking_provider", [False, True])
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_voiceprint_timeout_and_cancel_preserve_pending_encoder_ownership(
+    monkeypatch, voiceprint_host, blocking_provider, timed_out,
+):
+    from threading import Event
+
+    from server.utils.execution import BlockingCallCancelled
+
+    host = voiceprint_host
+    entered, provider_exit = Event(), Event()
+    stopped, released = [], []
+    host.runtime._repository.stop_voiceprint_preparation = stopped.append
+    if timed_out:
+        config = host.snapshot["inputs"].parse_config
+        host.snapshot["inputs"] = host.snapshot["inputs"].model_copy(update={"parse_config": config.model_copy(update={
+            "voiceprint": config.voiceprint.model_copy(update={"execution_timeout_seconds": 0.05}),
+        })})
+
+    def provider():
+        entered.set()
+        assert provider_exit.wait(timeout=3)
+
+    async def generate(*_args, **_options):
+        if blocking_provider:
+            await host.runtime._run_blocking(provider)
+        else:
+            entered.set()
+            await asyncio.Future()
+
+    async def invoke(_task):
+        await host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    host.runtime.agent = SimpleNamespace(InvokeVideoParse=invoke)
+    consumer = object.__new__(VideoParseConsumer)
+    consumer._queue = SimpleNamespace(release_execution=released.append)
+
+    async def execute():
+        task = asyncio.create_task(host.runtime.prepare(host.lease))
+        assert await asyncio.to_thread(entered.wait, 1)
+        if not timed_out:
+            task.cancel()
+        expected = BlockingCallCancelled if blocking_provider else TimeoutError if timed_out else asyncio.CancelledError
+        with pytest.raises(expected) as caught:
+            await task
+        assert stopped == ([] if timed_out else [host.lease])
+        if blocking_provider:
+            error = caught.value
+            assert error.execution_pending and not error.completion.done()
+            assert getattr(error, "voiceprint_failed", False) is timed_out
+            assert host.state.calls.pending and not host.state.closed
+            await consumer._release_cancelled(host.lease, error)
+            assert released == []
+            provider_exit.set()
+            await asyncio.wrap_future(error.completion)
+            assert released == [host.lease] and host.state.closed and not host.state.calls.pending
+        else:
+            assert host.state.closed
+
+    try:
+        asyncio.run(execute())
+    finally:
+        provider_exit.set()
+
+
+def test_voiceprint_cancel_before_phase_binding_stops_again_before_consumer_release(tmp_path):
+    from threading import Event
+
+    from server.utils.execution import BlockingCallCancelled
+    from tests.server.test_video_parse_repository import NOW, _prepare
+    from tests.server.test_video_parse_voiceprint import _commit, _enable
+
+    engine = create_database_engine(
+        "sqlite+pysqlite:///" + str(tmp_path / "cancel-before-binding.db"),
+        environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    factory, queue, repo, task_id, lease, _prepared = _prepare((engine, None), chunk_count=1)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    entered, allow_binding, binding_finished, released = Event(), Event(), Event(), Event()
+    observed = []
+
+    def begin(current):
+        entered.set()
+        assert allow_binding.wait(timeout=3)
+        result = repo.begin_voiceprint_preparation(current, now=NOW)
+        observed.append("binding committed")
+        binding_finished.set()
+        return result
+
+    def stop(current):
+        result = repo.stop_voiceprint_preparation(current, now=NOW)
+        observed.append(("stop", result))
+        return result
+
+    def release(current):
+        assert binding_finished.is_set()
+        with factory() as session:
+            phase = session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["voiceprint_preparation"]
+            assert phase["active"] is False
+        assert queue.release_execution(current, now=NOW)
+        observed.append("consumer released")
+        released.set()
+
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._repository = SimpleNamespace(
+        load_task_input=repo.load_task_input, begin_voiceprint_preparation=begin,
+        stop_voiceprint_preparation=stop,
+    )
+    runtime._video_lease = ContextVar("voiceprint-cancel-before-binding-lease", default=None)
+    runtime._model_manager = ContextVar("voiceprint-cancel-before-binding-manager", default=None)
+
+    async def invoke(current_task_id):
+        await runtime.load_voiceprint_input(current_task_id, LeaseToken(
+            owner=lease.worker_id, version=lease.lease_version, expires_at=lease.lease_expire_time,
+        ))
+
+    runtime.agent = SimpleNamespace(InvokeVideoParse=invoke)
+    consumer = object.__new__(VideoParseConsumer)
+    consumer._queue = SimpleNamespace(release_execution=release)
+
+    async def execute():
+        task = asyncio.create_task(runtime.prepare(lease))
+        assert await asyncio.to_thread(entered.wait, 1)
+        task.cancel()
+        with pytest.raises(BlockingCallCancelled) as caught:
+            await task
+        assert observed == [("stop", False)]
+        assert not caught.value.completion.done()
+        await consumer._release_cancelled(lease, caught.value)
+        assert not released.is_set()
+        allow_binding.set()
+        assert await asyncio.to_thread(released.wait, 2)
+        assert observed == [("stop", False), "binding committed", ("stop", True), "consumer released"]
+        with factory() as session:
+            parent = session.get(VideoParseTask, task_id)
+            phase = parent.detail[RUNTIME_DETAIL_KEY]["voiceprint_preparation"]
+            assert phase["active"] is False and phase.get("failures", 0) == 0
+            assert parent.lease_owner is None and parent.last_error is None
+            assert parent.detail["voiceprint"]["ready"] is False
+
+    try:
+        asyncio.run(execute())
+    finally:
+        allow_binding.set()
+        binding_finished.wait(timeout=3)
+        engine.dispose()
+
+
+def _voice_reference(encoder, speaker, digest, **changes):
+    return {
+        "speaker": speaker,
+        "model": {"name": encoder.model_name, "encoder_revision": encoder.encoder_revision},
+        "chunk_id": "reference-chunk", "source_version": 1, "event_fingerprint": "event-" + digest,
+        "start_ms": 1000, "end_ms": 2700, "source_start_ms": 1000, "source_end_ms": 3000,
+        "vector": [1.0] + [0.0] * 191, "pcm_sha256": digest, "duration_ms": 1700,
+        "selection_basis": "named independent dialogue", "confidence": 0.9, **changes,
+    }
+
+
+def test_compare_speaker_excludes_self_overlap_duplicate_and_encoder_mismatch(voiceprint_host):
+    from server.model.dto.jobDTO import IntervalParseLease
+
+    host = voiceprint_host
+    lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, (), 0, 1,
+        "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
+    target_hash = hashlib.sha256(b"\x01\x00" * 27200).hexdigest()
+    references = [
+        _voice_reference(host.encoder, "爽世", "soyo"),
+        _voice_reference(host.encoder, "爽世", "soyo", chunk_id="duplicated-chunk"),
+        _voice_reference(host.encoder, "燈", "tomori", vector=[0.999, 0.03] + [0.0] * 190),
+        _voice_reference(host.encoder, "target-self", "self", start_ms=47_100, end_ms=48_800),
+        _voice_reference(host.encoder, "overlapping-event", "overlap", start_ms=45_000, end_ms=46_000,
+                         source_start_ms=45_000, source_end_ms=50_000),
+        _voice_reference(host.encoder, "same-target-pcm", target_hash),
+        _voice_reference(host.encoder, "conflicting-A", "ambiguous-pcm"),
+        _voice_reference(host.encoder, "conflicting-B", "ambiguous-pcm"),
+        _voice_reference(host.encoder, "other-encoder", "old", model={"name": "old-model", "encoder_revision": "old"}),
+    ]
+    used = []
+    result = host.runtime._compare_speaker(host.encoder, host.source, lease, references, used,
+        start_ms=47_100, end_ms=48_800, check_active=lambda: None)
+    assert [candidate["speaker"] for candidate in result["candidates"]] == ["爽世", "燈"]
+    assert all(candidate["reference_count"] == 1 for candidate in result["candidates"])
+    assert 0 < result["candidate_margin"] < 0.01
+    assert result["similarity_metric"] == "cosine" and result["similarity_is_probability"] is False
+    assert result["quality"]["duration_ms"] == 1700 and result["quality"]["pcm_sha256"] == target_hash
+    assert used == [references[0], references[2]]
+    provenance = result["candidates"][0]["references"][0]
+    assert provenance["chunk_id"] == "reference-chunk" and provenance["source_version"] == 1
+    assert provenance["event_fingerprint"] == "event-soyo" and "vector" not in provenance
+    assert all(not path.exists() for path in host.state.audio_paths)
+
+
+def test_compare_speaker_without_eligible_references_does_not_extract_audio(monkeypatch, voiceprint_host):
+    host = voiceprint_host
+    monkeypatch.setattr(host.runtime, "_embed_speaker_segment", lambda *_args, **_kwargs: pytest.fail("no eligible references"))
+    result = host.runtime._compare_speaker(host.encoder, host.source, host.lease, [], [],
+        start_ms=47_100, end_ms=48_800, check_active=lambda: None)
+    assert result["candidates"] == [] and result["candidate_margin"] is None
+    assert result["quality"]["reason"] == "no_eligible_reference"
+
+
+def test_refine_compare_tool_carries_used_reference_dependencies_into_commit(monkeypatch, voiceprint_host):
+    from engine.parsev2.validation import ValidatedIntervalRefinement
+    from server.model.dto.jobDTO import IntervalParseLease
+
+    host = voiceprint_host
+    lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
+        "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
+    reference = _voice_reference(host.encoder, "爽世", "soyo")
+    host.runtime._repository.load_voiceprint_references = lambda _lease: [reference]
+    committed = []
+    host.runtime._repository.commit_interval_refinement = lambda _lease, **values: committed.append(values)
+    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_kwargs: lease)
+    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
+    canvas = ParseContextCanvas(scope="refine:voice", members={"member": {
+        "sequence_no": 0, "version": 1, "bounds": (40_000, 60_000),
+        "content": VideoParseResult(persons=[], timeline=[]),
+    }})
+    snapshot = {
+        "inputs": host.snapshot["inputs"], "video_parse_task_id": host.lease.video_parse_task_id,
+        "interval_parse_task_id": lease.interval_parse_task_id, "lease": object(),
+        "member_bounds": {"member": (40_000, 60_000)}, "member_sequence_nos": {"member": 0},
+        "member_versions": {"member": 1}, "member_fingerprints": {"member": "unchanged"},
+        "member_scopes": {"member": [0]},
+    }
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        compare = next(tool for tool in tools if tool.name == "compare_speaker")
+        rejected = json.loads(compare.invoke({"start_ms": 10_000, "end_ms": 11_000}))
+        assert rejected["error"]["code"] == "INVALID_VOICEPRINT_TARGET"
+        result = json.loads(compare.invoke({"start_ms": 47_100, "end_ms": 48_800}))
+        assert result["candidates"][0]["speaker"] == "爽世"
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas))
+    assert host.state.closed and snapshot["voiceprint_references"] == [reference]
+    assert asyncio.run(host.runtime.commit_interval_refinement(snapshot, ValidatedIntervalRefinement(updates=[])))
+    assert committed[0]["voiceprint_references"] == [reference]
+
+
 def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch):
     from unittest.mock import AsyncMock
 
@@ -1538,7 +2271,8 @@ def test_canvas_input_rejects_invalid_persisted_scope_before_deriving_bounds(mon
 
 
 @pytest.mark.parametrize("max_output_tokens", [None, 65_536, 131_072])
-def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatch, max_output_tokens):
+@pytest.mark.parametrize("enforce_model_call_limit", [False, True])
+def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatch, max_output_tokens, enforce_model_call_limit):
     captured = {}
 
     class Model:
@@ -1565,7 +2299,8 @@ def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatc
     context_checkpoint = lambda: []
     result = runtime._invoke_multimodal(binding, [TextInput("refine")], schema_name="CanvasCompletion", result_type=CanvasCompletion,
                                        tools=(_read_context_tool(),), max_model_calls=100,
-                                       check_control=check_control, context_checkpoint=context_checkpoint)
+                                       check_control=check_control, context_checkpoint=context_checkpoint,
+                                       enforce_model_call_limit=enforce_model_call_limit)
     assert result.complete
     assert captured["constructed"]["max_output_tokens"] == expected.max_output_tokens
     assert captured["constructed"]["reasoning_effort"] == "none"
@@ -1574,7 +2309,7 @@ def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatc
     assert policy.auto_compact_tokens < policy.maximum_input_tokens
     assert policy.compact_target_tokens < policy.auto_compact_tokens
     assert captured["generated"]["max_input_chars"] == expected.max_input_chars
-    assert captured["generated"]["max_model_calls"] is None
+    assert captured["generated"]["max_model_calls"] == (100 if enforce_model_call_limit else None)
     assert captured["generated"]["request_timeout_seconds"] == 60
     checked.clear()
     captured["generated"]["check_control"]()
@@ -1617,7 +2352,7 @@ def test_prefix_cancellation_releases_lease_only_after_execution_exits(monkeypat
 
     class _PrefixAgent:
         @staticmethod
-        async def run(_task_id):
+        async def InvokePrefix(_task_id):
             started.set()
             if blocking_provider:
                 await run_blocking(provider)

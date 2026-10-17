@@ -13,7 +13,7 @@ call the injected runtime directly. Stage-local state stays alongside its stage.
 ```text
 video_parse_v2/
 ├── __init__.py             # public ParseAgent export
-├── runtime.py              # stage assembly, main Graph and ParseAgent.run
+├── runtime.py              # stage assembly, main Graph and InvokeVideoParse
 ├── input.py                # task inputs and frozen configuration
 ├── state.py                # task/execution DTOs and main Graph state
 ├── timelineEvent_canvas.py # Parse facts, evidence and validated local operations
@@ -21,6 +21,7 @@ video_parse_v2/
 ├── prepare.py              # topology and child-task initialization
 ├── scheduler.py            # ordered batches and Chunk dispatch
 ├── prompts.py              # OCR, Understanding, Refine and Prefix prompt builders
+├── voiceprint.py            # InvokeVoiceprint and host-bound preparation/comparison tools
 ├── understanding/
 │   ├── __init__.py          # ChunkUnderstandingWorkflow export
 │   ├── workflow.py          # Chunk subgraph and execution cleanup
@@ -50,22 +51,27 @@ from agent.video_parse_v2 import ParseAgent
 
 agent = ParseAgent(runtime=runtime)
 
-await agent.run(video_parse_task_id)                    # Video coordinator
-await agent.chunk_workflow.run(chunk_parse_task_id)     # claimed Chunk worker
-await agent.interval_refine.run(interval_parse_task_id) # claimed Refine worker
-await agent.prefix_context_agent.run(chunk_task_id)     # claimed Prefix worker
+await agent.InvokeVideoParse(video_parse_task_id)                      # Video coordinator
+await agent.chunk_workflow.InvokeUnderstanding(chunk_parse_task_id)    # claimed Chunk worker
+await agent.interval_refine.InvokeRefine(interval_parse_task_id)        # claimed Refine worker
+await agent.prefix_context_agent.InvokePrefix(chunk_task_id)           # claimed Prefix worker
 ```
+
+Server-activated Agent business entries use `InvokeXxx`. Internal Graph nodes
+such as Prepare and ChunkScheduler keep their existing `run` names. Voiceprint
+uses `agent.voiceprint_agent.InvokeVoiceprint(task_id, parent_lease_token)` inside
+the coordinator; it has no independent Worker or lease.
 
 Executing a stage requires an injected runtime. Constructing the coordinator
 alone does not execute external operations.
 
 ## Persisted recovery
 
-`ParseAgent.run` first loads `VideoRunSnapshot` and routes from its durable
+`ParseAgent.InvokeVideoParse` first loads `VideoRunSnapshot` and routes from its durable
 status:
 
 - `PREPARING`: plan/reuse topology, ensure children, then schedule Chunks;
-- `PARSING`: resume Chunk scheduling and wait for required Refine/index work;
+- `PARSING`: resume Chunk scheduling, optional voice preparation, and required Refine/index work;
 - `INDEXING`: resume aggregation/index work without Prepare, ASR,
   Understanding, or Refine;
 - `COMPLETE`: return immediately.
@@ -90,7 +96,7 @@ It includes:
 - visual input mode and bounds, OCR/Understanding/Prefix switches;
 - retry, concurrency, and durable model-call budgets;
 - credential-free effective model identities and request controls for ASR,
-  Understanding/Refine, optional OCR/Prefix, and embedding.
+  Understanding/Refine, optional OCR/Prefix/Voiceprint, speaker embedding and retrieval embedding.
 
 Credentials remain in application configuration. Recovery uses the task's model
 snapshot rather than current global defaults. A missing explicit Refine model
@@ -108,6 +114,11 @@ ChunkScheduler
 ChunkUnderstandingWorkflow workers
   ASR || visual/OCR → Understanding or Engine observation conversion → validation
   → content + initial scope + ready masks + Chunk COMPLETE in one transaction
+        ↓
+VoiceprintAgent (optional, within the existing Video coordinator)
+  ceil(chunk_count / 2) Understanding commits → fixed source/speaker snapshot
+  → reference registration → finish Tool validates >50% speaker coverage (empty list permits zero)
+  → transaction commits detail.voiceprint.ready=true; remaining Understanding continues
         ↓
 IntervalRefine workers
   independent member snapshot + original evidence → local Canvas corrections
@@ -135,6 +146,41 @@ content, initial scope, every containing Interval's ready mask, and Chunk
 Intervals and rechecks readiness while claiming them; no Agent callback writes
 masks or enqueues Refine. Post-commit notifications wake the Video coordinator,
 and durable scans continue work even when notifications are lost.
+
+When voice preparation is enabled, the atomic Refine claim additionally requires
+`detail.voiceprint.ready=true`. Until then it remains WAITING without occupying a
+Refine slot or spending its retry budget. Queue batching still opens at 90% base
+Understanding completion; the half-video threshold only advances the coordinator.
+
+Voice preparation is disabled when `ParseConfig.voiceprint` is absent or null.
+Enabling it requires `voiceprint={max_tool_calls, execution_timeout_seconds}`,
+`models.voiceprint` (a frozen generative binding), and `models.speaker_embedding`
+(`source`, `model`, `request_timeout_seconds`). The speaker binding uses Gateway's
+`speaker_embedding` capability and CPU CAM++; its external source/checkpoint and
+optional dependencies must already be deployed. Historical tasks retain the old path.
+
+The formal result is `video_parse_task.detail.voiceprint={ready, voiceprintList}`.
+Each character has `speaker`, actual `model={name, encoder_revision}`,
+per-segment `references`, and optional attribution `confidence`. Engine owns this
+Schema; Server persists it, and Gateway computes the vectors. No ES voice index or
+cross-video/series sharing is introduced. Reference metadata binds original-video
+milliseconds, Chunk/event identity, content version, PCM digest and selection basis.
+Partial registration stays unready; each new attempt discards unpublished references.
+
+The four preparation Tools are `get_speaker_list`, readonly `get_context_canvas`,
+`register_voiceprint`, and `finish_voiceprint_preparation`. Only the host resolves
+media paths, extracts temporary PCM and computes vectors. A text completion alone
+cannot make preparation ready. Parent runtime stores only attempt sources, lease
+fence and finite failure/recovery facts; normal cancellation and waiting are free.
+Preparation failures/timeouts and active-phase crashes use the existing failure
+closure; committed preparation is skipped after restart, even if notification was lost.
+
+Refine can call `compare_speaker(start_ms,end_ms)` for null or conflicting named
+speakers. The host excludes self/overlap, repeated PCM, incompatible encoders and
+changed reference identities, then returns cosine candidates, margin and provenance.
+Cosine is not a probability. Refine uses its existing Canvas to change speaker or
+retain null. Referenced anchors are revalidated at commit, including outside the
+Interval; changed anchors reload that Refine rather than launching a whole new pass.
 
 The ASR provider returns seconds; the service converts them once to absolute
 integer milliseconds before using the Engine-owned transcript contract. OCR
@@ -169,7 +215,7 @@ The Server consumer's bounded background scan claims Prefix work through its
 repository. It advances the persisted cursor without Agent readiness callbacks.
 
 Temporary media is owned by the Task/Lease workspace and never enters Graph
-state. `ChunkUnderstandingWorkflow.run` always calls runtime cleanup with the
+state. `ChunkUnderstandingWorkflow.InvokeUnderstanding` always calls runtime cleanup with the
 same fenced `ChunkExecution`; orphan cleanup after process death belongs to the
 Worker reaper.
 

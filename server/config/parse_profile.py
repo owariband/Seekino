@@ -73,6 +73,8 @@ def validate_video_parse_schedule(config: VideoParseV2Config) -> VideoParseV2Con
         config.execution.index_execution_timeout_seconds,
     ):
         _validate_schedule_delay(seconds)
+    if config.voiceprint is not None:
+        _validate_schedule_delay(config.voiceprint.execution_timeout_seconds)
     return config
 
 

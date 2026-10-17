@@ -10,7 +10,7 @@ class PrefixContextAgent:
     def __init__(self, *, runtime) -> None:
         self._runtime = runtime
 
-    async def run(self, chunk_parse_task_id: str) -> None:
+    async def InvokePrefix(self, chunk_parse_task_id: str) -> None:
         while True:
             context = await self._runtime.load_prefix_context(chunk_parse_task_id)
             if not context["inputs"].parse_config.compact_enabled:

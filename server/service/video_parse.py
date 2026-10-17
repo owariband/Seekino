@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import math
 import threading
 import time
+import wave
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
@@ -19,6 +22,8 @@ from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
 from agent.utils.context_canvas_tools import build_context_canvas_tools
+from agent.utils.context_canvas import ContextCanvas
+from agent.utils.errors import AgentToolFeedbackError
 from agent.utils.tool import as_langchain_tools
 from agent.utils.video_frames import build_inspect_video_frames_tool
 from agent.video_parse_v2.timelineEvent_canvas import (
@@ -27,9 +32,13 @@ from agent.video_parse_v2.timelineEvent_canvas import (
 from agent.video_parse_v2.input import (
     GenerativeModelConfig,
     ParseInput,
+    SpeakerEmbeddingModelConfig,
 )
 from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput
+from agent.video_parse_v2.voiceprint import (
+    VoiceprintInput, build_compare_speaker_tool, build_tools as build_voiceprint_tools,
+)
 from agent.video_parse_v2.prompts import build_ocr_prompt
 from agent.video_parse_v2.state import (
     ChunkExecution,
@@ -61,9 +70,10 @@ from engine.rag import (
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
 from gateway.embedding import EmbeddingModel
 from gateway.model_factory import GatewayClient
+from gateway.speaker_embedding import SpeakerEmbeddingModel, SpeakerEmbeddingResult
 from gateway.multimodal import ImageInput, TextInput, VideoInput, adapter_capabilities
 from gateway.tracing import LangfuseTracing
-from gateway.usage import model_call_context
+from gateway.usage import ModelCallCancelledError, model_call_context
 
 from ..config.parse_profile import index_contract_fingerprint
 from ..constants.parse import PARSE_RETRIEVAL_CONTRACT
@@ -173,7 +183,14 @@ class VideoParseRuntimeService:
     async def prepare(self, lease: VideoParseLease) -> None:
         token = self._video_lease.set(lease)
         try:
-            await self.agent.run(lease.video_parse_task_id)
+            await self.agent.InvokeVideoParse(lease.video_parse_task_id)
+        except asyncio.CancelledError as error:
+            if not getattr(error, "voiceprint_failed", False):
+                try:
+                    await asyncio.to_thread(self._repository.stop_voiceprint_preparation, lease)
+                except VideoParseLeaseLostError:
+                    pass
+            raise
         finally:
             self._video_lease.reset(token)
 
@@ -193,7 +210,7 @@ class VideoParseRuntimeService:
                 category="parse",
                 check_active=lambda: self._require_chunk_active(lease),
             ):
-                await self.agent.chunk_workflow.run(lease.chunk_parse_task_id)
+                await self.agent.chunk_workflow.InvokeUnderstanding(lease.chunk_parse_task_id)
         finally:
             self._chunk_binding.reset(token)
 
@@ -210,7 +227,7 @@ class VideoParseRuntimeService:
                 category="parse",
                 check_active=lambda: self._require_interval_active(lease),
             ):
-                await self.agent.interval_refine.run(lease.interval_parse_task_id)
+                await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
         finally:
             self._interval_lease.reset(token)
 
@@ -433,6 +450,200 @@ class VideoParseRuntimeService:
         state = await asyncio.to_thread(self._repository.aggregate_task, current)
         return VideoTaskStatus(state.status)
 
+    # Agent runtime: Voiceprint preparation -------------------------------
+
+    async def load_voiceprint_input(
+        self, video_parse_task_id: str, lease: LeaseToken,
+    ) -> VoiceprintInput | None:
+        current = self._require_video_token(video_parse_task_id, lease)
+        source = await asyncio.to_thread(self._repository.load_task_input, video_parse_task_id)
+        try:
+            snapshot = await self._run_blocking(self._repository.begin_voiceprint_preparation, current)
+        except BlockingCallCancelled as error:
+            # A queued transaction may bind its phase after the cancellation's
+            # immediate stop. Clear it again before Consumer's deferred release.
+            def stop_after_binding(_future) -> None:
+                try:
+                    self._repository.stop_voiceprint_preparation(current)
+                except VideoParseLeaseLostError:
+                    pass
+                except Exception:
+                    _logger.exception("Deferred Voiceprint preparation stop failed; expiry will recover it")
+            error.completion.add_done_callback(stop_after_binding)
+            raise
+        if snapshot is None:
+            return None
+        return {
+            "video_parse_task_id": video_parse_task_id,
+            "inputs": self._parse_input(source),
+            "member_sequence_nos": snapshot["member_sequence_nos"],
+            "member_contents": {key: VideoParseResult.model_validate(value)
+                                for key, value in snapshot["member_contents"].items()},
+            "member_versions": snapshot["member_versions"],
+            "member_evidence": snapshot["member_evidence"],
+            "sources": snapshot["sources"], "background": source.background,
+        }
+
+    async def generate_voiceprint_preparation(
+        self, snapshot: VoiceprintInput, *, prompt: str, canvas: ContextCanvas,
+    ) -> CanvasCompletion:
+        lease = self._require_video_lease()
+        if lease.video_parse_task_id != snapshot["video_parse_task_id"]:
+            raise VideoParseLeaseLostError("Voiceprint execution targets another task")
+        task_input = await asyncio.to_thread(self._repository.load_task_input, lease.video_parse_task_id)
+        config = snapshot["inputs"].parse_config
+        if config.voiceprint is None:
+            raise ValueError("Voiceprint preparation is disabled")
+        async with self._model_stage(
+            lease, task_input, sequence_no=None, category="parse", stage="voiceprint",
+            check_active=lambda: self._require_video_active(lease),
+        ) as manager:
+            encoder = self._speaker_encoder(config.models.speaker_embedding)
+            preparation_lock = threading.RLock()
+            failure_lock = threading.Lock()
+            tool_calls = 0
+            execution_error: Exception | None = None
+
+            def raise_execution_error() -> None:
+                with failure_lock:
+                    error = execution_error
+                if error is not None:
+                    raise error
+
+            def fail_execution(error: Exception) -> None:
+                nonlocal execution_error
+                with failure_lock:
+                    if execution_error is None:
+                        execution_error = error
+                manager.cancel()
+
+            def check_preparation() -> None:
+                raise_execution_error()
+                manager.check_active()
+
+            def invoke_host(callback: Callable[..., dict], **values) -> dict:
+                # Finish cannot overtake an in-flight registration or its failure.
+                with preparation_lock:
+                    check_preparation()
+                    try:
+                        return callback(**values)
+                    except (AgentToolFeedbackError, ModelCallCancelledError, VideoParseLeaseLostError):
+                        raise
+                    except Exception as error:
+                        fail_execution(error)
+                        raise
+
+            def count_tool(_name: str) -> None:
+                nonlocal tool_calls
+                with preparation_lock:
+                    check_preparation()
+                    if tool_calls >= config.voiceprint.max_tool_calls:
+                        error = ModelCallBudgetExhaustedError("Voiceprint max_tool_calls exhausted")
+                        fail_execution(error)
+                        raise error
+                    tool_calls += 1
+
+            def register_voiceprint(*, source_ref: str, speaker: str, start_ms: int,
+                                    end_ms: int, selection_basis: str, confidence: float | None = None) -> dict:
+                source = snapshot["sources"].get(source_ref)
+                if (source is None or source["speaker"] != speaker
+                        or not source["start_ms"] <= start_ms < end_ms <= source["end_ms"]):
+                    raise AgentToolFeedbackError(
+                        "INVALID_VOICEPRINT_SOURCE", "Use a named authorized source and a subrange inside it.",
+                        "Read sources from get_context_canvas; preserve its speaker and absolute milliseconds.",
+                    )
+                embedding, pcm_sha256 = self._embed_speaker_segment(
+                    encoder, task_input, lease, start_ms=start_ms, end_ms=end_ms,
+                    check_active=manager.check_active,
+                )
+                manager.check_active()
+                result = self._repository.register_voiceprint(
+                    lease, source_ref=source_ref, speaker=speaker, start_ms=start_ms, end_ms=end_ms,
+                    selection_basis=selection_basis, confidence=confidence,
+                    model=embedding.model, encoder_revision=embedding.encoder_revision,
+                    vector=embedding.vector, pcm_sha256=pcm_sha256, duration_ms=embedding.duration_ms,
+                )
+                _logger.info(
+                    "event=voiceprint_registered task=%s lease=%s source=%s start_ms=%s end_ms=%s model=%s revision=%s pcm=%s",
+                    lease.video_parse_task_id, lease.lease_version, source_ref, start_ms, end_ms,
+                    embedding.model, embedding.encoder_revision, pcm_sha256,
+                )
+                return {**result, "reference": {key: value for key, value in result["reference"].items()
+                                                if key != "vector"}, "dimension": embedding.dimension}
+
+            def finish_voiceprint_preparation(*, complete: bool, skip_reasons: dict[str, str]) -> dict:
+                del complete  # The Tool schema accepts only true; persistence decides readiness.
+                result = invoke_host(
+                    lambda: self._repository.finish_voiceprint_preparation(lease, skip_reasons=skip_reasons),
+                )
+                _logger.info(
+                    "event=voiceprint_preparation_finished task=%s lease=%s ready=%s registered=%s required=%s",
+                    lease.video_parse_task_id, lease.lease_version, result["ready"],
+                    result["registered_speaker_count"], result["minimum_speaker_count"],
+                )
+                if result["ready"]:
+                    try:
+                        self._notify_change(lease.video_parse_task_id)
+                    except Exception:
+                        _logger.exception(
+                            "Voiceprint preparation committed; scheduler notification failed task=%s lease=%s",
+                            lease.video_parse_task_id, lease.lease_version,
+                        )
+                return result
+
+            tools = as_langchain_tools(build_voiceprint_tools(
+                canvas, get_speaker_list=lambda: invoke_host(
+                    lambda: self._repository.get_voiceprint_speaker_list(lease),
+                ),
+                register_voiceprint=lambda **values: invoke_host(register_voiceprint, **values),
+                finish_voiceprint_preparation=finish_voiceprint_preparation,
+                check_control=check_preparation, on_call=count_tool,
+            ))
+            pending: BlockingCallCancelled | None = None
+            timeout = asyncio.timeout(config.voiceprint.execution_timeout_seconds)
+            try:
+                async with timeout:
+                    try:
+                        result = await self._generate_text_structured(
+                            config.models.voiceprint, prompt, tools=tools, canvas=canvas,
+                            result_type=CanvasCompletion, max_model_calls=config.execution.max_model_calls,
+                            enforce_model_call_limit=True, tool_harness="deepagents",
+                        )
+                    except asyncio.CancelledError as error:
+                        if isinstance(error, BlockingCallCancelled):
+                            pending = error
+                        with failure_lock:
+                            failed = execution_error
+                        if timeout.expired() or failed is not None:
+                            error.voiceprint_failed = True
+                        if failed is not None:
+                            raise error from failed
+                        raise
+                    except Exception:
+                        raise_execution_error()
+                        raise
+                    raise_execution_error()
+                    return result
+            except TimeoutError:
+                if pending is not None:
+                    # Keep the existing execution slot until native work exits. Release
+                    # charges the still-active phase once; normal cancellation clears it.
+                    pending.voiceprint_failed = True
+                    raise pending
+                raise
+            finally:
+                await cleanup_execution(encoder.close)
+
+    async def ensure_voiceprint_prepared(self, snapshot: VoiceprintInput) -> None:
+        lease = self._require_video_lease()
+        self._require_video_active(lease)
+        source = await asyncio.to_thread(self._repository.load_task_input, snapshot["video_parse_task_id"])
+        if dict(source.task.detail.get("voiceprint") or {}).get("ready") is not True:
+            raise ValueError("Voiceprint Agent returned without a successful finish Tool commit")
+
+    async def notify_voiceprint_prepared(self, snapshot: VoiceprintInput) -> None:
+        self._notify_change(snapshot["video_parse_task_id"])
+
     # Agent runtime: Chunk execution ---------------------------------------
 
     async def load_chunk_execution(
@@ -654,6 +865,7 @@ class VideoParseRuntimeService:
             "background": task_input.background,
             "write_bounds": (snapshot.start_sequence_no * chunk_duration,
                              min(duration, (snapshot.start_sequence_no + snapshot.chunk_count) * chunk_duration)),
+            "voiceprint_references": [],
         }
 
     async def generate_interval_refinement(
@@ -668,6 +880,39 @@ class VideoParseRuntimeService:
             or snapshot["inputs"].parse_config.models.understanding
         )
         tools = self._canvas_tools(canvas)
+        encoder: SpeakerEmbeddingModel | None = None
+        encoder_binding: SpeakerEmbeddingModelConfig | None = None
+        if snapshot["inputs"].parse_config.voiceprint is not None:
+            lease = self._require_interval_token(
+                snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING",
+            )
+            source = await asyncio.to_thread(self._repository.load_task_input, snapshot["video_parse_task_id"])
+            references = await asyncio.to_thread(self._repository.load_voiceprint_references, lease)
+            encoder_binding = snapshot["inputs"].parse_config.models.speaker_embedding
+            audio_lock = threading.Lock()
+            manager = self._model_manager.get()
+            check_active = manager.check_active if manager is not None else lambda: self._require_interval_active(lease)
+
+            def compare_speaker(*, start_ms: int, end_ms: int) -> dict:
+                if encoder is None:
+                    raise RuntimeError("Refine speaker encoder was not initialized")
+                bounds = (min(value[0] for value in snapshot["member_bounds"].values()),
+                          max(value[1] for value in snapshot["member_bounds"].values()))
+                if not bounds[0] <= start_ms < end_ms <= min(bounds[1], source.duration_seconds):
+                    raise AgentToolFeedbackError(
+                        "INVALID_VOICEPRINT_TARGET", "The target is outside this Refine's authorized range.",
+                        f"Use absolute milliseconds within [{bounds[0]}, {bounds[1]}).",
+                    )
+                with audio_lock:
+                    return self._compare_speaker(
+                        encoder, source, lease, references,
+                        snapshot.setdefault("voiceprint_references", []),
+                        start_ms=start_ms, end_ms=end_ms, check_active=check_active,
+                    )
+
+            tools.extend(as_langchain_tools([build_compare_speaker_tool(
+                compare_speaker=compare_speaker, check_control=check_active,
+            )]))
         route = [binding]
         if binding.fallback is not None:
             route.append(binding.fallback)
@@ -701,14 +946,20 @@ class VideoParseRuntimeService:
             if fallback is not None:
                 fallback = fallback.model_copy(update={"supports_vision_input": True})
             binding = binding.model_copy(update={"supports_vision_input": True, "fallback": fallback})
-        return await self._generate_text_structured(
-            binding,
-            prompt,
-            tools=tools, canvas=canvas,
-            result_type=CanvasCompletion,
-            max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
-            tool_harness="deepagents",
-        )
+        try:
+            if encoder_binding is not None:
+                encoder = self._speaker_encoder(encoder_binding)
+            return await self._generate_text_structured(
+                binding,
+                prompt,
+                tools=tools, canvas=canvas,
+                result_type=CanvasCompletion,
+                max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
+                tool_harness="deepagents",
+            )
+        finally:
+            if encoder is not None:
+                await cleanup_execution(encoder.close)
 
     async def commit_interval_refinement(
         self,
@@ -737,6 +988,7 @@ class VideoParseRuntimeService:
                 input_versions=snapshot["member_versions"],
                 input_fingerprints=snapshot["member_fingerprints"],
                 detail={"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]},
+                voiceprint_references=snapshot.get("voiceprint_references", []),
             )
         except VideoParseSnapshotConflictError:
             _logger.info("Refine snapshot changed; refreshing interval %s", snapshot["interval_parse_task_id"])
@@ -869,7 +1121,7 @@ class VideoParseRuntimeService:
                 category="parse",
                 check_active=lambda: self._require_prefix_active(lease),
             ):
-                await self.agent.prefix_context_agent.run(
+                await self.agent.prefix_context_agent.InvokePrefix(
                     lease.chunk_parse_task_id
                 )
         except asyncio.CancelledError as error:
@@ -901,6 +1153,7 @@ class VideoParseRuntimeService:
         sequence_no: int | None,
         category: Literal["parse", "embedding"],
         check_active: Callable[[], None],
+        stage: str | None = None,
     ) -> AsyncIterator[VideoParseModelCallManager]:
         manager = VideoParseModelCallManager(
             self._repository,
@@ -924,7 +1177,7 @@ class VideoParseRuntimeService:
             "lease_version": lease.lease_version,
             "sequence_no": sequence_no,
             "category": category,
-            "stage": (
+            "stage": stage or (
                 "index" if category == "embedding"
                 else "refine" if isinstance(lease, IntervalParseLease)
                 else "prefix" if isinstance(lease, PrefixParseLease)
@@ -1126,6 +1379,100 @@ class VideoParseRuntimeService:
 
     # Model and indexing assembly ------------------------------------------
 
+    def _speaker_encoder(self, binding: SpeakerEmbeddingModelConfig | None) -> SpeakerEmbeddingModel:
+        if binding is None:
+            raise ValueError("Voiceprint execution has no frozen speaker encoder binding")
+        return self._gateway.create_speaker_embedding_model(ModelBinding.model_validate({
+            **binding.model_dump(mode="json"), "kind": "speaker_embedding",
+        }))
+
+    def _embed_speaker_segment(
+        self, encoder: SpeakerEmbeddingModel, source: VideoParseTaskInputState,
+        lease: VideoParseLease | IntervalParseLease, *, start_ms: int, end_ms: int,
+        check_active: Callable[[], None],
+    ) -> tuple[SpeakerEmbeddingResult, str]:
+        if not 0 <= start_ms < end_ms <= source.duration_seconds:
+            raise ValueError("Speaker audio exceeds the bound source video")
+        identity = MediaLeaseIdentity(
+            lease.video_parse_task_id,
+            lease.interval_parse_task_id if isinstance(lease, IntervalParseLease) else lease.video_parse_task_id,
+            lease.lease_version,
+            execution_kind="interval" if isinstance(lease, IntervalParseLease) else "video",
+        )
+        with self._media_service.prepare_speaker_audio(
+            identity, source_video=self._artifact_store.resolve(source.original_source_uri),
+            start_ms=start_ms, end_ms=end_ms, check_active=check_active,
+        ) as audio_path:
+            with wave.open(str(audio_path), "rb") as audio:
+                pcm_sha256 = hashlib.sha256(audio.readframes(audio.getnframes())).hexdigest()
+            result = encoder.embed_audio(audio_path)
+            check_active()
+            if (result.model != encoder.model_name or result.encoder_revision != encoder.encoder_revision
+                    or result.dimension != 192):
+                raise ValueError("Speaker embedding differs from its encoder contract")
+            return result, pcm_sha256
+
+    def _compare_speaker(
+        self, encoder: SpeakerEmbeddingModel, source: VideoParseTaskInputState,
+        lease: IntervalParseLease, references: list[dict], used_references: list[dict], *,
+        start_ms: int, end_ms: int, check_active: Callable[[], None],
+    ) -> dict:
+        metadata = {"start_ms": start_ms, "end_ms": end_ms,
+                    "model": encoder.model_name, "encoder_revision": encoder.encoder_revision,
+                    "similarity_metric": "cosine", "similarity_is_probability": False}
+        eligible = [ref for ref in references
+                    if ref["model"] == {"name": encoder.model_name, "encoder_revision": encoder.encoder_revision}
+                    and not (ref["start_ms"] < end_ms and start_ms < ref["end_ms"])
+                    and not (ref["source_start_ms"] < end_ms and start_ms < ref["source_end_ms"])]
+        if not eligible:
+            return {**metadata, "candidates": [], "candidate_margin": None,
+                    "quality": {"reason": "no_eligible_reference"}}
+        embedding, target_hash = self._embed_speaker_segment(
+            encoder, source, lease, start_ms=start_ms, end_ms=end_ms, check_active=check_active,
+        )
+        # Conflicting labels for identical PCM cannot provide independent identity evidence.
+        labels: dict[str, set[str]] = {}
+        for ref in eligible:
+            labels.setdefault(ref["pcm_sha256"], set()).add(ref["speaker"])
+        groups: dict[str, list[dict]] = {}
+        seen: set[str] = set()
+        for ref in eligible:
+            digest = ref["pcm_sha256"]
+            if digest == target_hash or digest in seen or len(labels[digest]) != 1:
+                continue
+            seen.add(digest)
+            groups.setdefault(ref["speaker"], []).append(ref)
+        target_norm = math.hypot(*embedding.vector)
+        target = [value / target_norm for value in embedding.vector]
+        candidates = []
+        for speaker, refs in groups.items():
+            vectors = [[value / math.hypot(*ref["vector"]) for value in ref["vector"]] for ref in refs]
+            centroid = [sum(values) / len(vectors) for values in zip(*vectors)]
+            norm = math.hypot(*centroid)
+            if norm == 0:
+                continue
+            similarity = max(-1.0, min(1.0, sum(a * b for a, b in zip(target, centroid)) / norm))
+            candidates.append({"speaker": speaker, "similarity": similarity, "reference_count": len(refs),
+                               "references": [{key: value for key, value in ref.items() if key != "vector"}
+                                              for ref in refs]})
+            for ref in refs:
+                if ref not in used_references:
+                    used_references.append(ref)
+        candidates.sort(key=lambda item: (-item["similarity"], item["speaker"]))
+        _logger.info(
+            "event=voiceprint_compared task=%s interval=%s lease=%s start_ms=%s end_ms=%s pcm=%s candidates=%s refs=%s",
+            lease.video_parse_task_id, lease.interval_parse_task_id, lease.lease_version,
+            start_ms, end_ms, target_hash,
+            [(item["speaker"], round(item["similarity"], 6)) for item in candidates[:3]],
+            sum(item["reference_count"] for item in candidates),
+        )
+        return {**metadata, "candidates": candidates,
+                "candidate_margin": (candidates[0]["similarity"] - candidates[1]["similarity"]
+                                     if len(candidates) >= 2 else None),
+                "quality": {"duration_ms": embedding.duration_ms, "pcm_sha256": target_hash,
+                            "requested_duration_ms": end_ms - start_ms,
+                            "reason": "compared" if candidates else "no_independent_reference"}}
+
     def _canvas_tools(self, canvas: ParseContextCanvas, *, on_call=None) -> list[BaseTool]:
         manager = self._model_manager.get()
         return as_langchain_tools(build_context_canvas_tools(
@@ -1146,8 +1493,9 @@ class VideoParseRuntimeService:
         schema_name: str,
         result_type: type[_Result],
         tools: Sequence[BaseTool] = (),
-        canvas: ParseContextCanvas | None = None,
+        canvas: ContextCanvas | None = None,
         max_model_calls: int | None = None,
+        enforce_model_call_limit: bool = False,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
     ) -> _Result:
         manager = self._model_manager.get()
@@ -1160,6 +1508,7 @@ class VideoParseRuntimeService:
                 check_control=manager.check_active if manager is not None else None,
                 fallback_inputs=fallback_inputs,
                 tool_harness=tool_harness,
+                enforce_model_call_limit=enforce_model_call_limit,
             )
         return await self._run_blocking(
             self._invoke_multimodal, binding, inputs,
@@ -1176,13 +1525,15 @@ class VideoParseRuntimeService:
         tools: Sequence[BaseTool],
         result_type: type[_Result],
         max_model_calls: int,
-        canvas: ParseContextCanvas | None = None,
+        enforce_model_call_limit: bool = False,
+        canvas: ContextCanvas | None = None,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
     ) -> _Result:
         return await self._generate_multimodal(
             binding, [TextInput(prompt)], schema_name=result_type.__name__,
             result_type=result_type, tools=tools, canvas=canvas, max_model_calls=max_model_calls,
             tool_harness=tool_harness,
+            enforce_model_call_limit=enforce_model_call_limit,
         )
 
     def _invoke_multimodal(
@@ -1194,6 +1545,7 @@ class VideoParseRuntimeService:
         result_type: type[_Result],
         tools: Sequence[BaseTool] = (),
         max_model_calls: int | None = None,
+        enforce_model_call_limit: bool = False,
         context_checkpoint=None,
         check_control=None,
         fallback_inputs=None,
@@ -1225,7 +1577,7 @@ class VideoParseRuntimeService:
                 inputs, schema_name=schema_name, result_type=result_type,
                 tools=tools,
                 # Existing task request budgets are enforced by the call manager.
-                max_model_calls=None,
+                max_model_calls=max_model_calls if enforce_model_call_limit else None,
                 check_control=check_control, context_checkpoint=context_checkpoint,
                 fallback_inputs=fallback_inputs, tool_harness=tool_harness,
             )
@@ -1389,6 +1741,10 @@ class VideoParseRuntimeService:
             lease, lease_duration=self._lease_duration
         ):
             raise VideoParseLeaseLostError("Chunk lease is no longer current")
+
+    def _require_video_active(self, lease: VideoParseLease) -> None:
+        if not self._queue.heartbeat_video(lease, lease_duration=self._lease_duration):
+            raise VideoParseLeaseLostError("Video coordinator lease is no longer current")
 
     def _require_interval_active(self, lease: IntervalParseLease) -> None:
         if not self._queue.heartbeat_interval(

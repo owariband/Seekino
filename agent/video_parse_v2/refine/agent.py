@@ -13,7 +13,7 @@ class IntervalRefine:
     def __init__(self, *, runtime) -> None:
         self._runtime = runtime
 
-    async def run(self, interval_parse_task_id: str) -> None:
+    async def InvokeRefine(self, interval_parse_task_id: str) -> None:
         while True:
             snapshot = await self._runtime.load_refine_input(interval_parse_task_id)
             self._validate_snapshot(snapshot)

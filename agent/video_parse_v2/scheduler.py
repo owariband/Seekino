@@ -20,6 +20,8 @@ class ChunkScheduler:
 
     async def run(self, state: RunState) -> RunState:
         task_id = state["video_parse_task_id"]
+        inputs = state.get("inputs")
+        voiceprint_enabled = inputs is not None and inputs.parse_config.voiceprint is not None
         while True:
             snapshot = await self._runtime.load_chunk_schedule(task_id)
             if snapshot.terminal_error is not None:
@@ -29,7 +31,10 @@ class ChunkScheduler:
                     "Prepared Video task has no Chunk tasks",
                     retryable=False,
                 )
-            if self._all_chunks_complete(snapshot):
+            if self._all_chunks_complete(snapshot) or (
+                voiceprint_enabled and sum(task.understanding_committed for task in snapshot.tasks)
+                >= ceil(len(snapshot.tasks) / 2)
+            ):
                 return state
             await self._runtime.wait_for_video_change(
                 task_id,

@@ -41,7 +41,7 @@ def test_active_video_run_rejects_missing_lease_before_any_write() -> None:
         ensure_video_chunks=AsyncMock(),
     )
     with pytest.raises(ParseError, match="missing its lease fence"):
-        asyncio.run(ParseAgent(runtime=runtime).run("video-task-1"))
+        asyncio.run(ParseAgent(runtime=runtime).InvokeVideoParse("video-task-1"))
     runtime.ensure_video_chunks.assert_not_awaited()
 
 
@@ -53,5 +53,5 @@ def test_complete_video_run_needs_no_lease_or_external_replay() -> None:
         20,
         None,
     )))
-    result = asyncio.run(ParseAgent(runtime=runtime).run("video-task-1"))
+    result = asyncio.run(ParseAgent(runtime=runtime).InvokeVideoParse("video-task-1"))
     assert result["status"] == VideoTaskStatus.COMPLETE
