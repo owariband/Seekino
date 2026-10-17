@@ -12,6 +12,7 @@ docs/ui-design/
 /docs/*.dataflow.json
 /docs/*.visual-check.*
 /docs/*-pipeline.html
+**/experiment/
 
 # Local development state
 .DS_Store
