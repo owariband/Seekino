@@ -26,6 +26,13 @@ model_sources:
     provider: codex
     max_concurrency: 10
 
+  campplus_local:
+    adapter: campplus
+    provider: local
+    checkpoint_path: /Users/bytedance/workspace/other-project/AniVAG/outputs/local-models/campplus/campplus_cn_common.bin
+    cpu_threads: 6
+    max_audio_seconds: 30
+
 models:
   agent:
     source: codex_local
@@ -73,6 +80,11 @@ models:
     dimensions: 1024
     video_fps: 1.0
     request_timeout_seconds: 600
+  speaker:
+    kind: speaker_embedding
+    source: campplus_local
+    model: iic/speech_campplus_sv_zh-cn_16k-common
+    request_timeout_seconds: 30
   rerank:
     kind: rerank
     source: deepseek_api

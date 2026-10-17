@@ -17,12 +17,12 @@ Conversation 或 Parse Job 等领域语义。
 - `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
 - `codex/`：Codex app-server 会话与 Agent Adapter；
 - `claude_code/`：Claude Agent SDK Adapter；
-- `local/`：Ollama 与 llama.cpp 多模态 Adapter；
-- 根目录的 `multimodal.py`、`embedding.py`、`media.py`、`schema_normalization.py`
+- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CPU CAM++ Adapter；
+- 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
 
 业务层通过 `model_factory.GatewayClient` 获取模型。`create(kind, ref)` 按外部配置
-创建 `generative`、`embedding`、`rerank`、`transcription` 四类模型，也提供对应的
+创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription` 五类模型，也提供对应的
 `create_*_model()` 类型入口。视觉理解使用生成接口和显式图片能力声明；来源适配器
 支持图片，并不表示该来源下的每个模型都能理解图片。
 
@@ -56,6 +56,43 @@ finally:
     model.close()
     client.close()
 ```
+
+## 声音向量接口
+
+`speaker_embedding` 提取说话人的声音特征，与检索使用的多模态 `embedding` 分开。
+`adapter: campplus` 在当前进程通过 PyTorch 执行官方 CAM++，使用 CPU／FP32，
+输出 192 维 L2 归一化向量；不经过 Ollama，也无需另起推理服务。
+
+```python
+client = GatewayClient(load_config())
+model = client.create_speaker_embedding_model("speaker")
+# 统一入口也支持 client.create("speaker_embedding", "speaker")。
+try:
+    result = model.embed_audio("/absolute/path/to/prepared-audio.wav")
+    vector = result.vector
+    encoder_revision = result.encoder_revision
+    duration_ms = result.duration_ms
+finally:
+    model.close()
+    client.close()
+```
+
+输入必须是宿主准备的 16 kHz、单声道 PCM16 WAV，时长至少 400 ms，且不超过
+source 的 `max_audio_seconds`。结果同时包含 `model` 和 `dimension`；版本标识包含
+固定权重 SHA-256 与预处理版本，便于检查向量是否来自兼容空间。400 ms 是接口
+输入限制，不表示该长度足以确认人物。
+
+创建句柄时不导入 torch、不加载权重；首次提取按需加载，同一句柄后续复用，
+并发调用在实例内串行执行，关闭时释放模型引用。`cpu_threads` 在模型首次加载时
+通过 PyTorch 设置进程级 intra-op 线程数，同进程的 CAM++ 来源应使用一致设置；
+同一 Gateway 配置中不同的线程设置会明确拒绝。
+调用复用既有模型调用记录、预算及取消检查，不虚构供应商 token 用量。取消和
+超时在等待与推理前后检查，已进入 PyTorch 原生前向的计算不能强制中断。
+
+Gateway 校验音频并提取向量。来源授权、从视频截音和清理临时音频、video/task
+隔离、参考登记、排除自我及重叠比对、相似度比较和最终 speaker 写回由宿主负责。
+VoiceprintAgent 与 Refine 已通过宿主接入此入口；声纹准备按解析任务配置显式启用，余弦相似度不是身份概率。
+依赖、官方源码和权重部署说明见[本地声音向量配置](../docs/model-config.md#本地声音向量)。
 
 ## 多模态模型接口
 

@@ -49,7 +49,7 @@ class _OwnedResource:
     def __getattr__(self, name: str) -> Any:
         value = getattr(self._delegate, name)
         if self._binding_source is None or not callable(value) or name not in {
-            "generate", "transcribe", "embed_text", "embed_query", "embed_image", "embed_video", "embed_sparse",
+            "generate", "transcribe", "embed_text", "embed_query", "embed_image", "embed_video", "embed_sparse", "embed_audio",
         }:
             return value
 
@@ -449,6 +449,14 @@ class GatewayClient:
             source=binding.source,
         )
 
+    def create_speaker_embedding_model(self, ref: str | ModelBinding = "speaker") -> Any:
+        from gateway.speaker_embedding import build_speaker_embedding_model
+        binding = self._binding(ref, "speaker_embedding")
+        return self._own(
+            build_speaker_embedding_model(binding, self.config.source(binding.source)),
+            source=binding.source,
+        )
+
     def create_rerank_model(self, ref: str | ModelBinding = "rerank") -> Any:
         from gateway.rerank import StructuredRerankModel
         binding = self._binding(ref, "rerank")
@@ -476,7 +484,7 @@ class GatewayClient:
                                           codex_executor=self._codex_executor(binding.source)))
 
     def create(
-        self, kind: Literal["generative", "transcription", "embedding", "rerank"],
+        self, kind: Literal["generative", "transcription", "embedding", "rerank", "speaker_embedding"],
         ref: str | ModelBinding,
     ) -> Any:
         constructors = {
@@ -484,6 +492,7 @@ class GatewayClient:
             "transcription": self.create_transcription_model,
             "embedding": self.create_embedding_model,
             "rerank": self.create_rerank_model,
+            "speaker_embedding": self.create_speaker_embedding_model,
         }
         try:
             constructor = constructors[kind]

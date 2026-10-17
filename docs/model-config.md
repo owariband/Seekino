@@ -44,7 +44,7 @@ models:
     max_output_tokens: 8192
 ```
 
-这是模型部分示例；完整配置仍需保留 Agent、转写及采样设置。`source` 引用连接定义，`model` 指定该连接的模型或 endpoint。`kind` 声明创建能力，支持 `generative`、`transcription`、`embedding`、`rerank`；省略时为普通生成，默认转写、向量和重排引用按各自能力归一。重排复用结构化生成实现，不要求供应商提供原生 `/rerank` 接口。
+这是模型部分示例；完整配置仍需保留 Agent、转写及采样设置。`source` 引用连接定义，`model` 指定该连接的模型或 endpoint。`kind` 声明创建能力，支持 `generative`、`transcription`、`embedding`、`speaker_embedding`、`rerank`；省略时为普通生成，默认转写、向量和重排引用按各自能力归一。重排复用结构化生成实现，不要求供应商提供原生 `/rerank` 接口。
 
 普通生成支持文本；接收图片的模型必须声明 `supports_vision_input: true`，且连接适配器支持图片输入。该声明由配置维护者根据模型能力设置，不会从模型名字猜测。为兼容已有版本 2 配置，保留引用 `vision`、`vision_fallback` 未声明该字段时默认允许视觉输入；任意新引用默认为文本。`fallback` 可内联另一份模型绑定，其来源、模型、超时、推理和预算分别保存。
 
@@ -103,6 +103,77 @@ models:
 
 `openai_audio` 调用 `POST /audio/transcriptions`。Engine 用 FFmpeg 把每个分析窗口转换为单声道、16 kHz WAV 后上传，临时音频在成功或失败后自动清理。`verbose_json` 支持 `segments[].start/end/text`，时间单位为秒，进入项目后乘以 1000 并舍入为整数毫秒，限制在窗口范围内；已有 `start_seconds` / `end_seconds` 字段名保留。接口仅支持 JSON 文本时，设置 `response_format: json`；这时只有整个窗口级别的时间范围，没有句级时间戳。只兼容聊天接口的服务不能作为该 ASR 来源。没有音轨或抽取失败会报错，不会伪造空转写。
 
+## 本地声音向量
+
+声音身份特征使用独立的 `speaker_embedding` 能力。以下片段分别合入现有的
+`model_sources` 与 `models`；`speaker` 是显式创建时使用的引用，不会自动让解析任务
+启用声纹。路径是部署示例，使用前替换为本机稳定存储位置。
+
+```yaml
+model_sources:
+  campplus_local:
+    adapter: campplus
+    provider: local
+    checkpoint_path: /opt/anivag/models/campplus/campplus_cn_common.bin
+    cpu_threads: 6
+    max_audio_seconds: 30
+models:
+  speaker:
+    kind: speaker_embedding
+    source: campplus_local
+    model: iic/speech_campplus_sv_zh-cn_16k-common
+    request_timeout_seconds: 30
+```
+
+`campplus` 与 Ollama Adapter 并列，进程内使用 CPU／FP32；本批没有 MPS 或 CUDA
+推理路径。输入为宿主准备的 16 kHz、单声道 PCM16 WAV，接口限制为 400 ms 至
+`max_audio_seconds`，不自动截视频、重采样或保存音频。输出为 192 维 L2 归一化向量，
+并返回 `model`、`encoder_revision`、`duration_ms` 和 `dimension`。与参考集合的
+比较、人物标签和 video/task 归属留在上层；相似度不是身份概率。
+
+部署时安装可选依赖：
+
+```bash
+uv sync --extra speaker
+```
+
+普通 `uv sync` 不安装 torch、torchaudio 或 SciPy。`speaker` 锁定实验验证过的
+torch／torchaudio 2.8.0、NumPy 2.2.6、SciPy 1.15.3，PyYAML 复用主依赖。NumPy
+也被现有检索依赖使用，因此共享锁文件将其从 2.5.3 调整为 2.2.6；其他既有包版本
+保持不变。PyPI 的 torch 在 Linux 上会附带 CUDA 相关条件依赖，macOS 不安装这些包；
+本 Adapter 始终使用 CPU。
+
+官方 [3D-Speaker](https://github.com/modelscope/3D-Speaker/tree/065629c313eaf1a01c65c640c46d77e61e9607b4)
+在固定 commit 下没有 Python 包安装元数据。将原始源码部署到项目外的稳定目录，
+通过服务启动环境的 `PYTHONPATH` 提供 `speakerlab`；无需复制网络实现，也无需安装
+上游完整训练依赖或 `modelscope`。以下是部署者按实际目录执行的准备命令：
+
+```bash
+SPEAKER_HOME=/opt/anivag/models/campplus
+mkdir -p "$SPEAKER_HOME"
+git clone https://github.com/modelscope/3D-Speaker.git "$SPEAKER_HOME/3D-Speaker"
+git -C "$SPEAKER_HOME/3D-Speaker" checkout 065629c313eaf1a01c65c640c46d77e61e9607b4
+curl -fL 'https://www.modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common/resolve/v1.0.0/campplus_cn_common.bin' -o "$SPEAKER_HOME/campplus_cn_common.bin"
+export PYTHONPATH="$SPEAKER_HOME/3D-Speaker${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+checkpoint 固定官方 revision `v1.0.0`，大小 28,036,335 字节，SHA-256 为
+`3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8`。
+Adapter 首次加载时校验权重及实际导入的 `DTDNN.py`、`layers.py`、`processor.py`
+三个官方实现文件的 SHA-256。缺失、错误权重、源码不可导入或版本不匹配会真实报错，
+不会静默下载。`encoder_revision` 包含权重身份、实现指纹与 FBank／L2 预处理版本。
+
+调用 `create_speaker_embedding_model("speaker")` 或
+`create("speaker_embedding", "speaker")` 获得句柄，再用 `embed_audio(path)` 提取。
+首次调用加载模型，同一句柄后续复用并串行执行；宿主复用句柄并按既有生命周期关闭。
+`cpu_threads` 在首次加载时设置 PyTorch 进程级 intra-op 线程数；同进程各来源应统一
+设置，同一 Gateway 配置中不同的线程设置会明确拒绝；不配置 inter-op 线程数。
+超时、取消及调用预算复用现有调用控制，PyTorch
+原生前向开始后只能在返回时检查取消或超时，不能承诺硬停止计算；本地调用无供应商
+token 计费。VoiceprintAgent、登记事务及 Refine 准入已接通；`config.yaml` 提供
+`campplus_local` 来源与 `speaker` 绑定，声纹准备仍需在解析任务配置中显式启用。
+部署前须按本机位置配置权重路径，并完成上述可选依赖与官方源码准备。
+
 ## 第三方画面理解
 
 增加一个独立的视觉来源：
@@ -142,6 +213,7 @@ models:
 | 视觉生成 | Ark 可接收视频；`openai`、`openai_vision`、Codex 使用有序图片；还需模型声明允许视觉输入 |
 | 转写 | `ark` 视频转写、`openai_audio` 专用 ASR |
 | 多模态向量 | Ark 多模态向量协议；配置来源可独立选择 Ark 连接 |
+| 声音向量 | `campplus` 进程内 CPU 推理；宿主提供 16 kHz 单声道 PCM16 WAV |
 
 能力注册和供应商适配器属于 Gateway，业务不维护供应商白名单。`openai_vision` 和普通 `openai` Chat 协议不支持 `reasoning_effort` 的非 `none` 设置；DeepSeek profile、Ark 和 Codex 保留各自实现的推理控制。`openai_audio` 不接受生成 token 限额。模型输出预算用于上下文规划；Codex app-server 不保证通过协议硬性截断到此 token 数。
 
