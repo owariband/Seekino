@@ -48,6 +48,7 @@ from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
 from .service.video_parse import VideoParseRuntimeService
 from .service.video_parse_media import VideoParseMediaService
+from .service.video_frame_reader import VideoFrameReader
 from .service.video_retrieval import VideoParseRetrievalService
 
 
@@ -312,6 +313,9 @@ def _build_application_services(
                 reasoning_effort=agent_config.chat_reasoning_effort,
             ),
             retrieval.search,
+            frame_reader=VideoFrameReader(v2_repository, artifact_store),
+            frame_max_height=agent_config.frame_max_height,
+            maximum_frame_inspections=agent_config.maximum_frame_inspections,
             max_loop_turns=agent_config.max_loop_turns,
             max_model_calls_per_turn=agent_config.max_model_calls_per_turn,
             max_tool_calls_per_turn=agent_config.max_tool_calls_per_turn,

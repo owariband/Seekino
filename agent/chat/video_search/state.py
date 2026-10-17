@@ -11,9 +11,9 @@ from pydantic import (
 from engine.rag.contracts import VideoChunkSearchEvidence, VideoChunkSearchResult
 from engine.rag.retrieval.fusion import AGENT_RETRIEVAL_STRATEGY_VERSION
 
-from ..common.errors import AgentContextBudgetError
 from ..common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
 from ..common.tool import ToolCallStatus
+from .frame_evidence import FrameInspectionSession
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
 _EvidenceClaim = Annotated[
@@ -356,34 +356,12 @@ class LoopTurn:
         }
 
 
-@dataclass(slots=True)
-class ModelContextBudget:
-    maximum_chars: int
-    consumed_chars: int = 0
-
-    def __post_init__(self) -> None:
-        if (
-            isinstance(self.maximum_chars, bool)
-            or not isinstance(self.maximum_chars, int)
-            or self.maximum_chars <= 0
-        ):
-            raise ValueError("maximum context characters must be a positive integer")
-
-    def consume(self, label: str, value: str) -> None:
-        next_total = self.consumed_chars + len(value)
-        if next_total > self.maximum_chars:
-            raise AgentContextBudgetError(
-                f"Agent context character budget exceeded while adding {label}: "
-                f"{next_total} > {self.maximum_chars}"
-            )
-        self.consumed_chars = next_total
-
-
 class RunState(TypedDict):
     inputs: RunInputs
     # VideoSearchContextCanvas is intentionally typed as Any here: LangGraph resolves all
     # TypedDict hints at runtime, while video_search_canvas.py imports this module.
     canvas: Any
+    frame_inspections: FrameInspectionSession | None
     turns: list[LoopTurn]
     control: ExecutionControl
     limits: RunLimits

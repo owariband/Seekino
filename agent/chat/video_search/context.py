@@ -80,6 +80,7 @@ def build_canvas_checkpoint(
             }
             for item in draft_items
         ],
+        **(project_run_records(canvas) if role != "chat" else {}),
         "recovery": (
             "Treat IDs and counts as navigation metadata only. Use the registered "
             "get_context_canvas for exact Evidence or Draft content."
@@ -105,6 +106,25 @@ def build_canvas_checkpoint(
             ],
         }
     return checkpoint
+
+
+def project_run_records(canvas: VideoSearchContextCanvas) -> dict[str, Any]:
+    """Point to complete execution records without replaying them in every prompt."""
+    collections = canvas.checkpoint()["collections"]
+    return {
+        "run_records": {
+            collection: {
+                "collection": collection,
+                "item_count": collections.get(collection, {}).get("item_count", 0),
+            }
+            for collection in ("history", "frame_inspections")
+        },
+        "run_records_instruction": (
+            "Use get_context_canvas to list and read previous turns or frame inspection "
+            "receipts as needed. Receipts identify delivered frames; read them before "
+            "repeating an inspection. They are metadata, not the images themselves."
+        ),
+    }
 
 
 def project_inputs(

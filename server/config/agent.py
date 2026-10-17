@@ -32,6 +32,8 @@ class AgentServiceConfig:
     max_tool_result_bytes: int = 16_384
     max_read_chars_per_call: int = 16_384
     max_catalog_items_per_page: int = 20
+    frame_max_height: int = 720
+    maximum_frame_inspections: int = 12
     stage_timeout_seconds: float = 480
     evaluator_stage_timeout_seconds: float = 480
     chat_timeout_seconds: float = 480
@@ -54,6 +56,10 @@ class AgentServiceConfig:
             raise ValueError("limits_enabled must be a boolean")
         if not isinstance(self.total_timeout_enabled, bool):
             raise ValueError("total_timeout_enabled must be a boolean")
+        for name in ("frame_max_height", "maximum_frame_inspections"):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
         for name in (
             "query_reasoning_effort", "evaluator_reasoning_effort",
             "chat_reasoning_effort", "supervisor_reasoning_effort",

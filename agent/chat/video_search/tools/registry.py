@@ -7,8 +7,10 @@ from engine.rag.contracts import VideoChunkSearchResult
 from ...common.state import ExecutionControl, RunInputs
 from agent.utils.tool import AgentTool
 from ..state import RetrievalCall, RetrievalChannelContract
+from ..frame_evidence import FrameInspectionSession, FrameReader
 from ..video_search_canvas import VideoSearchContextCanvas
 from .canvas import build_video_search_canvas_tools
+from .frames import build_inspect_video_frames_tool
 from .retrieval import build_retrieve_tool
 from .shared import _ToolCallBudget, DraftReadAudit
 
@@ -25,12 +27,16 @@ def build_query_tools(
     maximum_catalog_items: int,
     maximum_read_chars: int = 16_384,
     retrieval_channel: RetrievalChannelContract = "transcript",
+    frame_reader: FrameReader | None = None,
+    frame_session: FrameInspectionSession | None = None,
+    frame_max_height: int | None = None,
+    supports_vision_input: bool = False,
 ) -> list[AgentTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Query")
         if maximum_tool_calls is not None else None
     )
-    return [
+    tools = [
         build_retrieve_tool(
             search,
             canvas=canvas,
@@ -50,6 +56,13 @@ def build_query_tools(
             maximum_read_chars=maximum_read_chars, budget=budget,
         ),
     ]
+    if supports_vision_input and frame_reader is not None and frame_session is not None:
+        tools.append(build_inspect_video_frames_tool(
+            reader=frame_reader, session=frame_session, canvas=canvas, inputs=inputs,
+            control=control, role="Query", max_height=frame_max_height,
+            maximum_result_bytes=maximum_result_bytes, budget=budget,
+        ))
+    return tools
 
 
 def build_evaluator_tools(
@@ -66,12 +79,16 @@ def build_evaluator_tools(
     maximum_read_chars: int = 16_384,
     audit: DraftReadAudit | None = None,
     retrieval_channel: RetrievalChannelContract = "transcript",
+    frame_reader: FrameReader | None = None,
+    frame_session: FrameInspectionSession | None = None,
+    frame_max_height: int | None = None,
+    supports_vision_input: bool = False,
 ) -> list[AgentTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Evaluator")
         if maximum_tool_calls is not None else None
     )
-    return [
+    tools = [
         build_retrieve_tool(
             search,
             canvas=canvas,
@@ -91,6 +108,13 @@ def build_evaluator_tools(
             maximum_read_chars=maximum_read_chars, budget=budget, audit=audit,
         ),
     ]
+    if supports_vision_input and frame_reader is not None and frame_session is not None:
+        tools.append(build_inspect_video_frames_tool(
+            reader=frame_reader, session=frame_session, canvas=canvas, inputs=inputs,
+            control=control, role="Evaluator", max_height=frame_max_height,
+            maximum_result_bytes=maximum_result_bytes, budget=budget,
+        ))
+    return tools
 
 
 def build_chat_tools(

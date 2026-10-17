@@ -14,7 +14,7 @@ from ..common.errors import (
 from .output import build_chat_output
 from .skills import CHAT_SKILL_PROMPT
 from .state import (
-    ChatRenderDraft, ExecutionControl, LoopTurn, ModelContextBudget, RetrievalTraceEntry,
+    ChatRenderDraft, ExecutionControl, LoopTurn, RetrievalTraceEntry,
     RunInputs, context_json,
 )
 from .video_search_canvas import VideoSearchContextCanvas
@@ -68,7 +68,6 @@ def render_chat(
     )
     context_payload = context_json(context)
     prompt = instructions + "\n\n" + context_payload
-    ModelContextBudget(max_prompt_chars).consume("Chat Agent prompt", prompt)
 
     def accept_text(text: str) -> None:
         control.check()

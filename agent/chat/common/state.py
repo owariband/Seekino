@@ -25,6 +25,7 @@ class RunInputs(TypedDict):
     series_ids: list[str]
     series_context: list[dict]
     user_message: str
+    attachments: NotRequired[list[dict[str, str]]]
     image_urls: NotRequired[list[str]]
     history: list[dict]
     requested_top_k: int

@@ -507,7 +507,7 @@ def test_roles_forward_current_and_historical_images_outside_text_context(
         if role == "query":
             context = json.loads(calls[-1][0].rsplit("\n\n", 1)[1])
             assert context["original_plan"] == "plan-1"
-            assert context["turns"][-1]["review"]["advice"] == "find broken cup, not picked-up cup"
+            assert context["latest_evaluator_advice"] == "find broken cup, not picked-up cup"
         if role == "query" and context_messages:
             anchor = json.loads(calls[-1][1]["initial_messages"][1]["content"].split("\n", 1)[1])
             assert anchor["original_plan"] == "plan-1"
@@ -520,10 +520,10 @@ def test_query_native_image_history_keeps_one_task_body_within_text_budget(provi
 
     from agent.chat.common.state import ExecutionControl
     from agent.chat.video_search.query import run_query
-    from agent.chat.video_search.state import ModelContextBudget
     from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
     from gateway.claude_code.agent import ClaudeAgentModel
     from gateway.codex.agent import CodexAgentModel
+    from openai_codex import ImageInput as CodexImageInput, TextInput as CodexTextInput
 
     options = dict(model="native-budget-test", request_timeout_seconds=5, max_output_tokens=100,
                    max_input_chars=100_000)
@@ -552,11 +552,11 @@ def test_query_native_image_history_keeps_one_task_body_within_text_budget(provi
             assert messages[-1] == {"role": "user", "content": inputs["user_message"]}
             media_options = dict(initial_messages=messages, image_urls=kwargs["image_urls"])
             if provider == "codex":
-                rendered, _, media = native._prepare_input(
+                rendered, sdk_inputs = native._prepare_input(
                     prompt, max_input_chars=native.max_input_chars, **media_options,
                 )
-                images = [block["image_url"] for block in media if block["type"] == "input_image"]
-                texts = [block["text"] for block in media if block["type"] == "input_text"]
+                images = [item.url for item in sdk_inputs if isinstance(item, CodexImageInput)]
+                texts = [item.text for item in sdk_inputs if isinstance(item, CodexTextInput)]
             else:
                 rendered, media = native._prepare_input(prompt, **media_options)
                 images = [block["image_url"]["url"] for block in media if block["type"] == "image_url"]
@@ -569,14 +569,14 @@ def test_query_native_image_history_keeps_one_task_body_within_text_budget(provi
             assert "conversation message 1:" in texts[1] and "conversation message 2:" in texts[2]
             context = json.loads(prompt.rsplit("\n\n", 1)[1])
             assert context["original_plan"] == "original-plan"
-            assert context["turns"][-1]["review"]["advice"] == advice
+            assert context["latest_evaluator_advice"] == advice
             assert "original-plan" in rendered and advice in rendered
             return kwargs["result_type"](plan_context="updated-plan", message="Checked image.")
 
     try:
         result = run_query(
             QueryModel(), inputs, [previous], tools=[], max_model_calls=1,
-            control=ExecutionControl(monotonic() + 5), context_budget=ModelContextBudget(100_000),
+            control=ExecutionControl(monotonic() + 5), max_prompt_chars=100_000,
             canvas=VideoSearchContextCanvas("workspace", ("series",)),
         )
         assert result.plan_context == "updated-plan"
@@ -917,7 +917,7 @@ def test_concurrent_kicks_keep_auto_and_custom_limits_isolated() -> None:
                 "action": (
                     "complete"
                     if context["inputs"]["conversation_id"] == "auto"
-                    and len(context["turns"]) == 3
+                    and context["turn_number"] == 4
                     else "continue"
                 ),
                 "advice": "retry",
@@ -995,15 +995,30 @@ def test_evaluator_complete_is_trusted_without_full_section_reads(caplog, sectio
     assert "review_source=draft_read_guard" not in caplog.text
 
 
-def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
+def test_next_query_reads_previous_calls_drafts_and_reviews_from_canvas():
+    history_reads = []
+
+    class HistoryQuery(Query):
+        def run_structured(self, prompt, **kwargs):
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            if context["turn_number"] == 3:
+                reader = _reader(_tool_map(kwargs["tools"]), "history")
+                catalog = _invoke_json(reader, {})
+                assert catalog["total"] == 2
+                for item in catalog["items"]:
+                    history_reads.append(_read_all(reader, item["reference"])["history"])
+            return super().run_structured(prompt, **kwargs)
+
     runtime, query, evaluator, chat, retrieval = _runtime(
-        query=Query(search_rounds=(1, 2), searches_per_round=2), evaluator=Evaluator(3),
+        query=HistoryQuery(search_rounds=(1, 2), searches_per_round=2), evaluator=Evaluator(3),
     )
     result = runtime.kick(_inputs())
     third = query.contexts[2]
     assert third["original_plan"] == "plan-1"
-    assert len(third["turns"]) == 2
-    for number, record in enumerate(third["turns"], 1):
+    assert "turns" not in third
+    assert third["run_records"]["history"]["item_count"] == 2
+    assert third["latest_evaluator_advice"] == "find broken cup, not picked-up cup"
+    for number, record in enumerate(history_reads, 1):
         assert record["plan_context"] == f"plan-{number}"
         assert record["draft"]["message"] == f"draft-{number}"
         assert record["review"] == {
@@ -1014,7 +1029,7 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
         assert "result" not in record["retrieval_calls"][0]
         assert "retrieval_result" not in record
         assert "draft_output" not in record
-    assert third["turns"][1]["evidence_source_turns"] == {"chunk-1": 2}
+    assert history_reads[1]["evidence_source_turns"] == {"chunk-1": 2}
     assert "query" not in result.model_dump(mode="json", by_alias=True)
     assert [
         entry.model_dump(mode="json", by_alias=True)
@@ -1056,8 +1071,8 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
     assert "turns" not in chat.contexts[0]
     assert "retrieval_result" not in approved
     assert "chunk-2" not in json.dumps(chat.contexts[0])
-    # Creating/rendering the approved turn does not mutate previously delivered snapshots.
-    assert query.contexts[1]["turns"][0] == third["turns"][0]
+    # Later records and rendering do not change previously delivered navigation.
+    assert query.contexts[1]["run_records"]["history"]["item_count"] == 1
 
 
 @pytest.mark.parametrize("mutation, expected", [
@@ -1332,8 +1347,8 @@ def test_multi_turn_context_keeps_one_canonical_evidence_copy():
 
     assert json.dumps(query.contexts[2], ensure_ascii=False).count(marker) == 0
     assert json.dumps(evaluator.contexts[2], ensure_ascii=False).count(marker) == 0
-    assert all("retrieval_result" not in turn for turn in query.contexts[2]["turns"])
-    assert all("draft_output" not in turn for turn in query.contexts[2]["turns"])
+    assert "turns" not in query.contexts[2]
+    assert query.contexts[2]["run_records"]["history"]["item_count"] == 2
 
 
 @pytest.mark.parametrize("mutation, expected", [
@@ -1846,15 +1861,46 @@ def test_kick_can_lower_tool_budget_without_mutating_runtime_default():
     assert runtime._max_tool_calls == 24
 
 
-def test_prompt_character_budget_stops_before_the_query_provider():
+def test_old_prompt_character_threshold_does_not_block_any_role():
     runtime, query, evaluator, chat, retrieval = _runtime(max_prompt_chars=100)
 
-    with pytest.raises(VideoSearchFailure) as captured:
-        runtime.kick(_inputs())
-    assert captured.value.code is VideoSearchFailureCode.CONTEXT_BUDGET_EXCEEDED
-    assert captured.value.phase is VideoSearchFailurePhase.QUERY
+    result = runtime.kick(_inputs())
 
-    assert query.contexts == evaluator.contexts == chat.contexts == retrieval.calls == []
+    assert result.agent_reply.result_count == 1
+    assert len(query.contexts) == len(evaluator.contexts) == len(chat.contexts) == 1
+    assert all(len(model.prompts[0]) > 100 for model in (query, evaluator))
+    assert len(json.dumps(chat.contexts[0])) > 100
+    assert len(retrieval.calls) == 1
+
+
+def test_many_rounds_keep_prompt_small_and_old_turns_recoverable():
+    restored = []
+
+    class LongRunQuery(Query):
+        def run_structured(self, prompt, **kwargs):
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            if context["turn_number"] == 20:
+                restored.append(_read_all(
+                    _reader(_tool_map(kwargs["tools"]), "history"), "2",
+                )["history"])
+            return super().run_structured(prompt, **kwargs)
+
+    runtime, query, evaluator, _chat, _retrieval = _runtime(
+        query=LongRunQuery(search_rounds=(1,)), evaluator=Evaluator(20),
+        max_prompt_chars=100,
+    )
+    runtime.kick(_inputs())
+
+    assert len(query.prompts) == len(evaluator.prompts) == 20
+    assert query.contexts[-1]["original_plan"] == "plan-1"
+    assert query.contexts[-1]["run_records"]["history"]["item_count"] == 19
+    assert restored[0]["number"] == 2
+    assert restored[0]["plan_context"] == "plan-2"
+    assert restored[0]["draft"]["message"] == "draft-2"
+    assert restored[0]["review"]["advice"] == query.contexts[-1]["latest_evaluator_advice"]
+    # Changing the round/count has bounded overhead; old rounds are not re-serialized.
+    assert len(query.prompts[-1]) - len(query.prompts[1]) < 100
+    assert len(evaluator.prompts[-1]) - len(evaluator.prompts[1]) < 100
 
 
 def test_complete_query_message_budget_error_is_classified_for_supervisor():
@@ -2310,7 +2356,7 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
         ):
             assert request_timeout_seconds > 0
             context = json.loads(prompt.rsplit("\n\n", 1)[1])
-            assert context["turns"] == []
+            assert context["run_records"]["history"]["item_count"] == 0
             name = context["inputs"]["conversation_id"]
             rendezvous.wait(timeout=5)
             tools_by_name = _tool_map(tools)

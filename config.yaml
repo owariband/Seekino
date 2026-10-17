@@ -46,7 +46,7 @@ models:
     supports_vision_input: true
     reasoning_effort: low
     max_output_tokens: 8192
-    request_timeout_seconds: 600
+    request_timeout_seconds: 1200
     context_window_tokens: 128000
     context_safety_margin_tokens: 2048
     auto_compact_tokens: 90000
@@ -125,8 +125,8 @@ agent_runtime:
   stage_timeout_seconds: 480
   evaluator_stage_timeout_seconds: 480
   chat_timeout_seconds: 480
-  supervisor_timeout_seconds: 600
-  execution_timeout_seconds: 600
+  supervisor_timeout_seconds: 1200
+  execution_timeout_seconds: 1200
   maximum_concurrent_kicks: 4
 
 video_parser:

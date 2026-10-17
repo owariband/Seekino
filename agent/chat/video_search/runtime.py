@@ -25,6 +25,7 @@ from .errors import (
     VideoSearchFailurePhase,
 )
 from .evaluator import evaluate
+from .frame_evidence import FrameInspectionSession, FrameReader
 from .output import (
     bind_draft, build_retrieval_trace, finalize_output,
     validate_approved_video_ranges,
@@ -32,7 +33,7 @@ from .output import (
 from .query import run_query
 from .state import (
     AgentFinalOutput, AnswerPhase, ExecutionControl, LoopTurn,
-    ModelContextBudget, QueryDraft, RunInputs, RunLimits, RunState,
+    QueryDraft, RunInputs, RunLimits, RunState,
     RetrievalChannelContract, SelectedVideoRange, context_json,
 )
 from .skills import LEXICAL_RETRIEVAL_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
@@ -70,6 +71,9 @@ class AgentRuntime:
         chat_timeout_seconds: float = 480,
         execution_timeout_seconds: float = 480,
         retrieval_channel: RetrievalChannelContract = "transcript",
+        frame_reader: FrameReader | None = None,
+        frame_max_height: int | None = None,
+        maximum_frame_inspections: int | None = None,
     ) -> None:
         for name, value, maximum in [
             ("max_loop_turns", max_loop_turns, 3),
@@ -128,6 +132,14 @@ class AgentRuntime:
         self._chat_timeout = chat_timeout_seconds
         self._execution_timeout = execution_timeout_seconds
         self._retrieval_channel = retrieval_channel
+        if frame_reader is not None:
+            for name, value in (("frame_max_height", frame_max_height),
+                                ("maximum_frame_inspections", maximum_frame_inspections)):
+                if type(value) is not int or value <= 0:
+                    raise ValueError(f"{name} must be a positive integer when frame_reader is configured")
+        self._frame_reader = frame_reader
+        self._frame_max_height = frame_max_height
+        self._maximum_frame_inspections = maximum_frame_inspections
         # TODO(video-parse-v2/chat-owner): Defer Chat retrieval/prompt and Message
         # contract refactors until Engine publishes its query-policy contract.
         # Then adapt to that API; do not implement Engine policy in Chat or
@@ -239,6 +251,12 @@ class AgentRuntime:
             {
                 "inputs": deepcopy(inputs),
                 "canvas": canvas,
+                "frame_inspections": (
+                    FrameInspectionSession(
+                        self._maximum_frame_inspections if legacy_limits_enabled else None
+                    )
+                    if self._frame_reader is not None else None
+                ),
                 "turns": [],
                 "control": control,
                 "limits": limits,
@@ -319,7 +337,6 @@ class AgentRuntime:
             "phase": AnswerPhase.RETRIEVING,
         })
         calls = []
-        context_budget = ModelContextBudget(self._max_prompt_chars)
         query_deadline = monotonic() + self._stage_timeout
         query_control = replace(control, deadline=(
             query_deadline if control.deadline is None
@@ -337,6 +354,10 @@ class AgentRuntime:
             maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
             retrieval_channel=self._retrieval_channel,
+            frame_reader=self._frame_reader,
+            frame_session=state.get("frame_inspections"),
+            frame_max_height=self._frame_max_height,
+            supports_vision_input=getattr(self._query_model, "supports_vision_input", False),
         )
         attach_agent_tool_logging(query_tools, role="Query", inputs=inputs)
         try:
@@ -347,7 +368,7 @@ class AgentRuntime:
                 tools=as_langchain_tools(query_tools),
                 max_model_calls=limits.max_model_calls_per_turn,
                 control=query_control,
-                context_budget=context_budget,
+                max_prompt_chars=self._max_prompt_chars,
                 canvas=canvas,
                 retrieval_skill_prompt=self._retrieval_skill_prompt,
             )
@@ -401,6 +422,10 @@ class AgentRuntime:
             maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
             retrieval_channel=self._retrieval_channel,
+            frame_reader=self._frame_reader,
+            frame_session=state.get("frame_inspections"),
+            frame_max_height=self._frame_max_height,
+            supports_vision_input=getattr(self._evaluator_model, "supports_vision_input", False),
         )
         attach_agent_tool_logging(evaluator_tools, role="Evaluator", inputs=inputs)
         try:
@@ -449,6 +474,7 @@ class AgentRuntime:
             review=review,
             status=review.action,
         )
+        canvas.put("history", str(current.number), current.context(), readonly=True)
         _logger.info(
             "event=agent_turn_evaluated conversation_id=%s message_id=%s "
             "turn_number=%s retrieved_hit_count=%s selected_hit_count=%s "

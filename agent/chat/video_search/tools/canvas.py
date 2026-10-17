@@ -72,12 +72,7 @@ def build_video_search_canvas_tools(
 ) -> list[AgentTool]:
     return build_context_canvas_tools(
         canvas, role=role,
-        read_collections={
-            "query": ("retrieval", "draft"),
-            "evaluator": ("retrieval", "draft"),
-            "chat": ("approved", "render"),
-            "supervisor": ("retrieval", "draft", "approved", "render", "review"),
-        }[role],
+        read_collections=canvas.read_collections[role],
         write_args_schema={"query": QueryWriteCanvasArguments,
                            "chat": ChatWriteCanvasArguments}.get(role),
         maximum_result_bytes=maximum_result_bytes,

@@ -203,7 +203,8 @@ def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
             summary["video_chunk_id_sha256"] = sha256(
                 video_chunk_id.encode("utf-8", "replace")
             ).hexdigest()[:16]
-    for key in ("start_seconds", "end_seconds", "top_k", "start", "end"):
+    for key in ("start_seconds", "end_seconds", "top_k", "start", "end",
+                "start_ms", "end_ms", "frame_count"):
         value = inputs.get(key)
         if type(value) is int:
             summary[key] = value
@@ -260,6 +261,8 @@ def _trace_tool_result(output: Any) -> tuple[str, dict[str, Any]]:
         "accepted", "operation", "removed", "video_chunk_id", "id",
         "draft_item_count", "video_item_count", "result_count", "total", "partial",
         "section", "start", "end", "total_chars", "omitted_count",
+        "inspection_id", "start_ms", "end_ms", "frame_count", "frames",
+        "cache_hit", "images_supplied", "manifest_uri", "manifest_sha256",
     ):
         if key in payload:
             summary[key] = payload[key]

@@ -20,6 +20,15 @@ from .state import ChatRenderDraft, ChatVideoBlock, DraftItem, MarkdownRenderBlo
 class VideoSearchContextCanvas(ContextCanvas):
     """Per-Kick evidence, draft, approval and rendering in the shared Canvas."""
 
+    read_collections = {
+        "query": ("retrieval", "draft", "history", "frame_inspections"),
+        "evaluator": ("retrieval", "draft", "history", "frame_inspections"),
+        "chat": ("approved", "render"),
+        "supervisor": (
+            "retrieval", "draft", "approved", "render", "review", "history", "frame_inspections",
+        ),
+    }
+
     def __init__(self, tenant_id: str, series_ids: tuple[str, ...]) -> None:
         if not tenant_id.strip():
             raise ValueError("tenant_id must not be empty")
@@ -210,10 +219,7 @@ class VideoSearchContextCanvas(ContextCanvas):
         return ChatRenderDraft(blocks=self.render_blocks())
 
     def _check_collection(self, collection: str, role: str) -> None:
-        allowed = {"query": {"retrieval", "draft"}, "evaluator": {"retrieval", "draft"},
-                   "chat": {"approved", "render"},
-                   "supervisor": {"retrieval", "draft", "approved", "render", "review"}}
-        if collection not in allowed.get(role, set()):
+        if collection not in self.read_collections.get(role, ()):
             raise AgentToolFeedbackError(
                 "FORBIDDEN_COLLECTION", f"{role!r} cannot read {collection!r}.",
                 "Use only the collections registered for the current role.",
@@ -231,6 +237,17 @@ class VideoSearchContextCanvas(ContextCanvas):
             return [{"reference": reference, "turn_number": value["turn_number"],
                      "action": value["action"], "description": value["advice"][:500]}
                     for reference, value in self.items(collection)]
+        if collection == "history":
+            return [{"reference": reference, "turn_number": value["number"],
+                     "action": value["review"]["action"],
+                     "description": value["review"]["advice"][:500]}
+                    for reference, value in self.items(collection)]
+        if collection == "frame_inspections":
+            return [{"reference": reference, **{
+                key: value[key] for key in (
+                    "video_chunk_id", "role", "start_ms", "end_ms", "frame_count", "cache_hit",
+                )
+            }} for reference, value in self.items(collection)]
         if collection == "retrieval":
             cards = []
             for reference, value in self.items(collection):
@@ -257,8 +274,8 @@ class VideoSearchContextCanvas(ContextCanvas):
         try:
             if collection == "render":
                 return {"render": json.dumps(self.get(collection, reference), ensure_ascii=False)}
-            if collection == "review":
-                return {"review": json.dumps(self.get(collection, reference), ensure_ascii=False)}
+            if collection in ("review", "history", "frame_inspections"):
+                return {collection: json.dumps(self.get(collection, reference), ensure_ascii=False)}
             if collection == "retrieval":
                 return detail_sections(self.retrieval_snapshot(reference))
             approved = collection == "approved"

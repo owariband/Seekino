@@ -28,6 +28,7 @@ from server.config import ServerSettings
 from server.config.elasticsearch import ElasticsearchConfig
 from server.config.retrieval import RetrievalConfig
 from server.config.agent import AgentServiceConfig
+from server.config.global_agent_settings import read_global_agent_settings
 from server.config.auth import AuthConfig
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig
@@ -37,6 +38,7 @@ from server.database import DatabaseEnvironment, create_schema
 from tests.manual import server_mq_once as mq_main
 from server.mq.video_parse_consumer import VideoParseConsumer
 from server.service.video_parse import VideoParseRuntimeService
+from server.service.video_frame_reader import VideoFrameReader
 from server.service.retrieval_rerank import StructuredTextReranker
 from server.service.video_retrieval import VideoParseRetrievalService
 from server.storage.elasticsearch import ElasticsearchVideoChunkStore
@@ -96,6 +98,37 @@ class _ElasticsearchClient:
 
     def close(self):
         self.closed = True
+
+
+@pytest.mark.parametrize("name", ["frame_max_height", "maximum_frame_inspections"])
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "12", None])
+def test_frame_inspection_settings_require_positive_integers(name, value):
+    with pytest.raises(ValueError, match=f"{name} must be a positive integer"):
+        AgentServiceConfig(**{name: value})
+
+
+def test_frame_inspection_settings_follow_yaml_environment_default_precedence(monkeypatch, tmp_path):
+    for name in tuple(os.environ):
+        if name.startswith("ANIVAG_AGENT_"):
+            monkeypatch.delenv(name, raising=False)
+    configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    runtime_values = configuration.setdefault("agent_runtime", {})
+    for name in ("frame_max_height", "maximum_frame_inspections"):
+        runtime_values.pop(name, None)
+    path = tmp_path / "models.yaml"
+    path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
+    defaults, _ = read_global_agent_settings(path)
+    assert (defaults.frame_max_height, defaults.maximum_frame_inspections) == (720, 12)
+
+    monkeypatch.setenv("ANIVAG_AGENT_FRAME_MAX_HEIGHT", "480")
+    monkeypatch.setenv("ANIVAG_AGENT_MAXIMUM_FRAME_INSPECTIONS", "5")
+    environment, _ = read_global_agent_settings(path)
+    assert (environment.frame_max_height, environment.maximum_frame_inspections) == (480, 5)
+
+    runtime_values.update(frame_max_height=360, maximum_frame_inspections=7)
+    path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
+    explicit, _ = read_global_agent_settings(path)
+    assert (explicit.frame_max_height, explicit.maximum_frame_inspections) == (360, 7)
 
 
 def test_database_construction_disposes_engine_when_session_factory_fails(monkeypatch):
@@ -375,6 +408,8 @@ def test_process_assembly_receives_runtime_configuration(
             supervisor_reasoning_effort="high",
             max_output_tokens=2048,
             max_prompt_chars=120_000,
+            frame_max_height=480,
+            maximum_frame_inspections=5,
             stage_timeout_seconds=45,
             evaluator_stage_timeout_seconds=210,
             execution_timeout_seconds=execution_timeout, maximum_concurrent_kicks=2,
@@ -443,6 +478,11 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.parse_consumer._poll_interval.total_seconds() == settings.mq.poll_interval_seconds
         assert services.parse_consumer._lease_duration == settings.mq.lease_duration
         runtime = services.agent._runtime
+        assert isinstance(runtime._frame_reader, VideoFrameReader)
+        assert runtime._frame_reader._repository is services.retrieval._repository
+        assert runtime._frame_reader._artifacts is worker._artifact_store
+        assert runtime._frame_max_height == 480
+        assert runtime._maximum_frame_inspections == 5
         assert runtime._retrieval_channel == "lexical"
         assert runtime._query_model.model_name == expected_models[0]
         assert runtime._evaluator_model.model_name == expected_models[1]
@@ -521,10 +561,17 @@ def test_process_assembly_receives_runtime_configuration(
             chat_reasoning_effort="low",
             supervisor_reasoning_effort="none",
             maximum_concurrent_kicks=5,
+            frame_max_height=360, maximum_frame_inspections=7,
         )
         replacement = services.agent._runtime_factory(updated)
         replacement_supervisor = None
         try:
+            assert isinstance(replacement._frame_reader, VideoFrameReader)
+            assert replacement._frame_reader is not runtime._frame_reader
+            assert replacement._frame_reader._repository is runtime._frame_reader._repository
+            assert replacement._frame_reader._artifacts is runtime._frame_reader._artifacts
+            assert replacement._frame_max_height == 360
+            assert replacement._maximum_frame_inspections == 7
             assert replacement._evaluator_stage_timeout == 240
             assert replacement._total_timeout_enabled is updated.total_timeout_enabled
             assert replacement._max_tool_result_bytes == 8_192

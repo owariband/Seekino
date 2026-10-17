@@ -14,7 +14,7 @@ from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessio
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from agent.utils.context_canvas_tools import ContextCanvasReadArguments
 from agent.utils.tool import AgentTool
@@ -62,6 +62,13 @@ class SearchArguments(BaseModel):
     query: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
     ]
+
+
+class VideoSearchArguments(SearchArguments):
+    attachments: list[Annotated[str, StringConstraints(min_length=1)]] = Field(
+        default_factory=list, strict=True,
+        description="Copy mediaUri addresses from the provided attachments; omitted or [] sends no images.",
+    )
 
 
 class SupervisorRuntime:
@@ -159,9 +166,10 @@ class SupervisorRuntime:
             cancellation, emit,
         )
         video_result: AgentFinalOutput | None = None
-        review_canvas: VideoSearchContextCanvas | None = None
         review_turn: LoopTurn | None = None
         review_reader: AgentTool | None = None
+        evidence_canvas: VideoSearchContextCanvas | None = None
+        evidence_reader: AgentTool | None = None
         submitted_items: dict[str, SelectedVideoRange] = {}
         submitted_sources: dict[str, list[str]] = {}
         render_blocks: list[ChatRenderBlock | ToolRenderBlock] = []
@@ -171,6 +179,25 @@ class SupervisorRuntime:
         tool_calls = 0
         # SDK tool calls can overlap; keep this turn's evidence caches and budget serial.
         tool_lock = RLock()
+
+        # Keep the message's resource addresses bound to the already resolved images.
+        history_attachments = [
+            item for item in inputs["history"]
+            if str(item.get("role", "")).lower() == "user"
+            and item.get("status", "COMPLETED") == "COMPLETED"
+            and item.get("attachments")
+        ]
+        attachment_images: dict[str, str] = {}
+        for references, urls in [
+            (inputs.get("attachments", []), inputs.get("image_urls", [])),
+            *((item["attachments"], item.get("imageUrls", [])) for item in history_attachments),
+        ]:
+            if references:
+                for reference, url in zip(references, urls, strict=True):
+                    address = reference["mediaUri"]
+                    if address in attachment_images and attachment_images[address] != url:
+                        raise AgentModelInvocationError("Attachment address has conflicting image inputs")
+                    attachment_images[address] = url
 
         def answer_markdown() -> str:
             return "\n\n".join(
@@ -193,12 +220,15 @@ class SupervisorRuntime:
             return answer
 
         def accepted_video_evidence():
-            assert review_turn is not None and review_canvas is not None
+            assert review_turn is not None and evidence_canvas is not None and video_result is not None
             source_ids = list(dict.fromkeys(
                 identifier for sources in submitted_sources.values() for identifier in sources
             ))
             evidence = review_turn.retrieval_result.model_copy(update={
-                "hits": [review_canvas.retrieval_snapshot(identifier) for identifier in source_ids],
+                "hits": [evidence_canvas.retrieval_snapshot(identifier) for identifier in source_ids],
+                "partial": video_result.partial,
+                "warnings": list(video_result.warnings),
+                "searched_video_ids": video_result.searched_video_ids,
                 "agent_reply": review_turn.retrieval_result.agent_reply.model_copy(update={
                     "result_count": len(source_ids),
                 }),
@@ -372,18 +402,8 @@ class SupervisorRuntime:
                     },
                 )
 
-        def accept_video_review(canvas: VideoSearchContextCanvas, turn: LoopTurn) -> None:
-            nonlocal review_canvas, review_turn, review_reader
-            control.check()
-            if canvas.tenant_id != inputs["tenant_id"] or set(canvas.series_ids) != set(inputs["series_ids"]):
-                raise AgentModelInvocationError("Video review changed the fixed scope")
-            review_reader, = self._video_runtime.build_supervisor_read_tools(
-                canvas, control, maximum_result_bytes=self._max_tool_result_bytes,
-            )
-            review_canvas, review_turn = canvas, turn
-
-        def search_video_graph(query: str) -> ToolResult:
-            nonlocal video_result
+        def search_video_graph(query: str, attachments: list[str] | None = None) -> ToolResult:
+            nonlocal video_result, review_turn, review_reader, evidence_canvas, evidence_reader
             with tool_lock:
                 consume_tool_call()
                 if not inputs["series_ids"]:
@@ -398,63 +418,158 @@ class SupervisorRuntime:
                             ),
                         ).as_dict()},
                     )
-                reused = video_result is not None
-                if video_result is None:
-                    scoped_inputs = deepcopy(inputs)
-                    try:
-                        scoped_inputs["series_context"] = load_video_context()
-                        control.check()
-                        video_result = self._video_runtime.kick(
-                            scoped_inputs, emit=publish_child_progress, cancellation=cancellation,
-                            max_model_calls_per_turn=max_model_calls_per_turn,
-                            max_tool_calls_per_turn=max_tool_calls_per_turn,
-                            max_loop_turns=max_loop_turns, deadline=control.deadline,
-                            on_handoff=accept_video_review,
-                        )
-                    except VideoSearchFailure as exc:
-                        control.check()
-                        _logger.warning(
-                            "event=agent_supervisor_video_failed conversation_id=%s "
-                            "message_id=%s error_type=%s root_error_type=%s code=%s "
-                            "phase=%s retryable=%s",
-                            inputs["conversation_id"], inputs["assistant_message_id"],
-                            type(exc).__name__,
-                            type(exc.__cause__ or exc).__name__, exc.code.value,
-                            exc.phase.value, exc.retryable,
-                        )
-                        return JsonToolResult(
-                            success=False,
-                            payload={"error": _video_failure_tool_error(exc).as_dict()},
-                        )
+                selected = attachments or []
+                if any(address not in attachment_images for address in selected):
+                    raise AgentToolFeedbackError(
+                        "UNKNOWN_ATTACHMENT", "A selected attachment is not available in this conversation input.",
+                        "Copy mediaUri values from the provided attachments or history_attachments, or use [].",
+                    )
+                scoped_inputs = deepcopy(inputs)
+                scoped_inputs["user_message"] = query
+                scoped_inputs["attachments"] = [{"mediaUri": address} for address in selected]
+                scoped_inputs["image_urls"] = [attachment_images[address] for address in selected]
+                for message in scoped_inputs["history"]:
+                    message.pop("imageUrls", None)
+                    message.pop("attachments", None)
+                handoff: tuple[VideoSearchContextCanvas, LoopTurn] | None = None
+
+                def capture_review(canvas: VideoSearchContextCanvas, turn: LoopTurn) -> None:
+                    nonlocal handoff
+                    handoff = canvas, turn
+
+                try:
+                    scoped_inputs["series_context"] = load_video_context()
+                    control.check()
+                    _logger.info(
+                        "event=agent_supervisor_video_input conversation_id=%s message_id=%s "
+                        "attachment_count=%s query_chars=%s",
+                        inputs["conversation_id"], inputs["assistant_message_id"], len(selected), len(query),
+                    )
+                    current_result = self._video_runtime.kick(
+                        scoped_inputs, emit=publish_child_progress, cancellation=cancellation,
+                        max_model_calls_per_turn=max_model_calls_per_turn,
+                        max_tool_calls_per_turn=max_tool_calls_per_turn,
+                        max_loop_turns=max_loop_turns, deadline=control.deadline,
+                        on_handoff=capture_review,
+                    )
+                except VideoSearchFailure as exc:
+                    control.check()
+                    root = exc
+                    seen: set[int] = set()
+                    while id(root) not in seen:
+                        seen.add(id(root))
+                        cause = root.__cause__ or root.__context__
+                        if cause is None:
+                            break
+                        root = cause
+                    provider_code = getattr(root, "code", None)
+                    if not isinstance(provider_code, str) or re.fullmatch(r"[\w.-]{1,80}", provider_code) is None:
+                        provider_code = None
+                    _logger.warning(
+                        "event=agent_supervisor_video_failed conversation_id=%s "
+                        "message_id=%s error_type=%s root_error_type=%s code=%s "
+                        "phase=%s retryable=%s provider_status=%s provider_code=%s",
+                        inputs["conversation_id"], inputs["assistant_message_id"],
+                        type(exc).__name__,
+                        type(root).__name__, exc.code.value,
+                        exc.phase.value, exc.retryable,
+                        getattr(root, "status_code", None), provider_code,
+                    )
+                    if video_result is not None:
+                        video_result = video_result.model_copy(update={
+                            "partial": True,
+                            "warnings": list(dict.fromkeys([
+                                *video_result.warnings, "A requested video search failed: " + exc.code.value,
+                            ])),
+                        })
+                    return JsonToolResult(
+                        success=False,
+                        payload={"error": _video_failure_tool_error(exc).as_dict()},
+                    )
                 control.check()
-                if review_canvas is None:
+                if handoff is None:
                     raise AgentModelInvocationError("Video search completed without review evidence")
-                preview = video_result.agent_reply.message[:1_000]
+                canvas, turn = handoff
+                if canvas.tenant_id != inputs["tenant_id"] or set(canvas.series_ids) != set(inputs["series_ids"]):
+                    raise AgentModelInvocationError("Video review changed the fixed scope")
+                incoming = turn.retrieval_result.model_copy(update={
+                    "hits": [canvas.retrieval_snapshot(identifier) for identifier in canvas.retrieval_item_ids()],
+                    "agent_reply": turn.retrieval_result.agent_reply.model_copy(update={
+                        "result_count": len(canvas.retrieval_item_ids()),
+                    }),
+                }, deep=True)
+                validate_result(incoming, inputs)
+                cumulative = evidence_canvas or VideoSearchContextCanvas(
+                    inputs["tenant_id"], tuple(inputs["series_ids"]),
+                )
+                existing_ids = set(cumulative.retrieval_item_ids())
+                for hit in incoming.hits:
+                    identifier = hit.candidate.video_chunk_id
+                    if identifier in existing_ids and cumulative.retrieval_snapshot(identifier).evidence != hit.evidence:
+                        raise AgentToolFeedbackError(
+                            "EVIDENCE_CONFLICT", "A video chunk changed its source evidence during this answer.",
+                            "Previously retrieved evidence remains available; do not combine conflicting snapshots.",
+                        )
+                frame_receipts = canvas.items("frame_inspections")
+                previous_frames = dict(cumulative.items("frame_inspections"))
+                if any(identifier in previous_frames and previous_frames[identifier] != receipt
+                       for identifier, receipt in frame_receipts):
+                    raise AgentModelInvocationError("Frame inspection changed its source receipt")
+
+                preview = current_result.agent_reply.message[:1_000]
                 while True:
                     result = JsonToolResult(
                         success=True,
                         payload={
-                            "result_count": video_result.agent_reply.result_count,
-                            "candidate_count": len(review_canvas.retrieval_item_ids()),
-                            "reused": reused,
+                            "result_count": current_result.agent_reply.result_count,
+                            "candidate_count": len(canvas.retrieval_item_ids()),
                             "answer_preview": preview,
-                            "read_collections": ["retrieval", "draft", "approved", "render", "review"],
+                            "read_collections": list(canvas.read_collections["supervisor"]),
                             "message": (
-                                "Draft only. Read get_context_canvas; review/latest contains the audit. "
+                                "Draft only. Read get_context_canvas: retrieval and frame_inspections are cumulative; "
+                                "other collections, including review/latest, describe the latest successful search. "
                                 "Submit final video items and write your own answer."
                             ),
                         },
                     )
-                    if (
-                        len(result.model_content().encode("utf-8"))
-                        <= self._max_tool_result_bytes
-                    ):
-                        return result
+                    if len(result.model_content().encode("utf-8")) <= self._max_tool_result_bytes:
+                        break
                     if not preview:
-                        raise AgentToolInvocationError(
-                            "Video Tool result exceeds its output budget"
-                        )
+                        raise AgentToolInvocationError("Video Tool result exceeds its output budget")
                     preview = preview[: len(preview) // 2]
+
+                next_reader, = self._video_runtime.build_supervisor_read_tools(
+                    canvas, control, maximum_result_bytes=self._max_tool_result_bytes,
+                )
+                next_evidence_reader = evidence_reader
+                if next_evidence_reader is None:
+                    next_evidence_reader, = self._video_runtime.build_supervisor_read_tools(
+                        cumulative, control, maximum_result_bytes=self._max_tool_result_bytes,
+                    )
+                coverage = {
+                    "partial": incoming.partial,
+                    "warnings": list(incoming.warnings),
+                    "searched_video_ids": incoming.searched_video_ids,
+                }
+                trace = list(current_result.retrieval_trace)
+                if video_result is not None:
+                    coverage["partial"] = video_result.partial or incoming.partial
+                    coverage["warnings"] = list(dict.fromkeys([*video_result.warnings, *incoming.warnings]))
+                    coverage["searched_video_ids"] = (
+                        sorted(set(video_result.searched_video_ids) | set(incoming.searched_video_ids))
+                        if video_result.searched_video_ids is not None and incoming.searched_video_ids is not None
+                        else None
+                    )
+                    trace = [*video_result.retrieval_trace, *trace]
+                control.check()
+                # Publish a successful search only after validating the complete incoming batch.
+                cumulative.record_retrieval(incoming)
+                for identifier, receipt in frame_receipts:
+                    cumulative.put("frame_inspections", identifier, receipt, readonly=True)
+                evidence_canvas, evidence_reader = cumulative, next_evidence_reader
+                review_turn, review_reader = turn, next_reader
+                video_result = current_result.model_copy(update={**coverage, "retrieval_trace": trace}, deep=True)
+                return result
 
         def get_context_canvas(**values) -> ToolResult:
             with tool_lock:
@@ -464,20 +579,25 @@ class SupervisorRuntime:
                         "VIDEO_REVIEW_UNAVAILABLE", "No video review evidence is available.",
                         "Call search_video_graph successfully before reading its Canvas.",
                     )
-                return review_reader.execute(**values)
+                reader = (
+                    evidence_reader if values.get("collection") in ("retrieval", "frame_inspections")
+                    else review_reader
+                )
+                assert reader is not None
+                return reader.execute(**values)
 
         def submit_video_item(
             video_chunk_id: str, start_seconds: int, end_seconds: int, claim: str,
         ) -> ToolResult:
             with tool_lock:
                 consume_tool_call()
-                if review_canvas is None:
+                if evidence_canvas is None:
                     raise AgentToolFeedbackError(
                         "VIDEO_REVIEW_UNAVAILABLE", "No video review evidence is available.",
                         "Call search_video_graph and read its evidence before submitting video items.",
                     )
                 try:
-                    review_canvas.retrieval_snapshot(video_chunk_id)
+                    evidence_canvas.retrieval_snapshot(video_chunk_id)
                 except UnknownToolItemError as exc:
                     raise AgentToolFeedbackError(
                         "UNKNOWN_ITEM", str(exc),
@@ -485,8 +605,8 @@ class SupervisorRuntime:
                     ) from exc
                 try:
                     source_ids = video_range_sources(
-                        {reference: review_canvas.retrieval_snapshot(reference).evidence.model_dump(by_alias=True)
-                         for reference, _ in review_canvas.items("retrieval")},
+                        {reference: evidence_canvas.retrieval_snapshot(reference).evidence.model_dump(by_alias=True)
+                         for reference, _ in evidence_canvas.items("retrieval")},
                         video_chunk_id, start_seconds, end_seconds, allow_adjacent=True,
                     )
                 except ValueError as exc:
@@ -627,8 +747,11 @@ class SupervisorRuntime:
             build_agent_tool(
                 func=get_context_canvas, name="get_context_canvas",
                 description=(
-                    "Read video review evidence after search_video_graph. Collections: retrieval (all "
-                    "retrieved candidates), draft, approved, render (inner Chat draft), review (reference=latest). "
+                    "Read video review evidence after search_video_graph. Collections: "
+                    + ", ".join(VideoSearchContextCanvas.read_collections["supervisor"])
+                    + ". Retrieval and frame_inspections accumulate successful searches; other collections "
+                    "describe the latest successful search. Review uses reference=latest; history uses reference=turn_number; "
+                    "frame_inspections uses reference=inspection_id and contains source-frame metadata. "
                     "Omit reference to page catalogs with cursor. Read reference=video_chunk_id and "
                     "section=overview for section names, or evidence.events/transcript/text/series_context "
                     "directly. Single-reference start/end are character offsets, not media times; "
@@ -668,12 +791,15 @@ class SupervisorRuntime:
                 func=search_video_graph, name="search_video_graph",
                 description=(
                     "Search the selected anivag videos through the full Query, "
-                    "Evaluator and Chat review process. Include every local-video "
-                    "subrequest in one complete question. The graph retains the full "
-                    "original user request; repeated calls reuse the same evidence and draft. "
+                    "Evaluator and Chat review process. Each call independently executes its query. "
+                    "Choose image addresses from the provided attachments or history_attachments and pass "
+                    "them as attachments, in the desired order. Omitted or [] sends no images, including history. "
+                    "Prefer text-only searches when sufficient; attach only images needed for visual verification. "
+                    "Avoid repeatedly sending unrelated images. Split independent screenshot-origin questions "
+                    "into separate searches and issue independent tool calls together when possible. "
                     "Review its Canvas and submit the final video items yourself."
                 ),
-                args_schema=SearchArguments,
+                args_schema=VideoSearchArguments,
                 maximum_result_bytes=self._max_tool_result_bytes,
             ),
         ]
@@ -725,15 +851,25 @@ class SupervisorRuntime:
             "你是 anivag 对话 Supervisor。根据用户问题自行决定直接回答、调用 "
             "search_web、调用 search_video_graph，或组合调用已提供的工具。问题涉及所选"
             "视频中的人物、情节、讲解内容，或引用了视频片段时，应调用视频工具核验。"
-            "一次视频任务必须包含原始问题中的全部本地视频子需求，包括不同时间段的"
-            "概括、比较和片段展示，不能拆成仅覆盖其中一项的任务。视频图保留完整原始"
-            "用户问题作为审核锚点；重复调用只复用同一完整请求的证据与草稿。"
+            "你负责拆分检索任务；search_video_graph 每次只处理你填写的 query 和 attachments。"
+            "attachments 中的 mediaUri 按当前用户上传的图片顺序排列；history_attachments "
+            "保留对应历史消息及其图片顺序。将需要的 mediaUri 地址复制到工具的 attachments 列表，"
+            "不要改写地址或复制图片 Base64。省略或空列表表示不带图片，历史图片也不会自动下发。"
+            "为减少传输和读图耗时，文字足以完成的子任务优先只传 query；仅在核对原图细节、"
+            "定位图片出处等确实需要视觉证据时，传入该子任务所需的最少图片。避免反复下发"
+            "全部附件或无关图片；仍需看图核验时不要为了省时省略必要图片。"
+            "多个互相独立的截图出处问题应拆成单图任务；需要联合比较时可传多张。"
+            "相互独立、不依赖彼此结果的工具任务，尽量在同一轮并行发起，减少逐次等待；"
+            "需要前序结果，或需先读取对应 review/latest 再决定下一步时，按依赖顺序执行。"
+            "每次调用都会重新执行。"
             "先读 video_scope_description，确认本次可检索的视频范围。没有可检索"
             "系列时仍可直接聊天或搜索网页；当前播放工具取得的真实证据可独立用于答疑。"
             "若没有任何本地视频证据，先说明无法核验该视频，不得用网页信息冒充视频证据。"
             "你负责最终回答、视频选择理由和播放范围。search_video_graph 返回内部审核后的草稿，"
             "answer_preview 只供导航，不是不可修改的最终答案。通过 get_context_canvas 读取相关"
             "文字 Timeline、对白、Query 范围及 review/latest 审核意见，判断是否直接支持用户问题。"
+            "retrieval 和 frame_inspections 保留本轮各次成功搜索的证据；其他集合对应最后一次成功"
+            "搜索，请及时读取本次审核。后续搜索不会撤回你已提交的片段，先前的 Chunk 仍可提交。"
             "可以纠正内层草稿的主张、删除不支持答案的片段；不要求读取所有 section，也不要求看图。"
             "用 submit_video_item 提交每个最终展示片段的 ID、start_seconds、end_seconds 和 claim；"
             "这两个时间字段实际为原视频绝对整数毫秒，必须完整覆盖支持 claim 的必要事件或对白，"
@@ -767,10 +903,13 @@ class SupervisorRuntime:
                 "series_context": inputs["series_context"],
                 "video_reference": reference_summary,
                 "extra_context": inputs.get("extra_context"),
+                "attachments": inputs.get("attachments", []),
+                "history_attachments": [{
+                    "messageId": item.get("messageId"), "content": item.get("content", ""),
+                    "attachments": item["attachments"],
+                } for item in history_attachments],
             })
         )
-        if len(prompt) > self._max_prompt_chars:
-            raise AgentContextBudgetError("Supervisor prompt exceeds configured limit")
         try:
             self._model.run_agent(
                 prompt,
@@ -822,7 +961,7 @@ class SupervisorRuntime:
         rendered = ChatRenderDraft(blocks=answer_blocks(render_blocks))
         content = rendered.answer_markdown
         if video_result is not None:
-            if review_canvas is None or review_turn is None:
+            if evidence_canvas is None or review_turn is None:
                 raise AgentModelInvocationError("Video answer requires its review evidence snapshot")
             # Reuse the existing render contract with Supervisor selections, never child render blocks.
             evidence, selection = accepted_video_evidence()

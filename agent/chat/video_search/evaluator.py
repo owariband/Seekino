@@ -6,13 +6,15 @@ from gateway.agent_model.contracts import StructuredToolAgentModel
 from gateway.agent_model.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
-from .context import build_canvas_checkpoint, project_image_history, project_inputs
+from .context import (
+    build_canvas_checkpoint, project_image_history, project_inputs, project_run_records,
+)
 from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
 from .skills import EVALUATOR_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
 from .state import (
-    EvalDecision, ExecutionControl, LoopTurn, ModelContextBudget, QueryDraft,
+    EvalDecision, ExecutionControl, LoopTurn, QueryDraft,
     RetrievalCall, RunInputs, context_json,
 )
 from .video_search_canvas import VideoSearchContextCanvas
@@ -48,10 +50,12 @@ def evaluate(
     context = {
         "inputs": project_inputs(inputs, include_reference_evidence=False),
         "original_plan": original_plan,
-        "turns": [turn.context() for turn in previous_turns],
+        "turn_number": len(previous_turns) + 1,
+        "latest_evaluator_advice": previous_turns[-1].review.advice if previous_turns else None,
         "current_draft": current_draft,
         "retrieval_calls": [call.context() for call in calls],
         "evidence_source_turns": sources,
+        **project_run_records(canvas),
     }
     instructions = (
         "你是 anivag Evaluator Agent。你只能审核，不能修改 Draft。必须按顺序审核："
@@ -72,7 +76,6 @@ def evaluate(
     )
     context_payload = context_json(context)
     prompt = instructions + "\n\n" + context_payload
-    ModelContextBudget(max_prompt_chars).consume("Evaluator Agent prompt", prompt)
     try:
         context_options = {}
         if inputs.get("image_urls"):
@@ -97,6 +100,7 @@ def evaluate(
                             "original_plan": original_plan,
                             "current_draft": current_draft,
                             "evidence_source_turns": sources,
+                            **project_run_records(canvas),
                         })
                     ),
                 },

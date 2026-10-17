@@ -6,13 +6,15 @@ from gateway.agent_model.contracts import StructuredToolAgentModel
 from gateway.agent_model.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
-from .context import build_canvas_checkpoint, project_image_history, project_inputs
+from .context import (
+    build_canvas_checkpoint, project_image_history, project_inputs, project_run_records,
+)
 from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
 from .skills import QUERY_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
 from .state import (
-    ExecutionControl, LoopTurn, ModelContextBudget, QueryCompletion, RunInputs,
+    ExecutionControl, LoopTurn, QueryCompletion, RunInputs,
     context_json,
 )
 from .video_search_canvas import VideoSearchContextCanvas
@@ -26,7 +28,7 @@ def run_query(
     tools: Sequence[BaseTool],
     max_model_calls: int | None,
     control: ExecutionControl,
-    context_budget: ModelContextBudget,
+    max_prompt_chars: int,
     canvas: VideoSearchContextCanvas,
     retrieval_skill_prompt: str = RETRIEVAL_SKILL_PROMPT,
 ) -> QueryCompletion:
@@ -34,7 +36,8 @@ def run_query(
         "inputs": project_inputs(inputs),
         "turn_number": len(previous_turns) + 1,
         "original_plan": previous_turns[0].plan_context if previous_turns else None,
-        "turns": [turn.context() for turn in previous_turns],
+        "latest_evaluator_advice": previous_turns[-1].review.advice if previous_turns else None,
+        **project_run_records(canvas),
     }
     instructions = (
         "你是 anivag Query Agent。围绕当前用户问题维护 Canvas 中的证据草稿。"
@@ -54,7 +57,6 @@ def run_query(
     )
     context_payload = context_json(context)
     prompt = instructions + "\n\n" + context_payload
-    context_budget.consume("Query Agent prompt", prompt)
     try:
         context_options = {}
         if inputs.get("image_urls"):
@@ -105,7 +107,7 @@ def run_query(
             max_model_calls=max_model_calls,
             request_timeout_seconds=control.remaining_seconds(),
             check_control=control.check,
-            max_input_chars=context_budget.maximum_chars,
+            max_input_chars=max_prompt_chars,
             **context_options,
         )
         return QueryCompletion.model_validate(completion).model_copy(deep=True)

@@ -249,7 +249,7 @@ def test_config_yaml_exposes_agent_timeouts() -> None:
         settings.chat_timeout_seconds,
         settings.supervisor_timeout_seconds,
         settings.execution_timeout_seconds,
-    ) == (480, 480, 480, 600, 600)
+    ) == (480, 480, 480, 1200, 1200)
 
 
 def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> None:

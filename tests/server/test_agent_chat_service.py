@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from contextlib import contextmanager
 from queue import Empty
@@ -21,6 +22,7 @@ from agent.chat.common.state import AnswerPhase
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.context import _project_stored_search_result
 from agent.chat.video_search.runtime import AgentRuntime
+from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchHit, WebSearcher
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
 from server.api.agent import _agent_message_view
@@ -1168,7 +1170,7 @@ def test_uploaded_attachment_reaches_runtime_without_service_vision_gate(
     assert _send(service, conversation).assistant_message.status == "COMPLETED"
 
 
-def test_vision_supervisor_receives_uploaded_bytes_in_order_and_reloads_attachment_history(build_service, tmp_path):
+def test_vision_supervisor_receives_uploaded_bytes_in_order_and_reloads_attachment_history(build_service, tmp_path, monkeypatch):
     import base64
     from io import BytesIO
     from PIL import Image
@@ -1191,6 +1193,14 @@ def test_vision_supervisor_receives_uploaded_bytes_in_order_and_reloads_attachme
 
     model = VisionModel()
     service, _, retrieval, repository, *_ = build_service(supervisor_model=model)
+    runtime_inputs = []
+    kick = service._runtime.kick
+
+    def capture(inputs, **kwargs):
+        runtime_inputs.append(deepcopy(inputs))
+        return kick(inputs, **kwargs)
+
+    monkeypatch.setattr(service._runtime, "kick", capture)
     conversation = service.create_conversation(
         tenant_id="private-chat", owner_user_id="image-owner", idempotency_key="private-images",
     )
@@ -1218,6 +1228,8 @@ def test_vision_supervisor_receives_uploaded_bytes_in_order_and_reloads_attachme
     assert len(model.image_inputs[0]) == 6
     assert all(url.startswith("data:image/png;base64,") for url in model.image_inputs[0])
     assert [base64.b64decode(url.split(",", 1)[1]) for url in model.image_inputs[0]] == expected_bytes
+    assert runtime_inputs[0]["attachments"] == references
+    assert runtime_inputs[0]["image_urls"] == model.image_inputs[0]
     assert model.turns[0][3] == []
     assert service.send_message(conversation.conversation_id, **request) == first
     assert len(model.turns) == 1
@@ -1228,10 +1240,13 @@ def test_vision_supervisor_receives_uploaded_bytes_in_order_and_reloads_attachme
     )
     assert second.assistant_message.status == "COMPLETED"
     assert model.image_inputs[1] is None
+    assert runtime_inputs[1]["attachments"] == []
     history = model.turns[1][3]
     assert [item["role"] for item in history] == ["USER", "ASSISTANT"]
     assert [base64.b64decode(url.split(",", 1)[1]) for url in history[0]["imageUrls"]] == expected_bytes
+    assert history[0]["attachments"] == references
     assert "imageUrls" not in history[1]
+    assert "attachments" not in history[1]
     session_history = model.session_histories[1]
     assert model.session_histories[0] == []
     assert [(item["messageId"], item["sequenceNo"]) for item in session_history] == [
@@ -1239,7 +1254,9 @@ def test_vision_supervisor_receives_uploaded_bytes_in_order_and_reloads_attachme
         (first.assistant_message.message_id, first.assistant_message.sequence_no),
     ]
     assert [base64.b64decode(url.split(",", 1)[1]) for url in session_history[0]["imageUrls"]] == expected_bytes
+    assert session_history[0]["attachments"] == references
     assert "imageUrls" not in session_history[1]
+    assert "attachments" not in session_history[1]
     assert service.send_message(conversation.conversation_id, **request) == first
     assert len(model.turns) == 2 and not retrieval.calls
     assert all("data:image" not in prompt for prompt in model.prompts)
@@ -2480,8 +2497,17 @@ def test_conversation_reads_and_execution_do_not_cross_workspaces(build_service)
 
 @pytest.mark.parametrize("second_query", ["补充摔杯子", None])
 def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
+    restored_turns = []
+
+    class HistoryQuery(_QueryModel):
+        def run_structured(self, prompt, **kwargs):
+            if json.loads(prompt.rsplit("\n\n", 1)[1])["turn_number"] == 2:
+                reader = next(tool for tool in kwargs["tools"] if tool.name == "get_context_canvas")
+                restored_turns.append(_read_all(reader, "1", collection="history")["history"])
+            return super().run_structured(prompt, **kwargs)
+
     service, conversation, retrieval, repository, query, evaluator, chat = build_service(
-        query=_QueryModel(queries=("第一次改写", second_query)),
+        query=HistoryQuery(queries=("第一次改写", second_query)),
         evaluator=_EvaluatorModel(approve_after=2),
     )
     first = _send(service, conversation)
@@ -2523,8 +2549,12 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert evaluator.calls == 2 and len(chat.prompts) == 1
     context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
     assert context["original_plan"] == "第 1 轮检索并核验动作。"
-    assert context["turns"][0]["draft"]["message"] == "第 1 轮待审核草稿。"
-    assert context["turns"][0]["review"]["advice"] == "补充摔杯子的动作，重新核验。"
+    assert "turns" not in context
+    assert context["run_records"]["history"]["item_count"] == 1
+    assert context["latest_evaluator_advice"] == "补充摔杯子的动作，重新核验。"
+    assert len(restored_turns) == 1
+    assert restored_turns[0]["draft"]["message"] == "第 1 轮待审核草稿。"
+    assert restored_turns[0]["review"]["advice"] == context["latest_evaluator_advice"]
     with pytest.raises(AgentConflictError, match="different request fields"):
         service.send_message(conversation.conversation_id, tenant_id="local-default", content="寻找摔杯子的片段", top_k=7, idempotency_key="message")
     with pytest.raises(AgentConflictError, match="different request fields"):
@@ -2642,12 +2672,36 @@ def test_third_continue_persists_failure_and_never_calls_chat(build_service):
     ]
 
 
-def test_context_budget_failure_is_persisted_with_a_specific_public_error(build_service):
-    service, conversation, _, _, query, evaluator, chat = build_service(
+def test_old_prompt_character_threshold_allows_completed_message_persistence(build_service):
+    service, conversation, retrieval, _, query, evaluator, chat = build_service(
         runtime_kwargs={"max_prompt_chars": 100},
     )
 
-    with pytest.raises(AgentContextBudgetError, match="context character budget"):
+    result = _send(service, conversation)
+
+    messages = service.list_all_messages(
+        conversation.conversation_id, tenant_id="local-default",
+    )
+    assert [message.status for message in messages] == ["COMPLETED", "COMPLETED"]
+    assert messages[-1] == result.assistant_message
+    assert messages[-1].last_error is None
+    assert len(query.prompts) == evaluator.calls == len(chat.prompts) == 1
+    assert len(query.prompts[0]) > 100 and len(chat.prompts[0]) > 100
+    assert len(retrieval.calls) == 1
+
+
+def test_provider_context_failure_is_persisted_with_a_specific_public_error(build_service):
+    class CapacityFailureQuery(_QueryModel):
+        def run_structured(self, prompt, **_kwargs):
+            self.prompts.append(prompt)
+            raise ModelInputTooLargeError("Provider context capacity exceeded")
+
+    service, conversation, _, _, query, evaluator, chat = build_service(
+        query=CapacityFailureQuery(),
+        runtime_kwargs={"max_prompt_chars": 100},
+    )
+
+    with pytest.raises(AgentContextBudgetError, match="Provider context capacity exceeded"):
         _send(service, conversation)
 
     messages = service.list_all_messages(
@@ -2656,7 +2710,7 @@ def test_context_budget_failure_is_persisted_with_a_specific_public_error(build_
     assert messages[-1].status == "FAILED"
     assert messages[-1].last_error.code == "AGENT_CONTEXT_BUDGET_EXCEEDED"
     assert "精简系列背景" in messages[-1].last_error.message
-    assert query.prompts == [] and evaluator.calls == 0 and chat.prompts == []
+    assert len(query.prompts) == 1 and evaluator.calls == 0 and chat.prompts == []
 
 
 def test_execution_timeout_persists_specific_failure_and_publishes_terminal_event(build_service, monkeypatch):
@@ -2973,7 +3027,9 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
     first = _send(service, conversation)
     _send(service, conversation, key="second", content="再找一段")
     context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
-    assert context["turn_number"] == 1 and context["turns"] == []
+    assert context["turn_number"] == 1
+    assert context["run_records"]["history"]["item_count"] == 0
+    assert context["latest_evaluator_advice"] is None
     history = context["inputs"]["history"]
     assert history[0] == {
         "role": "USER", "content": first.user_message.content,
@@ -3054,7 +3110,9 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
     assert first.assistant_message.series_ids == (original_id,)
     assert second.assistant_message.series_ids == (added.series_id,)
     context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])
-    assert context["turns"] == [] and context["inputs"]["series_ids"] == [added.series_id]
+    assert context["run_records"]["history"]["item_count"] == 0
+    assert context["latest_evaluator_advice"] is None
+    assert context["inputs"]["series_ids"] == [added.series_id]
     assert all(item["seriesIds"] == [original_id] for item in context["inputs"]["history"])
     with pytest.raises(AgentConflictError):
         _send(service, conversation, series_ids=[added.series_id])

@@ -42,6 +42,9 @@ from agent.chat.video_search.tools import (
 from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
 from agent.chat.video_search.tools.canvas import build_video_search_canvas_tools
 from agent.utils.tool import AgentTool as SharedAgentTool
+from agent.utils.errors import AgentToolFeedbackError
+
+
 class _CanvasReader:
     """Bind a collection while exercising the registered shared read Tool."""
 
@@ -1293,6 +1296,41 @@ def test_canvas_checkpoint_contains_handles_without_full_evidence() -> None:
             {"type": "video", "video_chunk_id": "chunk-1"},
         ],
     }
+
+
+@pytest.mark.parametrize("role", ["query", "evaluator", "supervisor"])
+def test_execution_records_are_recoverable_through_existing_canvas_reads(role):
+    from tests.agent.chat.test_runtime import _read_all as read_sections
+
+    canvas = VideoSearchContextCanvas("workspace", ("series",))
+    historical_advice = "EARLY_REVIEW_MARKER " * 150
+    turn = {"number": 1, "review": {"action": "continue", "advice": historical_advice}}
+    receipt = {
+        "video_chunk_id": "chunk-1", "role": "Query", "start_ms": 1000,
+        "end_ms": 2000, "frame_count": 1, "cache_hit": False,
+        "frames": [{"artifact_uri": "artifact://frame.png", "sha256": "a" * 64}],
+    }
+    canvas.put("history", "1", turn, readonly=True)
+    canvas.put("frame_inspections", "inspection-1", receipt, readonly=True)
+    tools = {tool.name: tool for tool in build_video_search_canvas_tools(
+        canvas=canvas, role=role, control=_control(), maximum_result_bytes=2048,
+        maximum_catalog_items=1, maximum_read_chars=200,
+    )}
+    history = _reader(tools, "history")
+    catalog = json.loads(history.invoke({}))
+    assert catalog["total"] == 1
+    assert catalog["items"][0]["reference"] == "1"
+    assert read_sections(history, "1")["history"] == turn
+    assert read_sections(_reader(tools, "frame_inspections"), "inspection-1")["frame_inspections"] == receipt
+    checkpoint = build_canvas_checkpoint(canvas, role="query")
+    assert checkpoint["run_records"]["history"]["item_count"] == 1
+    assert historical_advice not in json.dumps(checkpoint)
+
+    with pytest.raises(AgentToolFeedbackError, match="read-only"):
+        canvas.put("history", "1", {**turn, "number": 2})
+    canvas.approve_draft()
+    with pytest.raises(AgentToolFeedbackError, match="cannot read"):
+        canvas.catalog("history", role="chat")
 
 
 def test_shared_role_tool_budget_counts_every_tool() -> None:

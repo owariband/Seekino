@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from engine.common.config import VideoParseRuntimeConfig
 from gateway.config import load_config
+from gateway.agent_model.errors import ModelInputTooLargeError
 from server.api.app import create_app
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
@@ -2909,12 +2910,62 @@ def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
     client.app.state.services.agent.close()
 
 
-def test_agent_context_budget_error_is_actionable_before_provider_call(tmp_path):
+def test_agent_old_prompt_character_threshold_allows_completed_response(tmp_path, monkeypatch):
     client, _, _ = _client(tmp_path)
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     runtime = client.app.state.services.agent._runtime
     runtime._max_prompt_chars = 100
+    calls = []
+    for role, model, method in (
+        ("query", runtime._query_model, "run_structured"),
+        ("evaluator", runtime._evaluator_model, "run_structured"),
+        ("chat", runtime._chat_model, "run_agent_loop"),
+    ):
+        invoke = getattr(model, method)
+
+        def record_call(prompt, *, _role=role, _invoke=invoke, **kwargs):
+            calls.append((_role, prompt))
+            return _invoke(prompt, **kwargs)
+
+        monkeypatch.setattr(model, method, record_call)
+
+    response = client.post(
+        "/api/agent/messages/send",
+        params={"tenantId": "local-default", "conversationId": conversation_id},
+        headers={"Idempotency-Key": "old-character-threshold"},
+        json={"tenantId": "local-default", "content": "找摔杯子的画面"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["assistantMessage"]["status"] == "COMPLETED"
+    assert response.json()["assistantMessage"]["lastError"] is None
+    assert [role for role, _prompt in calls] == ["query", "evaluator", "chat"]
+    assert all(len(prompt) > 100 for _role, prompt in calls)
+    stored = client.get("/api/agent/messages/get", params={
+        "tenantId": "local-default", "conversationId": conversation_id,
+        "idempotencyKey": "old-character-threshold",
+    })
+    assert stored.status_code == 200 and stored.json() == response.json()
+    client.app.state.services.agent.close()
+
+
+def test_agent_provider_context_error_keeps_actionable_http_mapping(tmp_path):
+    client, _, _ = _client(tmp_path)
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
+    runtime = client.app.state.services.agent._runtime
+    runtime._max_prompt_chars = 100
+
+    class CapacityFailureQuery(_AgentModelStub):
+        calls = 0
+
+        def run_structured(self, _prompt, **_kwargs):
+            self.calls += 1
+            raise ModelInputTooLargeError("Provider context capacity exceeded")
+
+    query = CapacityFailureQuery("capacity-failure")
+    runtime._query_model = query
 
     response = client.post(
         "/api/agent/messages/send",
@@ -2925,6 +2976,14 @@ def test_agent_context_budget_error_is_actionable_before_provider_call(tmp_path)
 
     assert response.status_code == 422
     assert response.json()["code"] == "AGENT_CONTEXT_BUDGET_EXCEEDED"
+    assert query.calls == 1
+    stored = client.get("/api/agent/messages/get", params={
+        "tenantId": "local-default", "conversationId": conversation_id,
+        "idempotencyKey": "context-budget",
+    })
+    assert stored.status_code == 200
+    assert stored.json()["assistantMessage"]["status"] == "FAILED"
+    assert stored.json()["assistantMessage"]["lastError"]["code"] == response.json()["code"]
     client.app.state.services.agent.close()
 
 

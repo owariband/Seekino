@@ -404,6 +404,68 @@ def test_structured_codex_tool_turn_receives_four_native_images(tmp_path):
     assert captions[1:] == [f"Frame at {1234 + index} ms" for index in range(4)]
 
 
+@pytest.mark.parametrize("provider", ["codex", "claude", "openai", "ark"])
+@pytest.mark.parametrize("vision", [False, True])
+def test_structured_factory_capability_controls_query_and_evaluator_frame_tools(provider, vision):
+    from agent.chat.common.state import ExecutionControl
+    from agent.chat.video_search.frame_evidence import FrameInspectionSession
+    from agent.chat.video_search.tools.registry import build_evaluator_tools, build_query_tools
+    from gateway.agent_model.context import ContextWindowPolicy
+    from gateway.agent_model.factory import AgentModelFactory
+    from gateway.config import (
+        AgentModelConfig, ArkModelSourceConfig, ClaudeCodeModelSourceConfig,
+        CodexModelSourceConfig, OpenAIModelSourceConfig,
+    )
+    from tests.agent.chat.test_tools import _inputs
+    from tests.agent.chat.test_video_frames import FrameReader, _canvas
+
+    sources = {
+        "codex": CodexModelSourceConfig(),
+        "claude": ClaudeCodeModelSourceConfig(),
+        "openai": OpenAIModelSourceConfig(
+            provider="openai", base_url="https://example.org", api_key_env="TEST_API_KEY",
+        ),
+        "ark": ArkModelSourceConfig(api_key_env="TEST_API_KEY"),
+    }
+    factory = AgentModelFactory(
+        AgentModelConfig(
+            source=provider, model="configured-model", supports_vision_input=vision,
+            max_output_tokens=1024, request_timeout_seconds=30,
+        ),
+        sources, environ={"TEST_API_KEY": "test"},
+    )
+    expected = vision
+    models = []
+    try:
+        for build_tools in (build_query_tools, build_evaluator_tools):
+            model = factory.build_structured(
+                model="configured-model", reasoning_effort="none",
+                request_timeout_seconds=30, max_output_tokens=1024, max_input_chars=20_000,
+                context_window_policy=ContextWindowPolicy(
+                    context_window_tokens=64_000, output_reserve_tokens=1024,
+                    safety_margin_tokens=4096, auto_compact_tokens=48_000,
+                    compact_target_tokens=24_000,
+                ),
+            )
+            models.append(model)
+            assert model.supports_vision_input is expected
+            tools = build_tools(
+                lambda **_kwargs: pytest.fail("registration must not retrieve"),
+                canvas=_canvas(), inputs=_inputs(), control=ExecutionControl(None), calls=[],
+                maximum_top_k=20, maximum_tool_calls=10, maximum_result_bytes=16_384,
+                maximum_catalog_items=20, frame_reader=FrameReader(),
+                frame_session=FrameInspectionSession(12), frame_max_height=720,
+                supports_vision_input=model.supports_vision_input,
+            )
+            assert ("inspect_video_frames" in {tool.name for tool in tools}) is expected
+    finally:
+        for model in models:
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
+        factory.close()
+
+
 def test_image_budgets_do_not_count_base64_as_text(tmp_path):
     tool = _tool(tmp_path)
     output = tool.invoke({

@@ -948,7 +948,8 @@ class AgentChatService:
                         "role": item.role, "content": item.content or "",
                         "messageId": item.message_id, "sequenceNo": item.sequence_no,
                         "status": item.status,
-                        **({"imageUrls": [image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
+                        **({"attachments": [dict(ref) for ref in item.attachments],
+                            "imageUrls": [image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
                                           for ref in item.attachments]}
                            if item.role == "USER" and item.attachments else {}),
                     } for item in committed]
@@ -1004,6 +1005,7 @@ class AgentChatService:
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
                 tenant_id=tenant_id, series_ids=list(initial.user_message.series_ids),
                 user_message=initial.user_message.content or "",
+                attachments=[dict(ref) for ref in initial.user_message.attachments],
                 image_urls=[image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
                             for ref in initial.user_message.attachments],
                 requested_top_k=requested_top_k,
@@ -1013,7 +1015,8 @@ class AgentChatService:
                     "messageId": item.message_id, "status": item.status,
                     "reference": item.reference,
                     "searchResult": _evidence_with_video_blocks(item),
-                    **({"imageUrls": [image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
+                    **({"attachments": [dict(ref) for ref in item.attachments],
+                        "imageUrls": [image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
                                       for ref in item.attachments]} if item.attachments else {}),
                 } for item in history],
                 reference_context=execution.reference_context,
