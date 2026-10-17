@@ -91,6 +91,7 @@ from ..repository.video_parse import (
     VideoParseLeaseLostError,
     VideoParseRepository,
     VideoParseSnapshotConflictError,
+    VoiceprintRegistrationRejectedError,
 )
 from ..storage.artifact import ArtifactStore
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
@@ -529,6 +530,8 @@ class VideoParseRuntimeService:
                         return callback(**values)
                     except (AgentToolFeedbackError, ModelCallCancelledError, VideoParseLeaseLostError):
                         raise
+                    except VoiceprintRegistrationRejectedError as error:
+                        raise AgentToolFeedbackError(error.code, str(error), error.retry_hint) from error
                     except Exception as error:
                         fail_execution(error)
                         raise
@@ -552,24 +555,29 @@ class VideoParseRuntimeService:
                         "INVALID_VOICEPRINT_SOURCE", "Use a named authorized source and a subrange inside it.",
                         "Read sources from get_context_canvas; preserve its speaker and absolute milliseconds.",
                     )
-                embedding, pcm_sha256 = self._embed_speaker_segment(
-                    encoder, task_input, lease, start_ms=start_ms, end_ms=end_ms,
-                    check_active=manager.check_active,
-                )
-                manager.check_active()
-                result = self._repository.register_voiceprint(
+                result = self._repository.precheck_voiceprint_registration(
                     lease, source_ref=source_ref, speaker=speaker, start_ms=start_ms, end_ms=end_ms,
-                    selection_basis=selection_basis, confidence=confidence,
-                    model=embedding.model, encoder_revision=embedding.encoder_revision,
-                    vector=embedding.vector, pcm_sha256=pcm_sha256, duration_ms=embedding.duration_ms,
+                    model=encoder.model_name, encoder_revision=encoder.encoder_revision,
                 )
-                _logger.info(
-                    "event=voiceprint_registered task=%s lease=%s source=%s start_ms=%s end_ms=%s model=%s revision=%s pcm=%s",
-                    lease.video_parse_task_id, lease.lease_version, source_ref, start_ms, end_ms,
-                    embedding.model, embedding.encoder_revision, pcm_sha256,
-                )
+                if result is None:
+                    embedding, pcm_sha256 = self._embed_speaker_segment(
+                        encoder, task_input, lease, start_ms=start_ms, end_ms=end_ms,
+                        check_active=manager.check_active,
+                    )
+                    manager.check_active()
+                    result = self._repository.register_voiceprint(
+                        lease, source_ref=source_ref, speaker=speaker, start_ms=start_ms, end_ms=end_ms,
+                        selection_basis=selection_basis, confidence=confidence,
+                        model=embedding.model, encoder_revision=embedding.encoder_revision,
+                        vector=embedding.vector, pcm_sha256=pcm_sha256, duration_ms=embedding.duration_ms,
+                    )
+                    _logger.info(
+                        "event=voiceprint_registered task=%s lease=%s source=%s start_ms=%s end_ms=%s model=%s revision=%s pcm=%s",
+                        lease.video_parse_task_id, lease.lease_version, source_ref, start_ms, end_ms,
+                        embedding.model, embedding.encoder_revision, pcm_sha256,
+                    )
                 return {**result, "reference": {key: value for key, value in result["reference"].items()
-                                                if key != "vector"}, "dimension": embedding.dimension}
+                                                if key != "vector"}, "dimension": encoder.dimensions}
 
             def finish_voiceprint_preparation(*, complete: bool, skip_reasons: dict[str, str]) -> dict:
                 del complete  # The Tool schema accepts only true; persistence decides readiness.
@@ -987,6 +995,10 @@ class VideoParseRuntimeService:
                 interval_content=result.model_dump(mode="json"), member_updates=member_updates,
                 input_versions=snapshot["member_versions"],
                 input_fingerprints=snapshot["member_fingerprints"],
+                input_contents={
+                    task_id: content.model_dump(mode="json")
+                    for task_id, content in snapshot["member_contents"].items()
+                },
                 detail={"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]},
                 voiceprint_references=snapshot.get("voiceprint_references", []),
             )

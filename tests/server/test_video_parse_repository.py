@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from contextvars import ContextVar
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -50,6 +51,7 @@ def _refinement_inputs(repo, lease, *, now=None):
     return {
         "input_versions": {member.chunk_parse_task_id: member.version for member in snapshot.members},
         "input_fingerprints": {member.chunk_parse_task_id: parse_content_fingerprint(member.content) for member in snapshot.members},
+        "input_contents": {member.chunk_parse_task_id: deepcopy(member.content) for member in snapshot.members},
     }
 
 
@@ -305,7 +307,7 @@ def test_execution_timing_rejects_invalid_sample_parameters(repository, values):
         )
 
 
-def test_refinement_checks_all_member_versions_before_any_write(repository):
+def test_refinement_preserves_concurrent_changes_in_unmodified_members(repository):
     factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository)
     _commit_all_chunks(factory, queue, repo, video_lease, prepared)
     at = NOW + timedelta(minutes=1)
@@ -318,24 +320,170 @@ def test_refinement_checks_all_member_versions_before_any_write(repository):
     repo.commit_interval_refinement(
         first, **first_inputs, interval_content={}, member_updates={overlap: {"persons": ["first writer"]}}, now=at,
     )
-    with pytest.raises(VideoParseSnapshotConflictError):
-        repo.commit_interval_refinement(
-            second, **stale_inputs, interval_content={}, member_updates={target: {"persons": ["stale writer"]}}, now=at,
-        )
-    with factory() as session:
-        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
-        assert session.get(IntervalParseTask, second.interval_parse_task_id).status == "REFINING"
-        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
-        assert row.version == 1 and row.content["persons"] == [] and row.detail["scope"] == [3]
     repo.commit_interval_refinement(
-        second, **_refinement_inputs(repo, second, now=at), interval_content={},
-        member_updates={target: {"persons": ["reviewed writer"]}}, now=at,
+        second, **stale_inputs, interval_content={}, member_updates={target: {"persons": ["independent writer"]}}, now=at,
     )
     with factory() as session:
         rows = {row.chunk_task_id: row for row in session.scalars(select(ChunkParseContent))}
         assert rows[overlap].content["persons"] == ["first writer"]
-        assert rows[target].content["persons"] == ["reviewed writer"]
+        assert rows[overlap].version == 2 and rows[overlap].detail["scope"] == [0, 1, 2, 3]
+        assert rows[target].content["persons"] == ["independent writer"]
+        assert rows[target].version == 2
         assert sum(len(row.content["timeline"]) for row in rows.values()) == 4
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is not None
+        assert session.get(IntervalParseTask, second.interval_parse_task_id).status == "COMPLETE"
+
+
+def _overlapping_refinements(repository):
+    factory, queue, repo, _task_id, _parent, prepared = _prepare(repository)
+    for sequence in range(4):
+        child = queue.claim_chunk("understand", lease_duration=timedelta(minutes=5), now=NOW)
+        dialogue = {**_fixture_event("spoken line", sequence_no=sequence),
+                    "event_type": "DIALOGUE", "speaker": "B", "participants": ["B"],
+                    "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": "line"}]}
+        action = {**_fixture_event("simultaneous action", sequence_no=sequence),
+                  "end_seconds": sequence * 10000 + 8000}
+        repo.commit_chunk_result(child, content={"persons": ["A", "B"], "timeline": [dialogue, action]}, now=NOW)
+    at = NOW + timedelta(minutes=1)
+    first = queue.claim_interval_refine("first", lease_duration=timedelta(minutes=5), now=at)
+    second = queue.claim_interval_refine("second", lease_duration=timedelta(minutes=5), now=at)
+    assert first is not None and second is not None
+    return factory, repo, prepared, first, second
+
+
+def test_refinement_merges_independent_events_in_one_chunk(repository):
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    first_inputs, second_inputs = _refinement_inputs(repo, first, now=at), _refinement_inputs(repo, second, now=at)
+    target = prepared.chunk_parse_task_ids[1]
+    first_timeline = deepcopy(first_inputs["input_contents"][target]["timeline"])
+    second_timeline = deepcopy(second_inputs["input_contents"][target]["timeline"])
+    first_timeline[0].update(speaker="A", participants=["A", "B"])
+    second_timeline[1]["description"] = "independently corrected action"
+    repo.commit_interval_refinement(first, **first_inputs, interval_content={},
+                                   member_updates={target: {"timeline": first_timeline}}, now=at)
+    repo.commit_interval_refinement(second, **second_inputs, interval_content={},
+                                   member_updates={target: {"timeline": second_timeline}}, now=at)
+    with factory() as session:
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
+        expected = deepcopy(first_timeline)
+        expected[1] = second_timeline[1]
+        assert row.content == {"persons": ["A", "B"], "timeline": expected}
+        assert row.version == 3 and row.detail["scope"] == [0, 1, 2, 3]
+        assert session.get(IntervalParseContent, first.interval_parse_task_id) is not None
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is not None
+
+
+@pytest.mark.parametrize("same_field", [True, False])
+def test_refinement_same_event_conflict_rolls_back_every_member(repository, same_field):
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    first_inputs, second_inputs = _refinement_inputs(repo, first, now=at), _refinement_inputs(repo, second, now=at)
+    target, untouched = prepared.chunk_parse_task_ids[2], prepared.chunk_parse_task_ids[1]
+    current = deepcopy(first_inputs["input_contents"][target]["timeline"])
+    proposed = deepcopy(second_inputs["input_contents"][target]["timeline"])
+    current[0]["description"] = "first interpretation"
+    proposed[0]["description" if same_field else "speaker"] = "second interpretation" if same_field else "A"
+    if not same_field:
+        proposed[0]["participants"] = ["A", "B"]
+    repo.commit_interval_refinement(first, **first_inputs, interval_content={},
+                                   member_updates={target: {"timeline": current}}, now=at)
+    with factory() as session:
+        before = {row.chunk_task_id: (deepcopy(row.content), row.version, deepcopy(row.detail))
+                  for row in session.scalars(select(ChunkParseContent))}
+    with pytest.raises(VideoParseSnapshotConflictError):
+        repo.commit_interval_refinement(second, **second_inputs, interval_content={}, now=at,
+            member_updates={untouched: {"persons": ["A", "B", "must not be written"]},
+                            target: {"timeline": proposed}})
+    with factory() as session:
+        after = {row.chunk_task_id: (row.content, row.version, row.detail)
+                 for row in session.scalars(select(ChunkParseContent))}
+        assert after == before
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
+        assert session.get(IntervalParseTask, second.interval_parse_task_id).status == "REFINING"
+
+
+def test_refinement_same_event_same_result_does_not_increment_version_twice(repository):
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    first_inputs, second_inputs = _refinement_inputs(repo, first, now=at), _refinement_inputs(repo, second, now=at)
+    target = prepared.chunk_parse_task_ids[1]
+    proposed = deepcopy(first_inputs["input_contents"][target]["timeline"])
+    proposed[0].update(speaker="A", participants=["A", "B"])
+    for lease, inputs in ((first, first_inputs), (second, second_inputs)):
+        repo.commit_interval_refinement(lease, **inputs, interval_content={},
+                                       member_updates={target: {"timeline": proposed}}, now=at)
+    with factory() as session:
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
+        assert row.content["timeline"] == proposed
+        assert row.version == 2 and row.detail["scope"] == [0, 1, 2, 3]
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is not None
+
+
+def test_refinement_concurrent_event_structure_changes_require_refresh(repository):
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    first_inputs, second_inputs = _refinement_inputs(repo, first, now=at), _refinement_inputs(repo, second, now=at)
+    target = prepared.chunk_parse_task_ids[1]
+    current = deepcopy(first_inputs["input_contents"][target]["timeline"])
+    proposed = deepcopy(second_inputs["input_contents"][target]["timeline"])
+    current[0]["description"] = "first interpretation"
+    proposed.append({**proposed[1], "start_seconds": 18500, "end_seconds": 19500})
+    repo.commit_interval_refinement(first, **first_inputs, interval_content={},
+                                   member_updates={target: {"timeline": current}}, now=at)
+    with pytest.raises(VideoParseSnapshotConflictError):
+        repo.commit_interval_refinement(second, **second_inputs, interval_content={},
+                                       member_updates={target: {"timeline": proposed}}, now=at)
+    with factory() as session:
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
+        assert row.content["timeline"] == current and row.version == 2
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
+
+
+@pytest.mark.parametrize("invalid_proposal", [False, True])
+def test_refinement_distinguishes_invalid_proposal_from_invalid_merge(repository, invalid_proposal):
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    first_inputs, second_inputs = _refinement_inputs(repo, first, now=at), _refinement_inputs(repo, second, now=at)
+    target = prepared.chunk_parse_task_ids[1]
+    proposed = deepcopy(second_inputs["input_contents"][target]["timeline"])
+    proposed[0]["speaker"] = "unknown" if invalid_proposal else "A"
+    proposed[0]["participants"] = ["B", proposed[0]["speaker"]]
+    repo.commit_interval_refinement(first, **first_inputs, interval_content={},
+                                   member_updates={target: {"persons": ["B"]}}, now=at)
+    expected = ValueError if invalid_proposal else VideoParseSnapshotConflictError
+    with pytest.raises(expected):
+        repo.commit_interval_refinement(second, **second_inputs, interval_content={},
+                                       member_updates={target: {"timeline": proposed}}, now=at)
+    with factory() as session:
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
+        assert row.content["persons"] == ["B"] and row.content["timeline"][0]["speaker"] == "B"
+        assert row.version == 2
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
+
+
+@pytest.mark.parametrize("invalid", ["missing_member", "extra_member", "base_content", "fingerprint", "version"])
+def test_refinement_rejects_forged_or_incomplete_base_identity(repository, invalid):
+    factory, repo, prepared, first, _second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    inputs = _refinement_inputs(repo, first, now=at)
+    target = prepared.chunk_parse_task_ids[0]
+    if invalid == "missing_member":
+        inputs["input_contents"].pop(target)
+    elif invalid == "extra_member":
+        inputs["input_contents"][str(uuid4())] = deepcopy(inputs["input_contents"][target])
+    elif invalid == "base_content":
+        inputs["input_contents"][target]["persons"] = ["forged"]
+    elif invalid == "fingerprint":
+        inputs["input_fingerprints"][target] = "0" * 64
+    else:
+        inputs["input_versions"][target] = True
+    with pytest.raises(VideoParseConflictError) as rejected:
+        repo.commit_interval_refinement(first, **inputs, interval_content={}, member_updates={}, now=at)
+    assert type(rejected.value) is VideoParseConflictError
+    with factory() as session:
+        assert session.get(IntervalParseContent, first.interval_parse_task_id) is None
+        assert session.get(IntervalParseTask, first.interval_parse_task_id).status == "REFINING"
 
 
 def test_refinement_fingerprint_and_full_result_validation_are_atomic(repository):

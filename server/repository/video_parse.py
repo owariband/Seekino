@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -17,7 +18,12 @@ from agent.video_parse_v2.input import ParseConfig
 from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.voiceprint import CharacterVoiceprint, Voiceprint, VoiceprintReference
-from engine.parsev2.validation import parse_content_fingerprint, validate_result_time_range
+from engine.parsev2.validation import (
+    RefinementMergeConflictError,
+    merge_refinement_content,
+    parse_content_fingerprint,
+    validate_result_time_range,
+)
 from engine.rag.contracts import (
     TranscriptCueView,
     VideoChunkEvidence,
@@ -26,7 +32,7 @@ from engine.rag.contracts import (
 from engine.rag.indexing.projection import project_chunk_index
 from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 
-from ..constants.parse import MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY
+from ..constants.parse import MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY, VOICEPRINT_REFS_PER_SPEAKER
 from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
     ChunkParseContentState,
@@ -90,6 +96,15 @@ class VideoParseConflictError(VideoParseRepositoryError):
 
 class VideoParseSnapshotConflictError(VideoParseConflictError):
     """A refinement input changed; refresh facts without rerunning observations."""
+
+
+class VoiceprintRegistrationRejectedError(VideoParseConflictError):
+    """A valid preparation can continue by choosing a different reference."""
+
+    def __init__(self, code: str, message: str, retry_hint: str) -> None:
+        self.code = code
+        self.retry_hint = retry_hint
+        super().__init__(message)
 
 
 class VideoParseLeaseLostError(VideoParseRepositoryError):
@@ -1235,6 +1250,20 @@ class VideoParseRepository:
                 "voiceprint": voiceprint.model_dump(mode="json"),
             }
 
+    def precheck_voiceprint_registration(
+        self, lease: VideoParseLease, *, source_ref: str, speaker: str,
+        start_ms: int, end_ms: int, model: str, encoder_revision: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        checked_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            parent = _locked_video_lease(session, lease, checked_at)
+            _detail, _voiceprint, _version, existing = _check_voiceprint_registration(
+                session, parent, lease, source_ref=source_ref, speaker=speaker,
+                start_ms=start_ms, end_ms=end_ms, model=model, encoder_revision=encoder_revision,
+            )
+            return existing
+
     def register_voiceprint(
         self, lease: VideoParseLease, *, source_ref: str, speaker: str,
         start_ms: int, end_ms: int, selection_basis: str, confidence: float | None,
@@ -1244,32 +1273,23 @@ class VideoParseRepository:
         registered_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             parent = _locked_video_lease(session, lease, registered_at)
-            detail, phase = _voiceprint_active_preparation(parent, lease)
-            chunk_id, separator, fingerprint = source_ref.partition(":")
-            if not separator or chunk_id not in phase["source_chunk_ids"] or speaker not in phase["speaker_list"]:
-                raise VideoParseConflictError("voiceprint source or speaker is outside this preparation")
-            row = session.execute(select(ChunkParseContent, VideoChunk).join(
-                ChunkParseTask, ChunkParseTask.id == ChunkParseContent.chunk_task_id,
-            ).join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id).where(
-                ChunkParseTask.video_task_id == parent.id,
-                VideoChunk.video_id == parent.video_id, VideoChunk.id == chunk_id,
-            ).with_for_update()).one_or_none()
-            if row is None:
-                raise VideoParseSnapshotConflictError("Voiceprint source no longer exists")
-            result, _chunk = row
-            event = next((event for event in dict(result.content or {}).get("timeline", [])
-                          if event.get("event_type") == "DIALOGUE"
-                          and _voiceprint_event_fingerprint(event) == fingerprint), None)
-            if (event is None or event.get("speaker") != speaker
-                or type(start_ms) is not int or type(end_ms) is not int
-                or not event["start_seconds"] <= start_ms < end_ms <= event["end_seconds"]):
-                raise VideoParseSnapshotConflictError("Voiceprint source identity or authorized segment changed")
+            detail, voiceprint, source_version, existing = _check_voiceprint_registration(
+                session, parent, lease, source_ref=source_ref, speaker=speaker,
+                start_ms=start_ms, end_ms=end_ms, model=model, encoder_revision=encoder_revision,
+            )
+            if existing is not None:
+                return existing
+            if any(ref.pcm_sha256 == pcm_sha256 for item in voiceprint.voiceprintList for ref in item.references):
+                raise VoiceprintRegistrationRejectedError(
+                    "VOICEPRINT_DUPLICATE_AUDIO", "The same PCM audio is already registered in this preparation.",
+                    "Choose another independent recording; a new source_ref does not make identical audio a new case.",
+                )
+            chunk_id, _, fingerprint = source_ref.partition(":")
             reference = VoiceprintReference(
                 chunk_id=chunk_id, start_ms=start_ms, end_ms=end_ms, vector=list(vector),
-                source_version=result.version, event_fingerprint=fingerprint,
+                source_version=source_version, event_fingerprint=fingerprint,
                 pcm_sha256=pcm_sha256, duration_ms=duration_ms, selection_basis=selection_basis,
             )
-            voiceprint = Voiceprint.model_validate(detail["voiceprint"])
             record = next((item for item in voiceprint.voiceprintList if item.speaker == speaker
                            and item.model.name == model and item.model.encoder_revision == encoder_revision), None)
             if record is None:
@@ -1277,16 +1297,13 @@ class VideoParseRepository:
                 record = CharacterVoiceprint(speaker=speaker, model={"name": model, "encoder_revision": encoder_revision},
                                              references=[], confidence=confidence)
                 voiceprint.voiceprintList.append(record)
-            existing = next((item for item in record.references
-                             if (item.chunk_id, item.start_ms, item.end_ms, item.event_fingerprint, item.pcm_sha256)
-                             == (chunk_id, start_ms, end_ms, fingerprint, pcm_sha256)), None)
-            if existing is None:
-                record.references.append(reference)
+            record.references.append(reference)
             detail["voiceprint"] = voiceprint.model_dump(mode="json")
             parent.detail = detail
             parent.update_time = datetime_to_unix_time_ms(registered_at)
-            return {"speaker": speaker, "model": record.model.model_dump(mode="json"),
-                    "reference": (existing or reference).model_dump(mode="json")}
+            count = len({(ref.chunk_id, ref.event_fingerprint) for item in voiceprint.voiceprintList
+                         if item.speaker == speaker for ref in item.references})
+            return _voiceprint_registration_receipt(record, reference, refs_count=count, added=True)
 
     def get_voiceprint_speaker_list(
         self, lease: VideoParseLease, *, now: datetime | None = None,
@@ -1301,7 +1318,8 @@ class VideoParseRepository:
                 detail, phase = _voiceprint_active_preparation(parent, lease)
             references = _valid_voiceprint_references(session, parent, voiceprint, for_update=False)
             speakers = set(phase["speaker_list"])
-            registered = {ref["speaker"] for ref in references} & speakers
+            progress = _voiceprint_reference_progress(references, speakers)
+            registered = {speaker for speaker, refs in progress.items() if refs}
             rows = session.execute(select(VideoChunk.id, ChunkParseContent.content).join(
                 ChunkParseTask, ChunkParseTask.chunk_id == VideoChunk.id,
             ).join(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id).where(
@@ -1314,7 +1332,10 @@ class VideoParseRepository:
                                 if event.get("event_type") == "DIALOGUE"
                                 and isinstance(event.get("speaker"), str) and event["speaker"].strip()} & speakers:
                     by_speaker[speaker].append(chunk_id)
-            return {"speaker_list": [{"speaker": speaker, "chunk_ids": chunk_ids}
+            return {"speaker_list": [{"speaker": speaker, "chunk_ids": chunk_ids,
+                                      "refs_count": len(progress[speaker]),
+                                      "target_refs_count": VOICEPRINT_REFS_PER_SPEAKER,
+                                      "references": progress[speaker]}
                                      for speaker, chunk_ids in by_speaker.items()],
                     "speaker_list_size": len(speakers), "registered_speaker_count": len(registered),
                     "minimum_speaker_count": len(speakers) // 2 + 1 if speakers else 0,
@@ -1334,24 +1355,38 @@ class VideoParseRepository:
                 detail, phase = _voiceprint_active_preparation(parent, lease)
             references = _valid_voiceprint_references(session, parent, voiceprint, for_update=True)
             speakers = set(phase.get("speaker_list", []))
-            registered = {ref["speaker"] for ref in references} & speakers
+            progress = _voiceprint_reference_progress(references, speakers)
+            counts = {speaker: len(refs) for speaker, refs in progress.items()}
+            registered = {speaker for speaker, count in counts.items() if count}
             missing = sorted(speakers - registered)
+            reasons = {name: reason.strip() for name, reason in dict(skip_reasons or {}).items()
+                       if name in counts and counts[name] < VOICEPRINT_REFS_PER_SPEAKER
+                       and isinstance(reason, str) and reason.strip()}
+            missing_reasons = sorted(name for name, count in counts.items()
+                                     if count < VOICEPRINT_REFS_PER_SPEAKER and name not in reasons)
             result = {"registered_speaker_count": len(registered), "speaker_list_size": len(speakers),
                       "minimum_speaker_count": len(speakers) // 2 + 1 if speakers else 0,
                       "missing_speakers": missing,
-                      "skip_reasons": {name: reason for name, reason in dict(skip_reasons or {}).items() if name in missing}}
+                      "skip_reasons": reasons, "reference_counts": counts,
+                      "target_refs_count": VOICEPRINT_REFS_PER_SPEAKER,
+                      "missing_reason_speakers": [] if voiceprint.ready else missing_reasons}
             if not voiceprint.ready:
                 if len(references) != sum(len(record.references) for record in voiceprint.voiceprintList):
                     raise VideoParseSnapshotConflictError("Voiceprint registered source identity changed")
                 if speakers and len(registered) * 2 <= len(speakers):
-                    return {"ready": False, **result}
+                    return {"ready": False, **result,
+                            "message": "Register valid references for strictly more than half the speaker list."}
+                if missing_reasons:
+                    return {"ready": False, **result,
+                            "message": f"Collect up to {VOICEPRINT_REFS_PER_SPEAKER} independent references per speaker, "
+                                       "or explain each shortfall in skip_reasons."}
             voiceprint.ready = True
             phase["active"] = False
             detail["voiceprint"] = voiceprint.model_dump(mode="json")
             detail[RUNTIME_DETAIL_KEY][_VOICEPRINT_PREPARATION_KEY] = phase
             parent.detail = detail
             parent.update_time = datetime_to_unix_time_ms(finished_at)
-            return {"ready": True, **result}
+            return {"ready": True, **result, "message": "Voiceprint preparation is ready."}
 
     def stop_voiceprint_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,
@@ -1553,11 +1588,12 @@ class VideoParseRepository:
         member_updates: Mapping[str, Mapping[str, Any]],
         input_versions: Mapping[str, int],
         input_fingerprints: Mapping[str, str],
+        input_contents: Mapping[str, Mapping[str, Any]],
         voiceprint_references: Sequence[Mapping[str, Any]] = (),
         detail: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
-        """Fence every input snapshot, validate all candidates, and commit once."""
+        """Merge independent event edits under current leases and commit once."""
 
         committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
@@ -1575,12 +1611,16 @@ class VideoParseRepository:
 
             rows = _member_content_rows(session, interval, for_update=True)
             expected_members = set(interval.chunk_task_ids)
-            if set(input_versions) != expected_members or set(input_fingerprints) != expected_members:
+            if (set(input_versions) != expected_members or set(input_fingerprints) != expected_members
+                    or set(input_contents) != expected_members):
                 raise VideoParseConflictError("refinement input identity must cover every Interval member")
             for chunk_task, _chunk, result in rows:
-                if (type(input_versions[chunk_task.id]) is not int
-                        or result.version != input_versions[chunk_task.id]
-                        or parse_content_fingerprint(dict(result.content or {})) != input_fingerprints[chunk_task.id]):
+                version = input_versions[chunk_task.id]
+                if (type(version) is not int or version < 1
+                        or parse_content_fingerprint(input_contents[chunk_task.id]) != input_fingerprints[chunk_task.id]):
+                    raise VideoParseConflictError("Refine base content does not match its input identity")
+                if (result.version < version or result.version == version
+                        and parse_content_fingerprint(dict(result.content or {})) != input_fingerprints[chunk_task.id]):
                     raise VideoParseSnapshotConflictError("Refine member content snapshot changed")
             consulted_scope = []
             for _chunk_task, chunk, result in rows:
@@ -1604,14 +1644,22 @@ class VideoParseRepository:
             end_ms = min(video.duration_ms, (consulted_scope[-1] + 1) * chunk_duration_ms)
             candidates = {}
             for chunk_task, _chunk, result in rows:
+                base = deepcopy(dict(input_contents[chunk_task.id]))
                 current = deepcopy(dict(result.content or {}))
                 changed = member_updates.get(chunk_task.id, {})
                 if set(changed) - {"persons", "timeline"}:
                     raise VideoParseConflictError("refinement can only commit persons and timeline")
-                candidate = {**current, **deepcopy(dict(changed))}
-                candidates[chunk_task.id] = validate_result_time_range(
-                    VideoParseResult.model_validate(candidate), start_seconds=start_ms, end_seconds=end_ms,
+                proposed = validate_result_time_range(
+                    VideoParseResult.model_validate({**base, **deepcopy(dict(changed))}),
+                    start_seconds=start_ms, end_seconds=end_ms,
                 ).model_dump(mode="json")
+                try:
+                    merged = merge_refinement_content(base, current, proposed)
+                    candidates[chunk_task.id] = validate_result_time_range(
+                        VideoParseResult.model_validate(merged), start_seconds=start_ms, end_seconds=end_ms,
+                    ).model_dump(mode="json")
+                except (RefinementMergeConflictError, ValidationError) as error:
+                    raise VideoParseSnapshotConflictError("Refine concurrent event edits conflict") from error
             member_scope = list(
                 range(
                     interval.start_sequence_no,
@@ -2982,6 +3030,86 @@ def _voiceprint_active_preparation(
         or phase.get("worker_id") != lease.worker_id):
         raise VideoParseLeaseLostError("Voiceprint preparation execution is no longer active")
     return detail, phase
+
+
+def _voiceprint_reference_progress(
+    references: Sequence[Mapping[str, Any]], speakers: set[str],
+) -> dict[str, list[dict[str, Any]]]:
+    progress = {speaker: {} for speaker in sorted(speakers)}
+    for ref in references:
+        if ref["speaker"] in progress:
+            source_ref = f'{ref["chunk_id"]}:{ref["event_fingerprint"]}'
+            progress[ref["speaker"]].setdefault(source_ref, {
+                "source_ref": source_ref, "start_ms": ref["start_ms"], "end_ms": ref["end_ms"],
+            })
+    return {speaker: list(refs.values()) for speaker, refs in progress.items()}
+
+
+def _voiceprint_registration_receipt(
+    record: CharacterVoiceprint, reference: VoiceprintReference, *, refs_count: int, added: bool,
+) -> dict[str, Any]:
+    return {"added": added, "speaker": record.speaker, "model": record.model.model_dump(mode="json"),
+            "refs_count": refs_count, "target_refs_count": VOICEPRINT_REFS_PER_SPEAKER,
+            "reference": {**reference.model_dump(mode="json"),
+                          "source_ref": f"{reference.chunk_id}:{reference.event_fingerprint}"}}
+
+
+def _check_voiceprint_registration(
+    session: Session, parent: VideoParseTask, lease: VideoParseLease, *, source_ref: str,
+    speaker: str, start_ms: int, end_ms: int, model: str, encoder_revision: str,
+) -> tuple[dict[str, Any], Voiceprint, int, dict[str, Any] | None]:
+    detail, phase = _voiceprint_active_preparation(parent, lease)
+    chunk_id, separator, fingerprint = source_ref.partition(":")
+    if not separator or chunk_id not in phase["source_chunk_ids"] or speaker not in phase["speaker_list"]:
+        raise VideoParseConflictError("voiceprint source or speaker is outside this preparation")
+    result = session.scalar(select(ChunkParseContent).join(
+        ChunkParseTask, ChunkParseTask.id == ChunkParseContent.chunk_task_id,
+    ).join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id).where(
+        ChunkParseTask.video_task_id == parent.id,
+        VideoChunk.video_id == parent.video_id, VideoChunk.id == chunk_id,
+    ).with_for_update())
+    if result is None:
+        raise VideoParseSnapshotConflictError("Voiceprint source no longer exists")
+    event = next((event for event in dict(result.content or {}).get("timeline", [])
+                  if event.get("event_type") == "DIALOGUE"
+                  and _voiceprint_event_fingerprint(event) == fingerprint), None)
+    if (event is None or event.get("speaker") != speaker
+        or type(start_ms) is not int or type(end_ms) is not int
+        or not event["start_seconds"] <= start_ms < end_ms <= event["end_seconds"]):
+        raise VideoParseSnapshotConflictError("Voiceprint source identity or authorized segment changed")
+    voiceprint = Voiceprint.model_validate(detail["voiceprint"])
+    references = _valid_voiceprint_references(session, parent, voiceprint, for_update=True)
+    if len(references) != sum(len(record.references) for record in voiceprint.voiceprintList):
+        raise VideoParseSnapshotConflictError("Voiceprint registered source identity changed")
+    count = len(_voiceprint_reference_progress(references, {speaker})[speaker])
+    for record in voiceprint.voiceprintList:
+        for ref in record.references:
+            if (ref.chunk_id, ref.event_fingerprint) != (chunk_id, fingerprint):
+                continue
+            if (record.speaker == speaker and record.model.name == model
+                and record.model.encoder_revision == encoder_revision
+                and (ref.start_ms, ref.end_ms) == (start_ms, end_ms)):
+                return detail, voiceprint, result.version, _voiceprint_registration_receipt(
+                    record, ref, refs_count=count, added=False,
+                )
+            raise VoiceprintRegistrationRejectedError(
+                "VOICEPRINT_SOURCE_ALREADY_REGISTERED",
+                f"Source {source_ref} already has a reference at {ref.start_ms}–{ref.end_ms} ms.",
+                "Choose a different source_ref; another subrange of the same dialogue is not an independent case.",
+            )
+    for ref in references:
+        if ref["start_ms"] < end_ms and start_ms < ref["end_ms"]:
+            raise VoiceprintRegistrationRejectedError(
+                "VOICEPRINT_REFERENCE_OVERLAP",
+                f'Requested range overlaps {ref["speaker"]}\'s reference at {ref["start_ms"]}–{ref["end_ms"]} ms.',
+                "Choose another clean single-speaker range that does not overlap any registered reference.",
+            )
+    if count >= VOICEPRINT_REFS_PER_SPEAKER:
+        raise VoiceprintRegistrationRejectedError(
+            "VOICEPRINT_REFERENCE_LIMIT", f"{speaker} already has {count} independent references.",
+            "Continue with another speaker, or finish preparation and explain any remaining shortfalls.",
+        )
+    return detail, voiceprint, result.version, None
 
 
 def _valid_voiceprint_references(

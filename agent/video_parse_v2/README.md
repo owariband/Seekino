@@ -170,7 +170,34 @@ Partial registration stays unready; each new attempt discards unpublished refere
 The four preparation Tools are `get_speaker_list`, readonly `get_context_canvas`,
 `register_voiceprint`, and `finish_voiceprint_preparation`. Only the host resolves
 media paths, extracts temporary PCM and computes vectors. A text completion alone
-cannot make preparation ready. Parent runtime stores only attempt sources, lease
+cannot make preparation ready. `get_speaker_list` returns each speaker's `refs_count`,
+`target_refs_count` and registered `references=[{source_ref,start_ms,end_ms}]` metadata;
+vectors are not exposed to the Agent. The first-version collection target and cap is
+five independent references per speaker, defined once by
+`server/constants/parse.py::VOICEPRINT_REFS_PER_SPEAKER` and returned by the Tools.
+Prefer reliable, clean speech with varied scenes, wording and speaking states; five
+is a cost limit, not a quality guarantee or a required number of emotions.
+
+Repeated `register_voiceprint` calls append references for the same speaker. Its
+receipt returns `added`, counts and source metadata. Exact repeats are idempotent;
+another subrange of an already registered source and any overlap with any speaker's
+registered audio are declined before embedding and rechecked on commit. Half-open
+intervals may touch. Identical PCM from a different source is also declined at the
+final registration check, after extraction provides its existing digest.
+Tool `message`/`retry_hint` directs the Agent to select a different
+independent, non-overlapping utterance; these declines consume Tool budget but do
+not count as preparation execution failures.
+
+Finishing still requires valid references for strictly more than half the fixed
+speaker list. Every speaker below its reference target, including zero references,
+needs a nonblank `skip_reasons` explanation. Missing reasons return `ready=false`,
+`missing_reason_speakers`, `reference_counts`, the target and a message. With reasons
+and majority coverage, fewer than five references is normal; an empty list can finish
+with zero references. The Agent should finish before exhausting its finite budget.
+Actual model, media and database failures retain the existing failure path. No waiting
+for later chunks, background supplementation or aggregation change is introduced.
+
+Parent runtime stores only attempt sources, lease
 fence and finite failure/recovery facts; normal cancellation and waiting are free.
 Preparation failures/timeouts and active-phase crashes use the existing failure
 closure; committed preparation is skipped after restart, even if notification was lost.

@@ -344,6 +344,77 @@ def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capac
     assert len(connections) >= 2
 
 
+@pytest.mark.parametrize("conflict", ["overlap", "speaker_limit"])
+def test_mysql_voiceprint_registration_rechecks_racing_prechecks(mysql_capacity, conflict):
+    from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
+    from server.repository.video_parse import VoiceprintRegistrationRejectedError
+
+    _engine, factory, create_task, connections = mysql_capacity
+    task_id = create_task(chunk_count=2)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
+    repo, parent, _prepared = _prepare(factory, queue, task_id, chunk_count=2)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        task.parse_config = {**task.parse_config, "voiceprint": {
+            "max_tool_calls": 32, "execution_timeout_seconds": 120.0,
+        }}
+    names = ["A", "B"] if conflict == "overlap" else ["A"] * (VOICEPRINT_REFS_PER_SPEAKER + 1)
+    timeline = [
+        {"event_type": "DIALOGUE", "speaker": name,
+         "start_seconds": 100 + index * 1400, "end_seconds": 1100 + index * 1400,
+         "description": "independently attributed single-speaker dialogue",
+         "participants": [name], "visible_persons": [],
+         "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": f"line {index}"}]}
+        for index, name in enumerate(names)
+    ]
+    if conflict == "overlap":
+        timeline[1].update(start_seconds=700, end_seconds=1700)
+    child = queue.claim_chunk("voiceprint-source", video_parse_task_id=task_id,
+        lease_duration=timedelta(minutes=5), now=NOW)
+    assert child is not None
+    repo.commit_chunk_result(child, content={"persons": sorted(set(names)), "timeline": timeline}, now=NOW)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    assert len(snapshot["member_contents"]) == 1
+    arguments = [
+        {"source_ref": source_ref, "speaker": source["speaker"],
+         "start_ms": source["start_ms"] + 100, "end_ms": source["end_ms"] - 100,
+         "model": "campplus", "encoder_revision": "v1.0.0"}
+        for source_ref, source in sorted(snapshot["sources"].items(), key=lambda item: item[1]["start_ms"])
+    ]
+
+    def register(values):
+        return repo.register_voiceprint(parent, **values,
+            selection_basis="reliable independent identity evidence", confidence=0.9,
+            vector=[1.0] + [0.0] * 191, pcm_sha256=format(values["start_ms"], "064x"),
+            duration_ms=values["end_ms"] - values["start_ms"], now=NOW)
+
+    for values in arguments[:-2]:
+        register(values)
+    prechecked = Barrier(2)
+
+    def race(worker, _attempt):
+        values = arguments[-2 + worker]
+        assert repo.precheck_voiceprint_registration(parent, **values, now=NOW) is None
+        prechecked.wait(timeout=10)
+        try:
+            return register(values)
+        except VoiceprintRegistrationRejectedError as error:
+            return error
+
+    results = _race(race, workers=2, attempts=1)
+    assert sum(isinstance(result, dict) for result in results) == 1
+    rejected = [result for result in results if isinstance(result, VoiceprintRegistrationRejectedError)]
+    assert len(rejected) == 1
+    assert rejected[0].code == ("VOICEPRINT_REFERENCE_OVERLAP" if conflict == "overlap"
+                                else "VOICEPRINT_REFERENCE_LIMIT")
+    with factory() as session:
+        voiceprint = session.get(VideoParseTask, task_id).detail["voiceprint"]
+        references = [reference for record in voiceprint["voiceprintList"] for reference in record["references"]]
+        assert len(references) == (1 if conflict == "overlap" else VOICEPRINT_REFS_PER_SPEAKER)
+        assert voiceprint["ready"] is False
+    assert len(connections) >= 2
+
+
 @pytest.mark.parametrize("phase", ["parse", "refine", "index"])
 def test_mysql_deadline_recovery_fences_heartbeat_and_late_commit(mysql_capacity, phase):
     _engine, factory, create_task, connections = mysql_capacity

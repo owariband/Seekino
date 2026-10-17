@@ -1466,6 +1466,7 @@ def voiceprint_host(monkeypatch, tmp_path):
     class Encoder:
         model_name = "iic/speech_campplus_sv_zh-cn_16k-common"
         encoder_revision = "v1.0.0"
+        dimensions = 192
 
         def embed_audio(self, path):
             assert Path(path).is_file()
@@ -1498,8 +1499,12 @@ def voiceprint_host(monkeypatch, tmp_path):
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._repository = SimpleNamespace(
         load_task_input=lambda _task: source,
+        precheck_voiceprint_registration=lambda _lease, **_values: None,
         register_voiceprint=register, finish_voiceprint_preparation=finish,
-        get_voiceprint_speaker_list=lambda _lease: {"speaker_list": [{"speaker": "爽世", "chunk_ids": ["chunk-0"]}]},
+        get_voiceprint_speaker_list=lambda _lease: {"speaker_list": [{
+            "speaker": "爽世", "chunk_ids": ["chunk-0"], "refs_count": 0,
+            "target_refs_count": 5, "references": [],
+        }]},
     )
     runtime._artifact_store = SimpleNamespace(resolve=lambda uri: original if uri == "artifact://original" else pytest.fail(uri))
     runtime._media_service = VideoParseMediaService(tmp_path / "media", command_runner=write_audio)
@@ -1609,7 +1614,7 @@ def test_voiceprint_tool_budget_counts_reads_and_closes_encoder_on_exhaustion(mo
     assert host.state.closed and not host.state.ready
 
 
-@pytest.mark.parametrize("failure_at", ["encoder", "audio", "register", "speaker_list", "finish"])
+@pytest.mark.parametrize("failure_at", ["encoder", "audio", "precheck", "register", "speaker_list", "finish"])
 @pytest.mark.parametrize("generation_outcome", ["complete", "another_error"])
 def test_voiceprint_host_failure_survives_tool_feedback_and_fences_finish(
     monkeypatch, voiceprint_host, failure_at, generation_outcome,
@@ -1625,7 +1630,8 @@ def test_voiceprint_host_failure_survives_tool_feedback_and_fences_finish(
     elif failure_at == "audio":
         monkeypatch.setattr(host.runtime, "_embed_speaker_segment", fail)
     else:
-        method = {"register": "register_voiceprint", "speaker_list": "get_voiceprint_speaker_list",
+        method = {"precheck": "precheck_voiceprint_registration", "register": "register_voiceprint",
+                  "speaker_list": "get_voiceprint_speaker_list",
                   "finish": "finish_voiceprint_preparation"}[failure_at]
         monkeypatch.setattr(host.runtime._repository, method, fail)
 
@@ -1696,6 +1702,87 @@ def test_voiceprint_source_feedback_can_be_corrected_before_finish(monkeypatch, 
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
     assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
     assert host.state.ready and len(host.state.registrations) == 1
+
+
+def test_voiceprint_duplicate_returns_progress_without_audio_or_embedding(monkeypatch, voiceprint_host):
+    host = voiceprint_host
+    host.state.coverage = True
+    existing = {
+        "added": False, "speaker": "爽世", "refs_count": 2, "target_refs_count": 5,
+        "reference": {"source_ref": "source-0", "start_ms": 47_100, "end_ms": 48_800,
+                      "vector": [1.0] + [0.0] * 191},
+    }
+
+    def precheck(lease, **values):
+        assert lease is host.lease
+        assert values["model"] == host.encoder.model_name
+        assert values["encoder_revision"] == host.encoder.encoder_revision
+        return existing
+
+    def embed(_path):
+        pytest.fail("A duplicate must return before extracting its embedding")
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        tools = {tool.name: tool for tool in tools}
+        result = json.loads(tools["register_voiceprint"].invoke({
+            "source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100,
+            "end_ms": 48_800, "selection_basis": "evidence",
+        }))
+        assert result["added"] is False and result["refs_count"] == 2
+        assert result["target_refs_count"] == 5 and result["dimension"] == 192
+        assert result["reference"]["source_ref"] == "source-0"
+        assert "vector" not in result["reference"]
+        assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"]
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime._repository, "precheck_voiceprint_registration", precheck)
+    monkeypatch.setattr(host.encoder, "embed_audio", embed)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
+    assert host.state.commands == [] and host.state.registrations == [] and host.state.closed
+
+
+@pytest.mark.parametrize("rejected_at", ["precheck_voiceprint_registration", "register_voiceprint"])
+def test_voiceprint_registration_rejection_is_correctable_without_failing_phase(
+    monkeypatch, voiceprint_host, rejected_at,
+):
+    from server.repository.video_parse import VoiceprintRegistrationRejectedError
+
+    host = voiceprint_host
+    host.state.coverage = True
+    original = getattr(host.runtime._repository, rejected_at)
+    rejected = False
+
+    def reject_once(*args, **values):
+        nonlocal rejected
+        if not rejected:
+            rejected = True
+            raise VoiceprintRegistrationRejectedError(
+                "VOICEPRINT_OVERLAP", "Requested [47100,48800) overlaps registered [47000,48000).",
+                "Choose another independent source with a non-overlapping interval.",
+            )
+        return original(*args, **values)
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        tools = {tool.name: tool for tool in tools}
+        values = {"source_ref": "source-0", "speaker": "爽世", "start_ms": 47_100,
+                  "end_ms": 48_800, "selection_basis": "evidence"}
+        feedback = json.loads(tools["register_voiceprint"].invoke(values))["error"]
+        assert feedback["code"] == "VOICEPRINT_OVERLAP" and feedback["retryable"] is True
+        assert "[47000,48000)" in feedback["message"]
+        assert "non-overlapping" in feedback["retry_hint"]
+        assert len(host.state.commands) == (0 if rejected_at.startswith("precheck") else 1)
+        host.state.manager.check_active()
+        tools["register_voiceprint"].invoke({**values, "start_ms": 48_200, "end_ms": 49_900})
+        assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"]
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime._repository, rejected_at, reject_once)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
+    assert host.state.ready and host.state.closed and len(host.state.registrations) == 1
+    assert len(host.state.commands) == (1 if rejected_at.startswith("precheck") else 2)
+    assert all(not path.exists() for path in host.state.audio_paths)
 
 
 def test_voiceprint_normal_model_cancellation_is_not_latched_as_execution_failure(monkeypatch, voiceprint_host):
@@ -2119,7 +2206,6 @@ def test_compare_speaker_without_eligible_references_does_not_extract_audio(monk
 
 
 def test_refine_compare_tool_carries_used_reference_dependencies_into_commit(monkeypatch, voiceprint_host):
-    from engine.parsev2.validation import ValidatedIntervalRefinement
     from server.model.dto.jobDTO import IntervalParseLease
 
     host = voiceprint_host
@@ -2140,6 +2226,7 @@ def test_refine_compare_tool_carries_used_reference_dependencies_into_commit(mon
         "interval_parse_task_id": lease.interval_parse_task_id, "lease": object(),
         "member_bounds": {"member": (40_000, 60_000)}, "member_sequence_nos": {"member": 0},
         "member_versions": {"member": 1}, "member_fingerprints": {"member": "unchanged"},
+        "member_contents": {"member": VideoParseResult(persons=[], timeline=[])},
         "member_scopes": {"member": [0]},
     }
 
@@ -2154,8 +2241,15 @@ def test_refine_compare_tool_carries_used_reference_dependencies_into_commit(mon
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
     asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas))
     assert host.state.closed and snapshot["voiceprint_references"] == [reference]
-    assert asyncio.run(host.runtime.commit_interval_refinement(snapshot, ValidatedIntervalRefinement(updates=[])))
+    canvas.write(role="refine", batch_id="refined-event", expected_revision=canvas.revision, operations=[{
+        "op": "add_event", "member_ref": "member", "key": "action",
+        "event": {"event_type": "ACTION", "start_seconds": 47_100, "end_seconds": 48_800,
+                  "description": "corrected action", "participants": [], "visible_persons": []},
+    }])
+    assert asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result()))
     assert committed[0]["voiceprint_references"] == [reference]
+    assert committed[0]["input_contents"] == {"member": {"persons": [], "timeline": []}}
+    assert committed[0]["member_updates"]["member"]["timeline"][0]["description"] == "corrected action"
 
 
 def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch):

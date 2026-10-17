@@ -277,6 +277,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
             input_versions={member.chunk_parse_task_id: member.version for member in refine_input},
             input_fingerprints={member.chunk_parse_task_id: parse_content_fingerprint(member.content)
                                 for member in refine_input},
+            input_contents={member.chunk_parse_task_id: member.content for member in refine_input},
         )
         index_lease = queue.claim_interval_index(
             "agent-test-index", lease_duration=timedelta(minutes=10),

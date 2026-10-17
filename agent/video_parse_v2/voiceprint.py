@@ -60,7 +60,10 @@ class RegisterVoiceprintArguments(CompareSpeakerArguments):
 
 class FinishVoiceprintArguments(_Arguments):
     complete: Literal[True]
-    skip_reasons: dict[str, str] = Field(default_factory=dict)
+    skip_reasons: dict[str, str] = Field(
+        default_factory=dict,
+        description="Explain every speaker below target_refs_count, including zero-reference speakers.",
+    )
 
 
 class VoiceprintAgent:
@@ -122,7 +125,10 @@ def build_tools(
     tools.extend([
         build_agent_tool(
             name="get_speaker_list", args_schema=GetSpeakerListArguments,
-            description="Read the fixed preparation speaker list, source chunks, registered coverage and required count.",
+            description=(
+                "Read the fixed speaker list, source chunks and coverage requirement. Each speaker includes "
+                "refs_count, target_refs_count and registered source_ref/start_ms/end_ms ranges. No vectors."
+            ),
             func=lambda: execute("get_speaker_list", get_speaker_list), maximum_result_bytes=32_000,
         ),
         build_agent_tool(
@@ -130,6 +136,9 @@ def build_tools(
             description=(
                 "Register an evidenced named speaker using an issued source_ref and a precise absolute millisecond "
                 "subrange inside it. The host extracts original audio and computes the embedding. "
+                "Repeat for independent utterances of the same speaker up to target_refs_count. Exact repeats "
+                "are idempotent; reused sources and overlap with any registered speaker are declined with "
+                "message/retry_hint. Returns added, progress and reference metadata without vectors. "
                 "Provide selection_basis; confidence evaluates attribution, not cosine similarity."
             ),
             func=lambda **values: execute("register_voiceprint", register_voiceprint, **values),
@@ -139,8 +148,10 @@ def build_tools(
             name="finish_voiceprint_preparation", args_schema=FinishVoiceprintArguments,
             description=(
                 "Request the host to validate references and persist ready=true. Coverage must exceed half "
-                "the fixed speaker list; an empty list permits zero references. Include reasons for skipped speakers. "
-                "Insufficient coverage leaves preparation unready."
+                "the fixed speaker list; an empty list permits zero references. Supply skip_reasons for every "
+                "speaker below target_refs_count, including zero references. Under-target speakers with reasons "
+                "may finish when majority coverage is met. Missing coverage or reasons leaves preparation unready "
+                "and returns progress plus a message. Finish before exhausting the Tool budget."
             ),
             func=lambda **values: execute("finish_voiceprint_preparation", finish_voiceprint_preparation, **values),
             maximum_result_bytes=32_000,

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -136,6 +137,52 @@ def parse_content_fingerprint(content: Mapping[str, object]) -> str:
     ).encode("utf-8")).hexdigest()
 
 
+class RefinementMergeConflictError(ValueError):
+    """Concurrent edits cannot be combined at whole-event granularity."""
+
+
+def _merge_refinement_value(base: object, current: object, proposed: object) -> object:
+    if proposed == base or proposed == current:
+        return deepcopy(current)
+    if current == base:
+        return deepcopy(proposed)
+    raise RefinementMergeConflictError("Refine changed the same entry differently")
+
+
+def merge_refinement_content(
+    base: Mapping[str, Any],
+    current: Mapping[str, Any],
+    proposed: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge validated results; ambiguous event structure retains a conflict.
+
+    Independent context changes may survive without another model review.
+    Persons remain one atomic list, and each timeline event is atomic too.
+    """
+    merged = deepcopy(dict(current))
+    for field in ("persons", "timeline"):
+        original, latest, candidate = base[field], current[field], proposed[field]
+        if (field != "timeline" or candidate == original
+                or latest == original or candidate == latest):
+            merged[field] = _merge_refinement_value(original, latest, candidate)
+            continue
+        # Execution-local Canvas refs are not persistent event identities.
+        # Only unchanged, unique, ordered time/type anchors permit alignment.
+        identities = [
+            [(event["event_type"], event["start_seconds"], event["end_seconds"])
+             for event in events]
+            for events in (original, latest, candidate)
+        ]
+        if (identities[0] != identities[1] or identities[0] != identities[2]
+                or len(set(identities[0])) != len(identities[0])):
+            raise RefinementMergeConflictError("Refine event structure changed or is ambiguous")
+        merged[field] = [
+            _merge_refinement_value(before, now, after)
+            for before, now, after in zip(original, latest, candidate, strict=True)
+        ]
+    return merged
+
+
 def apply_chunk_update(
     current: VideoParseResult,
     update: ChunkResultUpdate,
@@ -162,8 +209,8 @@ def validate_interval_refinement(
 ) -> ValidatedIntervalRefinement:
     """Validate program-assembled fields against the exact refinement snapshot.
 
-    The transaction must check every input version and fingerprint before
-    applying these complete fields. Model-facing operations live in Canvas.
+    The transaction must verify the base identity and merge these complete
+    fields against current content. Model-facing operations live in Canvas.
     """
 
     proposal = IntervalRefinementProposal.model_validate(proposal)
