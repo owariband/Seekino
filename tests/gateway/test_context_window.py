@@ -327,22 +327,25 @@ def test_hard_limit_releases_even_newest_tool_output_as_recoverable_receipt() ->
     assert update.after.characters <= 2_000
 
 
-def test_uncompactable_fixed_prefix_fails_without_advancing_window() -> None:
+@pytest.mark.parametrize(("policy", "character_threshold"), [(None, 100), (_policy(), None)])
+def test_uncompactable_fixed_prefix_reaches_provider_after_compaction_warning(
+    policy, character_threshold, caplog,
+) -> None:
     controller = ContextWindowController(
-        policy=None,
-        maximum_input_characters=100,
+        policy=policy,
+        maximum_input_characters=character_threshold,
         label="test",
     )
 
-    with pytest.raises(ContextWindowOverflow, match="message character budget"):
-        controller.prepare(
-            [{"role": "user", "content": "x" * 1_000}],
-            contract={},
-            checkpoint=lambda: {},
-        )
+    original = [{"role": "user", "content": "x" * 30_000}]
+    update = controller.prepare(original, contract={}, checkpoint=lambda: {})
 
-    assert controller.state.window_number == 1
-    assert controller.state.compaction_count == 0
+    assert update.messages[0] == original[0]
+    assert update.compacted is True
+    assert controller.state.window_number == 2
+    assert controller.state.compaction_count == 1
+    assert "event=agent_context_compaction_over_estimate" in caplog.text
+    assert "x" * 100 not in caplog.text
 
 
 def test_repeated_bounded_tool_batches_roll_across_multiple_windows() -> None:

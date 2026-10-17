@@ -218,17 +218,20 @@ def test_native_entries_reject_disabled_vision_before_creating_client(structured
             model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
 
 
-def test_feedback_round_recreates_image_input_stream_for_fresh_client() -> None:
+@pytest.mark.parametrize("max_input_chars", [None, 32])
+def test_feedback_round_preserves_images_and_leaves_long_prompt_to_sdk(max_input_chars) -> None:
     created = []
 
     def factory(options):
-        client = _FakeClient(options, [[_assistant("answer"), _result(text="answer")]])
+        answer = "answer " * 100
+        client = _FakeClient(options, [[_assistant(answer), _result(text=answer)]])
         created.append(client)
         return client
 
-    feedback = iter(["Check the image again", None])
+    feedback_text = "Check the image again"
+    feedback = iter([feedback_text, None])
     image = "data:image/png;base64,YQ=="
-    _model(factory).run_agent_loop(
+    _model(factory, max_input_chars=max_input_chars).run_agent_loop(
         "Describe the image", tools=[_tool()], max_model_calls=3, image_urls=[image],
         handle_text=lambda _text: None, stop_feedback=lambda: next(feedback),
     )
@@ -238,21 +241,33 @@ def test_feedback_round_recreates_image_input_stream_for_fresh_client() -> None:
         assert [block["source"] for block in envelope["message"]["content"] if block["type"] == "image"] == [
             {"type": "base64", "media_type": "image/png", "data": "YQ=="},
         ]
-    assert "Check the image again" in created[1].prompts[0][0]["message"]["content"][0]["text"]
+    assert feedback_text in created[1].prompts[0][0]["message"]["content"][0]["text"]
 
 
 @pytest.mark.parametrize("structured", [False, True])
-def test_image_tokens_are_counted_before_creating_client(structured) -> None:
-    model = _model(lambda _options: pytest.fail("client must not be created"), context_window_policy=_context_policy(2_000))
-    options = dict(tools=[_tool()], max_model_calls=1, image_urls=["data:image/png;base64,AAAA"])
-    with pytest.raises(ModelInputTooLargeError, match="initial context"):
-        if structured:
-            model.run_structured("Question", result_type=_Answer, **options)
-        else:
-            model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
+def test_native_entries_leave_six_images_to_sdk_context_management(structured) -> None:
+    created = []
+
+    def factory(options):
+        client = _FakeClient(options, [[_assistant("ok"), _result(text="ok", structured={"answer": "ok"})]])
+        created.append(client)
+        return client
+
+    model = _model(factory, context_window_policy=_context_policy(2_000))
+    images = [f"https://example.test/{index}.png" for index in range(6)]
+    options = dict(tools=[_tool()], max_model_calls=1, image_urls=images)
+    if structured:
+        assert model.run_structured("Question", result_type=_Answer, **options).answer == "ok"
+    else:
+        emitted = []
+        model.run_agent_loop("Question", handle_text=emitted.append, **options)
+        assert emitted == ["ok"]
+    envelope, = created[0].prompts[0]
+    assert [block["source"]["url"] for block in envelope["message"]["content"] if block["type"] == "image"] == images
 
 
-def test_context_preflight_counts_mcp_tool_contract_before_starting_client() -> None:
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_entries_leave_large_mcp_contract_to_sdk(structured) -> None:
     created: list[object] = []
 
     def lookup(value: str) -> str:
@@ -266,24 +281,30 @@ def test_context_preflight_counts_mcp_tool_contract_before_starting_client() -> 
 
     def factory(_options: Any) -> _FakeClient:
         created.append(object())
-        return _FakeClient(_options, [[_result(text="unused")]])
+        return _FakeClient(_options, [[_assistant("ok"), _result(text="ok", structured={"answer": "ok"})]])
 
     model = _model(
         factory,
         context_window_policy=_context_policy(2_000),
     )
-    with pytest.raises(ModelInputTooLargeError, match="initial context"):
+    if structured:
+        assert model.run_structured(
+            "short prompt", tools=[tool], result_type=_Answer, max_model_calls=1,
+        ).answer == "ok"
+    else:
+        emitted = []
         model.run_agent_loop(
             "short prompt",
             tools=[tool],
             max_model_calls=1,
-            handle_text=lambda _text: None,
+            handle_text=emitted.append,
         )
+        assert emitted == ["ok"]
 
-    assert created == []
+    assert len(created) == 1
 
 
-def test_context_preflight_allows_a_small_request_below_the_hard_limit() -> None:
+def test_native_loop_accepts_small_request() -> None:
     created: list[_FakeClient] = []
 
     def factory(options: Any) -> _FakeClient:
@@ -833,16 +854,28 @@ def test_invalid_sdk_model_usage_and_cost_remain_unknown_without_breaking_result
     assert records[0].sdk_model_usage[0].cost_usd is None
 
 
-def test_prompt_limit_and_close_are_enforced() -> None:
-    model = _model(lambda options: _FakeClient(options, []), max_input_chars=5)
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("max_input_chars", [None, 5])
+def test_native_entries_leave_long_prompt_to_sdk_and_enforce_close(structured, max_input_chars) -> None:
+    created = []
 
-    with pytest.raises(ModelInputTooLargeError):
+    def factory(options):
+        client = _FakeClient(options, [[_assistant("ok"), _result(text="ok", structured={"answer": "ok"})]])
+        created.append(client)
+        return client
+
+    model = _model(factory, max_input_chars=max_input_chars)
+    prompt = "long evidence " * 20_000
+    options = dict(tools=[_tool()], max_model_calls=1, max_input_chars=5)
+    if structured:
+        assert model.run_structured(prompt, result_type=_Answer, **options).answer == "ok"
+    else:
+        emitted = []
         model.run_agent_loop(
-            "too long",
-            tools=[_tool()],
-            max_model_calls=1,
-            handle_text=lambda _text: None,
+            prompt, handle_text=emitted.append, **options,
         )
+        assert emitted == ["ok"]
+    assert created[0].prompts == [prompt]
 
     model.close()
     model.close()
@@ -853,3 +886,35 @@ def test_prompt_limit_and_close_are_enforced() -> None:
             max_model_calls=1,
             handle_text=lambda _text: None,
         )
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_context_window_error_still_reaches_caller(structured) -> None:
+    def factory(options):
+        return _FakeClient(options, [[_result(
+            is_error=True, stop_reason="model_context_window_exceeded",
+        )]])
+
+    model = _model(factory, max_input_chars=None, context_window_policy=None)
+    with pytest.raises(ModelInputTooLargeError, match="model context window"):
+        options = dict(tools=[_tool()], max_model_calls=1)
+        if structured:
+            model.run_structured("Question", result_type=_Answer, **options)
+        else:
+            model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
+
+
+@pytest.mark.parametrize("invalid", [0, -1, True, 1.5])
+def test_native_entries_keep_input_limit_parameter_validation(invalid) -> None:
+    factory = lambda _options: pytest.fail("client must not be created")
+    with pytest.raises(ValueError, match="max_input_chars"):
+        _model(factory, max_input_chars=invalid)
+    model = _model(factory, max_input_chars=None)
+    try:
+        options = dict(tools=[_tool()], max_model_calls=1, max_input_chars=invalid)
+        with pytest.raises(ValueError, match="max_input_chars"):
+            model.run_structured("Question", result_type=_Answer, **options)
+        with pytest.raises(ValueError, match="max_input_chars"):
+            model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
+    finally:
+        model.close()

@@ -109,6 +109,48 @@ def test_factory_preserves_vision_capability_for_every_agent_transport(
         factory.close()
 
 
+@pytest.mark.parametrize(("source", "adapter_name"), [
+    (CodexModelSourceConfig(), "CodexAgentModel"),
+    (ClaudeCodeModelSourceConfig(), "ClaudeAgentModel"),
+])
+@pytest.mark.parametrize(("builder_name", "run_name"), [
+    ("build_structured", "run_structured"), ("build_loop", "run_agent_loop"),
+])
+def test_native_factory_does_not_restore_role_or_binding_context_limits(
+    monkeypatch, source, adapter_name, builder_name, run_name,
+):
+    adapters = []
+
+    class NativeModel:
+        def __init__(self, **options):
+            self.options = options
+            adapters.append(self)
+
+        def run_structured(self, _prompt, **options):
+            return options
+
+        run_agent_loop = run_structured
+
+    monkeypatch.setattr(agent_factory, adapter_name, NativeModel)
+    binding = ModelBinding(
+        source="primary", model="configured-model", request_timeout_seconds=7,
+        max_input_chars=5_000, max_output_tokens=1_024,
+    )
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": source}, binding=binding, environ={},
+    )
+    try:
+        model = getattr(factory, builder_name)(**_build_arguments())
+        assert adapters[0].options["max_input_chars"] is None
+        assert adapters[0].options["context_window_policy"] is None
+        options = getattr(model, run_name)("prompt", max_input_chars=1_000, request_timeout_seconds=60)
+        assert options["max_input_chars"] is None
+        assert options["request_timeout_seconds"] == 7
+        assert adapters[0].options["max_output_tokens"] == 1_024
+    finally:
+        factory.close()
+
+
 @pytest.mark.parametrize("primary", [_openai_source(), ArkModelSourceConfig()])
 @pytest.mark.parametrize("supports_vision_input", [True, False])
 def test_structured_fallback_uses_its_own_vision_capability(primary, supports_vision_input) -> None:
@@ -592,7 +634,7 @@ def test_supervisor_rejects_harness_source_mismatch(source, harness, reason):
 
 
 @pytest.mark.parametrize("total_timeout_enabled", [True, False])
-def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkeypatch, total_timeout_enabled):
+def test_codex_supervisor_factory_reuses_executor_and_native_context_controls(monkeypatch, total_timeout_enabled):
     adapters = []
 
     class NativeModel:
@@ -636,8 +678,8 @@ def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkey
         assert adapters[0].options["executor"] is adapters[1].options["executor"]
         assert adapters[0].options["request_timeout_seconds"] == 7
         assert adapters[0].options["max_output_tokens"] == 1_024
-        assert adapters[0].options["max_input_chars"] == 5_000
-        assert adapters[0].options["context_window_policy"].context_window_tokens == 32_000
+        assert adapters[0].options["max_input_chars"] is None
+        assert adapters[0].options["context_window_policy"] is None
         assert all(adapter.options["total_timeout_enabled"] is total_timeout_enabled for adapter in adapters)
         texts = []
         model.run_agent(
@@ -647,7 +689,7 @@ def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkey
         )
         assert texts == ["answer"]
         assert adapters[0].calls[0][1]["request_timeout_seconds"] == 7
-        assert adapters[0].calls[0][1]["max_input_chars"] == 5_000
+        assert adapters[0].calls[0][1]["max_input_chars"] is None
         assert adapters[0].calls[0][1]["max_model_calls"] == 2
         model.confirm_turn("conversation", "answer", "SQL answer")
         model.run_agent(
@@ -656,7 +698,7 @@ def test_codex_supervisor_factory_reuses_executor_and_bounds_native_calls(monkey
             handle_text=texts.append, request_timeout_seconds=1, max_input_chars=1_000,
         )
         assert adapters[0].calls[1][1]["request_timeout_seconds"] == 1
-        assert adapters[0].calls[1][1]["max_input_chars"] == 1_000
+        assert adapters[0].calls[1][1]["max_input_chars"] is None
     finally:
         model.close()
         model.close()

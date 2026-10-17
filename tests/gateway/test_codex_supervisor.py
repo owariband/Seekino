@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.tools import StructuredTool
 
-from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.agent_model.contracts import SupervisorSessionContext
 from gateway.codex.agent import CodexAgentModel
 from gateway.codex.protocol import CodexToolBridge
@@ -237,13 +236,27 @@ def test_native_turns_create_fresh_sessions_and_rebind_evidence_tools_with_image
         model.close()
 
 
-def test_native_history_budget_is_checked_before_start_and_failed_turn_can_retry():
+def test_large_native_history_reaches_fresh_sessions_and_confirmation_still_applies():
     model, sessions = native_model()
+    history = [{"role": "USER", "content": "x" * 10_000}]
     try:
-        with pytest.raises(ModelInputTooLargeError):
-            run(model, message="too-large", history=[{"role": "USER", "content": "x" * 10_000}])
-        assert sessions == []
-        assert run(model, message="retry") == ["native answer"]
+        assert run(model, message="large", history=history) == ["native answer"]
+        assert history[0]["content"] in sessions[0].prompts[0][0]
+        with pytest.raises(RuntimeError, match="not been confirmed"):
+            run(model, message="before-confirmation")
+        assert len(sessions) == 1
+
+        model.confirm_turn("conversation", "large", "committed answer")
+        history.append({"role": "ASSISTANT", "content": "committed answer"})
+        assert run(model, message="next", history=history) == ["native answer"]
+        assert "committed answer" in sessions[1].prompts[0][0]
+        assert "native answer" not in sessions[1].prompts[0][0]
+
+        model.discard_turn("conversation", "next")
+        assert run(model, message="after-discard", history=history) == ["native answer"]
+        assert len(sessions) == 3
+        assert len({id(session) for session in sessions}) == 3
+        assert all(session.closed for session in sessions)
     finally:
         model.close()
 

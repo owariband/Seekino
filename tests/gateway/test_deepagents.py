@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.exceptions import ContextOverflowError
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import StructuredTool
@@ -368,27 +369,42 @@ def test_cold_history_larger_than_character_budget_is_trimmed_by_sdk_summary():
     assert len(script._calls[0]["messages"][-1].text) < 120_000
 
 
-def test_oversized_tool_schema_is_rejected_before_model_request():
-    script = ScriptedModel(responses=[AIMessage(content="Must not be requested")])
+def test_oversized_tool_schema_reaches_provider_after_compaction_warning(caplog):
+    script = ScriptedModel(responses=[AIMessage(content="Provider answer")])
     model = _model(script)
     tool = StructuredTool.from_function(lambda: "fact", name="large", description="x" * 130_000)
-    with pytest.raises(ModelInputTooLargeError):
-        _run(model, tools=[tool])
-    assert not script._calls
-    assert not model.session_store.pending
+    assert _run(model, tools=[tool]) == ["Provider answer"]
+    assert len(script._calls) == 1
+    assert "event=agent_context_compaction_over_estimate" in caplog.text
 
 
-def test_non_compactable_tool_contract_respects_token_budget():
+def test_non_compactable_tool_contract_reaches_provider_after_compaction_warning(caplog):
     policy = ContextWindowPolicy(
         context_window_tokens=6_000, output_reserve_tokens=500,
         safety_margin_tokens=500, auto_compact_tokens=4_500, compact_target_tokens=1_000,
     )
-    script = ScriptedModel(responses=[AIMessage(content="Must not be requested")])
+    script = ScriptedModel(responses=[AIMessage(content="Provider answer")])
     model = _model(script, policy=policy)
     tool = StructuredTool.from_function(lambda: "fact", name="large", description="中文" * 5_000)
-    with pytest.raises(ModelInputTooLargeError):
-        _run(model, tools=[tool])
-    assert not script._calls
+    assert _run(model, tools=[tool]) == ["Provider answer"]
+    assert len(script._calls) == 1
+    assert "event=agent_context_compaction_over_estimate" in caplog.text
+
+
+def test_provider_context_overflow_remains_a_model_input_error():
+    class OverflowingModel(ScriptedModel):
+        def _generate(self, *args, **kwargs):
+            raise ContextOverflowError("Provider context window exceeded")
+
+    model = _model(OverflowingModel(responses=[]))
+    with pytest.raises(ModelInputTooLargeError) as failure:
+        _run(model)
+    assert isinstance(failure.value.__cause__, ContextOverflowError)
+    cause = failure.value
+    while cause.__cause__ is not None:
+        cause = cause.__cause__
+    assert str(cause) == "Provider context window exceeded"
+    assert not model.session_store.pending
 
 
 def _completion(content="Provider answer", *, calls=(), finish="stop"):

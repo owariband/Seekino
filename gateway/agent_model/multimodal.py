@@ -172,6 +172,17 @@ def tool_model_session(
             started = monotonic()
             request_tools = tools if bound_tools is None else bound_tools
             choice = "required" if choice == "any" else choice
+            contract = {"tools": specs}
+            if enforce_final_schema:
+                contract["output_schema"] = schema
+            if round_no == 1:
+                try:
+                    preflight_context(
+                        messages, contract, policy=context_window_policy,
+                        maximum_input_characters=max_input_chars, label="Multimodal initial request",
+                    )
+                except ContextWindowOverflow as overflow:
+                    raise ModelInputTooLargeError(str(overflow)) from overflow
             try:
                 turn, parsed, input_tokens = _request_turn(
                     active, messages, specs, choice, remaining, seen, visible,
@@ -205,7 +216,7 @@ def tool_model_session(
                 _media_message(messages, fallback)["content"] = deepcopy(fallback.content)
                 try:
                     preflight_context(
-                        messages, specs, policy=context_window_policy,
+                        messages, contract, policy=context_window_policy,
                         maximum_input_characters=max_input_chars, label="Multimodal fallback",
                     )
                 except ContextWindowOverflow as overflow:

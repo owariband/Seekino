@@ -153,13 +153,15 @@ class _GatewayChatModel(BaseChatModel):
         payload = [rendered] if isinstance(rendered, dict) else rendered
         _copy_assistant_reasoning(messages, payload)
         measurement = measure_context(payload, specs)
-        if self._max_input_chars is not None and measurement.characters > self._max_input_chars:
-            raise ContextOverflowError(
-                f"Supervisor input has {measurement.characters} characters; limit is {self._max_input_chars}"
-            )
-        if self._maximum_input_tokens is not None and measurement.estimated_tokens >= self._maximum_input_tokens:
-            raise ContextOverflowError(
-                f"Supervisor input has {measurement.estimated_tokens} estimated tokens; limit is {self._maximum_input_tokens}"
+        if (
+            self._max_input_chars is not None and measurement.characters > self._max_input_chars
+            or self._maximum_input_tokens is not None and measurement.estimated_tokens >= self._maximum_input_tokens
+        ):
+            _logger.warning(
+                "event=agent_context_compaction_over_estimate model=%s "
+                "characters=%s character_threshold=%s estimated_tokens=%s token_threshold=%s",
+                self.model_name, measurement.characters, self._max_input_chars,
+                measurement.estimated_tokens, self._maximum_input_tokens,
             )
         if self._max_model_calls is not None and self._model_calls >= self._max_model_calls:
             raise ModelFailureError("Supervisor exhausted max_model_calls", reason=ModelFailureReason.LOOP_LIMIT)
@@ -402,10 +404,8 @@ class DeepAgentsSupervisorModel:
             model._max_input_chars = self._max_input_chars if max_input_chars is None else max_input_chars
             if self._context_window_policy is not None:
                 model._maximum_input_tokens = self._context_window_policy.maximum_input_tokens
-                model.profile = {
-                    "max_input_tokens": self._context_window_policy.maximum_input_tokens,
-                    "image_inputs": self.supports_vision_input,
-                }
+                # Application compaction thresholds are not the model's actual capacity.
+                model.profile = {"image_inputs": self.supports_vision_input}
             backend = StateBackend()
             middleware: list[AgentMiddleware] = [
                 FilesystemMiddleware(backend=backend, tools=["read_file"]),

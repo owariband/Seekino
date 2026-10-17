@@ -247,6 +247,18 @@ def test_function_loop_releases_oversized_tool_result_before_next_request() -> N
     assert released["original_bytes"] == 20_000
 
 
+def test_function_loop_sends_noncompactable_input_after_local_estimate_warning(caplog) -> None:
+    model, completions = _function_model(_agent_response("Provider answer"))
+    texts = []
+
+    _run_agent(model, max_input_chars=1, handle_text=texts.append)
+
+    assert texts == ["Provider answer"]
+    assert len(completions.calls) == 1
+    assert completions.calls[0]["messages"][0]["content"] == "根据审核后的证据回答"
+    assert "event=agent_context_compaction_over_estimate" in caplog.text
+
+
 def test_deepseek_agent_loop_preserves_text_and_tool_order_across_turns() -> None:
     first_arguments = _video_item()
     second_arguments = _video_item("chunk-2", "人物离开房间")
@@ -2982,6 +2994,33 @@ def test_sdk_query_compacts_complete_messages_before_second_model_request() -> N
     assert len(requests) == 2
     assert searches == [large_query]
     client.close()
+
+
+def test_sdk_query_sends_noncompactable_input_after_local_estimate_warning(caplog) -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion("QueryDraft", {
+            "plan_context": "Provider accepted input", "message": "No candidates",
+            "selected_video_chunk_ids": [],
+        }))
+
+    client = Ark(
+        api_key="test-ark-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = ArkStructuredToolAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400,
+        max_input_chars=1, client=client,
+    )
+    try:
+        result = model.run_structured("检索", tools=[], result_type=QueryDraft, max_model_calls=3)
+        assert result.plan_context == "Provider accepted input"
+        assert len(requests) == 1
+        assert "event=agent_context_compaction_over_estimate" in caplog.text
+    finally:
+        client.close()
 
 
 def test_sdk_query_budget_stops_before_extra_model_request() -> None:

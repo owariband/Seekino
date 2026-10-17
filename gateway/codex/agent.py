@@ -253,17 +253,11 @@ class CodexAgentModel:
         image_urls: Sequence[str] = (),
     ) -> _ResultModel:
         del context_checkpoint
-        rendered_prompt, run_input, content = self._prepare_input(
+        _, run_input = self._prepare_input(
             prompt, initial_messages=initial_messages, image_urls=image_urls,
             max_input_chars=max_input_chars,
         )
         output_schema = strict_output_schema(result_type.model_json_schema())
-        self._preflight_context(
-            rendered_prompt,
-            tools=tools,
-            output_schema=output_schema,
-            content=content,
-        )
         self._validate_call_limit(max_model_calls)
         timeout = self._effective_timeout(request_timeout_seconds)
         return self._run_structured_invocation(
@@ -366,11 +360,10 @@ class CodexAgentModel:
         on_session_ready: Callable[[SessionLike], None] | None = None,
     ) -> None:
         del context_checkpoint
-        rendered_prompt, run_input, content = self._prepare_input(
+        _, run_input = self._prepare_input(
             prompt, initial_messages=initial_messages, image_urls=image_urls,
             max_input_chars=max_input_chars, render_history=on_session_ready is None,
         )
-        self._preflight_context(rendered_prompt, tools=tools, content=content)
         self._validate_call_limit(max_model_calls)
         timeout = self._effective_timeout(request_timeout_seconds)
         if check_control is not None:
@@ -626,7 +619,7 @@ class CodexAgentModel:
         image_urls: Sequence[str],
         max_input_chars: int | None,
         render_history: bool = True,
-    ) -> tuple[str, RunInput, list[dict[str, Any]] | None]:
+    ) -> tuple[str, RunInput]:
         messages = prepare_input_messages(prompt, initial_messages=initial_messages, image_urls=image_urls)
         require_vision_input(messages, supports_vision_input=self.supports_vision_input, model_name=self.model_name)
         image_groups = []
@@ -650,17 +643,14 @@ class CodexAgentModel:
             max_input_chars=max_input_chars,
         )
         if not image_groups:
-            return rendered, rendered, None
+            return rendered, rendered
         sdk_inputs = [CodexTextInput(rendered)]
-        content = [{"type": "input_text", "text": rendered}]
         for index, urls in image_groups:
             marker = f"Attached images for conversation message {index}:"
             sdk_inputs.append(CodexTextInput(marker))
-            content.append({"type": "input_text", "text": marker})
             for url in urls:
                 sdk_inputs.append(CodexImageInput(url))
-                content.append({"type": "input_image", "image_url": url})
-        return rendered, sdk_inputs, content
+        return rendered, sdk_inputs
 
     def _validated_prompt(
         self,
@@ -687,15 +677,6 @@ class CodexAgentModel:
                 + json.dumps(initial_messages, ensure_ascii=False, default=str)
                 + "\n\nCurrent instruction:\n"
                 + prompt
-            )
-        effective_limit = (
-            min(self.max_input_chars, max_input_chars)
-            if self.max_input_chars is not None and max_input_chars is not None
-            else self.max_input_chars or max_input_chars
-        )
-        if effective_limit is not None and len(rendered) > effective_limit:
-            raise ModelInputTooLargeError(
-                "Codex Agent prompt exceeded max_input_chars"
             )
         return rendered
 

@@ -42,9 +42,9 @@ AgentReasoningEffort = Literal["none", "low", "high", "max"]
 
 
 class _BoundAgentModel:
-    """Keep per-call overrides within the Gateway's resolved model budget."""
+    """Apply resolved request controls and API compaction hints."""
 
-    def __init__(self, delegate, *, timeout: float, max_input_chars: int):
+    def __init__(self, delegate, *, timeout: float, max_input_chars: int | None):
         self._delegate = delegate
         self._timeout = timeout
         self._max_input_chars = max_input_chars
@@ -59,8 +59,10 @@ class _BoundAgentModel:
         options["request_timeout_seconds"] = min(
             self._timeout, self._timeout if timeout is None else timeout,
         )
-        options["max_input_chars"] = min(
-            self._max_input_chars, self._max_input_chars if characters is None else characters,
+        options["max_input_chars"] = (
+            None if self._max_input_chars is None else min(
+                self._max_input_chars, self._max_input_chars if characters is None else characters,
+            )
         )
         return options
 
@@ -177,24 +179,29 @@ class AgentModelFactory:
     def _controls(self, *, request_timeout_seconds, max_output_tokens, max_input_chars, context_window_policy):
         if self._closed:
             raise RuntimeError("Agent model factory is closed")
+        native_context = isinstance(self._primary, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig))
         if self._binding is not None:
             from gateway.model_factory import _context_policy, _shared_context_policy
             binding = self._binding
             request_timeout_seconds = min(request_timeout_seconds, binding.request_timeout_seconds)
             max_output_tokens = min(max_output_tokens, binding.max_output_tokens)
-            max_input_chars = min(max_input_chars, binding.max_input_chars)
-            # Agent fallbacks also clamp output to the effective primary limit.
-            # Reserve what these adapters can request for this invocation.
-            context_window_policy = _shared_context_policy(
-                context_window_policy, _context_policy(binding), output_reserve_tokens=max_output_tokens,
-            )
-            fallback = binding.fallback
-            while fallback is not None:
-                max_input_chars = min(max_input_chars, fallback.max_input_chars)
+            if not native_context:
+                max_input_chars = min(max_input_chars, binding.max_input_chars)
+                # API fallbacks share the compaction hints for their active request.
                 context_window_policy = _shared_context_policy(
-                    context_window_policy, _context_policy(fallback), output_reserve_tokens=max_output_tokens,
+                    context_window_policy, _context_policy(binding), output_reserve_tokens=max_output_tokens,
                 )
-                fallback = fallback.fallback
+                fallback = binding.fallback
+                while fallback is not None:
+                    max_input_chars = min(max_input_chars, fallback.max_input_chars)
+                    context_window_policy = _shared_context_policy(
+                        context_window_policy, _context_policy(fallback), output_reserve_tokens=max_output_tokens,
+                    )
+                    fallback = fallback.fallback
+        if native_context:
+            # Native runtimes own compaction and their model's actual capacity.
+            max_input_chars = None
+            context_window_policy = None
         return dict(
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,

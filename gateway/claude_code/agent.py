@@ -31,9 +31,7 @@ from gateway.agent_model.errors import (
 from gateway.constants import CLAUDE_CODE_PROVIDER
 from gateway.agent_model.context import (
     ContextCheckpoint,
-    ContextWindowOverflow,
     ContextWindowPolicy,
-    preflight_context,
 )
 from gateway.schema_normalization import inline_schema_refs
 from gateway.media import prepare_input_messages, require_vision_input
@@ -85,7 +83,7 @@ class ClaudeAgentModel:
         reasoning_effort: _ReasoningEffort = "none",
         request_timeout_seconds: float,
         max_output_tokens: int,
-        max_input_chars: int,
+        max_input_chars: int | None,
         context_window_policy: ContextWindowPolicy | None = None,
         auth_mode: _AuthMode = "local_subscription",
         api_key: str | None = None,
@@ -104,8 +102,12 @@ class ClaudeAgentModel:
             raise ValueError("request_timeout_seconds must be greater than zero")
         if max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be greater than zero")
-        if max_input_chars <= 0:
-            raise ValueError("max_input_chars must be greater than zero")
+        if max_input_chars is not None and (
+            isinstance(max_input_chars, bool)
+            or not isinstance(max_input_chars, int)
+            or max_input_chars <= 0
+        ):
+            raise ValueError("max_input_chars must be positive when provided")
         if auth_mode not in {"local_subscription", "api_key"}:
             raise ValueError("unsupported auth_mode")
         if auth_mode == "api_key" and (api_key is None or not api_key.strip()):
@@ -167,7 +169,7 @@ class ClaudeAgentModel:
         image_urls: Sequence[str] = (),
     ) -> _ResultModel:
         prompt, image_content = self._prepare_input(prompt, initial_messages=initial_messages, image_urls=image_urls)
-        timeout, effective_input_limit = self._validate_call(
+        timeout = self._validate_call(
             prompt,
             tools=tools,
             max_model_calls=max_model_calls,
@@ -178,13 +180,6 @@ class ClaudeAgentModel:
         )
         schema = inline_schema_refs(result_type.model_json_schema())
         bridge = build_tool_bridge(tools)
-        output_format = {"type": "json_schema", "schema": schema}
-        self._preflight_context(
-            prompt,
-            bridge=bridge,
-            output_format=output_format,
-            image_content=image_content,
-        )
         options = self._options(
             bridge,
             max_model_calls=max_model_calls,
@@ -199,7 +194,6 @@ class ClaudeAgentModel:
                     image_content=image_content,
                     timeout_seconds=min(timeout, remaining),
                     check_control=check_control,
-                    max_input_chars=effective_input_limit,
                 ),
                 timeout_seconds=timeout,
                 check_control=check_control,
@@ -239,7 +233,7 @@ class ClaudeAgentModel:
         image_urls: Sequence[str] = (),
     ) -> None:
         prompt, image_content = self._prepare_input(prompt, initial_messages=initial_messages, image_urls=image_urls)
-        timeout, effective_input_limit = self._validate_call(
+        timeout = self._validate_call(
             prompt,
             tools=tools,
             max_model_calls=max_model_calls,
@@ -249,7 +243,6 @@ class ClaudeAgentModel:
             context_checkpoint=context_checkpoint,
         )
         bridge = build_tool_bridge(tools)
-        self._preflight_context(prompt, bridge=bridge, image_content=image_content)
         options = self._options(bridge, max_model_calls=max_model_calls)
         try:
             responses = self._run_with_capacity(
@@ -264,7 +257,6 @@ class ClaudeAgentModel:
                     stop_feedback=stop_feedback,
                     handle_text=handle_text,
                     max_model_calls=max_model_calls,
-                    max_input_chars=effective_input_limit,
                 ),
                 timeout_seconds=timeout,
                 check_control=check_control,
@@ -317,7 +309,7 @@ class ClaudeAgentModel:
         check_control: Callable[[], None] | None,
         max_input_chars: int | None,
         context_checkpoint: ContextCheckpoint | None,
-    ) -> tuple[float, int]:
+    ) -> float:
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
         if max_model_calls is not None and (
@@ -341,17 +333,11 @@ class ClaudeAgentModel:
             raise ValueError("max_input_chars must be positive when provided")
         if context_checkpoint is not None:
             raise ValueError("Claude Agent provider does not accept external context messages")
-        effective_input_limit = min(self.max_input_chars, max_input_chars or self.max_input_chars)
-        if len(prompt) > effective_input_limit:
-            raise ModelInputTooLargeError(
-                "Claude Agent prompt has "
-                f"{len(prompt)} characters; limit is {effective_input_limit}"
-            )
         # build_tool_bridge performs detailed tool validation after cheap call guards.
         if not tools:
             raise ValueError("tools must not be empty")
         self._check_control(check_control)
-        return timeout, effective_input_limit
+        return timeout
 
     def _options(
         self,
@@ -388,34 +374,6 @@ class ClaudeAgentModel:
                 else None
             ),
         )
-
-    def _preflight_context(
-        self,
-        prompt: str,
-        *,
-        bridge: ToolBridge,
-        output_format: dict[str, Any] | None = None,
-        image_content: Sequence[dict[str, Any]] = (),
-    ) -> None:
-        contract: dict[str, Any] = {
-            "tools": bridge.contract,
-            "allowed_tools": bridge.allowed_names,
-        }
-        if output_format is not None:
-            contract["output_format"] = output_format
-        try:
-            preflight_context(
-                [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": [{"type": "text", "text": prompt}, *image_content] if image_content else prompt},
-                ],
-                contract,
-                policy=self.context_window_policy,
-                maximum_input_characters=None,
-                label="Claude Agent",
-            )
-        except ContextWindowOverflow as exc:
-            raise ModelInputTooLargeError(str(exc)) from exc
 
     def _run_with_capacity(
         self,
@@ -459,7 +417,6 @@ class ClaudeAgentModel:
         stop_feedback: Callable[[], str | None] | None = None,
         handle_text: Callable[[str], None] | None = None,
         max_model_calls: int | None = None,
-        max_input_chars: int,
     ) -> list[_Response]:
         deadline = monotonic() + timeout_seconds
         responses: list[_Response] = []
@@ -469,11 +426,6 @@ class ClaudeAgentModel:
         used_turns = 0
         while True:
             self._check_control(check_control)
-            if len(prompt) > max_input_chars:
-                raise ModelInputTooLargeError(
-                    "Claude Agent follow-up prompt has "
-                    f"{len(prompt)} characters; limit is {max_input_chars}"
-                )
             remaining_calls = (
                 None if max_model_calls is None else max_model_calls - used_turns
             )

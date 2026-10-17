@@ -272,12 +272,12 @@ def test_codex_preserves_sdk_cache_write_counts_in_thread_total() -> None:
     assert usage.cached_input_tokens == 2 and usage.cache_write_input_tokens == 3
 
 
-def test_context_preflight_reserves_codex_base_input_before_starting_session() -> None:
+def test_native_loop_does_not_reject_codex_base_input_estimate() -> None:
     created: list[object] = []
 
     def factory(**_kwargs: object) -> _FakeSession:
         created.append(object())
-        return _FakeSession([(_turn("unused"), 0)])
+        return _FakeSession([(_turn("ok"), 0)])
 
     model = CodexAgentModel(
         model="gpt-5.3-codex",
@@ -289,20 +289,21 @@ def test_context_preflight_reserves_codex_base_input_before_starting_session() -
         session_factory=factory,
     )
     try:
-        with pytest.raises(ModelInputTooLargeError, match="fixed_input_tokens=13000"):
-            model.run_agent_loop(
-                "short prompt",
-                tools=[],
-                max_model_calls=1,
-                handle_text=lambda _text: None,
-            )
+        emitted = []
+        model.run_agent_loop(
+            "short prompt",
+            tools=[],
+            max_model_calls=1,
+            handle_text=emitted.append,
+        )
     finally:
         model.close()
 
-    assert created == []
+    assert len(created) == 1 and emitted == ["ok"]
 
 
-def test_context_preflight_counts_dynamic_tool_contract() -> None:
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_entries_leave_large_tool_contract_to_codex(structured) -> None:
     created: list[object] = []
 
     def lookup(value: str) -> str:
@@ -316,7 +317,7 @@ def test_context_preflight_counts_dynamic_tool_contract() -> None:
 
     def factory(**_kwargs: object) -> _FakeSession:
         created.append(object())
-        return _FakeSession([(_turn("unused"), 0)])
+        return _FakeSession([(_turn('{"answer":"ok"}' if structured else "ok"), 0)])
 
     model = CodexAgentModel(
         model="gpt-5.3-codex",
@@ -328,20 +329,26 @@ def test_context_preflight_counts_dynamic_tool_contract() -> None:
         session_factory=factory,
     )
     try:
-        with pytest.raises(ModelInputTooLargeError, match="initial context"):
+        if structured:
+            assert model.run_structured(
+                "short prompt", tools=[tool], result_type=Result, max_model_calls=1,
+            ).answer == "ok"
+        else:
+            emitted = []
             model.run_agent_loop(
                 "short prompt",
                 tools=[tool],
                 max_model_calls=1,
-                handle_text=lambda _text: None,
+                handle_text=emitted.append,
             )
+            assert emitted == ["ok"]
     finally:
         model.close()
 
-    assert created == []
+    assert len(created) == 1
 
 
-def test_context_preflight_allows_a_small_request_below_the_hard_limit() -> None:
+def test_native_loop_accepts_small_request() -> None:
     session = _FakeSession([(_turn("ok"), 0)])
     model = _model_for(
         session,
@@ -735,21 +742,63 @@ def test_generate_usage_cancellation_closes_native_transport_without_tools(total
         thread.join(timeout=1)
 
 
-def test_input_limit_is_enforced_before_starting_codex() -> None:
-    session = _FakeSession([])
-    model = _model_for(session, max_input_chars=4)
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("max_input_chars", [None, 4])
+def test_native_entries_do_not_reject_or_truncate_long_prompt(structured, max_input_chars) -> None:
+    session = _FakeSession([(_turn('{"answer":"ok"}' if structured else "ok"), 0)])
+    model = _model_for(session, max_input_chars=max_input_chars)
+    prompt = "long evidence " * 20_000
     try:
-        with pytest.raises(ModelInputTooLargeError):
+        options = dict(tools=[], max_model_calls=1, max_input_chars=4)
+        if structured:
+            assert model.run_structured(prompt, result_type=Result, **options).answer == "ok"
+        else:
+            emitted = []
             model.run_agent_loop(
-                "too long",
-                tools=[],
-                max_model_calls=1,
-                handle_text=lambda _text: None,
+                prompt, handle_text=emitted.append, **options,
             )
+            assert emitted == ["ok"]
     finally:
         model.close()
 
-    assert session.prompts == []
+    assert session.prompts[0][0] == prompt
+    assert session.closed
+
+
+@pytest.mark.parametrize("invalid", [0, -1, True, 1.5])
+def test_native_entries_keep_input_limit_parameter_validation(invalid) -> None:
+    session = _FakeSession([])
+    with pytest.raises(ValueError, match="max_input_chars"):
+        _model_for(session, max_input_chars=invalid)
+    model = _model_for(session, max_input_chars=None)
+    try:
+        options = dict(tools=[], max_model_calls=1, max_input_chars=invalid)
+        with pytest.raises(ValueError, match="max_input_chars"):
+            model.run_structured("Question", result_type=Result, **options)
+        with pytest.raises(ValueError, match="max_input_chars"):
+            model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
+        assert session.prompts == []
+    finally:
+        model.close()
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_native_context_error_is_preserved_after_submitting_request(structured) -> None:
+    error = RuntimeError("Provider rejected the request context")
+    error.code = "context_length_exceeded"
+    session = _FakeSession([error])
+    model = _model_for(session, max_input_chars=None)
+    try:
+        with pytest.raises(CodexAgentModelError) as captured:
+            options = dict(tools=[], max_model_calls=1)
+            if structured:
+                model.run_structured("Question", result_type=Result, **options)
+            else:
+                model.run_agent_loop("Question", handle_text=lambda _text: None, **options)
+        assert captured.value.__cause__ is error
+        assert session.prompts and session.closed
+    finally:
+        model.close()
 
 
 def test_control_cancellation_is_checked_before_starting_codex() -> None:
@@ -1121,20 +1170,19 @@ def test_session_key_identifies_codex_storage_without_model_or_plaintext_path(mo
 
 
 @pytest.mark.parametrize("structured", [False, True])
-def test_native_entries_count_attached_image_tokens_before_starting_session(structured) -> None:
-    session = _FakeSession([(_turn("Unexpected"), 0)])
+def test_native_entries_leave_six_images_to_codex_context_management(structured) -> None:
+    session = _FakeSession([(_turn('{"answer":"Observed"}' if structured else "Observed"), 0)])
     model = _model_for(session, context_window_policy=_context_policy(13_100))
+    images = [f"https://example.test/{index}.png" for index in range(6)]
     try:
-        with pytest.raises(ModelInputTooLargeError):
-            options = dict(
-                tools=[], max_model_calls=1,
-                initial_messages=[{"role": "user", "content": "Image", "imageUrls": ["data:image/png;base64,AAAA"]}],
-            )
-            if structured:
-                model.run_structured("Answer", result_type=Result, **options)
-            else:
-                model.run_agent_loop("Answer", handle_text=lambda _text: None, **options)
-        assert session.prompts == []
+        options = dict(tools=[], max_model_calls=1, image_urls=images)
+        if structured:
+            assert model.run_structured("Answer", result_type=Result, **options).answer == "Observed"
+        else:
+            emitted = []
+            model.run_agent_loop("Answer", handle_text=emitted.append, **options)
+            assert emitted == ["Observed"]
+        assert [item.url for item in session.prompts[0][0] if isinstance(item, CodexImageInput)] == images
     finally:
         model.close()
 

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from math import ceil
 from typing import Any, Callable, Literal
 from uuid import uuid4
 
+
+_logger = logging.getLogger(__name__)
 
 # These constants describe this module's wire representation. They are deliberately
 # local: no other subsystem should depend on the shape of a compacted message.
@@ -104,7 +107,7 @@ class ContextWindowUpdate:
 
 
 class ContextWindowController:
-    """Build a bounded replacement history without owning canonical Agent state."""
+    """Compact estimated context without owning canonical state or model capacity."""
 
     def __init__(
         self,
@@ -233,7 +236,14 @@ class ContextWindowController:
                 measure_context(candidate, contract)
             )
         if self._hard_limit_reached(after):
-            raise ContextWindowOverflow(self._overflow_message(after))
+            _logger.warning(
+                "event=agent_context_compaction_over_estimate label=%s "
+                "characters=%s character_threshold=%s estimated_tokens=%s token_threshold=%s "
+                "cleared_tool_results=%s",
+                self.label, after.characters, self.maximum_input_characters,
+                after.estimated_tokens, self.policy.maximum_input_tokens if self.policy is not None else None,
+                cleared_tool_results,
+            )
 
         if not changed:
             # A soft trigger may fire while the only sizeable data is the newest Tool
@@ -330,29 +340,6 @@ class ContextWindowController:
         return (
             self.policy is not None
             and measurement.estimated_tokens >= self.policy.maximum_input_tokens
-        )
-
-    def _overflow_message(self, measurement: ContextWindowMeasurement) -> str:
-        limits = []
-        if (
-            self.maximum_input_characters is not None
-            and measurement.characters > self.maximum_input_characters
-        ):
-            limits.append(
-                f"message character budget {measurement.characters}>"
-                f"{self.maximum_input_characters}"
-            )
-        if (
-            self.policy is not None
-            and measurement.estimated_tokens >= self.policy.maximum_input_tokens
-        ):
-            limits.append(
-                f"estimated token budget {measurement.estimated_tokens}>="
-                f"{self.policy.maximum_input_tokens}"
-            )
-        return (
-            f"{self.label} message context budget exceeded after compaction: "
-            + ", ".join(limits)
         )
 
     def _unchanged(
