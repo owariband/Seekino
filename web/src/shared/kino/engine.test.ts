@@ -119,7 +119,7 @@ describe("timelines", () => {
     const sleep = buildTimeline("sleep", startCursor("sleep", WIDTH), WIDTH).loop;
     expect(sleep.every(f => (f.fx ?? []).length > 0)).toBe(true);
     const loading = buildTimeline("loading", startCursor("loading", WIDTH), WIDTH).loop;
-    for (const f of loading) expect(f.fx?.filter(e => e.colour === "body")).toHaveLength(1);
+    for (const f of loading) expect(f.fx?.filter(e => e.colour === "spark")).toHaveLength(1);
   });
 });
 

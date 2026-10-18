@@ -91,13 +91,13 @@
   border-radius: 8px;
 }
 
-.themePreviewLight { background: #f4f7f2; }
+.themePreviewLight { background: #e4eae5; }
 /* Mirrors the dark theme tokens (canvas / surface / surface-raised) in global.css. */
 .themePreviewDark { background: #121816; }
 .themePreviewLight i,
 .themePreviewDark i { border-radius: 4px; }
-.themePreviewLight i:first-child { grid-row: 1 / -1; background: #e2ece5; }
-.themePreviewLight i:nth-child(2) { background: #fff; }
+.themePreviewLight i:first-child { grid-row: 1 / -1; background: #d9e1db; }
+.themePreviewLight i:nth-child(2) { background: #f6f8f5; }
 .themePreviewLight i:last-child { background: #238c78; opacity: .6; }
 .themePreviewDark i:first-child { grid-row: 1 / -1; background: #1a2220; }
 .themePreviewDark i:nth-child(2) { background: #222c29; }

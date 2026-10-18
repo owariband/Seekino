@@ -2,12 +2,16 @@
   --pixel-mascot-body: var(--brand, #74c5ba);
   --pixel-mascot-shade: var(--brand-shade, #349489);
   --pixel-mascot-belly: #fcfaf1;
+  --pixel-mascot-spark: var(--pixel-mascot-body);
   --pixel-mascot-ink: var(--brand-ink, #0b3b33);
   --pixel-mascot-shadow: var(--brand-ink, #0b3b33);
   display: block;
   flex: 0 0 auto;
   overflow: visible;
 }
+
+/* Small teal effects wash out on the light canvas, so draw them in shade there; dark mode keeps the brand palette. */
+:global(:root:not([data-theme="dark"])) .kino { --pixel-mascot-spark: var(--pixel-mascot-shade); }
 
 .kino[data-delayed] { animation: kino-appear .2s ease-out .3s both; }
 .kino[data-leaping] { position: relative; z-index: 3; will-change: transform; }

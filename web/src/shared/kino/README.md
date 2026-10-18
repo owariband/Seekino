@@ -52,7 +52,7 @@ import { Kino } from "../../shared/kino/Kino";
 - `perch` / `start` / `leapFrom`: used for the bubble-to-bubble leap. `perch` records Kino's position on unmount. The next perch reads it with `takePerch`, starts Kino in the old pose (`start`), and passes the offset to the old position (`leapFrom`). While `leap` plays, Kino crouches for two frames, then the component flies the sprite at display rate under gravity (a short spring up, then an accelerating fall, about half a second for a typical drop) while the engine holds one stretched airborne pose. If the page is hidden, Kino lands straight away. The leap only happens inside an element marked `data-kino-stage` (the chat thread), and only if the new perch mounts within a second of the old one leaving.
 - `interactive`: renders Kino as a button. Its label defaults to "Kino"; pass `title` for a translated one.
 - `delayed`: fades in after 300 ms so quick loading states never flash.
-- Colours come from CSS variables (`--pixel-mascot-body`, `-shade`, `-belly`, `-ink`, `-ground`, `-shadow`), mapped to the brand tokens in `kino.module.css`.
+- Colours come from CSS variables (`--pixel-mascot-body`, `-shade`, `-belly`, `-ink`, `-spark`, `-ground`, `-shadow`), mapped to the brand tokens in `kino.module.css`. `spark` is the bright tone of effects and matches the body by default. The light theme draws effects in shade so they read on the pale canvas; dark mode keeps the brand palette.
 
 ## Adding a move
 

@@ -9,6 +9,8 @@ export const PALETTE = {
   body: "#74c5ba",
   shade: "#349489",
   belly: "#fcfaf1",
+  /** The bright tone of effects (loading dot, sparkle, fresh Z). Matches body, but is its own role so a theme can deepen it. */
+  spark: "#74c5ba",
 } as const;
 export type Colour = keyof typeof PALETTE;
 export const COLOURS = Object.keys(PALETTE) as Colour[];
@@ -428,7 +430,7 @@ class Builder {
     for (let i = 0; i < LOADING_CYCLE; i++) {
       const f = i % 4, lit = Math.floor(i / 4);
       const fx = dots.map((x, k): Effect => k === lit
-        ? { colour: "body", cells: [[x, 8]] }
+        ? { colour: "spark", cells: [[x, 8]] }
         : { colour: "shade", cells: [[x, 9]] });
       this.push({
         pose: "side", flip, gait: f, stride: 1, bob: f % 2 ? -1 : 0, groundShift: -dir * i, fx,
@@ -542,7 +544,7 @@ function glyphCells(glyph: readonly string[], left: number, top: number): Cell[]
 /** A plus-shaped sparkle that shrinks to a single pixel between twinkles. */
 function twinkle(cx: number, cy: number, big: boolean): Effect {
   return big
-    ? { colour: "body", cells: [[cx, cy], [cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]] }
+    ? { colour: "spark", cells: [[cx, cy], [cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]] }
     : { colour: "shade", cells: [[cx, cy]] };
 }
 
@@ -572,7 +574,7 @@ function zGlyph(probe: Pick<Frame, "pose" | "flip" | "x">, i: number, start: num
   const top = 12 - h - Math.floor(age / 2);
   const cells: Cell[] = [];
   glyph.forEach((row, y) => [...row].forEach((ch, x) => { if (ch === "#") cells.push([left + x, top + y]); }));
-  return { colour: age < 10 ? "body" : "shade", cells };
+  return { colour: age < 10 ? "spark" : "shade", cells };
 }
 
 export function bounds(width: number): { left: number; right: number } {
