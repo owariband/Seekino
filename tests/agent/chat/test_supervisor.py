@@ -313,7 +313,8 @@ def test_video_tool_delegates_only_explicitly_selected_current_and_history_image
     assert delegated["attachments"] == [{"mediaUri": address} for address in attachments or []]
     assert delegated.get("image_urls", []) == expected
     assert all(not message.get("imageUrls") for message in delegated["history"])
-    assert seen_images == {role: [expected or None] for role in seen_images}
+    # The Supervisor writes the delivered answer, so the inner Chat render is skipped.
+    assert seen_images == {"query": [expected or None], "evaluator": [expected or None], "chat": []}
     context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
     assert context["attachments"] == inputs["attachments"]
     assert "media://old-a" in model.prompts[0] and "media://old-b" in model.prompts[0]
@@ -652,7 +653,8 @@ def test_supervisor_reads_real_handoff_canvas_without_mutating_child_draft():
     assert result.video_result.hits[0].selection_reason.summary == (
         "Supervisor checked the original text evidence."
     )
-    assert video.last_result.agent_reply.message == "## Final answer\n\nGrounded answer."
+    # Under the Supervisor the inner result projects the approved Query draft, not a Chat render.
+    assert video.last_result.agent_reply.message == "draft-1"
     assert video.last_result.hits[0].selection_reason.summary == "Grounded evidence for chunk-1."
     assert [(block.start_seconds, block.end_seconds) for block in video.last_result.render_blocks
             if block.type == "video"] == [(11, 19)]
@@ -1467,7 +1469,10 @@ def test_three_tools_deliver_supervisor_final_answer_and_current_video_explanati
         max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
         max_tool_result_bytes=4096, max_prompt_chars=10000,
     )
-    result = runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    inputs = _inputs(series_ids=["series"])
+    # understand_current_video is offered only with a frozen playback position.
+    inputs["extra_context"] = {"playback": {"videoId": "video", "positionSeconds": 1_000}}
+    result = runtime.kick(inputs, load_video_context=lambda: [])
     assert "Approved video explanation." not in result.content
     assert "Current-video explanation: lambda is the coefficient." in result.content
     assert "Web supplement" in result.content
@@ -1831,7 +1836,8 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
         assert first.video_result is None
         assert retrieval.calls == []
     else:
-        assert len(query.contexts) == len(evaluator.contexts) == len(chat.contexts) == 1
+        assert len(query.contexts) == len(evaluator.contexts) == 1
+        assert chat.contexts == []
         assert len(retrieval.calls) == 1
         assert payload["result_count"] == 1
         assert first.content == first.video_result.agent_reply.message == (
@@ -2016,3 +2022,14 @@ def test_deepagents_real_realtime_failure_propagates_and_clears_checkpoint(failu
     assert store.checkpointer.get_tuple({"configurable": {"thread_id": inputs["conversation_id"]}}) is None
     if failure == "host_error":
         assert raised.value.__cause__ is host_error
+
+
+def test_current_video_tool_is_not_offered_without_playback_context():
+    model = FakeSupervisorModel()
+    runtime = SupervisorRuntime(
+        FakeVideoRuntime(), model, FakeWebSearcher(), realtime_runtime=RealtimeUnderstandingRuntime(host=_host()),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+    )
+    runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    assert "understand_current_video" not in model.prompts[0]

@@ -128,6 +128,11 @@ agent_runtime:
   supervisor_timeout_seconds: 1200
   execution_timeout_seconds: 1200
   maximum_concurrent_kicks: 4
+  # Single-pass Result + deterministic Loop Control; false restores the Supervisor review tail.
+  single_pass_result: true
+  result_max_loops: 2
+  evaluator_policy: risk
+  evaluator_low_confidence_rank: 3
 
 video_parser:
   transcript_fps: 1.0

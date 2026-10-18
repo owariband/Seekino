@@ -1,10 +1,14 @@
 # 项目问题清单
 
-更新日期：2026-10-17。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项日期为准，不扩展当前开发范围。10 月 17 日新增 C14，记录台词检索中未经证实的人物／场景假设、Chunk 级 Embedding 的表征粒度、融合截取造成的候选丢失，以及真实实验与证据边界；新增 C15，记录局部截图检索无法收敛时持续搜索至超时的问题，以及 Evaluator `stop` 决策与正常返回未解决结果的待实施方案。10 月 16 日补充 B01 的取消与失败上抛现状、B07 的 EP04 重叠 Refine 重算、F06 的证据／封面展示，新增 B12 的 ASR 说话人归属、Refine 取帧与追踪缺口，以及 C13 的 Codex 错误通知和 Chat 计时差异。此前 B07／B08 的性能与索引、B09 的上传死锁、B10／B11 的停服恢复与阻塞执行问题保留各自日期下的证据；历史“未重启／待实施”不能直接当作当前部署状态，本文不宣称完成全仓问题的重新验收。
+更新日期：2026-10-18。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项日期为准，不扩展当前开发范围。10 月 17 日新增 C14，记录台词检索中未经证实的人物／场景假设、Chunk 级 Embedding 的表征粒度、融合截取造成的候选丢失，以及真实实验与证据边界；新增 C15，记录局部截图检索无法收敛时持续搜索至超时的问题，以及 Evaluator `stop` 决策与正常返回未解决结果的待实施方案。10 月 16 日补充 B01 的取消与失败上抛现状、B07 的 EP04 重叠 Refine 重算、F06 的证据／封面展示，新增 B12 的 ASR 说话人归属、Refine 取帧与追踪缺口，以及 C13 的 Codex 错误通知和 Chat 计时差异。此前 B07／B08 的性能与索引、B09 的上传死锁、B10／B11 的停服恢复与阻塞执行问题保留各自日期下的证据；历史“未重启／待实施”不能直接当作当前部署状态，本文不宣称完成全仓问题的重新验收。
 
 2026-10-17 新增 C16：构图检索实验缺少共同的帧级候选图库，当前等待另一工作线完成 Event 级检索，再基于命中 Event 的关键帧接续对照实验。
 
+2026-10-18 更新 C16：MyGO 13 集旧 Event 索引已补齐并通过全量验收，7,103 个 Event 可检索；下一步按 Event 取帧建立共同构图候选图库。
+
 2026-10-17 新增 B13：解析启动时模型进程重复加载全局 MCP，叠加任务列表全量读取 Chunk JSON，出现负载尖峰与页面长时间加载；只完成排查，交由另一 Agent 修复。
+
+2026-10-18 新增 C17／C18：记录 EP04 中文偏义台词定位仍耗时约 154–156 秒的完整阶段拆解，以及 Context Canvas 已有 batch、直接读取和可省略 end，却仍发生范围／模式误用的问题。仅完成诊断和接手依据整理，流程与工具优化尚未实施。
 
 ## frontend
 
@@ -1584,6 +1588,8 @@ Supervisor 可以把 Query 过宽的范围收窄，也可以在已提供的 cano
 
 ### C15：局部截图检索缺少收敛与主动停止判断，空草稿反复退回直到超时
 
+> Status 2026-10-18 (English note): addressed by deterministic Loop Control instead of an Evaluator `stop` action (see [perf_plan.md §3.5](perf_plan.md)). Under the single-pass Result, a search runs at most `result_max_loops` (2) outer loops, re-plans only when the Result self-check or the Evaluator names a concrete gap and the loop made progress, and otherwise ends normally with a "not fully verified" answer instead of `LOOP_LIMIT_EXCEEDED` or a timeout. Unit-tested only; the teacup image case has not been re-run.
+
 优先级：高。类型：Agent 检索策略与结束语义缺失。状态：2026-10-17 已复现，`stop` 方案已确认、待实施；本次仅维护问题与解决方案，未修改运行逻辑。
 
 #### 问题与真实证据
@@ -1629,9 +1635,9 @@ Supervisor 可以把 Query 过宽的范围收窄，也可以在已提供的 cano
 
 依据：[Evaluator 指令](../../agent/chat/video_search/evaluator.py)、[Evaluator Skill](../../agent/chat/video_search/skills/evaluator/SKILL.md)、[决策与轮次类型](../../agent/chat/video_search/state.py)、[Runtime 路由](../../agent/chat/video_search/runtime.py)、[草稿冻结](../../agent/chat/video_search/video_search_canvas.py)、[内部 Chat](../../agent/chat/video_search/chat.py)、[最终输出校验](../../agent/chat/video_search/output.py)、[Supervisor 工具交接](../../agent/chat/supervisor.py)。实验目录沿用本地 ignore 规则，引用的是本机原始产物；方案尚未编码、部署或重新实测。
 
-### C16：构图检索缺少共同的帧级候选图库，等待 Event 级检索接续实验
+### C16：构图检索缺少共同的帧级候选图库，接续 Event 级检索实验
 
-日期：2026-10-17。类型：实验数据覆盖不足与外部开发依赖。状态：**等待另一工作线完成 Event 级检索**（用户确认正在推进，尚未作为本项交付验收）；当前保留已有实验，不在 17 张样本上继续据排名选择模型或融合权重。
+日期：2026-10-17；更新：2026-10-18。类型：实验数据覆盖不足与外部开发依赖。状态：**MyGO 13 集旧 Event 索引补建及全量验收完成，待按 Event 取帧扩充共同构图候选图库**；当前保留已有实验，不在 17 张样本上继续据排名选择模型或融合权重。
 
 #### 当前卡点与已有证据
 
@@ -1641,13 +1647,125 @@ Supervisor 可以把 Query 过宽的范围收窄，也可以在已提供的 cano
 
 #### 已确认的接续方向
 
-1. **先等待 Event 级检索就绪及目标数据可检索。**由另一工作线交付，本构图实验不重复实现 Event 存储、索引、工具或回填。需要能够取得命中 Event 的身份、视频来源和原视频毫秒时间范围。
+1. **先确认 Event 级检索就绪及目标数据可检索。**由另一工作线交付实现，本构图实验不重复实现 Event 存储、索引或工具。2026-10-18 用户进一步授权本工作线调用现有补建入口，为 MyGO 13 集补齐 Event 索引；需要能够取得命中 Event 的身份、视频来源和原视频毫秒时间范围。
 2. **通过 Event 检索定位更细的候选范围，再取得对应关键帧。**优先复用另一线交付的关键帧；若只提供 Event 和时间范围，则接现有原片取帧能力。保留 Event／视频身份、帧时间及图片路径，按镜头和画面去重；Event 不保证等于一个镜头，必要时取多帧核对。
 3. **在同一批 Event 候选关键帧上接续构图实验。**对同一图库提取原图 embedding、PCP 类别分布、人物框图 embedding，比较单路与可调权重融合；分别评议构图类别，以及人物位置、大小和排列。原图 embedding 不替代人物框图特征。
 4. **区分候选召回与构图排序。**先确认相似画面是否进入 Event 候选集，再评价构图特征是否把它排上来；候选池外的画面不能被当作排序模型失败。Chat 发现的例子作为候选线索，经人工核对后使用，不直接当作完整标准答案集。
 
-依赖边界：[Event 细粒度检索 TRD](../design/event-retrieval-trd.md) 首版是 Event 内容词法检索，不强制 Event 向量，也未承诺逐关键帧向量索引。因此“Event 检索完成”表示可以接续定位和取帧；关键帧与各路特征是否已交付仍需确认，不能自动标为构图相似检索已完成。
+依赖边界：早期 [Event 细粒度检索 TRD](../design/event-retrieval-trd.md) 的仅词法方案已成为历史记录；当前以 [Sub-Chunk 检索 TRD](../../server/design/sub-chunk-trd.md) 和实际代码为准，独立 Event 索引包含文本、视觉向量及抽帧来源元数据。当前视觉向量由每 Event 最多 3 帧聚合，临时 JPEG 不持久保存，也没有建立逐帧 PCP／人物框图特征库。因此“Event 检索完成”表示可以接续定位和取帧，不能自动标为构图相似检索已完成。
 
 恢复实验的条件：目标视频的 Event 检索可用，命中可追溯到原片时间并取得对应帧，形成相较 17 图更丰富且各方法共用的候选集；随后用固定查询和人工评议检查召回、排序及人物布局差异。当前不预先选定最佳模型、权重或宣称全库效果。
 
-依据：[俯视房间 Chat 对照实验](../../engine/experiment/composition-models/20261017-chat-composition/README.md)、[PCP＋全部框／人物框实验](../../engine/experiment/composition-models/20261017-pcp-box-fusion/README.md)、[Chunk 视觉编码](../../server/service/video_parse_index_coordinator.py)、[现有检索链路](../../server/service/video_retrieval.py)。实验目录沿用本地 ignore 规则；本次只记录卡点与外部依赖，未实施或验收 Event 检索。
+2026-10-18 运行记录：复用旧 Timeline，通过 `request-es-index-rebuild --with-events` 补建，13/13 集 COMPLETE、312/312 Chunk 覆盖、7,103 个 Event 可检索，包含 16,535 个帧采样记录（不等于独立画面数）。逐个核验 ES 身份／版本、文本投影、向量合同、抽帧时间与完整集合；所有原正文 ID／版本／哈希保持不变。全量“俯视房间”和“舞台演奏”两条 Event 视觉通道检索通过，覆盖 312 个来源 Chunk，partial=false、rejected=0；俯视查询召回第 7 集 `248600–249100ms` 的候选，落在先前 Chat 找到的范围内，但本轮没有以此宣称构图排序准确率。详见 [旧 Event 补建记录](../../engine/experiment/composition-models/20261018-event-backfill/README.md)、[验收摘要](../../engine/experiment/composition-models/20261018-event-backfill/verification.json)。
+
+依据：[俯视房间 Chat 对照实验](../../engine/experiment/composition-models/20261017-chat-composition/README.md)、[PCP＋全部框／人物框实验](../../engine/experiment/composition-models/20261017-pcp-box-fusion/README.md)、[Chunk／Event 视觉编码](../../server/service/video_parse_index_coordinator.py)、[Event 检索链路](../../server/service/video_event_retrieval.py)。实验目录沿用本地 ignore 规则；源码实现由另一工作线负责，本工作线维护构图实验与本轮获授权的数据补建、验收记录。
+
+## Chat 联调问题（2026-10-18）
+
+### C17：单集台词定位仍耗时两分半，串行角色与重复交接占主要开销
+
+日期：2026-10-18。优先级：高。类型：Chat 端到端延迟、重复整理与观测粒度问题。状态：**真实 trace 已核对，优化尚未实施**。用户要求先记录问题并交给新 Agent；本轮未修改生产代码、Prompt、模型配置或执行拓扑。
+
+#### 固定样本、结果与证据
+
+使用 Seekino 本机运行的默认 Chat，在独立 `mygo-ep04-speaker-review-20261016` Series（`bdbf28ae-5404-58e4-8c98-699433499ffc`）发送两条中文、存在意思偏差的问题；没有给 Agent 日文原句、说话人、目标时间或 Event ID。测试时该 scope 有 24 个 Chunk、430 个 Event，且带有 EP04 素材元数据，所以这是单集定位测试，不能当作跨全集找集数的验收。
+
+| 样本 | 问题中的记忆表达 | 结果 | Conversation / Assistant |
+| --- | --- | --- | --- |
+| B，drift | “这又不关你的事，你少掺和” | 09:08–09:09 立希对爱音说「部外者は黙ってて。」；视频卡 09:00.000–09:14.200，说明并非逐字对应 | `ae105562-4b64-4067-b482-c4871beebfe0` / `cff08757-4a11-4f0c-bd18-1fc02595bf9f` |
+| C，premise | “不懂音乐就别来指点”，原话可能记偏 | 20:03.2–20:08.7 爱音挤兑立希不懂吉他和弦；视频卡 20:01.7–20:11.2，明确纠正原句没有“不懂音乐”和“别指点” | `a33927a7-362a-45ee-824a-bf213fe64398` / `1b65aa2b-7582-484a-af0d-3c9a759de38e` |
+
+两轮均完成，Query 自主使用 `search_video_events`，没有 Chunk `retrieve` 回退。首次可见文字分别为 7.3754 / 8.079 秒；目标 Chunk 的原始 transcript 在约 22 / 25 秒已读取，最终仍在 156.105 / 154.078 秒完成。获得文本不等于模型已完成理解或已足够交付，不能把后续时间全部判为无效。
+
+原始输入、完整最终响应、SSE、检索 trace、服务日志、工具开始／结束、审核意见、usage、可取得的 Supervisor 原生日志和帧证据均见 [中文偏义测试报告](../../engine/design/event-retrieval-eval-20261018/EP04-ZH.md)。[B 阶段分析](../../engine/design/event-retrieval-eval-20261018/ep04-zh-drift-chat/analysis.json)、[C 阶段分析](../../engine/design/event-retrieval-eval-20261018/ep04-zh-premise-chat/analysis.json) 为机器可读入口；实验产物沿用本地 ignore 规则，接手时须先确认文件仍在。
+
+#### 端到端耗时拆解
+
+| 阶段 | B | C |
+| --- | ---: | ---: |
+| Supervisor 启动、理解并委派 | 9.2 s | 9.8 s |
+| Query 第 1 轮 | 56.0 s | 29.4 s |
+| Evaluator 第 1 轮 | 37.5 s | 24.4 s |
+| Query 第 2 轮 | 无 | 32.5 s |
+| Evaluator 第 2 轮 | 无 | 18.7 s |
+| 内层 Chat 整理回答 | 31.1 s | 24.5 s |
+| Supervisor 最终读取、改写与提交 | 约 22.3 s | 约 14.7 s |
+| 服务端整轮 | **156.105 s** | **154.078 s** |
+
+- **底层搜索很快。** B 的 Event 检索 1 次，731 ms；C 共 3 次，671 + 919 + 668 = 2,258 ms。Embedding 已包含在检索工具执行时间内，不再叠加。B 抽帧 4 次成功，Query 1 次、Evaluator 3 次，后 3 次命中缓存；实际只有 4 张独立图片。C 没有抽帧，不能将其描述为重新核验过音画。
+- **主要时间在模型角色与角色内请求往返。** B 的 Query / Evaluator / Chat 工具执行合计分别为 1.284 / 0.105 / 0.022 秒，阶段却分别约 56 / 37.5 / 31 秒；C 对应工具合计为 2.308 / 0.035 / 0.020 秒。工具 duration 求和可能包含同一模型轮内的多个调用，并非严格独占墙钟；差额包含模型处理与等待、网络、SDK、启动和编排，不能全部称为“推理时间”。
+- **父子耗时不能重复累计。** B / C 的 `search_video_graph` 124.619 / 129.762 秒包住 Query、Evaluator、Chat；外层 Supervisor SDK 运行时间也包住该工具。原生三次约 30 秒 `wait` 正在等同一个后台子流程，不是额外增加 90 秒。
+
+#### 已确认的机制与仍待量化的贡献
+
+1. **简单定位仍走完整拓扑。** Supervisor → Query → Evaluator → Chat → Supervisor。`continue` 回 Query，`complete` 必进内层 Chat；内层回答只作草稿，Supervisor 再核对文字 Timeline、对白、范围和审核，自己输出最终文字、提交视频。独立核验有其必要性，但 Chat 与 Supervisor 的两层整理是否都需要、交接是否过于间接，值得优化；不能直接撤销 C12 已确认的 Supervisor 终审与范围修订权。
+2. **同一份证据重复导航与读取。** B 有 42 次业务工具调用，其中 33 次 Canvas 读取；C 有 39 次，其中 31 次读取。B 同一 transcript 被 Query、Evaluator、Chat、Supervisor 四个角色读取。工具调用数不等于模型请求数；原生 Supervisor 中存在一次 `exec` 顺序 await 多个工具的情况，不能仅凭同秒日志说成并行或每项各需一次模型请求。
+3. **C 额外一轮由播放范围与附带主张引出。** 第一次 Evaluator 已确认核心事实，只因从 20:00 起播、依赖跨 Chunk 的未完整前句而要求修订；它也给了“从完整台词 20:01.7 开始并删去首句依赖”的局部方案。Query 仍补检索前块，最后采用局部方案，之后再跑完整 Evaluator；两阶段合计 51.227 秒。不是 ES 搜索了 51 秒，也不能承诺只删第三次检索就省 51 秒。Query Prompt 只强制首轮真实检索，后轮并未强制重搜。
+4. **子角色会话独立启动。** 本次 Codex adapter 每次 Query / Evaluator / Chat invocation 使用新 ephemeral session / app-server；B / C 分别有 4 / 6 次 SDK 角色运行（含外层 Supervisor），不是其内部模型请求总次数。启动未单独打 span，尚不能量出应归因多少秒，也不能直接以复用会话替代角色／上下文隔离。
+5. **单集 scope 不等于短上下文。** 两轮 Supervisor 初始业务 Prompt 约 16,037 / 16,015 字符，其中 `series_context` JSON 13,207 字符、`importantExtraData` 12,834 字符；Query / Evaluator 每轮也携带完整 series context。Supervisor 原生单次模型输入约 22.7K–28.2K tokens。几十万的 usage 是 SDK 多次请求累计且多数命中缓存，不能当成单个超长 Prompt，也不能把 native `world_state` 状态快照当成模型输入。背景可能有成本，不等于全部无用，更没有单独测得其延迟贡献。
+
+#### 与性能修复一并保护的质量问题
+
+- C 第二次 query 写入“立希打断爱音”的未经证实方向，真实证据却是爱音回敬立希。没有设置 speaker 硬过滤，后续精读纠正了方向。只能确定假设出现在 query 串，不能从缺失的模型转录断言其来自某段背景知识；与 C14 的假设偏移问题关联。
+- 两轮最终用“你记得的是这段”指认来源，虽然解释了非逐字匹配，但没有排除其他近义场景；应区分“有支持的近义候选”和“唯一来源”。
+- C 第一次全量 trace 中核心 Event 融合 rank=22，在回源后 matched 集合位置为 20；首屏只有 14 卡，Query 没有翻页，不能说它已看到目标。第二次 rank=11 才进入首屏，随后精读。底层召回、工具实际展示、成功读取和最终选择须分开统计。
+- 另做的固定中文查询对照使用 0.65 / 0.35 / 0 权重，与自然 Agent 自主选择的参数不同；存在语义已召回但 RRF 排名被词法弱相关候选压低的情况，不将其混为“工具慢”或直接据三句改全局权重。具体 ID / 分数见 [独立检索分析](../../engine/design/event-retrieval-eval-20261018/experiment/ep04-zh-retrieval-analysis.json)。
+
+#### 待评估方向、职责与验收
+
+- Chat 编排负责评估是否减少 Supervisor 场景下内层 Chat 的重复润色，或更直接、有界地交接获批草稿与必要来源；保留独立 Chat 调用能力、Supervisor 终审与合法时间修订权。不预先选定“删 Chat”或自动信任子图为最终方案。
+- Query / Evaluator 负责区分需要新证据的修订和已有证据足够的局部修订；核心对白完整即可支持问题时，不为了可有可无的前文扩大主张、触发重搜。不得以追求速度直接跳过证据审查或放行跨界片段。
+- Gateway / 观测负责按现有日志与 usage 增补必要的单请求启动、发起、首个可用输出、结束、工具等待时间，区分 SDK 角色运行与内部模型请求；先确认现有埋点，避免新增表或复制日志系统。正文／工具展示与模型上下文继续解耦。
+- 工具易用性另见 C18。先复用现有 batch、直接 section、可省略 end 的能力，不能以“缺 batch”为前提另起协议。
+- 用相同素材与问题做改前／改后对照，记录模型绑定、scope / 索引版本、并发、阶段／请求／工具次数、错误恢复、首反馈与最终耗时；必要时顺序复跑以区分并发影响。保护说话人、原句纠偏、事件时间、完整且合法的播放范围、无结果正常说明、取消／失败／超时、流式展示与保存一致性。实际加速须真实模型验收，不能只靠 mock 或承诺省去阶段时长的全部。
+
+证据边界：两轮在 2026-10-18 14:55–14:58（UTC+08:00）并行执行，没有同问题 Chunk-only 全流程或严格缓存／负载控制；不能据此宣布 Event 加速或形成稳定 P95。此 scope 的索引快照不代表当前全库覆盖；C16 的 MyGO 13 集补建由另一工作线维护。Query / Evaluator / Chat ephemeral 完整转录未保留，不能补造 prompt 或内部推理。当前先完成记录，不重跑、回填、重启、迁移或部署。
+
+依据：[Runtime](../../agent/chat/video_search/runtime.py)、[Query](../../agent/chat/video_search/query.py)、[Evaluator](../../agent/chat/video_search/evaluator.py)、[内部 Chat](../../agent/chat/video_search/chat.py)、[Supervisor](../../agent/chat/supervisor.py)、[输入上下文](../../agent/chat/video_search/context.py)、[Codex adapter](../../gateway/codex/agent.py)、[Codex session](../../gateway/codex/client.py)、[B 原生 Supervisor](../../engine/design/event-retrieval-eval-20261018/ep04-zh-drift-chat/native-sessions/supervisor.rollout.jsonl)、[C 原生 Supervisor](../../engine/design/event-retrieval-eval-20261018/ep04-zh-premise-chat/native-sessions/supervisor.rollout.jsonl)。
+
+### C18：Context Canvas 已具备 batch，但读取模式与范围语义容易误用
+
+日期：2026-10-18。优先级：高。类型：通用 Tool 可用性、参数合同与角色使用问题。状态：**能力已有、误用已复现，接口／提示优化尚未实施**。不能将“Agent 未正确使用”写成“没有 batch”，也不能据两轮就断言全部耗时都由接口设计造成。
+
+#### 现有原理与能力
+
+Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 collection → reference 保存条目，业务适配层把条目投影为 named sections 和目录。模型通过 Tool 按权限读取或修改宿主状态，不是把整份 Canvas 追加到每轮模型消息，也不是专门的 MySQL history table。
+
+- 通用核心在 `agent/utils/context_canvas.py`：锁、快照／拷贝、revision、只读 collection / entry、原子 batch、角色与 batch_id 幂等；宿主／业务流程负责正式持久化，Canvas Tool 不直接决定业务数据库写入。
+- `agent/utils/context_canvas_tools.py` 负责有界读写通道、角色可读集合、参数模式、分页和详情读取；Chat 的 retrieval / draft / approved / review / render 等业务 section、草稿校验和读审计在 Chat 适配层。Parse 也使用该通用能力，调整工具须核对两类消费者，不能把 Event、台词或 Supervisor 规则塞回 utils。
+- 写入已支持带 `expected_revision`、唯一 `batch_id` 和 operations 的原子批次，整批失败无部分生效；本轮问题主要在读取，不默认改写写入合同。
+
+| 读取模式 | 参数 | 范围与返回 |
+| --- | --- | --- |
+| collection 目录 | 省略 reference / references，section 默认 overview | 用 cursor 分页；不接受 start/end 范围 |
+| 单个条目 overview | reference + section=overview | 返回 section 名与长度；不接受非默认字符范围 |
+| 单个 section 正文 | reference + 明确 section | start/end 是字符偏移，end 不包含；省略 end 自动取实际长度，预算内可整段读取 |
+| 多条目同 section 批读 | references=[...] + 明确的非 overview section | 同一 collection、多个 reference、同一个 section；start/end 是 references 的条目下标，省略 end 取列表长度；不使用 cursor |
+
+工具说明已明确：**已知 section 可以直接读，不必先 overview**。现有 batch 不能在同一次请求列出“同一 reference 的多个不同 section”或任意混合 collection / section；不能因此说完全没有批量能力。单次模型往返内可以执行多个单项 Tool，它与 Canvas references batch、真正并行执行是三件事。
+
+预算仍有区别：目录 `page_items` 按条数和 UTF-8 字节分页；单 section `range_text` 按字符／字节检查，超大范围要求缩小，不静默冒充完整；批量详情 `range_items` 对整个 JSON 回执再限制 8,000 o200k_base tokens，并结合字符／字节预算，返回 truncated / complete_end / msg（截断说明），未完整项不算已经精读。不能把“所有工具都限制 8,000 tokens”当作现状。
+
+#### 两轮真实误用与可确认原因
+
+- **B 没有使用 references batch。** Chat 先读过 overview，仍把 draft / selection_reason / evidence.transcript / evidence.metadata 四个 section 都按 `[0,8000)` 读取，实际长度为 359 / 1663 / 1866 / 1724，四次 INVALID_RANGE；随后按正确长度重读。end 本可省略。
+- B 的 Supervisor 已知 review 为 847 字符，先漏写 section 却填 end=1200，命中默认 overview 的范围拒绝；再用 section=review、end=1000，仍越界；第三次才成功。两次失败服务执行仅 14 ms，额外成本来自错误反馈后继续请求模型，不能把整个 22 秒末段都归因于错误。
+- **C 仅尝试一次 references batch，且失败。** Evaluator 传 collection=retrieval、references=[0044…]、section=overview、start=0、end=20，因 batch 不接受 overview 返回 INVALID_READ；即使换正确 section，一项列表也不能 end=20。Chat 另猜了 section=catalog，违反目录应省略 reference、使用默认 overview 的规则；两次错误均恢复。
+- **真实可用性问题是多模式共用字段。** reference / references / 均省略切换不同操作，同一 start/end 在字符与条目下标之间切换，overview 又有额外组合限制。已有说明与错误反馈未让这些样本稳定使用正确方式，不能只责怪 Agent “没看说明”；也尚不能断言只改 Prompt 或放宽一个范围规则就足够。
+- 日志同秒有多个单项调用，不代表它们并行。Supervisor 原生代码存在同一 exec 内顺序 await 多个调用；Query / Evaluator / Chat 的原生转录缺失，不能凭秒级日志补造并发方式或模型请求数。
+
+#### 待评估优化与边界
+
+1. **先核对模型实际收到的 schema、说明、角色 Skill 与错误回执。** 通用工具和 Supervisor 自定义说明须一致，强调已知 section 直接读、短内容省略 end、batch 的条目语义与续读方式；不要未检查就复制另一套 batch 工具。
+2. **让常见正确读取少填参数。** 评估目录／详情／batch 的表达是否应更明确，避免同名范围字段切换单位；若调整 schema，先给最小方案、调用方影响和兼容策略，不预设必须拆多个 Tool、加入新 DTO 或新增业务“证据包”。已知 section、完整小段与预算受控续读应成为清楚的主路径。
+3. **保留有界读取与证据完整性。** 不能为减少报错取消租户／角色权限、revision、只读来源、预算／截断标识、读审计或真实来源校验；若考虑自动收敛范围，须明确何时整段完整、何时部分返回、如何续读，不能静默截断后标记已完整核验。
+4. **通用能力与业务职责解耦。** 通用模式、预算与读写机制只维护一份；Chat 决定哪些获批材料足够支持用户主张，Parse 决定事件正文与修改规则，Canvas 不理解这些业务含义。不要以优化延迟为由新建 table、扩大为全仓 Canvas 重写或改动 Event 索引／前端消息 Schema。
+
+#### 接手验收
+
+- 直接读取已知 section、单条省略 end、现有多 reference 同 section batch 都可用；未知 section／reference、目录与详情模式误用有清晰可恢复反馈。批读 end 是条目下标，单读 end 是字符偏移的现合同，若改变必须同步所有消费者与测试。
+- 覆盖目录分页、超长单 section、批次完整前缀／截断／续读、token 与字节上限、只读／权限、revision 与原子写入重放；未完整项不能通过读审计。保护 Chat 与 Parse 两个消费者，定向回归，不借此全仓重构。
+- 真实 Agent 用上述 B / C 等同 scope 问题验证是否消除 INVALID_RANGE / INVALID_READ，并减少不必要 overview、重读和模型请求；记录模型轮次与工具调用分开，既看首反馈／总耗时，也核对最终说话人、记忆纠偏和合法完整播放范围。不以假模型能按 schema 调用证明真实模型一定会用好。
+- 本轮只记录问题；模型、背景裁剪、角色合并、读取协议或预算变化均未实施。优化效果和节省秒数等待具体方案与真实对照，不将 154–156 秒承诺为一定可压缩到某个时长。
+
+依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 原始调用](../../engine/design/event-retrieval-eval-20261018/ep04-zh-drift-chat/tool-events.json)、[C 原始调用](../../engine/design/event-retrieval-eval-20261018/ep04-zh-premise-chat/tool-events.json)。

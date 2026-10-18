@@ -25,6 +25,8 @@ class RunInputs(TypedDict):
     series_ids: list[str]
     series_context: list[dict]
     user_message: str
+    # The user's own words when a Supervisor rewrote user_message into a search sub-query.
+    original_user_message: NotRequired[str]
     attachments: NotRequired[list[dict[str, str]]]
     image_urls: NotRequired[list[str]]
     history: list[dict]

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "quote-zh-not-your-fault",
+    "query": "我觉得也不是你的错吧 —— 这个出自于哪里？？",
+    "series_ids": ["bdbf28ae-5404-58e4-8c98-699433499ffc"],
+    "expect_any": ["爱音", "愛音"]
+  },
+  {
+    "id": "quote-en-not-your-fault",
+    "query": "\"I don't think it's your fault\" - where does this line come from?",
+    "series_ids": ["bdbf28ae-5404-58e4-8c98-699433499ffc"],
+    "expect_any": ["Anon", "爱音", "愛音"]
+  },
+  {
+    "id": "fuzzy-nobody-at-fault",
+    "query": "谁在这集说了“不是你的错哦”之类的话？",
+    "series_ids": ["bdbf28ae-5404-58e4-8c98-699433499ffc"],
+    "expect_any": ["爽世", "Soyo"]
+  }
+]
