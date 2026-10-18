@@ -1,6 +1,10 @@
 # 项目问题清单
 
-更新日期：2026-10-17。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项日期为准，不扩展当前开发范围。10 月 17 日新增 C14，记录台词检索中未经证实的人物／场景假设、Chunk 级 Embedding 的表征粒度、融合截取造成的候选丢失，以及真实实验与证据边界。10 月 16 日补充 B01 的取消与失败上抛现状、B07 的 EP04 重叠 Refine 重算、F06 的证据／封面展示，新增 B12 的 ASR 说话人归属、Refine 取帧与追踪缺口，以及 C13 的 Codex 错误通知和 Chat 计时差异。此前 B07／B08 的性能与索引、B09 的上传死锁、B10／B11 的停服恢复与阻塞执行问题保留各自日期下的证据；历史“未重启／待实施”不能直接当作当前部署状态，本文不宣称完成全仓问题的重新验收。
+更新日期：2026-10-17。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项日期为准，不扩展当前开发范围。10 月 17 日新增 C14，记录台词检索中未经证实的人物／场景假设、Chunk 级 Embedding 的表征粒度、融合截取造成的候选丢失，以及真实实验与证据边界；新增 C15，记录局部截图检索无法收敛时持续搜索至超时的问题，以及 Evaluator `stop` 决策与正常返回未解决结果的待实施方案。10 月 16 日补充 B01 的取消与失败上抛现状、B07 的 EP04 重叠 Refine 重算、F06 的证据／封面展示，新增 B12 的 ASR 说话人归属、Refine 取帧与追踪缺口，以及 C13 的 Codex 错误通知和 Chat 计时差异。此前 B07／B08 的性能与索引、B09 的上传死锁、B10／B11 的停服恢复与阻塞执行问题保留各自日期下的证据；历史“未重启／待实施”不能直接当作当前部署状态，本文不宣称完成全仓问题的重新验收。
+
+2026-10-17 新增 C16：构图检索实验缺少共同的帧级候选图库，当前等待另一工作线完成 Event 级检索，再基于命中 Event 的关键帧接续对照实验。
+
+2026-10-17 新增 B13：解析启动时模型进程重复加载全局 MCP，叠加任务列表全量读取 Chunk JSON，出现负载尖峰与页面长时间加载；只完成排查，交由另一 Agent 修复。
 
 ## frontend
 
@@ -265,7 +269,7 @@ return completed
 - EP04 多参考声纹任务 `dd55671d-a84b-4628-bedb-4007a4f4aa9c` 完整墙钟 38:43.518；22 个 Refine 窗口生成 54 次，32 次快照刷新。32 轮占 Refine 并行累计生成时间的 64.4%，不是可直接承诺的整集降幅。准备 Agent 回合 148.086 秒，与剩余 Understanding 重叠；Refine 950 次 CAM++ 调用累计 66.113 秒，不能将整集耗时归因于编码推理。
 - 保留重叠窗口并发。提交时将输入原文 Base、数据库最新正文 Current 和本轮结果 Proposed 做三方合并：不同 Chunk／event 的独立修改保留，相同 event 的相同结果直接接受，正文未变不重复增加版本；同一 event 的不同结果仍刷新快照。
 - 双方 timeline 都变化且结果不同时，只对唯一且顺序一致的 `(event_type, start_seconds, end_seconds)` 对应事件合并；新增、拆并、重排、改时间／类型或重复锚点无法可靠对应时保守冲突。persons 保持整列表三方判断，不扩展到同一 event 内的字段合并。
-- 基准内容必须匹配输入指纹；未升版改正文、旧租约、失效声纹来源仍拒绝。先验证独立 Proposed，再校验合并结果；并发组合导致 Schema 不成立时按快照冲突处理，所有成员及阶段推进仍原子提交。
+- 基准内容必须匹配输入指纹；未升版改正文与旧租约仍拒绝。声纹准备后按可信静态成果使用，timeline 编辑不再造成来源失效或提交拒绝。先验证独立 Proposed，再校验合并结果；并发组合导致 Schema 不成立时按快照冲突处理，所有成员及阶段推进仍原子提交。
 - 定向回归共 585 项通过、1 项因专用 MySQL/ES 未配置跳过；包括 event 合并、真实冲突回滚、相同结果不重复升版、原始快照透传及现有声纹／索引门禁。EP04 24 份真实正文经新参数序列化后指纹一致；未执行真实 MySQL 多连接合并竞争实验。
 - 取舍：普通上下文变化不再一概让独立修改重算，不保证模型读取依赖的语义串行一致性。当前没有再次重启或整集重解析，尚无合并后的真实耗时对照；不宣称这 32 次全部可以自动合并。
 
@@ -1048,7 +1052,7 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 
 - 正式声纹位于本次 `video_parse_task.detail.voiceprint={ready,voiceprintList}`；视频、任务归属由父行确定，不按 series 或跨视频共享，不进入 ES。每个人物保存实际模型/revision、逐片段 192 维向量、来源 Chunk/版本/事件指纹、原视频绝对毫秒、PCM SHA-256 和选择依据。Engine 只定义 Schema；Gateway 执行 CAM++ CPU 推理。
 - 声纹默认关闭。开启时，提交 Understanding 的 Chunk 达到 `ceil(chunk_count/2)` 即固定本次来源与 speaker 名单并调用 `InvokeVoiceprint`；剩余 Understanding 继续执行，原 90% 批次开放规则不变。四个工具为名单查询、只读 Canvas、登记、完成；完成须有效登记人数严格超过名单一半，空名单允许零参考，NPC 可跳过并返回原因。非空 speaker 或自报 confidence 本身不能替代身份依据，首版不做同人异名合并。
-- Refine 的实际原子领取增加 `interval_ready && voiceprint.ready`；未就绪维持 WAITING，不占槽或扣失败。比较工具适用于 null 及有姓名但冲突的台词，返回 cosine/候选差值/来源及实际时长，排除自身、重叠事件、重复 PCM、不相容模型与失效锚点。工具不写 timeline，仍由原 Canvas 修改或保留 null；提交重验实际引用的参考，包含 Interval 外来源。
+- Refine 的实际原子领取增加 `interval_ready && voiceprint.ready`；未就绪维持 WAITING，不占槽或扣失败。比较工具适用于 null 及有姓名但冲突的台词，返回 cosine/候选差值/来源及实际时长，排除自身、重叠音频、重复 PCM 与不相容模型。工具不写 timeline，仍由原 Canvas 修改或保留 null。后续 EP04 v7 追踪发现旧来源指纹包含中文翻译：仅改翻译也会使参考失效，并使至少 9 轮 Refine 在合并前被拒绝。按用户确认，准备后的 speaker 和音频区间直接视为正确静态成果，读取及提交不再对照 timeline 重验；参考元数据只保留用于追溯，event 合并冲突日志继续保留。
 - 父协调器复用原租约、模型准入、用量和取消。准备期间的真实异常、超时和 active 崩溃受持久化有限预算约束，首次准备事务失败也计预算；正常取消/等待不计。Python 3.12 的自定义阻塞取消异常超时路径已单独验证：保留执行槽直到线程真实退出，避免误记为正常取消。另已用真实测试数据库覆盖取消先于 begin 事务绑定的竞态，事务真实退出后再次 stop，再由 Consumer 释放，正常取消不误扣失败。部分登记不放行，成功准备幂等跳过，人工 retry 重置本阶段失败预算。新增可空配置字段关闭时省略序列化，保持旧上传幂等指纹。
 - 自动化验证分两组：Agent/Repository/Queue/Worker/Upload/Gateway **540 项通过**，配置及媒体 **338 项通过**；数据库用例为测试隔离环境，尚未进行真实 MySQL 多 Consumer 锁竞争验收。未改 ASR Prompt，未重启服务、迁移、运行真实生成 Agent、写回 speaker 或重解析任何一集。
 - 真实音频验证复用 [既有实验清单](../../engine/experiment/campplus/20261017-mygo-ep04/manifest.json)，只取 `sequence_no<12` 的 16 条固定参考，每人 4 条，目标不入参考。使用本次 `_embed_speaker_segment` 从同一原视频直接 downmix 到 16k mono PCM16，再经 Gateway 调用官方固定 CAM++；17 次实际提取 completed，输出均为有限、归一化 192 维向量，临时 WAV/租约标记清理通过。此处声道为 mono downmix，与原实验的首声道协议不同，不将数值差异解释成准确率提升。
@@ -1080,8 +1084,8 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 
 - 统一每条参考首 1.5 秒后，等权平均仍为爽世 **0.506174**、灯 **0.406279**、立希 **0.340700**，前两名差 **0.099895**。灯增加参考后得分也会上升，但本目标上仍与爽世拉开差距。这解决了只给爽世增加参考、其他人保持单参考的不对等口径；不能由单个已知目标估计整体准确率，且爽世候选池来自此前已评分实验，不属于完全盲测。清单、逐条音频/向量/权重及来源 SHA 见 [三人多参考实验](../../engine/experiment/campplus/20261017-balanced-multiref/README.md)。这两个实验目录均被 Git 忽略，链接指向本地实验成果。
 - **聚合公式不能只比较数字大小。** 单位目标/参考下，逐条余弦均值为 `A=t·mean(u_i)`；现有归一化质心为 `B=A/||mean(u_i)||`。因此质心法数值更高包含缩放因素，不等于准确率更高；时长加权仅是预先固定的实验对照，也不是质量或人物置信度。本轮各方法排名一致，不能据此确定普遍最优算法。
-- **本次采集规则：** 每个 speaker 下保留多条参考；以 **5 条合格、独立参考作为每人采集目标和首版成本上限**，达到后停止补充该人物。数值仅定义于 `server/constants/parse.py::VOICEPRINT_REFS_PER_SPEAKER`，Agent 消费工具返回的 `target_refs_count`。不足 5 条允许完成，应说明固定授权来源不足或阶段预算接近耗尽等原因；不把 5 条作为 ready 的硬门槛，不用低质量/不确定样本凑数。人物身份可靠、单人有效发声和清楚边界优先，再尽量覆盖不同场景、台词和说话状态；不设置必须凑齐几种情绪的指标。跨 chunk 优先，但同 chunk 的不同独立台词仍可使用。
-- **独立来源与区间门禁：** 原实现仅对完全相同的来源/区间/fingerprint/PCM 做幂等。本次要求精确重复请求直接返回已有登记、不重做截音/embedding；同一 `source_ref` 的另一子区间即使不交叉也不能再登记为独立 case。对本轮全部人物的已登记区间检查交叉，采用绝对毫秒半开区间，`new_start < old_end && old_start < new_end` 即拒绝，首尾相接允许。宿主在提取前预检、持久化时原子复核；不同来源截取后 PCM 摘要完全相同也在最终登记拒绝，不增加声学查重框架。返回 `message/retry_hint` 引导 Agent 换独立、非重叠台词；这类反馈消耗工具预算，不计准备执行失败。上限按有效独立来源计，失效来源不继续计数；不扩大到同人异名合并。
+- **当前采集规则：** 每个 speaker 下保留多条参考；以 **5 条合格、独立参考作为每人采集目标，不设每人登记硬上限**，原“首版成本上限”已移除，仍受阶段有限工具/时间预算约束。数值仅定义于 `server/constants/parse.py::VOICEPRINT_REFS_PER_SPEAKER`，Agent 消费工具返回的 `target_refs_count`。不足 5 条允许完成，应说明固定授权来源不足或阶段预算接近耗尽等原因；不把 5 条作为 ready 的硬门槛，不用低质量/不确定样本凑数。人物身份可靠、单人有效发声和清楚边界优先，再尽量覆盖不同场景、台词和说话状态；不设置必须凑齐几种情绪的指标。跨 chunk 优先，但同 chunk 的不同独立台词仍可使用。
+- **独立来源与区间门禁：** 原实现仅对完全相同的来源/区间/fingerprint/PCM 做幂等。精确重复请求直接返回已有登记、不重做截音/embedding；同一 `source_ref` 的另一子区间即使不交叉也不能再登记为独立 case，只有显式替换才允许改为更准确子区间。对本轮全部人物的已登记区间检查交叉，采用绝对毫秒半开区间，`new_start < old_end && old_start < new_end` 即拒绝，首尾相接允许。宿主在提取前预检、持久化时原子复核；不同来源截取后 PCM 摘要完全相同也在最终登记拒绝，不增加声学查重框架。返回 `message/retry_hint` 引导 Agent 换独立、非重叠台词；这类反馈消耗工具预算，不计准备执行失败。参考目标按有效独立来源计，失效来源不继续计数；不扩大到同人异名合并。
 - **工具与收口：** `get_speaker_list` 返回每人的 `refs_count/target_refs_count` 及 `references=[{source_ref,start_ms,end_ms}]`，Agent 能对应 sources 避开已登记台词，不接收向量。`register_voiceprint` 可对同人多次追加，回执包含 `added`、该人物的参考进度和来源元数据。Agent 达到人物覆盖后继续补充多参考，在达到目标、可用来源耗尽或接近本阶段预算时、预算真正耗尽前调用完成工具。`finish` 要求名单内所有不足目标者（含零参考）提供非空 `skip_reasons`；缺原因返回 `ready=false`、`missing_reason_speakers`、`reference_counts`、目标及提示。说明齐全且 **具有效参考的人物数 > speaker_list_size/2** 才可 ready，空名单可零参考结束；理由不绕过多数门禁，也不额外建立“来源耗尽”审计框架。模型、截音、数据库失败及真实预算耗尽仍真实上抛，不能伪装成“收不够参考”。
 - 来源继续限于达到半数 Understanding 时固定的授权快照，预算/取消/恢复复用现有准备阶段；不为凑 5 等全部 chunk，不因后续更多台词触发无界补采或整轮 Refine。本轮调整采集策略、工具进度和完成检查，保持现有多参考存储及质心聚合；是否切换逐条均值/权重另按更多目标的验证结果决定。实现当时尚未进行第四集重解析，后续真实 v5 结果见下节；全片准确率仍未统计。
 
@@ -1097,6 +1101,22 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 - 统一账本1126条均completed，CAM++975次（准备25、Refine950），耗时中位44ms、最大2991ms，包含初始化和锁等待；不能把整集38分钟归于CPU声纹推理。Refine生成54次，对应22窗口正式提交，模型completed不等于成果提交。终态25条参考来源仍全部有效。
 - 验收边界：爽世参考含53.2–55.2秒同场景且共享“悪くない”的近邻台词，本轮目标1.3秒而v4为1秒，不是单因素或跨场景泛化实验；没有人工试听校准全部25个身份标签，不能据此估计全片准确率。现有diagnostics不持久化完整Tool回执，缺额理由也不单独落库；本轮全员满5，无缺额理由需要验收。证据来自正式参考、真实比较日志、Canvas写回及ES，不宣称完整工具轨迹已恢复，也不宣称本轮发生并验证了崩溃恢复。
 
+#### 2026-10-17：静态声纹与强制 null 提示复测，v8 流程完成但目标仍错
+
+- 仅在隔离第四集运行任务 `8ef2a23b-def7-4ff3-905d-36cee63ce70f`，Prefix/Compact 关闭。ASR 提示明确无法可靠区分匿名声音时必须 `speaker_id=null`，Understanding 明确身份无可靠依据时必须 `speaker=null`；不改 nullable schema，不注入目标答案。提示实参回归 47 项及独立 hypnos-review 通过。详见 [v8 本地实验](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-trusted-voiceprint-null-speaker/README.md)。
+- 19:16:08.468–19:46:17.381（UTC+8）COMPLETE，24/24 Understanding、22/22 Refine、24/24 当前版本索引。墙钟 30:08.913，比 v7 的 43:22.011 少 13:13.098（30.48%）；Refine 54→37 轮、刷新 32→15 次。本轮使用用户当前配置 `gpt-5.6-sol`，v7 为 `gpt-6-astra`，且提示及声纹策略有变化，不能将收益单独归因于去除参考校验。15 次拒绝为 13 次事件修改冲突、2 次结构冲突，没有声纹来源失效拒绝。
+- 声纹准备在 12/24 块时启动，正式参考仍为 5 人各 5 条，ready 后不变、无提前领取。VoiceprintAgent 生成耗时 389.539 秒，准备 25 次 CAM++ 编码累计仅 3.914 秒；准备与 Understanding 部分重叠，全部 Understanding 完成后到 ready 仍约等待 2 分 35 秒。原 13 视频/13 任务/312 正文未变，源文件摘要不变，终态租约、模型占用与临时文件已清理。
+- **目标识别未通过：** ASR 将 35.6–48.6 秒合成 `speaker1`，目标「咲ちゃんも悪くない」混在末尾；Understanding 将整段归千早爱音。seq0 首轮因 chunk2 的 177200–178000ms 事件双方同改 speaker/description 被拒绝，第二轮只更新 seq1/2；最终 chunk0 及 ES 仍错归千早爱音。全任务 270 条成功比较、seq0 20 条中，覆盖目标 47–49 秒的成功声音比对为 0；不能归因为 CAM++ 错认，也不能排除成功日志前被校验拒绝且未记录的工具尝试。下一步需区分混合接话拆分与具名错误归属核验的缺口，不以继续堆 null 提示替代验证。
+- 本轮 ASR 12/353 段为 null；初始 Understanding 43/308、最终 Timeline 31/314 条 DIALOGUE 为 null。这是弃权条目数，不是准确率；本轮没有证明目标修复或全片人物识别改善。
+
+#### 2026-10-17：v9 参考错标与完成前组内一致性检查
+
+- v9 `56498828-8926-4ad7-beb4-b8a22d2b0b49` 的 25 条正式参考中，47.6–48.8 秒「祥ちゃんも悪くない」被登记为灯，用户已确认实际为爽世。组内逐条 cosine 均值为 0.378263，去掉它后其余灯参考内部均值为 0.659323，gap=0.281059；与爽世五条均值为 0.715700。这说明非空 speaker、画面可见及自报 0.96 不能替代独立身份依据。完整矩阵见 [本地审计](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-visual-overlap-submit/registry-pairwise-consistency.json)。
+- 当前修复在 `finish_voiceprint_preparation` 同一事务读取未 ready 的参考，按 speaker/model/revision 检查组内一致性；不增 runtime 成果副本或缓存，不重新调用模型。实验初值为至少 5 条独立参考、核心均值 >=0.60、候选对核心均值 <=0.50、gap >=0.18，唯一来源为 `server/constants/parse.py`。少样本不阻止原收口，不强制每组删最低；显著异常返回 ready=false、来源/区间、均值、gap 及修正提示，不静默删条或改姓名。
+- 准备工具由原四个增至五个：新增 `unregister_voiceprint(source_ref)` 幂等单条撤销；`register_voiceprint` 可用 `replace_source_ref`，新 embedding 成功后事务替换，含同来源更精确子区间，失败保留旧条。无可靠替代时可撤销后以 `skip_reasons` 说明不足 5 条，具参考人数仍须严格过半；理由不能绕过仍存在的异常。ready 后继续按静态成果使用，不因 timeline 后续编辑重验或重跑。
+- 本次执行 `.venv/bin/python -m pytest -q tests/server/test_video_parse_voiceprint.py tests/agent/video_parse_v2/test_voiceprint.py tests/server/test_video_parse_worker.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_repository.py tests/agent/video_parse_v2/test_framework.py --tb=short`：**463 passed，23.56 秒**，仅既有 Starlette 弃用警告。覆盖完成门禁、阈值和编码器分组、显式替换/撤销及回滚、旧租约/来源保护、预算/取消与真实失败保留；此前 408 项及各轮部署/验证事实仍保留其原日期和合同。
+- 实际导入 `_voiceprint_consistency` 回放 v9 原 25 条向量，与独立核算一致返回灯 47.6 秒、立希 487.1 秒、祥子 293.9 秒三条可疑参考，报告在 `/tmp/anivag-voiceprint-consistency-replay.json`，没有写数据库或新增仓库实验文件。回放不是泛化准确率，后二条仍无独立真值；真实 MySQL 并发、实际 Agent 重选及全片准确率尚未验收。本轮没有服务重启、迁移、重解析或 commit/push。
+
 验收分别检查：新 ASR 是否真的在换人处分条；首次与最终 Timeline 是否纠正为爽世或有依据保留未知；Refine 是否实际取得图片、提交了哪些事件；最终索引／Chat 是否使用新版本。即使 Chat 答对，也保留 ASR 和数据库未修复的判定。相邻窗口重算见 B07，不在本项顺带修改调度。
 
 依据：[第一次完整报告](../../outputs/verification/mygo-ep04-speaker-review-20261016/report.md)、[结构化对照](../../outputs/verification/mygo-ep04-speaker-review-20261016/comparison-summary.json)、[最终首段](../../outputs/verification/mygo-ep04-speaker-review-20261016/final-seq0.json)、[ASR 契约](../../engine/common/transcription.py)、[解析宿主](../../server/service/video_parse.py)、[原系列保留检查](../../outputs/verification/mygo-ep04-speaker-review-20261016/original-preservation-check.json)。
@@ -1104,6 +1124,27 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 ### B13：解析启动负载尖峰、Codex 重复加载 MCP 与任务列表过量读取
 
 - 状态：2026-10-18 MCP 实例开关已实现，并完成 bundled Codex 无推理启动/恢复验证；任务列表轻量投影尚未实施。未重启现有服务，真实解析负载收益尚未验收。历史现场任务为隔离第四集 v10 `6ec42661-5938-4857-b7d0-d4a9d2eb77e2`；接手后只读详情已确认 COMPLETE、70/70 单元完成、lastError=null，不能沿用此前 PARSING 状态。
+
+#### 已确认的运行现场（UTC+08:00）
+
+| 时间 | 请求/采样 | 结果 |
+| --- | --- | --- |
+| 23:06:50–51 | `/api/jobs/video-parse/list` | HTTP 200，13,183.6 / 13,966.2 ms |
+| 23:07:01–02 | 同上 | HTTP 200，9,113.7 / 10,237.2 ms |
+| 23:07:16 | `/api/series/get` | HTTP 200，24,314.9 ms |
+| 23:08:05–11 | 解析任务列表 | 已回落至 377.5 / 474.4 ms |
+| 23:09:16 | `/healthz` / 单任务详情 | HTTP 200，16.0 / 60.2 ms |
+
+- 系统 18 个逻辑 CPU，load average 一度 166.42，随后回落至 105.10；后次采样 CPU 约 67% idle，表示此前有尖峰，不能把历史 load 当作当时仍满载。内存压缩约 14 GiB、swap 使用为 0；本轮日志未发现 OOM、MemoryError、线程池耗尽、FFmpeg 失败或实际 ERROR/CRITICAL，不能据此诊断为 OOM。
+- API PID 19140 连同其子进程采样共约 101 个进程：10 个 Codex 模型进程、各 10 套 bytedcli/组件文档/Chrome DevTools MCP 等。累计 RSS 约 11.4 GiB，包含共享页重复统计，不是独占物理内存精确值。API 自身采样 RSS 约 450–920 MiB。
+- 23:09:16 本轮仍 PARSING、last_error=null、父租约有效；仅 1/24 Understanding 已提交，声纹准备尚未达到半数 Chunk 的启动条件，22 个 Refine 均 WAITING。尖峰出现在 Understanding 启动期间，不能归因于新加的声纹组内矩阵检查。数据库当次 processlist 未见查询堆积或等锁。
+
+#### Gateway：会话与进程绑定，空表未真正关闭 MCP
+
+- `CodexSession.open()` 为每个会话创建 CodexClient，并执行 start/initialize/thread_start；SDK 的 client.start 实际启动本地 app-server 进程。close/interrupt 直接关闭整个 client，因此当次 10 路并发对应 10 个进程，是项目适配器现状，不是 Codex 协议要求一线程一进程。Supervisor 保留/恢复原生 threadId 也不等于复用常驻 app-server。
+- 排查时运行参数确有 `mcp_servers={}`，但仍启动全局配置中的 bytedcli、node_repl、motorComponentDoc、chrome-devtools。禁用设置没有达到预期；不能只靠 Prompt 禁用或断言存在空表参数来验收。Codex 配置存在逐表合并语义，应核对项目实际 bundled binary/SDK 的有效配置，不能拿 Homebrew Codex 版本替代运行版本。
+- 用户确认的配置边界：解析中的 Understanding/Refine/Voiceprint 等有界模型调用由上层在创建模型实例时传 `mcp=False`；Supervisor 是否保留 MCP 同样由上层装配明确选择。Gateway 只接收、透传和执行实例参数，不根据 Supervisor 身份选择策略，不新增 YAML/source 策略，不修改用户全局 Codex 配置，也不将 MCP 开启扩展为默认开放 shell/浏览器等全部原生能力。
+- 单 app-server 承载多个原生 thread 是可评估方向；项目当前只有单会话回调/通知绑定，取消还依赖关闭进程。共享前必须解决按 thread/turn 路由、工具回调隔离、单会话超时取消和进程退出影响面，不能仅把 client 改成单例。该生命周期调整应与先关闭额外 MCP 的修复分别核定范围。
 
 #### MCP 修复与验收进展（2026-10-18）
 
@@ -1113,6 +1154,23 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 - 隔离验证：临时 CODEX_HOME 中配置一个 enabled/required 的受控本地 MCP 和一个 disabled MCP，用历史注入持久化测试 thread 后跨进程恢复。False 的 start/resume 均没有 MCP 启动标记；True 的 start/resume 均能连接原本启用的服务器并发现工具，原本 disabled 的服务器始终没有启动。共 0 个推理 turn，未启动整套全局 MCP，也未修改全局配置。
 - 回归：`.venv/bin/python -m pytest tests/gateway/test_codex_{client,model,supervisor}.py tests/gateway/test_{model,agent}_factory.py tests/server/test_bootstrap.py tests/server/test_video_parse_worker.py -q`，536 passed，1 条 Starlette/AnyIO 依赖弃用警告。`git diff --check` 通过；按实施前快照完成 hypnos-review，未发现需修正的行为或职责边界问题，已补 rollback 恢复仍携带禁用表的断言。
 - 验证边界：参数传递、非法值、fallback、启动/恢复/rollback、动态工具、取消及上层装配有相关回归；真实 runtime 证据不替代新解析任务在服务中的负载验收。现有服务未重启，本轮未重跑解析、迁移或 commit/push。列表读取量/时延改造、共享 app-server 和前端请求截止时间仍待后续核定。
+
+#### 任务列表：需要轻量统计，却加载完整成果 JSON
+
+- `ParseJobRepository._video_parse_tracking()` 使用 `select(ChunkParseTask, ChunkParseContent, ...)` 加载完整 ORM 实体，只为判断成果存在性、内容版本、索引完成情况及 detail 中少量提交租约/耗时标记，却连带传输并反序列化正文、ASR/索引 detail 和 embedding。
+- 当次工作区列表覆盖 23 个任务、501 份 Chunk 成果；content 4,697,554 bytes、detail 16,484,904 bytes，合计约 20.2 MiB/次数据库读取，尚不含父任务及 Interval detail。这不是浏览器响应大小。统计长度的聚合 SQL 约 51.8 ms，未单独 profile 数据传输、JSON 解码和 ORM 成本，不能将 13 秒全部归于这一处。
+- 前端 TasksPage 每 5 秒调用 listAllVideoParseTasks，每页 100 条、串行读完全部分页才展示结果；requestJson 缺少请求截止时间，挂起时可能一直显示加载。任务页本身没有视频预览；旧 `/api/videos/content` 的 206 burst 不应直接归因于任务页。
+- `project_video_parse_task()` 仅过滤 `_worker_runtime_v2`，当前父任务 voiceprint 向量也会进入列表/详情公开 detail；页面不使用这些向量。是否调整公开 detail 需核对现有消费者，保持必要的声纹元数据和兼容边界。
+- MySQL 8.4.11 的只读 EXPLAIN 已核对：Chunk 成果连接通过 `uq_chunk_parse_content_task` 为 eq_ref；全量列表部分扫描与选择范围有关，没有证据表明缺少关联索引是主因。先将 SELECT 投影到存在标记、版本、必要 JSON 叶子及小字段，避免读取完整正文/detail。普通覆盖索引不能自动覆盖 JSON 叶子；是否使用生成列/函数索引或冗余统计字段应在窄查询实测后另议，本轮未执行 DDL。
+
+#### 接手方向与验收
+
+1. MCP 实例参数修复已完成上述独立运行验证；下一批按项目门禁核对任务列表轻量投影的最小修改树。共享进程和前端超时分别说明必要性，避免一起重做框架。
+2. 新代码接入现有服务后的解析负载仍待验收；独立无推理会话已核对有效配置、MCP runtime 状态和进程树，不能只靠配置字符串，也不默认启动全部真实 MCP 或消费模型预算。
+3. 列表改造保持进度、索引版本、拓扑、耗时完整性与旧成果兼容口径；验证不会加载正文/大 detail/向量，比较同数据量下的时延和读取量，检查分页/取消。需要覆盖索引时先给 EXPLAIN 和收益依据，不能直接加迁移。
+4. 如另行实施共享 app-server，必须证明一会话卡住、取消或超时不影响其他会话，工具回调/用量/历史不会串线。不要自动重启、迁移、全量重解析或 commit/push；当前声纹修复和其他工作区脏改动均须保留。
+
+依据：[运行日志](../../outputs/local-services/api.log)、[Codex 会话生命周期](../../gateway/codex/client.py)、[Agent 会话创建](../../gateway/codex/agent.py)、[Supervisor](../../gateway/codex/supervisor.py)、[模型工厂](../../gateway/agent_model/factory.py)、[任务统计查询](../../server/repository/job.py)、[接口投影](../../server/api/jobs.py)、[任务页](../../web/src/features/tasks/TasksPage.tsx)、[前端请求](../../web/src/api/client.ts)；[官方 app-server 协议](https://learn.chatgpt.com/docs/app-server)、[官方 MCP 配置](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。系统/SQL/HTTP采样均为只读，两个负担放大点已确认，各自对尖峰的贡献尚未隔离测量。
 
 ## Chat 联调问题（2026-09-21）
 
@@ -1523,3 +1581,73 @@ Supervisor 可以把 Query 过宽的范围收窄，也可以在已提供的 cano
 - 真实 trace 能关联用户问题、背景来源、Query 调用、候选及其精读、Evaluator advice 与 Supervisor 最终提交，区分可观察行为与无法确认的内部联想。
 
 依据：本机 [API 日志](../../outputs/server/logs/development/api.log) 中成功样本 `6075–6155`、失败样本 `10967–11133` 的检索／精读／审核记录，尤其 `6117`（相邻台词词法命中）、`6122`（正确 Chunk 返回）、`10987`（首次带人物的 Query）与 `11133`（未确认答复获批）；`GET /api/agent/messages/list` 的两轮 `retrievalTrace/renderBlocks`；只读 `model_usage` 查询（按上述 Assistant Message 的 `run_id`）；失败轮原始 Supervisor rollout `~/.codex/sessions/2026/10/16/rollout-2026-10-16T23-55-12-01a1456c-ae50-7aa2-bee5-0b3dd9b69969.jsonl` 第 9／13 行；[Query](../../agent/chat/video_search/query.py)、[Evaluator](../../agent/chat/video_search/evaluator.py)、[检索 Skill](../../agent/chat/video_search/skills/retrieval/SKILL.md)、[Supervisor](../../agent/chat/supervisor.py)、[ES 词法匹配](../../server/storage/elasticsearch.py)、[本地诊断边界](../../gateway/model_diagnostics.py)。本次未修改运行逻辑，未重跑 Supervisor／Query／Evaluator／内部 Chat 模型；上述 RAG 实验真实调用已配置的 Embedding，未重启服务或迁移数据库。
+
+### C15：局部截图检索缺少收敛与主动停止判断，空草稿反复退回直到超时
+
+优先级：高。类型：Agent 检索策略与结束语义缺失。状态：2026-10-17 已复现，`stop` 方案已确认、待实施；本次仅维护问题与解决方案，未修改运行逻辑。
+
+#### 问题与真实证据
+
+- 用户只上传 282×214 的茶杯局部图，询问“这张图片出自哪一集？”，范围限定 MyGO。图片上传及模型输入正常，但最终在 **1200.199 秒**后收到 `answer.failed / AGENT_EXECUTION_TIMEOUT`，仅保留开场白，没有定位集数、时间或视频卡。会话为 `8016a767-9528-42e2-939f-28bb1ff75cfe`，完整输入、日志与统计见[茶杯截图实验](../../engine/experiment/chat-image-origin/20261017-mygo-teacup-detail-source/README.md)。
+- 实际执行 48 次成功 retrieve（47 次新查询、1 次翻页），交付候选 423 次、去重 81 个 Chunk；Query 取帧 81 次，检查 24 个不同 Chunk，交付 256 帧次、131 个不同图片 SHA，其中 43 次取帧命中缓存。经历 6 轮 Query、5 次 Evaluator 审核，每次均因 Draft 为空返回 `continue`；Evaluator 未独立取帧，最后在第六轮 Query 触发整轮截止时间。
+- 本轮 `FRAME_INSPECTION_LIMIT` 与 `VIDEO_CONTEXT_BUDGET_EXCEEDED` 均为 0。大量搜索和取帧不代表完整穷举，也不能据此认定截图不在原片。失败产物未保存底层 retrieve 原词，只保留长度、hash、权重及候选 ID；不能用 Supervisor 描述冒充实际检索词。
+
+#### 根因与能力边界
+
+- **能描述图片，不代表描述具有定位区分度。** 白杯、黄色茶水、茶碟等是可识别但通用的线索；杯把形状、局部纹理和物件精确位置需要视觉匹配能力。当前 Chat 路线主要是看图生成文字查询，再检索 Chunk、取帧核验，没有直接用上传图片向量匹配逐关键帧或局部区域。线索弱时容易退化为反复试探，不能只责怪模型“不读图”。
+- **审核目标缺少“当前无法解决”的正常结束决定。** `EvalDecision.action` 只有 `complete / continue`，Evaluator 提示要求先审用户意图、任一层不合格都 continue。空 Draft 因未提供集数而不断退回，即使 Query 诚实说明尚未找到，也没有明确的停搜标准。当前已有无获批项时只输出正文的能力，但缺少区分“仍值得继续”与“已无有效方向”的协议和指令。
+- **有工具活动不等于有进展。** 同义改写、重复候选及反复读取已有图片可能没有增加证据；另一方面，缓存命中或暂未缩小候选范围也不能单独证明浪费。独立审核、补看未覆盖时段、解除错误假设或扩大到正确场景都可能有效。此前[咖啡店局部图实验](../../engine/experiment/chat-image-origin/20261017-mygo-cafe-source/README.md)就是改用较宽的场景描述后找到，不能硬编码“每轮 scope 必须变小”。
+
+#### 已确认方案：Evaluator 增加 `stop`
+
+沿用既有 Query → Evaluator → Supervisor 职责，在 Evaluator 增加“继续检索必要性检查”，放在要求完成用户意图之前；不另建分类 Agent、不增加未经测量的轮次／取帧硬上限。
+
+| action | 含义 |
+| --- | --- |
+| `complete` | 证据足够，进入回答整理；现有允许的诚实无结果答复仍保持兼容 |
+| `continue` | 尚未完成，但存在具体、具有区分度的下一步检索或核验动作 |
+| `stop` | 尚未完成，当前证据与工具下已没有值得继续的方向，正常结束本次检索 |
+
+- **继续条件：** 检查是否新增匹配证据、缩小候选／时间范围、排除关键假设，或获得新的可验证线索。返回 `continue` 时，`advice` 必须说明下一步动作及依据；不以“草稿为空”“用户还没得到答案”单独要求继续。
+- **停止条件：** 当前线索无法区分候选，已有尝试没有带来有效进展，下一步只能重复查找、重复查看或无依据地扩大搜索时返回 `stop`。可先根据图片的可用定位线索判断风险，再结合实际检索核验；不凭模型自报置信度、单一分数或固定次数直接判死。
+- **原因复用 `advice`：** 说明尚未核实的目标、停止依据、当前能力／线索限制及建议补充的周边画面、相邻截图或短视频，不新增原因字段或错误码。`stop` 不表示“原片不存在”，也不表示异常、用户取消或超时。
+- **Supervisor 正常交付：** 接收停搜决定后说明尚未定位及后续可补充的信息，不自动重发相同搜索。保持此前已确认／已提交项，不把本轮未核实候选作为已确认视频卡，不以泛化失败代替说明。
+
+#### 最小实现边界与仍需接通的逻辑
+
+- 主体是 Query／Evaluator／Supervisor 提示词和 `EvalDecision.action` 的调整，`LoopTurn.status` 同步接受 `stop`。继续复用 Canvas 历史、检索调用与取帧来源记录作为判断依据，不增加数据库状态或前端消息 Schema。
+- **不能只加枚举而漏接执行分支。** 当前 Runtime 只有 `continue → turn`、`complete → chat`，冻结草稿、内部 Chat 入口及最终输出校验都以 `complete` 为前提。必须补齐 `stop` 的正常结果构造、路由及 Supervisor 交接，携带停止说明与检索记录；不能直接跳 END 导致缺少 `final_output`，也不能把 `stop` 当作批准未审核 Draft 的捷径。具体接线应复用既有结果／正文通道，不重构整个会话体系。
+- Query 提示同时要求在无有效方向时结束当前阶段并说明限制，让 Evaluator 有机会判断。Evaluator 只在 Query 返回后执行，新增 `stop` 不能保证单次 Query 内部工具循环立即退出，更不能承诺固定响应时长。
+- 保留既有取消、真实 Provider 失败及超时语义，不把它们伪装成业务停搜。普通对话的等待预算、搜索提前返回并为最终说明留时间，以及关键帧／局部视觉索引是相邻待设计项，本次不靠新增硬编码或延长 20 分钟来替代。
+
+#### 验收条件
+
+- 弱线索且无有效进展时可返回 `stop`，搜索正常返回 Supervisor 并形成非空的未解决说明，不再次进入相同 Query 循环，不产生 `answer.failed`；未经核实的 Draft 不被批准或展示为确认片段。
+- 有具体新方向、独立核验理由或待补看的高价值区间时仍可 `continue`，不因候选暂未减少、需要扩大场景查询或命中缓存而机械停止；既有 `complete` 和无结果正常答复保持兼容。
+- 多个并行／先后搜索中，一个任务 stop 不撤销其他已确认结果；Supervisor 能区分停搜、超时、取消和模型异常。
+- 用已有茶杯失败、咖啡店成功及六图样本回归，记录实际 action、advice、工具轨迹和最终消息；不把假模型的路由通过当成真实图片定位质量验收，不承诺仅新增 enum 即解决全部长耗时问题。
+
+依据：[Evaluator 指令](../../agent/chat/video_search/evaluator.py)、[Evaluator Skill](../../agent/chat/video_search/skills/evaluator/SKILL.md)、[决策与轮次类型](../../agent/chat/video_search/state.py)、[Runtime 路由](../../agent/chat/video_search/runtime.py)、[草稿冻结](../../agent/chat/video_search/video_search_canvas.py)、[内部 Chat](../../agent/chat/video_search/chat.py)、[最终输出校验](../../agent/chat/video_search/output.py)、[Supervisor 工具交接](../../agent/chat/supervisor.py)。实验目录沿用本地 ignore 规则，引用的是本机原始产物；方案尚未编码、部署或重新实测。
+
+### C16：构图检索缺少共同的帧级候选图库，等待 Event 级检索接续实验
+
+日期：2026-10-17。类型：实验数据覆盖不足与外部开发依赖。状态：**等待另一工作线完成 Event 级检索**（用户确认正在推进，尚未作为本项交付验收）；当前保留已有实验，不在 17 张样本上继续据排名选择模型或融合权重。
+
+#### 当前卡点与已有证据
+
+- 本地 PCP＋检测框图实验只有 17 张选图；人物框共同候选池为 13 张，排除查询自身后 12 张。缺少足够丰富的构图和人物布局，无法区分“图库没有合适画面”与“存在但模型没有排上来”。
+- 俯视房间实测中，现有 Chat 检索 MyGO 13 集，返回第 7 集 `04:06.559–04:09.100`、`05:32.000–05:42.300` 两段休息室画面。第一段较贴近斜俯拍、人物靠右下与左侧大片地板的关系；第二段复用同机位但变成三人。这些候选不在旧 17 图图库中，不能据本轮结果判定 Chat 整体优于 PCP／人物框向量。
+- 当前正式视觉索引编码的是视频 Chunk；本轮 Chat 走“参考图理解 → 文字查询 → Chunk 召回 → 原片取帧核验”。现有关键帧图片或取帧记录不等于已建立可检索的逐帧向量库。
+
+#### 已确认的接续方向
+
+1. **先等待 Event 级检索就绪及目标数据可检索。**由另一工作线交付，本构图实验不重复实现 Event 存储、索引、工具或回填。需要能够取得命中 Event 的身份、视频来源和原视频毫秒时间范围。
+2. **通过 Event 检索定位更细的候选范围，再取得对应关键帧。**优先复用另一线交付的关键帧；若只提供 Event 和时间范围，则接现有原片取帧能力。保留 Event／视频身份、帧时间及图片路径，按镜头和画面去重；Event 不保证等于一个镜头，必要时取多帧核对。
+3. **在同一批 Event 候选关键帧上接续构图实验。**对同一图库提取原图 embedding、PCP 类别分布、人物框图 embedding，比较单路与可调权重融合；分别评议构图类别，以及人物位置、大小和排列。原图 embedding 不替代人物框图特征。
+4. **区分候选召回与构图排序。**先确认相似画面是否进入 Event 候选集，再评价构图特征是否把它排上来；候选池外的画面不能被当作排序模型失败。Chat 发现的例子作为候选线索，经人工核对后使用，不直接当作完整标准答案集。
+
+依赖边界：[Event 细粒度检索 TRD](../design/event-retrieval-trd.md) 首版是 Event 内容词法检索，不强制 Event 向量，也未承诺逐关键帧向量索引。因此“Event 检索完成”表示可以接续定位和取帧；关键帧与各路特征是否已交付仍需确认，不能自动标为构图相似检索已完成。
+
+恢复实验的条件：目标视频的 Event 检索可用，命中可追溯到原片时间并取得对应帧，形成相较 17 图更丰富且各方法共用的候选集；随后用固定查询和人工评议检查召回、排序及人物布局差异。当前不预先选定最佳模型、权重或宣称全库效果。
+
+依据：[俯视房间 Chat 对照实验](../../engine/experiment/composition-models/20261017-chat-composition/README.md)、[PCP＋全部框／人物框实验](../../engine/experiment/composition-models/20261017-pcp-box-fusion/README.md)、[Chunk 视觉编码](../../server/service/video_parse_index_coordinator.py)、[现有检索链路](../../server/service/video_retrieval.py)。实验目录沿用本地 ignore 规则；本次只记录卡点与外部依赖，未实施或验收 Event 检索。
