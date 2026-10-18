@@ -28,6 +28,54 @@ docker compose ps
 docker compose logs -f mysql elasticsearch
 ```
 
+## 本地模拟验证码邮件
+
+使用可选的 [Mailpit](https://mailpit.axllent.org/docs/install/docker/) 收件箱测试邮箱登录，
+无需域名、邮箱授权码或付费发信服务。Seekino 仍通过现有 SMTP 发送验证码；Mailpit
+捕获邮件供本地查看，不投递到收件人的真实邮箱。验证码的随机生成、Redis 校验、
+有效期和发送限制继续生效。
+
+在 `.env.local` 中将现有 SMTP 配置改为：
+
+```dotenv
+ANIVAG_SMTP_HOST=127.0.0.1
+ANIVAG_SMTP_PORT=1025
+ANIVAG_SMTP_USERNAME=
+ANIVAG_SMTP_PASSWORD=
+ANIVAG_SMTP_SENDER=noreply@seekino.test
+ANIVAG_SMTP_USE_SSL=false
+ANIVAG_SMTP_START_TLS=false
+```
+
+应用运行在宿主机，因此使用 `127.0.0.1`，而不是容器服务名 `mailpit`。
+SMTP 默认启用 STARTTLS，此处必须显式关闭，匹配 Mailpit 的本地无 TLS 接口。
+若 1025 或 8025 被占用，可在 `.env.local` 设置 `ANIVAG_MAILPIT_SMTP_PORT` 或
+`ANIVAG_MAILPIT_WEB_PORT`；更改 SMTP 发布端口时，同时更新 `ANIVAG_SMTP_PORT`。
+
+启动本地验证码依赖：
+
+```bash
+docker compose --env-file .env.local --profile cloud-auth --profile mock-email up -d --wait redis mailpit
+```
+
+测试账号登录时，Server 需以 `ANIVAG_AUTH_MODE=cloud` 启动，并配齐至少 32 字节的
+独立随机签名秘密及 Redis 连接。`ANIVAG_AUTH_QUERY_LEASE_SECONDS` 必须大于
+`config.yaml` 的 `execution_timeout_seconds`（当前为 1200 秒，可为本次测试设租约
+1800 秒）。使用普通 HTTP 的内网测试入口时设置 `ANIVAG_AUTH_COOKIE_SECURE=false`；
+正式 HTTPS 入口使用 `true`。SMTP 配置在 Server 启动时读取。
+
+在 Seekino 登录框填写测试邮箱（例如 `tester@example.com`），点击发送验证码；
+在电脑打开 `http://127.0.0.1:8025` 查看邮件，再回到原浏览器输入验证码完成登录。
+手机测试时也可在电脑查看验证码，并在手机申请验证码的同一个浏览器中完成验证。
+Mailpit 的 SMTP 和收件箱端口都只开放给本机；`mock-email` profile 默认不启动。
+邮件使用容器内临时存储，Mailpit 退出后清空。
+
+只停止模拟收件箱：
+
+```bash
+docker compose --env-file .env.local --profile mock-email stop mailpit
+```
+
 ## 视频测试
 
 正常从 Web 选择并上传本机视频，不需要把样例视频挂载到数据库容器。

@@ -2,6 +2,19 @@ name: anivag-local
 
 # Development dependencies only. API, Consumer, Vite and ffmpeg run on the host.
 services:
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    profiles: [mock-email]
+    ports:
+      - "127.0.0.1:${ANIVAG_MAILPIT_SMTP_PORT:-1025}:1025"
+      - "127.0.0.1:${ANIVAG_MAILPIT_WEB_PORT:-8025}:8025"
+    healthcheck:
+      test: [CMD, /mailpit, readyz]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
   redis:
     image: redis:7.4-alpine
     profiles: [cloud-auth]

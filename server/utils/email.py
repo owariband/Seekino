@@ -31,10 +31,10 @@ class SMTPEmailSender:
         if not config.host or not config.sender:
             raise RuntimeError("SMTP is not configured")
         message = EmailMessage()
-        message["Subject"] = "AniVAG 登录验证码"
+        message["Subject"] = "Seekino 登录验证码"
         message["From"] = config.sender
         message["To"] = email
-        message.set_content(f"你的 AniVAG 登录验证码是 {code}，{ttl_seconds} 秒内有效。请勿将验证码告诉他人。")
+        message.set_content(f"你的 Seekino 登录验证码是 {code}，{ttl_seconds} 秒内有效。请勿将验证码告诉他人。")
         client = smtplib.SMTP_SSL if config.use_ssl else smtplib.SMTP
         options = {"timeout": config.timeout_seconds}
         if config.use_ssl:
