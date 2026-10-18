@@ -1101,6 +1101,19 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 
 依据：[第一次完整报告](../../outputs/verification/mygo-ep04-speaker-review-20261016/report.md)、[结构化对照](../../outputs/verification/mygo-ep04-speaker-review-20261016/comparison-summary.json)、[最终首段](../../outputs/verification/mygo-ep04-speaker-review-20261016/final-seq0.json)、[ASR 契约](../../engine/common/transcription.py)、[解析宿主](../../server/service/video_parse.py)、[原系列保留检查](../../outputs/verification/mygo-ep04-speaker-review-20261016/original-preservation-check.json)。
 
+### B13：解析启动负载尖峰、Codex 重复加载 MCP 与任务列表过量读取
+
+- 状态：2026-10-18 MCP 实例开关已实现，并完成 bundled Codex 无推理启动/恢复验证；任务列表轻量投影尚未实施。未重启现有服务，真实解析负载收益尚未验收。历史现场任务为隔离第四集 v10 `6ec42661-5938-4857-b7d0-d4a9d2eb77e2`；接手后只读详情已确认 COMPLETE、70/70 单元完成、lastError=null，不能沿用此前 PARSING 状态。
+
+#### MCP 修复与验收进展（2026-10-18）
+
+- 代码：模型创建/build 入口新增实例级 `mcp: bool = False`，严格校验后沿 CodexAgentModel → CodexSession 传递，生成 fallback 沿用本次参数。V2 解析共用创建处显式 False；Server 装配处 Query/Evaluator/Chat 显式 False，Codex Supervisor 显式 True；Gateway 没有角色策略分支，现有配置、任务快照和会话取消机制不变。
+- 执行：False 在同一已初始化 app-server 上通过 `config/read` 读取有效服务器集合，再为 thread/start、thread/resume（含 rollback 后恢复）逐项覆盖 `enabled=false`；读取失败或形状异常会关闭会话并报错。True 不覆盖 MCP enabled 状态。两者均保留原生工具禁用、read-only sandbox 和 approval never，宿主动态工具继续可用。
+- 真实运行验证：使用项目 bundled binary/SDK 0.156.1，在现有全局配置下创建独立无推理 thread；bytedcli、chrome-devtools、computer-use、motorComponentDoc、node_repl 全部报告 `runtimeStatus=disabled`、工具数 0，进程树未见对应 MCP 命令，宿主动态工具调用成功。该次 open 约 1.32 秒；这是单次启动记录，不是前后性能对比。
+- 隔离验证：临时 CODEX_HOME 中配置一个 enabled/required 的受控本地 MCP 和一个 disabled MCP，用历史注入持久化测试 thread 后跨进程恢复。False 的 start/resume 均没有 MCP 启动标记；True 的 start/resume 均能连接原本启用的服务器并发现工具，原本 disabled 的服务器始终没有启动。共 0 个推理 turn，未启动整套全局 MCP，也未修改全局配置。
+- 回归：`.venv/bin/python -m pytest tests/gateway/test_codex_{client,model,supervisor}.py tests/gateway/test_{model,agent}_factory.py tests/server/test_bootstrap.py tests/server/test_video_parse_worker.py -q`，536 passed，1 条 Starlette/AnyIO 依赖弃用警告。`git diff --check` 通过；按实施前快照完成 hypnos-review，未发现需修正的行为或职责边界问题，已补 rollback 恢复仍携带禁用表的断言。
+- 验证边界：参数传递、非法值、fallback、启动/恢复/rollback、动态工具、取消及上层装配有相关回归；真实 runtime 证据不替代新解析任务在服务中的负载验收。现有服务未重启，本轮未重跑解析、迁移或 commit/push。列表读取量/时延改造、共享 app-server 和前端请求截止时间仍待后续核定。
+
 ## Chat 联调问题（2026-09-21）
 
 ### C01：草稿引用未召回的 Evidence 导致回答失败

@@ -295,6 +295,7 @@ def _build_application_services(
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 reasoning_effort=agent_config.query_reasoning_effort,
+                mcp=False,
             ),
             agent_model_factory.build_structured(
                 model=evaluator_model_name,
@@ -303,6 +304,7 @@ def _build_application_services(
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 reasoning_effort=agent_config.evaluator_reasoning_effort,
+                mcp=False,
             ),
             agent_model_factory.build_loop(
                 model=chat_model_name,
@@ -311,6 +313,7 @@ def _build_application_services(
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 reasoning_effort=agent_config.chat_reasoning_effort,
+                mcp=False,
             ),
             retrieval.search,
             frame_reader=VideoFrameReader(v2_repository, artifact_store),
@@ -360,6 +363,7 @@ def _build_application_services(
             video_runtime,
             supervisor_model_factory.build_supervisor(
                 harness=gateway_config.supervisor_harness,
+                mcp=gateway_config.supervisor_harness == "codex",
                 model=supervisor_binding.model if independent_supervisor else chat_model_name,
                 request_timeout_seconds=request_timeout,
                 max_output_tokens=max_output_tokens,

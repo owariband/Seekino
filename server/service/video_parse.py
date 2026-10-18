@@ -1583,7 +1583,7 @@ class VideoParseRuntimeService:
                 }) if definition.fallback is not None else None
             ),
         })
-        model = self._gateway.create_generative_model(definition)
+        model = self._gateway.create_generative_model(definition, mcp=False)
         try:
             return model.generate(
                 inputs, schema_name=schema_name, result_type=result_type,

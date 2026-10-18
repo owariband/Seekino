@@ -1399,6 +1399,13 @@ def test_frozen_codex_visual_model_uses_gateway_native_harness(monkeypatch, tmp_
     runtime._gateway_config = load_config()
     runtime._gateway_config.model_sources["native_codex"] = CodexModelSourceConfig()
     runtime._gateway = GatewayClient(runtime._gateway_config)
+    real_create_model = runtime._gateway.create_generative_model
+
+    def create_model(definition, **options):
+        assert options["mcp"] is False
+        return real_create_model(definition, **options)
+
+    monkeypatch.setattr(runtime._gateway, "create_generative_model", create_model)
     binding = GenerativeModelConfig(
         source="native_codex", model="frozen-vision-gpt", request_timeout_seconds=10,
         max_output_tokens=2048, reasoning_effort="high", supports_vision_input=True,
@@ -1416,6 +1423,7 @@ def test_frozen_codex_visual_model_uses_gateway_native_harness(monkeypatch, tmp_
     assert constructed[0]["model"] == "frozen-vision-gpt"
     assert constructed[0]["max_output_tokens"] == 2048
     assert constructed[0]["reasoning_effort"] == "high"
+    assert constructed[0]["mcp"] is False
     assert [type(item) for item in sessions[0].inputs] == [CodexImageInput, CodexTextInput, CodexImageInput]
     assert sessions[0].inputs[0].url != sessions[0].inputs[2].url
     assert all(item.url.startswith("data:image/png;base64,") for item in (sessions[0].inputs[0], sessions[0].inputs[2]))

@@ -32,6 +32,8 @@ class _FakeClient:
         self.initialized = False
         self.closed = False
         self.thread_params = None
+        self.servers = {"global-docs": {"command": "unused", "enabled": True}}
+        self.config_reads = []
 
     def start(self) -> None:
         self.started = True
@@ -43,6 +45,13 @@ class _FakeClient:
     def thread_start(self, params):
         self.thread_params = params
         return SimpleNamespace(thread=SimpleNamespace(id="thread-1"))
+
+    def request(self, method, params, *, response_model):
+        assert method == "config/read"
+        self.config_reads.append(params)
+        return response_model.model_validate({
+            "config": {"mcp_servers": self.servers}, "origins": {},
+        })
 
     def close(self) -> None:
         self.closed = True
@@ -85,12 +94,87 @@ def test_codex_session_starts_ephemeral_read_only_dynamic_tool_thread() -> None:
     assert fake.thread_params["ephemeral"] is True
     assert fake.thread_params["dynamicTools"][0]["name"] == "lookup"
     assert captured["config"].experimental_api is True
-    assert "mcp_servers={}" in captured["config"].config_overrides
+    assert fake.config_reads == [{"cwd": "/tmp", "includeLayers": False}]
+    assert fake.thread_params["config"] == {
+        "mcp_servers": {"global-docs": {"enabled": False}},
+    }
     assert "features.shell_tool=false" in captured["config"].config_overrides
     assert "features.unbounded_connection_retries=false" in captured["config"].config_overrides
     assert captured["handler"](
         "item/commandExecution/requestApproval", {}
     ) == {"decision": "cancel"}
+
+
+@pytest.mark.parametrize("mcp", [False, True])
+@pytest.mark.parametrize("resume", [False, True])
+def test_mcp_is_controlled_per_session_for_start_and_resume(mcp, resume):
+    class Client(_FakeClient):
+        def thread_resume(self, thread_id, params=None):
+            self.thread_params = params
+            return {"thread": {"id": thread_id}}
+
+    fake = Client()
+    fake.servers = {"docs.with.dots": {"enabled": True}, "disabled": {"enabled": False}}
+    tool = StructuredTool.from_function(lambda value: value, name="lookup", description="Look up a value.")
+    session = CodexSession(
+        model="model", tools=[tool], reasoning_effort="none", codex_bin=None,
+        cwd=None, max_tool_calls=None, check_control=None, mcp=mcp,
+        persistent=resume, native_thread_id="thread-1" if resume else None,
+        client_factory=lambda *_args: fake,
+    )
+    try:
+        session.open()
+        options = fake.thread_params
+        if mcp:
+            assert not fake.config_reads
+            assert "config" not in options
+            assert "configured MCP tools" in options["baseInstructions"]
+        else:
+            assert len(fake.config_reads) == 1
+            assert options["config"]["mcp_servers"] == {
+                "docs.with.dots": {"enabled": False}, "disabled": {"enabled": False},
+            }
+            assert "file access, MCP," in options["baseInstructions"]
+        assert "shell commands" in options["baseInstructions"]
+        assert "browser tools" in options["baseInstructions"]
+        assert "features.shell_tool=false" in session._config.config_overrides
+        assert session._handle_request("item/tool/call", {
+            "callId": "lookup-1", "tool": "lookup", "arguments": {"value": "host tool"},
+        })["success"]
+        assert fake.servers["docs.with.dots"]["enabled"] is True
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("failure", ["read", "shape"])
+def test_mcp_configuration_failure_closes_before_starting_thread(failure):
+    class Client(_FakeClient):
+        def request(self, *args, **kwargs):
+            if failure == "read":
+                raise RuntimeError("effective configuration unavailable")
+            return super().request(*args, **kwargs)
+
+    fake = Client()
+    if failure == "shape":
+        fake.servers = []
+    session = CodexSession(
+        model="model", tools=[], reasoning_effort="none", codex_bin=None,
+        cwd=None, max_tool_calls=None, check_control=None,
+        client_factory=lambda *_args: fake,
+    )
+    with pytest.raises(Exception, match="configuration unavailable|mcp_servers must be a table"):
+        session.open()
+    assert fake.closed
+    assert fake.thread_params is None
+
+
+@pytest.mark.parametrize("mcp", [None, 0, 1, "false", [], {}])
+def test_session_rejects_non_boolean_mcp_before_constructing_client(mcp):
+    with pytest.raises(ValueError, match="mcp must be a boolean"):
+        CodexSession(
+            model="model", tools=[], reasoning_effort="none", codex_bin=None,
+            cwd=None, max_tool_calls=None, check_control=None, mcp=mcp,
+        )
 
 
 @pytest.mark.parametrize("native_thread_id", [None, "thread-1"])
@@ -181,6 +265,9 @@ def test_persistent_session_reverts_uncommitted_turn_then_resumes_same_thread() 
             self.timeouts.append(timeout_seconds)
             if method == "thread/resume":
                 assert response_model is ThreadResumeResponse
+                assert params["config"] == {
+                    "mcp_servers": {"global-docs": {"enabled": False}},
+                }
                 self.calls.append((method, params["threadId"]))
                 return SimpleNamespace(thread=SimpleNamespace(id=params["threadId"], turns=[SimpleNamespace(id="committed-turn")]))
             self.calls.append((method, params))
@@ -370,6 +457,8 @@ class _TransportClient(_ObservedCodexClient):
 
     def _write_message(self, message):
         self.sent.append(message)
+        if message.get("method") == "config/read":
+            self.incoming.put({"id": message["id"], "result": {"config": {}, "origins": {}}})
         if message.get("method") == "turn/start":
             self.on_turn(self, message)
 

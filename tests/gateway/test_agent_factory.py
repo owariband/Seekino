@@ -406,6 +406,71 @@ def test_codex_factory_shares_one_executor(
     factory.close()
 
 
+@pytest.mark.parametrize("builder", ["build_structured", "build_loop", "build_supervisor"])
+def test_codex_factory_mcp_control_is_per_model_and_independent_of_builder(monkeypatch, builder):
+    calls = []
+
+    def build(**options):
+        calls.append(options)
+        return SimpleNamespace(
+            model_name=options["model"], provider_name="codex", supports_vision_input=True,
+            close=lambda: None,
+        )
+
+    monkeypatch.setattr(agent_factory, "CodexAgentModel", build)
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": CodexModelSourceConfig()}, environ={},
+    )
+    options = {"harness": "codex"} if builder == "build_supervisor" else {}
+    models = []
+    try:
+        for mcp_options in ({}, {"mcp": True}, {"mcp": False}):
+            models.append(getattr(factory, builder)(**_build_arguments(), **options, **mcp_options))
+        assert [call["mcp"] for call in calls] == [False, True, False]
+        assert all(call["executor"] is calls[0]["executor"] for call in calls)
+    finally:
+        for model in models:
+            model.close()
+        factory.close()
+
+
+@pytest.mark.parametrize("builder", ["build_structured", "build_loop", "build_deep_agent", "build_supervisor"])
+@pytest.mark.parametrize("mcp", [None, 0, 1, "false", []])
+def test_factory_rejects_non_boolean_mcp_before_adapter_construction(monkeypatch, builder, mcp):
+    monkeypatch.setattr(
+        agent_factory, "OpenAIStructuredToolAgentModel",
+        lambda **_options: pytest.fail("invalid mcp created a structured adapter"),
+    )
+    monkeypatch.setattr(
+        agent_factory, "OpenAIAgentModel",
+        lambda *_args, **_options: pytest.fail("invalid mcp created a loop adapter"),
+    )
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()},
+        environ={"DEEPSEEK_API_KEY": "test-key"},
+    )
+    options = {"harness": "deepagents"} if builder == "build_supervisor" else {}
+    try:
+        with pytest.raises(ValueError, match="mcp must be a boolean"):
+            getattr(factory, builder)(**_build_arguments(), **options, mcp=mcp)
+    finally:
+        factory.close()
+
+
+@pytest.mark.parametrize("builder", ["build_structured", "build_loop", "build_deep_agent", "build_supervisor"])
+def test_api_factory_accepts_mcp_without_adding_native_adapter_arguments(builder):
+    factory = agent_factory.AgentModelFactory(
+        _agent_config(), {"primary": _openai_source()},
+        environ={"DEEPSEEK_API_KEY": "test-key"},
+    )
+    options = {"harness": "deepagents"} if builder == "build_supervisor" else {}
+    try:
+        model = getattr(factory, builder)(**_build_arguments(), **options, mcp=True)
+        assert model.provider_name == "deepseek"
+    finally:
+        factory.close()
+
+
 def test_claude_local_subscription_needs_no_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

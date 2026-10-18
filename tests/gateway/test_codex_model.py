@@ -157,6 +157,33 @@ def _model_for(session: _FakeSession, **overrides) -> CodexAgentModel:
     return CodexAgentModel(**values)
 
 
+@pytest.mark.parametrize("mcp", [False, True])
+def test_mcp_control_is_passed_to_each_new_session(mcp):
+    options = []
+
+    def factory(**kwargs):
+        options.append(kwargs)
+        return _FakeSession([])
+
+    model = _model_for(_FakeSession([]), mcp=mcp, session_factory=factory)
+    try:
+        for _ in range(2):
+            model._new_session(tools=[], max_model_calls=1, check_control=None)
+        assert [item["mcp"] for item in options] == [mcp, mcp]
+    finally:
+        model.close()
+
+
+@pytest.mark.parametrize("mcp", [None, 0, 1, "false", [], {}])
+def test_model_rejects_non_boolean_mcp_before_allocating_executor(mcp, monkeypatch):
+    def unexpected_executor(**_kwargs):
+        pytest.fail("invalid mcp created an executor")
+
+    monkeypatch.setattr("gateway.codex.agent.ThreadPoolExecutor", unexpected_executor)
+    with pytest.raises(ValueError, match="mcp must be a boolean"):
+        _model_for(_FakeSession([]), mcp=mcp)
+
+
 def _context_policy(maximum_input_tokens: int) -> ContextWindowPolicy:
     return ContextWindowPolicy(
         context_window_tokens=maximum_input_tokens + 200,

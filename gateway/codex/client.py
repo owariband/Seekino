@@ -15,7 +15,7 @@ from openai_codex import ApprovalMode, CodexConfig, RunInput, Sandbox, Thread, T
 from openai_codex.client import CodexClient
 from openai_codex.errors import CodexError
 from openai_codex.generated.v2_all import (
-    AgentMessageThreadItem, ErrorNotification, ItemCompletedNotification, ThreadResumeResponse,
+    AgentMessageThreadItem, ConfigReadResponse, ErrorNotification, ItemCompletedNotification, ThreadResumeResponse,
     ReasoningEffort as CodexReasoningEffort,
 )
 from openai_codex.models import Notification
@@ -30,14 +30,13 @@ _logger = logging.getLogger(__name__)
 
 
 _BASE_INSTRUCTIONS = """\
-You are a bounded AniVAG reasoning component. Use only the dynamic tools supplied
-by the host for external actions. Do not use shell commands, file access, MCP,
+You are a bounded AniVAG reasoning component. Use only {allowed_tools}
+for external actions. Do not use shell commands, file access, {mcp_restriction}
 apps, plugins, browser tools, web search, user-input tools, or permission tools.
 Return the requested answer or structured result directly.
 """
 
 _DISABLED_FEATURE_OVERRIDES = (
-    "mcp_servers={}",
     'tools.disabled_tools=["apply_patch","exec","exec_command",'
     '"image_generation","request_user_input","shell","spawn_agent",'
     '"view_image","web_search","write_stdin"]',
@@ -218,12 +217,17 @@ class CodexSession:
         native_thread_id: str | None = None,
         persistent: bool = False,
         history_request_timeout_seconds: float = 2.0,
+        mcp: bool = False,
     ) -> None:
+        if not isinstance(mcp, bool):
+            raise ValueError("mcp must be a boolean")
         if not isfinite(history_request_timeout_seconds) or history_request_timeout_seconds <= 0:
             raise ValueError("history_request_timeout_seconds must be finite and positive")
         self._model = model
         self._reasoning_effort = reasoning_effort
         self._cwd = cwd
+        self._mcp = mcp
+        self._thread_config: dict[str, Any] = {}
         self._persistent = persistent
         self._history_request_timeout_seconds = history_request_timeout_seconds
         self._native_thread_id = native_thread_id
@@ -303,6 +307,17 @@ class CodexSession:
         try:
             client.start()
             client.initialize()
+            if not self._mcp:
+                effective = client.request("config/read", {
+                    "cwd": self._cwd, "includeLayers": False,
+                }, response_model=ConfigReadResponse)
+                servers = effective.config.model_dump().get("mcp_servers", {})
+                if not isinstance(servers, dict):
+                    raise CodexError("Codex effective mcp_servers must be a table")
+                # Empty tables merge with inherited servers instead of removing them.
+                self._thread_config = {"mcp_servers": {
+                    name: {"enabled": False} for name in servers
+                }}
             if self._persistent and self._native_thread_id is not None:
                 started = client.thread_resume(self._native_thread_id, self._thread_options())
             else:
@@ -317,13 +332,19 @@ class CodexSession:
             raise
 
     def _thread_options(self) -> dict[str, Any]:
+        instructions = _BASE_INSTRUCTIONS.format(
+            allowed_tools=("the dynamic tools supplied by the host and configured MCP tools"
+                           if self._mcp else "the dynamic tools supplied by the host"),
+            mcp_restriction="" if self._mcp else "MCP,",
+        )
         return {
             "approvalPolicy": "never",
-            "baseInstructions": _BASE_INSTRUCTIONS,
+            "baseInstructions": instructions,
             "cwd": self._cwd,
-            "developerInstructions": _BASE_INSTRUCTIONS,
+            "developerInstructions": instructions,
             "model": self._model,
             "sandbox": "read-only",
+            **({"config": self._thread_config} if not self._mcp else {}),
         }
 
     def _load_thread(self, client: CodexClientLike, response: object) -> None:

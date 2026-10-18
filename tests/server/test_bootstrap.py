@@ -439,13 +439,27 @@ def test_process_assembly_receives_runtime_configuration(
         return real_retrieval(*args, **kwargs)
 
     monkeypatch.setattr(retrieval_builder, "VideoParseRetrievalService", create_retrieval)
+    structured_builds = []
+    loop_builds = []
     supervisor_builds = []
+    real_build_structured = bootstrap.AgentModelFactory.build_structured
+    real_build_loop = bootstrap.AgentModelFactory.build_loop
     real_build_supervisor = bootstrap.AgentModelFactory.build_supervisor
+
+    def build_structured(factory, **kwargs):
+        structured_builds.append(kwargs)
+        return real_build_structured(factory, **kwargs)
+
+    def build_loop(factory, **kwargs):
+        loop_builds.append(kwargs)
+        return real_build_loop(factory, **kwargs)
 
     def build_supervisor(factory, **kwargs):
         supervisor_builds.append({**kwargs, "binding": factory._binding})
         return real_build_supervisor(factory, **kwargs)
 
+    monkeypatch.setattr(bootstrap.AgentModelFactory, "build_structured", build_structured)
+    monkeypatch.setattr(bootstrap.AgentModelFactory, "build_loop", build_loop)
     monkeypatch.setattr(bootstrap.AgentModelFactory, "build_supervisor", build_supervisor)
     application = main_module.init_application(settings)
     services = application.services
@@ -497,6 +511,8 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.reasoning_effort == "low"
         assert runtime._evaluator_model.reasoning_effort == "high"
         assert runtime._chat_model.reasoning_effort == "max"
+        assert [options["mcp"] for options in structured_builds] == [False, False]
+        assert {options["mcp"] for options in loop_builds} == {False}
         supervisor_model = services.agent._supervisor_runtime._model
         assert callable(supervisor_model.run_agent)
         assert callable(supervisor_model.confirm_turn)
@@ -506,6 +522,7 @@ def test_process_assembly_receives_runtime_configuration(
         )
         assert supervisor_model.provider_name == ("codex" if supervisor_backend == "codex" else "deepseek")
         assert supervisor_builds[0]["harness"] == ("deepagents" if supervisor_backend == "legacy" else supervisor_backend)
+        assert supervisor_builds[0]["mcp"] is (supervisor_backend == "codex")
         assert supervisor_builds[0]["reasoning_effort"] == ("high" if supervisor_backend == "legacy" else "low")
         expected_supervisor_timeout = expected_agent_timeout if supervisor_backend == "legacy" else expected_independent_timeout
         assert supervisor_builds[0]["request_timeout_seconds"] == expected_supervisor_timeout
@@ -579,11 +596,14 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement._query_model.reasoning_effort == "max"
             assert replacement._evaluator_model.reasoning_effort == "none"
             assert replacement._chat_model.reasoning_effort == "low"
+            assert [options["mcp"] for options in structured_builds] == [False] * 4
+            assert {options["mcp"] for options in loop_builds} == {False}
             replacement_supervisor = services.agent._supervisor_factory(replacement, updated)
             assert callable(replacement_supervisor._model.run_agent)
             if supervisor_backend != "codex":
                 assert replacement_supervisor._model.session_store is supervisor_model.session_store
             assert supervisor_builds[1]["reasoning_effort"] == ("none" if supervisor_backend == "legacy" else "low")
+            assert supervisor_builds[1]["mcp"] is (supervisor_backend == "codex")
             replacement_request_timeout = min(
                 timeout for timeout in (
                     global_timeout,

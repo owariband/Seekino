@@ -176,9 +176,11 @@ class AgentModelFactory:
         finally:
             self._supervisor_sessions.close()
 
-    def _controls(self, *, request_timeout_seconds, max_output_tokens, max_input_chars, context_window_policy):
+    def _controls(self, *, request_timeout_seconds, max_output_tokens, max_input_chars, context_window_policy, mcp):
         if self._closed:
             raise RuntimeError("Agent model factory is closed")
+        if not isinstance(mcp, bool):
+            raise ValueError("mcp must be a boolean")
         native_context = isinstance(self._primary, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig))
         if self._binding is not None:
             from gateway.model_factory import _context_policy, _shared_context_policy
@@ -205,6 +207,7 @@ class AgentModelFactory:
         return dict(
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
+            mcp=mcp,
         )
 
     def _bound(self, model, controls):
@@ -223,11 +226,13 @@ class AgentModelFactory:
         max_input_chars: int,
         context_window_policy: ContextWindowPolicy,
         total_timeout_enabled: bool = True,
+        mcp: bool = False,
     ) -> SupervisorAgentModel:
         """Bind the internal Supervisor harness to the configured API model."""
         controls = self._controls(
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
+            mcp=mcp,
         )
         if not isinstance(
             self._primary, (OpenAIModelSourceConfig, ArkModelSourceConfig)
@@ -271,12 +276,14 @@ class AgentModelFactory:
         max_input_chars: int,
         context_window_policy: ContextWindowPolicy,
         total_timeout_enabled: bool = True,
+        mcp: bool = False,
     ) -> SupervisorAgentModel:
         options = dict(
             model=model, reasoning_effort=reasoning_effort,
             request_timeout_seconds=request_timeout_seconds,
             max_output_tokens=max_output_tokens, max_input_chars=max_input_chars,
             context_window_policy=context_window_policy,
+            mcp=mcp,
         )
         if harness == "deepagents":
             return self.build_deep_agent(**options, total_timeout_enabled=total_timeout_enabled)
@@ -287,6 +294,7 @@ class AgentModelFactory:
         controls = self._controls(
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
+            mcp=mcp,
         )
         adapter = self._build_loop(
             model=model, reasoning_effort=reasoning_effort,
@@ -303,10 +311,12 @@ class AgentModelFactory:
         max_output_tokens: int,
         max_input_chars: int,
         context_window_policy: ContextWindowPolicy,
+        mcp: bool = False,
     ) -> StructuredToolAgentModel:
         controls = self._controls(
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
+            mcp=mcp,
         )
         adapter = self._build_structured(model=model, reasoning_effort=reasoning_effort, **controls)
         adapter.supports_vision_input = self._config.supports_vision_input
@@ -314,7 +324,7 @@ class AgentModelFactory:
 
     def _build_structured(
         self, *, model, reasoning_effort, request_timeout_seconds, max_output_tokens,
-        max_input_chars, context_window_policy,
+        max_input_chars, context_window_policy, mcp,
     ):
         source = self._primary
         common = {
@@ -354,6 +364,7 @@ class AgentModelFactory:
                 codex_bin=source.codex_bin,
                 max_concurrency=source.max_concurrency,
                 executor=self._codex_executor,
+                mcp=mcp,
             )
         if isinstance(source, ClaudeCodeModelSourceConfig):
             return ClaudeAgentModel(
@@ -376,16 +387,18 @@ class AgentModelFactory:
         max_output_tokens: int,
         max_input_chars: int,
         context_window_policy: ContextWindowPolicy,
+        mcp: bool = False,
     ) -> AgentLoopModel:
         controls = self._controls(
             request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars, context_window_policy=context_window_policy,
+            mcp=mcp,
         )
         return self._bound(self._build_loop(model=model, reasoning_effort=reasoning_effort, **controls), controls)
 
     def _build_loop(
         self, *, model, reasoning_effort, request_timeout_seconds, max_output_tokens,
-        max_input_chars, context_window_policy, total_timeout_enabled=True,
+        max_input_chars, context_window_policy, mcp, total_timeout_enabled=True,
     ):
         source = self._primary
         if isinstance(source, OpenAIModelSourceConfig):
@@ -437,6 +450,7 @@ class AgentModelFactory:
                 max_concurrency=source.max_concurrency,
                 executor=self._codex_executor,
                 total_timeout_enabled=total_timeout_enabled,
+                mcp=mcp,
             )
             adapter.supports_vision_input = self._config.supports_vision_input
             return adapter

@@ -128,7 +128,10 @@ class CodexAgentModel:
         executor: ThreadPoolExecutor | None = None,
         session_factory: SessionFactory | None = None,
         total_timeout_enabled: bool = True,
+        mcp: bool = False,
     ) -> None:
+        if not isinstance(mcp, bool):
+            raise ValueError("mcp must be a boolean")
         if not model.strip():
             raise ValueError("model must not be empty")
         if reasoning_effort not in {"none", "low", "high", "max"}:
@@ -162,6 +165,7 @@ class CodexAgentModel:
         self.codex_bin = codex_bin
         self.max_concurrency = max_concurrency
         self.cwd = cwd
+        self.mcp = mcp
         codex_home = Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
         if not codex_home.is_absolute():
             codex_home = Path(cwd or Path.cwd()) / codex_home
@@ -482,6 +486,7 @@ class CodexAgentModel:
             max_tool_calls=None,
             max_model_calls=max_model_calls,
             check_control=check_control,
+            mcp=self.mcp,
             **({"handle_text": handle_text} if handle_text is not None else {}),
             **({"native_thread_id": native_thread_id, "persistent": True} if persistent else {}),
         )

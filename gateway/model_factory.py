@@ -358,7 +358,9 @@ class GatewayClient:
                 self._codex_executors[source_name] = executor
             return executor
 
-    def _build_generative(self, binding: ModelBinding) -> GenerativeModel:
+    def _build_generative(self, binding: ModelBinding, *, mcp: bool = False) -> GenerativeModel:
+        if not isinstance(mcp, bool):
+            raise ValueError("mcp must be a boolean")
         selected = binding
         while selected is not None:
             selected_source = self.config.source(selected.source)
@@ -404,6 +406,7 @@ class GatewayClient:
                 delegate = CodexAgentModel(
                     **common, codex_bin=source.codex_bin,
                     executor=self._codex_executor(binding.source),
+                    mcp=mcp,
                 )
             else:
                 from gateway.claude_code.agent import ClaudeAgentModel
@@ -413,7 +416,7 @@ class GatewayClient:
         else:
             raise ValueError(f"unsupported generative adapter {source.adapter!r}")
         try:
-            fallback = self._build_generative(binding.fallback) if binding.fallback is not None else None
+            fallback = self._build_generative(binding.fallback, mcp=mcp) if binding.fallback is not None else None
             return GenerativeModel(binding, source, delegate, fallback)
         except BaseException:
             close = getattr(delegate, "close", None)
@@ -421,8 +424,8 @@ class GatewayClient:
                 close()
             raise
 
-    def create_generative_model(self, ref: str | ModelBinding) -> GenerativeModel:
-        return self._own(self._build_generative(self._binding(ref, "generative")))
+    def create_generative_model(self, ref: str | ModelBinding, *, mcp: bool = False) -> GenerativeModel:
+        return self._own(self._build_generative(self._binding(ref, "generative"), mcp=mcp))
 
     def create_embedding_model(self, ref: str | EmbeddingModelBinding = "embedding") -> Any:
         from gateway.embedding import build_embedding_model

@@ -272,6 +272,51 @@ def test_frozen_binding_never_reapplies_model_environment(monkeypatch):
         client.close()
 
 
+def test_generative_mcp_control_is_per_instance_and_preserved_for_fallback(monkeypatch):
+    constructed = []
+    _replace(monkeypatch, "gateway.codex.agent", "CodexAgentModel", constructed)
+    client = model_factory.GatewayClient(_config(), environ={})
+    binding = _binding(fallback=_binding(model="fallback-model"))
+    try:
+        client.create_generative_model(binding)
+        client.create_generative_model(binding, mcp=True)
+        client.create_generative_model(binding, mcp=False)
+        assert [delegate.options["mcp"] for delegate in constructed] == [
+            False, False, True, True, False, False,
+        ]
+        assert all(delegate.options["executor"] is constructed[0].options["executor"]
+                   for delegate in constructed)
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("mcp", [None, 0, 1, "false", []])
+def test_generative_rejects_non_boolean_mcp_before_model_or_executor_construction(monkeypatch, mcp):
+    constructed = []
+    _replace(monkeypatch, "gateway.codex.agent", "CodexAgentModel", constructed)
+    client = model_factory.GatewayClient(_config(), environ={})
+    try:
+        with pytest.raises(ValueError, match="mcp must be a boolean"):
+            client.create_generative_model(_binding(), mcp=mcp)
+        assert constructed == []
+        assert client._codex_executors == {}
+        assert client._resources == set()
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("mcp", [False, True])
+def test_generative_mcp_option_does_not_add_api_adapter_arguments(monkeypatch, mcp):
+    constructed = []
+    _replace(monkeypatch, "gateway.ark.multimodal", "ArkMultimodalModel", constructed)
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "test-key"})
+    try:
+        client.create_generative_model(_binding("api"), mcp=mcp)
+        assert "mcp" not in constructed[0].options
+    finally:
+        client.close()
+
+
 def test_source_capability_error_precedes_model_construction(monkeypatch):
     constructed = []
     _replace(monkeypatch, "gateway.claude_code.agent", "ClaudeAgentModel", constructed)
