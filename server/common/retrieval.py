@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from engine.rag import EncoderContract
+from engine.rag.indexing.events import EventIndexingContract
+from engine.rag.retrieval.contracts import RetrievalPolicy
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
 from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
 from gateway.multimodal import adapter_capabilities
@@ -19,7 +21,9 @@ from ..config.retrieval import RetrievalConfig
 from ..repository.video_parse import VideoParseRepository
 from ..service.retrieval_rerank import StructuredTextReranker
 from ..service.video_retrieval import VideoParseRetrievalService
+from ..service.video_event_retrieval import VideoEventRetrievalService
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 
 
 def validate_rerank_source(
@@ -45,22 +49,9 @@ def build_retrieval_service(
     from gateway.model_factory import GatewayClient
 
     client = gateway_client if gateway_client is not None else GatewayClient(gateway_config)
-    embedding_binding = EmbeddingModelBinding(
-        source=embedding_config.source, model=embedding_config.model,
-        encoder_model=embedding_config.encoder_model,
-        dimensions=embedding_config.dimensions, video_fps=embedding_config.video_fps,
-        request_timeout_seconds=min(
-            request_timeout_seconds,
-            embedding_config.request_timeout_seconds or request_timeout_seconds,
-        ),
-        kind="embedding",
+    encoder, embedder = _build_query_embedding(
+        client, embedding_config, request_timeout_seconds=request_timeout_seconds,
     )
-    metadata = client.describe_embedding(embedding_binding)
-    encoder = EncoderContract(
-        provider=metadata.provider_name, model=metadata.encoder_model,
-        encoder_revision=metadata.encoder_revision, dimensions=metadata.dimensions,
-    )
-    embedder = _LazyQueryEmbedder(gateway_client=client, binding=embedding_binding)
     rerank_binding = validate_rerank_source(gateway_config, retrieval_config)
     reranker = None
     if rerank_binding is not None:
@@ -84,6 +75,55 @@ def build_retrieval_service(
         exact=exact, tracing=tracing,
     )
     return service, encoder
+
+
+def build_event_retrieval_service(
+    repository: VideoParseRepository, store: ElasticsearchVideoEventStore, *,
+    gateway_config: GatewayConfig, embedding_config: ParseEmbeddingConfig,
+    retrieval_config: RetrievalConfig, contract: EventIndexingContract,
+    request_timeout_seconds: float, exact: bool = False,
+    tracing: LangfuseTracing | None = None, gateway_client: GatewayClient | None = None,
+) -> VideoEventRetrievalService:
+    """Reuse the configured multimodal query binding without initializing its index."""
+    from gateway.model_factory import GatewayClient
+
+    client = gateway_client if gateway_client is not None else GatewayClient(gateway_config)
+    encoder, embedder = _build_query_embedding(
+        client, embedding_config, request_timeout_seconds=request_timeout_seconds,
+    )
+    if contract.semantic_encoder != encoder or contract.vision_encoder != encoder:
+        raise ValueError("Event encoders differ from the declared shared multimodal query binding")
+    active = sum(value > 0 for value in (
+        retrieval_config.lexical_weight, retrieval_config.text_weight, retrieval_config.vision_weight,
+    ))
+    policy = RetrievalPolicy(
+        lexical_weight=retrieval_config.lexical_weight, semantic_weight=retrieval_config.text_weight,
+        vision_weight=retrieval_config.vision_weight, channel_top_k=retrieval_config.channel_top_k,
+        candidate_budget=retrieval_config.candidate_budget or retrieval_config.channel_top_k * active,
+        rrf_k=retrieval_config.rrf_k, top_k=1,
+    )
+    return VideoEventRetrievalService(
+        repository, store, embedder,
+        contract=contract, policy=policy, exact=exact, tracing=tracing,
+    )
+
+
+def _build_query_embedding(
+    client: GatewayClient, config: ParseEmbeddingConfig, *, request_timeout_seconds: float,
+) -> tuple[EncoderContract, _LazyQueryEmbedder]:
+    binding = EmbeddingModelBinding(
+        source=config.source, model=config.model, encoder_model=config.encoder_model,
+        dimensions=config.dimensions, video_fps=config.video_fps,
+        request_timeout_seconds=min(
+            request_timeout_seconds, config.request_timeout_seconds or request_timeout_seconds,
+        ), kind="embedding",
+    )
+    metadata = client.describe_embedding(binding)
+    encoder = EncoderContract(
+        provider=metadata.provider_name, model=metadata.encoder_model,
+        encoder_revision=metadata.encoder_revision, dimensions=metadata.dimensions,
+    )
+    return encoder, _LazyQueryEmbedder(gateway_client=client, binding=binding)
 
 
 class _LazyQueryEmbedder:

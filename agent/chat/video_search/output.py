@@ -156,6 +156,8 @@ def bind_draft(
         (len(previous_turns) + 1, calls),
     ]:
         for call in turn_calls:
+            if call.status == "error":
+                continue
             validate_result(call.result, inputs)
             last_query = call.query
             scope_recorded = scope_recorded and call.result.searched_video_ids is not None
@@ -354,6 +356,12 @@ def build_retrieval_trace(turns: list[LoopTurn]) -> list[RetrievalTraceEntry]:
             video_chunk_ids=[
                 hit.candidate.video_chunk_id for hit in call.result.hits
             ],
+            granularity=call.granularity,
+            effective_filters=call.effective_filters,
+            event_trace=call.event_trace,
+            role=call.role,
+            status=call.status,
+            error=call.error,
         )
         for turn in turns
         for call in turn.retrieval_calls

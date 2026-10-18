@@ -83,6 +83,143 @@ def _fixture_event(value, *, sequence_no=0):
             "participants": [], "visible_persons": []}
 
 
+def _event_target(*, max_frames=3):
+    from engine.rag.encoding import EncoderContract
+    from engine.rag.indexing.events import EventIndexingContract
+    from engine.rag.vision.event_frames import EventFrameContract
+
+    encoder = EncoderContract("test", "embedding", "v1", 2)
+    contract = EventIndexingContract(semantic_encoder=encoder, vision_encoder=encoder,
+                                    capture=EventFrameContract(max_height=720, max_frames=max_frames))
+    return {"index_name": "seekino_video_events_test_v1", "contract_id": contract.contract_id,
+            "contract": contract.as_dict()}
+
+
+def _event_index_fixture(repository, *, empty=False):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=1)
+    if empty:
+        with factory.begin() as session:
+            content = session.scalar(select(ChunkParseContent))
+            content.content = {"persons": [], "timeline": []}
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_interval_refinement(
+        refine, **_refinement_inputs(repo, refine, now=at),
+        interval_content={"summary": "done"}, member_updates={}, now=at,
+    )
+    lease = queue.claim_chunk_index("index", lease_duration=timedelta(minutes=5), now=at)
+    assert lease is not None
+    return factory, queue, repo, task_id, lease, at, video_lease
+
+
+def _event_receipt(snapshot, target):
+    from engine.rag.indexing.events import EventIndexingContract, build_event_index_receipt, plan_event_index
+
+    contract = EventIndexingContract.model_validate(target["contract"])
+    chunk = snapshot.chunk
+    plans = plan_event_index(snapshot.video_parse_task_id, chunk.video_chunk_id, chunk.content_version,
+                             VideoParseResult.model_validate(chunk.content), chunk.start_seconds,
+                             chunk.end_seconds, contract)
+    return {"parse_task_id": snapshot.video_parse_task_id, "video_chunk_id": chunk.video_chunk_id,
+            "content_version": chunk.content_version, "index_generation": snapshot.target_index_generation,
+            "events": build_event_index_receipt(target["index_name"], contract, plans).as_dict()}
+
+
+def test_event_target_freezes_once_and_rejects_stale_lease(repository):
+    factory, _queue, repo, task_id, lease, at, _video_lease = _event_index_fixture(repository)
+    original = repo.load_task_input(task_id).task.parse_config
+    target = _event_target()
+    assert repo.bind_event_index_target(lease, target, now=at) == target
+    assert repo.bind_event_index_target(lease, _event_target(max_frames=1), now=at) == target
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.bind_event_index_target(replace(lease, lease_version=lease.lease_version + 1), target, now=at)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["_event_index_target_v1"] == target
+    assert repo.load_task_input(task_id).task.parse_config == original
+    with pytest.raises(VideoParseConflictError, match="target changed"):
+        repo.load_chunk_indexing_snapshot(lease, event_target=_event_target(max_frames=1), now=at)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_event_receipt_required_for_completion_and_preserves_other_cache(repository, empty):
+    factory, _queue, repo, task_id, lease, at, video_lease = _event_index_fixture(repository, empty=empty)
+    target = repo.bind_event_index_target(lease, _event_target(), now=at)
+    snapshot = repo.load_chunk_indexing_snapshot(lease, event_target=target, now=at)
+    chunk = snapshot.chunk
+    receipt = _event_receipt(snapshot, target)
+    basic = {key: value for key, value in receipt.items() if key != "events"}
+    repo.save_index_embeddings(lease, chunk.chunk_parse_task_id, chunk.content_version,
+                               {"semantic": {"keep": True}, "events": {"first": {"vector": [1, 0]}}},
+                               receipt=basic, event_target=target, now=at)
+    with pytest.raises(VideoParseConflictError, match="publication is incomplete"):
+        repo.complete_chunk_indexing(lease, chunk.content_version, snapshot.target_index_generation,
+                                     event_target=target, now=at)
+    with pytest.raises(VideoParseConflictError, match="target changed"):
+        repo.save_index_embeddings(lease, chunk.chunk_parse_task_id, chunk.content_version, {},
+                                   receipt=receipt, now=at)
+    repo.save_index_embeddings(lease, chunk.chunk_parse_task_id, chunk.content_version,
+                               {"events": {"second": {"vector": [0, 1]}}}, receipt=receipt,
+                               event_target=target, now=at)
+    repo.complete_chunk_indexing(lease, chunk.content_version, snapshot.target_index_generation,
+                                 event_target=target, now=at)
+    repo.aggregate_task(video_lease, now=at)
+    with factory() as session:
+        content = session.scalar(select(ChunkParseContent))
+        cache = content.detail[INDEX_EMBEDDINGS_DETAIL_KEY]
+        assert set(cache["representations"]["events"]) == {"first", "second"}
+        assert cache["representations"]["semantic"] == {"keep": True}
+        assert cache["receipt"]["events"]["event_count"] == (0 if empty else 1)
+    status = repo.event_index_status(task_id)
+    assert status["task_complete"] and status["covered_chunks"] == status["total_chunks"] == 1
+
+
+def test_event_coverage_pairs_version_and_rebuild_preserves_source(repository):
+    factory, _queue, repo, task_id, lease, at, video_lease = _event_index_fixture(repository)
+    target = repo.bind_event_index_target(lease, _event_target(), now=at)
+    snapshot = repo.load_chunk_indexing_snapshot(lease, event_target=target, now=at)
+    chunk = snapshot.chunk
+    receipt = _event_receipt(snapshot, target)
+    repo.save_index_embeddings(lease, chunk.chunk_parse_task_id, chunk.content_version, {},
+                               receipt=receipt, event_target=target, now=at)
+    repo.complete_chunk_indexing(lease, chunk.content_version, snapshot.target_index_generation,
+                                 event_target=target, now=at)
+    repo.aggregate_task(video_lease, now=at)
+    scope = repo.resolve_retrieval_scope(tenant_id=chunk.tenant_id, series_ids=[chunk.series_id])
+    options = {"index_name": target["index_name"], "contract_id": target["contract_id"]}
+    assert repo.validate_event_coverage(scope, **options) == ((task_id, chunk.video_chunk_id, chunk.content_version),)
+    assert repo.validate_event_coverage(scope, video_chunk_ids=[chunk.video_chunk_id], **options)
+    with pytest.raises(VideoParseConflictError, match="outside"):
+        repo.validate_event_coverage(scope, video_chunk_ids=[str(uuid4())], **options)
+    with pytest.raises(VideoParseConflictError, match="not covered"):
+        repo.validate_event_coverage(scope, **{**options, "contract_id": "other"})
+    replacement = _event_target(max_frames=1)
+    assert repo.request_index_rebuild(task_id, event_target=replacement, now=at) == (chunk.chunk_parse_task_id,)
+    with factory() as session:
+        content = session.scalar(select(ChunkParseContent))
+        parent = session.get(VideoParseTask, task_id)
+        assert content.version == chunk.content_version and content.content == chunk.content
+        assert parent.target_index_generation == snapshot.target_index_generation
+        assert parent.detail["_event_index_target_v1"] == replacement
+    with pytest.raises(VideoParseConflictError, match="COMPLETE"):
+        repo.validate_event_coverage(scope, **options)
+
+
+def test_legacy_complete_is_not_zero_event_coverage(repository):
+    factory, repo, _video, identity, _chunk_id = _seed_retrieval_chunk(repository)
+    task_id = identity.parse_task_id
+    with factory() as session:
+        task = session.get(VideoParseTask, task_id)
+        video = session.get(Video, task.video_id)
+        series = session.get(Series, video.series_id)
+        tenant_id, series_id = series.tenant_id, series.id
+    scope = repo.resolve_retrieval_scope(tenant_id=tenant_id, series_ids=[series_id])
+    target = _event_target()
+    with pytest.raises(VideoParseConflictError, match="not covered"):
+        repo.validate_event_coverage(scope, index_name=target["index_name"], contract_id=target["contract_id"])
+    assert repo.event_index_status(task_id)["covered_chunks"] == 0
+
+
 def test_execution_timing_is_monotonic_frozen_and_preserves_runtime(repository):
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
     lease = queue.claim_chunk("timed", lease_duration=timedelta(minutes=5), now=NOW)
@@ -391,10 +528,20 @@ def test_refinement_same_event_conflict_rolls_back_every_member(repository, same
     with factory() as session:
         before = {row.chunk_task_id: (deepcopy(row.content), row.version, deepcopy(row.detail))
                   for row in session.scalars(select(ChunkParseContent))}
-    with pytest.raises(VideoParseSnapshotConflictError):
+    with pytest.raises(VideoParseSnapshotConflictError) as rejected:
         repo.commit_interval_refinement(second, **second_inputs, interval_content={}, now=at,
             member_updates={untouched: {"persons": ["A", "B", "must not be written"]},
                             target: {"timeline": proposed}})
+    assert rejected.value.reason == "event_changed"
+    assert rejected.value.context["chunk_task_id"] == target
+    assert rejected.value.context["sequence_no"] == 2
+    assert rejected.value.context["base_version"] == 1
+    assert rejected.value.context["current_version"] == 2
+    assert rejected.value.context["current_changed_fields"] == ["description"]
+    assert rejected.value.context["proposed_changed_fields"] == (
+        ["description"] if same_field else ["participants", "speaker"]
+    )
+    assert "first interpretation" not in str(rejected.value.context)
     with factory() as session:
         after = {row.chunk_task_id: (row.content, row.version, row.detail)
                  for row in session.scalars(select(ChunkParseContent))}
@@ -452,9 +599,14 @@ def test_refinement_distinguishes_invalid_proposal_from_invalid_merge(repository
     repo.commit_interval_refinement(first, **first_inputs, interval_content={},
                                    member_updates={target: {"persons": ["B"]}}, now=at)
     expected = ValueError if invalid_proposal else VideoParseSnapshotConflictError
-    with pytest.raises(expected):
+    with pytest.raises(expected) as rejected:
         repo.commit_interval_refinement(second, **second_inputs, interval_content={},
                                        member_updates={target: {"timeline": proposed}}, now=at)
+    if not invalid_proposal:
+        assert rejected.value.reason == "merged_validation_failed"
+        assert rejected.value.context["chunk_task_id"] == target
+        assert rejected.value.context["validation_errors"]
+        assert all(set(error) == {"location", "type"} for error in rejected.value.context["validation_errors"])
     with factory() as session:
         row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
         assert row.content["persons"] == ["B"] and row.content["timeline"][0]["speaker"] == "B"
@@ -497,8 +649,12 @@ def test_refinement_fingerprint_and_full_result_validation_are_atomic(repository
     with factory.begin() as session:
         row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
         row.content = {**row.content, "persons": ["intervening fact"]}
-    with pytest.raises(VideoParseSnapshotConflictError):
+    with pytest.raises(VideoParseSnapshotConflictError) as rejected:
         repo.commit_interval_refinement(lease, **stale, interval_content={}, member_updates={}, now=at)
+    assert rejected.value.reason == "member_snapshot_changed"
+    assert rejected.value.context["chunk_task_id"] == target
+    assert rejected.value.context["base_version"] == rejected.value.context["current_version"] == 1
+    assert rejected.value.context["base_fingerprint"] != rejected.value.context["current_fingerprint"]
     current = _refinement_inputs(repo, lease, now=at)
     with pytest.raises(ValueError):
         repo.commit_interval_refinement(

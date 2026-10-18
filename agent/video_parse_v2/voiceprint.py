@@ -56,6 +56,11 @@ class RegisterVoiceprintArguments(CompareSpeakerArguments):
     speaker: str = Field(min_length=1)
     selection_basis: str = Field(min_length=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
+    replace_source_ref: str | None = Field(default=None, min_length=1)
+
+
+class UnregisterVoiceprintArguments(_Arguments):
+    source_ref: str = Field(min_length=1)
 
 
 class FinishVoiceprintArguments(_Arguments):
@@ -102,7 +107,8 @@ class VoiceprintAgent:
 
 def build_tools(
     canvas: ContextCanvas, *, get_speaker_list: Callable[..., dict],
-    register_voiceprint: Callable[..., dict], finish_voiceprint_preparation: Callable[..., dict],
+    register_voiceprint: Callable[..., dict], unregister_voiceprint: Callable[..., dict],
+    finish_voiceprint_preparation: Callable[..., dict],
     check_control: Callable[[], None] | None = None,
     on_call: Callable[[str], None] | None = None,
 ) -> list[AgentTool]:
@@ -136,12 +142,26 @@ def build_tools(
             description=(
                 "Register an evidenced named speaker using an issued source_ref and a precise absolute millisecond "
                 "subrange inside it. The host extracts original audio and computes the embedding. "
-                "Repeat for independent utterances of the same speaker up to target_refs_count. Exact repeats "
+                "Repeat for independent utterances of the same speaker. target_refs_count is a collection goal, "
+                "not a registration limit; additional reliable independent references are allowed. Exact repeats "
                 "are idempotent; reused sources and overlap with any registered speaker are declined with "
                 "message/retry_hint. Returns added, progress and reference metadata without vectors. "
+                "Optional replace_source_ref atomically replaces one unpublished reference for the same speaker. "
+                "It may use another source or refine the old source's authorized subrange without adding a case. "
+                "The old reference remains if extraction or persistence fails. "
                 "Provide selection_basis; confidence evaluates attribution, not cosine similarity."
             ),
             func=lambda **values: execute("register_voiceprint", register_voiceprint, **values),
+            maximum_result_bytes=32_000,
+        ),
+        build_agent_tool(
+            name="unregister_voiceprint", args_schema=UnregisterVoiceprintArguments,
+            description=(
+                "Remove one registered source_ref during preparation when it is unsuitable and no reliable "
+                "replacement is available. Repeated removal is idempotent. Returns removed and updated counts. "
+                "Only unpublished references can be removed; ready references are static."
+            ),
+            func=lambda **values: execute("unregister_voiceprint", unregister_voiceprint, **values),
             maximum_result_bytes=32_000,
         ),
         build_agent_tool(
@@ -151,7 +171,9 @@ def build_tools(
                 "the fixed speaker list; an empty list permits zero references. Supply skip_reasons for every "
                 "speaker below target_refs_count, including zero references. Under-target speakers with reasons "
                 "may finish when majority coverage is met. Missing coverage or reasons leaves preparation unready "
-                "and returns progress plus a message. Finish before exhausting the Tool budget."
+                "and returns progress plus a message. The host also checks within-speaker acoustic consistency. "
+                "Suspect references leave ready=false without deleting them; replace or unregister them, then retry. "
+                "skip_reasons cannot bypass suspects. Finish before exhausting the Tool budget."
             ),
             func=lambda **values: execute("finish_voiceprint_preparation", finish_voiceprint_preparation, **values),
             maximum_result_bytes=32_000,

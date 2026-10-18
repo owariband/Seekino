@@ -98,6 +98,120 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
     }
 
 
+def test_init_event_index_uses_separate_target_and_full_contract_without_database(monkeypatch, capsys):
+    from contextlib import contextmanager
+
+    calls = {}
+    client = object()
+
+    @contextmanager
+    def storage(config, **kwargs):
+        calls["config"] = config
+        calls["storage"] = kwargs
+        yield client, object()  # The Chunk store must not be initialized by this command.
+
+    class EventStore:
+        index_name = "seekino_video_events_test_v1"
+
+        def ensure_index(self, contract):
+            calls["contract"] = contract
+
+    def build_event_store(selected, config, **kwargs):
+        assert selected is client
+        assert config.event_index_for_environment(cli.DatabaseEnvironment.TEST) == EventStore.index_name
+        calls["event_storage"] = kwargs
+        return EventStore()
+
+    monkeypatch.setattr(cli, "open_elasticsearch_storage", storage)
+    monkeypatch.setattr(cli, "build_event_elasticsearch_storage", build_event_store)
+    monkeypatch.setattr(cli, "open_database_storage", lambda *_args, **_kwargs: pytest.fail("used database"))
+    monkeypatch.setattr(sys, "argv", [
+        "anivag-server", "init-event-index", "--environment", "test",
+        "--elasticsearch-url", "http://127.0.0.1:9200",
+        "--elasticsearch-index", "anivag_video_chunks_test",
+        "--event-index", EventStore.index_name, "--max-height", "480",
+    ])
+    cli.main()
+
+    contract = calls["contract"]
+    assert contract.capture.max_height == 480
+    assert contract.semantic_encoder == contract.vision_encoder
+    assert calls["event_storage"] == calls["storage"]
+    assert json.loads(capsys.readouterr().out) == {
+        "schemaReady": True, "index": EventStore.index_name, "contractId": contract.contract_id,
+    }
+
+
+def test_event_status_is_read_only_and_does_not_allocate_index_or_models(monkeypatch, capsys):
+    from contextlib import contextmanager
+
+    factory = object()
+
+    @contextmanager
+    def database(*_args, **_kwargs):
+        yield object(), factory
+
+    class Repository:
+        def __init__(self, sessions):
+            assert sessions is factory
+
+        def event_index_status(self, task_id):
+            assert task_id == "task-1"
+            return {"target": None, "covered_chunks": 0}
+
+    monkeypatch.setattr(cli, "open_database_storage", database)
+    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setattr(cli, "open_elasticsearch_storage", lambda *_args, **_kwargs: pytest.fail("used ES"))
+    monkeypatch.setattr(cli, "load_config", lambda *_args, **_kwargs: pytest.fail("loaded model"))
+    monkeypatch.setattr(sys, "argv", ["anivag-server", "event-index-status", "--environment", "test",
+                                     "--database-url", "sqlite+pysqlite:///:memory:",
+                                     "--video-parse-task-id", "task-1"])
+    cli.main()
+    assert json.loads(capsys.readouterr().out) == {"target": None, "covered_chunks": 0}
+
+
+def test_event_backfill_uses_task_encoder_and_shared_event_capture_settings(monkeypatch, capsys):
+    from contextlib import contextmanager
+
+    config = default_video_parse_v2_config().model_copy(update={
+        "visual_input": default_video_parse_v2_config().visual_input.model_copy(update={"max_height": 360}),
+    })
+    calls = {}
+
+    @contextmanager
+    def database(*_args, **_kwargs):
+        yield object(), object()
+
+    class Repository:
+        def __init__(self, _sessions):
+            pass
+
+        def load_task_input(self, task_id):
+            assert task_id == "task-1"
+            return SimpleNamespace(task=SimpleNamespace(parse_config=config.model_dump(mode="json")))
+
+        def request_index_rebuild(self, task_id, *, event_target):
+            calls.update(task_id=task_id, target=event_target)
+            return ("chunk-1",)
+
+    monkeypatch.setattr(cli, "open_database_storage", database)
+    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setenv("ANIVAG_PARSE_MAX_HEIGHT", "480")
+    monkeypatch.setattr(cli, "open_elasticsearch_storage", lambda *_args, **_kwargs: pytest.fail("used ES"))
+    monkeypatch.setattr(sys, "argv", ["anivag-server", "request-es-index-rebuild", "--environment", "test",
+        "--database-url", "sqlite+pysqlite:///:memory:", "--video-parse-task-id", "task-1", "--with-events",
+        "--elasticsearch-url", "http://127.0.0.1:9200", "--elasticsearch-index", "anivag_video_chunks_test",
+        "--event-index", "seekino_video_events_test_v1"])
+    cli.main()
+    target = calls["target"]
+    assert target["contract"]["capture"]["max_height"] == 480
+    assert target["contract"]["semantic_encoder"]["model"] == (
+        config.models.embedding.encoder_model or config.models.embedding.model
+    )
+    assert target["index_name"] == "seekino_video_events_test_v1"
+    assert json.loads(capsys.readouterr().out)["scheduledChunkTaskIds"] == ["chunk-1"]
+
+
 def test_init_es_index_rejects_wrong_environment_before_connecting(monkeypatch) -> None:
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("connected"))
     monkeypatch.setattr(sys, "argv", [

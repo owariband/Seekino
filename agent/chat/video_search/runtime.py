@@ -10,6 +10,7 @@ from threading import Event
 from time import monotonic
 
 from engine.rag.contracts import VideoChunkSearchResult
+from engine.rag.retrieval.contracts import EventSearchResult
 from gateway.agent_model.contracts import AgentLoopModel, StructuredToolAgentModel
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
@@ -74,6 +75,7 @@ class AgentRuntime:
         frame_reader: FrameReader | None = None,
         frame_max_height: int | None = None,
         maximum_frame_inspections: int | None = None,
+        event_retrieve: Callable[..., EventSearchResult] | None = None,
     ) -> None:
         for name, value, maximum in [
             ("max_loop_turns", max_loop_turns, 3),
@@ -117,6 +119,7 @@ class AgentRuntime:
         self._evaluator_model = evaluator_model
         self._chat_model = chat_model
         self._retrieve = retrieve
+        self._event_retrieve = event_retrieve
         self._max_loop_turns = max_loop_turns
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
@@ -276,6 +279,8 @@ class AgentRuntime:
             scope_recorded = final_output.searched_video_ids is not None
             for completed_turn in result["turns"]:
                 for call in completed_turn.retrieval_calls:
+                    if call.status == "error":
+                        continue
                     partial = partial or call.result.partial
                     warnings.extend(call.result.warnings)
                     scope_recorded = scope_recorded and call.result.searched_video_ids is not None
@@ -344,6 +349,7 @@ class AgentRuntime:
         ))
         query_tools = build_query_tools(
             self._retrieve,
+            event_retrieve=self._event_retrieve,
             canvas=canvas,
             inputs=inputs,
             control=query_control,
@@ -412,6 +418,7 @@ class AgentRuntime:
         ))
         evaluator_tools = build_evaluator_tools(
             self._retrieve,
+            event_retrieve=self._event_retrieve,
             canvas=canvas,
             inputs=inputs,
             control=evaluator_control,

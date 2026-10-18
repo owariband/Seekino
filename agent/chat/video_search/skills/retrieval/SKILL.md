@@ -1,6 +1,6 @@
 # Video Retrieval Skill
 
-检索采用严格的两层读取协议：先用 `retrieve` 获得有界 Catalog，再只对确有价值的候选调用 `get_context_canvas` 精读。不要假设 Catalog 已包含完整证据，也不要为了“保险”把全部候选都展开。
+检索采用严格的两层读取协议：先用 `retrieve` 或已注册的 `search_video_events` 获得有界 Catalog，再只对确有价值的候选调用 `get_context_canvas` 精读。不要假设 Catalog 已包含完整证据，也不要为了“保险”把全部候选都展开。
 
 ## 第一层：retrieve
 
@@ -48,7 +48,7 @@ Catalog 中常用字段：
 
 要读到当前 section 末尾可省略 `end`；要读完整 section 时先用 `start=0` 且省略 `end`。如果工具返回 `RANGE_TOO_LARGE`，按 `suggested_end` 分段读取。显式填写 `end` 时必须满足 `start < end <=` 当前 `video_chunk_id`、当前 section 的 `total_chars`；不同片段的长度不能互用。
 
-只允许读取当前 Workspace 中已经由 `retrieve` 发现的 ID。最终结论、claim 和播放范围必须来自精读后的证据，不能只根据 Catalog 描述决定。
+只允许读取当前 Workspace 中已经由任一真实检索工具发现的 ID。最终结论、claim 和播放范围必须来自精读后的证据，不能只根据 Catalog 描述决定。
 
 ## Lexical 语言与词项
 
@@ -77,3 +77,14 @@ Lexical 通道不会翻译 Query。`inputs.series_context[].transcriptLanguageHi
 - 对该片段的事实描述必须准确说明 Evidence 实际支持什么，不得把推测写成事实。
 
 不要截断一句对白或连续动作，也不要为了追求短而移除理解结论所需的上下文。如何保存或审核结果由当前角色自己的 Skill 和已注册 Tool 决定；不得调用当前角色未注册的 Tool。
+
+
+## Event 细节检索
+
+已注册 `search_video_events` 时，可直接用它起手；也可先 retrieve，再通过 `video_chunk_ids` 把 Event 搜索缩小到已有 Chunk。它不要求先粗后细。参数为 `query`、`top_k`、`channel_weights`、可选 `event_types`、`speaker`、`video_chunk_ids` 和 `cursor`。Event 的权重键始终是 `lexical / semantic / visual`，不使用 `transcript`。
+
+- `event_types` 不传表示不限，按工具 schema 的事件类型筛选。`speaker` 是可靠对白说话人，不是出镜人物；只传 speaker 会限定 DIALOGUE，显式同时选择其他类型属于参数冲突。查人物出现或关系时应写入 query，不冒充 speaker。
+- `top_k` 和 `result_count` 计数不同 Chunk 组；`event_count` 是命中 Event 数。每张卡包含一个 `matched_event`，同一 Chunk 可以出现多张卡；分页 `total` 是 Event 卡数量。存在 `next_cursor` 时继续调用同一 Event 工具且只传 cursor。
+- Event 卡提供原始 Timeline 下标、类型、绝对毫秒时间、说话人、字段/语言/原文或译文角色与通道排名。这些是筛选线索；仍需通过原 `get_context_canvas(collection="retrieval", reference=video_chunk_id)` 精读权威 Chunk Evidence，再维护或审核草稿。
+- `EVENT_INDEX_NOT_READY` 表示当前范围尚未覆盖索引，可改用 retrieve；不能把未覆盖当作没有匹配。
+- Event 视觉索引使用离线抽帧向量，不代表你已看图。视觉主张继续调用 `inspect_video_frames` 核验；稀疏帧也不证明连续动作或声音强度。

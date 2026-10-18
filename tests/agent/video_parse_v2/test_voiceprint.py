@@ -17,7 +17,7 @@ from agent.video_parse_v2.state import (
     ChunkScheduleEntry, ChunkScheduleSnapshot, ChunkTaskStatus, VideoRunSnapshot, VideoTaskStatus,
 )
 from agent.video_parse_v2.voiceprint import (
-    CompareSpeakerArguments, RegisterVoiceprintArguments, VoiceprintAgent,
+    CompareSpeakerArguments, RegisterVoiceprintArguments, UnregisterVoiceprintArguments, VoiceprintAgent,
     build_compare_speaker_tool, build_tools,
 )
 from engine.parsev2.voiceprint import Voiceprint, VoiceprintReference
@@ -109,8 +109,10 @@ def test_voiceprint_fields_do_not_change_historical_request_fingerprints():
     assert enabled["models"]["speaker_embedding"]["model"] == "campplus"
 
 
-@pytest.mark.parametrize("total,ready_counts", [(4, (1, 2)), (5, (2, 3)), (1, (0, 1))])
-def test_scheduler_releases_at_ceiling_half_only_when_enabled(total, ready_counts):
+@pytest.mark.parametrize("total,ready_counts", [
+    (4, (2, 3)), (5, (3, 4)), (24, (17, 18)), (2, (1, 2)), (1, (0, 1)),
+])
+def test_scheduler_releases_at_ceiling_three_quarters_only_when_enabled(total, ready_counts):
     def schedule(ready):
         return ChunkScheduleSnapshot(tuple(
             ChunkScheduleEntry(str(index), index, ChunkTaskStatus.WAITING,
@@ -135,7 +137,7 @@ def test_disabled_scheduler_still_waits_for_all_understanding():
                 ChunkScheduleEntry(str(index), index, ChunkTaskStatus.WAITING,
                                    understanding_committed=index < ready)
                 for index in range(4)
-            ), 0) for ready in (2, 4)
+            ), 0) for ready in (3, 4)
         ]), wait_for_video_change=AsyncMock(),
     )
     state = {"video_parse_task_id": "task", "inputs": _inputs()}
@@ -152,7 +154,7 @@ def test_main_graph_prepares_voiceprints_before_waiting_for_completion():
         )),
         load_chunk_schedule=AsyncMock(return_value=ChunkScheduleSnapshot((
             ChunkScheduleEntry("chunk-0", 0, ChunkTaskStatus.WAITING, understanding_committed=True),
-            ChunkScheduleEntry("chunk-1", 1, ChunkTaskStatus.QUEUED),
+            ChunkScheduleEntry("chunk-1", 1, ChunkTaskStatus.WAITING, understanding_committed=True),
         ), 0)),
         load_voiceprint_input=AsyncMock(return_value=None),
     )
@@ -186,6 +188,10 @@ def test_voiceprint_notifies_only_after_durable_ready_and_keeps_sources_readonly
         assert canvas.get("sources", "issued-source")["start_ms"] == 1000
         assert "strictly greater than half" in prompt
         assert "non-null speaker" in prompt
+        assert "suspect_references" in prompt and "replace_source_ref" in prompt
+        assert "unregister_voiceprint" in prompt and "skip_reasons cannot bypass" in prompt
+        assert "early, middle and late" in prompt and "sequence_no" in prompt
+        assert "one reliable utterance per distinct available chunk" in prompt
         with pytest.raises(AgentToolFeedbackError, match="read-only"):
             canvas.put("sources", "issued-source", {"start_ms": 0})
         calls.append("generate")
@@ -219,17 +225,19 @@ def test_text_completion_cannot_bypass_ready_and_errors_propagate(error):
     runtime.notify_voiceprint_prepared.assert_not_awaited()
 
 
-def test_four_host_bound_tools_and_comparison_preserve_ms_and_real_failures():
+def test_five_host_bound_tools_and_comparison_preserve_ms_and_real_failures():
     calls = []
     canvas = ContextCanvas("voiceprint:task")
     canvas.put("sources", "issued", {"start_ms": 47100, "end_ms": 48800}, readonly=True)
     tools = {tool.name: tool for tool in build_tools(
         canvas, get_speaker_list=lambda: {"speaker_list_size": 0, "required_count": 0},
         register_voiceprint=lambda **values: calls.append(values) or {"registered": True},
+        unregister_voiceprint=lambda **values: calls.append(values) or {"removed": True},
         finish_voiceprint_preparation=lambda **values: {"ready": True},
     )}
     assert set(tools) == {
-        "get_context_canvas", "get_speaker_list", "register_voiceprint", "finish_voiceprint_preparation",
+        "get_context_canvas", "get_speaker_list", "register_voiceprint", "unregister_voiceprint",
+        "finish_voiceprint_preparation",
     }
     assert tools["get_speaker_list"].execute().payload["required_count"] == 0
     assert tools["get_context_canvas"].execute(
@@ -237,8 +245,11 @@ def test_four_host_bound_tools_and_comparison_preserve_ms_and_real_failures():
     ).success is True
     tools["register_voiceprint"].execute(
         source_ref="issued", speaker="爽世", start_ms=47100, end_ms=48800, selection_basis="已确认来源",
+        replace_source_ref="old-source",
     )
-    assert calls[-1]["start_ms"] == 47100
+    assert calls[-1]["start_ms"] == 47100 and calls[-1]["replace_source_ref"] == "old-source"
+    assert tools["unregister_voiceprint"].execute(source_ref="old-source").payload["removed"] is True
+    assert calls[-1] == {"source_ref": "old-source"}
     assert tools["finish_voiceprint_preparation"].execute(complete=True).payload["ready"] is True
 
     def fail(**values):
@@ -256,6 +267,13 @@ def test_tool_argument_contract_forbids_paths_vectors_and_reverse_time():
         "end_ms": 48800, "selection_basis": "已确认来源",
     }
     assert RegisterVoiceprintArguments.model_validate(values).start_ms == 47100
+    assert RegisterVoiceprintArguments.model_validate(values).replace_source_ref is None
+    assert RegisterVoiceprintArguments.model_validate({**values, "replace_source_ref": "old"}).replace_source_ref == "old"
+    with pytest.raises(ValidationError, match="at least 1 character"):
+        RegisterVoiceprintArguments.model_validate({**values, "replace_source_ref": ""})
+    assert UnregisterVoiceprintArguments(source_ref="old").source_ref == "old"
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        UnregisterVoiceprintArguments.model_validate({"source_ref": "old", "path": "/tmp/arbitrary.wav"})
     for extra in ({"path": "/tmp/arbitrary.wav"}, {"vector": [1.0] * 192}):
         with pytest.raises(ValidationError, match="Extra inputs"):
             RegisterVoiceprintArguments.model_validate({**values, **extra})

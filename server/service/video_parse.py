@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import threading
@@ -67,6 +68,7 @@ from engine.rag import (
     VideoClipInputContract,
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
+from engine.rag.indexing.events import EventIndexingContract
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
 from gateway.embedding import EmbeddingModel
 from gateway.model_factory import GatewayClient
@@ -95,6 +97,7 @@ from ..repository.video_parse import (
 )
 from ..storage.artifact import ArtifactStore
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from ..utils.execution import (
     BlockingCallCancelled, ExecutionCalls, cleanup_execution, execution_calls, run_blocking,
 )
@@ -142,6 +145,8 @@ class VideoParseRuntimeService:
         parse_usage: ParseUsageService | None = None,
         tracing: LangfuseTracing | None = None,
         gateway_client: GatewayClient | None = None,
+        event_store: ElasticsearchVideoEventStore | None = None,
+        event_contract: EventIndexingContract | None = None,
     ) -> None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be blank")
@@ -149,6 +154,8 @@ class VideoParseRuntimeService:
             raise ValueError("lease_duration must be positive")
         if not timedelta(0) < heartbeat_interval < lease_duration:
             raise ValueError("heartbeat_interval must be below the lease duration")
+        if (event_store is None) != (event_contract is None):
+            raise ValueError("Event indexing requires both a store and its configured contract")
         self._repository = repository
         self._queue = queue
         self._artifact_store = artifact_store
@@ -156,6 +163,8 @@ class VideoParseRuntimeService:
         self._gateway_config = gateway_config
         self._gateway = gateway_client or GatewayClient(gateway_config)
         self._elasticsearch_store = elasticsearch_store
+        self._event_store = event_store
+        self._event_contract = event_contract
         self._worker_id = worker_id.strip()
         self._lease_duration = lease_duration
         self._heartbeat_interval = heartbeat_interval
@@ -250,6 +259,7 @@ class VideoParseRuntimeService:
                     inputs,
                     check_active=manager.check_active,
                     index_generation=task_input.task.target_index_generation,
+                    **({"lease": lease} if self._event_store is not None else {}),
                 )
                 try:
                     await self._run_blocking(coordinator.index_chunk, lease)
@@ -547,7 +557,8 @@ class VideoParseRuntimeService:
                     tool_calls += 1
 
             def register_voiceprint(*, source_ref: str, speaker: str, start_ms: int,
-                                    end_ms: int, selection_basis: str, confidence: float | None = None) -> dict:
+                                    end_ms: int, selection_basis: str, confidence: float | None = None,
+                                    replace_source_ref: str | None = None) -> dict:
                 source = snapshot["sources"].get(source_ref)
                 if (source is None or source["speaker"] != speaker
                         or not source["start_ms"] <= start_ms < end_ms <= source["end_ms"]):
@@ -555,9 +566,10 @@ class VideoParseRuntimeService:
                         "INVALID_VOICEPRINT_SOURCE", "Use a named authorized source and a subrange inside it.",
                         "Read sources from get_context_canvas; preserve its speaker and absolute milliseconds.",
                     )
+                replacement = {"replace_source_ref": replace_source_ref} if replace_source_ref is not None else {}
                 result = self._repository.precheck_voiceprint_registration(
                     lease, source_ref=source_ref, speaker=speaker, start_ms=start_ms, end_ms=end_ms,
-                    model=encoder.model_name, encoder_revision=encoder.encoder_revision,
+                    model=encoder.model_name, encoder_revision=encoder.encoder_revision, **replacement,
                 )
                 if result is None:
                     embedding, pcm_sha256 = self._embed_speaker_segment(
@@ -570,14 +582,23 @@ class VideoParseRuntimeService:
                         selection_basis=selection_basis, confidence=confidence,
                         model=embedding.model, encoder_revision=embedding.encoder_revision,
                         vector=embedding.vector, pcm_sha256=pcm_sha256, duration_ms=embedding.duration_ms,
+                        **replacement,
                     )
                     _logger.info(
-                        "event=voiceprint_registered task=%s lease=%s source=%s start_ms=%s end_ms=%s model=%s revision=%s pcm=%s",
+                        "event=voiceprint_registered task=%s lease=%s source=%s start_ms=%s end_ms=%s model=%s revision=%s pcm=%s replaced_source=%s",
                         lease.video_parse_task_id, lease.lease_version, source_ref, start_ms, end_ms,
-                        embedding.model, embedding.encoder_revision, pcm_sha256,
+                        embedding.model, embedding.encoder_revision, pcm_sha256, replace_source_ref,
                     )
                 return {**result, "reference": {key: value for key, value in result["reference"].items()
                                                 if key != "vector"}, "dimension": encoder.dimensions}
+
+            def unregister_voiceprint(*, source_ref: str) -> dict:
+                result = self._repository.unregister_voiceprint(lease, source_ref=source_ref)
+                _logger.info(
+                    "event=voiceprint_unregistered task=%s lease=%s source=%s removed=%s refs_count=%s",
+                    lease.video_parse_task_id, lease.lease_version, source_ref, result["removed"], result["refs_count"],
+                )
+                return result
 
             def finish_voiceprint_preparation(*, complete: bool, skip_reasons: dict[str, str]) -> dict:
                 del complete  # The Tool schema accepts only true; persistence decides readiness.
@@ -585,9 +606,12 @@ class VideoParseRuntimeService:
                     lambda: self._repository.finish_voiceprint_preparation(lease, skip_reasons=skip_reasons),
                 )
                 _logger.info(
-                    "event=voiceprint_preparation_finished task=%s lease=%s ready=%s registered=%s required=%s",
+                    "event=voiceprint_preparation_finished task=%s lease=%s ready=%s registered=%s required=%s suspects=%s",
                     lease.video_parse_task_id, lease.lease_version, result["ready"],
                     result["registered_speaker_count"], result["minimum_speaker_count"],
+                    [(item["speaker"], item["source_ref"], item["start_ms"], item["end_ms"],
+                      round(item["candidate_mean"], 6))
+                     for item in result.get("suspect_references", [])],
                 )
                 if result["ready"]:
                     try:
@@ -604,6 +628,7 @@ class VideoParseRuntimeService:
                     lambda: self._repository.get_voiceprint_speaker_list(lease),
                 ),
                 register_voiceprint=lambda **values: invoke_host(register_voiceprint, **values),
+                unregister_voiceprint=lambda **values: invoke_host(unregister_voiceprint, **values),
                 finish_voiceprint_preparation=finish_voiceprint_preparation,
                 check_control=check_preparation, on_call=count_tool,
             ))
@@ -722,12 +747,14 @@ class VideoParseRuntimeService:
         binding = execution.inputs.parse_config.models.ocr
         if binding is None:
             raise ValueError("OCR is enabled without a fixed OCR model")
-        timestamps = [timestamp for timestamp, _path in media.frames]
+        frames = [(timestamp, path) for timestamp, path in (media.ocr_frames if media.ocr_frames is not None else media.frames)
+                  if execution.allowed_start_seconds <= timestamp < execution.allowed_end_seconds]
+        timestamps = [timestamp for timestamp, _path in frames]
         prompt = build_ocr_prompt(timestamps)
         return await self._generate_multimodal(
             binding,
             [
-                *(ImageInput(path=path) for _timestamp, path in media.frames),
+                *(ImageInput(path=path) for _timestamp, path in frames),
                 TextInput(text=prompt),
             ],
             schema_name="video_parse_v2_ocr",
@@ -746,6 +773,20 @@ class VideoParseRuntimeService:
         del asr_result, ocr_result
         media = await self._ensure_chunk_media(execution)
         visual = execution.inputs.parse_config.visual_input
+        visual_start = media.visual_start_ms if media.visual_start_ms is not None else execution.allowed_start_seconds
+        visual_end = media.visual_end_ms if media.visual_end_ms is not None else execution.allowed_end_seconds
+        prompt += (
+            f"\nHost visual input range: [{visual_start}, {visual_end}) ms. "
+            f"Writable chunk range: [{execution.allowed_start_seconds}, {execution.allowed_end_seconds}) ms. "
+            f"For native video, absolute_ms = {visual_start} + round(local_seconds * 1000). "
+            "ASR/OCR timestamps remain absolute source-video milliseconds."
+        )
+        if (visual_start, visual_end) != (execution.allowed_start_seconds, execution.allowed_end_seconds):
+            prompt += (
+                "\nWe supplied additional visual context outside your chunk to help interpret transitions. "
+                "Use it only as context; do not write events outside the writable chunk. "
+                "Additional images do not establish a voice identity; uncertain speakers must remain null."
+            )
         media_inputs: list[ImageInput | VideoInput | TextInput]
         if visual.mode == "ordered_frames":
             media_inputs = [
@@ -758,7 +799,7 @@ class VideoParseRuntimeService:
             ]
         else:
             media_inputs = [
-                VideoInput(path=media.video_path, fps=visual.fps),
+                VideoInput(path=media.visual_video_path or media.video_path, fps=visual.fps),
                 TextInput(text=prompt),
             ]
         fallback_inputs = [
@@ -1000,10 +1041,19 @@ class VideoParseRuntimeService:
                     for task_id, content in snapshot["member_contents"].items()
                 },
                 detail={"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]},
-                voiceprint_references=snapshot.get("voiceprint_references", []),
             )
-        except VideoParseSnapshotConflictError:
-            _logger.info("Refine snapshot changed; refreshing interval %s", snapshot["interval_parse_task_id"])
+        except VideoParseSnapshotConflictError as error:
+            _logger.info(
+                "Refine snapshot changed; refreshing interval %s event=refine_commit_conflict "
+                "task=%s video=%s lease=%s reason=%s details=%s",
+                snapshot["interval_parse_task_id"], snapshot["video_parse_task_id"],
+                snapshot["inputs"].video_id, lease.lease_version, error.reason,
+                json.dumps({"message": str(error), "context": error.context,
+                            "input_versions": snapshot["member_versions"],
+                            "updated_members": sorted(member_updates),
+                            "used_reference_count": len(snapshot.get("voiceprint_references", []))},
+                           ensure_ascii=False, sort_keys=True),
+            )
             return False
         return True
 
@@ -1361,6 +1411,7 @@ class VideoParseRuntimeService:
                 execution.lease.version,
                 execution_kind="chunk",
             )
+            overlap_ms = config.visual_input.context_overlap_seconds * 1000 if config.understanding_enabled else 0
             context = self._media_service.prepare_chunk(
                 identity,
                 source_video=self._artifact_store.resolve(
@@ -1368,16 +1419,16 @@ class VideoParseRuntimeService:
                 ),
                 start_seconds=execution.allowed_start_seconds,
                 end_seconds=execution.allowed_end_seconds,
+                visual_start_ms=max(0, execution.allowed_start_seconds - overlap_ms),
+                visual_end_ms=min(binding.state.task_input.duration_seconds,
+                                  execution.allowed_end_seconds + overlap_ms),
                 visual_mode=config.visual_input.mode,
                 frame_fps=config.visual_input.fps,
                 max_frames=config.visual_input.max_frames_per_chunk,
                 max_height=config.visual_input.max_height,
-                # A visual fallback consumes ordered frames even when the
-                # primary stage sends the prepared video directly.
-                ocr_enabled=(
-                    config.ocr_enabled
-                    or config.models.understanding.fallback is not None
-                ),
+                ocr_enabled=config.ocr_enabled,
+                # A visual fallback consumes extended frames; OCR consumes core frames.
+                visual_fallback_enabled=config.models.understanding.fallback is not None,
                 check_active=lambda: self._require_chunk_active(binding.lease),
             )
             try:
@@ -1468,6 +1519,7 @@ class VideoParseRuntimeService:
                                "references": [{key: value for key, value in ref.items() if key != "vector"}
                                               for ref in refs]})
             for ref in refs:
+                # 仅保留比较诊断；可信声源不作为 Refine 提交时的动态依赖。
                 if ref not in used_references:
                     used_references.append(ref)
         candidates.sort(key=lambda item: (-item["similarity"], item["speaker"]))
@@ -1602,6 +1654,7 @@ class VideoParseRuntimeService:
         *,
         check_active: Callable[[], None],
         index_generation: int,
+        lease: ChunkParseLease | None = None,
     ) -> tuple[VideoParseIndexCoordinator, EmbeddingModel]:
         embedding = inputs.parse_config.models.embedding
         definition = EmbeddingModelBinding.model_validate(embedding.model_dump(exclude_none=True))
@@ -1618,6 +1671,26 @@ class VideoParseRuntimeService:
             )
             if fingerprint != inputs.parse_config.indexing.contract_fingerprint:
                 raise ValueError("index encoder contract differs from the accepted task snapshot")
+            event_options = {}
+            if self._event_store is not None:
+                if lease is None:
+                    raise ValueError("Event indexing requires the current INDEX lease")
+                encoder = EncoderContract(
+                    provider=provider, model=embedder.encoder_model,
+                    encoder_revision=embedder.encoder_revision, dimensions=dimensions,
+                )
+                event_contract = self._event_contract
+                assert event_contract is not None
+                if (encoder != event_contract.semantic_encoder or encoder != event_contract.vision_encoder):
+                    raise ValueError("task encoder differs from the configured Event index")
+                configured = {"index_name": self._event_store.index_name,
+                              "contract_id": event_contract.contract_id, "contract": event_contract.as_dict()}
+                frozen = self._repository.bind_event_index_target(lease, configured)
+                accepted = EventIndexingContract.model_validate(frozen["contract"])
+                if (accepted.semantic_encoder != event_contract.semantic_encoder
+                        or accepted.vision_encoder != event_contract.vision_encoder):
+                    raise ValueError("Event encoder differs from the frozen task target")
+                event_options = {"event_store": self._event_store, "event_target": frozen}
             coordinator = VideoParseIndexCoordinator(
                 self._repository,
                 self._elasticsearch_store,
@@ -1625,6 +1698,7 @@ class VideoParseRuntimeService:
                 media_resolver=self._artifact_store.resolve,
                 media_service=self._media_service,
                 check_active=check_active,
+                **event_options,
                 contract=ChunkIndexingContract(
                     retrieval_contract_id=PARSE_RETRIEVAL_CONTRACT,
                     semantic_encoder=EncoderContract(

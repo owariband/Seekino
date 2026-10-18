@@ -10,6 +10,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from . import elasticsearch, mysql, redis
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ class CallerResources:
     session_factory: sessionmaker[Session] | None = None
     elasticsearch_client: Elasticsearch | None = None
     elasticsearch_store: ElasticsearchVideoChunkStore | None = None
+    elasticsearch_event_store: ElasticsearchVideoEventStore | None = None
     redis_client: Redis | None = None
     _cleanup: ExitStack | None = field(default=None, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
@@ -63,10 +65,15 @@ def init(
             semantic_dimensions=semantic_dimensions, vision_dimensions=vision_dimensions,
         )
         construction_cleanup.callback(elasticsearch.close_elasticsearch_client, elasticsearch_client)
+        event_store = elasticsearch.build_event_elasticsearch_storage(
+            elasticsearch_client, settings.elasticsearch, environment=settings.environment,
+            semantic_dimensions=semantic_dimensions, vision_dimensions=vision_dimensions,
+        )
         resources = CallerResources(
             engine=engine, session_factory=session_factory,
             elasticsearch_client=elasticsearch_client,
             elasticsearch_store=elasticsearch_store, redis_client=redis_client,
+            elasticsearch_event_store=event_store,
         )
         resources._cleanup = construction_cleanup.pop_all()
         return resources

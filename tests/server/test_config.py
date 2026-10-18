@@ -626,11 +626,16 @@ def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):
     assert frozen.models.understanding.reasoning_effort == resolved.reasoning_effort
     assert frozen.models.asr.reasoning_effort is None
     assert frozen.models.asr.max_output_tokens == gateway.resolve_model_binding("transcription").max_output_tokens
+    assert frozen.visual_input.context_overlap_seconds == defaults.window.context_overlap_seconds == 3
+    assert frozen.model_dump(mode="json")["visual_input"]["context_overlap_seconds"] == 3
 
     historical = frozen.model_dump(mode="json")
+    historical["visual_input"].pop("context_overlap_seconds")
     historical["models"]["understanding"].pop("reasoning_effort")
     historical["models"]["understanding"]["max_output_tokens"] = 8192
     restored = type(frozen).model_validate(historical)
+    assert restored.visual_input.context_overlap_seconds == 0
+    assert "context_overlap_seconds" not in restored.model_dump(mode="json")["visual_input"]
     assert restored.models.understanding.reasoning_effort is None
     assert restored.models.understanding.max_output_tokens == 8192
 
@@ -1062,3 +1067,19 @@ def test_parse_stage_execution_deadlines_are_finite_and_positive(field, value):
     from engine.common.config import VideoParseRuntimeConfig
     with pytest.raises(ValueError, match=field):
         VideoParseRuntimeConfig(**{field: value})
+
+
+def test_event_sampling_configuration_has_one_source_and_preserves_encoder():
+    from engine.rag.encoding import EncoderContract
+    from server.config.parse_profile import resolve_event_indexing_contract
+
+    encoder = EncoderContract("test", "embedding", "v1", 2)
+    defaults = resolve_event_indexing_contract(encoder, max_height=480, environ={})
+    changed = resolve_event_indexing_contract(encoder, max_height=480, environ={
+        "SEEKINO_EVENT_FRAME_FPS": "0.5", "SEEKINO_EVENT_MAX_FRAMES": "5",
+    })
+    assert defaults.capture.fps == 1 and defaults.capture.max_frames == 3
+    assert changed.capture.fps == 0.5 and changed.capture.max_frames == 5
+    assert defaults.capture.max_height == changed.capture.max_height == 480
+    assert defaults.semantic_encoder == changed.semantic_encoder == encoder
+    assert defaults.contract_id != changed.contract_id

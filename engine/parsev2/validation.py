@@ -140,6 +140,12 @@ def parse_content_fingerprint(content: Mapping[str, object]) -> str:
 class RefinementMergeConflictError(ValueError):
     """Concurrent edits cannot be combined at whole-event granularity."""
 
+    def __init__(self, message: str, *, reason: str = "entry_changed",
+                 context: Mapping[str, Any] | None = None) -> None:
+        self.reason = reason
+        self.context = dict(context or {})
+        super().__init__(message)
+
 
 def _merge_refinement_value(base: object, current: object, proposed: object) -> object:
     if proposed == base or proposed == current:
@@ -164,7 +170,13 @@ def merge_refinement_content(
         original, latest, candidate = base[field], current[field], proposed[field]
         if (field != "timeline" or candidate == original
                 or latest == original or candidate == latest):
-            merged[field] = _merge_refinement_value(original, latest, candidate)
+            try:
+                merged[field] = _merge_refinement_value(original, latest, candidate)
+            except RefinementMergeConflictError as error:
+                raise RefinementMergeConflictError(
+                    "Refine changed the persons list differently", reason="persons_changed",
+                    context={"field": field},
+                ) from error
             continue
         # Execution-local Canvas refs are not persistent event identities.
         # Only unchanged, unique, ordered time/type anchors permit alignment.
@@ -175,11 +187,35 @@ def merge_refinement_content(
         ]
         if (identities[0] != identities[1] or identities[0] != identities[2]
                 or len(set(identities[0])) != len(identities[0])):
-            raise RefinementMergeConflictError("Refine event structure changed or is ambiguous")
-        merged[field] = [
-            _merge_refinement_value(before, now, after)
-            for before, now, after in zip(original, latest, candidate, strict=True)
-        ]
+            mismatch = next((index for index in range(max(map(len, identities)))
+                             if len({keys[index] if index < len(keys) else None for keys in identities}) > 1), None)
+            raise RefinementMergeConflictError(
+                "Refine event structure changed or is ambiguous", reason="timeline_structure_changed",
+                context={"field": field, "base_events": len(original), "current_events": len(latest),
+                         "proposed_events": len(candidate), "current_anchors_changed": identities[0] != identities[1],
+                         "proposed_anchors_changed": identities[0] != identities[2],
+                         "first_mismatch_index": mismatch,
+                         "first_mismatch_anchors": {
+                             name: dict(zip(("event_type", "start_ms", "end_ms"), keys[mismatch]))
+                             if mismatch is not None and mismatch < len(keys) else None
+                             for name, keys in zip(("base", "current", "proposed"), identities)
+                         },
+                         "duplicate_base_anchors": len(set(identities[0])) != len(identities[0])},
+            )
+        merged[field] = []
+        for index, (before, now, after) in enumerate(zip(original, latest, candidate, strict=True)):
+            try:
+                merged[field].append(_merge_refinement_value(before, now, after))
+            except RefinementMergeConflictError as error:
+                raise RefinementMergeConflictError(
+                    "Refine changed the same event differently", reason="event_changed",
+                    context={"field": field, "event_index": index, "event_type": before["event_type"],
+                             "start_ms": before["start_seconds"], "end_ms": before["end_seconds"],
+                             "current_changed_fields": sorted(key for key in before.keys() | now.keys()
+                                                              if before.get(key) != now.get(key)),
+                             "proposed_changed_fields": sorted(key for key in before.keys() | after.keys()
+                                                               if before.get(key) != after.get(key))},
+                ) from error
     return merged
 
 

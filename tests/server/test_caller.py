@@ -127,6 +127,33 @@ def test_elasticsearch_default_timeout_is_left_to_sdk(monkeypatch):
     create.assert_called_once_with(config.url, api_key=None)
 
 
+def test_event_store_borrows_client_without_initializing_index(monkeypatch):
+    client = Mock()
+    config = ElasticsearchConfig("http://127.0.0.1:9200", "anivag_test")
+    store = elasticsearch_caller.build_event_elasticsearch_storage(
+        client, config, environment=DatabaseEnvironment.TEST,
+        semantic_dimensions=512, vision_dimensions=1024,
+    )
+    assert store._client is client
+    assert store.index_name == "seekino_video_events_test_v1"
+    client.assert_not_called()
+    client.indices.exists.assert_not_called()
+    client.close.assert_not_called()
+
+
+def test_event_index_configuration_uses_seekino_variable_and_environment_guard(monkeypatch):
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_EVENT_INDEX", "seekino_custom_event_test")
+    config = ElasticsearchConfig.from_environment(
+        DatabaseEnvironment.TEST, url="http://127.0.0.1:9200", index_name="anivag_test",
+    )
+    assert config.event_index_name == "seekino_custom_event_test"
+    with pytest.raises(ValueError, match="test component"):
+        ElasticsearchConfig.from_environment(
+            DatabaseEnvironment.TEST, url="http://127.0.0.1:9200", index_name="anivag_test",
+            event_index_name="seekino_production_events",
+        )
+
+
 def test_elasticsearch_wrong_environment_fails_before_allocating_client(monkeypatch):
     create = Mock()
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", create)

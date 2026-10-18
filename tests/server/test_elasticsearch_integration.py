@@ -89,6 +89,41 @@ def isolated_store():
             client.close()
 
 
+def test_event_index_real_filter_visibility_and_cleanup(isolated_store):
+    from tests.server.test_elasticsearch_events import _contract, _document
+    from engine.rag.retrieval.contracts import EventFilters
+    from server.storage.elasticsearch_events import ElasticsearchVideoEventStore
+
+    client = isolated_store._client
+    store = ElasticsearchVideoEventStore(
+        client, index_name=f"seekino_event_test_{uuid4().hex}", environment="test",
+        semantic_dimensions=2, vision_dimensions=2,
+    )
+    document = _document(dialogue=True)
+    newer = document.model_copy(update={"version": document.version + 1})
+    try:
+        store.ensure_index(_contract())
+        store.bulk_upsert([document, newer], write_version=1, refresh="wait_for")
+        assert store.verify_ready([document, newer])
+        assert store.verify_set(document.parse_task_id, document.video_chunk_id, newer.version, [newer.event_id])
+        sources = [(newer.parse_task_id, newer.video_chunk_id, newer.version)]
+        filters = EventFilters(speaker="祥子")
+        lexical = store.search_lexical("居高临下", sources=sources, filters=filters, limit=3)
+        assert [hit.event_id for hit in lexical] == [newer.event_id]
+        assert lexical[0].matched_fields[0].role == "TRANSLATION"
+        for channel in ("semantic", "vision"):
+            hits = store.search_vector([1, 0], channel=channel, sources=sources, filters=filters, limit=3)
+            assert [hit.event_id for hit in hits] == [newer.event_id]
+        store.delete_older(newer.parse_task_id, newer.video_chunk_id, newer.version)
+        assert store.inspect([document.event_id])[document.event_id] is None
+        keys = [(document.parse_task_id, document.video_chunk_id)]
+        store.bulk_delete(keys, refresh="wait_for")
+        assert store.verify_absent(keys)
+    finally:
+        if client.indices.exists(index=store.index_name):
+            client.indices.delete(index=store.index_name)
+
+
 def _document(*, series_id, video_id, chunk_id, parse_task_id, question):
     projection = ChunkIndexProjection(
         semantic_text="千早爱音说我没事，画面上有大丈夫",

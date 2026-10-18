@@ -273,6 +273,7 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             assert evidence["asr"]["transcript"][0]["speaker_id"] == "speaker1"
             assert "speaker_id" in kwargs["prompt"]
             assert "current input clip only" in kwargs["prompt"]
+            assert "DIALOGUE.speaker MUST be JSON null" in kwargs["prompt"]
             time_contract = kwargs["prompt"].lower()
             assert "already normalized" in time_contract
             assert "legacy" in time_contract

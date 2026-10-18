@@ -4,6 +4,7 @@ import math
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -24,7 +25,9 @@ from agent.video_parse_v2.input import (
 from gateway.config import GatewayConfig
 from gateway.embedding import describe_embedding_model
 from engine.rag import VIDEO_CLIP_PREPROCESS_REVISION
-from engine.rag.encoding import DEFAULT_ENCODER_OUTPUT_CONTRACT
+from engine.rag.encoding import DEFAULT_ENCODER_OUTPUT_CONTRACT, EncoderContract
+from engine.rag.indexing.events import EventIndexingContract
+from engine.rag.vision.event_frames import EventFrameContract
 from engine.rag.indexing.pipeline import INDEX_SOURCE_VERSION
 from engine.rag.indexing.projection import INDEX_PROJECTION_VERSION
 from ..constants.parse import MAX_INDEX_GENERATION, PARSE_RETRIEVAL_CONTRACT
@@ -95,6 +98,26 @@ def index_contract_fingerprint(embedding, *, provider: str, encoder_revision: st
         "max_height": max_height,
     }
     return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def resolve_event_indexing_contract(
+    encoder: EncoderContract, *, max_height: int,
+    environ: Mapping[str, str] | None = None,
+) -> EventIndexingContract:
+    """Resolve Event sampling once; tasks freeze the returned effective contract."""
+    environment = os.environ if environ is None else environ
+    options: dict[str, Any] = {"max_height": max_height}
+    for key, name, convert in (
+        ("SEEKINO_EVENT_FRAME_FPS", "fps", float),
+        ("SEEKINO_EVENT_MAX_FRAMES", "max_frames", int),
+    ):
+        value = environment.get(key)
+        if value is not None:
+            options[name] = convert(value)
+    return EventIndexingContract(
+        semantic_encoder=encoder, vision_encoder=encoder,
+        capture=EventFrameContract(**options),
+    )
 
 
 def _model_policy(model) -> dict[str, Any]:
@@ -364,6 +387,7 @@ class ParseConfig(ContractModel):
                 fps=self.vision.fps,
                 max_frames_per_chunk=maximum_frames,
                 max_height=self.window.analysis_max_height,
+                context_overlap_seconds=self.window.context_overlap_seconds,
             ),
             ocr_enabled=False,
             understanding_enabled=True,

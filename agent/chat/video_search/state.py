@@ -266,6 +266,21 @@ class RetrievalTraceEntry(_AgentContractModel):
     effective_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
     result_count: int = Field(ge=0)
     video_chunk_ids: list[_VideoChunkId]
+    granularity: Literal["chunk", "event"] | None = None
+    effective_filters: dict[str, Any] | None = None
+    event_trace: dict[str, Any] | None = None
+    role: Literal["query", "evaluator"] | None = None
+    status: Literal["success", "error"] | None = None
+    error: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_trace(self, handler):
+        data = handler(self)
+        for name in ("granularity", "effective_filters", "event_trace", "role", "status", "error"):
+            if getattr(self, name) is None:
+                data.pop(name, None)
+                data.pop(_to_camel(name), None)
+        return data
 
     @model_validator(mode="after")
     def require_matching_weight_channels(self) -> "RetrievalTraceEntry":
@@ -307,9 +322,15 @@ class RetrievalCall:
     effective_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
     result: VideoChunkSearchResult
     strategy_version: str = AGENT_RETRIEVAL_STRATEGY_VERSION
+    granularity: Literal["chunk", "event"] | None = None
+    effective_filters: dict[str, Any] | None = None
+    event_trace: dict[str, Any] | None = None
+    role: Literal["query", "evaluator"] | None = None
+    status: Literal["success", "error"] | None = None
+    error: dict[str, Any] | None = None
 
     def context(self) -> dict:
-        return {
+        summary = {
             "query": self.query,
             "top_k": self.top_k,
             "retrieval_strategy": {
@@ -323,6 +344,20 @@ class RetrievalCall:
             "partial": self.result.partial,
             "warnings": list(self.result.warnings),
         }
+        if self.granularity is not None:
+            summary["granularity"] = self.granularity
+        if self.effective_filters is not None:
+            summary["effective_filters"] = self.effective_filters
+        if self.role is not None:
+            summary["role"] = self.role
+        if self.status is not None:
+            summary["status"] = self.status
+        if self.error is not None:
+            summary["error"] = {key: value[:500] if isinstance(value, str) else value
+                                for key, value in self.error.items()}
+        # Candidate scores, raw Event fields and hydration details stay in the
+        # business trace, never copied wholesale into each model context.
+        return summary
 
 
 @dataclass(frozen=True, slots=True)

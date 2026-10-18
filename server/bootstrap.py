@@ -16,13 +16,13 @@ from gateway.web_search import WebSearcher
 
 from .config import ServerSettings
 from .caller import CallerResources
-from .common.retrieval import build_retrieval_service, validate_rerank_source
+from .common.retrieval import build_event_retrieval_service, build_retrieval_service, validate_rerank_source
 from .common.storage import (
     build_artifact_storage,
 )
 from .config.agent import AgentServiceConfig
 from .config.global_agent_settings import read_global_agent_settings
-from .config.parse_profile import ParseConfig
+from .config.parse_profile import ParseConfig, resolve_event_indexing_contract
 from .config.usage import load_model_pricing
 from .mq.video_parse_consumer import (
     VideoParseConsumer,
@@ -226,6 +226,21 @@ def _build_application_services(
         max_output_tokens=settings.agent.max_output_tokens, tracing=tracing,
         gateway_client=gateway_client,
     )
+    event_store = resources.elasticsearch_event_store
+    event_contract = None
+    event_retrieval = None
+    if event_store is not None:
+        event_contract = resolve_event_indexing_contract(
+            video_parse_query_encoder, max_height=parse_defaults.window.analysis_max_height,
+        )
+        event_retrieval = build_event_retrieval_service(
+            video_parse_repository, event_store, gateway_config=gateway_config,
+            embedding_config=parse_defaults.embedding, retrieval_config=settings.retrieval,
+            contract=event_contract,
+            request_timeout_seconds=min(timeout for timeout in (
+                settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
+            ) if timeout is not None), tracing=tracing, gateway_client=gateway_client,
+        )
     uploads = UploadService(
         UploadRepository(session_factory),
         artifact_store,
@@ -234,6 +249,7 @@ def _build_application_services(
         parse_defaults=parse_defaults,
         video_parse_query_encoder=video_parse_query_encoder,
         video_parse_query_encoder_source=parse_defaults.embedding.source,
+        video_event_index_store=event_store,
     )
     v2_repository = video_parse_repository
     v2_queue = MySqlVideoParseQueue(session_factory, video_concurrency=settings.parse.video_concurrency)
@@ -252,6 +268,8 @@ def _build_application_services(
         parse_usage=parse_usage,
         tracing=tracing,
         gateway_client=gateway_client,
+        event_store=event_store,
+        event_contract=event_contract,
     )
     realtime_service = RealtimeUnderstandingService(
         v2_repository, v2_queue, v2_runtime, artifact_store,
@@ -316,6 +334,7 @@ def _build_application_services(
                 mcp=False,
             ),
             retrieval.search,
+            event_retrieve=event_retrieval.search if event_retrieval is not None else None,
             frame_reader=VideoFrameReader(v2_repository, artifact_store),
             frame_max_height=agent_config.frame_max_height,
             maximum_frame_inspections=agent_config.maximum_frame_inspections,

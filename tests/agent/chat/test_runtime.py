@@ -20,6 +20,8 @@ from engine.rag.contracts import (
     VideoChunkSearchHit,
     VideoChunkSearchResult,
 )
+from engine.rag.retrieval.contracts import EventIndexNotReadyError, EventSearchResult, FusedEventHit
+from engine.rag.retrieval.events import EVENT_RETRIEVAL_STRATEGY_VERSION
 from gateway.agent_model.errors import (
     ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError,
 )
@@ -1392,6 +1394,108 @@ def test_first_turn_must_actually_retrieve_even_when_answer_has_no_selected_hits
     with pytest.raises(AgentModelInvocationError, match="must retrieve real evidence"):
         runtime.kick(_inputs())
     assert evaluator.contexts == chat.contexts == []
+
+
+def test_event_only_query_and_evaluator_complete_with_canonical_evidence_and_full_trace():
+    marker = "FULL_CANDIDATE_TRACE_" + "x" * 30_000
+    searches = []
+
+    def event_search(query, **options):
+        searches.append((query, options))
+        return EventSearchResult(
+            chunk_result=VideoChunkSearchResult(
+                query=query, series_ids=["series"], hits=[_hit()],
+                agent_reply=AgentReply(message="Event evidence", result_count=1),
+            ),
+            matches=(FusedEventHit(
+                event_id="event-1", parse_task_id="task", video_chunk_id="chunk-1",
+                version=1, timeline_index=9, event_type="RELATION_CHANGE", fused_rank=1,
+                fused_score=0.5, channel_ranks={"semantic": 1}, channel_scores={"semantic": 0.9},
+                lexical_fields=({"field": "event_description", "raw_text": "a relationship changes"},),
+                start_ms=12, end_ms=18,
+            ),),
+            trace={"strategy_version": EVENT_RETRIEVAL_STRATEGY_VERSION,
+                   "channels": {"semantic": [{"event_id": "event-1", "score": 0.9}]},
+                   "discarded": [{"event_id": "stale", "reason": marker}]},
+        )
+
+    class EventQuery(Query):
+        def run_structured(self, prompt, *, tools, result_type, **_options):
+            self.prompts.append(prompt)
+            self.contexts.append(json.loads(prompt.rsplit("\n\n", 1)[1]))
+            tools_by_name = _tool_map(tools)
+            page = _invoke_json(tools_by_name["search_video_events"], {
+                **_retrieval_args("relationship change", 3, lexical=0, semantic=1, visual=0),
+                "event_types": ["RELATION_CHANGE"],
+            })
+            assert page["result_count"] == 1
+            _read_all(_reader(tools_by_name, "retrieval"), "chunk-1")
+            _writer(tools_by_name, "upsert_draft_item").invoke({
+                **_selected_range("chunk-1"), "claim": "The canonical Event supports a relationship change.",
+            })
+            return result_type(plan_context="search Events directly", message="grounded draft")
+
+    class EventEvaluator(Evaluator):
+        def run_structured(self, prompt, *, tools, **options):
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            assert context["retrieval_calls"][0]["granularity"] == "event"
+            assert marker not in prompt
+            _invoke_json(_tool_map(tools)["search_video_events"], {
+                **_retrieval_args("check relationship change", 1, semantic=1, visual=0),
+                "event_types": ["RELATION_CHANGE"], "video_chunk_ids": ["chunk-1"],
+            })
+            return super().run_structured(prompt, tools=tools, **options)
+
+    runtime, query, evaluator, _chat, retrieval = _runtime(
+        query=EventQuery(), evaluator=EventEvaluator(), event_retrieve=event_search,
+    )
+    result = runtime.kick(_inputs())
+    assert retrieval.calls == [] and len(searches) == 2
+    assert result.hits[0].evidence.video_chunk_id == "chunk-1"
+    trace = result.model_dump(mode="json", by_alias=True)["retrievalTrace"]
+    assert [entry["role"] for entry in trace] == ["query", "evaluator"]
+    assert all(entry["granularity"] == "event" for entry in trace)
+    assert all(entry["strategyVersion"] == EVENT_RETRIEVAL_STRATEGY_VERSION for entry in trace)
+    assert all(entry["strategyVersion"] == entry["eventTrace"]["strategy_version"] for entry in trace)
+    assert all(entry["eventTrace"]["discarded"][0]["reason"] == marker for entry in trace)
+    assert trace[0]["eventTrace"]["matched_events"][0]["timeline_index"] == 9
+    assert trace[1]["effectiveFilters"]["video_chunk_ids"] == ["chunk-1"]
+    assert marker not in json.dumps(query.contexts + evaluator.contexts)
+
+
+@pytest.mark.parametrize("failure", [EventIndexNotReadyError("Event scope is not published"), RuntimeError("Event backend unavailable")])
+@pytest.mark.parametrize("fallback", [False, True])
+def test_failed_event_attempt_is_traced_but_does_not_satisfy_real_retrieval(failure, fallback):
+    class FallbackQuery(Query):
+        def run_structured(self, prompt, *, tools, result_type, **options):
+            result = _invoke_json(_tool_map(tools)["search_video_events"], {
+                **_retrieval_args("specific quote", 2, lexical=1, semantic=0, visual=0),
+                "speaker": "speaker",
+            })
+            assert result["error"]["code"] in {"EVENT_INDEX_NOT_READY", "EVENT_RETRIEVAL_FAILED"}
+            if fallback:
+                return super().run_structured(prompt, tools=tools, result_type=result_type, **options)
+            return result_type(plan_context="Event lookup failed", message="Coverage is unavailable")
+
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    runtime, _query, evaluator, chat, retrieval = _runtime(query=FallbackQuery(), event_retrieve=fail)
+    if not fallback:
+        with pytest.raises(AgentModelInvocationError, match="must retrieve real evidence"):
+            runtime.kick(_inputs())
+        assert evaluator.contexts == chat.contexts == retrieval.calls == []
+        return
+    result = runtime.kick(_inputs())
+    trace = result.model_dump(mode="json", by_alias=True)["retrievalTrace"]
+    assert len(trace) == 2 and len(retrieval.calls) == 1
+    assert trace[0]["query"] == "specific quote" and trace[0]["status"] == "error"
+    assert trace[0]["granularity"] == "event" and trace[0]["role"] == "query"
+    assert trace[0]["strategyVersion"] == EVENT_RETRIEVAL_STRATEGY_VERSION
+    assert trace[0]["effectiveFilters"] == {"speaker": "speaker", "event_types": ["DIALOGUE"], "video_chunk_ids": []}
+    assert trace[0]["error"]["message"] == str(failure)
+    assert trace[0]["resultCount"] == 0
+    assert trace[1]["query"] == "query-1-0" and "status" not in trace[1]
 
 
 def test_empty_real_retrieval_can_deliver_an_approved_uncertain_answer():

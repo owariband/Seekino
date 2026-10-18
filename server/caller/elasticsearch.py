@@ -8,6 +8,7 @@ from elasticsearch import Elasticsearch
 from ..config.elasticsearch import ElasticsearchConfig
 from ..database import DatabaseEnvironment
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 
 
 def create_elasticsearch_client(
@@ -50,6 +51,18 @@ def build_elasticsearch_storage(
     except BaseException:
         close_elasticsearch_client(client)
         raise
+
+
+def build_event_elasticsearch_storage(
+    client: Elasticsearch, config: ElasticsearchConfig, *, environment: DatabaseEnvironment,
+    semantic_dimensions: int, vision_dimensions: int,
+) -> ElasticsearchVideoEventStore:
+    """Borrow the existing client; index initialization is an explicit operation."""
+    config.validate_environment(environment)
+    return ElasticsearchVideoEventStore(
+        client, index_name=config.event_index_for_environment(environment), environment=environment,
+        semantic_dimensions=semantic_dimensions, vision_dimensions=vision_dimensions,
+    )
 
 
 @contextmanager

@@ -184,9 +184,16 @@ def test_refinement_merge_rejects_different_changes_to_the_same_event(same_field
         proposed["timeline"][0]["visible_persons"] = []
     before = deepcopy((base, current, proposed))
 
-    with pytest.raises(RefinementMergeConflictError):
+    with pytest.raises(RefinementMergeConflictError) as rejected:
         merge_refinement_content(base, current, proposed)
 
+    assert rejected.value.reason == "event_changed"
+    assert rejected.value.context == {
+        "field": "timeline", "event_index": 0, "event_type": "ACTION", "start_ms": 1000, "end_ms": 3000,
+        "current_changed_fields": ["description"],
+        "proposed_changed_fields": ["description"] if same_field else ["visible_persons"],
+    }
+    assert "先提交的动作修正" not in str(rejected.value.context)
     assert (base, current, proposed) == before
 
 
@@ -216,8 +223,10 @@ def test_refinement_merge_handles_persons_as_one_field_independently_from_timeli
         "persons": current["persons"], "timeline": proposed["timeline"],
     }
     proposed["persons"].append("立希")
-    with pytest.raises(RefinementMergeConflictError):
+    with pytest.raises(RefinementMergeConflictError) as rejected:
         merge_refinement_content(base, current, proposed)
+    assert rejected.value.reason == "persons_changed"
+    assert rejected.value.context == {"field": "persons"}
 
 
 @pytest.mark.parametrize("change", ["add", "remove", "reorder", "retime", "type", "duplicate"])
@@ -242,10 +251,24 @@ def test_refinement_merge_rejects_ambiguous_concurrent_timeline_structure(change
         proposed["timeline"].append(deepcopy(proposed["timeline"][0]))
     before = deepcopy((base, current, proposed))
 
-    with pytest.raises(RefinementMergeConflictError):
+    with pytest.raises(RefinementMergeConflictError) as rejected:
         merge_refinement_content(base, proposed if swap_sides else current,
                                  current if swap_sides else proposed)
 
+    assert rejected.value.reason == "timeline_structure_changed"
+    assert rejected.value.context["field"] == "timeline"
+    assert rejected.value.context["base_events"] == 2
+    assert rejected.value.context["current_anchors_changed"] == swap_sides
+    assert rejected.value.context["proposed_anchors_changed"] != swap_sides
+    index = 0 if change == "reorder" else 2 if change in {"add", "duplicate"} else 1
+    assert rejected.value.context["first_mismatch_index"] == index
+    for side, events in (("base", base["timeline"]),
+                         ("current", (proposed if swap_sides else current)["timeline"]),
+                         ("proposed", (current if swap_sides else proposed)["timeline"])):
+        assert rejected.value.context["first_mismatch_anchors"][side] == (
+            {"event_type": events[index]["event_type"], "start_ms": events[index]["start_seconds"],
+             "end_ms": events[index]["end_seconds"]} if index < len(events) else None
+        )
     assert (base, current, proposed) == before
 
 

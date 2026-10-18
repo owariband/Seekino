@@ -110,6 +110,7 @@ def _upload_service(
     clock=None,
     parse_defaults=None,
     video_parse_index_store=None,
+    video_event_index_store=None,
     probe_duration=None,
 ):
     engine, _video_repository = repository
@@ -151,6 +152,7 @@ def _upload_service(
             clock=clock,
             parse_defaults=parse_defaults,
             video_parse_index_store=video_parse_index_store,
+            video_event_index_store=video_event_index_store,
             video_parse_query_encoder=EncoderContract(
                 provider="ark",
                 model=active_embedding.model,
@@ -2395,7 +2397,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
 
 @pytest.mark.parametrize(
     "cleanup_state",
-    ["prepare_interrupted", "success", "bulk_failure", "not_visible", "unavailable"],
+    ["prepare_interrupted", "success", "bulk_failure", "not_visible", "unavailable", "event_bulk_failure", "event_not_visible"],
 )
 def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path, cleanup_state):
     class ParseIndexStore(_VideoParseIndexStore):
@@ -2416,11 +2418,25 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
             return cleanup_state != "not_visible" and not self.documents.intersection(keys)
 
     parse_index = ParseIndexStore()
+
+    class EventIndexStore(ParseIndexStore):
+        def bulk_delete(self, keys, *, refresh=False):
+            self.deleted.append((tuple(keys), refresh))
+            if cleanup_state == "event_bulk_failure":
+                raise RuntimeError("Event cleanup failed")
+            self.documents.difference_update(keys)
+
+        def verify_absent(self, keys):
+            self.verified.append(tuple(keys))
+            return cleanup_state != "event_not_visible" and not self.documents.intersection(keys)
+
+    event_index = EventIndexStore()
     now = unix_time_ms_to_datetime(1_789_560_000_000)
     clock = [now]
     engine, store, upload_repository, service = _upload_service(
         repository, tmp_path, clock=lambda: clock[0],
         video_parse_index_store=parse_index,
+        video_event_index_store=event_index,
     )
     with engine.connect() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys = ON")
@@ -2454,6 +2470,7 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
             interval.status = "COMPLETE"
             interval.ready_mask = 1
         parse_index.documents.add((completed.video_parse_task_id, chunk_id))
+        event_index.documents.add((completed.video_parse_task_id, chunk_id))
     expected_keys = tuple(sorted(parse_index.documents))
     if cleanup_state == "prepare_interrupted":
         with pytest.raises(UploadStateError, match="being parsed"):
@@ -2465,7 +2482,7 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
     clock[0] += timedelta(minutes=2)
     if cleanup_state == "unavailable":
         service._video_parse_index_store = None
-    failed = cleanup_state in {"bulk_failure", "not_visible", "unavailable"}
+    failed = cleanup_state in {"bulk_failure", "not_visible", "unavailable", "event_bulk_failure", "event_not_visible"}
     if failed:
         with pytest.raises(RuntimeError, match="cleanup"):
             service.delete_session(upload.upload_session_id, tenant_id="local-default")
@@ -2492,6 +2509,11 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
     assert deleted.video_id is None and deleted.last_error_code is None
     assert (parse_index.deleted, parse_index.verified) == cleanup_calls
     assert not parse_index.documents
+    assert not event_index.documents
+    assert all(keys == expected_keys and refresh == "wait_for" for keys, refresh in event_index.deleted)
+    assert all(keys == expected_keys for keys in event_index.verified)
+    assert bool(event_index.deleted) == bool(expected_keys)
+    assert bool(event_index.verified) == bool(expected_keys)
     assert all(keys == expected_keys and refresh == "wait_for" for keys, refresh in parse_index.deleted)
     assert all(keys == expected_keys for keys in parse_index.verified)
     assert bool(parse_index.deleted) == bool(expected_keys)

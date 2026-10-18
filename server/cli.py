@@ -8,13 +8,13 @@ from pathlib import Path
 
 from gateway.config import load_config
 
-from .caller.elasticsearch import open_elasticsearch_storage
+from .caller.elasticsearch import open_elasticsearch_storage, build_event_elasticsearch_storage
 from .caller.mysql import open_database_storage
 from .common.retrieval import build_retrieval_service
 from .common.storage import build_artifact_storage
 from .constants.tenant import DEFAULT_LOCAL_TENANT_ID
 from .config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
-from .config.parse_profile import resolve_embedding_config
+from .config.parse_profile import resolve_embedding_config, resolve_event_indexing_contract
 from .config.retrieval import RetrievalConfig, resolve_retrieval_model_limits
 from .config.settings import (
     resolve_agent_request_timeout_seconds,
@@ -45,6 +45,17 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_environment_argument(init_es_index)
     _add_elasticsearch_arguments(init_es_index)
 
+    init_events = subparsers.add_parser("init-event-index", help="Create or validate the fixed Seekino Event index contract.")
+    _add_environment_argument(init_events)
+    _add_elasticsearch_arguments(init_events)
+    init_events.add_argument("--config", type=Path)
+    init_events.add_argument("--embedding-model")
+    init_events.add_argument("--max-height", type=_positive_int)
+
+    event_status = subparsers.add_parser("event-index-status", help="Read persisted Event coverage; no model or ES writes.")
+    _add_database_arguments(event_status)
+    event_status.add_argument("--video-parse-task-id", required=True)
+
     init_database = subparsers.add_parser(
         "init-db",
         help="Create the initial anivag persistence schema.",
@@ -60,6 +71,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_database_arguments(request_es_rebuild)
     request_es_rebuild.add_argument("--video-parse-task-id", required=True)
+    request_es_rebuild.add_argument("--with-events", action="store_true", help="Explicitly accept the configured Event target for INDEX backfill.")
+    request_es_rebuild.add_argument("--config", type=Path)
+    _add_elasticsearch_arguments(request_es_rebuild)
 
     import_parse = subparsers.add_parser(
         "import-parse",
@@ -241,6 +255,7 @@ def _add_elasticsearch_arguments(
     parser.add_argument(
         "--elasticsearch-index",
     )
+    parser.add_argument("--event-index", help="Independent Seekino Event index name.")
     parser.add_argument(
         "--elasticsearch-api-key",
     )
@@ -266,13 +281,14 @@ def main() -> None:
         if not args.video_parse_task_id:
             raise ValueError("--video-parse-task-id is required in V2 mode")
 
-    if args.command in {"init-es-index", "search"}:
+    if args.command in {"init-es-index", "init-event-index", "search"}:
         elasticsearch = ElasticsearchConfig.from_environment(
             environment,
             url=args.elasticsearch_url,
             index_name=args.elasticsearch_index,
             api_key=args.elasticsearch_api_key,
             index_generation=args.elasticsearch_index_generation,
+            event_index_name=args.event_index,
         )
         if elasticsearch is None:
             raise ValueError(
@@ -285,16 +301,30 @@ def main() -> None:
             require_matching=args.command == "search",
         )
 
-    if args.command == "init-es-index":
+    if args.command in {"init-es-index", "init-event-index"}:
         with open_elasticsearch_storage(
             elasticsearch, environment=environment,
             semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
         ) as (_client, store):
-            store.ensure_index()
+            event_contract = None
+            if args.command == "init-event-index":
+                if text_dimensions != vision_dimensions:
+                    raise ValueError("the configured shared Event encoder requires matching dimensions")
+                gateway = load_config(args.config)
+                embedding = resolve_embedding_config(gateway, model=args.embedding_model, dimensions=text_dimensions)
+                event_contract = _event_contract(gateway, embedding, max_height=resolve_parse_max_height(args.max_height))
+                store = build_event_elasticsearch_storage(
+                    _client, elasticsearch, environment=environment,
+                    semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
+                )
+                store.ensure_index(event_contract)
+            else:
+                store.ensure_index()
         result = {
             "schemaReady": True,
-            "index": elasticsearch.index_name,
-            "indexGeneration": elasticsearch.index_generation,
+            "index": store.index_name if event_contract is not None else elasticsearch.index_name,
+            **({"contractId": event_contract.contract_id} if event_contract is not None
+               else {"indexGeneration": elasticsearch.index_generation}),
         }
         print(json.dumps(result))
         return
@@ -322,13 +352,30 @@ def main() -> None:
             create_schema(engine)
             result = {"schemaCreated": True, "environment": environment.value}
         elif args.command in {"request-es-index-rebuild", "rebuild-index"}:
-            interval_ids = VideoParseRepository(sessions).request_index_rebuild(
-                args.video_parse_task_id
-            )
+            repository = VideoParseRepository(sessions)
+            event_options = {}
+            if getattr(args, "with_events", False):
+                config = ElasticsearchConfig.from_environment(
+                    environment, url=args.elasticsearch_url, index_name=args.elasticsearch_index,
+                    api_key=args.elasticsearch_api_key, index_generation=args.elasticsearch_index_generation,
+                    event_index_name=args.event_index,
+                )
+                if config is None:
+                    raise ValueError("Event backfill requires an explicit Elasticsearch configuration")
+                from agent.video_parse_v2.input import ParseConfig as TaskParseConfig
+                task_input = repository.load_task_input(args.video_parse_task_id)
+                frozen = TaskParseConfig.model_validate(task_input.task.parse_config)
+                contract = _event_contract(load_config(args.config), frozen.models.embedding,
+                                           max_height=resolve_parse_max_height())
+                event_options["event_target"] = {"index_name": config.event_index_for_environment(environment),
+                    "contract_id": contract.contract_id, "contract": contract.as_dict()}
+            interval_ids = repository.request_index_rebuild(args.video_parse_task_id, **event_options)
             result = {
                 "videoParseTaskId": args.video_parse_task_id,
                 "scheduledChunkTaskIds": list(interval_ids),
             }
+        elif args.command == "event-index-status":
+            result = VideoParseRepository(sessions).event_index_status(args.video_parse_task_id)
         elif args.command == "import-parse":
             from .service.parsev1.parse_import import prepare_video_parse_import
 
@@ -392,6 +439,18 @@ def main() -> None:
                 )
             ]
     print(json.dumps(result, ensure_ascii=False))
+
+
+def _event_contract(gateway, embedding, *, max_height):
+    from gateway.config import EmbeddingModelBinding
+    from gateway.embedding import describe_embedding_model
+    from engine.rag.encoding import EncoderContract
+    binding = EmbeddingModelBinding.model_validate(embedding.model_dump(exclude_none=True))
+    metadata = describe_embedding_model(binding, gateway.source(binding.source))
+    return resolve_event_indexing_contract(EncoderContract(
+        provider=metadata.provider_name, model=metadata.encoder_model,
+        encoder_revision=metadata.encoder_revision, dimensions=metadata.dimensions,
+    ), max_height=max_height)
 
 
 def _positive_int(value: str) -> int:

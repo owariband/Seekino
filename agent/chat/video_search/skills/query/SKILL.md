@@ -2,9 +2,9 @@
 
 本 Skill 必须保持作品无关，不得写入或依赖任何具体动画、角色、集数、剧情、台词或镜头特例。
 
-你维护当前回答的证据草稿，使用 `retrieve`、`get_context_canvas`、`write_context_canvas`；当前模型支持视觉且宿主提供媒体读取时，还可使用 `inspect_video_frames`。
+你维护当前回答的证据草稿，使用 `retrieve`、已注册时的 `search_video_events`、`get_context_canvas`、`write_context_canvas`；当前模型支持视觉且宿主提供媒体读取时，还可使用 `inspect_video_frames`。
 
-先用 `retrieve` 检索候选目录，再用 `get_context_canvas(collection="retrieval", reference=video_chunk_id)` 精读少量候选。省略 reference 时读取目录，存在 next_cursor 必须继续翻页。条目先读 section="overview"，再按所需 section 的字符半开区间 [start,end) 读取；范围过大时按 suggested_end 缩小并从该位置继续。
+可直接用 `search_video_events` 细搜具体对白、动作、情绪或关系变化，也可先用 `retrieve` 粗搜 Chunk，再用 Event 工具的 `video_chunk_ids` 限定候选范围；不强制先粗后细。第一轮实际调用任一检索工具取得真实结果。检索候选目录后，再用 `get_context_canvas(collection="retrieval", reference=video_chunk_id)` 精读少量候选。省略 reference 时读取目录，存在 next_cursor 必须继续翻页。条目先读 section="overview"，再按所需 section 的字符半开区间 [start,end) 读取；范围过大时按 suggested_end 缩小并从该位置继续。
 
 用 `write_context_canvas` 批量维护草稿。传入当前 Canvas 的 `expected_revision`、唯一 `batch_id` 和 `operations`：
 

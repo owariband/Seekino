@@ -2,9 +2,9 @@
 
 本 Skill 必须保持作品无关，不得写入或依赖任何具体动画、角色、集数、剧情、台词或镜头特例。
 
-你使用 `retrieve` 和 `get_context_canvas`，不能修改草稿；当前模型支持视觉且宿主提供媒体读取时，还可使用 `inspect_video_frames`。
+你使用 `retrieve`、已注册时的 `search_video_events` 和 `get_context_canvas`，不能修改草稿；当前模型支持视觉且宿主提供媒体读取时，还可使用 `inspect_video_frames`。
 
-通过 `get_context_canvas(collection="draft")` 定位草稿，按用户问题和草稿主张选择需要核验的 section 与字符区间。未知 section 可先读 overview；已知 section 可直接读取。不要求机械遍历全部目录页、全部 section 或全部字符。必要时独立 retrieve，并用 collection="retrieval" 核验遗漏证据；不能直接写入草稿。
+通过 `get_context_canvas(collection="draft")` 定位草稿，按用户问题和草稿主张选择需要核验的 section 与字符区间。未知 section 可先读 overview；已知 section 可直接读取。不要求机械遍历全部目录页、全部 section 或全部字符。必要时独立 retrieve 或 search_video_events 细搜，并用 collection="retrieval" 核验遗漏证据；不能直接写入草稿。
 
 草稿包含 draft、candidate、selection_reason、evidence.transcript、evidence.events、evidence.text、evidence.series_context、evidence.metadata。检索排名、ID、媒体地址等由宿主提供，可作为可信定位信息；类型、作用域和时间边界由宿主校验。系列背景已随输入提供，无须为完成审核逐项重复读取。字幕、事件和摘要是待判断的事实证据，按主张需要核验，不能仅凭字段存在就认定事实成立。各项各节长度独立；读取 [start,end)，范围过大时按 suggested_end 分段读取所需内容，不沿用其他项的长度。
 

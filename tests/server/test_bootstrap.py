@@ -823,9 +823,30 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
         assert snapshot.models.embedding.encoder_model == response_model
         inputs = ParseInput(series_id="series", video_id="video", parse_config=snapshot)
         runtime = services.parse_consumer._handlers.index.__self__
+        # An older task may have a different Chunk visual size. Event uses the
+        # service's one configured contract, shared with Event query encoding.
+        from server.config.parse_profile import index_contract_fingerprint
+        query_encoder = services.retrieval._semantic_encoder
+        inputs = inputs.model_copy(update={"parse_config": snapshot.model_copy(update={
+            "visual_input": snapshot.visual_input.model_copy(update={"max_height": 360}),
+            "indexing": snapshot.indexing.model_copy(update={"contract_fingerprint": index_contract_fingerprint(
+                snapshot.models.embedding, provider=query_encoder.provider,
+                encoder_revision=query_encoder.encoder_revision, max_height=360,
+            )}),
+        })})
+        bindings = []
+        lease = object()
+
+        def bind_target(current_lease, target):
+            assert current_lease is lease
+            bindings.append(target)
+            return target
+
+        monkeypatch.setattr(runtime._repository, "bind_event_index_target", bind_target)
         coordinator, client = runtime._build_index_coordinator(
             inputs, check_active=lambda: None,
             index_generation=settings.elasticsearch.index_generation,
+            lease=lease,
         )
         try:
             query_encoder = services.retrieval._semantic_encoder
@@ -834,6 +855,12 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
             assert coordinator._embedder.model_name == "ep-A"
             assert coordinator.contract.semantic_encoder == query_encoder
             assert coordinator.contract.vision_encoder == query_encoder
+            assert coordinator._event_contract.semantic_encoder == query_encoder
+            assert coordinator._event_contract.vision_encoder == query_encoder
+            assert coordinator.contract.visual_input_contract.max_height == 360
+            assert coordinator._event_contract.capture.max_height == defaults.window.analysis_max_height
+            assert len(bindings) == 1
+            assert coordinator._event_target == bindings[0]
             request = QueryEncodingRequest(channels=("semantic", "vision"), text="query", encoder=query_encoder)
             assert request.encoder_id == coordinator.contract.semantic_encoder_id
             result = services.retrieval._embedder.embed_query(request.text)

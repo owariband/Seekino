@@ -33,7 +33,7 @@ class ChunkScheduler:
                 )
             if self._all_chunks_complete(snapshot) or (
                 voiceprint_enabled and sum(task.understanding_committed for task in snapshot.tasks)
-                >= ceil(len(snapshot.tasks) / 2)
+                >= voiceprint_preparation_min_chunks(len(snapshot.tasks))
             ):
                 return state
             await self._runtime.wait_for_video_change(
@@ -46,6 +46,11 @@ class ChunkScheduler:
         return bool(snapshot.tasks) and all(
             task.understanding_committed for task in snapshot.tasks
         )
+
+
+def voiceprint_preparation_min_chunks(chunk_count: int) -> int:
+    """Start preparation after three quarters of Understanding results commit."""
+    return ceil(chunk_count * 3 / 4)
 
 
 def claimable_chunk_sequences(

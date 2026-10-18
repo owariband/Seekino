@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from engine.rag.contracts import VideoChunkSearchResult
+from engine.rag.retrieval.contracts import EventSearchResult
 
 from ...common.state import ExecutionControl, RunInputs
 from agent.utils.tool import AgentTool
@@ -12,6 +13,7 @@ from ..video_search_canvas import VideoSearchContextCanvas
 from .canvas import build_video_search_canvas_tools
 from .frames import build_inspect_video_frames_tool
 from .retrieval import build_retrieve_tool
+from .event_retrieval import build_search_video_events_tool
 from .shared import _ToolCallBudget, DraftReadAudit
 
 def build_query_tools(
@@ -31,6 +33,7 @@ def build_query_tools(
     frame_session: FrameInspectionSession | None = None,
     frame_max_height: int | None = None,
     supports_vision_input: bool = False,
+    event_retrieve: Callable[..., EventSearchResult] | None = None,
 ) -> list[AgentTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Query")
@@ -56,6 +59,12 @@ def build_query_tools(
             maximum_read_chars=maximum_read_chars, budget=budget,
         ),
     ]
+    if event_retrieve is not None:
+        tools.append(build_search_video_events_tool(
+            event_retrieve, canvas=canvas, inputs=inputs, control=control, calls=calls,
+            role="query", maximum_result_bytes=maximum_result_bytes,
+            maximum_catalog_items=maximum_catalog_items, budget=budget,
+        ))
     if supports_vision_input and frame_reader is not None and frame_session is not None:
         tools.append(build_inspect_video_frames_tool(
             reader=frame_reader, session=frame_session, canvas=canvas, inputs=inputs,
@@ -83,6 +92,7 @@ def build_evaluator_tools(
     frame_session: FrameInspectionSession | None = None,
     frame_max_height: int | None = None,
     supports_vision_input: bool = False,
+    event_retrieve: Callable[..., EventSearchResult] | None = None,
 ) -> list[AgentTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Evaluator")
@@ -108,6 +118,12 @@ def build_evaluator_tools(
             maximum_read_chars=maximum_read_chars, budget=budget, audit=audit,
         ),
     ]
+    if event_retrieve is not None:
+        tools.append(build_search_video_events_tool(
+            event_retrieve, canvas=canvas, inputs=inputs, control=control, calls=calls,
+            role="evaluator", maximum_result_bytes=maximum_result_bytes,
+            maximum_catalog_items=maximum_catalog_items, budget=budget,
+        ))
     if supports_vision_input and frame_reader is not None and frame_session is not None:
         tools.append(build_inspect_video_frames_tool(
             reader=frame_reader, session=frame_session, canvas=canvas, inputs=inputs,

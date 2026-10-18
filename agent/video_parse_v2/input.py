@@ -22,6 +22,15 @@ class VisualInputConfig(_InputModel):
     fps: float = Field(gt=0)
     max_frames_per_chunk: int = Field(gt=0)
     max_height: int = Field(gt=0)
+    # Historical V2 snapshots have no visual context outside their core chunk.
+    context_overlap_seconds: int = Field(default=0, ge=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_visual_input(self, handler):
+        values = handler(self)
+        if self.context_overlap_seconds == 0:
+            values.pop("context_overlap_seconds", None)
+        return values
 
 
 class PrefixContextConfig(_InputModel):

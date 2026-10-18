@@ -3,11 +3,13 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
+from math import sqrt
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import event, select
 
+from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
 from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession
 from server.model.video import Video
@@ -17,6 +19,7 @@ from server.repository.video_parse import (
     VideoParseLeaseLostError,
     VideoParseSnapshotConflictError,
     VoiceprintRegistrationRejectedError,
+    _voiceprint_consistency,
 )
 from tests.server.test_video_parse_repository import NOW, _prepare, _refinement_inputs
 
@@ -69,54 +72,59 @@ def _content_row(session, chunk_id):
     ).where(ChunkParseTask.chunk_id == chunk_id))
 
 
-def test_half_snapshot_freezes_speaker_list_and_uses_original_source(repository):
-    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=5)
+def test_preparation_keeps_all_committed_sources_and_freezes_snapshot(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=8)
     _enable(factory, task_id)
-    _commit(queue, repo, ["A", None], 0)
-    _commit(queue, repo, ["B"], 1)
-    with pytest.raises(VideoParseConflictError, match="half"):
+    for sequence, name in enumerate("ABCDE"):
+        _commit(queue, repo, [name, None], sequence)
+    with pytest.raises(VideoParseConflictError, match="three quarters"):
         repo.begin_voiceprint_preparation(parent, now=NOW)
-    _commit(queue, repo, ["C"], 2)
+    _commit(queue, repo, ["F"], 5)
+    _commit(queue, repo, ["G"], 6)
     snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
-    assert snapshot["speaker_list"] == ["A", "B", "C"]
-    assert set(snapshot["member_sequence_nos"].values()) == {0, 1, 2}
+    assert snapshot["speaker_list"] == list("ABCDEFG")
+    assert set(snapshot["member_sequence_nos"].values()) == set(range(7))
     assert snapshot["source_media_ref"].startswith("artifact://")
-    _commit(queue, repo, ["later NPC"], 3)
+    assert repo.begin_voiceprint_preparation(parent, now=NOW) == snapshot
+    _commit(queue, repo, ["later NPC"], 7)
     again = repo.begin_voiceprint_preparation(parent, now=NOW)
     assert again["speaker_list"] == snapshot["speaker_list"]
     assert again["member_sequence_nos"] == snapshot["member_sequence_nos"]
+    assert again["sources"] == snapshot["sources"]
 
 
-def test_five_independent_references_complete_and_sixth_is_rejected(repository):
-    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+def test_collection_target_allows_seventh_reference_and_completion(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=2)
     _enable(factory, task_id)
     _commit(queue, repo, ["A"] * 6, 0)
+    _commit(queue, repo, ["A"], 1)
     snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
     sources = list(snapshot["sources"].items())
-    for count, (source_ref, source) in enumerate(sources[:5], 1):
+    for count, (source_ref, source) in enumerate(sources[:6], 1):
         receipt = _register(repo, parent, snapshot, "A", source_ref=source_ref)
         assert receipt["added"] is True and receipt["refs_count"] == count
-        assert receipt["target_refs_count"] == 5
+        assert receipt["target_refs_count"] == VOICEPRINT_REFS_PER_SPEAKER == 6
         assert receipt["reference"]["source_ref"] == source_ref
     source_ref, source = sources[0]
     duplicate = repo.precheck_voiceprint_registration(
         parent, source_ref=source_ref, speaker="A", start_ms=source["start_ms"] + 100,
         end_ms=source["end_ms"] - 100, model="campplus", encoder_revision="v1.0.0", now=NOW,
     )
-    assert duplicate["added"] is False and duplicate["refs_count"] == 5
+    assert duplicate["added"] is False and duplicate["refs_count"] == 6
     assert _register(repo, parent, snapshot, "A") == duplicate
-    source_ref, source = sources[5]
-    with pytest.raises(VoiceprintRegistrationRejectedError) as rejected:
-        repo.precheck_voiceprint_registration(
-            parent, source_ref=source_ref, speaker="A", start_ms=source["start_ms"] + 100,
-            end_ms=source["end_ms"] - 100, model="campplus", encoder_revision="v1.0.0", now=NOW,
-        )
-    assert rejected.value.code == "VOICEPRINT_REFERENCE_LIMIT"
-    with pytest.raises(VoiceprintRegistrationRejectedError, match="already has 5"):
-        _register(repo, parent, snapshot, "A", source_ref=source_ref)
+    source_ref, source = sources[6]
+    assert repo.precheck_voiceprint_registration(
+        parent, source_ref=source_ref, speaker="A", start_ms=source["start_ms"] + 100,
+        end_ms=source["end_ms"] - 100, model="campplus", encoder_revision="v1.0.0", now=NOW,
+    ) is None
+    seventh = _register(repo, parent, snapshot, "A", source_ref=source_ref)
+    assert seventh["added"] is True and seventh["refs_count"] == 7
+    assert seventh["target_refs_count"] == VOICEPRINT_REFS_PER_SPEAKER
+    duplicate = _register(repo, parent, snapshot, "A", source_ref=source_ref)
+    assert duplicate["added"] is False and duplicate["refs_count"] == 7
     progress = repo.get_voiceprint_speaker_list(parent, now=NOW)["speaker_list"][0]
-    assert progress["refs_count"] == progress["target_refs_count"] == 5
-    assert len(progress["references"]) == 5
+    assert progress["refs_count"] == 7 and progress["target_refs_count"] == VOICEPRINT_REFS_PER_SPEAKER
+    assert len(progress["references"]) == 7
     assert all(set(ref) == {"source_ref", "start_ms", "end_ms"} for ref in progress["references"])
     assert repo.finish_voiceprint_preparation(parent, now=NOW)["ready"] is True
 
@@ -227,8 +235,8 @@ def test_refine_is_not_claimed_until_atomic_majority_finish(repository):
     factory, queue, repo, task_id, parent, prepared = _prepare(repository, chunk_count=2)
     _enable(factory, task_id)
     _commit(queue, repo, ["A", "B", "NPC"], 0)
-    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
     _commit(queue, repo, [], 1)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
     first = _register(repo, parent, snapshot, "A")
     assert first["added"] is True
     assert _register(repo, parent, snapshot, "A") == {**first, "added": False}
@@ -246,9 +254,12 @@ def test_refine_is_not_claimed_until_atomic_majority_finish(repository):
     _register(repo, parent, snapshot, "B")
     reasons = {"A": "only one clean source", "B": "only one clean source", "NPC": "too short"}
     result = repo.finish_voiceprint_preparation(parent, skip_reasons=reasons, now=NOW)
+    assert result.pop("suspect_references") == []
+    assert result.pop("consistency")["insufficient_speakers"] == ["A", "B", "NPC"]
     assert result == {"ready": True, "registered_speaker_count": 2, "speaker_list_size": 3,
                       "missing_speakers": ["NPC"], "skip_reasons": reasons, "minimum_speaker_count": 2,
-                      "reference_counts": {"A": 1, "B": 1, "NPC": 0}, "target_refs_count": 5,
+                      "reference_counts": {"A": 1, "B": 1, "NPC": 0},
+                      "target_refs_count": VOICEPRINT_REFS_PER_SPEAKER,
                       "missing_reason_speakers": [], "message": "Voiceprint preparation is ready."}
     assert repo.begin_voiceprint_preparation(parent, now=NOW) is None
     assert repo.finish_voiceprint_preparation(parent, now=NOW)["ready"] is True
@@ -258,6 +269,222 @@ def test_refine_is_not_claimed_until_atomic_majority_finish(repository):
     references = repo.load_voiceprint_references(refine, now=NOW)
     assert {ref["speaker"] for ref in references} == {"A", "B"}
     assert len(references) == 2
+
+
+def test_finish_reports_outlier_without_removal_and_rechecks_after_replacement(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=2)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A"] * 6, 0)
+    _commit(queue, repo, [], 1)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    sources = list(snapshot["sources"])
+    for index, source_ref in enumerate(sources[:5]):
+        _register(repo, parent, snapshot, "A", source_ref=source_ref,
+                  vector=([0.0, 1.0] + [0.0] * 190) if index == 4 else [1.0] + [0.0] * 191)
+    with factory() as session:
+        before = deepcopy(session.get(VideoParseTask, task_id).detail)
+    result = repo.finish_voiceprint_preparation(parent, skip_reasons={"A": "do not bypass"}, now=NOW)
+    assert result["ready"] is False
+    assert result["consistency"]["checked_speakers"] == ["A"]
+    assert len(result["suspect_references"]) == 1
+    suspect = result["suspect_references"][0]
+    assert (suspect["source_ref"], suspect["candidate_mean"]) == (sources[4], 0.0)
+    assert "replace or unregister" in result["message"]
+    assert queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW) is None
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail == before
+    source = snapshot["sources"][sources[5]]
+    assert repo.precheck_voiceprint_registration(
+        parent, source_ref=sources[5], speaker="A", start_ms=source["start_ms"] + 100,
+        end_ms=source["end_ms"] - 100, model="campplus", encoder_revision="v1.0.0",
+        replace_source_ref=sources[4], now=NOW,
+    ) is None
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail == before
+    receipt = _register(repo, parent, snapshot, "A", source_ref=sources[5], replace_source_ref=sources[4])
+    assert receipt["refs_count"] == 5 and receipt["replaced_source_ref"] == sources[4]
+    duplicate = _register(repo, parent, snapshot, "A", source_ref=sources[5], replace_source_ref=sources[4])
+    assert duplicate == {**receipt, "added": False}
+    incomplete = repo.finish_voiceprint_preparation(parent, now=NOW)
+    assert not incomplete["ready"] and incomplete["missing_reason_speakers"] == ["A"]
+    completed = repo.finish_voiceprint_preparation(
+        parent, skip_reasons={"A": "only five reliable independent sources"}, now=NOW,
+    )
+    assert completed["ready"] is True and completed["suspect_references"] == []
+    assert queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW) is not None
+    assert "consistency" not in repo.finish_voiceprint_preparation(parent, now=NOW)
+
+
+@pytest.mark.parametrize("count", [1, 4, 5, 6])
+def test_consistency_does_not_force_an_outlier_or_require_five_references(repository, count):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A"] * count, 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    for index, source_ref in enumerate(snapshot["sources"]):
+        # Below the diagnostic minimum, even different voices cannot establish which reference is wrong.
+        vector = [0.0, 1.0] + [0.0] * 190 if count < 5 and index == 0 else [1.0] + [0.0] * 191
+        _register(repo, parent, snapshot, "A", source_ref=source_ref, vector=vector)
+    result = repo.finish_voiceprint_preparation(parent, skip_reasons={"A": "only available sources"}, now=NOW)
+    assert result["ready"] is True and result["suspect_references"] == []
+    assert result["consistency"]["insufficient_speakers"] == (["A"] if count < 5 else [])
+
+
+def test_unregister_outlier_can_finish_below_target_and_is_idempotent(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A"] * 5, 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    sources = list(snapshot["sources"])
+    for index, source_ref in enumerate(sources):
+        _register(repo, parent, snapshot, "A", source_ref=source_ref,
+                  vector=([0.0, 1.0] + [0.0] * 190) if index == 4 else [1.0] + [0.0] * 191)
+    assert not repo.finish_voiceprint_preparation(parent, now=NOW)["ready"]
+    removed = repo.unregister_voiceprint(parent, source_ref=sources[4], now=NOW)
+    assert removed["removed"] is True and removed["refs_count"] == 4
+    assert repo.unregister_voiceprint(parent, source_ref=sources[4], now=NOW)["removed"] is False
+    incomplete = repo.finish_voiceprint_preparation(parent, now=NOW)
+    assert not incomplete["ready"] and incomplete["missing_reason_speakers"] == ["A"]
+    assert repo.finish_voiceprint_preparation(parent, skip_reasons={"A": "no reliable replacement"}, now=NOW)["ready"]
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.unregister_voiceprint(parent, source_ref=sources[0], now=NOW)
+    with pytest.raises(VideoParseLeaseLostError):
+        _register(repo, parent, snapshot, "A", source_ref=sources[4], replace_source_ref=sources[0])
+
+
+@pytest.mark.parametrize("operation", ["replace", "unregister"])
+def test_reference_changes_roll_back_on_database_failure(repository, operation):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A", "A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    old, new = list(snapshot["sources"])
+    _register(repo, parent, snapshot, "A", source_ref=old)
+    with factory() as session:
+        before = deepcopy(session.get(VideoParseTask, task_id).detail)
+
+    def fail_commit(session):
+        if any(isinstance(item, VideoParseTask) for item in session.dirty):
+            raise RuntimeError("database commit failed")
+
+    event.listen(factory, "before_commit", fail_commit)
+    try:
+        with pytest.raises(RuntimeError, match="commit failed"):
+            if operation == "replace":
+                _register(repo, parent, snapshot, "A", source_ref=new, replace_source_ref=old)
+            else:
+                repo.unregister_voiceprint(parent, source_ref=old, now=NOW)
+    finally:
+        event.remove(factory, "before_commit", fail_commit)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail == before
+
+
+def test_replacement_can_retrim_same_source_but_preserves_other_reference_checks(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A"] * 3, 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    old, other, new = list(snapshot["sources"])
+    _register(repo, parent, snapshot, "A", source_ref=old)
+    other_receipt = _register(repo, parent, snapshot, "A", source_ref=other)
+    receipt = _register(repo, parent, snapshot, "A", source_ref=old, start_ms=300,
+                        duration_ms=700, replace_source_ref=old)
+    assert receipt["refs_count"] == 2 and receipt["reference"]["start_ms"] == 300
+    assert _register(repo, parent, snapshot, "A", source_ref=old, start_ms=300,
+                     duration_ms=700, replace_source_ref=old)["added"] is False
+    for target, pcm, code in [(other, None, "VOICEPRINT_SOURCE_ALREADY_REGISTERED"),
+                              (new, other_receipt["reference"]["pcm_sha256"], "VOICEPRINT_DUPLICATE_AUDIO")]:
+        kwargs = {"pcm_sha256": pcm} if pcm else {}
+        with pytest.raises(VoiceprintRegistrationRejectedError) as rejected:
+            _register(repo, parent, snapshot, "A", source_ref=target, replace_source_ref=old, **kwargs)
+        assert rejected.value.code == code
+    refs = repo.get_voiceprint_speaker_list(parent, now=NOW)["speaker_list"][0]["references"]
+    assert {item["source_ref"] for item in refs} == {old, other}
+
+
+@pytest.mark.parametrize("operation", ["replace", "unregister"])
+def test_reference_edits_reject_foreign_sources_and_old_leases(repository, operation):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A", "A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    old, new = list(snapshot["sources"])
+    _register(repo, parent, snapshot, "A", source_ref=old)
+    for lease, source, error in [(parent, "other-video:invalid", VoiceprintRegistrationRejectedError),
+                                  (replace(parent, lease_version=parent.lease_version + 1), old,
+                                   VideoParseLeaseLostError)]:
+        with pytest.raises(error):
+            if operation == "replace":
+                _register(repo, lease, snapshot, "A", source_ref=new, replace_source_ref=source)
+            else:
+                repo.unregister_voiceprint(lease, source_ref=source, now=NOW)
+
+
+@pytest.mark.parametrize(("core", "candidate", "flagged"), [
+    (0.65, 0.45, True), (0.58, 0.35, True), (0.80, 0.52, False), (0.65, 0.48, True),
+    (0.40, 0.30, True),
+])
+def test_consistency_uses_candidate_mean_without_core_or_gap_conditions(core, candidate, flagged):
+    refs = []
+    for index in range(5):
+        vector = [0.0] * 192
+        if index < 4:
+            vector[0], vector[index + 1] = sqrt(core), sqrt(1 - core)
+        else:
+            vector[0] = candidate / sqrt(core)
+            vector[5] = sqrt(1 - vector[0] ** 2)
+        refs.append({"speaker": "A", "model": {"name": "campplus", "encoder_revision": "v1.0.0"},
+                     "vector": [value * (index + 1) for value in vector], "chunk_id": "chunk",
+                     "event_fingerprint": str(index), "start_ms": index * 1000,
+                     "end_ms": index * 1000 + 800, "duration_ms": 800})
+    result = _voiceprint_consistency(refs, {"A"})
+    target = next((item for item in result["suspect_references"] if item["source_ref"] == "chunk:4"), None)
+    assert (target is not None) is flagged
+    if flagged:
+        assert target["candidate_mean"] == pytest.approx(candidate)
+        assert "core_mean" not in target and "gap" not in target
+    assert result["consistency"]["thresholds"] == {"minimum_references": 5, "max_candidate_mean": 0.50}
+    refs[-1]["model"] = {"name": "campplus", "encoder_revision": "other-revision"}
+    assert _voiceprint_consistency(refs, {"A"})["consistency"]["insufficient_speakers"] == ["A"]
+
+
+def test_replacement_excludes_only_old_audio_from_overlap_check(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable(factory, task_id)
+    child = _commit(queue, repo, ["A"] * 3, 0)
+    with factory.begin() as session:
+        row = _content_row(session, child.video_chunk_id)
+        content = deepcopy(row.content)
+        content["timeline"][2].update(start_seconds=100, end_seconds=3000)
+        row.content = content
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    old, other, new = list(snapshot["sources"])
+    _register(repo, parent, snapshot, "A", source_ref=old)
+    _register(repo, parent, snapshot, "A", source_ref=other)
+    with pytest.raises(VoiceprintRegistrationRejectedError) as rejected:
+        _register(repo, parent, snapshot, "A", source_ref=new, replace_source_ref=old,
+                  start_ms=1900, end_ms=2300, duration_ms=400)
+    assert rejected.value.code == "VOICEPRINT_REFERENCE_OVERLAP"
+    receipt = _register(repo, parent, snapshot, "A", source_ref=new, replace_source_ref=old,
+                        start_ms=300, end_ms=900, duration_ms=600)
+    assert receipt["refs_count"] == 2 and receipt["replaced_source_ref"] == old
+
+
+@pytest.mark.parametrize("change", [{"speaker": "B"}, {"encoder_revision": "other-revision"}])
+def test_replacement_cannot_transfer_old_reference_to_another_identity_or_encoder(repository, change):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable(factory, task_id)
+    _commit(queue, repo, ["A", "A", "B"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    old, new, other = list(snapshot["sources"])
+    _register(repo, parent, snapshot, "A", source_ref=old)
+    with pytest.raises(VoiceprintRegistrationRejectedError) as rejected:
+        _register(repo, parent, snapshot, change.get("speaker", "A"),
+                  source_ref=other if "speaker" in change else new, replace_source_ref=old,
+                  **{key: value for key, value in change.items() if key != "speaker"})
+    assert rejected.value.code == "VOICEPRINT_REPLACEMENT_MISMATCH"
+    assert repo.get_voiceprint_speaker_list(parent, now=NOW)["registered_speaker_count"] == 1
 
 
 def test_zero_speakers_finishes_without_any_registration(repository):
@@ -348,7 +575,7 @@ def test_registration_rejects_foreign_source_stale_lease_and_outside_segment(rep
         repo.finish_voiceprint_preparation(replace(parent, worker_id="other"), now=NOW)
 
 
-def test_finish_revalidates_identity_but_not_unrelated_source_version(repository):
+def test_prepared_references_remain_static_after_timeline_edits(repository):
     factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
     _enable(factory, task_id)
     _commit(queue, repo, ["A"], 0)
@@ -365,17 +592,21 @@ def test_finish_revalidates_identity_but_not_unrelated_source_version(repository
         parent, skip_reasons={"A": "only one clean source"}, now=NOW,
     )["ready"] is True
     refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
-    assert len(repo.load_voiceprint_references(refine, now=NOW)) == 1
+    references = repo.load_voiceprint_references(refine, now=NOW)
+    assert len(references) == 1
     with factory.begin() as session:
         row = _content_row(session, chunk_id)
         content = deepcopy(row.content)
         content["timeline"][0]["speaker"] = None
         row.content = content
         row.version += 1
-    assert repo.load_voiceprint_references(refine, now=NOW) == []
-    # A completed preparation remains completed; later invalidation does not launch another round.
+    assert repo.load_voiceprint_references(refine, now=NOW) == references
+    assert references[0]["speaker"] == "A"
+    assert repo.get_voiceprint_speaker_list(parent, now=NOW)["speaker_list"][0]["refs_count"] == 1
+    # Prepared labels are trusted; timeline corrections never reopen preparation.
     assert repo.begin_voiceprint_preparation(parent, now=NOW) is None
-    assert repo.finish_voiceprint_preparation(parent, now=NOW)["ready"] is True
+    repeated = repo.finish_voiceprint_preparation(parent, now=NOW)
+    assert repeated["ready"] is True and repeated["reference_counts"] == {"A": 1}
 
 
 def test_changed_identity_prevents_partial_registration_from_becoming_ready(repository):
@@ -402,16 +633,16 @@ def test_changed_identity_prevents_partial_registration_from_becoming_ready(repo
         assert session.get(VideoParseTask, task_id).detail["voiceprint"]["ready"] is False
 
 
-def test_refine_commit_fences_reference_outside_interval(repository):
+@pytest.mark.parametrize("change", ["time", "translation", "speaker", "removed_event"])
+def test_refine_uses_prepared_references_without_source_revalidation(repository, change):
     factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=6)
     _enable(factory, task_id)
-    for sequence in range(3):
+    for sequence in range(5):
         _commit(queue, repo, ["A"] if sequence == 0 else [], sequence)
     snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
     _register(repo, parent, snapshot, "A")
     repo.finish_voiceprint_preparation(parent, skip_reasons={"A": "only one clean source"}, now=NOW)
-    for sequence in range(3, 6):
-        _commit(queue, repo, [], sequence)
+    _commit(queue, repo, [], 5)
     with factory.begin() as session:
         for interval in session.scalars(select(IntervalParseTask).where(IntervalParseTask.video_task_id == task_id)):
             if interval.start_sequence_no != 3:
@@ -423,13 +654,23 @@ def test_refine_commit_fences_reference_outside_interval(repository):
     with factory.begin() as session:
         row = _content_row(session, references[0]["chunk_id"])
         content = deepcopy(row.content)
-        content["timeline"][0]["end_seconds"] += 1
+        if change == "time":
+            content["timeline"][0]["end_seconds"] += 1
+        elif change == "translation":
+            content["timeline"][0]["text_variants"].append({
+                "language": "zh-Hans", "role": "TRANSLATION", "text": "translation unrelated to audio",
+            })
+        elif change == "speaker":
+            content["timeline"][0]["speaker"] = None
+        else:
+            content["timeline"] = []
         row.content = content
         row.version += 1
-    with pytest.raises(VideoParseSnapshotConflictError, match="voiceprint"):
-        repo.commit_interval_refinement(refine, interval_content={}, member_updates={},
-                                        voiceprint_references=references,
-                                        **_refinement_inputs(repo, refine, now=NOW), now=NOW)
+    assert repo.load_voiceprint_references(refine, now=NOW) == references
+    repo.commit_interval_refinement(refine, interval_content={}, member_updates={},
+                                    **_refinement_inputs(repo, refine, now=NOW), now=NOW)
+    with factory() as session:
+        assert session.get(IntervalParseTask, refine.interval_parse_task_id).status == "COMPLETE"
 
 
 def test_voiceprint_retry_budget_survives_new_coordinator_and_discards_partial_results(repository):

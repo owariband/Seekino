@@ -36,6 +36,7 @@ class ElasticsearchConfig:
     index_name: str
     api_key: str | None = field(default=None, repr=False)
     index_generation: int = DEFAULT_INDEX_GENERATION
+    event_index_name: str | None = None
 
     @classmethod
     def from_environment(
@@ -44,6 +45,7 @@ class ElasticsearchConfig:
         index_name: str | None = None,
         api_key: str | None = None,
         index_generation: int | str | None = None,
+        event_index_name: str | None = None,
     ) -> "ElasticsearchConfig | None":
         url = (url if url is not None else os.getenv("ANIVAG_ELASTICSEARCH_URL", "")).strip()
         index_name = (index_name if index_name is not None else os.getenv(
@@ -71,6 +73,9 @@ class ElasticsearchConfig:
             index_name=index_name,
             api_key=api_key,
             index_generation=index_generation,
+            event_index_name=event_index_name if event_index_name is not None else os.getenv(
+                "SEEKINO_ELASTICSEARCH_EVENT_INDEX", "",
+            ).strip() or None,
         )
         config.validate_environment(environment)
         return config
@@ -99,17 +104,26 @@ class ElasticsearchConfig:
             )
 
     def validate_environment(self, environment: DatabaseEnvironment | str) -> None:
-        selected = DatabaseEnvironment(environment)
-        if self.index_name != self.index_name.lower():
-            raise ValueError("Elasticsearch index name must be lowercase")
-        parts = set(self.index_name.replace("-", "_").split("_"))
-        if selected is DatabaseEnvironment.TEST and "test" not in parts:
-            raise ValueError("test Elasticsearch index name must contain a test component")
-        if selected is DatabaseEnvironment.DEVELOPMENT and not parts.intersection(
-            {"dev", "development"}
-        ):
-            raise ValueError("development Elasticsearch index name must contain a dev component")
-        if selected is DatabaseEnvironment.PRODUCTION and parts.intersection(
-            {"test", "dev", "development"}
-        ):
-            raise ValueError("production Elasticsearch index name cannot name test or dev")
+        validate_index_name(self.index_name, environment)
+        event_index = self.event_index_for_environment(environment)
+        validate_index_name(event_index, environment)
+        if event_index == self.index_name:
+            raise ValueError("Event and Chunk indices must use different physical names")
+
+    def event_index_for_environment(self, environment: DatabaseEnvironment | str) -> str:
+        return self.event_index_name or f"seekino_video_events_{DatabaseEnvironment(environment).value}_v1"
+
+
+def validate_index_name(index_name: str, environment: DatabaseEnvironment | str) -> None:
+    selected = DatabaseEnvironment(environment)
+    if not isinstance(index_name, str) or not index_name or index_name != index_name.strip():
+        raise ValueError("Elasticsearch index name must not be empty or padded")
+    if index_name != index_name.lower():
+        raise ValueError("Elasticsearch index name must be lowercase")
+    parts = set(index_name.replace("-", "_").split("_"))
+    if selected is DatabaseEnvironment.TEST and "test" not in parts:
+        raise ValueError("test Elasticsearch index name must contain a test component")
+    if selected is DatabaseEnvironment.DEVELOPMENT and not parts.intersection({"dev", "development"}):
+        raise ValueError("development Elasticsearch index name must contain a dev component")
+    if selected is DatabaseEnvironment.PRODUCTION and parts.intersection({"test", "dev", "development"}):
+        raise ValueError("production Elasticsearch index name cannot name test or dev")

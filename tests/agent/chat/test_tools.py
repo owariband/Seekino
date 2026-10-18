@@ -21,6 +21,8 @@ from engine.rag.contracts import (
     VideoChunkSearchHit,
     VideoChunkSearchResult,
 )
+from engine.rag.retrieval.contracts import EventIndexNotReadyError, EventSearchResult, FusedEventHit
+from engine.rag.retrieval.events import EVENT_RETRIEVAL_STRATEGY_VERSION
 from agent.chat.common.errors import AgentModelInvocationError, AgentToolOutputError
 from agent.chat.common.state import ExecutionControl, RunInputs
 from agent.chat.common.tool import (
@@ -236,6 +238,133 @@ def _retrieve(tools, *, top_k: int = 20) -> dict:
             "visual": 0.3,
         },
     }))
+
+
+def _event_result(query: str, *, count: int = 3) -> EventSearchResult:
+    return EventSearchResult(
+        chunk_result=VideoChunkSearchResult(
+            query=query, series_ids=["series"], hits=[_hit("chunk-1")],
+            agent_reply=AgentReply(message="matched Events", result_count=1),
+        ),
+        matches=tuple(FusedEventHit(
+            event_id=f"event-{index}", parse_task_id="task", video_chunk_id="chunk-1",
+            version=1, timeline_index=index + 7, event_type="DIALOGUE", speaker="speaker",
+            lexical_fields=({"field": "dialogue", "raw_text": f"quote-{index}", "language": "ja", "role": "ORIGINAL"},),
+            matched_fields=({"field": "dialogue", "raw_text": f"quote-{index}", "language": "ja", "role": "ORIGINAL"},),
+            fused_rank=index + 1, fused_score=1 / (index + 1),
+            channel_ranks={"lexical": index + 1}, channel_scores={"lexical": 5.0},
+            start_ms=12, end_ms=18,
+        ) for index in range(count)),
+        trace={"strategy_version": EVENT_RETRIEVAL_STRATEGY_VERSION,
+               "channels": {"lexical": [{"event_id": "unselected-event", "score": 0.4}]},
+               "discarded": [{"event_id": "stale-event", "reason": "source changed"}]},
+    )
+
+
+@pytest.mark.parametrize("builder,role", [(build_query_tools, "query"), (build_evaluator_tools, "evaluator")])
+def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(builder, role) -> None:
+    received = []
+    found = _event_result("quote")
+    large_field = found.matches[0].lexical_fields[0].model_copy(update={"raw_text": "long original dialogue " * 2_000})
+    found = found.model_copy(update={"matches": (
+        found.matches[0].model_copy(update={"lexical_fields": (large_field,), "matched_fields": (large_field,)}),
+        *found.matches[1:],
+    )})
+
+    def search(query, **options):
+        received.append((query, options))
+        return found
+
+    canvas = VideoSearchContextCanvas(tenant_id="workspace", series_ids=("series",))
+    calls = []
+    tools = {tool.name: tool for tool in builder(
+        Retrieval([]).search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        maximum_top_k=1, maximum_tool_calls=None, maximum_result_bytes=4_096,
+        maximum_catalog_items=1, event_retrieve=search,
+    )}
+    initial = {"query": "quote", "top_k": 5, "speaker": "speaker", "video_chunk_ids": ["chunk-1"],
+               "channel_weights": {"lexical": 0.8, "semantic": 0.2, "visual": 0}}
+    page = json.loads(tools["search_video_events"].invoke(initial))
+    events = list(page["items"])
+    assert page["result_count"] == 1 and page["event_count"] == page["total"] == 3
+    assert page["effective_filters"]["event_types"] == ["DIALOGUE"]
+    assert page["retrieval_strategy"]["version"] == EVENT_RETRIEVAL_STRATEGY_VERSION
+    while page["next_cursor"]:
+        raw = tools["search_video_events"].invoke({"cursor": page["next_cursor"]})
+        assert len(raw.encode()) <= 4_096
+        page = json.loads(raw)
+        events.extend(page["items"])
+    assert [item["matched_event"]["timeline_index"] for item in events] == [7, 8, 9]
+    assert events[0]["matched_event"]["lexical_fields"][0]["role"] == "ORIGINAL"
+    assert events[0]["matched_event"]["matched_fields"][0]["language"] == "ja"
+    assert len(events[0]["matched_event"]["matched_fields"][0]["text_excerpt"]) <= 160
+    assert received == [("quote", {
+        "tenant_id": "workspace", "series_ids": ["series"], "top_k": 5,
+        "lexical_weight": 0.8, "text_weight": 0.2, "vision_weight": 0,
+        "event_types": ["DIALOGUE"], "speaker": "speaker", "video_chunk_ids": ["chunk-1"],
+    })]
+    assert canvas.retrieval_item_ids() == ("chunk-1",)
+    assert len(calls) == 1 and calls[0].role == role
+    assert calls[0].strategy_version == EVENT_RETRIEVAL_STRATEGY_VERSION
+    assert calls[0].event_trace == {**found.trace, "matched_events": [item.model_dump(mode="json") for item in found.matches]}
+    assert "event_trace" not in calls[0].context()
+    feedback = json.loads(tools["search_video_events"].invoke({**initial, "event_types": ["ACTION"]}))
+    assert feedback["error"]["code"] == "INVALID_ARGUMENTS"
+    assert len(received) == 1
+    from gateway.codex.protocol import CodexToolBridge, dynamic_tool_specs
+    native_tool = tools["search_video_events"].as_langchain_tool()
+    assert dynamic_tool_specs([native_tool])[0]["inputSchema"]["properties"]["event_types"]
+    native_result = CodexToolBridge([native_tool]).handle("item/tool/call", {
+        "tool": "search_video_events", "callId": "event-native-call", "arguments": initial,
+    })
+    assert native_result["success"] is True
+    assert json.loads(native_result["contentItems"][0]["text"])["event_count"] == 3
+
+
+def test_event_index_not_ready_is_recoverable_and_chunk_search_remains_available() -> None:
+    def unavailable(*_args, **_kwargs):
+        raise EventIndexNotReadyError("scope has no Event receipt")
+
+    canvas = VideoSearchContextCanvas(tenant_id="workspace", series_ids=("series",))
+    calls = []
+    tools = {tool.name: tool for tool in build_query_tools(
+        Retrieval([_hit("chunk-1")]).search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=4_096,
+        maximum_catalog_items=10, retrieval_channel="lexical", event_retrieve=unavailable,
+    )}
+    feedback = json.loads(tools["search_video_events"].invoke({
+        "query": "quote", "top_k": 1, "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0},
+    }))
+    assert feedback["error"]["code"] == "EVENT_INDEX_NOT_READY"
+    assert canvas.retrieval_item_ids() == () and len(calls) == 1
+    assert calls[0].status == "error" and calls[0].error["code"] == "EVENT_INDEX_NOT_READY"
+    assert _retrieve(tools)["result_count"] == 1
+    assert len(calls) == 2 and calls[1].granularity is None
+
+
+@pytest.mark.parametrize("corruption", ["scope", "speaker", "time", "strategy"])
+def test_event_results_are_validated_before_canvas_registration(corruption) -> None:
+    found = _event_result("quote", count=1)
+    if corruption == "scope":
+        found.chunk_result.hits[0].evidence.tenant_id = "outside"
+    elif corruption == "speaker":
+        found = found.model_copy(update={"matches": (found.matches[0].model_copy(update={"speaker": "other"}),)})
+    elif corruption == "time":
+        found = found.model_copy(update={"matches": (found.matches[0].model_copy(update={"start_ms": 40, "end_ms": 50}),)})
+    else:
+        found.trace["strategy_version"] = "query-adaptive-three-channel-rrf-v2"
+    canvas = VideoSearchContextCanvas(tenant_id="workspace", series_ids=("series",))
+    calls = []
+    tools = build_query_tools(
+        Retrieval([]).search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=4_096,
+        maximum_catalog_items=10, event_retrieve=lambda *_args, **_kwargs: found,
+    )
+    tool = next(tool for tool in tools if tool.name == "search_video_events")
+    with pytest.raises(AgentModelInvocationError):
+        tool.invoke({"query": "quote", "speaker": "speaker", "top_k": 1,
+                     "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0}})
+    assert calls == [] and canvas.retrieval_item_ids() == ()
 
 
 def _read_all(tool, video_chunk_id: str, maximum_result_bytes: int) -> dict:

@@ -27,8 +27,16 @@ from engine.rag import (
     finalize_chunk_index,
     plan_chunk_index,
 )
-from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
+from engine.rag.indexing.events import (
+    EventIndexDocument, EventIndexingContract, build_event_index_receipt,
+    finalize_event_index, plan_event_index,
+)
+from engine.rag.vision.event_frames import (
+    CaptureFrame, accept_event_frame_embedding, aggregate_event_frame_embeddings,
+    plan_event_frame_embeddings,
+)
 from agent.video_parse_v2.state import ChunkTaskPhase
+from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
 
 from ..model.dto.jobDTO import (
     IndexableChunkState,
@@ -42,12 +50,13 @@ from ..storage.elasticsearch import (
     StoredDocumentState,
     document_id,
 )
+from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_parse_media import MediaLeaseIdentity, VideoParseMediaService
 
 
 class VideoParseIndexCoordinatorRepository(Protocol):
     def load_chunk_indexing_snapshot(
-        self, lease: ChunkParseLease, *, now=None,
+        self, lease: ChunkParseLease, *, event_target=None, now=None,
     ) -> ChunkIndexingSnapshot: ...
 
     def save_index_embeddings(
@@ -58,6 +67,7 @@ class VideoParseIndexCoordinatorRepository(Protocol):
         representations: Mapping[str, Any],
         *,
         receipt: Mapping[str, Any] | None = None,
+        event_target: Mapping[str, Any] | None = None,
         now=None,
     ) -> None: ...
 
@@ -67,6 +77,7 @@ class VideoParseIndexCoordinatorRepository(Protocol):
         content_version: int,
         index_generation: int,
         *,
+        event_target: Mapping[str, Any] | None = None,
         now=None,
     ) -> object: ...
 
@@ -75,6 +86,8 @@ class MultimodalChunkEmbedder(Protocol):
     def embed_text(self, text: str) -> EmbeddingResult: ...
 
     def embed_video(self, video_path: str | Path) -> EmbeddingResult: ...
+
+    def embed_image(self, image_path: str | Path) -> EmbeddingResult: ...
 
     def embed_sparse(self, text: str) -> SparseEmbeddingResult: ...
 
@@ -96,6 +109,8 @@ class VideoParseIndexCoordinator:
         media_service: VideoParseMediaService,
         contract: ChunkIndexingContract,
         check_active: Callable[[], None] | None = None,
+        event_store: ElasticsearchVideoEventStore | None = None,
+        event_target: Mapping[str, Any] | None = None,
     ) -> None:
         if store.semantic_dimensions != contract.semantic_encoder.dimensions:
             raise ValueError("semantic dimensions differ between contract and store")
@@ -123,12 +138,21 @@ class VideoParseIndexCoordinator:
         self._media_service = media_service
         self._check_active = check_active or (lambda: None)
         self.contract = contract
+        if (event_store is None) != (event_target is None):
+            raise ValueError("Event store and frozen target must be provided together")
+        self._event_store = event_store
+        self._event_target = dict(event_target) if event_target is not None else None
+        self._event_contract = (EventIndexingContract.model_validate(event_target["contract"])
+                                if event_target is not None else None)
+        if event_store is not None and event_store.index_name != event_target["index_name"]:
+            raise ValueError("Event store differs from the frozen target index")
 
     def index_chunk(self, lease: ChunkParseLease) -> object:
         """Publish one leased Chunk and prove its exact query-visible version."""
 
         self._check_active()
-        snapshot = self._repository.load_chunk_indexing_snapshot(lease)
+        event_options = {"event_target": self._event_target} if self._event_target is not None else {}
+        snapshot = self._repository.load_chunk_indexing_snapshot(lease, **event_options)
         if snapshot.target_index_generation != self.contract.index_generation:
             raise VideoParseIndexCoordinationError("index contract differs from the task target generation")
         chunk = snapshot.chunk
@@ -202,10 +226,125 @@ class VideoParseIndexCoordinator:
             self._check_active()
             if not self._store.verify_ready([document]):
                 raise VideoParseIndexCoordinationError("Elasticsearch document is not query-visible at the expected version")
+        if self._event_store is not None:
+            self._index_events(lease, snapshot)
         self._check_active()
         return self._repository.complete_chunk_indexing(
-            lease, chunk.content_version, snapshot.target_index_generation,
+            lease, chunk.content_version, snapshot.target_index_generation, **event_options,
         )
+
+    def _index_events(self, lease: ChunkParseLease, snapshot: ChunkIndexingSnapshot) -> None:
+        """Restore per-Event work, then prove the complete searchable source set."""
+        store, contract = self._event_store, self._event_contract
+        assert store is not None and contract is not None and self._event_target is not None
+        store.ensure_index(contract)
+        chunk = snapshot.chunk
+        plans = plan_event_index(
+            snapshot.video_parse_task_id, chunk.video_chunk_id, chunk.content_version,
+            VideoParseResult.model_validate(chunk.content), chunk.start_seconds, chunk.end_seconds, contract,
+        )
+        base_receipt = ChunkIndexReceipt(
+            parse_task_id=snapshot.video_parse_task_id, video_chunk_id=chunk.video_chunk_id,
+            content_version=chunk.content_version, index_generation=snapshot.target_index_generation,
+        ).as_dict()
+        cached = _cached_representations(chunk.content_detail, receipt=base_receipt).get("events", {})
+        cached = cached if isinstance(cached, Mapping) else {}
+        documents = []
+        image_vectors = {}
+        identity = MediaLeaseIdentity(snapshot.video_parse_task_id, chunk.chunk_parse_task_id, lease.lease_version)
+        for plan in plans:
+            self._check_active()
+            text_hash = hashlib.sha256(plan.semantic_request.semantic_text.encode("utf-8")).hexdigest()
+            proof = {"contract_id": contract.contract_id, "semantic_input_sha256": text_hash,
+                     "source_media_ref": chunk.source_media_ref}
+            previous = cached.get(plan.event_id)
+            entry = dict(previous) if isinstance(previous, Mapping) and all(
+                previous.get(key) == value for key, value in proof.items()
+            ) else dict(proof)
+            # A completed cache binds the source, exact text, realized frames and encoder contract.
+            restored = None
+            if isinstance(entry.get("document"), Mapping):
+                try:
+                    saved = EventIndexDocument.model_validate(entry["document"])
+                    semantic = accept_embedding_result(plan.semantic_request, modality="text",
+                        model=contract.semantic_encoder.model, vector=saved.semantic_vector)
+                    rebuilt = finalize_event_index(plan, semantic, saved.vision_vector, saved.detail.capture.frames)
+                    if rebuilt == saved:
+                        restored = rebuilt
+                except (TypeError, ValueError):
+                    pass
+            if restored is not None:
+                documents.append(restored)
+                continue
+            semantic = None
+            if entry.get("semantic_vector") is not None:
+                try:
+                    semantic = accept_embedding_result(plan.semantic_request, modality="text",
+                        model=contract.semantic_encoder.model, vector=entry["semantic_vector"])
+                except (TypeError, ValueError):
+                    pass
+            if semantic is None:
+                with parse_chunk_scope(chunk.sequence_no, category="embedding"):
+                    result = self._embedder.embed_text(plan.semantic_request.semantic_text)
+                semantic = _accept_result(plan.semantic_request, result)
+                entry["semantic_vector"] = list(semantic.vector)
+                self._save_representations(lease, chunk, {"events": {plan.event_id: entry}}, receipt=base_receipt)
+            source = self._media_resolver(chunk.source_media_ref)
+            with self._media_service.prepare_event_frames(
+                identity, source_video=source, timestamps_ms=plan.frame_timestamps_ms,
+                max_height=contract.capture.max_height, check_active=self._check_active,
+            ) as paths:
+                frames = tuple(CaptureFrame(requested_at_ms=timestamp, image_sha256=_file_sha256(path))
+                               for timestamp, path in paths)
+                requests = plan_event_frame_embeddings(contract.vision_encoder, frames, contract.capture)
+                frame_cache = entry.get("frame_artifacts", {})
+                frame_cache = dict(frame_cache) if isinstance(frame_cache, Mapping) else {}
+                artifacts = []
+                for request, (_, path) in zip(requests, paths, strict=True):
+                    self._check_active()
+                    key = request.encoder_id + ":" + request.input_sha256
+                    vector = image_vectors.get(key, frame_cache.get(key))
+                    artifact = None
+                    if vector is not None:
+                        try:
+                            artifact = accept_event_frame_embedding(request, modality="image",
+                                model=request.encoder.model, vector=vector)
+                        except (TypeError, ValueError):
+                            pass
+                    if artifact is None:
+                        with parse_chunk_scope(chunk.sequence_no, category="embedding"):
+                            result = self._embedder.embed_image(path)
+                        artifact = accept_event_frame_embedding(request, modality=result.modality,
+                            model=result.model, vector=result.vector)
+                        frame_cache[key] = list(artifact.vector)
+                        entry["frame_artifacts"] = frame_cache
+                        self._save_representations(lease, chunk, {"events": {plan.event_id: entry}}, receipt=base_receipt)
+                    image_vectors[key] = artifact.vector
+                    artifacts.append(artifact)
+                vision = aggregate_event_frame_embeddings(requests, artifacts, contract.capture)
+            document = finalize_event_index(plan, semantic, vision, frames)
+            entry = {**proof, "document": document.as_source()}
+            self._save_representations(lease, chunk, {"events": {plan.event_id: entry}}, receipt=base_receipt)
+            documents.append(document)
+        self._check_active()
+        if not store.verify_ready(documents):
+            try:
+                store.bulk_upsert(documents, write_version=lease.lease_version, refresh="wait_for")
+            except (ValueError, ElasticsearchIndexSchemaError):
+                raise
+            except Exception:
+                self._check_active()
+                if not store.verify_ready(documents):
+                    raise
+        if not store.verify_ready(documents):
+            raise VideoParseIndexCoordinationError("Event documents are not query-visible at the expected source")
+        self._check_active()
+        store.delete_older(snapshot.video_parse_task_id, chunk.video_chunk_id, chunk.content_version)
+        receipt = build_event_index_receipt(store.index_name, contract, plans)
+        if not store.verify_set(snapshot.video_parse_task_id, chunk.video_chunk_id,
+                                chunk.content_version, receipt.event_ids):
+            raise VideoParseIndexCoordinationError("Event publication differs from the complete expected set")
+        self._save_representations(lease, chunk, {}, receipt={**base_receipt, "events": receipt.as_dict()})
 
     def _build_document(
         self,
@@ -403,6 +542,7 @@ class VideoParseIndexCoordinator:
             chunk.content_version,
             representations,
             receipt=receipt,
+            **({"event_target": self._event_target} if self._event_target is not None else {}),
         )
 
 

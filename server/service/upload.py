@@ -33,6 +33,7 @@ from ..storage.artifact import (
     UploadSegmentArtifact,
 )
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from ..utils.errors import exception_summary
 from ..utils.time import now_utc, require_utc_datetime, unix_time_ms_to_datetime
 from ..utils.validation import canonical_uuid, require_nonempty_text
@@ -65,6 +66,7 @@ class UploadService:
         parse_defaults: ParseConfig,
         video_parse_query_encoder: EncoderContract | None = None,
         video_parse_query_encoder_source: str | None = None,
+        video_event_index_store: ElasticsearchVideoEventStore | None = None,
     ) -> None:
         if (video_parse_query_encoder is None) != (
             video_parse_query_encoder_source is None
@@ -87,6 +89,7 @@ class UploadService:
         self._probe_duration = probe_duration
         self._clock = clock or now_utc
         self._video_parse_index_store = video_parse_index_store
+        self._video_event_index_store = video_event_index_store
         self._parse_defaults = parse_defaults
         self._video_parse_query_encoder = video_parse_query_encoder
         self._video_parse_query_encoder_source = video_parse_query_encoder_source
@@ -334,6 +337,10 @@ class UploadService:
                         raise RuntimeError(
                             "Video Parse V2 index cleanup was not visible"
                         )
+                    if self._video_event_index_store is not None:
+                        self._video_event_index_store.bulk_delete(keys, refresh="wait_for")
+                        if not self._video_event_index_store.verify_absent(keys):
+                            raise RuntimeError("Event index cleanup was not visible")
             for job_id in deletion.job_ids:
                 self._artifact_store.delete_job_artifacts(job_id)
             if deletion.video_id is not None:

@@ -90,9 +90,29 @@ from engine.rag.vision.inputs import (
     compute_visual_input_revision,
     plan_ordered_frame_timestamps,
 )
+from engine.rag.indexing.events import (
+    EventIndexingContract, EventIndexPlan, EventIndexDocument, EventIndexReceipt, EventLexicalField,
+    compute_event_id, plan_event_index, finalize_event_index, build_event_index_receipt,
+)
+from engine.rag.vision.event_frames import (
+    EventFrameContract, CaptureFrame, EventFrameEmbeddingRequest, EventFrameEmbeddingArtifact,
+    plan_event_frame_embeddings, accept_event_frame_embedding, aggregate_event_frame_embeddings,
+)
+from engine.rag.retrieval.contracts import (
+    EventFilters, RawEventHit, FusedEventHit, EventSearchResult, EventIndexNotReadyError,
+)
+from engine.rag.retrieval.events import (
+    EVENT_RETRIEVAL_STRATEGY_VERSION, fuse_event_hits, verify_event_candidate, select_event_chunk_hits,
+)
 
 
 __all__ = [
+    "EventIndexingContract", "EventIndexPlan", "EventIndexDocument", "EventIndexReceipt", "EventLexicalField",
+    "compute_event_id", "plan_event_index", "finalize_event_index", "build_event_index_receipt",
+    "EventFrameContract", "CaptureFrame", "EventFrameEmbeddingRequest", "EventFrameEmbeddingArtifact",
+    "plan_event_frame_embeddings", "accept_event_frame_embedding", "aggregate_event_frame_embeddings",
+    "EventFilters", "RawEventHit", "FusedEventHit", "EventSearchResult", "EventIndexNotReadyError",
+    "EVENT_RETRIEVAL_STRATEGY_VERSION", "fuse_event_hits", "verify_event_candidate", "select_event_chunk_hits",
     "ChunkIndexPlan",
     "ChunkIndexReceipt",
     "ChunkIndexProjection",

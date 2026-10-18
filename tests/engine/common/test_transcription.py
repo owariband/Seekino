@@ -129,6 +129,8 @@ def test_video_asr_converts_model_seconds_once_and_clamps_to_millisecond_duratio
         assert "speaker1、speaker2" in inputs[1].text
         assert "说话人切换时必须拆成不同条目" in inputs[1].text
         assert "只区分匿名说话人，不匹配真实姓名" in inputs[1].text
+        assert "否则必须写 JSON null" in inputs[1].text
+        assert "无法可靠分清的发言必须使用 speaker_id=null" in inputs[1].text
         assert "不要识别说话者身份" not in inputs[1].text
         original = result_type.model_validate(payload)
         originals.append((original, original.model_dump()))

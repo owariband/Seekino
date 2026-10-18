@@ -344,8 +344,8 @@ def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capac
     assert len(connections) >= 2
 
 
-@pytest.mark.parametrize("conflict", ["overlap", "speaker_limit"])
-def test_mysql_voiceprint_registration_rechecks_racing_prechecks(mysql_capacity, conflict):
+@pytest.mark.parametrize("scenario", ["overlap", "above_target"])
+def test_mysql_voiceprint_registration_rechecks_racing_prechecks(mysql_capacity, scenario):
     from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
     from server.repository.video_parse import VoiceprintRegistrationRejectedError
 
@@ -358,7 +358,7 @@ def test_mysql_voiceprint_registration_rechecks_racing_prechecks(mysql_capacity,
         task.parse_config = {**task.parse_config, "voiceprint": {
             "max_tool_calls": 32, "execution_timeout_seconds": 120.0,
         }}
-    names = ["A", "B"] if conflict == "overlap" else ["A"] * (VOICEPRINT_REFS_PER_SPEAKER + 1)
+    names = ["A", "B"] if scenario == "overlap" else ["A"] * (VOICEPRINT_REFS_PER_SPEAKER + 1)
     timeline = [
         {"event_type": "DIALOGUE", "speaker": name,
          "start_seconds": 100 + index * 1400, "end_seconds": 1100 + index * 1400,
@@ -367,14 +367,18 @@ def test_mysql_voiceprint_registration_rechecks_racing_prechecks(mysql_capacity,
          "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": f"line {index}"}]}
         for index, name in enumerate(names)
     ]
-    if conflict == "overlap":
+    if scenario == "overlap":
         timeline[1].update(start_seconds=700, end_seconds=1700)
     child = queue.claim_chunk("voiceprint-source", video_parse_task_id=task_id,
         lease_duration=timedelta(minutes=5), now=NOW)
     assert child is not None
     repo.commit_chunk_result(child, content={"persons": sorted(set(names)), "timeline": timeline}, now=NOW)
+    remaining = queue.claim_chunk("voiceprint-empty", video_parse_task_id=task_id,
+        lease_duration=timedelta(minutes=5), now=NOW)
+    assert remaining is not None
+    repo.commit_chunk_result(remaining, content={"persons": [], "timeline": []}, now=NOW)
     snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
-    assert len(snapshot["member_contents"]) == 1
+    assert len(snapshot["member_contents"]) == 2
     arguments = [
         {"source_ref": source_ref, "speaker": source["speaker"],
          "start_ms": source["start_ms"] + 100, "end_ms": source["end_ms"] - 100,
@@ -402,15 +406,22 @@ def test_mysql_voiceprint_registration_rechecks_racing_prechecks(mysql_capacity,
             return error
 
     results = _race(race, workers=2, attempts=1)
-    assert sum(isinstance(result, dict) for result in results) == 1
     rejected = [result for result in results if isinstance(result, VoiceprintRegistrationRejectedError)]
-    assert len(rejected) == 1
-    assert rejected[0].code == ("VOICEPRINT_REFERENCE_OVERLAP" if conflict == "overlap"
-                                else "VOICEPRINT_REFERENCE_LIMIT")
+    if scenario == "overlap":
+        assert sum(isinstance(result, dict) for result in results) == 1
+        assert len(rejected) == 1
+        assert rejected[0].code == "VOICEPRINT_REFERENCE_OVERLAP"
+    else:
+        assert len(rejected) == 0
+        assert all(isinstance(result, dict) and result["added"] for result in results)
+        assert sorted(result["refs_count"] for result in results) == [
+            VOICEPRINT_REFS_PER_SPEAKER, VOICEPRINT_REFS_PER_SPEAKER + 1,
+        ]
+        assert all(result["target_refs_count"] == VOICEPRINT_REFS_PER_SPEAKER for result in results)
     with factory() as session:
         voiceprint = session.get(VideoParseTask, task_id).detail["voiceprint"]
         references = [reference for record in voiceprint["voiceprintList"] for reference in record["references"]]
-        assert len(references) == (1 if conflict == "overlap" else VOICEPRINT_REFS_PER_SPEAKER)
+        assert len(references) == (1 if scenario == "overlap" else VOICEPRINT_REFS_PER_SPEAKER + 1)
         assert voiceprint["ready"] is False
     assert len(connections) >= 2
 

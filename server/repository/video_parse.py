@@ -15,7 +15,9 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from agent.video_parse_v2.input import ParseConfig
-from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
+from agent.video_parse_v2.scheduler import (
+    chunk_index_ready, summarize_video_task, voiceprint_preparation_min_chunks,
+)
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.voiceprint import CharacterVoiceprint, Voiceprint, VoiceprintReference
 from engine.parsev2.validation import (
@@ -32,7 +34,10 @@ from engine.rag.contracts import (
 from engine.rag.indexing.projection import project_chunk_index
 from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 
-from ..constants.parse import MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY, VOICEPRINT_REFS_PER_SPEAKER
+from ..constants.parse import (
+    MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY, VOICEPRINT_REFS_PER_SPEAKER,
+    VOICEPRINT_CONSISTENCY_MIN_REFS, VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN,
+)
 from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
     ChunkParseContentState,
@@ -78,6 +83,7 @@ from .video import SeriesNotReadyError, SeriesScopeNotFoundError, VideoChunkNotF
 
 
 INDEX_EMBEDDINGS_DETAIL_KEY = "_index_embeddings_v2"
+EVENT_INDEX_TARGET_DETAIL_KEY = "_event_index_target_v1"
 _REFINE_SUBMITTED = {IntervalParseTaskStatus.COMPLETE.value}
 _VOICEPRINT_PREPARATION_KEY = "voiceprint_preparation"
 
@@ -96,6 +102,12 @@ class VideoParseConflictError(VideoParseRepositoryError):
 
 class VideoParseSnapshotConflictError(VideoParseConflictError):
     """A refinement input changed; refresh facts without rerunning observations."""
+
+    def __init__(self, message: str, *, reason: str = "snapshot_changed",
+                 context: Mapping[str, Any] | None = None) -> None:
+        self.reason = reason
+        self.context = dict(context or {})
+        super().__init__(message)
 
 
 class VoiceprintRegistrationRejectedError(VideoParseConflictError):
@@ -683,6 +695,95 @@ class VideoParseRepository:
                 ) if incomplete_scope else (),
             )
 
+    def validate_event_coverage(
+        self, scope: VideoParseRetrievalScope, *, index_name: str, contract_id: str,
+        video_chunk_ids: Sequence[str] | None = None,
+    ) -> tuple[tuple[str, str, int], ...]:
+        """Resolve paired, currently published Event sources within a trusted scope."""
+
+        requested = None
+        if video_chunk_ids is not None:
+            if isinstance(video_chunk_ids, (str, bytes)):
+                raise ValueError("video_chunk_ids must be a sequence")
+            requested = {canonical_uuid(value, "video_chunk_id") for value in video_chunk_ids}
+            if not requested:
+                raise ValueError("video_chunk_ids must not be empty")
+        sources = []
+        with self._session_factory() as session:
+            tasks = {task.id: task for task in session.scalars(select(VideoParseTask).where(
+                VideoParseTask.id.in_(tuple(scope.parse_tasks_by_video_id.values())),
+                VideoParseTask.is_deleted.is_(False),
+            ))}
+            if len(tasks) != len(scope.parse_tasks_by_video_id):
+                raise VideoParseConflictError("Event retrieval scope changed")
+            for parent in tasks.values():
+                if (parent.status != VideoParseTaskStatus.COMPLETE.value
+                        or _latest_video_task_id(session, parent.video_id) != parent.id):
+                    raise VideoParseConflictError("Event source is no longer a COMPLETE publication")
+            rows = session.execute(select(ChunkParseTask, ChunkParseContent, VideoChunk).join(
+                ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id,
+            ).join(
+                VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
+            ).where(ChunkParseTask.video_task_id.in_(tuple(tasks))))
+            seen = set()
+            counts = {task_id: 0 for task_id in tasks}
+            for child, content, chunk in rows:
+                if requested is not None and child.chunk_id not in requested:
+                    continue
+                seen.add(child.chunk_id)
+                counts[child.video_task_id] += 1
+                parent = tasks[child.video_task_id]
+                if (child.phase != ChunkTaskPhase.INDEX
+                        or child.status != ChunkParseTaskStatus.COMPLETE.value
+                        or child.indexed_content_version != content.version):
+                    raise VideoParseConflictError("Event source is no longer a COMPLETE publication")
+                target = (parent.detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY)
+                if (not isinstance(target, Mapping) or target.get("index_name") != index_name
+                        or target.get("contract_id") != contract_id):
+                    raise VideoParseConflictError("Event index has not covered the selected Chunk scope")
+                receipt = _index_receipt(content, parent.id, child.chunk_id)
+                _require_event_publication(session, parent, child, content, receipt, target, chunk=chunk)
+                sources.append((parent.id, child.chunk_id, content.version))
+            if requested is not None and seen != requested:
+                raise VideoParseConflictError("Event Chunk sub-scope is outside the authorized publication")
+            if requested is None and any(counts[task_id] != task.chunk_count for task_id, task in tasks.items()):
+                raise VideoParseConflictError("Event publication scope has missing Chunk content")
+            if not sources:
+                raise VideoParseConflictError("Event index has no covered Chunk sources")
+        return tuple(sorted(sources))
+
+    def event_index_status(self, video_parse_task_id: str) -> dict[str, Any]:
+        """Report persisted Event coverage without changing task or index state."""
+        task_id = canonical_uuid(video_parse_task_id, "video_parse_task_id")
+        with self._session_factory() as session:
+            parent = session.get(VideoParseTask, task_id)
+            if parent is None or parent.is_deleted:
+                raise VideoParseTaskNotFoundError(task_id)
+            target = (parent.detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY)
+            rows = session.execute(select(ChunkParseTask, ChunkParseContent).outerjoin(
+                ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id,
+            ).where(ChunkParseTask.video_task_id == task_id).order_by(ChunkParseTask.chunk_id))
+            chunks = []
+            for child, content in rows:
+                reason = None
+                try:
+                    if (target is None or content is None or child.phase != ChunkTaskPhase.INDEX
+                            or child.status != ChunkParseTaskStatus.COMPLETE.value
+                            or child.indexed_content_version != content.version):
+                        raise VideoParseConflictError("Event source is not published")
+                    receipt = _index_receipt(content, parent.id, child.chunk_id)
+                    _require_event_publication(session, parent, child, content, receipt, target)
+                except (TypeError, ValueError, VideoParseConflictError) as error:
+                    reason = str(error)
+                chunks.append({"video_chunk_id": child.chunk_id,
+                               "version": content.version if content is not None else None,
+                               "receipt_ready": reason is None, "reason": reason})
+            ready = sum(item["receipt_ready"] for item in chunks)
+            return {"video_parse_task_id": task_id, "target": deepcopy(target),
+                    "task_complete": parent.status == VideoParseTaskStatus.COMPLETE.value,
+                    "total_chunks": parent.chunk_count, "covered_chunks": ready,
+                    "chunks": chunks}
+
     def hydrate_retrieval_evidence(
         self,
         candidates: Sequence[tuple[str, VideoChunkRetrievalIdentity]],
@@ -1174,7 +1275,7 @@ class VideoParseRepository:
     def begin_voiceprint_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,
     ) -> dict[str, Any] | None:
-        """Bind one half-video snapshot to the existing coordinator execution."""
+        """Freeze all committed sources once three quarters of Understanding is ready."""
         started_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             parent = _locked_video_lease(session, lease, started_at)
@@ -1197,19 +1298,18 @@ class VideoParseRepository:
                 VideoChunk.video_id == parent.video_id,
                 ChunkParseContent.content.is_not(None),
             ).order_by(VideoChunk.sequence_no)))
-            required = math.ceil(parent.chunk_count / 2)
+            required = voiceprint_preparation_min_chunks(parent.chunk_count)
             if len(rows) < required:
-                raise VideoParseConflictError("voiceprint preparation needs half the Understanding results")
+                raise VideoParseConflictError("voiceprint preparation needs three quarters of the Understanding results")
             same_execution = (phase.get("active") is True
                               and phase.get("lease_version") == lease.lease_version
                               and phase.get("worker_id") == lease.worker_id)
             if same_execution:
                 selected = set(phase["source_chunk_ids"])
                 rows = [row for row in rows if row[1].id in selected]
-                if len(rows) != required:
+                if len(rows) != len(selected):
                     raise VideoParseSnapshotConflictError("Voiceprint source snapshot is incomplete")
             else:
-                rows = rows[:required]
                 speakers = sorted({event["speaker"] for _task, _chunk, result in rows
                                    for event in dict(result.content or {}).get("timeline", [])
                                    if event.get("event_type") == "DIALOGUE"
@@ -1253,7 +1353,7 @@ class VideoParseRepository:
     def precheck_voiceprint_registration(
         self, lease: VideoParseLease, *, source_ref: str, speaker: str,
         start_ms: int, end_ms: int, model: str, encoder_revision: str,
-        now: datetime | None = None,
+        replace_source_ref: str | None = None, now: datetime | None = None,
     ) -> dict[str, Any] | None:
         checked_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
@@ -1261,6 +1361,7 @@ class VideoParseRepository:
             _detail, _voiceprint, _version, existing = _check_voiceprint_registration(
                 session, parent, lease, source_ref=source_ref, speaker=speaker,
                 start_ms=start_ms, end_ms=end_ms, model=model, encoder_revision=encoder_revision,
+                replace_source_ref=replace_source_ref,
             )
             return existing
 
@@ -1268,7 +1369,7 @@ class VideoParseRepository:
         self, lease: VideoParseLease, *, source_ref: str, speaker: str,
         start_ms: int, end_ms: int, selection_basis: str, confidence: float | None,
         model: str, encoder_revision: str, vector: Sequence[float], pcm_sha256: str,
-        duration_ms: int, now: datetime | None = None,
+        duration_ms: int, replace_source_ref: str | None = None, now: datetime | None = None,
     ) -> dict[str, Any]:
         registered_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
@@ -1276,6 +1377,7 @@ class VideoParseRepository:
             detail, voiceprint, source_version, existing = _check_voiceprint_registration(
                 session, parent, lease, source_ref=source_ref, speaker=speaker,
                 start_ms=start_ms, end_ms=end_ms, model=model, encoder_revision=encoder_revision,
+                replace_source_ref=replace_source_ref,
             )
             if existing is not None:
                 return existing
@@ -1303,7 +1405,41 @@ class VideoParseRepository:
             parent.update_time = datetime_to_unix_time_ms(registered_at)
             count = len({(ref.chunk_id, ref.event_fingerprint) for item in voiceprint.voiceprintList
                          if item.speaker == speaker for ref in item.references})
-            return _voiceprint_registration_receipt(record, reference, refs_count=count, added=True)
+            receipt = _voiceprint_registration_receipt(record, reference, refs_count=count, added=True)
+            if replace_source_ref is not None:
+                receipt["replaced_source_ref"] = replace_source_ref
+            return receipt
+
+    def unregister_voiceprint(
+        self, lease: VideoParseLease, *, source_ref: str, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        removed_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            parent = _locked_video_lease(session, lease, removed_at)
+            detail, phase = _voiceprint_active_preparation(parent, lease)
+            chunk_id, separator, _fingerprint = source_ref.partition(":")
+            if not separator or chunk_id not in phase["source_chunk_ids"]:
+                raise VoiceprintRegistrationRejectedError(
+                    "INVALID_VOICEPRINT_SOURCE", "Source is outside this preparation.",
+                    "Use a registered source_ref returned by get_speaker_list.",
+                )
+            voiceprint = Voiceprint.model_validate(detail["voiceprint"])
+            for record in voiceprint.voiceprintList:
+                reference = next((ref for ref in record.references
+                                  if f"{ref.chunk_id}:{ref.event_fingerprint}" == source_ref), None)
+                if reference is None:
+                    continue
+                record.references.remove(reference)
+                if not record.references:
+                    voiceprint.voiceprintList.remove(record)
+                detail["voiceprint"] = voiceprint.model_dump(mode="json")
+                parent.detail = detail
+                parent.update_time = datetime_to_unix_time_ms(removed_at)
+                count = sum(len(item.references) for item in voiceprint.voiceprintList if item.speaker == record.speaker)
+                return {"removed": True, "speaker": record.speaker, "source_ref": source_ref,
+                        "refs_count": count, "target_refs_count": VOICEPRINT_REFS_PER_SPEAKER}
+            return {"removed": False, "speaker": None, "source_ref": source_ref,
+                    "refs_count": None, "target_refs_count": VOICEPRINT_REFS_PER_SPEAKER}
 
     def get_voiceprint_speaker_list(
         self, lease: VideoParseLease, *, now: datetime | None = None,
@@ -1373,12 +1509,18 @@ class VideoParseRepository:
             if not voiceprint.ready:
                 if len(references) != sum(len(record.references) for record in voiceprint.voiceprintList):
                     raise VideoParseSnapshotConflictError("Voiceprint registered source identity changed")
+                result.update(_voiceprint_consistency(references, speakers))
+                if result["suspect_references"]:
+                    return {"ready": False, **result,
+                            "message": "Some references are acoustically inconsistent with their speaker group. "
+                                       "Review suspect_references and explicitly replace or unregister them, then retry. "
+                                       "skip_reasons cannot bypass these references; cosine is not identity probability."}
                 if speakers and len(registered) * 2 <= len(speakers):
                     return {"ready": False, **result,
                             "message": "Register valid references for strictly more than half the speaker list."}
                 if missing_reasons:
                     return {"ready": False, **result,
-                            "message": f"Collect up to {VOICEPRINT_REFS_PER_SPEAKER} independent references per speaker, "
+                            "message": f"Aim for {VOICEPRINT_REFS_PER_SPEAKER} independent references per speaker, "
                                        "or explain each shortfall in skip_reasons."}
             voiceprint.ready = True
             phase["active"] = False
@@ -1589,7 +1731,6 @@ class VideoParseRepository:
         input_versions: Mapping[str, int],
         input_fingerprints: Mapping[str, str],
         input_contents: Mapping[str, Mapping[str, Any]],
-        voiceprint_references: Sequence[Mapping[str, Any]] = (),
         detail: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
@@ -1621,18 +1762,19 @@ class VideoParseRepository:
                     raise VideoParseConflictError("Refine base content does not match its input identity")
                 if (result.version < version or result.version == version
                         and parse_content_fingerprint(dict(result.content or {})) != input_fingerprints[chunk_task.id]):
-                    raise VideoParseSnapshotConflictError("Refine member content snapshot changed")
+                    raise VideoParseSnapshotConflictError(
+                        "Refine member content snapshot changed", reason="member_snapshot_changed",
+                        context={"chunk_task_id": chunk_task.id, "chunk_id": chunk_task.chunk_id,
+                                 "base_version": version, "current_version": result.version,
+                                 "base_fingerprint": input_fingerprints[chunk_task.id],
+                                 "current_fingerprint": parse_content_fingerprint(dict(result.content or {}))},
+                    )
             consulted_scope = []
             for _chunk_task, chunk, result in rows:
                 consulted_scope = _ordered_int_union(
                     consulted_scope, _ordered_int_union(dict(result.detail or {}).get("scope"), [chunk.sequence_no]),
                 )
             parent = session.get(VideoParseTask, interval.video_task_id)
-            if voiceprint_references:
-                voiceprint = Voiceprint.model_validate(dict(parent.detail or {}).get("voiceprint", {}))
-                current_references = _valid_voiceprint_references(session, parent, voiceprint, for_update=True)
-                if not voiceprint.ready or any(dict(reference) not in current_references for reference in voiceprint_references):
-                    raise VideoParseSnapshotConflictError("Refine voiceprint reference source changed")
             video = session.get(Video, parent.video_id) if parent is not None else None
             if video is None or consulted_scope[0] < 0 or consulted_scope[-1] >= parent.chunk_count:
                 raise VideoParseConflictError("refinement scope exceeds its fixed Video topology")
@@ -1643,7 +1785,7 @@ class VideoParseRepository:
             start_ms = consulted_scope[0] * chunk_duration_ms
             end_ms = min(video.duration_ms, (consulted_scope[-1] + 1) * chunk_duration_ms)
             candidates = {}
-            for chunk_task, _chunk, result in rows:
+            for chunk_task, chunk, result in rows:
                 base = deepcopy(dict(input_contents[chunk_task.id]))
                 current = deepcopy(dict(result.content or {}))
                 changed = member_updates.get(chunk_task.id, {})
@@ -1659,7 +1801,21 @@ class VideoParseRepository:
                         VideoParseResult.model_validate(merged), start_seconds=start_ms, end_seconds=end_ms,
                     ).model_dump(mode="json")
                 except (RefinementMergeConflictError, ValidationError) as error:
-                    raise VideoParseSnapshotConflictError("Refine concurrent event edits conflict") from error
+                    context = {"chunk_task_id": chunk_task.id, "chunk_id": chunk.id,
+                               "sequence_no": chunk.sequence_no, "base_version": input_versions[chunk_task.id],
+                               "current_version": result.version}
+                    if isinstance(error, RefinementMergeConflictError):
+                        context.update(error.context)
+                        reason = error.reason
+                        message = str(error)
+                    else:
+                        reason = "merged_validation_failed"
+                        message = "Merged Refine result failed validation"
+                        context["validation_errors"] = [{"location": list(item["loc"]), "type": item["type"]}
+                                                        for item in error.errors(include_input=False)]
+                    raise VideoParseSnapshotConflictError(
+                        f"Refine concurrent event edits conflict: {message}", reason=reason, context=context,
+                    ) from error
             member_scope = list(
                 range(
                     interval.start_sequence_no,
@@ -1705,8 +1861,31 @@ class VideoParseRepository:
             )
             return tuple(queued)
 
+    def bind_event_index_target(
+        self, lease: ChunkParseLease, configured_target: Mapping[str, Any],
+        *, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Freeze one Event build target at the first leased INDEX execution."""
+
+        target = _normalize_event_index_target(configured_target)
+        bound_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            parent = _locked_parent_task(session, lease.video_parse_task_id)
+            _locked_chunk_lease(session, lease, bound_at)
+            if lease.phase != ChunkTaskPhase.INDEX:
+                raise VideoParseConflictError("Event target requires an INDEX lease")
+            detail = deepcopy(dict(parent.detail or {}))
+            existing = detail.get(EVENT_INDEX_TARGET_DETAIL_KEY)
+            if existing is not None:
+                return _normalize_event_index_target(existing)
+            detail[EVENT_INDEX_TARGET_DETAIL_KEY] = target
+            parent.detail = detail
+            parent.update_time = datetime_to_unix_time_ms(bound_at)
+            return deepcopy(target)
+
     def load_chunk_indexing_snapshot(
-        self, lease: ChunkParseLease, *, now: datetime | None = None,
+        self, lease: ChunkParseLease, *, event_target: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
     ) -> ChunkIndexingSnapshot:
         loaded_at = now if now is not None else now_utc()
         with self._session_factory() as session:
@@ -1722,6 +1901,8 @@ class VideoParseRepository:
             ))
             if parent is None or parent.is_deleted or video is None or series is None or chunk is None or content is None:
                 raise VideoParseConflictError("Chunk Index identity or content is incomplete")
+            if event_target is not None:
+                _require_event_index_target(parent, event_target)
             covering = _submitted_intervals_by_member(session, parent.id).get(child.id, ())
             refined = set(session.scalars(select(IntervalParseContent.interval_task_id).where(
                 IntervalParseContent.interval_task_id.in_([item.id for item in covering]),
@@ -1748,7 +1929,8 @@ class VideoParseRepository:
 
     def complete_chunk_indexing(
         self, lease: ChunkParseLease, content_version: int, index_generation: int,
-        *, now: datetime | None = None,
+        *, event_target: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
     ) -> VideoParseTaskState:
         """Record a publication only after the host proves its exact ES visibility."""
         if type(content_version) is not int or content_version < 1 or type(index_generation) is not int or index_generation < 1:
@@ -1764,9 +1946,12 @@ class VideoParseRepository:
                 raise VideoParseConflictError("indexed Chunk content or phase changed")
             if parent.target_index_generation != index_generation:
                 raise VideoParseConflictError("indexed Chunk target generation changed")
+            _require_event_index_target(parent, event_target)
             receipt = _index_receipt(content, parent.id, child.chunk_id)
             if receipt["index_generation"] != index_generation:
                 raise VideoParseConflictError("indexed Chunk checkpoint generation changed")
+            if event_target is not None:
+                _require_event_publication(session, parent, child, content, receipt, event_target)
             detail = deepcopy(dict(content.detail or {}))
             committed = list(detail.get("index_committed_lease_versions", []))
             if lease.lease_version not in committed:
@@ -1793,6 +1978,7 @@ class VideoParseRepository:
         representations: Mapping[str, Any],
         *,
         receipt: Mapping[str, Any] | None = None,
+        event_target: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> None:
         """Persist reusable encoding results behind the current index lease."""
@@ -1807,6 +1993,7 @@ class VideoParseRepository:
         with self._session_factory.begin() as session:
             parent = _locked_parent_task(session, lease.video_parse_task_id)
             child = _locked_chunk_lease(session, lease, saved_at)
+            _require_event_index_target(parent, event_target)
             if lease.phase != ChunkTaskPhase.INDEX or child.id != chunk_parse_task_id:
                 raise VideoParseConflictError("embedding target is not the leased Index Chunk")
             content = session.scalar(
@@ -1842,7 +2029,16 @@ class VideoParseRepository:
                     and isinstance(cached.get("representations"), Mapping)
                 ):
                     cached_representations = deepcopy(dict(cached["representations"]))
-            cached_representations.update(deepcopy(dict(representations)))
+            incoming = deepcopy(dict(representations))
+            if "events" in incoming:
+                if not isinstance(incoming["events"], Mapping):
+                    raise VideoParseConflictError("Event encoding cache must be an object")
+                old_events = cached_representations.get("events", {})
+                incoming["events"] = {
+                    **(dict(old_events) if isinstance(old_events, Mapping) else {}),
+                    **dict(incoming["events"]),
+                }
+            cached_representations.update(incoming)
             envelope: dict[str, Any] = {
                 "content_version": content_version,
                 "representations": cached_representations,
@@ -1854,7 +2050,8 @@ class VideoParseRepository:
             content.update_time = datetime_to_unix_time_ms(saved_at)
 
     def request_index_rebuild(
-        self, video_parse_task_id: str, *, now: datetime | None = None,
+        self, video_parse_task_id: str, *, event_target: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
     ) -> tuple[str, ...]:
         """Requeue released Chunks while preserving Parse and Refine results."""
         requested_at = now if now is not None else now_utc()
@@ -1866,6 +2063,10 @@ class VideoParseRepository:
             ).order_by(ChunkParseTask.id).with_for_update()))
             if _latest_video_task_id(session, task.video_id) != task.id:
                 raise VideoParseConflictError("only the latest VideoParseTask can rebuild its index")
+            if event_target is not None:
+                detail = deepcopy(dict(task.detail or {}))
+                detail[EVENT_INDEX_TARGET_DETAIL_KEY] = _normalize_event_index_target(event_target)
+                task.detail = detail
             failure = _video_failure_status(task) or (
                 task.status if task.status in {"PARSING_FAILED", "INDEXING_FAILED"} else None
             )
@@ -3057,6 +3258,7 @@ def _voiceprint_registration_receipt(
 def _check_voiceprint_registration(
     session: Session, parent: VideoParseTask, lease: VideoParseLease, *, source_ref: str,
     speaker: str, start_ms: int, end_ms: int, model: str, encoder_revision: str,
+    replace_source_ref: str | None = None,
 ) -> tuple[dict[str, Any], Voiceprint, int, dict[str, Any] | None]:
     detail, phase = _voiceprint_active_preparation(parent, lease)
     chunk_id, separator, fingerprint = source_ref.partition(":")
@@ -3082,34 +3284,101 @@ def _check_voiceprint_registration(
     if len(references) != sum(len(record.references) for record in voiceprint.voiceprintList):
         raise VideoParseSnapshotConflictError("Voiceprint registered source identity changed")
     count = len(_voiceprint_reference_progress(references, {speaker})[speaker])
+    replacement = None
+    if replace_source_ref is not None:
+        old_chunk_id, old_separator, _old_fingerprint = replace_source_ref.partition(":")
+        if not old_separator or old_chunk_id not in phase["source_chunk_ids"]:
+            raise VoiceprintRegistrationRejectedError(
+                "INVALID_VOICEPRINT_SOURCE", "Replacement source is outside this preparation.",
+                "Use the old reference's source_ref returned by get_speaker_list.",
+            )
+        replacement = next(((item, ref) for item in voiceprint.voiceprintList for ref in item.references
+                            if f"{ref.chunk_id}:{ref.event_fingerprint}" == replace_source_ref), None)
+        if replacement is not None and (
+            replacement[0].speaker != speaker or replacement[0].model.name != model
+            or replacement[0].model.encoder_revision != encoder_revision
+        ):
+            raise VoiceprintRegistrationRejectedError(
+                "VOICEPRINT_REPLACEMENT_MISMATCH", "Replacement must preserve the speaker and encoder version.",
+                "Choose another authorized reference for the same speaker; do not move references between groups.",
+            )
     for record in voiceprint.voiceprintList:
         for ref in record.references:
             if (ref.chunk_id, ref.event_fingerprint) != (chunk_id, fingerprint):
                 continue
             if (record.speaker == speaker and record.model.name == model
                 and record.model.encoder_revision == encoder_revision
-                and (ref.start_ms, ref.end_ms) == (start_ms, end_ms)):
-                return detail, voiceprint, result.version, _voiceprint_registration_receipt(
+                and (ref.start_ms, ref.end_ms) == (start_ms, end_ms)
+                and (replacement is None or replacement[1] is ref)):
+                receipt = _voiceprint_registration_receipt(
                     record, ref, refs_count=count, added=False,
                 )
+                if replace_source_ref is not None:
+                    receipt["replaced_source_ref"] = replace_source_ref
+                return detail, voiceprint, result.version, receipt
+            if replacement is not None and replacement[1] is ref:
+                continue  # Explicit replacement may refine this source's subrange without adding a case.
             raise VoiceprintRegistrationRejectedError(
                 "VOICEPRINT_SOURCE_ALREADY_REGISTERED",
                 f"Source {source_ref} already has a reference at {ref.start_ms}–{ref.end_ms} ms.",
                 "Choose a different source_ref; another subrange of the same dialogue is not an independent case.",
             )
+    if replace_source_ref is not None and replacement is None:
+        raise VoiceprintRegistrationRejectedError(
+            "VOICEPRINT_REFERENCE_NOT_FOUND", "The reference to replace is no longer registered.",
+            "Refresh get_speaker_list; append normally if no existing reference needs replacing.",
+        )
     for ref in references:
+        if replacement is not None and f'{ref["chunk_id"]}:{ref["event_fingerprint"]}' == replace_source_ref:
+            continue
         if ref["start_ms"] < end_ms and start_ms < ref["end_ms"]:
             raise VoiceprintRegistrationRejectedError(
                 "VOICEPRINT_REFERENCE_OVERLAP",
                 f'Requested range overlaps {ref["speaker"]}\'s reference at {ref["start_ms"]}–{ref["end_ms"]} ms.',
                 "Choose another clean single-speaker range that does not overlap any registered reference.",
             )
-    if count >= VOICEPRINT_REFS_PER_SPEAKER:
-        raise VoiceprintRegistrationRejectedError(
-            "VOICEPRINT_REFERENCE_LIMIT", f"{speaker} already has {count} independent references.",
-            "Continue with another speaker, or finish preparation and explain any remaining shortfalls.",
-        )
+    if replacement is not None:
+        # This is a detached copy: only the final registration transaction persists the replacement.
+        replacement[0].references.remove(replacement[1])
     return detail, voiceprint, result.version, None
+
+
+def _voiceprint_consistency(references: Sequence[Mapping[str, Any]], speakers: set[str]) -> dict[str, Any]:
+    """Flag low within-speaker mean similarity; this does not establish a character's name."""
+    groups: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
+    for ref in references:
+        key = (ref["speaker"], ref["model"]["name"], ref["model"]["encoder_revision"])
+        groups.setdefault(key, []).append(ref)
+    suspects = []
+    checked_speakers = set()
+    thresholds = {"minimum_references": VOICEPRINT_CONSISTENCY_MIN_REFS,
+                  "max_candidate_mean": VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN}
+    for (speaker, _model, _revision), refs in groups.items():
+        count = len(refs)
+        if count < VOICEPRINT_CONSISTENCY_MIN_REFS:
+            continue
+        checked_speakers.add(speaker)
+        vectors = []
+        for ref in refs:
+            norm = math.hypot(*ref["vector"])
+            vectors.append([value / norm for value in ref["vector"]])
+        pair_sums = [0.0] * count
+        for i, vector in enumerate(vectors):
+            for j in range(i):
+                similarity = max(-1.0, min(1.0, math.fsum(a * b for a, b in zip(vector, vectors[j]))))
+                pair_sums[i] += similarity
+                pair_sums[j] += similarity
+        for index, ref in enumerate(refs):
+            candidate_mean = pair_sums[index] / (count - 1)
+            if candidate_mean <= VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN:
+                suspects.append({"speaker": speaker, "source_ref": f'{ref["chunk_id"]}:{ref["event_fingerprint"]}',
+                                 "start_ms": ref["start_ms"], "end_ms": ref["end_ms"],
+                                 "model": ref["model"], "duration_ms": ref["duration_ms"],
+                                 "reference_count": count, "candidate_mean": candidate_mean})
+    return {"suspect_references": suspects,
+            "consistency": {"similarity_metric": "cosine", "similarity_is_probability": False,
+                            "thresholds": thresholds, "checked_speakers": sorted(checked_speakers),
+                            "insufficient_speakers": sorted(speakers - checked_speakers)}}
 
 
 def _valid_voiceprint_references(
@@ -3118,6 +3387,18 @@ def _valid_voiceprint_references(
     chunk_ids = {ref.chunk_id for item in voiceprint.voiceprintList for ref in item.references}
     if not chunk_ids:
         return []
+    if voiceprint.ready:
+        # 约定：准备完成的声源标签与音频区间视为正确的静态成果。
+        # 不复核可变 timeline，不因其文本、speaker 或时间编辑作废参考或重跑 Refine。
+        owned_chunks = set(session.scalars(select(VideoChunk.id).join(
+            ChunkParseTask, ChunkParseTask.chunk_id == VideoChunk.id,
+        ).where(ChunkParseTask.video_task_id == parent.id, VideoChunk.video_id == parent.video_id,
+                VideoChunk.id.in_(sorted(chunk_ids)))))
+        return [{"speaker": record.speaker, "model": record.model.model_dump(mode="json"),
+                 "confidence": record.confidence, "source_start_ms": reference.start_ms,
+                 "source_end_ms": reference.end_ms, **reference.model_dump(mode="json")}
+                for record in voiceprint.voiceprintList for reference in record.references
+                if reference.chunk_id in owned_chunks]
     statement = select(VideoChunk.id, ChunkParseContent).join(
         ChunkParseTask, ChunkParseTask.chunk_id == VideoChunk.id,
     ).join(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id).where(
@@ -3286,6 +3567,56 @@ def _index_receipt(
     return _validate_index_receipt(receipt, parse_task_id, video_chunk_id, content.version)
 
 
+def _normalize_event_index_target(target: Mapping[str, Any]) -> dict[str, Any]:
+    from engine.rag.indexing.events import EventIndexingContract
+
+    if (not isinstance(target, Mapping)
+            or set(target) != {"index_name", "contract_id", "contract"}
+            or not isinstance(target.get("index_name"), str)
+            or not target["index_name"].strip()):
+        raise VideoParseConflictError("Event index target is incomplete")
+    try:
+        contract = EventIndexingContract.model_validate(target["contract"])
+    except (TypeError, ValueError) as error:
+        raise VideoParseConflictError("Event index target contract is invalid") from error
+    if contract.contract_id != target["contract_id"]:
+        raise VideoParseConflictError("Event index target fingerprint differs")
+    return {"index_name": target["index_name"], "contract_id": contract.contract_id,
+            "contract": contract.as_dict()}
+
+
+def _require_event_index_target(parent: VideoParseTask, expected: Mapping[str, Any] | None) -> None:
+    current = (parent.detail or {}).get(EVENT_INDEX_TARGET_DETAIL_KEY)
+    if current is None and expected is None:
+        return
+    if expected is None or current != _normalize_event_index_target(expected):
+        raise VideoParseConflictError("Event index target changed during execution")
+
+
+def _require_event_publication(
+    session: Session, parent: VideoParseTask, child: ChunkParseTask,
+    content: ChunkParseContent, receipt: Mapping[str, Any], target: Mapping[str, Any],
+    *, chunk: VideoChunk | None = None,
+) -> None:
+    from engine.rag.indexing.events import (
+        EventIndexingContract, build_event_index_receipt, plan_event_index,
+    )
+
+    _require_event_index_target(parent, target)
+    contract = EventIndexingContract.model_validate(target["contract"])
+    chunk = chunk if chunk is not None else session.get(VideoChunk, child.chunk_id)
+    if chunk is None:
+        raise VideoParseConflictError("Event source Chunk no longer exists")
+    plans = plan_event_index(
+        parse_task_id=parent.id, video_chunk_id=child.chunk_id, version=content.version,
+        result=VideoParseResult.model_validate(content.content),
+        chunk_start_ms=chunk.start_ms, chunk_end_ms=chunk.end_ms, contract=contract,
+    )
+    expected = build_event_index_receipt(target["index_name"], contract, plans).as_dict()
+    if receipt.get("events") != expected:
+        raise VideoParseConflictError("Event publication is incomplete or differs from the current source")
+
+
 def _validate_index_receipt(
     receipt: Mapping[str, Any],
     parse_task_id: str,
@@ -3318,6 +3649,12 @@ def _validate_index_receipt(
             "Video Parse V2 index receipt has invalid index_generation"
         )
     normalized: dict[str, Any] = {**expected, "index_generation": generation}
+    if receipt.get("events") is not None:
+        from engine.rag.indexing.events import EventIndexReceipt
+        try:
+            normalized["events"] = EventIndexReceipt.model_validate(receipt["events"]).as_dict()
+        except (TypeError, ValueError) as error:
+            raise VideoParseConflictError("Event index receipt is invalid") from error
     if receipt.get("ordered_frames_manifest") is not None:
         normalized["ordered_frames_manifest"] = deepcopy(receipt["ordered_frames_manifest"])
     return normalized

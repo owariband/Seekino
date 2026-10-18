@@ -116,7 +116,7 @@ ChunkUnderstandingWorkflow workers
   → content + initial scope + ready masks + Chunk COMPLETE in one transaction
         ↓
 VoiceprintAgent (optional, within the existing Video coordinator)
-  ceil(chunk_count / 2) Understanding commits → fixed source/speaker snapshot
+  ceil(chunk_count × 3/4) Understanding commits → freeze all currently committed sources/speakers
   → reference registration → finish Tool validates >50% speaker coverage (empty list permits zero)
   → transaction commits detail.voiceprint.ready=true; remaining Understanding continues
         ↓
@@ -150,7 +150,7 @@ and durable scans continue work even when notifications are lost.
 When voice preparation is enabled, the atomic Refine claim additionally requires
 `detail.voiceprint.ready=true`. Until then it remains WAITING without occupying a
 Refine slot or spending its retry budget. Queue batching still opens at 90% base
-Understanding completion; the half-video threshold only advances the coordinator.
+Understanding completion; the three-quarter threshold only advances the coordinator.
 
 Voice preparation is disabled when `ParseConfig.voiceprint` is absent or null.
 Enabling it requires `voiceprint={max_tool_calls, execution_timeout_seconds}`,
@@ -167,32 +167,58 @@ cross-video/series sharing is introduced. Reference metadata binds original-vide
 milliseconds, Chunk/event identity, content version, PCM digest and selection basis.
 Partial registration stays unready; each new attempt discards unpublished references.
 
-The four preparation Tools are `get_speaker_list`, readonly `get_context_canvas`,
-`register_voiceprint`, and `finish_voiceprint_preparation`. Only the host resolves
-media paths, extracts temporary PCM and computes vectors. A text completion alone
+The five preparation Tools are `get_speaker_list`, readonly `get_context_canvas`,
+`register_voiceprint`, `unregister_voiceprint`, and `finish_voiceprint_preparation`.
+Only the host resolves media paths, extracts temporary PCM and computes vectors. A text completion alone
 cannot make preparation ready. `get_speaker_list` returns each speaker's `refs_count`,
 `target_refs_count` and registered `references=[{source_ref,start_ms,end_ms}]` metadata;
-vectors are not exposed to the Agent. The first-version collection target and cap is
-five independent references per speaker, defined once by
+vectors are not exposed to the Agent. The default collection target is
+six independent references per speaker, defined once by
 `server/constants/parse.py::VOICEPRINT_REFS_PER_SPEAKER` and returned by the Tools.
-Prefer reliable, clean speech with varied scenes, wording and speaking states; five
-is a cost limit, not a quality guarantee or a required number of emotions.
+Additional reliable independent references are allowed within the existing tool and
+time budgets. Prefer reliable, clean speech with varied scenes, wording and speaking
+states; six is a collection goal, not a registration limit, quality guarantee or
+required number of emotions.
+Before registering, inspect each speaker's available chunks and their sequence numbers.
+Sample temporally separated early, middle and late available chunks, preferring one
+reliable utterance per distinct chunk before adding more from the same chunk. A speaker
+need not occur in every region; reliability takes priority over temporal coverage or count.
 
 Repeated `register_voiceprint` calls append references for the same speaker. Its
 receipt returns `added`, counts and source metadata. Exact repeats are idempotent;
 another subrange of an already registered source and any overlap with any speaker's
-registered audio are declined before embedding and rechecked on commit. Half-open
+registered audio are declined before embedding and rechecked on commit. Explicit
+`replace_source_ref` replaces one reference, including a more precise subrange of
+that same source, only after the new embedding succeeds and the transaction rechecks
+the remaining references. `unregister_voiceprint(source_ref)` removes one reference
+idempotently; neither operation is allowed after ready. Half-open
 intervals may touch. Identical PCM from a different source is also declined at the
 final registration check, after extraction provides its existing digest.
 Tool `message`/`retry_hint` directs the Agent to select a different
 independent, non-overlapping utterance; these declines consume Tool budget but do
 not count as preparation execution failures.
 
+Before ready, finishing reads the current references in the same transaction and
+checks each same-speaker, same-model/revision group for low acoustic agreement.
+For each reference, `candidate_mean` is its mean cosine against all other references
+in that group, excluding itself. Experimental defaults require at least five
+independent references and flag `candidate_mean <= 0.50`; the sole threshold source
+is `server/constants/parse.py`. Core agreement and gap are not completion conditions.
+A low mean returns `ready=false`, `suspect_references` with source/time and
+`candidate_mean`, plus guidance to replace or explicitly remove
+the reference. This requests review and does not prove a wrong character label.
+No reference is silently deleted or relabelled, and no group must lose its
+lowest scorer. Smaller groups do not block on this check; scores are neither
+probabilities nor independently calibrated identity accuracy. No new model call,
+runtime cache or persistent reference copy is needed.
+
 Finishing still requires valid references for strictly more than half the fixed
 speaker list. Every speaker below its reference target, including zero references,
 needs a nonblank `skip_reasons` explanation. Missing reasons return `ready=false`,
 `missing_reason_speakers`, `reference_counts`, the target and a message. With reasons
-and majority coverage, fewer than five references is normal; an empty list can finish
+and majority coverage, fewer than six references remains normal, including after
+explicit removal when no reliable replacement exists. Reasons cannot bypass an outlier that remains
+registered. An empty list can finish
 with zero references. The Agent should finish before exhausting its finite budget.
 Actual model, media and database failures retain the existing failure path. No waiting
 for later chunks, background supplementation or aggregation change is introduced.
@@ -203,11 +229,13 @@ Preparation failures/timeouts and active-phase crashes use the existing failure
 closure; committed preparation is skipped after restart, even if notification was lost.
 
 Refine can call `compare_speaker(start_ms,end_ms)` for null or conflicting named
-speakers. The host excludes self/overlap, repeated PCM, incompatible encoders and
-changed reference identities, then returns cosine candidates, margin and provenance.
+speakers. The host excludes self/overlap, repeated PCM and incompatible encoders,
+then returns cosine candidates, margin and provenance.
 Cosine is not a probability. Refine uses its existing Canvas to change speaker or
-retain null. Referenced anchors are revalidated at commit, including outside the
-Interval; changed anchors reload that Refine rather than launching a whole new pass.
+retain null. Prepared speaker labels and registered audio ranges are trusted static
+results for this task. Refine never revalidates them against later timeline edits
+or rejects a commit because a reference event changed; comparison references are
+retained only for diagnostics.
 
 The ASR provider returns seconds; the service converts them once to absolute
 integer milliseconds before using the Engine-owned transcript contract. OCR

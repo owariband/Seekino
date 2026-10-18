@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import wave
 from pathlib import Path
 from uuid import uuid4
 
@@ -31,6 +32,37 @@ def _fake_runner(commands):
             stream.write(b"media")
 
     return run
+
+
+def test_event_capture_seeks_original_absolute_time_and_cleans_on_consumer_failure(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    commands = []
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner(commands))
+    paths = ()
+    with pytest.raises(RuntimeError, match="encoder failed"):
+        with service.prepare_event_frames(_identity(), source_video=source,
+                                          timestamps_ms=(120_000, 121_500), max_height=720) as frames:
+            assert [at for at, _ in frames] == [120_000, 121_500]
+            paths = tuple(path for _, path in frames)
+            assert all(path.is_file() for path in paths)
+            raise RuntimeError("encoder failed")
+    assert all(not path.exists() for path in paths)
+    assert [command[command.index("-ss") + 1] for command in commands] == ["120.000000", "121.500000"]
+    assert all(str(source) in command for command in commands)
+
+
+@pytest.mark.parametrize("timestamps", [(), (1, 1), (2, 1), (-1,), (True,), (1.5,)])
+def test_event_capture_rejects_invalid_plan_before_media_io(tmp_path, timestamps):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    commands = []
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner(commands))
+    with pytest.raises(ValueError, match="timestamps"):
+        with service.prepare_event_frames(_identity(), source_video=source,
+                                          timestamps_ms=timestamps, max_height=720):
+            pytest.fail("invalid plan accepted")
+    assert commands == []
 
 
 def _hold_workspace_in_another_process(base, source, identity, ready):
@@ -72,6 +104,8 @@ def test_media_is_isolated_by_task_and_lease_and_always_cleaned(tmp_path):
         )
         assert media.video_path.parent == expected
         assert media.audio_path.parent == expected
+        assert media.visual_video_path == media.video_path
+        assert (media.visual_start_ms, media.visual_end_ms) == (10_000, 20_000)
         assert len(media.frames) == 2
         assert all(10_000 <= timestamp < 20_000 for timestamp, _ in media.frames)
         assert json.loads((expected / ".lease.json").read_text())["lease_version"] == 7
@@ -83,6 +117,106 @@ def test_media_is_isolated_by_task_and_lease_and_always_cleaned(tmp_path):
     assert [command[command.index("-ss") + 1] for command in commands[2:]] == [
         "2.500000", "7.500000",
     ]
+
+
+def test_visual_context_keeps_core_asr_and_samples_one_bounded_frame_set(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    commands = []
+    probed = []
+
+    def probe(path):
+        probed.append(path)
+        return 16_000
+
+    service = VideoParseMediaService(
+        tmp_path / "work", command_runner=_fake_runner(commands), probe_duration=probe,
+    )
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=10_000, end_seconds=20_000,
+        visual_start_ms=7000, visual_end_ms=23_000, visual_mode="ordered_frames",
+        frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False,
+    ) as media:
+        assert media.visual_video_path != media.video_path
+        assert media.visual_video_path.parent == media.video_path.parent
+        assert (media.visual_start_ms, media.visual_end_ms) == (7000, 23_000)
+        assert [timestamp for timestamp, _ in media.frames] == [9000, 13_000, 17_000, 21_000]
+        assert probed == [media.visual_video_path]
+        assert commands[0][commands[0].index("-ss") + 1] == "10.000"
+        assert commands[0][commands[0].index("-t") + 1] == "10.000"
+        assert commands[1][commands[1].index("-i") + 1] == str(media.video_path)
+        assert commands[2][commands[2].index("-ss") + 1] == "7.000"
+        assert commands[2][commands[2].index("-t") + 1] == "16.000"
+        assert all(command[command.index("-i") + 1] == str(media.visual_video_path)
+                   for command in commands[3:])
+        assert len(commands) == 7  # two clips, core audio and one four-frame set
+    assert not media.video_path.parent.exists()
+
+
+def test_explicit_core_visual_bounds_reuse_existing_clip(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    commands = []
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner(commands))
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+        visual_start_ms=1000, visual_end_ms=2000, visual_mode="video",
+        frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False,
+    ) as media:
+        assert media.visual_video_path == media.video_path
+        assert media.frames == ()
+        assert len(commands) == 2
+
+
+@pytest.mark.parametrize("bounds", [
+    (-1, 3000), (1500, 3000), (0, 1999), (0, 0), (True, 3000), (0, 3000.0),
+])
+def test_invalid_visual_bounds_do_not_create_media(tmp_path, bounds):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    commands = []
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner(commands))
+    with pytest.raises(ValueError, match="Visual bounds"):
+        with service.prepare_chunk(
+            _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+            visual_start_ms=bounds[0], visual_end_ms=bounds[1], visual_mode="video",
+            frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False,
+        ):
+            pytest.fail("invalid visual bounds must be rejected before preparing media")
+    assert commands == []
+    assert list(service.base_directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("failure", ["cancel", "ffmpeg"])
+def test_failed_visual_context_cleans_core_and_extended_media(tmp_path, failure):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    commands = []
+    checks = 0
+
+    def run(command):
+        _fake_runner(commands)(command)
+        if failure == "ffmpeg" and len(commands) == 3:
+            raise subprocess.CalledProcessError(1, command, stderr=b"visual decode failed")
+
+    def check():
+        nonlocal checks
+        checks += 1
+        if failure == "cancel" and checks == 4:
+            raise RuntimeError("lease lost")
+
+    service = VideoParseMediaService(tmp_path / "work", command_runner=run)
+    with pytest.raises(RuntimeError, match="lease lost|visual decode failed"):
+        with service.prepare_chunk(
+            _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+            visual_start_ms=0, visual_end_ms=3000, visual_mode="video",
+            frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False, check_active=check,
+        ):
+            pytest.fail("failed visual preparation must not yield media")
+    assert len(commands) == 3
+    assert not list(service.base_directory.rglob(".lease.json"))
+    assert not list(service.base_directory.rglob("*.mp4"))
+    assert not list(service.base_directory.rglob("*.wav"))
 
 
 def test_execution_kind_separates_chunk_and_prefix_lease_namespaces(tmp_path):
@@ -103,7 +237,12 @@ def test_execution_kind_separates_chunk_and_prefix_lease_namespaces(tmp_path):
     assert service._read_identity(prefix_directory / ".lease.json") == prefix
 
 
-def test_video_mode_only_extracts_frames_when_ocr_needs_them(tmp_path):
+@pytest.mark.parametrize("ocr_enabled,visual_fallback_enabled,frame_count", [
+    (False, False, 0), (True, False, 2), (False, True, 2), (True, True, 2),
+])
+def test_video_mode_extracts_frames_only_for_ocr_or_fallback(
+    tmp_path, ocr_enabled, visual_fallback_enabled, frame_count,
+):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
     commands = []
@@ -115,17 +254,48 @@ def test_video_mode_only_extracts_frames_when_ocr_needs_them(tmp_path):
     with service.prepare_chunk(
         _identity(), source_video=source,
         start_seconds=0, end_seconds=5000, visual_mode="video",
-        frame_fps=1, max_frames=2, max_height=360, ocr_enabled=False,
+        frame_fps=1, max_frames=2, max_height=360, ocr_enabled=ocr_enabled,
+        visual_fallback_enabled=visual_fallback_enabled,
     ) as media:
-        assert media.frames == ()
-    assert len(commands) == 2
+        assert len(media.frames) == frame_count
+        if ocr_enabled:
+            assert media.ocr_frames is media.frames
+        else:
+            assert media.ocr_frames is None
+    assert len(commands) == 2 + frame_count
 
+
+@pytest.mark.parametrize("visual_mode,visual_fallback_enabled", [
+    ("ordered_frames", False), ("video", True), ("video", False),
+])
+@pytest.mark.parametrize("ocr_enabled", [False, True])
+def test_short_tail_keeps_a_core_frame_within_the_visual_and_ocr_budgets(
+    tmp_path, visual_mode, visual_fallback_enabled, ocr_enabled,
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    commands = []
+    service = VideoParseMediaService(
+        tmp_path / "work", command_runner=_fake_runner(commands),
+        probe_duration=lambda path: 3100 if path.name == "understanding.mp4" else 100,
+    )
     with service.prepare_chunk(
-        _identity(), source_video=source,
-        start_seconds=0, end_seconds=5000, visual_mode="video",
-        frame_fps=1, max_frames=2, max_height=360, ocr_enabled=True,
+        _identity(), source_video=source, start_seconds=60_000, end_seconds=60_100,
+        visual_start_ms=57_000, visual_end_ms=60_100, visual_mode=visual_mode,
+        frame_fps=1, max_frames=1, max_height=360, ocr_enabled=ocr_enabled,
+        visual_fallback_enabled=visual_fallback_enabled,
     ) as media:
-        assert len(media.frames) == 2
+        visual_frames_needed = visual_mode == "ordered_frames" or visual_fallback_enabled
+        assert [timestamp for timestamp, _ in media.frames] == ([60_050] if visual_frames_needed or ocr_enabled else [])
+        if ocr_enabled:
+            assert [timestamp for timestamp, _ in media.ocr_frames] == [60_050]
+            core_frame_command = commands[-1]
+            assert core_frame_command[core_frame_command.index("-i") + 1] == str(media.video_path)
+        else:
+            assert media.ocr_frames is None
+        if not visual_frames_needed and ocr_enabled:
+            assert media.ocr_frames is media.frames
+        assert len(commands) == 3 + int(visual_frames_needed) + int(ocr_enabled)
 
 
 def test_indexing_segment_uses_the_same_lease_isolation_without_extra_media(tmp_path):
@@ -342,3 +512,30 @@ def test_fractional_video_duration_limits_frames_even_when_audio_is_longer(tmp_p
         assert all(path.is_file() and path.stat().st_size > 0
                    for _timestamp, path in media.frames)
     assert not media.video_path.exists()
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="real media regression requires FFmpeg and FFprobe",
+)
+def test_real_visual_overlap_does_not_extend_asr_audio_or_video(tmp_path):
+    source = tmp_path / "source.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+        "color=c=blue:s=64x32:r=20:d=3",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000:duration=3",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-y", str(source),
+    ], check=True, capture_output=True)
+    service = VideoParseMediaService(tmp_path / "work")
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+        visual_start_ms=0, visual_end_ms=3000, visual_mode="ordered_frames",
+        frame_fps=1, max_frames=3, max_height=64, ocr_enabled=False,
+    ) as media:
+        assert probe_video_duration_seconds(media.video_path) == 1000
+        assert probe_video_duration_seconds(media.visual_video_path) == 3000
+        with wave.open(str(media.audio_path), "rb") as audio:
+            assert audio.getnframes() / audio.getframerate() == pytest.approx(1, abs=0.1)
+        assert [timestamp for timestamp, _ in media.frames] == [500, 1500, 2500]
+        assert all(path.is_file() for _timestamp, path in media.frames)
+    assert not media.video_path.parent.exists()

@@ -50,6 +50,10 @@ class PreparedVideoParseMedia:
     video_path: Path
     audio_path: Path
     frames: tuple[tuple[int, Path], ...]
+    visual_video_path: Path | None = None
+    visual_start_ms: int | None = None
+    visual_end_ms: int | None = None
+    ocr_frames: tuple[tuple[int, Path], ...] | None = None
 
 
 class VideoParseMediaService:
@@ -143,6 +147,38 @@ class VideoParseMediaService:
             yield video
 
     @contextmanager
+    def prepare_event_frames(
+        self,
+        identity: MediaLeaseIdentity,
+        *,
+        source_video: str | Path,
+        timestamps_ms: Sequence[int],
+        max_height: int,
+        check_active: Callable[[], None] | None = None,
+    ) -> Iterator[tuple[tuple[int, Path], ...]]:
+        """Prepare planned source-video frames in the current Index lease workspace."""
+
+        source = Path(source_video).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        times = tuple(timestamps_ms)
+        if (not times or any(type(value) is not int or value < 0 for value in times)
+                or tuple(sorted(set(times))) != times):
+            raise ValueError("Event frame timestamps must be nonempty, increasing integer milliseconds")
+        if type(max_height) is not int or max_height <= 0:
+            raise ValueError("Event frame max_height must be a positive integer")
+        ensure_active = check_active or (lambda: None)
+        with self._workspace(identity) as directory:
+            frames = []
+            for ordinal, timestamp in enumerate(times):
+                ensure_active()
+                path = directory / f"event-frame-{ordinal:04d}.jpg"
+                self._materialize_frame(source, path, at_seconds=timestamp, max_height=max_height)
+                ensure_active()
+                frames.append((timestamp, path))
+            yield tuple(frames)
+
+    @contextmanager
     def prepare_chunk(
         self,
         identity: MediaLeaseIdentity,
@@ -155,9 +191,12 @@ class VideoParseMediaService:
         max_frames: int,
         max_height: int,
         ocr_enabled: bool,
+        visual_fallback_enabled: bool = False,
+        visual_start_ms: int | None = None,
+        visual_end_ms: int | None = None,
         check_active: Callable[[], None] | None = None,
     ) -> Iterator[PreparedVideoParseMedia]:
-        """Create one isolated clip, ASR audio and any required ordered frames."""
+        """Keep ASR inside the core clip while visual context may extend it."""
 
         source = Path(source_video).expanduser().resolve()
         if not source.is_file():
@@ -170,6 +209,13 @@ class VideoParseMediaService:
             max_frames=max_frames,
             max_height=max_height,
         )
+        visual_start_ms = start_seconds if visual_start_ms is None else visual_start_ms
+        visual_end_ms = end_seconds if visual_end_ms is None else visual_end_ms
+        if (
+            type(visual_start_ms) is not int or type(visual_end_ms) is not int
+            or not 0 <= visual_start_ms <= start_seconds < end_seconds <= visual_end_ms
+        ):
+            raise ValueError("Visual bounds must be integer milliseconds containing the core clip")
         ensure_active = check_active or (lambda: None)
         with self._workspace(identity) as directory:
             ensure_active()
@@ -184,31 +230,60 @@ class VideoParseMediaService:
             ensure_active()
             audio = directory / "audio.wav"
             self._materialize_audio(video, audio)
+            ensure_active()
+            visual_video = video
+            if (visual_start_ms, visual_end_ms) != (start_seconds, end_seconds):
+                visual_video = directory / "understanding.mp4"
+                self._materialize_video(
+                    source, visual_video, start_seconds=visual_start_ms,
+                    end_seconds=visual_end_ms, max_height=max_height,
+                )
+                ensure_active()
 
-            frames: list[tuple[int, Path]] = []
-            if visual_mode == "ordered_frames" or ocr_enabled:
-                frame_directory = directory / "frames"
+            frame_sources = []
+            visual_frames_needed = visual_mode == "ordered_frames" or visual_fallback_enabled
+            if visual_frames_needed:
+                frame_sources.append(("frames", visual_video, visual_start_ms, visual_end_ms))
+            if ocr_enabled and (not visual_frames_needed or visual_video != video):
+                # OCR keeps its original core sampling, including very short tail chunks.
+                frame_sources.append(("ocr-frames", video, start_seconds, end_seconds))
+            frame_batches: dict[str, tuple[tuple[int, Path], ...]] = {}
+            for name, frame_video, frame_start, frame_end in frame_sources:
+                frame_directory = directory / name
                 frame_directory.mkdir()
                 # Media bounds are milliseconds. Audio can extend beyond the last
                 # video frame, so sample only inside the prepared video stream.
-                duration = min(end_seconds - start_seconds, self._probe_duration(video))
+                duration = min(frame_end - frame_start, self._probe_duration(frame_video))
                 timestamps = plan_frame_timestamps(
                     duration,
                     frame_fps=frame_fps,
                     max_frames=max_frames,
                 )
+                core_start, core_end = start_seconds, min(end_seconds, frame_start + duration)
+                if (name == "frames" and core_start < core_end
+                        and not any(core_start <= frame_start + value < core_end for value in timestamps)):
+                    # Context must not displace every frame of a very short core chunk.
+                    timestamps[-1] = (core_start + core_end) // 2 - frame_start
+                    timestamps.sort()
+                sampled_frames: list[tuple[int, Path]] = []
                 for index, relative_seconds in enumerate(timestamps):
                     ensure_active()
                     output = frame_directory / f"frame-{index:03d}.jpg"
                     self._materialize_frame(
-                        video,
+                        frame_video,
                         output,
                         at_seconds=relative_seconds,
                         max_height=max_height,
                     )
-                    frames.append((start_seconds + relative_seconds, output))
+                    sampled_frames.append((frame_start + relative_seconds, output))
+                frame_batches[name] = tuple(sampled_frames)
+            frames = frame_batches.get("frames", frame_batches.get("ocr-frames", ()))
+            ocr_frames = frame_batches.get("ocr-frames", frames) if ocr_enabled else None
             ensure_active()
-            yield PreparedVideoParseMedia(video, audio, tuple(frames))
+            yield PreparedVideoParseMedia(
+                video, audio, frames, visual_video,
+                visual_start_ms, visual_end_ms, ocr_frames,
+            )
 
     def reap_stale(
         self,

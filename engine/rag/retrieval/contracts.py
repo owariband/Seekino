@@ -10,12 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from engine.parsev2.schemas import VideoParseResult
 from engine.rag._validation import _sha256_json
-from engine.rag.contracts import VideoChunkRetrievalIdentity
+from engine.rag.contracts import VideoChunkRetrievalIdentity, VideoChunkSearchResult
 from engine.rag.encoding import (
     EmbeddingReuseTarget, EncoderContract, SparseEmbeddingRequest, compute_encoder_id,
 )
 from engine.rag.indexing.pipeline import ChunkIndexingContract
 from engine.rag.indexing.projection import LexicalField, SourceEnrichment
+from engine.rag.indexing.events import EventLexicalField, EventType
 from engine.rag.retrieval.fusion import (
     VersionedFusedVideoChunkRanking, normalize_hybrid_retrieval_weights,
 )
@@ -356,3 +357,95 @@ def validate_retrieval_identity(plan: RetrievalQueryPlan, identity: VideoChunkRe
             or identity.series_id != task.series_id or identity.parse_task_id != task.parse_task_id
             or identity.index_generation != plan.index_contract.index_generation):
         raise RetrievalConsistencyError("identity falls outside trusted scope or active index contract")
+
+
+class EventIndexNotReadyError(RuntimeError):
+    """The requested Event scope is not completely published; Chunk search can continue."""
+
+
+class EventFilters(_QueryModel):
+    event_types: tuple[EventType, ...] = ()
+    speaker: _NonBlank | None = None
+    video_chunk_ids: tuple[_NonBlank, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_speaker_scope(self) -> EventFilters:
+        if len(set(self.event_types)) != len(self.event_types) or len(set(self.video_chunk_ids)) != len(self.video_chunk_ids):
+            raise ValueError("Event filters must not contain duplicate types or Chunk IDs")
+        if self.speaker is not None:
+            if self.event_types and self.event_types != ("DIALOGUE",):
+                raise ValueError("speaker filtering requires only DIALOGUE")
+            object.__setattr__(self, "event_types", ("DIALOGUE",))
+        return self
+
+
+class RawEventHit(_QueryModel):
+    channel: Literal["lexical", "semantic", "vision"]
+    event_id: _NonBlank
+    parse_task_id: _NonBlank
+    video_chunk_id: _NonBlank
+    version: _PositiveInt
+    timeline_index: Annotated[int, Field(ge=0, strict=True)]
+    event_type: EventType
+    speaker: _NonBlank | None = None
+    rank: _PositiveInt
+    score: float = Field(allow_inf_nan=False, strict=True)
+    lexical_fields: tuple[EventLexicalField, ...] = ()
+    matched_fields: tuple[EventLexicalField, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_speaker(self) -> RawEventHit:
+        if self.event_type != "DIALOGUE" and self.speaker is not None:
+            raise ValueError("Only DIALOGUE hits can have a speaker")
+        if self.channel != "lexical" and self.matched_fields:
+            raise ValueError("Only lexical Event hits carry matched fields")
+        if any(field not in self.lexical_fields for field in self.matched_fields):
+            raise ValueError("Event matched fields must be indexed lexical fields")
+        return self
+
+
+class FusedEventHit(_QueryModel):
+    event_id: _NonBlank
+    parse_task_id: _NonBlank
+    video_chunk_id: _NonBlank
+    version: _PositiveInt
+    timeline_index: Annotated[int, Field(ge=0, strict=True)]
+    event_type: EventType
+    speaker: _NonBlank | None = None
+    lexical_fields: tuple[EventLexicalField, ...] = ()
+    matched_fields: tuple[EventLexicalField, ...] = ()
+    fused_rank: _PositiveInt
+    fused_score: float = Field(gt=0, allow_inf_nan=False)
+    channel_ranks: dict[Literal["lexical", "semantic", "vision"], _PositiveInt]
+    channel_scores: dict[Literal["lexical", "semantic", "vision"], Annotated[float, Field(strict=True, allow_inf_nan=False)]]
+    start_ms: Annotated[int, Field(ge=0, strict=True)] | None = None
+    end_ms: _PositiveInt | None = None
+
+    @model_validator(mode="after")
+    def validate_fused_hit(self) -> FusedEventHit:
+        if self.event_type != "DIALOGUE" and self.speaker is not None:
+            raise ValueError("Only DIALOGUE hits can have a speaker")
+        if ((self.start_ms is None) != (self.end_ms is None)
+                or self.start_ms is not None and self.end_ms <= self.start_ms):
+            raise ValueError("Event fact times must be an increasing pair")
+        if not self.channel_ranks or set(self.channel_ranks) != set(self.channel_scores):
+            raise ValueError("Event channel ranks and scores must describe the same channels")
+        if self.matched_fields and "lexical" not in self.channel_ranks:
+            raise ValueError("Event matched fields require a lexical channel rank")
+        if any(field not in self.lexical_fields for field in self.matched_fields):
+            raise ValueError("Event matched fields must be indexed lexical fields")
+        return self
+
+
+class EventSearchResult(_QueryModel):
+    chunk_result: VideoChunkSearchResult
+    matches: tuple[FusedEventHit, ...] = ()
+    trace: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_matched_chunk_evidence(self) -> EventSearchResult:
+        chunk_ids = {hit.candidate.video_chunk_id for hit in self.chunk_result.hits}
+        if (len({hit.event_id for hit in self.matches}) != len(self.matches)
+                or any(hit.video_chunk_id not in chunk_ids for hit in self.matches)):
+            raise ValueError("Event matches must reference unique Events in returned Chunk evidence")
+        return self
