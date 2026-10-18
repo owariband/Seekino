@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 _NonBlankString = Annotated[str, Field(min_length=1, pattern=r"\S")]
 
@@ -76,6 +76,10 @@ class DialogueEvent(TimelineEventBase):
     speaker: _NonBlankString | None = Field(
         description="Speaker name, or null when attribution is unreliable"
     )
+    speaker_source: Literal["understanding", "voice_default", "refine_edit"] | None = Field(
+        default=None,
+        description="Program-recorded origin of the final speaker, including null",
+    )
     text_variants: list[DialogueTextVariant] = Field(
         min_length=1,
         description=(
@@ -83,6 +87,13 @@ class DialogueEvent(TimelineEventBase):
             "ASR or OCR candidates"
         ),
     )
+
+    @model_serializer(mode="wrap")
+    def serialize_speaker_source(self, handler):
+        values = handler(self)
+        if self.speaker_source is None:
+            values.pop("speaker_source", None)
+        return values
 
     @model_validator(mode="after")
     def validate_dialogue_invariants(self) -> "DialogueEvent":

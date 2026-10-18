@@ -4,10 +4,13 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
 from math import sqrt
+import hashlib
+import json
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import event, select
+from engine.parsev2.voiceprint import Voiceprint
 
 from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
 from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
@@ -22,6 +25,8 @@ from server.repository.video_parse import (
     _voiceprint_consistency,
 )
 from tests.server.test_video_parse_repository import NOW, _prepare, _refinement_inputs
+from agent.video_parse_v2.timelineEvent_canvas import ParseContextCanvas
+from server.service.video_parse import VideoParseRuntimeService
 
 
 def _enable(factory, task_id):
@@ -30,6 +35,44 @@ def _enable(factory, task_id):
         task.parse_config = {**task.parse_config, "voiceprint": {
             "execution_timeout_seconds": 120.0, "max_tool_calls": 32,
         }}
+
+
+def _enable_scoring(factory, task_id, *, mode="flag"):
+    _enable(factory, task_id)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        task.parse_config = {**task.parse_config, "voiceprint_mode": mode}
+
+
+def _scoring_preparation(snapshot):
+    model = {"name": "campplus", "encoder_revision": "sha256:frozen-task"}
+    samples = [{**{key: value for key, value in source.items() if key != "text_variants"},
+                "id": source_id, "label": source["speaker"],
+                "model": model["name"], "encoder_revision": model["encoder_revision"],
+                "vector": [1.0] + [0.0] * 191, "pcm_sha256": source["event_fingerprint"]}
+               for source_id, source in snapshot["sources"].items()]
+    return {"method_version": "B0-trim20-v1", "parameters": {"trim_fraction": 0.2},
+            "model": model, "samples": samples,
+            "lines": [{**{key: value for key, value in source.items() if key != "text_variants"},
+                       "candidates": [], "gap": None,
+                       "duration_ms": source["end_ms"] - source["start_ms"],
+                       "band": "NO_VOICE", "reason": "no_candidates"}
+                      for source in snapshot["sources"].values()],
+            "failed_chunks": deepcopy(snapshot["failed_chunks"]), "timing": snapshot["timing"]}
+
+
+def _artifact_descriptor(lease, preparation):
+    encoded = json.dumps(preparation, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"), allow_nan=False).encode()
+    checksum = hashlib.sha256(encoded).hexdigest()
+    return {"location": f"artifact://test/voiceprints/{lease.video_parse_task_id}-{checksum}.json",
+            "checksum": checksum}
+
+
+def _finish_scoring(repo, lease, *, preparation, **options):
+    return repo.finish_voiceprint_scoring(
+        lease, preparation=preparation, artifact=_artifact_descriptor(lease, preparation), **options,
+    )
 
 
 def _dialogues(names, sequence):
@@ -814,3 +857,371 @@ def test_snapshot_transaction_failure_before_active_marker_has_finite_budget(rep
         task = session.get(VideoParseTask, task_id)
         assert task.status == "PARSING_FAILED"
         assert task.detail["_worker_runtime_v2"]["voiceprint_preparation"] == {"failures": 1, "active": False}
+
+
+def test_scoring_waits_for_all_terminal_and_keeps_null_targets_with_extra_gate_time(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=4)
+    _enable_scoring(factory, task_id)
+    for sequence, second in enumerate((0, 1, 2)):
+        at = NOW + timedelta(seconds=second)
+        child = queue.claim_chunk("understand", lease_duration=timedelta(minutes=5), now=at)
+        repo.commit_chunk_result(child, content=_dialogues(["A", None], sequence), now=at)
+    with pytest.raises(VideoParseConflictError, match="every Understanding chunk"):
+        repo.begin_voiceprint_preparation(parent, now=NOW + timedelta(seconds=3))
+    at = NOW + timedelta(seconds=5)
+    child = queue.claim_chunk("last", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_chunk_result(child, content=_dialogues(["B"], 3), now=at)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=at)
+    assert len(snapshot["sources"]) == 7
+    assert sum(source["speaker"] is None for source in snapshot["sources"].values()) == 3
+    assert snapshot["failed_chunks"] == []
+    assert snapshot["timing"]["extra_gate_wait_ms"] == 3000
+    assert {source["position"] for source in snapshot["sources"].values()} == {0, 1}
+    with factory() as session:
+        assert "scoring" not in session.get(VideoParseTask, task_id).detail["voiceprint"]
+
+
+def test_scoring_publishes_all_results_atomically_and_loads_only_with_current_lease(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id, mode="prefill")
+    _commit(queue, repo, ["A", None], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    preparation["timing"] = {**preparation["timing"], "preparation_elapsed_ms": 1234}
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+    with pytest.raises(VideoParseConflictError, match="every fixed dialogue"):
+        _finish_scoring(repo, parent, preparation={**preparation, "lines": []}, now=NOW)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == {"ready": False, "voiceprintList": []}
+    original = deepcopy(preparation)
+    result = _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert preparation == original
+    assert set(result) == {"ready", "method_version", "model", "parameters", "line_count", "sample_count",
+                           "checksum", "location"}
+    assert result["line_count"] == result["sample_count"] == 2
+    with factory() as session:
+        task = session.get(VideoParseTask, task_id)
+        assert task.detail["voiceprint"] == result
+        timing = task.detail["_worker_runtime_v2"]["voiceprint_preparation"]["timing"]
+        assert timing["ready_at_ms"] == int(NOW.timestamp() * 1000)
+        assert timing["preparation_elapsed_ms"] == 1234
+    assert repo.load_voiceprint_scoring(parent, now=NOW) == result
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
+    assert refine is not None and repo.load_voiceprint_scoring(refine, now=NOW) == result
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.load_voiceprint_scoring(replace(refine, lease_version=refine.lease_version + 1), now=NOW)
+
+
+def test_artifact_manifest_round_trips_without_inline_arrays_and_preserves_historical_shapes():
+    manifest = {"ready": True, "method_version": "B0-trimmed-centroid-v1",
+                "model": {"name": "campplus", "encoder_revision": "sha256:frozen-task"},
+                "parameters": {"trim_fraction": 0.2}, "line_count": 339, "sample_count": 335,
+                "checksum": "a" * 64, "location": "artifact://test/voiceprints/task-checksum.json"}
+    assert Voiceprint.model_validate(manifest).model_dump(mode="json") == manifest
+    assert Voiceprint().model_dump(mode="json") == {"ready": False, "voiceprintList": []}
+    legacy = {"ready": True, "voiceprintList": [], "scoring": {"lines": [], "samples": []}}
+    assert Voiceprint.model_validate(legacy).model_dump(mode="json") == legacy
+    for changes in ({"checksum": None}, {"ready": False}, {"sample_count": 340}, {"scoring": {}}):
+        with pytest.raises(ValueError):
+            Voiceprint.model_validate({**manifest, **changes})
+
+
+@pytest.mark.parametrize("invalid", ["checksum", "mutated_payload", "location"])
+def test_scoring_artifact_descriptor_must_match_the_exact_immutable_payload(repository, invalid):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    artifact = _artifact_descriptor(parent, preparation)
+    if invalid == "checksum":
+        artifact["checksum"] = "0" * 64
+    elif invalid == "mutated_payload":
+        preparation["lines"][0]["reason"] = "changed after artifact publication"
+    else:
+        artifact["location"] = ""
+    with pytest.raises(VideoParseConflictError, match="artifact"):
+        repo.finish_voiceprint_scoring(parent, preparation=preparation, artifact=artifact, now=NOW)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == {"ready": False, "voiceprintList": []}
+
+
+@pytest.mark.parametrize("invalid", [
+    "sample_text", "line_vector", "line_text", "candidate_src", "unknown_reference",
+    "duplicate_reference", "reference_count",
+])
+def test_scoring_artifact_uses_one_shared_sample_pool_without_repeated_payloads(repository, invalid):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    line = preparation["lines"][0]
+    sample = preparation["samples"][0]
+    if invalid == "sample_text":
+        sample["text_variants"] = []
+    elif invalid == "line_vector":
+        line["vector"] = sample["vector"]
+    elif invalid == "line_text":
+        line["text_variants"] = []
+    else:
+        candidate = {"speaker": "A", "similarity": 0.8, "reference_ids": [sample["id"]],
+                     "reference_count": 1}
+        line["candidates"] = [candidate]
+        if invalid == "candidate_src":
+            candidate["src"] = [deepcopy(sample)]
+        elif invalid == "unknown_reference":
+            candidate["reference_ids"] = ["not-in-sample-pool"]
+        elif invalid == "duplicate_reference":
+            candidate["reference_ids"] *= 2
+        else:
+            candidate["reference_count"] = 2
+    with pytest.raises(VideoParseConflictError):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+@pytest.mark.parametrize("stop", ["cancel", "commit_failure"])
+def test_scoring_cancellation_or_commit_failure_publishes_nothing(repository, stop):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    calls = []
+
+    def check_active():
+        calls.append(True)
+        if stop == "cancel" and len(calls) == 3:
+            raise RuntimeError("cancelled before ready commit")
+
+    def reject_commit(_session):
+        if stop == "commit_failure":
+            raise RuntimeError("transaction rejected")
+
+    event.listen(factory, "before_commit", reject_commit)
+    try:
+        with pytest.raises(RuntimeError):
+            _finish_scoring(repo,
+                parent, preparation=_scoring_preparation(snapshot), check_active=check_active, now=NOW,
+            )
+    finally:
+        event.remove(factory, "before_commit", reject_commit)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == {"ready": False, "voiceprintList": []}
+
+
+@pytest.mark.parametrize("change", ["source", "sample"])
+def test_scoring_rejects_changed_source_snapshot_or_sample_identity(repository, change):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    if change == "source":
+        with factory.begin() as session:
+            content = _content_row(session, next(iter(snapshot["member_contents"])))
+            content.version += 1
+    else:
+        preparation["samples"][0]["label"] = "B"
+    with pytest.raises(VideoParseSnapshotConflictError):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+def test_scoring_encoder_binding_survives_retry_and_rejects_different_revision(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    repo.bind_voiceprint_encoder(parent, model=preparation["model"], now=NOW)
+    changed = {**preparation, "model": {**preparation["model"], "encoder_revision": "new-deployment"}}
+    with pytest.raises(VideoParseSnapshotConflictError, match="encoder"):
+        _finish_scoring(repo, parent, preparation=changed, now=NOW)
+    retry = queue.retry_video(parent, error="media read failed", now=NOW)
+    assert retry.next_execute_time is not None
+    resumed = queue.claim_video("new coordinator", lease_duration=timedelta(minutes=5), now=retry.next_execute_time)
+    assert resumed is not None
+    snapshot = repo.begin_voiceprint_preparation(resumed, now=retry.next_execute_time)
+    with pytest.raises(VideoParseSnapshotConflictError, match="encoder revision"):
+        repo.bind_voiceprint_encoder(resumed, model=changed["model"], now=retry.next_execute_time)
+    repo.bind_voiceprint_encoder(resumed, model=preparation["model"], now=retry.next_execute_time)
+    assert snapshot["voiceprint"] == {"ready": False, "voiceprintList": []}
+
+
+@pytest.mark.parametrize("vector", [[1.0] * 191, [1.0] * 192])
+def test_scoring_rejects_incompatible_or_unnormalized_vectors_without_publishing(repository, vector):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    preparation["samples"][0]["vector"] = vector
+    with pytest.raises(VideoParseConflictError, match="embedding"):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+def test_scoring_keeps_under_400_ms_line_with_reason_without_embedding(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    child = queue.claim_chunk("short", lease_duration=timedelta(minutes=1), now=NOW)
+    content = _dialogues([None], 0)
+    content["timeline"][0]["end_seconds"] = content["timeline"][0]["start_seconds"] + 300
+    repo.commit_chunk_result(child, content=content, now=NOW)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    preparation["samples"] = []
+    preparation["lines"][0]["reason"] = "duration_below_encoder_minimum_400_ms"
+    result = _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert result["sample_count"] == 0 and result["line_count"] == 1
+    assert preparation["lines"][0]["duration_ms"] == 300
+    assert preparation["lines"][0]["candidates"] == []
+    assert preparation["lines"][0]["reason"] == "duration_below_encoder_minimum_400_ms"
+
+
+def test_scoring_keeps_duplicate_dialogue_events_as_separate_targets(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    child = queue.claim_chunk("duplicates", lease_duration=timedelta(minutes=1), now=NOW)
+    content = _dialogues(["A"], 0)
+    duplicate = deepcopy(content["timeline"][0])
+    duplicate["description"] = "another annotation for the same audio"
+    content["timeline"].append(duplicate)
+    repo.commit_chunk_result(child, content=content, now=NOW)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    assert len(snapshot["sources"]) == 2
+    assert {source["position"] for source in snapshot["sources"].values()} == {0, 1}
+    assert len({source["event_fingerprint"] for source in snapshot["sources"].values()}) == 1
+    result = _finish_scoring(repo, parent, preparation=_scoring_preparation(snapshot), now=NOW)
+    assert result["line_count"] == 2
+
+
+@pytest.mark.parametrize("changes", [
+    {"candidates": [{"speaker": "A", "similarity": 0.8}, {"speaker": "A", "similarity": 0.7}], "gap": 0.1},
+    {"candidates": [{"speaker": "A", "similarity": 0.8}, {"speaker": "B", "similarity": 0.7}], "gap": 0.2},
+    {"reason": None},
+])
+def test_scoring_rejects_incomplete_or_invalid_ranked_lines_without_publishing(repository, changes):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"], 0)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(snapshot)
+    preparation["lines"][0].update(changes)
+    with pytest.raises(VideoParseConflictError):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+def test_scoring_permanent_failure_is_excluded_and_task_fails_after_ready_without_deadlock(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=2)
+    _enable_scoring(factory, task_id)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        config = deepcopy(task.parse_config)
+        config["execution"]["max_retry_count"] = 0
+        task.parse_config = config
+    failed = queue.claim_chunk("failed", lease_duration=timedelta(minutes=1), now=NOW)
+    assert queue.retry_chunk(failed, error="permanent ASR failure", retry_at=NOW, now=NOW)
+    assert queue.load_chunk_schedule(task_id, now=NOW).terminal_error is None
+    _commit(queue, repo, ["A"], 1)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    assert len(snapshot["failed_chunks"]) == 1
+    assert snapshot["failed_chunks"][0]["chunk_task_id"] == failed.chunk_parse_task_id
+    assert len(snapshot["member_contents"]) == len(snapshot["sources"]) == 1
+    assert snapshot["timing"]["extra_gate_wait_ms"] is None
+    _finish_scoring(repo, parent, preparation=_scoring_preparation(snapshot), now=NOW)
+    assert repo.aggregate_task(parent, now=NOW).status == "PARSING_FAILED"
+
+
+def test_mode_only_snapshot_failure_has_a_finite_retry_budget(repository):
+    factory, _queue, _repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        config = deepcopy(task.parse_config)
+        config.pop("voiceprint")
+        config["execution"]["max_retry_count"] = 0
+        task.parse_config = config
+    result = _queue.retry_video(parent, error="snapshot transaction failed", now=NOW)
+    assert result.next_execute_time is None
+    with factory() as session:
+        task = session.get(VideoParseTask, task_id)
+        assert task.status == "PARSING_FAILED"
+        assert task.detail["_worker_runtime_v2"]["voiceprint_preparation"] == {"failures": 1, "active": False}
+
+
+@pytest.mark.parametrize(("mode", "edit", "speaker", "speaker_source"), [
+    ("prefill", "unchanged", "B", "voice_default"),
+    ("prefill", None, None, "refine_edit"),
+    ("prefill", "C", "C", "refine_edit"),
+    ("flag", "unchanged", "A", "understanding"),
+])
+def test_ready_b0_evidence_canvas_export_and_transaction_persist_speaker_source(
+    repository, mode, edit, speaker, speaker_source,
+):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id, mode=mode)
+    child = queue.claim_chunk("understanding", lease_duration=timedelta(minutes=1), now=NOW)
+    content = _dialogues(["A", "B", "B", "B", "A"], 0)
+    content["persons"].append("C")
+    for position, event in enumerate(content["timeline"]):
+        event.update(start_seconds=100 + position * 2000, end_seconds=1900 + position * 2000)
+    content["timeline"][0]["participants"] = ["A", "B", "C"]
+    repo.commit_chunk_result(child, content=content, now=NOW)
+    preparation_snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    preparation = _scoring_preparation(preparation_snapshot)
+    for position, sample in enumerate(preparation["samples"]):
+        sample["vector"] = ([0.0, 1.0] if position == 4 else [1.0, 0.0]) + [0.0] * 190
+        sample["cue_ids"] = [sample["source_id"]]
+        sample["understanding_speaker"] = sample["label"]
+    preparation["parameters"] = VideoParseRuntimeService._voiceprint_parameters()
+    preparation["lines"] = [VideoParseRuntimeService._score_voiceprint_sample(sample, preparation["samples"])
+                            for sample in preparation["samples"]]
+    assert preparation["lines"][0]["band"] == "ACCEPT"
+    assert preparation["lines"][0]["candidates"][0]["speaker"] == "B"
+    repo.bind_voiceprint_encoder(parent, model=preparation["model"], now=NOW)
+    _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
+    assert refine is not None
+    members = repo.load_interval_members(refine, now=NOW)
+    manifest = repo.load_voiceprint_scoring(refine, now=NOW)
+    assert manifest["checksum"] == _artifact_descriptor(parent, preparation)["checksum"]
+    # ArtifactStore I/O is tested at the service boundary; use those immutable bytes here.
+    stored = preparation
+    member = members.members[0]
+    evidence = {"mode": mode, "method_version": stored["method_version"], "lines": stored["lines"]}
+    snapshot = {
+        "interval_parse_task_id": refine.interval_parse_task_id,
+        "member_sequence_nos": {member.chunk_parse_task_id: 0},
+        "member_versions": {member.chunk_parse_task_id: member.version},
+        "member_bounds": {member.chunk_parse_task_id: (0, 10000)},
+        "member_scopes": {member.chunk_parse_task_id: [0]},
+        "member_contents": {member.chunk_parse_task_id: deepcopy(member.content)},
+        "member_evidence": {member.chunk_parse_task_id: {"voiceprint": evidence}},
+    }
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    if edit != "unchanged":
+        canvas.write(role="refine", batch_id="speaker-correction", expected_revision=canvas.revision, operations=[
+            {"op": "patch_event", "event_ref": canvas.items("events")[0][0], "fields": {"speaker": edit}},
+        ])
+    result = canvas.interval_result()
+    updates = {member.chunk_parse_task_id: result.updates[0].model_dump(
+        mode="json", exclude={"sequence_no"}, exclude_unset=True,
+    )}
+    repo.commit_interval_refinement(
+        refine, interval_content=result.model_dump(mode="json"), member_updates=updates,
+        **_refinement_inputs(repo, refine, now=NOW), now=NOW,
+    )
+    with factory() as session:
+        committed = session.scalar(select(ChunkParseContent).where(
+            ChunkParseContent.chunk_task_id == member.chunk_parse_task_id,
+        )).content
+        assert committed["timeline"][0]["speaker"] == speaker
+        assert committed["timeline"][0]["speaker_source"] == speaker_source
+        assert all(event.get("speaker_source") in {"understanding", "voice_default", "refine_edit"}
+                   for event in committed["timeline"])
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
+        assert stored["lines"][0]["candidates"][0]["speaker"] == "B"
+    assert "speaker_source" not in snapshot["member_contents"][member.chunk_parse_task_id]["timeline"][0]

@@ -317,7 +317,7 @@ class LocalArtifactStore:
     ) -> StoredArtifact:
         """Copy a derived media artifact to its stable Video namespace."""
 
-        if category not in {"chunks", "analysis-windows", "keyframes", "clips"}:
+        if category not in {"chunks", "analysis-windows", "keyframes", "clips", "voiceprints"}:
             raise ValueError("unsupported Video artifact category")
         canonical_series_id = canonical_uuid(series_id, "series_id")
         canonical_video_id = canonical_uuid(video_id, "video_id")

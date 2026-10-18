@@ -22,6 +22,7 @@ class ChunkScheduler:
         task_id = state["video_parse_task_id"]
         inputs = state.get("inputs")
         voiceprint_enabled = inputs is not None and inputs.parse_config.voiceprint is not None
+        scoring_enabled = inputs is not None and inputs.parse_config.voiceprint_mode != "off"
         while True:
             snapshot = await self._runtime.load_chunk_schedule(task_id)
             if snapshot.terminal_error is not None:
@@ -32,7 +33,12 @@ class ChunkScheduler:
                     retryable=False,
                 )
             if self._all_chunks_complete(snapshot) or (
-                voiceprint_enabled and sum(task.understanding_committed for task in snapshot.tasks)
+                scoring_enabled and all(task.understanding_committed or (
+                    task.phase == ChunkTaskPhase.PARSE and task.status == ChunkTaskStatus.FAILED
+                ) for task in snapshot.tasks)
+            ) or (
+                voiceprint_enabled and not scoring_enabled
+                and sum(task.understanding_committed for task in snapshot.tasks)
                 >= voiceprint_preparation_min_chunks(len(snapshot.tasks))
             ):
                 return state
@@ -55,6 +61,7 @@ def voiceprint_preparation_min_chunks(chunk_count: int) -> int:
 
 def claimable_chunk_sequences(
     tasks: Sequence[tuple[int, int, str, bool]], batch_max_size: int,
+    *, terminal_failures_ready: bool = False,
 ) -> frozenset[int]:
     """Apply the batch policy to a fresh snapshot; the host claims under lock."""
 
@@ -68,7 +75,9 @@ def claimable_chunk_sequences(
     previous_start = 0
     while opened_end < len(ordered):
         previous = ordered[previous_start:opened_end]
-        ready = sum(committed for _sequence, _phase, _status, committed in previous)
+        ready = sum(committed or terminal_failures_ready and phase == ChunkTaskPhase.PARSE
+                    and status == ChunkTaskStatus.FAILED
+                    for _sequence, phase, status, committed in previous)
         if ready < ceil(len(previous) * 0.9):
             break
         previous_start = opened_end

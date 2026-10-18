@@ -173,6 +173,7 @@ class ParseConfig(_InputModel):
     compact_enabled: bool = False
     prefix_context: PrefixContextConfig | None = None
     voiceprint: VoiceprintConfig | None = None
+    voiceprint_mode: Literal["off", "flag", "prefill"] = "off"
     execution: ExecutionConfig
     indexing: IndexingConfig
 
@@ -181,7 +182,13 @@ class ParseConfig(_InputModel):
         values = handler(self)
         if self.voiceprint is None:
             values.pop("voiceprint", None)
+        if self.voiceprint_mode == "off":
+            values.pop("voiceprint_mode", None)
         return values
+
+    @property
+    def voiceprint_enabled(self) -> bool:
+        return self.voiceprint is not None or self.voiceprint_mode != "off"
 
     @model_validator(mode="after")
     def validate_config_limits(self) -> ParseConfig:
@@ -204,7 +211,9 @@ class ParseConfig(_InputModel):
             raise ValueError(
                 "models.prefix_context is required when compact_enabled is true"
             )
-        if self.voiceprint is not None and (
+        if self.voiceprint_mode != "off" and self.models.speaker_embedding is None:
+            raise ValueError("models.speaker_embedding is required for B0 scoring")
+        if self.voiceprint_mode == "off" and self.voiceprint is not None and (
             self.models.voiceprint is None or self.models.speaker_embedding is None
         ):
             raise ValueError(
