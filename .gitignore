@@ -16,6 +16,7 @@ docs/ui-design/
 **/experiment/
 
 # Local development state
+/.claude-tmp/
 .DS_Store
 **/.DS_Store
 .env
