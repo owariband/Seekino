@@ -10,8 +10,7 @@
 }
 
 .kino[data-delayed] { animation: kino-appear .2s ease-out .3s both; }
-/* Frames step at 15 fps; a short linear tween between them keeps a long leap readable. */
-.kino[data-leaping] { position: relative; z-index: 3; transition: transform 66ms linear; will-change: transform; }
+.kino[data-leaping] { position: relative; z-index: 3; will-change: transform; }
 
 .poke {
   display: block;

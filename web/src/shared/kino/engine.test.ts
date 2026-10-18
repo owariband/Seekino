@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  GROUND, MascotPlayer, POSES, REACTIONS, SCENE_H, STATES, bounds, buildTimeline, cursorOf, extent, gaitOffset,
+  GROUND, MascotPlayer, POSES, REACTIONS, isAirborne, SCENE_H, STATES, bounds, buildTimeline, cursorOf, extent, gaitOffset,
   poseWidth, rasterize, startCursor, staticFrame, toPaths, type Frame, type MascotState, type PoseName,
 } from "./engine";
 
@@ -146,7 +146,11 @@ describe("kino moves", () => {
     expect(intro.every(f => f.leap === 0)).toBe(true);
     const progress = loop.map(f => f.leap!);
     expect(progress.every((p, i) => i === 0 || p >= progress[i - 1]!)).toBe(true);
-    expect(progress.filter(p => p > 0 && p < 1)).toHaveLength(10);
+    // One stretched airborne pose; the renderer holds it for the whole flight.
+    expect(loop.filter(isAirborne)).toEqual([expect.objectContaining({ bob: -1 })]);
+    // Short on both ends: a two-frame crouch, then a landing and recovery of five frames.
+    expect(loop.findIndex(isAirborne)).toBe(2);
+    expect(loop.length - loop.findIndex(isAirborne) - 1).toBe(5);
     const landing = loop.find(f => f.cue === "land")!;
     expect(landing.leap).toBe(1);
     expect(landing.fx?.length).toBe(2);

@@ -1,9 +1,9 @@
 import clsx from "clsx";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   COLOURS, GROUND, MascotPlayer, MIN_WIDTH, PALETTE, SCENE_H, STATE_FPS,
-  groundPath, rasterize, staticFrame, toPaths, type Cursor, type Frame, type MascotState, type Reaction,
+  groundPath, isAirborne, rasterize, staticFrame, toPaths, type Cursor, type Frame, type MascotState, type Reaction,
 } from "./engine";
 import { vacatePerch } from "./handoff";
 import styles from "./kino.module.css";
@@ -29,8 +29,9 @@ const POKE_REACTIONS: readonly KinoReaction[] = ["jump", "happy", "jump", "happy
 const POKE_STREAK_MS = 2_000;
 /** Hovering an interactive Kino makes it turn and look at you, unless it is busy. */
 const LOOKS_WHEN_HOVERED: ReadonlySet<KinoState> = new Set(["idle", "wander"]);
-/** Extra height of the leap's arc above the straight line between perches, in CSS pixels. */
-const LEAP_ARC = 36;
+/** Leap physics in CSS pixels: a snappy gravity, and how far Kino springs above the higher perch. */
+const LEAP_GRAVITY = 4200;
+const LEAP_APEX = 22;
 
 export function Kino({
   state = "idle", width = 64, scale = 3, ground = true, title, className, delayed = false,
@@ -59,7 +60,7 @@ export function Kino({
   start?: Partial<Cursor>;
   /**
    * CSS-pixel offset from Kino's feet here to the perch it is leaping from. While a `leap` reaction plays,
-   * Kino is drawn at that perch, then carried along an arc to its own position.
+   * Kino crouches at that perch, then falls along a ballistic arc to its own position at 60 fps.
    */
   leapFrom?: { x: number; y: number } | null;
   /** Leave this position behind on unmount so the next Kino in the same stage can leap from it. */
@@ -98,6 +99,8 @@ export function Kino({
   const playerRef = useRef<MascotPlayer | null>(null);
   const [frame, setFrame] = useState<Frame>(() => staticFrame(current, sceneWidth, start));
   const svgRef = useRef<SVGSVGElement>(null);
+  /** The running flight; while set, the airborne pose is held. */
+  const flightRef = useRef<{ frame: number; safety: number } | null>(null);
 
   useLayoutEffect(() => {
     if (!perch) return undefined;
@@ -116,7 +119,7 @@ export function Kino({
     setFrame(player.next());
     // Hidden tabs pause instead of piling up frames.
     const timer = window.setInterval(() => {
-      if (document.hidden) return;
+      if (document.hidden || flightRef.current !== null) return;
       setFrame(player.next());
       if (playing && player.loopsCompleted >= 1) {
         window.clearInterval(timer);
@@ -131,11 +134,63 @@ export function Kino({
   const paths = useMemo(() => toPaths(raster), [raster]);
   const ink = useMemo(() => groundPath(sceneWidth, raster.groundShift), [sceneWidth, raster.groundShift]);
   const label = title ?? (interactive ? "Kino" : undefined);
-  const leapStyle = playing === "leap" && leapFrom ? leapTransform(leapFrom, frame.leap ?? 0) : undefined;
+  const leaping = playing === "leap" && !!leapFrom && (frame.leap ?? 0) < 1;
+
+  // The sprite is moved directly on the SVG so the flight runs at display rate, between the 15 fps pose frames.
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    if (!leaping || !leapFrom) {
+      svg.style.transform = "";
+      return;
+    }
+    if (!isAirborne(frame)) {
+      svg.style.transform = translate(leapFrom.x, leapFrom.y);
+      return;
+    }
+    if (flightRef.current !== null) return;
+    const flight = ballistic(leapFrom);
+    const land = () => {
+      if (flightRef.current) {
+        cancelAnimationFrame(flightRef.current.frame);
+        window.clearTimeout(flightRef.current.safety);
+      }
+      flightRef.current = null;
+      svg.style.transform = "";
+      // Touch down on the very next pose frame instead of waiting for the frame timer.
+      if (playerRef.current) setFrame(playerRef.current.next());
+    };
+    // Hidden pages get no animation frames: skip straight to the landing rather than hanging in the air.
+    if (document.hidden) {
+      land();
+      return;
+    }
+    let startedAt: number | null = null;
+    const step = (now: number) => {
+      startedAt ??= now;
+      const t = (now - startedAt) / 1000;
+      if (t >= flight.duration) return land();
+      const at = flight.at(t);
+      svg.style.transform = translate(at.x, at.y);
+      if (flightRef.current) flightRef.current.frame = requestAnimationFrame(step);
+    };
+    flightRef.current = {
+      frame: requestAnimationFrame(step),
+      // If animation frames stop (the tab is hidden mid-flight), land anyway.
+      safety: window.setTimeout(land, flight.duration * 1000 + 250),
+    };
+  }, [frame, leaping, leapFrom]);
+
+  useEffect(() => () => {
+    if (!flightRef.current) return;
+    cancelAnimationFrame(flightRef.current.frame);
+    window.clearTimeout(flightRef.current.safety);
+    flightRef.current = null;
+  }, []);
 
   const svg = (
     <svg ref={svgRef} className={clsx(styles.kino, !interactive && className)} data-kino="" data-kino-state={current} data-pose={frame.pose}
-      data-x={frame.x} data-flip={frame.flip} data-delayed={delayed || undefined} data-leaping={leapStyle ? "" : undefined} style={leapStyle}
+      data-x={frame.x} data-flip={frame.flip} data-delayed={delayed || undefined} data-leaping={leaping ? "" : undefined}
       viewBox={`0 0 ${sceneWidth} ${SCENE_H}`} width={sceneWidth * scale} height={SCENE_H * scale}
       shapeRendering="crispEdges" role={label && !interactive ? "img" : undefined} aria-label={interactive ? undefined : label}
       aria-hidden={label && !interactive ? undefined : true} focusable="false">
@@ -164,11 +219,18 @@ export function Kino({
   );
 }
 
-/** Carries the sprite from the old perch (p = 0) to its own spot (p = 1) along a parabola. */
-function leapTransform(from: { x: number; y: number }, p: number): CSSProperties | undefined {
-  if (p >= 1) return undefined;
-  const x = from.x * (1 - p), y = from.y * (1 - p) - LEAP_ARC * 4 * p * (1 - p);
-  return { transform: `translate(${Math.round(x)}px, ${Math.round(y)}px)` };
+const translate = (x: number, y: number) => `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+
+/**
+ * A jump under gravity from `from` (offset of the old perch) to (0, 0): Kino springs a little above the
+ * higher perch and accelerates as it falls, so longer drops take longer but never feel floaty.
+ */
+function ballistic(from: { x: number; y: number }): { duration: number; at: (t: number) => { x: number; y: number } } {
+  const g = LEAP_GRAVITY, drop = -from.y;
+  const rise = Math.max(0, -drop) + LEAP_APEX;
+  const vy = -Math.sqrt(2 * g * rise);
+  const duration = (-vy + Math.sqrt(vy * vy + 2 * g * drop)) / g;
+  return { duration, at: t => ({ x: from.x * (1 - t / duration), y: from.y + vy * t + g * t * t / 2 }) };
 }
 
 /** Two-row contact shadow: full width on the ground row, two pixels narrower each side below it. */

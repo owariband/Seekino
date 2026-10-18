@@ -185,8 +185,9 @@ export interface Frame {
   /** Marks the frame that starts a sound-worthy beat, for the video export. */
   cue?: Cue;
   /**
-   * Flight progress from the old perch (0) to the new one (1) while leaping. The engine only poses Kino;
-   * whoever renders it moves the whole sprite between the two perches.
+   * Where a leap stands: 0 still on the old perch, between 0 and 1 airborne, 1 landed on the new perch.
+   * The engine only poses Kino; whoever renders it flies the sprite between the perches and holds the
+   * airborne frame until it touches down (see `isAirborne`).
    */
   leap?: number;
 }
@@ -316,7 +317,7 @@ const BANG = ["##", "##", "##", "..", "##"];
 const DROP = [".#..", ".##.", "####", "####", ".##."];
 /** Crouch, stretch, arc up seven rows and land; the shadow shrinks as the body lifts. */
 const JUMP_ARC = [1, 3, 5, 6, 7, 7, 7, 6, 5, 3, 1];
-const LEAP_FLIGHT = 10;
+const LEAP_AIRBORNE = 0.5;
 const IDLE_CYCLE = 36;
 const THINK_CYCLE = 36;
 const WORRY_CYCLE = 24;
@@ -467,18 +468,19 @@ class Builder {
     for (let i = 0; i < 12; i++) this.push({ pose: "front", flip: false, blink: i === 6 });
   }
 
-  /** Crouch, fly to the new perch while the renderer carries the sprite, land with dust, and catch a breath. */
+  /**
+   * A quick crouch, one stretched airborne frame the renderer holds for the whole flight, then a squashed,
+   * dusty landing and a beat to recover before getting back to work.
+   */
   leap() {
     const x = this.x;
-    for (let i = 0; i < 3; i++) this.push({ pose: "front", flip: false, bob: 1, leap: 0, cue: i === 0 ? "hop" : undefined });
-    for (let i = 0; i < LEAP_FLIGHT; i++) this.push({
-      pose: "front", flip: false, bob: i < 2 || i >= LEAP_FLIGHT - 2 ? -1 : 0, leap: (i + 1) / (LEAP_FLIGHT + 1),
-    });
+    for (let i = 0; i < 2; i++) this.push({ pose: "front", flip: false, bob: 1, leap: 0, cue: i === 0 ? "hop" : undefined });
+    this.push({ pose: "front", flip: false, bob: -1, leap: LEAP_AIRBORNE });
     for (let age = 0; age < 3; age++) this.push({
       pose: "front", flip: false, bob: age < 2 ? 1 : 0, leap: 1, cue: age === 0 ? "land" : undefined,
       fx: [puff(x - 9, -1, age), puff(x + 10, 1, age)],
     });
-    for (let i = 0; i < 6; i++) this.push({ pose: "front", flip: false, leap: 1, blink: i === 3 });
+    for (let i = 0; i < 2; i++) this.push({ pose: "front", flip: false, leap: 1 });
   }
 
   /** Two bouncy hops with squinting eyes while sparkles twinkle on either side. */
@@ -603,7 +605,8 @@ export function buildTimeline(state: MascotState, from: Cursor, width: number): 
       return { intro, loop: b.frames };
     }
     case "leap": {
-      b.stand(); b.turn("front");
+      // Spring up straight from wherever it was: a nap gets two frames to rise, a turn only one.
+      b.stand(); b.turn("front", true);
       // Getting up and turning still happen on the old perch.
       const intro = split().map(f => ({ ...f, leap: 0 }));
       b.leap();
@@ -653,6 +656,9 @@ export function buildTimeline(state: MascotState, from: Cursor, width: number): 
     }
   }
 }
+
+/** True while a leap is in the air; the renderer holds this frame until Kino touches down. */
+export const isAirborne = (frame: Pick<Frame, "leap">): boolean => frame.leap != null && frame.leap > 0 && frame.leap < 1;
 
 /** States that are played once as a reaction and then hand back to whatever Kino was doing. */
 export const REACTIONS = ["jump", "leap", "happy", "oops"] as const satisfies readonly MascotState[];

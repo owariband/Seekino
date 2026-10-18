@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Kino } from "./Kino";
 
-const svg = () => document.querySelector("svg[data-kino]")!;
+const svg = () => document.querySelector<SVGSVGElement>("svg[data-kino]")!;
 const state = () => svg().getAttribute("data-kino-state");
 let reduced = false;
 
@@ -45,6 +45,32 @@ describe("Kino", () => {
     expect(state()).toBe("idle");
     view.rerender(<Kino state="idle" reaction={{ name: "happy", key: 2 }} onReactionEnd={onEnd} />);
     expect(state()).toBe("happy");
+  });
+
+  it("leaps from the old perch under gravity: up a little, then an accelerating fall onto its spot", () => {
+    const onEnd = vi.fn();
+    render(<Kino state="think" start={{ facing: "front", lying: false }} leapFrom={{ x: 60, y: -300 }}
+      reaction={{ name: "leap", key: 1 }} onReactionEnd={onEnd} />);
+    const ys: number[] = [];
+    const offset = () => Number(svg().style.transform.match(/translate\((-?\d+)px, (-?\d+)px\)/)?.[2] ?? 0);
+    expect(offset()).toBe(-300);
+    let flightMs = 0;
+    for (let ms = 0; ms < 2_000 && state() === "leap"; ms += 16) {
+      act(() => { vi.advanceTimersByTime(16); });
+      if (svg().getAttribute("data-pose") === "front" && svg().style.transform && offset() !== -300) {
+        ys.push(offset());
+        flightMs += 16;
+      }
+    }
+    // Rises above the old perch first, then falls faster and faster.
+    expect(Math.min(...ys)).toBeLessThan(-300);
+    const steps = ys.slice(1).map((y, i) => y - ys[i]!);
+    expect(steps.at(-1)!).toBeGreaterThan(steps[Math.floor(steps.length / 2)]!);
+    // A 300px drop takes about half a second, not a slow glide.
+    expect(flightMs).toBeGreaterThan(350);
+    expect(flightMs).toBeLessThan(650);
+    expect(onEnd).toHaveBeenCalledExactlyOnceWith("leap");
+    expect(svg().style.transform).toBe("");
   });
 
   it("looks when hovered, reacts when poked, and startles on the fifth poke", () => {
