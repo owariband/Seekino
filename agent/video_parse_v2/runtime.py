@@ -70,7 +70,11 @@ class ParseAgent:
         })
 
     async def _prepare_voiceprint(self, state: RunState) -> RunState:
-        if state["inputs"].parse_config.voiceprint is not None:
+        if state["inputs"].parse_config.voiceprint_mode != "off":
+            await self.runtime.prepare_voiceprint_scoring(
+                state["video_parse_task_id"], state["lease"],
+            )
+        elif state["inputs"].parse_config.voiceprint is not None:
             await self.voiceprint_agent.InvokeVoiceprint(
                 state["video_parse_task_id"], state["lease"],
             )

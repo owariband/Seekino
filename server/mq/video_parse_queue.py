@@ -64,6 +64,7 @@ class MySqlVideoParseQueue:
         if type(self.video_concurrency) is not int or self.video_concurrency <= 0:
             raise ValueError("video_concurrency must be a positive integer")
         self._last_parent: dict[str, str] = {}
+        self._finalize_after: str | None = None
 
     def _acquire_capacity(self, session: Session, parent: VideoParseTask) -> bool:
         """Called only inside the serialized service admission transaction."""
@@ -274,7 +275,10 @@ class MySqlVideoParseQueue:
             terminal = None
             if _video_failure_status(parent) is not None:
                 terminal = "VideoParseTask is draining after a terminal failure"
-            elif any(task.status == "FAILED" for task, _chunk, _content in rows):
+            elif any(task.status == "FAILED" and (
+                parent.parse_config.get("voiceprint_mode", "off") == "off"
+                or task.phase != ChunkTaskPhase.PARSE
+            ) for task, _chunk, _content in rows):
                 terminal = "a Chunk stage exhausted its retry budget"
             return ChunkScheduleState(tuple(ChunkScheduleEntryState(
                 chunk_parse_task_id=task.id, sequence_no=chunk.sequence_no,
@@ -297,7 +301,8 @@ class MySqlVideoParseQueue:
                     VideoParseTask.id == parent_id,
                 ).with_for_update(skip_locked=True))
                 if (not _eligible_parent(parent)
-                    or parent.parse_config.get("voiceprint") is not None
+                    or (parent.parse_config.get("voiceprint") is not None
+                        or parent.parse_config.get("voiceprint_mode", "off") != "off")
                     and dict((parent.detail or {}).get("voiceprint") or {}).get("ready") is not True
                     or not _phase_capacity(session, parent, "refine")):
                     continue
@@ -716,11 +721,22 @@ class MySqlVideoParseQueue:
 
     def _finalize_draining_videos(self, *, now: datetime, limit: int) -> None:
         """Reconcile success and failure independently of any coordinator handle."""
-        with self._session_factory() as session:
-            candidate_ids = list(session.scalars(select(VideoParseTask.id).where(
+        # Page by id: unchanged tasks keep their update_date, so ordering by it
+        # would starve every task past the first page.
+        def page(after: str | None) -> list[str]:
+            query = select(VideoParseTask.id).where(
                 VideoParseTask.status.in_(["PARSING", "INDEXING"]),
                 VideoParseTask.is_deleted.is_(False),
-            ).order_by(VideoParseTask.update_date, VideoParseTask.id).limit(limit)))
+            )
+            if after is not None:
+                query = query.where(VideoParseTask.id > after)
+            with self._session_factory() as session:
+                return list(session.scalars(query.order_by(VideoParseTask.id).limit(limit)))
+
+        candidate_ids = page(self._finalize_after)
+        if not candidate_ids and self._finalize_after is not None:
+            candidate_ids = page(None)
+        self._finalize_after = candidate_ids[-1] if len(candidate_ids) == limit else None
         for task_id in candidate_ids:
             with self._session_factory.begin() as session:
                 task = session.scalar(select(VideoParseTask).where(
@@ -853,7 +869,10 @@ def _chunk_claim_allowed(
         .where(ChunkParseTask.video_task_id == parent.id)
         .order_by(VideoChunk.sequence_no)
     ))
-    if candidate_sequence not in claimable_chunk_sequences(rows, batch_size):
+    if candidate_sequence not in claimable_chunk_sequences(
+        rows, batch_size,
+        terminal_failures_ready=parent.parse_config.get("voiceprint_mode", "off") != "off",
+    ):
         return False
     dispatch_interval = parent.parse_config["dispatch_interval_seconds"]
     runtime = _ensure_runtime(parent.detail)[RUNTIME_DETAIL_KEY]

@@ -30,6 +30,286 @@ def _canvas():
     )
 
 
+def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None):
+    event = {
+        **_result().timeline[0].model_dump(mode="json"),
+        "event_type": "DIALOGUE", "speaker": "爱音",
+        "participants": ["爱音", "立希", "睦"],
+        "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": "声の証拠"}],
+    }
+    if source:
+        event["speaker_source"] = source
+    return {
+        "interval_parse_task_id": "voice-interval", "video_parse_task_id": "video",
+        "start_sequence_no": 0, "chunk_count": 1,
+        "member_sequence_nos": {"member": 0}, "member_versions": {"member": 1},
+        "member_bounds": {"member": (0, 20_000)}, "member_scopes": {"member": [0]},
+        "member_contents": {"member": {"persons": ["爱音", "立希", "睦"], "timeline": [event]}},
+        "member_evidence": {"member": {"asr": {"transcript": []}, "voiceprint": {
+            "mode": mode, "method_version": "B0-v1", "lines": [{
+                "id": "line-1", "position": 0, "start_ms": 1000, "end_ms": 3000,
+                "understanding_speaker": "爱音", "duration_ms": 2000,
+                "band": band, "conflict": band == "CONFLICT", "gap": 0.2,
+                "candidates": [
+                    {"speaker": "爽世", "similarity": 0.8, "reference_ids": ["source-1"],
+                     "src": [{"id": "source-1", "start_ms": 5000, "end_ms": 7000}]},
+                    {"speaker": "立希", "similarity": 0.6},
+                ],
+            }], "conflicts": ["line-1"] if band == "CONFLICT" else [],
+            "accept_disagreements": ["line-1"] if band == "ACCEPT" else [],
+        }}},
+    }
+
+
+@pytest.mark.parametrize("band", ["ACCEPT", "CONFLICT", "NO_VOICE", "REVIEW"])
+def test_flag_preserves_speaker_and_original_snapshot_for_every_band(band):
+    snapshot = _voice_snapshot("flag", band)
+    original = deepcopy(snapshot)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    event = canvas.result("member").timeline[0]
+    assert event.speaker == "爱音" and event.speaker_source == "understanding"
+    assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
+    assert snapshot == original
+    assert canvas.interval_result().updates[0].timeline[0].speaker_source == "understanding"
+
+
+@pytest.mark.parametrize("band,expected", [
+    ("ACCEPT", "爽世"), ("CONFLICT", "爱音"), ("NO_VOICE", "爱音"), ("REVIEW", "爱音"),
+])
+def test_prefill_only_accept_exports_default_without_polluting_initial(band, expected):
+    snapshot = _voice_snapshot(band=band)
+    original = deepcopy(snapshot)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    event = canvas.interval_result().updates[0].timeline[0]
+    assert event.speaker == expected
+    assert event.speaker_source == ("voice_default" if band == "ACCEPT" else "understanding")
+    if band == "ACCEPT":
+        assert "爽世" in event.participants and "爽世" in canvas.result("member").persons
+    assert snapshot == original
+    assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
+
+
+def test_voice_off_preserves_historical_draft_and_exports_no_changes():
+    snapshot = _voice_snapshot("off")
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    assert canvas.voiceprint_review() is None
+    assert canvas.result("member").model_dump(mode="json") == snapshot["member_contents"]["member"]
+    assert canvas.interval_result().updates == []
+
+
+@pytest.mark.parametrize("candidates", [[], [{"speaker": "爽世", "similarity": 0.8}]])
+def test_no_voice_preserves_unknown_speaker_with_empty_or_single_candidate(candidates):
+    snapshot = _voice_snapshot(band="NO_VOICE")
+    snapshot["member_contents"]["member"]["timeline"][0]["speaker"] = None
+    line = snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0]
+    line.update(understanding_speaker=None, candidates=candidates, gap=None)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    event = canvas.interval_result().updates[0].timeline[0]
+    assert event.speaker is None and event.speaker_source == "understanding"
+
+
+@pytest.mark.parametrize("speaker", ["爽世", "立希", "睦", None])
+def test_explicit_speaker_edits_including_null_and_outside_candidates_survive(speaker):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot())
+    reference, value = canvas.items("events")[0]
+    original_evidence = canvas.get("evidence", "member")
+    ranking = deepcopy(value["voice_evidence"])
+    assert ranking["line_id"] == "line-1" and ranking["evidence_ref"] == "member"
+    assert "reference_ids" not in ranking["candidates"][0]
+    assert "src" not in ranking["candidates"][0]
+    canvas.write(role="refine", batch_id="speaker", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": reference, "fields": {"speaker": speaker}},
+    ])
+    result = canvas.interval_result().updates[0].timeline[0]
+    assert result.speaker == speaker
+    assert result.speaker_source == ("voice_default" if speaker == "爽世" else "refine_edit")
+    assert canvas.get("events", reference)["voice_evidence"] == ranking
+    assert canvas.get("evidence", "member") == original_evidence
+
+
+def test_prior_refine_edit_is_not_overwritten_by_default_in_another_window():
+    snapshot = _voice_snapshot(source="refine_edit")
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    assert canvas.result("member").timeline[0].speaker == "爱音"
+    assert canvas.interval_result().updates == []
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_changed_audio_interval_invalidates_scores_and_unreviewed_default(explicit):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot())
+    reference = canvas.items("events")[0][0]
+    original_evidence = canvas.get("evidence", "member")
+    fields = {"start_seconds": 1100}
+    if explicit:
+        fields["speaker"] = None
+    canvas.write(role="refine", batch_id="new-audio-range", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": reference, "fields": fields},
+    ])
+    value = canvas.get("events", reference)
+    assert value["voice_evidence"]["valid"] is False
+    assert value["voice_evidence"]["invalid_reason"] == "audio_interval_changed"
+    assert value["event"]["speaker"] == (None if explicit else "爱音")
+    assert value["event"]["speaker_source"] == ("refine_edit" if explicit else "understanding")
+    assert canvas.get("evidence", "member") == original_evidence
+
+
+def test_text_only_edit_keeps_voice_evidence_valid_and_source_host_owned():
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot())
+    reference, value = canvas.items("events")[0]
+    canvas.write(role="refine", batch_id="wording", expected_revision=canvas.revision, operations=[
+        {"op": "event_array", "event_ref": reference, "field": "text_variants", "action": "set",
+         "values": [{"language": "ja", "role": "ORIGINAL", "text": "訂正文"}]},
+    ])
+    assert canvas.get("events", reference)["voice_evidence"] == value["voice_evidence"]
+    assert canvas.result("member").timeline[0].speaker_source == "voice_default"
+    event = canvas.result("member").timeline[0].model_dump(mode="json")
+    event["speaker_source"] = "understanding"
+    event["text_variants"][0]["text"] = "再び訂正された文"
+    canvas.write(role="refine", batch_id="complete-event", expected_revision=canvas.revision, operations=[
+        {"op": "set_event", "event_ref": reference, "event": event},
+    ])
+    assert canvas.result("member").timeline[0].speaker_source == "voice_default"
+
+
+@pytest.mark.parametrize("operation", ["patch_event", "set_event"])
+@pytest.mark.parametrize("source", ["understanding", "voice_default", "refine_edit"])
+@pytest.mark.parametrize("speaker", ["爱音", None])
+def test_same_speaker_value_preserves_source_including_previously_null(operation, source, speaker):
+    snapshot = _voice_snapshot("flag", source=source)
+    snapshot["member_contents"]["member"]["timeline"][0]["speaker"] = speaker
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    reference, value = canvas.items("events")[0]
+    payload = {"op": operation, "event_ref": reference}
+    if operation == "patch_event":
+        payload["fields"] = {"speaker": speaker}
+    else:
+        payload["event"] = {**value["event"], "description": "text-only factual correction",
+                            "speaker_source": "understanding"}
+    canvas.write(role="refine", batch_id="same-speaker", expected_revision=canvas.revision, operations=[payload])
+    result = canvas.result("member").timeline[0]
+    assert result.speaker == speaker and result.speaker_source == source
+
+
+@pytest.mark.parametrize("speaker", ["立希", None])
+def test_set_event_actual_speaker_change_records_refine_edit(speaker):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot())
+    reference, value = canvas.items("events")[0]
+    canvas.write(role="refine", batch_id="change-speaker", expected_revision=canvas.revision, operations=[
+        {"op": "set_event", "event_ref": reference,
+         "event": {**value["event"], "speaker": speaker, "speaker_source": "understanding"}},
+    ])
+    result = canvas.result("member").timeline[0]
+    assert result.speaker == speaker and result.speaker_source == "refine_edit"
+
+
+@pytest.mark.parametrize("operation", ["patch_event", "set_event"])
+def test_same_speaker_value_does_not_accept_default_after_interval_change(operation):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot())
+    reference, value = canvas.items("events")[0]
+    payload = {"op": operation, "event_ref": reference}
+    if operation == "patch_event":
+        payload["fields"] = {"start_seconds": 1100, "speaker": "爽世"}
+    else:
+        payload["event"] = {**value["event"], "start_seconds": 1100}
+    canvas.write(role="refine", batch_id="changed-audio", expected_revision=canvas.revision, operations=[payload])
+    result = canvas.result("member").timeline[0]
+    assert result.speaker == "爱音" and result.speaker_source == "understanding"
+    assert canvas.get("events", reference)["voice_evidence"]["valid"] is False
+
+
+@pytest.mark.parametrize("speaker,source", [("立希", "refine_edit"), (None, "understanding")])
+def test_add_dialogue_source_uses_null_prior_and_repeated_add_preserves_it(speaker, source):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("flag"))
+    event = {**canvas.items("events")[0][1]["event"], "start_seconds": 5000,
+             "end_seconds": 7000, "speaker": speaker, "speaker_source": "voice_default"}
+    payload = {"op": "add_event", "member_ref": "member", "key": "new-dialogue", "event": event}
+    receipt = canvas.write(role="refine", batch_id="new", expected_revision=canvas.revision, operations=[payload])
+    reference = receipt["results"][0]["reference"]
+    assert canvas.get("events", reference)["event"]["speaker_source"] == source
+    revision = canvas.revision
+    canvas.write(role="refine", batch_id="repeat", expected_revision=revision, operations=[payload])
+    assert canvas.revision == revision
+    assert canvas.get("events", reference)["event"]["speaker_source"] == source
+
+
+def test_prefix_edit_of_source_bearing_event_records_new_source():
+    snapshot = _voice_snapshot(source="voice_default")
+    canvas = ParseContextCanvas(scope="prefix:source", stage="prefix", members={"member": {
+        "sequence_no": 0, "version": 1, "bounds": (0, 20_000),
+        "content": snapshot["member_contents"]["member"],
+    }})
+    reference = canvas.items("events")[0][0]
+    canvas.write(role="prefix", batch_id="speaker", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}},
+    ])
+    assert canvas.result("member").timeline[0].speaker_source == "refine_edit"
+
+
+def test_off_mode_ignores_model_supplied_source_on_complete_event_write():
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("off"))
+    reference, value = canvas.items("events")[0]
+    canvas.write(role="refine", batch_id="untrusted-source", expected_revision=canvas.revision, operations=[
+        {"op": "set_event", "event_ref": reference,
+         "event": {**value["event"], "speaker_source": "voice_default"}},
+    ])
+    assert canvas.result("member").timeline[0].speaker_source is None
+    assert canvas.interval_result().updates == []
+
+
+@pytest.mark.parametrize("mode,expected", [("flag", "爱音"), ("prefill", "爽世")])
+def test_normal_refine_reads_prepared_draft_and_commits_default_once(mode, expected):
+    snapshot = _voice_snapshot(mode)
+    original = deepcopy(snapshot)
+
+    async def provider(_snapshot, *, canvas, prompt):
+        assert canvas.result("member").timeline[0].speaker == expected
+        review = json.loads(next(line for line in prompt.splitlines()
+                                 if line.startswith("Required voice review lists: ")).split(": ", 1)[1])
+        assert review["accept_disagreements"][0]["event_ref"] == canvas.items("events")[0][0]
+        return CanvasCompletion(complete=True)
+
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot),
+        generate_interval_refinement=AsyncMock(side_effect=provider),
+        commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    runtime.commit_interval_refinement.assert_awaited_once()
+    result = runtime.commit_interval_refinement.await_args.args[1].updates[0].timeline[0]
+    assert result.speaker == expected
+    assert result.speaker_source == ("voice_default" if mode == "prefill" else "understanding")
+    assert snapshot == original
+
+
+def test_new_canvas_binds_new_event_references_and_explicit_conflicts_in_prompt():
+    from agent.video_parse_v2.prompts import build_refine_prompt
+
+    snapshot = _voice_snapshot("flag", "CONFLICT")
+    first, second = ParseContextCanvas.from_refine(snapshot), ParseContextCanvas.from_refine(snapshot)
+    reference, value = second.items("events")[0]
+    assert reference != first.items("events")[0][0]
+    assert value["voice_evidence"]["event_ref"] == reference
+    prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=second)
+    review = json.loads(next(line for line in prompt.splitlines()
+                             if line.startswith("Required voice review lists: ")).split(": ", 1)[1])
+    assert review["conflicts"][0]["event_ref"] == reference
+    assert "爱音" in prompt and "unchanged candidate ranking" in prompt
+    assert json.loads(prompt.splitlines()[-1])["revision"] == second.revision
+
+
+@pytest.mark.parametrize("error", [RuntimeError("failed"), TimeoutError("expired"), asyncio.CancelledError()])
+def test_failed_refine_never_commits_prefilled_draft(error):
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=_voice_snapshot()),
+        generate_interval_refinement=AsyncMock(side_effect=error),
+        commit_interval_refinement=AsyncMock(), notify_interval_committed=AsyncMock(),
+    )
+    with pytest.raises(type(error)):
+        asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    runtime.commit_interval_refinement.assert_not_awaited()
+    runtime.notify_interval_committed.assert_not_awaited()
+
+
 def test_original_36_events_keep_every_unmentioned_event_after_two_corrections():
     fixture = json.loads((Path(__file__).parent / "fixtures/context_canvas_refine_36.json").read_text())
     canvas = ParseContextCanvas(scope="refine:original-36", members={

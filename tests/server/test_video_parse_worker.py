@@ -2363,6 +2363,407 @@ def _voice_reference(encoder, speaker, digest, **changes):
     }
 
 
+def _b0_snapshot(host):
+    from engine.parsev2.schemas import DialogueEvent
+
+    values = host.snapshot["inputs"].parse_config.model_dump(mode="json")
+    values["voiceprint_mode"] = "prefill"
+    values["models"].pop("voiceprint")
+    inputs = ParseInput.model_validate({"series_id": "series", "video_id": "video", "parse_config": values})
+    sources, events = {}, []
+    for index, label in enumerate(["A"] * 4 + ["B"] * 3 + ["B", None]):
+        start = index * 2000
+        end = start + (300 if index == 8 else 1700)
+        event = DialogueEvent(
+            event_type="DIALOGUE", speaker=label, start_seconds=start, end_seconds=end,
+            description="dialogue", participants=[label] if label else [], visible_persons=[],
+            text_variants=[{"language": "ja", "role": "ORIGINAL", "text": str(index)}],
+        )
+        events.append(event)
+        source_id = f"chunk:{index}"
+        sources[source_id] = {
+            "source_id": source_id, "chunk_id": "chunk", "chunk_task_id": "member",
+            "position": index, "event_index": index, "source_version": 1,
+            "event_fingerprint": hashlib.sha256(str(index).encode()).hexdigest(),
+            "speaker": label, "start_ms": start, "end_ms": end,
+            "text_variants": event.model_dump(mode="json")["text_variants"],
+        }
+    return {"inputs": inputs, "video_parse_task_id": host.lease.video_parse_task_id,
+            "sources": sources, "member_contents": {"chunk": VideoParseResult(persons=["A", "B"], timeline=events)},
+            "member_evidence": {"chunk": {"evidence": {"asr": {"transcript": [
+                {"start_seconds": row["start_ms"], "end_seconds": row["end_ms"], "text": str(index)}
+                for index, row in enumerate(sources.values())
+            ]}}}}, "failed_chunks": [], "timing": {"extra_gate_wait_ms": 1000}}
+
+
+def _b0_embedding(encoder, *, start_ms, **_options):
+    from gateway.speaker_embedding import SpeakerEmbeddingResult
+
+    index = start_ms // 2000
+    vector = [0.0, 1.0] if index in {4, 5, 6} else [1.0, 0.0]
+    return SpeakerEmbeddingResult(
+        model=encoder.model_name, encoder_revision=encoder.encoder_revision,
+        vector=vector + [0.0] * 190, duration_ms=1700,
+    ), hashlib.sha256(str(index).encode()).hexdigest()
+
+
+def test_b0_collection_retains_short_lines_and_original_labels_without_mutation(monkeypatch, voiceprint_host):
+    from copy import deepcopy
+
+    host = voiceprint_host
+    snapshot = _b0_snapshot(host)
+    before = deepcopy(snapshot)
+    calls = []
+
+    def embed(encoder, _source, _lease, **options):
+        calls.append(options["start_ms"])
+        return _b0_embedding(encoder, **options)
+
+    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample", embed)
+    result = host.runtime._collect_voiceprint_scores(
+        snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
+    )
+    assert snapshot == before
+    assert len(result["lines"]) == 9 and len(result["samples"]) == 8
+    assert len(calls) == 8 and 16000 not in calls
+    short = result["lines"][-1]
+    assert short["candidates"] == [] and short["gap"] is None
+    assert short["reason"] == "audio_too_short" and short["band"] == "NO_VOICE"
+    conflict = result["lines"][7]
+    assert conflict["understanding_speaker"] == "B"
+    assert conflict["band"] == "ACCEPT" and conflict["conflict"] is True
+    assert conflict["candidates"][0]["speaker"] == "A"
+    assert conflict["candidates"][0]["independent_cue_count"] >= 3
+    assert conflict["candidates"][0]["reference_ids"]
+    assert all("src" not in candidate for line in result["lines"] for candidate in line["candidates"])
+    assert all("text_variants" not in row for row in result["samples"] + result["lines"])
+    assert result["timing"]["extra_gate_wait_ms"] == 1000
+    assert result["timing"]["preparation_elapsed_ms"] >= 0
+
+
+def test_b0_song_annotation_prevents_accept(monkeypatch, voiceprint_host):
+    host = voiceprint_host
+    snapshot = _b0_snapshot(host)
+    snapshot["member_contents"]["chunk"].timeline[7].description = "角色唱出歌词"
+    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
+                        lambda encoder, _source, _lease, **options: _b0_embedding(encoder, **options))
+    result = host.runtime._collect_voiceprint_scores(
+        snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
+    )
+    assert result["lines"][7]["song"] is True
+    assert result["lines"][7]["band"] != "ACCEPT"
+
+
+@pytest.mark.parametrize("outcome", ["complete", "failure", "artifact_failure", "timeout", "cancel"])
+def test_b0_preparation_publishes_only_complete_results(monkeypatch, voiceprint_host, outcome):
+    from server.utils.execution import BlockingCallCancelled
+
+    host = voiceprint_host
+    snapshot = _b0_snapshot(host)
+    if outcome == "timeout":
+        config = snapshot["inputs"].parse_config
+        snapshot["inputs"] = snapshot["inputs"].model_copy(update={"parse_config": config.model_copy(update={
+            "voiceprint": config.voiceprint.model_copy(update={"execution_timeout_seconds": 0.02}),
+        })})
+    commits = []
+
+    async def load(*_args):
+        return snapshot
+
+    def collect(*_args, check_active):
+        if outcome == "failure":
+            raise ValueError("encoder revision changed")
+        if outcome in {"timeout", "cancel"}:
+            time.sleep(0.1)
+            check_active()
+        return {"method_version": "test", "lines": ["complete"]}
+
+    def store(*_args, check_active):
+        check_active()
+        if outcome == "artifact_failure":
+            raise OSError("artifact publication failed")
+        return {"location": "artifact://complete.json", "checksum": "a" * 64}
+
+    def finish(_lease, *, preparation, artifact, check_active):
+        check_active()
+        assert artifact == {"location": "artifact://complete.json", "checksum": "a" * 64}
+        commits.append(preparation)
+
+    monkeypatch.setattr(host.runtime, "load_voiceprint_input", load)
+    monkeypatch.setattr(host.runtime, "_collect_voiceprint_scores", collect)
+    monkeypatch.setattr(host.runtime, "_store_voiceprint_scoring", store)
+    host.runtime._repository.bind_voiceprint_encoder = lambda _lease, **_options: None
+    host.runtime._repository.finish_voiceprint_scoring = finish
+    token = LeaseToken(owner=host.lease.worker_id, version=host.lease.lease_version,
+                       expires_at=host.lease.lease_expire_time)
+
+    async def execute():
+        task = asyncio.create_task(host.runtime.prepare_voiceprint_scoring(host.lease.video_parse_task_id, token))
+        if outcome == "cancel":
+            await asyncio.sleep(0.02)
+            task.cancel()
+        if outcome == "complete":
+            await task
+            assert commits == [{"method_version": "test", "lines": ["complete"],
+                                "video_parse_task_id": host.lease.video_parse_task_id, "video_id": "video"}]
+        else:
+            expected = (ValueError if outcome == "failure" else OSError if outcome == "artifact_failure"
+                        else (TimeoutError, asyncio.CancelledError))
+            with pytest.raises(expected) as caught:
+                await task
+            if isinstance(caught.value, BlockingCallCancelled):
+                await asyncio.wrap_future(caught.value.completion)
+            assert commits == []
+        assert host.state.closed
+
+    asyncio.run(execute())
+    assert host.state.notifications == ([host.lease.video_parse_task_id] if outcome == "complete" else [])
+
+
+def test_b0_compare_reuses_frozen_policy_and_excludes_entire_asr_cue(monkeypatch, voiceprint_host):
+    host = voiceprint_host
+    snapshot = _b0_snapshot(host)
+    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
+                        lambda encoder, _source, _lease, **options: _b0_embedding(encoder, **options))
+    prepared = host.runtime._collect_voiceprint_scores(
+        snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
+    )
+    target = prepared["lines"][7]
+    excluded = prepared["samples"][0]
+    excluded["cue_ids"] = target["cue_ids"]
+    result = host.runtime._compare_speaker_b0(
+        host.encoder, host.source, host.lease, prepared["samples"], start_ms=14000, end_ms=15700,
+        check_active=lambda: None, parameters=prepared["parameters"], lines=prepared["lines"],
+    )
+    assert result["method_version"] == prepared["method_version"]
+    assert result["candidates"][0]["speaker"] == "A"
+    assert excluded["id"] not in result["candidates"][0]["reference_ids"]
+    assert target["id"] not in result["candidates"][0]["reference_ids"]
+    assert result["candidate_margin"] == result["gap"]
+    assert not {"band", "conflict", "review_reason"}.intersection(result)
+
+
+@pytest.mark.parametrize("duration_ms", [1700, 31000])
+@pytest.mark.parametrize("invalid", ["revision", "dimension", "normalization"])
+def test_b0_actual_encoder_contract_failure_never_publishes(
+    monkeypatch, voiceprint_host, duration_ms, invalid,
+):
+    from gateway.speaker_embedding import SpeakerEmbeddingResult
+
+    host = voiceprint_host
+    snapshot = _b0_snapshot(host)
+    snapshot["sources"]["chunk:0"]["end_ms"] = duration_ms
+    commits = []
+
+    def embed(_path):
+        return SpeakerEmbeddingResult(
+            model=host.encoder.model_name,
+            encoder_revision="different revision" if invalid == "revision" else host.encoder.encoder_revision,
+            vector=([1.0] + [0.0] * 190 if invalid == "dimension" else
+                    [2.0 if invalid == "normalization" else 1.0] + [0.0] * 191),
+            duration_ms=1700,
+        )
+
+    async def load(*_args):
+        return snapshot
+
+    monkeypatch.setattr(host.encoder, "embed_audio", embed)
+    monkeypatch.setattr(host.runtime, "load_voiceprint_input", load)
+    host.runtime._repository.bind_voiceprint_encoder = lambda _lease, **_options: None
+    host.runtime._repository.finish_voiceprint_scoring = lambda *_args, **options: commits.append(options)
+    token = LeaseToken(owner=host.lease.worker_id, version=host.lease.lease_version,
+                       expires_at=host.lease.lease_expire_time)
+    with pytest.raises(ValueError, match="contract|normalized"):
+        asyncio.run(host.runtime.prepare_voiceprint_scoring(host.lease.video_parse_task_id, token))
+    assert commits == [] and host.state.closed
+    assert not any(path.exists() for path in host.state.audio_paths)
+
+
+def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, voiceprint_host):
+    from agent.video_parse_v2.refine.agent import IntervalRefine
+    from server.model.dto.jobDTO import IntervalParseLease
+
+    host = voiceprint_host
+    prepared_snapshot = _b0_snapshot(host)
+    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
+                        lambda encoder, _source, _lease, **options: _b0_embedding(encoder, **options))
+    prepared = host.runtime._collect_voiceprint_scores(
+        prepared_snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
+    )
+    source = SimpleNamespace(
+        duration_seconds=60_000, background={}, series_id="series",
+        task=SimpleNamespace(video_id="video", chunk_count=1,
+                             parse_config=prepared_snapshot["inputs"].parse_config.model_dump(mode="json")),
+    )
+    content = prepared_snapshot["member_contents"]["chunk"].model_dump(mode="json")
+    member = SimpleNamespace(chunk_parse_task_id="member", sequence_no=0, version=1,
+                             detail={}, content=content)
+    lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
+                               "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
+    interval = SimpleNamespace(interval_parse_task_id=lease.interval_parse_task_id,
+                               video_parse_task_id=lease.video_parse_task_id,
+                               start_sequence_no=0, chunk_count=1, members=(member,))
+    host.runtime._interval_lease = ContextVar("b0-handoff-interval", default=lease)
+    host.runtime._repository.load_interval_members = lambda _lease: interval
+    host.runtime._repository.load_task_input = lambda _task_id: source
+    async def load_scoring(_lease):
+        return prepared
+
+    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", load_scoring)
+    committed = []
+
+    async def generate(snapshot, *, prompt, canvas):
+        assert snapshot["member_evidence"]["member"]["voiceprint"]["lines"] == prepared["lines"]
+        evidence = snapshot["member_evidence"]["member"]["voiceprint"]
+        for line in evidence["lines"]:
+            for candidate in line["candidates"]:
+                assert all(reference_id in evidence["samples"] for reference_id in candidate["reference_ids"])
+        assert all("vector" not in row and "text_variants" not in row for row in evidence["samples"].values())
+        target = canvas.items("events")[7][1]
+        assert target["event"]["speaker"] == "A"
+        assert target["event"]["speaker_source"] == "voice_default"
+        assert target["voice_evidence"]["understanding_speaker"] == "B"
+        assert "ACCEPT" in prompt and "event_ref" in prompt
+        assert snapshot["member_contents"]["member"].timeline[7].speaker == "B"
+        return CanvasCompletion(complete=True)
+
+    async def commit(snapshot, result):
+        committed.append((snapshot, result))
+        return True
+
+    async def notify(_snapshot):
+        pass
+
+    monkeypatch.setattr(host.runtime, "generate_interval_refinement", generate)
+    monkeypatch.setattr(host.runtime, "commit_interval_refinement", commit)
+    monkeypatch.setattr(host.runtime, "notify_interval_committed", notify)
+    asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(lease.interval_parse_task_id))
+    assert len(committed) == 1
+    assert committed[0][1].updates[0].timeline[7].speaker == "A"
+
+
+def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatch, voiceprint_host):
+    from server.model.dto.jobDTO import IntervalParseLease
+
+    host = voiceprint_host
+    snapshot = _b0_snapshot(host)
+    samples = []
+    for index in range(200):
+        name = "A" if index < 100 else "B"
+        samples.append({
+            "id": f"ref-{index}", "source_id": f"ref-{index}", "chunk_id": "chunk",
+            "source_version": 1, "event_fingerprint": hashlib.sha256(f"event{index}".encode()).hexdigest(),
+            "start_ms": index * 100, "end_ms": index * 100 + 500,
+            "cue_ids": [f"cue-{index}"], "label": name, "song": False, "overlap": False,
+            "pcm_sha256": hashlib.sha256(str(index).encode()).hexdigest(),
+            "model": host.encoder.model_name, "encoder_revision": host.encoder.encoder_revision,
+            "vector": ([1.0, 0.0] if name == "A" else [0.0, 1.0]) + [0.0] * 190,
+            "text_variants": [{"text": "source provenance " * 30}],
+        })
+    prepared = {"samples": samples, "lines": samples,
+                "parameters": host.runtime._voiceprint_parameters(),
+                "model": {"name": host.encoder.model_name, "encoder_revision": host.encoder.encoder_revision}}
+    lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
+                               "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
+    async def load_scoring(_lease):
+        return prepared
+
+    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", load_scoring)
+    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
+    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
+    canvas = ParseContextCanvas(scope="refine:b0-budget", members={"member": {
+        "sequence_no": 0, "version": 1, "bounds": (0, 60000),
+        "content": VideoParseResult(persons=[], timeline=[]),
+    }})
+    refine_input = {"inputs": snapshot["inputs"], "video_parse_task_id": lease.video_parse_task_id,
+                    "interval_parse_task_id": lease.interval_parse_task_id, "lease": object(),
+                    "member_bounds": {"member": (0, 60000)}}
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        compare = next(tool for tool in tools if tool.name == "compare_speaker")
+        content = compare.invoke({"start_ms": 47100, "end_ms": 48800})
+        result = json.loads(content)
+        assert len(content.encode()) < 32000
+        assert result["candidates"][0]["speaker"] == "A"
+        assert result["revision"] == canvas.revision
+        assert "src" not in result["candidates"][0] and "reference_ids" not in result["candidates"][0]
+        full = canvas.get("evidence", result["evidence_ref"])[result["evidence_section"]]
+        assert len(json.dumps(full).encode()) > 32000
+        assert len(full["candidates"][0]["reference_ids"]) == 80
+        assert all(reference_id in full["samples"] for reference_id in full["candidates"][0]["reference_ids"])
+        assert all("vector" not in ref and "text_variants" not in ref for ref in full["samples"].values())
+        assert not {"band", "conflict", "review_reason"}.intersection(result)
+        assert not {"band", "conflict", "review_reason"}.intersection(full)
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    asyncio.run(host.runtime.generate_interval_refinement(refine_input, prompt="refine", canvas=canvas))
+
+
+@pytest.mark.parametrize("damage", [None, "bytes", "task", "counts", "model"])
+def test_b0_artifact_roundtrip_and_integrity_checks(monkeypatch, voiceprint_host, tmp_path, damage):
+    from server.storage.artifact import ArtifactIntegrityError, LocalArtifactStore
+
+    host = voiceprint_host
+    source = SimpleNamespace(series_id=str(uuid4()), task=SimpleNamespace(video_id=str(uuid4())))
+    host.runtime._artifact_store = LocalArtifactStore(tmp_path / "durable", environment="test")
+    preparation = {"video_parse_task_id": host.lease.video_parse_task_id, "video_id": source.task.video_id,
+                   "method_version": "B0-test", "model": {"name": "campplus", "encoder_revision": "frozen"},
+                   "parameters": {"trim_fraction": 0.2}, "lines": [], "samples": []}
+    artifact = host.runtime._store_voiceprint_scoring(source, host.lease, preparation, check_active=lambda: None)
+    manifest = {"ready": True, **artifact, **{key: preparation[key] for key in ("method_version", "model", "parameters")},
+                "line_count": 0, "sample_count": 0}
+    host.runtime._repository.load_voiceprint_scoring = lambda _lease: manifest
+    assert asyncio.run(host.runtime._load_voiceprint_scoring(host.lease)) == preparation
+    path = host.runtime._artifact_store.resolve(artifact["location"])
+    if damage == "bytes":
+        path.write_bytes(path.read_bytes() + b" ")
+    elif damage == "task":
+        preparation["video_parse_task_id"] = str(uuid4())
+        changed = host.runtime._store_voiceprint_scoring(source, host.lease, preparation, check_active=lambda: None)
+        manifest.update(changed)
+    elif damage == "counts":
+        manifest["line_count"] = 1
+    elif damage == "model":
+        manifest["model"] = {"name": "different", "encoder_revision": "frozen"}
+    if damage is not None:
+        with pytest.raises(ArtifactIntegrityError):
+            asyncio.run(host.runtime._load_voiceprint_scoring(host.lease))
+    assert len(json.dumps(manifest).encode()) < 1000
+
+
+def test_b0_published_artifact_manifest_and_refine_load_use_same_bytes(repository, voiceprint_host, tmp_path, monkeypatch):
+    from server.storage.artifact import LocalArtifactStore
+    from tests.server.test_video_parse_repository import NOW, _prepare
+    from tests.server.test_video_parse_voiceprint import _commit, _enable_scoring
+
+    factory, queue, repo, task_id, lease, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", None], 0)
+    snapshot = repo.begin_voiceprint_preparation(lease, now=NOW)
+    snapshot["member_contents"] = {key: VideoParseResult.model_validate(value)
+                                   for key, value in snapshot["member_contents"].items()}
+    runtime = voiceprint_host.runtime
+    runtime._artifact_store = LocalArtifactStore(tmp_path / "durable", environment="test")
+    monkeypatch.setattr(runtime, "_embed_voiceprint_sample",
+                        lambda encoder, _source, _lease, **options: _b0_embedding(encoder, **options))
+    source = repo.load_task_input(task_id)
+    preparation = runtime._collect_voiceprint_scores(
+        snapshot, voiceprint_host.encoder, source, lease, check_active=lambda: None,
+    )
+    preparation.update(video_parse_task_id=task_id, video_id=source.task.video_id)
+    artifact = runtime._store_voiceprint_scoring(source, lease, preparation, check_active=lambda: None)
+    assert repo.load_voiceprint_scoring(lease, now=NOW) is None
+    manifest = repo.finish_voiceprint_scoring(lease, preparation=preparation, artifact=artifact, now=NOW)
+    with factory() as session:
+        stored = session.get(VideoParseTask, task_id).detail["voiceprint"]
+        assert stored == manifest
+        assert "samples" not in stored and "lines" not in stored and "scoring" not in stored
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
+    assert refine is not None
+    assert runtime._read_voiceprint_scoring(refine, repo.load_voiceprint_scoring(refine, now=NOW)) == preparation
+
+
 def test_compare_speaker_excludes_self_overlap_duplicate_and_encoder_mismatch(voiceprint_host):
     from server.model.dto.jobDTO import IntervalParseLease
 

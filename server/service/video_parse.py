@@ -7,6 +7,8 @@ import hashlib
 import json
 import logging
 import math
+import re
+import tempfile
 import threading
 import time
 import wave
@@ -78,7 +80,13 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import ModelCallCancelledError, model_call_context
 
 from ..config.parse_profile import index_contract_fingerprint
-from ..constants.parse import PARSE_RETRIEVAL_CONTRACT
+from ..constants.parse import (
+    PARSE_RETRIEVAL_CONTRACT, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_DIMENSIONS,
+    VOICEPRINT_B0_MIN_AUDIO_MS, VOICEPRINT_B0_TRIM_FRACTION, VOICEPRINT_B0_ACCEPT_GAP,
+    VOICEPRINT_B0_ACCEPT_DURATION_MS, VOICEPRINT_B0_ACCEPT_MIN_CUES,
+    VOICEPRINT_B0_CONFLICT_GAP, VOICEPRINT_B0_NO_VOICE_DURATION_MS,
+    VOICEPRINT_B0_WINDOW_MS, VOICEPRINT_B0_DIRECT_MAX_MS,
+)
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
     ChunkParseLease,
@@ -95,7 +103,7 @@ from ..repository.video_parse import (
     VideoParseSnapshotConflictError,
     VoiceprintRegistrationRejectedError,
 )
-from ..storage.artifact import ArtifactStore
+from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
 from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from ..utils.execution import (
@@ -493,7 +501,200 @@ class VideoParseRuntimeService:
             "member_versions": snapshot["member_versions"],
             "member_evidence": snapshot["member_evidence"],
             "sources": snapshot["sources"], "background": source.background,
+            "failed_chunks": snapshot.get("failed_chunks", []),
+            "timing": snapshot.get("timing", {}),
         }
+
+    async def prepare_voiceprint_scoring(
+        self, video_parse_task_id: str, lease: LeaseToken,
+    ) -> None:
+        """Build B0 in memory; publish its complete frozen result and ready together."""
+        snapshot = await self.load_voiceprint_input(video_parse_task_id, lease)
+        if snapshot is None:
+            return
+        current = self._require_video_token(video_parse_task_id, lease)
+        source = await asyncio.to_thread(self._repository.load_task_input, video_parse_task_id)
+        config = snapshot["inputs"].parse_config
+        async with self._model_stage(
+            current, source, sequence_no=None, category="parse", stage="voiceprint",
+            check_active=lambda: self._require_video_active(current),
+        ) as manager:
+            encoder = self._speaker_encoder(config.models.speaker_embedding)
+            timeout = asyncio.timeout(
+                config.voiceprint.execution_timeout_seconds if config.voiceprint is not None
+                else config.execution.parse_execution_timeout_seconds
+            )
+            pending: BlockingCallCancelled | None = None
+            try:
+                async with timeout:
+                    try:
+                        await self._run_blocking(
+                            self._repository.bind_voiceprint_encoder, current,
+                            model={"name": encoder.model_name, "encoder_revision": encoder.encoder_revision},
+                        )
+                        preparation = await self._run_blocking(
+                            self._collect_voiceprint_scores, snapshot, encoder, source, current,
+                            check_active=manager.check_active,
+                        )
+                        preparation.update(video_parse_task_id=video_parse_task_id, video_id=source.task.video_id)
+                        artifact = await self._run_blocking(
+                            self._store_voiceprint_scoring, source, current, preparation,
+                            check_active=manager.check_active,
+                        )
+                        manager.check_active()
+                        await self._run_blocking(
+                            self._repository.finish_voiceprint_scoring, current,
+                            preparation=preparation, artifact=artifact, check_active=manager.check_active,
+                        )
+                    except asyncio.CancelledError as error:
+                        manager.cancel()
+                        if isinstance(error, BlockingCallCancelled):
+                            pending = error
+                        if timeout.expired():
+                            error.voiceprint_failed = True
+                        raise
+            except TimeoutError:
+                if pending is not None:
+                    pending.voiceprint_failed = True
+                    raise pending
+                raise
+            finally:
+                await cleanup_execution(encoder.close)
+        self._notify_change(video_parse_task_id)
+
+    def _collect_voiceprint_scores(
+        self, snapshot: dict, encoder: SpeakerEmbeddingModel,
+        source: VideoParseTaskInputState, lease: VideoParseLease, *,
+        check_active: Callable[[], None],
+    ) -> dict:
+        started = time.monotonic()
+        if encoder.dimensions != VOICEPRINT_B0_DIMENSIONS:
+            raise ValueError("B0 requires the frozen 192-dimensional CAM++ encoder")
+        cues = {}
+        for member in snapshot["member_evidence"].values():
+            for cue in ((member.get("evidence", member).get("asr") or {}).get("transcript", [])):
+                identity = [cue["start_seconds"], cue["end_seconds"], cue["text"]]
+                cue_id = "asr:" + hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
+                cues[cue_id] = (cue["start_seconds"], cue["end_seconds"])
+        # Source descriptions are annotations, not an acoustic song detector.
+        song_pattern = re.compile(
+            r"歌唱|歌声|歌う|歌词|演唱|唱歌|哼唱|吟唱|唱[出到着起]|片[头尾]曲|主题曲|singing|vocals|\bsings\b",
+            re.I,
+        )
+        song_ranges = [(event.start_seconds, event.end_seconds)
+                       for member in snapshot["member_contents"].values()
+                       for event in member.timeline if song_pattern.search(event.description)]
+        samples = []
+        for source_id, line in snapshot["sources"].items():
+            check_active()
+            start, end = line["start_ms"], line["end_ms"]
+            sample = {**{key: value for key, value in line.items() if key != "text_variants"},
+                      "id": source_id, "source_id": source_id,
+                      "position": line["event_index"], "label": line["speaker"],
+                      "understanding_speaker": line["speaker"], "duration_ms": end - start,
+                      "model": encoder.model_name, "encoder_revision": encoder.encoder_revision,
+                      "cue_ids": sorted(key for key, (left, right) in cues.items()
+                                        if left < end and start < right),
+                      "song": any(left < end and start < right for left, right in song_ranges)}
+            if not sample["cue_ids"]:
+                sample["cue_ids"] = [f"dialogue:{start}:{end}"]
+                sample["cue_source"] = "dialogue_fallback"
+            else:
+                sample["cue_source"] = "retained_asr"
+            if end - start >= VOICEPRINT_B0_MIN_AUDIO_MS:
+                embedding, digest = self._embed_voiceprint_sample(
+                    encoder, source, lease, start_ms=start, end_ms=end, check_active=check_active,
+                )
+                sample.update(vector=embedding.vector, pcm_sha256=digest)
+            samples.append(sample)
+        for sample in samples:
+            sample["overlap"] = any(other["id"] != sample["id"]
+                                    and other["start_ms"] < sample["end_ms"]
+                                    and sample["start_ms"] < other["end_ms"] for other in samples)
+        lines = []
+        for sample in samples:
+            check_active()
+            lines.append(self._score_voiceprint_sample(sample, samples))
+        return {"method_version": VOICEPRINT_B0_METHOD_VERSION,
+                "parameters": self._voiceprint_parameters(),
+                "model": {"name": encoder.model_name, "encoder_revision": encoder.encoder_revision},
+                "samples": [sample for sample in samples if "vector" in sample],
+                "lines": lines, "failed_chunks": snapshot["failed_chunks"],
+                "timing": {**snapshot["timing"],
+                           "preparation_elapsed_ms": int((time.monotonic() - started) * 1000)}}
+
+    def _store_voiceprint_scoring(
+        self, source: VideoParseTaskInputState, lease: VideoParseLease, preparation: dict, *,
+        check_active: Callable[[], None],
+    ) -> dict:
+        content = json.dumps(preparation, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode()
+        checksum = hashlib.sha256(content).hexdigest()
+        check_active()
+        with tempfile.TemporaryDirectory(prefix="anivag-voiceprint-") as directory:
+            path = Path(directory) / "scoring.json"
+            path.write_bytes(content)
+            check_active()
+            stored = self._artifact_store.publish_video_artifact(
+                path, series_id=source.series_id, video_id=source.task.video_id,
+                category="voiceprints", filename=f"{lease.video_parse_task_id}-{checksum}.json",
+            )
+        check_active()
+        if stored.sha256 != checksum:
+            raise ArtifactIntegrityError("Published voiceprint checksum differs from the complete preparation")
+        return {"location": stored.uri, "checksum": checksum}
+
+    async def _load_voiceprint_scoring(self, lease: VideoParseLease | IntervalParseLease) -> dict | None:
+        manifest = await asyncio.to_thread(self._repository.load_voiceprint_scoring, lease)
+        if manifest is None:
+            return None
+        return await self._run_blocking(self._read_voiceprint_scoring, lease, manifest)
+
+    def _read_voiceprint_scoring(self, lease: VideoParseLease | IntervalParseLease, manifest: dict) -> dict:
+        content = self._artifact_store.resolve(manifest["location"]).read_bytes()
+        if hashlib.sha256(content).hexdigest() != manifest["checksum"]:
+            raise ArtifactIntegrityError("Voiceprint scoring artifact checksum changed")
+        result = json.loads(content)
+        if (result.get("video_parse_task_id") != lease.video_parse_task_id
+            or any(result.get(key) != manifest[key] for key in ("method_version", "model", "parameters"))
+            or len(result.get("lines", [])) != manifest["line_count"]
+            or len(result.get("samples", [])) != manifest["sample_count"]):
+            raise ArtifactIntegrityError("Voiceprint scoring artifact differs from its task manifest")
+        return result
+
+    @staticmethod
+    def _voiceprint_sources(samples: list[dict], reference_ids: set[str]) -> dict:
+        return {sample["id"]: {key: value for key, value in sample.items()
+                               if key not in {"vector", "text_variants"}}
+                for sample in samples if sample["id"] in reference_ids}
+
+    @staticmethod
+    def _voiceprint_parameters() -> dict:
+        return {"dimensions": VOICEPRINT_B0_DIMENSIONS, "min_duration_ms": VOICEPRINT_B0_MIN_AUDIO_MS,
+                "trim_fraction": VOICEPRINT_B0_TRIM_FRACTION, "accept_gap": VOICEPRINT_B0_ACCEPT_GAP,
+                "accept_duration_ms": VOICEPRINT_B0_ACCEPT_DURATION_MS,
+                "accept_min_cues": VOICEPRINT_B0_ACCEPT_MIN_CUES,
+                "conflict_gap": VOICEPRINT_B0_CONFLICT_GAP,
+                "no_voice_duration_ms": VOICEPRINT_B0_NO_VOICE_DURATION_MS}
+
+    @staticmethod
+    def _score_voiceprint_sample(query: dict, samples: list[dict], *, parameters: dict | None = None) -> dict:
+        from engine.parsev2.voiceprint_matching import classify_voiceprint_result, score_voiceprint_line
+
+        parameters = parameters if parameters is not None else VideoParseRuntimeService._voiceprint_parameters()
+        scoring_keys = ("dimensions", "min_duration_ms", "trim_fraction")
+        score = score_voiceprint_line(
+            query, samples, model=query["model"], encoder_revision=query["encoder_revision"],
+            **{key: parameters[key] for key in scoring_keys},
+        )
+        band = classify_voiceprint_result(
+            score, current_label=query.get("label"), song=query.get("song", False),
+            overlap=query.get("overlap", False),
+            **{key: value for key, value in parameters.items() if key not in scoring_keys},
+        )
+        return {**{key: value for key, value in query.items() if key != "vector"},
+                **score, **band, "method_version": VOICEPRINT_B0_METHOD_VERSION,
+                "similarity_metric": "cosine", "similarity_is_probability": False}
 
     async def generate_voiceprint_preparation(
         self, snapshot: VoiceprintInput, *, prompt: str, canvas: ContextCanvas,
@@ -831,10 +1032,15 @@ class VideoParseRuntimeService:
         evidence: dict[str, object],
     ) -> None:
         binding = self._require_chunk_execution(execution)
+        content = result.model_dump(mode="json")
+        if execution.inputs.parse_config.voiceprint_mode != "off":
+            for event in content["timeline"]:
+                if event["event_type"] == "DIALOGUE":
+                    event["speaker_source"] = "understanding"
         await asyncio.to_thread(
             self._repository.commit_chunk_result,
             binding.lease,
-            content=result.model_dump(mode="json"),
+            content=content,
             detail={"evidence": evidence},
         )
 
@@ -881,6 +1087,26 @@ class VideoParseRuntimeService:
         if any(scope[-1] >= task_input.task.chunk_count for scope in validated_scopes.values()):
             raise ValueError("Refine member scope exceeds the fixed Video topology")
         member_scopes = {task_id: list(validated_scopes[item.sequence_no]) for task_id, item in by_id.items()}
+        member_evidence = {
+            task_id: dict(item.detail.get("evidence") or {"asr": None, "ocr": None, "availability": "not_retained"})
+            for task_id, item in by_id.items()
+        }
+        if inputs.parse_config.voiceprint_mode != "off":
+            scoring = await self._load_voiceprint_scoring(lease)
+            if scoring is None:
+                raise ValueError("Refine requires the committed B0 preparation")
+            for task_id, item in by_id.items():
+                lines = [line for line in scoring["lines"] if line["chunk_task_id"] == task_id]
+                reference_ids = {reference_id for line in lines for candidate in line["candidates"]
+                                 for reference_id in candidate["reference_ids"]}
+                member_evidence[task_id]["voiceprint"] = {
+                    "mode": inputs.parse_config.voiceprint_mode,
+                    "method_version": scoring["method_version"], "lines": lines,
+                    "samples": self._voiceprint_sources(scoring["samples"], reference_ids),
+                    "conflicts": [line["id"] for line in lines if line["band"] == "CONFLICT"],
+                    "accept_disagreements": [line["id"] for line in lines
+                                             if line["band"] == "ACCEPT" and line["conflict"]],
+                }
         return {
             "interval_parse_task_id": snapshot.interval_parse_task_id,
             "video_parse_task_id": snapshot.video_parse_task_id,
@@ -904,10 +1130,7 @@ class VideoParseRuntimeService:
                 task_id: item.version for task_id, item in by_id.items()
             },
             "member_scopes": member_scopes,
-            "member_evidence": {
-                task_id: item.detail.get("evidence", {"asr": None, "ocr": None, "availability": "not_retained"})
-                for task_id, item in by_id.items()
-            },
+            "member_evidence": member_evidence,
             "member_fingerprints": {
                 task_id: parse_content_fingerprint(item.content) for task_id, item in by_id.items()
             },
@@ -931,12 +1154,15 @@ class VideoParseRuntimeService:
         tools = self._canvas_tools(canvas)
         encoder: SpeakerEmbeddingModel | None = None
         encoder_binding: SpeakerEmbeddingModelConfig | None = None
-        if snapshot["inputs"].parse_config.voiceprint is not None:
+        if snapshot["inputs"].parse_config.voiceprint_enabled:
             lease = self._require_interval_token(
                 snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING",
             )
             source = await asyncio.to_thread(self._repository.load_task_input, snapshot["video_parse_task_id"])
-            references = await asyncio.to_thread(self._repository.load_voiceprint_references, lease)
+            b0 = snapshot["inputs"].parse_config.voiceprint_mode != "off"
+            scoring = (await self._load_voiceprint_scoring(lease)) if b0 else None
+            references = (scoring["samples"] if scoring is not None else
+                          await asyncio.to_thread(self._repository.load_voiceprint_references, lease))
             encoder_binding = snapshot["inputs"].parse_config.models.speaker_embedding
             audio_lock = threading.Lock()
             manager = self._model_manager.get()
@@ -953,6 +1179,36 @@ class VideoParseRuntimeService:
                         f"Use absolute milliseconds within [{bounds[0]}, {bounds[1]}).",
                     )
                 with audio_lock:
+                    if b0:
+                        if scoring is None:
+                            raise ValueError("B0 preparation is not ready")
+                        if scoring["model"] != {"name": encoder.model_name, "encoder_revision": encoder.encoder_revision}:
+                            raise ValueError("Refine encoder differs from the task's frozen B0 encoder")
+                        result = self._compare_speaker_b0(
+                            encoder, source, lease, references,
+                            start_ms=start_ms, end_ms=end_ms, check_active=check_active,
+                            parameters=scoring["parameters"], lines=scoring["lines"],
+                        )
+                        reference_ids = {reference_id for candidate in result["candidates"]
+                                         for reference_id in candidate["reference_ids"]}
+                        result["samples"] = self._voiceprint_sources(references, reference_ids)
+                        evidence_ref = "voice-compare:" + hashlib.sha256(
+                            json.dumps(result, sort_keys=True, ensure_ascii=False).encode(),
+                        ).hexdigest()
+                        canvas.register_evidence(evidence_ref, {"voiceprint_comparison": result})
+                        return {
+                            **{key: result[key] for key in (
+                                "start_ms", "end_ms", "duration_ms", "method", "method_version",
+                                "model", "encoder_revision", "gap", "candidate_margin",
+                                "reason", "candidate_count", "similarity_metric",
+                                "similarity_is_probability",
+                            ) if key in result},
+                            "candidates": [{key: value for key, value in candidate.items()
+                                            if key not in {"src", "reference_ids"}}
+                                           for candidate in result["candidates"]],
+                            "evidence_ref": evidence_ref, "evidence_section": "voiceprint_comparison",
+                            "revision": canvas.revision,
+                        }
                     return self._compare_speaker(
                         encoder, source, lease, references,
                         snapshot.setdefault("voiceprint_references", []),
@@ -1474,6 +1730,83 @@ class VideoParseRuntimeService:
                     or result.dimension != 192):
                 raise ValueError("Speaker embedding differs from its encoder contract")
             return result, pcm_sha256
+
+    def _embed_voiceprint_sample(
+        self, encoder: SpeakerEmbeddingModel, source: VideoParseTaskInputState,
+        lease: VideoParseLease | IntervalParseLease, *, start_ms: int, end_ms: int,
+        check_active: Callable[[], None],
+    ) -> tuple[SpeakerEmbeddingResult, str]:
+        if end_ms - start_ms <= VOICEPRINT_B0_DIRECT_MAX_MS:
+            result, digest = self._embed_speaker_segment(
+                encoder, source, lease, start_ms=start_ms, end_ms=end_ms, check_active=check_active,
+            )
+            if not math.isclose(math.hypot(*result.vector), 1.0, abs_tol=1e-5):
+                raise ValueError("B0 requires L2-normalized embeddings")
+            return result, digest
+        # Match the offline long-cue rule without changing the encoder or its limit.
+        identity = MediaLeaseIdentity(
+            lease.video_parse_task_id,
+            lease.interval_parse_task_id if isinstance(lease, IntervalParseLease) else lease.video_parse_task_id,
+            lease.lease_version,
+            execution_kind="interval" if isinstance(lease, IntervalParseLease) else "video",
+        )
+        with self._media_service.prepare_speaker_audio(
+            identity, source_video=self._artifact_store.resolve(source.original_source_uri),
+            start_ms=start_ms, end_ms=end_ms, check_active=check_active,
+        ) as audio_path:
+            with wave.open(str(audio_path), "rb") as audio:
+                pcm = audio.readframes(audio.getnframes())
+            vectors = []
+            duration = end_ms - start_ms
+            offsets = list(range(0, duration - VOICEPRINT_B0_WINDOW_MS + 1, VOICEPRINT_B0_WINDOW_MS))
+            if offsets[-1] + VOICEPRINT_B0_WINDOW_MS < duration:
+                offsets.append(duration - VOICEPRINT_B0_WINDOW_MS)
+            window_path = Path(audio_path).with_name("b0-window.wav")
+            for offset in offsets:
+                check_active()
+                with wave.open(str(window_path), "wb") as window:
+                    window.setnchannels(1)
+                    window.setsampwidth(2)
+                    window.setframerate(16000)
+                    window.writeframes(pcm[offset * 32:(offset + VOICEPRINT_B0_WINDOW_MS) * 32])
+                result = encoder.embed_audio(window_path)
+                if (result.model != encoder.model_name or result.encoder_revision != encoder.encoder_revision
+                        or result.dimension != VOICEPRINT_B0_DIMENSIONS
+                        or not math.isclose(math.hypot(*result.vector), 1.0, abs_tol=1e-5)):
+                    raise ValueError("Speaker embedding differs from its encoder contract")
+                vectors.append(result.vector)
+            centroid = [sum(values) / len(vectors) for values in zip(*vectors)]
+            norm = math.hypot(*centroid)
+            if not norm:
+                raise ValueError("Long cue has no usable mean embedding")
+            return SpeakerEmbeddingResult(
+                model=encoder.model_name, encoder_revision=encoder.encoder_revision,
+                vector=[value / norm for value in centroid], duration_ms=duration,
+            ), hashlib.sha256(pcm).hexdigest()
+
+    def _compare_speaker_b0(
+        self, encoder: SpeakerEmbeddingModel, source: VideoParseTaskInputState,
+        lease: IntervalParseLease, samples: list[dict], *, start_ms: int, end_ms: int,
+        check_active: Callable[[], None], parameters: dict | None = None, lines: list[dict] | None = None,
+    ) -> dict:
+        matching = [row for row in (lines if lines is not None else samples)
+                    if row["start_ms"] < end_ms and start_ms < row["end_ms"]]
+        query = {"id": f"compare:{start_ms}:{end_ms}", "start_ms": start_ms, "end_ms": end_ms,
+                 "model": encoder.model_name, "encoder_revision": encoder.encoder_revision,
+                 "label": None, "cue_ids": sorted({cue for row in matching for cue in row["cue_ids"]}),
+                 "song": any(row["song"] for row in matching),
+                 "overlap": any(row["overlap"] for row in matching)}
+        if end_ms - start_ms >= VOICEPRINT_B0_MIN_AUDIO_MS:
+            embedding, digest = self._embed_voiceprint_sample(
+                encoder, source, lease, start_ms=start_ms, end_ms=end_ms, check_active=check_active,
+            )
+            query.update(vector=embedding.vector, pcm_sha256=digest)
+        result = self._score_voiceprint_sample(query, samples, parameters=parameters)
+        # A subrange may span several edited events and has no single current label.
+        for key in ("band", "conflict", "review_reason"):
+            result.pop(key, None)
+        result["candidate_margin"] = result["gap"]
+        return result
 
     def _compare_speaker(
         self, encoder: SpeakerEmbeddingModel, source: VideoParseTaskInputState,

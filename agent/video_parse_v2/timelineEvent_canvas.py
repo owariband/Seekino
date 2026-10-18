@@ -140,7 +140,12 @@ class ParseContextCanvas(ContextCanvas):
             ref: VideoParseResult.model_validate(member["content"])
             for ref, member in members.items()
         }
+        self._speaker_source_members = {
+            ref for ref, result in self._initial.items()
+            if any(getattr(event, "speaker_source", None) is not None for event in result.timeline)
+        }
         self._compact_limits = compact_limits
+        self._voiceprint_modes: dict[str, str] = {}
         self._write_bounds = write_bounds or (
             min(member["bounds"][0] for member in members.values()),
             max(member["bounds"][1] for member in members.values()),
@@ -184,7 +189,7 @@ class ParseContextCanvas(ContextCanvas):
     @classmethod
     def from_refine(cls, snapshot):
         refs = snapshot["member_sequence_nos"]
-        return cls(
+        canvas = cls(
             scope="refine:" + snapshot["interval_parse_task_id"],
             members={
                 ref: {
@@ -198,6 +203,84 @@ class ParseContextCanvas(ContextCanvas):
             background=snapshot.get("background", {}),
             write_bounds=snapshot.get("write_bounds"),
         )
+        canvas._apply_voiceprint()
+        return canvas
+
+    def _apply_voiceprint(self) -> None:
+        """Bind prepared evidence only after the original snapshot is captured."""
+        evidence = dict(self.items("evidence"))
+        self._voiceprint_modes = {
+            member_ref: value["voiceprint"]["mode"]
+            for member_ref, value in evidence.items()
+            if value.get("voiceprint", {}).get("mode") in {"flag", "prefill"}
+        }
+        if not self._voiceprint_modes:
+            return
+
+        def apply(draft):
+            for reference, value in draft["events"].items():
+                member_ref, event = value["member_ref"], value["event"]
+                if member_ref not in self._voiceprint_modes or event["event_type"] != "DIALOGUE":
+                    continue
+                event.setdefault("speaker_source", "understanding")
+                prepared = evidence[member_ref]["voiceprint"]
+                lines = prepared.get("lines", [])
+                matching = [line for line in lines if (
+                    line["start_ms"], line["end_ms"]
+                ) == (event["start_seconds"], event["end_seconds"])]
+                positioned = [line for line in matching
+                              if line.get("position") == value["source"]["position"]]
+                line = positioned[0] if len(positioned) == 1 else matching[0] if len(matching) == 1 else None
+                if line is None:
+                    continue
+                candidates = line.get("candidates") or []
+                value["voice_evidence"] = {
+                    **{key: deepcopy(line[key]) for key in (
+                        "start_ms", "end_ms", "understanding_speaker", "duration_ms",
+                        "band", "conflict", "reason", "gap",
+                    ) if key in line},
+                    "candidates": [{key: deepcopy(candidate[key]) for key in (
+                        "speaker", "similarity", "reference_count", "independent_cue_count",
+                    ) if key in candidate} for candidate in candidates],
+                    "line_id": line.get("id"), "event_ref": reference, "valid": True,
+                    "evidence_ref": member_ref, "evidence_section": "voiceprint",
+                    "method_version": prepared.get("method_version"),
+                }
+                if (self._voiceprint_modes[member_ref] == "prefill" and line.get("band") == "ACCEPT"
+                        and candidates and event["speaker_source"] != "refine_edit"):
+                    event["speaker"] = candidates[0]["speaker"]
+                    event["speaker_source"] = "voice_default"
+                    member = draft["members"][member_ref]
+                    if event["speaker"] not in member["persons"]:
+                        member["persons"].append(event["speaker"])
+                    if event["speaker"] not in event["participants"]:
+                        event["participants"].append(event["speaker"])
+            self._validate_draft(draft)
+
+        self.mutate(apply)
+
+    def voiceprint_review(self) -> dict[str, Any] | None:
+        if not self._voiceprint_modes:
+            return None
+        conflicts, accept_disagreements = [], []
+        for reference, value in self.items("events"):
+            evidence = value.get("voice_evidence")
+            if not evidence or not evidence["valid"]:
+                continue
+            target = {
+                "event_ref": reference, "member_ref": value["member_ref"],
+                "line_id": evidence.get("line_id"),
+                "start_ms": evidence["start_ms"], "end_ms": evidence["end_ms"],
+                "understanding_speaker": evidence.get("understanding_speaker"),
+            }
+            if evidence.get("conflict") or evidence.get("band") == "CONFLICT":
+                conflicts.append(target)
+            candidates = evidence.get("candidates") or []
+            if (evidence.get("band") == "ACCEPT" and candidates
+                    and candidates[0]["speaker"] != evidence.get("understanding_speaker")):
+                accept_disagreements.append(target)
+        return {"modes": dict(self._voiceprint_modes), "conflicts": conflicts,
+                "accept_disagreements": accept_disagreements}
 
     @classmethod
     def from_prefix(cls, context):
@@ -267,6 +350,7 @@ class ParseContextCanvas(ContextCanvas):
 
         def apply(draft, ops):
             results = []
+            selected_speakers = set()
             for index, payload in enumerate(ops):
                 operation = ParseCanvasWrite.model_validate({
                     "batch_id": batch_id, "expected_revision": expected_revision,
@@ -283,16 +367,41 @@ class ParseContextCanvas(ContextCanvas):
                         "source": {"key": operation.key},
                     }
                     existing = draft["events"].get(reference)
+                    previous = existing["event"] if existing is not None else {}
+                    value["event"].pop("speaker_source", None)
+                    if (self._tracks_speaker_source(operation.member_ref)
+                            and value["event"]["event_type"] == "DIALOGUE"):
+                        value["event"]["speaker_source"] = (
+                            "refine_edit" if value["event"]["speaker"] != previous.get("speaker")
+                            else previous.get("speaker_source") or "understanding"
+                        )
                     if existing is not None and existing != value:
                         raise ValueError("add_event key was already used for different facts")
                     draft["events"][reference] = value
                 elif isinstance(operation, SetEvent):
                     reference = operation.event_ref
-                    self._event(draft, reference)["event"] = operation.event.model_dump(mode="json")
+                    value = self._event(draft, reference)
+                    previous = value["event"]
+                    value["event"] = operation.event.model_dump(mode="json")
+                    value["event"].pop("speaker_source", None)
+                    if (self._tracks_speaker_source(value["member_ref"])
+                            and value["event"]["event_type"] == "DIALOGUE"):
+                        if value["event"]["speaker"] != previous.get("speaker"):
+                            selected_speakers.add(reference)
+                            value["event"]["speaker_source"] = "refine_edit"
+                        else:
+                            value["event"]["speaker_source"] = previous.get("speaker_source") or "understanding"
                 elif isinstance(operation, PatchEvent):
                     reference = operation.event_ref
-                    event = self._event(draft, reference)["event"]
+                    value = self._event(draft, reference)
+                    event = value["event"]
+                    previous_speaker = event.get("speaker")
                     event.update(operation.fields.model_dump(mode="json", exclude_unset=True))
+                    if (self._tracks_speaker_source(value["member_ref"])
+                            and "speaker" in operation.fields.model_fields_set
+                            and event["speaker"] != previous_speaker):
+                        selected_speakers.add(reference)
+                        event["speaker_source"] = "refine_edit"
                 elif isinstance(operation, PersonsOperation):
                     reference = operation.member_ref
                     member = self._member(draft, reference)
@@ -314,6 +423,17 @@ class ParseContextCanvas(ContextCanvas):
                     reference = "prefix"
                     draft["compact"][reference] = operation.model_dump(exclude={"op"})
                 results.append({"operation": index, "reference": reference})
+            for reference, value in draft["events"].items():
+                evidence, event = value.get("voice_evidence"), value["event"]
+                if evidence and (event["event_type"] != "DIALOGUE" or (
+                    event["start_seconds"], event["end_seconds"]
+                ) != (evidence["start_ms"], evidence["end_ms"])):
+                    evidence["valid"] = False
+                    evidence["invalid_reason"] = "audio_interval_changed"
+                    if (event.get("speaker_source") == "voice_default"
+                            and reference not in selected_speakers):
+                        event["speaker"] = evidence.get("understanding_speaker")
+                        event["speaker_source"] = "understanding"
             self._validate_draft(draft)
             return results
 
@@ -368,6 +488,9 @@ class ParseContextCanvas(ContextCanvas):
         if reference not in self._authority or reference not in draft["members"]:
             raise ValueError("member reference is outside the bound parse window")
         return draft["members"][reference]
+
+    def _tracks_speaker_source(self, member_ref):
+        return member_ref in self._voiceprint_modes or member_ref in self._speaker_source_members
 
     def _event(self, draft, reference):
         if reference not in draft["events"]:

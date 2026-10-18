@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 _Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -52,3 +52,36 @@ class CharacterVoiceprint(_VoiceprintModel):
 class Voiceprint(_VoiceprintModel):
     ready: bool = False
     voiceprintList: list[CharacterVoiceprint] = Field(default_factory=list)
+    # Historical inline scoring remains readable; new results use the manifest.
+    scoring: dict | None = None
+    method_version: _Text | None = None
+    model: VoiceprintModel | None = None
+    parameters: dict | None = None
+    line_count: int | None = Field(default=None, ge=0)
+    sample_count: int | None = Field(default=None, ge=0)
+    checksum: _Fingerprint | None = None
+    location: _Text | None = None
+
+    @model_validator(mode="after")
+    def validate_manifest(self):
+        fields = (self.method_version, self.model, self.parameters, self.line_count,
+                  self.sample_count, self.checksum, self.location)
+        if any(value is not None for value in fields):
+            if any(value is None for value in fields) or not self.ready:
+                raise ValueError("a voiceprint artifact manifest must be complete and ready")
+            if self.voiceprintList or self.scoring is not None:
+                raise ValueError("voiceprint artifact manifests cannot contain inline results")
+            if self.sample_count > self.line_count:
+                raise ValueError("voiceprint sample_count cannot exceed line_count")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_voiceprint(self, handler):
+        values = handler(self)
+        for name in ("scoring", "method_version", "model", "parameters", "line_count",
+                     "sample_count", "checksum", "location"):
+            if getattr(self, name) is None:
+                values.pop(name, None)
+        if self.location is not None:
+            values.pop("voiceprintList", None)
+        return values

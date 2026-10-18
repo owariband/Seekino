@@ -127,6 +127,15 @@ def build_refine_prompt(
     """Expose member content and scope while keeping write authority explicit."""
 
     end_sequence_no = start_sequence_no + chunk_count
+    voiceprint = canvas.voiceprint_review()
+    voice_instructions = () if voiceprint is None else (
+        "Prepared B0 voice evidence is available in each member's evidence/voiceprint section and bound to each event's voice_evidence with the current event_ref. The event summary contains its original Understanding speaker, unchanged candidate ranking, cosine gap, duration and band. Read full reference sources and provenance through get_context_canvas collection=evidence, reference=voice_evidence.evidence_ref, section=voiceprint, matching line_id. Similarity is not a probability or calibrated confidence.",
+        "Review every supplied voice default and every line in the explicit conflict and ACCEPT-disagreement lists below. In flag mode the program preserves every speaker. In prefill mode only ACCEPT lines have a voice top1 default in the working draft; leaving it unchanged accepts it. Modify speaker only for supported exceptions; an explicit null remains null. Candidates are evidence, and you may choose a person outside the top three. The program records speaker_source; do not set it yourself.",
+        "Scene and conversational context can support a correction; a single frame that does not show someone cannot by itself exclude an off-screen speaker. Record a brief factual correction basis in the event description or tool execution record without exposing hidden reasoning.",
+        "Voice evidence applies only to its recorded start_ms/end_ms. Editing text or speaker does not invalidate it. A changed audio interval invalidates the old scores and removes an unreviewed voice default: use compare_speaker for the new interval or explicitly select a supported speaker/null. Never reuse an old score as if it described the new interval.",
+        "compare_speaker returns a compact ranking and an evidence_ref/evidence_section for full immutable provenance through get_context_canvas. It also returns the current Canvas revision; use that revision for subsequent writes.",
+        "Required voice review lists: " + json.dumps(voiceprint, ensure_ascii=False, sort_keys=True),
+    )
     return "\n".join((
         f"Refine the fixed Interval [{start_sequence_no}, {end_sequence_no}).",
         _canvas_instructions(),
@@ -136,6 +145,7 @@ def build_refine_prompt(
         "Review unresolved speakers, apparent speaker changes and conflicts between ASR voice groups and surrounding events. When inspect_video_frames is available, use it to examine relevant source frames; narrow start_ms/end_ms and choose frame_count=1–4 inside its authorized range.",
         "Frame observations can support visual identity and conversational context, but contain no audio. Do not claim voice confirmation from still images or force an uncertain speaker into a named person. Correct attribution only when the supplied evidence supports it; otherwise retain null and explain the remaining uncertainty in the event description.",
         "When compare_speaker is available, call it for unresolved dialogue or a named speaker whose attribution conflicts with other evidence. Use the exact target utterance's start_ms/end_ms; narrow merged speech where evidence establishes the boundary. Compare its candidate similarities, margin, reference identity evidence and source/duration quality. Cosine similarity is not a probability: 0.8 does not mean 80% certainty. No reference, close candidates or weak evidence may leave speaker=null. Write any supported correction through write_context_canvas.",
+        *voice_instructions,
         "After reviewing the relevant members, call the CanvasCompletion tool with {\"complete\":true}. The program assembles the result from Canvas; do not return the completion receipt or events as prose or JSON in your final text.",
         canvas.checkpoint(),
     ))

@@ -97,6 +97,26 @@ def test_artifact_store_rejects_changed_segment_bytes(tmp_path) -> None:
         )
 
 
+def test_voiceprint_artifact_is_immutable_scoped_to_video_and_deleted_with_video(tmp_path):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    series_id, video_id, task_id = (str(uuid4()) for _ in range(3))
+    source = tmp_path / "scores.json"
+    source.write_bytes(b'{"lines":[],"samples":[]}')
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    options = dict(series_id=series_id, video_id=video_id, category="voiceprints",
+                   filename=f"{task_id}-{digest}.json")
+    artifact = store.publish_video_artifact(source, **options)
+    assert artifact.sha256 == digest
+    assert f"/videos/{video_id}/voiceprints/{task_id}-" in artifact.uri
+    assert store.publish_video_artifact(source, **options) == artifact
+    source.write_bytes(b"changed")
+    with pytest.raises(ArtifactIntegrityError, match="different bytes"):
+        store.publish_video_artifact(source, **options)
+    store.delete_video_artifacts(series_id, video_id)
+    with pytest.raises(FileNotFoundError):
+        store.resolve(artifact.uri)
+
+
 def test_artifact_store_enforces_environment_and_safe_filenames(tmp_path) -> None:
     test_store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     development_store = LocalArtifactStore(
