@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentConversationView, AgentGlobalSettings, AgentMessageOptions, AgentMessageView, ParseConfig, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
 import { readVideoProgress } from "../features/player/playbackProgress";
+import * as auth from "../features/auth/AuthProvider";
 import { App } from "./App";
+import { I18nProvider, LOCALE_STORAGE_KEY } from "./i18n";
 import { ThemeProvider } from "./theme";
 import { WorkspaceProvider } from "./workspace";
 
@@ -301,6 +303,7 @@ function renderApp(
   });
   const view = render(
     <QueryClientProvider client={queryClient}>
+      <I18nProvider>
       <ThemeProvider>
         <WorkspaceProvider>
           <MemoryRouter initialEntries={[options.initialPath ?? "/search"]}>
@@ -309,6 +312,7 @@ function renderApp(
           </MemoryRouter>
         </WorkspaceProvider>
       </ThemeProvider>
+      </I18nProvider>
     </QueryClientProvider>,
   );
   return {
@@ -323,6 +327,7 @@ function renderApp(
 describe("application shell", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     window.localStorage.clear();
   });
 
@@ -411,6 +416,61 @@ describe("application shell", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     const runtimeRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/system/runtime-config"));
     expect(new Headers(runtimeRequest?.[1]?.headers).has("x-use-ppe")).toBe(false);
+  });
+
+  it("switches the interface immediately, preserves settings edits and restores the saved language", async () => {
+    const view = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { name: "全局 Agent 配置" });
+    const historyInput = await screen.findByRole("spinbutton", { name: /历史消息数量/ });
+    await user.clear(historyInput);
+    await user.type(historyInput, "18");
+    await user.click(screen.getByRole("radio", { name: "EN English" }));
+    expect(screen.getByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Language" })).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: /History message count/ })).toHaveValue(18);
+    expect(screen.getByRole("radio", { name: "EN English" })).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement).toHaveAttribute("lang", "en");
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("en");
+    await user.click(screen.getByRole("button", { name: "Open account menu" }));
+    expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
+
+    view.unmount();
+    renderApp([apiSeries], { initialPath: "/settings" });
+    expect(screen.getByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "ZH 中文" }));
+    expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("lang", "zh-CN");
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("zh");
+  });
+
+  it.each([false, true])("allows local theme and language settings without configuration permission (guest=%s)", async (isGuest) => {
+    const realUseAuth = auth.useAuth;
+    vi.spyOn(auth, "useAuth").mockImplementation(() => {
+      const original = realUseAuth();
+      const identity = { ...original.identity, isGuest, email: isGuest ? null : "viewer@example.com",
+        permissions: { canUpload: false, canManage: false, canConfigure: false } };
+      return { ...original, identity, accountIdentity: identity, canUpload: false, canManage: false, canConfigure: false,
+        activeSource: { ...original.activeSource, identity, kind: isGuest ? "public" : "personal" } };
+    });
+    const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
+    await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
+    expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "语言" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "数据边界" })).not.toBeInTheDocument();
+    expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/global-settings"))).toBe(false);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: "黑夜模式" }));
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    await user.click(screen.getByRole("radio", { name: "EN English" }));
+    expect(screen.getByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open account menu" }));
+    expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Parsing tasks" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Model usage" })).not.toBeInTheDocument();
+    if (!isGuest) expect(screen.getByText("viewer@example.com")).toBeInTheDocument();
   });
 
   it("defaults to release while runtime configuration is pending and enables debug only after success", async () => {

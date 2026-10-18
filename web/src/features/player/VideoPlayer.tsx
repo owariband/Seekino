@@ -5,6 +5,7 @@ import { errorMessage, mediaUrl } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
 import { episodeLabel, formatTimecode } from "../../shared/format";
 import { playbackProgressStorageKey, readVideoProgress, saveVideoProgress } from "./playbackProgress";
+import { useI18n } from "../../app/i18n";
 import styles from "./watch.module.css";
 
 interface VideoPlayerProps {
@@ -30,6 +31,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   { video, atSeconds, fullscreen = false, onToggleFullscreen, onPlaybackPositionChange },
   ref,
 ) {
+  const { t, locale } = useI18n();
   const mediaRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef(0);
@@ -146,7 +148,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     if (!media || media.ended || !media.paused) return;
     setPlayError(null);
     void media.play().catch((failure: unknown) => {
-      if (mediaRef.current === media && !(failure instanceof DOMException && failure.name === "AbortError")) setPlayError(errorMessage(failure));
+      if (mediaRef.current === media && !(failure instanceof DOMException && failure.name === "AbortError")) setPlayError(errorMessage(failure, locale));
     });
   };
 
@@ -193,9 +195,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const toggleFullscreen = () => {
     if (!onToggleFullscreen) return;
     try {
-      void Promise.resolve(onToggleFullscreen()).catch(() => setPlayError("无法切换网页全屏。"));
+      void Promise.resolve(onToggleFullscreen()).catch(() => setPlayError(t("无法切换网页全屏。")));
     } catch {
-      setPlayError("无法切换网页全屏。");
+      setPlayError(t("无法切换网页全屏。"));
     }
   };
 
@@ -213,14 +215,14 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
 
   if (!playbackUrl) {
     return <div className={styles.videoPlayerUnavailable} role="status">
-      {video.playbackStatus === "MISSING" ? "原视频文件已丢失，暂时无法播放。"
-        : video.playbackStatus === "PREPARING" ? "播放媒体正在准备，请稍后再试。"
-          : video.playbackStatus === "FAILED" ? "当前视频格式无法在浏览器播放。" : "暂无可播放媒体。"}
+      {video.playbackStatus === "MISSING" ? t("原视频文件已丢失，暂时无法播放。")
+        : video.playbackStatus === "PREPARING" ? t("播放媒体正在准备，请稍后再试。")
+          : video.playbackStatus === "FAILED" ? t("当前视频格式无法在浏览器播放。") : t("暂无可播放媒体。")}
     </div>;
   }
 
   return (
-    <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label="视频播放器"
+    <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label={t("视频播放器")}
       data-controls-visible={controlsVisible}
       onPointerEnter={() => setPointerInside(true)}
       onPointerLeave={() => setPointerInside(false)}
@@ -244,11 +246,11 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
           onEnded={() => { setPlaying(false); syncPosition(); persist(); }}
           onVolumeChange={(event) => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted); }}
           onRateChange={(event) => setPlaybackRate(event.currentTarget.playbackRate)}
-          onError={() => { setPlaying(false); setPlayError("视频媒体无法读取，请稍后重试。"); }}
+          onError={() => { setPlaying(false); setPlayError(t("视频媒体无法读取，请稍后重试。")); }}
           onClick={togglePlay}
-          aria-label={`${episodeLabel(video.episodeOrder)} 视频`}
+          aria-label={t("{episode} 视频", { episode: episodeLabel(video.episodeOrder) })}
         />
-        {!playing ? <button className={styles.videoPlayerCenterPlay} type="button" onClick={togglePlay} aria-label="播放视频"><Play size={28} fill="currentColor" /></button> : null}
+        {!playing ? <button className={styles.videoPlayerCenterPlay} type="button" onClick={togglePlay} aria-label={t("播放视频")}><Play size={28} fill="currentColor" /></button> : null}
       </div>
       <div className={styles.videoPlayerControls}>
         <input
@@ -260,23 +262,23 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
           value={Math.min(currentSeconds, durationSeconds)}
           disabled={!mediaReady || durationSeconds <= 0}
           onChange={(event) => seekTo(Number(event.currentTarget.value))}
-          aria-label="播放进度"
+          aria-label={t("播放进度")}
           aria-valuetext={`${formatTimecode(currentSeconds)} / ${formatTimecode(durationSeconds)}`}
         />
         <div className={styles.videoPlayerControlRow}>
-          <button type="button" onClick={togglePlay} aria-label={playing ? "暂停" : "播放"}>{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</button>
-          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current - 10_000)} aria-label="后退 10 秒"><RotateCcw size={18} /><small>10s</small></button>
-          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current + 10_000)} aria-label="前进 10 秒"><RotateCw size={18} /><small>10s</small></button>
+          <button type="button" onClick={togglePlay} aria-label={playing ? t("暂停") : t("播放")}>{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</button>
+          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current - 10_000)} aria-label={t("后退 10 秒")}><RotateCcw size={18} /><small>10s</small></button>
+          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current + 10_000)} aria-label={t("前进 10 秒")}><RotateCw size={18} /><small>10s</small></button>
           <time>{formatTimecode(currentSeconds)} / {formatTimecode(durationSeconds)}</time>
           <div className={styles.videoPlayerControlSpacer} />
-          <button type="button" onClick={() => { const media = mediaRef.current; if (media) { media.muted = !media.muted; if (!media.muted && media.volume === 0) media.volume = 0.5; setMuted(media.muted); setVolume(media.volume); } }} aria-label={muted || volume === 0 ? "取消静音" : "静音"}>
+          <button type="button" onClick={() => { const media = mediaRef.current; if (media) { media.muted = !media.muted; if (!media.muted && media.volume === 0) media.volume = 0.5; setMuted(media.muted); setVolume(media.volume); } }} aria-label={muted || volume === 0 ? t("取消静音") : t("静音")}>
             {muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </button>
-          <input className={styles.videoPlayerVolume} type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(event) => { const media = mediaRef.current; if (media) { media.volume = Number(event.currentTarget.value); media.muted = media.volume === 0; setVolume(media.volume); setMuted(media.muted); } }} aria-label="音量" />
-          <select value={playbackRate} onChange={(event) => { const media = mediaRef.current; if (media) { media.playbackRate = Number(event.currentTarget.value); setPlaybackRate(media.playbackRate); } }} aria-label="播放倍速">
+          <input className={styles.videoPlayerVolume} type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(event) => { const media = mediaRef.current; if (media) { media.volume = Number(event.currentTarget.value); media.muted = media.volume === 0; setVolume(media.volume); setMuted(media.muted); } }} aria-label={t("音量")} />
+          <select value={playbackRate} onChange={(event) => { const media = mediaRef.current; if (media) { media.playbackRate = Number(event.currentTarget.value); setPlaybackRate(media.playbackRate); } }} aria-label={t("播放倍速")}>
             {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}
           </select>
-          <button type="button" onClick={toggleFullscreen} aria-label={fullscreen ? "退出网页全屏" : "网页全屏"} disabled={!onToggleFullscreen}>{fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}</button>
+          <button type="button" onClick={toggleFullscreen} aria-label={fullscreen ? t("退出网页全屏") : t("网页全屏")} disabled={!onToggleFullscreen}>{fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}</button>
         </div>
       </div>
       {playError ? <p className={styles.videoPlayerError} role="alert">{playError}</p> : null}

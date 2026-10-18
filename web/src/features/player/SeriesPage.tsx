@@ -10,9 +10,11 @@ import { useAuth } from "../auth/AuthProvider";
 import { readBackground, SeriesBackgroundEditor } from "../library/SeriesBackgroundEditor";
 import { PlaybackFrame } from "./PlaybackFrame";
 import { readWatchHistory } from "./playbackProgress";
+import { useI18n } from "../../app/i18n";
 import styles from "./series.module.css";
 
 export function SeriesPage() {
+  const { t, locale } = useI18n();
   const { seriesId } = useParams();
   const pageRef = useRef<HTMLElement>(null);
   const { canManage } = useAuth();
@@ -39,44 +41,44 @@ export function SeriesPage() {
   const description = series?.description?.trim();
 
   return <main ref={pageRef} className={`page ${styles.page}`}>
-    {!seriesId ? <p className={styles.state} role="alert"><Mascot mood="puzzled" size={64} />系列地址无效。</p>
-      : seriesQuery.isPending ? <p className={styles.state} role="status"><Mascot mood="seek" size={64} delayed />正在读取视频系列…</p>
-      : seriesQuery.isError ? <div className={styles.state}><Mascot mood="oops" size={64} /><p role="alert">读取视频系列失败：{errorMessage(seriesQuery.error)}</p><button className="button-secondary" type="button" onClick={() => void seriesQuery.refetch()}>重试</button><Link to="/watch">返回首页</Link></div>
+    {!seriesId ? <p className={styles.state} role="alert"><Mascot mood="puzzled" size={64} />{t("系列地址无效。")}</p>
+      : seriesQuery.isPending ? <p className={styles.state} role="status"><Mascot mood="seek" size={64} delayed />{t("正在读取视频系列…")}</p>
+      : seriesQuery.isError ? <div className={styles.state}><Mascot mood="oops" size={64} /><p role="alert">{t("读取视频系列失败：{message}", { message: errorMessage(seriesQuery.error, locale) })}</p><button className="button-secondary" type="button" onClick={() => void seriesQuery.refetch()}>{t("重试")}</button><Link to="/watch">{t("返回首页")}</Link></div>
       : series ? <>
-        <section className={styles.hero} aria-label="系列介绍">
+        <section className={styles.hero} aria-label={t("系列介绍")}>
           <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(featured?.playbackUrl ?? null)} positionSeconds={framePosition}
             poster={mediaUrl(series.cover?.url ?? featured?.thumbnail?.url ?? null)} />
-          <Link className={styles.back} to="/watch"><ArrowLeft size={17} aria-hidden="true" />全部系列</Link>
+          <Link className={styles.back} to="/watch"><ArrowLeft size={17} aria-hidden="true" />{t("全部系列")}</Link>
           <div className={styles.heroContent}>
-            <span className={styles.eyebrow}>视频系列</span>
+            <span className={styles.eyebrow}>{t("视频系列")}</span>
             <h1>{seriesTitle(series)}</h1>
-            <div className={styles.meta}><span>共 {episodes.length} 集</span>{featured ? <span>{recent ? "上次观看" : "从这里开始"} · {episodeTitle(featured.episodeOrder)}</span> : null}</div>
+            <div className={styles.meta}><span>{t("共 {count} 集", { count: episodes.length })}</span>{featured ? <span>{recent ? t("上次观看") : t("从这里开始")} · {episodeTitle(featured.episodeOrder, locale)}</span> : null}</div>
             <div className={styles.actions}>
               {featured ? <Link className={styles.play} to={`/watch/${encodeURIComponent(series.seriesId)}/${encodeURIComponent(featured.videoId)}`}>
-                <Play size={21} fill="currentColor" aria-hidden="true" />{recent ? "继续观看" : "开始观看"}
-              </Link> : <span className={styles.unavailable}>暂无可播放的剧集</span>}
-              {episodes.length > 0 ? <a className={styles.browse} href="#series-episodes">查看剧集<ChevronDown size={18} aria-hidden="true" /></a> : null}
+                <Play size={21} fill="currentColor" aria-hidden="true" />{recent ? t("继续观看") : t("开始观看")}
+              </Link> : <span className={styles.unavailable}>{t("暂无可播放的剧集")}</span>}
+              {episodes.length > 0 ? <a className={styles.browse} href="#series-episodes">{t("查看剧集")}<ChevronDown size={18} aria-hidden="true" /></a> : null}
             </div>
             {featured && recent ? <div className={styles.progress}>
-              <span>已看至 {formatTimecode(position)} / {formatTimecode(featured.durationSeconds)}</span>
-              {featured.durationSeconds > 0 ? <progress aria-label="上次观看进度" value={position} max={featured.durationSeconds} /> : null}
+              <span>{t("已看至 {time} / {duration}", { time: formatTimecode(position), duration: formatTimecode(featured.durationSeconds) })}</span>
+              {featured.durationSeconds > 0 ? <progress aria-label={t("上次观看进度")} value={position} max={featured.durationSeconds} /> : null}
             </div> : null}
           </div>
         </section>
         {/* A missing description is a to-do for managers; viewers simply skip the section. */}
-        {description || canManage ? <section className={styles.overview} aria-label="系列简介">
-          <h2>关于这部作品</h2>
+        {description || canManage ? <section className={styles.overview} aria-label={t("系列简介")}>
+          <h2>{t("关于这部作品")}</h2>
           <div className={styles.overviewContent}>
-            <p className={description ? undefined : styles.placeholder}>{description || "还没有填写系列简介。"}</p>
+            <p className={description ? undefined : styles.placeholder}>{description || t("还没有填写系列简介。")}</p>
             {canManage && hasParseNotes ? <details className={styles.parseNotes}>
-              <summary><span>解析用人物与背景资料</span><small>仅管理者可见 · 供模型解析参考</small><ChevronDown size={16} aria-hidden="true" /></summary>
+              <summary><span>{t("解析用人物与背景资料")}</span><small>{t("仅管理者可见 · 供模型解析参考")}</small><ChevronDown size={16} aria-hidden="true" /></summary>
               <SeriesBackgroundEditor key={series.seriesId} series={series} readOnly />
             </details> : null}
           </div>
         </section> : null}
-        <section id="series-episodes" className={styles.episodes} aria-label="系列选集">
-          <header><h2>剧集 <small>{episodes.length} 集</small></h2><span>按集数顺序</span></header>
-          {episodes.length === 0 ? <p className={styles.empty}>这个系列还没有视频。</p> : <ol className={styles.episodeGrid}>
+        <section id="series-episodes" className={styles.episodes} aria-label={t("系列选集")}>
+          <header><h2>{t("剧集")} <small>{t("{count} 集", { count: episodes.length })}</small></h2><span>{t("按集数顺序")}</span></header>
+          {episodes.length === 0 ? <p className={styles.empty}>{t("这个系列还没有视频。")}</p> : <ol className={styles.episodeGrid}>
             {episodes.map((episode) => {
               const available = episode.playbackStatus === "READY" && Boolean(episode.playbackUrl);
               const saved = history.find((item) => item.videoId === episode.videoId);
@@ -91,8 +93,8 @@ export function SeriesPage() {
                   <span className={styles.duration}>{formatTimecode(episode.durationSeconds)}</span>
                   {watched > 0 && episode.durationSeconds > 0 ? <span className={styles.watched} style={{ width: `${watched / episode.durationSeconds * 100}%` }} /> : null}
                 </span>
-                <strong title={episode.originalFilename}>{episodeTitle(episode.episodeOrder)}</strong>
-                {!available ? <small>暂不可播放</small> : watched > 0 ? <small>已看至 {formatTimecode(watched)}</small> : null}
+                <strong title={episode.originalFilename}>{episodeTitle(episode.episodeOrder, locale)}</strong>
+                {!available ? <small>{t("暂不可播放")}</small> : watched > 0 ? <small>{t("已看至 {time}", { time: formatTimecode(watched) })}</small> : null}
               </>;
               return <li key={episode.videoId}>{available
                 ? <Link className={styles.episode} to={`/watch/${encodeURIComponent(series.seriesId)}/${encodeURIComponent(episode.videoId)}`}>{content}</Link>
@@ -100,6 +102,6 @@ export function SeriesPage() {
             })}
           </ol>}
         </section>
-      </> : <p className={styles.state} role="alert"><Mascot mood="puzzled" size={64} />视频系列不存在。</p>}
+      </> : <p className={styles.state} role="alert"><Mascot mood="puzzled" size={64} />{t("视频系列不存在。")}</p>}
   </main>;
 }

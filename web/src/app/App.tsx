@@ -14,7 +14,7 @@ import { useAuth } from "../features/auth/AuthProvider";
 import { AppShell } from "./AppShell";
 
 export function App() {
-  const { canManage, canConfigure, canUpload } = useAuth();
+  const { canManage, canUpload } = useAuth();
   return (
     <UploadProvider>
       <Routes>
@@ -27,7 +27,7 @@ export function App() {
           <Route path="watch/:seriesId/:videoId" element={<WatchPage />} />
           <Route path="tasks" element={canManage ? <TasksPage /> : <Navigate to="/watch" replace />} />
           <Route path="usage" element={canManage ? <UsagePage /> : <Navigate to="/watch" replace />} />
-          <Route path="settings" element={canConfigure ? <SettingsPage /> : <Navigate to="/watch" replace />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/watch" replace />} />
         </Route>
       </Routes>

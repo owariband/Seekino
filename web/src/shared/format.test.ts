@@ -4,6 +4,8 @@ import {
   formatBytes,
   formatMoneyCny,
   formatMoneyUsd,
+  formatTokens,
+  episodeTitle,
   previewFramePosition,
   formatTimeRange,
   formatTimecode,
@@ -14,6 +16,18 @@ import {
 } from "./format";
 
 describe("format helpers", () => {
+  it("localizes generated labels without changing money precision or media timecodes", () => {
+    expect(formatTokens(null, "en")).toBe("Not recorded");
+    expect(formatTokens(12345, "en")).toBe("12,345");
+    expect(formatMoneyUsd(null, "en")).toBe("Not priced");
+    expect(formatMoneyUsd("0.00000004", "en")).toBe("$0.00000004");
+    expect(episodeTitle(13, "en")).toBe("Episode 13");
+    expect(episodeTitle(13)).toBe("第 13 集");
+    expect(stageLabel("PARSING", "en")).toBe("Understanding content");
+    expect(publicParseStageLabel("COMPLETED", "en")).toBe("Searchable");
+    expect(formatTimeRange(8008, 8250)).toBe("00:08–00:08");
+  });
+
   it("preserves USD decimal precision without converting money to a floating point number", () => {
     expect(formatMoneyUsd("0.00000004")).toBe("$0.00000004");
     expect(formatMoneyUsd("9007199254740993.123456789012345678")).toBe("$9,007,199,254,740,993.123456789012345678");

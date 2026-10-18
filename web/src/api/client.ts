@@ -1,3 +1,5 @@
+import { translate, type Locale } from "../shared/messages";
+
 import type {
   AgentAnswerEvent,
   AgentAttachmentReference,
@@ -88,6 +90,7 @@ export class ApiClientError extends Error {
   readonly status: number;
   readonly code: string | undefined;
   readonly requestId: string | undefined;
+  readonly hasServerMessage: boolean;
 
   constructor(status: number, payload: ApiErrorPayload | null) {
     super(payload?.message || `请求失败（HTTP ${status}）`);
@@ -95,6 +98,7 @@ export class ApiClientError extends Error {
     this.status = status;
     this.code = payload?.code;
     this.requestId = payload?.requestId;
+    this.hasServerMessage = Boolean(payload?.message);
   }
 }
 
@@ -835,10 +839,11 @@ export async function uploadSegment({
   });
 }
 
-export function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown, locale: Locale = "zh"): string {
   if (error instanceof ApiClientError) {
-    return error.requestId ? `${error.message}（请求编号：${error.requestId}）` : error.message;
+    const message = error.hasServerMessage ? error.message : translate(locale, "请求失败（HTTP {status}）", { status: error.status });
+    return error.requestId ? translate(locale, "{message}（请求编号：{requestId}）", { message, requestId: error.requestId }) : message;
   }
-  if (error instanceof Error) return error.message;
-  return "发生了无法识别的错误";
+  if (error instanceof Error) return translate(locale, error.message);
+  return translate(locale, "发生了无法识别的错误");
 }

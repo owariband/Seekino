@@ -28,6 +28,8 @@ import type {
   UploadSessionView,
   VideoParseTaskView,
 } from "../../api/contracts";
+import { useI18n } from "../../app/i18n";
+import { translate } from "../../shared/messages";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
 import type { UploadInput, UploadTask } from "./upload-types";
@@ -58,6 +60,9 @@ interface UploadContextValue {
 const UploadContext = createContext<UploadContextValue | null>(null);
 
 export function UploadProvider({ children }: PropsWithChildren) {
+  const { locale } = useI18n();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
   const { selectedSeries, refreshSeries } = useWorkspace();
   const { canUpload } = useAuth();
   const [tasks, setTasks] = useState<UploadTask[]>([]);
@@ -87,7 +92,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
             : job.status === "FAILED"
               ? "failed"
               : "processing",
-        error: job.status === "FAILED" ? job.lastError?.message || "解析任务失败" : undefined,
+        error: job.status === "FAILED" ? job.lastError?.message || translate(localeRef.current, "解析任务失败") : undefined,
       }));
     },
     [updateTask],
@@ -106,7 +111,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
             ? "failed"
             : "processing",
         error: failed
-          ? videoParseTask.lastError?.message || "解析任务失败"
+          ? videoParseTask.lastError?.message || translate(localeRef.current, "解析任务失败")
           : undefined,
       }));
     },
@@ -224,9 +229,9 @@ export function UploadProvider({ children }: PropsWithChildren) {
       if (existingSession) {
         session = await getUploadSession(existingSession.uploadSessionId, signal);
       } else {
-        if (!task.file) throw new Error("恢复上传需要重新选择原视频文件");
+        if (!task.file) throw new Error(translate(localeRef.current, "恢复上传需要重新选择原视频文件"));
         const mediaType = mediaTypeForFile(task.file);
-        if (!mediaType) throw new Error("只支持 MP4、MOV 和 AVI 视频");
+        if (!mediaType) throw new Error(translate(localeRef.current, "只支持 MP4、MOV 和 AVI 视频"));
         session = await createUploadSession(task.seriesId, task.idempotencyKey, {
           tenantId: TENANT_ID,
           episodeOrder: task.episodeOrder,
@@ -243,16 +248,16 @@ export function UploadProvider({ children }: PropsWithChildren) {
       }));
       signal.throwIfAborted();
       if (session.seriesId !== task.seriesId) {
-        throw new Error("上传会话不属于当前视频系列");
+        throw new Error(translate(localeRef.current, "上传会话不属于当前视频系列"));
       }
       if (task.file && (
         session.originalFilename !== task.file.name ||
         session.totalSizeBytes !== task.file.size
       )) {
-        throw new Error("上传会话与当前文件不一致，请重新选择视频");
+        throw new Error(translate(localeRef.current, "上传会话与当前文件不一致，请重新选择视频"));
       }
       if (session.status === "EXPIRED") {
-        throw new Error("上传会话已过期，请重新加入这个视频");
+        throw new Error(translate(localeRef.current, "上传会话已过期，请重新加入这个视频"));
       }
       if (session.status === "COMPLETING") {
         updateTask(task.taskId, (current) => ({
@@ -285,8 +290,8 @@ export function UploadProvider({ children }: PropsWithChildren) {
         watchCompletedParse(task.taskId, completed);
         return;
       }
-      if (!task.file) throw new Error("恢复上传需要重新选择原视频文件");
-      if (!mediaTypeForFile(task.file)) throw new Error("只支持 MP4、MOV 和 AVI 视频");
+      if (!task.file) throw new Error(translate(localeRef.current, "恢复上传需要重新选择原视频文件"));
+      if (!mediaTypeForFile(task.file)) throw new Error(translate(localeRef.current, "只支持 MP4、MOV 和 AVI 视频"));
 
       updateTask(task.taskId, (current) => ({
         ...current,
@@ -341,7 +346,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
       const verified = await getUploadSession(session.uploadSessionId, signal);
       signal.throwIfAborted();
       if (verified.missingSegmentNumbers.length > 0) {
-        throw new Error("仍有分片未被服务端确认，请重试上传");
+        throw new Error(translate(localeRef.current, "仍有分片未被服务端确认，请重试上传"));
       }
       updateTask(task.taskId, (current) => ({
         ...current,
@@ -374,7 +379,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
             ...current,
             status: "failed",
             inFlightBytes: 0,
-            error: errorMessage(error),
+            error: errorMessage(error, localeRef.current),
           }));
         }
       }).finally(() => {
@@ -409,7 +414,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
         status: session.status === "COMPLETING" ? "completing" : "paused",
         idempotencyKey: "",
         session,
-        error: session.status === "COMPLETING" ? undefined : session.lastError?.message ?? "请重新选择同一个原视频，系统会从服务端已确认的分片继续上传",
+        error: session.status === "COMPLETING" ? undefined : session.lastError?.message ?? translate(localeRef.current, "请重新选择同一个原视频，系统会从服务端已确认的分片继续上传"),
       }))];
     });
   }, [canUpload, selectedSeries]);
@@ -478,10 +483,10 @@ export function UploadProvider({ children }: PropsWithChildren) {
     (taskId: string, file: File) => {
       updateTask(taskId, (task) => {
         if (!mediaTypeForFile(file)) {
-          return { ...task, error: "只支持 MP4、MOV 和 AVI 视频" };
+          return { ...task, error: translate(localeRef.current, "只支持 MP4、MOV 和 AVI 视频") };
         }
         if (file.name !== task.fileName || file.size !== task.totalBytes) {
-          return { ...task, error: "所选文件与原上传任务的文件名或大小不一致" };
+          return { ...task, error: translate(localeRef.current, "所选文件与原上传任务的文件名或大小不一致") };
         }
         return { ...task, file, status: "queued", error: undefined };
       });
@@ -515,7 +520,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
         setTasks((current) => current.filter((item) => item.taskId !== taskId));
         void refreshSeries();
       } catch (error) {
-        updateTask(taskId, (current) => ({ ...current, status: "failed", error: `删除失败：${errorMessage(error)}` }));
+        updateTask(taskId, (current) => ({ ...current, status: "failed", error: translate(localeRef.current, "删除失败：{message}", { message: errorMessage(error, localeRef.current) }) }));
       }
     },
     [refreshSeries, tasks, updateTask],

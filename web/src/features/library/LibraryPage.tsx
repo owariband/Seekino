@@ -19,6 +19,8 @@ import { useWorkspace } from "../../app/workspace";
 import { useUploads } from "../uploads/UploadProvider";
 import { episodeLabel, formatBytes, formatTimecode } from "../../shared/format";
 import { SeriesBackgroundEditor } from "./SeriesBackgroundEditor";
+import { useI18n } from "../../app/i18n";
+import { translate } from "../../shared/messages";
 import styles from "./library.module.css";
 
 const parseStatusLabels: Record<string, string> = {
@@ -32,6 +34,7 @@ const parseStatusLabels: Record<string, string> = {
 const MAX_EPISODE_ORDER = 2_147_483_647;
 
 export function LibraryPage() {
+  const { t, locale } = useI18n();
   const {
     mode,
     series,
@@ -77,7 +80,7 @@ export function LibraryPage() {
       });
       setCreating(false);
     } catch (creationError) {
-      setFormError(creationError instanceof Error ? creationError.message : "创建视频系列失败");
+      setFormError(creationError instanceof Error ? errorMessage(creationError, locale) : t("创建视频系列失败"));
     } finally {
       setSaving(false);
     }
@@ -93,7 +96,7 @@ export function LibraryPage() {
     event.preventDefault();
     const episodeOrder = Number(episodeDraft);
     if (!Number.isSafeInteger(episodeOrder) || episodeOrder <= 0 || episodeOrder > MAX_EPISODE_ORDER) {
-      setEpisodeError({ videoId: video.videoId, message: "集数必须是有效的正整数" });
+      setEpisodeError({ videoId: video.videoId, message: t("集数必须是有效的正整数") });
       return;
     }
     if (episodeSaving || mode !== "live" || episodeOrder === video.episodeOrder) return;
@@ -104,7 +107,7 @@ export function LibraryPage() {
       setEditingVideoId(null);
       setEpisodeDraft("");
     } catch (failure) {
-      setEpisodeError({ videoId: video.videoId, message: `保存失败：${errorMessage(failure)}` });
+      setEpisodeError({ videoId: video.videoId, message: t("保存失败：{message}", { message: errorMessage(failure, locale) }) });
     } finally {
       setEpisodeSaving(false);
     }
@@ -114,26 +117,24 @@ export function LibraryPage() {
     <main className="page">
       <header className={styles.header}>
         <div>
-          <h1 className="page-title">资料库</h1>
+          <h1 className="page-title">{t("资料库")}</h1>
         </div>
         <div className={styles.headerActions}>
           <button className="button-secondary" type="button" onClick={() => setCreating(true)}>
-            <FolderPlus size={16} />新建视频系列
-          </button>
+            <FolderPlus size={16} />{t("新建视频系列")}</button>
           <button className="button-primary" type="button" onClick={openDialog} disabled={!selectedSeries}>
-            <UploadCloud size={16} />上传视频
-          </button>
+            <UploadCloud size={16} />{t("上传视频")}</button>
         </div>
       </header>
 
-      <section className={styles.shelf} aria-label="视频系列选择">
+      <section className={styles.shelf} aria-label={t("视频系列选择")}>
         <div className={styles.shelfHeading}>
-          <span>视频系列</span>
-          <button type="button" onClick={() => void refreshSeries()} disabled={mode !== "live" || isLoading} aria-label="刷新资料库">
+          <span>{t("视频系列")}</span>
+          <button type="button" onClick={() => void refreshSeries()} disabled={mode !== "live" || isLoading} aria-label={t("刷新资料库")}>
             <RefreshCw size={14} />
           </button>
         </div>
-        {error ? <p className={styles.error} role="alert">{error.message}</p> : null}
+        {error ? <p className={styles.error} role="alert">{errorMessage(error, locale)}</p> : null}
         <div className={styles.seriesList}>
           {series.map((item) => (
             <button
@@ -147,8 +148,8 @@ export function LibraryPage() {
             </button>
           ))}
         </div>
-        {!isLoading && !error && series.length === 0 ? <p className={styles.emptySeries}>暂无视频系列，点击“新建视频系列”开始。</p> : null}
-        {isLoading ? <p className={styles.emptySeries} role="status">正在读取视频系列…</p> : null}
+        {!isLoading && !error && series.length === 0 ? <p className={styles.emptySeries}>{t("暂无视频系列，点击“新建视频系列”开始。")}</p> : null}
+        {isLoading ? <p className={styles.emptySeries} role="status">{t("正在读取视频系列…")}</p> : null}
       </section>
 
       {selectedSeries ? (
@@ -157,8 +158,8 @@ export function LibraryPage() {
 
           <section className={styles.episodes}>
             <div className={styles.sectionHeader}>
-              <h2>视频</h2>
-              <span>{selectedSeries.videos.length} 个视频</span>
+              <h2>{t("视频")}</h2>
+              <span>{t("{count} 个视频", { count: selectedSeries.videos.length })}</span>
             </div>
             {selectedSeries.videos.length > 0 ? (
               <div className={styles.episodeList}>
@@ -170,14 +171,14 @@ export function LibraryPage() {
                           if (event.key === "Escape" && !episodeSaving) { event.preventDefault(); cancelEpisodeEditing(); }
                         }}>
                           <label>
-                            <span className="sr-only">{video.originalFilename} 集数</span>
+                            <span className="sr-only">{t("{filename} 集数", { filename: video.originalFilename })}</span>
                             <input className="field" type="number" min={1} max={MAX_EPISODE_ORDER} step={1} required autoFocus disabled={episodeSaving} value={episodeDraft} onChange={(event) => { setEpisodeDraft(event.target.value); setEpisodeError(null); }} />
                           </label>
                           <div>
-                            <button type="submit" disabled={episodeSaving || mode !== "live" || !Number.isSafeInteger(Number(episodeDraft)) || Number(episodeDraft) <= 0 || Number(episodeDraft) > MAX_EPISODE_ORDER || Number(episodeDraft) === video.episodeOrder} aria-label={episodeSaving ? `正在保存 ${video.originalFilename} 集数` : `保存 ${video.originalFilename} 集数`} title="保存集数">
+                            <button type="submit" disabled={episodeSaving || mode !== "live" || !Number.isSafeInteger(Number(episodeDraft)) || Number(episodeDraft) <= 0 || Number(episodeDraft) > MAX_EPISODE_ORDER || Number(episodeDraft) === video.episodeOrder} aria-label={episodeSaving ? t("正在保存 {filename} 集数", { filename: video.originalFilename }) : t("保存 {filename} 集数", { filename: video.originalFilename })} title={t("保存集数")}>
                               {episodeSaving ? <RefreshCw className={styles.spinning} size={12} /> : <Check size={12} />}
                             </button>
-                            <button type="button" disabled={episodeSaving} onClick={cancelEpisodeEditing} aria-label={`取消编辑 ${video.originalFilename} 集数`} title="取消编辑"><X size={12} /></button>
+                            <button type="button" disabled={episodeSaving} onClick={cancelEpisodeEditing} aria-label={t("取消编辑 {filename} 集数", { filename: video.originalFilename })} title={t("取消编辑")}><X size={12} /></button>
                           </div>
                         </form>
                       ) : (
@@ -185,7 +186,7 @@ export function LibraryPage() {
                           setEditingVideoId(video.videoId);
                           setEpisodeDraft(String(video.episodeOrder));
                           setEpisodeError(null);
-                        }} aria-label={`编辑 ${video.originalFilename} 集数`} title="编辑集数">
+                        }} aria-label={t("编辑 {filename} 集数", { filename: video.originalFilename })} title={t("编辑集数")}>
                           <span>{episodeLabel(video.episodeOrder)}</span><Pencil size={11} />
                         </button>
                       )}
@@ -195,16 +196,16 @@ export function LibraryPage() {
                       <div><strong>{video.originalFilename}</strong><span>{formatBytes(video.totalBytes)} · <Clock3 size={11} /> {formatTimecode(video.durationSeconds)}</span></div>
                     </div>
                     <div className={styles.progressCell}>
-                      <span>上传</span><i><em style={{ width: `${video.uploadProgress}%` }} /></i><b>{video.uploadProgress}%</b>
+                      <span>{t("上传")}</span><i><em style={{ width: `${video.uploadProgress}%` }} /></i><b>{video.uploadProgress}%</b>
                     </div>
                     <div className={styles.progressCell}>
-                      <span>{parseStatusLabels[video.parseStatus] ?? "解析"}</span><i>{video.parseProgress === null ? null : <em style={{ width: `${video.parseProgress}%` }} />}</i><b>{video.parseProgress === null ? "—" : `${video.parseProgress}%`}</b>
+                      <span>{t(parseStatusLabels[video.parseStatus] ?? "解析")}</span><i>{video.parseProgress === null ? null : <em style={{ width: `${video.parseProgress}%` }} />}</i><b>{video.parseProgress === null ? "—" : `${video.parseProgress}%`}</b>
                     </div>
                     <div className={styles.episodeReady} data-ready={video.indexStatus === "READY"}>
                       {video.indexStatus === "READY" ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
-                      {video.indexStatus === "READY" ? "可检索" : video.indexStatus === "FAILED" ? "索引失败" : "索引未就绪"}
-                      <small>{video.playbackStatus === "READY" ? "可播放" : video.playbackStatus === "MISSING" ? "原视频已丢失" : "播放未就绪"}</small>
-                      {video.playbackStatus === "READY" ? <Link className="button-quiet" to={`/watch/${encodeURIComponent(selectedSeries.seriesId)}/${encodeURIComponent(video.videoId)}`}>观看整集</Link> : null}
+                      {video.indexStatus === "READY" ? t("可检索") : video.indexStatus === "FAILED" ? t("索引失败") : t("索引未就绪")}
+                      <small>{video.playbackStatus === "READY" ? t("可播放") : video.playbackStatus === "MISSING" ? t("原视频已丢失") : t("播放未就绪")}</small>
+                      {video.playbackStatus === "READY" ? <Link className="button-quiet" to={`/watch/${encodeURIComponent(selectedSeries.seriesId)}/${encodeURIComponent(video.videoId)}`}>{t("观看整集")}</Link> : null}
                       {video.lastError ? <small>{video.lastError.message}</small> : null}
                     </div>
                     {episodeError?.videoId === video.videoId ? <p className={`${styles.error} ${styles.episodeError}`} role="alert">{episodeError.message}</p> : null}
@@ -213,24 +214,24 @@ export function LibraryPage() {
               </div>
             ) : (
               <div className={styles.emptyEpisodes}>
-                <p>暂无视频，点击“上传视频”添加。</p>
+                <p>{t("暂无视频，点击“上传视频”添加。")}</p>
               </div>
             )}
           </section>
           {pendingUploads.length ? (
-            <section className={styles.episodes} aria-label="上传中的视频">
-              <div className={styles.sectionHeader}><h2>上传中</h2></div>
+            <section className={styles.episodes} aria-label={t("上传中的视频")}>
+              <div className={styles.sectionHeader}><h2>{t("上传中")}</h2></div>
               <div className={styles.pendingUploads}>{pendingUploads.map((upload) => {
                 const task = tasks.find((item) => item.session?.uploadSessionId === upload.uploadSessionId);
                 const canDelete = upload.status !== "COMPLETING" && upload.status !== "COMPLETED" && task?.session?.status !== "COMPLETED" && !["completing", "processing", "completed"].includes(task?.status ?? "");
-                const deletionError = task?.error?.startsWith("删除失败：") ? task.error : upload.lastError?.message;
+                const deletionError = (task?.error?.startsWith("删除失败：") || task?.error?.startsWith(translate("en", "删除失败：{message}", { message: "" }))) ? task.error : upload.lastError?.message;
                 return (
                   <article key={upload.uploadSessionId}>
                     <strong>{upload.originalFilename}</strong>
-                    <span>{upload.status === "COMPLETING" ? "正在确认" : upload.status === "EXPIRED" ? "已过期" : upload.status === "COMPLETED" ? "已上传" : "上传中"}</span>
-                    <progress aria-label={`${upload.originalFilename} 上传进度`} value={upload.uploadedSizeBytes} max={upload.totalSizeBytes} />
+                    <span>{upload.status === "COMPLETING" ? t("正在确认") : upload.status === "EXPIRED" ? t("已过期") : upload.status === "COMPLETED" ? t("已上传") : t("上传中")}</span>
+                    <progress aria-label={t("{filename} 上传进度", { filename: upload.originalFilename })} value={upload.uploadedSizeBytes} max={upload.totalSizeBytes} />
                     <small>{formatBytes(upload.uploadedSizeBytes)} / {formatBytes(upload.totalSizeBytes)}</small>
-                    {canDelete ? <button className="button-quiet" type="button" disabled={mode !== "live" || !task || task.status === "deleting"} onClick={() => { if (task) void cancel(task.taskId); }} aria-label={`删除上传 ${upload.originalFilename}`} title="终止上传并清理已上传的分片"><Trash2 size={14} />{task?.status === "deleting" ? "正在删除…" : "删除上传"}</button> : null}
+                    {canDelete ? <button className="button-quiet" type="button" disabled={mode !== "live" || !task || task.status === "deleting"} onClick={() => { if (task) void cancel(task.taskId); }} aria-label={t("删除上传 {filename}", { filename: upload.originalFilename })} title={t("终止上传并清理已上传的分片")}><Trash2 size={14} />{task?.status === "deleting" ? t("正在删除…") : t("删除上传")}</button> : null}
                     {deletionError ? <p className={styles.error} role="alert">{deletionError}</p> : null}
                   </article>
                 );
@@ -244,18 +245,18 @@ export function LibraryPage() {
         <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setCreating(false);
         }}>
-          <form className={styles.createDialog} onSubmit={submitSeries} role="dialog" aria-modal="true" aria-label="新建视频系列">
-            <button className={styles.modalClose} type="button" onClick={() => setCreating(false)} aria-label="关闭"><X size={18} /></button>
-            <h2>新建视频系列</h2>
-            <label><span>视频系列名称</span><input className="field" name="name" required autoFocus placeholder="例如：城市漫游第一季" /></label>
-            <label><span>简介（选填）</span><input className="field" name="description" placeholder="简单介绍这个视频系列" /></label>
-            <label><span>ASR 原文语言（选填）</span><input className="field" name="transcriptLanguageHint" list="transcript-language-options" maxLength={64} placeholder="例如：ja（日语）" /></label>
-            <datalist id="transcript-language-options"><option value="ja">日语</option><option value="zh-Hans">简体中文</option><option value="en">英语</option><option value="ko">韩语</option></datalist>
-            <label><span>背景资料（选填）</span><textarea className="field" name="seriesBible" rows={5} placeholder="人物关系、别名、剧情背景等，帮助解析与检索。" /></label>
+          <form className={styles.createDialog} onSubmit={submitSeries} role="dialog" aria-modal="true" aria-label={t("新建视频系列")}>
+            <button className={styles.modalClose} type="button" onClick={() => setCreating(false)} aria-label={t("关闭")}><X size={18} /></button>
+            <h2>{t("新建视频系列")}</h2>
+            <label><span>{t("视频系列名称")}</span><input className="field" name="name" required autoFocus placeholder={t("例如：城市漫游第一季")} /></label>
+            <label><span>{t("简介（选填）")}</span><input className="field" name="description" placeholder={t("简单介绍这个视频系列")} /></label>
+            <label><span>{t("ASR 原文语言（选填）")}</span><input className="field" name="transcriptLanguageHint" list="transcript-language-options" maxLength={64} placeholder={t("例如：ja（日语）")} /></label>
+            <datalist id="transcript-language-options"><option value="ja">{t("日语")}</option><option value="zh-Hans">{t("简体中文")}</option><option value="en">{t("英语")}</option><option value="ko">{t("韩语")}</option></datalist>
+            <label><span>{t("背景资料（选填）")}</span><textarea className="field" name="seriesBible" rows={5} placeholder={t("人物关系、别名、剧情背景等，帮助解析与检索。")} /></label>
             {formError ? <p className={styles.error}>{formError}</p> : null}
             <div className={styles.modalActions}>
-              <button className="button-quiet" type="button" onClick={() => setCreating(false)}>取消</button>
-              <button className="button-primary" type="submit" disabled={saving}>{saving ? "正在创建…" : "创建视频系列"}</button>
+              <button className="button-quiet" type="button" onClick={() => setCreating(false)}>{t("取消")}</button>
+              <button className="button-primary" type="submit" disabled={saving}>{saving ? t("正在创建…") : t("创建视频系列")}</button>
             </div>
           </form>
         </div>

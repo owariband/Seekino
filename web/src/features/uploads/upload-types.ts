@@ -5,6 +5,7 @@ import type {
   VideoParseTaskStatus,
   VideoParseTaskView,
 } from "../../api/contracts";
+import { translate, type Locale } from "../../shared/messages";
 import { publicParseStageLabel } from "../../shared/format";
 
 export type UploadTaskStatus =
@@ -80,7 +81,7 @@ export function configuredMax(recommended: number, current: number): number {
   return Math.max(recommended, current);
 }
 
-export function validateParseConfig(config: ParseConfig, defaults: ParseConfig): string | null {
+export function validateParseConfig(config: ParseConfig, defaults: ParseConfig, locale: Locale = "zh"): string | null {
   const fields: [string, number | null, number, number, boolean?][] = [
     ["每段时长", config.window.chunkDurationSeconds, configuredMin(1, defaults.window.chunkDurationSeconds), configuredMax(120, defaults.window.chunkDurationSeconds), true],
     ["上下文重叠", config.window.contextOverlapSeconds, 0, configuredMax(30, defaults.window.contextOverlapSeconds), true],
@@ -110,20 +111,20 @@ export function validateParseConfig(config: ParseConfig, defaults: ParseConfig):
   for (const [label, value, minimum, maximum, integer] of fields) {
     if (value === null) continue;
     if (!Number.isFinite(value) || value < minimum || value > maximum || (integer && !Number.isInteger(value))) {
-      return `${label}必须在 ${minimum}–${maximum} 之间${integer ? "，且为整数" : ""}`;
+      return translate(locale, "{label}必须在 {minimum}–{maximum} 之间{integer}", { label: translate(locale, label), minimum, maximum, integer: integer ? translate(locale, "，且为整数") : "" });
     }
   }
   if (config.vision.inputMode === "ordered_frames" && config.vision.maxFramesPerWindow === null) {
-    return "逐帧解析需要设置每段最多帧数";
+    return translate(locale, "逐帧解析需要设置每段最多帧数");
   }
   if (config.vision.inputMode === "video" && config.vision.maxFramesPerWindow !== null) {
-    return "直传视频不能设置逐帧上限";
+    return translate(locale, "直传视频不能设置逐帧上限");
   }
   if (![config.vision.model, config.asr.model, config.fallback.model].every((model) => model.trim())) {
-    return "模型 ID 不能为空";
+    return translate(locale, "模型 ID 不能为空");
   }
   if (config.embedding.model !== defaults.embedding.model || config.embedding.dimensions !== defaults.embedding.dimensions) {
-    return "Embedding 模型与维度必须和当前索引一致";
+    return translate(locale, "Embedding 模型与维度必须和当前索引一致");
   }
   return null;
 }
@@ -140,30 +141,30 @@ export function taskProgress(task: UploadTask): number {
   );
 }
 
-export function taskStatusLabel(task: UploadTask): string {
+export function taskStatusLabel(task: UploadTask, locale: Locale = "zh"): string {
   switch (task.status) {
     case "queued":
-      return "等待上传";
+      return translate(locale, "等待上传");
     case "creating":
-      return "建立传输会话";
+      return translate(locale, "建立传输会话");
     case "uploading":
-      return "正在上传";
+      return translate(locale, "正在上传");
     case "paused":
-      return "已暂停";
+      return translate(locale, "已暂停");
     case "completing":
-      return "校验并合并";
+      return translate(locale, "校验并合并");
     case "processing":
       if (task.videoParseTask) {
-        return videoParseTaskStatusLabel[task.videoParseTask.status];
+        return translate(locale, videoParseTaskStatusLabel[task.videoParseTask.status]);
       }
-      return task.job?.stage ? publicParseStageLabel(task.job.stage) : "等待解析";
+      return task.job?.stage ? publicParseStageLabel(task.job.stage, locale) : translate(locale, "等待解析");
     case "completed":
-      return "已可检索";
+      return translate(locale, "已可检索");
     case "failed":
-      return "需要处理";
+      return translate(locale, "需要处理");
     case "cancelled":
-      return "已删除上传任务";
+      return translate(locale, "已删除上传任务");
     case "deleting":
-      return "正在删除";
+      return translate(locale, "正在删除");
   }
 }

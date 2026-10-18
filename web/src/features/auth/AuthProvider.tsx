@@ -3,6 +3,7 @@ import { createContext, type PropsWithChildren, useCallback, useContext, useEffe
 
 import { ApiClientError, clearDataSource, configureAccountIdentity, configureDataSource, createGuestIdentity, errorMessage, getAuthIdentity, logoutIdentity, PRIMARY_CONNECTION, REMOTE_CONNECTION, sendEmailCode, verifyEmailCode, TENANT_ID } from "../../api/client";
 import type { ApiConnection, AuthIdentity, DataSource } from "../../api/contracts";
+import { useI18n } from "../../app/i18n";
 import { LoginDialog } from "./LoginDialog";
 import styles from "./auth.module.css";
 
@@ -71,6 +72,7 @@ async function readIdentity(connection: ApiConnection, signal?: AbortSignal): Pr
 }
 
 export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }: PropsWithChildren<{ remoteConnection?: ApiConnection | null }>) {
+  const { t, locale } = useI18n();
   const queryClient = useQueryClient();
   const [primaryIdentity, setPrimaryIdentity] = useState<AuthIdentity | null>(null);
   const primary = useRef<AuthIdentity | null>(null);
@@ -80,8 +82,10 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
   const [accountConnection, setAccountConnection] = useState<ApiConnection | null>(remoteConnection);
   const account = useRef<{ connection: ApiConnection | null; identity: AuthIdentity | null }>({ connection: remoteConnection, identity: null });
   const [accountStatus, setAccountStatus] = useState<AuthContextValue["accountStatus"]>(remoteConnection ? "checking" : "unconfigured");
-  const [accountError, setAccountError] = useState<string | null>(null);
-  const [primaryError, setPrimaryError] = useState<string | null>(null);
+  const [accountFailure, setAccountFailure] = useState<{ failure: unknown } | null>(null);
+  const accountError = accountFailure ? errorMessage(accountFailure.failure, locale) : null;
+  const [primaryFailure, setPrimaryFailure] = useState<{ failure: unknown } | null>(null);
+  const primaryError = primaryFailure ? errorMessage(primaryFailure.failure, locale) : null;
   const [loginOpen, setLoginOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const accountVersion = useRef(0);
@@ -144,12 +148,12 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
       if (signal?.aborted || version !== accountVersion.current) return;
       applyAccount(connection, next);
       setAccountStatus("connected");
-      setAccountError(null);
+      setAccountFailure(null);
     } catch (failure) {
       if (!signal?.aborted && version === accountVersion.current) {
         if (expired) applyAccount(connection, null);
         setAccountStatus("unavailable");
-        setAccountError(errorMessage(failure));
+        setAccountFailure({ failure });
       }
     } finally {
       if (refreshing.current?.version === version) refreshing.current = null;
@@ -174,12 +178,12 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
         primary.current = next;
         setPrimaryIdentity(next);
         setAccountStatus("connected");
-        setAccountError(null);
+        setAccountFailure(null);
       }
-      setPrimaryError(null);
+      setPrimaryFailure(null);
     } catch (failure) {
       if (!signal?.aborted && version === primaryVersion.current) {
-        setPrimaryError(errorMessage(failure));
+        setPrimaryFailure({ failure });
         if (account.current.connection) void refreshAccount(signal);
       }
     }
@@ -210,8 +214,8 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
   if (!activeSource) {
     const error = primaryError ?? accountError;
     return <div className={styles.loading} role={error ? "alert" : "status"}>
-      <p>{error ? `暂时无法连接资料服务：${error}` : "正在连接服务…"}</p>
-      {error ? <button className="button-primary" type="button" onClick={() => void connectPrimary()}>重试连接</button> : null}
+      <p>{error ? t("暂时无法连接资料服务：{error}", { error }) : t("正在连接服务…")}</p>
+      {error ? <button className="button-primary" type="button" onClick={() => void connectPrimary()}>{t("重试连接")}</button> : null}
     </div>;
   }
 
@@ -248,7 +252,7 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
         const next = await verifyEmailCode(email, code, connection);
         if (version !== accountVersion.current) return;
         applyAccount(connection, next);
-        setAccountStatus("connected"); setAccountError(null); setLoginOpen(false);
+        setAccountStatus("connected"); setAccountFailure(null); setLoginOpen(false);
       } finally { accountMutation.current = false; }
     },
     logout: async () => {
@@ -262,7 +266,7 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
         const next = await logoutIdentity(connection);
         if (version !== accountVersion.current) return;
         applyAccount(connection, next);
-        setAccountStatus("connected"); setAccountError(null); setLoginOpen(false);
+        setAccountStatus("connected"); setAccountFailure(null); setLoginOpen(false);
       } finally { accountMutation.current = false; }
     },
   };

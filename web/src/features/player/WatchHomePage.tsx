@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Clapperboard, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
-import { getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
+import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
 import type { SeriesSummary } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
@@ -11,6 +11,7 @@ import { episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from 
 import { Mascot } from "../../shared/Mascot";
 import { readWatchHistory } from "./playbackProgress";
 import { PlaybackFrame } from "./PlaybackFrame";
+import { useI18n } from "../../app/i18n";
 import styles from "./watch.module.css";
 
 function SeriesArtwork({ series }: { series: SeriesSummary }) {
@@ -42,6 +43,7 @@ function SeriesArtwork({ series }: { series: SeriesSummary }) {
 }
 
 export function WatchHomePage() {
+  const { t, locale } = useI18n();
   const { series, isLoading, error } = useWorkspace();
   const { activeSource, canUpload } = useAuth();
   const shelfRef = useRef<HTMLDivElement>(null);
@@ -88,59 +90,59 @@ export function WatchHomePage() {
   const heroPosition = recentVideo && recent ? recent.positionSeconds : Math.min(30_000, (heroVideo?.durationSeconds ?? 0) * 0.1);
 
   return (
-    <main className={`page ${styles.home}`} aria-label="视频观看">
-      <h1 className="sr-only">视频观看</h1>
+    <main className={`page ${styles.home}`} aria-label={t("视频观看")}>
+      <h1 className="sr-only">{t("视频观看")}</h1>
 
       {heroSeries ? (
-        <section className={styles.hero} aria-label="继续观看推荐">
+        <section className={styles.hero} aria-label={t("继续观看推荐")}>
           <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(heroVideo?.playbackUrl ?? null)} positionSeconds={heroPosition}
             poster={mediaUrl(heroVideo?.thumbnail?.url ?? heroSeries.cover?.url ?? null)} />
           <div className={styles.heroContent}>
-            <span className={styles.heroKicker}>{recentVideo ? "继续上次的故事" : "从这里开始"}</span>
+            <span className={styles.heroKicker}>{recentVideo ? t("继续上次的故事") : t("从这里开始")}</span>
             <h2>{seriesTitle(heroSeries)}</h2>
             <div className={styles.heroMeta}>
-              {heroVideo ? <span>{episodeTitle(heroVideo.episodeOrder)}</span> : null}
-              <span>{heroSeries.videoCount} 集</span>
-              {recentVideo && recent ? <span>上次看到 {formatTimecode(recent.positionSeconds)}</span> : null}
+              {heroVideo ? <span>{episodeTitle(heroVideo.episodeOrder, locale)}</span> : null}
+              <span>{t("{count} 集", { count: heroSeries.videoCount })}</span>
+              {recentVideo && recent ? <span>{t("上次看到 {time}", { time: formatTimecode(recent.positionSeconds) })}</span> : null}
             </div>
-            <p>{heroSeries.description || (recentVideo ? "故事还在继续，回到上次停下的那一刻。" : "选一集开始观看，也可以一起寻找故事里的名场面。")}</p>
+            <p>{heroSeries.description || (recentVideo ? t("故事还在继续，回到上次停下的那一刻。") : t("选一集开始观看，也可以一起寻找故事里的名场面。"))}</p>
             <div className={styles.heroActions}>
-              {heroVideo ? <Link className={styles.heroPlay} to={`/watch/${encodeURIComponent(heroVideo.seriesId)}/${encodeURIComponent(heroVideo.videoId)}`}><Play size={20} fill="currentColor" aria-hidden="true" />{recentVideo ? "继续观看" : "播放本集"}</Link> : null}
-              <Link className={styles.heroBrowse} to={`/series/${encodeURIComponent(heroSeries.seriesId)}`}>查看系列<ChevronRight size={16} aria-hidden="true" /></Link>
+              {heroVideo ? <Link className={styles.heroPlay} to={`/watch/${encodeURIComponent(heroVideo.seriesId)}/${encodeURIComponent(heroVideo.videoId)}`}><Play size={20} fill="currentColor" aria-hidden="true" />{recentVideo ? t("继续观看") : t("播放本集")}</Link> : null}
+              <Link className={styles.heroBrowse} to={`/series/${encodeURIComponent(heroSeries.seriesId)}`}>{t("查看系列")}<ChevronRight size={16} aria-hidden="true" /></Link>
             </div>
             {recentVideo && recent && heroVideo && heroVideo.durationSeconds > 0 ? <div className={styles.heroProgress}>
-              <progress aria-label="上次观看进度" max={heroVideo.durationSeconds} value={Math.min(recent.positionSeconds, heroVideo.durationSeconds)} />
+              <progress aria-label={t("上次观看进度")} max={heroVideo.durationSeconds} value={Math.min(recent.positionSeconds, heroVideo.durationSeconds)} />
               <span>{formatTimecode(recent.positionSeconds)} / {formatTimecode(heroVideo.durationSeconds)}</span>
             </div> : null}
           </div>
         </section>
       ) : null}
 
-      {error ? <p className={styles.homeError} role="alert"><Mascot mood="oops" size={56} /><span>读取视频系列失败：{error.message}</span></p> : null}
-      {isLoading ? <p className={styles.homeEmpty} role="status"><Mascot mood="seek" size={56} delayed /><span>正在读取视频系列…</span></p> : null}
+      {error ? <p className={styles.homeError} role="alert"><Mascot mood="oops" size={56} /><span>{t("读取视频系列失败：{message}", { message: errorMessage(error, locale) })}</span></p> : null}
+      {isLoading ? <p className={styles.homeEmpty} role="status"><Mascot mood="seek" size={56} delayed /><span>{t("正在读取视频系列…")}</span></p> : null}
       {!isLoading && !error && series.length === 0 ? (
         <div className={styles.homeEmpty}>
           <Mascot mood="puzzled" size={72} />
-          <span>{activeSource.kind === "public" ? "公开资料里还没有视频。" : "资料库里还没有视频。"}</span>
-          {canUpload ? <Link to="/library">前往资料库上传视频</Link> : null}
+          <span>{activeSource.kind === "public" ? t("公开资料里还没有视频。") : t("资料库里还没有视频。")}</span>
+          {canUpload ? <Link to="/library">{t("前往资料库上传视频")}</Link> : null}
         </div>
       ) : null}
 
       {series.length > 0 ? (
         <div className={styles.homeGrid}>
-          <section className={styles.seriesShelf} aria-label="选择视频系列">
+          <section className={styles.seriesShelf} aria-label={t("选择视频系列")}>
             <div className={styles.shelfHeading}>
-              <h2>视频系列 <small>{series.length} 部作品</small></h2>
+              <h2>{t("视频系列")} <small>{t("{count} 部作品", { count: series.length })}</small></h2>
               {shelfEdges.previous || shelfEdges.next ? <div className={styles.shelfControls}>
-                <button type="button" aria-label="上一组系列" aria-controls="watch-series-shelf" disabled={!shelfEdges.previous} onClick={() => scrollShelf(-1)}><ChevronLeft size={18} aria-hidden="true" /></button>
-                <button type="button" aria-label="下一组系列" aria-controls="watch-series-shelf" disabled={!shelfEdges.next} onClick={() => scrollShelf(1)}><ChevronRight size={18} aria-hidden="true" /></button>
+                <button type="button" aria-label={t("上一组系列")} aria-controls="watch-series-shelf" disabled={!shelfEdges.previous} onClick={() => scrollShelf(-1)}><ChevronLeft size={18} aria-hidden="true" /></button>
+                <button type="button" aria-label={t("下一组系列")} aria-controls="watch-series-shelf" disabled={!shelfEdges.next} onClick={() => scrollShelf(1)}><ChevronRight size={18} aria-hidden="true" /></button>
               </div> : null}
             </div>
             <div id="watch-series-shelf" className={styles.seriesCards} ref={shelfRef}>
               {series.map((item) => (
                 <Link key={item.seriesId} className={styles.seriesCard} style={{ textDecoration: "none" }} to={`/series/${encodeURIComponent(item.seriesId)}`}>
                   <SeriesArtwork series={item} />
-                  <span><strong>{seriesTitle(item)}</strong><small>{item.videoCount} 集 · 查看系列</small></span>
+                  <span><strong>{seriesTitle(item)}</strong><small>{t("{count} 集 · 查看系列", { count: item.videoCount })}</small></span>
                 </Link>
               ))}
             </div>

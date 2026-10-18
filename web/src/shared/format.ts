@@ -1,3 +1,5 @@
+import { localeTag, translate, type Locale } from "./messages";
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -10,12 +12,12 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[index]}`;
 }
 
-export function formatTokens(value: number | null): string {
-  return value === null ? "未记录" : value.toLocaleString("zh-CN");
+export function formatTokens(value: number | null, locale: Locale = "zh"): string {
+  return value === null ? translate(locale, "未记录") : value.toLocaleString(localeTag(locale));
 }
 
-export function formatMoneyUsd(value: string | null): string {
-  if (value === null) return "未计价";
+export function formatMoneyUsd(value: string | null, locale: Locale = "zh"): string {
+  if (value === null) return translate(locale, "未计价");
   const [integer, fraction = ""] = value.split(".");
   return `$${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
 }
@@ -102,8 +104,8 @@ const stageLabels: Record<string, string> = {
   COMPLETED: "已可检索",
 };
 
-export function stageLabel(stage: string): string {
-  return stageLabels[stage] ?? stage.replaceAll("_", " ").toLowerCase();
+export function stageLabel(stage: string, locale: Locale = "zh"): string {
+  return translate(locale, stageLabels[stage] ?? stage.replaceAll("_", " ").toLowerCase());
 }
 
 const publicParseStageLabels: Record<string, string> = {
@@ -118,8 +120,8 @@ const publicParseStageLabels: Record<string, string> = {
   COMPLETED: "可检索",
 };
 
-export function publicParseStageLabel(stage: string): string {
-  return publicParseStageLabels[stage] ?? "解析画面与对白";
+export function publicParseStageLabel(stage: string, locale: Locale = "zh"): string {
+  return translate(locale, publicParseStageLabels[stage] ?? "解析画面与对白");
 }
 
 export function episodeLabel(order: number): string {
@@ -127,8 +129,8 @@ export function episodeLabel(order: number): string {
 }
 
 /** Viewer-facing episode title; the source filename belongs in tooltips and management views. */
-export function episodeTitle(order: number): string {
-  return `第 ${order} 集`;
+export function episodeTitle(order: number, locale: Locale = "zh"): string {
+  return translate(locale, "第 {order} 集", { order });
 }
 
 export function seriesTitle(series: { name: string; displayName?: string | null }): string {

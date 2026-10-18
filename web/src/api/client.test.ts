@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentMessagesEventsUrl,
   ApiClientError,
+  errorMessage,
   completeUpload,
   clearDataSource,
   configureAccountIdentity,
@@ -824,6 +825,18 @@ describe("current API routes", () => {
     expect(videoContentUrl("video/id")).toBe(
       "/api/videos/content?videoId=video%2Fid&tenantId=local-default",
     );
+  });
+});
+
+describe("localized errors", () => {
+  it("translates client fallbacks and keeps server messages and request identifiers intact", () => {
+    expect(errorMessage(new ApiClientError(503, null), "en")).toBe("Request failed (HTTP 503)");
+    expect(errorMessage(new ApiClientError(400, {
+      message: "原始业务错误", requestId: "request-123",
+    }), "en")).toBe("原始业务错误 (Request ID: request-123)");
+    expect(errorMessage(new Error("分片上传网络连接中断"), "en")).toBe("The upload connection was interrupted");
+    expect(errorMessage(null, "en")).toBe("An unknown error occurred");
+    expect(errorMessage(new ApiClientError(503, null))).toBe("请求失败（HTTP 503）");
   });
 });
 

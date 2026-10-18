@@ -2,10 +2,12 @@ import { X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { errorMessage } from "../../api/client";
+import { useI18n } from "../../app/i18n";
 import { useAuth } from "./AuthProvider";
 import styles from "./auth.module.css";
 
 export function LoginDialog() {
+  const { t, locale } = useI18n();
   const { loginOpen, closeLogin, sendCode, verifyCode, accountIdentity } = useAuth();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -13,7 +15,7 @@ export function LoginDialog() {
   const [retryAt, setRetryAt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ failure: unknown } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const requestVersion = useRef(0);
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000));
@@ -69,7 +71,7 @@ export function LoginDialog() {
       setRetryAt(Date.now() + seconds * 1000);
       setNow(Date.now());
     } catch (failure) {
-      if (version === requestVersion.current) setError(errorMessage(failure));
+      if (version === requestVersion.current) setError({ failure });
     } finally {
       if (version === requestVersion.current) setBusy(false);
     }
@@ -84,7 +86,7 @@ export function LoginDialog() {
     setError(null);
     try { await verifyCode(normalized, code); }
     catch (failure) {
-      if (version === requestVersion.current) setError(errorMessage(failure));
+      if (version === requestVersion.current) setError({ failure });
     } finally {
       if (version === requestVersion.current) setBusy(false);
     }
@@ -93,24 +95,24 @@ export function LoginDialog() {
   return <div className={styles.backdrop} onClick={(event) => { if (event.target === event.currentTarget) closeLogin(); }}>
     <div ref={panelRef} className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="login-heading">
       <header>
-        <div><h2 id="login-heading">邮箱登录</h2><p>登录后可访问你的远端资料。本机资料仍保留在本机。</p></div>
-        <button className={styles.close} type="button" onClick={closeLogin} aria-label="关闭登录"><X size={18} /></button>
+        <div><h2 id="login-heading">{t("邮箱登录")}</h2><p>{t("登录后可访问你的远端资料。本机资料仍保留在本机。")}</p></div>
+        <button className={styles.close} type="button" onClick={closeLogin} aria-label={t("关闭登录")}><X size={18} /></button>
       </header>
       <form onSubmit={(event) => void verify(event)}>
-        <label><span>邮箱</span><input className="field" type="email" autoComplete="email" required value={email}
+        <label><span>{t("邮箱")}</span><input className="field" type="email" autoComplete="email" required value={email}
           onChange={(event) => { setEmail(event.target.value); setError(null); }} /></label>
         <button className="button-secondary" type="button" disabled={busy || remaining > 0} onClick={() => void send()}>
-          {remaining > 0 ? `${remaining} 秒后重新发送` : sentEmail ? "重新发送验证码" : "发送验证码"}
+          {remaining > 0 ? t("{seconds} 秒后重新发送", { seconds: remaining }) : sentEmail ? t("重新发送验证码") : t("发送验证码")}
         </button>
-        {sentEmail ? <p className={styles.notice} role="status">验证码已发送至 {sentEmail}</p> : null}
-        <label><span>验证码</span><input className="field" type="text" inputMode="numeric" autoComplete="one-time-code"
+        {sentEmail ? <p className={styles.notice} role="status">{t("验证码已发送至 {email}", { email: sentEmail })}</p> : null}
+        <label><span>{t("验证码")}</span><input className="field" type="text" inputMode="numeric" autoComplete="one-time-code"
           pattern="[0-9]{6}" maxLength={6} required value={code}
-          onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} placeholder="6 位验证码" /></label>
-        {error ? <p className={styles.error} role="alert">{error}</p> : null}
+          onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} placeholder={t("6 位验证码")} /></label>
+        {error ? <p className={styles.error} role="alert">{errorMessage(error.failure, locale)}</p> : null}
         <button className="button-primary" type="submit" disabled={busy || sentEmail !== email.trim().toLowerCase() || code.length !== 6}>
-          {busy ? "处理中…" : "登录"}
+          {busy ? t("处理中…") : t("登录")}
         </button>
-        <button className={styles.guestLink} type="button" onClick={closeLogin}>继续使用</button>
+        <button className={styles.guestLink} type="button" onClick={closeLogin}>{t("继续使用")}</button>
       </form>
     </div>
   </div>;

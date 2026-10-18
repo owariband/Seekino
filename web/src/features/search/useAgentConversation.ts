@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useI18n } from "../../app/i18n";
+import { translate, type Locale } from "../../shared/messages";
 import {
   ApiClientError,
   cancelAgentMessage,
@@ -83,14 +85,14 @@ function rememberConversation(conversationId: string): void {
   }));
 }
 
-async function loadMessages(conversationId: string): Promise<AgentMessageView[]> {
+async function loadMessages(conversationId: string, locale: Locale): Promise<AgentMessageView[]> {
   const messages: AgentMessageView[] = [];
   let cursor: string | undefined;
   while (true) {
     const page = await listAgentMessages(conversationId, -1, cursor);
     messages.push(...page.items);
     if (!page.hasMore) return messages;
-    if (!page.nextCursor) throw new Error("消息列表缺少下一页游标");
+    if (!page.nextCursor) throw new Error(translate(locale, "消息列表缺少下一页游标"));
     cursor = page.nextCursor;
   }
 }
@@ -162,6 +164,10 @@ interface ActiveConversation {
 }
 
 export function useAgentConversation(requestedId: string | null = null) {
+  const { locale } = useI18n();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
+  const t = (message: string) => translate(localeRef.current, message);
   const [state, setState] = useState<ConversationState>({
     requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
   });
@@ -174,11 +180,11 @@ export function useAgentConversation(requestedId: string | null = null) {
     void (async () => {
       try {
         const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
-        if (conversation.tenantId !== TENANT_ID) throw new Error("对话不属于当前工作区");
+        if (conversation.tenantId !== TENANT_ID) throw new Error(t("对话不属于当前工作区"));
         if (activeRef.current !== active) return;
         rememberConversation(conversation.conversationId);
         active.conversationId = conversation.conversationId;
-        const messages = await loadMessages(conversation.conversationId);
+        const messages = await loadMessages(conversation.conversationId, localeRef.current);
         if (activeRef.current !== active) return;
         setState((current) => ({ ...current, conversationId: conversation.conversationId, messages, loading: false }));
         active.unsubscribe = subscribeAgentMessages(conversation.conversationId, (snapshot) => {
@@ -188,7 +194,7 @@ export function useAgentConversation(requestedId: string | null = null) {
           setState((current) => ({ ...current, error: recovered ? null : current.error, messages: mergeMessages(current.messages, snapshot.messages, conversation.conversationId, active.sending ? active.streamedMessageId : null) }));
         });
       } catch (error) {
-        if (activeRef.current === active) setState((current) => ({ ...current, loading: false, error: errorMessage(error) }));
+        if (activeRef.current === active) setState((current) => ({ ...current, loading: false, error: errorMessage(error, localeRef.current) }));
       }
     })();
     return () => {
@@ -260,7 +266,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     } catch (error) {
       if (activeRef.current !== active || active.identityKey !== conversationStorageKey() || active.cancellingMessageId !== message.messageId) return;
       active.cancellingMessageId = null;
-      setState((current) => ({ ...current, cancellingMessageId: null, error: errorMessage(error) }));
+      setState((current) => ({ ...current, cancellingMessageId: null, error: errorMessage(error, localeRef.current) }));
     }
   }, [requestedId, state.messages, state.requestedId]);
 
@@ -363,7 +369,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       rejected = error instanceof ApiClientError && error.status >= 400 && error.status < 500;
       if (activeRef.current === active && active.sendController === sendController && !signal.aborted) {
         active.recoveryMessageId = messageId;
-        setState((current) => ({ ...current, error: errorMessage(error) }));
+        setState((current) => ({ ...current, error: errorMessage(error, localeRef.current) }));
       }
     } finally {
       if (active.sendController !== sendController) return;
@@ -377,7 +383,7 @@ export function useAgentConversation(requestedId: string | null = null) {
             setState((current) => ({ ...current, error: pair.assistantMessage.status === "PROCESSING" ? current.error : null, messages: mergeMessages(current.messages, [pair.userMessage, pair.assistantMessage], conversationId) }));
           }
         } catch {
-          if (activeRef.current === active && !signal.aborted) setState((current) => ({ ...current, error: current.error ?? "未能确认消息是否已接收，草稿已保留" }));
+          if (activeRef.current === active && !signal.aborted) setState((current) => ({ ...current, error: current.error ?? t("未能确认消息是否已接收，草稿已保留") }));
         }
       }
       if (active.sendController !== sendController) return;
@@ -388,14 +394,14 @@ export function useAgentConversation(requestedId: string | null = null) {
         setState((current) => ({ ...current, sending: false }));
         // The HTTP subscription can end while the service still owns the Kick.
         try {
-          const messages = await loadMessages(conversationId);
+          const messages = await loadMessages(conversationId, localeRef.current);
           if (activeRef.current === active) {
             const recovered = messages.some((message) => message.messageId === active.recoveryMessageId && message.status !== "PROCESSING");
             if (recovered) active.recoveryMessageId = null;
             setState((current) => ({ ...current, error: recovered ? null : current.error, messages: mergeMessages(current.messages, messages, conversationId) }));
           }
         } catch (error) {
-          if (activeRef.current === active) setState((current) => ({ ...current, error: current.error ?? errorMessage(error) }));
+          if (activeRef.current === active) setState((current) => ({ ...current, error: current.error ?? errorMessage(error, localeRef.current) }));
         }
       }
     }

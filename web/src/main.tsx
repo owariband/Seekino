@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, useLocation, useNavigate } from "react-router";
 
 import { App } from "./app/App";
+import { I18nProvider } from "./app/i18n";
 import { ThemeProvider } from "./app/theme";
 import { WorkspaceProvider } from "./app/workspace";
 import { AuthProvider, useAuth } from "./features/auth/AuthProvider";
@@ -36,9 +37,11 @@ function IdentityApp() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <BrowserRouter><AuthProvider><IdentityApp /></AuthProvider></BrowserRouter>
-      </ThemeProvider>
+      <I18nProvider>
+        <ThemeProvider>
+          <BrowserRouter><AuthProvider><IdentityApp /></AuthProvider></BrowserRouter>
+        </ThemeProvider>
+      </I18nProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

@@ -1,4 +1,5 @@
 import type { LexicalFieldName, VideoChunkSearchHit } from "../../api/contracts";
+import { translate, type Locale, type MessageParams } from "../../shared/messages";
 
 export interface HitExplanation {
   summary: string;
@@ -24,29 +25,30 @@ function transcriptText(hit: VideoChunkSearchHit): string {
     .join(" ");
 }
 
-export function explainHit(hit: VideoChunkSearchHit): HitExplanation {
+export function explainHit(hit: VideoChunkSearchHit, locale: Locale = "zh"): HitExplanation {
+  const t = (message: string, params?: MessageParams) => translate(locale, message, params);
   const { candidate, selectionReason } = hit;
   return {
     summary: selectionReason.summary,
     matchedFacts: selectionReason.matchedEvidence.map((item) => item.text),
     sources: [
-      candidate.lexicalRank != null && `词项召回第 ${candidate.lexicalRank}`,
+      candidate.lexicalRank != null && t("词项召回第 {value0}", { value0: candidate.lexicalRank }),
       ...(candidate.lexicalRank != null
         ? [...new Set((selectionReason.lexicalMatches ?? []).map(
-            (match) => LEXICAL_SOURCE_LABELS[match.field],
+            (match) => t(LEXICAL_SOURCE_LABELS[match.field]),
           ))]
         : []),
       candidate.transcriptRank !== null &&
-        `ASR 原话 · 词法召回第 ${candidate.transcriptRank}`,
-      candidate.textRank !== null && `剧情语义 · 语义召回第 ${candidate.textRank}`,
-      candidate.visionRank !== null && `画面事件 · 视觉召回第 ${candidate.visionRank}`,
+        t("ASR 原话 · 词法召回第 {value0}", { value0: candidate.transcriptRank }),
+      candidate.textRank !== null && t("剧情语义 · 语义召回第 {value0}", { value0: candidate.textRank }),
+      candidate.visionRank !== null && t("画面事件 · 视觉召回第 {value0}", { value0: candidate.visionRank }),
       selectionReason.matchedEvidence.some((item) => item.kind === "CONTEXT") &&
-        "前后语境",
+        t("前后语境"),
     ].filter((value): value is string => Boolean(value)),
     limitations: selectionReason.limitations,
   };
 }
 
-export function readableTranscript(hit: VideoChunkSearchHit): string {
-  return transcriptText(hit) || "该时间片没有可展示的对白文本。";
+export function readableTranscript(hit: VideoChunkSearchHit, locale: Locale = "zh"): string {
+  return transcriptText(hit) || translate(locale, "该时间片没有可展示的对白文本。");
 }

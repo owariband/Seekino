@@ -5,6 +5,7 @@ import { errorMessage, getVideoChunk, mediaUrl } from "../../api/client";
 import type { DisplayMode, VideoChunkEvidence, VideoChunkSearchHit } from "../../api/contracts";
 import { episodeLabel, formatTimeRange, formatTimecode, formatTimeText } from "../../shared/format";
 import { explainHit, readableTranscript } from "./explain";
+import { useI18n } from "../../app/i18n";
 import styles from "./search.module.css";
 
 type EvidenceTab = "reason" | "evidence" | "context";
@@ -17,6 +18,9 @@ interface EvidencePlayerProps {
 }
 
 export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: EvidencePlayerProps) {
+  const { t, locale } = useI18n();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
   const videoRef = useRef<HTMLVideoElement>(null);
   const playRef = useRef<(() => void) | null>(null);
   const playingRef = useRef(false);
@@ -57,7 +61,7 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
     const startPlayback = () => {
       requested = false;
       void video.play().catch((error: unknown) => {
-        if (active && !(error instanceof DOMException && error.name === "AbortError")) setPlayError(errorMessage(error));
+        if (active && !(error instanceof DOMException && error.name === "AbortError")) setPlayError(errorMessage(error, localeRef.current));
       });
     };
     const positionAtStart = () => {
@@ -123,13 +127,13 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
       <aside className={styles.evidencePanel}>
         <div className={styles.evidenceEmpty}>
           <ScanSearch size={26} strokeWidth={1.4} />
-          <p>选择片段，查看画面与证据。</p>
+          <p>{t("选择片段，查看画面与证据。")}</p>
         </div>
       </aside>
     );
   }
 
-  const explanation = explainHit(hit);
+  const explanation = explainHit(hit, locale);
   const seekClip = (relativeSeconds: number) => {
     const video = videoRef.current;
     if (!video || !mediaReady) return;
@@ -159,18 +163,18 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
     try {
       const next = await getVideoChunk(evidence.videoChunkId, evidence.tenantId);
       if (selectionRef.current !== selectionKey) return;
-      if (next.videoChunkId !== evidence.videoChunkId || next.tenantId !== evidence.tenantId) throw new Error("返回的视频证据不属于当前片段");
+      if (next.videoChunkId !== evidence.videoChunkId || next.tenantId !== evidence.tenantId) throw new Error(t("返回的视频证据不属于当前片段"));
       setRefreshed(next);
       setPlayError(null);
-    } catch (error) { if (selectionRef.current === selectionKey) setPlayError(errorMessage(error)); }
+    } catch (error) { if (selectionRef.current === selectionKey) setPlayError(errorMessage(error, locale)); }
     finally { if (selectionRef.current === selectionKey) setRefreshing(false); }
   };
 
   return (
     <aside className={styles.evidencePanel}>
       <div className={styles.viewer}>
-        {playbackUrl ? <video key={playbackKey} ref={videoRef} playsInline preload="metadata" src={playbackUrl} poster={evidence.thumbnail && failedImage !== evidence.thumbnail.imageId ? mediaUrl(evidence.thumbnail.url) ?? undefined : undefined} onError={() => setPlayError("视频媒体无法读取，请刷新媒体状态后重试。")} aria-label="视频证据" />
-          : <p role="status">{evidence.playbackStatus === "MISSING" ? "原视频文件已丢失，仍可查看文字证据。" : evidence.playbackStatus === "PREPARING" ? "播放媒体正在准备，仍可查看文字证据。" : "暂无可播放媒体，仍可查看文字证据。"}</p>}
+        {playbackUrl ? <video key={playbackKey} ref={videoRef} playsInline preload="metadata" src={playbackUrl} poster={evidence.thumbnail && failedImage !== evidence.thumbnail.imageId ? mediaUrl(evidence.thumbnail.url) ?? undefined : undefined} onError={() => setPlayError(t("视频媒体无法读取，请刷新媒体状态后重试。"))} aria-label={t("视频证据")} />
+          : <p role="status">{evidence.playbackStatus === "MISSING" ? t("原视频文件已丢失，仍可查看文字证据。") : evidence.playbackStatus === "PREPARING" ? t("播放媒体正在准备，仍可查看文字证据。") : t("暂无可播放媒体，仍可查看文字证据。")}</p>}
         {playbackUrl ? (
           <div className={styles.clipControls}>
             <button
@@ -180,7 +184,7 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
                 if (playingRef.current) videoRef.current?.pause();
                 else playRef.current?.();
               }}
-              aria-label={playing ? "暂停视频片段" : "播放视频片段"}
+              aria-label={playing ? t("暂停视频片段") : t("播放视频片段")}
             >
               {playing ? <Pause size={18} fill="currentColor" aria-hidden="true" /> : <Play size={18} fill="currentColor" aria-hidden="true" />}
             </button>
@@ -194,7 +198,7 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
               disabled={!mediaReady || clipDurationSeconds <= 0}
               onChange={(event) => seekClip(Number(event.currentTarget.value))}
               onKeyDown={seekClipWithKeyboard}
-              aria-label="视频片段播放进度"
+              aria-label={t("视频片段播放进度")}
               aria-valuetext={`${formatTimecode(relativePositionSeconds)} / ${formatTimecode(clipDurationSeconds)}`}
               style={{ "--clip-progress": `${clipDurationSeconds > 0 ? (relativePositionSeconds / clipDurationSeconds) * 100 : 0}%` } as CSSProperties}
             />
@@ -210,20 +214,20 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
       <div className={styles.playerHeading}>
         <div>
           <h2>{evidence.seriesName}</h2>
-          <p>片段范围 {formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds)}</p>
+          <p>{t("片段范围 {range}", { range: formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds) })}</p>
         </div>
-        {playbackUrl ? <a className="button-quiet" href={`/watch/${encodeURIComponent(evidence.seriesId)}/${encodeURIComponent(evidence.videoId)}?atSeconds=${playbackRange.startSeconds}`}>在整集中观看</a> : null}
+        {playbackUrl ? <a className="button-quiet" href={`/watch/${encodeURIComponent(evidence.seriesId)}/${encodeURIComponent(evidence.videoId)}?atSeconds=${playbackRange.startSeconds}`}>{t("在整集中观看")}</a> : null}
       </div>
 
       {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}
-      {!playbackUrl || playError ? <button className="button-secondary" type="button" disabled={refreshing} onClick={() => void refreshMedia()}>{refreshing ? "正在刷新媒体状态…" : "刷新媒体状态"}</button> : null}
-      {!playbackUrl && evidence.thumbnail ? failedImage === evidence.thumbnail.imageId ? <p>关键帧图片无法读取</p> : <img src={mediaUrl(evidence.thumbnail.url) ?? undefined} alt={evidence.thumbnail.alt ?? "已登记关键帧"} onError={() => setFailedImage(evidence.thumbnail!.imageId)} /> : null}
+      {!playbackUrl || playError ? <button className="button-secondary" type="button" disabled={refreshing} onClick={() => void refreshMedia()}>{refreshing ? t("正在刷新媒体状态…") : t("刷新媒体状态")}</button> : null}
+      {!playbackUrl && evidence.thumbnail ? failedImage === evidence.thumbnail.imageId ? <p>{t("关键帧图片无法读取")}</p> : <img src={mediaUrl(evidence.thumbnail.url) ?? undefined} alt={evidence.thumbnail.alt ?? t("已登记关键帧")} onError={() => setFailedImage(evidence.thumbnail!.imageId)} /> : null}
 
-      {isDebug ? <nav className={styles.evidenceTabs} aria-label="证据详情">
+      {isDebug ? <nav className={styles.evidenceTabs} aria-label={t("证据详情")}>
         {([
-          ["reason", "选择理由"],
-          ["evidence", "原始证据"],
-          ["context", "前后语境"],
+          ["reason", t("选择理由")],
+          ["evidence", t("原始证据")],
+          ["context", t("前后语境")],
         ] as const).map(([value, label]) => (
           <button
             type="button"
@@ -249,7 +253,7 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
               <section className={styles.limitations}>
                 <CircleAlert size={16} />
                 <div>
-                  <strong>核验时留意</strong>
+                  <strong>{t("核验时留意")}</strong>
                   {explanation.limitations.map((item) => <p key={item}>{item}</p>)}
                 </div>
               </section>
@@ -261,23 +265,23 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
           <div className={styles.quoteStack}>
             <section>
               <Captions size={17} />
-              <div><span>对白 / Transcript</span><blockquote>{readableTranscript(hit)}</blockquote></div>
+              <div><span>{t("对白 / Transcript")}</span><blockquote>{readableTranscript(hit, locale)}</blockquote></div>
             </section>
             <section>
               <ScanSearch size={17} />
-              <div><span>画面 / Visual event</span><p>{evidence.baselineVisualCaption || evidence.allTimeEventText || "暂无画面描述"}</p></div>
+              <div><span>{t("画面 / Visual event")}</span><p>{evidence.baselineVisualCaption || evidence.allTimeEventText || t("暂无画面描述")}</p></div>
             </section>
           </div>
         ) : null}
 
         {activeTab === "context" ? (
           <div className={styles.contextFlow}>
-            <article><span>BEFORE</span><p>{evidence.contextBeforeCompact || "暂无前文摘要"}</p></article>
+            <article><span>BEFORE</span><p>{evidence.contextBeforeCompact || t("暂无前文摘要")}</p></article>
             <i />
             <article className={styles.contextCurrent}><span>MATCH</span><p>{evidence.videoCompact || evidence.windowSummary}</p></article>
             <i />
-            <article><span>AFTER</span><p>{evidence.contextAfterCompact || "暂无后文摘要"}</p></article>
-            <div className={styles.windowTime}><Clock3 size={14} />分析窗口 {formatTimeRange(evidence.analysisWindowStartSeconds, evidence.analysisWindowEndSeconds)}</div>
+            <article><span>AFTER</span><p>{evidence.contextAfterCompact || t("暂无后文摘要")}</p></article>
+            <div className={styles.windowTime}><Clock3 size={14} />{t("分析窗口 {range}", { range: formatTimeRange(evidence.analysisWindowStartSeconds, evidence.analysisWindowEndSeconds) })}</div>
           </div>
         ) : null}
       </div>

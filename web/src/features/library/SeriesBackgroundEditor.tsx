@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { errorMessage, imageContentUrl, mediaUrl, uploadSeriesImage } from "../../api/client";
 import type { ImageAsset, SeriesBackground, SeriesUpdateRequest, SeriesView } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
+import { useI18n } from "../../app/i18n";
 import styles from "./library.module.css";
 
 export function readBackground(data: SeriesView["importantExtraData"]): SeriesBackground {
@@ -21,6 +22,7 @@ export function readBackground(data: SeriesView["importantExtraData"]): SeriesBa
 }
 
 export function SeriesBackgroundEditor({ series, readOnly = false }: { series: SeriesView; readOnly?: boolean }) {
+  const { t, locale } = useI18n();
   const { mode, updateSeries } = useWorkspace();
   const current = {
     ...readBackground(series.importantExtraData),
@@ -98,7 +100,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
         else if (char === '"') insideString = !insideString;
       }
       if (!insideString || escaped) {
-        setNotice("图片已上传，请将图片引用放入 JSON 的字符串字段。");
+        setNotice(t("图片已上传，请将图片引用放入 JSON 的字符串字段。"));
         return;
       }
       insertion = reference;
@@ -124,9 +126,9 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
       if (controller.signal.aborted) return;
       setAssets((value) => ({ ...value, [asset.imageId]: asset }));
       setFailedImages((value) => value.filter((id) => id !== asset.imageId));
-      insertReference(asset.imageId, caption.trim() || file.name.replace(/\.[^.]+$/, "") || "参考图", start, end);
+      insertReference(asset.imageId, caption.trim() || file.name.replace(/\.[^.]+$/, "") || t("参考图"), start, end);
     } catch (failure) {
-      if (!controller.signal.aborted) setError(`图片上传失败：${errorMessage(failure)}`);
+      if (!controller.signal.aborted) setError(t("图片上传失败：{message}", { message: errorMessage(failure, locale) }));
     } finally {
       if (uploadController.current === controller) {
         uploadController.current = null;
@@ -148,7 +150,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
     if (draft.format !== baseline.format || draft.content !== baseline.content) {
       if (draft.content !== "" && draft.format === "json") {
         try { JSON.parse(draft.content); }
-        catch { setError("JSON 格式有误，请检查引号、逗号和括号。"); return; }
+        catch { setError(t("JSON 格式有误，请检查引号、逗号和括号。")); return; }
       }
       changes.importantExtraData = draft.content === "" ? null : { format: draft.format, content: draft.content };
     }
@@ -156,58 +158,58 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
     try {
       await updateSeries(changes);
       setEditing(false);
-      setNotice("已保存");
+      setNotice(t("已保存"));
     } catch (failure) {
-      setError(`保存失败：${errorMessage(failure)}`);
+      setError(t("保存失败：{message}", { message: errorMessage(failure, locale) }));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <section className={readOnly ? styles.backgroundReadOnly : styles.background} aria-label="系列背景资料">
+    <section className={readOnly ? styles.backgroundReadOnly : styles.background} aria-label={t("系列背景资料")}>
       {!readOnly ? <div className={styles.backgroundHeading}>
-        <h2>背景资料</h2>
-        {!editing ? <button className="button-quiet" type="button" onClick={startEditing} disabled={mode !== "live"}><Pencil size={14} />编辑背景</button> : null}
+        <h2>{t("背景资料")}</h2>
+        {!editing ? <button className="button-quiet" type="button" onClick={startEditing} disabled={mode !== "live"}><Pencil size={14} />{t("编辑背景")}</button> : null}
       </div> : null}
       {editing ? (
         <form className={styles.backgroundForm} onSubmit={save} onKeyDown={(event) => {
           if (event.key === "Escape" && !saving) { event.preventDefault(); cancel(); }
         }}>
-          <label><span>显示名称</span><input className="field" value={draft.displayName} maxLength={255} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, displayName: event.target.value }))} placeholder={`留空则显示「${series.name}」`} /></label>
-          <label><span>简介</span><input className="field" value={draft.description} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder="简单介绍这个视频系列" /></label>
-          <label><span>ASR 原文语言</span><input className="field" value={draft.transcriptLanguageHint} list={languageOptionsId} maxLength={64} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, transcriptLanguageHint: event.target.value }))} placeholder="例如：ja（日语）" /></label>
-          <datalist id={languageOptionsId}><option value="ja">日语</option><option value="zh-Hans">简体中文</option><option value="en">英语</option><option value="ko">韩语</option></datalist>
+          <label><span>{t("显示名称")}</span><input className="field" value={draft.displayName} maxLength={255} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, displayName: event.target.value }))} placeholder={t("留空则显示「{name}」", { name: series.name })} /></label>
+          <label><span>{t("简介")}</span><input className="field" value={draft.description} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder={t("简单介绍这个视频系列")} /></label>
+          <label><span>{t("ASR 原文语言")}</span><input className="field" value={draft.transcriptLanguageHint} list={languageOptionsId} maxLength={64} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, transcriptLanguageHint: event.target.value }))} placeholder={t("例如：ja（日语）")} /></label>
+          <datalist id={languageOptionsId}><option value="ja">{t("日语")}</option><option value="zh-Hans">{t("简体中文")}</option><option value="en">{t("英语")}</option><option value="ko">{t("韩语")}</option></datalist>
           <div className={styles.editorHeading}>
-            <label><span>正文格式</span><select className="field" value={draft.format} disabled={busy} onChange={(event) => { setDraft((value) => ({ ...value, format: event.target.value as SeriesBackground["format"] })); setError(null); }}><option value="markdown">Markdown</option><option value="json">JSON</option></select></label>
-            <button className="button-quiet" type="button" disabled={busy || !draft.content} onClick={() => { setDraft((value) => ({ ...value, content: "" })); setError(null); }}>清空背景</button>
+            <label><span>{t("正文格式")}</span><select className="field" value={draft.format} disabled={busy} onChange={(event) => { setDraft((value) => ({ ...value, format: event.target.value as SeriesBackground["format"] })); setError(null); }}><option value="markdown">Markdown</option><option value="json">JSON</option></select></label>
+            <button className="button-quiet" type="button" disabled={busy || !draft.content} onClick={() => { setDraft((value) => ({ ...value, content: "" })); setError(null); }}>{t("清空背景")}</button>
           </div>
-          <label><span className="sr-only">背景正文</span><textarea ref={bodyRef} className={`field ${styles.backgroundEditor}`} value={draft.content} disabled={busy} rows={7} aria-describedby={hintId} onChange={(event) => { setDraft((value) => ({ ...value, content: event.target.value })); setError(null); }} onPaste={(event) => {
+          <label><span className="sr-only">{t("背景正文")}</span><textarea ref={bodyRef} className={`field ${styles.backgroundEditor}`} value={draft.content} disabled={busy} rows={7} aria-describedby={hintId} onChange={(event) => { setDraft((value) => ({ ...value, content: event.target.value })); setError(null); }} onPaste={(event) => {
             const file = Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/"));
             if (file && !busy && mode === "live") { event.preventDefault(); void uploadImage(file); }
-          }} placeholder={draft.format === "json" ? "粘贴任意合法 JSON，保留你自己的字段。" : "人物关系、别名、剧情背景… 可直接粘贴参考图。"} /></label>
+          }} placeholder={draft.format === "json" ? t("粘贴任意合法 JSON，保留你自己的字段。") : t("人物关系、别名、剧情背景… 可直接粘贴参考图。")} /></label>
           <div className={styles.imageUploadControls}>
-            <input className="field" aria-label="图片说明（选填）" placeholder="图片说明，如人物姓名" value={caption} disabled={busy} onChange={(event) => setCaption(event.target.value)} />
-            <button className="button-secondary" type="button" disabled={busy || mode !== "live"} onClick={() => fileRef.current?.click()}><ImagePlus size={15} />添加参考图</button>
-            <input ref={fileRef} className="sr-only" type="file" aria-label="选择背景参考图" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={(event) => {
+            <input className="field" aria-label={t("图片说明（选填）")} placeholder={t("图片说明，如人物姓名")} value={caption} disabled={busy} onChange={(event) => setCaption(event.target.value)} />
+            <button className="button-secondary" type="button" disabled={busy || mode !== "live"} onClick={() => fileRef.current?.click()}><ImagePlus size={15} />{t("添加参考图")}</button>
+            <input ref={fileRef} className="sr-only" type="file" aria-label={t("选择背景参考图")} accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = "";
               if (file) void uploadImage(file);
             }} />
           </div>
-          {uploading ? <div className={styles.imageUploading} role="status"><progress aria-label="参考图上传进度" /><span>正在上传参考图…</span></div> : null}
-          <p className={styles.backgroundHint} id={hintId}>背景资料用于后续解析；ASR 原文语言保存后立即用于新检索。两者都不会重新解析已完成的视频。</p>
+          {uploading ? <div className={styles.imageUploading} role="status"><progress aria-label={t("参考图上传进度")} /><span>{t("正在上传参考图…")}</span></div> : null}
+          <p className={styles.backgroundHint} id={hintId}>{t("背景资料用于后续解析；ASR 原文语言保存后立即用于新检索。两者都不会重新解析已完成的视频。")}</p>
           {error ? <p className={styles.error} role="alert">{error}</p> : null}
           <div className={styles.backgroundActions}>
-            <button className="button-quiet" type="button" onClick={cancel} disabled={saving}>取消</button>
-            <button className="button-primary" type="submit" disabled={busy || !changed || mode !== "live"}>{saving ? "正在保存…" : "保存背景"}</button>
+            <button className="button-quiet" type="button" onClick={cancel} disabled={saving}>{t("取消")}</button>
+            <button className="button-primary" type="submit" disabled={busy || !changed || mode !== "live"}>{saving ? t("正在保存…") : t("保存背景")}</button>
           </div>
         </form>
       ) : (
         <>
-          {!readOnly && series.displayName ? <p className={styles.backgroundHint}>显示名称：{series.displayName}</p> : null}
+          {!readOnly && series.displayName ? <p className={styles.backgroundHint}>{t("显示名称：{name}", { name: series.displayName })}</p> : null}
           {!readOnly && series.description ? <p className={styles.seriesDescription}>{series.description}</p> : null}
-          {!readOnly ? <p className={styles.backgroundHint}>ASR 原文语言：{series.transcriptLanguageHint ?? "未设置"}</p> : null}
+          {!readOnly ? <p className={styles.backgroundHint}>{t("ASR 原文语言：{language}", { language: series.transcriptLanguageHint ?? t("未设置") })}</p> : null}
           {document.format === "markdown" && document.content ? (
             <div className={styles.backgroundMarkdown}>
               <Markdown
@@ -225,22 +227,22 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
                   img: ({ src, alt, title }) => {
                     const source = typeof src === "string" ? src : "";
                     if (!source || failedImages.includes(source)) {
-                      return <span className={styles.inlineImageUnavailable} role="img" aria-label={alt || "背景参考图"}>{alt ? `${alt}：` : ""}<span>图片暂时无法预览</span></span>;
+                      return <span className={styles.inlineImageUnavailable} role="img" aria-label={alt || t("背景参考图")}>{alt ? `${alt}：` : ""}<span>{t("图片暂时无法预览")}</span></span>;
                     }
-                    return <img src={source} alt={alt || "背景参考图"} title={title} loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, source])])} />;
+                    return <img src={source} alt={alt || t("背景参考图")} title={title} loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, source])])} />;
                   },
                   table: ({ children }) => <div className={styles.markdownTable}><table>{children}</table></div>,
                 }}
               >{document.content}</Markdown>
             </div>
-          ) : <pre className={styles.backgroundText}>{document.content || "暂无背景资料"}</pre>}
-          {series.characterBible.length > 0 ? <details className={styles.characters}><summary>人物资料 · {series.characterBible.length}</summary><ul>{series.characterBible.map((character, index) => <li key={`${character.name}-${index}`}><strong>{character.name}</strong>{character.aliases.length ? <span>{character.aliases.join("、")}</span> : null}</li>)}</ul></details> : null}
+          ) : <pre className={styles.backgroundText}>{document.content || t("暂无背景资料")}</pre>}
+          {series.characterBible.length > 0 ? <details className={styles.characters}><summary>{t("人物资料 · {count}", { count: series.characterBible.length })}</summary><ul>{series.characterBible.map((character, index) => <li key={`${character.name}-${index}`}><strong>{character.name}</strong>{character.aliases.length ? <span>{character.aliases.join("、")}</span> : null}</li>)}</ul></details> : null}
         </>
       )}
-      {(editing || document.format === "json") && imageIds.length ? <div className={styles.backgroundImages} aria-label="背景参考图">{imageIds.map((imageId) => (
+      {(editing || document.format === "json") && imageIds.length ? <div className={styles.backgroundImages} aria-label={t("背景参考图")}>{imageIds.map((imageId) => (
         <figure key={imageId}>
-          {failedImages.includes(imageId) ? <div className={styles.imageUnavailable}>图片暂时无法预览</div> : <img src={assets[imageId] ? mediaUrl(assets[imageId].url) ?? undefined : imageContentUrl(imageId, series.tenantId)} alt="背景参考图" loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, imageId])])} />}
-          {editing && draft.format === "json" ? <label><span className="sr-only">图片引用</span><input className="field" value={`asset://${imageId}`} readOnly onFocus={(event) => event.currentTarget.select()} /></label> : null}
+          {failedImages.includes(imageId) ? <div className={styles.imageUnavailable}>{t("图片暂时无法预览")}</div> : <img src={assets[imageId] ? mediaUrl(assets[imageId].url) ?? undefined : imageContentUrl(imageId, series.tenantId)} alt={t("背景参考图")} loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, imageId])])} />}
+          {editing && draft.format === "json" ? <label><span className="sr-only">{t("图片引用")}</span><input className="field" value={`asset://${imageId}`} readOnly onFocus={(event) => event.currentTarget.select()} /></label> : null}
         </figure>
       ))}</div> : null}
       {notice ? <p className={styles.backgroundHint} role="status">{notice}</p> : null}
