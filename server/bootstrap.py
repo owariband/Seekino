@@ -353,6 +353,19 @@ def _build_application_services(
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
             total_timeout_enabled=agent_config.total_timeout_enabled,
             retrieval_channel="lexical",
+            # The single-pass Result replaces the inner Chat render, so it reuses the Chat binding.
+            result_model=agent_model_factory.build_structured(
+                model=chat_model_name,
+                request_timeout_seconds=request_timeout,
+                max_output_tokens=max_output_tokens,
+                max_input_chars=agent_config.max_prompt_chars,
+                context_window_policy=context_window_policy,
+                reasoning_effort=agent_config.chat_reasoning_effort,
+                mcp=False,
+            ),
+            result_max_loops=agent_config.result_max_loops,
+            evaluator_policy=agent_config.evaluator_policy,
+            evaluator_low_confidence_rank=agent_config.evaluator_low_confidence_rank,
         )
     def build_supervisor_runtime(
         video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
@@ -409,6 +422,7 @@ def _build_application_services(
             limits_enabled=agent_config.limits_enabled,
             max_tool_result_bytes=agent_config.max_tool_result_bytes,
             max_prompt_chars=agent_config.max_prompt_chars,
+            single_pass_result=agent_config.single_pass_result,
         )
 
     runtime = build_agent_runtime(settings.agent)

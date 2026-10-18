@@ -8,6 +8,7 @@ import logging
 from math import isfinite
 from threading import Event
 from time import monotonic
+from typing import Literal
 
 from engine.rag.contracts import VideoChunkSearchResult
 from engine.rag.retrieval.contracts import EventSearchResult
@@ -26,15 +27,17 @@ from .errors import (
     VideoSearchFailurePhase,
 )
 from .evaluator import evaluate
+from .loop_control import best_attempt, decide, evaluator_risks, replan_advice, uncertainty_note
 from .frame_evidence import FrameInspectionSession, FrameReader
 from .output import (
-    bind_draft, build_retrieval_trace, finalize_output,
-    validate_approved_video_ranges,
+    bind_draft, build_chat_output, build_retrieval_trace, finalize_output,
+    validate_approved_video_ranges, validate_result,
 )
 from .query import run_query
+from .result import run_result, validate_result_items
 from .state import (
-    AgentFinalOutput, AnswerPhase, ExecutionControl, LoopTurn,
-    QueryDraft, RunInputs, RunLimits, RunState,
+    AgentFinalOutput, AnswerPhase, ChatRenderDraft, ChatVideoBlock, EvalDecision, ExecutionControl,
+    LoopTurn, MarkdownRenderBlock, QueryDraft, ResultAttempt, RunInputs, RunLimits, RunState,
     RetrievalChannelContract, SelectedVideoRange, context_json,
 )
 from .skills import LEXICAL_RETRIEVAL_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
@@ -48,7 +51,13 @@ _logger = logging.getLogger(__name__)
 
 
 class AgentRuntime:
-    """Run isolated Query, Evaluator and Chat contexts over one per-Kick Canvas."""
+    """Run isolated Query, Evaluator and Chat contexts over one per-Kick Canvas.
+
+    Under a Supervisor with ``single_pass_result``, Query is the only ReAct loop,
+    the Evaluator runs only for high-risk drafts, and one structured Result call
+    writes the answer. Deterministic Loop Control then passes, asks the user,
+    re-plans (at most ``result_max_loops`` outer loops) or degrades.
+    """
 
     def __init__(
         self,
@@ -76,6 +85,10 @@ class AgentRuntime:
         frame_max_height: int | None = None,
         maximum_frame_inspections: int | None = None,
         event_retrieve: Callable[..., EventSearchResult] | None = None,
+        result_model: StructuredToolAgentModel | None = None,
+        result_max_loops: int = 2,
+        evaluator_policy: Literal["risk", "always"] = "risk",
+        evaluator_low_confidence_rank: int = 3,
     ) -> None:
         for name, value, maximum in [
             ("max_loop_turns", max_loop_turns, 3),
@@ -86,6 +99,8 @@ class AgentRuntime:
             ("max_tool_result_bytes", max_tool_result_bytes, None),
             ("max_read_chars_per_call", max_read_chars_per_call, None),
             ("max_catalog_items_per_page", max_catalog_items_per_page, 100),
+            ("result_max_loops", result_max_loops, 3),
+            ("evaluator_low_confidence_rank", evaluator_low_confidence_rank, 100),
         ]:
             if (
                 isinstance(value, bool)
@@ -105,6 +120,8 @@ class AgentRuntime:
             raise ValueError("limits_enabled must be a boolean")
         if not isinstance(total_timeout_enabled, bool):
             raise ValueError("total_timeout_enabled must be a boolean")
+        if evaluator_policy not in ("risk", "always"):
+            raise ValueError("evaluator_policy must be risk or always")
         if retrieval_channel not in ("transcript", "lexical"):
             raise ValueError("retrieval_channel must be transcript or lexical")
         for name, value in (
@@ -118,6 +135,10 @@ class AgentRuntime:
         self._query_model = query_model
         self._evaluator_model = evaluator_model
         self._chat_model = chat_model
+        self._result_model = result_model
+        self._result_max_loops = result_max_loops
+        self._evaluator_policy = evaluator_policy
+        self._evaluator_low_confidence_rank = evaluator_low_confidence_rank
         self._retrieve = retrieve
         self._event_retrieve = event_retrieve
         self._max_loop_turns = max_loop_turns
@@ -155,10 +176,14 @@ class AgentRuntime:
         builder = StateGraph(RunState)
         builder.add_node("turn", self.turn)
         builder.add_node("chat", self._chat)
+        builder.add_node("result", self._result)
         builder.add_node("output", self._output)
         builder.add_edge(START, "turn")
         builder.add_conditional_edges(
-            "turn", self._route, {"continue": "turn", "complete": "chat"},
+            "turn", self._route, {"continue": "turn", "complete": "chat", "result": "result"},
+        )
+        builder.add_conditional_edges(
+            "result", self._route_result, {"replan": "turn", "done": "output"},
         )
         builder.add_edge("chat", "output")
         builder.add_edge("output", END)
@@ -171,7 +196,9 @@ class AgentRuntime:
 
     def close(self) -> None:
         closed: set[int] = set()
-        for model in (self._query_model, self._evaluator_model, self._chat_model):
+        for model in (self._query_model, self._evaluator_model, self._chat_model, self._result_model):
+            if model is None:
+                continue
             if id(model) in closed:
                 continue
             closed.add(id(model))
@@ -190,6 +217,8 @@ class AgentRuntime:
         max_loop_turns: int | None = None,
         deadline: float | None = None,
         on_handoff: Callable[[VideoSearchContextCanvas, LoopTurn], None] | None = None,
+        render_with_chat: bool = True,
+        single_pass_result: bool = False,
     ) -> AgentFinalOutput:
         if (
             not inputs["tenant_id"].strip()
@@ -198,6 +227,8 @@ class AgentRuntime:
             or any(not value.strip() for value in inputs["series_ids"])
         ):
             raise ValueError("Kick requires user input and fixed workspace / Series scope")
+        if single_pass_result and (render_with_chat or self._result_model is None):
+            raise ValueError("single_pass_result requires a Supervisor handoff and a Result model")
         top_k = inputs["requested_top_k"]
         if (
             isinstance(top_k, bool)
@@ -263,6 +294,9 @@ class AgentRuntime:
                 "turns": [],
                 "control": control,
                 "limits": limits,
+                "render_with_chat": render_with_chat,
+                "single_pass_result": single_pass_result,
+                "attempts": [],
             },
             config={
                 "recursion_limit": limits.max_loop_turns + 5
@@ -302,6 +336,13 @@ class AgentRuntime:
                     for item in turn.query_draft.selected_video_ranges
                 ],
                 **coverage,
+                **({"result": {
+                    "outcome": result["outcome"],
+                    "loop": result["final_attempt"].loop,
+                    "loops": len(result["attempts"]),
+                    "self_check": result["final_attempt"].output.self_check.model_dump(mode="json", by_alias=True),
+                    "warnings": list(result["final_attempt"].warnings),
+                }} if "final_attempt" in result else {}),
             }, readonly=True)
             control.check()
             on_handoff(canvas, turn)
@@ -407,61 +448,73 @@ class AgentRuntime:
             draft,
         )
 
-        control.publish(inputs, {
-            "type": "answer.progress",
-            "phase": AnswerPhase.EVALUATING,
-        })
-        evaluator_deadline = monotonic() + self._evaluator_stage_timeout
-        evaluator_control = replace(control, deadline=(
-            evaluator_deadline if control.deadline is None
-            else min(control.deadline, evaluator_deadline)
-        ))
-        evaluator_tools = build_evaluator_tools(
-            self._retrieve,
-            event_retrieve=self._event_retrieve,
-            canvas=canvas,
-            inputs=inputs,
-            control=evaluator_control,
-            calls=calls,
-            maximum_top_k=self._maximum_top_k,
-            maximum_tool_calls=limits.max_tool_calls_per_turn,
-            maximum_result_bytes=self._max_tool_result_bytes,
-            maximum_read_chars=self._max_read_chars_per_call,
-            maximum_catalog_items=self._max_catalog_items,
-            retrieval_channel=self._retrieval_channel,
-            frame_reader=self._frame_reader,
-            frame_session=state.get("frame_inspections"),
-            frame_max_height=self._frame_max_height,
-            supports_vision_input=getattr(self._evaluator_model, "supports_vision_input", False),
-        )
-        attach_agent_tool_logging(evaluator_tools, role="Evaluator", inputs=inputs)
-        try:
-            review = evaluate(
-                self._evaluator_model,
-                inputs,
-                previous,
-                draft,
-                calls,
-                sources,
-                tools=as_langchain_tools(evaluator_tools),
-                max_model_calls=limits.max_model_calls_per_turn,
-                control=evaluator_control,
-                max_prompt_chars=self._max_prompt_chars,
+        single_pass = state["single_pass_result"]
+        # Under single-pass Result the Evaluator is a high-risk bypass, not a stage of every request.
+        risks = evaluator_risks(
+            inputs, [item.video_chunk_id for item in draft_items],
+            [*(call for item in previous for call in item.retrieval_calls), *calls],
+            low_confidence_rank=self._evaluator_low_confidence_rank,
+        ) if single_pass else ()
+        if not single_pass or self._evaluator_policy == "always" or risks:
+            control.publish(inputs, {
+                "type": "answer.progress",
+                "phase": AnswerPhase.EVALUATING,
+            })
+            evaluator_deadline = monotonic() + self._evaluator_stage_timeout
+            evaluator_control = replace(control, deadline=(
+                evaluator_deadline if control.deadline is None
+                else min(control.deadline, evaluator_deadline)
+            ))
+            evaluator_tools = build_evaluator_tools(
+                self._retrieve,
+                event_retrieve=self._event_retrieve,
                 canvas=canvas,
-                retrieval_skill_prompt=self._retrieval_skill_prompt,
+                inputs=inputs,
+                control=evaluator_control,
+                calls=calls,
+                maximum_top_k=self._maximum_top_k,
+                maximum_tool_calls=limits.max_tool_calls_per_turn,
+                maximum_result_bytes=self._max_tool_result_bytes,
+                maximum_read_chars=self._max_read_chars_per_call,
+                maximum_catalog_items=self._max_catalog_items,
+                retrieval_channel=self._retrieval_channel,
+                frame_reader=self._frame_reader,
+                frame_session=state.get("frame_inspections"),
+                frame_max_height=self._frame_max_height,
+                supports_vision_input=getattr(self._evaluator_model, "supports_vision_input", False),
             )
-            evaluator_control.check()
-            control.check()
-        except Exception as exc:
-            _raise_classified_failure(
-                exc,
-                phase=VideoSearchFailurePhase.EVALUATOR,
-                stage_control=evaluator_control,
-                run_control=control,
-            )
+            attach_agent_tool_logging(evaluator_tools, role="Evaluator", inputs=inputs)
+            try:
+                review = evaluate(
+                    self._evaluator_model,
+                    inputs,
+                    previous,
+                    draft,
+                    calls,
+                    sources,
+                    tools=as_langchain_tools(evaluator_tools),
+                    max_model_calls=limits.max_model_calls_per_turn,
+                    control=evaluator_control,
+                    max_prompt_chars=self._max_prompt_chars,
+                    canvas=canvas,
+                    retrieval_skill_prompt=self._retrieval_skill_prompt,
+                    supervisor_final_review=not state["render_with_chat"],
+                )
+                evaluator_control.check()
+                control.check()
+            except Exception as exc:
+                _raise_classified_failure(
+                    exc,
+                    phase=VideoSearchFailurePhase.EVALUATOR,
+                    stage_control=evaluator_control,
+                    run_control=control,
+                )
+            review_source = "evaluator"
+        else:
+            review = EvalDecision(action="complete", advice="")
+            review_source = "host"
         evaluator_review = review
-        review_source = "evaluator"
-        if review.action == "complete":
+        if review.action == "complete" and not single_pass:
             with canvas._lock:
                 # Freeze canonical evidence after the Evaluator approves the draft.
                 selected = selected.model_copy(update={"hits": [
@@ -480,13 +533,15 @@ class AgentRuntime:
             draft_output=selected,
             review=review,
             status=review.action,
+            review_source=review_source,
+            evaluator_risks=risks,
         )
         canvas.put("history", str(current.number), current.context(), readonly=True)
         _logger.info(
             "event=agent_turn_evaluated conversation_id=%s message_id=%s "
             "turn_number=%s retrieved_hit_count=%s selected_hit_count=%s "
             "review_action=%s review_source=%s evaluator_action=%s "
-            "evaluator_advice=%s review_advice=%s",
+            "evaluator_advice=%s review_advice=%s evaluator_risks=%s",
             inputs["conversation_id"],
             inputs["assistant_message_id"],
             current.number,
@@ -497,9 +552,11 @@ class AgentRuntime:
             evaluator_review.action,
             context_json(evaluator_review.advice),
             context_json(review.advice),
+            ",".join(risks) or "-",
         )
         if (
-            limits.max_loop_turns is not None
+            not single_pass
+            and limits.max_loop_turns is not None
             and review.action == "continue"
             and current.number >= limits.max_loop_turns
         ):
@@ -514,7 +571,109 @@ class AgentRuntime:
 
     @staticmethod
     def _route(state: RunState) -> str:
+        if state["single_pass_result"]:
+            return "result"
         return state["turns"][-1].review.action
+
+    @staticmethod
+    def _route_result(state: RunState) -> str:
+        return "replan" if state["outcome"] == "replan" else "done"
+
+    def _result(self, state: RunState) -> dict:
+        """Run one single-pass Result and let Loop Control choose the exit."""
+
+        control = state["control"]
+        inputs = state["inputs"]
+        canvas = state["canvas"]
+        turns = state["turns"]
+        turn = turns[-1]
+        attempts = state["attempts"]
+        assert self._result_model is not None
+        max_loops = (
+            self._result_max_loops if state["limits"].max_loop_turns is None
+            else min(self._result_max_loops, state["limits"].max_loop_turns)
+        )
+        draft_items = canvas.draft_items()
+        draft_ids = frozenset(item.video_chunk_id for item in draft_items)
+        retrieved_ids = frozenset(
+            hit.candidate.video_chunk_id
+            for call in turn.retrieval_calls if call.status != "error"
+            for hit in call.result.hits
+        )
+        rejected = turn.review.action == "continue"
+        if rejected:
+            # A rejected draft re-plans on the Evaluator's advice without spending a Result call.
+            attempt = ResultAttempt(
+                loop=turn.number, output=None, items=(), draft_ids=draft_ids,
+                retrieved_ids=retrieved_ids, evaluator_rejected=True,
+                evaluator_advice=turn.review.advice,
+            )
+            if decide(attempt, attempts, max_loops=max_loops) == "replan":
+                self._log_loop(inputs, attempt, "replan")
+                return {"attempts": [*attempts, attempt], "outcome": "replan"}
+        control.publish(inputs, {
+            "type": "answer.progress",
+            "phase": AnswerPhase.RESPONDING,
+        })
+        result_deadline = monotonic() + self._chat_timeout
+        result_control = replace(control, deadline=(
+            result_deadline if control.deadline is None
+            else min(control.deadline, result_deadline)
+        ))
+        previous = next((item for item in reversed(attempts) if item.output is not None), None)
+        try:
+            output = run_result(
+                self._result_model, inputs, turn, canvas, draft_items,
+                [call for item in turns for call in item.retrieval_calls],
+                previous=previous, control=result_control,
+                max_prompt_chars=self._max_prompt_chars,
+            )
+            result_control.check()
+            control.check()
+        except Exception as exc:
+            _raise_classified_failure(
+                exc,
+                phase=VideoSearchFailurePhase.RESULT,
+                stage_control=result_control,
+                run_control=control,
+            )
+        items, warnings = validate_result_items(output, canvas, draft_items)
+        attempt = ResultAttempt(
+            loop=turn.number, output=output, items=items, draft_ids=draft_ids,
+            retrieved_ids=retrieved_ids, evaluator_rejected=rejected,
+            evaluator_advice=turn.review.advice if rejected else "", warnings=warnings,
+        )
+        history = [*attempts, attempt]
+        outcome = decide(attempt, attempts, max_loops=max_loops)
+        if rejected and outcome == "replan":
+            # Loop Control already declined to re-plan this rejected draft before the Result.
+            outcome = "degrade"
+        self._log_loop(inputs, attempt, outcome)
+        if outcome == "replan":
+            advice = replan_advice(attempt)
+            # The next Plan turn reads this advice exactly like Evaluator advice.
+            replanned = replace(
+                turn, review=EvalDecision(action="continue", advice=advice),
+                status="continue", review_source="result",
+            )
+            # Keep the Evaluator's record of this turn; add the Result's re-plan beside it.
+            canvas.put("history", f"{turn.number}.result", replanned.context(), readonly=True)
+            return {"turns": [*turns[:-1], replanned], "attempts": history, "outcome": outcome}
+        final = attempt if outcome in ("pass", "ask_user") else best_attempt(history)
+        return {"attempts": history, "final_attempt": final, "outcome": outcome}
+
+    @staticmethod
+    def _log_loop(inputs: RunInputs, attempt: ResultAttempt, outcome: str) -> None:
+        check = attempt.output.self_check if attempt.output is not None else None
+        _logger.info(
+            "event=agent_result_loop conversation_id=%s message_id=%s loop=%s outcome=%s "
+            "self_check_pass=%s needs_user_confirmation=%s missing_evidence=%s "
+            "evaluator_rejected=%s video_item_count=%s rejected_item_count=%s",
+            inputs["conversation_id"], inputs["assistant_message_id"], attempt.loop, outcome,
+            check.passed if check else None, check.needs_user_confirmation if check else None,
+            context_json(list(attempt.missing_evidence)), attempt.evaluator_rejected,
+            len(attempt.items), len(attempt.warnings),
+        )
 
     def _chat(self, state: RunState) -> dict:
         current = state["turns"][-1]
@@ -524,6 +683,17 @@ class AgentRuntime:
             "type": "answer.progress",
             "phase": AnswerPhase.RESPONDING,
         })
+        if not state["render_with_chat"]:
+            # The Supervisor rewrites the answer from the Canvas, so an inner
+            # Chat render would only be discarded. Project the approved draft.
+            return {
+                "turns": [
+                    *state["turns"][:-1],
+                    replace(current, rendered_answer=_render_approved_draft(
+                        state["canvas"], current,
+                    )),
+                ]
+            }
         chat_deadline = monotonic() + self._chat_timeout
         chat_control = replace(control, deadline=(
             chat_deadline if control.deadline is None
@@ -569,7 +739,54 @@ class AgentRuntime:
     @staticmethod
     def _output(state: RunState) -> dict:
         state["control"].check()
+        if state["single_pass_result"]:
+            return {"final_output": _result_output(state)}
         return {"final_output": finalize_output(state["turns"], state["inputs"])}
+
+
+def _result_output(state: RunState) -> AgentFinalOutput:
+    """Project the chosen Result attempt through the existing final-output contract."""
+
+    canvas = state["canvas"]
+    attempt = state["final_attempt"]
+    assert attempt.output is not None
+    turn = next(item for item in state["turns"] if item.number == attempt.loop)
+    markdown = attempt.output.answer_markdown
+    if state["outcome"] == "degrade":
+        markdown = uncertainty_note(attempt, state["inputs"]["user_message"]) + "\n\n" + markdown
+    sources = {item.video_chunk_id: list(item.source_video_chunk_ids) for item in attempt.items}
+    source_ids = list(dict.fromkeys(identifier for values in sources.values() for identifier in values))
+    with canvas._lock:
+        evidence = turn.retrieval_result.model_copy(update={
+            "hits": [canvas.retrieval_snapshot(identifier) for identifier in source_ids],
+            "agent_reply": turn.retrieval_result.agent_reply.model_copy(update={"result_count": len(source_ids)}),
+        }, deep=True)
+    selection = turn.query_draft.model_copy(update={"selected_video_ranges": [
+        SelectedVideoRange(
+            video_chunk_id=item.video_chunk_id, start_seconds=item.start_seconds,
+            end_seconds=item.end_seconds,
+        )
+        for item in attempt.items
+    ]}, deep=True)
+    validate_result(evidence, state["inputs"])
+    rendered = ChatRenderDraft(blocks=[
+        MarkdownRenderBlock(markdown=markdown),
+        *(ChatVideoBlock(video_chunk_id=item.video_chunk_id, claim=item.claim) for item in attempt.items),
+    ])
+    return build_chat_output(
+        evidence, selection, rendered, build_retrieval_trace(state["turns"]), video_sources=sources,
+    )
+
+
+def _render_approved_draft(
+    canvas: VideoSearchContextCanvas, turn: LoopTurn,
+) -> ChatRenderDraft:
+    canvas.append_markdown(turn.query_draft.message)
+    for item in canvas.draft_items(approved=True):
+        canvas.upsert_video_item(ChatVideoBlock(
+            video_chunk_id=item.video_chunk_id, claim=item.claim,
+        ))
+    return canvas.render_draft()
 
 
 def _positive_run_limit(name: str, value: int) -> int:

@@ -511,7 +511,9 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.reasoning_effort == "low"
         assert runtime._evaluator_model.reasoning_effort == "high"
         assert runtime._chat_model.reasoning_effort == "max"
-        assert [options["mcp"] for options in structured_builds] == [False, False]
+        # Query, Evaluator and the single-pass Result.
+        assert [options["mcp"] for options in structured_builds] == [False, False, False]
+        assert runtime._result_model.reasoning_effort == "max"
         assert {options["mcp"] for options in loop_builds} == {False}
         supervisor_model = services.agent._supervisor_runtime._model
         assert callable(supervisor_model.run_agent)
@@ -596,7 +598,7 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement._query_model.reasoning_effort == "max"
             assert replacement._evaluator_model.reasoning_effort == "none"
             assert replacement._chat_model.reasoning_effort == "low"
-            assert [options["mcp"] for options in structured_builds] == [False] * 4
+            assert [options["mcp"] for options in structured_builds] == [False] * 6
             assert {options["mcp"] for options in loop_builds} == {False}
             replacement_supervisor = services.agent._supervisor_factory(replacement, updated)
             assert callable(replacement_supervisor._model.run_agent)

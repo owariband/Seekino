@@ -40,6 +40,13 @@ class AgentServiceConfig:
     supervisor_timeout_seconds: float = 480
     execution_timeout_seconds: float = 480
     maximum_concurrent_kicks: int = 4
+    # Single-pass Result with deterministic Loop Control (docs/dev/perf_plan.md §3.5).
+    single_pass_result: bool = True
+    result_max_loops: int = 2
+    # "risk": the Evaluator runs only for speaker, visual or low-confidence drafts.
+    evaluator_policy: Literal["risk", "always"] = "risk"
+    # A drafted chunk whose best fused rank is worse than this counts as low confidence.
+    evaluator_low_confidence_rank: int = 3
 
     def __post_init__(self) -> None:
         if self.history_message_limit <= 0:
@@ -56,6 +63,14 @@ class AgentServiceConfig:
             raise ValueError("limits_enabled must be a boolean")
         if not isinstance(self.total_timeout_enabled, bool):
             raise ValueError("total_timeout_enabled must be a boolean")
+        if not isinstance(self.single_pass_result, bool):
+            raise ValueError("single_pass_result must be a boolean")
+        if not 1 <= self.result_max_loops <= 3:
+            raise ValueError("result_max_loops must be between 1 and 3")
+        if self.evaluator_policy not in ("risk", "always"):
+            raise ValueError("evaluator_policy must be risk or always")
+        if not 1 <= self.evaluator_low_confidence_rank <= 100:
+            raise ValueError("evaluator_low_confidence_rank must be between 1 and 100")
         for name in ("frame_max_height", "maximum_frame_inspections"):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:

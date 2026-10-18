@@ -2817,3 +2817,27 @@ def test_markdown_revision_merge_does_not_apply_to_query_writes() -> None:
                         operations=[{"operation": "upsert_draft_item", "video_chunk_id": "chunk-1",
                                      "claim": "Query must refresh"}])
     assert canvas.snapshot() == before
+
+
+def test_supervised_kick_skips_chat_and_projects_the_approved_draft():
+    runtime, query, evaluator, chat, _ = _runtime()
+    handoffs = []
+
+    result = runtime.kick(
+        _inputs(), on_handoff=lambda *values: handoffs.append(values), render_with_chat=False,
+    )
+
+    assert chat.contexts == []
+    assert len(handoffs) == 1
+    assert [block.type for block in result.render_blocks] == ["markdown", "video"]
+    assert result.agent_reply.message == result.render_blocks[0].markdown
+    assert result.hits[0].evidence.video_chunk_id == result.render_blocks[1].video_chunk_id
+
+
+@pytest.mark.parametrize("render_with_chat", [True, False])
+def test_evaluator_is_told_when_the_supervisor_owns_final_ranges(render_with_chat):
+    runtime, _, evaluator, _, _ = _runtime()
+
+    runtime.kick(_inputs(), render_with_chat=render_with_chat)
+
+    assert ("Supervisor 终审" in evaluator.prompts[0]) is not render_with_chat

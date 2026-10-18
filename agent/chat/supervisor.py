@@ -89,6 +89,7 @@ class SupervisorRuntime:
         limits_enabled: bool = False,
         total_timeout_enabled: bool = True,
         realtime_runtime: RealtimeUnderstandingRuntime | None = None,
+        single_pass_result: bool = False,
     ) -> None:
         if not 1 <= max_web_results <= 20:
             raise ValueError("max_web_results must be between 1 and 20")
@@ -102,6 +103,8 @@ class SupervisorRuntime:
             raise ValueError("limits_enabled must be a boolean")
         if not isinstance(total_timeout_enabled, bool):
             raise ValueError("total_timeout_enabled must be a boolean")
+        if not isinstance(single_pass_result, bool):
+            raise ValueError("single_pass_result must be a boolean")
         if max_tool_result_bytes < 512 or max_prompt_chars <= 0:
             raise ValueError("Supervisor output and prompt budgets must be positive")
         self._video_runtime = video_runtime
@@ -116,6 +119,8 @@ class SupervisorRuntime:
         self._total_timeout_enabled = total_timeout_enabled
         self._max_tool_result_bytes = max_tool_result_bytes
         self._max_prompt_chars = max_prompt_chars
+        # The video search delivers a single-pass Result; the Supervisor keeps routing only.
+        self._single_pass_result = single_pass_result
 
     @property
     def model_name(self) -> str:
@@ -177,6 +182,11 @@ class SupervisorRuntime:
         web_sources: dict[str, WebSearchHit] = {}
         web_search_attempted = False
         tool_calls = 0
+        # Offer current-video understanding only when the client froze a playback position;
+        # otherwise the tool can only fail and costs the Supervisor a model round trip.
+        realtime_available = self._realtime_runtime is not None and isinstance(
+            (inputs.get("extra_context") or {}).get("playback"), dict,
+        )
         # SDK tool calls can overlap; keep this turn's evidence caches and budget serial.
         tool_lock = RLock()
 
@@ -402,6 +412,110 @@ class SupervisorRuntime:
                     },
                 )
 
+        def legacy_search_result(
+            canvas: VideoSearchContextCanvas, turn: LoopTurn, current_result: AgentFinalOutput,
+        ) -> ToolResult:
+            preview = current_result.agent_reply.message[:1_000]
+            # Inline the approved ranges and the review so a clear answer needs no Canvas round trip.
+            approved_draft = [
+                {"video_chunk_id": item.video_chunk_id, "start_seconds": item.start_seconds,
+                 "end_seconds": item.end_seconds, "claim": item.claim[:500]}
+                for item in canvas.draft_items(approved=True)
+            ][:8]
+            review_advice = turn.review.advice[:1_000]
+            while True:
+                result = JsonToolResult(
+                    success=True,
+                    payload={
+                        "result_count": current_result.agent_reply.result_count,
+                        "candidate_count": len(canvas.retrieval_item_ids()),
+                        "answer_preview": preview,
+                        "approved_draft": approved_draft,
+                        "review_advice": review_advice,
+                        "read_collections": list(canvas.read_collections["supervisor"]),
+                        "message": (
+                            "Draft only. approved_draft and review_advice summarize the approved Query draft "
+                            "and its review; when they settle the question, submit from them directly. "
+                            "Read get_context_canvas for transcript evidence, other candidates or truncated "
+                            "advice: retrieval and frame_inspections are cumulative; other collections, "
+                            "including review/latest, describe the latest successful search. "
+                            "Submit final video items and write your own answer."
+                        ),
+                    },
+                )
+                if len(result.model_content().encode("utf-8")) <= self._max_tool_result_bytes:
+                    return result
+                if review_advice:
+                    review_advice = review_advice[: len(review_advice) // 2]
+                    continue
+                if not preview:
+                    raise AgentToolInvocationError("Video Tool result exceeds its output budget")
+                preview = preview[: len(preview) // 2]
+
+        def prepare_delivery(current_result: AgentFinalOutput) -> tuple[
+            list[ChatRenderBlock | ToolRenderBlock], dict[str, SelectedVideoRange], dict[str, list[str]],
+        ]:
+            """Validate the Result's blocks as an answer prefix before any state changes."""
+            claims = {hit.candidate.video_chunk_id: hit.selection_reason.summary for hit in current_result.hits}
+            candidate = list(render_blocks)
+            items: dict[str, SelectedVideoRange] = {}
+            sources: dict[str, list[str]] = {}
+            for block in current_result.render_blocks:
+                if block.type == "markdown":
+                    if candidate and isinstance(candidate[-1], MarkdownRenderBlock):
+                        candidate[-1] = MarkdownRenderBlock(markdown=candidate[-1].markdown + "\n\n" + block.markdown)
+                    else:
+                        candidate.append(MarkdownRenderBlock(markdown=block.markdown))
+                    continue
+                if block.video_chunk_id in submitted_items or block.video_chunk_id in items:
+                    # An earlier search already shows this clip; keep its card in place.
+                    continue
+                candidate.append(ChatVideoBlock(video_chunk_id=block.video_chunk_id, claim=claims[block.video_chunk_id]))
+                items[block.video_chunk_id] = SelectedVideoRange(
+                    video_chunk_id=block.video_chunk_id, start_seconds=block.start_seconds,
+                    end_seconds=block.end_seconds,
+                )
+                sources[block.video_chunk_id] = list(block.source_video_chunk_ids or [block.video_chunk_id])
+            ChatRenderDraft.validate_prefix(answer_blocks(candidate))
+            return candidate, items, sources
+
+        def single_pass_search_result(
+            canvas: VideoSearchContextCanvas,
+            delivery: tuple[list, dict[str, SelectedVideoRange], dict[str, list[str]]],
+        ) -> ToolResult:
+            review = canvas.get("review", "latest")
+            outcome = review.get("result", {})
+            check = outcome.get("self_check") or {}
+            message = {
+                "ask_user": (
+                    "The answer above asks the user a clarifying question. End your turn now and wait "
+                    "for the reply; do not search again."
+                ),
+                "degrade": (
+                    "The answer above is marked as not fully verified. End your turn now; do not repeat "
+                    "the same search."
+                ),
+            }.get(outcome.get("outcome"), "End your turn now.")
+            return JsonToolResult(success=True, payload={
+                "delivered": True,
+                "outcome": outcome.get("outcome"),
+                "loops": outcome.get("loops"),
+                "self_check": {
+                    "pass": check.get("pass"),
+                    "reason": str(check.get("reason", ""))[:300],
+                    "missing_evidence": [str(item)[:200] for item in check.get("missing_evidence", [])[:3]],
+                    "needs_user_confirmation": check.get("needs_user_confirmation"),
+                },
+                "video_item_count": len(delivery[1]),
+                "candidate_count": len(canvas.retrieval_item_ids()),
+                "message": (
+                    "The verified answer and its video cards were already shown to the user. Do not "
+                    "repeat, summarize or rewrite them. Add text only for web or current-video "
+                    "information the user also asked for, or call search_video_graph again only for "
+                    "an independent sub-question. " + message
+                ),
+            })
+
         def search_video_graph(query: str, attachments: list[str] | None = None) -> ToolResult:
             nonlocal video_result, review_turn, review_reader, evidence_canvas, evidence_reader
             with tool_lock:
@@ -426,6 +540,7 @@ class SupervisorRuntime:
                     )
                 scoped_inputs = deepcopy(inputs)
                 scoped_inputs["user_message"] = query
+                scoped_inputs["original_user_message"] = inputs["user_message"]
                 scoped_inputs["attachments"] = [{"mediaUri": address} for address in selected]
                 scoped_inputs["image_urls"] = [attachment_images[address] for address in selected]
                 for message in scoped_inputs["history"]:
@@ -450,7 +565,8 @@ class SupervisorRuntime:
                         max_model_calls_per_turn=max_model_calls_per_turn,
                         max_tool_calls_per_turn=max_tool_calls_per_turn,
                         max_loop_turns=max_loop_turns, deadline=control.deadline,
-                        on_handoff=capture_review,
+                        on_handoff=capture_review, render_with_chat=False,
+                        **({"single_pass_result": True} if self._single_pass_result else {}),
                     )
                 except VideoSearchFailure as exc:
                     control.check()
@@ -516,33 +632,20 @@ class SupervisorRuntime:
                        for identifier, receipt in frame_receipts):
                     raise AgentModelInvocationError("Frame inspection changed its source receipt")
 
-                preview = current_result.agent_reply.message[:1_000]
-                while True:
-                    result = JsonToolResult(
-                        success=True,
-                        payload={
-                            "result_count": current_result.agent_reply.result_count,
-                            "candidate_count": len(canvas.retrieval_item_ids()),
-                            "answer_preview": preview,
-                            "read_collections": list(canvas.read_collections["supervisor"]),
-                            "message": (
-                                "Draft only. Read get_context_canvas: retrieval and frame_inspections are cumulative; "
-                                "other collections, including review/latest, describe the latest successful search. "
-                                "Submit final video items and write your own answer."
-                            ),
-                        },
-                    )
-                    if len(result.model_content().encode("utf-8")) <= self._max_tool_result_bytes:
-                        break
-                    if not preview:
-                        raise AgentToolInvocationError("Video Tool result exceeds its output budget")
-                    preview = preview[: len(preview) // 2]
+                delivery = None
+                if self._single_pass_result:
+                    delivery = prepare_delivery(current_result)
+                    result = single_pass_search_result(canvas, delivery)
+                else:
+                    result = legacy_search_result(canvas, turn, current_result)
 
-                next_reader, = self._video_runtime.build_supervisor_read_tools(
-                    canvas, control, maximum_result_bytes=self._max_tool_result_bytes,
-                )
+                next_reader = None
+                if not self._single_pass_result:
+                    next_reader, = self._video_runtime.build_supervisor_read_tools(
+                        canvas, control, maximum_result_bytes=self._max_tool_result_bytes,
+                    )
                 next_evidence_reader = evidence_reader
-                if next_evidence_reader is None:
+                if next_evidence_reader is None and not self._single_pass_result:
                     next_evidence_reader, = self._video_runtime.build_supervisor_read_tools(
                         cumulative, control, maximum_result_bytes=self._max_tool_result_bytes,
                     )
@@ -569,6 +672,13 @@ class SupervisorRuntime:
                 evidence_canvas, evidence_reader = cumulative, next_evidence_reader
                 review_turn, review_reader = turn, next_reader
                 video_result = current_result.model_copy(update={**coverage, "retrieval_trace": trace}, deep=True)
+                if delivery is not None:
+                    # Stream the Result's answer and cards now; the Supervisor only closes the turn.
+                    blocks, items, sources = delivery
+                    render_blocks[:] = blocks
+                    submitted_items.update(items)
+                    submitted_sources.update(sources)
+                    publish_snapshot()
                 return result
 
         def get_context_canvas(**values) -> ToolResult:
@@ -797,13 +907,20 @@ class SupervisorRuntime:
                     "Prefer text-only searches when sufficient; attach only images needed for visual verification. "
                     "Avoid repeatedly sending unrelated images. Split independent screenshot-origin questions "
                     "into separate searches and issue independent tool calls together when possible. "
-                    "Review its Canvas and submit the final video items yourself."
+                    + ("It shows the verified answer and video cards to the user itself; do not rewrite them."
+                       if self._single_pass_result else
+                       "Review its Canvas and submit the final video items yourself.")
                 ),
                 args_schema=VideoSearchArguments,
                 maximum_result_bytes=self._max_tool_result_bytes,
             ),
         ]
-        if self._realtime_runtime is not None:
+        if self._single_pass_result:
+            tools = [
+                tool for tool in tools
+                if tool.name not in ("get_context_canvas", "submit_video_item", "remove_video_item")
+            ]
+        if realtime_available:
             tools.append(build_agent_tool(
                 func=understand_current_video, name="understand_current_video",
                 description=(
@@ -827,7 +944,7 @@ class SupervisorRuntime:
             + "。search_video_graph 仅可检索这些系列。"
             if scope else
             "当前没有可检索的视频系列；当前播放视频可通过 understand_current_video 取得基础证据。"
-            if self._realtime_runtime is not None else
+            if realtime_available else
             "当前没有可检索的视频系列。用户询问本地视频内容时，请先告知目前"
             "没有可核验的视频证据；网页资料不能代替视频证据。"
         )
@@ -838,33 +955,13 @@ class SupervisorRuntime:
             "selectedRange": reference.get("selectedRange"),
             "sourceStatus": reference.get("sourceStatus"),
         } if isinstance(evidence, dict) else None
-        prompt = (
-            ("当前播放视频可通过 understand_current_video 核验，即使尚未完成全量解析。"
-             "问题指向当前或刚才讲解、暂停画面时优先调用该工具，再根据证据、用户问题和历史组织解释。"
-             "根据 chunks 中的原始事实、frames caption 和 visual_summary 组织最终回答；summary 只是证据说明。"
-             "start_seconds/end_seconds 实际为源视频绝对毫秒；after_anchor 表示暂停位置之后的证据。"
-             "partial 表示采集缺失，omitted_evidence 表示输出为预算省略；据此说明覆盖范围与不确定性。"
-             "persons 是整个 Chunk 的人名清单，不证明这些人都在暂停帧中；不得补造或擅自改写事实。"
-             "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。\n"
-             if self._realtime_runtime is not None else "")
-            +
-            "你是 anivag 对话 Supervisor。根据用户问题自行决定直接回答、调用 "
-            "search_web、调用 search_video_graph，或组合调用已提供的工具。问题涉及所选"
-            "视频中的人物、情节、讲解内容，或引用了视频片段时，应调用视频工具核验。"
-            "你负责拆分检索任务；search_video_graph 每次只处理你填写的 query 和 attachments。"
-            "attachments 中的 mediaUri 按当前用户上传的图片顺序排列；history_attachments "
-            "保留对应历史消息及其图片顺序。将需要的 mediaUri 地址复制到工具的 attachments 列表，"
-            "不要改写地址或复制图片 Base64。省略或空列表表示不带图片，历史图片也不会自动下发。"
-            "为减少传输和读图耗时，文字足以完成的子任务优先只传 query；仅在核对原图细节、"
-            "定位图片出处等确实需要视觉证据时，传入该子任务所需的最少图片。避免反复下发"
-            "全部附件或无关图片；仍需看图核验时不要为了省时省略必要图片。"
-            "多个互相独立的截图出处问题应拆成单图任务；需要联合比较时可传多张。"
-            "相互独立、不依赖彼此结果的工具任务，尽量在同一轮并行发起，减少逐次等待；"
-            "需要前序结果，或需先读取对应 review/latest 再决定下一步时，按依赖顺序执行。"
-            "每次调用都会重新执行。"
-            "先读 video_scope_description，确认本次可检索的视频范围。没有可检索"
-            "系列时仍可直接聊天或搜索网页；当前播放工具取得的真实证据可独立用于答疑。"
-            "若没有任何本地视频证据，先说明无法核验该视频，不得用网页信息冒充视频证据。"
+        video_delivery = (
+            "search_video_graph 会在内部检索、核验并一次写出回答和视频卡，直接展示给用户。"
+            "工具返回 delivered=true 后，不要重复、概括或改写已展示的回答，也不要再写视频卡；"
+            "只在用户同时需要网页或当前视频信息时补充正文，或为独立子问题再次检索。"
+            "outcome=ask_user 表示回答中已向用户提出澄清问题，应结束本轮等待回复；"
+            "outcome=degrade 表示已说明未完全核实，不要重复相同检索。"
+            if self._single_pass_result else (
             "你负责最终回答、视频选择理由和播放范围。search_video_graph 返回内部审核后的草稿，"
             "answer_preview 只供导航，不是不可修改的最终答案。通过 get_context_canvas 读取相关"
             "文字 Timeline、对白、Query 范围及 review/latest 审核意见，判断是否直接支持用户问题。"
@@ -882,12 +979,45 @@ class SupervisorRuntime:
             "面向用户的普通 assistant 文本与 submit_video_item 按产生顺序展示；先写片段说明，"
             "在需要插入视频卡的位置调用 submit_video_item，再继续下一段正文。可以多次交替，"
             "不要求先提交全部视频或先写完整正文。工具调用和返回由系统处理，不要输出卡片 schema。"
-            "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
+            )
+        )
+        prompt = (
+            ("当前播放视频可通过 understand_current_video 核验，即使尚未完成全量解析。"
+             "问题指向当前或刚才讲解、暂停画面时优先调用该工具，再根据证据、用户问题和历史组织解释。"
+             "根据 chunks 中的原始事实、frames caption 和 visual_summary 组织最终回答；summary 只是证据说明。"
+             "start_seconds/end_seconds 实际为源视频绝对毫秒；after_anchor 表示暂停位置之后的证据。"
+             "partial 表示采集缺失，omitted_evidence 表示输出为预算省略；据此说明覆盖范围与不确定性。"
+             "persons 是整个 Chunk 的人名清单，不证明这些人都在暂停帧中；不得补造或擅自改写事实。"
+             "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。\n"
+             if realtime_available else "")
+            +
+            "你是 anivag 对话 Supervisor。根据用户问题自行决定直接回答、调用 "
+            "search_web、调用 search_video_graph，或组合调用已提供的工具。问题涉及所选"
+            "视频中的人物、情节、讲解内容，或引用了视频片段时，应调用视频工具核验。"
+            "你负责拆分检索任务；search_video_graph 每次只处理你填写的 query 和 attachments。"
+            "attachments 中的 mediaUri 按当前用户上传的图片顺序排列；history_attachments "
+            "保留对应历史消息及其图片顺序。将需要的 mediaUri 地址复制到工具的 attachments 列表，"
+            "不要改写地址或复制图片 Base64。省略或空列表表示不带图片，历史图片也不会自动下发。"
+            "为减少传输和读图耗时，文字足以完成的子任务优先只传 query；仅在核对原图细节、"
+            "定位图片出处等确实需要视觉证据时，传入该子任务所需的最少图片。避免反复下发"
+            "全部附件或无关图片；仍需看图核验时不要为了省时省略必要图片。"
+            "多个互相独立的截图出处问题应拆成单图任务；需要联合比较时可传多张。"
+            "相互独立、不依赖彼此结果的工具任务，尽量在同一轮并行发起，减少逐次等待；"
+            + ("需要前序结果时按依赖顺序执行。" if self._single_pass_result else
+               "需要前序结果，或需先读取对应 review/latest 再决定下一步时，按依赖顺序执行。")
+            +
+            "每次调用都会重新执行。"
+            "先读 video_scope_description，确认本次可检索的视频范围。没有可检索"
+            "系列时仍可直接聊天或搜索网页；当前播放工具取得的真实证据可独立用于答疑。"
+            "若没有任何本地视频证据，先说明无法核验该视频，不得用网页信息冒充视频证据。"
+            + video_delivery
+            + "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
             "调用耗时的视频检索、网页搜索或当前视频理解工具前，先用一句简短自然的正文说明"
             "准备核验什么，让用户及时知道任务已开始。工具状态由系统根据真实调用展示，"
             "不要输出工具 JSON、模拟进度或反复播报工具操作。得到证据后，如仍需继续核验，"
             "可简短说明已发现的内容和下一步核验目标；不泄露内部推理或未经核实的结论。"
-            "所有正文要与提交的 claim 和时间一致，整体不能只有完成确认。"
+            + ("" if self._single_pass_result else "所有正文要与提交的 claim 和时间一致，整体不能只有完成确认。")
+            +
             "实时理解和网页结果如有使用，应融入这份最终回答并区分来源与不确定性。"
             "网页摘要只是线索，准确说明来源和不确定性；只能引用 search_web 实际"
             "返回的网址。网页查询只包含查找所需的词，不复制对话历史或视频证据。"

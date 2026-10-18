@@ -360,6 +360,72 @@ class RetrievalCall:
         return summary
 
 
+class ResultVideoItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_chunk_id: _VideoChunkId
+    start_ms: int = Field(strict=True, ge=0)
+    end_ms: int = Field(strict=True, gt=0)
+    claim: _EvidenceClaim
+
+
+class SelfCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    passed: bool = Field(alias="pass")
+    reason: str = Field(max_length=2_000)
+    missing_evidence: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]] = Field(
+        max_length=8,
+    )
+    needs_user_confirmation: bool
+
+
+class ResultOutput(BaseModel):
+    """Single-pass Result: the delivered answer, its video items and a self-check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer_markdown: _Markdown
+    video_items: list[ResultVideoItem] = Field(max_length=8)
+    self_check: SelfCheck
+
+
+LoopOutcome = Literal["pass", "ask_user", "replan", "degrade"]
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedVideoItem:
+    video_chunk_id: str
+    start_seconds: int
+    end_seconds: int
+    claim: str
+    source_video_chunk_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResultAttempt:
+    """One outer loop: a Plan turn and, unless it was re-planned directly, its Result."""
+
+    loop: int
+    output: ResultOutput | None
+    items: tuple[ValidatedVideoItem, ...]
+    draft_ids: frozenset[str]
+    retrieved_ids: frozenset[str]
+    evaluator_rejected: bool
+    evaluator_advice: str = ""
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def passed(self) -> bool:
+        return self.output is not None and self.output.self_check.passed and not self.evaluator_rejected
+
+    @property
+    def missing_evidence(self) -> tuple[str, ...]:
+        if self.output is not None and self.output.self_check.missing_evidence:
+            return tuple(self.output.self_check.missing_evidence)
+        return (self.evaluator_advice,) if self.evaluator_rejected and self.evaluator_advice.strip() else ()
+
+
 @dataclass(frozen=True, slots=True)
 class LoopTurn:
     number: int
@@ -372,6 +438,9 @@ class LoopTurn:
     review: EvalDecision
     status: Literal["complete", "continue"]
     rendered_answer: ChatRenderDraft | None = None
+    # "host" when the rule-based high-risk gate bypassed the Evaluator.
+    review_source: Literal["evaluator", "host", "result"] = "evaluator"
+    evaluator_risks: tuple[str, ...] = ()
 
     def context(self) -> dict:
         return {
@@ -400,4 +469,11 @@ class RunState(TypedDict):
     turns: list[LoopTurn]
     control: ExecutionControl
     limits: RunLimits
+    # False when a Supervisor writes the delivered answer from the handoff.
+    render_with_chat: bool
+    # True when a single-pass Result writes the answer under deterministic Loop Control.
+    single_pass_result: bool
+    attempts: list[ResultAttempt]
+    final_attempt: ResultAttempt
+    outcome: LoopOutcome
     final_output: AgentFinalOutput

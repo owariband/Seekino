@@ -25,6 +25,7 @@ class VideoSearchFailurePhase(StrEnum):
     QUERY = "query"
     EVALUATOR = "evaluator"
     CHAT = "chat"
+    RESULT = "result"
     RETRIEVAL = "retrieval"
 
 
