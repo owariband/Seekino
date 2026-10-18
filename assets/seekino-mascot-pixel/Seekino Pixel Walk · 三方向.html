@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seekino 像素走路 · 三个方向</title>
+<style>
+:root {
+  --canvas: #f4f7f2; --surface: #fbfcf8; --surface-muted: #edf3ed;
+  --ink: #17312b; --ink-soft: #566b65; --ink-faint: #85938e;
+  --line: #24494026; --line-strong: #238c7861; --teal-deep: #126b5d; --teal-wash: #eaf5f0;
+  --display: ui-rounded, "SF Pro Rounded", "Nunito", "PingFang SC", sans-serif;
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  --mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--sans); }
+main { max-width: 1760px; margin: 0 auto; padding: 56px 48px 36px; }
+header { display: flex; justify-content: space-between; align-items: end; gap: 32px; margin-bottom: 32px; }
+.kicker { margin: 0 0 10px; color: var(--teal-deep); font: 650 .7rem/1.2 var(--mono); letter-spacing: .17em; text-transform: uppercase; }
+h1 { margin: 0; font: 600 2.1rem/1.2 var(--display); letter-spacing: -.02em; }
+.lede { max-width: 660px; margin: 14px 0 0; color: var(--ink-soft); font-size: .95rem; line-height: 1.7; text-wrap: pretty; }
+.mode { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.mode button { min-height: 34px; padding: 0 16px; border: 0; border-radius: 7px; background: none; color: var(--ink-soft); font: 500 .8rem/1 var(--sans); cursor: pointer; }
+.mode button[aria-pressed="true"] { background: var(--teal-wash); color: var(--teal-deep); }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.card { display: grid; align-content: start; gap: 16px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.card h2 { margin: 0; font: 600 1.2rem/1.3 var(--display); }
+.card h2 b { margin-right: 8px; color: var(--teal-deep); font-family: var(--mono); font-size: .9rem; }
+.spec { color: var(--ink-faint); font: 500 .7rem/1.3 var(--mono); white-space: nowrap; }
+.stage { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; image-rendering: pixelated; }
+.note { margin: 0; color: var(--ink-soft); font-size: .84rem; line-height: 1.7; text-wrap: pretty; }
+.note em { color: var(--ink); font-style: normal; font-weight: 600; }
+.strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.strip figure { display: grid; justify-items: center; gap: 4px; margin: 0; }
+.strip canvas { display: block; border-radius: 4px; image-rendering: pixelated; }
+.strip figcaption { color: var(--ink-faint); font: 500 .6rem/1 var(--mono); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-soft); font: 500 .62rem/1 var(--mono); }
+.chip i { width: 14px; height: 14px; border-radius: 3px; box-shadow: inset 0 0 0 1px #0b3b3326; }
+footer { display: flex; justify-content: space-between; margin-top: 28px; color: var(--ink-faint); font: 500 .66rem/1.4 var(--mono); }
+@media (max-width: 1280px) { .grid { grid-template-columns: 1fr; max-width: 640px; } header { flex-direction: column; align-items: start; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <p class="kicker">Seekino · Mascot · Pixel walk</p>
+      <h1>鲸鲨走路 · 三个像素方向</h1>
+      <p class="lede">色板全部取自 <code>assets/mascot</code> 和网页 tokens，没有新增颜色；B、C 两版的轮廓直接从现有 SVG 栅格化，A 版按 Clawd 的思路手点。挑一个方向，我再精修帧并导出 sprite sheet、GIF 和网页组件。</p>
+    </div>
+    <div class="mode" role="group" aria-label="走路模式">
+      <button type="button" data-mode="cross" aria-pressed="true">横穿</button>
+      <button type="button" data-mode="place" aria-pressed="false">原地</button>
+    </div>
+  </header>
+  <section class="grid" id="cards"></section>
+  <footer><span>同一套步态：对角两脚一组交替，支撑脚每帧后退 1 像素，身体前进 1 像素，脚不打滑。</span><span>Created by Huashu-Design</span></footer>
+</main>
+
+<script>
+const PAL = { ink: "#0b3b33", body: "#74c5ba", shade: "#349489", belly: "#fcfaf1", far: "#e6efe8" };
+
+// Geometry copied verbatim from AniVAG/assets/mascot/seekino-side.svg and seekino-logo.svg.
+const SIDE = {
+  body: "M38 116C38 70 86 48 150 50C204 52 240 74 252 100C260 122 250 148 222 157C182 168 110 170 70 162C48 156 38 140 38 116Z",
+  belly: "M28 112C64 108 116 118 168 126C208 132 238 132 264 124V200H28Z",
+  shade: "M244 90C258 116 252 146 222 162H270V80Z",
+  tail: "M244 98C262 90 280 72 292 52C299 80 296 104 286 116C296 132 300 150 297 166C282 150 264 134 244 126Z",
+  dorsal: "M124 56C138 38 154 26 170 18C171 32 173 46 178 56Z",
+  fin: "M116 130C126 146 140 156 162 162C154 150 152 140 150 130Z",
+};
+const LOGO = {
+  body: "M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z",
+  shade: "M196 122C212 152 210 192 186 230H240V110Z",
+  belly: "M18 134C48 114 108 108 154 120C186 130 202 168 192 232H18Z",
+  tail: "M164 92C174 62 198 36 220 29C230 50 227 80 214 101L233 113C225 119 217 122 208 125Z",
+  finLeft: "M34 134C26 137 19 142 14 148C20 153 27 157 33 159Z",
+  dorsal: "M90 88C104 70 120 55 136 48C137 61 140 74 146 87Z",
+  finRight: "M204 138C216 142 228 150 234 157C226 161 214 162 205 162",
+};
+
+const makeMask = (W, H) => ({ W, H, a: new Uint8Array(W * H) });
+const has = (m, x, y) => x >= 0 && y >= 0 && x < m.W && y < m.H && m.a[y * m.W + x] === 1;
+
+const rasterCache = new Map();
+/** Rasterize an SVG path onto the sprite grid with a hard alpha threshold (no anti-aliasing). */
+function raster(d, geo, rot) {
+  const key = `${d}|${geo.W},${geo.H},${geo.s},${geo.ox},${geo.oy}|${rot ? rot.join(",") : ""}`;
+  if (rasterCache.has(key)) return rasterCache.get(key);
+  const canvas = document.createElement("canvas");
+  canvas.width = geo.W; canvas.height = geo.H;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.setTransform(geo.s, 0, 0, geo.s, -geo.ox * geo.s, -geo.oy * geo.s);
+  if (rot) { ctx.translate(rot[0], rot[1]); ctx.rotate(rot[2] * Math.PI / 180); ctx.translate(-rot[0], -rot[1]); }
+  ctx.fill(new Path2D(d));
+  const data = ctx.getImageData(0, 0, geo.W, geo.H).data;
+  const m = makeMask(geo.W, geo.H);
+  for (let i = 0; i < m.a.length; i++) m.a[i] = data[i * 4 + 3] >= 128 ? 1 : 0;
+  rasterCache.set(key, m);
+  return m;
+}
+function shifted(m, dx, dy) {
+  if (!dx && !dy) return m;
+  const r = makeMask(m.W, m.H);
+  for (let y = 0; y < m.H; y++) for (let x = 0; x < m.W; x++) if (has(m, x - dx, y - dy)) r.a[y * m.W + x] = 1;
+  return r;
+}
+function and(a, b) {
+  const r = makeMask(a.W, a.H);
+  for (let i = 0; i < r.a.length; i++) r.a[i] = a.a[i] & b.a[i];
+  return r;
+}
+/** Foot: rectangle with the two bottom corners knocked off. */
+function footMask(W, H, x, y, w, h) {
+  const m = makeMask(W, H);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    if (w >= 3 && j === h - 1 && (i === 0 || i === w - 1)) continue;
+    const X = x + i, Y = y + j;
+    if (X >= 0 && Y >= 0 && X < W && Y < H) m.a[Y * W + X] = 1;
+  }
+  return m;
+}
+
+class Sprite {
+  constructor(W, H) { this.W = W; this.H = H; this.px = new Array(W * H).fill(null); }
+  set(x, y, c) { if (x >= 0 && y >= 0 && x < this.W && y < this.H) this.px[y * this.W + x] = c; }
+  fill(m, c) { for (let i = 0; i < m.a.length; i++) if (m.a[i]) this.px[i] = c; }
+  outline(m, c) {
+    for (let y = 0; y < m.H; y++) for (let x = 0; x < m.W; x++) {
+      if (has(m, x, y) && (!has(m, x - 1, y) || !has(m, x + 1, y) || !has(m, x, y - 1) || !has(m, x, y + 1))) this.set(x, y, c);
+    }
+  }
+  part(m, c) { this.fill(m, c); this.outline(m, PAL.ink); }
+  rect(x, y, w, h, c) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.set(x + i, y + j, c); }
+  line(x0, y0, x1, y1, c) {
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    for (;;) {
+      this.set(x0, y0, c);
+      if (x0 === x1 && y0 === y1) return;
+      const e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+  }
+}
+
+/**
+ * Foot offset for frame f of an N-frame cycle. Half the cycle is stance: the foot slides back
+ * exactly v px per frame while the body moves forward v px, so it stays planted on the ground.
+ */
+function gait(f, N, v, lift, offset) {
+  const half = N / 2, A = half * v / 2, l = (f + offset) % N;
+  if (l <= half) return { dx: Math.round(-A + l * v), dy: 0 };
+  const j = l - half;
+  return { dx: Math.round(A - j * v), dy: -Math.round(lift * Math.sin(Math.PI * j / half)) };
+}
+const bobAt = (f, N) => (f % (N / 2) === N / 4 ? -1 : 0);
+
+// A: hand-placed 22×11 body, facing left. b body · s shade · w belly · e ink.
+const A_ROWS = [
+  "..........b...........",
+  ".........bb...........",
+  "........bbb..........b",
+  "...bbbbbbbbbbb......bb",
+  ".bbbbbbbbbbbbbbb...bbb",
+  "bbebbbbbbbbbbbbbb.bbb.",
+  "bbbbbbbbbbbbbbbsssbb..",
+  "eeeeewwbbbbbbbbsssbbb.",
+  "wwwwwwwwwwwwwbbsss.bbb",
+  ".wwwwwwwbbwwwwwws....b",
+  "..wwwwwwwwbwwwww......",
+];
+const A_KEY = { b: PAL.body, s: PAL.shade, w: PAL.belly, e: PAL.ink };
+
+const geoB = { W: 56, H: 38, s: 0.2, ox: 28, oy: 6 };
+const geoC = { W: 46, H: 43, s: 0.19, ox: 6, oy: 14 };
+
+const DIRS = [
+  {
+    id: "a", key: "A", name: "终端团子", N: 4, fps: 6, scale: 10, W: 23, H: 14, groundY: 14, cx: 10, shadowW: 14,
+    stage: { bg: "#0c1412", ground: "#1f2e2a", shadow: "#080d0c", dash: [2, 2] },
+    note: "<em>学 Clawd 的终端小怪。</em>不描边、纯色块、23 像素宽，只保留背鳍、尾巴、白肚皮和直线嘴这四个识别点。放在暗色终端里最像 Claude Code 那只螃蟹，最适合做 CLI、加载态和 favicon。",
+    chips: [["body", PAL.body], ["shade", PAL.shade], ["belly", PAL.belly], ["ink", PAL.ink], ["stage", "#0c1412"]],
+    build(f, blink) {
+      const s = new Sprite(this.W, this.H), bob = bobAt(f, this.N);
+      // Diagonal pairs move together: near-front + far-back, far-front + near-back. Far legs first.
+      const legs = [[5, PAL.shade, 2], [14, PAL.shade, 0], [2, PAL.belly, 0], [11, PAL.belly, 2]];
+      for (const [x, c, o] of legs) { const g = gait(f, this.N, 1, 1, o); s.rect(x + g.dx, 11 + g.dy, 2, 3, c); }
+      A_ROWS.forEach((row, y) => [...row].forEach((ch, x) => {
+        if (ch === ".") return;
+        s.set(x, y + 1 + bob, blink && ch === "e" && y === 5 ? PAL.body : A_KEY[ch]);
+      }));
+      return { sprite: s, bob };
+    },
+  },
+  {
+    id: "b", key: "B", name: "品牌描边", N: 8, fps: 10, scale: 5, W: 56, H: 38, groundY: 36, cx: 23, shadowW: 34,
+    stage: { bg: "#f4f7f2", ground: "rgba(36,73,64,.24)", shadow: "rgba(11,59,51,.12)", tick: "rgba(36,73,64,.14)" },
+    note: "<em>和网页里的矢量鲸鲨是同一只。</em>轮廓直接从 <code>seekino-side.svg</code> 栅格化，保留深墨描边、尾部阴影和远近脚色差；尾巴、胸鳍随步子摆动。精度最高，适合官网、空状态和 README。",
+    chips: [["body", PAL.body], ["shade", PAL.shade], ["belly", PAL.belly], ["far", PAL.far], ["ink", PAL.ink]],
+    build(f, blink) {
+      const g = geoB, s = new Sprite(g.W, g.H), bob = bobAt(f, this.N), ph = 2 * Math.PI * f / this.N;
+      const feet = [[13, 3, 34, PAL.far, 4], [32, 3, 34, PAL.far, 0], [8, 4, 35, PAL.belly, 0], [28, 4, 35, PAL.belly, 4]];
+      for (const [x, w, bottom, c, o] of feet) {
+        const st = gait(f, this.N, 1, 2, o);
+        s.part(footMask(g.W, g.H, x + st.dx, 29 + st.dy, w, bottom - 29 + 1), c);
+      }
+      const up = m => shifted(m, 0, bob);
+      s.part(up(raster(SIDE.tail, g, [248, 112, 6 * Math.sin(ph)])), PAL.body);
+      s.part(up(raster(SIDE.dorsal, g)), PAL.body);
+      const body = up(raster(SIDE.body, g));
+      s.fill(body, PAL.body);
+      s.fill(and(body, up(raster(SIDE.belly, g))), PAL.belly);
+      s.fill(and(body, up(raster(SIDE.shade, g))), PAL.shade);
+      s.outline(body, PAL.ink);
+      s.part(up(raster(SIDE.fin, g, [150, 132, -8 * Math.sin(ph)])), PAL.body);
+      s.rect(7, (blink ? 18 : 17) + bob, 2, blink ? 1 : 2, PAL.ink);
+      s.line(4, 22 + bob, 14, 23 + bob, PAL.ink);
+      return { sprite: s, bob };
+    },
+  },
+  {
+    id: "c", key: "C", name: "Q 版侧身", N: 8, fps: 10, scale: 5, W: 46, H: 43, groundY: 42, cx: 22, shadowW: 30,
+    stage: { bg: "#eaf5f0", ground: "rgba(35,140,120,.28)", shadow: "rgba(18,107,93,.14)", dash: [4, 4] },
+    note: "<em>主形象直接走起来。</em>用 3/4 侧身的 logo 造型，两只眼和直线嘴都露在外面，姿态最接近你发的参考图；两只脚交替迈步，左右胸鳍和尾巴一起摆。辨识度最强，适合当品牌吉祥物主动作。",
+    chips: [["body", PAL.body], ["shade", PAL.shade], ["belly", PAL.belly], ["far", PAL.far], ["ink", PAL.ink]],
+    build(f, blink) {
+      const g = geoC, s = new Sprite(g.W, g.H), bob = bobAt(f, this.N), ph = 2 * Math.PI * f / this.N;
+      const feet = [[29, 4, 41, PAL.far, 4], [11, 4, 40, PAL.belly, 0]];
+      for (const [x, w, bottom, c, o] of feet) {
+        const st = gait(f, this.N, 1, 2, o);
+        s.part(footMask(g.W, g.H, x + st.dx, 34 + st.dy, w, bottom - 34 + 1), c);
+      }
+      const up = m => shifted(m, 0, bob);
+      s.part(up(raster(LOGO.tail, g, [200, 118, 6 * Math.sin(ph)])), PAL.body);
+      s.part(up(raster(LOGO.finLeft, g, [34, 146, 12 * Math.sin(ph)])), PAL.body);
+      s.part(up(raster(LOGO.dorsal, g)), PAL.body);
+      const body = up(raster(LOGO.body, g));
+      s.fill(body, PAL.body);
+      s.fill(and(body, up(raster(LOGO.shade, g))), PAL.shade);
+      s.fill(and(body, up(raster(LOGO.belly, g))), PAL.belly);
+      s.outline(body, PAL.ink);
+      s.part(up(raster(LOGO.finRight, g, [204, 150, -12 * Math.sin(ph)])), PAL.body);
+      for (const [x, y] of [[10, 18], [27, 20]]) s.rect(x, (blink ? y + 1 : y) + bob, 2, blink ? 1 : 2, PAL.ink);
+      s.line(10, 22 + bob, 28, 24 + bob, PAL.ink);
+      return { sprite: s, bob };
+    },
+  },
+];
+
+for (const d of DIRS) {
+  d.frames = Array.from({ length: d.N }, (_, f) => d.build(f, false));
+  d.blinks = Array.from({ length: d.N }, (_, f) => d.build(f, true));
+}
+
+/** Draw one stage frame in sprite-pixel units; sc is device pixels per sprite pixel. */
+function renderStage(ctx, d, step, mode, SW, SH, sc, blink) {
+  const st = d.stage, f = step % d.N, frame = (blink ? d.blinks : d.frames)[f];
+  const groundRow = SH - Math.max(3, Math.round(SH * 0.2));
+  // Crossing starts mid-stage so the first frame already shows the whole mascot.
+  const lap = SW + d.W, x0 = mode === "place" ? Math.floor((SW - d.W) / 2) : SW - ((step + Math.floor(lap / 2)) % lap);
+  const y0 = groundRow - d.groundY;
+  const px = (x, y, w = 1, h = 1) => ctx.fillRect(x * sc, y * sc, w * sc, h * sc);
+  ctx.fillStyle = st.bg; ctx.fillRect(0, 0, SW * sc, SH * sc);
+  // The ground scrolls only in place mode; when crossing, the mascot moves over a still ground.
+  const scroll = mode === "place" ? step : 0;
+  ctx.fillStyle = st.ground;
+  if (st.dash) {
+    const [on, off] = st.dash, period = on + off;
+    for (let x = -period + (scroll % period); x < SW; x += period) px(x, groundRow, on, 1);
+  } else {
+    px(0, groundRow, SW, 1);
+    ctx.fillStyle = st.tick;
+    for (let x = -8 + (scroll % 8); x < SW; x += 8) px(x, groundRow + 2, 2, 1);
+  }
+  const sw = d.shadowW - (frame.bob ? 2 : 0), sx = x0 + d.cx - Math.floor(sw / 2);
+  ctx.fillStyle = st.shadow;
+  px(sx, groundRow, sw, 1);
+  px(sx + 2, groundRow + 1, sw - 4, 1);
+  const s = frame.sprite;
+  for (let y = 0; y < s.H; y++) for (let x = 0; x < s.W; x++) {
+    const c = s.px[y * s.W + x];
+    if (c) { ctx.fillStyle = c; px(x0 + x, y0 + y); }
+  }
+}
+
+const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+let mode = "cross";
+const cards = document.getElementById("cards");
+const live = [];
+
+for (const d of DIRS) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="card-head"><h2><b>${d.key}</b>${d.name}</h2><span class="spec">${d.W}×${d.H} px · ${d.N} 帧 · ${d.fps} fps</span></div>
+    <canvas class="stage" aria-label="${d.name} 走路动画"></canvas>
+    <p class="note">${d.note}</p>
+    <div class="strip"></div>
+    <div class="chips">${d.chips.map(([n, c]) => `<span class="chip"><i style="background:${c}"></i>${n} ${c}</span>`).join("")}</div>`;
+  cards.appendChild(card);
+  const strip = card.querySelector(".strip");
+  const sScale = d.id === "a" ? 4 : 2;
+  d.frames.forEach((_, f) => {
+    const fig = document.createElement("figure");
+    const c = document.createElement("canvas");
+    const SW = d.W + 4, SH = d.groundY + 3;
+    c.width = SW * sScale * dpr; c.height = SH * sScale * dpr;
+    c.style.width = `${SW * sScale}px`; c.style.height = `${SH * sScale}px`;
+    const ctx = c.getContext("2d");
+    renderStage(ctx, { ...d, stage: { ...d.stage, dash: d.stage.dash, tick: d.stage.tick } }, f, "place", SW, SH, sScale * dpr, false);
+    fig.append(c);
+    const cap = document.createElement("figcaption"); cap.textContent = String(f + 1);
+    fig.append(cap);
+    strip.append(fig);
+  });
+  live.push({ d, canvas: card.querySelector(".stage") });
+}
+
+function fit(l) {
+  const r = l.canvas.getBoundingClientRect();
+  const scale = Math.max(2, Math.min(l.d.scale, Math.floor((r.height * 0.7) / l.d.H)));
+  l.sc = scale * dpr;
+  l.canvas.width = Math.round(r.width * dpr); l.canvas.height = Math.round(r.height * dpr);
+  l.SW = Math.ceil(l.canvas.width / l.sc); l.SH = Math.ceil(l.canvas.height / l.sc);
+}
+live.forEach(fit);
+addEventListener("resize", () => live.forEach(fit));
+
+document.querySelectorAll(".mode button").forEach(b => b.addEventListener("click", () => {
+  mode = b.dataset.mode;
+  document.querySelectorAll(".mode button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+}));
+
+const t0 = performance.now();
+function tick(now) {
+  for (const [i, l] of live.entries()) {
+    // rAF timestamps can precede t0 on the first frame, so clamp to keep the cycle index non-negative.
+    const step = Math.max(0, Math.floor((now - t0) / 1000 * l.d.fps));
+    const every = Math.round(l.d.fps * 3.2), phase = (step + i * 7) % every;
+    renderStage(l.canvas.getContext("2d"), l.d, step, mode, l.SW, l.SH, l.sc, phase < Math.max(1, Math.round(l.d.fps / 5)));
+  }
+  window.__ready = true;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+const lcm = (a, b) => { const g = (x, y) => (y ? g(y, x % y) : x); return a * b / g(a, b); };
+/** In-place loop that repeats seamlessly: sprite cycle and ground pattern both line up. */
+window.__exportLoop = (id, SW, SH, scale) => {
+  const d = DIRS.find(x => x.id === id);
+  const period = d.stage.dash ? d.stage.dash[0] + d.stage.dash[1] : 8;
+  const c = document.createElement("canvas"); c.width = SW * scale; c.height = SH * scale;
+  const ctx = c.getContext("2d");
+  return Array.from({ length: lcm(d.N, period) }, (_, step) => {
+    renderStage(ctx, d, step, "place", SW, SH, scale, false);
+    return c.toDataURL("image/png");
+  });
+};
+/** Transparent sprite sheet: N frames side by side. */
+window.__exportSheet = (id, scale) => {
+  const d = DIRS.find(x => x.id === id);
+  const c = document.createElement("canvas"); c.width = d.W * d.N * scale; c.height = d.H * scale;
+  const ctx = c.getContext("2d");
+  d.frames.forEach(({ sprite: s }, f) => {
+    for (let y = 0; y < s.H; y++) for (let x = 0; x < s.W; x++) {
+      const col = s.px[y * s.W + x];
+      if (col) { ctx.fillStyle = col; ctx.fillRect((f * d.W + x) * scale, y * scale, scale, scale); }
+    }
+  });
+  return c.toDataURL("image/png");
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seekino 像素 A · 来回游荡</title>
+<style>
+:root {
+  --canvas: #f4f7f2; --surface: #fbfcf8; --surface-muted: #edf3ed;
+  --ink: #17312b; --ink-soft: #566b65; --ink-faint: #85938e;
+  --line: #24494026; --line-strong: #238c7861; --teal: #238c78; --teal-deep: #126b5d; --teal-wash: #eaf5f0;
+  --stage: #0c1412;
+  --display: ui-rounded, "SF Pro Rounded", "Nunito", "PingFang SC", sans-serif;
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  --mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--sans); }
+main { max-width: 1240px; margin: 0 auto; padding: 52px 40px 36px; }
+header { display: flex; justify-content: space-between; align-items: end; gap: 32px; margin-bottom: 28px; }
+.kicker { margin: 0 0 10px; color: var(--teal-deep); font: 650 .7rem/1.2 var(--mono); letter-spacing: .17em; text-transform: uppercase; }
+h1 { margin: 0; font: 600 2rem/1.25 var(--display); letter-spacing: -.02em; }
+.lede { max-width: 700px; margin: 14px 0 0; color: var(--ink-soft); font-size: .95rem; line-height: 1.7; text-wrap: pretty; }
+.back { flex: none; color: var(--teal-deep); font-size: .82rem; text-decoration: none; padding: 9px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.back:hover { border-color: var(--line-strong); background: var(--teal-wash); }
+
+.theater { border: 1px solid var(--line); border-radius: 18px; background: var(--surface); padding: 18px; }
+.stage-wrap { display: grid; place-items: center; border-radius: 12px; background: var(--stage); padding: 28px 0; overflow: hidden; }
+#stage { display: block; image-rendering: pixelated; }
+.controls { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px 24px; padding: 16px 4px 2px; }
+.phases { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.phases li { padding: 6px 11px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-faint); font-size: .8rem; transition: color .15s, background .15s, border-color .15s; }
+.phases li[data-active="true"] { color: var(--teal-deep); border-color: var(--line-strong); background: var(--teal-wash); }
+.buttons { display: flex; align-items: center; gap: 10px; }
+.buttons button, .speed button { min-height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink-soft); font: 500 .8rem/1 var(--sans); cursor: pointer; }
+.speed { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 11px; }
+.speed button { border: 0; min-height: 28px; padding: 0 11px; font-family: var(--mono); font-size: .74rem; }
+.speed button[aria-pressed="true"] { background: var(--teal-wash); color: var(--teal-deep); }
+.progress { grid-column: 1 / -1; position: relative; height: 3px; border-radius: 2px; background: var(--surface-muted); overflow: hidden; }
+.progress i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--teal); }
+.progress b { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+
+section.breakdown { margin-top: 36px; }
+h2 { margin: 0 0 6px; font: 600 1.15rem/1.3 var(--display); }
+.sub { margin: 0 0 16px; color: var(--ink-soft); font-size: .86rem; line-height: 1.7; text-wrap: pretty; }
+.poses { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.poses figure { display: grid; justify-items: center; gap: 8px; margin: 0; }
+.poses canvas { display: block; border-radius: 8px; image-rendering: pixelated; }
+.poses figcaption { color: var(--ink-soft); font-size: .74rem; }
+.poses figcaption small { display: block; color: var(--ink-faint); font: 500 .62rem/1.5 var(--mono); text-align: center; }
+.poses .arrow { align-self: center; margin-bottom: 26px; color: var(--ink-faint); font-family: var(--mono); }
+.logo-ref { display: grid; place-items: center; width: 132px; height: 114px; border: 1px dashed var(--line-strong); border-radius: 8px; background: var(--surface); }
+.logo-ref svg { width: 96px; height: 96px; }
+
+.files { margin-top: 36px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.files div { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.files b { display: block; margin-bottom: 4px; font-size: .84rem; font-weight: 600; }
+.files code { color: var(--teal-deep); font: 500 .72rem/1.5 var(--mono); overflow-wrap: anywhere; }
+.files p { margin: 6px 0 0; color: var(--ink-soft); font-size: .78rem; line-height: 1.6; }
+footer { display: flex; justify-content: space-between; gap: 20px; margin-top: 28px; color: var(--ink-faint); font: 500 .66rem/1.4 var(--mono); }
+@media (max-width: 900px) { header { flex-direction: column; align-items: start; } .files { grid-template-columns: 1fr; } .controls { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <p class="kicker">Seekino · Mascot · A 终端团子</p>
+      <h1>来回游荡：向左走，转身看屏幕，再向右走</h1>
+      <p class="lede">在 A 的侧面造型上补了三个姿势：3/4 侧、logo 同款正面和正中过渡帧，转身时以脚为轴不挪位。两端都停在 logo 同款正面，先左右看一眼，眨眼，小跳一下，然后转向另一边继续走。</p>
+    </div>
+    <a class="back" href="Seekino Pixel Walk · 三方向.html">← 三方向原稿（A / B / C 都在）</a>
+  </header>
+
+  <section class="theater" aria-label="来回游荡动画">
+    <div class="stage-wrap"><canvas id="stage" aria-label="Seekino 像素吉祥物来回游荡"></canvas></div>
+    <div class="controls">
+      <ol class="phases" id="phases">
+        <li data-phase="walkL">← 向左走</li>
+        <li data-phase="turn">转身</li>
+        <li data-phase="look">正对屏幕</li>
+        <li data-phase="walkR">向右走 →</li>
+      </ol>
+      <div class="buttons">
+        <button type="button" id="toggle">暂停</button>
+        <div class="speed" role="group" aria-label="速度">
+          <button type="button" data-speed="0.5">0.5×</button>
+          <button type="button" data-speed="1">1×</button>
+          <button type="button" data-speed="2">2×</button>
+        </div>
+      </div>
+      <div class="progress" id="progress"><i id="bar"></i></div>
+    </div>
+  </section>
+
+  <section class="breakdown">
+    <h2>转身分解</h2>
+    <p class="sub">从左往右是一次完整的转身：朝左 → 朝右。动画里两端都停在第三格「正面 · logo」，镜像姿势只在转身途中闪过一帧。</p>
+    <div class="poses" id="poses"></div>
+  </section>
+
+  <section class="files">
+    <div><b>循环 GIF</b><code>out/wander-a.gif</code><p>完整一圈 152 帧，10 fps，约 15 秒，无缝循环。</p></div>
+    <div><b>透明 sprite sheet</b><code>out/sheet-a-wander.png</code><p>4 帧走路 + 3/4 侧 + 正面 + 正中，8 倍放大；朝右的姿势在代码里水平镜像。</p></div>
+    <div><b>三方向原稿</b><code>Seekino Pixel Walk · 三方向.html</code><p>A / B / C 原样保留，没有改动。</p></div>
+  </section>
+
+  <footer><span>色板沿用 assets/mascot：body #74c5ba · shade #349489 · belly #fcfaf1 · ink #0b3b33 · stage #0c1412</span><span>Created by Huashu-Design</span></footer>
+</main>
+
+<script>
+const PAL = { ink: "#0b3b33", body: "#74c5ba", shade: "#349489", belly: "#fcfaf1" };
+const STAGE = { bg: "#0c1412", ground: "#1f2e2a", shadow: "#080d0c" };
+const KEY = { b: PAL.body, s: PAL.shade, w: PAL.belly, e: PAL.ink };
+
+// All poses face left. b body · s shade · w belly · e mouth · o eye (blinks, can look ±1px).
+// Legs: [x, colour, gait offset]; far legs are drawn first so the near legs overlap them.
+const POSES = {
+  side: {
+    rows: [
+      "..........b............",
+      ".........bb............",
+      "....bbbbbbbbb........bb",
+      "..bbbbbbbbbbbbbb....bbb",
+      ".bbbbbbbbbbbbbbbbs.bbb.",
+      "bbobbbbbbbbbbbbbbssbb..",
+      "bbbbbbbbbbbbbbbbbssb...",
+      "eeeeewwbbbbbbbbbbssbb..",
+      "wwwwwwwwwwwbbbbbss..bb.",
+      ".wwwwwwwwswwwwwss....bb",
+      "..wwwwwwwwsswwss.......",
+    ],
+    legs: [[5, "s", 2], [14, "s", 0], [2, "w", 0], [11, "w", 2]], anchor: 8, shadow: 14,
+  },
+  q34: {
+    rows: [
+      "..........b.........",
+      ".........bb......bb.",
+      "....bbbbbbbbb...bbb.",
+      "..bbbbbbbbbbbbb.bbb.",
+      ".bbbbbbbbbbbbbbbbb..",
+      "bbobbbbbbobbbbbbbs..",
+      "bbbbbbbbbbbbbbbbss..",
+      "eeeeeeeewwwwbbbbssb.",
+      "wwwwwwwwwwwwwbbss..b",
+      ".wwwwwwwwwwwwwss....",
+      "..wwwwwwwwwwwss.....",
+    ],
+    legs: [[6, "s", 2], [12, "s", 0], [3, "w", 0], [10, "w", 2]], anchor: 8, shadow: 13,
+  },
+  // Same reading as seekino-logo.svg: both eyes, a straight mouth between them, dorsal fin and tail top-right.
+  front: {
+    rows: [
+      "...............b..",
+      "..............bb..",
+      ".........b...bbb..",
+      "........bb..bbbb..",
+      "....bbbbbbbbbbbb..",
+      "..bbbbbbbbbbbbbbb.",
+      ".bbbobbbbbbbbbbbs.",
+      ".bbwwwwwwwwobbbbs.",
+      "bwwwwwwwwwwwwbbss.",
+      "bwwweeeeeeeewwbssb",
+      ".wwwwwwwwwwwwwbss.",
+      ".wwwwwwwwwwwwwss..",
+      "..wwwwwwwwwwwss...",
+    ],
+    legs: [[4, "w", 0], [10, "w", 2]], anchor: 8, shadow: 12,
+  },
+  // Dead-centre in-between: tail hidden behind the body, shown for one frame while turning.
+  center: {
+    rows: [
+      "........b........",
+      ".......bbb.......",
+      "...bbbbbbbbbbb...",
+      "..bbbbbbbbbbbbb..",
+      ".bbbbbbbbbbbbbbs.",
+      ".bbbobbbbbbbobbs.",
+      ".bbwwwwwwwwwwwbs.",
+      "bwwwwwwwwwwwwwwsb",
+      "bwwweeeeeeeeewwsb",
+      ".wwwwwwwwwwwwwws.",
+      "..wwwwwwwwwwwws..",
+    ],
+    legs: [[4, "w", 0], [11, "w", 2]], anchor: 8, shadow: 12,
+  },
+};
+for (const [name, p] of Object.entries(POSES)) {
+  if (new Set(p.rows.map(r => r.length)).size !== 1) console.error(`pose ${name} has ragged rows`);
+}
+
+const SPRITE_H = 16, BODY_BOTTOM = 13;
+
+/**
+ * Foot offset for frame f of an N-frame cycle. Half the cycle is stance: the foot slides back
+ * exactly v px per frame while the body moves forward v px, so it stays planted on the ground.
+ */
+function gait(f, N, v, lift, offset) {
+  const half = N / 2, A = half * v / 2, l = (f + offset) % N;
+  if (l <= half) return { dx: Math.round(-A + l * v), dy: 0 };
+  const j = l - half;
+  return { dx: Math.round(A - j * v), dy: -Math.round(lift * Math.sin(Math.PI * j / half)) };
+}
+
+const spriteCache = new Map();
+function buildSprite(spec) {
+  const key = `${spec.pose}|${spec.gait}|${spec.bob}|${spec.look}|${spec.blink}`;
+  if (spriteCache.has(key)) return spriteCache.get(key);
+  const p = POSES[spec.pose], W = p.rows[0].length, px = new Array(W * SPRITE_H).fill(null);
+  const set = (x, y, c) => { if (x >= 0 && x < W && y >= 0 && y < SPRITE_H) px[y * W + x] = c; };
+  for (const [x, c, o] of p.legs) {
+    const g = spec.gait == null ? { dx: 0, dy: 0 } : gait(spec.gait, 4, 1, 1, o);
+    for (let j = 0; j < 3; j++) for (let i = 0; i < 2; i++) set(x + g.dx + i, BODY_BOTTOM + g.dy + j, KEY[c]);
+  }
+  const top = BODY_BOTTOM - (p.rows.length - 1) + (spec.bob || 0), eyes = [];
+  p.rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === ".") return;
+    if (ch === "o") { set(x, top + y, PAL.body); eyes.push([x, top + y]); return; }
+    set(x, top + y, KEY[ch]);
+  }));
+  if (!spec.blink) for (const [x, y] of eyes) set(x + (spec.look || 0), y, PAL.ink);
+  const sprite = { W, px };
+  spriteCache.set(key, sprite);
+  return sprite;
+}
+
+// Loop layout in sprite pixels. X is the foot anchor; the mascot walks between XL and XR.
+const FPS = 10, D = 48, XL = 18, XR = XL + D, SW = 85, SH = 30, GROUND = 24;
+const HOLD_LOOK = [0, 0, 0, -1, -1, -1, -1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+const HOLD_BLINK = 14, HOLD_LIFT = { 16: -1, 17: -2, 18: -1 };
+
+function buildTimeline() {
+  const t = [];
+  const walk = (from, dir, phase) => {
+    for (let i = 0; i < D; i++) {
+      const f = i % 4;
+      t.push({ phase, pose: "side", flip: dir > 0, X: from + dir * (i + 1), gait: f, bob: f % 2 ? -1 : 0, blink: i === 20 });
+    }
+  };
+  const still = (pose, flip, X, n) => { for (let i = 0; i < n; i++) t.push({ phase: "turn", pose, flip, X }); };
+  const hold = X => HOLD_LOOK.forEach((look, i) => t.push({
+    phase: "look", pose: "front", flip: false, X, look, blink: i === HOLD_BLINK, lift: HOLD_LIFT[i] || 0,
+  }));
+  walk(XR, -1, "walkL");
+  still("q34", false, XL, 3); hold(XL); still("center", false, XL, 1); still("front", true, XL, 1); still("q34", true, XL, 3);
+  walk(XL, 1, "walkR");
+  still("q34", true, XR, 3); still("front", true, XR, 1); still("center", false, XR, 1); hold(XR); still("q34", false, XR, 3);
+  return t;
+}
+const T = buildTimeline();
+
+/** Paint one frame; sc is device pixels per sprite pixel. */
+function drawScene(ctx, spec, { sc, w, h, ground, X = spec.X, transparent = false }) {
+  const fill = (x, y, cw = 1, ch = 1) => ctx.fillRect(x * sc, y * sc, cw * sc, ch * sc);
+  const p = POSES[spec.pose], { W, px } = buildSprite(spec), lift = spec.lift || 0;
+  ctx.clearRect(0, 0, w * sc, h * sc);
+  if (!transparent) {
+    ctx.fillStyle = STAGE.bg; fill(0, 0, w, h);
+    ctx.fillStyle = STAGE.ground;
+    for (let x = 0; x < w; x += 4) fill(x, ground, 2, 1);
+    const sw = p.shadow + 2 * lift, sx = X - Math.floor(sw / 2);
+    ctx.fillStyle = STAGE.shadow;
+    fill(sx, ground, sw, 1); fill(sx + 2, ground + 1, sw - 4, 1);
+  }
+  const x0 = X - (spec.flip ? W - 1 - p.anchor : p.anchor), y0 = ground - SPRITE_H + lift;
+  for (let y = 0; y < SPRITE_H; y++) for (let x = 0; x < W; x++) {
+    const c = px[y * W + x];
+    if (c) { ctx.fillStyle = c; fill(x0 + (spec.flip ? W - 1 - x : x), y0 + y); }
+  }
+}
+
+const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+const stage = document.getElementById("stage"), wrap = stage.parentElement, sctx = stage.getContext("2d");
+let sc = 1, dirty = true;
+function fit() {
+  sc = Math.max(2, Math.floor((wrap.clientWidth - 48) * dpr / SW));
+  stage.width = SW * sc; stage.height = SH * sc;
+  stage.style.width = `${SW * sc / dpr}px`; stage.style.height = `${SH * sc / dpr}px`;
+  dirty = true;
+}
+fit();
+addEventListener("resize", fit);
+
+// Phase boundaries on the progress bar.
+const progress = document.getElementById("progress"), bar = document.getElementById("bar");
+T.forEach((f, i) => {
+  if (i && T[i - 1].phase !== f.phase) {
+    const b = document.createElement("b"); b.style.left = `${i / T.length * 100}%`; progress.append(b);
+  }
+});
+const phaseItems = [...document.querySelectorAll("#phases li")];
+
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let playing = !reduced, idx = reduced ? T.findIndex(f => f.phase === "look") : 0, shown = -1, acc = 0, last = null;
+let speed = Number(localStorage.getItem("seekino-wander-speed")) || 1;
+const toggle = document.getElementById("toggle");
+const syncToggle = () => { toggle.textContent = playing ? "暂停" : "播放"; };
+syncToggle();
+toggle.addEventListener("click", () => { playing = !playing; syncToggle(); });
+const speedButtons = [...document.querySelectorAll(".speed button")];
+const syncSpeed = () => speedButtons.forEach(b => b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === speed)));
+syncSpeed();
+speedButtons.forEach(b => b.addEventListener("click", () => {
+  speed = Number(b.dataset.speed); localStorage.setItem("seekino-wander-speed", String(speed)); syncSpeed();
+}));
+
+function tick(now) {
+  if (last == null) last = now;
+  const dt = Math.min(0.25, Math.max(0, now - last) / 1000);
+  last = now;
+  if (playing) {
+    acc += dt * FPS * speed;
+    while (acc >= 1) { acc -= 1; idx = (idx + 1) % T.length; }
+  }
+  if (idx !== shown || dirty) {
+    const f = T[idx];
+    drawScene(sctx, f, { sc, w: SW, h: SH, ground: GROUND });
+    phaseItems.forEach(li => li.dataset.active = String(li.dataset.phase === f.phase));
+    bar.style.width = `${(idx + 1) / T.length * 100}%`;
+    shown = idx; dirty = false;
+  }
+  window.__ready = true;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// Turn breakdown tiles, left-facing to right-facing.
+const TURN = [
+  ["side", false, "侧面", "朝左走"], ["q34", false, "3/4 侧", "转身"], ["front", false, "正面 · logo", "停留姿势"],
+  ["center", false, "正中", "过渡 1 帧"], ["front", true, "正面镜像", "过渡 1 帧"], ["q34", true, "3/4 侧", "转身"], ["side", true, "侧面", "朝右走"],
+];
+const posesEl = document.getElementById("poses"), TILE_W = 27, TILE_H = 20, TILE_SC = 4;
+TURN.forEach(([pose, flip, label, hint], i) => {
+  if (i) { const a = document.createElement("span"); a.className = "arrow"; a.textContent = "→"; posesEl.append(a); }
+  const fig = document.createElement("figure"), c = document.createElement("canvas");
+  c.width = TILE_W * TILE_SC * dpr; c.height = TILE_H * TILE_SC * dpr;
+  c.style.width = `${TILE_W * TILE_SC}px`; c.style.height = `${TILE_H * TILE_SC}px`;
+  const p = POSES[pose], W = p.rows[0].length, x0 = Math.floor((TILE_W - W) / 2);
+  const spec = { pose, flip };
+  drawScene(c.getContext("2d"), spec, { sc: TILE_SC * dpr, w: TILE_W, h: TILE_H, ground: TILE_H - 3, X: x0 + (flip ? W - 1 - p.anchor : p.anchor) });
+  fig.append(c);
+  const cap = document.createElement("figcaption"); cap.innerHTML = `${label}<small>${hint}</small>`;
+  fig.append(cap); posesEl.append(fig);
+});
+// Reference: the vector logo the front pose is modelled on (geometry from assets/mascot/seekino-logo.svg).
+const ref = document.createElement("figure");
+ref.innerHTML = `<div class="logo-ref"><svg viewBox="0 0 256 256" aria-label="seekino-logo.svg"><defs><clipPath id="ref-clip"><path d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z"/></clipPath></defs><g fill="none" stroke="#0b3b33" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><g fill="#fcfaf1"><rect x="63" y="197" width="19" height="26" rx="8.5"/><rect x="157" y="199" width="19" height="29" rx="8.5"/></g><path fill="#74c5ba" d="M164 92C174 62 198 36 220 29C230 50 227 80 214 101L233 113C225 119 217 122 208 125Z"/><path fill="#74c5ba" d="M34 134C26 137 19 142 14 148C20 153 27 157 33 159Z"/><path fill="#74c5ba" d="M90 88C104 70 120 55 136 48C137 61 140 74 146 87Z"/><path fill="#74c5ba" stroke="none" d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z"/><g clip-path="url(#ref-clip)" stroke="none"><path fill="#349489" d="M196 122C212 152 210 192 186 230H240V110Z"/><path fill="#fcfaf1" d="M18 134C48 114 108 108 154 120C186 130 202 168 192 232H18Z"/></g><path d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z"/><path fill="#74c5ba" d="M204 138C216 142 228 150 234 157C226 161 214 162 205 162"/><g fill="#0b3b33" stroke="none"><circle cx="65" cy="113" r="6"/><circle cx="155" cy="125" r="6"/></g><path stroke-width="4.5" d="M61 130L151 140"/></g></svg></div><figcaption>参照 logo<small>seekino-logo.svg</small></figcaption>`;
+posesEl.append(ref);
+
+/** Every loop frame as PNG data URLs; the loop is seamless at FPS. */
+window.__exportLoop = scale => {
+  const c = document.createElement("canvas"); c.width = SW * scale; c.height = SH * scale;
+  const ctx = c.getContext("2d");
+  return T.map(f => { drawScene(ctx, f, { sc: scale, w: SW, h: SH, ground: GROUND }); return c.toDataURL("image/png"); });
+};
+/** Transparent sheet: 4 walk frames, then 3/4, front and centre. Right-facing poses are mirrors. */
+window.__exportSheet = scale => {
+  const cells = [0, 1, 2, 3].map(g => ({ pose: "side", gait: g, bob: g % 2 ? -1 : 0 }))
+    .concat([{ pose: "q34" }, { pose: "front" }, { pose: "center" }]);
+  const CW = 24, c = document.createElement("canvas");
+  c.width = CW * cells.length * scale; c.height = SPRITE_H * scale;
+  const ctx = c.getContext("2d");
+  cells.forEach((spec, i) => {
+    const { W, px } = buildSprite(spec), ox = i * CW + Math.floor((CW - W) / 2);
+    for (let y = 0; y < SPRITE_H; y++) for (let x = 0; x < W; x++) {
+      const col = px[y * W + x];
+      if (col) { ctx.fillStyle = col; ctx.fillRect((ox + x) * scale, y * scale, scale, scale); }
+    }
+  });
+  return c.toDataURL("image/png");
+};
+window.__timelineLength = T.length;
+</script>
+</body>
+</html>

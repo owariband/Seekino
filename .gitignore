@@ -8,6 +8,7 @@ docs/ui-design/
 /engines/*
 /assets/diagrams/*
 !/assets/diagrams/anivag-open-source-architecture.png
+/assets/seekino-mascot-pixel/out/
 /infographic/
 /docs/*.dataflow.json
 /docs/*.visual-check.*
