@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 
 import type { AgentMessageTiming, AgentMessageView, AnswerPhase, DisplayMode } from "../../api/contracts";
 import { formatTimecode as formatDuration } from "../../shared/format";
-import { Mascot, type MascotMood } from "../../shared/Mascot";
+import type { KinoReaction } from "../../shared/kino/Kino";
+import { ProgressMascot } from "./ProgressMascot";
 import type { AgentProgressEvent } from "./useAgentConversation";
 import { useI18n } from "../../app/i18n";
 import styles from "./search.module.css";
@@ -13,13 +14,6 @@ const phases: Record<AnswerPhase, { label: string; detail: string; icon: typeof 
   RETRIEVING: { label: "查找资料", detail: "查找回答问题所需的资料。", icon: ScanSearch },
   EVALUATING: { label: "核验资料", detail: "检查资料是否支持回答。", icon: ShieldCheck },
   RESPONDING: { label: "生成回答", detail: "整理回答和已查到的资料。", icon: MessageSquareText },
-};
-
-const phaseMoods: Record<AnswerPhase, MascotMood> = {
-  QUEUED: "seek",
-  RETRIEVING: "seek",
-  EVALUATING: "puzzled",
-  RESPONDING: "swim",
 };
 
 type VisibleStage = {
@@ -32,10 +26,25 @@ function latestTiming(message: AgentMessageView, steps: AgentProgressEvent[]): A
   return message.timing ?? [...steps].reverse().find((step) => step.timing)?.timing ?? null;
 }
 
-export function AgentProgress({ message, steps, displayMode = "release" }: { message: AgentMessageView; steps: AgentProgressEvent[]; displayMode?: DisplayMode }) {
+export function AgentProgress({ message, steps, displayMode = "release", kinoHost = true, kinoAwake = false }: {
+  message: AgentMessageView;
+  steps: AgentProgressEvent[];
+  displayMode?: DisplayMode;
+  /** Kino perches on the latest assistant bubble only; it acts out the answer here, then sleeps on it. */
+  kinoHost?: boolean;
+  /** A new question is on its way: wake a sleeping Kino before it leaps to the next bubble. */
+  kinoAwake?: boolean;
+}) {
   const { t } = useI18n();
   const processing = message.status === "PROCESSING";
   const failed = message.status === "FAILED";
+  // When a live answer settles Kino cheers (or startles on failure), then falls asleep on this bubble.
+  const [wasProcessing, setWasProcessing] = useState(processing);
+  const [farewell, setFarewell] = useState<KinoReaction | null>(null);
+  if (wasProcessing !== processing) {
+    setWasProcessing(processing);
+    setFarewell(processing ? null : failed ? "oops" : "happy");
+  }
   const timing = latestTiming(message, steps);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -68,23 +77,27 @@ export function AgentProgress({ message, steps, displayMode = "release" }: { mes
     });
   }
   const currentPhase = message.phase ?? visibleSteps.at(-1)?.phase ?? steps.at(-1)?.phase;
+  const kino = kinoHost
+    ? <ProgressMascot phase={processing ? currentPhase : null} settled={!processing} awake={kinoAwake} arriving={processing}
+      farewell={farewell} onFarewellDone={() => setFarewell(null)} />
+    : null;
   const status = failed ? t("回答未完成") : processing ? displayMode === "debug" && currentPhase ? t(phases[currentPhase].label) : t("处理中") : t("已完成");
   const timingStatus = elapsedMs === null
     ? status
     : `${status} · ${processing ? t("已用") : t("总耗时")} ${formatDuration(elapsedMs)}`;
 
-  // The mascot only accompanies live or failed answers; finished history stays quiet.
-  const mood: MascotMood | null = failed ? "oops" : processing ? phaseMoods[currentPhase ?? "QUEUED"] : null;
-  const mascot = mood ? <Mascot className={styles.progressMascot} mood={mood} size={32} /> : null;
-
   if (displayMode !== "debug") {
-    return <div className={styles.progressCard} role="status" aria-label={t("回答状态")} data-live={Boolean(mascot)}>{mascot}<p className={failed ? styles.messageError : styles.progressNote}>{timingStatus}</p></div>;
+    return <>
+      {kino}
+      <div className={styles.progressCard} role="status" aria-label={t("回答状态")}><p className={failed ? styles.messageError : styles.progressNote}>{timingStatus}</p></div>
+    </>;
   }
 
-  return (
+  return <>
+    {kino}
     <details className={styles.progressCard} open={processing}>
       <summary aria-label={t("回答过程")}>
-        {mascot ?? <Check size={15} aria-hidden="true" />}
+        {!processing && !failed ? <Check size={15} aria-hidden="true" /> : null}
         <span>{t("回答过程")}</span><small className={failed ? styles.messageError : undefined}>{timingStatus}</small>
         <ChevronDown size={14} className={styles.progressChevron} aria-hidden="true" />
       </summary>
@@ -106,5 +119,5 @@ export function AgentProgress({ message, steps, displayMode = "release" }: { mes
       ) : <p className={styles.progressNote}>{processing ? t("正在同步执行状态…") : failed ? t("本次回答未完成。") : t("历史消息仅保留最终状态，完整执行步骤暂不可回放。")}</p>}
       {message.searchResult ? <p className={styles.progressNote}>{t("{videos} 个视频 · {clips} 段候选", { videos: message.searchResult.searchedVideoIds.length, clips: message.searchResult.hits.length })}{message.searchResult.partial ? t(" · 结果有资料限制") : ""}</p> : null}
     </details>
-  );
+  </>;
 }

@@ -26,7 +26,7 @@ src/
 ├── app/       # 路由、主题、工作区上下文与全局壳
 ├── api/       # HTTP 边界与最小前端契约
 ├── features/  # 按 search/library/uploads/tasks/settings 纵向组织
-├── shared/    # 真正跨功能复用的格式化与小型 UI
+├── shared/    # 真正跨功能复用的格式化与小型 UI；kino/ 为聊天里的像素鲸鲨 Kino（见 shared/kino/README.md）
 ├── styles/    # 全局 token 与基础排版
 └── test/      # 单测环境
 ```

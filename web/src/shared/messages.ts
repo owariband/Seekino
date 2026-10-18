@@ -551,6 +551,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "移除 {value0}": "Remove {value0}",
   "待发送图片": "Images to send",
   "正在连接助手…": "Connecting to the assistant…",
+  "戳一戳 Kino": "Poke Kino",
   "正在恢复会话…": "Restoring conversation…",
   "没有检索到可展示的视频片段，试试换个描述。": "No video clips were found. Try a different description.",
   "检索到了候选片段，但本次回答未附带可播放视频，请重试。": "Candidate clips were found, but this response did not include playable video. Please try again.",

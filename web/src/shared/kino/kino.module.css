@@ -1,0 +1,35 @@
+.kino {
+  --pixel-mascot-body: var(--brand, #74c5ba);
+  --pixel-mascot-shade: var(--brand-shade, #349489);
+  --pixel-mascot-belly: #fcfaf1;
+  --pixel-mascot-ink: var(--brand-ink, #0b3b33);
+  --pixel-mascot-shadow: var(--brand-ink, #0b3b33);
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.kino[data-delayed] { animation: kino-appear .2s ease-out .3s both; }
+/* Frames step at 15 fps; a short linear tween between them keeps a long leap readable. */
+.kino[data-leaping] { position: relative; z-index: 3; transition: transform 66ms linear; will-change: transform; }
+
+.poke {
+  display: block;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.poke:focus-visible { outline: 2px solid var(--brand-shade, #349489); outline-offset: 4px; }
+
+@keyframes kino-appear { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .kino[data-delayed] { animation: none; }
+}

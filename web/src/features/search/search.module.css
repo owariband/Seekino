@@ -97,10 +97,7 @@
 .progressCard summary { display: flex; min-height: 58px; align-items: center; gap: 10px; padding: 17px 20px; cursor: pointer; list-style: none; font-size: .85rem; }
 .progressCard summary::-webkit-details-marker { display: none; }
 .progressCard summary > svg:first-child { flex: 0 0 auto; color: var(--ink-faint); }
-.progressCard[data-live="true"] { display: flex; align-items: center; gap: 4px; padding-left: 14px; }
-.progressCard[data-live="true"] > p { padding-left: 4px; }
-.progressMascot { flex: 0 0 auto; }
-.embeddedPage .progressCard[data-live="true"] { padding-left: 0; }
+.progressWalkway { position: relative; z-index: 2; height: 56px; pointer-events: none; user-select: none; }
 .progressCard small { margin-left: auto; color: var(--ink-faint); font-size: .73rem; }
 .progressChevron { flex: 0 0 auto; color: var(--ink-faint); }
 .progressCard[open] .progressChevron { transform: rotate(180deg); }

@@ -1,4 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -18,18 +19,85 @@ const steps: AgentProgressEvent[] = ["RETRIEVING", "EVALUATING", "RETRIEVING", "
 }));
 
 describe("Agent execution timeline", () => {
-  it("pairs a live answer with the mascot mood for its phase and drops it once finished", () => {
-    const mood = () => document.querySelector("svg[data-mood]")?.getAttribute("data-mood") ?? null;
-    const view = render(<AgentProgress message={{ ...message, phase: "RETRIEVING" }} steps={[]} />);
-    expect(mood()).toBe("seek");
-    view.rerender(<AgentProgress message={message} steps={[]} />);
-    expect(mood()).toBe("puzzled");
-    view.rerender(<AgentProgress message={{ ...message, phase: "RESPONDING" }} steps={[]} />);
-    expect(mood()).toBe("swim");
-    view.rerender(<AgentProgress message={{ ...message, status: "FAILED", phase: null }} steps={[]} />);
-    expect(mood()).toBe("oops");
-    view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
-    expect(mood()).toBeNull();
+  it.each(["release", "debug"] as const)("keeps Kino above the card, reacts to the outcome, then sleeps there in %s", (displayMode) => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<AgentProgress displayMode={displayMode} message={message} steps={[]} />);
+      const walker = view.container.querySelector("[data-pixel-mascot]")!;
+      const card = walker.nextElementSibling!;
+      const kinoState = () => view.container.querySelector("[data-kino]")?.getAttribute("data-kino-state");
+      expect(walker).toHaveAttribute("aria-hidden", "true");
+      expect(card.querySelector("svg[data-mood]")).toBeNull();
+      expect(kinoState()).toBe("think");
+      view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message, phase: "RESPONDING" }} steps={[]} />);
+      expect(view.container.querySelector("[data-pixel-mascot]")).toBe(walker);
+      expect(kinoState()).toBe("loading");
+      view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message, status: "FAILED", phase: null }} steps={[]} />);
+      expect(view.container.querySelector("[data-pixel-mascot]")).toBe(walker);
+      expect(kinoState()).toBe("oops");
+      act(() => { vi.advanceTimersByTime(6_000); });
+      expect(view.container.querySelector("[data-pixel-mascot]")).toBe(walker);
+      expect(kinoState()).toBe("sleep");
+      // Another bubble took Kino over: this one stays empty.
+      view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message, status: "FAILED", phase: null }} steps={[]} kinoHost={false} />);
+      expect(view.container.querySelector("[data-pixel-mascot]")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cheers once when a live answer completes, then falls asleep on the bubble", () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<AgentProgress message={message} steps={[]} />);
+      view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
+      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "happy");
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "sleep");
+      view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} kinoAwake />);
+      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "look");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sleeps without a reaction on an answer that was already settled", () => {
+    const view = render(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
+    expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "sleep");
+  });
+
+  // The app renders inside StrictMode, which runs mount effects twice in development.
+  it.each([false, true])("leaps from the previous bubble onto a new turn's bubble, then gets to work (strict mode: %s)", (strict) => {
+    vi.useFakeTimers();
+    try {
+      const settled = { ...message, messageId: "previous", status: "COMPLETED" as const, phase: null };
+      const live = { ...message, messageId: "next" };
+      const Thread = ({ next }: { next: boolean }) => <div data-kino-stage="">
+        <article data-id="previous"><AgentProgress message={settled} steps={[]} kinoHost={!next} /></article>
+        {next ? <article data-id="next"><AgentProgress message={live} steps={[]} kinoHost /></article> : null}
+      </div>;
+      const view = render(<Thread next={false} />, { wrapper: strict ? StrictMode : undefined });
+      const kinoIn = (id: string) => view.container.querySelector(`[data-id="${id}"] [data-kino]`);
+      expect(kinoIn("previous")).toHaveAttribute("data-kino-state", "sleep");
+
+      view.rerender(<Thread next />);
+      expect(kinoIn("previous")).toBeNull();
+      const arriving = kinoIn("next")!;
+      expect(arriving).toHaveAttribute("data-kino-state", "leap");
+      // It is still drawn on the old perch, getting up from its nap before the jump.
+      expect(arriving).toHaveAttribute("data-leaping");
+      expect(arriving).toHaveAttribute("data-pose", "side");
+      let leapt = false;
+      for (let i = 0; i < 40 && kinoIn("next")?.getAttribute("data-kino-state") === "leap"; i++) {
+        act(() => { vi.advanceTimersByTime(70); });
+        leapt ||= kinoIn("next")?.hasAttribute("data-leaping") === true && (kinoIn("next") as SVGElement).style.transform !== "";
+      }
+      expect(leapt).toBe(true);
+      expect(kinoIn("next")).toHaveAttribute("data-kino-state", "think");
+      expect(kinoIn("next")).not.toHaveAttribute("data-leaping");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows only generic status and persisted total duration in release", () => {

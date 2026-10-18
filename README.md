@@ -7,9 +7,14 @@
 <p align="center"><strong>边看边问，一句话找回视频里的那一刻。</strong></p>
 
 <p align="center">
+  <a href="README.en.md">English</a> · 简体中文
+</p>
+
+<p align="center">
   <a href="#实机截图">实机截图</a> ·
   <a href="#实际使用">实际使用</a> ·
   <a href="#能做什么">能做什么</a> ·
+  <a href="#认识-kino">认识 Kino</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#仓库与文档入口">开发文档</a>
 </p>
@@ -89,6 +94,16 @@ Seekino（原 AniVAG）是一个可自托管的视频观看与检索助手。导
 媒体、业务事实和索引保存在自己的运行环境，模型来源由自己的配置管理。使用远程模型时，相应音视频、帧或文本会发送到配置的供应商。
 
 项目仍在开发中。检索结果提供 Chunk 或经审核事件的时间范围，当前画面的按需理解也可抽取暂停位置附近的原视频帧；回答和片段仍应结合原片核对。已确认问题和验证范围见 [项目检查记录](docs/dev/check_log.md)。
+
+## 认识 Kino
+
+Kino 是住在聊天里的像素鲸鲨，站在最新一条回答气泡的上方，表现助手正在做什么：检索片段时来回奔跑，核验资料时抬头盯着问号，生成回答时顶着三个点原地走；回答完成会开心地连跳两下（失败时会吓一跳、冒出「!」和一滴汗），然后蜷在这条气泡上睡着。发出下一个问题时它会醒来，从睡觉的位置跳下，落到新的气泡上继续工作。
+
+![Kino 的动作：idle、wander、look、jump、leap、happy、think、oops、loading、run、sleep](assets/mascot/kino/kino-moves.svg)
+
+空对话时 Kino 安静地看着你；鼠标移上去它会转过来看你，戳一下会跳起来或欢呼，连戳五下会被吓到。页面放着不动一会儿，它就趴下睡觉，你一回来它就爬起来。
+
+Kino 是一个小状态机，不是 AI 模型；它完全由代码逐像素绘制，不需要图片文件，并遵守系统的「减少动态效果」设置。开发说明见 [web/src/shared/kino/README.md](web/src/shared/kino/README.md)（英文）。
 
 ## 使用流程
 
@@ -305,11 +320,11 @@ anivag/
 ├── engine/                     # parsev2、rag 与冻结 parsev1
 ├── agent/                      # Chat、实时理解、Parse 与 Context Canvas
 ├── server/                     # HTTP/CLI、持久化与可靠执行
-├── web/                        # 正式 React + TypeScript + Vite 前端
+├── web/                        # 正式 React + TypeScript + Vite 前端（Kino 位于 web/src/shared/kino）
 ├── scripts/                    # 本地启动与受控迁移工具
 ├── tests/ / evals/              # 自动化测试、手动诊断与评测
 ├── deploy/ / compose.yaml      # 本地基础设施与部署说明
-├── assets/                     # 正式 Logo、实机截图与架构图
+├── assets/                     # 正式 Logo、Kino 动作表、实机截图与架构图
 ├── docs/                       # 契约、设计、迁移与检查记录
 └── outputs/                    # 本地媒体、日志与运行产物，不进入 Git
 ```
@@ -318,6 +333,6 @@ anivag/
 
 - [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](agent/design/utils_context_canvas.md)
 - [当前播放位置理解实现](agent/chat/realtime_understanding/runtime.py) · [Server](server/README.md)
-- [Web](web/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
+- [Web](web/README.md) · [Kino](web/src/shared/kino/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
 - [模型配置](docs/model-config.md) · [模型 Token 用量](docs/parse-model-usage.md) · [用户/Tenant](server/report_docs/user-tenant-handoff-20261010.md)
 - [开发部署](deploy/README.md) · [项目检查记录](docs/dev/check_log.md)

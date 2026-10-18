@@ -11,7 +11,7 @@ import { createAgentConversation, deleteAgentConversation, errorMessage, getAgen
 import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference } from "../../api/contracts";
 import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
-import { Mascot } from "../../shared/Mascot";
+import { Kino } from "../../shared/kino/Kino";
 import { useAuth } from "../auth/AuthProvider";
 import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
@@ -273,6 +273,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     return () => window.removeEventListener(FOCUS_SEARCH_EVENT, focus);
   }, [embedded]);
   const { conversationId, messages, progress, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
+  const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
+  // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
+  const kinoHostId = messages.findLast((message) => message.role === "ASSISTANT")?.messageId ?? null;
   const attachments = useAgentAttachments(conversationId);
   const draftContextRef = useRef({ conversationId, identityKey: identityStorageKey("agent-draft") });
   draftContextRef.current = { conversationId, identityKey: identityStorageKey("agent-draft") };
@@ -667,13 +670,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
       <div className={selectedHit && !onOpenVideo ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
         <section className={styles.agentPanel} aria-label={t("与 Seekino 助手对话")}>
-          <div className={styles.thread} ref={threadRef} onScroll={(event) => {
+          <div className={styles.thread} ref={threadRef} data-kino-stage="" onScroll={(event) => {
             const thread = event.currentTarget;
             followThread.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
           }}>
             {!messages.length && !loading ? (
               <div className={styles.welcome}>
-                <Mascot size={embedded ? 88 : 140} />
+                <Kino interactive dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
                 <p>{embedded ? t("看到哪里，问到哪里。回答里的时间点可以直接点击跳转。") : t("描述记得的画面、台词或人物关系，一起把那一刻找回来。")}</p>
                 <div className={styles.examples} aria-label={t("试试这样问")}>
                   {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || !conversationId} onClick={() => {
@@ -696,7 +699,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                   </div>
                 ) : (
                   <div>
-                    <AgentProgress message={message} steps={progress[message.messageId] ?? []} displayMode={displayMode} />
+                    <AgentProgress message={message} steps={progress[message.messageId] ?? []} displayMode={displayMode}
+                      kinoHost={message.messageId === kinoHostId} kinoAwake={connecting} />
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
                     {displayMode === "debug" && message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : message.searchResult?.partial ? <p className={styles.resultWarnings} role="status">{t("本次回答仅覆盖当前可检索的视频。")}</p> : null}
@@ -760,7 +764,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     })}
                     {message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
-                        <Mascot mood="puzzled" size={44} />
+                        <Kino state="think" width={38} scale={2} ground={false} />
                         <span>{message.searchResult.retrievalTrace?.some((entry) => entry.resultCount > 0)
                           ? t("检索到了候选片段，但本次回答未附带可播放视频，请重试。")
                           : t("没有检索到可展示的视频片段，试试换个描述。")}</span>
@@ -770,8 +774,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 )}
               </article>
             ))}
-            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? <p className={styles.connectionState} role="status"><Mascot mood="seek" size={36} delayed />{loading ? t("正在恢复会话…") : t("正在连接助手…")}</p> : null}
-            {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={`${styles.messageError} ${styles.conversationError}`} role="alert" tabIndex={-1}><Mascot mood="oops" size={36} /><span>{error}</span></p> : null}
+            {loading || connecting ? <p className={styles.connectionState} role="status">{kinoHostId ? null : <Kino state="loading" width={38} scale={2} ground={false} delayed perch />}{loading ? t("正在恢复会话…") : t("正在连接助手…")}</p> : null}
+            {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={`${styles.messageError} ${styles.conversationError}`} role="alert" tabIndex={-1}><Kino state="oops" width={38} scale={2} ground={false} /><span>{error}</span></p> : null}
           </div>
 
           <div className={styles.composerArea}>
