@@ -23,6 +23,7 @@ from gateway.agent_model.errors import (
     ModelFailureError,
     ModelFailureReason,
     ModelInputTooLargeError,
+    provider_failure_reason,
 )
 from gateway.constants import CODEX_PROVIDER
 from gateway.agent_model.context import (
@@ -99,6 +100,9 @@ def _failure_reason(error: BaseException) -> ModelFailureReason:
     reason = getattr(error, "reason", None)
     if isinstance(reason, ModelFailureReason):
         return reason
+    provider_reason = provider_failure_reason(error)
+    if provider_reason is not None:
+        return provider_reason
     if isinstance(error, TimeoutError) or "timeout" in type(error).__name__.lower():
         return ModelFailureReason.MODEL_TIMEOUT
     return ModelFailureReason.INVALID_MODEL_RESPONSE

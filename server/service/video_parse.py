@@ -24,6 +24,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
+from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
@@ -73,7 +74,7 @@ from engine.rag import (
 )
 from engine.rag.indexing.events import EventIndexingContract
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
-from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
+from gateway.agent_model.errors import ModelFailureError, ModelFailureReason, QueryModelIncompleteError
 from gateway.embedding import EmbeddingModel
 from gateway.model_factory import GatewayClient
 from gateway.speaker_embedding import SpeakerEmbeddingModel, SpeakerEmbeddingResult
@@ -93,6 +94,7 @@ from ..constants.parse import (
     VOICEPRINT_B0_LABEL_MIN_RANK, VOICEPRINT_B0_LABEL_MIN_MARGIN,
     VOICEPRINT_B0_LABEL_MIN_DURATION_MS, VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
     VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION, VOICEPRINT_B0_LABEL_TAIL_MIN_REFS,
+    REFINE_PROVIDER_RETRY_DELAYS_SECONDS,
 )
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
@@ -251,8 +253,40 @@ class VideoParseRuntimeService:
                 sequence_no=None,
                 category="parse",
                 check_active=lambda: self._require_interval_active(lease),
-            ):
-                await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
+            ) as manager:
+                while True:
+                    try:
+                        await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
+                        return
+                    except ModelFailureError as error:
+                        if (task_input.task.parse_config.get("voiceprint_mode", "off") == "off" or error.reason not in {
+                            ModelFailureReason.PROVIDER_CAPACITY, ModelFailureReason.PROVIDER_RATE_LIMIT,
+                        }):
+                            raise
+                        manager.check_active()
+                        retry = await asyncio.to_thread(
+                            self._repository.reserve_refine_provider_retry, lease,
+                            max_retries=len(REFINE_PROVIDER_RETRY_DELAYS_SECONDS),
+                        )
+                        if retry is None:
+                            raise RefineProviderRetryExhaustedError(
+                                "Refine transient provider retry budget exhausted",
+                                reason=error.reason, retries=len(REFINE_PROVIDER_RETRY_DELAYS_SECONDS),
+                            ) from error
+                        delay = REFINE_PROVIDER_RETRY_DELAYS_SECONDS[retry - 1]
+                        _logger.info(
+                            "event=refine_provider_retry task=%s interval=%s lease=%s "
+                            "reason=%s retry=%s max_retries=%s delay_seconds=%s",
+                            lease.video_parse_task_id, lease.interval_parse_task_id, lease.lease_version,
+                            error.reason, retry, len(REFINE_PROVIDER_RETRY_DELAYS_SECONDS), delay,
+                        )
+                        remaining = delay
+                        while remaining > 0:
+                            manager.check_active()
+                            step = min(1.0, remaining)
+                            await asyncio.sleep(step)
+                            remaining -= step
+                        manager.check_active()
         finally:
             self._interval_lease.reset(token)
 

@@ -17,7 +17,7 @@ from engine.parsev2.validation import (
     ChunkResultUpdate, ValidatedIntervalRefinement, ValidatedPrefixRefinement,
     validate_result_time_range,
 )
-from server.constants.parse import VOICEPRINT_DECISION_REASON_MAX_CHARS
+from server.constants.parse import VOICEPRINT_B0_VOICE_TOP1_MIN_LEAD, VOICEPRINT_DECISION_REASON_MAX_CHARS
 
 
 def content_fingerprint(value: object) -> str:
@@ -102,7 +102,7 @@ class VoiceDecision(_Operation):
     event_ref: str
     decision: Literal["keep", "voice_top1", "other", "null"]
     reason: str = Field(min_length=1, max_length=VOICEPRINT_DECISION_REASON_MAX_CHARS, pattern=r"\S")
-    evidence_type: Literal["named_address", "visible_speaking", "text_identity"] | None = None
+    evidence_type: Literal["named_address", "visible_speaking", "text_identity", "contradiction"] | None = None
 
 
 ParseOperation = Annotated[
@@ -326,7 +326,12 @@ class ParseContextCanvas(ContextCanvas):
         return required
 
     @staticmethod
-    def _voice_decision_consistent(value):
+    def _voice_null_requires_contradiction(evidence):
+        gap = evidence.get("gap")
+        return evidence.get("band") == "ACCEPT" or gap is not None and gap >= VOICEPRINT_B0_VOICE_TOP1_MIN_LEAD
+
+    @classmethod
+    def _voice_decision_consistent(cls, value):
         record, event, evidence = value["voice_decision"], value["event"], value["voice_evidence"]
         speaker, understanding = event.get("speaker"), evidence.get("understanding_speaker")
         candidates = evidence.get("candidates") or []
@@ -339,7 +344,8 @@ class ParseContextCanvas(ContextCanvas):
             return top1 is not None and speaker == top1
         if record["decision"] == "other":
             return isinstance(speaker, str) and bool(speaker.strip()) and speaker not in {understanding, top1}
-        return speaker is None
+        return speaker is None and (not cls._voice_null_requires_contradiction(evidence)
+                                    or record.get("evidence_type") == "contradiction")
 
     def _voiceprint_review_status(self, draft):
         required = self._required_voice_events(draft)
@@ -558,12 +564,20 @@ class ParseContextCanvas(ContextCanvas):
                             "INVALID_VOICEPRINT_DECISION", "This event has no required voice conflict in the write window.",
                             "Use a current conflict event_ref with valid voice evidence inside the write bounds.",
                         )
-                    if (operation.decision == "keep" and required[reference]["voice_evidence"].get("label_doubtful")
-                            and operation.evidence_type is None):
+                    evidence = required[reference]["voice_evidence"]
+                    if (operation.decision == "keep" and evidence.get("label_doubtful")
+                            and operation.evidence_type not in {"named_address", "visible_speaking", "text_identity"}):
                         raise AgentToolFeedbackError(
                             "VOICEPRINT_KEEP_EVIDENCE_REQUIRED", "Keeping a doubtful label requires specific identity evidence.",
                             "Supply evidence_type=named_address, visible_speaking or text_identity and cite the observation "
                             "in reason; otherwise choose a supported speaker or null.",
+                        )
+                    if (operation.decision == "null" and self._voice_null_requires_contradiction(evidence)
+                            and operation.evidence_type != "contradiction"):
+                        raise AgentToolFeedbackError(
+                            "VOICEPRINT_NULL_EVIDENCE_REQUIRED", "Abstaining from this voice ranking requires specific evidence.",
+                            "Supply evidence_type=contradiction and cite the contradictory observation, very short audio, "
+                            "singing or overlap in reason; otherwise choose the supported voice candidate.",
                         )
                     required[reference]["voice_decision"] = operation.model_dump(
                         exclude={"op", "event_ref"}, exclude_none=True,

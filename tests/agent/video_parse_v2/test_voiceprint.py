@@ -469,7 +469,7 @@ def test_refine_prompt_explains_doubtful_labels_and_identity_evidence_only_when_
     canvas = ParseContextCanvas.from_refine(_voice_snapshot(mode, "NO_VOICE", doubtful=True))
     prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=canvas)
     paragraph = (
-        "Each dialogue line may carry label_doubtful. It means the line sounds clearly unlike the labeled character's other lines; it does not prove who did speak. On a doubtful line, keep the label only with specific evidence: the speaker is addressed by name, is visibly speaking, or the text identifies them. ASR speaker groups and turn order are not identity evidence; they are frequently wrong when two characters alternate. If you cannot identify the speaker, set it to null with the reason 'label doubtful, speaker unresolved'. Choose the voice's top candidate only when you can state why it fits beyond its score."
+        "Each dialogue line may carry label_doubtful. It means the line sounds clearly unlike the labeled character's other lines; it does not prove who did speak. On a doubtful line, keep the label only with specific evidence: the speaker is addressed by name, is visibly speaking, or the text identifies them. ASR speaker groups and turn order are not identity evidence; they are frequently wrong when two characters alternate."
     )
     if mode == "off":
         assert paragraph not in prompt and "doubtful_labels" not in prompt
@@ -480,6 +480,30 @@ def test_refine_prompt_explains_doubtful_labels_and_identity_evidence_only_when_
         assert "evidence_type=named_address|visible_speaking|text_identity" in prompt
         assert "cite the concrete identity observation in reason" in prompt
         assert json.loads(prompt.splitlines()[-1])["collections"]["events"][0]["voice"]["label_rank"] == "3/5"
+
+
+@pytest.mark.parametrize("mode", ["off", "flag", "prefill"])
+def test_refine_prompt_treats_ranking_as_audio_evidence_and_explains_null_gate(mode):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot(mode, "CONFLICT", doubtful=True))
+    prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=canvas)
+    paragraph = (
+        "The voice ranking is audio evidence. On a CONFLICT or label_doubtful line, choose the voice's top candidate when it leads the runner-up by at least 0.10 (or the line is ACCEPT) and nothing specific contradicts it: someone else is addressed by name or visibly speaking, or the candidate is clearly absent from the scene. Choose null only when the lead is below that value, the line is very short, singing or overlapping, or specific evidence contradicts the top candidate. Keep the original label only with specific evidence for it."
+    )
+    if mode == "off":
+        assert paragraph not in prompt and "evidence_type=contradiction" not in prompt
+        assert "otherwise retain null and explain the remaining uncertainty" in prompt
+        assert "No reference, close candidates or weak evidence may leave speaker=null" in prompt
+    else:
+        assert paragraph in prompt
+        assert "null on a required line with gap >= 0.10 or band=ACCEPT" in prompt
+        assert "supply evidence_type=contradiction" in prompt
+        assert "cite the specific contradiction, very short audio, singing or overlap in reason" in prompt
+        assert "contradiction is not identity evidence for keep" in prompt
+        assert "null needs no identity evidence" not in prompt
+        assert "label doubtful, speaker unresolved" not in prompt
+        assert "why it fits beyond its score" not in prompt
+        assert "otherwise retain null and explain the remaining uncertainty" not in prompt
+        assert "No reference, close candidates or weak evidence may leave speaker=null" not in prompt
 
 
 @pytest.mark.parametrize("mode", ["flag", "prefill"])
@@ -496,6 +520,7 @@ def test_refine_exports_doubtful_label_decision_and_evidence_with_the_interval_c
         if decision == "keep":
             record.update(evidence_type="named_address", reason="爱音 is addressed by name during this utterance.")
         else:
+            record.update(evidence_type="contradiction", reason="Two simultaneous speakers overlap in this target audio.")
             operations.append({"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}})
         canvas.write(role="refine", batch_id="doubtful", expected_revision=canvas.revision,
                      operations=[*operations, record])
@@ -519,6 +544,7 @@ def test_refine_exports_doubtful_label_decision_and_evidence_with_the_interval_c
     if decision == "keep":
         assert record["evidence_type"] == "named_address" and "addressed by name" in record["reason"]
     else:
-        assert "evidence_type" not in record and record["reason"] == "label doubtful, speaker unresolved"
+        assert record["evidence_type"] == "contradiction"
+        assert record["reason"] == "Two simultaneous speakers overlap in this target audio."
     runtime.notify_interval_committed.assert_awaited_once_with(snapshot)
     assert snapshot == original

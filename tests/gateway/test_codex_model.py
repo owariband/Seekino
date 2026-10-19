@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from langchain_core.tools import BaseTool, StructuredTool
 from openai_codex import ImageInput as CodexImageInput, TextInput as CodexTextInput
+from openai_codex.errors import JsonRpcError, ServerBusyError
 from pydantic import BaseModel, ConfigDict
 
 from gateway.agent_model.errors import (
@@ -19,6 +20,7 @@ from gateway.agent_model.errors import (
     MissingRequiredFunctionCallError,
     MissingStructuredQueryDraftError,
     ModelFailureReason,
+    ModelFailureError,
     ModelInputTooLargeError,
 )
 from gateway.codex import CodexAgentModel
@@ -1339,3 +1341,70 @@ def test_generate_timeout_closes_native_session() -> None:
     finally:
         model.close()
     assert session.closed
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("data,expected", [
+    ({"codexErrorInfo": "server_overloaded"}, ModelFailureReason.PROVIDER_CAPACITY),
+    ({"codexErrorInfo": "rateLimitExceeded"}, ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ({"codexErrorInfo": {"responseTooManyFailedAttempts": {"httpStatusCode": 429}}}, ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ({"codexErrorInfo": "usageLimitExceeded"}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ({"codexErrorInfo": "badRequest"}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ({"codexErrorInfo": "other"}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ({"codexErrorInfo": {}}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (None, ModelFailureReason.INVALID_MODEL_RESPONSE),
+])
+def test_native_rpc_codes_override_capacity_message(structured, data, expected):
+    error = JsonRpcError(
+        -32000, "Selected model is at capacity. Please try a different model.", data,
+    )
+    session = _FakeSession([error])
+    model = _model_for(session)
+    try:
+        with pytest.raises(CodexAgentModelError) as caught:
+            if structured:
+                model.run_structured("answer", tools=[], result_type=Result, max_model_calls=3)
+            else:
+                model.run_agent_loop(
+                    "answer", tools=[], max_model_calls=3, handle_text=lambda _text: None,
+                )
+    finally:
+        model.close()
+    assert caught.value.reason == expected
+    assert caught.value.__cause__ is error
+    assert len(session.prompts) == 1 and session.closed
+
+
+@pytest.mark.parametrize("error,expected", [
+    (ServerBusyError(-32000, "busy"), ModelFailureReason.PROVIDER_CAPACITY),
+    (ServerBusyError(-32000, "busy", {"codexErrorInfo": "other"}), ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (RuntimeError("Selected model is at capacity. Please try a different model."), ModelFailureReason.PROVIDER_CAPACITY),
+    (RuntimeError("rate limit exceeded"), ModelFailureReason.PROVIDER_RATE_LIMIT),
+    (RuntimeError("unrelated validation mentioned capacity"), ModelFailureReason.INVALID_MODEL_RESPONSE),
+])
+def test_native_transient_error_uses_stable_reason_without_internal_retry(error, expected):
+    session = _FakeSession([error])
+    model = _model_for(session)
+    try:
+        with pytest.raises(CodexAgentModelError) as caught:
+            model.run_structured("answer", tools=[], result_type=Result, max_model_calls=3)
+    finally:
+        model.close()
+    assert caught.value.reason == expected
+    assert len(session.prompts) == 1 and session.closed
+
+
+def test_native_preserves_existing_nontransient_failure_reason():
+    error = ModelFailureError(
+        "Selected model is at capacity. Please try a different model.",
+        reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
+    )
+    session = _FakeSession([error])
+    model = _model_for(session)
+    try:
+        with pytest.raises(ModelFailureError) as caught:
+            model.run_structured("answer", tools=[], result_type=Result, max_model_calls=3)
+    finally:
+        model.close()
+    assert caught.value is error
+    assert caught.value.reason == ModelFailureReason.REQUIRED_TOOL_MISSING

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import GenerativeModelConfig, ParseInput
+from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
 from agent.video_parse_v2.prompts import build_canvas_understanding_prompt
 from agent.video_parse_v2.state import ChunkExecution, LeaseToken
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion, ParseContextCanvas
@@ -37,6 +38,7 @@ from gateway.config import (
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 from gateway.errors import ContentFilterError
+from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.model_factory import GatewayClient
 from gateway.usage import TokenUsage, capture_model_usage, model_call_context, track_model_call
@@ -52,7 +54,7 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.dto.jobDTO import PrefixParseLease, VideoParseLease
+from server.model.dto.jobDTO import IntervalParseLease, PrefixParseLease, VideoParseLease
 from server.model.job import (
     ChunkParseContent,
     ChunkParseTask,
@@ -4174,3 +4176,127 @@ def test_voice_decision_off_commit_preserves_existing_detail_shape(repository):
         }
         assert all("voiceprint_decisions" not in row.detail
                    for row in session.scalars(select(ChunkParseContent)))
+
+
+@pytest.fixture
+def refine_provider_retry_host(monkeypatch):
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._interval_lease = ContextVar("test_refine_provider_lease", default=None)
+    lease = IntervalParseLease(
+        "interval", "task", ("member",), 0, 1, "REFINING", "worker", 1,
+        datetime.now(UTC) + timedelta(minutes=5), 0, 0, 1.0, 2.0,
+    )
+    host = SimpleNamespace(
+        runtime=runtime, lease=lease, mode="prefill", errors=[], calls=0, reservations=0,
+        sleeps=[], checks=0, stages=0, stop=False,
+    )
+
+    def reserve(actual, *, max_retries):
+        assert actual is lease and max_retries == 2
+        if host.reservations >= max_retries:
+            return None
+        host.reservations += 1
+        return host.reservations
+
+    runtime._repository = SimpleNamespace(
+        load_task_input=lambda _task: SimpleNamespace(task=SimpleNamespace(parse_config={
+            "voiceprint_mode": host.mode,
+        })), reserve_refine_provider_retry=reserve,
+    )
+
+    def check_active():
+        host.checks += 1
+        if host.stop:
+            raise TimeoutError("interval execution deadline elapsed")
+
+    @asynccontextmanager
+    async def stage(actual, _task, **_options):
+        assert actual is lease and runtime._interval_lease.get() is lease
+        host.stages += 1
+        yield SimpleNamespace(check_active=check_active)
+
+    async def invoke(interval_id):
+        assert interval_id == lease.interval_parse_task_id
+        host.calls += 1
+        if host.errors:
+            raise host.errors.pop(0)
+
+    async def sleep(delay):
+        host.sleeps.append(delay)
+
+    runtime._model_stage = stage
+    runtime.agent = SimpleNamespace(interval_refine=SimpleNamespace(InvokeRefine=invoke))
+    monkeypatch.setattr("server.service.video_parse.asyncio.sleep", sleep)
+    return host
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+def test_refine_provider_retries_capacity_and_rate_limit_with_separate_budget(refine_provider_retry_host, mode):
+    host = refine_provider_retry_host
+    host.mode = mode
+    host.errors = [
+        ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY),
+        ModelFailureError("rate", reason=ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ]
+    asyncio.run(host.runtime.refine(host.lease))
+    assert host.calls == 3 and host.reservations == 2 and host.stages == 1
+    assert host.sleeps == [1.0] * 120
+    assert host.lease.retry_count == 0 and host.lease.max_retry_count == 0
+    assert host.runtime._interval_lease.get() is None
+
+
+def test_refine_provider_retry_budget_does_not_reset_after_logic_failure(refine_provider_retry_host):
+    host = refine_provider_retry_host
+    logic = ModelFailureError("missing decision", reason=ModelFailureReason.REQUIRED_TOOL_MISSING)
+    host.errors = [ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY), logic]
+    with pytest.raises(ModelFailureError) as caught:
+        asyncio.run(host.runtime.refine(host.lease))
+    assert caught.value is logic
+    assert host.reservations == 1 and len(host.sleeps) == 30
+    host.errors = [ModelFailureError("rate", reason=ModelFailureReason.PROVIDER_RATE_LIMIT)]
+    asyncio.run(host.runtime.refine(host.lease))
+    assert host.reservations == 2 and len(host.sleeps) == 120
+    final = ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY)
+    host.errors = [final]
+    with pytest.raises(RefineProviderRetryExhaustedError) as caught:
+        asyncio.run(host.runtime.refine(host.lease))
+    assert caught.value.__cause__ is final
+    assert caught.value.provider_retries == 2 and caught.value.reason == ModelFailureReason.PROVIDER_CAPACITY
+    assert not caught.value.retryable and host.lease.retry_count == 0
+    assert host.calls == 5 and host.reservations == 2 and len(host.sleeps) == 120
+
+
+@pytest.mark.parametrize("mode,reason", [
+    ("off", ModelFailureReason.PROVIDER_CAPACITY),
+    ("off", ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ("flag", ModelFailureReason.REQUIRED_TOOL_MISSING),
+    ("prefill", ModelFailureReason.INVALID_MODEL_RESPONSE),
+])
+def test_refine_provider_retries_leave_off_mode_and_logic_errors_unchanged(refine_provider_retry_host, mode, reason):
+    host = refine_provider_retry_host
+    host.mode = mode
+    error = ModelFailureError("original error", reason=reason)
+    host.errors = [error]
+    with pytest.raises(ModelFailureError) as caught:
+        asyncio.run(host.runtime.refine(host.lease))
+    assert caught.value is error
+    assert host.calls == 1 and host.reservations == 0 and host.sleeps == []
+    assert host.runtime._interval_lease.get() is None
+
+
+@pytest.mark.parametrize("stop", ["deadline", "cancel"])
+def test_refine_provider_backoff_obeys_deadline_and_cancellation(refine_provider_retry_host, monkeypatch, stop):
+    host = refine_provider_retry_host
+    host.errors = [ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY)]
+
+    async def interrupted_sleep(delay):
+        host.sleeps.append(delay)
+        if stop == "cancel":
+            raise asyncio.CancelledError
+        host.stop = True
+
+    monkeypatch.setattr("server.service.video_parse.asyncio.sleep", interrupted_sleep)
+    with pytest.raises(asyncio.CancelledError if stop == "cancel" else TimeoutError):
+        asyncio.run(host.runtime.refine(host.lease))
+    assert host.calls == 1 and host.reservations == 1 and host.sleeps == [1.0]
+    assert host.runtime._interval_lease.get() is None

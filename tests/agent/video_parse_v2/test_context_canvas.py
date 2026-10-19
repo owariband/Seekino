@@ -319,7 +319,9 @@ def test_voice_review_reports_each_inconsistent_decision(decision, speaker):
     reference = canvas.items("events")[0][0]
     canvas.write(role="refine", batch_id="inconsistent", expected_revision=canvas.revision, operations=[
         {"op": "patch_event", "event_ref": reference, "fields": {"speaker": speaker}},
-        {"op": "voice_decision", "event_ref": reference, "decision": decision, "reason": "Specific visible evidence."},
+        {"op": "voice_decision", "event_ref": reference, "decision": decision,
+         "reason": "Another named person is visibly speaking this line." if decision == "null" else "Specific visible evidence.",
+         **({"evidence_type": "contradiction"} if decision == "null" else {})},
     ])
     status = canvas.finish_voiceprint_review()
     assert status["ready"] is False and status["missing"] == [] and status["inconsistent"] == [reference]
@@ -334,9 +336,11 @@ def test_voice_review_accepts_four_consistent_decisions_and_exports_fields(decis
     original = deepcopy(snapshot)
     canvas = ParseContextCanvas.from_refine(snapshot)
     reference = canvas.items("events")[0][0]
+    reason = "Two simultaneous speakers overlap in this target audio." if decision == "null" else "Visible mouth movement."
+    evidence = {"evidence_type": "contradiction"} if decision == "null" else {}
     canvas.write(role="refine", batch_id="resolve", expected_revision=canvas.revision, operations=[
         {"op": "patch_event", "event_ref": reference, "fields": {"speaker": speaker}},
-        {"op": "voice_decision", "event_ref": reference, "decision": decision, "reason": "Visible mouth movement."},
+        {"op": "voice_decision", "event_ref": reference, "decision": decision, "reason": reason, **evidence},
     ])
     assert canvas.voiceprint_review_status()["ready"] and not canvas.voiceprint_review_passed()
     receipt = canvas.finish_voiceprint_review()
@@ -345,7 +349,7 @@ def test_voice_review_accepts_four_consistent_decisions_and_exports_fields(decis
     assert canvas.voiceprint_decisions() == [{
         "event_ref": reference, "member_chunk_id": "member", "start_ms": 1000, "end_ms": 3000,
         "understanding_speaker": "爱音", "voice_top1": "爽世", "gap": 0.2, "band": "ACCEPT",
-        "decision": decision, "reason": "Visible mouth movement.", "final_speaker": speaker,
+        "decision": decision, "reason": reason, **evidence, "final_speaker": speaker,
     }]
     assert snapshot == original
     assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
@@ -581,18 +585,22 @@ def test_doubtful_keep_requires_declared_identity_evidence_and_exports_metrics(e
 
 
 @pytest.mark.parametrize("decision,speaker", [("voice_top1", "爽世"), ("other", "睦"), ("null", None)])
-def test_doubtful_non_keep_decisions_need_no_evidence_type(decision, speaker):
+def test_doubtful_non_keep_decisions_need_no_identity_evidence(decision, speaker):
     canvas = ParseContextCanvas.from_refine(_voice_snapshot("prefill", "ACCEPT", doubtful=True))
     reference = canvas.items("events")[0][0]
-    reason = "label doubtful, speaker unresolved" if decision == "null" else "The inspected frame identifies this speaker."
+    reason = "Two simultaneous speakers overlap in this target audio." if decision == "null" else "The inspected frame identifies this speaker."
+    evidence = {"evidence_type": "contradiction"} if decision == "null" else {}
     canvas.write(role="refine", batch_id="resolve", expected_revision=canvas.revision, operations=[
         {"op": "patch_event", "event_ref": reference, "fields": {"speaker": speaker}},
-        {"op": "voice_decision", "event_ref": reference, "decision": decision, "reason": reason},
+        {"op": "voice_decision", "event_ref": reference, "decision": decision, "reason": reason, **evidence},
     ])
     assert canvas.finish_voiceprint_review()["ready"]
     record = canvas.voiceprint_decisions()[0]
     assert record["final_speaker"] == speaker and record["label_doubtful"] is True
-    assert "evidence_type" not in record
+    if decision == "null":
+        assert record["evidence_type"] == "contradiction" and record["reason"] == reason
+    else:
+        assert "evidence_type" not in record
 
 
 def test_doubtful_gate_checks_stored_keep_evidence_and_type_changes_invalidate_it():
@@ -701,7 +709,7 @@ def test_label_tail_diagnostics_bind_review_and_export_without_changing_decision
     canvas.write(role="refine", batch_id="unresolved", expected_revision=canvas.revision, operations=[
         {"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}},
         {"op": "voice_decision", "event_ref": reference, "decision": "null",
-         "reason": "label doubtful, speaker unresolved"},
+         "evidence_type": "contradiction", "reason": "Two simultaneous speakers overlap in this target audio."},
     ])
     assert canvas.finish_voiceprint_review()["ready"]
     record = canvas.voiceprint_decisions()[0]
@@ -725,7 +733,7 @@ def test_doubtful_basis_is_visible_in_catalog_and_persisted_in_decisions(basis):
     canvas.write(role="refine", batch_id="unresolved", expected_revision=canvas.revision, operations=[
         {"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}},
         {"op": "voice_decision", "event_ref": reference, "decision": "null",
-         "reason": "label doubtful, speaker unresolved"},
+         "evidence_type": "contradiction", "reason": "Two simultaneous speakers overlap in this target audio."},
     ])
     assert canvas.finish_voiceprint_review()["ready"]
     record = canvas.voiceprint_decisions()[0]
@@ -735,6 +743,107 @@ def test_doubtful_basis_is_visible_in_catalog_and_persisted_in_decisions(basis):
     }])
     assert "voice" not in canvas.catalog("events", role="refine")[0]
     assert canvas.voiceprint_review()["doubtful_labels"] == []
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+@pytest.mark.parametrize("band,gap,doubtful,needs_evidence", [
+    ("CONFLICT", 0.099999, False, False), ("CONFLICT", 0.10, False, True),
+    ("CONFLICT", 0.100001, False, True), ("CONFLICT", None, False, False),
+    ("ACCEPT", 0.01, False, True), ("ACCEPT", None, False, True),
+    ("NO_VOICE", 0.10, True, True), (None, 0.10, True, True),
+    ("NO_VOICE", 0.099999, True, False), (None, None, True, False),
+])
+@pytest.mark.parametrize("evidence_type", [None, "named_address", "contradiction"])
+def test_required_null_decision_checks_voice_lead_and_accept_band(mode, band, gap, doubtful, needs_evidence, evidence_type):
+    snapshot = _voice_snapshot(mode, band, doubtful=doubtful)
+    snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0]["gap"] = gap
+    original = deepcopy(snapshot)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    reference = canvas.items("events")[0][0]
+    record = {"op": "voice_decision", "event_ref": reference, "decision": "null",
+              "reason": "The target is sung over a second simultaneous voice."}
+    if evidence_type is not None:
+        record["evidence_type"] = evidence_type
+    before = canvas.snapshot()
+    operations = [{"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}}, record]
+    if needs_evidence and evidence_type != "contradiction":
+        with pytest.raises(AgentToolFeedbackError) as error:
+            canvas.write(role="refine", batch_id="abstain", expected_revision=canvas.revision, operations=operations)
+        assert error.value.code == "VOICEPRINT_NULL_EVIDENCE_REQUIRED"
+        assert "evidence_type=contradiction" in error.value.retry_hint and "reason" in error.value.retry_hint
+        assert canvas.snapshot() == before
+        assert canvas.finish_voiceprint_review()["missing"] == [reference]
+        assert not canvas.voiceprint_review_passed()
+    else:
+        canvas.write(role="refine", batch_id="abstain", expected_revision=canvas.revision, operations=operations)
+        assert canvas.finish_voiceprint_review()["ready"] and canvas.voiceprint_review_passed()
+        exported = canvas.voiceprint_decisions()[0]
+        assert exported["decision"] == "null" and exported["final_speaker"] is None
+        assert exported["reason"] == record["reason"]
+        if evidence_type is None:
+            assert "evidence_type" not in exported
+        else:
+            assert exported["evidence_type"] == evidence_type
+    assert snapshot == original
+    assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
+
+
+@pytest.mark.parametrize("evidence_type", [None, "named_address", "contradiction"])
+def test_voice_gate_rechecks_stored_null_evidence_and_new_evidence_invalidates_gate(evidence_type):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("flag", "CONFLICT"))
+    reference = canvas.items("events")[0][0]
+
+    def stored_record(draft):
+        value = draft["events"][reference]
+        value["event"]["speaker"] = None
+        value["voice_decision"] = {"decision": "null", "reason": "A second simultaneous voice overlaps this audio."}
+        if evidence_type is not None:
+            value["voice_decision"]["evidence_type"] = evidence_type
+
+    canvas.mutate(stored_record)
+    status = canvas.finish_voiceprint_review()
+    assert status["ready"] == (evidence_type == "contradiction")
+    assert status["inconsistent"] == ([] if evidence_type == "contradiction" else [reference])
+    assert canvas.voiceprint_review_passed() == (evidence_type == "contradiction")
+    if evidence_type == "contradiction":
+        canvas.write(role="refine", batch_id="new-observation", expected_revision=canvas.revision, operations=[{
+            "op": "voice_decision", "event_ref": reference, "decision": "null", "evidence_type": "contradiction",
+            "reason": "The inspected frames show another named person speaking this line.",
+        }])
+        assert canvas.voiceprint_review_status()["ready"] and not canvas.voiceprint_review_passed()
+        assert canvas.finish_voiceprint_review()["ready"]
+
+
+def test_contradiction_is_not_identity_evidence_for_doubtful_keep_at_write_or_gate():
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("flag", None, doubtful=True))
+    reference = canvas.items("events")[0][0]
+    record = {"op": "voice_decision", "event_ref": reference, "decision": "keep",
+              "evidence_type": "contradiction", "reason": "Another simultaneous voice overlaps the top candidate."}
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="refine", batch_id="not-identity", expected_revision=canvas.revision, operations=[record])
+    assert error.value.code == "VOICEPRINT_KEEP_EVIDENCE_REQUIRED" and canvas.snapshot() == before
+
+    def stored_record(draft):
+        draft["events"][reference]["voice_decision"] = {key: value for key, value in record.items()
+                                                        if key not in {"op", "event_ref"}}
+
+    canvas.mutate(stored_record)
+    assert canvas.finish_voiceprint_review()["inconsistent"] == [reference]
+    assert not canvas.voiceprint_review_passed()
+
+
+@pytest.mark.parametrize("reason", ["", " \n\t", "x" * 301])
+def test_null_contradiction_still_requires_a_nonblank_bounded_reason(reason):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("flag", "CONFLICT"))
+    reference = canvas.items("events")[0][0]
+    before = canvas.snapshot()
+    with pytest.raises(ValidationError):
+        canvas.write(role="refine", batch_id="invalid-reason", expected_revision=canvas.revision, operations=[{
+            "op": "voice_decision", "event_ref": reference, "decision": "null",
+            "evidence_type": "contradiction", "reason": reason,
+        }])
+    assert canvas.snapshot() == before
 
 
 def test_new_canvas_binds_new_event_references_and_explicit_conflicts_in_prompt():
