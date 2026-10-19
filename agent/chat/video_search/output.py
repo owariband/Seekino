@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from engine.rag.contracts import (
     AgentReply,
     VideoChunkSearchHit,
@@ -8,7 +10,7 @@ from engine.rag.contracts import (
 
 from ..common.errors import AgentModelInvocationError
 from .state import (
-    AgentFinalOutput, ChatRenderDraft, ChatRenderBlock, ChatVideoBlock, LoopTurn,
+    AgentFinalOutput, ChatRenderDraft, ChatRenderBlock, ChatVideoBlock,
     MarkdownRenderBlock, QueryDraft,
     RetrievalCall, RetrievalTraceEntry, RunInputs, VideoRenderBlock,
 )
@@ -137,72 +139,63 @@ def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
                 raise AgentModelInvocationError("Matched Evidence has an invalid video time range")
 
 
-def bind_draft(
-    inputs: RunInputs,
-    previous_turns: list[LoopTurn],
-    calls: list[RetrievalCall],
-    draft: QueryDraft,
-) -> tuple[VideoChunkSearchResult, VideoChunkSearchResult, dict[str, int]]:
-    # Later calls supersede the same chunk; every value still comes from a real call.
+def merge_retrieval_calls(
+    inputs: RunInputs, calls: Sequence[RetrievalCall],
+) -> VideoChunkSearchResult:
+    """Merge real retrievals without changing their scope or canonical snapshots."""
+
     by_id: dict[str, VideoChunkSearchHit] = {}
-    sources: dict[str, int] = {}
     last_query = ""
     searched_video_ids: set[str] = set()
     scope_recorded = True
     warnings: list[str] = []
     partial = False
-    for number, turn_calls in [
-        *((turn.number, turn.retrieval_calls) for turn in previous_turns),
-        (len(previous_turns) + 1, calls),
-    ]:
-        for call in turn_calls:
-            if call.status == "error":
-                continue
-            validate_result(call.result, inputs)
-            last_query = call.query
-            scope_recorded = scope_recorded and call.result.searched_video_ids is not None
-            searched_video_ids.update(call.result.searched_video_ids or [])
-            partial = partial or call.result.partial
-            warnings.extend(call.result.warnings)
-            for hit in call.result.hits:
-                video_chunk_id = hit.candidate.video_chunk_id
-                by_id[video_chunk_id] = hit.model_copy(deep=True)
-                sources[video_chunk_id] = number
+    for call in calls:
+        if call.status == "error":
+            partial = True
+            warnings.append("A retrieval call failed; see the retrieval trace.")
+            continue
+        validate_result(call.result, inputs)
+        last_query = call.query
+        scope_recorded = scope_recorded and call.result.searched_video_ids is not None
+        searched_video_ids.update(call.result.searched_video_ids or [])
+        partial = partial or call.result.partial
+        warnings.extend(call.result.warnings)
+        for hit in call.result.hits:
+            identifier = hit.candidate.video_chunk_id
+            previous = by_id.get(identifier)
+            if previous is not None and previous.evidence != hit.evidence:
+                raise AgentModelInvocationError(
+                    "Retrieved source evidence changed for VideoChunk " + repr(identifier)
+                )
+            by_id[identifier] = hit.model_copy(deep=True)
     if not last_query:
-        raise AgentModelInvocationError("First Query turn must retrieve real evidence")
-    selected_ranges = []
-    selected_ids: set[str] = set()
-    for selected_range in draft.selected_video_ranges:
-        if selected_range.video_chunk_id in selected_ids:
-            raise AgentModelInvocationError(
-                "Query Agent selected duplicate ranges for one VideoChunk"
-            )
-        selected_ids.add(selected_range.video_chunk_id)
-        selected_ranges.append(selected_range)
-    if any(item.video_chunk_id not in by_id for item in selected_ranges):
-        raise AgentModelInvocationError("Query Agent selected a VideoChunk outside retrieved evidence")
-    selected = [
-        by_id[item.video_chunk_id].model_copy(deep=True)
-        for item in selected_ranges
-    ]
-    # Per-chunk source turns and individual calls retain multi-query provenance.
-    available = VideoChunkSearchResult(
+        raise AgentModelInvocationError("Query must retrieve real evidence before reporting")
+    return VideoChunkSearchResult(
         query=last_query, series_ids=list(inputs["series_ids"]),
         agent_reply=AgentReply(message="实际检索证据。", result_count=len(by_id)),
         hits=list(by_id.values()),
         searched_video_ids=sorted(searched_video_ids) if scope_recorded else None,
         partial=partial, warnings=list(dict.fromkeys(warnings)),
     )
-    bound = VideoChunkSearchResult(
-        query=last_query, series_ids=list(inputs["series_ids"]),
-        agent_reply=AgentReply(message=draft.message, result_count=len(selected)), hits=selected,
-        searched_video_ids=available.searched_video_ids,
-        partial=available.partial, warnings=available.warnings,
-    )
-    return available, bound, {
-        item.video_chunk_id: sources[item.video_chunk_id]
-        for item in selected_ranges
-    }
+
+
+def bind_draft(
+    inputs: RunInputs, calls: Sequence[RetrievalCall], draft: QueryDraft,
+) -> tuple[VideoChunkSearchResult, VideoChunkSearchResult]:
+    available = merge_retrieval_calls(inputs, calls)
+    by_id = {hit.candidate.video_chunk_id: hit for hit in available.hits}
+    selected_ids = [item.video_chunk_id for item in draft.selected_video_ranges]
+    if len(set(selected_ids)) != len(selected_ids):
+        raise AgentModelInvocationError("Query selected duplicate ranges for one VideoChunk")
+    if any(identifier not in by_id for identifier in selected_ids):
+        raise AgentModelInvocationError("Query selected a VideoChunk outside retrieved evidence")
+    selected = [by_id[identifier].model_copy(deep=True) for identifier in selected_ids]
+    bound = available.model_copy(update={
+        "hits": selected,
+        "agent_reply": AgentReply(message=draft.message, result_count=len(selected)),
+    }, deep=True)
+    return available, bound
 
 
 def build_chat_output(
@@ -344,7 +337,9 @@ def validate_approved_video_ranges(
             ) from exc
 
 
-def build_retrieval_trace(turns: list[LoopTurn]) -> list[RetrievalTraceEntry]:
+def build_retrieval_trace(calls: Sequence[RetrievalCall]) -> list[RetrievalTraceEntry]:
+    """Preserve every real call, including failures, for direct and delegated searches."""
+
     return [
         RetrievalTraceEntry(
             query=call.query,
@@ -353,31 +348,13 @@ def build_retrieval_trace(turns: list[LoopTurn]) -> list[RetrievalTraceEntry]:
             requested_weights=call.requested_weights.model_copy(deep=True),
             effective_weights=call.effective_weights.model_copy(deep=True),
             result_count=len(call.result.hits),
-            video_chunk_ids=[
-                hit.candidate.video_chunk_id for hit in call.result.hits
-            ],
+            video_chunk_ids=[hit.candidate.video_chunk_id for hit in call.result.hits],
             granularity=call.granularity,
             effective_filters=call.effective_filters,
             event_trace=call.event_trace,
             role=call.role,
             status=call.status,
             error=call.error,
-        )
-        for turn in turns
-        for call in turn.retrieval_calls
+        ).model_copy(deep=True)
+        for call in calls
     ]
-
-
-def finalize_output(turns: list[LoopTurn], inputs: RunInputs) -> AgentFinalOutput:
-    if not turns:
-        raise AgentModelInvocationError("Output requires at least one Query turn")
-    turn = turns[-1]
-    if turn.review.action != "complete" or turn.rendered_answer is None:
-        raise AgentModelInvocationError("Output requires approved evidence and nonempty Chat text")
-    validate_result(turn.draft_output, inputs)
-    return build_chat_output(
-        turn.draft_output,
-        turn.query_draft,
-        turn.rendered_answer,
-        build_retrieval_trace(turns),
-    )

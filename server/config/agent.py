@@ -18,8 +18,6 @@ class AgentServiceConfig:
     limits_enabled: bool = False
     total_timeout_enabled: bool = True
     query_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
-    evaluator_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
-    chat_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     supervisor_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     web_search_max_results: int = 5
     web_search_timeout_seconds: float = 12.0
@@ -35,18 +33,10 @@ class AgentServiceConfig:
     frame_max_height: int = 720
     maximum_frame_inspections: int = 12
     stage_timeout_seconds: float = 480
-    evaluator_stage_timeout_seconds: float = 480
-    chat_timeout_seconds: float = 480
     supervisor_timeout_seconds: float = 480
     execution_timeout_seconds: float = 480
     maximum_concurrent_kicks: int = 4
-    # Single-pass Result with deterministic Loop Control (docs/dev/perf_plan.md §3.5).
-    single_pass_result: bool = True
-    result_max_loops: int = 2
-    # "risk": the Evaluator runs only for speaker, visual or low-confidence drafts.
-    evaluator_policy: Literal["risk", "always"] = "risk"
-    # A drafted chunk whose best fused rank is worse than this counts as low confidence.
-    evaluator_low_confidence_rank: int = 3
+    maximum_parallel_queries: int = 3
 
     def __post_init__(self) -> None:
         if self.history_message_limit <= 0:
@@ -63,21 +53,14 @@ class AgentServiceConfig:
             raise ValueError("limits_enabled must be a boolean")
         if not isinstance(self.total_timeout_enabled, bool):
             raise ValueError("total_timeout_enabled must be a boolean")
-        if not isinstance(self.single_pass_result, bool):
-            raise ValueError("single_pass_result must be a boolean")
-        if not 1 <= self.result_max_loops <= 3:
-            raise ValueError("result_max_loops must be between 1 and 3")
-        if self.evaluator_policy not in ("risk", "always"):
-            raise ValueError("evaluator_policy must be risk or always")
-        if not 1 <= self.evaluator_low_confidence_rank <= 100:
-            raise ValueError("evaluator_low_confidence_rank must be between 1 and 100")
+        if type(self.maximum_parallel_queries) is not int or not 1 <= self.maximum_parallel_queries <= 8:
+            raise ValueError("maximum_parallel_queries must be between 1 and 8")
         for name in ("frame_max_height", "maximum_frame_inspections"):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
         for name in (
-            "query_reasoning_effort", "evaluator_reasoning_effort",
-            "chat_reasoning_effort", "supervisor_reasoning_effort",
+            "query_reasoning_effort", "supervisor_reasoning_effort",
         ):
             if getattr(self, name) not in ("none", "low", "high", "max"):
                 raise ValueError(f"{name} must be none, low, high, or max")
@@ -130,8 +113,7 @@ class AgentServiceConfig:
                 "compact_target_tokens must be lower than auto_compact_tokens"
             )
         for name in (
-            "stage_timeout_seconds", "evaluator_stage_timeout_seconds",
-            "chat_timeout_seconds", "supervisor_timeout_seconds",
+            "stage_timeout_seconds", "supervisor_timeout_seconds",
             "execution_timeout_seconds",
             "web_search_timeout_seconds",
         ):

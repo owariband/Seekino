@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Lock
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -106,6 +106,7 @@ def build_retrieve_tool(
     maximum_catalog_items: int,
     retrieval_channel: RetrievalChannelContract = "transcript",
     budget: _ToolCallBudget | None = None,
+    role: Literal["query", "supervisor"] = "query",
 ) -> AgentTool:
     """Page discovery cards while retaining canonical hits in Canvas.
 
@@ -225,6 +226,7 @@ def build_retrieve_tool(
                 requested_weights=requested_weights.model_copy(deep=True),
                 effective_weights=effective_weights,
                 result=result,
+                role=role,
             ))
             resource_id = f"retrieval-{len(catalogs) + 1}"
             items = [_retrieval_card(hit) for hit in result.hits]

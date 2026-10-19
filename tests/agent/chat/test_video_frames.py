@@ -18,10 +18,7 @@ from agent.chat.video_search.tools.shared import _ToolCallBudget
 from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
 from engine.rag.contracts import AgentReply, VideoChunkSearchResult
 from gateway.media import ToolImage, ToolImageArtifact
-from tests.agent.chat.test_runtime import (
-    Chat, Evaluator, Query, Retrieval, _inputs as _runtime_inputs,
-)
-from tests.agent.chat.test_tools import _hit, _inputs
+from tests.agent.chat.test_tools import Retrieval, _hit, _inputs
 
 
 class FrameReader:
@@ -140,9 +137,9 @@ def test_frames_reject_unknown_candidates_and_changed_input_scope():
 def test_shared_cache_still_delivers_images_and_separate_role_receipts():
     reader, session, canvas = FrameReader(), FrameInspectionSession(10), _canvas()
     query = _tool(reader, session=session, canvas=canvas, role="Query")
-    evaluator = _tool(reader, session=session, canvas=canvas, role="Evaluator")
+    supervisor = _tool(reader, session=session, canvas=canvas, role="Supervisor")
     arguments = {"video_chunk_id": "chunk-1", "frame_count": 4}
-    first, second = query.execute(**arguments), evaluator.execute(**arguments)
+    first, second = query.execute(**arguments), supervisor.execute(**arguments)
 
     assert len(reader.calls) == 2
     assert reader.calls[0][1] is None
@@ -152,7 +149,7 @@ def test_shared_cache_still_delivers_images_and_separate_role_receipts():
     assert first.payload["cache_hit"] is False
     assert second.payload["cache_hit"] is True
     receipts = session.summary()
-    assert [item["role"] for item in receipts] == ["Query", "Evaluator"]
+    assert [item["role"] for item in receipts] == ["Query", "Supervisor"]
     assert [item["inspection_id"] for item in receipts] == [
         first.payload["inspection_id"], second.payload["inspection_id"],
     ]
@@ -280,138 +277,113 @@ def _inspect_model_frames(tools, *, vision, role):
     return json.loads(message.content)
 
 
-class InspectingQuery(Query):
+class InspectingQuery:
+    model_name = "query-test"
+    provider_name = "fake"
     supports_vision_input = True
 
-    def run_structured(self, prompt, **kwargs):
-        result = super().run_structured(prompt, **kwargs)
+    def run_structured(self, _prompt, *, tools, result_type, **_options):
+        by_name = {tool.name: tool for tool in tools}
+        by_name["retrieve"].invoke({
+            "query": "cup", "top_k": 1,
+            "channel_weights": {"lexical": 0, "semantic": 1, "visual": 0},
+        })
+        evidence = json.loads(by_name["get_context_canvas"].invoke({
+            "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
+        }))
+        assert "error" not in evidence
+        current = json.loads(by_name["get_context_canvas"].invoke({"collection": "draft"}))
+        by_name["write_context_canvas"].invoke({
+            "batch_id": "frame-draft", "expected_revision": current["revision"],
+            "operations": [{"operation": "upsert_draft_item", "video_chunk_id": "chunk-1",
+                            "start_seconds": 11, "end_seconds": 19, "claim": "Grounded cup evidence."}],
+        })
+        self.inspect(tools)
+        return result_type.model_validate({"plan_context": "Inspect the cup", "message": "Cup located."})
+
+    def inspect(self, tools):
         self.inspection = _inspect_model_frames(
-            kwargs["tools"], vision=self.supports_vision_input, role="query",
+            tools, vision=self.supports_vision_input, role="query",
         )
-        return result
 
 
-class InspectingEvaluator(Evaluator):
-    supports_vision_input = True
-
-    def run_structured(self, prompt, **kwargs):
-        result = super().run_structured(prompt, **kwargs)
-        self.inspection = _inspect_model_frames(
-            kwargs["tools"], vision=self.supports_vision_input, role="evaluator",
-        )
-        return result
-
-
-@pytest.mark.parametrize("query_vision,evaluator_vision", [(True, True), (False, True), (True, False)])
-def test_runtime_gates_frames_per_model_and_resets_session_between_kicks(
-    query_vision, evaluator_vision, monkeypatch,
-):
+@pytest.mark.parametrize("query_vision", [True, False])
+def test_runtime_gates_frames_per_model_and_resets_session_between_kicks(query_vision, monkeypatch):
     from agent.chat.video_search.runtime import AgentRuntime
 
-    # These models use only single-entry Canvas reads; batch tokenization is unrelated.
     monkeypatch.setattr("agent.utils.context_canvas_tools.tiktoken.get_encoding", lambda _name: None)
-    reader, query, evaluator = FrameReader(), InspectingQuery(), InspectingEvaluator()
-    query.supports_vision_input, evaluator.supports_vision_input = query_vision, evaluator_vision
+    reader, query = FrameReader(), InspectingQuery()
+    query.supports_vision_input = query_vision
     runtime = AgentRuntime(
-        query, evaluator, Chat(), Retrieval().search,
+        query, Retrieval([_hit("chunk-1")]).search,
         retrieval_channel="lexical", frame_reader=reader,
         frame_max_height=480, maximum_frame_inspections=10,
     )
-    receipts = []
-    runtime.kick(_runtime_inputs(), on_handoff=lambda canvas, _turn: receipts.extend(
-        receipt for _reference, receipt in canvas.items("frame_inspections")
-    ))
-    first_call_count = len(reader.calls)
-    assert first_call_count == int(query_vision) + int(evaluator_vision)
-    assert reader.calls[0][1] is None
-    if query_vision and evaluator_vision:
-        assert reader.calls[1][1] is not None
+    report = runtime.kick(_inputs())
+    receipts = [receipt for _reference, receipt in report.canvas.items("frame_inspections")]
+    first_call_count = int(query_vision)
+    assert len(reader.calls) == first_call_count
+    if query_vision:
+        assert reader.calls[0][1] is None
         assert receipts[0]["inspection_id"] == query.inspection["inspection_id"]
         assert receipts[0]["role"] == "Query"
         assert "data:image" not in json.dumps(receipts)
+    else:
+        assert receipts == []
     first_ids = {request.inspection_id for request, _cached in reader.calls}
 
-    evaluator.approve_at = 2
-    runtime.kick(_runtime_inputs())
+    runtime.kick(_inputs())
     assert len(reader.calls) == first_call_count * 2
-    assert reader.calls[first_call_count][1] is None
-    assert first_ids.isdisjoint(
-        request.inspection_id for request, _cached in reader.calls[first_call_count:]
-    )
+    if query_vision:
+        assert reader.calls[first_call_count][1] is None
+        assert first_ids.isdisjoint(
+            request.inspection_id for request, _cached in reader.calls[first_call_count:]
+        )
 
 
-@pytest.mark.parametrize("limits_enabled,max_loop_turns,limited", [
-    (False, None, False),
-    (True, None, True),
-    (True, 0, False),
-    (True, 100, False),
-])
-def test_runtime_frame_inspections_follow_effective_count_limits(
-    limits_enabled, max_loop_turns, limited, monkeypatch,
-):
+@pytest.mark.parametrize("limits_enabled", [False, True])
+def test_runtime_frame_inspections_follow_effective_count_limits(limits_enabled, monkeypatch):
     from agent.chat.video_search.runtime import AgentRuntime
 
     monkeypatch.setattr("agent.utils.context_canvas_tools.tiktoken.get_encoding", lambda _name: None)
 
-    class RepeatedFrameQuery(Query):
-        supports_vision_input = True
-
-        def run_structured(self, prompt, **kwargs):
-            result = super().run_structured(prompt, **kwargs)
-            tool = next(tool for tool in kwargs["tools"] if tool.name == "inspect_video_frames")
+    class RepeatedFrameQuery(InspectingQuery):
+        def inspect(self, tools):
+            tool = next(tool for tool in tools if tool.name == "inspect_video_frames")
             self.inspections = [tool.invoke({
                 "type": "tool_call", "name": tool.name, "id": f"query-frames-{index}",
                 "args": {"video_chunk_id": "chunk-1", "frame_count": 1 if index == 12 else 3},
             }) for index in range(13)]
-            return result
 
-    class InspectingLimitEvaluator(Evaluator):
-        supports_vision_input = True
-
-        def run_structured(self, prompt, **kwargs):
-            result = super().run_structured(prompt, **kwargs)
-            tool = next(tool for tool in kwargs["tools"] if tool.name == "inspect_video_frames")
-            self.inspection = tool.invoke({
-                "type": "tool_call", "name": tool.name, "id": "evaluator-frames",
-                "args": {"video_chunk_id": "chunk-1"},
-            })
-            return result
-
-    reader, query, evaluator = FrameReader(), RepeatedFrameQuery(), InspectingLimitEvaluator()
+    reader, query = FrameReader(), RepeatedFrameQuery()
     runtime = AgentRuntime(
-        query, evaluator, Chat(), Retrieval().search,
+        query, Retrieval([_hit("chunk-1")]).search,
         retrieval_channel="lexical", frame_reader=reader,
         frame_max_height=480, maximum_frame_inspections=12, limits_enabled=limits_enabled,
     )
-    receipts = []
-    runtime.kick(_runtime_inputs(), max_loop_turns=max_loop_turns,
-                 on_handoff=lambda canvas, _turn: receipts.extend(
-                     receipt for _reference, receipt in canvas.items("frame_inspections")
-                 ))
+    report = runtime.kick(_inputs())
+    receipts = [receipt for _reference, receipt in report.canvas.items("frame_inspections")]
 
-    first_call_count = 12 if limited else 14
+    first_call_count = 12 if limits_enabled else 13
     assert len(reader.calls) == first_call_count
     assert all(message.status == "success" for message in query.inspections[:12])
     assert all(len(message.artifact.images) == 3 for message in query.inspections[:12])
     assert reader.calls[0][1] is None
     assert all(cached is not None for _request, cached in reader.calls[1:12])
-    if limited:
-        for message in (query.inspections[-1], evaluator.inspection):
-            assert message.status == "error"
-            assert json.loads(message.content)["error"]["code"] == "FRAME_INSPECTION_LIMIT"
-            assert message.artifact is None
+    if limits_enabled:
+        message = query.inspections[-1]
+        assert message.status == "error"
+        assert json.loads(message.content)["error"]["code"] == "FRAME_INSPECTION_LIMIT"
+        assert message.artifact is None
     else:
-        assert query.inspections[-1].status == evaluator.inspection.status == "success"
+        assert query.inspections[-1].status == "success"
         assert len(query.inspections[-1].artifact.images) == 1
         assert reader.calls[12][1] is None
-        assert reader.calls[13][1] is not None
-        assert evaluator.inspection.artifact.images == query.inspections[0].artifact.images
-        assert len(receipts) == 14
-        assert [receipt["role"] for receipt in receipts] == ["Query"] * 13 + ["Evaluator"]
+    assert len(receipts) == first_call_count
+    assert [receipt["role"] for receipt in receipts] == ["Query"] * first_call_count
 
     first_ids = {request.inspection_id for request, _cached in reader.calls}
-    evaluator.approve_at = 2
-    runtime.kick(_runtime_inputs(), max_loop_turns=max_loop_turns)
+    runtime.kick(_inputs())
     assert len(reader.calls) == first_call_count * 2
     assert reader.calls[first_call_count][1] is None
     assert first_ids.isdisjoint(

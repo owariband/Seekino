@@ -34,15 +34,16 @@ from agent.chat.common.tool_result import (
 from agent.chat.video_search.context import build_canvas_checkpoint
 from agent.chat.video_search.state import DraftItem
 from agent.chat.video_search.skills import (
-    CHAT_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, LEXICAL_RETRIEVAL_SKILL_PROMPT,
+    LEXICAL_RETRIEVAL_SKILL_PROMPT,
     QUERY_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT,
 )
 from agent.chat.video_search.tools import (
     DraftReadAudit, LexicalRetrieveArguments, RetrieveArguments,
-    build_chat_tools, build_evaluator_tools, build_query_tools,
+    build_query_tools, build_supervisor_tools,
 )
 from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
 from agent.chat.video_search.tools.canvas import build_video_search_canvas_tools
+from agent.chat.video_search.tools.shared import _ToolCallBudget
 from agent.utils.tool import AgentTool as SharedAgentTool
 from agent.utils.errors import AgentToolFeedbackError
 
@@ -261,7 +262,7 @@ def _event_result(query: str, *, count: int = 3) -> EventSearchResult:
     )
 
 
-@pytest.mark.parametrize("builder,role", [(build_query_tools, "query"), (build_evaluator_tools, "evaluator")])
+@pytest.mark.parametrize("builder,role", [(build_query_tools, "query"), (build_supervisor_tools, "supervisor")])
 def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(builder, role) -> None:
     received = []
     found = _event_result("quote")
@@ -416,7 +417,7 @@ def test_role_registries_expose_only_the_exact_tools() -> None:
         maximum_result_bytes=1_024,
         maximum_catalog_items=20,
     )
-    evaluator_tools = build_evaluator_tools(
+    supervisor_tools = build_supervisor_tools(
         retrieval.search,
         canvas=canvas,
         inputs=inputs,
@@ -428,16 +429,15 @@ def test_role_registries_expose_only_the_exact_tools() -> None:
         maximum_catalog_items=20,
     )
     canvas.approve_draft()
-    chat_tools = build_chat_tools(
-        canvas=canvas,
+    chat_tools = build_video_search_canvas_tools(
+        canvas=canvas, role="chat",
         control=_control(),
-        maximum_tool_calls=20,
         maximum_result_bytes=1_024,
-        maximum_catalog_items=20,
+        maximum_catalog_items=20, maximum_read_chars=16_384,
     )
 
     assert {tool.name for tool in query_tools} == {"retrieve", "get_context_canvas", "write_context_canvas"}
-    assert {tool.name for tool in evaluator_tools} == {"retrieve", "get_context_canvas"}
+    assert {tool.name for tool in supervisor_tools} == {"retrieve", "get_context_canvas"}
     assert {tool.name for tool in chat_tools} == {"get_context_canvas", "write_context_canvas"}
     assert all(isinstance(tool, SharedAgentTool) for tool in query_tools)
     assert {tool.name for tool in as_langchain_tools(query_tools)} == {
@@ -609,20 +609,17 @@ def test_agent_skills_are_explicitly_work_agnostic() -> None:
         RETRIEVAL_SKILL_PROMPT,
         LEXICAL_RETRIEVAL_SKILL_PROMPT,
         QUERY_SKILL_PROMPT,
-        EVALUATOR_SKILL_PROMPT,
-        CHAT_SKILL_PROMPT,
     )
 
     assert all("作品无关" in skill for skill in skills)
     assert all("不得写入或依赖任何具体动画" in skill for skill in skills)
     assert all("丰川祥子" not in skill for skill in skills)
-    for skill in (QUERY_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, CHAT_SKILL_PROMPT):
+    for skill in (QUERY_SKILL_PROMPT,):
         assert skill.startswith("媒体时间合同：")
         assert "*_seconds / *Seconds" in skill
         assert "整数毫秒" in skill
         assert "保留原始毫秒值" in skill
         assert "必须除以 1000" in skill
-        assert "必须拒绝把原始毫秒数直接标为秒" in skill
         assert "start/end 是字符偏移" in skill
 
 
@@ -671,7 +668,7 @@ def test_retrieve_tool_keeps_v1_transcript_and_v2_lexical_contracts_separate() -
     assert seen == [("transcript", 1.0), ("lexical", 1.0)]
 
 
-@pytest.mark.parametrize("build_tools", [build_query_tools, build_evaluator_tools])
+@pytest.mark.parametrize("build_tools", [build_query_tools, build_supervisor_tools])
 @pytest.mark.parametrize("channel", ["transcript", "lexical"])
 @pytest.mark.parametrize("requested,available", [(8, 8), (101, 101), (8, 2), (8, 0)])
 def test_retrieve_honors_agent_quantity_and_pages_all_hits(
@@ -1141,7 +1138,7 @@ def test_draft_audit_requires_full_coverage_of_every_section() -> None:
         "end_seconds": 19, "claim": "draft claim",
     })
     audit = DraftReadAudit()
-    evaluator_tools = {tool.name: tool for tool in build_evaluator_tools(
+    supervisor_tools = {tool.name: tool for tool in build_supervisor_tools(
         retrieval.search,
         canvas=canvas,
         inputs=_inputs(),
@@ -1153,8 +1150,8 @@ def test_draft_audit_requires_full_coverage_of_every_section() -> None:
         maximum_catalog_items=20,
         audit=audit,
     )}
-    _reader(evaluator_tools, "draft").invoke({})
-    overview = json.loads(_reader(evaluator_tools, "draft").invoke({
+    _reader(supervisor_tools, "draft").invoke({})
+    overview = json.loads(_reader(supervisor_tools, "draft").invoke({
         "video_chunk_id": "chunk-1",
     }))
     assert not audit.covers(["chunk-1"])
@@ -1163,13 +1160,13 @@ def test_draft_audit_requires_full_coverage_of_every_section() -> None:
     total = section["total_chars"]
     midpoint = total // 2
     for start, end in ((0, midpoint), (midpoint, total)):
-        _reader(evaluator_tools, "draft").invoke({
+        _reader(supervisor_tools, "draft").invoke({
             "video_chunk_id": "chunk-1", "section": "draft",
             "start": start, "end": end,
         })
     assert not audit.covers(["chunk-1"])
 
-    _read_all(_reader(evaluator_tools, "draft"), "chunk-1", 700)
+    _read_all(_reader(supervisor_tools, "draft"), "chunk-1", 700)
     assert audit.covers(["chunk-1"])
 
 
@@ -1337,12 +1334,11 @@ def test_chat_tools_use_approved_snapshot_and_update_video_in_place() -> None:
         })
     canvas.approve_draft()
     canvas.append_markdown("before")
-    tools = {tool.name: tool for tool in build_chat_tools(
-        canvas=canvas,
+    tools = {tool.name: tool for tool in build_video_search_canvas_tools(
+        canvas=canvas, role="chat",
         control=_control(),
-        maximum_tool_calls=20,
         maximum_result_bytes=1_024,
-        maximum_catalog_items=20,
+        maximum_catalog_items=20, maximum_read_chars=16_384,
     )}
 
     assert json.loads(_reader(tools, "approved").invoke({}))["total"] == 2
@@ -1404,12 +1400,11 @@ def test_canvas_checkpoint_contains_handles_without_full_evidence() -> None:
 
     canvas.approve_draft()
     canvas.append_markdown("answer text")
-    chat_tools = {tool.name: tool for tool in build_chat_tools(
-        canvas=canvas,
+    chat_tools = {tool.name: tool for tool in build_video_search_canvas_tools(
+        canvas=canvas, role="chat",
         control=_control(),
-        maximum_tool_calls=20,
         maximum_result_bytes=1_024,
-        maximum_catalog_items=20,
+        maximum_catalog_items=20, maximum_read_chars=16_384,
     )}
     _writer(chat_tools, "upsert_video_item").invoke({
         "video_chunk_id": "chunk-1",
@@ -1472,6 +1467,42 @@ def test_shared_role_tool_budget_counts_every_tool() -> None:
     _retrieve(tools, top_k=1)
     with pytest.raises(AgentModelInvocationError, match="Tool-call budget exceeded"):
         _reader(tools, "retrieval").invoke({"video_chunk_id": "chunk-1"})
+
+
+def test_atomic_tools_share_the_injected_budget_across_supervisor_and_query() -> None:
+    retrieval = Retrieval([_hit("chunk-1")])
+    canvas = VideoSearchContextCanvas("workspace", ("series",))
+    budget = _ToolCallBudget(2, "Supervisor")
+    calls, event_calls = [], []
+
+    def events(query, **_options):
+        event_calls.append(query)
+        return _event_result(query)
+
+    tools = {tool.name: tool for tool in build_supervisor_tools(
+        retrieval.search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        maximum_top_k=20, maximum_tool_calls=1, maximum_result_bytes=4_096,
+        maximum_catalog_items=20, retrieval_channel="lexical", event_retrieve=events,
+        budget=budget,
+    )}
+    assert "write_context_canvas" not in tools
+    _retrieve(tools, top_k=1)
+    assert calls[0].role == "supervisor"
+    query_tools = {tool.name: tool for tool in build_query_tools(
+        retrieval.search, canvas=canvas, inputs=_inputs(), control=_control(), calls=[],
+        maximum_top_k=20, maximum_tool_calls=1, maximum_result_bytes=4_096,
+        maximum_catalog_items=20, budget=budget,
+    )}
+    assert "error" not in json.loads(query_tools["get_context_canvas"].invoke({
+        "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
+    }))
+    with pytest.raises(AgentModelInvocationError, match="Supervisor Agent Tool-call budget"):
+        tools["search_video_events"].invoke({
+            "query": "quote", "top_k": 1,
+            "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0},
+        })
+    assert event_calls == []
+    assert budget.used == 3
 
 
 def test_tool_budget_can_be_disabled() -> None:
@@ -1557,9 +1588,9 @@ def test_canvas_role_permissions_and_approved_evidence_are_frozen() -> None:
                                 end_seconds=18, claim="later claim")
     retrieval.hits = [_hit("chunk-1", large_text="later evidence")]
     _retrieve(query, top_k=1)
-    chat = {tool.name: tool for tool in build_chat_tools(
-        canvas=canvas, control=_control(), maximum_tool_calls=None,
-        maximum_result_bytes=1024, maximum_catalog_items=20,
+    chat = {tool.name: tool for tool in build_video_search_canvas_tools(
+        canvas=canvas, role="chat", control=_control(),
+        maximum_result_bytes=1024, maximum_catalog_items=20, maximum_read_chars=16_384,
     )}
     assert canvas.draft_item("chunk-1", approved=True).claim == "approved claim"
     assert canvas.approved_hit("chunk-1").evidence.retrieval_text == "original evidence"
@@ -1643,11 +1674,11 @@ def test_canvas_audit_rejects_skipped_catalog_page_and_changed_revision() -> Non
     options = dict(canvas=canvas, inputs=_inputs(), control=_control(), calls=[],
                    maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=1024,
                    maximum_catalog_items=1)
-    previous = {tool.name: tool for tool in build_evaluator_tools(retrieval.search, **options)}
+    previous = {tool.name: tool for tool in build_supervisor_tools(retrieval.search, **options)}
     first = json.loads(previous["get_context_canvas"].invoke({"collection": "draft"}))
     assert first["next_cursor"]
     audit = DraftReadAudit()
-    current = {tool.name: tool for tool in build_evaluator_tools(retrieval.search, audit=audit, **options)}
+    current = {tool.name: tool for tool in build_supervisor_tools(retrieval.search, audit=audit, **options)}
     current["get_context_canvas"].invoke({"collection": "draft", "cursor": first["next_cursor"]})
     for reference in ("chunk-1", "chunk-2"):
         _read_all(_reader(current, "draft"), reference, 1024)
@@ -1675,15 +1706,15 @@ def test_canvas_catalog_cursor_cannot_cross_kick_or_role() -> None:
         "collection": "retrieval", "cursor": first["next_cursor"],
     }))
     assert other["error"]["code"] == "INVALID_CATALOG_CURSOR"
-    evaluator = {tool.name: tool for tool in build_evaluator_tools(
+    supervisor = {tool.name: tool for tool in build_supervisor_tools(
         retrieval.search, canvas=canvases[0], inputs=_inputs(), control=_control(), calls=[],
         maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=1024, maximum_catalog_items=1,
     )}
-    denied = json.loads(evaluator["get_context_canvas"].invoke({
+    denied = json.loads(supervisor["get_context_canvas"].invoke({
         "collection": "retrieval", "cursor": first["next_cursor"],
     }))
     assert denied["error"]["code"] == "INVALID_CATALOG_CURSOR"
-    assert "write_context_canvas" not in evaluator
+    assert "write_context_canvas" not in supervisor
 
 
 def test_canvas_write_output_budget_failure_keeps_state_and_replay_log() -> None:

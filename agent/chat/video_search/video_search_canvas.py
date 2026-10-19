@@ -239,8 +239,9 @@ class VideoSearchContextCanvas(ContextCanvas):
                     for reference, value in self.items(collection)]
         if collection == "history":
             return [{"reference": reference, "turn_number": value["number"],
-                     "action": value["review"]["action"],
-                     "description": value["review"]["advice"][:500]}
+                     "action": value.get("status", value.get("review", {}).get("action", "reported")),
+                     "description": (value.get("message") or value.get("error", {}).get("message")
+                                     or value.get("review", {}).get("advice", ""))[:500]}
                     for reference, value in self.items(collection)]
         if collection == "frame_inspections":
             return [{"reference": reference, **{

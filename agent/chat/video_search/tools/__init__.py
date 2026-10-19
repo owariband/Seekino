@@ -9,7 +9,7 @@ from .draft import (
     build_read_draft_item_tool, build_remove_draft_item_tool,
     build_update_draft_item_tool,
 )
-from .registry import build_chat_tools, build_evaluator_tools, build_query_tools
+from .registry import build_query_tools, build_supervisor_tools
 from .video_item import (
     UpdateVideoItemArguments, build_remove_video_item_tool,
     build_update_video_item_tool,

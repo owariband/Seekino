@@ -9,6 +9,7 @@ import yaml
 
 from gateway.config import ArkModelSourceConfig, GatewayConfig, load_config
 from server.config import ServerSettings
+from server.config.agent import AgentServiceConfig
 from server.config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
 from server.config.parse_profile import (
     ParseConfig, ParseVisionConfig, default_video_parse_v2_config,
@@ -80,8 +81,6 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.limits_enabled is False
     assert settings.agent.total_timeout_enabled is True
     assert settings.agent.query_reasoning_effort == "none"
-    assert settings.agent.evaluator_reasoning_effort == "none"
-    assert settings.agent.chat_reasoning_effort == "none"
     assert settings.agent.max_output_tokens == 8192
     assert settings.agent.max_prompt_chars == 200_000
     assert settings.agent.context_window_tokens == 64_000
@@ -92,15 +91,12 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.max_read_chars_per_call == 16_384
     assert settings.agent.max_catalog_items_per_page == 20
     assert settings.agent.stage_timeout_seconds == 480
-    assert settings.agent.evaluator_stage_timeout_seconds == 480
-    assert settings.agent.chat_timeout_seconds == 480
     assert settings.agent.supervisor_timeout_seconds == 480
     assert settings.agent.execution_timeout_seconds == 480
     assert settings.agent.maximum_concurrent_kicks == 4
     assert settings.agent_query_model is None
     assert settings.agent_chat_model is None
     assert settings.agent_fallback_model is None
-    assert settings.agent_evaluator_model is None
     assert settings.agent_request_timeout_seconds is None
     assert settings.mq.heartbeat_interval < settings.mq.lease_duration
     assert settings.mq.poll_interval_seconds == 2.0
@@ -245,11 +241,9 @@ def test_config_yaml_exposes_agent_timeouts() -> None:
     assert settings.total_timeout_enabled is True
     assert (
         settings.stage_timeout_seconds,
-        settings.evaluator_stage_timeout_seconds,
-        settings.chat_timeout_seconds,
         settings.supervisor_timeout_seconds,
         settings.execution_timeout_seconds,
-    ) == (480, 480, 480, 1200, 1200)
+    ) == (480, 1200, 1200)
 
 
 def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> None:
@@ -743,7 +737,6 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
     _clean_anivag_environment(monkeypatch)
     overrides = {
         "ANIVAG_AGENT_QUERY_MODEL": "query-model",
-        "ANIVAG_AGENT_EVALUATOR_MODEL": "review-model",
         "ANIVAG_AGENT_CHAT_MODEL": "output-model",
         "ANIVAG_AGENT_FALLBACK_MODEL": "fallback-model",
         "ANIVAG_AGENT_MAX_LOOP_TURNS": "2",
@@ -762,8 +755,6 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
         "ANIVAG_AGENT_MAX_READ_CHARS_PER_CALL": "4096",
         "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE": "10",
         "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS": "45",
-        "ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS": "210",
-        "ANIVAG_AGENT_CHAT_TIMEOUT_SECONDS": "150",
         "ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS": "300",
         "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
         "ANIVAG_AGENT_MAX_CONCURRENT_KICKS": "2",
@@ -773,10 +764,9 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
     settings = ServerSettings.from_environment()
     assert (
         settings.agent_query_model,
-        settings.agent_evaluator_model,
         settings.agent_chat_model,
         settings.agent_fallback_model,
-    ) == ("query-model", "review-model", "output-model", "fallback-model")
+    ) == ("query-model", "output-model", "fallback-model")
     assert settings.agent.max_loop_turns == 2
     assert settings.agent.max_model_calls_per_turn == 5
     assert settings.agent.maximum_model_calls_per_turn == 9
@@ -793,8 +783,6 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
     assert settings.agent.max_read_chars_per_call == 4_096
     assert settings.agent.max_catalog_items_per_page == 10
     assert settings.agent.stage_timeout_seconds == 45
-    assert settings.agent.evaluator_stage_timeout_seconds == 210
-    assert settings.agent.chat_timeout_seconds == 150
     assert settings.agent.supervisor_timeout_seconds == 300
     assert settings.agent.execution_timeout_seconds == 90
     assert settings.agent.maximum_concurrent_kicks == 2
@@ -833,10 +821,6 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
     ("ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE", "101"),
     ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "0"),
-    ("ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS", "nan"),
-    ("ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS", "0"),
-    ("ANIVAG_AGENT_CHAT_TIMEOUT_SECONDS", "nan"),
-    ("ANIVAG_AGENT_CHAT_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
@@ -873,39 +857,19 @@ def test_global_agent_settings_yaml_overrides_environment_and_keeps_fallbacks(
     assert config.max_tool_result_bytes == settings.agent.max_tool_result_bytes == 4096
 
 
-def test_global_agent_reasoning_settings_support_yaml_patch_and_environment(
-    monkeypatch,
-) -> None:
+def test_global_agent_reasoning_settings_support_yaml_patch_and_environment(monkeypatch) -> None:
     _clean_anivag_environment(monkeypatch)
     config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
     monkeypatch.setenv("ANIVAG_AGENT_QUERY_REASONING_EFFORT", " HIGH ")
     config, revision = read_global_agent_settings(config_path)
     assert config.query_reasoning_effort == "high"
-    assert config.evaluator_reasoning_effort == "none"
-    assert config.chat_reasoning_effort == "none"
-
+    assert config.supervisor_reasoning_effort == "none"
     updated, _ = patch_global_agent_settings(
-        {
-            "query_reasoning_effort": "low",
-            "evaluator_reasoning_effort": "high",
-            "chat_reasoning_effort": "max",
-        },
+        {"query_reasoning_effort": "low", "supervisor_reasoning_effort": "high"},
         revision, config_path,
     )
-    assert (
-        updated.query_reasoning_effort,
-        updated.evaluator_reasoning_effort,
-        updated.chat_reasoning_effort,
-    ) == ("low", "high", "max")
+    assert (updated.query_reasoning_effort, updated.supervisor_reasoning_effort) == ("low", "high")
     assert read_global_agent_settings(config_path)[0] == updated
-    runtime_values = yaml.safe_load(config_path.read_text(encoding="utf-8"))[
-        "agent_runtime"
-    ]
-    assert runtime_values == {
-        "query_reasoning_effort": "low",
-        "evaluator_reasoning_effort": "high",
-        "chat_reasoning_effort": "max",
-    }
 
 
 def test_total_timeout_switch_supports_environment_yaml_and_settings_patch(monkeypatch):
@@ -940,22 +904,22 @@ def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
 
     updated, next_revision = patch_global_agent_settings(
         {
-            "evaluator_stage_timeout_seconds": 210,
-            "chat_timeout_seconds": 300,
+            "stage_timeout_seconds": 210,
+            "maximum_parallel_queries": 4,
             "supervisor_timeout_seconds": 420,
             "max_read_chars_per_call": 4_096,
         },
         revision, config_path,
     )
     after = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert updated.evaluator_stage_timeout_seconds == 210
-    assert updated.chat_timeout_seconds == 300
+    assert updated.stage_timeout_seconds == 210
+    assert updated.maximum_parallel_queries == 4
     assert updated.supervisor_timeout_seconds == 420
     assert updated.max_read_chars_per_call == 4_096
     assert next_revision != revision
     assert after["agent_runtime"] == {
-        "evaluator_stage_timeout_seconds": 210.0,
-        "chat_timeout_seconds": 300.0,
+        "stage_timeout_seconds": 210.0,
+        "maximum_parallel_queries": 4,
         "supervisor_timeout_seconds": 420.0,
         "max_read_chars_per_call": 4_096,
     }
@@ -1083,3 +1047,25 @@ def test_event_sampling_configuration_has_one_source_and_preserves_encoder():
     assert defaults.capture.max_height == changed.capture.max_height == 480
     assert defaults.semantic_encoder == changed.semantic_encoder == encoder
     assert defaults.contract_id != changed.contract_id
+
+
+def test_retired_agent_settings_are_read_only_compatible(monkeypatch):
+    _clean_anivag_environment(monkeypatch)
+    path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    document = yaml.safe_load(path.read_text())
+    document["agent_runtime"] = {"evaluator_policy": "always", "single_pass_result": True, "maximum_parallel_queries": 2}
+    path.write_text(yaml.safe_dump(document))
+    config, revision = read_global_agent_settings(path)
+    assert config.maximum_parallel_queries == 2
+    assert not hasattr(config, "evaluator_policy")
+    updated, revision = patch_global_agent_settings({"maximum_parallel_queries": 4}, revision, path)
+    assert updated.maximum_parallel_queries == 4
+    assert yaml.safe_load(path.read_text())["agent_runtime"]["evaluator_policy"] == "always"
+    with pytest.raises(ValueError, match="unknown agent_runtime setting"):
+        patch_global_agent_settings({"evaluator_policy": "risk"}, revision, path)
+
+
+@pytest.mark.parametrize("value", [0, 9, True, 1.5])
+def test_parallel_query_limit_is_bounded(value):
+    with pytest.raises(ValueError, match="maximum_parallel_queries"):
+        AgentServiceConfig(maximum_parallel_queries=value)

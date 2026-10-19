@@ -346,23 +346,6 @@ class _AgentModelStub:
         self, _prompt, *, tools, result_type, max_model_calls, **_kwargs,
     ):
         tools_by_name = {tool.name: tool for tool in tools}
-        if "action" in result_type.model_fields:
-            cursor = None
-            while True:
-                catalog = json.loads(tools_by_name["get_context_canvas"].invoke({
-                    "collection": "draft", "cursor": cursor,
-                }))
-                for item in catalog["items"]:
-                    _read_all(
-                        tools_by_name["get_context_canvas"], item["video_chunk_id"],
-                        collection="draft",
-                    )
-                cursor = catalog["next_cursor"]
-                if cursor is None:
-                    break
-            return result_type.model_validate({
-                "action": "complete", "advice": "回答与证据一致，可以交付。",
-            })
         tools_by_name["retrieve"].invoke({
             "query": "她为什么哭",
             "top_k": 5,
@@ -375,37 +358,35 @@ class _AgentModelStub:
             "message": "没有找到可以核验的候选画面。",
         })
 
-    def run_agent_loop(
-        self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
-        require_tool_call=False,
-        request_timeout_seconds=None, check_control=None, max_input_chars=None,
-        image_urls=(), initial_messages=None,
-    ):
-        import json
+    def run_agent(self, prompt, *, tools, user_message, handle_text, check_control, **kwargs):
+        available = {tool.name: tool for tool in tools}
+        report = json.loads(available["query_video"].invoke({"query": user_message}))
+        self.run_agent_loop(
+            prompt + "\n\n" + json.dumps(report), tools=tools,
+            max_model_calls=kwargs.get("max_model_calls"), handle_text=handle_text,
+            request_timeout_seconds=kwargs.get("request_timeout_seconds"),
+            check_control=check_control,
+        )
 
-        tools_by_name = {tool.name: tool for tool in tools}
-        assert set(tools_by_name) == {"get_context_canvas", "write_context_canvas"}
-        assert set(tools_by_name["write_context_canvas"].args_schema.model_fields) == {
-            "batch_id", "expected_revision", "operations",
-        }
-        assert max_model_calls is None or (type(max_model_calls) is int and max_model_calls > 0)
-        assert request_timeout_seconds is not None
-        assert request_timeout_seconds > 0
-        context = json.loads(prompt.rsplit("\n\n", 1)[1])
-        approved = context["approved_turn"]
-        chunk_ids = approved["video_chunk_ids"]
-        assert require_tool_call is bool(chunk_ids)
-        if not chunk_ids:
-            handle_text(approved["message"])
-            return
-        handle_text("以下片段支持这个结论。")
-        for video_chunk_id in chunk_ids:
-            check_control and check_control()
-            _write_canvas(tools_by_name, "upsert_video_item", {
-                "video_chunk_id": video_chunk_id,
-                "claim": f"片段 {video_chunk_id} 支持结论。",
-            })
-        handle_text(approved["message"])
+    def run_agent_loop(self, prompt, *, tools, handle_text, check_control=None, **_):
+        available = {tool.name: tool for tool in tools}
+        for report in json.loads(prompt.rsplit("\n\n", 1)[1])["reports"]:
+            for item in report.get("draft_items", []):
+                check_control and check_control()
+                receipt = json.loads(available["submit_video_item"].invoke({
+                    name: item[name] for name in ("video_chunk_id", "start_seconds", "end_seconds", "claim")
+                }))
+                assert "error" not in receipt
+            handle_text(report.get("message", "没有找到可以核验的候选画面。"))
+
+    def confirm_turn(self, *_):
+        pass
+
+    def discard_turn(self, *_):
+        pass
+
+    def delete_thread(self, *_):
+        pass
 
 
 class _ParseConsumerStub:
@@ -438,12 +419,11 @@ def _client(tmp_path: Path):
     agent = AgentChatService(
         agent_repository,
         library,
-        AgentRuntime(
-            _AgentModelStub("query-model-v1"),
-            _AgentModelStub("evaluator-model-v1"),
-            _AgentModelStub("chat-model-v1"),
-            retrieval.search,
-            retrieval_channel="lexical",
+        SupervisorRuntime(
+            AgentRuntime(_AgentModelStub("query-model-v1"), retrieval.search, retrieval_channel="lexical"),
+            _AgentModelStub("chat-model-v1"), SimpleNamespace(),
+            max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+            max_tool_result_bytes=16_384, max_prompt_chars=200_000,
         ),
         attachments=attachments,
     )
@@ -1227,7 +1207,7 @@ def test_vision_attachment_send_and_follow_up_keep_images_in_json_and_sse_histor
 
     model = VisionModel()
     service._runtime = SupervisorRuntime(
-        service._runtime, model, SimpleNamespace(),
+        service._runtime._video_runtime, model, SimpleNamespace(),
         max_web_results=5, web_timeout_seconds=12,
         execution_timeout_seconds=60, max_tool_result_bytes=16_384, max_prompt_chars=200_000,
     )
@@ -2531,9 +2511,9 @@ def test_agent_evidence_view_reads_legacy_single_query_without_trace():
 
 
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
-@pytest.mark.parametrize("supervised,leading_text", [(False, True), (True, True), (True, False)])
+@pytest.mark.parametrize("leading_text", [True, False])
 def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
-    tmp_path, prepared_import, caplog, accept, supervised, leading_text,
+    tmp_path, prepared_import, caplog, accept, leading_text,
 ):
     caplog.set_level(logging.INFO, logger="server.api.agent")
     client, _, _ = _client(tmp_path)
@@ -2600,43 +2580,39 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 "message": "这些片段包含动作。",
             })
 
-    service._runtime._retrieve = joined_search
-    service._runtime._query_model = QueryWithEvidence("query-evidence")
-    if supervised:
-        class SupervisorModel:
-            model_name = "supervisor-evidence"
+    service._runtime._video_runtime._retrieve = joined_search
+    service._runtime._video_runtime._query_model = QueryWithEvidence("query-evidence")
+    class SupervisorModel:
+        model_name = "supervisor-evidence"
 
-            def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
-                by_name = {tool.name: tool for tool in tools}
-                if leading_text:
-                    handle_text("以下片段支持这个结论。")
-                by_name["search_video_graph"].invoke({"query": "找动作片段"})
-                approved = json.loads(by_name["get_context_canvas"].invoke({"collection": "approved"}))
-                for item in approved["items"]:
-                    draft = _read_all(
-                        by_name["get_context_canvas"], item["reference"], collection="approved",
-                    )["draft"]
-                    by_name["submit_video_item"].invoke({
-                        **draft, "claim": "这些片段包含动作。",
-                    })
-                handle_text("这些片段包含动作。")
+        def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
+            by_name = {tool.name: tool for tool in tools}
+            if leading_text:
+                handle_text("以下片段支持这个结论。")
+            report = json.loads(by_name["query_video"].invoke({"query": "找动作片段"}))["reports"][0]
+            for draft in report["draft_items"]:
+                _read_all(by_name["get_context_canvas"], draft["video_chunk_id"], collection="retrieval")
+                by_name["submit_video_item"].invoke({
+                    **draft, "claim": "这些片段包含动作。",
+                })
+            handle_text("这些片段包含动作。")
 
-            def confirm_turn(self, *_args):
-                pass
+        def confirm_turn(self, *_args):
+            pass
 
-            def discard_turn(self, *_args):
-                pass
+        def discard_turn(self, *_args):
+            pass
 
-            def delete_thread(self, *_args):
-                pass
+        def delete_thread(self, *_args):
+            pass
 
-        service._runtime = SupervisorRuntime(
-            service._runtime, SupervisorModel(), SimpleNamespace(),
-            max_web_results=5, web_timeout_seconds=12,
-            execution_timeout_seconds=60, max_tool_result_bytes=16_384,
-            max_prompt_chars=200_000,
-        )
-        service._runtimes = [service._runtime]
+    service._runtime = SupervisorRuntime(
+        service._runtime._video_runtime, SupervisorModel(), SimpleNamespace(),
+        max_web_results=5, web_timeout_seconds=12,
+        execution_timeout_seconds=60, max_tool_result_bytes=16_384,
+        max_prompt_chars=200_000,
+    )
+    service._runtimes = [service._runtime]
     try:
         response = client.post(
             "/api/agent/messages/send", params={"tenantId": "local-default", "conversationId": conversation_id},
@@ -2647,48 +2623,21 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         if accept == "text/event-stream":
             events = _answer_payloads(response.text)
             final = events[-1]["assistantMessage"]
-            if supervised:
-                snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
-                assert snapshots and all(message["status"] == "PROCESSING" for message in snapshots)
-                if leading_text:
-                    assert snapshots[0]["content"] == "以下片段支持这个结论。"
-                    assert snapshots[0]["searchResult"] is None
-                else:
-                    assert snapshots[0]["content"] == ""
-                    assert [block["type"] for block in snapshots[0]["renderBlocks"]] == ["tool"]
-                    assert snapshots[0]["renderBlocks"][0]["status"] == "inProgress"
-                    assert snapshots[0]["searchResult"] is None
-                assert snapshots[-1]["renderBlocks"] == final["renderBlocks"]
-                assert snapshots[-1]["searchResult"] == final["searchResult"]
-                assert snapshots[-1]["content"] == final["content"]
-                assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
-                assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+            snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+            assert snapshots and all(message["status"] == "PROCESSING" for message in snapshots)
+            if leading_text:
+                assert snapshots[0]["content"] == "以下片段支持这个结论。"
+                assert snapshots[0]["searchResult"] is None
             else:
-                evidence_event = next(event for event in events if event["type"] == "answer.evidence")
-                evidence_hits = evidence_event["searchResult"]["hits"]
-                assert "agentReply" not in evidence_event["searchResult"]
-                assert evidence_hits == final["searchResult"]["hits"]
-                block_events = [
-                    event for event in events if event["type"] == "answer.block"
-                ]
-                assert [event["block"] for event in block_events] == final["renderBlocks"]
-                event_types = [event["type"] for event in events]
-                assert event_types.index("answer.evidence") < event_types.index("answer.block")
-                assert max(
-                    index for index, value in enumerate(event_types)
-                    if value == "answer.block"
-                ) < event_types.index("answer.delta")
-                projection_log = next(
-                    record.getMessage() for record in caplog.records
-                    if record.name == "server.api.agent"
-                    and record.getMessage().startswith("agent_evidence_projected ")
-                )
-                assert f"conversation_id={conversation_id}" in projection_log
-                assert "hit_count=2" in projection_log
-                assert "playable_hits=0" in projection_log
-                assert "thumbnail_hits=0" in projection_log
-                assert "partial=True" in projection_log
-                assert "warning_count=3" in projection_log
+                assert snapshots[0]["content"] == ""
+                assert [block["type"] for block in snapshots[0]["renderBlocks"]] == ["tool"]
+                assert snapshots[0]["renderBlocks"][0]["status"] == "inProgress"
+                assert snapshots[0]["searchResult"] is None
+            assert snapshots[-1]["renderBlocks"] == final["renderBlocks"]
+            assert snapshots[-1]["searchResult"] == final["searchResult"]
+            assert snapshots[-1]["content"] == final["content"]
+            assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
+            assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
         else:
             final = response.json()["assistantMessage"]
         assert "agentReply" not in final["searchResult"]
@@ -2700,23 +2649,16 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             "requestedWeights": {"lexical": 0.2, "semantic": 0.2, "visual": 0.6},
             "effectiveWeights": {"lexical": 0.2, "semantic": 0.2, "visual": 0.6},
             "resultCount": len(report.video_chunk_ids),
-            "videoChunkIds": list(report.video_chunk_ids),
+            "videoChunkIds": list(report.video_chunk_ids), "role": "query",
         }]
-        if accept == "text/event-stream" and not supervised:
-            assert evidence_event["searchResult"]["retrievalTrace"] == (
-                final["searchResult"]["retrievalTrace"]
-            )
         hits = final["searchResult"]["hits"]
         assert len(hits) == len(report.video_chunk_ids) == 2
         tools = [block for block in final["renderBlocks"] if block["type"] == "tool"]
-        if supervised:
-            assert len(tools) == 1 and tools[0]["callId"]
-            assert tools[0] == {
-                "type": "tool", "callId": tools[0]["callId"], "tool": "search_video_graph",
-                "status": "completed", "query": "找动作片段",
-            }
-        else:
-            assert tools == []
+        assert len(tools) == 1 and tools[0]["callId"]
+        assert tools[0] == {
+            "type": "tool", "callId": tools[0]["callId"], "tool": "search_video_graph",
+            "status": "completed", "query": "找动作片段",
+        }
         assert final["renderBlocks"] == [
             *([{"type": "markdown", "markdown": "以下片段支持这个结论。"}] if leading_text else []),
             *tools,
@@ -2757,10 +2699,9 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     events = _answer_payloads(response.text)
-    assert [event["type"] for event in events] == [
-        "answer.started", "answer.progress", "answer.progress", "answer.progress",
-        "answer.evidence", "answer.block", "answer.delta", "answer.completed",
-    ]
+    assert events[0]["type"] == "answer.started" and events[-1]["type"] == "answer.completed"
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert all(event["conversationId"] == conversation_id for event in events)
     assert len({event["messageId"] for event in events}) == 1
@@ -2770,14 +2711,7 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     assert events[0]["assistantMessage"]["timing"]["stages"] == []
     assert type(events[0]["assistantMessage"]["timing"]["startedAt"]) is int
     progress = [event for event in events if event["type"] == "answer.progress"]
-    assert [
-        [stage["phase"] for stage in event["timing"]["stages"]]
-        for event in progress
-    ] == [
-        ["QUEUED"],
-        ["QUEUED", "RETRIEVING"],
-        ["QUEUED", "RETRIEVING", "EVALUATING"],
-    ]
+    assert all(event["timing"]["totalDurationMs"] is None for event in progress)
     assert events[0]["userMessage"]["modelName"] is None
     assert events[0]["userMessage"]["seriesIds"] == [series_id]
     assert events[0]["assistantMessage"]["seriesIds"] == [series_id]
@@ -2787,12 +2721,10 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
         stage["durationMs"] for stage in final["timing"]["stages"]
     )
     assert [stage["phase"] for stage in final["timing"]["stages"]] == [
-        "QUEUED", "RETRIEVING", "EVALUATING", "RESPONDING",
+        "QUEUED", "RETRIEVING", "RESPONDING",
     ]
-    assert final["content"] == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
-    assert final["renderBlocks"] == [
-        event["block"] for event in events if event["type"] == "answer.block"
-    ]
+    assert final["content"] == snapshots[-1]["content"]
+    assert final["renderBlocks"] == snapshots[-1]["renderBlocks"]
     persisted = client.get("/api/agent/messages/list", params={"tenantId": "local-default", "conversationId": conversation_id}).json()["items"]
     assert final == persisted[-1]
     replay = _answer_payloads(client.post("/api/agent/messages/send", **kwargs).text)
@@ -2814,7 +2746,7 @@ def test_manual_cancel_api_checks_scope_and_returns_the_current_message_pair(tmp
     conversation_id = _create_agent_conversation(client)
     service = client.app.state.services.agent
     entered, release = Event(), Event()
-    query = service._runtime._query_model.run_structured
+    query = service._runtime._video_runtime._query_model.run_structured
 
     def blocked_query(*args, **kwargs):
         result = query(*args, **kwargs)
@@ -2822,7 +2754,7 @@ def test_manual_cancel_api_checks_scope_and_returns_the_current_message_pair(tmp
         assert release.wait(5), "test did not release Query"
         return result
 
-    monkeypatch.setattr(service._runtime._query_model, "run_structured", blocked_query)
+    monkeypatch.setattr(service._runtime._video_runtime._query_model, "run_structured", blocked_query)
     execution = service.start_message(
         conversation_id, tenant_id="local-default", content="找画面",
         idempotency_key="api-cancel",
@@ -2869,29 +2801,22 @@ def test_manual_cancel_api_checks_scope_and_returns_the_current_message_pair(tmp
     assert client.post("/api/agent/messages/cancel", params=params).json() == final.json()
 
 
-def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
+def test_supervisor_failure_sends_failed_event_and_json_maps_harness_error(tmp_path):
     client, _, _ = _client(tmp_path)
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     runtime = client.app.state.services.agent._runtime
-    runtime._limits_enabled = True
-
-    class RejectModel:
-        model_name = "reject-model"
-        def run_structured(self, _prompt, *, result_type, **_kwargs):
-            return result_type.model_validate({"action": "continue", "advice": "需要重新找摔杯子的片段。"})
-
-    runtime._evaluator_model = RejectModel()
-    def forbidden_chat(*_args, **_kwargs):
-        raise AssertionError("rejected draft reached final Chat")
-    runtime._chat_model.run_agent_loop = forbidden_chat
+    def failed_supervisor(*_args, **_kwargs):
+        from agent.chat.common.errors import AgentModelInvocationError
+        raise AgentModelInvocationError("private provider error")
+    runtime._model.run_agent = failed_supervisor
     response = client.post(
         "/api/agent/messages/send", params={"tenantId": "local-default", "conversationId": conversation_id},
         headers={"Accept": "text/event-stream", "Idempotency-Key": "rejected-stream"},
         json={"tenantId": "local-default", "content": "找摔杯子的画面"},
     )
     events = _answer_payloads(response.text)
-    assert [event["type"] for event in events] == ["answer.started", *(["answer.progress"] * 6), "answer.failed"]
+    assert events[0]["type"] == "answer.started" and events[-1]["type"] == "answer.failed"
     assert events[-1]["error"]["code"] == "AGENT_MODEL_ERROR"
     assert events[-1]["assistantMessage"]["status"] == "FAILED"
     assert "需要重新找摔杯子的片段" not in events[-1]["error"]["message"]
@@ -2918,9 +2843,8 @@ def test_agent_old_prompt_character_threshold_allows_completed_response(tmp_path
     runtime._max_prompt_chars = 100
     calls = []
     for role, model, method in (
-        ("query", runtime._query_model, "run_structured"),
-        ("evaluator", runtime._evaluator_model, "run_structured"),
-        ("chat", runtime._chat_model, "run_agent_loop"),
+        ("query", runtime._video_runtime._query_model, "run_structured"),
+        ("chat", runtime._model, "run_agent_loop"),
     ):
         invoke = getattr(model, method)
 
@@ -2940,7 +2864,7 @@ def test_agent_old_prompt_character_threshold_allows_completed_response(tmp_path
     assert response.status_code == 200, response.text
     assert response.json()["assistantMessage"]["status"] == "COMPLETED"
     assert response.json()["assistantMessage"]["lastError"] is None
-    assert [role for role, _prompt in calls] == ["query", "evaluator", "chat"]
+    assert [role for role, _prompt in calls] == ["query", "chat"]
     assert all(len(prompt) > 100 for _role, prompt in calls)
     stored = client.get("/api/agent/messages/get", params={
         "tenantId": "local-default", "conversationId": conversation_id,
@@ -2957,15 +2881,15 @@ def test_agent_provider_context_error_keeps_actionable_http_mapping(tmp_path):
     runtime = client.app.state.services.agent._runtime
     runtime._max_prompt_chars = 100
 
-    class CapacityFailureQuery(_AgentModelStub):
+    class CapacityFailureSupervisor(_AgentModelStub):
         calls = 0
 
-        def run_structured(self, _prompt, **_kwargs):
+        def run_agent(self, _prompt, **_kwargs):
             self.calls += 1
             raise ModelInputTooLargeError("Provider context capacity exceeded")
 
-    query = CapacityFailureQuery("capacity-failure")
-    runtime._query_model = query
+    query = CapacityFailureSupervisor("capacity-failure")
+    runtime._model = query
 
     response = client.post(
         "/api/agent/messages/send",
@@ -2998,13 +2922,13 @@ def test_asgi_publishes_only_after_tools_and_final_text_succeed(tmp_path):
     service = client.app.state.services.agent
     provider_entered = Event()
     release = Event()
-    original_call = service._runtime._chat_model.run_agent_loop
+    original_call = service._runtime._model.run_agent_loop
 
     def blocked_provider(*args, **kwargs):
         provider_entered.set()
         assert release.wait(5), "test did not release Provider"
         return original_call(*args, **kwargs)
-    service._runtime._chat_model.run_agent_loop = blocked_provider
+    service._runtime._model.run_agent_loop = blocked_provider
     body = json.dumps({"tenantId": "local-default", "content": "找画面"}).encode()
 
     async def exercise():
@@ -3049,9 +2973,9 @@ def test_asgi_publishes_only_after_tools_and_final_text_succeed(tmp_path):
             release.set()
         await asyncio.wait_for(task, timeout=3)
         events = _answer_payloads(b"".join(message.get("body", b"") for message in output if message["type"] == "http.response.body").decode())
-        deltas = [event["delta"] for event in events if event["type"] == "answer.delta"]
-        assert len(deltas) == 1
-        assert events[-1]["assistantMessage"]["content"] == deltas[0]
+        snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+        assert snapshots
+        assert events[-1]["assistantMessage"]["content"] == snapshots[-1]["content"]
 
     try:
         asyncio.run(exercise())
@@ -3098,7 +3022,11 @@ def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, fai
     def failed_search(*_args, **_kwargs):
         raise error_type("retrieval source unavailable")
     service = client.app.state.services.agent
-    service._runtime._retrieve = failed_search
+    service._runtime._video_runtime._retrieve = failed_search
+    def direct_search(_prompt, *, tools, **_kwargs):
+        available = {tool.name: tool for tool in tools}
+        available["retrieve"].invoke({"query": "找画面", "top_k": 3, "channel_weights": {"lexical": 0.2, "semantic": 0.6, "visual": 0.2}})
+    service._runtime._model.run_agent = direct_search
     try:
         response = client.post(
             "/api/agent/messages/send", params={"tenantId": "local-default", "conversationId": conversation_id},
@@ -3115,7 +3043,10 @@ def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, fai
             json={"tenantId": "local-default", "content": "再找画面"},
         )
         events = _answer_payloads(response.text)
-        assert [event["type"] for event in events] == ["answer.started", "answer.progress", "answer.failed"]
+        assert [event["type"] for event in events] == [
+            "answer.started", "answer.snapshot", "answer.progress", "answer.snapshot", "answer.failed",
+        ]
+        assert events[-1]["assistantMessage"]["renderBlocks"] == events[-2]["assistantMessage"]["renderBlocks"]
         assert events[-1]["error"]["code"] == "PROCESSING_FAILED"
         assert events[-1]["assistantMessage"]["status"] == "FAILED"
     finally:

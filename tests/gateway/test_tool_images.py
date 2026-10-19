@@ -406,10 +406,10 @@ def test_structured_codex_tool_turn_receives_four_native_images(tmp_path):
 
 @pytest.mark.parametrize("provider", ["codex", "claude", "openai", "ark"])
 @pytest.mark.parametrize("vision", [False, True])
-def test_structured_factory_capability_controls_query_and_evaluator_frame_tools(provider, vision):
+def test_structured_factory_capability_controls_query_and_supervisor_frame_tools(provider, vision):
     from agent.chat.common.state import ExecutionControl
     from agent.chat.video_search.frame_evidence import FrameInspectionSession
-    from agent.chat.video_search.tools.registry import build_evaluator_tools, build_query_tools
+    from agent.chat.video_search.tools.registry import build_supervisor_tools, build_query_tools
     from gateway.agent_model.context import ContextWindowPolicy
     from gateway.agent_model.factory import AgentModelFactory
     from gateway.config import (
@@ -437,7 +437,7 @@ def test_structured_factory_capability_controls_query_and_evaluator_frame_tools(
     expected = vision
     models = []
     try:
-        for build_tools in (build_query_tools, build_evaluator_tools):
+        for build_tools in (build_query_tools, build_supervisor_tools):
             model = factory.build_structured(
                 model="configured-model", reasoning_effort="none",
                 request_timeout_seconds=30, max_output_tokens=1024, max_input_chars=20_000,
