@@ -7,6 +7,7 @@ RUNTIME_DETAIL_KEY = "_worker_runtime_v2"
 CAPACITY_ACQUIRED_KEY = "capacity_acquired"
 PREPARE_FAILURES_KEY = "prepare_failures"
 VOICEPRINT_REFS_PER_SPEAKER = 6
+VOICEPRINT_DECISION_REASON_MAX_CHARS = 300
 # Experimental preparation checks; these are cosine criteria, not identity probabilities.
 VOICEPRINT_CONSISTENCY_MIN_REFS = 5
 VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN = 0.50

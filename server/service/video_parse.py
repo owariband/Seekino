@@ -27,10 +27,11 @@ from agent.video_parse_v2 import ParseAgent
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
-from agent.utils.tool import as_langchain_tools
+from agent.utils.tool import as_langchain_tools, build_agent_tool
+from agent.utils.tool_result import JsonToolResult
 from agent.utils.video_frames import build_inspect_video_frames_tool
 from agent.video_parse_v2.timelineEvent_canvas import (
-    CanvasCompletion, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
+    CanvasCompletion, FinishVoiceprintReview, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
 )
 from agent.video_parse_v2.input import (
     GenerativeModelConfig,
@@ -72,6 +73,7 @@ from engine.rag import (
 )
 from engine.rag.indexing.events import EventIndexingContract
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
+from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
 from gateway.embedding import EmbeddingModel
 from gateway.model_factory import GatewayClient
 from gateway.speaker_embedding import SpeakerEmbeddingModel, SpeakerEmbeddingResult
@@ -1106,6 +1108,7 @@ class VideoParseRuntimeService:
                     "conflicts": [line["id"] for line in lines if line["band"] == "CONFLICT"],
                     "accept_disagreements": [line["id"] for line in lines
                                              if line["band"] == "ACCEPT" and line["conflict"]],
+                    "previous_decisions": list(item.detail.get("voiceprint_decisions", [])),
                 }
         return {
             "interval_parse_task_id": snapshot.interval_parse_task_id,
@@ -1152,6 +1155,29 @@ class VideoParseRuntimeService:
             or snapshot["inputs"].parse_config.models.understanding
         )
         tools = self._canvas_tools(canvas)
+        voice_review_enabled = snapshot["inputs"].parse_config.voiceprint_mode != "off"
+        if voice_review_enabled:
+            def finish_voiceprint_review(*, complete: bool) -> JsonToolResult:
+                del complete
+                manager = self._model_manager.get()
+                if manager is not None:
+                    manager.check_active()
+                feedback = canvas.finish_voiceprint_review()
+                _logger.info(
+                    "event=refine_voice_review_checked task=%s interval=%s ready=%s missing=%s inconsistent=%s",
+                    snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                    feedback["ready"], feedback["missing"], feedback["inconsistent"],
+                )
+                return JsonToolResult(success=True, payload=feedback)
+
+            tools.extend(as_langchain_tools([build_agent_tool(
+                name="finish_voiceprint_review", args_schema=FinishVoiceprintReview,
+                description=(
+                    "Check the current Canvas voice decisions before CanvasCompletion. "
+                    "Resolve every returned missing or inconsistent event_ref, then retry this gate."
+                ),
+                func=finish_voiceprint_review, maximum_result_bytes=32_000,
+            )]))
         encoder: SpeakerEmbeddingModel | None = None
         encoder_binding: SpeakerEmbeddingModelConfig | None = None
         if snapshot["inputs"].parse_config.voiceprint_enabled:
@@ -1254,7 +1280,7 @@ class VideoParseRuntimeService:
         try:
             if encoder_binding is not None:
                 encoder = self._speaker_encoder(encoder_binding)
-            return await self._generate_text_structured(
+            receipt = await self._generate_text_structured(
                 binding,
                 prompt,
                 tools=tools, canvas=canvas,
@@ -1262,6 +1288,13 @@ class VideoParseRuntimeService:
                 max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
                 tool_harness="deepagents",
             )
+            if voice_review_enabled and (canvas.voiceprint_review() is None or not canvas.voiceprint_review_passed()):
+                raise QueryModelIncompleteError(
+                    "Refine completed before finish_voiceprint_review accepted the current Canvas: "
+                    + json.dumps(canvas.voiceprint_review_status(), ensure_ascii=False, sort_keys=True),
+                    reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
+                )
+            return receipt
         finally:
             if encoder is not None:
                 await cleanup_execution(encoder.close)
@@ -1270,6 +1303,8 @@ class VideoParseRuntimeService:
         self,
         snapshot: RefineInput,
         result: ValidatedIntervalRefinement,
+        *,
+        voiceprint_decisions: list[dict] | None = None,
     ) -> bool:
         lease = self._require_interval_token(
             snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING"
@@ -1279,6 +1314,14 @@ class VideoParseRuntimeService:
             for task_id, sequence in snapshot["member_sequence_nos"].items()
         }
         member_updates: dict[str, dict[str, object]] = {}
+        detail = {"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]}
+        if snapshot["inputs"].parse_config.voiceprint_mode != "off":
+            if voiceprint_decisions is None:
+                raise QueryModelIncompleteError(
+                    "Refine commit requires the completed Canvas voice decisions",
+                    reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
+                )
+            detail["voiceprint_decisions"] = voiceprint_decisions
         for update in result.updates:
             task_id = task_ids[update.sequence_no]
             values = update.model_dump(
@@ -1296,7 +1339,7 @@ class VideoParseRuntimeService:
                     task_id: content.model_dump(mode="json")
                     for task_id, content in snapshot["member_contents"].items()
                 },
-                detail={"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]},
+                detail=detail,
             )
         except VideoParseSnapshotConflictError as error:
             _logger.info(

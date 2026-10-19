@@ -2613,8 +2613,10 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
                              parse_config=prepared_snapshot["inputs"].parse_config.model_dump(mode="json")),
     )
     content = prepared_snapshot["member_contents"]["chunk"].model_dump(mode="json")
+    previous = _voice_decision_record("member", content["timeline"][7], decision="keep", final_speaker="B")
+    previous["interval_parse_task_id"] = "earlier-window"
     member = SimpleNamespace(chunk_parse_task_id="member", sequence_no=0, version=1,
-                             detail={}, content=content)
+                             detail={"voiceprint_decisions": [previous]}, content=content)
     lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
                                "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
     interval = SimpleNamespace(interval_parse_task_id=lease.interval_parse_task_id,
@@ -2632,6 +2634,7 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
     async def generate(snapshot, *, prompt, canvas):
         assert snapshot["member_evidence"]["member"]["voiceprint"]["lines"] == prepared["lines"]
         evidence = snapshot["member_evidence"]["member"]["voiceprint"]
+        assert evidence["previous_decisions"] == [previous]
         for line in evidence["lines"]:
             for candidate in line["candidates"]:
                 assert all(reference_id in evidence["samples"] for reference_id in candidate["reference_ids"])
@@ -2640,12 +2643,18 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
         assert target["event"]["speaker"] == "A"
         assert target["event"]["speaker_source"] == "voice_default"
         assert target["voice_evidence"]["understanding_speaker"] == "B"
+        assert canvas.voiceprint_review_status()["missing"] == [canvas.items("events")[7][0]]
         assert "ACCEPT" in prompt and "event_ref" in prompt
         assert snapshot["member_contents"]["member"].timeline[7].speaker == "B"
+        canvas.write(role="refine", batch_id="resolve-voice", expected_revision=canvas.revision, operations=[{
+            "op": "voice_decision", "event_ref": canvas.items("events")[7][0],
+            "decision": "voice_top1", "reason": "Voice evidence supports the prepared speaker.",
+        }])
+        assert canvas.finish_voiceprint_review()["ready"]
         return CanvasCompletion(complete=True)
 
-    async def commit(snapshot, result):
-        committed.append((snapshot, result))
+    async def commit(snapshot, result, *, voiceprint_decisions):
+        committed.append((snapshot, result, voiceprint_decisions))
         return True
 
     async def notify(_snapshot):
@@ -2657,6 +2666,151 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
     asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(lease.interval_parse_task_id))
     assert len(committed) == 1
     assert committed[0][1].updates[0].timeline[7].speaker == "A"
+    assert committed[0][2][0]["decision"] == "voice_top1"
+    assert committed[0][2][0]["final_speaker"] == "A"
+    assert member.detail["voiceprint_decisions"] == [previous]
+
+
+def _voice_review_input(host, mode):
+    from tests.agent.video_parse_v2.test_context_canvas import _voice_snapshot
+    from server.model.dto.jobDTO import IntervalParseLease
+
+    snapshot = _voice_snapshot(mode, "CONFLICT")
+    inputs = _b0_snapshot(host)["inputs"]
+    snapshot.update(
+        inputs=inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={
+            "voiceprint_mode": mode,
+        })}), video_parse_task_id=host.lease.video_parse_task_id,
+        member_fingerprints={"member": "frozen-base"},
+    )
+    snapshot["member_contents"] = {
+        member: VideoParseResult.model_validate(content) for member, content in snapshot["member_contents"].items()
+    }
+    lease = IntervalParseLease(snapshot["interval_parse_task_id"], host.lease.video_parse_task_id,
+                               ("member",), 0, 1, "REFINING", "worker", 2,
+                               datetime.now(UTC) + timedelta(minutes=1), 0, 3, 1.0, 2.0)
+    snapshot["lease"] = LeaseToken(owner=lease.worker_id, version=lease.lease_version,
+                                   expires_at=lease.lease_expire_time)
+    return snapshot, lease, ParseContextCanvas.from_refine(snapshot)
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+@pytest.mark.parametrize("outcome", ["bypass", "missing", "inconsistent", "accepted", "contradiction", "restored", "interval_changed"])
+def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkeypatch, voiceprint_host, mode, outcome):
+    from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
+
+    host = voiceprint_host
+    snapshot, lease, canvas = _voice_review_input(host, mode)
+    reference = canvas.items("events")[0][0]
+    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
+    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
+
+    async def scoring(_lease):
+        return {"samples": [], "lines": []}
+
+    async def generate(_binding, _prompt, *, tools, **options):
+        assert options["tool_harness"] == "deepagents"
+        bound = {tool.name: tool for tool in tools}
+        finish = bound["finish_voiceprint_review"]
+        revision = canvas.revision
+        invalid = json.loads(finish.invoke({"complete": False}))
+        assert invalid["error"]["code"] == "INVALID_ARGUMENTS"
+        assert invalid["error"]["retry_hint"] and canvas.revision == revision
+        if outcome == "bypass":
+            return CanvasCompletion(complete=True)
+        missing = json.loads(finish.invoke({"complete": True}))
+        assert missing["ready"] is False and missing["missing"] == [reference]
+        assert missing["inconsistent"] == [] and missing["retry_hint"]
+        if outcome == "missing":
+            return CanvasCompletion(complete=True)
+        if outcome == "interval_changed":
+            canvas.write(role="refine", batch_id="changed-audio", expected_revision=canvas.revision, operations=[{
+                "op": "patch_event", "event_ref": reference, "fields": {"end_seconds": 3100},
+            }])
+            assert json.loads(finish.invoke({"complete": True}))["ready"]
+            assert canvas.voiceprint_decisions() == []
+            return CanvasCompletion(complete=True)
+        decision = "voice_top1" if outcome == "inconsistent" else "keep"
+        operation = {"op": "voice_decision", "event_ref": reference, "decision": decision,
+                     "reason": "The supplied frame shows the named person speaking."}
+        receipt = json.loads(bound["write_context_canvas"].invoke({
+            "batch_id": "voice-choice", "expected_revision": canvas.revision, "operations": [operation],
+        }))
+        assert "error" not in receipt
+        resolved = json.loads(finish.invoke({"complete": True}))
+        if outcome == "inconsistent":
+            assert resolved["missing"] == [] and resolved["inconsistent"] == [reference]
+            assert resolved["ready"] is False
+            return CanvasCompletion(complete=True)
+        assert resolved["ready"] and canvas.voiceprint_review_passed()
+        if outcome in {"contradiction", "restored"}:
+            canvas.write(role="refine", batch_id="speaker-after-gate", expected_revision=canvas.revision, operations=[{
+                "op": "patch_event", "event_ref": reference, "fields": {"speaker": "立希"},
+            }])
+            assert canvas.voiceprint_review_status()["missing"] == [reference]
+            if outcome == "restored":
+                canvas.write(role="refine", batch_id="restore-choice", expected_revision=canvas.revision, operations=[
+                    {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爱音"}}, operation,
+                ])
+                assert canvas.voiceprint_review_status()["ready"]
+            assert not canvas.voiceprint_review_passed()
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", scoring)
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    if outcome in {"accepted", "interval_changed"}:
+        assert asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas)).complete
+        assert canvas.voiceprint_review_passed()
+    else:
+        with pytest.raises(QueryModelIncompleteError) as caught:
+            asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas))
+        assert caught.value.reason == ModelFailureReason.REQUIRED_TOOL_MISSING
+    assert host.state.closed
+
+
+@pytest.mark.parametrize("mode", ["off", "flag", "prefill"])
+def test_refine_voice_decisions_reach_commit_detail_only_when_enabled(monkeypatch, voiceprint_host, mode):
+    from gateway.agent_model.errors import QueryModelIncompleteError
+
+    host = voiceprint_host
+    snapshot, lease, canvas = _voice_review_input(host, mode)
+    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
+    commits = []
+    host.runtime._repository.commit_interval_refinement = lambda *_args, **options: commits.append(options)
+    if mode == "off":
+        asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result()))
+        assert set(commits[0]["detail"]) == {"input_versions", "input_scopes"}
+    else:
+        with pytest.raises(QueryModelIncompleteError):
+            asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result()))
+        assert commits == []
+        reference = canvas.items("events")[0][0]
+        canvas.write(role="refine", batch_id="keep", expected_revision=canvas.revision, operations=[{
+            "op": "voice_decision", "event_ref": reference, "decision": "keep",
+            "reason": "The original speaker is visibly speaking.",
+        }])
+        assert canvas.finish_voiceprint_review()["ready"]
+        records = canvas.voiceprint_decisions()
+        asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result(), voiceprint_decisions=records))
+        assert commits[0]["detail"]["voiceprint_decisions"] == records
+        assert set(records[0]) == {"event_ref", "member_chunk_id", "start_ms", "end_ms", "understanding_speaker",
+                                   "voice_top1", "gap", "band", "decision", "reason", "final_speaker"}
+
+
+def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voiceprint_host):
+    host = voiceprint_host
+    snapshot, lease, canvas = _voice_review_input(host, "off")
+    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
+    host.runtime._repository.load_voiceprint_references = lambda _lease: []
+
+    async def generate(_binding, _prompt, *, tools, **_options):
+        assert {tool.name for tool in tools} == {"get_context_canvas", "write_context_canvas", "compare_speaker"}
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    before = canvas.snapshot()
+    assert asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas)).complete
+    assert canvas.snapshot() == before
 
 
 def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatch, voiceprint_host):
@@ -2692,6 +2846,8 @@ def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatc
         "sequence_no": 0, "version": 1, "bounds": (0, 60000),
         "content": VideoParseResult(persons=[], timeline=[]),
     }})
+    canvas.register_evidence("member", {"voiceprint": {"mode": "prefill", "lines": []}})
+    canvas._apply_voiceprint()
     refine_input = {"inputs": snapshot["inputs"], "video_parse_task_id": lease.video_parse_task_id,
                     "interval_parse_task_id": lease.interval_parse_task_id, "lease": object(),
                     "member_bounds": {"member": (0, 60000)}}
@@ -2711,6 +2867,8 @@ def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatc
         assert all("vector" not in ref and "text_variants" not in ref for ref in full["samples"].values())
         assert not {"band", "conflict", "review_reason"}.intersection(result)
         assert not {"band", "conflict", "review_reason"}.intersection(full)
+        finish = next(tool for tool in tools if tool.name == "finish_voiceprint_review")
+        assert json.loads(finish.invoke({"complete": True}))["ready"]
         return CanvasCompletion(complete=True)
 
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
@@ -3573,3 +3731,163 @@ def test_cancelled_parallel_calls_keep_the_lease_until_every_call_exits():
             await asyncio.gather(*tasks, return_exceptions=True)
 
     asyncio.run(execute())
+
+
+def _voice_decision_record(member_ref, event, *, decision="voice_top1", final_speaker="A"):
+    return {"event_ref": "event:reviewed", "member_chunk_id": member_ref,
+            "start_ms": event["start_seconds"], "end_ms": event["end_seconds"],
+            "understanding_speaker": "B", "voice_top1": "A", "gap": 0.08,
+            "band": "CONFLICT", "decision": decision,
+            "reason": "The visible speaker is A.", "final_speaker": final_speaker}
+
+
+def test_voice_decision_commit_persists_fields_and_member_history_atomically(repository):
+    from copy import deepcopy
+    from server.model.job import IntervalParseContent
+    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
+
+    factory, repo, prepared, first, _second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    inputs = _refinement_inputs(repo, first, now=at)
+    member = prepared.chunk_parse_task_ids[1]
+    timeline = deepcopy(inputs["input_contents"][member]["timeline"])
+    timeline[0].update(speaker="A", participants=["A", "B"])
+    record = _voice_decision_record(member, timeline[0])
+    original = deepcopy(record)
+    repo.commit_interval_refinement(
+        first, **inputs, interval_content={}, member_updates={member: {"timeline": timeline}},
+        detail={"voiceprint_decisions": [record], "unrelated": "retained"}, now=at,
+    )
+    assert record == original
+    with factory() as session:
+        interval = session.get(IntervalParseContent, first.interval_parse_task_id)
+        assert interval.detail["voiceprint_decisions"] == [record]
+        assert interval.detail["unrelated"] == "retained"
+        rows = {row.chunk_task_id: row for row in session.scalars(select(ChunkParseContent))}
+        assert rows[member].content["timeline"][0]["speaker"] == record["final_speaker"]
+        assert rows[member].detail["voiceprint_decisions"] == [
+            {**record, "interval_parse_task_id": first.interval_parse_task_id},
+        ]
+        assert all("voiceprint_decisions" not in row.detail for key, row in rows.items() if key != member)
+
+
+def test_voice_decision_overlap_history_remains_information_for_fresh_window(repository):
+    from server.model.job import IntervalParseContent
+    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
+
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    inputs = _refinement_inputs(repo, first, now=at)
+    member = prepared.chunk_parse_task_ids[1]
+    event = inputs["input_contents"][member]["timeline"][0]
+    record = _voice_decision_record(member, event, decision="keep", final_speaker="B")
+    repo.commit_interval_refinement(
+        first, **inputs, interval_content={}, member_updates={},
+        detail={"voiceprint_decisions": [record]}, now=at,
+    )
+    loaded = repo.load_interval_members(second, now=at)
+    previous = next(row.detail["voiceprint_decisions"] for row in loaded.members
+                    if row.chunk_parse_task_id == member)
+    assert previous == [{**record, "interval_parse_task_id": first.interval_parse_task_id}]
+    snapshot = {
+        "interval_parse_task_id": second.interval_parse_task_id,
+        "start_sequence_no": second.start_sequence_no, "chunk_count": second.chunk_count,
+        "member_sequence_nos": {row.chunk_parse_task_id: row.sequence_no for row in loaded.members},
+        "member_versions": {row.chunk_parse_task_id: row.version for row in loaded.members},
+        "member_scopes": {row.chunk_parse_task_id: row.detail["scope"] for row in loaded.members},
+        "member_bounds": {row.chunk_parse_task_id: (0, 40_000) for row in loaded.members},
+        "member_contents": {row.chunk_parse_task_id: row.content for row in loaded.members},
+        "write_bounds": (10_000, 40_000),
+        "member_evidence": {member: {"voiceprint": {
+            "mode": "flag", "previous_decisions": previous, "method_version": "B0-trim20-v1",
+            "lines": [{"id": "line:overlap", "position": 0,
+                       "start_ms": record["start_ms"], "end_ms": record["end_ms"],
+                       "duration_ms": record["end_ms"] - record["start_ms"],
+                       "understanding_speaker": "B", "band": "CONFLICT", "conflict": True,
+                       "gap": 0.08, "candidates": [{"speaker": "A", "similarity": 0.8}]}],
+        }}},
+    }
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    assert canvas.get("evidence", member)["voiceprint"]["previous_decisions"] == previous
+    assert len(canvas.voiceprint_review()["conflicts"]) == 1
+    reference = canvas.voiceprint_review()["conflicts"][0]["event_ref"]
+    assert canvas.voiceprint_review_status()["missing"] == [reference]
+    assert not canvas.voiceprint_review_passed()
+    with factory() as session:
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
+
+
+def test_voice_decision_concurrent_keep_rejects_merged_speaker_and_rolls_back(repository):
+    from copy import deepcopy
+    from server.model.job import IntervalParseContent
+    from server.repository.video_parse import VideoParseSnapshotConflictError
+    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
+
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    first_inputs = _refinement_inputs(repo, first, now=at)
+    stale_inputs = _refinement_inputs(repo, second, now=at)
+    member = prepared.chunk_parse_task_ids[1]
+    timeline = deepcopy(first_inputs["input_contents"][member]["timeline"])
+    timeline[0].update(speaker="A", participants=["A", "B"])
+    first_record = _voice_decision_record(member, timeline[0])
+    repo.commit_interval_refinement(
+        first, **first_inputs, interval_content={}, member_updates={member: {"timeline": timeline}},
+        detail={"voiceprint_decisions": [first_record]}, now=at,
+    )
+    with factory() as session:
+        before = {row.chunk_task_id: (deepcopy(row.content), row.version, deepcopy(row.detail))
+                  for row in session.scalars(select(ChunkParseContent))}
+    stale_record = _voice_decision_record(member, timeline[0], decision="keep", final_speaker="B")
+    with pytest.raises(VideoParseSnapshotConflictError) as rejected:
+        repo.commit_interval_refinement(
+            second, **stale_inputs, interval_content={}, member_updates={},
+            detail={"voiceprint_decisions": [stale_record]}, now=at,
+        )
+    assert rejected.value.reason == "voice_decision_merge_conflict"
+    assert rejected.value.context == {"chunk_task_id": member, "event_ref": "event:reviewed"}
+    with factory() as session:
+        after = {row.chunk_task_id: (row.content, row.version, row.detail)
+                 for row in session.scalars(select(ChunkParseContent))}
+        assert after == before
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
+        assert session.get(IntervalParseTask, second.interval_parse_task_id).status == "REFINING"
+
+
+def test_voice_decision_commit_rejects_nonmember_record_atomically(repository):
+    from server.model.job import IntervalParseContent
+    from server.repository.video_parse import VideoParseConflictError
+    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
+
+    factory, repo, prepared, first, _second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    inputs = _refinement_inputs(repo, first, now=at)
+    member = prepared.chunk_parse_task_ids[1]
+    record = _voice_decision_record("outside", inputs["input_contents"][member]["timeline"][0])
+    with pytest.raises(VideoParseConflictError, match="nonmember Chunk"):
+        repo.commit_interval_refinement(
+            first, **inputs, interval_content={}, member_updates={},
+            detail={"voiceprint_decisions": [record]}, now=at,
+        )
+    with factory() as session:
+        assert session.get(IntervalParseContent, first.interval_parse_task_id) is None
+        assert all("voiceprint_decisions" not in row.detail
+                   for row in session.scalars(select(ChunkParseContent)))
+
+
+def test_voice_decision_off_commit_preserves_existing_detail_shape(repository):
+    from server.model.job import IntervalParseContent
+    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
+
+    factory, repo, _prepared, first, _second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    repo.commit_interval_refinement(
+        first, **_refinement_inputs(repo, first, now=at), interval_content={},
+        member_updates={}, detail={"existing": "unchanged"}, now=at,
+    )
+    with factory() as session:
+        assert session.get(IntervalParseContent, first.interval_parse_task_id).detail == {
+            "existing": "unchanged", "refinement_committed_lease_version": first.lease_version,
+        }
+        assert all("voiceprint_decisions" not in row.detail
+                   for row in session.scalars(select(ChunkParseContent)))

@@ -27,7 +27,12 @@ class IntervalRefine:
             )
             CanvasCompletion.model_validate(receipt)
             result = canvas.interval_result()
-            committed = await self._runtime.commit_interval_refinement(snapshot, result)
+            if canvas.voiceprint_review() is None:
+                committed = await self._runtime.commit_interval_refinement(snapshot, result)
+            else:
+                committed = await self._runtime.commit_interval_refinement(
+                    snapshot, result, voiceprint_decisions=canvas.voiceprint_decisions(),
+                )
             if committed is False:
                 # The worker retains its claim and completed observations. Only
                 # the now-stale refinement is reviewed against fresh content.

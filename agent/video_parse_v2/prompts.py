@@ -10,6 +10,7 @@ from agent.common.chunk_understanding import (
 )
 from engine.parsev2.observations import ASRResult, OCRResult
 from agent.utils.context_canvas import ContextCanvas
+from server.constants.parse import VOICEPRINT_DECISION_REASON_MAX_CHARS
 
 from .state import ChunkExecution
 from .timelineEvent_canvas import ParseContextCanvas
@@ -131,9 +132,13 @@ def build_refine_prompt(
     voice_instructions = () if voiceprint is None else (
         "Prepared B0 voice evidence is available in each member's evidence/voiceprint section and bound to each event's voice_evidence with the current event_ref. The event summary contains its original Understanding speaker, unchanged candidate ranking, cosine gap, duration and band. Read full reference sources and provenance through get_context_canvas collection=evidence, reference=voice_evidence.evidence_ref, section=voiceprint, matching line_id. Similarity is not a probability or calibrated confidence.",
         "Review every supplied voice default and every line in the explicit conflict and ACCEPT-disagreement lists below. In flag mode the program preserves every speaker. In prefill mode only ACCEPT lines have a voice top1 default in the working draft; leaving it unchanged accepts it. Modify speaker only for supported exceptions; an explicit null remains null. Candidates are evidence, and you may choose a person outside the top three. The program records speaker_source; do not set it yourself.",
-        "Scene and conversational context can support a correction; a single frame that does not show someone cannot by itself exclude an off-screen speaker. Record a brief factual correction basis in the event description or tool execution record without exposing hidden reasoning.",
+        "Conversational context alone does not override a voice disagreement: it needs specific evidence, such as the speaker being addressed by name or visibly speaking. A single frame that does not show someone cannot by itself exclude an off-screen speaker. Record a brief factual correction basis without exposing hidden reasoning.",
         "Voice evidence applies only to its recorded start_ms/end_ms. Editing text or speaker does not invalidate it. A changed audio interval invalidates the old scores and removes an unreviewed voice default: use compare_speaker for the new interval or explicitly select a supported speaker/null. Never reuse an old score as if it described the new interval.",
         "compare_speaker returns a compact ranking and an evidence_ref/evidence_section for full immutable provenance through get_context_canvas. It also returns the current Canvas revision; use that revision for subsequent writes.",
+        f"For every event in conflicts or accept_disagreements inside this window's write bounds whose voice_evidence is still valid, record a decision through write_context_canvas with op=voice_decision, event_ref, decision=keep|voice_top1|other|null and a nonblank reason of 1-{VOICEPRINT_DECISION_REASON_MAX_CHARS} characters.",
+        "The decision must match the final speaker: keep equals understanding_speaker; voice_top1 equals candidates[0].speaker; other is a named speaker different from both; null means speaker is null. Edit speaker explicitly when needed, then record the decision. A contradictory later speaker edit invalidates the recorded decision; record a replacement and pass the gate again.",
+        "Earlier windows' committed decisions are information only: resolve every required conflict within this window again. An audio interval change invalidates old voice evidence and removes its decision requirement.",
+        "Call finish_voiceprint_review after resolving all required events and before CanvasCompletion. If ready=false, correct every missing or inconsistent event_ref and retry the gate; CanvasCompletion is accepted only after the gate passes.",
         "Required voice review lists: " + json.dumps(voiceprint, ensure_ascii=False, sort_keys=True),
     )
     return "\n".join((

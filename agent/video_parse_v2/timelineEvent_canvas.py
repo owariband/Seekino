@@ -17,6 +17,7 @@ from engine.parsev2.validation import (
     ChunkResultUpdate, ValidatedIntervalRefinement, ValidatedPrefixRefinement,
     validate_result_time_range,
 )
+from server.constants.parse import VOICEPRINT_DECISION_REASON_MAX_CHARS
 
 
 def content_fingerprint(value: object) -> str:
@@ -96,8 +97,15 @@ class CompactOperation(_Operation):
     video_compact: str
 
 
+class VoiceDecision(_Operation):
+    op: Literal["voice_decision"]
+    event_ref: str
+    decision: Literal["keep", "voice_top1", "other", "null"]
+    reason: str = Field(min_length=1, max_length=VOICEPRINT_DECISION_REASON_MAX_CHARS, pattern=r"\S")
+
+
 ParseOperation = Annotated[
-    AddEvent | PatchEvent | SetEvent | PersonsOperation | EventArrayOperation | CompactOperation,
+    AddEvent | PatchEvent | SetEvent | PersonsOperation | EventArrayOperation | CompactOperation | VoiceDecision,
     Field(discriminator="op"),
 ]
 
@@ -109,6 +117,10 @@ class ParseCanvasWrite(_Operation):
 
 
 class CanvasCompletion(_Operation):
+    complete: Literal[True]
+
+
+class FinishVoiceprintReview(_Operation):
     complete: Literal[True]
 
 
@@ -218,6 +230,7 @@ class ParseContextCanvas(ContextCanvas):
             return
 
         def apply(draft):
+            draft["voiceprint_review"] = {}
             for reference, value in draft["events"].items():
                 member_ref, event = value["member_ref"], value["event"]
                 if member_ref not in self._voiceprint_modes or event["event_type"] != "DIALOGUE":
@@ -282,6 +295,98 @@ class ParseContextCanvas(ContextCanvas):
         return {"modes": dict(self._voiceprint_modes), "conflicts": conflicts,
                 "accept_disagreements": accept_disagreements}
 
+    def _required_voice_events(self, draft):
+        if self.stage != "refine" or not self._voiceprint_modes:
+            return {}
+        required = {}
+        for reference, value in draft["events"].items():
+            event, evidence = value["event"], value.get("voice_evidence")
+            if (value["member_ref"] not in self._voiceprint_modes or event["event_type"] != "DIALOGUE"
+                    or not evidence or not evidence.get("valid")
+                    or not self._write_bounds[0] <= event["start_seconds"] < event["end_seconds"] <= self._write_bounds[1]):
+                continue
+            candidates = evidence.get("candidates") or []
+            if (evidence.get("conflict") or evidence.get("band") == "CONFLICT"
+                    or evidence.get("band") == "ACCEPT" and candidates
+                    and candidates[0]["speaker"] != evidence.get("understanding_speaker")):
+                required[reference] = value
+        return required
+
+    @staticmethod
+    def _voice_decision_consistent(value):
+        record, event, evidence = value["voice_decision"], value["event"], value["voice_evidence"]
+        speaker, understanding = event.get("speaker"), evidence.get("understanding_speaker")
+        candidates = evidence.get("candidates") or []
+        top1 = candidates[0]["speaker"] if candidates else None
+        if record["decision"] == "keep":
+            return speaker == understanding
+        if record["decision"] == "voice_top1":
+            return top1 is not None and speaker == top1
+        if record["decision"] == "other":
+            return isinstance(speaker, str) and bool(speaker.strip()) and speaker not in {understanding, top1}
+        return speaker is None
+
+    def _voiceprint_review_status(self, draft):
+        required = self._required_voice_events(draft)
+        missing = [reference for reference, value in required.items() if "voice_decision" not in value]
+        inconsistent = [reference for reference, value in required.items()
+                        if "voice_decision" in value and not self._voice_decision_consistent(value)]
+        return {
+            "ready": not missing and not inconsistent, "missing": missing, "inconsistent": inconsistent,
+            "retry_hint": ("Record a voice_decision for each listed event (edit the speaker only if your decision "
+                           "changes it), then call "
+                           "finish_voiceprint_review again.") if missing or inconsistent else "",
+        }
+
+    def voiceprint_review_status(self) -> dict[str, Any]:
+        return self._voiceprint_review_status(self.snapshot().collections)
+
+    def _voiceprint_decision_records(self, draft):
+        records = []
+        for reference, value in self._required_voice_events(draft).items():
+            evidence = value["voice_evidence"]
+            candidates = evidence.get("candidates") or []
+            records.append({
+                "event_ref": reference, "member_chunk_id": value["member_ref"],
+                "start_ms": evidence["start_ms"], "end_ms": evidence["end_ms"],
+                "understanding_speaker": evidence.get("understanding_speaker"),
+                "voice_top1": candidates[0]["speaker"] if candidates else None,
+                "gap": evidence.get("gap"), "band": evidence.get("band"),
+                **value.get("voice_decision", {}), "final_speaker": value["event"].get("speaker"),
+            })
+        return records
+
+    def finish_voiceprint_review(self) -> dict[str, Any]:
+        def finish(draft):
+            status = self._voiceprint_review_status(draft)
+            if self._voiceprint_modes:
+                gate = draft["voiceprint_review"]
+                gate.clear()
+                if status["ready"]:
+                    gate["signature"] = content_fingerprint(self._voiceprint_decision_records(draft))
+            return status
+
+        with self._lock:
+            result = self.mutate(finish)
+            return {**result, "revision": self.revision}
+
+    def voiceprint_review_passed(self) -> bool:
+        if not self._voiceprint_modes:
+            return True
+        draft = self.snapshot().collections
+        return (self._voiceprint_review_status(draft)["ready"]
+                and draft["voiceprint_review"].get("signature")
+                == content_fingerprint(self._voiceprint_decision_records(draft)))
+
+    def voiceprint_decisions(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if not self.voiceprint_review_passed():
+                raise AgentToolFeedbackError(
+                    "VOICEPRINT_REVIEW_REQUIRED", "Voice conflict decisions have not passed the current review gate.",
+                    "Resolve the required decisions and call finish_voiceprint_review before completing.",
+                )
+            return self._voiceprint_decision_records(self.snapshot().collections)
+
     @classmethod
     def from_prefix(cls, context):
         config = context["inputs"].parse_config.prefix_context
@@ -309,6 +414,14 @@ class ParseContextCanvas(ContextCanvas):
                 "reference": ref,
                 **({"member_ref": value["member_ref"], "event_type": value["event"]["event_type"]}
                    if collection == "events" else {}),
+                **({"speaker": value["event"].get("speaker"), **({"voice": {
+                    "top1": (value["voice_evidence"]["candidates"][0]["speaker"]
+                             if value["voice_evidence"].get("candidates") else None),
+                    "gap": value["voice_evidence"].get("gap"), "band": value["voice_evidence"].get("band"),
+                    "conflict": value["voice_evidence"].get("conflict", False),
+                }} if value.get("voice_evidence", {}).get("valid") else {})}
+                   if collection == "events" and value["member_ref"] in self._voiceprint_modes
+                   and value["event"]["event_type"] == "DIALOGUE" else {}),
                 **({"sequence_no": value["sequence_no"], "content_version": value["content_version"],
                     "scope": value["scope"], "start_ms": value["start_ms"], "end_ms": value["end_ms"]}
                    if collection == "members" else {}),
@@ -351,6 +464,7 @@ class ParseContextCanvas(ContextCanvas):
         def apply(draft, ops):
             results = []
             selected_speakers = set()
+            voice_before = content_fingerprint(self._voiceprint_decision_records(draft)) if self._voiceprint_modes else None
             for index, payload in enumerate(ops):
                 operation = ParseCanvasWrite.model_validate({
                     "batch_id": batch_id, "expected_revision": expected_revision,
@@ -391,6 +505,9 @@ class ParseContextCanvas(ContextCanvas):
                             value["event"]["speaker_source"] = "refine_edit"
                         else:
                             value["event"]["speaker_source"] = previous.get("speaker_source") or "understanding"
+                    if (value["event"].get("speaker") != previous.get("speaker")
+                            and "voice_decision" in value and not self._voice_decision_consistent(value)):
+                        value.pop("voice_decision")
                 elif isinstance(operation, PatchEvent):
                     reference = operation.event_ref
                     value = self._event(draft, reference)
@@ -402,6 +519,18 @@ class ParseContextCanvas(ContextCanvas):
                             and event["speaker"] != previous_speaker):
                         selected_speakers.add(reference)
                         event["speaker_source"] = "refine_edit"
+                    if (event.get("speaker") != previous_speaker
+                            and "voice_decision" in value and not self._voice_decision_consistent(value)):
+                        value.pop("voice_decision")
+                elif isinstance(operation, VoiceDecision):
+                    reference = operation.event_ref
+                    required = self._required_voice_events(draft)
+                    if reference not in required:
+                        raise AgentToolFeedbackError(
+                            "INVALID_VOICEPRINT_DECISION", "This event has no required voice conflict in the write window.",
+                            "Use a current conflict event_ref with valid voice evidence inside the write bounds.",
+                        )
+                    required[reference]["voice_decision"] = operation.model_dump(exclude={"op", "event_ref"})
                 elif isinstance(operation, PersonsOperation):
                     reference = operation.member_ref
                     member = self._member(draft, reference)
@@ -430,11 +559,14 @@ class ParseContextCanvas(ContextCanvas):
                 ) != (evidence["start_ms"], evidence["end_ms"])):
                     evidence["valid"] = False
                     evidence["invalid_reason"] = "audio_interval_changed"
+                    value.pop("voice_decision", None)
                     if (event.get("speaker_source") == "voice_default"
                             and reference not in selected_speakers):
                         event["speaker"] = evidence.get("understanding_speaker")
                         event["speaker_source"] = "understanding"
             self._validate_draft(draft)
+            if self._voiceprint_modes and voice_before != content_fingerprint(self._voiceprint_decision_records(draft)):
+                draft["voiceprint_review"].clear()
             return results
 
         try:

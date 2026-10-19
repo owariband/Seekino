@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,8 @@ from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.input import ParseInput
+from agent.video_parse_v2.prompts import build_refine_prompt
+from agent.video_parse_v2.refine.agent import IntervalRefine
 from agent.video_parse_v2.scheduler import ChunkScheduler
 from agent.video_parse_v2.state import (
     ChunkScheduleEntry, ChunkScheduleSnapshot, ChunkTaskStatus, VideoRunSnapshot, VideoTaskStatus,
@@ -20,8 +23,10 @@ from agent.video_parse_v2.voiceprint import (
     CompareSpeakerArguments, RegisterVoiceprintArguments, UnregisterVoiceprintArguments, VoiceprintAgent,
     build_compare_speaker_tool, build_tools,
 )
+from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion, ParseContextCanvas
 from engine.parsev2.voiceprint import Voiceprint, VoiceprintReference
 from tests.agent.video_parse_v2.test_framework import _inputs, _lease, _result
+from tests.agent.video_parse_v2.test_context_canvas import _voice_snapshot
 
 
 def _voice_inputs() -> ParseInput:
@@ -324,3 +329,135 @@ def test_tool_argument_contract_forbids_paths_vectors_and_reverse_time():
             RegisterVoiceprintArguments.model_validate({**values, **extra})
     with pytest.raises(ValidationError, match="exceed"):
         CompareSpeakerArguments(start_ms=2000, end_ms=1000)
+
+
+@pytest.mark.parametrize("mode,band,speaker", [
+    ("flag", "CONFLICT", "爱音"), ("prefill", "ACCEPT", "爽世"),
+])
+def test_refine_prompt_first_checkpoint_exposes_voice_conflicts_and_required_decision_gate(mode, band, speaker):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot(mode, band))
+    reference = canvas.items("events")[0][0]
+    prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=canvas)
+    catalog = json.loads(prompt.splitlines()[-1])["collections"]["events"]
+    assert catalog == [{
+        "reference": reference, "member_ref": "member", "event_type": "DIALOGUE",
+        "speaker": speaker, "voice": {"top1": "爽世", "gap": 0.2,
+                                    "band": band, "conflict": band == "CONFLICT"},
+    }]
+    assert "op=voice_decision" in prompt and "decision=keep|voice_top1|other|null" in prompt
+    assert "reason of 1-300 characters" in prompt and "this window's write bounds" in prompt
+    assert "keep equals understanding_speaker" in prompt and "voice_top1 equals candidates[0].speaker" in prompt
+    assert "other is a named speaker different from both" in prompt and "null means speaker is null" in prompt
+    assert "Earlier windows' committed decisions are information only" in prompt
+    assert "finish_voiceprint_review" in prompt and "before CanvasCompletion" in prompt
+    assert "missing or inconsistent event_ref" in prompt
+    assert "Conversational context alone does not override a voice disagreement" in prompt
+    assert "speaker being addressed by name or visibly speaking" in prompt
+
+
+def test_voice_off_refine_prompt_and_commit_keep_historical_call_contract():
+    snapshot = _voice_snapshot("off")
+
+    async def generate(_snapshot, *, canvas, prompt):
+        assert "op=voice_decision" not in prompt and "finish_voiceprint_review" not in prompt
+        assert "Required voice review lists" not in prompt
+        checkpoint = json.loads(prompt.splitlines()[-1])
+        assert set(checkpoint["collections"]["events"][0]) == {"reference", "member_ref", "event_type"}
+        return CanvasCompletion(complete=True)
+
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot),
+        generate_interval_refinement=AsyncMock(side_effect=generate),
+        commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    runtime.commit_interval_refinement.assert_awaited_once()
+    assert runtime.commit_interval_refinement.await_args.args[0] is snapshot
+    assert len(runtime.commit_interval_refinement.await_args.args) == 2
+    assert runtime.commit_interval_refinement.await_args.kwargs == {}
+    assert runtime.commit_interval_refinement.await_args.args[1].updates == []
+    runtime.notify_interval_committed.assert_awaited_once_with(snapshot)
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+def test_refine_commits_canvas_decision_records_with_complete_provenance(mode):
+    snapshot = _voice_snapshot(mode, "CONFLICT")
+    original = deepcopy(snapshot)
+
+    async def generate(_snapshot, *, canvas, prompt):
+        reference = canvas.items("events")[0][0]
+        canvas.write(role="refine", batch_id="resolve-voice", expected_revision=canvas.revision, operations=[
+            {"op": "persons", "member_ref": "member", "action": "add", "values": ["爽世"]},
+            {"op": "event_array", "event_ref": reference, "field": "participants", "action": "add",
+             "values": ["爽世"]},
+            {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爽世"}},
+            {"op": "voice_decision", "event_ref": reference, "decision": "voice_top1",
+             "reason": "The target is visibly speaking."},
+        ])
+        assert canvas.finish_voiceprint_review()["ready"] is True
+        assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
+        return CanvasCompletion(complete=True)
+
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot),
+        generate_interval_refinement=AsyncMock(side_effect=generate),
+        commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    records = runtime.commit_interval_refinement.await_args.kwargs["voiceprint_decisions"]
+    assert len(records) == 1
+    assert records[0] == {
+        "event_ref": records[0]["event_ref"], "member_chunk_id": "member",
+        "start_ms": 1000, "end_ms": 3000, "understanding_speaker": "爱音",
+        "voice_top1": "爽世", "gap": 0.2, "band": "CONFLICT", "decision": "voice_top1",
+        "reason": "The target is visibly speaking.", "final_speaker": "爽世",
+    }
+    assert runtime.commit_interval_refinement.await_args.args[1].updates[0].timeline[0].speaker == "爽世"
+    runtime.notify_interval_committed.assert_awaited_once_with(snapshot)
+    assert snapshot == original
+
+
+def test_refine_refresh_requires_new_canvas_decisions_after_a_commit_conflict():
+    snapshots = [_voice_snapshot("flag", "CONFLICT"), _voice_snapshot("flag", "CONFLICT")]
+    references = []
+
+    async def generate(_snapshot, *, canvas, prompt):
+        reference = canvas.items("events")[0][0]
+        references.append(reference)
+        assert canvas.voiceprint_review_status()["missing"] == [reference]
+        decision, speaker = ("voice_top1", "爽世") if len(references) == 1 else ("keep", "爱音")
+        canvas.write(role="refine", batch_id="resolve", expected_revision=canvas.revision, operations=[
+            {"op": "persons", "member_ref": "member", "action": "add", "values": [speaker]},
+            {"op": "event_array", "event_ref": reference, "field": "participants", "action": "add",
+             "values": [speaker]},
+            {"op": "patch_event", "event_ref": reference, "fields": {"speaker": speaker}},
+            {"op": "voice_decision", "event_ref": reference, "decision": decision,
+             "reason": f"Fresh window review {len(references)}."},
+        ])
+        assert canvas.finish_voiceprint_review()["ready"] is True
+        return CanvasCompletion(complete=True)
+
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(side_effect=snapshots),
+        generate_interval_refinement=AsyncMock(side_effect=generate),
+        commit_interval_refinement=AsyncMock(side_effect=[False, True]), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    assert len(set(references)) == 2
+    assert [call.kwargs["voiceprint_decisions"][0]["decision"]
+            for call in runtime.commit_interval_refinement.await_args_list] == ["voice_top1", "keep"]
+    assert [call.kwargs["voiceprint_decisions"][0]["event_ref"]
+            for call in runtime.commit_interval_refinement.await_args_list] == references
+    runtime.notify_interval_committed.assert_awaited_once_with(snapshots[1])
+
+
+def test_refine_receipt_without_voice_gate_does_not_export_or_commit_a_draft():
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=_voice_snapshot("flag", "CONFLICT")),
+        generate_interval_refinement=AsyncMock(return_value=CanvasCompletion(complete=True)),
+        commit_interval_refinement=AsyncMock(), notify_interval_committed=AsyncMock(),
+    )
+    with pytest.raises(AgentToolFeedbackError, match="review gate"):
+        asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    runtime.commit_interval_refinement.assert_not_awaited()
+    runtime.notify_interval_committed.assert_not_awaited()
