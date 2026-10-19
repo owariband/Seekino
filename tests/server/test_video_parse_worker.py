@@ -2962,10 +2962,11 @@ def _voice_review_input(host, mode):
 
 @pytest.mark.parametrize("mode", ["flag", "prefill"])
 @pytest.mark.parametrize("outcome", ["bypass", "missing", "inconsistent", "accepted", "contradiction", "restored", "interval_changed"])
-def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkeypatch, voiceprint_host, mode, outcome):
+def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkeypatch, voiceprint_host, caplog, mode, outcome):
     from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
 
     host = voiceprint_host
+    caplog.set_level("INFO", logger="server.service.video_parse")
     snapshot, lease, canvas = _voice_review_input(host, mode)
     reference = canvas.items("events")[0][0]
     monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
@@ -3032,6 +3033,41 @@ def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkey
             asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas))
         assert caught.value.reason == ModelFailureReason.REQUIRED_TOOL_MISSING
     assert host.state.closed
+    messages = [record.getMessage() for record in caplog.records]
+    checked = [message for message in messages if message.startswith("event=refine_voice_review_checked ")]
+    unresolved = [message for message in messages if message.startswith("event=refine_voice_review_unresolved ")]
+    rejected = [message for message in messages if message.startswith("event=refine_voice_review_completion_rejected ")]
+    if outcome == "bypass":
+        assert checked == unresolved == [] and len(rejected) == 1
+    else:
+        assert any(message.endswith(f"ready=False missing=['{reference}'] inconsistent=[]") for message in checked)
+        assert len(unresolved) == (2 if outcome == "inconsistent" else 1)
+    assert len(rejected) == (0 if outcome in {"accepted", "interval_changed"} else 1)
+    for message in unresolved + rejected:
+        assert f"task={snapshot['video_parse_task_id']} interval={snapshot['interval_parse_task_id']} details=" in message
+        details = json.loads(message.split(" details=", 1)[1])
+        assert details["canvas_id"] == canvas.id
+        assert type(details["revision"]) is int and details["revision"] <= canvas.revision
+        assert not details["gate_accepted"]
+        assert details["gate_failure"]
+        assert all(key not in message for key in ("text_variants", "声の証拠", '"text"', '"vector"', '"prompt"'))
+    if outcome == "inconsistent":
+        details = json.loads(unresolved[-1].split(" details=", 1)[1])
+        assert details["inconsistent"] == [reference] and details["missing"] == []
+        event = details["events"][0]
+        assert event["event_ref"] == reference and event["member_chunk_id"] == "member"
+        assert event["start_ms"] == 1000 and event["end_ms"] == 3000
+        assert event["decision"] == "voice_top1" and event["voice_top1"] == "爽世"
+        assert event["understanding_speaker"] == event["draft_speaker"] == "爱音"
+        assert event["expected_speaker"] == "爽世" and event["problem"] == "voice_top1_speaker_mismatch"
+        assert event["reason"] == "The supplied frame shows the named person speaking."
+    if outcome == "bypass":
+        details = json.loads(rejected[0].split(" details=", 1)[1])
+        assert details["missing"] == [reference]
+        assert details["events"][0]["event_ref"] == reference
+    if outcome == "restored":
+        details = json.loads(rejected[0].split(" details=", 1)[1])
+        assert details["ready"] and details["missing"] == details["inconsistent"] == []
 
 
 @pytest.mark.parametrize("mode", ["off", "flag", "prefill"])
@@ -3063,8 +3099,9 @@ def test_refine_voice_decisions_reach_commit_detail_only_when_enabled(monkeypatc
                                    "voice_top1", "gap", "band", "decision", "reason", "final_speaker"}
 
 
-def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voiceprint_host):
+def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voiceprint_host, caplog):
     host = voiceprint_host
+    caplog.set_level("INFO", logger="server.service.video_parse")
     snapshot, lease, canvas = _voice_review_input(host, "off")
     monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
     host.runtime._repository.load_voiceprint_references = lambda _lease: []
@@ -3077,6 +3114,10 @@ def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voicep
     before = canvas.snapshot()
     assert asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas)).complete
     assert canvas.snapshot() == before
+    assert all(not record.getMessage().startswith((
+        "event=refine_voice_review_checked ", "event=refine_voice_review_unresolved ",
+        "event=refine_voice_review_completion_rejected ",
+    )) for record in caplog.records)
 
 
 @pytest.mark.parametrize("new_method", [False, True])

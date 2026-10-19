@@ -332,20 +332,36 @@ class ParseContextCanvas(ContextCanvas):
 
     @classmethod
     def _voice_decision_consistent(cls, value):
+        return cls._voice_decision_problem(value) is None
+
+    @classmethod
+    def _voice_decision_problem(cls, value):
         record, event, evidence = value["voice_decision"], value["event"], value["voice_evidence"]
         speaker, understanding = event.get("speaker"), evidence.get("understanding_speaker")
         candidates = evidence.get("candidates") or []
         top1 = candidates[0]["speaker"] if candidates else None
         if record["decision"] == "keep":
-            return speaker == understanding and (not evidence.get("label_doubtful") or record.get("evidence_type") in {
+            if speaker != understanding:
+                return "keep_speaker_mismatch"
+            if evidence.get("label_doubtful") and record.get("evidence_type") not in {
                 "named_address", "visible_speaking", "text_identity",
-            })
-        if record["decision"] == "voice_top1":
-            return top1 is not None and speaker == top1
-        if record["decision"] == "other":
-            return isinstance(speaker, str) and bool(speaker.strip()) and speaker not in {understanding, top1}
-        return speaker is None and (not cls._voice_null_requires_contradiction(evidence)
-                                    or record.get("evidence_type") == "contradiction")
+            }:
+                return "keep_identity_evidence_required"
+        elif record["decision"] == "voice_top1":
+            if top1 is None:
+                return "voice_top1_unavailable"
+            if speaker != top1:
+                return "voice_top1_speaker_mismatch"
+        elif record["decision"] == "other":
+            if not isinstance(speaker, str) or not speaker.strip():
+                return "other_named_speaker_required"
+            if speaker in {understanding, top1}:
+                return "other_matches_understanding_or_voice_top1"
+        elif speaker is not None:
+            return "null_speaker_mismatch"
+        elif cls._voice_null_requires_contradiction(evidence) and record.get("evidence_type") != "contradiction":
+            return "null_contradiction_evidence_required"
+        return None
 
     def _voiceprint_review_status(self, draft):
         required = self._required_voice_events(draft)
@@ -361,6 +377,43 @@ class ParseContextCanvas(ContextCanvas):
 
     def voiceprint_review_status(self) -> dict[str, Any]:
         return self._voiceprint_review_status(self.snapshot().collections)
+
+    def voiceprint_review_diagnostics(self) -> dict[str, Any]:
+        """Read unresolved decisions without changing the draft or gate."""
+        with self._lock:
+            draft = self.snapshot().collections
+            status = self._voiceprint_review_status(draft)
+            records = self._voiceprint_decision_records(draft)
+            required = self._required_voice_events(draft)
+            unresolved = set(status["missing"]) | set(status["inconsistent"])
+            events = []
+            for record in records:
+                reference = record["event_ref"]
+                if reference not in unresolved:
+                    continue
+                decision = record.get("decision")
+                events.append({
+                    **{key: record.get(key) for key in (
+                        "event_ref", "member_chunk_id", "start_ms", "end_ms", "understanding_speaker",
+                        "voice_top1", "gap", "band", "label_doubtful", "decision", "reason", "evidence_type",
+                    )},
+                    "draft_speaker": record["final_speaker"],
+                    "speaker_source": required[reference]["event"].get("speaker_source"),
+                    "expected_speaker": (record["understanding_speaker"] if decision == "keep"
+                                         else record["voice_top1"] if decision == "voice_top1" else None),
+                    "problem": (self._voice_decision_problem(required[reference]) if decision is not None
+                                else "missing_decision"),
+                })
+            accepted = not self._voiceprint_modes or (
+                status["ready"] and draft["voiceprint_review"].get("signature") == content_fingerprint(records)
+            )
+            return {
+                "canvas_id": self.id, "revision": self.revision, "ready": status["ready"],
+                "gate_accepted": accepted,
+                "gate_failure": (None if accepted else "decisions_unresolved" if unresolved
+                                 else "gate_not_accepted_for_current_draft"),
+                "missing": status["missing"], "inconsistent": status["inconsistent"], "events": events,
+            }
 
     def _voiceprint_decision_records(self, draft):
         records = []

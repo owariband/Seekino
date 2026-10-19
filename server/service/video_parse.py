@@ -1249,6 +1249,12 @@ class VideoParseRuntimeService:
                     snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
                     feedback["ready"], feedback["missing"], feedback["inconsistent"],
                 )
+                if not feedback["ready"]:
+                    _logger.info(
+                        "event=refine_voice_review_unresolved task=%s interval=%s details=%s",
+                        snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                        json.dumps(canvas.voiceprint_review_diagnostics(), ensure_ascii=False, sort_keys=True),
+                    )
                 return JsonToolResult(success=True, payload=feedback)
 
             tools.extend(as_langchain_tools([build_agent_tool(
@@ -1376,6 +1382,11 @@ class VideoParseRuntimeService:
                 tool_harness="deepagents",
             )
             if voice_review_enabled and (canvas.voiceprint_review() is None or not canvas.voiceprint_review_passed()):
+                _logger.info(
+                    "event=refine_voice_review_completion_rejected task=%s interval=%s details=%s",
+                    snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                    json.dumps(canvas.voiceprint_review_diagnostics(), ensure_ascii=False, sort_keys=True),
+                )
                 raise QueryModelIncompleteError(
                     "Refine completed before finish_voiceprint_review accepted the current Canvas: "
                     + json.dumps(canvas.voiceprint_review_status(), ensure_ascii=False, sort_keys=True),

@@ -305,16 +305,25 @@ def test_voice_review_reports_missing_decision_and_requires_finish(mode, band):
         "revision": canvas.revision,
     }
     assert not canvas.voiceprint_review_passed()
+    before = canvas.snapshot()
+    diagnostics = canvas.voiceprint_review_diagnostics()
+    assert diagnostics["missing"] == [reference] and diagnostics["inconsistent"] == []
+    assert diagnostics["gate_failure"] == "decisions_unresolved" and not diagnostics["gate_accepted"]
+    assert diagnostics["events"][0]["problem"] == "missing_decision"
+    assert diagnostics["events"][0]["decision"] is diagnostics["events"][0]["reason"] is None
+    assert canvas.snapshot() == before
     with pytest.raises(AgentToolFeedbackError) as error:
         canvas.voiceprint_decisions()
     assert error.value.code == "VOICEPRINT_REVIEW_REQUIRED"
 
 
-@pytest.mark.parametrize("decision,speaker", [
-    ("keep", "爽世"), ("voice_top1", "爱音"), ("other", "爱音"), ("other", "爽世"),
-    ("other", None), ("null", "爽世"),
+@pytest.mark.parametrize("decision,speaker,problem", [
+    ("keep", "爽世", "keep_speaker_mismatch"), ("voice_top1", "爱音", "voice_top1_speaker_mismatch"),
+    ("other", "爱音", "other_matches_understanding_or_voice_top1"),
+    ("other", "爽世", "other_matches_understanding_or_voice_top1"),
+    ("other", None, "other_named_speaker_required"), ("null", "爽世", "null_speaker_mismatch"),
 ])
-def test_voice_review_reports_each_inconsistent_decision(decision, speaker):
+def test_voice_review_reports_each_inconsistent_decision(decision, speaker, problem):
     canvas = ParseContextCanvas.from_refine(_voice_snapshot())
     reference = canvas.items("events")[0][0]
     canvas.write(role="refine", batch_id="inconsistent", expected_revision=canvas.revision, operations=[
@@ -326,6 +335,24 @@ def test_voice_review_reports_each_inconsistent_decision(decision, speaker):
     status = canvas.finish_voiceprint_review()
     assert status["ready"] is False and status["missing"] == [] and status["inconsistent"] == [reference]
     assert not canvas.voiceprint_review_passed()
+    before = canvas.snapshot()
+    diagnostics = canvas.voiceprint_review_diagnostics()
+    assert diagnostics == {
+        "canvas_id": canvas.id, "revision": canvas.revision, "ready": False, "gate_accepted": False,
+        "gate_failure": "decisions_unresolved", "missing": [], "inconsistent": [reference],
+        "events": [{
+            "event_ref": reference, "member_chunk_id": "member", "start_ms": 1000, "end_ms": 3000,
+            "understanding_speaker": "爱音", "voice_top1": "爽世", "gap": 0.2, "band": "ACCEPT",
+            "label_doubtful": None, "decision": decision,
+            "reason": ("Another named person is visibly speaking this line." if decision == "null"
+                       else "Specific visible evidence."),
+            "evidence_type": "contradiction" if decision == "null" else None, "draft_speaker": speaker,
+            "speaker_source": canvas.get("events", reference)["event"]["speaker_source"],
+            "expected_speaker": "爱音" if decision == "keep" else "爽世" if decision == "voice_top1" else None,
+            "problem": problem,
+        }],
+    }
+    assert canvas.snapshot() == before
 
 
 @pytest.mark.parametrize("decision,speaker", [
@@ -343,9 +370,15 @@ def test_voice_review_accepts_four_consistent_decisions_and_exports_fields(decis
         {"op": "voice_decision", "event_ref": reference, "decision": decision, "reason": reason, **evidence},
     ])
     assert canvas.voiceprint_review_status()["ready"] and not canvas.voiceprint_review_passed()
+    pending = canvas.voiceprint_review_diagnostics()
+    assert pending["ready"] and not pending["gate_accepted"] and pending["events"] == []
+    assert pending["gate_failure"] == "gate_not_accepted_for_current_draft"
     receipt = canvas.finish_voiceprint_review()
     assert receipt["ready"] and receipt["missing"] == receipt["inconsistent"] == []
     assert receipt["revision"] == canvas.revision and canvas.voiceprint_review_passed()
+    accepted = canvas.voiceprint_review_diagnostics()
+    assert accepted["ready"] and accepted["gate_accepted"] and accepted["gate_failure"] is None
+    assert accepted["missing"] == accepted["inconsistent"] == accepted["events"] == []
     assert canvas.voiceprint_decisions() == [{
         "event_ref": reference, "member_chunk_id": "member", "start_ms": 1000, "end_ms": 3000,
         "understanding_speaker": "爱音", "voice_top1": "爽世", "gap": 0.2, "band": "ACCEPT",
@@ -353,6 +386,24 @@ def test_voice_review_accepts_four_consistent_decisions_and_exports_fields(decis
     }]
     assert snapshot == original
     assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
+
+
+def test_voice_review_diagnostics_identify_unavailable_top1_without_exposing_source_payloads():
+    snapshot = _voice_snapshot("flag", "CONFLICT")
+    snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0]["candidates"] = []
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    reference = canvas.items("events")[0][0]
+    canvas.write(role="refine", batch_id="no-candidate", expected_revision=canvas.revision, operations=[{
+        "op": "voice_decision", "event_ref": reference, "decision": "voice_top1", "reason": "Visible speaker.",
+    }])
+    before = canvas.snapshot()
+    details = canvas.voiceprint_review_diagnostics()
+    assert details["inconsistent"] == [reference] and not details["gate_accepted"]
+    event = details["events"][0]
+    assert event["problem"] == "voice_top1_unavailable"
+    assert event["voice_top1"] is event["expected_speaker"] is None
+    assert not {"text", "text_variants", "candidates", "src", "reference_ids", "embedding", "vector", "prompt"}.intersection(event)
+    assert canvas.snapshot() == before
 
 
 @pytest.mark.parametrize("reason", ["", " \n\t", "x" * 301])
@@ -432,6 +483,8 @@ def test_changed_interval_removes_decision_and_requirement_and_requires_fresh_ga
     assert value["voice_evidence"]["valid"] is False and "voice_decision" not in value
     assert canvas.voiceprint_review()["conflicts"] == canvas.voiceprint_review()["accept_disagreements"] == []
     assert canvas.voiceprint_review_status()["ready"] and not canvas.voiceprint_review_passed()
+    diagnostics = canvas.voiceprint_review_diagnostics()
+    assert diagnostics["events"] == [] and diagnostics["gate_failure"] == "gate_not_accepted_for_current_draft"
     assert canvas.finish_voiceprint_review()["ready"] and canvas.voiceprint_decisions() == []
     assert "voice" not in canvas.catalog("events", role="refine")[0]
 
@@ -492,6 +545,8 @@ def test_voice_review_off_preserves_catalog_state_and_exports_nothing():
     before = canvas.snapshot()
     assert canvas.voiceprint_review_status() == {"ready": True, "missing": [], "inconsistent": [], "retry_hint": ""}
     assert canvas.voiceprint_review_passed() and canvas.voiceprint_decisions() == []
+    diagnostics = canvas.voiceprint_review_diagnostics()
+    assert diagnostics["gate_accepted"] and diagnostics["gate_failure"] is None and diagnostics["events"] == []
     assert canvas.finish_voiceprint_review()["ready"] and canvas.snapshot() == before
     assert canvas.catalog("events", role="refine") == [{
         "reference": canvas.items("events")[0][0], "member_ref": "member", "event_type": "DIALOGUE",
@@ -612,6 +667,7 @@ def test_doubtful_gate_checks_stored_keep_evidence_and_type_changes_invalidate_i
 
     canvas.mutate(legacy_record)
     assert canvas.finish_voiceprint_review()["inconsistent"] == [reference]
+    assert canvas.voiceprint_review_diagnostics()["events"][0]["problem"] == "keep_identity_evidence_required"
     operation = {
         "op": "voice_decision", "event_ref": reference, "decision": "keep", "reason": "爱音 is visibly speaking.",
         "evidence_type": "visible_speaking",
@@ -808,6 +864,13 @@ def test_voice_gate_rechecks_stored_null_evidence_and_new_evidence_invalidates_g
     assert status["ready"] == (evidence_type == "contradiction")
     assert status["inconsistent"] == ([] if evidence_type == "contradiction" else [reference])
     assert canvas.voiceprint_review_passed() == (evidence_type == "contradiction")
+    diagnostics = canvas.voiceprint_review_diagnostics()
+    if evidence_type != "contradiction":
+        assert diagnostics["events"][0]["problem"] == "null_contradiction_evidence_required"
+        assert diagnostics["events"][0]["draft_speaker"] is None
+        assert diagnostics["events"][0]["evidence_type"] == evidence_type
+    else:
+        assert diagnostics["events"] == [] and diagnostics["gate_accepted"]
     if evidence_type == "contradiction":
         canvas.write(role="refine", batch_id="new-observation", expected_revision=canvas.revision, operations=[{
             "op": "voice_decision", "event_ref": reference, "decision": "null", "evidence_type": "contradiction",
