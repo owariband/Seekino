@@ -115,13 +115,19 @@ def score_baseline(
         kept = ordered[:len(ordered) - floor(trim_fraction * len(ordered))]
         center = _centroid(kept)
         if center is not None:
+            similarity = float(np.clip(target @ center, -1, 1))
+            kept_vectors = [_unit_vector(row) for row in kept]
+            higher_count = sum(float(np.clip(vector @ center, -1, 1)) > similarity
+                               for vector in kept_vectors)
             candidates.append({
                 "speaker": speaker,
-                "similarity": float(np.clip(target @ center, -1, 1)),
+                "similarity": similarity,
                 "reference_count": len(kept),
                 "reference_consistency": float(np.clip(np.mean([
-                    np.sum(_unit_vector(row) * center) for row in kept
+                    np.sum(vector * center) for vector in kept_vectors
                 ]), -1, 1)),
+                "reference_higher_count": higher_count,
+                "reference_higher_fraction": higher_count / len(kept),
                 "reference_ids": sorted(row["id"] for row in kept),
                 "independent_cue_count": len({cue for row in kept for cue in row.get("cue_ids", ())}),
             })
@@ -134,6 +140,7 @@ def score_voiceprint_line(
     min_duration_ms: int, label_min_rank: int | None = None, label_min_margin: float | None = None,
     label_min_duration_ms: int | None = None, label_min_ref_count: int | None = None,
     label_min_consistency: float | None = None,
+    label_min_ref_higher_fraction: float | None = None,
     excluded_reference_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """Apply the frozen production embedding contract to the offline B0 scorer.
@@ -164,16 +171,16 @@ def score_voiceprint_line(
         "excluded_reference_counts": {},
         "label_score": None, "label_rank": None, "label_count": None,
         "label_margin": None, "label_ref_count": None, "label_ref_consistency": None,
+        "label_ref_higher_count": None, "label_ref_higher_fraction": None,
     }
     label_policy = {
         "label_min_rank": label_min_rank, "label_min_margin": label_min_margin,
         "label_min_duration_ms": label_min_duration_ms, "label_min_ref_count": label_min_ref_count,
         "label_min_consistency": label_min_consistency,
+        "label_min_ref_higher_fraction": label_min_ref_higher_fraction,
     }
     supplied = [value is not None for value in label_policy.values()]
-    if any(supplied) and not all(supplied):
-        raise ValueError("label policy must provide all five thresholds or none")
-    result["label_doubtful"] = is_label_doubtful(result, **label_policy) if all(supplied) else False
+    result["label_doubtful"] = is_label_doubtful(result, **label_policy) if any(supplied) else False
     if duration_ms < min_duration_ms:
         return result
     issue = _embedding_issue(query, model=model, encoder_revision=encoder_revision,
@@ -207,9 +214,11 @@ def score_voiceprint_line(
                     label_margin=scored["candidates"][0]["similarity"] - candidate["similarity"],
                     label_ref_count=candidate["reference_count"],
                     label_ref_consistency=candidate["reference_consistency"],
+                    label_ref_higher_count=candidate["reference_higher_count"],
+                    label_ref_higher_fraction=candidate["reference_higher_fraction"],
                 )
                 break
-        if all(supplied):
+        if any(supplied):
             result["label_doubtful"] = is_label_doubtful(result, **label_policy)
     return {
         **result, "candidates": candidates, "gap": scored["gap"],
@@ -221,13 +230,19 @@ def score_voiceprint_line(
 
 def is_label_doubtful(
     result: Mapping[str, Any], *, label_min_rank: int, label_min_margin: float,
-    label_min_duration_ms: int, label_min_ref_count: int, label_min_consistency: float,
+    label_min_duration_ms: int, label_min_ref_count: int,
+    label_min_consistency: float | None = None, label_min_ref_higher_fraction: float | None = None,
 ) -> bool:
-    """Flag a label contradicted by a sufficiently coherent reference pool.
+    """Flag an own-label tail outlier using an explicitly selected policy.
 
     These injected cosine criteria do not change candidates, bands or defaults.
+    The v3 empirical fraction compares the target with the same kept references
+    against the same centroid containing those references; ties do not count.
+    This is not statistical confidence. Legacy v2 can select the mean floor.
     Reference count means kept PCM rows, not independent ASR cues.
     """
+    if (label_min_consistency is None) == (label_min_ref_higher_fraction is None):
+        raise ValueError("label policy requires exactly one tail threshold")
     for name, value in (("label_min_rank", label_min_rank),
                         ("label_min_duration_ms", label_min_duration_ms),
                         ("label_min_ref_count", label_min_ref_count)):
@@ -235,19 +250,23 @@ def is_label_doubtful(
             raise ValueError(f"{name} must be a positive integer")
     if not isfinite(label_min_margin) or not 0 <= label_min_margin <= 2:
         raise ValueError("label_min_margin must be in [0, 2]")
-    if not isfinite(label_min_consistency) or not 0 <= label_min_consistency <= 1:
-        raise ValueError("label_min_consistency must be in [0, 1]")
+    metric, threshold = (("label_ref_consistency", label_min_consistency)
+                         if label_min_consistency is not None else
+                         ("label_ref_higher_fraction", label_min_ref_higher_fraction))
+    if isinstance(threshold, bool) or not isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("label tail threshold must be in [0, 1]")
     return all(result.get(key) is not None and result[key] >= minimum for key, minimum in (
         ("label_rank", label_min_rank), ("label_margin", label_min_margin),
         ("duration_ms", label_min_duration_ms), ("label_ref_count", label_min_ref_count),
-        ("label_ref_consistency", label_min_consistency),
+        (metric, threshold),
     ))
 
 
 def score_voiceprint_batch(
     samples: Sequence[Sample], *, model: str, encoder_revision: str, dimensions: int,
     trim_fraction: float, min_duration_ms: int, label_min_rank: int, label_min_margin: float,
-    label_min_duration_ms: int, label_min_ref_count: int, label_min_consistency: float,
+    label_min_duration_ms: int, label_min_ref_count: int,
+    label_min_consistency: float | None = None, label_min_ref_higher_fraction: float | None = None,
 ) -> dict[str, Any]:
     """Score exactly twice; scores preserve input order and samples stay frozen.
 
@@ -259,6 +278,7 @@ def score_voiceprint_batch(
         "label_min_rank": label_min_rank, "label_min_margin": label_min_margin,
         "label_min_duration_ms": label_min_duration_ms, "label_min_ref_count": label_min_ref_count,
         "label_min_consistency": label_min_consistency,
+        "label_min_ref_higher_fraction": label_min_ref_higher_fraction,
     }
     is_label_doubtful({}, **label_policy)
     if len({sample["id"] for sample in samples}) != len(samples):

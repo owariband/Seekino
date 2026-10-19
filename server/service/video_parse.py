@@ -84,6 +84,7 @@ from gateway.usage import ModelCallCancelledError, model_call_context
 from ..config.parse_profile import index_contract_fingerprint
 from ..constants.parse import (
     PARSE_RETRIEVAL_CONTRACT, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_LEGACY_METHOD_VERSION,
+    VOICEPRINT_B0_COHERENCE_METHOD_VERSION,
     VOICEPRINT_B0_DIMENSIONS,
     VOICEPRINT_B0_MIN_AUDIO_MS, VOICEPRINT_B0_TRIM_FRACTION, VOICEPRINT_B0_ACCEPT_GAP,
     VOICEPRINT_B0_ACCEPT_DURATION_MS, VOICEPRINT_B0_ACCEPT_MIN_CUES,
@@ -91,7 +92,7 @@ from ..constants.parse import (
     VOICEPRINT_B0_WINDOW_MS, VOICEPRINT_B0_DIRECT_MAX_MS,
     VOICEPRINT_B0_LABEL_MIN_RANK, VOICEPRINT_B0_LABEL_MIN_MARGIN,
     VOICEPRINT_B0_LABEL_MIN_DURATION_MS, VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
-    VOICEPRINT_B0_LABEL_MIN_CONSISTENCY,
+    VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION,
 )
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
@@ -624,7 +625,7 @@ class VideoParseRuntimeService:
             samples, model=encoder.model_name, encoder_revision=encoder.encoder_revision,
             **{key: parameters[key] for key in (
                 "dimensions", "min_duration_ms", "trim_fraction", "label_min_rank", "label_min_margin",
-                "label_min_duration_ms", "label_min_ref_count", "label_min_consistency",
+                "label_min_duration_ms", "label_min_ref_count", "label_min_ref_higher_fraction",
             )},
         )
         lines = []
@@ -696,7 +697,7 @@ class VideoParseRuntimeService:
                 "label_min_margin": VOICEPRINT_B0_LABEL_MIN_MARGIN,
                 "label_min_duration_ms": VOICEPRINT_B0_LABEL_MIN_DURATION_MS,
                 "label_min_ref_count": VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
-                "label_min_consistency": VOICEPRINT_B0_LABEL_MIN_CONSISTENCY}
+                "label_min_ref_higher_fraction": VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION}
 
     @staticmethod
     def _score_voiceprint_sample(
@@ -706,28 +707,38 @@ class VideoParseRuntimeService:
     ) -> dict:
         from engine.parsev2.voiceprint_matching import classify_voiceprint_result, score_voiceprint_line
 
-        parameters = parameters if parameters is not None else VideoParseRuntimeService._voiceprint_parameters()
+        version = VOICEPRINT_B0_METHOD_VERSION if method_version is None else method_version
+        label_keys = ("label_min_rank", "label_min_margin", "label_min_duration_ms", "label_min_ref_count")
+        policy_keys = {
+            VOICEPRINT_B0_LEGACY_METHOD_VERSION: (),
+            VOICEPRINT_B0_COHERENCE_METHOD_VERSION: (*label_keys, "label_min_consistency"),
+            VOICEPRINT_B0_METHOD_VERSION: (*label_keys, "label_min_ref_higher_fraction"),
+        }
+        if version not in policy_keys:
+            raise ValueError("Unsupported frozen B0 scoring method: " + str(version))
+        if parameters is None:
+            if method_version is not None:
+                raise ValueError("An explicit B0 method requires its frozen parameters")
+            parameters = VideoParseRuntimeService._voiceprint_parameters()
         scoring_keys = ("dimensions", "min_duration_ms", "trim_fraction")
+        band_keys = ("accept_gap", "accept_duration_ms", "accept_min_cues", "conflict_gap", "no_voice_duration_ms")
+        missing = set((*scoring_keys, *band_keys, *policy_keys[version])) - parameters.keys()
+        if missing:
+            raise ValueError("Frozen B0 scoring parameters are incomplete: " + ", ".join(sorted(missing)))
         if score is None:
-            defaults = VideoParseRuntimeService._voiceprint_parameters()
             score = score_voiceprint_line(
                 query, samples, model=query["model"], encoder_revision=query["encoder_revision"],
                 excluded_reference_ids=excluded_reference_ids,
                 **{key: parameters[key] for key in scoring_keys},
-                **{key: parameters.get(key, defaults[key]) for key in (
-                    "label_min_rank", "label_min_margin", "label_min_duration_ms",
-                    "label_min_ref_count", "label_min_consistency",
-                )},
+                **{key: parameters[key] for key in policy_keys[version]},
             )
         band = classify_voiceprint_result(
             score, current_label=query.get("label"), song=query.get("song", False),
             overlap=query.get("overlap", False),
-            **{key: parameters[key] for key in (
-                "accept_gap", "accept_duration_ms", "accept_min_cues", "conflict_gap", "no_voice_duration_ms",
-            )},
+            **{key: parameters[key] for key in band_keys},
         )
         return {**{key: value for key, value in query.items() if key != "vector"},
-                **score, **band, "method_version": method_version or VOICEPRINT_B0_METHOD_VERSION,
+                **score, **band, "method_version": version,
                 "similarity_metric": "cosine", "similarity_is_probability": False}
 
     async def generate_voiceprint_preparation(
@@ -1265,6 +1276,7 @@ class VideoParseRuntimeService:
                                 "similarity_is_probability",
                                 "label_score", "label_rank", "label_count", "label_margin",
                                 "label_ref_count", "label_ref_consistency", "label_doubtful",
+                                "label_ref_higher_count", "label_ref_higher_fraction",
                             ) if key in result},
                             "candidates": [{key: value for key, value in candidate.items()
                                             if key not in {"src", "reference_ids"}}

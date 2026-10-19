@@ -21,11 +21,11 @@ import numpy as np
 
 from engine.parsev2.voiceprint_matching import classify_voiceprint_result, score_baseline, score_voiceprint_batch
 from server.constants.parse import (
-    VOICEPRINT_B0_LABEL_MIN_CONSISTENCY,
     VOICEPRINT_B0_LABEL_MIN_DURATION_MS,
     VOICEPRINT_B0_LABEL_MIN_MARGIN,
     VOICEPRINT_B0_LABEL_MIN_RANK,
     VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
+    VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION,
     VOICEPRINT_B0_METHOD_VERSION,
 )
 
@@ -64,8 +64,9 @@ def main():
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--text-results", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--min-consistency", type=float, default=VOICEPRINT_B0_LABEL_MIN_CONSISTENCY,
+    parser.add_argument("--min-ref-higher-fraction", type=float, default=VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION,
                         help="Explicit offline calibration override; default comes from server constants")
+    parser.add_argument("--previous-report", type=Path, help="Optional older report.json for flag-set comparison")
     args = parser.parse_args()
     payload, artifact_sha = _read(args.artifact)
     text_results, text_sha = _read(args.text_results)
@@ -84,7 +85,7 @@ def main():
         label_min_margin=VOICEPRINT_B0_LABEL_MIN_MARGIN,
         label_min_duration_ms=VOICEPRINT_B0_LABEL_MIN_DURATION_MS,
         label_min_ref_count=VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
-        label_min_consistency=args.min_consistency,
+        label_min_ref_higher_fraction=args.min_ref_higher_fraction,
     )
     batch = score_voiceprint_batch(
         targets, model=payload["model"]["name"], encoder_revision=payload["model"]["encoder_revision"],
@@ -95,8 +96,13 @@ def main():
         "accept_gap", "accept_duration_ms", "accept_min_cues", "conflict_gap", "no_voice_duration_ms",
     )}
     rows = []
+    scoring_lines = []
     for source, score in zip(targets, batch["scores"], strict=True):
         candidates = score["candidates"]
+        band = classify_voiceprint_result(score, current_label=source.get("label"),
+                                         song=source["song"], overlap=source["overlap"], **band_parameters)
+        scoring_lines.append({**{key: value for key, value in source.items() if key != "vector"},
+                              **score, **band, "method_version": VOICEPRINT_B0_METHOD_VERSION})
         rows.append({
             "id": source["id"], "chunk_task_id": source["chunk_task_id"],
             "start_ms": source["start_ms"], "end_ms": source["end_ms"],
@@ -109,11 +115,11 @@ def main():
             "top3_score": candidates[2]["similarity"] if len(candidates) > 2 else None,
             "gap": score["gap"],
             **{key: score[key] for key in ("label_score", "label_rank", "label_count", "label_margin",
-                                           "label_ref_count", "label_ref_consistency", "label_doubtful")},
+                                           "label_ref_count", "label_ref_consistency", "label_ref_higher_count",
+                                           "label_ref_higher_fraction", "label_doubtful")},
             "pass1_label_doubtful": source["id"] in excluded,
             "original_band": source.get("band"),
-            **classify_voiceprint_result(score, current_label=source.get("label"),
-                                        song=source["song"], overlap=source["overlap"], **band_parameters),
+            **band,
             "candidates": [{key: value for key, value in candidate.items() if key != "reference_ids"}
                            for candidate in candidates],
             **texts.get(source["id"], {"text": None}),
@@ -160,6 +166,23 @@ def main():
                       "pass2_flagged": len(matching) == 1 and matching[0]["label_doubtful"],
                       "top1_matches_truth": len(matching) == 1 and matching[0]["top1"] == truth})
     flagged = [row for row in rows if row["label_doubtful"]]
+    previous_comparison = None
+    if args.previous_report:
+        previous, previous_sha = _read(args.previous_report)
+        if previous.get("source_task_id") != payload["video_parse_task_id"]:
+            raise ValueError("Previous report must belong to the same source task")
+        old_ids = {row["id"] for row in previous["flagged_lines"]}
+        new_ids = {row["id"] for row in flagged}
+        previous_comparison = {
+            "path": str(args.previous_report.resolve()), "sha256": previous_sha,
+            "method_version": previous["method_version"], "old_flag_count": len(old_ids),
+            "current_flag_count": len(new_ids), "newly_flagged_ids": sorted(new_ids - old_ids),
+            "cleared_flag_ids": sorted(old_ids - new_ids),
+            "newly_flagged_by_label": dict(Counter(row["understanding_speaker"] for row in rows
+                                                   if row["id"] in new_ids - old_ids)),
+            "cleared_by_label": dict(Counter(row["understanding_speaker"] for row in rows
+                                            if row["id"] in old_ids - new_ids)),
+        }
     checks = {
         "pass1_top3_reproduces_frozen_artifact": baseline_matches == len(samples),
         "both_known_lines_unique": all(row["match_count"] == 1 for row in known),
@@ -182,7 +205,9 @@ def main():
                       "elapsed_wall_ms": (time.perf_counter() - started) * 1000,
                       "elapsed_scope": "CLI main through cached-vector calculations; excludes interpreter/module-import startup and final report serialization",
                       "model_calls": 0, "decoder_calls": 0, "database_calls": 0, "api_calls": 0},
-        "threshold_choice": f"Provisional default {VOICEPRINT_B0_LABEL_MIN_CONSISTENCY:g} separates diffuse reference groups such as 椎名立希 (~0.64) and 高松灯 (~0.67) from coherent groups around0.76+. The minimum of3 kept PCM references prevents a singleton's consistency1 from qualifying. This dataset-derived floor is not identity probability or a calibrated accuracy guarantee.",
+        "tail_definition": "After existing target/cue/overlap/PCM/revision exclusions and20% trim, score every kept reference against the SAME recomputed B0 centroid containing those references. higher_count counts STRICT reference cosine>target own-label cosine; higher_fraction=higher_count/kept_reference_count. Ties do not count. This empirical within-kept-reference relation is not95% statistical confidence or a correctness probability.",
+        "previous_report_comparison": previous_comparison,
+        "flagged_by_label": dict(Counter(row["understanding_speaker"] for row in flagged)),
         "label_diagnostics": rows, "hygiene": batch["hygiene"], "flagged_lines": flagged,
         "prototype_distribution": distribution, "known_cases": known,
         "unchanged_pass1_top3": baseline_matches,
@@ -201,15 +226,32 @@ def main():
             "The two historical user-confirmed identities are targeted checks, not a representative accuracy sample.",
             "Exactly two scoring passes determine flags. Independent prototype/baseline diagnostics are read-only calculations and do not feed a third pass or change labels.",
             "Pass-one excluded IDs remain excluded even when their flags clear in pass two; original sample names continue to govern duplicate-PCM abstention.",
+            "Reference scores include each reference in the shared centroid, while the target is excluded throughout. Small groups can therefore have optimistic reference scores; this is the agreed literal trial, not reference leave-one-out calibration.",
+            "The population is the SAME kept references after trimming, not all eligible references before trimming. These definitions have different behavior and are not silently interchangeable. With fewer than20 references,95% generally requires every reference to score strictly higher.",
             "No ASR, media extraction, model/API/database access, Refine run or production write is performed.",
         ],
     }
     args.out.mkdir(parents=True, exist_ok=True)
+    scoring_artifact = {**payload, "method_version": VOICEPRINT_B0_METHOD_VERSION,
+                        "parameters": {**band_parameters, **parameters}, "lines": scoring_lines,
+                        "hygiene": batch["hygiene"],
+                        "offline_recalculation": {"source_artifact_sha256": artifact_sha,
+                                                  "source_method_version": payload["method_version"]}}
+    scoring_bytes = json.dumps(scoring_artifact, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"), allow_nan=False).encode()
+    (args.out / "scoring-artifact.json").write_bytes(scoring_bytes)
+    report["scoring_artifact"] = {
+        "path": str((args.out / "scoring-artifact.json").resolve()),
+        "sha256": hashlib.sha256(scoring_bytes).hexdigest(), "bytes": len(scoring_bytes),
+        "method_version": VOICEPRINT_B0_METHOD_VERSION, "line_count": len(scoring_lines),
+        "sample_count": len(scoring_artifact["samples"]),
+    }
     (args.out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     fields = ["id", "chunk_task_id", "start_ms", "end_ms", "duration_ms", "text", "understanding_speaker",
               "top1", "top1_score", "top2", "top2_score", "top3", "top3_score", "gap",
               "label_score", "label_rank", "label_count", "label_margin",
-              "label_ref_count", "label_ref_consistency", "pass1_label_doubtful", "label_doubtful",
+              "label_ref_count", "label_ref_consistency", "label_ref_higher_count", "label_ref_higher_fraction",
+              "pass1_label_doubtful", "label_doubtful",
               "band", "conflict", "review_reason", "original_band", "historical_final_speaker", "historical_final_speaker_source"]
     with (args.out / "label-doubtful.tsv").open("w", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=fields, delimiter="\t", extrasaction="ignore")
@@ -218,23 +260,24 @@ def main():
     markdown = ["# B0 label-doubtful cached-vector verification", "",
                 f"Source task `{payload['video_parse_task_id']}`; {len(targets)} lines, {len(samples)} cached vectors.", "",
                 f"Pass 1 flags **{batch['hygiene']['pass1_flag_count']}**; pass 2 flags **{len(flagged)}**; changed flags **{batch['hygiene']['changed_flag_count']}**. Pass 1 excludes {len(excluded)} reference IDs. No relabeling or convergence loop is performed.", "",
-                f"Rule: rank ≥{parameters['label_min_rank']}, top1-minus-label ≥{parameters['label_min_margin']}, duration ≥{parameters['label_min_duration_ms']} ms, kept PCM reference count ≥{parameters['label_min_ref_count']}, kept-reference mean cosine ≥{parameters['label_min_consistency']}.", "",
-                "The consistency threshold is a provisional coherence floor, not identity probability. No song, overlap or independent-cue condition is added to this label flag. Existing band/default semantics are not changed by this offline audit.", "",
-                report["threshold_choice"], "",
+                f"Rule: rank ≥{parameters['label_min_rank']}, top1-minus-label ≥{parameters['label_min_margin']}, duration ≥{parameters['label_min_duration_ms']} ms, kept PCM reference count ≥{parameters['label_min_ref_count']}, strict higher-reference fraction ≥{parameters['label_min_ref_higher_fraction']}.", "",
+                "No global mean-cosine floor, song, overlap or independent-cue condition is added to this label flag. Reference consistency remains diagnostic. Existing band/default semantics are not changed by this offline audit.", "",
+                report["tail_definition"], "",
+                f"Final flags by original label: `{json.dumps(report['flagged_by_label'], ensure_ascii=False)}`. Previous-report comparison: `{json.dumps(previous_comparison, ensure_ascii=False)}`.", "",
                 "Final bands/conflicts/review reasons are recomputed from the final pass-2 scores with the unchanged classifier and the artifact's frozen band parameters. The TSV retains original_band for comparison and exports all top-three names and cosine scores.", "",
                 f"Original pass-1 top-three ranks, scores and reference IDs reproduced exactly for **{baseline_matches}/{len(samples)}** embeddable lines.", "",
                 f"Final-band comparison after the intended pool cleanup: **{report['band_comparison']['changed_count']}** lines changed band. Original `{json.dumps(report['band_comparison']['original'])}`; final `{json.dumps(report['band_comparison']['final'])}`; transitions `{json.dumps(report['band_comparison']['transitions'])}`. The classifier and its frozen thresholds are unchanged.", "",
-                "| Known center | Actual range (ms) | Original label | Pass-2 top1 | Label rank/count | Label margin | Kept refs / consistency | Pass-2 flag |",
+                "| Known center | Actual range (ms) | Original label | Pass-2 top1 | Label rank/count | Label margin | Strict higher / kept refs | Pass-2 flag |",
                 "|---:|---|---|---|---|---:|---|---|"]
     for case in known:
         for row in case["lines"]:
-            markdown.append(f"| {case['center_ms']/1000:g} s | {row['start_ms']}–{row['end_ms']} | {row['understanding_speaker']} | {row['top1']} | {row['label_rank']}/{row['label_count']} | {row['label_margin']:.6f} | {row['label_ref_count']} / {row['label_ref_consistency']:.6f} | {row['label_doubtful']} |")
+            markdown.append(f"| {case['center_ms']/1000:g} s | {row['start_ms']}–{row['end_ms']} | {row['understanding_speaker']} | {row['top1']} | {row['label_rank']}/{row['label_count']} | {row['label_margin']:.6f} | {row['label_ref_higher_count']} / {row['label_ref_count']} | {row['label_doubtful']} |")
     markdown += ["", "| Character | Source / embedded / full kept | Full mean cosine | Target-excluded min / p10 / median / max (pass 1) |", "|---|---|---:|---|"]
     for row in distribution:
         values = row["pass1_target_excluded"]
         summary = " / ".join(f"{values[key]:.6f}" for key in ("min", "p10", "median", "max")) if values else "none"
         markdown.append(f"| {row['speaker']} | {row['original_pool_lines']} / {row['embedded_pool_lines']} / {row['full_pool_kept']} | {row['full_pool_consistency']:.6f} | {summary} |")
-    markdown += ["", f"All **{len(flagged)}** final flags, with text and six label diagnostics, are exported to `label-doubtful.tsv`. Full pass provenance and both distributions are in `report.json`.", "",
+    markdown += ["", f"All **{len(flagged)}** final flags, with text and eight label diagnostics, are exported to `label-doubtful.tsv`. Full pass provenance and both distributions are in `report.json`. `scoring-artifact.json` contains all{len(targets)} final lines, all{len(samples)} original embeddings, complete reference IDs, frozen method/parameters and hygiene for isolated replay; it has not been published to a task.", "",
                  f"Source counts include all{len(targets)} lines. {len(targets)-len(samples)} lines have no compatible embedding: " + "; ".join(
                      f"{row['speaker']} has{row['original_pool_lines']} source/{row['embedded_pool_lines']} embedded lines"
                      for row in distribution if row['original_pool_lines'] != row['embedded_pool_lines'])
@@ -247,7 +290,7 @@ def main():
     print(json.dumps({"out": str(args.out), "hygiene": batch["hygiene"],
                       "known_cases_pass2_flagged": [row["pass2_flagged"] for row in known],
                       "baseline_top3_matches": baseline_matches, "text_lines": report["text_provenance"]["matched_line_ids"],
-                      "checks": checks}, ensure_ascii=False))
+                      "checks": checks, "scoring_artifact": report["scoring_artifact"]}, ensure_ascii=False))
     if not all(checks.values()):
         raise SystemExit("Cached-vector verification failed; inspect report.json checks")
 

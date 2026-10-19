@@ -663,6 +663,7 @@ def test_unscored_label_metrics_stay_null_without_creating_a_requirement():
     line = snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0]
     metrics = {name: None for name in (
         "label_score", "label_rank", "label_count", "label_margin", "label_ref_count", "label_ref_consistency",
+        "label_ref_higher_count", "label_ref_higher_fraction",
     )}
     line.update(**metrics, understanding_speaker=None, label_doubtful=False)
     canvas = ParseContextCanvas.from_refine(snapshot)
@@ -680,6 +681,32 @@ def test_doubtful_metadata_is_ignored_when_voice_mode_is_off():
     assert canvas.voiceprint_decisions() == [] and canvas.snapshot() == before
     assert "voice_evidence" not in canvas.items("events")[0][1]
     assert set(canvas.catalog("events", role="refine")[0]) == {"reference", "member_ref", "event_type"}
+
+
+def test_label_tail_diagnostics_bind_review_and_export_without_changing_decision_policy():
+    snapshot = _voice_snapshot("flag", None, doubtful=True)
+    line = snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0]
+    line.update(label_ref_higher_count=5, label_ref_higher_fraction=1)
+    original = deepcopy(snapshot)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    reference, value = canvas.items("events")[0]
+    for evidence in (value["voice_evidence"], canvas.voiceprint_review()["doubtful_labels"][0]):
+        assert evidence["label_ref_higher_count"] == 5 and evidence["label_ref_higher_fraction"] == 1
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="refine", batch_id="missing-evidence", expected_revision=canvas.revision, operations=[{
+            "op": "voice_decision", "event_ref": reference, "decision": "keep", "reason": "Turn order.",
+        }])
+    assert error.value.code == "VOICEPRINT_KEEP_EVIDENCE_REQUIRED"
+    canvas.write(role="refine", batch_id="unresolved", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}},
+        {"op": "voice_decision", "event_ref": reference, "decision": "null",
+         "reason": "label doubtful, speaker unresolved"},
+    ])
+    assert canvas.finish_voiceprint_review()["ready"]
+    record = canvas.voiceprint_decisions()[0]
+    assert record["label_ref_higher_count"] == 5 and record["label_ref_higher_fraction"] == 1
+    assert record["label_ref_count"] == 5 and record["final_speaker"] is None
+    assert snapshot == original
 
 
 def test_new_canvas_binds_new_event_references_and_explicit_conflicts_in_prompt():

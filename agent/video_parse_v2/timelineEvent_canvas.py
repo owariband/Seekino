@@ -254,6 +254,7 @@ class ParseContextCanvas(ContextCanvas):
                         "band", "conflict", "reason", "gap",
                         "label_score", "label_rank", "label_count", "label_margin",
                         "label_ref_count", "label_ref_consistency", "label_doubtful",
+                        "label_ref_higher_count", "label_ref_higher_fraction",
                     ) if key in line},
                     "candidates": [{key: deepcopy(candidate[key]) for key in (
                         "speaker", "similarity", "reference_count", "independent_cue_count",
@@ -291,6 +292,7 @@ class ParseContextCanvas(ContextCanvas):
                 **{key: evidence[key] for key in (
                     "label_score", "label_rank", "label_count", "label_margin",
                     "label_ref_count", "label_ref_consistency", "label_doubtful",
+                    "label_ref_higher_count", "label_ref_higher_fraction",
                 ) if key in evidence},
             }
             if evidence.get("conflict") or evidence.get("band") == "CONFLICT":
@@ -366,6 +368,7 @@ class ParseContextCanvas(ContextCanvas):
                 **{key: evidence[key] for key in (
                     "label_score", "label_rank", "label_count", "label_margin",
                     "label_ref_count", "label_ref_consistency", "label_doubtful",
+                    "label_ref_higher_count", "label_ref_higher_fraction",
                 ) if key in evidence},
                 **value.get("voice_decision", {}), "final_speaker": value["event"].get("speaker"),
             })

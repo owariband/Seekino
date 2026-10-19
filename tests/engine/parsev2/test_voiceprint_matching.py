@@ -226,7 +226,10 @@ LABEL_POLICY = {
     "label_min_consistency": 0.70,
 }
 LABEL_FIELDS = ("label_score", "label_rank", "label_count", "label_margin",
-                "label_ref_count", "label_ref_consistency")
+                "label_ref_count", "label_ref_consistency", "label_ref_higher_count",
+                "label_ref_higher_fraction")
+TAIL_POLICY = {key: value for key, value in LABEL_POLICY.items() if key != "label_min_consistency"}
+TAIL_POLICY["label_min_ref_higher_fraction"] = 0.95
 
 
 def label_score(query, references, **policy):
@@ -240,6 +243,13 @@ def label_batch(rows):
     return score_voiceprint_batch(
         rows, model="CAM++", encoder_revision="frozen", dimensions=192,
         trim_fraction=0.2, min_duration_ms=400, **LABEL_POLICY,
+    )
+
+
+def tail_score(query, references, **policy):
+    return score_voiceprint_line(
+        query, references, model="CAM++", encoder_revision="frozen", dimensions=192,
+        trim_fraction=0.2, min_duration_ms=400, **{**TAIL_POLICY, **policy},
     )
 
 
@@ -479,7 +489,7 @@ def test_invalid_label_thresholds_fail_even_for_unscored_targets(changes) -> Non
 
 
 def test_label_policy_is_optional_as_a_whole_and_boundaries_are_inclusive() -> None:
-    with pytest.raises(ValueError, match="all five"):
+    with pytest.raises(ValueError, match="tail threshold"):
         score_voiceprint_line(production_sample(100), [], model="CAM++", encoder_revision="frozen",
                               dimensions=192, trim_fraction=0.2, min_duration_ms=400, label_min_rank=3)
     boundary = {"label_rank": 3, "label_margin": 0.15, "duration_ms": 1000,
@@ -548,3 +558,78 @@ def test_pass_two_preserves_original_conflicting_pcm_names_after_exclusion() -> 
     assert duplicate["id"] not in result["hygiene"]["excluded_reference_ids"]
     assert all(duplicate["id"] not in candidate["reference_ids"]
                for score in result["scores"] for candidate in score["candidates"])
+
+
+@pytest.mark.parametrize("label", ["椎名立希", "高松灯"])
+def test_empirical_tail_flags_outlier_despite_low_mean_reference_coherence(label) -> None:
+    query = production_sample(100, label=label, angle=180)
+    references = [production_sample(index, label=label, angle=angle)
+                  for index, angle in enumerate([60, 60, -60, -60], 1)]
+    references += [production_sample(8, label="A", angle=180), production_sample(9, label="B", angle=160)]
+    result = tail_score(query, references)
+    assert result["label_ref_consistency"] == pytest.approx(0.5)
+    assert result["label_rank"] == 3
+    assert result["label_ref_higher_count"] == result["label_ref_count"] == 4
+    assert result["label_ref_higher_fraction"] == 1
+    assert result["label_doubtful"] is True
+    assert label_score(query, references)["label_doubtful"] is False  # frozen v2 mean-floor policy
+
+
+def test_empirical_tail_accepts_broad_within_label_spread_and_counts_ties_strictly() -> None:
+    references = [production_sample(index, label="C", angle=angle)
+                  for index, angle in enumerate([60, 60, -60, -60], 1)]
+    for target_angle in (50, 60):
+        query = production_sample(100, label="C", angle=target_angle)
+        nearby = [production_sample(8, label="A", angle=target_angle),
+                  production_sample(9, label="B", angle=target_angle - 10)]
+        result = tail_score(query, [*references, *nearby])
+        assert result["label_rank"] == 3 and result["label_margin"] >= 0.15
+        assert result["label_ref_higher_count"] == 0
+        assert result["label_ref_higher_fraction"] == 0
+        assert result["label_doubtful"] is False
+
+
+@pytest.mark.parametrize("count, higher, expected", [(3, 3, True), (3, 2, False),
+                                                     (20, 19, True), (20, 18, False)])
+def test_empirical_tail_fraction_has_inclusive_95_percent_boundary(count, higher, expected) -> None:
+    result = {"label_rank": 3, "label_margin": 0.15, "duration_ms": 1000,
+              "label_ref_count": count, "label_ref_higher_count": higher,
+              "label_ref_higher_fraction": higher / count, "label_ref_consistency": 0.1}
+    assert is_label_doubtful(result, **TAIL_POLICY) is expected
+
+
+def test_tail_population_is_same_kept_references_not_untrimmed_pool_or_reference_loo() -> None:
+    query = production_sample(100, label="C", angle=180)
+    references = [production_sample(index, label="C", angle=angle)
+                  for index, angle in enumerate([60, 60, -60, -60, 180], 1)]
+    result = tail_score(query, [*references, production_sample(8, label="A", angle=180),
+                               production_sample(9, label="B", angle=160)])
+    own = result["candidates"][2]
+    assert result["label_ref_count"] == result["label_ref_higher_count"] == 4
+    assert result["label_ref_higher_fraction"] == 1
+    assert references[-1]["id"] not in own["reference_ids"]
+    assert own["reference_higher_count"] == 4
+    assert own["reference_higher_fraction"] == 1
+    assert result["label_doubtful"] is True
+    # Three refs at60,0,-60 retain themselves in the common centroid. Their
+    # benchmark is .5,1,.5, not the lower reference-LOO values 0,1,0.
+    simple = [production_sample(index, label="C", angle=angle)
+              for index, angle in enumerate([60, 0, -60], 1)]
+    result = tail_score(production_sample(100, label="C", angle=70), simple)
+    assert result["label_ref_higher_count"] == 3
+
+
+@pytest.mark.parametrize("minimum", [-0.1, 1.1, float("nan"), float("inf"), True])
+def test_invalid_empirical_tail_threshold_is_rejected(minimum) -> None:
+    with pytest.raises(ValueError):
+        tail_score(production_sample(100), [], label_min_ref_higher_fraction=minimum)
+
+
+def test_legacy_mean_and_new_empirical_policies_cannot_be_combined() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        tail_score(production_sample(100), [], label_min_consistency=0.70)
+    with pytest.raises(ValueError, match="exactly one"):
+        score_voiceprint_batch([], model="CAM++", encoder_revision="frozen", dimensions=192,
+                               trim_fraction=.2, min_duration_ms=400, **{
+                                   key: value for key, value in TAIL_POLICY.items()
+                                   if key != "label_min_ref_higher_fraction"})

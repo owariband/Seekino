@@ -14,7 +14,8 @@ VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN = 0.50
 
 # Uncalibrated B0 decision policy from speaker-algo-20261018; cosine is not probability.
 VOICEPRINT_B0_LEGACY_METHOD_VERSION = "B0-trimmed-centroid-v1"
-VOICEPRINT_B0_METHOD_VERSION = "B0-trimmed-centroid-v2-label-doubtful"
+VOICEPRINT_B0_COHERENCE_METHOD_VERSION = "B0-trimmed-centroid-v2-label-doubtful"
+VOICEPRINT_B0_METHOD_VERSION = "B0-trimmed-centroid-v3-label-tail"
 VOICEPRINT_B0_DIMENSIONS = 192
 VOICEPRINT_B0_MIN_AUDIO_MS = 400
 VOICEPRINT_B0_TRIM_FRACTION = 0.20
@@ -27,7 +28,8 @@ VOICEPRINT_B0_LABEL_MIN_RANK = 3
 VOICEPRINT_B0_LABEL_MIN_MARGIN = 0.15
 VOICEPRINT_B0_LABEL_MIN_DURATION_MS = 1000
 VOICEPRINT_B0_LABEL_MIN_REF_COUNT = 3
-# Provisional coherence floor from EP04 v12; not calibrated identity confidence.
+# Frozen v2 policy; v3 uses the character's own kept-reference score distribution.
 VOICEPRINT_B0_LABEL_MIN_CONSISTENCY = 0.70
+VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION = 0.95
 VOICEPRINT_B0_WINDOW_MS = 1500
 VOICEPRINT_B0_DIRECT_MAX_MS = 30_000
