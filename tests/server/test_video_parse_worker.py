@@ -2454,8 +2454,9 @@ def test_b0_song_annotation_prevents_accept(monkeypatch, voiceprint_host):
     assert result["lines"][7]["band"] != "ACCEPT"
 
 
-@pytest.mark.parametrize("outcome", ["complete", "failure", "artifact_failure", "timeout", "cancel"])
+@pytest.mark.parametrize("outcome", ["complete", "failure", "artifact_failure", "timeout", "cancel", "commit_cancel"])
 def test_b0_preparation_publishes_only_complete_results(monkeypatch, voiceprint_host, outcome):
+    from gateway.usage import ModelCallCancelledError
     from server.utils.execution import BlockingCallCancelled
 
     host = voiceprint_host
@@ -2466,6 +2467,15 @@ def test_b0_preparation_publishes_only_complete_results(monkeypatch, voiceprint_
             "voiceprint": config.voiceprint.model_copy(update={"execution_timeout_seconds": 0.02}),
         })})
     commits = []
+    publication = {"locked": False}
+    renew = host.runtime._require_video_active
+
+    def renew_outside_publication(lease):
+        if publication["locked"]:
+            raise AssertionError("renewing the parent would block on the publication row lock")
+        return renew(lease)
+
+    monkeypatch.setattr(host.runtime, "_require_video_active", renew_outside_publication)
 
     async def load(*_args):
         return snapshot
@@ -2485,9 +2495,15 @@ def test_b0_preparation_publishes_only_complete_results(monkeypatch, voiceprint_
         return {"location": "artifact://complete.json", "checksum": "a" * 64}
 
     def finish(_lease, *, preparation, artifact, check_active):
-        check_active()
-        assert artifact == {"location": "artifact://complete.json", "checksum": "a" * 64}
-        commits.append(preparation)
+        publication["locked"] = True
+        try:
+            if outcome == "commit_cancel":
+                host.runtime._model_manager.get().cancel()
+            check_active()
+            assert artifact == {"location": "artifact://complete.json", "checksum": "a" * 64}
+            commits.append(preparation)
+        finally:
+            publication["locked"] = False
 
     monkeypatch.setattr(host.runtime, "load_voiceprint_input", load)
     monkeypatch.setattr(host.runtime, "_collect_voiceprint_scores", collect)
@@ -2508,6 +2524,7 @@ def test_b0_preparation_publishes_only_complete_results(monkeypatch, voiceprint_
                                 "video_parse_task_id": host.lease.video_parse_task_id, "video_id": "video"}]
         else:
             expected = (ValueError if outcome == "failure" else OSError if outcome == "artifact_failure"
+                        else ModelCallCancelledError if outcome == "commit_cancel"
                         else (TimeoutError, asyncio.CancelledError))
             with pytest.raises(expected) as caught:
                 await task
