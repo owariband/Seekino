@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import asyncio
 import json
@@ -143,6 +144,38 @@ def test_claim_enforces_ninety_percent_batch_gate_without_dispatch(repository):
     assert claimed is not None and claimed.chunk_parse_task_id == prepared.chunk_parse_task_ids[10]
     with factory() as session:
         assert all(session.get(ChunkParseTask, item).phase == 2 for item in prepared.chunk_parse_task_ids[:9])
+
+
+def test_scoring_mode_counts_permanent_parse_failures_in_the_ninety_percent_batch_gate(repository):
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    task_id = _task(factory, chunk_count=12, accepted=True, batch_size=10)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        config = deepcopy(parent.parse_config)
+        config["voiceprint_mode"] = "flag"
+        config["voiceprint"] = {"max_tool_calls": 32, "execution_timeout_seconds": 120.0}
+        config["execution"]["max_retry_count"] = 0
+        parent.parse_config = config
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
+    repo, _lease, prepared = _prepare(factory, queue, task_id, chunk_count=12)
+    for _ in range(7):
+        child = queue.claim_chunk("understand", lease_duration=timedelta(minutes=1), now=NOW)
+        repo.commit_chunk_result(child, content={"persons": [], "timeline": []}, now=NOW)
+    for sequence in (7, 8):
+        failed = queue.claim_chunk("failed", lease_duration=timedelta(minutes=1), now=NOW)
+        assert failed.chunk_parse_task_id == prepared.chunk_parse_task_ids[sequence]
+        queue.retry_chunk(failed, error="permanent failure", retry_at=NOW, now=NOW)
+    # Nine of ten are terminal, preserving the 90% batch threshold despite two failures.
+    with factory.begin() as session:
+        session.get(ChunkParseTask, prepared.chunk_parse_task_ids[9]).next_execute_time = NOW + timedelta(minutes=1)
+    child = queue.claim_chunk("later batch", lease_duration=timedelta(minutes=1), now=NOW)
+    assert child is not None and child.chunk_parse_task_id == prepared.chunk_parse_task_ids[10]
+    with factory() as session:
+        parent = session.get(VideoParseTask, task_id)
+        assert parent.status == "PARSING"
+        assert "failure_status" not in parent.detail["_worker_runtime_v2"]
+    assert queue.load_chunk_schedule(task_id, now=NOW).terminal_error is None
 
 
 def test_claims_share_active_chunk_capacity(repository):
@@ -1740,3 +1773,48 @@ def test_normal_stop_returns_same_phase_without_charging_retry_budget(repository
     assert resumed.execution_deadline == lease.execution_deadline + timedelta(seconds=1)
     with factory() as session:
         assert session.get(ChunkParseTask, resumed.chunk_parse_task_id).start_time == resumed_at
+
+
+def test_finalize_sweep_skips_no_op_updates_and_pages_every_task_by_id(repository, monkeypatch):
+    import server.mq.video_parse_queue as queue_module
+
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
+    task_ids = []
+    for _ in range(2):
+        task_ids.append(_task(factory, chunk_count=1, accepted=True, batch_size=1))
+        _prepare(factory, queue, task_ids[-1], chunk_count=1)
+    with factory() as session:
+        before = {task_id: session.get(VideoParseTask, task_id) for task_id in task_ids}
+        assert {task.status for task in before.values()} == {"PARSING"}
+        stamps = {task_id: (task.update_time, task.update_date) for task_id, task in before.items()}
+
+    visited = []
+    original = queue_module._aggregate_video_task
+
+    def spy(session, task_id, *args, **kwargs):
+        visited.append(task_id)
+        return original(session, task_id, *args, **kwargs)
+
+    monkeypatch.setattr(queue_module, "_aggregate_video_task", spy)
+    sweeper = MySqlVideoParseQueue(factory, video_concurrency=3)
+    for tick in range(3):
+        sweeper.reap_expired(now=NOW + timedelta(minutes=1 + tick), limit=1)
+    # Unchanged tasks keep their timestamps, yet the id cursor still reaches both.
+    first, second = sorted(task_ids)
+    assert visited == [first, second, first]
+    with factory() as session:
+        assert {task_id: (session.get(VideoParseTask, task_id).update_time,
+                          session.get(VideoParseTask, task_id).update_date)
+                for task_id in task_ids} == stamps
+
+    with factory.begin() as session:
+        session.get(VideoParseTask, first).status = "INDEXING"
+    changed_at = NOW + timedelta(minutes=5)
+    MySqlVideoParseQueue(factory, video_concurrency=3).reap_expired(now=changed_at, limit=10)
+    with factory() as session:
+        task = session.get(VideoParseTask, first)
+        assert task.status == "PARSING"
+        assert task.update_time == datetime_to_unix_time_ms(changed_at)
+        assert session.get(VideoParseTask, second).update_time == stamps[second][0]

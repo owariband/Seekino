@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -37,6 +37,7 @@ from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 from ..constants.parse import (
     MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY, VOICEPRINT_REFS_PER_SPEAKER,
     VOICEPRINT_CONSISTENCY_MIN_REFS, VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN,
+    VOICEPRINT_B0_MIN_AUDIO_MS,
 )
 from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
@@ -1275,13 +1276,14 @@ class VideoParseRepository:
     def begin_voiceprint_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,
     ) -> dict[str, Any] | None:
-        """Freeze all committed sources once three quarters of Understanding is ready."""
+        """Freeze the task's eligible Understanding sources under the Video lease."""
         started_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             parent = _locked_video_lease(session, lease, started_at)
             if parent.is_deleted or _latest_video_task_id(session, parent.video_id) != parent.id:
                 raise VideoParseLeaseLostError("Voiceprint parent task is no longer current")
-            if parent.parse_config.get("voiceprint") is None:
+            if (parent.parse_config.get("voiceprint") is None
+                and parent.parse_config.get("voiceprint_mode", "off") == "off"):
                 raise VideoParseConflictError("voiceprint preparation is disabled")
             detail = _ensure_runtime(parent.detail)
             voiceprint = Voiceprint.model_validate(detail.get("voiceprint", {}))
@@ -1289,6 +1291,8 @@ class VideoParseRepository:
                 return None
             if parent.status != VideoParseTaskStatus.PARSING.value:
                 raise VideoParseConflictError("voiceprint preparation requires a PARSING task")
+            if parent.parse_config.get("voiceprint_mode", "off") != "off":
+                return _voiceprint_scoring_snapshot(session, parent, lease, started_at)
             runtime = detail[RUNTIME_DETAIL_KEY]
             phase = dict(runtime.get(_VOICEPRINT_PREPARATION_KEY) or {})
             rows = list(session.execute(select(ChunkParseTask, VideoChunk, ChunkParseContent).join(
@@ -1349,6 +1353,195 @@ class VideoParseRepository:
                 "source_media_ref": video.source_uri,
                 "voiceprint": voiceprint.model_dump(mode="json"),
             }
+
+    def bind_voiceprint_encoder(
+        self, lease: VideoParseLease, *, model: Mapping[str, str], now: datetime | None = None,
+    ) -> None:
+        """Fence the encoder identity across interrupted preparation attempts."""
+        bound_at = now if now is not None else now_utc()
+        identity = dict(model)
+        if (set(identity) != {"name", "encoder_revision"}
+            or any(not isinstance(value, str) or not value.strip() for value in identity.values())):
+            raise ValueError("voiceprint encoder requires a model name and immutable revision")
+        with self._session_factory.begin() as session:
+            parent = _locked_video_lease(session, lease, bound_at)
+            detail, phase = _voiceprint_active_preparation(parent, lease)
+            if _latest_video_task_id(session, parent.video_id) != parent.id:
+                raise VideoParseLeaseLostError("Voiceprint parent task is no longer current")
+            if phase.get("encoder_model") is not None and phase["encoder_model"] != identity:
+                raise VideoParseSnapshotConflictError("Voiceprint encoder revision differs from the frozen task")
+            phase["encoder_model"] = identity
+            detail[RUNTIME_DETAIL_KEY][_VOICEPRINT_PREPARATION_KEY] = phase
+            parent.detail = detail
+            parent.update_time = datetime_to_unix_time_ms(bound_at)
+
+    def finish_voiceprint_scoring(
+        self, lease: VideoParseLease, *, preparation: Mapping[str, Any],
+        artifact: Mapping[str, str],
+        check_active: Callable[[], None] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Publish ready atomically; check_active must only check local cancellation.
+
+        The locked parent fences the lease; a callback renewing it on another
+        connection would wait on this transaction's own row lock.
+        """
+        finished_at = now if now is not None else now_utc()
+        payload = deepcopy(dict(preparation))
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode()
+        descriptor = dict(artifact)
+        checksum = hashlib.sha256(encoded).hexdigest()
+        if (set(descriptor) != {"location", "checksum"}
+            or not isinstance(descriptor.get("location"), str) or not descriptor["location"].strip()
+            or descriptor.get("checksum") != checksum):
+            raise VideoParseConflictError("voiceprint artifact descriptor or checksum does not match preparation")
+        with self._session_factory.begin() as session:
+            parent = _locked_video_lease(session, lease, finished_at)
+            if check_active is not None:
+                check_active()
+            if parent.parse_config.get("voiceprint_mode", "off") == "off":
+                raise VideoParseConflictError("voiceprint scoring is disabled")
+            detail, phase = _voiceprint_active_preparation(parent, lease)
+            if _latest_video_task_id(session, parent.video_id) != parent.id:
+                raise VideoParseLeaseLostError("Voiceprint parent task is no longer current")
+            snapshot = _voiceprint_scoring_snapshot(session, parent, lease, finished_at)
+            sources = snapshot["sources"]
+            lines = payload.get("lines")
+            samples = payload.get("samples")
+            model = payload.get("model")
+            if (not isinstance(payload.get("method_version"), str) or not payload["method_version"].strip()
+                or not isinstance(payload.get("parameters"), dict)
+                or not isinstance(model, dict) or not isinstance(model.get("name"), str)
+                or not model["name"].strip() or not isinstance(model.get("encoder_revision"), str)
+                or not model["encoder_revision"].strip()
+                or not isinstance(lines, list) or not isinstance(samples, list)):
+                raise VideoParseConflictError("voiceprint scoring result is incomplete")
+            if phase.get("encoder_model") is not None and phase["encoder_model"] != model:
+                raise VideoParseSnapshotConflictError("Voiceprint result encoder differs from the frozen task")
+            line_ids = [line.get("source_id") for line in lines if isinstance(line, dict)]
+            if len(line_ids) != len(lines) or len(set(line_ids)) != len(lines) or set(line_ids) != set(sources):
+                raise VideoParseConflictError("voiceprint scoring must cover every fixed dialogue exactly once")
+            sample_ids = set()
+            for sample in samples:
+                source_id = sample.get("source_id") if isinstance(sample, dict) else None
+                source = sources.get(source_id)
+                if source is None or source_id in sample_ids:
+                    raise VideoParseConflictError("voiceprint sample is outside the fixed source set or duplicated")
+                if sample.get("id") != source_id or "text_variants" in sample:
+                    raise VideoParseConflictError("voiceprint samples must use source IDs without transcript copies")
+                sample_ids.add(source_id)
+                if source["end_ms"] - source["start_ms"] < VOICEPRINT_B0_MIN_AUDIO_MS:
+                    raise VideoParseConflictError("voiceprint sample is shorter than the encoder minimum")
+                if (sample.get("label") != source["speaker"]
+                    or any(sample.get(key) != source[key] for key in (
+                        "start_ms", "end_ms", "source_version", "event_fingerprint",
+                    )) or sample.get("model") != model["name"]
+                    or sample.get("encoder_revision") != model["encoder_revision"]):
+                    raise VideoParseSnapshotConflictError("voiceprint sample source identity changed")
+                try:
+                    validated = VoiceprintReference.model_validate({
+                        **{key: source[key] for key in (
+                            "chunk_id", "start_ms", "end_ms", "source_version", "event_fingerprint",
+                        )},
+                        "vector": sample.get("vector"), "pcm_sha256": sample.get("pcm_sha256"),
+                        "duration_ms": source["end_ms"] - source["start_ms"],
+                        "selection_basis": "Understanding label; B0 leave-one-out reference pool",
+                    })
+                except ValidationError as error:
+                    raise VideoParseConflictError("voiceprint sample has an invalid CAM++ embedding") from error
+                if not math.isclose(sum(value * value for value in validated.vector), 1.0,
+                                    rel_tol=1e-5, abs_tol=1e-5):
+                    raise VideoParseConflictError("voiceprint sample embedding must be L2-normalized")
+            for line in lines:
+                source = sources[line["source_id"]]
+                if "vector" in line or "text_variants" in line:
+                    raise VideoParseConflictError("voiceprint scored lines cannot duplicate embeddings or transcripts")
+                if any(line.get(key) != source[key] for key in ("start_ms", "end_ms")):
+                    raise VideoParseSnapshotConflictError("voiceprint scored interval changed")
+                candidates = line.get("candidates")
+                if (line.get("duration_ms") != source["end_ms"] - source["start_ms"]
+                    or line.get("band") not in {None, "ACCEPT", "CONFLICT", "NO_VOICE"}
+                    or not isinstance(line.get("reason"), str) or not line["reason"]
+                    or not isinstance(candidates, list) or len(candidates) > 3):
+                    raise VideoParseConflictError("voiceprint scored line is incomplete")
+                names = []
+                for candidate in candidates:
+                    if (not isinstance(candidate, dict) or not isinstance(candidate.get("speaker"), str)
+                        or not candidate["speaker"].strip()
+                        or type(candidate.get("similarity")) not in {int, float}
+                        or not -1 <= candidate["similarity"] <= 1):
+                        raise VideoParseConflictError("voiceprint candidate must contain a named cosine score")
+                    reference_ids = candidate.get("reference_ids")
+                    if ("src" in candidate or "vector" in candidate or "text_variants" in candidate
+                        or not isinstance(reference_ids, list)
+                        or any(not isinstance(reference_id, str) for reference_id in reference_ids)
+                        or len(set(reference_ids)) != len(reference_ids)
+                        or not set(reference_ids).issubset(sample_ids)
+                        or "reference_count" in candidate and candidate["reference_count"] != len(reference_ids)):
+                        raise VideoParseConflictError("voiceprint candidates must reference the shared sample pool")
+                    names.append(candidate["speaker"])
+                if len(set(names)) != len(names) or candidates != sorted(
+                    candidates, key=lambda candidate: (-candidate["similarity"], candidate["speaker"]),
+                ):
+                    raise VideoParseConflictError("voiceprint candidates must rank distinct characters")
+                expected_gap = candidates[0]["similarity"] - candidates[1]["similarity"] if len(candidates) > 1 else None
+                if (expected_gap is None and line.get("gap") is not None
+                    or expected_gap is not None and (type(line.get("gap")) not in {int, float}
+                        or not math.isclose(line["gap"], expected_gap, rel_tol=0, abs_tol=1e-9))):
+                    raise VideoParseConflictError("voiceprint gap must compare the first two distinct characters")
+                if source["end_ms"] - source["start_ms"] < VOICEPRINT_B0_MIN_AUDIO_MS and candidates:
+                    raise VideoParseConflictError("voiceprint cannot score audio below the encoder minimum")
+            if payload.get("failed_chunks") != snapshot["failed_chunks"]:
+                raise VideoParseSnapshotConflictError("voiceprint failed chunk set changed")
+            timing = payload.get("timing")
+            if not isinstance(timing, dict) or any(timing.get(key) != value
+                                                   for key, value in snapshot["timing"].items()):
+                raise VideoParseSnapshotConflictError("voiceprint preparation timing does not match its snapshot")
+            ready_at_ms = datetime_to_unix_time_ms(finished_at)
+            previous_at_ms = snapshot["timing"]["previous_75_percent_at_ms"]
+            detail = _ensure_runtime(parent.detail)
+            phase = dict(detail[RUNTIME_DETAIL_KEY][_VOICEPRINT_PREPARATION_KEY])
+            phase["active"] = False
+            phase["timing"] = {**timing, "ready_at_ms": ready_at_ms,
+                               "ready_minus_previous_75_percent_ms": ready_at_ms - previous_at_ms
+                               if previous_at_ms is not None else None}
+            detail[RUNTIME_DETAIL_KEY][_VOICEPRINT_PREPARATION_KEY] = phase
+            manifest = Voiceprint.model_validate({
+                "ready": True, "method_version": payload["method_version"], "model": model,
+                "parameters": payload["parameters"], "line_count": len(lines), "sample_count": len(samples),
+                **descriptor,
+            }).model_dump(mode="json")
+            detail["voiceprint"] = manifest
+            if check_active is not None:
+                check_active()
+            parent.detail = detail
+            parent.update_time = datetime_to_unix_time_ms(finished_at)
+            session.flush()
+            if check_active is not None:
+                check_active()
+            return deepcopy(manifest)
+
+    def load_voiceprint_scoring(
+        self, lease: VideoParseLease | IntervalParseLease, *, now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Read the committed manifest; artifact I/O belongs to the service."""
+        loaded_at = now if now is not None else now_utc()
+        with self._session_factory() as session:
+            if isinstance(lease, IntervalParseLease):
+                interval = _interval_for_lease(session, lease, loaded_at)
+                parent = session.get(VideoParseTask, interval.video_task_id)
+            else:
+                parent = _locked_video_lease(session, lease, loaded_at)
+            if (parent is None or parent.is_deleted
+                or _latest_video_task_id(session, parent.video_id) != parent.id):
+                raise VideoParseLeaseLostError("Voiceprint parent task is no longer current")
+            voiceprint = dict((parent.detail or {}).get("voiceprint") or {})
+            if parent.parse_config.get("voiceprint_mode", "off") == "off" or voiceprint.get("ready") is not True:
+                return None
+            if "location" not in voiceprint:
+                return None
+            return Voiceprint.model_validate(voiceprint).model_dump(mode="json")
 
     def precheck_voiceprint_registration(
         self, lease: VideoParseLease, *, source_ref: str, speaker: str,
@@ -3105,7 +3298,7 @@ def _aggregate_video_task(
         task.finish_time = None
         if task.lease_owner is None and not any(child.lease_owner for child in chunks):
             task.capacity_acquired = False
-        task.update_time = datetime_to_unix_time_ms(now)
+        _touch_if_modified(session, task, now)
         return task
     refined = set(session.scalars(select(IntervalParseContent.interval_task_id).where(
         IntervalParseContent.interval_task_id.in_([item.id for item in intervals]),
@@ -3123,8 +3316,11 @@ def _aggregate_video_task(
     recorded_failure = _video_failure_status(task) or (
         task.status if task.status in {"PARSING_FAILED", "INDEXING_FAILED"} else None
     )
+    scoring_pending = (task.parse_config.get("voiceprint_mode", "off") != "off"
+                       and dict((task.detail or {}).get("voiceprint") or {}).get("ready") is not True)
     parsing_failed = ("PARSING_FAILED" in {failure_status, recorded_failure}
-                      or any(item.phase == ChunkTaskPhase.PARSE and item.status == "FAILED" for item in chunks)
+                      or not scoring_pending and any(
+                          item.phase == ChunkTaskPhase.PARSE and item.status == "FAILED" for item in chunks)
                       or any(item.status == "PARSING_FAILED" for item in intervals))
     indexing_failed = ("INDEXING_FAILED" in {failure_status, recorded_failure}
                        or any(item.phase == ChunkTaskPhase.INDEX and item.status == "FAILED" for item in chunks))
@@ -3163,12 +3359,19 @@ def _aggregate_video_task(
             task.heartbeat_time = None
     else:
         task.finish_time = None
-    task.update_time = datetime_to_unix_time_ms(now)
+    _touch_if_modified(session, task, now)
     video = session.get(Video, task.video_id)
     if video is not None:
         video.parse_status = status
         video.parse_progress = 100 if status == "COMPLETE" else 0
     return task
+
+
+def _touch_if_modified(session: Session, task: VideoParseTask, now: datetime) -> None:
+    # Scheduler sweeps re-aggregate unchanged tasks every tick; an update_time-only
+    # UPDATE still logs the whole row (and its large detail) to the binlog.
+    if session.is_modified(task):
+        task.update_time = datetime_to_unix_time_ms(now)
 
 
 def _interval_specs(chunk_count: int, interval_size: int) -> tuple[tuple[int, int], ...]:
@@ -3220,12 +3423,97 @@ def _voiceprint_event_fingerprint(event: Mapping[str, Any]) -> str:
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def _voiceprint_scoring_snapshot(
+    session: Session, parent: VideoParseTask, lease: VideoParseLease, started_at: datetime,
+) -> dict[str, Any]:
+    """Freeze every terminal Understanding source; scoring remains execution-local."""
+    rows = list(session.execute(select(ChunkParseTask, VideoChunk, ChunkParseContent).join(
+        VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
+    ).outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id).where(
+        ChunkParseTask.video_task_id == parent.id, VideoChunk.video_id == parent.video_id,
+    ).order_by(VideoChunk.sequence_no).with_for_update()))
+    committed = [(task, chunk, result) for task, chunk, result in rows
+                 if result is not None and result.content is not None]
+    failed = [(task, chunk) for task, chunk, result in rows
+              if (result is None or result.content is None)
+              and task.phase == ChunkTaskPhase.PARSE and task.status == "FAILED"]
+    if (len(rows) != parent.chunk_count
+        or [chunk.sequence_no for _task, chunk, _result in rows] != list(range(parent.chunk_count))
+        or len(committed) + len(failed) != parent.chunk_count):
+        raise VideoParseConflictError("voiceprint scoring needs every Understanding chunk to be terminal")
+    detail = _ensure_runtime(parent.detail)
+    phase = dict(detail[RUNTIME_DETAIL_KEY].get(_VOICEPRINT_PREPARATION_KEY) or {})
+    versions = {chunk.id: result.version for _task, chunk, result in committed}
+    fingerprints = {chunk.id: parse_content_fingerprint(result.content) for _task, chunk, result in committed}
+    failed_chunks = [{"chunk_task_id": task.id, "chunk_id": chunk.id,
+                      "sequence_no": chunk.sequence_no, "last_error": deepcopy(task.last_error)}
+                     for task, chunk in failed]
+    same_execution = (phase.get("active") is True and phase.get("lease_version") == lease.lease_version
+                      and phase.get("worker_id") == lease.worker_id)
+    if same_execution:
+        if (phase.get("source_versions") != versions or phase.get("source_fingerprints") != fingerprints
+            or phase.get("failed_chunks") != failed_chunks):
+            raise VideoParseSnapshotConflictError("Voiceprint source snapshot changed during scoring")
+    else:
+        existing_models = {json.dumps(record["model"], sort_keys=True)
+                           for record in dict(detail.get("voiceprint") or {}).get("voiceprintList", [])}
+        if len(existing_models) > 1:
+            raise VideoParseSnapshotConflictError("Voiceprint sources contain incompatible encoder revisions")
+        if existing_models:
+            identity = json.loads(next(iter(existing_models)))
+            if phase.get("encoder_model") is not None and phase["encoder_model"] != identity:
+                raise VideoParseSnapshotConflictError("Voiceprint encoder differs from the frozen task")
+            phase["encoder_model"] = identity
+        committed_times = sorted(result.create_time for _task, _chunk, result in committed)
+        previous_count = voiceprint_preparation_min_chunks(parent.chunk_count)
+        previous_at = committed_times[previous_count - 1] if len(committed_times) >= previous_count else None
+        terminal_times = [*committed_times, *(datetime_to_unix_time_ms(task.finish_time)
+                                             for task, _chunk in failed if task.finish_time is not None)]
+        terminal_at = max(terminal_times, default=datetime_to_unix_time_ms(started_at))
+        phase.update({"active": True, "lease_version": lease.lease_version, "worker_id": lease.worker_id,
+                      "source_chunk_ids": list(versions), "source_versions": versions,
+                      "source_fingerprints": fingerprints, "failed_chunks": failed_chunks,
+                      "timing": {"previous_75_percent_at_ms": previous_at,
+                                 "all_understanding_terminal_at_ms": terminal_at,
+                                 "extra_gate_wait_ms": terminal_at - previous_at if previous_at is not None else None,
+                                 "preparation_started_at_ms": datetime_to_unix_time_ms(started_at)}})
+        detail["voiceprint"] = Voiceprint().model_dump(mode="json")
+    detail[RUNTIME_DETAIL_KEY][_VOICEPRINT_PREPARATION_KEY] = phase
+    parent.detail = detail
+    parent.update_time = datetime_to_unix_time_ms(started_at)
+    video = session.get(Video, parent.video_id)
+    if video is None:
+        raise VideoParseConflictError("Voiceprint source Video no longer exists")
+    sources = {}
+    for task, chunk, result in committed:
+        for position, event in enumerate(dict(result.content).get("timeline", [])):
+            if event.get("event_type") != "DIALOGUE":
+                continue
+            fingerprint = _voiceprint_event_fingerprint(event)
+            source_id = f"{chunk.id}:{position}:{fingerprint}"
+            sources[source_id] = {"source_id": source_id, "chunk_task_id": task.id, "chunk_id": chunk.id,
+                                  "event_index": position, "position": position,
+                                  "source_version": result.version, "event_fingerprint": fingerprint,
+                                  "speaker": event.get("speaker"), "start_ms": event["start_seconds"],
+                                  "end_ms": event["end_seconds"],
+                                  "text_variants": deepcopy(event["text_variants"])}
+    speakers = sorted({source["speaker"] for source in sources.values() if source["speaker"]})
+    return {"member_sequence_nos": {chunk.id: chunk.sequence_no for _task, chunk, _result in committed},
+            "member_contents": {chunk.id: deepcopy(result.content) for _task, chunk, result in committed},
+            "member_versions": versions,
+            "member_evidence": {chunk.id: deepcopy(result.detail or {}) for _task, chunk, result in committed},
+            "sources": sources, "speaker_list": speakers, "source_media_ref": video.source_uri,
+            "voiceprint": deepcopy(detail["voiceprint"]), "failed_chunks": failed_chunks,
+            "timing": deepcopy(phase["timing"])}
+
+
 def _voiceprint_active_preparation(
     parent: VideoParseTask, lease: VideoParseLease,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     detail = _ensure_runtime(parent.detail)
     phase = dict(detail[RUNTIME_DETAIL_KEY].get(_VOICEPRINT_PREPARATION_KEY) or {})
-    if (parent.is_deleted or parent.parse_config.get("voiceprint") is None
+    if (parent.is_deleted or (parent.parse_config.get("voiceprint") is None
+                             and parent.parse_config.get("voiceprint_mode", "off") == "off")
         or dict(detail.get("voiceprint") or {}).get("ready") is True
         or phase.get("active") is not True or phase.get("lease_version") != lease.lease_version
         or phase.get("worker_id") != lease.worker_id):
@@ -3436,7 +3724,9 @@ def _record_voiceprint_failure(
     phase = dict(detail[RUNTIME_DETAIL_KEY].get(_VOICEPRINT_PREPARATION_KEY) or {})
     if dict(detail.get("voiceprint") or {}).get("ready") is True:
         return None, False
-    if phase.get("active") is not True and (not pending_failure or parent.parse_config.get("voiceprint") is None):
+    enabled = (parent.parse_config.get("voiceprint") is not None
+               or parent.parse_config.get("voiceprint_mode", "off") != "off")
+    if phase.get("active") is not True and (not pending_failure or not enabled):
         return None, False
     failures = phase.get("failures", 0)
     if type(failures) is not int or failures < 0:

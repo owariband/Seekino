@@ -90,6 +90,32 @@ def test_optional_config_preserves_historical_behavior_and_requires_both_models(
             ParseInput.model_validate(values)
 
 
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+def test_scoring_mode_needs_only_speaker_encoder_without_legacy_agent_settings(mode):
+    values = _voice_inputs().model_dump(mode="json")
+    config = values["parse_config"]
+    config["voiceprint_mode"] = mode
+    config.pop("voiceprint")
+    config["models"].pop("voiceprint")
+    parsed = ParseInput.model_validate(values)
+    assert parsed.parse_config.voiceprint_enabled is True
+    assert parsed.parse_config.voiceprint is None
+    assert parsed.parse_config.models.voiceprint is None
+    assert parsed.parse_config.voiceprint_mode == mode
+    config["models"].pop("speaker_embedding")
+    with pytest.raises(ValidationError, match="speaker_embedding"):
+        ParseInput.model_validate(values)
+
+
+def test_voiceprint_mode_defaults_off_is_omitted_and_rejects_unknown_values():
+    values = _inputs().model_dump(mode="json")
+    assert "voiceprint_mode" not in values["parse_config"]
+    assert ParseInput.model_validate(values).parse_config.voiceprint_mode == "off"
+    values["parse_config"]["voiceprint_mode"] = "automatic"
+    with pytest.raises(ValidationError):
+        ParseInput.model_validate(values)
+
+
 def test_voiceprint_fields_do_not_change_historical_request_fingerprints():
     historical = _inputs().model_dump(mode="json")
     config = historical["parse_config"]
@@ -142,6 +168,25 @@ def test_disabled_scheduler_still_waits_for_all_understanding():
     )
     state = {"video_parse_task_id": "task", "inputs": _inputs()}
     asyncio.run(ChunkScheduler(runtime=runtime).run(state))
+    runtime.wait_for_video_change.assert_awaited_once()
+
+
+def test_scoring_scheduler_waits_for_all_terminal_including_permanent_failure():
+    values = _voice_inputs().model_dump(mode="json")
+    values["parse_config"]["voiceprint_mode"] = "flag"
+    inputs = ParseInput.model_validate(values)
+    completed = tuple(ChunkScheduleEntry(str(index), index, ChunkTaskStatus.WAITING,
+                                         understanding_committed=True) for index in range(3))
+    runtime = SimpleNamespace(
+        load_chunk_schedule=AsyncMock(side_effect=[
+            ChunkScheduleSnapshot((*completed, ChunkScheduleEntry("last", 3, ChunkTaskStatus.QUEUED)), 0),
+            ChunkScheduleSnapshot((*completed, ChunkScheduleEntry("last", 3, ChunkTaskStatus.FAILED)), 0),
+        ]),
+        wait_for_video_change=AsyncMock(),
+    )
+    state = {"video_parse_task_id": "task", "inputs": inputs}
+    assert asyncio.run(ChunkScheduler(runtime=runtime).run(state)) == state
+    assert runtime.load_chunk_schedule.await_count == 2
     runtime.wait_for_video_change.assert_awaited_once()
 
 

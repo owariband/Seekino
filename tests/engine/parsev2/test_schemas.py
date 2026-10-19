@@ -62,6 +62,26 @@ def test_result_dispatches_union_and_preserves_multilingual_dialogue() -> None:
     assert VideoParseResult.model_validate_json(result.model_dump_json()) == result
 
 
+def test_absent_speaker_source_preserves_historical_payload_and_fingerprint() -> None:
+    from engine.parsev2.validation import parse_content_fingerprint
+
+    payload = _valid_result_payload()
+    result = VideoParseResult.model_validate(payload)
+    assert result.timeline[1].speaker_source is None
+    assert result.model_dump(mode="json") == payload
+    assert parse_content_fingerprint(result.model_dump(mode="json")) == parse_content_fingerprint(payload)
+
+
+@pytest.mark.parametrize("source", ["understanding", "voice_default", "refine_edit"])
+@pytest.mark.parametrize("speaker", ["爱音", None])
+def test_speaker_source_survives_round_trip_for_named_and_null_speakers(source, speaker) -> None:
+    payload = _valid_result_payload()
+    payload["timeline"][1].update(speaker=speaker, speaker_source=source)
+    result = VideoParseResult.model_validate(payload)
+    assert result.model_dump(mode="json") == payload
+    assert VideoParseResult.model_validate_json(result.model_dump_json()) == result
+
+
 def test_result_uses_names_without_person_id_mapping() -> None:
     result = VideoParseResult.model_validate(_valid_result_payload())
     assert result.persons == ["爱音", "乐奈"]
