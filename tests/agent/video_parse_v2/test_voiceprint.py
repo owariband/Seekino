@@ -487,7 +487,7 @@ def test_refine_prompt_treats_ranking_as_audio_evidence_and_explains_null_gate(m
     canvas = ParseContextCanvas.from_refine(_voice_snapshot(mode, "CONFLICT", doubtful=True))
     prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=canvas)
     paragraph = (
-        "The voice ranking is audio evidence. On a CONFLICT or label_doubtful line, choose the voice's top candidate when it leads the runner-up by at least 0.10 (or the line is ACCEPT) and nothing specific contradicts it: someone else is addressed by name or visibly speaking, or the candidate is clearly absent from the scene. Choose null only when the lead is below that value, the line is very short, singing or overlapping, or specific evidence contradicts the top candidate. Keep the original label only with specific evidence for it."
+        "The voice ranking is audio evidence. On a CONFLICT or label_doubtful line, choose the voice's top candidate when it leads the runner-up by at least 0.05 (or the line is ACCEPT) and nothing specific contradicts it: someone else is addressed by name or visibly speaking, or the candidate is clearly absent from the scene. Choose null only when the lead is below that value, the line is very short, singing or overlapping, or specific evidence contradicts the top candidate. Keep the original label only with specific evidence for it."
     )
     if mode == "off":
         assert paragraph not in prompt and "evidence_type=contradiction" not in prompt
@@ -495,7 +495,7 @@ def test_refine_prompt_treats_ranking_as_audio_evidence_and_explains_null_gate(m
         assert "No reference, close candidates or weak evidence may leave speaker=null" in prompt
     else:
         assert paragraph in prompt
-        assert "null on a required line with gap >= 0.10 or band=ACCEPT" in prompt
+        assert "null on a required line with gap >= 0.05 or band=ACCEPT" in prompt
         assert "supply evidence_type=contradiction" in prompt
         assert "cite the specific contradiction, very short audio, singing or overlap in reason" in prompt
         assert "contradiction is not identity evidence for keep" in prompt

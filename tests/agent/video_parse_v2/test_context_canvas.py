@@ -747,11 +747,14 @@ def test_doubtful_basis_is_visible_in_catalog_and_persisted_in_decisions(basis):
 
 @pytest.mark.parametrize("mode", ["flag", "prefill"])
 @pytest.mark.parametrize("band,gap,doubtful,needs_evidence", [
-    ("CONFLICT", 0.099999, False, False), ("CONFLICT", 0.10, False, True),
+    ("CONFLICT", 0.049999, False, False), ("CONFLICT", 0.05, False, True),
+    ("CONFLICT", 0.050001, False, True), ("CONFLICT", 0.099999, False, True),
+    ("CONFLICT", 0.10, False, True),
     ("CONFLICT", 0.100001, False, True), ("CONFLICT", None, False, False),
     ("ACCEPT", 0.01, False, True), ("ACCEPT", None, False, True),
     ("NO_VOICE", 0.10, True, True), (None, 0.10, True, True),
-    ("NO_VOICE", 0.099999, True, False), (None, None, True, False),
+    ("NO_VOICE", 0.099999, True, True), (None, None, True, False),
+    ("NO_VOICE", 0.049999, True, False), (None, 0.049999, True, False),
 ])
 @pytest.mark.parametrize("evidence_type", [None, "named_address", "contradiction"])
 def test_required_null_decision_checks_voice_lead_and_accept_band(mode, band, gap, doubtful, needs_evidence, evidence_type):
