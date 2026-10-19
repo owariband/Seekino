@@ -8,7 +8,7 @@ is read or changed here.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from math import floor, isfinite
 from typing import Any
 import warnings
@@ -19,12 +19,16 @@ import numpy as np
 Sample = Mapping[str, Any]
 
 
-def eligible_references(query: Sample, samples: Sequence[Sample]) -> list[dict[str, Any]]:
+def eligible_references(
+    query: Sample, samples: Sequence[Sample], *, excluded_reference_ids: Collection[str] = (),
+) -> list[dict[str, Any]]:
     """Exclude target leakage, then retain one deterministic row per PCM.
 
     Conflicting names on identical PCM cannot supply an identity vote, even if
     one conflicting row is excluded because its source overlaps the query.
-    Half-open intervals that merely touch do not overlap.
+    Half-open intervals that merely touch do not overlap. Excluded IDs cannot
+    contribute vectors, but their original names still participate in PCM
+    conflict detection.
     """
     query_cues = set(query.get("cue_ids", ()))
     by_pcm: dict[str, list[Sample]] = defaultdict(list)
@@ -41,6 +45,7 @@ def eligible_references(query: Sample, samples: Sequence[Sample]) -> list[dict[s
             continue
         allowed = [sample for sample in duplicates if not (
             sample["id"] == query["id"]
+            or sample["id"] in excluded_reference_ids
             or query_cues.intersection(sample.get("cue_ids", ()))
             or (query["start_ms"] < sample["end_ms"]
                 and sample["start_ms"] < query["end_ms"])
@@ -85,6 +90,7 @@ def _ranked_result(query: Sample, candidates: list[dict[str, Any]], method: str)
 
 def score_baseline(
     query: Sample, samples: Sequence[Sample], *, trim_fraction: float = 0.2,
+    excluded_reference_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """B0: leave-one-out, per-label normalized centroid after one trim step.
 
@@ -94,7 +100,7 @@ def score_baseline(
     if not 0 <= trim_fraction < 1:
         raise ValueError("trim_fraction must be in [0, 1)")
     by_speaker: dict[str, list[Sample]] = defaultdict(list)
-    for sample in eligible_references(query, samples):
+    for sample in eligible_references(query, samples, excluded_reference_ids=excluded_reference_ids):
         if sample.get("label"):
             by_speaker[sample["label"]].append(sample)
     target = _unit_vector(query)
@@ -113,6 +119,9 @@ def score_baseline(
                 "speaker": speaker,
                 "similarity": float(np.clip(target @ center, -1, 1)),
                 "reference_count": len(kept),
+                "reference_consistency": float(np.clip(np.mean([
+                    np.sum(_unit_vector(row) * center) for row in kept
+                ]), -1, 1)),
                 "reference_ids": sorted(row["id"] for row in kept),
                 "independent_cue_count": len({cue for row in kept for cue in row.get("cue_ids", ())}),
             })
@@ -122,7 +131,10 @@ def score_baseline(
 def score_voiceprint_line(
     query: Sample, samples: Sequence[Sample], *, model: str,
     encoder_revision: str, dimensions: int, trim_fraction: float,
-    min_duration_ms: int,
+    min_duration_ms: int, label_min_rank: int | None = None, label_min_margin: float | None = None,
+    label_min_duration_ms: int | None = None, label_min_ref_count: int | None = None,
+    label_min_consistency: float | None = None,
+    excluded_reference_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """Apply the frozen production embedding contract to the offline B0 scorer.
 
@@ -150,7 +162,18 @@ def score_voiceprint_line(
         "duration_ms": duration_ms, "candidates": [], "gap": None,
         "candidate_count": 0, "reason": "audio_too_short",
         "excluded_reference_counts": {},
+        "label_score": None, "label_rank": None, "label_count": None,
+        "label_margin": None, "label_ref_count": None, "label_ref_consistency": None,
     }
+    label_policy = {
+        "label_min_rank": label_min_rank, "label_min_margin": label_min_margin,
+        "label_min_duration_ms": label_min_duration_ms, "label_min_ref_count": label_min_ref_count,
+        "label_min_consistency": label_min_consistency,
+    }
+    supplied = [value is not None for value in label_policy.values()]
+    if any(supplied) and not all(supplied):
+        raise ValueError("label policy must provide all five thresholds or none")
+    result["label_doubtful"] = is_label_doubtful(result, **label_policy) if all(supplied) else False
     if duration_ms < min_duration_ms:
         return result
     issue = _embedding_issue(query, model=model, encoder_revision=encoder_revision,
@@ -172,14 +195,87 @@ def score_voiceprint_line(
             excluded[issue] += 1
             continue
         references.append(sample)
-    scored = score_baseline(query, references, trim_fraction=trim_fraction)
+    scored = score_baseline(query, references, trim_fraction=trim_fraction,
+                            excluded_reference_ids=excluded_reference_ids)
     candidates = scored["candidates"][:3]
+    if query.get("label") is not None and candidates:
+        for rank, candidate in enumerate(scored["candidates"], 1):
+            if candidate["speaker"] == query["label"]:
+                result.update(
+                    label_score=candidate["similarity"], label_rank=rank,
+                    label_count=len(scored["candidates"]),
+                    label_margin=scored["candidates"][0]["similarity"] - candidate["similarity"],
+                    label_ref_count=candidate["reference_count"],
+                    label_ref_consistency=candidate["reference_consistency"],
+                )
+                break
+        if all(supplied):
+            result["label_doubtful"] = is_label_doubtful(result, **label_policy)
     return {
         **result, "candidates": candidates, "gap": scored["gap"],
         "candidate_count": len(scored["candidates"]),
         "reason": "compared" if candidates else "no_eligible_reference",
         "excluded_reference_counts": dict(sorted(excluded.items())),
     }
+
+
+def is_label_doubtful(
+    result: Mapping[str, Any], *, label_min_rank: int, label_min_margin: float,
+    label_min_duration_ms: int, label_min_ref_count: int, label_min_consistency: float,
+) -> bool:
+    """Flag a label contradicted by a sufficiently coherent reference pool.
+
+    These injected cosine criteria do not change candidates, bands or defaults.
+    Reference count means kept PCM rows, not independent ASR cues.
+    """
+    for name, value in (("label_min_rank", label_min_rank),
+                        ("label_min_duration_ms", label_min_duration_ms),
+                        ("label_min_ref_count", label_min_ref_count)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if not isfinite(label_min_margin) or not 0 <= label_min_margin <= 2:
+        raise ValueError("label_min_margin must be in [0, 2]")
+    if not isfinite(label_min_consistency) or not 0 <= label_min_consistency <= 1:
+        raise ValueError("label_min_consistency must be in [0, 1]")
+    return all(result.get(key) is not None and result[key] >= minimum for key, minimum in (
+        ("label_rank", label_min_rank), ("label_margin", label_min_margin),
+        ("duration_ms", label_min_duration_ms), ("label_ref_count", label_min_ref_count),
+        ("label_ref_consistency", label_min_consistency),
+    ))
+
+
+def score_voiceprint_batch(
+    samples: Sequence[Sample], *, model: str, encoder_revision: str, dimensions: int,
+    trim_fraction: float, min_duration_ms: int, label_min_rank: int, label_min_margin: float,
+    label_min_duration_ms: int, label_min_ref_count: int, label_min_consistency: float,
+) -> dict[str, Any]:
+    """Score exactly twice; scores preserve input order and samples stay frozen.
+
+    Pass-one doubtful IDs are excluded from reference vectors in pass two, even
+    if their final flags clear. Original rows remain available for conflicting
+    PCM-name abstention. No recursive convergence or relabeling is performed.
+    """
+    label_policy = {
+        "label_min_rank": label_min_rank, "label_min_margin": label_min_margin,
+        "label_min_duration_ms": label_min_duration_ms, "label_min_ref_count": label_min_ref_count,
+        "label_min_consistency": label_min_consistency,
+    }
+    is_label_doubtful({}, **label_policy)
+    if len({sample["id"] for sample in samples}) != len(samples):
+        raise ValueError("voiceprint batch sample IDs must be unique")
+    settings = {"model": model, "encoder_revision": encoder_revision, "dimensions": dimensions,
+                "trim_fraction": trim_fraction, "min_duration_ms": min_duration_ms, **label_policy}
+    first = [score_voiceprint_line(sample, samples, **settings) for sample in samples]
+    excluded = {sample["id"] for sample, result in zip(samples, first) if result["label_doubtful"]}
+    final = [score_voiceprint_line(sample, samples, excluded_reference_ids=excluded, **settings)
+             for sample in samples]
+    flagged = {sample["id"] for sample, result in zip(samples, final) if result["label_doubtful"]}
+    return {"scores": final, "hygiene": {
+        "passes": 2, "pass1_flag_count": len(excluded), "pass2_flag_count": len(flagged),
+        "changed_flag_count": len(excluded ^ flagged),
+        "newly_flagged_ids": sorted(flagged - excluded), "cleared_flag_ids": sorted(excluded - flagged),
+        "excluded_reference_ids": sorted(excluded),
+    }}
 
 
 def _embedding_issue(

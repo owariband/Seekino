@@ -9,8 +9,10 @@ from engine.parsev2.voiceprint_matching import (
     classify_voiceprint_result,
     cluster_samples,
     eligible_references,
+    is_label_doubtful,
     score_baseline,
     score_clusters,
+    score_voiceprint_batch,
     score_voiceprint_line,
 )
 
@@ -218,6 +220,29 @@ def production_score(query: dict, references: list[dict]) -> dict:
     )
 
 
+LABEL_POLICY = {
+    "label_min_rank": 3, "label_min_margin": 0.15,
+    "label_min_duration_ms": 1000, "label_min_ref_count": 3,
+    "label_min_consistency": 0.70,
+}
+LABEL_FIELDS = ("label_score", "label_rank", "label_count", "label_margin",
+                "label_ref_count", "label_ref_consistency")
+
+
+def label_score(query, references, **policy):
+    return score_voiceprint_line(
+        query, references, model="CAM++", encoder_revision="frozen", dimensions=192,
+        trim_fraction=0.2, min_duration_ms=400, **{**LABEL_POLICY, **policy},
+    )
+
+
+def label_batch(rows):
+    return score_voiceprint_batch(
+        rows, model="CAM++", encoder_revision="frozen", dimensions=192,
+        trim_fraction=0.2, min_duration_ms=400, **LABEL_POLICY,
+    )
+
+
 def test_production_score_keeps_rare_characters_top3_and_reference_ids_only() -> None:
     query = production_sample(100)
     references = [production_sample(1, label="A", angle=0),
@@ -384,3 +409,142 @@ sys.meta_path.insert(0, RejectScipy())
 from engine.parsev2.voiceprint_matching import score_voiceprint_line
 """
     subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)
+
+
+def test_label_diagnostics_use_full_ranking_and_trimmed_reference_consistency() -> None:
+    query = production_sample(100, label="D")
+    references = [production_sample(index, label=label, angle=angle)
+                  for index, (label, angle) in enumerate(
+                      [("A", 0)] * 3 + [("B", 20)] * 3 + [("C", 40)] * 3
+                      + [("D", 70)] * 3, 1)]
+    result = label_score(query, [query, *references])
+    assert [row["speaker"] for row in result["candidates"]] == ["A", "B", "C"]
+    assert result["label_rank"] == result["label_count"] == 4
+    assert result["label_score"] == pytest.approx(cos(radians(70)))
+    assert result["label_margin"] == pytest.approx(1 - cos(radians(70)))
+    assert result["label_ref_count"] == 3
+    assert result["label_ref_consistency"] == pytest.approx(1)
+    assert result["label_doubtful"] is True
+    # The old API has no hidden policy defaults and retains the same ranking.
+    legacy = production_score(query, [query, *references])
+    assert legacy["candidates"] == result["candidates"]
+    assert legacy["gap"] == result["gap"]
+    assert legacy["label_doubtful"] is False
+
+    mixed = [production_sample(index, label="D", angle=angle)
+             for index, angle in enumerate([-60, 60, 0, 0, 180], 1)]
+    trimmed = label_score(query, [*mixed, production_sample(9, label="A")])
+    assert trimmed["label_ref_count"] == 4
+    assert trimmed["label_ref_consistency"] == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize("query, references", [
+    (production_sample(100, label=None), [production_sample(1)]),
+    (production_sample(100, end_ms=300_399), [production_sample(1)]),
+    (production_sample(100, label="missing"), [production_sample(1)]),
+    (production_sample(100), []),
+])
+def test_null_or_unscored_label_has_six_null_diagnostics(query, references) -> None:
+    result = label_score(query, references)
+    assert all(result[key] is None for key in LABEL_FIELDS)
+    assert result["label_doubtful"] is False
+
+
+def test_label_flag_counts_pcm_rows_not_cues_and_adds_no_song_overlap_gate() -> None:
+    query = production_sample(100, label="C", song=True, overlap=True)
+    references = [production_sample(index, label=label, angle=angle,
+                                   cue_ids=[f"shared-{label}"])
+                  for index, (label, angle) in enumerate(
+                      [("A", 0)] * 3 + [("B", 20)] * 3 + [("C", 90)] * 3, 1)]
+    result = label_score(query, references)
+    assert result["label_ref_count"] == 3
+    assert result["label_doubtful"] is True
+    rare = label_score(query, references[:-1])
+    assert rare["label_ref_count"] == 2
+    assert rare["label_ref_consistency"] == pytest.approx(1)
+    assert rare["label_doubtful"] is False
+    assert any(row["speaker"] == "C" for row in rare["candidates"])
+
+
+@pytest.mark.parametrize("changes", [
+    {"label_min_rank": 0}, {"label_min_rank": True},
+    {"label_min_duration_ms": 0}, {"label_min_ref_count": 0},
+    {"label_min_margin": -0.1}, {"label_min_margin": 2.1},
+    {"label_min_margin": float("nan")}, {"label_min_consistency": -0.1},
+    {"label_min_consistency": 1.1}, {"label_min_consistency": float("inf")},
+])
+def test_invalid_label_thresholds_fail_even_for_unscored_targets(changes) -> None:
+    with pytest.raises(ValueError):
+        label_score(production_sample(100, end_ms=300_399), [], **changes)
+
+
+def test_label_policy_is_optional_as_a_whole_and_boundaries_are_inclusive() -> None:
+    with pytest.raises(ValueError, match="all five"):
+        score_voiceprint_line(production_sample(100), [], model="CAM++", encoder_revision="frozen",
+                              dimensions=192, trim_fraction=0.2, min_duration_ms=400, label_min_rank=3)
+    boundary = {"label_rank": 3, "label_margin": 0.15, "duration_ms": 1000,
+                "label_ref_count": 3, "label_ref_consistency": 0.70}
+    assert is_label_doubtful(boundary, **LABEL_POLICY)
+    for key in boundary:
+        assert not is_label_doubtful({**boundary, key: boundary[key] - 0.001}, **LABEL_POLICY)
+
+
+@pytest.mark.parametrize("metrics", [
+    {"label_rank": 7, "label_count": 11, "label_score": 0.48096527056253957,
+     "label_margin": 0.28659438643592805, "duration_ms": 1300,
+     "label_ref_count": 73, "label_ref_consistency": 0.7649639875350588},
+    {"label_rank": 8, "label_count": 11, "label_score": 0.5170295242916154,
+     "label_margin": 0.2745646161043229, "duration_ms": 2500,
+     "label_ref_count": 4, "label_ref_consistency": 0.7753087188487837},
+])
+def test_confirmed_ep04_original_labels_satisfy_doubtful_policy(metrics) -> None:
+    # Frozen v12 metrics; actual cached-vector integration is the offline CLI.
+    assert is_label_doubtful(metrics, **LABEL_POLICY)
+
+
+def test_two_pass_exclusions_survive_cleared_flags_and_preserve_input_order() -> None:
+    rows = [production_sample(index, label="C", angle=angle)
+            for index, angle in enumerate([90, 270, 180, 180], 1)]
+    rows += [production_sample(index, label=label, angle=angle)
+             for index, (label, angle) in enumerate(
+                 [("A", 90)] * 3 + [("B", 100)] * 3 + [("D", 270)] * 3 + [("E", 260)] * 3, 5)]
+    before = deepcopy(rows)
+    first = [label_score(row, rows) for row in rows]
+    result = label_batch(rows)
+    assert [row["duration_ms"] for row in result["scores"]] == [row["duration_ms"] for row in first]
+    for query, score in zip(rows, result["scores"]):
+        expected = score_voiceprint_line(
+            query, rows, model="CAM++", encoder_revision="frozen", dimensions=192,
+            trim_fraction=0.2, min_duration_ms=400, excluded_reference_ids={rows[0]["id"], rows[1]["id"]},
+            **LABEL_POLICY,
+        )
+        assert score == expected
+    assert result["hygiene"] == {
+        "passes": 2, "pass1_flag_count": 2, "pass2_flag_count": 0,
+        "changed_flag_count": 2, "newly_flagged_ids": [],
+        "cleared_flag_ids": [rows[0]["id"], rows[1]["id"]],
+        "excluded_reference_ids": [rows[0]["id"], rows[1]["id"]],
+    }
+    assert all(not set(candidate["reference_ids"]) & set(result["hygiene"]["excluded_reference_ids"])
+               for score in result["scores"] for candidate in score["candidates"])
+    assert rows == before
+    assert label_batch([])["hygiene"]["passes"] == 2
+    with pytest.raises(ValueError, match="IDs must be unique"):
+        label_batch([rows[0], rows[0]])
+
+
+def test_pass_two_preserves_original_conflicting_pcm_names_after_exclusion() -> None:
+    wrong = production_sample(1, label="C", angle=90)
+    duplicate = production_sample(2, label="A", angle=90, pcm_sha256=wrong["pcm_sha256"])
+    rows = [wrong, duplicate]
+    rows += [production_sample(index, label=label, angle=angle)
+             for index, (label, angle) in enumerate(
+                 [("A", 90)] * 3 + [("B", 100)] * 3 + [("C", 180)] * 3, 3)]
+    eligible = eligible_references(production_sample(100), rows, excluded_reference_ids={wrong["id"]})
+    retained_duplicate = next(row for row in eligible if row["id"] == duplicate["id"])
+    assert retained_duplicate["label"] is None
+    result = label_batch(rows)
+    assert wrong["id"] in result["hygiene"]["excluded_reference_ids"]
+    assert duplicate["id"] not in result["hygiene"]["excluded_reference_ids"]
+    assert all(duplicate["id"] not in candidate["reference_ids"]
+               for score in result["scores"] for candidate in score["candidates"])

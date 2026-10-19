@@ -342,7 +342,8 @@ def test_refine_prompt_first_checkpoint_exposes_voice_conflicts_and_required_dec
     assert catalog == [{
         "reference": reference, "member_ref": "member", "event_type": "DIALOGUE",
         "speaker": speaker, "voice": {"top1": "爽世", "gap": 0.2,
-                                    "band": band, "conflict": band == "CONFLICT"},
+                                    "band": band, "conflict": band == "CONFLICT",
+                                    "label_doubtful": False, "label_rank": None, "label_margin": None},
     }]
     assert "op=voice_decision" in prompt and "decision=keep|voice_top1|other|null" in prompt
     assert "reason of 1-300 characters" in prompt and "this window's write bounds" in prompt
@@ -461,3 +462,63 @@ def test_refine_receipt_without_voice_gate_does_not_export_or_commit_a_draft():
         asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
     runtime.commit_interval_refinement.assert_not_awaited()
     runtime.notify_interval_committed.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["off", "flag", "prefill"])
+def test_refine_prompt_explains_doubtful_labels_and_identity_evidence_only_when_enabled(mode):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot(mode, "NO_VOICE", doubtful=True))
+    prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=canvas)
+    paragraph = (
+        "Each dialogue line may carry label_doubtful. It means the line sounds clearly unlike the labeled character's other lines; it does not prove who did speak. On a doubtful line, keep the label only with specific evidence: the speaker is addressed by name, is visibly speaking, or the text identifies them. ASR speaker groups and turn order are not identity evidence; they are frequently wrong when two characters alternate. If you cannot identify the speaker, set it to null with the reason 'label doubtful, speaker unresolved'. Choose the voice's top candidate only when you can state why it fits beyond its score."
+    )
+    if mode == "off":
+        assert paragraph not in prompt and "doubtful_labels" not in prompt
+        assert "evidence_type" not in prompt
+    else:
+        assert paragraph in prompt
+        assert "conflicts, accept_disagreements or doubtful_labels" in prompt
+        assert "evidence_type=named_address|visible_speaking|text_identity" in prompt
+        assert "cite the concrete identity observation in reason" in prompt
+        assert json.loads(prompt.splitlines()[-1])["collections"]["events"][0]["voice"]["label_rank"] == "3/5"
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+@pytest.mark.parametrize("decision", ["keep", "null"])
+def test_refine_exports_doubtful_label_decision_and_evidence_with_the_interval_commit(mode, decision):
+    snapshot = _voice_snapshot(mode, "NO_VOICE", doubtful=True)
+    original = deepcopy(snapshot)
+
+    async def generate(_snapshot, *, canvas, prompt):
+        reference = canvas.items("events")[0][0]
+        record = {"op": "voice_decision", "event_ref": reference, "decision": decision,
+                  "reason": "label doubtful, speaker unresolved"}
+        operations = []
+        if decision == "keep":
+            record.update(evidence_type="named_address", reason="爱音 is addressed by name during this utterance.")
+        else:
+            operations.append({"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}})
+        canvas.write(role="refine", batch_id="doubtful", expected_revision=canvas.revision,
+                     operations=[*operations, record])
+        assert canvas.finish_voiceprint_review()["ready"]
+        return CanvasCompletion(complete=True)
+
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot),
+        generate_interval_refinement=AsyncMock(side_effect=generate),
+        commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    record = runtime.commit_interval_refinement.await_args.kwargs["voiceprint_decisions"][0]
+    assert record["label_doubtful"] is True
+    assert {key: record[key] for key in ("label_score", "label_rank", "label_count", "label_margin",
+                                        "label_ref_count", "label_ref_consistency")} == {
+        "label_score": 0.2, "label_rank": 3, "label_count": 5, "label_margin": 0.6,
+        "label_ref_count": 5, "label_ref_consistency": 0.8,
+    }
+    assert record["decision"] == decision and record["final_speaker"] == ("爱音" if decision == "keep" else None)
+    if decision == "keep":
+        assert record["evidence_type"] == "named_address" and "addressed by name" in record["reason"]
+    else:
+        assert "evidence_type" not in record and record["reason"] == "label doubtful, speaker unresolved"
+    runtime.notify_interval_committed.assert_awaited_once_with(snapshot)
+    assert snapshot == original

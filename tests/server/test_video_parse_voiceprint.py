@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import event, select
 from engine.parsev2.voiceprint import Voiceprint
 
-from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
+from server.constants.parse import VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_REFS_PER_SPEAKER
 from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession
 from server.model.video import Video
@@ -67,6 +67,29 @@ def _artifact_descriptor(lease, preparation):
     checksum = hashlib.sha256(encoded).hexdigest()
     return {"location": f"artifact://test/voiceprints/{lease.video_parse_task_id}-{checksum}.json",
             "checksum": checksum}
+
+
+def _label_scoring_preparation(snapshot):
+    from engine.parsev2.voiceprint_matching import score_voiceprint_batch
+
+    preparation = _scoring_preparation(snapshot)
+    parameters = VideoParseRuntimeService._voiceprint_parameters()
+    batch = score_voiceprint_batch(
+        preparation["samples"], model=preparation["model"]["name"],
+        encoder_revision=preparation["model"]["encoder_revision"],
+        **{key: parameters[key] for key in (
+            "dimensions", "min_duration_ms", "trim_fraction", "label_min_rank", "label_min_margin",
+            "label_min_duration_ms", "label_min_ref_count", "label_min_consistency",
+        )},
+    )
+    preparation.update(method_version=VOICEPRINT_B0_METHOD_VERSION, parameters=parameters,
+                       hygiene=batch["hygiene"], lines=[
+        VideoParseRuntimeService._score_voiceprint_sample(
+            {**sample, "understanding_speaker": sample["label"]}, preparation["samples"],
+            parameters=parameters, score=score,
+        ) for sample, score in zip(preparation["samples"], batch["scores"])
+    ])
+    return preparation
 
 
 def _finish_scoring(repo, lease, *, preparation, **options):
@@ -924,6 +947,71 @@ def test_artifact_manifest_round_trips_without_inline_arrays_and_preserves_histo
     for changes in ({"checksum": None}, {"ready": False}, {"sample_count": 340}, {"scoring": {}}):
         with pytest.raises(ValueError):
             Voiceprint.model_validate({**manifest, **changes})
+
+
+def test_label_diagnostics_and_hygiene_publish_atomically_without_expanding_detail(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", "A", "A", "A", "B", None], 0)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW))
+    original = deepcopy(preparation)
+    assert preparation["lines"][0]["label_ref_count"] == 3
+    assert preparation["lines"][0]["label_count"] == 2
+    assert preparation["lines"][-1]["label_count"] is None
+    manifest = _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert preparation == original
+    assert manifest["method_version"] == VOICEPRINT_B0_METHOD_VERSION
+    assert "hygiene" not in manifest and "lines" not in manifest and "samples" not in manifest
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
+
+
+@pytest.mark.parametrize("invalid", [
+    "missing_metric", "partial_metrics", "all_null", "rank", "count", "score", "margin", "consistency",
+    "label", "flag", "policy", "missing_hygiene", "hygiene_ids", "hygiene_counts", "excluded_reference",
+])
+def test_label_artifact_rejects_invalid_diagnostics_or_hygiene_before_ready(repository, invalid):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", "A", "A", "A", "B", None], 0)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW))
+    line = preparation["lines"][0]
+    if invalid == "missing_metric":
+        del line["label_score"]
+    elif invalid == "partial_metrics":
+        line["label_score"] = None
+    elif invalid == "all_null":
+        line.update({key: None for key in ("label_score", "label_rank", "label_count", "label_margin",
+                                          "label_ref_count", "label_ref_consistency")})
+    elif invalid == "rank":
+        line["label_rank"] = 3
+    elif invalid == "count":
+        line["label_count"] = 3
+    elif invalid == "score":
+        line.update(label_score=0.7, label_margin=0.3)
+    elif invalid == "margin":
+        line["label_margin"] = 0.2
+    elif invalid == "consistency":
+        line["label_ref_consistency"] = 1.5
+    elif invalid == "label":
+        line["understanding_speaker"] = "B"
+    elif invalid == "flag":
+        line["label_doubtful"] = True
+    elif invalid == "policy":
+        preparation["parameters"]["label_min_rank"] = 0
+    elif invalid == "missing_hygiene":
+        del preparation["hygiene"]
+    elif invalid == "hygiene_ids":
+        preparation["hygiene"]["excluded_reference_ids"] = ["unknown"]
+    elif invalid == "hygiene_counts":
+        preparation["hygiene"]["pass2_flag_count"] = 1
+    else:
+        excluded = line["candidates"][0]["reference_ids"][0]
+        preparation["hygiene"].update(excluded_reference_ids=[excluded], cleared_flag_ids=[excluded],
+                                      pass1_flag_count=1, changed_flag_count=1)
+    with pytest.raises(VideoParseConflictError, match="voiceprint"):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
 
 
 @pytest.mark.parametrize("invalid", ["checksum", "mutated_payload", "location"])

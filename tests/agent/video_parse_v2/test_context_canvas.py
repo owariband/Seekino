@@ -31,7 +31,7 @@ def _canvas():
     )
 
 
-def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None):
+def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None, doubtful=False):
     event = {
         **_result().timeline[0].model_dump(mode="json"),
         "event_type": "DIALOGUE", "speaker": "爱音",
@@ -40,7 +40,7 @@ def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None):
     }
     if source:
         event["speaker_source"] = source
-    return {
+    snapshot = {
         "interval_parse_task_id": "voice-interval", "video_parse_task_id": "video",
         "start_sequence_no": 0, "chunk_count": 1,
         "member_sequence_nos": {"member": 0}, "member_versions": {"member": 1},
@@ -60,6 +60,12 @@ def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None):
             "accept_disagreements": ["line-1"] if band == "ACCEPT" else [],
         }}},
     }
+    if doubtful:
+        snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0].update(
+            label_score=0.2, label_rank=3, label_count=5, label_margin=0.6,
+            label_ref_count=5, label_ref_consistency=0.8, label_doubtful=True,
+        )
+    return snapshot
 
 
 @pytest.mark.parametrize("band", ["ACCEPT", "CONFLICT", "NO_VOICE", "REVIEW"])
@@ -493,7 +499,8 @@ def test_checkpoint_shows_only_compact_voice_summary_for_enabled_dialogue():
     event = json.loads(canvas.checkpoint())["collections"]["events"][0]
     assert event == {
         "reference": canvas.items("events")[0][0], "member_ref": "member", "event_type": "DIALOGUE",
-        "speaker": "爱音", "voice": {"top1": "爽世", "gap": 0.2, "band": "CONFLICT", "conflict": True},
+        "speaker": "爱音", "voice": {"top1": "爽世", "gap": 0.2, "band": "CONFLICT", "conflict": True,
+                                  "label_doubtful": False, "label_rank": None, "label_margin": None},
     }
     assert len(json.dumps(event, ensure_ascii=False).encode()) < 300
     assert not {"candidates", "src", "reference_ids", "reason", "understanding_speaker"}.intersection(event)
@@ -515,6 +522,164 @@ def test_enabled_dialogue_without_evidence_still_shows_current_speaker():
     }]
     assert not canvas.voiceprint_review_passed()
     assert canvas.finish_voiceprint_review()["ready"] and canvas.voiceprint_decisions() == []
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+@pytest.mark.parametrize("band", ["NO_VOICE", None])
+def test_doubtful_label_requires_review_without_a_voice_conflict_or_prefill(mode, band):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot(mode, band, doubtful=True))
+    reference, value = canvas.items("events")[0]
+    review = canvas.voiceprint_review()
+    assert review["conflicts"] == review["accept_disagreements"] == []
+    assert review["doubtful_labels"][0]["event_ref"] == reference
+    assert value["event"]["speaker"] == "爱音" and value["event"]["speaker_source"] == "understanding"
+    assert canvas.finish_voiceprint_review()["missing"] == [reference]
+    assert json.loads(canvas.checkpoint())["collections"]["events"][0]["voice"] == {
+        "top1": "爽世", "gap": 0.2, "band": band, "conflict": False,
+        "label_doubtful": True, "label_rank": "3/5", "label_margin": 0.6,
+    }
+
+
+@pytest.mark.parametrize("evidence_type", [None, "named_address", "visible_speaking", "text_identity"])
+def test_doubtful_keep_requires_declared_identity_evidence_and_exports_metrics(evidence_type):
+    snapshot = _voice_snapshot("flag", None, doubtful=True)
+    original = deepcopy(snapshot)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    reference = canvas.items("events")[0][0]
+    reasons = {
+        "named_address": "The speaker is addressed by name as 爱音.",
+        "visible_speaking": "爱音 is visibly speaking in the inspected frame.",
+        "text_identity": "The utterance explicitly identifies its speaker as 爱音.",
+    }
+    operation = {
+        "op": "voice_decision", "event_ref": reference, "decision": "keep",
+        "reason": reasons.get(evidence_type, "Turn order suggests 爱音."),
+    }
+    if evidence_type is not None:
+        operation["evidence_type"] = evidence_type
+    before = canvas.snapshot()
+    if evidence_type is None:
+        with pytest.raises(AgentToolFeedbackError) as error:
+            canvas.write(role="refine", batch_id="keep", expected_revision=canvas.revision, operations=[operation])
+        assert error.value.code == "VOICEPRINT_KEEP_EVIDENCE_REQUIRED"
+        assert "cite the observation" in error.value.retry_hint
+        assert canvas.snapshot() == before
+        assert canvas.finish_voiceprint_review()["missing"] == [reference]
+    else:
+        canvas.write(role="refine", batch_id="keep", expected_revision=canvas.revision, operations=[operation])
+        assert canvas.finish_voiceprint_review()["ready"]
+        assert canvas.voiceprint_decisions() == [{
+            "event_ref": reference, "member_chunk_id": "member", "start_ms": 1000, "end_ms": 3000,
+            "understanding_speaker": "爱音", "voice_top1": "爽世", "gap": 0.2, "band": None,
+            "label_score": 0.2, "label_rank": 3, "label_count": 5, "label_margin": 0.6,
+            "label_ref_count": 5, "label_ref_consistency": 0.8, "label_doubtful": True,
+            "decision": "keep", "reason": operation["reason"], "evidence_type": evidence_type,
+            "final_speaker": "爱音",
+        }]
+    assert snapshot == original
+    assert canvas._initial["member"].model_dump(mode="json") == original["member_contents"]["member"]
+
+
+@pytest.mark.parametrize("decision,speaker", [("voice_top1", "爽世"), ("other", "睦"), ("null", None)])
+def test_doubtful_non_keep_decisions_need_no_evidence_type(decision, speaker):
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("prefill", "ACCEPT", doubtful=True))
+    reference = canvas.items("events")[0][0]
+    reason = "label doubtful, speaker unresolved" if decision == "null" else "The inspected frame identifies this speaker."
+    canvas.write(role="refine", batch_id="resolve", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": reference, "fields": {"speaker": speaker}},
+        {"op": "voice_decision", "event_ref": reference, "decision": decision, "reason": reason},
+    ])
+    assert canvas.finish_voiceprint_review()["ready"]
+    record = canvas.voiceprint_decisions()[0]
+    assert record["final_speaker"] == speaker and record["label_doubtful"] is True
+    assert "evidence_type" not in record
+
+
+def test_doubtful_gate_checks_stored_keep_evidence_and_type_changes_invalidate_it():
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("flag", None, doubtful=True))
+    reference = canvas.items("events")[0][0]
+
+    def legacy_record(draft):
+        draft["events"][reference]["voice_decision"] = {"decision": "keep", "reason": "Earlier turn order."}
+
+    canvas.mutate(legacy_record)
+    assert canvas.finish_voiceprint_review()["inconsistent"] == [reference]
+    operation = {
+        "op": "voice_decision", "event_ref": reference, "decision": "keep", "reason": "爱音 is visibly speaking.",
+        "evidence_type": "visible_speaking",
+    }
+    canvas.write(role="refine", batch_id="visible", expected_revision=canvas.revision, operations=[operation])
+    assert canvas.finish_voiceprint_review()["ready"] and canvas.voiceprint_review_passed()
+    canvas.write(role="refine", batch_id="identity", expected_revision=canvas.revision, operations=[{
+        **operation, "evidence_type": "text_identity",
+    }])
+    assert canvas.voiceprint_review_status()["ready"] and not canvas.voiceprint_review_passed()
+    assert canvas.finish_voiceprint_review()["ready"]
+
+
+def test_doubtful_evidence_type_rejects_unknown_values_and_keep_still_requires_a_nonblank_reason():
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("flag", None, doubtful=True))
+    before = canvas.snapshot()
+    for fields in ({"evidence_type": "turn_order"}, {"evidence_type": "named_address", "reason": " \n"}):
+        with pytest.raises(ValidationError):
+            canvas.write(role="refine", batch_id="invalid", expected_revision=canvas.revision, operations=[{
+                "op": "voice_decision", "event_ref": canvas.items("events")[0][0],
+                "decision": "keep", "reason": "The speaker is addressed by name.", **fields,
+            }])
+    assert canvas.snapshot() == before
+
+
+def test_changed_interval_removes_doubtful_requirement_and_catalog_evidence():
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("flag", "NO_VOICE", doubtful=True))
+    reference = canvas.items("events")[0][0]
+    canvas.write(role="refine", batch_id="range", expected_revision=canvas.revision, operations=[{
+        "op": "patch_event", "event_ref": reference, "fields": {"end_seconds": 2900},
+    }])
+    assert canvas.voiceprint_review()["doubtful_labels"] == []
+    assert canvas.finish_voiceprint_review()["ready"] and canvas.voiceprint_decisions() == []
+    assert "voice" not in canvas.catalog("events", role="refine")[0]
+
+
+def test_doubtful_requirement_respects_write_bounds_and_previous_window_decisions_are_information():
+    snapshot = _voice_snapshot("flag", None, doubtful=True)
+    snapshot["write_bounds"] = (3000, 20_000)
+    outside = ParseContextCanvas.from_refine(snapshot)
+    assert outside.voiceprint_review()["doubtful_labels"]
+    assert outside.finish_voiceprint_review()["ready"] and outside.voiceprint_decisions() == []
+    snapshot["write_bounds"] = (0, 20_000)
+    previous = {"event_ref": outside.items("events")[0][0], "decision": "keep", "reason": "Earlier window.",
+                "evidence_type": "named_address", "final_speaker": "爱音"}
+    snapshot["member_evidence"]["member"]["voiceprint"]["previous_decisions"] = [previous]
+    current = ParseContextCanvas.from_refine(snapshot)
+    reference = current.items("events")[0][0]
+    assert reference != previous["event_ref"]
+    assert current.get("evidence", "member")["voiceprint"]["previous_decisions"] == [previous]
+    assert current.finish_voiceprint_review()["missing"] == [reference]
+
+
+def test_unscored_label_metrics_stay_null_without_creating_a_requirement():
+    snapshot = _voice_snapshot("flag", None)
+    snapshot["member_contents"]["member"]["timeline"][0]["speaker"] = None
+    line = snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0]
+    metrics = {name: None for name in (
+        "label_score", "label_rank", "label_count", "label_margin", "label_ref_count", "label_ref_consistency",
+    )}
+    line.update(**metrics, understanding_speaker=None, label_doubtful=False)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    evidence = canvas.items("events")[0][1]["voice_evidence"]
+    assert {key: evidence[key] for key in metrics} == metrics
+    assert canvas.voiceprint_review()["doubtful_labels"] == []
+    assert canvas.finish_voiceprint_review()["ready"]
+    assert canvas.catalog("events", role="refine")[0]["voice"]["label_rank"] is None
+
+
+def test_doubtful_metadata_is_ignored_when_voice_mode_is_off():
+    canvas = ParseContextCanvas.from_refine(_voice_snapshot("off", None, doubtful=True))
+    before = canvas.snapshot()
+    assert canvas.voiceprint_review() is None and canvas.voiceprint_review_passed()
+    assert canvas.voiceprint_decisions() == [] and canvas.snapshot() == before
+    assert "voice_evidence" not in canvas.items("events")[0][1]
+    assert set(canvas.catalog("events", role="refine")[0]) == {"reference", "member_ref", "event_type"}
 
 
 def test_new_canvas_binds_new_event_references_and_explicit_conflicts_in_prompt():

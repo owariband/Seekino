@@ -102,6 +102,7 @@ class VoiceDecision(_Operation):
     event_ref: str
     decision: Literal["keep", "voice_top1", "other", "null"]
     reason: str = Field(min_length=1, max_length=VOICEPRINT_DECISION_REASON_MAX_CHARS, pattern=r"\S")
+    evidence_type: Literal["named_address", "visible_speaking", "text_identity"] | None = None
 
 
 ParseOperation = Annotated[
@@ -251,6 +252,8 @@ class ParseContextCanvas(ContextCanvas):
                     **{key: deepcopy(line[key]) for key in (
                         "start_ms", "end_ms", "understanding_speaker", "duration_ms",
                         "band", "conflict", "reason", "gap",
+                        "label_score", "label_rank", "label_count", "label_margin",
+                        "label_ref_count", "label_ref_consistency", "label_doubtful",
                     ) if key in line},
                     "candidates": [{key: deepcopy(candidate[key]) for key in (
                         "speaker", "similarity", "reference_count", "independent_cue_count",
@@ -275,7 +278,7 @@ class ParseContextCanvas(ContextCanvas):
     def voiceprint_review(self) -> dict[str, Any] | None:
         if not self._voiceprint_modes:
             return None
-        conflicts, accept_disagreements = [], []
+        conflicts, accept_disagreements, doubtful_labels = [], [], []
         for reference, value in self.items("events"):
             evidence = value.get("voice_evidence")
             if not evidence or not evidence["valid"]:
@@ -285,6 +288,10 @@ class ParseContextCanvas(ContextCanvas):
                 "line_id": evidence.get("line_id"),
                 "start_ms": evidence["start_ms"], "end_ms": evidence["end_ms"],
                 "understanding_speaker": evidence.get("understanding_speaker"),
+                **{key: evidence[key] for key in (
+                    "label_score", "label_rank", "label_count", "label_margin",
+                    "label_ref_count", "label_ref_consistency", "label_doubtful",
+                ) if key in evidence},
             }
             if evidence.get("conflict") or evidence.get("band") == "CONFLICT":
                 conflicts.append(target)
@@ -292,8 +299,10 @@ class ParseContextCanvas(ContextCanvas):
             if (evidence.get("band") == "ACCEPT" and candidates
                     and candidates[0]["speaker"] != evidence.get("understanding_speaker")):
                 accept_disagreements.append(target)
+            if evidence.get("label_doubtful"):
+                doubtful_labels.append(target)
         return {"modes": dict(self._voiceprint_modes), "conflicts": conflicts,
-                "accept_disagreements": accept_disagreements}
+                "accept_disagreements": accept_disagreements, "doubtful_labels": doubtful_labels}
 
     def _required_voice_events(self, draft):
         if self.stage != "refine" or not self._voiceprint_modes:
@@ -306,7 +315,7 @@ class ParseContextCanvas(ContextCanvas):
                     or not self._write_bounds[0] <= event["start_seconds"] < event["end_seconds"] <= self._write_bounds[1]):
                 continue
             candidates = evidence.get("candidates") or []
-            if (evidence.get("conflict") or evidence.get("band") == "CONFLICT"
+            if (evidence.get("label_doubtful") or evidence.get("conflict") or evidence.get("band") == "CONFLICT"
                     or evidence.get("band") == "ACCEPT" and candidates
                     and candidates[0]["speaker"] != evidence.get("understanding_speaker")):
                 required[reference] = value
@@ -319,7 +328,9 @@ class ParseContextCanvas(ContextCanvas):
         candidates = evidence.get("candidates") or []
         top1 = candidates[0]["speaker"] if candidates else None
         if record["decision"] == "keep":
-            return speaker == understanding
+            return speaker == understanding and (not evidence.get("label_doubtful") or record.get("evidence_type") in {
+                "named_address", "visible_speaking", "text_identity",
+            })
         if record["decision"] == "voice_top1":
             return top1 is not None and speaker == top1
         if record["decision"] == "other":
@@ -352,6 +363,10 @@ class ParseContextCanvas(ContextCanvas):
                 "understanding_speaker": evidence.get("understanding_speaker"),
                 "voice_top1": candidates[0]["speaker"] if candidates else None,
                 "gap": evidence.get("gap"), "band": evidence.get("band"),
+                **{key: evidence[key] for key in (
+                    "label_score", "label_rank", "label_count", "label_margin",
+                    "label_ref_count", "label_ref_consistency", "label_doubtful",
+                ) if key in evidence},
                 **value.get("voice_decision", {}), "final_speaker": value["event"].get("speaker"),
             })
         return records
@@ -419,6 +434,11 @@ class ParseContextCanvas(ContextCanvas):
                              if value["voice_evidence"].get("candidates") else None),
                     "gap": value["voice_evidence"].get("gap"), "band": value["voice_evidence"].get("band"),
                     "conflict": value["voice_evidence"].get("conflict", False),
+                    "label_doubtful": value["voice_evidence"].get("label_doubtful", False),
+                    "label_rank": (f'{value["voice_evidence"]["label_rank"]}/{value["voice_evidence"]["label_count"]}'
+                                   if value["voice_evidence"].get("label_rank") is not None
+                                   and value["voice_evidence"].get("label_count") is not None else None),
+                    "label_margin": value["voice_evidence"].get("label_margin"),
                 }} if value.get("voice_evidence", {}).get("valid") else {})}
                    if collection == "events" and value["member_ref"] in self._voiceprint_modes
                    and value["event"]["event_type"] == "DIALOGUE" else {}),
@@ -530,7 +550,16 @@ class ParseContextCanvas(ContextCanvas):
                             "INVALID_VOICEPRINT_DECISION", "This event has no required voice conflict in the write window.",
                             "Use a current conflict event_ref with valid voice evidence inside the write bounds.",
                         )
-                    required[reference]["voice_decision"] = operation.model_dump(exclude={"op", "event_ref"})
+                    if (operation.decision == "keep" and required[reference]["voice_evidence"].get("label_doubtful")
+                            and operation.evidence_type is None):
+                        raise AgentToolFeedbackError(
+                            "VOICEPRINT_KEEP_EVIDENCE_REQUIRED", "Keeping a doubtful label requires specific identity evidence.",
+                            "Supply evidence_type=named_address, visible_speaking or text_identity and cite the observation "
+                            "in reason; otherwise choose a supported speaker or null.",
+                        )
+                    required[reference]["voice_decision"] = operation.model_dump(
+                        exclude={"op", "event_ref"}, exclude_none=True,
+                    )
                 elif isinstance(operation, PersonsOperation):
                     reference = operation.member_ref
                     member = self._member(draft, reference)

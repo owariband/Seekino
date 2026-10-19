@@ -2407,6 +2407,118 @@ def _b0_embedding(encoder, *, start_ms, **_options):
     ), hashlib.sha256(str(index).encode()).hexdigest()
 
 
+def _b0_hygiene_snapshot(host):
+    from copy import deepcopy
+    from engine.parsev2.schemas import DialogueEvent
+
+    snapshot = _b0_snapshot(host)
+    member = snapshot["member_contents"]["chunk"]
+    member.persons.append("C")
+    for index in range(9, 13):
+        source = deepcopy(snapshot["sources"]["chunk:0"])
+        source.update(source_id=f"chunk:{index}", position=index, event_index=index, speaker="C",
+                      start_ms=index * 2000, end_ms=index * 2000 + 1700,
+                      event_fingerprint=hashlib.sha256(str(index).encode()).hexdigest())
+        source["text_variants"] = [{"language": "ja", "role": "ORIGINAL", "text": str(index)}]
+        snapshot["sources"][source["source_id"]] = source
+        member.timeline.append(DialogueEvent(
+            event_type="DIALOGUE", speaker="C", start_seconds=source["start_ms"], end_seconds=source["end_ms"],
+            description="independent C reference", participants=["C"], visible_persons=[],
+            text_variants=source["text_variants"],
+        ))
+        snapshot["member_evidence"]["chunk"]["evidence"]["asr"]["transcript"].append({
+            "start_seconds": source["start_ms"], "end_seconds": source["end_ms"], "text": str(index),
+        })
+    return snapshot
+
+
+def _b0_hygiene_embedding(encoder, *, start_ms, **options):
+    if 9 <= start_ms // 2000 < 13:
+        from gateway.speaker_embedding import SpeakerEmbeddingResult
+
+        return SpeakerEmbeddingResult(
+            model=encoder.model_name, encoder_revision=encoder.encoder_revision,
+            vector=[0.8, 0.6] + [0.0] * 190, duration_ms=1700,
+        ), hashlib.sha256(str(start_ms // 2000).encode()).hexdigest()
+    return _b0_embedding(encoder, start_ms=start_ms, **options)
+
+
+def test_b0_preparation_runs_two_pass_hygiene_once_and_keeps_label_provenance(monkeypatch, voiceprint_host):
+    from copy import deepcopy
+    import engine.parsev2.voiceprint_matching as matching
+    from server.constants.parse import VOICEPRINT_B0_METHOD_VERSION
+
+    host = voiceprint_host
+    snapshot = _b0_hygiene_snapshot(host)
+    before = deepcopy(snapshot)
+    batches = []
+    actual = matching.score_voiceprint_batch
+
+    def collect(samples, **parameters):
+        batches.append((deepcopy(samples), parameters))
+        return actual(samples, **parameters)
+
+    monkeypatch.setattr(matching, "score_voiceprint_batch", collect)
+    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
+                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
+    result = host.runtime._collect_voiceprint_scores(
+        snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
+    )
+    assert snapshot == before and len(batches) == 1 and len(batches[0][0]) == 13
+    assert result["method_version"] == VOICEPRINT_B0_METHOD_VERSION
+    assert result["hygiene"] == {
+        "passes": 2, "pass1_flag_count": 1, "pass2_flag_count": 1, "changed_flag_count": 0,
+        "newly_flagged_ids": [], "cleared_flag_ids": [], "excluded_reference_ids": ["chunk:7"],
+    }
+    target = result["lines"][7]
+    assert target["label_doubtful"] and target["label_rank"] == target["label_count"] == 3
+    assert target["label_score"] == 0 and target["label_margin"] == 1
+    assert target["label_ref_count"] == 3 and target["label_ref_consistency"] == 1
+    assert target["understanding_speaker"] == "B" and target["candidates"][0]["speaker"] == "A"
+    assert target["band"] == "ACCEPT" and target["conflict"] is True
+    assert next(sample for sample in result["samples"] if sample["id"] == "chunk:7")["label"] == "B"
+    assert all("chunk:7" not in candidate["reference_ids"]
+               for line in result["lines"] for candidate in line["candidates"])
+    assert len(result["samples"]) == 12 and len(result["lines"]) == 13
+    assert all(result["parameters"][key] == value for key, value in batches[0][1].items()
+               if key not in {"model", "encoder_revision"})
+
+
+def test_b0_compare_uses_frozen_pass_one_exclusions_and_legacy_artifact_pool(monkeypatch, voiceprint_host):
+    from server.model.dto.jobDTO import IntervalParseLease
+    from server.constants.parse import VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION
+
+    host = voiceprint_host
+    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
+                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
+    prepared = host.runtime._collect_voiceprint_scores(
+        _b0_hygiene_snapshot(host), host.encoder, host.source, host.lease, check_active=lambda: None,
+    )
+    lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
+                               "REFINING", "worker", 1, datetime.now(UTC), 0, 3, 1.0, 2.0)
+    for sample in prepared["samples"]:
+        sample["label_doubtful"] = sample["label"] == "A"
+    scored = host.runtime._compare_speaker_b0(
+        host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
+        check_active=lambda: None, parameters=prepared["parameters"], lines=prepared["lines"],
+        excluded_reference_ids=prepared["hygiene"]["excluded_reference_ids"], method_version=VOICEPRINT_B0_METHOD_VERSION,
+    )
+    assert scored["method_version"] == VOICEPRINT_B0_METHOD_VERSION
+    assert scored["candidates"][0]["speaker"] == "A"
+    assert "chunk:7" not in next(row for row in scored["candidates"] if row["speaker"] == "B")["reference_ids"]
+    assert scored["label_score"] is None and scored["label_rank"] is None and scored["label_doubtful"] is False
+    assert not {"band", "conflict", "review_reason"}.intersection(scored)
+    legacy_parameters = {key: value for key, value in prepared["parameters"].items() if not key.startswith("label_")}
+    legacy = host.runtime._compare_speaker_b0(
+        host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
+        check_active=lambda: None, parameters=legacy_parameters, lines=prepared["lines"],
+        method_version=VOICEPRINT_B0_LEGACY_METHOD_VERSION,
+    )
+    assert legacy["method_version"] == VOICEPRINT_B0_LEGACY_METHOD_VERSION
+    assert "chunk:7" in next(row for row in legacy["candidates"] if row["speaker"] == "B")["reference_ids"]
+    assert legacy["label_score"] is None and legacy["label_rank"] is None
+
+
 def test_b0_collection_retains_short_lines_and_original_labels_without_mutation(monkeypatch, voiceprint_host):
     from copy import deepcopy
 
@@ -2596,14 +2708,15 @@ def test_b0_actual_encoder_contract_failure_never_publishes(
     assert not any(path.exists() for path in host.state.audio_paths)
 
 
-def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, voiceprint_host):
+@pytest.mark.parametrize("doubtful", [False, True])
+def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, voiceprint_host, doubtful):
     from agent.video_parse_v2.refine.agent import IntervalRefine
     from server.model.dto.jobDTO import IntervalParseLease
 
     host = voiceprint_host
-    prepared_snapshot = _b0_snapshot(host)
+    prepared_snapshot = _b0_hygiene_snapshot(host) if doubtful else _b0_snapshot(host)
     monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
-                        lambda encoder, _source, _lease, **options: _b0_embedding(encoder, **options))
+                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
     prepared = host.runtime._collect_voiceprint_scores(
         prepared_snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
     )
@@ -2635,6 +2748,7 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
         assert snapshot["member_evidence"]["member"]["voiceprint"]["lines"] == prepared["lines"]
         evidence = snapshot["member_evidence"]["member"]["voiceprint"]
         assert evidence["previous_decisions"] == [previous]
+        assert evidence["doubtful_labels"] == ([prepared["lines"][7]["id"]] if doubtful else [])
         for line in evidence["lines"]:
             for candidate in line["candidates"]:
                 assert all(reference_id in evidence["samples"] for reference_id in candidate["reference_ids"])
@@ -2643,6 +2757,9 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
         assert target["event"]["speaker"] == "A"
         assert target["event"]["speaker_source"] == "voice_default"
         assert target["voice_evidence"]["understanding_speaker"] == "B"
+        assert target["voice_evidence"]["label_doubtful"] is doubtful
+        assert target["voice_evidence"]["label_rank"] == (3 if doubtful else 2)
+        assert target["voice_evidence"]["label_count"] == (3 if doubtful else 2)
         assert canvas.voiceprint_review_status()["missing"] == [canvas.items("events")[7][0]]
         assert "ACCEPT" in prompt and "event_ref" in prompt
         assert snapshot["member_contents"]["member"].timeline[7].speaker == "B"
@@ -2813,8 +2930,10 @@ def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voicep
     assert canvas.snapshot() == before
 
 
-def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatch, voiceprint_host):
+@pytest.mark.parametrize("new_method", [False, True])
+def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatch, voiceprint_host, new_method):
     from server.model.dto.jobDTO import IntervalParseLease
+    from server.constants.parse import VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION
 
     host = voiceprint_host
     snapshot = _b0_snapshot(host)
@@ -2830,10 +2949,17 @@ def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatc
             "model": host.encoder.model_name, "encoder_revision": host.encoder.encoder_revision,
             "vector": ([1.0, 0.0] if name == "A" else [0.0, 1.0]) + [0.0] * 190,
             "text_variants": [{"text": "source provenance " * 30}],
+            "label_doubtful": index == 100,
         })
     prepared = {"samples": samples, "lines": samples,
                 "parameters": host.runtime._voiceprint_parameters(),
+                "method_version": VOICEPRINT_B0_METHOD_VERSION if new_method else VOICEPRINT_B0_LEGACY_METHOD_VERSION,
                 "model": {"name": host.encoder.model_name, "encoder_revision": host.encoder.encoder_revision}}
+    if new_method:
+        prepared["hygiene"] = {"excluded_reference_ids": ["ref-0"]}
+    else:
+        prepared["parameters"] = {key: value for key, value in prepared["parameters"].items()
+                                  if not key.startswith("label_")}
     lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
                                "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
     async def load_scoring(_lease):
@@ -2858,11 +2984,14 @@ def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatc
         result = json.loads(content)
         assert len(content.encode()) < 32000
         assert result["candidates"][0]["speaker"] == "A"
+        assert result["method_version"] == prepared["method_version"]
         assert result["revision"] == canvas.revision
         assert "src" not in result["candidates"][0] and "reference_ids" not in result["candidates"][0]
         full = canvas.get("evidence", result["evidence_ref"])[result["evidence_section"]]
         assert len(json.dumps(full).encode()) > 32000
         assert len(full["candidates"][0]["reference_ids"]) == 80
+        assert ("ref-0" not in full["candidates"][0]["reference_ids"]) is new_method
+        assert "ref-100" in full["candidates"][1]["reference_ids"]
         assert all(reference_id in full["samples"] for reference_id in full["candidates"][0]["reference_ids"])
         assert all("vector" not in ref and "text_variants" not in ref for ref in full["samples"].values())
         assert not {"band", "conflict", "review_reason"}.intersection(result)
@@ -3741,7 +3870,8 @@ def _voice_decision_record(member_ref, event, *, decision="voice_top1", final_sp
             "reason": "The visible speaker is A.", "final_speaker": final_speaker}
 
 
-def test_voice_decision_commit_persists_fields_and_member_history_atomically(repository):
+@pytest.mark.parametrize("doubtful", [False, True])
+def test_voice_decision_commit_persists_fields_and_member_history_atomically(repository, doubtful):
     from copy import deepcopy
     from server.model.job import IntervalParseContent
     from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
@@ -3753,6 +3883,10 @@ def test_voice_decision_commit_persists_fields_and_member_history_atomically(rep
     timeline = deepcopy(inputs["input_contents"][member]["timeline"])
     timeline[0].update(speaker="A", participants=["A", "B"])
     record = _voice_decision_record(member, timeline[0])
+    if doubtful:
+        record.update(label_score=0.2, label_rank=3, label_count=5, label_margin=0.6,
+                      label_ref_count=5, label_ref_consistency=0.8, label_doubtful=True,
+                      evidence_type="visible_speaking")
     original = deepcopy(record)
     repo.commit_interval_refinement(
         first, **inputs, interval_content={}, member_updates={member: {"timeline": timeline}},

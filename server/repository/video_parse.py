@@ -20,6 +20,7 @@ from agent.video_parse_v2.scheduler import (
 )
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.voiceprint import CharacterVoiceprint, Voiceprint, VoiceprintReference
+from engine.parsev2.voiceprint_matching import is_label_doubtful
 from engine.parsev2.validation import (
     RefinementMergeConflictError,
     merge_refinement_content,
@@ -37,7 +38,7 @@ from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 from ..constants.parse import (
     MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY, VOICEPRINT_REFS_PER_SPEAKER,
     VOICEPRINT_CONSISTENCY_MIN_REFS, VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN,
-    VOICEPRINT_B0_MIN_AUDIO_MS,
+    VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_MIN_AUDIO_MS,
 )
 from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
@@ -1419,6 +1420,17 @@ class VideoParseRepository:
                 raise VideoParseConflictError("voiceprint scoring result is incomplete")
             if phase.get("encoder_model") is not None and phase["encoder_model"] != model:
                 raise VideoParseSnapshotConflictError("Voiceprint result encoder differs from the frozen task")
+            label_policy = None
+            if payload["method_version"] == VOICEPRINT_B0_METHOD_VERSION:
+                keys = ("label_min_rank", "label_min_margin", "label_min_duration_ms",
+                        "label_min_ref_count", "label_min_consistency")
+                if not set(keys).issubset(payload["parameters"]):
+                    raise VideoParseConflictError("voiceprint label policy is incomplete")
+                label_policy = {key: payload["parameters"][key] for key in keys}
+                try:
+                    is_label_doubtful({}, **label_policy)
+                except (TypeError, ValueError) as error:
+                    raise VideoParseConflictError("voiceprint label policy is invalid") from error
             line_ids = [line.get("source_id") for line in lines if isinstance(line, dict)]
             if len(line_ids) != len(lines) or len(set(line_ids)) != len(lines) or set(line_ids) != set(sources):
                 raise VideoParseConflictError("voiceprint scoring must cover every fixed dialogue exactly once")
@@ -1492,6 +1504,61 @@ class VideoParseRepository:
                     raise VideoParseConflictError("voiceprint gap must compare the first two distinct characters")
                 if source["end_ms"] - source["start_ms"] < VOICEPRINT_B0_MIN_AUDIO_MS and candidates:
                     raise VideoParseConflictError("voiceprint cannot score audio below the encoder minimum")
+                if label_policy is not None:
+                    metrics = ("label_score", "label_rank", "label_count", "label_margin",
+                               "label_ref_count", "label_ref_consistency")
+                    if (not set(metrics).issubset(line) or type(line.get("label_doubtful")) is not bool
+                        or line.get("understanding_speaker") != source["speaker"]):
+                        raise VideoParseConflictError("voiceprint label diagnostics are incomplete")
+                    values = [line[key] for key in metrics]
+                    if source["speaker"] in names:
+                        rank = names.index(source["speaker"]) + 1
+                        candidate = candidates[rank - 1]
+                        if (line["label_rank"] != rank or line["label_score"] != candidate["similarity"]
+                            or line["label_ref_count"] != candidate.get("reference_count")
+                            or "reference_consistency" in candidate
+                            and line["label_ref_consistency"] != candidate["reference_consistency"]):
+                            raise VideoParseConflictError("voiceprint label diagnostics contradict the visible ranking")
+                    if any(value is not None for value in values):
+                        if (source["speaker"] is None or any(value is None for value in values)
+                            or any(type(line[key]) is not int or line[key] < 1
+                                   for key in ("label_rank", "label_count", "label_ref_count"))
+                            or line["label_rank"] > line["label_count"]
+                            or line["label_rank"] <= len(names)
+                            and names[line["label_rank"] - 1] != source["speaker"]
+                            or line["label_count"] != line.get("candidate_count")
+                            or any(type(line[key]) not in {int, float} or not math.isfinite(line[key])
+                                   for key in ("label_score", "label_margin", "label_ref_consistency"))
+                            or not -1 <= line["label_score"] <= 1
+                            or not -1 <= line["label_ref_consistency"] <= 1
+                            or not candidates or line["label_margin"] < 0
+                            or not math.isclose(line["label_margin"], candidates[0]["similarity"]
+                                                - line["label_score"], rel_tol=0, abs_tol=1e-9)):
+                            raise VideoParseConflictError("voiceprint label diagnostics are invalid")
+                    if line["label_doubtful"] != is_label_doubtful(line, **label_policy):
+                        raise VideoParseConflictError("voiceprint label flag does not match its diagnostics")
+            if label_policy is not None:
+                hygiene = payload.get("hygiene")
+                if not isinstance(hygiene, dict):
+                    raise VideoParseConflictError("voiceprint two-pass hygiene is missing")
+                id_keys = ("excluded_reference_ids", "newly_flagged_ids", "cleared_flag_ids")
+                if any(not isinstance(hygiene.get(key), list)
+                       or any(not isinstance(value, str) for value in hygiene[key])
+                       or len(hygiene[key]) != len(set(hygiene[key]))
+                       or not set(hygiene[key]).issubset(sources) for key in id_keys):
+                    raise VideoParseConflictError("voiceprint hygiene IDs are invalid")
+                excluded = set(hygiene["excluded_reference_ids"])
+                flagged = {line["source_id"] for line in lines if line["label_doubtful"]}
+                if (hygiene.get("passes") != 2
+                    or hygiene.get("pass1_flag_count") != len(excluded)
+                    or hygiene.get("pass2_flag_count") != len(flagged)
+                    or hygiene.get("changed_flag_count") != len(excluded ^ flagged)
+                    or set(hygiene["newly_flagged_ids"]) != flagged - excluded
+                    or set(hygiene["cleared_flag_ids"]) != excluded - flagged
+                    or not excluded.issubset(sample_ids)
+                    or any(excluded.intersection(candidate["reference_ids"])
+                           for line in lines for candidate in line["candidates"])):
+                    raise VideoParseConflictError("voiceprint two-pass hygiene does not match final scores")
             if payload.get("failed_chunks") != snapshot["failed_chunks"]:
                 raise VideoParseSnapshotConflictError("voiceprint failed chunk set changed")
             timing = payload.get("timing")
