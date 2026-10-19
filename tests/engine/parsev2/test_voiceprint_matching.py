@@ -521,6 +521,7 @@ def test_two_pass_exclusions_survive_cleared_flags_and_preserve_input_order() ->
     before = deepcopy(rows)
     first = [label_score(row, rows) for row in rows]
     result = label_batch(rows)
+    assert result["pass1_scores"] == first
     assert [row["duration_ms"] for row in result["scores"]] == [row["duration_ms"] for row in first]
     for query, score in zip(rows, result["scores"]):
         expected = score_voiceprint_line(
@@ -633,3 +634,112 @@ def test_legacy_mean_and_new_empirical_policies_cannot_be_combined() -> None:
                                trim_fraction=.2, min_duration_ms=400, **{
                                    key: value for key, value in TAIL_POLICY.items()
                                    if key != "label_min_ref_higher_fraction"})
+
+
+def test_four_reference_loo_calibration_and_production_few_reference_fallback_are_distinct() -> None:
+    query = production_sample(100, label="C", angle=95)
+    references = [production_sample(index, label="C", angle=angle)
+                  for index, angle in enumerate([0, 20, 30, 90], 1)]
+    references += [production_sample(8, label="A", angle=95), production_sample(9, label="B", angle=85)]
+    current = score_baseline(query, references)  # current default: reference LOO
+    shared = score_baseline(query, references, reference_leave_one_out=False)
+    own = current["candidates"][2]
+    assert own["reference_higher_count"] == 3
+    assert own["reference_higher_fraction"] == 0.75
+    assert shared["candidates"][2]["reference_higher_count"] == 4
+    legacy = tail_score(query, references)
+    assert legacy["label_ref_higher_fraction"] == 1
+    assert legacy["label_doubtful"] is True
+    assert legacy["label_doubtful_basis"] is None
+    # An isolated 95% LOO test fails; production intentionally uses the
+    # common-rank/margin fallback for this four-reference cohort.
+    assert not is_label_doubtful({**legacy, "label_ref_higher_fraction": 0.75}, **TAIL_POLICY)
+    production = tail_score(query, references, label_tail_min_refs=8)
+    assert production["label_ref_higher_count"] == 3
+    assert production["label_ref_higher_fraction"] == 0.75
+    assert production["label_doubtful"] is True
+    assert production["label_doubtful_basis"] == "rank_margin_only_few_refs"
+
+
+@pytest.mark.parametrize("count,higher,expected", [(2, 2, False), (3, 0, True), (7, 0, True),
+                                                   (8, 7, False), (8, 8, True), (20, 19, True)])
+def test_current_tail_starts_at_eight_without_changing_three_reference_common_gate(count, higher, expected):
+    result = {"label_rank": 3, "label_margin": 0.15, "duration_ms": 1000,
+              "label_ref_count": count, "label_ref_higher_count": higher,
+              "label_ref_higher_fraction": higher / count}
+    assert is_label_doubtful(result, **TAIL_POLICY, label_tail_min_refs=8) is expected
+    assert not is_label_doubtful({**result, "label_margin": 0.149}, **TAIL_POLICY, label_tail_min_refs=8)
+
+
+def test_current_large_cohort_uses_tail_basis_and_preserves_target_scores():
+    query = production_sample(100, label="C", angle=180)
+    references = [production_sample(index, label="C") for index in range(1, 10)]
+    references += [production_sample(20, label="A", angle=180), production_sample(21, label="B", angle=170)]
+    current = tail_score(query, references, label_tail_min_refs=8)
+    legacy = tail_score(query, references)
+    assert current["label_ref_count"] == current["label_ref_higher_count"] == 8
+    assert current["label_ref_higher_fraction"] == 1
+    assert current["label_doubtful_basis"] == "tail"
+    for left, right in zip(current["candidates"], legacy["candidates"]):
+        assert left["similarity"] == right["similarity"]
+        assert left["reference_ids"] == right["reference_ids"]
+        assert left["reference_consistency"] == right["reference_consistency"]
+    assert current["gap"] == legacy["gap"]
+
+
+def test_degenerate_reference_loo_abstains_without_dropping_candidate_or_shrinking_denominator():
+    def vector(*values):
+        return [*values, *([0.0] * (192 - len(values)))]
+    vectors = [vector(0, 0, 0, 1), vector(1, 0, 0, 0), vector(-.5, sin(radians(120)), 0, 0),
+               vector(-.5, -sin(radians(120)), 0, 0), vector(0, 1, 0, 0), vector(0, -1, 0, 0),
+               vector(0, 0, 1, 0), vector(0, 0, -1, 0)]
+    references = [{**production_sample(index, label="C"), "vector": value}
+                  for index, value in enumerate(vectors, 1)]
+    references += [production_sample(20, label="A"), production_sample(21, label="B", angle=30)]
+    query = production_sample(100, label="C")
+    result = score_voiceprint_line(query, references, model="CAM++", encoder_revision="frozen",
+                                  dimensions=192, trim_fraction=0, min_duration_ms=400,
+                                  **TAIL_POLICY, label_tail_min_refs=8)
+    assert result["label_ref_count"] == 8
+    assert result["label_ref_higher_count"] is result["label_ref_higher_fraction"] is None
+    assert result["label_doubtful"] is False
+    assert result["label_doubtful_basis"] is None
+    rare = score_baseline(query, [production_sample(1, label="rare")])["candidates"][0]
+    assert rare["speaker"] == "rare" and rare["reference_count"] == 1
+    assert rare["reference_higher_count"] is rare["reference_higher_fraction"] is None
+
+
+@pytest.mark.parametrize("minimum", [0, 2, True, 8.0])
+def test_tail_population_minimum_is_validated_without_weakening_the_common_minimum(minimum):
+    with pytest.raises(ValueError, match="label_tail_min_refs"):
+        tail_score(production_sample(100), [], label_tail_min_refs=minimum)
+    with pytest.raises(ValueError, match="label_tail_min_refs"):
+        label_score(production_sample(100), [], label_tail_min_refs=8)
+
+
+@pytest.mark.parametrize("metrics,isolated_tail", [
+    ({"label_rank": 6, "label_margin": 0.2891652123734639, "duration_ms": 1300,
+      "label_ref_count": 70, "label_ref_higher_count": 70, "label_ref_higher_fraction": 1}, True),
+    ({"label_rank": 7, "label_margin": 0.2701004322619014, "duration_ms": 2500,
+      "label_ref_count": 4, "label_ref_higher_count": 3, "label_ref_higher_fraction": .75}, False),
+])
+def test_confirmed_ep04_current_policy_keeps_both_flags_without_calling_few_reference_case_a_tail_success(
+    metrics, isolated_tail,
+):
+    # Actual v12-vector LOO diagnostics for 47.4–48.7s and 293.5–296.0s.
+    # The CLI checks actual vectors; this regression freezes policy semantics.
+    assert is_label_doubtful(metrics, **TAIL_POLICY, label_tail_min_refs=8)
+    assert is_label_doubtful(metrics, **TAIL_POLICY) is isolated_tail
+
+
+def test_few_reference_fallback_keeps_common_gate_when_loo_calibration_is_degenerate():
+    query = production_sample(100, label="C", angle=90)
+    references = [production_sample(1, label="C", vector=[1, 0]),
+                  production_sample(2, label="C", vector=[0, 1]),
+                  production_sample(3, label="C", vector=[0, -1]),
+                  production_sample(8, label="A", angle=90), production_sample(9, label="B", angle=60)]
+    result = tail_score(query, references, label_tail_min_refs=8)
+    assert result["label_ref_count"] == 3
+    assert result["label_ref_higher_count"] is result["label_ref_higher_fraction"] is None
+    assert result["label_doubtful"] is True
+    assert result["label_doubtful_basis"] == "rank_margin_only_few_refs"

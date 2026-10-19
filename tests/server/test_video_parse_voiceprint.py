@@ -13,7 +13,8 @@ from sqlalchemy import event, select
 from engine.parsev2.voiceprint import Voiceprint
 
 from server.constants.parse import (
-    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_LABEL_MIN_CONSISTENCY,
+    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+    VOICEPRINT_B0_LABEL_MIN_CONSISTENCY,
     VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_REFS_PER_SPEAKER,
 )
 from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
@@ -72,12 +73,19 @@ def _artifact_descriptor(lease, preparation):
             "checksum": checksum}
 
 
-def _label_scoring_preparation(snapshot, *, coherence=False):
+def _label_scoring_preparation(snapshot, *, coherence=False, inclusive=False, vectors=None):
     from engine.parsev2.voiceprint_matching import score_voiceprint_batch
 
     preparation = _scoring_preparation(snapshot)
+    for sample in preparation["samples"]:
+        if vectors and sample["id"] in vectors:
+            sample["vector"] = vectors[sample["id"]]
     parameters = VideoParseRuntimeService._voiceprint_parameters()
     version = VOICEPRINT_B0_COHERENCE_METHOD_VERSION if coherence else VOICEPRINT_B0_METHOD_VERSION
+    if inclusive:
+        version = VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION
+    if coherence or inclusive:
+        del parameters["label_tail_min_refs"]
     threshold = "label_min_consistency" if coherence else "label_min_ref_higher_fraction"
     if coherence:
         del parameters["label_min_ref_higher_fraction"]
@@ -88,7 +96,7 @@ def _label_scoring_preparation(snapshot, *, coherence=False):
         **{key: parameters[key] for key in (
             "dimensions", "min_duration_ms", "trim_fraction", "label_min_rank", "label_min_margin",
             "label_min_duration_ms", "label_min_ref_count", threshold,
-        )},
+        ) + (("label_tail_min_refs",) if not coherence and not inclusive else ())},
     )
     preparation.update(method_version=version, parameters=parameters,
                        hygiene=batch["hygiene"], lines=[
@@ -957,12 +965,13 @@ def test_artifact_manifest_round_trips_without_inline_arrays_and_preserves_histo
             Voiceprint.model_validate({**manifest, **changes})
 
 
-@pytest.mark.parametrize("coherence", [False, True])
-def test_label_diagnostics_and_hygiene_publish_atomically_without_expanding_detail(repository, coherence):
+@pytest.mark.parametrize("coherence,inclusive", [(False, False), (True, False), (False, True)])
+def test_label_diagnostics_and_hygiene_publish_atomically_without_expanding_detail(repository, coherence, inclusive):
     factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
     _enable_scoring(factory, task_id)
     _commit(queue, repo, ["A", "A", "A", "A", "B", None], 0)
-    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW), coherence=coherence)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW),
+                                             coherence=coherence, inclusive=inclusive)
     original = deepcopy(preparation)
     assert preparation["lines"][0]["label_ref_count"] == 3
     assert preparation["lines"][0]["label_count"] == 2
@@ -977,9 +986,71 @@ def test_label_diagnostics_and_hygiene_publish_atomically_without_expanding_deta
         assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
 
 
+@pytest.mark.parametrize("label_count,expected_refs,basis", [
+    (5, 4, "rank_margin_only_few_refs"), (11, 8, "tail"),
+])
+def test_label_basis_publishes_with_actual_two_pass_scores(repository, label_count, expected_refs, basis):
+    names = ["A"] * 3 + ["B"] * 3 + ["C"] * label_count
+    chunk_count = (len(names) + 5) // 6
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=chunk_count)
+    _enable_scoring(factory, task_id)
+    for sequence in range(chunk_count):
+        _commit(queue, repo, names[sequence * 6:(sequence + 1) * 6], sequence)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    target_id = next(key for key, source in snapshot["sources"].items() if source["speaker"] == "C")
+    vectors = {key: [0.0, 1.0] + [0.0] * 190 for key, source in snapshot["sources"].items()
+               if source["speaker"] != "C" or key == target_id}
+    preparation = _label_scoring_preparation(snapshot, vectors=vectors)
+    target = next(line for line in preparation["lines"] if line["id"] == target_id)
+    assert target["label_rank"] == 3
+    assert target["label_ref_count"] == expected_refs
+    assert target["label_doubtful"] is True
+    assert target["label_doubtful_basis"] == basis
+    assert preparation["hygiene"]["pass1_flag_count"] == preparation["hygiene"]["pass2_flag_count"] == 1
+    assert preparation["hygiene"]["excluded_reference_ids"] == [target_id]
+    manifest = _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert manifest["ready"] is True
+    assert manifest["parameters"]["label_tail_min_refs"] == 8
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
+
+
+@pytest.mark.parametrize("invalid", [None, "tail", "unknown"])
+def test_flagged_few_reference_basis_must_match_frozen_policy(repository, invalid):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=2)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"] * 3 + ["B"] * 3, 0)
+    _commit(queue, repo, ["C"] * 5, 1)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    target_id = next(key for key, source in snapshot["sources"].items() if source["speaker"] == "C")
+    vectors = {key: [0.0, 1.0] + [0.0] * 190 for key, source in snapshot["sources"].items()
+               if source["speaker"] != "C" or key == target_id}
+    preparation = _label_scoring_preparation(snapshot, vectors=vectors)
+    target = next(line for line in preparation["lines"] if line["id"] == target_id)
+    assert target["label_doubtful_basis"] == "rank_margin_only_few_refs"
+    target["label_doubtful_basis"] = invalid
+    with pytest.raises(VideoParseConflictError, match="basis does not match"):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+def test_single_reference_label_accepts_null_leave_one_out_diagnostics(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", "A", "B"], 0)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW))
+    for line in preparation["lines"][:2]:
+        assert line["label_ref_count"] == 1
+        assert line["label_ref_higher_count"] is None
+        assert line["label_ref_higher_fraction"] is None
+        assert line["label_doubtful"] is False
+        assert line["label_doubtful_basis"] is None
+    assert _finish_scoring(repo, parent, preparation=preparation, now=NOW)["ready"] is True
+
+
 @pytest.mark.parametrize("invalid", [
     "missing_metric", "partial_metrics", "all_null", "rank", "count", "score", "margin", "consistency",
-    "label", "flag", "policy", "higher_count", "higher_fraction", "missing_tail",
+    "label", "flag", "policy", "higher_count", "higher_fraction", "missing_tail", "missing_basis", "basis",
     "missing_hygiene", "hygiene_ids", "hygiene_counts", "excluded_reference",
 ])
 def test_label_artifact_rejects_invalid_diagnostics_or_hygiene_before_ready(repository, invalid):
@@ -1018,6 +1089,10 @@ def test_label_artifact_rejects_invalid_diagnostics_or_hygiene_before_ready(repo
         line["label_ref_higher_fraction"] = 0.5
     elif invalid == "missing_tail":
         del line["label_ref_higher_count"]
+    elif invalid == "missing_basis":
+        del line["label_doubtful_basis"]
+    elif invalid == "basis":
+        line["label_doubtful_basis"] = "tail"
     elif invalid == "missing_hygiene":
         del preparation["hygiene"]
     elif invalid == "hygiene_ids":

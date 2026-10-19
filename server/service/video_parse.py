@@ -84,7 +84,7 @@ from gateway.usage import ModelCallCancelledError, model_call_context
 from ..config.parse_profile import index_contract_fingerprint
 from ..constants.parse import (
     PARSE_RETRIEVAL_CONTRACT, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_LEGACY_METHOD_VERSION,
-    VOICEPRINT_B0_COHERENCE_METHOD_VERSION,
+    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
     VOICEPRINT_B0_DIMENSIONS,
     VOICEPRINT_B0_MIN_AUDIO_MS, VOICEPRINT_B0_TRIM_FRACTION, VOICEPRINT_B0_ACCEPT_GAP,
     VOICEPRINT_B0_ACCEPT_DURATION_MS, VOICEPRINT_B0_ACCEPT_MIN_CUES,
@@ -92,7 +92,7 @@ from ..constants.parse import (
     VOICEPRINT_B0_WINDOW_MS, VOICEPRINT_B0_DIRECT_MAX_MS,
     VOICEPRINT_B0_LABEL_MIN_RANK, VOICEPRINT_B0_LABEL_MIN_MARGIN,
     VOICEPRINT_B0_LABEL_MIN_DURATION_MS, VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
-    VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION,
+    VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION, VOICEPRINT_B0_LABEL_TAIL_MIN_REFS,
 )
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
@@ -626,6 +626,7 @@ class VideoParseRuntimeService:
             **{key: parameters[key] for key in (
                 "dimensions", "min_duration_ms", "trim_fraction", "label_min_rank", "label_min_margin",
                 "label_min_duration_ms", "label_min_ref_count", "label_min_ref_higher_fraction",
+                "label_tail_min_refs",
             )},
         )
         lines = []
@@ -697,7 +698,8 @@ class VideoParseRuntimeService:
                 "label_min_margin": VOICEPRINT_B0_LABEL_MIN_MARGIN,
                 "label_min_duration_ms": VOICEPRINT_B0_LABEL_MIN_DURATION_MS,
                 "label_min_ref_count": VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
-                "label_min_ref_higher_fraction": VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION}
+                "label_min_ref_higher_fraction": VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION,
+                "label_tail_min_refs": VOICEPRINT_B0_LABEL_TAIL_MIN_REFS}
 
     @staticmethod
     def _score_voiceprint_sample(
@@ -712,7 +714,8 @@ class VideoParseRuntimeService:
         policy_keys = {
             VOICEPRINT_B0_LEGACY_METHOD_VERSION: (),
             VOICEPRINT_B0_COHERENCE_METHOD_VERSION: (*label_keys, "label_min_consistency"),
-            VOICEPRINT_B0_METHOD_VERSION: (*label_keys, "label_min_ref_higher_fraction"),
+            VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION: (*label_keys, "label_min_ref_higher_fraction"),
+            VOICEPRINT_B0_METHOD_VERSION: (*label_keys, "label_min_ref_higher_fraction", "label_tail_min_refs"),
         }
         if version not in policy_keys:
             raise ValueError("Unsupported frozen B0 scoring method: " + str(version))
@@ -1277,6 +1280,7 @@ class VideoParseRuntimeService:
                                 "label_score", "label_rank", "label_count", "label_margin",
                                 "label_ref_count", "label_ref_consistency", "label_doubtful",
                                 "label_ref_higher_count", "label_ref_higher_fraction",
+                                "label_doubtful_basis",
                             ) if key in result},
                             "candidates": [{key: value for key, value in candidate.items()
                                             if key not in {"src", "reference_ids"}}

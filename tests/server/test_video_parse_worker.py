@@ -2475,6 +2475,7 @@ def test_b0_preparation_runs_two_pass_hygiene_once_and_keeps_label_provenance(mo
     assert target["label_score"] == 0 and target["label_margin"] == 1
     assert target["label_ref_count"] == 3 and target["label_ref_consistency"] == 1
     assert target["label_ref_higher_count"] == 3 and target["label_ref_higher_fraction"] == 1
+    assert target["label_doubtful_basis"] == "rank_margin_only_few_refs"
     assert target["understanding_speaker"] == "B" and target["candidates"][0]["speaker"] == "A"
     assert target["band"] == "ACCEPT" and target["conflict"] is True
     assert next(sample for sample in result["samples"] if sample["id"] == "chunk:7")["label"] == "B"
@@ -2488,7 +2489,8 @@ def test_b0_preparation_runs_two_pass_hygiene_once_and_keeps_label_provenance(mo
 def test_b0_compare_uses_frozen_pass_one_exclusions_and_legacy_artifact_pool(monkeypatch, voiceprint_host):
     from server.model.dto.jobDTO import IntervalParseLease
     from server.constants.parse import (
-        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
+        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+        VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
     )
 
     host = voiceprint_host
@@ -2521,7 +2523,7 @@ def test_b0_compare_uses_frozen_pass_one_exclusions_and_legacy_artifact_pool(mon
     assert "chunk:7" in next(row for row in legacy["candidates"] if row["speaker"] == "B")["reference_ids"]
     assert legacy["label_score"] is None and legacy["label_rank"] is None
     coherence_parameters = {key: value for key, value in prepared["parameters"].items()
-                            if key != "label_min_ref_higher_fraction"}
+                            if key not in {"label_min_ref_higher_fraction", "label_tail_min_refs"}}
     coherence_parameters["label_min_consistency"] = 0.7
     coherence = host.runtime._compare_speaker_b0(
         host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
@@ -2532,15 +2534,27 @@ def test_b0_compare_uses_frozen_pass_one_exclusions_and_legacy_artifact_pool(mon
     assert coherence["method_version"] == VOICEPRINT_B0_COHERENCE_METHOD_VERSION
     assert coherence["candidates"] == scored["candidates"]
     assert coherence["gap"] == scored["gap"]
+    inclusive_parameters = {key: value for key, value in prepared["parameters"].items()
+                            if key != "label_tail_min_refs"}
+    inclusive = host.runtime._compare_speaker_b0(
+        host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
+        check_active=lambda: None, parameters=inclusive_parameters, lines=prepared["lines"],
+        excluded_reference_ids=prepared["hygiene"]["excluded_reference_ids"],
+        method_version=VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+    )
+    assert inclusive["method_version"] == VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION
+    assert inclusive["candidates"] == scored["candidates"] and inclusive["gap"] == scored["gap"]
 
 
 @pytest.mark.parametrize("method,threshold,expected", [
-    ("legacy", None, False), ("coherence", 0.7, False), ("coherence", 0.5, True), ("tail", 0.95, True),
+    ("legacy", None, False), ("coherence", 0.7, False), ("coherence", 0.5, True),
+    ("inclusive_tail", 0.95, True), ("loo_tail", 0.95, True),
 ])
-def test_b0_scoring_dispatch_preserves_frozen_v1_v2_and_v3_policies(monkeypatch, voiceprint_host, method, threshold, expected):
+def test_b0_scoring_dispatch_preserves_frozen_v1_v2_v3_and_v4_policies(monkeypatch, voiceprint_host, method, threshold, expected):
     from copy import deepcopy
     from server.constants.parse import (
-        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
+        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+        VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
     )
 
     host = voiceprint_host
@@ -2557,16 +2571,20 @@ def test_b0_scoring_dispatch_preserves_frozen_v1_v2_and_v3_policies(monkeypatch,
     parameters = {key: value for key, value in prepared["parameters"].items() if not key.startswith("label_")}
     if method != "legacy":
         parameters.update({key: value for key, value in prepared["parameters"].items()
-                           if key.startswith("label_") and key != "label_min_ref_higher_fraction"})
+                           if key.startswith("label_") and key not in {"label_min_ref_higher_fraction", "label_tail_min_refs"}})
         parameters["label_min_consistency" if method == "coherence" else "label_min_ref_higher_fraction"] = threshold
+        if method == "loo_tail":
+            parameters["label_tail_min_refs"] = prepared["parameters"]["label_tail_min_refs"]
     version = {"legacy": VOICEPRINT_B0_LEGACY_METHOD_VERSION, "coherence": VOICEPRINT_B0_COHERENCE_METHOD_VERSION,
-               "tail": VOICEPRINT_B0_METHOD_VERSION}[method]
+               "inclusive_tail": VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION, "loo_tail": VOICEPRINT_B0_METHOD_VERSION}[method]
     monkeypatch.setattr(VideoParseRuntimeService, "_voiceprint_parameters",
                         staticmethod(lambda: pytest.fail("Frozen scoring used current defaults")))
     result = host.runtime._score_voiceprint_sample(query, samples, parameters=parameters, method_version=version)
     assert result["method_version"] == version and result["label_doubtful"] is expected
-    assert result["label_ref_count"] == result["label_ref_higher_count"] == 3
-    assert result["label_ref_higher_fraction"] == 1
+    assert result["label_ref_count"] == 3
+    assert result["label_ref_higher_count"] == (0 if method == "loo_tail" else 3)
+    assert result["label_ref_higher_fraction"] == (0 if method == "loo_tail" else 1)
+    assert result["label_doubtful_basis"] == ("rank_margin_only_few_refs" if method == "loo_tail" else None)
     assert result["label_ref_consistency"] == pytest.approx(1 / (3 ** 0.5))
     assert result["label_rank"] == 3 and result["label_margin"] == 1
     assert [row["speaker"] for row in result["candidates"]] == ["A", "C", "B"]
@@ -2575,22 +2593,28 @@ def test_b0_scoring_dispatch_preserves_frozen_v1_v2_and_v3_policies(monkeypatch,
 
 @pytest.mark.parametrize("method,missing", [
     ("unknown", None), ("legacy", None), ("coherence", None),
-    ("coherence", "label_min_consistency"), ("tail", "label_min_ref_higher_fraction"),
+    ("coherence", "label_min_consistency"), ("inclusive_tail", "label_min_ref_higher_fraction"),
+    ("loo_tail", "label_min_ref_higher_fraction"), ("loo_tail", "label_tail_min_refs"),
 ])
 def test_b0_frozen_method_does_not_invent_missing_policy_or_accept_unknown_versions(method, missing):
     from server.constants.parse import (
-        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
+        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+        VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
     )
 
     version = {"legacy": VOICEPRINT_B0_LEGACY_METHOD_VERSION, "coherence": VOICEPRINT_B0_COHERENCE_METHOD_VERSION,
-               "tail": VOICEPRINT_B0_METHOD_VERSION, "unknown": "B0-unknown"}[method]
+               "inclusive_tail": VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+               "loo_tail": VOICEPRINT_B0_METHOD_VERSION, "unknown": "B0-unknown"}[method]
     parameters = None
     if missing is not None:
         parameters = VideoParseRuntimeService._voiceprint_parameters()
         if method == "coherence":
             parameters.pop("label_min_ref_higher_fraction")
+            parameters.pop("label_tail_min_refs")
         else:
             parameters.pop(missing)
+            if method == "inclusive_tail":
+                parameters.pop("label_tail_min_refs")
     query = {"id": "query", "model": "campplus", "encoder_revision": "frozen",
              "start_ms": 0, "end_ms": 300, "label": "A"}
     message = "Unsupported frozen B0 scoring method" if method == "unknown" else (
@@ -2598,6 +2622,48 @@ def test_b0_frozen_method_does_not_invent_missing_policy_or_accept_unknown_versi
     )
     with pytest.raises(ValueError, match=message):
         VideoParseRuntimeService._score_voiceprint_sample(query, [], parameters=parameters, method_version=version)
+
+
+@pytest.mark.parametrize("reference_count,aligned,basis", [
+    (1, False, None), (2, False, None), (3, False, "rank_margin_only_few_refs"),
+    (7, False, "rank_margin_only_few_refs"), (8, False, None), (8, True, "tail"),
+])
+def test_b0_loo_tail_keeps_three_reference_minimum_and_eight_reference_tail_gate(
+    monkeypatch, voiceprint_host, reference_count, aligned, basis,
+):
+    from copy import deepcopy
+    from server.constants.parse import VOICEPRINT_B0_METHOD_VERSION
+
+    host = voiceprint_host
+    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
+                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
+    prepared = host.runtime._collect_voiceprint_scores(
+        _b0_hygiene_snapshot(host), host.encoder, host.source, host.lease, check_active=lambda: None,
+    )
+    template = next(row for row in prepared["samples"] if row["id"] == "chunk:4")
+    samples = [deepcopy(row) for row in prepared["samples"] if row["label"] != "B"]
+    raw_count = reference_count + (1 if reference_count >= 7 else 0)
+    for index in range(raw_count):
+        vector = [0.0] * 192
+        vector[1 if aligned else index + 1] = 1.0
+        samples.append({**deepcopy(template), "id": f"B-{index}", "cue_ids": [f"B-cue-{index}"],
+                        "pcm_sha256": hashlib.sha256(f"B-pcm-{index}".encode()).hexdigest(),
+                        "start_ms": 30000 + index * 2000, "end_ms": 31700 + index * 2000,
+                        "vector": vector})
+    query = {**deepcopy(template), "id": "target", "cue_ids": ["target-cue"], "vector": [1.0] + [0.0] * 191,
+             "pcm_sha256": hashlib.sha256(b"target-pcm").hexdigest(), "start_ms": 100000, "end_ms": 101700}
+    result = host.runtime._score_voiceprint_sample(
+        query, samples, parameters=prepared["parameters"], method_version=VOICEPRINT_B0_METHOD_VERSION,
+    )
+    assert result["label_ref_count"] == reference_count
+    assert result["label_doubtful"] is (basis is not None) and result["label_doubtful_basis"] == basis
+    if reference_count == 1:
+        assert result["label_ref_higher_count"] is result["label_ref_higher_fraction"] is None
+    else:
+        assert result["label_ref_higher_fraction"] == (1 if aligned else 0)
+    assert result["label_rank"] == 3 and result["label_margin"] == 1
+    assert [row["speaker"] for row in result["candidates"]] == ["A", "C", "B"]
+    assert result["band"] == "ACCEPT" and result["conflict"] is True
 
 
 def test_b0_collection_retains_short_lines_and_original_labels_without_mutation(monkeypatch, voiceprint_host):
@@ -3968,6 +4034,7 @@ def test_voice_decision_commit_persists_fields_and_member_history_atomically(rep
         record.update(label_score=0.2, label_rank=3, label_count=5, label_margin=0.6,
                       label_ref_count=5, label_ref_consistency=0.8, label_doubtful=True,
                       label_ref_higher_count=5, label_ref_higher_fraction=1,
+                      label_doubtful_basis="rank_margin_only_few_refs",
                       evidence_type="visible_speaking")
     original = deepcopy(record)
     repo.commit_interval_refinement(

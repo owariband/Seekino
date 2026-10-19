@@ -665,10 +665,11 @@ def test_unscored_label_metrics_stay_null_without_creating_a_requirement():
         "label_score", "label_rank", "label_count", "label_margin", "label_ref_count", "label_ref_consistency",
         "label_ref_higher_count", "label_ref_higher_fraction",
     )}
-    line.update(**metrics, understanding_speaker=None, label_doubtful=False)
+    line.update(**metrics, understanding_speaker=None, label_doubtful=False, label_doubtful_basis=None)
     canvas = ParseContextCanvas.from_refine(snapshot)
     evidence = canvas.items("events")[0][1]["voice_evidence"]
     assert {key: evidence[key] for key in metrics} == metrics
+    assert evidence["label_doubtful_basis"] is None
     assert canvas.voiceprint_review()["doubtful_labels"] == []
     assert canvas.finish_voiceprint_review()["ready"]
     assert canvas.catalog("events", role="refine")[0]["voice"]["label_rank"] is None
@@ -707,6 +708,33 @@ def test_label_tail_diagnostics_bind_review_and_export_without_changing_decision
     assert record["label_ref_higher_count"] == 5 and record["label_ref_higher_fraction"] == 1
     assert record["label_ref_count"] == 5 and record["final_speaker"] is None
     assert snapshot == original
+
+
+@pytest.mark.parametrize("basis", ["tail", "rank_margin_only_few_refs"])
+def test_doubtful_basis_is_visible_in_catalog_and_persisted_in_decisions(basis):
+    snapshot = _voice_snapshot("flag", None, doubtful=True)
+    line = snapshot["member_evidence"]["member"]["voiceprint"]["lines"][0]
+    reference_count = 8 if basis == "tail" else 5
+    line.update(label_ref_count=reference_count, label_ref_higher_count=reference_count,
+                label_ref_higher_fraction=1, label_doubtful_basis=basis)
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    reference, value = canvas.items("events")[0]
+    assert value["voice_evidence"]["label_doubtful_basis"] == basis
+    assert canvas.voiceprint_review()["doubtful_labels"][0]["label_doubtful_basis"] == basis
+    assert json.loads(canvas.checkpoint())["collections"]["events"][0]["voice"]["label_doubtful_basis"] == basis
+    canvas.write(role="refine", batch_id="unresolved", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": reference, "fields": {"speaker": None}},
+        {"op": "voice_decision", "event_ref": reference, "decision": "null",
+         "reason": "label doubtful, speaker unresolved"},
+    ])
+    assert canvas.finish_voiceprint_review()["ready"]
+    record = canvas.voiceprint_decisions()[0]
+    assert record["label_doubtful_basis"] == basis and record["final_speaker"] is None
+    canvas.write(role="refine", batch_id="changed-audio", expected_revision=canvas.revision, operations=[{
+        "op": "patch_event", "event_ref": reference, "fields": {"end_seconds": 2900},
+    }])
+    assert "voice" not in canvas.catalog("events", role="refine")[0]
+    assert canvas.voiceprint_review()["doubtful_labels"] == []
 
 
 def test_new_canvas_binds_new_event_references_and_explicit_conflicts_in_prompt():

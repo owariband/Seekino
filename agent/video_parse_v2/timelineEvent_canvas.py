@@ -255,6 +255,7 @@ class ParseContextCanvas(ContextCanvas):
                         "label_score", "label_rank", "label_count", "label_margin",
                         "label_ref_count", "label_ref_consistency", "label_doubtful",
                         "label_ref_higher_count", "label_ref_higher_fraction",
+                        "label_doubtful_basis",
                     ) if key in line},
                     "candidates": [{key: deepcopy(candidate[key]) for key in (
                         "speaker", "similarity", "reference_count", "independent_cue_count",
@@ -293,6 +294,7 @@ class ParseContextCanvas(ContextCanvas):
                     "label_score", "label_rank", "label_count", "label_margin",
                     "label_ref_count", "label_ref_consistency", "label_doubtful",
                     "label_ref_higher_count", "label_ref_higher_fraction",
+                    "label_doubtful_basis",
                 ) if key in evidence},
             }
             if evidence.get("conflict") or evidence.get("band") == "CONFLICT":
@@ -369,6 +371,7 @@ class ParseContextCanvas(ContextCanvas):
                     "label_score", "label_rank", "label_count", "label_margin",
                     "label_ref_count", "label_ref_consistency", "label_doubtful",
                     "label_ref_higher_count", "label_ref_higher_fraction",
+                    "label_doubtful_basis",
                 ) if key in evidence},
                 **value.get("voice_decision", {}), "final_speaker": value["event"].get("speaker"),
             })
@@ -442,6 +445,8 @@ class ParseContextCanvas(ContextCanvas):
                                    if value["voice_evidence"].get("label_rank") is not None
                                    and value["voice_evidence"].get("label_count") is not None else None),
                     "label_margin": value["voice_evidence"].get("label_margin"),
+                    **({"label_doubtful_basis": value["voice_evidence"]["label_doubtful_basis"]}
+                       if "label_doubtful_basis" in value["voice_evidence"] else {}),
                 }} if value.get("voice_evidence", {}).get("valid") else {})}
                    if collection == "events" and value["member_ref"] in self._voiceprint_modes
                    and value["event"]["event_type"] == "DIALOGUE" else {}),

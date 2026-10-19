@@ -38,7 +38,8 @@ from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 from ..constants.parse import (
     MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY, VOICEPRINT_REFS_PER_SPEAKER,
     VOICEPRINT_CONSISTENCY_MIN_REFS, VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN,
-    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_MIN_AUDIO_MS,
+    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+    VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_MIN_AUDIO_MS,
 )
 from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
@@ -1421,10 +1422,13 @@ class VideoParseRepository:
             if phase.get("encoder_model") is not None and phase["encoder_model"] != model:
                 raise VideoParseSnapshotConflictError("Voiceprint result encoder differs from the frozen task")
             label_policy = None
-            label_tail = payload["method_version"] == VOICEPRINT_B0_METHOD_VERSION
+            label_loo = payload["method_version"] == VOICEPRINT_B0_METHOD_VERSION
+            label_tail = label_loo or payload["method_version"] == VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION
             if label_tail or payload["method_version"] == VOICEPRINT_B0_COHERENCE_METHOD_VERSION:
                 keys = ("label_min_rank", "label_min_margin", "label_min_duration_ms",
                         "label_min_ref_count", "label_min_ref_higher_fraction" if label_tail else "label_min_consistency")
+                if label_loo:
+                    keys += ("label_tail_min_refs",)
                 if not set(keys).issubset(payload["parameters"]):
                     raise VideoParseConflictError("voiceprint label policy is incomplete")
                 label_policy = {key: payload["parameters"][key] for key in keys}
@@ -1510,10 +1514,12 @@ class VideoParseRepository:
                                "label_ref_count", "label_ref_consistency")
                     if label_tail:
                         metrics += ("label_ref_higher_count", "label_ref_higher_fraction")
+                    if label_loo:
+                        metrics += ("label_doubtful_basis",)
                     if (not set(metrics).issubset(line) or type(line.get("label_doubtful")) is not bool
                         or line.get("understanding_speaker") != source["speaker"]):
                         raise VideoParseConflictError("voiceprint label diagnostics are incomplete")
-                    values = [line[key] for key in metrics]
+                    values = [line[key] for key in metrics[:6]]
                     if source["speaker"] in names:
                         rank = names.index(source["speaker"]) + 1
                         candidate = candidates[rank - 1]
@@ -1542,7 +1548,9 @@ class VideoParseRepository:
                             or not math.isclose(line["label_margin"], candidates[0]["similarity"]
                                                 - line["label_score"], rel_tol=0, abs_tol=1e-9)):
                             raise VideoParseConflictError("voiceprint label diagnostics are invalid")
-                        if label_tail and (
+                        tail_missing = (line.get("label_ref_higher_count") is None
+                                        and line.get("label_ref_higher_fraction") is None)
+                        if label_tail and not (label_loo and tail_missing) and (
                             type(line["label_ref_higher_count"]) is not int
                             or not 0 <= line["label_ref_higher_count"] <= line["label_ref_count"]
                             or type(line["label_ref_higher_fraction"]) not in {int, float}
@@ -1552,8 +1560,18 @@ class VideoParseRepository:
                                                 rel_tol=0, abs_tol=1e-12)
                         ):
                             raise VideoParseConflictError("voiceprint label tail diagnostics are invalid")
+                    elif label_tail and (line["label_ref_higher_count"] is not None
+                                         or line["label_ref_higher_fraction"] is not None):
+                        raise VideoParseConflictError("voiceprint unscored labels cannot have tail diagnostics")
                     if line["label_doubtful"] != is_label_doubtful(line, **label_policy):
                         raise VideoParseConflictError("voiceprint label flag does not match its diagnostics")
+                    if label_loo:
+                        basis = None
+                        if line["label_doubtful"]:
+                            basis = ("rank_margin_only_few_refs" if line["label_ref_count"]
+                                     < label_policy["label_tail_min_refs"] else "tail")
+                        if line["label_doubtful_basis"] != basis:
+                            raise VideoParseConflictError("voiceprint label basis does not match its policy")
             if label_policy is not None:
                 hygiene = payload.get("hygiene")
                 if not isinstance(hygiene, dict):
