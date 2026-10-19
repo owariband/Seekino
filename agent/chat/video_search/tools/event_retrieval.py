@@ -55,7 +55,7 @@ def build_search_video_events_tool(
     inputs: RunInputs,
     control: ExecutionControl,
     calls: list[RetrievalCall],
-    role: Literal["query", "evaluator"],
+    role: Literal["query", "supervisor"],
     maximum_result_bytes: int,
     maximum_catalog_items: int,
     budget: _ToolCallBudget | None = None,

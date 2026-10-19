@@ -18,7 +18,6 @@ from agent.chat.common.errors import (
 from agent.chat.common.state import AnswerPhase, RunInputs
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.output import video_range_sources
-from agent.chat.video_search.runtime import AgentRuntime
 from engine.rag.contracts import VideoChunkEvidence
 from gateway.agent_model.contracts import SupervisorSessionContext
 from gateway.tracing import LangfuseTracing
@@ -212,13 +211,11 @@ class AgentChatService:
         self,
         repository: AgentRepository,
         library: LibraryService,
-        runtime: AgentRuntime | SupervisorRuntime,
+        runtime: SupervisorRuntime,
         *,
-        supervisor_runtime: SupervisorRuntime | None = None,
         config: AgentServiceConfig | None = None,
         config_loader: Callable[[], tuple[AgentServiceConfig, str]] | None = None,
-        runtime_factory: Callable[[AgentServiceConfig], AgentRuntime | SupervisorRuntime] | None = None,
-        supervisor_factory: Callable[[AgentRuntime, AgentServiceConfig], SupervisorRuntime] | None = None,
+        runtime_factory: Callable[[AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
         tracing: LangfuseTracing | None = None,
         parse_usage: ParseUsageService | None = None,
@@ -229,16 +226,14 @@ class AgentChatService:
         self._repository = repository
         self._library = library
         self._runtime = runtime
-        self._supervisor_runtime = supervisor_runtime
         self._tracing = tracing
         self._parse_usage = parse_usage
         self._attachments = attachments
         self._config = config or AgentServiceConfig()
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
-        self._supervisor_factory = supervisor_factory
         self._config_revision = config_revision
-        self._runtimes = [supervisor_runtime or runtime]
+        self._runtimes = [runtime]
         self._active_maximum_concurrent_kicks = self._config.maximum_concurrent_kicks
         self._clock = clock
         self._monotonic_clock = monotonic_clock
@@ -291,7 +286,7 @@ class AgentChatService:
             ),
         )
 
-    def _current_config(self) -> tuple[AgentRuntime | SupervisorRuntime, AgentServiceConfig, ThreadPoolExecutor]:
+    def _current_config(self) -> tuple[SupervisorRuntime, AgentServiceConfig, ThreadPoolExecutor]:
         with self._lock:
             if self._closed:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
@@ -310,20 +305,8 @@ class AgentChatService:
                         if active_config != previous_config:
                             assert self._runtime_factory is not None
                             new_runtime = self._runtime_factory(config)
-                            if self._supervisor_factory is not None:
-                                assert isinstance(new_runtime, AgentRuntime)
-                                try:
-                                    new_supervisor = self._supervisor_factory(
-                                        new_runtime, config,
-                                    )
-                                except Exception:
-                                    new_runtime.close()
-                                    raise
-                            else:
-                                new_supervisor = None
                             self._runtime = new_runtime
-                            self._supervisor_runtime = new_supervisor
-                            self._runtimes.append(new_supervisor or new_runtime)
+                            self._runtimes.append(new_runtime)
                         self._config = config
                         _logger.info(
                             "agent_global_settings_reloaded revision=%s "
@@ -332,7 +315,7 @@ class AgentChatService:
                             config.maximum_concurrent_kicks != self._active_maximum_concurrent_kicks,
                         )
                     self._config_revision = revision
-            return self._supervisor_runtime or self._runtime, self._config, self._executor
+            return self._runtime, self._config, self._executor
 
     def create_conversation(
         self,
@@ -418,16 +401,15 @@ class AgentChatService:
                         normalized_conversation_id,
                         exc_info=True,
                     )
-            runtime = self._supervisor_runtime or self._runtime
-            if isinstance(runtime, SupervisorRuntime):
-                try:
-                    runtime.delete_thread(normalized_conversation_id)
-                except Exception:
-                    _logger.warning(
-                        "Could not delete Supervisor thread conversation_id=%s",
-                        normalized_conversation_id,
-                        exc_info=True,
-                    )
+            runtime = self._runtime
+            try:
+                runtime.delete_thread(normalized_conversation_id)
+            except Exception:
+                _logger.warning(
+                    "Could not delete Supervisor thread conversation_id=%s",
+                    normalized_conversation_id,
+                    exc_info=True,
+                )
             return deleted
 
     def page_conversations(
@@ -561,7 +543,7 @@ class AgentChatService:
         requested_scope = _canonical_scope([] if series_ids is None else series_ids)
         playback_series_id = None
         playback = extra_context.get("playback") if isinstance(extra_context, dict) else None
-        if isinstance(runtime, SupervisorRuntime) and runtime.realtime_enabled and isinstance(playback, dict):
+        if runtime.realtime_enabled and isinstance(playback, dict):
             video = self._library.get_video(playback.get("videoId"), tenant_id=normalized_source)
             position = playback.get("positionSeconds")
             if (
@@ -636,7 +618,7 @@ class AgentChatService:
                     )
                 scope = self._resolve_scope(
                     requested_scope, normalized_source,
-                    allow_empty=isinstance(runtime, SupervisorRuntime),
+                    allow_empty=True,
                     playback_series_id=playback_series_id,
                 )
                 reference_context = self._load_reference(
@@ -817,7 +799,7 @@ class AgentChatService:
     def _execute(
         self, execution: AgentMessageExecution, tenant_id: str, requested_top_k: int,
         run_options: AgentRunOptionsState, max_loop_turns: int | None,
-        runtime: AgentRuntime | SupervisorRuntime, config: AgentServiceConfig,
+        runtime: SupervisorRuntime, config: AgentServiceConfig,
         *,
         owner_user_id: str = LOCAL_USER_ID,
         conversation_tenant_id: str | None = None,
@@ -826,7 +808,6 @@ class AgentChatService:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
         conversation_id = initial.assistant_message.conversation_id
-        pending_answer_events: list[dict] = []
         last_phase = initial.assistant_message.phase
         evidence_hit_count = 0
         snapshot_count = 0
@@ -851,7 +832,7 @@ class AgentChatService:
                     )
                     execution.publish({**event, "timing": asdict(timing)})
                 return
-            elif event_type == "answer.snapshot" and isinstance(runtime, SupervisorRuntime):
+            elif event_type == "answer.snapshot":
                 with self._lock:
                     if execution.cancellation.is_set():
                         raise AgentModelInvocationError("Agent execution cancelled")
@@ -881,8 +862,6 @@ class AgentChatService:
                 )
                 return
             elif event_type in {"answer.evidence", "answer.block", "answer.delta"}:
-                if not isinstance(runtime, SupervisorRuntime):
-                    pending_answer_events.append(event)
                 return
             execution.publish(event)
 
@@ -921,59 +900,58 @@ class AgentChatService:
                 ).path
 
             session_context = None
-            if isinstance(runtime, SupervisorRuntime):
-                session_states = None
+            session_states = None
+            try:
+                conversation = self._repository.get_conversation(
+                    conversation_id, conversation_tenant_id or tenant_id,
+                    owner_user_id=owner_user_id,
+                )
+                session_states = deepcopy((conversation.detail or {}).get("runtimeSessions", {}))
+            except AgentConversationNotFoundError:
+                raise
+            except Exception:
+                _logger.warning(
+                    "Could not load Supervisor session state conversation_id=%s message_id=%s",
+                    conversation_id, assistant_id, exc_info=True,
+                )
+
+            def load_session_history(after_sequence_no: int) -> list[dict]:
+                committed = self._repository.list_recent_completed_messages(
+                    conversation_id, conversation_tenant_id or tenant_id,
+                    before_sequence_no=initial.user_message.sequence_no,
+                    after_sequence_no=after_sequence_no, limit=None,
+                    owner_user_id=owner_user_id,
+                )
+                return [{
+                    "role": item.role, "content": item.content or "",
+                    "messageId": item.message_id, "sequenceNo": item.sequence_no,
+                    "status": item.status,
+                    **({"attachments": [dict(ref) for ref in item.attachments],
+                        "imageUrls": [image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
+                                      for ref in item.attachments]}
+                       if item.role == "USER" and item.attachments else {}),
+                } for item in committed]
+
+            def save_session_state(key: str, state: dict) -> None:
+                if execution.cancellation.is_set():
+                    raise AgentModelInvocationError("Agent execution cancelled")
                 try:
-                    conversation = self._repository.get_conversation(
+                    self._repository.save_runtime_session(
                         conversation_id, conversation_tenant_id or tenant_id,
+                        message_id=assistant_id, key=key, state=state,
                         owner_user_id=owner_user_id,
                     )
-                    session_states = deepcopy((conversation.detail or {}).get("runtimeSessions", {}))
-                except AgentConversationNotFoundError:
+                except (AgentConflictError, AgentMessageNotFoundError, AgentConversationNotFoundError):
+                    execution.cancellation.set()
                     raise
-                except Exception:
-                    _logger.warning(
-                        "Could not load Supervisor session state conversation_id=%s message_id=%s",
-                        conversation_id, assistant_id, exc_info=True,
-                    )
 
-                def load_session_history(after_sequence_no: int) -> list[dict]:
-                    committed = self._repository.list_recent_completed_messages(
-                        conversation_id, conversation_tenant_id or tenant_id,
-                        before_sequence_no=initial.user_message.sequence_no,
-                        after_sequence_no=after_sequence_no, limit=None,
-                        owner_user_id=owner_user_id,
-                    )
-                    return [{
-                        "role": item.role, "content": item.content or "",
-                        "messageId": item.message_id, "sequenceNo": item.sequence_no,
-                        "status": item.status,
-                        **({"attachments": [dict(ref) for ref in item.attachments],
-                            "imageUrls": [image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
-                                          for ref in item.attachments]}
-                           if item.role == "USER" and item.attachments else {}),
-                    } for item in committed]
-
-                def save_session_state(key: str, state: dict) -> None:
-                    if execution.cancellation.is_set():
-                        raise AgentModelInvocationError("Agent execution cancelled")
-                    try:
-                        self._repository.save_runtime_session(
-                            conversation_id, conversation_tenant_id or tenant_id,
-                            message_id=assistant_id, key=key, state=state,
-                            owner_user_id=owner_user_id,
-                        )
-                    except (AgentConflictError, AgentMessageNotFoundError, AgentConversationNotFoundError):
-                        execution.cancellation.set()
-                        raise
-
-                if session_states is not None:
-                    session_context = SupervisorSessionContext(
-                        states=session_states,
-                        message_sequence_no=initial.assistant_message.sequence_no,
-                        load_history=load_session_history,
-                        save_state=save_session_state,
-                    )
+            if session_states is not None:
+                session_context = SupervisorSessionContext(
+                    states=session_states,
+                    message_sequence_no=initial.assistant_message.sequence_no,
+                    load_history=load_session_history,
+                    save_state=save_session_state,
+                )
 
             context_series_ids = list(initial.user_message.series_ids)
             if playback_series_id is not None and playback_series_id not in context_series_ids:
@@ -1056,32 +1034,22 @@ class AgentChatService:
                 usage = self._parse_usage.capture_chat(context) if self._parse_usage is not None else nullcontext()
                 # This scope belongs to the executor thread that invokes the models.
                 with model_call_context(context), tracing, usage:
-                    final = (
-                        runtime.kick(
-                            inputs, load_video_context=load_video_context,
-                            session_context=session_context,
-                            **run_kwargs,
-                        )
-                        if isinstance(runtime, SupervisorRuntime)
-                        else runtime.kick(inputs, **run_kwargs)
+                    final = runtime.kick(
+                        inputs, load_video_context=load_video_context,
+                        session_context=session_context, **run_kwargs,
                     )
             except AgentToolInvocationError as exc:
                 if exc.__cause__ is None:
                     raise
                 raise exc.__cause__ from None
             terminal_timing = timer.finish()
-            if isinstance(runtime, SupervisorRuntime):
-                content = final.content
-                render_blocks = list(final.render_blocks) if final.render_blocks is not None else None
-                video_result = final.video_result
-                search_result = (
-                    video_result.model_dump(mode="json", by_alias=True)
-                    if video_result is not None else None
-                )
-            else:
-                content = final.agent_reply.message
-                render_blocks = None
-                search_result = final.model_dump(mode="json", by_alias=True)
+            content = final.content
+            render_blocks = list(final.render_blocks) if final.render_blocks is not None else None
+            video_result = final.video_result
+            search_result = (
+                video_result.model_dump(mode="json", by_alias=True)
+                if video_result is not None else None
+            )
             if search_result is not None:
                 legacy_blocks = search_result.pop("renderBlocks", None)
                 if render_blocks is None:
@@ -1097,33 +1065,23 @@ class AgentChatService:
                     render_blocks=render_blocks,
                 )
                 committed_result = AgentMessageSendState(initial.user_message, assistant)
-                if isinstance(runtime, SupervisorRuntime):
+                try:
+                    runtime.confirm_turn(conversation_id, assistant_id, content)
+                except Exception:
+                    _logger.warning(
+                        "Could not confirm Supervisor turn conversation_id=%s message_id=%s",
+                        conversation_id, assistant_id,
+                        exc_info=True,
+                    )
+                    # SQL owns the completed answer; discard unconfirmed harness state.
                     try:
-                        runtime.confirm_turn(conversation_id, assistant_id, content)
+                        runtime.delete_thread(conversation_id)
                     except Exception:
                         _logger.warning(
-                            "Could not confirm Supervisor turn conversation_id=%s message_id=%s",
-                            conversation_id, assistant_id,
+                            "Could not clear Supervisor thread conversation_id=%s",
+                            conversation_id,
                             exc_info=True,
                         )
-                        # SQL owns the completed answer; discard unconfirmed harness state.
-                        try:
-                            runtime.delete_thread(conversation_id)
-                        except Exception:
-                            _logger.warning(
-                                "Could not clear Supervisor thread conversation_id=%s",
-                                conversation_id,
-                                exc_info=True,
-                            )
-            for event in pending_answer_events:
-                if event["type"] == "answer.evidence":
-                    event = {**event, "searchResult": {
-                        key: value for key, value in event["searchResult"].items()
-                        if key != "renderBlocks"
-                    }}
-                    hits = event["searchResult"].get("hits")
-                    evidence_hit_count = len(hits) if isinstance(hits, list) else 0
-                execution.publish(event)
             _logger.info(
                 "agent_execution_completed conversation_id=%s message_id=%s "
                 "phase=%s duration_ms=%s stage_count=%s output_chars=%s "
@@ -1144,15 +1102,14 @@ class AgentChatService:
                     conversation_id, assistant_id,
                 )
                 return committed_result
-            if isinstance(runtime, SupervisorRuntime):
-                try:
-                    runtime.discard_turn(conversation_id, assistant_id)
-                except Exception:
-                    _logger.warning(
-                        "Could not discard Supervisor turn conversation_id=%s message_id=%s",
-                        conversation_id, assistant_id,
-                        exc_info=True,
-                    )
+            try:
+                runtime.discard_turn(conversation_id, assistant_id)
+            except Exception:
+                _logger.warning(
+                    "Could not discard Supervisor turn conversation_id=%s message_id=%s",
+                    conversation_id, assistant_id,
+                    exc_info=True,
+                )
             if isinstance(exc, AgentContextBudgetError):
                 public_code = "AGENT_CONTEXT_BUDGET_EXCEEDED"
                 public_message = (

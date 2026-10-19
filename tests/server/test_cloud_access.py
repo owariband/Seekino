@@ -13,6 +13,7 @@ from PIL import Image
 import pytest
 from sqlalchemy import select
 
+from agent.chat.supervisor import SupervisorResult
 from server.api.app import create_app
 from server.api.agent import _agent_message_events
 from server.config.auth import AuthConfig
@@ -24,7 +25,6 @@ from server.model.video import Series, Video, VideoChunk, VideoChunkEmbedding
 from server.repository.agent import AgentRepository
 from server.repository.identity import IdentityRepository
 from server.repository.library import LibraryRepository
-from server.schema import AgentReply, VideoChunkSearchResult
 from server.service.agent_chat import AgentChatService
 from server.service.agent_attachments import AgentAttachmentService
 from server.config.media import ImageUploadConfig
@@ -57,16 +57,23 @@ class CapturingEmail:
 
 @dataclass
 class ModelRuntime:
+    realtime_enabled: bool = False
     model_name: str = "isolated-test-model"
     calls: list = field(default_factory=list)
 
     def kick(self, inputs, **options):
         self.calls.append((inputs, options))
-        return VideoChunkSearchResult(
-            query=inputs["user_message"], series_ids=list(inputs["series_ids"]),
-            searched_video_ids=[], hits=[],
-            agent_reply=AgentReply(message="测试课程检索完成。", result_count=0),
-        )
+        content = "测试课程检索完成。"
+        return SupervisorResult(content=content, video_result=None, web_sources=())
+
+    def confirm_turn(self, *_):
+        pass
+
+    def discard_turn(self, *_):
+        pass
+
+    def delete_thread(self, *_):
+        pass
 
     def close(self):
         pass

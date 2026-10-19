@@ -132,7 +132,7 @@ class _QueryModel:
 
     def run_structured(self, prompt, *, tools, result_type, max_model_calls, **_kwargs):
         self.prompts.append(prompt)
-        number = json.loads(prompt.rsplit("\n\n", 1)[1])["turn_number"]
+        number = json.loads(prompt.rsplit("\n\n", 1)[1]).get("turn_number", 1)
         query = self.queries[min(number - 1, len(self.queries) - 1)]
         tools_by_name = {tool.name: tool for tool in tools}
         if query is not None:
@@ -160,34 +160,6 @@ class _QueryModel:
 
 
 @dataclass
-class _EvaluatorModel:
-    model_name: str = "evaluator-test"
-    approve_after: int = 1
-    calls: int = 0
-
-    def run_structured(self, _prompt, *, tools, result_type, **_kwargs):
-        tools_by_name = {tool.name: tool for tool in tools}
-        cursor = None
-        item_ids = []
-        while True:
-            page = json.loads(tools_by_name["get_context_canvas"].invoke({
-                "collection": "draft",
-                "cursor": cursor,
-            }))
-            item_ids.extend(item["video_chunk_id"] for item in page["items"])
-            cursor = page["next_cursor"]
-            if cursor is None:
-                break
-        for video_chunk_id in item_ids:
-            _read_all(tools_by_name["get_context_canvas"], video_chunk_id, collection="draft")
-        self.calls += 1
-        return result_type.model_validate({
-            "action": "complete" if self.calls >= self.approve_after else "continue",
-            "advice": "补充摔杯子的动作，重新核验。",
-        })
-
-
-@dataclass
 class _ChatModel:
     model_name: str = "chat-test"
     prompts: list[str] = field(default_factory=list)
@@ -195,49 +167,54 @@ class _ChatModel:
     release: Event | None = None
     fail: bool = False
 
-    def run_agent_loop(
-        self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
-        require_tool_call=False,
-        request_timeout_seconds=None, check_control=None, max_input_chars=None,
-        image_urls=(), initial_messages=None,
-    ):
-        tools_by_name = {tool.name: tool for tool in tools}
-        assert set(tools_by_name) == {"get_context_canvas", "write_context_canvas"}
-        assert set(tools_by_name["write_context_canvas"].args_schema.model_fields) == {
-            "batch_id", "expected_revision", "operations",
-        }
+    def run_agent(self, prompt, *, tools, user_message, handle_text, check_control, **kwargs):
+        available = {tool.name: tool for tool in tools}
+        report = json.loads(available["query_video"].invoke({"query": user_message}))
+        self.run_agent_loop(
+            prompt + "\n\n" + json.dumps(report), tools=tools,
+            max_model_calls=kwargs.get("max_model_calls"), handle_text=handle_text,
+            request_timeout_seconds=kwargs.get("request_timeout_seconds"),
+            check_control=check_control,
+        )
+
+    def run_agent_loop(self, prompt, *, tools, max_model_calls, handle_text,
+                       request_timeout_seconds=None, check_control=None, **_):
         self.prompts.append(prompt)
-        assert request_timeout_seconds is not None
-        assert request_timeout_seconds > 0
-        assert max_model_calls is None or (type(max_model_calls) is int and max_model_calls > 0)
-        assert check_control is not None
+        assert request_timeout_seconds is not None and request_timeout_seconds > 0
         if self.release is not None:
             assert self.release.wait(5), "test did not release provider"
         if self.fail:
             raise RuntimeError("private upstream failure")
-        context = json.loads(prompt.rsplit("\n\n", 1)[1])
-        approved_turn = context["approved_turn"]
-        chunk_ids = approved_turn["video_chunk_ids"]
-        assert require_tool_call is bool(chunk_ids)
         check_control()
-        handle_text(
-            "目前没有足够的候选画面，"
-            if chunk_ids else "目前没有足够的候选画面，建议补充人物或动作。"
-        )
-        for current_count, chunk_id in enumerate(chunk_ids, 1):
-            item = {
-                "video_chunk_id": chunk_id,
-                "claim": f"片段 {chunk_id} 支持回答。",
-            }
-            self.submitted_items.append(item)
-            assert _write_canvas(tools_by_name, "upsert_video_item", item) == {
-                "accepted": True,
-                "operation": "inserted",
-                "video_chunk_id": chunk_id,
-                "video_item_count": current_count,
-            }
-        if chunk_ids:
+        available = {tool.name: tool for tool in tools}
+        reports = json.loads(prompt.rsplit("\n\n", 1)[1])["reports"]
+        items = [item for report in reports for item in report.get("draft_items", [])]
+        handle_text("目前没有足够的候选画面，" if items else "目前没有足够的候选画面，建议补充人物或动作。")
+        for item in items:
+            submitted = {name: item[name] for name in ("video_chunk_id", "start_seconds", "end_seconds", "claim")}
+            self.submitted_items.append(submitted)
+            receipt = json.loads(available["submit_video_item"].invoke(submitted))
+            assert "error" not in receipt
+        if items:
             handle_text("建议补充人物或动作。")
+
+    def confirm_turn(self, *_):
+        pass
+
+    def discard_turn(self, *_):
+        pass
+
+    def delete_thread(self, *_):
+        pass
+
+
+def _chat_runtime(query_runtime, model=None, *, web_searcher=None, realtime_runtime=None):
+    return SupervisorRuntime(
+        query_runtime, model or _ChatModel(), web_searcher or WebSearcher(),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=16_384, max_prompt_chars=200_000,
+        realtime_runtime=realtime_runtime,
+    )
 
 
 @pytest.fixture
@@ -245,7 +222,7 @@ def build_service(tmp_path):
     resources = []
 
     def build(
-        *, query=None, evaluator=None, chat=None, runtime_kwargs=None,
+        *, query=None, chat=None, runtime_kwargs=None,
         service_kwargs=None, enforce_foreign_keys=False, supervisor_model=None,
         web_searcher=None, realtime_runtime=None,
     ):
@@ -260,23 +237,14 @@ def build_service(tmp_path):
         repository = AgentRepository(factory)
         library = LibraryService(LibraryRepository(factory))
         retrieval = _RetrievalStub()
-        query, evaluator, chat = query or _QueryModel(), evaluator or _EvaluatorModel(), chat or _ChatModel()
+        query, chat = query or _QueryModel(), chat or _ChatModel()
         video_runtime = AgentRuntime(
-            query,
-            evaluator,
-            chat,
-            retrieval.search,
+            query, retrieval.search,
             **{"retrieval_channel": "lexical", **(runtime_kwargs or {})},
         )
-        runtime = (
-            SupervisorRuntime(
-                video_runtime, supervisor_model, web_searcher or WebSearcher(),
-                max_web_results=5, web_timeout_seconds=12,
-                execution_timeout_seconds=60, max_tool_result_bytes=16_384,
-                max_prompt_chars=200_000,
-                realtime_runtime=realtime_runtime,
-            )
-            if supervisor_model is not None else video_runtime
+        runtime = _chat_runtime(
+            video_runtime, supervisor_model or chat,
+            web_searcher=web_searcher, realtime_runtime=realtime_runtime,
         )
         service = AgentChatService(
             repository, library, runtime, **(service_kwargs or {}),
@@ -289,7 +257,7 @@ def build_service(tmp_path):
             tenant_id="local-default", title="测试对话",
             idempotency_key="conversation",
         )
-        return service, conversation, retrieval, repository, query, evaluator, chat
+        return service, conversation, retrieval, repository, query, chat
 
     yield build
     for service, engine in resources:
@@ -433,9 +401,8 @@ class _DirectSupervisorModel:
     ):
         self.prompts.append(prompt)
         self.turns.append((thread_id, message_id, user_message, history))
-        assert {tool.name for tool in tools} == {
-            "search_web", "search_video_graph", "get_context_canvas", "submit_video_item",
-            "remove_video_item",
+        assert {"search_web", "query_video", "submit_video_item", "remove_video_item"} <= {
+            tool.name for tool in tools
         }
         check_control()
         handle_text("你好，我可以直接回答。")
@@ -473,13 +440,11 @@ class _VideoSupervisorModel(_DirectSupervisorModel):
         if self.include_web:
             web = json.loads(by_name["search_web"].invoke({"query": "补充信息"}))
             assert web["result_count"] == 1
-        result = json.loads(by_name["search_video_graph"].invoke({"query": "视频里发生了什么？"}))
-        assert result["result_count"] > 0
-        approved = json.loads(by_name["get_context_canvas"].invoke({"collection": "approved"}))
-        drafts = []
-        for item in approved["items"]:
-            sections = _read_all(by_name["get_context_canvas"], item["reference"], collection="approved")
-            drafts.append(sections["draft"])
+        result = json.loads(by_name["query_video"].invoke({"query": "视频里发生了什么？"}))
+        drafts = result["reports"][0]["draft_items"]
+        assert drafts
+        for item in drafts:
+            _read_all(by_name["get_context_canvas"], item["video_chunk_id"], collection="retrieval")
         if self.merge_adjacent:
             drafts = [{**drafts[0], "end_seconds": drafts[-1]["end_seconds"]}]
         for draft in drafts:
@@ -871,7 +836,7 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
             assert current["importantExtraData"] == background
             assert current["characterBible"] == [{"name": "若叶睦", "aliases": ["睦"]}]
             by_name = {tool.name: tool for tool in tools}
-            graph = json.loads(by_name["search_video_graph"].invoke({"query": "now"}))
+            graph = json.loads(by_name["query_video"].invoke({"query": "now"}))
             assert graph["error"]["code"] == "NO_VIDEO_SCOPE"
             handle_text("当前视频答疑可使用实时理解。")
 
@@ -937,7 +902,7 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
             assert [item["seriesId"] for item in context["video_scope"]] == [ready.series_id]
             assert {item["seriesId"] for item in context["series_context"]} == {current_id, ready.series_id}
             by_name = {tool.name: tool for tool in tools}
-            by_name["search_video_graph"].invoke({"query": "what was explained"})
+            by_name["query_video"].invoke({"query": "what was explained"})
             handle_text("Answer from the available evidence.")
 
     service, conversation, retrieval, repository, query, *_ = build_service(
@@ -998,7 +963,7 @@ def test_supervisor_and_video_search_share_one_background_snapshot_per_turn(
                 with repository._session_factory.begin() as session:
                     session.get(Series, series_id).important_extra_data = next_background
             reads_before_tool = len(reads)
-            next(tool for tool in tools if tool.name == "search_video_graph").invoke({"query": "核验人物"})
+            next(tool for tool in tools if tool.name == "query_video").invoke({"query": "核验人物"})
             assert len(reads) == reads_before_tool
             query_context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
             assert len(query_context["series_context"]) == 1
@@ -1667,7 +1632,7 @@ def test_supervisor_session_survives_api_switch_and_service_rebuild_with_full_mi
 
     resumed_model = SessionModel()
     runtime = SupervisorRuntime(
-        AgentRuntime(_QueryModel(), _EvaluatorModel(), _ChatModel(), retrieval.search, retrieval_channel="lexical"),
+        AgentRuntime(_QueryModel(), retrieval.search, retrieval_channel="lexical"),
         resumed_model, WebSearcher(), max_web_results=5, web_timeout_seconds=12,
         execution_timeout_seconds=60, max_tool_result_bytes=16_384, max_prompt_chars=200_000,
     )
@@ -2438,7 +2403,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
 
 def test_service_delete_is_workspace_scoped_and_rejects_processing_answer(build_service):
     release = Event()
-    service, conversation, _, _, _, _, _ = build_service(
+    service, conversation, _, _, _, _ = build_service(
         chat=_ChatModel(release=release)
     )
     execution = service.start_message(
@@ -2495,20 +2460,9 @@ def test_conversation_reads_and_execution_do_not_cross_workspaces(build_service)
     assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default") == []
 
 
-@pytest.mark.parametrize("second_query", ["补充摔杯子", None])
-def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
-    restored_turns = []
-
-    class HistoryQuery(_QueryModel):
-        def run_structured(self, prompt, **kwargs):
-            if json.loads(prompt.rsplit("\n\n", 1)[1])["turn_number"] == 2:
-                reader = next(tool for tool in kwargs["tools"] if tool.name == "get_context_canvas")
-                restored_turns.append(_read_all(reader, "1", collection="history")["history"])
-            return super().run_structured(prompt, **kwargs)
-
-    service, conversation, retrieval, repository, query, evaluator, chat = build_service(
-        query=HistoryQuery(queries=("第一次改写", second_query)),
-        evaluator=_EvaluatorModel(approve_after=2),
+def test_supervisor_chat_is_persisted_and_idempotent(build_service):
+    service, conversation, retrieval, repository, query, chat = build_service(
+        query=_QueryModel(),
     )
     first = _send(service, conversation)
     repeated = _send(service, conversation)
@@ -2524,8 +2478,7 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert timing is not None and timing == first.assistant_message.timing
     assert timing == repeated.assistant_message.timing
     assert [stage.phase.value for stage in timing.stages] == [
-        "QUEUED", "RETRIEVING", "EVALUATING", "RETRIEVING",
-        "EVALUATING", "RESPONDING",
+        "QUEUED", "RETRIEVING", "RESPONDING",
     ]
     assert all(
         type(stage.duration_ms) is int and stage.duration_ms >= 0
@@ -2545,16 +2498,8 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
                 for stage in timing.stages
             ],
         }}
-    assert [call[0] for call in retrieval.calls] == ["第一次改写"] + ([second_query] if second_query else [])
-    assert evaluator.calls == 2 and len(chat.prompts) == 1
-    context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
-    assert context["original_plan"] == "第 1 轮检索并核验动作。"
-    assert "turns" not in context
-    assert context["run_records"]["history"]["item_count"] == 1
-    assert context["latest_evaluator_advice"] == "补充摔杯子的动作，重新核验。"
-    assert len(restored_turns) == 1
-    assert restored_turns[0]["draft"]["message"] == "第 1 轮待审核草稿。"
-    assert restored_turns[0]["review"]["advice"] == context["latest_evaluator_advice"]
+    assert [call[0] for call in retrieval.calls] == ["第一次改写"]
+    assert len(query.prompts) == len(chat.prompts) == 1
     with pytest.raises(AgentConflictError, match="different request fields"):
         service.send_message(conversation.conversation_id, tenant_id="local-default", content="寻找摔杯子的片段", top_k=7, idempotency_key="message")
     with pytest.raises(AgentConflictError, match="different request fields"):
@@ -2570,7 +2515,7 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
 def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     build_service,
 ):
-    service, conversation, _, repository, _, _, _ = build_service()
+    service, conversation, _, repository, _, _ = build_service()
     observed = []
     original_kick = service._runtime.kick
 
@@ -2654,26 +2599,8 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
         )
 
 
-def test_third_continue_persists_failure_and_never_calls_chat(build_service):
-    service, conversation, _, _, _, evaluator, chat = build_service(
-        evaluator=_EvaluatorModel(approve_after=4),
-        runtime_kwargs={"limits_enabled": True},
-    )
-    with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
-        _send(service, conversation)
-    assert evaluator.calls == 3 and not chat.prompts
-    messages = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")
-    assert [m.status for m in messages] == ["COMPLETED", "FAILED"]
-    assert messages[1].search_result is None and messages[1].model_name == "chat-test"
-    assert messages[1].timing is not None
-    assert [stage.phase.value for stage in messages[1].timing.stages] == [
-        "QUEUED", "RETRIEVING", "EVALUATING", "RETRIEVING",
-        "EVALUATING", "RETRIEVING", "EVALUATING",
-    ]
-
-
 def test_old_prompt_character_threshold_allows_completed_message_persistence(build_service):
-    service, conversation, retrieval, _, query, evaluator, chat = build_service(
+    service, conversation, retrieval, _, query, chat = build_service(
         runtime_kwargs={"max_prompt_chars": 100},
     )
 
@@ -2685,19 +2612,19 @@ def test_old_prompt_character_threshold_allows_completed_message_persistence(bui
     assert [message.status for message in messages] == ["COMPLETED", "COMPLETED"]
     assert messages[-1] == result.assistant_message
     assert messages[-1].last_error is None
-    assert len(query.prompts) == evaluator.calls == len(chat.prompts) == 1
+    assert len(query.prompts) == len(chat.prompts) == 1
     assert len(query.prompts[0]) > 100 and len(chat.prompts[0]) > 100
     assert len(retrieval.calls) == 1
 
 
 def test_provider_context_failure_is_persisted_with_a_specific_public_error(build_service):
-    class CapacityFailureQuery(_QueryModel):
-        def run_structured(self, prompt, **_kwargs):
+    class CapacityFailureSupervisor(_DirectSupervisorModel):
+        def run_agent(self, prompt, **_kwargs):
             self.prompts.append(prompt)
             raise ModelInputTooLargeError("Provider context capacity exceeded")
 
-    service, conversation, _, _, query, evaluator, chat = build_service(
-        query=CapacityFailureQuery(),
+    service, conversation, _, _, _, chat = build_service(
+        supervisor_model=CapacityFailureSupervisor(),
         runtime_kwargs={"max_prompt_chars": 100},
     )
 
@@ -2710,25 +2637,26 @@ def test_provider_context_failure_is_persisted_with_a_specific_public_error(buil
     assert messages[-1].status == "FAILED"
     assert messages[-1].last_error.code == "AGENT_CONTEXT_BUDGET_EXCEEDED"
     assert "精简系列背景" in messages[-1].last_error.message
-    assert len(query.prompts) == 1 and evaluator.calls == 0 and chat.prompts == []
+    assert chat.prompts == []
 
 
 def test_execution_timeout_persists_specific_failure_and_publishes_terminal_event(build_service, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr("agent.chat.video_search.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("agent.chat.supervisor.monotonic", lambda: clock[0])
     monkeypatch.setattr("agent.chat.common.state.monotonic", lambda: clock[0])
 
-    class SlowEvaluator(_EvaluatorModel):
+    class SlowQuery(_QueryModel):
         def run_structured(self, prompt, **kwargs):
             result = super().run_structured(prompt, **kwargs)
             clock[0] += 600
             return result
 
-    service, conversation, _, _, query, evaluator, chat = build_service(
-        evaluator=SlowEvaluator(),
+    service, conversation, _, _, query, chat = build_service(
+        query=SlowQuery(),
         runtime_kwargs={
             "total_timeout_enabled": True, "execution_timeout_seconds": 600,
-            "evaluator_stage_timeout_seconds": 600,
+            "stage_timeout_seconds": 600,
         },
     )
     execution = service.start_message(
@@ -2744,10 +2672,10 @@ def test_execution_timeout_persists_specific_failure_and_publishes_terminal_even
         conversation.conversation_id, tenant_id="local-default",
     )[-1]
     assert clock[0] == 700.0
-    assert len(query.prompts) == evaluator.calls == 1 and chat.prompts == []
+    assert len(query.prompts) == 1 and chat.prompts == []
     assert failed.message_id == execution.initial.assistant_message.message_id
     assert failed.status == "FAILED" and failed.phase is None
-    assert failed.content is None and failed.search_result is None
+    assert not failed.content and failed.search_result is None
     assert failed.last_error.code == "AGENT_EXECUTION_TIMEOUT"
     assert failed.last_error.message == "本次处理超时，已停止生成，请缩小问题后重试。"
     assert events[-1]["type"] == "answer.failed"
@@ -2792,7 +2720,7 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
         session_factory=lambda **_kwargs: session,
     )
     model.supports_vision_input = True
-    service, conversation, _, repository, query, evaluator, chat = build_service(
+    service, conversation, _, repository, query, chat = build_service(
         supervisor_model=CodexSupervisorModel(agent_model=model),
     )
     execution = service.start_message(
@@ -2818,7 +2746,7 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     assert closed.is_set()
     assert failed.status == "FAILED" and failed.phase is None
     assert failed.last_error.code == "AGENT_MODEL_ERROR"
-    assert failed.content is None and failed.search_result is None
+    assert not failed.content and failed.search_result is None
     with repository._session_factory() as sql_session:
         record = sql_session.get(AgentMessage, failed.message_id)
         assert record.status == "FAILED" and record.phase is None
@@ -2826,7 +2754,7 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     assert events[-1]["type"] == "answer.failed"
     assert events[-1]["error"] == asdict(failed.last_error)
     assert "answer.completed" not in {event["type"] for event in events}
-    assert query.prompts == [] and evaluator.calls == 0 and chat.prompts == []
+    assert query.prompts == [] and chat.prompts == []
 
 
 def test_manual_cancel_is_scoped_and_stops_before_the_next_model(build_service):
@@ -2839,7 +2767,7 @@ def test_manual_cancel_is_scoped_and_stops_before_the_next_model(build_service):
             assert release.wait(5), "test did not release Query"
             return result
 
-    service, conversation, _, _, query, evaluator, chat = build_service(query=BlockingQuery())
+    service, conversation, _, _, query, chat = build_service(query=BlockingQuery())
     other = service.create_conversation(tenant_id="local-default", idempotency_key="other")
     execution = service.start_message(
         conversation.conversation_id, tenant_id="local-default", content="找杯子",
@@ -2880,8 +2808,8 @@ def test_manual_cancel_is_scoped_and_stops_before_the_next_model(build_service):
     failed = service.get_message(
         conversation.conversation_id, tenant_id="local-default", message_id=message_id,
     ).assistant_message
-    assert len(query.prompts) == 1 and evaluator.calls == 0 and chat.prompts == []
-    assert failed.status == "FAILED" and failed.content is None and failed.search_result is None
+    assert len(query.prompts) == 1 and chat.prompts == []
+    assert failed.status == "FAILED" and not failed.content and failed.search_result is None
     assert failed.last_error.code == "AGENT_CANCELLED"
     assert failed.last_error.message == "已停止生成回答。"
     assert events[-1]["type"] == "answer.failed"
@@ -2913,7 +2841,7 @@ def test_manual_cancel_is_idempotent_for_terminal_replies(build_service, monkeyp
 
 
 def test_manual_cancel_finishes_an_orphaned_processing_reply(build_service):
-    service, conversation, _, repository, query, evaluator, chat = build_service()
+    service, conversation, _, repository, query, chat = build_service()
     started = repository.start_message(
         conversation_id=conversation.conversation_id, tenant_id="local-default",
         content="找杯子", model_name=service.model_name, requested_top_k=3,
@@ -2930,7 +2858,7 @@ def test_manual_cancel_finishes_an_orphaned_processing_reply(build_service):
     assert cancelled.assistant_message.status == "FAILED"
     assert cancelled.assistant_message.last_error.code == "AGENT_CANCELLED"
     assert cancelled.assistant_message.timing.total_duration_ms is not None
-    assert query.prompts == chat.prompts == [] and evaluator.calls == 0
+    assert query.prompts == chat.prompts == []
     assert service.cancel_message(
         conversation.conversation_id, tenant_id="local-default",
         message_id=started.assistant_message.message_id,
@@ -2974,7 +2902,9 @@ def test_manual_cancel_before_commit_prevents_completion_and_preserves_timeout(
         conversation.conversation_id, tenant_id="local-default",
         message_id=execution.initial.assistant_message.message_id,
     ).assistant_message
-    assert failed.status == "FAILED" and failed.content is None
+    assert failed.status == "FAILED"
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert failed.content == snapshots[-1]["content"]
     assert failed.last_error.code == ("AGENT_EXECUTION_TIMEOUT" if timeout else "AGENT_CANCELLED")
     assert events[-1]["type"] == "answer.failed"
     assert not {"answer.completed", "answer.delta", "answer.block", "answer.evidence"} & {
@@ -3023,13 +2953,12 @@ def test_manual_cancel_after_commit_has_started_observes_completed_reply(build_s
 
 
 def test_next_kick_reads_only_completed_conversation_history(build_service):
-    service, conversation, _, _, query, _, _ = build_service()
+    service, conversation, _, _, query, _ = build_service()
     first = _send(service, conversation)
     _send(service, conversation, key="second", content="再找一段")
     context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
-    assert context["turn_number"] == 1
+    assert context.get("turn_number", 1) == 1
     assert context["run_records"]["history"]["item_count"] == 0
-    assert context["latest_evaluator_advice"] is None
     history = context["inputs"]["history"]
     assert history[0] == {
         "role": "USER", "content": first.user_message.content,
@@ -3055,8 +2984,7 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
 def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kick(
     build_service, monkeypatch,
 ):
-    service, conversation, retrieval, repository, query, _, _ = build_service(
-        evaluator=_EvaluatorModel(approve_after=2),
+    service, conversation, retrieval, repository, query, _ = build_service(
     )
     library = LibraryService(LibraryRepository(repository._session_factory))
     original_id = library.list_series(tenant_id="local-default")[0].series_id
@@ -3074,7 +3002,7 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
 
     monkeypatch.setattr(query, "run_structured", query_with_new_series)
     first = _send(service, conversation, series_ids=[])
-    assert [call[1] for call in retrieval.calls] == [[original_id], [original_id]]
+    assert [call[1] for call in retrieval.calls] == [[original_id]]
     assert first.user_message.series_ids == first.assistant_message.series_ids == (original_id,)
     assert all(
         json.loads(prompt.rsplit("\n\n", 1)[1])["inputs"]["series_ids"] == [original_id]
@@ -3085,7 +3013,7 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
     with repository._session_factory.begin() as session:
         session.get(Series, original_id).status = "INDEXING"
     assert _send(service, conversation) == first
-    assert len(retrieval.calls) == 2
+    assert len(retrieval.calls) == 1
     with repository._session_factory.begin() as session:
         session.get(Series, original_id).status = "READY"
 
@@ -3097,7 +3025,7 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
 
 
 def test_next_message_can_choose_another_scope_without_reusing_old_evidence(build_service):
-    service, conversation, retrieval, repository, query, _, _ = build_service()
+    service, conversation, retrieval, repository, query, _ = build_service()
     library = LibraryService(LibraryRepository(repository._session_factory))
     original_id = library.list_series(tenant_id="local-default")[0].series_id
     added = library.create_series(tenant_id="local-default", name="Second animation")
@@ -3111,59 +3039,32 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
     assert second.assistant_message.series_ids == (added.series_id,)
     context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])
     assert context["run_records"]["history"]["item_count"] == 0
-    assert context["latest_evaluator_advice"] is None
     assert context["inputs"]["series_ids"] == [added.series_id]
     assert all(item["seriesIds"] == [original_id] for item in context["inputs"]["history"])
     with pytest.raises(AgentConflictError):
         _send(service, conversation, series_ids=[added.series_id])
 
 
-def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
+def test_tool_answer_progress_and_disconnect_does_not_cancel(build_service):
     release = Event()
-    service, conversation, _, _, _, _, _ = build_service(chat=_ChatModel(release=release))
+    service, conversation, *_ = build_service(chat=_ChatModel(release=release))
     execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="找到杯子", idempotency_key="stream", stream=True)
     try:
-        events = [execution.next_event(timeout=2) for _ in range(4)]
-        assert [event["type"] for event in events] == [
-            "answer.started", "answer.progress", "answer.progress", "answer.progress",
-        ]
-        assert [event["phase"] for event in events if event["type"] == "answer.progress"] == [
-            "RETRIEVING", "EVALUATING", "RESPONDING",
-        ]
-        assert all(event["conversationId"] == conversation.conversation_id for event in events)
-        assert [event["sequence"] for event in events] == list(range(1, 5))
-        assert all(isinstance(event["occurredAt"], int) for event in events)
-        progress_events = [
-            event for event in events if event["type"] == "answer.progress"
-        ]
-        assert [
-            [stage["phase"].value for stage in event["timing"]["stages"]]
-            for event in progress_events
-        ] == [
-            ["QUEUED"],
-            ["QUEUED", "RETRIEVING"],
-            ["QUEUED", "RETRIEVING", "EVALUATING"],
-        ]
-        assert all(
-            event["timing"]["total_duration_ms"] is None
-            for event in progress_events
-        )
+        events = [execution.next_event(timeout=2)]
+        while True:
+            try:
+                events.append(execution.next_event(timeout=0.1))
+            except Empty:
+                break
+        assert events[0]["type"] == "answer.started"
+        assert any(event.get("phase") == "RETRIEVING" for event in events)
+        assert not {"answer.completed", "answer.failed"} & {event["type"] for event in events}
+        assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
         assert not execution.future.done()
-        with pytest.raises(Empty):
-            execution.next_event(timeout=0.05)
-        processing = service.list_all_messages(
-            conversation.conversation_id, tenant_id="local-default",
-        )[-1]
-        assert processing.status == "PROCESSING"
-        assert processing.timing is not None
-        assert processing.timing.total_duration_ms is None
-        assert [stage.phase.value for stage in processing.timing.stages] == [
-            "QUEUED", "RETRIEVING", "EVALUATING",
-        ]
+        processing = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1]
+        assert processing.status == "PROCESSING" and processing.timing.total_duration_ms is None
         with pytest.raises(AgentMessageInProgressError):
-            service.start_message(conversation.conversation_id, tenant_id="local-default", content="找到杯子", idempotency_key="stream")
-        with pytest.raises(AgentMessageInProgressError):
-            service.start_message(conversation.conversation_id, tenant_id="local-default", content="另一个问题", idempotency_key="other")
+            _send(service, conversation, key="other")
         execution.detach()
         assert not execution.cancellation.is_set()
     finally:
@@ -3172,7 +3073,7 @@ def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
 
 
 def test_completed_event_observes_committed_snapshot(build_service):
-    service, conversation, retrieval, _, _, _, _ = build_service()
+    service, conversation, retrieval, _, _, _ = build_service()
     execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="找杯子", idempotency_key="stream", stream=True)
     events = _collect(execution)
     assert events[-1]["type"] == "answer.completed"
@@ -3180,9 +3081,10 @@ def test_completed_event_observes_committed_snapshot(build_service):
     persisted = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1]
     assert persisted == completed
     assert events[-1]["assistantMessage"]["status"] == "COMPLETED"
-    assert [event["type"] for event in events].count("answer.evidence") == 1
-    evidence = next(event for event in events if event["type"] == "answer.evidence")
-    assert evidence["searchResult"] == completed.search_result
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots[-1]["search_result"] == completed.search_result
+    assert snapshots[-1]["render_blocks"] == completed.render_blocks
+    assert snapshots[-1]["content"] == completed.content
     assert "query" not in completed.search_result
     assert service.default_top_k == 3
     assert [call[2] for call in retrieval.calls] == [8]
@@ -3193,23 +3095,17 @@ def test_completed_event_observes_committed_snapshot(build_service):
         "requestedWeights": {"lexical": 0.1, "semantic": 0.5, "visual": 0.4},
         "effectiveWeights": {"lexical": 0.1, "semantic": 0.5, "visual": 0.4},
         "resultCount": 0,
-        "videoChunkIds": [],
+        "videoChunkIds": [], "role": "query",
     }]
-    blocks = [event["block"] for event in events if event["type"] == "answer.block"]
-    assert blocks == list(completed.render_blocks)
-    assert [event["type"] for event in events[-4:]] == [
-        "answer.evidence", "answer.block", "answer.delta", "answer.completed",
-    ]
-    deltas = [event["delta"] for event in events if event["type"] == "answer.delta"]
-    assert deltas == [completed.content]
+    assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
 
 
 @pytest.mark.parametrize("failure", ["chat", "commit"])
-def test_failure_has_no_completed_event_and_never_persists_unvalidated_chat_text(
+def test_failure_has_no_completed_event_and_preserves_only_published_prefix(
     build_service, monkeypatch, caplog, failure,
 ):
     caplog.set_level(logging.ERROR, logger="server.service.agent_chat")
-    service, conversation, _, repository, _, _, _ = build_service(chat=_ChatModel(fail=failure == "chat"))
+    service, conversation, _, repository, _, _ = build_service(chat=_ChatModel(fail=failure == "chat"))
     if failure == "commit":
         def fail_commit(*_args, **_kwargs):
             raise RuntimeError("database commit failed")
@@ -3222,8 +3118,9 @@ def test_failure_has_no_completed_event_and_never_persists_unvalidated_chat_text
     assert "answer.completed" not in [event["type"] for event in events]
     failed = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1]
     assert failed.status == "FAILED"
-    assert failed.content is None
-    assert failed.search_result is None
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert failed.content == (snapshots[-1]["content"] if snapshots else None)
+    assert failed.search_result == (snapshots[-1]["search_result"] if snapshots else None)
     assert [event for event in events if event["type"] == "answer.delta"] == []
     assert [event for event in events if event["type"] == "answer.evidence"] == []
     assert [event for event in events if event["type"] == "answer.block"] == []
@@ -3232,7 +3129,7 @@ def test_failure_has_no_completed_event_and_never_persists_unvalidated_chat_text
     assert failed.timing.total_duration_ms == sum(
         stage.duration_ms for stage in failed.timing.stages
     )
-    assert failed.timing.stages[-1].phase.value == "RESPONDING"
+    assert failed.timing.stages[-1].phase.value == ("RETRIEVING" if failure == "chat" else "RESPONDING")
     assert asdict(failed.last_error) == events[-1]["error"]
     assert "private upstream failure" not in events[-1]["error"]["message"]
     failure_log = next(
@@ -3243,8 +3140,8 @@ def test_failure_has_no_completed_event_and_never_persists_unvalidated_chat_text
     failure_message = failure_log.getMessage()
     assert f"conversation_id={conversation.conversation_id}" in failure_message
     assert f"message_id={failed.message_id}" in failure_message
-    assert "phase=RESPONDING" in failure_message
-    assert "partial_chars=0" in failure_message
+    assert f"phase={failed.timing.stages[-1].phase.value}" in failure_message
+    assert f"partial_chars={len(failed.content or '')}" in failure_message
     assert "evidence_hits=0" in failure_message
     assert "root_error_type=RuntimeError" in failure_message
     if failure == "chat":
@@ -3269,23 +3166,22 @@ def test_unconfirmed_terminal_write_emits_interrupted_and_recovers_processing_sn
     assert not {"answer.completed", "answer.failed"} & {event["type"] for event in events}
     recovered = service.get_message(conversation.conversation_id, tenant_id="local-default",
                                     idempotency_key="unknown-terminal").assistant_message
-    assert recovered.status == "PROCESSING" and recovered.search_result is None
-    assert (recovered.content or "") == "".join(
-        event["delta"] for event in events if event["type"] == "answer.delta"
-    )
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert recovered.status == "PROCESSING"
+    assert recovered.content == snapshots[-1]["content"]
+    assert recovered.search_result == snapshots[-1]["search_result"]
+    assert recovered.render_blocks == snapshots[-1]["render_blocks"]
 
 
-def test_slow_consumer_receives_one_atomic_tool_answer(build_service):
+def test_slow_consumer_recovers_complete_supervisor_snapshot(build_service):
     service, conversation, *_ = build_service()
     execution = service.start_message(conversation.conversation_id, tenant_id="local-default",
                                       content="找画面", idempotency_key="slow-reader", stream=True)
     result = execution.result()
     events = _collect(execution)
-    assert [event["type"] for event in events].count("answer.delta") == 1
-    assert [event["type"] for event in events].count("answer.block") == 1
-    assert [event["delta"] for event in events if event["type"] == "answer.delta"] == [
-        result.assistant_message.content,
-    ]
+    snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots[-1]["content"] == result.assistant_message.content
+    assert snapshots[-1]["render_blocks"] == result.assistant_message.render_blocks
     assert events[-1]["type"] == "answer.completed"
     assert result.assistant_message.status == "COMPLETED"
     assert result.assistant_message.content == "目前没有足够的候选画面，建议补充人物或动作。"
@@ -3295,17 +3191,19 @@ def test_slow_consumer_receives_one_atomic_tool_answer(build_service):
 
 def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
     release = Event()
-    evaluator = _EvaluatorModel()
+    query = _QueryModel()
     closed = []
-    evaluator.close = lambda: closed.append(True)
-    service, conversation, _, _, _, _, _ = build_service(
-        evaluator=evaluator,
+    query.close = lambda: closed.append(True)
+    service, conversation, _, _, _, _ = build_service(
+        query=query,
         chat=_ChatModel(release=release),
     )
     execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="找杯子", idempotency_key="shutdown", stream=True)
     try:
-        for _ in range(4):
-            execution.next_event(timeout=2)
+        while True:
+            event = execution.next_event(timeout=2)
+            if event.get("phase") == "RETRIEVING":
+                break
         execution.cancellation.set()
     finally:
         release.set()
@@ -3338,11 +3236,11 @@ def test_global_settings_reload_applies_to_new_messages_only(build_service):
     revision = "before"
     service._config_loader = lambda: (config, revision)
     service._config_revision = revision
-    service._runtime_factory = lambda current: AgentRuntime(
-        _QueryModel(), _EvaluatorModel(), _ChatModel(), retrieval.search,
-        evaluator_stage_timeout_seconds=current.evaluator_stage_timeout_seconds,
+    service._runtime_factory = lambda current: _chat_runtime(AgentRuntime(
+        _QueryModel(), retrieval.search,
+        stage_timeout_seconds=current.stage_timeout_seconds,
         retrieval_channel="lexical",
-    )
+    ))
     history_limits = []
     original_history = repository.list_recent_completed_messages
 
@@ -3359,7 +3257,7 @@ def test_global_settings_reload_applies_to_new_messages_only(build_service):
         assert entered.wait(5)
         config = replace(
             initial_config, history_message_limit=2,
-            evaluator_stage_timeout_seconds=240,
+            stage_timeout_seconds=240,
             maximum_concurrent_kicks=7,
         )
         revision = "after"
@@ -3372,7 +3270,7 @@ def test_global_settings_reload_applies_to_new_messages_only(build_service):
         )
         assert after.result().assistant_message.status == "COMPLETED"
         assert service._runtime is not old_runtime
-        assert service._runtime._evaluator_stage_timeout == 240
+        assert service._runtime._video_runtime._stage_timeout == 240
         assert service.active_maximum_concurrent_kicks == initial_config.maximum_concurrent_kicks
         assert history_limits == [initial_config.history_message_limit, 2]
         updated_runtime = service._runtime
@@ -3402,13 +3300,9 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     service = AgentChatService(
         repository,
         library,
-        AgentRuntime(
-            _QueryModel(),
-            _EvaluatorModel(),
-            _ChatModel(),
-            _RetrievalStub().search,
-            retrieval_channel="lexical",
-        ),
+        _chat_runtime(AgentRuntime(
+            _QueryModel(), _RetrievalStub().search, retrieval_channel="lexical",
+        )),
     )
     conversation = service.create_conversation(
         tenant_id="workspace-1",

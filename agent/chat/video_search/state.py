@@ -269,7 +269,7 @@ class RetrievalTraceEntry(_AgentContractModel):
     granularity: Literal["chunk", "event"] | None = None
     effective_filters: dict[str, Any] | None = None
     event_trace: dict[str, Any] | None = None
-    role: Literal["query", "evaluator"] | None = None
+    role: Literal["query", "evaluator", "supervisor"] | None = None
     status: Literal["success", "error"] | None = None
     error: dict[str, Any] | None = None
 
@@ -294,22 +294,8 @@ class AgentFinalOutput(VideoChunkSearchEvidence):
     retrieval_trace: list[RetrievalTraceEntry] = Field(min_length=1)
 
 
-class EvalDecision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    action: Literal["complete", "continue"]
-    advice: str = Field(max_length=2_000)
-
-    @model_validator(mode="after")
-    def require_revision_advice(self) -> EvalDecision:
-        if self.action == "continue" and not self.advice.strip():
-            raise ValueError("continue requires actionable advice")
-        return self
-
-
 @dataclass(frozen=True, slots=True)
 class RunLimits:
-    max_loop_turns: int | None
     max_model_calls_per_turn: int | None
     max_tool_calls_per_turn: int | None
 
@@ -325,7 +311,7 @@ class RetrievalCall:
     granularity: Literal["chunk", "event"] | None = None
     effective_filters: dict[str, Any] | None = None
     event_trace: dict[str, Any] | None = None
-    role: Literal["query", "evaluator"] | None = None
+    role: Literal["query", "evaluator", "supervisor"] | None = None
     status: Literal["success", "error"] | None = None
     error: dict[str, Any] | None = None
 
@@ -360,120 +346,28 @@ class RetrievalCall:
         return summary
 
 
-class ResultVideoItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    video_chunk_id: _VideoChunkId
-    start_ms: int = Field(strict=True, ge=0)
-    end_ms: int = Field(strict=True, gt=0)
-    claim: _EvidenceClaim
-
-
-class SelfCheck(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    passed: bool = Field(alias="pass")
-    reason: str = Field(max_length=2_000)
-    missing_evidence: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]] = Field(
-        max_length=8,
-    )
-    needs_user_confirmation: bool
-
-
-class ResultOutput(BaseModel):
-    """Single-pass Result: the delivered answer, its video items and a self-check."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    answer_markdown: _Markdown
-    video_items: list[ResultVideoItem] = Field(max_length=8)
-    self_check: SelfCheck
-
-
-LoopOutcome = Literal["pass", "ask_user", "replan", "degrade"]
-
-
 @dataclass(frozen=True, slots=True)
-class ValidatedVideoItem:
-    video_chunk_id: str
-    start_seconds: int
-    end_seconds: int
-    claim: str
-    source_video_chunk_ids: tuple[str, ...]
+class QueryReport:
+    """A delegated investigation; the Supervisor owns the final user answer."""
 
-
-@dataclass(frozen=True, slots=True)
-class ResultAttempt:
-    """One outer loop: a Plan turn and, unless it was re-planned directly, its Result."""
-
-    loop: int
-    output: ResultOutput | None
-    items: tuple[ValidatedVideoItem, ...]
-    draft_ids: frozenset[str]
-    retrieved_ids: frozenset[str]
-    evaluator_rejected: bool
-    evaluator_advice: str = ""
-    warnings: tuple[str, ...] = ()
-
-    @property
-    def passed(self) -> bool:
-        return self.output is not None and self.output.self_check.passed and not self.evaluator_rejected
-
-    @property
-    def missing_evidence(self) -> tuple[str, ...]:
-        if self.output is not None and self.output.self_check.missing_evidence:
-            return tuple(self.output.self_check.missing_evidence)
-        return (self.evaluator_advice,) if self.evaluator_rejected and self.evaluator_advice.strip() else ()
-
-
-@dataclass(frozen=True, slots=True)
-class LoopTurn:
-    number: int
-    plan_context: str
-    retrieval_calls: tuple[RetrievalCall, ...]
-    retrieval_result: VideoChunkSearchResult
-    evidence_source_turns: dict[str, int]
+    completion: QueryCompletion
     query_draft: QueryDraft
-    draft_output: VideoChunkSearchResult
-    review: EvalDecision
-    status: Literal["complete", "continue"]
-    rendered_answer: ChatRenderDraft | None = None
-    # "host" when the rule-based high-risk gate bypassed the Evaluator.
-    review_source: Literal["evaluator", "host", "result"] = "evaluator"
-    evaluator_risks: tuple[str, ...] = ()
-
-    def context(self) -> dict:
-        return {
-            "number": self.number,
-            "status": self.status,
-            "plan_context": self.plan_context,
-            "retrieval_calls": [call.context() for call in self.retrieval_calls],
-            "evidence_source_turns": self.evidence_source_turns,
-            "draft": {
-                "message": self.query_draft.message,
-                "video_chunk_ids": [
-                    item.video_chunk_id
-                    for item in self.query_draft.selected_video_ranges
-                ],
-            },
-            "review": self.review.model_dump(mode="json"),
-        }
+    retrieval_result: VideoChunkSearchResult
+    retrieval_trace: list[RetrievalTraceEntry]
+    retrieval_calls: tuple[RetrievalCall, ...]
+    canvas: Any
 
 
 class RunState(TypedDict):
     inputs: RunInputs
-    # VideoSearchContextCanvas is intentionally typed as Any here: LangGraph resolves all
-    # TypedDict hints at runtime, while video_search_canvas.py imports this module.
+    # Any avoids the Canvas/state import cycle when LangGraph resolves hints.
     canvas: Any
     frame_inspections: FrameInspectionSession | None
-    turns: list[LoopTurn]
+    calls: list[RetrievalCall]
     control: ExecutionControl
     limits: RunLimits
-    # False when a Supervisor writes the delivered answer from the handoff.
-    render_with_chat: bool
-    # True when a single-pass Result writes the answer under deterministic Loop Control.
-    single_pass_result: bool
-    attempts: list[ResultAttempt]
-    final_attempt: ResultAttempt
-    outcome: LoopOutcome
-    final_output: AgentFinalOutput
+    tool_budget: Any
+    completion: QueryCompletion
+    query_draft: QueryDraft
+    retrieval_result: VideoChunkSearchResult
+    report: QueryReport

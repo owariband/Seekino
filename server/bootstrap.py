@@ -281,7 +281,6 @@ def _build_application_services(
     )
     construction_cleanup.callback(realtime_service.close)
     query_model_name = settings.agent_query_model or agent_model_config.model
-    evaluator_model_name = settings.agent_evaluator_model or agent_model_config.model
     chat_model_name = settings.agent_chat_model or agent_model_config.model
     def build_agent_runtime(agent_config: AgentServiceConfig) -> AgentRuntime:
         _validate_cloud_agent_timeout(settings, agent_config)
@@ -315,30 +314,11 @@ def _build_application_services(
                 reasoning_effort=agent_config.query_reasoning_effort,
                 mcp=False,
             ),
-            agent_model_factory.build_structured(
-                model=evaluator_model_name,
-                request_timeout_seconds=request_timeout,
-                max_output_tokens=max_output_tokens,
-                max_input_chars=agent_config.max_prompt_chars,
-                context_window_policy=context_window_policy,
-                reasoning_effort=agent_config.evaluator_reasoning_effort,
-                mcp=False,
-            ),
-            agent_model_factory.build_loop(
-                model=chat_model_name,
-                request_timeout_seconds=request_timeout,
-                max_output_tokens=max_output_tokens,
-                max_input_chars=agent_config.max_prompt_chars,
-                context_window_policy=context_window_policy,
-                reasoning_effort=agent_config.chat_reasoning_effort,
-                mcp=False,
-            ),
             retrieval.search,
             event_retrieve=event_retrieval.search if event_retrieval is not None else None,
             frame_reader=VideoFrameReader(v2_repository, artifact_store),
             frame_max_height=agent_config.frame_max_height,
             maximum_frame_inspections=agent_config.maximum_frame_inspections,
-            max_loop_turns=agent_config.max_loop_turns,
             max_model_calls_per_turn=agent_config.max_model_calls_per_turn,
             max_tool_calls_per_turn=agent_config.max_tool_calls_per_turn,
             limits_enabled=agent_config.limits_enabled,
@@ -348,24 +328,9 @@ def _build_application_services(
             max_read_chars_per_call=agent_config.max_read_chars_per_call,
             max_catalog_items_per_page=agent_config.max_catalog_items_per_page,
             stage_timeout_seconds=agent_config.stage_timeout_seconds,
-            evaluator_stage_timeout_seconds=agent_config.evaluator_stage_timeout_seconds,
-            chat_timeout_seconds=agent_config.chat_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
             total_timeout_enabled=agent_config.total_timeout_enabled,
             retrieval_channel="lexical",
-            # The single-pass Result replaces the inner Chat render, so it reuses the Chat binding.
-            result_model=agent_model_factory.build_structured(
-                model=chat_model_name,
-                request_timeout_seconds=request_timeout,
-                max_output_tokens=max_output_tokens,
-                max_input_chars=agent_config.max_prompt_chars,
-                context_window_policy=context_window_policy,
-                reasoning_effort=agent_config.chat_reasoning_effort,
-                mcp=False,
-            ),
-            result_max_loops=agent_config.result_max_loops,
-            evaluator_policy=agent_config.evaluator_policy,
-            evaluator_low_confidence_rank=agent_config.evaluator_low_confidence_rank,
         )
     def build_supervisor_runtime(
         video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
@@ -422,11 +387,18 @@ def _build_application_services(
             limits_enabled=agent_config.limits_enabled,
             max_tool_result_bytes=agent_config.max_tool_result_bytes,
             max_prompt_chars=agent_config.max_prompt_chars,
-            single_pass_result=agent_config.single_pass_result,
+            maximum_parallel_queries=agent_config.maximum_parallel_queries,
         )
 
-    runtime = build_agent_runtime(settings.agent)
-    supervisor_runtime = build_supervisor_runtime(runtime, settings.agent)
+    def build_chat_runtime(agent_config: AgentServiceConfig) -> SupervisorRuntime:
+        query_runtime = build_agent_runtime(agent_config)
+        try:
+            return build_supervisor_runtime(query_runtime, agent_config)
+        except Exception:
+            query_runtime.close()
+            raise
+
+    runtime = build_chat_runtime(settings.agent)
 
     def load_agent_config() -> tuple[AgentServiceConfig, str]:
         return read_global_agent_settings(settings.model_config_path)
@@ -438,11 +410,9 @@ def _build_application_services(
     )
     agent = AgentChatService(
         agent_repository, library, runtime,
-        supervisor_runtime=supervisor_runtime,
         config=settings.agent,
         config_loader=load_agent_config,
-        runtime_factory=build_agent_runtime,
-        supervisor_factory=build_supervisor_runtime,
+        runtime_factory=build_chat_runtime,
         config_revision=config_revision,
         tracing=tracing,
         parse_usage=parse_usage,

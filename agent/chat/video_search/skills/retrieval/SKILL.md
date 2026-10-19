@@ -2,6 +2,8 @@
 
 检索采用严格的两层读取协议：先用 `retrieve` 或已注册的 `search_video_events` 获得有界 Catalog，再只对确有价值的候选调用 `get_context_canvas` 精读。不要假设 Catalog 已包含完整证据，也不要为了“保险”把全部候选都展开。
 
+默认采用贪心原则：具体台词、动作、情绪或局部事件优先用 `search_video_events`，不先粗搜 Chunk；台词保留用户给出的原话或译文短语。Event 工具不可用、索引未覆盖、候选不足或需要更广上下文时，再用 `retrieve`。命中后先读已有 Chunk 的必要上下文；证据充分即结束，不为保险重复检索或展开全部材料。未覆盖或部分覆盖不能解释成没有匹配。
+
 ## 第一层：retrieve
 
 `retrieve` 在当前固定 Series Scope 内检索真实视频证据，只返回候选描述、排序信号、稳定 `video_chunk_id` 和分页游标，不返回完整 Transcript、视觉事件或语义上下文。
@@ -42,7 +44,7 @@ Catalog 中常用字段：
 
 ## 第二层：get_context_canvas
 
-对 Catalog 中可能直接支撑答案的 `video_chunk_id` 调用 `get_context_canvas`。使用 `collection="retrieval"` 和 `reference=video_chunk_id`，先用 `section="overview"` 查看可读 section 和长度，再用同一 `reference`、所需 `section` 和起始位置读取内容，必要时指定结束位置。可读 section 为 `candidate`、`selection_reason`、`evidence.transcript`、`evidence.events`、`evidence.text`、`evidence.series_context`、`evidence.metadata`。Transcript、视觉事件、语义上下文、来源信息和 canonical 时间范围都应从相关 section 核验。
+对 Catalog 中可能直接支撑答案的 `video_chunk_id` 调用 `get_context_canvas`，使用 `collection="retrieval"` 和 `reference=video_chunk_id`。已知 section 时直接读取，不必先 overview；只有不确定可读 section 时才用 `section="overview"` 查看名称和长度。可读 section 为 `candidate`、`selection_reason`、`evidence.transcript`、`evidence.events`、`evidence.text`、`evidence.series_context`、`evidence.metadata`，不要简写为 transcript/events。只核验当前结论需要的证据、来源和 canonical 时间范围，不要求读完所有 section。
 
 精读不使用 cursor。读取 `overview` 时只需传 `collection="retrieval"`、`reference=video_chunk_id` 和 `section="overview"`，可省略 `start`、`end`；它列出有限、互不重叠的 section 及字符长度。读取其他 section 时可指定字符半开范围 `[start, end)`，返回值包含 `total_chars`。若请求范围过大，按工具提示缩小范围并再次调用；需要更多内容时用相邻范围继续读。同一 ID 可以按显式范围反复读取，不依赖此前返回的书签。Catalog 的 `next_cursor` 仍只用于 `retrieve` 翻页。
 
@@ -81,7 +83,7 @@ Lexical 通道不会翻译 Query。`inputs.series_context[].transcriptLanguageHi
 
 ## Event 细节检索
 
-已注册 `search_video_events` 时，可直接用它起手；也可先 retrieve，再通过 `video_chunk_ids` 把 Event 搜索缩小到已有 Chunk。它不要求先粗后细。参数为 `query`、`top_k`、`channel_weights`、可选 `event_types`、`speaker`、`video_chunk_ids` 和 `cursor`。Event 的权重键始终是 `lexical / semantic / visual`，不使用 `transcript`。
+`search_video_events` 是具体线索的默认起点，无需先 retrieve；已有可靠 Chunk 线索时可用 `video_chunk_ids` 缩小 Event 搜索范围。参数为 `query`、`top_k`、`channel_weights`、可选 `event_types`、`speaker`、`video_chunk_ids` 和 `cursor`。Event 的权重键始终是 `lexical / semantic / visual`，不使用 `transcript`。
 
 - `event_types` 不传表示不限，按工具 schema 的事件类型筛选。`speaker` 是可靠对白说话人，不是出镜人物；只传 speaker 会限定 DIALOGUE，显式同时选择其他类型属于参数冲突。查人物出现或关系时应写入 query，不冒充 speaker。
 - `top_k` 和 `result_count` 计数不同 Chunk 组；`event_count` 是命中 Event 数。每张卡包含一个 `matched_event`，同一 Chunk 可以出现多张卡；分页 `total` 是 Event 卡数量。存在 `next_cursor` 时继续调用同一 Event 工具且只传 cursor。

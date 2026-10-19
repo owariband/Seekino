@@ -687,8 +687,7 @@ export interface AgentGlobalSettingsValues {
   maximum_tool_calls_per_turn: number;
   limits_enabled: boolean;
   query_reasoning_effort: AgentReasoningEffort;
-  evaluator_reasoning_effort: AgentReasoningEffort;
-  chat_reasoning_effort: AgentReasoningEffort;
+  supervisor_reasoning_effort: AgentReasoningEffort;
   max_output_tokens: number;
   max_prompt_chars: number;
   context_window_tokens: number;
@@ -699,9 +698,10 @@ export interface AgentGlobalSettingsValues {
   max_read_chars_per_call: number;
   max_catalog_items_per_page: number;
   stage_timeout_seconds: number;
-  evaluator_stage_timeout_seconds: number;
+  supervisor_timeout_seconds: number;
   execution_timeout_seconds: number;
   maximum_concurrent_kicks: number;
+  maximum_parallel_queries: number;
 }
 
 export interface AgentGlobalSettings {

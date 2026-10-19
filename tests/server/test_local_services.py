@@ -169,14 +169,14 @@ def test_config_digest_distinguishes_hot_settings_from_restart_settings(
     config_path = tmp_path / "config.yaml"
     config = yaml.safe_load((Path(local_services.ROOT) / "config.yaml").read_text())
     config["agent_runtime"] = {
-        "evaluator_stage_timeout_seconds": 180,
+        "stage_timeout_seconds": 180,
         "maximum_concurrent_kicks": 4,
     }
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
     first = config_digest()
 
-    config["agent_runtime"]["evaluator_stage_timeout_seconds"] = 240
+    config["agent_runtime"]["stage_timeout_seconds"] = 240
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     assert config_digest() == first
 

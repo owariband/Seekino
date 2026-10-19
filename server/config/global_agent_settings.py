@@ -27,6 +27,12 @@ class GlobalAgentSettingsConflictError(Exception):
 _WRITE_LOCK = threading.Lock()
 _DEFAULTS = AgentServiceConfig()
 _FIELD_NAMES = frozenset(asdict(_DEFAULTS))
+_RETIRED_FIELDS = frozenset({
+    "evaluator_reasoning_effort", "chat_reasoning_effort",
+    "evaluator_stage_timeout_seconds", "chat_timeout_seconds",
+    "single_pass_result", "result_max_loops", "evaluator_policy",
+    "evaluator_low_confidence_rank",
+})
 _ENV_NAMES = {
     name: "ANIVAG_AGENT_" + name.upper()
     for name in _FIELD_NAMES
@@ -103,7 +109,11 @@ def _read_document(path: Path) -> tuple[dict[str, object], str, bytes]:
     runtime_values = payload.get("agent_runtime", {})
     if not isinstance(runtime_values, dict):
         raise ValueError("agent_runtime must be a YAML mapping")
-    payload["agent_runtime"] = _validate_values(runtime_values)
+    # Old YAML remains readable; only active settings can be changed by the API.
+    payload["agent_runtime"] = {
+        **{name: value for name, value in runtime_values.items() if name in _RETIRED_FIELDS},
+        **_validate_values({name: value for name, value in runtime_values.items() if name not in _RETIRED_FIELDS}),
+    }
     return payload, _revision(raw), raw
 
 
@@ -135,6 +145,7 @@ def _serialize_runtime_section(raw: bytes, values: Mapping[str, object]) -> byte
 
 
 def _effective_config(yaml_values: Mapping[str, object]) -> AgentServiceConfig:
+    yaml_values = {name: value for name, value in yaml_values.items() if name not in _RETIRED_FIELDS}
     defaults = asdict(_DEFAULTS)
     environment_values: dict[str, object] = {}
     for name in _FIELD_NAMES - yaml_values.keys():

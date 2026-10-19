@@ -21,6 +21,8 @@ from langchain_core.tools import BaseTool
 from sqlalchemy import delete
 
 from agent.chat.video_search.runtime import AgentRuntime
+from agent.chat.supervisor import SupervisorRuntime
+from gateway.web_search import WebSearcher
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import (
     DatabaseEnvironment,
@@ -120,52 +122,31 @@ class _QueryModel:
 
 
 @dataclass
-class _EvaluatorModel:
-    model_name: str = "ci-evaluator"
-    provider_name: str = "scripted"
-
-    def run_structured(self, _prompt, *, tools, result_type, **_kwargs):
-        tools_by_name = _tool_map(tools)
-        cursor = None
-        references = []
-        while True:
-            catalog = _invoke(tools_by_name["get_context_canvas"], {"collection": "draft", "cursor": cursor})
-            references.extend(item["reference"] for item in catalog["items"])
-            cursor = catalog["next_cursor"]
-            if cursor is None:
-                break
-        assert len(references) == 1
-        _read_item(tools_by_name["get_context_canvas"], references[0], collection="draft")
-        return result_type.model_validate({
-            "action": "complete",
-            "advice": "证据完整。",
-        })
-
-
-@dataclass
 class _ChatModel:
     expected_video_chunk_id: str
     model_name: str = "ci-chat"
     provider_name: str = "scripted"
 
-    def run_agent_loop(
-        self,
-        _prompt,
-        *,
-        tools,
-        handle_text,
-        require_tool_call,
-        check_control,
-        **_kwargs,
-    ):
-        assert require_tool_call is True
+    def run_agent(self, _prompt, *, tools, user_message, handle_text, check_control, **_kwargs):
+        available = _tool_map(tools)
+        reports = _invoke(available["query_video"], {"query": user_message})["reports"]
+        item, = reports[0]["draft_items"]
+        assert item["video_chunk_id"] == self.expected_video_chunk_id
         check_control()
-        accepted = _write_canvas(_tool_map(tools), "upsert_video_item", {
-            "video_chunk_id": self.expected_video_chunk_id,
-            "claim": "第一段动作与问题匹配。",
+        accepted = _invoke(available["submit_video_item"], {
+            name: item[name] for name in ("video_chunk_id", "start_seconds", "end_seconds", "claim")
         })
         assert accepted["accepted"] is True
         handle_text("已找到第一段动作。")
+
+    def confirm_turn(self, *_):
+        pass
+
+    def discard_turn(self, *_):
+        pass
+
+    def delete_thread(self, *_):
+        pass
 
 
 class _QueryEmbedder:
@@ -312,15 +293,16 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
         )
         chunk_id = chunks[0].video_chunk_id
         runtime = AgentRuntime(
-            _QueryModel(chunk_id, 0, 10), _EvaluatorModel(), _ChatModel(chunk_id),
-            retrieval.search, max_loop_turns=1, max_model_calls_per_turn=3,
+            _QueryModel(chunk_id, 0, 10), retrieval.search, max_model_calls_per_turn=3,
             max_tool_calls_per_turn=16, limits_enabled=True, execution_timeout_seconds=30,
             retrieval_channel="lexical",
         )
         service = AgentChatService(
             AgentRepository(session_factory),
             LibraryService(LibraryRepository(session_factory, execution_mode="v2")),
-            runtime,
+            SupervisorRuntime(runtime, _ChatModel(chunk_id), WebSearcher(),
+                max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=30,
+                max_tool_result_bytes=16_384, max_prompt_chars=200_000),
         )
         conversation = service.create_conversation(
             tenant_id=tenant_id, title="CI Agent",

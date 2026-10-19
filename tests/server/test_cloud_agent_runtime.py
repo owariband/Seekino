@@ -1,21 +1,55 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 import pytest
 
-from tests.agent.chat.test_runtime import Chat, Evaluator, Query, Retrieval, _runtime
+from agent.chat.common.errors import AgentModelInvocationError
+from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.video_search.runtime import AgentRuntime
+from tests.agent.chat.test_runtime import Query, Retrieval
 from tests.server.test_cloud_access import _conversation, _course, _guest, _login, cloud_api
 
 
+class _MainModel:
+    model_name = "cloud-main-test"
+
+    def __init__(self):
+        self.budgets = []
+
+    def run_agent(self, _prompt, *, tools, user_message, max_model_calls, handle_text, **_):
+        self.budgets.append(max_model_calls)
+        available = {tool.name: tool for tool in tools}
+        reports = json.loads(available["query_video"].invoke({"query": user_message}))["reports"]
+        if any("error" in report for report in reports):
+            raise AgentModelInvocationError("Query could not finish within its budget")
+        handle_text("没有足够证据。")
+
+    def confirm_turn(self, *_):
+        pass
+
+    def discard_turn(self, *_):
+        pass
+
+    def delete_thread(self, *_):
+        pass
+
+
 def _install_runtime(api, *, searches_per_round=1):
-    runtime, query, evaluator, chat, retrieval = _runtime(
-        query=Query(selected=(), searches_per_round=searches_per_round),
-        evaluator=Evaluator(), chat=Chat(), retrieval=Retrieval(hits=[]),
-        limits_enabled=True,
+    query = Query(selected=(), searches_per_round=searches_per_round)
+    retrieval = Retrieval(hits=[])
+    main = _MainModel()
+    runtime = SupervisorRuntime(
+        AgentRuntime(query, retrieval.search, retrieval_channel="lexical", limits_enabled=True),
+        main, SimpleNamespace(), max_web_results=5, web_timeout_seconds=12,
+        execution_timeout_seconds=60, max_tool_result_bytes=16_384,
+        max_prompt_chars=200_000, limits_enabled=True,
     )
     api.services.agent._runtime = runtime
     api.services.agent._runtimes.append(runtime)
-    return query, evaluator, chat, retrieval
+    return query, main, retrieval
 
 
 def _send(client, api, *, kind, series_id, loop_turns, tool_budget, expected_status=200):
@@ -49,14 +83,14 @@ def _send(client, api, *, kind, series_id, loop_turns, tool_budget, expected_sta
 @pytest.mark.parametrize("kind", ["guest", "user"])
 def test_cloud_loop_options_preserve_actual_model_budgets(cloud_api, loop_turns, kind):
     series_id, _ = _course(cloud_api)
-    query, evaluator, chat, retrieval = _install_runtime(cloud_api)
+    query, main, retrieval = _install_runtime(cloud_api)
     with TestClient(cloud_api.app) as client:
         message, budget = _send(
             client, cloud_api, kind=kind, series_id=series_id,
             loop_turns=loop_turns, tool_budget=8,
         )
     assert message["status"] == "COMPLETED", message
-    assert query.budgets == evaluator.budgets == chat.model_call_budgets == [budget]
+    assert query.budgets == main.budgets == [budget]
     assert len(retrieval.calls) == 1
     assert retrieval.calls[0][1] == cloud_api.services.auth.config.public_tenant_id
 
@@ -65,13 +99,13 @@ def test_cloud_loop_options_preserve_actual_model_budgets(cloud_api, loop_turns,
 @pytest.mark.parametrize("kind", ["guest", "user"])
 def test_cloud_loop_options_cannot_disable_actual_tool_budget(cloud_api, loop_turns, kind):
     series_id, _ = _course(cloud_api)
-    query, evaluator, chat, retrieval = _install_runtime(cloud_api, searches_per_round=2)
+    query, main, retrieval = _install_runtime(cloud_api, searches_per_round=2)
     with TestClient(cloud_api.app) as client:
         message, budget = _send(
             client, cloud_api, kind=kind, series_id=series_id,
-            loop_turns=loop_turns, tool_budget=1, expected_status=502,
+            loop_turns=loop_turns, tool_budget=2, expected_status=502,
         )
     assert message["status"] == "FAILED", message
     assert query.budgets == [budget]
     assert len(retrieval.calls) == 1
-    assert evaluator.budgets == chat.model_call_budgets == []
+    assert main.budgets == [budget]

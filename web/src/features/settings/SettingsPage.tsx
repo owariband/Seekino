@@ -10,15 +10,14 @@ import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
 import styles from "./settings.module.css";
 
-type ReasoningSettingKey = "query_reasoning_effort" | "evaluator_reasoning_effort" | "chat_reasoning_effort";
+type ReasoningSettingKey = "query_reasoning_effort" | "supervisor_reasoning_effort";
 type NumericSettingKey = Exclude<keyof AgentGlobalSettingsValues, "limits_enabled" | ReasoningSettingKey>;
 type SettingField = readonly [NumericSettingKey, string, string];
 type SettingsError = { message: string; params?: MessageParams; failure?: unknown };
 
 const reasoningFields: ReadonlyArray<readonly [ReasoningSettingKey, string]> = [
   ["query_reasoning_effort", "Query 检索"],
-  ["evaluator_reasoning_effort", "Evaluator 审核"],
-  ["chat_reasoning_effort", "Chat 回答"],
+  ["supervisor_reasoning_effort", "Supervisor 回答"],
 ];
 const reasoningOptions: ReadonlyArray<readonly [AgentReasoningEffort, string]> = [
   ["none", "关闭推理"], ["low", "低"], ["high", "高"], ["max", "最大"],
@@ -27,7 +26,6 @@ const reasoningOptions: ReadonlyArray<readonly [AgentReasoningEffort, string]> =
 const settingGroups: ReadonlyArray<{ title: string; fields: ReadonlyArray<SettingField> }> = [
   { title: "回答与检索", fields: [
     ["history_message_limit", "历史消息数量", "条"],
-    ["max_loop_turns", "启用调用限制时的最多轮次", "轮"],
     ["max_model_calls_per_turn", "每轮默认模型调用", "次"],
     ["maximum_model_calls_per_turn", "每轮模型调用上限", "次"],
     ["max_tool_calls_per_turn", "每轮默认工具调用", "次"],
@@ -35,9 +33,10 @@ const settingGroups: ReadonlyArray<{ title: string; fields: ReadonlyArray<Settin
   ] },
   { title: "超时与并发", fields: [
     ["stage_timeout_seconds", "常规阶段超时", "秒"],
-    ["evaluator_stage_timeout_seconds", "审核阶段超时", "秒"],
+    ["supervisor_timeout_seconds", "Supervisor 超时", "秒"],
     ["execution_timeout_seconds", "整次执行超时", "秒"],
     ["maximum_concurrent_kicks", "并行任务上限", "个"],
+    ["maximum_parallel_queries", "Query 并发上限", "个"],
   ] },
   { title: "模型上下文", fields: [
     ["max_output_tokens", "模型输出上限", "Token"],
@@ -168,7 +167,7 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
         {settings ? (
           <form key={formVersion} onSubmit={(event) => void save(event)} onInput={() => { setDirty(true); setNotice(null); }} onChange={() => { setDirty(true); setNotice(null); }}>
             <label className={styles.globalSettingToggle}>
-              <span><strong>{t("启用调用次数限制")}</strong><small>{t("开启后，Chat 的自动模式限制轮次、模型和工具调用次数；自定义轮次按本次设置执行。")}</small></span>
+              <span><strong>{t("启用调用次数限制")}</strong><small>{t("开启后，限制模型和工具调用次数；Chat 页的本次回答设置优先。")}</small></span>
               <input name="limits_enabled" type="checkbox" defaultChecked={settings.values.limits_enabled} disabled={saving || loading || mode !== "live"} />
             </label>
             {settingGroups.map((group, index) => (
@@ -181,7 +180,7 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
                   {group.fields.map(([key, label, unit]) => (
                     <label className={styles.globalSettingField} key={key}>
                       <span><strong>{t(label)}</strong>{key === "maximum_concurrent_kicks" ? <em className={styles.restartBadge}>{t("重启后生效")}</em> : null}<small>{key}</small></span>
-                      <span className={styles.globalSettingInput}><input className="field" name={key} type="number" required min={key === "max_tool_result_bytes" ? 512 : 1} max={key === "max_loop_turns" ? 3 : key === "max_catalog_items_per_page" ? 100 : undefined} step={key.endsWith("seconds") ? "any" : 1} defaultValue={settings.values[key]} disabled={saving || loading || mode !== "live"} /><small>{t(unit)}</small></span>
+                      <span className={styles.globalSettingInput}><input className="field" name={key} type="number" required min={key === "max_tool_result_bytes" ? 512 : 1} max={key === "maximum_parallel_queries" ? 8 : key === "max_catalog_items_per_page" ? 100 : undefined} step={key.endsWith("seconds") ? "any" : 1} defaultValue={settings.values[key]} disabled={saving || loading || mode !== "live"} /><small>{t(unit)}</small></span>
                     </label>
                   ))}
                 </div>
@@ -189,7 +188,7 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
             ))}
             <details className={styles.globalSettingGroup}>
               <summary>{t("模型思考")}<span>{t("{count} 项", { count: reasoningFields.length })}</span></summary>
-              <p className={styles.globalSettingsNote}>{t("分别设置 Query、Evaluator 和 Chat 的思考强度；关闭时不使用思考模式。保存后用于新的请求。")}</p>
+              <p className={styles.globalSettingsNote}>{t("分别设置 Query 和 Supervisor 的思考强度；关闭时不使用思考模式。保存后用于新的请求。")}</p>
               <div className={styles.globalSettingFields}>
                 {reasoningFields.map(([key, label]) => (
                   <label className={styles.globalSettingField} key={key}>
