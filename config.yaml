@@ -107,8 +107,6 @@ agent_runtime:
   limits_enabled: false
   total_timeout_enabled: true
   query_reasoning_effort: low
-  evaluator_reasoning_effort: low
-  chat_reasoning_effort: low
   supervisor_reasoning_effort: none
   web_search_max_results: 5
   web_search_timeout_seconds: 12
@@ -120,19 +118,13 @@ agent_runtime:
   compact_target_tokens: 24000
   max_tool_result_bytes: 16384
   max_catalog_items_per_page: 20
-  # stage_timeout_seconds is Query's timeout; each Agent can be configured separately.
-  # Supervisor time includes waiting for video_search.
+  # Query has a separate stage timeout; Supervisor time includes delegated investigations.
   stage_timeout_seconds: 480
-  evaluator_stage_timeout_seconds: 480
-  chat_timeout_seconds: 480
   supervisor_timeout_seconds: 1200
   execution_timeout_seconds: 1200
   maximum_concurrent_kicks: 4
-  # Single-pass Result + deterministic Loop Control; false restores the Supervisor review tail.
-  single_pass_result: true
-  result_max_loops: 2
-  evaluator_policy: risk
-  evaluator_low_confidence_rank: 3
+  # Bound concurrent Query investigations delegated by one Supervisor tool call.
+  maximum_parallel_queries: 3
 
 video_parser:
   transcript_fps: 1.0

@@ -34,7 +34,6 @@ class ServerSettings:
     agent: AgentServiceConfig
     agent_chat_model: str | None
     agent_fallback_model: str | None
-    agent_evaluator_model: str | None
     agent_request_timeout_seconds: float | None
     mq: MQConsumerConfig
     allowed_origins: tuple[str, ...]
@@ -206,9 +205,6 @@ class ServerSettings:
             ),
             agent_fallback_model=_optional_environment(
                 "ANIVAG_AGENT_FALLBACK_MODEL"
-            ),
-            agent_evaluator_model=_optional_environment(
-                "ANIVAG_AGENT_EVALUATOR_MODEL"
             ),
             agent_request_timeout_seconds=resolve_agent_request_timeout_seconds(),
             mq=MQConsumerConfig(

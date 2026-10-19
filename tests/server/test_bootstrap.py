@@ -314,16 +314,12 @@ def test_parse_execution_settings_reach_the_frozen_task(monkeypatch, tmp_path):
     ("configured_models", "expected_models"),
     [
         (
-            ("configured-query-model", "configured-review-model", "configured-chat-model"),
-            ("configured-query-model", "configured-review-model", "configured-chat-model"),
+            ("configured-query-model", "configured-chat-model"),
+            ("configured-query-model", "configured-chat-model"),
         ),
         (
-            (None, None, None),
-            (
-                "deepseek-flash",
-                "deepseek-flash",
-                "deepseek-flash",
-            ),
+            (None, None),
+            ("deepseek-flash", "deepseek-flash"),
         ),
     ],
 )
@@ -394,8 +390,7 @@ def test_process_assembly_receives_runtime_configuration(
         video_embedding_model="configured-embedding-model",
         video_embedding_fps=2.0,
         agent_query_model=configured_models[0],
-        agent_evaluator_model=configured_models[1],
-        agent_chat_model=configured_models[2],
+        agent_chat_model=configured_models[1],
         agent_fallback_model="configured-fallback-model",
         images=ImageUploadConfig(maximum_upload_size_bytes=2048, maximum_pixels=1_000_000, model_max_edge=512),
         agent=AgentServiceConfig(
@@ -403,15 +398,12 @@ def test_process_assembly_receives_runtime_configuration(
             max_tool_calls_per_turn=2, limits_enabled=True,
             total_timeout_enabled=total_timeout_enabled,
             query_reasoning_effort="low",
-            evaluator_reasoning_effort="high",
-            chat_reasoning_effort="max",
             supervisor_reasoning_effort="high",
             max_output_tokens=2048,
             max_prompt_chars=120_000,
             frame_max_height=480,
             maximum_frame_inspections=5,
             stage_timeout_seconds=45,
-            evaluator_stage_timeout_seconds=210,
             execution_timeout_seconds=execution_timeout, maximum_concurrent_kicks=2,
         ),
     )
@@ -491,7 +483,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.parse_consumer._worker_id == settings.mq.consumer_id
         assert services.parse_consumer._poll_interval.total_seconds() == settings.mq.poll_interval_seconds
         assert services.parse_consumer._lease_duration == settings.mq.lease_duration
-        runtime = services.agent._runtime
+        runtime = services.agent._runtime._video_runtime
         assert isinstance(runtime._frame_reader, VideoFrameReader)
         assert runtime._frame_reader._repository is services.retrieval._repository
         assert runtime._frame_reader._artifacts is worker._artifact_store
@@ -499,28 +491,18 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._maximum_frame_inspections == 5
         assert runtime._retrieval_channel == "lexical"
         assert runtime._query_model.model_name == expected_models[0]
-        assert runtime._evaluator_model.model_name == expected_models[1]
-        assert runtime._chat_model.model_name == expected_models[2]
         assert runtime._query_model.request_timeout_seconds == expected_agent_timeout
-        assert runtime._evaluator_model.request_timeout_seconds == expected_agent_timeout
-        assert runtime._chat_model._request_timeout_seconds == expected_agent_timeout
-        assert callable(runtime._evaluator_model.run_structured)
         assert runtime._query_model.provider_name == "deepseek"
-        assert runtime._evaluator_model.provider_name == "deepseek"
-        assert runtime._chat_model.provider_name == "deepseek"
         assert runtime._query_model.reasoning_effort == "low"
-        assert runtime._evaluator_model.reasoning_effort == "high"
-        assert runtime._chat_model.reasoning_effort == "max"
-        # Query, Evaluator and the single-pass Result.
-        assert [options["mcp"] for options in structured_builds] == [False, False, False]
-        assert runtime._result_model.reasoning_effort == "max"
-        assert {options["mcp"] for options in loop_builds} == {False}
-        supervisor_model = services.agent._supervisor_runtime._model
+        # Only Query needs a separate structured agent binding.
+        assert [options["mcp"] for options in structured_builds] == [False]
+        assert {options["mcp"] for options in loop_builds} == (set() if supervisor_backend == "codex" else {False})
+        supervisor_model = services.agent._runtime._model
         assert callable(supervisor_model.run_agent)
         assert callable(supervisor_model.confirm_turn)
         assert callable(supervisor_model.discard_turn)
         assert supervisor_model.model_name == (
-            expected_models[2] if supervisor_backend == "legacy" else "independent-supervisor-model"
+            expected_models[1] if supervisor_backend == "legacy" else "independent-supervisor-model"
         )
         assert supervisor_model.provider_name == ("codex" if supervisor_backend == "codex" else "deepseek")
         assert supervisor_builds[0]["harness"] == ("deepagents" if supervisor_backend == "legacy" else supervisor_backend)
@@ -529,7 +511,7 @@ def test_process_assembly_receives_runtime_configuration(
         expected_supervisor_timeout = expected_agent_timeout if supervisor_backend == "legacy" else expected_independent_timeout
         assert supervisor_builds[0]["request_timeout_seconds"] == expected_supervisor_timeout
         assert supervisor_builds[0]["total_timeout_enabled"] is total_timeout_enabled
-        assert services.agent._supervisor_runtime._total_timeout_enabled is total_timeout_enabled
+        assert services.agent._runtime._total_timeout_enabled is total_timeout_enabled
         actual_supervisor_timeout = (
             supervisor_model._agent_model.request_timeout_seconds
             if supervisor_backend == "codex" else supervisor_model._request_timeout_seconds
@@ -542,24 +524,11 @@ def test_process_assembly_receives_runtime_configuration(
             assert supervisor_builds[0]["binding"].context_window_tokens == 32_000
             assert supervisor_builds[0]["binding"].fallback is None
         assert runtime._query_model.fallback_provider_name == "ark"
-        assert runtime._evaluator_model.fallback_provider_name == "ark"
-        assert runtime._chat_model.fallback_provider_name == "ark"
         assert runtime._query_model.fallback_model_name == "configured-fallback-model"
-        assert runtime._evaluator_model.fallback_model_name == "configured-fallback-model"
-        assert runtime._chat_model.fallback_model_name == "configured-fallback-model"
         assert runtime._query_model.max_output_tokens == 2048
         assert runtime._query_model.max_input_chars == 120_000
         assert runtime._query_model.context_window_policy.maximum_input_tokens == 57_856
         assert runtime._query_model.context_window_policy.auto_compact_tokens == 48_000
-        assert runtime._evaluator_model.context_window_policy == (
-            runtime._query_model.context_window_policy
-        )
-        assert runtime._chat_model.context_window_policy == (
-            runtime._query_model.context_window_policy
-        )
-        assert runtime._chat_model.max_output_tokens == 2048
-        assert runtime._evaluator_model.max_output_tokens == 2048
-        assert runtime._max_loop_turns == 2
         assert runtime._max_model_calls == 4
         assert runtime._max_tool_calls == 2
         assert runtime._limits_enabled is True
@@ -569,21 +538,20 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._max_read_chars_per_call == 16_384
         assert runtime._max_catalog_items == 20
         assert runtime._stage_timeout == 45
-        assert runtime._evaluator_stage_timeout == 210
+        assert services.agent._runtime._maximum_parallel_queries == settings.agent.maximum_parallel_queries
         assert runtime._execution_timeout == execution_timeout
         assert services.agent._executor._max_workers == 2
         updated = replace(
-            settings.agent, evaluator_stage_timeout_seconds=240,
+            settings.agent, stage_timeout_seconds=240,
             total_timeout_enabled=not total_timeout_enabled,
             max_tool_result_bytes=8_192, max_read_chars_per_call=4_096,
-            query_reasoning_effort="max", evaluator_reasoning_effort="none",
-            chat_reasoning_effort="low",
+            query_reasoning_effort="max",
             supervisor_reasoning_effort="none",
             maximum_concurrent_kicks=5,
             frame_max_height=360, maximum_frame_inspections=7,
         )
-        replacement = services.agent._runtime_factory(updated)
-        replacement_supervisor = None
+        replacement_supervisor = services.agent._runtime_factory(updated)
+        replacement = replacement_supervisor._video_runtime
         try:
             assert isinstance(replacement._frame_reader, VideoFrameReader)
             assert replacement._frame_reader is not runtime._frame_reader
@@ -591,16 +559,13 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement._frame_reader._artifacts is runtime._frame_reader._artifacts
             assert replacement._frame_max_height == 360
             assert replacement._maximum_frame_inspections == 7
-            assert replacement._evaluator_stage_timeout == 240
+            assert replacement._stage_timeout == 240
             assert replacement._total_timeout_enabled is updated.total_timeout_enabled
             assert replacement._max_tool_result_bytes == 8_192
             assert replacement._max_read_chars_per_call == 4_096
             assert replacement._query_model.reasoning_effort == "max"
-            assert replacement._evaluator_model.reasoning_effort == "none"
-            assert replacement._chat_model.reasoning_effort == "low"
-            assert [options["mcp"] for options in structured_builds] == [False] * 6
-            assert {options["mcp"] for options in loop_builds} == {False}
-            replacement_supervisor = services.agent._supervisor_factory(replacement, updated)
+            assert [options["mcp"] for options in structured_builds] == [False] * 2
+            assert {options["mcp"] for options in loop_builds} == (set() if supervisor_backend == "codex" else {False})
             assert callable(replacement_supervisor._model.run_agent)
             if supervisor_backend != "codex":
                 assert replacement_supervisor._model.session_store is supervisor_model.session_store
@@ -618,10 +583,7 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement_supervisor._total_timeout_enabled is updated.total_timeout_enabled
             assert services.agent.active_maximum_concurrent_kicks == 2
         finally:
-            if replacement_supervisor is not None:
-                replacement_supervisor.close()
-            else:
-                replacement.close()
+            replacement_supervisor.close()
         app = create_app(services, settings=settings)
         assert app.state.sse_config == settings.sse
     finally:
@@ -749,7 +711,7 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
             services.uploads.parse_defaults.embedding.source
         )
         assert services.uploads.parse_defaults.indexing.index_generation == 7
-        assert services.agent._runtime._retrieval_channel == "lexical"
+        assert services.agent._runtime._video_runtime._retrieval_channel == "lexical"
         assert services.uploads._video_parse_index_store is runtime._elasticsearch_store
         assert runtime._media_service.base_directory == (
             tmp_path / "artifacts" / "test" / "work" / "video-parse-v2"

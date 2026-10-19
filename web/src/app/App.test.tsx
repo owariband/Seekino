@@ -69,8 +69,7 @@ const initialGlobalSettings: AgentGlobalSettings = {
     maximum_tool_calls_per_turn: 48,
     limits_enabled: false,
     query_reasoning_effort: "low",
-    evaluator_reasoning_effort: "low",
-    chat_reasoning_effort: "low",
+    supervisor_reasoning_effort: "low",
     max_output_tokens: 4096,
     max_prompt_chars: 200000,
     context_window_tokens: 64000,
@@ -81,9 +80,10 @@ const initialGlobalSettings: AgentGlobalSettings = {
     max_read_chars_per_call: 16384,
     max_catalog_items_per_page: 20,
     stage_timeout_seconds: 120,
-    evaluator_stage_timeout_seconds: 180,
+    supervisor_timeout_seconds: 180,
     execution_timeout_seconds: 600,
     maximum_concurrent_kicks: 4,
+    maximum_parallel_queries: 3,
   },
 };
 
@@ -635,6 +635,12 @@ describe("application shell", () => {
     await waitFor(() => expect(concurrency).toBeEnabled());
     expect(concurrency).toHaveValue(4);
     fireEvent.input(concurrency, { target: { value: "6" } });
+    const queryConcurrency = screen.getByRole("spinbutton", { name: /Query 并发上限/ });
+    expect(queryConcurrency).toHaveValue(3);
+    expect(queryConcurrency).toHaveAttribute("min", "1");
+    expect(queryConcurrency).toHaveAttribute("max", "8");
+    fireEvent.input(queryConcurrency, { target: { value: "2" } });
+    expect(screen.queryByRole("spinbutton", { name: /审核阶段超时|启用调用限制时的最多轮次/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存全局配置" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "保存全局配置" }));
 
@@ -646,7 +652,7 @@ describe("application shell", () => {
     );
     expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
       revision: "rev-1",
-      values: { maximum_concurrent_kicks: 6 },
+      values: { maximum_concurrent_kicks: 6, maximum_parallel_queries: 2 },
     });
     expect(await screen.findByText(/并行任务上限已保存为/)).toHaveTextContent("当前服务仍使用 4");
     expect(screen.getAllByText(/重启服务后生效/)).toHaveLength(2);
@@ -677,7 +683,7 @@ describe("application shell", () => {
     expect(await screen.findByText("已保存。新的请求会使用更新后的全局配置。")).toBeInTheDocument();
   });
 
-  it("saves independent thinking modes for Query, Evaluator, and Chat", async () => {
+  it("saves independent thinking modes for Query and Supervisor", async () => {
     const { fetchMock } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
@@ -685,14 +691,12 @@ describe("application shell", () => {
     await screen.findByRole("spinbutton", { name: /并行任务上限/ });
     await user.click(screen.getByText("模型思考"));
     const query = screen.getByRole("combobox", { name: /Query 检索/ });
-    const evaluator = screen.getByRole("combobox", { name: /Evaluator 审核/ });
-    const chat = screen.getByRole("combobox", { name: /Chat 回答/ });
+    const supervisor = screen.getByRole("combobox", { name: /Supervisor 回答/ });
+    expect(screen.queryByRole("combobox", { name: /Evaluator 审核|Chat 回答/ })).not.toBeInTheDocument();
     expect(query).toHaveValue("low");
-    expect(evaluator).toHaveValue("low");
-    expect(chat).toHaveValue("low");
+    expect(supervisor).toHaveValue("low");
     await user.selectOptions(query, "high");
-    await user.selectOptions(evaluator, "max");
-    await user.selectOptions(chat, "none");
+    await user.selectOptions(supervisor, "none");
     await user.click(screen.getByRole("button", { name: "保存全局配置" }));
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
@@ -705,8 +709,7 @@ describe("application shell", () => {
       revision: "rev-1",
       values: {
         query_reasoning_effort: "high",
-        evaluator_reasoning_effort: "max",
-        chat_reasoning_effort: "none",
+        supervisor_reasoning_effort: "none",
       },
     });
     expect(await screen.findByText("已保存。新的请求会使用更新后的全局配置。")).toBeInTheDocument();
@@ -717,7 +720,7 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
-    const timeout = await screen.findByRole("spinbutton", { name: /审核阶段超时/ });
+    const timeout = await screen.findByRole("spinbutton", { name: /Supervisor 超时/ });
     await waitFor(() => expect(timeout).toBeEnabled());
     fireEvent.input(timeout, { target: { value: "240" } });
     expect(screen.getByRole("button", { name: "保存全局配置" })).toBeEnabled();

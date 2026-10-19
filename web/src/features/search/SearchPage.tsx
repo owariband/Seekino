@@ -762,7 +762,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                         </section>
                       );
                     })}
-                    {message.searchResult && !message.searchResult.hits.length ? (
+                    {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
                         <Kino state="think" width={38} scale={2} ground={false} />
                         <span>{message.searchResult.retrievalTrace?.some((entry) => entry.resultCount > 0)

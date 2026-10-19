@@ -35,7 +35,7 @@ The waste falls into five patterns:
 4. **Unneeded frames.** Pure dialogue questions trigger `inspect_video_frames`, and stills cannot prove who said a line anyway.
 5. **A tool that is bound to fail.** The Supervisor calls `understand_current_video` without a playback position (also seen in `engine/design/event-retrieval-eval-20261018/README.md`).
 
-### 2.2 Changes already made (uncommitted, needs an API restart)
+### 2.2 Changes already made (merged in [owariband/Seekino#2](https://github.com/owariband/Seekino/pull/2), live after an API restart)
 
 | # | Change | Files | Verified |
 | --- | --- | --- | --- |
@@ -145,15 +145,15 @@ request
 
 ### 3.5 Migration (incremental, each step shippable)
 
-1. **Done in the working tree:** skip inner Chat, Evaluator range rule, evidence preload, inline handoff, realtime gating, no frames for dialogue (§2.2).
+1. **Done (PR #2):** skip inner Chat, Evaluator range rule, evidence preload, inline handoff, realtime gating, no frames for dialogue (§2.2).
 2. **Quote fast path:** host pre-retrieval plus a conditional Evaluator skip (§2.3).
-3. **Single-pass Result:** replace the Supervisor's post-search ReAct tail with one structured call that receives the approved draft and evidence. The Supervisor keeps routing and web search.
+3. **Done (PR #2) · Single-pass Result:** replace the Supervisor's post-search ReAct tail with one structured call that receives the approved draft and evidence. The Supervisor keeps routing and web search.
 4. **Rules + skill router:** split `skills/` into per-intent prompts and tool subsets; send only the selected one.
-5. **Deterministic Loop Control:** MaxLoops, per-node timeouts, monotonicity, degrade path. Make the Evaluator a high-risk bypass.
+5. **Done (PR #2) · Deterministic Loop Control:** MaxLoops, per-node timeouts, monotonicity, degrade path. Make the Evaluator a high-risk bypass.
 
 Check each step with one or two harness runs per query type (latency + correct target range); no long benchmark loops.
 
-**Status 2026-10-18 (steps 3 and 5, uncommitted):**
+**Status 2026-10-18: steps 3 and 5 merged in PR #2 (`f5c46b1`); not timed yet, and not live until the API restarts.**
 
 - `agent/chat/video_search/result.py`: one structured call (no tools, `max_model_calls=1`) gets the question, the draft items and bounded evidence (±15 s transcript window around each range, adjacent retrieved chunks, matched evidence and Events, review advice). It returns `answer_markdown`, `video_items` (ms) and `self_check {pass, reason, missing_evidence, needs_user_confirmation}`. Host validation uses `video_range_sources` (anchor must be a drafted ID; adjacent-chunk contiguity). An invalid range falls back to the drafted range, and an unknown ID is dropped.
 - `agent/chat/video_search/loop_control.py`: pass → deliver; `needs_user_confirmation` → ask the user (fail A); fail B re-plans only with non-empty `missing_evidence` (or Evaluator advice), at most `result_max_loops` and only if the loop improved the self-check score or drafted a new chunk; otherwise degrade to the best attempt with a host-written "not fully verified" note.
@@ -166,6 +166,112 @@ Check each step with one or two harness runs per query type (latency + correct t
 - Fewer independent checks can let wrong speakers or visual claims through. That is why the Evaluator stays for high-risk skills and why host validation must stay strict.
 - A single-pass Result needs the evidence in the prompt. Bound it (top 3–4 items, transcript windows around the hit), or token costs grow.
 - The router can misroute. Fall back to the general scene/plot skill when it is unsure, never to "no video".
+
+### 3.7 Where the speed comes from (levers, ranked)
+
+Small models are one lever, not the main one, and the target is not "single-agent". Ranked by their share of the 161 s trace:
+
+1. **Fewer model calls in a row.** About 30 sequential round trips, three of them reviewing the same answer, account for most of the time. Structure fixes this (one Plan loop plus a single-pass Result), whatever the model size.
+2. **Code instead of model calls wherever no judgement is needed:** running searches up front, checking IDs and ranges, stop rules, rule-based routing (playback position? attachments? quote-like?). Milliseconds, and never a round trip.
+3. **Parse time instead of query time:** moment tags for broad questions, voice scores for every line, a per-frame visual index. Each turns a multi-step search into a filter or lookup.
+4. **Parallel work:** independent searches, and parallel workers for independent sub-questions (per episode, per screenshot, per scene). This is where multi-agent saves time (§3.8).
+5. **Cheaper individual calls.** Small models for narrow tasks with clear inputs and outputs: routing, query rewrite, re-ranking, parse-time moment tagging. Also smaller per-skill prompts, lower reasoning effort, and streaming.
+6. **Caching:** a repeated question can come back almost instantly.
+
+Cautions:
+
+- **Keep a strong model in the main loop.** A weaker one tends to take more steps or trigger re-plans, which can end up slower overall.
+- **Measure the per-call overhead first.** Each call costs ~3–5 s through the Codex app-server, and part of that may be harness overhead rather than model time. Time one direct API call against one Codex call with the same prompt before deciding that a model switch helps.
+
+Rule of thumb: multi-agent is faster when agents run side by side on independent work; it is slower when agents run one after another on the same task, because every hand-off costs a fresh context, a 5–10 s first call and re-reading evidence. The current pipeline is the second case.
+
+### 3.8 Supervisor with parallel Query workers (proposed 2026-10-18)
+
+Proposal: a small router picks the route. Quick lookups are answered with tools called directly by the Supervisor. Decomposable questions ("How did they meet?") are split into sub-goals; the Supervisor dispatches Query workers in parallel, each one investigates, checks its own findings and reports back, and the Supervisor writes the final answer.
+
+**Assessment: yes, this is faster, for the questions it suits.** Wall time becomes route + plan + the slowest worker + synthesis, instead of the sum of every step. It fixes the case a single loop handles worst: a narrative assembled from several scenes, which one agent would search for one scene after another. For a single-scene question, though, the extra plan and synthesis calls make it slower than one worker, which is why the router has to pick the route.
+
+| Route | Example | Path | Model calls on the critical path | Estimate |
+| --- | --- | --- | ---: | ---: |
+| A · direct lookup | "我觉得也不是你的错吧 出自哪里？" | rules/router → Supervisor calls Event search + transcript window → answer | 1–2 | ~10–15 s |
+| B · one worker | one scene, or a lookup whose hit was weak | Supervisor → 1 Query worker → Supervisor answer | 3–6 | ~25–35 s |
+| C · fan-out | "How did they meet?", best moment per episode, several screenshots | Supervisor sketch search → N workers in parallel → synthesis | 2 + slowest worker + 1 | ~35–45 s (T01 measured 215 s on 2026-10-15) |
+
+All estimates assume ~3–5 s per call and are not measured.
+
+```
+request
+ ├─ rules → small router (only when rules are unsure)               0–1 call
+ ├─ A · direct lookup: Supervisor tools (Event search,
+ │      transcript window) → answer                                  1 call
+ │      weak hit (low score, no margin, several episodes) → B
+ ├─ B · one Query worker → report → Supervisor answer               3–6 calls
+ └─ C · Supervisor sketch search (1 tool call, sorted by episode/time)
+        → N Query workers in parallel (goal + scope each,
+          self-check, structured report)
+        → code: order by episode/time, dedupe, flag conflicts
+        → Supervisor synthesis (single pass, streamed)               2 + slowest worker + 1
+ Loop control: per-worker deadline and at most 1 re-plan; top level asks or degrades
+```
+
+Roles. The name Supervisor stays; its job changes from reviewing answers to routing, planning and writing the final answer.
+
+| Role | Owns | Does not do | Model |
+| --- | --- | --- | --- |
+| **Router** | Picks route A, B, C or chat from rules (quotes, "出自 / 谁说", attachments, playback); returns a route and an optional sub-goal hint | Retrieval, answering | None for most requests; a small model only when the rules are unsure (< 1 s) |
+| **Supervisor** | Route A lookups with its read-only tools; the sketch search, splitting into sub-goals and dispatching workers (route C); escalation A → B → C; the final user-facing answer, written from worker reports | Reviewing every answer; re-reading the Canvas section by section; multi-step searching of its own beyond the sketch search | Strong model; 1 call for route A, about 2 plus synthesis for route C |
+| **Query worker** | One goal in one scope (episodes, chunk IDs or a time window): search, read evidence, check its own findings, return a structured report | User-facing prose; work outside its scope; cross-worker judgements | Strong model; the only ReAct loop, a few steps |
+| **Evaluator** | An independent check with frames, for high-risk claims only (speaker attribution, visual similarity, low-confidence hits) | Running on every request; range or wording nits | Strong model, triggered by rule |
+| **Code (host)** | Pre-retrieval, ID/range/scope/contiguity validation, ordering by episode and time, de-duplication, conflict flags, deadlines, loop limits, degrade path | Judging whether evidence supports a claim | None |
+
+Design rules:
+
+1. **Search before splitting.** For "How did they meet?" the sub-questions are unknown until the timeline is visible. The Supervisor first runs one cheap broad search itself (Chunk + Event, ordered by episode and time) to sketch the candidate scenes, then dispatches one worker per candidate or goal: first encounter, introduction, a later retelling, a relationship turning point. Splitting blind produces overlapping or empty workers.
+2. **One goal and one scope per worker.** Each worker gets an episode range, chunk IDs or a time window, so workers do not fetch the same evidence. Cap N (e.g. 4). Global capacity matters: Codex `max_concurrency` is 10 and `maximum_concurrent_kicks` is 4, so four users fanning out to four workers each saturate it.
+3. **Workers return structured reports, not prose.** `{goal, findings: [{claim, video_chunk_id, start_ms, end_ms, evidence_quote, kind: direct | retold | inferred}], gaps, self_check {pass, reason}}`, bounded to about 5 findings with quotes of at most 200 characters. Since PR #2, the Result inside `search_video_graph` writes the user-facing answer; in fan-out mode it must switch to report mode, so the Supervisor's synthesis is the only answer writer.
+4. **Two levels of checking.** A worker checks that each finding is supported by its own evidence. The Supervisor handles cross-worker questions: chronology ("how they met" means the earliest encounter across all workers), duplicates, and conflicts (the same scene reported with different speakers). Ordering and de-duplication are code; conflicts are shown in the answer, never resolved silently.
+5. **Deadlines and partial results.** Each worker gets a deadline (e.g. 25 s). The Supervisor synthesizes whatever has returned and names the gaps, so one slow worker cannot hold the answer.
+6. **Direct tools on the Supervisor:** read-only and fast — Event search, transcript window read, later the moment-tag filter. When the direct result is weak, escalate to B instead of guessing.
+7. **Router: rules first.** Quotation marks, "出自 / 谁说 / which episode", attachments, playback context. The small model runs only when the rules are unsure, with a budget under 1 s, and returns a route plus an optional sub-goal hint. Misroutes fall back A → B → C, never to "no answer".
+
+Costs and risks:
+
+- **Tokens:** N workers each carry their own context. Fan out only when the question really splits.
+- **Synthesis input** grows with N; keep reports bounded (rule 3).
+- **Fixed overhead:** route C adds a sketch search, a plan and a synthesis, about 10–15 s. That is acceptable for narrative questions and too much for single scenes.
+- **Disagreement:** workers can return conflicting findings; the synthesis must show them.
+
+Relation to §3.4: the "Plan agent" step becomes one or N Query workers. The single-pass Result from PR #2 becomes the worker's self-check plus the Supervisor's synthesis. Loop control applies per worker (at most one re-plan) and at the top level (ask or degrade). The quote fast path in §2.3 becomes route A: the Supervisor's direct tools replace host pre-retrieval inside the Query agent.
+
+### 3.9 Implementation status and open items (2026-10-19)
+
+**Built:** the Supervisor answers with direct tools (Event search, retrieve, Canvas reads, frames) and submits the final text and video items itself. `query_video` delegates one goal or a parallel batch (`maximum_parallel_queries`, default 3, range 1–8). A worker runs `query → validate_evidence → report` on its own Canvas and returns a report, never a user answer. The Evaluator, inner Chat, Result and Loop Control are removed; retired settings are still accepted in old YAML.
+
+**Not built yet:** router rules, the sketch search, structured findings (`evidence_quote`, `kind`, bounded to about 5), short per-worker deadlines and the rule-triggered Evaluator.
+
+**Verified:** the changed Chat and server tests pass (1115 passed). The 8 failures in `tests/server/test_local_services.py` come from committed code, not this change. Not yet run end to end with real videos and models, and latency is not measured.
+
+**Decision:** the MVP goal (OKR O0: the existing chain working end to end) comes first. Keep this design as it is and fix an item below only when it blocks or misleads an O0 acceptance run. Everything else waits until O0 passes.
+
+Open items from the review. "Default config" means `limits_enabled: false` with a 1200 s total and a 480 s stage timeout.
+
+| # | Item | Default config | Fix |
+| --- | --- | --- | --- |
+| 1 | The concurrency cap applies to one batch, not one request: several `query_video` calls in one model message run at the same time | Active | A per-request semaphore around worker runs |
+| 2 | Workers use the Supervisor's shared tool budget; when it runs out, `submit_video_item` fails the whole turn | Dormant | Reserve calls for delivery, or return budget exhaustion as tool feedback |
+| 3 | The model-call budget is not shared: each batch gets about the full allowance again, and a 3-way split leaves each worker 2 calls | Dormant | One request-wide model-call budget |
+| 4 | With limits off, each worker is still capped at `max_tool_calls_per_turn` (24) while the Supervisor is not | Active | Pass worker limits only when `limits_enabled` |
+| 5 | No time is reserved for synthesis: a global timeout during a worker fails the request, and a timed-out worker's finished retrievals are dropped | Mostly mitigated (stage timeout fires first) | Worker deadline = total minus a synthesis reserve; return completed calls with the failure |
+| 6 | A provider error without a classified reason (429, 5xx) in one worker cancels the batch and fails the turn | Active | Classify transient provider errors as a retryable worker failure |
+| 7 | Grounding is enforced only by the prompt: a clip can be submitted that nobody read. `DraftReadAudit` exists but is not wired in | Active | Require a transcript read overlapping the submitted range; start in log-only mode |
+| 8 | One `EVIDENCE_CONFLICT` drops every report in the batch, including the successful ones | Rare (reindex during a turn) | Keep the non-conflicting reports |
+| 9 | `tool_lock` serializes direct tools, including network calls, so parallel direct searches run one after another | Active (speed only) | Hold the lock only while changing shared state |
+| 10 | Frame-inspection caps apply per session, so the effective cap is the configured cap × (workers + 1) | Dormant | Share one frame session |
+| 11 | `max_loop_turns` and the "运行轮次" control are still exposed but do nothing | Active (misleading UI) | Remove them, or map them to the number of Query batches |
+| 12 | Retired environment variables (`ANIVAG_AGENT_EVALUATOR_MODEL`, `ANIVAG_AGENT_SINGLE_PASS_RESULT`, …) are ignored without a warning | Active | Log a warning at startup |
+| 13 | No process-wide model gate for HTTP API sources (only Codex and Claude Code sources have one); `maximum_concurrent_kicks` × workers can exceed provider capacity | Active under load | A shared semaphore per model source |
+
+**Measurements, when O0 passes** (extend `evals/latency/chat_latency.py`): the route taken (direct, one worker, batch) and the batch size; Supervisor rounds and input tokens per round; time to the first text; repeated reads of the same chunk, section and range within a turn; the slowest worker compared with the sum of all workers; budget, deadline and 429 failure rates; correctness (speaker, evidence support, clip range) and clips submitted without a read.
 
 ## 4. Speaker attribution
 
@@ -235,8 +341,10 @@ Caveat: the labels are agent output and partly derived from CAM++ evidence. Agre
 
 ## 6. Order of work
 
-1. Restart the API after the Event backfill finishes, so the §2.2 changes take effect. Run one check per quote case.
-2. Quote fast path (§2.3).
+1. Pull `main` (PR #2) and restart the API after the Event backfill finishes, so §2.2 and the single-pass Result take effect. Run one check per quote case.
+2. Route A: rules + router, read-only direct tools on the Supervisor, escalation to one worker on a weak hit (§3.8). This replaces the separate quote fast path in §2.3.
 3. Parse-time voice scoring + margin rule + labeled set (§4.3).
-4. Single-pass Result + deterministic Loop Control (§3.5 steps 3 and 5).
-5. Skill router (§3.5 step 4), then `retrieve_visual` and moment tags (§5), each with its small test set.
+4. Route C: worker report mode, parallel dispatch, code ordering/dedupe, Supervisor synthesis (§3.8). Check it on "How did they meet?" (T01) and one multi-episode question.
+5. Skill-scoped prompts (§3.5 step 4), then `retrieve_visual` and moment tags (§5), each with its small test set.
+
+Steps 2 and 4 are partly built; see §3.9 for what is built and the open items, which wait until OKR O0 passes.
