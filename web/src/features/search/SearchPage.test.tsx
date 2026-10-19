@@ -464,9 +464,11 @@ describe("Search assistant presentation", () => {
     { label: "lexical", weights: { lexical: 0.2, semantic: 0.5, visual: 0.3 } },
   ];
 
-  it.each(traceCases)("distinguishes retrieved candidates from an empty retrieval with $label trace", ({ weights }) => {
-    const message = {
+  it.each(traceCases)("waits for answer completion before reporting candidates without video with $label trace", ({ weights }) => {
+    const message: AgentMessageView = {
       ...assistantMessage("只生成了文字"),
+      status: "PROCESSING",
+      phase: "RETRIEVING",
       searchResult: {
         seriesIds: [series.seriesId],
         searchedVideoIds: ["video-1"],
@@ -483,10 +485,23 @@ describe("Search assistant presentation", () => {
           videoChunkIds: ["chunk-1", "chunk-2"],
         }],
       },
-      renderBlocks: [{ type: "markdown" as const, markdown: "只生成了文字" }],
+      renderBlocks: [
+        { type: "markdown", markdown: "只生成了文字" },
+        { type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "completed" },
+      ],
     };
 
-    renderPage(message);
+    const view = renderPage(message);
+
+    expect(screen.getByRole("status", { name: "查找视频资料" })).toHaveTextContent("已完成");
+    expect(screen.queryByText("检索到了候选片段，但本次回答未附带可播放视频，请重试。")).not.toBeInTheDocument();
+    expect(screen.queryByText("没有检索到可展示的视频片段，试试换个描述。")).not.toBeInTheDocument();
+
+    mocks.useAgentConversation.mockReturnValue({
+      ...mocks.useAgentConversation.mock.results.at(-1)!.value,
+      messages: [{ ...message, status: "COMPLETED", phase: null }],
+    });
+    view.rerender(<SearchPage />);
 
     expect(screen.getByText("检索到了候选片段，但本次回答未附带可播放视频，请重试。")).toBeInTheDocument();
     expect(screen.queryByText("没有检索到可展示的视频片段，试试换个描述。")).not.toBeInTheDocument();
