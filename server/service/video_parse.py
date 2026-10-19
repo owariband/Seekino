@@ -544,7 +544,7 @@ class VideoParseRuntimeService:
                         manager.check_active()
                         await self._run_blocking(
                             self._repository.finish_voiceprint_scoring, current,
-                            preparation=preparation, artifact=artifact, check_active=manager.check_active,
+                            preparation=preparation, artifact=artifact, check_active=manager.raise_if_cancelled,
                         )
                     except asyncio.CancelledError as error:
                         manager.cancel()

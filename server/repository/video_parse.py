@@ -1381,7 +1381,11 @@ class VideoParseRepository:
         check_active: Callable[[], None] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        """Commit the immutable artifact's manifest and ready in one transaction."""
+        """Publish ready atomically; check_active must only check local cancellation.
+
+        The locked parent fences the lease; a callback renewing it on another
+        connection would wait on this transaction's own row lock.
+        """
         finished_at = now if now is not None else now_utc()
         payload = deepcopy(dict(preparation))
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True,
