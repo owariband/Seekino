@@ -187,7 +187,7 @@ class VideoParseModelCallManager:
     def check_active(self) -> None:
         """Fence local cancellation and the durable execution lease."""
 
-        self._raise_if_cancelled()
+        self.raise_if_cancelled()
         try:
             self._check_active()
         except Exception as error:
@@ -196,7 +196,8 @@ class VideoParseModelCallManager:
                 "Parse V2 execution lease was lost"
             ) from error
 
-    def _raise_if_cancelled(self) -> None:
+    def raise_if_cancelled(self) -> None:
+        """Check local cancellation without acquiring a database lease lock."""
         if self._cancelled.is_set():
             raise ModelCallCancelledError("Parse V2 execution was cancelled")
 
