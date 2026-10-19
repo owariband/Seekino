@@ -1323,8 +1323,8 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
     runtime._gateway.close()
 
 
-@pytest.mark.parametrize("tool_harness", ["legacy", "deepagents"])
-def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool_harness):
+@pytest.mark.parametrize("tool_harness,with_feedback", [("legacy", False), ("deepagents", False), ("deepagents", True)])
+def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool_harness, with_feedback):
     captured = {}
     closed = []
 
@@ -1368,9 +1368,11 @@ def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool
         fallback={"source": "ark_default", "model": "fallback-model", "request_timeout_seconds": 17,
                   "max_output_tokens": 2048, "reasoning_effort": "none"},
     )
+    feedback = lambda: None
     result = asyncio.run(runtime._generate_text_structured(
         binding, "refine", tools=(_read_context_tool(),), result_type=CanvasCompletion, max_model_calls=100,
         tool_harness=tool_harness,
+        **({"stop_feedback": feedback, "enforce_model_call_limit": True} if with_feedback else {}),
     ))
     assert result.complete
     assert captured["harness"] == tool_harness
@@ -1378,7 +1380,11 @@ def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool
     assert captured["fallback"][1]["request_timeout_seconds"] == 17
     assert captured["fallback"][1]["max_output_tokens"] == 2048
     assert captured["fallback"][1]["reasoning_effort"] == "none"
-    assert captured["generate"]["max_model_calls"] is None
+    assert captured["generate"]["max_model_calls"] == (100 if with_feedback else None)
+    if with_feedback:
+        assert captured["generate"]["stop_feedback"] is feedback
+    else:
+        assert "stop_feedback" not in captured["generate"]
     assert captured["generate"]["request_timeout_seconds"] == 61
     assert captured["generate"]["context_window_policy"].output_reserve_tokens == 4096
     assert captured["generate"]["fallback_on_error"](ContentFilterError("filtered"))
@@ -2977,6 +2983,7 @@ def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkey
 
     async def generate(_binding, _prompt, *, tools, **options):
         assert options["tool_harness"] == "deepagents"
+        assert callable(options["stop_feedback"]) and options["enforce_model_call_limit"] is True
         bound = {tool.name: tool for tool in tools}
         finish = bound["finish_voiceprint_review"]
         revision = canvas.revision
@@ -2986,8 +2993,11 @@ def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkey
         if outcome == "bypass":
             return CanvasCompletion(complete=True)
         missing = json.loads(finish.invoke({"complete": True}))
-        assert missing["ready"] is False and missing["missing"] == [reference]
-        assert missing["inconsistent"] == [] and missing["retry_hint"]
+        assert missing["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
+        assert missing["error"]["retryable"] is True and missing["error"]["retry_hint"]
+        assert reference in missing["error"]["message"] and "missing_decision" in missing["error"]["message"]
+        status = canvas.voiceprint_review_status()
+        assert status["ready"] is False and status["missing"] == [reference] and status["inconsistent"] == []
         if outcome == "missing":
             return CanvasCompletion(complete=True)
         if outcome == "interval_changed":
@@ -3006,8 +3016,12 @@ def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkey
         assert "error" not in receipt
         resolved = json.loads(finish.invoke({"complete": True}))
         if outcome == "inconsistent":
-            assert resolved["missing"] == [] and resolved["inconsistent"] == [reference]
-            assert resolved["ready"] is False
+            assert resolved["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
+            assert resolved["error"]["retryable"] is True and resolved["error"]["retry_hint"]
+            assert "voice_top1_speaker_mismatch" in resolved["error"]["message"]
+            assert reference in resolved["error"]["message"]
+            status = canvas.voiceprint_review_status()
+            assert status["missing"] == [] and status["inconsistent"] == [reference] and status["ready"] is False
             return CanvasCompletion(complete=True)
         assert resolved["ready"] and canvas.voiceprint_review_passed()
         if outcome in {"contradiction", "restored"}:
@@ -3108,6 +3122,7 @@ def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voicep
 
     async def generate(_binding, _prompt, *, tools, **_options):
         assert {tool.name for tool in tools} == {"get_context_canvas", "write_context_canvas", "compare_speaker"}
+        assert "stop_feedback" not in _options and "enforce_model_call_limit" not in _options
         return CanvasCompletion(complete=True)
 
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
@@ -3117,7 +3132,179 @@ def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voicep
     assert all(not record.getMessage().startswith((
         "event=refine_voice_review_checked ", "event=refine_voice_review_unresolved ",
         "event=refine_voice_review_completion_rejected ",
+        "event=refine_voice_review_completion_deferred ",
     )) for record in caplog.records)
+
+
+@pytest.mark.parametrize("mode", ["flag", "prefill"])
+@pytest.mark.parametrize("issue", ["missing", "inconsistent", "gate_invalidated"])
+def test_refine_repairs_voice_review_before_completion_without_a_worker_retry(monkeypatch, voiceprint_host, caplog, mode, issue):
+    from unittest.mock import AsyncMock
+    from agent.video_parse_v2.refine.agent import IntervalRefine
+
+    host = voiceprint_host
+    snapshot, lease, _canvas = _voice_review_input(host, mode)
+    inputs = snapshot["inputs"]
+    snapshot["inputs"] = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={
+        "execution": inputs.parse_config.execution.model_copy(update={"max_retry_count": 0}),
+    })})
+    original = snapshot["member_contents"]["member"].model_dump(mode="json")
+    loaded = AsyncMock(return_value=snapshot)
+    committed = AsyncMock(return_value=True)
+    notified = AsyncMock()
+    generated = []
+    monkeypatch.setattr(host.runtime, "load_refine_input", loaded)
+    monkeypatch.setattr(host.runtime, "commit_interval_refinement", committed)
+    monkeypatch.setattr(host.runtime, "notify_interval_committed", notified)
+    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
+    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
+    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", AsyncMock(return_value={"samples": [], "lines": []}))
+
+    async def generate(_binding, _prompt, *, tools, canvas, max_model_calls, **options):
+        generated.append(canvas.id)
+        assert options["enforce_model_call_limit"] is True and options["tool_harness"] == "deepagents"
+        assert max_model_calls == snapshot["inputs"].parse_config.execution.max_model_calls
+        bound = {tool.name: tool for tool in tools}
+        reference = canvas.items("events")[0][0]
+        operation = {"op": "voice_decision", "event_ref": reference,
+                     "decision": "keep" if issue == "gate_invalidated" else "voice_top1",
+                     "reason": "The inspected frame identifies the person speaking."}
+        if issue != "missing":
+            receipt = json.loads(bound["write_context_canvas"].invoke({
+                "batch_id": "first-choice", "expected_revision": canvas.revision, "operations": [operation],
+            }))
+            assert "error" not in receipt
+        checked = json.loads(bound["finish_voiceprint_review"].invoke({"complete": True}))
+        if issue == "gate_invalidated":
+            assert checked["ready"]
+            canvas.write(role="refine", batch_id="edit-after-gate", expected_revision=canvas.revision, operations=[{
+                "op": "patch_event", "event_ref": reference, "fields": {"speaker": "立希"},
+            }])
+            canvas.write(role="refine", batch_id="restore-choice", expected_revision=canvas.revision, operations=[
+                {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爱音"}}, operation,
+            ])
+            assert canvas.voiceprint_review_status()["ready"] and not canvas.voiceprint_review_passed()
+        else:
+            assert checked["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
+            assert checked["error"]["retryable"] and checked["error"]["retry_hint"]
+            assert reference in checked["error"]["message"]
+            assert ("missing_decision" if issue == "missing" else "voice_top1_speaker_mismatch") in checked["error"]["message"]
+        before = canvas.snapshot()
+        feedback = options["stop_feedback"]()
+        assert feedback and "current draft" in feedback and "finish_voiceprint_review" in feedback
+        assert canvas.snapshot() == before
+        committed.assert_not_awaited()
+        if issue != "gate_invalidated":
+            receipt = json.loads(bound["write_context_canvas"].invoke({
+                "batch_id": "correct-choice", "expected_revision": canvas.revision, "operations": [
+                    {"op": "persons", "member_ref": "member", "action": "add", "values": ["爽世"]},
+                    {"op": "event_array", "event_ref": reference, "field": "participants", "action": "add", "values": ["爽世"]},
+                    {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爽世"}}, operation,
+                ],
+            }))
+            assert "error" not in receipt
+        assert json.loads(bound["finish_voiceprint_review"].invoke({"complete": True}))["ready"]
+        assert options["stop_feedback"]() is None
+        return CanvasCompletion(complete=True)
+
+    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
+    caplog.set_level("INFO", logger="server.service.video_parse")
+    asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(snapshot["interval_parse_task_id"]))
+    loaded.assert_awaited_once()
+    committed.assert_awaited_once()
+    notified.assert_awaited_once_with(snapshot)
+    assert len(generated) == 1 and host.state.closed
+    decisions = committed.await_args.kwargs["voiceprint_decisions"]
+    assert len(decisions) == 1
+    assert decisions[0]["decision"] == ("keep" if issue == "gate_invalidated" else "voice_top1")
+    assert decisions[0]["final_speaker"] == ("爱音" if issue == "gate_invalidated" else "爽世")
+    assert snapshot["member_contents"]["member"].model_dump(mode="json") == original
+    assert snapshot["inputs"].parse_config.execution.max_retry_count == 0
+    messages = [record.getMessage() for record in caplog.records]
+    assert sum(message.startswith("event=refine_voice_review_completion_deferred ") for message in messages) == 1
+    assert not any(message.startswith("event=refine_voice_review_completion_rejected ") for message in messages)
+
+
+def test_refine_voice_feedback_reaches_the_running_native_codex_session(monkeypatch, voiceprint_host):
+    from unittest.mock import AsyncMock
+    from agent.video_parse_v2.refine.agent import IntervalRefine
+    from gateway.codex.agent import CodexAgentModel
+    from tests.gateway.test_codex_model import _FakeSession, _turn
+
+    host = voiceprint_host
+    snapshot, lease, _canvas = _voice_review_input(host, "prefill")
+    inputs = snapshot["inputs"]
+    snapshot["inputs"] = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={
+        "execution": inputs.parse_config.execution.model_copy(update={"max_retry_count": 0}),
+        "models": inputs.parse_config.models.model_copy(update={
+            "refine": inputs.parse_config.models.understanding.model_copy(update={
+                "source": "codex_local", "fallback": None, "supports_vision_input": False,
+            }),
+        }),
+    })})
+    sessions = []
+
+    class Session(_FakeSession):
+        def __init__(self, **options):
+            super().__init__([])
+            assert options["max_model_calls"] == snapshot["inputs"].parse_config.execution.max_model_calls
+            self.tools = {tool.name: tool for tool in options["tools"]}
+            sessions.append(self)
+
+        def run_turn(self, prompt, *, output_schema=None):
+            assert not self.closed
+            self.prompts.append((prompt, output_schema))
+            catalog = json.loads(self.tools["get_context_canvas"].invoke({"collection": "events"}))
+            reference = catalog["items"][0]["reference"]
+            decision = {"op": "voice_decision", "event_ref": reference, "decision": "voice_top1",
+                        "reason": "The inspected frame identifies the person speaking."}
+            operations = [decision]
+            if len(self.prompts) == 2:
+                assert reference in prompt and "voice_top1_speaker_mismatch" in prompt
+                operations = [
+                    {"op": "persons", "member_ref": "member", "action": "add", "values": ["爽世"]},
+                    {"op": "event_array", "event_ref": reference, "field": "participants", "action": "add", "values": ["爽世"]},
+                    {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爽世"}}, decision,
+                ]
+            receipt = json.loads(self.tools["write_context_canvas"].invoke({
+                "batch_id": "native-choice-" + str(len(self.prompts)),
+                "expected_revision": catalog["revision"], "operations": operations,
+            }))
+            assert "error" not in receipt
+            checked = json.loads(self.tools["finish_voiceprint_review"].invoke({"complete": True}))
+            if len(self.prompts) == 1:
+                assert checked["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
+            else:
+                assert len(self.prompts) == 2 and checked["ready"]
+            self.tool_call_count += 3
+            self.successful_tool_call_count += 2
+            return _turn('{"complete":true}')
+
+    monkeypatch.setattr("gateway.codex.agent.CodexAgentModel", lambda **options: CodexAgentModel(
+        **options, session_factory=Session,
+    ))
+    host.runtime._gateway_config = load_config()
+    host.runtime._gateway = GatewayClient(host.runtime._gateway_config)
+    committed = AsyncMock(return_value=True)
+    notified = AsyncMock()
+    monkeypatch.setattr(host.runtime, "load_refine_input", AsyncMock(return_value=snapshot))
+    monkeypatch.setattr(host.runtime, "commit_interval_refinement", committed)
+    monkeypatch.setattr(host.runtime, "notify_interval_committed", notified)
+    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
+    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
+    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", AsyncMock(return_value={"samples": [], "lines": []}))
+    try:
+        asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(snapshot["interval_parse_task_id"]))
+    finally:
+        host.runtime._gateway.close()
+    assert len(sessions) == 1 and len(sessions[0].prompts) == 2 and sessions[0].closed
+    assert sessions[0].prompts[0][1] == sessions[0].prompts[1][1]
+    assert sessions[0].prompts[0][1]["properties"]["complete"] == {
+        "type": "boolean", "const": True, "title": "Complete",
+    }
+    committed.assert_awaited_once()
+    notified.assert_awaited_once_with(snapshot)
+    assert committed.await_args.kwargs["voiceprint_decisions"][0]["final_speaker"] == "爽世"
 
 
 @pytest.mark.parametrize("new_method", [False, True])

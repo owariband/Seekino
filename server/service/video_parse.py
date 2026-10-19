@@ -1237,7 +1237,35 @@ class VideoParseRuntimeService:
         )
         tools = self._canvas_tools(canvas)
         voice_review_enabled = snapshot["inputs"].parse_config.voiceprint_mode != "off"
+        stop_feedback = None
         if voice_review_enabled:
+            def voice_review_feedback() -> str:
+                details = canvas.voiceprint_review_diagnostics()
+                return (
+                    "Voice review has not accepted the current Canvas: "
+                    + json.dumps({
+                        "revision": details["revision"], "gate_failure": details["gate_failure"],
+                        "missing_count": len(details["missing"]), "inconsistent_count": len(details["inconsistent"]),
+                        "first_unresolved_event": next(iter(details["events"]), None),
+                    }, ensure_ascii=False, sort_keys=True)
+                    + ". Keep the current draft and successful tool receipts. Resolve the listed decision "
+                    "(edit the speaker only if your decision changes it); review any other conflicts, then call "
+                    "finish_voiceprint_review again before completing."
+                )
+
+            def stop_feedback() -> str | None:
+                manager = self._model_manager.get()
+                if manager is not None:
+                    manager.check_active()
+                if canvas.voiceprint_review_passed():
+                    return None
+                _logger.info(
+                    "event=refine_voice_review_completion_deferred task=%s interval=%s details=%s",
+                    snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                    json.dumps(canvas.voiceprint_review_diagnostics(), ensure_ascii=False, sort_keys=True),
+                )
+                return voice_review_feedback()
+
             def finish_voiceprint_review(*, complete: bool) -> JsonToolResult:
                 del complete
                 manager = self._model_manager.get()
@@ -1254,6 +1282,11 @@ class VideoParseRuntimeService:
                         "event=refine_voice_review_unresolved task=%s interval=%s details=%s",
                         snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
                         json.dumps(canvas.voiceprint_review_diagnostics(), ensure_ascii=False, sort_keys=True),
+                    )
+                    raise AgentToolFeedbackError(
+                        "VOICEPRINT_REVIEW_REQUIRED", voice_review_feedback(),
+                        "Record consistent voice_decisions (edit speakers only when needed), then call "
+                        "finish_voiceprint_review again. Do not complete until the gate succeeds.",
                     )
                 return JsonToolResult(success=True, payload=feedback)
 
@@ -1380,6 +1413,7 @@ class VideoParseRuntimeService:
                 result_type=CanvasCompletion,
                 max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
                 tool_harness="deepagents",
+                **({"stop_feedback": stop_feedback, "enforce_model_call_limit": True} if voice_review_enabled else {}),
             )
             if voice_review_enabled and (canvas.voiceprint_review() is None or not canvas.voiceprint_review_passed()):
                 _logger.info(
@@ -2039,6 +2073,7 @@ class VideoParseRuntimeService:
         max_model_calls: int | None = None,
         enforce_model_call_limit: bool = False,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _Result:
         manager = self._model_manager.get()
         if tools:
@@ -2051,12 +2086,14 @@ class VideoParseRuntimeService:
                 fallback_inputs=fallback_inputs,
                 tool_harness=tool_harness,
                 enforce_model_call_limit=enforce_model_call_limit,
+                **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
             )
         return await self._run_blocking(
             self._invoke_multimodal, binding, inputs,
             schema_name=schema_name, result_type=result_type,
             fallback_inputs=fallback_inputs,
             check_control=manager.check_active if manager is not None else None,
+            **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
         )
 
     async def _generate_text_structured(
@@ -2070,12 +2107,14 @@ class VideoParseRuntimeService:
         enforce_model_call_limit: bool = False,
         canvas: ContextCanvas | None = None,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _Result:
         return await self._generate_multimodal(
             binding, [TextInput(prompt)], schema_name=result_type.__name__,
             result_type=result_type, tools=tools, canvas=canvas, max_model_calls=max_model_calls,
             tool_harness=tool_harness,
             enforce_model_call_limit=enforce_model_call_limit,
+            **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
         )
 
     def _invoke_multimodal(
@@ -2092,6 +2131,7 @@ class VideoParseRuntimeService:
         check_control=None,
         fallback_inputs=None,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _Result:
         definition = ModelBinding.model_validate(binding.model_dump(exclude_none=True))
         requires_vision = any(isinstance(item, (ImageInput, VideoInput)) for item in inputs)
@@ -2118,10 +2158,11 @@ class VideoParseRuntimeService:
             return model.generate(
                 inputs, schema_name=schema_name, result_type=result_type,
                 tools=tools,
-                # Existing task request budgets are enforced by the call manager.
+                # Pass an explicit loop ceiling only for stages that opt into it.
                 max_model_calls=max_model_calls if enforce_model_call_limit else None,
                 check_control=check_control, context_checkpoint=context_checkpoint,
                 fallback_inputs=fallback_inputs, tool_harness=tool_harness,
+                **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
             )
         finally:
             model.close()

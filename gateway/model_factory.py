@@ -155,6 +155,7 @@ class GenerativeModel:
         fallback_inputs: Sequence[MultimodalInput] | None = None,
         fallback_on_error: Callable[[BaseException], bool] | None = None,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _Result:
         from gateway.agent_model.context import preflight_context
         from gateway.agent_model.errors import AgentModelTimeoutError, ModelInputTooLargeError
@@ -166,6 +167,10 @@ class GenerativeModel:
         self._validate_inputs(inputs)
         if tool_harness not in {"legacy", "deepagents"}:
             raise ValueError("unsupported tool_harness")
+        if stop_feedback is not None and not callable(stop_feedback):
+            raise ValueError("stop_feedback must be callable")
+        if stop_feedback is not None and not self._native and not (tools and tool_harness == "deepagents"):
+            raise ValueError("stop_feedback requires a native model or DeepAgents with tools")
         if max_model_calls is not None and (
             isinstance(max_model_calls, bool) or not isinstance(max_model_calls, int) or max_model_calls <= 0
         ):
@@ -230,11 +235,13 @@ class GenerativeModel:
             )
         except ContextWindowOverflow as error:
             raise ModelInputTooLargeError(str(error)) from error
+        feedback_options = {"stop_feedback": stop_feedback} if stop_feedback is not None else {}
         common = dict(
             schema_name=schema_name, result_type=result_type, tools=tools,
             max_model_calls=max_model_calls, request_timeout_seconds=timeout,
             check_control=check_run, context_checkpoint=context_checkpoint,
             context_window_policy=policy, max_input_chars=input_limit,
+            **feedback_options,
         )
         try:
             if isinstance(self._source, ClaudeCodeModelSourceConfig):
@@ -244,6 +251,7 @@ class GenerativeModel:
                         result_type=result_type, max_model_calls=max_model_calls,
                         request_timeout_seconds=timeout, check_control=check_run,
                         context_checkpoint=context_checkpoint, max_input_chars=input_limit,
+                        **feedback_options,
                     )
             elif self._native:
                 with model_call_context({"src": self.binding.source}):
