@@ -105,8 +105,8 @@ export default defineConfig(({ command, mode }) => {
       host: "127.0.0.1",
       port: 5173,
       proxy: {
-        "/api": apiTarget,
-        "/healthz": apiTarget,
+        "/api": { target: apiTarget, changeOrigin: false },
+        "/healthz": { target: apiTarget, changeOrigin: false },
         ...(remote ? { "^/remote(?:/|\\?|$)": remote.options } : {}),
       },
     },

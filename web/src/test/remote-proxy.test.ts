@@ -113,8 +113,8 @@ describe("localhost remote development proxy", () => {
     if (typeof viteConfig !== "function") throw new Error("Vite config must resolve environment values");
     const local = await viteConfig({ command: "serve", mode: "test" });
     expect(local.define?.["import.meta.env.VITE_REMOTE_API_BASE_URL"]).toBe('""');
-    expect(local.server?.proxy?.["/api"]).toMatch(/^http:\/\/127\.0\.0\.1:/);
-    expect(local.server?.proxy?.["/healthz"]).toBe(local.server?.proxy?.["/api"]);
+    expect(local.server?.proxy?.["/api"]).toEqual({ target: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/), changeOrigin: false });
+    expect(local.server?.proxy?.["/healthz"]).toEqual(local.server?.proxy?.["/api"]);
 
     vi.stubEnv("ANIVAG_REMOTE_API_URL", upstreamOrigin);
     const configured = await viteConfig({ command: "serve", mode: "test" });

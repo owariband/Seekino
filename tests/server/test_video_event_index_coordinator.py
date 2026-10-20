@@ -10,6 +10,7 @@ from engine.rag.indexing.events import EventIndexingContract
 from engine.rag.vision.event_frames import EventFrameContract
 from gateway.embedding import EmbeddingResult
 from server.repository.video_parse import INDEX_EMBEDDINGS_DETAIL_KEY
+import server.service.video_parse_index_coordinator as coordinator_module
 from server.service.video_parse_index_coordinator import (
     VideoParseIndexCoordinator, VideoParseIndexCoordinationError,
 )
@@ -223,3 +224,17 @@ def test_lost_successful_bulk_response_completes_after_exact_event_readback(tmp_
     assert service.index_chunk(lease) == "complete"
     assert len(repository.completed) == 1 and len(events.bulk_calls) == 1
     assert embedder.text_calls == 1 and len(embedder.image_calls) == 3
+
+
+@pytest.mark.parametrize(("flush_events", "event_saves"), [(8, 1), (1, 2)])
+def test_event_cache_is_flushed_in_batches_not_per_encoding_step(tmp_path, monkeypatch, flush_events, event_saves):
+    monkeypatch.setattr(coordinator_module, "EVENT_CACHE_FLUSH_EVENTS", flush_events)
+    service,repository,_chunks,events,embedder,lease,_target,_commands,_temporary = _event_setup(tmp_path,event_count=2)
+    assert service.index_chunk(lease) == "complete"
+    assert embedder.text_calls == 2 and len(embedder.image_calls) == 4
+    # Each save rewrites the whole cache row, so one per encoding step grows quadratically.
+    batches = [saved[2]["events"] for saved in repository.saved if "events" in saved[2]]
+    assert len(batches) == event_saves
+    assert sum(len(batch) for batch in batches) == 2
+    assert all("document" in entry for batch in batches for entry in batch.values())
+    assert len(repository.saved) == event_saves + 1  # plus the final Event receipt

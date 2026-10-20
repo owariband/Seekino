@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -52,6 +54,12 @@ from ..storage.elasticsearch import (
 )
 from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_parse_media import MediaLeaseIdentity, VideoParseMediaService
+
+# Every cache save rewrites the Chunk's whole Event cache row, so per-step saves
+# grow quadratically with the Event count. Flush finished Events in batches;
+# a hard crash re-encodes at most one batch.
+EVENT_CACHE_FLUSH_EVENTS = 8
+EVENT_CACHE_FLUSH_SECONDS = 30.0
 
 
 class VideoParseIndexCoordinatorRepository(Protocol):
@@ -252,80 +260,101 @@ class VideoParseIndexCoordinator:
         documents = []
         image_vectors = {}
         identity = MediaLeaseIdentity(snapshot.video_parse_task_id, chunk.chunk_parse_task_id, lease.lease_version)
-        for plan in plans:
-            self._check_active()
-            text_hash = hashlib.sha256(plan.semantic_request.semantic_text.encode("utf-8")).hexdigest()
-            proof = {"contract_id": contract.contract_id, "semantic_input_sha256": text_hash,
-                     "source_media_ref": chunk.source_media_ref}
-            previous = cached.get(plan.event_id)
-            entry = dict(previous) if isinstance(previous, Mapping) and all(
-                previous.get(key) == value for key, value in proof.items()
-            ) else dict(proof)
-            # A completed cache binds the source, exact text, realized frames and encoder contract.
-            restored = None
-            if isinstance(entry.get("document"), Mapping):
-                try:
-                    saved = EventIndexDocument.model_validate(entry["document"])
-                    semantic = accept_embedding_result(plan.semantic_request, modality="text",
-                        model=contract.semantic_encoder.model, vector=saved.semantic_vector)
-                    rebuilt = finalize_event_index(plan, semantic, saved.vision_vector, saved.detail.capture.frames)
-                    if rebuilt == saved:
-                        restored = rebuilt
-                except (TypeError, ValueError):
-                    pass
-            if restored is not None:
-                documents.append(restored)
-                continue
-            semantic = None
-            if entry.get("semantic_vector") is not None:
-                try:
-                    semantic = accept_embedding_result(plan.semantic_request, modality="text",
-                        model=contract.semantic_encoder.model, vector=entry["semantic_vector"])
-                except (TypeError, ValueError):
-                    pass
-            if semantic is None:
-                with parse_chunk_scope(chunk.sequence_no, category="embedding"):
-                    result = self._embedder.embed_text(plan.semantic_request.semantic_text)
-                semantic = _accept_result(plan.semantic_request, result)
-                entry["semantic_vector"] = list(semantic.vector)
-                self._save_representations(lease, chunk, {"events": {plan.event_id: entry}}, receipt=base_receipt)
-            source = self._media_resolver(chunk.source_media_ref)
-            with self._media_service.prepare_event_frames(
-                identity, source_video=source, timestamps_ms=plan.frame_timestamps_ms,
-                max_height=contract.capture.max_height, check_active=self._check_active,
-            ) as paths:
-                frames = tuple(CaptureFrame(requested_at_ms=timestamp, image_sha256=_file_sha256(path))
-                               for timestamp, path in paths)
-                requests = plan_event_frame_embeddings(contract.vision_encoder, frames, contract.capture)
-                frame_cache = entry.get("frame_artifacts", {})
-                frame_cache = dict(frame_cache) if isinstance(frame_cache, Mapping) else {}
-                artifacts = []
-                for request, (_, path) in zip(requests, paths, strict=True):
-                    self._check_active()
-                    key = request.encoder_id + ":" + request.input_sha256
-                    vector = image_vectors.get(key, frame_cache.get(key))
-                    artifact = None
-                    if vector is not None:
-                        try:
-                            artifact = accept_event_frame_embedding(request, modality="image",
-                                model=request.encoder.model, vector=vector)
-                        except (TypeError, ValueError):
-                            pass
-                    if artifact is None:
-                        with parse_chunk_scope(chunk.sequence_no, category="embedding"):
-                            result = self._embedder.embed_image(path)
-                        artifact = accept_event_frame_embedding(request, modality=result.modality,
-                            model=result.model, vector=result.vector)
-                        frame_cache[key] = list(artifact.vector)
-                        entry["frame_artifacts"] = frame_cache
-                        self._save_representations(lease, chunk, {"events": {plan.event_id: entry}}, receipt=base_receipt)
-                    image_vectors[key] = artifact.vector
-                    artifacts.append(artifact)
-                vision = aggregate_event_frame_embeddings(requests, artifacts, contract.capture)
-            document = finalize_event_index(plan, semantic, vision, frames)
-            entry = {**proof, "document": document.as_source()}
-            self._save_representations(lease, chunk, {"events": {plan.event_id: entry}}, receipt=base_receipt)
-            documents.append(document)
+        # Partial Events are kept only in memory and flushed with finished ones
+        # or on failure, so a retry still reuses every vector already encoded.
+        pending: dict[str, dict[str, Any]] = {}
+
+        def flush() -> float:
+            if pending:
+                self._save_representations(lease, chunk, {"events": dict(pending)}, receipt=base_receipt)
+                pending.clear()
+            return time.monotonic()
+
+        flushed_at = time.monotonic()
+        try:
+            for plan in plans:
+                self._check_active()
+                text_hash = hashlib.sha256(plan.semantic_request.semantic_text.encode("utf-8")).hexdigest()
+                proof = {"contract_id": contract.contract_id, "semantic_input_sha256": text_hash,
+                         "source_media_ref": chunk.source_media_ref}
+                previous = cached.get(plan.event_id)
+                entry = dict(previous) if isinstance(previous, Mapping) and all(
+                    previous.get(key) == value for key, value in proof.items()
+                ) else dict(proof)
+                # A completed cache binds the source, exact text, realized frames and encoder contract.
+                restored = None
+                if isinstance(entry.get("document"), Mapping):
+                    try:
+                        saved = EventIndexDocument.model_validate(entry["document"])
+                        semantic = accept_embedding_result(plan.semantic_request, modality="text",
+                            model=contract.semantic_encoder.model, vector=saved.semantic_vector)
+                        rebuilt = finalize_event_index(plan, semantic, saved.vision_vector, saved.detail.capture.frames)
+                        if rebuilt == saved:
+                            restored = rebuilt
+                    except (TypeError, ValueError):
+                        pass
+                if restored is not None:
+                    documents.append(restored)
+                    continue
+                semantic = None
+                if entry.get("semantic_vector") is not None:
+                    try:
+                        semantic = accept_embedding_result(plan.semantic_request, modality="text",
+                            model=contract.semantic_encoder.model, vector=entry["semantic_vector"])
+                    except (TypeError, ValueError):
+                        pass
+                if semantic is None:
+                    with parse_chunk_scope(chunk.sequence_no, category="embedding"):
+                        result = self._embedder.embed_text(plan.semantic_request.semantic_text)
+                    semantic = _accept_result(plan.semantic_request, result)
+                    entry["semantic_vector"] = list(semantic.vector)
+                    pending[plan.event_id] = entry
+                source = self._media_resolver(chunk.source_media_ref)
+                with self._media_service.prepare_event_frames(
+                    identity, source_video=source, timestamps_ms=plan.frame_timestamps_ms,
+                    max_height=contract.capture.max_height, check_active=self._check_active,
+                ) as paths:
+                    frames = tuple(CaptureFrame(requested_at_ms=timestamp, image_sha256=_file_sha256(path))
+                                   for timestamp, path in paths)
+                    requests = plan_event_frame_embeddings(contract.vision_encoder, frames, contract.capture)
+                    frame_cache = entry.get("frame_artifacts", {})
+                    frame_cache = dict(frame_cache) if isinstance(frame_cache, Mapping) else {}
+                    artifacts = []
+                    for request, (_, path) in zip(requests, paths, strict=True):
+                        self._check_active()
+                        key = request.encoder_id + ":" + request.input_sha256
+                        vector = image_vectors.get(key, frame_cache.get(key))
+                        artifact = None
+                        if vector is not None:
+                            try:
+                                artifact = accept_event_frame_embedding(request, modality="image",
+                                    model=request.encoder.model, vector=vector)
+                            except (TypeError, ValueError):
+                                pass
+                        if artifact is None:
+                            with parse_chunk_scope(chunk.sequence_no, category="embedding"):
+                                result = self._embedder.embed_image(path)
+                            artifact = accept_event_frame_embedding(request, modality=result.modality,
+                                model=result.model, vector=result.vector)
+                            frame_cache[key] = list(artifact.vector)
+                            entry["frame_artifacts"] = frame_cache
+                            pending[plan.event_id] = entry
+                        image_vectors[key] = artifact.vector
+                        artifacts.append(artifact)
+                    vision = aggregate_event_frame_embeddings(requests, artifacts, contract.capture)
+                document = finalize_event_index(plan, semantic, vision, frames)
+                entry = {**proof, "document": document.as_source()}
+                pending[plan.event_id] = entry
+                if (len(pending) >= EVENT_CACHE_FLUSH_EVENTS
+                        or time.monotonic() - flushed_at >= EVENT_CACHE_FLUSH_SECONDS):
+                    flushed_at = flush()
+                documents.append(document)
+        except Exception:
+            # Best effort: the original failure (often a lost lease) wins.
+            with contextlib.suppress(Exception):
+                flush()
+            raise
+        flush()
         self._check_active()
         if not store.verify_ready(documents):
             try:

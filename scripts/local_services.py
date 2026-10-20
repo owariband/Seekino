@@ -247,6 +247,9 @@ def start_mysql(settings: ServerSettings) -> None:
             mysqld, "--no-defaults", f"--datadir={datadir}", "--bind-address=127.0.0.1",
             f"--port={mysql_port}", f"--socket={socket_path}",
             f"--pid-file={STATE / 'mysql-server.pid'}", "--mysqlx=OFF",
+            "--binlog-expire-logs-seconds=604800",  # Keep seven days of binary logs.
+            # Log only changed columns (FULL if CDC is added); compress transactions.
+            "--binlog-row-image=MINIMAL", "--binlog-transaction-compression=ON",
         ])
         wait_ready("mysql", lambda: listening(mysql_port))
 

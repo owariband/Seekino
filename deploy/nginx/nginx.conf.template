@@ -1,0 +1,61 @@
+worker_processes 1;
+pid nginx.pid;
+error_log error.log warn;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    types {
+        text/html html;
+        text/css css;
+        application/javascript js mjs;
+        application/json json;
+        application/wasm wasm;
+        image/svg+xml svg;
+        image/png png;
+        image/jpeg jpg jpeg;
+        image/webp webp;
+        image/x-icon ico;
+        font/woff woff;
+        font/woff2 woff2;
+    }
+    default_type application/octet-stream;
+    access_log off;
+    sendfile on;
+    client_body_temp_path client_temp;
+    proxy_temp_path proxy_temp;
+
+    server {
+        listen @BIND@:@PORT@ ssl;
+        server_name localhost;
+        ssl_certificate seekino-certs/site.pem;
+        ssl_certificate_key seekino-certs/site-key.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_cache shared:TLS:1m;
+
+        # Uploads use 8 MiB chunks; allow room for multipart overhead.
+        client_max_body_size 32m;
+        client_body_timeout 120s;
+
+        location ~ ^/(api(?:/|$)|healthz$) {
+            # No URI suffix: preserve /api and keep media authorization upstream.
+            proxy_pass http://127.0.0.1:@API_PORT@;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_buffering off;
+            proxy_read_timeout 1800s;
+            proxy_send_timeout 1800s;
+        }
+
+        root "@WEB_ROOT@";
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}

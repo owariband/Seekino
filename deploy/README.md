@@ -1,4 +1,10 @@
-# 可选：Docker 数据库 + 本地应用
+# 部署与本地运行
+
+已有原生 MySQL、Elasticsearch 和 Python 环境时，可以继续使用；HTTPS 入口不要求
+Docker。macOS 的 Nginx 安装、本地证书、8443 入口与手机信任步骤见
+[原生 Nginx 本地 HTTPS](nginx/README.md)。Nginx 独立于 Python API 和 Vite 运行。
+
+## 可选：Docker 数据库 + 本地应用
 
 根目录 `compose.yaml` 默认运行 MySQL 8.4 和 Elasticsearch 8.19.22。
 Python Server（含 V2 Parse Consumer）、Vite、ffmpeg、模型 SDK 在宿主机运行。
@@ -101,6 +107,60 @@ CLI search 使用同一套 V2 检索。`./start.sh` 要求 ES 集群为 yellow/g
 仅复制索引不能作为完整备份。
 容器没有代码或模型密钥挂载；数据库端口仅绑定 `127.0.0.1`。
 MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose 用于本地开发。
+
+## MySQL binlog
+
+The binlog stays on: replicas, point-in-time recovery and any future CDC depend
+on it. Both `compose.yaml` and the native MySQL started by `./start.sh`
+(`scripts/local_services.py`) run with the same settings, so local runs show the
+binlog growth production would see:
+
+| Setting | Local value | Why |
+|---|---|---|
+| `binlog_expire_logs_seconds` | `604800` (7 days) | Caps disk use. In production, match the backup / PITR window instead. |
+| `binlog_row_image` | `MINIMAL` | The before image holds only the primary key and the after image only the changed columns, so a timestamp-only update no longer copies a large `JSON` `detail`. A changed JSON column is still logged in full. `NOBLOB` is not enough here: it skips TEXT/BLOB but not `JSON` (see below). |
+| `binlog_transaction_compression` | `ON` | zstd-compresses each transaction payload (MySQL ≥ 8.0.20); JSON-encoded vectors compress about 4×. |
+
+Measured on MySQL 8.4.11 with one row holding ~176 KB of float-like text,
+updating only a `BIGINT` timestamp (binlog bytes per UPDATE):
+
+| Large column type | `FULL` | `FULL` + compression | `NOBLOB` | `NOBLOB` + compression | `MINIMAL` |
+|---|---:|---:|---:|---:|---:|
+| `LONGTEXT` | 352,384 | 80,222 | 315 | 272 | 303 |
+| `JSON` | 352,453 | 80,249 | 352,453 | 80,249 | 298 |
+
+So for this schema only `MINIMAL` stops unchanged JSON from being logged, and
+compression is the only lever that works with `FULL`; both are enabled. The application avoids
+needless large-JSON rewrites (batched Event cache saves; no `update_time`-only
+task updates), which matters under every row image.
+
+Production equivalents:
+
+- Self-managed MySQL: put the same three keys under `[mysqld]` in `my.cnf`
+  (`binlog_expire_logs_seconds`, `binlog_row_image = MINIMAL`,
+  `binlog_transaction_compression = ON`). Both of the last two are dynamic, so
+  `SET PERSIST` also works without a restart.
+- Managed MySQL (RDS / Aurora / Cloud SQL / ApsaraDB, etc.): set them in the
+  instance parameter group. Retention there is usually the provider's own setting
+  (for example RDS `binlog retention hours`), not `binlog_expire_logs_seconds`.
+- `MINIMAL` keeps replication and PITR working; every table here has a primary
+  key, which `MINIMAL` row matching relies on (keep it that way for new tables).
+- **If CDC is added, switch back to `binlog_row_image = FULL`.** Debezium and
+  most CDC connectors require full row images, and so do binlog-based
+  row-rollback / flashback tools. Keep compression on and rely on the
+  application-side write limits to keep `FULL` affordable.
+
+Check the live values with:
+
+```bash
+mysql -uroot -h127.0.0.1 -e "SHOW VARIABLES WHERE Variable_name IN ('log_bin','binlog_row_image','binlog_transaction_compression','binlog_expire_logs_seconds');"
+```
+
+Reclaim space from old logs (discards PITR history before that point):
+
+```bash
+mysql -uroot -h127.0.0.1 -e "PURGE BINARY LOGS BEFORE NOW() - INTERVAL 1 HOUR;"
+```
 
 ## 停止、重启和日志
 
