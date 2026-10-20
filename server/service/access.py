@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager, suppress
 import time
-from typing import Iterator
+from typing import Iterator, Literal
 from uuid import uuid4
 
 from redis.exceptions import RedisError
 
 from ..model.dto.authDTO import AuthIdentity
+from ..model.dto.libraryDTO import SeriesState
+from ..model.video import SeriesVisibility
 from ..error.auth import AuthError
 from .auth import AuthService
 
@@ -39,16 +41,24 @@ def require_admin(identity: AuthIdentity) -> None:
     raise AuthError("此功能需要管理员权限", status_code=403, code="PERMISSION_DENIED")
 
 
-def require_series_read(identity: AuthIdentity, series) -> None:
-    require_tenant_read(identity, series.tenant_id)
-    if identity.mode == "local" or series.tenant_id != identity.public_tenant_id:
-        return
+def is_series_member(identity: AuthIdentity, tenant_id: str) -> bool:
+    return identity.mode == "local" or tenant_id == identity.tenant_id or (
+        tenant_id == identity.public_tenant_id and identity.role == "admin"
+        and identity.auth_level == "email" and not identity.is_guest
+    )
+
+
+def series_access(identity: AuthIdentity, series: SeriesState) -> Literal["member", "public"]:
+    if is_series_member(identity, series.tenant_id):
+        return "member"
     status = getattr(series.status, "value", series.status)
     if not (
-        series.is_published and status == "READY" and series.video_count > 0
+        series.visibility == SeriesVisibility.PUBLIC and series.publisher_active
+        and status == "READY" and series.video_count > 0
         and series.ready_video_count == series.video_count and series.pending_upload_count == 0
     ):
         raise AuthError("请求的资源不存在或无法访问", status_code=404, code="NOT_FOUND")
+    return "public"
 
 
 _ADMIT_QUERY = """

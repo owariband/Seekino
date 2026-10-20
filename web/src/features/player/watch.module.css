@@ -154,6 +154,13 @@
 .seriesCards { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(240px, 28%, 400px); gap: clamp(18px, 1.6vw, 32px); overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scroll-padding-inline: 4px; scroll-margin-top: calc(var(--app-header-height, 76px) + 32px); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding: 4px 4px 18px; margin: -4px; }
 .seriesCard, .seriesCardActive { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 0 0 12px; color: var(--ink); border-bottom: 2px solid transparent; background: transparent; cursor: pointer; text-align: left; scroll-snap-align: start; }
 .seriesCardActive { border-bottom-color: var(--teal); }
+.seriesCardLink { display: grid; gap: 14px; min-width: 0; color: inherit; text-decoration: none; }
+.seriesCardLink > span:last-child { display: grid; gap: 7px; }
+.seriesCardFooter { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.publisher { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.publisher small { overflow-wrap: anywhere; }
+.publisherAvatar { position: relative; display: grid; width: 28px; height: 28px; flex-shrink: 0; place-items: center; overflow: hidden; color: var(--teal-deep); border-radius: 50%; background: var(--teal-wash); font-size: .72rem; }
+.publisherAvatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .seriesCover { position: relative; display: grid; width: 100%; aspect-ratio: 16 / 10; overflow: hidden; place-items: center; color: var(--teal-deep); border-radius: 5px; background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--line); transition: transform 180ms ease, box-shadow 180ms ease; }
 .seriesFrame { position: absolute; inset: 0; }
 .seriesCard:hover .seriesCover, .seriesCardActive:hover .seriesCover { transform: translateY(-3px); box-shadow: var(--shadow-small); }

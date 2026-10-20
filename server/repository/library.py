@@ -11,7 +11,7 @@ from ..constants.identity import LOCAL_USER_ID
 
 from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
 from ..model.dto.jobDTO import VideoChunkCheckpointState
-from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesState, VideoSummaryState
+from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoSummaryState
 from ..model.index_sync import IndexSyncIntent, IndexSyncOperation, IndexSyncStatus
 from ..model.job import (
     SeriesParseJob,
@@ -21,8 +21,11 @@ from ..model.job import (
 )
 from ..model.job_progress import calculate_checkpoint_progress
 from ..model.upload import UploadSession
+from ..model.tenant import Tenant
+from ..model.user import User
 from ..model.video import (
     Series,
+    SeriesVisibility,
     VideoIndexStatus,
     Video,
     VideoChunk,
@@ -31,6 +34,7 @@ from ..model.video import (
 from ..utils.media import stored_keyframe_uri
 from ..utils.time import now_utc
 from .index_sync import list_ready_video_ids
+from .identity import default_public_nickname
 from .upload import UploadRepository
 from .video_parse import (
     VideoParseConflictError,
@@ -138,7 +142,7 @@ class LibraryRepository:
             if record is None:
                 raise SeriesNotFoundError("Series does not exist in this workspace")
             for field in (
-                "display_name", "description", "transcript_language_hint", "important_extra_data", "is_published",
+                "display_name", "description", "transcript_language_hint", "important_extra_data", "visibility",
             ):
                 if field in changes:
                     setattr(record, field, changes[field])
@@ -248,15 +252,17 @@ class LibraryRepository:
 
     def list_series(
         self,
-        tenant_id: str,
+        tenant_id: str | None,
         *,
         status: str | None = None,
         query: str | None = None,
         offset: int = 0,
         limit: int | None = None,
-        published_only: bool = False,
+        public_only: bool = False,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> list[SeriesState]:
+        if tenant_id is None and not public_only:
+            raise ValueError("tenant_id is required for private Series listings")
         with self._session_factory() as session:
             statement = (
                 select(Series)
@@ -267,8 +273,8 @@ class LibraryRepository:
                 ))
                 .order_by(Series.create_time, Series.id)
             )
-            if published_only:
-                statement = statement.where(Series.is_published.is_(True))
+            if public_only:
+                statement = statement.where(Series.visibility == SeriesVisibility.PUBLIC.value)
             if self._execution_mode == "v1":
                 records = session.scalars(
                     statement.offset(offset).limit(limit)
@@ -337,8 +343,8 @@ class LibraryRepository:
             return states[0]
 
     @staticmethod
-    def _series_filters(tenant_id: str, *, status: str | None, query: str | None):
-        filters = [Series.tenant_id == tenant_id]
+    def _series_filters(tenant_id: str | None, *, status: str | None, query: str | None):
+        filters = [Series.tenant_id == tenant_id] if tenant_id is not None else []
         if status:
             filters.append(Series.status == status)
         if query:
@@ -356,9 +362,33 @@ class LibraryRepository:
         if not records:
             return []
         series_ids = [record.id for record in records]
-        videos = self._video_states(
-            session, tenant_id=records[0].tenant_id, series_ids=series_ids,
-        )
+        series_by_tenant: dict[str, list[str]] = {}
+        for record in records:
+            series_by_tenant.setdefault(record.tenant_id, []).append(record.id)
+        videos = [
+            video
+            for tenant_id, tenant_series_ids in series_by_tenant.items()
+            for video in self._video_states(session, tenant_id=tenant_id, series_ids=tenant_series_ids)
+        ]
+        publishers: dict[str, tuple[SeriesPublisherState, bool]] = {}
+        for tenant, owner in session.execute(
+            select(Tenant, User).outerjoin(User, User.id == Tenant.owner_id)
+            .where(Tenant.id.in_(series_by_tenant))
+        ):
+            if tenant.type == "public":
+                publishers[tenant.id] = (
+                    SeriesPublisherState(kind="platform", display_name=tenant.name),
+                    tenant.status == "ACTIVE",
+                )
+            elif owner is not None:
+                nickname = owner.nickname.strip()
+                email = (owner.email or "").casefold()
+                if not nickname or nickname.casefold() in {email, email.partition("@")[0][:100]}:
+                    nickname = default_public_nickname(owner.id)
+                publishers[tenant.id] = (
+                    SeriesPublisherState(kind="user", display_name=nickname),
+                    tenant.status == "ACTIVE" and owner.status == "ACTIVE" and not owner.is_anonymous,
+                )
         ready_video_ids = (
             set(list_ready_video_ids(session, series_ids))
             if self._execution_mode == "v1"
@@ -370,9 +400,10 @@ class LibraryRepository:
         )
         pending = dict(session.execute(
             select(UploadSession.series_id, func.count(UploadSession.id))
+            .join(Series, Series.id == UploadSession.series_id)
             .where(
                 UploadSession.series_id.in_(series_ids),
-                UploadSession.tenant_id == records[0].tenant_id,
+                UploadSession.tenant_id == Series.tenant_id,
                 UploadSession.status.not_in({"COMPLETED", "EXPIRED", "CANCELLED"}),
                 (UploadSession.status != "UPLOADING")
                 | (UploadSession.expire_time > now_utc()),
@@ -384,7 +415,7 @@ class LibraryRepository:
             select(AgentMessage)
             .join(AgentConversation)
             .where(
-                AgentConversation.tenant_id == records[0].tenant_id,
+                AgentConversation.tenant_id.in_(series_by_tenant),
                 AgentConversation.owner_id == owner_user_id,
                 AgentMessage.role == AgentMessageRole.USER.value,
             )
@@ -431,6 +462,8 @@ class LibraryRepository:
                     (video for video in videos if video.series_id == record.id and video.keyframe_uris),
                     None,
                 ),
+                publisher=publishers.get(record.tenant_id, (None, False))[0],
+                publisher_active=publishers.get(record.tenant_id, (None, False))[1],
             )
             for record in records
         ]
@@ -661,6 +694,8 @@ class LibraryRepository:
         pending_upload_count: int = 0,
         last_search: SeriesLastSearchState | None = None,
         representative_video: VideoSummaryState | None = None,
+        publisher: SeriesPublisherState | None = None,
+        publisher_active: bool = False,
     ) -> SeriesState:
         return SeriesState(
             series_id=record.id,
@@ -679,7 +714,9 @@ class LibraryRepository:
             last_search=last_search,
             created_at=record.create_time,
             updated_at=record.update_time,
-            is_published=record.is_published,
+            visibility=SeriesVisibility(record.visibility),
+            publisher=publisher,
+            publisher_active=publisher_active,
             representative_video=representative_video,
             videos=videos,
         )

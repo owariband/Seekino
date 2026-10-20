@@ -122,7 +122,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
     setError(null);
     setNotice(null);
     try {
-      const asset = await uploadSeriesImage(series.seriesId, file, controller.signal);
+      const asset = await uploadSeriesImage(series.seriesId, file, controller.signal, series.tenantId);
       if (controller.signal.aborted) return;
       setAssets((value) => ({ ...value, [asset.imageId]: asset }));
       setFailedImages((value) => value.filter((id) => id !== asset.imageId));
@@ -141,7 +141,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
     event.preventDefault();
     if (busy || !changed || mode !== "live") return;
     setError(null);
-    const changes: Omit<SeriesUpdateRequest, "tenantId"> = { seriesId: series.seriesId };
+    const changes: SeriesUpdateRequest = { seriesId: series.seriesId, tenantId: series.tenantId };
     if (draft.displayName.trim() !== baseline.displayName.trim()) changes.displayName = draft.displayName.trim() || null;
     if (draft.description.trim() !== baseline.description.trim()) changes.description = draft.description.trim() || null;
     if (draft.transcriptLanguageHint.trim() !== baseline.transcriptLanguageHint.trim()) {
@@ -166,6 +166,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
     }
   };
 
+  if (series.access !== "member") return null;
   return (
     <section className={readOnly ? styles.backgroundReadOnly : styles.background} aria-label={t("系列背景资料")}>
       {!readOnly ? <div className={styles.backgroundHeading}>

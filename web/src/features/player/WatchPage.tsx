@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router";
 
-import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
+import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
 import type { WatchPanelLayout } from "../../app/AppShell";
 import { episodeLabel, episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
@@ -12,11 +12,9 @@ import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
 import { PlaybackFrame } from "./PlaybackFrame";
 import { useI18n } from "../../app/i18n";
+import { seriesPath, watchPath } from "../library/seriesLinks";
+import { useAuth } from "../auth/AuthProvider";
 import styles from "./watch.module.css";
-
-function watchPath(seriesId: string, videoId: string): string {
-  return `/watch/${encodeURIComponent(seriesId)}/${encodeURIComponent(videoId)}`;
-}
 
 const PANEL_WIDTH_KEY = "anivag-watch-panel-width";
 const MIN_PANEL_WIDTH = 320;
@@ -47,8 +45,11 @@ function WatchPanelPortal({ children }: { children: ReactNode }) {
 
 export function WatchPage() {
   const { t, locale } = useI18n();
+  const { canManage } = useAuth();
   const { seriesId, videoId } = useParams();
   const { search } = useLocation();
+  const searchParams = new URLSearchParams(search);
+  const tenantId = searchParams.get("tenantId") || TENANT_ID;
   const navigate = useNavigate();
   const setWatchPanelLayout = useOutletContext<Dispatch<SetStateAction<WatchPanelLayout>> | undefined>();
   const pageRef = useRef<HTMLElement>(null);
@@ -70,8 +71,8 @@ export function WatchPage() {
   const visiblePanelWidth = Math.min(panelWidth, maxPanelWidth);
   const [pageFullscreen, setPageFullscreen] = useState(false);
   const seriesQuery = useQuery({
-    queryKey: ["series-detail", seriesId],
-    queryFn: () => getSeries(seriesId!),
+    queryKey: ["series-detail", seriesId, tenantId],
+    queryFn: () => getSeries(seriesId!, tenantId),
     enabled: Boolean(seriesId),
     retry: shouldRetryApiRequest,
   });
@@ -83,7 +84,6 @@ export function WatchPage() {
   const selected = selectedIndex >= 0 ? episodes[selectedIndex]! : null;
   const followingEpisodes = selectedIndex >= 0 ? episodes.slice(selectedIndex + 1) : episodes;
   const suggestedEpisodes = followingEpisodes.length ? followingEpisodes : episodes;
-  const searchParams = new URLSearchParams(search);
   const rawAtSeconds = searchParams.get("atSeconds");
   const parsedAtSeconds = rawAtSeconds !== null && /^\d+$/.test(rawAtSeconds) ? Number(rawAtSeconds) : undefined;
   const explicitAtSeconds = parsedAtSeconds !== undefined && Number.isSafeInteger(parsedAtSeconds) ? parsedAtSeconds : undefined;
@@ -293,20 +293,20 @@ export function WatchPage() {
           onPointerDownCapture={(event) => { if (event.button === 0) captureExtraContext(); }}
           onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}
         >
-          <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} captureExtraContext={captureExtraContext} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
-            navigate(`${watchPath(targetSeriesId, targetVideoId)}?atSeconds=${startSeconds}`);
+          <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} initialSeries={series} captureExtraContext={captureExtraContext} onOpenVideo={({ tenantId: targetTenantId, seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
+            navigate(`${watchPath({ tenantId: targetTenantId, seriesId: targetSeriesId }, targetVideoId)}&atSeconds=${startSeconds}`);
           }} onSeekCurrent={selected ? (positionMs) => {
-            navigate(`${watchPath(selected.seriesId, selected.videoId)}?atSeconds=${positionMs}`);
+            navigate(`${watchPath(series, selected.videoId)}&atSeconds=${positionMs}`);
           } : undefined} />
         </div>
         <div id="watch-episodes-panel" className={styles.episodePanel} role="tabpanel" aria-labelledby="watch-episodes-tab" hidden={panelTab !== "episodes"}>
-          <h2>{t("选集")} <span><small>{t("{count} 集", { count: episodes.length })}</small><Link to="/library">{t("调整集数")}</Link></span></h2>
+          <h2>{t("选集")} <span><small>{t("{count} 集", { count: episodes.length })}</small>{canManage && series.access === "member" ? <Link to="/library">{t("调整集数")}</Link> : null}</span></h2>
           <ol className={styles.episodeList}>
             {episodes.map((episode) => (
               <li key={episode.videoId}>
-                <Link to={watchPath(seriesId, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
+                <Link to={watchPath(series, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
                   <span>{episodeLabel(episode.episodeOrder)}</span>
-                  <strong title={episode.originalFilename}>{episodeTitle(episode.episodeOrder, locale)}</strong>
+                  <strong title={episode.originalFilename ?? undefined}>{episodeTitle(episode.episodeOrder, locale)}</strong>
                   <small>{formatTimecode(episode.durationSeconds)} · {episode.playbackStatus === "READY" ? t("可播放") : t("播放未就绪")}</small>
                 </Link>
               </li>
@@ -317,27 +317,27 @@ export function WatchPage() {
       </WatchPanelPortal>
       <div className={styles.watchDetails}>
         <section className={styles.watchSynopsis} aria-label={t("视频简介")}>
-          <Link className={styles.seriesName} to={`/series/${encodeURIComponent(seriesId)}`}>{seriesTitle(series)}<ChevronRight size={18} aria-hidden="true" /></Link>
-          <h1 title={selected?.originalFilename}>{selected ? episodeTitle(selected.episodeOrder, locale) : seriesTitle(series)}</h1>
+          <Link className={styles.seriesName} to={seriesPath(series)}>{seriesTitle(series)}<ChevronRight size={18} aria-hidden="true" /></Link>
+          <h1 title={selected?.originalFilename ?? undefined}>{selected ? episodeTitle(selected.episodeOrder, locale) : seriesTitle(series)}</h1>
           <div className={styles.videoMeta}><span>{selected ? formatTimecode(selected.durationSeconds) : null}</span><span>{t("共 {count} 集", { count: episodes.length })}</span></div>
           {series.description ? <p>{series.description}</p> : null}
           {selected ? <nav className={styles.neighbors} aria-label={t("切换集数")}>
-            {selectedIndex > 0 ? <Link to={watchPath(seriesId, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />{t("上一集")}</Link> : null}
-            {selectedIndex < episodes.length - 1 ? <Link to={watchPath(seriesId, episodes[selectedIndex + 1]!.videoId)}>{t("下一集")}<ChevronRight size={16} /></Link> : null}
+            {selectedIndex > 0 ? <Link to={watchPath(series, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />{t("上一集")}</Link> : null}
+            {selectedIndex < episodes.length - 1 ? <Link to={watchPath(series, episodes[selectedIndex + 1]!.videoId)}>{t("下一集")}<ChevronRight size={16} /></Link> : null}
           </nav> : null}
         </section>
         <section className={styles.upNext} aria-label={t("后续集数")}>
           <h2>{followingEpisodes.length ? t("接下来") : t("本系列选集")}</h2>
           <ol className={styles.nextEpisodes}>
             {suggestedEpisodes.map((episode) => <li key={episode.videoId}>
-              <Link to={watchPath(seriesId, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
+              <Link to={watchPath(series, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
                 <span className={styles.nextPreview} aria-hidden="true">
                   <Clapperboard size={24} strokeWidth={1} />
                   {episode.thumbnail ? <img src={mediaUrl(episode.thumbnail.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
                     : episode.playbackStatus === "READY" && episode.playbackUrl ? <PlaybackFrame className={styles.seriesFrame} src={mediaUrl(episode.playbackUrl)} positionSeconds={previewFramePosition(episode.durationSeconds)} /> : null}
                   <span className={styles.nextPlay}><Play size={17} fill="currentColor" /></span>
                 </span>
-                <span className={styles.nextTitle}><small>{episodeLabel(episode.episodeOrder)}{episode.videoId === selected?.videoId ? t(" · 当前集") : ""}</small><strong title={episode.originalFilename}>{episodeTitle(episode.episodeOrder, locale)}</strong><span>{formatTimecode(episode.durationSeconds)}{episode.playbackStatus !== "READY" ? t(" · 播放未就绪") : ""}</span></span>
+                <span className={styles.nextTitle}><small>{episodeLabel(episode.episodeOrder)}{episode.videoId === selected?.videoId ? t(" · 当前集") : ""}</small><strong title={episode.originalFilename ?? undefined}>{episodeTitle(episode.episodeOrder, locale)}</strong><span>{formatTimecode(episode.durationSeconds)}{episode.playbackStatus !== "READY" ? t(" · 播放未就绪") : ""}</span></span>
               </Link>
             </li>)}
           </ol>

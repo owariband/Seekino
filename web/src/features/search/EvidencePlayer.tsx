@@ -6,6 +6,7 @@ import type { DisplayMode, VideoChunkEvidence, VideoChunkSearchHit } from "../..
 import { episodeLabel, formatTimeRange, formatTimecode, formatTimeText } from "../../shared/format";
 import { explainHit, readableTranscript } from "./explain";
 import { useI18n } from "../../app/i18n";
+import { watchPath } from "../library/seriesLinks";
 import styles from "./search.module.css";
 
 type EvidenceTab = "reason" | "evidence" | "context";
@@ -216,7 +217,7 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
           <h2>{evidence.seriesName}</h2>
           <p>{t("片段范围 {range}", { range: formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds) })}</p>
         </div>
-        {playbackUrl ? <a className="button-quiet" href={`/watch/${encodeURIComponent(evidence.seriesId)}/${encodeURIComponent(evidence.videoId)}?atSeconds=${playbackRange.startSeconds}`}>{t("在整集中观看")}</a> : null}
+        {playbackUrl ? <a className="button-quiet" href={`${watchPath(evidence, evidence.videoId)}&atSeconds=${playbackRange.startSeconds}`}>{t("在整集中观看")}</a> : null}
       </div>
 
       {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}

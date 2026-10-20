@@ -29,7 +29,7 @@ class VideoChunkEvidenceView(ContractModel):
     series_status: str
     video_id: str
     episode_order: int
-    original_filename: str
+    original_filename: str | None = None
     duration_seconds: int
     video_chunk_id: str
     sequence_no: int

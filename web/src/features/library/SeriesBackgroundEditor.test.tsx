@@ -11,6 +11,7 @@ vi.mock("../../app/workspace", () => ({ useWorkspace: () => mocks }));
 vi.mock("../../api/client", async (importOriginal) => ({ ...await importOriginal<typeof import("../../api/client")>(), uploadSeriesImage: mocks.uploadSeriesImage }));
 
 const series: SeriesView = {
+  visibility: "private", access: "member", publisher: null,
   seriesId: "series-a", tenantId: "local-default", name: "MyGO", description: "现有简介", status: "EMPTY",
   transcriptLanguageHint: null,
   importantExtraData: null, characterBible: [], videos: [], pendingUploads: [], videoCount: 0, readyVideoCount: 0,
@@ -32,6 +33,12 @@ beforeEach(() => {
 });
 
 describe("Series background editing", () => {
+  it("does not expose private background to a public viewer", () => {
+    render(<SeriesBackgroundEditor series={{ ...series, access: "public", importantExtraData: { content: "private notes" } }} />);
+    expect(screen.queryByText("private notes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "编辑背景" })).not.toBeInTheDocument();
+  });
+
   it("renders Markdown headings, images and descriptions in their original positions without a duplicate gallery", () => {
     const content = "## `mygo.tomori` — 高松灯\n\n![高松灯官方立绘](asset://simg_tomori)\n\n- 声优：**羊宫妃那**\n- 乐队职责：主唱 `Vo.`\n\n## 千早爱音\n\n![爱音官方立绘](asset://simg_anon)\n\n- 乐队职责：吉他";
     const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { format: "markdown", content } }} />);
@@ -110,7 +117,7 @@ describe("Series background editing", () => {
     expect(JSON.parse(body.value)).toEqual(old);
     fireEvent.change(screen.getByRole("textbox", { name: "简介" }), { target: { value: "新简介" } });
     await user.click(screen.getByRole("button", { name: "保存背景" }));
-    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({ seriesId: "series-a", description: "新简介" }));
+    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({ tenantId: "local-default", seriesId: "series-a", description: "新简介" }));
   });
 
   it("updates and clears the ASR transcript language independently", async () => {
@@ -119,7 +126,7 @@ describe("Series background editing", () => {
     await user.type(language, "ja");
     await user.click(screen.getByRole("button", { name: "保存背景" }));
     await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({
-      seriesId: "series-a",
+      tenantId: "local-default", seriesId: "series-a",
       transcriptLanguageHint: "ja",
     }));
 
@@ -130,7 +137,7 @@ describe("Series background editing", () => {
     await user.clear(screen.getByRole("combobox", { name: "ASR 原文语言" }));
     await user.click(screen.getByRole("button", { name: "保存背景" }));
     await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({
-      seriesId: "series-a",
+      tenantId: "local-default", seriesId: "series-a",
       transcriptLanguageHint: null,
     }));
   });
@@ -140,7 +147,7 @@ describe("Series background editing", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "正文格式" }), "json");
     fireEvent.change(body, { target: { value: content } });
     await user.click(screen.getByRole("button", { name: "保存背景" }));
-    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({ seriesId: "series-a", importantExtraData: { format: "json", content } }));
+    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({ tenantId: "local-default", seriesId: "series-a", importantExtraData: { format: "json", content } }));
   });
 
   it("rejects invalid JSON without losing the draft or sending a save", async () => {
@@ -157,12 +164,12 @@ describe("Series background editing", () => {
     const { user, body } = await openEditor({ seriesBible: "原始背景" });
     fireEvent.change(body, { target: { value: " \n# 背景\n " } });
     await user.click(screen.getByRole("button", { name: "保存背景" }));
-    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({ seriesId: "series-a", importantExtraData: { format: "markdown", content: " \n# 背景\n " } }));
+    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({ tenantId: "local-default", seriesId: "series-a", importantExtraData: { format: "markdown", content: " \n# 背景\n " } }));
     await user.click(screen.getByRole("button", { name: "编辑背景" }));
     fireEvent.change(screen.getByRole("textbox", { name: "简介" }), { target: { value: "" } });
     await user.click(screen.getByRole("button", { name: "清空背景" }));
     await user.click(screen.getByRole("button", { name: "保存背景" }));
-    await waitFor(() => expect(mocks.updateSeries).toHaveBeenLastCalledWith({ seriesId: "series-a", description: null, importantExtraData: null }));
+    await waitFor(() => expect(mocks.updateSeries).toHaveBeenLastCalledWith({ tenantId: "local-default", seriesId: "series-a", description: null, importantExtraData: null }));
   });
 
   it("keeps the editor open and draft intact when the backend rejects a reference", async () => {
@@ -182,7 +189,7 @@ describe("Series background editing", () => {
     const file = new File(["image-bytes"], "reference.png", { type: "image/png" });
     await user.upload(screen.getByLabelText("选择背景参考图"), file);
     await waitFor(() => expect(body).toHaveValue("前![灯](asset://simg_uploaded)后"));
-    expect(mocks.uploadSeriesImage).toHaveBeenCalledWith("series-a", file, expect.any(AbortSignal));
+    expect(mocks.uploadSeriesImage).toHaveBeenCalledWith("series-a", file, expect.any(AbortSignal), "local-default");
     expect(screen.getByRole("img", { name: "背景参考图" })).toHaveAttribute("src", asset.url);
     expect(body).toHaveFocus();
     expect(body.selectionStart).toBe("前![灯](asset://simg_uploaded)".length);

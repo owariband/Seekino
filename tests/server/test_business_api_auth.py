@@ -84,7 +84,7 @@ _ROUTES = [
     ("GET", "/api/uploads/get", {"uploadSessionId": "upload"}),
     ("POST", "/api/uploads/create", {"seriesId": "series"}),
     ("POST", "/api/uploads/delete", {"uploadSessionId": "upload"}),
-    ("POST", "/api/uploads/retry-parse", {"uploadSessionId": "upload", "expectedJobVersion": 1}),
+    ("POST", "/api/uploads/retry-parse", {"uploadSessionId": "upload", "expectedJobVersion": 1, "expectedLeaseVersion": 0}),
     ("POST", "/api/uploads/reparse", {"uploadSessionId": "upload", "expectedJobVersion": 1}),
     ("PUT", "/api/uploads/segments/upload", {"uploadSessionId": "upload", "segmentNumber": 0}),
     ("POST", "/api/uploads/complete", {"uploadSessionId": "upload"}),
@@ -194,7 +194,7 @@ def test_upload_creation_and_reexecution_take_actor_from_identity(monkeypatch):
     monkeypatch.setattr(uploads_api, "project_video_parse_task", lambda task: task)
     body = UploadSessionCreateRequest.model_validate({**_UPLOAD_BODY, "tenantId": "personal-tenant"})
     assert uploads_api.create_upload_session(body, _request(app), series_id="series", idempotency_key="key") == "detail"
-    assert uploads_api.retry_upload_parse(_request(app), upload_session_id="upload", tenant_id="personal-tenant", expected_job_version=1) == "task"
+    assert uploads_api.retry_upload_parse(_request(app), upload_session_id="upload", tenant_id="personal-tenant", expected_job_version=1, expected_lease_version=0) == "task"
     assert uploads_api.reparse_upload(_request(app), upload_session_id="upload", tenant_id="personal-tenant", expected_job_version=1) == "task"
     assert calls[0][1]["created_by_user_id"] == "verified-user"
     assert all(kwargs["actor_user_id"] == "verified-user" for _, kwargs in calls[1:])

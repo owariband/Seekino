@@ -8,6 +8,7 @@ from ..constants.identity import LOCAL_USER_ID
 
 from ..model.identifiers import derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
+from ..model.video import SeriesVisibility
 from ..repository.library import LibraryRepository
 from ..storage.artifact import ArtifactStore
 from ..utils.validation import canonical_uuid, normalize_language_tag_hint, require_nonempty_text
@@ -62,11 +63,11 @@ class LibraryService:
         series = self.get_series(series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
         if changes.keys() - {
             "display_name", "description", "transcript_language_hint", "important_extra_data",
-            "is_published",
+            "visibility",
         }:
             raise ValueError(
                 "only display_name, description, transcript_language_hint, "
-                "important_extra_data and is_published can be updated"
+                "important_extra_data and visibility can be updated"
             )
         normalized = dict(changes)
         if "display_name" in normalized and normalized["display_name"] is not None:
@@ -74,10 +75,12 @@ class LibraryService:
             if not isinstance(display_name, str) or len(display_name.strip()) > 255:
                 raise ValueError("display_name must be text up to 255 characters or null")
             normalized["display_name"] = display_name.strip() or None
-        if "is_published" in normalized:
-            if not isinstance(normalized["is_published"], bool):
-                raise ValueError("is_published must be a boolean")
-            if normalized["is_published"] and (
+        if "visibility" in normalized:
+            try:
+                normalized["visibility"] = SeriesVisibility(normalized["visibility"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError("visibility must be private or public") from exc
+            if normalized["visibility"] == SeriesVisibility.PUBLIC and (
                 series.status != "READY" or series.video_count == 0
                 or series.ready_video_count != series.video_count or series.pending_upload_count > 0
             ):
@@ -157,7 +160,7 @@ class LibraryService:
         query: str | None = None,
         offset: int = 0,
         limit: int | None = None,
-        published_only: bool = False,
+        public_only: bool = False,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> list[SeriesState]:
         if status is not None and status not in {"EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"}:
@@ -169,25 +172,30 @@ class LibraryService:
         return self._repository.list_series(
             require_nonempty_text(tenant_id, "tenant_id"),
             status=status, query=query.strip() if query else None, offset=offset, limit=limit,
-            published_only=published_only, owner_user_id=owner_user_id,
+            public_only=public_only, owner_user_id=owner_user_id,
         )
 
     def list_public_series_page(
-        self, *, tenant_id: str, media: MediaService, owner_user_id: str,
+        self, *, tenant_id: str | None, media: MediaService, owner_user_id: str,
         status: str | None = None, query: str | None = None, offset: int = 0, limit: int = 50,
     ) -> tuple[list[SeriesState], int]:
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("offset must be a nonnegative integer")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        candidates = self.list_series(
-            tenant_id=tenant_id, status=status, query=query,
-            published_only=True, owner_user_id=owner_user_id,
+        if status is not None and status not in {"EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"}:
+            raise ValueError("status is not a supported Series status")
+        candidates = self._repository.list_series(
+            tenant_id=None if tenant_id is None else require_nonempty_text(tenant_id, "tenant_id"),
+            status=status, query=query.strip() if query else None,
+            public_only=True, owner_user_id=owner_user_id,
         )
         visible: list[SeriesState] = []
         for candidate in candidates:
-            state = self.get_series(candidate.series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
-            if media.publication_ready(state):
+            if not candidate.publisher_active:
+                continue
+            state = self.get_series(candidate.series_id, tenant_id=candidate.tenant_id, owner_user_id=owner_user_id)
+            if state.publisher_active and media.publication_ready(state):
                 visible.append(state)
         return visible[offset:offset + limit], len(visible)
 

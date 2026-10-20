@@ -2,6 +2,7 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Kino } from "./Kino";
+import { takePerch } from "./handoff";
 
 const svg = () => document.querySelector<SVGSVGElement>("svg[data-kino]")!;
 const state = () => svg().getAttribute("data-kino-state");
@@ -45,6 +46,31 @@ describe("Kino", () => {
     expect(state()).toBe("idle");
     view.rerender(<Kino state="idle" reaction={{ name: "happy", key: 2 }} onReactionEnd={onEnd} />);
     expect(state()).toBe("happy");
+  });
+
+  it("leaves no perch behind if it goes before it has faded in, so Kino leaps from where it was last seen", () => {
+    const stage = document.createElement("div");
+    stage.setAttribute("data-kino-stage", "");
+    document.body.append(stage);
+    const spot = () => stage.appendChild(document.createElement("div"));
+    try {
+      const welcome = render(<Kino perch />, { container: spot() });
+      const seen = svg();
+      welcome.unmount();
+      // The connecting row's Kino fades in after a delay; this one leaves before anyone saw it.
+      const connecting = render(<Kino perch delayed />, { container: spot() });
+      act(() => { vi.advanceTimersByTime(200); });
+      connecting.unmount();
+      expect(takePerch(stage)?.svg).toBe(seen);
+
+      const shown = render(<Kino perch delayed />, { container: spot() });
+      act(() => { vi.advanceTimersByTime(500); });
+      const late = svg();
+      shown.unmount();
+      expect(takePerch(stage)?.svg).toBe(late);
+    } finally {
+      stage.remove();
+    }
   });
 
   it("leaps from the old perch under gravity: up a little, then an accelerating fall onto its spot", () => {

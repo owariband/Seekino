@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from uuid import uuid4
 
 from sqlalchemy import select, update
@@ -12,6 +13,10 @@ from ..model.agent import AgentConversation
 from ..model.tenant import Tenant
 from ..model.user import User
 from ..utils.time import now_utc
+
+
+def default_public_nickname(user_id: str) -> str:
+    return f"用户-{sha256(user_id.encode()).hexdigest()[:10]}"
 
 
 class IdentityRepository:
@@ -67,7 +72,7 @@ class IdentityRepository:
                     if target is None:
                         target = guest
                         guest.email, guest.is_anonymous, guest.is_superuser = email, False, role == "admin"
-                        guest.nickname = email.partition("@")[0][:100]
+                        guest.nickname = default_public_nickname(guest.id)
                     elif target.status != "ACTIVE" or target.is_anonymous:
                         raise IdentityDeniedError("account is unavailable")
                     guest.auth_version += 1

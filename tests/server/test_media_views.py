@@ -166,6 +166,20 @@ def test_search_view_preserves_actual_scope_rank_and_media_diagnostics(repositor
         search_result_view(raw, service, tenant_id="foreign")
 
 
+def test_public_search_and_chunk_projection_hide_original_filename(repository, prepared_import, tmp_path):
+    raw = domain_result(repository, prepared_import)
+    service, _client, _source, _frame, _state, _probe = media_fixture(tmp_path)
+    original = raw.hits[0].evidence.original_filename
+    assert original
+    member = search_result_view(raw, service, tenant_id=prepared_import.tenant_id)
+    public = search_result_view(raw, service, tenant_id=prepared_import.tenant_id, public_view=True)
+    chunk, _ = evidence_view(raw.hits[0].evidence, service, tenant_id=prepared_import.tenant_id, public_view=True)
+    assert member.hits[0].evidence.original_filename == original
+    assert public.hits[0].evidence.original_filename is None
+    assert chunk.original_filename is None
+    assert public.hits[0].evidence.video_chunk_id == member.hits[0].evidence.video_chunk_id
+
+
 @pytest.mark.parametrize("partial", [False, True])
 def test_search_view_supports_video_preview_without_registered_frames(
     repository, prepared_import, tmp_path, partial,

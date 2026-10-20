@@ -21,7 +21,10 @@ from server.model.job import (
     VideoParseTask,
 )
 from server.model.upload import UploadSession
-from server.model.video import Series, VideoChunkEmbedding, Video
+from server.model.tenant import Tenant
+from server.model.user import User
+from server.model.video import Series, SeriesVisibility, VideoChunkEmbedding, Video
+from server.repository.identity import default_public_nickname
 from server.repository.library import (
     LibraryRepository,
     SeriesNotFoundError,
@@ -412,6 +415,151 @@ def test_series_page_counts_filters_and_cursor_bind_actual_query(repository, tmp
         library_api.list_series(request, "local-default", first.next_cursor, 1, "EMPTY", "Other")
     with pytest.raises(ValueError, match="cursor"):
         library_api.list_series(request, "other", first.next_cursor, 1, "EMPTY", "Match")
+
+
+@pytest.mark.parametrize("nickname", ["", "Legacy", "legacy@example.com", "自选昵称"])
+def test_series_publisher_uses_owner_and_hides_email_defaults(repository, nickname):
+    factory, _videos, library = _library(repository)
+    owner_id = str(uuid4())
+    with factory.begin() as session:
+        session.add(User(id=owner_id, email="legacy@example.com", is_anonymous=False, nickname=nickname))
+        session.flush()
+        session.add_all([
+            Tenant(id="personal", owner_id=owner_id, type="personal", name="个人资料"),
+            Tenant(id="platform", type="public", name="Seekino"),
+        ])
+    personal = library.create_series(tenant_id="personal", name="Personal")
+    platform = library.create_series(tenant_id="platform", name="Platform")
+    orphan = library.create_series(tenant_id="missing-tenant", name="Orphan")
+    assert personal.publisher.kind == "user"
+    assert personal.publisher.display_name == (
+        "自选昵称" if nickname == "自选昵称" else default_public_nickname(owner_id)
+    )
+    assert personal.publisher_active
+    assert platform.publisher.kind == "platform" and platform.publisher.display_name == "Seekino"
+    assert platform.publisher_active
+    assert orphan.publisher is None and not orphan.publisher_active
+
+    with factory.begin() as session:
+        session.get(User, owner_id).status = "DISABLED"
+        session.get(Tenant, "platform").status = "DISABLED"
+    assert not library.get_series(personal.series_id, tenant_id="personal").publisher_active
+    assert not library.get_series(platform.series_id, tenant_id="platform").publisher_active
+    with factory.begin() as session:
+        owner = session.get(User, owner_id)
+        owner.status, owner.is_anonymous, owner.email = "ACTIVE", True, None
+    assert not library.get_series(personal.series_id, tenant_id="personal").publisher_active
+    with factory.begin() as session:
+        session.get(User, owner_id).is_anonymous = False
+        session.get(Tenant, "personal").status = "DISABLED"
+    assert not library.get_series(personal.series_id, tenant_id="personal").publisher_active
+
+
+def test_global_public_candidates_keep_tenant_facts_and_viewer_history(repository, tmp_path):
+    factory, _videos, _library_service = _library(repository)
+    repository = LibraryRepository(factory, execution_mode="v2")
+    library = LibraryService(repository)
+    store = LocalArtifactStore(tmp_path / "artifacts", environment=DatabaseEnvironment.TEST)
+    media = MediaService(library, store, probe_playback=lambda _path: True)
+    viewer_id, owner_id = str(uuid4()), str(uuid4())
+    with factory.begin() as session:
+        session.add_all([
+            User(id=viewer_id, is_anonymous=False, nickname="Viewer"),
+            User(id=owner_id, is_anonymous=False, nickname="Owner"),
+        ])
+        session.flush()
+        session.add_all([
+            Tenant(id="first", owner_id=owner_id, type="personal", name="First"),
+            Tenant(id="second", owner_id=owner_id, type="personal", name="Second"),
+        ])
+    first = library.create_series(tenant_id="first", name="One")
+    second = library.create_series(tenant_id="second", name="Two")
+    library.create_series(tenant_id="second", name="Private")
+    with factory.begin() as session:
+        for series in (first, second):
+            session.get(Series, series.series_id).visibility = SeriesVisibility.PUBLIC
+            for episode in range(1, 2 if series == first else 3):
+                video_id = str(uuid4())
+                staged = store.put_upload_segment(str(uuid4()), 0, b"video")
+                original = store.publish_original(
+                    staged, series_id=series.series_id, video_id=video_id, original_filename=f"{episode}.mp4",
+                )
+                session.add(Video(
+                    id=video_id, series_id=series.series_id, episode_order=episode, upload_sequence=episode,
+                    filename=f"{episode}.mp4", source_uri=original.uri, hash=str(uuid4()),
+                    size_bytes=1, duration_ms=1_000, upload_status="COMPLETED", parse_status="COMPLETE",
+                    upload_progress=100, parse_progress=100,
+                ))
+                session.flush()
+                _add_prefix_task(session, video_id=video_id)
+            for actor, question in ((viewer_id, f"viewer:{series.tenant_id}"), (owner_id, "owner secret")):
+                conversation_id = str(uuid4())
+                session.add(AgentConversation(
+                    id=conversation_id, tenant_id=series.tenant_id, owner_id=actor,
+                    title=question, idempotency_key=conversation_id,
+                ))
+                session.flush()
+                session.add(AgentMessage(
+                    id=str(uuid4()), conversation_id=conversation_id, sequence_no=0,
+                    role="USER", status="COMPLETED", content=question, series_ids=[series.series_id],
+                ))
+    pending_upload = UploadRepository(factory).create_session(
+        tenant_id="second", series_id=second.series_id, episode_order=3,
+        original_filename="pending.mp4", media_type="video/mp4", total_size_bytes=1,
+        preferred_segment_size_bytes=1, total_segments=1, idempotency_key="pending",
+        expires_at=now_utc() + timedelta(days=1), now=now_utc(),
+        parse_config=default_video_parse_v2_config().model_dump(mode="json"),
+    )
+    states = {item.series_id: item for item in repository.list_series(
+        None, public_only=True, owner_user_id=viewer_id,
+    )}
+    assert set(states) == {first.series_id, second.series_id}
+    assert (states[first.series_id].video_count, states[first.series_id].ready_video_count) == (1, 1)
+    assert (states[second.series_id].video_count, states[second.series_id].ready_video_count) == (2, 2)
+    assert states[first.series_id].pending_upload_count == 0
+    assert states[second.series_id].pending_upload_count == 1
+    for series in (first, second):
+        assert states[series.series_id].last_search.query == f"viewer:{series.tenant_id}"
+        assert states[series.series_id].publisher.display_name == "Owner"
+    with pytest.raises(ValueError, match="tenant_id"):
+        repository.list_series(None)
+
+    page, total = library.list_public_series_page(
+        tenant_id=None, media=media, owner_user_id=viewer_id,
+    )
+    assert total == 1 and [item.series_id for item in page] == [first.series_id]
+    with factory.begin() as session:
+        upload = session.get(UploadSession, pending_upload.upload_session_id)
+        upload.status, upload.active_slot_key = "EXPIRED", None
+    page, total = library.list_public_series_page(
+        tenant_id=None, media=media, owner_user_id=viewer_id, offset=1, limit=1,
+    )
+    assert total == 2 and len(page) == 1
+    page, total = library.list_public_series_page(
+        tenant_id="second", media=media, owner_user_id=viewer_id,
+    )
+    assert total == 1 and page[0].series_id == second.series_id
+    store.resolve(library.get_series(first.series_id, tenant_id="first").videos[0].original_source_uri).unlink()
+    with factory.begin() as session:
+        session.get(Tenant, "second").status = "DISABLED"
+    page, total = library.list_public_series_page(
+        tenant_id=None, media=media, owner_user_id=viewer_id,
+    )
+    assert page == [] and total == 0
+
+
+def test_visibility_update_validates_values_and_keeps_new_series_private(repository):
+    _factory, _videos, library = _library(repository)
+    series = library.create_series(tenant_id="local-default", name="Visibility")
+    assert series.visibility == SeriesVisibility.PRIVATE
+    for invalid in (None, True, "team", "PUBLIC"):
+        with pytest.raises(ValueError, match="visibility"):
+            library.update_series(series.series_id, tenant_id=series.tenant_id, changes={"visibility": invalid})
+    with pytest.raises(ValueError, match="ready"):
+        library.update_series(series.series_id, tenant_id=series.tenant_id, changes={"visibility": "public"})
+    assert library.update_series(
+        series.series_id, tenant_id=series.tenant_id, changes={"visibility": "private"},
+    ).visibility == SeriesVisibility.PRIVATE
 
 
 def test_background_edit_preserves_video_order_and_character_metadata(repository, prepared_import):

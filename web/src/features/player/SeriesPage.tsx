@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ChevronDown, Clapperboard, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 
-import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
+import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
 import { episodeLabel, episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
-import { useAuth } from "../auth/AuthProvider";
 import { readBackground, SeriesBackgroundEditor } from "../library/SeriesBackgroundEditor";
+import { SeriesActionsMenu } from "../library/SeriesActionsMenu";
+import { watchPath } from "../library/seriesLinks";
 import { PlaybackFrame } from "./PlaybackFrame";
 import { readWatchHistory } from "./playbackProgress";
 import { useI18n } from "../../app/i18n";
@@ -16,11 +17,12 @@ import styles from "./series.module.css";
 export function SeriesPage() {
   const { t, locale } = useI18n();
   const { seriesId } = useParams();
+  const [searchParams] = useSearchParams();
+  const tenantId = searchParams.get("tenantId") || TENANT_ID;
   const pageRef = useRef<HTMLElement>(null);
-  const { canManage } = useAuth();
   const [watchHistory, setWatchHistory] = useState(() => readWatchHistory());
   const seriesQuery = useQuery({
-    queryKey: ["series-detail", seriesId], queryFn: () => getSeries(seriesId!),
+    queryKey: ["series-detail", seriesId, tenantId], queryFn: () => getSeries(seriesId!, tenantId),
     enabled: Boolean(seriesId), retry: shouldRetryApiRequest,
   });
   useEffect(() => {
@@ -29,6 +31,7 @@ export function SeriesPage() {
     pageRef.current?.scrollIntoView?.({ block: "start", behavior: "instant" });
   }, [seriesId]);
   const series = seriesQuery.data;
+  const canManage = series?.access === "member";
   // The background document is written for parsing models, not viewers; only managers see it.
   const hasParseNotes = Boolean(series && (readBackground(series.importantExtraData).content.trim() || series.characterBible.length));
   const episodes = [...(series?.videos ?? [])].sort((a, b) => a.episodeOrder - b.episodeOrder || a.uploadSequence - b.uploadSequence);
@@ -48,13 +51,22 @@ export function SeriesPage() {
         <section className={styles.hero} aria-label={t("系列介绍")}>
           <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(featured?.playbackUrl ?? null)} positionSeconds={framePosition}
             poster={mediaUrl(series.cover?.url ?? featured?.thumbnail?.url ?? null)} />
-          <Link className={styles.back} to="/watch"><ArrowLeft size={17} aria-hidden="true" />{t("全部系列")}</Link>
+          <div className={styles.heroToolbar}>
+            <Link className={styles.back} to="/watch"><ArrowLeft size={17} aria-hidden="true" />{t("全部系列")}</Link>
+            <SeriesActionsMenu series={series} />
+          </div>
           <div className={styles.heroContent}>
             <span className={styles.eyebrow}>{t("视频系列")}</span>
             <h1>{seriesTitle(series)}</h1>
             <div className={styles.meta}><span>{t("共 {count} 集", { count: episodes.length })}</span>{featured ? <span>{recent ? t("上次观看") : t("从这里开始")} · {episodeTitle(featured.episodeOrder, locale)}</span> : null}</div>
+            {series.visibility === "public" && series.publisher ? <div className={styles.publisher}>
+              <span className={styles.publisherAvatar} aria-hidden="true">{series.publisher.displayName.slice(0, 1).toUpperCase()}
+                {series.publisher.avatar ? <img src={mediaUrl(series.publisher.avatar.url) ?? undefined} alt="" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+              </span>
+              <span>{t("{name} 分享", { name: series.publisher.displayName })}</span>
+            </div> : null}
             <div className={styles.actions}>
-              {featured ? <Link className={styles.play} to={`/watch/${encodeURIComponent(series.seriesId)}/${encodeURIComponent(featured.videoId)}`}>
+              {featured ? <Link className={styles.play} to={watchPath(series, featured.videoId)}>
                 <Play size={21} fill="currentColor" aria-hidden="true" />{recent ? t("继续观看") : t("开始观看")}
               </Link> : <span className={styles.unavailable}>{t("暂无可播放的剧集")}</span>}
               {episodes.length > 0 ? <a className={styles.browse} href="#series-episodes">{t("查看剧集")}<ChevronDown size={18} aria-hidden="true" /></a> : null}
@@ -93,11 +105,11 @@ export function SeriesPage() {
                   <span className={styles.duration}>{formatTimecode(episode.durationSeconds)}</span>
                   {watched > 0 && episode.durationSeconds > 0 ? <span className={styles.watched} style={{ width: `${watched / episode.durationSeconds * 100}%` }} /> : null}
                 </span>
-                <strong title={episode.originalFilename}>{episodeTitle(episode.episodeOrder, locale)}</strong>
+                <strong title={episode.originalFilename ?? undefined}>{episodeTitle(episode.episodeOrder, locale)}</strong>
                 {!available ? <small>{t("暂不可播放")}</small> : watched > 0 ? <small>{t("已看至 {time}", { time: formatTimecode(watched) })}</small> : null}
               </>;
               return <li key={episode.videoId}>{available
-                ? <Link className={styles.episode} to={`/watch/${encodeURIComponent(series.seriesId)}/${encodeURIComponent(episode.videoId)}`}>{content}</Link>
+                ? <Link className={styles.episode} to={watchPath(series, episode.videoId)}>{content}</Link>
                 : <div className={styles.episode} aria-disabled="true">{content}</div>}</li>;
             })}
           </ol>}

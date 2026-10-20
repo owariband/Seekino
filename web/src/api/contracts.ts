@@ -28,6 +28,7 @@ export interface DataSource {
 export type ThemeMode = "light" | "dark";
 
 export type SeriesStatus = "EMPTY" | "INDEXING" | "PARTIAL" | "READY" | "FAILED";
+export type SeriesVisibility = "private" | "public";
 export type UnixTimeMs = number;
 // Media positions and durations named *Seconds are safe integer milliseconds.
 // ParseConfig window/fallback durations and request timeouts remain configuration seconds.
@@ -73,8 +74,8 @@ export interface VideoSummary {
   seriesId: string;
   episodeOrder: number;
   uploadSequence: number;
-  originalFilename: string;
-  totalBytes: number;
+  originalFilename: string | null;
+  totalBytes: number | null;
   /** Integer milliseconds; the field name is retained for compatibility. */
   durationSeconds: number;
   uploadStatus: string;
@@ -96,8 +97,22 @@ export interface VideoEpisodeUpdateRequest {
   episodeOrder: number;
 }
 
+export interface ParseExportRequest {
+  tenantId: string;
+  videoIds: string[];
+  eventTypes?: string[];
+}
+
+export interface ParseExportSummary {
+  record_count: number;
+  event_count: number;
+  skipped: { no_matching_events: number };
+}
+
 export interface SeriesSummary {
-  isPublished?: boolean;
+  visibility: SeriesVisibility;
+  access: "member" | "public";
+  publisher: { kind: "user" | "platform"; displayName: string; avatar: ImageAsset | null } | null;
   seriesId: string;
   tenantId: string;
   /** Stable import key; the series id derives from it. */
@@ -139,7 +154,7 @@ export interface SeriesBackground {
 }
 
 export interface SeriesUpdateRequest {
-  isPublished?: boolean;
+  visibility?: SeriesVisibility;
   tenantId: string;
   seriesId: string;
   displayName?: string | null;
@@ -468,7 +483,7 @@ export interface VideoChunkEvidence {
   seriesStatus: SeriesStatus;
   videoId: string;
   episodeOrder: number;
-  originalFilename: string;
+  originalFilename: string | null;
   /** Duration and all media bounds below use integer milliseconds. */
   durationSeconds: number;
   videoChunkId: string;
@@ -720,6 +735,7 @@ export interface AgentMessageRunOptions {
 
 export interface AgentMessageSendRequest extends AgentMessageRunOptions {
   tenantId: string;
+  sourceTenantId?: string;
   content: string;
   seriesIds: string[];
   reference: EvidenceReference | null;

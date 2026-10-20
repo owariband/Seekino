@@ -10,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -78,10 +79,17 @@ class VideoIndexStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class SeriesVisibility(StrEnum):
+    PRIVATE = "private"
+    PUBLIC = "public"
+
+
 class Series(BaseModel):
     __tablename__ = "series"
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_series_tenant_name"),
+        CheckConstraint("visibility IN ('private', 'public')", name="ck_series_visibility"),
+        Index("ix_series_visibility_created", "visibility", "create_time", "id"),
         MYSQL_TABLE_OPTIONS,
     )
 
@@ -93,7 +101,10 @@ class Series(BaseModel):
     description: Mapped[str | None] = mapped_column(LONG_TEXT)
     transcript_language_hint: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    visibility: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=SeriesVisibility.PRIVATE,
+        server_default=SeriesVisibility.PRIVATE,
+    )
     important_extra_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     character_bible: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON,

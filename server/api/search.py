@@ -7,7 +7,7 @@ from engine.rag.contracts import VideoChunkSearchEvidence
 from .context import get_identity, get_services, revalidate_identity
 from .library import read_series
 from ..config.retrieval import RetrievalConfig
-from ..service.access import model_query, require_tenant_read
+from ..service.access import is_series_member, model_query, require_tenant_read
 from ..model.dto.mediaDTO import PlaybackMedia
 from ..model.dto.searchDTO import VideoSearchRequest
 from ..model.vo.searchVO import (
@@ -30,12 +30,12 @@ def search_video_chunks(
 ) -> SearchResultView:
     services = get_services(request)
     identity = get_identity(request)
-    require_tenant_read(identity, body.tenant_id)
     config = getattr(request.app.state, "retrieval_config", RetrievalConfig())
     top_k = config.search_default_top_k if body.top_k is None else body.top_k
     series_ids = list(body.series_ids)
     if identity.mode == "cloud":
         if not series_ids:
+            require_tenant_read(identity, body.tenant_id)
             if body.tenant_id == identity.public_tenant_id:
                 states, _total = services.library.list_public_series_page(
                     tenant_id=body.tenant_id, media=services.media, owner_user_id=identity.user_id, limit=100,
@@ -60,19 +60,23 @@ def search_video_chunks(
             body.query, tenant_id=body.tenant_id, series_ids=series_ids, top_k=top_k,
         )
     if identity.mode == "cloud":
-        request.state.identity = revalidate_identity(request)
+        identity = request.state.identity = revalidate_identity(request)
         result = _validated_search_result(result)
         services.media.require_series_access(
             request.state.identity,
             [*result.series_ids, *(hit.evidence.series_id for hit in result.hits)],
             tenant_id=body.tenant_id,
         )
-    return search_result_view(result, services.media, tenant_id=body.tenant_id)
+    return search_result_view(
+        result, services.media, tenant_id=body.tenant_id,
+        public_view=not is_series_member(identity, body.tenant_id),
+    )
 
 
 def evidence_view(
     evidence: VideoChunkEvidence, media: MediaService, *, tenant_id: str,
     playback: PlaybackMedia | None = None,
+    public_view: bool = False,
 ) -> tuple[VideoChunkEvidenceView, list[str]]:
     if evidence.tenant_id != tenant_id:
         from ..repository.library import SeriesNotFoundError
@@ -110,7 +114,7 @@ def evidence_view(
         tenant_id=evidence.tenant_id, series_id=evidence.series_id,
         series_name=evidence.series_name, series_status=evidence.series_status,
         video_id=evidence.video_id, episode_order=evidence.episode_order,
-        original_filename=evidence.original_filename, duration_seconds=evidence.duration_seconds,
+        original_filename=None if public_view else evidence.original_filename, duration_seconds=evidence.duration_seconds,
         video_chunk_id=evidence.video_chunk_id, sequence_no=evidence.sequence_no,
         start_seconds=evidence.start_seconds, end_seconds=evidence.end_seconds,
         analysis_window_start_seconds=evidence.analysis_window_start_seconds,
@@ -132,14 +136,16 @@ def evidence_view(
 
 def search_evidence_view(
     result: VideoChunkSearchResult | dict, media: MediaService, *, tenant_id: str,
+    public_view: bool = False,
 ) -> SearchEvidenceView:
     result = _validated_search_result(result)
-    evidence = search_evidence_fields(result, media, tenant_id=tenant_id)
+    evidence = search_evidence_fields(result, media, tenant_id=tenant_id, public_view=public_view)
     return SearchEvidenceView(**evidence.model_dump(), query=result.query)
 
 
 def search_evidence_fields(
     result: VideoChunkSearchEvidence | dict, media: MediaService, *, tenant_id: str,
+    public_view: bool = False,
 ) -> SearchEvidenceFieldsView:
     if isinstance(result, dict):
         result = VideoChunkSearchEvidence.model_validate({
@@ -161,7 +167,10 @@ def search_evidence_fields(
             raise SeriesNotFoundError("片段资源不存在")
         if source.video_id not in playback_by_video:
             playback_by_video[source.video_id] = media.playback_view(source.video_id, tenant_id=tenant_id, video=source)
-        evidence, limitations = evidence_view(source, media, tenant_id=tenant_id, playback=playback_by_video[source.video_id])
+        evidence, limitations = evidence_view(
+            source, media, tenant_id=tenant_id, playback=playback_by_video[source.video_id],
+            public_view=public_view,
+        )
         warnings.extend(f"片段 {source.video_chunk_id}：{message}" for message in limitations)
         reason = hit.selection_reason.model_copy(update={
             "matched_evidence": [],
@@ -182,9 +191,10 @@ def search_evidence_fields(
 
 def search_result_view(
     result: VideoChunkSearchResult | dict, media: MediaService, *, tenant_id: str,
+    public_view: bool = False,
 ) -> SearchResultView:
     result = _validated_search_result(result)
-    evidence = search_evidence_view(result, media, tenant_id=tenant_id)
+    evidence = search_evidence_view(result, media, tenant_id=tenant_id, public_view=public_view)
     return SearchResultView(
         **evidence.model_dump(), agent_reply=result.agent_reply,
     )

@@ -4,6 +4,7 @@ import {
   agentMessagesEventsUrl,
   ApiClientError,
   errorMessage,
+  exportParsedVideos,
   completeUpload,
   clearDataSource,
   configureAccountIdentity,
@@ -21,6 +22,7 @@ import {
   getAgentMessageOptions,
   getJob,
   getParseConfig,
+  getParseExportOptions,
   getRuntimeConfig,
   getUsageOverview,
   getSeries,
@@ -33,6 +35,7 @@ import {
   listAllVideoParseTasks,
   listVideoParseTasks,
   listSeries,
+  listPublicSeries,
   logoutIdentity,
   mediaUrl,
   PRIMARY_CONNECTION,
@@ -63,9 +66,79 @@ const localIdentity: AuthIdentity = {
   mode: "local", csrfToken: "", permissions: { canUpload: true, canManage: true, canConfigure: true },
 };
 afterEach(() => {
+  clearDataSource();
   configureApiIdentity(localIdentity, "local-default");
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+describe("parsed data export", () => {
+  const summary = { record_count: 2, event_count: 7, skipped: { no_matching_events: 1 } };
+  const request = { tenantId: "owner-tenant", videoIds: ["video-a"], eventTypes: ["DIALOGUE"] };
+
+  it("loads available types from the requested tenant", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ eventTypes: ["DIALOGUE", "FUTURE_EVENT"] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await expect(getParseExportOptions("owner/tenant", controller.signal)).resolves.toEqual({ eventTypes: ["DIALOGUE", "FUTURE_EVENT"] });
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/videos/parse/export/options?tenantId=owner%2Ftenant");
+    controller.abort();
+    expect(fetchMock.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+  });
+
+  it("downloads a blob with the active credentials and reads only header summary JSON", async () => {
+    configureApiIdentity({ ...localIdentity, mode: "cloud", csrfToken: "export-csrf", tenantId: "owner-tenant" }, "owner-tenant");
+    const content = '{"text":"爱音：你好"}\n{"text":"灯：你好"}\n';
+    const response = new Response(content, { headers: { "Content-Type": "application/x-ndjson", "X-Export-Summary": JSON.stringify(summary) } });
+    const readJson = vi.spyOn(response, "json");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await exportParsedVideos(request);
+    expect(await result.blob.text()).toBe(content);
+    expect(result.summary).toEqual(summary);
+    expect(result.filename).toBe("parse-export.jsonl");
+    expect(readJson).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/videos/parse/export");
+    expect(init).toMatchObject({ method: "POST", credentials: "include", body: JSON.stringify(request) });
+    expect(new Headers(init?.headers).get("Accept")).toBe("application/x-ndjson");
+    expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("export-csrf");
+  });
+
+  it("accepts empty results and omitted type selection", async () => {
+    const empty = { record_count: 0, event_count: 0, skipped: { no_matching_events: 3 } };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("", { headers: { "X-Export-Summary": JSON.stringify(empty) } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await exportParsedVideos({ tenantId: request.tenantId, videoIds: request.videoIds });
+    expect(result.blob.size).toBe(0);
+    expect(result.summary).toEqual(empty);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).not.toHaveProperty("eventTypes");
+  });
+
+  it.each([403, 404, 409])("preserves HTTP %s export errors", async (status) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "export_unavailable", message: "来源不可用" }), { status })));
+    await expect(exportParsedVideos(request)).rejects.toMatchObject({ status, code: "export_unavailable", message: "来源不可用" });
+  });
+
+  it.each([null, "invalid", '{"record_count":-1,"event_count":0,"skipped":{"no_matching_events":0}}'])("rejects missing or invalid summary %s", async (header) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { headers: header === null ? {} : { "X-Export-Summary": header } })));
+    await expect(exportParsedVideos(request)).rejects.toThrow("导出响应缺少有效统计信息");
+  });
+
+  it.each(["caller", "scope"])("rejects a late blob after %s cancellation", async (mode) => {
+    const response = new Response("", { headers: { "X-Export-Summary": JSON.stringify(summary) } });
+    let release!: (value: Blob) => void;
+    const readBlob = vi.spyOn(response, "blob").mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+    const controller = new AbortController();
+    const pending = exportParsedVideos(request, controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(readBlob).toHaveBeenCalledOnce());
+    if (mode === "caller") controller.abort();
+    else configureApiIdentity(localIdentity, "another-tenant");
+    release(new Blob(["stale data"]));
+    await rejected;
+  });
 });
 
 describe("cloud request identity", () => {
@@ -347,6 +420,18 @@ it("loads the server parse defaults before an upload is configured", async () =>
 });
 
 describe("Chat attachments", () => {
+  it("keeps conversation ownership separate from public search scope in JSON and SSE", async () => {
+    configureApiIdentity({ ...localIdentity, tenantId: "viewer-tenant" }, "viewer-tenant");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Headers(init?.headers).get("Accept") === "text/event-stream"
+      ? new Response("", { headers: { "Content-Type": "text/event-stream" } }) : new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await sendAgentMessage("conversation", "query", "key", ["public-series"], null, {}, null, [], "owner-tenant");
+    await streamAgentMessage("conversation", "query", "key", vi.fn(), new AbortController().signal, ["public-series"], null, {}, null, [], "owner-tenant");
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(JSON.parse(String(init?.body))).toMatchObject({ tenantId: "viewer-tenant", sourceTenantId: "owner-tenant", seriesIds: ["public-series"] });
+    }
+  });
+
   it("uploads raw bytes under the active conversation with cookies, CSRF and cancellation", async () => {
     configureApiIdentity({ ...localIdentity, csrfToken: "chat-csrf" }, "tenant/id");
     const attachment = { mediaUri: "asset://attachment", mediaType: "image/png", sizeBytes: 4, previewUrl: "/api/agent/attachments/content?mediaUri=asset" };
@@ -407,6 +492,26 @@ describe("Chat attachments", () => {
 });
 
 describe("Series background routes", () => {
+  it("keeps the viewer identity while addressing a public series by its owning tenant", async () => {
+    const identity = { ...localIdentity, mode: "cloud" as const, userId: "viewer", csrfToken: "viewer-csrf", tenantId: "viewer-tenant" };
+    configureApiIdentity(identity, "viewer-tenant");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await listPublicSeries("next/page", 20);
+    await getSeries("series/id", "owner/tenant");
+    await updateSeries({ tenantId: "owner/tenant", seriesId: "series/id", visibility: "public" });
+    await uploadSeriesImage("series/id", new File(["image"], "cover.png"), undefined, "owner/tenant");
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "/api/series/public?limit=20&cursor=next%2Fpage",
+      "/api/series/get?seriesId=series%2Fid&tenantId=owner%2Ftenant",
+      "/api/series/update",
+      "/api/series/images/upload?tenantId=owner%2Ftenant&seriesId=series%2Fid",
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]![1]?.body))).toEqual({ tenantId: "owner/tenant", seriesId: "series/id", visibility: "public" });
+    expect(new Headers(fetchMock.mock.calls[2]![1]?.headers).get("X-CSRF-Token")).toBe("viewer-csrf");
+    expect(videoContentUrl("video-id")).toContain("tenantId=viewer-tenant");
+  });
+
   it("distinguishes omitted fields from explicit clearing and preserves raw JSON text", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}"));
     vi.stubGlobal("fetch", fetchMock);
@@ -829,14 +934,58 @@ describe("current API routes", () => {
 });
 
 describe("localized errors", () => {
-  it("translates client fallbacks and keeps server messages and request identifiers intact", () => {
+  it("translates client fallbacks and hides request identifiers by default", () => {
     expect(errorMessage(new ApiClientError(503, null), "en")).toBe("Request failed (HTTP 503)");
     expect(errorMessage(new ApiClientError(400, {
       message: "原始业务错误", requestId: "request-123",
-    }), "en")).toBe("原始业务错误 (Request ID: request-123)");
+    }), "en")).toBe("原始业务错误");
     expect(errorMessage(new Error("分片上传网络连接中断"), "en")).toBe("The upload connection was interrupted");
     expect(errorMessage(null, "en")).toBe("An unknown error occurred");
     expect(errorMessage(new ApiClientError(503, null))).toBe("请求失败（HTTP 503）");
+  });
+
+  it("shows request identifiers only for the connection with a confirmed PPE display mode", async () => {
+    const remote: ApiConnection = { id: "remote:ppe", baseUrl: "/remote" };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ displayMode: "debug" }))));
+    await getRuntimeConfig();
+    const failure = new ApiClientError(400, { message: "原始业务错误", requestId: "request-123" });
+    expect(failure.requestId).toBe("request-123");
+    expect(errorMessage(failure, "en")).toBe("原始业务错误 (Request ID: request-123)");
+    expect(errorMessage(failure)).toBe("原始业务错误（请求编号：request-123）");
+    expect(errorMessage(new ApiClientError(400, { message: "远端错误", requestId: "remote-id" }, remote))).toBe("远端错误");
+
+    clearDataSource();
+    expect(errorMessage(failure)).toBe("原始业务错误");
+  });
+
+  it("hides request identifiers again when PPE is removed or runtime configuration fails", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ displayMode: "debug" })));
+    vi.stubGlobal("fetch", fetchMock);
+    const failure = new ApiClientError(400, { message: "原始业务错误", requestId: "request-123" });
+    await getRuntimeConfig();
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ displayMode: "release" })));
+    await getRuntimeConfig();
+    expect(errorMessage(failure)).toBe("原始业务错误");
+
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ displayMode: "debug" })));
+    await getRuntimeConfig();
+    fetchMock.mockImplementation(async () => new Response(null, { status: 503 }));
+    await expect(getRuntimeConfig()).rejects.toBeInstanceOf(ApiClientError);
+    expect(errorMessage(failure)).toBe("原始业务错误");
+  });
+
+  it.each([false, true])("ignores an older PPE config completing after a newer config (older failure: %s)", async (olderFails) => {
+    let completeOlder!: (response: Response) => void;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { completeOlder = resolve; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ displayMode: olderFails ? "debug" : "release" })));
+    vi.stubGlobal("fetch", fetchMock);
+    const older = getRuntimeConfig().catch(() => undefined);
+    await getRuntimeConfig();
+    completeOlder(olderFails ? new Response(null, { status: 503 }) : new Response(JSON.stringify({ displayMode: "debug" })));
+    await older;
+    const failure = new ApiClientError(400, { message: "原始业务错误", requestId: "request-123" });
+    expect(errorMessage(failure)).toBe(olderFails ? "原始业务错误（请求编号：request-123）" : "原始业务错误");
   });
 });
 

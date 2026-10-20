@@ -13,6 +13,7 @@ import { ThemeProvider } from "./theme";
 import { WorkspaceProvider } from "./workspace";
 
 const apiSeries: SeriesView = {
+  visibility: "private", access: "member", publisher: null,
   seriesId: "series-from-api",
   tenantId: "local-default",
   name: "接口返回的系列",
@@ -154,7 +155,7 @@ function renderApp(
       return jsonResponse(await (options.runtimeConfig ?? { displayMode: "release" }));
     }
     if (url.includes("/api/uploads/parse-config")) return jsonResponse(parseDefaults);
-    if (url.includes("/api/series/list")) {
+    if (url.includes("/api/series/list") || url.includes("/api/series/public")) {
       const items = createdSeries ? [...availableSeries, createdSeries] : availableSeries;
       return jsonResponse({ items, total: items.length, hasMore: false, nextCursor: null });
     }
@@ -329,6 +330,46 @@ describe("application shell", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     window.localStorage.clear();
+  });
+
+  it("updates visibility from the home menu and keeps the new value on the detail page", async () => {
+    const { fetchMock } = renderApp([apiSeries], { initialPath: "/watch" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: `${apiSeries.name} 的系列选项` }));
+    expect(screen.getByRole("menuitemradio", { name: /私有/ })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("menuitemradio", { name: /公开/ }));
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("link", { name: "查看系列" }));
+    await user.click(await screen.findByRole("button", { name: `${apiSeries.name} 的系列选项` }));
+    expect(screen.getByRole("menuitemradio", { name: /公开/ })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("menuitemradio", { name: /私有/ }));
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    const updates = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/series/update"));
+    expect(updates.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { tenantId: apiSeries.tenantId, seriesId: apiSeries.seriesId, visibility: "public" },
+      { tenantId: apiSeries.tenantId, seriesId: apiSeries.seriesId, visibility: "private" },
+    ]);
+  });
+
+  it("discovers other publishers through the public list and opens their tenant without management controls", async () => {
+    const realUseAuth = auth.useAuth;
+    vi.spyOn(auth, "useAuth").mockImplementation(() => {
+      const original = realUseAuth();
+      return { ...original, canManage: false, canUpload: false,
+        activeSource: { ...original.activeSource, kind: "public", tenantId: "public-platform" } };
+    });
+    const shared: SeriesView = { ...apiSeries, tenantId: "other-publisher", visibility: "public", access: "public",
+      publisher: { kind: "user", displayName: "分享者", avatar: null } };
+    const { fetchMock } = renderApp([shared], { initialPath: "/watch", historyControls: true });
+    expect(await screen.findByText("分享者 分享")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /系列选项/ })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("link", { name: "查看系列" }));
+    expect(await screen.findByRole("heading", { level: 1, name: apiSeries.name })).toBeInTheDocument();
+    expect(screen.getByTestId("current-route").textContent).toBe(`/series/${apiSeries.seriesId}?tenantId=other-publisher`);
+    expect(screen.queryByRole("button", { name: /系列选项/ })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/series/public?"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/series/list?"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`seriesId=${apiSeries.seriesId}&tenantId=other-publisher`))).toBe(true);
   });
 
   it("starts with an empty queue and only displays files selected by the user", async () => {
@@ -570,14 +611,14 @@ describe("application shell", () => {
     try {
       const shelf = await screen.findByRole("region", { name: "选择视频系列" });
       const seriesCard = await within(shelf).findByRole("link", { name: new RegExp(apiSeries.name) });
-      expect(seriesCard).toHaveAttribute("href", `/series/${apiSeries.seriesId}`);
+      expect(seriesCard).toHaveAttribute("href", `/series/${apiSeries.seriesId}?tenantId=local-default`);
       await user.click(seriesCard);
 
       expect(await screen.findByRole("heading", { name: apiSeries.name, level: 1 })).toBeInTheDocument();
       expect(screen.getByTestId("current-route")).toHaveTextContent(`/series/${apiSeries.seriesId}`);
       expect(within(screen.getByRole("region", { name: "系列选集" })).getByRole("heading", { name: /^剧集/ })).toBeInTheDocument();
       const start = screen.getByRole("link", { name: "开始观看" });
-      expect(start).toHaveAttribute("href", `/watch/${apiSeries.seriesId}/${playableVideo.videoId}`);
+      expect(start).toHaveAttribute("href", `/watch/${apiSeries.seriesId}/${playableVideo.videoId}?tenantId=local-default`);
       await user.click(start);
 
       const player = await screen.findByLabelText<HTMLVideoElement>("EP 01 视频");
@@ -605,7 +646,7 @@ describe("application shell", () => {
       fireEvent.loadedMetadata(preview);
       expect(preview.currentTime).toBe(45.125);
       const resume = within(seriesHero).getByRole("link", { name: "继续观看" });
-      expect(resume).toHaveAttribute("href", `/watch/${apiSeries.seriesId}/${playableVideo.videoId}`);
+      expect(resume).toHaveAttribute("href", `/watch/${apiSeries.seriesId}/${playableVideo.videoId}?tenantId=local-default`);
       await user.click(resume);
       const resumedPlayer = await screen.findByLabelText<HTMLVideoElement>("EP 01 视频");
       Object.defineProperty(resumedPlayer, "duration", { configurable: true, value: 120 });
@@ -835,7 +876,7 @@ describe("application shell", () => {
 
     await user.click(screen.getAllByRole("link", { name: "资料库" })[0]!);
 
-    expect(await screen.findByText(videoWithoutProgress.originalFilename)).toBeInTheDocument();
+    expect(await screen.findByText("calculating-progress.mp4")).toBeInTheDocument();
     const unavailable = screen.getByText("—");
     expect(unavailable).toBeInTheDocument();
     expect(unavailable.closest("div")?.querySelector("em")).toBeNull();
@@ -964,8 +1005,9 @@ describe("application shell", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/jobs/delete"))).toBe(false);
   });
 
-  it.each([503, 409])("keeps an upload visible with the API error and request identifier when deletion returns %s", async (status) => {
-    const { fetchMock } = renderApp([{ ...apiSeries, pendingUploads: [pendingUpload], pendingUploadCount: 1 }]);
+  it.each([[503, "release"], [409, "release"], [503, "debug"]] as const)("keeps a rejected upload deletion visible with status %s and display mode %s", async (status, displayMode) => {
+    const { fetchMock, queryClient } = renderApp([{ ...apiSeries, pendingUploads: [pendingUpload], pendingUploadCount: 1 }], { runtimeConfig: { displayMode } });
+    await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
     const original = fetchMock.getMockImplementation()!;
     let rejected = false;
     fetchMock.mockImplementation(async (input, init) => {
@@ -978,7 +1020,9 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getAllByRole("link", { name: "资料库" })[0]!);
     await user.click(await screen.findByRole("button", { name: `删除上传 ${pendingUpload.originalFilename}` }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("删除失败：暂时无法删除上传（请求编号：delete-request）");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(displayMode === "debug"
+      ? "删除失败：暂时无法删除上传（请求编号：delete-request）" : "删除失败：暂时无法删除上传");
     expect(screen.getByText(pendingUpload.originalFilename)).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/uploads/delete"))).toHaveLength(1);
     if (status === 503) {
@@ -1426,7 +1470,8 @@ describe("application shell", () => {
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
 
-    expect(await screen.findByText("删除对话失败：对话仍在处理消息（请求编号：conversation-delete）")).toBeInTheDocument();
+    expect(await screen.findByText("删除对话失败：对话仍在处理消息")).toBeInTheDocument();
+    expect(screen.queryByText(/请求编号：conversation-delete/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^删除对话 Test，/ })).toBeInTheDocument();
   });
 
@@ -1509,7 +1554,7 @@ describe("application shell", () => {
     const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     await user.type(composer, "雨天门口");
     await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
-    act(() => queryClient.setQueryData(["series"], [{ ...apiSeries, status: "INDEXING" }, secondSeries]));
+    act(() => queryClient.setQueriesData({ queryKey: ["series"] }, [{ ...apiSeries, status: "INDEXING" }, secondSeries]));
     await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled());
     expect(firstChoice).toBeChecked();
     expect(firstChoice).toBeEnabled();

@@ -17,10 +17,13 @@ import type {
   ApiConnection,
   AuthIdentity,
   DataSource,
+  DisplayMode,
   EvidenceReference,
   ImageAsset,
   Page,
   ParseConfig,
+  ParseExportRequest,
+  ParseExportSummary,
   ParseJobView,
   RuntimeConfig,
   UsageOverviewOptions,
@@ -46,6 +49,7 @@ let TENANT_QUERY = encodeURIComponent(TENANT_ID);
 let activeDataSource: DataSource | null = null;
 let scopeController = new AbortController();
 const accountIdentities = new Map<string, AuthIdentity | null>();
+const displayModes = new Map<string, { mode: DisplayMode }>();
 const eventSources = new Set<EventSource>();
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(
   /\/$/,
@@ -91,14 +95,16 @@ export class ApiClientError extends Error {
   readonly code: string | undefined;
   readonly requestId: string | undefined;
   readonly hasServerMessage: boolean;
+  readonly connectionId: string;
 
-  constructor(status: number, payload: ApiErrorPayload | null) {
+  constructor(status: number, payload: ApiErrorPayload | null, connection = PRIMARY_CONNECTION) {
     super(payload?.message || `请求失败（HTTP ${status}）`);
     this.name = "ApiClientError";
     this.status = status;
     this.code = payload?.code;
     this.requestId = payload?.requestId;
     this.hasServerMessage = Boolean(payload?.message);
+    this.connectionId = connection.id;
   }
 }
 
@@ -122,15 +128,15 @@ async function readError(response: Response): Promise<ApiErrorPayload | null> {
   }
 }
 
-async function requestJson<T>(
+async function requestResponse(
   path: string,
   init?: RequestInit,
   context = businessContext(),
-): Promise<T> {
+): Promise<{ response: Response; signal: AbortSignal | undefined }> {
   const signal = scopedSignal(init?.signal, context.scopeSignal);
   signal?.throwIfAborted();
   const headers = new Headers(init?.headers);
-  headers.set("Accept", "application/json");
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
   if (context.identity?.csrfToken && !["GET", "HEAD"].includes(init?.method ?? "GET")) {
     headers.set("X-CSRF-Token", context.identity.csrfToken);
   }
@@ -145,8 +151,13 @@ async function requestJson<T>(
     if (response.status === 401 && !path.startsWith("/api/auth/")) authRequired(context.connection);
     const payload = await readError(response);
     signal?.throwIfAborted();
-    throw new ApiClientError(response.status, payload);
+    throw new ApiClientError(response.status, payload, context.connection);
   }
+  return { response, signal };
+}
+
+async function requestJson<T>(path: string, init?: RequestInit, context = businessContext()): Promise<T> {
+  const { response, signal } = await requestResponse(path, init, context);
   const payload = (await response.json()) as T;
   signal?.throwIfAborted();
   return payload;
@@ -166,6 +177,7 @@ export function clearDataSource(): void {
   eventSources.forEach((stream) => stream.close());
   eventSources.clear();
   activeDataSource = null;
+  displayModes.clear();
 }
 
 export function configureDataSource(source: DataSource): void {
@@ -180,6 +192,7 @@ export function configureDataSource(source: DataSource): void {
     eventSources.forEach((stream) => stream.close());
     eventSources.clear();
     scopeController = new AbortController();
+    displayModes.clear();
   }
   activeDataSource = source;
   TENANT_ID = source.tenantId;
@@ -240,25 +253,43 @@ export async function checkHealth(): Promise<boolean> {
   if (!response.ok) {
     const payload = await readError(response);
     signal?.throwIfAborted();
-    throw new ApiClientError(response.status, payload);
+    throw new ApiClientError(response.status, payload, context.connection);
   }
   const payload = (await response.json()) as { status?: string };
   signal?.throwIfAborted();
   return payload.status === "ok";
 }
 
-export function getRuntimeConfig(signal?: AbortSignal): Promise<RuntimeConfig> {
-  return requestJson("/api/system/runtime-config", { signal, cache: "no-store" });
+export async function getRuntimeConfig(signal?: AbortSignal): Promise<RuntimeConfig> {
+  const context = businessContext();
+  const display = { mode: displayModes.get(context.connection.id)?.mode ?? "release" };
+  displayModes.set(context.connection.id, display);
+  try {
+    const config = await requestJson<RuntimeConfig>("/api/system/runtime-config", { signal, cache: "no-store" }, context);
+    signal?.throwIfAborted();
+    context.scopeSignal?.throwIfAborted();
+    if (displayModes.get(context.connection.id) === display) display.mode = config.displayMode === "debug" ? "debug" : "release";
+    return config;
+  } catch (error) {
+    if (!signal?.aborted && !context.scopeSignal?.aborted && displayModes.get(context.connection.id) === display) {
+      displayModes.delete(context.connection.id);
+    }
+    throw error;
+  }
 }
 
 export function listSeries(cursor?: string, limit = 100): Promise<Page<SeriesSummary>> {
   return requestJson(`/api/series/list?tenantId=${TENANT_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
 
-export function getSeries(seriesId: string): Promise<SeriesView> {
+export function listPublicSeries(cursor?: string, limit = 100): Promise<Page<SeriesSummary>> {
+  return requestJson(`/api/series/public?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+}
+
+export function getSeries(seriesId: string, tenantId = TENANT_ID): Promise<SeriesView> {
   return requestJson(
     `/api/series/get?seriesId=${encodeURIComponent(seriesId)}` +
-      `&tenantId=${TENANT_QUERY}`,
+      `&tenantId=${encodeURIComponent(tenantId)}`,
   );
 }
 
@@ -278,8 +309,8 @@ export function updateSeries(body: SeriesUpdateRequest): Promise<SeriesView> {
   });
 }
 
-export function uploadSeriesImage(seriesId: string, file: File, signal?: AbortSignal): Promise<ImageAsset> {
-  return requestJson(`/api/series/images/upload?${new URLSearchParams({ tenantId: TENANT_ID, seriesId })}`, {
+export function uploadSeriesImage(seriesId: string, file: File, signal?: AbortSignal, tenantId = TENANT_ID): Promise<ImageAsset> {
+  return requestJson(`/api/series/images/upload?${new URLSearchParams({ tenantId, seriesId })}`, {
     method: "POST",
     headers: { "Content-Type": file.type || "application/octet-stream" },
     body: file,
@@ -293,6 +324,34 @@ export function updateVideoEpisode(body: VideoEpisodeUpdateRequest): Promise<Vid
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+export function getParseExportOptions(tenantId = TENANT_ID, signal?: AbortSignal): Promise<{ eventTypes: string[] }> {
+  return requestJson(`/api/videos/parse/export/options?${new URLSearchParams({ tenantId })}`, { signal });
+}
+
+export async function exportParsedVideos(body: ParseExportRequest, signal?: AbortSignal): Promise<{
+  blob: Blob;
+  filename: string;
+  summary: ParseExportSummary;
+}> {
+  const result = await requestResponse("/api/videos/parse/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  let summary: ParseExportSummary;
+  try {
+    summary = JSON.parse(result.response.headers.get("X-Export-Summary") ?? "null") as ParseExportSummary;
+    if (![summary?.record_count, summary?.event_count, summary?.skipped?.no_matching_events]
+      .every((value) => Number.isSafeInteger(value) && value >= 0)) throw new Error();
+  } catch {
+    throw new Error("导出响应缺少有效统计信息");
+  }
+  const blob = await result.response.blob();
+  result.signal?.throwIfAborted();
+  return { blob, filename: "parse-export.jsonl", summary };
 }
 
 export function imageContentUrl(imageId: string, tenantId = TENANT_ID): string {
@@ -594,9 +653,11 @@ function agentMessageBody(
   options: AgentMessageRunOptions,
   extraContext: Record<string, unknown> | null,
   attachments: AgentAttachmentReference[],
+  sourceTenantId?: string,
 ): AgentMessageSendRequest {
   return {
     tenantId: TENANT_ID,
+    ...(sourceTenantId === undefined ? {} : { sourceTenantId }),
     content,
     seriesIds,
     reference,
@@ -615,11 +676,12 @@ export function sendAgentMessage(
   options: AgentMessageRunOptions = {},
   extraContext: Record<string, unknown> | null = null,
   attachments: AgentAttachmentReference[] = [],
+  sourceTenantId?: string,
 ): Promise<AgentMessageSendView> {
   return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments)),
+    body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments, sourceTenantId)),
   });
 }
 
@@ -640,6 +702,7 @@ export async function streamAgentMessage(
   options: AgentMessageRunOptions = {},
   extraContext: Record<string, unknown> | null = null,
   attachments: AgentAttachmentReference[] = [],
+  sourceTenantId?: string,
 ): Promise<void> {
   const context = businessContext();
   signal = scopedSignal(signal, context.scopeSignal)!;
@@ -650,7 +713,7 @@ export async function streamAgentMessage(
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey,
       ...(context.identity?.csrfToken ? { "X-CSRF-Token": context.identity.csrfToken } : {}),
     },
-    body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments)),
+    body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments, sourceTenantId)),
     signal,
   });
   signal.throwIfAborted();
@@ -658,7 +721,7 @@ export async function streamAgentMessage(
     if (response.status === 401) authRequired(context.connection);
     const payload = await readError(response);
     signal.throwIfAborted();
-    throw new ApiClientError(response.status, payload);
+    throw new ApiClientError(response.status, payload, context.connection);
   }
   if (!response.body || !response.headers.get("Content-Type")?.includes("text/event-stream")) {
     await response.body?.cancel().catch(() => undefined);
@@ -825,7 +888,7 @@ export async function uploadSegment({
         payload = null;
       }
       if (xhr.status === 401) authRequired(context.connection);
-      reject(new ApiClientError(xhr.status, payload));
+      reject(new ApiClientError(xhr.status, payload, context.connection));
     };
     xhr.onerror = () => {
       signal.removeEventListener("abort", abort);
@@ -842,7 +905,8 @@ export async function uploadSegment({
 export function errorMessage(error: unknown, locale: Locale = "zh"): string {
   if (error instanceof ApiClientError) {
     const message = error.hasServerMessage ? error.message : translate(locale, "请求失败（HTTP {status}）", { status: error.status });
-    return error.requestId ? translate(locale, "{message}（请求编号：{requestId}）", { message, requestId: error.requestId }) : message;
+    return error.requestId && displayModes.get(error.connectionId)?.mode === "debug"
+      ? translate(locale, "{message}（请求编号：{requestId}）", { message, requestId: error.requestId }) : message;
   }
   if (error instanceof Error) return translate(locale, error.message);
   return translate(locale, "发生了无法识别的错误");

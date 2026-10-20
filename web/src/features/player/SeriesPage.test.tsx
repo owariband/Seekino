@@ -34,6 +34,7 @@ function video(videoId: string, episodeOrder: number, uploadSequence = episodeOr
 }
 
 const series: SeriesView = {
+  visibility: "private", access: "member", publisher: null,
   seriesId: "series-a", tenantId: "local-default", name: "甲系列", description: "三个朋友，沿着河岸寻找走失的猫。",
   status: "READY", videoCount: 3, readyVideoCount: 3, failedVideoCount: 0,
   pendingUploadCount: 0, cover: null, lastSearch: null, createdAt: 0, updatedAt: 0,
@@ -60,11 +61,11 @@ function personalSource(userId: string): DataSource {
   };
 }
 
-function renderPage() {
+function renderPage(entry = "/series/series-a") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/series/series-a"]}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes><Route path="/series/:seriesId" element={<SeriesPage />} /></Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -79,16 +80,38 @@ beforeEach(() => {
 afterEach(() => { cleanup(); configureDataSource(localSource); vi.clearAllMocks(); mocks.canManage = true; });
 
 describe("SeriesPage", () => {
+  it("reads a shared deep link using its tenant and hides management and private background", async () => {
+    mocks.getSeries.mockResolvedValue({ ...series, tenantId: "another-owner", access: "public", visibility: "public",
+      publisher: { kind: "user", displayName: "分享者", avatar: null },
+      importantExtraData: { format: "markdown", content: "private notes" },
+      videos: [{ ...video("a-1", 1), originalFilename: null, totalBytes: null }],
+    });
+    renderPage("/series/series-a?tenantId=another-owner");
+    expect(await screen.findByRole("heading", { name: "甲系列", level: 1 })).toBeInTheDocument();
+    expect(mocks.getSeries).toHaveBeenCalledWith("series-a", "another-owner");
+    expect(screen.getByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-1?tenantId=another-owner");
+    expect(screen.getByText("分享者 分享")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "甲系列 的系列选项" })).not.toBeInTheDocument();
+    expect(screen.queryByText("private notes")).not.toBeInTheDocument();
+    expect(screen.queryByText("解析用人物与背景资料")).not.toBeInTheDocument();
+  });
+
+  it("keeps owner controls available independently of the selected public source", async () => {
+    mocks.canManage = false;
+    renderPage();
+    expect(await screen.findByRole("button", { name: "甲系列 的系列选项" })).toBeInTheDocument();
+  });
+
   it("loads the routed series, shows its supplied description, and orders episodes before choosing the first", async () => {
     mocks.getSeries.mockResolvedValue({ ...series, videos: [video("a-3", 3), video("a-1b", 1, 2), video("a-1a", 1, 1)] });
     renderPage();
     expect(await screen.findByRole("heading", { name: "甲系列", level: 1 })).toBeInTheDocument();
-    expect(mocks.getSeries).toHaveBeenCalledWith("series-a");
+    expect(mocks.getSeries).toHaveBeenCalledWith("series-a", "local-default");
     expect(within(screen.getByRole("region", { name: "系列简介" })).getByText(series.description!)).toBeVisible();
-    expect(screen.getByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-1a");
+    expect(screen.getByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-1a?tenantId=local-default");
     const episodes = screen.getByRole("region", { name: "系列选集" });
     expect(within(episodes).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
-      "/watch/series-a/a-1a", "/watch/series-a/a-1b", "/watch/series-a/a-3",
+      "/watch/series-a/a-1a?tenantId=local-default", "/watch/series-a/a-1b?tenantId=local-default", "/watch/series-a/a-3?tenantId=local-default",
     ]);
     expect(screen.queryByRole("link", { name: "继续观看" })).not.toBeInTheDocument();
   });
@@ -104,7 +127,7 @@ describe("SeriesPage", () => {
     mocks.getSeries.mockResolvedValue({ ...series, videos: [video("a-1", 1), { ...video("a-2", 2), durationSeconds: 30_000 }, { ...video("a-3", 3), playbackStatus: "PREPARING" }] });
     const stored = localStorage.getItem(playbackProgressStorageKey());
     renderPage();
-    expect(await screen.findByRole("link", { name: "继续观看" })).toHaveAttribute("href", "/watch/series-a/a-2");
+    expect(await screen.findByRole("link", { name: "继续观看" })).toHaveAttribute("href", "/watch/series-a/a-2?tenantId=local-default");
     const hero = screen.getByRole("region", { name: "系列介绍" });
     expect(within(hero).getByTestId("playback-frame")).toHaveAttribute("data-position", "30000");
     expect(within(hero).getByTestId("playback-frame").getAttribute("data-src")).toContain("videoId=a-2");
@@ -118,11 +141,11 @@ describe("SeriesPage", () => {
       { ...video("a-2", 2), playbackUrl: null }, video("a-3", 3),
     ] });
     renderPage();
-    expect(await screen.findByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-3");
+    expect(await screen.findByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-3?tenantId=local-default");
     const episodes = screen.getByRole("region", { name: "系列选集" });
     expect(within(episodes).getAllByRole("listitem")).toHaveLength(3);
     expect(within(episodes).getAllByRole("link")).toHaveLength(1);
-    expect(within(episodes).getByRole("link")).toHaveAttribute("href", "/watch/series-a/a-3");
+    expect(within(episodes).getByRole("link")).toHaveAttribute("href", "/watch/series-a/a-3?tenantId=local-default");
     expect(within(episodes).getByTitle("a-1.mp4")).toHaveTextContent("第 1 集");
     expect(within(episodes).getByTitle("a-2.mp4")).toHaveTextContent("第 2 集");
     expect(screen.queryByRole("link", { name: "继续观看" })).not.toBeInTheDocument();
@@ -135,13 +158,13 @@ describe("SeriesPage", () => {
     const firstHistory = localStorage.getItem(firstKey);
     configureDataSource(personalSource("user-b"));
     const otherAccount = renderPage();
-    expect(await screen.findByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-1");
+    expect(await screen.findByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-1?tenantId=local-default");
     expect(screen.queryByRole("link", { name: "继续观看" })).not.toBeInTheDocument();
     expect(localStorage.getItem(playbackProgressStorageKey())).toBeNull();
     otherAccount.unmount();
     configureDataSource(personalSource("user-a"));
     renderPage();
-    expect(await screen.findByRole("link", { name: "继续观看" })).toHaveAttribute("href", "/watch/series-a/a-2");
+    expect(await screen.findByRole("link", { name: "继续观看" })).toHaveAttribute("href", "/watch/series-a/a-2?tenantId=local-default");
     expect(within(screen.getByRole("region", { name: "系列介绍" })).getByTestId("playback-frame")).toHaveAttribute("data-position", "45125");
     expect(localStorage.getItem(firstKey)).toBe(firstHistory);
   });
@@ -157,7 +180,7 @@ describe("SeriesPage", () => {
 
   it("skips the empty introduction for viewers instead of showing a manager to-do", async () => {
     mocks.canManage = false;
-    mocks.getSeries.mockResolvedValue({ ...series, description: null });
+    mocks.getSeries.mockResolvedValue({ ...series, access: "public", description: null });
     renderPage();
     await screen.findByRole("heading", { name: "甲系列", level: 1 });
     expect(screen.queryByRole("region", { name: "系列简介" })).not.toBeInTheDocument();

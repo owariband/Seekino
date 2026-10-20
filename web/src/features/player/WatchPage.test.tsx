@@ -4,7 +4,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router";
 
-import type { SeriesView, VideoSummary } from "../../api/contracts";
+import type { SeriesSummary, SeriesView, VideoSummary } from "../../api/contracts";
 import type { WatchPanelLayout } from "../../app/AppShell";
 import { WatchPage } from "./WatchPage";
 
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   resumePlayer: vi.fn(),
   focusComposer: vi.fn(),
   receiveExtraContext: vi.fn(),
+  useAuth: vi.fn(),
 }));
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
@@ -23,6 +24,7 @@ vi.mock("../../api/client", async (importOriginal) => ({
 vi.mock("./PlaybackFrame", () => ({
   PlaybackFrame: () => <span aria-hidden="true" />,
 }));
+vi.mock("../auth/AuthProvider", () => ({ useAuth: mocks.useAuth }));
 vi.mock("./VideoPlayer", async () => {
   const { forwardRef, useImperativeHandle, useRef } = await import("react");
   return {
@@ -54,20 +56,21 @@ vi.mock("./VideoPlayer", async () => {
 vi.mock("../search/SearchPage", async () => {
   const { forwardRef, useImperativeHandle, useRef } = await import("react");
   return {
-    SearchPage: forwardRef(function MockSearchPage({ embedded, initialSeriesId, captureExtraContext, onOpenVideo }: {
+    SearchPage: forwardRef(function MockSearchPage({ embedded, initialSeriesId, initialSeries, captureExtraContext, onOpenVideo }: {
       embedded?: boolean;
       initialSeriesId?: string;
+      initialSeries?: SeriesSummary;
       captureExtraContext?: () => Record<string, unknown> | null;
-      onOpenVideo?: (target: { seriesId: string; videoId: string; startSeconds: number }) => void;
+      onOpenVideo?: (target: { tenantId: string; seriesId: string; videoId: string; startSeconds: number }) => void;
     }, ref) {
       const composerRef = useRef<HTMLTextAreaElement>(null);
       useImperativeHandle(ref, () => ({
         focusComposer: () => { composerRef.current?.focus(); mocks.focusComposer(); },
       }));
       return (
-        <div data-testid="supervisor-chat" data-embedded={embedded} data-series-id={initialSeriesId}>
+        <div data-testid="supervisor-chat" data-embedded={embedded} data-series-id={initialSeriesId} data-source-tenant={initialSeries?.tenantId}>
           <textarea ref={composerRef} aria-label="向 Seekino 助手提问" />
-          <button type="button" onClick={() => onOpenVideo?.({ seriesId: "series-1", videoId: "video-1", startSeconds: 4_000 })}>打开视频证据</button>
+          <button type="button" onClick={() => onOpenVideo?.({ tenantId: initialSeries?.tenantId ?? "local-default", seriesId: "series-1", videoId: "video-1", startSeconds: 4_000 })}>打开视频证据</button>
           <button type="button" onClick={() => mocks.receiveExtraContext(captureExtraContext?.())}>捕获播放上下文</button>
         </div>
       );
@@ -98,6 +101,7 @@ const video = (videoId: string, episodeOrder: number): VideoSummary => ({
 });
 
 const series: SeriesView = {
+  visibility: "private", access: "member", publisher: null,
   seriesId: "series-1",
   tenantId: "local-default",
   name: "测试课程",
@@ -149,6 +153,7 @@ function renderPage(path = "/watch/series-1/video-2", withShell = false) {
 }
 
 beforeEach(() => {
+  mocks.useAuth.mockReturnValue({ canManage: true });
   localStorage.clear();
   mocks.getSeries.mockResolvedValue(series);
   mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 12_000, wasPlaying: false });
@@ -156,6 +161,33 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("WatchPage", () => {
+  it("hides the library shortcut when viewing one's own series from a public source", async () => {
+    mocks.useAuth.mockReturnValue({ canManage: false });
+    renderPage();
+    await screen.findByTestId("video-player");
+    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("tab", { name: "选集" }));
+    expect(screen.queryByRole("link", { name: "调整集数" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the source tenant through a public deep link, seek, and episode navigation", async () => {
+    mocks.getSeries.mockResolvedValue({ ...series, tenantId: "tenant-alice", visibility: "public", access: "public" });
+    renderPage("/watch/series-1/video-2?tenantId=tenant-alice&atMs=13250");
+    expect(await screen.findByTestId("video-player")).toHaveTextContent("video-2 @ 13250");
+    expect(mocks.getSeries).toHaveBeenCalledWith("series-1", "tenant-alice");
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("tenantId=tenant-alice&atSeconds=13250"));
+    expect(screen.getByTestId("supervisor-chat")).toHaveAttribute("data-source-tenant", "tenant-alice");
+    expect(screen.getByRole("link", { name: "测试课程" })).toHaveAttribute("href", "/series/series-1?tenantId=tenant-alice");
+    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开视频证据" }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-1?tenantId=tenant-alice&atSeconds=4000"));
+    fireEvent.click(screen.getByRole("tab", { name: "选集" }));
+    expect(screen.queryByRole("link", { name: "调整集数" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "下一集" }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-2?tenantId=tenant-alice"));
+    expect(screen.getByTestId("location")).not.toHaveTextContent("atSeconds");
+  });
+
   it.each([600, 1440])("starts with Chat closed at %s px so the video stays unobstructed", async (width) => {
     const widthMock = vi.spyOn(window, "innerWidth", "get").mockReturnValue(width);
     renderPage();
@@ -215,7 +247,7 @@ describe("WatchPage", () => {
     mocks.getSeries.mockResolvedValue({ ...series, description: "一起寻找故事里的名场面。" });
     renderPage("/watch/series-1/video-1?atSeconds=12000");
     const description = await screen.findByRole("region", { name: "视频简介" });
-    expect(within(description).getByRole("link", { name: "测试课程" })).toHaveAttribute("href", "/series/series-1");
+    expect(within(description).getByRole("link", { name: "测试课程" })).toHaveAttribute("href", "/series/series-1?tenantId=local-default");
     expect(within(description).getByRole("heading", { level: 1 })).toHaveTextContent("第 1 集");
     expect(within(description).getByRole("heading", { level: 1 })).toHaveAttribute("title", "video-1.mp4");
     expect(within(description).getByText("一起寻找故事里的名场面。")).toBeVisible();
@@ -223,7 +255,7 @@ describe("WatchPage", () => {
     expect(within(upcoming).getByRole("heading", { name: "接下来" })).toBeVisible();
     const links = within(upcoming).getAllByRole("link");
     expect(links.map((item) => item.getAttribute("href"))).toEqual([
-      "/watch/series-1/video-2", "/watch/series-1/video-3",
+      "/watch/series-1/video-2?tenantId=local-default", "/watch/series-1/video-3?tenantId=local-default",
     ]);
     expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
     fireEvent.click(links[0]!);
@@ -236,7 +268,7 @@ describe("WatchPage", () => {
     const upcoming = await screen.findByRole("region", { name: "后续集数" });
     expect(within(upcoming).getByRole("heading", { name: "本系列选集" })).toBeVisible();
     expect(within(upcoming).getAllByRole("link").map((item) => item.getAttribute("href"))).toEqual([
-      "/watch/series-1/video-1", "/watch/series-1/video-2", "/watch/series-1/video-3",
+      "/watch/series-1/video-1?tenantId=local-default", "/watch/series-1/video-2?tenantId=local-default", "/watch/series-1/video-3?tenantId=local-default",
     ]);
     expect(screen.queryByRole("link", { name: "下一集" })).not.toBeInTheDocument();
   });
@@ -302,7 +334,7 @@ describe("WatchPage", () => {
     await screen.findByTestId("supervisor-chat");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
     fireEvent.click(screen.getByRole("button", { name: "打开视频证据" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-1?atSeconds=4000"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-1?tenantId=local-default&atSeconds=4000"));
     expect(screen.getByTestId("video-player")).toHaveTextContent("video-1 @ 4000");
   });
 

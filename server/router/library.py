@@ -40,6 +40,12 @@ router.add_api_route(
     response_model=Page[SeriesSummary],
 )
 router.add_api_route(
+    "/api/series/public",
+    library.list_public_series,
+    methods=["GET"],
+    response_model=Page[SeriesSummary],
+)
+router.add_api_route(
     "/api/series/get",
     library.get_series,
     methods=["GET"],

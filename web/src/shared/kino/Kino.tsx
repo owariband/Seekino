@@ -32,6 +32,8 @@ const LOOKS_WHEN_HOVERED: ReadonlySet<KinoState> = new Set(["idle", "wander"]);
 /** Leap physics in CSS pixels: a snappy gravity, and how far Kino springs above the higher perch. */
 const LEAP_GRAVITY = 4200;
 const LEAP_APEX = 22;
+/** A `delayed` Kino is half faded in by now (see kino-appear); before that it was never seen, so it leaves no perch. */
+const SEEN_AFTER_MS = 400;
 
 export function Kino({
   state = "idle", width = 64, scale = 3, ground = true, title, className, delayed = false,
@@ -102,10 +104,18 @@ export function Kino({
   /** The running flight; while set, the airborne pose is held. */
   const flightRef = useRef<{ frame: number; safety: number } | null>(null);
 
+  // Kino only leaps from where someone saw it: a delayed Kino that leaves before fading in keeps the older perch.
+  const seenRef = useRef(!delayed);
+  useEffect(() => {
+    if (seenRef.current) return undefined;
+    const timer = window.setTimeout(() => { seenRef.current = true; }, SEEN_AFTER_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   useLayoutEffect(() => {
     if (!perch) return undefined;
     const svg = svgRef.current;
-    return () => vacatePerch(svg);
+    return () => { if (seenRef.current) vacatePerch(svg); };
   }, [perch]);
 
   useEffect(() => {

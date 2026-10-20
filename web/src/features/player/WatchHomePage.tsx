@@ -7,6 +7,8 @@ import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../
 import type { SeriesSummary } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
+import { SeriesActionsMenu } from "../library/SeriesActionsMenu";
+import { seriesPath, watchPath } from "../library/seriesLinks";
 import { episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
 import { readWatchHistory } from "./playbackProgress";
@@ -27,7 +29,7 @@ function SeriesArtwork({ series }: { series: SeriesSummary }) {
     return () => observer.disconnect();
   }, []);
   const detail = useQuery({
-    queryKey: ["series-detail", series.seriesId], queryFn: () => getSeries(series.seriesId),
+    queryKey: ["series-detail", series.seriesId, series.tenantId], queryFn: () => getSeries(series.seriesId, series.tenantId),
     enabled: visible && !series.cover, retry: shouldRetryApiRequest,
   });
   const playable = [...(detail.data?.videos ?? [])].filter((video) => video.playbackStatus === "READY" && video.playbackUrl)
@@ -70,9 +72,9 @@ export function WatchHomePage() {
   const activeSeriesId = recent?.seriesId ?? series[0]?.seriesId ?? null;
   const selectedSeries = series.find((item) => item.seriesId === activeSeriesId);
   const detailQuery = useQuery({
-    queryKey: ["series-detail", activeSeriesId],
-    queryFn: () => getSeries(activeSeriesId!),
-    enabled: Boolean(activeSeriesId),
+    queryKey: ["series-detail", activeSeriesId, selectedSeries?.tenantId],
+    queryFn: () => getSeries(activeSeriesId!, selectedSeries!.tenantId),
+    enabled: Boolean(selectedSeries),
     retry: shouldRetryApiRequest,
   });
   const episodes = [...(detailQuery.data?.videos ?? [])].sort((left, right) =>
@@ -81,8 +83,8 @@ export function WatchHomePage() {
   const firstPlayable = episodes.find((item) => item.playbackStatus === "READY" && item.playbackUrl);
   const recentSeries = recent ? series.find((item) => item.seriesId === recent.seriesId) : null;
   const recentDetail = useQuery({
-    queryKey: ["series-detail", recent?.seriesId], queryFn: () => getSeries(recent!.seriesId),
-    enabled: Boolean(recent), retry: shouldRetryApiRequest,
+    queryKey: ["series-detail", recent?.seriesId, recentSeries?.tenantId], queryFn: () => getSeries(recent!.seriesId, recentSeries!.tenantId),
+    enabled: Boolean(recentSeries), retry: shouldRetryApiRequest,
   });
   const recentVideo = recentDetail.data?.videos.find((item) => item.videoId === recent?.videoId && item.playbackStatus === "READY" && item.playbackUrl);
   const heroSeries = recentVideo ? recentSeries : selectedSeries;
@@ -107,8 +109,8 @@ export function WatchHomePage() {
             </div>
             <p>{heroSeries.description || (recentVideo ? t("故事还在继续，回到上次停下的那一刻。") : t("选一集开始观看，也可以一起寻找故事里的名场面。"))}</p>
             <div className={styles.heroActions}>
-              {heroVideo ? <Link className={styles.heroPlay} to={`/watch/${encodeURIComponent(heroVideo.seriesId)}/${encodeURIComponent(heroVideo.videoId)}`}><Play size={20} fill="currentColor" aria-hidden="true" />{recentVideo ? t("继续观看") : t("播放本集")}</Link> : null}
-              <Link className={styles.heroBrowse} to={`/series/${encodeURIComponent(heroSeries.seriesId)}`}>{t("查看系列")}<ChevronRight size={16} aria-hidden="true" /></Link>
+              {heroVideo ? <Link className={styles.heroPlay} to={watchPath(heroSeries, heroVideo.videoId)}><Play size={20} fill="currentColor" aria-hidden="true" />{recentVideo ? t("继续观看") : t("播放本集")}</Link> : null}
+              <Link className={styles.heroBrowse} to={seriesPath(heroSeries)}>{t("查看系列")}<ChevronRight size={16} aria-hidden="true" /></Link>
             </div>
             {recentVideo && recent && heroVideo && heroVideo.durationSeconds > 0 ? <div className={styles.heroProgress}>
               <progress aria-label={t("上次观看进度")} max={heroVideo.durationSeconds} value={Math.min(recent.positionSeconds, heroVideo.durationSeconds)} />
@@ -140,10 +142,21 @@ export function WatchHomePage() {
             </div>
             <div id="watch-series-shelf" className={styles.seriesCards} ref={shelfRef}>
               {series.map((item) => (
-                <Link key={item.seriesId} className={styles.seriesCard} style={{ textDecoration: "none" }} to={`/series/${encodeURIComponent(item.seriesId)}`}>
-                  <SeriesArtwork series={item} />
-                  <span><strong>{seriesTitle(item)}</strong><small>{t("{count} 集 · 查看系列", { count: item.videoCount })}</small></span>
-                </Link>
+                <article key={item.seriesId} className={styles.seriesCard}>
+                  <Link className={styles.seriesCardLink} to={seriesPath(item)}>
+                    <SeriesArtwork series={item} />
+                    <span><strong>{seriesTitle(item)}</strong><small>{t("{count} 集 · 查看系列", { count: item.videoCount })}</small></span>
+                  </Link>
+                  <div className={styles.seriesCardFooter}>
+                    {item.visibility === "public" && item.publisher ? <span className={styles.publisher}>
+                      <span className={styles.publisherAvatar} aria-hidden="true">{item.publisher.displayName.slice(0, 1).toUpperCase()}
+                        {item.publisher.avatar ? <img src={mediaUrl(item.publisher.avatar.url) ?? undefined} alt="" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+                      </span>
+                      <small>{t("{name} 分享", { name: item.publisher.displayName })}</small>
+                    </span> : <span />}
+                    <SeriesActionsMenu series={item} />
+                  </div>
+                </article>
               ))}
             </div>
           </section>

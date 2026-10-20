@@ -681,6 +681,7 @@ def create_schema(engine: Engine) -> None:
         )
 
     _check_identity_schema(inspector, existing_tables)
+    _check_series_visibility_schema(inspector, existing_tables)
 
     task_tables = tuple(model.__table__ for model in (VideoParseTask, ChunkTask, IntervalParseTask)
                         if model.__tablename__ in existing_tables)
@@ -741,7 +742,7 @@ def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> N
     from .model.user import User
 
     required = {
-        "series": {"tenant_id", "is_published"},
+        "series": {"tenant_id"},
         "upload_session": {"tenant_id", "creator_id"},
         "agent_conversation": {"tenant_id", "owner_id"},
         "model_usage": {"tenant_id", "user_id"},
@@ -774,6 +775,42 @@ def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> N
         )
         raise SchemaUpgradeRequiredError(
             f"user / tenant identity schema requires {migration} before init-db; incompatible: "
+            + ", ".join(sorted(differences))
+        )
+
+
+def _check_series_visibility_schema(inspector: Inspector, existing_tables: set[str]) -> None:
+    if "series" not in existing_tables:
+        return
+    from .model.video import Series, SeriesVisibility
+
+    columns = {column["name"]: column for column in inspector.get_columns("series")}
+    visibility = columns.get("visibility")
+    differences: set[str] = set()
+    if "is_published" in columns:
+        differences.add("series.is_published")
+    if visibility is None:
+        differences.add("series.visibility.missing")
+    else:
+        if not isinstance(visibility["type"], String) or visibility["type"].length != 16:
+            differences.add("series.visibility.type")
+        if visibility["nullable"]:
+            differences.add("series.visibility.nullable")
+        if str(visibility["default"]).strip("'\"") != SeriesVisibility.PRIVATE:
+            differences.add("series.visibility.default")
+    expected_check = next(constraint for constraint in Series.__table__.constraints
+                          if constraint.name == "ck_series_visibility")
+    checks = {_normalize_task_check(str(item.get("sqltext") or ""))
+              for item in inspector.get_check_constraints("series")}
+    if _normalize_task_check(str(expected_check.sqltext)) not in checks:
+        differences.add("series.visibility.check")
+    indexes = {tuple(item.get("column_names") or ()) for item in inspector.get_indexes("series")
+               if not item.get("unique")}
+    if ("visibility", "create_time", "id") not in indexes:
+        differences.add("series.visibility.index")
+    if differences:
+        raise SchemaUpgradeRequiredError(
+            "Series visibility requires 20261019_series_visibility.sql before init-db; incompatible: "
             + ", ".join(sorted(differences))
         )
 

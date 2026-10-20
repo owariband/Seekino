@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -113,18 +113,28 @@ describe("Agent execution timeline", () => {
     expect(screen.queryByText("已完成")).not.toBeInTheDocument();
   });
 
-  it("shows repeated real steps, lets the user collapse them, and collapses on durable completion", async () => {
+  it("keeps PPE details opt-in, preserves expansion during updates, and collapses on completion", async () => {
     const view = render(<AgentProgress displayMode="debug" message={message} steps={steps} />);
     const card = screen.getByLabelText("回答过程").closest("details")!;
-    expect(card).toHaveAttribute("open");
+    const status = screen.getByRole("status", { name: "回答状态" });
+    expect(status).toHaveTextContent("核验资料");
+    expect(status).not.toContainElement(card);
+    expect(status.parentElement).toContainElement(card);
+    expect(card).not.toHaveAttribute("open");
+    expect(screen.getByRole("list", { name: "已同步的执行步骤" })).not.toBeVisible();
+    await userEvent.click(screen.getByLabelText("回答过程"));
     const list = screen.getByRole("list", { name: "已同步的执行步骤" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(4);
     expect(within(list).getAllByText("查找资料")).toHaveLength(2);
     expect(within(list).getByText("进行中")).toBeInTheDocument();
+    view.rerender(<AgentProgress displayMode="debug" message={{ ...message, phase: "RESPONDING" }} steps={steps} />);
+    expect(card).toHaveAttribute("open");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(5);
     await userEvent.click(screen.getByLabelText("回答过程"));
     expect(card).not.toHaveAttribute("open");
+    await userEvent.click(screen.getByLabelText("回答过程"));
     view.rerender(<AgentProgress displayMode="debug" message={{ ...message, status: "COMPLETED", phase: null }} steps={steps} />);
-    expect(card).not.toHaveAttribute("open");
+    expect(screen.getByLabelText("回答过程").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("已完成")).toBeInTheDocument();
   });
 
@@ -152,15 +162,17 @@ describe("Agent execution timeline", () => {
     }
   });
 
-  it("restores only the known snapshot phase instead of inventing previous steps", () => {
+  it("restores only the known snapshot phase instead of inventing previous steps", async () => {
     render(<AgentProgress displayMode="debug" message={message} steps={[]} />);
+    await userEvent.click(screen.getByLabelText("回答过程"));
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByRole("listitem")).toHaveTextContent("核验资料");
     expect(screen.queryByText("查找资料")).not.toBeInTheDocument();
   });
 
-  it("retains observed steps when a newer recovery snapshot supplies the current phase", () => {
+  it("retains observed steps when a newer recovery snapshot supplies the current phase", async () => {
     render(<AgentProgress displayMode="debug" message={{ ...message, phase: "RESPONDING" }} steps={steps} />);
+    await userEvent.click(screen.getByLabelText("回答过程"));
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(5);
     expect(rows[4]).toHaveTextContent("生成回答");
@@ -175,10 +187,11 @@ describe("Agent execution timeline", () => {
     expect(screen.getByText("未确认完成")).toBeInTheDocument();
     view.rerender(<AgentProgress displayMode="debug" message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("回答过程"));
     expect(screen.getByText(/完整执行步骤暂不可回放/)).toBeInTheDocument();
   });
 
-  it("shows persisted total timing and every repeated phase in order", () => {
+  it("shows persisted total timing and every repeated phase in order", async () => {
     render(<AgentProgress displayMode="debug" message={{
       ...message,
       status: "COMPLETED",
@@ -198,6 +211,7 @@ describe("Agent execution timeline", () => {
     }} steps={[]} />);
 
     expect(screen.getByText("已完成 · 总耗时 00:04")).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("回答过程"));
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(6);
     expect(rows[0]).toHaveTextContent("等待处理");
@@ -224,6 +238,7 @@ describe("Agent execution timeline", () => {
     }} steps={[]} />);
 
     expect(screen.getByText("核验资料 · 已用 00:03")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("回答过程"));
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(3);
     expect(rows[2]).toHaveAttribute("data-state", "active");

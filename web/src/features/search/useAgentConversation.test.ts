@@ -89,6 +89,20 @@ async function send(result: { current: ReturnType<typeof useAgentConversation> }
 }
 
 describe("Conversation state", () => {
+  it("passes a public source tenant without changing the conversation or attachments", async () => {
+    const { result } = await ready();
+    act(() => { void result.current.send("查找这段", ["shared-series"], null, {}, null, {
+      sourceTenantId: "tenant-alice", attachments: [{ mediaUri: "asset://own-attachment" }],
+    }); });
+    await waitFor(() => expect(streamAgentMessage).toHaveBeenCalledOnce());
+    const args = vi.mocked(streamAgentMessage).mock.calls[0]!;
+    expect(args[0]).toBe("conv-A");
+    expect(args[5]).toEqual(["shared-series"]);
+    expect(args[9]).toEqual([{ mediaUri: "asset://own-attachment" }]);
+    expect(args[10]).toBe("tenant-alice");
+    expect(result.current.conversationId).toBe("conv-A");
+  });
+
   it("confirms acceptance once before the answer finishes and freezes ordered attachment references", async () => {
     const { result } = await ready();
     const onAccepted = vi.fn();

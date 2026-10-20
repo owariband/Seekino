@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Clock3, LoaderCircle, MessageSquareText, ScanSearch, ShieldCheck } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { AgentMessageTiming, AgentMessageView, AnswerPhase, DisplayMode } from "../../api/contracts";
@@ -9,11 +9,11 @@ import type { AgentProgressEvent } from "./useAgentConversation";
 import { useI18n } from "../../app/i18n";
 import styles from "./search.module.css";
 
-const phases: Record<AnswerPhase, { label: string; detail: string; icon: typeof Clock3 }> = {
-  QUEUED: { label: "等待处理", detail: "服务端已接收问题。", icon: Clock3 },
-  RETRIEVING: { label: "查找资料", detail: "查找回答问题所需的资料。", icon: ScanSearch },
-  EVALUATING: { label: "核验资料", detail: "检查资料是否支持回答。", icon: ShieldCheck },
-  RESPONDING: { label: "生成回答", detail: "整理回答和已查到的资料。", icon: MessageSquareText },
+const phases: Record<AnswerPhase, { label: string; detail: string }> = {
+  QUEUED: { label: "等待处理", detail: "服务端已接收问题。" },
+  RETRIEVING: { label: "查找资料", detail: "查找回答问题所需的资料。" },
+  EVALUATING: { label: "核验资料", detail: "检查资料是否支持回答。" },
+  RESPONDING: { label: "生成回答", detail: "整理回答和已查到的资料。" },
 };
 
 type VisibleStage = {
@@ -86,38 +86,31 @@ export function AgentProgress({ message, steps, displayMode = "release", kinoHos
     ? status
     : `${status} · ${processing ? t("已用") : t("总耗时")} ${formatDuration(elapsedMs)}`;
 
-  if (displayMode !== "debug") {
-    return <>
-      {kino}
-      <div className={styles.progressCard} role="status" aria-label={t("回答状态")}><p className={failed ? styles.messageError : styles.progressNote}>{timingStatus}</p></div>
-    </>;
-  }
-
   return <>
     {kino}
-    <details className={styles.progressCard} open={processing}>
-      <summary aria-label={t("回答过程")}>
-        {!processing && !failed ? <Check size={15} aria-hidden="true" /> : null}
-        <span>{t("回答过程")}</span><small className={failed ? styles.messageError : undefined}>{timingStatus}</small>
-        <ChevronDown size={14} className={styles.progressChevron} aria-hidden="true" />
-      </summary>
-      {visibleSteps.length ? (
-        <ol className={styles.progressSteps} aria-label={t("已同步的执行步骤")}>
-          {visibleSteps.map((step, index) => {
-            const phase = phases[step.phase];
-            const latest = index === visibleSteps.length - 1;
-            const state = latest && processing ? "active" : latest && failed ? "interrupted" : "done";
-            const Icon = state === "active" ? LoaderCircle : phase.icon;
-            return (
-              <li key={step.key} data-state={state}>
-                <div className={styles.stepIcon}><Icon size={17} className={state === "active" ? styles.spinning : undefined} aria-hidden="true" /></div>
-                <div><div className={styles.stepHeading}><strong>{t(phase.label)}</strong><span>{state === "active" ? t("进行中") : state === "interrupted" ? t("未确认完成") : t("已执行")}{step.durationMs === null ? "" : ` · ${formatDuration(step.durationMs)}`}</span></div><p>{t(phase.detail)}</p></div>
-              </li>
-            );
-          })}
-        </ol>
-      ) : <p className={styles.progressNote}>{processing ? t("正在同步执行状态…") : failed ? t("本次回答未完成。") : t("历史消息仅保留最终状态，完整执行步骤暂不可回放。")}</p>}
-      {message.searchResult ? <p className={styles.progressNote}>{t("{videos} 个视频 · {clips} 段候选", { videos: message.searchResult.searchedVideoIds.length, clips: message.searchResult.hits.length })}{message.searchResult.partial ? t(" · 结果有资料限制") : ""}</p> : null}
-    </details>
+    <div className={styles.progressCard}>
+      <div role="status" aria-label={t("回答状态")}><p className={failed ? styles.messageError : styles.progressNote}>{timingStatus}</p></div>
+      {displayMode === "debug" ? <details key={message.status} className={styles.progressDetails}>
+        <summary aria-label={t("回答过程")}>
+          <span>{t("回答过程")}</span>
+          <ChevronDown size={14} className={styles.progressChevron} aria-hidden="true" />
+        </summary>
+        {visibleSteps.length ? (
+          <ol className={styles.progressSteps} aria-label={t("已同步的执行步骤")}>
+            {visibleSteps.map((step, index) => {
+              const phase = phases[step.phase];
+              const latest = index === visibleSteps.length - 1;
+              const state = latest && processing ? "active" : latest && failed ? "interrupted" : "done";
+              return (
+                <li key={step.key} data-state={state}>
+                  <div><div className={styles.stepHeading}><strong>{t(phase.label)}</strong><span>{state === "active" ? t("进行中") : state === "interrupted" ? t("未确认完成") : t("已执行")}{step.durationMs === null ? "" : ` · ${formatDuration(step.durationMs)}`}</span></div><p>{t(phase.detail)}</p></div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : <p className={styles.progressNote}>{processing ? t("正在同步执行状态…") : failed ? t("本次回答未完成。") : t("历史消息仅保留最终状态，完整执行步骤暂不可回放。")}</p>}
+        {message.searchResult ? <p className={styles.progressNote}>{t("{videos} 个视频 · {clips} 段候选", { videos: message.searchResult.searchedVideoIds.length, clips: message.searchResult.hits.length })}{message.searchResult.partial ? t(" · 结果有资料限制") : ""}</p> : null}
+      </details> : null}
+    </div>
   </>;
 }

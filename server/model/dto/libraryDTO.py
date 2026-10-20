@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import Field
 
 from ...schema import ContractModel
-from ..video import VideoIndexStatus
+from ..video import SeriesVisibility, VideoIndexStatus
 from .uploadDTO import UploadSessionState
 
 
@@ -36,7 +36,7 @@ class SeriesUpdateRequest(ContractModel):
     description: str | None = None
     transcript_language_hint: str | None = Field(default=None, max_length=64)
     important_extra_data: SeriesBackground | None = None
-    is_published: bool | None = Field(default=None, strict=True)
+    visibility: SeriesVisibility | None = None
 
 
 class VideoEpisodeUpdateRequest(ContractModel):
@@ -76,6 +76,12 @@ class SeriesLastSearchState:
 
 
 @dataclass(frozen=True, slots=True)
+class SeriesPublisherState:
+    kind: Literal["user", "platform"]
+    display_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class SeriesState:
     series_id: str
     tenant_id: str
@@ -88,7 +94,9 @@ class SeriesState:
     video_count: int
     created_at: int
     updated_at: int
-    is_published: bool = False
+    visibility: SeriesVisibility = SeriesVisibility.PRIVATE
+    publisher: SeriesPublisherState | None = None
+    publisher_active: bool = False
     display_name: str | None = None
     ready_video_count: int = 0
     failed_video_count: int = 0

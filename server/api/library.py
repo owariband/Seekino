@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Literal
 
 from fastapi import Query, Request
+from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
 from ..model.dto.libraryDTO import (
@@ -14,8 +16,9 @@ from ..model.dto.libraryDTO import (
     VideoSummaryState,
 )
 from ..model.job import ParseJobStatus
+from ..model.video import SeriesVisibility
 from ..service.media import MediaService
-from ..service.access import require_admin, require_series_read, require_tenant_read, require_tenant_write
+from ..service.access import is_series_member, require_admin, require_tenant_read, require_tenant_write, series_access
 from ..service.pagination import decode_cursor, encode_cursor
 from .uploads import project_upload_session
 from .context import get_identity, get_services
@@ -43,22 +46,26 @@ def create_series(request: Request, body: SeriesCreateRequest) -> SeriesView:
     return _series_view(state, get_services(request).media)
 
 
-def update_series(request: Request, body: SeriesUpdateRequest) -> SeriesView:
+def update_series(request: Request, body: SeriesUpdateRequest) -> SeriesView | Response:
     services = get_services(request)
     identity = get_identity(request)
     changes = body.model_dump(exclude_unset=True, exclude={"tenant_id", "series_id"})
-    if "is_published" in changes:
+    series = services.library.get_series(body.series_id, tenant_id=body.tenant_id, owner_user_id=identity.user_id)
+    takedown = not is_series_member(identity, series.tenant_id) and changes == {
+        "visibility": SeriesVisibility.PRIVATE,
+    } and identity.role == "admin"
+    if takedown:
         require_admin(identity)
-        if body.tenant_id != identity.public_tenant_id:
-            raise ValueError("only platform public courses can be published")
-        if changes["is_published"]:
-            series = services.library.get_series(body.series_id, tenant_id=body.tenant_id, owner_user_id=identity.user_id)
-            if not services.media.publication_ready(series, require_published=False):
-                raise ValueError("only a complete Series with playable media can be published")
-    require_tenant_write(identity, body.tenant_id)
+    else:
+        require_tenant_write(identity, series.tenant_id)
+    if changes.get("visibility") == SeriesVisibility.PUBLIC:
+        if not services.media.publication_ready(series, require_published=False):
+            raise ValueError("only a complete Series with playable media can be published")
     state = services.library.update_series(
         body.series_id, tenant_id=body.tenant_id, changes=changes, owner_user_id=identity.user_id,
     )
+    if takedown:
+        return Response(status_code=204)
     return _series_view(state, services.media)
 
 
@@ -122,7 +129,7 @@ def list_series(
     normalized_query = query.strip() if query else None
     scope = {"tenantId": tenant_id, "ownerUserId": identity.user_id, "status": status, "query": normalized_query, "sort": "createdAt,seriesId:asc"}
     offset = decode_cursor(cursor, scope=scope)
-    if identity.mode == "cloud" and tenant_id == identity.public_tenant_id:
+    if identity.mode == "cloud" and not is_series_member(identity, tenant_id):
         states, total = services.library.list_public_series_page(
             tenant_id=tenant_id, media=services.media, owner_user_id=identity.user_id,
             status=status, query=normalized_query, offset=offset, limit=limit,
@@ -133,11 +140,33 @@ def list_series(
             owner_user_id=identity.user_id,
         )
         total = services.library.count_series(tenant_id=tenant_id, status=status, query=normalized_query)
-    for state in states:
-        require_series_read(identity, state)
     has_more = offset + len(states) < total
     return Page[SeriesSummary](
-        items=[project_series_summary(state, services.media) for state in states], total=total,
+        items=[project_series_summary(state, services.media, access=series_access(identity, state)) for state in states], total=total,
+        next_cursor=encode_cursor(offset + len(states), scope=scope) if has_more else None,
+        has_more=has_more,
+    )
+
+
+def list_public_series(
+    request: Request,
+    cursor: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    query: str | None = Query(None),
+) -> Page[SeriesSummary]:
+    services = get_services(request)
+    identity = get_identity(request)
+    normalized_query = query.strip() if query else None
+    scope = {"source": "public", "query": normalized_query, "sort": "createdAt,seriesId:asc"}
+    offset = decode_cursor(cursor, scope=scope)
+    states, total = services.library.list_public_series_page(
+        tenant_id=None, media=services.media, owner_user_id=identity.user_id,
+        query=normalized_query, offset=offset, limit=limit,
+    )
+    has_more = offset + len(states) < total
+    return Page[SeriesSummary](
+        items=[project_series_summary(state, services.media, access=series_access(identity, state)) for state in states],
+        total=total,
         next_cursor=encode_cursor(offset + len(states), scope=scope) if has_more else None,
         has_more=has_more,
     )
@@ -149,25 +178,22 @@ def get_series(
     tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
 ) -> SeriesView:
     state = read_series(request, series_id, tenant_id=tenant_id)
-    return _series_view(state, get_services(request).media)
+    return _series_view(state, get_services(request).media, access=series_access(get_identity(request), state))
 
 
 def read_series(request: Request, series_id: str, *, tenant_id: str) -> SeriesState:
     identity = get_identity(request)
-    require_tenant_read(identity, tenant_id)
     services = get_services(request)
     state = services.library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
-    require_series_read(identity, state)
-    if identity.mode == "cloud" and tenant_id == identity.public_tenant_id:
-        services.media.require_public_series(state)
+    services.media.require_readable_series(identity, state)
     return state
 
 
-def _series_view(state: SeriesState, media: MediaService) -> SeriesView:
-    return project_series_detail(state, media)
+def _series_view(state: SeriesState, media: MediaService, *, access: Literal["member", "public"] = "member") -> SeriesView:
+    return project_series_detail(state, media, access=access)
 
 
-def project_video(state: VideoSummaryState, media: MediaService) -> VideoSummary:
+def project_video(state: VideoSummaryState, media: MediaService, *, access: Literal["member", "public"] = "member") -> VideoSummary:
     playback = media.playback_view(state.video_id, tenant_id=state.tenant_id, video=state)
     thumbnail = media.thumbnail_view(state.video_id, tenant_id=state.tenant_id, video=state)
     error = Failure(code="PROCESSING_FAILED", message="视频建库发生错误，请查看任务状态") if state.last_error else None
@@ -178,7 +204,8 @@ def project_video(state: VideoSummaryState, media: MediaService) -> VideoSummary
     return VideoSummary(
         video_id=state.video_id, tenant_id=state.tenant_id, series_id=state.series_id,
         episode_order=state.episode_order, upload_sequence=state.upload_sequence,
-        original_filename=state.original_filename, total_bytes=state.total_bytes,
+        original_filename=state.original_filename if access == "member" else None,
+        total_bytes=state.total_bytes if access == "member" else None,
         duration_seconds=state.duration_seconds, upload_status=state.upload_status,
         upload_progress=state.upload_progress,
         parse_status=ParseJobStatus.SUCCEEDED if state.parse_status == "COMPLETED" else state.parse_status,
@@ -186,33 +213,36 @@ def project_video(state: VideoSummaryState, media: MediaService) -> VideoSummary
         playback_status=playback.status, playback_url=playback.url,
         playback_url_expires_at=playback.expires_at,
         thumbnail=ImageAsset.model_validate(asdict(thumbnail)) if thumbnail else None,
-        latest_job_id=state.latest_job_id, last_error=error,
+        latest_job_id=state.latest_job_id if access == "member" else None,
+        last_error=error if access == "member" else None,
     )
 
 
-def project_series_summary(state: SeriesState, media: MediaService) -> SeriesSummary:
+def project_series_summary(state: SeriesState, media: MediaService, *, access: Literal["member", "public"] = "member") -> SeriesSummary:
     representative = state.representative_video
     cover = media.thumbnail_view(
         representative.video_id, tenant_id=state.tenant_id, video=representative,
     ) if representative else None
     return SeriesSummary(
         series_id=state.series_id, tenant_id=state.tenant_id,
-        is_published=state.is_published,
+        visibility=state.visibility, access=access,
+        publisher=asdict(state.publisher) if state.publisher else None,
         name=state.name, display_name=state.display_name, description=state.description, status=state.status,
         video_count=state.video_count, ready_video_count=state.ready_video_count,
-        failed_video_count=state.failed_video_count, pending_upload_count=state.pending_upload_count,
+        failed_video_count=state.failed_video_count if access == "member" else 0,
+        pending_upload_count=state.pending_upload_count if access == "member" else 0,
         cover=ImageAsset.model_validate(asdict(cover)) if cover else None,
         last_search=LastSearchView.model_validate(asdict(state.last_search)) if state.last_search else None,
         created_at=state.created_at, updated_at=state.updated_at,
     )
 
 
-def project_series_detail(state: SeriesState, media: MediaService) -> SeriesDetail:
+def project_series_detail(state: SeriesState, media: MediaService, *, access: Literal["member", "public"] = "member") -> SeriesDetail:
     return SeriesDetail(
-        **project_series_summary(state, media).model_dump(),
-        transcript_language_hint=state.transcript_language_hint,
-        important_extra_data=state.important_extra_data,
-        character_bible=[Character(name=item["name"], aliases=item.get("aliases", [])) for item in state.character_bible],
-        videos=[project_video(video, media) for video in state.videos],
-        pending_uploads=[project_upload_session(upload) for upload in state.pending_uploads],
+        **project_series_summary(state, media, access=access).model_dump(),
+        transcript_language_hint=state.transcript_language_hint if access == "member" else None,
+        important_extra_data=state.important_extra_data if access == "member" else None,
+        character_bible=[Character(name=item["name"], aliases=item.get("aliases", [])) for item in state.character_bible] if access == "member" else [],
+        videos=[project_video(video, media, access=access) for video in state.videos],
+        pending_uploads=[project_upload_session(upload) for upload in state.pending_uploads] if access == "member" else [],
     )

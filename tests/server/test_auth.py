@@ -27,7 +27,7 @@ from server.database import Base
 from server.model.agent import AgentConversation
 from server.model.tenant import Tenant
 from server.model.user import User
-from server.repository.identity import IdentityRepository
+from server.repository.identity import IdentityRepository, default_public_nickname
 from server.router.auth import router
 from server.error.auth import AuthError, IdentityDeniedError
 from server.utils.email import normalize_email
@@ -244,7 +244,9 @@ def test_guest_profile_defaults_and_successful_login_record(cloud, monkeypatch):
     assert service.authenticate(account.token) == account.identity
     with sessions() as session:
         user = session.get(User, account.identity.user_id)
-        assert user.nickname == "profile"
+        assert user.nickname == default_public_nickname(user.id)
+        assert user.nickname.startswith("用户-")
+        assert "profile" not in user.nickname and "@" not in user.nickname
         assert not user.is_anonymous
         assert user.last_login_time == instant and user.login_channel == "email"
 

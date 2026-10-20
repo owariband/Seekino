@@ -1,0 +1,12 @@
+.trigger { display: inline-grid; flex-shrink: 0; width: 36px; height: 36px; place-items: center; padding: 0; color: inherit; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); cursor: pointer; }
+.trigger:hover { color: var(--teal-deep); background: var(--teal-wash); }
+.menu { position: fixed; z-index: 1000; display: grid; gap: 4px; width: min(250px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 8px; color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-small); background: var(--surface); box-shadow: var(--shadow-small); }
+.label { padding: 5px 8px; color: var(--ink-soft); font-size: .75rem; }
+.menu > button { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 8px; color: inherit; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; }
+.menu > button:hover, .menu > button:focus-visible { background: var(--teal-wash); }
+.menu > button:disabled { opacity: .6; cursor: wait; }
+.menu > button > span { flex: 1; font-size: .85rem; }
+.menu small { display: block; margin-top: 3px; color: var(--ink-soft); font-size: .72rem; }
+.status, .error { margin: 2px 8px 6px; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+.status { color: var(--ink-soft); }
+.error { color: var(--danger, #bc4b46); }

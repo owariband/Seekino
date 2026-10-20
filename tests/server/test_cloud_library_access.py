@@ -1,28 +1,35 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
+from server.api import agent as agent_api
 from server.api.errors import register_exception_handlers
 from server.config.auth import AuthConfig
+from server.config.sse import SSEConfig
 from server.constants.identity import LOCAL_USER_ID
 from server.database import create_schema, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
+from server.model.dto.agentDTO import AgentMessageState
 from server.model.dto.authDTO import AuthIdentity
 from server.model.job import VideoParseTask
+from server.model.tenant import Tenant
 from server.model.upload import UploadSession
-from server.model.video import Series, Video, VideoChunk
+from server.model.user import User
+from server.model.video import Series, SeriesVisibility, Video, VideoChunk
 from server.repository.library import LibraryRepository
 from server.repository.video import VideoRepository
 from server.router.library import router as library_router
@@ -86,6 +93,12 @@ def cloud_library(prepared_import, tmp_path):
                            connect_args={"check_same_thread": False})
     create_schema(engine)
     factory = create_session_factory(engine)
+    with factory.begin() as session:
+        session.add(Tenant(id=PUBLIC, type="public", name="Seekino"))
+        for user_id in ("alice", "bob", "admin"):
+            session.add(User(id=user_id, email=f"{user_id}@example.com", is_anonymous=False,
+                             is_superuser=user_id == "admin", nickname=user_id))
+            session.add(Tenant(id=f"tenant-{user_id}", type="personal", owner_id=user_id, name=user_id))
     videos = VideoRepository(factory)
     prepared = replace(prepared_import, tenant_id=PUBLIC)
     report = videos.import_video_parse(prepared)
@@ -95,7 +108,7 @@ def cloud_library(prepared_import, tmp_path):
     frame = store.base_directory / "course.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-course-frame")
     with factory.begin() as session:
-        session.get(Series, prepared.series_id).is_published = True
+        session.get(Series, prepared.series_id).visibility = SeriesVisibility.PUBLIC
         session.get(Video, prepared.video_id).source_uri = store.uri_for_path(source)
         session.get(VideoChunk, report.video_chunk_ids[0]).keyframe_uris = [
             {"uri": store.uri_for_path(frame), "at_seconds": 0},
@@ -146,7 +159,7 @@ def _course(fixture, name, *, tenant_id=PUBLIC, published=True, task_status="COM
     state = fixture.library.create_series(tenant_id=tenant_id, name=name)
     video_id = str(uuid4())
     with fixture.factory.begin() as session:
-        session.get(Series, state.series_id).is_published = published
+        session.get(Series, state.series_id).visibility = SeriesVisibility.PUBLIC if published else SeriesVisibility.PRIVATE
         session.add(Video(
             id=video_id, series_id=state.series_id, episode_order=1, upload_sequence=1,
             filename="private-course.mp4",
@@ -166,9 +179,9 @@ def _login(fixture, token):
     fixture.client.cookies.set(fixture.auth.config.cookie_name, token)
 
 
-def _publish(fixture, value, *, series_id=None, tenant_id=PUBLIC):
+def _visibility(fixture, value, *, series_id=None, tenant_id=PUBLIC):
     return fixture.client.post("/api/series/update", headers={"X-CSRF-Token": "csrf"}, json={
-        "tenantId": tenant_id, "seriesId": series_id or fixture.prepared.series_id, "isPublished": value,
+        "tenantId": tenant_id, "seriesId": series_id or fixture.prepared.series_id, "visibility": value,
     })
 
 
@@ -188,7 +201,8 @@ def test_public_library_filters_before_count_and_pagination(cloud_library):
     assert response.status_code == 200
     page = response.json()
     assert page["total"] == 2 and page["hasMore"]
-    assert page["items"][0]["isPublished"] is True
+    assert page["items"][0]["visibility"] == "public"
+    assert page["items"][0]["publisher"] == {"kind": "platform", "displayName": "Seekino", "avatar": None}
     next_page = f.client.get("/api/series/list", params={
         "tenantId": PUBLIC, "limit": 1, "cursor": page["nextCursor"],
     }).json()
@@ -219,6 +233,127 @@ def test_private_media_and_library_require_personal_tenant(cloud_library):
     assert f.client.get(requests[2][0], params=requests[2][1], headers={"Range": "bytes=0-3"}).status_code == 206
 
 
+@pytest.mark.parametrize("token,visibility,ready,status,access", [
+    ("guest", "private", True, 404, None),
+    ("bob", "private", True, 404, None),
+    ("admin", "private", True, 404, None),
+    ("alice", "private", True, 200, "member"),
+    ("guest", "public", True, 200, "public"),
+    ("bob", "public", True, 200, "public"),
+    ("admin", "public", True, 200, "public"),
+    ("alice", "public", True, 200, "member"),
+    ("guest", "public", False, 404, None),
+    ("bob", "public", False, 404, None),
+    ("admin", "public", False, 404, None),
+    ("alice", "public", False, 200, "member"),
+])
+def test_personal_series_access_matrix(cloud_library, token, visibility, ready, status, access):
+    f = cloud_library
+    series_id, _ = _course(f, "Alice shared series", tenant_id="tenant-alice",
+                           published=visibility == "public", task_status="COMPLETE" if ready else "PENDING")
+    _login(f, token)
+    response = f.client.get("/api/series/get", params={"tenantId": "tenant-alice", "seriesId": series_id})
+    assert response.status_code == status, response.text
+    if status == 200:
+        assert response.json()["access"] == access
+        assert response.json()["visibility"] == visibility
+
+
+def test_owner_shares_safe_public_detail_and_can_revoke_media(cloud_library):
+    f = cloud_library
+    series_id, video_id = _course(f, "Alice shared series", tenant_id="tenant-alice", published=False)
+    with f.factory.begin() as session:
+        record = session.get(Series, series_id)
+        record.transcript_language_hint = "zh-CN"
+        record.important_extra_data = {"format": "markdown", "content": "owner background secret"}
+        record.character_bible = [{"name": "owner character secret", "aliases": []}]
+    _login(f, "alice")
+    response = _visibility(f, "public", series_id=series_id, tenant_id="tenant-alice")
+    assert response.status_code == 200, response.text
+    assert response.json()["access"] == "member"
+    assert response.json()["videos"][0]["originalFilename"] == "private-course.mp4"
+    params = {"tenantId": "tenant-alice", "seriesId": series_id}
+    media_params = {"tenantId": "tenant-alice", "videoId": video_id}
+    assert f.client.get("/api/videos/content", params={**media_params, "variant": "original"}).status_code == 200
+    for token in ("guest", "bob"):
+        _login(f, token)
+        response = f.client.get("/api/series/get", params=params)
+        assert response.status_code == 200, response.text
+        detail = response.json()
+        assert detail["access"] == "public"
+        assert detail["publisher"]["kind"] == "user"
+        assert detail["publisher"]["avatar"] is None
+        assert detail["publisher"]["displayName"] != "alice"
+        assert "example.com" not in response.text
+        assert detail["transcriptLanguageHint"] is None
+        assert detail["importantExtraData"] is None
+        assert detail["characterBible"] == [] and detail["pendingUploads"] == []
+        for field in ("originalFilename", "totalBytes", "latestJobId", "lastError"):
+            assert detail["videos"][0][field] is None
+        assert "owner background secret" not in response.text and "owner character secret" not in response.text
+        assert f.client.get("/api/series/list", params={"tenantId": "tenant-alice"}).status_code == 404
+        assert f.client.get("/api/videos/content", params=media_params, headers={"Range": "bytes=0-3"}).status_code == 206
+        assert f.client.get("/api/videos/content", params={**media_params, "variant": "original"}).status_code == 404
+    _login(f, "alice")
+    assert _visibility(f, "private", series_id=series_id, tenant_id="tenant-alice").status_code == 200
+    _login(f, "guest")
+    assert f.client.get("/api/series/get", params=params).status_code == 404
+    assert f.client.get("/api/videos/content", params=media_params, headers={"Range": "bytes=0-3"}).status_code == 404
+
+
+def test_admin_takedown_does_not_grant_cross_tenant_edit_or_read(cloud_library):
+    f = cloud_library
+    series_id, _ = _course(f, "Alice private title", tenant_id="tenant-alice", published=True)
+    _login(f, "admin")
+    response = f.client.post("/api/series/update", headers={"X-CSRF-Token": "csrf"}, json={
+        "tenantId": "tenant-alice", "seriesId": series_id, "visibility": "private", "description": "changed",
+    })
+    assert response.status_code == 404
+    assert _visibility(f, "public", series_id=series_id, tenant_id="tenant-alice").status_code == 404
+    response = _visibility(f, "private", series_id=series_id, tenant_id="tenant-alice")
+    assert response.status_code == 204 and response.content == b""
+    assert f.library.get_series(series_id, tenant_id="tenant-alice").visibility == SeriesVisibility.PRIVATE
+    assert f.client.get("/api/series/get", params={"tenantId": "tenant-alice", "seriesId": series_id}).status_code == 404
+
+
+def test_public_discovery_crosses_tenants_and_cursor_is_not_viewer_scoped(cloud_library):
+    f = cloud_library
+    alice_id, _ = _course(f, "Alice available", tenant_id="tenant-alice")
+    bob_id, _ = _course(f, "Bob available", tenant_id="tenant-bob")
+    _course(f, "Alice draft", tenant_id="tenant-alice", published=False)
+    _course(f, "Bob processing", tenant_id="tenant-bob", task_status="PENDING")
+    _course(f, "Missing available", tenant_id="tenant-bob", managed=False)
+    first = f.client.get("/api/series/public", params={"limit": 1})
+    assert first.status_code == 200, first.text
+    page = first.json()
+    assert page["total"] == 3 and page["hasMore"]
+    items = page["items"]
+    _login(f, "bob")
+    while page["hasMore"]:
+        response = f.client.get("/api/series/public", params={"limit": 1, "cursor": page["nextCursor"]})
+        assert response.status_code == 200, response.text
+        page = response.json()
+        assert page["total"] == 3
+        items.extend(page["items"])
+    assert {item["seriesId"] for item in items} == {f.prepared.series_id, alice_id, bob_id}
+    assert {item["tenantId"] for item in items} == {PUBLIC, "tenant-alice", "tenant-bob"}
+    assert all(item["videoCount"] == 1 and item["publisher"] is not None for item in items)
+    assert f.client.get("/api/series/public", params={"cursor": first.json()["nextCursor"], "query": "Alice"}).status_code == 400
+
+
+@pytest.mark.parametrize("disable", ["owner", "tenant"])
+def test_disabled_publisher_disappears_from_public_detail_media_and_discovery(cloud_library, disable):
+    f = cloud_library
+    series_id, video_id = _course(f, "Alice available", tenant_id="tenant-alice")
+    with f.factory.begin() as session:
+        record = session.get(User, "alice") if disable == "owner" else session.get(Tenant, "tenant-alice")
+        record.status = "DISABLED"
+    assert f.client.get("/api/series/get", params={"tenantId": "tenant-alice", "seriesId": series_id}).status_code == 404
+    assert f.client.get("/api/videos/content", params={"tenantId": "tenant-alice", "videoId": video_id}).status_code == 404
+    page = f.client.get("/api/series/public").json()
+    assert page["total"] == 1 and page["items"][0]["seriesId"] == f.prepared.series_id
+
+
 def test_withdrawal_blocks_existing_media_image_chunk_and_range_urls(cloud_library):
     f = cloud_library
     series = f.library.get_series(f.prepared.series_id, tenant_id=PUBLIC)
@@ -237,11 +372,11 @@ def test_withdrawal_blocks_existing_media_image_chunk_and_range_urls(cloud_libra
     endpoints.append(("/api/media/images/content", {"tenantId": PUBLIC, "imageId": background.image_id}))
     for path, params in endpoints:
         response = f.client.get(path, params=params)
-        assert response.status_code == 200
-        if path in {"/api/videos/content", "/api/media/images/content"}:
+        assert response.status_code == (404 if params.get("variant") == "original" else 200)
+        if response.status_code == 200 and path in {"/api/videos/content", "/api/media/images/content"}:
             assert response.headers["cache-control"] == "private, no-store"
     _login(f, "admin")
-    assert _publish(f, False).status_code == 200
+    assert _visibility(f, "private").status_code == 200
     _login(f, "guest")
     for path, params in endpoints:
         response = f.client.get(path, params=params, headers={"Range": "bytes=0-3"})
@@ -251,23 +386,24 @@ def test_withdrawal_blocks_existing_media_image_chunk_and_range_urls(cloud_libra
     f.retrieval.search.assert_not_called()
 
 
-def test_publication_requires_admin_public_source_ready_and_playable_media(cloud_library):
+def test_visibility_requires_ownership_ready_and_playable_media(cloud_library):
     f = cloud_library
-    for token in ("guest", "alice"):
+    for token, expected in (("guest", 403), ("alice", 404)):
         _login(f, token)
-        assert _publish(f, False).status_code == 403
+        assert _visibility(f, "private").status_code == expected
     _login(f, "admin")
     private_id, _ = _course(f, "Admin private course", tenant_id="tenant-admin", published=False)
-    assert _publish(f, True, series_id=private_id, tenant_id="tenant-admin").status_code == 400
-    assert _publish(f, False).status_code == 200
+    assert _visibility(f, "public", series_id=private_id, tenant_id="tenant-admin").status_code == 200
+    assert _visibility(f, "private").status_code == 200
     f.probe.return_value = False
-    assert _publish(f, True).status_code == 400
+    assert _visibility(f, "public").status_code == 400
     f.probe.return_value = True
-    assert _publish(f, True).json()["isPublished"] is True
+    assert _visibility(f, "public").json()["visibility"] == "public"
     not_ready, _ = _course(f, "Unready course", published=False, task_status="PENDING")
-    assert _publish(f, True, series_id=not_ready).status_code == 400
-    assert _publish(f, None).status_code == 400
-    assert _publish(f, "true").status_code == 422
+    assert _visibility(f, "public", series_id=not_ready).status_code == 400
+    assert _visibility(f, None).status_code == 400
+    assert _visibility(f, "unlisted").status_code == 422
+    assert _visibility(f, True).status_code == 422
     f.source.unlink()
     _login(f, "guest")
     assert f.client.get("/api/series/list", params={"tenantId": PUBLIC}).json()["total"] == 0
@@ -288,7 +424,7 @@ def test_pending_upload_hides_course_and_blocks_publication(cloud_library):
     assert _search(f).status_code == 404
     f.retrieval.search.assert_not_called()
     _login(f, "admin")
-    assert _publish(f, True).status_code == 400
+    assert _visibility(f, "public").status_code == 400
 
 
 def test_last_search_is_scoped_to_user_within_public_tenant(cloud_library):
@@ -323,11 +459,71 @@ def test_search_quota_denial_happens_before_retrieval(cloud_library):
     f.auth.redis.zrem.assert_not_called()
 
 
+@pytest.mark.parametrize("token,public_view", [("guest", True), ("bob", True), ("admin", False)])
+def test_chunk_and_search_routes_project_filename_for_actual_viewer(cloud_library, token, public_view):
+    f = cloud_library
+    _login(f, token)
+    source = f.result.hits[0].evidence
+    expected = None if public_view else source.original_filename
+    assert source.original_filename
+    chunk = f.client.get("/api/video-chunks/get", params={
+        "tenantId": PUBLIC, "videoChunkId": source.video_chunk_id,
+    })
+    assert chunk.status_code == 200, chunk.text
+    assert chunk.json()["originalFilename"] == expected
+    searched = _search(f)
+    assert searched.status_code == 200, searched.text
+    assert searched.json()["hits"][0]["evidence"]["originalFilename"] == expected
+
+
+@pytest.mark.parametrize("token,public_view", [("guest", True), ("bob", True), ("admin", False)])
+def test_agent_history_and_evidence_stream_project_filename_for_actual_viewer(cloud_library, token, public_view):
+    f = cloud_library
+    identity = f.auth.identities[token]
+    result = f.result.model_dump(by_alias=True, exclude={"query"})
+    message = AgentMessageState(
+        message_id=str(uuid4()), conversation_id=str(uuid4()), sequence_no=1,
+        role="ASSISTANT", status="COMPLETED", content="Found course",
+        series_ids=(f.prepared.series_id,), model_name=None, search_result=result,
+        last_error=None, created_at=1, updated_at=1, source_tenant_id=PUBLIC,
+    )
+    expected = None if public_view else f.result.hits[0].evidence.original_filename
+    historical = agent_api._agent_message_view(
+        message, media=f.media, tenant_id=identity.tenant_id or PUBLIC, identity=identity,
+    )
+    assert historical.search_result.hits[0].evidence.original_filename == expected
+    request = Request({
+        "type": "http", "method": "GET", "path": "/api/agent/messages/events",
+        "app": f.client.app,
+        "headers": [(b"cookie", f"{f.auth.config.cookie_name}={token}".encode())],
+    })
+    request.is_disconnected = AsyncMock(return_value=False)
+    execution = SimpleNamespace(
+        next_event=Mock(side_effect=[{
+            "type": "answer.evidence", "conversationId": message.conversation_id,
+            "messageId": message.message_id, "sequence": 1, "occurredAt": 1,
+            "searchResult": result,
+        }, None]), cancellation=Mock(), detach=Mock(),
+    )
+
+    async def collect():
+        return [event async for event in agent_api._answer_events(
+            request, execution, SSEConfig(), media=f.media, tenant_id=PUBLIC,
+            series_ids=[f.prepared.series_id], chat_tenant_id=identity.tenant_id or PUBLIC,
+        )]
+
+    events = asyncio.run(collect())
+    assert len(events) == 1
+    payload = json.loads(next(line[6:] for line in events[0].splitlines() if line.startswith("data: ")))
+    assert payload["searchResult"]["hits"][0]["evidence"]["originalFilename"] == expected
+    execution.detach.assert_called_once()
+
+
 def test_search_revalidates_publication_after_model_work(cloud_library):
     f = cloud_library
     def withdraw(*args, **kwargs):
         with f.factory.begin() as session:
-            session.get(Series, f.prepared.series_id).is_published = False
+            session.get(Series, f.prepared.series_id).visibility = SeriesVisibility.PRIVATE
         return f.result
     f.retrieval.search.side_effect = withdraw
     response = _search(f)

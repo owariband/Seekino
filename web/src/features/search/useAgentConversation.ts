@@ -276,7 +276,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     reference: EvidenceReference | null = null,
     options: AgentMessageRunOptions = {},
     extraContext: Record<string, unknown> | null = null,
-    submission?: { attachments?: AgentAttachmentReference[]; onAccepted?: () => void },
+    submission?: { attachments?: AgentAttachmentReference[]; sourceTenantId?: string; onAccepted?: () => void },
   ) => {
     const active = activeRef.current;
     if (!content.trim() || !active?.conversationId || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
@@ -364,6 +364,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         frozenOptions,
         frozenExtraContext,
         frozenAttachments,
+        submission?.sourceTenantId,
       );
     } catch (error) {
       rejected = error instanceof ApiClientError && error.status >= 400 && error.status < 500;

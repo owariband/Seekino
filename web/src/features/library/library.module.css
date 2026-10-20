@@ -6,6 +6,8 @@
 }
 
 .headerActions { display: flex; gap: 10px; }
+.selectedSeriesHeading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 28px; }
+.selectedSeriesHeading h2 { margin: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
 .headerActions button { font-size: .78rem; }
 .shelf { margin-top: 28px; }
 .shelfHeading, .sectionHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; color: var(--ink-faint); font-size: .75rem; }

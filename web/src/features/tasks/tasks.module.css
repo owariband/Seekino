@@ -250,16 +250,13 @@
   font-size: .64rem;
 }
 
-.jobProgress {
-  display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(0, 1fr);
-  align-items: center;
-  gap: 24px;
-  margin-top: 16px;
-}
-
+.jobProgress,
 .jobProgressRelease {
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .pipeline {
@@ -312,12 +309,9 @@
 .progressFacts {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px 18px;
-  padding: 8px 10px;
   color: var(--ink-faint);
-  border-radius: 10px;
-  background: var(--teal-wash);
   font-size: .62rem;
 }
 

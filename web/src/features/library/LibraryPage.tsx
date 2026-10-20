@@ -17,8 +17,10 @@ import { errorMessage } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { useUploads } from "../uploads/UploadProvider";
-import { episodeLabel, formatBytes, formatTimecode } from "../../shared/format";
+import { episodeLabel, formatBytes, formatTimecode, seriesTitle } from "../../shared/format";
 import { SeriesBackgroundEditor } from "./SeriesBackgroundEditor";
+import { SeriesActionsMenu } from "./SeriesActionsMenu";
+import { watchPath } from "./seriesLinks";
 import { useI18n } from "../../app/i18n";
 import { translate } from "../../shared/messages";
 import styles from "./library.module.css";
@@ -122,7 +124,7 @@ export function LibraryPage() {
         <div className={styles.headerActions}>
           <button className="button-secondary" type="button" onClick={() => setCreating(true)}>
             <FolderPlus size={16} />{t("新建视频系列")}</button>
-          <button className="button-primary" type="button" onClick={openDialog} disabled={!selectedSeries}>
+          <button className="button-primary" type="button" onClick={openDialog} disabled={selectedSeries?.access !== "member"}>
             <UploadCloud size={16} />{t("上传视频")}</button>
         </div>
       </header>
@@ -152,8 +154,12 @@ export function LibraryPage() {
         {isLoading ? <p className={styles.emptySeries} role="status">{t("正在读取视频系列…")}</p> : null}
       </section>
 
-      {selectedSeries ? (
+      {selectedSeries?.access === "member" ? (
         <>
+          <div className={styles.selectedSeriesHeading}>
+            <h2>{seriesTitle(selectedSeries)}</h2>
+            <SeriesActionsMenu series={selectedSeries} />
+          </div>
           <SeriesBackgroundEditor key={`${selectedSeries.tenantId}:${selectedSeries.seriesId}`} series={selectedSeries} />
 
           <section className={styles.episodes}>
@@ -171,14 +177,14 @@ export function LibraryPage() {
                           if (event.key === "Escape" && !episodeSaving) { event.preventDefault(); cancelEpisodeEditing(); }
                         }}>
                           <label>
-                            <span className="sr-only">{t("{filename} 集数", { filename: video.originalFilename })}</span>
+                            <span className="sr-only">{t("{filename} 集数", { filename: video.originalFilename ?? episodeLabel(video.episodeOrder) })}</span>
                             <input className="field" type="number" min={1} max={MAX_EPISODE_ORDER} step={1} required autoFocus disabled={episodeSaving} value={episodeDraft} onChange={(event) => { setEpisodeDraft(event.target.value); setEpisodeError(null); }} />
                           </label>
                           <div>
-                            <button type="submit" disabled={episodeSaving || mode !== "live" || !Number.isSafeInteger(Number(episodeDraft)) || Number(episodeDraft) <= 0 || Number(episodeDraft) > MAX_EPISODE_ORDER || Number(episodeDraft) === video.episodeOrder} aria-label={episodeSaving ? t("正在保存 {filename} 集数", { filename: video.originalFilename }) : t("保存 {filename} 集数", { filename: video.originalFilename })} title={t("保存集数")}>
+                            <button type="submit" disabled={episodeSaving || mode !== "live" || !Number.isSafeInteger(Number(episodeDraft)) || Number(episodeDraft) <= 0 || Number(episodeDraft) > MAX_EPISODE_ORDER || Number(episodeDraft) === video.episodeOrder} aria-label={episodeSaving ? t("正在保存 {filename} 集数", { filename: video.originalFilename ?? episodeLabel(video.episodeOrder) }) : t("保存 {filename} 集数", { filename: video.originalFilename ?? episodeLabel(video.episodeOrder) })} title={t("保存集数")}>
                               {episodeSaving ? <RefreshCw className={styles.spinning} size={12} /> : <Check size={12} />}
                             </button>
-                            <button type="button" disabled={episodeSaving} onClick={cancelEpisodeEditing} aria-label={t("取消编辑 {filename} 集数", { filename: video.originalFilename })} title={t("取消编辑")}><X size={12} /></button>
+                            <button type="button" disabled={episodeSaving} onClick={cancelEpisodeEditing} aria-label={t("取消编辑 {filename} 集数", { filename: video.originalFilename ?? episodeLabel(video.episodeOrder) })} title={t("取消编辑")}><X size={12} /></button>
                           </div>
                         </form>
                       ) : (
@@ -186,14 +192,14 @@ export function LibraryPage() {
                           setEditingVideoId(video.videoId);
                           setEpisodeDraft(String(video.episodeOrder));
                           setEpisodeError(null);
-                        }} aria-label={t("编辑 {filename} 集数", { filename: video.originalFilename })} title={t("编辑集数")}>
+                        }} aria-label={t("编辑 {filename} 集数", { filename: video.originalFilename ?? episodeLabel(video.episodeOrder) })} title={t("编辑集数")}>
                           <span>{episodeLabel(video.episodeOrder)}</span><Pencil size={11} />
                         </button>
                       )}
                     </div>
                     <div className={styles.episodeName}>
                       <Clapperboard size={16} />
-                      <div><strong>{video.originalFilename}</strong><span>{formatBytes(video.totalBytes)} · <Clock3 size={11} /> {formatTimecode(video.durationSeconds)}</span></div>
+                      <div><strong>{video.originalFilename ?? episodeLabel(video.episodeOrder)}</strong><span>{video.totalBytes === null ? "—" : formatBytes(video.totalBytes)} · <Clock3 size={11} /> {formatTimecode(video.durationSeconds)}</span></div>
                     </div>
                     <div className={styles.progressCell}>
                       <span>{t("上传")}</span><i><em style={{ width: `${video.uploadProgress}%` }} /></i><b>{video.uploadProgress}%</b>
@@ -205,7 +211,7 @@ export function LibraryPage() {
                       {video.indexStatus === "READY" ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
                       {video.indexStatus === "READY" ? t("可检索") : video.indexStatus === "FAILED" ? t("索引失败") : t("索引未就绪")}
                       <small>{video.playbackStatus === "READY" ? t("可播放") : video.playbackStatus === "MISSING" ? t("原视频已丢失") : t("播放未就绪")}</small>
-                      {video.playbackStatus === "READY" ? <Link className="button-quiet" to={`/watch/${encodeURIComponent(selectedSeries.seriesId)}/${encodeURIComponent(video.videoId)}`}>{t("观看整集")}</Link> : null}
+                      {video.playbackStatus === "READY" ? <Link className="button-quiet" to={watchPath(selectedSeries, video.videoId)}>{t("观看整集")}</Link> : null}
                       {video.lastError ? <small>{video.lastError.message}</small> : null}
                     </div>
                     {episodeError?.videoId === video.videoId ? <p className={`${styles.error} ${styles.episodeError}`} role="alert">{episodeError.message}</p> : null}

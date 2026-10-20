@@ -98,7 +98,8 @@ def build_app(
                 "X-CSRF-Token",
                 "X-Use-PPE",
             ],
-            expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag", "X-Request-Id"],
+            expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag", "X-Request-Id",
+                            "Content-Disposition", "X-Export-Summary"],
         )
     register_exception_handlers(app)
     app.include_router(router, responses={

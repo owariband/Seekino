@@ -11,8 +11,8 @@ from typing import Any
 from uuid import uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import and_, exists, or_, select
+from sqlalchemy.orm import Session, aliased, load_only, sessionmaker
 
 from agent.video_parse_v2.input import ParseConfig
 from agent.video_parse_v2.scheduler import (
@@ -172,6 +172,16 @@ class RealtimeChunkState:
     phase: int = ChunkTaskPhase.PARSE
 
 
+@dataclass(frozen=True, slots=True)
+class ParseExportChunkSnapshot:
+    video_id: str
+    parse_task_id: str
+    chunk_id: str
+    chunk_sequence_no: int
+    content_version: int
+    content: VideoParseResult
+
+
 def invalidate_series_prefixes_from(
     session: Session,
     *,
@@ -292,6 +302,101 @@ class VideoParseRepository:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def load_export_snapshot(
+        self,
+        *,
+        tenant_id: str,
+        video_ids: Sequence[str] = (),
+        video_parse_task_ids: Sequence[str] = (),
+    ) -> tuple[ParseExportChunkSnapshot, ...]:
+        """Freeze complete formal content in one read, independently of indexing."""
+
+        workspace = require_nonempty_text(tenant_id, "tenant_id")
+        if bool(video_ids) == bool(video_parse_task_ids):
+            raise ValueError("provide either video_ids or video_parse_task_ids")
+        by_video = bool(video_ids)
+        selected_ids = tuple(dict.fromkeys(
+            canonical_uuid(value, "video_id" if by_video else "video_parse_task_id")
+            for value in (video_ids if by_video else video_parse_task_ids)
+        ))
+        selection = VideoParseTask.id.in_(selected_ids)
+        if by_video:
+            newer_task = aliased(VideoParseTask)
+            selection = and_(
+                VideoParseTask.video_id.in_(selected_ids),
+                ~exists(select(newer_task.id).where(
+                    newer_task.video_id == VideoParseTask.video_id,
+                    newer_task.is_deleted.is_(False),
+                    newer_task.version > VideoParseTask.version,
+                )).correlate(VideoParseTask),
+            )
+        with self._session_factory() as session:
+            # One statement gives every selected task and content the same read
+            # snapshot; serialization never fetches individual Chunks again.
+            rows = session.execute(
+                select(VideoParseTask, Video, ChunkParseTask, VideoChunk, ChunkParseContent)
+                .options(load_only(ChunkParseContent.content, ChunkParseContent.version))
+                .join(Video, Video.id == VideoParseTask.video_id)
+                .join(Series, Series.id == Video.series_id)
+                .outerjoin(ChunkParseTask, ChunkParseTask.video_task_id == VideoParseTask.id)
+                .outerjoin(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
+                .outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
+                .where(selection, VideoParseTask.is_deleted.is_(False), Series.tenant_id == workspace)
+                .order_by(VideoParseTask.id, VideoChunk.sequence_no)
+            ).all()
+
+        grouped: dict[str, list] = {}
+        for row in rows:
+            task = row[0]
+            grouped.setdefault(task.video_id if by_video else task.id, []).append(row)
+        if missing := set(selected_ids) - grouped.keys():
+            raise VideoParseTaskNotFoundError(
+                "export source does not exist in this workspace: " + ", ".join(sorted(missing))
+            )
+
+        snapshots = []
+        for source_id in selected_ids:
+            source_rows = grouped[source_id]
+            task, video, *_ = source_rows[0]
+            runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY, {})
+            if task.is_test or not isinstance(runtime, Mapping) or runtime.get("accepted") is not True:
+                raise VideoParseConflictError(f"export task {task.id} is not a formal accepted parse")
+            if (task.status not in {
+                VideoParseTaskStatus.INDEXING.value,
+                VideoParseTaskStatus.INDEXING_FAILED.value,
+                VideoParseTaskStatus.COMPLETE.value,
+            } or _video_failure_status(task) == VideoParseTaskStatus.PARSING_FAILED.value):
+                raise VideoParseConflictError(f"export task {task.id} parsing is not complete")
+            if task.parse_config.get("compact_enabled", False):
+                prefix = runtime.get("prefix", {})
+                cursor = prefix.get("next_chunk_sequence_no", 0) if isinstance(prefix, Mapping) else None
+                if type(cursor) is not int or cursor < task.chunk_count:
+                    raise VideoParseConflictError(f"export task {task.id} prefix refinement is not complete")
+            if (len(source_rows) != task.chunk_count
+                    or any(row[3] is None for row in source_rows)
+                    or [row[3].sequence_no for row in source_rows] != list(range(task.chunk_count))
+                    or any(row[3].video_id != video.id for row in source_rows)):
+                raise VideoParseConflictError(f"export task {task.id} Chunk topology is incomplete")
+            for _task, _video, child, chunk, stored in source_rows:
+                if child.phase != ChunkTaskPhase.INDEX:
+                    raise VideoParseConflictError(f"export Chunk {chunk.id} refinement is not complete")
+                if stored is None or not stored.content or type(stored.version) is not int or stored.version < 1:
+                    raise VideoParseConflictError(f"export Chunk {chunk.id} formal content is missing")
+                try:
+                    content = validate_result_time_range(
+                        VideoParseResult.model_validate(stored.content),
+                        start_seconds=0, end_seconds=video.duration_ms,
+                    )
+                except ValueError as exc:
+                    raise VideoParseConflictError(
+                        f"export Chunk {chunk.id} content version {stored.version} is invalid: {exc}"
+                    ) from exc
+                snapshots.append(ParseExportChunkSnapshot(
+                    video_id=video.id, parse_task_id=task.id, chunk_id=chunk.id,
+                    chunk_sequence_no=chunk.sequence_no, content_version=stored.version, content=content,
+                ))
+        return tuple(snapshots)
 
     def ensure_realtime_task(
         self,

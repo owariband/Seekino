@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import Field
 
 from ..dto.libraryDTO import Character
-from ..video import VideoIndexStatus
+from ..video import SeriesVisibility, VideoIndexStatus
 from ..job import ParseJobStatus, VideoParseTaskStatus
 from ...schema import ContractModel
 from .commonVO import Failure, ImageAsset, UnixTimeMs
@@ -24,8 +24,8 @@ class VideoSummary(ContractModel):
     series_id: str
     episode_order: int = Field(gt=0)
     upload_sequence: int = Field(gt=0)
-    original_filename: str
-    total_bytes: int = Field(ge=0)
+    original_filename: str | None = None
+    total_bytes: int | None = Field(default=None, ge=0)
     duration_seconds: int = Field(gt=0)
     upload_status: Literal["COMPLETED"]
     upload_progress: Literal[100]
@@ -40,8 +40,16 @@ class VideoSummary(ContractModel):
     last_error: Failure | None
 
 
+class SeriesPublisherView(ContractModel):
+    kind: Literal["user", "platform"]
+    display_name: str
+    avatar: ImageAsset | None = None
+
+
 class SeriesSummary(ContractModel):
-    is_published: bool = False
+    visibility: SeriesVisibility = SeriesVisibility.PRIVATE
+    publisher: SeriesPublisherView | None = None
+    access: Literal["member", "public"] = "member"
     series_id: str
     tenant_id: str
     name: str
@@ -59,11 +67,11 @@ class SeriesSummary(ContractModel):
 
 
 class SeriesDetail(SeriesSummary):
-    transcript_language_hint: str | None
-    important_extra_data: dict | None
-    character_bible: list[Character]
+    transcript_language_hint: str | None = None
+    important_extra_data: dict | None = None
+    character_bible: list[Character] = Field(default_factory=list)
     videos: list[VideoSummary]
-    pending_uploads: list[UploadSessionView]
+    pending_uploads: list[UploadSessionView] = Field(default_factory=list)
 
 
 SeriesView = SeriesDetail

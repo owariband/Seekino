@@ -6,6 +6,10 @@
 :global(:root[data-theme="light"]) .hero::after { background: linear-gradient(0deg, rgb(5 16 13 / 72%), transparent); }
 .back { display: inline-flex; width: fit-content; align-items: center; gap: 8px; min-height: 40px; padding-inline: 10px; color: #f3f8f5; border-radius: var(--radius-small); background: rgb(5 16 13 / 50%); font-size: .8rem; text-decoration: none; }
 .back:hover { color: #8cd4c2; }
+.heroToolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--ink); }
+.publisher { display: flex; align-items: center; gap: 9px; margin-top: 18px; color: #d1dfd8; font-size: .8rem; }
+.publisherAvatar { position: relative; display: grid; width: 30px; height: 30px; place-items: center; overflow: hidden; color: #10251f; border-radius: 50%; background: #b6e4d7; }
+.publisherAvatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .heroContent { width: min(720px, 62%); padding-top: 100px; }
 .eyebrow { color: #b6e4d7; font-size: .78rem; letter-spacing: .14em; }
 .hero h1 { margin: 18px 0 24px; font: 600 clamp(2.5rem, 5vw, 5rem)/1.15 var(--display); letter-spacing: -.035em; overflow-wrap: anywhere; }

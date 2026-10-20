@@ -28,6 +28,7 @@ from server.model.parse_usage import (
 from server.model.upload import UploadSegment, UploadSession
 from server.model.video import (
     Series,
+    SeriesVisibility,
     UTC_TIMESTAMP,
     VideoChunkInfo,
     VideoChunk,
@@ -342,7 +343,7 @@ def test_create_schema_rejects_legacy_workspace_scope_before_mutation(table_name
 
 
 @pytest.mark.parametrize("table_name,column_name", [
-    ("series", "is_published"), ("agent_conversation", "owner_id"),
+    ("series", "tenant_id"), ("agent_conversation", "owner_id"),
     ("upload_session", "creator_id"), ("series_parse_job", "creator_id"),
     ("video_parse_task", "creator_id"),
 ])
@@ -356,6 +357,94 @@ def test_create_schema_requires_identity_business_columns(monkeypatch, table_nam
     monkeypatch.setattr(inspector, "get_columns", lambda table: [column for column in columns(table) if not (table == table_name and column["name"] == column_name)])
     monkeypatch.setattr(database, "inspect", lambda _: inspector)
     with pytest.raises(SchemaUpgradeRequiredError, match=column_name):
+        create_schema(engine)
+
+
+def test_series_visibility_defaults_private_and_rejects_unknown_values() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO series (id, tenant_id, name, status, character_bible) "
+            "VALUES ('private-series', 'local-default', 'Private', 'EMPTY', '[]')"
+        ))
+        assert connection.execute(text("SELECT visibility FROM series")).scalar_one() == SeriesVisibility.PRIVATE
+        connection.execute(text("UPDATE series SET visibility = 'public' WHERE id = 'private-series'"))
+        with pytest.raises(IntegrityError, match="ck_series_visibility"):
+            connection.execute(text("UPDATE series SET visibility = 'team' WHERE id = 'private-series'"))
+    ddl = str(CreateTable(Series.__table__).compile(dialect=mysql.dialect()))
+    assert "visibility VARCHAR(16) NOT NULL DEFAULT 'private'" in ddl
+    assert "ck_series_visibility CHECK (visibility IN ('private', 'public'))" in ddl
+    assert "is_published" not in ddl
+    assert ("visibility", "create_time", "id") in {
+        tuple(index.columns.keys()) for index in Series.__table__.indexes
+    }
+
+
+def test_create_schema_rejects_legacy_publication_without_changing_rows() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    ddl = str(CreateTable(Series.__table__).compile(dialect=engine.dialect))
+    legacy_ddl = ddl.replace(
+        "visibility VARCHAR(16) DEFAULT 'private' NOT NULL",
+        "is_published BOOLEAN DEFAULT 0 NOT NULL",
+    ).replace(
+        ", \n\tCONSTRAINT ck_series_visibility CHECK (visibility IN ('private', 'public'))", "",
+    )
+    assert "visibility" not in legacy_ddl
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE series"))
+        connection.execute(text(legacy_ddl))
+        for index in Series.__table__.indexes:
+            if "visibility" not in index.columns.keys():
+                index.create(connection)
+        connection.execute(text(
+            "INSERT INTO series (id, tenant_id, name, status, character_bible, is_published) VALUES "
+            "('private-series', 'local-default', 'Private', 'EMPTY', '[]', 0), "
+            "('public-series', 'platform-public', 'Public', 'READY', '[]', 1)"
+        ))
+        before = connection.execute(text("SELECT * FROM series ORDER BY id")).all()
+
+    with pytest.raises(SchemaUpgradeRequiredError, match="20261019_series_visibility.sql.*series.is_published"):
+        create_schema(engine)
+
+    assert "visibility" not in {column["name"] for column in inspect(engine).get_columns("series")}
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT * FROM series ORDER BY id")).all() == before
+
+
+@pytest.mark.parametrize("difference", ["missing", "type", "nullable", "default", "check", "index"])
+def test_create_schema_requires_visibility_contract(monkeypatch, difference: str) -> None:
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    inspector = inspect(engine)
+    if difference in {"missing", "type", "nullable", "default"}:
+        real_get_columns = inspector.get_columns
+
+        def columns(table_name):
+            result = [dict(column) for column in real_get_columns(table_name)]
+            if table_name != "series":
+                return result
+            if difference == "missing":
+                return [column for column in result if column["name"] != "visibility"]
+            visibility = next(column for column in result if column["name"] == "visibility")
+            visibility[difference] = {"type": String(255), "nullable": True, "default": "'public'"}[difference]
+            return result
+
+        monkeypatch.setattr(inspector, "get_columns", columns)
+    elif difference == "check":
+        real_get_checks = inspector.get_check_constraints
+        monkeypatch.setattr(inspector, "get_check_constraints", lambda table: [] if table == "series" else real_get_checks(table))
+    else:
+        real_get_indexes = inspector.get_indexes
+        monkeypatch.setattr(inspector, "get_indexes", lambda table: [
+            index for index in real_get_indexes(table)
+            if not (table == "series" and index["column_names"] == ["visibility", "create_time", "id"])
+        ])
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    with pytest.raises(SchemaUpgradeRequiredError, match=rf"20261019_series_visibility.sql.*series.visibility.{difference}"):
         create_schema(engine)
 
 

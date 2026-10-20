@@ -7,8 +7,8 @@ import remarkGfm from "remark-gfm";
 import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import { useWorkspace } from "../../app/workspace";
-import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl } from "../../api/client";
-import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference } from "../../api/contracts";
+import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl, TENANT_ID } from "../../api/client";
+import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference, SeriesSummary } from "../../api/contracts";
 import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
 import { Kino } from "../../shared/kino/Kino";
@@ -48,8 +48,9 @@ function MessageAttachment({ attachment, index }: { attachment: AgentAttachmentV
 type SearchPageProps = {
   embedded?: boolean;
   initialSeriesId?: string;
+  initialSeries?: SeriesSummary;
   captureExtraContext?: () => Record<string, unknown> | null;
-  onOpenVideo?: (target: { seriesId: string; videoId: string; startSeconds: number }) => void;
+  onOpenVideo?: (target: { tenantId: string; seriesId: string; videoId: string; startSeconds: number }) => void;
   /** Seeks the episode being watched; enables clickable timestamps in answers. Milliseconds. */
   onSeekCurrent?: (positionMs: number) => void;
 };
@@ -209,14 +210,17 @@ function MarkdownAnswer({ markdown }: { markdown: string }) {
 }
 
 export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function SearchPage(
-  { embedded = false, initialSeriesId, captureExtraContext, onOpenVideo, onSeekCurrent },
+  { embedded = false, initialSeriesId, initialSeries: suppliedSeries, captureExtraContext, onOpenVideo, onSeekCurrent },
   ref,
 ) {
   const { t, locale, formatLocale } = useI18n();
   const localeRef = useRef(locale);
   localeRef.current = locale;
-  const { mode, displayMode, series, isLoading: workspaceLoading } = useWorkspace();
-  const { canManage } = useAuth();
+  const { mode, displayMode, series: workspaceSeries, isLoading: workspaceLoading } = useWorkspace();
+  const series = suppliedSeries ? [suppliedSeries, ...workspaceSeries.filter((item) => item.seriesId !== suppliedSeries.seriesId
+    && (!captureExtraContext || item.tenantId === suppliedSeries.tenantId))] : workspaceSeries;
+  const { canManage, activeSource } = useAuth();
+  const requiresExplicitScope = activeSource.kind === "public" || Boolean(suppliedSeries && suppliedSeries.tenantId !== TENANT_ID);
   const inRouter = useInRouterContext();
   const [requestedConversationId, setRequestedConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<AgentConversationView[]>([]);
@@ -288,15 +292,27 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   }, [query]);
   const isSearchable = (status: string) => status === "READY";
   const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
-  const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && isSearchable(item.status)));
+  const sourceTenantId = series.find((item) => item.seriesId === selectedSeriesIds[0])?.tenantId;
+  const referenceMessage = reference ? messages.find((message) => message.messageId === reference.messageId) : null;
+  const referenceHit = referenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === reference?.videoChunkId) ?? null;
+  const referenceScopeValid = !reference || Boolean(referenceHit && referenceHit.evidence.tenantId === (sourceTenantId ?? TENANT_ID)
+    && (!selectedSeriesIds.length || selectedSeriesIds.includes(referenceHit.evidence.seriesId)));
+  const scopeValid = (!requiresExplicitScope || selectedSeriesIds.length > 0)
+    && selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.tenantId === sourceTenantId && isSearchable(item.status)));
   const canAttach = Boolean(!loading && conversationId && !deletedConversationIdsRef.current.has(conversationId) && mode === "live");
-  const canSend = Boolean(query.trim() && canAttach && !searching && scopeValid && attachments.items.every((item) => item.status === "ready"));
+  const canSend = Boolean(query.trim() && canAttach && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
 
   useEffect(() => {
-    if (!embedded || !initialSeriesId || scopeTouchedRef.current) return;
-    const next = initialSeries?.status === "READY" ? [initialSeriesId] : [];
+    scopeTouchedRef.current = false;
+  }, [initialSeriesId, suppliedSeries?.tenantId, activeSource.key]);
+
+  useEffect(() => {
+    if (scopeTouchedRef.current) return;
+    const preferred = embedded && initialSeriesId ? initialSeries : requiresExplicitScope ? series.find((item) => isSearchable(item.status)) : null;
+    if (!embedded && !requiresExplicitScope) return;
+    const next = preferred?.status === "READY" ? [preferred.seriesId] : [];
     setSelectedSeriesIds((current) => current.length === next.length && current.every((id, index) => id === next[index]) ? current : next);
-  }, [embedded, initialSeriesId, initialSeries?.status]);
+  }, [embedded, initialSeriesId, initialSeries?.status, requiresExplicitScope, workspaceSeries, suppliedSeries]);
 
   useLayoutEffect(() => {
     const composer = composerRef.current;
@@ -308,8 +324,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const evidenceMessage = selection?.conversationId === conversationId ? messages.find((message) => message.messageId === selection.messageId) : null;
   const selectedBlock = evidenceMessage ? messageRenderBlocks(evidenceMessage).find((block) => block.type === "video" && block.videoChunkId === selection?.chunkId) : null;
   const selectedHit = selectedBlock ? evidenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === selection?.chunkId) ?? null : null;
-  const referenceMessage = reference ? messages.find((message) => message.messageId === reference.messageId) : null;
-  const referenceHit = referenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === reference?.videoChunkId) ?? null;
   const referenceBlock = referenceMessage && reference ? messageRenderBlocks(referenceMessage).find((block) => block.type === "video" && block.videoChunkId === reference.videoChunkId) : null;
   const referenceRange = referenceHit && referenceBlock?.type === "video"
     ? { startSeconds: referenceBlock.startSeconds, endSeconds: referenceBlock.endSeconds }
@@ -436,6 +450,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     const context = draftContextRef.current;
     const submittedIds = attachments.items.map((item) => item.id);
     void send(query, selectedSeriesIds, reference, options, extraContext, {
+      ...(sourceTenantId ? { sourceTenantId } : {}),
       attachments: attachments.items.map((item) => ({ mediaUri: item.attachment!.mediaUri })),
       onAccepted: () => {
         if (draftContextRef.current.conversationId !== context.conversationId
@@ -676,7 +691,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           }}>
             {!messages.length && !loading ? (
               <div className={styles.welcome}>
-                <Kino interactive dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
+                <Kino interactive perch dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
                 <p>{embedded ? t("看到哪里，问到哪里。回答里的时间点可以直接点击跳转。") : t("描述记得的画面、台词或人物关系，一起把那一刻找回来。")}</p>
                 <div className={styles.examples} aria-label={t("试试这样问")}>
                   {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || !conversationId} onClick={() => {
@@ -730,7 +745,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                               className={selected ? styles.candidateSelected : styles.candidate}
                               onClick={() => {
                                 if (onOpenVideo) {
-                                  onOpenVideo({ seriesId: hit.evidence.seriesId, videoId: hit.evidence.videoId, startSeconds: playbackRange.startSeconds });
+                                  onOpenVideo({ tenantId: hit.evidence.tenantId, seriesId: hit.evidence.seriesId, videoId: hit.evidence.videoId, startSeconds: playbackRange.startSeconds });
                                 } else {
                                   setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId });
                                 }
@@ -832,11 +847,11 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
                     }}
                   >
-                    <summary aria-label={t("选择检索视频系列")}>{embedded && selectedSeriesIds.length === 1
+                    <summary aria-label={t("选择检索视频系列")}>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
                       ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? t("已选 1 个系列")
-                      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : t("全部视频系列")}<ChevronDown size={13} aria-hidden="true" /></summary>
+                      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}<ChevronDown size={13} aria-hidden="true" /></summary>
                     <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
-                      <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>
+                      {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
                       {series.map((item) => (
                         <label key={item.seriesId}>
                           <input
@@ -845,7 +860,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                             disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
                             onChange={(event) => {
                               scopeTouchedRef.current = true;
-                              setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId));
+                              setSelectedSeriesIds((current) => event.target.checked
+                                ? [...current.filter((id) => series.some((candidate) => candidate.seriesId === id && candidate.tenantId === item.tenantId)), item.seriesId]
+                                : current.filter((id) => id !== item.seriesId));
                             }}
                           />
                           <span>{item.name}</span>
@@ -936,7 +953,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             </form>
             <p className={styles.keyboardHint}>{t("Enter 发送 · Shift + Enter 换行")}</p>
             {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
-            {!scopeValid ? <p className={styles.messageError} role="alert">{t("所选视频系列暂不可检索，请重新选择范围。")}</p> : null}
+            {(!scopeValid || !referenceScopeValid) && !workspaceLoading ? <p className={styles.messageError} role="alert">{t(requiresExplicitScope && !series.some((item) => isSearchable(item.status)) ? "暂无可体验的公开系列" : "所选视频系列暂不可检索，请重新选择范围。")}</p> : null}
             {embedded && initialSeriesId && !workspaceLoading && initialSeries?.status !== "READY" ? (
               <p className={styles.scopeNotice} role="status">
                 <span className={styles.scopeChip}>{t("检索范围：")}{selectedSeriesIds.length ? selectedSeriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join(locale === "en" ? ", " : "、") : t("全部系列")}</span>
@@ -959,6 +976,10 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             <button className={`button-secondary ${styles.referenceButton}`} type="button" onClick={() => {
               draftRevisionRef.current += 1;
               setReference({ messageId: evidenceMessage.messageId, videoChunkId: selectedHit.evidence.videoChunkId });
+              if (requiresExplicitScope || selectedHit.evidence.tenantId !== TENANT_ID || selectedSeriesIds.length > 0) {
+                scopeTouchedRef.current = true;
+                setSelectedSeriesIds([selectedHit.evidence.seriesId]);
+              }
               setSelection(null);
               composerRef.current?.focus();
             }}>{t("引用此片段追问")}</button>

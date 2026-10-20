@@ -183,7 +183,7 @@ describe("Evidence range playback", () => {
     const timeline = screen.getByRole<HTMLInputElement>("slider", { name: "视频片段播放进度" });
     expect(video.currentTime).toBe(0);
     expect(video.src).toContain("/api/videos/content?videoId=video-1&tenantId=local-default");
-    expect(screen.getByRole("link", { name: "在整集中观看" })).toHaveAttribute("href", "/watch/series-1/video-1?atSeconds=12000");
+    expect(screen.getByRole("link", { name: "在整集中观看" })).toHaveAttribute("href", "/watch/series-1/video-1?tenantId=local-default&atSeconds=12000");
     expect(video).not.toHaveAttribute("controls");
     expect(video).toHaveAttribute("playsinline");
     expect(timeline).toHaveAttribute("min", "0");

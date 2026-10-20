@@ -23,7 +23,7 @@ from ..model.dto.agentDTO import (
 )
 from ..service.agent_chat import AgentChatService, AgentMessageExecution
 from ..service.agent_attachments import AgentAttachmentService
-from ..service.access import model_query, require_admin, require_series_read, require_tenant_read
+from ..service.access import is_series_member, model_query, require_admin, require_tenant_read
 from ..error.auth import AuthError
 from ..model.dto.authDTO import AuthIdentity
 from ..service.media import MediaMissingError, MediaNotReadyError, MediaService
@@ -328,18 +328,28 @@ async def send_agent_message(
     series_ids = await run_in_threadpool(
         _authorize_query_scope, request, identity, source_tenant_id, body.series_ids,
     )
-    playback = (body.extra_context or {}).get("playback")
-    if identity.mode == "cloud" and isinstance(playback, dict):
-        video = await run_in_threadpool(
-            services.library.get_video, playback.get("videoId"), tenant_id=source_tenant_id,
-        )
-        await run_in_threadpool(
-            _authorize_query_scope, request, identity, source_tenant_id, [video.series_id],
-        )
     await run_in_threadpool(
         service.get_conversation, conversation_id, tenant_id=body.tenant_id,
         owner_user_id=identity.user_id,
     )
+    source_scopes = {source_tenant_id: list(series_ids)}
+    if identity.mode == "cloud":
+        source_scopes[source_tenant_id] = await run_in_threadpool(
+            _message_series_scope, services.media, source_tenant_id, series_ids, body.extra_context,
+        )
+        # Previous turns are model input too, even when this turn selects a new source.
+        history = await run_in_threadpool(
+            service.list_all_messages, conversation_id, tenant_id=body.tenant_id,
+            owner_user_id=identity.user_id,
+        )
+        for message in history:
+            source = message.source_tenant_id or body.tenant_id
+            selected = await run_in_threadpool(
+                _message_series_scope, services.media, source, message.series_ids, message.extra_context,
+            )
+            source_scopes.setdefault(source, []).extend(selected)
+        for source, selected in source_scopes.items():
+            await run_in_threadpool(services.media.require_series_access, identity, selected, tenant_id=source)
     max_model_calls = body.max_model_calls_per_turn
     max_tool_calls = body.max_tool_calls_per_turn
     if identity.mode == "cloud" and identity.is_guest:
@@ -403,7 +413,8 @@ async def send_agent_message(
         return StreamingResponse(
             _answer_events(request, execution, get_sse_config(request),
                            media=services.media, tenant_id=source_tenant_id, series_ids=series_ids,
-                           attachment_service=getattr(services, "agent_attachments", None), chat_tenant_id=body.tenant_id),
+                           attachment_service=getattr(services, "agent_attachments", None), chat_tenant_id=body.tenant_id,
+                           source_scopes=source_scopes),
             media_type="text/event-stream",
             headers={"Cache-Control": "private, no-store", "X-Accel-Buffering": "no"},
         )
@@ -413,7 +424,7 @@ async def send_agent_message(
                          maximum_concurrent=getattr(service, "active_maximum_concurrent_kicks", None)):
             return service.send_message(conversation_id, **arguments)
     result = await run_in_threadpool(send)
-    identity = await run_in_threadpool(revalidate_identity, request)
+    identity = await run_in_threadpool(_revalidate_source_access, request, services.media, source_scopes)
     return AgentMessageSendView(
         user_message=_agent_message_view(result.user_message, media=services.media, tenant_id=body.tenant_id,
                                         identity=identity, attachment_service=getattr(services, "agent_attachments", None)),
@@ -425,9 +436,10 @@ async def send_agent_message(
 def _authorize_query_scope(
     request: Request, identity: AuthIdentity, tenant_id: str, series_ids: list[str],
 ) -> list[str]:
-    require_tenant_read(identity, tenant_id)
     if identity.mode == "local":
         return series_ids
+    if not series_ids:
+        require_tenant_read(identity, tenant_id)
     services = get_services(request)
     if tenant_id == identity.public_tenant_id and not series_ids:
         offset = 0
@@ -444,12 +456,21 @@ def _authorize_query_scope(
         if not selected:
             raise ValueError("暂无可体验的公开课程")
         return selected
-    for series_id in series_ids:
-        series = services.library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
-        require_series_read(identity, series)
-        if tenant_id == identity.public_tenant_id:
-            services.media.require_public_series(series)
+    services.media.require_series_access(identity, series_ids, tenant_id=tenant_id)
     return series_ids
+
+
+def _message_series_scope(
+    media: MediaService, tenant_id: str, series_ids: list[str] | tuple[str, ...], extra_context: dict | None,
+) -> list[str]:
+    selected = list(series_ids)
+    playback = (extra_context or {}).get("playback")
+    if isinstance(playback, dict):
+        # Playback can contribute context outside the explicitly selected search Series.
+        series = media.video_series(playback.get("videoId"), tenant_id=tenant_id)
+        if series.series_id not in selected:
+            selected.append(series.series_id)
+    return selected
 
 
 async def stream_agent_messages(
@@ -557,7 +578,10 @@ def _agent_message_view(
     if identity is not None and identity.mode == "cloud":
         if media is None or source_tenant_id is None:
             raise ValueError("evidence projection requires the source Tenant and media service")
-        media.require_series_access(identity, list(state.series_ids), tenant_id=source_tenant_id)
+        media.require_series_access(
+            identity, _message_series_scope(media, source_tenant_id, state.series_ids, state.extra_context),
+            tenant_id=source_tenant_id,
+        )
     result = None
     if state.search_result is not None:
         if media is None or source_tenant_id is None:
@@ -686,7 +710,10 @@ def _agent_search_evidence_view(
         media.require_series_access(
             identity, result.get("seriesIds", result.get("series_ids", [])), tenant_id=tenant_id,
         )
-    evidence = search_evidence_fields(result, media, tenant_id=tenant_id)
+    evidence = search_evidence_fields(
+        result, media, tenant_id=tenant_id,
+        public_view=identity is not None and not is_series_member(identity, tenant_id),
+    )
     raw_trace = result.get("retrievalTrace", result.get("retrieval_trace", []))
     return AgentSearchEvidenceView(
         **evidence.model_dump(),
@@ -707,6 +734,18 @@ _ANSWER_EVENT_MODELS = {
 }
 
 
+def _revalidate_source_access(
+    request: Request, media: MediaService | None, source_scopes: dict[str, list[str]],
+) -> AuthIdentity:
+    identity = revalidate_identity(request)
+    for source, selected in source_scopes.items():
+        if media is not None and identity.mode == "cloud":
+            media.require_series_access(identity, selected, tenant_id=source)
+        else:
+            require_tenant_read(identity, source)
+    return identity
+
+
 async def _answer_events(
     request: Request,
     execution: AgentMessageExecution,
@@ -715,16 +754,14 @@ async def _answer_events(
     series_ids: list[str] | None = None,
     attachment_service: AgentAttachmentService | None = None,
     chat_tenant_id: str | None = None,
+    source_scopes: dict[str, list[str]] | None = None,
 ) -> AsyncIterator[str]:
     last_event_at = time.monotonic()
+    scopes = source_scopes if source_scopes is not None else ({tenant_id: series_ids or []} if tenant_id else {})
     try:
         while not await request.is_disconnected():
             try:
-                identity = await run_in_threadpool(revalidate_identity, request)
-                if tenant_id is not None:
-                    require_tenant_read(identity, tenant_id)
-                    if media is not None and identity.mode == "cloud":
-                        await run_in_threadpool(media.require_series_access, identity, series_ids or [], tenant_id=tenant_id)
+                identity = await run_in_threadpool(_revalidate_source_access, request, media, scopes)
             except (AuthError, AgentConversationNotFoundError, SeriesNotFoundError):
                 execution.cancellation.set()
                 return
@@ -744,6 +781,8 @@ async def _answer_events(
             model = _ANSWER_EVENT_MODELS.get(event_type)
             if model is None:
                 continue
+            # The source may have been withdrawn while waiting for the model event.
+            identity = await run_in_threadpool(_revalidate_source_access, request, media, scopes)
             data = dict(event)
             for field in ("userMessage", "assistantMessage"):
                 if field in data:

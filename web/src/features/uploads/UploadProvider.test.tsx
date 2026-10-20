@@ -236,7 +236,8 @@ describe("upload deletion", () => {
     const options = mocks.uploadSegment.mock.calls.map(([value]) => value as { signal: AbortSignal; onProgress: (bytes: number) => void });
     expect(screen.getByText(file.name).closest("article")).toHaveTextContent("01");
     await user.click(screen.getByRole("button", { name: `删除 ${file.name}` }));
-    expect(await screen.findByText(/删除失败.*request-a/)).toBeInTheDocument();
+    expect(await screen.findByText("删除失败：暂时不可用")).toBeInTheDocument();
+    expect(screen.queryByText(/request-a/)).not.toBeInTheDocument();
     expect(options.every((option) => option.signal.aborted)).toBe(true);
     act(() => options.forEach((option) => option.onProgress(10)));
     expect(screen.getByText(/删除失败/)).toBeInTheDocument();
@@ -435,7 +436,8 @@ describe("upload deletion", () => {
     await user.click(screen.getByRole("button", { name: "上传面板" }));
     await user.click(screen.getByRole("button", { name: `继续合并 ${file.name}` }));
 
-    expect(await screen.findByText(/服务端仍在合并.*merge-request/)).toBeInTheDocument();
+    expect(await screen.findByText("服务端仍在合并")).toBeInTheDocument();
+    expect(screen.queryByText(/merge-request/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: `继续合并 ${file.name}` })).toBeEnabled();
     expect(screen.queryByRole("button", { name: `删除 ${file.name}` })).not.toBeInTheDocument();
   });

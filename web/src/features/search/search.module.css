@@ -94,33 +94,36 @@
 .connectionState { display: flex; width: min(100%, 880px); align-self: center; align-items: center; gap: 9px; margin: 0; color: var(--ink-faint); font-size: .8rem; }
 
 .progressCard { margin: 0 0 20px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 55%, transparent); border-radius: 16px; background: var(--surface-raised); }
-.progressCard summary { display: flex; min-height: 58px; align-items: center; gap: 10px; padding: 17px 20px; cursor: pointer; list-style: none; font-size: .85rem; }
-.progressCard summary::-webkit-details-marker { display: none; }
-.progressCard summary > svg:first-child { flex: 0 0 auto; color: var(--ink-faint); }
+.progressDetails summary { display: flex; align-items: center; gap: 8px; padding: 0 22px 12px; color: var(--ink-faint); cursor: pointer; list-style: none; font-size: .72rem; }
+.progressDetails summary::-webkit-details-marker { display: none; }
+.progressDetails summary:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
 .progressWalkway { position: relative; z-index: 2; height: 56px; pointer-events: none; user-select: none; }
-.progressCard small { margin-left: auto; color: var(--ink-faint); font-size: .73rem; }
 .progressChevron { flex: 0 0 auto; color: var(--ink-faint); }
-.progressCard[open] .progressChevron { transform: rotate(180deg); }
-.progressSteps { display: grid; gap: 0; margin: 0; padding: 4px 24px 20px; list-style: none; }
-.progressSteps li { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; padding-bottom: 24px; }
-.progressSteps li:last-child { padding-bottom: 0; }
-.progressSteps li:not(:last-child)::after { content: ""; position: absolute; top: 43px; bottom: 7px; left: 17px; width: 1px; background: var(--line); }
-.stepIcon { display: grid; width: 36px; height: 36px; place-items: center; color: var(--ink-faint); border-radius: 50%; background: var(--surface-muted); }
-.progressSteps [data-state="active"] .stepIcon { color: var(--teal-deep); background: color-mix(in srgb, var(--teal) 10%, var(--surface-muted)); }
-.progressSteps [data-state="interrupted"] .stepIcon { color: var(--red); }
-.progressSteps li > div:last-child { padding-top: 6px; }
-.stepHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.stepHeading strong { font-size: .84rem; font-weight: 500; }
+.progressDetails[open] .progressChevron { transform: rotate(180deg); }
+.progressSteps { display: grid; gap: 12px; margin: 0; padding: 4px 22px 16px; list-style: none; }
+.progressSteps [data-state="active"] strong { color: var(--teal-deep); }
+.progressSteps [data-state="interrupted"] strong { color: var(--red); }
+.stepHeading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; color: var(--ink-soft); }
+.stepHeading strong { font-size: .72rem; font-weight: 500; }
 .stepHeading span { color: var(--ink-faint); font-size: .63rem; white-space: nowrap; }
-.progressSteps p { margin: 6px 0 0; color: var(--ink-soft); font-size: .76rem; line-height: 1.6; }
+.progressSteps p { margin: 3px 0 0; color: var(--ink-faint); font-size: .68rem; line-height: 1.6; }
 .progressNote { margin: 0; padding: 14px 22px; color: var(--ink-faint); font-size: .72rem; line-height: 1.6; }
-.toolCall { position: relative; overflow: hidden; margin: 12px 0; padding: 10px 12px; border-radius: 8px; color: var(--ink-soft); background: var(--surface-muted); font-size: .76rem; }
-.toolCallHeading { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.toolCallHeading small { flex: 0 0 auto; color: var(--ink-faint); }
+.toolCall { margin: 12px 0; color: var(--ink-soft); font-size: .76rem; }
+.toolCallHeading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.toolCallHeading small { flex: 0 0 auto; color: var(--ink-faint); white-space: nowrap; }
 .toolCall[data-status="failed"] .toolCallHeading small { color: var(--red); }
 .toolCall p { position: relative; margin: 5px 0 0; overflow-wrap: anywhere; line-height: 1.6; }
-.toolCall[data-active="true"]::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--teal) 18%, transparent), transparent); animation: toolCallShimmer 1.8s linear infinite; }
-@keyframes toolCallShimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@supports (background-clip: text) or (-webkit-background-clip: text) {
+  .toolCall[data-active="true"] .toolCallHeading > span {
+    color: transparent;
+    background: linear-gradient(110deg, var(--ink-soft) 35%, color-mix(in srgb, var(--teal) 18%, var(--ink)) 50%, var(--ink-soft) 65%);
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    animation: toolCallShimmer 4s linear infinite;
+  }
+}
+@keyframes toolCallShimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }
 
 .composerArea { width: min(100%, 880px); flex: 0 0 auto; align-self: center; padding: 0 8px; }
 .composer { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 20px 18px 14px; border: 1px solid transparent; border-radius: 22px; background: var(--surface-raised); box-shadow: var(--shadow-small); }
@@ -207,14 +210,12 @@
 .candidatePreview { position: relative; display: block; overflow: hidden; }
 .candidatePreviewFrame { position: absolute; inset: 0; pointer-events: none; }
 .candidatePreviewPlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 10px; color: white; background: rgb(0 0 0 / .45); border-radius: 50%; pointer-events: none; }
-.candidateThumbnailFallback { display: grid; grid-column: 1; grid-row: 1 / span 2; width: 100%; align-self: start; aspect-ratio: 16 / 9; place-content: center; justify-items: center; gap: 9px; color: var(--ink-faint); border-radius: 8px; background: var(--surface-muted); }
-.candidateThumbnailFallback > span { font-size: .68rem; }
 .candidate > strong, .candidateSelected > strong { grid-column: 2; font: 500 .83rem/1.65 var(--sans); }
 .candidate > p, .candidateSelected > p { grid-column: 1 / -1; }
 .candidate blockquote, .candidateSelected blockquote { grid-column: 1 / -1; margin: 0; padding-left: 10px; color: var(--ink-soft); border-left: 2px solid var(--line); font-size: .76rem; line-height: 1.65; }
-.whyLine { display: flex; grid-column: 1; grid-row: 1 / span 2; gap: 8px; align-items: center; color: var(--ink-soft); }
-.whyLine svg { flex: 0 0 auto; margin-top: 3px; color: var(--teal-deep); }
-.whyLine span { font-size: .74rem; line-height: 1.65; overflow-wrap: anywhere; }
+.whyLine, .candidateThumbnailFallback { display: flex; grid-column: 1; grid-row: 1 / span 2; gap: 8px; align-items: center; color: var(--ink-soft); }
+.whyLine svg, .candidateThumbnailFallback svg { flex: 0 0 auto; margin-top: 3px; color: var(--teal-deep); }
+.whyLine span, .candidateThumbnailFallback span { font-size: .74rem; line-height: 1.65; overflow-wrap: anywhere; }
 .candidateEmpty { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--ink-faint); font-size: .8rem; line-height: 1.6; }
 .resultWarnings { margin-bottom: 12px; color: var(--amber); font-size: .75rem; line-height: 1.6; }
 .resultWarnings p { margin: 4px 0; }
@@ -591,10 +592,8 @@
   .thread { gap: 24px; padding: 8px 0 18px; }
   .userMessage > div { max-width: 92%; padding: 12px 16px; }
   .messageScope { font-size: .6rem; }
-  .progressCard summary { gap: 8px; padding: 16px; }
-  .progressCard small { font-size: .65rem; }
+  .progressDetails summary { padding: 0 16px 12px; }
   .progressSteps { padding: 4px 16px 18px; }
-  .progressSteps li { gap: 10px; }
   .progressNote { padding: 12px 16px; }
   .composerArea { padding: 0; }
   .composer { padding: 16px; border-radius: 18px; }
@@ -637,12 +636,8 @@
 .embeddedPage .messageScope { margin-top: 5px; font-size: .62rem; }
 .embeddedPage .messageError { margin: 8px 0; font-size: .76rem; line-height: 1.5; }
 .embeddedPage .progressCard { margin-bottom: 8px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
-.embeddedPage .progressCard summary { min-height: 38px; gap: 6px; padding: 7px 2px; font-size: .74rem; }
-.embeddedPage .progressCard small { font-size: .64rem; }
+.embeddedPage .progressDetails summary { padding: 0 2px 8px; }
 .embeddedPage .progressSteps { padding: 4px 2px 12px; }
-.embeddedPage .progressSteps li { grid-template-columns: 28px minmax(0, 1fr); gap: 8px; padding-bottom: 16px; }
-.embeddedPage .progressSteps li:not(:last-child)::after { top: 34px; left: 13px; }
-.embeddedPage .stepIcon { width: 28px; height: 28px; }
 .embeddedPage .progressNote { padding: 8px 2px; }
 .embeddedPage .candidatesPanel { margin-top: 14px; }
 .embeddedPage .candidateHeading { margin-bottom: 7px; }
@@ -651,13 +646,13 @@
 .embeddedPage .candidateTop { display: flex; grid-column: 2; flex-wrap: wrap; gap: 2px 7px; align-items: baseline; }
 .embeddedPage .candidateTop time { grid-column: auto; }
 .embeddedPage .rank { width: 17px; height: 17px; grid-row: auto; border-radius: 4px; font-size: .58rem; }
-.embeddedPage .candidateThumbnail, .embeddedPage .candidateThumbnailFallback { width: 96px; grid-column: 1; grid-row: 1 / span 3; align-self: start; }
-.embeddedPage .candidateThumbnailFallback { gap: 0; }
-.embeddedPage .candidateThumbnailFallback > span { display: none; }
+.embeddedPage .candidateThumbnail { width: 96px; grid-column: 1; grid-row: 1 / span 3; align-self: start; }
 .embeddedPage .candidate > strong, .embeddedPage .candidateSelected > strong { grid-column: 2; font-size: .75rem; line-height: 1.4; }
 .embeddedPage .candidate blockquote, .embeddedPage .candidateSelected blockquote { grid-column: 2; overflow: hidden; font-size: .69rem; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.embeddedPage .whyLine { grid-column: 1 / -1; grid-row: auto; margin-top: 2px; }
-.embeddedPage .whyLine span { font-size: .69rem; line-height: 1.4; }
+.embeddedPage .whyLine, .embeddedPage .candidateThumbnailFallback { grid-column: 1 / -1; grid-row: auto; margin-top: 2px; }
+.embeddedPage .whyLine span, .embeddedPage .candidateThumbnailFallback span { font-size: .69rem; line-height: 1.4; }
+.embeddedPage :is(.candidate, .candidateSelected):has(> :is(.whyLine, .candidateThumbnailFallback)) { grid-template-columns: minmax(0, 1fr); }
+.embeddedPage :is(.candidate, .candidateSelected):has(> :is(.whyLine, .candidateThumbnailFallback)) > :is(.candidateTop, strong, blockquote) { grid-column: 1; }
 .embeddedPage .composerArea { width: 100%; padding: 8px 0 0; border-top: 1px solid var(--line); }
 .embeddedPage .composer { gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
 .embeddedPage .composer textarea { min-height: 38px; max-height: 130px; font-size: .82rem; line-height: 1.5; }
@@ -677,6 +672,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .spinning { animation: none; }
-  .toolCall[data-active="true"]::before { animation: none; }
+  .toolCall[data-active="true"] .toolCallHeading > span { animation: none; color: var(--ink-soft); background: none; }
   .conversationPicker > summary svg, .conversationChoice, .deleteConversation, .conversationMenuClose { transition: none; }
 }

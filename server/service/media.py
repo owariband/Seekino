@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlencode
 
 from ..config.media import ImageUploadConfig
@@ -13,12 +14,16 @@ from ..utils.validation import canonical_uuid
 from ..constants.identity import LOCAL_USER_ID
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
 from ..model.dto.authDTO import AuthIdentity
-from ..model.video import VideoIndexStatus
+from ..model.video import SeriesVisibility, VideoIndexStatus
 from ..model.dto.mediaDTO import (
     ImageReference,
     KeyframeImageReference,
+    ParseExport,
+    ParseExportRecord,
+    ParseExportSource,
     PlaybackMedia,
     VideoMedia,
+    parse_export_event_types,
 )
 from ..repository.library import SeriesNotFoundError
 from ..repository.video import VideoRepository
@@ -34,7 +39,7 @@ from ..utils.media import (
     image_media_type,
 )
 from .library import LibraryService
-from .access import require_series_read, require_tenant_read
+from .access import series_access, require_tenant_read
 
 
 class MediaMissingError(FileNotFoundError):
@@ -63,9 +68,47 @@ class MediaService:
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
 
+    def export_parse_results(
+        self, *, tenant_id: str, video_ids: Sequence[str] = (),
+        video_parse_task_ids: Sequence[str] = (), event_types: Sequence[str] | None = None,
+    ) -> ParseExport:
+        supported = parse_export_event_types()
+        selected = set(supported if event_types is None else event_types)
+        if not selected or selected.difference(supported):
+            raise ValueError("eventTypes must select one or more supported types: " + ", ".join(supported))
+        if self._video_parse_repository is None:
+            raise VideoParseConflictError("ParseV2 export is not available in this execution mode")
+        snapshots = self._video_parse_repository.load_export_snapshot(
+            tenant_id=tenant_id, video_ids=video_ids, video_parse_task_ids=video_parse_task_ids,
+        )
+        lines: list[str] = []
+        event_count = 0
+        skipped = 0
+        for snapshot in snapshots:
+            indexed_events = [(index, event) for index, event in enumerate(snapshot.content.timeline)
+                              if event.event_type in selected]
+            if not indexed_events:
+                skipped += 1
+                continue
+            record = ParseExportRecord(
+                source=ParseExportSource(
+                    video_id=snapshot.video_id, parse_task_id=snapshot.parse_task_id,
+                    chunk_id=snapshot.chunk_id, content_version=snapshot.content_version,
+                    timeline_indices=[index for index, _ in indexed_events],
+                ),
+                persons=snapshot.content.persons,
+                timeline=[event for _, event in indexed_events],
+            )
+            lines.append(record.model_dump_json())
+            event_count += len(indexed_events)
+        return ParseExport(
+            content=("".join(line + "\n" for line in lines)).encode("utf-8"),
+            record_count=len(lines), event_count=event_count, skipped_empty_chunks=skipped,
+        )
+
     def publication_ready(self, series: SeriesState, *, require_published: bool = True) -> bool:
         if (
-            (require_published and not series.is_published)
+            (require_published and series.visibility != SeriesVisibility.PUBLIC)
             or series.status != "READY" or series.video_count == 0
             or series.ready_video_count != series.video_count
             or series.pending_upload_count > 0 or series.pending_uploads
@@ -80,18 +123,24 @@ class MediaService:
         )
 
     def require_public_series(self, series: SeriesState) -> None:
-        if not self.publication_ready(series):
+        if not series.publisher_active or not self.publication_ready(series):
             raise SeriesNotFoundError("公开课程不存在或尚不可用")
+
+    def require_readable_series(self, identity: AuthIdentity, series: SeriesState) -> Literal["member", "public"]:
+        access = series_access(identity, series)
+        if access == "public":
+            self.require_public_series(series)
+        return access
 
     def require_series_access(self, identity: AuthIdentity, series_ids: list[str], *, tenant_id: str) -> None:
         if identity.mode == "local":
             return
-        require_tenant_read(identity, tenant_id)
+        if not series_ids:
+            # Empty scopes may expand only within the caller's existing tenant access.
+            require_tenant_read(identity, tenant_id)
         for series_id in dict.fromkeys(series_ids):
             series = self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
-            require_series_read(identity, series)
-            if tenant_id == identity.public_tenant_id:
-                self.require_public_series(series)
+            self.require_readable_series(identity, series)
 
     def image_series(
         self, image_id: str, *, tenant_id: str, owner_user_id: str = LOCAL_USER_ID,
@@ -108,6 +157,10 @@ class MediaService:
         except ValueError as exc:
             raise SeriesNotFoundError("图片资源不存在") from exc
         return self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
+
+    def video_series(self, video_id: str, *, tenant_id: str) -> SeriesState:
+        video = self._library.get_video(video_id, tenant_id=tenant_id)
+        return self._library.get_series(video.series_id, tenant_id=tenant_id)
 
     def upload_series_image(
         self, series_id: str, data: bytes, *, tenant_id: str,

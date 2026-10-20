@@ -37,6 +37,7 @@ from ..repository.video import (
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
 )
+from ..repository.video_parse import VideoParseConflictError, VideoParseTaskNotFoundError
 from ..service.media import MediaMissingError, MediaNotReadyError
 from ..service.agent_chat import AgentAttachmentInputUnavailableError
 from ..error.auth import AuthError
@@ -59,6 +60,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         AgentConversationNotFoundError,
         AgentMessageNotFoundError,
         ParseJobNotFoundError,
+        VideoParseTaskNotFoundError,
         SeriesNotFoundError,
         SeriesScopeNotFoundError,
         UploadSessionNotFoundError,
@@ -86,6 +88,10 @@ def register_exception_handlers(app: FastAPI) -> None:
         exc: ValueError,
     ) -> JSONResponse:
         return _error_response(request, 400, "INVALID_REQUEST", str(exc))
+
+    @app.exception_handler(VideoParseConflictError)
+    async def parse_conflict_handler(request: Request, exc: VideoParseConflictError) -> JSONResponse:
+        return _error_response(request, 409, "PARSE_CONTENT_NOT_READY", str(exc))
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

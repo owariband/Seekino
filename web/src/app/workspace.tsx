@@ -15,6 +15,7 @@ import {
   getSeries,
   getRuntimeConfig,
   listSeries,
+  listPublicSeries,
   updateSeries as updateSeriesRequest,
   updateVideoEpisode as updateVideoEpisodeRequest,
   shouldRetryApiRequest,
@@ -30,6 +31,7 @@ import type {
   VideoEpisodeUpdateRequest,
   VideoSummary,
 } from "../api/contracts";
+import { useAuth } from "../features/auth/AuthProvider";
 
 interface WorkspaceContextValue {
   mode: RuntimeMode;
@@ -41,7 +43,7 @@ interface WorkspaceContextValue {
   error: Error | null;
   selectSeries: (seriesId: string) => void;
   createSeries: (input: Omit<SeriesCreateRequest, "tenantId">) => Promise<SeriesView>;
-  updateSeries: (input: Omit<SeriesUpdateRequest, "tenantId">) => Promise<SeriesView>;
+  updateSeries: (input: Omit<SeriesUpdateRequest, "tenantId"> & { tenantId?: string }) => Promise<SeriesView>;
   updateVideoEpisode: (input: Omit<VideoEpisodeUpdateRequest, "tenantId">) => Promise<VideoSummary>;
   refreshSeries: () => Promise<void>;
 }
@@ -50,6 +52,7 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
+  const { activeSource } = useAuth();
   const seriesStorageKey = identityStorageKey("anivag-selected-series", "anivag-selected-series");
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(
     () => window.localStorage.getItem(seriesStorageKey),
@@ -72,12 +75,12 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     ? "debug" : "release";
 
   const seriesQuery = useQuery({
-    queryKey: ["series"],
+    queryKey: ["series", activeSource.key],
     queryFn: async () => {
       const items: SeriesSummary[] = [];
       let cursor: string | undefined;
       do {
-        const page = await listSeries(cursor);
+        const page = await (activeSource.kind === "public" ? listPublicSeries(cursor) : listSeries(cursor));
         items.push(...page.items);
         if (page.hasMore && !page.nextCursor) throw new Error("系列列表缺少下一页游标");
         cursor = page.hasMore ? page.nextCursor! : undefined;
@@ -116,8 +119,8 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
   const selectedSummary =
     series.find((item) => item.seriesId === selectedSeriesId) ?? null;
   const selectedSeriesQuery = useQuery({
-    queryKey: ["series-detail", selectedSummary?.seriesId],
-    queryFn: () => getSeries(selectedSummary!.seriesId),
+    queryKey: ["series-detail", selectedSummary?.seriesId, selectedSummary?.tenantId],
+    queryFn: () => getSeries(selectedSummary!.seriesId, selectedSummary!.tenantId),
     enabled: Boolean(selectedSummary),
     retry: shouldRetryApiRequest,
   });
@@ -149,14 +152,14 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
         return created;
       },
       updateSeries: async (input) => {
-        const updated = await updateSeriesRequest({ ...input, tenantId: TENANT_ID });
-        queryClient.setQueryData(["series-detail", updated.seriesId], updated);
+        const updated = await updateSeriesRequest({ ...input, tenantId: input.tenantId ?? TENANT_ID });
+        queryClient.setQueryData(["series-detail", updated.seriesId, updated.tenantId], updated);
         await queryClient.invalidateQueries({ queryKey: ["series"] });
         return updated;
       },
       updateVideoEpisode: async (input) => {
         const updated = await updateVideoEpisodeRequest({ ...input, tenantId: TENANT_ID });
-        queryClient.setQueryData<SeriesView>(["series-detail", updated.seriesId], (current) => current ? {
+        queryClient.setQueryData<SeriesView>(["series-detail", updated.seriesId, updated.tenantId], (current) => current ? {
           ...current,
           videos: current.videos
             .map((video) => video.videoId === updated.videoId ? updated : video)
