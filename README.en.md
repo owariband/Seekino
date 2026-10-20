@@ -93,7 +93,7 @@ There are also light and dark themes, model token usage statistics, and entry po
 
 Media, business data and indexes stay in your own environment, and you choose the model providers in your own config. When you use remote models, the relevant audio, video, frames or text are sent to the provider you configured.
 
-The project is still in development. Search results give the time range of a chunk or a reviewed event, and on-demand understanding of the current frame can also sample original frames near the paused position. Always check answers and clips against the original. Known issues and what has been verified are recorded in the [project check log](docs/dev/check_log.md) (in Chinese).
+The project is still in development. Search results give the time range of a chunk or a reviewed event, and on-demand understanding of the current frame can also sample original frames near the paused position. Always check answers and clips against the original. Known issues and planned work are recorded in the [issue list](docs/dev/problems.md) (in Chinese).
 
 ## Meet Kino
 
@@ -307,7 +307,7 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-Real integration tests need separate `ANIVAG_TEST_DATABASE_URL`, `ANIVAG_TEST_ELASTICSEARCH_URL` and `ANIVAG_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider. Some regression fixtures are currently behind the production contracts; failures and actual results are recorded in the [check log](docs/dev/check_log.md).
+Real integration tests need separate `ANIVAG_TEST_DATABASE_URL`, `ANIVAG_TEST_ELASTICSEARCH_URL` and `ANIVAG_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider. Known issues and pending acceptance checks are recorded in the [issue list](docs/dev/problems.md).
 
 Passing unit tests, builds, isolated SQL/ES tests and mocked-API browser tests is not the same as a full acceptance run with real models. Semantic quality, cold-start latency of on-demand understanding, real SMTP and full browser end-to-end runs each need separate acceptance. A successful `/healthz` only means the consumer is running.
 
@@ -337,4 +337,4 @@ Most module docs below are written in Chinese.
 - [Current-position understanding](agent/chat/realtime_understanding/runtime.py) · [Server](server/README.md)
 - [Web](web/README.md) · [Kino](web/src/shared/kino/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
 - [Model configuration](docs/model-config.md) · [Model token usage](docs/parse-model-usage.md) · [User/tenant](server/report_docs/user-tenant-handoff-20261010.md)
-- [Development deployment](deploy/README.md) · [Project check log](docs/dev/check_log.md)
+- [Development deployment](deploy/README.md) · [Issue list](docs/dev/problems.md)

@@ -93,7 +93,7 @@ Seekino（原 AniVAG）是一个可自托管的视频观看与检索助手。导
 
 媒体、业务事实和索引保存在自己的运行环境，模型来源由自己的配置管理。使用远程模型时，相应音视频、帧或文本会发送到配置的供应商。
 
-项目仍在开发中。检索结果提供 Chunk 或经审核事件的时间范围，当前画面的按需理解也可抽取暂停位置附近的原视频帧；回答和片段仍应结合原片核对。已确认问题和验证范围见 [项目检查记录](docs/dev/check_log.md)。
+项目仍在开发中。检索结果提供 Chunk 或经审核事件的时间范围，当前画面的按需理解也可抽取暂停位置附近的原视频帧；回答和片段仍应结合原片核对。已知问题与后续计划见 [问题清单](docs/dev/problems.md)。
 
 ## 认识 Kino
 
@@ -307,7 +307,7 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-真实集成需配置独立的 `ANIVAG_TEST_DATABASE_URL`、`ANIVAG_TEST_ELASTICSEARCH_URL`、`ANIVAG_TEST_AUTH_REDIS_URL`；真实模型测试需要额外显式启用，可能产生供应商消耗。当前部分回归 fixture 已落后于生产合同，失败原因及实际执行结果见 [检查记录](docs/dev/check_log.md)。
+真实集成需配置独立的 `ANIVAG_TEST_DATABASE_URL`、`ANIVAG_TEST_ELASTICSEARCH_URL`、`ANIVAG_TEST_AUTH_REDIS_URL`；真实模型测试需要额外显式启用，可能产生供应商消耗。已知问题与待验收项见 [问题清单](docs/dev/problems.md)。
 
 已有单测、构建、隔离 SQL/ES 与模拟 API 浏览器验证不等同于当前完整真实模型验收。语义质量、按需理解冷启动延迟、真实 SMTP 和完整浏览器联调仍需分别验收；`/healthz` 成功只说明 Consumer 运行状态。
 
@@ -335,4 +335,4 @@ anivag/
 - [当前播放位置理解实现](agent/chat/realtime_understanding/runtime.py) · [Server](server/README.md)
 - [Web](web/README.md) · [Kino](web/src/shared/kino/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
 - [模型配置](docs/model-config.md) · [模型 Token 用量](docs/parse-model-usage.md) · [用户/Tenant](server/report_docs/user-tenant-handoff-20261010.md)
-- [开发部署](deploy/README.md) · [项目检查记录](docs/dev/check_log.md)
+- [开发部署](deploy/README.md) · [问题清单](docs/dev/problems.md)

@@ -133,6 +133,20 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 
 ---
 
+## P3 / 低 ROI 候选开发项
+
+### O5. 用 SHOT Event 描述可检索的镜头语言
+
+状态（2026-10-19）：按用户决策记为低 ROI、后置候选项，尚未进入生产开发。已有构图实验提供探索线索，尚未通过独立人工判断证明检索收益。
+
+- KR1：验证在现有 `event_type` 中增加 `SHOT` 的方案，将其定义为稀疏的镜头语言观察事件。描述景别（远景、近景、特写等）、机位角度（俯拍、仰拍等）、主体位置与大小、构图和空间关系；运镜只在连续画面证据支持时记录。`SCENE` 继续表达地点和环境，`ACTION` / `DIALOGUE` 保留原有语义职责。
+- KR2：复用 Event 的时间范围、检索和回源链路，关联具体关键帧及其来源时间。区分 Event 与 Shot 的时间重叠上下文、帧是否处于 Event 区间，以及画面是否支持事件描述；不把同一 Shot 的全部关联 Event 自动当作每张关键帧的证据。
+- KR3：先用已有数据比较现有 Event 检索与新增镜头语言描述的收益，分别评议构图类别和布局，记录额外解析用量、处理时间和存储。只有收益足以支持成本时再排期；完整镜头覆盖、独立 Shot 业务体系和全量构图标注不作为本项前置建设。
+
+参考：[Shot gallery](../../engine/experiment/composition-models/20261018-shot-gallery/README.md)、[构图标签与盲评实验](../../engine/experiment/composition-models/20261019-shot-tags/README.md)。实验产物保留在本机忽略目录；本项仅记录设计方向，不标记为已实现或效果已验证。
+
+---
+
 # 9.23 ～ 9.30
 ## P0
 
@@ -188,6 +202,65 @@ done
 
 
 ### 5. 支持解析台词导出功能用于skill蒸馏
+
+2026-10-20 需求确认：准备供 PyTorch 文字角色模型训练使用的解析语料。导出完整正式 `TimelineEvent`，允许按类型筛选，由训练侧自行选择语言、拼接剧情和角色对话、组织训练目标。最终格式为 `schema_version + source + time + persons + timeline` 的 JSONL；不预设 `messages` 或 `text` 训练模板，不携带或读取视频媒体。自动解析结果不标称人工标注真值。
+
+- **设计：已确认。** 每个非空正式 Chunk 导出一条来源记录，记录粒度不限定训练样本粒度。复用 ParseV2 的 Event 契约；`persons` 保留正式列表，`speaker=null`、`speaker_source`、语言和 ORIGINAL/TRANSLATION 原样保留，不用 description 代替台词。原契约允许的非对白不确定人物引用也原样保留，不补造人物。
+- **实现：已完成。** 系列详情页与资料库共用的系列菜单增加“导出解析数据”，弹窗可全选系列视频或指定选集，并选择 Event 类型；服务端直接返回 JSONL 下载。权限沿用解析任务管理范围，公开可观看不等于可导出。
+- **验证：定向自动化与本机 MySQL 导出验证已通过，浏览器下载验收未执行。** 服务端导出、存储、媒体与权限回归 233 项通过；既有检索、Chunk 与 CORS 回归另 13 项通过。前端 API、系列菜单、导出弹窗与系列详情页 87 项通过，弹窗关闭顺序调整后相关 7 项复测通过；类型检查通过。hypnos-review 已完成，移除了超出正式契约的非对白人物引用限制，修复后回归通过；下方示例也已通过正式导出契约校验。自动化数据库测试使用隔离 SQLite；已通过现有 service/repository 从本机 MySQL 只读导出 MyGO 全 13 集，尚未验证 MySQL 并发更新场景。前端测试使用 jsdom，未做真实浏览器下载验收。未运行全库导出、索引重建或训练。
+
+2026-10-20 MyGO 实际导出：`outputs/datasets/mygo/20261020T041726857899Z/timeline-events.jsonl`，统计与校验信息位于同目录 `summary.json`。13 集各 24 个 Chunk，共 312 条记录、7,103 个 Event（其中 DIALOGUE 4,715），无跳过；UTF-8 文件 2,957,825 字节。数据库读取、正式契约校验与序列化耗时 0.372 秒，本次脚本含逐行复核和写盘共 0.461 秒（不含进程启动）。这些数值仅代表本次本机运行。自动解析对白中 1,180 条 speaker 为空，保留原状；后续构造角色监督数据时应单独处理。
+
+接口与约定：
+
+```http
+GET /api/videos/parse/export/options?tenantId=<工作区ID>
+POST /api/videos/parse/export
+Content-Type: application/json
+
+{"tenantId":"local-default","videoIds":["11111111-1111-4111-8111-111111111111"],"eventTypes":["DIALOGUE"]}
+```
+
+示例 ID 仅用于说明。`videoIds` 与 `videoParseTaskIds` 二选一，均支持多个公开 UUID、去重并保留选择顺序；视频选择最新未删除解析任务，不因新任务未完成而回退旧结果。指定解析任务可导出其历史正式版本。`eventTypes` 省略（或 null）表示全部当前支持类型，空列表和未知类型报参数错误，重复类型去重；类型选项直接来自正式契约，不维护另一份枚举。导出不选择语言，同一句的原文和译文保留在同一 Event。
+
+成功响应为 `application/x-ndjson`，文件名 `parse-export.jsonl`。`X-Export-Summary` 响应头单独报告 `record_count`、`event_count`、`skipped.no_matching_events`，汇总不写入 JSONL。无所选事件的 Chunk 跳过；全部为空时 API 返回空文件及零计数，前端提示没有匹配事件，不触发文件下载。
+
+下面是完整的一条记录，全部值为演示；实际 JSONL 每条写在一行：
+
+```json
+{
+  "schema_version": "anivag.parse-export.v1",
+  "source": {
+    "video_id": "11111111-1111-4111-8111-111111111111",
+    "parse_task_id": "22222222-2222-4222-8222-222222222222",
+    "chunk_id": "33333333-3333-4333-8333-333333333333",
+    "content_version": 3,
+    "timeline_indices": [4]
+  },
+  "time": {"unit": "ms", "origin": "source_video"},
+  "persons": ["爱音", "灯"],
+  "timeline": [{
+    "event_type": "DIALOGUE",
+    "start_seconds": 64000,
+    "end_seconds": 66000,
+    "description": "爱音邀请灯一起练习。",
+    "participants": ["爱音", "灯"],
+    "visible_persons": ["爱音", "灯"],
+    "speaker": "爱音",
+    "speaker_source": "understanding",
+    "text_variants": [
+      {"language": "ja", "role": "ORIGINAL", "text": "今日は一緒に練習に行く？"},
+      {"language": "zh-Hans", "role": "TRANSLATION", "text": "今天一起去练习吗？"}
+    ]
+  }]
+}
+```
+
+`source.timeline_indices` 与筛选后的 timeline 一一对应，示例事件来自原始 `timeline[4]`。历史字段名 `start_seconds/end_seconds` 的实际单位仍是源视频绝对整数毫秒，区间为 `[start,end)`；跨 Chunk 事件保留完整时间，只校验源视频总范围。导出不去重相邻 Chunk 里可能已有的重复观察，不将 Chunk 的来源边界视为片内时间原点。训练侧按来源与时间组织上下文，不把翻译当成新轮次；这些 ID 用于追溯，不是需要训练加载器解析的媒体 URI。
+
+来源完整性采用一次数据库查询冻结任务、全部 Chunk 内容与 content_version，再在内存中筛选和序列化。只接受正式提交、非测试、Understanding/Refine 已完成的内容；启用 Prefix 时要求其完成。索引等待或失败不影响已完成正式内容导出。任何请求来源缺失、越权、尚未完成或内容不符合正式契约，整个请求明确报错，不返回部分文件。冻结后出现新版本不会改写本次文件；本次记录的是查询时点的版本，不保证下载结束时仍是最新。
+
+首版同步导出到内存，适用于按系列/选集提取文字解析数据；不增加后台导出队列、自动训练集划分或训练执行。既有 `training/qwen3_vl/export_dataset.py` 仍是 ParseV1 的视频解析训练工具，本次未修改或复用它。低 ROI 的 SHOT 方案保持后置。
 
 
 ### 6. 视频综合理解维度划分，增加文本向量化维度召回
