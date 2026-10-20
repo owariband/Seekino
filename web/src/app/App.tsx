@@ -4,7 +4,7 @@ import { LibraryPage } from "../features/library/LibraryPage";
 import { WatchHomePage } from "../features/player/WatchHomePage";
 import { WatchPage } from "../features/player/WatchPage";
 import { SeriesPage } from "../features/player/SeriesPage";
-import { SearchPage } from "../features/search/SearchPage";
+import { RoutedSearchPage } from "../features/search/SearchPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { TasksPage } from "../features/tasks/TasksPage";
 import { UsagePage } from "../features/usage/UsagePage";
@@ -22,7 +22,7 @@ export function App() {
           <Route index element={<Navigate to="/watch" replace />} />
           <Route path="watch" element={<WatchHomePage />} />
           <Route path="series/:seriesId" element={<SeriesPage />} />
-          <Route path="search" element={<SearchPage />} />
+          <Route path="search" element={<RoutedSearchPage />} />
           <Route path="library" element={canManage ? <LibraryPage /> : <Navigate to="/watch" replace />} />
           <Route path="watch/:seriesId/:videoId" element={<WatchPage />} />
           <Route path="tasks" element={canManage ? <TasksPage /> : <Navigate to="/watch" replace />} />

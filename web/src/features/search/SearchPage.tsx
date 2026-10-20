@@ -1,7 +1,7 @@
 import { ArrowUp, ChevronDown, History, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
-import { Link, useInRouterContext } from "react-router";
+import { Link, useInRouterContext, useLocation, useNavigate } from "react-router";
 import remarkGfm from "remark-gfm";
 
 import { useI18n } from "../../app/i18n";
@@ -46,6 +46,8 @@ function MessageAttachment({ attachment, index }: { attachment: AgentAttachmentV
 }
 
 type SearchPageProps = {
+  navigation?: Pick<AgentConversationView, "conversationId" | "title"> & { key: string };
+  onNavigationConsumed?: () => void;
   embedded?: boolean;
   initialSeriesId?: string;
   initialSeries?: SeriesSummary;
@@ -124,7 +126,7 @@ function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
   });
 }
 
-async function loadConversations(locale: Locale): Promise<AgentConversationView[]> {
+export async function loadConversations(locale: Locale): Promise<AgentConversationView[]> {
   const conversations: AgentConversationView[] = [];
   let cursor: string | undefined;
   while (true) {
@@ -209,8 +211,23 @@ function MarkdownAnswer({ markdown }: { markdown: string }) {
   );
 }
 
+export function RoutedSearchPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { scopeKey } = useAuth();
+  const request = location.state?.conversation;
+  const navigation = request?.scopeKey === scopeKey && typeof request.conversationId === "string" && typeof request.title === "string"
+    ? { conversationId: request.conversationId, title: request.title, key: location.key }
+    : undefined;
+  return <SearchPage navigation={navigation} onNavigationConsumed={() => {
+    const state = { ...location.state };
+    delete state.conversation;
+    navigate(location.pathname + location.search + location.hash, { replace: true, state });
+  }} />;
+}
+
 export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function SearchPage(
-  { embedded = false, initialSeriesId, initialSeries: suppliedSeries, captureExtraContext, onOpenVideo, onSeekCurrent },
+  { embedded = false, initialSeriesId, initialSeries: suppliedSeries, captureExtraContext, onOpenVideo, onSeekCurrent, navigation, onNavigationConsumed },
   ref,
 ) {
   const { t, locale, formatLocale } = useI18n();
@@ -222,7 +239,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const { canManage, activeSource } = useAuth();
   const requiresExplicitScope = activeSource.kind === "public" || Boolean(suppliedSeries && suppliedSeries.tenantId !== TENANT_ID);
   const inRouter = useInRouterContext();
-  const [requestedConversationId, setRequestedConversationId] = useState<string | null>(null);
+  const [requestedConversationId, setRequestedConversationId] = useState<string | null>(navigation?.conversationId ?? null);
+  const consumedNavigationRef = useRef<string | undefined>(undefined);
   const [conversations, setConversations] = useState<AgentConversationView[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [conversationListError, setConversationListError] = useState<string | null>(null);
@@ -318,7 +336,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     const composer = composerRef.current;
     if (!composer) return;
     composer.style.height = "auto";
-    composer.style.height = `${composer.scrollHeight}px`;
+    if (query) composer.style.height = `${composer.scrollHeight}px`;
   }, [query]);
 
   const evidenceMessage = selection?.conversationId === conversationId ? messages.find((message) => message.messageId === selection.messageId) : null;
@@ -465,12 +483,12 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     });
   };
 
-  const closeConversationPicker = (restoreFocus = false) => {
+  const closeConversationPicker = useCallback((restoreFocus = false) => {
     conversationPickerRef.current?.removeAttribute("open");
     if (restoreFocus) conversationPickerRef.current?.querySelector<HTMLElement>("summary")?.focus();
-  };
+  }, []);
 
-  const selectConversation = (conversation: AgentConversationView) => {
+  const selectConversation = useCallback((conversation: Pick<AgentConversationView, "conversationId" | "title">) => {
     if (creatingConversation || deletingConversationId) return;
     const nextConversationId = conversation.conversationId;
     setConfirmingDeleteId(null);
@@ -484,7 +502,14 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     focusAfterMutationRef.current = "composer";
     setConversationStatus(t("正在打开对话：{value0}", { value0: conversation.title }));
     setRequestedConversationId(nextConversationId);
-  };
+  }, [closeConversationPicker, conversationId, creatingConversation, deletingConversationId, t]);
+
+  useEffect(() => {
+    if (!navigation || consumedNavigationRef.current === navigation.key || creatingConversation || deletingConversationId) return;
+    selectConversation(navigation);
+    consumedNavigationRef.current = navigation.key;
+    onNavigationConsumed?.();
+  }, [navigation, onNavigationConsumed, selectConversation, creatingConversation, deletingConversationId]);
 
   const createConversation = async () => {
     if (mode !== "live" || loading || creatingConversation || deletingConversationId) return;
@@ -828,7 +853,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                   }
                 }}
                 placeholder={t("提问视频内容，或聊聊其他问题…")}
-                rows={2}
+                rows={1}
                 aria-label={t("向 Seekino 助手提问")}
               />
               <div className={styles.composerToolbar}>
@@ -847,9 +872,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
                     }}
                   >
-                    <summary aria-label={t("选择检索视频系列")}>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
+                    <summary aria-label={t("选择检索视频系列")}><span>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
                       ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? t("已选 1 个系列")
-                      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}<ChevronDown size={13} aria-hidden="true" /></summary>
+                      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}</span><ChevronDown size={13} aria-hidden="true" /></summary>
                     <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
                       {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
                       {series.map((item) => (
