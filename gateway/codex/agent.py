@@ -23,6 +23,7 @@ from gateway.agent_model.errors import (
     ModelFailureError,
     ModelFailureReason,
     ModelInputTooLargeError,
+    provider_failure_reason,
 )
 from gateway.constants import CODEX_PROVIDER
 from gateway.agent_model.context import (
@@ -31,7 +32,7 @@ from gateway.agent_model.context import (
     ContextWindowPolicy,
     preflight_context,
 )
-from gateway.usage import track_model_call
+from gateway.usage import ModelCallControlError, track_model_call
 from gateway.model_diagnostics import capture_model_diagnostics
 from gateway.media import encode_media_file, prepare_input_messages, require_vision_input
 from gateway.multimodal import (
@@ -99,6 +100,9 @@ def _failure_reason(error: BaseException) -> ModelFailureReason:
     reason = getattr(error, "reason", None)
     if isinstance(reason, ModelFailureReason):
         return reason
+    provider_reason = provider_failure_reason(error)
+    if provider_reason is not None:
+        return provider_reason
     if isinstance(error, TimeoutError) or "timeout" in type(error).__name__.lower():
         return ModelFailureReason.MODEL_TIMEOUT
     return ModelFailureReason.INVALID_MODEL_RESPONSE
@@ -193,6 +197,7 @@ class CodexAgentModel:
         context_checkpoint: ContextCheckpoint | None = None,
         context_window_policy: ContextWindowPolicy | None = None,
         max_input_chars: int | None = None,
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _ResultModel:
         """Run native Codex with real images and host-owned business tools."""
         del context_checkpoint
@@ -240,6 +245,7 @@ class CodexAgentModel:
             timeout=self._effective_timeout(request_timeout_seconds),
             check_control=check_control, require_successful_tool=bool(tools),
             operation=self._operation(schema_name, tools),
+            stop_feedback=stop_feedback,
         )
 
     def run_structured(
@@ -255,6 +261,7 @@ class CodexAgentModel:
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
         image_urls: Sequence[str] = (),
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _ResultModel:
         del context_checkpoint
         _, run_input = self._prepare_input(
@@ -268,6 +275,7 @@ class CodexAgentModel:
             run_input, tools=tools, result_type=result_type,
             output_schema=output_schema, max_model_calls=max_model_calls,
             timeout=timeout, check_control=check_control,
+            stop_feedback=stop_feedback,
         )
 
     def _run_structured_invocation(
@@ -282,6 +290,7 @@ class CodexAgentModel:
         check_control: Callable[[], None] | None,
         require_successful_tool: bool = False,
         operation: str | None = None,
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _ResultModel:
         if check_control is not None:
             check_control()
@@ -291,46 +300,75 @@ class CodexAgentModel:
             check_control=check_control,
         )
         latest_turn: object | None = None
+        deadline = monotonic() + timeout if self.total_timeout_enabled else None
 
         def execute() -> tuple[object, _ResultModel]:
             nonlocal latest_turn
             try:
+                turn_count = 1
                 turn = session.run_turn(
                     prompt,
                     output_schema=output_schema,
                 )
                 latest_turn = turn
-                if require_successful_tool and session.successful_tool_call_count == 0:
-                    if max_model_calls is not None and max_model_calls <= 1:
+                while require_successful_tool and session.successful_tool_call_count == 0:
+                    if max_model_calls is not None and turn_count >= max_model_calls:
                         raise MissingRequiredFunctionCallError(
                             "Codex completed before a business tool succeeded",
                             reason=ModelFailureReason.LOOP_LIMIT,
                         )
+                    if stop_feedback is not None:
+                        if check_control is not None:
+                            check_control()
+                        if deadline is not None and monotonic() >= deadline:
+                            raise AgentModelTimeoutError("Codex Agent execution deadline expired")
                     turn = session.run_turn(
                         "Successfully use the supplied business tools before completing. "
                         "Inspect failed receipts and correct recoverable errors; do not "
                         "repeat successful writes. Then return the structured result.",
                         output_schema=output_schema,
                     )
+                    turn_count += 1
                     latest_turn = turn
-                    if session.successful_tool_call_count == 0:
+                    if session.successful_tool_call_count == 0 and stop_feedback is None:
                         raise MissingRequiredFunctionCallError(
                             "Codex completed twice without a successful business tool"
                         )
-                response = _turn_field(turn, "final_response")
-                if not isinstance(response, str) or not response.strip():
-                    raise MissingStructuredQueryDraftError(
-                        "Codex ended without its required structured result",
-                        reason=ModelFailureReason.INVALID_MODEL_RESPONSE,
-                    )
-                try:
-                    value = result_type.model_validate_json(response)
-                except (ValidationError, ValueError, json.JSONDecodeError) as exc:
-                    raise MissingStructuredQueryDraftError(
-                        "Codex returned an invalid structured result",
-                        reason=ModelFailureReason.INVALID_MODEL_RESPONSE,
-                    ) from exc
-                return turn, value
+                while True:
+                    response = _turn_field(turn, "final_response")
+                    if not isinstance(response, str) or not response.strip():
+                        raise MissingStructuredQueryDraftError(
+                            "Codex ended without its required structured result",
+                            reason=ModelFailureReason.INVALID_MODEL_RESPONSE,
+                        )
+                    try:
+                        value = result_type.model_validate_json(response)
+                    except (ValidationError, ValueError, json.JSONDecodeError) as exc:
+                        raise MissingStructuredQueryDraftError(
+                            "Codex returned an invalid structured result",
+                            reason=ModelFailureReason.INVALID_MODEL_RESPONSE,
+                        ) from exc
+                    if stop_feedback is None:
+                        return turn, value
+                    if check_control is not None:
+                        check_control()
+                    if deadline is not None and monotonic() >= deadline:
+                        raise AgentModelTimeoutError("Codex Agent execution deadline expired")
+                    feedback = stop_feedback()
+                    if check_control is not None:
+                        check_control()
+                    if deadline is not None and monotonic() >= deadline:
+                        raise AgentModelTimeoutError("Codex Agent execution deadline expired")
+                    if not feedback:
+                        return turn, value
+                    if max_model_calls is not None and turn_count >= max_model_calls:
+                        raise CodexAgentModelError(
+                            "Codex structured loop exhausted max_model_calls before stop",
+                            reason=ModelFailureReason.LOOP_LIMIT,
+                        )
+                    turn_count += 1
+                    turn = session.run_turn(feedback, output_schema=output_schema)
+                    latest_turn = turn
             finally:
                 session.close()
 
@@ -341,6 +379,7 @@ class CodexAgentModel:
             check_control=check_control,
             operation=operation or self._operation("structured", tools),
             latest_turn=lambda: latest_turn,
+            deadline=deadline,
         )
         del turn
         return value
@@ -506,8 +545,10 @@ class CodexAgentModel:
         check_control: Callable[[], None] | None,
         operation: str,
         latest_turn: Callable[[], object | None],
+        deadline: float | None = None,
     ) -> Any:
-        deadline = monotonic() + timeout if self.total_timeout_enabled else None
+        if deadline is None and self.total_timeout_enabled:
+            deadline = monotonic() + timeout
         future: Future[Any] | None = None
         try:
             with track_model_call(
@@ -549,10 +590,10 @@ class CodexAgentModel:
                                 timeout=min(remaining, 0.05) if remaining is not None else 0.05,
                             )
                             break
+                        except (ModelFailureError, AgentModelTimeoutError, ModelCallControlError):
+                            raise
                         except FutureTimeout:
                             continue
-                        except ModelFailureError:
-                            raise
                         except CodexModelCallLimitError as exc:
                             raise CodexAgentModelError(
                                 "Codex agent exhausted max_model_calls",

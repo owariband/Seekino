@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 import httpx
 from arkruntime._exceptions import ArkAPIError
+from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
 from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
 from gateway.errors import SSEProxyError
 
@@ -120,6 +121,82 @@ def test_video_claim_requires_explicit_v2_acceptance(repository):
     assert lease is not None and lease.video_parse_task_id == accepted_id
     with factory() as session:
         assert session.get(VideoParseTask, legacy_id).status == "PENDING"
+
+
+def test_refine_provider_exhaustion_is_terminal_without_spending_logic_retry(repository):
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    task_id = _task(factory, chunk_count=1, accepted=True)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        config = deepcopy(parent.parse_config)
+        config["execution"]["max_retry_count"] = 5
+        parent.parse_config = config
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
+    repo, _video, _prepared = _prepare(factory, queue, task_id, chunk_count=1)
+    chunk = queue.claim_chunk("understand", lease_duration=timedelta(minutes=1), now=NOW)
+    repo.commit_chunk_result(chunk, content={"persons": [], "timeline": []}, now=NOW)
+    lease = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
+    assert lease is not None
+    assert repo.reserve_refine_provider_retry(lease, max_retries=2, now=NOW) == 1
+    assert repo.reserve_refine_provider_retry(lease, max_retries=2, now=NOW) == 2
+    assert queue.retry_interval(
+        lease, error="provider exhausted", retry_at=NOW, now=NOW, provider_retry_exhausted=True,
+    )
+    with factory() as session:
+        interval = session.get(IntervalParseTask, lease.interval_parse_task_id)
+        assert interval.status == "PARSING_FAILED" and interval.retry_count == 0
+        assert interval.finish_time == NOW and interval.lease_owner is None and interval.lease_expire_time is None
+        parent = session.get(VideoParseTask, task_id)
+        assert parent.detail["_worker_runtime_v2"]["refine_provider_retries"] == {interval.id: 2}
+        assert parent.status == "PARSING_FAILED"
+    assert queue.claim_interval_refine("again", lease_duration=timedelta(minutes=1), now=NOW) is None
+    assert not queue.retry_interval(
+        lease, error="stale provider exhausted", retry_at=NOW, now=NOW, provider_retry_exhausted=True,
+    )
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_consumer_reports_separate_terminal_provider_budget(monkeypatch, caplog, recorded):
+    lease = IntervalParseLease(
+        "interval", "task", ("chunk",), 0, 1, "REFINING", "worker", 1,
+        NOW + timedelta(minutes=1), 0, 5, 2.5, 7.0,
+    )
+    calls = []
+
+    class Queue:
+        @staticmethod
+        def heartbeat_interval(*_args, **_kwargs):
+            return True
+
+        @staticmethod
+        def retry_interval(actual, **options):
+            calls.append((actual, options))
+            return recorded
+
+    async def fail(_lease):
+        raise RefineProviderRetryExhaustedError("provider exhausted", reason="provider_capacity", retries=2)
+
+    monkeypatch.setattr("server.mq.video_parse_consumer.now_utc", lambda: NOW)
+    caplog.set_level(logging.WARNING, logger="server.mq.video_parse_consumer")
+    consumer = VideoParseConsumer(
+        Queue(), VideoParseConsumerHandlers(fail, fail, fail, fail), worker_id="worker",
+        lease_duration=timedelta(minutes=5), heartbeat_interval=timedelta(seconds=1),
+        poll_interval=timedelta(seconds=2), maintenance_interval=timedelta(minutes=5), video_concurrency=3,
+    )
+    asyncio.run(consumer._run_interval(lease, fail))
+    assert calls == [(lease, {
+        "error": "provider exhausted", "retry_at": NOW + timedelta(seconds=2.5), "provider_retry_exhausted": True,
+    })]
+    message = next(record.getMessage() for record in caplog.records if record.levelno == logging.WARNING)
+    assert 'provider_retries=2' in message and 'retry_budget="provider"' in message and 'retry_at=null' in message
+    assert 'attempt=1' in message and 'max_retry_count=5' in message
+    terminal = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    if recorded:
+        assert len(terminal) == 1 and 'terminal_reason="provider_retry_budget_exhausted"' in terminal[0]
+        assert "child_retry_budget_exhausted" not in terminal[0]
+    else:
+        assert terminal == []
 
 
 def test_claim_enforces_ninety_percent_batch_gate_without_dispatch(repository):

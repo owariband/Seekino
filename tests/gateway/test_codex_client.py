@@ -21,6 +21,7 @@ from gateway.codex.client import (
     codex_reasoning_effort,
 )
 from gateway.codex.agent import CodexAgentModel, CodexAgentModelError
+from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.usage import (
     capture_model_usage, control_model_calls, model_call_context, track_model_call,
 )
@@ -582,10 +583,12 @@ def test_history_response_timeout_keeps_transport_and_next_turn_usable(phase, la
     assert not client._reader_thread.is_alive()
 
 
-def _error_notification(*, will_retry, status=None, thread_id="thread-1", turn_id="turn-1"):
+def _error_notification(*, will_retry, status=None, info=None, thread_id="thread-1", turn_id="turn-1"):
     error = {"message": "model connection failed"}
     if status is not None:
         error["codexErrorInfo"] = {"httpConnectionFailed": {"httpStatusCode": status}}
+    elif info is not None:
+        error["codexErrorInfo"] = info
     return {"method": "error", "params": {
         "threadId": thread_id, "turnId": turn_id,
         "willRetry": will_retry, "error": error,
@@ -633,6 +636,8 @@ def test_native_error_without_turn_completion_is_raised_and_closes_transport(
 @pytest.mark.parametrize("with_text", [False, True])
 @pytest.mark.parametrize("error", [
     _error_notification(will_retry=True, status=503),
+    _error_notification(will_retry=True, info="serverOverloaded"),
+    _error_notification(will_retry=True, info="rateLimitExceeded"),
     _error_notification(will_retry=False, thread_id="another-thread"),
     _error_notification(will_retry=False, turn_id="previous-turn"),
 ])
@@ -651,6 +656,80 @@ def test_retryable_and_other_turn_errors_do_not_fail_a_successful_turn(with_text
         session.close()
     assert displayed == (["A", "B"] if with_text else [])
     assert session.successful_tool_call_count == 1
+
+
+@pytest.mark.parametrize("with_text", [False, True])
+@pytest.mark.parametrize("early_error", [False, True])
+@pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize("info,expected", [
+    ("serverOverloaded", ModelFailureReason.PROVIDER_CAPACITY),
+    ("rateLimitExceeded", ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ({"responseStreamDisconnected": {"httpStatusCode": 429}}, ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ({"httpConnectionFailed": {"httpStatusCode": 503}}, ModelFailureReason.PROVIDER_CAPACITY),
+    ({"httpConnectionFailed": {"httpStatusCode": 403}}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ("usageLimitExceeded", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ("other", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (None, ModelFailureReason.PROVIDER_CAPACITY),
+])
+def test_native_provider_failure_preserves_codes_before_sdk_message_flattening(
+    with_text, early_error, completed, info, expected,
+):
+    def on_turn(client, request):
+        started = {"id": request["id"], "result": {
+            "turn": {"id": "turn-1", "items": [], "status": "inProgress"},
+        }}
+        error = {"message": "Selected model is at capacity. Please try a different model."}
+        if info is not None:
+            error["codexErrorInfo"] = info
+        notification = ({"method": "turn/completed", "params": {
+            "threadId": "thread-1", "turn": {
+                "id": "turn-1", "items": [], "status": "failed", "error": error,
+            },
+        }} if completed else {"method": "error", "params": {
+            "threadId": "thread-1", "turnId": "turn-1", "willRetry": False, "error": error,
+        }})
+        for message in ([notification, started] if early_error else [started, notification]):
+            client.incoming.put(message)
+
+    session, clients = _ordered_session(
+        (lambda _text: None) if with_text else None, lambda: "accepted", on_turn,
+    )
+    model = CodexAgentModel(
+        model="fake", request_timeout_seconds=600, max_output_tokens=256,
+        max_input_chars=200_000, max_concurrency=1,
+        session_factory=lambda **_kwargs: session,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            pending = pool.submit(
+                model.run_agent_loop, "answer", tools=[], max_model_calls=None,
+                handle_text=lambda _text: None,
+            )
+            with pytest.raises(ModelFailureError) as caught:
+                pending.result(timeout=2)
+            assert caught.value.reason == expected
+        finally:
+            model.close()
+    clients[0]._reader_thread.join(timeout=1)
+    assert not clients[0]._reader_thread.is_alive()
+    assert session.tool_call_count == 0
+
+
+def test_failed_completion_for_previous_turn_does_not_fail_current_turn():
+    def on_turn(client, request):
+        client.incoming.put({"method": "turn/completed", "params": {
+            "threadId": "thread-1", "turn": {
+                "id": "previous-turn", "items": [], "status": "failed",
+                "error": {"message": "upstream busy", "codexErrorInfo": "serverOverloaded"},
+            },
+        }})
+        _turn_messages(client, request)
+
+    session, clients = _ordered_session(None, lambda: "accepted", on_turn)
+    try:
+        assert session.run_turn("answer").final_response == "B"
+    finally:
+        session.close()
 
 
 @pytest.mark.parametrize("early_tool", [False, True])

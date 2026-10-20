@@ -20,6 +20,7 @@ from agent.video_parse_v2.scheduler import (
 )
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.parsev2.voiceprint import CharacterVoiceprint, Voiceprint, VoiceprintReference
+from engine.parsev2.voiceprint_matching import is_label_doubtful
 from engine.parsev2.validation import (
     RefinementMergeConflictError,
     merge_refinement_content,
@@ -37,7 +38,8 @@ from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 from ..constants.parse import (
     MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY, VOICEPRINT_REFS_PER_SPEAKER,
     VOICEPRINT_CONSISTENCY_MIN_REFS, VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN,
-    VOICEPRINT_B0_MIN_AUDIO_MS,
+    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+    VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_MIN_AUDIO_MS,
 )
 from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
@@ -1419,6 +1421,21 @@ class VideoParseRepository:
                 raise VideoParseConflictError("voiceprint scoring result is incomplete")
             if phase.get("encoder_model") is not None and phase["encoder_model"] != model:
                 raise VideoParseSnapshotConflictError("Voiceprint result encoder differs from the frozen task")
+            label_policy = None
+            label_loo = payload["method_version"] == VOICEPRINT_B0_METHOD_VERSION
+            label_tail = label_loo or payload["method_version"] == VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION
+            if label_tail or payload["method_version"] == VOICEPRINT_B0_COHERENCE_METHOD_VERSION:
+                keys = ("label_min_rank", "label_min_margin", "label_min_duration_ms",
+                        "label_min_ref_count", "label_min_ref_higher_fraction" if label_tail else "label_min_consistency")
+                if label_loo:
+                    keys += ("label_tail_min_refs",)
+                if not set(keys).issubset(payload["parameters"]):
+                    raise VideoParseConflictError("voiceprint label policy is incomplete")
+                label_policy = {key: payload["parameters"][key] for key in keys}
+                try:
+                    is_label_doubtful({}, **label_policy)
+                except (TypeError, ValueError) as error:
+                    raise VideoParseConflictError("voiceprint label policy is invalid") from error
             line_ids = [line.get("source_id") for line in lines if isinstance(line, dict)]
             if len(line_ids) != len(lines) or len(set(line_ids)) != len(lines) or set(line_ids) != set(sources):
                 raise VideoParseConflictError("voiceprint scoring must cover every fixed dialogue exactly once")
@@ -1492,6 +1509,91 @@ class VideoParseRepository:
                     raise VideoParseConflictError("voiceprint gap must compare the first two distinct characters")
                 if source["end_ms"] - source["start_ms"] < VOICEPRINT_B0_MIN_AUDIO_MS and candidates:
                     raise VideoParseConflictError("voiceprint cannot score audio below the encoder minimum")
+                if label_policy is not None:
+                    metrics = ("label_score", "label_rank", "label_count", "label_margin",
+                               "label_ref_count", "label_ref_consistency")
+                    if label_tail:
+                        metrics += ("label_ref_higher_count", "label_ref_higher_fraction")
+                    if label_loo:
+                        metrics += ("label_doubtful_basis",)
+                    if (not set(metrics).issubset(line) or type(line.get("label_doubtful")) is not bool
+                        or line.get("understanding_speaker") != source["speaker"]):
+                        raise VideoParseConflictError("voiceprint label diagnostics are incomplete")
+                    values = [line[key] for key in metrics[:6]]
+                    if source["speaker"] in names:
+                        rank = names.index(source["speaker"]) + 1
+                        candidate = candidates[rank - 1]
+                        if (line["label_rank"] != rank or line["label_score"] != candidate["similarity"]
+                            or line["label_ref_count"] != candidate.get("reference_count")
+                            or "reference_consistency" in candidate
+                            and line["label_ref_consistency"] != candidate["reference_consistency"]
+                            or label_tail and (
+                                line["label_ref_higher_count"] != candidate.get("reference_higher_count")
+                                or line["label_ref_higher_fraction"] != candidate.get("reference_higher_fraction")
+                            )):
+                            raise VideoParseConflictError("voiceprint label diagnostics contradict the visible ranking")
+                    if any(value is not None for value in values):
+                        if (source["speaker"] is None or any(value is None for value in values)
+                            or any(type(line[key]) is not int or line[key] < 1
+                                   for key in ("label_rank", "label_count", "label_ref_count"))
+                            or line["label_rank"] > line["label_count"]
+                            or line["label_rank"] <= len(names)
+                            and names[line["label_rank"] - 1] != source["speaker"]
+                            or line["label_count"] != line.get("candidate_count")
+                            or any(type(line[key]) not in {int, float} or not math.isfinite(line[key])
+                                   for key in ("label_score", "label_margin", "label_ref_consistency"))
+                            or not -1 <= line["label_score"] <= 1
+                            or not -1 <= line["label_ref_consistency"] <= 1
+                            or not candidates or line["label_margin"] < 0
+                            or not math.isclose(line["label_margin"], candidates[0]["similarity"]
+                                                - line["label_score"], rel_tol=0, abs_tol=1e-9)):
+                            raise VideoParseConflictError("voiceprint label diagnostics are invalid")
+                        tail_missing = (line.get("label_ref_higher_count") is None
+                                        and line.get("label_ref_higher_fraction") is None)
+                        if label_tail and not (label_loo and tail_missing) and (
+                            type(line["label_ref_higher_count"]) is not int
+                            or not 0 <= line["label_ref_higher_count"] <= line["label_ref_count"]
+                            or type(line["label_ref_higher_fraction"]) not in {int, float}
+                            or not math.isfinite(line["label_ref_higher_fraction"])
+                            or not math.isclose(line["label_ref_higher_fraction"],
+                                                line["label_ref_higher_count"] / line["label_ref_count"],
+                                                rel_tol=0, abs_tol=1e-12)
+                        ):
+                            raise VideoParseConflictError("voiceprint label tail diagnostics are invalid")
+                    elif label_tail and (line["label_ref_higher_count"] is not None
+                                         or line["label_ref_higher_fraction"] is not None):
+                        raise VideoParseConflictError("voiceprint unscored labels cannot have tail diagnostics")
+                    if line["label_doubtful"] != is_label_doubtful(line, **label_policy):
+                        raise VideoParseConflictError("voiceprint label flag does not match its diagnostics")
+                    if label_loo:
+                        basis = None
+                        if line["label_doubtful"]:
+                            basis = ("rank_margin_only_few_refs" if line["label_ref_count"]
+                                     < label_policy["label_tail_min_refs"] else "tail")
+                        if line["label_doubtful_basis"] != basis:
+                            raise VideoParseConflictError("voiceprint label basis does not match its policy")
+            if label_policy is not None:
+                hygiene = payload.get("hygiene")
+                if not isinstance(hygiene, dict):
+                    raise VideoParseConflictError("voiceprint two-pass hygiene is missing")
+                id_keys = ("excluded_reference_ids", "newly_flagged_ids", "cleared_flag_ids")
+                if any(not isinstance(hygiene.get(key), list)
+                       or any(not isinstance(value, str) for value in hygiene[key])
+                       or len(hygiene[key]) != len(set(hygiene[key]))
+                       or not set(hygiene[key]).issubset(sources) for key in id_keys):
+                    raise VideoParseConflictError("voiceprint hygiene IDs are invalid")
+                excluded = set(hygiene["excluded_reference_ids"])
+                flagged = {line["source_id"] for line in lines if line["label_doubtful"]}
+                if (hygiene.get("passes") != 2
+                    or hygiene.get("pass1_flag_count") != len(excluded)
+                    or hygiene.get("pass2_flag_count") != len(flagged)
+                    or hygiene.get("changed_flag_count") != len(excluded ^ flagged)
+                    or set(hygiene["newly_flagged_ids"]) != flagged - excluded
+                    or set(hygiene["cleared_flag_ids"]) != excluded - flagged
+                    or not excluded.issubset(sample_ids)
+                    or any(excluded.intersection(candidate["reference_ids"])
+                           for line in lines for candidate in line["candidates"])):
+                    raise VideoParseConflictError("voiceprint two-pass hygiene does not match final scores")
             if payload.get("failed_chunks") != snapshot["failed_chunks"]:
                 raise VideoParseSnapshotConflictError("voiceprint failed chunk set changed")
             timing = payload.get("timing")
@@ -1948,6 +2050,9 @@ class VideoParseRepository:
             if (set(input_versions) != expected_members or set(input_fingerprints) != expected_members
                     or set(input_contents) != expected_members):
                 raise VideoParseConflictError("refinement input identity must cover every Interval member")
+            voiceprint_decisions = deepcopy(dict(detail or {}).get("voiceprint_decisions", []))
+            if any(record["member_chunk_id"] not in expected_members for record in voiceprint_decisions):
+                raise VideoParseConflictError("voice decision refers to a nonmember Chunk")
             for chunk_task, _chunk, result in rows:
                 version = input_versions[chunk_task.id]
                 if (type(version) is not int or version < 1
@@ -2009,6 +2114,18 @@ class VideoParseRepository:
                     raise VideoParseSnapshotConflictError(
                         f"Refine concurrent event edits conflict: {message}", reason=reason, context=context,
                     ) from error
+            for record in voiceprint_decisions:
+                matching = [event for event in candidates[record["member_chunk_id"]]["timeline"]
+                            if event["event_type"] == "DIALOGUE" and (
+                                event["start_seconds"], event["end_seconds"]
+                            ) == (record["start_ms"], record["end_ms"])]
+                if len(matching) != 1 or matching[0]["speaker"] != record["final_speaker"]:
+                    raise VideoParseSnapshotConflictError(
+                        "Merged Refine speaker contradicts its voice decision",
+                        reason="voice_decision_merge_conflict",
+                        context={"chunk_task_id": record["member_chunk_id"],
+                                 "event_ref": record["event_ref"]},
+                    )
             member_scope = list(
                 range(
                     interval.start_sequence_no,
@@ -2026,6 +2143,13 @@ class VideoParseRepository:
                 current_detail["scope"] = _ordered_int_union(
                     current_detail.get("scope"), member_scope
                 )
+                decisions = [record for record in voiceprint_decisions
+                             if record["member_chunk_id"] == chunk_task.id]
+                if decisions:
+                    current_detail["voiceprint_decisions"] = [
+                        *current_detail.get("voiceprint_decisions", []),
+                        *[{**record, "interval_parse_task_id": interval.id} for record in decisions],
+                    ]
                 result.detail = current_detail
                 result.update_time = datetime_to_unix_time_ms(committed_at)
 
@@ -2302,6 +2426,43 @@ class VideoParseRepository:
             )
             session.flush()
             return _task_state(task)
+
+    def reserve_refine_provider_retry(
+        self,
+        lease: IntervalParseLease,
+        *,
+        max_retries: int,
+        now: datetime | None = None,
+    ) -> int | None:
+        """Charge a provider retry before waiting, independently of logic retries."""
+        if type(max_retries) is not int or max_retries <= 0:
+            raise ValueError("max_retries must be a positive integer")
+        reserved_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            parent = _locked_parent_task(session, lease.video_parse_task_id)
+            interval = _locked_interval_lease(
+                session, lease, reserved_at, IntervalParseTaskStatus.REFINING.value,
+            )
+            detail = deepcopy(dict(parent.detail or {}))
+            runtime = detail.get(RUNTIME_DETAIL_KEY, {})
+            if not isinstance(runtime, dict):
+                raise VideoParseConflictError("worker runtime must be a mapping")
+            retries = runtime.get("refine_provider_retries", {})
+            if not isinstance(retries, dict):
+                raise VideoParseConflictError("refine provider retries must be a mapping")
+            count = retries.get(interval.id, 0)
+            if type(count) is not int or count < 0:
+                raise VideoParseConflictError("refine provider retry count must be a nonnegative integer")
+            if count >= max_retries:
+                return None
+            # One entry per persisted Interval, retained when its lease changes.
+            count += 1
+            retries[interval.id] = count
+            runtime["refine_provider_retries"] = retries
+            detail[RUNTIME_DETAIL_KEY] = runtime
+            parent.detail = detail
+            parent.update_time = datetime_to_unix_time_ms(reserved_at)
+            return count
 
     def record_execution_timing(
         self,

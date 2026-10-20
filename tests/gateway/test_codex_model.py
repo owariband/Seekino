@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from langchain_core.tools import BaseTool, StructuredTool
 from openai_codex import ImageInput as CodexImageInput, TextInput as CodexTextInput
+from openai_codex.errors import JsonRpcError, ServerBusyError
 from pydantic import BaseModel, ConfigDict
 
 from gateway.agent_model.errors import (
@@ -19,6 +20,7 @@ from gateway.agent_model.errors import (
     MissingRequiredFunctionCallError,
     MissingStructuredQueryDraftError,
     ModelFailureReason,
+    ModelFailureError,
     ModelInputTooLargeError,
 )
 from gateway.codex import CodexAgentModel
@@ -218,6 +220,255 @@ def test_run_structured_uses_json_schema_and_reports_usage() -> None:
     assert usages[0].usage_source == "codex_thread_total"
     assert usages[0].usage.input_tokens == 10
     assert usages[0].usage.reasoning_tokens == 1
+
+
+@pytest.mark.parametrize("generate", [False, True])
+def test_structured_stop_feedback_repairs_in_one_session_without_truncation(generate):
+    session = _FakeSession([
+        (_turn('{"answer":"draft"}'), 0),
+        (_turn('{"answer":"resolved"}', usage=_usage(total_input_tokens=25)), 0),
+    ])
+    created = []
+
+    def factory(**options):
+        created.append(options)
+        return session
+
+    feedback_text = "Resolve these Canvas inconsistencies: " + "event-ref " * 100
+    feedback = iter([feedback_text, None])
+    checks = []
+
+    def review():
+        assert not session.closed
+        checks.append(len(session.prompts))
+        return next(feedback)
+
+    model = _model_for(session, session_factory=factory)
+    records = []
+    try:
+        with capture_model_usage(records.append):
+            options = dict(result_type=Result, max_model_calls=2, stop_feedback=review)
+            if generate:
+                result = model.generate([TextInput("answer")], schema_name="answer", **options)
+            else:
+                result = model.run_structured("answer", tools=[], **options)
+    finally:
+        model.close()
+
+    assert result.answer == "resolved" and checks == [1, 2]
+    assert len(created) == 1 and created[0]["max_model_calls"] == 2
+    assert session.prompts[1][0] == feedback_text
+    assert session.prompts[0][1] == session.prompts[1][1]
+    assert session.prompts[1][1]["additionalProperties"] is False
+    assert session.closed and len(records) == 1
+    assert records[0].usage.input_tokens == 25
+
+
+@pytest.mark.parametrize("limit", [2, 3])
+def test_generate_feedback_includes_required_tool_repair_in_shared_budget(limit):
+    class Session(_FakeSession):
+        def run_turn(self, prompt, *, output_schema=None):
+            turn = super().run_turn(prompt, output_schema=output_schema)
+            if len(self.prompts) >= 2:
+                self.successful_tool_call_count = 1
+            return turn
+
+    session = Session([
+        (_turn('{"answer":"premature"}'), 0),
+        (_turn('{"answer":"draft"}'), 1),
+        (_turn('{"answer":"resolved"}'), 1),
+    ])
+    feedback = iter(["Finish the Canvas review", None])
+    tool = StructuredTool.from_function(lambda value: value, name="inspect", description="Inspect evidence.")
+    model = _model_for(session)
+    try:
+        options = dict(
+            schema_name="answer", result_type=Result, tools=[tool],
+            max_model_calls=limit, stop_feedback=lambda: next(feedback),
+        )
+        if limit == 2:
+            with pytest.raises(CodexAgentModelError) as caught:
+                model.generate([TextInput("answer")], **options)
+            assert caught.value.reason == ModelFailureReason.LOOP_LIMIT
+        else:
+            assert model.generate([TextInput("answer")], **options).answer == "resolved"
+    finally:
+        model.close()
+    assert len(session.prompts) == limit and session.closed
+    assert all(schema == session.prompts[0][1] for _, schema in session.prompts)
+
+
+@pytest.mark.parametrize("limit", [2, 3])
+def test_generate_feedback_allows_repeated_tool_error_repair_within_budget(limit):
+    class Session(_FakeSession):
+        def run_turn(self, prompt, *, output_schema=None):
+            turn = super().run_turn(prompt, output_schema=output_schema)
+            if len(self.prompts) == 3:
+                self.successful_tool_call_count = 1
+            return turn
+
+    session = Session([
+        (_turn('{"answer":"first failed receipt"}'), 1),
+        (_turn('{"answer":"second failed receipt"}'), 2),
+        (_turn('{"answer":"resolved"}'), 3),
+    ])
+    reviews = []
+
+    def review():
+        reviews.append(session.successful_tool_call_count)
+        return None
+
+    tool = StructuredTool.from_function(lambda value: value, name="inspect", description="Inspect evidence.")
+    model = _model_for(session)
+    try:
+        options = dict(
+            schema_name="answer", result_type=Result, tools=[tool],
+            max_model_calls=limit, stop_feedback=review,
+        )
+        if limit == 2:
+            with pytest.raises(MissingRequiredFunctionCallError) as caught:
+                model.generate([TextInput("answer")], **options)
+            assert caught.value.reason == ModelFailureReason.LOOP_LIMIT
+            assert reviews == []
+        else:
+            assert model.generate([TextInput("answer")], **options).answer == "resolved"
+            assert reviews == [1]
+    finally:
+        model.close()
+    assert len(session.prompts) == limit and session.closed
+    assert all(schema == session.prompts[0][1] for _, schema in session.prompts)
+
+
+def test_structured_feedback_preserves_native_continuation_call_budget():
+    from gateway.codex.client import CodexModelCallBudget
+
+    class Session(_FakeSession):
+        def __init__(self, limit):
+            super().__init__([(_turn('{"answer":"draft"}'), 1)])
+            self.budget = CodexModelCallBudget(limit)
+
+        def run_turn(self, prompt, *, output_schema=None):
+            self.budget.reserve()
+            if not self.prompts:
+                self.budget.reserve()
+            return super().run_turn(prompt, output_schema=output_schema)
+
+    created = []
+
+    def factory(**options):
+        session = Session(options["max_model_calls"])
+        created.append(session)
+        return session
+
+    model = _model_for(_FakeSession([]), session_factory=factory)
+    try:
+        with pytest.raises(CodexAgentModelError) as caught:
+            model.run_structured(
+                "answer", tools=[], result_type=Result, max_model_calls=2,
+                stop_feedback=lambda: "repair",
+            )
+    finally:
+        model.close()
+    assert caught.value.reason == ModelFailureReason.LOOP_LIMIT
+    assert len(created) == 1 and created[0].budget.used == 2
+    assert len(created[0].prompts) == 1 and created[0].closed
+
+
+@pytest.mark.parametrize("response", ["", "not-json", '{"unexpected":true}'])
+def test_structured_feedback_does_not_repair_malformed_output(response):
+    session = _FakeSession([(_turn(response), 0)])
+    model = _model_for(session)
+    try:
+        with pytest.raises(MissingStructuredQueryDraftError) as caught:
+            model.run_structured(
+                "answer", tools=[], result_type=Result, max_model_calls=2,
+                stop_feedback=lambda: pytest.fail("invalid output reached the stop gate"),
+            )
+    finally:
+        model.close()
+    assert caught.value.reason == ModelFailureReason.INVALID_MODEL_RESPONSE
+    assert len(session.prompts) == 1 and session.closed
+
+
+def test_structured_feedback_checks_cancellation_before_next_turn():
+    cancelled = Event()
+    session = _FakeSession([(_turn('{"answer":"draft"}'), 0)])
+    control_checks = []
+
+    def check_control():
+        control_checks.append(cancelled.is_set())
+        if cancelled.is_set():
+            raise ModelCallCancelledError("cancelled during stop feedback")
+
+    def feedback():
+        assert control_checks[-1] is False
+        cancelled.set()
+        return "repair"
+
+    model = _model_for(session)
+    try:
+        with pytest.raises(ModelCallCancelledError, match="during stop feedback"):
+            model.run_structured(
+                "answer", tools=[], result_type=Result, max_model_calls=2,
+                stop_feedback=feedback, check_control=check_control,
+            )
+    finally:
+        model.close()
+    assert control_checks[-1] is True
+    assert len(session.prompts) == 1 and session.closed
+
+
+def test_structured_feedback_does_not_run_after_cancellation():
+    cancelled = Event()
+
+    class Session(_FakeSession):
+        def run_turn(self, prompt, *, output_schema=None):
+            turn = super().run_turn(prompt, output_schema=output_schema)
+            cancelled.set()
+            return turn
+
+    def check_control():
+        if cancelled.is_set():
+            raise ModelCallCancelledError("cancelled before stop feedback")
+
+    session = Session([(_turn('{"answer":"draft"}'), 0)])
+    model = _model_for(session)
+    try:
+        with pytest.raises(ModelCallCancelledError, match="before stop feedback"):
+            model.run_structured(
+                "answer", tools=[], result_type=Result, max_model_calls=2,
+                stop_feedback=lambda: pytest.fail("cancelled call reached the stop gate"),
+                check_control=check_control,
+            )
+    finally:
+        model.close()
+    assert len(session.prompts) == 1 and session.closed
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_structured_feedback_does_not_reset_deadline(monkeypatch, enabled):
+    now = [100.0]
+    monkeypatch.setattr("gateway.codex.agent.monotonic", lambda: now[0])
+    session = _FakeSession([
+        (_turn('{"answer":"draft"}'), 0),
+        (_turn('{"answer":"resolved"}'), 0),
+    ])
+
+    def feedback():
+        now[0] += 3.0
+        return "repair" if len(session.prompts) == 1 else None
+
+    model = _model_for(session, total_timeout_enabled=enabled)
+    try:
+        options = dict(tools=[], result_type=Result, max_model_calls=2, stop_feedback=feedback)
+        if enabled:
+            with pytest.raises(AgentModelTimeoutError, match="deadline expired"):
+                model.run_structured("answer", **options)
+        else:
+            assert model.run_structured("answer", **options).answer == "resolved"
+    finally:
+        model.close()
+    assert len(session.prompts) == (1 if enabled else 2) and session.closed
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -1339,3 +1590,70 @@ def test_generate_timeout_closes_native_session() -> None:
     finally:
         model.close()
     assert session.closed
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("data,expected", [
+    ({"codexErrorInfo": "server_overloaded"}, ModelFailureReason.PROVIDER_CAPACITY),
+    ({"codexErrorInfo": "rateLimitExceeded"}, ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ({"codexErrorInfo": {"responseTooManyFailedAttempts": {"httpStatusCode": 429}}}, ModelFailureReason.PROVIDER_RATE_LIMIT),
+    ({"codexErrorInfo": "usageLimitExceeded"}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ({"codexErrorInfo": "badRequest"}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ({"codexErrorInfo": "other"}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    ({"codexErrorInfo": {}}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (None, ModelFailureReason.INVALID_MODEL_RESPONSE),
+])
+def test_native_rpc_codes_override_capacity_message(structured, data, expected):
+    error = JsonRpcError(
+        -32000, "Selected model is at capacity. Please try a different model.", data,
+    )
+    session = _FakeSession([error])
+    model = _model_for(session)
+    try:
+        with pytest.raises(CodexAgentModelError) as caught:
+            if structured:
+                model.run_structured("answer", tools=[], result_type=Result, max_model_calls=3)
+            else:
+                model.run_agent_loop(
+                    "answer", tools=[], max_model_calls=3, handle_text=lambda _text: None,
+                )
+    finally:
+        model.close()
+    assert caught.value.reason == expected
+    assert caught.value.__cause__ is error
+    assert len(session.prompts) == 1 and session.closed
+
+
+@pytest.mark.parametrize("error,expected", [
+    (ServerBusyError(-32000, "busy"), ModelFailureReason.PROVIDER_CAPACITY),
+    (ServerBusyError(-32000, "busy", {"codexErrorInfo": "other"}), ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (RuntimeError("Selected model is at capacity. Please try a different model."), ModelFailureReason.PROVIDER_CAPACITY),
+    (RuntimeError("rate limit exceeded"), ModelFailureReason.PROVIDER_RATE_LIMIT),
+    (RuntimeError("unrelated validation mentioned capacity"), ModelFailureReason.INVALID_MODEL_RESPONSE),
+])
+def test_native_transient_error_uses_stable_reason_without_internal_retry(error, expected):
+    session = _FakeSession([error])
+    model = _model_for(session)
+    try:
+        with pytest.raises(CodexAgentModelError) as caught:
+            model.run_structured("answer", tools=[], result_type=Result, max_model_calls=3)
+    finally:
+        model.close()
+    assert caught.value.reason == expected
+    assert len(session.prompts) == 1 and session.closed
+
+
+def test_native_preserves_existing_nontransient_failure_reason():
+    error = ModelFailureError(
+        "Selected model is at capacity. Please try a different model.",
+        reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
+    )
+    session = _FakeSession([error])
+    model = _model_for(session)
+    try:
+        with pytest.raises(ModelFailureError) as caught:
+            model.run_structured("answer", tools=[], result_type=Result, max_model_calls=3)
+    finally:
+        model.close()
+    assert caught.value is error
+    assert caught.value.reason == ModelFailureReason.REQUIRED_TOOL_MISSING

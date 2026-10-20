@@ -7,12 +7,15 @@ from types import SimpleNamespace
 from time import monotonic
 
 import pytest
+import httpx
+from openai import APIStatusError, RateLimitError
 from pydantic import BaseModel
 
 from agent.utils.tool import build_agent_tool
 from agent.utils.tool_result import JsonToolResult
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.errors import ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError
+from gateway.agent_model.tool_loop import _failure_reason_for_exception
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.errors import ContentFilterError
 from gateway.media import ToolImageArtifact
@@ -731,3 +734,51 @@ def test_parse_diagnostics_keep_response_when_final_schema_validation_fails(monk
     assert events[0]["payload"]["context"]["agent_round"] == 2
     assert events[-1]["event"] == "error"
     assert [item["type"] for item in events[-1]["payload"]["chain"]] == ["QueryModelIncompleteError", "ValidationError"]
+
+
+@pytest.mark.parametrize("status,code,expected", [
+    (429, "rate_limit_exceeded", ModelFailureReason.PROVIDER_RATE_LIMIT),
+    (429, None, ModelFailureReason.PROVIDER_RATE_LIMIT),
+    (503, None, ModelFailureReason.PROVIDER_CAPACITY),
+    (429, "insufficient_quota", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (429, "AccountOverdueError", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (401, None, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (403, "rate_limit_exceeded", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (400, "bad_request", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (400, "unknown_provider_code", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (429, "unknown_provider_code", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (503, "upstream_error", ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (503, "bad_request", ModelFailureReason.INVALID_MODEL_RESPONSE),
+])
+def test_multimodal_structured_provider_failure_does_not_retry_or_use_message(
+    status, code, expected,
+):
+    response = httpx.Response(status, request=httpx.Request("POST", "https://example.invalid"))
+    error_type = RateLimitError if status == 429 else APIStatusError
+    error = error_type(
+        "Selected model is at capacity. Please try a different model.",
+        response=response, body={"code": code},
+    )
+    responses = Responses([error])
+    with pytest.raises(QueryModelIncompleteError) as caught:
+        _model("deepseek", responses).generate(
+            [TextInput("Validate the completion.")], schema_name="canvas_completion",
+            result_type=Completion, tools=_tools({}, []), max_model_calls=2,
+        )
+    assert caught.value.reason == expected
+    assert caught.value.__cause__ is error
+    assert len(responses.requests) == 1
+
+
+@pytest.mark.parametrize("code,status,body,expected", [
+    (None, None, None, ModelFailureReason.PROVIDER_CAPACITY),
+    ("other", None, None, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (None, 400, None, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (None, None, {"error": {"code": "rate_limit_exceeded"}}, ModelFailureReason.PROVIDER_RATE_LIMIT),
+    (None, None, {"error": {"code": "insufficient_quota"}}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+    (None, None, {"error": {"code": "unknown"}}, ModelFailureReason.INVALID_MODEL_RESPONSE),
+])
+def test_provider_code_precedence_for_unstructured_and_nested_errors(code, status, body, expected):
+    error = RuntimeError("Selected model is at capacity. Please try a different model.")
+    error.code, error.status_code, error.body = code, status, body
+    assert _failure_reason_for_exception(error) == expected

@@ -220,6 +220,141 @@ def test_legacy_complete_is_not_zero_event_coverage(repository):
     assert repo.event_index_status(task_id)["covered_chunks"] == 0
 
 
+def test_refine_provider_retry_reservations_are_durable_bounded_and_preserve_detail(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=4)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared)
+    at = NOW + timedelta(minutes=1)
+    first = queue.claim_interval_refine("first", lease_duration=timedelta(minutes=5), now=at)
+    second = queue.claim_interval_refine("second", lease_duration=timedelta(minutes=5), now=at)
+    assert first is not None and second is not None
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        detail = deepcopy(parent.detail)
+        detail["unrelated"] = {"keep": True}
+        detail["_worker_runtime_v2"]["prefix"]["session_extension"] = {"keep": "prefix"}
+        parent.detail = detail
+        original_detail = deepcopy(detail)
+        original_intervals = {
+            row.id: {column.key: deepcopy(getattr(row, column.key)) for column in row.__table__.columns}
+            for row in session.scalars(select(IntervalParseTask))
+        }
+        original_contents = {
+            row.id: (deepcopy(row.content), deepcopy(row.detail), row.version)
+            for row in session.scalars(select(ChunkParseContent))
+        }
+    for expected in (1, 2, None):
+        assert repo.reserve_refine_provider_retry(first, max_retries=2, now=at) == expected
+        with factory() as session:
+            parent = session.get(VideoParseTask, task_id)
+            remaining = deepcopy(parent.detail)
+            assert remaining["_worker_runtime_v2"].pop("refine_provider_retries") == {
+                first.interval_parse_task_id: min(expected or 2, 2),
+            }
+            assert remaining == original_detail
+    assert repo.reserve_refine_provider_retry(second, max_retries=2, now=at) == 1
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["refine_provider_retries"] == {
+            first.interval_parse_task_id: 2, second.interval_parse_task_id: 1,
+        }
+        assert {
+            row.id: {column.key: deepcopy(getattr(row, column.key)) for column in row.__table__.columns}
+            for row in session.scalars(select(IntervalParseTask))
+        } == original_intervals
+        assert {
+            row.id: (row.content, row.detail, row.version)
+            for row in session.scalars(select(ChunkParseContent))
+        } == original_contents
+        assert list(session.scalars(select(IntervalParseContent))) == []
+
+
+@pytest.mark.parametrize("max_retries", [0, -1, True, False, 1.5, "2", None])
+def test_refine_provider_retry_rejects_invalid_budget(repository, max_retries):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=1)
+    at = NOW + timedelta(minutes=1)
+    lease = queue.claim_interval_refine("refiner", lease_duration=timedelta(minutes=5), now=at)
+    with pytest.raises(ValueError, match="max_retries must be a positive integer"):
+        repo.reserve_refine_provider_retry(lease, max_retries=max_retries, now=at)
+    with factory() as session:
+        assert "refine_provider_retries" not in session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]
+
+
+def test_refine_provider_retry_fences_full_interval_identity_and_completed_leases(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    lease = queue.claim_interval_refine("refiner", lease_duration=timedelta(minutes=5), now=at)
+    assert repo.reserve_refine_provider_retry(lease, max_retries=2, now=at) == 1
+    for forged in (
+        replace(lease, worker_id="another-worker"),
+        replace(lease, lease_version=lease.lease_version + 1),
+        replace(lease, video_parse_task_id=str(uuid4())),
+        replace(lease, interval_parse_task_id=str(uuid4())),
+        replace(lease, phase="INDEXING"),
+        replace(lease, chunk_parse_task_ids=(str(uuid4()), *lease.chunk_parse_task_ids[1:])),
+        replace(lease, start_sequence_no=lease.start_sequence_no + 1),
+        replace(lease, chunk_count=lease.chunk_count + 1),
+    ):
+        with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
+            repo.reserve_refine_provider_retry(forged, max_retries=2, now=at)
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.reserve_refine_provider_retry(lease, max_retries=2, now=lease.lease_expire_time)
+    repo.commit_interval_refinement(
+        lease, **_refinement_inputs(repo, lease, now=at),
+        interval_content={"updates": []}, member_updates={}, now=at,
+    )
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.reserve_refine_provider_retry(lease, max_retries=2, now=at)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["refine_provider_retries"] == {
+            lease.interval_parse_task_id: 1,
+        }
+
+
+def test_refine_provider_retry_budget_survives_logic_failure_and_new_lease(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=1)
+    at = NOW + timedelta(minutes=1)
+    first = queue.claim_interval_refine("first", lease_duration=timedelta(minutes=5), now=at)
+    assert first.retry_count == 0
+    assert repo.reserve_refine_provider_retry(first, max_retries=2, now=at) == 1
+    with factory() as session:
+        assert session.get(IntervalParseTask, first.interval_parse_task_id).retry_count == 0
+    retry_at = at + timedelta(seconds=1)
+    assert queue.retry_interval(first, error="required review missing", retry_at=retry_at, now=at)
+    second = queue.claim_interval_refine("second", lease_duration=timedelta(minutes=5), now=retry_at)
+    assert second is not None and second.lease_version > first.lease_version and second.retry_count == 1
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.reserve_refine_provider_retry(first, max_retries=2, now=retry_at)
+    assert repo.reserve_refine_provider_retry(second, max_retries=2, now=retry_at) == 2
+    assert repo.reserve_refine_provider_retry(second, max_retries=2, now=retry_at) is None
+    with factory() as session:
+        child = session.get(IntervalParseTask, second.interval_parse_task_id)
+        assert child.retry_count == 1 and child.lease_version == second.lease_version
+        assert session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["refine_provider_retries"] == {
+            first.interval_parse_task_id: 2,
+        }
+
+
+@pytest.mark.parametrize("stored", [[], True, -1])
+def test_refine_provider_retry_rejects_malformed_stored_budget(repository, stored):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=1)
+    at = NOW + timedelta(minutes=1)
+    lease = queue.claim_interval_refine("refiner", lease_duration=timedelta(minutes=5), now=at)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        detail = deepcopy(parent.detail)
+        detail["_worker_runtime_v2"]["refine_provider_retries"] = (
+            stored if isinstance(stored, list) else {lease.interval_parse_task_id: stored}
+        )
+        parent.detail = detail
+    with pytest.raises(VideoParseConflictError, match="refine provider retr"):
+        repo.reserve_refine_provider_retry(lease, max_retries=2, now=at)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail == detail
+
+
 def test_execution_timing_is_monotonic_frozen_and_preserves_runtime(repository):
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
     lease = queue.claim_chunk("timed", lease_duration=timedelta(minutes=5), now=NOW)
