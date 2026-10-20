@@ -189,6 +189,10 @@ class ParseContextCanvas(ContextCanvas):
                     draft["events"][event_ref] = {
                         "member_ref": ref, "event": value, "source": identity,
                     }
+                    if self.stage != "refine" and value["event_type"] == "DIALOGUE":
+                        draft["events"][event_ref]["dialogue_interval_ms"] = [
+                            value["start_seconds"], value["end_seconds"],
+                        ]
 
         self.mutate(initialize, readonly_collections=("evidence", "background"))
         self._initial_identities = {
@@ -576,6 +580,7 @@ class ParseContextCanvas(ContextCanvas):
                             "refine_edit" if value["event"]["speaker"] != previous.get("speaker")
                             else previous.get("speaker_source") or "understanding"
                         )
+                    self._validate_dialogue_timing(draft, value)
                     if existing is not None and existing != value:
                         raise ValueError("add_event key was already used for different facts")
                     draft["events"][reference] = value
@@ -595,6 +600,7 @@ class ParseContextCanvas(ContextCanvas):
                     if (value["event"].get("speaker") != previous.get("speaker")
                             and "voice_decision" in value and not self._voice_decision_consistent(value)):
                         value.pop("voice_decision")
+                    self._validate_dialogue_timing(draft, value)
                 elif isinstance(operation, PatchEvent):
                     reference = operation.event_ref
                     value = self._event(draft, reference)
@@ -609,6 +615,7 @@ class ParseContextCanvas(ContextCanvas):
                     if (event.get("speaker") != previous_speaker
                             and "voice_decision" in value and not self._voice_decision_consistent(value)):
                         value.pop("voice_decision")
+                    self._validate_dialogue_timing(draft, value)
                 elif isinstance(operation, VoiceDecision):
                     reference = operation.event_ref
                     required = self._required_voice_events(draft)
@@ -727,6 +734,32 @@ class ParseContextCanvas(ContextCanvas):
 
     def _tracks_speaker_source(self, member_ref):
         return member_ref in self._voiceprint_modes or member_ref in self._speaker_source_members
+
+    def _validate_dialogue_timing(self, draft, value):
+        """Only Refine can change a dialogue's bound audio interval."""
+        if self.stage == "refine":
+            return
+        event = value["event"]
+        times = [event["start_seconds"], event["end_seconds"]]
+        if "dialogue_interval_ms" in value and times != value["dialogue_interval_ms"]:
+            raise AgentToolFeedbackError(
+                "DIALOGUE_TIMING_READ_ONLY", "Only Refine may change an existing dialogue's audio interval.",
+                "Keep its original start_seconds/end_seconds; correct text or attribution without changing time, "
+                "and leave interval corrections to Refine.",
+            )
+        if event["event_type"] != "DIALOGUE":
+            return
+        if self.stage == "understanding":
+            asr = draft["evidence"].get(value["member_ref"], {}).get("asr") or {}
+            intervals = {(cue["start_seconds"], cue["end_seconds"])
+                         for cue in asr.get("transcript", []) if (cue.get("text") or "").strip()}
+            if intervals and tuple(times) not in intervals:
+                raise AgentToolFeedbackError(
+                    "ASR_DIALOGUE_RANGE_REQUIRED", "A dialogue must preserve one original ASR cue's audio interval.",
+                    "Read this member's evidence/asr and use one cue's exact start_seconds/end_seconds. "
+                    "Do not merge, split or resize ASR intervals; leave those corrections to Refine.",
+                )
+        value["dialogue_interval_ms"] = times
 
     def _event(self, draft, reference):
         if reference not in draft["events"]:

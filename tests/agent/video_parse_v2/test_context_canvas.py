@@ -68,6 +68,218 @@ def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None, doubtful=Fals
     return snapshot
 
 
+def _understanding_canvas(*, stage="understanding", evidence=None, initial=False):
+    content = _voice_snapshot("off")["member_contents"]["member"]
+    if not initial:
+        content["timeline"] = []
+    return ParseContextCanvas(
+        scope="chunk:test", stage=stage, members={"member": {
+            "sequence_no": 0, "version": 0, "bounds": (0, 20_000), "content": content,
+        }}, evidence=evidence if evidence is not None else {"member": {"asr": {"transcript": [
+            {"start_seconds": 1000, "end_seconds": 3000, "text": "first utterance"},
+            {"start_seconds": 4000, "end_seconds": 6000, "text": "second utterance"},
+        ]}}},
+    )
+
+
+@pytest.mark.parametrize("start,end", [(1000, 6000), (1100, 2900), (900, 3000)])
+@pytest.mark.parametrize("operation", ["add_event", "set_event"])
+def test_understanding_dialogue_cannot_merge_split_or_extend_asr_cues(start, end, operation):
+    canvas = _understanding_canvas()
+    event = _voice_snapshot("off")["member_contents"]["member"]["timeline"][0]
+    if operation == "set_event":
+        receipt = canvas.write(role="understanding", batch_id="action", expected_revision=canvas.revision, operations=[
+            {"op": "add_event", "member_ref": "member", "key": "action", "event": _result().timeline[0]},
+        ])
+        target = {"event_ref": receipt["results"][0]["reference"]}
+    else:
+        target = {"member_ref": "member", "key": "dialogue"}
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="understanding", batch_id="invalid-range", expected_revision=canvas.revision, operations=[
+            {"op": "persons", "member_ref": "member", "action": "add", "values": ["新人物"]},
+            {"op": operation, **target,
+             "event": {**event, "start_seconds": start, "end_seconds": end}},
+        ])
+    assert error.value.code == "ASR_DIALOGUE_RANGE_REQUIRED"
+    assert canvas.snapshot() == before
+
+
+def test_understanding_dialogue_uses_only_its_own_members_asr_cues():
+    canvas = _understanding_canvas(evidence={
+        "member": {"asr": {"transcript": [
+            {"start_seconds": 1000, "end_seconds": 3000, "text": "member speech"},
+        ]}},
+        "other": {"asr": {"transcript": [
+            {"start_seconds": 4000, "end_seconds": 6000, "text": "other member speech"},
+        ]}},
+    })
+    event = _voice_snapshot("off")["member_contents"]["member"]["timeline"][0]
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="understanding", batch_id="other-member-cue", expected_revision=canvas.revision, operations=[
+            {"op": "add_event", "member_ref": "member", "key": "dialogue",
+             "event": {**event, "start_seconds": 4000, "end_seconds": 6000}},
+        ])
+    assert error.value.code == "ASR_DIALOGUE_RANGE_REQUIRED" and canvas.snapshot() == before
+
+
+@pytest.mark.parametrize("stage", ["understanding", "prefix"])
+@pytest.mark.parametrize("operation", ["patch_event", "set_event"])
+@pytest.mark.parametrize("start,end", [(1100, 3000), (1000, 3200), (4000, 6000)])
+def test_only_refine_can_change_existing_dialogue_times(stage, operation, start, end):
+    canvas = _understanding_canvas(stage=stage)
+    event = _voice_snapshot("off")["member_contents"]["member"]["timeline"][0]
+    receipt = canvas.write(role=stage, batch_id="initial", expected_revision=canvas.revision, operations=[
+        {"op": "add_event", "member_ref": "member", "key": "dialogue", "event": event},
+    ])
+    reference = receipt["results"][0]["reference"]
+    payload = {"op": operation, "event_ref": reference}
+    payload["fields" if operation == "patch_event" else "event"] = (
+        {"start_seconds": start, "end_seconds": end} if operation == "patch_event"
+        else {**event, "start_seconds": start, "end_seconds": end}
+    )
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role=stage, batch_id="retime", expected_revision=canvas.revision, operations=[
+            {"op": "patch_event", "event_ref": reference, "fields": {"description": "先改描述"}},
+            payload,
+        ])
+    assert error.value.code == "DIALOGUE_TIMING_READ_ONLY" and canvas.snapshot() == before
+
+
+@pytest.mark.parametrize("stage", ["understanding", "prefix"])
+def test_non_refine_initial_dialogue_times_are_locked_before_any_write(stage):
+    canvas = _understanding_canvas(stage=stage, initial=True)
+    reference = canvas.items("events")[0][0]
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role=stage, batch_id="retime-initial", expected_revision=canvas.revision, operations=[
+            {"op": "patch_event", "event_ref": reference, "fields": {"start_seconds": 4000, "end_seconds": 6000}},
+        ])
+    assert error.value.code == "DIALOGUE_TIMING_READ_ONLY" and canvas.snapshot() == before
+
+
+@pytest.mark.parametrize("operation", ["patch_event", "set_event"])
+def test_understanding_same_times_and_content_speaker_edits_remain_allowed(operation):
+    canvas = _understanding_canvas()
+    event = _voice_snapshot("off")["member_contents"]["member"]["timeline"][0]
+    receipt = canvas.write(role="understanding", batch_id="initial", expected_revision=canvas.revision, operations=[
+        {"op": "add_event", "member_ref": "member", "key": "dialogue", "event": event},
+    ])
+    reference = receipt["results"][0]["reference"]
+    fields = {"start_seconds": 1000, "end_seconds": 3000, "description": "修正描述", "speaker": "睦"}
+    canvas.write(role="understanding", batch_id="interpretation", expected_revision=canvas.revision, operations=[
+        {"op": operation, "event_ref": reference,
+         "fields" if operation == "patch_event" else "event": fields if operation == "patch_event" else {**event, **fields}},
+        {"op": "event_array", "event_ref": reference, "field": "text_variants", "action": "set",
+         "values": [{"language": "ja", "role": "ORIGINAL", "text": "訂正された台詞"}]},
+    ])
+    final = canvas.result("member").timeline[0]
+    assert (final.start_seconds, final.end_seconds) == (1000, 3000)
+    assert final.speaker == "睦" and final.description == "修正描述"
+    assert final.text_variants[0].text == "訂正された台詞"
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_understanding_cannot_bypass_dialogue_time_lock_by_changing_event_type(batched):
+    canvas = _understanding_canvas()
+    event = _voice_snapshot("off")["member_contents"]["member"]["timeline"][0]
+    receipt = canvas.write(role="understanding", batch_id="initial", expected_revision=canvas.revision, operations=[
+        {"op": "add_event", "member_ref": "member", "key": "dialogue", "event": event},
+    ])
+    reference = receipt["results"][0]["reference"]
+    action = {"op": "set_event", "event_ref": reference,
+              "event": _result().timeline[0].model_dump(mode="json")}
+    if not batched:
+        canvas.write(role="understanding", batch_id="action", expected_revision=canvas.revision, operations=[action])
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="understanding", batch_id="retime-action", expected_revision=canvas.revision, operations=[
+            *([action] if batched else []),
+            {"op": "patch_event", "event_ref": reference, "fields": {"start_seconds": 4000, "end_seconds": 6000}},
+            {"op": "set_event", "event_ref": reference, "event": {**event, "start_seconds": 4000, "end_seconds": 6000}},
+        ])
+    assert error.value.code == "DIALOGUE_TIMING_READ_ONLY" and canvas.snapshot() == before
+    canvas.write(role="understanding", batch_id="restore-dialogue", expected_revision=canvas.revision, operations=[
+        {"op": "set_event", "event_ref": reference, "event": event},
+    ])
+    assert canvas.result("member").timeline[0].event_type == "DIALOGUE"
+
+
+def test_understanding_non_dialogue_timing_stays_editable_until_converted_to_dialogue():
+    canvas = _understanding_canvas()
+    receipt = canvas.write(role="understanding", batch_id="action", expected_revision=canvas.revision, operations=[
+        {"op": "add_event", "member_ref": "member", "key": "action", "event": _result().timeline[0]},
+    ])
+    reference = receipt["results"][0]["reference"]
+    canvas.write(role="understanding", batch_id="retime-action", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": reference, "fields": {"start_seconds": 4000, "end_seconds": 6000}},
+    ])
+    event = {**_voice_snapshot("off")["member_contents"]["member"]["timeline"][0],
+             "start_seconds": 4000, "end_seconds": 6000}
+    canvas.write(role="understanding", batch_id="dialogue", expected_revision=canvas.revision, operations=[
+        {"op": "set_event", "event_ref": reference, "event": event},
+    ])
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="understanding", batch_id="retime-dialogue", expected_revision=canvas.revision, operations=[
+            {"op": "patch_event", "event_ref": reference, "fields": {"start_seconds": 1000, "end_seconds": 3000}},
+        ])
+    assert error.value.code == "DIALOGUE_TIMING_READ_ONLY" and canvas.snapshot() == before
+
+
+def test_understanding_repeated_dialogue_add_keeps_idempotence_and_time_lock():
+    canvas = _understanding_canvas()
+    operation = {"op": "add_event", "member_ref": "member", "key": "dialogue",
+                 "event": _voice_snapshot("off")["member_contents"]["member"]["timeline"][0]}
+    first = canvas.write(role="understanding", batch_id="initial", expected_revision=canvas.revision, operations=[operation])
+    before = canvas.snapshot()
+    repeated = canvas.write(role="understanding", batch_id="same-facts", expected_revision=canvas.revision, operations=[operation])
+    replayed = canvas.write(role="understanding", batch_id="initial", expected_revision=0, operations=[operation])
+    assert repeated["results"] == first["results"] and replayed["replayed"]
+    assert canvas.snapshot() == before
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="understanding", batch_id="retime", expected_revision=canvas.revision, operations=[
+            {"op": "patch_event", "event_ref": first["results"][0]["reference"], "fields": {"end_seconds": 3200}},
+        ])
+    assert error.value.code == "DIALOGUE_TIMING_READ_ONLY" and canvas.snapshot() == before
+
+
+@pytest.mark.parametrize("evidence", [
+    {}, {"member": {"asr": None}}, {"member": {"asr": {"transcript": []}}},
+    {"member": {"asr": {"transcript": [{"start_seconds": 1000, "end_seconds": 3000, "text": "  "}]}}},
+])
+def test_understanding_without_usable_asr_preserves_initial_media_dialogue_creation(evidence):
+    canvas = _understanding_canvas(evidence=evidence)
+    event = {**_voice_snapshot("off")["member_contents"]["member"]["timeline"][0],
+             "start_seconds": 1700, "end_seconds": 3500}
+    receipt = canvas.write(role="understanding", batch_id="media-dialogue", expected_revision=canvas.revision, operations=[
+        {"op": "add_event", "member_ref": "member", "key": "dialogue", "event": event},
+    ])
+    assert canvas.result("member").timeline[0].start_seconds == 1700
+    before = canvas.snapshot()
+    with pytest.raises(AgentToolFeedbackError) as error:
+        canvas.write(role="understanding", batch_id="retime", expected_revision=canvas.revision, operations=[
+            {"op": "patch_event", "event_ref": receipt["results"][0]["reference"], "fields": {"end_seconds": 3600}},
+        ])
+    assert error.value.code == "DIALOGUE_TIMING_READ_ONLY" and canvas.snapshot() == before
+
+
+def test_refine_can_create_and_retime_dialogue_independently_of_asr_cue_bounds():
+    canvas = _understanding_canvas(stage="refine")
+    event = {**_voice_snapshot("off")["member_contents"]["member"]["timeline"][0], "end_seconds": 6000}
+    receipt = canvas.write(role="refine", batch_id="dialogue", expected_revision=canvas.revision, operations=[
+        {"op": "add_event", "member_ref": "member", "key": "dialogue", "event": event},
+    ])
+    canvas.write(role="refine", batch_id="retime", expected_revision=canvas.revision, operations=[
+        {"op": "patch_event", "event_ref": receipt["results"][0]["reference"],
+         "fields": {"start_seconds": 2000, "end_seconds": 7000}},
+    ])
+    final = canvas.result("member").timeline[0]
+    assert (final.start_seconds, final.end_seconds) == (2000, 7000)
+
+
 @pytest.mark.parametrize("band", ["ACCEPT", "CONFLICT", "NO_VOICE", "REVIEW"])
 def test_flag_preserves_speaker_and_original_snapshot_for_every_band(band):
     snapshot = _voice_snapshot("flag", band)
