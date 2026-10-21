@@ -27,9 +27,9 @@ from gateway.usage import ModelCallControlError, model_call_context
 
 from ..config.retrieval import RetrievalConfig
 from ..constants.parse import MAX_INDEX_GENERATION
-from ..repository.video_parse import (
+from .video_parse_persistence import (
     VideoParseConflictError,
-    VideoParseRepository,
+    VideoParsePersistenceService,
 )
 from ..schema import (
     AgentReply,
@@ -61,7 +61,7 @@ class VideoParseRetrievalService:
     """Execute Engine recall, verify current facts, then score and select top_k."""
 
     def __init__(
-        self, repository: VideoParseRepository, store: ElasticsearchVideoChunkStore,
+        self, persistence: VideoParsePersistenceService, store: ElasticsearchVideoChunkStore,
         embedder: QueryEmbedder, *, semantic_encoder: EncoderContract,
         expected_index_generation: int,
         expected_embedding_source: str | None = None,
@@ -94,7 +94,7 @@ class VideoParseRetrievalService:
             candidate_budget=channel_top_k if candidate_budget is None else candidate_budget,
             top_k=1, rrf_k=rrf_k,
         )
-        self._repository, self._store, self._embedder = repository, store, embedder
+        self._persistence, self._store, self._embedder = persistence, store, embedder
         self._semantic_encoder = semantic_encoder
         self._candidate_budget = candidate_budget
         self._expected_index_generation = expected_index_generation
@@ -135,7 +135,7 @@ class VideoParseRetrievalService:
             })
         query = query.strip()
         try:
-            selected = self._repository.resolve_retrieval_scope(
+            selected = self._persistence.resolve_retrieval_scope(
                 series_ids, tenant_id=tenant_id,
                 **({"require_sparse": True} if policy.sparse_weight else {}),
             )
@@ -205,7 +205,7 @@ class VideoParseRetrievalService:
             requests = build_recall_requests(plan, vectors=vectors, sparse=sparse)
             raw_hits = tuple(hit for request in requests for hit in self._store.recall(request, exact=self._exact))
             candidates = fuse_retrieval_candidates(plan, raw_hits)
-            hydrated = self._repository.hydrate_retrieval_candidates([
+            hydrated = self._persistence.hydrate_retrieval_candidates([
                 (item.ranking.video_chunk_id, item.ranking.retrieval_identity) for item in candidates
             ]) if candidates else ()
             rerank_plan = plan_candidate_rerank(

@@ -27,7 +27,7 @@ from ..model.dto.mediaDTO import (
 )
 from ..repository.library import SeriesNotFoundError
 from ..repository.video import VideoRepository
-from ..repository.video_parse import VideoParseConflictError, VideoParseRepository
+from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
 from ..schema import VideoChunkEvidence
 from ..storage.artifact import ArtifactStore
 from ..utils.images import prepare_series_image
@@ -57,14 +57,14 @@ class MediaService:
         artifact_store: ArtifactStore,
         video_repository: VideoRepository | None = None,
         *,
-        video_parse_repository: VideoParseRepository | None = None,
+        parse_persistence: VideoParsePersistenceService | None = None,
         probe_playback: Callable[[Path], bool] | None = None,
         config: ImageUploadConfig | None = None,
     ) -> None:
         self._library = library
         self._artifact_store = artifact_store
         self._video_repository = video_repository
-        self._video_parse_repository = video_parse_repository
+        self._parse_persistence = parse_persistence
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
 
@@ -76,9 +76,9 @@ class MediaService:
         selected = set(supported if event_types is None else event_types)
         if not selected or selected.difference(supported):
             raise ValueError("eventTypes must select one or more supported types: " + ", ".join(supported))
-        if self._video_parse_repository is None:
+        if self._parse_persistence is None:
             raise VideoParseConflictError("ParseV2 export is not available in this execution mode")
-        snapshots = self._video_parse_repository.load_export_snapshot(
+        snapshots = self._parse_persistence.load_export_snapshot(
             tenant_id=tenant_id, video_ids=video_ids, video_parse_task_ids=video_parse_task_ids,
         )
         lines: list[str] = []
@@ -286,7 +286,7 @@ class MediaService:
                 projected
                 or refresh
                 or evidence.keyframe_uris
-                or (self._video_repository is None and self._video_parse_repository is None)
+                or (self._video_repository is None and self._parse_persistence is None)
             ):
                 return tuple(projected)
 
@@ -356,9 +356,9 @@ class MediaService:
         return VideoMedia(path, media_type, size)
 
     def get_chunk_evidence(self, video_chunk_id: str, *, tenant_id: str) -> VideoChunkEvidence:
-        if self._video_parse_repository is not None:
+        if self._parse_persistence is not None:
             try:
-                return self._video_parse_repository.get_chunk_evidence(
+                return self._parse_persistence.get_chunk_evidence(
                     video_chunk_id, tenant_id=tenant_id,
                 )
             except VideoParseConflictError as error:

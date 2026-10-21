@@ -8,7 +8,8 @@ from engine.rag.retrieval.contracts import (
     ChunkRetrievalFacts, EventIndexNotReadyError, RawEventHit, RetrievalPolicy,
 )
 from engine.rag.vision.event_frames import EventFrameContract
-from server.repository.video_parse import HydratedRetrievalCandidate, VideoParseConflictError
+from server.model.dto.jobDTO import HydratedRetrievalCandidate
+from server.service.video_parse_errors import VideoParseConflictError
 from server.service.video_event_retrieval import VideoEventRetrievalService
 from tests.server.test_video_retrieval_service import (
     FakeQueryEmbedder, _v2_retrieval_fixture, _v2_semantic_encoder,

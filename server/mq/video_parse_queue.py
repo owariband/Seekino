@@ -36,17 +36,18 @@ from ..model.job import (
     interval_full_ready_mask,
 )
 from ..model.video import VideoChunk
-from ..repository.video_parse import (
+from ..service.video_parse_task import (
     _aggregate_video_task,
     _advance_ready_chunks,
     _ensure_runtime,
     _error_detail,
     _execution_config,
     _latest_video_task_id,
-    _record_voiceprint_failure,
     _submitted_intervals_by_member,
-    _video_failure_status,
+    _video_failure_status as _task_failure_status,
 )
+from ..repository import video_parse_task as task_store
+from ..service.video_parse_voiceprint import _record_voiceprint_failure as _voiceprint_failure
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from ..utils.validation import require_nonempty_text
 from ..utils.retry import task_retry_delay
@@ -618,7 +619,7 @@ class MySqlVideoParseQueue:
             elif task.status == "PARSING":
                 # An error loading/binding the snapshot can roll back the active
                 # marker itself. Real coordinator failures still have a finite budget.
-                _voiceprint_failures, exhausted = _record_voiceprint_failure(task, failed_at, pending_failure=True)
+                _voiceprint_failures, exhausted = _record_voiceprint_failure(session, task, failed_at, pending_failure=True)
                 if _voiceprint_failures is not None:
                     retry_at = task.next_execute_time
             task.next_execute_time = retry_at
@@ -682,7 +683,7 @@ class MySqlVideoParseQueue:
             if isinstance(lease, VideoParseLease):
                 if parent.lease_owner != lease.worker_id or parent.lease_version != lease.lease_version:
                     return False
-                _failures, exhausted = _record_voiceprint_failure(parent, released_at)
+                _failures, exhausted = _record_voiceprint_failure(session, parent, released_at)
                 if _failures is not None:
                     parent.last_error = _error_detail("Voiceprint preparation execution interrupted before release")
                 parent.lease_owner = None
@@ -777,7 +778,7 @@ class MySqlVideoParseQueue:
                     continue
                 # Waiting coordinators are free to resume; interrupted voice preparation
                 # spends the same finite failure budget as an explicit execution error.
-                failures, exhausted = _record_voiceprint_failure(task, reaped_at)
+                failures, exhausted = _record_voiceprint_failure(session, task, reaped_at)
                 if failures is None:
                     task.next_execute_time = reaped_at
                 else:
@@ -1025,3 +1026,14 @@ def _fail_child(child, parent: VideoParseTask, now: datetime, error: str,
     child.finish_time = now if exhausted else None
     child.last_error = _error_detail(error)
     child.update_time = datetime_to_unix_time_ms(now)
+
+
+def _record_voiceprint_failure(session: Session, parent: VideoParseTask, now: datetime, *, pending_failure: bool = False):
+    state = task_store.task_data(parent)
+    outcome = _voiceprint_failure(state, now, pending_failure=pending_failure)
+    task_store.save_task(session, state)
+    return outcome
+
+
+def _video_failure_status(parent: VideoParseTask) -> str | None:
+    return _task_failure_status(task_store.task_data(parent))

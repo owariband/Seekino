@@ -37,7 +37,7 @@ from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.agent import AgentRepository
 from server.repository.library import LibraryRepository
-from server.repository.video_parse import VideoParseRepository
+from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.service.agent_chat import AgentChatService
 from server.service.library import LibraryService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
@@ -227,7 +227,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
                 detail={"_worker_runtime_v2": {"accepted": True}},
                 create_time=datetime_to_unix_time_ms(now), update_time=datetime_to_unix_time_ms(now),
             ))
-        repository = VideoParseRepository(session_factory)
+        repository = VideoParsePersistenceService(session_factory)
         queue = MySqlVideoParseQueue(session_factory, video_concurrency=3)
         chunks = repository.ensure_video_chunks(video_lease, [(0, 0, 10)])
         prepared = repository.ensure_parse_tasks(

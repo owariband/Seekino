@@ -12,8 +12,8 @@ from engine.rag.retrieval.events import EVENT_RETRIEVAL_STRATEGY_VERSION
 from engine.rag.vision.event_frames import EventFrameContract
 from gateway.embedding import EmbeddingResult
 from server.model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
-from server.repository import video_parse as repository_module
-from server.repository.video_parse import INDEX_EMBEDDINGS_DETAIL_KEY
+from server.service import video_parse_persistence as persistence_module
+from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 from server.service.video_event_retrieval import VideoEventRetrievalService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
 from server.service.video_parse_media import VideoParseMediaService
@@ -70,7 +70,7 @@ class ImageEmbedder(_Embedder):
 
 def test_real_sql_index_event_receipt_hydration_and_agent_canvas_pipeline(repository, tmp_path, monkeypatch):
     factory, _queue, repo, task_id, index_lease, at, video_lease = _event_index_fixture(repository)
-    monkeypatch.setattr(repository_module, "now_utc", lambda: at)
+    monkeypatch.setattr(persistence_module, "now_utc", lambda: at)
     chunk_contract = _contract()
     event_contract = EventIndexingContract(
         semantic_encoder=chunk_contract.semantic_encoder,

@@ -14,7 +14,7 @@ from server.api.errors import register_exception_handlers
 from server.api.search import evidence_view, search_result_view
 from server.config.media import ImageUploadConfig
 from server.repository.library import SeriesNotFoundError
-from server.repository.video_parse import VideoParseConflictError
+from server.service.video_parse_persistence import VideoParseConflictError
 from server.router.media import router as media_router
 from server.router.search import router as search_router
 from server.schema import (
@@ -281,7 +281,7 @@ def test_v2_media_reader_takes_priority_and_refreshes_historical_keyframes(
     legacy = Mock()
     v2 = Mock(get_chunk_evidence=Mock(return_value=evidence))
     service = MediaService(
-        fixture._library, fixture._artifact_store, legacy, video_parse_repository=v2,
+        fixture._library, fixture._artifact_store, legacy, parse_persistence=v2,
     )
     assert service.get_chunk_evidence(
         evidence.video_chunk_id, tenant_id=evidence.tenant_id,

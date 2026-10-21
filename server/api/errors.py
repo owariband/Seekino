@@ -37,7 +37,7 @@ from ..repository.video import (
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
 )
-from ..repository.video_parse import VideoParseConflictError, VideoParseTaskNotFoundError
+from ..service.video_parse_persistence import VideoParseConflictError, VideoParseTaskNotFoundError
 from ..service.media import MediaMissingError, MediaNotReadyError
 from ..service.agent_chat import AgentAttachmentInputUnavailableError
 from ..error.auth import AuthError

@@ -18,7 +18,7 @@ from server.database import (
 from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
-from server.repository.video_parse import VideoParseLeaseLostError, VideoParseRepository
+from server.service.video_parse_persistence import VideoParseLeaseLostError, VideoParsePersistenceService
 from server.utils.database import serialized_transaction
 from tests.server.test_video_parse_queue import NOW, _prepare, _task
 from tests.server.test_video_parse_repository import _refinement_inputs
@@ -260,7 +260,7 @@ def test_mysql_three_video_admissions_are_atomic_and_recovery_precedes_new_work(
     assert recovered.lease_version > stopped.lease_version
     assert queues[2].claim_video("still-full", lease_duration=timedelta(minutes=1), now=expired_at) is None
 
-    repo = VideoParseRepository(factory)
+    repo = VideoParsePersistenceService(factory)
     physical = repo.ensure_video_chunks(recovered, [(0, 0, 10000)], now=expired_at)
     repo.ensure_parse_tasks(recovered, [physical[0].video_chunk_id], [(0, 1)], now=expired_at)
     repo.activate_video_task(recovered, now=expired_at)
@@ -347,7 +347,7 @@ def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capac
 @pytest.mark.parametrize("scenario", ["overlap", "above_target"])
 def test_mysql_voiceprint_registration_rechecks_racing_prechecks(mysql_capacity, scenario):
     from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
-    from server.repository.video_parse import VoiceprintRegistrationRejectedError
+    from server.service.video_parse_persistence import VoiceprintRegistrationRejectedError
 
     _engine, factory, create_task, connections = mysql_capacity
     task_id = create_task(chunk_count=2)

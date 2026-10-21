@@ -723,7 +723,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
                 compact_enabled=index != 1,
             ))
 
-    library = LibraryRepository(factory)
+    library = LibraryService(LibraryRepository(factory))
     library.update_video_episode_order(
         video_ids[target_index],
         tenant_id="local-default",
@@ -841,7 +841,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
         }
 
     with pytest.raises(VideoEpisodeOrderConflictError, match="active lease"):
-        LibraryRepository(factory).update_video_episode_order(
+        LibraryService(LibraryRepository(factory)).update_video_episode_order(
             target_video_id,
             tenant_id="local-default",
             episode_order=2,

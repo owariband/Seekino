@@ -17,13 +17,13 @@ from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTas
 from server.model.upload import UploadSession
 from server.model.video import Video
 from server.repository.upload import UploadRepository
-from server.repository.video_parse import (
+from server.service.video_parse_persistence import (
     VideoParseConflictError,
     VideoParseLeaseLostError,
     VideoParseSnapshotConflictError,
     VoiceprintRegistrationRejectedError,
-    _voiceprint_consistency,
 )
+from server.service.video_parse_voiceprint import _voiceprint_consistency
 from tests.server.test_video_parse_repository import NOW, _prepare, _refinement_inputs
 from agent.video_parse_v2.timelineEvent_canvas import ParseContextCanvas
 from server.service.video_parse import VideoParseRuntimeService

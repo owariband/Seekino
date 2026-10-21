@@ -14,7 +14,7 @@ import pytest
 from agent.chat.common.errors import AgentExecutionTimeoutError, AgentModelInvocationError
 from agent.chat.video_search.frame_evidence import FrameReadError, FrameReadRequest
 from engine.rag.contracts import VideoChunkEvidence
-from server.repository.video_parse import VideoParseConflictError
+from server.service.video_parse_errors import VideoParseConflictError
 from server.service.video_frame_reader import VideoFrameReader
 from server.storage.artifact import LocalArtifactStore
 

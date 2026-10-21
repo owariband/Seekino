@@ -3,6 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+from collections.abc import Mapping
+
+from agent.video_parse_v2.input import ParseConfig
+from engine.parsev2.schemas import VideoParseResult
+from engine.rag.contracts import VideoChunkEvidence
+from engine.rag.retrieval.contracts import ChunkRetrievalFacts
+
+from ...utils.time import now_utc
 
 from agent.video_parse_v2.state import ChunkTaskPhase
 
@@ -343,3 +351,216 @@ class ChunkScheduleState:
     tasks: tuple[ChunkScheduleEntryState, ...]
     wait_timeout_seconds: float
     terminal_error: str | None = None
+
+
+# Database snapshots used by transactional services; no ORM or workflow behavior.
+@dataclass(kw_only=True)
+class VideoParseTaskData:
+    id: str
+    creator_id: str | None = None
+    video_id: str
+    pipeline_version: str
+    status: str
+    parse_config: dict[str, Any]
+    chunk_count: int
+    version: int
+    next_execute_time: datetime = field(default_factory=now_utc)
+    attempt_count: int = 0
+    max_attempts: int
+    lease_owner: str | None = None
+    lease_version: int = 0
+    lease_expire_time: datetime | None = None
+    heartbeat_time: datetime | None = None
+    start_time: datetime | None = None
+    finish_time: datetime | None = None
+    processing_duration_ms: int = 0
+    processing_timing_complete: bool = True
+    last_error: dict[str, Any] | None = None
+    is_test: bool = False
+    is_deleted: bool = False
+    detail: dict[str, Any] = field(default_factory=dict)
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class ChunkParseTaskData:
+    id: str
+    video_task_id: str
+    chunk_id: str
+    phase: int = ChunkTaskPhase.PARSE
+    indexed_content_version: int | None = None
+    status: str
+    next_execute_time: datetime = field(default_factory=now_utc)
+    retry_count: int = 0
+    lease_owner: str | None = None
+    lease_version: int = 0
+    lease_expire_time: datetime | None = None
+    start_time: datetime | None = None
+    finish_time: datetime | None = None
+    last_error: dict[str, Any] | None = None
+    detail: dict[str, Any] | None = None
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class ChunkParseContentData:
+    id: str
+    chunk_task_id: str
+    content: Any | None = None
+    version: int = 1
+    detail: dict[str, Any] | None = None
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class IntervalParseTaskData:
+    id: str
+    chunk_task_id: str
+    video_task_id: str
+    chunk_task_ids: list[str]
+    start_sequence_no: int
+    chunk_count: int
+    ready_mask: int = 0
+    status: str
+    next_execute_time: datetime = field(default_factory=now_utc)
+    retry_count: int = 0
+    lease_owner: str | None = None
+    lease_version: int = 0
+    lease_expire_time: datetime | None = None
+    start_time: datetime | None = None
+    finish_time: datetime | None = None
+    last_error: dict[str, Any] | None = None
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class IntervalParseContentData:
+    interval_task_id: str
+    content: Any
+    detail: dict[str, Any] | None = None
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class VideoData:
+    id: str
+    series_id: str
+    episode_order: int
+    upload_sequence: int
+    filename: str
+    source_uri: str
+    proxy_uri: str | None = None
+    hash: str
+    size_bytes: int
+    duration_ms: int
+    upload_status: str
+    parse_status: str
+    upload_progress: int
+    parse_progress: int
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class VideoChunkData:
+    id: str
+    video_id: str
+    sequence_no: int
+    start_ms: int
+    end_ms: int
+    window_start_ms: int
+    window_end_ms: int
+    chunk_media_ref: str
+    analysis_window_media_ref: str
+    transcript: list[dict[str, Any]] = field(default_factory=list)
+    baseline_visual_caption: str | None = None
+    keyframe_uris: list[str | dict[str, Any]] = field(default_factory=list)
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class SeriesData:
+    id: str
+    tenant_id: str
+    name: str
+    display_name: str | None = None
+    description: str | None = None
+    transcript_language_hint: str | None = None
+    status: str
+    visibility: str = "private"
+    important_extra_data: dict[str, Any] | None = None
+    character_bible: list[dict[str, Any]] = field(default_factory=list)
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VideoParseRetrievalScope:
+    """Current queryable V2 task set and its shared index contract."""
+
+    series_ids: tuple[str, ...]
+    searched_video_ids: tuple[str, ...]
+    parse_tasks_by_video_id: Mapping[str, str]
+    series_by_video_id: Mapping[str, str]
+    parse_config: ParseConfig
+    index_generation: int
+    partial: bool = False
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def embedding_model(self) -> str:
+        return self.parse_config.models.embedding.model
+
+
+@dataclass(frozen=True, slots=True)
+class HydratedRetrievalCandidate:
+    facts: ChunkRetrievalFacts
+    evidence: VideoChunkEvidence
+    contexts: tuple[ChunkRetrievalFacts, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeChunkState:
+    chunk_parse_task_id: str
+    video_chunk_id: str
+    sequence_no: int
+    start_ms: int
+    end_ms: int
+    status: str
+    content: VideoParseResult | None
+    content_version: int | None
+    last_error: dict | None
+    parent_error: str | None = None
+    phase: int = ChunkTaskPhase.PARSE
+
+
+@dataclass(frozen=True, slots=True)
+class ParseExportChunkSnapshot:
+    video_id: str
+    parse_task_id: str
+    chunk_id: str
+    chunk_sequence_no: int
+    content_version: int
+    content: VideoParseResult

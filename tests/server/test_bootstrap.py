@@ -485,7 +485,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.parse_consumer._lease_duration == settings.mq.lease_duration
         runtime = services.agent._runtime._video_runtime
         assert isinstance(runtime._frame_reader, VideoFrameReader)
-        assert runtime._frame_reader._repository is services.retrieval._repository
+        assert runtime._frame_reader._persistence is services.retrieval._persistence
         assert runtime._frame_reader._artifacts is worker._artifact_store
         assert runtime._frame_max_height == 480
         assert runtime._maximum_frame_inspections == 5
@@ -555,7 +555,7 @@ def test_process_assembly_receives_runtime_configuration(
         try:
             assert isinstance(replacement._frame_reader, VideoFrameReader)
             assert replacement._frame_reader is not runtime._frame_reader
-            assert replacement._frame_reader._repository is runtime._frame_reader._repository
+            assert replacement._frame_reader._persistence is runtime._frame_reader._persistence
             assert replacement._frame_reader._artifacts is runtime._frame_reader._artifacts
             assert replacement._frame_max_height == 360
             assert replacement._maximum_frame_inspections == 7
@@ -661,7 +661,7 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert isinstance(consumer, VideoParseConsumer)
         runtime = consumer._handlers.prepare.__self__
         assert isinstance(runtime, VideoParseRuntimeService)
-        assert services.media._video_parse_repository is runtime._repository
+        assert services.media._parse_persistence is runtime._persistence
         assert services.tracing is None
         assert runtime._parse_usage is services.parse_usage
         assert services.agent._parse_usage is services.parse_usage
@@ -693,7 +693,7 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         else:
             assert received["reranker"] is None
         assert services.retrieval._store is runtime._elasticsearch_store
-        assert services.retrieval._repository is runtime._repository
+        assert services.retrieval._persistence is runtime._persistence
         assert services.retrieval._expected_index_generation == 7
         assert services.retrieval._semantic_encoder.claims() == {
             "provider": "ark",
@@ -806,7 +806,7 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
             bindings.append(target)
             return target
 
-        monkeypatch.setattr(runtime._repository, "bind_event_index_target", bind_target)
+        monkeypatch.setattr(runtime._persistence, "bind_event_index_target", bind_target)
         coordinator, client = runtime._build_index_coordinator(
             inputs, check_active=lambda: None,
             index_generation=settings.elasticsearch.index_generation,

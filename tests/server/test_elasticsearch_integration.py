@@ -52,7 +52,7 @@ from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.upload import UploadRepository
 from server.repository.video import SeriesNotReadyError
-from server.repository.video_parse import VideoParseRepository
+from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.service.upload import UploadService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
 from server.service.video_parse_media import VideoParseMediaService
@@ -202,7 +202,7 @@ def _indexing_case(tmp_path, store):
     try:
         create_schema(engine)
         factory = create_session_factory(engine)
-        repository = VideoParseRepository(factory)
+        repository = VideoParsePersistenceService(factory)
         queue = MySqlVideoParseQueue(factory, video_concurrency=3)
         series_id, video_id, task_id, upload_id = (str(uuid4()) for _ in range(4))
         now = datetime.now(UTC) - timedelta(seconds=1)

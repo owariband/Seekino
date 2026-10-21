@@ -96,10 +96,10 @@ from ..model.dto.jobDTO import (
     VideoParseTaskInputState,
 )
 from ..mq.video_parse_queue import MySqlVideoParseQueue
-from ..repository.video_parse import (
+from .video_parse_persistence import (
     ModelCallBudgetExhaustedError,
     VideoParseLeaseLostError,
-    VideoParseRepository,
+    VideoParsePersistenceService,
     VideoParseSnapshotConflictError,
     VoiceprintRegistrationRejectedError,
 )
@@ -136,11 +136,11 @@ class _ChunkBinding:
 
 
 class VideoParseRuntimeService:
-    """Run Parse with its existing repository, media and Gateway dependencies."""
+    """Run Parse with its transactional service, media and Gateway dependencies."""
 
     def __init__(
         self,
-        repository: VideoParseRepository,
+        persistence: VideoParsePersistenceService,
         queue: MySqlVideoParseQueue,
         artifact_store: ArtifactStore,
         media_service: VideoParseMediaService,
@@ -164,7 +164,7 @@ class VideoParseRuntimeService:
             raise ValueError("heartbeat_interval must be below the lease duration")
         if (event_store is None) != (event_contract is None):
             raise ValueError("Event indexing requires both a store and its configured contract")
-        self._repository = repository
+        self._persistence = persistence
         self._queue = queue
         self._artifact_store = artifact_store
         self._media_service = media_service
@@ -205,7 +205,7 @@ class VideoParseRuntimeService:
         except asyncio.CancelledError as error:
             if not getattr(error, "voiceprint_failed", False):
                 try:
-                    await asyncio.to_thread(self._repository.stop_voiceprint_preparation, lease)
+                    await asyncio.to_thread(self._persistence.stop_voiceprint_preparation, lease)
                 except VideoParseLeaseLostError:
                     pass
             raise
@@ -217,7 +217,7 @@ class VideoParseRuntimeService:
         token = self._chunk_binding.set(binding)
         try:
             state = await asyncio.to_thread(
-                self._repository.load_chunk_execution, lease
+                self._persistence.load_chunk_execution, lease
             )
             binding.state = state
             task_input = state.task_input
@@ -236,7 +236,7 @@ class VideoParseRuntimeService:
         token = self._interval_lease.set(lease)
         try:
             task_input = await asyncio.to_thread(
-                self._repository.load_task_input, lease.video_parse_task_id
+                self._persistence.load_task_input, lease.video_parse_task_id
             )
             async with self._model_stage(
                 lease,
@@ -253,7 +253,7 @@ class VideoParseRuntimeService:
         token = self._chunk_binding.set(_ChunkBinding(lease))
         try:
             task_input = await asyncio.to_thread(
-                self._repository.load_task_input, lease.video_parse_task_id
+                self._persistence.load_task_input, lease.video_parse_task_id
             )
             inputs = self._parse_input(task_input)
             async with self._model_stage(
@@ -279,7 +279,7 @@ class VideoParseRuntimeService:
 
     async def run_next_prefix(self) -> bool:
         lease = await asyncio.to_thread(
-            self._repository.claim_next_prefix_any,
+            self._persistence.claim_next_prefix_any,
             self._worker_id,
             lease_duration=self._lease_duration,
         )
@@ -328,7 +328,7 @@ class VideoParseRuntimeService:
 
     async def load_video_run(self, video_parse_task_id: str) -> VideoRunSnapshot:
         task_input = await asyncio.to_thread(
-            self._repository.load_task_input, video_parse_task_id
+            self._persistence.load_task_input, video_parse_task_id
         )
         status = VideoTaskStatus(task_input.task.status)
         lease = self._video_lease.get()
@@ -354,7 +354,7 @@ class VideoParseRuntimeService:
     ) -> tuple[VideoChunk, ...]:
         current = self._require_video_token(video_parse_task_id, lease)
         rows = await asyncio.to_thread(
-            self._repository.ensure_video_chunks,
+            self._persistence.ensure_video_chunks,
             current,
             tuple((item.sequence_no, item.start_seconds, item.end_seconds) for item in plans),
         )
@@ -377,7 +377,7 @@ class VideoParseRuntimeService:
     ) -> None:
         current = self._require_video_token(video_parse_task_id, lease)
         await asyncio.to_thread(
-            self._repository.ensure_parse_tasks,
+            self._persistence.ensure_parse_tasks,
             current,
             tuple(item.video_chunk_id for item in chunks),
             tuple((item.start_sequence_no, item.chunk_count) for item in intervals),
@@ -387,7 +387,7 @@ class VideoParseRuntimeService:
         self, video_parse_task_id: str, lease: LeaseToken
     ) -> None:
         current = self._require_video_token(video_parse_task_id, lease)
-        await asyncio.to_thread(self._repository.activate_video_task, current)
+        await asyncio.to_thread(self._persistence.activate_video_task, current)
 
     async def load_chunk_schedule(
         self, video_parse_task_id: str
@@ -466,7 +466,7 @@ class VideoParseRuntimeService:
         self, video_parse_task_id: str, lease: LeaseToken
     ) -> VideoTaskStatus:
         current = self._require_video_token(video_parse_task_id, lease)
-        state = await asyncio.to_thread(self._repository.aggregate_task, current)
+        state = await asyncio.to_thread(self._persistence.aggregate_task, current)
         return VideoTaskStatus(state.status)
 
     # Agent runtime: Voiceprint preparation -------------------------------
@@ -475,15 +475,15 @@ class VideoParseRuntimeService:
         self, video_parse_task_id: str, lease: LeaseToken,
     ) -> VoiceprintInput | None:
         current = self._require_video_token(video_parse_task_id, lease)
-        source = await asyncio.to_thread(self._repository.load_task_input, video_parse_task_id)
+        source = await asyncio.to_thread(self._persistence.load_task_input, video_parse_task_id)
         try:
-            snapshot = await self._run_blocking(self._repository.begin_voiceprint_preparation, current)
+            snapshot = await self._run_blocking(self._persistence.begin_voiceprint_preparation, current)
         except BlockingCallCancelled as error:
             # A queued transaction may bind its phase after the cancellation's
             # immediate stop. Clear it again before Consumer's deferred release.
             def stop_after_binding(_future) -> None:
                 try:
-                    self._repository.stop_voiceprint_preparation(current)
+                    self._persistence.stop_voiceprint_preparation(current)
                 except VideoParseLeaseLostError:
                     pass
                 except Exception:
@@ -513,7 +513,7 @@ class VideoParseRuntimeService:
         if snapshot is None:
             return
         current = self._require_video_token(video_parse_task_id, lease)
-        source = await asyncio.to_thread(self._repository.load_task_input, video_parse_task_id)
+        source = await asyncio.to_thread(self._persistence.load_task_input, video_parse_task_id)
         config = snapshot["inputs"].parse_config
         async with self._model_stage(
             current, source, sequence_no=None, category="parse", stage="voiceprint",
@@ -529,7 +529,7 @@ class VideoParseRuntimeService:
                 async with timeout:
                     try:
                         await self._run_blocking(
-                            self._repository.bind_voiceprint_encoder, current,
+                            self._persistence.bind_voiceprint_encoder, current,
                             model={"name": encoder.model_name, "encoder_revision": encoder.encoder_revision},
                         )
                         preparation = await self._run_blocking(
@@ -543,7 +543,7 @@ class VideoParseRuntimeService:
                         )
                         manager.check_active()
                         await self._run_blocking(
-                            self._repository.finish_voiceprint_scoring, current,
+                            self._persistence.finish_voiceprint_scoring, current,
                             preparation=preparation, artifact=artifact, check_active=manager.raise_if_cancelled,
                         )
                     except asyncio.CancelledError as error:
@@ -645,7 +645,7 @@ class VideoParseRuntimeService:
         return {"location": stored.uri, "checksum": checksum}
 
     async def _load_voiceprint_scoring(self, lease: VideoParseLease | IntervalParseLease) -> dict | None:
-        manifest = await asyncio.to_thread(self._repository.load_voiceprint_scoring, lease)
+        manifest = await asyncio.to_thread(self._persistence.load_voiceprint_scoring, lease)
         if manifest is None:
             return None
         return await self._run_blocking(self._read_voiceprint_scoring, lease, manifest)
@@ -702,7 +702,7 @@ class VideoParseRuntimeService:
         lease = self._require_video_lease()
         if lease.video_parse_task_id != snapshot["video_parse_task_id"]:
             raise VideoParseLeaseLostError("Voiceprint execution targets another task")
-        task_input = await asyncio.to_thread(self._repository.load_task_input, lease.video_parse_task_id)
+        task_input = await asyncio.to_thread(self._persistence.load_task_input, lease.video_parse_task_id)
         config = snapshot["inputs"].parse_config
         if config.voiceprint is None:
             raise ValueError("Voiceprint preparation is disabled")
@@ -768,7 +768,7 @@ class VideoParseRuntimeService:
                         "Read sources from get_context_canvas; preserve its speaker and absolute milliseconds.",
                     )
                 replacement = {"replace_source_ref": replace_source_ref} if replace_source_ref is not None else {}
-                result = self._repository.precheck_voiceprint_registration(
+                result = self._persistence.precheck_voiceprint_registration(
                     lease, source_ref=source_ref, speaker=speaker, start_ms=start_ms, end_ms=end_ms,
                     model=encoder.model_name, encoder_revision=encoder.encoder_revision, **replacement,
                 )
@@ -778,7 +778,7 @@ class VideoParseRuntimeService:
                         check_active=manager.check_active,
                     )
                     manager.check_active()
-                    result = self._repository.register_voiceprint(
+                    result = self._persistence.register_voiceprint(
                         lease, source_ref=source_ref, speaker=speaker, start_ms=start_ms, end_ms=end_ms,
                         selection_basis=selection_basis, confidence=confidence,
                         model=embedding.model, encoder_revision=embedding.encoder_revision,
@@ -794,7 +794,7 @@ class VideoParseRuntimeService:
                                                 if key != "vector"}, "dimension": encoder.dimensions}
 
             def unregister_voiceprint(*, source_ref: str) -> dict:
-                result = self._repository.unregister_voiceprint(lease, source_ref=source_ref)
+                result = self._persistence.unregister_voiceprint(lease, source_ref=source_ref)
                 _logger.info(
                     "event=voiceprint_unregistered task=%s lease=%s source=%s removed=%s refs_count=%s",
                     lease.video_parse_task_id, lease.lease_version, source_ref, result["removed"], result["refs_count"],
@@ -802,9 +802,9 @@ class VideoParseRuntimeService:
                 return result
 
             def finish_voiceprint_preparation(*, complete: bool, skip_reasons: dict[str, str]) -> dict:
-                del complete  # The Tool schema accepts only true; persistence decides readiness.
+                del complete  # The Tool schema accepts only true; the transaction service validates readiness.
                 result = invoke_host(
-                    lambda: self._repository.finish_voiceprint_preparation(lease, skip_reasons=skip_reasons),
+                    lambda: self._persistence.finish_voiceprint_preparation(lease, skip_reasons=skip_reasons),
                 )
                 _logger.info(
                     "event=voiceprint_preparation_finished task=%s lease=%s ready=%s registered=%s required=%s suspects=%s",
@@ -826,7 +826,7 @@ class VideoParseRuntimeService:
 
             tools = as_langchain_tools(build_voiceprint_tools(
                 canvas, get_speaker_list=lambda: invoke_host(
-                    lambda: self._repository.get_voiceprint_speaker_list(lease),
+                    lambda: self._persistence.get_voiceprint_speaker_list(lease),
                 ),
                 register_voiceprint=lambda **values: invoke_host(register_voiceprint, **values),
                 unregister_voiceprint=lambda **values: invoke_host(unregister_voiceprint, **values),
@@ -871,7 +871,7 @@ class VideoParseRuntimeService:
     async def ensure_voiceprint_prepared(self, snapshot: VoiceprintInput) -> None:
         lease = self._require_video_lease()
         self._require_video_active(lease)
-        source = await asyncio.to_thread(self._repository.load_task_input, snapshot["video_parse_task_id"])
+        source = await asyncio.to_thread(self._persistence.load_task_input, snapshot["video_parse_task_id"])
         if dict(source.task.detail.get("voiceprint") or {}).get("ready") is not True:
             raise ValueError("Voiceprint Agent returned without a successful finish Tool commit")
 
@@ -887,7 +887,7 @@ class VideoParseRuntimeService:
         if binding.lease.chunk_parse_task_id != chunk_parse_task_id:
             raise VideoParseLeaseLostError("Chunk lease targets another task")
         state = await asyncio.to_thread(
-            self._repository.load_chunk_execution, binding.lease
+            self._persistence.load_chunk_execution, binding.lease
         )
         binding.state = state
         return ChunkExecution(
@@ -1038,7 +1038,7 @@ class VideoParseRuntimeService:
                 if event["event_type"] == "DIALOGUE":
                     event["speaker_source"] = "understanding"
         await asyncio.to_thread(
-            self._repository.commit_chunk_result,
+            self._persistence.commit_chunk_result,
             binding.lease,
             content=content,
             detail={"evidence": evidence},
@@ -1064,9 +1064,9 @@ class VideoParseRuntimeService:
     ) -> RefineInput:
         lease = self._require_interval_lease(interval_parse_task_id, phase="REFINING")
         snapshot, task_input = await asyncio.gather(
-            asyncio.to_thread(self._repository.load_interval_members, lease),
+            asyncio.to_thread(self._persistence.load_interval_members, lease),
             asyncio.to_thread(
-                self._repository.load_task_input, lease.video_parse_task_id
+                self._persistence.load_task_input, lease.video_parse_task_id
             ),
         )
         inputs = self._parse_input(task_input)
@@ -1158,11 +1158,11 @@ class VideoParseRuntimeService:
             lease = self._require_interval_token(
                 snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING",
             )
-            source = await asyncio.to_thread(self._repository.load_task_input, snapshot["video_parse_task_id"])
+            source = await asyncio.to_thread(self._persistence.load_task_input, snapshot["video_parse_task_id"])
             b0 = snapshot["inputs"].parse_config.voiceprint_mode != "off"
             scoring = (await self._load_voiceprint_scoring(lease)) if b0 else None
             references = (scoring["samples"] if scoring is not None else
-                          await asyncio.to_thread(self._repository.load_voiceprint_references, lease))
+                          await asyncio.to_thread(self._persistence.load_voiceprint_references, lease))
             encoder_binding = snapshot["inputs"].parse_config.models.speaker_embedding
             audio_lock = threading.Lock()
             manager = self._model_manager.get()
@@ -1228,7 +1228,7 @@ class VideoParseRuntimeService:
                 snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING",
             )
             source = await asyncio.to_thread(
-                self._repository.load_task_input, snapshot["video_parse_task_id"],
+                self._persistence.load_task_input, snapshot["video_parse_task_id"],
             )
             if (source.series_id != snapshot["inputs"].series_id
                     or source.task.video_id != snapshot["inputs"].video_id):
@@ -1288,7 +1288,7 @@ class VideoParseRuntimeService:
                 member_updates[task_id] = values
         try:
             await asyncio.to_thread(
-                self._repository.commit_interval_refinement, lease,
+                self._persistence.commit_interval_refinement, lease,
                 interval_content=result.model_dump(mode="json"), member_updates=member_updates,
                 input_versions=snapshot["member_versions"],
                 input_fingerprints=snapshot["member_fingerprints"],
@@ -1325,8 +1325,8 @@ class VideoParseRuntimeService:
         if lease is None or lease.chunk_parse_task_id != chunk_parse_task_id:
             raise VideoParseLeaseLostError("Prefix lease is not bound to this task")
         task_input, content = await asyncio.gather(
-            asyncio.to_thread(self._repository.load_task_input, lease.video_parse_task_id),
-            asyncio.to_thread(self._repository.load_prefix_content, lease),
+            asyncio.to_thread(self._persistence.load_task_input, lease.video_parse_task_id),
+            asyncio.to_thread(self._persistence.load_prefix_content, lease),
         )
         inputs = self._parse_input(task_input)
         scope = list(validate_member_scopes(
@@ -1412,7 +1412,7 @@ class VideoParseRuntimeService:
         )
         try:
             await asyncio.to_thread(
-                self._repository.commit_prefix, lease, content_updates=updates,
+                self._persistence.commit_prefix, lease, content_updates=updates,
                 video_prefix_compact=result.video_compact, series_prefix_compact=result.series_compact,
                 input_version=context["content_version"], input_fingerprint=context["content_fingerprint"],
             )
@@ -1430,7 +1430,7 @@ class VideoParseRuntimeService:
         token = self._prefix_lease.set(lease)
         try:
             task_input = await asyncio.to_thread(
-                self._repository.load_task_input, lease.video_parse_task_id
+                self._persistence.load_task_input, lease.video_parse_task_id
             )
             async with self._model_stage(
                 lease,
@@ -1446,16 +1446,16 @@ class VideoParseRuntimeService:
             if isinstance(error, BlockingCallCancelled):
                 def release_after_exit(_future) -> None:
                     try:
-                        self._repository.release_prefix(lease)
+                        self._persistence.release_prefix(lease)
                     except Exception:
                         _logger.exception("Deferred Prefix lease release failed; expiry will recover it")
                 error.completion.add_done_callback(release_after_exit)
             else:
-                await asyncio.to_thread(self._repository.release_prefix, lease)
+                await asyncio.to_thread(self._persistence.release_prefix, lease)
             raise
         except Exception as error:
             await asyncio.to_thread(
-                self._repository.retry_prefix,
+                self._persistence.retry_prefix,
                 lease,
                 error=str(error),
             )
@@ -1474,7 +1474,7 @@ class VideoParseRuntimeService:
         stage: str | None = None,
     ) -> AsyncIterator[VideoParseModelCallManager]:
         manager = VideoParseModelCallManager(
-            self._repository,
+            self._persistence,
             execution_lease=lease,
             lease_duration=self._lease_duration,
             check_active=check_active,
@@ -1538,7 +1538,7 @@ class VideoParseRuntimeService:
             elapsed_ms = int((time.monotonic() - timing_started) * 1_000)
             try:
                 recorded = await asyncio.to_thread(
-                    self._repository.record_execution_timing,
+                    self._persistence.record_execution_timing,
                     lease, started_at_ms=timing_started_at, elapsed_ms=elapsed_ms,
                     finished=finished, outcome=outcome,
                 )
@@ -2018,14 +2018,14 @@ class VideoParseRuntimeService:
                     raise ValueError("task encoder differs from the configured Event index")
                 configured = {"index_name": self._event_store.index_name,
                               "contract_id": event_contract.contract_id, "contract": event_contract.as_dict()}
-                frozen = self._repository.bind_event_index_target(lease, configured)
+                frozen = self._persistence.bind_event_index_target(lease, configured)
                 accepted = EventIndexingContract.model_validate(frozen["contract"])
                 if (accepted.semantic_encoder != event_contract.semantic_encoder
                         or accepted.vision_encoder != event_contract.vision_encoder):
                     raise ValueError("Event encoder differs from the frozen task target")
                 event_options = {"event_store": self._event_store, "event_target": frozen}
             coordinator = VideoParseIndexCoordinator(
-                self._repository,
+                self._persistence,
                 self._elasticsearch_store,
                 embedder,
                 media_resolver=self._artifact_store.resolve,
@@ -2172,7 +2172,7 @@ class VideoParseRuntimeService:
             raise VideoParseLeaseLostError("Interval lease is no longer current")
 
     def _require_prefix_active(self, lease: PrefixParseLease) -> None:
-        if not self._repository.heartbeat_prefix(
+        if not self._persistence.heartbeat_prefix(
             lease, lease_duration=self._lease_duration
         ):
             raise VideoParseLeaseLostError("Prefix lease is no longer current")

@@ -66,7 +66,7 @@ from server.config.parse_profile import ParseConfig, default_video_parse_v2_conf
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadConflictError, UploadRepository, UploadStateError
 from server.repository.video import VideoRepository
-from server.repository.video_parse import VideoParseLeaseLostError, VideoParseRepository
+from server.service.video_parse_persistence import VideoParseLeaseLostError, VideoParsePersistenceService
 from server.service.library import LibraryService
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.service.qdrant_mutation_lock import (
@@ -622,9 +622,15 @@ def mysql_v2_series():
 @pytest.mark.parametrize("takeover", [False, True], ids=["reparse", "pending-takeover"])
 @pytest.mark.parametrize("active", [True, False], ids=["active-prefix", "expired-prefix"])
 def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
-    mysql_v2_series, takeover, active,
+    mysql_v2_series, takeover, active, tmp_path,
 ):
     engine, factory, _series_id, tenant_id, now, episodes = mysql_v2_series
+    uploads = UploadService(
+        UploadRepository(factory),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+        parse_defaults=_upload_defaults(),
+        clock=lambda: now,
+    )
     first, second, third = episodes
     expires = now + (timedelta(minutes=5) if active else -timedelta(seconds=1))
     with factory.begin() as session:
@@ -686,9 +692,8 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
             try:
                 assert locked.wait(5), "holder did not acquire the later parent lock"
                 future = contenders.submit(
-                    UploadRepository(factory).reparse, first["upload_id"],
+                    uploads.reparse, first["upload_id"],
                     tenant_id=tenant_id, expected_job_version=1,
-                    now=now,
                 )
                 assert observed.wait(5), "uncommitted entry changes were not observed"
             finally:
@@ -750,7 +755,7 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
             content_detail={"scope": [0], "compact": "retained child"},
             series_prefix_compact="series-2", video_prefix_compact="video-2",
         )
-        repository = VideoParseRepository(factory)
+        repository = VideoParsePersistenceService(factory)
         assert not repository.heartbeat_prefix(stale, lease_duration=timedelta(minutes=1), now=now)
         assert not repository.retry_prefix(stale, error="late", now=now)
         with pytest.raises(VideoParseLeaseLostError):
@@ -895,7 +900,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
         session.execute(delete(IntervalParseContent).where(
             IntervalParseContent.interval_task_id == target["interval_id"],
         ))
-    repository = VideoParseRepository(factory)
+    repository = VideoParsePersistenceService(factory)
     common = dict(video_parse_task_id=target["task_id"], worker_id="commit-worker", lease_version=1,
         lease_expire_time=expires, execution_deadline=deadline, retry_count=0, max_retry_count=2,
         retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0)
@@ -1009,7 +1014,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 IntervalParseContent.interval_task_id == target["interval_id"],
             ))
 
-    queue, repository = MySqlVideoParseQueue(factory, video_concurrency=3), VideoParseRepository(factory)
+    queue, repository = MySqlVideoParseQueue(factory, video_concurrency=3), VideoParsePersistenceService(factory)
     update_pending, release_commit = Event(), Event()
     table = "interval_parse_task" if kind == "refine" else "chunk_parse_task"
     connections = {}

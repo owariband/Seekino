@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 from ..config.parse_profile import ParseEmbeddingConfig
 from ..config.retrieval import RetrievalConfig
-from ..repository.video_parse import VideoParseRepository
+from ..service.video_parse_persistence import VideoParsePersistenceService
 from ..service.retrieval_rerank import StructuredTextReranker
 from ..service.video_retrieval import VideoParseRetrievalService
 from ..service.video_event_retrieval import VideoEventRetrievalService
@@ -39,7 +39,7 @@ def validate_rerank_source(
 
 
 def build_retrieval_service(
-    repository: VideoParseRepository, store: ElasticsearchVideoChunkStore, *,
+    persistence: VideoParsePersistenceService, store: ElasticsearchVideoChunkStore, *,
     gateway_config: GatewayConfig, embedding_config: ParseEmbeddingConfig,
     retrieval_config: RetrievalConfig, index_generation: int,
     request_timeout_seconds: float, max_output_tokens: int | None = None,
@@ -64,7 +64,7 @@ def build_retrieval_service(
             gateway_client=client, binding=rerank_binding.model_copy(update=updates),
         ))
     service = VideoParseRetrievalService(
-        repository, store, embedder, semantic_encoder=encoder,
+        persistence, store, embedder, semantic_encoder=encoder,
         expected_index_generation=index_generation,
         expected_embedding_source=embedding_config.source,
         channel_top_k=retrieval_config.channel_top_k, rrf_k=retrieval_config.rrf_k,
@@ -78,7 +78,7 @@ def build_retrieval_service(
 
 
 def build_event_retrieval_service(
-    repository: VideoParseRepository, store: ElasticsearchVideoEventStore, *,
+    persistence: VideoParsePersistenceService, store: ElasticsearchVideoEventStore, *,
     gateway_config: GatewayConfig, embedding_config: ParseEmbeddingConfig,
     retrieval_config: RetrievalConfig, contract: EventIndexingContract,
     request_timeout_seconds: float, exact: bool = False,
@@ -103,7 +103,7 @@ def build_event_retrieval_service(
         rrf_k=retrieval_config.rrf_k, top_k=1,
     )
     return VideoEventRetrievalService(
-        repository, store, embedder,
+        persistence, store, embedder,
         contract=contract, policy=policy, exact=exact, tracing=tracing,
     )
 

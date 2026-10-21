@@ -9,7 +9,7 @@ import pytest
 from engine.rag.indexing.events import EventIndexingContract
 from engine.rag.vision.event_frames import EventFrameContract
 from gateway.embedding import EmbeddingResult
-from server.repository.video_parse import INDEX_EMBEDDINGS_DETAIL_KEY
+from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 import server.service.video_parse_index_coordinator as coordinator_module
 from server.service.video_parse_index_coordinator import (
     VideoParseIndexCoordinator, VideoParseIndexCoordinationError,

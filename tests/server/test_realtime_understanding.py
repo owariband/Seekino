@@ -25,8 +25,9 @@ from server.model.upload import UploadSession
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.upload import UploadConflictError, UploadRepository
-from server.repository.video_parse import RUNTIME_DETAIL_KEY, VideoParseConflictError, VideoParseRepository, VideoParseTaskNotFoundError
+from server.service.video_parse_persistence import RUNTIME_DETAIL_KEY, VideoParseConflictError, VideoParsePersistenceService, VideoParseTaskNotFoundError
 from server.service.realtime_understanding import RealtimeUnderstandingService
+from server.service.upload import UploadService
 from server.service.video_parse import VideoParseRuntimeService
 from server.storage.artifact import LocalArtifactStore
 from server.utils.time import now_utc
@@ -70,7 +71,7 @@ def realtime(tmp_path, monkeypatch):
     engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'realtime.db'}", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
     factory = create_session_factory(engine)
-    repository = VideoParseRepository(factory)
+    repository = VideoParsePersistenceService(factory)
     queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     artifacts = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     series_id, video_id = str(uuid4()), str(uuid4())
@@ -322,7 +323,11 @@ def test_full_parse_promotion_reuses_identity_content_and_refine_ready_mask(real
     assert all(item.content_version == 1 for item in asyncio.run(complete()))
     assert realtime.queue.claim_interval_refine("refine", lease_duration=timedelta(seconds=2)) is None
     upload_id = _upload(realtime, context.video_parse_task_id)
-    promoted = UploadRepository(realtime.factory).reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc())
+    uploads = UploadService(
+        UploadRepository(realtime.factory), realtime.artifacts,
+        parse_defaults=SimpleNamespace(indexing=realtime.config.indexing),
+    )
+    promoted = uploads.reparse(upload_id, tenant_id="mine", expected_job_version=1)
     assert promoted.video_parse_task_id == context.video_parse_task_id and promoted.version == 1
     lease = realtime.queue.claim_video("full", lease_duration=timedelta(seconds=2))
     assert lease is not None
@@ -347,11 +352,14 @@ def test_promotion_refuses_config_changes_and_recovers_failed_on_demand_children
         task.status = "PARSING_FAILED"
         task.detail = {**task.detail, RUNTIME_DETAIL_KEY: {**task.detail[RUNTIME_DETAIL_KEY], "failure_status": "PARSING_FAILED"}}
     upload_id = _upload(realtime, context.video_parse_task_id)
-    upload = UploadRepository(realtime.factory)
-    changed = realtime.config.model_copy(update={"understanding_enabled": False}).model_dump(mode="json")
+    upload = UploadService(
+        UploadRepository(realtime.factory), realtime.artifacts,
+        parse_defaults=SimpleNamespace(indexing=realtime.config.indexing),
+    )
+    changed = realtime.config.model_copy(update={"understanding_enabled": False})
     with pytest.raises(UploadConflictError, match="freezes"):
-        upload.reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc(), parse_config=changed)
-    promoted = upload.reparse(upload_id, tenant_id="mine", expected_job_version=1, now=now_utc())
+        upload.reparse(upload_id, tenant_id="mine", expected_job_version=1, parse_config=changed)
+    promoted = upload.reparse(upload_id, tenant_id="mine", expected_job_version=1)
     assert promoted.video_parse_task_id == context.video_parse_task_id and promoted.status == "PENDING"
     with realtime.factory() as session:
         assert session.get(ChunkParseTask, target.chunk_parse_task_id).status == "QUEUED"

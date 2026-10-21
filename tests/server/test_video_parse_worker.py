@@ -67,7 +67,7 @@ from server.mq.video_parse_consumer import (
     VideoParseConsumerHandlers,
 )
 from server.mq.video_parse_queue import MySqlVideoParseQueue
-from server.repository.video_parse import RUNTIME_DETAIL_KEY, VideoParseRepository
+from server.service.video_parse_persistence import RUNTIME_DETAIL_KEY, VideoParsePersistenceService
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
 from server.repository.model_usage import ModelUsageRepository
@@ -695,7 +695,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     create_schema(engine)
     factory = create_session_factory(engine)
     task_id = _create_task(factory, source)
-    repository = VideoParseRepository(factory)
+    repository = VideoParsePersistenceService(factory)
     queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     media = VideoParseMediaService(
         tmp_path / "media-work",
@@ -888,7 +888,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     create_schema(engine)
     factory = create_session_factory(engine)
     artifacts = LocalArtifactStore(tmp_path / "artifacts", environment="test")
-    repository = VideoParseRepository(factory)
+    repository = VideoParsePersistenceService(factory)
     queue = MySqlVideoParseQueue(factory, video_concurrency=3)
     store = _RecoveringElasticsearchBoundary()
     media = VideoParseMediaService(
@@ -1284,7 +1284,7 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
     refine_canvas = ParseContextCanvas(scope="refine:interval", evidence=evidence, members={
         "member": {"sequence_no": 2, "version": 1, "bounds": (20_000, 30_000), "content": result},
     })
-    runtime._repository = SimpleNamespace(load_task_input=lambda _task: SimpleNamespace(
+    runtime._persistence = SimpleNamespace(load_task_input=lambda _task: SimpleNamespace(
         series_id="series", task=SimpleNamespace(video_id="video"), duration_seconds=30_000,
         original_source_uri=str(tmp_path / "source.mp4"), content_hash="source-hash",
     ))
@@ -1581,7 +1581,7 @@ def voiceprint_host(monkeypatch, tmp_path):
                 "refs_count": 1, "target_refs_count": 5}
 
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = SimpleNamespace(
+    runtime._persistence = SimpleNamespace(
         load_task_input=lambda _task: source,
         precheck_voiceprint_registration=lambda _lease, **_values: None,
         register_voiceprint=register, finish_voiceprint_preparation=finish,
@@ -1604,7 +1604,7 @@ def voiceprint_host(monkeypatch, tmp_path):
         state.stages.append(options)
         calls_token = execution_calls.set(state.calls)
         manager = VideoParseModelCallManager(
-            runtime._repository, execution_lease=lease, lease_duration=timedelta(minutes=2),
+            runtime._persistence, execution_lease=lease, lease_duration=timedelta(minutes=2),
             check_active=lambda: state.checks.append("active"),
         )
         state.manager = manager
@@ -1681,7 +1681,7 @@ def test_voiceprint_model_completion_cannot_replace_finish_commit(monkeypatch, v
 
 @pytest.mark.parametrize("first_tool", ["get_context_canvas", "unregister_voiceprint"])
 def test_voiceprint_tool_budget_counts_reads_and_closes_encoder_on_exhaustion(monkeypatch, voiceprint_host, first_tool):
-    from server.repository.video_parse import ModelCallBudgetExhaustedError
+    from server.service.video_parse_persistence import ModelCallBudgetExhaustedError
 
     host = voiceprint_host
     config = host.snapshot["inputs"].parse_config
@@ -1722,7 +1722,7 @@ def test_voiceprint_host_failure_survives_tool_feedback_and_fences_finish(
                   "unregister": "unregister_voiceprint",
                   "speaker_list": "get_voiceprint_speaker_list",
                   "finish": "finish_voiceprint_preparation"}[failure_at]
-        monkeypatch.setattr(host.runtime._repository, method, fail)
+        monkeypatch.setattr(host.runtime._persistence, method, fail)
 
     async def generate(_binding, _prompt, *, tools, **_options):
         tools = {tool.name: tool for tool in tools}
@@ -1756,7 +1756,7 @@ def test_voiceprint_host_failure_survives_tool_feedback_and_fences_finish(
 
 
 def test_voiceprint_swallowed_tool_budget_failure_still_fails_preparation(monkeypatch, voiceprint_host):
-    from server.repository.video_parse import ModelCallBudgetExhaustedError
+    from server.service.video_parse_persistence import ModelCallBudgetExhaustedError
 
     host = voiceprint_host
     config = host.snapshot["inputs"].parse_config
@@ -1829,7 +1829,7 @@ def test_voiceprint_duplicate_returns_progress_without_audio_or_embedding(monkey
         assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"]
         return CanvasCompletion(complete=True)
 
-    monkeypatch.setattr(host.runtime._repository, "precheck_voiceprint_registration", precheck)
+    monkeypatch.setattr(host.runtime._persistence, "precheck_voiceprint_registration", precheck)
     monkeypatch.setattr(host.encoder, "embed_audio", embed)
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
     assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
@@ -1879,8 +1879,8 @@ def test_voiceprint_replacement_preserves_old_reference_until_embedding_and_comm
         assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"]
         return CanvasCompletion(complete=True)
 
-    monkeypatch.setattr(host.runtime._repository, "precheck_voiceprint_registration", precheck)
-    monkeypatch.setattr(host.runtime._repository, "register_voiceprint", register)
+    monkeypatch.setattr(host.runtime._persistence, "precheck_voiceprint_registration", precheck)
+    monkeypatch.setattr(host.runtime._persistence, "register_voiceprint", register)
     monkeypatch.setattr(host.encoder, "embed_audio", embed)
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
     if failure_at:
@@ -1900,8 +1900,8 @@ def test_voiceprint_suspect_feedback_requires_explicit_unregister_without_audio(
     remaining = {"source-old"}
     suspect = {"source_ref": "source-old", "speaker": "爽世", "start_ms": 47100, "end_ms": 48800,
                "candidate_mean": 0.38}
-    original_finish = host.runtime._repository.finish_voiceprint_preparation
-    original_unregister = host.runtime._repository.unregister_voiceprint
+    original_finish = host.runtime._persistence.finish_voiceprint_preparation
+    original_unregister = host.runtime._persistence.unregister_voiceprint
 
     def finish(_lease, **values):
         result = original_finish(_lease, **values)
@@ -1924,8 +1924,8 @@ def test_voiceprint_suspect_feedback_requires_explicit_unregister_without_audio(
         assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"]
         return CanvasCompletion(complete=True)
 
-    monkeypatch.setattr(host.runtime._repository, "finish_voiceprint_preparation", finish)
-    monkeypatch.setattr(host.runtime._repository, "unregister_voiceprint", unregister)
+    monkeypatch.setattr(host.runtime._persistence, "finish_voiceprint_preparation", finish)
+    monkeypatch.setattr(host.runtime._persistence, "unregister_voiceprint", unregister)
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
     assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
     assert host.state.unregistrations == ["source-old"] and not remaining
@@ -1939,11 +1939,11 @@ def test_voiceprint_suspect_feedback_requires_explicit_unregister_without_audio(
 def test_voiceprint_registration_rejection_is_correctable_without_failing_phase(
     monkeypatch, voiceprint_host, rejected_at, replace_reference,
 ):
-    from server.repository.video_parse import VoiceprintRegistrationRejectedError
+    from server.service.video_parse_persistence import VoiceprintRegistrationRejectedError
 
     host = voiceprint_host
     host.state.coverage = True
-    original = getattr(host.runtime._repository, rejected_at)
+    original = getattr(host.runtime._persistence, rejected_at)
     rejected = False
 
     def reject_once(*args, **values):
@@ -1972,7 +1972,7 @@ def test_voiceprint_registration_rejection_is_correctable_without_failing_phase(
         assert json.loads(tools["finish_voiceprint_preparation"].invoke({"complete": True}))["ready"]
         return CanvasCompletion(complete=True)
 
-    monkeypatch.setattr(host.runtime._repository, rejected_at, reject_once)
+    monkeypatch.setattr(host.runtime._persistence, rejected_at, reject_once)
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
     assert asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas)).complete
     assert host.state.ready and host.state.closed and len(host.state.registrations) == 1
@@ -2002,7 +2002,7 @@ def test_voiceprint_normal_model_cancellation_is_not_latched_as_execution_failur
         raise following
 
     if tool_name == "unregister_voiceprint":
-        monkeypatch.setattr(host.runtime._repository, "unregister_voiceprint", cancel)
+        monkeypatch.setattr(host.runtime._persistence, "unregister_voiceprint", cancel)
     else:
         monkeypatch.setattr(host.encoder, "embed_audio", cancel)
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
@@ -2051,7 +2051,7 @@ def test_voiceprint_failure_before_cancel_keeps_failure_budget_and_pending_owner
     original = RuntimeError("encoder failed before cancellation")
     entered, provider_exit = Event(), Event()
     stopped = []
-    host.runtime._repository.stop_voiceprint_preparation = stopped.append
+    host.runtime._persistence.stop_voiceprint_preparation = stopped.append
 
     def embed(_path):
         raise original
@@ -2213,7 +2213,7 @@ def test_voiceprint_timeout_and_cancel_preserve_pending_encoder_ownership(
     host = voiceprint_host
     entered, provider_exit = Event(), Event()
     stopped, released = [], []
-    host.runtime._repository.stop_voiceprint_preparation = stopped.append
+    host.runtime._persistence.stop_voiceprint_preparation = stopped.append
     if timed_out:
         config = host.snapshot["inputs"].parse_config
         host.snapshot["inputs"] = host.snapshot["inputs"].model_copy(update={"parse_config": config.model_copy(update={
@@ -2308,7 +2308,7 @@ def test_voiceprint_cancel_before_phase_binding_stops_again_before_consumer_rele
         released.set()
 
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = SimpleNamespace(
+    runtime._persistence = SimpleNamespace(
         load_task_input=repo.load_task_input, begin_voiceprint_preparation=begin,
         stop_voiceprint_preparation=stop,
     )
@@ -2508,8 +2508,8 @@ def test_b0_preparation_publishes_only_complete_results(monkeypatch, voiceprint_
     monkeypatch.setattr(host.runtime, "load_voiceprint_input", load)
     monkeypatch.setattr(host.runtime, "_collect_voiceprint_scores", collect)
     monkeypatch.setattr(host.runtime, "_store_voiceprint_scoring", store)
-    host.runtime._repository.bind_voiceprint_encoder = lambda _lease, **_options: None
-    host.runtime._repository.finish_voiceprint_scoring = finish
+    host.runtime._persistence.bind_voiceprint_encoder = lambda _lease, **_options: None
+    host.runtime._persistence.finish_voiceprint_scoring = finish
     token = LeaseToken(owner=host.lease.worker_id, version=host.lease.lease_version,
                        expires_at=host.lease.lease_expire_time)
 
@@ -2586,8 +2586,8 @@ def test_b0_actual_encoder_contract_failure_never_publishes(
 
     monkeypatch.setattr(host.encoder, "embed_audio", embed)
     monkeypatch.setattr(host.runtime, "load_voiceprint_input", load)
-    host.runtime._repository.bind_voiceprint_encoder = lambda _lease, **_options: None
-    host.runtime._repository.finish_voiceprint_scoring = lambda *_args, **options: commits.append(options)
+    host.runtime._persistence.bind_voiceprint_encoder = lambda _lease, **_options: None
+    host.runtime._persistence.finish_voiceprint_scoring = lambda *_args, **options: commits.append(options)
     token = LeaseToken(owner=host.lease.worker_id, version=host.lease.lease_version,
                        expires_at=host.lease.lease_expire_time)
     with pytest.raises(ValueError, match="contract|normalized"):
@@ -2621,8 +2621,8 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
                                video_parse_task_id=lease.video_parse_task_id,
                                start_sequence_no=0, chunk_count=1, members=(member,))
     host.runtime._interval_lease = ContextVar("b0-handoff-interval", default=lease)
-    host.runtime._repository.load_interval_members = lambda _lease: interval
-    host.runtime._repository.load_task_input = lambda _task_id: source
+    host.runtime._persistence.load_interval_members = lambda _lease: interval
+    host.runtime._persistence.load_task_input = lambda _task_id: source
     async def load_scoring(_lease):
         return prepared
 
@@ -2730,7 +2730,7 @@ def test_b0_artifact_roundtrip_and_integrity_checks(monkeypatch, voiceprint_host
     artifact = host.runtime._store_voiceprint_scoring(source, host.lease, preparation, check_active=lambda: None)
     manifest = {"ready": True, **artifact, **{key: preparation[key] for key in ("method_version", "model", "parameters")},
                 "line_count": 0, "sample_count": 0}
-    host.runtime._repository.load_voiceprint_scoring = lambda _lease: manifest
+    host.runtime._persistence.load_voiceprint_scoring = lambda _lease: manifest
     assert asyncio.run(host.runtime._load_voiceprint_scoring(host.lease)) == preparation
     path = host.runtime._artifact_store.resolve(artifact["location"])
     if damage == "bytes":
@@ -2831,9 +2831,9 @@ def test_refine_compare_tool_tracks_references_for_diagnostics_only(monkeypatch,
     lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
         "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
     reference = _voice_reference(host.encoder, "爽世", "soyo")
-    host.runtime._repository.load_voiceprint_references = lambda _lease: [reference]
+    host.runtime._persistence.load_voiceprint_references = lambda _lease: [reference]
     committed = []
-    host.runtime._repository.commit_interval_refinement = lambda _lease, **values: committed.append(values)
+    host.runtime._persistence.commit_interval_refinement = lambda _lease, **values: committed.append(values)
     monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_kwargs: lease)
     monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
     canvas = ParseContextCanvas(scope="refine:voice", members={"member": {
@@ -2874,7 +2874,7 @@ def test_refine_compare_tool_tracks_references_for_diagnostics_only(monkeypatch,
 @pytest.mark.parametrize("structured", [False, True])
 def test_refine_commit_conflict_logs_reason_and_safe_context(monkeypatch, voiceprint_host, caplog, structured):
     from server.model.dto.jobDTO import IntervalParseLease
-    from server.repository.video_parse import VideoParseSnapshotConflictError
+    from server.service.video_parse_persistence import VideoParseSnapshotConflictError
 
     host = voiceprint_host
     lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
@@ -2888,7 +2888,7 @@ def test_refine_commit_conflict_logs_reason_and_safe_context(monkeypatch, voicep
         assert _lease is lease
         raise error
 
-    host.runtime._repository.commit_interval_refinement = reject
+    host.runtime._persistence.commit_interval_refinement = reject
     monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_kwargs: lease)
     canvas = ParseContextCanvas(scope="refine:conflict", members={"member": {
         "sequence_no": 0, "version": 1, "bounds": (40_000, 60_000),
@@ -3015,7 +3015,7 @@ def test_canvas_input_rejects_invalid_persisted_scope_before_deriving_bounds(mon
     snapshot = SimpleNamespace(start_sequence_no=0, chunk_count=1, members=[member])
     lease = SimpleNamespace(chunk_parse_task_id="member", video_parse_task_id="video", sequence_no=0)
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = SimpleNamespace(
+    runtime._persistence = SimpleNamespace(
         load_task_input=lambda _task: task_input,
         load_interval_members=lambda _lease: snapshot,
         load_prefix_content=lambda _lease: member,
@@ -3119,7 +3119,7 @@ def test_prefix_cancellation_releases_lease_only_after_execution_exits(monkeypat
                 await asyncio.Future()
 
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = _Repository()
+    runtime._persistence = _Repository()
     runtime._prefix_lease = ContextVar("test_prefix_lease", default=None)
     runtime.agent = SimpleNamespace(prefix_context_agent=_PrefixAgent())
 
@@ -3212,7 +3212,7 @@ def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch, initial_rec
         _Manager,
     )
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = SimpleNamespace(
+    runtime._persistence = SimpleNamespace(
         record_execution_timing=lambda _lease, **sample: samples.append(sample) or True,
     )
     runtime._queue = _Queue()
@@ -3278,7 +3278,7 @@ def test_model_stage_traces_actual_worker_calls_without_a_ledger(monkeypatch):
 
     monkeypatch.setattr("server.service.video_parse.VideoParseModelCallManager", Manager)
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = object()
+    runtime._persistence = object()
     runtime._queue = object()
     runtime._lease_duration = timedelta(seconds=5)
     runtime._heartbeat_interval = timedelta(seconds=1)
@@ -3373,7 +3373,7 @@ def test_execution_timing_records_short_runs_without_changing_results(monkeypatc
         monotonic=lambda: clock[0], time_ns=lambda: 1_800_000_000_000_000_000,
     ))
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = SimpleNamespace(record_execution_timing=lambda lease, **sample: samples.append((lease, sample)) or True)
+    runtime._persistence = SimpleNamespace(record_execution_timing=lambda lease, **sample: samples.append((lease, sample)) or True)
     runtime._queue = object()
     runtime._lease_duration = timedelta(seconds=5)
     runtime._heartbeat_interval = timedelta(seconds=1)
@@ -3451,7 +3451,7 @@ def test_execution_timing_heartbeats_and_storage_errors_preserve_business_work(m
         monotonic=lambda: clock[0], time_ns=lambda: 1_800_000_000_000_000_000,
     ))
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = SimpleNamespace(record_execution_timing=record)
+    runtime._persistence = SimpleNamespace(record_execution_timing=record)
     runtime._queue = object()
     runtime._lease_duration = timedelta(seconds=5)
     runtime._heartbeat_interval = timedelta(milliseconds=1)

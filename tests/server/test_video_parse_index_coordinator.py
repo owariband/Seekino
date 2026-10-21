@@ -27,7 +27,7 @@ from server.model.dto.jobDTO import (
     ChunkParseLease,
 )
 from server.model.job import ChunkParseContent
-from server.repository.video_parse import INDEX_EMBEDDINGS_DETAIL_KEY
+from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 from server.service.video_parse_index_coordinator import (
     VideoParseIndexCoordinator,
     VideoParseIndexCoordinationError,

@@ -27,7 +27,7 @@ from .config.settings import (
 )
 from .database import DatabaseEnvironment, create_schema
 from .repository.video import VideoRepository
-from .repository.video_parse import VideoParseRepository
+from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.keyframe_backfill import KeyframeBackfillService
 
 
@@ -352,7 +352,7 @@ def main() -> None:
             create_schema(engine)
             result = {"schemaCreated": True, "environment": environment.value}
         elif args.command in {"request-es-index-rebuild", "rebuild-index"}:
-            repository = VideoParseRepository(sessions)
+            repository = VideoParsePersistenceService(sessions)
             event_options = {}
             if getattr(args, "with_events", False):
                 config = ElasticsearchConfig.from_environment(
@@ -375,7 +375,7 @@ def main() -> None:
                 "scheduledChunkTaskIds": list(interval_ids),
             }
         elif args.command == "event-index-status":
-            result = VideoParseRepository(sessions).event_index_status(args.video_parse_task_id)
+            result = VideoParsePersistenceService(sessions).event_index_status(args.video_parse_task_id)
         elif args.command == "import-parse":
             from .service.parsev1.parse_import import prepare_video_parse_import
 
@@ -419,7 +419,7 @@ def main() -> None:
                 semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
             ) as (_client, store):
                 service, _encoder = build_retrieval_service(
-                    VideoParseRepository(sessions), store,
+                    VideoParsePersistenceService(sessions), store,
                     gateway_config=gateway, embedding_config=embedding,
                     retrieval_config=retrieval,
                     index_generation=elasticsearch.index_generation,

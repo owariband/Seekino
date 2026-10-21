@@ -38,7 +38,7 @@ from server.mq.video_parse_consumer import (
     _failure_log_text,
     _log_retry_failure,
 )
-from server.repository.video_parse import VideoParseLeaseLostError, VideoParseRepository
+from server.service.video_parse_persistence import VideoParseLeaseLostError, VideoParsePersistenceService
 from server.utils.time import datetime_to_unix_time_ms
 
 
@@ -87,7 +87,7 @@ def _task(factory, *, chunk_count: int, accepted: bool, batch_size: int = 10):
 
 
 def _prepare(factory, queue, task_id: str, *, chunk_count: int):
-    repo = VideoParseRepository(factory)
+    repo = VideoParsePersistenceService(factory)
     lease = queue.claim_video(
         "main", lease_duration=timedelta(minutes=20), now=NOW
     )
@@ -489,7 +489,7 @@ def test_realtime_prepare_reaper_releases_only_unused_capacity(repository, activ
     )
     assert lease is not None
     if active_chunk:
-        repo = VideoParseRepository(factory)
+        repo = VideoParsePersistenceService(factory)
         chunks = repo.ensure_video_chunks(lease, [(0, 0, 10000)], now=NOW)
         prepared = repo.ensure_parse_tasks(
             lease, [chunks[0].video_chunk_id], [(0, 1)], now=NOW,
@@ -1380,7 +1380,7 @@ def test_one_consumer_keeps_coordinator_alive_while_processing_children(tmp_path
             2020, 1, 1, tzinfo=UTC
         )
     queue = MySqlVideoParseQueue(factory, video_concurrency=3)
-    repo = VideoParseRepository(factory)
+    repo = VideoParsePersistenceService(factory)
 
     async def prepare(lease):
         chunks = repo.ensure_video_chunks(lease, [(0, 0, 10000)])

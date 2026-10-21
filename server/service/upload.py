@@ -22,6 +22,7 @@ from ..model.dto.uploadDTO import (
     UploadSessionState,
 )
 from ..model.dto.jobDTO import VideoParseTaskState
+from ..repository import video_parse_task as task_store
 from ..repository.upload import (
     UploadConflictError,
     UploadRepository,
@@ -37,6 +38,9 @@ from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from ..utils.errors import exception_summary
 from ..utils.time import now_utc, require_utc_datetime, unix_time_ms_to_datetime
 from ..utils.validation import canonical_uuid, require_nonempty_text
+from .video_parse_errors import VideoParseConflictError
+from .video_parse_prefix import invalidate_series_prefixes_from
+from .video_parse_task import _task_state
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _logger = logging.getLogger(__name__)
@@ -293,15 +297,36 @@ class UploadService:
                 )})
             return self._resolve_parse_config(selected).model_dump(mode="json")
 
-        task = self._repository.reparse(
-            session_id,
-            tenant_id=normalized_workspace,
-            expected_job_version=expected_job_version,
-            actor_user_id=actor_user_id,
-            parse_config=(parse_config.model_dump(mode="json") if parse_config is not None else None),
-            snapshot_resolver=resolve_snapshot,
-            now=self._now(),
-        )
+        now = self._now()
+        with self._repository.transaction() as session:
+            task = self._repository.reparse(
+                session_id,
+                session=session,
+                tenant_id=normalized_workspace,
+                expected_job_version=expected_job_version,
+                actor_user_id=actor_user_id,
+                parse_config=(parse_config.model_dump(mode="json") if parse_config is not None else None),
+                snapshot_resolver=resolve_snapshot,
+                now=now,
+            )
+            video = task_store.get_video(session, task.video_id)
+            if video is None:
+                raise UploadConflictError("upload session Video no longer exists")
+            try:
+                invalidate_series_prefixes_from(
+                    session,
+                    series_id=video.series_id,
+                    episode_order=video.episode_order,
+                    video_id=video.id,
+                    now=now,
+                )
+            except VideoParseConflictError as exc:
+                raise UploadStateError(str(exc)) from exc
+            session.flush()
+            current = task_store.get_task(session, task.video_parse_task_id)
+            if current is None:
+                raise UploadConflictError("upload session VideoParseTask no longer exists")
+            task = _task_state(current)
         _logger.info(
             "upload_full_reparse_requested upload_session_id=%s video_parse_task_id=%s expected_parse_version=%s",
             session_id,

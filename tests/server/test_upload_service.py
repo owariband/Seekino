@@ -59,7 +59,7 @@ from server.repository.upload import (
 )
 from server.repository.job import ParseJobRepository
 from server.repository.index_sync import IndexSyncRepository
-from server.repository.video_parse import VideoParseRepository
+from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.service.upload import (
     UploadChecksumMismatchError,
     UploadService,
@@ -1234,6 +1234,16 @@ def test_reparse_atomically_invalidates_the_series_prefix_suffix(
             )
             config = dict(task.parse_config)
             config["compact_enabled"] = order != 2
+            if config["compact_enabled"]:
+                config["prefix_context"] = {
+                    "series_compact_max_chars": 3000,
+                    "video_compact_max_chars": 1000,
+                    "max_tool_calls": 2,
+                }
+                config["models"] = {
+                    **config["models"],
+                    "prefix_context": dict(config["models"]["understanding"]),
+                }
             task.parse_config = config
             if order != 1 or not take_over_pending:
                 task.status = "COMPLETE"
@@ -1266,11 +1276,10 @@ def test_reparse_atomically_invalidates_the_series_prefix_suffix(
     target_upload = upload_by_order[1]
     target_task_id = completed_by_order[1].video_parse_task_id
     with pytest.raises(UploadStateError, match="active lease"):
-        upload_repository.reparse(
+        service.reparse(
             target_upload.upload_session_id,
             tenant_id="local-default",
             expected_job_version=1,
-            now=now,
         )
 
     with factory() as session:
@@ -1307,11 +1316,10 @@ def test_reparse_atomically_invalidates_the_series_prefix_suffix(
         detail["_worker_runtime_v2"] = runtime
         third.detail = detail
 
-    reparsed = upload_repository.reparse(
+    reparsed = service.reparse(
         target_upload.upload_session_id,
         tenant_id="local-default",
         expected_job_version=1,
-        now=now,
     )
     if take_over_pending:
         assert (reparsed.video_parse_task_id, reparsed.version) == (target_task_id, 1)
@@ -2450,7 +2458,7 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
         "prepare", lease_duration=timedelta(minutes=1), now=now,
     )
     assert lease is not None
-    parse_repository = VideoParseRepository(factory)
+    parse_repository = VideoParsePersistenceService(factory)
     chunks = parse_repository.ensure_video_chunks(lease, [(0, 0, 12_000)], now=now)
     chunk_id = chunks[0].video_chunk_id
     prepared = None

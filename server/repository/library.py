@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import AbstractContextManager
 from typing import Literal
 
 from sqlalchemy import func, or_, select
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
-from ..model.dto.jobDTO import VideoChunkCheckpointState
+from ..model.dto.jobDTO import VideoChunkCheckpointState, VideoData
 from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoSummaryState
 from ..model.index_sync import IndexSyncIntent, IndexSyncOperation, IndexSyncStatus
 from ..model.job import (
@@ -36,10 +37,7 @@ from ..utils.time import now_utc
 from .index_sync import list_ready_video_ids
 from .identity import default_public_nickname
 from .upload import UploadRepository
-from .video_parse import (
-    VideoParseConflictError,
-    invalidate_series_prefixes_from,
-)
+from .video_parse_task import video_data
 
 
 class SeriesNotFoundError(LookupError):
@@ -65,6 +63,9 @@ class LibraryRepository:
             raise ValueError("execution_mode must be 'v1' or 'v2'")
         self._session_factory = session_factory
         self._execution_mode = execution_mode
+
+    def transaction(self) -> AbstractContextManager[Session]:
+        return self._session_factory.begin()
 
     def create_series(
         self,
@@ -151,104 +152,89 @@ class LibraryRepository:
         self,
         video_id: str,
         *,
+        session: Session,
         tenant_id: str,
         episode_order: int,
-    ) -> None:
+    ) -> tuple[VideoData, int]:
         if (
             isinstance(episode_order, bool)
             or not isinstance(episode_order, int)
             or not 0 < episode_order <= 2_147_483_647
         ):
             raise ValueError("episode_order must be a positive 32-bit integer")
-        try:
-            with self._session_factory.begin() as session:
-                # Upload mutations lock Upload before Video elsewhere. Keep the
-                # same order so an episode edit can safely race retry/delete.
-                uploads = list(session.scalars(
-                    select(UploadSession)
-                    .where(UploadSession.video_id == video_id)
-                    .order_by(UploadSession.id)
-                    .with_for_update()
-                ))
-                video = session.scalar(
-                    select(Video)
-                    .where(Video.id == video_id)
-                    .with_for_update()
-                )
-                if video is None:
-                    raise SeriesNotFoundError(
-                        f"videoId {video_id!r} does not exist in this workspace"
-                    )
-                series_workspace = session.scalar(
-                    select(Series.tenant_id).where(
-                        Series.id == video.series_id,
-                    )
-                )
-                if series_workspace != tenant_id:
-                    raise SeriesNotFoundError(
-                        f"videoId {video_id!r} does not exist in this workspace"
-                    )
+        # Upload mutations lock Upload before Video elsewhere. Keep the
+        # same order so an episode edit can safely race retry/delete.
+        uploads = list(session.scalars(
+            select(UploadSession)
+            .where(UploadSession.video_id == video_id)
+            .order_by(UploadSession.id)
+            .with_for_update()
+        ))
+        video = session.scalar(
+            select(Video)
+            .where(Video.id == video_id)
+            .with_for_update()
+        )
+        if video is None:
+            raise SeriesNotFoundError(
+                f"videoId {video_id!r} does not exist in this workspace"
+            )
+        series_workspace = session.scalar(
+            select(Series.tenant_id).where(
+                Series.id == video.series_id,
+            )
+        )
+        if series_workspace != tenant_id:
+            raise SeriesNotFoundError(
+                f"videoId {video_id!r} does not exist in this workspace"
+            )
 
-                occupied_video_id = session.scalar(
-                    select(Video.id.label("video_id"))
-                    .where(
-                        Video.series_id == video.series_id,
-                        Video.episode_order == episode_order,
-                        Video.id != video.id,
-                    )
-                    .with_for_update()
-                )
-                active_slot_key = f"{video.series_id}:{episode_order}"
-                occupied_upload_id = session.scalar(
-                    select(UploadSession.id.label("upload_session_id"))
-                    .where(
-                        UploadSession.active_slot_key == active_slot_key,
-                        or_(
-                            UploadSession.video_id.is_(None),
-                            UploadSession.video_id != video.id,
-                        ),
-                    )
-                    .with_for_update()
-                )
-                if occupied_video_id is not None or occupied_upload_id is not None:
-                    raise VideoEpisodeOrderConflictError(
-                        "episode order is already occupied in this Series"
-                    )
-
-                previous_episode_order = video.episode_order
-                video.episode_order = episode_order
-                video.upload_sequence = episode_order
-                for upload in uploads:
-                    next_active_slot_key = (
-                        active_slot_key
-                        if upload.active_slot_key is not None
-                        else None
-                    )
-                    if (
-                        upload.episode_order == episode_order
-                        and upload.active_slot_key == next_active_slot_key
-                    ):
-                        continue
-                    upload.episode_order = episode_order
-                    upload.upload_sequence = episode_order
-                    upload.active_slot_key = next_active_slot_key
-                    upload.version += 1
-                session.flush()
-                if previous_episode_order != episode_order:
-                    try:
-                        invalidate_series_prefixes_from(
-                            session,
-                            series_id=video.series_id,
-                            episode_order=min(previous_episode_order, episode_order),
-                            video_id=video.id,
-                            now=now_utc(),
-                        )
-                    except VideoParseConflictError as exc:
-                        raise VideoEpisodeOrderConflictError(str(exc)) from exc
-        except IntegrityError as exc:
+        occupied_video_id = session.scalar(
+            select(Video.id.label("video_id"))
+            .where(
+                Video.series_id == video.series_id,
+                Video.episode_order == episode_order,
+                Video.id != video.id,
+            )
+            .with_for_update()
+        )
+        active_slot_key = f"{video.series_id}:{episode_order}"
+        occupied_upload_id = session.scalar(
+            select(UploadSession.id.label("upload_session_id"))
+            .where(
+                UploadSession.active_slot_key == active_slot_key,
+                or_(
+                    UploadSession.video_id.is_(None),
+                    UploadSession.video_id != video.id,
+                ),
+            )
+            .with_for_update()
+        )
+        if occupied_video_id is not None or occupied_upload_id is not None:
             raise VideoEpisodeOrderConflictError(
                 "episode order is already occupied in this Series"
-            ) from exc
+            )
+
+        previous_episode_order = video.episode_order
+        video.episode_order = episode_order
+        video.upload_sequence = episode_order
+        for upload in uploads:
+            next_active_slot_key = (
+                active_slot_key
+                if upload.active_slot_key is not None
+                else None
+            )
+            if (
+                upload.episode_order == episode_order
+                and upload.active_slot_key == next_active_slot_key
+            ):
+                continue
+            upload.episode_order = episode_order
+            upload.upload_sequence = episode_order
+            upload.active_slot_key = next_active_slot_key
+            upload.version += 1
+        session.flush()
+        return video_data(video), previous_episode_order
 
     def list_series(
         self,

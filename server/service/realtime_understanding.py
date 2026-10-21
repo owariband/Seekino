@@ -27,8 +27,8 @@ from gateway.multimodal import ImageInput, TextInput
 
 from ..model.dto.jobDTO import ChunkParseLease
 from ..mq.video_parse_queue import MySqlVideoParseQueue
-from ..repository.video_parse import (
-    VideoParseConflictError, VideoParseLeaseLostError, VideoParseRepository,
+from .video_parse_persistence import (
+    VideoParseConflictError, VideoParseLeaseLostError, VideoParsePersistenceService,
 )
 from ..storage.artifact import ArtifactStore
 from ..utils.time import now_utc
@@ -49,7 +49,7 @@ class RealtimeUnderstandingService:
 
     def __init__(
         self,
-        repository: VideoParseRepository,
+        persistence: VideoParsePersistenceService,
         queue: MySqlVideoParseQueue,
         parse_runtime: VideoParseRuntimeService,
         artifact_store: ArtifactStore,
@@ -65,7 +65,7 @@ class RealtimeUnderstandingService:
             raise ValueError("realtime requires a worker and positive Chunk concurrency")
         if not timedelta(0) < heartbeat_interval < lease_duration:
             raise ValueError("heartbeat_interval must be positive and shorter than lease_duration")
-        self._repository = repository
+        self._persistence = persistence
         self._queue = queue
         self._runtime = parse_runtime
         self._artifacts = artifact_store
@@ -93,7 +93,7 @@ class RealtimeUnderstandingService:
     async def prepare_context(self, request: RealtimeRequest) -> RealtimeContext:
         self._check(request)
         task_input = await asyncio.to_thread(
-            self._repository.ensure_realtime_task,
+            self._persistence.ensure_realtime_task,
             tenant_id=request.tenant_id, video_id=request.video_id,
             default_parse_config=self._default_config,
         )
@@ -103,12 +103,12 @@ class RealtimeUnderstandingService:
         while True:
             self._check(request)
             rows = await asyncio.to_thread(
-                self._repository.load_realtime_chunks, task_input.task.video_parse_task_id,
+                self._persistence.load_realtime_chunks, task_input.task.video_parse_task_id,
                 tenant_id=request.tenant_id, video_id=request.video_id,
                 task_version=task_input.task.version,
             )
             current_input = await asyncio.to_thread(
-                self._repository.load_task_input, task_input.task.video_parse_task_id,
+                self._persistence.load_task_input, task_input.task.video_parse_task_id,
             )
             if len(rows) == task_input.task.chunk_count and current_input.task.status != "PREPARING":
                 break
@@ -125,18 +125,18 @@ class RealtimeUnderstandingService:
             try:
                 plans = plan_chunks(duration_seconds=task_input.duration_seconds, chunk_duration=config.chunk_duration)
                 chunks = await asyncio.to_thread(
-                    self._repository.ensure_video_chunks, lease,
+                    self._persistence.ensure_video_chunks, lease,
                     [(item.sequence_no, item.start_seconds, item.end_seconds) for item in plans],
                 )
                 intervals = plan_intervals(chunk_count=len(chunks), size=interval_size(
                     interval_duration=config.interval_duration, chunk_duration=config.chunk_duration,
                 ))
                 await asyncio.to_thread(
-                    self._repository.ensure_parse_tasks, lease,
+                    self._persistence.ensure_parse_tasks, lease,
                     [item.video_chunk_id for item in chunks],
                     [(item.start_sequence_no, item.chunk_count) for item in intervals],
                 )
-                await asyncio.to_thread(self._repository.finish_realtime_preparation, lease)
+                await asyncio.to_thread(self._persistence.finish_realtime_preparation, lease)
             except asyncio.CancelledError:
                 await asyncio.shield(asyncio.to_thread(self._queue.release_execution, lease))
                 raise
@@ -180,7 +180,7 @@ class RealtimeUnderstandingService:
 
     async def observe_frames(self, context: RealtimeContext, *, prompt: str) -> VisualEvidence:
         self._check(context.request)
-        task_input = await asyncio.to_thread(self._repository.load_task_input, context.video_parse_task_id)
+        task_input = await asyncio.to_thread(self._persistence.load_task_input, context.video_parse_task_id)
         rows = await self._load_chunks(context)  # fence against task replacement before using media
         config = ParseConfig.model_validate(task_input.task.parse_config)
         frame = await run_blocking(self._extract_anchor, context, config.visual_input.max_height, task_input.content_hash)
@@ -196,7 +196,7 @@ class RealtimeUnderstandingService:
     async def compose_context(self, context: RealtimeContext, *, prompt: str) -> ContextSummary:
         self._check(context.request)
         rows = await self._load_chunks(context)
-        task_input = await asyncio.to_thread(self._repository.load_task_input, context.video_parse_task_id)
+        task_input = await asyncio.to_thread(self._persistence.load_task_input, context.video_parse_task_id)
         config = ParseConfig.model_validate(task_input.task.parse_config)
         return await self._derive(
             context, config, rows, prompt, [TextInput(prompt)],
@@ -205,7 +205,7 @@ class RealtimeUnderstandingService:
 
     async def _load_chunks(self, context: RealtimeContext):
         return await asyncio.to_thread(
-            self._repository.load_realtime_chunks, context.video_parse_task_id,
+            self._persistence.load_realtime_chunks, context.video_parse_task_id,
             tenant_id=context.request.tenant_id, video_id=context.request.video_id,
             task_version=context.task_version,
         )

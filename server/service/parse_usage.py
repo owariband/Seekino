@@ -22,7 +22,7 @@ from ..model.dto.parseUsageDTO import (
     UsageCostSummary, UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,
 )
 from ..config.usage import ModelPricingConfig
-from ..repository.video_parse import RUNTIME_DETAIL_KEY
+from ..constants.parse import RUNTIME_DETAIL_KEY
 from ..repository.model_usage import ModelUsageRepository
 from ..utils.time import datetime_to_unix_time_ms, now_utc, unix_time_ms_to_datetime
 from ..utils.validation import require_nonempty_text

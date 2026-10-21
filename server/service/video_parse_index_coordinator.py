@@ -45,7 +45,7 @@ from ..model.dto.jobDTO import (
     ChunkIndexingSnapshot,
     ChunkParseLease,
 )
-from ..repository.video_parse import INDEX_EMBEDDINGS_DETAIL_KEY
+from .video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 from ..storage.elasticsearch import (
     ElasticsearchIndexSchemaError,
     ElasticsearchVideoChunkStore,
@@ -62,7 +62,7 @@ EVENT_CACHE_FLUSH_EVENTS = 8
 EVENT_CACHE_FLUSH_SECONDS = 30.0
 
 
-class VideoParseIndexCoordinatorRepository(Protocol):
+class VideoParseIndexCoordinatorPersistence(Protocol):
     def load_chunk_indexing_snapshot(
         self, lease: ChunkParseLease, *, event_target=None, now=None,
     ) -> ChunkIndexingSnapshot: ...
@@ -109,7 +109,7 @@ class VideoParseIndexCoordinator:
 
     def __init__(
         self,
-        repository: VideoParseIndexCoordinatorRepository,
+        persistence: VideoParseIndexCoordinatorPersistence,
         store: ElasticsearchVideoChunkStore,
         embedder: MultimodalChunkEmbedder,
         *,
@@ -139,7 +139,7 @@ class VideoParseIndexCoordinator:
             raise ValueError(
                 "the current Server adapter requires its MP4 preprocessing contract"
             )
-        self._repository = repository
+        self._persistence = persistence
         self._store = store
         self._embedder = embedder
         self._media_resolver = media_resolver
@@ -160,7 +160,7 @@ class VideoParseIndexCoordinator:
 
         self._check_active()
         event_options = {"event_target": self._event_target} if self._event_target is not None else {}
-        snapshot = self._repository.load_chunk_indexing_snapshot(lease, **event_options)
+        snapshot = self._persistence.load_chunk_indexing_snapshot(lease, **event_options)
         if snapshot.target_index_generation != self.contract.index_generation:
             raise VideoParseIndexCoordinationError("index contract differs from the task target generation")
         chunk = snapshot.chunk
@@ -237,7 +237,7 @@ class VideoParseIndexCoordinator:
         if self._event_store is not None:
             self._index_events(lease, snapshot)
         self._check_active()
-        return self._repository.complete_chunk_indexing(
+        return self._persistence.complete_chunk_indexing(
             lease, chunk.content_version, snapshot.target_index_generation, **event_options,
         )
 
@@ -498,7 +498,7 @@ class VideoParseIndexCoordinator:
                 }
                 self._save_representations(lease, chunk, representations, receipt=receipt)
 
-        # This final repository call is also the last lease/content check before
+        # This final persistence call is also the last lease/content check before
         # the external write. ES external versions still order a following race.
         document = finalize_chunk_index(plan, tuple(artifacts.values()), sparse_artifact=sparse_artifact)
         self._save_representations(
@@ -565,7 +565,7 @@ class VideoParseIndexCoordinator:
         receipt: Mapping[str, Any],
     ) -> None:
         self._check_active()
-        self._repository.save_index_embeddings(
+        self._persistence.save_index_embeddings(
             lease,
             chunk.chunk_parse_task_id,
             chunk.content_version,
@@ -648,5 +648,5 @@ __all__ = [
     "MultimodalChunkEmbedder",
     "VideoParseIndexCoordinator",
     "VideoParseIndexCoordinationError",
-    "VideoParseIndexCoordinatorRepository",
+    "VideoParseIndexCoordinatorPersistence",
 ]

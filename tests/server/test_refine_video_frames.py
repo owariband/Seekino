@@ -18,7 +18,7 @@ from gateway.config import ClaudeCodeModelSourceConfig, load_config
 from gateway.media import ToolImageArtifact
 from server.config.parse_profile import default_video_parse_v2_config
 from server.model.dto.jobDTO import IntervalParseLease
-from server.repository.video_parse import VideoParseLeaseLostError
+from server.service.video_parse_persistence import VideoParseLeaseLostError
 from server.service.video_parse import VideoParseRuntimeService
 
 
@@ -66,7 +66,7 @@ def refine_frames(tmp_path, monkeypatch):
     )
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._gateway_config = gateway
-    runtime._repository = SimpleNamespace(load_task_input=Mock(return_value=source))
+    runtime._persistence = SimpleNamespace(load_task_input=Mock(return_value=source))
     runtime._artifact_store = SimpleNamespace(resolve=Mock(return_value=source_path))
     runtime._interval_lease = ContextVar("refine-frame-lease", default=lease)
     manager = SimpleNamespace(check_active=Mock())
@@ -135,7 +135,7 @@ def test_refine_supplies_images_from_bound_source_and_expanded_read_scope(refine
     assert payload["content_hash"] == case.source.content_hash
     assert case.extracted[0][:2] == (case.source_path, [61_500])
     assert all(not path.exists() for _, _, path in case.extracted)
-    case.runtime._repository.load_task_input.assert_called_once_with(case.snapshot["video_parse_task_id"])
+    case.runtime._persistence.load_task_input.assert_called_once_with(case.snapshot["video_parse_task_id"])
     case.runtime._artifact_store.resolve.assert_called_once_with(case.source.original_source_uri)
     assert case.manager.check_active.call_count >= 3
     assert config.model_dump(mode="json") == frozen
@@ -170,7 +170,7 @@ def test_refine_without_visual_support_skips_tool_and_source_lookup(refine_frame
     assert {tool.name for tool in case.generated.await_args.kwargs["tools"]} == {
         "get_context_canvas", "write_context_canvas",
     }
-    case.runtime._repository.load_task_input.assert_not_called()
+    case.runtime._persistence.load_task_input.assert_not_called()
     case.runtime._artifact_store.resolve.assert_not_called()
     assert not case.extracted
     assert case.snapshot["inputs"].parse_config.model_dump(mode="json") == frozen

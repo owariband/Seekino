@@ -19,7 +19,7 @@ from engine.rag.retrieval.events import (
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
-from ..repository.video_parse import VideoParseConflictError, VideoParseRepository
+from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
 from ..repository.video import SeriesNotReadyError
 from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_retrieval import QueryEmbedder, RetrievalIndexConsistencyError
@@ -28,7 +28,7 @@ class VideoEventRetrievalService:
     """Keep Event ranking and facts typed; expose familiar Chunk Evidence to the Agent."""
 
     def __init__(
-        self, repository: VideoParseRepository, store: ElasticsearchVideoEventStore,
+        self, persistence: VideoParsePersistenceService, store: ElasticsearchVideoEventStore,
         embedder: QueryEmbedder, *, contract: EventIndexingContract,
         policy: RetrievalPolicy, vision_embedder: QueryEmbedder | None = None,
         exact: bool = False, tracing: LangfuseTracing | None = None,
@@ -44,7 +44,7 @@ class VideoEventRetrievalService:
             raise ValueError("distinct Event encoders require a distinct compatible vision query embedder")
         if not isinstance(exact, bool):
             raise ValueError("exact must be a bool")
-        self._repository, self._store, self._embedder = repository, store, embedder
+        self._persistence, self._store, self._embedder = persistence, store, embedder
         self._vision_embedder = embedder if vision_embedder is None else vision_embedder
         self._exact, self._tracing = exact, tracing
 
@@ -77,13 +77,13 @@ class VideoEventRetrievalService:
         }))
         query = query.strip()
         try:
-            selected = self._repository.resolve_retrieval_scope(series_ids, tenant_id=tenant_id)
+            selected = self._persistence.resolve_retrieval_scope(series_ids, tenant_id=tenant_id)
         except (VideoParseConflictError, SeriesNotReadyError) as error:
             raise EventIndexNotReadyError(str(error)) from error
         # Absence/coverage is checked before any model call; it is not an empty match.
         self._store.bind_contract(self._contract)
         try:
-            sources = self._repository.validate_event_coverage(
+            sources = self._persistence.validate_event_coverage(
                 selected, index_name=self._store.index_name, contract_id=self._contract.contract_id,
                 video_chunk_ids=filters.video_chunk_ids or None,
             )
@@ -142,7 +142,7 @@ class VideoEventRetrievalService:
             if previous != identity:
                 raise RetrievalIndexConsistencyError("Event candidates disagree about one parent Chunk")
         try:
-            hydrated = self._repository.hydrate_retrieval_candidates(list(identities.items())) if identities else ()
+            hydrated = self._persistence.hydrate_retrieval_candidates(list(identities.items())) if identities else ()
         except VideoParseConflictError as error:
             raise RetrievalIndexConsistencyError(str(error)) from error
         by_chunk = {item.facts.video_chunk_id: item for item in hydrated}

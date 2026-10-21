@@ -10,11 +10,8 @@ from server.constants.parse import RUNTIME_DETAIL_KEY
 from server.database import create_session_factory
 from server.model.job import ChunkParseContent, ChunkParseTask, ChunkTaskPhase, VideoParseTask
 from server.model.video import Series, Video, VideoChunk
-from server.repository.video_parse import (
-    VideoParseConflictError,
-    VideoParseRepository,
-    VideoParseTaskNotFoundError,
-)
+from server.service.video_parse_errors import VideoParseConflictError, VideoParseTaskNotFoundError
+from server.service.video_parse_persistence import VideoParsePersistenceService
 
 
 def _content(sequence_no):
@@ -91,7 +88,7 @@ def test_export_preserves_formal_content_without_index_or_media(repository):
 
     event.listen(engine, "before_cursor_execute", record_sql)
     try:
-        snapshots = VideoParseRepository(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
+        snapshots = VideoParsePersistenceService(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
     finally:
         event.remove(engine, "before_cursor_execute", record_sql)
 
@@ -109,7 +106,7 @@ def test_export_preserves_formal_content_without_index_or_media(repository):
         stored.version += 1
     assert snapshots[0].content_version == 3
     assert snapshots[0].content.timeline[0].text_variants[0].text == "こんにちは。"
-    refreshed = VideoParseRepository(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
+    refreshed = VideoParsePersistenceService(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
     assert refreshed[0].content_version == 4 and refreshed[0].content.timeline == []
 
 
@@ -125,7 +122,7 @@ def test_export_rejects_missing_or_out_of_scope_source(repository, by_video, cas
     if case == "unknown":
         source_id = str(uuid4())
     with pytest.raises(VideoParseTaskNotFoundError, match="does not exist in this workspace"):
-        VideoParseRepository(factory).load_export_snapshot(
+        VideoParsePersistenceService(factory).load_export_snapshot(
             tenant_id="mine", **{"video_ids" if by_video else "video_parse_task_ids": [source_id]},
         )
 
@@ -150,7 +147,7 @@ def test_export_requires_complete_formal_parsing(repository, case):
         else:
             task.detail = {RUNTIME_DETAIL_KEY: {"accepted": True, "failure_status": "PARSING_FAILED"}}
     with pytest.raises(VideoParseConflictError, match="not (a formal accepted parse|complete)"):
-        VideoParseRepository(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
+        VideoParsePersistenceService(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
 
 
 def test_export_accepts_finished_prefix_and_explicit_historical_task(repository):
@@ -161,7 +158,7 @@ def test_export_accepts_finished_prefix_and_explicit_historical_task(repository)
         task = session.get(VideoParseTask, old_task_id)
         task.parse_config = {"compact_enabled": True}
         task.detail = {RUNTIME_DETAIL_KEY: {"accepted": True, "prefix": {"next_chunk_sequence_no": 2}}}
-    repo = VideoParseRepository(factory)
+    repo = VideoParsePersistenceService(factory)
     with pytest.raises(VideoParseConflictError, match="parsing is not complete"):
         repo.load_export_snapshot(tenant_id="mine", video_ids=[video_id])
     assert all(item.parse_task_id == old_task_id for item in repo.load_export_snapshot(
@@ -192,7 +189,7 @@ def test_export_rejects_incomplete_chunk_set(repository, case):
             child.phase = ChunkTaskPhase.REFINE
             child.status = "WAITING"
     with pytest.raises(VideoParseConflictError, match="(topology is incomplete|content is missing|refinement is not complete)"):
-        VideoParseRepository(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
+        VideoParsePersistenceService(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
 
 
 def test_export_preserves_cross_chunk_event_and_canonical_person_rules(repository):
@@ -206,7 +203,7 @@ def test_export_preserves_cross_chunk_event_and_canonical_person_rules(repositor
     })
     with factory.begin() as session:
         _first_content(session, task_id).content = content
-    snapshot = VideoParseRepository(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])[0]
+    snapshot = VideoParsePersistenceService(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])[0]
     assert snapshot.content.model_dump(mode="json") == content
     assert snapshot.content.persons == ["爱音"]
 
@@ -226,7 +223,7 @@ def test_export_rejects_invalid_formal_content(repository, case):
             content["persons"] = []
         stored.content = content
     with pytest.raises(VideoParseConflictError, match="content version 3 is invalid"):
-        VideoParseRepository(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
+        VideoParsePersistenceService(factory).load_export_snapshot(tenant_id="mine", video_ids=[video_id])
 
 
 @pytest.mark.parametrize("by_video", [False, True])
@@ -236,7 +233,7 @@ def test_export_multi_source_is_ordered_deduplicated_and_all_or_error(repository
     second_video, second_task = _seed(factory)
     key = "video_ids" if by_video else "video_parse_task_ids"
     requested = [second_video, first_video] if by_video else [second_task, first_task]
-    repo = VideoParseRepository(factory)
+    repo = VideoParsePersistenceService(factory)
     snapshots = repo.load_export_snapshot(tenant_id="mine", **{key: [*requested, requested[0]]})
     assert [item.parse_task_id for item in snapshots] == [second_task, second_task, first_task, first_task]
     with pytest.raises(VideoParseTaskNotFoundError):
@@ -253,4 +250,4 @@ def test_export_multi_source_is_ordered_deduplicated_and_all_or_error(repository
 ])
 def test_export_rejects_invalid_source_selection(repository, sources):
     with pytest.raises(ValueError):
-        VideoParseRepository(create_session_factory(repository[0])).load_export_snapshot(tenant_id="mine", **sources)
+        VideoParsePersistenceService(create_session_factory(repository[0])).load_export_snapshot(tenant_id="mine", **sources)

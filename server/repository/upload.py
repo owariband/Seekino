@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
@@ -14,7 +15,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from engine.parsev2.planning import plan_intervals
 from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
-from ..constants.parse import PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
+from ..constants.parse import (
+    PREPARE_FAILURES_KEY,
+    RUNTIME_DETAIL_KEY,
+    VOICEPRINT_PREPARATION_KEY as _VOICEPRINT_PREPARATION_KEY,
+)
 
 from ..model.dto.jobDTO import VideoParseTaskState
 from ..model.dto.uploadDTO import (
@@ -55,11 +60,6 @@ from ..model.video import (
 )
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from .index_sync import refresh_series_statuses
-from .video_parse import (
-    _VOICEPRINT_PREPARATION_KEY,
-    VideoParseConflictError,
-    invalidate_series_prefixes_from,
-)
 
 
 class UploadSessionNotFoundError(LookupError):
@@ -89,6 +89,9 @@ class UploadCompletionLeaseLostError(UploadStateError):
 class UploadRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def transaction(self) -> AbstractContextManager[Session]:
+        return self._session_factory.begin()
 
     def create_session(
         self,
@@ -412,6 +415,7 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
+        session: Session,
         tenant_id: str,
         expected_job_version: int,
         now: datetime,
@@ -421,179 +425,91 @@ class UploadRepository:
     ) -> VideoParseTaskState:
         """Create a new V2 task while retaining every prior task and result."""
 
-        with self._session_factory.begin() as session:
-            upload = self._locked_session(session, upload_session_id)
-            if upload.tenant_id != tenant_id:
-                raise UploadSessionNotFoundError(
-                    "upload session does not exist in this workspace"
-                )
-            if (
-                upload.status != UploadSessionStatus.COMPLETED.value
-                or upload.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
-            ):
-                raise UploadStateError(
-                    "only a completed upload session can be fully reparsed"
-                )
-            if upload.video_id is None:
-                raise UploadConflictError(
-                    "completed upload session is missing its Video"
-                )
-            latest = session.scalar(
-                select(VideoParseTask)
-                .where(
-                    VideoParseTask.video_id == upload.video_id,
-                    VideoParseTask.is_deleted.is_(False),
-                )
-                .order_by(VideoParseTask.version.desc())
-                .limit(1)
-                .with_for_update()
+        upload = self._locked_session(session, upload_session_id)
+        if upload.tenant_id != tenant_id:
+            raise UploadSessionNotFoundError(
+                "upload session does not exist in this workspace"
             )
-            if latest is None:
-                raise UploadConflictError(
-                    "upload session VideoParseTask no longer exists"
-                )
-            candidate_id = latest.id
-            candidate_runtime = latest.detail.get(RUNTIME_DETAIL_KEY, {})
-            realtime_only = isinstance(candidate_runtime, dict) and candidate_runtime.get("realtime_only") is True
-            realtime_chunks = []
-            if realtime_only:
-                # Parent is already locked; acquire Interval then Chunk rows consistently.
-                list(session.scalars(select(IntervalParseTask).where(
-                    IntervalParseTask.video_task_id == candidate_id,
-                ).order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id).with_for_update()))
-                realtime_chunks = list(session.scalars(select(ChunkParseTask).where(
-                    ChunkParseTask.video_task_id == candidate_id,
-                ).order_by(ChunkParseTask.id).with_for_update()))
-            latest = session.scalar(select(VideoParseTask).where(
+        if (
+            upload.status != UploadSessionStatus.COMPLETED.value
+            or upload.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
+        ):
+            raise UploadStateError(
+                "only a completed upload session can be fully reparsed"
+            )
+        if upload.video_id is None:
+            raise UploadConflictError(
+                "completed upload session is missing its Video"
+            )
+        latest = session.scalar(
+            select(VideoParseTask)
+            .where(
                 VideoParseTask.video_id == upload.video_id,
                 VideoParseTask.is_deleted.is_(False),
-            ).order_by(VideoParseTask.version.desc()).limit(1).with_for_update().execution_options(populate_existing=True))
-            if latest is None or latest.id != candidate_id:
-                raise UploadConflictError("VideoParseTask changed; refresh before reparsing")
-            if latest.version != expected_job_version:
-                raise UploadConflictError(
-                    "VideoParseTask version changed; refresh before reparsing"
-                )
-            if _has_active_prefix_lease(latest, now):
-                raise UploadStateError(
-                    "the VideoParseTask Prefix worker is active and cannot be reparsed"
-                )
-            snapshot = latest.parse_config if parse_config is None else parse_config
-            if snapshot_resolver is not None:
-                snapshot = snapshot_resolver(deepcopy(snapshot))
-            if realtime_only and snapshot != latest.parse_config:
-                raise UploadConflictError(
-                    "realtime base Parse freezes its configuration; promotion must use the same snapshot"
-                )
-            runtime = latest.detail.get(RUNTIME_DETAIL_KEY, {})
-            accepted = isinstance(runtime, dict) and runtime.get("accepted") is True
-            if (
-                (latest.status == VideoParseTaskStatus.PENDING.value or realtime_only)
-                and not accepted
-            ):
-                video = session.get(Video, upload.video_id)
-                if video is None:
-                    raise UploadConflictError(
-                        "upload session Video no longer exists"
-                    )
-                latest.chunk_count = _require_compatible_video_topology(
-                    session,
-                    video,
-                    snapshot,
-                )
-                execution = snapshot.get("execution")
-                max_retry_count = (
-                    execution.get("max_retry_count")
-                    if isinstance(execution, dict)
-                    else None
-                )
-                if (
-                    isinstance(max_retry_count, bool)
-                    or not isinstance(max_retry_count, int)
-                    or max_retry_count < 0
-                ):
-                    raise UploadConflictError(
-                        "VideoParseTask parse_config has invalid max_retry_count"
-                    )
-                latest.parse_config = snapshot
-                latest.max_attempts = max_retry_count + 1
-                detail = dict(latest.detail)
-                existing_runtime = detail.get(RUNTIME_DETAIL_KEY)
-                runtime = (
-                    dict(existing_runtime)
-                    if isinstance(existing_runtime, dict)
-                    else {}
-                )
-                runtime.pop("actor_user_id", None)
-                runtime.update({
-                    **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
-                    "accepted": True,
-                    "execution_mode": "v2",
-                    **({"realtime_only": False} if realtime_only else {}),
-                })
-                runtime.pop("failure_status", None)
-                detail[RUNTIME_DETAIL_KEY] = runtime
-                latest.detail = detail
-                if realtime_only:
-                    for child in realtime_chunks:
-                        if child.status != ChunkParseTaskStatus.FAILED.value:
-                            continue
-                        child.status = ChunkParseTaskStatus.QUEUED.value
-                        child.retry_count = 0
-                        child.next_execute_time = now
-                        child.finish_time = None
-                        child.last_error = None
-                        child.lease_owner = None
-                        child.lease_expire_time = None
-                        child.lease_version += 1
-                        child.update_time = datetime_to_unix_time_ms(now)
-                    active_topology = (
-                        latest.lease_owner is not None
-                        and latest.lease_expire_time is not None
-                        and latest.lease_expire_time > now
-                    )
-                    latest.status = (VideoParseTaskStatus.PREPARING.value if active_topology
-                                     else VideoParseTaskStatus.PENDING.value)
-                    latest.finish_time = None
-                    latest.last_error = None
-                    # A live topology lease retains its fencing token. Once it
-                    # finishes it observes accepted=true and activates Parse.
-                    if latest.lease_expire_time is None or latest.lease_expire_time <= now:
-                        latest.lease_owner = None
-                        latest.lease_expire_time = None
-                        latest.heartbeat_time = None
-                latest.next_execute_time = now
-                latest.update_time = datetime_to_unix_time_ms(now)
-                _invalidate_series_prefixes_for_reparse(
-                    session,
-                    video=video,
-                    now=now,
-                )
-                session.flush()
-                return self._task_snapshot(latest)
-            terminal_statuses = {
-                VideoParseTaskStatus.COMPLETE.value,
-                VideoParseTaskStatus.PARSING_FAILED.value,
-                VideoParseTaskStatus.INDEXING_FAILED.value,
-            }
-            if latest.status not in terminal_statuses:
-                raise UploadStateError(
-                    "only a complete or failed VideoParseTask can be reparsed"
-                )
+            )
+            .order_by(VideoParseTask.version.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if latest is None:
+            raise UploadConflictError(
+                "upload session VideoParseTask no longer exists"
+            )
+        candidate_id = latest.id
+        candidate_runtime = latest.detail.get(RUNTIME_DETAIL_KEY, {})
+        realtime_only = isinstance(candidate_runtime, dict) and candidate_runtime.get("realtime_only") is True
+        realtime_chunks = []
+        if realtime_only:
+            # Parent is already locked; acquire Interval then Chunk rows consistently.
+            list(session.scalars(select(IntervalParseTask).where(
+                IntervalParseTask.video_task_id == candidate_id,
+            ).order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id).with_for_update()))
+            realtime_chunks = list(session.scalars(select(ChunkParseTask).where(
+                ChunkParseTask.video_task_id == candidate_id,
+            ).order_by(ChunkParseTask.id).with_for_update()))
+        latest = session.scalar(select(VideoParseTask).where(
+            VideoParseTask.video_id == upload.video_id,
+            VideoParseTask.is_deleted.is_(False),
+        ).order_by(VideoParseTask.version.desc()).limit(1).with_for_update().execution_options(populate_existing=True))
+        if latest is None or latest.id != candidate_id:
+            raise UploadConflictError("VideoParseTask changed; refresh before reparsing")
+        if latest.version != expected_job_version:
+            raise UploadConflictError(
+                "VideoParseTask version changed; refresh before reparsing"
+            )
+        if _has_active_prefix_lease(latest, now):
+            raise UploadStateError(
+                "the VideoParseTask Prefix worker is active and cannot be reparsed"
+            )
+        snapshot = latest.parse_config if parse_config is None else parse_config
+        if snapshot_resolver is not None:
+            snapshot = snapshot_resolver(deepcopy(snapshot))
+        if realtime_only and snapshot != latest.parse_config:
+            raise UploadConflictError(
+                "realtime base Parse freezes its configuration; promotion must use the same snapshot"
+            )
+        runtime = latest.detail.get(RUNTIME_DETAIL_KEY, {})
+        accepted = isinstance(runtime, dict) and runtime.get("accepted") is True
+        if (
+            (latest.status == VideoParseTaskStatus.PENDING.value or realtime_only)
+            and not accepted
+        ):
             video = session.get(Video, upload.video_id)
             if video is None:
-                raise UploadConflictError("upload session Video no longer exists")
-            chunk_count = _require_compatible_video_topology(
+                raise UploadConflictError(
+                    "upload session Video no longer exists"
+                )
+            latest.chunk_count = _require_compatible_video_topology(
                 session,
                 video,
                 snapshot,
             )
             execution = snapshot.get("execution")
-            if not isinstance(execution, dict):
-                raise UploadConflictError(
-                    "VideoParseTask parse_config is missing execution settings"
-                )
-            max_retry_count = execution.get("max_retry_count")
+            max_retry_count = (
+                execution.get("max_retry_count")
+                if isinstance(execution, dict)
+                else None
+            )
             if (
                 isinstance(max_retry_count, bool)
                 or not isinstance(max_retry_count, int)
@@ -602,42 +518,118 @@ class UploadRepository:
                 raise UploadConflictError(
                     "VideoParseTask parse_config has invalid max_retry_count"
                 )
-            task = VideoParseTask(
-                id=str(uuid4()),
-                creator_id=actor_user_id,
-                video_id=video.id,
-                pipeline_version=latest.pipeline_version,
-                status=VideoParseTaskStatus.PENDING.value,
-                parse_config=snapshot,
-                chunk_count=chunk_count,
-                version=latest.version + 1,
-                next_execute_time=now,
-                attempt_count=0,
-                max_attempts=max_retry_count + 1,
-                lease_version=0,
-                processing_duration_ms=0,
-                processing_timing_complete=True,
-                is_test=latest.is_test,
-                is_deleted=False,
-                detail={
-                    RUNTIME_DETAIL_KEY: {
-                        **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
-                        "accepted": True,
-                        "execution_mode": "v2",
-                    }
-                },
-                create_time=datetime_to_unix_time_ms(now),
-                update_time=datetime_to_unix_time_ms(now),
+            latest.parse_config = snapshot
+            latest.max_attempts = max_retry_count + 1
+            detail = dict(latest.detail)
+            existing_runtime = detail.get(RUNTIME_DETAIL_KEY)
+            runtime = (
+                dict(existing_runtime)
+                if isinstance(existing_runtime, dict)
+                else {}
             )
-            session.add(task)
+            runtime.pop("actor_user_id", None)
+            runtime.update({
+                **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
+                "accepted": True,
+                "execution_mode": "v2",
+                **({"realtime_only": False} if realtime_only else {}),
+            })
+            runtime.pop("failure_status", None)
+            detail[RUNTIME_DETAIL_KEY] = runtime
+            latest.detail = detail
+            if realtime_only:
+                for child in realtime_chunks:
+                    if child.status != ChunkParseTaskStatus.FAILED.value:
+                        continue
+                    child.status = ChunkParseTaskStatus.QUEUED.value
+                    child.retry_count = 0
+                    child.next_execute_time = now
+                    child.finish_time = None
+                    child.last_error = None
+                    child.lease_owner = None
+                    child.lease_expire_time = None
+                    child.lease_version += 1
+                    child.update_time = datetime_to_unix_time_ms(now)
+                active_topology = (
+                    latest.lease_owner is not None
+                    and latest.lease_expire_time is not None
+                    and latest.lease_expire_time > now
+                )
+                latest.status = (VideoParseTaskStatus.PREPARING.value if active_topology
+                                 else VideoParseTaskStatus.PENDING.value)
+                latest.finish_time = None
+                latest.last_error = None
+                # A live topology lease retains its fencing token. Once it
+                # finishes it observes accepted=true and activates Parse.
+                if latest.lease_expire_time is None or latest.lease_expire_time <= now:
+                    latest.lease_owner = None
+                    latest.lease_expire_time = None
+                    latest.heartbeat_time = None
+            latest.next_execute_time = now
+            latest.update_time = datetime_to_unix_time_ms(now)
             session.flush()
-            _invalidate_series_prefixes_for_reparse(
-                session,
-                video=video,
-                now=now,
+            return self._task_snapshot(latest)
+        terminal_statuses = {
+            VideoParseTaskStatus.COMPLETE.value,
+            VideoParseTaskStatus.PARSING_FAILED.value,
+            VideoParseTaskStatus.INDEXING_FAILED.value,
+        }
+        if latest.status not in terminal_statuses:
+            raise UploadStateError(
+                "only a complete or failed VideoParseTask can be reparsed"
             )
-            session.flush()
-            return self._task_snapshot(task)
+        video = session.get(Video, upload.video_id)
+        if video is None:
+            raise UploadConflictError("upload session Video no longer exists")
+        chunk_count = _require_compatible_video_topology(
+            session,
+            video,
+            snapshot,
+        )
+        execution = snapshot.get("execution")
+        if not isinstance(execution, dict):
+            raise UploadConflictError(
+                "VideoParseTask parse_config is missing execution settings"
+            )
+        max_retry_count = execution.get("max_retry_count")
+        if (
+            isinstance(max_retry_count, bool)
+            or not isinstance(max_retry_count, int)
+            or max_retry_count < 0
+        ):
+            raise UploadConflictError(
+                "VideoParseTask parse_config has invalid max_retry_count"
+            )
+        task = VideoParseTask(
+            id=str(uuid4()),
+            creator_id=actor_user_id,
+            video_id=video.id,
+            pipeline_version=latest.pipeline_version,
+            status=VideoParseTaskStatus.PENDING.value,
+            parse_config=snapshot,
+            chunk_count=chunk_count,
+            version=latest.version + 1,
+            next_execute_time=now,
+            attempt_count=0,
+            max_attempts=max_retry_count + 1,
+            lease_version=0,
+            processing_duration_ms=0,
+            processing_timing_complete=True,
+            is_test=latest.is_test,
+            is_deleted=False,
+            detail={
+                RUNTIME_DETAIL_KEY: {
+                    **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
+                    "accepted": True,
+                    "execution_mode": "v2",
+                }
+            },
+            create_time=datetime_to_unix_time_ms(now),
+            update_time=datetime_to_unix_time_ms(now),
+        )
+        session.add(task)
+        session.flush()
+        return self._task_snapshot(task)
 
     def list_pending_deletions(
         self,
@@ -1525,24 +1517,6 @@ class UploadRepository:
 
 def _active_slot_key(series_id: str, episode_order: int) -> str:
     return f"{series_id}:{episode_order}"
-
-
-def _invalidate_series_prefixes_for_reparse(
-    session: Session,
-    *,
-    video: Video,
-    now: datetime,
-) -> None:
-    try:
-        invalidate_series_prefixes_from(
-            session,
-            series_id=video.series_id,
-            episode_order=video.episode_order,
-            video_id=video.id,
-            now=now,
-        )
-    except VideoParseConflictError as exc:
-        raise UploadStateError(str(exc)) from exc
 
 
 def _has_active_prefix_lease(

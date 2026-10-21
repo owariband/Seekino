@@ -16,15 +16,15 @@ from engine.common.frame_sampler import extract_video_frames, plan_frame_timesta
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from gateway.media import ToolImageArtifact
 
-from ..repository.video_parse import VideoParseConflictError, VideoParseRepository
+from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
 from ..storage.artifact import ArtifactStore
 
 
 class VideoFrameReader:
     """Read source frames pinned to a retrieved publication; never start parsing."""
 
-    def __init__(self, repository: VideoParseRepository, artifacts: ArtifactStore) -> None:
-        self._repository = repository
+    def __init__(self, persistence: VideoParsePersistenceService, artifacts: ArtifactStore) -> None:
+        self._persistence = persistence
         self._artifacts = artifacts
 
     def __call__(
@@ -54,7 +54,7 @@ class VideoFrameReader:
         except (KeyError, ValidationError) as error:
             raise FrameReadError("FRAME_SOURCE_UNAVAILABLE", "Frame source lacks a formal retrieval identity.") from error
         try:
-            hydrated = self._repository.hydrate_retrieval_candidates([(evidence.video_chunk_id, identity)])
+            hydrated = self._persistence.hydrate_retrieval_candidates([(evidence.video_chunk_id, identity)])
         except VideoParseConflictError as error:
             raise FrameReadError(
                 "FRAME_SOURCE_CHANGED",

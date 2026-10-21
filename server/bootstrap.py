@@ -36,7 +36,7 @@ from .repository.library import LibraryRepository
 from .repository.model_usage import ModelUsageRepository
 from .repository.upload import UploadRepository
 from .repository.video import VideoRepository
-from .repository.video_parse import VideoParseRepository
+from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.agent_chat import AgentChatService
 from .service.agent_attachments import AgentAttachmentService
 from .service.auth import AuthService
@@ -206,15 +206,15 @@ def _build_application_services(
     )
     construction_cleanup.callback(parse_usage.close)
     video_repository = VideoRepository(session_factory)
-    video_parse_repository = VideoParseRepository(session_factory)
+    parse_persistence = VideoParsePersistenceService(session_factory)
     media = MediaService(
         library, artifact_store, video_repository, config=settings.images,
-        video_parse_repository=video_parse_repository if settings.parse_execution_mode == "v2" else None,
+        parse_persistence=parse_persistence if settings.parse_execution_mode == "v2" else None,
     )
 
     assert settings.elasticsearch is not None
     retrieval, video_parse_query_encoder = build_retrieval_service(
-        video_parse_repository, elasticsearch_store,
+        parse_persistence, elasticsearch_store,
         gateway_config=gateway_config, embedding_config=parse_defaults.embedding,
         retrieval_config=settings.retrieval,
         index_generation=settings.elasticsearch.index_generation,
@@ -234,7 +234,7 @@ def _build_application_services(
             video_parse_query_encoder, max_height=parse_defaults.window.analysis_max_height,
         )
         event_retrieval = build_event_retrieval_service(
-            video_parse_repository, event_store, gateway_config=gateway_config,
+            parse_persistence, event_store, gateway_config=gateway_config,
             embedding_config=parse_defaults.embedding, retrieval_config=settings.retrieval,
             contract=event_contract,
             request_timeout_seconds=min(timeout for timeout in (
@@ -251,10 +251,9 @@ def _build_application_services(
         video_parse_query_encoder_source=parse_defaults.embedding.source,
         video_event_index_store=event_store,
     )
-    v2_repository = video_parse_repository
     v2_queue = MySqlVideoParseQueue(session_factory, video_concurrency=settings.parse.video_concurrency)
     v2_runtime = VideoParseRuntimeService(
-        v2_repository,
+        parse_persistence,
         v2_queue,
         artifact_store,
         VideoParseMediaService(
@@ -272,7 +271,7 @@ def _build_application_services(
         event_contract=event_contract,
     )
     realtime_service = RealtimeUnderstandingService(
-        v2_repository, v2_queue, v2_runtime, artifact_store,
+        parse_persistence, v2_queue, v2_runtime, artifact_store,
         gateway_config=gateway_config,
         default_parse_config=parse_defaults.to_video_parse_v2(),
         worker_id=settings.mq.consumer_id,
@@ -316,7 +315,7 @@ def _build_application_services(
             ),
             retrieval.search,
             event_retrieve=event_retrieval.search if event_retrieval is not None else None,
-            frame_reader=VideoFrameReader(v2_repository, artifact_store),
+            frame_reader=VideoFrameReader(parse_persistence, artifact_store),
             frame_max_height=agent_config.frame_max_height,
             maximum_frame_inspections=agent_config.maximum_frame_inspections,
             max_model_calls_per_turn=agent_config.max_model_calls_per_turn,

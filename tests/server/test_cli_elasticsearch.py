@@ -14,7 +14,7 @@ from server import cli
 from server.common import retrieval as retrieval_bootstrap
 from server.caller import elasticsearch as elasticsearch_caller, mysql as mysql_caller
 from server.config.parse_profile import default_video_parse_v2_config
-from server.repository.video_parse import VideoParseRetrievalScope
+from server.service.video_parse_persistence import VideoParseRetrievalScope
 from server.service.video_retrieval import RetrievalIndexConsistencyError
 
 
@@ -160,7 +160,7 @@ def test_event_status_is_read_only_and_does_not_allocate_index_or_models(monkeyp
             return {"target": None, "covered_chunks": 0}
 
     monkeypatch.setattr(cli, "open_database_storage", database)
-    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(cli, "open_elasticsearch_storage", lambda *_args, **_kwargs: pytest.fail("used ES"))
     monkeypatch.setattr(cli, "load_config", lambda *_args, **_kwargs: pytest.fail("loaded model"))
     monkeypatch.setattr(sys, "argv", ["anivag-server", "event-index-status", "--environment", "test",
@@ -195,7 +195,7 @@ def test_event_backfill_uses_task_encoder_and_shared_event_capture_settings(monk
             return ("chunk-1",)
 
     monkeypatch.setattr(cli, "open_database_storage", database)
-    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setenv("ANIVAG_PARSE_MAX_HEIGHT", "480")
     monkeypatch.setattr(cli, "open_elasticsearch_storage", lambda *_args, **_kwargs: pytest.fail("used ES"))
     monkeypatch.setattr(sys, "argv", ["anivag-server", "request-es-index-rebuild", "--environment", "test",
@@ -282,7 +282,7 @@ def test_request_es_index_rebuild_schedules_one_v2_task(
         "create_session_factory",
         lambda selected: factory if selected is engine else pytest.fail("wrong engine"),
     )
-    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(sys, "argv", [
         "anivag-server",
         "request-es-index-rebuild",
@@ -353,7 +353,7 @@ def test_rebuild_index_v2_requests_task_without_index_client(
         "create_session_factory",
         lambda selected: factory if selected is engine else pytest.fail("wrong engine"),
     )
-    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(
         elasticsearch_caller, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("used ES"),
     )
@@ -461,7 +461,7 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
     )
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
-    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(retrieval_bootstrap, "_LazyQueryEmbedder", Embedder)
     monkeypatch.setattr(retrieval_bootstrap, "VideoParseRetrievalService", Retrieval)
     configured = load_config()
@@ -589,7 +589,7 @@ def test_search_v2_closes_elasticsearch_client_on_failure(monkeypatch) -> None:
     monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
-    monkeypatch.setattr(cli, "VideoParseRepository", lambda _factory: object())
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", lambda _factory: object())
     monkeypatch.setattr(retrieval_bootstrap, "_LazyQueryEmbedder", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
     monkeypatch.setattr(retrieval_bootstrap, "VideoParseRetrievalService", Retrieval)
     monkeypatch.setattr(
@@ -814,7 +814,7 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
         close=lambda: events.append("elasticsearch"),
     ))
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
-    monkeypatch.setattr(cli, "VideoParseRepository", Repository)
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr("arkruntime.Ark.volc", sdk_client)
     build = cli.build_retrieval_service
 

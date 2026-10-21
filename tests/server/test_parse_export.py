@@ -19,7 +19,7 @@ from server.config.sse import SSEConfig
 from server.error.auth import AuthError
 from server.model.dto.authDTO import AuthIdentity
 from server.model.dto.mediaDTO import ParseExportRecord, parse_export_event_types
-from server.repository.video_parse import VideoParseConflictError, VideoParseTaskNotFoundError
+from server.service.video_parse_errors import VideoParseConflictError, VideoParseTaskNotFoundError
 from server.router.media import router
 from server.service.media import MediaService
 
@@ -61,7 +61,7 @@ def _snapshot(content=None):
 def export_api():
     snapshot = _snapshot()
     repo = SimpleNamespace(load_export_snapshot=Mock(return_value=(snapshot,)))
-    media = MediaService(_Forbidden(), _Forbidden(), video_parse_repository=repo)
+    media = MediaService(_Forbidden(), _Forbidden(), parse_persistence=repo)
     app = FastAPI()
     app.state.services = SimpleNamespace(media=media)
     app.include_router(router)

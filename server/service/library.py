@@ -4,14 +4,19 @@ from engine.common.background import extract_background_image_ids, prepare_backg
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import IntegrityError
+
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.identifiers import derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
 from ..model.video import SeriesVisibility
-from ..repository.library import LibraryRepository
+from ..repository.library import LibraryRepository, VideoEpisodeOrderConflictError
 from ..storage.artifact import ArtifactStore
 from ..utils.validation import canonical_uuid, normalize_language_tag_hint, require_nonempty_text
+from ..utils.time import now_utc
+from .video_parse_errors import VideoParseConflictError
+from .video_parse_prefix import invalidate_series_prefixes_from
 
 if TYPE_CHECKING:
     from .media import MediaService
@@ -131,11 +136,29 @@ class LibraryService:
             )
         normalized_video_id = canonical_uuid(video_id, "video_id")
         normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
-        self._repository.update_video_episode_order(
-            normalized_video_id,
-            tenant_id=normalized_workspace,
-            episode_order=episode_order,
-        )
+        try:
+            with self._repository.transaction() as session:
+                video, previous_episode_order = self._repository.update_video_episode_order(
+                    normalized_video_id,
+                    session=session,
+                    tenant_id=normalized_workspace,
+                    episode_order=episode_order,
+                )
+                if previous_episode_order != episode_order:
+                    try:
+                        invalidate_series_prefixes_from(
+                            session,
+                            series_id=video.series_id,
+                            episode_order=min(previous_episode_order, episode_order),
+                            video_id=video.id,
+                            now=now_utc(),
+                        )
+                    except VideoParseConflictError as exc:
+                        raise VideoEpisodeOrderConflictError(str(exc)) from exc
+        except IntegrityError as exc:
+            raise VideoEpisodeOrderConflictError(
+                "episode order is already occupied in this Series"
+            ) from exc
         return self._repository.get_video(
             normalized_video_id,
             normalized_workspace,

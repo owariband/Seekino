@@ -15,7 +15,7 @@ from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
 
-from server.repository.video_parse import VideoParseRetrievalScope, HydratedRetrievalCandidate
+from server.model.dto.jobDTO import VideoParseRetrievalScope, HydratedRetrievalCandidate
 from server.config.parse_profile import default_video_parse_v2_config
 from engine.parsev2.schemas import VideoParseResult
 from engine.rag.contracts import VideoChunkRetrievalIdentity
