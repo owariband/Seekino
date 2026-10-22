@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 
 
-import logging
 
 
 import subprocess
@@ -22,7 +21,6 @@ from threading import Barrier, Event
 from time import monotonic
 
 
-from uuid import uuid4
 
 
 import pytest
@@ -56,7 +54,6 @@ from agent.chat.common.errors import AgentExecutionTimeoutError, AgentModelInvoc
 from agent.chat.common.state import RunInputs
 
 
-from agent.chat.common.tool import as_langchain_tools
 
 
 from agent.chat.video_search.runtime import AgentRuntime
@@ -73,9 +70,7 @@ from agent.chat.video_search.state import (
 )
 
 
-from agent.chat.video_search.tools import ChatWriteCanvasArguments, UpdateVideoItemArguments
-
-from agent.chat.video_search.output import build_retrieval_trace, merge_retrieval_calls
+from agent.chat.video_search.output import build_retrieval_trace, merge_retrieval_calls, retrieval_hit
 from agent.chat.video_search.state import QueryReport, RetrievalCall
 from agent.chat.video_search.tools.shared import _ToolCallBudget
 
@@ -90,57 +85,6 @@ import sys
 assert 'agent.chat.video_search.runtime' not in sys.modules
 assert not any(name == 'langgraph' or name.startswith('langgraph.') for name in sys.modules)
 """], check=True)
-
-
-class _CanvasReader:
-    """Bind a collection while exercising the registered shared read Tool."""
-
-    def __init__(self, tools, collection):
-        self.tool = tools["get_context_canvas"]
-        self.collection = collection
-
-    def _arguments(self, values):
-        values = dict(values)
-        if "video_chunk_id" in values:
-            values["reference"] = values.pop("video_chunk_id")
-        return {"collection": self.collection, **values}
-
-    def invoke(self, values):
-        if values.get("type") == "tool_call":
-            values = {**values, "name": "get_context_canvas",
-                      "args": self._arguments(values["args"])}
-        else:
-            values = self._arguments(values)
-        return self.tool.invoke(values)
-
-    def execute(self, **values):
-        return self.tool.execute(**self._arguments(values))
-
-
-class _CanvasWriter:
-    """Send one business operation through the registered atomic batch Tool."""
-
-    def __init__(self, tools, operation):
-        self.tools, self.operation = tools, operation
-        self.args_schema = tools["write_context_canvas"].args_schema
-        self.description = tools["write_context_canvas"].description
-
-    def invoke(self, values):
-        collection = "draft" if "draft" in self.operation else "approved"
-        current = json.loads(self.tools["get_context_canvas"].invoke({"collection": collection}))
-        result = json.loads(self.tools["write_context_canvas"].invoke({
-            "batch_id": uuid4().hex, "expected_revision": current["revision"],
-            "operations": [{"operation": self.operation, **values}],
-        }))
-        return json.dumps(result["results"][0] if "results" in result else result)
-
-
-def _reader(tools, collection):
-    return _CanvasReader(tools, collection)
-
-
-def _writer(tools, operation):
-    return _CanvasWriter(tools, operation)
 
 
 def _inputs(name="conversation", *, workspace="workspace", series="series") -> RunInputs:
@@ -179,35 +123,13 @@ def _invoke_json(tool, arguments):
 
 
 def _read_all(tool, video_chunk_id):
-    overview = _invoke_json(tool, {
-        "video_chunk_id": video_chunk_id,
-        "section": "overview",
-    })
-    sections = {}
-    for item in overview["sections"]:
-        name, total = item["name"], item["total_chars"]
-        start = 0
-        content = []
-        while start < total:
-            end = total
-            while True:
-                page = _invoke_json(tool, {
-                    "video_chunk_id": video_chunk_id,
-                    "section": name,
-                    "start": start,
-                    "end": end,
-                })
-                if "error" not in page:
-                    break
-                assert page["error"]["code"] == "RANGE_TOO_LARGE"
-                end = page["error"]["suggested_end"]
-                assert start < end < total
-            assert page["start"] == start
-            assert page["end"] == end
-            content.append(page["content"])
-            start = end
-        sections[name] = json.loads("".join(content))
-    return sections
+    content, cursor = [], None
+    while True:
+        page = _invoke_json(tool, {"video_chunk_id": video_chunk_id, "cursor": cursor})
+        content.extend(item["text"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return "".join(content)
 
 
 def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
@@ -221,10 +143,10 @@ def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
         sequence_no=0, start_seconds=10, end_seconds=20, analysis_window_start_seconds=0,
         analysis_window_end_seconds=30, chunk_media_ref="chunk.mp4",
         analysis_window_media_ref="window.mp4", transcript=[], baseline_visual_caption=None,
-        keyframe_uris=[], all_time_events=[], all_time_event_text="cup action",
+        keyframe_uris=[], all_time_events=[{"event_type": "ACTION", "start_seconds": 12, "end_seconds": 18, "description": "cup action"}], all_time_event_text="cup action",
         retrieval_text="cup action", video_compact="cup action", context_before_compact="",
         context_after_compact="", window_summary="cup action", model_provider="ark",
-        model_name="parser", pipeline_version="v1", is_fallback=False,
+        model_name="parser", pipeline_version="video-parse-v2", is_fallback=False,
         parse_provenance=None, parsed_at=1_789_724_800,
     )
     return VideoChunkSearchHit(
@@ -363,115 +285,19 @@ class Query:
                         visual=self.channel_weights[2],
                     ))
                 )
-        ranges = (
-            [_selected_range(chunk_id) for chunk_id in self.selected]
-            if self.selected_ranges is None
-            else self.selected_ranges
-        )
-        for item in ranges:
-            _read_all(_reader(tools_by_name, "retrieval"), item["video_chunk_id"])
-            self.draft_tool_results.append(
-                _writer(tools_by_name, "upsert_draft_item").invoke({
-                    **item,
-                    "claim": f"Grounded evidence for {item['video_chunk_id']}.",
-                })
-            )
         return result_type.model_validate({
             "plan_context": f"plan-{number}", "message": f"draft-{number}",
         })
 
 
 class Evaluator:
-    model_name = "evaluator-test"
-    provider_name = "fake"
-
-    def __init__(self, approve_at=1):
-        self.approve_at = approve_at
-        self.prompts = []
+    def __init__(self, *args, **kwargs):
         self.contexts = []
-        self.budgets = []
-        self.request_timeouts = []
-
-    def run_structured(
-        self, prompt, *, tools, result_type, max_model_calls, request_timeout_seconds,
-        check_control=None, max_input_chars=None,
-    ):
-        self.prompts.append(prompt)
-        self.contexts.append(json.loads(prompt.rsplit("\n\n", 1)[1]))
-        self.budgets.append(max_model_calls)
-        assert request_timeout_seconds > 0
-        self.request_timeouts.append(request_timeout_seconds)
-        tools_by_name = _tool_map(tools)
-        cursor = None
-        item_ids = []
-        while True:
-            page = _invoke_json(_reader(tools_by_name, "draft"), {"cursor": cursor})
-            item_ids.extend(item["video_chunk_id"] for item in page["items"])
-            cursor = page["next_cursor"]
-            if cursor is None:
-                break
-        for video_chunk_id in item_ids:
-            _read_all(_reader(tools_by_name, "draft"), video_chunk_id)
-        number = len(self.contexts)
-        return result_type.model_validate({
-            "action": "complete" if number == self.approve_at else "continue",
-            "advice": "find broken cup, not picked-up cup" if number != self.approve_at else "approved",
-        })
 
 
 class Chat:
-    model_name = "chat-test"
-    provider_name = "fake"
-
     def __init__(self):
         self.contexts = []
-        self.request_timeouts = []
-        self.model_call_budgets = []
-        self.text_blocks = []
-        self.video_items = []
-        self.tool_results = []
-        self.require_tool_calls = []
-
-    def run_agent_loop(
-        self, prompt, *, tools, max_model_calls, handle_text, require_tool_call=False,
-        request_timeout_seconds=None, check_control=None, max_input_chars=None,
-    ):
-        assert [tool.name for tool in tools] == ["get_context_canvas", "write_context_canvas"]
-        tools_by_name = _tool_map(tools)
-        update_video_item = _writer(tools_by_name, "upsert_video_item")
-        assert update_video_item.description
-        assert update_video_item.args_schema is ChatWriteCanvasArguments
-        context = json.loads(prompt.rsplit("\n\n", 1)[1])
-        self.contexts.append(context)
-        assert request_timeout_seconds is not None
-        assert request_timeout_seconds > 0
-        self.request_timeouts.append(request_timeout_seconds)
-        self.model_call_budgets.append(max_model_calls)
-        assert check_control is not None
-        chunk_ids = context["approved_turn"]["video_chunk_ids"]
-        self.require_tool_calls.append(require_tool_call)
-        assert require_tool_call is bool(chunk_ids)
-        text_blocks = (
-            ["## Final answer", "Grounded answer."]
-            if chunk_ids else ["## Final answer\n\nGrounded answer."]
-        )
-        check_control()
-        self.text_blocks.append(text_blocks[0])
-        handle_text(text_blocks[0])
-        for chunk_id in chunk_ids:
-            check_control()
-            item = UpdateVideoItemArguments.model_validate({
-                "video_chunk_id": chunk_id,
-                "claim": f"Grounded evidence for {chunk_id}.",
-            })
-            self.video_items.append(item)
-            self.tool_results.append(json.loads(update_video_item.invoke(
-                item.model_dump(mode="python")
-            )))
-        if len(text_blocks) == 2:
-            check_control()
-            self.text_blocks.append(text_blocks[1])
-            handle_text(text_blocks[1])
 
 
 def _runtime(query=None, evaluator=None, chat=None, retrieval=None, **kwargs):
@@ -605,40 +431,35 @@ def test_lexical_trace_weights_reject_invalid_values(weights):
         LexicalRetrievalChannelWeights.model_validate(weights)
 
 
-
-def test_query_report_contains_all_real_evidence_and_only_suggested_ranges():
+def test_query_report_contains_all_real_evidence_without_mutable_drafts():
     runtime, query, evaluator, chat, retrieval = _runtime()
     events = []
 
     report = runtime.kick(_inputs(), emit=events.append)
 
     assert isinstance(report, QueryReport)
-    assert report.completion.message == report.query_draft.message == "draft-1"
+    assert report.completion.message == "draft-1"
     assert [hit.evidence.video_chunk_id for hit in report.retrieval_result.hits] == ["chunk-1", "chunk-2"]
-    assert [item.video_chunk_id for item in report.query_draft.selected_video_ranges] == ["chunk-1"]
     assert len(query.contexts) == len(retrieval.calls) == len(report.retrieval_calls) == 1
     assert evaluator.contexts == chat.contexts == []
-    assert report.canvas.items("approval") == []
-    assert report.canvas.render_blocks() == []
+    assert report.frame_receipts == ()
     assert report.retrieval_trace[0].video_chunk_ids == ["chunk-1", "chunk-2"]
     assert [event["type"] for event in events] == ["answer.progress"]
     assert runtime.model_name == query.model_name
 
 
-def test_query_report_keeps_selection_order_and_deep_canonical_snapshots():
+def test_query_report_keeps_deep_canonical_snapshots():
     runtime, *_ = _runtime(query=Query(selected=("chunk-2", "chunk-1")))
     report = runtime.kick(_inputs())
-    assert [item.video_chunk_id for item in report.query_draft.selected_video_ranges] == ["chunk-2", "chunk-1"]
-    original = report.canvas.retrieval_snapshot("chunk-1").evidence.window_summary
-    report.retrieval_result.hits[0].evidence.window_summary = "changed outside Canvas"
-    assert report.canvas.retrieval_snapshot("chunk-1").evidence.window_summary == original
+    original = retrieval_hit(report.retrieval_calls, "chunk-1").evidence.window_summary
+    report.retrieval_result.hits[0].evidence.window_summary = "changed report copy"
+    assert retrieval_hit(report.retrieval_calls, "chunk-1").evidence.window_summary == original
 
 
 def test_empty_real_retrieval_returns_an_uncertain_report_without_video_items():
     runtime, *_ = _runtime(query=Query(selected=()), retrieval=Retrieval([]))
     report = runtime.kick(_inputs())
     assert report.retrieval_result.hits == []
-    assert report.query_draft.selected_video_ranges == []
     assert len(report.retrieval_trace) == 1
 
 
@@ -679,31 +500,6 @@ def test_query_tool_scope_is_fixed_even_when_result_narrows_it():
     inputs["series_ids"] = ["series", "second"]
     with pytest.raises(AgentModelInvocationError, match="changed the fixed Series scope"):
         runtime.kick(inputs)
-
-
-def test_invalid_draft_range_can_be_repaired_inside_the_same_query():
-    class RepairQuery(Query):
-        def run_structured(self, prompt, *, tools, result_type, **kwargs):
-            available = _tool_map(tools)
-            available["retrieve"].invoke(_retrieval_args("cup", 2))
-            _read_all(_reader(available, "retrieval"), "chunk-1")
-            bad = json.loads(_writer(available, "upsert_draft_item").invoke({
-                "video_chunk_id": "chunk-1", "start_seconds": 5,
-                "end_seconds": 25, "claim": "too wide",
-            }))
-            assert "error" in bad
-            good = json.loads(_writer(available, "upsert_draft_item").invoke({
-                "video_chunk_id": "chunk-1", "start_seconds": 12,
-                "end_seconds": 18, "claim": "supported interval",
-            }))
-            assert "error" not in good
-            return result_type(plan_context="checked", message="supported, speaker uncertain")
-
-    runtime, *_ = _runtime(query=RepairQuery())
-    report = runtime.kick(_inputs())
-    item, = report.query_draft.selected_video_ranges
-    assert (item.start_seconds, item.end_seconds) == (12, 18)
-    assert report.completion.message == "supported, speaker uncertain"
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.5])
@@ -842,7 +638,7 @@ def test_unknown_query_failure_keeps_original_cause():
     assert isinstance(captured.value.__cause__, RuntimeError)
 
 
-def test_shared_query_graph_runs_concurrently_without_crossing_canvas_or_scope():
+def test_shared_query_graph_runs_concurrently_without_crossing_evidence_or_scope():
     started = Barrier(2)
 
     class ScopedQuery:
@@ -856,11 +652,7 @@ def test_shared_query_graph_runs_concurrently_without_crossing_canvas_or_scope()
             available = _tool_map(tools)
             available["retrieve"].invoke(_retrieval_args(name, 1))
             identifier = f"chunk-{name}"
-            _read_all(_reader(available, "retrieval"), identifier)
-            _writer(available, "upsert_draft_item").invoke({
-                "video_chunk_id": identifier, "start_seconds": 11, "end_seconds": 19,
-                "claim": f"evidence for {name}",
-            })
+            _read_all(available["read_retrieval_evidence"], identifier)
             return result_type(plan_context=name, message=f"report for {name}")
 
     def search(query, *, tenant_id, series_ids, **kwargs):
@@ -877,9 +669,9 @@ def test_shared_query_graph_runs_concurrently_without_crossing_canvas_or_scope()
             _inputs(name, workspace=f"workspace-{name}", series=f"series-{name}"),
             emit=events[name].append) for name in events}
         reports = {name: future.result(timeout=5) for name, future in futures.items()}
-    assert reports["a"].canvas.id != reports["b"].canvas.id
+    assert reports["a"].retrieval_calls is not reports["b"].retrieval_calls
     for name, report in reports.items():
-        assert report.canvas.retrieval_item_ids() == (f"chunk-{name}",)
+        assert [hit.evidence.video_chunk_id for hit in report.retrieval_result.hits] == [f"chunk-{name}"]
         assert report.completion.message == f"report for {name}"
         assert all(event["conversationId"] == name for event in events[name])
 
@@ -981,7 +773,7 @@ def test_event_only_query_reports_canonical_evidence_and_full_trace():
             ),
             matches=(FusedEventHit(
                 event_id="event-1", parse_task_id="task", video_chunk_id="chunk-1",
-                version=1, timeline_index=9, event_type="RELATION_CHANGE", fused_rank=1,
+                version=1, timeline_index=0, event_type="ACTION", fused_rank=1,
                 fused_score=0.5, channel_ranks={"semantic": 1}, channel_scores={"semantic": 0.9},
                 lexical_fields=({"field": "event_description", "raw_text": "a relationship changes"},),
                 start_ms=12, end_ms=18,
@@ -998,13 +790,10 @@ def test_event_only_query_reports_canonical_evidence_and_full_trace():
             tools_by_name = _tool_map(tools)
             page = _invoke_json(tools_by_name["search_video_events"], {
                 **_retrieval_args("relationship change", 3, lexical=0, semantic=1, visual=0),
-                "event_types": ["RELATION_CHANGE"],
+                "event_types": ["ACTION"],
             })
             assert page["result_count"] == 1
-            _read_all(_reader(tools_by_name, "retrieval"), "chunk-1")
-            _writer(tools_by_name, "upsert_draft_item").invoke({
-                **_selected_range("chunk-1"), "claim": "The canonical Event supports a relationship change.",
-            })
+            _read_all(tools_by_name["read_retrieval_evidence"], "chunk-1")
             return result_type(plan_context="search Events directly", message="grounded draft")
 
     runtime, query, evaluator, _chat, retrieval = _runtime(
@@ -1019,7 +808,7 @@ def test_event_only_query_reports_canonical_evidence_and_full_trace():
     assert all(entry["strategyVersion"] == EVENT_RETRIEVAL_STRATEGY_VERSION for entry in trace)
     assert all(entry["strategyVersion"] == entry["eventTrace"]["strategy_version"] for entry in trace)
     assert all(entry["eventTrace"]["discarded"][0]["reason"] == marker for entry in trace)
-    assert trace[0]["eventTrace"]["matched_events"][0]["timeline_index"] == 9
+    assert trace[0]["eventTrace"]["matched_events"][0]["timeline_index"] == 0
     assert marker not in json.dumps(query.contexts + evaluator.contexts)
 
 
@@ -1029,7 +818,6 @@ def test_query_native_image_history_keeps_one_task_body_within_text_budget(provi
 
     from agent.chat.common.state import ExecutionControl
     from agent.chat.video_search.query import run_query
-    from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
     from gateway.claude_code.agent import ClaudeAgentModel
     from gateway.codex.agent import CodexAgentModel
     from openai_codex import ImageInput as CodexImageInput, TextInput as CodexTextInput
@@ -1076,7 +864,7 @@ def test_query_native_image_history_keeps_one_task_body_within_text_budget(provi
         result = run_query(
             QueryModel(), inputs, tools=[], max_model_calls=1,
             control=ExecutionControl(monotonic() + 5), max_prompt_chars=100_000,
-            canvas=VideoSearchContextCanvas("workspace", ("series",)),
+            calls=[], frame_session=None,
         )
         assert result.plan_context == "updated-plan"
     finally:

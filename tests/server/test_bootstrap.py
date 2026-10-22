@@ -645,15 +645,6 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
 
     monkeypatch.setattr(mysql_caller, "create_database_engine", create_engine)
 
-    def forbidden_v1_runtime(*_args, **_kwargs):
-        raise AssertionError("V2 mode must not construct the V1 parse runtime")
-
-    def forbidden_v1_consumer(*_args, **_kwargs):
-        raise AssertionError("V2 mode must not construct the V1 parse consumer")
-
-    monkeypatch.setattr("engine.parsev1.runtime.EngineVideoParseRuntime", forbidden_v1_runtime)
-    monkeypatch.setattr("server.mq.consumer.ParseJobConsumer", forbidden_v1_consumer)
-
     application = main_module.init_application(settings)
     services = application.services
     try:

@@ -55,36 +55,15 @@ def _invoke(tool: BaseTool, arguments: dict) -> dict:
     return json.loads(tool.invoke(arguments))
 
 
-def _read_item(tool: BaseTool, video_chunk_id: str, *, collection: str) -> None:
-    overview = _invoke(tool, {
-        "collection": collection, "reference": video_chunk_id, "section": "overview",
-    })
-    for section in overview["sections"]:
-        start, total = 0, section["total_chars"]
-        while start < total:
-            end = total
-            while True:
-                page = _invoke(tool, {
-                    "collection": collection, "reference": video_chunk_id,
-                    "section": section["name"], "start": start, "end": end,
-                })
-                if "error" not in page:
-                    break
-                assert page["error"]["code"] == "RANGE_TOO_LARGE"
-                end = page["error"]["suggested_end"]
-            assert page["start"] == start and page["end"] == end
-            start = end
-
-
-def _write_canvas(tools_by_name, operation: str, fields: dict) -> dict:
-    collection = "draft" if "draft" in operation else "approved"
-    current = _invoke(tools_by_name["get_context_canvas"], {"collection": collection})
-    receipt = _invoke(tools_by_name["write_context_canvas"], {
-        "batch_id": uuid4().hex, "expected_revision": current["revision"],
-        "operations": [{"operation": operation, **fields}],
-    })
-    assert "error" not in receipt
-    return receipt["results"][0]
+def _read_item(tool: BaseTool, video_chunk_id: str) -> dict:
+    parts, cursor = [], None
+    while True:
+        page = _invoke(tool, {"video_chunk_id": video_chunk_id, "cursor": cursor})
+        parts.extend(item["text"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return {name: json.loads(value) for name, value in
+                    (section.split("\n", 1) for section in "".join(parts).split("\n\n"))}
 
 
 @dataclass
@@ -107,14 +86,9 @@ class _QueryModel:
             },
         })
         assert result["items"][0]["video_chunk_id"] == self.video_chunk_id
-        _read_item(tools_by_name["get_context_canvas"], self.video_chunk_id, collection="retrieval")
-        accepted = _write_canvas(tools_by_name, "upsert_draft_item", {
-            "video_chunk_id": self.video_chunk_id,
-            "start_seconds": self.start_seconds,
-            "end_seconds": self.end_seconds,
-            "claim": "第一段动作与问题匹配。",
-        })
-        assert accepted["accepted"] is True
+        evidence = _read_item(tools_by_name["read_retrieval_evidence"], self.video_chunk_id)
+        assert evidence["evidence.metadata"]["startSeconds"] == self.start_seconds
+        assert evidence["evidence.metadata"]["endSeconds"] == self.end_seconds
         return result_type.model_validate({
             "plan_context": "检索并核验第一段动作。",
             "message": "已找到匹配片段。",
@@ -130,11 +104,14 @@ class _ChatModel:
     def run_agent(self, _prompt, *, tools, user_message, handle_text, check_control, **_kwargs):
         available = _tool_map(tools)
         reports = _invoke(available["query_video"], {"query": user_message})["reports"]
-        item, = reports[0]["draft_items"]
-        assert item["video_chunk_id"] == self.expected_video_chunk_id
+        identifier, = reports[0]["evidence_references"]
+        assert identifier == self.expected_video_chunk_id
+        evidence = _read_item(available["read_retrieval_evidence"], identifier)["evidence.metadata"]
         check_control()
         accepted = _invoke(available["submit_video_item"], {
-            name: item[name] for name in ("video_chunk_id", "start_seconds", "end_seconds", "claim")
+            "video_chunk_id": identifier, "claim": "第一段动作与问题匹配。",
+            "start_seconds": evidence["startSeconds"],
+            "end_seconds": evidence["endSeconds"],
         })
         assert accepted["accepted"] is True
         handle_text("已找到第一段动作。")

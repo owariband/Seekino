@@ -458,49 +458,26 @@ def test_responses_and_chat_fallback_share_history_and_endpoint_settings(
         assert all("responses_output" not in message for message in transferred)
 
 
-@pytest.mark.parametrize("domain", ["parse", "chat"])
-def test_real_canvas_partial_updates_keep_omitted_fields_through_model_validation(domain):
+def test_parse_canvas_partial_updates_keep_omitted_fields_through_model_validation():
     from agent.utils.context_canvas_tools import build_context_canvas_tools
     from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion, ParseCanvasWrite, ParseContextCanvas
 
-    if domain == "parse":
-        from engine.parsev2.schemas import VideoParseResult
-        original = VideoParseResult.model_validate({"persons": ["Alice"], "timeline": [{
-            "event_type": "ACTION", "start_seconds": 1000, "end_seconds": 3000,
-            "description": "original", "participants": ["Alice"], "visible_persons": ["Alice"],
-        }]})
-        canvas = ParseContextCanvas(scope="refine:offline", members={"member": {
-            "sequence_no": 0, "version": 2, "bounds": (0, 20000), "content": original,
-        }})
-        event_ref = canvas.items("events")[0][0]
-        read, operation = {"collection": "events"}, {
-            "op": "patch_event", "event_ref": event_ref, "fields": {"description": "corrected"},
-        }
-        tools = build_context_canvas_tools(
-            canvas, role="refine", read_collections=("events",), write_args_schema=ParseCanvasWrite,
-            maximum_result_bytes=4096, maximum_read_chars=1024, maximum_catalog_items=10,
-        )
-    else:
-        from agent.chat.common.state import ExecutionControl
-        from agent.chat.video_search.tools.canvas import build_video_search_canvas_tools
-        from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
-        from engine.rag.contracts import AgentReply, VideoChunkSearchResult
-        from tests.agent.chat.test_tools import _hit
-
-        canvas = VideoSearchContextCanvas("workspace", ("series",))
-        canvas.record_retrieval(VideoChunkSearchResult(
-            query="cup", series_ids=["series"], agent_reply=AgentReply(message="retrieved", result_count=2),
-            hits=[_hit("chunk-1"), _hit("chunk-2")],
-        ))
-        for reference in ("chunk-1", "chunk-2"):
-            canvas.upsert_draft_item(video_chunk_id=reference, start_seconds=11, end_seconds=19, claim=reference)
-        read, operation = {"collection": "draft"}, {
-            "operation": "upsert_draft_item", "video_chunk_id": "chunk-1", "claim": "corrected",
-        }
-        tools = build_video_search_canvas_tools(
-            canvas=canvas, role="query", control=ExecutionControl(monotonic() + 60),
-            maximum_result_bytes=4096, maximum_read_chars=1024, maximum_catalog_items=10,
-        )
+    from engine.parsev2.schemas import VideoParseResult
+    original = VideoParseResult.model_validate({"persons": ["Alice"], "timeline": [{
+        "event_type": "ACTION", "start_seconds": 1000, "end_seconds": 3000,
+        "description": "original", "participants": ["Alice"], "visible_persons": ["Alice"],
+    }]})
+    canvas = ParseContextCanvas(scope="refine:offline", members={"member": {
+        "sequence_no": 0, "version": 2, "bounds": (0, 20000), "content": original,
+    }})
+    event_ref = canvas.items("events")[0][0]
+    read, operation = {"collection": "events"}, {
+        "op": "patch_event", "event_ref": event_ref, "fields": {"description": "corrected"},
+    }
+    tools = build_context_canvas_tools(
+        canvas, role="refine", read_collections=("events",), write_args_schema=ParseCanvasWrite,
+        maximum_result_bytes=4096, maximum_read_chars=1024, maximum_catalog_items=10,
+    )
     revision = canvas.revision
     read_response = _response("read")
     read_response.output[0].arguments = json.dumps(read)
@@ -519,15 +496,9 @@ def test_real_canvas_partial_updates_keep_omitted_fields_through_model_validatio
     receipt = next(item for item in responses.requests[-1]["input"]
                    if item.get("type") == "function_call_output" and item["call_id"] == "write")
     assert "error" not in json.loads(receipt["output"])
-    if domain == "parse":
-        expected = original.model_copy(deep=True)
-        expected.timeline[0].description = "corrected"
-        assert canvas.result("member") == expected
-    else:
-        assert canvas.draft_item("chunk-1").model_dump() == {
-            "video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19, "claim": "corrected",
-        }
-        assert canvas.draft_item("chunk-2").claim == "chunk-2"
+    expected = original.model_copy(deep=True)
+    expected.timeline[0].description = "corrected"
+    assert canvas.result("member") == expected
 
 
 @pytest.mark.parametrize("provider", ["ark", "deepseek", "chat"])

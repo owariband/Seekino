@@ -20,7 +20,7 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
 from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
-from ..repository.video import SeriesNotReadyError
+from ..error.retrieval import SeriesNotReadyError
 from ..storage.elasticsearch_events import ElasticsearchVideoEventStore
 from .video_retrieval import QueryEmbedder, RetrievalIndexConsistencyError
 

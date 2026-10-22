@@ -13,10 +13,7 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import ModelCallUsage, TokenUsage, capture_model_usage, model_call_context
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..model.dto.jobDTO import (
-    ChunkParseLease, IntervalParseLease, ParseJobLease, PrefixParseLease,
-    VideoParseLease, VideoParseTaskInputState,
-)
+from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, PrefixParseLease, VideoParseLease, VideoParseTaskInputState
 from ..model.dto.parseUsageDTO import (
     ModelUsageState,
     UsageCostSummary, UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,
@@ -58,24 +55,6 @@ class ParseUsageService:
 
     def close(self) -> None:
         pass  # The application owns the shared engine and its lifetime.
-
-    @contextmanager
-    def capture(self, lease: ParseJobLease) -> Iterator[None]:
-        context = {
-            "tenant_id": lease.tenant_id, "series_id": lease.series_id,
-            "video_id": lease.video_id, "job_id": lease.job_id,
-            "run_id": lease.job_id, "session_id": lease.video_id,
-            "attempt_count": lease.attempt_count, "lease_version": lease.lease_version,
-            "category": "parse",
-            "task_type": None,
-        }
-        tracing = self._tracing.scope(context) if self._tracing is not None else nullcontext()
-        owner_token = self._owner.set(None)
-        try:
-            with model_call_context(context), tracing:
-                yield
-        finally:
-            self._owner.reset(owner_token)
 
     @contextmanager
     def capture_video(

@@ -7,7 +7,6 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from time import monotonic
-from uuid import uuid4
 
 import pytest
 from langchain_core.messages import ToolMessage
@@ -31,72 +30,18 @@ from agent.chat.common.tool import (
 from agent.chat.common.tool_result import (
     JsonToolResult, TextToolResult, ToolError,
 )
-from agent.chat.video_search.context import build_canvas_checkpoint
-from agent.chat.video_search.state import DraftItem
+from agent.chat.video_search.context import build_retrieval_checkpoint, retrieval_evidence_text
 from agent.chat.video_search.skills import (
     LEXICAL_RETRIEVAL_SKILL_PROMPT,
     QUERY_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT,
 )
 from agent.chat.video_search.tools import (
-    DraftReadAudit, LexicalRetrieveArguments, RetrieveArguments,
+    LexicalRetrieveArguments, RetrieveArguments,
     build_query_tools, build_supervisor_tools,
 )
-from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
-from agent.chat.video_search.tools.canvas import build_video_search_canvas_tools
 from agent.chat.video_search.tools.shared import _ToolCallBudget
 from agent.utils.tool import AgentTool as SharedAgentTool
 from agent.utils.errors import AgentToolFeedbackError
-
-
-class _CanvasReader:
-    """Bind a collection while exercising the registered shared read Tool."""
-
-    def __init__(self, tools, collection):
-        self.tool = tools["get_context_canvas"]
-        self.collection = collection
-
-    def _arguments(self, values):
-        values = dict(values)
-        if "video_chunk_id" in values:
-            values["reference"] = values.pop("video_chunk_id")
-        return {"collection": self.collection, **values}
-
-    def invoke(self, values):
-        if values.get("type") == "tool_call":
-            values = {**values, "name": "get_context_canvas",
-                      "args": self._arguments(values["args"])}
-        else:
-            values = self._arguments(values)
-        return self.tool.invoke(values)
-
-    def execute(self, **values):
-        return self.tool.execute(**self._arguments(values))
-
-
-class _CanvasWriter:
-    """Send one business operation through the registered atomic batch Tool."""
-
-    def __init__(self, tools, operation):
-        self.tools, self.operation = tools, operation
-        self.args_schema = tools["write_context_canvas"].args_schema
-        self.description = tools["write_context_canvas"].description
-
-    def invoke(self, values):
-        collection = "draft" if "draft" in self.operation else "approved"
-        current = json.loads(self.tools["get_context_canvas"].invoke({"collection": collection}))
-        result = json.loads(self.tools["write_context_canvas"].invoke({
-            "batch_id": uuid4().hex, "expected_revision": current["revision"],
-            "operations": [{"operation": self.operation, **values}],
-        }))
-        return json.dumps(result["results"][0] if "results" in result else result)
-
-
-def _reader(tools, collection):
-    return _CanvasReader(tools, collection)
-
-
-def _writer(tools, operation):
-    return _CanvasWriter(tools, operation)
 
 
 def _inputs() -> RunInputs:
@@ -141,7 +86,7 @@ def _hit(chunk_id: str, *, episode: int = 1, large_text: str = "") -> VideoChunk
         transcript=[],
         baseline_visual_caption=large_text or "a cup breaks",
         keyframe_uris=[],
-        all_time_events=[],
+        all_time_events=[{"event_type": "DIALOGUE", "start_seconds": 12, "end_seconds": 18, "speaker": "speaker", "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": f"quote-{index}"}]} for index in range(3)],
         all_time_event_text=large_text or "a cup breaks",
         retrieval_text=large_text or "a cup breaks",
         video_compact=large_text or "a cup breaks",
@@ -150,7 +95,7 @@ def _hit(chunk_id: str, *, episode: int = 1, large_text: str = "") -> VideoChunk
         window_summary=large_text or "a cup breaks",
         model_provider="ark",
         model_name="parser",
-        pipeline_version="v1",
+        pipeline_version="video-parse-v2",
         is_fallback=False,
         parse_provenance=None,
         parsed_at=1_789_724_800,
@@ -205,9 +150,8 @@ def _control() -> ExecutionControl:
 
 def _query_tools(
     retrieval: Retrieval,
-    canvas: VideoSearchContextCanvas,
     *,
-    maximum_result_bytes: int = 1_024,
+    maximum_result_bytes: int = 4_096,
     maximum_read_chars: int = 16_384,
     maximum_catalog_items: int = 20,
     maximum_tool_calls: int | None = 100,
@@ -215,7 +159,6 @@ def _query_tools(
     calls = []
     tools = build_query_tools(
         retrieval.search,
-        canvas=canvas,
         inputs=_inputs(),
         control=_control(),
         calls=calls,
@@ -249,7 +192,7 @@ def _event_result(query: str, *, count: int = 3) -> EventSearchResult:
         ),
         matches=tuple(FusedEventHit(
             event_id=f"event-{index}", parse_task_id="task", video_chunk_id="chunk-1",
-            version=1, timeline_index=index + 7, event_type="DIALOGUE", speaker="speaker",
+            version=1, timeline_index=index, event_type="DIALOGUE", speaker="speaker",
             lexical_fields=({"field": "dialogue", "raw_text": f"quote-{index}", "language": "ja", "role": "ORIGINAL"},),
             matched_fields=({"field": "dialogue", "raw_text": f"quote-{index}", "language": "ja", "role": "ORIGINAL"},),
             fused_rank=index + 1, fused_score=1 / (index + 1),
@@ -276,10 +219,9 @@ def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(builder, r
         received.append((query, options))
         return found
 
-    canvas = VideoSearchContextCanvas(tenant_id="workspace", series_ids=("series",))
     calls = []
     tools = {tool.name: tool for tool in builder(
-        Retrieval([]).search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        Retrieval([]).search, inputs=_inputs(), control=_control(), calls=calls,
         maximum_top_k=1, maximum_tool_calls=None, maximum_result_bytes=4_096,
         maximum_catalog_items=1, event_retrieve=search,
     )}
@@ -295,7 +237,7 @@ def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(builder, r
         assert len(raw.encode()) <= 4_096
         page = json.loads(raw)
         events.extend(page["items"])
-    assert [item["matched_event"]["timeline_index"] for item in events] == [7, 8, 9]
+    assert [item["matched_event"]["timeline_index"] for item in events] == [0, 1, 2]
     assert events[0]["matched_event"]["lexical_fields"][0]["role"] == "ORIGINAL"
     assert events[0]["matched_event"]["matched_fields"][0]["language"] == "ja"
     assert len(events[0]["matched_event"]["matched_fields"][0]["text_excerpt"]) <= 160
@@ -304,7 +246,7 @@ def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(builder, r
         "lexical_weight": 0.8, "text_weight": 0.2, "vision_weight": 0,
         "event_types": ["DIALOGUE"], "speaker": "speaker", "video_chunk_ids": ["chunk-1"],
     })]
-    assert canvas.retrieval_item_ids() == ("chunk-1",)
+    assert calls[0].result.hits[0].evidence.video_chunk_id == "chunk-1"
     assert len(calls) == 1 and calls[0].role == role
     assert calls[0].strategy_version == EVENT_RETRIEVAL_STRATEGY_VERSION
     assert calls[0].event_trace == {**found.trace, "matched_events": [item.model_dump(mode="json") for item in found.matches]}
@@ -326,10 +268,9 @@ def test_event_index_not_ready_is_recoverable_and_chunk_search_remains_available
     def unavailable(*_args, **_kwargs):
         raise EventIndexNotReadyError("scope has no Event receipt")
 
-    canvas = VideoSearchContextCanvas(tenant_id="workspace", series_ids=("series",))
     calls = []
     tools = {tool.name: tool for tool in build_query_tools(
-        Retrieval([_hit("chunk-1")]).search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        Retrieval([_hit("chunk-1")]).search, inputs=_inputs(), control=_control(), calls=calls,
         maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=4_096,
         maximum_catalog_items=10, retrieval_channel="lexical", event_retrieve=unavailable,
     )}
@@ -337,14 +278,14 @@ def test_event_index_not_ready_is_recoverable_and_chunk_search_remains_available
         "query": "quote", "top_k": 1, "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0},
     }))
     assert feedback["error"]["code"] == "EVENT_INDEX_NOT_READY"
-    assert canvas.retrieval_item_ids() == () and len(calls) == 1
+    assert len(calls) == 1
     assert calls[0].status == "error" and calls[0].error["code"] == "EVENT_INDEX_NOT_READY"
     assert _retrieve(tools)["result_count"] == 1
     assert len(calls) == 2 and calls[1].granularity is None
 
 
-@pytest.mark.parametrize("corruption", ["scope", "speaker", "time", "strategy"])
-def test_event_results_are_validated_before_canvas_registration(corruption) -> None:
+@pytest.mark.parametrize("corruption", ["scope", "speaker", "time", "strategy", "schema", "missing_event", "negative_index"])
+def test_event_results_are_validated_before_recording_evidence(corruption) -> None:
     found = _event_result("quote", count=1)
     if corruption == "scope":
         found.chunk_result.hits[0].evidence.tenant_id = "outside"
@@ -352,12 +293,17 @@ def test_event_results_are_validated_before_canvas_registration(corruption) -> N
         found = found.model_copy(update={"matches": (found.matches[0].model_copy(update={"speaker": "other"}),)})
     elif corruption == "time":
         found = found.model_copy(update={"matches": (found.matches[0].model_copy(update={"start_ms": 40, "end_ms": 50}),)})
-    else:
+    elif corruption == "strategy":
         found.trace["strategy_version"] = "query-adaptive-three-channel-rrf-v2"
-    canvas = VideoSearchContextCanvas(tenant_id="workspace", series_ids=("series",))
+    elif corruption == "missing_event":
+        found.chunk_result.hits[0].evidence.all_time_events = []
+    elif corruption == "negative_index":
+        found = found.model_copy(update={"matches": (found.matches[0].model_copy(update={"timeline_index": -1}),)})
+    else:
+        found = {"invalid": "event result"}
     calls = []
     tools = build_query_tools(
-        Retrieval([]).search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        Retrieval([]).search, inputs=_inputs(), control=_control(), calls=calls,
         maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=4_096,
         maximum_catalog_items=10, event_retrieve=lambda *_args, **_kwargs: found,
     )
@@ -365,50 +311,14 @@ def test_event_results_are_validated_before_canvas_registration(corruption) -> N
     with pytest.raises(AgentModelInvocationError):
         tool.invoke({"query": "quote", "speaker": "speaker", "top_k": 1,
                      "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0}})
-    assert calls == [] and canvas.retrieval_item_ids() == ()
-
-
-def _read_all(tool, video_chunk_id: str, maximum_result_bytes: int) -> dict:
-    overview = json.loads(tool.invoke({"video_chunk_id": video_chunk_id}))
-    detail: dict = {}
-    for section in overview["sections"]:
-        name, total = section["name"], section["total_chars"]
-        start, parts = 0, []
-        while start < total:
-            raw = tool.invoke({
-                "video_chunk_id": video_chunk_id,
-                "section": name,
-                "start": start,
-                "end": total,
-            })
-            assert len(raw.encode("utf-8")) <= maximum_result_bytes
-            page = json.loads(raw)
-            if "error" in page:
-                assert page["error"]["code"] == "RANGE_TOO_LARGE"
-                end = page["error"]["suggested_end"]
-                page = json.loads(tool.invoke({
-                    "video_chunk_id": video_chunk_id,
-                    "section": name,
-                    "start": start,
-                    "end": end,
-                }))
-            parts.append(page["content"])
-            start = page["end"]
-        value = json.loads("".join(parts))
-        if name.startswith("evidence."):
-            detail.setdefault("evidence", {}).update(value)
-        else:
-            detail[name] = value
-    return detail
+    assert calls == []
 
 
 def test_role_registries_expose_only_the_exact_tools() -> None:
     inputs = _inputs()
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
     retrieval = Retrieval([_hit("chunk-1")])
     query_tools = build_query_tools(
         retrieval.search,
-        canvas=canvas,
         inputs=inputs,
         control=_control(),
         calls=[],
@@ -419,7 +329,6 @@ def test_role_registries_expose_only_the_exact_tools() -> None:
     )
     supervisor_tools = build_supervisor_tools(
         retrieval.search,
-        canvas=canvas,
         inputs=inputs,
         control=_control(),
         calls=[],
@@ -428,17 +337,8 @@ def test_role_registries_expose_only_the_exact_tools() -> None:
         maximum_result_bytes=1_024,
         maximum_catalog_items=20,
     )
-    canvas.approve_draft()
-    chat_tools = build_video_search_canvas_tools(
-        canvas=canvas, role="chat",
-        control=_control(),
-        maximum_result_bytes=1_024,
-        maximum_catalog_items=20, maximum_read_chars=16_384,
-    )
-
-    assert {tool.name for tool in query_tools} == {"retrieve", "get_context_canvas", "write_context_canvas"}
-    assert {tool.name for tool in supervisor_tools} == {"retrieve", "get_context_canvas"}
-    assert {tool.name for tool in chat_tools} == {"get_context_canvas", "write_context_canvas"}
+    assert {tool.name for tool in query_tools} == {"retrieve", "read_retrieval_evidence"}
+    assert {tool.name for tool in supervisor_tools} == {"retrieve", "read_retrieval_evidence"}
     assert all(isinstance(tool, SharedAgentTool) for tool in query_tools)
     assert {tool.name for tool in as_langchain_tools(query_tools)} == {
         tool.name for tool in query_tools
@@ -618,12 +518,12 @@ def test_agent_skills_are_explicitly_work_agnostic() -> None:
         assert skill.startswith("媒体时间合同：")
         assert "*_seconds / *Seconds" in skill
         assert "整数毫秒" in skill
-        assert "保留原始毫秒值" in skill
+        assert "inspect_video_frames 使用毫秒" in skill
         assert "必须除以 1000" in skill
-        assert "start/end 是字符偏移" in skill
+        assert "ID 和游标续读" in skill
 
 
-def test_retrieve_tool_keeps_v1_transcript_and_v2_lexical_contracts_separate() -> None:
+def test_retrieve_keeps_transcript_and_lexical_weight_contracts_separate() -> None:
     seen: list[tuple[str, float]] = []
 
     def search(query, *, transcript_weight=None, lexical_weight=None, **kwargs):
@@ -640,7 +540,6 @@ def test_retrieve_tool_keeps_v1_transcript_and_v2_lexical_contracts_separate() -
         )
 
     common = dict(
-        canvas=VideoSearchContextCanvas("workspace", ("series",)),
         inputs=_inputs(),
         control=_control(),
         calls=[],
@@ -649,17 +548,17 @@ def test_retrieve_tool_keeps_v1_transcript_and_v2_lexical_contracts_separate() -
         maximum_result_bytes=1_024,
         maximum_catalog_items=20,
     )
-    v1 = build_query_tools(search, **common)[0]
-    assert v1.args_schema is RetrieveArguments
-    json.loads(v1.invoke({
+    transcript = build_query_tools(search, **common)[0]
+    assert transcript.args_schema is RetrieveArguments
+    json.loads(transcript.invoke({
         "query": "spoken phrase",
         "top_k": 5,
         "channel_weights": {"transcript": 1, "semantic": 0, "visual": 0},
     }))
 
-    v2 = build_query_tools(search, retrieval_channel="lexical", **common)[0]
-    assert v2.args_schema is LexicalRetrieveArguments
-    json.loads(v2.invoke({
+    lexical = build_query_tools(search, retrieval_channel="lexical", **common)[0]
+    assert lexical.args_schema is LexicalRetrieveArguments
+    json.loads(lexical.invoke({
         "query": "structured terms",
         "top_k": 5,
         "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0},
@@ -684,11 +583,10 @@ def test_retrieve_honors_agent_quantity_and_pages_all_hits(
             kwargs["lexical_weight"] = kwargs.pop("transcript_weight")
         return retrieval.search(query, top_k=top_k, **kwargs)
 
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
     calls = []
-    maximum_result_bytes = 1_024
+    maximum_result_bytes = 4_096
     tool = build_tools(
-        search, canvas=canvas, inputs=inputs, control=_control(), calls=calls,
+        search, inputs=inputs, control=_control(), calls=calls,
         maximum_top_k=2, maximum_tool_calls=None,
         maximum_result_bytes=maximum_result_bytes, maximum_catalog_items=3,
         retrieval_channel=channel,
@@ -706,7 +604,7 @@ def test_retrieve_honors_agent_quantity_and_pages_all_hits(
         assert page["warnings"] == []
         assert page["partial"] is False
         assert len(page["items"]) <= 3
-        assert all("evidence" not in item for item in page["items"])
+        assert all("evidence" in item for item in page["items"])
         found_ids.extend(item["video_chunk_id"] for item in page["items"])
         if page["next_cursor"] is None:
             break
@@ -717,7 +615,7 @@ def test_retrieve_honors_agent_quantity_and_pages_all_hits(
     assert retrieval.calls == len(calls) == 1
     assert calls[0].top_k == requested
     if available:
-        assert canvas.retrieval_item(found_ids[-1]).evidence.video_chunk_id == found_ids[-1]
+        assert calls[0].result.hits[-1].evidence.video_chunk_id == found_ids[-1]
 
 
 @pytest.mark.parametrize("schema,channel", [
@@ -736,41 +634,19 @@ def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> N
     caplog.set_level(logging.INFO, logger="agent.chat.common.tool")
     tools, _calls = _query_tools(
         Retrieval([_hit("chunk-1", large_text="private evidence " * 100)]),
-        VideoSearchContextCanvas("workspace", ("series",)),
     )
     attach_agent_tool_logging(list(tools.values()), role="Query", inputs=_inputs())
 
     _retrieve(tools, top_k=1)
-    _reader(tools, "retrieval").invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text", "end": 10,
-    })
-    tools["get_context_canvas"].invoke({
-        "collection": "retrieval", "references": ["chunk-1"], "section": "candidate",
-    })
-    _writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 11,
-        "end_seconds": 19,
-        "claim": "private claim text",
-    })
-    feedback = json.loads(_writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "unknown-chunk",
-        "start_seconds": 11,
-        "end_seconds": 19,
-        "claim": "private claim text",
-    }))
+    tools["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1"})
+    feedback = json.loads(tools["read_retrieval_evidence"].invoke({"video_chunk_id": "unknown-chunk"}))
     assert feedback["error"]["code"] == "UNKNOWN_ITEM"
 
     assert "event=agent_tool_started role=Query conversation_id=conversation message_id=answer" in caplog.text
     assert '"top_k":1' in caplog.text
     assert '"item_video_chunk_ids":["chunk-1"]' in caplog.text
-    assert '"content_chars":' in caplog.text
-    assert '"collection":"retrieval"' in caplog.text
-    assert '"reference":"chunk-1"' in caplog.text
-    assert '"section":"evidence.text"' in caplog.text
-    assert '"references":["chunk-1"]' in caplog.text
-    assert '"reference_count":1' in caplog.text
-    assert "tool=write_context_canvas" in caplog.text
+    assert '"video_chunk_id":"chunk-1"' in caplog.text
+    assert "tool=read_retrieval_evidence" in caplog.text
     assert "status=error" in caplog.text
     assert '"error_code":"UNKNOWN_ITEM"' in caplog.text
     assert "broken cup" not in caplog.text
@@ -894,190 +770,16 @@ def test_tool_activity_publish_errors_preserve_business_results(caplog, failed_s
                for record in caplog.records)
 
 
-def test_retrieve_returns_catalog_and_read_trieve_item_ranges_full_evidence() -> None:
-    maximum_result_bytes = 768
-    lexical_hit = _hit("chunk-1", episode=1, large_text="杯子碎裂。" * 500)
-    lexical_hit.candidate.lexical_rank = 3
-    retrieval = Retrieval([
-        lexical_hit,
-        _hit("chunk-2", episode=2, large_text="人物离开。" * 500),
-    ])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, calls = _query_tools(
-        retrieval,
-        canvas,
-        maximum_result_bytes=maximum_result_bytes,
-        maximum_catalog_items=1,
-        maximum_tool_calls=1_000,
-    )
-
-    first = _retrieve(tools, top_k=2)
-
-    assert retrieval.calls == 1
-    assert len(calls) == 1
-    assert first["total"] == 2
-    assert first["draft_item_count"] == 0
-    assert len(first["items"]) == 1
-    assert first["items"][0]["video_chunk_id"] == "chunk-1"
-    assert first["items"][0]["lexical_rank"] == 3
-    assert first["items"][0]["transcript_rank"] is None
-    assert "杯子碎裂" not in json.dumps(first, ensure_ascii=False)
-    assert "evidence" not in first["items"][0]
-    assert first["next_cursor"]
-
-    inserted = json.loads(_writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 11,
-        "end_seconds": 19,
-        "claim": "first claim",
-    }))
-    assert inserted["draft_item_count"] == 1
-
-    second_raw = tools["retrieve"].invoke({"cursor": first["next_cursor"]})
-    second = json.loads(second_raw)
-    assert len(second_raw.encode("utf-8")) <= maximum_result_bytes
-    assert retrieval.calls == 1
-    assert [item["video_chunk_id"] for item in second["items"]] == ["chunk-2"]
-    assert second["draft_item_count"] == 1
-    assert second["next_cursor"] is None
-
-    invalid_cursor = json.loads(tools["retrieve"].invoke({"cursor": "invalid"}))
-    assert invalid_cursor["error"]["code"] == "INVALID_CATALOG_CURSOR"
-    assert invalid_cursor["draft_item_count"] == 1
-
-    detail = _read_all(
-        _reader(tools, "retrieval"), "chunk-1", maximum_result_bytes,
-    )
-    assert detail["candidate"]["videoChunkId"] == "chunk-1"
-    assert detail["evidence"]["videoCompact"] == "杯子碎裂。" * 500
-
-
-def test_read_range_reports_oversize_and_retries_with_smaller_range() -> None:
-    maximum_result_bytes = 700
-    retrieval = Retrieval([_hit("chunk-1", large_text="杯子碎裂。" * 500)])
-    tools, _calls = _query_tools(
-        retrieval, VideoSearchContextCanvas("workspace", ("series",)),
-        maximum_result_bytes=maximum_result_bytes,
-    )
-    _retrieve(tools, top_k=1)
-    tool = _reader(tools, "retrieval")
-    overview = json.loads(tool.invoke({"video_chunk_id": "chunk-1"}))
-    total = next(
-        section["total_chars"] for section in overview["sections"]
-        if section["name"] == "evidence.text"
-    )
-
-    oversized = json.loads(tool.invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text",
-        "start": 0, "end": total,
-    }))
-    assert "ok" not in oversized
-    assert oversized["error"]["code"] == "RANGE_TOO_LARGE"
-    suggested_end = oversized["error"]["suggested_end"]
-    assert 0 < suggested_end < total
-    assert len(json.dumps(oversized, ensure_ascii=False).encode("utf-8")) <= maximum_result_bytes
-
-    smaller_raw = tool.invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text",
-        "start": 0, "end": suggested_end,
-    })
-    smaller = json.loads(smaller_raw)
-    assert smaller["end"] == suggested_end
-    assert smaller["total_chars"] == total
-    assert len(smaller["content"]) == suggested_end
-    assert len(smaller_raw.encode("utf-8")) <= maximum_result_bytes
-
-    empty_tail = json.loads(tool.invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text",
-        "start": total, "end": total,
-    }))
-    assert empty_tail["error"]["code"] == "INVALID_RANGE"
-
-
-def test_read_tools_enforce_character_limit_with_retryable_end() -> None:
-    retrieval = Retrieval([_hit("chunk-1", large_text="detail" * 500)])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(
-        retrieval, canvas, maximum_result_bytes=4_096,
-        maximum_read_chars=80,
-    )
-    _retrieve(tools, top_k=1)
-    _writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1", "start_seconds": 11,
-        "end_seconds": 19, "claim": "draft claim",
-    })
-
-    for collection in ("retrieval", "draft"):
-        tool = _reader(tools, collection)
-        too_large = json.loads(tool.invoke({
-            "video_chunk_id": "chunk-1", "section": "evidence.text",
-            "start": 0, "end": 100,
-        }))
-        assert too_large["error"]["code"] == "RANGE_TOO_LARGE"
-        assert too_large["error"]["suggested_end"] == 80
-        smaller = json.loads(tool.invoke({
-            "video_chunk_id": "chunk-1", "section": "evidence.text",
-            "start": 0, "end": 80,
-        }))
-        assert smaller["end"] == 80
-        assert len(smaller["content"]) == 80
-
-
-def test_read_range_uses_smaller_of_character_and_byte_limits() -> None:
-    retrieval = Retrieval([_hit("chunk-1", large_text="杯子碎裂。" * 500)])
-    tools, _calls = _query_tools(
-        retrieval, VideoSearchContextCanvas("workspace", ("series",)),
-        maximum_result_bytes=700, maximum_read_chars=300,
-    )
-    _retrieve(tools, top_k=1)
-    too_large = json.loads(_reader(tools, "retrieval").invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text",
-        "start": 0, "end": 500,
-    }))
-    suggested_end = too_large["error"]["suggested_end"]
-    assert too_large["error"]["code"] == "RANGE_TOO_LARGE"
-    assert 0 < suggested_end < 300
-    smaller = json.loads(_reader(tools, "retrieval").invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text",
-        "start": 0, "end": suggested_end,
-    }))
-    assert smaller["end"] == suggested_end
-
-
-def test_read_range_uses_first_snapshot_after_same_id_is_retrieved_again() -> None:
-    retrieval = Retrieval([_hit("chunk-1", large_text="first evidence")])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(retrieval, canvas)
-    _retrieve(tools, top_k=1)
-    first = json.loads(_reader(tools, "retrieval").invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text",
-    }))
-
-    changed = _hit("chunk-1", large_text="later evidence")
-    changed.candidate.fused_rank = 9
-    changed.selection_reason.summary = "later search ranking"
-    retrieval.hits = [changed]
-    _retrieve(tools, top_k=1)
-    repeated = json.loads(_reader(tools, "retrieval").invoke({
-        "video_chunk_id": "chunk-1", "section": "evidence.text",
-        "start": first["start"], "end": first["end"],
-    }))
-
-    assert repeated["content"] == first["content"]
-    assert repeated["revision"] > first["revision"]
-    assert canvas.retrieval_item("chunk-1").candidate.fused_rank == 9
-
-
 def test_correctable_tool_error_is_returned_to_agent_with_error_status() -> None:
     tools, _calls = _query_tools(
-        Retrieval([]), VideoSearchContextCanvas("workspace", ("series",)),
+        Retrieval([]),
     )
-    internal_result = _reader(tools, "retrieval").execute(
+    internal_result = tools["read_retrieval_evidence"].execute(
         video_chunk_id="missing",
     )
-    result = _reader(tools, "retrieval").invoke({
+    result = tools["read_retrieval_evidence"].invoke({
         "type": "tool_call",
-        "name": "read_trieve_item",
+        "name": "read_retrieval_evidence",
         "id": "call-1",
         "args": {"video_chunk_id": "missing"},
     })
@@ -1093,7 +795,6 @@ def test_correctable_tool_error_is_returned_to_agent_with_error_status() -> None
 def test_success_and_validation_results_preserve_tool_call_id_and_status() -> None:
     tools, _calls = _query_tools(
         Retrieval([_hit("chunk-1")]),
-        VideoSearchContextCanvas("workspace", ("series",)),
     )
     success = tools["retrieve"].invoke({
         "type": "tool_call",
@@ -1128,350 +829,19 @@ def test_success_and_validation_results_preserve_tool_call_id_and_status() -> No
     assert invalid_payload["error"]["retryable"] is True
 
 
-def test_draft_audit_requires_full_coverage_of_every_section() -> None:
-    retrieval = Retrieval([_hit("chunk-1", large_text="detail" * 500)])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    query_tools, _calls = _query_tools(retrieval, canvas)
-    _retrieve(query_tools, top_k=1)
-    _writer(query_tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1", "start_seconds": 11,
-        "end_seconds": 19, "claim": "draft claim",
-    })
-    audit = DraftReadAudit()
-    supervisor_tools = {tool.name: tool for tool in build_supervisor_tools(
-        retrieval.search,
-        canvas=canvas,
-        inputs=_inputs(),
-        control=_control(),
-        calls=[],
-        maximum_top_k=20,
-        maximum_tool_calls=100,
-        maximum_result_bytes=700,
-        maximum_catalog_items=20,
-        audit=audit,
-    )}
-    _reader(supervisor_tools, "draft").invoke({})
-    overview = json.loads(_reader(supervisor_tools, "draft").invoke({
-        "video_chunk_id": "chunk-1",
-    }))
-    assert not audit.covers(["chunk-1"])
-
-    section = next(item for item in overview["sections"] if item["name"] == "draft")
-    total = section["total_chars"]
-    midpoint = total // 2
-    for start, end in ((0, midpoint), (midpoint, total)):
-        _reader(supervisor_tools, "draft").invoke({
-            "video_chunk_id": "chunk-1", "section": "draft",
-            "start": start, "end": end,
-        })
-    assert not audit.covers(["chunk-1"])
-
-    _read_all(_reader(supervisor_tools, "draft"), "chunk-1", 700)
-    assert audit.covers(["chunk-1"])
-
-
-def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
-    maximum_result_bytes = 700
-    retrieval = Retrieval([_hit("chunk-1", large_text="detail" * 500)])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(
-        retrieval, canvas, maximum_result_bytes=maximum_result_bytes, maximum_tool_calls=None,
-    )
-    retrieved = _retrieve(tools, top_k=1)
-    assert retrieved["draft_item_count"] == 0
-
-    first_item = {
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 11,
-        "end_seconds": 19,
-        "claim": "first claim",
-    }
-    inserted = json.loads(_writer(tools, "upsert_draft_item").invoke(first_item))
-    repeated = json.loads(_writer(tools, "upsert_draft_item").invoke(first_item))
-    updated = json.loads(_writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 12,
-        "end_seconds": 18,
-        "claim": "revised claim",
-    }))
-
-    assert inserted["operation"] == "inserted"
-    assert inserted["draft_item_count"] == 1
-    assert repeated["operation"] == "already_present"
-    assert repeated["draft_item_count"] == 1
-    assert updated["operation"] == "updated"
-    assert updated["draft_item_count"] == 1
-    catalog = json.loads(_reader(tools, "draft").invoke({}))
-    assert catalog["total"] == 1
-    assert catalog["items"][0] == {
-        "reference": "chunk-1",
-        "video_chunk_id": "chunk-1",
-        "episode_order": 1,
-        "start_seconds": 12,
-        "end_seconds": 18,
-        "description": "revised claim",
-    }
-    detail = _read_all(_reader(tools, "draft"), "chunk-1", maximum_result_bytes)
-    assert detail["draft"]["claim"] == "revised claim"
-    assert detail["evidence"]["videoChunkId"] == "chunk-1"
-
-    out_of_range = _writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 9,
-        "end_seconds": 18,
-        "claim": "out of range",
-    })
-    empty_range = _writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 15,
-        "end_seconds": 15,
-        "claim": "empty range",
-    })
-    reversed_range = _writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 16,
-        "end_seconds": 15,
-        "claim": "reversed range",
-    })
-    negative_range = _writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": -1,
-        "end_seconds": 15,
-        "claim": "negative range",
-    })
-
-    for rejected in (
-        out_of_range, empty_range, reversed_range, negative_range,
-    ):
-        failure = json.loads(rejected)
-        assert canvas.draft_item_count() == 1
-        assert failure["error"]["code"] == "INVALID_DRAFT_RANGE"
-        assert "10 <= start_seconds < end_seconds <= 20" in failure["error"]["message"]
-        assert "重新调用 write_context_canvas" in failure["error"]["retry_hint"]
-    assert "start_seconds=9, end_seconds=18" in out_of_range
-    assert "start_seconds=15, end_seconds=15" in empty_range
-    assert "start_seconds=16, end_seconds=15" in reversed_range
-    assert "start_seconds=-1, end_seconds=15" in negative_range
-    assert canvas.draft_item("chunk-1") == DraftItem(
-        video_chunk_id="chunk-1",
-        start_seconds=12,
-        end_seconds=18,
-        claim="revised claim",
-    )
-
-    removed = json.loads(_writer(tools, "remove_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-    }))
-    assert removed == {
-        "removed": True,
-        "video_chunk_id": "chunk-1",
-        "draft_item_count": 0,
-    }
-
-
-def test_update_draft_tool_does_not_mask_unexpected_errors(monkeypatch) -> None:
-    retrieval = Retrieval([_hit("chunk-1")])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(retrieval, canvas)
-    _retrieve(tools, top_k=1)
-
-    def fail_upsert(*_args, **_values) -> bool:
-        raise RuntimeError("unexpected storage failure")
-
-    monkeypatch.setattr(VideoSearchContextCanvas, "_upsert_draft", fail_upsert)
-
-    with pytest.raises(RuntimeError, match="unexpected storage failure"):
-        _writer(tools, "upsert_draft_item").invoke({
-            "video_chunk_id": "chunk-1",
-            "start_seconds": 11,
-            "end_seconds": 18,
-            "claim": "valid range",
-        })
-
-
-def test_draft_catalog_cursor_is_rejected_after_draft_changes() -> None:
-    retrieval = Retrieval([_hit("chunk-1"), _hit("chunk-2", episode=2)])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(
-        retrieval, canvas, maximum_catalog_items=1, maximum_result_bytes=1_024,
-    )
-    _retrieve(tools, top_k=2)
-    for chunk_id in ("chunk-1", "chunk-2"):
-        _writer(tools, "upsert_draft_item").invoke({
-            "video_chunk_id": chunk_id,
-            "start_seconds": 11,
-            "end_seconds": 19,
-            "claim": chunk_id,
-        })
-    first = json.loads(_reader(tools, "draft").invoke({}))
-    assert first["next_cursor"]
-
-    _writer(tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 12,
-        "end_seconds": 18,
-        "claim": "changed",
-    })
-
-    feedback = json.loads(_reader(tools, "draft").invoke({
-        "cursor": first["next_cursor"],
-    }))
-    assert feedback["error"]["code"] == "INVALID_CATALOG_CURSOR"
-    assert "without a cursor" in feedback["error"]["retry_hint"]
-
-
-def test_chat_tools_use_approved_snapshot_and_update_video_in_place() -> None:
-    retrieval = Retrieval([_hit("chunk-1"), _hit("chunk-2", episode=2)])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    query_tools, _calls = _query_tools(retrieval, canvas)
-    _retrieve(query_tools, top_k=2)
-    for chunk_id in ("chunk-1", "chunk-2"):
-        _writer(query_tools, "upsert_draft_item").invoke({
-            "video_chunk_id": chunk_id,
-            "start_seconds": 11,
-            "end_seconds": 19,
-            "claim": f"draft {chunk_id}",
-        })
-    canvas.approve_draft()
-    canvas.append_markdown("before")
-    tools = {tool.name: tool for tool in build_video_search_canvas_tools(
-        canvas=canvas, role="chat",
-        control=_control(),
-        maximum_result_bytes=1_024,
-        maximum_catalog_items=20, maximum_read_chars=16_384,
-    )}
-
-    assert json.loads(_reader(tools, "approved").invoke({}))["total"] == 2
-    _writer(tools, "upsert_video_item").invoke({
-        "video_chunk_id": "chunk-1", "claim": "first",
-    })
-    canvas.append_markdown("between")
-    _writer(tools, "upsert_video_item").invoke({
-        "video_chunk_id": "chunk-2", "claim": "second",
-    })
-    _writer(tools, "upsert_video_item").invoke({
-        "video_chunk_id": "chunk-1", "claim": "first revised",
-    })
-
-    rendered = canvas.render_draft()
-    assert [block.type for block in rendered.blocks] == [
-        "markdown", "video", "markdown", "video",
-    ]
-    assert rendered.video_items[0].claim == "first revised"
-    assert rendered.video_items[1].claim == "second"
-
-    removed = json.loads(_writer(tools, "remove_video_item").invoke({
-        "video_chunk_id": "chunk-1",
-    }))
-    assert removed["removed"] is True
-    assert [item.video_chunk_id for item in canvas.render_draft().video_items] == [
-        "chunk-2",
-    ]
-
-
-def test_canvas_checkpoint_contains_handles_without_full_evidence() -> None:
-    large_text = "canonical evidence" * 2_000
-    retrieval = Retrieval([_hit("chunk-1", large_text=large_text)])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    query_tools, _calls = _query_tools(retrieval, canvas)
-    _retrieve(query_tools, top_k=1)
-    _writer(query_tools, "upsert_draft_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 11,
-        "end_seconds": 19,
-        "claim": "bounded claim",
-    })
-
-    query_checkpoint = build_canvas_checkpoint(canvas, role="query")
-    rendered_query = json.dumps(query_checkpoint, ensure_ascii=False)
-
-    assert query_checkpoint["retrieval_catalog"] == {
-        "item_count": 1,
-        "visible_video_chunk_ids": ["chunk-1"],
-        "omitted_item_count": 0,
-    }
-    assert query_checkpoint["draft_catalog"] == [{
-        "video_chunk_id": "chunk-1",
-        "start_seconds": 11,
-        "end_seconds": 19,
-    }]
-    assert large_text not in rendered_query
-    assert "bounded claim" not in rendered_query
-
-    canvas.approve_draft()
-    canvas.append_markdown("answer text")
-    chat_tools = {tool.name: tool for tool in build_video_search_canvas_tools(
-        canvas=canvas, role="chat",
-        control=_control(),
-        maximum_result_bytes=1_024,
-        maximum_catalog_items=20, maximum_read_chars=16_384,
-    )}
-    _writer(chat_tools, "upsert_video_item").invoke({
-        "video_chunk_id": "chunk-1",
-        "claim": "rendered claim",
-    })
-
-    chat_checkpoint = build_canvas_checkpoint(canvas, role="chat")
-
-    assert chat_checkpoint["render_draft"] == {
-        "block_count": 2,
-        "blocks": [
-            {"type": "markdown", "character_count": 11},
-            {"type": "video", "video_chunk_id": "chunk-1"},
-        ],
-    }
-
-
-@pytest.mark.parametrize("role", ["query", "evaluator", "supervisor"])
-def test_execution_records_are_recoverable_through_existing_canvas_reads(role):
-    from tests.agent.chat.test_runtime import _read_all as read_sections
-
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    historical_advice = "EARLY_REVIEW_MARKER " * 150
-    turn = {"number": 1, "review": {"action": "continue", "advice": historical_advice}}
-    receipt = {
-        "video_chunk_id": "chunk-1", "role": "Query", "start_ms": 1000,
-        "end_ms": 2000, "frame_count": 1, "cache_hit": False,
-        "frames": [{"artifact_uri": "artifact://frame.png", "sha256": "a" * 64}],
-    }
-    canvas.put("history", "1", turn, readonly=True)
-    canvas.put("frame_inspections", "inspection-1", receipt, readonly=True)
-    tools = {tool.name: tool for tool in build_video_search_canvas_tools(
-        canvas=canvas, role=role, control=_control(), maximum_result_bytes=2048,
-        maximum_catalog_items=1, maximum_read_chars=200,
-    )}
-    history = _reader(tools, "history")
-    catalog = json.loads(history.invoke({}))
-    assert catalog["total"] == 1
-    assert catalog["items"][0]["reference"] == "1"
-    assert read_sections(history, "1")["history"] == turn
-    assert read_sections(_reader(tools, "frame_inspections"), "inspection-1")["frame_inspections"] == receipt
-    checkpoint = build_canvas_checkpoint(canvas, role="query")
-    assert checkpoint["run_records"]["history"]["item_count"] == 1
-    assert historical_advice not in json.dumps(checkpoint)
-
-    with pytest.raises(AgentToolFeedbackError, match="read-only"):
-        canvas.put("history", "1", {**turn, "number": 2})
-    canvas.approve_draft()
-    with pytest.raises(AgentToolFeedbackError, match="cannot read"):
-        canvas.catalog("history", role="chat")
-
-
 def test_shared_role_tool_budget_counts_every_tool() -> None:
     retrieval = Retrieval([_hit("chunk-1")])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
     tools, _calls = _query_tools(
-        retrieval, canvas, maximum_tool_calls=1,
+        retrieval, maximum_tool_calls=1,
     )
 
     _retrieve(tools, top_k=1)
     with pytest.raises(AgentModelInvocationError, match="Tool-call budget exceeded"):
-        _reader(tools, "retrieval").invoke({"video_chunk_id": "chunk-1"})
+        tools["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1"})
 
 
 def test_atomic_tools_share_the_injected_budget_across_supervisor_and_query() -> None:
     retrieval = Retrieval([_hit("chunk-1")])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
     budget = _ToolCallBudget(2, "Supervisor")
     calls, event_calls = [], []
 
@@ -1480,7 +850,7 @@ def test_atomic_tools_share_the_injected_budget_across_supervisor_and_query() ->
         return _event_result(query)
 
     tools = {tool.name: tool for tool in build_supervisor_tools(
-        retrieval.search, canvas=canvas, inputs=_inputs(), control=_control(), calls=calls,
+        retrieval.search, inputs=_inputs(), control=_control(), calls=calls,
         maximum_top_k=20, maximum_tool_calls=1, maximum_result_bytes=4_096,
         maximum_catalog_items=20, retrieval_channel="lexical", event_retrieve=events,
         budget=budget,
@@ -1489,13 +859,11 @@ def test_atomic_tools_share_the_injected_budget_across_supervisor_and_query() ->
     _retrieve(tools, top_k=1)
     assert calls[0].role == "supervisor"
     query_tools = {tool.name: tool for tool in build_query_tools(
-        retrieval.search, canvas=canvas, inputs=_inputs(), control=_control(), calls=[],
+        retrieval.search, inputs=_inputs(), control=_control(), calls=calls,
         maximum_top_k=20, maximum_tool_calls=1, maximum_result_bytes=4_096,
         maximum_catalog_items=20, budget=budget,
     )}
-    assert "error" not in json.loads(query_tools["get_context_canvas"].invoke({
-        "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
-    }))
+    assert "error" not in json.loads(query_tools["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1"}))
     with pytest.raises(AgentModelInvocationError, match="Supervisor Agent Tool-call budget"):
         tools["search_video_events"].invoke({
             "query": "quote", "top_k": 1,
@@ -1507,226 +875,65 @@ def test_atomic_tools_share_the_injected_budget_across_supervisor_and_query() ->
 
 def test_tool_budget_can_be_disabled() -> None:
     retrieval = Retrieval([_hit("chunk-1")])
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(retrieval, canvas, maximum_tool_calls=None)
+    tools, _calls = _query_tools(retrieval, maximum_tool_calls=None)
 
     _retrieve(tools, top_k=1)
     for _ in range(101):
-        response = _reader(tools, "retrieval").invoke({
+        response = tools["read_retrieval_evidence"].invoke({
             "video_chunk_id": "chunk-1",
         })
-        assert json.loads(response)["id"] == "chunk-1"
+        assert json.loads(response)["video_chunk_id"] == "chunk-1"
 
 
-def test_video_search_canvas_uses_shared_storage_and_atomic_operations() -> None:
-    from agent.utils.context_canvas import ContextCanvas
-
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(Retrieval([_hit("chunk-1"), _hit("chunk-2")]), canvas)
-    _retrieve(tools, top_k=2)
-    assert isinstance(canvas, ContextCanvas)
-    assert not hasattr(canvas, "_draft_items")
-    before = canvas.snapshot()
-    arguments = {
-        "batch_id": "atomic-error", "expected_revision": canvas.revision,
-        "operations": [
-            {"operation": "upsert_draft_item", "video_chunk_id": "chunk-1",
-             "start_seconds": 11, "end_seconds": 19, "claim": "kept"},
-            {"operation": "upsert_draft_item", "video_chunk_id": "chunk-2",
-             "start_seconds": 1, "end_seconds": 2, "claim": "invalid"},
-        ],
-    }
-    failed = json.loads(tools["write_context_canvas"].invoke(arguments))
-    assert failed["error"]["code"] == "INVALID_DRAFT_RANGE"
-    assert canvas.snapshot() == before
-    arguments["operations"][1].update(start_seconds=12, end_seconds=18)
-    receipt = json.loads(tools["write_context_canvas"].invoke(arguments))
-    assert len(receipt["results"]) == 2
-    assert canvas.snapshot().collections["draft"]["chunk-1"]["claim"] == "kept"
 
 
-def test_canvas_write_omitted_fields_replay_and_stale_revision() -> None:
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(Retrieval([_hit("chunk-1"), _hit("chunk-2")]), canvas)
-    _retrieve(tools, top_k=2)
-    for reference in ("chunk-1", "chunk-2"):
-        canvas.upsert_draft_item(video_chunk_id=reference, start_seconds=11,
-                                    end_seconds=19, claim=reference)
-    arguments = {"batch_id": "partial", "expected_revision": canvas.revision,
-                 "operations": [{"operation": "upsert_draft_item", "video_chunk_id": "chunk-1",
-                                 "claim": "corrected"}]}
-    receipt = json.loads(tools["write_context_canvas"].invoke(arguments))
-    assert receipt["replayed"] is False
-    assert canvas.draft_item("chunk-1").start_seconds == 11
-    assert canvas.draft_item("chunk-2").claim == "chunk-2"
-    canvas.append_markdown("Host streamed text.")
-    revision = canvas.revision
-    replay = json.loads(tools["write_context_canvas"].invoke(arguments))
-    assert replay["replayed"] is True
-    assert canvas.revision == revision
-    stale = json.loads(tools["write_context_canvas"].invoke({**arguments, "batch_id": "stale"}))
-    assert stale["error"]["code"] == "STALE_REVISION"
-    assert canvas.revision == revision
-    reused = json.loads(tools["write_context_canvas"].invoke({
-        **arguments, "operations": [{"operation": "remove_draft_item", "video_chunk_id": "chunk-1"}],
-    }))
-    assert reused["error"]["code"] == "BATCH_ID_REUSED"
-    assert canvas.draft_item("chunk-1").claim == "corrected"
+def test_direct_retrieval_returns_source_evidence_and_full_unicode_continuation():
+    hit = _hit("chunk-1", large_text="真实对白\n\"与动作\"" * 300)
+    tools, calls = _query_tools(Retrieval([hit]), maximum_result_bytes=4096, maximum_read_chars=211, maximum_tool_calls=None)
+    page = _retrieve(tools, top_k=1)
+    assert page["items"][0]["evidence_truncated"]
+    assert "quote-0" in page["items"][0]["evidence"]
+    parts, cursor = [], None
+    while True:
+        raw = tools["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1", "cursor": cursor})
+        assert len(raw.encode()) <= 4096
+        page = json.loads(raw)
+        assert all(len(item["text"]) <= 211 for item in page["items"])
+        parts.extend(item["text"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert "".join(parts) == retrieval_evidence_text(hit)
+    assert len(calls) == 1
 
 
-def test_canvas_role_permissions_and_approved_evidence_are_frozen() -> None:
-    from agent.utils.errors import AgentToolFeedbackError
-
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    retrieval = Retrieval([_hit("chunk-1", large_text="original evidence"), _hit("chunk-2")])
-    query, _calls = _query_tools(retrieval, canvas)
-    _retrieve(query, top_k=2)
-    canvas.upsert_draft_item(video_chunk_id="chunk-1", start_seconds=11,
-                                end_seconds=19, claim="approved claim")
-    canvas.approve_draft()
-    canvas.upsert_draft_item(video_chunk_id="chunk-1", start_seconds=12,
-                                end_seconds=18, claim="later claim")
-    retrieval.hits = [_hit("chunk-1", large_text="later evidence")]
-    _retrieve(query, top_k=1)
-    chat = {tool.name: tool for tool in build_video_search_canvas_tools(
-        canvas=canvas, role="chat", control=_control(),
-        maximum_result_bytes=1024, maximum_catalog_items=20, maximum_read_chars=16_384,
-    )}
-    assert canvas.draft_item("chunk-1", approved=True).claim == "approved claim"
-    assert canvas.approved_hit("chunk-1").evidence.retrieval_text == "original evidence"
-    for collection in ("draft", "retrieval", "evidence"):
-        response = json.loads(chat["get_context_canvas"].invoke({"collection": collection}))
-        assert response["error"]["code"] == "FORBIDDEN_COLLECTION"
-    unapproved = json.loads(chat["get_context_canvas"].invoke({
-        "collection": "approved", "reference": "chunk-2",
-    }))
-    assert unapproved["error"]["code"] == "UNKNOWN_ITEM"
-    denied = json.loads(chat["write_context_canvas"].invoke({
-        "batch_id": "role-write", "expected_revision": canvas.revision,
-        "operations": [{"operation": "remove_draft_item", "video_chunk_id": "chunk-1"}],
-    }))
-    assert denied["error"]["code"] == "INVALID_ARGUMENTS"
-    with pytest.raises(AgentToolFeedbackError, match="read-only"):
-        canvas.mutate(lambda draft: draft["approved"]["chunk-1"].update(claim="changed"))
+def test_evidence_cursor_cannot_cross_id_or_invocation():
+    tools, _ = _query_tools(Retrieval([_hit("chunk-1", large_text="a" * 10000), _hit("chunk-2")]))
+    _retrieve(tools)
+    page = json.loads(tools["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1"}))
+    bad = json.loads(tools["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-2", "cursor": page["next_cursor"]}))
+    assert bad["error"]["code"] == "INVALID_EVIDENCE_CURSOR"
+    other, _ = _query_tools(Retrieval([]))
+    missing = json.loads(other["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1", "cursor": page["next_cursor"]}))
+    assert missing["error"]["code"] == "UNKNOWN_ITEM"
 
 
-def test_supervisor_reads_canonical_candidates_and_review_without_write_access() -> None:
-    from agent.utils.errors import AgentToolFeedbackError
-
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    original = _hit("chunk-1", large_text="original evidence")
-    original.selection_reason.summary = "original summary"
-    retrieval = Retrieval([original, _hit("chunk-2")])
-    query, _ = _query_tools(retrieval, canvas)
-    _retrieve(query, top_k=2)
-    canvas.upsert_draft_item(video_chunk_id="chunk-1", start_seconds=11,
-                             end_seconds=19, claim="approved claim")
-    canvas.approve_draft()
-    canvas.append_markdown("Child answer.")
-    canvas.put("review", "latest", {
-        "turn_number": 1, "action": "complete", "advice": "supported",
-        "selected_video_ranges": [{"video_chunk_id": "chunk-1", "start_seconds": 11,
-                                   "end_seconds": 19}],
-    }, readonly=True)
-    newer = _hit("chunk-1", large_text="newer evidence")
-    newer.selection_reason.summary = "newer summary"
-    retrieval.hits = [newer]
-    _retrieve(query, top_k=1)
-    tools = {tool.name: tool for tool in as_langchain_tools(build_video_search_canvas_tools(
-        canvas=canvas, role="supervisor", control=_control(),
-        maximum_result_bytes=2048, maximum_catalog_items=20, maximum_read_chars=1024,
-    ))}
-    assert set(tools) == {"get_context_canvas"}
-    read = tools["get_context_canvas"]
-    catalog = json.loads(read.invoke({"collection": "retrieval"}))
-    assert catalog["items"][0]["description"] == "original summary"
-    assert canvas.catalog("retrieval", role="query")[0]["description"] == "newer summary"
-    for collection in ("retrieval", "draft", "approved", "render", "review"):
-        assert "error" not in json.loads(read.invoke({"collection": collection}))
-    evidence = json.loads(read.invoke({
-        "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
-    }))
-    assert "original evidence" in evidence["content"]
-    assert "newer evidence" not in evidence["content"]
-    assert "error" not in json.loads(read.invoke({
-        "collection": "retrieval", "reference": "chunk-2",
-    }))
-    review = json.loads(read.invoke({
-        "collection": "review", "reference": "latest", "section": "review",
-    }))
-    assert json.loads(review["content"])["action"] == "complete"
-    assert json.loads(review["content"])["selected_video_ranges"][0]["start_seconds"] == 11
-    forbidden = json.loads(read.invoke({"collection": "evidence"}))
-    assert forbidden["error"]["code"] == "FORBIDDEN_COLLECTION"
-    for role in ("query", "evaluator", "chat"):
-        with pytest.raises(AgentToolFeedbackError, match="cannot read"):
-            canvas.catalog("review", role=role)
+def test_conflicting_retrieval_cannot_replace_accepted_source_evidence():
+    retrieval = Retrieval([_hit("chunk-1")])
+    tools, calls = _query_tools(retrieval)
+    _retrieve(tools)
+    original = calls[0].result.hits[0].evidence.model_copy(deep=True)
+    retrieval.hits[0].evidence.window_summary = "conflicting version"
+    with pytest.raises(AgentModelInvocationError, match="source evidence changed"):
+        _retrieve(tools)
+    assert len(calls) == 1 and calls[0].result.hits[0].evidence == original
 
 
-def test_canvas_audit_rejects_skipped_catalog_page_and_changed_revision() -> None:
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    retrieval = Retrieval([_hit("chunk-1"), _hit("chunk-2")])
-    query, _calls = _query_tools(retrieval, canvas)
-    _retrieve(query, top_k=2)
-    for reference in ("chunk-1", "chunk-2"):
-        canvas.upsert_draft_item(video_chunk_id=reference, start_seconds=11,
-                                    end_seconds=19, claim=reference)
-    options = dict(canvas=canvas, inputs=_inputs(), control=_control(), calls=[],
-                   maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=1024,
-                   maximum_catalog_items=1)
-    previous = {tool.name: tool for tool in build_supervisor_tools(retrieval.search, **options)}
-    first = json.loads(previous["get_context_canvas"].invoke({"collection": "draft"}))
-    assert first["next_cursor"]
-    audit = DraftReadAudit()
-    current = {tool.name: tool for tool in build_supervisor_tools(retrieval.search, audit=audit, **options)}
-    current["get_context_canvas"].invoke({"collection": "draft", "cursor": first["next_cursor"]})
-    for reference in ("chunk-1", "chunk-2"):
-        _read_all(_reader(current, "draft"), reference, 1024)
-    assert not audit.covers(["chunk-1", "chunk-2"], revision=canvas.revision)
-    current["get_context_canvas"].invoke({"collection": "draft"})
-    assert audit.covers(["chunk-1", "chunk-2"], revision=canvas.revision)
-    canvas.upsert_draft_item(video_chunk_id="chunk-1", start_seconds=11,
-                                end_seconds=19, claim="changed")
-    assert not audit.covers(["chunk-1", "chunk-2"], revision=canvas.revision)
-    current["get_context_canvas"].invoke({"collection": "draft"})
-    assert not audit.covers(["chunk-1", "chunk-2"], revision=canvas.revision)
-
-
-def test_canvas_catalog_cursor_cannot_cross_kick_or_role() -> None:
-    canvases = [VideoSearchContextCanvas("workspace", ("series",)) for _ in range(2)]
-    maps = []
-    retrieval = Retrieval([_hit("chunk-1"), _hit("chunk-2")])
-    for canvas in canvases:
-        tools, _calls = _query_tools(retrieval, canvas, maximum_catalog_items=1)
-        _retrieve(tools, top_k=2)
-        maps.append(tools)
-    first = json.loads(maps[0]["get_context_canvas"].invoke({"collection": "retrieval"}))
-    assert first["next_cursor"]
-    other = json.loads(maps[1]["get_context_canvas"].invoke({
-        "collection": "retrieval", "cursor": first["next_cursor"],
-    }))
-    assert other["error"]["code"] == "INVALID_CATALOG_CURSOR"
-    supervisor = {tool.name: tool for tool in build_supervisor_tools(
-        retrieval.search, canvas=canvases[0], inputs=_inputs(), control=_control(), calls=[],
-        maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=1024, maximum_catalog_items=1,
-    )}
-    denied = json.loads(supervisor["get_context_canvas"].invoke({
-        "collection": "retrieval", "cursor": first["next_cursor"],
-    }))
-    assert denied["error"]["code"] == "INVALID_CATALOG_CURSOR"
-    assert "write_context_canvas" not in supervisor
-
-
-def test_canvas_write_output_budget_failure_keeps_state_and_replay_log() -> None:
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    tools, _calls = _query_tools(Retrieval([_hit("chunk-1")]), canvas)
-    _retrieve(tools, top_k=1)
-    before = canvas.snapshot()
-    arguments = dict(role="query", batch_id="budget", expected_revision=canvas.revision,
-                     operations=[{"operation": "upsert_draft_item", "video_chunk_id": "chunk-1",
-                                  "start_seconds": 11, "end_seconds": 19, "claim": "grounded"}])
-    with pytest.raises(AgentToolOutputError):
-        canvas.write(**arguments, maximum_result_bytes=10)
-    assert canvas.snapshot() == before
-    receipt = canvas.write(**arguments, maximum_result_bytes=1024)
-    assert receipt["replayed"] is False
+def test_retrieval_checkpoint_keeps_bounded_handles_without_copying_evidence():
+    tools, calls = _query_tools(Retrieval([_hit(f"chunk-{index}", large_text="private evidence") for index in range(205)]), maximum_tool_calls=None)
+    _retrieve(tools, top_k=205)
+    checkpoint = build_retrieval_checkpoint(calls, [{"inspection_id": "frame-1", "video_chunk_id": "chunk-1", "images": ["huge-image"]}])
+    assert len(checkpoint["retrieved_video_chunk_ids"]) == 200
+    assert checkpoint["omitted_video_chunk_count"] == 5
+    assert "private evidence" not in json.dumps(checkpoint)
+    assert "huge-image" not in json.dumps(checkpoint)

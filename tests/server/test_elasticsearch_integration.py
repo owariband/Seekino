@@ -51,7 +51,7 @@ from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSessio
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.upload import UploadRepository
-from server.repository.video import SeriesNotReadyError
+from server.error.retrieval import SeriesNotReadyError
 from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.service.upload import UploadService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator

@@ -35,7 +35,6 @@ from ..model.job import (
     IntervalParseContent,
     IntervalParseTask,
     IntervalParseTaskStatus,
-    ParseJobStatus,
     SeriesParseJob,
     VideoParseTask,
     VideoParseTaskStatus,
@@ -59,7 +58,6 @@ from ..model.video import (
     Video,
 )
 from ..utils.time import datetime_to_unix_time_ms, now_utc
-from .index_sync import refresh_series_statuses
 
 
 class UploadSessionNotFoundError(LookupError):
@@ -719,27 +717,6 @@ class UploadRepository:
                 )
                 if job is not None:
                     jobs = [job]
-            if any(job.status == ParseJobStatus.RUNNING.value for job in jobs):
-                raise UploadStateError(
-                    "the upload task is being parsed and cannot be deleted"
-                )
-            for job in jobs:
-                if job.status in {
-                    ParseJobStatus.QUEUED.value,
-                    ParseJobStatus.RETRY_WAIT.value,
-                }:
-                    # Fencing every Job in the same transaction prevents a Worker
-                    # from claiming another pipeline for the deleting Video.
-                    job.status = ParseJobStatus.FAILED.value
-                    job.lease_owner = None
-                    job.lease_expire_time = None
-                    job.heartbeat_time = None
-                    legacy_now = datetime_to_unix_time_ms(now)
-                    job.finish_time = legacy_now
-                    job.last_error = "upload task deletion requested"
-                    job.version += 1
-                    job.update_time = legacy_now
-
             v2_tasks: list[VideoParseTask] = []
             if video_id is not None:
                 v2_tasks = list(session.scalars(
@@ -788,10 +765,6 @@ class UploadRepository:
                     task.is_deleted = True
                     task.capacity_acquired = False
                     task.update_time = datetime_to_unix_time_ms(now)
-            if jobs and video_id is not None:
-                video = session.get(Video, video_id)
-                if video is not None:
-                    video.parse_status = ParseJobStatus.FAILED.value
 
             job_ids = tuple(sorted(
                 {job.id for job in jobs}
@@ -926,21 +899,6 @@ class UploadRepository:
             upload.last_error_code = None
             session.flush()
 
-            remaining_video_count = int(session.scalar(
-                select(func.count(Video.id)).where(
-                    Video.series_id == upload.series_id
-                )
-            ) or 0)
-            if remaining_video_count:
-                refresh_series_statuses(session, {upload.series_id})
-            else:
-                series = session.scalar(
-                    select(Series)
-                    .where(Series.id == upload.series_id)
-                    .with_for_update()
-                )
-                if series is not None:
-                    series.status = "EMPTY"
             return self._snapshot(session, upload, segments=[])
 
     def register_segment(
@@ -1234,7 +1192,7 @@ class UploadRepository:
                     size_bytes=upload.size_bytes,
                     duration_ms=duration_seconds,
                     upload_status="COMPLETED",
-                    parse_status=ParseJobStatus.QUEUED.value,
+                    parse_status=VideoParseTaskStatus.PENDING.value,
                     upload_progress=100,
                     parse_progress=0,
                 )
@@ -1303,8 +1261,6 @@ class UploadRepository:
             upload.version += 1
             upload.update_time = datetime_to_unix_time_ms(completed_at)
             session.flush()
-            if series.status != "READY":
-                refresh_series_statuses(session, {upload.series_id})
             return CompletedUploadState(
                 session=self._snapshot(session, upload),
                 video_id=video_id,

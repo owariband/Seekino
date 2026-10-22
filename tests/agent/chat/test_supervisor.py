@@ -41,11 +41,30 @@ def _inputs(*, series_ids=None):
     }
 
 
+def _read_report(available, reference):
+    parts, cursor = [], None
+    while True:
+        page = json.loads(available["read_query_report"].invoke({"report_reference": reference, "cursor": cursor}))
+        parts.extend(item["text"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return json.loads("".join(parts))
+
+
+def _read_source(available, identifier):
+    parts, cursor = [], None
+    while True:
+        page = json.loads(available["read_retrieval_evidence"].invoke({"video_chunk_id": identifier, "cursor": cursor}))
+        parts.extend(item["text"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return "".join(parts)
+
+
 class FakeVideoRuntime:
     def __init__(self, *, query=None, retrieval=None):
         self.calls = []
-        # Exercise the real Canvas handoff with local test agents, not a
-        # production fallback that reconstructs evidence from the child answer.
+        # Exercise the real evidence handoff with local test agents.
         self.runtime, self.query, self.evaluator, self.chat, self.retrieval = _video_runtime(
             query=query, retrieval=retrieval,
         )
@@ -127,7 +146,7 @@ class FakeSupervisorModel:
         check_control()
         available = {tool.name: tool for tool in tools}
         assert {"search_web", "query_video", "submit_video_item", "remove_video_item"} <= set(available)
-        if "get_context_canvas" in available:
+        if "read_retrieval_evidence" in available:
             assert "retrieve" in available
         assert set(available["submit_video_item"].args_schema.model_fields) == {
             "video_chunk_id", "start_seconds", "end_seconds", "claim",
@@ -193,19 +212,10 @@ def test_supervisor_discovers_and_reads_history_and_frame_inspection_records():
         def run_agent(self, prompt, *, tools, handle_text, **kwargs):
             available = {tool.name: tool for tool in tools}
             search = json.loads(available["query_video"].invoke({"query": "find the cup"}))
-            assert "history" in search["read_collections"]
-            assert "frame_inspections" in search["read_collections"]
-            reader = available["get_context_canvas"]
-            assert "frame_inspections" in reader.description
-            history = json.loads(reader.invoke({
-                "collection": "history", "reference": "query-1", "section": "history",
-            }))
-            assert json.loads(history["content"])["status"] == "reported"
-            frames = json.loads(reader.invoke({
-                "collection": "frame_inspections", "reference": query.inspection["inspection_id"],
-                "section": "frame_inspections",
-            }))
-            assert json.loads(frames["content"])["images_supplied"] is True
+            history = _read_report(available, search["reports"][0]["report_reference"])
+            assert history["status"] == "reported"
+            assert history["frame_inspections"][0]["inspection_id"] == query.inspection["inspection_id"]
+            assert history["frame_inspections"][0]["images_supplied"] is True
             handle_text("Reviewed the execution records.")
 
     result = _runtime(ReviewingSupervisor(), video=video).kick(
@@ -284,8 +294,6 @@ def test_video_tool_delegates_only_explicitly_selected_current_and_history_image
     seen_images = {"query": [], "evaluator": [], "chat": []}
     for role, agent, method in (
         ("query", video.query, "run_structured"),
-        ("evaluator", video.evaluator, "run_structured"),
-        ("chat", video.chat, "run_agent_loop"),
     ):
         original = getattr(agent, method)
 
@@ -505,11 +513,11 @@ def test_tool_activity_publish_failure_does_not_disable_real_cancellation():
 def test_supervisor_keeps_internal_and_unknown_tools_out_of_public_blocks(unknown):
     class InternalModel(FakeSupervisorModel):
         def run_agent(self, prompt, *, tools, handle_text, **kwargs):
-            reader = next(tool for tool in tools if tool.name == "get_context_canvas")
+            reader = next(tool for tool in tools if tool.name == "read_retrieval_evidence")
             if unknown:
                 reader.name = "unknown_tool"
-            receipt = json.loads(reader.invoke({"collection": "retrieval"}))
-            assert receipt["items"] == []
+            receipt = json.loads(reader.invoke({"video_chunk_id": "unknown"}))
+            assert receipt["error"]["code"] == "UNKNOWN_ITEM"
             handle_text("No video evidence is available.")
 
     events = []
@@ -626,42 +634,25 @@ def test_parallel_video_tool_calls_execute_independent_searches():
     assert all(block["status"] == "completed" for block in tools)
 
 
-def test_supervisor_reads_real_handoff_canvas_without_mutating_child_draft():
-    collections = ("retrieval", "draft", "approved", "render", "review")
+def test_supervisor_reads_source_evidence_and_owns_final_selection():
     model = FakeSupervisorModel(
-        calls=("query_video", *("get_context_canvas" for _ in collections),
-               "get_context_canvas", "submit_video_item", "get_context_canvas"),
-        arguments=(
-            {"query": "find the cup"},
-            *({"collection": collection} for collection in collections),
-            {"collection": "retrieval", "reference": "chunk-1", "section": "evidence.text"},
+        calls=("query_video", "read_retrieval_evidence", "submit_video_item"),
+        arguments=({"query": "find the cup"}, {"video_chunk_id": "chunk-1"},
             {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20,
-             "claim": "Supervisor checked the original text evidence."},
-            {"collection": "approved"},
-        ),
-        answer="Supervisor corrected the draft using the original evidence.",
+             "claim": "Supervisor checked the original text evidence."}),
+        answer="Supervisor checked the evidence.",
     )
     video = FakeVideoRuntime()
-    result = _runtime(model, video=video).kick(
-        _inputs(series_ids=["series"]), load_video_context=lambda: [],
-    )
-
+    result = _runtime(model, video=video).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
     assert all("error" not in receipt for receipt in model.tool_results)
-    assert "cup action" in model.tool_results[6]["content"]
-    assert model.tool_results[3]["revision"] == model.tool_results[-1]["revision"]
-    assert result.content == model.answer
-    assert result.video_result.agent_reply.message == model.answer
-    assert result.video_result.hits[0].selection_reason.summary == (
-        "Supervisor checked the original text evidence."
-    )
-    # Query returns evidence and candidate ranges, never user-facing render blocks.
-    assert video.last_result.completion.message == "draft-1"
-    assert [(item.start_seconds, item.end_seconds)
-            for item in video.last_result.query_draft.selected_video_ranges] == [(11, 19)]
-    assert not hasattr(video.last_result, "render_blocks")
+    assert "cup action" in json.dumps(model.tool_results[1])
+    assert result.content == result.video_result.agent_reply.message == model.answer
+    assert result.video_result.hits[0].selection_reason.summary == "Supervisor checked the original text evidence."
+    assert video.last_result.retrieval_result.hits[0].evidence.start_seconds == 10
+    assert not hasattr(video.last_result, "canvas")
 
 
-def test_successful_searches_accumulate_evidence_and_trace_while_failed_search_preserves_latest_canvas():
+def test_successful_searches_accumulate_evidence_and_trace_while_failed_search_preserves_previous_evidence():
     first, second = _hit("chunk-1"), _hit("chunk-2")
 
     class FailingAfterHandoff(SuccessiveVideoRuntime):
@@ -688,28 +679,15 @@ def test_successful_searches_accumulate_evidence_and_trace_while_failed_search_p
                 "claim": "Evidence retained across searches.",
             })
             assert "error" not in call("query_video", {"query": "second scene"})
-            catalog = call("get_context_canvas", {"collection": "retrieval"})
-            assert [item["video_chunk_id"] for item in catalog["items"]] == ["chunk-1", "chunk-2"]
-            history = call("get_context_canvas", {"collection": "history"})
-            assert [item["reference"] for item in history["items"]] == ["query-1", "query-2"]
-            previous_report = call("get_context_canvas", {
-                "collection": "history", "reference": "query-2", "section": "history",
-            })
-            assert json.loads(previous_report["content"])["draft_items"][0]["video_chunk_id"] == "chunk-2"
-            read_first = call("get_context_canvas", {
-                "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
-            })
-            assert "cup action" in read_first["content"]
+            previous_report = _read_report(available, "query-2")
+            assert previous_report["evidence_references"] == ["chunk-2"]
+            read_first = _read_source(available, "chunk-1")
+            assert "cup action" in read_first
             failed = call("query_video", {"query": "third scene"})
             assert failed["error"]["code"] == "VIDEO_MODEL_TIMEOUT"
-            assert call("get_context_canvas", {"collection": "retrieval"})["items"] == catalog["items"]
-            assert call("get_context_canvas", {
-                "collection": "history", "reference": "query-2", "section": "history",
-            })["content"] == previous_report["content"]
-            failed_report = call("get_context_canvas", {
-                "collection": "history", "reference": "query-3", "section": "history",
-            })
-            assert json.loads(failed_report["content"])["status"] == "failed"
+            assert _read_source(available, "chunk-1") == read_first
+            assert _read_report(available, "query-2") == previous_report
+            assert _read_report(available, "query-3")["status"] == "failed"
             assert "error" not in call("submit_video_item", {
                 "video_chunk_id": "chunk-2", "start_seconds": 11, "end_seconds": 19,
                 "claim": "Evidence retained across searches.",
@@ -743,10 +721,10 @@ def test_repeated_chunk_keeps_first_canonical_evidence_and_rejects_conflicting_b
         repeated.evidence.original_source_uri = "changed-source.mp4"
     video = SuccessiveVideoRuntime([original], [_hit("chunk-3"), repeated])
     model = FakeSupervisorModel(
-        calls=("query_video", "query_video", "get_context_canvas", "submit_video_item"),
+        calls=("query_video", "query_video", "read_retrieval_evidence", "submit_video_item"),
         arguments=(
             {"query": "first scene"}, {"query": "same scene with another query"},
-            {"collection": "retrieval"},
+            {"video_chunk_id": "chunk-1"},
             {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19,
              "claim": "Original verified source."},
         ),
@@ -759,9 +737,9 @@ def test_repeated_chunk_keeps_first_canonical_evidence_and_rejects_conflicting_b
         assert error["code"] == "EVIDENCE_CONFLICT" and error["retry_hint"]
     else:
         assert "error" not in model.tool_results[1]
-    assert [item["video_chunk_id"] for item in model.tool_results[2]["items"]] == (
-        ["chunk-1"] if conflicting else ["chunk-1", "chunk-3"]
-    )
+    assert "cup action" in json.dumps(model.tool_results[2])
+    if not conflicting:
+        assert model.tool_results[1]["reports"][0]["evidence_references"] == ["chunk-3", "chunk-1"]
     assert "error" not in model.tool_results[3]
     assert result.video_result.hits[0].evidence == original.evidence
     assert len(result.video_result.retrieval_trace) == (1 if conflicting else 2)
@@ -786,14 +764,11 @@ def test_frame_inspection_receipts_from_independent_searches_remain_readable():
                 receipt = json.loads(available["query_video"].invoke({"query": query}))
                 assert "error" not in receipt
                 first_id = first_id or video.query.inspection["inspection_id"]
-            reader = available["get_context_canvas"]
-            catalog = json.loads(reader.invoke({"collection": "frame_inspections"}))
-            assert len(catalog["items"]) == 2
-            assert len({item["reference"] for item in catalog["items"]}) == 2
-            detail = json.loads(reader.invoke({
-                "collection": "frame_inspections", "reference": first_id, "section": "frame_inspections",
-            }))
-            assert json.loads(detail["content"])["images_supplied"] is True
+            frames = [_read_report(available, reference)["frame_inspections"][0]
+                      for reference in ("query-1", "query-2")]
+            assert len({item["inspection_id"] for item in frames}) == 2
+            assert frames[0]["inspection_id"] == first_id
+            assert all(item["images_supplied"] for item in frames)
             handle_text("Reviewed both searches' frame records.")
 
     result = _runtime(ReviewingSupervisor(), video=video).kick(
@@ -901,8 +876,6 @@ def test_supervisor_submits_continuous_adjacent_chunks_and_keeps_original_source
         restored = type(result).model_validate(result.model_dump(mode="json", by_alias=True))
         restored_video = next(block for block in restored.render_blocks if block.type == "video")
         assert restored_video.source_video_chunk_ids == ["chunk-1", "chunk-2"]
-    assert video.last_result.query_draft.selected_video_ranges[0].start_seconds == 11
-    assert video.last_result.query_draft.selected_video_ranges[0].end_seconds == 19
 
 
 @pytest.mark.parametrize("invalid", ["other-video", "gap", "non-adjacent"])
@@ -1037,7 +1010,7 @@ def test_supervisor_live_card_revisions_and_removals_keep_the_text_positions():
 
 def test_supervisor_merges_adjacent_text_without_merging_across_a_tool():
     model = FakeSupervisorModel(
-        calls=("query_video", "get_context_canvas"),
+        calls=("query_video", "read_retrieval_evidence"),
         arguments=({"query": "find the cup"}, {"collection": "retrieval"}),
         text_before_calls={0: "First paragraph.", 1: "Second paragraph."}, answer="Final paragraph.",
     )
@@ -1183,7 +1156,7 @@ def test_invalid_supervisor_submission_is_feedback_and_does_not_replace_valid_se
 
 
 @pytest.mark.parametrize("name,arguments", [
-    ("get_context_canvas", {"collection": "retrieval"}),
+    ("read_retrieval_evidence", {"video_chunk_id": "chunk-1"}),
     ("submit_video_item", {"video_chunk_id": "chunk-1", "start_seconds": 10,
                            "end_seconds": 20, "claim": "No handoff."}),
 ])
@@ -1191,10 +1164,7 @@ def test_supervisor_tools_before_retrieval_use_only_real_evidence(name, argument
     model = FakeSupervisorModel(calls=(name,), arguments=(arguments,))
     result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
 
-    if name == "get_context_canvas":
-        assert model.tool_results[0]["items"] == []
-    else:
-        assert model.tool_results[0]["error"]["code"] == "UNKNOWN_ITEM"
+    assert model.tool_results[0]["error"]["code"] == "UNKNOWN_ITEM"
     assert result.content == model.answer
     assert result.video_result is None
 
@@ -1543,8 +1513,8 @@ def test_video_tool_passes_each_query_and_preserves_scope_across_searches():
         assert delegated["history"] is not inputs["history"]
         assert options["deadline"] > 0
     assert inputs["series_context"] == [{"seriesId": "series", "name": "Course"}]
-    assert len(model.tool_results[0]["reports"][0]["draft_items"]) == 1
-    assert len(model.tool_results[1]["reports"][0]["draft_items"]) == 1
+    assert model.tool_results[0]["reports"][0]["evidence_references"]
+    assert model.tool_results[1]["reports"][0]["evidence_references"]
     assert all("reused" not in receipt for receipt in model.tool_results)
     prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
     assert prompt_context["video_scope"] == [{"seriesId": "series", "name": "Course"}]
@@ -1851,7 +1821,7 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
         assert len(query.contexts) == 1 and evaluator.contexts == []
         assert chat.contexts == []
         assert len(retrieval.calls) == 1
-        assert len(payload["reports"][0]["draft_items"]) == 1
+        assert payload["reports"][0]["evidence_references"]
         assert first.content == first.video_result.agent_reply.message == (
             "Current-video explanation from the verified evidence."
         )
@@ -2058,10 +2028,10 @@ def test_supervisor_direct_lookup_uses_atomic_tools_without_query_or_old_graph()
                 "query": "cup", "top_k": 3, "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0},
             }))
             assert "error" not in receipt
-            evidence = json.loads(available["get_context_canvas"].invoke({
-                "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
+            evidence = json.loads(available["read_retrieval_evidence"].invoke({
+                "video_chunk_id": "chunk-1",
             }))
-            assert "cup action" in evidence["content"]
+            assert "cup action" in json.dumps(evidence)
             available["submit_video_item"].invoke({
                 "video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18,
                 "claim": "Directly checked evidence.",
@@ -2129,8 +2099,11 @@ def test_query_batch_keeps_successful_evidence_when_another_stage_times_out():
             ]}))
             assert receipt["reports"][0]["error"]["code"] == "VIDEO_MODEL_TIMEOUT"
             assert receipt["reports"][1]["status"] == "reported"
-            item = receipt["reports"][1]["draft_items"][0]
-            available["submit_video_item"].invoke(item)
+            identifier = receipt["reports"][1]["evidence_references"][0]
+            available["submit_video_item"].invoke({
+                "video_chunk_id": identifier, "start_seconds": 10,
+                "end_seconds": 20, "claim": "The fast investigation supports this scene.",
+            })
             handle_text("The fast investigation is supported; the other question remains unresolved.")
 
     result = _runtime(PartialSupervisor(), video=video).kick(
@@ -2141,7 +2114,7 @@ def test_query_batch_keeps_successful_evidence_when_another_stage_times_out():
     assert len(result.video_result.retrieval_trace) == 1
 
 
-def test_query_report_at_minimum_output_budget_retains_complete_canvas_readback():
+def test_query_report_at_minimum_output_budget_retains_complete_readback():
     class LongQuery(Query):
         def run_structured(self, *args, **kwargs):
             completion = super().run_structured(*args, **kwargs)
@@ -2155,12 +2128,16 @@ def test_query_report_at_minimum_output_budget_retains_complete_canvas_readback(
             receipt = json.loads(raw)
             assert receipt["reports"][0]["truncated"] is True
             reference = receipt["reports"][0]["report_reference"]
-            raw_history = available["get_context_canvas"].invoke({
-                "collection": "history", "reference": reference, "section": "history", "start": 0, "end": 20,
-            })
-            history = json.loads(raw_history)
-            assert history["content"]
-            assert history["end"] < history["total_chars"]
+            invalid = json.loads(available["read_query_report"].invoke({
+                "report_reference": reference, "cursor": "invalid",
+            }))
+            assert invalid["error"]["code"] == "INVALID_REPORT_CURSOR"
+            history = json.loads(available["read_query_report"].invoke({"report_reference": reference}))
+            assert history["items"][0]["text"]
+            assert history["next_cursor"] is not None
+            complete = _read_report(available, reference)
+            assert complete["message"] == "调查结果" * 500
+            assert complete["plan_context"] == "计划" * 500
             handle_text("The complete findings remain available in the evidence store.")
 
     runtime = SupervisorRuntime(

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from threading import Lock
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkSearchResult
 from engine.rag.retrieval.contracts import (
@@ -22,9 +23,8 @@ from ...common.state import ExecutionControl, RunInputs
 from ...common.tool import AgentTool, build_agent_tool
 from ...common.tool_output import cursor_position, page_items
 from ...common.tool_result import TextToolResult, ToolResult
-from ..output import validate_result
+from ..output import merge_retrieval_calls, validate_result
 from ..state import LexicalRetrievalChannelWeights, RetrievalCall
-from ..video_search_canvas import VideoSearchContextCanvas
 from .retrieval import LexicalRetrieveArguments
 from .shared import _ToolCallBudget, _bounded_text, _start_tool_call
 
@@ -51,7 +51,6 @@ class SearchVideoEventsArguments(LexicalRetrieveArguments):
 def build_search_video_events_tool(
     search: Callable[..., EventSearchResult],
     *,
-    canvas: VideoSearchContextCanvas,
     inputs: RunInputs,
     control: ExecutionControl,
     calls: list[RetrievalCall],
@@ -85,7 +84,7 @@ def build_search_video_events_tool(
                         items, namespace=_TOOL_NAME, resource_id=position.resource_id,
                         cursor=cursor, maximum_items=maximum_catalog_items,
                         maximum_bytes=maximum_result_bytes,
-                        metadata={**metadata, "draft_item_count": canvas.draft_item_count()},
+                        metadata=metadata,
                     ))
                 except AgentToolOutputError:
                     raise
@@ -130,7 +129,10 @@ def build_search_video_events_tool(
                     "Continue with retrieve or retry Event search. Missing coverage is not evidence of no matching scenes.",
                 ) from exc
             control.check()
-            found = EventSearchResult.model_validate(found).model_copy(deep=True)
+            try:
+                found = EventSearchResult.model_validate(found).model_copy(deep=True)
+            except ValidationError as exc:
+                raise AgentModelInvocationError("Event retrieval returned invalid source evidence") from exc
             strategy_version = found.trace.get("strategy_version", EVENT_RETRIEVAL_STRATEGY_VERSION)
             if strategy_version != EVENT_RETRIEVAL_STRATEGY_VERSION:
                 raise AgentModelInvocationError("Event retrieval returned an incompatible strategy version")
@@ -153,8 +155,16 @@ def build_search_video_events_tool(
                     or not match.start_ms < evidence.end_seconds
                     or not evidence.start_seconds < match.end_ms):
                     raise AgentModelInvocationError("Event match has invalid filters or canonical times")
+                canonical_event = evidence.all_time_events[match.timeline_index] if 0 <= match.timeline_index < len(evidence.all_time_events) else None
+                if canonical_event is None:
+                    raise AgentModelInvocationError("Event match has no canonical Timeline event")
+                event_text = json.dumps(canonical_event, ensure_ascii=False, separators=(",", ":"))
+                excerpt_size = max(1, (maximum_result_bytes - 2048) // 8)
                 items.append({
                     "video_chunk_id": match.video_chunk_id,
+                    "video_id": evidence.video_id,
+                    "event_evidence": _bounded_text(event_text, excerpt_size),
+                    "evidence_truncated": len(event_text) > excerpt_size,
                     "episode_order": evidence.episode_order,
                     "start_seconds": evidence.start_seconds,
                     "end_seconds": evidence.end_seconds,
@@ -171,19 +181,20 @@ def build_search_video_events_tool(
                 **found.trace,
                 "matched_events": [match.model_dump(mode="json") for match in found.matches],
             }
-            canvas.record_retrieval(result)
-            calls.append(RetrievalCall(
+            call = RetrievalCall(
                 query=query, top_k=top_k, requested_weights=requested.model_copy(deep=True),
                 effective_weights=effective, result=result, granularity="event",
                 effective_filters=filters.model_dump(mode="json"), event_trace=event_trace, role=role,
                 status="success",
                 strategy_version=strategy_version,
-            ))
+            )
+            merge_retrieval_calls(inputs, [*calls, call])
+            calls.append(call)
             resource_id = f"event-retrieval-{len(catalogs) + 1}"
             metadata = {
                 "query": query, "granularity": "event", "requested_top_k": top_k,
                 "result_count": len(result.hits), "event_count": len(found.matches),
-                "draft_item_count": canvas.draft_item_count(), "partial": result.partial,
+                "partial": result.partial,
                 "warnings": [_bounded_text(value, 500) for value in result.warnings[:8]],
                 "effective_filters": filters.model_dump(mode="json"),
                 "retrieval_strategy": {
@@ -205,9 +216,8 @@ def build_search_video_events_tool(
             "top_k counts distinct Chunk groups; each paginated card describes one matched Event. "
             "speaker selects only reliable DIALOGUE speakers, not visible people. "
             "Use lexical/semantic/visual weights. Continue with cursor only. "
-            "Read canonical Evidence through get_context_canvas(collection='retrieval') before making claims. "
+            "Matched events contain source text; use read_retrieval_evidence only for missing context or truncated text. "
             "Visual similarity still requires inspect_video_frames verification."
         ),
         args_schema=SearchVideoEventsArguments, maximum_result_bytes=maximum_result_bytes,
-        draft_item_count=canvas.draft_item_count,
     )

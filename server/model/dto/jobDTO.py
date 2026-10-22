@@ -16,41 +16,6 @@ from agent.video_parse_v2.state import ChunkTaskPhase
 
 
 @dataclass(frozen=True, slots=True)
-class ParseJobState:
-    job_id: str
-    tenant_id: str
-    series_id: str
-    video_id: str
-    series_name: str
-    episode_order: int
-    original_filename: str
-    pipeline_version: str
-    status: str
-    stage: str
-    progress: int
-    attempt_count: int
-    max_attempts: int
-    version: int
-    available_at: int
-    lease_owner: str | None
-    lease_version: int
-    lease_expires_at: int | None
-    heartbeat_at: int | None
-    started_at: int | None
-    completed_at: int | None
-    processing_duration_ms: int
-    processing_timing_complete: bool
-    last_error: str | None
-    created_at: int
-    updated_at: int
-    duration_seconds: int
-    upload_session_id: str | None = None
-    is_primary_upload_job: bool = False
-    parse_config: dict | None = None
-    created_by_user_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class VideoParseTaskState:
     video_parse_task_id: str
     video_id: str
@@ -113,68 +78,6 @@ class VideoParseTaskInputState:
     duration_seconds: int
     tenant_id: str = ""
     background: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class ParseJobLease:
-    job_id: str
-    series_id: str
-    video_id: str
-    pipeline_version: str
-    worker_id: str
-    lease_version: int
-    lease_expires_at: int
-    attempt_count: int
-    max_attempts: int
-    processing_duration_base_ms: int
-    episode_order: int
-    upload_sequence: int
-    original_filename: str
-    original_source_uri: str
-    content_hash: str
-    total_bytes: int
-    duration_seconds: int
-    tenant_id: str
-    series_name: str
-    series_description: str | None
-    important_extra_data: dict | None
-    character_bible: list[dict]
-    preserve_existing_result: bool = False
-    parse_config: dict | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class VideoChunkCheckpointState:
-    job_id: str
-    sequence_no: int
-    video_chunk_id: str
-    stage: str
-    chunk_start_seconds: int | None = None
-    chunk_end_seconds: int | None = None
-    chunk_media_uri: str | None = None
-    analysis_window_media_uri: str | None = None
-    parse_artifact_uri: str | None = None
-    text_embedding_artifact_uri: str | None = None
-    vision_embedding_artifact_uri: str | None = None
-    last_error: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ParseJobSummaryState:
-    tenant_id: str
-    series_id: str | None
-    counts: dict[str, int]
-    checkpoint_count: int
-    version: int
-    updated_at: int
-
-
-@dataclass(frozen=True, slots=True)
-class ParseJobDetail:
-    job: ParseJobState
-    checkpoints: tuple[VideoChunkCheckpointState, ...]
-    processing_duration_ms: int = 0
-    processing_timing_complete: bool = False
 
 
 @dataclass(frozen=True, slots=True)

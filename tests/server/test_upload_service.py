@@ -23,7 +23,6 @@ from server.config.parse_profile import ParseConfig, default_video_parse_v2_conf
 from server.constants.parse import MAX_INDEX_GENERATION, PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
 from server.model.dto.uploadDTO import UploadReparseRequest, UploadSessionCreateRequest, UploadSessionState
 from server.database import create_session_factory
-from server.model.dto.parseDTO import PreparedEmbedding
 from server.model.index_sync import IndexSyncIntent, IndexSyncOperation, IndexSyncStatus
 from server.model.job import (
     ChunkParseContent,
@@ -48,7 +47,6 @@ from server.model.video import (
     VideoChunk,
     Video,
 )
-from server.mq.mysql_queue import MySqlParseJobQueue
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.upload import (
     UploadCompletionInProgressError,
@@ -58,7 +56,7 @@ from server.repository.upload import (
     UploadStateError,
 )
 from server.repository.job import ParseJobRepository
-from server.repository.index_sync import IndexSyncRepository
+from server.repository.library import LibraryRepository
 from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.service.upload import (
     UploadChecksumMismatchError,
@@ -649,39 +647,21 @@ def test_upload_session_is_idempotent_and_reports_progress(
 
 
 def test_new_upload_and_retry_keep_ready_sibling_searchable(
-    repository, prepared_import, tmp_path,
+    repository, seed_video, tmp_path,
 ) -> None:
     engine, video_repository = repository
     _engine, _store, _upload_repository, service = _upload_service(repository, tmp_path)
     series_id = "77285f16-3e5b-592e-ba15-8b224b619806"
-    video_repository.import_video_parse(replace(
-        prepared_import,
-        series_id=series_id,
-        series_name="Test Upload Series",
-        episode_order=6,
-        upload_sequence=1,
-        chunks=tuple(replace(
-            chunk,
-            text_embedding=PreparedEmbedding([0.1], {"model": "test"}),
-            vision_embedding=PreparedEmbedding([0.2], {"model": "test"}),
-        ) for chunk in prepared_import.chunks),
-    ))
     session_factory = create_session_factory(engine)
-    index_repository = IndexSyncRepository(session_factory)
-    for item in index_repository.list_all():
-        assert index_repository.mark_synced(
-            item.video_chunk_id, item.source_revision, item.operation,
-            item.generation,
-        )
-    with session_factory() as session:
-        assert session.get(Series, series_id).status == "READY"
+    seed_video(session_factory, series_id=series_id, series_name="Test Upload Series", episode_order=6, upload_sequence=1)
+    library = LibraryRepository(session_factory)
+    assert library.get_series(series_id, tenant_id="local-default").ready_video_count == 1
 
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(upload.upload_session_id, tenant_id="local-default")
-    with session_factory() as session:
-        assert session.get(Series, series_id).status == "READY"
+    assert library.get_series(series_id, tenant_id="local-default").ready_video_count == 1
 
     with session_factory.begin() as session:
         task = session.get(VideoParseTask, completed.video_parse_task_id)
@@ -693,8 +673,7 @@ def test_new_upload_and_retry_keep_ready_sibling_searchable(
         tenant_id="local-default",
         expected_job_version=1, expected_lease_version=0,
     )
-    with session_factory() as session:
-        assert session.get(Series, series_id).status == "READY"
+    assert library.get_series(series_id, tenant_id="local-default").ready_video_count == 1
 
 
 def test_legacy_parse_execution_resolves_defaults_without_changing_request_fingerprint(
@@ -1027,7 +1006,7 @@ def test_upload_rejects_checksum_mismatch_and_missing_completion(
         service.complete(upload.upload_session_id, tenant_id="local-default")
 
 
-def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(repository, tmp_path):
+def test_delete_removes_segments_and_preserves_later_parse_without_reusing_order(repository, tmp_path):
     engine, store, upload_repository, service = _upload_service(repository, tmp_path)
     upload = _create(service)
     _put(service, upload.upload_session_id, 0, b"abcd")
@@ -1047,12 +1026,7 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
     completed = service.complete(later.upload_session_id, tenant_id="local-default")
     completed = _with_historical_v1_job(engine, completed, service.parse_defaults)
     session_factory = create_session_factory(engine)
-    jobs = ParseJobRepository(session_factory)
-    queue = MySqlParseJobQueue(session_factory)
-    assert queue.claim_next(
-        "test-worker", lease_duration=timedelta(minutes=5),
-    ) is None
-
+    queue = MySqlVideoParseQueue(session_factory, video_concurrency=3)
     deleted = service.delete_session(upload.upload_session_id, tenant_id="local-default")
     repeated = service.delete_session(upload.upload_session_id, tenant_id="local-default")
     assert deleted.status == repeated.status == "EXPIRED"
@@ -1061,10 +1035,10 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
     assert upload_repository.list_segments(upload.upload_session_id) == []
     assert not staging.exists()
     assert service.list_sessions(tenant_id="local-default") == []
-    lease = queue.claim_next(
+    lease = queue.claim_video(
         "test-worker", lease_duration=timedelta(minutes=5),
     )
-    assert lease is not None and lease.job_id == completed.job_id
+    assert lease is not None and lease.video_parse_task_id == completed.video_parse_task_id
     with pytest.raises(UploadStateError, match="expired"):
         _put(service, upload.upload_session_id, 0, b"abcd")
     with pytest.raises(UploadStateError, match="expired"):
@@ -1113,11 +1087,11 @@ def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
     upload_repository.release_completion(upload.upload_session_id, claim.completion_token, error="retry")
     completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     completed = _with_historical_v1_job(engine, completed, service.parse_defaults)
-    lease = MySqlParseJobQueue(create_session_factory(engine)).claim_next(
+    lease = MySqlVideoParseQueue(create_session_factory(engine), video_concurrency=3).claim_video(
         "test-worker",
         lease_duration=timedelta(minutes=5),
     )
-    assert lease is not None and lease.job_id == completed.job_id
+    assert lease is not None and lease.video_parse_task_id == completed.video_parse_task_id
     with pytest.raises(UploadStateError, match="being parsed"):
         service.delete_session(upload.upload_session_id, tenant_id="local-default")
     with create_session_factory(engine)() as session:
@@ -2537,7 +2511,8 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
         assert list(session.scalars(select(IntervalParseTask))) == []
 
 
-def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_path):
+@pytest.mark.parametrize("historical_status", ["FAILED", "RUNNING", "QUEUED"])
+def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_path, historical_status):
     engine, store, upload_repository, service = _upload_service(repository, tmp_path)
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
@@ -2552,7 +2527,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
     chunk_parse_task_id = str(uuid4())
     with create_session_factory(engine).begin() as session:
         job = session.get(SeriesParseJob, completed.job_id)
-        job.status = ParseJobStatus.FAILED.value
+        job.status = historical_status
         job.last_error = "fixture failure"
         session.add(SeriesParseJob(
             id=second_job_id,
@@ -2673,9 +2648,8 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
         / "videos" / completed.video_id
     )
     assert video_directory.exists()
-    assert ParseJobRepository(create_session_factory(engine)).get(
-        second_job_id
-    ).upload_session_id == upload.upload_session_id
+    with create_session_factory(engine)() as session:
+        assert session.get(SeriesParseJob, second_job_id).video_id == completed.video_id
 
     class ParseIndexStore:
         def __init__(self):
@@ -2921,7 +2895,7 @@ def test_complete_creates_video_and_durable_parse_job_once(
     assert video.episode_order == video.upload_sequence == 7
     assert video.hash == hashlib.sha256(b"abcdefghij").hexdigest()
     assert video.duration_ms == 12_000
-    assert video.parse_status == ParseJobStatus.QUEUED.value
+    assert video.parse_status == "PENDING"
     assert store.resolve(video.source_uri).read_bytes() == b"abcdefghij"
     assert first.job_id is None
     assert video_parse_task.id == first.video_parse_task_id

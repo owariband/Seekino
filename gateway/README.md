@@ -326,8 +326,8 @@ uv run --env-file .env.local python -m tests.manual.gateway_embedding \
 
 Ark Base64 内联媒体的保守上限为 45 MiB。更大的输入应由上层改走文件上传与复用流程。
 
-旧的 Gateway `parse-video` 子命令与 parser 类已移除；视频解析统一从
-`python -m engine.parsev1.cli parse-video` 进入，避免 Gateway 重新承担 Prompt、抽帧和领域结果归一。
+Gateway 只负责模型接入。视频解析由 Server 的 V2 任务与 `agent/video_parse_v2/` 执行，
+Prompt、抽帧编排和领域结果校验由其所属层负责。
 
 ## Langfuse 模型观测
 

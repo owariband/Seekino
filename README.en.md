@@ -238,7 +238,9 @@ A full parse runs basic understanding over fixed chunks, while sliding intervals
 
 The Supervisor can answer directly, search the web, call video search, or understand the current and neighbouring chunks at the frozen playback position. Even before a video is fully indexed, basic evidence can be fetched on demand. The Supervisor decides which calls to make; response time depends on the models and the execution budget.
 
-The production service only accepts **V2 + MySQL + Elasticsearch**. The consumer runs in the same server process as the API, job and recovery state live in MySQL, and ES is a search projection. Gateway, Engine and Agent need no separate processes. Local mode needs no Redis or external message queue. The frozen Parse V1/Qdrant path is kept only for historical reference and offline diagnostics; see the [Engine notes](engine/README.md).
+Retrieval tools return source evidence directly; additional context is read by chunk ID and cursor.
+
+The production service only accepts **V2 + MySQL + Elasticsearch**. The consumer runs in the same server process as the API, job and recovery state live in MySQL, and ES is a search projection. Gateway, Engine and Agent need no separate processes. Local mode needs no Redis or external message queue. Parse V1, Qdrant, and the old offline import entrypoints have been removed.
 
 Video durations, event/chunk boundaries, playback positions and frame times are all **integer milliseconds** from the start of the original video. Existing fields such as `durationSeconds`, `startSeconds`, `endSeconds`, `atSeconds` and `positionSeconds` keep their old names, but their values are not seconds. The browser player converts to seconds at its boundary. Absolute times are Unix epoch milliseconds. Chunk durations and timeouts in the parse config are still in seconds.
 
@@ -317,7 +319,7 @@ Passing unit tests, builds, isolated SQL/ES tests and mocked-API browser tests i
 anivag/
 ├── config.yaml / .env.example   # Model defaults and environment template
 ├── gateway/                    # Model protocols and source adapters
-├── engine/                     # parsev2, rag and the frozen parsev1
+├── engine/                     # parsev2, rag and shared media utilities
 ├── agent/                      # Chat, realtime understanding, parsing and the Context Canvas
 ├── server/                     # HTTP/CLI, persistence and reliable execution
 ├── web/                        # React + TypeScript + Vite frontend (Kino lives in web/src/shared/kino)

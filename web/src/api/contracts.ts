@@ -45,12 +45,6 @@ export type UploadStatus =
   | "COMPLETED"
   | "EXPIRED";
 export type UploadCompletionStage = "VERIFYING" | "ASSEMBLING" | "PROBING" | "CREATING_JOB";
-export type ParseJobStatus =
-  | "QUEUED"
-  | "RUNNING"
-  | "RETRY_WAIT"
-  | "SUCCEEDED"
-  | "FAILED";
 export type VideoParseTaskStatus =
   | "PENDING"
   | "PREPARING"
@@ -272,69 +266,6 @@ export interface UploadCompleteView {
   videoId: string;
   jobId: string | null;
   videoParseTaskId: string;
-}
-
-export interface VideoChunkCheckpointView {
-  sequenceNo: number;
-  videoChunkId: string;
-  /** Chunk bounds in integer milliseconds. */
-  chunkStartSeconds: number | null;
-  chunkEndSeconds: number | null;
-  stage: string;
-  lastError: Failure | null;
-}
-
-export interface ParseJobCurrentChunkView {
-  sequenceNo: number;
-  /** Chunk bounds in integer milliseconds. */
-  startSeconds: number;
-  endSeconds: number;
-}
-
-export interface ParseJobView {
-  jobId: string;
-  uploadSessionId: string | null;
-  tenantId: string;
-  seriesId: string;
-  videoId: string;
-  seriesName: string;
-  episodeOrder: number;
-  originalFilename: string;
-  pipelineVersion: string;
-  retryOfJobId: string | null;
-  status: ParseJobStatus;
-  stage: string;
-  progress: number;
-  overallProgress: number | null;
-  stageProgress: number | null;
-  /** Media progress in integer milliseconds. */
-  completedDurationSeconds: number | null;
-  completedThroughSeconds: number | null;
-  /** Source video duration in integer milliseconds; totalDurationSeconds is retained. */
-  videoDurationSeconds: number;
-  totalDurationSeconds: number;
-  /** Cumulative known worker processing time, never the video duration. */
-  processingDurationMs: number;
-  /** True only for a terminal job whose every attempt duration was measured. */
-  processingTimingComplete: boolean;
-  completedChunkCount: number | null;
-  totalChunkCount: number;
-  currentChunk: ParseJobCurrentChunkView | null;
-  attemptCount: number;
-  maxAttempts: number;
-  availableAt: UnixTimeMs | null;
-  startedAt: UnixTimeMs | null;
-  completedAt: UnixTimeMs | null;
-  estimatedRemainingMs: number | null;
-  canRetry: boolean;
-  canReparse: boolean;
-  canCancel: boolean;
-  lastError: Failure | null;
-  version: number;
-  checkpoints: VideoChunkCheckpointView[];
-  createdAt: UnixTimeMs;
-  updatedAt: UnixTimeMs;
-  parseConfig?: ParseConfig | null;
 }
 
 export interface VideoParseTaskView {

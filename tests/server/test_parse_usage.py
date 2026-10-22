@@ -167,20 +167,10 @@ def test_conflicting_context_is_rejected_without_recording(changes, caplog):
     assert not repository.appended and "append failed" in caplog.text
 
 
-def test_v1_and_standalone_retrieval_do_not_fabricate_an_owner():
+def test_standalone_retrieval_does_not_fabricate_an_owner():
     repository = Repository()
-    capture = service(repository)
-    lease = SimpleNamespace(tenant_id="workspace", series_id="series", video_id="video", job_id="job",
-                            attempt_count=2, lease_version=7)
-    with capture.capture(lease):
-        with track_model_call(provider="p", model="m", operation="video_parse"):
-            pass
     with model_call_context({"tenant_id": "workspace", "series_ids": ["series"]}):
         with track_model_call(provider="p", model="m", operation="text_embedding"):
-            pass
-    # Even an outer Chat subscriber must ignore a legacy V1 job context.
-    with capture.capture_chat(chat_context()), capture.capture(lease):
-        with track_model_call(provider="p", model="m", operation="video_parse"):
             pass
     assert not repository.appended
 

@@ -54,32 +54,14 @@ def test_complete_matching_receipt_is_reused(modality: str) -> None:
     assert decision == EmbeddingReuseDecision((0.6, 0.8), None)
 
 
-def test_import_parse_video_stat_hash_cannot_prove_media_bytes() -> None:
-    target = _target("video")
+@pytest.mark.parametrize("source_kind", ["v1_native_artifact", "import_parse_cache"])
+@pytest.mark.parametrize("modality", ["text", "video"])
+def test_retired_embedding_sources_are_not_reused(source_kind, modality) -> None:
+    target = _target(modality)
     receipt = embedding_receipt(target, [0.6, 0.8])
-
-    decision = assess_embedding_reuse(
-        target,
-        source_kind="import_parse_cache",
-        metadata=receipt,
-        vector=receipt["vector"],
-    )
-
-    assert decision == EmbeddingReuseDecision(None, "UNPROVEN_INPUT")
-
-
-def test_import_parse_text_can_reuse_a_proven_text_input() -> None:
-    target = _target()
-    receipt = embedding_receipt(target, [1.0, 0.0])
-
-    decision = assess_embedding_reuse(
-        target,
-        source_kind="import_parse_cache",
-        metadata=receipt,
-        vector=receipt["vector"],
-    )
-
-    assert decision.vector == (1.0, 0.0)
+    assert assess_embedding_reuse(
+        target, source_kind=source_kind, metadata=receipt, vector=receipt["vector"],
+    ) == EmbeddingReuseDecision(None, "UNPROVEN_INPUT")
 
 
 def test_legacy_text_receipt_without_derived_encoder_id_is_reused() -> None:
@@ -168,7 +150,7 @@ def test_missing_visual_encoder_or_preprocess_claim_rejects_reuse(
 
     decision = assess_embedding_reuse(
         target,
-        source_kind="v1_native_artifact",
+        source_kind="v2_index_cache",
         metadata=receipt,
         vector=[0.6, 0.8],
     )

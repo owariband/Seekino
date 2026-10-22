@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from contextlib import contextmanager
@@ -12,7 +11,8 @@ from threading import Event
 from uuid import uuid4
 
 import pytest
-from langchain_core.tools import BaseTool
+
+from tests.server.conftest import set_series_parse_status
 from sqlalchemy import delete, event, func, inspect, select, text
 
 from agent.chat.common.errors import (
@@ -34,14 +34,16 @@ from server.model.agent import (
     AgentConversation,
     AgentMessage,
 )
-from server.model.video import Series, Video, VideoChunkInfo
+from server.model.video import Series, Video
+from server.model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
 from server.model.dto.agentDTO import AgentMessageTimingState, AgentStageTimingState
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
 from server.repository.library import LibraryRepository, SeriesNotFoundError
-from server.repository.video import SeriesNotReadyError, VideoRepository
+from server.error.retrieval import SeriesNotReadyError
+from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
@@ -49,6 +51,26 @@ from server.service.agent_chat import (
     AgentAttachmentInputUnavailableError, AgentChatService, _validated_stored_video_range,
 )
 from server.service.library import LibraryService
+
+
+def _read_all(tool, video_chunk_id: str) -> dict:
+    parts, cursor = [], None
+    while True:
+        page = json.loads(tool.invoke({"video_chunk_id": video_chunk_id, "cursor": cursor}))
+        parts.extend(item["text"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return {name: json.loads(value) for name, value in
+                    (section.split("\n", 1) for section in "".join(parts).split("\n\n"))}
+
+
+def _reported_items(report, tools):
+    items = []
+    for identifier in report.get("evidence_references", []):
+        metadata = _read_all(tools["read_retrieval_evidence"], identifier)["evidence.metadata"]
+        items.append({"video_chunk_id": identifier, "start_seconds": metadata["startSeconds"],
+                      "end_seconds": metadata["endSeconds"], "claim": "真实片段支持回答。"})
+    return items
 
 
 @dataclass
@@ -80,49 +102,6 @@ class _RetrievalStub:
         )
 
 
-def _read_all(tool, video_chunk_id: str, *, collection: str) -> dict:
-    overview = json.loads(tool.invoke({
-        "collection": collection, "reference": video_chunk_id,
-        "section": "overview",
-    }))
-    sections = {}
-    for item in overview["sections"]:
-        name, total = item["name"], item["total_chars"]
-        start = 0
-        content = []
-        while start < total:
-            end = total
-            while True:
-                page = json.loads(tool.invoke({
-                    "collection": collection, "reference": video_chunk_id,
-                    "section": name,
-                    "start": start,
-                    "end": end,
-                }))
-                if "error" not in page:
-                    break
-                assert page["error"]["code"] == "RANGE_TOO_LARGE"
-                end = page["error"]["suggested_end"]
-                assert start < end < total
-            assert page["start"] == start
-            assert page["end"] == end
-            content.append(page["content"])
-            start = end
-        sections[name] = json.loads("".join(content))
-    return sections
-
-
-def _write_canvas(tools_by_name, operation: str, fields: dict) -> dict:
-    collection = "draft" if "draft" in operation else "approved"
-    current = json.loads(tools_by_name["get_context_canvas"].invoke({"collection": collection}))
-    receipt = json.loads(tools_by_name["write_context_canvas"].invoke({
-        "batch_id": uuid4().hex, "expected_revision": current["revision"],
-        "operations": [{"operation": operation, **fields}],
-    }))
-    assert "error" not in receipt
-    return receipt["results"][0]
-
-
 @dataclass
 class _QueryModel:
     model_name: str = "query-test"
@@ -146,13 +125,7 @@ class _QueryModel:
                 },
             })
         for video_chunk_id, start_seconds, end_seconds in self.selected_ranges:
-            _read_all(tools_by_name["get_context_canvas"], video_chunk_id, collection="retrieval")
-            _write_canvas(tools_by_name, "upsert_draft_item", {
-                "video_chunk_id": video_chunk_id,
-                "start_seconds": start_seconds,
-                "end_seconds": end_seconds,
-                "claim": f"片段 {video_chunk_id} 支持回答。",
-            })
+            _read_all(tools_by_name["read_retrieval_evidence"], video_chunk_id)
         return result_type.model_validate({
             "plan_context": f"第 {number} 轮检索并核验动作。",
             "message": f"第 {number} 轮待审核草稿。",
@@ -164,6 +137,7 @@ class _ChatModel:
     model_name: str = "chat-test"
     prompts: list[str] = field(default_factory=list)
     submitted_items: list[dict] = field(default_factory=list)
+    selected_ranges: dict[str, tuple[int, int]] = field(default_factory=dict)
     release: Event | None = None
     fail: bool = False
 
@@ -188,10 +162,13 @@ class _ChatModel:
         check_control()
         available = {tool.name: tool for tool in tools}
         reports = json.loads(prompt.rsplit("\n\n", 1)[1])["reports"]
-        items = [item for report in reports for item in report.get("draft_items", [])]
+        items = [item for report in reports for item in _reported_items(report, available)]
         handle_text("目前没有足够的候选画面，" if items else "目前没有足够的候选画面，建议补充人物或动作。")
         for item in items:
             submitted = {name: item[name] for name in ("video_chunk_id", "start_seconds", "end_seconds", "claim")}
+            if item["video_chunk_id"] in self.selected_ranges:
+                submitted["start_seconds"], submitted["end_seconds"] = self.selected_ranges[item["video_chunk_id"]]
+            # Keep recorded selections in milliseconds for persistence assertions.
             self.submitted_items.append(submitted)
             receipt = json.loads(available["submit_video_item"].invoke(submitted))
             assert "error" not in receipt
@@ -252,7 +229,7 @@ def build_service(tmp_path):
         resources.append((service, engine))
         series = library.create_series(tenant_id="local-default", name="Test Series")
         with factory.begin() as session:
-            session.get(Series, series.series_id).status = "READY"
+            set_series_parse_status(session, series.series_id)
         conversation = service.create_conversation(
             tenant_id="local-default", title="测试对话",
             idempotency_key="conversation",
@@ -441,10 +418,10 @@ class _VideoSupervisorModel(_DirectSupervisorModel):
             web = json.loads(by_name["search_web"].invoke({"query": "补充信息"}))
             assert web["result_count"] == 1
         result = json.loads(by_name["query_video"].invoke({"query": "视频里发生了什么？"}))
-        drafts = result["reports"][0]["draft_items"]
+        drafts = _reported_items(result["reports"][0], by_name)
         assert drafts
         for item in drafts:
-            _read_all(by_name["get_context_canvas"], item["video_chunk_id"], collection="retrieval")
+            _read_all(by_name["read_retrieval_evidence"], item["video_chunk_id"])
         if self.merge_adjacent:
             drafts = [{**drafts[0], "end_seconds": drafts[-1]["end_seconds"]}]
         for draft in drafts:
@@ -486,7 +463,7 @@ def test_supervisor_chat_without_ready_video_series(build_service):
         supervisor_model=model,
     )
     with repository._session_factory.begin() as session:
-        session.query(Series).update({Series.status: "EMPTY"})
+        session.query(VideoParseTask).update({VideoParseTask.status: "PENDING"})
 
     completed = _send(service, conversation, content="你好")
 
@@ -846,7 +823,7 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
     video_id = str(uuid4())
     with repository._session_factory.begin() as session:
         series = session.query(Series).one()
-        series.status = "EMPTY"
+        set_series_parse_status(session, series.id, "PENDING")
         series.description = "乐队人物资料"
         series.transcript_language_hint = "ja"
         series.important_extra_data = background
@@ -913,9 +890,9 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
     video_id = str(uuid4())
     with repository._session_factory.begin() as session:
         current = session.query(Series).filter(Series.name == "Test Series").one()
-        current.status = "EMPTY"
+        set_series_parse_status(session, current.id, "PENDING")
         current_id = current.id
-        session.get(Series, ready.series_id).status = "READY"
+        set_series_parse_status(session, ready.series_id)
         session.add(Video(
             id=video_id, series_id=current_id, episode_order=1, upload_sequence=1,
             filename="lecture.mp4", source_uri="source/lecture.mp4",
@@ -1317,7 +1294,7 @@ def test_attachment_cleanup_failure_does_not_undo_committed_conversation_delete(
 @pytest.mark.parametrize("commit_failure", [False, True])
 @pytest.mark.parametrize("merge_adjacent", [False, True])
 def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
-    build_service, prepared_import, monkeypatch, include_web, commit_failure, merge_adjacent,
+    build_service, seed_video, monkeypatch, include_web, commit_failure, merge_adjacent,
 ):
     from server.service.agent_chat import AgentMessageExecution
 
@@ -1326,11 +1303,11 @@ def test_supervisor_final_review_persists_and_streams_its_own_text_and_ranges(
         supervisor_model=model,
         web_searcher=_WebSearcherStub(),
     )
-    videos = VideoRepository(repository._session_factory)
-    report = videos.import_video_parse(prepared_import)
+    videos = VideoParsePersistenceService(repository._session_factory)
+    report = seed_video(repository._session_factory)
     with repository._session_factory.begin() as session:
-        session.get(Series, report.series_id).status = "READY"
-    chunks = videos.hydrate_video_chunks(report.video_chunk_ids)
+        set_series_parse_status(session, report.series_id)
+    chunks = [videos.get_chunk_evidence(identifier, tenant_id="local-default") for identifier in report.video_chunk_ids]
     retrieval.hits = [VideoChunkSearchHit(
         candidate=VideoChunkCandidate(
             video_chunk_id=chunk.video_chunk_id, fused_rank=index + 1,
@@ -1916,18 +1893,18 @@ def test_supervisor_thread_is_deleted_only_after_authorized_sql_delete(build_ser
 
 
 @pytest.fixture
-def evidence_service(build_service, prepared_import):
+def evidence_service(build_service, seed_video):
     resources = build_service()
     service, _, retrieval, repository, query, *_ = resources
-    videos = VideoRepository(repository._session_factory)
-    report = videos.import_video_parse(prepared_import)
+    videos = VideoParsePersistenceService(repository._session_factory)
+    report = seed_video(repository._session_factory)
     with repository._session_factory.begin() as session:
-        session.get(Series, report.series_id).status = "READY"
+        set_series_parse_status(session, report.series_id)
     retrieval.hits = [VideoChunkSearchHit(
         candidate=VideoChunkCandidate(video_chunk_id=chunk.video_chunk_id, fused_rank=index + 1, fused_score=1),
         selection_reason=SelectionReason(summary=chunk.window_summary, matched_evidence=[], limitations=[]),
         evidence=chunk,
-    ) for index, chunk in enumerate(videos.hydrate_video_chunks(report.video_chunk_ids))]
+    ) for index, chunk in enumerate([videos.get_chunk_evidence(identifier, tenant_id="local-default") for identifier in report.video_chunk_ids])]
     query.selected_ranges = tuple(
         (
             hit.evidence.video_chunk_id,
@@ -1981,26 +1958,30 @@ def test_read_only_message_recovery_by_user_assistant_or_request_key(build_servi
 
 
 def test_reference_uses_saved_same_version_evidence_with_ordered_history(evidence_service):
-    service, conversation, _, repository, query, *_ = evidence_service
+    service, conversation, _, repository, query, chat = evidence_service
     selected = list(query.selected_ranges)
     chunk_id, start_seconds, end_seconds = selected[1]
-    selected[1] = (chunk_id, start_seconds + 1, end_seconds - 1)
-    query.selected_ranges = tuple(selected)
+    chat.selected_ranges[chunk_id] = (start_seconds + 1, end_seconds - 1)
     source = _send(service, conversation)
     hits = source.assistant_message.search_result["hits"]
     reference = {"messageId": source.assistant_message.message_id,
                  "videoChunkId": hits[1]["candidate"]["videoChunkId"]}
     with repository._session_factory.begin() as session:
-        current = session.get(VideoChunkInfo, reference["videoChunkId"])
+        current = session.scalar(select(ChunkParseContent).join(ChunkParseTask).where(
+            ChunkParseTask.chunk_id == reference["videoChunkId"],
+        ))
         assert current is not None
-        current.context_before_compact = "newer current-version context"
+        updated = deepcopy(current.content)
+        updated["timeline"][0]["description"] = "newer current-version event"
+        current.content = updated
     followup = _send(service, conversation, key="reference", content="这段的前文呢？", reference=reference)
     assert followup.user_message.reference == reference
     assert followup.assistant_message.reference is None
     assert _send(service, conversation, key="reference", content="这段的前文呢？", reference=reference) == followup
     context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
     assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
-    assert context["reference_context"]["evidence"]["contextBeforeCompact"] == hits[1]["evidence"]["contextBeforeCompact"]
+    assert context["reference_context"]["evidence"]["allTimeEvents"] == hits[1]["evidence"]["allTimeEvents"]
+    assert "newer current-version event" not in json.dumps(context["reference_context"])
     assert context["reference_context"]["selectedRange"] == {
         "startSeconds": start_seconds + 1,
         "endSeconds": end_seconds - 1,
@@ -2226,7 +2207,7 @@ def test_invalid_reference_does_not_start_a_message(evidence_service, invalid):
         library = LibraryService(LibraryRepository(repository._session_factory))
         series = library.create_series(tenant_id="local-default", name="Other Series")
         with repository._session_factory.begin() as session:
-            session.get(Series, series.series_id).status = "READY"
+            set_series_parse_status(session, series.series_id)
         scope = [series.series_id]
     before = service.list_all_messages(target.conversation_id, tenant_id="local-default")
     query_count = len(query.prompts)
@@ -2958,7 +2939,7 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
     _send(service, conversation, key="second", content="再找一段")
     context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
     assert context.get("turn_number", 1) == 1
-    assert context["run_records"]["history"]["item_count"] == 0
+    assert "run_records" not in context
     history = context["inputs"]["history"]
     assert history[0] == {
         "role": "USER", "content": first.user_message.content,
@@ -2996,7 +2977,7 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
         if not added_ids:
             added = library.create_series(tenant_id="local-default", name="Added mid-loop")
             with repository._session_factory.begin() as session:
-                session.get(Series, added.series_id).status = "READY"
+                set_series_parse_status(session, added.series_id)
             added_ids.append(added.series_id)
         return draft
 
@@ -3011,11 +2992,11 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
 
     # An identical "all" request returns its saved answer, even after readiness changes.
     with repository._session_factory.begin() as session:
-        session.get(Series, original_id).status = "INDEXING"
+        set_series_parse_status(session, original_id, "INDEXING")
     assert _send(service, conversation) == first
     assert len(retrieval.calls) == 1
     with repository._session_factory.begin() as session:
-        session.get(Series, original_id).status = "READY"
+        set_series_parse_status(session, original_id)
 
     second = _send(service, conversation, key="next-all", series_ids=[])
     assert second.user_message.series_ids == tuple(sorted([original_id, added_ids[0]]))
@@ -3030,7 +3011,7 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
     original_id = library.list_series(tenant_id="local-default")[0].series_id
     added = library.create_series(tenant_id="local-default", name="Second animation")
     with repository._session_factory.begin() as session:
-        session.get(Series, added.series_id).status = "READY"
+        set_series_parse_status(session, added.series_id)
 
     first = _send(service, conversation, series_ids=[original_id])
     second = _send(service, conversation, key="second", series_ids=[added.series_id])
@@ -3038,7 +3019,7 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
     assert first.assistant_message.series_ids == (original_id,)
     assert second.assistant_message.series_ids == (added.series_id,)
     context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])
-    assert context["run_records"]["history"]["item_count"] == 0
+    assert "run_records" not in context
     assert context["inputs"]["series_ids"] == [added.series_id]
     assert all(item["seriesIds"] == [original_id] for item in context["inputs"]["history"])
     with pytest.raises(AgentConflictError):

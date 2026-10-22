@@ -18,12 +18,7 @@ EncodingChannel = Literal["semantic", "vision"]
 
 Modality = Literal["text", "video"]
 VisualInputKind = Literal["video_clip", "ordered_frames"]
-SourceKind = Literal[
-    "v1_native_artifact",
-    "v2_index_cache",
-    "import_parse_cache",
-    "unknown",
-]
+SourceKind = Literal["v2_index_cache", "unknown"]
 ReuseGapReason = Literal[
     "UNPROVEN_INPUT",
     "INPUT_MISMATCH",
@@ -132,14 +127,7 @@ def assess_embedding_reuse(
 ) -> EmbeddingReuseDecision:
     """Accept only a vector whose input and complete encoder claims are proven."""
 
-    if source_kind not in (
-        "v1_native_artifact",
-        "v2_index_cache",
-        "import_parse_cache",
-    ):
-        return EmbeddingReuseDecision(None, "UNPROVEN_INPUT")
-    if source_kind == "import_parse_cache" and target.modality == "video":
-        # The legacy import cache hashes path/stat metadata rather than media bytes.
+    if source_kind != "v2_index_cache":
         return EmbeddingReuseDecision(None, "UNPROVEN_INPUT")
 
     input_sha256 = metadata.get("input_sha256")

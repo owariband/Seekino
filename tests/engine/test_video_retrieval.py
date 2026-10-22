@@ -1,14 +1,6 @@
-from pathlib import Path
 
 import pytest
 
-from engine.parsev1.schemas import (
-    AnalysisWindow,
-    ContextSnapshot,
-    OwnedTimelineEvent,
-    VideoChunkParseResult,
-    VideoParseResult,
-)
 from engine.rag.contracts import (
     LexicalMatch,
     SelectionReason,
@@ -33,60 +25,6 @@ from engine.rag.nlp.transcript import (
     TranscriptCueDocument,
     rank_transcript_chunks,
 )
-from engine.parsev1.retrieval import build_video_chunk_retrieval_documents
-
-
-def _parse_result() -> VideoParseResult:
-    source_video = Path("video.mp4")
-    before = ContextSnapshot(
-        snapshot_id="before-0",
-        after_chunk_sequence_no=-1,
-        compact_text="LEAK_CONTEXT_BEFORE",
-        recent_events=[],
-    )
-    after = ContextSnapshot(
-        snapshot_id="after-0",
-        after_chunk_sequence_no=0,
-        compact_text="LEAK_CONTEXT_AFTER",
-        recent_events=[],
-    )
-    event = OwnedTimelineEvent(
-        start_seconds=1000,
-        end_seconds=2000,
-        event_type="DIALOGUE",
-        description="当前片段发生的事件",
-        text="当前片段的台词",
-        source_chunk_sequence_no=0,
-    )
-    chunk = VideoChunkParseResult(
-        window=AnalysisWindow(
-            sequence_no=0,
-            source_video=source_video,
-            media_path=Path("chunk-0000.mp4"),
-            chunk_start_seconds=0,
-            chunk_end_seconds=60000,
-            analysis_start_seconds=0,
-            analysis_end_seconds=60000,
-        ),
-        context_before=before,
-        candidate_transcript=[],
-        window_summary="LEAK_WINDOW_SUMMARY",
-        observed_events=[],
-        events=[event],
-        self_compact="当前片段摘要",
-        is_fallback=True,
-        context_after=after,
-        context_before_compact=before.compact_text,
-        context_after_compact=after.compact_text,
-    )
-    return VideoParseResult(
-        source_video=source_video,
-        duration_seconds=60000,
-        chunk_duration_seconds=60,
-        context_overlap_seconds=0,
-        chunks=[chunk],
-        events=[event],
-    )
 
 
 def _ranked(*sequence_nos: int) -> list[RankedVideoChunk]:
@@ -111,20 +49,6 @@ def _retrieval_identity(**updates: object) -> VideoChunkRetrievalIdentity:
     }
     values.update(updates)
     return VideoChunkRetrievalIdentity.model_validate(values)
-
-
-def test_retrieval_documents_expose_video_compact_without_context() -> None:
-    documents = build_video_chunk_retrieval_documents(_parse_result())
-
-    assert documents[0].video_compact == "当前片段摘要"
-    assert documents[0].text == (
-        "当前片段摘要\n当前片段发生的事件\n当前片段的台词"
-    )
-    assert "LEAK_WINDOW_SUMMARY" not in documents[0].text
-    assert "LEAK_CONTEXT_BEFORE" not in documents[0].text
-    assert "LEAK_CONTEXT_AFTER" not in documents[0].text
-    assert "self_compact" not in documents[0].model_dump()
-    assert documents[0].is_fallback is True
 
 
 def test_weighted_rrf_changes_channel_priority() -> None:

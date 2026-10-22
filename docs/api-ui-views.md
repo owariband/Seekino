@@ -119,7 +119,7 @@ Content-Type: application/json
 同一 Idempotency-Key 不能换选项重放。reference 可省略 /
 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失或非法范围不再扩大为 canonical Chunk，引用校验失败。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
-SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、按执行模式选择的 requested/effective Transcript 或 Lexical + Semantic/Visual 权重、策略版本和返回 Chunk ID）。V1 Agent 工具保持 `transcript/semantic/visual`，V2 才使用 `lexical/semantic/visual`，不会把 ES 结构化词项合同套到 V1 ASR 连续短语检索。候选同时暴露适用通道的 rank/score；Transcript 命中说明使用真正匹配的 ASR cue 与媒体时间偏移，Lexical 中的 generated questions 等字段只作召回线索。后续事实核验、Draft/Evaluator 门禁、Chat 输出和失败恢复规则保持不变：事实性结论必须由精读 Evidence 支撑，播放范围必须位于 canonical Evidence 内，Chat 只提交 `video_chunk_id + claim`，旧消息的非法范围不扩大，消息 version 单调且终态 phase 为 null。
+Chat 的 progress、工具结果、正文与最终 evidence 来自实际执行，completed 在数据库提交后发出。每条回答事件包含 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 包含 retrievalTrace，记录每次真实检索的 query、topK、requested/effective Lexical + Semantic/Visual 权重、策略版本和返回 Chunk ID。retrieve 与 search_video_events 直接返回源证据，截断内容可通过 read_retrieval_evidence 继续读取；Query 报告通过 evidence_references 交给 Supervisor。检索不再经过 Canvas、草稿写入或读取审计。Supervisor 提交真实 video_chunk_id、claim 和播放起止毫秒，宿主继续检查 canonical Evidence、租户范围及时间边界。旧消息的非法范围不扩大，消息 version 单调且终态 phase 为 null。
 
 持久化 FAILED 时，answer.failed 返回公开 error 与真实消息对，并保留已经确认的证据 / 部分正文。队列溢出或无法确认终态提交时返回 answer.interrupted，不谎称后台 FAILED。恢复时读取 messages/get / list / events。断开流不取消后台任务。不同 Conversation 的流、上下文和候选引用隔离。
 
@@ -131,12 +131,12 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 
 - 保留 JSON send 同步返回 200，没有改成首次受理 202；SSE 是真实增量输出。
 - Series 创建仍按 Workspace + name 的业务身份幂等，upload complete 仍按 uploadSessionId 幂等，未增加覆盖规格所有写入路由的通用幂等记录。
-- 没有新增取消、settings 写入或 system/status。V1 保留 jobs/get、list、events；V2 增加 video-parse/get、list、events，事件流仍绑定单个 taskId。任务快照分别返回 canRetry/canReparse/canDelete，三者由最新任务身份、上传归属及当前 Chunk/Interval/Prefix/V1 执行租约独立计算，前端不再从状态自行推断。终态事件发送后关闭；TasksPage 每 5 秒重新拉取列表，以观察终态后的租约释放和能力变化。
+- 解析任务只提供 jobs/video-parse/get、list、events，旧 jobs/get、list、summary、events 已删除；事件流绑定单个 videoParseTaskId。任务快照分别返回 canRetry/canReparse/canDelete，三者由最新任务身份、上传归属及当前 Chunk/Interval/Prefix 执行租约独立计算，前端不再从状态自行推断。终态事件发送后关闭；TasksPage 每 5 秒重新拉取列表，以观察终态后的租约释放和能力变化。
 - contentSha256 请求暂可省略；提供时固定并在合并后真实校验全文件 SHA。历史 / 未计算值为 null，完成后保存真实值。前端没有新增全文件 Worker hash。
 - completionStage 来自真实合并步骤；无法可靠度量的 completionProgress / estimatedRemainingMs 为 null。Upload / Message / Job 的 version 由实际可见变化递增，Job 心跳不伪造新版本。
 - 当前没有新增视频转码，不将 MOV / AVI 或无法确认 codec 的原文件标为可播放。解析没有保存关键帧的原视频 atSeconds，Evidence.keyframes=[] / thumbnail=null，并给出明确限制；系列封面仅使用可读取的已登记真实图片。
-- V1 仍只检索 READY Series；V2 可在所选 Series 中检索最新 COMPLETE task 的视频子集，并以 partial、searchedVideoIds 和 warnings 明示未覆盖视频。离线导入没有 ParseJob 时 latestJobId=null，不填假的 Job。
-- 真实模型、开发 MySQL / Qdrant / Elasticsearch、浏览器视频回放仍需单独联调；本地 Mock、SQLite 或 fake ES 回归不代替该验收。
+- 检索在所选 Series 中使用最新 COMPLETE task 的视频子集，并以 partial、searchedVideoIds 和 warnings 明示未覆盖视频。保留的历史 latestJobId 字段为 null，当前任务通过 videoParseTaskId 标识。
+- 真实模型、开发 MySQL / Elasticsearch、浏览器视频回放仍需单独联调；本地 Mock、SQLite 或 fake ES 回归不代替该验收。
 
 旧数据库需要受控迁移，不能把 init-db 当作 ALTER TABLE。新增列：
 

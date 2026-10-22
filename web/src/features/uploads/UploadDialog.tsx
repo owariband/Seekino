@@ -14,7 +14,7 @@ import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from "r
 import { errorMessage, getParseConfig } from "../../api/client";
 import type { ParseConfig } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
-import { formatBytes, formatTimecode, formatTimeRange, inferEpisodeOrder, publicParseStageLabel } from "../../shared/format";
+import { formatBytes, inferEpisodeOrder } from "../../shared/format";
 import { useUploads } from "./UploadProvider";
 import type { UploadInput, UploadTask } from "./upload-types";
 import { configuredMax, configuredMin, mediaTypeForFile, taskProgress, taskStatusLabel, validateParseConfig } from "./upload-types";
@@ -34,15 +34,10 @@ function TaskRow({ task }: { task: UploadTask }) {
   const canResumeCompletion = !task.file
     && task.session?.status === "COMPLETING"
     && ["completing", "failed"].includes(task.status);
-  const parsePosition = task.job?.currentChunk
-    ? t("当前解析 {time0}", { time0: formatTimeRange(task.job.currentChunk.startSeconds, task.job.currentChunk.endSeconds) })
-    : task.job?.completedThroughSeconds !== null && task.job?.completedThroughSeconds !== undefined
-      ? t("连续解析到 {time0} / {time1}", { time0: formatTimecode(task.job.completedThroughSeconds), time1: formatTimecode(task.job.totalDurationSeconds) })
-      : t("等待精确检查点");
   const videoParsePosition = task.videoParseTask
     ? t("{count} 个固定切片", { count: task.videoParseTask.chunkCount })
     : null;
-  const draftConfig = task.job?.parseConfig ?? task.parseConfig;
+  const draftConfig = task.parseConfig;
   const visualConfig = task.session?.parseConfig?.visual_input ?? (draftConfig ? {
     max_height: draftConfig.window.analysisMaxHeight,
     fps: draftConfig.vision.fps,
@@ -73,15 +68,13 @@ function TaskRow({ task }: { task: UploadTask }) {
         >
           <span style={{ width: `${progress}%` }} />
         </div>
-        {task.status === "processing" && (task.job || task.videoParseTask) ? (
+        {task.status === "processing" && task.videoParseTask ? (
           <div className={styles.stageLine}>
             <span>
-              {task.videoParseTask
-                ? `${taskStatusLabel(task, locale)}${isDebug ? ` · ${videoParsePosition}` : ""}`
-                : `${publicParseStageLabel(task.job!.stage, locale)}${isDebug ? ` · ${parsePosition}` : ""}`}
+              {`${taskStatusLabel(task, locale)}${isDebug ? ` · ${videoParsePosition}` : ""}`}
             </span>
             {isDebug ? <span>
-              {t("{attempt}/{maximum} 次尝试", { attempt: (task.videoParseTask ?? task.job)!.attemptCount, maximum: (task.videoParseTask ?? task.job)!.maxAttempts })}</span> : null}
+              {t("{attempt}/{maximum} 次尝试", { attempt: task.videoParseTask.attemptCount, maximum: task.videoParseTask.maxAttempts })}</span> : null}
           </div>
         ) : null}
         {isDebug ? visualConfig ? <p className={styles.taskConfig}>{t("解析配置：")}{visualConfig.max_height}p · {visualConfig.fps} FPS ·

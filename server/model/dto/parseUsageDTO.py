@@ -9,7 +9,6 @@ from typing import Any, Literal
 
 from gateway.usage import TokenUsage
 
-from .jobDTO import ParseJobState
 
 
 def _freeze_json(value: Any) -> Any:
@@ -74,43 +73,6 @@ class ParseModelCallState:
     price_snapshot: dict | None
     execution_kind: Literal["video", "chunk", "interval", "prefix"] | None = None
     execution_task_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ParseUsageLedgerState:
-    attempt_count: int
-    job_status: str
-    calls: tuple[ParseModelCallState, ...]
-    attempts: dict[int, bool]
-
-
-@dataclass(frozen=True, slots=True)
-class ParseUsageRowState:
-    provider: str
-    model: str
-    category: Literal["parse", "embedding"]
-    operation: str
-    call_count: int
-    input_tokens: int | None
-    output_tokens: int | None
-    cached_input_tokens: int | None
-    reasoning_tokens: int | None
-    total_tokens: int | None
-    estimated_cost_cny: Decimal | None
-    missing_usage_count: int
-    unpriced_call_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class ParseUsageState:
-    job: ParseJobState
-    coverage: Literal["not_started", "recorded", "partial", "unknown"]
-    total_tokens: int | None
-    estimated_cost_cny: Decimal | None
-    call_count: int
-    missing_usage_count: int
-    unpriced_call_count: int
-    items: tuple[ParseUsageRowState, ...]
 
 
 @dataclass(frozen=True, slots=True)

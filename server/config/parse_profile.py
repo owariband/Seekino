@@ -314,9 +314,8 @@ class ParseConfig(ContractModel):
     def to_video_parse_v2(self) -> VideoParseV2Config:
         """Freeze this effective server profile into the V2 task contract.
 
-        The two ParseConfig types intentionally remain separate: the server
-        profile also carries V1 model and indexing settings, while the V2
-        harness persists only the values that affect its execution plan.
+        The server profile accepts upload configuration; the harness snapshot
+        persists the resolved values that affect its execution plan.
         """
 
         if self.indexing is None or any(getattr(self.execution, name) is None for name in _EXECUTION_POLICY_FIELDS):

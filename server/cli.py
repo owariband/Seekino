@@ -11,24 +11,13 @@ from gateway.config import load_config
 from .caller.elasticsearch import open_elasticsearch_storage, build_event_elasticsearch_storage
 from .caller.mysql import open_database_storage
 from .common.retrieval import build_retrieval_service
-from .common.storage import build_artifact_storage
 from .constants.tenant import DEFAULT_LOCAL_TENANT_ID
 from .config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
 from .config.parse_profile import resolve_embedding_config, resolve_event_indexing_contract
 from .config.retrieval import RetrievalConfig, resolve_retrieval_model_limits
-from .config.settings import (
-    resolve_agent_request_timeout_seconds,
-    resolve_artifact_root,
-    resolve_database_pool_recycle_seconds,
-    resolve_database_url,
-    resolve_environment,
-    resolve_execution_mode,
-    resolve_parse_max_height,
-)
+from .config.settings import resolve_agent_request_timeout_seconds, resolve_database_pool_recycle_seconds, resolve_database_url, resolve_environment, resolve_execution_mode, resolve_parse_max_height
 from .database import DatabaseEnvironment, create_schema
-from .repository.video import VideoRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
-from .service.keyframe_backfill import KeyframeBackfillService
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -75,101 +64,13 @@ def _build_parser() -> argparse.ArgumentParser:
     request_es_rebuild.add_argument("--config", type=Path)
     _add_elasticsearch_arguments(request_es_rebuild)
 
-    import_parse = subparsers.add_parser(
-        "import-parse",
-        help="Import one completed VideoParseResult as formal business records.",
-    )
-    _add_database_arguments(import_parse)
-    import_parse.add_argument("--parse-result", type=Path, required=True)
-    import_parse.add_argument(
-        "--canonical-chunk-dir",
-        type=Path,
-        required=True,
-        help="Directory containing one non-overlapping canonical MP4 per VideoChunk.",
-    )
-    import_parse.add_argument(
-        "--embedding-cache-dir",
-        type=Path,
-        help=(
-            "Optional directory containing chunk-NNNN.text/video.json files; "
-            "legacy segment-NNNN files are also accepted."
-        ),
-    )
-    import_parse.add_argument("--series-name", required=True)
-    import_parse.add_argument("--series-description")
-    import_parse.add_argument("--series-id")
-    import_parse.add_argument("--video-id")
-    import_parse.add_argument("--tenant-id", "--workspace-id", dest="tenant_id", default=DEFAULT_LOCAL_TENANT_ID)
-    import_parse.add_argument("--episode-order", type=int, required=True)
-    import_parse.add_argument("--upload-sequence", type=int)
-    import_parse.add_argument("--pipeline-version", required=True)
-    import_parse.add_argument("--series-bible-file", type=Path)
-    import_parse.add_argument(
-        "--create-schema",
-        action="store_true",
-        help="Create missing tables before this transitional import.",
-    )
-
     hydrate = subparsers.add_parser(
         "hydrate",
         help="Batch hydrate formal videoChunkId values from MySQL.",
     )
     _add_database_arguments(hydrate)
     hydrate.add_argument("video_chunk_ids", nargs="+")
-
-    backfill_keyframes = subparsers.add_parser(
-        "backfill-keyframes",
-        help=(
-            "Generate timed first-frame images for historical VideoChunks "
-            "without rerunning model parsing."
-        ),
-    )
-    _add_database_arguments(backfill_keyframes)
-    backfill_keyframes.add_argument(
-        "--artifact-root",
-        type=Path,
-        help="Managed Artifact Store root; defaults to ANIVAG_ARTIFACT_ROOT.",
-    )
-    backfill_keyframes.add_argument(
-        "--tenant-id", "--workspace-id", dest="tenant_id",
-        default=DEFAULT_LOCAL_TENANT_ID,
-        help="Only inspect this Tenant; defaults to local-default.",
-    )
-    backfill_keyframes.add_argument(
-        "--series-id",
-        help="Only inspect this Series UUID.",
-    )
-    backfill_keyframes.add_argument(
-        "--video-id",
-        help="Only inspect this Video UUID.",
-    )
-    backfill_keyframes.add_argument(
-        "--limit",
-        type=_positive_int,
-        default=100,
-        help=(
-            "Maximum successful writes for --apply, or missing candidates "
-            "inspected for --dry-run."
-        ),
-    )
-    backfill_keyframes.add_argument(
-        "--max-height",
-        type=_positive_int,
-        help="Maximum generated JPEG height; defaults to ANIVAG_PARSE_MAX_HEIGHT.",
-    )
-    backfill_mode = backfill_keyframes.add_mutually_exclusive_group(
-        required=True
-    )
-    backfill_mode.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Inspect candidates and managed media without writing images or MySQL.",
-    )
-    backfill_mode.add_argument(
-        "--apply",
-        action="store_true",
-        help="Explicitly publish first-frame images and conditionally update MySQL.",
-    )
+    hydrate.add_argument("--tenant-id", required=True)
 
     rebuild_index = subparsers.add_parser(
         "rebuild-index",
@@ -376,43 +277,6 @@ def main() -> None:
             }
         elif args.command == "event-index-status":
             result = VideoParsePersistenceService(sessions).event_index_status(args.video_parse_task_id)
-        elif args.command == "import-parse":
-            from .service.parsev1.parse_import import prepare_video_parse_import
-
-            if args.create_schema:
-                create_schema(engine)
-            prepared = prepare_video_parse_import(
-                args.parse_result,
-                args.canonical_chunk_dir,
-                series_name=args.series_name,
-                series_description=args.series_description,
-                series_id=args.series_id,
-                video_id=args.video_id,
-                tenant_id=args.tenant_id,
-                episode_order=args.episode_order,
-                upload_sequence=args.upload_sequence,
-                pipeline_version=args.pipeline_version,
-                series_bible_file=args.series_bible_file,
-                embedding_cache_directory=args.embedding_cache_dir,
-            )
-            result = VideoRepository(sessions).import_video_parse(
-                prepared
-            ).model_dump(mode="json", by_alias=True)
-        elif args.command == "backfill-keyframes":
-            report = KeyframeBackfillService(
-                VideoRepository(sessions),
-                build_artifact_storage(
-                    resolve_artifact_root(args.artifact_root),
-                    environment=environment,
-                    create_base_directory=args.apply,
-                ),
-                max_height=resolve_parse_max_height(args.max_height),
-            ).backfill(
-                limit=args.limit, dry_run=not args.apply,
-                tenant_id=args.tenant_id, series_id=args.series_id,
-                video_id=args.video_id,
-            )
-            result = report.model_dump(mode="json", by_alias=True)
         elif args.command == "search":
             with open_elasticsearch_storage(
                 elasticsearch, environment=environment,
@@ -434,8 +298,10 @@ def main() -> None:
         elif args.command == "hydrate":
             result = [
                 item.model_dump(mode="json", by_alias=True)
-                for item in VideoRepository(sessions).hydrate_video_chunks(
-                    args.video_chunk_ids
+                for item in (
+                    VideoParsePersistenceService(sessions).get_chunk_evidence(
+                        chunk_id, tenant_id=args.tenant_id,
+                    ) for chunk_id in args.video_chunk_ids
                 )
             ]
     print(json.dumps(result, ensure_ascii=False))

@@ -238,7 +238,9 @@ flowchart LR
 
 Supervisor 可以直接回答、搜索网页、调用视频检索，或按冻结的播放位置理解当前及相邻 Chunk。当前视频尚未完整建库时，也可按需取得基础证据；调用由 Supervisor 决定，响应时间受模型与执行预算影响。
 
-正式服务只接受 **V2 + MySQL + Elasticsearch**。Consumer 与 API 在同一 Server 进程运行，任务与恢复事实保存在 MySQL，ES 是检索投影。Gateway、Engine 和 Agent 无需单独启动；local 模式无需 Redis 或外部消息队列。冻结的 Parse V1/Qdrant 链只供历史参考和离线诊断，见 [Engine 说明](engine/README.md)。
+检索工具直接返回来源证据；需要更多上下文时按片段 ID 和游标续读。
+
+正式服务只接受 **V2 + MySQL + Elasticsearch**。Consumer 与 API 在同一 Server 进程运行，任务与恢复事实保存在 MySQL，ES 是检索投影。Gateway、Engine 和 Agent 无需单独启动；local 模式无需 Redis 或外部消息队列。Parse V1、Qdrant 和旧离线导入入口已删除。
 
 视频时长、事件/Chunk 边界、播放位置及帧时间统一为相对原片起点的**整数毫秒**。现有 `durationSeconds`、`startSeconds`、`endSeconds`、`atSeconds`、`positionSeconds` 等字段保留旧名，值不能按秒解释；浏览器播放接口处转换为秒。绝对时间使用 Unix epoch 毫秒，解析配置的分块时长与超时仍以秒为单位。
 
@@ -317,7 +319,7 @@ npm --prefix web run test:e2e
 anivag/
 ├── config.yaml / .env.example   # 模型默认值与环境配置模板
 ├── gateway/                    # 模型协议与来源适配
-├── engine/                     # parsev2、rag 与冻结 parsev1
+├── engine/                     # parsev2、rag 与共享媒体能力
 ├── agent/                      # Chat、实时理解、Parse 与 Context Canvas
 ├── server/                     # HTTP/CLI、持久化与可靠执行
 ├── web/                        # 正式 React + TypeScript + Vite 前端（Kino 位于 web/src/shared/kino）

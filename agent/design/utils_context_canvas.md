@@ -1,5 +1,7 @@
 # ContextCanvas：Parse 与 Chat 共用的上下文工作区
 
+> 当前状态：Chat 检索已移除 Canvas，直接返回证据并保留来源与播放范围校验。本文的 Chat Canvas 段落是历史设计记录；Parse V2 和通用 Canvas 仍保留。
+
 更新时间：2026-10-10。状态：通用 Tool 抽取、ContextCanvas 基座、Parse/Chat 迁移与 Gateway 接入已实现，最终联合离线验证通过。真实模型、外部数据库及服务联调未执行。阶段证据见第 11、12、13 节。
 
 ## 1. 目标与已确认决定

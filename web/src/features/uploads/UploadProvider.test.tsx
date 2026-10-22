@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClientError } from "../../api/client";
 import type {
   ParseConfig,
-  ParseJobView,
   UploadSessionView,
   VideoParseTaskView,
 } from "../../api/contracts";
@@ -59,21 +58,6 @@ const session: UploadSessionView = {
   version: 1, createdAt: 1, updatedAt: 1,
 };
 
-const retriedJob: ParseJobView = {
-  jobId: "job-a", uploadSessionId: session.uploadSessionId,
-  tenantId: "local-default", seriesId: session.seriesId, videoId: "video-a",
-  seriesName: "测试系列", episodeOrder: 1, originalFilename: file.name,
-  pipelineVersion: "m1", retryOfJobId: null, status: "QUEUED", stage: "QUEUED",
-  progress: 18, overallProgress: 18, stageProgress: null,
-  completedDurationSeconds: null, completedThroughSeconds: null, videoDurationSeconds: 10, totalDurationSeconds: 10,
-  processingDurationMs: 0, processingTimingComplete: false,
-  completedChunkCount: null, totalChunkCount: 1, currentChunk: null,
-  attemptCount: 3, maxAttempts: 4, availableAt: 1,
-  startedAt: 1, completedAt: null, estimatedRemainingMs: null,
-  canRetry: false, canReparse: false, canCancel: false, lastError: null, version: 8,
-  checkpoints: [], createdAt: 1, updatedAt: 2,
-};
-
 const videoParseTask: VideoParseTaskView = {
   videoParseTaskId: "task-a",
   videoId: "video-a",
@@ -121,7 +105,7 @@ function Controls() {
     <button onClick={() => { enqueue([{ file, episodeOrder: 99 }]); openDialog(); }}>开始</button>
     <button onClick={openDialog}>上传面板</button>
     <button onClick={() => forgetDeletedSession(session.uploadSessionId)}>同步外部删除</button>
-    <button onClick={() => syncRequeuedParse(retriedJob)}>同步解析重试</button>
+    <button onClick={() => syncRequeuedParse({ ...videoParseTask, attemptCount: 3, maxAttempts: 4 })}>同步解析重试</button>
     <UploadDialog />
   </>;
 }
@@ -276,7 +260,7 @@ describe("upload deletion", () => {
     expect(mocks.deleteUploadSession).not.toHaveBeenCalled();
   });
 
-  it("reattaches a recovered in-memory task when its parse job is manually retried", async () => {
+  it("reattaches a recovered in-memory task when its parse task is manually retried", async () => {
     mocks.displayMode = "debug";
     mocks.selectedSeries.pendingUploads = [session];
     vi.stubGlobal("EventSource", class {
@@ -297,7 +281,7 @@ describe("upload deletion", () => {
       expect(task).toHaveTextContent("100%");
       expect(task).not.toHaveTextContent("本阶段");
       expect(task).toHaveTextContent("3/4 次尝试");
-      expect(task).toHaveTextContent("等待精确检查点");
+      expect(task).toHaveTextContent("2 个固定切片");
     });
   });
 

@@ -417,7 +417,7 @@ def test_structured_factory_capability_controls_query_and_supervisor_frame_tools
         CodexModelSourceConfig, OpenAIModelSourceConfig,
     )
     from tests.agent.chat.test_tools import _inputs
-    from tests.agent.chat.test_video_frames import FrameReader, _canvas
+    from tests.agent.chat.test_video_frames import FrameReader, _calls
 
     sources = {
         "codex": CodexModelSourceConfig(),
@@ -451,7 +451,7 @@ def test_structured_factory_capability_controls_query_and_supervisor_frame_tools
             assert model.supports_vision_input is expected
             tools = build_tools(
                 lambda **_kwargs: pytest.fail("registration must not retrieve"),
-                canvas=_canvas(), inputs=_inputs(), control=ExecutionControl(None), calls=[],
+                inputs=_inputs(), control=ExecutionControl(None), calls=_calls(),
                 maximum_top_k=20, maximum_tool_calls=10, maximum_result_bytes=16_384,
                 maximum_catalog_items=20, frame_reader=FrameReader(),
                 frame_session=FrameInspectionSession(12), frame_max_height=720,

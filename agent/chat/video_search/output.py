@@ -8,7 +8,7 @@ from engine.rag.contracts import (
     VideoChunkSearchResult,
 )
 
-from ..common.errors import AgentModelInvocationError
+from ..common.errors import AgentModelInvocationError, UnknownToolItemError
 from .state import (
     AgentFinalOutput, ChatRenderDraft, ChatRenderBlock, ChatVideoBlock,
     MarkdownRenderBlock, QueryDraft,
@@ -180,24 +180,6 @@ def merge_retrieval_calls(
     )
 
 
-def bind_draft(
-    inputs: RunInputs, calls: Sequence[RetrievalCall], draft: QueryDraft,
-) -> tuple[VideoChunkSearchResult, VideoChunkSearchResult]:
-    available = merge_retrieval_calls(inputs, calls)
-    by_id = {hit.candidate.video_chunk_id: hit for hit in available.hits}
-    selected_ids = [item.video_chunk_id for item in draft.selected_video_ranges]
-    if len(set(selected_ids)) != len(selected_ids):
-        raise AgentModelInvocationError("Query selected duplicate ranges for one VideoChunk")
-    if any(identifier not in by_id for identifier in selected_ids):
-        raise AgentModelInvocationError("Query selected a VideoChunk outside retrieved evidence")
-    selected = [by_id[identifier].model_copy(deep=True) for identifier in selected_ids]
-    bound = available.model_copy(update={
-        "hits": selected,
-        "agent_reply": AgentReply(message=draft.message, result_count=len(selected)),
-    }, deep=True)
-    return available, bound
-
-
 def build_chat_output(
     draft: VideoChunkSearchResult,
     query_draft: QueryDraft,
@@ -358,3 +340,15 @@ def build_retrieval_trace(calls: Sequence[RetrievalCall]) -> list[RetrievalTrace
         ).model_copy(deep=True)
         for call in calls
     ]
+
+
+def retrieval_hit(calls: Sequence[RetrievalCall], video_chunk_id: str) -> VideoChunkSearchHit:
+    for call in calls:
+        if call.status != "error":
+            for hit in call.result.hits:
+                if hit.candidate.video_chunk_id == video_chunk_id:
+                    return hit.model_copy(deep=True)
+    raise UnknownToolItemError(
+        f"Unknown retrieved video_chunk_id {video_chunk_id!r}",
+        "Use a video_chunk_id returned by retrieve or search_video_events.",
+    )

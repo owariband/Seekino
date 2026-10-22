@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
+from agent.chat.video_search.output import merge_retrieval_calls
+from agent.chat.video_search.state import RetrievalCall, LexicalRetrievalChannelWeights
 from engine.rag.indexing.events import EventIndexingContract
 from engine.rag.retrieval.contracts import RawEventHit, RetrievalPolicy
 from engine.rag.retrieval.events import EVENT_RETRIEVAL_STRATEGY_VERSION
@@ -68,7 +69,7 @@ class ImageEmbedder(_Embedder):
         pytest.fail("lexical-only retrieval must not encode the query")
 
 
-def test_real_sql_index_event_receipt_hydration_and_agent_canvas_pipeline(repository, tmp_path, monkeypatch):
+def test_real_sql_index_event_receipt_hydration_and_agent_evidence_pipeline(repository, tmp_path, monkeypatch):
     factory, _queue, repo, task_id, index_lease, at, video_lease = _event_index_fixture(repository)
     monkeypatch.setattr(persistence_module, "now_utc", lambda: at)
     chunk_contract = _contract()
@@ -136,6 +137,9 @@ def test_real_sql_index_event_receipt_hydration_and_agent_canvas_pipeline(reposi
     assert found.trace["raw_candidates"][0]["event_id"] == match.event_id
     assert found.trace["selected_event_ids"] == [match.event_id] and not found.trace["rejected"]
     assert hit.evidence.all_time_events[0] == original
-    canvas = VideoSearchContextCanvas(snapshot.chunk.tenant_id, (snapshot.chunk.series_id,))
-    canvas.record_retrieval(found.chunk_result)
-    assert canvas.retrieval_snapshot(match.video_chunk_id).evidence == hit.evidence
+    weights = LexicalRetrievalChannelWeights(lexical=1, semantic=0, visual=0)
+    calls = [RetrievalCall(query=found.chunk_result.query, top_k=1,
+                          requested_weights=weights, effective_weights=weights, result=found.chunk_result)]
+    merged = merge_retrieval_calls({"tenant_id": snapshot.chunk.tenant_id,
+                                    "series_ids": [snapshot.chunk.series_id]}, calls)
+    assert merged.hits[0].evidence == hit.evidence

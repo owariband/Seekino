@@ -19,16 +19,15 @@ from ..common.errors import AgentContextBudgetError, AgentModelInvocationError
 from ..common.tool import as_langchain_tools, attach_agent_tool_logging
 from .errors import VideoRetrievalError, VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase
 from .frame_evidence import FrameInspectionSession, FrameReader
-from .output import bind_draft, build_retrieval_trace, validate_approved_video_ranges
+from .output import build_retrieval_trace, merge_retrieval_calls
 from .query import run_query
 from .state import (
-    AnswerPhase, ExecutionControl, QueryDraft, QueryReport, RetrievalCall,
-    RetrievalChannelContract, RunInputs, RunLimits, RunState, SelectedVideoRange,
+    AnswerPhase, ExecutionControl, QueryReport, RetrievalCall,
+    RetrievalChannelContract, RunInputs, RunLimits, RunState,
 )
 from .skills import LEXICAL_RETRIEVAL_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
 from .tools.registry import build_query_tools, build_supervisor_tools
 from .tools.shared import _ToolCallBudget
-from .video_search_canvas import VideoSearchContextCanvas
 
 
 class AgentRuntime:
@@ -136,7 +135,7 @@ class AgentRuntime:
         )
 
     def build_supervisor_tools(
-        self, canvas: VideoSearchContextCanvas, inputs: RunInputs,
+        self, inputs: RunInputs,
         control: ExecutionControl, calls: list[RetrievalCall], *,
         maximum_tool_calls: int | None = None, supports_vision_input: bool = False,
         frame_session: FrameInspectionSession | None = None, budget: _ToolCallBudget | None = None,
@@ -144,7 +143,7 @@ class AgentRuntime:
     ) -> list[AgentTool]:
         return build_supervisor_tools(
             self._retrieve, event_retrieve=self._event_retrieve,
-            canvas=canvas, inputs=inputs, control=control, calls=calls,
+            inputs=inputs, control=control, calls=calls,
             maximum_top_k=self._maximum_top_k, maximum_tool_calls=maximum_tool_calls,
             maximum_result_bytes=min(self._max_tool_result_bytes, maximum_result_bytes)
             if maximum_result_bytes is not None else self._max_tool_result_bytes,
@@ -184,7 +183,6 @@ class AgentRuntime:
         control.check()
         result = self._graph.invoke({
             "inputs": deepcopy(inputs),
-            "canvas": VideoSearchContextCanvas(inputs["tenant_id"], tuple(inputs["series_ids"])),
             "frame_inspections": self.new_frame_session(), "calls": [],
             "control": control, "limits": limits, "tool_budget": tool_budget,
         })
@@ -205,7 +203,7 @@ class AgentRuntime:
         ))
         tools = build_query_tools(
             self._retrieve, event_retrieve=self._event_retrieve,
-            canvas=state["canvas"], inputs=inputs, control=query_control, calls=state["calls"],
+            inputs=inputs, control=query_control, calls=state["calls"],
             maximum_top_k=self._maximum_top_k,
             maximum_tool_calls=state["limits"].max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
@@ -222,7 +220,8 @@ class AgentRuntime:
                 self._query_model, inputs, tools=as_langchain_tools(tools),
                 max_model_calls=state["limits"].max_model_calls_per_turn,
                 control=query_control, max_prompt_chars=self._max_prompt_chars,
-                canvas=state["canvas"], retrieval_skill_prompt=self._retrieval_skill_prompt,
+                calls=state["calls"], frame_session=state["frame_inspections"],
+                retrieval_skill_prompt=self._retrieval_skill_prompt,
             )
             query_control.check()
             control.check()
@@ -246,31 +245,17 @@ class AgentRuntime:
                 VideoSearchFailureCode.RETRIEVAL_FAILED,
                 VideoSearchFailurePhase.RETRIEVAL, retryable=True,
             )
-        completion = state["completion"]
-        draft = QueryDraft(
-            plan_context=completion.plan_context, message=completion.message,
-            selected_video_ranges=[SelectedVideoRange(
-                video_chunk_id=item.video_chunk_id, start_seconds=item.start_seconds,
-                end_seconds=item.end_seconds,
-            ) for item in state["canvas"].draft_items()],
-        )
-        available, selected = bind_draft(state["inputs"], state["calls"], draft)
-        validate_approved_video_ranges(selected, draft)
-        # Bind the report to fixed retrieved snapshots, not mutable ranking metadata.
-        available = available.model_copy(update={"hits": [
-            state["canvas"].retrieval_snapshot(hit.candidate.video_chunk_id)
-            for hit in available.hits
-        ]}, deep=True)
-        return {"query_draft": draft, "retrieval_result": available}
+        return {"retrieval_result": merge_retrieval_calls(state["inputs"], state["calls"])}
 
     @staticmethod
     def _report(state: RunState) -> dict:
         state["control"].check()
         return {"report": QueryReport(
-            completion=state["completion"], query_draft=state["query_draft"],
+            completion=state["completion"],
             retrieval_result=state["retrieval_result"],
             retrieval_trace=build_retrieval_trace(state["calls"]),
-            retrieval_calls=tuple(state["calls"]), canvas=state["canvas"],
+            retrieval_calls=tuple(state["calls"]),
+            frame_receipts=tuple(state["frame_inspections"].summary()) if state["frame_inspections"] else (),
         )}
 
 

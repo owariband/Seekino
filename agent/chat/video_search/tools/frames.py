@@ -13,7 +13,8 @@ from ...common.tool_result import JsonToolResult, ToolError
 from ..frame_evidence import (
     FrameInspectionSession, FrameReader, FrameReadError, FrameReadRequest,
 )
-from ..video_search_canvas import VideoSearchContextCanvas
+from ..output import retrieval_hit
+from ..state import RetrievalCall
 from .shared import _ToolCallBudget, _start_tool_call
 
 _DEFAULT_FRAME_COUNT = 3
@@ -30,7 +31,7 @@ class InspectVideoFramesArguments(BaseModel):
 
 def build_inspect_video_frames_tool(
     *, reader: FrameReader, session: FrameInspectionSession,
-    canvas: VideoSearchContextCanvas, inputs: RunInputs, control: ExecutionControl,
+    calls: list[RetrievalCall], inputs: RunInputs, control: ExecutionControl,
     role: str, max_height: int, maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
@@ -42,7 +43,7 @@ def build_inspect_video_frames_tool(
         end_ms: int | None = None, frame_count: int = _DEFAULT_FRAME_COUNT,
     ) -> JsonToolResult:
         _start_tool_call(control, budget, "inspect_video_frames")
-        hit = canvas.retrieval_snapshot(video_chunk_id)
+        hit = retrieval_hit(calls, video_chunk_id)
         evidence = hit.evidence
         if (evidence.tenant_id != inputs["tenant_id"]
                 or evidence.series_id not in inputs["series_ids"]):
@@ -101,7 +102,6 @@ def build_inspect_video_frames_tool(
                     "frames", "cache_hit", "images_supplied", "manifest_uri", "manifest_sha256",
                 ) if name in payload
             } | {"role": role}
-            canvas.put("frame_inspections", request.inspection_id, receipt, readonly=True)
             session.cache[key] = inspection
             session.receipts.append(receipt)
             return JsonToolResult(success=True, payload=payload, artifact=inspection.artifact)

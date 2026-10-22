@@ -470,10 +470,6 @@ class AgentRepository:
                 raise AgentMessageNotFoundError("this message has no assistant reply")
             return StartedAgentMessageState(self._message_state(user), self._message_state(assistant), True)
 
-    def load_reference_evidence(self, video_chunk_id: str):
-        from .video import VideoRepository
-        return VideoRepository(self._session_factory).hydrate_video_chunks([video_chunk_id])[0]
-
     def checkpoint_assistant_message(
         self, message_id: str, *, now: int, phase: str | None = None,
         content: str | None = None, search_result: dict | None = None,

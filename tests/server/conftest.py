@@ -1,152 +1,116 @@
 from __future__ import annotations
 
-from pathlib import Path
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
-from engine.parsev1.schemas import (
-    AnalysisWindow,
-    ContextEvent,
-    ContextSnapshot,
-    OwnedTimelineEvent,
-    VideoChunkParseResult,
-    VideoParseModels,
-    VideoParseResult,
-)
+from sqlalchemy import select
 
-from server.database import (
-    DatabaseEnvironment,
-    create_database_engine,
-    create_schema,
-    create_session_factory,
-)
-from server.model.dto.parseDTO import PreparedVideoParseImport
-from server.service.parsev1.parse_import import prepare_video_parse_import
-from server.repository.video import VideoRepository
+from server.config.parse_profile import default_video_parse_v2_config
+from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
+from server.model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
+from server.model.video import Series, Video, VideoChunk
+from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY, VideoParsePersistenceService
+from server.utils.time import datetime_to_unix_time_ms
 
 
-@pytest.fixture
-def prepared_import(tmp_path: Path, monkeypatch) -> PreparedVideoParseImport:
-    source_video = tmp_path / "episode.mp4"
-    source_video.write_bytes(b"source-video")
-    canonical_directory = tmp_path / "canonical"
-    canonical_directory.mkdir()
-    analysis_directory = tmp_path / "analysis"
-    analysis_directory.mkdir()
-
-    initial = ContextSnapshot(
-        snapshot_id="context-initial",
-        after_chunk_sequence_no=-1,
-        compact_text="",
-        recent_events=[],
-    )
-    chunks: list[VideoChunkParseResult] = []
-    all_events: list[OwnedTimelineEvent] = []
-    context_before = initial
-    for sequence_no in range(2):
-        start_seconds = sequence_no * 10
-        end_seconds = (sequence_no + 1) * 10
-        analysis_path = analysis_directory / f"window-{sequence_no}.mp4"
-        analysis_path.write_bytes(f"analysis-{sequence_no}".encode())
-        canonical_path = canonical_directory / f"chunk-{sequence_no:04d}.mp4"
-        canonical_path.write_bytes(f"canonical-{sequence_no}".encode())
-
-        event = OwnedTimelineEvent(
-            start_seconds=start_seconds + 1,
-            end_seconds=start_seconds + 3,
-            event_type="ACTION",
-            description=f"第 {sequence_no + 1} 段动作",
-            text=None,
-            source_chunk_sequence_no=sequence_no,
+def set_series_parse_status(session, series_id, status="COMPLETE"):
+    """Set current parse facts for Chat tests that stub retrieval itself."""
+    tasks = session.scalars(select(VideoParseTask).join(Video).where(Video.series_id == series_id)).all()
+    if not tasks:
+        video = Video(
+            id=str(uuid4()), series_id=series_id, episode_order=100, upload_sequence=100,
+            filename="scope.mp4", source_uri="scope.mp4", hash=uuid4().hex * 2, size_bytes=1,
+            duration_ms=1000, upload_status="COMPLETED", parse_status=status,
+            upload_progress=100, parse_progress=100,
         )
-        compact = (
-            f"[{start_seconds + 1}-{start_seconds + 3}] "
-            f"第 {sequence_no + 1} 段动作"
+        session.add(video)
+        session.flush()
+        task = VideoParseTask(
+            id=str(uuid4()), video_id=video.id, pipeline_version="video-parse-v2",
+            status=status, parse_config=default_video_parse_v2_config().model_dump(mode="json"),
+            chunk_count=1, version=1, max_attempts=3, is_test=True,
         )
-        context_after = ContextSnapshot(
-            snapshot_id=f"engine-context-{sequence_no}",
-            after_chunk_sequence_no=sequence_no,
-            compact_text=compact,
-            recent_events=[
-                ContextEvent(
-                    chunk_sequence_no=sequence_no,
-                    start_seconds=event.start_seconds,
-                    end_seconds=event.end_seconds,
-                    event_type=event.event_type,
-                    description=event.description,
-                    text=None,
-                )
-            ],
-        )
-        chunk = VideoChunkParseResult(
-            window=AnalysisWindow(
-                sequence_no=sequence_no,
-                source_video=source_video,
-                media_path=analysis_path,
-                chunk_start_seconds=start_seconds,
-                chunk_end_seconds=end_seconds,
-                analysis_start_seconds=start_seconds,
-                analysis_end_seconds=end_seconds,
-            ),
-            context_before=context_before,
-            candidate_transcript=[],
-            is_fallback=False,
-            window_summary=f"第 {sequence_no + 1} 段摘要",
-            observed_events=[],
-            events=[event],
-            self_compact=compact,
-            context_after=context_after,
-        )
-        chunks.append(chunk)
-        all_events.append(event)
-        context_before = context_after
-
-    parse_result = VideoParseResult(
-        models=VideoParseModels(
-            transcript=None,
-            transcript_mode="none",
-            video_parser="test-video-model",
-            fallback={
-                "enabled": False,
-                "transcript_model": "test-transcript-model",
-                "provider": "deepseek",
-                "visual_model": "test-visual-model",
-                "refiner_model": "test-refiner-model",
-                "input_mode": "ordered_frames",
-                "frame_fps": 0.5,
-                "group_duration_seconds": 30,
-                "max_frames_per_group": 15,
-                "max_height": 720,
-            },
-        ),
-        source_video=source_video,
-        duration_seconds=20,
-        chunk_duration_seconds=10,
-        context_overlap_seconds=0,
-        chunks=chunks,
-        events=all_events,
-    )
-    parse_path = tmp_path / "pipeline.parse.json"
-    parse_path.write_text(parse_result.model_dump_json(), encoding="utf-8")
-    # Fake source bytes test contracts; the declared duration and coordinates are milliseconds.
-    monkeypatch.setattr(
-        "server.service.parsev1.parse_import.probe_video_duration_seconds",
-        lambda _path: parse_result.duration_seconds,
-    )
-    return prepare_video_parse_import(
-        parse_path,
-        canonical_directory,
-        series_name="Test Series",
-        series_description="isolated fixture",
-        episode_order=7,
-        pipeline_version="test-pipeline-v1",
-    )
+        session.add(task)
+        tasks = [task]
+    for task in tasks:
+        task.status = status
 
 
 @pytest.fixture
 def repository():
-    engine = create_database_engine(
-        "sqlite+pysqlite:///:memory:",
-        environment=DatabaseEnvironment.TEST,
-    )
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
-    return engine, VideoRepository(create_session_factory(engine))
+    yield engine, VideoParsePersistenceService(create_session_factory(engine))
+    engine.dispose()
+
+
+@pytest.fixture
+def seed_video(tmp_path):
+    """Seed current V2 facts for tests of the library, media and Chat boundaries."""
+    def seed(factory, *, tenant_id="local-default", series_id=None, series_name="Test Series", episode_order=7, upload_sequence=None):
+        video_id, task_id = str(uuid4()), str(uuid4())
+        source = tmp_path / f"{video_id}.mp4"
+        source.write_bytes(b"source-video")
+        at = datetime(2026, 9, 29, tzinfo=UTC)
+        timestamp = datetime_to_unix_time_ms(at)
+        config = default_video_parse_v2_config().model_dump(mode="json")
+        config.update(chunk_duration=10, interval_duration=30)
+        config["indexing"]["index_generation"] = 1
+        chunks = []
+        with factory.begin() as session:
+            if series_id is None:
+                series_id = session.scalar(select(Series.id).where(
+                    Series.tenant_id == tenant_id, Series.name == series_name,
+                )) or str(uuid4())
+            if session.get(Series, series_id) is None:
+                session.add(Series(id=series_id, tenant_id=tenant_id, name=series_name,
+                                   description="isolated fixture", status="INDEXING", character_bible=[]))
+            session.add(Video(id=video_id, series_id=series_id, episode_order=episode_order,
+                              upload_sequence=upload_sequence or episode_order, filename="episode.mp4",
+                              source_uri=source.as_uri(), hash="a" * 64, size_bytes=source.stat().st_size,
+                              duration_ms=20_000, upload_status="COMPLETED", parse_status="COMPLETE",
+                              upload_progress=100, parse_progress=100))
+            session.add(VideoParseTask(id=task_id, video_id=video_id, pipeline_version="video-parse-v2",
+                                      status="COMPLETE", parse_config=config, chunk_count=2, version=1,
+                                      next_execute_time=at, finish_time=at, max_attempts=3,
+                                      is_test=True, is_deleted=False,
+                                      detail={"_worker_runtime_v2": {"accepted": True}},
+                                      create_time=timestamp, update_time=timestamp))
+            for index in range(2):
+                chunk_id, child_id = str(uuid4()), str(uuid4())
+                start, end = index * 10_000, (index + 1) * 10_000
+                path = tmp_path / f"{chunk_id}.mp4"
+                path.write_bytes(f"canonical-{index}".encode())
+                session.add(VideoChunk(id=chunk_id, video_id=video_id, sequence_no=index,
+                                       start_ms=start, end_ms=end, window_start_ms=start, window_end_ms=end,
+                                       chunk_media_ref=path.as_uri(), analysis_window_media_ref=path.as_uri(),
+                                       transcript=[], keyframe_uris=[]))
+                session.add(ChunkParseTask(id=child_id, video_task_id=task_id, chunk_id=chunk_id,
+                                          phase=3, status="COMPLETE", indexed_content_version=1,
+                                          next_execute_time=at, detail=None,
+                                          create_time=timestamp, update_time=timestamp))
+                receipt = {"parse_task_id": task_id, "video_chunk_id": chunk_id,
+                           "content_version": 1, "index_generation": 1}
+                session.add(ChunkParseContent(id=str(uuid4()), chunk_task_id=child_id, version=1,
+                    content={"persons": [], "timeline": [{"event_type": "ACTION", "start_seconds": start + 1000,
+                              "end_seconds": start + 3000, "description": f"第 {index + 1} 段动作",
+                              "participants": [], "visible_persons": []}]},
+                    detail={"compact": f"第 {index + 1} 段摘要", INDEX_EMBEDDINGS_DETAIL_KEY: {
+                        "content_version": 1, "representations": {}, "receipt": receipt}},
+                    create_time=timestamp, update_time=timestamp))
+                chunks.append(SimpleNamespace(video_chunk_id=chunk_id, chunk_media_ref=path.as_uri(),
+                                              analysis_window_media_ref=path.as_uri()))
+        return SimpleNamespace(tenant_id=tenant_id, series_id=series_id, series_name=series_name,
+                               video_id=video_id, video_parse_task_id=task_id,
+                               video_chunk_ids=[chunk.video_chunk_id for chunk in chunks], chunks=tuple(chunks),
+                               episode_order=episode_order, upload_sequence=upload_sequence or episode_order,
+                               original_filename="episode.mp4", original_source_uri=source.as_uri(),
+                               total_bytes=source.stat().st_size)
+    return seed
+
+
+@pytest.fixture
+def parsed_video(repository, seed_video):
+    return seed_video(create_session_factory(repository[0]))

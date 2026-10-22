@@ -2,10 +2,10 @@ from pathlib import Path
 
 
 _MEDIA_TIME_INSTRUCTIONS = (
-    "媒体时间合同：Evidence、Catalog、Draft 中历史命名的 *_seconds / *Seconds "
-    "媒体位置与时长字段均为整数毫秒。工具入参和播放范围必须保留原始毫秒值；"
+    "媒体时间合同：Evidence 中历史命名的 *_seconds / *Seconds "
+    "媒体位置与时长字段均为整数毫秒。inspect_video_frames 使用毫秒；工具入参和播放范围保留原始毫秒值。"
     "claim 和最终正文显示秒时必须除以 1000，或转换为时间码，例如 12095 毫秒为 12.095 秒。"
-    "精读工具 read 的 start/end 是字符偏移，与媒体时间无关。\n\n"
+    "read_retrieval_evidence 使用 ID 和游标续读，不需要时间或字符范围。\n\n"
 )
 
 

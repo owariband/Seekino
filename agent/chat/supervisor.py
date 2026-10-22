@@ -27,19 +27,19 @@ from .common.errors import (
     AgentContextBudgetError, AgentExecutionTimeoutError, AgentModelInvocationError, AgentToolFeedbackError,
     AgentToolInvocationError, UnknownToolItemError,
 )
-from .common.tool_result import JsonToolResult, ToolError, ToolResult
+from .common.tool_result import JsonToolResult, TextToolResult, ToolError, ToolResult
+from .common.tool_output import page_items
 from .video_search.errors import VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase
 from .video_search.runtime import AgentRuntime
 from .video_search.output import (
     build_chat_output, build_chat_snapshot, build_retrieval_trace, merge_retrieval_calls,
-    validate_result, video_range_sources,
+    retrieval_hit, validate_result, video_range_sources,
 )
 from .video_search.state import (
-    AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock, DraftItem,
+    AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock,
     MarkdownRenderBlock, QueryDraft, RetrievalCall, SelectedVideoRange, SupervisorToolName, ToolRenderBlock,
 )
-from .video_search.tools.shared import RemoveItemArguments, _ToolCallBudget
-from .video_search.video_search_canvas import VideoSearchContextCanvas
+from .video_search.tools.shared import RemoveItemArguments, _OptionalCursor, _ToolCallBudget
 from .realtime_understanding.state import RealtimeResult
 from typing import TYPE_CHECKING
 
@@ -86,6 +86,28 @@ class QueryArguments(BaseModel):
             raise ValueError("Provide query or queries, exclusively")
         if self.queries is not None and self.attachments:
             raise ValueError("Put attachments on each independent query")
+        return self
+
+
+class ReadQueryReportArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_reference: Annotated[str, StringConstraints(min_length=1, max_length=80)]
+    cursor: _OptionalCursor = None
+
+
+class SubmitVideoItemArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_chunk_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+    start_seconds: int = Field(strict=True, ge=0)
+    end_seconds: int = Field(strict=True, gt=0)
+    claim: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)]
+
+    @model_validator(mode="after")
+    def validate_time_range(self):
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 
@@ -188,9 +210,9 @@ class SupervisorRuntime:
             cancellation, emit,
         )
         video_result: AgentFinalOutput | None = None
-        evidence_canvas = VideoSearchContextCanvas(
-            inputs["tenant_id"], tuple(inputs["series_ids"]),
-        ) if inputs["series_ids"] else None
+        video_available = bool(inputs["series_ids"])
+        query_reports: dict[str, dict] = {}
+        frame_receipts: dict[str, dict] = {}
         retrieval_calls: list[RetrievalCall] = []
         query_warnings: list[str] = []
         submitted_items: dict[str, SelectedVideoRange] = {}
@@ -250,7 +272,7 @@ class SupervisorRuntime:
             return answer
 
         def accepted_video_evidence():
-            assert evidence_canvas is not None
+            assert video_available
             available = merge_retrieval_calls(inputs, retrieval_calls)
             if query_warnings:
                 available = available.model_copy(update={
@@ -261,7 +283,7 @@ class SupervisorRuntime:
                 identifier for sources in submitted_sources.values() for identifier in sources
             ))
             evidence = available.model_copy(update={
-                "hits": [evidence_canvas.retrieval_snapshot(identifier) for identifier in source_ids],
+                "hits": [retrieval_hit(retrieval_calls, identifier) for identifier in source_ids],
                 "agent_reply": available.agent_reply.model_copy(update={"result_count": len(source_ids)}),
             }, deep=True)
             selection = QueryDraft(
@@ -449,7 +471,7 @@ class SupervisorRuntime:
             nonlocal query_number
             with tool_lock:
                 consume_tool_call()
-                if evidence_canvas is None:
+                if not video_available:
                     return JsonToolResult(success=False, payload={"error": ToolError(
                         code="NO_VIDEO_SCOPE", message="No video series is available for this conversation.",
                         retryable=False, retry_hint="Explain that local video evidence is unavailable.",
@@ -487,7 +509,7 @@ class SupervisorRuntime:
                     task_inputs.append(scoped)
                 control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.RETRIEVING})
 
-            # Independent Query sessions never share a writable Canvas or publish final answers.
+            # Independent Query sessions retain their own evidence and never publish final answers.
             batch_stopped = Event()
 
             class QueryCancellation:
@@ -565,29 +587,27 @@ class SupervisorRuntime:
                 if incoming_calls:
                     # Validate the whole incoming evidence batch before changing cumulative state.
                     try:
-                        cumulative = merge_retrieval_calls(inputs, [*retrieval_calls, *incoming_calls])
+                        merge_retrieval_calls(inputs, [*retrieval_calls, *incoming_calls])
                     except AgentModelInvocationError as exc:
                         raise AgentToolFeedbackError(
                             "EVIDENCE_CONFLICT", "Queries returned conflicting source evidence.",
                             "Existing source snapshots remain available; do not combine conflicting versions.",
                         ) from exc
-                    frame_receipts = {}
-                    previous_frames = dict(evidence_canvas.items("frame_inspections"))
+                    incoming_frames = {}
                     for report in reports:
                         if isinstance(report, VideoSearchFailure):
                             continue
-                        if (report.canvas.tenant_id != inputs["tenant_id"]
-                                or set(report.canvas.series_ids) != set(inputs["series_ids"])):
-                            raise AgentModelInvocationError("Query changed the fixed scope")
-                        for identifier, receipt in report.canvas.items("frame_inspections"):
-                            if identifier in previous_frames and previous_frames[identifier] != receipt:
-                                raise AgentModelInvocationError("Query changed a frame receipt")
+                        validate_result(report.retrieval_result, inputs)
+                        if report.retrieval_result != merge_retrieval_calls(inputs, report.retrieval_calls):
+                            raise AgentModelInvocationError("Query report does not match its retrieval calls")
+                        for receipt in report.frame_receipts:
+                            identifier = receipt["inspection_id"]
                             if identifier in frame_receipts and frame_receipts[identifier] != receipt:
+                                raise AgentModelInvocationError("Query changed a frame receipt")
+                            if identifier in incoming_frames and incoming_frames[identifier] != receipt:
                                 raise AgentModelInvocationError("Queries returned conflicting frame receipts")
-                            frame_receipts[identifier] = receipt
-                    evidence_canvas.record_retrieval(cumulative)
-                    for identifier, receipt in frame_receipts.items():
-                        evidence_canvas.put("frame_inspections", identifier, receipt, readonly=True)
+                            incoming_frames[identifier] = deepcopy(receipt)
+                    frame_receipts.update(incoming_frames)
                     retrieval_calls.extend(incoming_calls)
                 previews = []
                 for task, report in zip(tasks, reports, strict=True):
@@ -597,25 +617,29 @@ class SupervisorRuntime:
                         query_warnings.append("A requested Query failed: " + report.code.value)
                         failure_report = {"number": query_number, "status": "failed", "query": task.query,
                                           "error": _video_failure_tool_error(report).as_dict()}
-                        evidence_canvas.put("history", reference, failure_report, readonly=True)
+                        query_reports[reference] = deepcopy(failure_report)
                         previews.append({**failure_report, "report_reference": reference, "truncated": False})
                         continue
                     full_report = {
                         "number": query_number, "status": "reported",
                         "query": task.query, "message": report.completion.message,
                         "plan_context": report.completion.plan_context,
-                        "draft_items": [item.model_dump() for item in report.canvas.draft_items()],
-                        "evidence_references": list(report.canvas.retrieval_item_ids()),
+                        "frame_inspections": deepcopy(list(report.frame_receipts)),
+                        "evidence_references": [hit.candidate.video_chunk_id for hit in report.retrieval_result.hits],
                         "partial": report.retrieval_result.partial,
                         "warnings": list(report.retrieval_result.warnings),
                     }
-                    evidence_canvas.put("history", reference, full_report, readonly=True)
+                    query_reports[reference] = deepcopy(full_report)
                     previews.append({**deepcopy(full_report), "report_reference": reference,
-                                     "truncated": False, "omitted_draft_items": 0})
-                payload = {"reports": previews, "read_collections": list(evidence_canvas.read_collections["supervisor"])}
+                                     "truncated": False})
+                payload = {"reports": previews}
                 success = any(not isinstance(report, VideoSearchFailure) for report in reports)
                 if not success:
                     payload["error"] = dict(previews[0]["error"])
+                continuation = (
+                    "Use read_query_report for query-"
+                    f"{query_number - len(tasks) + 1} through query-{query_number}."
+                )
                 compact = False
                 while True:
                     result = JsonToolResult(success=success, payload=payload)
@@ -623,11 +647,11 @@ class SupervisorRuntime:
                         return result
                     largest = max(previews, key=lambda item: len(context_json(item)))
                     largest["truncated"] = True
+                    payload["continuation"] = continuation
                     if len(largest.get("message", "")) > 100:
                         largest["message"] = largest["message"][:len(largest["message"]) // 2]
-                    elif largest.get("draft_items"):
-                        largest["draft_items"].pop()
-                        largest["omitted_draft_items"] += 1
+                    elif largest.get("frame_inspections"):
+                        largest["frame_inspections"] = []
                     elif largest.get("evidence_references"):
                         largest["evidence_references"] = []
                     elif largest.get("plan_context"):
@@ -643,13 +667,13 @@ class SupervisorRuntime:
                     elif len(previews) > 1:
                         previews.remove(largest)
                         payload["omitted_reports"] = payload.get("omitted_reports", 0) + 1
-                        payload["continuation"] = "Read the history catalog with get_context_canvas for omitted reports."
+                        payload["continuation"] = continuation
                     elif not compact:
                         payload = {
                             "reports": [{"report_reference": item["report_reference"],
                                          "status": item["status"], "truncated": True} for item in previews],
                             "omitted_reports": payload.get("omitted_reports", 0),
-                            "continuation": "Read complete reports from get_context_canvas(collection='history').",
+                            "continuation": continuation,
                         }
                         if not success:
                             payload["error"] = {"code": previews[0]["error"]["code"]}
@@ -658,27 +682,51 @@ class SupervisorRuntime:
                     else:
                         raise AgentToolInvocationError("Query reports exceed their output budget")
 
+        def read_query_report(report_reference: str, cursor: str | None = None) -> ToolResult:
+            with tool_lock:
+                consume_tool_call()
+                if report_reference not in query_reports:
+                    raise AgentToolFeedbackError(
+                        "UNKNOWN_REPORT", "Unknown Query report reference.",
+                        "Use a report_reference returned by query_video.",
+                    )
+                content = context_json(query_reports[report_reference])
+                part_size = max(1, (self._max_tool_result_bytes - 384) // 8)
+                try:
+                    return TextToolResult(success=True, content=page_items(
+                        [{"text": content[start:start + part_size]}
+                         for start in range(0, len(content), part_size)],
+                        namespace="query-report", resource_id=report_reference, cursor=cursor,
+                        maximum_items=1, maximum_bytes=self._max_tool_result_bytes,
+                        metadata={"report_reference": report_reference},
+                    ))
+                except AgentToolInvocationError as exc:
+                    raise AgentToolFeedbackError(
+                        "INVALID_REPORT_CURSOR", str(exc),
+                        "Read this report_reference again without cursor, then use its returned next_cursor.",
+                    ) from exc
+
         def submit_video_item(
             video_chunk_id: str, start_seconds: int, end_seconds: int, claim: str,
         ) -> ToolResult:
             with tool_lock:
                 consume_tool_call()
-                if evidence_canvas is None:
+                if not video_available:
                     raise AgentToolFeedbackError(
                         "VIDEO_EVIDENCE_UNAVAILABLE", "No video evidence is available.",
                         "Retrieve video evidence directly or call query_video before submitting video items.",
                     )
                 try:
-                    evidence_canvas.retrieval_snapshot(video_chunk_id)
+                    retrieval_hit(retrieval_calls, video_chunk_id)
                 except UnknownToolItemError as exc:
                     raise AgentToolFeedbackError(
                         "UNKNOWN_ITEM", str(exc),
-                        "Read get_context_canvas(collection='retrieval') and use a returned video_chunk_id.",
+                        "Use a video_chunk_id returned by retrieve or search_video_events.",
                     ) from exc
                 try:
                     source_ids = video_range_sources(
-                        {reference: evidence_canvas.retrieval_snapshot(reference).evidence.model_dump(by_alias=True)
-                         for reference, _ in evidence_canvas.items("retrieval")},
+                        {hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
+                         for hit in merge_retrieval_calls(inputs, retrieval_calls).hits},
                         video_chunk_id, start_seconds, end_seconds, allow_adjacent=True,
                     )
                 except ValueError as exc:
@@ -822,7 +870,7 @@ class SupervisorRuntime:
                     "Submit a final video selection after checking its source evidence. Times are integer "
                     "milliseconds within the anchor or two adjacent retrieved chunks of the same video. "
                     "Repeated submission updates the selection in place; only submitted selections are displayed."
-                ), args_schema=DraftItem, maximum_result_bytes=self._max_tool_result_bytes,
+                ), args_schema=SubmitVideoItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
             ),
             build_agent_tool(
                 func=remove_video_item, name="remove_video_item",
@@ -841,14 +889,19 @@ class SupervisorRuntime:
                     "evidence and returns findings, candidate ranges and gaps, never a final user answer. "
                     "Use query for one goal, or queries=[{query, attachments}, ...] for independent goals "
                     f"executed in parallel (at most {self._maximum_parallel_queries}). "
-                    "For simple lookups prefer your direct retrieval and Canvas tools. Copy only needed "
-                    "attachment mediaUri values. Full reports remain in Canvas history by report_reference."
+                    "For simple lookups use direct retrieval. Copy only needed attachment mediaUri values. "
+                    "Use read_query_report with report_reference and cursor to continue a truncated report."
                 ), args_schema=QueryArguments, maximum_result_bytes=self._max_tool_result_bytes,
             ),
+            build_agent_tool(
+                func=read_query_report, name="read_query_report",
+                description="Continue a truncated Query report using its report_reference and next_cursor.",
+                args_schema=ReadQueryReportArguments, maximum_result_bytes=self._max_tool_result_bytes,
+            ),
         ]
-        if evidence_canvas is not None:
+        if video_available:
             direct_tools = self._video_runtime.build_supervisor_tools(
-                evidence_canvas, inputs, control, retrieval_calls,
+                inputs, control, retrieval_calls,
                 maximum_tool_calls=max_tool_calls_per_turn if self._limits_enabled else None,
                 supports_vision_input=self.supports_vision_input,
                 frame_session=self._video_runtime.new_frame_session(), budget=tool_budget,
@@ -933,7 +986,7 @@ class SupervisorRuntime:
             "默认采用贪心原则：选能回答当前问题的最小粒度工具，取得充分证据就停止扩搜并交付。"
             "具体台词、动作、情绪或局部事件优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
             "台词检索保留用户提供的原话或译文短语，不先扩写成带人物、剧情假设的长查询。"
-            "命中后用 get_context_canvas 只精读支持答案的必要上下文；排名第一本身不等于证据充分。"
+            "命中结果包含真实证据；内容截断或缺少上下文时用 read_retrieval_evidence 续读。排名第一本身不等于证据充分。"
             "Event 工具不可用、索引未覆盖、候选不足或需要更广上下文时，再用 retrieve 扩大到 Chunk；"
             "未覆盖或部分覆盖不能解释成没有匹配。只缺局部上下文时先读取已命中 Chunk，不重新广搜。"
             "复杂问题可直接把可独立调查的目标交给 query_video，按需先取线索，无需逐级试遍工具；"

@@ -35,7 +35,6 @@ from .repository.job import ParseJobRepository
 from .repository.library import LibraryRepository
 from .repository.model_usage import ModelUsageRepository
 from .repository.upload import UploadRepository
-from .repository.video import VideoRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.agent_chat import AgentChatService
 from .service.agent_attachments import AgentAttachmentService
@@ -205,11 +204,10 @@ def _build_application_services(
         pricing=load_model_pricing(settings.model_pricing_path),
     )
     construction_cleanup.callback(parse_usage.close)
-    video_repository = VideoRepository(session_factory)
     parse_persistence = VideoParsePersistenceService(session_factory)
     media = MediaService(
-        library, artifact_store, video_repository, config=settings.images,
-        parse_persistence=parse_persistence if settings.parse_execution_mode == "v2" else None,
+        library, artifact_store, config=settings.images,
+        parse_persistence=parse_persistence,
     )
 
     assert settings.elasticsearch is not None

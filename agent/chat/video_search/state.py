@@ -71,23 +71,8 @@ class QueryCompletion(BaseModel):
     message: _Text
 
 
-class DraftItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    video_chunk_id: _VideoChunkId
-    start_seconds: int = Field(strict=True, ge=0)
-    end_seconds: int = Field(strict=True, gt=0)
-    claim: _EvidenceClaim
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> DraftItem:
-        if self.end_seconds <= self.start_seconds:
-            raise ValueError("end_seconds must be greater than start_seconds")
-        return self
-
-
 class RetrievalChannelWeights(BaseModel):
-    """ASR/Semantic/Visual weights retained for live V1 calls and old traces."""
+    """ASR/Semantic/Visual weights for transcript retrieval and stored traces."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -351,23 +336,19 @@ class QueryReport:
     """A delegated investigation; the Supervisor owns the final user answer."""
 
     completion: QueryCompletion
-    query_draft: QueryDraft
     retrieval_result: VideoChunkSearchResult
     retrieval_trace: list[RetrievalTraceEntry]
     retrieval_calls: tuple[RetrievalCall, ...]
-    canvas: Any
+    frame_receipts: tuple[dict, ...] = ()
 
 
 class RunState(TypedDict):
     inputs: RunInputs
-    # Any avoids the Canvas/state import cycle when LangGraph resolves hints.
-    canvas: Any
     frame_inspections: FrameInspectionSession | None
     calls: list[RetrievalCall]
     control: ExecutionControl
     limits: RunLimits
     tool_budget: Any
     completion: QueryCompletion
-    query_draft: QueryDraft
     retrieval_result: VideoChunkSearchResult
     report: QueryReport

@@ -26,7 +26,6 @@ from ..model.dto.mediaDTO import (
     parse_export_event_types,
 )
 from ..repository.library import SeriesNotFoundError
-from ..repository.video import VideoRepository
 from .video_parse_persistence import VideoParseConflictError, VideoParsePersistenceService
 from ..schema import VideoChunkEvidence
 from ..storage.artifact import ArtifactStore
@@ -55,7 +54,6 @@ class MediaService:
         self,
         library: LibraryService,
         artifact_store: ArtifactStore,
-        video_repository: VideoRepository | None = None,
         *,
         parse_persistence: VideoParsePersistenceService | None = None,
         probe_playback: Callable[[Path], bool] | None = None,
@@ -63,7 +61,6 @@ class MediaService:
     ) -> None:
         self._library = library
         self._artifact_store = artifact_store
-        self._video_repository = video_repository
         self._parse_persistence = parse_persistence
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
@@ -286,14 +283,12 @@ class MediaService:
                 projected
                 or refresh
                 or evidence.keyframe_uris
-                or (self._video_repository is None and self._parse_persistence is None)
+                or self._parse_persistence is None
             ):
                 return tuple(projected)
 
-            # Agent messages persist an evidence snapshot. A later, safe
-            # keyframe backfill updates the canonical VideoChunk rather than
-            # rewriting every historical message JSON, so retry projection
-            # once with the current registered media facts.
+            # Agent messages keep their evidence snapshot. Refresh registered
+            # keyframes from current V2 facts without rewriting that snapshot.
             try:
                 current = self.get_chunk_evidence(
                     evidence.video_chunk_id,
@@ -356,20 +351,14 @@ class MediaService:
         return VideoMedia(path, media_type, size)
 
     def get_chunk_evidence(self, video_chunk_id: str, *, tenant_id: str) -> VideoChunkEvidence:
-        if self._parse_persistence is not None:
-            try:
-                return self._parse_persistence.get_chunk_evidence(
-                    video_chunk_id, tenant_id=tenant_id,
-                )
-            except VideoParseConflictError as error:
-                raise MediaNotReadyError("片段的最新 V2 证据尚不可读取") from error
-        if self._video_repository is None:
+        if self._parse_persistence is None:
             raise MediaNotReadyError("片段证据读取尚未装配")
-        chunk_id = canonical_uuid(video_chunk_id, "video_chunk_id")
-        evidence = self._video_repository.hydrate_video_chunk_states([chunk_id])[0].evidence
-        if evidence.tenant_id != tenant_id:
-            raise SeriesNotFoundError("片段资源不存在")
-        return evidence
+        try:
+            return self._parse_persistence.get_chunk_evidence(
+                video_chunk_id, tenant_id=tenant_id,
+            )
+        except VideoParseConflictError as error:
+            raise MediaNotReadyError("片段的最新 V2 证据尚不可读取") from error
 
 
 def _media_type(path: Path) -> str:

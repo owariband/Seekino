@@ -24,7 +24,6 @@ import type {
   ParseConfig,
   ParseExportRequest,
   ParseExportSummary,
-  ParseJobView,
   RuntimeConfig,
   UsageOverviewOptions,
   UsageOverviewVO,
@@ -435,32 +434,6 @@ export function completeUpload(
   );
 }
 
-export function listJobs(cursor?: string, limit = 100, signal?: AbortSignal): Promise<Page<ParseJobView>> {
-  return requestJson(`/api/jobs/list?tenantId=${TENANT_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
-}
-
-export async function listAllJobs(signal?: AbortSignal): Promise<ParseJobView[]> {
-  const items = new Map<string, ParseJobView>();
-  const cursors = new Set<string>();
-  let cursor: string | undefined;
-  do {
-    const page = await listJobs(cursor, 100, signal);
-    for (const job of page.items) items.set(job.jobId, job);
-    if (page.hasMore && !page.nextCursor) throw new Error("任务列表缺少下一页游标");
-    cursor = page.hasMore ? page.nextCursor! : undefined;
-    if (cursor && cursors.has(cursor)) throw new Error("任务列表返回了重复的分页游标");
-    if (cursor) cursors.add(cursor);
-  } while (cursor);
-  return [...items.values()];
-}
-
-export function getJob(jobId: string): Promise<ParseJobView> {
-  return requestJson(
-    `/api/jobs/get?jobId=${encodeURIComponent(jobId)}` +
-      `&tenantId=${TENANT_QUERY}`,
-  );
-}
-
 export function listVideoParseTasks(
   cursor?: string,
   limit = 100,
@@ -511,13 +484,6 @@ export function getUsageOverview(options: UsageOverviewOptions = {}, signal?: Ab
   return requestJson(
     `/api/usage/overview?${query}`,
     { signal },
-  );
-}
-
-export function jobEventsUrl(jobId: string): string {
-  return apiUrl(
-    `/api/jobs/events?jobId=${encodeURIComponent(jobId)}` +
-      `&tenantId=${TENANT_QUERY}`,
   );
 }
 

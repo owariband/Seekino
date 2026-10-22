@@ -5,7 +5,7 @@ Server 的正式 Upload-to-Search 链路只使用 V2、MySQL 和 Elasticsearch�
 ES 保存同版本的检索投影。API、Agent Chat 和 CLI 共用 V2 检索 Service；
 `ANIVAG_PARSE_EXECUTION_MODE` 只接受 `v2`，启动必须显式配置 ES。
 模型协议由 Gateway 实现，Server 进程内复用 Engine 的领域转换、索引投影和融合能力。
-历史 V1 模块、数据库表与离线导入工具保留，正式入口不装配 Qdrant 或旧 Consumer。
+V1 解析、旧 Consumer、Qdrant 客户端及离线导入工具已删除；历史表的 ORM 映射仅供已有数据清理使用。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
 AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
@@ -270,35 +270,6 @@ Artifact URI 形如 `artifact://development/...`，test/development/production �
 Server 内的 API/Consumer 依赖同一个 `ArtifactStore` 边界，当前 M1 adapter 是
 `LocalArtifactStore`。
 
-以下 V1 Pipeline、Checkpoint 和导入说明仅描述保留的历史实现，正式 Server 不装配它们。
-旧 ParseJobConsumer 领取任务后，由 `VideoProcessingService` 加载 Job 和已提交恢复状态，再调用
-Engine 的显式 Parse Pipeline：
-
-```text
-Server: Job / Lease / Checkpoint / Artifact
-                  ↓
-Engine: transcribe → understand → embed → persist(ParsePersistence)
-                  ↓
-Server ParsePersistence: Parse Artifact / Checkpoint → MySQL 事实
-Server Job Adapter: Qdrant 派生索引同步
-```
-
-`VideoProcessingService` 不拥有 ASR、理解或 Embedding 的算法顺序；它负责保证每次阶段输出
-只有在当前 Lease/Fencing 校验通过后才能发布和提交。Server 为每个 Job 保存单调
-checkpoint：
-
-```text
-PREPARED → SPLIT_READY → PARSED → TEXT_EMBEDDED → VISION_EMBEDDED → INDEXED
-```
-
-AnalysisWindow 带上下文重叠，仅供模型解析；Vision vector 始终读取无重叠的 canonical
-VideoChunk MP4。Text vector 读取同一 VideoChunk 的完整 retrieval document；这些算法
-选择属于 Engine，Server 只把结果映射到稳定 `videoChunkId` 后入库和建索引。Server 异常
-退出后复用 MySQL Checkpoint 指向的已提交 Artifact 续跑；进程内 Pipeline State 和未提交
-临时文件都不是恢复真相，旧 `leaseVersion` 不能提交 checkpoint 或最终 MySQL 事实。SSE
-只发送 MySQL 中对 UI 有意义的状态、阶段、进度或 checkpoint 变化，不把纯 Heartbeat
-当成进度事件；断线后仍以 Job 查询结果为准。
-
 ## 运行日志
 
 anivag Server 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
@@ -335,62 +306,8 @@ rg 'upload_session_id=会话ID|job=任务ID|request_id=请求编号' outputs/ser
 上传详细错误同时保存在 `upload_session.last_error`，解析错误保存在任务/checkpoint
 记录中；公开接口只返回适合用户阅读的通用提示。日志配置改动在进程重启后生效。
 
-## 导入第七集已有产物
-
-`import-parse` 是保留给已有离线产物的过渡入口。原视频、AnalysisWindow 和规范 VideoChunk
-必须真实存在；导入器会把媒体保存为稳定的 `file:` URI。省略显式 ID 时，
-Series ID 由 workspace 与规范化名称生成，Video ID 由 Series ID 与视频内容哈希生成，
-VideoChunk ID 再由 Video ID 与序号生成稳定、不可反解关系的 UUID。`episodeOrder` 不参与
-Video 身份计算，调整集序不会产生另一个业务 ID。
-
-```bash
-uv run python -m server.cli import-parse \
-  --parse-result outputs/engine/ep07-full-60s/pipeline.parse.json \
-  --canonical-chunk-dir outputs/engine/ep07-recall-smoke/eval-only-canonical-media/bfa4a91901efd2b7-h720 \
-  --embedding-cache-dir outputs/engine/ep07-recall-smoke/embedding-cache/segments \
-  --series-name 'BanG Dream! It’s MyGO!!!!!' \
-  --series-description 'MyGO 动画测试数据' \
-  --episode-order 7 \
-  --pipeline-version 50661d1 \
-  --series-bible-file assets/mygo_background_referrence/characters.md
-```
-
-整个 Video 快照在一个事务中写入。相同命令重复执行会复用相同的 `videoId` 与
-`videoChunkId` 并更新解析器拥有的数据，不会增加记录；并发首导入遇到唯一键竞争时
-会回滚后重试。重导不会清空已有的 Series/Video 管理元数据、Canonical VideoChunk
-媒体引用或下游 enrichment，也不会用改变后的文本继续配用旧 Text Embedding。
-同一 ID 对应到另一源视频或另一套 VideoChunk 边界时会明确报冲突。
-
-上例的 `embedding-cache/segments` 是现有第七集历史缓存目录；导入器只把其中的
-`segment-NNNN.*.json` 当兼容输入读取，新领域模型与新产物统一使用 VideoChunk/chunk。
-
-Artifact Store 负责原视频、Proxy、VideoChunk、AnalysisWindow、关键帧和 Clip 等媒体或
-二进制产物；当前实现是按环境隔离的本地文件 adapter。Text/Vision 向量仍持久化在
-MySQL `VideoChunkEmbedding`，未来是否外置及外置到哪类存储是独立决策。
-
-历史 VideoChunk 缺少首帧时，先按 workspace/Series 做只读检查，再显式执行回填：
-
-```bash
-uv run python -m server.cli backfill-keyframes \
-  --workspace-id local-default \
-  --series-id 77285f16-3e5b-592e-ba15-8b224b619806 \
-  --limit 100 \
-  --dry-run
-
-uv run python -m server.cli backfill-keyframes \
-  --workspace-id local-default \
-  --series-id 77285f16-3e5b-592e-ba15-8b224b619806 \
-  --limit 100 \
-  --apply
-```
-
-该命令没有模型调用，不重跑解析或向量，只从已有受管 canonical VideoChunk 提取并补充
-缺失的带原视频绝对时间首帧。找不到 canonical 媒体时默认跳过；不会由 API 请求或服务
-启动自动触发。
-
-事实与对应的 `IndexSyncIntent` 在同一个 MySQL 事务中提交。双向量完整时意图为
-`UPSERT`；向量不完整或新事实要求清除旧索引时为 `DELETE`。导入不直接访问 Qdrant，
-因此 Qdrant 故障不会回滚已经提交的业务事实。
+`hydrate` 只回查当前 V2 事实，必须传 `--tenant-id` 和片段 ID；旧的 `import-parse`、
+`backfill-keyframes` 与 V1 Job 查询/SSE 路由已移除。上传和解析任务统一使用 `/api/jobs/video-parse/*`。
 
 ## V2 索引与恢复
 

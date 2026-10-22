@@ -88,10 +88,6 @@ _ROUTES = [
     ("POST", "/api/uploads/reparse", {"uploadSessionId": "upload", "expectedJobVersion": 1}),
     ("PUT", "/api/uploads/segments/upload", {"uploadSessionId": "upload", "segmentNumber": 0}),
     ("POST", "/api/uploads/complete", {"uploadSessionId": "upload"}),
-    ("GET", "/api/jobs/get", {"jobId": "job"}),
-    ("GET", "/api/jobs/list", {}),
-    ("GET", "/api/jobs/summary", {}),
-    ("GET", "/api/jobs/events", {"jobId": "job"}),
     ("GET", "/api/jobs/video-parse/get", {"videoParseTaskId": "task"}),
     ("GET", "/api/jobs/video-parse/list", {}),
     ("GET", "/api/jobs/video-parse/events", {"videoParseTaskId": "task"}),
@@ -230,9 +226,8 @@ def test_usage_denies_guests_and_other_tenants(guest, tenant, status, code):
     assert response.status_code == status and response.json()["code"] == code
 
 
-@pytest.mark.parametrize("stream", ["job", "video"])
 @pytest.mark.parametrize("revocation", ["token", "tenant"])
-def test_processing_sse_stops_before_fetching_after_access_revocation(monkeypatch, stream, revocation):
+def test_processing_sse_stops_before_fetching_after_access_revocation(monkeypatch, revocation):
     app, auth = _app(_identity())
     request = _request(app, method="GET")
 
@@ -241,13 +236,12 @@ def test_processing_sse_stops_before_fetching_after_access_revocation(monkeypatc
 
     request.is_disconnected = connected
     view = SimpleNamespace(
-        job_id="job", version=1, video_parse_task_id="task",
+        version=1, video_parse_task_id="task",
         model_dump_json=lambda **_: '{"status":"PARSING"}',
     )
-    monkeypatch.setattr(jobs_api, "_job_view", lambda _: view)
     monkeypatch.setattr(jobs_api, "project_video_parse_task", lambda _: view)
-    initial = SimpleNamespace(job=SimpleNamespace(status="RUNNING"), task=SimpleNamespace(status="PARSING"))
-    generator = jobs_api._job_events if stream == "job" else jobs_api._video_parse_task_events
+    initial = SimpleNamespace(task=SimpleNamespace(status="PARSING"))
+    generator = jobs_api._video_parse_task_events
 
     async def collect():
         events = generator(request, _ForbiddenBusiness(), "id", "personal-tenant", initial, app.state.sse_config)

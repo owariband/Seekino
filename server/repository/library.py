@@ -11,30 +11,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
-from ..model.dto.jobDTO import VideoChunkCheckpointState, VideoData
+from ..model.dto.jobDTO import VideoData
 from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoSummaryState
-from ..model.index_sync import IndexSyncIntent, IndexSyncOperation, IndexSyncStatus
-from ..model.job import (
-    SeriesParseJob,
-    VideoChunkCheckpoint,
-    VideoParseTask,
-    VideoParseTaskStatus,
-)
-from ..model.job_progress import calculate_checkpoint_progress
+from ..model.job import VideoParseTask, VideoParseTaskStatus
 from ..model.upload import UploadSession
 from ..model.tenant import Tenant
 from ..model.user import User
-from ..model.video import (
-    Series,
-    SeriesVisibility,
-    VideoIndexStatus,
-    Video,
-    VideoChunk,
-    VideoChunkEmbedding,
-)
+from ..model.video import Series, SeriesVisibility, VideoIndexStatus, Video, VideoChunk
 from ..utils.media import stored_keyframe_uri
 from ..utils.time import now_utc
-from .index_sync import list_ready_video_ids
 from .identity import default_public_nickname
 from .upload import UploadRepository
 from .video_parse_task import video_data
@@ -57,12 +42,11 @@ class LibraryRepository:
         self,
         session_factory: sessionmaker[Session],
         *,
-        execution_mode: Literal["v1", "v2"] = "v1",
+        execution_mode: Literal["v2"] = "v2",
     ) -> None:
-        if execution_mode not in {"v1", "v2"}:
-            raise ValueError("execution_mode must be 'v1' or 'v2'")
+        if execution_mode != "v2":
+            raise ValueError("execution_mode must be 'v2'")
         self._session_factory = session_factory
-        self._execution_mode = execution_mode
 
     def transaction(self) -> AbstractContextManager[Session]:
         return self._session_factory.begin()
@@ -254,18 +238,13 @@ class LibraryRepository:
                 select(Series)
                 .where(*self._series_filters(
                     tenant_id,
-                    status=status if self._execution_mode == "v1" else None,
+                    status=None,
                     query=query,
                 ))
                 .order_by(Series.create_time, Series.id)
             )
             if public_only:
                 statement = statement.where(Series.visibility == SeriesVisibility.PUBLIC.value)
-            if self._execution_mode == "v1":
-                records = session.scalars(
-                    statement.offset(offset).limit(limit)
-                ).all()
-                return self._series_states(session, records, owner_user_id=owner_user_id)
             states = self._series_states(session, session.scalars(statement).all(), owner_user_id=owner_user_id)
             if status is not None:
                 states = [item for item in states if item.status == status]
@@ -278,18 +257,8 @@ class LibraryRepository:
         status: str | None = None,
         query: str | None = None,
     ) -> int:
-        if self._execution_mode == "v2":
-            return len(self.list_series(
-                tenant_id,
-                status=status,
-                query=query,
-            ))
-        with self._session_factory() as session:
-            return int(session.scalar(
-                select(func.count(Series.id)).where(
-                    *self._series_filters(tenant_id, status=status, query=query)
-                )
-            ) or 0)
+        return len(self.list_series(tenant_id, status=status, query=query))
+
 
     def get_series(self, series_id: str, tenant_id: str, *, owner_user_id: str = LOCAL_USER_ID) -> SeriesState:
         with self._session_factory() as session:
@@ -375,15 +344,10 @@ class LibraryRepository:
                     SeriesPublisherState(kind="user", display_name=nickname),
                     tenant.status == "ACTIVE" and owner.status == "ACTIVE" and not owner.is_anonymous,
                 )
-        ready_video_ids = (
-            set(list_ready_video_ids(session, series_ids))
-            if self._execution_mode == "v1"
-            else {
-                video.video_id
-                for video in videos
-                if video.index_status == VideoIndexStatus.READY
-            }
-        )
+        ready_video_ids = {
+            video.video_id for video in videos
+            if video.index_status == VideoIndexStatus.READY
+        }
         pending = dict(session.execute(
             select(UploadSession.series_id, func.count(UploadSession.id))
             .join(Series, Series.id == UploadSession.series_id)
@@ -423,8 +387,6 @@ class LibraryRepository:
                     _v2_series_status(
                         [video for video in videos if video.series_id == record.id]
                     )
-                    if self._execution_mode == "v2"
-                    else record.status
                 ),
                 video_count=sum(video.series_id == record.id for video in videos),
                 videos=tuple(video for video in videos if video.series_id == record.id)
@@ -461,128 +423,6 @@ class LibraryRepository:
         tenant_id: str,
         series_ids: list[str] | None = None,
         video_id: str | None = None,
-    ) -> list[VideoSummaryState]:
-        if self._execution_mode == "v2":
-            return self._video_states_v2(
-                session,
-                tenant_id=tenant_id,
-                series_ids=series_ids,
-                video_id=video_id,
-            )
-        latest = select(
-            SeriesParseJob.video_id,
-            SeriesParseJob.id.label("job_id"),
-            SeriesParseJob.status,
-            SeriesParseJob.last_error,
-            func.row_number().over(
-                partition_by=SeriesParseJob.video_id,
-                order_by=(SeriesParseJob.create_time.desc(), SeriesParseJob.id.desc()),
-            ).label("position"),
-        ).subquery()
-        statement = (
-            select(Video, latest.c.job_id, latest.c.status, latest.c.last_error)
-            .join(Series, Series.id == Video.series_id)
-            .outerjoin(latest, (latest.c.video_id == Video.id) & (latest.c.position == 1))
-            .where(Series.tenant_id == tenant_id)
-            .order_by(Video.episode_order, Video.id)
-        )
-        if series_ids is not None:
-            statement = statement.where(Video.series_id.in_(series_ids))
-        if video_id is not None:
-            statement = statement.where(Video.id == video_id)
-        rows = session.execute(statement).all()
-        if not rows:
-            return []
-        latest_job_ids = [job_id for _, job_id, _, _ in rows if job_id is not None]
-        checkpoints_by_job: dict[str, list[VideoChunkCheckpointState]] = {}
-        if latest_job_ids:
-            checkpoints = session.scalars(
-                select(VideoChunkCheckpoint)
-                .where(VideoChunkCheckpoint.job_id.in_(latest_job_ids))
-                .order_by(
-                    VideoChunkCheckpoint.job_id,
-                    VideoChunkCheckpoint.sequence_no,
-                )
-            ).all()
-            for checkpoint in checkpoints:
-                checkpoints_by_job.setdefault(checkpoint.job_id, []).append(
-                    VideoChunkCheckpointState(
-                        job_id=checkpoint.job_id,
-                        sequence_no=checkpoint.sequence_no,
-                        video_chunk_id=checkpoint.chunk_id,
-                        stage=checkpoint.stage,
-                        chunk_start_seconds=checkpoint.start_ms,
-                        chunk_end_seconds=checkpoint.end_ms,
-                    )
-                )
-        chunks = session.execute(
-            select(
-                VideoChunk.video_id,
-                VideoChunk.keyframe_uris,
-                VideoChunkEmbedding.text_vector,
-                VideoChunkEmbedding.vision_vector,
-                IndexSyncIntent.operation,
-                IndexSyncIntent.status,
-                IndexSyncIntent.last_error,
-            )
-            .select_from(VideoChunk)
-            .outerjoin(VideoChunkEmbedding, VideoChunkEmbedding.chunk_id == VideoChunk.id)
-            .outerjoin(IndexSyncIntent, IndexSyncIntent.chunk_id == VideoChunk.id)
-            .where(VideoChunk.video_id.in_([row[0].id for row in rows]))
-            .order_by(VideoChunk.sequence_no)
-        ).all()
-        by_video: dict[str, list] = {}
-        for chunk in chunks:
-            by_video.setdefault(chunk.video_id, []).append(chunk)
-        states = []
-        for video, job_id, job_status, error in rows:
-            video_chunks = by_video.get(video.id, [])
-            indexed = bool(video_chunks) and all(
-                chunk.text_vector and chunk.vision_vector
-                and chunk.operation == IndexSyncOperation.UPSERT.value
-                and chunk.status == IndexSyncStatus.SYNCED.value
-                for chunk in video_chunks
-            )
-            index_error = next((chunk.last_error for chunk in video_chunks if chunk.last_error), None)
-            if indexed:
-                index_status = VideoIndexStatus.READY
-            elif index_error:
-                index_status = VideoIndexStatus.FAILED
-            elif video_chunks and all(chunk.text_vector and chunk.vision_vector for chunk in video_chunks):
-                index_status = VideoIndexStatus.SYNCING
-            else:
-                index_status = VideoIndexStatus.NOT_READY
-            parse_status = job_status or video.parse_status
-            checkpoint_progress = calculate_checkpoint_progress(
-                checkpoints_by_job.get(job_id, ()),
-                video.duration_ms,
-                completed=parse_status in {"SUCCEEDED", "COMPLETED"},
-            )
-            states.append(self._video_state(
-                video, tenant_id=tenant_id, index_status=index_status,
-                latest_job_id=job_id, parse_status=parse_status,
-                parse_progress=(
-                    checkpoint_progress.overall_progress
-                    if checkpoint_progress is not None
-                    else None
-                ),
-                last_error=error or index_error,
-                keyframe_uris=tuple(dict.fromkeys(
-                    uri
-                    for chunk in video_chunks
-                    for value in chunk.keyframe_uris
-                    if (uri := stored_keyframe_uri(value)) is not None
-                )),
-            ))
-        return states
-
-    def _video_states_v2(
-        self,
-        session: Session,
-        *,
-        tenant_id: str,
-        series_ids: list[str] | None,
-        video_id: str | None,
     ) -> list[VideoSummaryState]:
         latest = (
             select(

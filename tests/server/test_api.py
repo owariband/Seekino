@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
 from io import BytesIO
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -12,9 +11,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+
+from tests.server.conftest import set_series_parse_status
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from langchain_core.tools import BaseTool
 from PIL import Image
 from sqlalchemy import select
 
@@ -25,7 +25,6 @@ from server.api.app import create_app
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from server.api.agent import _agent_message_view, _agent_render_blocks, _agent_search_evidence_view
-from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig
@@ -48,12 +47,11 @@ from server.model.job import (
 from server.model.dto.agentDTO import AgentMessageState
 from server.model.video import Series, Video
 from server.model.upload import UploadSession
-from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadRepository
-from server.repository.video import VideoRepository
+from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.schema import (
     AgentReply,
     SelectionReason,
@@ -70,47 +68,25 @@ from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 
 
-def _read_all(tool, video_chunk_id: str, *, collection: str = "retrieval") -> dict:
-    overview = json.loads(tool.invoke({
-        "collection": collection, "reference": video_chunk_id,
-        "section": "overview",
-    }))
-    sections = {}
-    for item in overview["sections"]:
-        name, total = item["name"], item["total_chars"]
-        start = 0
-        content = []
-        while start < total:
-            end = total
-            while True:
-                page = json.loads(tool.invoke({
-                    "collection": collection, "reference": video_chunk_id,
-                    "section": name,
-                    "start": start,
-                    "end": end,
-                }))
-                if "error" not in page:
-                    break
-                assert page["error"]["code"] == "RANGE_TOO_LARGE"
-                end = page["error"]["suggested_end"]
-                assert start < end < total
-            assert page["start"] == start
-            assert page["end"] == end
-            content.append(page["content"])
-            start = end
-        sections[name] = json.loads("".join(content))
-    return sections
+def _read_all(tool, video_chunk_id: str) -> dict:
+    parts, cursor = [], None
+    while True:
+        page = json.loads(tool.invoke({"video_chunk_id": video_chunk_id, "cursor": cursor}))
+        parts.extend(item["text"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return {name: json.loads(value) for name, value in
+                    (section.split("\n", 1) for section in "".join(parts).split("\n\n"))}
 
 
-def _write_canvas(tools_by_name, operation: str, fields: dict) -> dict:
-    collection = "draft" if "draft" in operation else "approved"
-    current = json.loads(tools_by_name["get_context_canvas"].invoke({"collection": collection}))
-    receipt = json.loads(tools_by_name["write_context_canvas"].invoke({
-        "batch_id": uuid4().hex, "expected_revision": current["revision"],
-        "operations": [{"operation": operation, **fields}],
-    }))
-    assert "error" not in receipt
-    return receipt["results"][0]
+def _reported_items(report, tools):
+    items = []
+    for identifier in report.get("evidence_references", []):
+        metadata = _read_all(tools["read_retrieval_evidence"], identifier)["evidence.metadata"]
+        items.append({"video_chunk_id": identifier, "start_seconds": metadata["startSeconds"],
+                      "end_seconds": metadata["endSeconds"], "claim": "真实片段支持回答。"})
+    return items
+
 
 
 @dataclass
@@ -371,7 +347,7 @@ class _AgentModelStub:
     def run_agent_loop(self, prompt, *, tools, handle_text, check_control=None, **_):
         available = {tool.name: tool for tool in tools}
         for report in json.loads(prompt.rsplit("\n\n", 1)[1])["reports"]:
-            for item in report.get("draft_items", []):
+            for item in _reported_items(report, available):
                 check_control and check_control()
                 receipt = json.loads(available["submit_video_item"].invoke({
                     name: item[name] for name in ("video_chunk_id", "start_seconds", "end_seconds", "claim")
@@ -495,7 +471,7 @@ def _create_series(
     series_id = response.json()["seriesId"]
     if ready:
         with client.app.state.services.library._repository._session_factory.begin() as session:
-            session.get(Series, series_id).status = "READY"
+            set_series_parse_status(session, series_id)
     return series_id
 
 
@@ -530,14 +506,10 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/uploads/reparse",
         "/api/uploads/segments/upload",
         "/api/uploads/complete",
-        "/api/jobs/list",
-        "/api/jobs/get",
         "/api/jobs/video-parse/get",
         "/api/jobs/video-parse/list",
         "/api/jobs/video-parse/events",
         "/api/usage/overview",
-        "/api/jobs/summary",
-        "/api/jobs/events",
         "/api/videos/content",
         "/api/video-chunks/get",
         "/api/media/images/content",
@@ -601,7 +573,6 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
             "segmentNumber",
         },
         ("/api/uploads/complete", "post"): {"uploadSessionId"},
-        ("/api/jobs/get", "get"): {"jobId"},
         ("/api/jobs/video-parse/get", "get"): {
             "videoParseTaskId", "tenantId",
         },
@@ -610,7 +581,6 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
             "videoParseTaskId", "tenantId",
         },
         ("/api/usage/overview", "get"): {"tenantId"},
-        ("/api/jobs/events", "get"): {"jobId"},
         ("/api/videos/content", "get"): {"videoId"},
         ("/api/agent/conversations/get", "get"): {"conversationId"},
         ("/api/agent/conversations/delete", "post"): {
@@ -658,21 +628,10 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     ]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/AgentConversationView"
     }
-    assert {
-        "uploadSessionId",
-        "seriesName",
-        "episodeOrder",
-        "originalFilename",
-        "overallProgress",
-        "stageProgress",
-        "completedDurationSeconds",
-        "completedThroughSeconds",
-        "totalDurationSeconds",
-        "completedChunkCount",
-        "totalChunkCount",
-        "currentChunk",
-        "canReparse",
-    } <= set(schemas["ParseJobView"]["required"])
+    assert "ParseJobView" not in schemas
+    assert {"videoParseTaskId", "status", "parseConfig", "chunkCount"} <= set(
+        schemas["VideoParseTaskView"]["required"]
+    )
     parse_progress = schemas["VideoSummary"]["properties"]["parseProgress"]
     assert "parseProgress" in schemas["VideoSummary"]["required"]
     assert {item.get("type") for item in parse_progress["anyOf"]} == {
@@ -1521,7 +1480,7 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
 
     assert listed[0]["seriesId"] == series_id
     assert {"seriesId", "name", "status"} <= listed[0].keys()
-    assert detail["videoCount"] == 0
+    assert detail["videoCount"] == 1
     assert searched.status_code == 200
     assert searched.json() == {
         "query": "她为什么哭",
@@ -1668,7 +1627,7 @@ def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:
 
 def test_upload_episode_order_is_required_unique_and_idempotent(tmp_path: Path) -> None:
     client, _retrieval, _jobs_repository = _client(tmp_path)
-    series_id = _create_series(client)
+    series_id = _create_series(client, ready=False)
     payload = {
         "tenantId": "local-default", "originalFilename": "episode-99.mp4",
         "mediaType": "video/mp4", "totalSizeBytes": 4,
@@ -1895,7 +1854,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
         video = session.get(Video, job.video_id)
         video.parse_status = ParseJobStatus.SUCCEEDED.value
         video.parse_progress = 100
-        session.get(Series, series_id).status = "READY"
+        set_series_parse_status(session, series_id)
         session.add(VideoChunkCheckpoint(
             job_id=job_id,
             sequence_no=0,
@@ -2111,74 +2070,8 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
         "/api/jobs/video-parse/list",
         params={"tenantId": "another-workspace"},
     ).json()["items"] == []
-    job = client.get("/api/jobs/get", params={"tenantId": "local-default", "jobId": job_id})
-    jobs = client.get("/api/jobs/list", params={"tenantId": "local-default"})
-    assert job.status_code == 200
-    assert job.json()["status"] == "QUEUED"
-    assert job.json()["uploadSessionId"] == upload_id
-    assert job.json()["progress"] == 0
-    assert job.json()["overallProgress"] is None
-    assert job.json()["stageProgress"] is None
-    assert job.json()["completedDurationSeconds"] is None
-    assert job.json()["completedThroughSeconds"] is None
-    assert job.json()["videoDurationSeconds"] == 12
-    assert job.json()["totalDurationSeconds"] == 12
-    assert job.json()["processingDurationMs"] == 0
-    assert job.json()["processingTimingComplete"] is False
-    assert job.json()["completedChunkCount"] is None
-    assert job.json()["totalChunkCount"] == 0
-    assert job.json()["currentChunk"] is None
-    assert job.json()["seriesName"] == "Test Series"
-    assert job.json()["episodeOrder"] == 7
-    assert job.json()["originalFilename"] == "episode-07.mp4"
-    assert [item["jobId"] for item in jobs.json()["items"]] == [job_id]
-    for path in ("/api/jobs/get", "/api/jobs/events"):
-        outside_workspace = client.get(
-            path,
-            params={"jobId": job_id, "tenantId": "another-workspace"},
-        )
-        assert outside_workspace.status_code == 404
-
-    queue = MySqlParseJobQueue(jobs_repository._session_factory)
-    lease = queue.claim_next(
-        "api-test-worker",
-        lease_duration=timedelta(minutes=5),
-    )
-    assert lease is not None
-    job_service = client.app.state.services.jobs
-    before_heartbeat = _job_view(
-        job_service.get(job_id, tenant_id="local-default")
-    )
-    assert queue.heartbeat(
-        lease,
-        lease_duration=timedelta(minutes=5),
-    )
-    after_heartbeat = _job_view(
-        job_service.get(job_id, tenant_id="local-default")
-    )
-    assert _job_event_fingerprint(before_heartbeat) == _job_event_fingerprint(
-        after_heartbeat
-    )
-    assert jobs_repository.update_progress(
-        lease,
-        stage=ParseJobStage.PARSING,
-        progress=30,
-    )
-    after_progress = _job_view(
-        job_service.get(job_id, tenant_id="local-default")
-    )
-    assert _job_event_fingerprint(after_progress) != _job_event_fingerprint(
-        after_heartbeat
-    )
-    assert queue.acknowledge(lease, duration_ms=0)
-    with client.stream(
-        "GET",
-        "/api/jobs/events",
-        params={"tenantId": "local-default", "jobId": job_id},
-    ) as events:
-        body = "\n".join(events.iter_lines())
-    assert "event: job" in body
-    assert '"status":"SUCCEEDED"' in body
+    for path in ("/api/jobs/get", "/api/jobs/list", "/api/jobs/summary", "/api/jobs/events"):
+        assert client.get(path, params={"tenantId": "local-default", "jobId": job_id}).status_code == 404
 
     with jobs_repository._session_factory.begin() as session:
         task = session.get(VideoParseTask, video_parse_task_id)
@@ -2220,8 +2113,8 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert deleted.json()["videoId"] is None
     assert deleted.json()["jobId"] is None
     assert client.get(
-        "/api/jobs/get",
-        params={"tenantId": "local-default", "jobId": job_id},
+        "/api/jobs/video-parse/get",
+        params={"tenantId": "local-default", "videoParseTaskId": video_parse_task_id},
     ).status_code == 404
     assert client.get(
         "/api/videos/content",
@@ -2516,15 +2409,15 @@ def test_agent_evidence_view_reads_legacy_single_query_without_trace():
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
 @pytest.mark.parametrize("leading_text", [True, False])
 def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
-    tmp_path, prepared_import, caplog, accept, leading_text,
+    tmp_path, seed_video, caplog, accept, leading_text,
 ):
     caplog.set_level(logging.INFO, logger="server.api.agent")
     client, _, _ = _client(tmp_path)
     service = client.app.state.services.agent
-    video_repository = VideoRepository(service._repository._session_factory)
-    report = video_repository.import_video_parse(prepared_import)
+    video_repository = VideoParsePersistenceService(service._repository._session_factory)
+    prepared_import = report = seed_video(service._repository._session_factory)
     with service._repository._session_factory.begin() as session:
-        session.get(Series, prepared_import.series_id).status = "READY"
+        set_series_parse_status(session, prepared_import.series_id)
     conversation_id = _create_agent_conversation(client)
 
     def joined_search(
@@ -2540,7 +2433,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         assert tenant_id == prepared_import.tenant_id
         assert series_ids == [prepared_import.series_id]
         assert lexical_weight + text_weight + vision_weight == pytest.approx(1.0)
-        evidence = video_repository.hydrate_video_chunks(report.video_chunk_ids)
+        evidence = [video_repository.get_chunk_evidence(identifier, tenant_id=prepared_import.tenant_id) for identifier in report.video_chunk_ids]
         hits = [
             VideoChunkSearchHit(
                 candidate=VideoChunkCandidate(
@@ -2571,16 +2464,9 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 },
             }))
             for item in result["items"]:
-                _read_all(tools_by_name["get_context_canvas"], item["video_chunk_id"])
-                _write_canvas(tools_by_name, "upsert_draft_item", {
-                    "video_chunk_id": item["video_chunk_id"],
-                    "start_seconds": item["start_seconds"],
-                    "end_seconds": item["end_seconds"],
-                    "claim": "画面中有对应动作。",
-                })
+                _read_all(tools_by_name["read_retrieval_evidence"], item["video_chunk_id"])
             return result_type.model_validate({
-                "plan_context": "召回动作并检查片段来源。",
-                "message": "这些片段包含动作。",
+                "plan_context": "已核验实际召回证据。", "message": "找到对应动作片段。",
             })
 
     service._runtime._video_runtime._retrieve = joined_search
@@ -2593,8 +2479,9 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             if leading_text:
                 handle_text("以下片段支持这个结论。")
             report = json.loads(by_name["query_video"].invoke({"query": "找动作片段"}))["reports"][0]
-            for draft in report["draft_items"]:
-                _read_all(by_name["get_context_canvas"], draft["video_chunk_id"], collection="retrieval")
+            for draft in _reported_items(report, by_name):
+                _read_all(by_name["read_retrieval_evidence"], draft["video_chunk_id"])
+                # Public and persisted ranges stay in milliseconds after this tool boundary.
                 by_name["submit_video_item"].invoke({
                     **draft, "claim": "这些片段包含动作。",
                 })
@@ -3012,7 +2899,7 @@ def test_send_respects_accept_quality(tmp_path, accept, expected):
     ("index-inconsistent", 409, "CONFLICT"),
 ])
 def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, failure, expected_status, expected_code):
-    from server.repository.video import SeriesNotReadyError, SeriesScopeNotFoundError
+    from server.error.retrieval import SeriesNotReadyError, SeriesScopeNotFoundError
     from server.service.video_retrieval import RetrievalIndexConsistencyError
     client, _, _ = _client(tmp_path)
     _create_series(client)

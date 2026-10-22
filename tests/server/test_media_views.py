@@ -129,25 +129,24 @@ def test_series_image_upload_reads_actual_bytes_and_enforces_series_scope(tmp_pa
     assert client.get(image.url).status_code == 410
 
 
-def domain_result(repository, prepared_import):
+def domain_result(repository, parsed_video):
     _engine, repo = repository
-    report = repo.import_video_parse(prepared_import)
-    evidence = repo.hydrate_video_chunk_states(report.video_chunk_ids)[0].evidence
+    evidence = repo.get_chunk_evidence(parsed_video.video_chunk_ids[0], tenant_id=parsed_video.tenant_id)
     hit = VideoChunkSearchHit(candidate=VideoChunkCandidate(video_chunk_id=evidence.video_chunk_id, fused_rank=7, fused_score=0.1), selection_reason=SelectionReason(summary="真实证据", matched_evidence=[], limitations=[]), evidence=evidence)
     return VideoChunkSearchResult(query="action", series_ids=[evidence.series_id], searched_video_ids=[evidence.video_id, str(uuid4())], agent_reply=AgentReply(message="结果", result_count=1), hits=[hit])
 
 
-def test_search_view_preserves_actual_scope_rank_and_media_diagnostics(repository, prepared_import, tmp_path):
-    raw = domain_result(repository, prepared_import)
+def test_search_view_preserves_actual_scope_rank_and_media_diagnostics(repository, parsed_video, tmp_path):
+    raw = domain_result(repository, parsed_video)
     service, _client, _source, _frame, _state, _probe = media_fixture(tmp_path)
-    view = search_result_view(raw, service, tenant_id=prepared_import.tenant_id)
+    view = search_result_view(raw, service, tenant_id=parsed_video.tenant_id)
     payload = view.model_dump(mode="json", by_alias=True)
     assert payload["searchedVideoIds"] == raw.searched_video_ids
     assert payload["hits"][0]["candidate"]["rank"] == 1
     assert payload["hits"][0]["candidate"]["fusedRank"] == 7
     evidence = payload["hits"][0]["evidence"]
-    assert evidence["tenantId"] == prepared_import.tenant_id
-    assert evidence["seriesId"] == prepared_import.series_id
+    assert evidence["tenantId"] == parsed_video.tenant_id
+    assert evidence["seriesId"] == parsed_video.series_id
     assert isinstance(evidence["parsedAt"], int)
     assert evidence["playbackStatus"] == "FAILED"
     assert evidence["playbackUrl"] is None
@@ -158,7 +157,7 @@ def test_search_view_preserves_actual_scope_rank_and_media_diagnostics(repositor
     assert payload["warnings"]
     assert not any("已登记关键帧" in warning for warning in payload["warnings"])
     old = raw.model_copy(update={"searched_video_ids": None})
-    old_view = search_result_view(old, service, tenant_id=prepared_import.tenant_id)
+    old_view = search_result_view(old, service, tenant_id=parsed_video.tenant_id)
     assert old_view.searched_video_ids == []
     assert old_view.partial is True
     assert "原始记录缺少检索视频范围" in old_view.warnings
@@ -166,14 +165,14 @@ def test_search_view_preserves_actual_scope_rank_and_media_diagnostics(repositor
         search_result_view(raw, service, tenant_id="foreign")
 
 
-def test_public_search_and_chunk_projection_hide_original_filename(repository, prepared_import, tmp_path):
-    raw = domain_result(repository, prepared_import)
+def test_public_search_and_chunk_projection_hide_original_filename(repository, parsed_video, tmp_path):
+    raw = domain_result(repository, parsed_video)
     service, _client, _source, _frame, _state, _probe = media_fixture(tmp_path)
     original = raw.hits[0].evidence.original_filename
     assert original
-    member = search_result_view(raw, service, tenant_id=prepared_import.tenant_id)
-    public = search_result_view(raw, service, tenant_id=prepared_import.tenant_id, public_view=True)
-    chunk, _ = evidence_view(raw.hits[0].evidence, service, tenant_id=prepared_import.tenant_id, public_view=True)
+    member = search_result_view(raw, service, tenant_id=parsed_video.tenant_id)
+    public = search_result_view(raw, service, tenant_id=parsed_video.tenant_id, public_view=True)
+    chunk, _ = evidence_view(raw.hits[0].evidence, service, tenant_id=parsed_video.tenant_id, public_view=True)
     assert member.hits[0].evidence.original_filename == original
     assert public.hits[0].evidence.original_filename is None
     assert chunk.original_filename is None
@@ -182,9 +181,9 @@ def test_public_search_and_chunk_projection_hide_original_filename(repository, p
 
 @pytest.mark.parametrize("partial", [False, True])
 def test_search_view_supports_video_preview_without_registered_frames(
-    repository, prepared_import, tmp_path, partial,
+    repository, parsed_video, tmp_path, partial,
 ):
-    raw = domain_result(repository, prepared_import)
+    raw = domain_result(repository, parsed_video)
     service, _client, _source, _frame, state, _probe = media_fixture(tmp_path)
     hit = raw.hits[0]
     evidence = hit.evidence.model_copy(update={
@@ -197,7 +196,7 @@ def test_search_view_supports_video_preview_without_registered_frames(
         "warnings": ["部分视频尚不可检索"] if partial else [],
     })
 
-    view = search_result_view(raw, service, tenant_id=prepared_import.tenant_id)
+    view = search_result_view(raw, service, tenant_id=parsed_video.tenant_id)
 
     assert view.hits[0].evidence.playback_status == "READY"
     assert view.hits[0].evidence.playback_url
@@ -210,14 +209,11 @@ def test_search_view_supports_video_preview_without_registered_frames(
 
 def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
     repository,
-    prepared_import,
+    parsed_video,
     tmp_path,
 ):
     _engine, video_repository = repository
-    video_repository.import_video_parse(prepared_import)
-    evidence = video_repository.hydrate_video_chunks(
-        [prepared_import.chunks[1].video_chunk_id]
-    )[0]
+    evidence = video_repository.get_chunk_evidence(parsed_video.chunks[1].video_chunk_id, tenant_id=parsed_video.tenant_id)
     service, client, _source, frame, _state, _probe = media_fixture(tmp_path)
     evidence = evidence.model_copy(update={
         "keyframe_uris": [
@@ -227,20 +223,16 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
             )
         ]
     })
-    service._video_repository = Mock(
-        hydrate_video_chunk_states=Mock(
-            return_value=[SimpleNamespace(evidence=evidence)]
-        )
-    )
+    service._parse_persistence = Mock(get_chunk_evidence=Mock(return_value=evidence))
 
     view, limitations = evidence_view(
         evidence,
         service,
-        tenant_id=prepared_import.tenant_id,
+        tenant_id=parsed_video.tenant_id,
     )
 
     assert view.thumbnail == view.keyframes[0]
-    assert view.keyframes[0].at_seconds == 10
+    assert view.keyframes[0].at_seconds == 10_000
     assert "缺少带原视频时间位置的已登记关键帧" not in limitations
     response = client.get(view.keyframes[0].url)
     assert response.status_code == 200
@@ -256,38 +248,35 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
     })
     assert service.keyframe_views(
         relative_time,
-        tenant_id=prepared_import.tenant_id,
+        tenant_id=parsed_video.tenant_id,
     ) == ()
 
     historical_snapshot = evidence.model_copy(update={"keyframe_uris": []})
     refreshed = service.keyframe_views(
         historical_snapshot,
-        tenant_id=prepared_import.tenant_id,
+        tenant_id=parsed_video.tenant_id,
     )
     assert len(refreshed) == 1
     assert refreshed[0].at_seconds == evidence.start_seconds
 
 
-def test_v2_media_reader_takes_priority_and_refreshes_historical_keyframes(
-    repository, prepared_import, tmp_path,
+def test_v2_media_reader_refreshes_historical_keyframes_and_rejects_newer_unready_task(
+    repository, parsed_video, tmp_path,
 ):
-    evidence = domain_result(repository, prepared_import).hits[0].evidence
+    evidence = domain_result(repository, parsed_video).hits[0].evidence
     fixture, _client, _source, frame, _state, _probe = media_fixture(tmp_path)
     evidence = evidence.model_copy(update={"keyframe_uris": [
         VideoChunkKeyframeReference(
             uri=fixture._artifact_store.uri_for_path(frame), at_seconds=evidence.start_seconds,
         ),
     ]})
-    legacy = Mock()
     v2 = Mock(get_chunk_evidence=Mock(return_value=evidence))
     service = MediaService(
-        fixture._library, fixture._artifact_store, legacy, parse_persistence=v2,
+        fixture._library, fixture._artifact_store, parse_persistence=v2,
     )
     assert service.get_chunk_evidence(
         evidence.video_chunk_id, tenant_id=evidence.tenant_id,
     ) == evidence
-    legacy.hydrate_video_chunk_states.assert_not_called()
-    service._video_repository = None
     historical = evidence.model_copy(update={"keyframe_uris": []})
     frames = service.keyframe_views(historical, tenant_id=evidence.tenant_id)
     assert len(frames) == 1
@@ -296,8 +285,8 @@ def test_v2_media_reader_takes_priority_and_refreshes_historical_keyframes(
     assert service.keyframe_views(historical, tenant_id=evidence.tenant_id) == ()
 
 
-def test_nonempty_search_route_returns_public_projection(repository, prepared_import, tmp_path):
-    raw = domain_result(repository, prepared_import)
+def test_nonempty_search_route_returns_public_projection(repository, parsed_video, tmp_path):
+    raw = domain_result(repository, parsed_video)
     service, _client, _source, _frame, _state, _probe = media_fixture(tmp_path)
     app = FastAPI()
     app.state.services = SimpleNamespace(
@@ -308,7 +297,7 @@ def test_nonempty_search_route_returns_public_projection(repository, prepared_im
     )
     app.include_router(search_router)
     client = TestClient(app)
-    response = client.post("/api/search", json={"tenantId": prepared_import.tenant_id, "seriesIds": raw.series_ids, "query": "action"})
+    response = client.post("/api/search", json={"tenantId": parsed_video.tenant_id, "seriesIds": raw.series_ids, "query": "action"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["searchedVideoIds"] == raw.searched_video_ids

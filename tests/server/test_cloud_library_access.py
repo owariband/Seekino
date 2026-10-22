@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
 from types import SimpleNamespace
@@ -31,7 +30,7 @@ from server.model.upload import UploadSession
 from server.model.user import User
 from server.model.video import Series, SeriesVisibility, Video, VideoChunk
 from server.repository.library import LibraryRepository
-from server.repository.video import VideoRepository
+from server.service.video_parse_persistence import VideoParsePersistenceService
 from server.router.library import router as library_router
 from server.router.media import router as media_router
 from server.router.search import router as search_router
@@ -88,7 +87,7 @@ class FakeAuth:
 
 
 @pytest.fixture
-def cloud_library(prepared_import, tmp_path):
+def cloud_library(seed_video, tmp_path):
     engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool,
                            connect_args={"check_same_thread": False})
     create_schema(engine)
@@ -99,9 +98,8 @@ def cloud_library(prepared_import, tmp_path):
             session.add(User(id=user_id, email=f"{user_id}@example.com", is_anonymous=False,
                              is_superuser=user_id == "admin", nickname=user_id))
             session.add(Tenant(id=f"tenant-{user_id}", type="personal", owner_id=user_id, name=user_id))
-    videos = VideoRepository(factory)
-    prepared = replace(prepared_import, tenant_id=PUBLIC)
-    report = videos.import_video_parse(prepared)
+    videos = VideoParsePersistenceService(factory)
+    prepared = report = seed_video(factory, tenant_id=PUBLIC)
     store = LocalArtifactStore(tmp_path / "managed", environment="test")
     source = store.base_directory / "course.mp4"
     source.write_bytes(b"managed-course-video")
@@ -113,14 +111,10 @@ def cloud_library(prepared_import, tmp_path):
         session.get(VideoChunk, report.video_chunk_ids[0]).keyframe_uris = [
             {"uri": store.uri_for_path(frame), "at_seconds": 0},
         ]
-        session.add(VideoParseTask(
-            id=str(uuid4()), video_id=prepared.video_id, pipeline_version="video-parse-v2",
-            status="COMPLETE", parse_config={}, chunk_count=2, version=1, max_attempts=3,
-        ))
     library = LibraryService(LibraryRepository(factory, execution_mode="v2"))
     probe = Mock(return_value=True)
-    media = MediaService(library, store, videos, probe_playback=probe)
-    evidence = videos.hydrate_video_chunk_states(report.video_chunk_ids)[0].evidence
+    media = MediaService(library, store, parse_persistence=videos, probe_playback=probe)
+    evidence = videos.get_chunk_evidence(report.video_chunk_ids[0], tenant_id=PUBLIC)
     result = VideoChunkSearchResult(
         query="course", series_ids=[prepared.series_id], searched_video_ids=[prepared.video_id],
         agent_reply=AgentReply(message="Found course", result_count=1),

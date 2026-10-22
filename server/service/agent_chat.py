@@ -41,7 +41,7 @@ from ..repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
-from ..repository.video import SeriesNotReadyError
+from ..error.retrieval import SeriesNotReadyError
 from ..utils.time import now_unix_time_ms
 from ..utils.media import image_uri_to_data_url
 from ..utils.validation import canonical_uuid, require_nonempty_text

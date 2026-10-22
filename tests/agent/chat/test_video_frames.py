@@ -15,7 +15,7 @@ from agent.chat.video_search.frame_evidence import (
 )
 from agent.chat.video_search.tools.frames import build_inspect_video_frames_tool
 from agent.chat.video_search.tools.shared import _ToolCallBudget
-from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
+from agent.chat.video_search.state import RetrievalCall, LexicalRetrievalChannelWeights
 from engine.rag.contracts import AgentReply, VideoChunkSearchResult
 from gateway.media import ToolImage, ToolImageArtifact
 from tests.agent.chat.test_tools import Retrieval, _hit, _inputs
@@ -50,25 +50,24 @@ class FrameReader:
         }, artifact)
 
 
-def _canvas():
+def _calls():
     hit = _hit("chunk-1")
     hit.evidence.start_seconds, hit.evidence.end_seconds = 10_000, 20_000
-    canvas = VideoSearchContextCanvas("workspace", ("series",))
-    canvas.record_retrieval(VideoChunkSearchResult(
-        query="cup", series_ids=["series"],
-        agent_reply=AgentReply(message="retrieved", result_count=1), hits=[hit],
-    ))
-    return canvas
+    hit.evidence.duration_seconds = hit.evidence.analysis_window_end_seconds = 30_000
+    weights = LexicalRetrievalChannelWeights(lexical=1, semantic=0, visual=0)
+    return [RetrievalCall(query="cup", top_k=1, requested_weights=weights, effective_weights=weights,
+        result=VideoChunkSearchResult(query="cup", series_ids=["series"],
+            agent_reply=AgentReply(message="retrieved", result_count=1), hits=[hit]))]
 
 
 def _tool(
-    reader, *, session=None, canvas=None, control=None, inputs=None,
+    reader, *, session=None, evidence_calls=None, control=None, inputs=None,
     role="Query", maximum_result_bytes=16_384, **kwargs,
 ):
     return build_inspect_video_frames_tool(
         reader=reader,
         session=session if session is not None else FrameInspectionSession(10),
-        canvas=canvas if canvas is not None else _canvas(),
+        calls=evidence_calls if evidence_calls is not None else _calls(),
         inputs=_inputs() if inputs is None else inputs,
         control=control if control is not None else ExecutionControl(monotonic() + 60),
         role=role, max_height=480, maximum_result_bytes=maximum_result_bytes, **kwargs,
@@ -135,9 +134,9 @@ def test_frames_reject_unknown_candidates_and_changed_input_scope():
 
 
 def test_shared_cache_still_delivers_images_and_separate_role_receipts():
-    reader, session, canvas = FrameReader(), FrameInspectionSession(10), _canvas()
-    query = _tool(reader, session=session, canvas=canvas, role="Query")
-    supervisor = _tool(reader, session=session, canvas=canvas, role="Supervisor")
+    reader, session, evidence_calls = FrameReader(), FrameInspectionSession(10), _calls()
+    query = _tool(reader, session=session, evidence_calls=evidence_calls, role="Query")
+    supervisor = _tool(reader, session=session, evidence_calls=evidence_calls, role="Supervisor")
     arguments = {"video_chunk_id": "chunk-1", "frame_count": 4}
     first, second = query.execute(**arguments), supervisor.execute(**arguments)
 
@@ -153,7 +152,6 @@ def test_shared_cache_still_delivers_images_and_separate_role_receipts():
     assert [item["inspection_id"] for item in receipts] == [
         first.payload["inspection_id"], second.payload["inspection_id"],
     ]
-    assert [canvas.get("frame_inspections", item["inspection_id"]) for item in receipts] == receipts
     assert len(session.cache) == 1
 
     independent = _tool(reader, session=FrameInspectionSession(10))
@@ -184,32 +182,31 @@ def test_frames_honor_tool_budget_session_limit_and_cancellation_before_reading(
 
 
 def test_failed_frame_read_consumes_inspection_budget_without_caching_images():
-    calls, session, canvas = [], FrameInspectionSession(1), _canvas()
+    calls, session, evidence_calls = [], FrameInspectionSession(1), _calls()
 
     def failing_reader(request, cached=None):
         calls.append(request)
         raise FrameReadError("FRAME_SOURCE_UNAVAILABLE", "Source unavailable", retryable=True)
 
-    tool = _tool(failing_reader, session=session, canvas=canvas)
+    tool = _tool(failing_reader, session=session, evidence_calls=evidence_calls)
     result = tool.execute(video_chunk_id="chunk-1")
     assert result.success is False and result.artifact is None
     assert result.payload["error"]["retryable"] is True
     assert result.payload["inspection_id"] == calls[0].inspection_id
     assert session.cache == {} and session.summary() == []
-    assert canvas.items("frame_inspections") == []
     exhausted = tool.execute(video_chunk_id="chunk-1")
     assert exhausted.payload["error"]["code"] == "FRAME_INSPECTION_LIMIT"
     assert len(calls) == 1
 
 
 def test_oversized_frame_result_does_not_record_success_or_cache_images():
-    reader, session, canvas = FrameReader(), FrameInspectionSession(10), _canvas()
+    reader, session, evidence_calls = FrameReader(), FrameInspectionSession(10), _calls()
 
     def oversized_reader(request, cached=None):
         inspection = reader(request, cached)
         return FrameInspection({**inspection.payload, "extra": "x" * 2_000}, inspection.artifact)
 
-    tool = _tool(oversized_reader, session=session, canvas=canvas, maximum_result_bytes=512)
+    tool = _tool(oversized_reader, session=session, evidence_calls=evidence_calls, maximum_result_bytes=512)
     with pytest.raises(AgentToolOutputError):
         tool.invoke({
             "type": "tool_call", "name": "inspect_video_frames", "id": "oversized",
@@ -218,7 +215,6 @@ def test_oversized_frame_result_does_not_record_success_or_cache_images():
     assert len(reader.calls) == session.used_inspections == 1
     assert session.cache == {}
     assert session.summary() == []
-    assert canvas.items("frame_inspections") == []
 
 
 def test_failed_cached_frame_read_allows_fresh_retry():
@@ -288,16 +284,8 @@ class InspectingQuery:
             "query": "cup", "top_k": 1,
             "channel_weights": {"lexical": 0, "semantic": 1, "visual": 0},
         })
-        evidence = json.loads(by_name["get_context_canvas"].invoke({
-            "collection": "retrieval", "reference": "chunk-1", "section": "evidence.text",
-        }))
+        evidence = json.loads(by_name["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1"}))
         assert "error" not in evidence
-        current = json.loads(by_name["get_context_canvas"].invoke({"collection": "draft"}))
-        by_name["write_context_canvas"].invoke({
-            "batch_id": "frame-draft", "expected_revision": current["revision"],
-            "operations": [{"operation": "upsert_draft_item", "video_chunk_id": "chunk-1",
-                            "start_seconds": 11, "end_seconds": 19, "claim": "Grounded cup evidence."}],
-        })
         self.inspect(tools)
         return result_type.model_validate({"plan_context": "Inspect the cup", "message": "Cup located."})
 
@@ -311,7 +299,6 @@ class InspectingQuery:
 def test_runtime_gates_frames_per_model_and_resets_session_between_kicks(query_vision, monkeypatch):
     from agent.chat.video_search.runtime import AgentRuntime
 
-    monkeypatch.setattr("agent.utils.context_canvas_tools.tiktoken.get_encoding", lambda _name: None)
     reader, query = FrameReader(), InspectingQuery()
     query.supports_vision_input = query_vision
     runtime = AgentRuntime(
@@ -320,7 +307,7 @@ def test_runtime_gates_frames_per_model_and_resets_session_between_kicks(query_v
         frame_max_height=480, maximum_frame_inspections=10,
     )
     report = runtime.kick(_inputs())
-    receipts = [receipt for _reference, receipt in report.canvas.items("frame_inspections")]
+    receipts = list(report.frame_receipts)
     first_call_count = int(query_vision)
     assert len(reader.calls) == first_call_count
     if query_vision:
@@ -345,7 +332,6 @@ def test_runtime_gates_frames_per_model_and_resets_session_between_kicks(query_v
 def test_runtime_frame_inspections_follow_effective_count_limits(limits_enabled, monkeypatch):
     from agent.chat.video_search.runtime import AgentRuntime
 
-    monkeypatch.setattr("agent.utils.context_canvas_tools.tiktoken.get_encoding", lambda _name: None)
 
     class RepeatedFrameQuery(InspectingQuery):
         def inspect(self, tools):
@@ -362,7 +348,7 @@ def test_runtime_frame_inspections_follow_effective_count_limits(limits_enabled,
         frame_max_height=480, maximum_frame_inspections=12, limits_enabled=limits_enabled,
     )
     report = runtime.kick(_inputs())
-    receipts = [receipt for _reference, receipt in report.canvas.items("frame_inspections")]
+    receipts = list(report.frame_receipts)
 
     first_call_count = 12 if limits_enabled else 13
     assert len(reader.calls) == first_call_count

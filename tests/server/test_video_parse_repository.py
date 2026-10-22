@@ -38,7 +38,7 @@ from server.service.video_parse_persistence import (
     VideoParseTaskNotFoundError,
     invalidate_series_prefixes_from,
 )
-from server.repository.video import SeriesNotReadyError, VideoChunkNotFoundError
+from server.error.retrieval import SeriesNotReadyError, VideoChunkNotFoundError
 from server.service.video_parse import VideoParseRuntimeService
 from server.utils.time import datetime_to_unix_time_ms
 

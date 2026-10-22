@@ -20,7 +20,6 @@ import {
   getAuthIdentity,
   getAgentGlobalSettings,
   getAgentMessageOptions,
-  getJob,
   getParseConfig,
   getParseExportOptions,
   getRuntimeConfig,
@@ -30,8 +29,6 @@ import {
   getVideoParseTask,
   imageContentUrl,
   identityStorageKey,
-  jobEventsUrl,
-  listJobs,
   listAllVideoParseTasks,
   listVideoParseTasks,
   listSeries,
@@ -287,7 +284,7 @@ describe("independent account and data connections", () => {
     await rejected;
     expect(imageContentUrl("image/id")).toBe("/remote/api/media/images/content?tenantId=personal-id&imageId=image%2Fid");
     expect(videoContentUrl("video/id")).toBe("/remote/api/videos/content?videoId=video%2Fid&tenantId=personal-id");
-    expect(jobEventsUrl("job/id")).toBe("/remote/api/jobs/events?jobId=job%2Fid&tenantId=personal-id");
+    expect(videoParseTaskEventsUrl("task/id")).toBe("/remote/api/jobs/video-parse/events?videoParseTaskId=task%2Fid&tenantId=personal-id");
     expect(mediaUrl("/api/videos/content?videoId=video-id")).toBe("/remote/api/videos/content?videoId=video-id");
     expect(mediaUrl("https://cdn.example/video?signature=abc")).toBe("https://cdn.example/video?signature=abc");
     const firstKey = identityStorageKey("selection");
@@ -876,8 +873,8 @@ describe("current API routes", () => {
     });
     await getUploadSession("upload/id");
     await completeUpload("upload/id");
-    await listJobs();
-    await getJob("job/id");
+    await listVideoParseTasks();
+    await getVideoParseTask("task/id");
     await searchVideos({
       tenantId: "local-default",
       query: "rainy doorway",
@@ -906,10 +903,10 @@ describe("current API routes", () => {
       "/api/uploads/complete?uploadSessionId=upload%2Fid&tenantId=local-default",
     );
     expect(String(calls[6]?.[0])).toBe(
-      "/api/jobs/list?tenantId=local-default&limit=100",
+      "/api/jobs/video-parse/list?tenantId=local-default&limit=100",
     );
     expect(String(calls[7]?.[0])).toBe(
-      "/api/jobs/get?jobId=job%2Fid&tenantId=local-default",
+      "/api/jobs/video-parse/get?videoParseTaskId=task%2Fid&tenantId=local-default",
     );
     expect(String(calls[8]?.[0])).toBe("/api/search");
     expect(JSON.parse(String(calls[8]?.[1]?.body))).toEqual({
@@ -924,8 +921,8 @@ describe("current API routes", () => {
     expect(calls[10]?.[1]?.method).toBe("POST");
     expect(String(calls[11]?.[0])).toBe("/api/uploads/reparse?uploadSessionId=upload%2Fid&tenantId=local-default&expectedJobVersion=8");
     expect(calls[11]?.[1]?.method).toBe("POST");
-    expect(jobEventsUrl("job/id")).toBe(
-      "/api/jobs/events?jobId=job%2Fid&tenantId=local-default",
+    expect(videoParseTaskEventsUrl("task/id")).toBe(
+      "/api/jobs/video-parse/events?videoParseTaskId=task%2Fid&tenantId=local-default",
     );
     expect(videoContentUrl("video/id")).toBe(
       "/api/videos/content?videoId=video%2Fid&tenantId=local-default",

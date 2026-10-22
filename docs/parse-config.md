@@ -1,26 +1,17 @@
 # 解析配置
 
-上传前可选择服务端当前默认配置，或展开自定义配置。自定义参数随上传会话保存，完成上传时复制到解析任务；排队、失败重试和重新解析沿用该任务的配置。旧任务的 `parseConfig` 为 `null`，表示当时的参数没有被记录，不能用当前默认值冒充历史值。
+正式解析只使用 Parse V2。上传前读取 `/api/uploads/parse-config` 获取服务端默认值；自定义配置随上传会话保存，完成上传后成为 `VideoParseTask.parse_config` 快照。模型凭据与服务地址保留在服务端配置中。
 
-## 画面与帧数
+任务快照中的主要字段：
 
-- `window.analysisMaxHeight` 控制送往 ASR 与主视觉模型的分析视频高度。可以试用 480p，不会同时改变回放素材。
-- `window.canonicalMaxHeight` 控制回放片段、关键帧及视频向量化使用的视频高度。
-- `vision.fps` 控制主模型的取帧频率；`window.chunkDurationSeconds` 和 `window.contextOverlapSeconds` 决定每次调用的视频时间范围。界面显示的帧数是估计值，实际 Token 和费用以服务商返回值为准。
-- `vision.inputMode=video` 保留视频输入；这个模式没有独立的硬帧数上限。
-- `vision.inputMode=ordered_frames` 使用已有的均匀抽帧路径，此时 `maxFramesPerWindow` 是每段帧数硬上限。主视觉模型接收图片序列和上游 ASR 文本，不接收该段视频的原始音轨；应单独评测其效果。
-- 内容过滤兜底另有 `fallback.frameFps`、`groupDurationSeconds`、`maxFramesPerGroup` 和 `maxHeight`。兜底参数只在触发时生效。
+- `chunk_duration`、`interval_duration`、`batch_max_size` 决定固定切片、精修窗口和批次大小。
+- `visual_input` 保存视频或按序帧输入方式、FPS、最大高度和上下文重叠；实际执行以任务快照为准。修改默认 FPS 不会改变已完成的解析结果。
+- 按序帧解析按 `ceil(实际视频时长 × fps)` 均匀抽帧，默认 3 fps：60 秒为 180 帧，包含前后各 3 秒上下文时为 198 帧。旧 `maxFramesPerWindow` / `max_frames_per_chunk` 字段为配置兼容保留，不再限制解析取帧。已有任务仍沿用冻结的 FPS，需显式采用新配置重新解析才能得到 3 fps 的结果。
+- Gateway 不再用固定每图 2048 tokens 的猜测提前拒绝多帧输入；实际视觉容量与错误由模型服务返回。
+- `models` 保存 ASR、理解、精修、OCR、Embedding 等模型的来源、型号与调用参数。可用来源由 Gateway 配置决定。
+- `execution` 保存解析、精修、索引的并发、超时和重试参数；`indexing` 保存索引代次、稀疏检索开关和合同指纹。
+- Embedding 模型、维度与预处理合同必须匹配当前 Elasticsearch 索引，不能只改任务参数而继续写入不兼容的索引。
 
-## 其他参数
+当前任务详情由 `/api/jobs/video-parse/get` 返回完整 `parseConfig`。重试和重新解析通过上传服务的对应接口执行，以服务端返回的 `canRetry`、`canReparse` 及任务版本判断可用操作。旧 V1 Job 接口与离线导入命令已删除。
 
-ASR 模式、模型、FPS、并发与输出上限，主视觉模型及输出上限，前序事件和文字预算，背景文字与参考图的输入限额，视频 embedding FPS，以及请求超时和最大尝试次数，均可按任务配置。背景参考图最大边长不能超过已存储的模型图片大小。
-
-主解析与 ASR 的模型 ID 走 Ark，内容过滤兜底模型走 DeepSeek。这里配置的是现有接入方式的模型参数；填写本地 Ollama 模型名不会自动切换接入方式。界面的参数上限是建议范围，若服务端原有默认值更高，会允许保留该默认值。
-
-Embedding 模型和维度必须与当前 Qdrant 索引一致；界面显示这两个值但不允许按任务混用。模型凭据与服务地址留在服务端配置中，不进入任务快照。
-
-任务详情接口返回完整的 `parseConfig`，方便核对成本和效果。当前重新解析复用同一任务并清空检查点；若要同时保留同一集两套结果，还需要独立的实验任务与隔离的输出存储。
-
-## 升级
-
-已有 MySQL 安装需先应用 `docs/migrations/20260922_parse_config_snapshot.sql`，再启动读取新字段的服务版本。迁移只加两个可空 JSON 列，不回填不可信的历史配置。新建测试数据库通过 SQLAlchemy 模型直接获得这两列。
+字段约束见 [Parse V2 输入合同](../agent/video_parse_v2/input.py)，默认值组装见 [解析配置](../server/config/parse_profile.py)，部署与数据库升级见 [Server 文档](../server/README.md)。

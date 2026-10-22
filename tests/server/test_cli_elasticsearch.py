@@ -26,25 +26,25 @@ def test_hydrate_keeps_database_evidence_output(monkeypatch, capsys) -> None:
         def __init__(self, session_factory):
             assert session_factory is factory
 
-        def hydrate_video_chunks(self, selected_ids):
-            assert selected_ids == chunk_ids
-            return [SimpleNamespace(model_dump=lambda **kwargs: {
-                "videoChunkId": "chunk-1", "retrievalText": "原有数据库证据",
-            })]
+        def get_chunk_evidence(self, chunk_id, *, tenant_id):
+            assert chunk_id in chunk_ids and tenant_id == "workspace"
+            return SimpleNamespace(model_dump=lambda **kwargs: {
+                "videoChunkId": chunk_id, "retrievalText": "当前数据库证据",
+            })
 
     monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
     monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: factory)
-    monkeypatch.setattr(cli, "VideoRepository", Repository)
+    monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "hydrate", *chunk_ids,
+        "anivag-server", "hydrate", *chunk_ids, "--tenant-id", "workspace",
         "--database-url", "sqlite+pysqlite:///:memory:", "--environment", "test",
     ])
 
     cli.main()
 
-    assert json.loads(capsys.readouterr().out) == [{
-        "videoChunkId": "chunk-1", "retrievalText": "原有数据库证据",
-    }]
+    assert json.loads(capsys.readouterr().out) == [
+        {"videoChunkId": identifier, "retrievalText": "当前数据库证据"} for identifier in chunk_ids
+    ]
 
 
 def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) -> None:
@@ -876,76 +876,11 @@ assert not any(name == prefix or name.startswith(prefix + '.')
     assert result.returncode == 0, result.stderr
 
 
-def test_import_command_passes_series_bible_path_to_importer(monkeypatch, tmp_path, capsys):
-    from server.service.parsev1 import parse_import
-
-    received = {}
-    engine = SimpleNamespace(dispose=lambda: received.update(disposed=True))
-    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
-    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
-
-    def prepare(*args, **kwargs):
-        received.update(kwargs)
-        return "prepared"
-
-    monkeypatch.setattr(parse_import, "prepare_video_parse_import", prepare)
-    monkeypatch.setattr(cli, "VideoRepository", lambda _sessions: SimpleNamespace(
-        import_video_parse=lambda _prepared: SimpleNamespace(model_dump=lambda **kwargs: {"imported": True}),
-    ))
-    bible = tmp_path / "bible.md"
-    monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "import-parse", "--database-url", "sqlite+pysqlite:///:memory:",
-        "--environment", "test", "--parse-result", "result.json",
-        "--canonical-chunk-dir", "chunks", "--series-name", "Series",
-        "--episode-order", "1", "--pipeline-version", "v1",
-        "--series-bible-file", str(bible),
-    ])
-    cli.main()
-    assert received["series_bible_file"] == bible and received["disposed"] is True
-    assert "important_extra_data" not in received
-    assert json.loads(capsys.readouterr().out) == {"imported": True}
 
 
-def test_backfill_cli_uses_configured_media_limits_without_creating_dry_run_storage(
-    monkeypatch, tmp_path, capsys,
-):
-    received = {}
-    engine = SimpleNamespace(dispose=lambda: received.update(disposed=True))
-    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("ANIVAG_PARSE_MAX_HEIGHT", "480")
-    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
-    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
-    monkeypatch.setattr(cli, "VideoRepository", lambda _sessions: "repository")
-
-    def artifact(root, **kwargs):
-        received["artifacts"] = (root, kwargs)
-        return "artifacts"
-
-    class Backfill:
-        def __init__(self, repository, artifacts, *, max_height):
-            assert (repository, artifacts) == ("repository", "artifacts")
-            received["max_height"] = max_height
-
-        def backfill(self, **kwargs):
-            received["backfill"] = kwargs
-            return SimpleNamespace(model_dump=lambda **kwargs: {"backfilled": 0})
-
-    monkeypatch.setattr(cli, "build_artifact_storage", artifact)
-    monkeypatch.setattr(cli, "KeyframeBackfillService", Backfill)
-    monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "backfill-keyframes", "--environment", "test",
-        "--database-url", "sqlite+pysqlite:///:memory:", "--dry-run",
-        "--workspace-id", "workspace", "--series-id", "series", "--limit", "25",
-    ])
-    cli.main()
-    assert received["artifacts"] == (
-        tmp_path / "artifacts", {"environment": cli.DatabaseEnvironment.TEST,
-                                 "create_base_directory": False},
-    )
-    assert received["max_height"] == 480
-    assert received["backfill"] == {
-        "limit": 25, "dry_run": True, "tenant_id": "workspace",
-        "series_id": "series", "video_id": None,
-    }
-    assert received["disposed"] is True
-    assert json.loads(capsys.readouterr().out) == {"backfilled": 0}
+@pytest.mark.parametrize("command", ["import-parse", "backfill-keyframes"])
+def test_retired_v1_cli_commands_are_not_registered(monkeypatch, command):
+    monkeypatch.setattr(sys, "argv", ["anivag-server", command])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2

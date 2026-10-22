@@ -15,7 +15,7 @@ from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
 from ..model.job import ChunkTaskPhase, ChunkParseTaskStatus, VideoParseTaskStatus
-from ..repository.video import SeriesNotReadyError, SeriesScopeNotFoundError, VideoChunkNotFoundError
+from ..error.retrieval import SeriesNotReadyError, SeriesScopeNotFoundError, VideoChunkNotFoundError
 from ..repository import video_parse_retrieval as read_store
 from ..repository import video_parse_task as task_store
 from ..model.dto.jobDTO import (

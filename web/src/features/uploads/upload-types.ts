@@ -1,12 +1,10 @@
 import type {
   ParseConfig,
-  ParseJobView,
   UploadSessionView,
   VideoParseTaskStatus,
   VideoParseTaskView,
 } from "../../api/contracts";
 import { translate, type Locale } from "../../shared/messages";
-import { publicParseStageLabel } from "../../shared/format";
 
 export type UploadTaskStatus =
   | "queued"
@@ -58,7 +56,6 @@ export interface UploadTask {
   idempotencyKey: string;
   parseConfig?: ParseConfig;
   session?: UploadSessionView;
-  job?: ParseJobView;
   videoParseTask?: VideoParseTaskView;
   error?: string;
 }
@@ -132,7 +129,7 @@ export function validateParseConfig(config: ParseConfig, defaults: ParseConfig, 
 export function taskProgress(task: UploadTask): number {
   if (
     ["completing", "processing", "completed"].includes(task.status)
-    || (task.status === "failed" && (task.job || task.videoParseTask))
+    || (task.status === "failed" && task.videoParseTask)
   ) return 100;
   if (task.totalBytes <= 0) return 0;
   return Math.min(
@@ -157,7 +154,7 @@ export function taskStatusLabel(task: UploadTask, locale: Locale = "zh"): string
       if (task.videoParseTask) {
         return translate(locale, videoParseTaskStatusLabel[task.videoParseTask.status]);
       }
-      return task.job?.stage ? publicParseStageLabel(task.job.stage, locale) : translate(locale, "等待解析");
+      return translate(locale, "等待解析");
     case "completed":
       return translate(locale, "已可检索");
     case "failed":

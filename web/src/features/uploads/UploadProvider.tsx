@@ -14,16 +14,13 @@ import {
   createUploadSession,
   deleteUploadSession,
   errorMessage,
-  getJob,
   getUploadSession,
   getVideoParseTask,
-  jobEventsUrl,
   uploadSegment,
   videoParseTaskEventsUrl,
   TENANT_ID,
 } from "../../api/client";
 import type {
-  ParseJobView,
   UploadCompleteView,
   UploadSessionView,
   VideoParseTaskView,
@@ -53,7 +50,7 @@ interface UploadContextValue {
   retry: (taskId: string) => void;
   cancel: (taskId: string) => Promise<void>;
   forgetDeletedSession: (uploadSessionId: string) => void;
-  syncRequeuedParse: (task: ParseJobView | VideoParseTaskView) => void;
+  syncRequeuedParse: (task: VideoParseTaskView) => void;
   dismissFinished: () => void;
 }
 
@@ -81,23 +78,6 @@ export function UploadProvider({ children }: PropsWithChildren) {
     [],
   );
 
-  const acceptJob = useCallback(
-    (taskId: string, job: ParseJobView) => {
-      updateTask(taskId, (task) => ({
-        ...task,
-        job,
-        status:
-          job.status === "SUCCEEDED"
-            ? "completed"
-            : job.status === "FAILED"
-              ? "failed"
-              : "processing",
-        error: job.status === "FAILED" ? job.lastError?.message || translate(localeRef.current, "解析任务失败") : undefined,
-      }));
-    },
-    [updateTask],
-  );
-
   const acceptVideoParseTask = useCallback(
     (taskId: string, videoParseTask: VideoParseTaskView) => {
       const failed = videoParseTask.status === "PARSING_FAILED"
@@ -116,49 +96,6 @@ export function UploadProvider({ children }: PropsWithChildren) {
       }));
     },
     [updateTask],
-  );
-
-  const watchJob = useCallback(
-    (taskId: string, initialJob: ParseJobView | { jobId: string }) => {
-      jobSources.current.get(taskId)?.close();
-      const source = new EventSource(jobEventsUrl(initialJob.jobId), { withCredentials: true });
-      jobSources.current.set(taskId, source);
-      let recovering = false;
-
-      const close = () => {
-        source.close();
-        if (jobSources.current.get(taskId) === source) {
-          jobSources.current.delete(taskId);
-        }
-      };
-
-      source.addEventListener("job", (event) => {
-        const job = JSON.parse((event as MessageEvent).data) as ParseJobView;
-        acceptJob(taskId, job);
-        if (job.status === "SUCCEEDED" || job.status === "FAILED") {
-          close();
-          void refreshSeries();
-        }
-      });
-
-      source.onerror = async () => {
-        if (recovering) return;
-        recovering = true;
-        try {
-          const job = await getJob(initialJob.jobId);
-          acceptJob(taskId, job);
-          if (job.status === "SUCCEEDED" || job.status === "FAILED") {
-            close();
-            void refreshSeries();
-          }
-        } catch {
-          // EventSource reconnects automatically. The next successful snapshot is authoritative.
-        } finally {
-          recovering = false;
-        }
-      };
-    },
-    [acceptJob, refreshSeries],
   );
 
   const watchVideoParseTask = useCallback(
@@ -209,15 +146,11 @@ export function UploadProvider({ children }: PropsWithChildren) {
 
   const watchCompletedParse = useCallback(
     (taskId: string, completed: UploadCompleteView) => {
-      if (completed.jobId) {
-        watchJob(taskId, { jobId: completed.jobId });
-        return;
-      }
       watchVideoParseTask(taskId, {
         videoParseTaskId: completed.videoParseTaskId,
       });
     },
-    [watchJob, watchVideoParseTask],
+    [watchVideoParseTask],
   );
 
   const runRealTask = useCallback(
@@ -548,7 +481,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
   );
 
   const syncRequeuedParse = useCallback(
-    (parseTask: ParseJobView | VideoParseTaskView) => {
+    (parseTask: VideoParseTaskView) => {
       const uploadSessionId = parseTask.uploadSessionId;
       if (!uploadSessionId) return;
       const task = tasks.find((item) =>
@@ -558,19 +491,13 @@ export function UploadProvider({ children }: PropsWithChildren) {
       if (!task) return;
       updateTask(task.taskId, (current) => ({
         ...current,
-        ...("jobId" in parseTask
-          ? { job: parseTask }
-          : { videoParseTask: parseTask }),
+        videoParseTask: parseTask,
         status: "processing",
         error: undefined,
       }));
-      if ("jobId" in parseTask) {
-        watchJob(task.taskId, parseTask);
-      } else {
-        watchVideoParseTask(task.taskId, parseTask);
-      }
+      watchVideoParseTask(task.taskId, parseTask);
     },
-    [tasks, updateTask, watchJob, watchVideoParseTask],
+    [tasks, updateTask, watchVideoParseTask],
   );
 
   const visibleTasks = tasks.filter((task) => task.status !== "cancelled");

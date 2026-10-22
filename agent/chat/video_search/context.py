@@ -13,8 +13,7 @@ from engine.rag.contracts import (
 from .output import video_range_sources
 
 if TYPE_CHECKING:
-    from .state import DraftItem, RunInputs
-    from .video_search_canvas import VideoSearchContextCanvas
+    from .state import RetrievalCall, RunInputs
 
 
 _MAX_CHECKPOINT_RETRIEVAL_IDS = 200
@@ -46,85 +45,6 @@ _EVIDENCE_ALIASES = tuple(
     for name, field in VideoChunkEvidence.model_fields.items()
     if name in _EVIDENCE_FIELDS
 )
-
-
-def build_canvas_checkpoint(
-    canvas: VideoSearchContextCanvas,
-    *,
-    role: Literal["query", "evaluator", "chat"],
-) -> dict[str, Any]:
-    """Project bounded canonical state when the Harness installs a new window."""
-
-    retrieval_ids = (tuple(item.video_chunk_id for item in canvas.draft_items(approved=True))
-                     if role == "chat" else canvas.retrieval_item_ids())
-    visible_retrieval_ids = retrieval_ids[-_MAX_CHECKPOINT_RETRIEVAL_IDS:]
-    approved = role == "chat"
-    draft_items = canvas.draft_items(approved=approved)
-    checkpoint: dict[str, Any] = {
-        "schema": "anivag.context-canvas-checkpoint.v1",
-        "canvas_id": canvas.id,
-        "canvas_revision": canvas.revision,
-        "role": role,
-        "tenant_id": canvas.tenant_id,
-        "series_ids": list(canvas.series_ids),
-        "retrieval_catalog": {
-            "item_count": len(retrieval_ids),
-            "visible_video_chunk_ids": list(visible_retrieval_ids),
-            "omitted_item_count": len(retrieval_ids) - len(visible_retrieval_ids),
-        },
-        "draft_catalog": [
-            {
-                "video_chunk_id": item.video_chunk_id,
-                "start_seconds": item.start_seconds,
-                "end_seconds": item.end_seconds,
-            }
-            for item in draft_items
-        ],
-        **(project_run_records(canvas) if role != "chat" else {}),
-        "recovery": (
-            "Treat IDs and counts as navigation metadata only. Use the registered "
-            "get_context_canvas for exact Evidence or Draft content."
-        ),
-    }
-    if role == "chat":
-        blocks = canvas.render_blocks()
-        checkpoint["render_draft"] = {
-            "block_count": len(blocks),
-            "blocks": [
-                (
-                    {
-                        "type": "video",
-                        "video_chunk_id": getattr(block, "video_chunk_id"),
-                    }
-                    if getattr(block, "type", None) == "video"
-                    else {
-                        "type": "markdown",
-                        "character_count": len(getattr(block, "markdown", "")),
-                    }
-                )
-                for block in blocks
-            ],
-        }
-    return checkpoint
-
-
-def project_run_records(canvas: VideoSearchContextCanvas) -> dict[str, Any]:
-    """Point to complete execution records without replaying them in every prompt."""
-    collections = canvas.checkpoint()["collections"]
-    return {
-        "run_records": {
-            collection: {
-                "collection": collection,
-                "item_count": collections.get(collection, {}).get("item_count", 0),
-            }
-            for collection in ("history", "frame_inspections")
-        },
-        "run_records_instruction": (
-            "Use get_context_canvas to list and read previous turns or frame inspection "
-            "receipts as needed. Receipts identify delivered frames; read them before "
-            "repeating an inspection. They are metadata, not the images themselves."
-        ),
-    }
 
 
 def project_inputs(
@@ -407,7 +327,7 @@ _EVIDENCE_SECTION_FIELDS = {
 
 
 def detail_sections(
-    hit: VideoChunkSearchHit, draft: DraftItem | None = None,
+    hit: VideoChunkSearchHit,
 ) -> dict[str, str]:
     evidence = hit.evidence.model_dump(mode="json", by_alias=True)
     grouped = {
@@ -427,9 +347,32 @@ def detail_sections(
         "selection_reason": hit.selection_reason.model_dump(mode="json", by_alias=True),
         **grouped,
     }
-    if draft is not None:
-        sections = {"draft": draft.model_dump(mode="json"), **sections}
     return {
         name: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         for name, value in sections.items()
+    }
+
+
+def retrieval_evidence_text(hit: VideoChunkSearchHit) -> str:
+    sections = detail_sections(hit)
+    return "\n\n".join(
+        name + "\n" + sections[name]
+        for name in ("evidence.events", "evidence.transcript", "evidence.text",
+                     "evidence.series_context", "evidence.metadata")
+    )
+
+
+def build_retrieval_checkpoint(calls: list[RetrievalCall], frame_receipts: list[dict]) -> dict:
+    identifiers = list(dict.fromkeys(
+        hit.candidate.video_chunk_id for call in calls if call.status != "error"
+        for hit in call.result.hits
+    ))
+    return {
+        "retrieved_video_chunk_ids": identifiers[-_MAX_CHECKPOINT_RETRIEVAL_IDS:],
+        "omitted_video_chunk_count": max(0, len(identifiers) - _MAX_CHECKPOINT_RETRIEVAL_IDS),
+        "frame_inspections": [
+            {key: receipt[key] for key in ("inspection_id", "video_chunk_id", "start_ms", "end_ms")
+             if key in receipt} for receipt in frame_receipts
+        ],
+        "recovery": "Use read_retrieval_evidence with a known video_chunk_id if its source evidence is no longer in context.",
     }

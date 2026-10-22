@@ -20,8 +20,9 @@ from server.config.auth import AuthConfig
 from server.config.sse import SSEConfig
 from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
-from server.model.index_sync import IndexSyncIntent
-from server.model.video import Series, SeriesVisibility, Video, VideoChunk, VideoChunkEmbedding
+from server.model.job import VideoParseTask
+from server.config.parse_profile import default_video_parse_v2_config
+from server.model.video import Series, SeriesVisibility, Video, VideoChunk
 from server.repository.agent import AgentRepository
 from server.repository.identity import IdentityRepository
 from server.repository.library import LibraryRepository
@@ -263,8 +264,11 @@ def _course(api, *, tenant_id=None):
             chunk_media_ref=api.store.uri_for_path(source), analysis_window_media_ref=api.store.uri_for_path(source),
         ))
         session.flush()
-        session.add(VideoChunkEmbedding(chunk_id=chunk_id, text_input="测试课程片段", text_vector=[1.0], vision_vector=[1.0]))
-        session.add(IndexSyncIntent(chunk_id=chunk_id, operation="UPSERT", source_revision="a" * 64, status="SYNCED"))
+        session.add(VideoParseTask(
+            id=str(uuid4()), video_id=video_id, pipeline_version="video-parse-v2",
+            status="COMPLETE", parse_config=default_video_parse_v2_config().model_dump(mode="json"),
+            chunk_count=1, version=1, max_attempts=3, is_test=True,
+        ))
     state = api.services.library.get_series(series.series_id, tenant_id=tenant_id)
     assert api.services.media.publication_ready(state)
     return series.series_id, video_id

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from copy import deepcopy
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from ..model.dto.jobDTO import VideoParseTaskData, VideoData, SeriesData
-from ..model.job import VideoParseTask, SeriesParseJob
+from ..model.job import VideoParseTask
 from ..model.video import Video, Series
 
 
@@ -234,12 +233,6 @@ def get_task_input_context(
         .where(VideoParseTask.id == task_id, VideoParseTask.is_deleted.is_(False))
     ).one_or_none()
     return None if row is None else (task_data(row[0]), video_data(row[1]), series_data(row[2]))
-
-
-def has_legacy_jobs(session: Session, video_id: str, statuses: Sequence[str]) -> bool:
-    return session.scalar(select(SeriesParseJob.id.label("job_id")).where(
-        SeriesParseJob.video_id == video_id, SeriesParseJob.status.in_(statuses),
-    ).limit(1)) is not None
 
 
 def list_series_ids(session: Session) -> list[str]:

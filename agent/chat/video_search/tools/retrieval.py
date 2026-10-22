@@ -4,7 +4,7 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from engine.rag.contracts import VideoChunkSearchResult
 from engine.rag.retrieval.fusion import (
@@ -21,17 +21,16 @@ from ...common.tool import AgentTool, build_agent_tool
 from ...common.tool_output import cursor_position, page_items
 from ...common.tool_result import TextToolResult, ToolResult
 from ..errors import VideoRetrievalError
-from ..output import validate_result
+from ..output import merge_retrieval_calls, retrieval_hit, validate_result
+from ..context import retrieval_evidence_text
 from ..state import (
     LexicalRetrievalChannelWeights,
     RetrievalCall,
     RetrievalChannelContract,
     RetrievalChannelWeights,
 )
-from ..video_search_canvas import VideoSearchContextCanvas
 from .shared import (
-    _OptionalCursor, _ToolCallBudget, _bounded_text, _detail_sections,
-    _read_detail_section, _retrieval_card, _start_tool_call,
+    _OptionalCursor, _ToolCallBudget, _bounded_text, _retrieval_card, _start_tool_call,
 )
 
 class RetrieveArguments(BaseModel):
@@ -87,17 +86,11 @@ class ReadItemArguments(BaseModel):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
     ]
-    section: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
-    ] = "overview"
-    start: int = Field(default=0, ge=0, strict=True)
-    end: int | None = Field(default=None, ge=0, strict=True)
+    cursor: _OptionalCursor = None
 
 def build_retrieve_tool(
     search: Callable[..., VideoChunkSearchResult],
     *,
-    canvas: VideoSearchContextCanvas,
     inputs: RunInputs,
     control: ExecutionControl,
     calls: list[RetrievalCall],
@@ -108,7 +101,7 @@ def build_retrieve_tool(
     budget: _ToolCallBudget | None = None,
     role: Literal["query", "supervisor"] = "query",
 ) -> AgentTool:
-    """Page discovery cards while retaining canonical hits in Canvas.
+    """Return source evidence directly and retain immutable calls for selection checks.
 
     maximum_top_k is accepted for legacy callers; the Agent owns top_k.
     """
@@ -145,10 +138,7 @@ def build_retrieve_tool(
                             cursor=cursor,
                             maximum_items=maximum_catalog_items,
                             maximum_bytes=maximum_result_bytes,
-                            metadata={
-                                **metadata,
-                                "draft_item_count": canvas.draft_item_count(),
-                            },
+                            metadata=metadata,
                         ),
                     )
                 except AgentToolOutputError:
@@ -210,7 +200,10 @@ def build_retrieve_tool(
             except Exception as exc:
                 raise VideoRetrievalError("Video retrieval tool failed") from exc
             control.check()
-            result = VideoChunkSearchResult.model_validate(result).model_copy(deep=True)
+            try:
+                result = VideoChunkSearchResult.model_validate(result).model_copy(deep=True)
+            except ValidationError as exc:
+                raise AgentModelInvocationError("Retrieval returned invalid source evidence") from exc
             validate_result(result, inputs)
             if result.query != query:
                 raise AgentModelInvocationError(
@@ -219,22 +212,22 @@ def build_retrieve_tool(
             if len(result.hits) > top_k:
                 raise AgentModelInvocationError("Retrieval result exceeds the requested top_k")
 
-            canvas.record_retrieval(result)
-            calls.append(RetrievalCall(
+            call = RetrievalCall(
                 query=query,
                 top_k=top_k,
                 requested_weights=requested_weights.model_copy(deep=True),
                 effective_weights=effective_weights,
                 result=result,
                 role=role,
-            ))
+            )
+            merge_retrieval_calls(inputs, [*calls, call])
+            calls.append(call)
             resource_id = f"retrieval-{len(catalogs) + 1}"
-            items = [_retrieval_card(hit) for hit in result.hits]
+            items = [_retrieval_card(hit, max(1, (maximum_result_bytes - 1024) // 8)) for hit in result.hits]
             metadata = {
                 "query": query,
                 "requested_top_k": top_k,
                 "result_count": len(items),
-                "draft_item_count": canvas.draft_item_count(),
                 "partial": result.partial,
                 "warnings": [_bounded_text(value, 500) for value in result.warnings[:8]],
                 "retrieval_strategy": {
@@ -261,9 +254,9 @@ def build_retrieve_tool(
         func=retrieve,
         name="retrieve",
         description=(
-            "Search the fixed Series Scope and return a bounded Evidence catalog. "
-            "Catalog entries contain descriptions and video_chunk_id handles, never "
-            "the full Evidence. Use get_context_canvas with collection='retrieval' to inspect a handle. "
+            "Search the fixed Series scope and return source evidence with video_chunk_id and canonical times. "
+            "Use the returned evidence to assess each claim; ranking alone is not proof. "
+            "If evidence_truncated or more context is needed, use read_retrieval_evidence with that ID. "
             "When next_cursor is present, call retrieve with cursor only."
         ),
         args_schema=(
@@ -272,48 +265,37 @@ def build_retrieve_tool(
             else RetrieveArguments
         ),
         maximum_result_bytes=maximum_result_bytes,
-        draft_item_count=canvas.draft_item_count,
     )
 
 
-def build_read_trieve_item_tool(
-    *,
-    canvas: VideoSearchContextCanvas,
-    control: ExecutionControl,
-    maximum_result_bytes: int,
-    maximum_read_chars: int = 16_384,
+def build_read_retrieval_evidence_tool(
+    *, calls: list[RetrievalCall], control: ExecutionControl,
+    maximum_result_bytes: int, maximum_read_chars: int = 16_384,
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
-    def read_trieve_item(
-        video_chunk_id: str,
-        section: str = "overview",
-        start: int = 0,
-        end: int | None = None,
-    ) -> ToolResult:
-        _start_tool_call(control, budget, "read_trieve_item")
-        sections = _detail_sections(canvas.retrieval_snapshot(video_chunk_id))
-        return TextToolResult(
-            success=True,
-            content=_read_detail_section(
-                video_chunk_id, sections,
-                section=section,
-                start=start,
-                end=end,
-                maximum_result_bytes=maximum_result_bytes,
-                maximum_read_chars=maximum_read_chars,
-            ),
-        )
+    def read_retrieval_evidence(video_chunk_id: str, cursor: str | None = None) -> ToolResult:
+        _start_tool_call(control, budget, "read_retrieval_evidence")
+        content = retrieval_evidence_text(retrieval_hit(calls, video_chunk_id))
+        part_size = max(1, min(maximum_read_chars, (maximum_result_bytes - 384) // 8))
+        parts = [{"text": content[start:start + part_size]}
+                 for start in range(0, len(content), part_size)]
+        try:
+            return TextToolResult(success=True, content=page_items(
+                parts, namespace="retrieval-evidence", resource_id=video_chunk_id,
+                cursor=cursor, maximum_items=1, maximum_bytes=maximum_result_bytes,
+                metadata={"video_chunk_id": video_chunk_id},
+            ))
+        except AgentToolInvocationError as exc:
+            raise AgentToolFeedbackError(
+                "INVALID_EVIDENCE_CURSOR", str(exc),
+                "Read this video_chunk_id again without cursor, then use its returned next_cursor.",
+            ) from exc
 
     return build_agent_tool(
-        func=read_trieve_item,
-        name="read_trieve_item",
+        func=read_retrieval_evidence, name="read_retrieval_evidence",
         description=(
-            "Read a stable Evidence snapshot by video_chunk_id. First request "
-            "section='overview' to get section names and character lengths. Then "
-            "read a named section with start/end character offsets [start,end); "
-            "omit end to read to this section's end, and never reuse another ID's end. "
-            "If a range is too large, retry with the suggested smaller end."
-        ),
-        args_schema=ReadItemArguments,
-        maximum_result_bytes=maximum_result_bytes,
+            "Read complete source evidence for a retrieved video_chunk_id. "
+            "Only use when the search excerpt is insufficient. "
+            "Continue with the same ID and returned next_cursor; no character ranges are needed."
+        ), args_schema=ReadItemArguments, maximum_result_bytes=maximum_result_bytes,
     )

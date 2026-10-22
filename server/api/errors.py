@@ -32,7 +32,7 @@ from ..repository.upload import (
     UploadSeriesNotFoundError,
     UploadStateError,
 )
-from ..repository.video import (
+from ..error.retrieval import (
     SeriesNotReadyError,
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,

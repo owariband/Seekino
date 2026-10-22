@@ -201,7 +201,6 @@ function renderApp(
       }));
       return jsonResponse({ ...upload, status: "EXPIRED" });
     }
-    if (url.includes("/api/jobs/list")) return jsonResponse({ items: [], total: 0, hasMore: false, nextCursor: null });
     if (url.includes("/api/agent/conversations/create")) {
       conversationCreates += 1;
       if (conversationCreates === 1 && options.failInitialConversationCreation) {

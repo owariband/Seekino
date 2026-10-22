@@ -36,7 +36,6 @@ from ..model.dto.jobDTO import (
     VideoParseTaskData,
 )
 from ..model.job import (
-    ParseJobStatus,
     VideoParseTaskStatus,
 )
 from ..repository import video_parse_task as task_store
@@ -154,20 +153,10 @@ class VideoParsePersistenceService:
                     # parent so parent -> Video remains consistent everywhere.
                     continue
                 runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY] if task else {}
-                is_placeholder = task is not None and (
-                    not runtime.get("accepted")
-                    and task.status == VideoParseTaskStatus.PENDING.value
-                    and runtime.get("execution_mode") in {None, "v1"}
-                )
                 is_v2 = task is not None and (
                     runtime.get("execution_mode") == "v2"
                     or (runtime.get("execution_mode") is None and task.pipeline_version == "v2")
-                    or is_placeholder
                 )
-                if is_placeholder and task_store.has_legacy_jobs(session, video_id, (
-                    ParseJobStatus.QUEUED.value, ParseJobStatus.RUNNING.value, ParseJobStatus.RETRY_WAIT.value,
-                )):
-                    raise VideoParseConflictError("Video has an active legacy Parse worker")
                 if is_v2:
                     config = ParseConfig.model_validate(task.parse_config)
                     if task.chunk_count != math.ceil(video.duration_ms / (config.chunk_duration * 1000)):

@@ -14,22 +14,13 @@ from server.api.library import project_series_detail
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
-from server.model.index_sync import IndexSyncIntent
-from server.model.job import (
-    SeriesParseJob,
-    VideoChunkCheckpoint,
-    VideoParseTask,
-)
+from server.model.job import VideoParseTask
 from server.model.upload import UploadSession
 from server.model.tenant import Tenant
 from server.model.user import User
-from server.model.video import Series, SeriesVisibility, VideoChunkEmbedding, Video
+from server.model.video import Series, SeriesVisibility, Video
 from server.repository.identity import default_public_nickname
-from server.repository.library import (
-    LibraryRepository,
-    SeriesNotFoundError,
-    VideoEpisodeOrderConflictError,
-)
+from server.repository.library import LibraryRepository, VideoEpisodeOrderConflictError
 from server.model.video import VideoIndexStatus
 from server.repository.upload import UploadRepository
 from server.service.library import LibraryService
@@ -55,6 +46,7 @@ def _add_prefix_task(
     status: str = "COMPLETE",
     version: int = 1,
 ) -> str:
+    version = max(version, max(session.scalars(select(VideoParseTask.version).where(VideoParseTask.video_id == video_id)), default=0) + 1)
     task_id = str(uuid4())
     now = now_utc()
     session.add(VideoParseTask(
@@ -97,12 +89,12 @@ def _add_prefix_task(
     return task_id
 
 
-def test_offline_video_views_use_actual_index_and_media_facts(repository, prepared_import, tmp_path):
+def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed_video, tmp_path):
     factory, videos, library = _library(repository)
-    report = videos.import_video_parse(prepared_import)
+    report = parsed_video
     store = LocalArtifactStore(tmp_path / "artifacts", environment=DatabaseEnvironment.TEST)
     staged = store.put_upload_segment(
-        str(uuid4()), 0, Path(unquote(urlparse(prepared_import.original_source_uri).path)).read_bytes(),
+        str(uuid4()), 0, Path(unquote(urlparse(parsed_video.original_source_uri).path)).read_bytes(),
     )
     original = store.publish_original(
         staged,
@@ -113,27 +105,21 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
         session.get(Video, report.video_id).source_uri = original.uri
     media = MediaService(library, store, probe_playback=lambda _path: True)
 
+    with factory.begin() as session:
+        session.get(VideoParseTask, report.video_parse_task_id).status = "INDEXING"
     initial = library.get_series(report.series_id, tenant_id="local-default")
     assert initial.video_count == 1
     assert initial.ready_video_count == 0
-    assert initial.videos[0].index_status == VideoIndexStatus.NOT_READY
+    assert initial.videos[0].index_status == VideoIndexStatus.SYNCING
     assert initial.videos[0].latest_job_id is None
-
     with factory.begin() as session:
-        for chunk in session.scalars(select(VideoChunkEmbedding)):
-            chunk.text_vector = [0.1, 0.2]
-            chunk.vision_vector = [0.2, 0.3]
-    assert library.get_video(report.video_id, tenant_id="local-default").index_status == VideoIndexStatus.SYNCING
-    with factory.begin() as session:
-        for intent in session.scalars(select(IndexSyncIntent)):
-            intent.operation = "UPSERT"
-            intent.status = "SYNCED"
+        session.get(VideoParseTask, report.video_parse_task_id).status = "COMPLETE"
     ready = library.get_series(report.series_id, tenant_id="local-default")
     assert ready.ready_video_count == 1
     detail = project_series_detail(ready, media).model_dump(by_alias=True)
     assert detail["createdAt"] == ready.created_at
     assert detail["videos"][0]["indexStatus"] == "READY"
-    assert detail["videos"][0]["parseStatus"] == "SUCCEEDED"
+    assert detail["videos"][0]["parseStatus"] == "COMPLETE"
     assert detail["videos"][0]["parseProgress"] == 100
     assert detail["videos"][0]["playbackStatus"] == "READY"
     assert detail["videos"][0]["latestJobId"] is None
@@ -149,9 +135,9 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
     assert missing.last_error.code == "MEDIA_MISSING"
 
 
-def test_v2_library_status_uses_latest_video_parse_task(repository, prepared_import):
+def test_v2_library_status_uses_latest_video_parse_task(repository, parsed_video):
     engine, videos = repository
-    report = videos.import_video_parse(prepared_import)
+    report = parsed_video
     factory = create_session_factory(engine)
     with factory.begin() as session:
         _add_prefix_task(session, video_id=report.video_id)
@@ -188,10 +174,10 @@ def test_v2_library_status_uses_latest_video_parse_task(repository, prepared_imp
     "PARSING_FAILED", "INDEXING_FAILED",
 ])
 def test_v2_library_detail_projects_parse_task_status(
-    repository, prepared_import, tmp_path, parse_status,
+    repository, parsed_video, tmp_path, parse_status,
 ):
     engine, videos = repository
-    report = videos.import_video_parse(prepared_import)
+    report = parsed_video
     factory = create_session_factory(engine)
     with factory.begin() as session:
         _add_prefix_task(session, video_id=report.video_id, status=parse_status)
@@ -214,123 +200,17 @@ def test_v2_library_detail_projects_parse_task_status(
     assert detail["readyVideoCount"] == int(parse_status == "COMPLETE")
 
 
-def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repository, prepared_import):
-    factory, videos, library = _library(repository)
-    report = videos.import_video_parse(prepared_import)
-    now = now_unix_time_ms()
-    job_id = str(uuid4())
-    with factory.begin() as session:
-        session.add(SeriesParseJob(
-            id=job_id, series_id=report.series_id, video_id=report.video_id,
-            pipeline_version="failure-pipeline", status="FAILED", stage="PARSING",
-            progress=42, attempt_count=3, max_attempts=3, next_execute_time=now,
-            finish_time=now, last_error="private provider endpoint failure",
-        ))
-        for intent in session.scalars(select(IndexSyncIntent)):
-            intent.status = "RETRY_WAIT"
-            intent.last_error = "private index endpoint failure"
-    state = library.get_series(report.series_id, tenant_id="local-default")
-    assert state.failed_video_count == 1
-    assert state.ready_video_count == 0
-    video = state.videos[0]
-    assert video.latest_job_id == job_id
-    assert video.parse_status == "FAILED"
-    assert video.parse_progress is None
-    assert video.index_status == VideoIndexStatus.FAILED
-    with pytest.raises(SeriesNotFoundError):
-        library.get_video(report.video_id, tenant_id="other-workspace")
-
-
-def test_ready_video_count_keeps_an_indexed_video_during_failed_reparse(
-    repository, prepared_import,
+def test_ready_video_count_excludes_old_content_after_failed_current_reparse(
+    repository, parsed_video,
 ):
     factory, videos, library = _library(repository)
-    report = videos.import_video_parse(prepared_import)
-    now = now_unix_time_ms()
+    report = parsed_video
     with factory.begin() as session:
-        for chunk in session.scalars(select(VideoChunkEmbedding)):
-            chunk.text_vector = [0.1, 0.2]
-            chunk.vision_vector = [0.2, 0.3]
-        for intent in session.scalars(select(IndexSyncIntent)):
-            intent.operation = "UPSERT"
-            intent.status = "SYNCED"
-        session.add(SeriesParseJob(
-            id=str(uuid4()),
-            series_id=report.series_id,
-            video_id=report.video_id,
-            pipeline_version="failed-reparse",
-            status="FAILED",
-            stage="PARSING",
-            progress=42,
-            attempt_count=3,
-            max_attempts=3,
-            next_execute_time=now,
-            finish_time=now,
-            last_error="reparse failed before replacing the indexed result",
-        ))
-
+        _add_prefix_task(session, video_id=report.video_id, status="PARSING_FAILED")
     state = library.get_series(report.series_id, tenant_id="local-default")
-    assert state.ready_video_count == 1
-    assert state.videos[0].parse_status == "FAILED"
-    assert state.videos[0].index_status == VideoIndexStatus.READY
-
-
-def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent(
-    repository,
-    prepared_import,
-) -> None:
-    factory, videos, library = _library(repository)
-    report = videos.import_video_parse(prepared_import)
-    now = now_unix_time_ms()
-    job_id = str(uuid4())
-    with factory.begin() as session:
-        session.add(SeriesParseJob(
-            id=job_id,
-            series_id=report.series_id,
-            video_id=report.video_id,
-            pipeline_version="checkpoint-progress",
-            status="RUNNING",
-            stage="PARSING",
-            progress=34,
-            attempt_count=1,
-            max_attempts=3,
-            next_execute_time=now,
-        ))
-        session.add_all([
-            VideoChunkCheckpoint(
-                job_id=job_id,
-                sequence_no=0,
-                chunk_id=str(uuid4()),
-                stage="PARSED",
-                start_ms=0,
-                end_ms=15,
-            ),
-            VideoChunkCheckpoint(
-                job_id=job_id,
-                sequence_no=1,
-                chunk_id=str(uuid4()),
-                stage="SPLIT_READY",
-                start_ms=15,
-                end_ms=20,
-            ),
-        ])
-
-    video = library.get_video(report.video_id, tenant_id="local-default")
-
-    assert video.latest_job_id == job_id
-    assert video.parse_progress == 74
-
-    with factory.begin() as session:
-        checkpoint = session.get(VideoChunkCheckpoint, (job_id, 1))
-        checkpoint.start_ms = 16
-
-    assert (
-        library.get_video(
-            report.video_id,
-            tenant_id="local-default",
-        ).parse_progress
-        is None
-    )
+    assert state.ready_video_count == 0
+    assert state.videos[0].parse_status == "PARSING_FAILED"
+    assert state.videos[0].index_status != VideoIndexStatus.READY
 
 
 def test_pending_upload_counts_expiry_and_full_detail(repository):
@@ -562,9 +442,9 @@ def test_visibility_update_validates_values_and_keeps_new_series_private(reposit
     ).visibility == SeriesVisibility.PRIVATE
 
 
-def test_background_edit_preserves_video_order_and_character_metadata(repository, prepared_import):
+def test_background_edit_preserves_video_order_and_character_metadata(repository, parsed_video):
     _factory, videos, library = _library(repository)
-    report = videos.import_video_parse(prepared_import)
+    report = parsed_video
     before = library.get_series(report.series_id, tenant_id="local-default")
     edited = library.update_series(
         report.series_id, tenant_id="local-default",
@@ -591,10 +471,10 @@ def test_background_edit_preserves_video_order_and_character_metadata(repository
 
 def test_episode_edit_updates_linked_upload_without_changing_execution_order(
     repository,
-    prepared_import,
+    parsed_video,
 ) -> None:
     factory, videos, library = _library(repository)
-    report = videos.import_video_parse(prepared_import)
+    report = parsed_video
     upload_session_id = str(uuid4())
     inactive_upload_session_id = str(uuid4())
     now = now_utc()
@@ -602,32 +482,32 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
         session.add_all([
             UploadSession(
                 id=upload_session_id,
-                tenant_id=prepared_import.tenant_id,
+                tenant_id=parsed_video.tenant_id,
                 series_id=report.series_id,
-                episode_order=prepared_import.episode_order,
-                upload_sequence=prepared_import.upload_sequence,
-                filename=prepared_import.original_filename,
+                episode_order=parsed_video.episode_order,
+                upload_sequence=parsed_video.upload_sequence,
+                filename=parsed_video.original_filename,
                 media_type="video/mp4",
-                size_bytes=prepared_import.total_bytes,
-                segment_size_bytes=prepared_import.total_bytes,
+                size_bytes=parsed_video.total_bytes,
+                segment_size_bytes=parsed_video.total_bytes,
                 segment_count=1,
                 status="COMPLETED",
                 idempotency_key="episode-edit-linked-upload",
-                active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
+                active_slot_key=f"{report.series_id}:{parsed_video.episode_order}",
                 expire_time=now + timedelta(days=1),
                 finish_time=now,
                 video_id=report.video_id,
             ),
             UploadSession(
                 id=inactive_upload_session_id,
-                tenant_id=prepared_import.tenant_id,
+                tenant_id=parsed_video.tenant_id,
                 series_id=report.series_id,
-                episode_order=prepared_import.episode_order,
-                upload_sequence=prepared_import.upload_sequence,
-                filename=prepared_import.original_filename,
+                episode_order=parsed_video.episode_order,
+                upload_sequence=parsed_video.upload_sequence,
+                filename=parsed_video.original_filename,
                 media_type="video/mp4",
-                size_bytes=prepared_import.total_bytes,
-                segment_size_bytes=prepared_import.total_bytes,
+                size_bytes=parsed_video.total_bytes,
+                segment_size_bytes=parsed_video.total_bytes,
                 segment_count=1,
                 status="EXPIRED",
                 idempotency_key="episode-edit-inactive-upload",
@@ -640,12 +520,12 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
 
     edited = library.update_video_episode_order(
         report.video_id,
-        tenant_id=prepared_import.tenant_id,
+        tenant_id=parsed_video.tenant_id,
         episode_order=9,
     )
     replay = library.update_video_episode_order(
         report.video_id,
-        tenant_id=prepared_import.tenant_id,
+        tenant_id=parsed_video.tenant_id,
         episode_order=9,
     )
 
@@ -862,10 +742,10 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
 
 def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
     repository,
-    prepared_import,
+    parsed_video,
 ) -> None:
     factory, videos, library = _library(repository)
-    report = videos.import_video_parse(prepared_import)
+    report = parsed_video
     now = now_utc()
     linked_upload_id = str(uuid4())
     reserved_upload_id = str(uuid4())
@@ -874,25 +754,25 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
         session.add_all([
             UploadSession(
                 id=linked_upload_id,
-                tenant_id=prepared_import.tenant_id,
+                tenant_id=parsed_video.tenant_id,
                 series_id=report.series_id,
-                episode_order=prepared_import.episode_order,
-                upload_sequence=prepared_import.upload_sequence,
-                filename=prepared_import.original_filename,
+                episode_order=parsed_video.episode_order,
+                upload_sequence=parsed_video.upload_sequence,
+                filename=parsed_video.original_filename,
                 media_type="video/mp4",
-                size_bytes=prepared_import.total_bytes,
-                segment_size_bytes=prepared_import.total_bytes,
+                size_bytes=parsed_video.total_bytes,
+                segment_size_bytes=parsed_video.total_bytes,
                 segment_count=1,
                 status="COMPLETED",
                 idempotency_key="episode-edit-conflict-linked",
-                active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
+                active_slot_key=f"{report.series_id}:{parsed_video.episode_order}",
                 expire_time=now + timedelta(days=1),
                 finish_time=now,
                 video_id=report.video_id,
             ),
             UploadSession(
                 id=reserved_upload_id,
-                tenant_id=prepared_import.tenant_id,
+                tenant_id=parsed_video.tenant_id,
                 series_id=report.series_id,
                 episode_order=10,
                 upload_sequence=10,
@@ -931,19 +811,19 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
         ):
             library.update_video_episode_order(
                 report.video_id,
-                tenant_id=prepared_import.tenant_id,
+                tenant_id=parsed_video.tenant_id,
                 episode_order=occupied_episode,
             )
 
     with factory() as session:
         video = session.get(Video, report.video_id)
         upload = session.get(UploadSession, linked_upload_id)
-        assert video.episode_order == prepared_import.episode_order
-        assert video.upload_sequence == prepared_import.upload_sequence
-        assert upload.episode_order == prepared_import.episode_order
-        assert upload.upload_sequence == prepared_import.upload_sequence
+        assert video.episode_order == parsed_video.episode_order
+        assert video.upload_sequence == parsed_video.upload_sequence
+        assert upload.episode_order == parsed_video.episode_order
+        assert upload.upload_sequence == parsed_video.upload_sequence
         assert upload.active_slot_key == (
-            f"{report.series_id}:{prepared_import.episode_order}"
+            f"{report.series_id}:{parsed_video.episode_order}"
         )
         assert upload.version == 1
 

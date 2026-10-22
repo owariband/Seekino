@@ -63,7 +63,7 @@ def test_shared_and_v2_modules_do_not_import_v1(shared: bool) -> None:
         "server.config.settings", "server.config.parse_profile",
         "server.service.video_parse", "server.service.video_parse_media",
         "server.service.video_parse_index_coordinator", "server.service.upload",
-        "server.service.library", "server.service.keyframe_backfill",
+        "server.service.library",
         "server.bootstrap", "server.cli",
     ],
 ], ids=["common", "v2-agent", "server-imports"])
@@ -83,13 +83,3 @@ assert not loaded, loaded
         cwd=_ROOT, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_v1_and_common_share_transcript_and_config_class_identity() -> None:
-    from engine.common.config import VideoParseRuntimeConfig
-    from engine.common.transcription import TranscriptAnalysis, TranscriptCue
-    from engine.parsev1 import runtime, schemas
-
-    assert schemas.TranscriptCue is TranscriptCue
-    assert schemas.TranscriptAnalysis is TranscriptAnalysis
-    assert runtime.VideoParseRuntimeConfig is VideoParseRuntimeConfig
