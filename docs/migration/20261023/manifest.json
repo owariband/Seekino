@@ -239,7 +239,7 @@
   ],
   "experimental_snapshots": [
     {
-      "branch": "migration/ep04-continuous-turn-20261021",
+      "branch": "experiment/continuous-dialogue",
       "commit": "3d9eb75d651a2cf44f39fbbf446b54f89e833206",
       "base": "322db8e7f1cf94bc5618ad7154b9a6949066a249",
       "source": "outputs/worktrees/ep04-continuous-turn-20261021",
@@ -283,7 +283,7 @@
       "skipped_dependency_links": []
     },
     {
-      "branch": "migration/ep04-continuous-turn-20261021-v23",
+      "branch": "experiment/speaker-turn-review",
       "commit": "6ff0a7329b62ce1e57e547c5d317c3a2c6fa39fb",
       "base": "322db8e7f1cf94bc5618ad7154b9a6949066a249",
       "source": "outputs/worktrees/ep04-continuous-turn-20261021-v23",
@@ -327,7 +327,7 @@
       "skipped_dependency_links": []
     },
     {
-      "branch": "migration/ep04-offscreen-20261022",
+      "branch": "experiment/offscreen-speaker-attribution",
       "commit": "707bdcecee4d2542b1aeee844d49fb2cf1b4fef8",
       "base": "322db8e7f1cf94bc5618ad7154b9a6949066a249",
       "source": "outputs/worktrees/ep04-offscreen-20261022",
@@ -382,7 +382,7 @@
       ]
     },
     {
-      "branch": "migration/ep04-segmentation-20261020",
+      "branch": "experiment/speaker-segmentation",
       "commit": "963e53bae4d5b3a0c3b4e6d14cebada142471e12",
       "base": "215aadf1ec2e39086109fde804622a057f5e156a",
       "source": "outputs/worktrees/ep04-segmentation-20261020",

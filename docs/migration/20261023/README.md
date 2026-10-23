@@ -6,20 +6,22 @@
 
 ## 实验代码入口
 
+实验分支统一使用 `experiment/<用途>`；日期与实验轮次保留在报告中。
+
 | 分支 | 快照 commit | 原始基准 |
 |---|---|---|
-| `migration/ep04-continuous-turn-20261021` | `3d9eb75d651a2cf44f39fbbf446b54f89e833206` | `322db8e` |
-| `migration/ep04-continuous-turn-20261021-v23` | `6ff0a7329b62ce1e57e547c5d317c3a2c6fa39fb` | `322db8e` |
-| `migration/ep04-offscreen-20261022` | `707bdcecee4d2542b1aeee844d49fb2cf1b4fef8` | `322db8e` |
-| `migration/ep04-segmentation-20261020` | `963e53bae4d5b3a0c3b4e6d14cebada142471e12` | `215aadf` |
+| `experiment/continuous-dialogue` | `3d9eb75d651a2cf44f39fbbf446b54f89e833206` | `322db8e` |
+| `experiment/speaker-turn-review` | `6ff0a7329b62ce1e57e547c5d317c3a2c6fa39fb` | `322db8e` |
+| `experiment/offscreen-speaker-attribution` | `707bdcecee4d2542b1aeee844d49fb2cf1b4fef8` | `322db8e` |
+| `experiment/speaker-segmentation` | `963e53bae4d5b3a0c3b4e6d14cebada142471e12` | `215aadf` |
 
-- continuous-turn 保存初版连续话轮提示及音频复核工具整合。
-- continuous-turn-v23 保存后续混合 cue、完整局部上下文提示。
-- offscreen 保存 v25 画外发声提示对应代码，实验运行时为 1 秒预填规则。
-- segmentation 保存独立开发线，包含 pyannote 尝试和后来严格大于 500ms 的预填规则。
+- continuous-dialogue 保存初版连续话轮提示及音频复核工具整合。
+- speaker-turn-review 保存后续混合 cue、完整局部上下文提示。
+- offscreen-speaker-attribution 保存 v25 画外发声提示对应代码，实验运行时为 1 秒预填规则。
+- speaker-segmentation 保存独立开发线，包含 pyannote 尝试和后来严格大于 500ms 的预填规则。
 - 四个分支均保留对应的 `agent/video_parse_v2/design/voiceprint-trd.md`。
 - PR #5 的已提交来源为 `215aadf1ec2e39086109fde804622a057f5e156a`：
-  https://github.com/owariband/Seekino/pull/5 。该提交仍是 segmentation 快照的父提交。
+  https://github.com/owariband/Seekino/pull/5 。该提交仍是 speaker-segmentation 快照的父提交。
 
 ## 新电脑取得代码
 
@@ -29,7 +31,7 @@ Windows 建议在 WSL2 的 Linux 文件系统中克隆，以保留 Bash、权限
 git clone --branch dev https://github.com/owariband/Seekino.git Seekino
 cd Seekino
 git branch -r
-git worktree add --detach ../Seekino-ep04-v25 origin/migration/ep04-offscreen-20261022
+git worktree add --detach ../Seekino-offscreen origin/experiment/offscreen-speaker-attribution
 ```
 
 普通 clone 会取得这些远端分支；不要使用 `--single-branch`，否则需要另行 fetch 实验分支。
