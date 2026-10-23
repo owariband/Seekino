@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agent.common.chunk_understanding import understand_chunk
+from agent.utils.errors import AgentToolFeedbackError
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion
 from agent.video_parse_v2.prompts import build_canvas_understanding_prompt
@@ -307,6 +308,101 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
         task_id
     ))
     assert calls[-3:] == ["commit", "notify", "cleanup"]
+
+
+@pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
+def test_chunk_workflow_commits_free_dialogue_split_and_immutable_tool_evidence(offset_ms) -> None:
+    task_id = "chunk-task-0"
+    execution = ChunkExecution(
+        task_id, "video-task-1", int(offset_ms != 0), offset_ms, offset_ms + 20_000,
+        offset_ms, offset_ms + 20_000, _inputs(), _lease(),
+    )
+    asr_result = {"transcript": [
+        {"start_seconds": offset_ms + 1000, "end_seconds": offset_ms + 4500,
+         "text": "それで灯ちゃんたち傷つけて 祥ちゃんも悪くない", "speaker_id": "speaker1"},
+    ]}
+    local_asr = {"transcript": [
+        {"start_seconds": offset_ms + 1000, "end_seconds": offset_ms + 3000,
+         "text": "それで灯ちゃんたち傷つけて", "speaker_id": "speaker1"},
+        {"start_seconds": offset_ms + 3500, "end_seconds": offset_ms + 4500,
+         "text": "祥ちゃんも悪くない", "speaker_id": "speaker2"},
+    ]}
+
+    async def understand(loaded, *, canvas, prompt, **kwargs):
+        assert loaded is execution and kwargs["asr_result"] is asr_result
+        assert canvas.get("evidence", task_id)["asr"] == asr_result
+        before = canvas.snapshot()
+        assert ("evidence", task_id) in before.readonly_entries
+        assert prompt == build_canvas_understanding_prompt(execution, canvas=canvas)
+        assert "Resolve wording, timing and attribution" in prompt
+        assert "Separate the utterances where their boundaries are supported" in prompt
+        assert "Only Refine" not in prompt
+        assert "analyze_speaker_consistency(start_ms,end_ms)" in prompt
+        assert "transcribe_segment(start_ms,end_ms)" in prompt
+        assert "not additional Canvas write or completion authorization gates" in prompt
+        assert "one continuous speaking turn by one person" in prompt
+        assert "do not fragment it merely at punctuation" in prompt
+        assert "call analyze_speaker_consistency on the entire proposed start_ms/end_ms range" in prompt
+        assert "Separate per-cue host checks do not check the joins" in prompt
+        assert "review the suspicious range with real surrounding context using transcribe_segment" in prompt
+        assert "scan_count is not a requested number of segments" in prompt
+        assert "empty candidates, zero/few windows or insufficient_support alone do not mean a pass" in prompt
+        event = {
+            "event_type": "DIALOGUE", "start_seconds": offset_ms + 1000,
+            "end_seconds": offset_ms + 4500, "description": "两个人先后说话",
+            "participants": [], "visible_persons": [], "speaker": None,
+            "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": "合并台词"}],
+        }
+        receipt = canvas.write(role="understanding", batch_id="initial", expected_revision=canvas.revision, operations=[
+            {"op": "add_event", "member_ref": task_id, "key": "original-dialogue", "event": event},
+        ])
+        canvas.register_evidence("analysis:test", {"member_ref": task_id, "kind": "speaker_consistency",
+            "start_ms": offset_ms + 1000, "end_ms": offset_ms + 4500, "candidates": []})
+        canvas.register_evidence("local:test", {"member_ref": task_id, "kind": "local_asr",
+            "start_ms": offset_ms + 1000, "end_ms": offset_ms + 4500, "asr": local_asr})
+        canvas.write(role="understanding", batch_id="split", expected_revision=canvas.revision, operations=[
+            {"op": "patch_event", "event_ref": receipt["results"][0]["reference"],
+             "fields": {"end_seconds": offset_ms + 3200, "description": "前半台词"}},
+            {"op": "event_array", "event_ref": receipt["results"][0]["reference"],
+             "field": "text_variants", "action": "set", "values": [
+                 {"language": "ja", "role": "ORIGINAL", "text": local_asr["transcript"][0]["text"]},
+             ]},
+            {"op": "add_event", "member_ref": task_id, "key": "second-utterance", "event": {
+                **event, "start_seconds": offset_ms + 3400, "description": "后半台词",
+                "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": "祥ちゃんも悪くない"}],
+            }},
+        ])
+        assert canvas.get("evidence", task_id)["asr"] == asr_result
+        assert ("evidence", task_id) in canvas.snapshot().readonly_entries
+        return canvas.result(task_id)
+
+    runtime = SimpleNamespace(
+        load_chunk_execution=AsyncMock(return_value=execution),
+        prepare_chunk_visual=AsyncMock(),
+        transcribe_chunk=AsyncMock(return_value=asr_result),
+        understand_chunk=AsyncMock(side_effect=understand),
+        commit_chunk_result=AsyncMock(),
+        notify_chunk_committed=AsyncMock(),
+        cleanup_chunk_execution=AsyncMock(),
+    )
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(task_id))
+    runtime.understand_chunk.assert_awaited_once()
+    runtime.commit_chunk_result.assert_awaited_once()
+    result = runtime.commit_chunk_result.await_args.args[1]
+    assert [(event.start_seconds, event.end_seconds) for event in result.timeline] == [
+        (offset_ms + 1000, offset_ms + 3200), (offset_ms + 3400, offset_ms + 4500),
+    ]
+    evidence = runtime.commit_chunk_result.await_args.kwargs["evidence"]
+    assert evidence["asr"] == asr_result
+    assert evidence["tool_evidence"]["local:test"]["asr"] == local_asr
+    assert evidence["tool_evidence"]["analysis:test"]["candidates"] == []
+    assert [record["position"] for record in evidence["dialogue_provenance"]] == [0, 1]
+    assert all(record["content_verified"] is False for record in evidence["dialogue_provenance"])
+    assert [[source["relation"] for source in record["sources"]] for record in evidence["dialogue_provenance"]] == [
+        ["subrange", "overlap"], ["subrange", "overlap"],
+    ]
+    runtime.notify_chunk_committed.assert_awaited_once_with(execution)
+    runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
 
 @pytest.mark.parametrize("ocr_enabled", [False, True])
