@@ -39,6 +39,16 @@ speaker = [
     "torch==2.8.0",
     "torchaudio==2.8.0",
 ]
+diarization = [
+    "pyannote.audio==3.4.0",
+    "huggingface-hub==0.35.3",
+    "lightning==2.5.5",
+    "pytorch-lightning==2.5.5",
+    "numpy==2.2.6",
+    "scipy==1.15.3",
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+]
 
 [dependency-groups]
 dev = [

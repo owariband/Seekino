@@ -674,7 +674,7 @@ export interface AgentMessageOptions {
   maxToolCallsPerTurn: AgentIntegerOption;
 }
 
-export type AgentReasoningEffort = "none" | "low" | "high" | "max";
+export type AgentReasoningEffort = "none" | "low" | "medium" | "high" | "max";
 
 export interface AgentGlobalSettingsValues {
   history_message_limit: number;

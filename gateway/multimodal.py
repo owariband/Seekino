@@ -20,6 +20,7 @@ class AdapterCapabilities:
     transcription: bool = False
     embedding: bool = False
     speaker_embedding: bool = False
+    speaker_diarization: bool = False
     visual_input_mode: Literal["video", "ordered_frames"] | None = None
     transcription_input_mode: Literal["video", "audio"] | None = None
     supports_reasoning_effort: bool = True
@@ -48,6 +49,9 @@ _ADAPTER_CAPABILITIES = {
     "claude_sdk": AdapterCapabilities(generative=True, rerank=True),
     "campplus": AdapterCapabilities(
         speaker_embedding=True, supports_reasoning_effort=False, supports_output_limit=False,
+    ),
+    "pyannote": AdapterCapabilities(
+        speaker_diarization=True, supports_reasoning_effort=False, supports_output_limit=False,
     ),
 }
 

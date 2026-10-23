@@ -21,7 +21,8 @@ video_parse_v2/
 ├── prepare.py              # topology and child-task initialization
 ├── scheduler.py            # ordered batches and Chunk dispatch
 ├── prompts.py              # OCR, Understanding, Refine and Prefix prompt builders
-├── voiceprint.py            # InvokeVoiceprint and host-bound preparation/comparison tools
+├── tools.py                # Parse tool contracts and stage-specific tool collections
+├── voiceprint.py           # InvokeVoiceprint and preparation orchestration
 ├── understanding/
 │   ├── __init__.py          # ChunkUnderstandingWorkflow export
 │   ├── workflow.py          # Chunk subgraph and execution cleanup
@@ -33,8 +34,7 @@ video_parse_v2/
 └── prefix/
     ├── __init__.py          # PrefixContextAgent export
     ├── agent.py             # optional background Prefix execution
-    ├── context.py           # bound Chunk and prefix context snapshot
-    └── tools.py             # shared Canvas tools bound to the current target
+    └── context.py           # bound Chunk and prefix context snapshot
 ```
 
 The public entry point remains `ParseAgent`. The host enters claimed Chunk,
@@ -236,6 +236,53 @@ retain null. Prepared speaker labels and registered audio ranges are trusted sta
 results for this task. Refine never revalidates them against later timeline edits
 or rejects a commit because a reference event changed; comparison references are
 retained only for diagnostics.
+
+Parse tool argument schemas and stage collections live in [`tools.py`](tools.py).
+The host binds model/media callbacks there; Canvas validation remains in
+`timelineEvent_canvas.py`. Understanding, Refine, Prefix and voice preparation
+use their own collections. This consolidation preserves Refine's existing voice
+review gate and the framework-owned `CanvasCompletion`; Prefix's zero-tool
+compact path still bypasses tool construction and uses its existing model-call budget.
+
+Understanding has two optional host-bound audio tools, with absolute integer
+`start_ms` / `end_ms` inside the writable Chunk:
+
+- `analyze_speaker_consistency` returns acoustic-change review ranges, support
+  statistics and uncovered audio, using the task's frozen CAM++ encoder.
+  Before invoking Understanding, the host scans each valid original ASR cue when
+  that encoder binding exists. The execution shares original PCM, one lazy encoder
+  and PCM-digest embedding caches. The service and offline replay share
+  `server/constants/parse.py` parameters: 1-second windows, 400-ms hop, without VAD.
+- `transcribe_segment` adds a read-only local ASR observation using the frozen
+  ASR binding when its mode is not `none`. The host selects audio or clipped video
+  according to the transport's input mode and converts local times once to absolute
+  milliseconds. Anonymous speaker labels belong only to that transcription call.
+
+These are advisory evidence, not edit authorization. Understanding may split and
+retime dialogue within its Chunk, including after creation and without a candidate
+or an exact match to original/local ASR. Original observations remain read-only;
+Chunk bounds and atomic Canvas batches still apply. Prefix keeps its dialogue
+interval lock; Refine keeps its current timing edits and evidence invalidation.
+A candidate does not establish a boundary, speaker identity, count or overlap;
+no candidate does not verify one speaker. Constant PCM that the encoder cannot
+encode produces an explicit unavailable analysis with unencodable windows and
+reasons. It is not silently dropped or classified as one speaker; other model
+failures retain the failure path. Missing frozen bindings make the corresponding
+tool unavailable rather than inventing a clean result.
+
+Understanding commits the original ASR/OCR/media together with immutable
+`tool_evidence` and, when needed, `dialogue_provenance` through the existing
+`detail.evidence` field. Provenance links final event positions/fingerprints to
+original or local ASR cue references/fingerprints by `exact`, `subrange` or
+`overlap` time relations. Its basis is `temporal_overlap_only`, with
+`content_verified=false`: this is traceability, not verification of words or voice
+identity, and missing source links do not block writes. Legacy exact-cue results
+without new tool evidence retain their previous evidence shape.
+
+B0 admission before reference/target encoding, Refine attribution locking and
+restricted cross-Chunk utterance merging remain follow-up work. These tools and
+provenance do not yet enforce those future contracts or establish attribution
+accuracy from pipeline completion.
 
 The ASR provider returns seconds; the service converts them once to absolute
 integer milliseconds before using the Engine-owned transcript contract. OCR

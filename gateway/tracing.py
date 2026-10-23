@@ -425,7 +425,10 @@ class LangfuseTracing:
         if tracer is None:
             return self
         attributes = {
-            "langfuse.observation.type": "embedding" if tracker.operation in {"text_embedding", "image_embedding", "video_embedding", "speaker_embedding"} else "generation",
+            "langfuse.observation.type": (
+                "span" if tracker.operation == "speaker_diarization" else
+                "embedding" if tracker.operation in {"text_embedding", "image_embedding", "video_embedding", "speaker_embedding"} else "generation"
+            ),
             "langfuse.observation.model.name": tracker.model[:256],
             "langfuse.environment": self._settings.environment,
             "langfuse.observation.metadata.call_id": tracker.call_id,

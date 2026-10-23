@@ -348,16 +348,19 @@ def _embedding_issue(
 
 def classify_voiceprint_result(
     result: Mapping[str, Any], *, current_label: str | None, song: bool,
-    overlap: bool, accept_gap: float, accept_duration_ms: int,
-    accept_min_cues: int, conflict_gap: float, no_voice_duration_ms: int,
+    overlap: bool, accept_gap: float | None, accept_duration_ms: int,
+    accept_min_cues: int, conflict_gap: float | None, no_voice_duration_ms: int,
 ) -> dict[str, Any]:
     """Classify voice evidence without applying any speaker change.
 
     ACCEPT disagreements remain eligible defaults and also set conflict=True.
-    A high-gap disagreement that fails an ACCEPT condition remains a conflict
-    for Refine review; it is never eligible for automatic prefill.
+    With both gap thresholds unset, gap is descriptive only. Numeric thresholds
+    reproduce historical artifacts; they are not the current default policy.
+    Disagreements failing a non-gap condition remain conflicts for Refine review.
     """
-    if (not isfinite(accept_gap) or not isfinite(conflict_gap)
+    if (accept_gap is None) != (conflict_gap is None):
+        raise ValueError("voice gap thresholds must both be unset or both numeric")
+    if accept_gap is not None and (not isfinite(accept_gap) or not isfinite(conflict_gap)
             or not 0 <= conflict_gap <= accept_gap <= 2):
         raise ValueError("voice gap thresholds must satisfy 0 <= conflict <= accept <= 2")
     for name, value in (("accept_duration_ms", accept_duration_ms),
@@ -375,19 +378,20 @@ def classify_voiceprint_result(
                 or "duration_below_no_voice_minimum"}
     if not candidates:
         return {**decision, "review_reason": result.get("reason") or "no_candidates"}
-    if gap is None:
-        return {**decision, "review_reason": "insufficient_candidates"}
-    if not isfinite(gap) or not 0 <= gap <= 2:
+    if gap is not None and (not isfinite(gap) or not 0 <= gap <= 2):
         raise ValueError("candidate gap must be a finite cosine difference in [0, 2]")
-    if gap < conflict_gap:
-        return {**decision, "review_reason": "gap_below_no_voice_minimum"}
     top1 = candidates[0]
     disagreement = top1["speaker"] != current_label
-    if gap < accept_gap:
-        return {"band": "CONFLICT" if disagreement else None,
-                "conflict": disagreement,
-                "review_reason": "voice_label_disagreement" if disagreement
-                else "agreement_below_accept_gap"}
+    if accept_gap is not None:
+        if gap is None:
+            return {**decision, "review_reason": "insufficient_candidates"}
+        if gap < conflict_gap:
+            return {**decision, "review_reason": "gap_below_no_voice_minimum"}
+        if gap < accept_gap:
+            return {"band": "CONFLICT" if disagreement else None,
+                    "conflict": disagreement,
+                    "review_reason": "voice_label_disagreement" if disagreement
+                    else "agreement_below_accept_gap"}
     reason = (
         "song" if song else
         "overlapping_dialogue" if overlap else

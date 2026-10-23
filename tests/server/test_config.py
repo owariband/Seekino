@@ -872,6 +872,27 @@ def test_global_agent_reasoning_settings_support_yaml_patch_and_environment(monk
     assert read_global_agent_settings(config_path)[0] == updated
 
 
+def test_global_agent_medium_reasoning_settings_persist_and_reload(monkeypatch) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    monkeypatch.setenv("ANIVAG_AGENT_QUERY_REASONING_EFFORT", " MEDIUM ")
+    monkeypatch.setenv("ANIVAG_AGENT_SUPERVISOR_REASONING_EFFORT", "high")
+    config, revision = read_global_agent_settings(config_path)
+    assert config.query_reasoning_effort == "medium"
+
+    updated, next_revision = patch_global_agent_settings(
+        {"query_reasoning_effort": "medium", "supervisor_reasoning_effort": "medium"},
+        revision, config_path,
+    )
+
+    assert next_revision != revision
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))["agent_runtime"]
+    assert saved["query_reasoning_effort"] == saved["supervisor_reasoning_effort"] == "medium"
+    assert read_global_agent_settings(config_path)[0] == updated
+    reloaded = ServerSettings.from_environment().agent
+    assert reloaded.query_reasoning_effort == reloaded.supervisor_reasoning_effort == "medium"
+
+
 def test_total_timeout_switch_supports_environment_yaml_and_settings_patch(monkeypatch):
     _clean_anivag_environment(monkeypatch)
     config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
@@ -988,7 +1009,7 @@ def test_global_agent_settings_patch_rejects_external_alias_dependency(
         {"supervisor_timeout_seconds": float("inf")},
         {"maximum_top_k": 101},
         {"default_top_k": 21, "maximum_top_k": 20},
-        {"query_reasoning_effort": "medium"},
+        {"query_reasoning_effort": "unsupported"},
         {"evaluator_reasoning_effort": 1},
         {"chat_reasoning_effort": None},
         {"total_timeout_enabled": "false"},

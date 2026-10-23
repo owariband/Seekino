@@ -13,7 +13,7 @@ import threading
 import time
 import wave
 from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -25,14 +25,13 @@ from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
-from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
-from agent.utils.tool import as_langchain_tools, build_agent_tool
+from agent.utils.tool import as_langchain_tools
 from agent.utils.tool_result import JsonToolResult
 from agent.utils.video_frames import build_inspect_video_frames_tool
 from agent.video_parse_v2.timelineEvent_canvas import (
-    CanvasCompletion, FinishVoiceprintReview, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
+    CanvasCompletion, ParseContextCanvas, PrefixCompactCompletion,
 )
 from agent.video_parse_v2.input import (
     GenerativeModelConfig,
@@ -41,8 +40,9 @@ from agent.video_parse_v2.input import (
 )
 from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput
-from agent.video_parse_v2.voiceprint import (
-    VoiceprintInput, build_compare_speaker_tool, build_tools as build_voiceprint_tools,
+from agent.video_parse_v2.voiceprint import VoiceprintInput
+from agent.video_parse_v2.tools import (
+    build_understanding_tools, build_refine_tools, build_prefix_tools, build_voiceprint_tools,
 )
 from agent.video_parse_v2.prompts import build_ocr_prompt
 from agent.video_parse_v2.state import (
@@ -59,6 +59,7 @@ from engine.common.transcription import TranscriptAnalysis, VideoASRAgent, norma
 from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import VideoParseResult
+from engine.parsev2.speaker_change import detect_speaker_changes
 from engine.parsev2.validation import (
     ValidatedIntervalRefinement,
     ValidatedPrefixRefinement,
@@ -95,6 +96,8 @@ from ..constants.parse import (
     VOICEPRINT_B0_LABEL_MIN_DURATION_MS, VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
     VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION, VOICEPRINT_B0_LABEL_TAIL_MIN_REFS,
     REFINE_PROVIDER_RETRY_DELAYS_SECONDS,
+    SPEAKER_CONSISTENCY_METHOD, SPEAKER_CONSISTENCY_WINDOW_MS, SPEAKER_CONSISTENCY_HOP_MS,
+    SPEAKER_CONSISTENCY_PARAMETERS,
 )
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
@@ -1044,6 +1047,224 @@ class VideoParseRuntimeService:
             result_type=OCRResult,
         )
 
+    @contextmanager
+    def _understanding_audio_tools(
+        self, execution: ChunkExecution, media: PreparedVideoParseMedia,
+        canvas: ParseContextCanvas, asr_result: ASRResult,
+    ):
+        """Own one encoder and original PCM for this Understanding execution."""
+        config = execution.inputs.parse_config
+        manager = self._model_manager.get()
+        encoder_binding = config.models.speaker_embedding
+        asr_binding = config.models.asr
+        if encoder_binding is None and asr_binding.mode == "none":
+            yield build_understanding_tools(
+                canvas, check_control=manager.check_active if manager is not None else None,
+            ), "Audio tools unavailable: no frozen speaker encoder; ASR mode is none."
+            return
+        binding = self._require_chunk_execution(execution)
+        if binding.state is None:
+            raise RuntimeError("Chunk execution state was not loaded")
+        # source_media_ref may be an inference proxy; speaker evidence uses the original.
+        task_input = binding.state.task_input
+        source = self._artifact_store.resolve(task_input.original_source_uri)
+        check_active = manager.check_active if manager is not None else lambda: self._require_chunk_active(binding.lease)
+        bounds = (execution.allowed_start_seconds, execution.allowed_end_seconds)
+        lock = threading.Lock()
+        encoder = None
+        pcm = None
+        audio_path = None
+        embedding_cache: dict[str, list[float]] = {}
+        analysis_cache: dict[tuple[int, int], dict] = {}
+
+        def validate_range(start_ms: int, end_ms: int) -> None:
+            check_active()
+            if (type(start_ms) is not int or type(end_ms) is not int
+                    or not bounds[0] <= start_ms < end_ms <= bounds[1]):
+                raise AgentToolFeedbackError(
+                    "INVALID_AUDIO_RANGE", "Audio tools are limited to this Chunk.",
+                    f"Use absolute integer milliseconds within [{bounds[0]}, {bounds[1]}).",
+                )
+
+        def record(kind: str, start_ms: int, end_ms: int, payload: dict) -> dict:
+            value = {
+                "member_ref": execution.chunk_parse_task_id, "kind": kind,
+                "start_ms": start_ms, "end_ms": end_ms,
+                "source_content_hash": task_input.content_hash, **payload,
+            }
+            reference = kind + ":" + hashlib.sha256(
+                json.dumps(value, sort_keys=True, ensure_ascii=False).encode(),
+            ).hexdigest()
+            check_active()
+            canvas.register_evidence(reference, value)
+            return {**value, "evidence_ref": reference, "revision": canvas.revision}
+
+        with ExitStack() as resources:
+            def analyze_speaker_consistency(*, start_ms: int, end_ms: int) -> dict:
+                nonlocal encoder, pcm, audio_path
+                validate_range(start_ms, end_ms)
+                with lock:
+                    check_active()
+                    if (start_ms, end_ms) in analysis_cache:
+                        return {**analysis_cache[start_ms, end_ms], "revision": canvas.revision}
+                    if pcm is None:
+                        audio_path = resources.enter_context(self._media_service.prepare_chunk_tool_media(
+                            media, source_video=source, start_ms=bounds[0], end_ms=bounds[1],
+                            input_mode="audio", max_height=config.visual_input.max_height,
+                            check_active=check_active,
+                        ))
+                        with wave.open(str(audio_path), "rb") as audio:
+                            if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, 16000):
+                                raise ValueError("Speaker consistency requires 16 kHz mono PCM16")
+                            pcm = audio.readframes(audio.getnframes())
+                    available_end = min(end_ms, bounds[0] + len(pcm) // 32)
+                    windows, vectors = [], []
+                    unencodable = []
+                    for start in range(start_ms, available_end - SPEAKER_CONSISTENCY_WINDOW_MS + 1,
+                                       SPEAKER_CONSISTENCY_HOP_MS):
+                        end = start + SPEAKER_CONSISTENCY_WINDOW_MS
+                        fragment = pcm[(start - bounds[0]) * 32:(end - bounds[0]) * 32]
+                        digest = hashlib.sha256(fragment).hexdigest()
+                        windows.append({"start_ms": start, "end_ms": end, "pcm_sha256": digest})
+                        # CAM++ rejects constant PCM. Keep the complete grid; do not
+                        # silently remove these windows or pass a fake vector.
+                        if fragment == fragment[:2] * (len(fragment) // 2):
+                            unencodable.append({"start_ms": start, "end_ms": end, "reason": "constant_pcm"})
+                    if unencodable:
+                        payload = record("speaker_consistency", start_ms, end_ms, {
+                            "method": SPEAKER_CONSISTENCY_METHOD, "analysis_status": "unavailable",
+                            "parameters": {**SPEAKER_CONSISTENCY_PARAMETERS,
+                                           "window_ms": SPEAKER_CONSISTENCY_WINDOW_MS,
+                                           "hop_ms": SPEAKER_CONSISTENCY_HOP_MS, "vad_filter": False},
+                            "model": encoder_binding.model, "encoder_revision": None,
+                            "pcm_sha256": hashlib.sha256(pcm[
+                                (start_ms - bounds[0]) * 32:(end_ms - bounds[0]) * 32
+                            ]).hexdigest(),
+                            "window_count": len(windows), "unencodable_windows": unencodable,
+                            "candidates": [], "uncovered": [{"start_ms": start_ms, "end_ms": end_ms}],
+                            "score_is_probability": False, "single_speaker_verified": False,
+                            "interpretation": "This range was not scored: CAM++ cannot encode constant PCM windows. "
+                                              "No windows were filtered; use media or local ASR to review it.",
+                        })
+                        analysis_cache[start_ms, end_ms] = payload
+                        return payload
+                    for window in windows:
+                        check_active()
+                        digest = window["pcm_sha256"]
+                        if digest not in embedding_cache:
+                            if encoder is None:
+                                encoder = self._speaker_encoder(encoder_binding)
+                                resources.callback(encoder.close)
+                            fragment = pcm[(window["start_ms"] - bounds[0]) * 32:
+                                           (window["end_ms"] - bounds[0]) * 32]
+                            window_path = audio_path.with_name("consistency-window.wav")
+                            with wave.open(str(window_path), "wb") as output:
+                                output.setnchannels(1)
+                                output.setsampwidth(2)
+                                output.setframerate(16000)
+                                output.writeframes(fragment)
+                            result = encoder.embed_audio(window_path)
+                            check_active()
+                            if (result.model != encoder.model_name
+                                    or result.encoder_revision != encoder.encoder_revision
+                                    or result.dimension != VOICEPRINT_B0_DIMENSIONS
+                                    or result.duration_ms != SPEAKER_CONSISTENCY_WINDOW_MS
+                                    or not math.isclose(math.hypot(*result.vector), 1.0, abs_tol=1e-5)):
+                                raise ValueError("Speaker consistency embedding differs from the frozen encoder")
+                            embedding_cache[digest] = result.vector
+                        vectors.append(embedding_cache[digest])
+                    analysis = detect_speaker_changes(
+                        windows, vectors, start_ms=start_ms, end_ms=end_ms,
+                        **SPEAKER_CONSISTENCY_PARAMETERS,
+                    )
+                    reason_counts: dict[str, int] = {}
+                    for scan in analysis["scans"]:
+                        reason_counts[scan["reason"]] = reason_counts.get(scan["reason"], 0) + 1
+                    payload = record("speaker_consistency", start_ms, end_ms, {
+                        "method": SPEAKER_CONSISTENCY_METHOD, "analysis_status": "completed",
+                        "parameters": {**analysis["parameters"], "window_ms": SPEAKER_CONSISTENCY_WINDOW_MS,
+                                       "hop_ms": SPEAKER_CONSISTENCY_HOP_MS, "vad_filter": False},
+                        "model": encoder.model_name if encoder is not None else encoder_binding.model,
+                        "encoder_revision": encoder.encoder_revision if encoder is not None else None,
+                        "pcm_sha256": hashlib.sha256(pcm[
+                            (start_ms - bounds[0]) * 32:(end_ms - bounds[0]) * 32
+                        ]).hexdigest(),
+                        "window_count": len(windows), "scan_reason_counts": reason_counts,
+                        "candidates": analysis["candidates"], "uncovered": analysis["uncovered"],
+                        "candidate_statistics": [
+                            scan for scan in analysis["scans"]
+                            if scan["time_ms"] in {item["peak_ms"] for item in analysis["candidates"]}
+                        ],
+                        "score_is_probability": False, "single_speaker_verified": False,
+                        "interpretation": "Review suggestions only; silence, prosody and clipping may trigger them. "
+                                          "No candidate does not verify one speaker. Simultaneous overlap is not classified.",
+                    })
+                    analysis_cache[start_ms, end_ms] = payload
+                    return payload
+
+            def transcribe_segment(*, start_ms: int, end_ms: int) -> dict:
+                validate_range(start_ms, end_ms)
+                with lock:
+                    check_active()
+                    definition = ModelBinding.model_validate({
+                        key: value for key, value in asr_binding.model_dump(exclude_none=True).items()
+                        if key not in {"mode", "fps"}
+                    }).model_copy(update={"kind": "transcription"})
+                    transport = self._gateway.create_transcription_model(definition)
+                    try:
+                        with self._media_service.prepare_chunk_tool_media(
+                            media, source_video=source, start_ms=start_ms, end_ms=end_ms,
+                            input_mode=transport.input_mode, max_height=config.visual_input.max_height,
+                            check_active=check_active,
+                        ) as path:
+                            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                            if transport.input_mode == "audio":
+                                analysis = normalize_transcription(
+                                    transport.transcribe(path), duration_seconds=end_ms - start_ms,
+                                )
+                            else:
+                                analysis = VideoASRAgent(transport, fps=asr_binding.fps).transcribe(
+                                    path, duration_seconds=end_ms - start_ms,
+                                )
+                    finally:
+                        transport.close()
+                    check_active()
+                    analysis = TranscriptAnalysis.model_validate(analysis)
+                    return record("local_asr", start_ms, end_ms, {
+                        "model": definition.model_dump(mode="json"), "media_sha256": digest,
+                        "asr": {"transcript": [{
+                            "start_seconds": cue.start_seconds + start_ms,
+                            "end_seconds": cue.end_seconds + start_ms,
+                            "text": cue.text, "speaker_id": cue.speaker_id,
+                        } for cue in analysis.transcript]},
+                        "single_speaker_verified": False,
+                    })
+
+            summaries = []
+            if encoder_binding is not None:
+                for cue in asr_result.get("transcript", []):
+                    start, end = cue["start_seconds"], cue["end_seconds"]
+                    # Invalid observations remain visible as ASR; do not invent an audio range.
+                    if (type(start) is int and type(end) is int and bounds[0] <= start < end <= bounds[1]):
+                        result = analyze_speaker_consistency(start_ms=start, end_ms=end)
+                        summaries.append({
+                            key: result[key] for key in (
+                                "start_ms", "end_ms", "evidence_ref", "analysis_status", "candidates", "window_count",
+                            )
+                        })
+            yield build_understanding_tools(
+                canvas, analyze_speaker_consistency=analyze_speaker_consistency if encoder_binding is not None else None,
+                transcribe_segment=transcribe_segment if asr_binding.mode != "none" else None,
+                check_control=check_active,
+            ), "\nHost audio review: " + json.dumps({
+                "analyze_speaker_consistency_available": encoder_binding is not None,
+                "transcribe_segment_available": asr_binding.mode != "none",
+                "original_asr_reviews": summaries, "vad_filter": False,
+                "instruction": "Read these evidence refs as needed. Review suggested ranges against media or local ASR. "
+                               "You may split or retime within the Chunk even without a candidate. "
+                               "No result certifies atomic dialogue or speaker identity.",
+            }, ensure_ascii=False)
+
     async def understand_chunk(
         self,
         execution: ChunkExecution,
@@ -1053,58 +1274,64 @@ class VideoParseRuntimeService:
         prompt: str,
         canvas: ParseContextCanvas,
     ) -> VideoParseResult:
-        del asr_result, ocr_result
+        del ocr_result
         media = await self._ensure_chunk_media(execution)
-        visual = execution.inputs.parse_config.visual_input
-        visual_start = media.visual_start_ms if media.visual_start_ms is not None else execution.allowed_start_seconds
-        visual_end = media.visual_end_ms if media.visual_end_ms is not None else execution.allowed_end_seconds
-        prompt += (
-            f"\nHost visual input range: [{visual_start}, {visual_end}) ms. "
-            f"Writable chunk range: [{execution.allowed_start_seconds}, {execution.allowed_end_seconds}) ms. "
-            f"For native video, absolute_ms = {visual_start} + round(local_seconds * 1000). "
-            "ASR/OCR timestamps remain absolute source-video milliseconds."
-        )
-        if (visual_start, visual_end) != (execution.allowed_start_seconds, execution.allowed_end_seconds):
+        context = self._understanding_audio_tools(execution, media, canvas, asr_result)
+        try:
+            tools, audio_summary = await self._run_blocking(context.__enter__)
+            prompt += "\n" + audio_summary
+            visual = execution.inputs.parse_config.visual_input
+            visual_start = media.visual_start_ms if media.visual_start_ms is not None else execution.allowed_start_seconds
+            visual_end = media.visual_end_ms if media.visual_end_ms is not None else execution.allowed_end_seconds
             prompt += (
-                "\nWe supplied additional visual context outside your chunk to help interpret transitions. "
-                "Use it only as context; do not write events outside the writable chunk. "
-                "Additional images do not establish a voice identity; uncertain speakers must remain null."
+                f"\nHost visual input range: [{visual_start}, {visual_end}) ms. "
+                f"Writable chunk range: [{execution.allowed_start_seconds}, {execution.allowed_end_seconds}) ms. "
+                f"For native video, absolute_ms = {visual_start} + round(local_seconds * 1000). "
+                "ASR/OCR timestamps remain absolute source-video milliseconds."
             )
-        media_inputs: list[ImageInput | VideoInput | TextInput]
-        if visual.mode == "ordered_frames":
-            media_inputs = [
+            if (visual_start, visual_end) != (execution.allowed_start_seconds, execution.allowed_end_seconds):
+                prompt += (
+                    "\nWe supplied additional visual context outside your chunk to help interpret transitions. "
+                    "Use it only as context; do not write events outside the writable chunk. "
+                    "Additional images do not establish a voice identity; uncertain speakers must remain null."
+                )
+            media_inputs: list[ImageInput | VideoInput | TextInput]
+            if visual.mode == "ordered_frames":
+                media_inputs = [
+                    *(ImageInput(path=path) for _timestamp, path in media.frames),
+                    TextInput(text=(
+                        prompt
+                        + "\nOrdered frame timestamps: "
+                        + str([timestamp for timestamp, _path in media.frames])
+                    )),
+                ]
+            else:
+                media_inputs = [
+                    VideoInput(path=media.visual_video_path or media.video_path, fps=visual.fps),
+                    TextInput(text=prompt),
+                ]
+            fallback_inputs = [
                 *(ImageInput(path=path) for _timestamp, path in media.frames),
                 TextInput(text=(
                     prompt
-                    + "\nOrdered frame timestamps: "
+                    + "\nFallback ordered frame timestamps: "
                     + str([timestamp for timestamp, _path in media.frames])
                 )),
             ]
-        else:
-            media_inputs = [
-                VideoInput(path=media.visual_video_path or media.video_path, fps=visual.fps),
-                TextInput(text=prompt),
-            ]
-        fallback_inputs = [
-            *(ImageInput(path=path) for _timestamp, path in media.frames),
-            TextInput(text=(
-                prompt
-                + "\nFallback ordered frame timestamps: "
-                + str([timestamp for timestamp, _path in media.frames])
-            )),
-        ]
-        receipt = await self._generate_multimodal(
-            execution.inputs.parse_config.models.understanding,
-            media_inputs,
-            fallback_inputs=fallback_inputs,
-            schema_name="video_parse_v2_chunk",
-            result_type=CanvasCompletion,
-            tools=self._canvas_tools(canvas), canvas=canvas,
-            max_model_calls=execution.inputs.parse_config.execution.max_model_calls,
-            tool_harness="deepagents",
-        )
-        CanvasCompletion.model_validate(receipt)
-        return canvas.result(execution.chunk_parse_task_id)
+            receipt = await self._generate_multimodal(
+                execution.inputs.parse_config.models.understanding,
+                media_inputs,
+                fallback_inputs=fallback_inputs,
+                schema_name="video_parse_v2_chunk",
+                result_type=CanvasCompletion,
+                tools=as_langchain_tools(tools), canvas=canvas,
+                max_model_calls=execution.inputs.parse_config.execution.max_model_calls,
+                tool_harness="deepagents",
+            )
+            CanvasCompletion.model_validate(receipt)
+            return canvas.result(execution.chunk_parse_task_id)
+        finally:
+            await cleanup_execution(context.__exit__, None, None, None)
 
     async def commit_chunk_result(
         self,
@@ -1235,7 +1462,11 @@ class VideoParseRuntimeService:
             snapshot["inputs"].parse_config.models.refine
             or snapshot["inputs"].parse_config.models.understanding
         )
-        tools = self._canvas_tools(canvas)
+        manager = self._model_manager.get()
+        check_control = manager.check_active if manager is not None else None
+        finish_callback = None
+        compare_callback = None
+        frame_tool = None
         voice_review_enabled = snapshot["inputs"].parse_config.voiceprint_mode != "off"
         stop_feedback = None
         if voice_review_enabled:
@@ -1290,14 +1521,7 @@ class VideoParseRuntimeService:
                     )
                 return JsonToolResult(success=True, payload=feedback)
 
-            tools.extend(as_langchain_tools([build_agent_tool(
-                name="finish_voiceprint_review", args_schema=FinishVoiceprintReview,
-                description=(
-                    "Check the current Canvas voice decisions before CanvasCompletion. "
-                    "Resolve every returned missing or inconsistent event_ref, then retry this gate."
-                ),
-                func=finish_voiceprint_review, maximum_result_bytes=32_000,
-            )]))
+            finish_callback = finish_voiceprint_review
         encoder: SpeakerEmbeddingModel | None = None
         encoder_binding: SpeakerEmbeddingModelConfig | None = None
         if snapshot["inputs"].parse_config.voiceprint_enabled:
@@ -1367,9 +1591,8 @@ class VideoParseRuntimeService:
                         start_ms=start_ms, end_ms=end_ms, check_active=check_active,
                     )
 
-            tools.extend(as_langchain_tools([build_compare_speaker_tool(
-                compare_speaker=compare_speaker, check_control=check_active,
-            )]))
+            compare_callback = compare_speaker
+            check_control = check_active
         route = [binding]
         if binding.fallback is not None:
             route.append(binding.fallback)
@@ -1390,7 +1613,7 @@ class VideoParseRuntimeService:
             if not 0 <= bounds[0] < bounds[1] <= source.duration_seconds:
                 raise ValueError("Refine frame scope exceeds its source video")
             manager = self._model_manager.get()
-            tools.extend(as_langchain_tools([build_inspect_video_frames_tool(
+            frame_tool = build_inspect_video_frames_tool(
                 source_path=self._artifact_store.resolve(source.original_source_uri),
                 read_bounds=bounds, max_height=snapshot["inputs"].parse_config.visual_input.max_height,
                 timeout_seconds=binding.request_timeout_seconds,
@@ -1398,11 +1621,15 @@ class VideoParseRuntimeService:
                 trace_context={"video_parse_task_id": snapshot["video_parse_task_id"],
                                "interval_parse_task_id": snapshot["interval_parse_task_id"],
                                "video_id": snapshot["inputs"].video_id, "content_hash": source.content_hash},
-            )]))
+            )
             fallback = binding.fallback
             if fallback is not None:
                 fallback = fallback.model_copy(update={"supports_vision_input": True})
             binding = binding.model_copy(update={"supports_vision_input": True, "fallback": fallback})
+        tools = as_langchain_tools(build_refine_tools(
+            canvas, compare_speaker=compare_callback, finish_voiceprint_review=finish_callback,
+            inspect_video_frames=frame_tool, check_control=check_control,
+        ))
         try:
             if encoder_binding is not None:
                 encoder = self._speaker_encoder(encoder_binding)
@@ -1565,7 +1792,10 @@ class VideoParseRuntimeService:
         return await self._generate_text_structured(
             binding,
             prompt,
-            tools=self._canvas_tools(canvas, on_call=count_tool), canvas=canvas,
+            tools=as_langchain_tools(build_prefix_tools(
+                canvas, on_call=count_tool,
+                check_control=self._model_manager.get().check_active if self._model_manager.get() else None,
+            )), canvas=canvas,
             result_type=CanvasCompletion,
             max_model_calls=context["inputs"].parse_config.execution.max_model_calls,
         )
@@ -2048,17 +2278,6 @@ class VideoParseRuntimeService:
                 "quality": {"duration_ms": embedding.duration_ms, "pcm_sha256": target_hash,
                             "requested_duration_ms": end_ms - start_ms,
                             "reason": "compared" if candidates else "no_independent_reference"}}
-
-    def _canvas_tools(self, canvas: ParseContextCanvas, *, on_call=None) -> list[BaseTool]:
-        manager = self._model_manager.get()
-        return as_langchain_tools(build_context_canvas_tools(
-            canvas, role=canvas.stage,
-            read_collections=("members", "events", "evidence", "background", "compact"),
-            write_args_schema=ParseCanvasWrite, maximum_result_bytes=32_000,
-            maximum_read_chars=12_000, maximum_catalog_items=100,
-            check_control=manager.check_active if manager is not None else None,
-            on_call=on_call,
-        ))
 
     async def _generate_multimodal(
         self,

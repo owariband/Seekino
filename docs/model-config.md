@@ -44,7 +44,7 @@ models:
     max_output_tokens: 8192
 ```
 
-这是模型部分示例；完整配置仍需保留 Agent、转写及采样设置。`source` 引用连接定义，`model` 指定该连接的模型或 endpoint。`kind` 声明创建能力，支持 `generative`、`transcription`、`embedding`、`speaker_embedding`、`rerank`；省略时为普通生成，默认转写、向量和重排引用按各自能力归一。重排复用结构化生成实现，不要求供应商提供原生 `/rerank` 接口。
+这是模型部分示例；完整配置仍需保留 Agent、转写及采样设置。`source` 引用连接定义，`model` 指定该连接的模型或 endpoint。`kind` 声明创建能力，支持 `generative`、`transcription`、`embedding`、`speaker_embedding`、`speaker_diarization`、`rerank`；省略时为普通生成，默认转写、向量和重排引用按各自能力归一。重排复用结构化生成实现，不要求供应商提供原生 `/rerank` 接口。
 
 普通生成支持文本；接收图片的模型必须声明 `supports_vision_input: true`，且连接适配器支持图片输入。该声明由配置维护者根据模型能力设置，不会从模型名字猜测。为兼容已有版本 2 配置，保留引用 `vision`、`vision_fallback` 未声明该字段时默认允许视觉输入；任意新引用默认为文本。`fallback` 可内联另一份模型绑定，其来源、模型、超时、推理和预算分别保存。
 
@@ -173,6 +173,62 @@ Adapter 首次加载时校验权重及实际导入的 `DTDNN.py`、`layers.py`�
 token 计费。VoiceprintAgent、登记事务及 Refine 准入已接通；`config.yaml` 提供
 `campplus_local` 来源与 `speaker` 绑定，声纹准备仍需在解析任务配置中显式启用。
 部署前须按本机位置配置权重路径，并完成上述可选依赖与官方源码准备。
+
+## 本地匿名说话人分段
+
+`pyannote` Adapter 在当前进程以 CPU 执行官方 3.1 diarization pipeline，使用
+segmentation-3.0 与 WeSpeaker embedding 关联跨窗匿名身份。它与 CAM++ 声音向量
+能力分开，不修改 B0 encoder、相似度阈值或参考池。以下片段合入一份独立实验配置，
+不会自动改变现有解析任务：
+
+```yaml
+model_sources:
+  pyannote_local:
+    adapter: pyannote
+    provider: local
+    pipeline_path: /opt/anivag/models/pyannote/config.yaml
+    cpu_threads: 6
+    max_audio_seconds: 300
+models:
+  diarization:
+    kind: speaker_diarization
+    source: pyannote_local
+    model: pyannote/speaker-diarization-3.1
+    request_timeout_seconds: 600
+```
+
+安装 `uv sync --extra diarization`。独立 extra 锁定 pyannote.audio 3.4.0、HF Hub
+0.35.3、Lightning／pytorch-lightning 2.5.5，复用声音向量的 torch／torchaudio 2.8.0、
+NumPy 2.2.6、SciPy 1.15.3。Lightning 2.5.5 明确使用旧 checkpoint 的完整加载方式，
+避免新版默认 `weights_only` 改变；不修改全局 `torch.load` 或强制加载环境变量。
+Adapter 只加载部署者准备的本地模型，创建句柄不导入这些可选依赖。
+
+先用 HF 账号分别接受 [segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+和 [speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) 的访问条件，
+再用该账号的只读 Token 下载。Token 只用于下载，不写入 YAML、Git 或推理结果。
+保留官方 3.1 `config.yaml` 的 pipeline 名称、构造参数与 `params`，将构造参数里的
+`segmentation`、`embedding` 分别替换为官方 segmentation-3.0 与
+[wespeaker-voxceleb-resnet34-LM](https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM)
+的本地 `pytorch_model.bin` 路径；相对路径按配置目录解析。不能直接保留 HF 仓库名：
+本地 Adapter 明确拒绝缺失权重、自动下载、外部 preprocessors 和非 CPU 配置。
+首次调用记录配置、权重及运行库版本指纹；同一句柄复用内存模型。
+`pipeline_path` 本身按进程工作目录解析，部署时优先填绝对路径。
+
+输入为宿主准备的 16 kHz、单声道 PCM16 WAV，至少 1 ms，允许静音返回空活动。
+`max_audio_seconds` 是资源上限，与模型的 10 秒局部窗口独立。输出 `model`、
+`model_revision`、`duration_ms`、`turns`；turn 使用相对整数毫秒与匿名 `speaker`。
+不同 speaker 的交叠会保留，匿名 ID 不跨调用关联。无 fallback、生成预算或人物写回。
+同一配置的本地 torch 来源共用一致的线程数。取消／超时可在批次 hook 与前后检查，
+不能强制中断已运行的原生计算。
+
+pyannote.audio 代码、segmentation-3.0 与 3.1 pipeline 使用 MIT；WeSpeaker 权重为
+CC BY 4.0，部署时保留各自 LICENSE、版权及署名，不能都按 MIT 处理。HF 访问条件
+与软件／权重许可分别满足。这里只提供本地入口，效果仍以目标音频的独立试听标注为准。
+EP04 离线验证入口为 `python -m evals.speaker.speaker_diarization --help`，不启动 API
+或解析任务；B0 在编码前检查参考纯净度及 Refine 工具接线留待模型效果通过后处理。
+2026-10-20 实测已完成本机离线推理，但默认 3.1 pipeline 在六个历史完整输入中均未给出
+换人候选，局部 segmentation 活动也仅有一个通道。当前不能把其单人输出作为参考池
+放行证据；结果与验收限制见 [problems.md B12](dev/problems.md#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)。
 
 ## 第三方画面理解
 

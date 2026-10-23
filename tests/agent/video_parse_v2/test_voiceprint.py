@@ -19,10 +19,11 @@ from agent.video_parse_v2.scheduler import ChunkScheduler
 from agent.video_parse_v2.state import (
     ChunkScheduleEntry, ChunkScheduleSnapshot, ChunkTaskStatus, VideoRunSnapshot, VideoTaskStatus,
 )
-from agent.video_parse_v2.voiceprint import (
-    CompareSpeakerArguments, RegisterVoiceprintArguments, UnregisterVoiceprintArguments, VoiceprintAgent,
-    build_compare_speaker_tool, build_tools,
+from agent.video_parse_v2.tools import (
+    CompareSpeakerArguments, RegisterVoiceprintArguments, UnregisterVoiceprintArguments,
+    build_compare_speaker_tool, build_voiceprint_tools,
 )
+from agent.video_parse_v2.voiceprint import VoiceprintAgent
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion, ParseContextCanvas
 from engine.parsev2.voiceprint import Voiceprint, VoiceprintReference
 from tests.agent.video_parse_v2.test_framework import _inputs, _lease, _result
@@ -279,7 +280,7 @@ def test_five_host_bound_tools_and_comparison_preserve_ms_and_real_failures():
     calls = []
     canvas = ContextCanvas("voiceprint:task")
     canvas.put("sources", "issued", {"start_ms": 47100, "end_ms": 48800}, readonly=True)
-    tools = {tool.name: tool for tool in build_tools(
+    tools = {tool.name: tool for tool in build_voiceprint_tools(
         canvas, get_speaker_list=lambda: {"speaker_list_size": 0, "required_count": 0},
         register_voiceprint=lambda **values: calls.append(values) or {"registered": True},
         unregister_voiceprint=lambda **values: calls.append(values) or {"removed": True},
@@ -347,7 +348,8 @@ def test_refine_prompt_first_checkpoint_exposes_voice_conflicts_and_required_dec
     }]
     assert "op=voice_decision" in prompt and "decision=keep|voice_top1|other|null" in prompt
     assert "reason of 1-300 characters" in prompt and "this window's write bounds" in prompt
-    assert "keep equals understanding_speaker" in prompt and "voice_top1 equals candidates[0].speaker" in prompt
+    assert "keep equals a named understanding_speaker" in prompt and "voice_top1 equals candidates[0].speaker" in prompt
+    assert "Use null, not keep, when Understanding had no named speaker" in prompt
     assert "other is a named speaker different from both" in prompt and "null means speaker is null" in prompt
     assert "Earlier windows' committed decisions are information only" in prompt
     assert "finish_voiceprint_review" in prompt and "before CanvasCompletion" in prompt
@@ -487,23 +489,25 @@ def test_refine_prompt_treats_ranking_as_audio_evidence_and_explains_null_gate(m
     canvas = ParseContextCanvas.from_refine(_voice_snapshot(mode, "CONFLICT", doubtful=True))
     prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=canvas)
     paragraph = (
-        "The voice ranking is audio evidence. On a CONFLICT or label_doubtful line, choose the voice's top candidate when it leads the runner-up by at least 0.05 (or the line is ACCEPT) and nothing specific contradicts it: someone else is addressed by name or visibly speaking, or the candidate is clearly absent from the scene. Choose null only when the lead is below that value, the line is very short, singing or overlapping, or specific evidence contradicts the top candidate. Keep the original label only with specific evidence for it."
+        "The voice ranking is audio evidence. Candidate cosine similarities, gap and reference counts are descriptive evidence, not calibrated confidence. Gap is not an acceptance threshold: a small, zero or unavailable gap alone does not justify null or restoring the Understanding label. ACCEPT marks prefill eligibility, not certainty of identity."
     )
     if mode == "off":
         assert paragraph not in prompt and "evidence_type=contradiction" not in prompt
         assert "otherwise retain null and explain the remaining uncertainty" in prompt
-        assert "No reference, close candidates or weak evidence may leave speaker=null" in prompt
+        assert "Missing references or unreliable audio may leave speaker=null" in prompt
+        assert "a small candidate margin alone is not a reason to abstain" in prompt
     else:
         assert paragraph in prompt
-        assert "null on a required line with gap >= 0.05 or band=ACCEPT" in prompt
+        assert "null on a required line with available candidates" in prompt
         assert "supply evidence_type=contradiction" in prompt
         assert "cite the specific contradiction, very short audio, singing or overlap in reason" in prompt
         assert "contradiction is not identity evidence for keep" in prompt
         assert "null needs no identity evidence" not in prompt
         assert "label doubtful, speaker unresolved" not in prompt
         assert "why it fits beyond its score" not in prompt
+        assert "leads the runner-up by at least" not in prompt and "gap >=" not in prompt
         assert "otherwise retain null and explain the remaining uncertainty" not in prompt
-        assert "No reference, close candidates or weak evidence may leave speaker=null" not in prompt
+        assert "Missing references or unreliable audio may leave speaker=null" not in prompt
 
 
 @pytest.mark.parametrize("mode", ["flag", "prefill"])

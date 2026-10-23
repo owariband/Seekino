@@ -159,6 +159,27 @@ def _model_for(session: _FakeSession, **overrides) -> CodexAgentModel:
     return CodexAgentModel(**values)
 
 
+@pytest.mark.parametrize("effort", ["medium", "high"])
+def test_configured_effort_reaches_codex_session(effort):
+    from gateway.config import ModelBinding
+
+    binding = ModelBinding(source="codex_local", model="gpt-6-luna", reasoning_effort=effort)
+    options = []
+    session = _FakeSession([])
+
+    def factory(**kwargs):
+        options.append(kwargs)
+        return session
+
+    model = _model_for(session, model=binding.model, reasoning_effort=binding.reasoning_effort,
+                       session_factory=factory)
+    try:
+        model._new_session(tools=[], max_model_calls=1, check_control=None).close()
+        assert options[0]["reasoning_effort"] == effort
+    finally:
+        model.close()
+
+
 @pytest.mark.parametrize("mcp", [False, True])
 def test_mcp_control_is_passed_to_each_new_session(mcp):
     options = []

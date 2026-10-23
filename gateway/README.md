@@ -17,12 +17,12 @@ Conversation 或 Parse Job 等领域语义。
 - `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
 - `codex/`：Codex app-server 会话与 Agent Adapter；
 - `claude_code/`：Claude Agent SDK Adapter；
-- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CPU CAM++ Adapter；
-- 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
+- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CPU CAM++、pyannote Adapter；
+- 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`speaker_diarization.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
 
 业务层通过 `model_factory.GatewayClient` 获取模型。`create(kind, ref)` 按外部配置
-创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription` 五类模型，也提供对应的
+创建 `generative`、`embedding`、`speaker_embedding`、`speaker_diarization`、`rerank`、`transcription` 六类模型，也提供对应的
 `create_*_model()` 类型入口。视觉理解使用生成接口和显式图片能力声明；来源适配器
 支持图片，并不表示该来源下的每个模型都能理解图片。
 
@@ -93,6 +93,29 @@ Gateway 校验音频并提取向量。来源授权、从视频截音和清理临
 隔离、参考登记、排除自我及重叠比对、相似度比较和最终 speaker 写回由宿主负责。
 VoiceprintAgent 与 Refine 已通过宿主接入此入口；声纹准备按解析任务配置显式启用，余弦相似度不是身份概率。
 依赖、官方源码和权重部署说明见[本地声音向量配置](../docs/model-config.md#本地声音向量)。
+
+## 匿名说话人分段接口
+
+`speaker_diarization` 使用本地 PyTorch／pyannote pipeline，将音频转换为匿名活动区间：
+
+```python
+model = client.create_speaker_diarization_model("diarization")
+try:
+    result = model.diarize_audio("/absolute/path/to/prepared-audio.wav")
+    # turns: start_ms / end_ms / speaker，时间相对本次音频；交叠区间保留。
+finally:
+    model.close()
+```
+
+输入为 16 kHz、单声道 PCM16 WAV，时长上限来自 source；10 秒是 segmentation
+的局部窗口，不是整段输入上限。官方 pipeline 负责滑窗、声音特征及聚类关联，
+返回的匿名 ID 仅在本次调用内有效。空活动合法；结果无人物名或未经校准的置信度。
+宿主负责准备音频、映射视频时间和人工验收。分段不能证明人物归因正确。
+
+首次推理加载本地模型，同一句柄复用并串行执行，调用沿用既有取消、超时与追踪；
+原生前向运行期间不能硬中断。与 CAM++ 共用进程时须统一 `cpu_threads`。
+配置、权重下载权限和可选依赖见[本地匿名说话人分段](../docs/model-config.md#本地匿名说话人分段)。
+此入口尚未接入 B0 参考收集或 Agent 工具，默认配置不自动启用。
 
 ## 多模态模型接口
 

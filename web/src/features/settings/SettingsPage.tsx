@@ -20,7 +20,7 @@ const reasoningFields: ReadonlyArray<readonly [ReasoningSettingKey, string]> = [
   ["supervisor_reasoning_effort", "Supervisor 回答"],
 ];
 const reasoningOptions: ReadonlyArray<readonly [AgentReasoningEffort, string]> = [
-  ["none", "关闭推理"], ["low", "低"], ["high", "高"], ["max", "最大"],
+  ["none", "关闭推理"], ["low", "低"], ["medium", "中"], ["high", "高"], ["max", "最大"],
 ];
 
 const settingGroups: ReadonlyArray<{ title: string; fields: ReadonlyArray<SettingField> }> = [
@@ -116,7 +116,7 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
     if (limitsEnabled !== settings.values.limits_enabled) changes.limits_enabled = limitsEnabled;
     for (const [key] of reasoningFields) {
       const value = form.get(key);
-      if (value !== "none" && value !== "low" && value !== "high" && value !== "max") {
+      if (value !== "none" && value !== "low" && value !== "medium" && value !== "high" && value !== "max") {
         setError({ message: "请为 {key} 选择有效的思考模式。", params: { key } });
         return;
       }

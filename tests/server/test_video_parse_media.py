@@ -65,6 +65,132 @@ def test_event_capture_rejects_invalid_plan_before_media_io(tmp_path, timestamps
     assert commands == []
 
 
+@pytest.mark.parametrize("input_mode", ["audio", "video"])
+def test_chunk_tool_media_uses_unique_children_and_preserves_the_chunk(tmp_path, input_mode):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    commands = []
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner(commands))
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=10_000, end_seconds=20_000,
+        visual_mode="video", frame_fps=1, max_frames=1, max_height=360, ocr_enabled=False,
+    ) as media:
+        workspace = media.video_path.parent
+        with service.prepare_chunk_tool_media(
+            media, source_video=source, start_ms=10_250, end_ms=11_000,
+            input_mode=input_mode, max_height=180, check_active=lambda: None,
+        ) as first:
+            assert first.parent.parent == workspace
+            with service.prepare_chunk_tool_media(
+                media, source_video=source, start_ms=11_000, end_ms=11_750,
+                input_mode=input_mode, max_height=180, check_active=lambda: None,
+            ) as second:
+                assert second.parent.parent == workspace
+                assert first.parent != second.parent
+                assert first.read_bytes() == second.read_bytes() == b"media"
+            assert not second.parent.exists()
+            assert first.is_file()
+        assert not first.parent.exists()
+        assert media.video_path.is_file() and media.audio_path.is_file()
+        assert (workspace / ".lease.json").is_file()
+        assert len(list(service.base_directory.rglob(".lease.json"))) == 1
+    assert not workspace.exists()
+    assert len(commands) == 4
+    for command, start in zip(commands[2:], ("10.250", "11.000")):
+        assert command[command.index("-i") + 1] == str(source)
+        assert command[command.index("-ss") + 1] == start
+        assert command[command.index("-t") + 1] == "0.750"
+        if input_mode == "audio":
+            assert command[command.index("-c:a") + 1] == "pcm_s16le"
+            assert command[command.index("-ar") + 1] == "16000"
+            assert command[command.index("-ac") + 1] == "1"
+        else:
+            assert command[command.index("-vf") + 1] == "scale=-2:min(180\\,ih)"
+
+
+@pytest.mark.parametrize("input_mode", ["audio", "video"])
+@pytest.mark.parametrize("failure", ["cancel_before", "cancel_after", "ffmpeg", "consumer"])
+def test_failed_chunk_tool_media_cleans_only_its_child(tmp_path, input_mode, failure):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    commands = []
+    checks = 0
+
+    def run(command):
+        _fake_runner(commands)(command)
+        if failure == "ffmpeg" and len(commands) == 3:
+            raise subprocess.CalledProcessError(1, command, stderr=b"tool decode failed")
+
+    def check():
+        nonlocal checks
+        checks += 1
+        if (failure == "cancel_before" and checks == 1
+                or failure == "cancel_after" and checks == 2):
+            raise RuntimeError("lease lost")
+
+    service = VideoParseMediaService(tmp_path / "work", command_runner=run)
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+        visual_mode="video", frame_fps=1, max_frames=1, max_height=360, ocr_enabled=False,
+    ) as media:
+        with pytest.raises(RuntimeError, match="lease lost|tool decode failed|consumer failed"):
+            with service.prepare_chunk_tool_media(
+                media, source_video=source, start_ms=1250, end_ms=1750,
+                input_mode=input_mode, max_height=360, check_active=check,
+            ):
+                if failure == "consumer":
+                    raise RuntimeError("consumer failed")
+                pytest.fail("failed preparation must not yield a tool input")
+        assert not list(media.video_path.parent.glob("tool-*"))
+        assert media.video_path.is_file() and media.audio_path.is_file()
+        assert (media.video_path.parent / ".lease.json").is_file()
+    assert not media.video_path.parent.exists()
+
+
+@pytest.mark.parametrize("options", [
+    {"start_ms": True}, {"end_ms": 1000}, {"end_ms": 2000.0},
+    {"input_mode": "frames"}, {"max_height": 0},
+])
+def test_invalid_chunk_tool_media_is_rejected_before_media_io(tmp_path, options):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    commands = []
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner(commands))
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+        visual_mode="video", frame_fps=1, max_frames=1, max_height=360, ocr_enabled=False,
+    ) as media:
+        kwargs = dict(start_ms=1000, end_ms=2000, input_mode="audio", max_height=360)
+        kwargs.update(options)
+        with pytest.raises(ValueError):
+            with service.prepare_chunk_tool_media(
+                media, source_video=source, check_active=lambda: None, **kwargs,
+            ):
+                pytest.fail("invalid tool input accepted")
+        assert len(commands) == 2
+        assert not list(media.video_path.parent.glob("tool-*"))
+
+
+def test_chunk_tool_media_does_not_recreate_an_expired_workspace(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    commands = []
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner(commands))
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+        visual_mode="video", frame_fps=1, max_frames=1, max_height=360, ocr_enabled=False,
+    ) as media:
+        pass
+    with pytest.raises(FileNotFoundError):
+        with service.prepare_chunk_tool_media(
+            media, source_video=source, start_ms=1250, end_ms=1750,
+            input_mode="audio", max_height=360, check_active=lambda: None,
+        ):
+            pytest.fail("expired Chunk workspace was recreated")
+    assert len(commands) == 2
+    assert not media.video_path.parent.exists()
+
+
 def _hold_workspace_in_another_process(base, source, identity, ready):
     service = VideoParseMediaService(base, command_runner=_fake_runner([]))
     with service.prepare_video_segment(
@@ -538,4 +664,39 @@ def test_real_visual_overlap_does_not_extend_asr_audio_or_video(tmp_path):
             assert audio.getnframes() / audio.getframerate() == pytest.approx(1, abs=0.1)
         assert [timestamp for timestamp, _ in media.frames] == [500, 1500, 2500]
         assert all(path.is_file() for _timestamp, path in media.frames)
+    assert not media.video_path.parent.exists()
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="real media regression requires FFmpeg and FFprobe",
+)
+def test_real_chunk_tool_audio_matches_original_pcm_without_chunk_transcoding(tmp_path):
+    source = tmp_path / "source.mkv"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+        "color=c=blue:s=64x32:r=20:d=3", "-f", "lavfi", "-i",
+        "sine=frequency=713:sample_rate=16000:duration=3",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le",
+        "-y", str(source),
+    ], check=True, capture_output=True)
+    original_pcm = subprocess.run([
+        "ffmpeg", "-v", "error", "-i", str(source), "-map", "0:a:0", "-vn",
+        "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "s16le", "-",
+    ], check=True, capture_output=True).stdout
+    service = VideoParseMediaService(tmp_path / "work")
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
+        visual_mode="video", frame_fps=1, max_frames=1, max_height=64, ocr_enabled=False,
+    ) as media:
+        with service.prepare_chunk_tool_media(
+            media, source_video=source, start_ms=1250, end_ms=1750,
+            input_mode="audio", max_height=64, check_active=lambda: None,
+        ) as audio_path:
+            with wave.open(str(audio_path), "rb") as audio:
+                assert (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) == (1, 2, 16000)
+                assert audio.getnframes() == 8000
+                assert audio.readframes(audio.getnframes()) == original_pcm[1250 * 32:1750 * 32]
+        assert not audio_path.exists()
+        assert media.video_path.is_file()
     assert not media.video_path.parent.exists()

@@ -17,8 +17,8 @@ class AgentServiceConfig:
     maximum_tool_calls_per_turn: int = 48
     limits_enabled: bool = False
     total_timeout_enabled: bool = True
-    query_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
-    supervisor_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
+    query_reasoning_effort: Literal["none", "low", "medium", "high", "max"] = "none"
+    supervisor_reasoning_effort: Literal["none", "low", "medium", "high", "max"] = "none"
     web_search_max_results: int = 5
     web_search_timeout_seconds: float = 12.0
     max_output_tokens: int = 8192
@@ -62,8 +62,8 @@ class AgentServiceConfig:
         for name in (
             "query_reasoning_effort", "supervisor_reasoning_effort",
         ):
-            if getattr(self, name) not in ("none", "low", "high", "max"):
-                raise ValueError(f"{name} must be none, low, high, or max")
+            if getattr(self, name) not in ("none", "low", "medium", "high", "max"):
+                raise ValueError(f"{name} must be none, low, medium, high, or max")
         for name in (
             "max_model_calls_per_turn", "maximum_model_calls_per_turn",
             "max_tool_calls_per_turn", "maximum_tool_calls_per_turn",

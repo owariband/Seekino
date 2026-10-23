@@ -17,7 +17,7 @@ from engine.parsev2.validation import (
     ChunkResultUpdate, ValidatedIntervalRefinement, ValidatedPrefixRefinement,
     validate_result_time_range,
 )
-from server.constants.parse import VOICEPRINT_B0_VOICE_TOP1_MIN_LEAD, VOICEPRINT_DECISION_REASON_MAX_CHARS
+from server.constants.parse import VOICEPRINT_DECISION_REASON_MAX_CHARS
 
 
 def content_fingerprint(value: object) -> str:
@@ -189,7 +189,7 @@ class ParseContextCanvas(ContextCanvas):
                     draft["events"][event_ref] = {
                         "member_ref": ref, "event": value, "source": identity,
                     }
-                    if self.stage != "refine" and value["event_type"] == "DIALOGUE":
+                    if self.stage == "prefix" and value["event_type"] == "DIALOGUE":
                         draft["events"][event_ref]["dialogue_interval_ms"] = [
                             value["start_seconds"], value["end_seconds"],
                         ]
@@ -331,8 +331,7 @@ class ParseContextCanvas(ContextCanvas):
 
     @staticmethod
     def _voice_null_requires_contradiction(evidence):
-        gap = evidence.get("gap")
-        return evidence.get("band") == "ACCEPT" or gap is not None and gap >= VOICEPRINT_B0_VOICE_TOP1_MIN_LEAD
+        return bool(evidence.get("candidates"))
 
     @classmethod
     def _voice_decision_consistent(cls, value):
@@ -345,6 +344,8 @@ class ParseContextCanvas(ContextCanvas):
         candidates = evidence.get("candidates") or []
         top1 = candidates[0]["speaker"] if candidates else None
         if record["decision"] == "keep":
+            if understanding is None:
+                return "keep_understanding_speaker_unavailable"
             if speaker != understanding:
                 return "keep_speaker_mismatch"
             if evidence.get("label_doubtful") and record.get("evidence_type") not in {
@@ -625,6 +626,12 @@ class ParseContextCanvas(ContextCanvas):
                             "Use a current conflict event_ref with valid voice evidence inside the write bounds.",
                         )
                     evidence = required[reference]["voice_evidence"]
+                    if operation.decision == "keep" and evidence.get("understanding_speaker") is None:
+                        raise AgentToolFeedbackError(
+                            "INVALID_VOICEPRINT_DECISION", "There is no named Understanding speaker to keep.",
+                            "Use decision=null for an unknown final speaker and supply the required evidence; "
+                            "otherwise choose a supported speaker.",
+                        )
                     if (operation.decision == "keep" and evidence.get("label_doubtful")
                             and operation.evidence_type not in {"named_address", "visible_speaking", "text_identity"}):
                         raise AgentToolFeedbackError(
@@ -701,6 +708,68 @@ class ParseContextCanvas(ContextCanvas):
     def register_evidence(self, reference: str, value: dict[str, Any]) -> None:
         self.put("evidence", reference, value, readonly=True)
 
+    def understanding_evidence(self, member_ref: str) -> dict[str, Any]:
+        """Export observations and temporal source links without certifying wording."""
+        draft = self.snapshot().collections
+        self._member(draft, member_ref)
+        evidence = draft["evidence"]
+        result = deepcopy(evidence.get(member_ref, {}))
+        if "media" in evidence:
+            result["media"] = deepcopy(evidence["media"])
+        tool_evidence = {
+            reference: deepcopy(value) for reference, value in evidence.items()
+            if reference not in {member_ref, "media"} and isinstance(value, Mapping)
+            and value.get("member_ref") == member_ref
+            and value.get("kind") in {"speaker_consistency", "local_asr"}
+        }
+        if tool_evidence:
+            result["tool_evidence"] = tool_evidence
+        asr_sources = [(member_ref, result.get("asr"))]
+        asr_sources.extend((reference, value.get("asr")) for reference, value in tool_evidence.items()
+                           if value["kind"] == "local_asr")
+        events = [(reference, value["event"]) for reference, value in draft["events"].items()
+                  if value["member_ref"] == member_ref]
+        events.sort(key=lambda item: item[1]["start_seconds"])
+        provenance = []
+        needed = bool(tool_evidence)
+        for position, (reference, event) in enumerate(events):
+            if event["event_type"] != "DIALOGUE":
+                continue
+            start, end = event["start_seconds"], event["end_seconds"]
+            sources = []
+            for evidence_ref, asr in asr_sources:
+                if not isinstance(asr, Mapping):
+                    continue
+                for cue_index, cue in enumerate(asr.get("transcript") or []):
+                    if not isinstance(cue, Mapping) or not (cue.get("text") or "").strip():
+                        continue
+                    left, right = cue.get("start_seconds"), cue.get("end_seconds")
+                    if (type(left) is not int or type(right) is not int or left >= right
+                            or end <= left or start >= right):
+                        continue
+                    relation = "exact" if (start, end) == (left, right) else (
+                        "subrange" if left <= start < end <= right else "overlap"
+                    )
+                    sources.append({
+                        "evidence_ref": evidence_ref, "section": "asr", "cue_index": cue_index,
+                        "cue_fingerprint": content_fingerprint(cue),
+                        "start_ms": left, "end_ms": right, "relation": relation,
+                    })
+            needed = needed or not any(source["evidence_ref"] == member_ref and source["relation"] == "exact"
+                                       for source in sources)
+            provenance.append({
+                "event_ref": reference, "position": position,
+                # The commit host may add speaker_source after the Canvas export.
+                "event_fingerprint": content_fingerprint({key: value for key, value in event.items()
+                                                           if key != "speaker_source"}),
+                "event_fingerprint_basis": "event_without_speaker_source",
+                "start_ms": start, "end_ms": end,
+                "basis": "temporal_overlap_only", "content_verified": False, "sources": sources,
+            })
+        if needed:
+            result["dialogue_provenance"] = provenance
+        return result
+
     def interval_result(self) -> ValidatedIntervalRefinement:
         updates = []
         for member_ref, member in self._authority.items():
@@ -736,29 +805,19 @@ class ParseContextCanvas(ContextCanvas):
         return member_ref in self._voiceprint_modes or member_ref in self._speaker_source_members
 
     def _validate_dialogue_timing(self, draft, value):
-        """Only Refine can change a dialogue's bound audio interval."""
-        if self.stage == "refine":
+        """Prefix preserves dialogue intervals; Understanding and Refine may edit them."""
+        if self.stage != "prefix":
             return
         event = value["event"]
         times = [event["start_seconds"], event["end_seconds"]]
         if "dialogue_interval_ms" in value and times != value["dialogue_interval_ms"]:
             raise AgentToolFeedbackError(
-                "DIALOGUE_TIMING_READ_ONLY", "Only Refine may change an existing dialogue's audio interval.",
+                "DIALOGUE_TIMING_READ_ONLY", "Prefix must preserve an existing dialogue's audio interval.",
                 "Keep its original start_seconds/end_seconds; correct text or attribution without changing time, "
-                "and leave interval corrections to Refine.",
+                "and leave interval corrections to Understanding or Refine.",
             )
         if event["event_type"] != "DIALOGUE":
             return
-        if self.stage == "understanding":
-            asr = draft["evidence"].get(value["member_ref"], {}).get("asr") or {}
-            intervals = {(cue["start_seconds"], cue["end_seconds"])
-                         for cue in asr.get("transcript", []) if (cue.get("text") or "").strip()}
-            if intervals and tuple(times) not in intervals:
-                raise AgentToolFeedbackError(
-                    "ASR_DIALOGUE_RANGE_REQUIRED", "A dialogue must preserve one original ASR cue's audio interval.",
-                    "Read this member's evidence/asr and use one cue's exact start_seconds/end_seconds. "
-                    "Do not merge, split or resize ASR intervals; leave those corrections to Refine.",
-                )
         value["dialogue_interval_ms"] = times
 
     def _event(self, draft, reference):

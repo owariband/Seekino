@@ -138,6 +138,18 @@ class CampPlusModelSourceConfig(BaseModel):
     max_audio_seconds: float = Field(default=30, ge=0.4, le=300)
 
 
+class PyannoteModelSourceConfig(BaseModel):
+    """Local diarization pipeline with explicitly downloaded model files."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    adapter: Literal["pyannote"] = "pyannote"
+    provider: Literal["local"] = "local"
+    pipeline_path: _NonEmptyString
+    cpu_threads: int = Field(default=6, ge=1, le=64, strict=True)
+    max_audio_seconds: float = Field(default=300, gt=0, le=3600)
+
+
 class CodexModelSourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -172,6 +184,7 @@ ModelSourceConfig = (
     | OpenAIAudioSourceConfig
     | OpenAIVisionSourceConfig
     | CampPlusModelSourceConfig
+    | PyannoteModelSourceConfig
 )
 _ModelSourceConfigField = Annotated[
     ModelSourceConfig,
@@ -185,10 +198,10 @@ class ModelBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     source: _NonEmptyString
     model: _NonEmptyString
-    kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding"] | None = None
+    kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding", "speaker_diarization"] | None = None
     request_timeout_seconds: float | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
-    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high", "max"] | None = None
     supports_vision_input: bool = False
     fallback: ModelBinding | None = None
     context_window_tokens: int | None = Field(default=None, ge=2)
@@ -355,10 +368,10 @@ class GatewayConfig(BaseModel):
     def validate_agent_sources(self) -> GatewayConfig:
         speaker_threads = {
             source.cpu_threads for source in self.model_sources.values()
-            if isinstance(source, CampPlusModelSourceConfig)
+            if isinstance(source, (CampPlusModelSourceConfig, PyannoteModelSourceConfig))
         }
         if len(speaker_threads) > 1:
-            raise ValueError("campplus sources in one process must use the same cpu_threads")
+            raise ValueError("local torch sources in one process must use the same cpu_threads")
         if self.agent_model.source not in self.model_sources:
             raise ValueError(
                 f"agent_model.source {self.agent_model.source!r} is not present "
@@ -485,7 +498,7 @@ class GatewayConfig(BaseModel):
         source = self.source(binding.source)
         capabilities = adapter_capabilities(source.adapter)
         kind = "embedding" if isinstance(binding, EmbeddingModelBinding) else binding.kind or "generative"
-        if kind in {"embedding", "transcription", "speaker_embedding"} and binding.fallback is not None:
+        if kind in {"embedding", "transcription", "speaker_embedding", "speaker_diarization"} and binding.fallback is not None:
             raise ValueError(f"{ref} {kind} does not support fallback")
         if kind == "embedding" and binding.supports_vision_input:
             raise ValueError(f"{ref} embedding does not use generative supports_vision_input")
@@ -502,11 +515,11 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{source.adapter} does not support reasoning_effort")
         if not capabilities.supports_output_limit and binding.max_output_tokens is not None:
             raise ValueError(f"{source.adapter} does not support max_output_tokens")
-        if kind == "speaker_embedding" and any(getattr(binding, name) is not None for name in (
+        if kind in {"speaker_embedding", "speaker_diarization"} and any(getattr(binding, name) is not None for name in (
             "context_window_tokens", "context_safety_margin_tokens", "auto_compact_tokens",
             "compact_target_tokens", "max_input_chars",
         )):
-            raise ValueError(f"{ref} speaker_embedding does not use generative context budgets")
+            raise ValueError(f"{ref} {kind} does not use generative context budgets")
         if binding.fallback is not None:
             self._validate_binding(binding.fallback, ref=f"{ref}.fallback")
 
@@ -520,7 +533,7 @@ class GatewayConfig(BaseModel):
             "context_safety_margin_tokens": 2048 if binding.supports_vision_input else runtime.get("context_safety_margin_tokens", 2048),
             "max_input_chars": 400_000 if binding.supports_vision_input else runtime.get("max_prompt_chars", 400_000),
         }
-        if binding.kind == "speaker_embedding":
+        if binding.kind in {"speaker_embedding", "speaker_diarization"}:
             return binding.model_copy(update={
                 "request_timeout_seconds": binding.request_timeout_seconds or defaults["request_timeout_seconds"],
             })

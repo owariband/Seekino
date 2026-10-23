@@ -1419,3 +1419,107 @@ def test_ready_b0_evidence_canvas_export_and_transaction_persist_speaker_source(
         assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
         assert stored["lines"][0]["candidates"][0]["speaker"] == "B"
     assert "speaker_source" not in snapshot["member_contents"][member.chunk_parse_task_id]["timeline"][0]
+
+
+@pytest.mark.parametrize(
+    "duration_ms,other_similarity,reference_count,shared_cue,expected_band,expected_speaker",
+    [
+        (499, 0.0, 3, False, "NO_VOICE", "A"),
+        (500, 0.0, 3, False, "NO_VOICE", "A"),
+        (501, 0.0, 3, False, "ACCEPT", "B"),
+        (900, 0.0, 3, False, "ACCEPT", "B"),
+        (1000, 0.0, 3, False, "ACCEPT", "B"),
+        (1200, 0.0, 3, False, "ACCEPT", "B"),
+        (1000, 0.90, 3, False, "ACCEPT", "B"),
+        (1000, 1.0, 3, False, "ACCEPT", "B"),
+        (501, 0.0, 2, False, "CONFLICT", "A"),
+        (501, 0.0, 3, True, "CONFLICT", "A"),
+    ],
+    ids=["below-500ms", "exactly-500ms", "above-500ms", "900ms-target-length", "exactly-1s",
+         "1.2s-target-length", "low-gap", "zero-gap", "few-references", "same-cue-references"],
+)
+def test_default_short_b0_accept_reaches_prefill_without_bypassing_support(
+    duration_ms, other_similarity, reference_count, shared_cue, expected_band, expected_speaker,
+):
+    # Synthetic vectors protect the default policy-to-Canvas contract, not voice accuracy.
+    parameters = VideoParseRuntimeService._voiceprint_parameters()
+    assert parameters["accept_duration_ms"] == parameters["no_voice_duration_ms"] == 501
+    assert parameters["accept_gap"] is None and parameters["conflict_gap"] is None
+    query = {
+        "id": "query", "source_id": "query", "position": 0,
+        "start_ms": 100, "end_ms": 100 + duration_ms, "pcm_sha256": "query-pcm",
+        "label": "A", "understanding_speaker": "A", "cue_ids": ["query-cue"],
+        "model": "campplus", "encoder_revision": "frozen",
+        "vector": [1.0, 0.0] + [0.0] * 190,
+    }
+    references = [{
+        **query, "id": f"reference-{index}", "source_id": f"reference-{index}",
+        "start_ms": 5000 + index * 2000, "end_ms": 6000 + index * 2000,
+        "pcm_sha256": f"reference-pcm-{index}", "label": "B", "understanding_speaker": "B",
+        "cue_ids": ["shared-cue" if shared_cue else f"reference-cue-{index}"],
+    } for index in range(reference_count)]
+    references.append({
+        **query, "id": "other", "source_id": "other", "start_ms": 15000, "end_ms": 16000,
+        "label": "C", "understanding_speaker": "C",
+        "pcm_sha256": "other-pcm", "cue_ids": ["other-cue"],
+        "vector": [other_similarity, sqrt(1 - other_similarity ** 2)] + [0.0] * 190,
+    })
+    line = VideoParseRuntimeService._score_voiceprint_sample(query, [query, *references])
+    assert line["candidates"][0]["speaker"] == "B"
+    assert line["band"] == expected_band
+    assert line["understanding_speaker"] == query["label"] == "A"
+    content = _dialogues(["A"], 0)
+    content["timeline"][0]["end_seconds"] = 100 + duration_ms
+    canvas = ParseContextCanvas.from_refine({
+        "interval_parse_task_id": "short-accept", "member_sequence_nos": {"member": 0},
+        "member_versions": {"member": 1}, "member_bounds": {"member": (0, 20000)},
+        "member_scopes": {"member": [0]},
+        "member_contents": {"member": content},
+        "member_evidence": {"member": {"voiceprint": {
+            "mode": "prefill", "method_version": line["method_version"], "lines": [line],
+        }}},
+    })
+    result = canvas.result("member").timeline[0]
+    assert result.speaker == expected_speaker
+    assert result.speaker_source == ("voice_default" if expected_band == "ACCEPT" else "understanding")
+
+
+@pytest.mark.parametrize("start_ms,end_ms,original,top1,top2,score1,score2,cues", [
+    (47500, 48800, "千早爱音", "长崎爽世", "若叶睦", 0.7730583563348821, 0.7170293544755257, 43),
+    (293300, 295800, "若叶睦", "千早爱音", "长崎爽世", 0.8229987220931618, 0.6887947400756788, 75),
+], ids=["v20-soyo-target", "v20-anon-target"])
+def test_v20_fixed_target_scores_reach_prefill_only_under_gap_free_policy(
+    start_ms, end_ms, original, top1, top2, score1, score2, cues,
+):
+    # Fixed score subset from v20 b0-scoring.json SHA256 08a7324822f4ae8509f38f63aa22cee1cbc3928fb04c7a01caa0d783e7677381.
+    # This tests policy and actual Canvas prefill, not a new encoder run or final identity accuracy.
+    query = {"id": "fixed-target", "source_id": "fixed-target", "position": 0,
+             "start_ms": start_ms, "end_ms": end_ms, "label": original,
+             "understanding_speaker": original, "song": False, "overlap": False}
+    score = {"duration_ms": end_ms - start_ms, "reason": "compared", "gap": score1 - score2,
+             "candidates": [{"speaker": top1, "similarity": score1, "independent_cue_count": cues},
+                            {"speaker": top2, "similarity": score2}]}
+    before = deepcopy(score)
+    parameters = VideoParseRuntimeService._voiceprint_parameters()
+    historical = VideoParseRuntimeService._score_voiceprint_sample(
+        query, [], score=score, parameters={**parameters, "accept_gap": 0.15, "conflict_gap": 0.05},
+    )
+    current = VideoParseRuntimeService._score_voiceprint_sample(query, [], score=score)
+    assert historical["band"] == "CONFLICT"
+    assert current["band"] == "ACCEPT" and current["conflict"] is True
+    assert current["gap"] == historical["gap"] == score["gap"]
+    assert current["candidates"] == historical["candidates"] == score["candidates"]
+    content = _dialogues([original], 0)
+    content["timeline"][0].update(start_seconds=start_ms, end_seconds=end_ms)
+    canvas = ParseContextCanvas.from_refine({
+        "interval_parse_task_id": "fixed-v20", "member_sequence_nos": {"member": 0},
+        "member_versions": {"member": 1}, "member_bounds": {"member": (0, 400000)},
+        "member_scopes": {"member": [0]}, "member_contents": {"member": content},
+        "member_evidence": {"member": {"voiceprint": {
+            "mode": "prefill", "method_version": current["method_version"], "lines": [current],
+        }}},
+    })
+    event = canvas.result("member").timeline[0]
+    assert event.speaker == top1 and event.speaker_source == "voice_default"
+    assert canvas._initial["member"].timeline[0].speaker == original
+    assert score == before

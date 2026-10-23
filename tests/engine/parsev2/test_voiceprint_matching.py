@@ -372,6 +372,61 @@ def test_decision_bands_keep_accept_disagreements_eligible(result, options, expe
     assert result == before
 
 
+@pytest.mark.parametrize("gap", [None, 0, 0.001, 0.149999])
+def test_unset_gap_thresholds_keep_supported_candidates_eligible(gap) -> None:
+    result = evidence(speaker="B", gap=gap, duration_ms=1000)
+    before = deepcopy(result)
+    assert decision(result, accept_gap=None, conflict_gap=None, accept_duration_ms=1000) == {
+        "band": "ACCEPT", "conflict": True, "review_reason": "voice_label_disagreement",
+    }
+    assert result == before
+
+
+@pytest.mark.parametrize("top_score, other_score", [(1.0, 0.99), (0.0, 0.0), (-0.5, -0.8)])
+def test_gap_free_policy_accepts_production_rankings_with_low_zero_or_negative_cosines(
+    top_score, other_score,
+) -> None:
+    query = production_sample(100, label="original")
+    references = [production_sample(index, label=name, vector=[score, (1 - score ** 2) ** 0.5])
+                  for name, score, indices in (("B", top_score, range(1, 4)), ("C", other_score, range(4, 7)))
+                  for index in indices]
+    result = production_score(query, references)
+    assert result["candidates"][0]["speaker"] == "B"
+    assert result["candidates"][0]["similarity"] == pytest.approx(top_score)
+    assert result["gap"] == pytest.approx(top_score - other_score)
+    assert decision(result, current_label="original", accept_gap=None, conflict_gap=None)["band"] == "ACCEPT"
+
+
+@pytest.mark.parametrize("result, options, expected_band, reason", [
+    (evidence(speaker="B", gap=0, duration_ms=999), {}, "NO_VOICE", "duration_below_no_voice_minimum"),
+    (evidence(speaker="B", gap=0, cues=2), {}, "CONFLICT", "insufficient_independent_reference_cues"),
+    (evidence(speaker="B", gap=0), {"song": True}, "CONFLICT", "song"),
+    (evidence(speaker="B", gap=0), {"overlap": True}, "CONFLICT", "overlapping_dialogue"),
+    ({"candidates": [], "gap": None, "duration_ms": 1500, "reason": "no_eligible_reference"},
+     {}, "NO_VOICE", "no_eligible_reference"),
+])
+def test_gap_free_policy_preserves_non_gap_quality_conditions(result, options, expected_band, reason) -> None:
+    classified = decision(result, accept_gap=None, conflict_gap=None, accept_duration_ms=1000, **options)
+    assert classified["band"] == expected_band
+    assert classified["review_reason"] == reason
+
+
+@pytest.mark.parametrize("accept_gap, conflict_gap", [
+    (None, 0.05), (0.15, None), (-0.1, 0.05), (0.05, 0.15),
+    (float("nan"), 0.05), (0.15, float("inf")),
+])
+def test_gap_policy_rejects_partial_or_invalid_frozen_thresholds(accept_gap, conflict_gap) -> None:
+    with pytest.raises(ValueError, match="voice gap thresholds"):
+        decision(evidence(), accept_gap=accept_gap, conflict_gap=conflict_gap)
+
+
+@pytest.mark.parametrize("thresholds", [(None, None), (0.15, 0.05)])
+@pytest.mark.parametrize("gap", [float("nan"), float("inf"), -0.001, 2.000001])
+def test_descriptive_gap_still_requires_a_finite_cosine_difference(thresholds, gap) -> None:
+    with pytest.raises(ValueError, match="candidate gap"):
+        decision(evidence(gap=gap), accept_gap=thresholds[0], conflict_gap=thresholds[1])
+
+
 @pytest.mark.parametrize("speaker, expected_band", [("A", None), ("B", "CONFLICT")])
 @pytest.mark.parametrize("result_changes, options, reason", [
     ({"duration_ms": 1200}, {}, "duration_below_accept_minimum"),

@@ -13,6 +13,8 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Literal
 from uuid import uuid4
 
 from engine.common.frame_sampler import plan_frame_timestamps
@@ -99,14 +101,47 @@ class VideoParseMediaService:
         with self._workspace(identity) as directory:
             check_active()
             audio = directory / "speaker.wav"
-            self._execute([
-                self._ffmpeg_bin, "-v", "error", "-ss", f"{start_ms / 1000:.3f}",
-                "-i", str(source), "-t", f"{(end_ms - start_ms) / 1000:.3f}",
-                "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
-                "-c:a", "pcm_s16le", "-y", str(audio),
-            ], audio)
+            self._materialize_source_audio(source, audio, start_ms=start_ms, end_ms=end_ms)
             check_active()
             yield audio
+
+    @contextmanager
+    def prepare_chunk_tool_media(
+        self,
+        media: PreparedVideoParseMedia,
+        *,
+        source_video: Path,
+        start_ms: int,
+        end_ms: int,
+        input_mode: Literal["audio", "video"],
+        max_height: int,
+        check_active: Callable[[], None],
+    ) -> Iterator[Path]:
+        """Prepare one tool input inside an already active Chunk media context."""
+        source = Path(source_video).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        if input_mode not in {"audio", "video"}:
+            raise ValueError("input_mode must be audio or video")
+        self._validate_options(
+            start_seconds=start_ms, end_seconds=end_ms, visual_mode="video",
+            frame_fps=1.0, max_frames=1, max_height=max_height,
+        )
+        check_active()
+        # The enclosing Chunk owns its lease lock; each tool call owns only its child.
+        with TemporaryDirectory(prefix="tool-", dir=media.video_path.parent) as temporary:
+            directory = Path(temporary)
+            if input_mode == "audio":
+                output = directory / "audio.wav"
+                self._materialize_source_audio(source, output, start_ms=start_ms, end_ms=end_ms)
+            else:
+                output = directory / "video.mp4"
+                self._materialize_video(
+                    source, output, start_seconds=start_ms,
+                    end_seconds=end_ms, max_height=max_height,
+                )
+            check_active()
+            yield output
 
     @contextmanager
     def prepare_video_segment(
@@ -446,6 +481,16 @@ class VideoParseMediaService:
             ],
             output,
         )
+
+    def _materialize_source_audio(
+        self, source: Path, output: Path, *, start_ms: int, end_ms: int,
+    ) -> None:
+        self._execute([
+            self._ffmpeg_bin, "-v", "error", "-ss", f"{start_ms / 1000:.3f}",
+            "-i", str(source), "-t", f"{(end_ms - start_ms) / 1000:.3f}",
+            "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
+            "-c:a", "pcm_s16le", "-y", str(output),
+        ], output)
 
     def _materialize_frame(
         self,

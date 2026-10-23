@@ -44,7 +44,7 @@ models:
     source: codex_local
     model: gpt-6-luna
     supports_vision_input: true
-    reasoning_effort: low
+    reasoning_effort: medium
     max_output_tokens: 8192
     request_timeout_seconds: 1200
     context_window_tokens: 128000
@@ -60,7 +60,7 @@ models:
     model: gpt-6-luna
     supports_vision_input: true
     max_output_tokens: 8192
-    reasoning_effort: low
+    reasoning_effort: high
     request_timeout_seconds: 600
     context_window_tokens: 128000
     context_safety_margin_tokens: 2048
@@ -106,8 +106,8 @@ agent_runtime:
   maximum_tool_calls_per_turn: 48
   limits_enabled: false
   total_timeout_enabled: true
-  query_reasoning_effort: low
-  supervisor_reasoning_effort: none
+  query_reasoning_effort: medium
+  supervisor_reasoning_effort: medium
   web_search_max_results: 5
   web_search_timeout_seconds: 12
   max_output_tokens: 8192

@@ -109,10 +109,7 @@ class ChunkUnderstandingWorkflow:
         await self._runtime.commit_chunk_result(
             state["execution"],
             state["result"],
-            evidence={
-                **state["canvas"].get("evidence", state["execution"].chunk_parse_task_id),
-                "media": state["canvas"].get("evidence", "media"),
-            },
+            evidence=state["canvas"].understanding_evidence(state["execution"].chunk_parse_task_id),
         )
         return {}
 
