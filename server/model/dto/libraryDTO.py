@@ -66,6 +66,9 @@ class VideoSummaryState:
     latest_job_id: str | None
     last_error: str | None
     keyframe_uris: tuple[str, ...] = ()
+    display_name: str | None = None
+    description: str | None = None
+    cover_uri: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

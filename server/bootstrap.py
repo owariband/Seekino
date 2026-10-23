@@ -5,12 +5,16 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
 from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.query_hook import QueryHook
 from agent.chat.realtime_understanding import RealtimeUnderstandingRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
-from gateway.config import GatewayConfig, load_config
+from gateway.config import (
+    ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, load_config,
+)
 from gateway.model_factory import GatewayClient
+from gateway.query_hook import QueryHookModels
 from gateway.tracing import LangfuseTracing
 from gateway.web_search import WebSearcher
 
@@ -47,6 +51,7 @@ from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
 from .service.video_parse import VideoParseRuntimeService
 from .service.video_parse_media import VideoParseMediaService
+from .service.video_summarize import VideoSummarizeService
 from .service.video_frame_reader import VideoFrameReader
 from .service.video_retrieval import VideoParseRetrievalService
 
@@ -117,6 +122,7 @@ def prepare_service_configuration(
         )
     _validate_cloud_agent_timeout(settings, settings.agent)
     gateway_config = load_config(settings.model_config_path)
+    _validate_cloud_pi_harness(settings, gateway_config)
     validate_rerank_source(gateway_config, settings.retrieval)
     parse_defaults = ParseConfig.from_defaults(
         runtime=settings.parse,
@@ -131,6 +137,18 @@ def prepare_service_configuration(
         index_generation=settings.elasticsearch.index_generation,
     )
     return gateway_config, parse_defaults
+
+
+def _validate_cloud_pi_harness(settings: ServerSettings, config: GatewayConfig) -> None:
+    if settings.auth.mode != "cloud":
+        return
+    if config.supervisor_harness != "pi":
+        raise ValueError("cloud Server requires supervisor_harness: pi; set ANIVAG_MODEL_CONFIG to an API-backed cloud configuration")
+    for role, binding in config.normalized_models.items():
+        while binding is not None:
+            if isinstance(config.source(binding.source), (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
+                raise ValueError(f"cloud models.{role} must use API sources; native Codex/Claude processes are local-only")
+            binding = getattr(binding, "fallback", None)
 
 
 def build_application_services(
@@ -268,6 +286,16 @@ def _build_application_services(
         event_store=event_store,
         event_contract=event_contract,
     )
+    summary_service = (
+        VideoSummarizeService(
+            parse_persistence, artifact_store, gateway_client,
+            gateway_config=gateway_config, model=gateway_config.resolve_model_binding("summarize"),
+            config=settings.summarize, worker_id=settings.mq.consumer_id,
+            lease_duration=settings.mq.lease_duration,
+            heartbeat_interval=settings.mq.heartbeat_interval, parse_usage=parse_usage,
+        )
+        if settings.summarize.enabled and "summarize" in gateway_config.normalized_models else None
+    )
     realtime_service = RealtimeUnderstandingService(
         parse_persistence, v2_queue, v2_runtime, artifact_store,
         gateway_config=gateway_config,
@@ -385,6 +413,9 @@ def _build_application_services(
             max_tool_result_bytes=agent_config.max_tool_result_bytes,
             max_prompt_chars=agent_config.max_prompt_chars,
             maximum_parallel_queries=agent_config.maximum_parallel_queries,
+            query_hook=QueryHook(
+                gateway_config.query_hook, QueryHookModels(gateway_config.query_hook),
+            ) if gateway_config.query_hook.enabled else None,
         )
 
     def build_chat_runtime(agent_config: AgentServiceConfig) -> SupervisorRuntime:
@@ -425,6 +456,7 @@ def _build_application_services(
             index=v2_runtime.index,
             prefix=v2_runtime.run_next_prefix,
             maintenance=v2_runtime.reap_stale_media,
+            summarize=summary_service.run_next if summary_service is not None else None,
         ),
         worker_id=settings.mq.consumer_id,
         lease_duration=settings.mq.lease_duration,
@@ -432,6 +464,7 @@ def _build_application_services(
         poll_interval=timedelta(seconds=settings.mq.poll_interval_seconds),
         maintenance_interval=settings.mq.lease_duration,
         video_concurrency=settings.parse.video_concurrency,
+        summarize_concurrency=settings.summarize.concurrency,
     )
     construction_cleanup.callback(parse_consumer.close)
 

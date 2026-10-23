@@ -549,7 +549,6 @@ class AgentChatService:
             if (
                 type(position) is not int or not 0 <= position <= video.duration_seconds
                 or playback.get("seriesId") != video.series_id
-                or playback.get("episodeOrder") != video.episode_order
             ):
                 raise ValueError("playback context does not match the current video")
             playback_series_id = video.series_id
@@ -979,6 +978,15 @@ class AgentChatService:
                     if item["seriesId"] in initial.user_message.series_ids
                 ])
 
+            extra_context = deepcopy(initial.user_message.extra_context)
+            if runtime.realtime_enabled and isinstance(extra_context, dict):
+                playback = extra_context.get("playback")
+                if isinstance(playback, dict):
+                    video = self._library.get_video(playback.get("videoId"), tenant_id=tenant_id)
+                    # Episode order may change after submission. Preserve the original
+                    # request for idempotency and give the Agent the current identity.
+                    playback["episodeOrder"] = video.episode_order
+
             inputs = RunInputs(
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
                 tenant_id=tenant_id, series_ids=list(initial.user_message.series_ids),
@@ -998,7 +1006,7 @@ class AgentChatService:
                                       for ref in item.attachments]} if item.attachments else {}),
                 } for item in history],
                 reference_context=execution.reference_context,
-                extra_context=initial.user_message.extra_context,
+                extra_context=extra_context,
                 series_context=series_context,
             )
             if inputs["image_urls"] or any(item.get("imageUrls") for item in inputs["history"]):

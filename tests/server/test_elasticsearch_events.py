@@ -85,7 +85,10 @@ def _document(*, task=None, chunk=None, version=2, ordinal=0, dialogue=False):
         speaker="祥子" if dialogue else None,
         lexical_fields=[{"field": "dialogue", "raw_text": "真是居高临下啊", "language": "zh-Hans", "role": "TRANSLATION"}]
         if dialogue else [{"field": "event_description", "raw_text": "角色从台阶跳下", "language": None, "role": None}],
-        semantic_vector=[1, 0], vision_vector=[0, 1],
+        semantic_vectors=[{"source": "description", "vector": [1, 0]}, *(
+            [{"source": "dialogue", "language": "zh-Hans", "role": "TRANSLATION", "vector": [0.6, 0.8]}]
+            if dialogue else []
+        )], vision_vector=[0, 1],
         detail={"capture": {"frames": [{"requested_at_ms": 150, "actual_at_ms": None, "image_sha256": "a" * 64}]}},
     )
 
@@ -116,10 +119,16 @@ def test_event_schema_has_only_agreed_fields_and_freezes_complete_contract(stora
     mapping = client.indices.mapping
     assert set(mapping["properties"]) == {
         "video_chunk_id", "parse_task_id", "version", "timeline_index", "event_type", "speaker",
-        "lexical_fields", "semantic_vector", "vision_vector", "detail",
+        "lexical_fields", "semantic_vectors", "vision_vector", "detail",
     }
     assert set(mapping["properties"]["lexical_fields"]["properties"]) == {"field", "raw_text", "language", "role"}
     assert mapping["properties"]["detail"] == {"type": "object", "enabled": False}
+    assert mapping["properties"]["semantic_vectors"] == {"type": "nested", "dynamic": "strict", "properties": {
+        "source": {"type": "keyword"}, "language": {"type": "keyword"}, "role": {"type": "keyword"},
+        "vector": {"type": "dense_vector", "dims": 2, "index": True, "similarity": "cosine",
+                   "index_options": {"type": "hnsw"}},
+    }}
+    assert mapping["_meta"]["index_contract_version"] == "seekino-video-event-es-2"
     assert mapping["_meta"]["event_contract"] == contract.as_dict()
     changed = contract.model_copy(update={"capture": contract.capture.model_copy(update={"max_frames": 4})})
     with pytest.raises(ElasticsearchIndexSchemaError, match="fixed contract"):
@@ -130,14 +139,37 @@ def test_event_schema_has_only_agreed_fields_and_freezes_complete_contract(stora
         other.bind_contract(changed)
 
 
-def test_bulk_restore_verifies_content_and_search_visibility(storage):
+@pytest.mark.parametrize("change", ["old_version", "scalar", "object", "dimensions", "extra_field"])
+def test_event_schema_rejects_old_or_incompatible_semantic_mapping(storage, change):
     client, store = storage
     store.ensure_index(_contract())
-    document = _document()
+    mapping = client.indices.mapping
+    semantic = mapping["properties"]["semantic_vectors"]
+    if change == "old_version":
+        mapping["_meta"]["index_contract_version"] = "seekino-video-event-es-1"
+    elif change == "scalar":
+        mapping["properties"]["semantic_vector"] = semantic["properties"]["vector"]
+        del mapping["properties"]["semantic_vectors"]
+    elif change == "object":
+        semantic["type"] = "object"
+    elif change == "dimensions":
+        semantic["properties"]["vector"]["dims"] = 3
+    else:
+        semantic["properties"]["weight"] = {"type": "float"}
+    with pytest.raises(ElasticsearchIndexSchemaError):
+        store.bind_contract(_contract())
+
+
+@pytest.mark.parametrize("dialogue", [False, True])
+def test_bulk_restore_verifies_content_and_search_visibility(storage, dialogue):
+    client, store = storage
+    store.ensure_index(_contract())
+    document = _document(dialogue=dialogue)
     assert store.bulk_upsert([document], write_version=7, refresh="wait_for") == [document.event_id]
     action, source = client.requests[-1]["operations"]
     assert action["index"]["version"] == 7 and action["index"]["version_type"] == "external_gte"
-    assert "event_id" not in source and "speaker" not in source
+    assert "event_id" not in source and ("speaker" in source) == dialogue
+    assert len(source["semantic_vectors"]) == (2 if dialogue else 1)
     assert store.inspect([document.event_id])[document.event_id] == document
     assert store.verify_ready([document])
     client.documents[document.event_id]["version"] += 1
@@ -162,9 +194,31 @@ def test_store_revalidates_copied_models_at_the_storage_boundary(storage):
     _, store = storage
     store.ensure_index(_contract())
     document = _document()
-    for update in ({"event_type": "NOT_AN_EVENT"}, {"semantic_vector": (True, 0.0)}):
+    for update in ({"event_type": "NOT_AN_EVENT"}, {"semantic_vectors": (
+        document.semantic_vectors[0].model_copy(update={"vector": (True, 0.0)}),
+    )}):
         with pytest.raises(ValueError):
             store.bulk_upsert([document.model_copy(update=update)])
+
+
+@pytest.mark.parametrize("semantic", [
+    [], [1.0, 0.0], [{"source": "description", "vector": [1.0, 0.0, 0.0]}],
+    [{"source": "description", "vector": [0.0, 0.0]}],
+    [{"source": "description", "vector": [True, 0.0]}],
+    [{"source": "dialogue", "vector": [1.0, 0.0]}],
+    [{"source": "description", "vector": [1.0, 0.0]}] * 2,
+])
+def test_malformed_semantic_collection_cannot_be_written_or_read(storage, semantic):
+    client, store = storage
+    store.ensure_index(_contract())
+    document = _document()
+    source = {**document.as_source(), "semantic_vectors": semantic}
+    with pytest.raises(ValueError):
+        store.bulk_upsert([source])
+    assert not client.documents
+    client.documents[document.event_id] = source
+    with pytest.raises(ElasticsearchDocumentConsistencyError):
+        store.inspect([document.event_id])
 
 
 @pytest.mark.parametrize("channel", ["lexical", "semantic", "vision"])
@@ -186,6 +240,73 @@ def test_every_channel_prefilters_paired_sources_type_and_root_speaker(storage, 
     ]}} for task, chunk, version in sources], "minimum_should_match": 1}}
     assert {"terms": {"event_type": ["DIALOGUE"]}} in conditions
     assert {"term": {"speaker": "祥子"}} in conditions
+
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_semantic_search_scores_one_parent_event_with_max_child_and_parent_filters(storage, exact):
+    client, store = storage
+    store.ensure_index(_contract())
+    document = _document(dialogue=True)
+    sources = [(document.parse_task_id, document.video_chunk_id, document.version)]
+    filters = EventFilters(speaker="祥子", video_chunk_ids=(document.video_chunk_id,))
+    client.hits = [{"_id": document.event_id, "_score": 1.8 if exact else 0.9,
+                    "_source": document.as_source()}]
+    hit, = store.search_vector([1, 0], channel="semantic", sources=sources,
+                               filters=filters, limit=20, exact=exact)
+    assert hit.event_id == document.event_id and hit.rank == 1
+    assert hit.score == (1.8 if exact else 0.9)
+    request = client.requests[-1]
+    assert request["size"] == 20
+    assert "semantic_vectors" not in request["source_includes"]
+    assert "vision_vector" not in request["source_includes"]
+    if exact:
+        query = request["query"]["bool"]
+        conditions = query["filter"]
+        nested = query["must"][0]["nested"]
+        assert nested["path"] == "semantic_vectors" and nested["score_mode"] == "max"
+        score = nested["query"]["script_score"]
+        assert score["query"] == {"exists": {"field": "semantic_vectors.vector"}}
+        assert score["script"] == {
+            "source": "cosineSimilarity(params.vector, 'semantic_vectors.vector') + 1.0",
+            "params": {"vector": [1.0, 0.0]},
+        }
+    else:
+        knn = request["knn"]
+        assert knn["field"] == "semantic_vectors.vector"
+        assert knn["k"] == 20 and knn["num_candidates"] == 100
+        conditions = knn["filter"]["bool"]["filter"]
+    assert len(conditions) == 4
+    assert all("exists" not in condition for condition in conditions)
+    assert {"term": {"speaker": "祥子"}} in conditions
+    assert {"terms": {"event_type": ["DIALOGUE"]}} in conditions
+    assert {"terms": {"video_chunk_id": [document.video_chunk_id]}} in conditions
+
+
+def test_exact_vision_search_keeps_parent_scalar_scoring(storage):
+    client, store = storage
+    store.ensure_index(_contract())
+    document = _document(dialogue=True)
+    store.search_vector([1, 0], channel="vision", sources=[(
+        document.parse_task_id, document.video_chunk_id, document.version,
+    )], filters=EventFilters(speaker="祥子"), limit=4, exact=True)
+    score = client.requests[-1]["query"]["script_score"]
+    assert score["query"]["bool"]["filter"][-1] == {"exists": {"field": "vision_vector"}}
+    assert {"term": {"speaker": "祥子"}} in score["query"]["bool"]["filter"]
+    assert score["script"]["source"] == "cosineSimilarity(params.vector, 'vision_vector') + 1.0"
+
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_semantic_search_rejects_duplicate_or_untrusted_parent_results(storage, exact):
+    client, store = storage
+    store.ensure_index(_contract())
+    document = _document(dialogue=True)
+    hit = {"_id": document.event_id, "_score": 0.9, "_source": document.as_source()}
+    for hits, version in (([hit, hit], document.version), ([hit], document.version + 1)):
+        client.hits = hits
+        with pytest.raises(ElasticsearchDocumentConsistencyError, match="trusted source"):
+            store.search_vector([1, 0], channel="semantic", sources=[(
+                document.parse_task_id, document.video_chunk_id, version,
+            )], filters=EventFilters(), limit=20, exact=exact)
 
 
 def test_search_rejects_stale_source_and_retains_actual_lexical_fields(storage):

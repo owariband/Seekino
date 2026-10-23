@@ -110,8 +110,8 @@ class _ChatModel:
         check_control()
         accepted = _invoke(available["submit_video_item"], {
             "video_chunk_id": identifier, "claim": "第一段动作与问题匹配。",
-            "start_seconds": evidence["startSeconds"],
-            "end_seconds": evidence["endSeconds"],
+            "start_seconds": evidence["startSeconds"] / 1000,
+            "end_seconds": evidence["endSeconds"] / 1000,
         })
         assert accepted["accepted"] is True
         handle_text("已找到第一段动作。")

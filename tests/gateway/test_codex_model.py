@@ -1214,18 +1214,19 @@ def test_native_entries_leave_six_images_to_codex_context_management(structured)
         model.close()
 
 
-def test_generate_counts_image_tokens_before_starting_session(tmp_path) -> None:
+def test_generate_leaves_image_token_cost_to_codex(tmp_path) -> None:
     image = tmp_path / "frame.png"
     image.write_bytes(b"image")
-    session = _FakeSession([])
+    session = _FakeSession([(_turn('{"answer":"observed"}'), 0)])
     model = _model_for(session)
     try:
-        with pytest.raises(ModelInputTooLargeError, match="initial context"):
-            model.generate(
-                [ImageInput(image)], schema_name="visual", result_type=Result,
-                context_window_policy=_context_policy(15_000),
-            )
-        assert session.prompts == []
+        result = model.generate(
+            [ImageInput(image)], schema_name="visual", result_type=Result,
+            context_window_policy=_context_policy(15_000),
+        )
+        assert result.answer == "observed"
+        assert len(session.prompts) == 1
+        assert session.prompts[0][0] == [CodexImageInput("data:image/png;base64,aW1hZ2U=")]
     finally:
         model.close()
 

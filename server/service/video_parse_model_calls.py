@@ -26,6 +26,7 @@ from ..model.dto.jobDTO import (
     IntervalParseLease,
     ModelCallReservation,
     PrefixParseLease,
+    VideoSummarizeLease,
     VideoParseLease,
     VideoParseTaskData,
 )
@@ -48,10 +49,11 @@ from .video_parse_task import (
 )
 from .video_parse_content import _matching_chunk_lease, _matching_interval_lease
 from .video_parse_prefix import _current_prefix_lease
+from .video_parse_summarize import current_summary_lease
 
 
 ExecutionLease = (
-    VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease
+    VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease | VideoSummarizeLease
 )
 
 
@@ -234,7 +236,7 @@ __all__ = [
 
 
 def _model_execution_identity(
-    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
+    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease | VideoSummarizeLease,
 ) -> tuple[str, str, int]:
     if isinstance(lease, VideoParseLease):
         return "video", lease.video_parse_task_id, lease.lease_version
@@ -242,6 +244,8 @@ def _model_execution_identity(
         return "chunk", lease.chunk_parse_task_id, lease.lease_version
     if isinstance(lease, IntervalParseLease):
         return "interval", lease.interval_parse_task_id, lease.lease_version
+    if isinstance(lease, VideoSummarizeLease):
+        return "summarize", lease.video_parse_task_id, lease.lease_version
     return "prefix", lease.chunk_parse_task_id, lease.lease_version
 
 
@@ -263,7 +267,7 @@ def _stored_model_execution_identity(
 
 def _lock_model_execution_lease(
     session: Session,
-    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
+    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease | VideoSummarizeLease,
     now: datetime,
 ) -> VideoParseTaskData:
     """Serialize the task budget and then fence the actual execution lease."""
@@ -290,6 +294,10 @@ def _lock_model_execution_lease(
             or parent.lease_expire_time <= now
         ):
             raise VideoParseLeaseLostError("VideoParseTask lease is no longer current")
+    elif isinstance(lease, VideoSummarizeLease):
+        if (current_summary_lease(parent, lease, now) is None
+                or _latest_video_task_id(session, parent.video_id) != parent.id):
+            raise VideoParseLeaseLostError("Video summary lease is no longer current")
     elif isinstance(lease, PrefixParseLease):
         if (
             _current_prefix_lease(parent, lease, now) is None
@@ -389,7 +397,7 @@ def record_execution_timing(
 def reserve_model_call(
     session: Session,
     *,
-    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
+    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease | VideoSummarizeLease,
     call_id: str,
     expires_at: datetime,
     now_ms: int,
@@ -451,7 +459,7 @@ def reserve_model_call(
 def renew_model_call(
     session: Session,
     *,
-    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
+    lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease | VideoSummarizeLease,
     call_id: str,
     lease_duration: timedelta,
     renewed_at: datetime,

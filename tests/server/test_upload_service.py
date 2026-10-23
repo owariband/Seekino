@@ -1604,6 +1604,109 @@ def prepared_v2_retry(repository, tmp_path):
     return service, upload, completed.video_parse_task_id, factory, chunk_ids, interval_ids, now
 
 
+@pytest.fixture
+def running_v2_summary(prepared_v2_retry):
+    service, upload, task_id, factory, chunk_ids, interval_ids, now = prepared_v2_retry
+    with factory.begin() as session:
+        session.get(VideoParseTask, task_id).status = "COMPLETE"
+    persistence = VideoParsePersistenceService(factory)
+    assert persistence.mark_summary_ready(task_id, now=now)
+    lease = persistence.claim_next_summary(
+        "summary-worker", lease_duration=timedelta(minutes=5),
+        config_snapshot={"limits": {"max_retries": 2}}, now=now,
+    )
+    assert lease is not None and lease.video_parse_task_id == task_id
+    with factory() as session:
+        prefix = session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["prefix"]
+    return (*prepared_v2_retry, persistence, lease, prefix)
+
+
+def test_reparse_revokes_running_summary_without_waiting_for_it(running_v2_summary):
+    service, upload, task_id, factory, _chunks, _intervals, now, persistence, lease, prefix = running_v2_summary
+    reparsed = service.reparse(
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+    )
+    assert reparsed.video_parse_task_id != task_id and reparsed.version == 2
+    with factory() as session:
+        runtime = session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]
+        summary = runtime["summarize"]
+        assert summary["status"] == "CANCELLED"
+        assert summary["lease_version"] == lease.lease_version + 1
+        assert summary["lease_owner"] is None and summary["lease_expire_time_ms"] is None
+        assert runtime["prefix"] == prefix
+    assert not persistence.heartbeat_summary(lease, lease_duration=timedelta(minutes=5), now=now)
+
+
+def test_delete_revokes_running_summary_before_media_cleanup(running_v2_summary, monkeypatch, repository):
+    service, upload, task_id, factory, _chunks, _intervals, now, persistence, lease, prefix = running_v2_summary
+    engine, _videos = repository
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+
+    class EmptyIndex:
+        def bulk_delete(self, _keys, *, refresh=False):
+            pass
+
+        def verify_absent(self, _keys):
+            return True
+
+    service._video_parse_index_store = EmptyIndex()
+    cleanup = service._artifact_store.delete_video_artifacts
+    observed = []
+
+    def check_revoked_before_cleanup(series_id, video_id):
+        with factory() as session:
+            task = session.get(VideoParseTask, task_id)
+            summary = task.detail[RUNTIME_DETAIL_KEY]["summarize"]
+            assert task.is_deleted
+            assert summary["status"] == "CANCELLED"
+            assert summary["lease_version"] == lease.lease_version + 1
+            assert summary["lease_owner"] is None and summary["lease_expire_time_ms"] is None
+            assert task.detail[RUNTIME_DETAIL_KEY]["prefix"] == prefix
+        assert not persistence.heartbeat_summary(lease, lease_duration=timedelta(minutes=5), now=now)
+        observed.append(video_id)
+        cleanup(series_id, video_id)
+
+    monkeypatch.setattr(service._artifact_store, "delete_video_artifacts", check_revoked_before_cleanup)
+    deleted = service.delete_session(upload.upload_session_id, tenant_id="local-default")
+    assert deleted.status == "EXPIRED" and deleted.video_id is None
+    assert observed == [lease.video_id]
+    with factory() as session:
+        assert session.get(Video, lease.video_id) is None
+        assert session.get(VideoParseTask, task_id) is None
+
+
+@pytest.mark.parametrize("index_only", [False, True])
+def test_failed_parse_retry_fences_summary_lease_and_requeues_only_ready_input(running_v2_summary, index_only):
+    service, upload, task_id, factory, chunks, intervals, now, persistence, lease, prefix = running_v2_summary
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        task.status = "INDEXING_FAILED" if index_only else "PARSING_FAILED"
+        if index_only:
+            session.get(ChunkParseTask, chunks[0]).status = "FAILED"
+        else:
+            session.get(IntervalParseTask, intervals[0]).status = "PARSING_FAILED"
+    retried = service.retry_parse(
+        upload.upload_session_id, tenant_id="local-default",
+        expected_job_version=1, expected_lease_version=0,
+    )
+    assert retried.video_parse_task_id == task_id and retried.version == 1
+    assert retried.status == ("INDEXING" if index_only else "PARSING")
+    runtime = retried.detail[RUNTIME_DETAIL_KEY]
+    summary = runtime["summarize"]
+    assert summary["status"] == ("PENDING" if index_only else "CANCELLED")
+    assert summary["lease_version"] == lease.lease_version + 1
+    assert summary["lease_owner"] is None and summary["lease_expire_time_ms"] is None
+    assert runtime["prefix"] == prefix
+    assert not persistence.heartbeat_summary(lease, lease_duration=timedelta(minutes=5), now=now)
+    replacement = persistence.claim_next_summary("replacement", lease_duration=timedelta(minutes=5), now=now)
+    if index_only:
+        assert replacement is not None and replacement.lease_version > lease.lease_version
+        assert replacement.video_parse_task_id == task_id
+    else:
+        assert replacement is None
+
+
 @pytest.mark.parametrize("parent_state", ["PARSING_FAILED", "INDEXING_FAILED"])
 def test_parse_retry_preserves_snapshot_after_yaml_changes(
     prepared_v2_retry, tmp_path, monkeypatch, parent_state,

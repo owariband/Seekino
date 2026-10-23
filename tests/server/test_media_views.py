@@ -27,6 +27,7 @@ from server.schema import (
 )
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
+from server.utils.media import decode_keyframe_image_id
 
 
 def media_fixture(tmp_path, *, playable=True):
@@ -90,6 +91,24 @@ def test_media_requires_workspace_and_rejects_unmanaged_sources(tmp_path):
     assert client.get("/api/videos/content", params={"videoId": state.video_id}).status_code == 422
     state.original_source_uri = source.as_uri()
     assert service.playback_view(state.video_id, tenant_id="workspace", video=state).status == "FAILED"
+
+
+def test_recommended_cover_keeps_existing_keyframes_and_falls_back_when_missing(tmp_path):
+    service, client, _source, frame, state, _probe = media_fixture(tmp_path)
+    old_image = service.thumbnail_view(state.video_id, tenant_id="workspace")
+    cover = frame.with_name("cover.png")
+    cover.write_bytes(b"\x89PNG\r\n\x1a\nrecommended-cover")
+    state.cover_uri = service._artifact_store.uri_for_path(cover)
+    image = service.thumbnail_view(state.video_id, tenant_id="workspace")
+    assert decode_keyframe_image_id(image.image_id) == ("video_cover", state.video_id, 0)
+    assert client.get(image.url).content == cover.read_bytes()
+    assert client.get(old_image.url).content == frame.read_bytes()
+    assert client.get(image.url.replace("tenantId=workspace", "tenantId=other")).status_code == 404
+    cover.unlink()
+    assert client.get(image.url).status_code == 410
+    assert service.thumbnail_view(state.video_id, tenant_id="workspace") == old_image
+    state.cover_uri = "file:///private/cover.png"
+    assert service.thumbnail_view(state.video_id, tenant_id="workspace") == old_image
 
 
 def test_series_image_upload_reads_actual_bytes_and_enforces_series_scope(tmp_path):

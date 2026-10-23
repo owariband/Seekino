@@ -33,10 +33,8 @@ function Frame({ src, positionSeconds, poster, className, eager = false }: Playb
     let disposed = false;
     let target: number | null = null;
     const fail = () => { if (!disposed) { setReady(false); setFailed(true); } };
-    const timeout = window.setTimeout(fail, 12_000);
     const reveal = () => {
       if (disposed || target === null || media.seeking || media.readyState < 2 || Math.abs(media.currentTime - target) > 0.15) return;
-      window.clearTimeout(timeout);
       setReady(true);
     };
     const seek = () => {
@@ -53,7 +51,6 @@ function Frame({ src, positionSeconds, poster, className, eager = false }: Playb
     media.load();
     return () => {
       disposed = true;
-      window.clearTimeout(timeout);
       media.removeEventListener("loadedmetadata", seek);
       media.removeEventListener("loadeddata", reveal);
       media.removeEventListener("seeked", reveal);
@@ -66,7 +63,7 @@ function Frame({ src, positionSeconds, poster, className, eager = false }: Playb
 
   return <span ref={wrapperRef} className={className}>
     {poster ? <img key={poster} src={poster} alt="" style={{ ...imageStyle, visibility: ready ? "hidden" : "visible" }} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
-    {active && src && !failed ? <video ref={videoRef} muted playsInline preload="metadata" aria-hidden="true" tabIndex={-1}
+    {active && src && !failed ? <video ref={videoRef} muted playsInline preload={eager ? "auto" : "metadata"} aria-hidden="true" tabIndex={-1}
       style={{ ...imageStyle, visibility: ready ? "visible" : "hidden", opacity: ready ? 1 : 0 }} /> : null}
   </span>;
 }

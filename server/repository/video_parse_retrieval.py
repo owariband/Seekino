@@ -14,6 +14,8 @@ from ..model.dto.jobDTO import (
     SeriesData,
     VideoChunkData,
     VideoData,
+    VideoParseRetrievalChunkData,
+    VideoParseRetrievalTaskData,
     VideoParseTaskData,
 )
 from ..model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
@@ -36,10 +38,17 @@ def list_series_videos(session: Session, *, series_ids: Sequence[str]) -> list[V
     ).order_by(Video.episode_order, Video.id))]
 
 
-def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[VideoParseTaskData]:
-    return [task_store.task_data(row) for row in session.scalars(select(VideoParseTask).where(
+def list_video_tasks(session: Session, *, video_ids: Sequence[str]) -> list[VideoParseRetrievalTaskData]:
+    rows = session.execute(select(
+        VideoParseTask.id, VideoParseTask.video_id, VideoParseTask.status,
+        VideoParseTask.parse_config, VideoParseTask.chunk_count,
+    ).where(
         VideoParseTask.video_id.in_(video_ids), VideoParseTask.is_deleted.is_(False),
-    ).order_by(VideoParseTask.video_id, VideoParseTask.version.desc(), VideoParseTask.id.desc()))]
+    ).order_by(VideoParseTask.video_id, VideoParseTask.version.desc(), VideoParseTask.id.desc()))
+    return [VideoParseRetrievalTaskData(
+        id=row.id, video_id=row.video_id, status=row.status,
+        parse_config=deepcopy(row.parse_config), chunk_count=row.chunk_count,
+    ) for row in rows]
 
 
 def list_tasks(session: Session, *, task_ids: Sequence[str]) -> list[VideoParseTaskData]:
@@ -50,16 +59,19 @@ def list_tasks(session: Session, *, task_ids: Sequence[str]) -> list[VideoParseT
 
 def list_indexed_chunk_rows(
     session: Session, *, task_ids: Sequence[str], phase: int, status: str,
-) -> list[tuple[ChunkParseTaskData, VideoChunkData, ChunkParseContentData]]:
-    rows = session.execute(select(ChunkParseTask, VideoChunk, ChunkParseContent).join(
+) -> list[VideoParseRetrievalChunkData]:
+    rows = session.execute(select(
+        ChunkParseTask.video_task_id, VideoChunk.video_id, VideoChunk.sequence_no,
+    ).select_from(ChunkParseTask).join(
         VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
     ).join(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id).where(
         ChunkParseTask.video_task_id.in_(task_ids), ChunkParseTask.phase == phase,
         ChunkParseTask.status == status,
         ChunkParseTask.indexed_content_version == ChunkParseContent.version,
     ).order_by(ChunkParseTask.video_task_id, VideoChunk.sequence_no))
-    return [(chunk_store.task_data(child), chunk_store.video_chunk_data(chunk),
-             chunk_store.content_data(content)) for child, chunk, content in rows]
+    return [VideoParseRetrievalChunkData(
+        video_task_id=row.video_task_id, video_id=row.video_id, sequence_no=row.sequence_no,
+    ) for row in rows]
 
 
 def load_task_chunk_rows(

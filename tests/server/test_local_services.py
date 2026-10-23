@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,15 +26,22 @@ def _model_config(
     *selected_sources,
     fallback_enabled: bool = False,
 ) -> SimpleNamespace:
+    fallback = SimpleNamespace(
+        enabled=fallback_enabled,
+        deepseek=SimpleNamespace(api_key_env="PARSE_DEEPSEEK_API_KEY"),
+    )
     return SimpleNamespace(
         stage_source=lambda _stage: ArkModelSourceConfig(),
         selected_agent_sources=lambda: selected_sources,
-        video_parser=SimpleNamespace(
-            fallback=SimpleNamespace(
-                enabled=fallback_enabled,
-                deepseek=SimpleNamespace(api_key_env="PARSE_DEEPSEEK_API_KEY"),
-            ),
+        normalized_models={ref: SimpleNamespace(
+            source="ark", fallback=SimpleNamespace(source="deepseek", fallback=None)
+            if ref == "vision" else None,
+        ) for ref in ("transcription", "vision", "embedding", "rerank")},
+        source=lambda name: ArkModelSourceConfig() if name == "ark" else OpenAIModelSourceConfig(
+            provider="deepseek", profile="deepseek", base_url="https://api.deepseek.com",
+            api_key_env=fallback.deepseek.api_key_env,
         ),
+        video_parser=SimpleNamespace(fallback=fallback),
         model_dump=lambda mode: {
             "model_sources": [source.model_dump() for source in selected_sources],
             "agent_runtime": {},
@@ -355,6 +364,7 @@ def test_start_local_cli_providers_reach_launch_without_agent_api_key(
     )
     monkeypatch.setattr(local_services, "listening", lambda _port: False)
     monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
+    monkeypatch.setattr(local_services, "refresh_applications", lambda: None)
     monkeypatch.setattr(local_services, "launch", stop_at_launch)
 
     with pytest.raises(LaunchReached):
@@ -551,3 +561,233 @@ def test_local_mysql_missing_database_closes_admin_and_application_engines(
     assert events.count("application closed") == 1
     assert events.index("admin closed") < events.index("application closed")
     assert ("schema" in events) is (failure != "admin")
+
+
+@pytest.fixture
+def main_worktree(tmp_path):
+    root = tmp_path / "main checkout"
+    subprocess.run(["git", "init", "-b", "main", str(root)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "core.hooksPath=/dev/null",
+         "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "--allow-empty", "-m", "initial"],
+        check=True, capture_output=True,
+    )
+    return root
+
+
+@pytest.mark.parametrize("arguments", [[], ["start"], ["status"]])
+def test_shell_routes_to_main_before_loading_environment(main_worktree, tmp_path, arguments):
+    root = main_worktree
+    launcher = Path(local_services.__file__).resolve().parent.parent / "start.sh"
+    (root / "start.sh").write_bytes(launcher.read_bytes())
+    subprocess.run(["git", "-C", str(root), "add", "start.sh"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "core.hooksPath=/dev/null",
+         "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-m", "launcher"],
+        check=True, capture_output=True,
+    )
+    other = tmp_path / "experiment checkout"
+    subprocess.run(
+        ["git", "-C", str(root), "worktree", "add", "--detach", str(other)],
+        check=True, capture_output=True,
+    )
+    (root / ".env.local").write_text("LAUNCH_SOURCE=main\n", encoding="utf-8")
+    (other / ".env.local").write_text("LAUNCH_SOURCE=experiment\n", encoding="utf-8")
+    (root / ".venv/bin").mkdir(parents=True)
+    (root / ".venv/bin/python").symlink_to(sys.executable)
+    (root / "scripts").mkdir()
+    (root / "scripts/local_services.py").write_text(
+        "from pathlib import Path\n"
+        "assert Path('.env.local').read_text() == 'LAUNCH_SOURCE=main\\n'\n"
+        "print('LAUNCH_SOURCE')\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\nfrom pathlib import Path\n"
+        "Path(os.environ['LAUNCH_RECORD']).write_text(json.dumps({"
+        "'cwd': str(Path.cwd()), 'args': sys.argv[1:], "
+        "'inherited': os.environ.get('LAUNCH_SOURCE'), "
+        "'dotenv': Path(sys.argv[sys.argv.index('--env-file') + 1]).read_text()}))\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    record = tmp_path / "launch.json"
+    result = subprocess.run(
+        ["bash", str(other / "start.sh"), *arguments], cwd=other,
+        env={**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+             "LAUNCH_SOURCE": "inherited", "LAUNCH_RECORD": str(record)},
+        capture_output=True, text=True, check=True,
+    )
+
+    assert "[main]" in result.stdout
+    assert json.loads(record.read_text()) == {
+        "cwd": str(root.resolve()),
+        "args": ["run", "--no-sync", "--env-file", ".env.local", "python",
+                 "scripts/local_services.py", *arguments],
+        "inherited": None, "dotenv": "LAUNCH_SOURCE=main\n",
+    }
+    assert not (other / ".venv").exists()
+
+
+def test_shell_rejects_missing_main_checkout_before_uv(main_worktree, tmp_path, monkeypatch):
+    root = main_worktree
+    launcher = Path(local_services.__file__).resolve().parent.parent / "start.sh"
+    (root / "start.sh").write_bytes(launcher.read_bytes())
+    subprocess.run(["git", "-C", str(root), "switch", "-c", "experiment"], check=True,
+                   capture_output=True)
+    uv = tmp_path / "uv"
+    uv.write_text("#!/bin/sh\necho unexpected-uv-call >&2\nexit 99\n", encoding="utf-8")
+    uv.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    result = subprocess.run(["bash", str(root / "start.sh")], cwd=tmp_path,
+                            capture_output=True, text=True)
+
+    assert result.returncode == 1
+    assert "未找到已检出 main" in result.stderr
+    assert "unexpected-uv-call" not in result.stderr
+    assert not (root / ".venv").exists()
+
+
+@pytest.mark.parametrize("checkout", [["switch", "-c", "experiment"], ["checkout", "--detach"]])
+def test_direct_entry_rejects_non_main_before_creating_state(monkeypatch, main_worktree, checkout):
+    root = main_worktree
+    monkeypatch.setattr(local_services, "ROOT", root)
+    state = root / "state"
+    monkeypatch.setattr(local_services, "STATE", state)
+    monkeypatch.setattr(sys, "argv", ["local_services.py", "start"])
+    local_services.require_main_worktree()
+    subprocess.run(["git", "-C", str(root), *checkout], check=True, capture_output=True)
+
+    with pytest.raises(RuntimeError, match="只允许 main"):
+        local_services.main()
+    assert not state.exists()
+
+
+@pytest.mark.parametrize(("name", "directory"), [("api", "server"), ("web", "web")])
+def test_source_digest_tracks_working_files_and_ignores_generated_files(
+    monkeypatch, main_worktree, name, directory,
+):
+    root = main_worktree
+    monkeypatch.setattr(local_services, "ROOT", root)
+    source_dir = root / directory
+    source_dir.mkdir()
+    tracked = source_dir / "source.py"
+    tracked.write_text("first\n", encoding="utf-8")
+    (root / ".gitignore").write_text("__pycache__/\nnode_modules/\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", directory, ".gitignore"], check=True)
+    first = local_services.source_digest(name)
+    tracked.write_text("edited without commit\n", encoding="utf-8")
+    edited = local_services.source_digest(name)
+    (source_dir / "new.py").write_text("untracked\n", encoding="utf-8")
+    added = local_services.source_digest(name)
+    tracked.unlink()
+    deleted = local_services.source_digest(name)
+
+    assert len({first, edited, added, deleted}) == 4
+    for directory_name in ("__pycache__", "node_modules"):
+        generated = source_dir / directory_name
+        generated.mkdir()
+        (generated / "generated.py").write_text("ignored\n", encoding="utf-8")
+    assert local_services.source_digest(name) == deleted
+
+
+@pytest.mark.parametrize("name", ["api", "web"])
+def test_launch_records_current_source(monkeypatch, tmp_path, name):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    monkeypatch.setattr(local_services, "STATE", state)
+    monkeypatch.setattr(local_services, "CHILDREN", {})
+    monkeypatch.setattr(local_services, "config_digest", lambda: "config")
+    monkeypatch.setattr(local_services, "source_digest", lambda service: f"{service}-source")
+    monkeypatch.setattr(local_services, "signature", lambda _pid: "started now")
+    monkeypatch.setattr(local_services.subprocess, "Popen", lambda *_args, **_kwargs: SimpleNamespace(pid=123))
+
+    local_services.launch(name, ["unused"], cwd=tmp_path)
+
+    assert json.loads((state / f"{name}.pid.json").read_text()) == {
+        "pid": 123, "signature": "started now", "config": "config",
+        "source_root": str(tmp_path), "source_digest": f"{name}-source",
+    }
+
+
+@pytest.mark.parametrize(("pid", "listeners", "returncode", "expected"), [
+    (None, "123\n", 0, False), (123, "123\n", 0, True),
+    (123, "124\n", 0, False), (123, "123\n124\n", 0, False),
+    (123, "", 1, False),
+])
+def test_owned_listener_requires_exact_managed_pid(monkeypatch, pid, listeners, returncode, expected):
+    monkeypatch.setattr(local_services, "owned_pid", lambda _name: pid)
+    calls = []
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=listeners, returncode=returncode)
+
+    monkeypatch.setattr(local_services.subprocess, "run", run)
+
+    assert local_services.owned_listener("api", 9621) is expected
+    assert calls == ([] if pid is None else [
+        ["lsof", "-nP", "-t", "-iTCP:9621", "-sTCP:LISTEN"]
+    ])
+
+
+@pytest.mark.parametrize("name", ["api", "web"])
+@pytest.mark.parametrize("change", [None, "legacy", "source_root", "source_digest", "config"])
+def test_refresh_only_stale_managed_applications(monkeypatch, tmp_path, name, change):
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setattr(local_services, "listening", lambda _port: True)
+    monkeypatch.setattr(local_services, "owned_listener", lambda _name, _port: True)
+    monkeypatch.setattr(local_services, "owned_pid", lambda _name: 123)
+    monkeypatch.setattr(local_services, "config_digest", lambda: "current-config")
+    monkeypatch.setattr(local_services, "source_digest", lambda _name: "current-source")
+    stopped = []
+    monkeypatch.setattr(local_services, "stop", lambda names: stopped.append(names))
+    for service in ("api", "web"):
+        record = {"config": "current-config", "source_root": str(tmp_path),
+                  "source_digest": "current-source"}
+        if service == name and change == "legacy":
+            record = {"config": "current-config"}
+        elif service == name and change:
+            record[change] = "outdated"
+        (tmp_path / f"{service}.pid.json").write_text(json.dumps(record), encoding="utf-8")
+
+    local_services.refresh_applications()
+
+    assert stopped == ([(name,)] if change else [])
+
+
+@pytest.mark.parametrize("unknown", ["api", "web"])
+def test_refresh_rejects_any_unknown_listener_before_stopping(monkeypatch, tmp_path, unknown):
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setattr(local_services, "listening", lambda _port: True)
+    monkeypatch.setattr(local_services, "owned_listener", lambda name, _port: name != unknown)
+    monkeypatch.setattr(local_services, "config_digest", lambda: pytest.fail("must preflight both ports"))
+    monkeypatch.setattr(local_services, "stop", lambda *_args: pytest.fail("must not stop any service"))
+
+    with pytest.raises(RuntimeError, match=f"{unknown} 端口 .*非本启动器"):
+        local_services.refresh_applications()
+
+
+def test_stop_does_not_signal_reused_pid(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    (tmp_path / "api.pid.json").write_text(json.dumps({"pid": 123, "signature": "old"}))
+    monkeypatch.setattr(local_services, "signature", lambda _pid: "new process")
+    monkeypatch.setattr(local_services.os, "killpg", lambda *_args: pytest.fail("must not signal reused PID"))
+
+    local_services.stop(("api",))
+
+    assert (tmp_path / "api.pid.json").exists()

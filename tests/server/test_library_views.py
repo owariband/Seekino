@@ -23,7 +23,7 @@ from server.repository.identity import default_public_nickname
 from server.repository.library import LibraryRepository, VideoEpisodeOrderConflictError
 from server.model.video import VideoIndexStatus
 from server.repository.upload import UploadRepository
-from server.service.library import LibraryService
+from server.service.library import LibraryService, update_video_episode_order_in_session
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
 from server.utils.time import now_unix_time_ms, now_utc, timedelta_to_ms
@@ -124,6 +124,8 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert detail["videos"][0]["playbackStatus"] == "READY"
     assert detail["videos"][0]["latestJobId"] is None
     assert detail["videos"][0]["thumbnail"] is None
+    assert detail["videos"][0]["displayName"] is None
+    assert detail["videos"][0]["description"] is None
     assert detail["cover"] is None
     for internal_field in ("originalSourceURI", "originalSourceUri", "contentHash", "inferenceProxyURI", "keyframeURIs"):
         assert internal_field not in detail["videos"][0]
@@ -133,6 +135,51 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert missing.playback_status == "MISSING"
     assert missing.playback_url is None
     assert missing.last_error.code == "MEDIA_MISSING"
+
+
+def test_video_metadata_and_episode_order_share_transaction(repository, parsed_video, tmp_path):
+    factory, videos, library = _library(repository)
+    report = parsed_video
+    repo = LibraryRepository(factory)
+    original = library.get_video(report.video_id, tenant_id="local-default")
+
+    with pytest.raises(RuntimeError, match="abort publication"):
+        with factory.begin() as session:
+            update_video_episode_order_in_session(
+                repo, session, video_id=report.video_id, tenant_id="local-default",
+                episode_order=original.episode_order + 1, now=now_utc(),
+            )
+            repo.update_video_metadata(
+                report.video_id, session=session, display_name="本集标题",
+                description="本集简介", cover_uri="artifact://video/cover.png",
+            )
+            raise RuntimeError("abort publication")
+    unchanged = library.get_video(report.video_id, tenant_id="local-default")
+    assert unchanged.episode_order == original.episode_order
+    assert unchanged.display_name is None and unchanged.cover_uri is None
+
+    with factory.begin() as session:
+        update_video_episode_order_in_session(
+            repo, session, video_id=report.video_id, tenant_id="local-default",
+            episode_order=original.episode_order + 1, now=now_utc(),
+        )
+        repo.update_video_metadata(
+            report.video_id, session=session, display_name="本集标题",
+            description="本集简介", cover_uri="artifact://video/cover.png",
+        )
+        repo.update_video_metadata(
+            report.video_id, session=session, display_name=None,
+            description="更新后的简介", cover_uri=None,
+        )
+    result = library.get_video(report.video_id, tenant_id="local-default")
+    assert result.episode_order == result.upload_sequence == original.episode_order + 1
+    assert result.display_name == "本集标题"
+    assert result.description == "更新后的简介"
+    assert result.cover_uri == "artifact://video/cover.png"
+    media = MediaService(library, LocalArtifactStore(tmp_path / "metadata", environment="test"))
+    public = library_api.project_video(result, media, access="public").model_dump(by_alias=True)
+    assert public["displayName"] == result.display_name and public["description"] == result.description
+    assert "coverUri" not in public
 
 
 def test_v2_library_status_uses_latest_video_parse_task(repository, parsed_video):

@@ -362,6 +362,8 @@ class ContextWindowController:
 def measure_context(
     messages: list[OpenAIMessage],
     contract: object,
+    *,
+    estimate_media_tokens: bool = True,
 ) -> ContextWindowMeasurement:
     payload = {"messages": messages, "contract": contract}
     projected, image_count = _media_budget_projection(payload)
@@ -374,7 +376,8 @@ def measure_context(
     byte_count = len(rendered.encode("utf-8"))
     return ContextWindowMeasurement(
         characters=len(rendered),
-        estimated_tokens=max(1, ceil(byte_count / _BYTES_PER_ESTIMATED_TOKEN)) + image_count * 2048,
+        estimated_tokens=max(1, ceil(byte_count / _BYTES_PER_ESTIMATED_TOKEN))
+        + (image_count * 2048 if estimate_media_tokens else 0),
     )
 
 
@@ -406,7 +409,9 @@ def preflight_context(
     if not label.strip():
         raise ValueError("context-window label must not be empty")
 
-    payload = measure_context(messages, contract)
+    # A generic per-image guess is not the provider's token count. It may guide
+    # compaction, but must not reject configured visual evidence before sending it.
+    payload = measure_context(messages, contract, estimate_media_tokens=False)
     measurement = replace(
         payload,
         estimated_tokens=payload.estimated_tokens + fixed_input_tokens,

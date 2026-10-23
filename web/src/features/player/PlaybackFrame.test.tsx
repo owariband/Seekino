@@ -49,6 +49,7 @@ describe("PlaybackFrame", () => {
 
     act(() => intersect(true));
     expect(view.container.querySelector("video")).toHaveAttribute("src", "/first.mp4");
+    expect(view.container.querySelector("video")).toHaveAttribute("preload", "metadata");
     expect(load).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalled();
   });
@@ -59,7 +60,7 @@ describe("PlaybackFrame", () => {
     const poster = view.container.querySelector("img")!;
     expect(media).not.toBeVisible();
     expect(poster).toBeVisible();
-    expect(media).toHaveAttribute("preload", "metadata");
+    expect(media).toHaveAttribute("preload", "auto");
     expect(media).toHaveAttribute("playsinline");
     expect(media.muted).toBe(true);
     expect(media.autoplay).toBe(false);
@@ -129,18 +130,21 @@ describe("PlaybackFrame", () => {
     expect(media).toBeVisible();
   });
 
-  it("abandons stalled loading after twelve seconds and allows a transparent fallback", () => {
+  it.each(["metadata", "frame"])("still displays the preview when %s takes longer than twelve seconds", (delayed) => {
     vi.useFakeTimers();
     const view = render(<PlaybackFrame src="/first.mp4" positionSeconds={3_000} eager />);
     const media = view.container.querySelector("video")!;
-    act(() => vi.advanceTimersByTime(12_000));
-    expect(view.container.querySelector("video")).toBeNull();
-    expect(view.container.querySelector("img")).toBeNull();
-    expect(media).not.toHaveAttribute("src");
-    expect(vi.getTimerCount()).toBe(0);
+    if (delayed === "frame") metadata(media);
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(view.container.querySelector("video")).toBe(media);
+    expect(media).toHaveAttribute("src", "/first.mp4");
+    expect(media).not.toBeVisible();
+    if (delayed === "metadata") metadata(media);
+    ready(media);
+    expect(media).toBeVisible();
   });
 
-  it("clears the timeout after success and releases media when unmounted", () => {
+  it("keeps the decoded frame and releases media when unmounted", () => {
     vi.useFakeTimers();
     const view = render(<PlaybackFrame src="/first.mp4" positionSeconds={3_000} eager />);
     const media = view.container.querySelector("video")!;

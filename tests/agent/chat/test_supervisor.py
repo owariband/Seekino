@@ -638,7 +638,7 @@ def test_supervisor_reads_source_evidence_and_owns_final_selection():
     model = FakeSupervisorModel(
         calls=("query_video", "read_retrieval_evidence", "submit_video_item"),
         arguments=({"query": "find the cup"}, {"video_chunk_id": "chunk-1"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20,
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02,
              "claim": "Supervisor checked the original text evidence."}),
         answer="Supervisor checked the evidence.",
     )
@@ -675,7 +675,7 @@ def test_successful_searches_accumulate_evidence_and_trace_while_failed_search_p
 
             assert "error" not in call("query_video", {"query": "first scene"})
             assert "error" not in call("submit_video_item", {
-                "video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19,
+                "video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
                 "claim": "Evidence retained across searches.",
             })
             assert "error" not in call("query_video", {"query": "second scene"})
@@ -689,7 +689,7 @@ def test_successful_searches_accumulate_evidence_and_trace_while_failed_search_p
             assert _read_report(available, "query-2") == previous_report
             assert _read_report(available, "query-3")["status"] == "failed"
             assert "error" not in call("submit_video_item", {
-                "video_chunk_id": "chunk-2", "start_seconds": 11, "end_seconds": 19,
+                "video_chunk_id": "chunk-2", "start_seconds": 0.011, "end_seconds": 0.019,
                 "claim": "Evidence retained across searches.",
             })
             handle_text("Both verified scenes remain available; the third search timed out.")
@@ -725,7 +725,7 @@ def test_repeated_chunk_keeps_first_canonical_evidence_and_rejects_conflicting_b
         arguments=(
             {"query": "first scene"}, {"query": "same scene with another query"},
             {"video_chunk_id": "chunk-1"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19,
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
              "claim": "Original verified source."},
         ),
     )
@@ -790,7 +790,7 @@ def test_supervisor_submits_adjacent_sources_retrieved_by_different_searches(anc
         calls=("query_video", "query_video", "submit_video_item"),
         arguments=(
             {"query": "first half"}, {"query": "second half"},
-            {"video_chunk_id": anchor, "start_seconds": 12, "end_seconds": 28,
+            {"video_chunk_id": anchor, "start_seconds": 0.012, "end_seconds": 0.028,
              "claim": "The same scene continues across independently retrieved chunks."},
         ),
     )
@@ -813,7 +813,7 @@ def test_supervisor_can_expand_or_narrow_the_child_range_inside_canonical_eviden
         calls=("query_video", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": start, "end_seconds": end,
+            {"video_chunk_id": "chunk-1", "start_seconds": start / 1000, "end_seconds": end / 1000,
              "claim": "Revised scope after Supervisor review."},
         ),
         answer="The final explanation is written by Supervisor.",
@@ -828,6 +828,44 @@ def test_supervisor_can_expand_or_narrow_the_child_range_inside_canonical_eviden
     assert (block.video_chunk_id, block.start_seconds, block.end_seconds) == ("chunk-1", start, end)
 
 
+@pytest.mark.parametrize("start,end,expected_ms", [
+    (50, 60, (50_000, 60_000)),
+    (54.6, 56, (54_600, 56_000)),
+    (8.008, 8.25, (8_008, 8_250)),
+])
+def test_submit_seconds_produce_correct_playback_milliseconds(start, end, expected_ms, caplog):
+    caplog.set_level("INFO", logger="agent.chat.common.tool")
+    hit = _hit()
+    hit.evidence.start_seconds, hit.evidence.end_seconds = 0, 60_000
+    hit.evidence.analysis_window_end_seconds = 60_000
+    hit.evidence.duration_seconds = 120_000
+    model = FakeSupervisorModel(
+        calls=("query_video", "submit_video_item"),
+        arguments=(
+            {"query": "find the line"},
+            {"video_chunk_id": "chunk-1", "start_seconds": start, "end_seconds": end,
+             "claim": "The verified line and its reply."},
+        ),
+    )
+    result = _runtime(model, video=FakeVideoRuntime(retrieval=Retrieval([hit]))).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+
+    receipt = model.tool_results[-1]
+    assert receipt["accepted"] is True
+    assert (receipt["start_seconds"], receipt["end_seconds"]) == (start, end)
+    block = next(block for block in result.render_blocks if block["type"] == "video")
+    assert (block["startSeconds"], block["endSeconds"]) == expected_ms
+    evidence = result.video_result.hits[0].evidence
+    assert (evidence.start_seconds, evidence.end_seconds) == (0, 60_000)
+    submission_log = next(
+        record.message for record in caplog.records
+        if "event=agent_tool_started" in record.message and "tool=submit_video_item " in record.message
+    )
+    arguments = json.loads(submission_log.split("arguments_summary=", 1)[1])
+    assert (arguments["start_seconds"], arguments["end_seconds"]) == (start, end)
+
+
 @pytest.mark.parametrize("anchor", ["chunk-1", "chunk-2"])
 @pytest.mark.parametrize("revision", [None, "narrow", "remove"])
 def test_supervisor_submits_continuous_adjacent_chunks_and_keeps_original_sources(anchor, revision):
@@ -838,14 +876,14 @@ def test_supervisor_submits_continuous_adjacent_chunks_and_keeps_original_source
     calls = ["query_video", "submit_video_item"]
     arguments = [
         {"query": "find the cup"},
-        {"video_chunk_id": anchor, "start_seconds": 12, "end_seconds": 28,
+        {"video_chunk_id": anchor, "start_seconds": 0.012, "end_seconds": 0.028,
          "claim": "The same dialogue continues across the boundary."},
     ]
     if revision == "narrow":
         calls.append("submit_video_item")
         start, end = (12, 18) if anchor == "chunk-1" else (22, 28)
-        arguments.append({"video_chunk_id": anchor, "start_seconds": start,
-                          "end_seconds": end, "claim": "Revised selection."})
+        arguments.append({"video_chunk_id": anchor, "start_seconds": start / 1000,
+                          "end_seconds": end / 1000, "claim": "Revised selection."})
     elif revision == "remove":
         calls.append("remove_video_item")
         arguments.append({"video_chunk_id": anchor})
@@ -894,8 +932,8 @@ def test_supervisor_rejects_unsupported_cross_chunk_range_without_losing_valid_i
         calls=("query_video", "submit_video_item", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18, "claim": "Valid."},
-            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 28, "claim": "Invalid."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.018, "claim": "Valid."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.028, "claim": "Invalid."},
         ),
     )
     result = _runtime(model, video=FakeVideoRuntime(retrieval=Retrieval([left, right]))).kick(
@@ -914,9 +952,9 @@ def test_supervisor_updates_submitted_ids_in_place_and_can_remove_them(remove_se
         + (("remove_video_item",) if remove_second else ()),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "First."},
-            {"video_chunk_id": "chunk-2", "start_seconds": 10, "end_seconds": 20, "claim": "Second."},
-            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18, "claim": "Updated."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "First."},
+            {"video_chunk_id": "chunk-2", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Second."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.018, "claim": "Updated."},
         ) + (({"video_chunk_id": "chunk-2"},) if remove_second else ()),
     )
     result = _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
@@ -937,9 +975,9 @@ def test_supervisor_streams_text_and_video_at_their_actual_submission_positions(
         calls=("query_video", "submit_video_item", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19,
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
              "claim": "First scene."},
-            {"video_chunk_id": "chunk-2", "start_seconds": 12, "end_seconds": 18,
+            {"video_chunk_id": "chunk-2", "start_seconds": 0.012, "end_seconds": 0.018,
              "claim": "Second scene."},
         ),
         text_before_calls={1: "Opening explanation.", 2: "Between the scenes."},
@@ -978,11 +1016,11 @@ def test_supervisor_live_card_revisions_and_removals_keep_the_text_positions():
                "submit_video_item", "remove_video_item", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "First."},
-            {"video_chunk_id": "chunk-2", "start_seconds": 10, "end_seconds": 20, "claim": "Second."},
-            {"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18, "claim": "Revised."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "First."},
+            {"video_chunk_id": "chunk-2", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Second."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.018, "claim": "Revised."},
             {"video_chunk_id": "chunk-1"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 13, "end_seconds": 17, "claim": "Reinserted."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.013, "end_seconds": 0.017, "claim": "Reinserted."},
         ),
         text_before_calls={2: "Between two cards."}, answer="End.",
     )
@@ -1050,7 +1088,7 @@ def test_mutating_public_snapshot_blocks_cannot_change_business_evidence_or_resu
         calls=("query_video", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19,
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
              "claim": "Verified evidence."},
         ),
         text_before_calls={0: "I will verify the scene."}, answer="The grounded explanation.",
@@ -1091,7 +1129,7 @@ def test_supervisor_rejects_oversize_text_before_publishing_or_replacing_the_val
         calls=("query_video", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Scene."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Scene."},
         ),
         text_before_calls={1: "A" * 10_001}, answer="B" * 10_000,
     )
@@ -1111,7 +1149,7 @@ def test_supervisor_sanitizes_streamed_web_links_and_appends_sources_after_cards
         calls=("search_web", "query_video", "submit_video_item"),
         arguments=(
             {"query": "context"}, {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Scene."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Scene."},
         ),
         text_before_calls={2: "[Source](https://example.org/source) and [unknown](https://unknown.invalid)."},
         answer="End.",
@@ -1130,20 +1168,24 @@ def test_supervisor_sanitizes_streamed_web_links_and_appends_sources_after_cards
 
 
 @pytest.mark.parametrize("arguments,code", [
-    ({"video_chunk_id": "unknown", "start_seconds": 10, "end_seconds": 20, "claim": "Wrong ID."}, "UNKNOWN_ITEM"),
-    ({"video_chunk_id": "chunk-1", "start_seconds": 9, "end_seconds": 20, "claim": "Outside."}, "INVALID_VIDEO_RANGE"),
-    ({"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 21, "claim": "Outside."}, "INVALID_VIDEO_RANGE"),
-    ({"video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 12, "claim": "Empty."}, "INVALID_ARGUMENTS"),
-    ({"video_chunk_id": "chunk-1", "start_seconds": 18, "end_seconds": 12, "claim": "Reversed."}, "INVALID_ARGUMENTS"),
-    ({"video_chunk_id": "chunk-1", "start_seconds": 10.5, "end_seconds": 20, "claim": "Fraction."}, "INVALID_ARGUMENTS"),
-    ({"video_chunk_id": "chunk-1", "start_seconds": True, "end_seconds": 20, "claim": "Boolean."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "unknown", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Wrong ID."}, "UNKNOWN_ITEM"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 0.009, "end_seconds": 0.02, "claim": "Outside."}, "INVALID_VIDEO_RANGE"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.021, "claim": "Outside."}, "INVALID_VIDEO_RANGE"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.012, "claim": "Empty."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 0.018, "end_seconds": 0.012, "claim": "Reversed."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": "0.01", "end_seconds": 0.02, "claim": "String."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": True, "end_seconds": 0.02, "claim": "Boolean."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": float("nan"), "end_seconds": 0.02, "claim": "NaN."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": float("inf"), "claim": "Infinity."}, "INVALID_ARGUMENTS"),
+    ({"video_chunk_id": "chunk-1", "start_seconds": 0.0101, "end_seconds": 0.0102, "claim": "Rounds to empty."}, "INVALID_VIDEO_RANGE"),
+    ({"video_chunk_id": "chunk-1", "claim": "Missing times."}, "INVALID_ARGUMENTS"),
 ])
 def test_invalid_supervisor_submission_is_feedback_and_does_not_replace_valid_selection(arguments, code):
     model = FakeSupervisorModel(
         calls=("query_video", "submit_video_item", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19, "claim": "Valid."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019, "claim": "Valid."},
             arguments,
         ),
     )
@@ -1157,8 +1199,8 @@ def test_invalid_supervisor_submission_is_feedback_and_does_not_replace_valid_se
 
 @pytest.mark.parametrize("name,arguments", [
     ("read_retrieval_evidence", {"video_chunk_id": "chunk-1"}),
-    ("submit_video_item", {"video_chunk_id": "chunk-1", "start_seconds": 10,
-                           "end_seconds": 20, "claim": "No handoff."}),
+    ("submit_video_item", {"video_chunk_id": "chunk-1", "start_seconds": 0.01,
+                           "end_seconds": 0.02, "claim": "No handoff."}),
 ])
 def test_supervisor_tools_before_retrieval_use_only_real_evidence(name, arguments):
     model = FakeSupervisorModel(calls=(name,), arguments=(arguments,))
@@ -1202,7 +1244,7 @@ def test_supervisor_can_remove_every_submitted_video_item():
         calls=("query_video", "submit_video_item", "remove_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Candidate."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Candidate."},
             {"video_chunk_id": "chunk-1"},
         ),
         answer="Supervisor decided that only a qualified text answer is supported.",
@@ -1226,7 +1268,7 @@ def test_cancelled_supervisor_cannot_deliver_its_submitted_video_selection():
         calls=("query_video", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Submitted."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Submitted."},
         ),
     )
     with pytest.raises(AgentModelInvocationError, match="cancelled"):
@@ -1241,7 +1283,7 @@ def test_supervisor_requires_its_own_nonempty_text_even_with_a_submitted_video()
         calls=("query_video", "submit_video_item"),
         arguments=(
             {"query": "find the cup"},
-            {"video_chunk_id": "chunk-1", "start_seconds": 10, "end_seconds": 20, "claim": "Submitted."},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.01, "end_seconds": 0.02, "claim": "Submitted."},
         ),
         answer="   ",
     )
@@ -1626,14 +1668,41 @@ def test_disabled_supervisor_total_timeout_preserves_cancellation():
         runtime.kick(_inputs(), load_video_context=lambda: [], cancellation=cancellation)
 
 
-def test_supervisor_ignores_call_limits_when_disabled():
+@pytest.mark.parametrize("max_tool_calls", [1, 24])
+def test_supervisor_ignores_call_limits_when_disabled(max_tool_calls):
     model = FakeSupervisorModel(calls=("query_video", "query_video"))
-    result = _runtime(model).kick(
+    video = FakeVideoRuntime(query=Query(searches_per_round=25))
+    result = _runtime(model, video=video).kick(
         _inputs(series_ids=["series"]), load_video_context=lambda: [],
-        max_model_calls_per_turn=1, max_tool_calls_per_turn=1,
+        max_model_calls_per_turn=1, max_tool_calls_per_turn=max_tool_calls,
     )
     assert result.content == "Direct answer."
     assert model.model_call_limits == [None]
+    assert video.query.budgets == [None, None]
+    assert len(video.retrieval.calls) == 50
+    assert all(receipt["reports"][0]["status"] == "reported" for receipt in model.tool_results)
+    for _, kwargs in video.calls:
+        assert kwargs["max_tool_calls_per_turn"] is None
+        assert kwargs["tool_budget"] is None
+
+
+def test_enabled_supervisor_and_child_queries_share_one_tool_budget():
+    model = FakeSupervisorModel(calls=("query_video", "query_video"))
+    video = FakeVideoRuntime()
+    _runtime(model, video=video, limits_enabled=True).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+        max_tool_calls_per_turn=3,
+    )
+
+    first_budget = video.calls[0][1]["tool_budget"]
+    assert first_budget is video.calls[1][1]["tool_budget"]
+    assert first_budget.maximum == 3
+    # Two parent delegations and two child retrieval attempts share the same allowance.
+    assert first_budget.used == 4
+    assert all(kwargs["max_tool_calls_per_turn"] == 3 for _, kwargs in video.calls)
+    assert len(video.retrieval.calls) == 1
+    assert model.tool_results[0]["reports"][0]["status"] == "reported"
+    assert model.tool_results[1]["reports"][0]["error"]["code"] == "VIDEO_LOOP_LIMIT_EXCEEDED"
 
 
 def test_supervisor_can_use_web_and_video_in_same_turn():
@@ -1768,8 +1837,8 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
     if tool_name == "query_video":
         responses.append(AIMessage(content="", tool_calls=[{
             "name": "submit_video_item", "id": "submit-video",
-            "args": {"video_chunk_id": "chunk-1", "start_seconds": 12,
-                     "end_seconds": 18, "claim": "Supervisor reviewed the original evidence."},
+            "args": {"video_chunk_id": "chunk-1", "start_seconds": 0.012,
+                     "end_seconds": 0.018, "claim": "Supervisor reviewed the original evidence."},
         }]))
     responses.extend([
         AIMessage(content="Current-video explanation from the verified evidence."),
@@ -2033,7 +2102,7 @@ def test_supervisor_direct_lookup_uses_atomic_tools_without_query_or_old_graph()
             }))
             assert "cup action" in json.dumps(evidence)
             available["submit_video_item"].invoke({
-                "video_chunk_id": "chunk-1", "start_seconds": 12, "end_seconds": 18,
+                "video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.018,
                 "claim": "Directly checked evidence.",
             })
             handle_text("Directly checked evidence.")
@@ -2101,8 +2170,8 @@ def test_query_batch_keeps_successful_evidence_when_another_stage_times_out():
             assert receipt["reports"][1]["status"] == "reported"
             identifier = receipt["reports"][1]["evidence_references"][0]
             available["submit_video_item"].invoke({
-                "video_chunk_id": identifier, "start_seconds": 10,
-                "end_seconds": 20, "claim": "The fast investigation supports this scene.",
+                "video_chunk_id": identifier, "start_seconds": 0.01,
+                "end_seconds": 0.02, "claim": "The fast investigation supports this scene.",
             })
             handle_text("The fast investigation is supported; the other question remains unresolved.")
 

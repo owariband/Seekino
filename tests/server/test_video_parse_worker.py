@@ -505,7 +505,8 @@ def test_visual_context_is_clamped_without_expanding_core_media(
     assert binding.media is None and binding.media_context is None
 
 
-def test_ocr_host_uses_agent_prompt_and_shared_engine_result(monkeypatch, tmp_path):
+@pytest.mark.parametrize("frame_timestamps", [(1000, 2000), (19_999,)])
+def test_ocr_host_uses_agent_prompt_and_shared_engine_result(monkeypatch, tmp_path, frame_timestamps):
     config = _parse_config()
     config["ocr_enabled"] = True
     config["models"]["ocr"] = dict(config["models"]["understanding"])
@@ -516,10 +517,12 @@ def test_ocr_host_uses_agent_prompt_and_shared_engine_result(monkeypatch, tmp_pa
         "chunk-task", "video-task", 0, 0, 20_000, 0, 20_000, inputs,
         LeaseToken("worker", 1, datetime.now(UTC) + timedelta(seconds=30)),
     )
+    frames = tuple((timestamp, tmp_path / f"frame-{index}.jpg")
+                   for index, timestamp in enumerate(frame_timestamps))
     media = PreparedVideoParseMedia(
         tmp_path / "prepared.mp4", tmp_path / "prepared.wav",
         ((1000, tmp_path / "frame-1.jpg"), (21_000, tmp_path / "context.jpg")),
-        ocr_frames=((1000, tmp_path / "frame-1.jpg"), (2000, tmp_path / "frame-2.jpg")),
+        ocr_frames=(*frames, (20_000, tmp_path / "outside-core.jpg")),
     )
     runtime = VideoParseRuntimeService(
         object(), object(), _ArtifactResolver(),
@@ -527,9 +530,11 @@ def test_ocr_host_uses_agent_prompt_and_shared_engine_result(monkeypatch, tmp_pa
         worker_id="worker", lease_duration=timedelta(seconds=30),
         heartbeat_interval=timedelta(seconds=5),
     )
-    expected = OCRResult.model_validate({"lines": [{
-        "start_seconds": 1000, "end_seconds": 2000, "text": "営業中", "language": "ja",
-    }]})
+    expected = OCRResult.model_validate({"lines": [
+        {"start_seconds": frame_timestamps[0], "end_seconds": frame_timestamps[-1] + 1,
+         "text": wording, "language": language}
+        for language, wording in (("ja", "営業中"), ("ja", "本当？"), ("zh-Hans", "真的吗？"))
+    ]})
 
     async def prepared_media(_self, loaded):
         assert loaded is execution
@@ -539,14 +544,20 @@ def test_ocr_host_uses_agent_prompt_and_shared_engine_result(monkeypatch, tmp_pa
         assert binding is inputs.parse_config.models.ocr
         assert schema_name == "video_parse_v2_ocr"
         assert result_type is OCRResult
-        assert [item.path for item in request_inputs[:-1]] == [
-            tmp_path / "frame-1.jpg", tmp_path / "frame-2.jpg",
-        ]
-        assert request_inputs[-1].text == (
-            "Read only visible non-dialogue on-screen text from the ordered frames. "
-            "Use absolute integer source-video milliseconds inside the authorized range. "
-            "Frame timestamps: [1000, 2000]."
-        )
+        assert len(request_inputs) == 2 * len(frames) + 1
+        for index, (timestamp, path) in enumerate(frames):
+            assert request_inputs[2 * index].text == (
+                f"The following frame is at absolute source-video timestamp {timestamp} ms."
+            )
+            assert request_inputs[2 * index + 1].path == path
+        prompt = request_inputs[-1].text
+        assert "dialogue subtitles and other on-screen text verbatim" in prompt
+        assert "Chinese and Japanese subtitles shown together" in prompt
+        assert "Do not translate, paraphrase, infer missing words" in prompt
+        assert "Merge identical text only across consecutive frames" in prompt
+        assert "matching frame timestamp plus 1 millisecond" in prompt
+        assert "only one frame" in prompt
+        assert f"Frame timestamps: {list(frame_timestamps)}." in prompt
         return expected
 
     monkeypatch.setattr(runtime, "_ensure_chunk_media", MethodType(prepared_media, runtime))
@@ -869,6 +880,70 @@ def test_consumer_async_tick_is_executable_in_isolation():
     """Keep the public async diagnostic surface explicit for event-loop callers."""
 
     assert asyncio.iscoroutinefunction(VideoParseConsumer.run_once)
+
+
+@pytest.mark.parametrize("summary_fails", [False, True])
+def test_summary_execution_does_not_block_indexing_or_stop_consumer(summary_fails):
+    class Queue:
+        index = None
+
+        def reap_expired(self):
+            return None
+
+        def claim_video(self, *args, **kwargs):
+            return None
+
+        claim_chunk = claim_video
+        claim_interval_refine = claim_video
+
+        def claim_chunk_index(self, *args, **kwargs):
+            result, self.index = self.index, None
+            return result
+
+    async def scenario():
+        queue = Queue()
+        started, indexed, cancelled, stop = (asyncio.Event() for _ in range(4))
+        summary_calls = 0
+
+        async def summarize():
+            nonlocal summary_calls
+            summary_calls += 1
+            started.set()
+            if summary_fails:
+                raise RuntimeError("summary unavailable")
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def index(_lease):
+            indexed.set()
+
+        consumer = VideoParseConsumer(
+            queue, VideoParseConsumerHandlers(
+                prepare=index, understand=index, refine=index, index=index, summarize=summarize,
+            ), worker_id="summary-worker", lease_duration=timedelta(seconds=5),
+            heartbeat_interval=timedelta(seconds=1), poll_interval=timedelta(milliseconds=10),
+            maintenance_interval=timedelta(seconds=5), video_concurrency=1,
+        )
+        consumer._run_chunk = index
+        running = asyncio.create_task(consumer.run_forever(stop))
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            queue.index = object()
+            await asyncio.wait_for(indexed.wait(), 1)
+            assert consumer.failure is None
+            if not summary_fails:
+                assert summary_calls == 1
+                assert len(consumer._summary_tasks) == 1
+        finally:
+            stop.set()
+            await asyncio.wait_for(running, 1)
+        if not summary_fails:
+            assert cancelled.is_set()
+        assert not consumer._summary_tasks
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("interval_duration_seconds", [20, 30], ids=["full-window", "short-window"])

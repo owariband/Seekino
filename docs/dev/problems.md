@@ -560,11 +560,30 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 ### C19：Chat Agent 误把表达反馈当台词检索，Query Router 需明确本轮任务再追加提示
 
-排序日期：2026-10-20。
+排序日期：2026-10-21。
 
-优先级：高。类型：多轮对话意图识别、Query 改写与回答目标偏移。状态：**已定位“问起来很笨很蠢”的具体行为，确定 Query Router 三字段方案与 append 模板；用户最新测试反馈“效果还挺好的”。** 当前正向结论属于改写提示的体验反馈；自动 Router 接入、识别准确率和多轮稳定性尚未在本项验收，故保留在 TODO。本次只维护问题记录，不修改运行代码。
+优先级：高。类型：多轮对话意图识别、Query 改写与回答目标偏移。状态：**`query_hook` 已接入 Chat；当前优先测试短对话效果，长对话上下文截断与 harness 对接暂缓。** 下方 2026-10-20 的 schema 与“待接入”描述保留为历史方案，当前实现以本次更新为准；分类准确率、回答效果与长对话稳定性仍待验收。
+
+#### 2026-10-21：沿用服务层近期消息，先验收短对话
+
+- **当前链路。** Supervisor 进入 harness 前执行一次 `query_hook`：Jev 判定 `respond / retrieve / mixed`；`retrieve / mixed` 再由纯文本 Qwen3-8B 填写 `retrieval_query`，`respond` 跳过 8B；代码将固定模板与候选词追加到模型输入。业务消息仍保留用户原文。当前不采用下方历史方案中的 `clarify / current_task` 输出。
+- **上下文现状。** Hook 使用服务层传入的已完成用户／助手消息，与 Supervisor harness 的内部上下文分开；当前配置最多取最近 **6 条消息（不是 6 轮）／合计 2000 字符**，边界消息按尾部字符截取。它没有消费 harness compact 的结果，也没有单独维护新的 context 表或摘要模型。
+- **本次决定。** 暂时沿用这条服务层链路，不迁移 pi／Codex hook，不实现长对话压缩，不修改现有截断逻辑；先让用户测试短对话。此次只更新问题记录，未修改运行代码或重启服务。
+- **截断影响。** 超过窗口后，Jev／8B 可能丢失指代对象、前文限定或用户刚纠正的意图。按字符截取还可能改变句意：此前离线边界复现中，`这不是动画中的角色台词。` 保留最后 9 字符变成 `动画中的角色台词。`；这是输入构造缺陷的复现，尚未据此测得真实 Jev 的误判率。短对话只要相关历史未超过上述限制，就不会触发这项历史裁剪；即便轮数少，单条长回答仍可能超限。
+
+待办（本阶段暂缓）：
+
+- [ ] 明确 Hook 长对话上下文的来源与预算：继续由服务层提供近期消息，或复用 harness 的有效上下文／摘要；届时再决定，不先增加第二套记忆存储。
+- [ ] 处理字符截断破坏语义的问题，优先评估保留连续完整消息；补测窗口边界、否定句、指代与意图切换，不通过补造历史弥补缺失。
+- [ ] 短对话效果稳定后，再比较长对话中裁剪前后的路由、填槽与最终回答；若接 harness，保证每个用户轮次只运行一次 Jev／8B，工具循环复用结果。
+
+当前短对话验收：使用用户原句依次测试“台词出处 → 评价助手表达 → 再次要求检索”，另开短会话测试独立回应与检索混合请求；不要手工添加 Router 提示。分别检查 Jev 动作、8B 候选词是否保留原句和约束、最终回答是否回应本轮诉求、工具调用是否符合需要，以及 Hook／整轮耗时。服务健康检查通过只说明可访问，不等于上述效果已验收。
+
+依据：[Hook 与历史截取](../../agent/chat/query_hook.py)、[当前分类规则与固定模板](../../agent/chat/query_hook_prompts.py)、[Supervisor 接入点](../../agent/chat/supervisor.py)、[默认配置](../../gateway/config.py)。
 
 #### 2026-10-20：最新进展与证据边界
+
+当时状态：**已定位“问起来很笨很蠢”的具体行为，确定 Query Router 三字段方案与 append 模板；用户最新测试反馈“效果还挺好的”。** 当前正向结论属于改写提示的体验反馈；自动 Router 接入、识别准确率和多轮稳定性尚未在本项验收，故保留在 TODO。本次只维护问题记录，不修改运行代码。
 
 - 用户在明确两轮完整改写示例后反馈最新效果较好，认可“保留原文 + 追加本轮任务解释”的方向。下方保存采用的 schema、具体输入和此前失败过程，便于后续继续测试。
 - 这次反馈没有附带可关联的新 Conversation／Message ID、完整模型回答或工具统计，不能补造最新成功样本的耗时、零工具次数或通过率，也不能写成“自动 Query Router 已上线”。
@@ -694,7 +713,106 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 排序日期：2026-10-19。
 
-优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-19 仍未闭环**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-19。
+优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
+
+#### 2026-10-22 后续：声纹预填最短时长调整为严格 >500ms（已实现，未部署）
+
+- 用户针对#12开头900ms立希短句仍为null，要求把时长条件放宽至严格大于500ms。开发副本仅将B0 ACCEPT最短时长改为501ms，并让NO_VOICE最短时长引用同一常量；现有整数毫秒与“低于最小值拒绝”的合同不变，500ms仍不自动预填，501ms起可通过时长条件。
+- 只改变候选分档／自动预填的时长条件；400ms编码最低时长、label_doubtful的1秒判断条件、独立参考数量、歌曲／重叠排除、gap描述性规则、CAM++及矩阵检测均不变。历史artifact继续使用其冻结参数，不重写v25结果。
+- 修改既有从默认参数到真实Refine Canvas预填的参数化回归，覆盖499/500/501/900/1000/1200ms以及短句参考不足／同cue参考。相关三组测试共311 passed（9.73s）。代码只在独立开发副本修改，运行中的v25副本仍为1秒规则；本轮未重启、未重解析、未修改数据库，重复台词问题另列未修。
+- 固定v25真实900ms立希句（top1椎名立希0.671305、32条独立参考）离线重放：原1000ms为NO_VOICE且Canvas姓名null；只换两个时长参数为501后，实际 `ParseContextCanvas.from_refine` 已预填椎名立希／voice_default。未重编码、未调用Refine，不能据此宣布新全集终态正确。
+- 变更与离线核对见[时长策略记录](../../outputs/verification/ep04-duration-policy-20261022/report.md)。
+
+#### 2026-10-22：单句画外发声提示与 v25 全集验收，两句固定目标均正确
+
+- **本轮仅一处生产修改：** 用户提出全局memory可能有助于身份判断，但明确只修改一处prompt并重跑。本轮替换Refine一条声纹身份规则：考虑“未见其人先闻其声”与画外发声，结合精确有效音频区间的程序声音证据和可靠上下文；单帧张口、可见人物、被提到的名字或未出现在采样帧中，均不能单独证明该句身份。保留ACCEPT并非身份认证、相似度并非概率的说明；没有新增memory、权限限制、算法或阈值。
+- **真实启动与终态：** 先用项目原生ES脚本恢复依赖，再由独立副本原样 `start.sh start` 启动MySQL／标准API／Web。EP04 v25 `dbf599bf-3d5c-4fce-abaa-3f2202f10684` 于北京时间10:28:54–11:06:05完成，37分11秒；Under 24/24、Refine 22/22、索引24/24。API9621 PID28802及依赖保持健康运行。相对v24的345运行Python文件只变prompts.py一处（+1/-1），既有framework 22 passed；ParseConfig和有效模型配置未变，Under／Refine仍gpt-6-luna/high。
+- **两句已知真值本轮2/2：** 爽世目标47.1–48.3秒：首次Under高松灯→B0爽世0.750163／ACCEPT→持久化Refine窗口0选择voice_top1→最终长崎爽世。爱音目标293.7–296.1秒：Under爽世→B0爱音0.830967／ACCEPT→窗口2、3、4均voice_top1→最终千早爱音。爽世句理由明确“无对该句的具体身份反证”，最终描述也说明画面可见灯不足以归人；不过description仍混入程序判定过程。爽世ASR字形为「咲希ちゃんも、悪くない。」：严格alias待复核另列，本轮按同视频SHA／时间／语义对应用户已确认台词，未改原真值，也不认证整个cue单人纯净或边界准确。
+- **既有工具链本轮正例：** 原ASR35.5–48.6秒为13.1秒长cue；宿主检测候选45–48秒，真实局部ASR回执查询35–50秒。Under保留35.5–46.5连续爱音一整条，单列47.1–48.3目标句与48.7–50回应；目标名字由后续B0／Refine纠正。这个上游结果不能归因于本次下游Refine提示，回执也不提供完整调用／写入顺序。
+- **全片仍有质量问题：** 终态368条DIALOGUE，286非空、82 null（22.28%；v24为58/359）。首次Under356条无同成员／范围／文本重复，终态比首次Under多12条，形成12组各两条的重复，每组至少一条null；Refine窗口18持久化提交产物已有这些重复，暂不能判断Agent写入还是Canvas组装造成。#12首句1201.7–1202.6秒重复且均null，B0立希top1但900ms不足1秒ACCEPT，不能宣称本轮#12已正确形成完整立希→爱音。原始条目数及null比例受重复影响，不等于准确率。
+- **归因稳定性仅作描述：** 247条B0 ACCEPT中243终态仍top1、2为null、2因同范围同文本重复而无法唯一关联（1193.0–1194.2、1211.8–1214.3秒各一具名、一null）。可唯一关联的245条没有改成其他具名人物。392条持久化必审收据对应142条B0行，其中137条多次写入、2条后窗标签变化（587.2–588.3灯→null；613.3–614.9null→灯）。这不是全片错误率，也不覆盖全部模型尝试。
+- **证据与边界：** 24份首次Under均在任何Refine落库前保存；没有本轮实际post-prefill Canvas输入，不能把B0 ACCEPT加规则推导写成已观察到预填。345源码、3控制脚本与配置全程不变，其他18任务／13视频未变。两轮重建ASR／Under／参考池，1/2→2/2符合提示意图，但不是冻结输入单因素因果证明，也不能决定是否需要全局memory。未提交／推送／合并PR，未执行迁移，未触碰主MyGO系列；主工作区其他生产改动未纳入。
+- 证据：[本轮报告](../../outputs/verification/ep04-offscreen-rerun-20261022/report.md)、[单句patch](../../outputs/verification/ep04-offscreen-rerun-20261022/prompt.patch)、[首次Understanding](../../outputs/verification/ep04-offscreen-rerun-20261022/understanding-audit.md)、[终态归因](../../outputs/verification/ep04-offscreen-rerun-20261022/attribution-audit.json)、[执行边界](../../outputs/verification/ep04-offscreen-rerun-20261022/execution-integrity.json)、[懒启动日志](../../outputs/verification/ep04-offscreen-rerun-20261022/lazy-start.log)。
+
+#### 2026-10-21：v24 全集完成，同人合并前检查与最终归因仍未闭环
+
+- **交付与终态：** 连续话轮提示已部署，标准API重跑EP04 v24 `40276e86-e076-4547-9b39-6cf71c5f2bc4`，Understanding 24/24、Refine 22/22、索引24/24 COMPLETE，38分13秒。API9621为PID32185，继续运行；未提交／推送／合并PR，未迁移。最终提示要求同人连续发言不按标点／语气碎切，合并前检查完整拟合并范围，候选需完整上下文复核；保留Canvas编辑权限，没有新增程序门禁。
+- **来源已核验：** v23保留为新旧consumer混源诊断，不用于纯新版验收。v24启动前确认旧API、启动器及已记录子进程退出；24份实际Under输入全部含D23最终5段完整指令，输入／输出→提交→持久化链齐，19份租约样本仅32185。终态345运行源码／3冻结观察脚本及配置未变，其他18条任务、13个视频未变；phone API未动。这些来源检查不等于人物准确性验收。
+- **同人合并仍未达标：** 35–49秒原ASR已是35.4–37.8、38.6–44.6、45.3–47.0、47.4–48.8四条，Under全部原范围保留并标爱音，没有显式检测／重ASR。前3条连续爱音未合并；爽世目标短cue由原ASR产生，不能算Under成功拆分。全片两处措辞合并（288.7–292.7、1143.3–1150.8）都没有完整合并范围检测；另有381.7–385.1仅扩时覆盖另一cue但未包含其全部措辞，单列。三者均不能认证检查通过，逐cue预扫不能替代合并后检查。
+- **固定两句仍1/2：** 47.4–48.8秒爽世句：Under爱音→B0爽世0.736442／ACCEPT→真实输入已预填爽世→Refine窗口0以keep／visible_speaking改回爱音并成功提交。理由称48.1秒爱音张口与字幕相符，这是Agent声称的视觉证据，没有独立口型对齐验证。293.7–295.7秒爱音句：Under null→B0爱音0.795080／ACCEPT→实际预填与终态均爱音。前者ASR字形为「さきちゃんも、悪くない。」导致严格alias待复核，另已按同视频SHA、时间与语义人工对应；不能用字形漂移掩盖已知错误，也不认证整个cue绝对单人。两句最终description还混入候选判定过程。
+- **工具正例与限制：** 373/373原ASR有效唯一区间有宿主回执，显式analyze 4次、transcribe 12次。#11同人语气变化候选经整段重ASR后仍保留一条爱音，没有机械按返回4行拆开；超出用户已确认范围的两侧端点未认证。#12终态立希→爱音→爱音，但原ASR已分3条、Under未显式复核，不能称Under主动发现换人，也未合并后2条爱音。
+- **覆盖不等于正确：** 最终359条DIALOGUE，301非空、58 null；249 ACCEPT终态246仍top1、2 null、1改其他具名人物，最后1条正是爽世错误。31次Refine观测22次成功提交、9次并发冲突后重试；399条必审记录精确关联137条cue，其中134条多写、3条后窗变标签，共4次转换。这是必审子集；爽世仅1个窗口，预填被改错不计入后窗变化。没有全片人工真值，不能宣布整体错误率或稳定性改善。
+- **改动与测试：** 本次新增仅prompt与对应framework断言（2文件+13/-3），另更新B12与TRD；此前EP04工具／预填整合单列。最终framework 22 passed；首次扩展1645 passed／9 failed，9项已在原样322db8e复现同样默认配置预期差异，未弱化断言。检测规则、CAM++、1s／400ms、无VAD及B0参数不变。B0编码前准入、Refine归因只读仍未实现；当前程序确实允许覆盖正确预填。
+- 证据：[v24完整验收](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v24/report.md)、[工具审计](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v24/tool-workflow-audit.md)、[实际归因链](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v24/attribution-summary.md)、[重点范围清单](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v24/focus-range-audit.md)、[最终提示patch](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v24/continuous-turn-final.patch)、[执行边界](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v24/execution-integrity.json)。完整重跑会重新生成ASR、Under和参考池，即使模型配置相同也不是冻结输入单因素对照。
+
+#### 2026-10-21：v23 确认新旧进程共同执行，不能用于新版提示的全片验收
+
+- 针对v22已有局部两匿名组却保留长cue的真实反例，补充先建立话轮再命名、原已混cue同样复核、局部转写截断时扩大到完整上下文、图片不能否定画外发声；换人有依据但名字未知时拆开且保留null。未要求机械按ASR分组切碎，不增加Canvas硬门禁。
+- 独立部署副本 `outputs/worktrees/ep04-continuous-turn-20261021-v23` 相对v22的345个运行源码文件仅 `agent/video_parse_v2/prompts.py` 不同；模型配置逐字节相同，检测／B0参数未动，既有framework回归22 passed。v22源码和证据保留不动。
+- v22终态后启动API9621 PID7107，标准完整重解析创建v23 `d3d08d2a-025a-43e7-8891-82421af693eb`。随后确认旧70280收到SIGTERM后仍在等待连接退出，端口释放但consumer继续领取v23；24个Understanding中11个由新7107执行、13个由旧70280执行，整片B0与Refine也不能统一归因新版提示。此前以端口释放判定重启完成不充分，本轮不作为纯新版提示的全片验收。
+- 已核对旧进程命令／启动时间后发送SIGINT，18:00确认70277／70280均退出，未向这两个进程发送SIGKILL。v23已按既有流程自然完成，保留全部证据；其#0／#4有完整新提示输入至提交链，可单独审计，但不能代替全片结果。后续v24沿用同一D23源码，不再修改提示／算法，并在新任务前确认旧进程实际退出。
+- 执行来源证据：[混源审计](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v23/mixed-consumer-provenance-audit.md)、[旧进程退出确认](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v23/old-consumer-exit-confirmed.json)。
+- 证据：[提示patch](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v23/prompt-conflict-followup.patch)、[审查](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v23/prompt-review.md)、[启动](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v23/api-startup.json)、[任务回执](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v23/submission.json)。完整重跑仍会重新生成ASR与参考池，不能仅因代码只改Prompt就宣称是固定输入的单因素试验。
+
+#### 2026-10-21：EP04 v22 全流程完成，连续话轮提示仍未保证拆干净
+
+- v21 因连接故障失败后，使用标准完整重解析创建 v22 `4f47e2eb-2e94-4216-886e-b91bf0fa99c9`，不复用失败轮只有 11 条的 B0。运行目录为 `outputs/verification/ep04-continuous-turn-rerun-20261021-v22`；本地 API 9621 PID `70280`，同一部署源码，模型配置与 v21 字节一致，未再次调算法或提示。
+- **终态：** `COMPLETE`，Understanding 24/24、Refine 22/22、索引24/24，约40分44秒。367/367有效原ASR区间有宿主分析回执，显式检测28次（8次缓存）、局部ASR15次，观察器无错误。5处跨完整原cue合并均检查同范围，但1处仍有候选、4处缺逐接合处正常扫描证据，不能把调用成功计为单人通过。
+- **目标仍未通过：** 35.4–48.7秒原混cue虽经45.7–47.9局部ASR给出两个匿名组，仍整段写爱音；局部查询还裁掉目标句尾。整段B0 top1爱音0.916416不能代表爽世短句。293.6–295.5秒目标从Understanding睦经B0爱音0.797181预填，最终姓名及描述均为爱音。按已确认两句人工匹配仍1/2正确；另有295.7–296.8「と。」条目是否重复待复核。
+- **稳定性不等于准确率：** 最终355条DIALOGUE、60条null（16.90%，v20为91/378=24.07%）。237条ACCEPT终态235保留top1、2变null、0改其它具名人；持久化必审记录的130条多窗复审台词中6条后改名（5具名→null、1null→具名）。不能据此宣称全片错误率下降。31次Refine尝试22提交、9次版本冲突后刷新，未混算为成功决定。
+- 终态345源码／3脚本SHA与启动相同，模型配置一致，预检中的其它18条任务和13个视频未变。旧v21失败证据保留。依据v22具体失败另备v23提示词：先轮次后命名、原混cue同样复核、局部ASR完整上下文、图片不能否定画外声音；只改一个生产文件，既有framework测试22 passed，后续部署复验状态见上节。
+- 证据：[v22验收报告](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v22/report.md)、[工具审计](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v22/tool-workflow-audit.md)、[提示遵循审计](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v22/prompt-adherence-audit.md)、[执行范围](../../outputs/verification/ep04-continuous-turn-rerun-20261021-v22/execution-integrity.json)。
+
+#### 2026-10-21：连续话轮提示已部署，v21 被 ASR 连接故障阻断
+
+- **本轮新增提示：** 同一人物连续发言（含普通停顿）保留为一个 DIALOGUE，不按标点、语义小句或语气变化拆碎。跨 ASR cue 合并前调用 `analyze_speaker_consistency` 检查整个拟合并范围并读完整证据；出现 `block_change`／`low_support` 时用 `transcribe_segment` 和实际上下文复核，保留不受可疑范围影响的同人连续部分。候选范围、峰值及 `scan_count` 不是准确切点或要求拆分的条数。`completed`／无候选／少窗／支持不足均不认证单人；没有新增 Canvas 写入或完成硬门禁。
+- **运行版本：** 部署副本 `outputs/worktrees/ep04-continuous-turn-20261021` 以本地已有部署 `322db8e` 为基础，移入先前已授权的工具、1 秒预填、取消 gap 门槛和 Refine 决策检查，保持当前 DTO／SQL 分层。主工作区其他未部署的 metadata／query hook 等改动没有纳入；未迁移数据库。当前模型配置仅投影排除该部署未使用的 `query_hook`，模型参数保持当前服务值，Understanding 为 `gpt-6-luna/high`。与 v20 相比不是仅 prompt 改变的严格对照。
+- **验证与启动：** 扩展回归 **1645 passed、9 failed**；9 项均为默认模型配置预期差异，在原样 `322db8e` 冻结源码复现同一失败列表（98 passed、9 failed），未修改它们以掩盖失败。补齐既有 medium 配置的 Codex 校验后，另 **73 passed**。已确认无活动解析任务后，优雅重启本地 API 9621；新 PID `60613`，源码与配置 SHA 已冻结。另一套 phone API 9622 保留不动。
+- **v21 终态：** 通过标准 `/api/uploads/reparse` 提交固定隔离 EP04，task `7c34f471-b7b0-47b7-9c76-31c80cece0dd` 最终 `PARSING_FAILED`：仅 1/24 Chunk 完成 Understanding，23 个 ASR 连接故障耗尽重试；主要错误为域名解析失败，另有请求超时。B0 仅有 11 条评分／样本，22 个 Refine 窗口均未完成，不能据此验收全片分段或人物效果。当前独立 DNS／TLS／无凭据 HTTPS 检查可达，不代表历史连接故障已确知根因或永久解决。将保留失败证据并以新版本完整重跑，避免复用该不完整 B0。
+- **执行与观察：** 使用服务本身的 Consumer，没有另起 Worker／调度框架。观察记录区分真实模型输入、显式工具调用／缓存复用、Understanding 成功提交、B0 原始 artifact、Refine 生成结果与提交结果。唯一已完成 Chunk 的成功提交快照已写入；随后附加观察事件因重复 `observed_at_ms` 关键字出现 TypeError，该非致命观察错误未改变业务结果，需在下一轮观察脚本修正。未将流程或局部结果当成人物正确认证。
+- 证据入口：[本轮最小提示词 patch](../../outputs/verification/ep04-continuous-turn-rerun-20261021/continuous-turn.patch)、[启动来源](../../outputs/verification/ep04-continuous-turn-rerun-20261021/api-startup.json)、[提交回执](../../outputs/verification/ep04-continuous-turn-rerun-20261021/submission.json)、[测试记录](../../outputs/verification/ep04-continuous-turn-rerun-20261021/tests-final.log)。未提交／推送／合并 PR。
+
+#### 2026-10-21：gap 改为展示证据，固定 v20 输入验证两句均正确预填
+
+- **按用户要求取消 gap 采纳门槛：** 新生成 B0 artifact 的 `accept_gap`／`conflict_gap` 均为 `null`。不再因 top1–top2 差值小、为零或单候选无 gap 阻止 ACCEPT；保留至少 1000ms、3 个独立 cue、非歌曲／重叠及有效候选条件。候选 cosine、gap、引用数继续展示，均不解释为校准置信度或概率；ACCEPT 只代表预填资格。未更改 CAM++、评分、两轮参考清理或 Understanding 无 VAD 矩阵规则。
+- **Refine 同步：** 移除 0.05 的采纳／弃权提示与程序判断。必审事件有候选时，置 null 必须明确提交 contradiction 及具体理由；不能仅因 gap 小恢复旧名或弃权。`keep` 只用于具名的 Understanding 姓名；原名为空必须使用 `null`，避免绕过上述检查。仍保留具体证据支持的改名／弃权权限，尚未实现 Refine 归因只读。
+- **固定输入实测：** 冻结 v20 task `e442375b-06c0-486b-9afc-0108a996b46a` 的 378 条评分、371 个样本、24 份首次 Understanding。调用当前真实 Runtime 分类与 Refine Canvas，旧参数重放 0 差异；仅把两项 gap 参数改为 null 后，ACCEPT／实际预填均 **127→248**，新增 **121/121** 条实际预填。47.5–48.8s 从爱音预填为爽世（cosine 0.773058，gap 0.056029）；293.3–295.8s 从睦预填为爱音（0.822999，gap 0.134204）。所有评分、引用、排除与源字段保持不变。
+- **兼容与验收边界：** 历史 artifact 的数值参数仍按旧规则重放，原存储 band 不重写；评分方法仍为 v4，策略由完整冻结参数区分。gap 数值完整性检查保留。此次零模型调用、零数据库操作、无音频重编码、未重跑全集；初始两句正确预填不等于最终 Refine 两句已正确，也不认证新增 121 条人物名或单人纯度。改动留在隔离 worktree，未部署／重启 API、迁移、提交或推送。
+- **回归与审查：** engine/parsev2、agent/video_parse_v2、server voiceprint／repository 四组最终 **894 passed、0 failed**，1 条第三方弃用警告；改后审查复核历史兼容、实际预填与弃权旁路。初次测试样例／旧提示断言失败及修正记录完整保留。
+- 证据：[固定输入实测](../../outputs/verification/ep04-gap-advisory-20261021/replay.md)、[逐行结果与来源校验](../../outputs/verification/ep04-gap-advisory-20261021/replay.json)、[改动与验证记录](../../outputs/verification/ep04-gap-advisory-20261021/change-report.md)。以下 v19／v20 历史记录保留当时策略与终态。
+
+#### 2026-10-21：预填最短时长改为 1 秒，v20 完成，两句仍为 1/2
+
+- **本轮改动与验证：** `VOICEPRINT_B0_ACCEPT_DURATION_MS` 1500→1000；gap 0.15、独立 cue 数、NO_VOICE 1000ms、B0 编码窗 1500ms、CAM++、prompt 与 Refine 权限不变。三组回归 **640 passed**。371 个运行源码仅该常量一行变化；实际 B0 artifact 参数已确认 1000ms，模型配置与 v19 相同。代码留在隔离 worktree，未部署 API。
+- **固定输入对照：** v19 的 338 条原评分／引用／Under 输入不变，真实 Canvas 预填的 ACCEPT 118→155（37 条新增）；旧 47.4–48.6s 句从爱音预填为爽世。新全集另行重新 ASR 与建池，不能混成同一输入的因果对照。
+- **v20 实际终态：** task `e442375b-06c0-486b-9afc-0108a996b46a`，24/24 Chunk、22/22 Refine COMPLETE，50 分 24 秒。127 条 ACCEPT 均实际预填并最终保留 top1，其中 33 条短于旧 1.5 秒门槛；40 组真实 Refine 输入／输出齐全，22 窗口均唯一关联到正式提交。最终保留 top1 不认证人物真值，现有改名权限仍未取消。
+- **两句仍 1/2：** 爽世句本轮为 47.5–48.8s，top1 爽世 0.773058、第二睦 0.717029、gap 0.056029，仍 CONFLICT；实际输入爱音，Refine 因画面冲突置 null。爱音句 293.3–295.8s，top1 爱音 0.822999／gap 0.134204，仍 CONFLICT；三个窗口均 voice_top1，最终爱音。此次没有出现“目标句已正确预填又被覆盖”；门槛已生效，但新评分的 gap 未满足 0.15。两轮目标 PCM、参考 PCM 都改变，不能把漂移单归因于参考池。已知两句均被排除出第二轮正式参考向量，不排除第一轮对标疑集合的间接影响。
+- **时间线：** #11 仍一条爱音；#12 为立希→爱音→爱音，符合粗粒度反馈。最终 378 条 DIALOGUE、91 条 null（24.1%，v19 为 15.4%）；244 条决策／22 窗口与 Chunk 历史一致，83 条多次写入 cue 中 12 条变化、13 次转换（6 name→null、5 null→name、2 name→另一人）。未见整体覆盖改善；不同版本仅 7 条严格同区间同原文，不能宣称整体稳定率或错误率改善。378 个原 ASR 唯一区间全部扫描，14 候选，12 条成功局部 ASR 回执，均不等于声学正确率。
+- **外围检查未通过：** 管线本身 COMPLETE，runner 因非目标记录变化退出 1。期间 video `e709a2d8-aabb-509e-b323-e7f9aa7018b2` 新增 task `577674ad-68bc-4ac7-89ed-8a53f0bc9521` v2 并进入 PARSING；其余原 13 个非目标任务所选字段未变。触发者未知，保留原失败记录，未改动／停止该任务；不认证全部隔离检查通过。本轮未重启 API、迁移或提交推送。
+- 证据：[验收报告](../../outputs/verification/ep04-prefill-1s-rerun-20261021/report.md)、[时间线 HTML](../../outputs/verification/ep04-prefill-1s-rerun-20261021/report.html)、[固定输入对照](../../outputs/verification/ep04-prefill-1s-rerun-20261021/frozen-input-comparison.md)、[非目标变化核对](../../outputs/verification/ep04-prefill-1s-rerun-20261021/unrelated-check.md)。
+
+#### 2026-10-21：EP04 v19 全集重跑完成，两句纠正 1/2，归因仍未闭环
+
+- **终态与范围：** 按用户要求采用当前服务配置完成 v19 `04960abe-fa62-4806-919e-df3f28ac6040`：24/24 Chunk、22/22 Refine 均 COMPLETE，约 40 分 36 秒。5 个 Refine 窗口因 `max_model_calls` 各重试 1 次后成功，Chunk 无阶段重试。只对固定 EP04 视频执行，终态核对非目标视频任务未变化；未重启 API、迁移、合并 PR、commit/push。
+- **两句真值：** v18 最终 0/2 正确，本轮 1/2。爽世句已独立为 47.4–48.6s，Under 错标爱音，B0 top1 爽世 0.773138／gap 0.188161，Refine 却以“48 秒画面显示爱音在说该字幕”的 `visible_speaking` 理由 `keep` 爱音，最终仍错。爱音句保持 293.2–295.6s，Under 错标睦，B0 top1 爱音 0.785129／gap 0.103957，三个覆盖窗口均采用 `voice_top1`，最终纠正为爱音。两条均 CONFLICT，不会走仅 ACCEPT 的自动预填；爽世是 Refine 保留错名，不能写成“覆盖了已预填正确姓名”。
+- **对照与分段边界：** #11 最终保留 738.7–744.8s 一条爱音；#12 为 1202.0–1203.0s 立希、1203.2–1208.7s 爱音，符合人工反馈。但 #12 本轮原 ASR 已拆，四处重点均未局部重 ASR，不能把正确顺序归因于工具主动拆分，也不认证完整单人/重叠准确率。
+- **全片与稳定性：** 最终 DIALOGUE 从 263 增至 338；未归属从 141/263（53.6%）降到 52/338（15.4%），只是标签覆盖。171 条决策收据覆盖 22/22 窗口、60 条 cue，与 Chunk 历史多重集一致；57 条多次写入 cue 中 9 条发生标签变化（6 null→具名、2 具名→另一人物、1 具名→null）。v18 只有 4/22 窗口 17 条收据，不能直接比较改名比例来宣布稳定率提升。无全片真值，不计算全片错误率。Under→Final 338 条区间/文字一对一，48 条姓名改变，不等于 48 条纠错。
+- **实际工具使用：** 343 个有效原 ASR 唯一区间均自动分析，1107 个窗口引用，18 个候选均 low_support；9 条成功局部 ASR 证据。24 次 Under 均提供两个工具；显式分析工具调用次数缺原生执行日志，保持未知。继续无 VAD 的既有规则，CAM++ 完整 encoder revision、B0 方法/参数与 v18 一致。
+- **配置与代码来源：** 本轮先 fetch 确认 PR 远端仍 `215aadf`；使用已测试工作副本的冻结源码（371 文件核验一致）。现有数据库需 visibility 映射，仅运行快照采用主线 `c00a0ae` 已提交的 `server/model/video.py`，没有迁移或引入其他主线声纹逻辑。当前配置为 gpt-5.6-luna/high、Refine 继承，现有模型绑定、并发 4/4/4、重试 2 次，显式 prefill；投影仅排除解析不消费的 Chat query_hook。v18 是 gpt-6-luna/low，ASR/参考池重新生成，非单变量实验。复用现有服务实现定点运行，API 未部署本轮代码。
+- **剩余问题：** 当前复核工具已真实接入，但 B0 编码前准入、Prepare 对错名的可采纳归因，以及 Refine 归因只读/受限合并仍未闭环。下一步不能仅锁住 Under 的错名；本轮不改阈值、encoder 或临时调整流程。
+- 证据：[简洁 HTML 与时间线](../../outputs/verification/ep04-full-rerun-20261021/report.html)、[验收结论](../../outputs/verification/ep04-full-rerun-20261021/report.md)、[最终评价](../../outputs/verification/ep04-full-rerun-20261021/rerun-evaluation.json)、[逐阶段归因](../../outputs/verification/ep04-full-rerun-20261021/attribution-audit.json)。outputs 被 Git 忽略，证据仍需从主工作区只读引用。
+
+#### 2026-10-21：Understanding 声学复核工具已接入，沿用无 VAD 矩阵规则
+
+- **实现范围：** 在基于远端 `215aadf` 的隔离 worktree `outputs/worktrees/ep04-segmentation-20261020` 实现。本轮已重新 fetch 并核对远端；代码尚未提交、推送或部署；接入交付时未重启、迁移或重解析，随后固定 EP04 的 v19 验收见上条，未触碰主 MyGO 系列。主工作区只同步本条 B12 与原目录 TRD，不覆盖其他工作线代码。
+- **工具统一入口：** `agent/video_parse_v2/tools.py` 集中 Understanding／Refine／Prefix／Voiceprint 的工具声明和组装，沿用共享 Canvas Tool 协议；移除原 `prefix/tools.py` 重复包装，`voiceprint.py` 保留 Agent 编排。原 Refine 的 compare、看帧和完成检查、Prefix 零工具路径和计数保留；未新增注册表框架。
+- **接入行为：** `analyze_speaker_consistency(start_ms,end_ms)` 返回复核范围、支持统计、未覆盖范围和只读证据；宿主在 Understanding 调用前扫描合法原 ASR cue，任务有冻结 speaker encoder 才启用。`transcribe_segment(start_ms,end_ms)` 使用任务固定 ASR 模型／输入模式，对 Chunk 内指定范围重新转写，返回新的只读 ASR，不覆盖原 ASR、不自动改事件。ASR mode=none 时不提供该工具；没有模型绑定不回退到全局默认配置。
+- **算法保持：** CAM++ 192 维、1 秒完整窗口、400ms 步长；左右至多 6 窗、至少 3 个有效窗对、反差 0.10／短侧 0.15。运行与离线回放共用 `server/constants/parse.py`，纯算法未改；不启用 VAD、不聚类、不预设人数。自身／重叠／重复 PCM 的统计排除保留。完全恒定 PCM 为现有 encoder 不支持的输入，整段显式返回 `analysis_status=unavailable`、不可编码窗和未评分范围；不删窗、不造向量、不认证为单人。其他模型／媒体故障仍走失败路径。
+- **职责与证据：** 按用户最新要求撤销 Understanding 完整 cue 区间锁，允许在 Chunk 内拆分和校正时间；不以候选、局部重 ASR 或精确 cue 匹配作为写权限／完成门禁。原 ASR 仍只读，Chunk 越界校验和批次原子性保留，Prefix 时间保护不变。提交沿现有 `detail.evidence` 保存原观察、`tool_evidence` 与必要的 `dialogue_provenance`；exact/subrange/overlap 仅是时间对应，明确 `content_verified=false`，不是内容或人物认证。
+- **调用与回收：** 分析直接解码 `task_input.original_source_uri`，避免 `source_media_ref` 指向 proxy 的混淆；每次 Understanding 共用原 PCM、一个延迟加载的 encoder 及按 PCM 摘要缓存的向量。工具临时文件归当前 Chunk lease，取消时仍等待实际阻塞调用退出后再释放。回执每次返回最新 Canvas revision，缓存不冻结旧 revision；局部 ASR 的相对时间只加一次绝对偏移。
+- **代码验证：** 十组共 **1319 passed、0 failed、1 条第三方弃用警告，33.54 秒**：engine/parsev2 280、agent/video_parse_v2 366、Runtime 新测试 9、media 56、voiceprint 115、worker 220、queue 131、repository 125、artifact 12、model_calls 5。覆盖音频／视频 ASR、原片选择、缓存、恒定窗不足、取消期间资源保留、只读证据和拆分权限；媒体测试含真实 FFmpeg PCM 逐字节核对。独立审查发现的原片来源、回执版本及恒定窗错误路径均已修复并回归。
+- **真实样本回放：** 新工具运行路径已对原来的 12 条／231 窗完成真实原 MP4 裁取与 CAM++ 推理：完整 PCM 摘要、所有窗口向量与冻结基线相同，最大逐分量差 0；旧算法字段逐项一致，24 次重复工具调用未新增编码。第 11 条全程爱音的误报仍保留，第 12 条立希→爱音仍正确提示；按现有人工分组为混人范围 6/7、其余对照候选 1/5。总墙钟 13.828 秒含媒体处理；范围有历史重叠版本、四条普通对照缺逐段精标，不能当泛化准确率。此次使用离线 lease／task 绑定和已有范围 cue，未调用生成式 ASR／Understanding、数据库或重解析。见 [真实路径离线验收](../../outputs/verification/ep04-understanding-tools-20261021/report.md)。
+- **仍未验收／后续：** 上述离线交付时尚未运行生成式 Understanding 全集验收；随后 v19 实测已完成，结果见上条，人物归因闭环仍未通过。模型 pipeline COMPLETE 不证明人物归因正确。B0 收集／编码前的准入、Refine 归因只读和受限跨 Chunk 合并属于后续工作，本轮没有实施，也没有改 B0 算法／阈值／encoder。TRD 保留原历史正文并同步 main，设计目录仍被 Git 忽略，不随 PR 自动推送。
 
 #### 2026-10-19：排查链路、音频区间漂移与当前结论
 
@@ -825,16 +943,18 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 #### 2026-10-20：矩阵变化算法已实现，离线粗筛有信号但尚不能判断台词纯净
 
+- **最新人工更正：第 12 条（1201.7–1208.5s）开头立希、随后爱音，算法正确发现原记录混人；第 11 条（738.7–744.7s）全程爱音，用户指出截断与较大语气变化，属于误报。** 第 12 条移出单人对照。未加 VAD 按新分组为混人 6/7、其余对照候选 1/5；50% VAD 为 4/7、1/5，25% 为 6/7、1/5，75% 为 3/7、0/5。其余四条普通候选仍仅有一般反馈，不声称完整人工误报率。此例支持算法用于 Understanding 复核纠错；触发后仍须确认拆分。详见 TRD 第 8 节，独立保存人工标注，未改原评分／参数或重跑模型。
+
 - 用户授权先实现并实测算法，随后明确只需实验结论、不要求精确定位。新增`engine/parsev2/speaker_change.py`、`evals/speaker/speaker_change.py`及对应测试，均在隔离worktree；两个Understanding Agent工具尚未注册，生产流程未接入。算法复用原CAM++／1s窗／400ms步长，不聚类、不预设人数。
 - Foote原论文的Gaussian checkerboard相关作为对照保留；masked median与短侧支持分支是本地扩展。主设置在回放前冻结为左右最多6窗、最少3个有效窗对、完整两侧反差0.10／短侧0.15，未改变B0阈值。已排除自身、共享音频和重复PCM的虚假配对支持。
 - 共16个EP04输入、244窗：复用62旧窗、新编码182窗及14次首窗重复，重复逐分量差0。另选6条6–10秒普通台词作对照，编码前冻结选择规则与artifact摘要，PCM与原artifact一致；采用用户“其他基本都对”的泛化反馈，不冒充逐段精确转人／重叠标注。
-- **主结果：6个历史混人范围中5个触发复核，6条普通长台词中2条也触发。** 用户圈出的两条13秒长段均捕捉到末尾差异，但v17爽世短范围未触发，v18爱音目标附近仍缺候选。历史6范围来自两个场景的多个重叠版本，触发率不能当作独立泛化准确率；普通对照的额外复核也仍需回听。4条短输入／短对照无候选不能当单人认证。
+- **初始选样分组记录：6个历史混人范围中5个触发复核，原选普通对照的6条中2条触发；其中第12条现已确认混人、提示正确。** 用户圈出的两条13秒长段均捕捉到末尾差异，但v17爽世短范围未触发，v18爱音目标附近仍缺候选。历史6范围来自两个场景的多个重叠版本，触发率不能当作独立泛化准确率；普通对照的额外复核也仍需回听。4条短输入／短对照无候选不能当单人认证。
 - 预先列出的短侧门槛敏感性：0.10时混人5/6、普通4/6触发；主0.15为5/6、2/6；0.20为4/6、1/6。保留漏检与额外触发的取舍，未挑结果替换主设置。结论是可继续验证为局部重ASR的辅助提醒，不能作为自动切分或B0单人准入证明；同时发声及真实A→B→A音频仍未验收。
 - 新增49个算法语义测试（含1s／400ms A→B、A→B→A和短尾），完整`tests/engine/parsev2`为267 passed、0 failed。独立非调用算法的复算覆盖228主扫描、96组敏感性结果、103个Foote点，最大误差5.5511e-16。首次实测前已修复并回归“低支持尾峰被升级成完整支持峰”的review发现。
 - [实验结果与证据](../../outputs/worktrees/ep04-segmentation-20261020/outputs/verification/ep04-speaker-change-20261020/run-v1/report.md)保留全部样本、参数／代码摘要、PNG和JSON；最新实现状态与结论已同步main原目录的[voiceprint-trd.md](../../agent/video_parse_v2/design/voiceprint-trd.md)。本轮未重ASR、重解析、部署、重启、迁移、commit、push或合并PR，未改主工作区其他代码。
 - 后续按用户要求提供 [12 条矩阵 HTML](../../outputs/verification/ep04-speaker-change-20261020/matrices-12.html)：6 个历史合并输入加 6 条普通长台词，每条保留矩阵数值与原音频。主工作区和隔离副本均有可独立离线打开的文件。TRD 第 3 节补齐当前实际扫描、0.10／0.15 分支、连续点合并和支持不足处理；此次仅展示冻结结果，未重新编码或更改参数。
 
-- 后续按用户“停顿可能造成误判”的假设，复用本地 pyannote 官方 VAD 对 12 条做窗口过滤对照；保留原时间网格／邻域／CAM++／反差门槛，仅可选 mask 排除配对。主设置语音占比≥50%：历史触发 5/6→3/6、普通 2/6→2/6；两条普通额外触发均未过滤任何窗，爱音部分候选因支持不足消失，不能当作修好。25% 为 5/6、2/6；75% 为 2/6、1/6。新增 13 个 mask 语义测试，engine 280 passed。见 [VAD 对照记录](../../outputs/verification/ep04-speaker-change-20261020/vad-mask-report.md) 与 TRD 第 7 节；未接生产或重解析。
+- 后续按用户“停顿可能造成误判”的假设，复用本地 pyannote 官方 VAD 对 12 条做窗口过滤对照；保留原时间网格／邻域／CAM++／反差门槛，仅可选 mask 排除配对。主设置语音占比≥50%：历史触发 5/6→3/6、普通 2/6→2/6；第11条误报与第12条正确提示均未过滤任何窗（该句前面的5/6、2/6保留初始选样分组口径，最新分组见本节首条），爱音部分候选因支持不足消失，不能当作修好。25% 为 5/6、2/6；75% 为 2/6、1/6。新增 13 个 mask 语义测试，engine 280 passed。见 [VAD 对照记录](../../outputs/verification/ep04-speaker-change-20261020/vad-mask-report.md) 与 TRD 第 7 节；未接生产或重解析。
 
 #### 2026-10-17 历史状态：v5 曾通过爽世单例
 

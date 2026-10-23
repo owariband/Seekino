@@ -24,6 +24,31 @@ def test_video_input_budget_excludes_inline_base64_and_keeps_media_reserve() -> 
     assert large.estimated_tokens >= 2048
 
 
+@pytest.mark.parametrize("frame_count", [180, 198])
+def test_preflight_admits_parse_frames_without_changing_compaction_estimates(frame_count) -> None:
+    policy = ContextWindowPolicy(128_000, 8_192, 2_048, 90_000, 60_000)
+    messages = [{"role": "user", "content": [
+        {"type": "input_image", "image_url": f"data:image/png;base64,frame-{index}"}
+        for index in range(frame_count)
+    ]}]
+    estimate = measure_context(messages, {})
+
+    admitted = preflight_context(
+        messages, {}, policy=policy, maximum_input_characters=400_000,
+        fixed_input_tokens=13_000, label="parse frames",
+    )
+
+    assert estimate.estimated_tokens > policy.maximum_input_tokens
+    assert admitted.estimated_tokens < policy.maximum_input_tokens
+    assert admitted.characters == estimate.characters
+    controller = ContextWindowController(
+        policy=policy, maximum_input_characters=400_000, label="parse frames",
+    )
+    update = controller.prepare(messages, contract={})
+    assert update.before == estimate
+    assert update.messages[0] == messages[0]
+
+
 def _assistant_tool_call(call_id: str, name: str) -> dict:
     return {
         "role": "assistant",

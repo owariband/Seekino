@@ -34,6 +34,7 @@ from ..utils.media import (
     decode_keyframe_image_id,
     decode_series_image_id,
     encode_chunk_keyframe_image_id,
+    encode_video_cover_image_id,
     encode_video_keyframe_image_id,
     image_media_type,
 )
@@ -147,7 +148,7 @@ class MediaService:
                 series_id, _checksum, _extension = decode_series_image_id(image_id)
             else:
                 scope, identifier, _index = decode_keyframe_image_id(image_id)
-                if scope == "video":
+                if scope in {"video", "video_cover"}:
                     series_id = self._library.get_video(identifier, tenant_id=tenant_id).series_id
                 else:
                     series_id = self.get_chunk_evidence(identifier, tenant_id=tenant_id).series_id
@@ -229,14 +230,17 @@ class MediaService:
         video = video or self._library.get_video(video_id, tenant_id=tenant_id)
         if video.video_id != video_id or getattr(video, "tenant_id", tenant_id) != tenant_id:
             raise SeriesNotFoundError("视频资源不存在")
-        for index, uri in enumerate(getattr(video, "keyframe_uris", ())):
+        cover_uri = getattr(video, "cover_uri", None)
+        sources = [(encode_video_cover_image_id(video_id), cover_uri)] if cover_uri else []
+        sources.extend((encode_video_keyframe_image_id(video_id, index), uri)
+                       for index, uri in enumerate(getattr(video, "keyframe_uris", ())))
+        for image_id, uri in sources:
             try:
                 path = self._artifact_store.resolve(uri)
                 if image_media_type(path) is None:
                     continue
             except (OSError, ValueError):
                 continue
-            image_id = encode_video_keyframe_image_id(video_id, index)
             return ImageReference(image_id, "/api/media/images/content?" + urlencode({
                 "tenantId": tenant_id, "imageId": image_id,
             }))
@@ -327,9 +331,13 @@ class MediaService:
             scope, identifier, index = decode_keyframe_image_id(image_id)
         except ValueError as exc:
             raise SeriesNotFoundError("图片资源不存在") from exc
-        if scope == "video":
+        if scope in {"video", "video_cover"}:
             video = self._library.get_video(identifier, tenant_id=tenant_id)
-            sources = getattr(video, "keyframe_uris", ())
+            if scope == "video_cover":
+                cover_uri = getattr(video, "cover_uri", None)
+                sources = (cover_uri,) if cover_uri else ()
+            else:
+                sources = getattr(video, "keyframe_uris", ())
         else:
             evidence = self.get_chunk_evidence(
                 identifier,

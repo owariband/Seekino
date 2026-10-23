@@ -191,7 +191,7 @@ Vite 代理读取同一环境中的 `ANIVAG_HTTP_HOST` / `ANIVAG_HTTP_PORT`。�
 
 ### 可选：本机启动器
 
-仓库保留本机 MySQL 懒启动、API/Web 复用与进程管理入口：
+本机启动器固定使用已检出 `main` 分支的工作区；新版入口从其他 worktree 执行时也会先转入 main，再加载 main 的 `.env.local`：
 
 ```bash
 ./start.sh
@@ -199,9 +199,13 @@ Vite 代理读取同一环境中的 `ANIVAG_HTTP_HOST` / `ANIVAG_HTTP_PORT`。�
 ./start.sh stop
 ```
 
+`start` 使用本地 main 当前文件（包含未提交改动），不自动拉取远端或切换分支。启动器会根据源码目录、文件内容和配置更新自己管理的 API/Web，未变化则复用；旧版进程记录也会更新。未知进程占用端口时会报错。此更新不停止 MySQL/ES；已有冻结 worktree 中的旧版脚本不会自动获得该行为，请使用主目录入口。
+
 启动器按当前 `tenantId` 契约检查 API 资料库及 Web 代理，使用 `ANIVAG_LOCAL_TENANT_ID` 配置的本地 Tenant。启动前需准备可达的 Elasticsearch；脚本会校验集群与索引，不启动 ES。`stop` 只停止启动器管理的进程，不会停止手动启动的 API/Web 或 Compose 数据库。
 
 启动器自建数据与日志在 `outputs/local-services/`；媒体默认在 `outputs/server/artifacts/`，可通过 `ANIVAG_ARTIFACT_ROOT` 修改。已有 MySQL/ES 会按配置复用，旧 Schema 不自动 ALTER。Docker 和端口配置详情见 [开发部署说明](deploy/README.md)。
+
+换机、恢复环境或整理大目录前，先读 [本机资产与换机恢复](deploy/README.md#local-assets)。`outputs/` 被 Git 忽略，但可能包含实际生效的模型配置、业务媒体、训练成果和有未提交改动的实验工作区；不能把它整体视为可丢弃缓存。
 
 ## 架构与部署
 
@@ -238,7 +242,7 @@ flowchart LR
 
 Supervisor 可以直接回答、搜索网页、调用视频检索，或按冻结的播放位置理解当前及相邻 Chunk。当前视频尚未完整建库时，也可按需取得基础证据；调用由 Supervisor 决定，响应时间受模型与执行预算影响。
 
-检索工具直接返回来源证据；需要更多上下文时按片段 ID 和游标续读。
+检索工具直接返回来源证据；需要更多上下文时按片段 ID 和游标续读。Jev 分类与本地 8B 改写前置链保留。
 
 正式服务只接受 **V2 + MySQL + Elasticsearch**。Consumer 与 API 在同一 Server 进程运行，任务与恢复事实保存在 MySQL，ES 是检索投影。Gateway、Engine 和 Agent 无需单独启动；local 模式无需 Redis 或外部消息队列。Parse V1、Qdrant 和旧离线导入入口已删除。
 
@@ -338,3 +342,7 @@ anivag/
 - [Web](web/README.md) · [Kino](web/src/shared/kino/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
 - [模型配置](docs/model-config.md) · [模型 Token 用量](docs/parse-model-usage.md) · [用户/Tenant](server/report_docs/user-tenant-handoff-20261010.md)
 - [开发部署](deploy/README.md) · [问题清单](docs/dev/problems.md)
+
+## 设备迁移快照
+
+2026-10-23 的主工作区与实验代码入口见 [迁移索引](docs/migration/20261023/README.md)。dev 保存主工作区快照，各 EP04 实验保存在索引列出的独立分支。

@@ -133,6 +133,10 @@ export function episodeTitle(order: number, locale: Locale = "zh"): string {
   return translate(locale, "第 {order} 集", { order });
 }
 
+export function videoTitle(video: { episodeOrder: number; displayName?: string | null }, locale: Locale = "zh"): string {
+  return video.displayName?.trim() || episodeTitle(video.episodeOrder, locale);
+}
+
 export function seriesTitle(series: { name: string; displayName?: string | null }): string {
   return series.displayName?.trim() || series.name;
 }

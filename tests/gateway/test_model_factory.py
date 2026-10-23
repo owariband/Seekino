@@ -98,6 +98,40 @@ def _mock_native_turns(monkeypatch, on_run, on_create=lambda _name: None):
     monkeypatch.setattr("gateway.agent_model.factory.CodexAgentModel", construct)
 
 
+def test_codex_generative_binding_preserves_medium_reasoning(monkeypatch):
+    from gateway.codex.agent import CodexAgentModel
+
+    sessions = []
+
+    def create_session(**options):
+        sessions.append(options)
+
+        class Session:
+            tool_call_count = successful_tool_call_count = 0
+
+            def run_turn(self, *_args, **_kwargs):
+                return SimpleNamespace(final_response='{"answer":"ok"}', usage=None)
+
+            def close(self):
+                pass
+
+        return Session()
+
+    monkeypatch.setattr("gateway.codex.agent.CodexAgentModel", lambda **options: CodexAgentModel(
+        **options, session_factory=create_session,
+    ))
+    client = model_factory.GatewayClient(_config(), environ={})
+    try:
+        model = client.create_generative_model(_binding(
+            model="gpt-6-luna", reasoning_effort="medium", max_output_tokens=512,
+        ))
+        assert model.generate([TextInput("Answer briefly")], schema_name="answer", result_type=Result) == Result(answer="ok")
+        assert sessions[0]["model"] == "gpt-6-luna"
+        assert sessions[0]["reasoning_effort"] == "medium"
+    finally:
+        client.close()
+
+
 def test_codex_source_bounds_mixed_parse_supervisor_and_second_factory(monkeypatch):
     from gateway.agent_model.context import ContextWindowPolicy
 
@@ -533,6 +567,61 @@ def test_actual_native_generate_uses_real_images_and_outer_fallback_deadline(mon
     finally:
         client.close()
     assert fallbacks[0].closed == 1
+
+
+@pytest.mark.parametrize("frame_count", [180, 198])
+def test_parse_frames_reach_codex_in_order_and_text_budgets_remain(monkeypatch, tmp_path, frame_count):
+    from base64 import b64encode
+    from gateway.agent_model.errors import ModelInputTooLargeError
+    from gateway.codex.agent import CodexAgentModel
+    from openai_codex import ImageInput as CodexImageInput, TextInput as CodexTextInput
+
+    turns = []
+
+    class Session:
+        tool_call_count = successful_tool_call_count = 0
+
+        def run_turn(self, inputs, **_kwargs):
+            turns.append(inputs)
+            return SimpleNamespace(final_response='{"answer":"observed"}', usage=None)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("gateway.codex.agent.CodexAgentModel", lambda **options: CodexAgentModel(
+        **options, session_factory=lambda **_kwargs: Session(),
+    ))
+    frames, expected_urls = [], []
+    for index in range(frame_count):
+        data = f"frame-{index}".encode()
+        path = tmp_path / f"frame-{index}.png"
+        path.write_bytes(data)
+        frames.append(ImageInput(path))
+        expected_urls.append("data:image/png;base64," + b64encode(data).decode())
+    client = model_factory.GatewayClient(_config(), environ={})
+    model = client.create_generative_model(_binding(
+        model="gpt-6-luna", supports_vision_input=True, max_output_tokens=8_192,
+        context_window_tokens=128_000, context_safety_margin_tokens=2_048,
+        auto_compact_tokens=90_000, compact_target_tokens=60_000, max_input_chars=400_000,
+    ))
+    try:
+        result = model.generate(
+            [*frames, TextInput("Interpret the ordered frames")],
+            schema_name="parse", result_type=Result, tool_harness="deepagents",
+        )
+        assert result.answer == "observed"
+        assert len(turns) == 1
+        assert [item.url for item in turns[0] if isinstance(item, CodexImageInput)] == expected_urls
+        assert turns[0][-1] == CodexTextInput("Interpret the ordered frames")
+
+        for size, reason in [(400_001, "serialized character budget"), (360_000, "estimated token budget")]:
+            with pytest.raises(ModelInputTooLargeError, match=reason):
+                model.generate(
+                    [*frames, TextInput("x" * size)], schema_name="parse", result_type=Result,
+                )
+        assert len(turns) == 1
+    finally:
+        client.close()
 
 
 def test_outer_fallback_does_not_hide_cancellation(monkeypatch):
@@ -1002,5 +1091,74 @@ def test_same_provider_and_model_bindings_keep_sources_isolated_in_parallel(monk
             assert all(result.answer == "ok" for result in pool.map(run, models))
         assert {call.context["src"] for call in calls} == {"api", "second_api"}
         assert all(call.context["src"] == call.context["task_id"] for call in calls)
+    finally:
+        client.close()
+
+
+def test_pi_factories_share_one_application_client_and_close_it_once(monkeypatch, tmp_path):
+    from gateway.config import PiHostConfig
+
+    constructed, closed = [], []
+
+    class SharedPiClient:
+        def __init__(self, **options):
+            self.options = options
+            constructed.append(self)
+
+        def close(self):
+            closed.append(self)
+
+    monkeypatch.setattr("gateway.pi.client.PiClient", SharedPiClient)
+    config = _config().model_copy(update={
+        "supervisor_harness": "pi",
+        "pi_host": PiHostConfig(
+            node_bin="configured-node", session_dir=str(tmp_path / "sessions"),
+            max_active_runs=3, max_model_requests=5, max_loaded_sessions=9,
+            max_session_bytes=48 * 1024 * 1024, max_cache_bytes=96 * 1024 * 1024,
+            session_ttl_seconds=123, max_transient_tasks=7,
+            startup_timeout_seconds=11, cancel_timeout_seconds=12, shutdown_timeout_seconds=13,
+        ),
+    })
+    client = model_factory.GatewayClient(config, environ={"API_KEY": "api-secret"})
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        factories = list(pool.map(lambda _: client.create_agent_factory(_binding("api")), range(4)))
+    try:
+        assert len(constructed) == 1
+        shared = constructed[0]
+        assert all(factory._pi_client is shared for factory in factories)
+        assert client._shared_pi_client() is shared
+        assert shared.options["command"] == "configured-node"
+        assert shared.options["args"][0].endswith("/gateway/pi/host/dist/src/main.js")
+        assert shared.options["config"] == {
+            "sessionDir": str(tmp_path / "sessions"), "maxActiveRuns": 3,
+            "maxModelRequests": 5, "maxLoadedSessions": 9, "sessionTtlSeconds": 123,
+            "maxSessionBytes": 48 * 1024 * 1024, "maxCacheBytes": 96 * 1024 * 1024,
+            "maxQueueBytes": 32 * 1024 * 1024, "maxLineBytes": 16 * 1024 * 1024,
+            "maxToolOutputBytes": 12 * 1024 * 1024, "maxTransientTasks": 7,
+        }
+        assert shared.options["startup_timeout"] == 11
+        assert shared.options["cancel_timeout"] == 12
+        assert shared.options["shutdown_timeout"] == 13
+        factories[0].close()
+        assert closed == []
+    finally:
+        client.close()
+        client.close()
+    assert closed == constructed
+    with pytest.raises(RuntimeError, match="Gateway client is closed"):
+        client._shared_pi_client()
+
+
+def test_non_pi_factory_construction_does_not_allocate_a_pi_client(monkeypatch):
+    def forbidden_pi_client(**_options):
+        raise AssertionError("local API models must not allocate a Pi Host")
+
+    monkeypatch.setattr("gateway.pi.client.PiClient", forbidden_pi_client)
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "api-secret"})
+    try:
+        factory = client.create_agent_factory(_binding("api"))
+        assert factory.provider_name == "ark"
+        assert factory._pi_client is None
+        factory.close()
     finally:
         client.close()

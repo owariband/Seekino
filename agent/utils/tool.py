@@ -99,13 +99,16 @@ class AgentTool:
         return JsonToolResult(success=False, payload={"error": error})
 
     def _validation_feedback(self, error: Any) -> str:
-        fields = [
-            ".".join(map(str, item.get("loc", ()))) or "arguments"
-            for item in error.errors(include_input=False, include_url=False)[:4]
+        details = [
+            f"{'.'.join(map(str, item.get('loc', ()))) or 'arguments'} "
+            f"({item['type']}): {item['msg']}"
+            for item in error.errors(
+                include_input=False, include_context=False, include_url=False,
+            )[:4]
         ]
         return self._model_content(self._failure_result(ToolError(
             code="INVALID_ARGUMENTS",
-            message=f"Invalid arguments for {self.name}: {', '.join(fields)}.",
+            message=f"Invalid arguments for {self.name}: {'; '.join(details)}.",
             retryable=True,
             retry_hint="Check the Tool schema and call it again with valid arguments.",
         ).as_dict()))

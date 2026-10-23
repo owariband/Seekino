@@ -78,10 +78,13 @@ def list_tasks(
     return [task_data(row) for row in session.scalars(statement)]
 
 
-def list_content_ids(session: Session, interval_ids: Sequence[str]) -> set[str]:
-    return set(session.scalars(select(IntervalParseContent.interval_task_id).where(
+def list_content_ids(session: Session, interval_ids: Sequence[str], *, for_update: bool = False) -> set[str]:
+    statement = select(IntervalParseContent.interval_task_id).where(
         IntervalParseContent.interval_task_id.in_(interval_ids),
-    )))
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    return set(session.scalars(statement))
 
 
 def insert_task(session: Session, data: IntervalParseTaskData) -> None:

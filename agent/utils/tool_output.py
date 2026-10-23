@@ -7,8 +7,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-import tiktoken
-
 from .errors import (
     AgentToolFeedbackError, AgentToolInvocationError, AgentToolOutputError,
 )
@@ -118,65 +116,46 @@ def page_items(
     )
 
 
-def range_items(
+def batch_items(
     items: list[dict[str, Any]],
     *,
-    start: int,
-    total: int,
     maximum_bytes: int,
-    maximum_chars: int,
-    encoding: tiktoken.Encoding,
     metadata: dict[str, Any],
 ) -> str:
-    """Keep a full prefix of the requested range and mark the remaining entries."""
+    """Try complete items first; return unread references for a smaller batch."""
     _validate_maximum_bytes(maximum_bytes)
-    if maximum_chars <= 0:
-        raise ValueError("maximum_chars must be greater than zero")
     warning = (
-        "请减少item检索数目，超限已被裁剪，无法看到全量信息。"
-        "缩小start/end项区间；单项过大时用reference/start/end字符区间读取。"
+        "Read remaining_references in smaller batches. Only returned items are fully read. "
+        "If one item still exceeds the result budget, read its named sections or use "
+        "reference with char_start/char_end character offsets."
     )
-    brief = [
-        {"reference": item["reference"], "section": item["section"],
-         "total_chars": item["total_chars"], "truncated": True}
-        for item in items
-    ]
-    end = start + len(items)
     payload = {
-        **metadata, "start": start, "end": end, "total": total,
-        "complete_end": start, "truncated": bool(items), "msg": warning if items else "",
-        "token_limit": 8_000, "token_encoding": encoding.name, "items": list(brief),
+        **metadata, "total": len(items), "items": items,
+        "remaining_references": [], "truncated": False, "msg": "",
     }
 
     def fits() -> bool:
-        encoded = _json(payload)
-        return (
-            len(encoded.encode("utf-8")) <= maximum_bytes
-            and len(encoding.encode(encoded, disallowed_special=())) <= payload["token_limit"]
-        )
+        return len(_json(payload).encode("utf-8")) <= maximum_bytes
 
-    payload.update(items=items, complete_end=end, truncated=False, msg="")
-    if sum(len(item["content"]) for item in items) <= maximum_chars and fits():
+    if fits():
         return bounded_json(payload, maximum_bytes)
-    payload.update(items=list(brief), complete_end=start, truncated=True, msg=warning)
+    remaining = [item["reference"] for item in items]
+    payload.update(items=[], remaining_references=remaining, truncated=True, msg=warning)
     if not fits():
         raise AgentToolFeedbackError(
-            "BATCH_RANGE_TOO_LARGE", "Batch metadata alone exceeds the result budget.",
-            "Reduce the references or narrow the start/end item range.",
+            "BATCH_TOO_LARGE", "Batch references alone exceed the result budget.",
+            "Retry with fewer references in each batch.",
         )
-    content_chars = 0
-    for index, item in enumerate(items):
-        payload["items"][index] = item
-        payload["complete_end"] = start + index + 1
-        payload["truncated"] = payload["complete_end"] < end
-        payload["msg"] = warning if payload["truncated"] else ""
-        item_chars = len(item["content"])
-        if content_chars + item_chars > maximum_chars or not fits():
-            payload["items"][index] = brief[index]
-            payload["complete_end"] = start + index
-            payload["truncated"], payload["msg"] = True, warning
+    for item in items:
+        payload["items"].append(item)
+        position = remaining.index(item["reference"])
+        remaining.remove(item["reference"])
+        payload.update(truncated=bool(remaining), msg=warning if remaining else "")
+        if not fits():
+            payload["items"].pop()
+            remaining.insert(position, item["reference"])
+            payload.update(truncated=True, msg=warning)
             break
-        content_chars += item_chars
     return bounded_json(payload, maximum_bytes)
 
 
@@ -205,7 +184,7 @@ def range_text(
             "INVALID_RANGE",
             f"Requested [{start}, {end}) is outside section {section!r} "
             f"with {total_chars} characters.",
-            f"Use 0 <= start < end <= {total_chars}, or [0, 0) if empty.",
+            f"Use 0 <= char_start < char_end <= {total_chars}, or [0, 0) if empty.",
         )
 
     def payload(stop: int) -> dict[str, Any]:
@@ -244,8 +223,8 @@ def range_text(
         f"Requested [{start}, {end}) from {section!r} spans "
         f"{requested_chars} characters (limit {maximum_chars}) and needs "
         f"{requested_bytes} UTF-8 bytes (limit {maximum_bytes}).",
-        f"Retry the same section with start={start} and end<={best}; "
-        f"then continue from start={best}.",
+        f"Retry the same section with char_start={start} and char_end={best}; "
+        "then continue with char_start set to the returned end.",
         suggested_end=best,
     )
 

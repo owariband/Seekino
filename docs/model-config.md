@@ -199,7 +199,7 @@ token 计费。VoiceprintAgent、登记事务及 Refine 准入已接通；`confi
     request_timeout_seconds: 180
 ```
 
-该适配器调用带图片的 Chat Completions。Engine 自动使用有序抽帧路径，把已有 ASR 转写与画面一起交给视觉模型，不要求第三方支持视频上传。`video_parser.video_fps` 控制抽帧频率，`video_parser.max_frames_per_window` 控制每窗口上限（默认 32）。
+该适配器调用带图片的 Chat Completions。Engine 自动使用有序抽帧路径，把已有 ASR 转写与画面一起交给视觉模型，不要求第三方支持视频上传。`video_parser.video_fps` 控制抽帧频率，当前默认 3 fps；Parse V2 按实际片段时长完整取帧，旧 `video_parser.max_frames_per_window` 仅为配置兼容保留，不再限制解析帧数。
 
 如果服务不支持 `json_schema`，可以选择 `json_object`；输出仍必须通过项目结构校验。支持的 token 参数为 `max_tokens` 和 `max_completion_tokens`。不完整、被过滤或结构不合法的响应不会当作成功结果保存。
 

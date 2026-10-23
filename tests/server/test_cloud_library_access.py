@@ -45,7 +45,7 @@ from server.error.auth import AuthError
 from server.service.library import LibraryService
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
-from server.utils.media import encode_video_keyframe_image_id
+from server.utils.media import encode_video_keyframe_image_id, encode_video_cover_image_id
 from server.utils.time import now_utc
 
 
@@ -350,12 +350,16 @@ def test_disabled_publisher_disappears_from_public_detail_media_and_discovery(cl
 
 def test_withdrawal_blocks_existing_media_image_chunk_and_range_urls(cloud_library):
     f = cloud_library
+    with f.factory.begin() as session:
+        chunk = session.get(VideoChunk, f.result.hits[0].evidence.video_chunk_id)
+        session.get(Video, f.prepared.video_id).cover_uri = chunk.keyframe_uris[0]["uri"]
     series = f.library.get_series(f.prepared.series_id, tenant_id=PUBLIC)
     endpoints = [
         ("/api/series/get", {"tenantId": PUBLIC, "seriesId": series.series_id}),
         ("/api/videos/content", {"tenantId": PUBLIC, "videoId": f.prepared.video_id}),
         ("/api/videos/content", {"tenantId": PUBLIC, "videoId": f.prepared.video_id, "variant": "original"}),
         ("/api/media/images/content", {"tenantId": PUBLIC, "imageId": encode_video_keyframe_image_id(f.prepared.video_id, 0)}),
+        ("/api/media/images/content", {"tenantId": PUBLIC, "imageId": encode_video_cover_image_id(f.prepared.video_id)}),
         ("/api/video-chunks/get", {"tenantId": PUBLIC, "videoChunkId": f.result.hits[0].evidence.video_chunk_id}),
     ]
     chunk_image = f.media.keyframe_views(f.result.hits[0].evidence, tenant_id=PUBLIC)[0]

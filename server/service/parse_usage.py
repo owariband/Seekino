@@ -13,7 +13,7 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import ModelCallUsage, TokenUsage, capture_model_usage, model_call_context
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, PrefixParseLease, VideoParseLease, VideoParseTaskInputState
+from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, PrefixParseLease, VideoParseLease, VideoParseTaskInputState, VideoSummarizeLease
 from ..model.dto.parseUsageDTO import (
     ModelUsageState,
     UsageCostSummary, UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,
@@ -58,7 +58,7 @@ class ParseUsageService:
 
     @contextmanager
     def capture_video(
-        self, lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
+        self, lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease | VideoSummarizeLease,
         task_input: VideoParseTaskInputState, *, sequence_no: int | None,
         category: Literal["parse", "embedding"],
     ) -> Iterator[None]:

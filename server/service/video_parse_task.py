@@ -206,16 +206,7 @@ def _aggregate_video_task(
         _touch_if_modified(session, task, before, now)
         return task
     refined = interval_store.list_content_ids(session, [item.id for item in intervals])
-    expected = _interval_specs(task.chunk_count, _interval_size(task.parse_config))
-    topology_complete = (
-        len(chunks) == task.chunk_count
-        and [chunk.sequence_no for _, chunk, _ in chunk_rows] == list(range(task.chunk_count))
-        and all(chunk.video_id == task.video_id for _, chunk, _ in chunk_rows)
-        and [(item.start_sequence_no, item.chunk_count) for item in intervals] == list(expected)
-        and all(tuple(item.chunk_task_ids) == tuple(
-            child.id for child in chunks[item.start_sequence_no:item.start_sequence_no + item.chunk_count]
-        ) for item in intervals)
-    )
+    topology_complete = _topology_complete(task, chunk_rows, intervals)
     recorded_failure = _video_failure_status(task) or (
         task.status if task.status in {"PARSING_FAILED", "INDEXING_FAILED"} else None
     )
@@ -271,6 +262,21 @@ def _aggregate_video_task(
             session, video.id, parse_status=video.parse_status, parse_progress=video.parse_progress,
         )
     return task
+
+
+def _topology_complete(task: VideoParseTaskData, chunk_rows: Sequence, intervals: Sequence[IntervalParseTaskData]) -> bool:
+    """Check the same committed coverage for aggregation and Video summarization."""
+    chunks = [child for child, _chunk, _content in chunk_rows]
+    expected = _interval_specs(task.chunk_count, _interval_size(task.parse_config))
+    return (
+        task.chunk_count > 0 and len(chunks) == task.chunk_count
+        and [chunk.sequence_no for _, chunk, _ in chunk_rows] == list(range(task.chunk_count))
+        and all(chunk.video_id == task.video_id for _, chunk, _ in chunk_rows)
+        and [(item.start_sequence_no, item.chunk_count) for item in intervals] == list(expected)
+        and all(tuple(item.chunk_task_ids) == tuple(
+            child.id for child in chunks[item.start_sequence_no:item.start_sequence_no + item.chunk_count]
+        ) for item in intervals)
+    )
 
 
 def _touch_if_modified(session: Session, task: VideoParseTaskData, before: VideoParseTaskData, now: datetime) -> None:

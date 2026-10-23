@@ -14,7 +14,8 @@ from engine.common.config import VideoParseRuntimeConfig
 from engine.rag.nlp.query import accept_query_vector
 from engine.rag.retrieval.contracts import QueryEncodingRequest
 from gateway.config import (
-    ArkModelSourceConfig, EmbeddingModelBinding, ModelBinding,
+    ArkModelSourceConfig, ClaudeCodeModelSourceConfig, CodexModelSourceConfig,
+    EmbeddingModelBinding, ModelBinding,
     OpenAIAudioSourceConfig, OpenAIModelSourceConfig, load_config,
 )
 from gateway.rerank import RerankScore
@@ -38,6 +39,7 @@ from server.database import DatabaseEnvironment, create_schema
 from tests.manual import server_mq_once as mq_main
 from server.mq.video_parse_consumer import VideoParseConsumer
 from server.service.video_parse import VideoParseRuntimeService
+from server.service.video_summarize import VideoSummarizeService
 from server.service.video_frame_reader import VideoFrameReader
 from server.service.retrieval_rerank import StructuredTextReranker
 from server.service.video_retrieval import VideoParseRetrievalService
@@ -172,6 +174,14 @@ def test_application_construction_closes_allocated_clients_when_setup_fails(
         monkeypatch.setenv("ANIVAG_AUTH_REDIS_URL", "redis://127.0.0.1:16379/15")
         monkeypatch.setenv("ANIVAG_SMTP_HOST", "smtp.example.com")
         monkeypatch.setenv("ANIVAG_SMTP_SENDER", "noreply@example.com")
+        configuration = yaml.safe_load((
+            Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml"
+        ).read_text())
+        configuration["supervisor_harness"] = "pi"
+        configuration["agent_model"].pop("fallback")
+        config_path = tmp_path / "cloud-models.yaml"
+        config_path.write_text(yaml.safe_dump(configuration))
+        monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
     settings = ServerSettings.from_environment()
     settings = replace(settings, agent=replace(
         settings.agent, total_timeout_enabled=True, execution_timeout_seconds=480,
@@ -596,10 +606,12 @@ def test_process_assembly_receives_runtime_configuration(
 
 
 @pytest.mark.parametrize("advanced_retrieval", [False, True])
+@pytest.mark.parametrize("summary_mode", ["enabled", "disabled", "missing_role"])
 def test_v2_mode_wires_durable_worker_and_elasticsearch(
     monkeypatch,
     tmp_path,
     advanced_retrieval,
+    summary_mode,
 ):
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
@@ -615,6 +627,14 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
     monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    if summary_mode == "missing_role":
+        configuration["models"].pop("summarize", None)
+    if summary_mode == "disabled":
+        monkeypatch.setenv("ANIVAG_SUMMARIZE_ENABLED", "false")
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
+    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
     settings = ServerSettings.from_environment()
     if advanced_retrieval:
         settings = replace(settings, retrieval=RetrievalConfig(
@@ -666,6 +686,14 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert consumer._handlers.index.__self__ is runtime
         assert consumer._handlers.prefix.__self__ is runtime
         assert consumer._handlers.maintenance.__self__ is runtime
+        if summary_mode == "enabled":
+            summary = consumer._handlers.summarize.__self__
+            assert isinstance(summary, VideoSummarizeService)
+            assert summary._persistence is runtime._persistence
+            assert summary._parse_usage is services.parse_usage
+            assert consumer._summarize_concurrency == settings.summarize.concurrency
+        else:
+            assert consumer._handlers.summarize is None
         assert consumer._maintenance_interval == settings.mq.lease_duration
         assert isinstance(runtime._elasticsearch_store, ElasticsearchVideoChunkStore)
         assert runtime._elasticsearch_store._client is application.resources.elasticsearch_client
@@ -1221,3 +1249,55 @@ def test_application_keeps_closing_clients_after_dependency_close_fails(failure)
         runtime.close()
     runtime.close()
     assert order == ["agent", "elasticsearch", "redis", "database"]
+
+
+@pytest.mark.parametrize("harness", ["codex", "deepagents"])
+def test_cloud_requires_pi_before_allocating_external_clients(monkeypatch, harness):
+    config = load_config(Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml")
+    config = config.model_copy(update={"supervisor_harness": harness})
+    monkeypatch.setattr(bootstrap, "load_config", lambda _path: config)
+
+    def forbidden_database(*_args, **_kwargs):
+        raise AssertionError("invalid cloud harness must fail before external clients")
+
+    monkeypatch.setattr(mysql_caller, "create_database_engine", forbidden_database)
+    settings = SimpleNamespace(
+        model_config_path=None, parse_execution_mode="v2", elasticsearch=object(),
+        agent=AgentServiceConfig(execution_timeout_seconds=480),
+        auth=SimpleNamespace(mode="cloud", query_lease_seconds=600),
+    )
+    with pytest.raises(ValueError, match="cloud Server requires supervisor_harness: pi"):
+        main_module.init_application(settings)
+
+
+@pytest.mark.parametrize("source", [CodexModelSourceConfig(), ClaudeCodeModelSourceConfig()])
+@pytest.mark.parametrize(("role", "fallback"), [
+    ("agent", False), ("supervisor", False), ("vision", False),
+    ("ocr", False), ("summarize", False), ("vision", True),
+])
+def test_cloud_pi_rejects_selected_native_sources_including_fallback(source, role, fallback):
+    config = load_config(Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml")
+    config.model_sources["native"] = source
+    native = ModelBinding(source="native", model="native-model", request_timeout_seconds=30)
+    binding = (
+        ModelBinding(source="deepseek_api", model="api-model", request_timeout_seconds=30, fallback=native)
+        if fallback else native
+    )
+    config = config.model_copy(update={
+        "supervisor_harness": "pi",
+        "normalized_models": {**config.normalized_models, role: binding},
+    })
+    with pytest.raises(ValueError, match=rf"cloud models\.{role} must use API sources"):
+        bootstrap._validate_cloud_pi_harness(SimpleNamespace(auth=SimpleNamespace(mode="cloud")), config)
+
+
+def test_cloud_pi_allows_api_bindings_and_unused_native_source():
+    config = load_config(Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml")
+    config.model_sources["unused_native"] = CodexModelSourceConfig()
+    config = config.model_copy(update={"supervisor_harness": "pi"})
+    bootstrap._validate_cloud_pi_harness(SimpleNamespace(auth=SimpleNamespace(mode="cloud")), config)
+
+
+def test_local_mode_preserves_native_models_and_harness():
+    config = load_config()
+    bootstrap._validate_cloud_pi_harness(SimpleNamespace(auth=SimpleNamespace(mode="local")), config)

@@ -257,7 +257,8 @@ class VideoParseMediaService:
                 timestamps = plan_frame_timestamps(
                     duration,
                     frame_fps=frame_fps,
-                    max_frames=max_frames,
+                    # Parse every configured FPS; legacy frame caps must not thin evidence.
+                    max_frames=math.ceil(duration / 1000 * frame_fps),
                 )
                 core_start, core_end = start_seconds, min(end_seconds, frame_start + duration)
                 if (name == "frames" and core_start < core_end

@@ -196,40 +196,6 @@ def test_shared_tools_bind_role_scope_schema_and_actual_call_budget() -> None:
     assert [tool.name for tool in read_only] == ["get_context_canvas"]
 
 
-def test_shared_reads_recover_exact_state_and_invalidate_stale_catalogs() -> None:
-    import json
-
-    canvas = ContextCanvas("task")
-    canvas.put("evidence", "first", {"text": "杯" * 150}, readonly=True)
-    canvas.put("evidence", "second", {"text": "tail"}, readonly=True)
-    audit = []
-    tool = build_context_canvas_tools(
-        canvas, role="evaluator", read_collections=("evidence",), maximum_result_bytes=512,
-        maximum_read_chars=100, maximum_catalog_items=1, on_read=audit.append,
-    )[0]
-    first = json.loads(tool.invoke({"collection": "evidence"}))
-    assert first["next_cursor"]
-    assert "杯" not in json.dumps(canvas.checkpoint(), ensure_ascii=False)
-    overview = json.loads(tool.invoke({"collection": "evidence", "reference": "first"}))
-    total = overview["sections"][0]["total_chars"]
-    start, parts = 0, []
-    while start < total:
-        page = json.loads(tool.invoke({"collection": "evidence", "reference": "first", "section": "value",
-                                      "start": start, "end": total}))
-        if "error" in page:
-            assert page["error"]["code"] == "RANGE_TOO_LARGE"
-            page = json.loads(tool.invoke({"collection": "evidence", "reference": "first", "section": "value",
-                                          "start": start, "end": page["error"]["suggested_end"]}))
-        assert len(json.dumps(page, ensure_ascii=False, separators=(",", ":")).encode()) <= 512
-        parts.append(page["content"])
-        start = page["end"]
-    assert json.loads("".join(parts)) == canvas.get("evidence", "first")
-    canvas.put("evidence", "third", {"text": "added"}, readonly=True)
-    stale = json.loads(tool.invoke({"collection": "evidence", "cursor": first["next_cursor"]}))
-    assert stale["error"]["code"] == "INVALID_CATALOG_CURSOR"
-    assert all("error" not in item for item in audit)
-
-
 def _batch_read_tool(canvas, **options):
     settings = dict(role="evaluator", read_collections=("evidence",), maximum_result_bytes=4096,
                     maximum_read_chars=2048, maximum_catalog_items=8)
@@ -237,7 +203,43 @@ def _batch_read_tool(canvas, **options):
     return build_context_canvas_tools(canvas, **settings)[0]
 
 
-def test_batch_detail_reads_return_exact_entries_in_one_call_without_mutation() -> None:
+def test_catalog_returns_all_entries_until_actual_bytes_require_paging() -> None:
+    canvas = ContextCanvas("catalog")
+    for index in range(30):
+        canvas.put("evidence", f"entry-{index:02}-" + "x" * 32, 1)
+    tool = _batch_read_tool(canvas, maximum_result_bytes=4096, maximum_catalog_items=1)
+    full = json.loads(tool.invoke({"collection": "evidence"}))
+    assert full["items"] == canvas.catalog("evidence", role="evaluator")
+    assert not full.get("next_cursor")
+
+    bounded = _batch_read_tool(canvas, maximum_result_bytes=700, maximum_catalog_items=1)
+    first = json.loads(bounded.invoke({"collection": "evidence"}))
+    assert first["next_cursor"] and len(first["items"]) > 1
+    recovered = list(first["items"])
+    page = first
+    while page.get("next_cursor"):
+        raw = bounded.invoke({"collection": "evidence", "catalog_cursor": page["next_cursor"]})
+        assert len(raw.encode("utf-8")) <= 700
+        page = json.loads(raw)
+        recovered.extend(page["items"])
+    assert recovered == full["items"]
+    canvas.put("evidence", "new", 1)
+    stale = json.loads(bounded.invoke({"collection": "evidence", "catalog_cursor": first["next_cursor"]}))
+    assert stale["error"]["code"] == "INVALID_CATALOG_CURSOR"
+
+
+def test_small_full_catalog_does_not_reserve_an_unneeded_cursor() -> None:
+    canvas = ContextCanvas("small-catalog")
+    canvas.put("evidence", "a", 1)
+    canvas.put("evidence", "b", 2)
+    tool = _batch_read_tool(canvas, maximum_result_bytes=200)
+    raw = tool.invoke({"collection": "evidence"})
+    result = json.loads(raw)
+    assert len(raw.encode("utf-8")) <= 200 and result["next_cursor"] is None
+    assert result["items"] == [{"reference": "a"}, {"reference": "b"}]
+
+
+def test_batch_detail_reads_default_to_complete_content_without_mutation() -> None:
     canvas = ContextCanvas("batch")
     for reference in ("second", "first"):
         canvas.put("evidence", reference, {"text": reference}, readonly=True)
@@ -245,98 +247,128 @@ def test_batch_detail_reads_return_exact_entries_in_one_call_without_mutation() 
     calls, audit = [], []
     tool = _batch_read_tool(canvas, on_call=calls.append, on_read=audit.append)
     references = ["first", "second"]
-    page = json.loads(tool.invoke({"collection": "evidence", "references": references, "section": "value"}))
+    page = json.loads(tool.invoke({"collection": "evidence", "references": references}))
     expected = []
     for reference in references:
-        content = canvas.sections("evidence", reference, role="evaluator")["value"]
+        content = canvas.sections("evidence", reference, role="evaluator")["content"]
         expected.append({"collection": "evidence", "revision": canvas.revision,
-                         "reference": reference, "id": reference, "section": "value",
+                         "reference": reference, "id": reference, "section": "content",
                          "start": 0, "end": len(content), "total_chars": len(content), "content": content})
     assert page["items"] == expected
-    assert (page["collection"], page["revision"], page["section"], page["start"], page["end"],
-            page["total"], page["complete_end"], page["truncated"], page["msg"]) == (
-        "evidence", canvas.revision, "value", 0, 2, 2, 2, False, "",
+    assert (page["collection"], page["revision"], page["section"], page["total"],
+            page["truncated"], page["msg"], page["remaining_references"]) == (
+        "evidence", canvas.revision, "content", 2, False, "", [],
     )
-    assert "next_cursor" not in page and page["token_limit"] == 8000
+    assert not {"next_cursor", "complete_end", "token_limit", "token_encoding"} & page.keys()
     assert calls == ["get_context_canvas"] and audit == expected
     assert canvas.snapshot() == before
-    catalog = json.loads(tool.invoke({"collection": "evidence"}))
-    assert catalog["items"] == [{"reference": "second"}, {"reference": "first"}]
-    overview = json.loads(tool.invoke({"collection": "evidence", "reference": "first"}))
-    assert overview["section"] == "overview" and overview["sections"][0]["name"] == "value"
-    single = json.loads(tool.invoke({"collection": "evidence", "reference": "first", "section": "value"}))
+    single = json.loads(tool.invoke({"collection": "evidence", "reference": "first"}))
     assert single == expected[0]
+    overview = json.loads(tool.invoke({"collection": "evidence", "reference": "first", "section": "overview"}))
+    assert overview["section"] == "overview" and overview["sections"][0]["name"] == "content"
 
 
-@pytest.mark.parametrize("maximum_bytes,maximum_chars", [(1400, 4096), (8192, 90)], ids=["utf8", "characters"])
-def test_batch_ranges_trim_later_details_and_recover_every_entry(maximum_bytes, maximum_chars) -> None:
+def test_batch_remaining_references_recover_all_chinese_content_within_byte_budget() -> None:
     canvas = ContextCanvas("paged-batch")
     references = [f"entry-{index}" for index in range(6)]
     for reference in references:
         canvas.put("evidence", reference, {"text": "杯" * 60}, readonly=True)
     calls, audit = [], []
-    tool = _batch_read_tool(canvas, maximum_result_bytes=maximum_bytes, maximum_read_chars=maximum_chars,
+    tool = _batch_read_tool(canvas, maximum_result_bytes=1400,
                             on_call=calls.append, on_read=audit.append)
     before = canvas.snapshot()
-    request = {"collection": "evidence", "references": references, "section": "value"}
-    recovered, pages, start = [], 0, 0
-    for _ in range(len(references) + 1):
-        raw = tool.invoke({**request, "start": start, "end": len(references)})
+    recovered, pending, pages = [], references, 0
+    while pending:
+        raw = tool.invoke({"collection": "evidence", "references": pending})
         page = json.loads(raw)
         assert "error" not in page and page["items"]
-        assert len(raw.encode("utf-8")) <= maximum_bytes
-        complete = [item for item in page["items"] if not item.get("truncated", False)]
-        assert complete and sum(len(item["content"]) for item in complete) <= maximum_chars
-        assert page["total"] == len(references) and page["revision"] == before.revision
-        assert page["start"] == start and page["end"] == len(references)
-        assert page["complete_end"] == start + len(complete)
-        assert [item["reference"] for item in page["items"]] == references[start:]
-        assert page["items"][:len(complete)] == complete
-        for item in page["items"][len(complete):]:
-            assert set(item) == {"reference", "section", "total_chars", "truncated"}
-            assert item["truncated"] is True and "content" not in item
+        assert len(raw.encode("utf-8")) <= 1400
+        assert page["total"] == len(pending) and page["revision"] == before.revision
+        complete = page["items"]
+        assert all(not item.get("truncated", False) and "content" in item for item in complete)
+        assert [item["reference"] for item in complete] + page["remaining_references"] == pending
+        assert page["truncated"] == bool(page["remaining_references"])
+        assert bool(page["msg"]) == page["truncated"]
+        assert "complete_end" not in page and "next_cursor" not in page
         recovered.extend(complete)
+        pending = page["remaining_references"]
         pages += 1
-        start = page["complete_end"]
-        assert audit == recovered
-        if not page["truncated"]:
-            assert start == len(references) and page["msg"] == ""
-            break
-        assert "请减少item检索数目" in page["msg"] and "无法看到全量信息" in page["msg"]
-        assert "next_cursor" not in page
-    else:
-        pytest.fail("Numeric batch ranges did not recover all details")
+        assert pages <= len(references) and audit == recovered
     assert pages > 1 and [item["reference"] for item in recovered] == references
     assert [json.loads(item["content"]) for item in recovered] == [canvas.get("evidence", ref) for ref in references]
-    assert calls == ["get_context_canvas"] * pages and audit == recovered
+    assert calls == ["get_context_canvas"] * pages and canvas.snapshot() == before
+
+
+def test_large_first_item_preserves_unread_order_and_can_be_read_by_character_ranges() -> None:
+    canvas = ContextCanvas("large-batch")
+    canvas.put("evidence", "large", {"text": "杯" * 500}, readonly=True)
+    canvas.put("evidence", "small", 1, readonly=True)
+    before, audit = canvas.snapshot(), []
+    tool = _batch_read_tool(canvas, maximum_result_bytes=700, maximum_read_chars=1,
+                            maximum_catalog_items=1, on_read=audit.append)
+    raw = tool.invoke({"collection": "evidence", "references": ["large", "small"]})
+    result = json.loads(raw)
+    assert len(raw.encode("utf-8")) <= 700
+    assert result["truncated"] and result["remaining_references"] == ["large", "small"]
+    assert result["items"] == [] and audit == []
+    assert result["msg"]
+    small = json.loads(tool.invoke({"collection": "evidence", "references": ["small"]}))
+    assert not small["truncated"] and small["remaining_references"] == []
+    assert [item["reference"] for item in small["items"]] == ["small"]
+    assert small["items"][0]["content"] == "1" and audit == small["items"]
+    overview = json.loads(tool.invoke({"collection": "evidence", "reference": "large", "section": "overview"}))
+    total = overview["sections"][0]["total_chars"]
+    audit.clear()
+    start, parts = 0, []
+    while start < total:
+        request = {"collection": "evidence", "reference": "large", "char_start": start, "char_end": total}
+        raw = tool.invoke(request)
+        page = json.loads(raw)
+        if "error" in page:
+            assert page["error"]["code"] == "RANGE_TOO_LARGE"
+            suggested_end = page["error"]["suggested_end"]
+            assert page["error"]["retry_hint"] == (
+                f"Retry the same section with char_start={start} and char_end={suggested_end}; "
+                "then continue with char_start set to the returned end."
+            )
+            request["char_end"] = suggested_end
+            raw = tool.invoke(request)
+            page = json.loads(raw)
+        assert len(raw.encode("utf-8")) <= 700 and "error" not in page
+        assert page["start"] == start and page["end"] - start == len(page["content"])
+        assert page["end"] > start + 1
+        parts.append(page["content"])
+        start = page["end"]
+    assert json.loads("".join(parts)) == canvas.get("evidence", "large")
+    assert [item["content"] for item in audit] == parts
     assert canvas.snapshot() == before
 
 
-def test_batch_range_is_zero_based_end_exclusive_and_only_resolves_selected_refs() -> None:
-    canvas = ContextCanvas("selected-batch")
-    for reference in ("first", "second"):
-        canvas.put("evidence", reference, {"text": reference}, readonly=True)
+def test_legacy_caps_do_not_limit_reference_count_characters_or_model_tokens() -> None:
+    canvas = ContextCanvas("legacy-caps")
+    references = [f"entry-{index}" for index in range(12)]
+    for index, reference in enumerate(references):
+        canvas.put("evidence", reference, {"text": "a " * 9000 + "<|endoftext|>" if index == 0 else reference})
     audit = []
-    tool = _batch_read_tool(canvas, on_read=audit.append)
-    references = ["unselected-missing-before", "first", "second", "unselected-missing-after"]
-    page = json.loads(tool.invoke({"collection": "evidence", "references": references,
-                                   "section": "value", "start": 1, "end": 3}))
-    assert [item["reference"] for item in page["items"]] == references[1:3]
-    assert (page["start"], page["end"], page["total"], page["complete_end"]) == (1, 3, 4, 3)
-    assert audit == page["items"] and not page["truncated"]
-    tail = json.loads(tool.invoke({"collection": "evidence", "references": references[:3],
-                                   "section": "value", "start": 2}))
-    assert [item["reference"] for item in tail["items"]] == ["second"] and tail["end"] == 3
+    tool = _batch_read_tool(canvas, maximum_result_bytes=64_000,
+                            maximum_read_chars=1, maximum_catalog_items=1, on_read=audit.append)
+    raw = tool.invoke({"collection": "evidence", "references": references})
+    result = json.loads(raw)
+    assert len(raw.encode("utf-8")) <= 64_000
+    assert not result["truncated"] and result["remaining_references"] == []
+    assert [item["reference"] for item in result["items"]] == references
+    assert [json.loads(item["content"]) for item in result["items"]] == [canvas.get("evidence", ref) for ref in references]
+    assert audit == result["items"]
 
 
 def test_small_complete_batch_does_not_reserve_an_unneeded_truncation_warning() -> None:
     canvas = ContextCanvas("small-complete-batch")
     canvas.put("evidence", "first", 1)
     tool = _batch_read_tool(canvas, maximum_result_bytes=350)
-    raw = tool.invoke({"collection": "evidence", "references": ["first"], "section": "value"})
+    raw = tool.invoke({"collection": "evidence", "references": ["first"]})
     result = json.loads(raw)
     assert len(raw.encode("utf-8")) <= 350
-    assert not result["truncated"] and result["complete_end"] == 1 and result["msg"] == ""
+    assert not result["truncated"] and result["remaining_references"] == [] and result["msg"] == ""
     assert result["items"][0]["content"] == "1"
 
 
@@ -345,40 +377,35 @@ def test_batch_reference_schema_rejects_empty_and_malformed_lists_before_call(re
     canvas = ContextCanvas("schema")
     calls, audit = [], []
     tool = _batch_read_tool(canvas, on_call=calls.append, on_read=audit.append)
-    result = json.loads(tool.invoke({"collection": "evidence", "references": references, "section": "value"}))
+    result = json.loads(tool.invoke({"collection": "evidence", "references": references}))
     assert result["error"]["code"] == "INVALID_ARGUMENTS"
     assert calls == [] and audit == [] and canvas.revision == 0
 
 
 @pytest.mark.parametrize("overrides", [
-    {"reference": "first"}, {"section": "overview"}, {"cursor": "not-a-cursor"},
-    {"references": ["first", "first"]}, {"references": ["first", "second", "third"]},
+    {"reference": "first"}, {"section": "overview"}, {"catalog_cursor": "not-a-cursor"},
+    {"references": ["first", "first"]}, {"char_start": 1}, {"char_end": 1},
 ])
 def test_invalid_batch_read_combinations_return_feedback_without_read_audit(overrides) -> None:
     canvas = ContextCanvas("invalid-batch")
     canvas.put("evidence", "first", 1)
     before, audit = canvas.snapshot(), []
-    tool = _batch_read_tool(canvas, maximum_catalog_items=2, on_read=audit.append)
-    request = {"collection": "evidence", "references": ["first"], "section": "value", **overrides}
-    result = json.loads(tool.invoke(request))
+    tool = _batch_read_tool(canvas, on_read=audit.append)
+    result = json.loads(tool.invoke({"collection": "evidence", "references": ["first"], **overrides}))
     assert result["error"]["code"] == "INVALID_READ"
     assert audit == [] and canvas.snapshot() == before
 
 
-@pytest.mark.parametrize("overrides,code", [
-    ({"start": 1}, "INVALID_RANGE"), ({"end": 0}, "INVALID_RANGE"),
-    ({"end": 2}, "INVALID_RANGE"), ({"start": -1}, "INVALID_ARGUMENTS"),
-    ({"start": True}, "INVALID_ARGUMENTS"), ({"end": 0.5}, "INVALID_ARGUMENTS"),
-])
-def test_invalid_batch_item_ranges_return_feedback_without_audit(overrides, code) -> None:
-    canvas = ContextCanvas("invalid-range")
+@pytest.mark.parametrize("overrides", [{"cursor": "legacy"}, {"start": 0}, {"end": 1}])
+@pytest.mark.parametrize("target", [{}, {"reference": "first"}, {"references": ["first"]}])
+def test_legacy_read_arguments_are_rejected_before_call(overrides, target) -> None:
+    canvas = ContextCanvas("legacy-arguments")
     canvas.put("evidence", "first", 1)
-    before, audit = canvas.snapshot(), []
-    tool = _batch_read_tool(canvas, on_read=audit.append)
-    result = json.loads(tool.invoke({"collection": "evidence", "references": ["first"],
-                                     "section": "value", **overrides}))
-    assert result["error"]["code"] == code
-    assert audit == [] and canvas.snapshot() == before
+    calls, audit = [], []
+    tool = _batch_read_tool(canvas, on_call=calls.append, on_read=audit.append)
+    result = json.loads(tool.invoke({"collection": "evidence", **target, **overrides}))
+    assert result["error"]["code"] == "INVALID_ARGUMENTS"
+    assert calls == [] and audit == []
 
 
 @pytest.mark.parametrize("overrides,code", [
@@ -391,93 +418,19 @@ def test_batch_scope_and_lookup_errors_expose_no_partial_reads(overrides, code) 
     canvas.put("evidence", "first", {"text": "original"}, readonly=True)
     before, audit = canvas.snapshot(), []
     tool = _batch_read_tool(canvas, on_read=audit.append)
-    request = {"collection": "evidence", "references": ["first"], "section": "value", **overrides}
-    result = json.loads(tool.invoke(request))
+    result = json.loads(tool.invoke({"collection": "evidence", "references": ["first"], **overrides}))
     assert result["error"]["code"] == code
     assert audit == [] and canvas.snapshot() == before
 
 
-@pytest.mark.parametrize("maximum_bytes,maximum_chars", [(4096, 10), (700, 4096)], ids=["characters", "utf8"])
-def test_oversized_batch_item_trims_itself_and_later_small_items_without_audit(maximum_bytes, maximum_chars) -> None:
-    canvas = ContextCanvas("large-batch")
-    canvas.put("evidence", "large", {"text": "杯" * 500}, readonly=True)
-    canvas.put("evidence", "small", 1, readonly=True)
-    before, audit = canvas.snapshot(), []
-    tool = _batch_read_tool(canvas, maximum_result_bytes=maximum_bytes, maximum_read_chars=maximum_chars,
-                            on_read=audit.append)
-    raw = tool.invoke({"collection": "evidence", "references": ["large", "small"], "section": "value"})
-    result = json.loads(raw)
-    assert len(raw.encode("utf-8")) <= maximum_bytes
-    assert result["truncated"] and result["complete_end"] == 0
-    assert all(item["truncated"] and "content" not in item for item in result["items"])
-    assert "超限已被裁剪" in result["msg"] and "reference/start/end" in result["msg"]
-    assert audit == [] and canvas.snapshot() == before
-    small = json.loads(tool.invoke({"collection": "evidence", "references": ["large", "small"],
-                                    "section": "value", "start": 1, "end": 2}))
-    assert not small["truncated"] and small["complete_end"] == 2
-    assert audit == small["items"] and canvas.snapshot() == before
-
-
-@pytest.mark.parametrize("budget", ["bytes", "tokens"])
-def test_batch_metadata_over_budget_returns_reduce_range_feedback_without_audit(budget) -> None:
+def test_batch_metadata_over_byte_budget_requests_fewer_references_without_audit() -> None:
     canvas = ContextCanvas("metadata-batch")
-    references = [f"{index}-" + "😃" * 128 for index in range(100 if budget == "tokens" else 8)]
+    references = [f"{index}-" + "😃" * 128 for index in range(8)]
     for reference in references:
         canvas.put("evidence", reference, 1)
     before, audit = canvas.snapshot(), []
-    tool = _batch_read_tool(canvas, maximum_catalog_items=100, maximum_read_chars=60_000,
-                            maximum_result_bytes=64_000 if budget == "tokens" else 512, on_read=audit.append)
-    result = json.loads(tool.invoke({"collection": "evidence", "references": references, "section": "value"}))
-    assert result["error"]["code"] == "BATCH_RANGE_TOO_LARGE"
-    assert "start/end" in result["error"]["retry_hint"]
+    tool = _batch_read_tool(canvas, maximum_result_bytes=512, on_read=audit.append)
+    result = json.loads(tool.invoke({"collection": "evidence", "references": references}))
+    assert result["error"]["code"] == "BATCH_TOO_LARGE"
+    assert "references" in result["error"]["retry_hint"]
     assert audit == [] and canvas.snapshot() == before
-
-
-def test_batch_token_budget_counts_the_whole_actual_json_receipt() -> None:
-    import tiktoken
-
-    encoding = tiktoken.get_encoding("o200k_base")
-    canvas = ContextCanvas("whole-json-token-budget")
-    canvas.put("evidence", "first", {"text": "a " * 7940}, readonly=True)
-    content = canvas.sections("evidence", "first", role="evaluator")["value"]
-    assert len(encoding.encode(content, disallowed_special=())) < 8000
-    audit = []
-    tool = _batch_read_tool(canvas, maximum_result_bytes=64_000, maximum_read_chars=60_000,
-                            on_read=audit.append)
-    raw = tool.invoke({"collection": "evidence", "references": ["first"], "section": "value"})
-    result = json.loads(raw)
-    assert len(encoding.encode(raw, disallowed_special=())) <= 8000
-    assert len(raw.encode("utf-8")) <= 64_000 and result["token_encoding"] == "o200k_base"
-    assert result["truncated"] and result["complete_end"] == 0 and audit == []
-    assert result["items"] == [{"reference": "first", "section": "value",
-                                "total_chars": len(content), "truncated": True}]
-
-
-def test_batch_tokens_trim_later_items_and_special_strings_are_plain_business_text() -> None:
-    import tiktoken
-
-    canvas = ContextCanvas("tokens-batch")
-    values = ["a " * 4200 + "<|endoftext|>", "天气晴朗 " * 1400 + "<|fim_prefix|>"]
-    references = ["first", "second"]
-    for reference, text in zip(references, values):
-        canvas.put("evidence", reference, {"text": text}, readonly=True)
-    encoding = tiktoken.get_encoding("o200k_base")
-    contents = [canvas.sections("evidence", ref, role="evaluator")["value"] for ref in references]
-    assert sum(len(content) for content in contents) < 60_000
-    assert sum(len(content.encode("utf-8")) for content in contents) < 60_000
-    assert sum(len(encoding.encode(content, disallowed_special=())) for content in contents) > 8000
-    audit = []
-    tool = _batch_read_tool(canvas, maximum_result_bytes=64_000, maximum_read_chars=60_000,
-                            on_read=audit.append)
-    request = {"collection": "evidence", "references": references, "section": "value"}
-    raw = tool.invoke(request)
-    result = json.loads(raw)
-    assert "error" not in result and len(encoding.encode(raw, disallowed_special=())) <= 8000
-    assert result["truncated"] and result["complete_end"] == 1
-    assert json.loads(result["items"][0]["content"])["text"] == values[0]
-    assert result["items"][1]["truncated"] and "content" not in result["items"][1]
-    assert audit == result["items"][:1]
-    remaining = json.loads(tool.invoke({**request, "start": 1, "end": 2}))
-    assert not remaining["truncated"] and remaining["complete_end"] == 2
-    assert json.loads(remaining["items"][0]["content"])["text"] == values[1]
-    assert [item["reference"] for item in audit] == references

@@ -100,6 +100,22 @@ def test_legacy_model_snapshot_does_not_add_unset_policy_fields():
     assert "max_input_chars" not in rendered
 
 
+def test_ocr_medium_reasoning_and_fallback_survive_snapshot_round_trip():
+    payload = _input_payload()
+    binding = {
+        "source": "codex_local", "model": "gpt-6-luna",
+        "request_timeout_seconds": 120, "max_output_tokens": 8192,
+        "reasoning_effort": "medium", "supports_vision_input": True,
+    }
+    payload["parse_config"]["ocr_enabled"] = True
+    payload["parse_config"]["models"]["ocr"] = {**binding, "fallback": binding}
+    inputs = ParseInput.model_validate(payload)
+    restored = ParseInput.model_validate_json(inputs.model_dump_json())
+    assert restored == inputs
+    assert restored.parse_config.models.ocr.reasoning_effort == "medium"
+    assert restored.parse_config.models.ocr.fallback.reasoning_effort == "medium"
+
+
 def test_historical_indexing_snapshot_remains_readable_without_inventing_generation():
     payload = _input_payload()
     payload["parse_config"]["indexing"].pop("index_generation")

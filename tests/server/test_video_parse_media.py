@@ -119,7 +119,7 @@ def test_media_is_isolated_by_task_and_lease_and_always_cleaned(tmp_path):
     ]
 
 
-def test_visual_context_keeps_core_asr_and_samples_one_bounded_frame_set(tmp_path):
+def test_visual_context_keeps_core_asr_and_samples_at_configured_fps(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
     commands = []
@@ -140,7 +140,7 @@ def test_visual_context_keeps_core_asr_and_samples_one_bounded_frame_set(tmp_pat
         assert media.visual_video_path != media.video_path
         assert media.visual_video_path.parent == media.video_path.parent
         assert (media.visual_start_ms, media.visual_end_ms) == (7000, 23_000)
-        assert [timestamp for timestamp, _ in media.frames] == [9000, 13_000, 17_000, 21_000]
+        assert [timestamp for timestamp, _ in media.frames] == list(range(7500, 23_000, 1000))
         assert probed == [media.visual_video_path]
         assert commands[0][commands[0].index("-ss") + 1] == "10.000"
         assert commands[0][commands[0].index("-t") + 1] == "10.000"
@@ -149,7 +149,35 @@ def test_visual_context_keeps_core_asr_and_samples_one_bounded_frame_set(tmp_pat
         assert commands[2][commands[2].index("-t") + 1] == "16.000"
         assert all(command[command.index("-i") + 1] == str(media.visual_video_path)
                    for command in commands[3:])
-        assert len(commands) == 7  # two clips, core audio and one four-frame set
+        assert len(commands) == 19  # two clips, core audio and sixteen frames
+    assert not media.video_path.parent.exists()
+
+
+@pytest.mark.parametrize("overlap_ms,expected_frames", [(0, 180), (3000, 198)])
+@pytest.mark.parametrize("ocr_enabled", [False, True])
+def test_three_fps_preserves_all_chunk_frames_despite_legacy_cap(
+    tmp_path, overlap_ms, expected_frames, ocr_enabled,
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = VideoParseMediaService(
+        tmp_path / "work", command_runner=_fake_runner([]),
+        probe_duration=lambda path: 66_000 if path.name == "understanding.mp4" else 60_000,
+    )
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=10_000, end_seconds=70_000,
+        visual_start_ms=10_000 - overlap_ms, visual_end_ms=70_000 + overlap_ms,
+        visual_mode="ordered_frames", frame_fps=3, max_frames=32,
+        max_height=720, ocr_enabled=ocr_enabled,
+    ) as media:
+        times = [timestamp for timestamp, _ in media.frames]
+        assert len(times) == expected_frames
+        assert all(right - left in (333, 334) for left, right in zip(times, times[1:]))
+        assert 10_000 - overlap_ms <= times[0] < times[-1] < 70_000 + overlap_ms
+        assert all(path.is_file() for _, path in media.frames)
+        if ocr_enabled:
+            assert len(media.ocr_frames) == 180
+            assert all(10_000 <= timestamp < 70_000 for timestamp, _ in media.ocr_frames)
     assert not media.video_path.parent.exists()
 
 
@@ -238,7 +266,7 @@ def test_execution_kind_separates_chunk_and_prefix_lease_namespaces(tmp_path):
 
 
 @pytest.mark.parametrize("ocr_enabled,visual_fallback_enabled,frame_count", [
-    (False, False, 0), (True, False, 2), (False, True, 2), (True, True, 2),
+    (False, False, 0), (True, False, 5), (False, True, 5), (True, True, 5),
 ])
 def test_video_mode_extracts_frames_only_for_ocr_or_fallback(
     tmp_path, ocr_enabled, visual_fallback_enabled, frame_count,
@@ -269,7 +297,7 @@ def test_video_mode_extracts_frames_only_for_ocr_or_fallback(
     ("ordered_frames", False), ("video", True), ("video", False),
 ])
 @pytest.mark.parametrize("ocr_enabled", [False, True])
-def test_short_tail_keeps_a_core_frame_within_the_visual_and_ocr_budgets(
+def test_short_tail_keeps_a_core_frame_without_thinning_visual_context(
     tmp_path, visual_mode, visual_fallback_enabled, ocr_enabled,
 ):
     source = tmp_path / "source.mp4"
@@ -286,7 +314,8 @@ def test_short_tail_keeps_a_core_frame_within_the_visual_and_ocr_budgets(
         visual_fallback_enabled=visual_fallback_enabled,
     ) as media:
         visual_frames_needed = visual_mode == "ordered_frames" or visual_fallback_enabled
-        assert [timestamp for timestamp, _ in media.frames] == ([60_050] if visual_frames_needed or ocr_enabled else [])
+        expected = [57_387, 58_162, 58_937, 60_050] if visual_frames_needed else ([60_050] if ocr_enabled else [])
+        assert [timestamp for timestamp, _ in media.frames] == expected
         if ocr_enabled:
             assert [timestamp for timestamp, _ in media.ocr_frames] == [60_050]
             core_frame_command = commands[-1]
@@ -295,7 +324,7 @@ def test_short_tail_keeps_a_core_frame_within_the_visual_and_ocr_budgets(
             assert media.ocr_frames is None
         if not visual_frames_needed and ocr_enabled:
             assert media.ocr_frames is media.frames
-        assert len(commands) == 3 + int(visual_frames_needed) + int(ocr_enabled)
+        assert len(commands) == 3 + 4 * int(visual_frames_needed) + int(ocr_enabled)
 
 
 def test_indexing_segment_uses_the_same_lease_isolation_without_extra_media(tmp_path):
@@ -530,12 +559,12 @@ def test_real_visual_overlap_does_not_extend_asr_audio_or_video(tmp_path):
     with service.prepare_chunk(
         _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
         visual_start_ms=0, visual_end_ms=3000, visual_mode="ordered_frames",
-        frame_fps=1, max_frames=3, max_height=64, ocr_enabled=False,
+        frame_fps=3, max_frames=3, max_height=64, ocr_enabled=False,
     ) as media:
         assert probe_video_duration_seconds(media.video_path) == 1000
         assert probe_video_duration_seconds(media.visual_video_path) == 3000
         with wave.open(str(media.audio_path), "rb") as audio:
             assert audio.getnframes() / audio.getframerate() == pytest.approx(1, abs=0.1)
-        assert [timestamp for timestamp, _ in media.frames] == [500, 1500, 2500]
+        assert [timestamp for timestamp, _ in media.frames] == [166, 500, 833, 1166, 1500, 1833, 2166, 2500, 2833]
         assert all(path.is_file() for _timestamp, path in media.frames)
     assert not media.video_path.parent.exists()

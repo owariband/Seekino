@@ -44,7 +44,7 @@ class EventRepository(_Repository):
             if key == "events":
                 events = cached.setdefault("events", {})
                 for event_id, event in value.items():
-                    events.setdefault(event_id, {}).update(deepcopy(event))
+                    events[event_id] = deepcopy(event)
             else:
                 cached[key] = deepcopy(value)
         envelope["receipt"].update(deepcopy(receipt or {}))
@@ -55,7 +55,7 @@ class EventRepository(_Repository):
 
 
 class EventStore:
-    index_name = "seekino_video_events_development_v1"
+    index_name = "seekino_video_events_development_v3"
 
     def __init__(self):
         self.documents = {}
@@ -94,8 +94,16 @@ class EventStore:
 class EventEmbedder(_Embedder):
     def __init__(self):
         super().__init__()
+        self.text_inputs = []
+        self.fail_text_call = None
         self.image_calls = []
         self.fail_image_call = None
+
+    def embed_text(self, text):
+        self.text_inputs.append(text)
+        if len(self.text_inputs) == self.fail_text_call:
+            raise RuntimeError("text provider failed")
+        return super().embed_text(text)
 
     def embed_image(self, path):
         content = Path(path).read_bytes()
@@ -110,7 +118,10 @@ class EventEmbedder(_Embedder):
 def _event_setup(tmp_path, *, event_count=1, warm_chunk=True):
     ids, media, snapshot = _fixture(tmp_path)
     content = _content()
-    content["timeline"][0].update(start_seconds=1000, end_seconds=5000)
+    content["timeline"][0].update(start_seconds=1000, end_seconds=5000, text_variants=[
+        {"language": "ja", "role": "ORIGINAL", "text": "大丈夫"},
+        {"language": "zh-Hans", "role": "TRANSLATION", "text": "我没事"},
+    ])
     if event_count == 0:
         content["timeline"] = []
     elif event_count == 2:
@@ -143,6 +154,7 @@ def _event_setup(tmp_path, *, event_count=1, warm_chunk=True):
         repository.targets.clear()
         repository.saved.clear()
         embedder.text_calls = embedder.video_calls = 0
+        embedder.text_inputs.clear()
     coordinator = VideoParseIndexCoordinator(repository,chunk_store,embedder,
         media_resolver=lambda _:media,media_service=media_service,contract=chunk_contract,
         event_store=events,event_target=target)
@@ -154,9 +166,14 @@ def test_current_chunk_still_builds_missing_events_and_forwards_frozen_target_an
     old_chunk_writes = len(chunks.bulk_calls)
     assert service.index_chunk(lease) == "complete"
     assert len(chunks.bulk_calls) == old_chunk_writes
-    assert embedder.video_calls == 0 and embedder.text_calls == 1
+    assert embedder.video_calls == 0 and embedder.text_calls == 3
+    assert embedder.text_inputs == ["千早爱音回答", "大丈夫", "我没事"]
     assert len(embedder.image_calls) == 3
     document = events.bulk_calls[0][0][0]
+    assert [(item.source, item.language, item.role) for item in document.semantic_vectors] == [
+        ("description", None, None), ("dialogue", "ja", "ORIGINAL"),
+        ("dialogue", "zh-Hans", "TRANSLATION"),
+    ]
     assert document.vision_vector == pytest.approx((2 / 5 ** .5, 1 / 5 ** .5))
     assert events.bulk_calls[0][1:] == (9,"wait_for")
     assert events.bound[-1].model_dump(mode="json") == target["contract"]
@@ -169,23 +186,92 @@ def test_current_chunk_still_builds_missing_events_and_forwards_frozen_target_an
     assert temporary and all(not path.exists() for path in temporary)
 
 
+@pytest.mark.parametrize("stale_proof", ["contract_id", "semantic_inputs"])
+def test_event_indexing_replaces_vectors_with_stale_encoding_proof(tmp_path, stale_proof):
+    service,repository,_chunks,events,embedder,lease,_target,_commands,_temporary = _event_setup(tmp_path)
+    assert service.index_chunk(lease) == "complete"
+    entry = next(iter(repository.snapshot.chunk.content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]["representations"]["events"].values()))
+    if stale_proof == "contract_id":
+        entry[stale_proof] = "event-index:sha256:" + "0" * 64
+    else:
+        entry[stale_proof][next(iter(entry[stale_proof]))] = "0" * 64
+    entry["document"]["semantic_vectors"][0]["vector"] = [0., 1.]
+    embedder.text_inputs.clear()
+
+    assert service.index_chunk(lease) == "complete"
+    assert embedder.text_inputs == (["千早爱音回答", "大丈夫", "我没事"]
+                                    if stale_proof == "contract_id" else ["千早爱音回答"])
+    document = next(iter(events.documents.values()))
+    assert document.semantic_vectors[0].vector == (1., 0.)
+    assert any(field.field == "dialogue" and field.raw_text == "我没事" for field in document.lexical_fields)
+
+
+def test_second_text_failure_reuses_description_then_completes_all_languages(tmp_path):
+    service,repository,_chunks,events,embedder,lease,_target,_commands,_temporary = _event_setup(tmp_path)
+    embedder.fail_text_call = 2
+    with pytest.raises(RuntimeError, match="text provider"):
+        service.index_chunk(lease)
+    assert not repository.completed and not events.bulk_calls and not embedder.image_calls
+    assert embedder.text_inputs == ["千早爱音回答", "大丈夫"]
+
+    embedder.fail_text_call = None
+    assert service.index_chunk(lease) == "complete"
+    assert embedder.text_inputs == ["千早爱音回答", "大丈夫", "大丈夫", "我没事"]
+    assert len(next(iter(events.documents.values())).semantic_vectors) == 3
+
+
+@pytest.mark.parametrize("retry_image", [False, True])
+def test_changed_translation_reuses_other_text_vectors_from_complete_cache(tmp_path, retry_image):
+    service,repository,_chunks,events,embedder,lease,_target,_commands,_temporary = _event_setup(tmp_path)
+    assert service.index_chunk(lease) == "complete"
+    event_id = next(iter(events.documents))
+    repository.snapshot.chunk.content["timeline"][0]["text_variants"][1]["text"] = "我很好"
+    embedder.text_inputs.clear()
+    if retry_image:
+        embedder.fail_image_call = len(embedder.image_calls) + 1
+        with pytest.raises(RuntimeError, match="image provider"):
+            service.index_chunk(lease)
+        embedder.fail_image_call = None
+
+    assert service.index_chunk(lease) == "complete"
+    assert embedder.text_inputs == ["我很好"]
+    assert set(events.documents) == {event_id}
+    assert any(field.raw_text == "我很好" for field in events.documents[event_id].lexical_fields)
+
+
+@pytest.mark.parametrize("damage", ["missing", "invalid_vector"])
+def test_incomplete_or_corrupt_complete_text_cache_is_rebuilt(tmp_path, damage):
+    service,repository,_chunks,events,embedder,lease,_target,_commands,_temporary = _event_setup(tmp_path)
+    assert service.index_chunk(lease) == "complete"
+    entry = next(iter(repository.snapshot.chunk.content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]["representations"]["events"].values()))
+    if damage == "missing":
+        entry["document"]["semantic_vectors"].pop()
+    else:
+        entry["document"]["semantic_vectors"][1]["vector"] = [1.]
+    embedder.text_inputs.clear()
+
+    assert service.index_chunk(lease) == "complete"
+    assert embedder.text_inputs == ["千早爱音回答", "大丈夫", "我没事"]
+    assert len(next(iter(events.documents.values())).semantic_vectors) == 3
+
+
 def test_image_retry_reuses_semantic_and_partial_frames_then_complete_cache_skips_media(tmp_path):
     service,repository,_chunks,events,embedder,lease,_target,_commands,temporary = _event_setup(tmp_path)
     embedder.fail_image_call = 2
     with pytest.raises(RuntimeError,match="image provider"):
         service.index_chunk(lease)
     assert not repository.completed
-    assert embedder.text_calls == 1 and len(embedder.image_calls) == 2
+    assert embedder.text_calls == 3 and len(embedder.image_calls) == 2
     entry = next(iter(repository.snapshot.chunk.content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]["representations"]["events"].values()))
-    assert entry["semantic_vector"] == [1.,0.] and len(entry["frame_artifacts"]) == 1
+    assert len(entry["semantic_artifacts"]) == 3 and len(entry["frame_artifacts"]) == 1
     assert all(not path.exists() for path in temporary)
     embedder.fail_image_call = None
     assert service.index_chunk(lease) == "complete"
-    assert embedder.text_calls == 1 and len(embedder.image_calls) == 4
+    assert embedder.text_calls == 3 and len(embedder.image_calls) == 4
     calls, frames = len(events.bulk_calls), len(temporary)
     service._media_resolver = lambda _:pytest.fail("completed Event cache must not reopen media")
     assert service.index_chunk(lease) == "complete"
-    assert embedder.text_calls == 1 and len(embedder.image_calls) == 4
+    assert embedder.text_calls == 3 and len(embedder.image_calls) == 4
     assert len(events.bulk_calls) == calls and len(temporary) == frames
 
 
@@ -223,7 +309,7 @@ def test_lost_successful_bulk_response_completes_after_exact_event_readback(tmp_
     events.fail_write = "after_write"
     assert service.index_chunk(lease) == "complete"
     assert len(repository.completed) == 1 and len(events.bulk_calls) == 1
-    assert embedder.text_calls == 1 and len(embedder.image_calls) == 3
+    assert embedder.text_calls == 3 and len(embedder.image_calls) == 3
 
 
 @pytest.mark.parametrize(("flush_events", "event_saves"), [(8, 1), (1, 2)])
@@ -231,7 +317,7 @@ def test_event_cache_is_flushed_in_batches_not_per_encoding_step(tmp_path, monke
     monkeypatch.setattr(coordinator_module, "EVENT_CACHE_FLUSH_EVENTS", flush_events)
     service,repository,_chunks,events,embedder,lease,_target,_commands,_temporary = _event_setup(tmp_path,event_count=2)
     assert service.index_chunk(lease) == "complete"
-    assert embedder.text_calls == 2 and len(embedder.image_calls) == 4
+    assert embedder.text_calls == 4 and len(embedder.image_calls) == 4
     # Each save rewrites the whole cache row, so one per encoding step grows quadratically.
     batches = [saved[2]["events"] for saved in repository.saved if "events" in saved[2]]
     assert len(batches) == event_saves

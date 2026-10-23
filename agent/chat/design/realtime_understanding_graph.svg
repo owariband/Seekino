@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1040" viewBox="0 0 1320 1040" role="img" aria-labelledby="diagram-title diagram-desc">
+  <title id="diagram-title">realtime_understanding Workflow Graph</title>
+  <desc id="diagram-desc">设计方案：prepare_context 冻结视频、毫秒时间点和用户问题，并定位固定 Chunk 窗口。ensure_chunks 与 observe_frames 并行执行：前者在节点内有界并发复用或补齐三个 Chunk，不执行 Refine；后者按需提前读取暂停点附近原图，无需补充时返回空结果。两路结束后，由同一 Agent 的 compose_context 综合文字和视觉观察，保留覆盖与缺失情况。统一工具结果包括上下文总结、精选 caption、文字证据和关键帧，交给图外 Chat Supervisor 组织最终回答。</desc>
+  <defs>
+    <filter id="card-shadow" x="-12%" y="-18%" width="124%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#172B4D" flood-opacity="0.07"/>
+    </filter>
+    <marker id="arrow-neutral" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#52637A"/>
+    </marker>
+    <marker id="arrow-chunk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3473C9"/>
+    </marker>
+    <marker id="arrow-vision" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8562C8"/>
+    </marker>
+    <style>
+      text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; fill: #26364C; }
+      .identifier { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-weight: 600; font-size: 22px; }
+      .body { font-size: 17px; }
+      .small { font-size: 15px; }
+      .muted { fill: #63748A; }
+      .edge { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+      .neutral { stroke: #52637A; }
+      .chunk { stroke: #3473C9; }
+      .vision { stroke: #8562C8; }
+    </style>
+  </defs>
+
+  <rect width="1320" height="1040" fill="#F5F7FB"/>
+  <text x="56" y="66" font-size="30" font-weight="650">realtime_understanding · Workflow Graph</text>
+  <rect x="1104" y="39" width="160" height="36" rx="18" fill="#E7ECF4"/>
+  <text x="1184" y="63" text-anchor="middle" class="small muted">设计方案 · 待实现</text>
+  <text x="660" y="113" text-anchor="middle" class="body muted">工具输入：video_id · t_ms · question</text>
+
+  <g id="realtime-graph">
+    <rect x="56" y="134" width="1208" height="624" rx="24" fill="#FFFFFF" stroke="#C9D6E8" stroke-width="2"/>
+    <text x="84" y="163" font-size="16" font-weight="600" fill="#45688E">realtime_understanding / StateGraph</text>
+    <text x="1236" y="163" text-anchor="end" class="small muted">同一 harness · 四个节点</text>
+
+    <g id="graph-edges">
+      <path id="input-edge" class="edge neutral" d="M 660 120 V 180" marker-end="url(#arrow-neutral)"/>
+      <path id="fork-stem" class="edge neutral" d="M 660 288 V 316"/>
+      <path id="edge-prepare-ensure" data-from="prepare_context" data-to="ensure_chunks" class="edge chunk" d="M 660 316 H 345 V 354" marker-end="url(#arrow-chunk)"/>
+      <path id="edge-prepare-observe" data-from="prepare_context" data-to="observe_frames" class="edge vision" d="M 660 316 H 975 V 354" marker-end="url(#arrow-vision)"/>
+      <circle cx="660" cy="316" r="5" fill="#52637A"/>
+      <text x="440" y="339" text-anchor="middle" class="small" fill="#3473C9">A · Chunk 路径</text>
+      <text x="870" y="339" text-anchor="middle" class="small" fill="#8562C8">B · 视觉路径（按需）</text>
+
+      <path id="edge-ensure-compose" data-from="ensure_chunks" data-to="compose_context" class="edge chunk" d="M 345 508 V 552 H 540 V 582" marker-end="url(#arrow-chunk)"/>
+      <path id="edge-observe-compose" data-from="observe_frames" data-to="compose_context" class="edge vision" d="M 975 508 V 552 H 780 V 582" marker-end="url(#arrow-vision)"/>
+      <text x="440" y="540" text-anchor="middle" class="small" fill="#3473C9">Chunk 解析结果</text>
+      <text x="880" y="540" text-anchor="middle" class="small" fill="#8562C8">视觉观察 / 空补充结果</text>
+    </g>
+
+    <g id="prepare_context" data-graph-node="true">
+      <rect x="420" y="180" width="480" height="108" rx="16" fill="#F8FAFD" stroke="#B8C7DB" stroke-width="1.5" filter="url(#card-shadow)"/>
+      <text x="448" y="214" class="identifier">prepare_context</text>
+      <text x="448" y="243" class="body">校验并冻结视频、毫秒时间点与用户问题</text>
+      <text x="448" y="269" class="small muted">目标：chunk_i 及左右邻居；视频首尾裁剪</text>
+    </g>
+
+    <g id="ensure_chunks" data-graph-node="true">
+      <rect x="100" y="354" width="490" height="154" rx="16" fill="#F2F7FF" stroke="#AFC9EC" stroke-width="1.5" filter="url(#card-shadow)"/>
+      <text x="128" y="389" class="identifier" fill="#23599F">ensure_chunks</text>
+      <text x="128" y="419" class="body">已完成：读取结果；解析中：共享等待</text>
+      <text x="128" y="446" class="body">缺失：节点内有界并发补齐基础解析</text>
+      <rect x="128" y="464" width="133" height="27" rx="13.5" fill="#DFEBFC"/>
+      <text x="194.5" y="483" text-anchor="middle" class="small" fill="#23599F">不做 Refine</text>
+      <text x="280" y="483" class="small muted">领取与保存走既有 runtime</text>
+    </g>
+
+    <g id="observe_frames" data-graph-node="true">
+      <rect x="730" y="354" width="490" height="154" rx="16" fill="#F8F4FF" stroke="#CEBDED" stroke-width="1.5" filter="url(#card-shadow)"/>
+      <text x="758" y="389" class="identifier" fill="#6D48AE">observe_frames</text>
+      <text x="758" y="419" class="body">按需读取暂停点及必要邻近帧，记录观察</text>
+      <text x="758" y="446" class="body">无需补充：返回空结果，仍完成本分支</text>
+      <rect x="758" y="464" width="290" height="27" rx="13.5" fill="#EDE4FA"/>
+      <text x="903" y="483" text-anchor="middle" class="small" fill="#6D48AE">提前看图 · 不等待新 Chunk 结果</text>
+    </g>
+
+    <g id="compose_context" data-graph-node="true">
+      <rect x="420" y="582" width="480" height="138" rx="16" fill="#F8FAFD" stroke="#B8C7DB" stroke-width="1.5" filter="url(#card-shadow)"/>
+      <text x="448" y="617" class="identifier">compose_context</text>
+      <text x="448" y="647" class="body">同一 Agent 综合 Chunk 文字与早期视觉观察</text>
+      <text x="448" y="674" class="body">两路返回或确认缺失后，统一整理上下文</text>
+      <text x="448" y="701" class="small muted">提前看图已调用模型时：按需下一轮调用</text>
+    </g>
+  </g>
+
+  <path id="edge-compose-supervisor" data-from="compose_context" data-to="chat_supervisor" class="edge neutral" d="M 660 720 V 812" marker-end="url(#arrow-neutral)"/>
+  <text x="680" y="787" class="body muted">统一工具结果</text>
+
+  <g id="chat_supervisor" data-outside-graph="true">
+    <rect x="420" y="812" width="480" height="106" rx="16" fill="#EEF8F3" stroke="#A6D3BB" stroke-width="1.5" filter="url(#card-shadow)"/>
+    <text x="448" y="845" class="identifier" fill="#26704D">Chat Supervisor</text>
+    <text x="448" y="874" class="body">总结 + 精选 caption / 文字证据 + 关键帧</text>
+    <text x="448" y="900" class="small muted">图外：结合用户问题与对话历史，组织最终回答</text>
+  </g>
+
+  <rect x="56" y="946" width="1208" height="67" rx="14" fill="#EAF0F7"/>
+  <text x="80" y="973" class="small muted">Graph：初始化编译一次；每次工具调用使用独立 State，保留实际覆盖与缺失信息。</text>
+  <text x="80" y="998" class="small muted">持久化：Chunk 状态由 runtime 管理；关键帧保持可访问至 Supervisor 消费完成。</text>
+</svg>

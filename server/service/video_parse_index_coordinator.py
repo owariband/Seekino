@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -30,7 +31,7 @@ from engine.rag import (
     plan_chunk_index,
 )
 from engine.rag.indexing.events import (
-    EventIndexDocument, EventIndexingContract, build_event_index_receipt,
+    EventIndexDocument, EventIndexingContract, EventSemanticSource, build_event_index_receipt,
     finalize_event_index, plan_event_index,
 )
 from engine.rag.vision.event_frames import (
@@ -274,41 +275,66 @@ class VideoParseIndexCoordinator:
         try:
             for plan in plans:
                 self._check_active()
-                text_hash = hashlib.sha256(plan.semantic_request.semantic_text.encode("utf-8")).hexdigest()
-                proof = {"contract_id": contract.contract_id, "semantic_input_sha256": text_hash,
-                         "source_media_ref": chunk.source_media_ref}
+                semantic_inputs = {
+                    _event_semantic_key(item.source): hashlib.sha256(
+                        item.request.semantic_text.encode("utf-8")
+                    ).hexdigest()
+                    for item in plan.semantic_requests
+                }
+                proof = {"contract_id": contract.contract_id, "source_media_ref": chunk.source_media_ref}
                 previous = cached.get(plan.event_id)
                 entry = dict(previous) if isinstance(previous, Mapping) and all(
                     previous.get(key) == value for key, value in proof.items()
                 ) else dict(proof)
                 # A completed cache binds the source, exact text, realized frames and encoder contract.
                 restored = None
+                semantic_cache = entry.get("semantic_artifacts", {})
+                semantic_cache = dict(semantic_cache) if isinstance(semantic_cache, Mapping) else {}
                 if isinstance(entry.get("document"), Mapping):
                     try:
                         saved = EventIndexDocument.model_validate(entry["document"])
-                        semantic = accept_embedding_result(plan.semantic_request, modality="text",
-                            model=contract.semantic_encoder.model, vector=saved.semantic_vector)
-                        rebuilt = finalize_event_index(plan, semantic, saved.vision_vector, saved.detail.capture.frames)
-                        if rebuilt == saved:
-                            restored = rebuilt
+                        saved_inputs = entry.get("semantic_inputs", {})
+                        if isinstance(saved_inputs, Mapping):
+                            for representation in saved.semantic_vectors:
+                                key = _event_semantic_key(representation)
+                                if key in saved_inputs:
+                                    semantic_cache.setdefault(key, {"input_sha256": saved_inputs[key],
+                                                                    "vector": representation.vector})
+                        if saved_inputs == semantic_inputs:
+                            semantic = [
+                                accept_embedding_result(item.request, modality="text",
+                                    model=contract.semantic_encoder.model, vector=representation.vector)
+                                for item, representation in zip(
+                                    plan.semantic_requests, saved.semantic_vectors, strict=True,
+                                )
+                            ]
+                            rebuilt = finalize_event_index(plan, semantic, saved.vision_vector, saved.detail.capture.frames)
+                            if rebuilt == saved:
+                                restored = rebuilt
                     except (TypeError, ValueError):
                         pass
                 if restored is not None:
                     documents.append(restored)
                     continue
-                semantic = None
-                if entry.get("semantic_vector") is not None:
-                    try:
-                        semantic = accept_embedding_result(plan.semantic_request, modality="text",
-                            model=contract.semantic_encoder.model, vector=entry["semantic_vector"])
-                    except (TypeError, ValueError):
-                        pass
-                if semantic is None:
-                    with parse_chunk_scope(chunk.sequence_no, category="embedding"):
-                        result = self._embedder.embed_text(plan.semantic_request.semantic_text)
-                    semantic = _accept_result(plan.semantic_request, result)
-                    entry["semantic_vector"] = list(semantic.vector)
-                    pending[plan.event_id] = entry
+                semantic = []
+                for item in plan.semantic_requests:
+                    self._check_active()
+                    key = _event_semantic_key(item.source)
+                    artifact, cached_text = None, semantic_cache.get(key)
+                    if isinstance(cached_text, Mapping) and cached_text.get("input_sha256") == semantic_inputs[key]:
+                        try:
+                            artifact = accept_embedding_result(item.request, modality="text",
+                                model=contract.semantic_encoder.model, vector=cached_text.get("vector"))
+                        except (TypeError, ValueError):
+                            pass
+                    if artifact is None:
+                        with parse_chunk_scope(chunk.sequence_no, category="embedding"):
+                            result = self._embedder.embed_text(item.request.semantic_text)
+                        artifact = _accept_result(item.request, result)
+                        semantic_cache[key] = {"input_sha256": semantic_inputs[key], "vector": list(artifact.vector)}
+                        entry["semantic_artifacts"] = semantic_cache
+                        pending[plan.event_id] = entry
+                    semantic.append(artifact)
                 source = self._media_resolver(chunk.source_media_ref)
                 with self._media_service.prepare_event_frames(
                     identity, source_video=source, timestamps_ms=plan.frame_timestamps_ms,
@@ -343,7 +369,7 @@ class VideoParseIndexCoordinator:
                         artifacts.append(artifact)
                     vision = aggregate_event_frame_embeddings(requests, artifacts, contract.capture)
                 document = finalize_event_index(plan, semantic, vision, frames)
-                entry = {**proof, "document": document.as_source()}
+                entry = {**proof, "semantic_inputs": semantic_inputs, "document": document.as_source()}
                 pending[plan.event_id] = entry
                 if (len(pending) >= EVENT_CACHE_FLUSH_EVENTS
                         or time.monotonic() - flushed_at >= EVENT_CACHE_FLUSH_SECONDS):
@@ -573,6 +599,10 @@ class VideoParseIndexCoordinator:
             receipt=receipt,
             **({"event_target": self._event_target} if self._event_target is not None else {}),
         )
+
+
+def _event_semantic_key(source: EventSemanticSource) -> str:
+    return json.dumps((source.source, source.language.casefold() if source.language else None, source.role))
 
 
 def _file_sha256(path: Path) -> str:

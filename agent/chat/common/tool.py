@@ -206,7 +206,9 @@ def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
     for key in ("start_seconds", "end_seconds", "top_k", "start", "end",
                 "start_ms", "end_ms", "frame_count"):
         value = inputs.get(key)
-        if type(value) is int:
+        if type(value) is int or (
+            key in ("start_seconds", "end_seconds") and type(value) is float and isfinite(value)
+        ):
             summary[key] = value
     for key in ("collection", "reference", "section"):
         value = inputs.get(key)

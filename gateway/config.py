@@ -28,6 +28,7 @@ from gateway.constants import (
     OPENAI_ADAPTER,
     OPENAI_DEEPSEEK_PROFILE,
     OPENAI_STANDARD_PROFILE,
+    ReasoningEffort,
 )
 from gateway.multimodal import adapter_capabilities
 
@@ -60,6 +61,21 @@ _HttpsBaseUrl = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1),
     AfterValidator(_https_base_url),
+]
+
+
+def _audio_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
+        _https_base_url("https:" + value[len("http:"):])
+        return value.rstrip("/")
+    return _https_base_url(value)
+
+
+_AudioBaseUrl = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+    AfterValidator(_audio_base_url),
 ]
 _NonEmptyString = Annotated[
     str,
@@ -109,7 +125,7 @@ class OpenAIAudioSourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     adapter: Literal["openai_audio"] = "openai_audio"
     provider: _NonEmptyString
-    base_url: _HttpsBaseUrl
+    base_url: _AudioBaseUrl
     api_key_env: _NonEmptyString
     response_format: Literal["verbose_json", "json"] = "verbose_json"
 
@@ -188,7 +204,7 @@ class ModelBinding(BaseModel):
     kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding"] | None = None
     request_timeout_seconds: float | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
-    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+    reasoning_effort: ReasoningEffort | None = None
     supports_vision_input: bool = False
     fallback: ModelBinding | None = None
     context_window_tokens: int | None = Field(default=None, ge=2)
@@ -318,11 +334,98 @@ class TracingConfig(BaseModel):
     queue_size: int = Field(default=2048, ge=1, le=100_000)
 
 
+def _query_hook_url(value: str) -> str:
+    parsed = urlsplit(value)
+    parsed.port  # Validate malformed or out-of-range ports as well.
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError("query hook URL must be HTTP(S) without credentials, query, or fragment")
+    return value.rstrip("/")
+
+
+class QueryHookConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    enabled: bool = False
+    router_endpoint: Annotated[_HttpsBaseUrl, AfterValidator(_query_hook_url)] = (
+        "https://openrouter.ai/api/alpha/decisions"
+    )
+    router_model: _NonEmptyString = "typesafe/jev-1.14"
+    router_api_key_env: _NonEmptyString = "OPENROUTER_JEV_API_KEY"
+    router_timeout_seconds: float = Field(default=3, gt=0)
+    rewriter_base_url: Annotated[_NonEmptyString, AfterValidator(_query_hook_url)] = (
+        "http://127.0.0.1:18841"
+    )
+    rewriter_model: _NonEmptyString = "seekino-qwen3-text-8b-rewriter"
+    rewriter_timeout_seconds: float = Field(default=4, gt=0)
+    max_output_tokens: int = Field(default=256, ge=1, strict=True)
+    history_message_limit: int = Field(default=6, ge=1, strict=True)
+    history_max_chars: int = Field(default=2000, ge=1, strict=True)
+    query_max_chars: int = Field(default=2000, ge=1, strict=True)
+    total_timeout_seconds: float = Field(default=8, gt=0)
+
+
+class PiHostConfig(BaseModel):
+    """Limits for the application's shared Node Pi runtime."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    node_bin: _NonEmptyString = "node"
+    session_dir: _NonEmptyString = "outputs/pi/sessions"
+    max_active_runs: int = Field(default=2, ge=1, le=64, strict=True)
+    max_model_requests: int = Field(default=4, ge=1, le=128, strict=True)
+    max_loaded_sessions: int = Field(default=32, ge=1, le=4096, strict=True)
+    max_session_bytes: int = Field(default=64 * 1024 * 1024, ge=1024, strict=True)
+    max_cache_bytes: int = Field(default=256 * 1024 * 1024, ge=1024, strict=True)
+    session_ttl_seconds: float = Field(default=900, gt=0)
+    max_queue_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, strict=True)
+    max_line_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, strict=True)
+    max_tool_output_bytes: int = Field(default=12 * 1024 * 1024, ge=1024, strict=True)
+    max_transient_tasks: int = Field(default=8, ge=1, le=128, strict=True)
+    startup_timeout_seconds: float = Field(default=30, gt=0)
+    cancel_timeout_seconds: float = Field(default=10, gt=0)
+    shutdown_timeout_seconds: float = Field(default=5, gt=0)
+
+    @model_validator(mode="after")
+    def validate_transport_bounds(self) -> PiHostConfig:
+        if self.max_queue_bytes < self.max_line_bytes:
+            raise ValueError("Pi max_queue_bytes must be at least max_line_bytes")
+        if self.max_tool_output_bytes >= self.max_line_bytes:
+            raise ValueError("Pi max_tool_output_bytes must be smaller than max_line_bytes")
+        if self.max_cache_bytes < self.max_session_bytes:
+            raise ValueError("Pi max_cache_bytes must be at least max_session_bytes")
+        return self
+
+    def runtime_options(self) -> dict[str, str | int | float]:
+        """Resolve the private Node runtime configuration from one default source."""
+        return {
+            "sessionDir": str(Path(self.session_dir).expanduser().resolve()),
+            "maxActiveRuns": self.max_active_runs,
+            "maxModelRequests": self.max_model_requests,
+            "maxLoadedSessions": self.max_loaded_sessions,
+            "maxSessionBytes": self.max_session_bytes,
+            "maxCacheBytes": self.max_cache_bytes,
+            "sessionTtlSeconds": self.session_ttl_seconds,
+            "maxQueueBytes": self.max_queue_bytes,
+            "maxLineBytes": self.max_line_bytes,
+            "maxToolOutputBytes": self.max_tool_output_bytes,
+            "maxTransientTasks": self.max_transient_tasks,
+        }
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     config_version: Literal[1, 2] = 1
-    supervisor_harness: Literal["deepagents", "codex"] = "deepagents"
+    supervisor_harness: Literal["deepagents", "codex", "pi"] = "deepagents"
+    pi_host: PiHostConfig = Field(default_factory=PiHostConfig)
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
         default_factory=_default_model_sources
@@ -331,6 +434,7 @@ class GatewayConfig(BaseModel):
     video_parser: VideoParseConfig
     multimodal_embedding: MultimodalEmbeddingConfig
     tracing: TracingConfig = Field(default_factory=TracingConfig)
+    query_hook: QueryHookConfig = Field(default_factory=QueryHookConfig)
     # Runtime tuning is validated by the Server, which owns its constraints.
     agent_runtime: dict[str, object] = Field(default_factory=dict)
     normalized_models: dict[str, EmbeddingModelBinding | ModelBinding] = Field(
@@ -391,6 +495,12 @@ class GatewayConfig(BaseModel):
         if isinstance(binding, EmbeddingModelBinding) or binding.kind not in {None, "generative"}:
             raise ValueError("models.supervisor must be a generative model binding")
         source = self.source(binding.source)
+        if self.supervisor_harness == "pi":
+            if not isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
+                raise ValueError("pi supervisor_harness requires an OpenAI-compatible or Ark API source")
+            if binding.fallback is not None:
+                raise ValueError("pi supervisor_harness does not support fallback; configure one authorized model profile")
+            return
         if self.supervisor_harness == "codex":
             if not isinstance(source, CodexModelSourceConfig):
                 raise ValueError("codex supervisor_harness requires a codex_app_server source")

@@ -199,6 +199,8 @@ The repository includes a launcher for lazily starting local MySQL, reusing the 
 ./start.sh stop
 ```
 
+The launcher uses the checked-out `main` worktree and loads its `.env.local`, including when the updated entry point is invoked from another worktree. `start` uses current local files, including uncommitted changes, without pulling or switching branches. Managed API/Web processes are refreshed when their source directory, file contents, or configuration changes; unchanged processes are reused, and unknown port owners are rejected. MySQL/ES are not stopped by this refresh. Frozen worktrees retain their old launchers, so use the main directory entry point.
+
 The launcher checks the API library and the web proxy against the current `tenantId` contract, using the local tenant configured in `ANIVAG_LOCAL_TENANT_ID`. Elasticsearch must be reachable before you start: the script verifies the cluster and index but does not start ES. `stop` only stops processes the launcher manages. It does not stop a hand-started API/web or the Compose databases.
 
 Launcher data and logs go to `outputs/local-services/`. Media goes to `outputs/server/artifacts/` by default, configurable with `ANIVAG_ARTIFACT_ROOT`. An existing MySQL/ES is reused as configured, and old schemas are never altered automatically. For Docker and port details, see the [development deployment notes](deploy/README.md) (in Chinese).
@@ -238,7 +240,7 @@ A full parse runs basic understanding over fixed chunks, while sliding intervals
 
 The Supervisor can answer directly, search the web, call video search, or understand the current and neighbouring chunks at the frozen playback position. Even before a video is fully indexed, basic evidence can be fetched on demand. The Supervisor decides which calls to make; response time depends on the models and the execution budget.
 
-Retrieval tools return source evidence directly; additional context is read by chunk ID and cursor.
+Retrieval tools return source evidence directly; additional context is read by chunk ID and cursor. The Jev classifier and local 8B query rewrite remain in the pre-processing path.
 
 The production service only accepts **V2 + MySQL + Elasticsearch**. The consumer runs in the same server process as the API, job and recovery state live in MySQL, and ES is a search projection. Gateway, Engine and Agent need no separate processes. Local mode needs no Redis or external message queue. Parse V1, Qdrant, and the old offline import entrypoints have been removed.
 

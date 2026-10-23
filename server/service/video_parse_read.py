@@ -25,6 +25,8 @@ from ..model.dto.jobDTO import (
     VideoChunkData,
     VideoData,
     VideoParseTaskData,
+    VideoParseRetrievalChunkData,
+    VideoParseRetrievalTaskData,
     VideoParseRetrievalScope,
     HydratedRetrievalCandidate,
     ParseExportChunkSnapshot,
@@ -211,7 +213,7 @@ def resolve_retrieval_scope(
         )
 
     video_ids = [video.id for video in videos]
-    latest_by_video: dict[str, VideoParseTaskData] = {}
+    latest_by_video: dict[str, VideoParseRetrievalTaskData] = {}
     for task in read_store.list_video_tasks(session, video_ids=video_ids):
         latest_by_video.setdefault(task.video_id, task)
 
@@ -228,15 +230,12 @@ def resolve_retrieval_scope(
         )
 
     task_ids = [task.id for _video, task in selected]
-    rows_by_task: dict[
-        str,
-        list[tuple[ChunkParseTaskData, VideoChunkData, ChunkParseContentData]],
-    ] = {}
+    rows_by_task: dict[str, list[VideoParseRetrievalChunkData]] = {}
     for row in read_store.list_indexed_chunk_rows(
         session, task_ids=task_ids, phase=ChunkTaskPhase.INDEX,
         status=ChunkParseTaskStatus.COMPLETE.value,
     ):
-        rows_by_task.setdefault(row[0].video_task_id, []).append(row)
+        rows_by_task.setdefault(row.video_task_id, []).append(row)
 
     shared_contract: tuple[int, str, str, int, float, int] | None = None
     selected_config: ParseConfig | None = None
@@ -244,9 +243,9 @@ def resolve_retrieval_scope(
         rows = rows_by_task.get(task.id, [])
         if (
             len(rows) != task.chunk_count
-            or [chunk.sequence_no for _child, chunk, _content in rows]
+            or [chunk.sequence_no for chunk in rows]
             != list(range(task.chunk_count))
-            or any(chunk.video_id != video.id for _child, chunk, _content in rows)
+            or any(chunk.video_id != video.id for chunk in rows)
         ):
             raise VideoParseConflictError(
                 "COMPLETE Video Parse V2 task has incomplete Chunk content"
@@ -258,7 +257,7 @@ def resolve_retrieval_scope(
                 "COMPLETE Video Parse V2 task has invalid fixed parse configuration"
             ) from exc
         embedding = config.models.embedding
-        for _child, chunk, content in rows:
+        if rows:
             if require_sparse and not config.indexing.sparse_enabled:
                 raise VideoParseConflictError("selected V2 task has no published Sparse representation")
             contract = (

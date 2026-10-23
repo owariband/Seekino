@@ -31,8 +31,14 @@ class _Operation(BaseModel):
 
 
 class EventFields(_Operation):
-    start_seconds: int | None = Field(default=None, ge=0, strict=True)
-    end_seconds: int | None = Field(default=None, gt=0, strict=True)
+    start_seconds: int | None = Field(
+        default=None, ge=0, strict=True,
+        description="Inclusive absolute start in integer source-video milliseconds; not seconds",
+    )
+    end_seconds: int | None = Field(
+        default=None, gt=0, strict=True,
+        description="Exclusive absolute end in integer source-video milliseconds; not seconds",
+    )
     description: str | None = Field(default=None, min_length=1, pattern=r"\S")
     speaker: str | None = None
     language: str | None = None
@@ -66,6 +72,11 @@ class SetEvent(_Operation):
     event: TimelineEvent
 
 
+class RemoveEvent(_Operation):
+    op: Literal["remove_event"]
+    event_ref: str
+
+
 class PersonsOperation(_Operation):
     op: Literal["persons"]
     member_ref: str
@@ -97,7 +108,7 @@ class CompactOperation(_Operation):
 
 
 ParseOperation = Annotated[
-    AddEvent | PatchEvent | SetEvent | PersonsOperation | EventArrayOperation | CompactOperation,
+    AddEvent | PatchEvent | SetEvent | RemoveEvent | PersonsOperation | EventArrayOperation | CompactOperation,
     Field(discriminator="op"),
 ]
 
@@ -406,6 +417,10 @@ class ParseContextCanvas(ContextCanvas):
                     reference = operation.member_ref
                     member = self._member(draft, reference)
                     member["persons"] = self._array(member["persons"], operation.action, operation.values)
+                elif isinstance(operation, RemoveEvent):
+                    reference = operation.event_ref
+                    self._event(draft, reference)
+                    del draft["events"][reference]
                 elif isinstance(operation, EventArrayOperation):
                     reference = operation.event_ref
                     event = self._event(draft, reference)["event"]
@@ -519,9 +534,8 @@ class ParseContextCanvas(ContextCanvas):
     def _validate_draft(self, draft):
         start = min(member["bounds"][0] for member in self._authority.values())
         end = max(member["bounds"][1] for member in self._authority.values())
-        for reference in self._initial_identities:
-            self._event(draft, reference)
         for reference, value in draft["events"].items():
+            self._event(draft, reference)
             event = value["event"]
             times = (event["start_seconds"], event["end_seconds"])
             if self._initial_times.get(reference) != times and (

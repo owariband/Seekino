@@ -204,6 +204,7 @@ def project_video(state: VideoSummaryState, media: MediaService, *, access: Lite
     return VideoSummary(
         video_id=state.video_id, tenant_id=state.tenant_id, series_id=state.series_id,
         episode_order=state.episode_order, upload_sequence=state.upload_sequence,
+        display_name=state.display_name, description=state.description,
         original_filename=state.original_filename if access == "member" else None,
         total_bytes=state.total_bytes if access == "member" else None,
         duration_seconds=state.duration_seconds, upload_status=state.upload_status,

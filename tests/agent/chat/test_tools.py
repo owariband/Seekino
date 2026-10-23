@@ -480,7 +480,8 @@ def test_shared_output_helpers_bound_utf8_and_reject_stale_pages() -> None:
     feedback = captured.value
     assert feedback.code == "RANGE_TOO_LARGE"
     assert 0 < feedback.suggested_end < len(content)
-    assert f"end<={feedback.suggested_end}" in feedback.retry_hint
+    assert f"char_end={feedback.suggested_end}" in feedback.retry_hint
+    assert "char_start set to the returned end" in feedback.retry_hint
     raw = range_text(content, end=feedback.suggested_end, **range_options)
     payload = json.loads(raw)
     assert payload["content"] == content[:feedback.suggested_end]

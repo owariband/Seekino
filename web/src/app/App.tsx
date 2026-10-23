@@ -1,17 +1,19 @@
+import { lazy } from "react";
 import { Navigate, Route, Routes } from "react-router";
 
-import { LibraryPage } from "../features/library/LibraryPage";
 import { WatchHomePage } from "../features/player/WatchHomePage";
-import { WatchPage } from "../features/player/WatchPage";
-import { SeriesPage } from "../features/player/SeriesPage";
-import { RoutedSearchPage } from "../features/search/SearchPage";
-import { SettingsPage } from "../features/settings/SettingsPage";
-import { TasksPage } from "../features/tasks/TasksPage";
-import { UsagePage } from "../features/usage/UsagePage";
 import { UploadDialog } from "../features/uploads/UploadDialog";
 import { UploadProvider } from "../features/uploads/UploadProvider";
 import { useAuth } from "../features/auth/AuthProvider";
 import { AppShell } from "./AppShell";
+
+const LibraryPage = lazy(() => import("../features/library/LibraryPage").then((module) => ({ default: module.LibraryPage })));
+const WatchPage = lazy(() => import("../features/player/WatchPage").then((module) => ({ default: module.WatchPage })));
+const SeriesPage = lazy(() => import("../features/player/SeriesPage").then((module) => ({ default: module.SeriesPage })));
+const RoutedSearchPage = lazy(() => import("../features/search/SearchPage").then((module) => ({ default: module.RoutedSearchPage })));
+const SettingsPage = lazy(() => import("../features/settings/SettingsPage").then((module) => ({ default: module.SettingsPage })));
+const TasksPage = lazy(() => import("../features/tasks/TasksPage").then((module) => ({ default: module.TasksPage })));
+const UsagePage = lazy(() => import("../features/usage/UsagePage").then((module) => ({ default: module.UsagePage })));
 
 export function App() {
   const { canManage, canUpload } = useAuth();

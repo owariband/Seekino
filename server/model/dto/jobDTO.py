@@ -224,6 +224,19 @@ class ModelCallReservation:
 
 
 @dataclass(frozen=True, slots=True)
+class VideoSummarizeLease:
+    video_parse_task_id: str
+    video_id: str
+    worker_id: str
+    lease_version: int
+    lease_expire_time: datetime
+    retry_count: int
+    source_fingerprint: str
+    task_input: VideoParseTaskInputState
+    config_snapshot: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class PrefixParseLease:
     video_parse_task_id: str
     chunk_parse_task_id: str
@@ -417,6 +430,26 @@ class SeriesData:
     create_date: datetime | None = None
     update_time: int | None = None
     update_date: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VideoParseRetrievalTaskData:
+    """Task fields required to choose and validate a retrieval scope."""
+
+    id: str
+    video_id: str
+    status: str
+    parse_config: dict[str, Any]
+    chunk_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class VideoParseRetrievalChunkData:
+    """Published chunk identity needed to validate retrieval scope coverage."""
+
+    video_task_id: str
+    video_id: str
+    sequence_no: int
 
 
 @dataclass(frozen=True, slots=True)

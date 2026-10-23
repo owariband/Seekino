@@ -111,7 +111,7 @@ class ElasticsearchConfig:
             raise ValueError("Event and Chunk indices must use different physical names")
 
     def event_index_for_environment(self, environment: DatabaseEnvironment | str) -> str:
-        return self.event_index_name or f"seekino_video_events_{DatabaseEnvironment(environment).value}_v1"
+        return self.event_index_name or f"seekino_video_events_{DatabaseEnvironment(environment).value}_v3"
 
 
 def validate_index_name(index_name: str, environment: DatabaseEnvironment | str) -> None:

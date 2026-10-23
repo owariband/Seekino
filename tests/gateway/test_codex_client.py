@@ -396,7 +396,8 @@ def test_none_reasoning_effort_is_sent_explicitly() -> None:
     assert codex_reasoning_effort("high") is ReasoningEffort.high
 
 
-def test_codex_session_passes_real_ordered_images_to_sdk(monkeypatch) -> None:
+@pytest.mark.parametrize("reasoning_effort", ["high", "medium"])
+def test_codex_session_passes_real_ordered_images_to_sdk(monkeypatch, reasoning_effort) -> None:
     captured = {}
     result = SimpleNamespace(final_response='{"answer":"ok"}')
 
@@ -412,7 +413,7 @@ def test_codex_session_passes_real_ordered_images_to_sdk(monkeypatch) -> None:
     monkeypatch.setattr("gateway.codex.client.Thread", FakeThread)
     fake = _FakeClient()
     session = CodexSession(
-        model="vision-model", tools=[], reasoning_effort="high", codex_bin=None,
+        model="vision-model", tools=[], reasoning_effort=reasoning_effort, codex_bin=None,
         cwd=None, max_tool_calls=None, check_control=None,
         client_factory=lambda *_args: fake,
     )
@@ -427,6 +428,7 @@ def test_codex_session_passes_real_ordered_images_to_sdk(monkeypatch) -> None:
 
     assert captured["inputs"] is inputs
     assert captured["kwargs"]["output_schema"] == schema
+    assert captured["kwargs"]["effort"] is ReasoningEffort(reasoning_effort)
     assert fake.closed
 
 

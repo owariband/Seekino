@@ -68,6 +68,8 @@ export interface VideoSummary {
   seriesId: string;
   episodeOrder: number;
   uploadSequence: number;
+  displayName?: string | null;
+  description?: string | null;
   originalFilename: string | null;
   totalBytes: number | null;
   /** Integer milliseconds; the field name is retained for compatibility. */

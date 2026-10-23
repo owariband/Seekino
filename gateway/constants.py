@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, Literal
+
+
+ReasoningEffort = Literal["none", "low", "medium", "high", "max"]
 
 
 # Adapter names select a request protocol and its implementation.

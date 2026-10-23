@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
+from .query_hook import QueryHook
 from .common.tool import (
     ToolCallStatus, as_langchain_tools, attach_agent_tool_logging, build_agent_tool,
 )
@@ -100,8 +101,14 @@ class SubmitVideoItemArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     video_chunk_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
-    start_seconds: int = Field(strict=True, ge=0)
-    end_seconds: int = Field(strict=True, gt=0)
+    start_seconds: float = Field(
+        strict=True, ge=0, allow_inf_nan=False,
+        description="Absolute start time in seconds, e.g. 54.6 for 00:54.600.",
+    )
+    end_seconds: float = Field(
+        strict=True, gt=0, allow_inf_nan=False,
+        description="Absolute end time in seconds; must be greater than start_seconds.",
+    )
     claim: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)]
 
     @model_validator(mode="after")
@@ -130,6 +137,7 @@ class SupervisorRuntime:
         total_timeout_enabled: bool = True,
         realtime_runtime: RealtimeUnderstandingRuntime | None = None,
         maximum_parallel_queries: int = 3,
+        query_hook: QueryHook | None = None,
     ) -> None:
         if not 1 <= max_web_results <= 20:
             raise ValueError("max_web_results must be between 1 and 20")
@@ -160,6 +168,7 @@ class SupervisorRuntime:
         self._max_tool_result_bytes = max_tool_result_bytes
         self._max_prompt_chars = max_prompt_chars
         self._maximum_parallel_queries = maximum_parallel_queries
+        self._query_hook = query_hook
 
     @property
     def model_name(self) -> str:
@@ -208,6 +217,10 @@ class SupervisorRuntime:
                 self._execution_timeout_seconds, self._supervisor_timeout_seconds,
             ) if self._total_timeout_enabled else None,
             cancellation, emit,
+        )
+        model_user_message = (
+            self._query_hook(inputs, control) if self._query_hook is not None
+            else inputs["user_message"]
         )
         video_result: AgentFinalOutput | None = None
         video_available = bool(inputs["series_ids"])
@@ -532,7 +545,9 @@ class SupervisorRuntime:
                             max(1, max_model_calls_per_turn // len(tasks))
                             if self._limits_enabled and max_model_calls_per_turn is not None else None
                         ),
-                        max_tool_calls_per_turn=max_tool_calls_per_turn,
+                        max_tool_calls_per_turn=(
+                            max_tool_calls_per_turn if self._limits_enabled else None
+                        ),
                         tool_budget=tool_budget, deadline=control.deadline,
                     )
                     control.check()
@@ -707,7 +722,7 @@ class SupervisorRuntime:
                     ) from exc
 
         def submit_video_item(
-            video_chunk_id: str, start_seconds: int, end_seconds: int, claim: str,
+            video_chunk_id: str, start_seconds: float, end_seconds: float, claim: str,
         ) -> ToolResult:
             with tool_lock:
                 consume_tool_call()
@@ -724,20 +739,23 @@ class SupervisorRuntime:
                         "Use a video_chunk_id returned by retrieve or search_video_events.",
                     ) from exc
                 try:
+                    # The tool accepts seconds; canonical evidence and playback storage use milliseconds.
+                    start_ms, end_ms = round(start_seconds * 1000), round(end_seconds * 1000)
                     source_ids = video_range_sources(
                         {hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
                          for hit in merge_retrieval_calls(inputs, retrieval_calls).hits},
-                        video_chunk_id, start_seconds, end_seconds, allow_adjacent=True,
+                        video_chunk_id, start_ms, end_ms, allow_adjacent=True,
                     )
-                except ValueError as exc:
+                except (ValueError, OverflowError) as exc:
                     raise AgentToolFeedbackError(
                         "INVALID_VIDEO_RANGE", str(exc),
-                        "Use integer milliseconds within the anchor or two adjacent retrieved chunks "
-                        "of the same source video, without an uncovered gap.",
+                        "Use seconds within the anchor or two adjacent retrieved chunks "
+                        "of the same source video, without an uncovered gap. "
+                        "Divide evidence timestamps in milliseconds by 1000 before submitting.",
                     ) from exc
                 item = SelectedVideoRange(
-                    video_chunk_id=video_chunk_id, start_seconds=start_seconds,
-                    end_seconds=end_seconds,
+                    video_chunk_id=video_chunk_id, start_seconds=start_ms,
+                    end_seconds=end_ms,
                 )
                 # A retry or revision replaces this item in place; evidence stays immutable.
                 block = ChatVideoBlock(video_chunk_id=video_chunk_id, claim=claim)
@@ -754,7 +772,8 @@ class SupervisorRuntime:
                 render_blocks[:] = candidate
                 publish_snapshot()
                 return JsonToolResult(success=True, payload={
-                    "accepted": True, **item.model_dump(),
+                    "accepted": True, "video_chunk_id": video_chunk_id,
+                    "start_seconds": start_ms / 1000, "end_seconds": end_ms / 1000,
                     "source_video_chunk_ids": source_ids,
                     "video_item_count": len(submitted_items),
                 })
@@ -867,8 +886,9 @@ class SupervisorRuntime:
             build_agent_tool(
                 func=submit_video_item, name="submit_video_item",
                 description=(
-                    "Submit a final video selection after checking its source evidence. Times are integer "
-                    "milliseconds within the anchor or two adjacent retrieved chunks of the same video. "
+                    "Submit a final video selection after checking its source evidence. Times are absolute "
+                    "seconds (decimals allowed) within the anchor or two adjacent retrieved chunks "
+                    "of the same video. For 00:50–01:00, pass start_seconds=50, end_seconds=60. "
                     "Repeated submission updates the selection in place; only submitted selections are displayed."
                 ), args_schema=SubmitVideoItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
             ),
@@ -965,7 +985,9 @@ class SupervisorRuntime:
             "按需直接读取 evidence.transcript 核对对白、evidence.events 核对事件，section 不能简写为 transcript 或 events。"
             "已知 section 不必先 overview，也不要求读完所有 section；省略 end 按预算读取，截断时按提示续读。"
             "对白证据已足够回答出处、原话或说话人时无需抽帧；只有具体视觉主张或证据缺口才看图。"
-            "用 submit_video_item 提交最终片段；start_seconds/end_seconds 实际为原视频绝对整数毫秒。"
+            "用 submit_video_item 提交最终片段；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
+            "例如 00:50–01:00 传 50 和 60。检索证据与 Query 草稿仍使用毫秒，提交前除以 1000；"
+            "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文与 claim 使用秒或时间码。"
             "范围须完整覆盖支持主张的必要内容并去掉无关部分，可跨同一视频两个相邻已检索 Chunk。"
             "重复 ID 会原位更新，remove_video_item 可撤回；未提交的候选不会自动显示。"
             "普通正文与选段按产生顺序展示；在需要插入视频卡的位置调用 submit_video_item，"
@@ -976,7 +998,8 @@ class SupervisorRuntime:
             ("当前播放视频可通过 understand_current_video 核验，即使尚未完成全量解析。"
              "问题指向当前或刚才讲解、暂停画面时优先调用该工具，再根据证据、用户问题和历史组织解释。"
              "根据 chunks 中的原始事实、frames caption 和 visual_summary 组织最终回答；summary 只是证据说明。"
-             "start_seconds/end_seconds 实际为源视频绝对毫秒；after_anchor 表示暂停位置之后的证据。"
+             "understand_current_video 返回的 chunks[].evidence[] 中 start_seconds/end_seconds 为源视频绝对毫秒；"
+             "after_anchor 表示暂停位置之后的证据。"
              "partial 表示采集缺失，omitted_evidence 表示输出为预算省略；据此说明覆盖范围与不确定性。"
              "persons 是整个 Chunk 的人名清单，不证明这些人都在暂停帧中；不得补造或擅自改写事实。"
              "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。\n"
@@ -1033,7 +1056,7 @@ class SupervisorRuntime:
                 prompt,
                 thread_id=inputs["conversation_id"],
                 message_id=inputs["assistant_message_id"],
-                user_message=inputs["user_message"],
+                user_message=model_user_message,
                 history=inputs["history"],
                 **({"session_context": session_context} if session_context is not None else {}),
                 **({"image_urls": inputs["image_urls"]} if inputs.get("image_urls") else {}),

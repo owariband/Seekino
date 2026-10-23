@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
@@ -12,6 +13,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session, sessionmaker
 
 from agent.video_parse_v2.input import ParseConfig
+from agent.video_summarize.state import VideoSummarizeInput, VideoSummaryResult
 from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 
 from ..constants.parse import MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY
@@ -34,6 +36,7 @@ from ..model.dto.jobDTO import (
     RealtimeChunkState,
     ParseExportChunkSnapshot,
     VideoParseTaskData,
+    VideoSummarizeLease,
 )
 from ..model.job import (
     VideoParseTaskStatus,
@@ -78,6 +81,8 @@ from . import video_parse_prefix as prefix_ops
 from . import video_parse_voiceprint as voiceprint_ops
 from . import video_parse_model_calls as execution_ops
 from . import video_parse_read as retrieval_ops
+from . import video_parse_summarize as summary_ops
+from ..repository.library import LibraryRepository
 
 
 class VideoParsePersistenceService:
@@ -756,6 +761,7 @@ class VideoParsePersistenceService:
                 session, interval.video_task_id, interval.chunk_task_ids,
                 committed_at, locked_intervals=locked_intervals,
             )
+            summary_ops.mark_summary_ready(session, interval.video_task_id, now=committed_at)
             return tuple(queued)
 
     def bind_event_index_target(
@@ -1113,3 +1119,67 @@ class VideoParsePersistenceService:
                 lease=lease,
                 released_at=released_at,
             )
+
+    def mark_summary_ready(self, task_id: str, *, now: datetime | None = None) -> bool:
+        with self._summary_transaction() as session:
+            return summary_ops.mark_summary_ready(session, task_id, now=now or now_utc())
+
+    @contextmanager
+    def _summary_transaction(self) -> Iterator[Session]:
+        with self._session_factory.begin() as session:
+            # Set before acquiring a connection/starting the database transaction.
+            # Summary scans precede parent locks; RR would otherwise retain an
+            # older source snapshot even after the current parent is locked.
+            if session.get_bind().dialect.name == "mysql":
+                session.connection(execution_options={"isolation_level": "READ COMMITTED"})
+            yield session
+
+    def claim_next_summary(
+        self, worker_id: str, *, lease_duration: timedelta,
+        config_snapshot: dict | None = None, now: datetime | None = None,
+    ) -> VideoSummarizeLease | None:
+        if lease_duration <= timedelta(0):
+            raise ValueError("lease_duration must be positive")
+        worker_id = require_nonempty_text(worker_id, "worker_id")
+        with self._summary_transaction() as session:
+            return summary_ops.claim_next_summary(
+                session, worker_id, lease_duration=lease_duration,
+                config_snapshot=config_snapshot, now=now or now_utc(),
+            )
+
+    def load_summary_input(
+        self, lease: VideoSummarizeLease, *, now: datetime | None = None,
+    ) -> VideoSummarizeInput:
+        with self._summary_transaction() as session:
+            return summary_ops.load_summary_input(session, lease, now=now or now_utc())
+
+    def heartbeat_summary(
+        self, lease: VideoSummarizeLease, *, lease_duration: timedelta, now: datetime | None = None,
+    ) -> bool:
+        if lease_duration <= timedelta(0):
+            raise ValueError("lease_duration must be positive")
+        with self._session_factory.begin() as session:
+            return summary_ops.heartbeat_summary(session, lease, lease_duration=lease_duration, now=now or now_utc())
+
+    def complete_summary(
+        self, lease: VideoSummarizeLease, result: VideoSummaryResult, *,
+        cover_uri: str | None, now: datetime | None = None,
+    ) -> bool:
+        with self._summary_transaction() as session:
+            return summary_ops.complete_summary(
+                session, LibraryRepository(self._session_factory, execution_mode="v2"),
+                lease, result, cover_uri=cover_uri, now=now or now_utc(),
+            )
+
+    def retry_summary(
+        self, lease: VideoSummarizeLease, *, error: str, retry_at: datetime,
+        max_retries: int, now: datetime | None = None,
+    ) -> bool:
+        with self._session_factory.begin() as session:
+            return summary_ops.retry_summary(
+                session, lease, error=error, retry_at=retry_at, max_retries=max_retries, now=now or now_utc(),
+            )
+
+    def release_summary(self, lease: VideoSummarizeLease, *, now: datetime | None = None) -> bool:
+        with self._session_factory.begin() as session:
+            return summary_ops.release_summary(session, lease, now=now or now_utc())

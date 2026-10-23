@@ -111,7 +111,7 @@ def test_init_event_index_uses_separate_target_and_full_contract_without_databas
         yield client, object()  # The Chunk store must not be initialized by this command.
 
     class EventStore:
-        index_name = "seekino_video_events_test_v1"
+        index_name = "seekino_video_events_test_v3"
 
         def ensure_index(self, contract):
             calls["contract"] = contract

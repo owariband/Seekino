@@ -411,7 +411,7 @@ describe("application shell", () => {
     renderApp();
     const user = userEvent.setup();
 
-    expect(screen.getByRole("heading", { name: "Seekino 助手", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Seekino 助手", level: 1 })).toBeInTheDocument();
     expect(screen.getByText("Seekino 助手")).toBeInTheDocument();
     expect(screen.queryByText(/影像札记|问记忆，找画面|当前检索范围/)).not.toBeInTheDocument();
 

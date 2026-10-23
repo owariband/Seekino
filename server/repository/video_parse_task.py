@@ -10,6 +10,21 @@ from sqlalchemy.orm import Session
 from ..model.dto.jobDTO import VideoParseTaskData, VideoData, SeriesData
 from ..model.job import VideoParseTask
 from ..model.video import Video, Series
+from ..constants.parse import RUNTIME_DETAIL_KEY
+
+
+def list_due_summary_task_ids(session: Session, now_ms: int, *, limit: int = 64) -> list[str]:
+    """Bounded SQL scan of explicitly queued summaries, including expired claims."""
+    summary = VideoParseTask.detail[RUNTIME_DETAIL_KEY]["summarize"]
+    status = summary["status"].as_string()
+    return list(session.scalars(select(VideoParseTask.id).where(
+        VideoParseTask.is_deleted.is_(False),
+        or_(
+            and_(status.in_(["PENDING", "RETRY_WAIT"]),
+                 summary["next_execute_time_ms"].as_integer() <= now_ms),
+            and_(status == "RUNNING", summary["lease_expire_time_ms"].as_integer() <= now_ms),
+        ),
+    ).order_by(VideoParseTask.update_time, VideoParseTask.id).limit(limit)))
 
 
 def task_data(row: VideoParseTask) -> VideoParseTaskData:
