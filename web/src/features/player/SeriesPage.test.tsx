@@ -102,8 +102,10 @@ describe("SeriesPage", () => {
     expect(await screen.findByRole("button", { name: "甲系列 的系列选项" })).toBeInTheDocument();
   });
 
-  it("loads the routed series, shows its supplied description, and orders episodes before choosing the first", async () => {
-    mocks.getSeries.mockResolvedValue({ ...series, videos: [video("a-3", 3), video("a-1b", 1, 2), video("a-1a", 1, 1)] });
+  it("shows supplied video titles with episode fallbacks and orders episodes before choosing the first", async () => {
+    mocks.getSeries.mockResolvedValue({ ...series, videos: [
+      { ...video("a-3", 3), displayName: "本集正式标题" }, video("a-1b", 1, 2), video("a-1a", 1, 1),
+    ] });
     renderPage();
     expect(await screen.findByRole("heading", { name: "甲系列", level: 1 })).toBeInTheDocument();
     expect(mocks.getSeries).toHaveBeenCalledWith("series-a", "local-default");
@@ -113,6 +115,9 @@ describe("SeriesPage", () => {
     expect(within(episodes).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
       "/watch/series-a/a-1a?tenantId=local-default", "/watch/series-a/a-1b?tenantId=local-default", "/watch/series-a/a-3?tenantId=local-default",
     ]);
+    expect(within(episodes).getByTitle("a-3.mp4")).toHaveTextContent("本集正式标题");
+    expect(within(episodes).getByTitle("a-1a.mp4")).toHaveTextContent("第 1 集");
+    expect(within(episodes).getByText("EP 03")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "继续观看" })).not.toBeInTheDocument();
   });
 

@@ -498,7 +498,7 @@ def create_schema(engine: Engine) -> None:
             "processing_duration_ms",
             "processing_timing_complete",
         },
-        "video": {"duration_ms"},
+        "video": {"duration_ms", "display_name", "description", "cover_uri"},
         "video_chunk": {
             "start_ms",
             "end_ms",

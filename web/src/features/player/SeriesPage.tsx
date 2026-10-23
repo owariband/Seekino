@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
 import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
-import { episodeLabel, episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
+import { episodeLabel, episodeTitle, formatTimecode, previewFramePosition, seriesTitle, videoTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
 import { readBackground, SeriesBackgroundEditor } from "../library/SeriesBackgroundEditor";
 import { SeriesActionsMenu } from "../library/SeriesActionsMenu";
@@ -105,7 +105,7 @@ export function SeriesPage() {
                   <span className={styles.duration}>{formatTimecode(episode.durationSeconds)}</span>
                   {watched > 0 && episode.durationSeconds > 0 ? <span className={styles.watched} style={{ width: `${watched / episode.durationSeconds * 100}%` }} /> : null}
                 </span>
-                <strong title={episode.originalFilename ?? undefined}>{episodeTitle(episode.episodeOrder, locale)}</strong>
+                <strong title={episode.originalFilename ?? undefined}>{videoTitle(episode, locale)}</strong>
                 {!available ? <small>{t("暂不可播放")}</small> : watched > 0 ? <small>{t("已看至 {time}", { time: formatTimecode(watched) })}</small> : null}
               </>;
               return <li key={episode.videoId}>{available

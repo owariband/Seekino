@@ -6,7 +6,7 @@ import { Link, useLocation, useNavigate, useOutletContext, useParams } from "rea
 
 import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
 import type { WatchPanelLayout } from "../../app/AppShell";
-import { episodeLabel, episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
+import { episodeLabel, videoTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
 import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
@@ -17,6 +17,7 @@ import { useAuth } from "../auth/AuthProvider";
 import styles from "./watch.module.css";
 
 const PANEL_WIDTH_KEY = "anivag-watch-panel-width";
+const PAUSE_ON_SEND_KEY = "anivag-watch-pause-on-send";
 const MIN_PANEL_WIDTH = 320;
 
 type PlaybackExtraContext = {
@@ -64,6 +65,10 @@ export function WatchPage() {
   const resumeAfterChatRef = useRef(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<"chat" | "episodes">("chat");
+  const [pauseOnSend, setPauseOnSend] = useState(() => {
+    try { return window.localStorage.getItem(PAUSE_ON_SEND_KEY) !== "false"; }
+    catch { return true; }
+  });
   const [panelWidth, setPanelWidth] = useState(savedPanelWidth);
   const [resizing, setResizing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
@@ -106,20 +111,19 @@ export function WatchPage() {
 
   const captureExtraContext = useCallback((): Record<string, unknown> | null => {
     if (!selected) return null;
-    const paused = playerRef.current?.pauseAndGetSnapshot();
-    if (paused) {
-      if (paused.wasPlaying) resumeAfterChatRef.current = true;
-      updatePlaybackContext(paused.positionSeconds);
+    const snapshot = pauseOnSend ? playerRef.current?.pauseAndGetSnapshot() : playerRef.current?.getSnapshot();
+    if (snapshot) {
+      if (pauseOnSend && snapshot.wasPlaying) resumeAfterChatRef.current = true;
+      updatePlaybackContext(snapshot.positionSeconds);
     }
     const context = playbackContextRef.current;
     if (context?.playback.seriesId !== selected.seriesId
       || context.playback.videoId !== selected.videoId
       || context.playback.episodeOrder !== selected.episodeOrder) return null;
     return context;
-  }, [selected, updatePlaybackContext]);
+  }, [pauseOnSend, selected, updatePlaybackContext]);
 
   const focusChat = () => {
-    captureExtraContext();
     if (panelOpen && panelTab === "chat") {
       pendingChatFocusRef.current = false;
       chatRef.current?.focusComposer();
@@ -186,6 +190,10 @@ export function WatchPage() {
   useEffect(() => {
     try { window.localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)); } catch { /* Resizing still works without storage. */ }
   }, [panelWidth]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(PAUSE_ON_SEND_KEY, String(pauseOnSend)); } catch { /* The setting still works for this visit. */ }
+  }, [pauseOnSend]);
 
   useEffect(() => {
     const sync = () => setViewportWidth(window.innerWidth);
@@ -284,13 +292,16 @@ export function WatchPage() {
           <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />{t("聊天")}</button>
           <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />{t("选集")}</button>
         </div>
+        {panelTab === "chat" ? <label className={styles.pauseOnSend}>
+          <span>{t("发送问题时暂停视频")}</span>
+          <input type="checkbox" role="switch" checked={pauseOnSend} onChange={(event) => setPauseOnSend(event.target.checked)} />
+        </label> : null}
         <div
           id="watch-chat-panel"
           className={styles.chatPanel}
           role="tabpanel"
           aria-labelledby="watch-chat-tab"
           hidden={panelTab !== "chat"}
-          onPointerDownCapture={(event) => { if (event.button === 0) captureExtraContext(); }}
           onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}
         >
           <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} initialSeries={series} captureExtraContext={captureExtraContext} onOpenVideo={({ tenantId: targetTenantId, seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
@@ -306,7 +317,7 @@ export function WatchPage() {
               <li key={episode.videoId}>
                 <Link to={watchPath(series, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
                   <span>{episodeLabel(episode.episodeOrder)}</span>
-                  <strong title={episode.originalFilename ?? undefined}>{episodeTitle(episode.episodeOrder, locale)}</strong>
+                  <strong title={episode.originalFilename ?? undefined}>{videoTitle(episode, locale)}</strong>
                   <small>{formatTimecode(episode.durationSeconds)} · {episode.playbackStatus === "READY" ? t("可播放") : t("播放未就绪")}</small>
                 </Link>
               </li>
@@ -318,9 +329,9 @@ export function WatchPage() {
       <div className={styles.watchDetails}>
         <section className={styles.watchSynopsis} aria-label={t("视频简介")}>
           <Link className={styles.seriesName} to={seriesPath(series)}>{seriesTitle(series)}<ChevronRight size={18} aria-hidden="true" /></Link>
-          <h1 title={selected?.originalFilename ?? undefined}>{selected ? episodeTitle(selected.episodeOrder, locale) : seriesTitle(series)}</h1>
+          <h1 title={selected?.originalFilename ?? undefined}>{selected ? videoTitle(selected, locale) : seriesTitle(series)}</h1>
           <div className={styles.videoMeta}><span>{selected ? formatTimecode(selected.durationSeconds) : null}</span><span>{t("共 {count} 集", { count: episodes.length })}</span></div>
-          {series.description ? <p>{series.description}</p> : null}
+          {selected?.description || series.description ? <p>{selected?.description || series.description}</p> : null}
           {selected ? <nav className={styles.neighbors} aria-label={t("切换集数")}>
             {selectedIndex > 0 ? <Link to={watchPath(series, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />{t("上一集")}</Link> : null}
             {selectedIndex < episodes.length - 1 ? <Link to={watchPath(series, episodes[selectedIndex + 1]!.videoId)}>{t("下一集")}<ChevronRight size={16} /></Link> : null}
@@ -337,7 +348,7 @@ export function WatchPage() {
                     : episode.playbackStatus === "READY" && episode.playbackUrl ? <PlaybackFrame className={styles.seriesFrame} src={mediaUrl(episode.playbackUrl)} positionSeconds={previewFramePosition(episode.durationSeconds)} /> : null}
                   <span className={styles.nextPlay}><Play size={17} fill="currentColor" /></span>
                 </span>
-                <span className={styles.nextTitle}><small>{episodeLabel(episode.episodeOrder)}{episode.videoId === selected?.videoId ? t(" · 当前集") : ""}</small><strong title={episode.originalFilename ?? undefined}>{episodeTitle(episode.episodeOrder, locale)}</strong><span>{formatTimecode(episode.durationSeconds)}{episode.playbackStatus !== "READY" ? t(" · 播放未就绪") : ""}</span></span>
+                <span className={styles.nextTitle}><small>{episodeLabel(episode.episodeOrder)}{episode.videoId === selected?.videoId ? t(" · 当前集") : ""}</small><strong title={episode.originalFilename ?? undefined}>{videoTitle(episode, locale)}</strong><span>{formatTimecode(episode.durationSeconds)}{episode.playbackStatus !== "READY" ? t(" · 播放未就绪") : ""}</span></span>
               </Link>
             </li>)}
           </ol>

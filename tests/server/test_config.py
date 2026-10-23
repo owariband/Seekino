@@ -17,6 +17,7 @@ from server.config.parse_profile import (
 )
 from server.constants.parse import MAX_INDEX_GENERATION
 from server.config.retrieval import RetrievalConfig, resolve_retrieval_model_limits
+from server.config.video_summarize import VideoSummarizeConfig
 from server.config.settings import (
     resolve_agent_request_timeout_seconds,
     resolve_artifact_root,
@@ -56,6 +57,28 @@ def _clean_anivag_environment(monkeypatch) -> None:
         "ANIVAG_DATABASE_URL",
         "mysql+pymysql://user:password@127.0.0.1/anivag_development",
     )
+
+
+def test_video_summary_limits_have_independent_environment_settings(monkeypatch):
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_SUMMARIZE_MAXIMUM_READ_CHARS", "6000")
+    monkeypatch.setenv("ANIVAG_SUMMARIZE_EXECUTION_TIMEOUT_SECONDS", "120.5")
+    monkeypatch.setenv("ANIVAG_SUMMARIZE_ENABLED", "false")
+    settings = ServerSettings.from_environment()
+    assert settings.summarize.maximum_read_chars == 6000
+    assert settings.summarize.execution_timeout_seconds == 120.5
+    assert settings.summarize.enabled is False
+    assert settings.agent.max_model_calls_per_turn == 6
+
+
+@pytest.mark.parametrize("values", [
+    {"concurrency": 0}, {"maximum_read_chars": True}, {"max_retries": -1},
+    {"execution_timeout_seconds": float("inf")}, {"maximum_result_bytes": 0},
+    {"retry_initial_delay_seconds": 30, "retry_max_delay_seconds": 10},
+])
+def test_video_summary_rejects_unbounded_or_invalid_limits(values):
+    with pytest.raises(ValueError):
+        VideoSummarizeConfig(**values)
 
 
 def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) -> None:

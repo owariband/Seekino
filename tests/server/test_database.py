@@ -1574,6 +1574,18 @@ def test_create_schema_rejects_legacy_media_field_names(
     assert set(inspect(engine).get_table_names()) == {table_name}
 
 
+@pytest.mark.parametrize("column", ["display_name", "description", "cover_uri"])
+def test_create_schema_requires_video_metadata_migration(column: str) -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text(f"ALTER TABLE video DROP COLUMN {column}"))
+    with pytest.raises(SchemaUpgradeRequiredError, match=f"video.{column}"):
+        create_schema(engine)
+
+
 def test_create_schema_requires_series_language_hint_migration() -> None:
     engine = create_database_engine(
         "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,

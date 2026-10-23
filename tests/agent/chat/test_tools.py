@@ -37,7 +37,7 @@ from agent.chat.video_search.skills import (
 )
 from agent.chat.video_search.tools import (
     LexicalRetrieveArguments, RetrieveArguments,
-    build_query_tools, build_supervisor_tools,
+    build_retrieval_tools,
 )
 from agent.chat.video_search.tools.shared import _ToolCallBudget
 from agent.utils.tool import AgentTool as SharedAgentTool
@@ -157,12 +157,11 @@ def _query_tools(
     maximum_tool_calls: int | None = 100,
 ):
     calls = []
-    tools = build_query_tools(
-        retrieval.search,
+    tools = build_retrieval_tools(
+        retrieval.search, role="query",
         inputs=_inputs(),
         control=_control(),
         calls=calls,
-        maximum_top_k=20,
         maximum_tool_calls=maximum_tool_calls,
         maximum_result_bytes=maximum_result_bytes,
         maximum_read_chars=maximum_read_chars,
@@ -205,8 +204,8 @@ def _event_result(query: str, *, count: int = 3) -> EventSearchResult:
     )
 
 
-@pytest.mark.parametrize("builder,role", [(build_query_tools, "query"), (build_supervisor_tools, "supervisor")])
-def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(builder, role) -> None:
+@pytest.mark.parametrize("role", ["query", "supervisor"])
+def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(role) -> None:
     received = []
     found = _event_result("quote")
     large_field = found.matches[0].lexical_fields[0].model_copy(update={"raw_text": "long original dialogue " * 2_000})
@@ -220,9 +219,9 @@ def test_event_search_pages_events_counts_chunks_and_keeps_full_trace(builder, r
         return found
 
     calls = []
-    tools = {tool.name: tool for tool in builder(
-        Retrieval([]).search, inputs=_inputs(), control=_control(), calls=calls,
-        maximum_top_k=1, maximum_tool_calls=None, maximum_result_bytes=4_096,
+    tools = {tool.name: tool for tool in build_retrieval_tools(
+        Retrieval([]).search, role=role, inputs=_inputs(), control=_control(), calls=calls,
+        maximum_tool_calls=None, maximum_result_bytes=4_096,
         maximum_catalog_items=1, event_retrieve=search,
     )}
     initial = {"query": "quote", "top_k": 5, "speaker": "speaker", "video_chunk_ids": ["chunk-1"],
@@ -269,9 +268,9 @@ def test_event_index_not_ready_is_recoverable_and_chunk_search_remains_available
         raise EventIndexNotReadyError("scope has no Event receipt")
 
     calls = []
-    tools = {tool.name: tool for tool in build_query_tools(
-        Retrieval([_hit("chunk-1")]).search, inputs=_inputs(), control=_control(), calls=calls,
-        maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=4_096,
+    tools = {tool.name: tool for tool in build_retrieval_tools(
+        Retrieval([_hit("chunk-1")]).search, role="query", inputs=_inputs(), control=_control(), calls=calls,
+        maximum_tool_calls=None, maximum_result_bytes=4_096,
         maximum_catalog_items=10, retrieval_channel="lexical", event_retrieve=unavailable,
     )}
     feedback = json.loads(tools["search_video_events"].invoke({
@@ -302,9 +301,9 @@ def test_event_results_are_validated_before_recording_evidence(corruption) -> No
     else:
         found = {"invalid": "event result"}
     calls = []
-    tools = build_query_tools(
-        Retrieval([]).search, inputs=_inputs(), control=_control(), calls=calls,
-        maximum_top_k=20, maximum_tool_calls=None, maximum_result_bytes=4_096,
+    tools = build_retrieval_tools(
+        Retrieval([]).search, role="query", inputs=_inputs(), control=_control(), calls=calls,
+        maximum_tool_calls=None, maximum_result_bytes=4_096,
         maximum_catalog_items=10, event_retrieve=lambda *_args, **_kwargs: found,
     )
     tool = next(tool for tool in tools if tool.name == "search_video_events")
@@ -317,22 +316,20 @@ def test_event_results_are_validated_before_recording_evidence(corruption) -> No
 def test_role_registries_expose_only_the_exact_tools() -> None:
     inputs = _inputs()
     retrieval = Retrieval([_hit("chunk-1")])
-    query_tools = build_query_tools(
-        retrieval.search,
+    query_tools = build_retrieval_tools(
+        retrieval.search, role="query",
         inputs=inputs,
         control=_control(),
         calls=[],
-        maximum_top_k=20,
         maximum_tool_calls=20,
         maximum_result_bytes=1_024,
         maximum_catalog_items=20,
     )
-    supervisor_tools = build_supervisor_tools(
-        retrieval.search,
+    supervisor_tools = build_retrieval_tools(
+        retrieval.search, role="supervisor",
         inputs=inputs,
         control=_control(),
         calls=[],
-        maximum_top_k=20,
         maximum_tool_calls=20,
         maximum_result_bytes=1_024,
         maximum_catalog_items=20,
@@ -480,7 +477,8 @@ def test_shared_output_helpers_bound_utf8_and_reject_stale_pages() -> None:
     feedback = captured.value
     assert feedback.code == "RANGE_TOO_LARGE"
     assert 0 < feedback.suggested_end < len(content)
-    assert f"end<={feedback.suggested_end}" in feedback.retry_hint
+    assert f"char_end={feedback.suggested_end}" in feedback.retry_hint
+    assert "char_start set to the returned end" in feedback.retry_hint
     raw = range_text(content, end=feedback.suggested_end, **range_options)
     payload = json.loads(raw)
     assert payload["content"] == content[:feedback.suggested_end]
@@ -543,12 +541,11 @@ def test_retrieve_keeps_transcript_and_lexical_weight_contracts_separate() -> No
         inputs=_inputs(),
         control=_control(),
         calls=[],
-        maximum_top_k=20,
         maximum_tool_calls=10,
         maximum_result_bytes=1_024,
         maximum_catalog_items=20,
     )
-    transcript = build_query_tools(search, **common)[0]
+    transcript = build_retrieval_tools(search, role="query", **common)[0]
     assert transcript.args_schema is RetrieveArguments
     json.loads(transcript.invoke({
         "query": "spoken phrase",
@@ -556,7 +553,7 @@ def test_retrieve_keeps_transcript_and_lexical_weight_contracts_separate() -> No
         "channel_weights": {"transcript": 1, "semantic": 0, "visual": 0},
     }))
 
-    lexical = build_query_tools(search, retrieval_channel="lexical", **common)[0]
+    lexical = build_retrieval_tools(search, role="query", retrieval_channel="lexical", **common)[0]
     assert lexical.args_schema is LexicalRetrieveArguments
     json.loads(lexical.invoke({
         "query": "structured terms",
@@ -567,11 +564,11 @@ def test_retrieve_keeps_transcript_and_lexical_weight_contracts_separate() -> No
     assert seen == [("transcript", 1.0), ("lexical", 1.0)]
 
 
-@pytest.mark.parametrize("build_tools", [build_query_tools, build_supervisor_tools])
+@pytest.mark.parametrize("role", ["query", "supervisor"])
 @pytest.mark.parametrize("channel", ["transcript", "lexical"])
 @pytest.mark.parametrize("requested,available", [(8, 8), (101, 101), (8, 2), (8, 0)])
 def test_retrieve_honors_agent_quantity_and_pages_all_hits(
-    build_tools, channel, requested, available,
+    role, channel, requested, available,
 ) -> None:
     inputs = {**_inputs(), "requested_top_k": 3}
     retrieval = Retrieval([_hit(f"chunk-{index}") for index in range(available)])
@@ -585,9 +582,9 @@ def test_retrieve_honors_agent_quantity_and_pages_all_hits(
 
     calls = []
     maximum_result_bytes = 4_096
-    tool = build_tools(
-        search, inputs=inputs, control=_control(), calls=calls,
-        maximum_top_k=2, maximum_tool_calls=None,
+    tool = build_retrieval_tools(
+        search, role=role, inputs=inputs, control=_control(), calls=calls,
+        maximum_tool_calls=None,
         maximum_result_bytes=maximum_result_bytes, maximum_catalog_items=3,
         retrieval_channel=channel,
     )[0]
@@ -849,18 +846,18 @@ def test_atomic_tools_share_the_injected_budget_across_supervisor_and_query() ->
         event_calls.append(query)
         return _event_result(query)
 
-    tools = {tool.name: tool for tool in build_supervisor_tools(
-        retrieval.search, inputs=_inputs(), control=_control(), calls=calls,
-        maximum_top_k=20, maximum_tool_calls=1, maximum_result_bytes=4_096,
+    tools = {tool.name: tool for tool in build_retrieval_tools(
+        retrieval.search, role="supervisor", inputs=_inputs(), control=_control(), calls=calls,
+        maximum_tool_calls=1, maximum_result_bytes=4_096,
         maximum_catalog_items=20, retrieval_channel="lexical", event_retrieve=events,
         budget=budget,
     )}
     assert "write_context_canvas" not in tools
     _retrieve(tools, top_k=1)
     assert calls[0].role == "supervisor"
-    query_tools = {tool.name: tool for tool in build_query_tools(
-        retrieval.search, inputs=_inputs(), control=_control(), calls=calls,
-        maximum_top_k=20, maximum_tool_calls=1, maximum_result_bytes=4_096,
+    query_tools = {tool.name: tool for tool in build_retrieval_tools(
+        retrieval.search, role="query", inputs=_inputs(), control=_control(), calls=calls,
+        maximum_tool_calls=1, maximum_result_bytes=4_096,
         maximum_catalog_items=20, budget=budget,
     )}
     assert "error" not in json.loads(query_tools["read_retrieval_evidence"].invoke({"video_chunk_id": "chunk-1"}))

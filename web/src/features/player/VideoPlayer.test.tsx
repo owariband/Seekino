@@ -313,6 +313,33 @@ describe("VideoPlayer", () => {
     expect(next.currentTime).toBe(70);
   });
 
+  it.each([true, false])("reads a fresh snapshot without changing playback or saving progress when paused=%s", (paused) => {
+    const ref = createRef<VideoPlayerHandle>();
+    const onPlaybackPositionChange = vi.fn();
+    render(<VideoPlayer ref={ref} video={video()} onPlaybackPositionChange={onPlaybackPositionChange} />);
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+    Object.defineProperty(media, "paused", { value: paused, configurable: true });
+
+    expect(ref.current?.getSnapshot()).toBeNull();
+    expect(onPlaybackPositionChange).not.toHaveBeenCalled();
+    expect(readVideoProgress("video-1")).toBeNull();
+
+    metadata(media);
+    onPlaybackPositionChange.mockClear();
+    media.currentTime = 12.3456;
+    expect(ref.current?.getSnapshot()).toEqual({ positionSeconds: 12_346, wasPlaying: !paused });
+    media.currentTime = 91.2344;
+    expect(ref.current?.getSnapshot()).toEqual({ positionSeconds: 91_234, wasPlaying: !paused });
+
+    expect(media.currentTime).toBe(91.2344);
+    expect(media.paused).toBe(paused);
+    expect(pause).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+    expect(onPlaybackPositionChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("slider", { name: "播放进度" })).toHaveValue("0");
+    expect(readVideoProgress("video-1")).toBeNull();
+  });
+
   it("pauses and reads the integer media position through its imperative handle", () => {
     const ref = createRef<VideoPlayerHandle>();
     const onPlaybackPositionChange = vi.fn();

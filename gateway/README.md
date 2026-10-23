@@ -17,6 +17,8 @@ Conversation 或 Parse Job 等领域语义。
 - `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
 - `codex/`：Codex app-server 会话与 Agent Adapter；
 - `claude_code/`：Claude Agent SDK Adapter；
+- `bridge/`：用户本机原生 Agent 的 ACP 连接；已有 Client，完整产品接入仍需验收；
+- `pi/design/`：云端 Pi Host 的设计；单 Node 进程承载多用户独立对话，运行时代码尚未实现；
 - `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CPU CAM++ Adapter；
 - 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
@@ -185,16 +187,100 @@ Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 模型名、服务地址和采样参数由仓库根目录 [`config.yaml`](../config.yaml) 提供；
 本机密钥或个人 Endpoint 写入已忽略的 `.env.local`。不要在 adapter 中固化部署地址。
 
+## 本地与云端 Agent 的目标
+
+本地由用户连接自己安装、认证的 Codex 或 Claude Code。AniVAG 负责连接、会话交接、
+业务工具和界面，进程开销由用户本机承担；原生 runtime 的内部调度与进程机制由其自身
+及上游维护。本地不要求安装 Pi，也不纳入云端的单进程优化目标。接入边界见
+[本地 Bridge TRD](bridge/design/codex-bridge-trd.md)。
+
+云端由 AniVAG 提供统一的 Pi harness，支持用户配置自己的模型 API，承载长对话、长工具
+调用和复杂任务链。目标是在 4 CPU / 8 GB 等受限服务器上，用一个 Node Pi Host 复用
+运行时代码，按用户模型配置隔离凭据，按 Conversation 隔离持久上下文，并限制活跃执行、
+缓存和输出体积。一次性 subagent 执行后释放，不建立长期业务会话。设计与验收见
+[云端 Pi Host TRD](pi/design/pi-host-trd.md)。Pi Host 与现有聊天合同已接入；用户级 API
+配置的保存/管理和目标机器容量验收仍需完成。
+
+### 云端 Pi Host 的构建与配置
+
+Host 使用独立的 Node 包，不依赖前端构建。依赖精确版本由
+[`package.json`](pi/host/package.json) 和锁文件固定，不需要修改或安装相邻的 `../pi` checkout。
+部署机需要 Node.js 22.19.0 或更高版本：
+
+```bash
+npm ci --prefix gateway/pi/host
+npm run build --prefix gateway/pi/host
+```
+
+在完整的云端模型配置中选择 `supervisor_harness: pi`，为聊天和所有实际执行的模型角色
+绑定 API source。以下仅列聊天相关片段；完整文件还须保留解析、摘要、转写、Embedding
+等配置，并将其中的 Codex / Claude 绑定和 fallback 改为相应 API 模型。
+
+```yaml
+supervisor_harness: pi
+pi_host:
+  session_dir: /var/lib/anivag/pi/sessions
+  max_active_runs: 2
+  max_model_requests: 4
+  max_loaded_sessions: 32
+  max_session_bytes: 67108864
+  max_cache_bytes: 268435456
+  session_ttl_seconds: 900
+
+models:
+  agent:
+    source: deepseek_api
+    model: deepseek-flash
+  supervisor:
+    source: deepseek_api
+    model: deepseek-flash
+    supports_vision_input: false
+    max_output_tokens: 8192
+    request_timeout_seconds: 300
+```
+
+`deepseek_api` 等连接仍在 `model_sources` 定义，Key 仍从该 source 指定的环境变量读取。
+Pi 是 harness；API source 的 `adapter` 和 `provider` 保持真实服务含义。Pi 聊天首版使用
+一个明确模型配置，不配置隐式 fallback；图片任务须选择支持图片的 API 模型。
+
+```bash
+export ANIVAG_AUTH_MODE=cloud
+export ANIVAG_MODEL_CONFIG=/etc/anivag/models.cloud.yaml
+uv run python -m server.main
+```
+
+cloud 模式在构造外部资源前要求 Pi harness，并拒绝任何被选择的 Codex / Claude 模型
+绑定及 fallback。仓库中的本地配置仍可供用户自己的 runtime 使用；云端须指向独立配置。
+首版按一个 Python API worker 部署；多个 worker 会各自拥有 Host，需要另行托管 Host
+后才能实现跨 worker 共享。
+
+`GatewayClient` 拥有一个 `PiClient`，Node 在第一次使用时启动；不同 Conversation 通过
+双向 JSONL 复用它。Python 工具继续执行既有权限、业务校验和用量逻辑。每轮重新绑定工具，
+长期历史使用 Pi JSONL，SQL 保存消息与不含凭据的恢复绑定；SQL 成功提交后才确认 Pi 本轮。
+空闲历史按数量、字节预算和 TTL 淘汰，卸载后可恢复。目录需要服务账号可写并持久保留。
+发生进程退出时结束当前调用，后续请求恢复已确认历史，不自动重放有副作用的工具。
+
+一次性 `subagent` 通过同进程 SDK 执行 single / parallel / chain，使用内存上下文，结束后
+释放；当前不递归创建 subagent，也不启动额外 Pi 进程。云端只注册显式业务工具及该临时
+任务工具，不自动启用 read/bash/edit/write 或加载外部扩展。
+
+Server 可通过 `SupervisorSessionContext.model_profile` 注入当次已授权的用户模型配置；
+不同配置隔离凭据和 Runtime，Key 不进入历史文件或 Conversation detail。用户配置的存储、
+管理接口及页面仍由后续 Server 批次交付。上述字节预算是历史/队列的应用预算，不能替代
+4 CPU / 8 GB 上包含 Python、媒体任务及数据库的真实 RSS 压测。
+
 ## Chat Agent 模型来源
 
 `model_sources` 描述连接方式，`agent_model.source` 选择其中一个来源。`adapter`
 决定协议实现，`provider` 只用于 provenance、用量和价格归属，OpenAI 兼容协议的
-`profile` 处理不同 API 方言。Query、Evaluator、Chat 与内部 Supervisor 共用所选 source；
+`profile` 处理不同 API 方言。版本 2 的 `models.agent` 与 `models.supervisor` 可分别绑定来源；
+旧配置没有独立 Supervisor 绑定时沿用 Agent 来源。
 `ANIVAG_AGENT_QUERY_MODEL`、`ANIVAG_AGENT_EVALUATOR_MODEL` 和
 `ANIVAG_AGENT_CHAT_MODEL` 仍可覆盖各角色的模型名。
 
-内部 Supervisor 默认通过 `AgentModelFactory.build_deep_agent()` 使用 Deep Agents
-0.7.23。SDK 负责模型／工具循环、摘要和工具结果卸载；Gateway 将已有 OpenAI 兼容
+内部 Supervisor 支持 `supervisor_harness=deepagents`、`codex` 和 `pi`，按配置选择。
+Deep Agents 路径通过 `AgentModelFactory.build_deep_agent()` 使用 SDK；
+SDK 负责模型／工具循环、摘要和工具结果卸载；Gateway 将已有 OpenAI 兼容
 或 Ark Adapter 的单次请求接入 SDK，继续使用配置中的模型、推理参数、超时、fallback、
 用量及追踪。视频 Query／Evaluator／Chat 的审核流程仍作为业务工具执行。
 
@@ -205,10 +291,11 @@ SDK 使用 `StateBackend` 虚拟文件和进程内 `InMemorySaver`。一个 Conv
 从数据库中已完成的历史恢复。删除 Conversation 同时清理 SDK 状态。重启进程后也从
 数据库恢复文本历史，虚拟文件和中间工具状态不会持久化。
 
-当前内部 Supervisor 要求 OpenAI 兼容或 Ark API source。下方 Codex／Claude 配置
-描述已有原子 Agent Adapter；把它们作为当前 Server 的全局 source 会在 Supervisor
-组装时报配置错误。用户自带 Codex／Claude 的完整本机会话计划通过 ACP Bridge 接入，
-该路径的设计见 [Bridge TRD](bridge/design/codex-bridge-trd.md)，本批尚未实现。
+Deep Agents 路径要求 OpenAI 兼容或 Ark API source；Codex Supervisor 路径要求
+`codex_app_server` source，已有原生 thread 恢复，但当前每次 invocation 仍创建并关闭
+app-server 进程。下方 Codex／Claude 配置还可服务已有原子 Agent Adapter。以上是当前
+代码能力；云端 Pi 使用上节说明的公共 Host，不把既有 Deep Agents 路径作为新的本地产品默认。
+完整本机 Bridge 的目录、权限、交互与恢复接入仍按独立验收项推进。
 
 DeepSeek 使用 OpenAI Adapter 的 DeepSeek profile，并显式配置 Ark fallback：
 

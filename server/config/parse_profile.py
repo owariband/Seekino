@@ -281,11 +281,19 @@ class ParseConfig(ContractModel):
     window: ParseWindowConfig
     asr: ParseASRConfig
     vision: ParseVisionConfig
+    ocr: VideoParseV2GenerativeModelConfig | None = None
     context: ParseContextConfig
     fallback: ParseFallbackConfig
     embedding: ParseEmbeddingConfig
     execution: ParseExecutionConfig
     indexing: VideoParseV2IndexingConfig | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_ocr(self, handler):
+        values = handler(self)
+        if self.ocr is None:
+            values.pop("ocr", None)
+        return values
 
     def resolve_execution(self, defaults: "ParseConfig | None") -> "ParseConfig":
         """Fill only missing legacy request fields before freezing the task."""
@@ -370,7 +378,7 @@ class ParseConfig(ContractModel):
                     ),
                 ),
                 refine=None,
-                ocr=None,
+                ocr=self.ocr,
                 prefix_context=None,
                 embedding=VideoParseV2EmbeddingModelConfig(
                     source=self.embedding.source,
@@ -388,7 +396,7 @@ class ParseConfig(ContractModel):
                 max_height=self.window.analysis_max_height,
                 context_overlap_seconds=self.window.context_overlap_seconds,
             ),
-            ocr_enabled=False,
+            ocr_enabled=self.ocr is not None,
             understanding_enabled=True,
             compact_enabled=False,
             prefix_context=None,
@@ -441,6 +449,23 @@ class ParseConfig(ContractModel):
         vision_binding = gateway.resolve_model_binding("vision")
         if not vision_binding.supports_vision_input:
             raise ValueError("configured vision model must declare image input support")
+        ocr = None
+        if "ocr" in gateway.normalized_models:
+            ocr_binding = gateway.resolve_model_binding("ocr")
+            if not ocr_binding.supports_vision_input:
+                raise ValueError("configured OCR model must declare image input support")
+            if ocr_binding.fallback is not None and ocr_binding.fallback.fallback is not None:
+                raise ValueError("OCR supports one configured fallback")
+            ocr = VideoParseV2GenerativeModelConfig.model_validate({
+                **ocr_binding.model_dump(
+                    mode="json", exclude_none=True,
+                    include={
+                        **dict.fromkeys(VideoParseV2GenerativeModelConfig.model_fields, True),
+                        "fallback": set(VideoParseV2FallbackModelConfig.model_fields),
+                    },
+                ),
+                "request_timeout_seconds": ocr_binding.request_timeout_seconds or runtime.request_timeout_seconds,
+            })
         embedding_binding = gateway.resolve_embedding_binding(environ={})
         fallback_enabled = (
             runtime.fallback_enabled
@@ -493,6 +518,7 @@ class ParseConfig(ContractModel):
                 request_timeout_seconds=vision_binding.request_timeout_seconds,
                 **_model_policy(vision_binding),
             ),
+            ocr=ocr,
             context=ParseContextConfig(
                 max_events=runtime.max_context_events,
                 max_chars=runtime.max_context_chars,

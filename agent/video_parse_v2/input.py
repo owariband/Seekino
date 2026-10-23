@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+from gateway.constants import ReasoningEffort
+
 
 class _InputModel(BaseModel):
     model_config = ConfigDict(
@@ -68,7 +70,7 @@ class FallbackModelConfig(_ModelPolicy):
     model: str = Field(min_length=1)
     request_timeout_seconds: float = Field(gt=0)
     max_output_tokens: int | None = Field(default=None, gt=0)
-    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class GenerativeModelConfig(_ModelPolicy):
@@ -78,7 +80,7 @@ class GenerativeModelConfig(_ModelPolicy):
     model: str = Field(min_length=1)
     request_timeout_seconds: float = Field(gt=0)
     max_output_tokens: int | None = Field(default=None, gt=0)
-    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+    reasoning_effort: ReasoningEffort | None = None
     fallback: FallbackModelConfig | None = None
 
 

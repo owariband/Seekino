@@ -153,7 +153,24 @@ it("sends the draft profile and displays the canonical V2 upload configuration",
     window: { analysisMaxHeight: 480, canonicalMaxHeight: 720 },
     vision: { fps: 0.5 },
   });
-  expect(await screen.findByText(/解析配置：360p.*0.25 FPS.*每段最多 8 帧/)).toBeInTheDocument();
+  expect(await screen.findByText(/解析配置：360p.*0.25 FPS.*逐帧图片/)).toBeInTheDocument();
+  expect(screen.queryByText(/每段最多 8 帧/)).not.toBeInTheDocument();
+});
+
+it("shows all 198 frames at 3 FPS without an extra frame-count control", async () => {
+  mocks.displayMode = "debug";
+  mocks.getParseConfig.mockResolvedValue({
+    ...parseConfig,
+    vision: { ...parseConfig.vision, inputMode: "ordered_frames", fps: 3, maxFramesPerWindow: 32 },
+  });
+  render(<UploadProvider><Controls /></UploadProvider>);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "上传面板" }));
+  await user.click(await screen.findByRole("radio", { name: "自定义" }));
+  expect(screen.getByRole("spinbutton", { name: "取帧 FPS" })).toHaveValue(3);
+  expect(screen.getByText(/主解析每段约 198 帧/)).toBeInTheDocument();
+  expect(screen.queryByRole("spinbutton", { name: "每段最多帧数" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/逐帧模式每段最多/)).not.toBeInTheDocument();
 });
 
 it("uploads with server defaults in release without loading debug configuration", async () => {

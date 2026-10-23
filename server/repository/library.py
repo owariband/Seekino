@@ -132,6 +132,20 @@ class LibraryRepository:
                 if field in changes:
                     setattr(record, field, changes[field])
 
+    def update_video_metadata(
+        self, video_id: str, *, session: Session,
+        display_name: str | None, description: str | None, cover_uri: str | None,
+    ) -> None:
+        video = session.scalar(select(Video).where(Video.id == video_id).with_for_update())
+        if video is None:
+            raise SeriesNotFoundError("video no longer exists")
+        for field, value in (
+            ("display_name", display_name), ("description", description), ("cover_uri", cover_uri),
+        ):
+            if value is not None:
+                setattr(video, field, value)
+        session.flush()
+
     def update_video_episode_order(
         self,
         video_id: str,
@@ -579,6 +593,9 @@ class LibraryRepository:
             latest_job_id=latest_job_id,
             last_error=last_error,
             keyframe_uris=keyframe_uris,
+            display_name=record.display_name,
+            description=record.description,
+            cover_uri=record.cover_uri,
         )
 
 

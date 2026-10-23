@@ -31,6 +31,8 @@ web/dist/
 web/coverage/
 web/playwright-report/
 web/test-results/
+gateway/pi/host/node_modules/
+gateway/pi/host/dist/
 
 # Local model experiments and copyrighted fixtures
 /assets/example_video_mygo/

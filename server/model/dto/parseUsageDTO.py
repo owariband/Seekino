@@ -3,12 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Literal
-
-from gateway.usage import TokenUsage
-
 
 
 def _freeze_json(value: Any) -> Any:
@@ -46,38 +42,6 @@ class ModelUsageState:
 @dataclass(frozen=True, slots=True)
 class ModelCallUsageBatch:
     records: tuple[ModelUsageState, ...]
-    truncated: bool
-
-
-@dataclass(frozen=True, slots=True)
-class ParseModelCallState:
-    call_id: str
-    job_id: str | None
-    video_parse_task_id: str | None
-    attempt_count: int
-    lease_version: int
-    tenant_id: str
-    series_id: str
-    video_id: str
-    sequence_no: int | None
-    video_chunk_id: str | None
-    provider: str
-    model: str
-    category: Literal["parse", "embedding"]
-    operation: str
-    started_at: datetime
-    request_id: str | None
-    status: Literal["completed", "failed"]
-    usage: TokenUsage | None
-    estimated_cost_cny: Decimal | None
-    price_snapshot: dict | None
-    execution_kind: Literal["video", "chunk", "interval", "prefix"] | None = None
-    execution_task_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class UsageObservationBatch:
-    observations: tuple[dict, ...]
     truncated: bool
 
 

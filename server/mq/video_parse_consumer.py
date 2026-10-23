@@ -28,6 +28,7 @@ class VideoParseConsumerHandlers:
     index: Callable[[ChunkParseLease], Awaitable[None]]
     prefix: Callable[[], Awaitable[bool]] | None = None
     maintenance: Callable[[], Awaitable[object]] | None = None
+    summarize: Callable[[], Awaitable[bool]] | None = None
 
 
 _Lease = TypeVar("_Lease", VideoParseLease, ChunkParseLease, IntervalParseLease)
@@ -142,6 +143,7 @@ class VideoParseConsumer:
         poll_interval: timedelta,
         maintenance_interval: timedelta,
         video_concurrency: int,
+        summarize_concurrency: int = 1,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
@@ -153,6 +155,8 @@ class VideoParseConsumer:
             raise ValueError("maintenance_interval must be positive")
         if type(video_concurrency) is not int or video_concurrency <= 0:
             raise ValueError("video_concurrency must be a positive integer")
+        if type(summarize_concurrency) is not int or summarize_concurrency <= 0:
+            raise ValueError("summarize_concurrency must be a positive integer")
         self._queue = queue
         self._handlers = handlers
         self._worker_id = worker_id
@@ -166,6 +170,8 @@ class VideoParseConsumer:
         self._video_tasks: set[asyncio.Task[None]] = set()
         self._work_tasks: set[asyncio.Task[None]] = set()
         self._prefix_task: asyncio.Task[None] | None = None
+        self._summarize_concurrency = summarize_concurrency
+        self._summary_tasks: set[asyncio.Task[None]] = set()
         self._lifecycle_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -252,20 +258,29 @@ class VideoParseConsumer:
             (self._queue.claim_interval_refine, lambda lease: self._run_interval(lease, self._handlers.refine)),
             (self._queue.claim_chunk_index, self._run_chunk),
         )
-        for offset in range(4):
-            stage = (self._phase_cursor + offset) % 4
+        for offset in range(5):
+            stage = (self._phase_cursor + offset) % 5
+            if stage == 4:
+                if self._handlers.summarize is None or len(self._summary_tasks) >= self._summarize_concurrency:
+                    continue
+                task = asyncio.create_task(self._run_summary())
+                self._summary_tasks.add(task)
+                task.add_done_callback(self._summary_tasks.discard)
+                self._track(task)
+                self._phase_cursor = 0
+                return True
             if stage == 3:
                 if self._handlers.prefix is None or self._prefix_task is not None and not self._prefix_task.done():
                     continue
                 self._prefix_task = asyncio.create_task(self._run_prefix())
                 self._track(self._prefix_task)
-                self._phase_cursor = 0
+                self._phase_cursor = 4
                 return True
             claim, run = stages[stage]
             lease = await asyncio.to_thread(claim, self._worker_id, lease_duration=self._lease_duration)
             if lease is not None:
                 self._track(asyncio.create_task(run(lease)))
-                self._phase_cursor = (stage + 1) % 4
+                self._phase_cursor = (stage + 1) % 5
                 return True
         return False
 
@@ -289,6 +304,7 @@ class VideoParseConsumer:
                 await asyncio.gather(*pending, return_exceptions=True)
             self._video_tasks.clear()
             self._work_tasks.clear()
+            self._summary_tasks.clear()
 
     async def _run_one_claim_to_completion(self) -> bool:
         worked = await self.run_once()
@@ -434,6 +450,18 @@ class VideoParseConsumer:
     async def _run_prefix(self) -> None:
         assert self._handlers.prefix is not None
         worked = await self._handlers.prefix()
+        if not worked:
+            await asyncio.sleep(self._poll_interval.total_seconds())
+
+    async def _run_summary(self) -> None:
+        assert self._handlers.summarize is not None
+        try:
+            worked = await self._handlers.summarize()
+        except Exception as error:
+            # Metadata failures never stop parsing or indexing. The durable lease
+            # permits recovery if even recording a retry failed.
+            _logger.warning("Video summary execution failed: %s", _failure_log_text(str(error)))
+            worked = False
         if not worked:
             await asyncio.sleep(self._poll_interval.total_seconds())
 

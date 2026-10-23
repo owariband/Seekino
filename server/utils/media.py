@@ -4,7 +4,7 @@ import base64
 import binascii
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -14,7 +14,7 @@ from ..constants.media import SERIES_IMAGE_EXTENSIONS, SERIES_IMAGE_ID_PREFIX
 from .validation import canonical_uuid
 
 
-KeyframeImageScope = Literal["video", "video_chunk"]
+KeyframeImageScope = Literal["video", "video_chunk", "video_cover"]
 
 
 def image_uri_to_data_url(uri: str, *, resolve: Callable[[str], Path]) -> str:
@@ -82,33 +82,6 @@ def stored_keyframe_at_seconds(value: object) -> int | None:
     )
 
 
-def merge_keyframe_uri_values(
-    preferred: Iterable[str | dict[str, object]],
-    existing: object,
-    *,
-    start_seconds: int,
-    end_seconds: int,
-) -> list[str | dict[str, object]]:
-    """Prefer current keyframes and keep one URI per valid timeline position."""
-
-    historical = existing if isinstance(existing, (list, tuple)) else ()
-    merged: list[str | dict[str, object]] = []
-    seen_uris: set[str] = set()
-    seen_positions: set[int] = set()
-    for value in (*preferred, *historical):
-        uri = stored_keyframe_uri(value)
-        if uri is None or uri in seen_uris:
-            continue
-        at_seconds = stored_keyframe_at_seconds(value)
-        if at_seconds is not None and start_seconds <= at_seconds < end_seconds:
-            if at_seconds in seen_positions:
-                continue
-            seen_positions.add(at_seconds)
-        seen_uris.add(uri)
-        merged.append(dict(value) if isinstance(value, dict) else value)
-    return merged
-
-
 def encode_video_keyframe_image_id(video_id: str, index: int) -> str:
     return _encode_keyframe_image_id(
         [canonical_uuid(video_id, "video_id"), _keyframe_index(index)]
@@ -123,6 +96,10 @@ def encode_chunk_keyframe_image_id(video_chunk_id: str, index: int) -> str:
             _keyframe_index(index),
         ]
     )
+
+
+def encode_video_cover_image_id(video_id: str) -> str:
+    return _encode_keyframe_image_id(["video_cover", canonical_uuid(video_id, "video_id"), 0])
 
 
 def decode_keyframe_image_id(
@@ -153,13 +130,16 @@ def decode_keyframe_image_id(
         if (
             isinstance(payload, list)
             and len(payload) == 3
-            and payload[0] == "video_chunk"
+            and payload[0] in {"video_chunk", "video_cover"}
         ):
-            identifier = canonical_uuid(payload[1], "video_chunk_id")
+            scope = payload[0]
+            identifier = canonical_uuid(payload[1], "video_chunk_id" if scope == "video_chunk" else "video_id")
             index = _keyframe_index(payload[2])
-            if encode_chunk_keyframe_image_id(identifier, index) != image_id:
+            expected = (encode_chunk_keyframe_image_id(identifier, index) if scope == "video_chunk"
+                        else encode_video_cover_image_id(identifier))
+            if expected != image_id:
                 raise ValueError("noncanonical keyframe image ID")
-            return "video_chunk", identifier, index
+            return scope, identifier, index
         raise ValueError("invalid keyframe image ID payload")
     except (TypeError, ValueError, UnicodeDecodeError, binascii.Error) as exc:
         raise ValueError("invalid keyframe image ID") from exc

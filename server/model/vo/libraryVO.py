@@ -24,6 +24,8 @@ class VideoSummary(ContractModel):
     series_id: str
     episode_order: int = Field(gt=0)
     upload_sequence: int = Field(gt=0)
+    display_name: str | None = None
+    description: str | None = None
     original_filename: str | None = None
     total_bytes: int | None = Field(default=None, ge=0)
     duration_seconds: int = Field(gt=0)

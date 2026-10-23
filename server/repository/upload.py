@@ -399,6 +399,7 @@ class UploadRepository:
                 phase.update({"failures": 0, "active": False})
                 runtime[_VOICEPRINT_PREPARATION_KEY] = phase
             runtime.pop("failure_status", None)
+            _revoke_summary(runtime, pending=task.status in {"INDEXING", "COMPLETE"}, now=now)
             if actor_user_id is None:
                 runtime.pop("actor_user_id", None)
             else:
@@ -625,6 +626,11 @@ class UploadRepository:
             create_time=datetime_to_unix_time_ms(now),
             update_time=datetime_to_unix_time_ms(now),
         )
+        previous_detail = deepcopy(latest.detail or {})
+        previous_runtime = previous_detail.get(RUNTIME_DETAIL_KEY, {})
+        if _revoke_summary(previous_runtime, pending=False, now=now):
+            previous_detail[RUNTIME_DETAIL_KEY] = previous_runtime
+            latest.detail = previous_detail
         session.add(task)
         session.flush()
         return self._task_snapshot(task)
@@ -763,6 +769,11 @@ class UploadRepository:
                 # removes these rows through their existing cascade.
                 for task in v2_tasks:
                     task.is_deleted = True
+                    detail = deepcopy(task.detail or {})
+                    runtime = detail.get(RUNTIME_DETAIL_KEY, {})
+                    if _revoke_summary(runtime, pending=False, now=now):
+                        detail[RUNTIME_DETAIL_KEY] = runtime
+                        task.detail = detail
                     task.capacity_acquired = False
                     task.update_time = datetime_to_unix_time_ms(now)
 
@@ -1473,6 +1484,18 @@ class UploadRepository:
 
 def _active_slot_key(series_id: str, episode_order: int) -> str:
     return f"{series_id}:{episode_order}"
+
+
+def _revoke_summary(runtime: dict, *, pending: bool, now: datetime) -> bool:
+    """Fence the independent summary without making it block upload mutations."""
+    state = runtime.get("summarize")
+    if not isinstance(state, dict) or state.get("status") == "COMPLETE":
+        return False
+    state.update(status="PENDING" if pending else "CANCELLED",
+                 lease_version=int(state.get("lease_version", 0)) + 1,
+                 lease_owner=None, lease_expire_time_ms=None,
+                 next_execute_time_ms=datetime_to_unix_time_ms(now), retry_count=0)
+    return True
 
 
 def _has_active_prefix_lease(

@@ -18,7 +18,7 @@ from .elasticsearch import (
     ElasticsearchIndexSchemaError, _mapping_contains, _positive_limit, _validated_vector,
 )
 
-EVENT_INDEX_CONTRACT_VERSION = "seekino-video-event-es-1"
+EVENT_INDEX_CONTRACT_VERSION = "seekino-video-event-es-2"
 EventSource = tuple[str, str, int]
 _HIT_SOURCE_FIELDS = (
     "video_chunk_id", "parse_task_id", "version", "timeline_index", "event_type", "speaker", "lexical_fields",
@@ -73,7 +73,9 @@ class ElasticsearchVideoEventStore:
             raise ElasticsearchIndexSchemaError("Event index contract metadata or source differs")
         for name, specification in expected["properties"].items():
             current = mapping.get("properties", {}).get(name)
-            if not isinstance(current, Mapping) or not _mapping_contains(current, specification):
+            if (not isinstance(current, Mapping) or not _mapping_contains(current, specification)
+                    or name == "semantic_vectors"
+                    and set(current.get("properties", {})) != set(specification["properties"])):
                 raise ElasticsearchIndexSchemaError(f"Event index field {name!r} differs")
         self._contract = contract
 
@@ -250,16 +252,24 @@ class ElasticsearchVideoEventStore:
     ) -> tuple[RawEventHit, ...]:
         if channel not in ("semantic", "vision"):
             raise ValueError("unknown Event vector channel")
-        field = f"{channel}_vector"
+        field = "semantic_vectors.vector" if channel == "semantic" else "vision_vector"
         dimensions = self.semantic_dimensions if channel == "semantic" else self.vision_dimensions
         vector = _validated_vector(query_vector, dimensions, "query_vector")
-        scope = self._query_scope(sources, filters) + [{"exists": {"field": field}}]
+        scope = self._query_scope(sources, filters)
+        if channel == "vision":
+            scope.append({"exists": {"field": field}})
         limit = _positive_limit(limit)
         if exact:
-            response = self._client.search(index=self.index_name, query={"script_score": {
-                "query": {"bool": {"filter": scope}},
+            score = {"script_score": {
+                "query": {"exists": {"field": field}} if channel == "semantic" else {"bool": {"filter": scope}},
                 "script": {"source": f"cosineSimilarity(params.vector, '{field}') + 1.0", "params": {"vector": vector}},
-            }}, size=limit, source_includes=list(_HIT_SOURCE_FIELDS))
+            }}
+            query = {"bool": {"filter": scope, "must": [{"nested": {
+                "path": "semantic_vectors", "score_mode": "max", "query": score,
+            }}]}} if channel == "semantic" else score
+            response = self._client.search(
+                index=self.index_name, query=query, size=limit, source_includes=list(_HIT_SOURCE_FIELDS),
+            )
         else:
             if limit > 10_000:
                 raise ValueError("approximate Event limit must not exceed 10000")
@@ -325,9 +335,10 @@ class ElasticsearchVideoEventStore:
         source = value.model_dump(mode="python") if isinstance(value, EventIndexDocument) else value
         if not isinstance(source, Mapping):
             raise ValueError("Event document source must be an object")
-        _validated_vector(source.get("semantic_vector"), self.semantic_dimensions, "semantic_vector")
-        _validated_vector(source.get("vision_vector"), self.vision_dimensions, "vision_vector")
         document = EventIndexDocument.model_validate(source)
+        for semantic in document.semantic_vectors:
+            _validated_vector(semantic.vector, self.semantic_dimensions, "semantic_vectors.vector")
+        _validated_vector(document.vision_vector, self.vision_dimensions, "vision_vector")
         if (canonical_uuid(document.parse_task_id, "parse_task_id") != document.parse_task_id
                 or canonical_uuid(document.video_chunk_id, "video_chunk_id") != document.video_chunk_id):
             raise ValueError("Event document IDs must use canonical UUIDs")
@@ -357,10 +368,17 @@ class ElasticsearchVideoEventStore:
                 "raw_text": {"type": "text", "analyzer": "cjk", "search_analyzer": "cjk"},
                 "language": {"type": "keyword"}, "role": {"type": "keyword"},
             }},
-            **{f"{channel}_vector": {
-                "type": "dense_vector", "dims": dimensions, "index": True, "similarity": "cosine",
+            "semantic_vectors": {"type": "nested", "dynamic": "strict", "properties": {
+                "source": {"type": "keyword"}, "language": {"type": "keyword"}, "role": {"type": "keyword"},
+                "vector": {
+                    "type": "dense_vector", "dims": self.semantic_dimensions, "index": True,
+                    "similarity": "cosine", "index_options": {"type": "hnsw"},
+                },
+            }},
+            "vision_vector": {
+                "type": "dense_vector", "dims": self.vision_dimensions, "index": True, "similarity": "cosine",
                 "index_options": {"type": "hnsw"},
-            } for channel, dimensions in (("semantic", self.semantic_dimensions), ("vision", self.vision_dimensions))},
+            },
             "detail": {"type": "object", "enabled": False},
         }}
 

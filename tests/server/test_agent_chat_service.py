@@ -170,7 +170,11 @@ class _ChatModel:
                 submitted["start_seconds"], submitted["end_seconds"] = self.selected_ranges[item["video_chunk_id"]]
             # Keep recorded selections in milliseconds for persistence assertions.
             self.submitted_items.append(submitted)
-            receipt = json.loads(available["submit_video_item"].invoke(submitted))
+            receipt = json.loads(available["submit_video_item"].invoke({
+                **submitted,
+                "start_seconds": submitted["start_seconds"] / 1000,
+                "end_seconds": submitted["end_seconds"] / 1000,
+            }))
             assert "error" not in receipt
         if items:
             handle_text("建议补充人物或动作。")
@@ -431,16 +435,22 @@ class _VideoSupervisorModel(_DirectSupervisorModel):
                 "end_seconds": draft["end_seconds"] - 1,
                 "claim": f"终审片段 {draft['video_chunk_id']} 支持最终回答。",
             }
-            receipt = json.loads(by_name["submit_video_item"].invoke(submitted))
+            # Drafts and recorded selections use milliseconds; only tool inputs use seconds.
+            tool_arguments = {
+                **submitted,
+                "start_seconds": submitted["start_seconds"] / 1000,
+                "end_seconds": submitted["end_seconds"] / 1000,
+            }
+            receipt = json.loads(by_name["submit_video_item"].invoke(tool_arguments))
             assert receipt["accepted"]
             if self.revise and not self.submitted_items:
                 handle_text("补充片段说明。")
-                revised = {**submitted, "start_seconds": submitted["start_seconds"] + 1}
+                revised = {**tool_arguments, "start_seconds": (submitted["start_seconds"] + 1) / 1000}
                 assert json.loads(by_name["submit_video_item"].invoke(revised))["accepted"]
                 assert json.loads(by_name["remove_video_item"].invoke({
                     "video_chunk_id": submitted["video_chunk_id"],
                 }))["removed"]
-                assert json.loads(by_name["submit_video_item"].invoke(submitted))["accepted"]
+                assert json.loads(by_name["submit_video_item"].invoke(tool_arguments))["accepted"]
             self.submitted_items.append(submitted)
         handle_text(
             self.answer + " 网页补充 [来源](https://example.org/source)"
@@ -867,6 +877,46 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
         _send(service, conversation, key="without-playback", series_ids=[series_id])
 
 
+def test_playback_uses_current_episode_without_changing_request_idempotency(build_service):
+    seen = []
+
+    class CurrentEpisodeModel(_DirectSupervisorModel):
+        model_name = "current-episode-test"
+
+        def run_agent(self, prompt, *, handle_text, **_kwargs):
+            seen.append(json.loads(prompt.rsplit("\n\n", 1)[1])["extra_context"]["playback"])
+            handle_text("当前视频答疑。")
+
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=CurrentEpisodeModel(), realtime_runtime=object(),
+    )
+    video_id = str(uuid4())
+    with repository._session_factory.begin() as session:
+        series_id = session.query(Series).one().id
+        session.add(Video(
+            id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
+            filename="lecture.mp4", source_uri="source/lecture.mp4",
+            hash="a" * 64, size_bytes=1, duration_ms=300_000,
+            upload_status="UPLOADED", parse_status="PENDING", upload_progress=100, parse_progress=0,
+        ))
+    context = {"playback": {
+        "seriesId": series_id, "videoId": video_id, "episodeOrder": 99,
+        "positionSeconds": 123_456,
+    }}
+    first = _send(service, conversation, series_ids=[series_id], extra_context=context)
+    assert first.user_message.extra_context == context
+    assert seen[-1]["episodeOrder"] == 1
+    assert seen[-1]["positionSeconds"] == 123_456
+    with repository._session_factory.begin() as session:
+        session.get(Video, video_id).episode_order = 2
+    replay = _send(service, conversation, series_ids=[series_id], extra_context=context)
+    assert replay.assistant_message.message_id == first.assistant_message.message_id
+    assert len(seen) == 1
+    _send(service, conversation, key="after-renumbering", series_ids=[series_id], extra_context=context)
+    assert seen[-1]["episodeOrder"] == 2
+    assert context["playback"]["episodeOrder"] == 99
+
+
 @pytest.mark.parametrize("include_other_unready", [False, True])
 def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
     build_service, include_other_unready,
@@ -1068,6 +1118,8 @@ def test_uploaded_attachment_reaches_runtime_without_service_vision_gate(
     from server.config.media import ImageUploadConfig
     from server.service.agent_attachments import AgentAttachmentService
     from server.storage.artifact import LocalArtifactStore
+
+
 
     model = _DirectSupervisorModel() if supervised else None
     service, conversation, retrieval, repository, query, *_ = build_service(supervisor_model=model)
@@ -3443,6 +3495,59 @@ def test_runtime_session_updates_merge_conversation_detail_and_preserve_owner_sc
             key="codex-A", state={},
         )
     assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == expected
+
+
+@pytest.mark.parametrize("commit_fails", [False, True])
+def test_pi_runtime_binding_is_confirmed_only_after_business_sql_commit(build_service, monkeypatch, commit_fails):
+    from gateway.agent_model.contracts import AgentModelProfile
+    from gateway.pi.supervisor import PiSupervisorModel
+
+    commands, prompts = [], []
+    repository = None
+
+    class PiHost:
+        def prompt(self, **options):
+            prompts.append(options)
+            options["check_control"]()
+            state = {"sessionFile": "controlled/session.jsonl", "pendingRunId": options["run_id"]}
+            options["on_event"]({"type": "state", "state": state})
+            options["on_event"]({"type": "text_delta", "delta": "你好，可以继续提问。"})
+            return {"text": "你好，可以继续提问。", "state": state}
+
+        def request(self, command, **options):
+            commands.append(command)
+            if command == "confirm_turn":
+                with repository._session_factory() as session:
+                    assert session.get(AgentMessage, options["run_id"]).status == "COMPLETED"
+                return {"state": {"sessionFile": "controlled/session.jsonl", "committedLeafId": "confirmed"}}
+            return {}
+
+    adapter = PiSupervisorModel(
+        client=PiHost(),
+        profile=AgentModelProfile("configured", "1", "fake", "test-model", "secret", "https://model.example/v1"),
+        request_timeout_seconds=30, max_input_chars=200_000,
+    )
+    service, conversation, _, repository, *_ = build_service(supervisor_model=adapter)
+    if commit_fails:
+        def failed_commit(*_args, **_kwargs):
+            raise RuntimeError("injected SQL commit failure")
+        monkeypatch.setattr(repository, "complete_assistant_message", failed_commit)
+        with pytest.raises(RuntimeError, match="SQL commit failure"):
+            _send(service, conversation)
+        assert "discard_turn" in commands
+        assert "confirm_turn" not in commands
+        assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1].status == "FAILED"
+    else:
+        first = _send(service, conversation)
+        assert commands == ["confirm_turn"]
+        detail = service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail
+        assert detail["runtimeSessions"]["pi"]["committedLeafId"] == "confirmed"
+        _send(service, conversation, key="next", content="继续")
+        assert prompts[1]["state"]["committedLeafId"] == "confirmed"
+        assert prompts[1]["history"] == [
+            {"role": "user", "content": first.user_message.content},
+            {"role": "assistant", "content": first.assistant_message.content},
+        ]
 
 
 def test_public_tenant_conversations_are_private_per_owner(build_service):

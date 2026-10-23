@@ -20,6 +20,7 @@ from .mq import MQConsumerConfig
 from .retrieval import RetrievalConfig
 from .sse import SSEConfig
 from .upload import UploadServiceConfig
+from .video_summarize import VideoSummarizeConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,7 @@ class ServerSettings:
     elasticsearch: ElasticsearchConfig | None = None
     parse_execution_mode: Literal["v2"] = "v2"
     auth: AuthConfig = field(default_factory=AuthConfig)
+    summarize: VideoSummarizeConfig = field(default_factory=VideoSummarizeConfig)
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
@@ -106,6 +108,7 @@ class ServerSettings:
         model_pricing_config = _optional_environment("ANIVAG_MODEL_PRICING_CONFIG")
         agent_config, _ = read_global_agent_settings(model_config)
         return cls(
+            summarize=VideoSummarizeConfig.from_environment(),
             auth=AuthConfig.from_environment(),
             environment=environment,
             database_url=database_url,

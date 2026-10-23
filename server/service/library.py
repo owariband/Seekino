@@ -3,23 +3,50 @@ from __future__ import annotations
 from engine.common.background import extract_background_image_ids, prepare_background_text
 
 from typing import TYPE_CHECKING
+from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.identifiers import derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
+from ..model.dto.jobDTO import VideoData
 from ..model.video import SeriesVisibility
 from ..repository.library import LibraryRepository, VideoEpisodeOrderConflictError
 from ..storage.artifact import ArtifactStore
 from ..utils.validation import canonical_uuid, normalize_language_tag_hint, require_nonempty_text
 from ..utils.time import now_utc
-from .video_parse_errors import VideoParseConflictError
+from .video_parse_errors import VideoParseConflictError, VideoParseSnapshotConflictError
 from .video_parse_prefix import invalidate_series_prefixes_from
 
 if TYPE_CHECKING:
     from .media import MediaService
+
+
+def update_video_episode_order_in_session(
+    repository: LibraryRepository, session: Session, *,
+    video_id: str, tenant_id: str, episode_order: int, now: datetime,
+    skip_locked: bool = False,
+) -> tuple[VideoData, int]:
+    """Keep episode ordering and Prefix invalidation in the caller's transaction."""
+    video, previous_episode_order = repository.update_video_episode_order(
+        video_id, session=session, tenant_id=tenant_id, episode_order=episode_order,
+    )
+    if previous_episode_order != episode_order:
+        try:
+            invalidate_series_prefixes_from(
+                session, series_id=video.series_id,
+                episode_order=min(previous_episode_order, episode_order),
+                video_id=video.id, now=now,
+                skip_locked=skip_locked,
+            )
+        except VideoParseSnapshotConflictError:
+            raise
+        except VideoParseConflictError as exc:
+            raise VideoEpisodeOrderConflictError(str(exc)) from exc
+    return video, previous_episode_order
 
 
 class LibraryService:
@@ -138,23 +165,10 @@ class LibraryService:
         normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         try:
             with self._repository.transaction() as session:
-                video, previous_episode_order = self._repository.update_video_episode_order(
-                    normalized_video_id,
-                    session=session,
-                    tenant_id=normalized_workspace,
-                    episode_order=episode_order,
+                update_video_episode_order_in_session(
+                    self._repository, session, video_id=normalized_video_id,
+                    tenant_id=normalized_workspace, episode_order=episode_order, now=now_utc(),
                 )
-                if previous_episode_order != episode_order:
-                    try:
-                        invalidate_series_prefixes_from(
-                            session,
-                            series_id=video.series_id,
-                            episode_order=min(previous_episode_order, episode_order),
-                            video_id=video.id,
-                            now=now_utc(),
-                        )
-                    except VideoParseConflictError as exc:
-                        raise VideoEpisodeOrderConflictError(str(exc)) from exc
         except IntegrityError as exc:
             raise VideoEpisodeOrderConflictError(
                 "episode order is already occupied in this Series"

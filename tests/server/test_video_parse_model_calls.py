@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from copy import deepcopy
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -14,6 +15,88 @@ from server.service.video_parse_model_calls import (
     VideoParseModelCallManager,
 )
 from server.utils.time import now_utc
+
+
+def test_summary_model_calls_continue_after_parse_completion_and_preserve_runtime(repository, monkeypatch):
+    from server.constants.parse import RUNTIME_DETAIL_KEY
+    from server.model.job import VideoParseTask
+    from tests.server.test_video_summarize_persistence import AT, _claim, _ready
+    from tests.server.test_video_parse_repository import _finish_ready_indexes
+
+    factory, queue, persistence, task_id, video_lease = _ready(repository)
+    _finish_ready_indexes(queue, persistence, now=AT)
+    queue.release_execution(video_lease, now=AT)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        assert task.status == "COMPLETE"
+        config = deepcopy(task.parse_config)
+        config["execution"]["max_model_calls"] = 1
+        task.parse_config = config
+        detail = deepcopy(task.detail)
+        detail[RUNTIME_DETAIL_KEY]["model_calls"]["used_call_ids"] = ["understanding", "refine"]
+        detail[RUNTIME_DETAIL_KEY]["other_phase"] = {"value": "before"}
+        task.detail = detail
+    lease = _claim(persistence)
+    monkeypatch.setattr("server.service.video_parse_persistence.now_utc", lambda: AT)
+    usage = []
+    manager = VideoParseModelCallManager(
+        persistence, execution_lease=lease, lease_duration=timedelta(minutes=5), usage_observer=usage.append,
+    )
+    with manager.capture():
+        from gateway.usage import track_model_call
+        with track_model_call(provider="fixture", model="summary", operation="generate") as call:
+            with factory.begin() as session:
+                task = session.get(VideoParseTask, task_id)
+                detail = deepcopy(task.detail)
+                runtime = detail[RUNTIME_DETAIL_KEY]
+                slot = runtime["model_calls"]["active"][call.call_id]
+                assert slot["execution_kind"] == "summarize"
+                assert slot["execution_task_id"] == task_id
+                runtime["other_phase"] = {"value": "concurrent-update"}
+                task.detail = detail
+            assert manager.heartbeat()
+    with factory() as session:
+        task = session.get(VideoParseTask, task_id)
+        runtime = task.detail[RUNTIME_DETAIL_KEY]
+        assert task.status == "COMPLETE"
+        assert runtime["summarize"]["status"] == "RUNNING"
+        assert runtime["other_phase"] == {"value": "concurrent-update"}
+        assert runtime["model_calls"]["active"] == {}
+        assert set(runtime["model_calls"]["used_call_ids"]) == {"understanding", "refine", call.call_id}
+    assert len(usage) == 1
+
+
+@pytest.mark.parametrize("replacement", ["summary_lease", "parse_task"])
+def test_summary_call_admission_fences_replaced_execution(repository, monkeypatch, replacement):
+    from gateway.usage import track_model_call
+    from server.constants.parse import RUNTIME_DETAIL_KEY
+    from server.model.job import VideoParseTask
+    from tests.server.test_video_summarize_persistence import AT, _claim, _ready
+
+    factory, _queue, persistence, task_id, _video_lease = _ready(repository)
+    lease = _claim(persistence)
+    if replacement == "summary_lease":
+        assert persistence.release_summary(lease, now=AT)
+        assert _claim(persistence).lease_version > lease.lease_version
+    else:
+        with factory.begin() as session:
+            task = session.get(VideoParseTask, task_id)
+            session.add(VideoParseTask(
+                id=str(uuid4()), video_id=task.video_id, pipeline_version=task.pipeline_version,
+                status="PENDING", parse_config=task.parse_config, chunk_count=task.chunk_count,
+                version=2, next_execute_time=AT, max_attempts=3,
+                detail={RUNTIME_DETAIL_KEY: {"accepted": True}},
+            ))
+    monkeypatch.setattr("server.service.video_parse_persistence.now_utc", lambda: AT)
+    manager = VideoParseModelCallManager(
+        persistence, execution_lease=lease, lease_duration=timedelta(minutes=5),
+    )
+    with manager.capture(), pytest.raises(ModelCallAdmissionError):
+        with track_model_call(provider="fixture", model="summary", operation="generate"):
+            pytest.fail("a stale summary must be rejected before the provider starts")
+    with factory() as session:
+        runtime = session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]
+        assert runtime["model_calls"]["active"] == {}
 
 
 class _Repository:

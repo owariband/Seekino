@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm.attributes import flag_modified
 
 from engine.parsev2.schemas import VideoParseResult
@@ -2590,6 +2590,68 @@ def _seed_retrieval_chunk(repository):
     return factory, repo, video, identity, chunk_id
 
 
+def test_retrieval_scope_reads_only_task_and_chunk_projections_without_lazy_loading(repository):
+    factory, repo, video, identity, _chunk_id = _seed_retrieval_chunk(repository)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, identity.parse_task_id)
+        task.detail = {**task.detail, "large_runtime_trace": "模型调用记录" * 100_000}
+        content = session.scalar(select(ChunkParseContent))
+        content.detail = {**content.detail, "large_embedding_cache": [0.5] * 100_000}
+
+    statements = []
+
+    def record_sql(_connection, _cursor, statement, _parameters, _context, _many):
+        if "FROM video_parse_task" in statement or "FROM chunk_parse_task" in statement:
+            statements.append(statement)
+
+    engine = repository[0]
+    event.listen(engine, "before_cursor_execute", record_sql)
+    try:
+        scope = repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
+    finally:
+        event.remove(engine, "before_cursor_execute", record_sql)
+
+    assert scope.parse_tasks_by_video_id == {video.id: identity.parse_task_id}
+    assert scope.index_generation == 2
+    assert len(statements) == 2
+    columns = statements[0].split("FROM", 1)[0]
+    assert "video_parse_task.parse_config" in columns
+    assert "video_parse_task.detail" not in columns
+    assert "video_parse_task.last_error" not in columns
+    assert "video_parse_task.lease_owner" not in columns
+    chunk_columns = statements[1].split("FROM", 1)[0]
+    assert "chunk_parse_task.video_task_id" in chunk_columns
+    assert "video_chunk.video_id" in chunk_columns
+    assert "video_chunk.sequence_no" in chunk_columns
+    assert "chunk_parse_content" not in chunk_columns
+    assert "detail" not in chunk_columns
+
+
+@pytest.mark.parametrize("invalid", ["phase", "status", "unpublished_version", "missing_content", "sequence", "video"])
+def test_retrieval_scope_projection_preserves_chunk_publication_and_coverage_checks(repository, invalid):
+    factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
+    other_chunk_id = _seed_retrieval_chunk(repository)[4] if invalid == "video" else None
+    with factory.begin() as session:
+        child = session.scalar(select(ChunkParseTask).where(ChunkParseTask.video_task_id == identity.parse_task_id))
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id))
+        chunk = session.get(VideoChunk, chunk_id)
+        if invalid == "phase":
+            child.phase = 2
+            child.status = "WAITING"
+        elif invalid == "status":
+            child.status = "QUEUED"
+        elif invalid == "unpublished_version":
+            content.version += 1
+        elif invalid == "missing_content":
+            session.delete(content)
+        elif invalid == "sequence":
+            chunk.sequence_no = 1
+        else:
+            child.chunk_id = other_chunk_id
+    with pytest.raises(VideoParseConflictError, match="incomplete Chunk content"):
+        repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
+
+
 def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
     repository,
 ) -> None:
@@ -2674,6 +2736,8 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
             VideoParseTask.version == 2,
         ))
         newer.is_deleted = True
+    restored = repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
+    assert restored.parse_tasks_by_video_id == {video.id: task_id}
     assert repo.get_chunk_evidence(chunk_id, tenant_id="mine") == evidence[0]
     with factory.begin() as session:
         session.get(VideoParseTask, task_id).is_deleted = True

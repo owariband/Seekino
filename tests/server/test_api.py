@@ -349,8 +349,11 @@ class _AgentModelStub:
         for report in json.loads(prompt.rsplit("\n\n", 1)[1])["reports"]:
             for item in _reported_items(report, available):
                 check_control and check_control()
+                # Query drafts retain milliseconds; the final submission tool accepts seconds.
                 receipt = json.loads(available["submit_video_item"].invoke({
-                    name: item[name] for name in ("video_chunk_id", "start_seconds", "end_seconds", "claim")
+                    **{name: item[name] for name in ("video_chunk_id", "claim")},
+                    "start_seconds": item["start_seconds"] / 1000,
+                    "end_seconds": item["end_seconds"] / 1000,
                 }))
                 assert "error" not in receipt
             handle_text(report.get("message", "没有找到可以核验的候选画面。"))
@@ -679,7 +682,7 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
     assert response.json()["window"]["chunkDurationSeconds"] == 60
     assert response.json()["window"]["contextOverlapSeconds"] == 3
     assert "chunkDurationMs" not in response.json()["window"]
-    assert response.json()["vision"]["fps"] == 1.0
+    assert response.json()["vision"]["fps"] == defaults.vision.fps
 
     invalid = response.json()
     invalid["vision"]["inputMode"] = "video"
@@ -2484,6 +2487,8 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 # Public and persisted ranges stay in milliseconds after this tool boundary.
                 by_name["submit_video_item"].invoke({
                     **draft, "claim": "这些片段包含动作。",
+                    "start_seconds": draft["start_seconds"] / 1000,
+                    "end_seconds": draft["end_seconds"] / 1000,
                 })
             handle_text("这些片段包含动作。")
 

@@ -286,7 +286,7 @@ def test_five_host_bound_tools_and_comparison_preserve_ms_and_real_failures():
     }
     assert tools["get_speaker_list"].execute().payload["required_count"] == 0
     assert tools["get_context_canvas"].execute(
-        collection="sources", reference="issued", section="value",
+        collection="sources", reference="issued", section="content",
     ).success is True
     tools["register_voiceprint"].execute(
         source_ref="issued", speaker="爽世", start_ms=47100, end_ms=48800, selection_basis="已确认来源",

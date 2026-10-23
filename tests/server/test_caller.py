@@ -135,7 +135,7 @@ def test_event_store_borrows_client_without_initializing_index(monkeypatch):
         semantic_dimensions=512, vision_dimensions=1024,
     )
     assert store._client is client
-    assert store.index_name == "seekino_video_events_test_v1"
+    assert store.index_name == "seekino_video_events_test_v3"
     client.assert_not_called()
     client.indices.exists.assert_not_called()
     client.close.assert_not_called()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial, wraps
 from collections.abc import Callable, Mapping, Sequence
@@ -314,6 +315,7 @@ class GatewayClient:
         self._environ = os.environ if environ is None else environ
         self._resources: set[_OwnedResource] = set()
         self._codex_executors: dict[str, ThreadPoolExecutor] = {}
+        self._pi_client = None
         self._lock = Lock()
         self._closed = False
 
@@ -484,7 +486,26 @@ class GatewayClient:
         )
         return self._own(AgentModelFactory(config, self.config.model_sources,
                                           environ=self._environ, binding=binding,
-                                          codex_executor=self._codex_executor(binding.source)))
+                                          codex_executor=self._codex_executor(binding.source),
+                                          pi_client=self._shared_pi_client() if self.config.supervisor_harness == "pi" else None))
+
+    def _shared_pi_client(self):
+        from gateway.pi.client import PiClient
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Gateway client is closed")
+            if self._pi_client is None:
+                settings = self.config.pi_host
+                self._pi_client = PiClient(
+                    command=settings.node_bin,
+                    args=(str(Path(__file__).resolve().parent / "pi" / "host" / "dist" / "src" / "main.js"),),
+                    env=self._environ,
+                    config=settings.runtime_options(),
+                    startup_timeout=settings.startup_timeout_seconds,
+                    cancel_timeout=settings.cancel_timeout_seconds,
+                    shutdown_timeout=settings.shutdown_timeout_seconds,
+                )
+            return self._pi_client
 
     def create(
         self, kind: Literal["generative", "transcription", "embedding", "rerank", "speaker_embedding"],
@@ -510,6 +531,7 @@ class GatewayClient:
             self._closed = True
             resources, self._resources = tuple(self._resources), set()
             executors, self._codex_executors = tuple(self._codex_executors.values()), {}
+            pi_client, self._pi_client = self._pi_client, None
         failure = None
         for resource in resources:
             try:
@@ -519,6 +541,11 @@ class GatewayClient:
         for executor in executors:
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
+            except BaseException as error:
+                failure = failure or error
+        if pi_client is not None:
+            try:
+                pi_client.close()
             except BaseException as error:
                 failure = failure or error
         if failure is not None:

@@ -6,6 +6,7 @@ import {
   formatMoneyUsd,
   formatTokens,
   episodeTitle,
+  videoTitle,
   previewFramePosition,
   formatTimeRange,
   formatTimecode,
@@ -16,6 +17,12 @@ import {
 } from "./format";
 
 describe("format helpers", () => {
+  it("prefers a video title and falls back to the localized episode number", () => {
+    expect(videoTitle({ episodeOrder: 4, displayName: "  一生だよ  " })).toBe("一生だよ");
+    expect(videoTitle({ episodeOrder: 4, displayName: null })).toBe("第 4 集");
+    expect(videoTitle({ episodeOrder: 4, displayName: " " }, "en")).toBe("Episode 4");
+  });
+
   it("localizes generated labels without changing money precision or media timecodes", () => {
     expect(formatTokens(null, "en")).toBe("Not recorded");
     expect(formatTokens(12345, "en")).toBe("12,345");

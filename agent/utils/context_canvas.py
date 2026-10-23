@@ -210,4 +210,4 @@ class ContextCanvas:
         return [{"reference": reference} for reference, _value in self.items(collection)]
 
     def sections(self, collection: str, reference: str, *, role: str) -> dict[str, str]:
-        return {"value": canvas_json(self.get(collection, reference))}
+        return {"content": canvas_json(self.get(collection, reference))}

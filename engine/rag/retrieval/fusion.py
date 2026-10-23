@@ -12,13 +12,6 @@ from engine.rag.contracts import VideoChunkRetrievalIdentity
 
 AGENT_RETRIEVAL_STRATEGY_VERSION = "query-adaptive-three-channel-rrf-v2"
 
-class RankedVideoChunk(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    rank: int = Field(gt=0)
-    chunk_sequence_no: int = Field(ge=0)
-    score: float
-
 
 class RankedVideoChunkMatch(BaseModel):
     """One formal VideoChunk result from a single retrieval channel."""
@@ -68,134 +61,6 @@ class VersionedFusedVideoChunkRanking(FusedVideoChunkRanking):
             if getattr(self, field) is None:
                 ranking.pop(field, None)
         return ranking
-
-
-def weighted_reciprocal_rank_fusion(
-    text_rankings: list[RankedVideoChunk],
-    vision_rankings: list[RankedVideoChunk],
-    *,
-    text_weight: float,
-    vision_weight: float,
-    channel_top_k: int,
-    rrf_k: int,
-) -> list[RankedVideoChunk]:
-    """Fuse text and vision rankings with configurable channel weights."""
-
-    _validate_rrf_parameters(
-        text_weight=text_weight,
-        vision_weight=vision_weight,
-        channel_top_k=channel_top_k,
-        rrf_k=rrf_k,
-    )
-
-    scores: dict[int, float] = {}
-    for rankings, weight in (
-        (text_rankings, text_weight),
-        (vision_rankings, vision_weight),
-    ):
-        if weight == 0:
-            continue
-        for ranked in rankings[:channel_top_k]:
-            scores[ranked.chunk_sequence_no] = scores.get(
-                ranked.chunk_sequence_no, 0.0
-            ) + weight / (rrf_k + ranked.rank)
-
-    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
-    return [
-        RankedVideoChunk(
-            rank=rank,
-            chunk_sequence_no=sequence_no,
-            score=score,
-        )
-        for rank, (sequence_no, score) in enumerate(ordered, start=1)
-    ]
-
-
-def fuse_video_chunk_rankings(
-    text_rankings: Sequence[RankedVideoChunkMatch],
-    vision_rankings: Sequence[RankedVideoChunkMatch],
-    *,
-    lexical_rankings: Sequence[RankedVideoChunkMatch] = (),
-    lexical_weight: float = 0.0,
-    transcript_rankings: Sequence[RankedVideoChunkMatch] = (),
-    transcript_weight: float = 0.0,
-    text_weight: float,
-    vision_weight: float,
-    channel_top_k: int,
-    rrf_k: int,
-) -> list[FusedVideoChunkRanking]:
-    """Fuse formal VideoChunk IDs while retaining every channel's rank and score."""
-
-    _validate_rrf_parameters(
-        lexical_weight=lexical_weight,
-        transcript_weight=transcript_weight,
-        text_weight=text_weight,
-        vision_weight=vision_weight,
-        channel_top_k=channel_top_k,
-        rrf_k=rrf_k,
-    )
-    if lexical_weight > 0 and transcript_weight > 0:
-        raise ValueError(
-            "lexical_weight and transcript_weight cannot both be greater than zero"
-        )
-    lexical_by_id = _rankings_by_video_chunk_id(
-        lexical_rankings[:channel_top_k],
-        channel_name="lexical",
-    )
-    transcript_by_id = _rankings_by_video_chunk_id(
-        transcript_rankings[:channel_top_k],
-        channel_name="transcript",
-    )
-    text_by_id = _rankings_by_video_chunk_id(
-        text_rankings[:channel_top_k],
-        channel_name="text",
-    )
-    vision_by_id = _rankings_by_video_chunk_id(
-        vision_rankings[:channel_top_k],
-        channel_name="vision",
-    )
-
-    scores: dict[str, float] = {}
-    for rankings, weight in (
-        (lexical_by_id, lexical_weight),
-        (transcript_by_id, transcript_weight),
-        (text_by_id, text_weight),
-        (vision_by_id, vision_weight),
-    ):
-        if weight == 0:
-            continue
-        for video_chunk_id, ranked in rankings.items():
-            scores[video_chunk_id] = scores.get(video_chunk_id, 0.0) + (
-                weight / (rrf_k + ranked.rank)
-            )
-
-    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
-    candidates: list[FusedVideoChunkRanking] = []
-    for fused_rank, (video_chunk_id, fused_score) in enumerate(ordered, start=1):
-        lexical = lexical_by_id.get(video_chunk_id)
-        transcript = transcript_by_id.get(video_chunk_id)
-        text = text_by_id.get(video_chunk_id)
-        vision = vision_by_id.get(video_chunk_id)
-        candidates.append(
-            FusedVideoChunkRanking(
-                video_chunk_id=video_chunk_id,
-                fused_rank=fused_rank,
-                fused_score=fused_score,
-                lexical_rank=lexical.rank if lexical is not None else None,
-                lexical_score=lexical.score if lexical is not None else None,
-                transcript_rank=(
-                    transcript.rank if transcript is not None else None
-                ),
-                transcript_score=(
-                    transcript.score if transcript is not None else None
-                ),
-                text_rank=text.rank if text is not None else None,
-                text_score=text.score if text is not None else None,
-                vision_rank=vision.rank if vision is not None else None,
-                vision_score=vision.score if vision is not None else None,
-            )
-        )
-    return candidates
 
 
 def fuse_versioned_video_chunk_rankings(
@@ -304,20 +169,6 @@ def normalize_hybrid_retrieval_weights(
     )
 
 
-def normalize_video_retrieval_weights(
-    text_weight: float,
-    vision_weight: float,
-) -> tuple[float, float]:
-    """Validate and normalize one call's Text/Vision weight ratio."""
-
-    _, normalized_text, normalized_vision = normalize_hybrid_retrieval_weights(
-        0.0,
-        text_weight,
-        vision_weight,
-    )
-    return normalized_text, normalized_vision
-
-
 def _rankings_by_video_chunk_id(
     rankings: Sequence[RankedVideoChunkMatch],
     *,
@@ -401,14 +252,10 @@ def _validate_rrf_parameters(
 
 __all__ = [
     "AGENT_RETRIEVAL_STRATEGY_VERSION",
-    "RankedVideoChunk",
     "RankedVideoChunkMatch",
     "VersionedRankedVideoChunkMatch",
     "FusedVideoChunkRanking",
     "VersionedFusedVideoChunkRanking",
-    "weighted_reciprocal_rank_fusion",
-    "fuse_video_chunk_rankings",
     "fuse_versioned_video_chunk_rankings",
     "normalize_hybrid_retrieval_weights",
-    "normalize_video_retrieval_weights"
 ]

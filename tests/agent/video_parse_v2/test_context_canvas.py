@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-import tiktoken
 from pydantic import ValidationError
 
 from agent.utils.context_canvas import CanvasRevisionConflict, ContextCanvas
@@ -434,7 +433,77 @@ def test_original_evidence_and_state_remain_readable_after_checkpoint_and_edits(
     assert canvas.get("evidence", "member") == before
 
 
-def test_role_scope_and_operation_types_cannot_delete_or_clear_events():
+@pytest.mark.parametrize("origin", ["initial", "added"])
+def test_explicit_remove_only_deletes_the_named_editable_event(origin):
+    canvas = _canvas()
+    initial_ref = canvas.items("events")[0][0]
+    evidence = canvas.get("evidence", "member")
+    event_ref = initial_ref
+    if origin == "added":
+        receipt = canvas.write(role="refine", batch_id="add", expected_revision=canvas.revision, operations=[
+            {"op": "add_event", "member_ref": "member", "key": "duplicate",
+             "event": _result("duplicate event").timeline[0]},
+        ])
+        event_ref = receipt["results"][0]["reference"]
+    expected = [value["event"] for reference, value in canvas.items("events") if reference != event_ref]
+
+    canvas.write(role="refine", batch_id="remove", expected_revision=canvas.revision, operations=[
+        {"op": "remove_event", "event_ref": event_ref},
+    ])
+
+    assert canvas.result("member").model_dump(mode="json")["timeline"] == expected
+    assert event_ref not in {item["reference"] for item in canvas.catalog("events", role="refine")}
+    with pytest.raises(ValueError, match="Unknown Canvas reference"):
+        canvas.get("events", event_ref)
+    assert canvas.get("evidence", "member") == evidence
+    if origin == "initial":
+        assert canvas.interval_result().updates[0].timeline == []
+    else:
+        assert canvas.interval_result().updates == []
+
+
+def test_remove_batch_replay_is_idempotent_but_new_missing_reference_fails():
+    canvas = _canvas()
+    reference = canvas.items("events")[0][0]
+    revision = canvas.revision
+    operations = [{"op": "remove_event", "event_ref": reference}]
+    first = canvas.write(role="refine", batch_id="remove", expected_revision=revision, operations=operations)
+    after = canvas.snapshot()
+
+    replay = canvas.write(role="refine", batch_id="remove", expected_revision=revision, operations=operations)
+
+    assert replay == {**first, "replayed": True}
+    assert canvas.snapshot() == after
+    with pytest.raises(ValueError, match="unknown event reference"):
+        canvas.write(role="refine", batch_id="another-remove", expected_revision=canvas.revision, operations=operations)
+    assert canvas.snapshot() == after
+
+
+def test_remove_and_patch_deleted_event_rolls_back_whole_batch():
+    canvas = _canvas()
+    reference = canvas.items("events")[0][0]
+    before = canvas.snapshot()
+
+    with pytest.raises(ValueError, match="unknown event reference"):
+        canvas.write(role="refine", batch_id="remove-then-patch", expected_revision=canvas.revision, operations=[
+            {"op": "remove_event", "event_ref": reference},
+            {"op": "patch_event", "event_ref": reference, "fields": {"description": "must not commit"}},
+        ])
+
+    assert canvas.snapshot() == before
+
+
+def test_surviving_initial_event_keeps_its_source_identity():
+    canvas = _canvas()
+    draft = canvas.snapshot().collections
+    reference = next(iter(draft["events"]))
+    draft["events"][reference]["source"]["position"] = 99
+
+    with pytest.raises(ValueError, match="event source identity changed"):
+        canvas._validate_draft(draft)
+
+
+def test_role_scope_and_unknown_operations_cannot_mutate_other_events():
     canvas, other = _canvas(), _canvas()
     before = canvas.snapshot()
     with pytest.raises(ValueError):
@@ -444,6 +513,10 @@ def test_role_scope_and_operation_types_cannot_delete_or_clear_events():
     with pytest.raises(ValueError):
         canvas.write(role="refine", batch_id="other-execution", expected_revision=canvas.revision, operations=[
             {"op": "patch_event", "event_ref": other.items("events")[0][0], "fields": {"description": "wrong window"}},
+        ])
+    with pytest.raises(ValueError, match="unknown event reference"):
+        canvas.write(role="refine", batch_id="remove-other-execution", expected_revision=canvas.revision, operations=[
+            {"op": "remove_event", "event_ref": other.items("events")[0][0]},
         ])
     for op in ("delete_event", "clear_timeline"):
         with pytest.raises(ValidationError):
@@ -539,7 +612,7 @@ def test_refine_batches_original_event_details_and_commits_once(correct_events):
 
     async def fake_provider(_snapshot, *, canvas, prompt):
         assert "references=[...]" in prompt and "Skip overview" in prompt
-        assert "without cursor" in prompt and "brief items are not fully reviewed" in prompt
+        assert "remaining_references" in prompt and "returned items are complete" in prompt
         navigation = json.loads(prompt.splitlines()[-1])
         references = [entry["reference"] for entry in navigation["collections"]["events"]]
         tools = {tool.name: tool for tool in build_context_canvas_tools(
@@ -547,31 +620,25 @@ def test_refine_batches_original_event_details_and_commits_once(correct_events):
             write_args_schema=ParseCanvasWrite, maximum_result_bytes=32_000,
             maximum_read_chars=12_000, maximum_catalog_items=100, on_call=calls.append,
         )}
-        start, reviewed = 0, {}
+        remaining, reviewed = references, {}
         while True:
             raw = tools["get_context_canvas"].invoke({
-                "collection": "events", "references": references, "section": "content",
-                "start": start, "end": len(references),
+                "collection": "events", "references": remaining,
             })
             page = json.loads(raw)
             assert "error" not in page and len(raw.encode("utf-8")) <= 32_000
-            assert len(tiktoken.get_encoding(page["token_encoding"]).encode(raw, disallowed_special=())) <= 8_000
-            assert sum(len(item.get("content", "")) for item in page["items"]) <= 12_000
             assert page["revision"] == canvas.revision
-            assert "next_cursor" not in page and page["start"] == start
+            assert "next_cursor" not in page
             for item in page["items"]:
-                if item.get("truncated"):
-                    assert "content" not in item and "无法看到全量信息" in page["msg"]
-                    continue
                 body = json.loads(item["content"])
                 source = body["source"]
                 assert body["event"] == members[body["member_ref"]]["content"]["timeline"][source["position"]]
                 assert item["reference"] not in reviewed
                 reviewed[item["reference"]] = body
-            assert page["complete_end"] > start
-            start = page["complete_end"]
+            assert page["items"]
+            remaining = page["remaining_references"]
             assert len(calls) < len(references)
-            if start == len(references):
+            if not remaining:
                 break
         assert len(reviewed) == 36
         if correct_events:

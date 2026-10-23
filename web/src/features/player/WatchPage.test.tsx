@@ -10,6 +10,7 @@ import { WatchPage } from "./WatchPage";
 
 const mocks = vi.hoisted(() => ({
   getSeries: vi.fn(),
+  getSnapshot: vi.fn(),
   pauseAndGetSnapshot: vi.fn(),
   focusPlayer: vi.fn(),
   resumePlayer: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("./VideoPlayer", async () => {
     ) {
       const playerRef = useRef<HTMLDivElement>(null);
       useImperativeHandle(ref, () => ({
+        getSnapshot: mocks.getSnapshot,
         pauseAndGetSnapshot: mocks.pauseAndGetSnapshot,
         focus: () => { playerRef.current?.focus(); mocks.focusPlayer(); },
         resume: mocks.resumePlayer,
@@ -156,11 +158,32 @@ beforeEach(() => {
   mocks.useAuth.mockReturnValue({ canManage: true });
   localStorage.clear();
   mocks.getSeries.mockResolvedValue(series);
+  mocks.getSnapshot.mockReturnValue({ positionSeconds: 12_000, wasPlaying: false });
   mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 12_000, wasPlaying: false });
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("WatchPage", () => {
+  it("shows per-video title, synopsis and cover while keeping episode navigation", async () => {
+    mocks.getSeries.mockResolvedValue({
+      ...series, description: "系列简介",
+      videos: series.videos.map((episode) => ({ ...episode,
+        displayName: episode.videoId === "video-2" ? "本集标题" : "后续集标题",
+        description: episode.videoId === "video-2" ? "本集内容简介" : null,
+        thumbnail: { imageId: "cover", url: "/api/media/images/content?imageId=cover", expiresAt: null },
+      })),
+    });
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1, name: "本集标题" })).toBeInTheDocument();
+    expect(screen.getByText("本集内容简介")).toBeInTheDocument();
+    expect(screen.queryByText("系列简介")).not.toBeInTheDocument();
+    const next = screen.getByRole("region", { name: "后续集数" });
+    expect(within(next).getByText("后续集标题")).toBeInTheDocument();
+    expect(next.querySelector("img")).toHaveAttribute("src", expect.stringContaining("imageId=cover"));
+    fireEvent.click(screen.getByRole("link", { name: "下一集" }));
+    await waitFor(() => expect(screen.getByTestId("video-player")).toHaveTextContent("video-3"));
+  });
+
   it("hides the library shortcut when viewing one's own series from a public source", async () => {
     mocks.useAuth.mockReturnValue({ canManage: false });
     renderPage();
@@ -220,27 +243,23 @@ describe("WatchPage", () => {
     expect(screen.getByRole("tab", { name: "聊天" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("pauses the video when the user opens, selects, or interacts with Chat", async () => {
+  it("keeps playback unchanged when the user opens, selects, or interacts with Chat", async () => {
     renderPage();
     await screen.findByTestId("video-player");
 
     expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
-    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
     fireEvent.click(screen.getByRole("tab", { name: "聊天" }));
-    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(3);
 
     fireEvent.pointerDown(screen.getByTestId("supervisor-chat"), { button: 0, pointerType: "mouse" });
-    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(4);
-
     fireEvent.pointerDown(screen.getByTestId("supervisor-chat"), { button: 2, pointerType: "mouse" });
-    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(4);
+    fireEvent.pointerDown(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), { button: 0, pointerType: "touch" });
+    expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
+    expect(mocks.getSnapshot).not.toHaveBeenCalled();
   });
 
   it("shows the episode description and ordered upcoming episodes while Chat is closed", async () => {
@@ -342,9 +361,11 @@ describe("WatchPage", () => {
     renderPage();
     await screen.findByTestId("supervisor-chat");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    mocks.pauseAndGetSnapshot.mockClear();
+    expect(screen.getByRole("switch", { name: "发送问题时暂停视频" })).toBeChecked();
+    expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.getSnapshot).not.toHaveBeenCalled();
     expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
       playback: {
         seriesId: "series-1",
@@ -366,6 +387,46 @@ describe("WatchPage", () => {
         positionSeconds: 7_000,
       },
     });
+  });
+
+  it("restores the pause preference and only pauses future sends while it is enabled", async () => {
+    const view = renderPage();
+    await screen.findByTestId("video-player");
+    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("switch", { name: "发送问题时暂停视频" }));
+    expect(localStorage.getItem("anivag-watch-pause-on-send")).toBe("false");
+    view.unmount();
+
+    renderPage();
+    const player = await screen.findByTestId("video-player");
+    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    const pauseOnSend = screen.getByRole("switch", { name: "发送问题时暂停视频" });
+    const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    expect(pauseOnSend).not.toBeChecked();
+    mocks.getSnapshot.mockReturnValue({ positionSeconds: 21_567, wasPlaying: true });
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.getSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: { seriesId: "series-1", videoId: "video-2", episodeOrder: 2, positionSeconds: 21_567 },
+    });
+    fireEvent.keyDown(composer, { key: "Tab" });
+    expect(player).toHaveFocus();
+    expect(mocks.resumePlayer).not.toHaveBeenCalled();
+
+    fireEvent.click(pauseOnSend);
+    expect(pauseOnSend).toBeChecked();
+    expect(localStorage.getItem("anivag-watch-pause-on-send")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: "聊天" }));
+    mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 31_234, wasPlaying: true });
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.getSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: { seriesId: "series-1", videoId: "video-2", episodeOrder: 2, positionSeconds: 31_234 },
+    });
+    fireEvent.keyDown(composer, { key: "Tab" });
+    expect(mocks.resumePlayer).toHaveBeenCalledOnce();
   });
 
   it("keeps the latest reported playback context and does not reuse it after switching episodes", async () => {
@@ -436,7 +497,7 @@ describe("WatchPage", () => {
     });
   });
 
-  it("switches focus between the viewer and Chat with Tab and resumes only an interrupted video", async () => {
+  it("switches focus with Tab without pausing and resumes only playback interrupted by a send", async () => {
     renderPage();
     const player = await screen.findByTestId("video-player");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
@@ -449,14 +510,18 @@ describe("WatchPage", () => {
     player.focus();
     fireEvent.keyDown(player, { key: "Tab" });
 
-    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
+    expect(mocks.getSnapshot).not.toHaveBeenCalled();
     expect(screen.getByRole("complementary", { name: "观看侧栏" })).toHaveAttribute("aria-hidden", "false");
     expect(screen.getByRole("tab", { name: "聊天" })).toHaveAttribute("aria-selected", "true");
     expect(composer).toHaveFocus();
     expect(mocks.focusComposer).toHaveBeenCalledOnce();
 
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
     mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 18_000, wasPlaying: false });
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    fireEvent.click(screen.getByRole("switch", { name: "发送问题时暂停视频" }));
     fireEvent.keyDown(composer, { key: "Tab", shiftKey: true });
     expect(player).toHaveFocus();
     expect(mocks.focusPlayer).toHaveBeenCalledOnce();

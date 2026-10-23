@@ -69,8 +69,21 @@ class ImageEmbedder(_Embedder):
         pytest.fail("lexical-only retrieval must not encode the query")
 
 
-def test_real_sql_index_event_receipt_hydration_and_agent_evidence_pipeline(repository, tmp_path, monkeypatch):
+@pytest.mark.parametrize("dialogue", [False, True])
+def test_real_sql_index_event_receipt_hydration_and_agent_evidence_pipeline(repository, tmp_path, monkeypatch, dialogue):
     factory, _queue, repo, task_id, index_lease, at, video_lease = _event_index_fixture(repository)
+    if dialogue:
+        with factory.begin() as session:
+            content = session.scalar(select(ChunkParseContent))
+            original_event = content.content["timeline"][0]
+            content.content = {"persons": ["祥子"], "timeline": [{
+                **original_event, "event_type": "DIALOGUE", "speaker": "祥子",
+                "participants": ["祥子"], "visible_persons": ["祥子"],
+                "text_variants": [
+                    {"language": "ja", "role": "ORIGINAL", "text": "いいご身分ですわね。"},
+                    {"language": "zh-Hans", "role": "TRANSLATION", "text": "真是居高临下啊"},
+                ],
+            }]}
     monkeypatch.setattr(persistence_module, "now_utc", lambda: at)
     chunk_contract = _contract()
     event_contract = EventIndexingContract(
@@ -116,7 +129,13 @@ def test_real_sql_index_event_receipt_hydration_and_agent_evidence_pipeline(repo
         assert receipt["events"]["event_count"] == 1
         assert receipt["events"]["contract_id"] == target["contract_id"]
         assert content.content["timeline"][0] == original
-    assert embedder.text_calls == 2 and embedder.video_calls == 1 and embedder.image_calls == 3
+    assert embedder.text_calls == (4 if dialogue else 2)
+    assert embedder.video_calls == 1 and embedder.image_calls == 3
+    indexed = next(iter(events.documents.values()))
+    assert [(item.source, item.language, item.role) for item in indexed.semantic_vectors] == [
+        ("description", None, None),
+        *(("dialogue", variant["language"], variant["role"]) for variant in original.get("text_variants", [])),
+    ]
     assert all(not path.exists() for path in temporary_frames)
 
     service = VideoEventRetrievalService(repo, events, embedder, contract=event_contract,

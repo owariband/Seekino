@@ -108,6 +108,108 @@ CLI search 使用同一套 V2 检索。`./start.sh` 要求 ES 集群为 yellow/g
 容器没有代码或模型密钥挂载；数据库端口仅绑定 `127.0.0.1`。
 MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose 用于本地开发。
 
+<a id="local-assets"></a>
+
+## 本机资产与换机恢复
+
+本节供开发者和 AI 恢复现有环境时使用。下面的路径、模型绑定和工作区状态来自
+**2026-10-23 本地 main 工作区盘点**，不是新安装的默认值；执行前重新核对实际环境。
+`outputs/`、`design/`、`experiment/` 被 Git 忽略，不代表其中内容可重新生成或可直接删除。
+
+### 先确定运行依据
+
+1. 读取 `.env.local` 中的配置变量名与本地路径，不输出密钥值。优先核对
+   `ANIVAG_MODEL_CONFIG`、`ANIVAG_ARTIFACT_ROOT`、数据库 URL、ES 索引及代际；
+   不用根目录 `config.yaml` 或 `.env.example` 覆盖现有运行配置。
+2. 本次 `ANIVAG_MODEL_CONFIG` 指向 `outputs/local-services/main-model-config.yaml`，
+   其中模型绑定和 Agent 预算与根配置不同。该文件与 `.env.local` 必须配套恢复。
+3. 主业务库为 `anivag_local_20261010_development`，媒体根为
+   `outputs/server/local-20261010/artifacts`，其 `development/` 子目录也必须保留。
+   手机测试另用 `outputs/local-services/cloud-auth/phone.env`、同目录 `model-config.yaml`、
+   `seekino_phone_dev` 和 `outputs/phone-test/artifacts`；仅在需要恢复手机测试环境时携带这一套。
+4. 检查 `git status`，保存启动脚本和当前功能所依赖的未提交/未跟踪源码。
+   本次 `scripts/local_whisper.py`、`evals/query_router/` 等尚未进入已有提交；
+   单独 clone main 不能恢复完整的本机工作状态。
+5. `./start.sh` 固定定位 main，且不会启动下面的 Whisper 或查询改写模型服务。
+   API `/healthz` 正常只证明 API/Consumer 状态，不能作为模型能力恢复完成的证据。
+
+### 当前配置需要的本地模型文件
+
+三份权重合计约 **6.22 GiB**；整个模型目录的约 44.9 GiB 不是当前运行的最小要求。
+权重可通过备份恢复，或按原版本、来源和校验值重新取得；Mac 可执行文件须在 Windows/WSL
+重新安装或构建。
+
+| 能力 | 必需文件与关联依赖 | 恢复依据 |
+|---|---|---|
+| 查询改写 | `outputs/models/Qwen3-8B-GGUF-local/b968826d9c46dd6066d109eabc6255188de91218/Qwen3-8B-Q4_K_M.gguf`，约 4.68 GiB；匹配的 `llama-server` | 同目录 `manifest.json` 记录官方 Qwen/Qwen3-8B revision、转换器版本、量化参数及 SHA-256；详见 [查询改写实验记录](../evals/query_router/README.md) |
+| ASR | `outputs/local-models/whisper/ggml-large-v3-turbo.bin`，约 1.51 GiB；`outputs/tools/whisper.cpp/build/bin/whisper-server` | 本次 whisper.cpp 源码为 `48f628a`；保留版本，按其 `models/download-ggml-model.sh` 获取 `large-v3-turbo`，用 [启动脚本](../scripts/local_whisper.py) 读取当前模型绑定 |
+| 声纹 | `outputs/local-models/campplus/campplus_cn_common.bin`，约 27 MiB；`outputs/local-models/campplus/3D-Speaker` 中的 `speakerlab` 和 `speaker` 可选依赖（extra） | [CAM++ 适配器](../gateway/local/campplus.py) 校验权重和源码 SHA；恢复相同实现，修正 `PYTHONPATH` 与 YAML 中的 `checkpoint_path`，不能只复制权重 |
+
+查询改写的本机启动记录在 `outputs/local-services/query-hook/runtime.json`。
+恢复时使用其中的 command 语义，不复用旧 PID 和 `/opt/homebrew`、`/Users/...` 路径：
+端口 `18841`、alias `seekino-qwen3-text-8b-rewriter`、context `8192`、parallel `1`、
+threads `4`、seed `42`、`enable_thinking=false`；GPU offload 参数按新机器后端设置。
+Jev 还需要 `.env.local` 中的 `OPENROUTER_JEV_API_KEY`。
+
+Whisper 使用当前配置的 `http://127.0.0.1:18842/v1`，可在依赖与二进制准备好后运行：
+
+```bash
+uv run --no-sync --env-file .env.local python scripts/local_whisper.py
+```
+
+`WHISPER_API_KEY` 是本机 OpenAI 兼容客户端的占位配置，不代表服务启用了认证。
+另需恢复当前模型来源要求的 Ark、DeepSeek 凭据和本地 Codex 登录；配置中的变量名不能替代真实凭据。
+
+以下模型**不被本次 main 的有效模型配置引用**，不属于恢复当前服务的必需文件：
+`Qwen3-4B-GGUF`、`Qwen3-0.6B-GGUF`、Qwen3-8B 原始 BF16 副本、
+`ggml-large-v3.bin`、WavLM、ReDimNet、ERes2Net、DeepSeek-OCR-2，以及
+`deploy/llama_cpp/models/` 下的 Qwen3-VL 主模型与 projector。
+保留正在进行的实验、转换或训练所需的版本；其他副本可记录来源后按需重新下载。
+[llama.cpp direct-video 入口](llama_cpp/README.md) 是历史 A/B 实验，不能用它替代 `18841` 的纯文本改写服务。
+自行训练或合并的权重另查 `outputs/training/`，不能按公开下载缓存处理。
+
+### 大目录的保留与舍弃条件
+
+| 目录/资产 | 当前运行是否依赖 | 迁移与整理规则 |
+|---|---|---|
+| MySQL 业务数据 | 是，保存资料库、任务、解析成果及应用对话等 | 做一致性逻辑导出并验证恢复，与媒体配套保存。不要只复制部分 `.ibd` 或把运行中的数据目录作为唯一备份 |
+| MySQL binlog | 用于复制、CDC、按时间点恢复；不是完整逻辑备份恢复到其快照状态的必需附件 | 本次约 67.15 GiB。只有确认复制/CDC/PITR 保留需求、完整备份和恢复验证后，才能决定不携带哪些历史日志；清理走 MySQL 管理命令，不手动删除文件 |
+| 实际 `ANIVAG_ARTIFACT_ROOT` | 是 | 保留完整媒体、切片、帧图、对话附件及环境子目录。数据库使用 `artifact://development/...` 相对 URI；新机可以调整根路径，但必须保持内部结构和数据库对应关系 |
+| `assets/example_video_mygo/` 与手机测试媒体 | 主服务依赖已发布媒体；原始样例还被部分评测引用 | 手机环境可整套选择不恢复。原始样例只有在确认业务副本完整、哈希一致且所需评测不再引用后才可省略；不能仅凭文件名判断重复 |
+| `outputs/verification/` | 不是生产启动依赖，但包含验收证据及评测辅助输入 | 保留报告、协议、配置、真值/用例、来源版本、关键结果和代表性失败证据。逐实验确认其余大日志、重复帧和中间结果可以放弃；重跑可能需要模型费用，结果也未必相同 |
+| `outputs/worktrees/` | main 启动不依赖这些实验工作区 | 先保存 base commit、tracked diff（含二进制）、untracked 文件和必要的 ignored 文件，核对没有运行进程引用后才能移除 worktree。单独保存 Git patch 不包含未跟踪文件 |
+| `engine/experiment/` | 不是生产启动依赖，保存实验脚本、数据与原始结果 | 保留 README、脚本、参数、模型来源、输入标识/哈希、金标与关键原始输出。可重建的向量、重复图片和全量输出是否省略，按保留的复现目标决定 |
+| `outputs/model-traces/` | [诊断模块](../gateway/model_diagnostics.py) 写入，不是正式解析/检索的恢复数据源 | 保留未解决问题或已引用结论对应的 call/task 轨迹，其余可按保留期归档或舍弃；轨迹含输入输出和媒体，按私有资料处理 |
+
+工作区盘点发现四个 `outputs/worktrees/` 子目录均有未提交改动：
+
+| 工作区 | 已跟踪改动文件 | 未跟踪文件 |
+|---|---:|---:|
+| `ep04-continuous-turn-20261021` | 25 | 4 |
+| `ep04-continuous-turn-20261021-v23` | 25 | 4 |
+| `ep04-offscreen-20261022` | 25 | 6 |
+| `ep04-segmentation-20261020` | 34 | 10 |
+
+它们不是可直接删除的代码副本。约 5.5 GiB 总占用主要来自 segmentation 工作区内的
+`outputs/`（约 5.4 GiB），其内容也需单独盘点，不能随 worktree 一起丢弃。
+验收记录中，EP04 v24 的 `report.md`、v25/offscreen 的 `report.md` 是语义效果演进证据；
+`outputs/verification/speaker-agreement-20261018/v11-lines.jsonl` 还被声纹算法评测用于可选历史一致性核对。
+
+### 给恢复环境的 AI 的交付要求
+
+- 每个必需资产注明：用途、配置引用、源路径、新机目标路径、来源/revision、已有校验值或待补校验值、
+  获取/构建方式、验证步骤。仅写“下载一个 Qwen/Whisper 模型”不足以重建当前行为。
+- Windows 优先在 WSL2 中恢复现有 Bash/POSIX 启动链。Python、Node 依赖按锁文件重装，
+  CAM++ 需 `speaker` 可选依赖（extra）；本机二进制和 GPU 后端重新准备，修正绝对路径。
+- MySQL 和 Elasticsearch 可用 Compose 恢复；ES 备份采用 snapshot，或从保留的业务事实和媒体重建并验证索引合同。
+  `ANIVAG_MYSQL_BUFFER_POOL_SIZE=8G` 当前只由原生启动器消费；Compose 需显式设置对应 mysqld 参数，
+  并根据新机内存调整。不要把 `.env.local` 中出现该变量等同于容器配置已生效。
+- 先核对资产和配置，再验证数据库、媒体可读性、索引及模型服务身份；模型调用验收与 API 健康检查分别记录。
+  验收记录包括一次已解析视频播放、已有资料检索，以及在获准调用模型后的一次 ASR/改写/声纹检查。
+- 密钥配置和私有数据单独加密备份；Git 中保存脱敏模板、恢复说明和可公开的源码/文档。
+  `outputs/migration/20261023/manifest.json` 记录的三个 ZIP 只覆盖部分设计资料、实验报告和训练数据，
+  不含完整数据库、主要媒体、模型权重及上述工作区修改，不能作为整机迁移完成的依据。
+
 ## MySQL binlog
 
 The binlog stays on: replicas, point-in-time recovery and any future CDC depend

@@ -19,6 +19,7 @@ interface VideoPlayerProps {
 
 export interface VideoPlayerHandle {
   /** positionSeconds is integer milliseconds, including subsecond playback position. */
+  getSnapshot(): { positionSeconds: number; wasPlaying: boolean } | null;
   pauseAndGetSnapshot(): { positionSeconds: number; wasPlaying: boolean } | null;
   focus(): void;
   resume(): void;
@@ -132,15 +133,22 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     if (Date.now() - lastWriteAtRef.current >= PROGRESS_WRITE_INTERVAL_MS) persist();
   };
 
-  const pauseAndReadPosition = () => {
+  const readSnapshot = () => {
     const media = mediaRef.current;
     if (!media || !progressReadyRef.current) return null;
-    const wasPlaying = !media.paused && !media.ended;
-    media.pause();
-    const positionSeconds = Math.max(0, Math.round(media.currentTime * 1000));
-    updatePosition(positionSeconds);
+    return {
+      positionSeconds: Math.max(0, Math.round(media.currentTime * 1000)),
+      wasPlaying: !media.paused && !media.ended,
+    };
+  };
+
+  const pauseAndReadPosition = () => {
+    const snapshot = readSnapshot();
+    if (!snapshot) return null;
+    mediaRef.current?.pause();
+    updatePosition(snapshot.positionSeconds);
     persist();
-    return { positionSeconds, wasPlaying };
+    return snapshot;
   };
 
   const resume = () => {
@@ -153,6 +161,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   };
 
   useImperativeHandle(ref, () => ({
+    getSnapshot: readSnapshot,
     pauseAndGetSnapshot: pauseAndReadPosition,
     focus: () => playerRef.current?.focus(),
     resume,

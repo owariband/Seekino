@@ -124,6 +124,65 @@ def test_event_index_real_filter_visibility_and_cleanup(isolated_store):
             client.indices.delete(index=store.index_name)
 
 
+def test_event_multivector_real_max_parent_topk_and_authorized_scope(isolated_store):
+    from engine.parsev2.schemas import VideoParseResult
+    from engine.rag.encoding import accept_embedding_result
+    from engine.rag.indexing.events import finalize_event_index, plan_event_index
+    from engine.rag.retrieval.contracts import EventFilters
+    from engine.rag.vision.event_frames import CaptureFrame
+    from server.storage.elasticsearch_events import ElasticsearchVideoEventStore
+    from tests.server.test_elasticsearch_events import _contract
+
+    client = isolated_store._client
+    store = ElasticsearchVideoEventStore(
+        client, index_name=f"seekino_event_test_{uuid4().hex}", environment="test",
+        semantic_dimensions=2, vision_dimensions=2,
+    )
+    timeline = []
+    for ordinal, kind in enumerate(("DIALOGUE", "DIALOGUE", "ACTION")):
+        event = {
+            "event_type": kind, "start_seconds": ordinal * 1000, "end_seconds": (ordinal + 1) * 1000,
+            "description": f"场景说明 {ordinal}", "participants": ["祥子"], "visible_persons": ["祥子"],
+        }
+        if kind == "DIALOGUE":
+            event.update(speaker="祥子", text_variants=[
+                {"language": "ja", "role": "ORIGINAL", "text": f"原文 {ordinal}"},
+                {"language": "zh-Hans", "role": "TRANSLATION", "text": f"译文 {ordinal}"},
+            ])
+        timeline.append(event)
+    task, chunk = str(uuid4()), str(uuid4())
+    plans = plan_event_index(task, chunk, 1, VideoParseResult(persons=["祥子"], timeline=timeline),
+                             0, 3000, _contract())
+    # Event 0 has two identical best vectors; Event 1 would win if scores were summed.
+    vectors = (((0., 1.), (1., 0.), (1., 0.)), ((0.8, 0.6),) * 3, ((0.9, 0.4358898943540673),))
+    documents = [finalize_event_index(
+        plan,
+        [accept_embedding_result(item.request, modality="text", model="embedding", vector=vector)
+         for item, vector in zip(plan.semantic_requests, values, strict=True)],
+        (0., 1.), [CaptureFrame(requested_at_ms=at, image_sha256="a" * 64) for at in plan.frame_timestamps_ms],
+    ) for plan, values in zip(plans, vectors, strict=True)]
+    outside = documents[0].model_copy(update={"parse_task_id": str(uuid4())})
+    try:
+        store.ensure_index(_contract())
+        store.bulk_upsert([*documents, outside], refresh="wait_for")
+        assert store.verify_ready([*documents, outside])
+        assert store.verify_set(task, chunk, 1, [document.event_id for document in documents])
+        for exact in (False, True):
+            hits = store.search_vector([1., 0.], channel="semantic", sources=[(task, chunk, 1)],
+                                       filters=EventFilters(), limit=2, exact=exact)
+            assert [hit.event_id for hit in hits] == [documents[0].event_id, documents[2].event_id]
+            cosines = [hit.score - 1. if exact else 2. * hit.score - 1. for hit in hits]
+            assert cosines == pytest.approx([1., 0.9], abs=1e-6)
+            dialogue = store.search_vector([1., 0.], channel="semantic", sources=[(task, chunk, 1)],
+                                           filters=EventFilters(speaker="祥子"), limit=2, exact=exact)
+            assert [hit.event_id for hit in dialogue] == [documents[0].event_id, documents[1].event_id]
+            assert store.search_vector([1., 0.], channel="semantic", sources=[(str(uuid4()), chunk, 1)],
+                                       filters=EventFilters(), limit=2, exact=exact) == ()
+    finally:
+        if client.indices.exists(index=store.index_name):
+            client.indices.delete(index=store.index_name)
+
+
 def _document(*, series_id, video_id, chunk_id, parse_task_id, question):
     projection = ChunkIndexProjection(
         semantic_text="千早爱音说我没事，画面上有大丈夫",

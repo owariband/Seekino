@@ -337,7 +337,6 @@ class QueryReport:
 
     completion: QueryCompletion
     retrieval_result: VideoChunkSearchResult
-    retrieval_trace: list[RetrievalTraceEntry]
     retrieval_calls: tuple[RetrievalCall, ...]
     frame_receipts: tuple[dict, ...] = ()
 

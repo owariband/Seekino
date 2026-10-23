@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Collection
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from engine.rag.contracts import (
     VideoChunkEvidence,
     VideoChunkSearchHit,
-    VideoChunkSearchResult,
 )
 
 from .output import video_range_sources
@@ -83,58 +81,6 @@ def project_image_history(
     if messages and include_current_message:
         messages.append({"role": "user", "content": inputs["user_message"]})
     return messages
-
-
-def project_search_result(
-    result: VideoChunkSearchResult,
-    *,
-    previously_returned_video_chunk_ids: Collection[str] = (),
-) -> dict[str, Any]:
-    """Project canonical evidence without replaying an earlier Tool payload."""
-    previous_ids = set(previously_returned_video_chunk_ids)
-    new_hits = []
-    reused_hits = []
-    for hit in result.hits:
-        if hit.candidate.video_chunk_id in previous_ids:
-            reused_hits.append({
-                "candidate": hit.candidate.model_dump(mode="json", by_alias=True),
-                "selectionReason": _project_selection_reason(
-                    hit.selection_reason.model_dump(mode="json", by_alias=True),
-                    include_matched=False,
-                ),
-            })
-        else:
-            new_hits.append(_project_hit(hit))
-
-    projected = {
-        "query": result.query,
-        "seriesIds": list(result.series_ids),
-        "resultCount": len(result.hits),
-        "hits": new_hits,
-        "searchedVideoCount": (
-            len(result.searched_video_ids)
-            if result.searched_video_ids is not None else None
-        ),
-        "partial": result.partial,
-        "warnings": list(result.warnings),
-    }
-    if reused_hits:
-        projected.update({
-            "newResultCount": len(new_hits),
-            "reusedResultCount": len(reused_hits),
-            "reusedHits": reused_hits,
-        })
-    return projected
-
-
-def _project_hit(hit: VideoChunkSearchHit) -> dict[str, Any]:
-    return {
-        "candidate": hit.candidate.model_dump(mode="json", by_alias=True),
-        "selectionReason": hit.selection_reason.model_dump(mode="json", by_alias=True),
-        "evidence": hit.evidence.model_dump(
-            mode="json", by_alias=True, include=_EVIDENCE_FIELDS,
-        ),
-    }
 
 
 def _project_history_message(message: dict) -> dict[str, Any]:

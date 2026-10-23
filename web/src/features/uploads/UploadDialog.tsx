@@ -42,7 +42,6 @@ function TaskRow({ task }: { task: UploadTask }) {
     max_height: draftConfig.window.analysisMaxHeight,
     fps: draftConfig.vision.fps,
     mode: draftConfig.vision.inputMode,
-    max_frames_per_chunk: draftConfig.vision.maxFramesPerWindow,
   } : null);
 
   return (
@@ -79,7 +78,7 @@ function TaskRow({ task }: { task: UploadTask }) {
         ) : null}
         {isDebug ? visualConfig ? <p className={styles.taskConfig}>{t("解析配置：")}{visualConfig.max_height}p · {visualConfig.fps} FPS ·
           {visualConfig.mode === "ordered_frames"
-            ? t(" 每段最多 {frames} 帧", { frames: String(visualConfig.max_frames_per_chunk) })
+            ? t("逐帧图片")
             : t("直传视频")}
         </p> : task.session ? <p className={styles.taskConfig}>{t("历史任务未记录解析配置")}</p> : null : null}
         {task.error ? <p className={styles.error}>{task.error}</p> : null}
@@ -181,7 +180,7 @@ function ParseConfigFields({ value, defaults, onChange }: {
   );
 
   return <div className={styles.configSections}>
-    <p className={styles.configEstimate}>{t("主解析每段约 {frames} 帧；最终 Token 和费用以模型实际返回为准。", { frames: estimatedFrames })}{" "}{value.vision.inputMode === "ordered_frames" ? t("逐帧模式每段最多 {frames} 帧。", { frames: String(value.vision.maxFramesPerWindow) }) : t("直传视频按 FPS 取帧。")}
+    <p className={styles.configEstimate}>{t("主解析每段约 {frames} 帧；最终 Token 和费用以模型实际返回为准。", { frames: estimatedFrames })}
     </p>
     <details className={styles.configGroup} open>
       <summary>{t("切段与画面")}</summary>
@@ -201,7 +200,6 @@ function ParseConfigFields({ value, defaults, onChange }: {
           maxFramesPerWindow: event.target.value === "ordered_frames" ? 24 : null,
         })}><option value="video">{t("直传视频")}</option><option value="ordered_frames">{t("逐帧图片")}</option></select></label>
         <ConfigNumber label={t("取帧 FPS")} value={value.vision.fps} min={0.2} max={5} step="any" onChange={(v) => update("vision", { fps: v ?? 0 })} />
-        {value.vision.inputMode === "ordered_frames" ? <ConfigNumber label={t("每段最多帧数")} value={value.vision.maxFramesPerWindow} min={1} max={600} onChange={(v) => update("vision", { maxFramesPerWindow: v ?? 0 })} /> : null}
         <ConfigNumber label={t("最大输出 Token")} value={value.vision.maxOutputTokens} min={256} max={262144} optional onChange={(v) => update("vision", { maxOutputTokens: v })} />
       </div>
     </details>

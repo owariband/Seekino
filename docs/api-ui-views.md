@@ -119,7 +119,7 @@ Content-Type: application/json
 同一 Idempotency-Key 不能换选项重放。reference 可省略 /
 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失或非法范围不再扩大为 canonical Chunk，引用校验失败。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
-Chat 的 progress、工具结果、正文与最终 evidence 来自实际执行，completed 在数据库提交后发出。每条回答事件包含 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 包含 retrievalTrace，记录每次真实检索的 query、topK、requested/effective Lexical + Semantic/Visual 权重、策略版本和返回 Chunk ID。retrieve 与 search_video_events 直接返回源证据，截断内容可通过 read_retrieval_evidence 继续读取；Query 报告通过 evidence_references 交给 Supervisor。检索不再经过 Canvas、草稿写入或读取审计。Supervisor 提交真实 video_chunk_id、claim 和播放起止毫秒，宿主继续检查 canonical Evidence、租户范围及时间边界。旧消息的非法范围不扩大，消息 version 单调且终态 phase 为 null。
+Chat 的 progress、工具结果、正文与最终 evidence 来自实际执行，completed 在数据库提交后发出。每条回答事件包含 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 包含 retrievalTrace，记录每次真实检索的 query、topK、requested/effective Lexical + Semantic/Visual 权重、策略版本和返回 Chunk ID。retrieve 与 search_video_events 直接返回源证据，截断内容可通过 read_retrieval_evidence 继续读取；Query 报告通过 evidence_references 交给 Supervisor。检索不再经过 Canvas、草稿写入或读取审计。Supervisor 提交真实 video_chunk_id、claim 和播放起止秒数，宿主继续检查 canonical Evidence、租户范围及时间边界。旧消息的非法范围不扩大，消息 version 单调且终态 phase 为 null。
 
 持久化 FAILED 时，answer.failed 返回公开 error 与真实消息对，并保留已经确认的证据 / 部分正文。队列溢出或无法确认终态提交时返回 answer.interrupted，不谎称后台 FAILED。恢复时读取 messages/get / list / events。断开流不取消后台任务。不同 Conversation 的流、上下文和候选引用隔离。
 

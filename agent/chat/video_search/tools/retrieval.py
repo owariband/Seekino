@@ -94,17 +94,13 @@ def build_retrieve_tool(
     inputs: RunInputs,
     control: ExecutionControl,
     calls: list[RetrievalCall],
-    maximum_top_k: int,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
     retrieval_channel: RetrievalChannelContract = "transcript",
     budget: _ToolCallBudget | None = None,
     role: Literal["query", "supervisor"] = "query",
 ) -> AgentTool:
-    """Return source evidence directly and retain immutable calls for selection checks.
-
-    maximum_top_k is accepted for legacy callers; the Agent owns top_k.
-    """
+    """Return source evidence directly and retain immutable calls for selection checks."""
 
     if retrieval_channel not in ("transcript", "lexical"):
         raise ValueError("retrieval_channel must be transcript or lexical")

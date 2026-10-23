@@ -16,10 +16,10 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
-import { FOCUS_SEARCH_EVENT, loadConversations } from "../features/search/SearchPage";
+import { FOCUS_SEARCH_EVENT, loadConversations } from "../features/search/conversationNavigation";
 import { useUploads } from "../features/uploads/UploadProvider";
 import { useAssistantBusy } from "../shared/assistantActivity";
 import { Mascot } from "../shared/Mascot";
@@ -199,7 +199,11 @@ export function AppShell() {
           </div>
         </div>
       </header>
-      <div className={styles.content}><Outlet context={setWatchPanelLayout} /></div>
+      <div className={styles.content}>
+        <Suspense fallback={<main className="page" aria-busy="true"><Mascot mood="seek" size={56} delayed /></main>}>
+          <Outlet context={setWatchPanelLayout} />
+        </Suspense>
+      </div>
       </div>
       <div id="watch-side-panel-host" className={styles.panelHost} />
       <dialog id="mobile-navigation" ref={mobileMenuRef} className={styles.mobileDrawer} aria-label={t("手机导航")}

@@ -7,7 +7,7 @@ import remarkGfm from "remark-gfm";
 import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import { useWorkspace } from "../../app/workspace";
-import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl, TENANT_ID } from "../../api/client";
+import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, mediaUrl, TENANT_ID } from "../../api/client";
 import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference, SeriesSummary } from "../../api/contracts";
 import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
@@ -16,6 +16,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
+import { FOCUS_SEARCH_EVENT, loadConversations } from "./conversationNavigation";
 import { explainHit } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
 import { AGENT_ATTACHMENT_ACCEPT, useAgentAttachments } from "./useAgentAttachments";
@@ -23,8 +24,6 @@ import styles from "./search.module.css";
 
 type MessageOptionOverrides = Omit<AgentMessageRunOptions, "topK">;
 type SelectedMessageOptions = Required<MessageOptionOverrides>;
-/** Dispatched on window to focus the standalone search composer (⌘K / Ctrl K). */
-export const FOCUS_SEARCH_EVENT = "seekino:focus-search";
 
 const EXAMPLE_QUESTIONS = ["下雨天有人在门口等待的画面", "乐队第一次站上舞台演出", "两个人在天台吵架的那一段"];
 const EMBEDDED_EXAMPLE_QUESTIONS = ["刚才发生了什么？", "现在画面里的人是谁？", "前面有类似的场景吗？"];
@@ -124,18 +123,6 @@ function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
       && block.endSeconds <= hit.evidence.durationSeconds,
     );
   });
-}
-
-export async function loadConversations(locale: Locale): Promise<AgentConversationView[]> {
-  const conversations: AgentConversationView[] = [];
-  let cursor: string | undefined;
-  while (true) {
-    const page = await listAgentConversations(100, cursor);
-    conversations.push(...page.items);
-    if (!page.hasMore) return conversations;
-    if (!page.nextCursor) throw new Error(translate(locale, "对话列表缺少下一页游标"));
-    cursor = page.nextCursor;
-  }
 }
 
 function conversationTime(conversation: AgentConversationView, formatLocale: string): string {
@@ -294,6 +281,17 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     window.addEventListener(FOCUS_SEARCH_EVENT, focus);
     return () => window.removeEventListener(FOCUS_SEARCH_EVENT, focus);
   }, [embedded]);
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return;
+      for (const ref of [conversationPickerRef, scopePickerRef, answerSettingsRef]) {
+        const picker = ref.current;
+        if (picker?.open && !picker.contains(event.target)) picker.removeAttribute("open");
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, []);
   const { conversationId, messages, progress, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.

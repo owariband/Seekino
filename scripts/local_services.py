@@ -1,4 +1,4 @@
-"""Start missing localhost services without replacing existing processes or data."""
+"""Run localhost applications from the current main worktree and reuse databases."""
 from __future__ import annotations
 
 import argparse
@@ -184,8 +184,64 @@ def owned_pid(name: str) -> int | None:
     return None
 
 
+def require_main_worktree() -> None:
+    branch = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "HEAD"], cwd=ROOT,
+        capture_output=True, text=True, check=False,
+    )
+    if branch.returncode or branch.stdout.strip() != "refs/heads/main":
+        raise RuntimeError("懒启动只允许 main 工作区；请通过新版 ./start.sh 定位 main。")
+
+
+def source_digest(name: str) -> str:
+    paths = ["web"] if name == "web" else [
+        "agent", "engine", "engines", "gateway", "server", "config",
+        "pyproject.toml", "uv.lock", "scripts/local_services.py",
+    ]
+    files = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *paths],
+        cwd=ROOT, capture_output=True, check=True,
+    ).stdout.split(b"\0")
+    digest = hashlib.sha256()
+    for relative in sorted(set(files) - {b""}):
+        path = ROOT / os.fsdecode(relative)
+        if path.is_file():
+            digest.update(relative + b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def owned_listener(name: str, number: int) -> bool:
+    pid = owned_pid(name)
+    if pid is None:
+        return False
+    listeners = subprocess.run(
+        ["lsof", "-nP", "-t", f"-iTCP:{number}", "-sTCP:LISTEN"],
+        capture_output=True, text=True, check=False,
+    )
+    return listeners.returncode == 0 and set(listeners.stdout.split()) == {str(pid)}
+
+
+def refresh_applications() -> None:
+    for name, key in (("api", "ANIVAG_HTTP_PORT"), ("web", "ANIVAG_WEB_PORT")):
+        number = port(key)
+        if listening(number) and not owned_listener(name, number):
+            raise RuntimeError(f"{name} 端口 {number} 被非本启动器管理的进程占用；请先停止该进程。")
+    digest = config_digest()
+    sources = {name: source_digest(name) for name in ("api", "web")}
+    for name in ("api", "web"):
+        if owned_pid(name):
+            record = json.loads((STATE / f"{name}.pid.json").read_text())
+            if (record.get("config") != digest
+                    or record.get("source_root") != str(ROOT)
+                    or record.get("source_digest") != sources[name]):
+                print(f"[更新] {name} 使用 main 当前源码与配置", flush=True)
+                stop((name,))
+
+
 def launch(name: str, args: list[str], *, cwd: Path = ROOT, env: dict | None = None) -> int:
     digest = config_digest()
+    source = source_digest(name) if name in ("api", "web") else None
     log_path = STATE / f"{name}.log"
     with log_path.open("ab") as log:
         offset = log.tell()
@@ -195,6 +251,8 @@ def launch(name: str, args: list[str], *, cwd: Path = ROOT, env: dict | None = N
         )
     CHILDREN[name] = child
     record = {"pid": child.pid, "signature": signature(child.pid), "config": digest}
+    if source is not None:
+        record.update(source_root=str(ROOT), source_digest=source)
     (STATE / f"{name}.pid.json").write_text(json.dumps(record))
     print(f"[启动] {name} PID={child.pid}，日志 {log_path.relative_to(ROOT)}", flush=True)
     return offset
@@ -247,6 +305,7 @@ def start_mysql(settings: ServerSettings) -> None:
             mysqld, "--no-defaults", f"--datadir={datadir}", "--bind-address=127.0.0.1",
             f"--port={mysql_port}", f"--socket={socket_path}",
             f"--pid-file={STATE / 'mysql-server.pid'}", "--mysqlx=OFF",
+            f"--innodb-buffer-pool-size={os.environ.get('ANIVAG_MYSQL_BUFFER_POOL_SIZE', '128M')}",
             "--binlog-expire-logs-seconds=604800",  # Keep seven days of binary logs.
             # Log only changed columns (FULL if CDC is added); compress transactions.
             "--binlog-row-image=MINIMAL", "--binlog-transaction-compression=ON",
@@ -331,6 +390,16 @@ def library_ready(base: str) -> bool:
 def start_applications() -> None:
     api_port = port("ANIVAG_HTTP_PORT")
     api_base = f"http://127.0.0.1:{api_port}"
+    model_config = load_config()
+    missing_api_keys = [
+        key for key in sorted(required_api_key_env_names(model_config)) if not os.environ.get(key)
+    ]
+    if missing_api_keys:
+        raise RuntimeError(
+            "请在 .env.local 填写 " + "、".join(missing_api_keys)
+            + "；当前配置的模型来源需要这些密钥。"
+        )
+    refresh_applications()
     if listening(api_port):
         if not api_ready(api_base):
             raise RuntimeError(f"API 端口 {api_port} 已占用，未识别到 anivag API。")
@@ -338,17 +407,6 @@ def start_applications() -> None:
     else:
         if owned_pid("api"):
             raise RuntimeError("已有脚本启动的 API 尚未就绪，请查看 api.log。")
-        model_config = load_config()
-        api_key_names = required_api_key_env_names(model_config)
-        missing_api_keys = [
-            key for key in sorted(api_key_names) if not os.environ.get(key)
-        ]
-        if missing_api_keys:
-            raise RuntimeError(
-                "请在 .env.local 填写 "
-                + "、".join(missing_api_keys)
-                + "；当前配置的模型来源需要这些密钥。"
-            )
         launch("api", [sys.executable, "-u", "-m", "server.api"])
         wait_ready("api", lambda: api_ready(api_base))
     if not library_ready(api_base):
@@ -400,8 +458,8 @@ def status(settings: ServerSettings) -> bool:
     return all(checks.values())
 
 
-def stop() -> None:
-    for name in ("web", "api", "mysql"):
+def stop(names: tuple[str, ...] = ("web", "api", "mysql")) -> None:
+    for name in names:
         pid = owned_pid(name)
         if not pid:
             print(f"[跳过] {name}：没有本脚本管理的存活进程")
@@ -432,6 +490,7 @@ def main() -> int:
         for name in dotenv_variable_names(args.env_file):
             print(name)
         return 0
+    require_main_worktree()
     os.chdir(ROOT)
     STATE.mkdir(parents=True, exist_ok=True)
     with (STATE / "startup.lock").open("a") as lock:
@@ -445,13 +504,8 @@ def main() -> int:
         settings = configure()
         if args.command == "status":
             return 0 if status(settings) else 1
-        for tool in ("ffmpeg", "ffprobe", "node", "npm"):
+        for tool in ("ffmpeg", "ffprobe", "node", "npm", "lsof"):
             binary(tool)
-        for name in ("api", "web"):
-            if owned_pid(name):
-                record = json.loads((STATE / f"{name}.pid.json").read_text())
-                if record.get("config") != config_digest():
-                    raise RuntimeError(f"{name} 的启动配置已变化，请先 ./start.sh stop 再启动。")
         start_mysql(settings)
         start_elasticsearch(settings)
         start_applications()

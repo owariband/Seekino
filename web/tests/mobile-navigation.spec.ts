@@ -1,8 +1,8 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import type { AgentConversationView, AgentMessageView, AuthIdentity } from "../src/api/contracts";
+import type { AgentConversationView, AgentMessageView, AuthIdentity, DisplayMode, SeriesView } from "../src/api/contracts";
 
-async function mockService(page: Page, guest = true) {
+async function mockService(page: Page, guest = true, { displayMode = "release", series = [] }: { displayMode?: DisplayMode; series?: SeriesView[] } = {}) {
   const identity: AuthIdentity = {
     userId: guest ? "mobile-guest" : "mobile-member", email: guest ? null : "viewer@example.com",
     isGuest: guest, tenantId: guest ? null : "personal", publicTenantId: "public",
@@ -35,10 +35,20 @@ async function mockService(page: Page, guest = true) {
     const path = url.pathname;
     requests.push(path);
     if (path === "/api/auth/me") return route.fulfill({ json: identity });
-    if (path === "/api/system/runtime-config") return route.fulfill({ json: { displayMode: "release" } });
+    if (path === "/api/system/runtime-config") return route.fulfill({ json: { displayMode } });
     if (["/api/series/list", "/api/series/public"].includes(path)) {
-      return route.fulfill({ json: { items: [], total: 0, hasMore: false, nextCursor: null } });
+      return route.fulfill({ json: { items: series, total: series.length, hasMore: false, nextCursor: null } });
     }
+    if (path === "/api/series/get") {
+      const selected = series.find((item) => item.seriesId === url.searchParams.get("seriesId"));
+      if (selected) return route.fulfill({ json: selected });
+    }
+    if (path === "/api/agent/messages/options") return route.fulfill({ json: {
+      topK: { defaultValue: 10, minimum: 1, maximum: 20 },
+      maxLoopTurns: { defaultValue: 10, minimum: 1, maximum: 100 },
+      maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
+      maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
+    } });
     if (path === "/api/agent/conversations/list") return route.fulfill({ json: {
       items: conversations, total: conversations.length, hasMore: false, nextCursor: null,
     } });
@@ -134,18 +144,40 @@ test("keeps focus in the drawer and preserves the draft when dismissed", async (
 
 test("keeps watch as the home page and navigates between watch and the assistant", async ({ page }) => {
   const mock = await mockService(page);
+  const scripts: string[] = [];
+  page.on("request", (request) => {
+    if (request.resourceType() === "script") scripts.push(new URL(request.url()).pathname);
+  });
+  let releaseSearch!: () => void;
+  const searchDownload = new Promise<void>((resolve) => { releaseSearch = resolve; });
+  await page.route(/\/assets\/SearchPage-[^/]+\.js$/, async (route) => {
+    await searchDownload;
+    await route.continue();
+  });
   await page.goto("/");
   await expect(page).toHaveURL(/\/watch$/);
   await expect(page.getByRole("link", { name: "搜索名场面", exact: true })).toHaveAttribute("href", "/search");
+  expect(scripts.some((path) => /\/(?:SearchPage|WatchPage|SeriesPage|LibraryPage|SettingsPage|TasksPage|UsagePage)-/.test(path))).toBe(false);
   const trigger = page.getByRole("button", { name: "打开侧边栏", exact: true });
   const drawer = page.getByRole("dialog", { name: "手机导航", exact: true });
   await trigger.click();
   const navigation = drawer.getByRole("navigation", { name: "主导航", exact: true });
   await expect(navigation.getByRole("link").first()).toHaveAttribute("href", "/watch");
+  await expect(drawer.getByRole("link", { name: `打开对话 ${mock.conversations[0].title}`, exact: true })).toBeVisible();
+  expect(scripts.some((path) => path.includes("/SearchPage-"))).toBe(false);
   await navigation.getByRole("link", { name: "Seekino 助手", exact: true }).click();
   await expect(page).toHaveURL(/\/search$/);
   await expect(drawer).toBeHidden();
   const input = page.getByRole("textbox", { name: "向 Seekino 助手提问" });
+  try {
+    await expect.poll(() => scripts.some((path) => path.includes("/SearchPage-"))).toBe(true);
+    await expect(input).toHaveCount(0);
+    await trigger.click();
+    await expect(drawer).toBeVisible();
+    await drawer.getByRole("button", { name: "关闭侧边栏", exact: true }).click();
+  } finally {
+    releaseSearch();
+  }
   await expect(input).toBeVisible();
   await expect(page.getByRole("heading", { name: "Seekino 助手", exact: true })).toBeHidden();
   await page.getByRole("button", { name: "搜索名场面", exact: true }).click();
@@ -262,3 +294,71 @@ test("opens and switches drawer history without creating a blank conversation or
   expect(mock.unexpected).toEqual([]);
   expect(mock.errors).toEqual([]);
 });
+
+for (const touch of [false, true]) {
+  test.describe(touch ? "mobile touch" : "desktop mouse", () => {
+    test.use({ viewport: { width: touch ? 390 : 1280, height: touch ? 844 : 900 }, hasTouch: touch });
+
+    test("dismisses chat popovers outside while preserving internal choices", async ({ page }) => {
+      const series = ["系列甲", "系列乙"].map((name, index): SeriesView => ({
+        seriesId: `popover-series-${index}`, tenantId: "personal", name, description: null,
+        visibility: "private", access: "member", publisher: null, status: "READY",
+        videoCount: 1, readyVideoCount: 1, failedVideoCount: 0, pendingUploadCount: 0,
+        cover: null, lastSearch: null, createdAt: 0, updatedAt: 0, transcriptLanguageHint: null,
+        importantExtraData: null, characterBible: [], videos: [], pendingUploads: [],
+      }));
+      const mock = await mockService(page, false, { displayMode: "debug", series });
+      const activate = (target: Locator) => touch ? target.tap() : target.click();
+      const outside = page.getByRole("banner", { name: "全站导航", exact: true });
+      const dismissOutside = () => touch ? outside.tap({ position: { x: 1, y: 1 } }) : outside.click({ position: { x: 1, y: 1 } });
+      await page.goto("/search");
+      const scopeTrigger = page.getByLabel("选择检索视频系列", { exact: true });
+      const scope = page.getByRole("group", { name: "检索视频系列多选", exact: true });
+      const settingsTrigger = page.getByLabel("配置本次回答", { exact: true });
+      const settings = page.getByRole("group", { name: "本次回答设置", exact: true });
+      const historyTrigger = page.getByLabel("打开对话记录", { exact: true });
+      const history = page.getByRole("region", { name: "对话记录", exact: true });
+
+      await activate(scopeTrigger);
+      for (const name of ["系列甲", "系列乙"]) {
+        const choice = scope.getByRole("checkbox", { name: new RegExp(`^${name}`) });
+        await activate(choice);
+        await expect(choice).toBeChecked();
+        await expect(scope).toBeVisible();
+      }
+      await activate(scopeTrigger);
+      await expect(scope).toBeHidden();
+      await activate(scopeTrigger);
+      await activate(settingsTrigger);
+      await expect(scope).toBeHidden();
+      await expect(settings).toBeVisible();
+      await activate(settings.getByRole("button", { name: "自定义", exact: true }));
+      await expect(settings.getByRole("slider", { name: "最多运行轮次", exact: true })).toBeVisible();
+      await expect(settings).toBeVisible();
+      await dismissOutside();
+      await expect(settings).toBeHidden();
+
+      await activate(settingsTrigger);
+      await activate(historyTrigger);
+      await expect(settings).toBeHidden();
+      await expect(history).toBeVisible();
+      await activate(history.getByText("对话记录", { exact: true }));
+      await expect(history).toBeVisible();
+      if (!touch) {
+        await activate(historyTrigger);
+        await expect(history).toBeHidden();
+        await activate(historyTrigger);
+      }
+      await dismissOutside();
+      await expect(history).toBeHidden();
+      await activate(scopeTrigger);
+      for (const name of ["系列甲", "系列乙"]) {
+        await expect(scope.getByRole("checkbox", { name: new RegExp(`^${name}`) })).toBeChecked();
+      }
+      await dismissOutside();
+      await expect(scope).toBeHidden();
+      expect(mock.unexpected).toEqual([]);
+      expect(mock.errors).toEqual([]);
+    });
+  });
+}

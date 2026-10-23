@@ -19,14 +19,14 @@ from ..common.errors import AgentContextBudgetError, AgentModelInvocationError
 from ..common.tool import as_langchain_tools, attach_agent_tool_logging
 from .errors import VideoRetrievalError, VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase
 from .frame_evidence import FrameInspectionSession, FrameReader
-from .output import build_retrieval_trace, merge_retrieval_calls
+from .output import merge_retrieval_calls
 from .query import run_query
 from .state import (
     AnswerPhase, ExecutionControl, QueryReport, RetrievalCall,
     RetrievalChannelContract, RunInputs, RunLimits, RunState,
 )
 from .skills import LEXICAL_RETRIEVAL_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
-from .tools.registry import build_query_tools, build_supervisor_tools
+from .tools.registry import build_retrieval_tools
 from .tools.shared import _ToolCallBudget
 
 
@@ -46,7 +46,6 @@ class AgentRuntime:
         max_tool_calls_per_turn: int = 24,
         limits_enabled: bool = False,
         total_timeout_enabled: bool = True,
-        maximum_top_k: int = 20,
         max_prompt_chars: int = 200_000,
         max_tool_result_bytes: int = 16_384,
         max_read_chars_per_call: int = 16_384,
@@ -62,7 +61,6 @@ class AgentRuntime:
         for name, value, maximum in (
             ("max_model_calls_per_turn", max_model_calls_per_turn, None),
             ("max_tool_calls_per_turn", max_tool_calls_per_turn, None),
-            ("maximum_top_k", maximum_top_k, 100),
             ("max_prompt_chars", max_prompt_chars, None),
             ("max_tool_result_bytes", max_tool_result_bytes, None),
             ("max_read_chars_per_call", max_read_chars_per_call, None),
@@ -92,7 +90,6 @@ class AgentRuntime:
         self._max_tool_calls = max_tool_calls_per_turn
         self._limits_enabled = limits_enabled
         self._total_timeout_enabled = total_timeout_enabled
-        self._maximum_top_k = maximum_top_k
         self._max_prompt_chars = max_prompt_chars
         self._max_tool_result_bytes = max_tool_result_bytes
         self._max_read_chars_per_call = max_read_chars_per_call
@@ -141,10 +138,10 @@ class AgentRuntime:
         frame_session: FrameInspectionSession | None = None, budget: _ToolCallBudget | None = None,
         maximum_result_bytes: int | None = None,
     ) -> list[AgentTool]:
-        return build_supervisor_tools(
-            self._retrieve, event_retrieve=self._event_retrieve,
+        return build_retrieval_tools(
+            self._retrieve, role="supervisor", event_retrieve=self._event_retrieve,
             inputs=inputs, control=control, calls=calls,
-            maximum_top_k=self._maximum_top_k, maximum_tool_calls=maximum_tool_calls,
+            maximum_tool_calls=maximum_tool_calls,
             maximum_result_bytes=min(self._max_tool_result_bytes, maximum_result_bytes)
             if maximum_result_bytes is not None else self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
@@ -201,10 +198,9 @@ class AgentRuntime:
         query_control = replace(control, deadline=(
             stage_deadline if control.deadline is None else min(control.deadline, stage_deadline)
         ))
-        tools = build_query_tools(
-            self._retrieve, event_retrieve=self._event_retrieve,
+        tools = build_retrieval_tools(
+            self._retrieve, role="query", event_retrieve=self._event_retrieve,
             inputs=inputs, control=query_control, calls=state["calls"],
-            maximum_top_k=self._maximum_top_k,
             maximum_tool_calls=state["limits"].max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_read_chars=self._max_read_chars_per_call,
@@ -253,7 +249,6 @@ class AgentRuntime:
         return {"report": QueryReport(
             completion=state["completion"],
             retrieval_result=state["retrieval_result"],
-            retrieval_trace=build_retrieval_trace(state["calls"]),
             retrieval_calls=tuple(state["calls"]),
             frame_receipts=tuple(state["frame_inspections"].summary()) if state["frame_inspections"] else (),
         )}

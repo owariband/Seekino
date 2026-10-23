@@ -372,6 +372,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "观看侧栏": "Viewing sidebar",
   "调整右侧栏宽度": "Resize the right sidebar",
   "边看边聊": "Chat while watching",
+  "发送问题时暂停视频": "Pause video when sending a message",
   "关闭对话面板": "Close chat panel",
   "观看侧栏内容": "Viewing sidebar content",
   "聊天": "Chat",

@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Lock
 from time import monotonic
 from types import SimpleNamespace
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, get_args
 
 from langchain_core.tools import BaseTool
 from openai_codex import ImageInput as CodexImageInput, RunInput, TextInput as CodexTextInput
@@ -24,7 +24,7 @@ from gateway.agent_model.errors import (
     ModelFailureReason,
     ModelInputTooLargeError,
 )
-from gateway.constants import CODEX_PROVIDER
+from gateway.constants import CODEX_PROVIDER, ReasoningEffort
 from gateway.agent_model.context import (
     ContextCheckpoint,
     ContextWindowOverflow,
@@ -43,7 +43,6 @@ from .protocol import dynamic_tool_specs, strict_output_schema
 
 
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
-ReasoningEffort = Literal["none", "low", "high", "max"]
 
 # A minimal live turn with pinned openai-codex 0.156.1 reports roughly 12,900
 # input tokens before AniVAG's variable prompt and tool contract are considered.
@@ -134,7 +133,7 @@ class CodexAgentModel:
             raise ValueError("mcp must be a boolean")
         if not model.strip():
             raise ValueError("model must not be empty")
-        if reasoning_effort not in {"none", "low", "high", "max"}:
+        if reasoning_effort not in get_args(ReasoningEffort):
             raise ValueError("unsupported reasoning_effort")
         if request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be greater than zero")

@@ -5,6 +5,23 @@ config_version: 2
 # Select the primary chat harness at startup; model bindings stay independent.
 supervisor_harness: codex
 
+# Once per Chat turn: Jev chooses the template; text Qwen fills only retrieval_query.
+# The 8B endpoint is a separate llama-server, started with enable_thinking=false.
+query_hook:
+  enabled: true
+  router_endpoint: https://openrouter.ai/api/alpha/decisions
+  router_model: typesafe/jev-1.14
+  router_api_key_env: OPENROUTER_JEV_API_KEY
+  router_timeout_seconds: 3
+  rewriter_base_url: http://127.0.0.1:18841
+  rewriter_model: seekino-qwen3-text-8b-rewriter
+  rewriter_timeout_seconds: 4
+  max_output_tokens: 256
+  history_message_limit: 6
+  history_max_chars: 2000
+  query_max_chars: 2000
+  total_timeout_seconds: 8
+
 # Server records Token usage locally; optional tracing stays disabled.
 tracing:
   enabled: false
@@ -21,6 +38,12 @@ model_sources:
     adapter: ark
     provider: ark
     api_key_env: ARK_API_KEY
+  whisper_local:
+    adapter: openai_audio
+    provider: whisper.cpp
+    base_url: http://127.0.0.1:18842/v1
+    api_key_env: WHISPER_API_KEY
+    response_format: verbose_json
   codex_local:
     adapter: codex_app_server
     provider: codex
@@ -53,14 +76,15 @@ models:
     compact_target_tokens: 60000
     max_input_chars: 400000
   transcription:
-    source: ark_default
-    model: doubao-seed-2-0-lite-260428
+    source: whisper_local
+    model: large-v3-turbo
+    request_timeout_seconds: 600
   vision:
     source: codex_local
-    model: gpt-5.6-sol
+    model: gpt-6-luna
     supports_vision_input: true
     max_output_tokens: 8192
-    reasoning_effort: low
+    reasoning_effort: high
     request_timeout_seconds: 600
     context_window_tokens: 128000
     context_safety_margin_tokens: 2048
@@ -73,6 +97,26 @@ models:
     reasoning_effort: none
     max_output_tokens: 8192
     request_timeout_seconds: 1200
+  # A dedicated OCR binding enables subtitle/text extraction before Understanding.
+  ocr:
+    source: codex_local
+    model: gpt-6-luna
+    supports_vision_input: true
+    reasoning_effort: medium
+    max_output_tokens: 8192
+    request_timeout_seconds: 600
+  summarize:
+    source: codex_local
+    model: gpt-6-luna
+    supports_vision_input: true
+    max_output_tokens: 8192
+    reasoning_effort: high
+    request_timeout_seconds: 600
+    context_window_tokens: 128000
+    context_safety_margin_tokens: 2048
+    auto_compact_tokens: 90000
+    compact_target_tokens: 60000
+    max_input_chars: 400000
   embedding:
     kind: embedding
     source: ark_default
@@ -128,7 +172,7 @@ agent_runtime:
 
 video_parser:
   transcript_fps: 1.0
-  video_fps: 1.0
+  video_fps: 3.0
   fallback:
     enabled: true
     frame_fps: 0.5

@@ -955,7 +955,10 @@ class VideoParseRuntimeService:
         return await self._generate_multimodal(
             binding,
             [
-                *(ImageInput(path=path) for _timestamp, path in frames),
+                *(item for timestamp, path in frames for item in (
+                    TextInput(text=f"The following frame is at absolute source-video timestamp {timestamp} ms."),
+                    ImageInput(path=path),
+                )),
                 TextInput(text=prompt),
             ],
             schema_name="video_parse_v2_ocr",

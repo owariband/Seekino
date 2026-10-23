@@ -65,6 +65,7 @@ def invalidate_series_prefixes_from(
     episode_order: int,
     video_id: str,
     now: datetime,
+    skip_locked: bool = False,
 ) -> tuple[str, ...]:
     """Fence and reset the latest enabled Prefix chain from one episode.
 
@@ -87,8 +88,10 @@ def invalidate_series_prefixes_from(
 
     locked: list[VideoParseTaskData] = []
     for _order, task_video_id, task_id in sorted(latest_by_video.values()):
-        task = task_store.get_task(session, task_id, for_update=True, include_deleted=False)
+        task = task_store.get_task(session, task_id, for_update=True, skip_locked=skip_locked, include_deleted=False)
         if task is None:
+            if skip_locked:
+                raise VideoParseSnapshotConflictError("Prefix parent is busy or changed; retry publication")
             raise VideoParseConflictError(
                 "Prefix invalidation frontier changed; retry the transaction"
             )
