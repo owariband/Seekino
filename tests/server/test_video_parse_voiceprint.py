@@ -13,6 +13,11 @@ from sqlalchemy import event, select
 from engine.parsev2.voiceprint import Voiceprint
 
 from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
+from server.constants.parse import (
+    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+    VOICEPRINT_B0_LABEL_MIN_CONSISTENCY,
+    VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_REFS_PER_SPEAKER,
+)
 from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession
 from server.model.video import Video
@@ -1225,3 +1230,294 @@ def test_ready_b0_evidence_canvas_export_and_transaction_persist_speaker_source(
         assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
         assert stored["lines"][0]["candidates"][0]["speaker"] == "B"
     assert "speaker_source" not in snapshot["member_contents"][member.chunk_parse_task_id]["timeline"][0]
+
+
+def _label_scoring_preparation(snapshot, *, coherence=False, inclusive=False, vectors=None):
+    from engine.parsev2.voiceprint_matching import score_voiceprint_batch
+
+    preparation = _scoring_preparation(snapshot)
+    for sample in preparation["samples"]:
+        if vectors and sample["id"] in vectors:
+            sample["vector"] = vectors[sample["id"]]
+    parameters = VideoParseRuntimeService._voiceprint_parameters()
+    version = VOICEPRINT_B0_COHERENCE_METHOD_VERSION if coherence else VOICEPRINT_B0_METHOD_VERSION
+    if inclusive:
+        version = VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION
+    if coherence or inclusive:
+        del parameters["label_tail_min_refs"]
+    threshold = "label_min_consistency" if coherence else "label_min_ref_higher_fraction"
+    if coherence:
+        del parameters["label_min_ref_higher_fraction"]
+        parameters[threshold] = VOICEPRINT_B0_LABEL_MIN_CONSISTENCY
+    batch = score_voiceprint_batch(
+        preparation["samples"], model=preparation["model"]["name"],
+        encoder_revision=preparation["model"]["encoder_revision"],
+        **{key: parameters[key] for key in (
+            "dimensions", "min_duration_ms", "trim_fraction", "label_min_rank", "label_min_margin",
+            "label_min_duration_ms", "label_min_ref_count", threshold,
+        ) + (("label_tail_min_refs",) if not coherence and not inclusive else ())},
+    )
+    preparation.update(method_version=version, parameters=parameters,
+                       hygiene=batch["hygiene"], lines=[
+        VideoParseRuntimeService._score_voiceprint_sample(
+            {**sample, "understanding_speaker": sample["label"]}, preparation["samples"],
+            parameters=parameters, score=score, method_version=version,
+        ) for sample, score in zip(preparation["samples"], batch["scores"])
+    ])
+    return preparation
+
+
+@pytest.mark.parametrize("coherence,inclusive", [(False, False), (True, False), (False, True)])
+def test_label_diagnostics_and_hygiene_publish_atomically_without_expanding_detail(repository, coherence, inclusive):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", "A", "A", "A", "B", None], 0)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW),
+                                             coherence=coherence, inclusive=inclusive)
+    original = deepcopy(preparation)
+    assert preparation["lines"][0]["label_ref_count"] == 3
+    assert preparation["lines"][0]["label_count"] == 2
+    assert preparation["lines"][0]["label_ref_higher_count"] == 0
+    assert preparation["lines"][0]["label_ref_higher_fraction"] == 0
+    assert preparation["lines"][-1]["label_count"] is None
+    manifest = _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert preparation == original
+    assert manifest["method_version"] == preparation["method_version"]
+    assert "hygiene" not in manifest and "lines" not in manifest and "samples" not in manifest
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
+
+
+@pytest.mark.parametrize("label_count,expected_refs,basis", [
+    (5, 4, "rank_margin_only_few_refs"), (11, 8, "tail"),
+])
+def test_label_basis_publishes_with_actual_two_pass_scores(repository, label_count, expected_refs, basis):
+    names = ["A"] * 3 + ["B"] * 3 + ["C"] * label_count
+    chunk_count = (len(names) + 5) // 6
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=chunk_count)
+    _enable_scoring(factory, task_id)
+    for sequence in range(chunk_count):
+        _commit(queue, repo, names[sequence * 6:(sequence + 1) * 6], sequence)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    target_id = next(key for key, source in snapshot["sources"].items() if source["speaker"] == "C")
+    vectors = {key: [0.0, 1.0] + [0.0] * 190 for key, source in snapshot["sources"].items()
+               if source["speaker"] != "C" or key == target_id}
+    preparation = _label_scoring_preparation(snapshot, vectors=vectors)
+    target = next(line for line in preparation["lines"] if line["id"] == target_id)
+    assert target["label_rank"] == 3
+    assert target["label_ref_count"] == expected_refs
+    assert target["label_doubtful"] is True
+    assert target["label_doubtful_basis"] == basis
+    assert preparation["hygiene"]["pass1_flag_count"] == preparation["hygiene"]["pass2_flag_count"] == 1
+    assert preparation["hygiene"]["excluded_reference_ids"] == [target_id]
+    manifest = _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert manifest["ready"] is True
+    assert manifest["parameters"]["label_tail_min_refs"] == 8
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail["voiceprint"] == manifest
+
+
+@pytest.mark.parametrize("invalid", [None, "tail", "unknown"])
+def test_flagged_few_reference_basis_must_match_frozen_policy(repository, invalid):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=2)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A"] * 3 + ["B"] * 3, 0)
+    _commit(queue, repo, ["C"] * 5, 1)
+    snapshot = repo.begin_voiceprint_preparation(parent, now=NOW)
+    target_id = next(key for key, source in snapshot["sources"].items() if source["speaker"] == "C")
+    vectors = {key: [0.0, 1.0] + [0.0] * 190 for key, source in snapshot["sources"].items()
+               if source["speaker"] != "C" or key == target_id}
+    preparation = _label_scoring_preparation(snapshot, vectors=vectors)
+    target = next(line for line in preparation["lines"] if line["id"] == target_id)
+    assert target["label_doubtful_basis"] == "rank_margin_only_few_refs"
+    target["label_doubtful_basis"] = invalid
+    with pytest.raises(VideoParseConflictError, match="basis does not match"):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+def test_single_reference_label_accepts_null_leave_one_out_diagnostics(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", "A", "B"], 0)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW))
+    for line in preparation["lines"][:2]:
+        assert line["label_ref_count"] == 1
+        assert line["label_ref_higher_count"] is None
+        assert line["label_ref_higher_fraction"] is None
+        assert line["label_doubtful"] is False
+        assert line["label_doubtful_basis"] is None
+    assert _finish_scoring(repo, parent, preparation=preparation, now=NOW)["ready"] is True
+
+
+@pytest.mark.parametrize("invalid", [
+    "missing_metric", "partial_metrics", "all_null", "rank", "count", "score", "margin", "consistency",
+    "label", "flag", "policy", "higher_count", "higher_fraction", "missing_tail", "missing_basis", "basis",
+    "missing_hygiene", "hygiene_ids", "hygiene_counts", "excluded_reference",
+])
+def test_label_artifact_rejects_invalid_diagnostics_or_hygiene_before_ready(repository, invalid):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", "A", "A", "A", "B", None], 0)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW))
+    line = preparation["lines"][0]
+    if invalid == "missing_metric":
+        del line["label_score"]
+    elif invalid == "partial_metrics":
+        line["label_score"] = None
+    elif invalid == "all_null":
+        line.update({key: None for key in ("label_score", "label_rank", "label_count", "label_margin",
+                                          "label_ref_count", "label_ref_consistency",
+                                          "label_ref_higher_count", "label_ref_higher_fraction")})
+    elif invalid == "rank":
+        line["label_rank"] = 3
+    elif invalid == "count":
+        line["label_count"] = 3
+    elif invalid == "score":
+        line.update(label_score=0.7, label_margin=0.3)
+    elif invalid == "margin":
+        line["label_margin"] = 0.2
+    elif invalid == "consistency":
+        line["label_ref_consistency"] = 1.5
+    elif invalid == "label":
+        line["understanding_speaker"] = "B"
+    elif invalid == "flag":
+        line["label_doubtful"] = True
+    elif invalid == "policy":
+        preparation["parameters"]["label_min_rank"] = 0
+    elif invalid == "higher_count":
+        line["label_ref_higher_count"] = line["label_ref_count"] + 1
+    elif invalid == "higher_fraction":
+        line["label_ref_higher_fraction"] = 0.5
+    elif invalid == "missing_tail":
+        del line["label_ref_higher_count"]
+    elif invalid == "missing_basis":
+        del line["label_doubtful_basis"]
+    elif invalid == "basis":
+        line["label_doubtful_basis"] = "tail"
+    elif invalid == "missing_hygiene":
+        del preparation["hygiene"]
+    elif invalid == "hygiene_ids":
+        preparation["hygiene"]["excluded_reference_ids"] = ["unknown"]
+    elif invalid == "hygiene_counts":
+        preparation["hygiene"]["pass2_flag_count"] = 1
+    else:
+        excluded = line["candidates"][0]["reference_ids"][0]
+        preparation["hygiene"].update(excluded_reference_ids=[excluded], cleared_flag_ids=[excluded],
+                                      pass1_flag_count=1, changed_flag_count=1)
+    with pytest.raises(VideoParseConflictError, match="voiceprint"):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+def test_historical_coherence_artifact_still_validates_its_frozen_label_policy(repository):
+    factory, queue, repo, task_id, parent, _prepared = _prepare(repository, chunk_count=1)
+    _enable_scoring(factory, task_id)
+    _commit(queue, repo, ["A", "A", "A", "A", "B"], 0)
+    preparation = _label_scoring_preparation(repo.begin_voiceprint_preparation(parent, now=NOW), coherence=True)
+    assert "label_min_ref_higher_fraction" not in preparation["parameters"]
+    preparation["lines"][0]["label_doubtful"] = True
+    with pytest.raises(VideoParseConflictError, match="flag does not match"):
+        _finish_scoring(repo, parent, preparation=preparation, now=NOW)
+    assert repo.load_voiceprint_scoring(parent, now=NOW) is None
+
+
+@pytest.mark.parametrize(
+    "duration_ms,other_similarity,reference_count,shared_cue,expected_band,expected_speaker",
+    [
+        (999, 0.0, 3, False, "NO_VOICE", "A"),
+        (1000, 0.0, 3, False, "ACCEPT", "B"),
+        (1200, 0.0, 3, False, "ACCEPT", "B"),
+        (1000, 0.90, 3, False, "ACCEPT", "B"),
+        (1000, 1.0, 3, False, "ACCEPT", "B"),
+        (1000, 0.0, 2, False, "CONFLICT", "A"),
+        (1200, 0.0, 3, True, "CONFLICT", "A"),
+    ],
+    ids=["below-1s", "exactly-1s", "1.2s-target-length", "low-gap", "zero-gap", "few-references", "same-cue-references"],
+)
+def test_default_short_b0_accept_reaches_prefill_without_bypassing_support(
+    duration_ms, other_similarity, reference_count, shared_cue, expected_band, expected_speaker,
+):
+    # Synthetic vectors protect the default policy-to-Canvas contract, not voice accuracy.
+    parameters = VideoParseRuntimeService._voiceprint_parameters()
+    assert parameters["accept_duration_ms"] == 1000
+    assert parameters["accept_gap"] is None and parameters["conflict_gap"] is None
+    query = {
+        "id": "query", "source_id": "query", "position": 0,
+        "start_ms": 100, "end_ms": 100 + duration_ms, "pcm_sha256": "query-pcm",
+        "label": "A", "understanding_speaker": "A", "cue_ids": ["query-cue"],
+        "model": "campplus", "encoder_revision": "frozen",
+        "vector": [1.0, 0.0] + [0.0] * 190,
+    }
+    references = [{
+        **query, "id": f"reference-{index}", "source_id": f"reference-{index}",
+        "start_ms": 5000 + index * 2000, "end_ms": 6000 + index * 2000,
+        "pcm_sha256": f"reference-pcm-{index}", "label": "B", "understanding_speaker": "B",
+        "cue_ids": ["shared-cue" if shared_cue else f"reference-cue-{index}"],
+    } for index in range(reference_count)]
+    references.append({
+        **query, "id": "other", "source_id": "other", "start_ms": 15000, "end_ms": 16000,
+        "label": "C", "understanding_speaker": "C",
+        "pcm_sha256": "other-pcm", "cue_ids": ["other-cue"],
+        "vector": [other_similarity, sqrt(1 - other_similarity ** 2)] + [0.0] * 190,
+    })
+    line = VideoParseRuntimeService._score_voiceprint_sample(query, [query, *references])
+    assert line["candidates"][0]["speaker"] == "B"
+    assert line["band"] == expected_band
+    assert line["understanding_speaker"] == query["label"] == "A"
+    content = _dialogues(["A"], 0)
+    content["timeline"][0]["end_seconds"] = 100 + duration_ms
+    canvas = ParseContextCanvas.from_refine({
+        "interval_parse_task_id": "short-accept", "member_sequence_nos": {"member": 0},
+        "member_versions": {"member": 1}, "member_bounds": {"member": (0, 20000)},
+        "member_scopes": {"member": [0]},
+        "member_contents": {"member": content},
+        "member_evidence": {"member": {"voiceprint": {
+            "mode": "prefill", "method_version": line["method_version"], "lines": [line],
+        }}},
+    })
+    result = canvas.result("member").timeline[0]
+    assert result.speaker == expected_speaker
+    assert result.speaker_source == ("voice_default" if expected_band == "ACCEPT" else "understanding")
+
+
+@pytest.mark.parametrize("start_ms,end_ms,original,top1,top2,score1,score2,cues", [
+    (47500, 48800, "千早爱音", "长崎爽世", "若叶睦", 0.7730583563348821, 0.7170293544755257, 43),
+    (293300, 295800, "若叶睦", "千早爱音", "长崎爽世", 0.8229987220931618, 0.6887947400756788, 75),
+], ids=["v20-soyo-target", "v20-anon-target"])
+def test_v20_fixed_target_scores_reach_prefill_only_under_gap_free_policy(
+    start_ms, end_ms, original, top1, top2, score1, score2, cues,
+):
+    # Fixed score subset from v20 b0-scoring.json SHA256 08a7324822f4ae8509f38f63aa22cee1cbc3928fb04c7a01caa0d783e7677381.
+    # This tests policy and actual Canvas prefill, not a new encoder run or final identity accuracy.
+    query = {"id": "fixed-target", "source_id": "fixed-target", "position": 0,
+             "start_ms": start_ms, "end_ms": end_ms, "label": original,
+             "understanding_speaker": original, "song": False, "overlap": False}
+    score = {"duration_ms": end_ms - start_ms, "reason": "compared", "gap": score1 - score2,
+             "candidates": [{"speaker": top1, "similarity": score1, "independent_cue_count": cues},
+                            {"speaker": top2, "similarity": score2}]}
+    before = deepcopy(score)
+    parameters = VideoParseRuntimeService._voiceprint_parameters()
+    historical = VideoParseRuntimeService._score_voiceprint_sample(
+        query, [], score=score, parameters={**parameters, "accept_gap": 0.15, "conflict_gap": 0.05},
+    )
+    current = VideoParseRuntimeService._score_voiceprint_sample(query, [], score=score)
+    assert historical["band"] == "CONFLICT"
+    assert current["band"] == "ACCEPT" and current["conflict"] is True
+    assert current["gap"] == historical["gap"] == score["gap"]
+    assert current["candidates"] == historical["candidates"] == score["candidates"]
+    content = _dialogues([original], 0)
+    content["timeline"][0].update(start_seconds=start_ms, end_seconds=end_ms)
+    canvas = ParseContextCanvas.from_refine({
+        "interval_parse_task_id": "fixed-v20", "member_sequence_nos": {"member": 0},
+        "member_versions": {"member": 1}, "member_bounds": {"member": (0, 400000)},
+        "member_scopes": {"member": [0]}, "member_contents": {"member": content},
+        "member_evidence": {"member": {"voiceprint": {
+            "mode": "prefill", "method_version": current["method_version"], "lines": [current],
+        }}},
+    })
+    event = canvas.result("member").timeline[0]
+    assert event.speaker == top1 and event.speaker_source == "voice_default"
+    assert canvas._initial["member"].timeline[0].speaker == original
+    assert score == before
+

@@ -43,7 +43,7 @@ from .protocol import dynamic_tool_specs, strict_output_schema
 
 
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
-ReasoningEffort = Literal["none", "low", "high", "max"]
+ReasoningEffort = Literal["none", "low", "medium", "high", "max"]
 
 # A minimal live turn with pinned openai-codex 0.156.1 reports roughly 12,900
 # input tokens before AniVAG's variable prompt and tool contract are considered.
@@ -134,7 +134,7 @@ class CodexAgentModel:
             raise ValueError("mcp must be a boolean")
         if not model.strip():
             raise ValueError("model must not be empty")
-        if reasoning_effort not in {"none", "low", "high", "max"}:
+        if reasoning_effort not in {"none", "low", "medium", "high", "max"}:
             raise ValueError("unsupported reasoning_effort")
         if request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be greater than zero")

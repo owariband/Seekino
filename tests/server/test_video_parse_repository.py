@@ -581,6 +581,59 @@ def test_refinement_same_event_same_result_does_not_increment_version_twice(repo
         assert session.get(IntervalParseContent, second.interval_parse_task_id) is not None
 
 
+def test_refinement_voice_decisions_append_without_changing_unchanged_content(repository):
+    factory, repo, prepared, first, second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    target = prepared.chunk_parse_task_ids[1]
+    record = {"member_chunk_id": target, "event_ref": "event:test", "start_ms": 11000,
+              "end_ms": 14000, "final_speaker": "B", "decision": "voice_top1",
+              "reason": "The reviewed voice ranking supports B"}
+    for lease in (first, second):
+        repo.commit_interval_refinement(
+            lease, **_refinement_inputs(repo, lease, now=at), interval_content={},
+            member_updates={}, detail={"voiceprint_decisions": [record]}, now=at,
+        )
+    with factory() as session:
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
+        assert row.version == 1 and row.content["timeline"][0]["speaker"] == "B"
+        assert row.detail["voiceprint_decisions"] == [
+            {**record, "interval_parse_task_id": lease.interval_parse_task_id}
+            for lease in (first, second)
+        ]
+        for lease in (first, second):
+            assert session.get(IntervalParseContent, lease.interval_parse_task_id).detail[
+                "voiceprint_decisions"] == [record]
+
+
+@pytest.mark.parametrize("invalid", ["nonmember", "speaker_changed", "range_changed"])
+def test_refinement_voice_decision_conflict_rolls_back_all_members(repository, invalid):
+    factory, repo, prepared, first, _second = _overlapping_refinements(repository)
+    at = NOW + timedelta(minutes=1)
+    target = prepared.chunk_parse_task_ids[1]
+    record = {"member_chunk_id": target, "event_ref": "event:test", "start_ms": 11000,
+              "end_ms": 14000, "final_speaker": "B", "decision": "voice_top1", "reason": "Voice evidence"}
+    if invalid == "nonmember":
+        record["member_chunk_id"] = prepared.chunk_parse_task_ids[3]
+    elif invalid == "speaker_changed":
+        record["final_speaker"] = "A"
+    else:
+        record["end_ms"] += 1
+    with factory() as session:
+        before = {row.chunk_task_id: (deepcopy(row.content), row.version, deepcopy(row.detail))
+                  for row in session.scalars(select(ChunkParseContent))}
+    with pytest.raises(VideoParseConflictError):
+        repo.commit_interval_refinement(
+            first, **_refinement_inputs(repo, first, now=at), interval_content={},
+            member_updates={target: {"persons": ["A", "B", "must roll back"]}},
+            detail={"voiceprint_decisions": [record]}, now=at,
+        )
+    with factory() as session:
+        assert {row.chunk_task_id: (row.content, row.version, row.detail)
+                for row in session.scalars(select(ChunkParseContent))} == before
+        assert session.get(IntervalParseContent, first.interval_parse_task_id) is None
+        assert session.get(IntervalParseTask, first.interval_parse_task_id).status == "REFINING"
+
+
 def test_refinement_concurrent_event_structure_changes_require_refresh(repository):
     factory, repo, prepared, first, second = _overlapping_refinements(repository)
     at = NOW + timedelta(minutes=1)
