@@ -38,7 +38,7 @@ from gateway.agent_model.deepagents import (
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
 
-AgentReasoningEffort = Literal["none", "low", "high", "max"]
+AgentReasoningEffort = Literal["none", "low", "medium", "high", "max"]
 
 
 class _BoundAgentModel:

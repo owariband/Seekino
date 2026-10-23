@@ -918,6 +918,9 @@ def commit_interval_refinement(
     if (set(input_versions) != expected_members or set(input_fingerprints) != expected_members
             or set(input_contents) != expected_members):
         raise VideoParseConflictError("refinement input identity must cover every Interval member")
+    voiceprint_decisions = deepcopy(dict(detail or {}).get("voiceprint_decisions", []))
+    if any(record["member_chunk_id"] not in expected_members for record in voiceprint_decisions):
+        raise VideoParseConflictError("voice decision refers to a nonmember Chunk")
     for chunk_task, _chunk, result in rows:
         version = input_versions[chunk_task.id]
         if (type(version) is not int or version < 1
@@ -979,6 +982,18 @@ def commit_interval_refinement(
             raise VideoParseSnapshotConflictError(
                 f"Refine concurrent event edits conflict: {message}", reason=reason, context=context,
             ) from error
+    for record in voiceprint_decisions:
+        matching = [event for event in candidates[record["member_chunk_id"]]["timeline"]
+                    if event["event_type"] == "DIALOGUE" and (
+                        event["start_seconds"], event["end_seconds"]
+                    ) == (record["start_ms"], record["end_ms"])]
+        if len(matching) != 1 or matching[0]["speaker"] != record["final_speaker"]:
+            raise VideoParseSnapshotConflictError(
+                "Merged Refine speaker contradicts its voice decision",
+                reason="voice_decision_merge_conflict",
+                context={"chunk_task_id": record["member_chunk_id"],
+                         "event_ref": record["event_ref"]},
+            )
     member_scope = list(
         range(
             interval.start_sequence_no,
@@ -996,6 +1011,13 @@ def commit_interval_refinement(
         current_detail["scope"] = _ordered_int_union(
             current_detail.get("scope"), member_scope
         )
+        decisions = [record for record in voiceprint_decisions
+                     if record["member_chunk_id"] == chunk_task.id]
+        if decisions:
+            current_detail["voiceprint_decisions"] = [
+                *current_detail.get("voiceprint_decisions", []),
+                *[{**record, "interval_parse_task_id": interval.id} for record in decisions],
+            ]
         result.detail = current_detail
         result.update_time = datetime_to_unix_time_ms(committed_at)
         chunk_store.save_content(session, result)

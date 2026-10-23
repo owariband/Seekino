@@ -9,8 +9,10 @@ from engine.parsev2.voiceprint_matching import (
     classify_voiceprint_result,
     cluster_samples,
     eligible_references,
+    is_label_doubtful,
     score_baseline,
     score_clusters,
+    score_voiceprint_batch,
     score_voiceprint_line,
 )
 
@@ -218,6 +220,39 @@ def production_score(query: dict, references: list[dict]) -> dict:
     )
 
 
+LABEL_POLICY = {
+    "label_min_rank": 3, "label_min_margin": 0.15,
+    "label_min_duration_ms": 1000, "label_min_ref_count": 3,
+    "label_min_consistency": 0.70,
+}
+LABEL_FIELDS = ("label_score", "label_rank", "label_count", "label_margin",
+                "label_ref_count", "label_ref_consistency", "label_ref_higher_count",
+                "label_ref_higher_fraction")
+TAIL_POLICY = {key: value for key, value in LABEL_POLICY.items() if key != "label_min_consistency"}
+TAIL_POLICY["label_min_ref_higher_fraction"] = 0.95
+
+
+def label_score(query, references, **policy):
+    return score_voiceprint_line(
+        query, references, model="CAM++", encoder_revision="frozen", dimensions=192,
+        trim_fraction=0.2, min_duration_ms=400, **{**LABEL_POLICY, **policy},
+    )
+
+
+def label_batch(rows):
+    return score_voiceprint_batch(
+        rows, model="CAM++", encoder_revision="frozen", dimensions=192,
+        trim_fraction=0.2, min_duration_ms=400, **LABEL_POLICY,
+    )
+
+
+def tail_score(query, references, **policy):
+    return score_voiceprint_line(
+        query, references, model="CAM++", encoder_revision="frozen", dimensions=192,
+        trim_fraction=0.2, min_duration_ms=400, **{**TAIL_POLICY, **policy},
+    )
+
+
 def test_production_score_keeps_rare_characters_top3_and_reference_ids_only() -> None:
     query = production_sample(100)
     references = [production_sample(1, label="A", angle=0),
@@ -337,6 +372,61 @@ def test_decision_bands_keep_accept_disagreements_eligible(result, options, expe
     assert result == before
 
 
+@pytest.mark.parametrize("gap", [None, 0, 0.001, 0.149999])
+def test_unset_gap_thresholds_keep_supported_candidates_eligible(gap) -> None:
+    result = evidence(speaker="B", gap=gap, duration_ms=1000)
+    before = deepcopy(result)
+    assert decision(result, accept_gap=None, conflict_gap=None, accept_duration_ms=1000) == {
+        "band": "ACCEPT", "conflict": True, "review_reason": "voice_label_disagreement",
+    }
+    assert result == before
+
+
+@pytest.mark.parametrize("top_score, other_score", [(1.0, 0.99), (0.0, 0.0), (-0.5, -0.8)])
+def test_gap_free_policy_accepts_production_rankings_with_low_zero_or_negative_cosines(
+    top_score, other_score,
+) -> None:
+    query = production_sample(100, label="original")
+    references = [production_sample(index, label=name, vector=[score, (1 - score ** 2) ** 0.5])
+                  for name, score, indices in (("B", top_score, range(1, 4)), ("C", other_score, range(4, 7)))
+                  for index in indices]
+    result = production_score(query, references)
+    assert result["candidates"][0]["speaker"] == "B"
+    assert result["candidates"][0]["similarity"] == pytest.approx(top_score)
+    assert result["gap"] == pytest.approx(top_score - other_score)
+    assert decision(result, current_label="original", accept_gap=None, conflict_gap=None)["band"] == "ACCEPT"
+
+
+@pytest.mark.parametrize("result, options, expected_band, reason", [
+    (evidence(speaker="B", gap=0, duration_ms=999), {}, "NO_VOICE", "duration_below_no_voice_minimum"),
+    (evidence(speaker="B", gap=0, cues=2), {}, "CONFLICT", "insufficient_independent_reference_cues"),
+    (evidence(speaker="B", gap=0), {"song": True}, "CONFLICT", "song"),
+    (evidence(speaker="B", gap=0), {"overlap": True}, "CONFLICT", "overlapping_dialogue"),
+    ({"candidates": [], "gap": None, "duration_ms": 1500, "reason": "no_eligible_reference"},
+     {}, "NO_VOICE", "no_eligible_reference"),
+])
+def test_gap_free_policy_preserves_non_gap_quality_conditions(result, options, expected_band, reason) -> None:
+    classified = decision(result, accept_gap=None, conflict_gap=None, accept_duration_ms=1000, **options)
+    assert classified["band"] == expected_band
+    assert classified["review_reason"] == reason
+
+
+@pytest.mark.parametrize("accept_gap, conflict_gap", [
+    (None, 0.05), (0.15, None), (-0.1, 0.05), (0.05, 0.15),
+    (float("nan"), 0.05), (0.15, float("inf")),
+])
+def test_gap_policy_rejects_partial_or_invalid_frozen_thresholds(accept_gap, conflict_gap) -> None:
+    with pytest.raises(ValueError, match="voice gap thresholds"):
+        decision(evidence(), accept_gap=accept_gap, conflict_gap=conflict_gap)
+
+
+@pytest.mark.parametrize("thresholds", [(None, None), (0.15, 0.05)])
+@pytest.mark.parametrize("gap", [float("nan"), float("inf"), -0.001, 2.000001])
+def test_descriptive_gap_still_requires_a_finite_cosine_difference(thresholds, gap) -> None:
+    with pytest.raises(ValueError, match="candidate gap"):
+        decision(evidence(gap=gap), accept_gap=thresholds[0], conflict_gap=thresholds[1])
+
+
 @pytest.mark.parametrize("speaker, expected_band", [("A", None), ("B", "CONFLICT")])
 @pytest.mark.parametrize("result_changes, options, reason", [
     ({"duration_ms": 1200}, {}, "duration_below_accept_minimum"),
@@ -384,3 +474,327 @@ sys.meta_path.insert(0, RejectScipy())
 from engine.parsev2.voiceprint_matching import score_voiceprint_line
 """
     subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)
+
+
+def test_label_diagnostics_use_full_ranking_and_trimmed_reference_consistency() -> None:
+    query = production_sample(100, label="D")
+    references = [production_sample(index, label=label, angle=angle)
+                  for index, (label, angle) in enumerate(
+                      [("A", 0)] * 3 + [("B", 20)] * 3 + [("C", 40)] * 3
+                      + [("D", 70)] * 3, 1)]
+    result = label_score(query, [query, *references])
+    assert [row["speaker"] for row in result["candidates"]] == ["A", "B", "C"]
+    assert result["label_rank"] == result["label_count"] == 4
+    assert result["label_score"] == pytest.approx(cos(radians(70)))
+    assert result["label_margin"] == pytest.approx(1 - cos(radians(70)))
+    assert result["label_ref_count"] == 3
+    assert result["label_ref_consistency"] == pytest.approx(1)
+    assert result["label_doubtful"] is True
+    # The old API has no hidden policy defaults and retains the same ranking.
+    legacy = production_score(query, [query, *references])
+    assert legacy["candidates"] == result["candidates"]
+    assert legacy["gap"] == result["gap"]
+    assert legacy["label_doubtful"] is False
+
+    mixed = [production_sample(index, label="D", angle=angle)
+             for index, angle in enumerate([-60, 60, 0, 0, 180], 1)]
+    trimmed = label_score(query, [*mixed, production_sample(9, label="A")])
+    assert trimmed["label_ref_count"] == 4
+    assert trimmed["label_ref_consistency"] == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize("query, references", [
+    (production_sample(100, label=None), [production_sample(1)]),
+    (production_sample(100, end_ms=300_399), [production_sample(1)]),
+    (production_sample(100, label="missing"), [production_sample(1)]),
+    (production_sample(100), []),
+])
+def test_null_or_unscored_label_has_six_null_diagnostics(query, references) -> None:
+    result = label_score(query, references)
+    assert all(result[key] is None for key in LABEL_FIELDS)
+    assert result["label_doubtful"] is False
+
+
+def test_label_flag_counts_pcm_rows_not_cues_and_adds_no_song_overlap_gate() -> None:
+    query = production_sample(100, label="C", song=True, overlap=True)
+    references = [production_sample(index, label=label, angle=angle,
+                                   cue_ids=[f"shared-{label}"])
+                  for index, (label, angle) in enumerate(
+                      [("A", 0)] * 3 + [("B", 20)] * 3 + [("C", 90)] * 3, 1)]
+    result = label_score(query, references)
+    assert result["label_ref_count"] == 3
+    assert result["label_doubtful"] is True
+    rare = label_score(query, references[:-1])
+    assert rare["label_ref_count"] == 2
+    assert rare["label_ref_consistency"] == pytest.approx(1)
+    assert rare["label_doubtful"] is False
+    assert any(row["speaker"] == "C" for row in rare["candidates"])
+
+
+@pytest.mark.parametrize("changes", [
+    {"label_min_rank": 0}, {"label_min_rank": True},
+    {"label_min_duration_ms": 0}, {"label_min_ref_count": 0},
+    {"label_min_margin": -0.1}, {"label_min_margin": 2.1},
+    {"label_min_margin": float("nan")}, {"label_min_consistency": -0.1},
+    {"label_min_consistency": 1.1}, {"label_min_consistency": float("inf")},
+])
+def test_invalid_label_thresholds_fail_even_for_unscored_targets(changes) -> None:
+    with pytest.raises(ValueError):
+        label_score(production_sample(100, end_ms=300_399), [], **changes)
+
+
+def test_label_policy_is_optional_as_a_whole_and_boundaries_are_inclusive() -> None:
+    with pytest.raises(ValueError, match="tail threshold"):
+        score_voiceprint_line(production_sample(100), [], model="CAM++", encoder_revision="frozen",
+                              dimensions=192, trim_fraction=0.2, min_duration_ms=400, label_min_rank=3)
+    boundary = {"label_rank": 3, "label_margin": 0.15, "duration_ms": 1000,
+                "label_ref_count": 3, "label_ref_consistency": 0.70}
+    assert is_label_doubtful(boundary, **LABEL_POLICY)
+    for key in boundary:
+        assert not is_label_doubtful({**boundary, key: boundary[key] - 0.001}, **LABEL_POLICY)
+
+
+@pytest.mark.parametrize("metrics", [
+    {"label_rank": 7, "label_count": 11, "label_score": 0.48096527056253957,
+     "label_margin": 0.28659438643592805, "duration_ms": 1300,
+     "label_ref_count": 73, "label_ref_consistency": 0.7649639875350588},
+    {"label_rank": 8, "label_count": 11, "label_score": 0.5170295242916154,
+     "label_margin": 0.2745646161043229, "duration_ms": 2500,
+     "label_ref_count": 4, "label_ref_consistency": 0.7753087188487837},
+])
+def test_confirmed_ep04_original_labels_satisfy_doubtful_policy(metrics) -> None:
+    # Frozen v12 metrics; actual cached-vector integration is the offline CLI.
+    assert is_label_doubtful(metrics, **LABEL_POLICY)
+
+
+def test_two_pass_exclusions_survive_cleared_flags_and_preserve_input_order() -> None:
+    rows = [production_sample(index, label="C", angle=angle)
+            for index, angle in enumerate([90, 270, 180, 180], 1)]
+    rows += [production_sample(index, label=label, angle=angle)
+             for index, (label, angle) in enumerate(
+                 [("A", 90)] * 3 + [("B", 100)] * 3 + [("D", 270)] * 3 + [("E", 260)] * 3, 5)]
+    before = deepcopy(rows)
+    first = [label_score(row, rows) for row in rows]
+    result = label_batch(rows)
+    assert result["pass1_scores"] == first
+    assert [row["duration_ms"] for row in result["scores"]] == [row["duration_ms"] for row in first]
+    for query, score in zip(rows, result["scores"]):
+        expected = score_voiceprint_line(
+            query, rows, model="CAM++", encoder_revision="frozen", dimensions=192,
+            trim_fraction=0.2, min_duration_ms=400, excluded_reference_ids={rows[0]["id"], rows[1]["id"]},
+            **LABEL_POLICY,
+        )
+        assert score == expected
+    assert result["hygiene"] == {
+        "passes": 2, "pass1_flag_count": 2, "pass2_flag_count": 0,
+        "changed_flag_count": 2, "newly_flagged_ids": [],
+        "cleared_flag_ids": [rows[0]["id"], rows[1]["id"]],
+        "excluded_reference_ids": [rows[0]["id"], rows[1]["id"]],
+    }
+    assert all(not set(candidate["reference_ids"]) & set(result["hygiene"]["excluded_reference_ids"])
+               for score in result["scores"] for candidate in score["candidates"])
+    assert rows == before
+    assert label_batch([])["hygiene"]["passes"] == 2
+    with pytest.raises(ValueError, match="IDs must be unique"):
+        label_batch([rows[0], rows[0]])
+
+
+def test_pass_two_preserves_original_conflicting_pcm_names_after_exclusion() -> None:
+    wrong = production_sample(1, label="C", angle=90)
+    duplicate = production_sample(2, label="A", angle=90, pcm_sha256=wrong["pcm_sha256"])
+    rows = [wrong, duplicate]
+    rows += [production_sample(index, label=label, angle=angle)
+             for index, (label, angle) in enumerate(
+                 [("A", 90)] * 3 + [("B", 100)] * 3 + [("C", 180)] * 3, 3)]
+    eligible = eligible_references(production_sample(100), rows, excluded_reference_ids={wrong["id"]})
+    retained_duplicate = next(row for row in eligible if row["id"] == duplicate["id"])
+    assert retained_duplicate["label"] is None
+    result = label_batch(rows)
+    assert wrong["id"] in result["hygiene"]["excluded_reference_ids"]
+    assert duplicate["id"] not in result["hygiene"]["excluded_reference_ids"]
+    assert all(duplicate["id"] not in candidate["reference_ids"]
+               for score in result["scores"] for candidate in score["candidates"])
+
+
+@pytest.mark.parametrize("label", ["椎名立希", "高松灯"])
+def test_empirical_tail_flags_outlier_despite_low_mean_reference_coherence(label) -> None:
+    query = production_sample(100, label=label, angle=180)
+    references = [production_sample(index, label=label, angle=angle)
+                  for index, angle in enumerate([60, 60, -60, -60], 1)]
+    references += [production_sample(8, label="A", angle=180), production_sample(9, label="B", angle=160)]
+    result = tail_score(query, references)
+    assert result["label_ref_consistency"] == pytest.approx(0.5)
+    assert result["label_rank"] == 3
+    assert result["label_ref_higher_count"] == result["label_ref_count"] == 4
+    assert result["label_ref_higher_fraction"] == 1
+    assert result["label_doubtful"] is True
+    assert label_score(query, references)["label_doubtful"] is False  # frozen v2 mean-floor policy
+
+
+def test_empirical_tail_accepts_broad_within_label_spread_and_counts_ties_strictly() -> None:
+    references = [production_sample(index, label="C", angle=angle)
+                  for index, angle in enumerate([60, 60, -60, -60], 1)]
+    for target_angle in (50, 60):
+        query = production_sample(100, label="C", angle=target_angle)
+        nearby = [production_sample(8, label="A", angle=target_angle),
+                  production_sample(9, label="B", angle=target_angle - 10)]
+        result = tail_score(query, [*references, *nearby])
+        assert result["label_rank"] == 3 and result["label_margin"] >= 0.15
+        assert result["label_ref_higher_count"] == 0
+        assert result["label_ref_higher_fraction"] == 0
+        assert result["label_doubtful"] is False
+
+
+@pytest.mark.parametrize("count, higher, expected", [(3, 3, True), (3, 2, False),
+                                                     (20, 19, True), (20, 18, False)])
+def test_empirical_tail_fraction_has_inclusive_95_percent_boundary(count, higher, expected) -> None:
+    result = {"label_rank": 3, "label_margin": 0.15, "duration_ms": 1000,
+              "label_ref_count": count, "label_ref_higher_count": higher,
+              "label_ref_higher_fraction": higher / count, "label_ref_consistency": 0.1}
+    assert is_label_doubtful(result, **TAIL_POLICY) is expected
+
+
+def test_tail_population_is_same_kept_references_not_untrimmed_pool_or_reference_loo() -> None:
+    query = production_sample(100, label="C", angle=180)
+    references = [production_sample(index, label="C", angle=angle)
+                  for index, angle in enumerate([60, 60, -60, -60, 180], 1)]
+    result = tail_score(query, [*references, production_sample(8, label="A", angle=180),
+                               production_sample(9, label="B", angle=160)])
+    own = result["candidates"][2]
+    assert result["label_ref_count"] == result["label_ref_higher_count"] == 4
+    assert result["label_ref_higher_fraction"] == 1
+    assert references[-1]["id"] not in own["reference_ids"]
+    assert own["reference_higher_count"] == 4
+    assert own["reference_higher_fraction"] == 1
+    assert result["label_doubtful"] is True
+    # Three refs at60,0,-60 retain themselves in the common centroid. Their
+    # benchmark is .5,1,.5, not the lower reference-LOO values 0,1,0.
+    simple = [production_sample(index, label="C", angle=angle)
+              for index, angle in enumerate([60, 0, -60], 1)]
+    result = tail_score(production_sample(100, label="C", angle=70), simple)
+    assert result["label_ref_higher_count"] == 3
+
+
+@pytest.mark.parametrize("minimum", [-0.1, 1.1, float("nan"), float("inf"), True])
+def test_invalid_empirical_tail_threshold_is_rejected(minimum) -> None:
+    with pytest.raises(ValueError):
+        tail_score(production_sample(100), [], label_min_ref_higher_fraction=minimum)
+
+
+def test_legacy_mean_and_new_empirical_policies_cannot_be_combined() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        tail_score(production_sample(100), [], label_min_consistency=0.70)
+    with pytest.raises(ValueError, match="exactly one"):
+        score_voiceprint_batch([], model="CAM++", encoder_revision="frozen", dimensions=192,
+                               trim_fraction=.2, min_duration_ms=400, **{
+                                   key: value for key, value in TAIL_POLICY.items()
+                                   if key != "label_min_ref_higher_fraction"})
+
+
+def test_four_reference_loo_calibration_and_production_few_reference_fallback_are_distinct() -> None:
+    query = production_sample(100, label="C", angle=95)
+    references = [production_sample(index, label="C", angle=angle)
+                  for index, angle in enumerate([0, 20, 30, 90], 1)]
+    references += [production_sample(8, label="A", angle=95), production_sample(9, label="B", angle=85)]
+    current = score_baseline(query, references)  # current default: reference LOO
+    shared = score_baseline(query, references, reference_leave_one_out=False)
+    own = current["candidates"][2]
+    assert own["reference_higher_count"] == 3
+    assert own["reference_higher_fraction"] == 0.75
+    assert shared["candidates"][2]["reference_higher_count"] == 4
+    legacy = tail_score(query, references)
+    assert legacy["label_ref_higher_fraction"] == 1
+    assert legacy["label_doubtful"] is True
+    assert legacy["label_doubtful_basis"] is None
+    # An isolated 95% LOO test fails; production intentionally uses the
+    # common-rank/margin fallback for this four-reference cohort.
+    assert not is_label_doubtful({**legacy, "label_ref_higher_fraction": 0.75}, **TAIL_POLICY)
+    production = tail_score(query, references, label_tail_min_refs=8)
+    assert production["label_ref_higher_count"] == 3
+    assert production["label_ref_higher_fraction"] == 0.75
+    assert production["label_doubtful"] is True
+    assert production["label_doubtful_basis"] == "rank_margin_only_few_refs"
+
+
+@pytest.mark.parametrize("count,higher,expected", [(2, 2, False), (3, 0, True), (7, 0, True),
+                                                   (8, 7, False), (8, 8, True), (20, 19, True)])
+def test_current_tail_starts_at_eight_without_changing_three_reference_common_gate(count, higher, expected):
+    result = {"label_rank": 3, "label_margin": 0.15, "duration_ms": 1000,
+              "label_ref_count": count, "label_ref_higher_count": higher,
+              "label_ref_higher_fraction": higher / count}
+    assert is_label_doubtful(result, **TAIL_POLICY, label_tail_min_refs=8) is expected
+    assert not is_label_doubtful({**result, "label_margin": 0.149}, **TAIL_POLICY, label_tail_min_refs=8)
+
+
+def test_current_large_cohort_uses_tail_basis_and_preserves_target_scores():
+    query = production_sample(100, label="C", angle=180)
+    references = [production_sample(index, label="C") for index in range(1, 10)]
+    references += [production_sample(20, label="A", angle=180), production_sample(21, label="B", angle=170)]
+    current = tail_score(query, references, label_tail_min_refs=8)
+    legacy = tail_score(query, references)
+    assert current["label_ref_count"] == current["label_ref_higher_count"] == 8
+    assert current["label_ref_higher_fraction"] == 1
+    assert current["label_doubtful_basis"] == "tail"
+    for left, right in zip(current["candidates"], legacy["candidates"]):
+        assert left["similarity"] == right["similarity"]
+        assert left["reference_ids"] == right["reference_ids"]
+        assert left["reference_consistency"] == right["reference_consistency"]
+    assert current["gap"] == legacy["gap"]
+
+
+def test_degenerate_reference_loo_abstains_without_dropping_candidate_or_shrinking_denominator():
+    def vector(*values):
+        return [*values, *([0.0] * (192 - len(values)))]
+    vectors = [vector(0, 0, 0, 1), vector(1, 0, 0, 0), vector(-.5, sin(radians(120)), 0, 0),
+               vector(-.5, -sin(radians(120)), 0, 0), vector(0, 1, 0, 0), vector(0, -1, 0, 0),
+               vector(0, 0, 1, 0), vector(0, 0, -1, 0)]
+    references = [{**production_sample(index, label="C"), "vector": value}
+                  for index, value in enumerate(vectors, 1)]
+    references += [production_sample(20, label="A"), production_sample(21, label="B", angle=30)]
+    query = production_sample(100, label="C")
+    result = score_voiceprint_line(query, references, model="CAM++", encoder_revision="frozen",
+                                  dimensions=192, trim_fraction=0, min_duration_ms=400,
+                                  **TAIL_POLICY, label_tail_min_refs=8)
+    assert result["label_ref_count"] == 8
+    assert result["label_ref_higher_count"] is result["label_ref_higher_fraction"] is None
+    assert result["label_doubtful"] is False
+    assert result["label_doubtful_basis"] is None
+    rare = score_baseline(query, [production_sample(1, label="rare")])["candidates"][0]
+    assert rare["speaker"] == "rare" and rare["reference_count"] == 1
+    assert rare["reference_higher_count"] is rare["reference_higher_fraction"] is None
+
+
+@pytest.mark.parametrize("minimum", [0, 2, True, 8.0])
+def test_tail_population_minimum_is_validated_without_weakening_the_common_minimum(minimum):
+    with pytest.raises(ValueError, match="label_tail_min_refs"):
+        tail_score(production_sample(100), [], label_tail_min_refs=minimum)
+    with pytest.raises(ValueError, match="label_tail_min_refs"):
+        label_score(production_sample(100), [], label_tail_min_refs=8)
+
+
+@pytest.mark.parametrize("metrics,isolated_tail", [
+    ({"label_rank": 6, "label_margin": 0.2891652123734639, "duration_ms": 1300,
+      "label_ref_count": 70, "label_ref_higher_count": 70, "label_ref_higher_fraction": 1}, True),
+    ({"label_rank": 7, "label_margin": 0.2701004322619014, "duration_ms": 2500,
+      "label_ref_count": 4, "label_ref_higher_count": 3, "label_ref_higher_fraction": .75}, False),
+])
+def test_confirmed_ep04_current_policy_keeps_both_flags_without_calling_few_reference_case_a_tail_success(
+    metrics, isolated_tail,
+):
+    # Actual v12-vector LOO diagnostics for 47.4–48.7s and 293.5–296.0s.
+    # The CLI checks actual vectors; this regression freezes policy semantics.
+    assert is_label_doubtful(metrics, **TAIL_POLICY, label_tail_min_refs=8)
+    assert is_label_doubtful(metrics, **TAIL_POLICY) is isolated_tail
+
+
+def test_few_reference_fallback_keeps_common_gate_when_loo_calibration_is_degenerate():
+    query = production_sample(100, label="C", angle=90)
+    references = [production_sample(1, label="C", vector=[1, 0]),
+                  production_sample(2, label="C", vector=[0, 1]),
+                  production_sample(3, label="C", vector=[0, -1]),
+                  production_sample(8, label="A", angle=90), production_sample(9, label="B", angle=60)]
+    result = tail_score(query, references, label_tail_min_refs=8)
+    assert result["label_ref_count"] == 3
+    assert result["label_ref_higher_count"] is result["label_ref_higher_fraction"] is None
+    assert result["label_doubtful"] is True
+    assert result["label_doubtful_basis"] == "rank_margin_only_few_refs"

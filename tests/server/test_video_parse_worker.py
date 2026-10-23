@@ -2642,10 +2642,15 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
         assert target["voice_evidence"]["understanding_speaker"] == "B"
         assert "ACCEPT" in prompt and "event_ref" in prompt
         assert snapshot["member_contents"]["member"].timeline[7].speaker == "B"
+        canvas.write(role="refine", batch_id="resolve-voice", expected_revision=canvas.revision, operations=[{
+            "op": "voice_decision", "event_ref": canvas.items("events")[7][0],
+            "decision": "voice_top1", "reason": "Voice evidence supports the prepared speaker.",
+        }])
+        assert canvas.finish_voiceprint_review()["ready"]
         return CanvasCompletion(complete=True)
 
-    async def commit(snapshot, result):
-        committed.append((snapshot, result))
+    async def commit(snapshot, result, *, voiceprint_decisions):
+        committed.append((snapshot, result, voiceprint_decisions))
         return True
 
     async def notify(_snapshot):
@@ -2657,6 +2662,8 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
     asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(lease.interval_parse_task_id))
     assert len(committed) == 1
     assert committed[0][1].updates[0].timeline[7].speaker == "A"
+    assert committed[0][2][0]["decision"] == "voice_top1"
+    assert committed[0][2][0]["final_speaker"] == "A"
 
 
 def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatch, voiceprint_host):
@@ -2692,6 +2699,8 @@ def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatc
         "sequence_no": 0, "version": 1, "bounds": (0, 60000),
         "content": VideoParseResult(persons=[], timeline=[]),
     }})
+    canvas.register_evidence("member", {"voiceprint": {"mode": "prefill", "lines": []}})
+    canvas._apply_voiceprint()
     refine_input = {"inputs": snapshot["inputs"], "video_parse_task_id": lease.video_parse_task_id,
                     "interval_parse_task_id": lease.interval_parse_task_id, "lease": object(),
                     "member_bounds": {"member": (0, 60000)}}
@@ -2711,6 +2720,8 @@ def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatc
         assert all("vector" not in ref and "text_variants" not in ref for ref in full["samples"].values())
         assert not {"band", "conflict", "review_reason"}.intersection(result)
         assert not {"band", "conflict", "review_reason"}.intersection(full)
+        finish = next(tool for tool in tools if tool.name == "finish_voiceprint_review")
+        assert json.loads(finish.invoke({"complete": True}))["ready"]
         return CanvasCompletion(complete=True)
 
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)

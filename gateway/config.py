@@ -188,7 +188,7 @@ class ModelBinding(BaseModel):
     kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding"] | None = None
     request_timeout_seconds: float | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
-    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high", "max"] | None = None
     supports_vision_input: bool = False
     fallback: ModelBinding | None = None
     context_window_tokens: int | None = Field(default=None, ge=2)
