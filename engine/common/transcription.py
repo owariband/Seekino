@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import math
-import subprocess
-import tempfile
 from pathlib import Path
-from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -64,102 +61,6 @@ TRANSCRIPT_PROMPT = """
 7. text 只写原文台词，不添加 speaker 编号或姓名前缀，不输出画面描述、动作、情绪或剧情推断。
 8. 没有可确认的人声时返回空 transcript。
 """.strip()
-
-
-class VideoASRAgentProtocol(Protocol):
-    def transcribe(
-        self,
-        video_path: str | Path,
-        *,
-        duration_seconds: int | None = None,
-    ) -> TranscriptAnalysis: ...
-
-
-class AudioTranscriptionAgent:
-    """Extract window audio and normalize an Audio Transcriptions response."""
-
-    def __init__(
-        self,
-        model,
-        *,
-        provider: str | None = None,
-        base_url: str | None = None,
-        api_key: str | None = None,
-        request_timeout_seconds: float,
-        response_format: str = "verbose_json",
-    ) -> None:
-        if isinstance(model, str):
-            # Legacy callers provide a connection directly; creation still belongs to Gateway.
-            from gateway.config import ModelBinding, OpenAIAudioSourceConfig, load_config
-            from gateway.model_factory import GatewayClient
-            if provider is None or base_url is None or api_key is None:
-                raise ValueError("legacy audio transcription requires provider, base_url and api_key")
-            config = load_config()
-            source_name = "legacy_audio_transcription"
-            source = OpenAIAudioSourceConfig(
-                provider=provider, base_url=base_url, api_key_env="LEGACY_ASR_API_KEY",
-                response_format=response_format,
-            )
-            config = config.model_copy(update={
-                "model_sources": {**config.model_sources, source_name: source},
-            })
-            client = GatewayClient(config, environ={"LEGACY_ASR_API_KEY": api_key})
-            try:
-                model = client.create_transcription_model(ModelBinding(
-                    source=source_name, model=model, kind="transcription",
-                    request_timeout_seconds=request_timeout_seconds,
-                ))
-            except BaseException:
-                client.close()
-                raise
-        self.model_name = model.model_name
-        self.provider_name = model.provider_name
-        self._delegate = model
-        self._timeout = request_timeout_seconds
-        self._closed = False
-
-    def close(self) -> None:
-        if not self._closed:
-            self._closed = True
-            self._delegate.close()
-
-    def transcribe(
-        self, video_path: str | Path, *, duration_seconds: int | None = None
-    ) -> TranscriptAnalysis:
-        if self._closed:
-            raise RuntimeError("Audio transcription agent is closed")
-        path = Path(video_path).resolve(strict=True)
-        duration = (
-            duration_seconds
-            if duration_seconds is not None
-            else probe_video_duration_seconds(path)
-        )
-        with tempfile.TemporaryDirectory(prefix="anivag-asr-") as directory:
-            audio_path = Path(directory) / "audio.wav"
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    "-y",
-                    "-i",
-                    str(path),
-                    "-vn",
-                    "-ac",
-                    "1",
-                    "-ar",
-                    "16000",
-                    "-c:a",
-                    "pcm_s16le",
-                    str(audio_path),
-                ],
-                check=True,
-                capture_output=True,
-                timeout=self._timeout,
-            )
-            payload = self._delegate.transcribe(audio_path)
-        return normalize_transcription(payload, duration_seconds=duration)
 
 
 class VideoASRAgent:
@@ -261,21 +162,4 @@ def normalize_transcription(
         ]
         if text.strip()
         else []
-    )
-
-
-def clamp_transcript(
-    transcript: TranscriptAnalysis,
-    duration_seconds: int,
-) -> TranscriptAnalysis:
-    return transcript.model_copy(
-        update={
-            "transcript": [
-                cue.model_copy(
-                    update={"end_seconds": min(cue.end_seconds, duration_seconds)}
-                )
-                for cue in transcript.transcript
-                if cue.start_seconds < duration_seconds
-            ]
-        }
     )

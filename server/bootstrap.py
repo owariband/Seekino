@@ -347,7 +347,6 @@ def _build_application_services(
             max_model_calls_per_turn=agent_config.max_model_calls_per_turn,
             max_tool_calls_per_turn=agent_config.max_tool_calls_per_turn,
             limits_enabled=agent_config.limits_enabled,
-            maximum_top_k=agent_config.maximum_top_k,
             max_prompt_chars=agent_config.max_prompt_chars,
             max_tool_result_bytes=agent_config.max_tool_result_bytes,
             max_read_chars_per_call=agent_config.max_read_chars_per_call,

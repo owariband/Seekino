@@ -1,16 +1,12 @@
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from engine.common.model_factory import build_asr_agent
 from engine.common.transcription import (
-    AudioTranscriptionAgent,
     TranscriptAnalysis,
     VideoASRAgent,
     normalize_transcription,
 )
-from gateway.config import GatewayConfig, load_config
 from gateway.multimodal import TextInput, VideoInput
 
 
@@ -55,40 +51,6 @@ def test_json_only_asr_retains_honest_window_level_timing():
 def test_asr_rejects_malformed_responses(payload):
     with pytest.raises(ValueError):
         normalize_transcription(payload, duration_seconds=2000)
-
-
-def test_asr_extracts_audio_and_cleans_temporary_files(monkeypatch, tmp_path):
-    video = tmp_path / "video.mp4"
-    video.write_bytes(b"video")
-    audio_paths = []
-
-    def extract(command, **kwargs):
-        assert command[0] == "ffmpeg" and "-vn" in command
-        assert str(video) in command
-        audio = Path(command[-1])
-        audio.write_bytes(b"audio")
-        audio_paths.append(audio)
-
-    def transcribe(path, **kwargs):
-        assert path.read_bytes() == b"audio"
-        assert kwargs["model"] == "speech"
-        return {"text": "hello"}
-
-    monkeypatch.setattr("engine.common.transcription.subprocess.run", extract)
-    monkeypatch.setattr("gateway.transcription.transcribe_audio", transcribe)
-    agent = AudioTranscriptionAgent(
-        "speech",
-        provider="custom",
-        base_url="https://speech.example/v1",
-        api_key="fake-key",
-        request_timeout_seconds=10,
-    )
-    assert agent.transcribe(video, duration_seconds=1000).transcript[0].text == "hello"
-    assert audio_paths and not audio_paths[0].exists()
-    agent.close()
-    agent.close()
-    with pytest.raises(RuntimeError, match="closed"):
-        agent.transcribe(video, duration_seconds=1000)
 
 
 @pytest.mark.parametrize("duration_seconds", [None, 3000])
@@ -204,32 +166,3 @@ def test_video_asr_rejects_reversed_model_seconds(tmp_path):
     agent = VideoASRAgent(SimpleNamespace(model_name="lite", generate=generate), fps=1)
     with pytest.raises(ValueError, match="invalid segment timestamps"):
         agent.transcribe(video, duration_seconds=3000)
-
-
-def test_asr_factory_keeps_default_ark_source_independent_of_agent_source(monkeypatch):
-    path = Path(__file__).resolve().parents[2] / "gateway/fixtures/legacy-config.yaml"
-    data = load_config(path).model_dump()
-    del data["normalized_models"]
-    data["model_sources"]["ark_default"]["api_key_env"] = "CUSTOM_ARK_KEY"
-    config = GatewayConfig.model_validate(data)
-    monkeypatch.delenv("CUSTOM_ARK_KEY", raising=False)
-    requests = []
-
-    class Client:
-        def __init__(self, config):
-            self.config = config
-
-        def create_transcription_model(self, binding):
-            requests.append(binding)
-            assert self.config.source(binding.source).api_key_env == "ARK_API_KEY"
-            return SimpleNamespace(model_name=binding.model, input_mode="video")
-
-    monkeypatch.setattr("engine.common.model_factory.GatewayClient", Client)
-
-    agent = build_asr_agent(
-        config, model="lite", fps=0.5, timeout=45,
-    )
-    assert isinstance(agent, VideoASRAgent)
-    assert len(requests) == 1
-    assert requests[0].model == "lite" and requests[0].request_timeout_seconds == 45
-    assert requests[0].max_output_tokens is None

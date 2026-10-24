@@ -46,11 +46,6 @@ _PUBLIC_MODULES = [
     ]),
     ("engine.rag.retrieval.fusion", [
         "VersionedRankedVideoChunkMatch", "fuse_versioned_video_chunk_rankings",
-        "fuse_video_chunk_rankings", "weighted_reciprocal_rank_fusion",
-    ]),
-    ("engine.rag.nlp.transcript", [
-        "TranscriptCueDocument", "TranscriptChunkDocument", "RankedTranscriptMatch",
-        "rank_transcript_chunks",
     ]),
 ]
 

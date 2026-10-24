@@ -4,7 +4,7 @@ import base64
 import binascii
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -80,33 +80,6 @@ def stored_keyframe_at_seconds(value: object) -> int | None:
         if isinstance(at_seconds, int) and not isinstance(at_seconds, bool)
         else None
     )
-
-
-def merge_keyframe_uri_values(
-    preferred: Iterable[str | dict[str, object]],
-    existing: object,
-    *,
-    start_seconds: int,
-    end_seconds: int,
-) -> list[str | dict[str, object]]:
-    """Prefer current keyframes and keep one URI per valid timeline position."""
-
-    historical = existing if isinstance(existing, (list, tuple)) else ()
-    merged: list[str | dict[str, object]] = []
-    seen_uris: set[str] = set()
-    seen_positions: set[int] = set()
-    for value in (*preferred, *historical):
-        uri = stored_keyframe_uri(value)
-        if uri is None or uri in seen_uris:
-            continue
-        at_seconds = stored_keyframe_at_seconds(value)
-        if at_seconds is not None and start_seconds <= at_seconds < end_seconds:
-            if at_seconds in seen_positions:
-                continue
-            seen_positions.add(at_seconds)
-        seen_uris.add(uri)
-        merged.append(dict(value) if isinstance(value, dict) else value)
-    return merged
 
 
 def encode_video_keyframe_image_id(video_id: str, index: int) -> str:

@@ -339,6 +339,7 @@ describe("application shell", () => {
     await user.click(screen.getByRole("menuitemradio", { name: /公开/ }));
     await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
     await user.click(screen.getByRole("link", { name: "查看系列" }));
+    expect(await screen.findByRole("heading", { name: apiSeries.name, level: 1 })).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: `${apiSeries.name} 的系列选项` }));
     expect(screen.getByRole("menuitemradio", { name: /公开/ })).toHaveAttribute("aria-checked", "true");
     await user.click(screen.getByRole("menuitemradio", { name: /私有/ }));

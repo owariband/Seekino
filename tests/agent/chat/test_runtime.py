@@ -443,7 +443,9 @@ def test_query_report_contains_all_real_evidence_without_mutable_drafts():
     assert len(query.contexts) == len(retrieval.calls) == len(report.retrieval_calls) == 1
     assert evaluator.contexts == chat.contexts == []
     assert report.frame_receipts == ()
-    assert report.retrieval_trace[0].video_chunk_ids == ["chunk-1", "chunk-2"]
+    assert [
+        hit.candidate.video_chunk_id for hit in report.retrieval_calls[0].result.hits
+    ] == ["chunk-1", "chunk-2"]
     assert [event["type"] for event in events] == ["answer.progress"]
     assert runtime.model_name == query.model_name
 
@@ -460,7 +462,7 @@ def test_empty_real_retrieval_returns_an_uncertain_report_without_video_items():
     runtime, *_ = _runtime(query=Query(selected=()), retrieval=Retrieval([]))
     report = runtime.kick(_inputs())
     assert report.retrieval_result.hits == []
-    assert len(report.retrieval_trace) == 1
+    assert len(report.retrieval_calls) == 1
 
 
 def test_query_cannot_return_a_report_without_real_retrieval():
@@ -749,7 +751,10 @@ def test_failed_event_attempt_is_traced_but_does_not_satisfy_real_retrieval(fail
         assert evaluator.contexts == chat.contexts == retrieval.calls == []
         return
     result = runtime.kick(_inputs())
-    trace = [item.model_dump(mode="json", by_alias=True) for item in result.retrieval_trace]
+    trace = [
+        item.model_dump(mode="json", by_alias=True)
+        for item in build_retrieval_trace(result.retrieval_calls)
+    ]
     assert len(trace) == 2 and len(retrieval.calls) == 1
     assert trace[0]["query"] == "specific quote" and trace[0]["status"] == "error"
     assert trace[0]["granularity"] == "event" and trace[0]["role"] == "query"
@@ -802,7 +807,10 @@ def test_event_only_query_reports_canonical_evidence_and_full_trace():
     result = runtime.kick(_inputs())
     assert retrieval.calls == [] and len(searches) == 1
     assert result.retrieval_result.hits[0].evidence.video_chunk_id == "chunk-1"
-    trace = [item.model_dump(mode="json", by_alias=True) for item in result.retrieval_trace]
+    trace = [
+        item.model_dump(mode="json", by_alias=True)
+        for item in build_retrieval_trace(result.retrieval_calls)
+    ]
     assert [entry["role"] for entry in trace] == ["query"]
     assert all(entry["granularity"] == "event" for entry in trace)
     assert all(entry["strategyVersion"] == EVENT_RETRIEVAL_STRATEGY_VERSION for entry in trace)

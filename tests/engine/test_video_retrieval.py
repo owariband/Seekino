@@ -11,31 +11,11 @@ from engine.rag.contracts import (
 )
 from engine.rag.indexing.projection import LexicalField
 from engine.rag.retrieval.fusion import (
-    RankedVideoChunk,
     RankedVideoChunkMatch,
     VersionedRankedVideoChunkMatch,
-    fuse_video_chunk_rankings,
     fuse_versioned_video_chunk_rankings,
     normalize_hybrid_retrieval_weights,
-    normalize_video_retrieval_weights,
-    weighted_reciprocal_rank_fusion,
 )
-from engine.rag.nlp.transcript import (
-    TranscriptChunkDocument,
-    TranscriptCueDocument,
-    rank_transcript_chunks,
-)
-
-
-def _ranked(*sequence_nos: int) -> list[RankedVideoChunk]:
-    return [
-        RankedVideoChunk(
-            rank=rank,
-            chunk_sequence_no=sequence_no,
-            score=1.0 / rank,
-        )
-        for rank, sequence_no in enumerate(sequence_nos, start=1)
-    ]
 
 
 def _retrieval_identity(**updates: object) -> VideoChunkRetrievalIdentity:
@@ -51,88 +31,30 @@ def _retrieval_identity(**updates: object) -> VideoChunkRetrievalIdentity:
     return VideoChunkRetrievalIdentity.model_validate(values)
 
 
-def test_weighted_rrf_changes_channel_priority() -> None:
-    fused = weighted_reciprocal_rank_fusion(
-        _ranked(0, 1),
-        _ranked(1, 0),
-        text_weight=2.0,
-        vision_weight=1.0,
-        channel_top_k=2,
-        rrf_k=60,
-    )
-
-    assert [ranked.chunk_sequence_no for ranked in fused] == [0, 1]
-
-
-def test_weighted_rrf_uses_only_channel_top_k() -> None:
-    fused = weighted_reciprocal_rank_fusion(
-        _ranked(0, 1, 2),
-        _ranked(1, 0, 2),
+def test_versioned_rrf_uses_only_channel_top_k() -> None:
+    rankings = [
+        VersionedRankedVideoChunkMatch(
+            rank=rank, video_chunk_id=chunk_id, score=1.0 / rank,
+            retrieval_identity=_retrieval_identity(),
+        )
+        for rank, chunk_id in enumerate(("chunk-a", "chunk-b", "chunk-c"), start=1)
+    ]
+    fused = fuse_versioned_video_chunk_rankings(
+        rankings,
+        [],
         text_weight=1.0,
         vision_weight=1.0,
         channel_top_k=2,
         rrf_k=60,
     )
 
-    assert [ranked.chunk_sequence_no for ranked in fused] == [0, 1]
-
-
-def test_weighted_rrf_breaks_score_ties_by_sequence_number() -> None:
-    fused = weighted_reciprocal_rank_fusion(
-        _ranked(4),
-        _ranked(2),
-        text_weight=1.0,
-        vision_weight=1.0,
-        channel_top_k=1,
-        rrf_k=60,
-    )
-
-    assert [ranked.chunk_sequence_no for ranked in fused] == [2, 4]
-    assert [ranked.rank for ranked in fused] == [1, 2]
-
-
-def test_zero_weight_excludes_that_channel() -> None:
-    fused = weighted_reciprocal_rank_fusion(
-        _ranked(0),
-        _ranked(1),
-        text_weight=1.0,
-        vision_weight=0.0,
-        channel_top_k=1,
-        rrf_k=60,
-    )
-
-    assert [ranked.chunk_sequence_no for ranked in fused] == [0]
-
-
-@pytest.mark.parametrize("weight", [-1.0, float("inf"), float("nan")])
-def test_weighted_rrf_rejects_invalid_weights(weight: float) -> None:
-    with pytest.raises(ValueError, match="finite nonnegative"):
-        weighted_reciprocal_rank_fusion(
-            _ranked(0),
-            _ranked(1),
-            text_weight=weight,
-            vision_weight=1.0,
-            channel_top_k=1,
-            rrf_k=60,
-        )
-
-
-def test_weighted_rrf_requires_one_enabled_channel() -> None:
-    with pytest.raises(ValueError, match="at least one channel weight"):
-        weighted_reciprocal_rank_fusion(
-            _ranked(0),
-            _ranked(1),
-            text_weight=0.0,
-            vision_weight=0.0,
-            channel_top_k=1,
-            rrf_k=60,
-        )
+    assert [ranked.video_chunk_id for ranked in fused] == ["chunk-a", "chunk-b"]
 
 
 def test_retrieval_weights_are_normalized_without_changing_their_ratio() -> None:
-    assert normalize_video_retrieval_weights(7, 3) == pytest.approx((0.7, 0.3))
-    assert normalize_video_retrieval_weights(1e308, 1e308) == pytest.approx(
-        (0.5, 0.5)
+    assert normalize_hybrid_retrieval_weights(0, 7, 3) == pytest.approx((0, 0.7, 0.3))
+    assert normalize_hybrid_retrieval_weights(0, 1e308, 1e308) == pytest.approx(
+        (0, 0.5, 0.5)
     )
 
 
@@ -152,18 +74,30 @@ def test_retrieval_weight_normalization_rejects_invalid_values(
     vision_weight: float,
 ) -> None:
     with pytest.raises(ValueError):
-        normalize_video_retrieval_weights(text_weight, vision_weight)
+        normalize_hybrid_retrieval_weights(0, text_weight, vision_weight)
 
 
 def test_formal_rrf_preserves_each_channel_rank_and_score() -> None:
-    fused = fuse_video_chunk_rankings(
+    fused = fuse_versioned_video_chunk_rankings(
         [
-            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=0.9),
-            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-b", score=0.8),
+            VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-a", score=0.9,
+                retrieval_identity=_retrieval_identity(),
+            ),
+            VersionedRankedVideoChunkMatch(
+                rank=2, video_chunk_id="chunk-b", score=0.8,
+                retrieval_identity=_retrieval_identity(),
+            ),
         ],
         [
-            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-b", score=0.95),
-            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-a", score=0.7),
+            VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-b", score=0.95,
+                retrieval_identity=_retrieval_identity(),
+            ),
+            VersionedRankedVideoChunkMatch(
+                rank=2, video_chunk_id="chunk-a", score=0.7,
+                retrieval_identity=_retrieval_identity(),
+            ),
         ],
         text_weight=2.0,
         vision_weight=1.0,
@@ -173,6 +107,7 @@ def test_formal_rrf_preserves_each_channel_rank_and_score() -> None:
 
     assert [item.video_chunk_id for item in fused] == ["chunk-a", "chunk-b"]
     assert fused[0].model_dump() == {
+        "retrieval_identity": _retrieval_identity().model_dump(),
         "video_chunk_id": "chunk-a",
         "fused_rank": 1,
         "fused_score": (2 / 61) + (1 / 62),
@@ -341,7 +276,20 @@ def test_versioned_rrf_default_wire_and_disabled_sparse_are_compatible() -> None
         retrieval_identity=_retrieval_identity(),
     )
     kwargs = dict(text_weight=1.0, vision_weight=1.0, channel_top_k=2, rrf_k=60)
-    expected = fuse_video_chunk_rankings([first], [first], **kwargs)[0].model_dump()
+    expected = {
+        "video_chunk_id": "chunk-a",
+        "fused_rank": 1,
+        "fused_score": 2 / 61,
+        "lexical_rank": None,
+        "lexical_score": None,
+        "transcript_rank": None,
+        "transcript_score": None,
+        "text_rank": 1,
+        "text_score": 0.9,
+        "vision_rank": 1,
+        "vision_score": 0.9,
+        "retrieval_identity": first.retrieval_identity.model_dump(),
+    }
     fused = fuse_versioned_video_chunk_rankings(
         [first], [first],
         # Disabled Sparse neither accepts a vote nor consumes an identity.
@@ -350,7 +298,6 @@ def test_versioned_rrf_default_wire_and_disabled_sparse_are_compatible() -> None
         )],  # type: ignore[list-item]
         **kwargs,
     )
-    expected["retrieval_identity"] = first.retrieval_identity.model_dump()
     assert fused[0].model_dump() == expected
     assert TypeAdapter(list[type(fused[0])]).dump_python(fused) == [expected]
     assert "sparse_rank" not in fused[0].model_dump_json()
@@ -504,15 +451,27 @@ def test_lexical_match_requires_lexical_rank_on_hit() -> None:
 
 
 def test_formal_rrf_fuses_lexical_weight_and_preserves_its_evidence() -> None:
-    fused = fuse_video_chunk_rankings(
+    fused = fuse_versioned_video_chunk_rankings(
         [
-            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-b", score=0.9),
-            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-a", score=0.8),
+            VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-b", score=0.9,
+                retrieval_identity=_retrieval_identity(),
+            ),
+            VersionedRankedVideoChunkMatch(
+                rank=2, video_chunk_id="chunk-a", score=0.8,
+                retrieval_identity=_retrieval_identity(),
+            ),
         ],
         [],
         lexical_rankings=[
-            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=12.0),
-            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-b", score=9.0),
+            VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-a", score=12.0,
+                retrieval_identity=_retrieval_identity(),
+            ),
+            VersionedRankedVideoChunkMatch(
+                rank=2, video_chunk_id="chunk-b", score=9.0,
+                retrieval_identity=_retrieval_identity(),
+            ),
         ],
         lexical_weight=2.0,
         text_weight=1.0,
@@ -529,11 +488,14 @@ def test_formal_rrf_fuses_lexical_weight_and_preserves_its_evidence() -> None:
 
 
 def test_formal_rrf_accepts_lexical_as_the_only_enabled_channel() -> None:
-    fused = fuse_video_chunk_rankings(
+    fused = fuse_versioned_video_chunk_rankings(
         [],
         [],
         lexical_rankings=[
-            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=3.0)
+            VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-a", score=3.0,
+                retrieval_identity=_retrieval_identity(),
+            )
         ],
         lexical_weight=1.0,
         text_weight=0.0,
@@ -549,7 +511,7 @@ def test_formal_rrf_accepts_lexical_as_the_only_enabled_channel() -> None:
 
 def test_formal_rrf_rejects_lexical_and_transcript_double_counting() -> None:
     with pytest.raises(ValueError, match="lexical_weight and transcript_weight"):
-        fuse_video_chunk_rankings(
+        fuse_versioned_video_chunk_rankings(
             [],
             [],
             lexical_weight=0.5,
@@ -564,7 +526,7 @@ def test_formal_rrf_rejects_lexical_and_transcript_double_counting() -> None:
 @pytest.mark.parametrize("weight", [True, -1.0, float("inf"), float("nan")])
 def test_formal_rrf_rejects_invalid_lexical_weight(weight: float) -> None:
     with pytest.raises(ValueError, match="lexical_weight must be a finite nonnegative"):
-        fuse_video_chunk_rankings(
+        fuse_versioned_video_chunk_rankings(
             [],
             [],
             lexical_weight=weight,
@@ -576,9 +538,12 @@ def test_formal_rrf_rejects_invalid_lexical_weight(weight: float) -> None:
 
 
 def test_formal_rrf_rejects_duplicate_lexical_chunk_votes() -> None:
-    duplicate = RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=3.0)
+    duplicate = VersionedRankedVideoChunkMatch(
+        rank=1, video_chunk_id="chunk-a", score=3.0,
+        retrieval_identity=_retrieval_identity(),
+    )
     with pytest.raises(ValueError, match="lexical rankings contain duplicate"):
-        fuse_video_chunk_rankings(
+        fuse_versioned_video_chunk_rankings(
             [],
             [],
             lexical_rankings=[duplicate, duplicate.model_copy(update={"rank": 2})],
@@ -591,9 +556,15 @@ def test_formal_rrf_rejects_duplicate_lexical_chunk_votes() -> None:
 
 
 def test_formal_rrf_breaks_cross_channel_ties_by_video_chunk_id() -> None:
-    fused = fuse_video_chunk_rankings(
-        [RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-c", score=0.9)],
-        [RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-b", score=0.9)],
+    fused = fuse_versioned_video_chunk_rankings(
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="chunk-c", score=0.9,
+            retrieval_identity=_retrieval_identity(),
+        )],
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="chunk-b", score=0.9,
+            retrieval_identity=_retrieval_identity(),
+        )],
         text_weight=1.0,
         vision_weight=1.0,
         channel_top_k=1,
@@ -604,14 +575,15 @@ def test_formal_rrf_breaks_cross_channel_ties_by_video_chunk_id() -> None:
 
 
 def test_formal_rrf_rejects_duplicate_ids_within_one_channel() -> None:
-    duplicate = RankedVideoChunkMatch(
+    duplicate = VersionedRankedVideoChunkMatch(
+        retrieval_identity=_retrieval_identity(),
         rank=1,
         video_chunk_id="chunk-a",
         score=0.9,
     )
 
     with pytest.raises(ValueError, match="duplicate video_chunk_id"):
-        fuse_video_chunk_rankings(
+        fuse_versioned_video_chunk_rankings(
             [duplicate, duplicate.model_copy(update={"rank": 2})],
             [],
             text_weight=1.0,
@@ -621,59 +593,21 @@ def test_formal_rrf_rejects_duplicate_ids_within_one_channel() -> None:
         )
 
 
-def test_transcript_ranking_matches_normalized_phrase_across_adjacent_cues() -> None:
-    documents = [
-        TranscriptChunkDocument(
-            video_chunk_id="chunk-a",
-            cues=[
-                TranscriptCueDocument(text="别把责任", start_seconds=1000, end_seconds=2000),
-                TranscriptCueDocument(text="推给别人。", start_seconds=2000, end_seconds=3000),
-            ],
-        ),
-        TranscriptChunkDocument(
-            video_chunk_id="chunk-b",
-            cues=[
-                TranscriptCueDocument(
-                    text="她说：别把责任推给别人。",
-                    start_seconds=4000,
-                    end_seconds=5000,
-                )
-            ],
-        ),
-    ]
-
-    ranked = rank_transcript_chunks("『别把责任，推给别人！』", documents, limit=10)
-
-    assert [item.video_chunk_id for item in ranked] == ["chunk-a", "chunk-b"]
-    assert ranked[0].score == 1.0
-    assert ranked[0].matched_text == "别把责任 推给别人。"
-    assert (ranked[0].start_seconds, ranked[0].end_seconds) == (1000, 3000)
-    assert ranked[1].score < ranked[0].score
-
-
-def test_transcript_ranking_does_not_turn_semantic_similarity_into_a_match() -> None:
-    documents = [
-        TranscriptChunkDocument(
-            video_chunk_id="chunk-a",
-            cues=[
-                TranscriptCueDocument(
-                    text="别把责任推给别人。",
-                    start_seconds=1000,
-                    end_seconds=2000,
-                )
-            ],
-        )
-    ]
-
-    assert rank_transcript_chunks("不要甩锅", documents, limit=10) == []
-
-
 def test_three_channel_rrf_preserves_transcript_rank_and_changes_order() -> None:
-    fused = fuse_video_chunk_rankings(
-        [RankedVideoChunkMatch(rank=1, video_chunk_id="semantic", score=0.9)],
-        [RankedVideoChunkMatch(rank=1, video_chunk_id="visual", score=0.9)],
+    fused = fuse_versioned_video_chunk_rankings(
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="semantic", score=0.9,
+            retrieval_identity=_retrieval_identity(),
+        )],
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="visual", score=0.9,
+            retrieval_identity=_retrieval_identity(),
+        )],
         transcript_rankings=[
-            RankedVideoChunkMatch(rank=1, video_chunk_id="transcript", score=1.0)
+            VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="transcript", score=1.0,
+                retrieval_identity=_retrieval_identity(),
+            )
         ],
         transcript_weight=0.8,
         text_weight=0.1,

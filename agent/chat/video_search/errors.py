@@ -47,26 +47,3 @@ class VideoSearchFailure(AgentToolInvocationError):
 
 class VideoRetrievalError(AgentToolInvocationError):
     """The video retrieval dependency failed before producing a valid result."""
-
-
-class InvalidDraftRangeError(ValueError):
-    """A model-submitted Draft range is outside its canonical Evidence."""
-
-    def __init__(
-        self,
-        *,
-        video_chunk_id: str,
-        start_seconds: int,
-        end_seconds: int,
-        evidence_start_seconds: int,
-        evidence_end_seconds: int,
-    ) -> None:
-        self.video_chunk_id = video_chunk_id
-        self.start_seconds = start_seconds
-        self.end_seconds = end_seconds
-        self.evidence_start_seconds = evidence_start_seconds
-        self.evidence_end_seconds = evidence_end_seconds
-        super().__init__(
-            "Draft Item range must satisfy canonical Evidence bounds and "
-            "start_seconds < end_seconds"
-        )
