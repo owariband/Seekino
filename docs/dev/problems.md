@@ -1,5 +1,7 @@
 # 项目问题清单
 
+> 2026-10-24 旧实验退役说明：下文保留当时的观察；声纹、检测、图片出处实验的原始材料已删除，链接转到[结论摘要](design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)。构图／shot-tags 数据仅保存在被 Git 忽略的本地归档中，详见[恢复说明](design-experiment-cleanup.md#本地归档与恢复)。
+
 整理日期：2026-10-20。本次仅整理文档结构与排序，不代表重新验收历史问题。
 
 **维护规则（后续 Agent 补写或更新时必须遵守）**
@@ -122,7 +124,7 @@
 3. `binlog_row_image=MINIMAL` 可作为另一项评估，减少未变化列，但当前 detail 本身整体变化时仍会记录大字段；不能把数据库开关当成替代应用修复。初次诊断值为 FULL，本轮文档维护未重新核对运行态或更改此开关；另行实施前需核对恢复／复制需求和既有连接的会话设置。
 4. 验收同时记录固定数量 Event 的 embedding 次数、checkpoint / UPDATE 事件数、binlog 字节增量和耗时；验证无变化轮询不再写库，有限批次修复前后可比较，并覆盖中断恢复不重复已缓存调用、旧 lease 不覆盖新结果、Event 发布集合正确。不能用文本日志行数替代写入量，也不为测量再次无条件补建全 13 集。
 
-依据：[本轮补建记录](../../engine/experiment/composition-models/20261018-event-backfill/README.md)、[补建验收](../../engine/experiment/composition-models/20261018-event-backfill/verification.json)、[应用原始日志](../../outputs/local-services/api.log)、[本地 MySQL binlog 目录](../../outputs/local-services/mysql/)。本次文档维护记录历史故障、Claude 已实施的修复、七天留存和 batch 教训，不改写其他 Agent 的应用代码、数据库结构或服务状态；binlog 证据会按新留存策略过期，核心计数与解码结论保存在本项。
+依据：[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)、[应用原始日志](../../outputs/local-services/api.log)、[本地 MySQL binlog 目录](../../outputs/local-services/mysql/)。本次文档维护记录历史故障、Claude 已实施的修复、七天留存和 batch 教训，不改写其他 Agent 的应用代码、数据库结构或服务状态；binlog 证据会按新留存策略过期，核心计数与解码结论保存在本项。
 
 ### C15：局部截图检索缺少收敛与主动停止判断，空草稿反复退回直到超时
 
@@ -136,7 +138,7 @@
 
 #### 问题与真实证据
 
-- 用户只上传 282×214 的茶杯局部图，询问“这张图片出自哪一集？”，范围限定 MyGO。图片上传及模型输入正常，但最终在 **1200.199 秒**后收到 `answer.failed / AGENT_EXECUTION_TIMEOUT`，仅保留开场白，没有定位集数、时间或视频卡。会话为 `8016a767-9528-42e2-939f-28bb1ff75cfe`，完整输入、日志与统计见[茶杯截图实验](../../engine/experiment/chat-image-origin/20261017-mygo-teacup-detail-source/README.md)。
+- 用户只上传 282×214 的茶杯局部图，询问“这张图片出自哪一集？”，范围限定 MyGO。图片上传及模型输入正常，但最终在 **1200.199 秒**后收到 `answer.failed / AGENT_EXECUTION_TIMEOUT`，仅保留开场白，没有定位集数、时间或视频卡。会话为 `8016a767-9528-42e2-939f-28bb1ff75cfe`，完整输入、日志与统计见[图片检索退役摘要](design-experiment-cleanup.md#图片向量与出处定位)。
 - 实际执行 48 次成功 retrieve（47 次新查询、1 次翻页），交付候选 423 次、去重 81 个 Chunk；Query 取帧 81 次，检查 24 个不同 Chunk，交付 256 帧次、131 个不同图片 SHA，其中 43 次取帧命中缓存。经历 6 轮 Query、5 次 Evaluator 审核，每次均因 Draft 为空返回 `continue`；Evaluator 未独立取帧，最后在第六轮 Query 触发整轮截止时间。
 - 本轮 `FRAME_INSPECTION_LIMIT` 与 `VIDEO_CONTEXT_BUDGET_EXCEEDED` 均为 0。大量搜索和取帧不代表完整穷举，也不能据此认定截图不在原片。失败产物未保存底层 retrieve 原词，只保留长度、hash、权重及候选 ID；不能用 Supervisor 描述冒充实际检索词。
 
@@ -144,7 +146,7 @@
 
 - **能描述图片，不代表描述具有定位区分度。** 白杯、黄色茶水、茶碟等是可识别但通用的线索；杯把形状、局部纹理和物件精确位置需要视觉匹配能力。当前 Chat 路线主要是看图生成文字查询，再检索 Chunk、取帧核验，没有直接用上传图片向量匹配逐关键帧或局部区域。线索弱时容易退化为反复试探，不能只责怪模型“不读图”。
 - **审核目标缺少“当前无法解决”的正常结束决定。** `EvalDecision.action` 只有 `complete / continue`，Evaluator 提示要求先审用户意图、任一层不合格都 continue。空 Draft 因未提供集数而不断退回，即使 Query 诚实说明尚未找到，也没有明确的停搜标准。当前已有无获批项时只输出正文的能力，但缺少区分“仍值得继续”与“已无有效方向”的协议和指令。
-- **有工具活动不等于有进展。** 同义改写、重复候选及反复读取已有图片可能没有增加证据；另一方面，缓存命中或暂未缩小候选范围也不能单独证明浪费。独立审核、补看未覆盖时段、解除错误假设或扩大到正确场景都可能有效。此前[咖啡店局部图实验](../../engine/experiment/chat-image-origin/20261017-mygo-cafe-source/README.md)就是改用较宽的场景描述后找到，不能硬编码“每轮 scope 必须变小”。
+- **有工具活动不等于有进展。** 同义改写、重复候选及反复读取已有图片可能没有增加证据；另一方面，缓存命中或暂未缩小候选范围也不能单独证明浪费。独立审核、补看未覆盖时段、解除错误假设或扩大到正确场景都可能有效。此前[图片检索退役摘要](design-experiment-cleanup.md#图片向量与出处定位)就是改用较宽的场景描述后找到，不能硬编码“每轮 scope 必须变小”。
 
 #### 已确认方案：Evaluator 增加 `stop`
 
@@ -1045,13 +1047,13 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - Refine 的实际原子领取增加 `interval_ready && voiceprint.ready`；未就绪维持 WAITING，不占槽或扣失败。比较工具适用于 null 及有姓名但冲突的台词，返回 cosine/候选差值/来源及实际时长，排除自身、重叠音频、重复 PCM 与不相容模型。工具不写 timeline，仍由原 Canvas 修改或保留 null。后续 EP04 v7 追踪发现旧来源指纹包含中文翻译：仅改翻译也会使参考失效，并使至少 9 轮 Refine 在合并前被拒绝。按用户确认，准备后的 speaker 和音频区间直接视为正确静态成果，读取及提交不再对照 timeline 重验；参考元数据只保留用于追溯，event 合并冲突日志继续保留。
 - 父协调器复用原租约、模型准入、用量和取消。准备期间的真实异常、超时和 active 崩溃受持久化有限预算约束，首次准备事务失败也计预算；正常取消/等待不计。Python 3.12 的自定义阻塞取消异常超时路径已单独验证：保留执行槽直到线程真实退出，避免误记为正常取消。另已用真实测试数据库覆盖取消先于 begin 事务绑定的竞态，事务真实退出后再次 stop，再由 Consumer 释放，正常取消不误扣失败。部分登记不放行，成功准备幂等跳过，人工 retry 重置本阶段失败预算。新增可空配置字段关闭时省略序列化，保持旧上传幂等指纹。
 - 自动化验证分两组：Agent/Repository/Queue/Worker/Upload/Gateway **540 项通过**，配置及媒体 **338 项通过**；数据库用例为测试隔离环境，尚未进行真实 MySQL 多 Consumer 锁竞争验收。未改 ASR Prompt，未重启服务、迁移、运行真实生成 Agent、写回 speaker 或重解析任何一集。
-- 真实音频验证复用 [既有实验清单](../../engine/experiment/campplus/20261017-mygo-ep04/manifest.json)，只取 `sequence_no<12` 的 16 条固定参考，每人 4 条，目标不入参考。使用本次 `_embed_speaker_segment` 从同一原视频直接 downmix 到 16k mono PCM16，再经 Gateway 调用官方固定 CAM++；17 次实际提取 completed，输出均为有限、归一化 192 维向量，临时 WAV/租约标记清理通过。此处声道为 mono downmix，与原实验的首声道协议不同，不将数值差异解释成准确率提升。
+- 真实音频验证复用 [声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)，只取 `sequence_no<12` 的 16 条固定参考，每人 4 条，目标不入参考。使用本次 `_embed_speaker_segment` 从同一原视频直接 downmix 到 16k mono PCM16，再经 Gateway 调用官方固定 CAM++；17 次实际提取 completed，输出均为有限、归一化 192 维向量，临时 WAV/租约标记清理通过。此处声道为 mono downmix，与原实验的首声道协议不同，不将数值差异解释成准确率提升。
 - 目标 `47100–48800ms`、实际 1700ms 的候选为：长崎爽世 **0.82694462**、高松灯 **0.51958897**、千早爱音 **0.44891524**、椎名立希 **0.39888920**；第一/二差值 **0.30735565**。相似度不是概率；这些样本的身份依据沿用实验清单/用户授权，不能外推整集准确率，也不等于真实 Refine 已正确识别并写回爽世。
-- 原视频 SHA-256 `50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814`；目标 PCM SHA-256 `8587a4c56232d357e5b1c3d6e9ee2560dd378bfefe51c943ec15a484fb3b9f08`。本次临时验证输出 `/tmp/anivag-voiceprint-smoke-20261017/result.json` 包含每条向量、来源、实际模型 revision、候选及调用 ID，文件 SHA-256 `a8ec8321961faf0f5ac3736b9a8da85fb218d13478ec709931a783ab4e3518b2`，目标 call ID `dc7d49db-2c41-4562-8bcc-cc5d458a7c92`。临时依赖/官方源码/权重仅在 `/tmp`，未同步项目主环境；临时目录可能被系统清理，固定来源与协议仍见清单及 [CAM++ 实验说明](../../engine/experiment/campplus/20261017-mygo-ep04/README.md)。
+- 原视频 SHA-256 `50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814`；目标 PCM SHA-256 `8587a4c56232d357e5b1c3d6e9ee2560dd378bfefe51c943ec15a484fb3b9f08`。本次临时验证输出 `/tmp/anivag-voiceprint-smoke-20261017/result.json` 包含每条向量、来源、实际模型 revision、候选及调用 ID，文件 SHA-256 `a8ec8321961faf0f5ac3736b9a8da85fb218d13478ec709931a783ab4e3518b2`，目标 call ID `dc7d49db-2c41-4562-8bcc-cc5d458a7c92`。临时依赖/官方源码/权重仅在 `/tmp`，未同步项目主环境；临时目录可能被系统清理，固定来源与协议仍见清单及 [声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)。
 
 #### 2026-10-17：重启后的 EP04 VoiceprintAgent 实测
 
-- 已安装 speaker 可选依赖到项目 `.venv`，在 ignored `outputs/local-models/campplus/` 部署官方固定源码和权重，配置 CAM++ CPU Gateway source/binding，重启 API/Web 后通过原 reparse 接口仅提交隔离第四集 v4：`a99b4af4-4b66-43e5-90dc-b04b525b616a`。MySQL/ES 未重启，没有迁移、commit/push。完整冻结配置、部署 SHA、时间线及数据基线见 [实验报告](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04/README.md)。
+- 已安装 speaker 可选依赖到项目 `.venv`，在 ignored `outputs/local-models/campplus/` 部署官方固定源码和权重，配置 CAM++ CPU Gateway source/binding，重启 API/Web 后通过原 reparse 接口仅提交隔离第四集 v4：`a99b4af4-4b66-43e5-90dc-b04b525b616a`。MySQL/ES 未重启，没有迁移、commit/push。完整冻结配置、部署 SHA、时间线及数据基线见 [VoiceprintAgent 退役摘要](design-experiment-cleanup.md#voiceprintagent-历次迭代)。
 - 本轮真实观察到 Understanding 恰好 12/24 提交即启动准备；固定 12 块、5 人名单。Agent 依据已提交 ACTION/EMOTION 与独立 ASR 轮次登记爽世 414900–416400ms、立希 597100–600000ms、灯 536200–540000ms，各一条。准备完成 3/5 人，11:48:29 提交 ready；参考部分登记期间全部 Interval 仍 WAITING，ready 后才开始领取，此时 Understanding 20/24。目标 null 没有被登记为参考。
 - 目标本轮边界 `47700–48700ms`，实际 1000ms。真实 compare_speaker 候选为爽世 **0.433279**、灯 **0.411900**、立希 **0.394218**，前两名差 **0.021379**。Refine 明确消费该结果，因差值小及参考覆盖不足保留 null；Prefix 后仍 null，seq0 v2 已索引。链路实际执行通过，目标正确识别未通过。参考集合、目标裁切与此前 1700ms／多参考独立实验不同，不能直接拿旧高分替代本轮结论。
 - 实测发现准备阶段一条真实 speaker_embedding failed（37.050s，冻结超时 30s）被 Codex 通用工具反馈路径交给模型，Agent 重试后仍提交 ready，绕过宿主失败预算。账本未保存原始异常类型，不把推断的 TimeoutError 当作直接回执。已仅在准备宿主保存首次真实错误、阻止后续 finish，并保留正常取消和 pending 资源所有权；相关 worker **107 项**、声纹仓库/队列 **144 项**回归通过。补丁与失败账本保留在实验目录。此修复尚无修复后独立完成整集解析的实测证据。
@@ -1062,7 +1064,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 - **状态：多参考采集与登记门禁已修复，408 项相关回归通过；真实 Agent 选样质量待单独验收。** 离线实验样本未写进正式声纹库。现有 `CharacterVoiceprint.references` 已经能在同一 speaker 下保存多条独立向量，登记实现会向相同 speaker/model/revision 的人物记录追加；Refine 也已对多参考做单位化、均值和质心再归一化比较。缺口主要在采样策略、有效样本计数及完成条件，而非缺少多向量存储能力。
 - **根因：人物覆盖目标与单人物参考充分度混在一起。** 修复前 `get_speaker_list` 仅返回人物/chunk 和总体覆盖数，没有每个人的已登记数、目标和缺额；Prompt 与 `finish_voiceprint_preparation` 只要求具参考的人物数严格超过名单一半。实际 5 人名单中登记 3 人、每人 1 条便可结束，缺少继续为每个人物收集独立参考的目标。原 `skip_reasons` 仅返回零参考人物的理由，1–4 条时没有缺额说明机制。
-- **爽世选段实验：** 固定同一 `47700–48700ms` 目标，原急切追问参考仍为 **0.433279**；温柔感谢样本为 **0.729227**，困惑询问为 **0.673273**，普通协商为 **0.500743**。同场景平静劝解为 **0.771343**，但共享“悪くない”措辞，不能独自证明跨场景表现。完整片段与固定首 1.5 秒的 9 组对照中，7 组完整得分更高、2 组更低，不能认为时长越长越好。情绪分类来自解析描述、尚未独立听音标注；文本、停顿、场景和背景仍有混杂因素，不能断定差异完全由情绪造成。见 [选段实验与全部试听](../../engine/experiment/campplus/20261017-soyo-emotion/README.md)。
+- **爽世选段实验：** 固定同一 `47700–48700ms` 目标，原急切追问参考仍为 **0.433279**；温柔感谢样本为 **0.729227**，困惑询问为 **0.673273**，普通协商为 **0.500743**。同场景平静劝解为 **0.771343**，但共享“悪くない”措辞，不能独自证明跨场景表现。完整片段与固定首 1.5 秒的 9 组对照中，7 组完整得分更高、2 组更低，不能认为时长越长越好。情绪分类来自解析描述、尚未独立听音标注；文本、停顿、场景和背景仍有混杂因素，不能断定差异完全由情绪造成。见 [声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)。
 - **三人均衡多参考实验：** 爽世、灯、立希各 5 条、每人来自 5 个不同 chunk，均在初始 Understanding v1 已具名；目标所在 chunk、重叠音频和重复 PCM 排除，保留各自原登记作 baseline。固定目标不变，30 次 CAM++ CPU 提取全部成功；以下为完整参考的结果，分数均为 cosine、不是身份概率。
 
 | 聚合方式 | 长崎爽世 | 高松灯 | 椎名立希 | 第一、二名差 |
@@ -1072,7 +1074,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 | 按时长加权平均（每条权重上限 4 秒） | 0.640495 | 0.459412 | 0.374714 | 0.181083 |
 | 现有归一化质心比较 | 0.744100 | 0.549815 | 0.435815 | 0.194285 |
 
-- 统一每条参考首 1.5 秒后，等权平均仍为爽世 **0.506174**、灯 **0.406279**、立希 **0.340700**，前两名差 **0.099895**。灯增加参考后得分也会上升，但本目标上仍与爽世拉开差距。这解决了只给爽世增加参考、其他人保持单参考的不对等口径；不能由单个已知目标估计整体准确率，且爽世候选池来自此前已评分实验，不属于完全盲测。清单、逐条音频/向量/权重及来源 SHA 见 [三人多参考实验](../../engine/experiment/campplus/20261017-balanced-multiref/README.md)。这两个实验目录均被 Git 忽略，链接指向本地实验成果。
+- 统一每条参考首 1.5 秒后，等权平均仍为爽世 **0.506174**、灯 **0.406279**、立希 **0.340700**，前两名差 **0.099895**。灯增加参考后得分也会上升，但本目标上仍与爽世拉开差距。这解决了只给爽世增加参考、其他人保持单参考的不对等口径；不能由单个已知目标估计整体准确率，且爽世候选池来自此前已评分实验，不属于完全盲测。清单、逐条音频/向量/权重及来源 SHA 见 [声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)。这两个实验目录均被 Git 忽略，链接指向本地实验成果。
 - **聚合公式不能只比较数字大小。** 单位目标/参考下，逐条余弦均值为 `A=t·mean(u_i)`；现有归一化质心为 `B=A/||mean(u_i)||`。因此质心法数值更高包含缩放因素，不等于准确率更高；时长加权仅是预先固定的实验对照，也不是质量或人物置信度。本轮各方法排名一致，不能据此确定普遍最优算法。
 - **当前采集规则：** 每个 speaker 下保留多条参考；以 **5 条合格、独立参考作为每人采集目标，不设每人登记硬上限**，原“首版成本上限”已移除，仍受阶段有限工具/时间预算约束。数值仅定义于 `server/constants/parse.py::VOICEPRINT_REFS_PER_SPEAKER`，Agent 消费工具返回的 `target_refs_count`。不足 5 条允许完成，应说明固定授权来源不足或阶段预算接近耗尽等原因；不把 5 条作为 ready 的硬门槛，不用低质量/不确定样本凑数。人物身份可靠、单人有效发声和清楚边界优先，再尽量覆盖不同场景、台词和说话状态；不设置必须凑齐几种情绪的指标。跨 chunk 优先，但同 chunk 的不同独立台词仍可使用。
 - **独立来源与区间门禁：** 原实现仅对完全相同的来源/区间/fingerprint/PCM 做幂等。精确重复请求直接返回已有登记、不重做截音/embedding；同一 `source_ref` 的另一子区间即使不交叉也不能再登记为独立 case，只有显式替换才允许改为更准确子区间。对本轮全部人物的已登记区间检查交叉，采用绝对毫秒半开区间，`new_start < old_end && old_start < new_end` 即拒绝，首尾相接允许。宿主在提取前预检、持久化时原子复核；不同来源截取后 PCM 摘要完全相同也在最终登记拒绝，不增加声学查重框架。返回 `message/retry_hint` 引导 Agent 换独立、非重叠台词；这类反馈消耗工具预算，不计准备执行失败。参考目标按有效独立来源计，失效来源不继续计数；不扩大到同人异名合并。
@@ -1084,7 +1086,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 #### 2026-10-17：关闭 Prefix/Compact 后，第四集 v5 多参考端到端通过
 
-- 按用户指令重启 API/Web 后，仅通过 reparse 提交隔离第四集新任务 `dd55671d-a84b-4628-bedb-4007a4f4aa9c`、version5。相对 v4 请求只关闭 `compact_enabled`、清空 `prefix_context` 及其模型绑定；声纹96次工具/600秒、CAM++ CPU/30秒、并发10、max_retry_count=0等保持原值。没有人工登记样本或注入目标身份。详细报告、请求/响应与快照见 [本地实验](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-multiref-no-prefix/README.md)。
+- 按用户指令重启 API/Web 后，仅通过 reparse 提交隔离第四集新任务 `dd55671d-a84b-4628-bedb-4007a4f4aa9c`、version5。相对 v4 请求只关闭 `compact_enabled`、清空 `prefix_context` 及其模型绑定；声纹96次工具/600秒、CAM++ CPU/30秒、并发10、max_retry_count=0等保持原值。没有人工登记样本或注入目标身份。详细报告、请求/响应与快照见 [VoiceprintAgent 退役摘要](design-experiment-cleanup.md#voiceprintagent-历次迭代)。
 - 15:13:19.484（UTC+8）恰好12/24 Understanding提交时准备启动，固定seq0–9、13、18和5人名单。实际Agent为爱音、祥子、立希、爽世、灯各收集5条，共25条；独立source_ref和存储PCM摘要各25、无区间交叉、同模型192维单位向量。目标音频未登记。25条已登记但ready=false时22窗口仍WAITING；15:15:45.062首次观察ready，15:15:46.277首个Refine领取；采样无提前领取。
 - 本轮目标为47500–48800ms（1300ms）。ASR单独分条但匿名speaker仍与前文爱音相同，首次Understanding v1错归高松灯。Refine真实compare两次一致：爽世0.778768、祥子0.613801、灯0.505230，前两名差约0.164967；cosine不是概率。15:19:43.348提交v2改为长崎爽世，description明确引用声音证据；15:19:54.076目标chunk已索引。终态直接读ES，日文原句和中文译句的speaker均为长崎爽世。
 - 15:47:40.798整集COMPLETE，约38分44秒：Understanding24/24、Refine22/22、当前正文版本索引24/24，全部窗口retry_count=0。Prefix lease_version/cursor均为0且无对应模型调用；父子租约、模型占用及capacity已清，临时媒体无残留，API/Consumer健康。原系列13视频、13任务、312正文的版本/时间/规范SHA全部不变，无迁移或commit/push。
@@ -1093,7 +1095,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 #### 2026-10-17：静态声纹与强制 null 提示复测，v8 流程完成但目标仍错
 
-- 仅在隔离第四集运行任务 `8ef2a23b-def7-4ff3-905d-36cee63ce70f`，Prefix/Compact 关闭。ASR 提示明确无法可靠区分匿名声音时必须 `speaker_id=null`，Understanding 明确身份无可靠依据时必须 `speaker=null`；不改 nullable schema，不注入目标答案。提示实参回归 47 项及独立 hypnos-review 通过。详见 [v8 本地实验](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-trusted-voiceprint-null-speaker/README.md)。
+- 仅在隔离第四集运行任务 `8ef2a23b-def7-4ff3-905d-36cee63ce70f`，Prefix/Compact 关闭。ASR 提示明确无法可靠区分匿名声音时必须 `speaker_id=null`，Understanding 明确身份无可靠依据时必须 `speaker=null`；不改 nullable schema，不注入目标答案。提示实参回归 47 项及独立 hypnos-review 通过。详见 [VoiceprintAgent 退役摘要](design-experiment-cleanup.md#voiceprintagent-历次迭代)。
 - 19:16:08.468–19:46:17.381（UTC+8）COMPLETE，24/24 Understanding、22/22 Refine、24/24 当前版本索引。墙钟 30:08.913，比 v7 的 43:22.011 少 13:13.098（30.48%）；Refine 54→37 轮、刷新 32→15 次。本轮使用用户当前配置 `gpt-5.6-sol`，v7 为 `gpt-6-astra`，且提示及声纹策略有变化，不能将收益单独归因于去除参考校验。15 次拒绝为 13 次事件修改冲突、2 次结构冲突，没有声纹来源失效拒绝。
 - 声纹准备在 12/24 块时启动，正式参考仍为 5 人各 5 条，ready 后不变、无提前领取。VoiceprintAgent 生成耗时 389.539 秒，准备 25 次 CAM++ 编码累计仅 3.914 秒；准备与 Understanding 部分重叠，全部 Understanding 完成后到 ready 仍约等待 2 分 35 秒。原 13 视频/13 任务/312 正文未变，源文件摘要不变，终态租约、模型占用与临时文件已清理。
 - **目标识别未通过：** ASR 将 35.6–48.6 秒合成 `speaker1`，目标「咲ちゃんも悪くない」混在末尾；Understanding 将整段归千早爱音。seq0 首轮因 chunk2 的 177200–178000ms 事件双方同改 speaker/description 被拒绝，第二轮只更新 seq1/2；最终 chunk0 及 ES 仍错归千早爱音。全任务 270 条成功比较、seq0 20 条中，覆盖目标 47–49 秒的成功声音比对为 0；不能归因为 CAM++ 错认，也不能排除成功日志前被校验拒绝且未记录的工具尝试。下一步需区分混合接话拆分与具名错误归属核验的缺口，不以继续堆 null 提示替代验证。
@@ -1101,7 +1103,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 #### 2026-10-17：v9 参考错标与完成前组内一致性检查
 
-- v9 `56498828-8926-4ad7-beb4-b8a22d2b0b49` 的 25 条正式参考中，47.6–48.8 秒「祥ちゃんも悪くない」被登记为灯，用户已确认实际为爽世。组内逐条 cosine 均值为 0.378263，去掉它后其余灯参考内部均值为 0.659323，gap=0.281059；与爽世五条均值为 0.715700。这说明非空 speaker、画面可见及自报 0.96 不能替代独立身份依据。完整矩阵见 [本地审计](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-visual-overlap-submit/registry-pairwise-consistency.json)。
+- v9 `56498828-8926-4ad7-beb4-b8a22d2b0b49` 的 25 条正式参考中，47.6–48.8 秒「祥ちゃんも悪くない」被登记为灯，用户已确认实际为爽世。组内逐条 cosine 均值为 0.378263，去掉它后其余灯参考内部均值为 0.659323，gap=0.281059；与爽世五条均值为 0.715700。这说明非空 speaker、画面可见及自报 0.96 不能替代独立身份依据。完整矩阵见 [VoiceprintAgent 退役摘要](design-experiment-cleanup.md#voiceprintagent-历次迭代)。
 - 当前修复在 `finish_voiceprint_preparation` 同一事务读取未 ready 的参考，按 speaker/model/revision 检查组内一致性；不增 runtime 成果副本或缓存，不重新调用模型。实验初值为至少 5 条独立参考、核心均值 >=0.60、候选对核心均值 <=0.50、gap >=0.18，唯一来源为 `server/constants/parse.py`。少样本不阻止原收口，不强制每组删最低；显著异常返回 ready=false、来源/区间、均值、gap 及修正提示，不静默删条或改姓名。
 - 准备工具由原四个增至五个：新增 `unregister_voiceprint(source_ref)` 幂等单条撤销；`register_voiceprint` 可用 `replace_source_ref`，新 embedding 成功后事务替换，含同来源更精确子区间，失败保留旧条。无可靠替代时可撤销后以 `skip_reasons` 说明不足 5 条，具参考人数仍须严格过半；理由不能绕过仍存在的异常。ready 后继续按静态成果使用，不因 timeline 后续编辑重验或重跑。
 - 本次执行 `.venv/bin/python -m pytest -q tests/server/test_video_parse_voiceprint.py tests/agent/video_parse_v2/test_voiceprint.py tests/server/test_video_parse_worker.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_repository.py tests/agent/video_parse_v2/test_framework.py --tb=short`：**463 passed，23.56 秒**，仅既有 Starlette 弃用警告。覆盖完成门禁、阈值和编码器分组、显式替换/撤销及回滚、旧租约/来源保护、预算/取消与真实失败保留；此前 408 项及各轮部署/验证事实仍保留其原日期和合同。
@@ -1187,11 +1189,11 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 恢复实验的条件：目标视频的 Event 检索可用，命中可追溯到原片时间并取得对应帧，形成相较 17 图更丰富且各方法共用的候选集；随后用固定查询和人工评议检查召回、排序及人物布局差异。当前不预先选定最佳模型、权重或宣称全库效果。
 
-2026-10-18 运行记录：复用旧 Timeline，通过 `request-es-index-rebuild --with-events` 补建，13/13 集 COMPLETE、312/312 Chunk 覆盖、7,103 个 Event 可检索，包含 16,535 个帧采样记录（不等于独立画面数）。逐个核验 ES 身份／版本、文本投影、向量合同、抽帧时间与完整集合；所有原正文 ID／版本／哈希保持不变。全量“俯视房间”和“舞台演奏”两条 Event 视觉通道检索通过，覆盖 312 个来源 Chunk，partial=false、rejected=0；俯视查询召回第 7 集 `248600–249100ms` 的候选，落在先前 Chat 找到的范围内，但本轮没有以此宣称构图排序准确率。详见 [旧 Event 补建记录](../../engine/experiment/composition-models/20261018-event-backfill/README.md)、[验收摘要](../../engine/experiment/composition-models/20261018-event-backfill/verification.json)。
+2026-10-18 运行记录：复用旧 Timeline，通过 `request-es-index-rebuild --with-events` 补建，13/13 集 COMPLETE、312/312 Chunk 覆盖、7,103 个 Event 可检索，包含 16,535 个帧采样记录（不等于独立画面数）。逐个核验 ES 身份／版本、文本投影、向量合同、抽帧时间与完整集合；所有原正文 ID／版本／哈希保持不变。全量“俯视房间”和“舞台演奏”两条 Event 视觉通道检索通过，覆盖 312 个来源 Chunk，partial=false、rejected=0；俯视查询召回第 7 集 `248600–249100ms` 的候选，落在先前 Chat 找到的范围内，但本轮没有以此宣称构图排序准确率。详见 [构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)。
 
 性能补充：这轮功能补建暴露的历史写入放大为约 45 分钟 **20.61 万个 UPDATE_ROWS 事件、44.106 GB binlog**，严格按事件时间统计全天为 47.786 GB。Claude 已完成缓存批量保存、无变化聚合与配套扫描修复；完整计数、batch 教训、实施范围和七天留存措施见 **B14**。上述数字属于修复前基线，修复后的真实负载降幅未在本轮复测。
 
-依据：[俯视房间 Chat 对照实验](../../engine/experiment/composition-models/20261017-chat-composition/README.md)、[PCP＋全部框／人物框实验](../../engine/experiment/composition-models/20261017-pcp-box-fusion/README.md)、[Chunk／Event 视觉编码](../../server/service/video_parse_index_coordinator.py)、[Event 检索链路](../../server/service/video_event_retrieval.py)。实验目录沿用本地 ignore 规则；源码实现由另一工作线负责，本工作线维护构图实验与本轮获授权的数据补建、验收记录。
+依据：[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)、[Chunk／Event 视觉编码](../../server/service/video_parse_index_coordinator.py)、[Event 检索链路](../../server/service/video_event_retrieval.py)。实验目录沿用本地 ignore 规则；源码实现由另一工作线负责，本工作线维护构图实验与本轮获授权的数据补建、验收记录。
 
 ### C17：单集台词定位仍耗时两分半，串行角色与重复交接占主要开销
 
@@ -1210,7 +1212,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 两轮均完成，Query 自主使用 `search_video_events`，没有 Chunk `retrieve` 回退。首次可见文字分别为 7.3754 / 8.079 秒；目标 Chunk 的原始 transcript 在约 22 / 25 秒已读取，最终仍在 156.105 / 154.078 秒完成。获得文本不等于模型已完成理解或已足够交付，不能把后续时间全部判为无效。
 
-原始输入、完整最终响应、SSE、检索 trace、服务日志、工具开始／结束、审核意见、usage、可取得的 Supervisor 原生日志和帧证据均见 [中文偏义测试报告](../../engine/design/event-retrieval-eval-20261018/EP04-ZH.md)。[B 阶段分析](../../engine/design/event-retrieval-eval-20261018/ep04-zh-drift-chat/analysis.json)、[C 阶段分析](../../engine/design/event-retrieval-eval-20261018/ep04-zh-premise-chat/analysis.json) 为机器可读入口；实验产物沿用本地 ignore 规则，接手时须先确认文件仍在。
+2026-10-24 已将本轮输入、历史完整回答、阶段计时、审核反馈和关键工具失败摘要迁移到 [MyGO benchmark](../../evals/mygo/README.md#历史结论event)，B/C 的机器可读记录见 [baseline.jsonl](../../evals/mygo/baseline.jsonl) 中的 chat-event-drift／chat-event-premise。原始 SSE、完整日志、原生 rollout 和帧文件已退役；下文保留当时的发现与适用边界，不再提供逐字节日志取证。
 
 #### 端到端耗时拆解
 
@@ -1242,7 +1244,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - C 第二次 query 写入“立希打断爱音”的未经证实方向，真实证据却是爱音回敬立希。没有设置 speaker 硬过滤，后续精读纠正了方向。只能确定假设出现在 query 串，不能从缺失的模型转录断言其来自某段背景知识；与 C14 的假设偏移问题关联。
 - 两轮最终用“你记得的是这段”指认来源，虽然解释了非逐字匹配，但没有排除其他近义场景；应区分“有支持的近义候选”和“唯一来源”。
 - C 第一次全量 trace 中核心 Event 融合 rank=22，在回源后 matched 集合位置为 20；首屏只有 14 卡，Query 没有翻页，不能说它已看到目标。第二次 rank=11 才进入首屏，随后精读。底层召回、工具实际展示、成功读取和最终选择须分开统计。
-- 另做的固定中文查询对照使用 0.65 / 0.35 / 0 权重，与自然 Agent 自主选择的参数不同；存在语义已召回但 RRF 排名被词法弱相关候选压低的情况，不将其混为“工具慢”或直接据三句改全局权重。具体 ID / 分数见 [独立检索分析](../../engine/design/event-retrieval-eval-20261018/experiment/ep04-zh-retrieval-analysis.json)。
+- 另做的固定中文查询对照使用 0.65 / 0.35 / 0 权重，与自然 Agent 自主选择的参数不同；存在语义已召回但 RRF 排名被词法弱相关候选压低的情况，不将其混为“工具慢”或直接据三句改全局权重。具体 ID / 分数见 [独立检索分析](../../evals/mygo/baseline.jsonl)。
 
 #### 待评估方向、职责与验收
 
@@ -1254,7 +1256,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 证据边界：两轮在 2026-10-18 14:55–14:58（UTC+08:00）并行执行，没有同问题 Chunk-only 全流程或严格缓存／负载控制；不能据此宣布 Event 加速或形成稳定 P95。此 scope 的索引快照不代表当前全库覆盖；C16 的 MyGO 13 集补建由另一工作线维护。Query / Evaluator / Chat ephemeral 完整转录未保留，不能补造 prompt 或内部推理。当前先完成记录，不重跑、回填、重启、迁移或部署。
 
-依据：[Runtime](../../agent/chat/video_search/runtime.py)、[Query](../../agent/chat/video_search/query.py)、[Evaluator](../../agent/chat/video_search/evaluator.py)、[内部 Chat](../../agent/chat/video_search/chat.py)、[Supervisor](../../agent/chat/supervisor.py)、[输入上下文](../../agent/chat/video_search/context.py)、[Codex adapter](../../gateway/codex/agent.py)、[Codex session](../../gateway/codex/client.py)、[B 原生 Supervisor](../../engine/design/event-retrieval-eval-20261018/ep04-zh-drift-chat/native-sessions/supervisor.rollout.jsonl)、[C 原生 Supervisor](../../engine/design/event-retrieval-eval-20261018/ep04-zh-premise-chat/native-sessions/supervisor.rollout.jsonl)。
+依据：[Runtime](../../agent/chat/video_search/runtime.py)、[Query](../../agent/chat/video_search/query.py)、[Evaluator](../../agent/chat/video_search/evaluator.py)、[内部 Chat](../../agent/chat/video_search/chat.py)、[Supervisor](../../agent/chat/supervisor.py)、[输入上下文](../../agent/chat/video_search/context.py)、[Codex adapter](../../gateway/codex/agent.py)、[Codex session](../../gateway/codex/client.py)、[B 运行诊断摘要](../../evals/mygo/baseline.jsonl)、[C 运行诊断摘要](../../evals/mygo/baseline.jsonl)。
 
 ### C18：Context Canvas 已具备 batch，但读取模式与范围语义容易误用
 
@@ -1303,7 +1305,7 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 - 真实 Agent 用上述 B / C 等同 scope 问题验证是否消除 INVALID_RANGE / INVALID_READ，并减少不必要 overview、重读和模型请求；记录模型轮次与工具调用分开，既看首反馈／总耗时，也核对最终说话人、记忆纠偏和合法完整播放范围。不以假模型能按 schema 调用证明真实模型一定会用好。
 - 本轮只记录问题；模型、背景裁剪、角色合并、读取协议或预算变化均未实施。优化效果和节省秒数等待具体方案与真实对照，不将 154–156 秒承诺为一定可压缩到某个时长。
 
-依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 原始调用](../../engine/design/event-retrieval-eval-20261018/ep04-zh-drift-chat/tool-events.json)、[C 原始调用](../../engine/design/event-retrieval-eval-20261018/ep04-zh-premise-chat/tool-events.json)。
+依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/mygo/baseline.jsonl)、[C 工具错误摘要](../../evals/mygo/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 

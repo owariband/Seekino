@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "AniVAG 动画建库主链时序",
+    "locale": "zh-CN",
+    "output": "anivag-indexing.sequence.html",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 670]
+  },
+  "participants": [
+    { "id": "anime_viewer", "type": "external", "label": "用户", "sublabel": "动画视频" },
+    { "id": "anime_workbench", "type": "frontend", "label": "Web 工作台", "sublabel": "导入 + SSE" },
+    { "id": "anime_gateway", "type": "backend", "label": "AniVAG API", "sublabel": "任务入口" },
+    { "id": "anime_job_db", "type": "database", "label": "Job Store", "sublabel": "状态真源" },
+    { "id": "anime_indexer", "type": "backend", "label": "Index Worker", "sublabel": "阶段执行" },
+    { "id": "anime_artifacts", "type": "cloud", "label": "产物存储", "sublabel": "媒体产物" },
+    { "id": "anime_rag", "type": "backend", "label": "AniVAG Engine", "sublabel": "领域算法" },
+    { "id": "anime_ai", "type": "external", "label": "模型服务", "sublabel": "Audio / VLM" },
+    { "id": "anime_index_db", "type": "database", "label": "Index Store", "sublabel": "版本化索引" }
+  ],
+  "segments": [
+    { "from": 142, "to": 270, "label": "持久受理" },
+    { "from": 278, "to": 412, "label": "媒体预处理" },
+    { "from": 420, "to": 496, "label": "事件理解" },
+    { "from": 504, "to": 596, "label": "索引发布" }
+  ],
+  "messages": [
+    { "from": "anime_viewer", "to": "anime_workbench", "y": 160, "label": "选择 3–5 集动画视频", "variant": "emphasis" },
+    { "from": "anime_workbench", "to": "anime_gateway", "y": 184, "label": "POST /episodes", "variant": "emphasis" },
+    { "from": "anime_gateway", "to": "anime_artifacts", "y": 208, "label": "保存视频引用" },
+    { "from": "anime_gateway", "to": "anime_job_db", "y": 236, "label": "创建 PENDING + content_hash", "variant": "emphasis" },
+    { "from": "anime_gateway", "to": "anime_workbench", "y": 260, "label": "202 + job_id", "variant": "return" },
+    { "from": "anime_indexer", "to": "anime_job_db", "y": 292, "label": "claim RUNNING + lease", "variant": "emphasis" },
+    { "from": "anime_indexer", "to": "anime_artifacts", "y": 320, "label": "读取动画媒体" },
+    { "from": "anime_indexer", "to": "anime_rag", "y": 348, "label": "处理音轨 + 抽镜头与关键帧", "variant": "emphasis" },
+    { "from": "anime_rag", "to": "anime_artifacts", "y": 376, "label": "写入 audio / shot / keyframe 产物" },
+    { "from": "anime_indexer", "to": "anime_job_db", "y": 400, "label": "Checkpoint：MEDIA_READY" },
+    { "from": "anime_indexer", "to": "anime_rag", "y": 432, "label": "按批生成 AnimeEvent" },
+    { "from": "anime_rag", "to": "anime_ai", "y": 460, "label": "音频语义 + 关键帧 → AnimeEvent" },
+    { "from": "anime_ai", "to": "anime_rag", "y": 488, "label": "结构化事件与向量", "variant": "return" },
+    { "from": "anime_indexer", "to": "anime_rag", "y": 516, "label": "构建语音文本 / 视觉 / 事件索引" },
+    { "from": "anime_rag", "to": "anime_index_db", "y": 540, "label": "写入 index_version=vNext" },
+    { "from": "anime_indexer", "to": "anime_job_db", "y": 564, "label": "原子提交 READY + active_version", "variant": "emphasis" },
+    { "from": "anime_gateway", "to": "anime_workbench", "y": 586, "label": "SSE：READY，可开始检索", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "anime_gateway", "from": 178, "to": 266, "type": "backend" },
+    { "participant": "anime_job_db", "from": 230, "to": 570, "type": "database" },
+    { "participant": "anime_indexer", "from": 286, "to": 570, "type": "backend" },
+    { "participant": "anime_artifacts", "from": 202, "to": 382, "type": "cloud" },
+    { "participant": "anime_rag", "from": 342, "to": 546, "type": "backend" },
+    { "participant": "anime_ai", "from": 454, "to": 494, "type": "external" },
+    { "participant": "anime_index_db", "from": 534, "to": 546, "type": "database" }
+  ]
+}

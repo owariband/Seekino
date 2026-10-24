@@ -1,5 +1,4 @@
 # Local design notes and generated visual / architecture artifacts
-**/design/
 docs/notes/
 docs/ui-design/
 /transfer.md
@@ -17,6 +16,8 @@ docs/ui-design/
 
 # Local development state
 /.claude-tmp/
+/.kimi-tmp/
+/.research/
 .DS_Store
 **/.DS_Store
 .env

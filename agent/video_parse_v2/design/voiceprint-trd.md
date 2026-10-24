@@ -452,7 +452,7 @@ Refine 的提示必须明确：所有程序预填项都属于本轮审核范围�
 ## 声纹候选收集算法：先分组，再挑片，最后确认人物
 
 > 2026-10-18：本节是待验证的算法方案，用于说明程序究竟怎么算；不代表已接入生产 VoiceprintAgent。
-> 已在隔离实验中实现局部支持筛选、medoid、差异选样，并实际调用现有 VoiceprintAgent；[实验报告](../../../engine/experiment/speaker-clustering/20261018-mygo-ep04-voiceprint-agent/report.md)及[候选试听](../../../engine/experiment/speaker-clustering/20261018-mygo-ep04-voiceprint-agent/report.html)。生产未接入，人物覆盖及参考身份质量尚未通过验收。
+> 已在隔离实验中实现局部支持筛选、medoid、差异选样，并实际调用当时的 VoiceprintAgent；[聚类与选源退役摘要](../../../docs/dev/design-experiment-cleanup.md#聚类与选源)。2026-10-24 已总结并删除该实验目录，旧试听与逐条结果不再保留。生产未接入该实验选源路线，人物覆盖及参考身份质量尚未通过验收。
 > 本节不修改[主 TRD](trd.md)约定的 75% Understanding 启动条件、任务来源快照、ready 提交与 Refine 准入合同。
 > 依据层级：K-means、medoid 和最远点选样是成熟组件；局部支持筛选、来源约束及 VoiceprintAgent 核验组成了本项目的待验方案。没有论文直接证明这套组合能正确收集日语动画中同一人物的不同发声。理论来源与验收方式见第 8 节。
 

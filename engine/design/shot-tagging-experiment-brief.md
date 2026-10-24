@@ -1,5 +1,7 @@
 # Brief: Shot composition tagging and ranking ablation
 
+> Archive status (2026-10-24): the experiment directories named below have been retired. Composition and shot-tags data are kept in a local Git-ignored ZIP; see the [summary and recovery instructions](../../docs/dev/design-experiment-cleanup.md#本地归档与恢复). Paths and commands below describe the historical experiment, not an active run request.
+
 Hand this file to the experiment agent as its task. Date: 2026-10-19.
 
 ---

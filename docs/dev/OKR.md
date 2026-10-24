@@ -1,6 +1,9 @@
 Objectives and Key Results
 目标与关键成果法
 
+> 2026-10-24 旧实验退役说明：下文保留当时的观察；声纹、检测、图片出处实验的原始材料已删除，链接转到[结论摘要](design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)。构图／shot-tags 数据仅保存在被 Git 忽略的本地归档中，详见[恢复说明](design-experiment-cleanup.md#本地归档与恢复)。
+
+
 # 2026-10-09
 
 本期重点（2026-10-10 调整）：先把已有上传、解析、检索、播放与 Chat 答疑做到好用、可验证。用真实课程完成操作与结果核对，修复影响使用的问题后，再推进新增能力。
@@ -143,7 +146,7 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 - KR2：复用 Event 的时间范围、检索和回源链路，关联具体关键帧及其来源时间。区分 Event 与 Shot 的时间重叠上下文、帧是否处于 Event 区间，以及画面是否支持事件描述；不把同一 Shot 的全部关联 Event 自动当作每张关键帧的证据。
 - KR3：先用已有数据比较现有 Event 检索与新增镜头语言描述的收益，分别评议构图类别和布局，记录额外解析用量、处理时间和存储。只有收益足以支持成本时再排期；完整镜头覆盖、独立 Shot 业务体系和全量构图标注不作为本项前置建设。
 
-参考：[Shot gallery](../../engine/experiment/composition-models/20261018-shot-gallery/README.md)、[构图标签与盲评实验](../../engine/experiment/composition-models/20261019-shot-tags/README.md)。实验产物保留在本机忽略目录；本项仅记录设计方向，不标记为已实现或效果已验证。
+参考：[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)。实验产物已移至本机忽略 ZIP，原目录已退役；本项仅记录设计方向，不标记为已实现或效果已验证。
 
 ---
 

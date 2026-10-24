@@ -62,7 +62,7 @@ Query（计划 / 检索 / draft output）
 
 完整本地设计：[agent-chat-delivery-contract.md](agent-chat-delivery-contract.md)。
 
-对应的历史代码草案：[agent-loop-code-example.py](agent-loop-code-example.py)。其中 2026-09-15 的 8 项离线检查仅是草案阶段基线，不是当前回归总数，也不代表现行 HTTP / SSE 交付；当前实现与验证以[最新交付契约](agent-chat-delivery-contract.md)为准。
+历史代码草案已于 2026-10-24 清理，探索结论见[归档总结](../dev/design-experiment-cleanup.md#过时架构图和代码示例)。其中 2026-09-15 的 8 项离线检查仅是草案阶段基线，不是当前回归总数，也不代表现行 HTTP / SSE 交付；当前实现与验证以[最新交付契约](agent-chat-delivery-contract.md)为准。
 
 ## 5. DeepSeek Harness：kick → turn → step
 

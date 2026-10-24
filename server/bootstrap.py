@@ -194,6 +194,11 @@ def _build_application_services(
         gateway_client.create_agent_factory(supervisor_binding)
         if independent_supervisor else agent_model_factory
     )
+    query_hook_model = (
+        gateway_client.create_generative_model("query_hook")
+        if gateway_config.query_hook.enabled and "query_hook" in gateway_config.normalized_models
+        else None
+    )
     auth = AuthService(
         IdentityRepository(session_factory), settings.auth,
         redis=resources.redis_client,
@@ -414,6 +419,7 @@ def _build_application_services(
             maximum_parallel_queries=agent_config.maximum_parallel_queries,
             query_hook=QueryHook(
                 gateway_config.query_hook, QueryHookModels(gateway_config.query_hook),
+                decision_model=query_hook_model,
             ) if gateway_config.query_hook.enabled else None,
         )
 

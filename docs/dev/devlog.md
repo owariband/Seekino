@@ -1,4 +1,6 @@
-# AniVAG Devlog
+# Seekino Devlog
+
+> 2026-10-24 旧实验退役说明：下文保留当时的观察；声纹、检测、图片出处实验的原始材料已删除，链接转到[结论摘要](design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)。构图／shot-tags 数据仅保存在被 Git 忽略的本地归档中，详见[恢复说明](design-experiment-cleanup.md#本地归档与恢复)。
 
 ## 维护原则
 
@@ -20,6 +22,8 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-24：Chat 前置 low / none 实测与 cloud 选型](#devlog-query-hook-chat-model-ab-20261024) | C19、前置模型替代、体验与建设成本 |
+| [2026-10-24：Jev 旧链路与主 Chat 直接处理的真实端到端对照](#devlog-jev-chat-ab-20261024) | C19、意图路由、部署复杂度 |
 | [2026-10-23：Canvas 完整条目读取、可修复反馈与端到端评估](#devlog-canvas-20261023) | B06、C07、C18 |
 | [2026-10-22：画外音提示修正与 EP04 两个已知身份目标](#devlog-history-01) | B12 |
 | [2026-10-22：Whisper 替代 ASR 与整集先转写](#devlog-history-02) | 独立实验/设计 |
@@ -882,7 +886,7 @@ Refine 需要为指定对白完成声纹审查，但旧流程可能在缺少必�
 
 ### 1. 问题与现状
 
-需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../../engine/design/shot-tagging-experiment-brief.md)、[字段 schema](../../engine/design/shot-composition-schema.md)、[完整结果](../../engine/experiment/composition-models/20261019-shot-tags/README.md)
+需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../../engine/design/shot-tagging-experiment-brief.md)、[字段 schema](../../engine/design/shot-composition-schema.md)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
 
 ### 2. 方案候选
 
@@ -892,7 +896,7 @@ Refine 需要为指定对白完成声纹审查，但旧流程可能在缺少必�
 
 ### 3. 方案验证
 
-200 unique shot/hash pilot 覆盖 104 个 episode×duration×motion strata，保留 4 个指定 anchors；“motion”来自像素变化，不独立证明运镜。主模型 A/B 首次 200/200 合法，cheap 首次 198/200、修正后 200/200。pilot gate 通过后开全量，后被用户明确停止，只交付完成子集，明显偏前几集。HTML 有图、框和三个模型字段，浏览器因本地文件 policy 未完成目视验收，不能省略此限制。[pilot 报告](../../engine/experiment/composition-models/20261019-shot-tags/pilot/report.md)
+200 unique shot/hash pilot 覆盖 104 个 episode×duration×motion strata，保留 4 个指定 anchors；“motion”来自像素变化，不独立证明运镜。主模型 A/B 首次 200/200 合法，cheap 首次 198/200、修正后 200/200。pilot gate 通过后开全量，后被用户明确停止，只交付完成子集，明显偏前几集。HTML 有图、框和三个模型字段，浏览器因本地文件 policy 未完成目视验收，不能省略此限制。[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
 
 25 queries×6 methods 共 150 排序；735 query-shot pairs collapse 为 718 blind candidates（每 query 19–37），但用户相关性判断未完成、score.py 未执行。某 anchor 从 M0 rank 22 到 M4 rank 2 是排序变化，不是人工已确认收益。
 
@@ -973,17 +977,17 @@ bundled SDK 0.156.1 的独立无推理 thread 核对有效 MCP 全部 disabled�
 
 ### 1. 问题与现状
 
-CAM++ 在困难爽世样例上有错排，需要区分 encoder 能力、参考质量、adapter 与聚合方式。比较使用完全相同 PCM，固定 47 条音频（v11 参考 31＋平衡参考 15＋target）。真正有外部确认的目标句只有两条，不是大规模准确率测试。[模型对照](../../engine/experiment/speaker-encoder/20261018-mygo-ep04-model-comparison/README.md)
+CAM++ 在困难爽世样例上有错排，需要区分 encoder 能力、参考质量、adapter 与聚合方式。比较使用完全相同 PCM，固定 47 条音频（v11 参考 31＋平衡参考 15＋target）。真正有外部确认的目标句只有两条，不是大规模准确率测试。[声纹模型实验退役摘要](design-experiment-cleanup.md#声纹模型与适配器)
 
 ### 2. 方案候选
 
 候选为 CAM++、ERes2NetV2、ReDimNet-B6 Vox／mixed、WavLM，以及 WavLM 官方旧环境复测。保留 pair mean 与 centroid 为不同指标；不因某个目标用 centroid 更好就事后切换胜负口径。192／256 维区别也不是精度因果证据。
 
-成本包括模型权重和来源核验、多环境 adapter、旧依赖 pin、固定音频 hash 及聚合协议。WavLM 缓存约 2.570 GB，需同时处理 SV 权重与基础配置；官方旧环境使用 Python 3.9、Torch 1.9、NumPy 1.20 和固定 s3prl commit，并在本机经 Rosetta x86 运行。[artifact 清单](../../engine/experiment/speaker-encoder/20261018-mygo-ep04-model-comparison/artifacts.md)
+成本包括模型权重和来源核验、多环境 adapter、旧依赖 pin、固定音频 hash 及聚合协议。WavLM 缓存约 2.570 GB，需同时处理 SV 权重与基础配置；官方旧环境使用 Python 3.9、Torch 1.9、NumPy 1.20 和固定 s3prl commit，并在本机经 Rosetta x86 运行。[声纹模型实验退役摘要](design-experiment-cleanup.md#声纹模型与适配器)
 
 ### 3. 方案验证
 
-CPU 4 threads、FP32、batch 1 比较新编码器；CAM++ 使用既有缓存，没有加入同轮速度排名。WavLM 与固定官方实现重复同 47 PCM，验证 710 项相关权重严格匹配（分类投影例外）；微小数值差没有改变目标排名，因而 adapter 数值误差不能解释困难例失败。[WavLM 官方环境复测](../../engine/experiment/speaker-encoder/20261018-mygo-ep04-model-comparison/wavlm_official_pinned/README.md)
+CPU 4 threads、FP32、batch 1 比较新编码器；CAM++ 使用既有缓存，没有加入同轮速度排名。WavLM 与固定官方实现重复同 47 PCM，验证 710 项相关权重严格匹配（分类投影例外）；微小数值差没有改变目标排名，因而 adapter 数值误差不能解释困难例失败。[声纹模型实验退役摘要](design-experiment-cleanup.md#声纹模型与适配器)
 
 ### 4. 指标对比
 
@@ -1003,7 +1007,7 @@ CPU 4 threads、FP32、batch 1 比较新编码器；CAM++ 使用既有缓存，�
 
 ### 1. 问题与现状
 
-固定参考容易误标和采样集中，候选方向是先按声学信号聚类，再由 Agent 根据画面和上下文归名。研究中的 AHC／spectral 候选只是调研，实际验证采用 WavLM＋普通欧氏 KMeans。[聚类研究](../../engine/experiment/campplus/20261018-diarization-research.md)、[整集 KMeans](../../engine/experiment/speaker-clustering/20261018-mygo-ep04-wavlm-kmeans/README.md)
+固定参考容易误标和采样集中，候选方向是先按声学信号聚类，再由 Agent 根据画面和上下文归名。研究中的 AHC／spectral 候选只是调研，实际验证采用 WavLM＋普通欧氏 KMeans。[声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)、[聚类与选源退役摘要](design-experiment-cleanup.md#聚类与选源)
 
 ### 2. 方案候选
 
@@ -1015,7 +1019,7 @@ CPU 4 threads、FP32、batch 1 比较新编码器；CAM++ 使用既有缓存，�
 
 24 chunks 的 378 ASR cues 切为 436 个不重叠且不超过 3 秒窗口，加 3 holdout，共 439 embeddings；226 fit，181 个短于 1.5 秒窗口不参与 fit。归一化输入，但非 spherical KMeans、无 PCA／whitening。K=2..12、5 组 seeds、每组 10 starts，按 median silhouette 选 K；最优 K=2 把两个已知角色都放同一簇。
 
-K=8 参考替换只换 4 组并保留 6 人，随后 18 个代表候选交给 Voiceprint Agent；75 个 uncertain 没有送入。该 Agent 实际看每候选 3 帧，不能直接听音频。最终 15 refs／5 人未达严格 6/11 角色覆盖，ready=false、未发布。[参考替换检查](../../engine/experiment/speaker-clustering/20261018-mygo-ep04-wavlm-kmeans/reference-bank-check.md)、[Agent 完整报告（含被取代 runs）](../../engine/experiment/speaker-clustering/20261018-mygo-ep04-voiceprint-agent/report.md)
+K=8 参考替换只换 4 组并保留 6 人，随后 18 个代表候选交给 Voiceprint Agent；75 个 uncertain 没有送入。该 Agent 实际看每候选 3 帧，不能直接听音频。最终 15 refs／5 人未达严格 6/11 角色覆盖，ready=false、未发布。[聚类与选源退役摘要](design-experiment-cleanup.md#聚类与选源)
 
 ### 4. 指标对比
 
@@ -1038,7 +1042,7 @@ K=8 参考替换只换 4 组并保留 6 人，随后 18 个代表候选交给 Vo
 
 原问题编号 **C16**。早期问题记录的17张选图、13张共同人物框池，无法区分候选缺失与排序失败；它所说的“共同图库待建”是当时状态。下述10/18 gallery已补齐数据组织，人工相关性验收仍未完成。
 
-Event 不一定对应单一镜头，做构图检索与相似画面排重需要 shot、keyframe 和复用组。10/18 建立独立离线 gallery，不改变 Event index 的权威内容。[gallery 报告](../../engine/experiment/composition-models/20261018-shot-gallery/README.md)
+Event 不一定对应单一镜头，做构图检索与相似画面排重需要 shot、keyframe 和复用组。10/18 建立独立离线 gallery，不改变 Event index 的权威内容。[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)
 
 ### 2. 方案候选
 
@@ -1122,7 +1126,7 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 1. 问题与现状
 
-原正式 13 集 scope 有 312 chunks，却没有 Event published receipts；另一个 EP04 实验任务的 430 Events 不能代替该 scope 的索引。自然台词 query 先报 Event not ready，再回退 chunk；因此先判断实际数据范围和 readiness，不能把尚无索引当成检索模型失败。[原 scope 实验](../../engine/design/event-retrieval-eval-20261018/README.md)
+原正式 13 集 scope 有 312 chunks，却没有 Event published receipts；另一个 EP04 实验任务的 430 Events 不能代替该 scope 的索引。自然台词 query 先报 Event not ready，再回退 chunk；因此先判断实际数据范围和 readiness，不能把尚无索引当成检索模型失败。[原 scope 实验](../../evals/mygo/README.md#历史结论event)
 
 ### 2. 方案候选
 
@@ -1132,9 +1136,9 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 3. 方案验证
 
-独立 EP04 v11 有 24 chunks／430 Events，日语「部外者は黙ってて。」Event 首位为立希 548–549 秒、播放 540–553 秒。两条自然中文 Chat 均无需 chunk fallback；其中目标 Event 初次 rank 22 不在首屏，改 query 后 rank 11 才曝光。完整召回集合不等于模型实际已读集合。[EP04 日语](../../engine/design/event-retrieval-eval-20261018/EP04.md)、[EP04 中文](../../engine/design/event-retrieval-eval-20261018/EP04-ZH.md)
+独立 EP04 v11 有 24 chunks／430 Events，日语「部外者は黙ってて。」Event 首位为立希 548–549 秒、播放 540–553 秒。两条自然中文 Chat 均无需 chunk fallback；其中目标 Event 初次 rank 22 不在首屏，改 query 后 rank 11 才曝光。完整召回集合不等于模型实际已读集合。[EP04 日语](../../evals/mygo/README.md#历史结论event)、[EP04 中文](../../evals/mygo/README.md#历史结论event)
 
-随后正式 13 集回填 312/312 chunks、7,103/7,103 Events；验证 content id／version／SHA 未变，16:17 完成、16:19 核验，INDEX retry errors=0。图像 query 的原图同源首位 EP01 9:02.3–9:04.3、cos 0.9294221；只写构图则可能命中 EP13 类似大／小主体，宽泛描述还可命中 ED。文字候选池 20 与图片 40 不同，top_k 又是父 chunk 数，不能直接做公平模态优劣比较。[回填](../../engine/experiment/composition-models/20261018-event-backfill/README.md)、[Event 构图](../../engine/experiment/composition-models/20261018-event-composition/README.md)
+随后正式 13 集回填 312/312 chunks、7,103/7,103 Events；验证 content id／version／SHA 未变，16:17 完成、16:19 核验，INDEX retry errors=0。图像 query 的原图同源首位 EP01 9:02.3–9:04.3、cos 0.9294221；只写构图则可能命中 EP13 类似大／小主体，宽泛描述还可命中 ED。文字候选池 20 与图片 40 不同，top_k 又是父 chunk 数，不能直接做公平模态优劣比较。[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)
 
 ### 4. 指标对比
 
@@ -1157,7 +1161,7 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 原编号 **B14**。MyGO 13 集 Event 补建在约 45 分钟内产生 44.106 GB binlog，核心负担是不断重写增长中的 JSON，并非普通文本日志或同一 Chunk 无限重试。历史状态为缓存批量保存、无变化聚合、扫描游标修复已完成源码核对，七天 binlog 留存已启用；修复后真实工作负载降幅与运行服务加载仍未在本条复验。
 
-来源：[问题原文 B14](problems.md)、[索引协调器](../../server/service/video_parse_index_coordinator.py)、[Event 补建记录](../../engine/experiment/composition-models/20261018-event-backfill/README.md)。原条所记 `server/repository/video_parse.py` 已迁移，历史路径保留用于追版本，不伪装成当前可打开文件。
+来源：[问题原文 B14](problems.md)、[索引协调器](../../server/service/video_parse_index_coordinator.py)、[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)。原条所记 `server/repository/video_parse.py` 已迁移，历史路径保留用于追版本，不伪装成当前可打开文件。
 
 ### 2. 方案候选
 
@@ -1245,17 +1249,17 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 1. 问题与现状
 
-“类似构图”可能指类别相同，也可能指人物位置、画面线条或视角相似。PCP 分类、SAMP/MUSIQ 质量分、CLIP/DINO embedding 与检测框编码各回答不同问题。[首轮模型实验](../../engine/experiment/composition-models/20261017-first-pass/README.md)、[PCP](../../engine/experiment/composition-models/20261017-first-pass/pcp/README.md)、[SAMP](../../engine/experiment/composition-models/20261017-first-pass/samp/README.md)
+“类似构图”可能指类别相同，也可能指人物位置、画面线条或视角相似。PCP 分类、SAMP/MUSIQ 质量分、CLIP/DINO embedding 与检测框编码各回答不同问题。[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)
 
 ### 2. 方案候选
 
 比较原图模型特征、DINO 对框／线条栅格图的特征、PCP 与全物体／人物框融合，以及真实 Chat 按构图描述搜索。融合的 PCP 0.8、box 0.2 是试验默认值，未优化或校准；没有足够数据选定通用赢家。
 
-新增维护包括多模型权重和预处理、特征是否缺失的语义、类别映射、坐标／线段来源、融合权重与评测口径。框的轴对齐会丢倾斜信息；质量分不可直接冒充构图类别概率。[栅格实验](../../engine/experiment/composition-models/20261017-layout-raster/README.md)、[栅格复核](../../engine/experiment/composition-models/20261017-layout-raster/review.md)、[PCP＋box](../../engine/experiment/composition-models/20261017-pcp-box-fusion/README.md)
+新增维护包括多模型权重和预处理、特征是否缺失的语义、类别映射、坐标／线段来源、融合权重与评测口径。框的轴对齐会丢倾斜信息；质量分不可直接冒充构图类别概率。[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)
 
 ### 3. 方案验证
 
-固定 17 张图、10 组探索性三元组。栅格实验用同一批原图，分别编码原图、全部框、线条、框＋线条；共同有效 query 为 16 条、共同有效三元组 9 条。PCP＋人物框只在 13/17 图存在特征，粉色倾斜图漏人不能当作无人物。Chat 另在真实视频 corpus 找构图：它的候选库不同，不能与 17 图离线分数直接对比。[融合复核](../../engine/experiment/composition-models/20261017-pcp-box-fusion/review.md)、[Chat 构图](../../engine/experiment/composition-models/20261017-chat-composition/README.md)
+固定 17 张图、10 组探索性三元组。栅格实验用同一批原图，分别编码原图、全部框、线条、框＋线条；共同有效 query 为 16 条、共同有效三元组 9 条。PCP＋人物框只在 13/17 图存在特征，粉色倾斜图漏人不能当作无人物。Chat 另在真实视频 corpus 找构图：它的候选库不同，不能与 17 图离线分数直接对比。[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)
 
 ### 4. 指标对比
 
@@ -1288,9 +1292,9 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 3. 方案验证
 
-v4 服务重启后失败，understand 24/24、refine 8/22、index 1/24，目标仍 null；288 次 CAM++ 中 1 次失败，冻结的 30 秒预算故障被 Agent 重试遮蔽。v5 完成并将目标从燈纠正为爽世且进入索引；v7 同配置重试仍有大量 refresh。v8 更快却把目标错成爱音，输入 ASR 35.6–48.6 秒是混合语音，而且没有成功的目标比较，不能归为 CAM++ 识别错误。[v4](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04/README.md)、[v5](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-multiref-no-prefix/README.md)、[v7](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-event-merge-no-prefix-retry/README.md)、[v7 时延 trace](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-event-merge-no-prefix-retry/trace-latency-report.md)、[v8](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-trusted-voiceprint-null-speaker/README.md)
+v4 服务重启后失败，understand 24/24、refine 8/22、index 1/24，目标仍 null；288 次 CAM++ 中 1 次失败，冻结的 30 秒预算故障被 Agent 重试遮蔽。v5 完成并将目标从燈纠正为爽世且进入索引；v7 同配置重试仍有大量 refresh。v8 更快却把目标错成爱音，输入 ASR 35.6–48.6 秒是混合语音，而且没有成功的目标比较，不能归为 CAM++ 识别错误。[VoiceprintAgent 退役摘要](design-experiment-cleanup.md#voiceprintagent-历次迭代)、[v7 时延探索总结](design-experiment-cleanup.md#v6-网络失败与-v7-性能结论)、[VoiceprintAgent 退役摘要](design-experiment-cleanup.md#voiceprintagent-历次迭代)
 
-后续一致性审计发现参考误标：v9 目标错归燈，对本组 mean 0.378263、爽世 0.7157；v10 K5 实际爱音却登记祥子，且 K4/K5 cosine 0.651728，说明简单相似阈值不能保证身份。v11 18/24 chunk 完成后触发，6 人 31 条参考仍有两条已知误标，爽世 6 条中 4 条来自同 chunk，未实现充分覆盖。[v9 一致性](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-visual-overlap-submit/registry-pairwise-consistency.md)、[v10 审计](../../engine/experiment/voiceprint-agent/20261017-mygo-ep04-v10-saki-reference-audit/README.md)、[v11 执行](../../engine/experiment/voiceprint-agent/20261018-mygo-ep04-three-quarter-sampling/voiceprint-execution-trace.md)、[v11 分组审计](../../engine/experiment/voiceprint-agent/20261018-mygo-ep04-three-quarter-sampling/cross-group-mean-audit.md)
+后续一致性审计发现参考误标：v9 目标错归燈，对本组 mean 0.378263、爽世 0.7157；v10 K5 实际爱音却登记祥子，且 K4/K5 cosine 0.651728，说明简单相似阈值不能保证身份。v11 18/24 chunk 完成后触发，6 人 31 条参考仍有两条已知误标，爽世 6 条中 4 条来自同 chunk，未实现充分覆盖。[VoiceprintAgent 退役摘要](design-experiment-cleanup.md#voiceprintagent-历次迭代)
 
 ### 4. 指标对比
 
@@ -1308,11 +1312,11 @@ v8 声纹 Agent 阶段 6:29.539，准备 encoder 25 次仅 3.914 秒。v11 31 re
 
 ### 1. 问题与现状
 
-需要用声音证据纠正动漫台词 speaker，先验证本地 CAM++ 是否能区分角色。固定片段的闭集识别很好，并不说明混合说话人、短音频、情绪变化和参考误标都已解决。[首轮 CAM++](../../engine/experiment/campplus/20261017-mygo-ep04/README.md)
+需要用声音证据纠正动漫台词 speaker，先验证本地 CAM++ 是否能区分角色。固定片段的闭集识别很好，并不说明混合说话人、短音频、情绪变化和参考误标都已解决。[声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)
 
 ### 2. 方案候选
 
-比较每人单参考、双参考、leave-one-out、多参考等权平均、归一化 centroid、截断时长加权。单条情绪案例可用于诊断，不足以选择全局阈值或认定情绪是因果。维持同等参考预算与排除目标泄漏比单纯增加参考数量更重要。[情绪／参考诊断](../../engine/experiment/campplus/20261017-soyo-emotion/README.md)、[平衡多参考](../../engine/experiment/campplus/20261017-balanced-multiref/README.md)
+比较每人单参考、双参考、leave-one-out、多参考等权平均、归一化 centroid、截断时长加权。单条情绪案例可用于诊断，不足以选择全局阈值或认定情绪是因果。维持同等参考预算与排除目标泄漏比单纯增加参考数量更重要。[声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)
 
 架构与维护成本是音频裁剪／解码、参考来源和 PCM hash、已知角色标签、参考重叠与时长控制、聚合分数的解释。cosine 的均值与 centroid 数值不可互换，margin 大也不能证明音频没有混合说话人。
 
@@ -1339,13 +1343,13 @@ v8 声纹 Agent 阶段 6:29.539，准备 encoder 25 次仅 3.914 秒。v11 31 re
 
 ### 1. 问题与现状
 
-10/16–10/17 的截图实验中，实际 Chat 路径是图片交给 VLM 描述，再用文本 query 检索语义／视觉通道和看候选帧，并不是直接把上传图的 embedding 查向量库。完整画面、咖啡店裁剪和茶杯小裁剪难度不同。[实验索引](../../engine/experiment/chat-image-origin/README.md)、[6 图源头实验](../../engine/experiment/chat-image-origin/20261016-mygo-image-origin/README.md)
+10/16–10/17 的截图实验中，实际 Chat 路径是图片交给 VLM 描述，再用文本 query 检索语义／视觉通道和看候选帧，并不是直接把上传图的 embedding 查向量库。完整画面、咖啡店裁剪和茶杯小裁剪难度不同。[图片检索退役摘要](design-experiment-cleanup.md#图片向量与出处定位)
 
 **原问题 C15 的停止方案与验证状态：**
 
 原编号 **C15**。282×214 茶杯局部图样本运行 1200.199 秒后超时，空 Draft 反复被退回，用户只得到开场白。10/18 曾用 deterministic Loop Control 处理并通过单元测试，采用10/18该Loop Control后的茶杯真实样本未重跑；10/19 的 Query-only 收敛又移除了 Evaluator、inner Chat、Result 和 Loop Control，旧设置仅兼容 YAML。因此 10/17 的 stop 提案和 10/18 的两轮控制都不能当作当前停止保证；当前架构的茶杯回归仍无验证证据。
 
-来源：[C15](problems.md)、[perf_plan.md §3.5](perf_plan.md)、[茶杯实验](../../engine/experiment/chat-image-origin/20261017-mygo-teacup-detail-source/README.md)。
+来源：[C15](problems.md)、[perf_plan.md §3.5](perf_plan.md)、[图片检索退役摘要](design-experiment-cleanup.md#图片向量与出处定位)。
 
 ### 2. 方案候选
 
@@ -1361,9 +1365,9 @@ v8 声纹 Agent 阶段 6:29.539，准备 encoder 25 次仅 3.914 秒。v11 31 re
 
 ### 3. 方案验证
 
-6 图分两组：600 秒预算下 chat-06、07 超时；后来 1200 秒预算下 chat-08、09 各返回 3 卡，6 张候选经过独立帧检查。咖啡店裁剪 630×412，最终靠较宽的场景描述找到 EP01 约 17:33。282×214 茶杯裁剪首次 1200 秒超时；第二次更换模型及其他运行条件后虽完成，却选错 EP02 11:38.5，独立源帧不匹配。不能把不同条件两次运行当模型优劣 AB。[咖啡店](../../engine/experiment/chat-image-origin/20261017-mygo-cafe-source/README.md)、[茶杯第一次](../../engine/experiment/chat-image-origin/20261017-mygo-teacup-detail-source/README.md)、[茶杯第二次](../../engine/experiment/chat-image-origin/20261017-mygo-teacup-detail-source/run2/README.md)
+6 图分两组：600 秒预算下 chat-06、07 超时；后来 1200 秒预算下 chat-08、09 各返回 3 卡，6 张候选经过独立帧检查。咖啡店裁剪 630×412，最终靠较宽的场景描述找到 EP01 约 17:33。282×214 茶杯裁剪首次 1200 秒超时；第二次更换模型及其他运行条件后虽完成，却选错 EP02 11:38.5，独立源帧不匹配。不能把不同条件两次运行当模型优劣 AB。[图片检索退役摘要](design-experiment-cleanup.md#图片向量与出处定位)
 
-直接 embedding 另做 8 次 doubao-embedding-vision-250615 调用和 1 次追加脸部裁剪查询：杯子 crop 对 full 图 top1/7，cos 0.364079，领先第二名 0.032004；反向 full→crop 排末。脸部 crop 对 full 图 cos 0.705202、top1/7，但 margin 仅 0.029257。没有充分 hard negative，部分 crop 精确同帧关系未证实。[杯子 embedding](../../engine/experiment/image-embedding/20261017-mygo-cup-crop/README.md)、[人物 crop](../../engine/experiment/image-embedding/20261017-mygo-anon-crop/README.md)
+直接 embedding 另做 8 次 doubao-embedding-vision-250615 调用和 1 次追加脸部裁剪查询：杯子 crop 对 full 图 top1/7，cos 0.364079，领先第二名 0.032004；反向 full→crop 排末。脸部 crop 对 full 图 cos 0.705202、top1/7，但 margin 仅 0.029257。没有充分 hard negative，部分 crop 精确同帧关系未证实。[图片检索退役摘要](design-experiment-cleanup.md#图片向量与出处定位)
 
 **原问题 C15 的停止方案与验证状态：**
 
@@ -1417,7 +1421,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 1. 问题与现状
 
-需要在动漫画面中获得人物和物体位置，辅助构图检索。GroundingDINO Tiny 在本机可运行，但目标框、构图类别、主要线段、机位和人物身份是不同输出。[本地验证](../../engine/experiment/grounding-dino/20261016-mygo-local/README.md)
+需要在动漫画面中获得人物和物体位置，辅助构图检索。GroundingDINO Tiny 在本机可运行，但目标框、构图类别、主要线段、机位和人物身份是不同输出。[GroundingDINO 退役摘要](design-experiment-cleanup.md#groundingdino-检测)
 
 ### 2. 方案候选
 
@@ -1427,7 +1431,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 3. 方案验证
 
-6 张 EP01 1920×1080 图，6×3 次计时和 2 次 warmup。另用 360/480/720/1080 图比较，发现默认 processor 都变成 1333×750 tensor；室内图比较 3 组提示词；水族馆单图先冻结助手的 6 条线和 2 人框，再比较检测器。助手标注不是专家 ground truth，也没有标准 AP。[分辨率](../../engine/experiment/grounding-dino/20261016-mygo-resolution/README.md)、[室内布局](../../engine/experiment/grounding-dino/20261017-interior-layout/README.md)、[水族馆](../../engine/experiment/grounding-dino/20261017-aquarium-vlm-vs-dino/README.md)
+6 张 EP01 1920×1080 图，6×3 次计时和 2 次 warmup。另用 360/480/720/1080 图比较，发现默认 processor 都变成 1333×750 tensor；室内图比较 3 组提示词；水族馆单图先冻结助手的 6 条线和 2 人框，再比较检测器。助手标注不是专家 ground truth，也没有标准 AP。[GroundingDINO 退役摘要](design-experiment-cleanup.md#groundingdino-检测)
 
 ### 4. 指标对比
 
@@ -1473,7 +1477,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 1. 问题与现状
 
-13 集 ready 的 MyGO scope 上，9 次请求、8 个 conversation 均技术完成，但返回 COMPLETED 不等于语义任务完成。任务覆盖人物关系、精彩／搞笑片段、全剧归纳、动作、短台词和当前播放位置。T01 存在无充分证据的心理解释及午餐卡遗漏，T02 追问才补；T07 短台词检索漏掉此前 T04 已出现的 EP04 17:11.2–17:11.6 立希「は？」。[总报告](../../engine/design/mygo-chat-eval-20261015.md)、[完整对话](../../engine/design/mygo-chat-eval-20261015/transcripts.md)
+13 集 ready 的 MyGO scope 上，9 次请求、8 个 conversation 均技术完成，但返回 COMPLETED 不等于语义任务完成。任务覆盖人物关系、精彩／搞笑片段、全剧归纳、动作、短台词和当前播放位置。T01 存在无充分证据的心理解释及午餐卡遗漏，T02 追问才补；T07 短台词检索漏掉此前 T04 已出现的 EP04 17:11.2–17:11.6 立希「は？」。[总报告](../../evals/mygo/README.md#历史结论chat)、[历史回答与基线](../../evals/mygo/baseline.jsonl)
 
 ### 2. 方案候选
 
@@ -1483,7 +1487,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 3. 方案验证
 
-使用 gpt-6-astra，两个 worker 的任务并发，峰值模型并行 4；因此不是隔离资源的性能基准。每条保存回复、tool trace、usage 和源数据索引；大体积 deep trace 保留链接追溯，没有在本次归档重跑或全量重解析。[运行汇总](../../engine/design/mygo-chat-eval-20261015/run-summary.json)、[逐条日志索引](../../engine/design/mygo-chat-eval-20261015/chat-logs/README.md)、[deep trace 索引](../../engine/design/mygo-chat-eval-20261015/deep-trace/README.md)
+使用 gpt-6-astra，两个 worker 的任务并发，峰值模型并行 4；因此不是隔离资源的性能基准。原实验逐条保存回复、tool trace、usage 和源数据索引；2026-10-24 已将问题、历史回答、用量及关键诊断收敛为 benchmark，旧 deep trace 已退役。本次归档没有重跑或全量重解析。[运行汇总](../../evals/mygo/baseline.jsonl)、[诊断摘要](../../evals/mygo/baseline.jsonl)、[归档范围](../../evals/mygo/README.md#归档与清理边界)
 
 ### 4. 指标对比
 
@@ -2205,3 +2209,293 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 ### 4. 指标对比
 
 已验证窗口、状态隔离、租约恢复、取消和缓存合同；未做真实视频/模型端到端延迟测量、真实MySQL并发锁压测。缓存命中可省去对应工作属于路径事实，首轮等待时间、费用和回答质量改善未量化；不能将“实时”解释为已承诺固定秒数响应。
+
+<a id="devlog-jev-chat-ab-20261024"></a>
+
+## 2026-10-24：Jev 旧链路与主 Chat 直接处理的真实端到端对照
+
+### 1. 问题与现状
+
+用户要求用旧链路与主 Chat 直接处理的**完整耗时、token、任务完成度**判断是否值得保留 Jev，而不是凭架构复杂程度或单个模型的分类命中率作决定。原问题 C19：上一轮已经完成台词检索，用户说“那又咋了，你说话怎么这么无趣啊”，系统仍把对助手的反馈当作待查台词。旧实现是 **Jev 三路判断（respond/retrieve/mixed）→ 按需调用本地 Qwen3-8B 抽取检索槽位 → 原始消息附加应用说明 → Chat 及其工具**。原始用户消息没有被整个替换。
+
+此前的 [意图路由记录](#devlog-history-12) 主要验证了局部分类、槽位及少量在线行为，没有完整证明该前置链路的净收益。同日先前的 14 条固定空工具回放和 6 条真实 runtime 调用，对比的是**无 hook 的旧 prompt 与无 hook 的新 prompt**，不能作为“有 Jev 的旧链路”基线。新 prompt 在空工具回放中工具选择 14/14、严格行为 13/14，也不能推出真实 HTTP 历史会话中的 C19 已解决。本次另建基线，前述样本不计入以下 40 次。
+
+本轮结果不支持直接下结论“Jev 没必要”：新链路在 C19 两次均误检索；旧链路两次均正确保持对话路径。但旧链路也有回答越过证据、时间码错误和 8B 抽错目标的问题。两种方案都没有达到完整业务验收，不能把某一方描述为已经稳定解决问题。
+
+### 2. 方案候选
+
+| 方案 | 预期收益与代价 | 本轮状态 |
+|---|---|---|
+| 保留 Jev + 8B + 旧 Chat prompt | 独立路由可以约束检索惯性；增加外部 key、网络依赖、本地模型及三处行为规则 | 真实基线，20 次 |
+| 新 Chat prompt 直接理解原始消息，关闭整个 hook | 少一项外部服务配置、一个常驻本地模型；意图判断与回答统一，也可能被长检索说明和历史牵引 | 候选方案，20 次 |
+| 仅去掉 8B 改写，保留 Jev 路由 | 有机会降低本地部署负担，同时保留 C19 的路由约束 | **未运行消融**；不能拿上述两组差异推断此方案的效果 |
+
+本次只比较前两条链路；没有微调小模型、添加新模型、边跑边修改 prompt，也没有改变默认 hook 配置。上一轮准备的 v4 prompt 修改仍是工作区候选；本轮没有新增业务代码改动。**v4 prompt + 启用 hook 的组合不属于本次已验证的任一实验臂**，不把当前工作区草稿等同于旧基线或已验收部署。当前决定是暂不据此删除 Jev；若继续简化，先分离路由与 8B 改写的作用，再验证独立收益。
+
+### 3. 方案验证
+
+实验产物位于 [jev-chat-e2e-ab-20261024](../../outputs/verification/jev-chat-e2e-ab-20261024/)；主入口为 [run_arm.py](../../outputs/verification/jev-chat-e2e-ab-20261024/run_arm.py)、冻结的 [protocol.json](../../outputs/verification/jev-chat-e2e-ab-20261024/protocol.json)、[cases.json](../../outputs/verification/jev-chat-e2e-ab-20261024/cases.json) 与 [schedule.json](../../outputs/verification/jev-chat-e2e-ab-20261024/schedule.json)。`outputs` 是本地实验产物，关键数字在本文保留，不假定随 Git 分发。
+
+控制条件与测量范围：
+
+- 两个独立 OS 进程，每组 10 个场景 × 2 次重复，共 40 次。按配对顺序交替先跑旧/新，第二轮反转场景顺序；同时只发起一个顶层请求，保留超时后的迟到终态与 usage。每次新建独立 SQL/native 会话，种入相同历史；没有共享上一条测试生成的回答。
+- 两组 Supervisor 均为 `gpt-5.6-luna / medium`、Codex harness；Query 为同一 `gpt-5.6-luna / high`，同一 embedding、工具 schema 与 runtime 设置。总超时均为 240 秒，`limits_enabled=false`。服务端 cache 未清空，fresh native session 不等于冷 cache；两次重复不提供 p95 或统计显著性结论。
+- 旧组冻结 Supervisor 源码 SHA-256 为 `62e5b794eb8d93b2911dbf30f8e5cf5f26ed6946d515b57f7aa062c46a067730`，新组为 `a7f0a1c5ad14ee9835855b855fcf61c92d936cdb7826a6693dd43ac4578fe949`。旧组真实调用 Jev `typesafe/jev-1.14`（响应版本 `jev-1.14-20261014`）与本地 Qwen3-8B-Q4_K_M；新组 `_query_hook=None`，将原始消息原样交给 Chat。完整源码与配置元数据分别保存在 `old/`、`new/`。
+- 使用原有 MyGO 13 集数据、MySQL、Elasticsearch 与真实工具。索引 `anivag_video_chunks_local_20261010_development`，前后 UUID 与文档数 **71,736** 一致。检索结果存在 `partial=true` 和第 2 集覆盖不足警告；能确认已命中的正例，不能证明全剧中不存在某句台词。
+- 通过实际 `/api/agent/conversations/create`、`/api/agent/messages/send` 的 ASGI HTTP 路径执行，记录发送到最终持久化/HTTP 错误的耗时；不包括新建会话、准备 fixture、真实客户端网络传输和浏览器渲染。首个文本可能只是过程说明，不等于首次给出正确答案。
+- 20 对 Supervisor 入口的历史、动态上下文、工具 schema 与原始请求一致；新组没有隐式改写原始消息。进一步读取对应 native rollout，**40/40 的历史消息均按原文、原顺序出现在当前 prompt 前**。旧组 `r1-holdout_mixed`、新组 `r2-retrieve_correct_negation` 有历史注入确认超时警告，但原生日志确认消息实际存在；不能将警告直接解释为历史丢失。证据：[input-audit.json](../../outputs/verification/jev-chat-e2e-ab-20261024/input-audit.json)、[native-history-audit.json](../../outputs/verification/jev-chat-e2e-ab-20261024/native-history-audit.json)。
+- 保存每次 HTTP 响应、阶段耗时、Jev 返回标签、8B 槽位、实际传入 Chat 的消息、工具参数、返回给模型的证据正文、可见回答与 provider/SDK usage。仅工具调用成功不足以判定任务完成；逐条对照当前请求、执行顺序、证据、提交片段与最终文本，审读记录见 [reviews.json](../../outputs/verification/jev-chat-e2e-ab-20261024/reviews.json)。这是 Agent 审读，未做独立人工盲评或全剧逐帧标注。
+
+场景覆盖 8 条经典问题及 2 条新的表述：C19 原始历史、真实台词出处、只解释已有证据、先回应吐槽再找首次登台、停止检索并压缩、纠正“不解释≠不检索”、按历史解析“第一件/第二件”、明确搜索类似吐槽的角色台词，以及两条新的反馈/混合表达。正例包括第 13 集「いいご身分ですわね。」54.6–56 秒与第 7 集首次 live 的对白/舞台片段。
+
+质量分级：`pass` 为当前请求完整完成且最终说法与证据一致；`partial` 为方向正确但只有近似片段、复述错对象、时间展示错误或结论越过证据；`fail` 为意图/目标错误、漏掉任务、无依据宣称精确命中或超时；`unassessed` 不算成功。近似字幕翻译与原句可核对时可以通过，语义不同的“无聊的女生”不能算“你说话怎么这么无趣”的精确出处。
+
+评测自身有一处问题：`holdout_mixed` 的历史明确提到祥子/睦，当前“她们第一次登台”却在预期里被写死为 MyGO 五人，存在指代歧义。发现后保存 [fixture-caveat.json](../../outputs/verification/jev-chat-e2e-ab-20261024/fixture-caveat.json)，没有改题重跑；两组该场景的两次运行全部保留耗时与 token，业务质量标为 `unassessed`，所以每组只有 **18 次可判任务质量**。执行“先压缩再找”的顺序仍可独立判断。
+
+预检曾发现实验记录器保留已解压响应的 `Content-Encoding`，造成重复解压，并发现 HTTP 外层 usage observer 未自动进入业务执行线程。立即停止预检，修复记录器、单独校准 Jev 和 8B 后才开始上述正式 40 次；预检保存在 `harness-preflight-*`，不作为旧链路质量失败或正式费用统计。正式运行过程中未改记录器和两组 prompt。
+
+闭环核对：SQL 最终 **38 COMPLETED、2 FAILED、0 PROCESSING**，38 个成功响应与持久化正文一致；两个失败均为 `AGENT_EXECUTION_TIMEOUT`。成功响应引用的 6 个不同视频 URL 均经真实内容接口返回 **HTTP 206、1024 bytes、video/mp4**，验证了资源可读与 Range 路径；未执行浏览器全片播放或完整解码验收。见 [persistence-audit.json](../../outputs/verification/jev-chat-e2e-ab-20261024/persistence-audit.json)、[playback-probe.json](../../outputs/verification/jev-chat-e2e-ab-20261024/playback-probe.json)。本轮临时启动的 MySQL、ES、8B 服务已仅按记录的自有 PID 停止，数据、权重及带 `[Jev A/B]` 标题的测试会话保留供追溯；未启动解析任务或重建索引。
+
+未验证：长上下文容量、用户图片附件的意图理解、其他 Chat 模型/供应商、真实并发负载、独立 Jev/8B 消融、广泛用户问题分布与最终部署效果。本轮只支持上述冻结条件下的链路比较。
+
+### 4. 指标对比
+
+主统计包含所有正式运行和失败，不删除慢样本；**共 20 次/组**。来源：[summary.json](../../outputs/verification/jev-chat-e2e-ab-20261024/summary.json)。
+
+| 指标 | 旧链路：Jev + 8B + 旧 Chat | 新链路：v4 Chat 全处理 |
+|---|---:|---:|
+| 20 次累计耗时 | 843.65 秒 | 1,172.38 秒 |
+| 平均每次耗时 | 42.18 秒 | 58.62 秒（+39.0%） |
+| 耗时中位数 | 33.54 秒 | 32.29 秒 |
+| 首个可见文本：平均 / 中位数 | 7.23 / 7.07 秒 | 8.05 / 5.01 秒 |
+| HTTP 与最终持久化完成 | 20/20（100%） | 18/20（90%） |
+| 严格业务通过（可判的 18 次） | 10/18（55.6%） | 12/18（66.7%） |
+| 部分完成 / 失败 | 8 / 0 | 2 / 4 |
+| 目标歧义，未判业务质量 | 2/20 | 2/20 |
+| 意图与先后顺序检查 | 19/20 | 18/20 |
+| 全链路已观测 token | **7,233,511，记录完整** | **至少 4,351,225，仍不完整** |
+
+新组的 4 次失败是 C19 两次误检索和第二轮两次超时。旧组的 8 次部分完成包括：C19 一次回应错对象、已有文字解释两次过度推断、台词出处一次时间码错误、雨中等人两次近似候选、明确吐槽台词检索两次近似候选。新组通过数较高与失败数较多同时成立，不能仅选一个数字宣称全胜。意图/顺序是局部行为指标：超时前选择正确路径也可以通过此项，但不会因此算业务成功。
+
+每个场景的两次完整耗时如下；顺序为第 1 / 第 2 次，质量字母 `P=通过、△=部分、F=失败、?=未判`：
+
+| 场景 | 旧：秒；质量 | 新：秒；质量 |
+|---|---|---|
+| C19 原始历史后的吐槽 | 7.56 / 5.77；△ / P | 36.85 / 45.21；F / F |
+| “高高在上”台词出处 | 25.62 / 38.62；P / △ | 20.68 / 17.00；P / P |
+| 只解释已有证据 | 5.29 / 4.89；△ / △ | 4.72 / 5.33；P / P |
+| 先回应反馈再找首次登台 | 44.60 / 35.25；P / P | 53.26 / 23.49；P / P |
+| 停止检索、压成一句话 | 6.46 / 6.91；P / P | 4.17 / 4.50；P / P |
+| “不解释”并非“不检索” | 31.83 / 46.16；P / P | 28.89 / 116.03；P / P |
+| 第二件反馈先答，第一件雨中等人继续找 | 170.57 / 161.00；△ / △ | 36.75 / 240.15；△ / F |
+| 明确要求寻找“说话无趣”的角色台词 | 70.20 / 70.08；△ / △ | 69.95 / 240.17；△ / F |
+| 新表述：出处已知，只批评表达 | 7.76 / 7.40；P / P | 4.77 / 5.70；P / P |
+| 新表述：压缩出处，再找“她们”首次登台 | 36.71 / 60.94；? / ? | 35.70 / 179.04；? / ? |
+
+关键失败证据及阶段作用：
+
+- **C19 是当前替代方案的明确回归。**旧组两次均 `respond`、0 次检索，分别 23,333 / 23,448 token；新组两次均去搜索并返回第 8 集无关近似台词，分别 **199,219 / 289,953 token**。新组还将用户反馈解释成“记混了两处台词”。历史已确认实际注入，因此不能用“没拿到历史”解释这个结果。旧组第一次虽无误检索，却把反馈写成给用户使用的回话示例，仍只计部分完成。
+- **8B 改写存在独立缺陷。**12 次调用中，6 次保留目标、2 次把原台词缩为“高高在上 台词”、4 次抽错当前检索任务。两次“第二件先答、第一件继续找”均抽成“为什么总把我的吐槽当台词”；两次压缩旧出处后找新场景均抽回已知旧台词。Chat 有时仍依靠原始消息搜索正确目标，不能把全部额外耗时因果归给错误槽位。详细见 [hook-review.json](../../outputs/verification/jev-chat-e2e-ab-20261024/hook-review.json)。
+- **路由正确不保证最后正确。**Jev 的冻结三分类标签为 20/20，但旧组仍只有 10/18 严格通过；例如第二轮混合改写任务先检索、最后才压缩，没有遵守顺序。已有文字解释也出现“不能判断不喜欢”之后又断言“并非讨厌对方”的矛盾。
+- **新组两次超时的原因不能合并成意图失败。**明确台词搜索一直扩搜并调用 Query，240 秒仍无最终答案；雨中等人一例在约 39 秒已提交室内等待候选，之后未完成最终答复，240 秒返回 502。未独立排除 native SDK/远端推理停顿，不能把全部超时归因于删掉 Jev。它们仍是真实端到端失败，应保留在主要统计。
+
+token 与费用必须分口径。Gateway 记录旧组 input **7,196,699**、output **36,812**、cached input **6,364,976**；新组可见 input **3,596,824**、output **20,008**、cached input **2,897,664**，但新组 2 个 Chat、1 个 Query 超时调用没有返回完整 usage。新组 Gateway 的 **3,616,832** 因而只是部分记录，不能与旧组直接比较得出“省了一半”。进一步从对应原生会话日志恢复两个失败 Chat 的最后计数 **559,620 + 174,773**，与 Gateway 已记录调用不重叠，得到 **4,351,225 的已观测下界**；失败 Query 的 ephemeral 会话未保存可恢复日志，超时尾部也可能尚未回报。38 个成功 Chat 的 native 总计数与 Gateway 全部一致，恢复依据见 [usage-recovery.json](../../outputs/verification/jev-chat-e2e-ab-20261024/usage-recovery.json)。
+
+| 阶段 | 旧链路 token | 新链路已观测 token |
+|---|---:|---:|
+| Jev 路由 | 16,228（20 次） | 0 次 |
+| 8B 槽位 | 4,140（12 次） | 0 次 |
+| 主 Chat | 3,804,152 | 至少 3,436,059（含两个失败会话的部分恢复） |
+| Query 子调用 | 3,408,183（2 次） | 至少 913,597（1 次有 usage、1 次超时未知） |
+| 文本 embedding | 808 | 1,569 |
+
+为给出不把未知计零的可比数字，另列**两边用量都完整的 18 对样本**，同时排除这两个新组超时及它们对应的旧组运行：旧 **4,596,795** → 新 **3,616,307 token，下降 21.3%**；耗时合计 **612.56 → 692.06 秒，上升 13.0%**。其中具备 cache 明细的 Chat/Query 未缓存输入 **570,767 → 697,591，反而增加 22.2%**；输出 **27,512 → 20,008**。不能把总 token 下降比例当成账单下降比例。该子集只是补充，不能替代包含失败的主统计。再排除两组各一次历史确认警告对应的配对样本后，16 对耗时 **529.69 → 540.33 秒**，token **4,139,198 → 3,324,985**；同样不是随机独立的新实验。仅排除指代歧义场景、仍保留失败时，每组 18 次的平均耗时为 **41.44 → 53.20 秒**，新链路并未因此变成整体更快。
+
+Jev 20 次响应中直接返回的 `usage.cost` 合计 **$0.000649656**，仅为本次 Jev 路由费用，不含任何 Chat/Query/embedding/本地计算。Jev 路由累计 **17.59 秒**，8B 改写累计 **10.56 秒**；前置阶段平均每个用户请求约 **1.41 秒**（8B 只在 12/20 次触发）。两阶段合计 **20,368 token，约占旧链路总量 0.28%**，本次主要模型消耗来自后续 Chat/Query 的检索与核验循环。Codex 的 usage 是 `sdk_turn_run / codex_thread_total` 聚合，不足以还原每个供应商请求的上下文计价档位；cached/write/reasoning 属于明细子集，不重复相加，未返回的 cache 信息不当零处理。未取得完整供应商账单，不填写整体美元节省额；本地 8B 算力也不当作免费。
+
+部署复杂度方面，新方案确实省去一项 Jev API key/网络依赖及一个本地 llama-server 服务，减少路由说明、槽位 prompt、Chat prompt 的多处协调。现有 8B 权重实测 **5,027,783,584 bytes（约 5.03 GB）**；一次 RSS 观察约 **5.85 GiB**，不代表完整 Metal/GPU 占用，也不是隔离压测得到的新旧净内存差。实际用户配置步骤、首次安装时间和维护人时未测。**可确认部署依赖减少，尚不能确认总费用更低或核心任务不退化。**当前证据支持把“Jev 路由是否有价值”和“8B 改写是否值得保留”拆开判断，未支持直接把整个前置链路删除后作为已验收版本发布。
+
+
+<a id="devlog-query-hook-chat-model-ab-20261024"></a>
+
+## 2026-10-24：复用 Chat 模型做意图判断与 query 改写，三组实测与 cloud 选型
+
+### 1. 问题与现状
+
+上一轮证明了“直接去掉前置节点、仅让 Chat 处理”仍会在 C19 把用户对助手的吐槽当作台词检索，但这并不证明 **Jev 这个供应商不可替代**。本次按用户要求，在 `dev` 分支实现一个职责受限的前置调用：复用 Chat 的模型与认证，一次只输出 `action` 和 `retrieval_query`，分别测试 `low`、`none` 推理强度，和 Jev + 本地 8B 对照。
+
+本次的旧路径是 **Jev → 按需 Qwen3-8B 槽位 → 当前 v4 Chat**，不是上一轮的旧 Chat prompt。三组均使用相同 v4 Chat prompt，Jev 基线重新实测；不能把本次 15/20 与上一轮 10/18 直接相减当成修改收益。上一轮有歧义的“她们首次登台”混合题，在本次冻结前明确改为“MyGO!!!!! 五人第一次登台”；这也不代表修好了旧 8B 的指代能力。
+
+结果分两层：三组前置标签都为 **20/20**，low 和 none 都能承担受限的前置职责；整条链路严格业务通过为 **15/20、13/20、11/20**。low 的本轮全链路平均耗时与总 token 较低，但质量没有超过基线；none 有两次后续检索超时。因此，当前证据支持提供“复用 Chat 的前置节点”来减少用户配置，**不支持宣称已等效替换整个 Jev 链路、整体更优，或已经验证长上下文能力**。
+
+### 2. 方案候选
+
+| 方案 | 本次决策与代价 |
+|---|---|
+| Jev + 本地 Qwen3-8B + v4 Chat | 用户确认 cloud 继续选用。前置更快，本轮严格业务通过数更高；独立 Jev key 与 8B 服务由部署团队维护，仍有抽错检索目标的问题。 |
+| 同款 Chat 模型 / low 一次输出两字段 | 新增为可选绑定，复用已有 source/认证，不需要 Jev key 或 8B 服务。前置本身更慢、token 更多；本轮整体质量未达到不退化。 |
+| 同款 Chat 模型 / none 一次输出两字段 | 同一实现，仅改推理强度。确实没有 reasoning token，但前置节省很小，整链路有两次超时；本轮没有充分依据优先采用它。 |
+| Chat 直接处理、没有前置节点 | 只有上一轮的实测证据，本次不重跑、不并入三组统计。 |
+
+**Cloud 选择（用户于 2026-10-24 确认）：继续使用 Jev + 按需 8B query 改写，不切换到 low / none 前置。** Cloud 产品的 Jev 认证和 8B 推理由服务端统一承担，普通终端用户无需分别提供这个 key 或运行 8B；表中的“本地 8B”指后端连接的模型服务，不要求运行在终端用户设备上。选择理由是优先保留本轮更快的首次文本响应、纯回应速度和更高的严格业务通过数，接受团队承担额外服务的部署维护。low 保留为减少自托管配置负担的可选路径，none 暂不优先；这不是“Jev 不可替代”或“cloud 效果已经验收”的结论。
+
+只读核对 `config.yaml`、当前本地 `outputs/local-services/main-model-config.yaml`、现有 cloud 联调环境 `outputs/local-services/cloud-auth/phone.env` 指向的 `model-config.yaml`：三者均为 `query_hook.enabled=true`，且没有 `models.query_hook` 替代绑定，实际配置选择已是 Jev + 8B。此次补记不需要切换配置，也没有重启或发布服务。云环境的并发、硬件成本和真实客户端等待未重新实测，不能把下面的本地对照数字当作生产 cloud SLA。
+
+实际最小改动为 3 个生产文件 **+83/-12**、1 个测试文件 **+92/-4**，本条记录追加到统一 devlog。`QueryHookDecision` 复用现有槽位约束：三种 action、最多 160 字符的非空候选或 null、禁止多余字段，respond 必须为 null。新分支只有一次结构化生成，无工具、无多轮规划；结果仍通过原固定模板附加在原始用户消息后。原文、已有历史、工具请求的职责不变，未把整条用户消息替换成改写文本。
+
+总 hook deadline 保持 8 秒，继承原来最近 6 条/2,000 字符历史及当前 query 的有界输入策略。超时、供应商错误或无效 schema 回到原始消息；不会偷偷调用 Jev 或 8B。取消、父任务超时和用量准入拒绝继续上抛，不能当普通可降级错误吞掉。模型由现有 GatewayClient 创建和关闭，没有增加独立模型服务或新配置 Schema。
+
+可选 low 路径的启用方式是在既有模型配置的 `models` 下增加 `query_hook` 绑定，复用 Chat 已配置的 source；下面是实验配置示意，**不是本次选定的 cloud 配置**，其他既有绑定保留：
+
+```yaml
+query_hook:
+  enabled: true
+  total_timeout_seconds: 8
+models:
+  query_hook:
+    source: codex_local
+    model: gpt-5.6-luna
+    reasoning_effort: low
+    supports_vision_input: false
+    request_timeout_seconds: 8
+    max_output_tokens: 512
+    fallback: null
+```
+
+本次 none 仅将 `reasoning_effort` 改为 `none`。完整实验配置见产物中的 `low-model-config.yaml`、`none-model-config.yaml`；`max_output_tokens=512` 是配置值，不把它当作已验证的 native SDK 强制输出上限。正式前置调用实际最大输出为 low 84、none 72 token。未提供 `models.query_hook` 时继续旧 Jev/8B 路径；`query_hook.enabled=false` 时仍完全关闭 hook。**默认 `.env.local` 与主模型配置未切换**，没有 commit、push、迁移或重启用户正在运行的应用。
+
+减少的是新部署的额外认证与本地模型依赖：可以少配一项 Jev key、少运行一个 llama-server、少下载约 5.03 GB 的现有 8B 权重。5.03 GB 是已有权重文件的实测大小，不是本轮隔离测得的净内存节省。仓库仍保留旧适配器以兼容，且新增一个可选分支和 prompt，不能声称维护成本已全部消除；用户配置耗时、安装成功率和维护人时未量化。
+
+### 3. 方案验证
+
+可复查产物：[实验目录](../../outputs/verification/query-hook-chat-model-ab-20261024/)、[冻结协议](../../outputs/verification/query-hook-chat-model-ab-20261024/protocol.json)、[worker.py](../../outputs/verification/query-hook-chat-model-ab-20261024/worker.py)、[cases.json](../../outputs/verification/query-hook-chat-model-ab-20261024/cases.json)、[schedule.json](../../outputs/verification/query-hook-chat-model-ab-20261024/schedule.json)。`outputs` 为本地实验产物，不假定随 Git 分发，关键结果保留在本记录中。
+
+- 三个独立 OS 进程，每组 10 题 × 2 次，共 **60 次真实模型/工具调用链**。每题轮换组顺序，第二轮反转题序；同一时刻只发一个顶层请求，避免相互争抢测试资源。每次新建 SQL/native 会话，写入相同历史，不把上次生成的答案传给下一题。
+- 三组主 Chat 均为 `gpt-5.6-luna / medium`，Query 为同模型 `/ high`，新前置为同模型 `/ low` 或 `/ none`，均走当前 Codex harness；Jev 为 `typesafe/jev-1.14`，改写为本地 Qwen3-8B-Q4_K_M。同一工具、embedding、MyGO 数据、240 秒完整任务 deadline、`limits_enabled=false`。前置预检使用过 20 秒预算，已排除，正式三组均为 8 秒预算。正式运行没有改 prompt、case、生产代码或 runner。
+- 通过真实 `/api/agent/conversations/create` 和 `/api/agent/messages/send` 的 ASGI HTTP 路径测量，从 send 到最终响应/持久化或 HTTP 错误；不计建会话、写 fixture、真实客户端网络和浏览器渲染。FTT 使用记录器捕获的主模型首次 `handle_text` 回调作为代理指标，可能是“我去查一下”等过程说明，**不是浏览器实际首 token 或首个正确结果时间**。SDK/服务端缓存未清空，新会话不等于冷缓存；不是并发负载测试。
+- [输入审计](../../outputs/verification/query-hook-chat-model-ab-20261024/input-audit.json) 验证 **20/20 三元组**的主 Chat prompt、历史正文、工具 schema、原始请求一致；low/none 前置 prompt 与 schema 相同，SDK 实际请求的 effort 分别为 low/none，主 Chat 仍为 medium。**60/60 native 会话都按原文、顺序收到历史**，无历史注入确认警告。生产文件、case、runner SHA-256 与冻结记录一致。
+- 沿用 MyGO 13 集资料，返回证据仍有 `partial=true`、第 2 集覆盖不足等限制。Chunk 索引 `anivag_video_chunks_local_20261010_development` 的实验前后 UUID 和 **71,736** 文档数一致。Event 索引 `seekino_video_events_development_v3` 使用固定配置；本次只额外取得运行中与结束时快照，两者 UUID/文档数 **59,730** 一致，**没有把该快照冒充实验前快照**。未启动解析或重建索引。
+- 逐条审读 HTTP 文本、过程顺序、工具参数/证据、提交片段和返回卡片描述，见 [reviews.json](../../outputs/verification/query-hook-chat-model-ab-20261024/reviews.json)。`pass` 为完整处理当前任务且说法与证据一致，`partial` 为近似片段、回应错位、时间/片段描述错误或越过证据，`fail` 为错目标、漏任务或超时。没有把标签正确、工具返回成功当作业务通过。对话措辞存在审读判断，例如 low 第二次“并非明确排斥”按未明确表达排斥判通过；none 第二次 C19 转为品评用户原句判部分。未做独立人工盲评，不能把这些分数包装成客观大样本正确率。
+- 正例锚点包括第 13 集 54.6–56 秒「いいご身分ですわね。」和第 7 集 607.7–610.8 秒首次 live 对白。首次登台请求接受经证据确认的同场演出片段，不要求必须截到这句对白，例如 Jev 第二轮提交 840–900 秒的演奏片段可通过；若卡片明确宣称包含这句对白而所选范围没有，则计部分。雨中等人与“说话无趣”两类仅得到近似候选，未确认全剧不存在精确目标，不以索引缺失证明不存在。
+
+闭环检查：[持久化审计](../../outputs/verification/query-hook-chat-model-ab-20261024/persistence-audit.json) 为 **58 COMPLETED、2 FAILED、0 PROCESSING**，58 个成功响应正文均与 SQL 一致，失败均为 `AGENT_EXECUTION_TIMEOUT`；两次失败均保留 240 秒完整耗时和迟到用量记录。[播放资源探测](../../outputs/verification/query-hook-chat-model-ab-20261024/playback-probe.json) 的 5 个不同视频 URL 均返回 HTTP 206、1,024 bytes、`video/mp4`；这是内容/Range 路径验证，不是浏览器完整播放或逐帧人工验真。本次启动的 MySQL、ES、8B 服务已按自有 PID 停止，见 [cleanup.json](../../outputs/verification/query-hook-chat-model-ab-20261024/cleanup.json)；保留数据、权重和 `[Hook model A/B]` 测试会话供追溯。
+
+相关回归共 **218 项最终通过**：初次执行 `pytest tests/agent/chat/test_query_hook.py tests/gateway/test_query_hook.py tests/server/test_bootstrap.py -q` 为 217 passed / 1 failed；失败是新增测试把共有免责声明“候选检索用语”误当成有槽位，修正为检查实际槽位标签后，受影响 hook 文件 **32 passed**，此前未受影响 Gateway/Bootstrap **186 passed**，重叠不重复计数。覆盖一次附加、原文保留、禁止调用旧模型、schema、用量上下文、迟到结果、取消/超时/准入拒绝及 Supervisor 接线；不是全仓测试。`git diff --check` 和冻结源码检查通过。
+
+未验证：超出当前有界历史的长上下文、用户图片附件、其他模型/供应商、真实并发、全量视频覆盖、完整账单、长期效果和用户安装体验。没有凭这 60 次决定训练小模型或改变检索/Query 的实现；发现的扩搜不收敛、时间码/卡片描述和证据边界问题保留在本轮记录中，未扩大代码修改范围。
+
+### 4. 指标对比
+
+主统计包含全部 20 次/组以及失败；来源：[summary.json](../../outputs/verification/query-hook-chat-model-ab-20261024/summary.json)、[component-summary.json](../../outputs/verification/query-hook-chat-model-ab-20261024/component-summary.json)。此次多维表为同一批 60 次实验的整理和派生计算，没有新跑模型，也没有把同一批样本重复计数。FTT 为服务端首次文本回调，TT 为请求到成功或失败终态的耗时；错误地提前交付也可能 TT 较短，不能把它直接解释为更高效率。
+
+| 指标 | Jev + 8B | Chat 前置 low | Chat 前置 none |
+|---|---:|---:|---:|
+| 累计 TT | 601.72 秒 | 546.49 秒 | 906.05 秒 |
+| 平均每次 TT | 30.09 秒 | 27.32 秒（-9.2%） | 45.30 秒（+50.6%） |
+| TT 中位数 | 24.68 秒 | 25.32 秒 | 31.79 秒 |
+| 最慢一次 TT | 130.33 秒 | 125.50 秒 | 240.67 秒 |
+| TT 超过 60 秒 | 2/20 | 2/20 | 3/20 |
+| 超时未完成 | 0/20 | 0/20 | 2/20 |
+| FTT 代理指标：平均 / 中位数 | 6.13 / 6.14 秒 | 7.78 / 7.70 秒 | 7.89 / 7.58 秒 |
+| 浏览器实际首 token / 首个正确结果时间 | 未测 | 未测 | 未测 |
+| HTTP + 持久化完成 | 20/20 | 20/20 | 18/20 |
+| 严格业务通过 | 15/20（75%） | 13/20（65%） | 11/20（55%） |
+| 部分 / 失败 | 5 / 0 | 6 / 1 | 7 / 2 |
+| 意图与任务顺序检查 | 20/20 | 20/20 | 20/20 |
+| 前置分类正确且说明实际附加 | 20/20 | 20/20 | 20/20 |
+| 全链路已观测 token | 3,412,745，完整 | 2,842,916，完整 | 至少 2,742,713，仍不完整 |
+
+“意图与顺序”通过表示走对路径、按要求先回应再查找；后续超时或答案错误仍是业务失败。low 的全链路总 token 比基线少 **16.7%**，但这不是质量不退化或账单下降的证明。两次重复不足以提供 p95、统计显著性或稳定胜率。
+
+任务质量的三类互斥且合计为 20 次，例如 low 是 **13 次通过 + 6 次部分 + 1 次失败**。部分完成同时包含“诚实说明只能找到近似候选”和“时间码等局部错误”，衡量的是当前请求的整体达成，不是前置模型单独的准确率；HTTP 完成也不等于业务正确。low 的服务端首次文本平均晚 **1.66 秒**，8 次纯回应平均 TT 增加约 **2.22 秒**；其整体 TT 均值较低但中位数略高，不能解读为大多数用户请求都更快。
+
+资源投入与 Token cost 派生指标：
+
+| 成本维度 | Jev + 8B | low | none |
+|---|---:|---:|---:|
+| 全链路平均每次请求 token | 约 17.06 万 | 约 14.21 万 | 至少约 13.71 万 |
+| 平均每次前置 token | 约 1,016 | 约 10,800 | 约 10,783 |
+| Codex 阶段已知未缓存输入 | 584,573 | 599,829 | 至少 611,007，仍不完整 |
+| 每个严格通过结果分摊的 token | 约 22.75 万 | 约 21.87 万 | 至少约 24.93 万 |
+| 完整美元账单 | 未取得 | 未取得 | 未取得 |
+
+“每个严格通过结果分摊的 token” = 全组已观测 token ÷ 严格通过数量，包含部分完成和失败的资源投入，**不是成功请求本身的平均用量，也不是重试直到成功的成本预测**。按此口径 low 仅少约 **3.9%**，不再是全组总量的 16.7%；同样不等于美元成本下降。Codex 阶段只包括主 Chat、Query 和新前置：none 的 611,007 = Gateway 已知 565,654 + 两个失败 Chat 原生日志恢复的未缓存输入 45,353，仍缺失败 Query 和可能未回报的尾部。cached / reasoning 是明细子集，不重复加总；模型 token 和本地算力不能当作同价单位或免费资源。
+
+下表为每个场景两次实际耗时与质量，`P=通过、△=部分、F=失败`：
+
+| 场景 | Jev：秒；质量 | low：秒；质量 | none：秒；质量 |
+|---|---|---|---|
+| C19 原始历史后的吐槽 | 6.54 / 5.88；P / P | 7.32 / 7.00；P / P | 7.64 / 7.44；P / △ |
+| “高高在上”台词出处 | 27.53 / 21.64；P / P | 25.92 / 24.04；△ / P | 31.55 / 24.12；△ / P |
+| 只解释已有证据 | 4.62 / 5.39；P / △ | 8.15 / 7.45；P / P | 8.20 / 7.19；△ / △ |
+| 先回应吐槽再找首次登台 | 33.74 / 31.30；P / P | 30.66 / 31.64；P / △ | 38.41 / 35.00；P / P |
+| 停止检索、压成一句话 | 5.03 / 4.84；P / P | 7.80 / 7.20；P / P | 6.80 / 7.16；P / P |
+| “不解释”并非“不检索” | 44.03 / 60.98；P / P | 30.68 / 31.40；P / P | 37.64 / 32.41；P / P |
+| 第二件反馈先答，第一件雨中等人继续找 | 21.82 / 36.00；△ / △ | 36.49 / 36.13；△ / △ | 35.59 / 35.66；△ / △ |
+| 明确搜索“说话无趣”的角色台词 | 59.98 / 130.33；△ / △ | 125.50 / 60.73；△ / △ | 63.62 / 240.15；△ / F |
+| 新表述：出处已知，只批评表达 | 5.20 / 4.75；P / P | 7.64 / 7.50；P / P | 7.15 / 7.63；P / P |
+| 新表述：压缩旧出处，再找 MyGO 五人首次登台 | 50.51 / 41.59；P / P | 24.72 / 28.54；P / F | 240.67 / 32.03；F / P |
+
+主要差异与失败证据：
+
+- **C19：三组两次均没有误检索。**Jev、low 的两次业务回应均通过；none 第二次先认领反馈，随后又复述并品评用户原句，严格审读计部分。这个结果说明主模型同款前置可以保住 C19 的路由约束，不支持“必须是 Jev”。
+- **槽位独立计分，见 [hook-review.json](../../outputs/verification/query-hook-chat-model-ab-20261024/hook-review.json)。**每组有 12 次需要检索：Jev+8B 保留目标 8 次、原句压缩丢词 2 次、抽错目标 2 次；low 保留目标 9 次、保守返回 null 3 次；none 保留目标 12 次。null 是允许的“不提供候选”，不能计为完成了具体改写。保留“她们”等未明确指代也不等于完全消解；none 有一次加入不要检索旧台词的排除说明，并非最简检索词。旧 8B 两次都把“雨中等人”抽成反馈问题，Chat 依靠原文纠回方向，不能把下游表现直接等同于槽位优劣。
+- **low 的错目标发生在下游。**第二次明确 MyGO 五人首次登台题，前置目标正确，Chat 却把第 3 集开头演奏场景断言为首次登台，未用“首次”的证据核对，计失败。另一次首次 live 选到第 7 集正确场次，但卡片将不在所选 548.4–599.9 秒内的“第一次开 Live”对白写入说明，计部分；低推理前置并没有解决这些证据对齐问题。
+- **none 的两个超时都不是动作分类失败。**一次是明确 MyGO 首次登台，一次是“说话无趣”的台词搜索。前置分别在 3.15 / 3.09 秒完成，随后 Chat/Query 持续检索到约 240 秒仍未交付。none 第一轮首次登台与 low 第二轮同题的主 Chat 提示、工具、历史正文和候选 query 完全相同，却分别超时和返回错片段，说明不能仅凭归组把失败因果归为 none。其余长尾同样存在：Jev 台词题第二次 130.33 秒，low 第一次 125.50 秒。
+- **前置正确不保证文字正确。**原台词查询中 low、none 各一次把 54.6 秒写成约 54 分钟；已有文字题 Jev 一次、none 两次排除了证据未能排除的情绪/动机。雨中等人与明确无趣台词均未得到可靠精确目标；近似结果保留为部分完成。
+
+前置阶段的实测成本：
+
+| 指标 | Jev + 8B | low | none |
+|---|---:|---:|---:|
+| 前置模型调用数 | 20 Jev + 12 次 8B | 20 | 20 |
+| 平均前置耗时 | 1.34 秒 | 3.51 秒 | 3.34 秒 |
+| 前置中位数 / 最大耗时 | 1.20 / 3.03 秒 | 3.38 / 4.49 秒 | 3.13 / 4.36 秒 |
+| 累计前置 token | 20,324 | 215,991 | 215,651 |
+| 正式新前置 schema 有效、未 fallback | 不适用 | 20/20 | 20/20 |
+| 8 次纯回应的全链路平均耗时 | 5.28 秒 | 7.51 秒 | 7.40 秒 |
+| 8 次纯回应的全链路 token | 188,119 | 267,848 | 267,744 |
+
+Jev 路由累计 18.70 秒，本地 8B 累计 8.09 秒；low、none 的前置累计 70.27 / 66.81 秒。**降低 effort 并没有消掉新增调用的固定开销。**low 和 none 的前置输入总量都为 **215,040 token**，输出 951 / 611，其中 reasoning 为 382 / 0，属于输出明细不能重复加总；none 只少 340 个总 token（0.16%），平均只快约 0.17 秒。约 10.75k 的每次输入包含当前 Codex harness 的上下文开销，不能当作这份短决策 prompt 本身需要这么多 token，也不能外推到其他裸 API 调用方式。
+
+全链路阶段用量：
+
+| 阶段 | Jev + 8B | low | none 已观测 |
+|---|---:|---:|---:|
+| Jev | 16,236 | 0 次 | 0 次 |
+| 本地 8B | 4,088 | 0 次 | 0 次 |
+| 新前置 decision | 0 次 | 215,991 | 215,651 |
+| 主 Chat | 2,751,687 | 2,179,676 | 至少 2,525,623 |
+| Query | 639,941（1 次） | 446,546（1 次） | 2 次超时，用量未知 |
+| 文本 embedding | 793 | 703 | 1,439 |
+
+none 的 Gateway 直接记录 **2,165,120 token**，另有 2 个 Chat、2 个 Query 未返回 usage。根据对应持久 native 日志，仅对缺失 Chat 恢复最后计数 **273,332 + 304,261 = 577,593**，无重复加总，得 **2,742,713 的已观测下界**。两个失败 Query 为 ephemeral，会话没有可恢复日志，取消尾部也可能尚未计入。58 个成功 Chat 的 native input/output/total 与 Gateway 均一致。证据：[usage-recovery.json](../../outputs/verification/query-hook-chat-model-ab-20261024/usage-recovery.json)。未知 Query 绝不按零费用/零 token 成功计算。
+
+另列**三组用量都完整的 18 组三元样本**作为描述性补充：Jev **420.88 秒 / 2,248,859 token**，low **461.04 秒 / 2,409,169 token**，none **425.24 秒 / 2,142,427 token**。此时 low 相对基线耗时 +9.5%、token +7.1%，与全量平均的方向不同，显示少数长尾对结果影响很大。该子集同时排除 none 两个超时和它们对应的其他组样本，**不能替代保留失败的主统计**，更不能拿它证明 none 更可靠。
+
+费用口径：Jev 响应直接返回的 20 次 `usage.cost` 合计 **$0.000649992**，不含 Chat/Query/embedding 或本地计算。Jev 组全链路 input/output 为 **3,390,988 / 21,757**，low 为 **2,824,660 / 18,256**，已知 cached input 分别 **2,789,045 / 2,224,128**。只比较具有完整 cache 明细的 Codex 阶段（Chat、Query、新前置），未缓存输入反而从 **584,573 增至 599,829（+2.6%）**。SDK 聚合用量不是逐请求计价账单，不同模型 token 也不能按同一价格相加；未给出整体美元节省额，不把本地算力当免费。
+
+团队建设与部署维护视角，以下为架构事实和定性判断；安装耗时、维护工时、支持工单和云实例费用均未实测：
+
+| 建设与维护维度 | Jev + 8B | low | none |
+|---|---|---|---|
+| 相对已有 Chat 的额外认证 | Jev key，由服务端管理 | 复用 Chat 认证 | 同 low |
+| 额外推理服务 | 需要维护 8B 服务 | 无需该服务 | 同 low |
+| 额外模型权重 | 实验配置约 5.03 GB | 无需这份 8B 权重 | 同 low |
+| 自托管用户首次配置 | Jev 认证、8B 下载/启动/地址 | 增加前置模型绑定 | 同 low |
+| Cloud 普通终端用户 | 无需单独配 Jev key 或运行 8B | 无需单独配置前置模型 | 同 low |
+| 生效路径的前置调优 | 路由规则 + 8B 槽位提取 | 一个节点输出两个字段 | 同 low |
+| 额外排障事项 | Jev 请求、8B 进程、端口、权重与资源 | 前置绑定、schema、已有 Chat 调用 | 同 low |
+| 现有 Chat 服务的额外调用 | 前置由 Jev/8B 承担 | 每个适用请求增加一次同源调用 | 同 low |
+| 当前仓库的兼容维护 | 旧路径继续保留 | 新增可选分支，没有退役旧代码 | 与 low 共用实现 |
+
+部署依赖减少不等于当前代码维护立即减少：本次生产改动 **+83/-12，净增 71 行**，目前仍需维护旧/新两种路径。未来若退役旧适配器可能减少维护对象，但未量化人时。low 和 none 的部署要求相同，关闭 thinking 没有额外的部署简化收益；现有 Chat 服务的并发/额度承载也没有在本轮压测。
+
+| 选择目标 | 当前决定或证据 |
+|---|---|
+| Cloud 默认路径 | **按用户选择保留 Jev + 8B**；额外依赖集中由团队承担，优先本轮首次文本速度、纯回应速度与严格业务通过数 |
+| 减少自托管配置负担 | low 保留为可试用选项；接受额外前置等待，业务质量不退化尚未证明 |
+| 关闭推理的 none 路径 | 保留实验结论，不作为 cloud 默认；相比 low 的前置收益很小，本轮有两次下游超时 |
+| 最低实际账单 | 暂不能判断；总 token、缓存、不同模型计价和失败用量不能合并成未经验证的美元节省额 |
+
+Cloud 保留 Jev 的决定不表示它已全面解决任务：8B 抽错目标、取证不收敛、时间/片段描述和证据边界问题仍存在，未在本次文档补记中修改。后续若调整默认，仍应围绕这些具体失败扩大独立样本，再评估质量与成本；不能仅以“前置 20/20”或一次总 token 较少作为发布验收。

@@ -1,5 +1,7 @@
 # Shot Composition Schema (draft v1)
 
+> Archive status (2026-10-24): the experiment directories named below have been retired. Composition and shot-tags data are kept in a local Git-ignored ZIP; see the [summary and recovery instructions](../../docs/dev/design-experiment-cleanup.md#本地归档与恢复). Paths and commands below describe the historical experiment, not an active run request.
+
 Date: 2026-10-19. Status: **draft for experiment** — not a production contract. The tagging experiment ([brief](shot-tagging-experiment-brief.md)) produces records in this shape so that the evaluation can decide which fields earn a place in the production `video_shot_feature` table and the shots ES index.
 
 ## 1. Purpose and boundaries

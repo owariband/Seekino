@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="900" viewBox="0 0 1460 900">
+<title>Seekino Cloud 首发部署</title>
+<desc>原生 Excalidraw 架构画板；同名 .excalidraw 文件可编辑全部模块、文字与连线。</desc>
+<rect width="100%" height="100%" fill="white"/>
+<text x="60" y="71" fill="#17253D" font-size="36" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="60" y="71.0">Seekino · Cloud 首发部署</tspan>
+</text>
+<text x="62" y="110" fill="#61718A" font-size="19" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="62" y="110.0">部署目标 · 资源待租 · 容量未测</tspan>
+</text>
+<rect x="80" y="154" width="720" height="92" rx="9" fill="#F2F6FE" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="440.0" y="189" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="440.0" y="189.0">用户浏览器</tspan>
+</text>
+<text x="440.0" y="219" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="440.0" y="219.0">Web 访问 · 视频上传</tspan>
+</text>
+<rect x="80" y="300" width="720" height="500" rx="9" fill="#F6F3FF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="104" y="346" fill="#6950CF" font-size="26" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="104" y="346.0">CPU 云主机 · 4 vCPU / 8 GiB</tspan>
+</text>
+<rect x="104" y="386" width="424" height="100" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="316.0" y="421" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="316.0" y="421.0">应用服务</tspan>
+</text>
+<text x="316.0" y="451" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="316.0" y="451.0">Web · FastAPI · Pi Host</tspan>
+</text>
+<rect x="104" y="516" width="424" height="100" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="316.0" y="551" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="316.0" y="551.0">解析任务</tspan>
+</text>
+<text x="316.0" y="581" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="316.0" y="581.0">V2 Consumer · FFmpeg</tspan>
+</text>
+<rect x="578" y="426" width="198" height="150" rx="9" fill="#EFF9F9" stroke="#368A91" stroke-width="1.5"/>
+<text x="677.0" y="461" fill="#368A91" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="677.0" y="461.0">Gateway</tspan>
+</text>
+<text x="677.0" y="491" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="677.0" y="491.0">模型调用</tspan>
+</text>
+<path d="M 535 436 L 571 459" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 564.0491107064994 458.17226934966806 L 571 459 L 567.3276416191427 453.0406557472699" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 535 566 L 571 543" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 567.3276416191427 548.95934425273 L 571 543 L 564.0491107064994 543.8277306503319" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<rect x="104" y="672" width="672" height="100" rx="9" fill="#FFF8EF" stroke="#B97035" stroke-width="1.5"/>
+<text x="440.0" y="707" fill="#B97035" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="440.0" y="707.0">同机数据与媒体</tspan>
+</text>
+<text x="440.0" y="737" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="440.0" y="737.0">MySQL · Elasticsearch · Redis · 媒体持久盘</tspan>
+</text>
+<path d="M 440 253 L 440 293" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<path d="M 436.9552412612214 286.69687028353127 L 440 293 L 443.0447587387786 286.69687028353127" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<rect x="964" y="332" width="426" height="174" rx="9" fill="#EFF9F9" stroke="#368A91" stroke-width="1.5" stroke-dasharray="7 6"/>
+<text x="1177.0" y="367" fill="#368A91" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1177.0" y="367.0">GPU 模型服务 · 规划</tspan>
+</text>
+<text x="1177.0" y="397" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1177.0" y="397.0">ASR · 镜头识别 · 自托管模型</tspan>
+</text>
+<text x="1177.0" y="457" fill="#61718A" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1177.0" y="457.0">模型按实验结果选用</tspan>
+</text>
+<rect x="964" y="584" width="426" height="174" rx="9" fill="#F2F6FE" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="1177.0" y="619" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1177.0" y="619.0">云模型 API</tspan>
+</text>
+<text x="1177.0" y="649" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1177.0" y="649.0">LLM · VLM · Embedding</tspan>
+</text>
+<path d="M 783 466 L 957 418" fill="none" stroke="#368A91" stroke-width="1.7" stroke-dasharray="7 6"/>
+<path d="M 951.733519122667 422.61130991895857 L 957 418 L 950.1141398407906 416.74106002215655" fill="none" stroke="#368A91" stroke-width="1.7"/>
+<path d="M 783 538 L 957 668" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<path d="M 950.1281736848549 666.6665821755805 L 957 668 L 953.7729063259259 661.7882477175316" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<text x="80" y="858" fill="#61718A" font-size="19" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="80" y="858.0">业务、数据和解析任务先同机部署；GPU 承载模型推理。</tspan>
+</text>
+</svg>

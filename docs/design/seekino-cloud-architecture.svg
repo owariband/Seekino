@@ -1,0 +1,439 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1960" height="1760" viewBox="0 0 1960 1760">
+<title>Seekino 系统架构</title>
+<desc>原生 Excalidraw 架构画板；同名 .excalidraw 文件可编辑全部模块、文字与连线。</desc>
+<rect width="100%" height="100%" fill="white"/>
+<text x="45" y="44" fill="#61718A" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="44.0">SEEKINO / ARCHITECTURE</tspan>
+</text>
+<text x="44" y="107" fill="#17253D" font-size="42" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="44" y="107.0">Seekino 系统架构</tspan>
+</text>
+<text x="47" y="141" fill="#61718A" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="47" y="141.0">云端视频理解 · 事件检索 · 证据播放</tspan>
+</text>
+<text x="1540" y="110" fill="#6950CF" font-size="27" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="1540" y="110.0">技术支撑</tspan>
+</text>
+<text x="1540" y="139" fill="#61718A" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="1540" y="139.0">组件与实现归属</tspan>
+</text>
+<text x="45" y="196" fill="#A1ACC0" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="196.0">01</tspan>
+</text>
+<text x="45" y="233" fill="#17253D" font-size="23" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="233.0">接入层</tspan>
+</text>
+<text x="45" y="322" fill="#A1ACC0" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="322.0">02</tspan>
+</text>
+<text x="45" y="359" fill="#17253D" font-size="23" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="359.0">业务层</tspan>
+</text>
+<text x="45" y="542" fill="#A1ACC0" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="542.0">03</tspan>
+</text>
+<text x="45" y="579" fill="#17253D" font-size="23" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="579.0">编排层</tspan>
+</text>
+<text x="45" y="962" fill="#A1ACC0" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="962.0">04</tspan>
+</text>
+<text x="45" y="999" fill="#17253D" font-size="23" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="999.0">能力层</tspan>
+</text>
+<text x="45" y="1286" fill="#A1ACC0" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="1286.0">05</tspan>
+</text>
+<text x="45" y="1323" fill="#17253D" font-size="23" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="1323.0">数据 / 模型</tspan>
+</text>
+<text x="45" y="1596" fill="#A1ACC0" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="1596.0">06</tspan>
+</text>
+<text x="45" y="1633" fill="#17253D" font-size="23" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="1633.0">运行支撑</tspan>
+</text>
+<rect x="190" y="170" width="426" height="96" rx="9" fill="#F2F6FE" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="403.0" y="205" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="403.0" y="205.0">Web 客户端</tspan>
+</text>
+<text x="403.0" y="235" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="403.0" y="235.0">上传 · 检索 · 播放</tspan>
+</text>
+<rect x="637" y="170" width="426" height="96" rx="9" fill="#F2F6FE" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="850.0" y="205" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="850.0" y="205.0">REST API</tspan>
+</text>
+<text x="850.0" y="235" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="850.0" y="235.0">资料 · 任务 · 对话</tspan>
+</text>
+<rect x="1084" y="170" width="426" height="96" rx="9" fill="#F2F6FE" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="1297.0" y="205" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1297.0" y="205.0">SSE 通道</tspan>
+</text>
+<text x="1297.0" y="235" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1297.0" y="235.0">解析进度 · 回答流</tspan>
+</text>
+<rect x="1540" y="170" width="360" height="96" rx="9" fill="#F6F3FF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="205" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="205.0">React · Vite</tspan>
+</text>
+<text x="1720.0" y="235" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="235.0">界面与交互</tspan>
+</text>
+<rect x="190" y="296" width="1320" height="190" rx="9" fill="#F6F3FF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="212" y="339" fill="#6950CF" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="212" y="339.0">业务应用</tspan>
+</text>
+<rect x="212" y="363" width="410" height="98" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="417.0" y="398" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="417.0" y="398.0">视频资料库</tspan>
+</text>
+<text x="417.0" y="428" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="417.0" y="428.0">系列管理 · 视频上传</tspan>
+</text>
+<rect x="644" y="363" width="410" height="98" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="849.0" y="398" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="849.0" y="398.0">视频解析</tspan>
+</text>
+<text x="849.0" y="428" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="849.0" y="428.0">任务提交 · 进度查看</tspan>
+</text>
+<rect x="1076" y="363" width="410" height="98" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1281.0" y="398" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1281.0" y="398.0">对话检索</tspan>
+</text>
+<text x="1281.0" y="428" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1281.0" y="428.0">多轮问答 · 证据播放</tspan>
+</text>
+<rect x="1540" y="296" width="360" height="190" rx="9" fill="#F6F3FF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="1562" y="339" fill="#6950CF" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="1562" y="339.0">Server · FastAPI</tspan>
+</text>
+<rect x="1562" y="361" width="316" height="38" rx="9" fill="#ECE6FC" stroke="#ECE6FC" stroke-width="1.5"/>
+<text x="1720.0" y="385.85" fill="#6950CF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="385.85">HTTP / SSE</tspan>
+</text>
+<rect x="1562" y="411" width="316" height="38" rx="9" fill="#ECE6FC" stroke="#ECE6FC" stroke-width="1.5"/>
+<text x="1720.0" y="435.85" fill="#6950CF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="435.85">业务接口 · 资源鉴权</tspan>
+</text>
+<rect x="190" y="516" width="1320" height="390" rx="9" fill="#F6F3FF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="212" y="559" fill="#6950CF" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="212" y="559.0">Agent 与任务编排</tspan>
+</text>
+<rect x="212" y="580" width="626" height="304" rx="9" fill="#FFFFFF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="232" y="620" fill="#6950CF" font-size="22" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="232" y="620.0">解析编排</tspan>
+</text>
+<rect x="232" y="651" width="137" height="96" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="300.5" y="686" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="300.5" y="686.0">媒体准备</tspan>
+</text>
+<text x="300.5" y="716" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="300.5" y="716.0">帧 · 音频</tspan>
+</text>
+<rect x="380" y="651" width="137" height="96" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="448.5" y="686" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="448.5" y="686.0">Chunk 理解</tspan>
+</text>
+<text x="448.5" y="716" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="448.5" y="716.0">事件提取</tspan>
+</text>
+<rect x="528" y="651" width="137" height="96" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="596.5" y="686" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="596.5" y="686.0">区间精修</tspan>
+</text>
+<text x="596.5" y="716" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="596.5" y="716.0">事实校验</tspan>
+</text>
+<rect x="676" y="651" width="137" height="96" rx="9" fill="#FFFFFF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="744.5" y="686" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="744.5" y="686.0">索引发布</tspan>
+</text>
+<text x="744.5" y="716" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="744.5" y="716.0">成果入库</tspan>
+</text>
+<path d="M 371 699 L 378 699" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 371.69687028353127 702.0447587387786 L 378 699 L 371.69687028353127 695.9552412612214" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 519 699 L 526 699" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 519.6968702835312 702.0447587387786 L 526 699 L 519.6968702835312 695.9552412612214" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 667 699 L 674 699" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<path d="M 667.6968702835312 702.0447587387786 L 674 699 L 667.6968702835312 695.9552412612214" fill="none" stroke="#6950CF" stroke-width="1.7"/>
+<rect x="232" y="796" width="188" height="50" rx="9" fill="#F6F3FF" stroke="#F6F3FF" stroke-width="1.5"/>
+<text x="326.0" y="826.85" fill="#6950CF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="326.0" y="826.85">声纹校验</tspan>
+</text>
+<rect x="430" y="796" width="188" height="50" rx="9" fill="#F6F3FF" stroke="#F6F3FF" stroke-width="1.5"/>
+<text x="524.0" y="826.85" fill="#6950CF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="524.0" y="826.85">前缀上下文</tspan>
+</text>
+<rect x="628" y="796" width="188" height="50" rx="9" fill="#F6F3FF" stroke="#F6F3FF" stroke-width="1.5"/>
+<text x="722.0" y="826.85" fill="#6950CF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="722.0" y="826.85">整集摘要</tspan>
+</text>
+<rect x="858" y="580" width="630" height="304" rx="9" fill="#FFFFFF" stroke="#ADC4EA" stroke-width="1.5"/>
+<text x="878" y="620" fill="#3E68BC" font-size="22" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="878" y="620.0">Chat 编排</tspan>
+</text>
+<rect x="878" y="651" width="263" height="96" rx="9" fill="#FFFFFF" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="1009.5" y="686" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1009.5" y="686.0">Supervisor</tspan>
+</text>
+<text x="1009.5" y="716" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1009.5" y="716.0">任务规划 · 工具调用</tspan>
+</text>
+<rect x="1203" y="651" width="263" height="96" rx="9" fill="#FFFFFF" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="1334.5" y="686" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1334.5" y="686.0">Query 子任务</tspan>
+</text>
+<text x="1334.5" y="716" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1334.5" y="716.0">检索委派 · 按需</tspan>
+</text>
+<path d="M 1148 698 L 1196 698" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<path d="M 1189.6968702835313 701.0447587387786 L 1196 698 L 1189.6968702835313 694.9552412612214" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<rect x="878" y="795" width="588" height="51" rx="9" fill="#F2F6FE" stroke="#ADC4EA" stroke-width="1.5"/>
+<text x="1172.0" y="826" fill="#3E68BC" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1172.0" y="826.0">检索工具  ·  证据读取  ·  视频选段</tspan>
+</text>
+<path d="M 1009 754 L 1009 788" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<path d="M 1005.9552412612214 781.6968702835312 L 1009 788 L 1012.0447587387786 781.6968702835312" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<path d="M 1334 754 L 1334 788" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<path d="M 1330.9552412612213 781.6968702835312 L 1334 788 L 1337.0447587387787 781.6968702835312" fill="none" stroke="#3E68BC" stroke-width="1.7"/>
+<rect x="1540" y="516" width="360" height="390" rx="9" fill="#F6F3FF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="1562" y="559" fill="#6950CF" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="1562" y="559.0">执行支撑</tspan>
+</text>
+<rect x="1562" y="584" width="316" height="40" rx="9" fill="#6950CF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="610.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="610.5">Pi Host</tspan>
+</text>
+<rect x="1562" y="634" width="316" height="36" rx="9" fill="#ECE6FC" stroke="#ECE6FC" stroke-width="1.5"/>
+<text x="1720.0" y="657.525" fill="#6950CF" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="657.525">Agent 执行 · 工具回调</tspan>
+</text>
+<rect x="1562" y="727" width="316" height="40" rx="9" fill="#6950CF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="753.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="753.5">V2 Consumer</tspan>
+</text>
+<rect x="1562" y="777" width="316" height="36" rx="9" fill="#ECE6FC" stroke="#ECE6FC" stroke-width="1.5"/>
+<text x="1720.0" y="800.525" fill="#6950CF" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="800.525">阶段调度 · 租约恢复</tspan>
+</text>
+<rect x="190" y="936" width="1320" height="294" rx="9" fill="#F0F9F4" stroke="#ABD3BF" stroke-width="1.5"/>
+<text x="212" y="979" fill="#36856B" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="212" y="979.0">领域与基础能力</tspan>
+</text>
+<rect x="212" y="1000" width="238" height="208" rx="9" fill="#FFFFFF" stroke="#ABD3BF" stroke-width="1.5"/>
+<rect x="224" y="1012" width="214" height="40" rx="9" fill="#36856B" stroke="#36856B" stroke-width="1.5"/>
+<text x="331.0" y="1038.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="331.0" y="1038.5">视频处理</tspan>
+</text>
+<rect x="224" y="1062" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="331.0" y="1085.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="331.0" y="1085.525">转码 · 抽帧</tspan>
+</text>
+<rect x="224" y="1108" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="331.0" y="1131.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="331.0" y="1131.525">ASR · OCR</tspan>
+</text>
+<rect x="224" y="1154" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="331.0" y="1177.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="331.0" y="1177.525">声纹校验</tspan>
+</text>
+<rect x="471" y="1000" width="238" height="208" rx="9" fill="#FFFFFF" stroke="#ABD3BF" stroke-width="1.5"/>
+<rect x="483" y="1012" width="214" height="40" rx="9" fill="#36856B" stroke="#36856B" stroke-width="1.5"/>
+<text x="590.0" y="1038.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="590.0" y="1038.5">解析事实</tspan>
+</text>
+<rect x="483" y="1062" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="590.0" y="1085.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="590.0" y="1085.525">Chunk</tspan>
+</text>
+<rect x="483" y="1108" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="590.0" y="1131.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="590.0" y="1131.525">Interval</tspan>
+</text>
+<rect x="483" y="1154" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="590.0" y="1177.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="590.0" y="1177.525">Event</tspan>
+</text>
+<rect x="730" y="1000" width="238" height="208" rx="9" fill="#FFFFFF" stroke="#ABD3BF" stroke-width="1.5"/>
+<rect x="742" y="1012" width="214" height="40" rx="9" fill="#36856B" stroke="#36856B" stroke-width="1.5"/>
+<text x="849.0" y="1038.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="849.0" y="1038.5">RAG 检索</tspan>
+</text>
+<rect x="742" y="1062" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="849.0" y="1085.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="849.0" y="1085.525">BM25 · 向量</tspan>
+</text>
+<rect x="742" y="1108" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="849.0" y="1131.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="849.0" y="1131.525">结果融合</tspan>
+</text>
+<rect x="742" y="1154" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="849.0" y="1177.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="849.0" y="1177.525">证据回源</tspan>
+</text>
+<rect x="989" y="1000" width="238" height="208" rx="9" fill="#FFFFFF" stroke="#ABD3BF" stroke-width="1.5"/>
+<rect x="1001" y="1012" width="214" height="40" rx="9" fill="#36856B" stroke="#36856B" stroke-width="1.5"/>
+<text x="1108.0" y="1038.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1108.0" y="1038.5">Agent 上下文</tspan>
+</text>
+<rect x="1001" y="1062" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="1108.0" y="1085.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1108.0" y="1085.525">Prompt</tspan>
+</text>
+<rect x="1001" y="1108" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="1108.0" y="1131.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1108.0" y="1131.525">Parse Canvas</tspan>
+</text>
+<rect x="1001" y="1154" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="1108.0" y="1177.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1108.0" y="1177.525">历史消息</tspan>
+</text>
+<rect x="1248" y="1000" width="238" height="208" rx="9" fill="#FFFFFF" stroke="#ABD3BF" stroke-width="1.5"/>
+<rect x="1260" y="1012" width="214" height="40" rx="9" fill="#36856B" stroke="#36856B" stroke-width="1.5"/>
+<text x="1367.0" y="1038.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1367.0" y="1038.5">任务调度</tspan>
+</text>
+<rect x="1260" y="1062" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="1367.0" y="1085.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1367.0" y="1085.525">DB Queue</tspan>
+</text>
+<rect x="1260" y="1108" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="1367.0" y="1131.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1367.0" y="1131.525">Lease · 心跳</tspan>
+</text>
+<rect x="1260" y="1154" width="214" height="36" rx="9" fill="#E6F4EB" stroke="#E6F4EB" stroke-width="1.5"/>
+<text x="1367.0" y="1177.525" fill="#36856B" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1367.0" y="1177.525">重试恢复</tspan>
+</text>
+<rect x="1540" y="936" width="360" height="294" rx="9" fill="#F6F3FF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="1562" y="979" fill="#6950CF" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="1562" y="979.0">领域实现</tspan>
+</text>
+<rect x="1562" y="997" width="316" height="32" rx="9" fill="#6950CF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="1018.85" fill="#FFFFFF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1018.85">FFmpeg</tspan>
+</text>
+<text x="1720.0" y="1050" fill="#6950CF" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1050.0">媒体处理</tspan>
+</text>
+<rect x="1562" y="1069" width="316" height="32" rx="9" fill="#6950CF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="1090.85" fill="#FFFFFF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1090.85">Parse Engine</tspan>
+</text>
+<text x="1720.0" y="1122" fill="#6950CF" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1122.0">时间与证据合同</tspan>
+</text>
+<rect x="1562" y="1141" width="316" height="32" rx="9" fill="#6950CF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="1162.85" fill="#FFFFFF" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1162.85">RAG Engine</tspan>
+</text>
+<text x="1720.0" y="1194" fill="#6950CF" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1194.0">召回与融合策略</tspan>
+</text>
+<rect x="190" y="1260" width="760" height="280" rx="9" fill="#FFF8EF" stroke="#E8C6A3" stroke-width="1.5"/>
+<text x="212" y="1303" fill="#B97035" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="212" y="1303.0">数据存储</tspan>
+</text>
+<rect x="212" y="1332" width="168" height="136" rx="9" fill="#FFFFFF" stroke="#B97035" stroke-width="1.5"/>
+<text x="296.0" y="1367" fill="#B97035" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="296.0" y="1367.0">MySQL</tspan>
+</text>
+<text x="296.0" y="1397" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="296.0" y="1397.0">业务事实</tspan>
+</text>
+<rect x="396" y="1332" width="168" height="136" rx="9" fill="#FFFFFF" stroke="#B97035" stroke-width="1.5"/>
+<text x="480.0" y="1365" fill="#B97035" font-size="18" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="480.0" y="1365.0">Elasticsearch</tspan>
+</text>
+<text x="480.0" y="1397" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="480.0" y="1397.0">检索索引</tspan>
+</text>
+<rect x="580" y="1332" width="168" height="136" rx="9" fill="#FFFFFF" stroke="#B97035" stroke-width="1.5"/>
+<text x="664.0" y="1367" fill="#B97035" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="664.0" y="1367.0">Redis</tspan>
+</text>
+<text x="664.0" y="1397" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="664.0" y="1397.0">短期状态</tspan>
+</text>
+<rect x="764" y="1332" width="168" height="136" rx="9" fill="#FFFFFF" stroke="#B97035" stroke-width="1.5"/>
+<text x="848.0" y="1367" fill="#B97035" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="848.0" y="1367.0">媒体文件</tspan>
+</text>
+<text x="848.0" y="1397" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="848.0" y="1397.0">视频与派生媒体</tspan>
+</text>
+<rect x="970" y="1260" width="540" height="280" rx="9" fill="#EFF9F9" stroke="#A7D2D5" stroke-width="1.5"/>
+<text x="992" y="1303" fill="#368A91" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="992" y="1303.0">模型服务</tspan>
+</text>
+<rect x="992" y="1332" width="229" height="70" rx="9" fill="#FFFFFF" stroke="#368A91" stroke-width="1.5"/>
+<text x="1106.5" y="1373.5" fill="#368A91" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1106.5" y="1373.5">LLM / VLM</tspan>
+</text>
+<rect x="1243" y="1332" width="229" height="70" rx="9" fill="#FFFFFF" stroke="#368A91" stroke-width="1.5"/>
+<text x="1357.5" y="1373.5" fill="#368A91" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1357.5" y="1373.5">ASR / OCR</tspan>
+</text>
+<rect x="992" y="1420" width="229" height="70" rx="9" fill="#FFFFFF" stroke="#368A91" stroke-width="1.5"/>
+<text x="1106.5" y="1461.5" fill="#368A91" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1106.5" y="1461.5">Embedding</tspan>
+</text>
+<rect x="1243" y="1420" width="229" height="70" rx="9" fill="#FFFFFF" stroke="#368A91" stroke-width="1.5"/>
+<text x="1357.5" y="1461.5" fill="#368A91" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1357.5" y="1461.5">声纹 / 重排</tspan>
+</text>
+<rect x="1540" y="1260" width="360" height="280" rx="9" fill="#F6F3FF" stroke="#C5B7F1" stroke-width="1.5"/>
+<text x="1562" y="1303" fill="#6950CF" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="1562" y="1303.0">模型接入</tspan>
+</text>
+<rect x="1562" y="1326" width="316" height="40" rx="9" fill="#6950CF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="1352.5" fill="#FFFFFF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1352.5">Gateway</tspan>
+</text>
+<rect x="1562" y="1376" width="316" height="36" rx="9" fill="#ECE6FC" stroke="#ECE6FC" stroke-width="1.5"/>
+<text x="1720.0" y="1399.525" fill="#6950CF" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1399.525">模型绑定</tspan>
+</text>
+<rect x="1562" y="1422" width="316" height="36" rx="9" fill="#ECE6FC" stroke="#ECE6FC" stroke-width="1.5"/>
+<text x="1720.0" y="1445.525" fill="#6950CF" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1445.525">协议适配</tspan>
+</text>
+<rect x="1562" y="1468" width="316" height="36" rx="9" fill="#ECE6FC" stroke="#ECE6FC" stroke-width="1.5"/>
+<text x="1720.0" y="1491.525" fill="#6950CF" font-size="17" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1491.525">用量记录</tspan>
+</text>
+<rect x="190" y="1570" width="1320" height="140" rx="9" fill="#F2F6FE" stroke="#ADC4EA" stroke-width="1.5"/>
+<text x="212" y="1613" fill="#3E68BC" font-size="24" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="212" y="1613.0">运行支撑</tspan>
+</text>
+<rect x="212" y="1633" width="302" height="54" rx="9" fill="#FFFFFF" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="363.0" y="1666.5" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="363.0" y="1666.5">身份与权限</tspan>
+</text>
+<rect x="536" y="1633" width="302" height="54" rx="9" fill="#FFFFFF" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="687.0" y="1666.5" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="687.0" y="1666.5">配额与并发</tspan>
+</text>
+<rect x="860" y="1633" width="302" height="54" rx="9" fill="#FFFFFF" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="1011.0" y="1666.5" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1011.0" y="1666.5">日志与用量</tspan>
+</text>
+<rect x="1184" y="1633" width="302" height="54" rx="9" fill="#FFFFFF" stroke="#3E68BC" stroke-width="1.5"/>
+<text x="1335.0" y="1666.5" fill="#3E68BC" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1335.0" y="1666.5">离线评测</tspan>
+</text>
+<rect x="1540" y="1570" width="360" height="140" rx="9" fill="#F6F3FF" stroke="#6950CF" stroke-width="1.5"/>
+<text x="1720.0" y="1605" fill="#6950CF" font-size="20" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1605.0">Server · Evals</tspan>
+</text>
+<text x="1720.0" y="1635" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="middle">
+<tspan x="1720.0" y="1635.0">服务治理 · 业务验证</tspan>
+</text>
+<text x="45" y="1746" fill="#61718A" font-size="16" font-family="Helvetica, Arial, PingFang SC, Microsoft YaHei, sans-serif" text-anchor="start">
+<tspan x="45" y="1746.0">Cloud 架构视图 · 2026.10.24    /    部署拓扑见附图</tspan>
+</text>
+</svg>

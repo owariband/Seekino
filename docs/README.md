@@ -11,7 +11,7 @@
 | [design/](design/)、[ui-design/](ui-design/) 及模块内 TRD | 当前有效的设计、接口、数据合同与交互约定 | 明确候选方案、已选设计及被替代的历史方案，设计确认不等于已部署；问题和执行待办关联 problems，实施过程和效果关联 devlog。 |
 | [research/](research/)、[notes/](notes/) | 调研依据、技术解释、假设与候选思路 | 标明来源、日期和适用边界；研究结论不直接作为本项目已实现或效果达标的证明。 |
 | [migrations/](migrations/) | 可执行的数据库变更脚本与迁移依据 | 脚本存在不代表已执行；实际环境、执行结果和验证证据记入 devlog，相关待办状态由 problems 维护。 |
-| [outputs/verification](../outputs/verification/)、[engine/experiment](../engine/experiment/)、[evals](../evals/) | 实验输入、脚本、原始结果和复现材料 | 原始产物保留来源，综合结论收敛到 devlog；样本数、测试通过数和运行完成状态不直接代表业务质量。 |
+| [outputs/verification](../outputs/verification/)、[旧实验退役摘要](dev/design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)、[evals](../evals/) | 当前验收、benchmark 与旧实验结论 | `engine/experiment/` 已整体退役，构图／shot-tags 仅留本地忽略归档；其余旧实验仅留摘要。当前验收产物和 benchmark 保留来源，样本数或运行完成不直接代表业务质量。 |
 | [dev/problem_backup.md](dev/problem_backup.md) | 旧问题清单的历史备份 | 保留追溯，不再更新，不作为当前待办或完成状态的依据。 |
 
 OKR、性能计划等规划文档说明目标、优先级和候选路线；其中需要执行的问题统一关联到 problems，避免多处分别维护当前完成状态。
@@ -41,4 +41,4 @@ OKR、性能计划等规划文档说明目标、优先级和候选路线；其�
 3. 将决策、验证结果和整体指标写入统一 devlog，注明原问题编号并链接来源；没有测量的数据明确写未测。
 4. 根据实际验收结果更新 problems 的 TODO / 已解决状态、进展日期与 devlog 链接。后续实验追加有日期的记录，保留原失败结果和适用边界。
 
-已有历史问题正文、TRD 和实验产物保留为追溯依据；后续新增内容按以上职责维护，避免复制整段材料后形成多个独立更新的副本。
+已有历史问题正文、TRD 和实验退役摘要保留为追溯依据；后续新增内容按以上职责维护，避免复制整段材料后形成多个独立更新的副本。

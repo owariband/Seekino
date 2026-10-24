@@ -8,7 +8,7 @@
 
 检索范围改为每次 messages/send 的 seriesIds：省略或 [] 表示当前 Workspace 全部 READY 动画，显式选择未 READY 返回 409。Conversation 不再保存 seriesIds；每次 Kick 启动前展开实际范围，USER / ASSISTANT 消息都公开保存该快照。动画多选复用已有 GET /api/series/list?workspaceId=... 的 seriesId / name / status，改变选择只影响下一次发送。
 
-可运行离线示例：[agent-loop-code-example.py](agent-loop-code-example.py)，直接调用正式 AgentRuntime，不复制 Graph。完整结构与历史提案见 [agent-runtime-design.md](agent-runtime-design.md)，参考项目源码见 [agent-loop-references.md](agent-loop-references.md)。当前没有跨进程 delta 重放、崩溃遗留 PROCESSING 恢复或独立 Clip 端点。
+当前检索 Runtime 入口：[video_search/runtime.py](../../agent/chat/video_search/runtime.py)。旧离线示例已因导入路径失效于 2026-10-24 清理，探索结论见[归档总结](../dev/design-experiment-cleanup.md#过时架构图和代码示例)。完整结构与历史提案见 [agent-runtime-design.md](agent-runtime-design.md)，参考项目源码见 [agent-loop-references.md](agent-loop-references.md)。当前没有跨进程 delta 重放、崩溃遗留 PROCESSING 恢复或独立 Clip 端点。
 
 ## 1. 三个 Agent 的职责
 
@@ -277,16 +277,15 @@ SQLite、ASGI、实际 SDK 配合 HTTP MockTransport / 仿真 Provider 事件与
 
 ## 7. 可复现命令与后续顺序
 
-从项目根目录运行：
+以下保留 2026-09-18 时点的命令记录，测试路径应按当前目录核对；已移除失效的旧离线示例命令：
 
 ```bash
 .venv/bin/pytest -q
 .venv/bin/pytest tests/server/test_agent_runtime.py tests/server/test_agent_chat_service.py tests/server/test_api.py tests/server/test_sse_events.py -q
 .venv/bin/pytest tests/gateway/test_agent_model.py tests/gateway/test_models.py tests/gateway/test_sse_proxy.py -q
-PYTHONPATH=. .venv/bin/python docs/design/agent-loop-code-example.py
 ```
 
-从 web/ 运行 npm run typecheck、npm test、npm run build。离线示例使用非空假证据，演示 first continue → advice → 第二轮复用 → complete → evidence / delta → final_output；没有 SQL / HTTP，因此故意没有 answer.completed。
+从 web/ 运行 npm run typecheck、npm test、npm run build。旧离线示例曾使用非空假证据，演示 first continue → advice → 第二轮复用 → complete → evidence / delta → final_output；没有 SQL / HTTP，因此没有 answer.completed。该探索的结论已收录于[归档总结](../dev/design-experiment-cleanup.md#过时架构图和代码示例)。
 
 接下来的验收顺序：
 
