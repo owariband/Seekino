@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Renders the Seekino promo from source: Kino's Theme (60 s), then the 60 s video.
-# Run from anywhere; outputs land in assets/promo/out/.
+# Run from anywhere; the final video lands in assets/promo/releases/.
+# Generated audio and working files stay in assets/promo/out/.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -20,4 +21,4 @@ if [[ "${1:-}" == "--explorations" ]]; then
   node "$here/explorations/battle-box-style-frames.mjs"
 fi
 
-echo "done: $out"
+echo "done: $here/releases/kino-promo-60s.mp4"

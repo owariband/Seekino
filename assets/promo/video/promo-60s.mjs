@@ -24,6 +24,7 @@ import * as E from "../../../web/src/shared/kino/engine.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "../../..");
 const OUT = join(HERE, "../out");
+const RELEASES = join(HERE, "../releases");
 const WORK = join(OUT, ".work/promo");
 mkdirSync(WORK, { recursive: true });
 const THEME = join(OUT, "kino-theme-60s.wav");
@@ -444,7 +445,8 @@ await done;
 
 const blipWav = join(WORK, "blips.wav");
 writeBlips(blipWav);
-const out = join(OUT, "kino-promo-60s.mp4");
+mkdirSync(RELEASES, { recursive: true });
+const out = join(RELEASES, "kino-promo-60s.mp4");
 await new Promise((resolve, reject) => spawn("ffmpeg", ["-loglevel", "error", "-y", "-i", silent, "-i", THEME, "-i", blipWav,
   "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]",
   "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", String(DURATION), "-movflags", "+faststart", out],

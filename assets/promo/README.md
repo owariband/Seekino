@@ -4,6 +4,8 @@ Source for the Seekino promo. Everything is generated from code: the music is sy
 
 The video is 1080×1350 (4:5, for the X feed), 30 fps, 62.2 s. Kino walks a dashed ground line, collects "moment" tiles, headbutts a ▶ block, and a projector screen drops down behind it to show Seekino. The Undertale-style text box talks to the viewer, so the video still works with the sound off.
 
+Finished promo: [kino-promo-60s.mp4](releases/kino-promo-60s.mp4). This release asset is kept in Git alongside its source.
+
 ## Render
 
 From the repository root:
@@ -12,12 +14,12 @@ From the repository root:
 ./assets/promo/render.sh
 ```
 
-Outputs go to `assets/promo/out/` (git-ignored):
+The final video goes to `assets/promo/releases/`. Generated audio and working files stay in `assets/promo/out/` (git-ignored). Paths below are relative to `assets/promo/`:
 
 | File | What |
 | --- | --- |
-| `kino-theme-60s.wav` / `.mp3` | Kino's Theme, 62.2 s |
-| `kino-promo-60s.mp4` | the 60 s promo with the theme and typewriter blips |
+| `out/kino-theme-60s.wav` / `.mp3` | Kino's Theme, 62.2 s; generated locally |
+| `releases/kino-promo-60s.mp4` | the finished promo with the theme and typewriter blips; kept in Git |
 
 `./assets/promo/render.sh --explorations` also renders the earlier directions into `out/explorations/`.
 
