@@ -61,7 +61,6 @@ def _input_payload() -> dict:
             "visual_input": {
                 "mode": "ordered_frames",
                 "fps": 1,
-                "max_frames_per_chunk": 30,
                 "max_height": 720,
             },
             "indexing": {"index_generation": 1, "sparse_enabled": False, "contract_fingerprint": "0" * 64},
@@ -90,6 +89,15 @@ def test_config_snapshot_round_trip_and_default_switches() -> None:
     assert inputs.parse_config.prefix_context is None
     with pytest.raises(ValidationError, match="frozen"):
         inputs.parse_config.execution.max_model_calls = 200
+
+
+def test_legacy_frame_cap_is_ignored_and_not_serialized() -> None:
+    payload = _input_payload()
+    payload["parse_config"]["visual_input"]["max_frames_per_chunk"] = 32
+    inputs = ParseInput.model_validate(payload)
+    rendered = inputs.model_dump(mode="json")["parse_config"]["visual_input"]
+    assert "max_frames_per_chunk" not in rendered
+    assert not hasattr(inputs.parse_config.visual_input, "max_frames_per_chunk")
 
 
 def test_legacy_model_snapshot_does_not_add_unset_policy_fields():

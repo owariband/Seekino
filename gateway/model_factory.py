@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial, wraps
 from collections.abc import Callable, Mapping, Sequence
@@ -29,6 +28,7 @@ from gateway.usage import model_call_context
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
     from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
+    from gateway.agent_model.deepagents import DeepAgentSessionStore
     from gateway.agent_model.factory import AgentModelFactory
 
 _Result = TypeVar("_Result", bound=BaseModel)
@@ -310,12 +310,20 @@ class GenerativeModel:
 class GatewayClient:
     """Resolve external model bindings and own their live Gateway resources."""
 
-    def __init__(self, config: GatewayConfig, *, environ: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self, config: GatewayConfig, *, environ: Mapping[str, str] | None = None,
+        supervisor_sessions: DeepAgentSessionStore | None = None,
+    ) -> None:
         self.config = config
         self._environ = os.environ if environ is None else environ
         self._resources: set[_OwnedResource] = set()
         self._codex_executors: dict[str, ThreadPoolExecutor] = {}
-        self._pi_client = None
+        owns_supervisor_sessions = supervisor_sessions is None and config.supervisor_harness == "deepagents"
+        if owns_supervisor_sessions:
+            from gateway.agent_model.deepagents import DeepAgentSessionStore
+            supervisor_sessions = DeepAgentSessionStore()
+        self._supervisor_sessions = supervisor_sessions
+        self._owns_supervisor_sessions = owns_supervisor_sessions
         self._lock = Lock()
         self._closed = False
 
@@ -484,28 +492,12 @@ class GatewayClient:
                 "request_timeout_seconds", "reasoning_effort",
             })) if fallback is not None else None),
         )
-        return self._own(AgentModelFactory(config, self.config.model_sources,
-                                          environ=self._environ, binding=binding,
-                                          codex_executor=self._codex_executor(binding.source),
-                                          pi_client=self._shared_pi_client() if self.config.supervisor_harness == "pi" else None))
-
-    def _shared_pi_client(self):
-        from gateway.pi.client import PiClient
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("Gateway client is closed")
-            if self._pi_client is None:
-                settings = self.config.pi_host
-                self._pi_client = PiClient(
-                    command=settings.node_bin,
-                    args=(str(Path(__file__).resolve().parent / "pi" / "host" / "dist" / "src" / "main.js"),),
-                    env=self._environ,
-                    config=settings.runtime_options(),
-                    startup_timeout=settings.startup_timeout_seconds,
-                    cancel_timeout=settings.cancel_timeout_seconds,
-                    shutdown_timeout=settings.shutdown_timeout_seconds,
-                )
-            return self._pi_client
+        return self._own(AgentModelFactory(
+            config, self.config.model_sources,
+            environ=self._environ, binding=binding,
+            codex_executor=self._codex_executor(binding.source),
+            supervisor_sessions=self._supervisor_sessions,
+        ))
 
     def create(
         self, kind: Literal["generative", "transcription", "embedding", "rerank", "speaker_embedding"],
@@ -531,7 +523,6 @@ class GatewayClient:
             self._closed = True
             resources, self._resources = tuple(self._resources), set()
             executors, self._codex_executors = tuple(self._codex_executors.values()), {}
-            pi_client, self._pi_client = self._pi_client, None
         failure = None
         for resource in resources:
             try:
@@ -543,9 +534,9 @@ class GatewayClient:
                 executor.shutdown(wait=False, cancel_futures=True)
             except BaseException as error:
                 failure = failure or error
-        if pi_client is not None:
+        if self._owns_supervisor_sessions:
             try:
-                pi_client.close()
+                self._supervisor_sessions.close()
             except BaseException as error:
                 failure = failure or error
         if failure is not None:

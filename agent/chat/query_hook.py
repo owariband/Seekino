@@ -5,14 +5,16 @@ from time import monotonic
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from gateway.config import QueryHookConfig
+from gateway.model_factory import GenerativeModel
+from gateway.multimodal import TextInput
 from gateway.query_hook import QueryHookModelError, QueryHookModels
-from gateway.usage import model_call_context
+from gateway.usage import ModelCallControlError, model_call_context
 
 from .common.state import ExecutionControl, RunInputs, context_json
-from .query_hook_prompts import ROUTE_QUESTION, SLOT_PROMPT, TEMPLATES, TURN_SCOPE
+from .query_hook_prompts import DECISION_PROMPT, ROUTE_QUESTION, SLOT_PROMPT, TEMPLATES, TURN_SCOPE
 
 _logger = logging.getLogger(__name__)
 Action = Literal["respond", "retrieve", "mixed"]
@@ -30,6 +32,16 @@ class RetrievalSlot(BaseModel):
         return value
 
 
+class QueryHookDecision(RetrievalSlot):
+    action: Action
+
+    @model_validator(mode="after")
+    def response_has_no_retrieval(self):
+        if self.action == "respond" and self.retrieval_query is not None:
+            raise ValueError("respond must not supply a retrieval query")
+        return self
+
+
 class _HookState(TypedDict):
     query: str
     recent_messages: list[dict[str, str]]
@@ -45,19 +57,30 @@ class _HookState(TypedDict):
 class QueryHook:
     """Route once per user turn, optionally fill a slot, then append a fixed template."""
 
-    def __init__(self, config: QueryHookConfig, models: QueryHookModels) -> None:
+    def __init__(
+        self, config: QueryHookConfig, models: QueryHookModels, *,
+        decision_model: GenerativeModel | None = None,
+    ) -> None:
         self._config = config
         self._models = models
+        self._decision_model = decision_model
         graph = StateGraph(_HookState)
-        graph.add_node("route", self._route)
-        graph.add_node("rewrite", self._rewrite)
         graph.add_node("append", self._append)
-        graph.add_edge(START, "route")
-        graph.add_conditional_edges("route", lambda state: (
-            END if state["action"] is None
-            else "append" if state["action"] == "respond" else "rewrite"
-        ), [END, "append", "rewrite"])
-        graph.add_edge("rewrite", "append")
+        if decision_model is not None:
+            graph.add_node("decide", self._decide)
+            graph.add_edge(START, "decide")
+            graph.add_conditional_edges("decide", lambda state: (
+                END if state["action"] is None else "append"
+            ), [END, "append"])
+        else:
+            graph.add_node("route", self._route)
+            graph.add_node("rewrite", self._rewrite)
+            graph.add_edge(START, "route")
+            graph.add_conditional_edges("route", lambda state: (
+                END if state["action"] is None
+                else "append" if state["action"] == "respond" else "rewrite"
+            ), [END, "append", "rewrite"])
+            graph.add_edge("rewrite", "append")
         graph.add_edge("append", END)
         self._graph = graph.compile(checkpointer=False)
 
@@ -135,6 +158,40 @@ class QueryHook:
             (monotonic() - started) * 1000, error,
         )
         return {"action": action}
+
+    def _decide(self, state: _HookState) -> dict:
+        started = monotonic()
+        result = {"action": None, "retrieval_query": None}
+        status, error = "fallback", "hook_deadline"
+        remaining = self._remaining(state)
+        if remaining > 0:
+            prompt = (
+                f"{DECISION_PROMPT}\n分类规则：{context_json(ROUTE_QUESTION)}\n"
+                f"近期对话：{context_json(state['recent_messages'])}\n"
+                f"当前消息：{context_json(state['query'])}"
+            )
+            try:
+                decision = self._decision_model.generate(
+                    [TextInput(prompt)], schema_name="query_hook_decision",
+                    result_type=QueryHookDecision, max_model_calls=1,
+                    request_timeout_seconds=remaining, check_control=state["control"].check,
+                )
+                if self._remaining(state) > 0:
+                    result = decision.model_dump()
+                    status, error = "completed", None
+            except ModelCallControlError:
+                raise
+            except Exception as exc:
+                # This optional decision may fail open; cancellation and admission may not.
+                state["control"].check()
+                error = type(exc).__name__
+        _logger.log(
+            logging.WARNING if status == "fallback" else logging.INFO,
+            "event=query_hook_decide conversation_id=%s message_id=%s status=%s action=%s duration_ms=%.1f error=%s",
+            state["conversation_id"], state["message_id"], status, result["action"],
+            (monotonic() - started) * 1000, error,
+        )
+        return result
 
     def _rewrite(self, state: _HookState) -> dict:
         started = monotonic()

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "AniVAG 名场面检索与时间证据时序",
+    "locale": "zh-CN",
+    "output": "anivag-search.compact.sequence.html",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 670]
+  },
+  "participants": [
+    { "id": "user", "type": "external", "label": "用户", "sublabel": "自然语言" },
+    { "id": "web", "type": "frontend", "label": "Web 工作台", "sublabel": "搜索 + 播放器" },
+    { "id": "api", "type": "backend", "label": "Search API", "sublabel": "在线入口" },
+    { "id": "engine", "type": "backend", "label": "Hybrid RAG", "sublabel": "查询理解与融合" },
+    { "id": "speech", "type": "database", "label": "语音文本索引", "sublabel": "台词与称呼" },
+    { "id": "visual", "type": "database", "label": "视觉索引", "sublabel": "场景与动作" },
+    { "id": "event", "type": "database", "label": "事件索引", "sublabel": "关系与情绪" },
+    { "id": "reranker", "type": "backend", "label": "Reranker", "sublabel": "融合与时间聚合" },
+    { "id": "media", "type": "cloud", "label": "Media Store", "sublabel": "原片与关键帧" }
+  ],
+  "segments": [
+    { "from": 140, "to": 226, "label": "查询理解" },
+    { "from": 238, "to": 394, "label": "三路召回" },
+    { "from": 406, "to": 528, "label": "证据组装" },
+    { "from": 536, "to": 584, "label": "跳转原片" }
+  ],
+  "messages": [
+    { "from": "user", "to": "web", "y": 160, "label": "“惊世一跪在哪一集？”", "variant": "emphasis" },
+    { "from": "web", "to": "api", "y": 184, "label": "POST /search {library_id, query}", "variant": "emphasis" },
+    { "from": "api", "to": "engine", "y": 208, "label": "读取 active_version；改写梗、动作与事件语义", "variant": "emphasis" },
+    { "from": "engine", "to": "speech", "y": 250, "label": "语音台词 / 人物关键词召回" },
+    { "from": "speech", "to": "engine", "y": 278, "label": "speech_hits", "variant": "return" },
+    { "from": "engine", "to": "visual", "y": 306, "label": "下跪、雨夜、构图语义召回" },
+    { "from": "visual", "to": "engine", "y": 334, "label": "visual_hits", "variant": "return" },
+    { "from": "engine", "to": "event", "y": 362, "label": "人物 + 动作 + 情绪 + 关系召回" },
+    { "from": "event", "to": "engine", "y": 390, "label": "event_hits", "variant": "return" },
+    { "from": "engine", "to": "reranker", "y": 420, "label": "候选去重、RRF / 加权融合", "variant": "emphasis" },
+    { "from": "reranker", "to": "media", "y": 444, "label": "读取关键帧与时间片证据" },
+    { "from": "media", "to": "reranker", "y": 472, "label": "episode + [start_ms,end_ms] + frames", "variant": "return" },
+    { "from": "reranker", "to": "api", "y": 496, "label": "Top-K EvidenceResult", "variant": "return" },
+    { "from": "api", "to": "web", "y": 520, "label": "集数、时间戳、字幕、关键帧、解释", "variant": "return" },
+    { "from": "user", "to": "web", "y": 548, "label": "点击 Top-1 名场面", "variant": "emphasis" },
+    { "from": "web", "to": "media", "y": 576, "label": "读取原片并 seek(start_ms)，流式播放" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 178, "to": 526, "type": "backend" },
+    { "participant": "engine", "from": 202, "to": 426, "type": "backend" },
+    { "participant": "speech", "from": 244, "to": 284, "type": "database" },
+    { "participant": "visual", "from": 300, "to": 340, "type": "database" },
+    { "participant": "event", "from": 356, "to": 396, "type": "database" },
+    { "participant": "reranker", "from": 414, "to": 502, "type": "backend" },
+    { "participant": "media", "from": 438, "to": 582, "type": "cloud" },
+    { "participant": "web", "from": 542, "to": 582, "type": "frontend" }
+  ]
+}

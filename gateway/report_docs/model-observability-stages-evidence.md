@@ -19,7 +19,7 @@ V1 退役与其完成后的 commit/push 沿用独立任务授权。
 
 ## 1. 有效入口
 
-- [TRD](../design/trd.md)：目标、职责、调用合同、已确认平台和验收边界。
+- [TRD](../../docs/design/gateway-model-observability-trd.md)：目标、职责、调用合同、已确认平台和验收边界。
 - [主图](model-observability-stages.svg) / [可编辑源场景](model-observability-stages.excalidraw)。
 - [G01–G03 分图](model-observability-stages-01-03.svg) / [源场景](model-observability-stages-01-03.excalidraw)。
 - [G04–G05 分图](model-observability-stages-04-05.svg) / [源场景](model-observability-stages-04-05.excalidraw)。
@@ -29,14 +29,14 @@ V1 退役与其完成后的 commit/push 沿用独立任务授权。
 
 | 阶段 | 设计依据 | 当前证据与状态 |
 | --- | --- | --- |
-| G01 | [设计签收](../design/trd.md#g01) | 用户已明确授权完整实施；边界为已展示 Gateway18 + Server10 + 设计8 |
-| G02 | [公共记录](../design/trd.md#g02) | 已实施；41 passed，包含旧 capture 兼容、fanout、上下文与生命周期 |
-| G03A | [structured Query](../design/trd.md#g03a) | 已实施；主请求、repair、fallback 和失败 usage 直接回归通过 |
-| G03B | [原生 SDK](../design/trd.md#g03b) | 已实施；聚合粒度、失败 usage、reader thread 上下文直接回归通过；G03A/B 合并 153 passed |
-| G04A | [兼容与关闭机制](../design/trd.md#g04a) | 临时 SDK 4.17 关闭候选未通过；私有 OTel 1.45 + 自有 OTLP 进程机制已验证 |
-| G04B | [桥接、配置与生命周期](../design/trd.md#g04b) | 已实施；61 passed、1 skipped，含真实 protobuf、本地 HTTP 和资源收尾 |
-| G05A | [离线组合验收](../design/trd.md#g05a) | 已执行；Gateway 全部离线测试 378 passed、1 skipped；真实 Provider 文件排除 |
-| G05B | [真实项目与交接](../design/trd.md#g05b) | 当前；真实项目测试入口已实现并默认跳过；S1 接线完成但普通联验受阻，S2 项目待提供 |
+| G01 | [设计签收](../../docs/design/gateway-model-observability-trd.md#g01) | 用户已明确授权完整实施；边界为已展示 Gateway18 + Server10 + 设计8 |
+| G02 | [公共记录](../../docs/design/gateway-model-observability-trd.md#g02) | 已实施；41 passed，包含旧 capture 兼容、fanout、上下文与生命周期 |
+| G03A | [structured Query](../../docs/design/gateway-model-observability-trd.md#g03a) | 已实施；主请求、repair、fallback 和失败 usage 直接回归通过 |
+| G03B | [原生 SDK](../../docs/design/gateway-model-observability-trd.md#g03b) | 已实施；聚合粒度、失败 usage、reader thread 上下文直接回归通过；G03A/B 合并 153 passed |
+| G04A | [兼容与关闭机制](../../docs/design/gateway-model-observability-trd.md#g04a) | 临时 SDK 4.17 关闭候选未通过；私有 OTel 1.45 + 自有 OTLP 进程机制已验证 |
+| G04B | [桥接、配置与生命周期](../../docs/design/gateway-model-observability-trd.md#g04b) | 已实施；61 passed、1 skipped，含真实 protobuf、本地 HTTP 和资源收尾 |
+| G05A | [离线组合验收](../../docs/design/gateway-model-observability-trd.md#g05a) | 已执行；Gateway 全部离线测试 378 passed、1 skipped；真实 Provider 文件排除 |
+| G05B | [真实项目与交接](../../docs/design/gateway-model-observability-trd.md#g05b) | 当前；真实项目测试入口已实现并默认跳过；S1 接线完成但普通联验受阻，S2 项目待提供 |
 
 阶段对应：G03 = G03A + G03B；G04 = G04A + G04B；G05 = G05A + G05B。
 细化依赖：G01 → G02 与 G04A 并行；G02 → G03A 与 G03B。

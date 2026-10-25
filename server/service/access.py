@@ -26,6 +26,8 @@ def require_tenant_write(identity: AuthIdentity, tenant_id: str) -> None:
         return
     if identity.is_guest or identity.auth_level != "email":
         raise AuthError("登录后可使用此功能", status_code=403, code="LOGIN_REQUIRED")
+    if identity.tenant_id is None:
+        raise AuthError("当前账号仅可体验公开资料", status_code=403, code="PERMISSION_DENIED")
     if tenant_id == identity.tenant_id or (
         identity.role == "admin" and tenant_id == identity.public_tenant_id
     ):

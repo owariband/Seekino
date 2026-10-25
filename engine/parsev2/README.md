@@ -104,5 +104,5 @@ application, status aggregation, indexing readiness, and recovery. Gateway owns
 actual model/embedding requests and cancellation.
 
 The active design contract is
-[`design/trd.md`](design/trd.md). Historical Canonical/Patch reducer and atomic
+[`design/trd.md`](../../docs/design/video-parse-engine-trd.md). Historical Canonical/Patch reducer and atomic
 publication proposals are not the current implementation contract.

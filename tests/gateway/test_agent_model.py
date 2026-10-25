@@ -2221,6 +2221,87 @@ def test_deepseek_structured_agent_replays_reasoning_after_tool_call() -> None:
     client.close()
 
 
+def test_kimi_agent_loop_uses_fixed_temperature_and_reasoning_effort() -> None:
+    completions = _FunctionCompletions(_agent_response("ok"))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    model = OpenAIAgentModel(
+        "k3.1-pro",
+        provider_name="kimi",
+        profile="kimi",
+        base_url="https://api.kimi.com/coding/v1",
+        api_key="test-key",
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        reasoning_effort="low",
+        client=client,
+    )
+
+    _run_agent(model)
+
+    assert len(completions.calls) == 1
+    request = completions.calls[0]
+    assert request["temperature"] == 1
+    assert request["reasoning_effort"] == "low"
+    assert request["max_completion_tokens"] == 2048
+    assert "max_tokens" not in request
+    assert "extra_body" not in request
+
+
+def test_kimi_structured_agent_uses_fixed_temperature_and_reasoning_effort() -> None:
+    requests = []
+
+    def retrieve(query: str) -> dict:
+        return {"hits": [{"video_chunk_id": "chunk-real", "query": query}]}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        completion = (
+            _completion("search_video_chunk_evidence", {"query": "摔杯子"})
+            if len(requests) == 1
+            else _completion("QueryDraft", {
+                "plan_context": "已确认片段",
+                "message": "找到了片段",
+                "selected_video_chunk_ids": ["chunk-real"],
+            }, call_id="call-2")
+        )
+        return httpx.Response(200, json=completion)
+
+    client = OpenAI(
+        api_key="test-key",
+        base_url="https://api.kimi.test/coding/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    try:
+        model = OpenAIStructuredToolAgentModel(
+            "k3.1-pro",
+            provider_name="kimi",
+            api_profile="kimi",
+            base_url="https://api.kimi.test/coding/v1",
+            request_timeout_seconds=3,
+            max_output_tokens=400,
+            reasoning_effort="low",
+            client=client,
+        )
+        result = model.run_structured(
+            "找到摔杯子的片段",
+            tools=[_tool(retrieve)],
+            result_type=QueryDraft,
+            max_model_calls=2,
+        )
+    finally:
+        client.close()
+
+    assert result.selected_video_chunk_ids == ["chunk-real"]
+    assert len(requests) == 2
+    for request in requests:
+        assert request["temperature"] == 1
+        assert request["reasoning_effort"] == "low"
+        assert request["max_completion_tokens"] == 400
+        assert "max_tokens" not in request
+        assert "thinking" not in request
+
+
 def test_context_middleware_keeps_recent_tool_reasoning_when_compacting() -> None:
     def assistant(call_id: str, reasoning: str) -> AIMessage:
         return AIMessage(

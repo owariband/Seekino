@@ -42,10 +42,13 @@ class AuthConfig:
     guest_max_model_calls: int = 4
     admin_emails: tuple[str, ...] = ()
     smtp: SMTPConfig = field(default_factory=SMTPConfig)
+    public_library_only: bool = False
 
     def __post_init__(self) -> None:
         if self.mode not in {"local", "cloud"}:
             raise ValueError("auth mode must be local or cloud")
+        if not isinstance(self.public_library_only, bool):
+            raise ValueError("public_library_only must be a boolean")
         if self.mode == "cloud" and len(self.secret_key.encode("utf-8")) < 32:
             raise ValueError("cloud authentication requires a secret of at least 32 bytes")
         for name in ("cookie_name", "public_tenant_id", "local_tenant_id"):
@@ -92,6 +95,7 @@ class AuthConfig:
             return value in {"true", "1"}
         return cls(
             mode=os.getenv("ANIVAG_AUTH_MODE", defaults.mode),
+            public_library_only=enabled("ANIVAG_PUBLIC_LIBRARY_ONLY", defaults.public_library_only),
             secret_key=os.getenv("ANIVAG_AUTH_SECRET_KEY", ""),
             redis_url=os.getenv("ANIVAG_AUTH_REDIS_URL", ""),
             cookie_name=os.getenv("ANIVAG_AUTH_COOKIE_NAME", defaults.cookie_name),

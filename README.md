@@ -1,122 +1,122 @@
 <p align="center">
-  <img src="assets/mascot/animated/seekino-idle.svg" width="160" alt="Seekino 青绿色鲸鲨吉祥物" />
+  <img src="assets/mascot/animated/seekino-idle.svg" width="88" alt="Seekino" />
 </p>
 
 <h1 align="center">Seekino</h1>
 
-<p align="center"><strong>边看边问，一句话找回视频里的那一刻。</strong></p>
+<p align="center"><strong>人人可用的个人视频素材库。</strong></p>
+<p align="center">解析视频，用自然语言找回素材，让每个片段都能回到原片核对。</p>
 
 <p align="center">
   <a href="README.en.md">English</a> · 简体中文
 </p>
 
 <p align="center">
-  <a href="#实机截图">实机截图</a> ·
-  <a href="#实际使用">实际使用</a> ·
+  <a href="#仍在建设中">仍在建设中</a> ·
   <a href="#能做什么">能做什么</a> ·
-  <a href="#认识-kino">认识 Kino</a> ·
+  <a href="#实机截图">实机截图</a> ·
+  <a href="#使用方式">使用方式</a> ·
+  <a href="#接口接入">接口接入</a> ·
   <a href="#快速开始">快速开始</a> ·
-  <a href="#仓库与文档入口">开发文档</a>
+  <a href="#references">References</a>
 </p>
 
-Seekino（原 AniVAG）是一个可自托管的视频观看与检索助手。导入自己的视频系列，描述记得的画面、动作或人物关系，找到相关片段；观看时打开侧栏，询问当前画面和刚才的对白，再沿着回答回到原片核对。
+Seekino（原 AniVAG）把自己的视频整理成可搜索、可回看的素材库：导入视频，解析画面与对白，用一句描述召回相关片段，再沿时间戳回到原片确认。解析与检索召回能力也支持通过 API 接入自己的工具和工作流。
 
-目前已用于 **MyGO 动画的观看问答、跨集名场面检索和创作素材整理**。从继续观看、系列选集，到对话、片段预览和证据核对，这些操作都可以在同一套 Web 界面中完成。
+## 仍在建设中
 
-## 实机截图
+目前已支持素材入库、解析、检索和观看问答。接下来继续建设：
 
-以下截图于 **2026-10-15** 取自本机运行的 Seekino，使用真实视频与已有对话记录。界面采用青绿色视觉与日/夜主题，下面展示夜间模式。
+1. **Sandbox 接入**：让平台内 Agent 接入创作工作流，利用召回素材进行参考剪辑。
+2. **开放 MCP**：让 Codex、Claude Code 等外部 Agent 使用素材库寻找素材。
+3. **解析策略优化**：提升内容理解与结构化解析质量，优化解析耗时和成本。
+4. **召回策略优化**：改善素材匹配、片段定位与上下文关联。
+5. **可配置性与易用性建设**：完善模型配置、部署流程和日常使用体验。
 
-### 看到哪里，问到哪里
-
-播放器与「边看边聊」侧栏并排展示。提问携带当前集与暂停位置，回答中的当前视频时间可以点击跳转；人物、对白和剧情解释都能对照原片查看。
-
-![Seekino 实机截图：视频播放器与观看问答侧栏](assets/screenshots/watch-chat.jpg)
-
-### 从一句描述，到可以播放的片段
-
-在对话中跨集寻找场景，展开结果即可播放片段、查看选择理由、原始证据与前后语境，也可以回到整集或引用片段继续追问。
-
-![Seekino 实机截图：跨集检索结果、片段播放器与选择理由](assets/screenshots/search-results.jpg)
-
-<details>
-<summary>更多界面：继续观看与系列选集</summary>
-
-### 回到上次停下的故事
-
-观看首页以视频画面呈现最近观看的作品，保留集数和播放进度，一次点击继续观看。
-
-![Seekino 实机截图：视频观看首页与继续观看入口](assets/screenshots/watch-home.jpg)
-
-### 按系列浏览与选集
-
-浏览系列与剧集列表，选择一集开始播放或继续上次观看。管理者还可以查看供模型解析参考的人物与背景资料。
-
-![Seekino 实机截图：系列介绍、背景资料与选集](assets/screenshots/series.jpg)
-
-</details>
-
-## 实际使用
-
-### 观看时，确认人物与正在发生的事
-
-在 MyGO 第 1 集 **10:38** 暂停，提问「他们在干嘛？这些都是谁？」。已有对话围绕音乐教室里的祥子与爱音展开，结合当前画面和附近对白解释人物身份、交谈内容，并区分暂停帧里的人与画面外的对话者。上方观看截图展示的就是这条记录。
-
-### 按想看的感觉，找跨集演出片段
-
-实际提问：「**MyGO 里面有哪些特别燃的演出场面？推荐 3 段，说说为什么燃。**」
-
-这次回答给出了三段不同侧重的演出，并附上推荐理由和可播放片段：
-
-| 原片位置 | 这次回答的推荐侧重 |
-| --- | --- |
-| 第 10 集 · 20:01–20:54 | 含泪合奏，人物之间的情感回应。 |
-| 第 12 集 · 09:00–09:50 | 乐器演奏、舞台动作与观众互动带来的现场感。 |
-| 第 12 集 · 15:00–15:59 | 成员微笑合奏、一起继续向前的情绪。 |
-
-上方检索截图展示了这次回答的三个片段。时间对应本机视频版本；推荐理由是助手对内容的解释，可以打开原片自行判断。
-
-### 从检索片段，延伸到短片素材
-
-已有一次《春日影》主题的创作实验：将 MyGO 第 2、3 集的三个检索片段整理成保留原片时间、选择依据与字幕的素材包，再通过 HyperFrames 编排为 **1080 × 1920 的离线 HTML 短片**。这项实践通过独立的素材整理与打包流程完成，可参考[短片创作实验工作流](.agents/skills/anivag-short-video/SKILL.md)；相关脚本与配置需按当前接口核对后使用。
+**欢迎大家反馈交流，有兴趣的话可以加入一起建设！**
 
 ## 能做什么
 
-| 你想做的事 | Seekino 提供的功能 |
+| 能力 | 你可以做的事 |
 | --- | --- |
-| 找回记得的那一幕 | 自然语言跨集检索，可逐次选择系列范围、持续追问，也可引用已经找到的片段。 |
-| 边看边问 | 整集播放、继续上次观看、倍速与网页全屏；侧栏 Chat 随问题携带当前集与播放位置。 |
-| 核对回答的依据 | 查看集数、时间范围、选择理由、原始证据和前后语境，播放片段或回到整集。 |
-| 管理自己的视频 | 创建系列、维护背景和参考图，多文件分片上传、暂停与续传；查看解析进度、错误和可用的恢复操作。 |
+| 素材入库与解析 | 按系列组织视频，补充人物与背景资料，上传后解析画面、对白与事件，建立可检索索引。 |
+| 自然语言召回 | 描述画面、动作、台词或人物关系，在选定系列中跨视频寻找片段，并继续追问。 |
+| 回看与核对 | 查看来源视频、时间范围、选择理由和上下文，播放命中片段或跳回完整原片。 |
+| 观看问答 | 播放视频时打开侧栏，围绕当前画面、人物和附近对白提问。 |
+| 接入自己的工具 | 通过 HTTP API 接入上传解析、任务状态、检索召回与 Agent 对话。 |
 
-另有日/夜主题、模型 Token 用量统计，以及本机资料、远端个人资料与公开内容的访问入口。是否能够管理资料、上传或修改设置，由当前服务和身份权限决定。
+例如，在 MyGO 素材库里提问「**有哪些特别燃的演出场面？推荐 3 段，说说为什么燃。**」，可以得到带来源、时间范围和推荐理由的片段，再打开原片判断是否适合自己的创作。下面的演示使用 MyGO 动画素材；其他视频类型的效果仍需结合自己的素材验证。
 
-媒体、业务事实和索引保存在自己的运行环境，模型来源由自己的配置管理。使用远程模型时，相应音视频、帧或文本会发送到配置的供应商。
+## 实机截图
 
-项目仍在开发中。检索结果提供 Chunk 或经审核事件的时间范围，当前画面的按需理解也可抽取暂停位置附近的原视频帧；回答和片段仍应结合原片核对。已知问题与后续计划见 [问题清单](docs/dev/problems.md)。
+以下截图于 **2026-10-25** 取自本机运行的 Seekino，展示真实视频、已有解析结果与对话记录。截图为当前 Web 界面，不代表云端体验已上线。
 
-## 认识 Kino
+### 整理自己的视频素材
 
-Kino 是住在聊天里的像素鲸鲨，站在最新一条回答气泡的上方，表现助手正在做什么：检索片段时来回奔跑，核验资料时抬头盯着问号，生成回答时顶着三个点原地走；回答完成会开心地连跳两下（失败时会吓一跳、冒出「!」和一滴汗），然后蜷在这条气泡上睡着。发出下一个问题时它会醒来，从睡觉的位置跳下，落到新的气泡上继续工作。
+在资料库中按系列管理视频，查看上传、解析与可检索状态；也可以补充背景资料，帮助解析时理解人物与内容。
 
-![Kino 的动作：idle、wander、look、jump、leap、happy、think、oops、loading、run、sleep](assets/mascot/kino/kino-moves.svg)
+![Seekino 素材库：视频系列、解析状态与管理入口](assets/screenshots/library.jpg)
 
-空对话时 Kino 安静地看着你；鼠标移上去它会转过来看你，戳一下会跳起来或欢呼，连戳五下会被吓到。页面放着不动一会儿，它就趴下睡觉，你一回来它就爬起来。
+### 描述要找的画面，召回相关片段
 
-Kino 是一个小状态机，不是 AI 模型；它完全由代码逐像素绘制，不需要图片文件，并遵守系统的「减少动态效果」设置。开发说明见 [web/src/shared/kino/README.md](web/src/shared/kino/README.md)（英文）。
+用自然语言跨视频检索，展开结果即可预览片段、查看选择理由与原片时间，也可以引用片段继续追问。
 
-## 使用流程
+![Seekino 检索：自然语言提问、召回片段与选择理由](assets/screenshots/search-results.jpg)
 
-1. 在「资料库」创建动画系列，填写简介、语音语言与人物/剧情背景；背景支持 Markdown、JSON 和参考图片。
-2. 上传视频，在上传面板查看传输进度。刷新后续传应重新选择原文件；解析失败后的重试使用「解析任务」页入口。
-3. 从右上角账号菜单进入「解析任务」，查看完整建库状态。重试、重新解析、删除是否可用，以服务端当前能力和版本为准。
-4. 在观看首页选集播放，打开「边看边聊」询问当前画面、人物或刚才的对白。交互会暂停视频，并随问题冻结当前视频与播放位置。
-5. 点击顶部搜索入口，或按 `⌘ K` / `Ctrl K` 打开检索，选择系列跨集提问。点击答案中的视频片段核对原片，查看证据与前后语境，再引用片段追问。
-6. 从账号菜单进入「模型消耗」查看已记录 Token；有权限时可进入「设置」，调试展示模式下可调整后续消息的运行参数。
+### 回到原片，边看边核对
+
+播放器与问答侧栏并排展示。提问携带当前视频与播放位置，回答中的视频时间可以点击跳转。
+
+![Seekino 观看问答：原片播放器与对话侧栏](assets/screenshots/watch-chat.jpg)
+
+<details>
+<summary>更多界面：浏览素材与选集</summary>
+
+观看首页提供视频系列与播放入口，也支持继续上次观看。
+
+![Seekino 观看首页：视频系列与播放入口](assets/screenshots/watch-home.jpg)
+
+系列页按集数浏览视频，选择需要查看的原片。
+
+![Seekino 系列页：素材概览与视频选集](assets/screenshots/series.jpg)
+
+</details>
+
+## 使用方式
+
+**云端样例库正在准备发布。** 首发由管理员上传和维护已解析素材，用户可观看、检索和问答。在线入口尚未开放。
+
+**目前可以自托管个人素材库**，安装步骤见[快速开始](#快速开始)。基本流程是：
+
+1. 创建视频系列作为素材集合，按需填写简介、语音语言、背景资料与参考图片。
+2. 上传视频，在「解析任务」中查看建库进度。分片上传支持暂停与续传，解析失败时可查看错误并使用可用的重试操作。
+3. 在检索页描述需要的素材，或先选集播放、打开侧栏提问；从回答中的片段回到原视频核对。
+
+资料管理与上传权限由部署模式和当前身份决定。自托管需要准备数据库、模型配置与媒体存储；解析和问答使用远程模型时，相应音视频、帧或文本会发送到配置的供应商，并可能产生调用费用。
+
+## 接口接入
+
+Web 界面与外部工具使用同一套服务接口。已有工具可以接入以下能力：
+
+| 接入目标 | 现有接口 |
+| --- | --- |
+| 上传视频并触发解析 | `POST /api/uploads/create` → `PUT /api/uploads/segments/upload` → `POST /api/uploads/complete` |
+| 跟踪解析任务 | `GET /api/jobs/video-parse/get`、`GET /api/jobs/video-parse/events` |
+| 检索召回素材 | `POST /api/search`，返回片段来源、时间范围与证据。 |
+| 通过 Agent 对话找素材 | `/api/agent/conversations/*` 与 `/api/agent/messages/*`，支持持续对话与流式回答。 |
+
+启动服务后，在 [OpenAPI 文档](http://127.0.0.1:9621/docs)查看请求与响应，接入说明见 [Server](server/README.md)。当前范围字段使用 `tenantId`；视频时间字段采用相对原片起点的整数毫秒，部分字段仍保留 `*Seconds` 旧名，接入时需按当前合同处理。
+
+## 创作实验
+
+此前已通过独立工作流完成过「召回素材 → 整理片段 → HyperFrames 编排离线 HTML 短片」的实验，可参考[短片创作实验工作流](.agents/skills/anivag-short-video/SKILL.md)。这份实验用于验证素材复用方向；相关脚本与配置需按当前接口核对后使用。
+
+项目仍在迭代，解析、检索与回答可能存在偏差，请结合原片核对。已知问题与后续计划见[问题清单](docs/dev/problems.md)。
 
 ## 快速开始
 
 以下命令均从仓库根目录运行，适用于本机开发环境。默认 local 模式无需登录。
+首次试用可按[本地配置指南：API 模型 + Docker 数据库](deploy/local-setup.md)配置；其中提供不依赖本地权重的 Kimi / Ark 示例、checkpoint 初始化与常见问题。
 
 ### 1. 准备环境与配置
 
@@ -134,9 +134,10 @@ npm --prefix web ci
 
 | 模型角色 | 默认来源 | 准备事项 |
 | --- | --- | --- |
-| 对话 Supervisor、画面理解 | 本机 Codex | 当前系统用户已完成 Codex 登录；可通过来源配置指定可执行文件。 |
-| 语音转写、向量表示 | Ark | 配置 `ARK_API_KEY`。 |
-| 视频检索 Agent、重排 | DeepSeek | 配置 `DEEPSEEK_API_KEY`。 |
+| 对话 Supervisor、视频检索 Agent、画面理解 | 本机 Codex | 当前系统用户已完成 Codex 登录；可通过来源配置指定可执行文件。 |
+| 语音转写 | 本机 Whisper 服务 | 准备模型文件与兼容音频接口，或按模型配置替换为自己的转写服务。 |
+| 向量表示 | Ark | 配置 `ARK_API_KEY`。 |
+| 重排、视觉失败时的文本回退 | DeepSeek | 配置 `DEEPSEEK_API_KEY`。 |
 
 可以按自己的可用模型或 Endpoint 调整 [模型配置](docs/model-config.md)。默认 `supervisor_harness: codex` 要求对应的 Codex 来源；切换为 API 模型时，需要一并调整 harness 与 Supervisor 绑定。
 
@@ -191,15 +192,22 @@ Vite 代理读取同一环境中的 `ANIVAG_HTTP_HOST` / `ANIVAG_HTTP_PORT`。�
 
 ### 可选：本机启动器
 
-本机启动器固定使用已检出 `main` 分支的工作区；新版入口从其他 worktree 执行时也会先转入 main，再加载 main 的 `.env.local`：
+本机启动器默认使用已检出 `main` 分支的工作区，也支持通过 `--branch` 选择已有工作区；入口先转入所选工作区，再加载其 `.env.local`：
 
 ```bash
 ./start.sh
 ./start.sh status
 ./start.sh stop
+
+# 当前 dev 工作区
+./start.sh --branch dev
+./start.sh --branch dev status
+./start.sh --branch dev stop
 ```
 
-`start` 使用本地 main 当前文件（包含未提交改动），不自动拉取远端或切换分支。启动器会根据源码目录、文件内容和配置更新自己管理的 API/Web，未变化则复用；旧版进程记录也会更新。未知进程占用端口时会报错。此更新不停止 MySQL/ES；已有冻结 worktree 中的旧版脚本不会自动获得该行为，请使用主目录入口。
+`start` 使用所选工作区的当前文件（包含未提交改动），不自动拉取远端或切换分支。启动器会根据源码目录、文件内容和配置更新自己管理的 API/Web，未变化则复用；旧版进程记录也会更新。未知进程占用端口时会报错。此更新不停止 MySQL/ES；已有冻结 worktree 中的旧版脚本不会自动获得该行为，请使用主目录入口。
+
+首次使用 DeepAgents 必须先执行上面的 `server.cli init-db`，初始化 checkpoint 表；启动器自身的业务表初始化不能替代这一步。
 
 启动器按当前 `tenantId` 契约检查 API 资料库及 Web 代理，使用 `ANIVAG_LOCAL_TENANT_ID` 配置的本地 Tenant。启动前需准备可达的 Elasticsearch；脚本会校验集群与索引，不启动 ES。`stop` 只停止启动器管理的进程，不会停止手动启动的 API/Web 或 Compose 数据库。
 
@@ -326,19 +334,48 @@ anivag/
 ├── engine/                     # parsev2、rag 与共享媒体能力
 ├── agent/                      # Chat、实时理解、Parse 与 Context Canvas
 ├── server/                     # HTTP/CLI、持久化与可靠执行
-├── web/                        # 正式 React + TypeScript + Vite 前端（Kino 位于 web/src/shared/kino）
+├── web/                        # 正式 React + TypeScript + Vite 前端
 ├── scripts/                    # 本地启动与受控迁移工具
 ├── tests/ / evals/              # 自动化测试、手动诊断与评测
 ├── deploy/ / compose.yaml      # 本地基础设施与部署说明
-├── assets/                     # 正式 Logo、Kino 动作表、实机截图与架构图
+├── assets/                     # Logo、实机截图与架构图
 ├── docs/                       # 契约、设计、迁移与检查记录
 └── outputs/                    # 本地媒体、日志与运行产物，不进入 Git
 ```
 
 仓库根是运行边界，Python 内部模块统一由 `pyproject.toml` / `uv.lock` 管理，`package=false`；不单独发布各层分发包。
 
-- [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](agent/design/utils_context_canvas.md)
+- [设计文档分类索引](docs/design/README.md) · [文档维护约定](docs/README.md)
+- [Benchmark 索引](evals/benchmark/README.md)：查询能力覆盖、对话理解与应变、检索质量、意图路由。
+- [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](docs/design/context-canvas-design.md)
 - [当前播放位置理解实现](agent/chat/realtime_understanding/runtime.py) · [Server](server/README.md)
-- [Web](web/README.md) · [Kino](web/src/shared/kino/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
+- [Web](web/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
 - [模型配置](docs/model-config.md) · [模型 Token 用量](docs/parse-model-usage.md) · [用户/Tenant](server/report_docs/user-tenant-handoff-20261010.md)
 - [开发部署](deploy/README.md) · [问题清单](docs/dev/problems.md)
+
+## 设备迁移快照
+
+2026-10-23 的主工作区与实验代码入口见 [迁移索引](docs/migration/20261023/README.md)。dev 保存主工作区快照，各 EP04 实验保存在索引列出的独立分支。
+
+## References
+
+以下是项目调研与设计时参考的主要资料。论文条目包含仍在研究的方向，不表示已经完整复现。
+
+### 论文与研究
+
+| 论文 | 参考方向 |
+| --- | --- |
+| [OmniScript](https://arxiv.org/abs/2604.11102) | 长视频转结构化剧本，场景与事件层级、人物和对白的时间定位。 |
+| [ScreenWriter](https://arxiv.org/abs/2410.19809) | 自动剧本生成、场景组织、说话人归属与电影摘要。 |
+| [TransNet V2](https://arxiv.org/abs/2008.04838) | 镜头边界与转场检测。 |
+| [ShotBench / ShotQA / ShotVL](https://arxiv.org/abs/2506.21356) | 景别、构图、光线、运镜等电影摄影维度的理解与评测。 |
+| [CameraBench — Towards Understanding Camera Motions in Any Video](https://arxiv.org/abs/2504.15376) | 相机运动的分类、理解与评测。 |
+| [VideoRAG](https://arxiv.org/abs/2502.01549) | 长视频与跨视频的多模态检索增强生成。 |
+| [RAPTOR](https://arxiv.org/abs/2401.18059) | 层次化摘要与多粒度检索。 |
+| [QVHighlights](https://arxiv.org/abs/2107.09609) | 自然语言查询驱动的片段定位与高光选择评测。 |
+| [VISTA — LLM Agents Are Latent Context Managers](https://arxiv.org/abs/2606.30005) | 可见的上下文状态、按需归档与完整内容恢复。 |
+| [ACM — Agentic Context Management for Long Horizon Tasks](https://arxiv.org/abs/2607.23809) | 长任务中的上下文编辑、卸载与按需取回。 |
+
+### 工程实践
+
+- [Anthropic — Writing effective tools for agents — with agents](https://www.anthropic.com/research/writing-tools-for-agents)：已用于项目的 Agent 工具设计，包括清晰的工具职责、按需读取上下文、分页与可纠正的错误反馈。项目中的研究与应用记录见 [Canvas 工具设计研究](docs/research/2026-10-22-canvas-agent-tool-design.md)。

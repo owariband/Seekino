@@ -1,6 +1,25 @@
 Objectives and Key Results
 目标与关键成果法
 
+# 2026-10-24
+反思自己个人AI团队的失职，定下新OKR指标
+time管理：10.26离职，10.27回成都+数据迁移，耽搁一天，10月剩余时间：不到4d
+
+主要任务：
+1. 保证cloud环境下部署完整项目可控user体验seekino全量功能
+2. 提供sandbox，允许agent直接进行plan-召回结果-video/html制作
+3. 解析增加分镜、高亮理解，支持剪辑制作
+
+时间不够，十月底上不了线，并行处理研究
+
+
+
+
+
+
+> 2026-10-24 旧实验退役说明：下文保留当时的观察；声纹、检测、图片出处实验的原始材料已删除，链接转到[结论摘要](design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)。构图／shot-tags 数据仅保存在被 Git 忽略的本地归档中，详见[恢复说明](design-experiment-cleanup.md#本地归档与恢复)。
+
+
 # 2026-10-09
 
 本期重点（2026-10-10 调整）：先把已有上传、解析、检索、播放与 Chat 答疑做到好用、可验证。用真实课程完成操作与结果核对，修复影响使用的问题后，再推进新增能力。
@@ -93,7 +112,7 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 
 ### 2. 实时识别的sub-agent开发，接入chat supervisor
 
-状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../../agent/chat/design/实时parse_trd.md)，产品验收按 O0 进行。
+状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../design/realtime-parse-trd.md)，产品验收按 O0 进行。
 
 职责边界：本 Agent 负责实时区间理解 sub-agent、Chat Supervisor 的调用与结果整合，以及这条链路必需的 Server 适配。前端播放交互、全量 Parse / Refine / 索引算法、身份与 Workspace 体系、YouTube 下载和本机笔记生成由对应模块负责；本任务复用其接口，依赖缺口列 TODO。
 
@@ -143,7 +162,7 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 - KR2：复用 Event 的时间范围、检索和回源链路，关联具体关键帧及其来源时间。区分 Event 与 Shot 的时间重叠上下文、帧是否处于 Event 区间，以及画面是否支持事件描述；不把同一 Shot 的全部关联 Event 自动当作每张关键帧的证据。
 - KR3：先用已有数据比较现有 Event 检索与新增镜头语言描述的收益，分别评议构图类别和布局，记录额外解析用量、处理时间和存储。只有收益足以支持成本时再排期；完整镜头覆盖、独立 Shot 业务体系和全量构图标注不作为本项前置建设。
 
-参考：[Shot gallery](../../engine/experiment/composition-models/20261018-shot-gallery/README.md)、[构图标签与盲评实验](../../engine/experiment/composition-models/20261019-shot-tags/README.md)。实验产物保留在本机忽略目录；本项仅记录设计方向，不标记为已实现或效果已验证。
+参考：[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)。实验产物已移至本机忽略 ZIP，原目录已退役；本项仅记录设计方向，不标记为已实现或效果已验证。
 
 ---
 

@@ -696,8 +696,7 @@ def test_parse_vision_source_freezes_compatible_media_without_changing_other_bin
     assert understanding.reasoning_effort == "none"
     assert frozen.models.refine is None
     assert frozen.visual_input.mode == input_mode
-    if input_mode == "ordered_frames":
-        assert frozen.visual_input.max_frames_per_chunk == selected.video_parser.max_frames_per_window
+    assert "max_frames_per_chunk" not in frozen.visual_input.model_dump(mode="json")
     assert frozen.models.asr == previous.models.asr
     assert frozen.models.embedding == previous.models.embedding
     assert selected.normalized_models["agent"] == gateway.normalized_models["agent"]

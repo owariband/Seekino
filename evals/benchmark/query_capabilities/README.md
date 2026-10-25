@@ -1,0 +1,113 @@
+# Query Capabilities · 查询能力覆盖
+
+保留 2026-10-15 旧 multi-agent 的九轮 Chat 能力摸底，以及 2026-10-18 的四条端到端台词定位，共 **13 个 Chat 用例、13 条旧历史观测、10 条参考证据**；另收录 2026-10-25 Deep Agents + Kimi 的 13 条观测。它覆盖不同任务类型，名称不绑定 multi-agent 或某个模型。原先混放的 13 个直接检索配置、23 条观测已拆到 [retrieval_quality](../retrieval_quality/README.md)。
+
+要评估“高高在上”之后用户吐槽“说话无趣”时的反馈与意图切换，应使用 [chat_behavior](../chat_behavior/README.md)。本目录虽有相近出处题，但不是那套 10 个对话场景。这里没有全剧穷尽金标或主观偏好金标，不报告整体准确率或全库 Recall@K。
+
+输入与结果：
+
+| 文件 | 内容 |
+| --- | --- |
+| [cases.json](cases.json) | 13 个 Chat 用例；输入、播放上下文、多轮关系、参考事实、自动检查和人工评分要求 |
+| [共享 run.py](../run.py) | 默认离线验证；历史回放；显式 `--suite query_capabilities --live chat` 运行真实 HTTP Chat |
+| [baseline.jsonl](baseline.jsonl) | 13 条旧 Chat 观测；原回答、实际播放卡、阶段耗时、已有用量、原报告判断及源文件 SHA-256 |
+| [kimi-20261025.jsonl](kimi-20261025.jsonl) | Deep Agents + Kimi 的 13 条精简观测，含失败、证据复核、用量／数据限制和原产物 SHA；不作为对话行为验收 |
+| 本文件 | 使用方法、数据前提、历史结论、评分边界 |
+
+新运行只写一份 `outputs/verification/query_capabilities-*.jsonl`，包含运行说明及逐例结果。普通运行不导出候选目录、源码副本、重复 SSE 或逐角色 README。失败记录保留，已有输出拒绝覆盖；不自动重试可能已被服务端接受的 Chat 请求。
+
+## 离线使用
+
+从仓库根目录执行，不需要运行服务、数据库或模型：
+
+```bash
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities --dry-run --only chat-T02
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/baseline.jsonl
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/kimi-20261025.jsonl
+.venv/bin/pytest -q tests/evals/test_benchmark.py
+```
+
+选择 `chat-T02` 会自动先运行 `chat-T01`，两者共用一个新会话；前一轮失败时后一轮记为 BLOCKED。其他 Chat 独立建会话，每次 repeat 重新建立会话，不复用历史 Conversation ID。
+
+旧 Chat 基线回放有 **13/13 次执行完成、12/13 次通过已知来源检查**，T07 已知漏例保留；Kimi 为 **11/13、9/13**。这些计数验证迁移与检查口径，**不是回答准确率**；T01、T05、T08 等即使通过结构／来源检查，也仍有历史人工评审指出的质量缺口。回放成功退出表示数据可读取和评分，不表示历史失败已修复。
+
+真实运行遇到执行失败或自动来源检查失败时退出码为 1；全部自动检查通过时为 0，仍需完成用例中的人工评审。
+
+## 真实运行
+
+需要已有的 MyGO 视频、解析结果和对应索引；本目录不含视频或完整索引。两个固定 scope 在 `cases.json.datasets` 中：正式 MyGO 13 集，以及独立 EP04 speaker-review 素材。若迁到新环境，应准备同一素材及索引，再在用例副本中更新 scope 和播放 video ID，不能用任意 Series 替换后直接比较。
+
+```bash
+# 真实 Chat：连接已经运行的本地 API；会创建会话并调用实际模型。
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities --live chat --only chat-T01 chat-T02 \
+  --data-version '填写实际素材和索引版本' --base-url http://127.0.0.1:9621
+
+# 新运行产生的同一份 JSONL 可离线重新评分。
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay outputs/verification/替换为实际运行文件.jsonl
+```
+
+`--data-version` 是操作者声明的数据版本，程序不冒充已校验素材哈希。历史记录也没有完整媒体 SHA-256，fixture 明确保留为 null。HTTP Chat 记录的是客户端 Git 版本／dirty 状态、实际回答模型与服务端阶段时间，不能据此认定远端进程与客户端代码相同。对照前须另外固定并核对服务端代码、模型／Prompt／预算、数据与索引版本。直接检索还记录实际索引名称、Event contract ID 和检索配置。
+
+Chat 使用现有 JSON 消息接口，不测 HTTP SSE 首字／首卡延迟，也不启动服务或解析 Worker。`wall_seconds` 包含客户端请求过程；历史九轮使用客户端耗时，历史 Event Chat 使用服务端 `timing.totalDurationMs`，每行标明口径。两种历史计时不可直接混算提速。历史两轮中文 Chat 并发运行，新运行默认串行；`--repeat` 提供重复观测，不自动生成缺乏样本支持的 P95。
+
+未来生成式模型测试使用 `k3.1-pro`，运行前检查目标服务的实际绑定及 fallback；runner 不自动修改服务配置。所有 `grading`／reference facts 都留在本地，发送给 Chat 的只有原问题、scope 和必要播放上下文。角色工具中可能包含真实模型调用，费用未知时不填零；历史 SDK 累计 token 不能当成去重上下文或直接换算金额。
+
+## 用例与评分
+
+| 用例组 | 内容 | 自动检查与人工评审 |
+| --- | --- | --- |
+| `chat-T01` → `chat-T02` | 相识过程及同会话证据追问 | T02 要覆盖初遇、自我介绍、午餐回述；人工检查事实／解释区分和每项主张的播放来源 |
+| `chat-T03`、`chat-T04` | 三段演出推荐、三段搞笑推荐 | 检查卡片数量；人工检查理由、上下文、不重叠及偏好标准，不固定唯一片单 |
+| `chat-T05` | 五片段回顾全剧 | 检查数量；全剧覆盖、代表性、剧情顺序与取舍仍需人工评审 |
+| `chat-T06` | 坐着到起身离开的动作 | 检查交付；动作连续性需要连续看片，稀疏帧不能证明 |
+| `chat-T07` | 独立短促“哈？” | 保留 EP02 08:39.7–08:40 与 EP04 17:11.2–17:11.6 两个已知正例；音型、字幕语言及负例排除需要回听／人工判断 |
+| `chat-T08`、`chat-T09` | 播放锚点与显式场景对照 | 播放卡不得越过 EP10 15:00；人工检查当前理解是否真正用于此前情节检索 |
+| `chat-event-original` | “真是高高在上的”出处 | 检查 EP13 00:54.6–00:56 的来源覆盖，人工核对祥子原话与译意 |
+| `chat-event-jp` | 「部外者は黙ってて。」 | 检查 EP04 09:08–09:09 的来源覆盖，人工核对立希、原句及完整播放边界 |
+| `chat-event-drift` | “这又不关你的事，你少掺和” | 多个场景可能合理，保留三个参考；不强制命中单一 Event，人工检查近义支持与不确定性表达 |
+| `chat-event-premise` | “不懂音乐就别来指点” | 参考 EP04 20:03.2–20:08.7 爱音谈和弦；人工核对纠正记忆偏差，不把用户新增前提写回原话 |
+
+所有时间统一为整数毫秒。现有 API 的 `positionSeconds/startSeconds/endSeconds` 虽然名字带 Seconds，当前合同仍传毫秒；benchmark 对内统一命名为 `*_ms`。Chat 检查实际交付的播放卡，不能拿仅被召回的 Evidence 代替最终卡片。
+
+来源匹配要求 scope、集数和时间覆盖一致；Event 另核对原句与说话人。稳定时间／文本锚点用于避免重新解析后 Event ID 改变导致假失败，旧 Chunk／Event ID 保留为来源说明。Chunk 检查只证明父块覆盖，不能证明模型精读了某句话；Event `best_rank` 是完整融合排名，`top_k` 限制的是父 Chunk 数。模糊问题允许未列出的合理答案，自动检查后始终保留人工评分要求。
+
+没有自动 LLM judge，没有用旧回答训练评分器，也不把 `COMPLETED`、关键词出现、卡片数量当成语义通过。人工评审结果应随对应新运行记录保存，注明评审者、标准与依据。
+
+## 历史结论：Chat
+
+2026-10-15，正式 MyGO 13 集 READY 后进行了九轮真实请求、八个会话，模型为 `gpt-6-astra`。客户端耗时 91.2–277.4 秒，中位数 204.4 秒；两个 worker、模型并发峰值 4，不是隔离性能基准。
+
+- T01 有关键午餐旁述缺视频卡、事实和心理解释混杂；T02 追问后补齐。应检查主张到来源的对应，不能只检查“回复里有卡”。
+- T03/T04 推荐理由有来源；T05 的五段精选没有证明全剧覆盖。主观推荐与全局任务要单独审阅覆盖和取舍，不能按一次 TopK 代替全剧浏览。
+- T06 稀疏帧支持姿态变化，但没有连续观看证明动作完整性；没有测试参考图片／GIF／视频的动作相似度。
+- T07 已知 EP04 的独立「は？」曾在 T04 出现，T07 却漏召回；这支持固定反例回归，不支持计算全库召回率。未回听音频的边界继续保留。
+- T08 外层识别了当前场景，内层却缺少定位；T09 把同一场景明确写入问题后，得到更具体的此前证据链。源码与历史轨迹支持当时的上下文交接缺口；这不是隔离其他变量的 AB，也不证明当前版本仍有同一缺陷。
+- 历史模型用量包含 SDK 多轮累计输入，缺少完整费用口径。原始 prompt／中间草稿本来就没有完整保存，后补的候选内容不能冒充模型当时看过的上下文。
+
+## 历史结论：Event
+
+2026-10-18 原正式 13 集有 312 个 Chunk，但 Event receipt 为零；独立 EP04 的 430 个 Event 不代表正式 scope 已就绪。自然问题先收到 `EVENT_INDEX_NOT_READY`，再通过 Chunk 找到 EP13 祥子的台词，服务端全程 103.399 秒。四次直接 Event 调用未完成召回；这类结果是覆盖前提缺失，不是空结果或算法漏检。
+
+已覆盖的独立 EP04 有 24 Chunk／430 Event。日文原句 Event 与 Chunk 都在首位命中；三次同权重检索中位耗时分别为 0.699、0.596 秒，完整 Chat 226.111 秒。没有同问题的 Chunk-only Chat 对照，无法据此声称端到端加速。
+
+中文 drift／premise 两轮服务端耗时 156.105、154.078 秒，检索工具约 0.7–0.9 秒。drift 有六次可恢复 Canvas 范围错误，premise 有两次；baseline 保存精简后的失败记录、审核反馈、检索参数及参考事件位置。首轮 premise 的目标融合 rank=22，未进入首屏；第二次 rank=11 才进入首屏并精读。召回集合、模型可见目录、精读和最终交付须分别判断。
+
+固定三条中文查询的对照使用相同 scope、top_k=10 和权重 0.65/0.35/0：
+
+| 输入 | 参考目标 | Event 融合排名／父块排名 | Chunk 父块排名 |
+| --- | --- | --- | --- |
+| 不相干的人别插话 | 09:08 立希“局外人闭嘴” | 8 / 6 | 10 |
+| 这又不关你的事，你少掺和 | 09:08 参考场景 | 12 / 8 | 前十无该父块 |
+| 同上 | 07:02.5、07:04.5 拒绝来往的近义候选 | 5、8 / 4 | 4 |
+| 不懂音乐就别来指点 | 20:03.2 爱音谈和弦 | 2 / 2 | 5 |
+
+旧 premise case 沿用了 09:08 立希目标，不能用于这个问题的机械评分。本次根据独立候选原文修正为爱音的和弦台词；历史 JSON 中的旧目标排名仍以 `legacy_target_*` 保存，当前评分使用 `reference_matches`。最终回答明确纠正“不懂音乐／别指点”并非逐字原话；“你记得的就是这一处”仍比证据支持的唯一性更强。
+
+这些发现支撑更细定位、候选曝光和审核行为的回归；没有证明普遍命中率提高、稳定时延下降或特定优化能省去全部阶段时间。当前相关问题记录见 [problems.md](../../../docs/dev/problems.md)，历史汇总见 [devlog.md](../../../docs/dev/devlog.md)。
+
+## 归档与清理边界
+
+两个旧评测目录及旁边的旧 MyGO 总报告，共 532 个文件，已由本套 benchmark 承接。保留原问题、历史完整最终回答、实际播放卡、十条参考事实、直接检索的精简候选、历史判断及相关诊断；旧日志、全部候选正文、原生 rollout、图片、源码快照和展开报告退役后，不能再进行原始逐字节或逐候选全链路取证。
+
+`provenance.retired_path`、源文件 SHA-256 和 Git 迁移 manifest 是历史来源说明；它们不作为可打开的现存文件链接，也不声称能从 SHA 恢复原始文件。新 benchmark 独立于两个旧目录，验证与运行均不读取它们。此次整理只做离线校验与模拟请求，尚未执行新一轮真实模型评测。详细清理记录见 [统一清理总结](../../../docs/dev/design-experiment-cleanup.md)。

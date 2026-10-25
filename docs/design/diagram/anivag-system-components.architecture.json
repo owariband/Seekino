@@ -1,0 +1,345 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AniVAG 目标系统组件架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1200, 650],
+    "views": [
+      {
+        "id": "online_retrieval",
+        "label": "在线名场面检索",
+        "focus": [
+          "web_client",
+          "conversation_service",
+          "retrieval_evidence_service",
+          "hybrid_retrieval_pipeline",
+          "gateway",
+          "mysql",
+          "qdrant",
+          "video_management_service"
+        ],
+        "note": "追问先改写成独立检索请求，再执行 Query Embedding 与双路召回；Video Management 统一读取 Series 范围、活动索引版本、VideoChunk 元数据和播放证据。"
+      },
+      {
+        "id": "offline_indexing",
+        "label": "上传后异步解析与建库",
+        "focus": [
+          "web_client",
+          "video_management_service",
+          "durable_job_runtime",
+          "video_parser_pipeline",
+          "gateway",
+          "vector_index_manager",
+          "mysql",
+          "qdrant",
+          "artifact_store"
+        ],
+        "note": "分片上传并合并原视频后提交 ParseJob；上传请求不等待模型解析，前端持续读取持久化进度，后台完成解析、索引同步与发布。"
+      },
+      {
+        "id": "consistency",
+        "label": "MySQL–Qdrant 一致性",
+        "focus": [
+          "durable_job_runtime",
+          "video_parser_pipeline",
+          "vector_index_manager",
+          "mysql",
+          "qdrant"
+        ],
+        "note": "MySQL 是事实源；Qdrant 是派生索引，通过稳定 Point ID、版本/哈希、重试和 Reconciler 最终收敛。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "web_client",
+      "type": "external",
+      "label": "Web Client",
+      "sublabel": "上传 · Chat · 进度 · 播放",
+      "pos": [20, 225],
+      "size": [140, 70]
+    },
+    {
+      "id": "conversation_service",
+      "type": "backend",
+      "label": "Conversation Service",
+      "sublabel": "会话恢复 · 有界上下文 · Query Rewrite",
+      "pos": [190, 70],
+      "size": [190, 70]
+    },
+    {
+      "id": "retrieval_evidence_service",
+      "type": "backend",
+      "label": "Retrieval & Evidence Service",
+      "sublabel": "Series Scope · Hydrate · SceneHit",
+      "pos": [420, 70],
+      "size": [210, 70]
+    },
+    {
+      "id": "video_management_service",
+      "type": "backend",
+      "label": "Video Management Service",
+      "sublabel": "分片上传 · 合并校验 · 播放 / Clip",
+      "pos": [190, 330],
+      "size": [190, 70]
+    },
+    {
+      "id": "durable_job_runtime",
+      "type": "backend",
+      "label": "Durable Job Runtime",
+      "sublabel": "MySQL DB Queue · Lease · Retry · Reaper",
+      "pos": [420, 330],
+      "size": [210, 70]
+    },
+    {
+      "id": "hybrid_retrieval_pipeline",
+      "type": "backend",
+      "label": "Hybrid Retrieval Pipeline",
+      "sublabel": "Query Embedding · 双路召回 · RRF · Verify",
+      "pos": [680, 70],
+      "size": [210, 70]
+    },
+    {
+      "id": "gateway",
+      "type": "backend",
+      "label": "Gateway",
+      "sublabel": "外部视频模型 · Text/Vision Embedding",
+      "pos": [940, 70],
+      "size": [210, 70]
+    },
+    {
+      "id": "video_parser_pipeline",
+      "type": "backend",
+      "label": "Video Parser Pipeline",
+      "sublabel": "VideoChunk · 解析 · 归并 · 双向量",
+      "pos": [680, 330],
+      "size": [210, 70]
+    },
+    {
+      "id": "vector_index_manager",
+      "type": "backend",
+      "label": "Vector Index Manager",
+      "sublabel": "IndexSync · Publish · Reconcile",
+      "pos": [940, 330],
+      "size": [210, 70]
+    },
+    {
+      "id": "mysql",
+      "type": "database",
+      "label": "MySQL",
+      "sublabel": "业务 / 会话 / Job / IndexVersion 事实源",
+      "pos": [420, 520],
+      "size": [210, 70]
+    },
+    {
+      "id": "artifact_store",
+      "type": "backend",
+      "label": "Artifact Store",
+      "sublabel": "原视频 · Proxy · VideoChunk · 关键帧",
+      "pos": [680, 520],
+      "size": [210, 70]
+    },
+    {
+      "id": "qdrant",
+      "type": "database",
+      "label": "Qdrant",
+      "sublabel": "Named Vector: text + vision（派生索引）",
+      "pos": [940, 520],
+      "size": [210, 70]
+    }
+  ],
+  "connections": [
+    {
+      "id": "client_to_conversation",
+      "from": "web_client",
+      "to": "conversation_service",
+      "label": "Chat / SSE",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [[90, 105]],
+      "labelAt": [140, 52]
+    },
+    {
+      "id": "client_to_video_management",
+      "from": "web_client",
+      "to": "video_management_service",
+      "label": "分片上传 / 续传 / 进度 / 播放",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [[90, 365]],
+      "labelAt": [140, 415]
+    },
+    {
+      "id": "conversation_to_retrieval",
+      "from": "conversation_service",
+      "to": "retrieval_evidence_service",
+      "label": "检索请求",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [400, 48]
+    },
+    {
+      "id": "retrieval_to_pipeline",
+      "from": "retrieval_evidence_service",
+      "to": "hybrid_retrieval_pipeline",
+      "label": "SceneSearch",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [655, 158]
+    },
+    {
+      "id": "pipeline_to_models",
+      "from": "hybrid_retrieval_pipeline",
+      "to": "gateway",
+      "label": "Query Embedding",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [915, 158]
+    },
+    {
+      "id": "pipeline_to_qdrant",
+      "from": "hybrid_retrieval_pipeline",
+      "to": "qdrant",
+      "label": "text / vision ANN",
+      "fromSide": "top",
+      "toSide": "right",
+      "via": [[785, 20], [1190, 20], [1190, 555]],
+      "labelAt": [1120, 300]
+    },
+    {
+      "id": "retrieval_to_video_management",
+      "from": "retrieval_evidence_service",
+      "to": "video_management_service",
+      "label": "Scope + activeVersion + Hydrate / Clip",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [[525, 165], [400, 165], [400, 300], [285, 300]],
+      "labelAt": [400, 235]
+    },
+    {
+      "id": "video_management_to_mysql",
+      "from": "video_management_service",
+      "to": "mysql",
+      "label": "Video / UploadSession / Segment"
+    },
+    {
+      "id": "video_management_to_artifacts",
+      "from": "video_management_service",
+      "to": "artifact_store",
+      "label": "上传 Segment / 合并原视频 / Clip",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [[285, 620], [785, 620]],
+      "labelAt": [535, 620]
+    },
+    {
+      "id": "video_management_to_jobs",
+      "from": "video_management_service",
+      "to": "durable_job_runtime",
+      "label": "上传完成 → 提交 ParseJob",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [400, 315]
+    },
+    {
+      "id": "jobs_to_parser",
+      "from": "durable_job_runtime",
+      "to": "video_parser_pipeline",
+      "label": "Claim / Lease / Execute",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [655, 315]
+    },
+    {
+      "id": "parser_to_models",
+      "from": "video_parser_pipeline",
+      "to": "gateway",
+      "label": "Video Parse + Embedding",
+      "fromSide": "top",
+      "toSide": "right",
+      "via": [[785, 185], [1170, 185], [1170, 105]],
+      "labelAt": [1000, 210]
+    },
+    {
+      "id": "jobs_to_mysql",
+      "from": "durable_job_runtime",
+      "to": "mysql",
+      "label": "Job / Lease / Progress",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [540, 430]
+    },
+    {
+      "id": "parser_to_mysql",
+      "from": "video_parser_pipeline",
+      "to": "mysql",
+      "label": "VideoChunk Info + Embedding + Intent（同事务）",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "via": [[785, 465], [650, 465], [650, 555]],
+      "labelAt": [715, 447]
+    },
+    {
+      "id": "parser_to_artifacts",
+      "from": "artifact_store",
+      "to": "video_parser_pipeline",
+      "label": "读取 VideoChunk / AnalysisWindow",
+      "fromSide": "top",
+      "toSide": "right",
+      "via": [[785, 485], [920, 485], [920, 365]],
+      "labelAt": [930, 447]
+    },
+    {
+      "id": "vector_index_to_qdrant",
+      "from": "vector_index_manager",
+      "to": "qdrant",
+      "label": "幂等 Upsert + Verify",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [1110, 460]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "AniVAG Server",
+      "wraps": [
+        "conversation_service",
+        "retrieval_evidence_service",
+        "video_management_service",
+        "durable_job_runtime"
+      ],
+      "pad": 15
+    },
+    {
+      "kind": "region",
+      "label": "AniVAG Engine · Pipeline & Model Adapters",
+      "wraps": [
+        "hybrid_retrieval_pipeline",
+        "gateway",
+        "video_parser_pipeline",
+        "vector_index_manager"
+      ],
+      "pad": 15
+    },
+    {
+      "kind": "region",
+      "label": "Persistence",
+      "wraps": [
+        "mysql",
+        "artifact_store",
+        "qdrant"
+      ],
+      "pad": 15
+    }
+  ]
+}

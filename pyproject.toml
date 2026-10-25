@@ -17,6 +17,7 @@ dependencies = [
     "langchain-core>=1.6.7,<2",
     "langchain-openai>=1.1,<2",
     "langgraph>=1.2,<2",
+    "langgraph-checkpoint-mysql[pymysql]==3.0.0",
     "openai>=1.66,<3",
     "openai-codex==0.156.1",
     "opentelemetry-api==1.45.0",

@@ -635,7 +635,7 @@ def test_factory_closes_shared_supervisor_resources_once_and_rejects_new_models(
         getattr(factory, builder)(**options, **_build_arguments())
 
 
-def test_supervisor_close_preserves_checkpoint_until_factory_shutdown() -> None:
+def test_supervisor_close_preserves_checkpoint_after_factory_shutdown() -> None:
     factory = agent_factory.AgentModelFactory(
         _agent_config(), {"primary": _openai_source()},
         environ={"DEEPSEEK_API_KEY": "deepseek-secret"},
@@ -653,7 +653,7 @@ def test_supervisor_close_preserves_checkpoint_until_factory_shutdown() -> None:
         assert saver.get(thread) is not None
     finally:
         factory.close()
-    assert saver.get(thread) is None
+    assert saver.get(thread) is not None
 
 
 @pytest.mark.parametrize("primary", [_openai_source(), ArkModelSourceConfig()])
@@ -685,7 +685,7 @@ def test_explicit_deepagents_supervisor_retains_shared_sessions_and_provider_con
 @pytest.mark.parametrize("source,harness,reason", [
     (_openai_source(), "codex", "codex_app_server source"),
     (CodexModelSourceConfig(), "deepagents", "OpenAI-compatible or Ark"),
-    (CodexModelSourceConfig(), "unknown", "must be deepagents, codex or pi"),
+    (CodexModelSourceConfig(), "unknown", "must be deepagents or codex"),
 ])
 def test_supervisor_rejects_harness_source_mismatch(source, harness, reason):
     factory = agent_factory.AgentModelFactory(
@@ -838,75 +838,4 @@ def test_bound_codex_supervisor_total_timeout_switch_leaves_stage_models_enabled
         model.close()
         structured.close()
         loop.close()
-        factory.close()
-
-
-@pytest.mark.parametrize("source", [_openai_source(), ArkModelSourceConfig()])
-@pytest.mark.parametrize("total_timeout_enabled", [True, False])
-def test_pi_supervisor_borrows_client_and_resolves_one_profile(source, total_timeout_enabled):
-    from gateway.constants import ARK_OPENAI_BASE_URL
-    from gateway.pi.supervisor import PiSupervisorModel
-
-    closed = []
-    client = SimpleNamespace(close=lambda: closed.append("client"))
-    binding = ModelBinding(
-        source="primary", model="configured-model", request_timeout_seconds=17,
-        max_output_tokens=2048, max_input_chars=60_000, context_window_tokens=64_000,
-        context_safety_margin_tokens=4096, auto_compact_tokens=48_000, compact_target_tokens=24_000,
-    )
-    factory = agent_factory.AgentModelFactory(
-        _agent_config().model_copy(update={"supports_vision_input": True}),
-        {"primary": source}, binding=binding, pi_client=client,
-        environ={"DEEPSEEK_API_KEY": "deepseek-secret", "ARK_API_KEY": "ark-secret"},
-    )
-    try:
-        model = factory.build_supervisor(
-            harness="pi", **_build_arguments(), total_timeout_enabled=total_timeout_enabled,
-        )
-        assert isinstance(model, PiSupervisorModel)
-        assert model._client is client
-        assert model.model_name == "role-model"
-        assert model.provider_name == source.provider
-        assert model.supports_vision_input
-        profile = model._profile
-        assert profile.base_url == (source.base_url if isinstance(source, OpenAIModelSourceConfig) else ARK_OPENAI_BASE_URL)
-        assert profile.api_key == ("deepseek-secret" if isinstance(source, OpenAIModelSourceConfig) else "ark-secret")
-        assert profile.api_key not in repr(profile)
-        assert profile.max_output_tokens == 2048
-        assert profile.context_window_tokens == 64_000
-        assert profile.reasoning_effort == "high"
-        assert model._timeout == 17
-        assert model._max_input_chars == 60_000
-        assert model._total_timeout_enabled is total_timeout_enabled
-        model.close()
-        replacement = factory.build_supervisor(harness="pi", **_build_arguments())
-        assert replacement._client is client
-        assert replacement._profile.revision == profile.revision
-        replacement.close()
-    finally:
-        factory.close()
-    assert closed == []
-
-
-@pytest.mark.parametrize(("case", "message"), [
-    ("missing_client", "application-owned PiClient"),
-    ("fallback", "one model profile without fallback"),
-    ("mcp", "explicit business tool allowlist"),
-    ("codex", "OpenAI-compatible or Ark API source"),
-    ("claude", "OpenAI-compatible or Ark API source"),
-])
-def test_pi_supervisor_rejects_unsupported_factory_combinations(case, message):
-    source = {
-        "codex": CodexModelSourceConfig(), "claude": ClaudeCodeModelSourceConfig(),
-    }.get(case, _openai_source())
-    factory = agent_factory.AgentModelFactory(
-        _agent_config(fallback=case == "fallback"),
-        {"primary": source, "fallback": ArkModelSourceConfig()},
-        environ={"DEEPSEEK_API_KEY": "deepseek-secret", "ARK_API_KEY": "ark-secret"},
-        pi_client=None if case == "missing_client" else object(),
-    )
-    try:
-        with pytest.raises(ValueError, match=message):
-            factory.build_supervisor(harness="pi", mcp=case == "mcp", **_build_arguments())
-    finally:
         factory.close()

@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AniVAG · 私有视频语义检索架构",
+    "subtitle": "从本地视频到可核验片段：离线解析、三层存储、Agent 检索与可恢复执行",
+    "locale": "zh-CN",
+    "output": "docs/design/diagrams/anivag-system-architecture.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "viewBox": [1380, 720],
+    "legend": {
+      "mode": "all",
+      "entries": {
+        "external": { "label": "用户与外部输入" },
+        "backend": { "label": "计算与智能节点" },
+        "database": { "label": "持久化数据层" },
+        "messagebus": { "label": "持久化控制平面" },
+        "cloud": { "label": "可替换模型接口" },
+        "frontend": { "label": "可核验结果" }
+      }
+    },
+    "views": [
+      {
+        "id": "offline-indexing",
+        "label": "离线解析与索引",
+        "focus": ["private_video", "window_planner", "multimodal_parse", "embedding", "artifact_store", "qdrant"],
+        "note": "视频按时间窗持续解析，生成结构化证据与双通道向量。"
+      },
+      {
+        "id": "online-retrieval",
+        "label": "在线检索与回答",
+        "focus": ["user_query", "retrieval_graph", "mysql", "artifact_store", "qdrant", "evidence_answer"],
+        "note": "Agent 自主检索、评估、补查，并返回可定位到原视频的证据。"
+      },
+      {
+        "id": "durable-execution",
+        "label": "失败恢复路径",
+        "focus": ["durable_control", "window_planner", "multimodal_parse", "embedding", "mysql"],
+        "note": "任务、分片、租约、重试与索引意图均可持久化和重放。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "private_video",
+      "type": "external",
+      "label": "私有视频",
+      "sublabel": "本地文件 · 不复制原视频",
+      "tag": "INPUT",
+      "pos": [45, 140],
+      "size": [155, 68]
+    },
+    {
+      "id": "window_planner",
+      "type": "backend",
+      "label": "时间窗规划",
+      "sublabel": "切片 · 检查点 · 顺序上下文",
+      "tag": "PREPARE",
+      "pos": [245, 140],
+      "size": [175, 68]
+    },
+    {
+      "id": "multimodal_parse",
+      "type": "backend",
+      "label": "多模态解析",
+      "sublabel": "主解析器｜ASR 预取 + 抽帧回退",
+      "tag": "PARSE",
+      "pos": [470, 140],
+      "size": [220, 68]
+    },
+    {
+      "id": "embedding",
+      "type": "backend",
+      "label": "双通道向量化",
+      "sublabel": "文本语义 · 视觉证据",
+      "tag": "EMBED",
+      "pos": [745, 140],
+      "size": [180, 68]
+    },
+    {
+      "id": "model_api",
+      "type": "cloud",
+      "label": "模型适配层",
+      "sublabel": "本地 / 自备 API Key / 云 API",
+      "tag": "PLUGGABLE",
+      "pos": [1135, 140],
+      "size": [200, 68]
+    },
+    {
+      "id": "durable_control",
+      "type": "messagebus",
+      "label": "持久化执行与控制",
+      "sublabel": "Job / Chunk 状态 · 租约 · 重试 · Index Intent · 重放",
+      "tag": "CONTROL PLANE",
+      "pos": [45, 315],
+      "size": [375, 78]
+    },
+    {
+      "id": "mysql",
+      "type": "database",
+      "label": "MySQL",
+      "sublabel": "任务状态 · 片段事实 · 时间坐标",
+      "tag": "SOURCE OF TRUTH",
+      "pos": [500, 318],
+      "size": [180, 72]
+    },
+    {
+      "id": "artifact_store",
+      "type": "database",
+      "label": "Artifact Store",
+      "sublabel": "抽帧 · 音频 · 结构化解析产物",
+      "tag": "EVIDENCE",
+      "pos": [765, 318],
+      "size": [200, 72]
+    },
+    {
+      "id": "qdrant",
+      "type": "database",
+      "label": "Qdrant",
+      "sublabel": "文本 / 视觉向量 · 可重建索引",
+      "tag": "DERIVED INDEX",
+      "pos": [1050, 318],
+      "size": [210, 72]
+    },
+    {
+      "id": "user_query",
+      "type": "external",
+      "label": "自然语言问题",
+      "sublabel": "“爱音是怎么认识灯的？”",
+      "tag": "QUERY",
+      "pos": [45, 541],
+      "size": [190, 70]
+    },
+    {
+      "id": "retrieval_graph",
+      "type": "backend",
+      "label": "Retrieval Agent Graph",
+      "sublabel": "Query → 混合召回 → RRF → Evaluate ↺ → Chat",
+      "tag": "LANGGRAPH",
+      "pos": [330, 535],
+      "size": [380, 82]
+    },
+    {
+      "id": "evidence_answer",
+      "type": "frontend",
+      "label": "可核验片段回答",
+      "sublabel": "结论 · 时间码 · 原视频回跳 · 证据帧",
+      "tag": "ANSWER",
+      "pos": [1040, 540],
+      "size": [220, 72]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "OFFLINE PARSE / INDEXING PLANE",
+      "wraps": ["private_video", "window_planner", "multimodal_parse", "embedding"],
+      "pad": 24
+    },
+    {
+      "kind": "region",
+      "label": "DATA / INDEX PLANE",
+      "wraps": ["mysql", "artifact_store", "qdrant"],
+      "pad": 24
+    },
+    {
+      "kind": "region",
+      "label": "ONLINE RETRIEVAL / AGENT PLANE",
+      "wraps": ["user_query", "retrieval_graph", "evidence_answer"],
+      "pad": 24
+    },
+    {
+      "kind": "security-group",
+      "label": "DURABLE EXECUTION / CONTROL PLANE",
+      "wraps": ["durable_control"],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    {
+      "from": "private_video",
+      "to": "window_planner",
+      "label": "元数据 / 读取句柄",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelAt": [222, 222]
+    },
+    {
+      "from": "window_planner",
+      "to": "multimodal_parse",
+      "label": "时间窗",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "multimodal_parse",
+      "to": "embedding",
+      "label": "结构化证据",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "model_api",
+      "to": "multimodal_parse",
+      "label": "视觉 / 语音 / 推理",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "top",
+      "via": [[1010, 174], [1010, 105], [580, 105]]
+    },
+    {
+      "from": "model_api",
+      "to": "embedding",
+      "label": "Embedding",
+      "variant": "dashed",
+      "route": "straight",
+      "labelAt": [970, 195]
+    },
+    {
+      "from": "multimodal_parse",
+      "to": "artifact_store",
+      "label": "证据产物",
+      "route": "orthogonal-v",
+      "labelAt": [750, 260]
+    },
+    {
+      "from": "multimodal_parse",
+      "to": "mysql",
+      "label": "片段事实",
+      "route": "orthogonal-v",
+      "labelAt": [610, 290]
+    },
+    {
+      "from": "embedding",
+      "to": "qdrant",
+      "label": "upsert",
+      "route": "orthogonal-v",
+      "labelAt": [930, 260]
+    },
+    {
+      "from": "durable_control",
+      "to": "window_planner",
+      "label": "lease / checkpoint",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "orthogonal-v"
+    },
+    {
+      "from": "durable_control",
+      "to": "multimodal_parse",
+      "label": "retry / resume",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [[450, 354], [450, 255], [580, 255]],
+      "labelAt": [520, 243]
+    },
+    {
+      "from": "durable_control",
+      "to": "mysql",
+      "label": "状态与索引意图",
+      "variant": "dashed",
+      "route": "orthogonal-h",
+      "labelAt": [460, 380]
+    },
+    {
+      "from": "user_query",
+      "to": "retrieval_graph",
+      "label": "会话上下文",
+      "variant": "emphasis",
+      "route": "orthogonal-h"
+    },
+    {
+      "from": "retrieval_graph",
+      "to": "mysql",
+      "label": "事实回填",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "orthogonal-v"
+    },
+    {
+      "from": "retrieval_graph",
+      "to": "artifact_store",
+      "label": "证据定位",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "orthogonal-v"
+    },
+    {
+      "from": "retrieval_graph",
+      "to": "qdrant",
+      "label": "多路召回 + RRF",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "orthogonal-v",
+      "labelAt": [1000, 455]
+    },
+    {
+      "from": "model_api",
+      "to": "retrieval_graph",
+      "label": "Query / Evaluate / Chat",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [[1355, 174], [1355, 500], [520, 500]],
+      "labelAt": [900, 488]
+    },
+    {
+      "from": "retrieval_graph",
+      "to": "evidence_answer",
+      "label": "答案 + 引用",
+      "variant": "emphasis",
+      "route": "orthogonal-h"
+    }
+  ]
+}

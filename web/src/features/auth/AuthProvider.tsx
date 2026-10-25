@@ -52,7 +52,8 @@ const AuthContext = createContext<AuthContextValue>({
 
 function accountSources(connection: ApiConnection, identity: AuthIdentity): DataSource[] {
   if (identity.mode !== "cloud") throw new Error("该账号服务不支持远端登录");
-  if (!identity.publicTenantId || (!identity.isGuest && !identity.tenantId)) {
+  const needsPersonalTenant = identity.permissions.canUpload || identity.permissions.canManage || identity.permissions.canConfigure;
+  if (!identity.publicTenantId || (!identity.isGuest && needsPersonalTenant && !identity.tenantId)) {
     throw new Error("当前身份缺少可访问的资料来源");
   }
   const sources: DataSource[] = [{ key: `${connection.id}:public`, kind: "public", connection, tenantId: identity.publicTenantId, identity }];
@@ -225,7 +226,7 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
   }
   if (accountIdentity && accountConnection) sources.push(...accountSources(accountConnection, accountIdentity));
   const identity = activeSource.identity;
-  const writable = activeSource.kind !== "public";
+  const writable = activeSource.kind !== "public" || (!identity.isGuest && identity.permissions.canConfigure);
   const value: AuthContextValue = {
     identity, activeTenantId: activeSource.tenantId, activeSource, sources,
     scopeKey: `${activeSource.key}:${identity.userId}:${activeSource.tenantId}:${revision}`,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import hashlib
 import json
 import os
@@ -328,17 +327,6 @@ class ParseConfig(ContractModel):
 
         if self.indexing is None or any(getattr(self.execution, name) is None for name in _EXECUTION_POLICY_FIELDS):
             raise ValueError("parse execution configuration must be resolved before creating a V2 task")
-        maximum_frames = self.vision.max_frames_per_window
-        if maximum_frames is None:
-            maximum_frames = min(
-                600,
-                max(
-                    1,
-                    math.ceil(
-                        self.window.chunk_duration_seconds * self.vision.fps
-                    ),
-                ),
-            )
         return VideoParseV2Config(
             chunk_duration=self.window.chunk_duration_seconds,
             interval_duration=self.window.chunk_duration_seconds * 3,
@@ -392,7 +380,6 @@ class ParseConfig(ContractModel):
             visual_input=VideoParseV2VisualInputConfig(
                 mode=self.vision.input_mode,
                 fps=self.vision.fps,
-                max_frames_per_chunk=maximum_frames,
                 max_height=self.window.analysis_max_height,
                 context_overlap_seconds=self.window.context_overlap_seconds,
             ),

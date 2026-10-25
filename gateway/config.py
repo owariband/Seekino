@@ -27,6 +27,7 @@ from gateway.constants import (
     DEEPSEEK_PROVIDER,
     OPENAI_ADAPTER,
     OPENAI_DEEPSEEK_PROFILE,
+    OPENAI_KIMI_PROFILE,
     OPENAI_STANDARD_PROFILE,
     ReasoningEffort,
 )
@@ -104,9 +105,11 @@ class OpenAIModelSourceConfig(BaseModel):
 
     adapter: Literal[OPENAI_ADAPTER] = OPENAI_ADAPTER
     provider: _NonEmptyString
-    profile: Literal[OPENAI_STANDARD_PROFILE, OPENAI_DEEPSEEK_PROFILE] = (
-        OPENAI_STANDARD_PROFILE
-    )
+    profile: Literal[
+        OPENAI_STANDARD_PROFILE,
+        OPENAI_DEEPSEEK_PROFILE,
+        OPENAI_KIMI_PROFILE,
+    ] = OPENAI_STANDARD_PROFILE
     base_url: _HttpsBaseUrl
     api_key_env: _NonEmptyString
 
@@ -372,60 +375,11 @@ class QueryHookConfig(BaseModel):
     total_timeout_seconds: float = Field(default=8, gt=0)
 
 
-class PiHostConfig(BaseModel):
-    """Limits for the application's shared Node Pi runtime."""
-
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-
-    node_bin: _NonEmptyString = "node"
-    session_dir: _NonEmptyString = "outputs/pi/sessions"
-    max_active_runs: int = Field(default=2, ge=1, le=64, strict=True)
-    max_model_requests: int = Field(default=4, ge=1, le=128, strict=True)
-    max_loaded_sessions: int = Field(default=32, ge=1, le=4096, strict=True)
-    max_session_bytes: int = Field(default=64 * 1024 * 1024, ge=1024, strict=True)
-    max_cache_bytes: int = Field(default=256 * 1024 * 1024, ge=1024, strict=True)
-    session_ttl_seconds: float = Field(default=900, gt=0)
-    max_queue_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, strict=True)
-    max_line_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, strict=True)
-    max_tool_output_bytes: int = Field(default=12 * 1024 * 1024, ge=1024, strict=True)
-    max_transient_tasks: int = Field(default=8, ge=1, le=128, strict=True)
-    startup_timeout_seconds: float = Field(default=30, gt=0)
-    cancel_timeout_seconds: float = Field(default=10, gt=0)
-    shutdown_timeout_seconds: float = Field(default=5, gt=0)
-
-    @model_validator(mode="after")
-    def validate_transport_bounds(self) -> PiHostConfig:
-        if self.max_queue_bytes < self.max_line_bytes:
-            raise ValueError("Pi max_queue_bytes must be at least max_line_bytes")
-        if self.max_tool_output_bytes >= self.max_line_bytes:
-            raise ValueError("Pi max_tool_output_bytes must be smaller than max_line_bytes")
-        if self.max_cache_bytes < self.max_session_bytes:
-            raise ValueError("Pi max_cache_bytes must be at least max_session_bytes")
-        return self
-
-    def runtime_options(self) -> dict[str, str | int | float]:
-        """Resolve the private Node runtime configuration from one default source."""
-        return {
-            "sessionDir": str(Path(self.session_dir).expanduser().resolve()),
-            "maxActiveRuns": self.max_active_runs,
-            "maxModelRequests": self.max_model_requests,
-            "maxLoadedSessions": self.max_loaded_sessions,
-            "maxSessionBytes": self.max_session_bytes,
-            "maxCacheBytes": self.max_cache_bytes,
-            "sessionTtlSeconds": self.session_ttl_seconds,
-            "maxQueueBytes": self.max_queue_bytes,
-            "maxLineBytes": self.max_line_bytes,
-            "maxToolOutputBytes": self.max_tool_output_bytes,
-            "maxTransientTasks": self.max_transient_tasks,
-        }
-
-
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     config_version: Literal[1, 2] = 1
-    supervisor_harness: Literal["deepagents", "codex", "pi"] = "deepagents"
-    pi_host: PiHostConfig = Field(default_factory=PiHostConfig)
+    supervisor_harness: Literal["deepagents", "codex"] = "deepagents"
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
         default_factory=_default_model_sources
@@ -495,12 +449,6 @@ class GatewayConfig(BaseModel):
         if isinstance(binding, EmbeddingModelBinding) or binding.kind not in {None, "generative"}:
             raise ValueError("models.supervisor must be a generative model binding")
         source = self.source(binding.source)
-        if self.supervisor_harness == "pi":
-            if not isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
-                raise ValueError("pi supervisor_harness requires an OpenAI-compatible or Ark API source")
-            if binding.fallback is not None:
-                raise ValueError("pi supervisor_harness does not support fallback; configure one authorized model profile")
-            return
         if self.supervisor_harness == "codex":
             if not isinstance(source, CodexModelSourceConfig):
                 raise ValueError("codex supervisor_harness requires a codex_app_server source")

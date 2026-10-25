@@ -22,10 +22,16 @@ class _InputModel(BaseModel):
 class VisualInputConfig(_InputModel):
     mode: Literal["ordered_frames", "video"]
     fps: float = Field(gt=0)
-    max_frames_per_chunk: int = Field(gt=0)
     max_height: int = Field(gt=0)
     # Historical V2 snapshots have no visual context outside their core chunk.
     context_overlap_seconds: int = Field(default=0, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_frame_cap(cls, values):
+        if isinstance(values, dict):
+            return {key: value for key, value in values.items() if key != "max_frames_per_chunk"}
+        return values
 
     @model_serializer(mode="wrap")
     def serialize_visual_input(self, handler):

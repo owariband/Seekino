@@ -10,7 +10,6 @@ from gateway.config import (
     CodexModelSourceConfig,
     OpenAIAudioSourceConfig,
     OpenAIModelSourceConfig,
-    PiHostConfig,
     TracingConfig,
     agent_api_key_env_names,
     load_config,
@@ -193,6 +192,27 @@ def test_gateway_accepts_agent_runtime_in_shared_yaml(tmp_path: Path) -> None:
     _write_config(config_path, payload)
 
     assert load_config(config_path).agent_runtime == {"max_tool_result_bytes": 8192}
+
+
+def test_kimi_source_accepts_reasoning_effort(tmp_path: Path) -> None:
+    payload = _config_payload()
+    payload["model_sources"]["primary"].update({
+        "provider": "kimi",
+        "profile": "kimi",
+        "base_url": "https://api.kimi.com/coding/v1",
+        "api_key_env": "KIMI_API_KEY",
+    })
+    config_path = tmp_path / "kimi-agent.yaml"
+    _write_config(config_path, payload)
+    config = load_config(config_path)
+
+    binding = config.normalized_models["agent"].model_copy(
+        update={"reasoning_effort": "low"}
+    )
+    resolved = config.resolve_model_binding(binding, environ={})
+
+    assert config.model_sources["primary"].profile == "kimi"
+    assert resolved.reasoning_effort == "low"
 
 
 def test_legacy_deepseek_agent_chat_is_normalized_once(tmp_path: Path) -> None:
@@ -493,88 +513,14 @@ def test_base_urls_are_trimmed_and_canonicalized(tmp_path: Path) -> None:
     assert primary.base_url == "https://api.deepseek.test/v1"
 
 
-@pytest.mark.parametrize("configuration", [
-    {"max_active_runs": 0}, {"max_active_runs": 65}, {"max_active_runs": True},
-    {"max_model_requests": 0}, {"max_model_requests": 129},
-    {"max_loaded_sessions": 0}, {"max_loaded_sessions": 4097},
-    {"max_session_bytes": 0}, {"max_session_bytes": 1023},
-    {"max_session_bytes": True}, {"max_session_bytes": 1024.5},
-    {"max_cache_bytes": 0}, {"max_cache_bytes": 1023}, {"max_cache_bytes": True},
-    {"max_session_bytes": 4096, "max_cache_bytes": 2048},
-    {"max_transient_tasks": 0}, {"max_transient_tasks": 129},
-    {"session_ttl_seconds": 0}, {"startup_timeout_seconds": 0},
-    {"cancel_timeout_seconds": 0}, {"shutdown_timeout_seconds": 0},
-    {"session_ttl_seconds": float("inf")}, {"startup_timeout_seconds": float("inf")},
-    {"cancel_timeout_seconds": float("nan")}, {"shutdown_timeout_seconds": float("inf")},
-    {"node_bin": ""}, {"session_dir": ""}, {"max_line_bytes": 1023},
-    {"max_queue_bytes": 1024}, {"max_tool_output_bytes": 16 * 1024 * 1024},
-    {"unknown_setting": True},
-])
-def test_pi_host_rejects_invalid_resource_and_transport_bounds(configuration):
+@pytest.mark.parametrize("field", ["supervisor_harness", "pi_host"])
+def test_pi_configuration_is_rejected(tmp_path, field):
+    payload = _config_payload()
+    if field == "supervisor_harness":
+        payload[field] = "pi"
+    else:
+        payload[field] = {}
+    config_path = tmp_path / f"retired-{field}.yaml"
+    _write_config(config_path, payload)
     with pytest.raises(ValidationError):
-        PiHostConfig.model_validate(configuration)
-
-
-def test_pi_host_defaults_allow_bounded_media_transport():
-    settings = PiHostConfig()
-    assert settings.max_active_runs == 2
-    assert settings.max_session_bytes == 64 * 1024 * 1024
-    assert settings.max_cache_bytes == 256 * 1024 * 1024
-    assert settings.max_queue_bytes >= settings.max_line_bytes
-    assert settings.max_line_bytes > settings.max_tool_output_bytes >= 12 * 1024 * 1024
-
-
-def test_pi_host_runtime_options_preserve_cache_budgets_and_resolve_session_path(tmp_path):
-    session_dir = tmp_path / "work" / ".." / "sessions"
-    settings = PiHostConfig(
-        session_dir=str(session_dir), max_session_bytes=2048, max_cache_bytes=4096,
-    )
-    options = settings.runtime_options()
-    assert options["sessionDir"] == str(tmp_path / "sessions")
-    assert options["maxSessionBytes"] == 2048
-    assert options["maxCacheBytes"] == 4096
-
-
-def test_pi_host_cache_budget_can_equal_one_session_budget():
-    settings = PiHostConfig(max_session_bytes=1024, max_cache_bytes=1024)
-    assert settings.runtime_options()["maxCacheBytes"] == 1024
-
-
-@pytest.mark.parametrize("source", ["primary", "fallback"])
-def test_pi_harness_accepts_one_api_model_profile(tmp_path, source):
-    payload = _config_payload()
-    payload["supervisor_harness"] = "pi"
-    payload["agent_model"] = {
-        "source": source, "model": "cloud-agent", "max_output_tokens": 2048,
-        "request_timeout_seconds": 30,
-    }
-    config_path = tmp_path / "pi.yaml"
-    _write_config(config_path, payload)
-
-    config = load_config(config_path)
-    assert config.supervisor_harness == "pi"
-    assert config.resolve_model_binding("agent").source == source
-
-
-@pytest.mark.parametrize("native", [
-    {"adapter": "codex_app_server", "provider": "codex"},
-    {"adapter": "claude_sdk", "provider": "claude_code"},
-])
-def test_pi_harness_rejects_native_model_sources(tmp_path, native):
-    payload = _config_payload()
-    payload["supervisor_harness"] = "pi"
-    payload["model_sources"]["primary"] = native
-    payload["agent_model"].pop("fallback")
-    config_path = tmp_path / "pi-native.yaml"
-    _write_config(config_path, payload)
-    with pytest.raises(ValidationError, match="pi supervisor_harness requires.*API source"):
-        load_config(config_path)
-
-
-def test_pi_harness_rejects_implicit_api_fallback(tmp_path):
-    payload = _config_payload()
-    payload["supervisor_harness"] = "pi"
-    config_path = tmp_path / "pi-fallback.yaml"
-    _write_config(config_path, payload)
-    with pytest.raises(ValidationError, match="pi supervisor_harness does not support fallback"):
         load_config(config_path)

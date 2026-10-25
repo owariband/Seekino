@@ -111,18 +111,6 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --dev
 
-      - name: Set up Pi Host Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22.19.0"
-          cache: npm
-          cache-dependency-path: gateway/pi/host/package-lock.json
-
-      - name: Build and test Pi Host
-        run: |
-          npm ci --prefix gateway/pi/host
-          npm test --prefix gateway/pi/host
-
       - name: Run tests
         run: uv run --locked pytest -m "not live_agent"
 

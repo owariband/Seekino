@@ -1901,11 +1901,12 @@ def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_
         host.prepare_context.assert_not_awaited()
 
     config = {"configurable": {"thread_id": inputs["conversation_id"]}}
-    assert store.checkpointer.get_tuple(config) is not None
+    assert store.checkpointer.get_tuple(config) is None
     assert store.pending[inputs["conversation_id"]].message_id == inputs["assistant_message_id"]
     graph = store.pending[inputs["conversation_id"]].graph
     runtime.confirm_turn(inputs["conversation_id"], inputs["assistant_message_id"], first.content)
     assert store.pending == {}
+    assert store.checkpointer.get_tuple(config) is not None
     assert graph.get_state(config).values["messages"][-1].content == first.content
 
     second_inputs = {**inputs, "assistant_message_id": "second-answer", "user_message": "Explain it again."}

@@ -21,5 +21,6 @@ DEEPSEEK_PROVIDER: Final = "deepseek"
 # Profiles describe dialect differences within one protocol implementation.
 OPENAI_STANDARD_PROFILE: Final = "standard"
 OPENAI_DEEPSEEK_PROFILE: Final = "deepseek"
+OPENAI_KIMI_PROFILE: Final = "kimi"
 
 ARK_OPENAI_BASE_URL: Final = "https://ark.cn-beijing.volces.com/api/v3"

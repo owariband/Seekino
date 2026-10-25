@@ -1,5 +1,7 @@
 # 部署与本地运行
 
+首次安装推荐阅读[本地配置指南：API 模型 + Docker 数据库](local-setup.md)，包含当前 dev 的模型示例、checkpoint 初始化、日常启动和 Docker 覆盖范围。
+
 已有原生 MySQL、Elasticsearch 和 Python 环境时，可以继续使用；HTTPS 入口不要求
 Docker。macOS 的 Nginx 安装、本地证书、8443 入口与手机信任步骤见
 [原生 Nginx 本地 HTTPS](nginx/README.md)。Nginx 独立于 Python API 和 Vite 运行。
@@ -18,12 +20,15 @@ Python Server（含 V2 Parse Consumer）、Vite、ffmpeg、模型 SDK 在宿主�
 2. 本机安装 uv、Node 24+、npm、ffmpeg / ffprobe。
 3. 在仓库根目录执行 `cp .env.example .env.local`（已有文件则保留），填写模型密钥，
    并显式配置 `ANIVAG_ELASTICSEARCH_URL` 和 `ANIVAG_ELASTICSEARCH_INDEX`。
-   默认模型配置需要 `ARK_API_KEY` 和 `DEEPSEEK_API_KEY`；模型与 Endpoint 按 `config.yaml` 配置。
-4. 执行 `docker compose up -d --wait && ./start.sh`，访问 `http://127.0.0.1:5173`。
+   根模型配置还依赖本机 Codex、Whisper 和可选模型服务；首次试用可选上面指南的 API 模型配置。
+4. 执行 `docker compose --env-file .env.local up -d --wait mysql elasticsearch`。
+5. 依次执行 `uv run --env-file .env.local python -m server.cli init-db` 和
+   `uv run --no-sync --env-file .env.local python -m server.cli init-es-index`，前者同时初始化 DeepAgents checkpoint 表。
+6. 在当前 dev 工作区执行 `./start.sh --branch dev`；main 工作区使用 `./start.sh`，访问 `http://127.0.0.1:5173`。
 
 Compose 先启动数据库并等待健康检查通过；原脚本随后复用数据库，
-创建/校验 MySQL 表和 ES 索引，再启动本地应用。
-`&&` 保证容器启动失败时不会继续运行原脚本。
+校验 MySQL 业务表和 ES 索引，再启动本地应用；脚本本身不初始化 checkpoint 表。
+按顺序执行，前一步失败时先修复，再继续下一步。
 首次下载镜像或 Python 依赖需要网络；容器启动成功不表示模型密钥和视频解析已验证。
 
 只准备基础设施时，无需模型密钥或本地 Python 环境：
@@ -128,7 +133,7 @@ MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose �
    手机测试另用 `outputs/local-services/cloud-auth/phone.env`、同目录 `model-config.yaml`、
    `seekino_phone_dev` 和 `outputs/phone-test/artifacts`；仅在需要恢复手机测试环境时携带这一套。
 4. 检查 `git status`，保存启动脚本和当前功能所依赖的未提交/未跟踪源码。
-   本次 `scripts/local_whisper.py`、`evals/query_router/` 等尚未进入已有提交；
+   本次 `scripts/local_whisper.py`、`evals/benchmark/intent_routing/` 等尚未进入已有提交；
    单独 clone main 不能恢复完整的本机工作状态。
 5. `./start.sh` 固定定位 main，且不会启动下面的 Whisper 或查询改写模型服务。
    API `/healthz` 正常只证明 API/Consumer 状态，不能作为模型能力恢复完成的证据。
@@ -141,7 +146,7 @@ MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose �
 
 | 能力 | 必需文件与关联依赖 | 恢复依据 |
 |---|---|---|
-| 查询改写 | `outputs/models/Qwen3-8B-GGUF-local/b968826d9c46dd6066d109eabc6255188de91218/Qwen3-8B-Q4_K_M.gguf`，约 4.68 GiB；匹配的 `llama-server` | 同目录 `manifest.json` 记录官方 Qwen/Qwen3-8B revision、转换器版本、量化参数及 SHA-256；详见 [查询改写实验记录](../evals/query_router/README.md) |
+| 查询改写 | `outputs/models/Qwen3-8B-GGUF-local/b968826d9c46dd6066d109eabc6255188de91218/Qwen3-8B-Q4_K_M.gguf`，约 4.68 GiB；匹配的 `llama-server` | 同目录 `manifest.json` 记录官方 Qwen/Qwen3-8B revision、转换器版本、量化参数及 SHA-256；详见 [查询改写实验记录](../evals/benchmark/intent_routing/README.md) |
 | ASR | `outputs/local-models/whisper/ggml-large-v3-turbo.bin`，约 1.51 GiB；`outputs/tools/whisper.cpp/build/bin/whisper-server` | 本次 whisper.cpp 源码为 `48f628a`；保留版本，按其 `models/download-ggml-model.sh` 获取 `large-v3-turbo`，用 [启动脚本](../scripts/local_whisper.py) 读取当前模型绑定 |
 | 声纹 | `outputs/local-models/campplus/campplus_cn_common.bin`，约 27 MiB；`outputs/local-models/campplus/3D-Speaker` 中的 `speakerlab` 和 `speaker` 可选依赖（extra） | [CAM++ 适配器](../gateway/local/campplus.py) 校验权重和源码 SHA；恢复相同实现，修正 `PYTHONPATH` 与 YAML 中的 `checkpoint_path`，不能只复制权重 |
 

@@ -1,0 +1,165 @@
+[
+  {
+    "id": "c19_original_history",
+    "expected": "respond",
+    "state": {
+      "query": "那又咋了，你说话怎么这么无趣啊",
+      "recent_messages": [
+        {
+          "role": "USER",
+          "content": "真是高高在上呢 哪里出现过"
+        },
+        {
+          "role": "ASSISTANT",
+          "content": "我先按这句字幕原话检索全剧，再核对前后对白，确认集数、说话人和语境。\n\n找到了一个高度接近的候选：第 13 集开头，字幕是“真是居高临下啊”。我再核对它前后是谁对谁说，以及是否就是你记得的“高高在上”。\n\n出现在 **《BanG Dream! It's MyGO!!!!!》第 13 集开头，约 00:54**。\n\n- **说话人：**丰川祥子  \n- **对象：**若叶睦  \n- **日语原句：**「いいご身分ですわね。」\n- **本片字幕：**“真是居高临下啊。”\n\n前文是若叶睦说：“因为祥看起来快要坏掉了。”祥子认为这种带着怜悯、担心的说法很刺耳，于是讽刺地回了这句。你记得的 **“真是高高在上呢”** 应该是这句话的另一种译法。"
+        }
+      ]
+    }
+  },
+  {
+    "id": "retrieve_original_quote",
+    "question": "route",
+    "state": {
+      "recent_messages": [],
+      "query": "真是高高在上呢 哪里出现过"
+    },
+    "expected": "retrieve"
+  },
+  {
+    "id": "respond_existing_evidence",
+    "question": "route",
+    "state": {
+      "recent_messages": [
+        {
+          "role": "user",
+          "content": "帮我找她拒绝邀请的片段。"
+        },
+        {
+          "role": "assistant",
+          "content": "找到了。片段里她说：我不是不想去，只是已经答应陪妹妹了。"
+        }
+      ],
+      "query": "只根据你刚贴出的这句话，她是在拒绝邀请，还是不喜欢邀请她的人？"
+    },
+    "expected": "respond"
+  },
+  {
+    "id": "mixed_feedback_and_search",
+    "question": "route",
+    "state": {
+      "recent_messages": [
+        {
+          "role": "user",
+          "content": "你刚才完全没回应我对你的吐槽。"
+        },
+        {
+          "role": "assistant",
+          "content": "我可以继续找相关视频。"
+        }
+      ],
+      "query": "先回应一下我刚才对你的吐槽。另外，帮我找她们第一次登台的片段。"
+    },
+    "expected": "mixed"
+  },
+  {
+    "id": "respond_stop_retrieval",
+    "question": "route",
+    "state": {
+      "recent_messages": [
+        {
+          "role": "assistant",
+          "content": "这段主要表达她虽然想去，但因为已经答应陪妹妹而拒绝了邀请。我还可以继续找相似片段。"
+        }
+      ],
+      "query": "不用继续找视频了。刚才那段解释太长，帮我压缩成一句话。"
+    },
+    "expected": "respond"
+  },
+  {
+    "id": "retrieve_correct_negation",
+    "question": "route",
+    "state": {
+      "recent_messages": [
+        {
+          "role": "user",
+          "content": "你不用再解释怎么检索了。"
+        },
+        {
+          "role": "assistant",
+          "content": "明白，我先停止检索。"
+        }
+      ],
+      "query": "我说的是不用解释检索过程，不是不用检索。帮我找第一次登台演出的片段。"
+    },
+    "expected": "retrieve"
+  },
+  {
+    "id": "mixed_reference_and_feedback",
+    "question": "route",
+    "state": {
+      "recent_messages": [
+        {
+          "role": "user",
+          "content": "我想看雨中等人的场景，也想知道你为什么总把我的吐槽当台词。"
+        },
+        {
+          "role": "assistant",
+          "content": "你希望先处理哪一件？"
+        }
+      ],
+      "query": "第二件先回答，第一件也要继续帮我找。"
+    },
+    "expected": "mixed"
+  },
+  {
+    "id": "retrieve_feedback_quote",
+    "question": "route",
+    "state": {
+      "recent_messages": [
+        {
+          "role": "assistant",
+          "content": "可以发你记得的台词，我帮你找出处。"
+        }
+      ],
+      "query": "帮我找角色说“你说话怎么这么无趣啊”的片段，我是在找台词出处。"
+    },
+    "expected": "retrieve"
+  },
+  {
+    "id": "holdout_feedback",
+    "expected": "respond",
+    "holdout": true,
+    "state": {
+      "recent_messages": [
+        {
+          "role": "USER",
+          "content": "真是高高在上呢 哪里出现过"
+        },
+        {
+          "role": "ASSISTANT",
+          "content": "我先按这句字幕原话检索全剧，再核对前后对白，确认集数、说话人和语境。\n\n找到了一个高度接近的候选：第 13 集开头，字幕是“真是居高临下啊”。我再核对它前后是谁对谁说，以及是否就是你记得的“高高在上”。\n\n出现在 **《BanG Dream! It's MyGO!!!!!》第 13 集开头，约 00:54**。\n\n- **说话人：**丰川祥子  \n- **对象：**若叶睦  \n- **日语原句：**「いいご身分ですわね。」\n- **本片字幕：**“真是居高临下啊。”\n\n前文是若叶睦说：“因为祥看起来快要坏掉了。”祥子认为这种带着怜悯、担心的说法很刺耳，于是讽刺地回了这句。你记得的 **“真是高高在上呢”** 应该是这句话的另一种译法。"
+        }
+      ],
+      "query": "出处我已经知道了。接下来只说你的表达：你老在汇报操作，听起来太机械了。"
+    }
+  },
+  {
+    "id": "holdout_mixed",
+    "expected": "mixed",
+    "holdout": true,
+    "state": {
+      "recent_messages": [
+        {
+          "role": "USER",
+          "content": "真是高高在上呢 哪里出现过"
+        },
+        {
+          "role": "ASSISTANT",
+          "content": "我先按这句字幕原话检索全剧，再核对前后对白，确认集数、说话人和语境。\n\n找到了一个高度接近的候选：第 13 集开头，字幕是“真是居高临下啊”。我再核对它前后是谁对谁说，以及是否就是你记得的“高高在上”。\n\n出现在 **《BanG Dream! It's MyGO!!!!!》第 13 集开头，约 00:54**。\n\n- **说话人：**丰川祥子  \n- **对象：**若叶睦  \n- **日语原句：**「いいご身分ですわね。」\n- **本片字幕：**“真是居高临下啊。”\n\n前文是若叶睦说：“因为祥看起来快要坏掉了。”祥子认为这种带着怜悯、担心的说法很刺耳，于是讽刺地回了这句。你记得的 **“真是高高在上呢”** 应该是这句话的另一种译法。"
+        }
+      ],
+      "query": "先把刚才的出处解释压成一句话，再帮我找 MyGO!!!!! 五人第一次登台演出的片段。"
+    },
+    "fixture_revision": "Explicit MyGO five-person target; removes previous ambiguous 她们 before any formal run."
+  }
+]

@@ -177,11 +177,15 @@ def test_application_construction_closes_allocated_clients_when_setup_fails(
         configuration = yaml.safe_load((
             Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml"
         ).read_text())
-        configuration["supervisor_harness"] = "pi"
+        configuration["supervisor_harness"] = "deepagents"
         configuration["agent_model"].pop("fallback")
         config_path = tmp_path / "cloud-models.yaml"
         config_path.write_text(yaml.safe_dump(configuration))
         monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+        monkeypatch.setattr(
+            bootstrap, "create_agent_checkpoint_store",
+            lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None),
+        )
     settings = ServerSettings.from_environment()
     settings = replace(settings, agent=replace(
         settings.agent, total_timeout_enabled=True, execution_timeout_seconds=480,
@@ -390,6 +394,10 @@ def test_process_assembly_receives_runtime_configuration(
     config_path = tmp_path / "models.yaml"
     config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
     monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    from gateway.agent_model.deepagents import DeepAgentSessionStore
+    monkeypatch.setattr(
+        bootstrap, "create_agent_checkpoint_store", lambda *_args, **_kwargs: DeepAgentSessionStore(),
+    )
     settings = replace(
         ServerSettings.from_environment(),
         sse=SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=9),
@@ -1251,10 +1259,9 @@ def test_application_keeps_closing_clients_after_dependency_close_fails(failure)
     assert order == ["agent", "elasticsearch", "redis", "database"]
 
 
-@pytest.mark.parametrize("harness", ["codex", "deepagents"])
-def test_cloud_requires_pi_before_allocating_external_clients(monkeypatch, harness):
+def test_cloud_requires_deepagents_before_allocating_external_clients(monkeypatch):
     config = load_config(Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml")
-    config = config.model_copy(update={"supervisor_harness": harness})
+    config = config.model_copy(update={"supervisor_harness": "codex"})
     monkeypatch.setattr(bootstrap, "load_config", lambda _path: config)
 
     def forbidden_database(*_args, **_kwargs):
@@ -1266,7 +1273,7 @@ def test_cloud_requires_pi_before_allocating_external_clients(monkeypatch, harne
         agent=AgentServiceConfig(execution_timeout_seconds=480),
         auth=SimpleNamespace(mode="cloud", query_lease_seconds=600),
     )
-    with pytest.raises(ValueError, match="cloud Server requires supervisor_harness: pi"):
+    with pytest.raises(ValueError, match="cloud Server requires supervisor_harness: deepagents"):
         main_module.init_application(settings)
 
 
@@ -1275,7 +1282,7 @@ def test_cloud_requires_pi_before_allocating_external_clients(monkeypatch, harne
     ("agent", False), ("supervisor", False), ("vision", False),
     ("ocr", False), ("summarize", False), ("vision", True),
 ])
-def test_cloud_pi_rejects_selected_native_sources_including_fallback(source, role, fallback):
+def test_cloud_deepagents_rejects_selected_native_sources_including_fallback(source, role, fallback):
     config = load_config(Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml")
     config.model_sources["native"] = source
     native = ModelBinding(source="native", model="native-model", request_timeout_seconds=30)
@@ -1284,20 +1291,20 @@ def test_cloud_pi_rejects_selected_native_sources_including_fallback(source, rol
         if fallback else native
     )
     config = config.model_copy(update={
-        "supervisor_harness": "pi",
+        "supervisor_harness": "deepagents",
         "normalized_models": {**config.normalized_models, role: binding},
     })
     with pytest.raises(ValueError, match=rf"cloud models\.{role} must use API sources"):
-        bootstrap._validate_cloud_pi_harness(SimpleNamespace(auth=SimpleNamespace(mode="cloud")), config)
+        bootstrap._validate_cloud_supervisor_harness(SimpleNamespace(auth=SimpleNamespace(mode="cloud")), config)
 
 
-def test_cloud_pi_allows_api_bindings_and_unused_native_source():
+def test_cloud_deepagents_allows_api_bindings_and_unused_native_source():
     config = load_config(Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml")
     config.model_sources["unused_native"] = CodexModelSourceConfig()
-    config = config.model_copy(update={"supervisor_harness": "pi"})
-    bootstrap._validate_cloud_pi_harness(SimpleNamespace(auth=SimpleNamespace(mode="cloud")), config)
+    config = config.model_copy(update={"supervisor_harness": "deepagents"})
+    bootstrap._validate_cloud_supervisor_harness(SimpleNamespace(auth=SimpleNamespace(mode="cloud")), config)
 
 
 def test_local_mode_preserves_native_models_and_harness():
     config = load_config()
-    bootstrap._validate_cloud_pi_harness(SimpleNamespace(auth=SimpleNamespace(mode="local")), config)
+    bootstrap._validate_cloud_supervisor_harness(SimpleNamespace(auth=SimpleNamespace(mode="local")), config)

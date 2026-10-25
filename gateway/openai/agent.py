@@ -64,7 +64,7 @@ class OpenAIAgentModel:
             raise ValueError("request_timeout_seconds must be greater than zero")
         if not provider_name.strip():
             raise ValueError("provider_name must not be empty")
-        if profile not in {"standard", "deepseek"}:
+        if profile not in {"standard", "deepseek", "kimi"}:
             raise ValueError(f"unsupported OpenAI API profile: {profile}")
         if reasoning_effort not in {"none", "low", "high", "max"}:
             raise ValueError("unsupported reasoning_effort")
@@ -304,14 +304,15 @@ class OpenAIAgentModel:
                 if self.profile == "deepseek"
                 else {"max_completion_tokens": self.max_output_tokens}
             )
+            profile_options = completion_options(self.profile, self.reasoning_effort)
             response = client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
                 stream=False,
-                temperature=0,
+                temperature=profile_options.pop("temperature", 0),
                 timeout=timeout,
                 **token_options,
-                **completion_options(self.profile, self.reasoning_effort),
+                **profile_options,
                 **tool_options,
             )
         except APIError as error:

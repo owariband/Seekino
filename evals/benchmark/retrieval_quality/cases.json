@@ -1,0 +1,539 @@
+{
+  "schema_version": 1,
+  "time_unit": "milliseconds",
+  "description": "retrieval_quality: Small historical regression suite; reference positives are not exhaustive gold labels. All answers and facts stay outside model input.",
+  "datasets": {
+    "mygo-full": {
+      "series_id": "836fa9f0-2bf4-50fb-9c64-75526fa1dea9",
+      "description": "正式 MyGO 13 集。2026-10-15 已完成 Chunk 解析；2026-10-18 早期 Event 评测尚无本 scope 的 Event 覆盖。",
+      "source_media_included": false,
+      "media_sha256": null
+    },
+    "ep04-review": {
+      "series_id": "bdbf28ae-5404-58e4-8c98-699433499ffc",
+      "description": "独立 EP04 speaker-review 素材，历史 task version=11，24 Chunk、430 Event。",
+      "historical_parse_task_id": "0f681291-4f52-4254-a3be-91c1ee835c3c",
+      "source_media_included": false,
+      "media_sha256": null
+    }
+  },
+  "historical_environments": {
+    "2026-10-15-chat": {
+      "model": "gpt-6-astra",
+      "git_head": "620136ae96d95bcf92f3cfd2ef25d838cdba60b8",
+      "source_sha256": {
+        "engine/design/trd.md": "6d9923b9dc3c7ba628ddf67950a76be8025f843ff646d70ebd4b6aa221ac8c91",
+        "agent/chat/supervisor.py": "0b8b0d5c0f07f17cd320a7feb0ab1f92f89df90ff149920563366dbbe8ae9324",
+        "agent/chat/video_search/context.py": "4a7c0b1a412d74b78f198db900b4be441750ac724c975a9378dff968e0ac0b5e",
+        "agent/chat/video_search/output.py": "5b22dba6dc5414d02fc356cdc06fadc8c36f8c7364da3c2c1fe2754fd4b808b1",
+        "agent/chat/video_search/skills/retrieval/SKILL.md": "3f5f103b5143742b131bc4ad92f2d2c4e72ffb573a4bc57fd0888d14a94234a0",
+        "server/service/agent_chat.py": "e248fe9e6a3f45cfecf8980599618e4fb9110495b507ecb526cf9b3b855c6e80",
+        "server/service/video_retrieval.py": "2e865481c0b095b7903e597a91d768c1c2ebe149fa0bb9d2d7bb951b1ff1ad69",
+        "engine/parsev2/schemas.py": "532ad0fe9f0f4efaca0010947e824d86698a59239d08b92e3cd53cf5376659a2"
+      },
+      "uncommitted_changes": true,
+      "concurrency": "2 workers; observed model concurrency up to 4",
+      "execution_timeout_seconds": 600,
+      "top_k": 3,
+      "max_top_k": 20,
+      "limits_enabled": false
+    },
+    "2026-10-18-event": {
+      "model": "default live service bindings; see per-response model",
+      "git_head": null,
+      "concurrency": "Chinese drift/premise ran concurrently; retrieval calls sequential",
+      "ep04_retrieval_environment": {
+        "captured_at": "2026-10-18T06:38:12.403494+00:00",
+        "series_id": "bdbf28ae-5404-58e4-8c98-699433499ffc",
+        "target_chunk_id": "cd60254c-9e9f-5481-9fed-4e88ad61017d",
+        "chunk_index": "anivag_video_chunks_local_20261010_development",
+        "event_index": "seekino_video_events_development_v1",
+        "retrieval_config": {
+          "channel_top_k": 20,
+          "rrf_k": 60,
+          "lexical_weight": 1.0,
+          "text_weight": 1.0,
+          "vision_weight": 1.0,
+          "candidate_budget": null,
+          "sparse_weight": 0.0,
+          "rerank_enabled": false,
+          "search_default_top_k": 30
+        },
+        "event_contract": {
+          "semantic_encoder": {
+            "provider": "ark",
+            "model": "doubao-embedding-vision-250615",
+            "encoder_revision": "gateway-ark-embedding-v1",
+            "dimensions": 1024,
+            "normalization": "none",
+            "output_contract": "float-vector-v1"
+          },
+          "vision_encoder": {
+            "provider": "ark",
+            "model": "doubao-embedding-vision-250615",
+            "encoder_revision": "gateway-ark-embedding-v1",
+            "dimensions": 1024,
+            "normalization": "none",
+            "output_contract": "float-vector-v1"
+          },
+          "capture": {
+            "max_height": 720,
+            "fps": 1.0,
+            "max_frames": 3,
+            "mime_type": "image/jpeg",
+            "preprocess_revision": "ffmpeg-jpeg-q3-scale-cap-v1",
+            "strategy": "uniform_midpoint_v1",
+            "pooling": "l2-mean-v1"
+          },
+          "description_language": null,
+          "projection_version": "timeline-event-index-v1"
+        },
+        "method": "Sequential in-process calls, same production factories/config, no forced query vector reuse or index writes; per-stage wall time includes service IO."
+      },
+      "limitations": "No same-question Chunk-only end-to-end control; index contents and load not fully pinned."
+    }
+  },
+  "facts": {
+    "high-handed-ep13": {
+      "dataset": "mygo-full",
+      "episode": 13,
+      "start_ms": 54600,
+      "end_ms": 56000,
+      "quote": "いいご身分ですわね。",
+      "speaker": "豊川祥子",
+      "historical_chunk_id": "ad1c7419-c11c-5280-9e2e-89456355bfe7",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/environment-coverage.json",
+        "sha256": "7831a00b75c76dd77943826ff552a0ab77f459d722705b04c0ac9aaa6250c1d9"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth."
+    },
+    "guitar-retort": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 1203200,
+      "end_ms": 1208700,
+      "quote": "ギターはコードに始まり コードに終わるんです。ドラムのあんたには分からないだろうけど。",
+      "speaker": "千早爱音",
+      "historical_chunk_id": "0044de20-6f7c-5d22-925b-d6f369b02cfd",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/ep04-zh-retrieval/event-premise-1.json",
+        "sha256": "d544e3f491f72dc453f12b2575f859a085396cb6a829fd8f06e477da15ce0825"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "396043d3f7c611beb36dcc6c017ee1062fb828007320020c789d8ca40f8af2dc"
+    },
+    "outsider-ep04": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 548000,
+      "end_ms": 549000,
+      "quote": "部外者は黙ってて。",
+      "speaker": "椎名立希",
+      "historical_chunk_id": "cd60254c-9e9f-5481-9fed-4e88ad61017d",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/experiment/ep04-groundtruth.json",
+        "sha256": "21f2ae37de01cf225f6ddbeb0691aa4535b515792446c1be17c0b741778179a3"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "37b02b5240bc807c5e54b39eeb447f075b74a36f0319283140c16239da21766b"
+    },
+    "leave-me-alone-422500": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 422500,
+      "end_ms": 423200,
+      "quote": "関係ありませんわ。",
+      "speaker": "丰川祥子",
+      "historical_chunk_id": "c3bfb1d7-f399-5d94-8b65-6a47a1c5979c",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/experiment/ep04-chinese-grading-notes.json",
+        "sha256": "5314e58be5c1e82ede7e5bcdf1b96bfbcdcf4d5e2c96032b2a65257757e71c88"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "1e6f440f4567ecaaccb45abd14c399f866bca5a9aff49d1b8b6349217b58f604"
+    },
+    "leave-me-alone-424500": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 424500,
+      "end_ms": 426300,
+      "quote": "もう、私に関わらないで。",
+      "speaker": "丰川祥子",
+      "historical_chunk_id": "c3bfb1d7-f399-5d94-8b65-6a47a1c5979c",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/experiment/ep04-chinese-grading-notes.json",
+        "sha256": "5314e58be5c1e82ede7e5bcdf1b96bfbcdcf4d5e2c96032b2a65257757e71c88"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "307580a3ef6d7bbba35a537d452fa0922b5d8de354557ef86425b016a3dbdc5c"
+    }
+  },
+  "cases": [
+    {
+      "id": "retrieval-full-chunk-actual-query",
+      "kind": "retrieval",
+      "mode": "chunk",
+      "dataset": "mygo-full",
+      "query": "中文台词“真是高高在上的”或“还真是居高临下”“一副高高在上的样子”，人物讽刺对方态度傲慢、居高临下的对话",
+      "parameters": {
+        "top_k": 10,
+        "lexical_weight": 0.55,
+        "text_weight": 0.45,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "high-handed-ep13"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "high-handed-ep13"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-full-chunk-original",
+      "kind": "retrieval",
+      "mode": "chunk",
+      "dataset": "mygo-full",
+      "query": "真是高高在上的，出于哪一集？",
+      "parameters": {
+        "top_k": 10
+      },
+      "reference_facts": [
+        "high-handed-ep13"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "high-handed-ep13"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-full-chunk-verified-wording",
+      "kind": "retrieval",
+      "mode": "chunk",
+      "dataset": "mygo-full",
+      "query": "真是居高临下啊",
+      "parameters": {
+        "top_k": 10
+      },
+      "reference_facts": [
+        "high-handed-ep13"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "high-handed-ep13"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-full-event-original",
+      "kind": "retrieval",
+      "mode": "event",
+      "dataset": "mygo-full",
+      "query": "真是高高在上的，出于哪一集？",
+      "parameters": {
+        "top_k": 10,
+        "event_types": [
+          "DIALOGUE"
+        ]
+      },
+      "reference_facts": [
+        "high-handed-ep13"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "high-handed-ep13"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-full-event-verified-wording",
+      "kind": "retrieval",
+      "mode": "event",
+      "dataset": "mygo-full",
+      "query": "真是居高临下啊",
+      "parameters": {
+        "top_k": 10,
+        "event_types": [
+          "DIALOGUE"
+        ]
+      },
+      "reference_facts": [
+        "high-handed-ep13"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "high-handed-ep13"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-chunk-quote",
+      "kind": "retrieval",
+      "mode": "chunk",
+      "dataset": "ep04-review",
+      "query": "部外者は黙ってて。",
+      "parameters": {
+        "top_k": 10,
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "outsider-ep04"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "outsider-ep04"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-event-quote",
+      "kind": "retrieval",
+      "mode": "event",
+      "dataset": "ep04-review",
+      "query": "部外者は黙ってて。",
+      "parameters": {
+        "top_k": 10,
+        "event_types": [
+          "DIALOGUE"
+        ],
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "outsider-ep04"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "outsider-ep04"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-chunk-drift",
+      "kind": "retrieval",
+      "mode": "chunk",
+      "dataset": "ep04-review",
+      "query": "这又不关你的事，你少掺和",
+      "parameters": {
+        "top_k": 10,
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "outsider-ep04",
+        "leave-me-alone-422500",
+        "leave-me-alone-424500"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "outsider-ep04",
+            "leave-me-alone-422500",
+            "leave-me-alone-424500"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-chunk-near",
+      "kind": "retrieval",
+      "mode": "chunk",
+      "dataset": "ep04-review",
+      "query": "不相干的人别插话",
+      "parameters": {
+        "top_k": 10,
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "outsider-ep04"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "outsider-ep04"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-chunk-premise",
+      "kind": "retrieval",
+      "mode": "chunk",
+      "dataset": "ep04-review",
+      "query": "不懂音乐就别来指点",
+      "parameters": {
+        "top_k": 10,
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "guitar-retort"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "guitar-retort"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-event-drift",
+      "kind": "retrieval",
+      "mode": "event",
+      "dataset": "ep04-review",
+      "query": "这又不关你的事，你少掺和",
+      "parameters": {
+        "top_k": 10,
+        "event_types": [
+          "DIALOGUE"
+        ],
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "outsider-ep04",
+        "leave-me-alone-422500",
+        "leave-me-alone-424500"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "outsider-ep04",
+            "leave-me-alone-422500",
+            "leave-me-alone-424500"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-event-near",
+      "kind": "retrieval",
+      "mode": "event",
+      "dataset": "ep04-review",
+      "query": "不相干的人别插话",
+      "parameters": {
+        "top_k": 10,
+        "event_types": [
+          "DIALOGUE"
+        ],
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "outsider-ep04"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "outsider-ep04"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    },
+    {
+      "id": "retrieval-ep04-event-premise",
+      "kind": "retrieval",
+      "mode": "event",
+      "dataset": "ep04-review",
+      "query": "不懂音乐就别来指点",
+      "parameters": {
+        "top_k": 10,
+        "event_types": [
+          "DIALOGUE"
+        ],
+        "lexical_weight": 0.65,
+        "text_weight": 0.35,
+        "vision_weight": 0.0
+      },
+      "reference_facts": [
+        "guitar-retort"
+      ],
+      "checks": {
+        "required_fact_groups": [
+          [
+            "guitar-retort"
+          ]
+        ]
+      },
+      "rubric": [
+        "只评已知正例覆盖及其排名；不是全库 Recall@K 或答案质量。",
+        "Event 使用完整融合排名，top_k 限父 Chunk 数；不把父块命中等同单句已被 Agent 看见。"
+      ]
+    }
+  ]
+}

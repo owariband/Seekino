@@ -143,7 +143,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791590400000,
-      "link": "../design/codex-bridge-trd.md#bridge-first-batch",
+      "link": "../../../docs/design/codex-bridge-trd.md#bridge-first-batch",
       "locked": false,
       "customData": {
         "stageId": "P01",
@@ -585,7 +585,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791590400000,
-      "link": "../design/codex-bridge-trd.md#bridge-session",
+      "link": "../../../docs/design/codex-bridge-trd.md#bridge-session",
       "locked": false,
       "customData": {
         "stageId": "P02",
@@ -1027,7 +1027,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791590400000,
-      "link": "../design/codex-bridge-trd.md#bridge-mcp",
+      "link": "../../../docs/design/codex-bridge-trd.md#bridge-mcp",
       "locked": false,
       "customData": {
         "stageId": "P03",
@@ -1469,7 +1469,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791590400000,
-      "link": "../design/codex-bridge-trd.md#bridge-recovery",
+      "link": "../../../docs/design/codex-bridge-trd.md#bridge-recovery",
       "locked": false,
       "customData": {
         "stageId": "P04",
@@ -1911,7 +1911,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791590400000,
-      "link": "../design/codex-bridge-trd.md#bridge-validation",
+      "link": "../../../docs/design/codex-bridge-trd.md#bridge-validation",
       "locked": false,
       "customData": {
         "stageId": "P05",

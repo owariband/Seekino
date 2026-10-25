@@ -6,7 +6,7 @@ import pytest
 
 from agent.chat.common.errors import AgentExecutionTimeoutError, AgentModelInvocationError
 from agent.chat.common.state import ExecutionControl
-from agent.chat.query_hook import QueryHook, RetrievalSlot
+from agent.chat.query_hook import QueryHook, QueryHookDecision, RetrievalSlot
 from agent.chat.supervisor import SupervisorRuntime
 from gateway.config import QueryHookConfig
 from gateway.query_hook import QueryHookModelError
@@ -33,6 +33,92 @@ class Models:
             raise self.rewrite_error
         with track_model_call(provider="fake", model="8b", operation="retrieval_slot"):
             return result_type(retrieval_query=self.query)
+
+
+class DecisionModel:
+    def __init__(self, action="mixed", query="雨中等人"):
+        self.result = {"action": action, "retrieval_query": query}
+        self.calls = []
+        self.error = None
+
+    def generate(self, inputs, **options):
+        self.calls.append((inputs, options))
+        if self.error:
+            raise self.error
+        with track_model_call(provider="fake", model="chat", operation="query_hook_decision"):
+            return options["result_type"].model_validate(self.result)
+
+
+@pytest.mark.parametrize("action,query", [("respond", None), ("retrieve", "原句不是你说的那样"), ("mixed", "雨中等人")])
+def test_combined_decision_preserves_original_without_calling_legacy_models(action, query):
+    legacy, model = Models(), DecisionModel(action, query)
+    inputs = _inputs()
+    original = deepcopy(inputs)
+    usage = []
+    before = QueryHook(QueryHookConfig(enabled=True), legacy, decision_model=model)
+    with capture_model_usage(usage.append):
+        output = before(inputs, ExecutionControl(None))
+    assert inputs == original and not legacy.calls
+    assert output.startswith(inputs["user_message"] + "\n\n")
+    assert output.count("[本轮处理说明｜应用生成]") == 1
+    assert len(model.calls) == 1
+    options = model.calls[0][1]
+    assert options["max_model_calls"] == 1 and 0 < options["request_timeout_seconds"] <= 8
+    assert callable(options["check_control"])
+    assert [c.operation for c in usage] == ["query_hook_decision"]
+    assert usage[0].context["stage"] == "query_hook"
+    assert ("候选检索用语（JSON 字符串）：" in output) == (query is not None)
+
+
+@pytest.mark.parametrize("payload", [
+    {"action": "respond", "retrieval_query": "旧目标"},
+    {"action": "unknown", "retrieval_query": None},
+    {"action": "retrieve", "retrieval_query": " "},
+    {"action": "mixed", "retrieval_query": "x" * 161},
+    {"action": "respond", "retrieval_query": None, "answer": "不应回答"},
+])
+def test_combined_decision_rejects_inconsistent_or_unusable_output(payload):
+    with pytest.raises(ValueError):
+        QueryHookDecision.model_validate(payload)
+
+
+def test_combined_failure_falls_back_but_quota_and_cancellation_propagate():
+    model, inputs = DecisionModel(), _inputs()
+    before = QueryHook(QueryHookConfig(enabled=True), Models(), decision_model=model)
+    model.error = RuntimeError("provider failure")
+    assert before(inputs, ExecutionControl(None)) == inputs["user_message"]
+    model.error = ModelCallControlError("quota exhausted")
+    with pytest.raises(ModelCallControlError):
+        before(inputs, ExecutionControl(None))
+    cancel = Event()
+    original_generate = model.generate
+
+    def cancelling(*args, **kwargs):
+        cancel.set()
+        return original_generate(*args, **kwargs)
+
+    model.error = RuntimeError("connection closed")
+    model.generate = cancelling
+    with pytest.raises(AgentModelInvocationError, match="cancelled"):
+        before(inputs, ExecutionControl(None, cancel))
+
+
+def test_combined_late_result_is_discarded_and_parent_deadline_is_not_swallowed(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("agent.chat.query_hook.monotonic", lambda: clock[0])
+    model, inputs = DecisionModel(), _inputs()
+    original_generate = model.generate
+
+    def slow(*args, **kwargs):
+        clock[0] += 9
+        return original_generate(*args, **kwargs)
+
+    model.generate = slow
+    before = QueryHook(QueryHookConfig(enabled=True), Models(), decision_model=model)
+    assert before(inputs, ExecutionControl(None)) == inputs["user_message"]
+    with pytest.raises(AgentExecutionTimeoutError):
+        before(inputs, ExecutionControl(monotonic() - 1))
+    assert len(model.calls) == 1
 
 
 def hook(models, **config):
@@ -190,7 +276,8 @@ def test_empty_or_excessive_slot_cannot_be_appended(query):
         RetrievalSlot(retrieval_query=query)
 
 
-def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_original():
+@pytest.mark.parametrize("combined", [False, True])
+def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_original(combined):
     models = Models("retrieve")
     supervisor = FakeSupervisorModel(calls=("query_video",))
     video = FakeVideoRuntime()
@@ -198,14 +285,15 @@ def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_ori
         video, supervisor, FakeWebSearcher(),
         max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
         max_tool_result_bytes=4096, max_prompt_chars=10000,
-        query_hook=hook(models),
+        query_hook=QueryHook(QueryHookConfig(enabled=True), models,
+            decision_model=DecisionModel("retrieve", "真是高高在上呢") if combined else None),
     )
     inputs = _inputs(series_ids=["series"])
     inputs["history"] = [{"role": "user", "content": "原始历史", "messageId": "old"}]
     original = deepcopy(inputs)
     runtime.kick(inputs, load_video_context=lambda: [])
     assert inputs == original
-    assert [call[0] for call in models.calls] == ["route", "rewrite"]
+    assert [call[0] for call in models.calls] == ([] if combined else ["route", "rewrite"])
     sent = supervisor.runs[0][2]
     assert sent.startswith(inputs["user_message"] + "\n\n")
     assert sent.count("[本轮处理说明｜应用生成]") == 1

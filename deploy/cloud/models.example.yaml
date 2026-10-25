@@ -1,0 +1,102 @@
+# API-backed starting profile. Verify these model IDs or replace them with your endpoints.
+config_version: 2
+supervisor_harness: deepagents
+
+query_hook:
+  enabled: false
+
+tracing:
+  enabled: false
+  environment: production
+
+model_sources:
+  deepseek_api:
+    adapter: openai
+    provider: deepseek
+    profile: deepseek
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+  ark_default:
+    adapter: ark
+    provider: ark
+    api_key_env: ARK_API_KEY
+
+models:
+  agent:
+    source: deepseek_api
+    model: deepseek-flash
+    max_output_tokens: 4096
+    request_timeout_seconds: 180
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-0-lite-260428
+      max_output_tokens: 4096
+      request_timeout_seconds: 180
+  supervisor:
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
+    supports_vision_input: true
+    max_output_tokens: 4096
+    request_timeout_seconds: 180
+  transcription:
+    kind: transcription
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
+    request_timeout_seconds: 600
+  vision:
+    source: ark_default
+    model: doubao-seed-2-1-pro-260628
+    supports_vision_input: true
+    max_output_tokens: 8192
+    request_timeout_seconds: 600
+  vision_fallback:
+    source: deepseek_api
+    model: deepseek-flash
+    supports_vision_input: true
+    max_output_tokens: 8192
+    request_timeout_seconds: 600
+  summarize:
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
+    supports_vision_input: true
+    max_output_tokens: 4096
+    request_timeout_seconds: 180
+  embedding:
+    kind: embedding
+    source: ark_default
+    model: doubao-embedding-vision-250615
+    dimensions: 1024
+    video_fps: 1.0
+    request_timeout_seconds: 600
+  rerank:
+    kind: rerank
+    source: deepseek_api
+    model: deepseek-flash
+    reasoning_effort: none
+    max_output_tokens: 4096
+    request_timeout_seconds: 180
+
+agent_runtime:
+  limits_enabled: true
+  total_timeout_enabled: true
+  max_loop_turns: 3
+  max_model_calls_per_turn: 4
+  maximum_model_calls_per_turn: 6
+  max_tool_calls_per_turn: 12
+  maximum_tool_calls_per_turn: 24
+  max_output_tokens: 4096
+  stage_timeout_seconds: 180
+  supervisor_timeout_seconds: 480
+  execution_timeout_seconds: 600
+  maximum_concurrent_kicks: 2
+  maximum_parallel_queries: 1
+
+video_parser:
+  transcript_fps: 1.0
+  video_fps: 1.0
+  fallback:
+    enabled: true
+    frame_fps: 0.5
+    group_duration_seconds: 30
+    max_frames_per_group: 15
+    max_height: 720

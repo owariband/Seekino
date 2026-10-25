@@ -1,4 +1,4 @@
-"""Run localhost applications from the current main worktree and reuse databases."""
+"""Run localhost applications from the selected worktree and reuse databases."""
 from __future__ import annotations
 
 import argparse
@@ -184,13 +184,15 @@ def owned_pid(name: str) -> int | None:
     return None
 
 
-def require_main_worktree() -> None:
+def require_worktree_branch(expected: str) -> None:
     branch = subprocess.run(
         ["git", "symbolic-ref", "--quiet", "HEAD"], cwd=ROOT,
         capture_output=True, text=True, check=False,
     )
-    if branch.returncode or branch.stdout.strip() != "refs/heads/main":
-        raise RuntimeError("懒启动只允许 main 工作区；请通过新版 ./start.sh 定位 main。")
+    if branch.returncode or branch.stdout.strip() != f"refs/heads/{expected}":
+        raise RuntimeError(
+            f"懒启动只允许 {expected} 工作区；请通过 ./start.sh --branch {expected} 定位。"
+        )
 
 
 def source_digest(name: str) -> str:
@@ -235,7 +237,7 @@ def refresh_applications() -> None:
             if (record.get("config") != digest
                     or record.get("source_root") != str(ROOT)
                     or record.get("source_digest") != sources[name]):
-                print(f"[更新] {name} 使用 main 当前源码与配置", flush=True)
+                print(f"[更新] {name} 使用当前工作区源码与配置", flush=True)
                 stop((name,))
 
 
@@ -483,6 +485,7 @@ def main() -> int:
         default="start",
     )
     parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--branch", default="main", help="启动来源分支，默认 main")
     args = parser.parse_args()
     if args.command == "_env-names":
         if args.env_file is None:
@@ -490,7 +493,7 @@ def main() -> int:
         for name in dotenv_variable_names(args.env_file):
             print(name)
         return 0
-    require_main_worktree()
+    require_worktree_branch(args.branch)
     os.chdir(ROOT)
     STATE.mkdir(parents=True, exist_ok=True)
     with (STATE / "startup.lock").open("a") as lock:
@@ -515,7 +518,8 @@ def main() -> int:
         print(
             f"\n服务已就绪：\n  Web  http://127.0.0.1:{port('ANIVAG_WEB_PORT')}"
             f"\n  API  http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}/docs"
-            "\n  状态 ./start.sh status\n  停止 ./start.sh stop"
+            f"\n  状态 ./start.sh --branch {args.branch} status"
+            f"\n  停止 ./start.sh --branch {args.branch} stop"
             "\n  日志 outputs/local-services/*.log",
             flush=True,
         )

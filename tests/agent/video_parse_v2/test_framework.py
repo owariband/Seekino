@@ -74,8 +74,7 @@ def _inputs(**switches: bool) -> ParseInput:
                 },
             },
             "visual_input": {
-                "mode": "ordered_frames", "fps": 1,
-                "max_frames_per_chunk": 30, "max_height": 720,
+                "mode": "ordered_frames", "fps": 1, "max_height": 720,
             },
             "ocr_enabled": ocr,
             "understanding_enabled": switches.get("understanding_enabled", True),
