@@ -560,6 +560,31 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 以下保留未修复、部分完成或同条目仍有主体问题未解决的记录，已实施的阶段性修复与历史证据一并保留。
 
+### C20：Cloud Chat 的 pi 与 Deep Agents 上下文职责重复，需收敛持久化与恢复合同
+
+排序日期：2026-10-24。
+
+优先级：高。类型：Chat harness、上下文持久化与部署复杂度。状态：**代码实现、离线回归、开发环境真实 Chat 与 MySQL 恢复已验证：真实 MySQL 6 passed，两组均完成 3/3 轮，重启后恢复 30 条原生消息／13 条 ToolMessage。Deep Agents 总耗时约为 Codex 的 3.66 倍，且第三轮出现文案与视频块结束时间不一致；生产迁移、性能与质量回归评估、净维护成本仍未完成，保持 TODO。**
+
+#### 背景与当前问题
+
+云端引入 pi 时，需要避免一会话一进程、复用已有 SessionManager／compaction，并补齐当时 Deep Agents 仅使用 `InMemorySaver` 的恢复缺口。随着 Deep Agents＋LangGraph 持久化 checkpointer 被核实可覆盖模型／工具循环、原生消息、compact 和 thread 恢复，pi 的 Node Host、Python↔Node IPC、Conversation↔pi-session 映射及 JSONL 生命周期成为当前单实例部署中的重复层。
+
+本次只收敛 Cloud Chat Supervisor，不处理本地 Codex／Claude、Parse 或 Sandbox。`agent_message` 继续承担前端展示与业务终态；Deep Agents checkpoint 承担原生 Agent 上下文。历史 pi JSONL 不删除，旧会话没有 checkpoint 时仍按现有 SQL 展示历史冷启动，不承诺旧 tool 上下文无损迁移。
+
+#### 方案与验收条件
+
+采用 Deep Agents＋`PyMySQLSaver`，每轮先在内存执行，SQL 消息确认后才提交完整 checkpoint；失败、取消和关闭不得删除已确认历史。cloud 改为要求 `supervisor_harness: deepagents`，删除 pi Host、Python client、配置和专属测试，保留退役设计作为历史依据。
+
+验收必须分别记录：
+
+1. tool call／result、DeltaChannel、compact 和 offload 文件在 store 重建后保持一致；`history_message_limit` 不影响 Agent 恢复。
+2. 失败、取消和未确认 turn 不污染上一已确认 checkpoint；只有显式删除会话才删除其 checkpoint。
+3. cloud 配置、共享 store 生命周期、初始化和既有 Chat 回归通过；真实 MySQL `setup()` 与恢复使用隔离数据库。
+4. 真实业务 case 固定模型、数据、工具和预算，对比较完成率、证据正确性、覆盖度、完整时延、U/C/W/O、RSS 与存储增长。没有数据时明确写未测，不用删除代码量替代整体收益。
+
+依据：[统一 devlog](devlog.md#devlog-cloud-chat-checkpoint-20261024)、[Deep Agents 适配器](../../gateway/agent_model/deepagents.py)、[历史 pi Host TRD](../design/pi-host-trd.md)。
+
 ### C19：Chat Agent 误把表达反馈当台词检索，Query Router 需明确本轮任务再追加提示
 
 排序日期：2026-10-21。
@@ -938,7 +963,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 #### 2026-10-20：补全声学变化工具设计与 Prepare→Refine 归因边界
 
 - 用户进一步明确：Refine拿到准备阶段的归因后不得随意改名或置null，就DIALOGUE而言只处理跨Chunk衔接／合并。该约束需要Canvas和提交检查实施，不能只靠prompt；当前实现仍允许后续窗口重新决策，尚未收紧。
-- 原TRD为[agent/video_parse_v2/design/voiceprint-trd.md](../../agent/video_parse_v2/design/voiceprint-trd.md)，受`.gitignore`的`**/design/`规则忽略。最新职责、算法和分批实现设计已按用户要求同步回main主工作区的原目录，并与隔离worktree同名副本保持一致；历史原文完整保留。此次仅合入相关设计与本节记录，保留主工作区其他修改；该TRD仍不随PR推送，本条提供可追踪索引。
+- 原TRD为[agent/video_parse_v2/design/voiceprint-trd.md](../design/voiceprint-trd.md)，受`.gitignore`的`**/design/`规则忽略。最新职责、算法和分批实现设计已按用户要求同步回main主工作区的原目录，并与隔离worktree同名副本保持一致；历史原文完整保留。此次仅合入相关设计与本节记录，保留主工作区其他修改；该TRD仍不随PR推送，本条提供可追踪索引。
 - 首批设计沿用CAM++／1秒窗／400ms步长，比较时间矩阵的左右内部与跨侧相似度，排除自身／共享PCM／重复PCM的虚假支持，不聚类、不预设人数。连续块变化和短尾差异均可成为重ASR待复核范围；短尾缺少内部非重叠配对时明确支持不足，不能再次按最小成簇数量丢掉。算法和阈值尚未验收，现有矩阵不等于自动定位已成功；单embedding无法独立确认同时发声。
 - 接入目标是在Understanding模型调用前程序扫描，Agent展开候选并复用冻结ASR局部重转写，提交前处理已知混人及残余；B0在收集／编码前检查资格。原ASR只读，有新局部ASR证据时允许在授权Chunk内校正旧cue时间，不能机械锁死错误原范围。
 - 当前B0是排名／分档artifact，只有`prefill+ACCEPT`预填，其余可能保留Understanding旧姓名。因此不能直接锁住当前speaker就称为高置信归因；还须明确准备阶段可采纳归因与未决的交付。现有`merge_refinement_content`是并发三方合并，不是两条台词的合并工具；正式合并还缺源事件保留／去重和证据继承合同。本次仅整理设计，未改生产逻辑、B0／encoder／阈值，未运行模型、部署、重解析、提交或推送。
@@ -953,7 +978,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - **初始选样分组记录：6个历史混人范围中5个触发复核，原选普通对照的6条中2条触发；其中第12条现已确认混人、提示正确。** 用户圈出的两条13秒长段均捕捉到末尾差异，但v17爽世短范围未触发，v18爱音目标附近仍缺候选。历史6范围来自两个场景的多个重叠版本，触发率不能当作独立泛化准确率；普通对照的额外复核也仍需回听。4条短输入／短对照无候选不能当单人认证。
 - 预先列出的短侧门槛敏感性：0.10时混人5/6、普通4/6触发；主0.15为5/6、2/6；0.20为4/6、1/6。保留漏检与额外触发的取舍，未挑结果替换主设置。结论是可继续验证为局部重ASR的辅助提醒，不能作为自动切分或B0单人准入证明；同时发声及真实A→B→A音频仍未验收。
 - 新增49个算法语义测试（含1s／400ms A→B、A→B→A和短尾），完整`tests/engine/parsev2`为267 passed、0 failed。独立非调用算法的复算覆盖228主扫描、96组敏感性结果、103个Foote点，最大误差5.5511e-16。首次实测前已修复并回归“低支持尾峰被升级成完整支持峰”的review发现。
-- [实验结果与证据](../../outputs/worktrees/ep04-segmentation-20261020/outputs/verification/ep04-speaker-change-20261020/run-v1/report.md)保留全部样本、参数／代码摘要、PNG和JSON；最新实现状态与结论已同步main原目录的[voiceprint-trd.md](../../agent/video_parse_v2/design/voiceprint-trd.md)。本轮未重ASR、重解析、部署、重启、迁移、commit、push或合并PR，未改主工作区其他代码。
+- [实验结果与证据](../../outputs/worktrees/ep04-segmentation-20261020/outputs/verification/ep04-speaker-change-20261020/run-v1/report.md)保留全部样本、参数／代码摘要、PNG和JSON；最新实现状态与结论已同步main原目录的[voiceprint-trd.md](../design/voiceprint-trd.md)。本轮未重ASR、重解析、部署、重启、迁移、commit、push或合并PR，未改主工作区其他代码。
 - 后续按用户要求提供 [12 条矩阵 HTML](../../outputs/verification/ep04-speaker-change-20261020/matrices-12.html)：6 个历史合并输入加 6 条普通长台词，每条保留矩阵数值与原音频。主工作区和隔离副本均有可独立离线打开的文件。TRD 第 3 节补齐当前实际扫描、0.10／0.15 分支、连续点合并和支持不足处理；此次仅展示冻结结果，未重新编码或更改参数。
 
 - 后续按用户“停顿可能造成误判”的假设，复用本地 pyannote 官方 VAD 对 12 条做窗口过滤对照；保留原时间网格／邻域／CAM++／反差门槛，仅可选 mask 排除配对。主设置语音占比≥50%：历史触发 5/6→3/6、普通 2/6→2/6；第11条误报与第12条正确提示均未过滤任何窗（该句前面的5/6、2/6保留初始选样分组口径，最新分组见本节首条），爱音部分候选因支持不足消失，不能当作修好。25% 为 5/6、2/6；75% 为 2/6、1/6。新增 13 个 mask 语义测试，engine 280 passed。见 [VAD 对照记录](../../outputs/verification/ep04-speaker-change-20261020/vad-mask-report.md) 与 TRD 第 7 节；未接生产或重解析。
@@ -1185,7 +1210,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 3. **在同一批 Event 候选关键帧上接续构图实验。**对同一图库提取原图 embedding、PCP 类别分布、人物框图 embedding，比较单路与可调权重融合；分别评议构图类别，以及人物位置、大小和排列。原图 embedding 不替代人物框图特征。
 4. **区分候选召回与构图排序。**先确认相似画面是否进入 Event 候选集，再评价构图特征是否把它排上来；候选池外的画面不能被当作排序模型失败。Chat 发现的例子作为候选线索，经人工核对后使用，不直接当作完整标准答案集。
 
-依赖边界：早期 [Event 细粒度检索 TRD](../design/event-retrieval-trd.md) 的仅词法方案已成为历史记录；当前以 [Sub-Chunk 检索 TRD](../../server/design/sub-chunk-trd.md) 和实际代码为准，独立 Event 索引包含文本、视觉向量及抽帧来源元数据。当前视觉向量由每 Event 最多 3 帧聚合，临时 JPEG 不持久保存，也没有建立逐帧 PCP／人物框图特征库。因此“Event 检索完成”表示可以接续定位和取帧，不能自动标为构图相似检索已完成。
+依赖边界：早期 [Event 细粒度检索 TRD](../design/event-retrieval-trd.md) 的仅词法方案已成为历史记录；当前以 [Sub-Chunk 检索 TRD](../design/sub-chunk-trd.md) 和实际代码为准，独立 Event 索引包含文本、视觉向量及抽帧来源元数据。当前视觉向量由每 Event 最多 3 帧聚合，临时 JPEG 不持久保存，也没有建立逐帧 PCP／人物框图特征库。因此“Event 检索完成”表示可以接续定位和取帧，不能自动标为构图相似检索已完成。
 
 恢复实验的条件：目标视频的 Event 检索可用，命中可追溯到原片时间并取得对应帧，形成相较 17 图更丰富且各方法共用的候选集；随后用固定查询和人工评议检查召回、排序及人物布局差异。当前不预先选定最佳模型、权重或宣称全库效果。
 
@@ -1212,7 +1237,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 两轮均完成，Query 自主使用 `search_video_events`，没有 Chunk `retrieve` 回退。首次可见文字分别为 7.3754 / 8.079 秒；目标 Chunk 的原始 transcript 在约 22 / 25 秒已读取，最终仍在 156.105 / 154.078 秒完成。获得文本不等于模型已完成理解或已足够交付，不能把后续时间全部判为无效。
 
-2026-10-24 已将本轮输入、历史完整回答、阶段计时、审核反馈和关键工具失败摘要迁移到 [MyGO benchmark](../../evals/mygo/README.md#历史结论event)，B/C 的机器可读记录见 [baseline.jsonl](../../evals/mygo/baseline.jsonl) 中的 chat-event-drift／chat-event-premise。原始 SSE、完整日志、原生 rollout 和帧文件已退役；下文保留当时的发现与适用边界，不再提供逐字节日志取证。
+2026-10-24 已将本轮输入、历史完整回答、阶段计时、审核反馈和关键工具失败摘要迁移到 [MyGO benchmark](../../evals/benchmark/query_capabilities/README.md#历史结论event)，B/C 的机器可读记录见 [baseline.jsonl](../../evals/benchmark/query_capabilities/baseline.jsonl) 中的 chat-event-drift／chat-event-premise。原始 SSE、完整日志、原生 rollout 和帧文件已退役；下文保留当时的发现与适用边界，不再提供逐字节日志取证。
 
 #### 端到端耗时拆解
 
@@ -1244,7 +1269,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - C 第二次 query 写入“立希打断爱音”的未经证实方向，真实证据却是爱音回敬立希。没有设置 speaker 硬过滤，后续精读纠正了方向。只能确定假设出现在 query 串，不能从缺失的模型转录断言其来自某段背景知识；与 C14 的假设偏移问题关联。
 - 两轮最终用“你记得的是这段”指认来源，虽然解释了非逐字匹配，但没有排除其他近义场景；应区分“有支持的近义候选”和“唯一来源”。
 - C 第一次全量 trace 中核心 Event 融合 rank=22，在回源后 matched 集合位置为 20；首屏只有 14 卡，Query 没有翻页，不能说它已看到目标。第二次 rank=11 才进入首屏，随后精读。底层召回、工具实际展示、成功读取和最终选择须分开统计。
-- 另做的固定中文查询对照使用 0.65 / 0.35 / 0 权重，与自然 Agent 自主选择的参数不同；存在语义已召回但 RRF 排名被词法弱相关候选压低的情况，不将其混为“工具慢”或直接据三句改全局权重。具体 ID / 分数见 [独立检索分析](../../evals/mygo/baseline.jsonl)。
+- 另做的固定中文查询对照使用 0.65 / 0.35 / 0 权重，与自然 Agent 自主选择的参数不同；存在语义已召回但 RRF 排名被词法弱相关候选压低的情况，不将其混为“工具慢”或直接据三句改全局权重。具体 ID / 分数见 [独立检索分析](../../evals/benchmark/retrieval_quality/baseline.jsonl)。
 
 #### 待评估方向、职责与验收
 
@@ -1256,7 +1281,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 证据边界：两轮在 2026-10-18 14:55–14:58（UTC+08:00）并行执行，没有同问题 Chunk-only 全流程或严格缓存／负载控制；不能据此宣布 Event 加速或形成稳定 P95。此 scope 的索引快照不代表当前全库覆盖；C16 的 MyGO 13 集补建由另一工作线维护。Query / Evaluator / Chat ephemeral 完整转录未保留，不能补造 prompt 或内部推理。当前先完成记录，不重跑、回填、重启、迁移或部署。
 
-依据：[Runtime](../../agent/chat/video_search/runtime.py)、[Query](../../agent/chat/video_search/query.py)、[Evaluator](../../agent/chat/video_search/evaluator.py)、[内部 Chat](../../agent/chat/video_search/chat.py)、[Supervisor](../../agent/chat/supervisor.py)、[输入上下文](../../agent/chat/video_search/context.py)、[Codex adapter](../../gateway/codex/agent.py)、[Codex session](../../gateway/codex/client.py)、[B 运行诊断摘要](../../evals/mygo/baseline.jsonl)、[C 运行诊断摘要](../../evals/mygo/baseline.jsonl)。
+依据：[Runtime](../../agent/chat/video_search/runtime.py)、[Query](../../agent/chat/video_search/query.py)、[Evaluator](../../agent/chat/video_search/evaluator.py)、[内部 Chat](../../agent/chat/video_search/chat.py)、[Supervisor](../../agent/chat/supervisor.py)、[输入上下文](../../agent/chat/video_search/context.py)、[Codex adapter](../../gateway/codex/agent.py)、[Codex session](../../gateway/codex/client.py)、[B 运行诊断摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 运行诊断摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### C18：Context Canvas 已具备 batch，但读取模式与范围语义容易误用
 
@@ -1305,7 +1330,7 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 - 真实 Agent 用上述 B / C 等同 scope 问题验证是否消除 INVALID_RANGE / INVALID_READ，并减少不必要 overview、重读和模型请求；记录模型轮次与工具调用分开，既看首反馈／总耗时，也核对最终说话人、记忆纠偏和合法完整播放范围。不以假模型能按 schema 调用证明真实模型一定会用好。
 - 本轮只记录问题；模型、背景裁剪、角色合并、读取协议或预算变化均未实施。优化效果和节省秒数等待具体方案与真实对照，不将 154–156 秒承诺为一定可压缩到某个时长。
 
-依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/mygo/baseline.jsonl)、[C 工具错误摘要](../../evals/mygo/baseline.jsonl)。
+依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 

@@ -131,7 +131,7 @@ beforeEach(() => {
 it("sends the draft profile and displays the canonical V2 upload configuration", async () => {
   mocks.displayMode = "debug";
   mocks.createUploadSession.mockResolvedValue({ ...session, parseConfig: {
-    visual_input: { mode: "ordered_frames", max_height: 360, fps: 0.25, max_frames_per_chunk: 8 },
+    visual_input: { mode: "ordered_frames", max_height: 360, fps: 0.25 },
   } });
   const { container } = render(<UploadProvider><Controls /></UploadProvider>);
   const user = userEvent.setup();

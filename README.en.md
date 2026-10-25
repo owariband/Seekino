@@ -1,118 +1,117 @@
 <p align="center">
-  <img src="assets/mascot/animated/seekino-idle.svg" width="160" alt="Seekino teal whale shark mascot" />
+  <img src="assets/mascot/animated/seekino-idle.svg" width="88" alt="Seekino" />
 </p>
 
 <h1 align="center">Seekino</h1>
 
-<p align="center"><strong>Ask while you watch. Find that moment in a video with one sentence.</strong></p>
+<p align="center"><strong>A personal video library for everyone.</strong></p>
+<p align="center">Analyze your videos, find footage in natural language, and trace every clip back to the original.</p>
 
 <p align="center">
   English · <a href="README.md">简体中文</a>
 </p>
 
 <p align="center">
-  <a href="#screenshots">Screenshots</a> ·
-  <a href="#in-practice">In practice</a> ·
+  <a href="#under-construction">Under construction</a> ·
   <a href="#what-it-does">What it does</a> ·
-  <a href="#meet-kino">Meet Kino</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#how-to-use-it">How to use it</a> ·
+  <a href="#api-integration">API integration</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="#repository-and-docs">Developer docs</a>
+  <a href="#references">References</a>
 </p>
 
-Seekino (formerly AniVAG) is a self-hosted assistant for watching and searching video. Import your own video series, describe a scene, action or relationship you remember, and get the matching clips back. While watching, open the side panel to ask about the current frame or the line just spoken, then follow the answer back to the original footage to check it.
+Seekino (formerly AniVAG) turns your videos into a searchable footage library. Import videos, analyze visuals and dialogue, describe what you need, and retrieve clips with timestamps that lead back to the original. Video analysis and retrieval are also available through APIs for your own tools and workflows.
 
-It is currently used for **Q&A while watching the MyGO anime, cross-episode search for memorable scenes, and collecting material for fan edits**. Continuing where you left off, picking episodes, chatting, previewing clips and checking evidence all happen in one web interface.
+## Under construction
 
-## Screenshots
+Import, analysis, retrieval and viewing Q&A are available today. We are continuing work on:
 
-These screenshots were taken on **2026-10-15** from Seekino running locally, with real videos and existing conversations. The interface uses a teal visual style with light and dark themes; dark mode is shown below.
+1. **Sandbox integration**: connect the platform's Agent to creative workflows, using retrieved footage for reference edits.
+2. **An MCP interface**: let external agents such as Codex and Claude Code search the footage library for material.
+3. **Video analysis improvements**: improve content understanding and structured analysis, while reducing processing time and cost.
+4. **Retrieval improvements**: improve footage matching, temporal localization and context linking.
+5. **Configurability and ease of use**: improve model configuration, deployment and the everyday experience.
 
-### Ask about whatever you are watching
-
-The player and the "Chat while watching" side panel sit side by side. Questions carry the current episode and paused position, and video timestamps in the answer are clickable. Characters, dialogue and plot explanations can all be checked against the original footage.
-
-![Seekino screenshot: video player with the watch-chat side panel](assets/screenshots/watch-chat.jpg)
-
-### From one description to a playable clip
-
-Search for a scene across episodes from the chat. Expand a result to play the clip, see why it was chosen, the raw evidence and the surrounding context. You can also jump back to the full episode, or quote the clip in a follow-up question.
-
-![Seekino screenshot: cross-episode results, clip player and selection reasons](assets/screenshots/search-results.jpg)
-
-<details>
-<summary>More screens: continue watching and episode selection</summary>
-
-### Back to where the story stopped
-
-The watch home page shows recently watched series with their video frames, keeps the episode and playback position, and resumes with one click.
-
-![Seekino screenshot: watch home page with continue-watching entries](assets/screenshots/watch-home.jpg)
-
-### Browse series and pick an episode
-
-Browse series and episode lists, then start an episode or continue where you left off. Admins can also see the character and background notes the model uses when parsing.
-
-![Seekino screenshot: series overview, background notes and episode list](assets/screenshots/series.jpg)
-
-</details>
-
-## In practice
-
-### While watching: who is this, and what is happening?
-
-Pause MyGO episode 1 at **10:38** and ask "What are they doing? Who are these people?". The conversation centres on Sakiko and Anon in the music room. The answer uses the current frame and nearby dialogue to explain who the characters are and what they are discussing, and it tells apart the people in the paused frame from the speaker off screen. The watch screenshot above shows this exact conversation.
-
-### Find performances across episodes by the feeling you want
-
-Actual question: "**Which performances in MyGO are the most hype? Recommend 3 and explain why.**"
-
-The answer gave three performances with different emphases, each with a reason and a playable clip:
-
-| Position in the original | What this answer highlighted |
-| --- | --- |
-| Episode 10 · 20:01–20:54 | Playing together in tears; the characters answering each other emotionally. |
-| Episode 12 · 09:00–09:50 | Live energy from the instruments, stage movement and the audience. |
-| Episode 12 · 15:00–15:59 | Members smiling as they play, moving forward together. |
-
-The search screenshot above shows these three clips. The timestamps match the local video files. The reasons are the assistant's interpretation of the content, so open the original to judge for yourself.
-
-### From search results to short-video material
-
-One creative experiment used the theme "Haruhikage": three clips found in MyGO episodes 2 and 3 were packaged with their original timestamps, selection reasons and subtitles, then laid out with HyperFrames as a **1080 × 1920 offline HTML short video**. This ran through a separate packaging workflow; see the [short-video workflow](.agents/skills/anivag-short-video/SKILL.md). Check its scripts and config against the current API before using them.
+**Feedback and discussion are welcome. If you are interested, join us in building Seekino!**
 
 ## What it does
 
-| What you want to do | What Seekino offers |
+| Capability | What you can do |
 | --- | --- |
-| Find a scene you remember | Natural-language search across episodes. Choose the series scope per question, keep asking follow-ups, or quote a clip you already found. |
-| Ask while watching | Full-episode playback, resume, playback speed and in-page full screen. The side chat sends the current episode and position with each question. |
-| Check what an answer is based on | See the episode, time range, selection reason, raw evidence and context; play the clip or jump back to the full episode. |
-| Manage your own videos | Create series, maintain background notes and reference images, upload many files in resumable chunks with pause and resume. Track parsing progress, errors and the available recovery actions. |
+| Organize and analyze footage | Group videos into series, add character and background notes, and analyze visuals, dialogue and events to build a searchable index. |
+| Retrieve clips in natural language | Describe a scene, action, line or relationship. Search across videos in selected series and keep asking follow-up questions. |
+| Preview and verify | See the source video, time range, selection reason and context. Play the retrieved clip or jump back to the full video. |
+| Ask while watching | Open the side panel to ask about the current frame, characters or nearby dialogue. |
+| Connect your own tools | Use HTTP APIs for uploads, analysis tasks, retrieval and Agent conversations. |
 
-There are also light and dark themes, model token usage statistics, and entry points for local data, a remote personal library and public content. Whether you can manage data, upload or change settings depends on the server and your permissions.
+For example, ask the MyGO library: "**Which performances are the most hype? Recommend 3 and explain why.**" The answer provides clips with sources, timestamps and reasons, so you can check the original footage and decide whether it fits your edit. The demo below uses MyGO anime footage; results on other kinds of video still need to be evaluated with your own material.
 
-Media, business data and indexes stay in your own environment, and you choose the model providers in your own config. When you use remote models, the relevant audio, video, frames or text are sent to the provider you configured.
+## Screenshots
 
-The project is still in development. Search results give the time range of a chunk or a reviewed event, and on-demand understanding of the current frame can also sample original frames near the paused position. Always check answers and clips against the original. Known issues and planned work are recorded in the [issue list](docs/dev/problems.md) (in Chinese).
+These screenshots were taken on **2026-10-25** from Seekino running locally, using real videos, existing analysis results and conversation records. They show the current web interface; the hosted demo is not live yet.
 
-## Meet Kino
+### Organize your footage
 
-Kino is the little pixel whale shark who lives in the chat. Kino isn't decoration: it shows what the assistant is doing. It perches on top of the newest answer bubble. It runs back and forth while searching for clips, stares at a question mark while checking evidence, and walks under three dots while writing the answer. When an answer lands it does a happy double hop (or gets a startled "!" and a sweat drop if something failed), then curls up and falls asleep on that bubble. Ask the next question and Kino wakes up, leaps down from where it slept, lands on the new bubble and gets back to work.
+Manage videos by series and check upload, analysis and search availability. Add background notes to help the analysis understand characters and content.
 
-![Kino's moves: idle, wander, look, jump, leap, happy, think, oops, loading, run, sleep](assets/mascot/kino/kino-moves.svg)
+![Seekino library: video series, analysis status and management controls](assets/screenshots/library.jpg)
 
-On an empty chat, Kino idles and watches you. Hover over it and it turns to look at you. Poke it and it jumps or cheers; poke it five times in a row and it gets startled. Leave the page alone for a while and Kino lies down and falls asleep, and it gets up again as soon as you come back.
+### Describe a scene and retrieve matching clips
 
-Kino is a small state machine, not an AI model. It is drawn pixel by pixel from code, with no image files, and it respects your reduced-motion setting. Developer notes are in [web/src/shared/kino/README.md](web/src/shared/kino/README.md).
+Search across videos in natural language. Expand a result to preview the clip, see why it was selected and check its original timestamps. Quote a clip to ask a follow-up question.
+
+![Seekino search: a natural-language question, retrieved clips and selection reasons](assets/screenshots/search-results.jpg)
+
+### Return to the original and check the context
+
+The player and Q&A panel sit side by side. Questions carry the current video and playback position, and video timestamps in answers are clickable.
+
+![Seekino viewing Q&A: original video player and conversation panel](assets/screenshots/watch-chat.jpg)
+
+<details>
+<summary>More screens: browse footage and choose an episode</summary>
+
+The viewing home page provides series and playback entry points, with support for resuming where you left off.
+
+![Seekino viewing home: video series and playback entry points](assets/screenshots/watch-home.jpg)
+
+The series page lists videos in episode order so you can choose the original footage to inspect.
+
+![Seekino series page: footage overview and episode selection](assets/screenshots/series.jpg)
+
+</details>
 
 ## How to use it
 
-1. In the Library, create an anime series and fill in the description, spoken language and character/plot background. Background notes accept Markdown, JSON and reference images.
-2. Upload videos and follow transfer progress in the upload panel. To resume after a page refresh, select the original file again. Retry a failed parse from the Parse Tasks page.
-3. Open "Parse Tasks" from the account menu (top right) to see the full indexing status. Whether retry, re-parse and delete are available depends on the server's current capabilities and version.
-4. Pick an episode on the watch home page and open "Chat while watching" to ask about the current frame, characters or the line just spoken. Interacting pauses the video and freezes the current video and position for the question.
-5. Click the search entry at the top, or press `⌘ K` / `Ctrl K`, choose a series and ask across episodes. Click a clip in the answer to check the original, see the evidence and context, then quote the clip to keep asking.
-6. Open "Model Usage" from the account menu to see recorded tokens. With permission you can open "Settings"; in debug display mode you can adjust runtime parameters for later messages.
+**A hosted sample library is being prepared for release.** Admins will upload and maintain pre-analyzed footage, while visitors can watch, search and ask questions. There is no public demo URL yet.
+
+**You can currently self-host a personal library.** See [Quick start](#quick-start) for setup. The basic workflow is:
+
+1. Create a video series as a collection. Add a description, spoken language, background notes and reference images as needed.
+2. Upload videos and track indexing in Parse Tasks. Chunked uploads support pause and resume; failed analysis tasks show errors and available retry actions.
+3. Describe the footage you want in search, or play a video and ask in the side panel. Follow clips in the answer back to the original video to verify them.
+
+Management and upload permissions depend on the deployment mode and your identity. Self-hosting requires storage, a database and model configuration. When using remote models, the relevant audio, video, frames or text are sent to the configured provider and may incur API charges.
+
+## API integration
+
+The web interface and external tools use the same service APIs. Your tools can connect to these capabilities:
+
+| Integration | Existing endpoints |
+| --- | --- |
+| Upload videos and start analysis | `POST /api/uploads/create` → `PUT /api/uploads/segments/upload` → `POST /api/uploads/complete` |
+| Track analysis tasks | `GET /api/jobs/video-parse/get`, `GET /api/jobs/video-parse/events` |
+| Retrieve footage | `POST /api/search`, returning source clips, time ranges and evidence. |
+| Find footage through Agent chat | `/api/agent/conversations/*` and `/api/agent/messages/*`, with ongoing conversations and streamed answers. |
+
+After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
+
+## Creative experiments
+
+A separate experiment has already connected retrieval, clip preparation and HyperFrames composition into an offline HTML short video. See the [short-video experiment workflow](.agents/skills/anivag-short-video/SKILL.md). It explores reusing retrieved footage; check its scripts and configuration against the current API before using them.
+
+The project is still evolving. Analysis, retrieval and answers can be inaccurate, so check them against the original footage. Known issues and planned work are listed in the [issue list](docs/dev/problems.md) (in Chinese).
 
 ## Quick start
 
@@ -134,9 +133,10 @@ Fill in model credentials and local connection details in `.env.local`. The defa
 
 | Model role | Default source | What you need |
 | --- | --- | --- |
-| Chat Supervisor, frame understanding | Local Codex | The current OS user is logged in to Codex. The executable can be set in the source config. |
-| Speech transcription, embeddings | Ark | Set `ARK_API_KEY`. |
-| Video search agent, reranking | DeepSeek | Set `DEEPSEEK_API_KEY`. |
+| Chat Supervisor, video search agent, frame understanding | Local Codex | The current OS user is logged in to Codex. The executable can be set in the source config. |
+| Speech transcription | Local Whisper service | Prepare the model files and a compatible audio endpoint, or configure your own transcription service. |
+| Embeddings | Ark | Set `ARK_API_KEY`. |
+| Reranking, text fallback when vision fails | DeepSeek | Set `DEEPSEEK_API_KEY`. |
 
 Adjust the [model configuration](docs/model-config.md) to the models or endpoints you have. The default `supervisor_harness: codex` needs the matching Codex source. If you switch to API models, change the harness and the Supervisor binding together.
 
@@ -324,11 +324,11 @@ anivag/
 ├── engine/                     # parsev2, rag and shared media utilities
 ├── agent/                      # Chat, realtime understanding, parsing and the Context Canvas
 ├── server/                     # HTTP/CLI, persistence and reliable execution
-├── web/                        # React + TypeScript + Vite frontend (Kino lives in web/src/shared/kino)
+├── web/                        # React + TypeScript + Vite frontend
 ├── scripts/                    # Local launcher and controlled migration tools
 ├── tests/ / evals/              # Automated tests, manual diagnostics and evaluations
 ├── deploy/ / compose.yaml      # Local infrastructure and deployment notes
-├── assets/                     # Logo, Kino sheet, screenshots and architecture diagrams
+├── assets/                     # Logo, screenshots and architecture diagrams
 ├── docs/                       # Contracts, designs, migrations and check logs
 └── outputs/                    # Local media, logs and run artifacts, not in Git
 ```
@@ -337,8 +337,33 @@ The repository root is the runtime boundary. Python modules are managed together
 
 Most module docs below are written in Chinese.
 
-- [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](agent/design/utils_context_canvas.md)
+- [Design document index](docs/design/README.md) · [Documentation conventions](docs/README.md)
+- [Benchmark index](evals/benchmark/README.md): query capabilities, chat behavior, retrieval quality and intent routing.
+- [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](docs/design/context-canvas-design.md)
 - [Current-position understanding](agent/chat/realtime_understanding/runtime.py) · [Server](server/README.md)
-- [Web](web/README.md) · [Kino](web/src/shared/kino/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
+- [Web](web/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
 - [Model configuration](docs/model-config.md) · [Model token usage](docs/parse-model-usage.md) · [User/tenant](server/report_docs/user-tenant-handoff-20261010.md)
 - [Development deployment](deploy/README.md) · [Issue list](docs/dev/problems.md)
+
+## References
+
+These are key sources consulted during the project's research and design. The papers include directions still under investigation; listing them does not imply a complete implementation.
+
+### Papers and research
+
+| Paper | Area of interest |
+| --- | --- |
+| [OmniScript](https://arxiv.org/abs/2604.11102) | Structured scripts from long videos, scene and event hierarchies, and temporal grounding of characters and dialogue. |
+| [ScreenWriter](https://arxiv.org/abs/2410.19809) | Automatic screenplay generation, scene organization, speaker attribution and movie summaries. |
+| [TransNet V2](https://arxiv.org/abs/2008.04838) | Shot boundaries and transitions. |
+| [ShotBench / ShotQA / ShotVL](https://arxiv.org/abs/2506.21356) | Understanding and evaluating shot scale, composition, lighting, camera movement and other cinematography dimensions. |
+| [CameraBench — Towards Understanding Camera Motions in Any Video](https://arxiv.org/abs/2504.15376) | Camera motion taxonomy, understanding and evaluation. |
+| [VideoRAG](https://arxiv.org/abs/2502.01549) | Multimodal retrieval-augmented generation over long videos and across videos. |
+| [RAPTOR](https://arxiv.org/abs/2401.18059) | Hierarchical summaries and retrieval at multiple levels of detail. |
+| [QVHighlights](https://arxiv.org/abs/2107.09609) | Query-based temporal localization and highlight selection evaluation. |
+| [VISTA — LLM Agents Are Latent Context Managers](https://arxiv.org/abs/2606.30005) | Visible context state, on-demand archiving and recovery of complete content. |
+| [ACM — Agentic Context Management for Long Horizon Tasks](https://arxiv.org/abs/2607.23809) | Context editing, offloading and on-demand retrieval in long tasks. |
+
+### Engineering practice
+
+- [Anthropic — Writing effective tools for agents — with agents](https://www.anthropic.com/research/writing-tools-for-agents): applied to the project's Agent tool design, including clear tool responsibilities, on-demand context reads, pagination and actionable error feedback. See the project's [Canvas tool design research](docs/research/2026-10-22-canvas-agent-tool-design.md) (in Chinese).

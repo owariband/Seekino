@@ -2,9 +2,9 @@
 
 日期：2026-10-15。状态：设计基线，待实现。本文的工具名、附件输入和视觉查询流程均为目标设计，不代表当前 Chat 已支持图片、GIF 或 MP4 查询。
 
-本文是文字／视觉查询分工和视觉媒体接入的主设计文档。需求与研究来源见 [RAG 研究记录](../../engine/design/multimodel-retrieve-trd.md)，历史效果及记录边界见 [MyGO Chat benchmark 历史结论](../../evals/mygo/README.md#历史结论chat)。实现时以实际代码和版本化合同为准，不将旧实测结论写成新链路验收。
+本文是文字／视觉查询分工和视觉媒体接入的主设计文档。需求与研究来源见 [RAG 研究记录](multimodel-retrieve-trd.md)，历史效果及记录边界见 [MyGO Chat benchmark 历史结论](../../evals/benchmark/query_capabilities/README.md#历史结论chat)。实现时以实际代码和版本化合同为准，不将旧实测结论写成新链路验收。
 
-2026-10-16 补充：构图、空间关系、主体姿势、运镜、分镜组织的需求及当前缺口记录在 [目标 Query Set](../../engine/design/multimodel-retrieve-trd.md)。近期先接通静态图片输入并验证普通图片找出处，再用真实漏例决定专项视觉能力；接口研究见本文第 9 节。
+2026-10-16 补充：构图、空间关系、主体姿势、运镜、分镜组织的需求及当前缺口记录在 [目标 Query Set](multimodel-retrieve-trd.md)。近期先接通静态图片输入并验证普通图片找出处，再用真实漏例决定专项视觉能力；接口研究见本文第 9 节。
 
 2026-10-17 增补：[Event 细粒度检索 TRD](event-retrieval-trd.md) 增加文字输入下的 Event 池搜索，与本文的媒体输入分工正交。该方案待实现，不要求先落地视觉媒体输入，也不依赖更换 embedding 模型。
 

@@ -3498,35 +3498,22 @@ def test_runtime_session_updates_merge_conversation_detail_and_preserve_owner_sc
 
 
 @pytest.mark.parametrize("commit_fails", [False, True])
-def test_pi_runtime_binding_is_confirmed_only_after_business_sql_commit(build_service, monkeypatch, commit_fails):
-    from gateway.agent_model.contracts import AgentModelProfile
-    from gateway.pi.supervisor import PiSupervisorModel
-
-    commands, prompts = [], []
+def test_checkpoint_turn_is_confirmed_only_after_business_sql_commit(build_service, monkeypatch, commit_fails):
+    commands = []
     repository = None
 
-    class PiHost:
-        def prompt(self, **options):
-            prompts.append(options)
-            options["check_control"]()
-            state = {"sessionFile": "controlled/session.jsonl", "pendingRunId": options["run_id"]}
-            options["on_event"]({"type": "state", "state": state})
-            options["on_event"]({"type": "text_delta", "delta": "你好，可以继续提问。"})
-            return {"text": "你好，可以继续提问。", "state": state}
+    class CheckpointModel(_DirectSupervisorModel):
+        def confirm_turn(self, thread_id, message_id, content):
+            commands.append("confirm_turn")
+            with repository._session_factory() as session:
+                assert session.get(AgentMessage, message_id).status == "COMPLETED"
+            super().confirm_turn(thread_id, message_id, content)
 
-        def request(self, command, **options):
-            commands.append(command)
-            if command == "confirm_turn":
-                with repository._session_factory() as session:
-                    assert session.get(AgentMessage, options["run_id"]).status == "COMPLETED"
-                return {"state": {"sessionFile": "controlled/session.jsonl", "committedLeafId": "confirmed"}}
-            return {}
+        def discard_turn(self, thread_id, message_id):
+            commands.append("discard_turn")
+            super().discard_turn(thread_id, message_id)
 
-    adapter = PiSupervisorModel(
-        client=PiHost(),
-        profile=AgentModelProfile("configured", "1", "fake", "test-model", "secret", "https://model.example/v1"),
-        request_timeout_seconds=30, max_input_chars=200_000,
-    )
+    adapter = CheckpointModel()
     service, conversation, _, repository, *_ = build_service(supervisor_model=adapter)
     if commit_fails:
         def failed_commit(*_args, **_kwargs):
@@ -3534,19 +3521,25 @@ def test_pi_runtime_binding_is_confirmed_only_after_business_sql_commit(build_se
         monkeypatch.setattr(repository, "complete_assistant_message", failed_commit)
         with pytest.raises(RuntimeError, match="SQL commit failure"):
             _send(service, conversation)
-        assert "discard_turn" in commands
-        assert "confirm_turn" not in commands
+        assert commands == ["discard_turn"]
+        assert adapter.discarded[0][1] == service.list_all_messages(
+            conversation.conversation_id, tenant_id="local-default",
+        )[-1].message_id
         assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1].status == "FAILED"
     else:
         first = _send(service, conversation)
         assert commands == ["confirm_turn"]
-        detail = service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail
-        assert detail["runtimeSessions"]["pi"]["committedLeafId"] == "confirmed"
+        assert adapter.confirmed == [(
+            conversation.conversation_id, first.assistant_message.message_id,
+            first.assistant_message.content,
+        )]
         _send(service, conversation, key="next", content="继续")
-        assert prompts[1]["state"]["committedLeafId"] == "confirmed"
-        assert prompts[1]["history"] == [
-            {"role": "user", "content": first.user_message.content},
-            {"role": "assistant", "content": first.assistant_message.content},
+        assert [
+            (item["role"].lower(), item["content"], item["messageId"])
+            for item in adapter.turns[1][3]
+        ] == [
+            ("user", first.user_message.content, first.user_message.message_id),
+            ("assistant", first.assistant_message.content, first.assistant_message.message_id),
         ]
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
+from copy import deepcopy
 from dataclasses import dataclass
 from threading import Lock, RLock
 from time import monotonic
@@ -29,7 +30,9 @@ from langchain_core.messages import (
 )
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Overwrite
 from openai import OpenAI
 from pydantic import PrivateAttr
 
@@ -75,20 +78,35 @@ def _count_context_tokens(messages: Sequence[BaseMessage], *, tools: Sequence[An
     return measure_context(payload, specs).estimated_tokens
 
 
+def _overwrite_state(values: dict[str, Any]) -> dict[str, Any]:
+    """Replace message-like channels without wrapping middleware event state."""
+    return {
+        key: Overwrite(value) if key in {"messages", "files", "todos"} else value
+        for key, value in values.items()
+    }
+
+
 @dataclass
 class _PendingTurn:
     message_id: str
     graph: Any
+    values: dict[str, Any]
+    run_checkpointer: InMemorySaver
+    preserve_on_delete: bool = False
 
 
 class DeepAgentSessionStore:
-    """Process-local SDK state shared by models and configuration reloads."""
+    """Own confirmed checkpoints and transient turns shared by model reloads."""
 
-    def __init__(self) -> None:
-        self.checkpointer = InMemorySaver()
+    def __init__(
+        self, checkpointer: BaseCheckpointSaver | None = None,
+        *, on_close: Callable[[], None] | None = None,
+    ) -> None:
+        self.checkpointer = checkpointer or InMemorySaver()
         self.pending: dict[str, _PendingTurn] = {}
         self._locks: dict[str, RLock] = {}
         self._lock = Lock()
+        self._on_close = on_close
 
     def thread_lock(self, thread_id: str) -> RLock:
         with self._lock:
@@ -96,15 +114,26 @@ class DeepAgentSessionStore:
 
     def delete_thread(self, thread_id: str) -> None:
         with self.thread_lock(thread_id):
+            pending = self.pending.pop(thread_id, None)
+            if pending is not None and pending.preserve_on_delete:
+                pending.run_checkpointer.delete_thread(thread_id)
+                return
             self.checkpointer.delete_thread(thread_id)
-            self.pending.pop(thread_id, None)
+
+    def discard_turn(self, thread_id: str, message_id: str) -> None:
+        with self.thread_lock(thread_id):
+            pending = self.pending.get(thread_id)
+            if pending is not None and pending.message_id == message_id:
+                pending.run_checkpointer.delete_thread(thread_id)
+                self.pending.pop(thread_id, None)
 
     def close(self) -> None:
-        for thread_id in list(self.checkpointer.storage):
-            self.delete_thread(thread_id)
         with self._lock:
             self.pending.clear()
             self._locks.clear()
+            close, self._on_close = self._on_close, None
+        if close is not None:
+            close()
 
 
 class _GatewayChatModel(BaseChatModel):
@@ -422,14 +451,24 @@ class DeepAgentsSupervisorModel:
                     keep=("tokens", policy.compact_target_tokens), trim_tokens_to_summarize=max(1, summary_budget),
                     token_counter=_count_context_tokens,
                 ))
-            graph = create_deep_agent(
-                model=model, tools=list(tools), system_prompt=prompt,
-                middleware=middleware, backend=backend,
-                checkpointer=self.session_store.checkpointer, name="anivag_supervisor",
-            )
-            state = graph.get_state(config)
+            def build_graph(checkpointer):
+                return create_deep_agent(
+                    model=model, tools=list(tools), system_prompt=prompt,
+                    middleware=middleware, backend=backend,
+                    checkpointer=checkpointer, name="anivag_supervisor",
+                )
+
+            checkpoint_graph = build_graph(self.session_store.checkpointer)
+            committed_values = checkpoint_graph.get_state(config).values or {}
+            run_checkpointer = InMemorySaver()
+            run_graph = build_graph(run_checkpointer)
+            if committed_values:
+                run_graph.update_state(config, _overwrite_state(committed_values), as_node="model")
+
             inputs: list[dict[str, Any]] = []
-            if not state.values:
+            if not committed_values:
+                # Legacy conversations have no checkpoint yet. Preserve the existing
+                # cold-start path without treating it as a lossless native migration.
                 seen: set[str] = set()
                 for index, item in enumerate(history):
                     role = str(item.get("role", "")).lower()
@@ -447,14 +486,18 @@ class DeepAgentsSupervisorModel:
             messages = [(HumanMessage if item["role"] == "user" else AIMessage)(
                 content=item["content"], id=item["id"],
             ) for item in inputs]
-            self.session_store.pending[thread_id] = _PendingTurn(message_id, graph)
+            self.session_store.pending[thread_id] = _PendingTurn(
+                message_id, checkpoint_graph, {}, run_checkpointer,
+            )
             try:
-                # Async durability preserves outer checkpoints without forcing sync
-                # checkpoint waits on business graphs that disable their saver.
-                graph.invoke({"messages": messages}, config, durability="async")
+                # Only the transient run uses async checkpoints. The confirmed snapshot
+                # is synchronously written to the durable saver by confirm_turn().
+                run_graph.invoke({"messages": messages}, config, durability="async")
+                pending = self.session_store.pending[thread_id]
+                pending.values = deepcopy(run_graph.get_state(config).values)
                 check()
             except BaseException as error:
-                self.session_store.delete_thread(thread_id)
+                self.session_store.discard_turn(thread_id, message_id)
                 if isinstance(error, ContextOverflowError):
                     raise ModelInputTooLargeError(str(error)) from error
                 raise
@@ -464,8 +507,11 @@ class DeepAgentsSupervisorModel:
             pending = self.session_store.pending.get(thread_id)
             if pending is None or pending.message_id != message_id:
                 return
+            # If confirmation fails, the service's cleanup must not delete the
+            # previously committed checkpoint. A successful confirm clears pending.
+            pending.preserve_on_delete = True
             config = {"configurable": {"thread_id": thread_id}}
-            messages = pending.graph.get_state(config).values.get("messages", [])
+            messages = pending.values.get("messages", [])
             if not messages or not isinstance(messages[-1], AIMessage) or messages[-1].tool_calls:
                 self.session_store.delete_thread(thread_id)
                 raise RuntimeError("Supervisor turn has no completed assistant response")
@@ -494,16 +540,17 @@ class DeepAgentsSupervisorModel:
                     "thread_id=%s message_id=%s action=confirm_final_text",
                     thread_id, message_id,
                 )
-            pending.graph.update_state(config, {"messages": [
-                *updates, AIMessage(content=confirmed_content, id=messages[-1].id),
-            ]}, as_node="model")
+            final_values = deepcopy(pending.values)
+            replacements = {message.id: message for message in updates}
+            final_values["messages"] = [
+                replacements.get(message.id, message) for message in messages[:-1]
+            ] + [AIMessage(content=confirmed_content, id=messages[-1].id)]
+            pending.graph.update_state(config, _overwrite_state(final_values), as_node="model")
+            pending.run_checkpointer.delete_thread(thread_id)
             self.session_store.pending.pop(thread_id, None)
 
     def discard_turn(self, thread_id: str, message_id: str) -> None:
-        with self.session_store.thread_lock(thread_id):
-            pending = self.session_store.pending.get(thread_id)
-            if pending is not None and pending.message_id == message_id:
-                self.session_store.delete_thread(thread_id)
+        self.session_store.discard_turn(thread_id, message_id)
 
     def delete_thread(self, thread_id: str) -> None:
         self.session_store.delete_thread(thread_id)

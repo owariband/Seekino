@@ -1,6 +1,6 @@
 # Parse V2 事件驱动解析设计
 
-> **后续基线（2026-10-17）**：任务模型、Index 归属与恢复以 [Parse Agent TRD 的 2026-10-14 基线](../../agent/video_parse_v2/design/trd.md) 为准，取代本文历史 Interval INDEX 描述；Interval 仅 Refine，ChunkTask 合并 Parse/Index。新增 Event 派生持久化及同步见 [Event TRD](event-retrieval-trd.md)：保留完整 Chunk Timeline，在全部覆盖 Refine 提交后由既有 Chunk INDEX 建立，待实现。本文保留算法与历史记录，不重复维护新 Event 合同。
+> **后续基线（2026-10-17）**：任务模型、Index 归属与恢复以 [Parse Agent TRD 的 2026-10-14 基线](video-parse-harness-trd.md) 为准，取代本文历史 Interval INDEX 描述；Interval 仅 Refine，ChunkTask 合并 Parse/Index。新增 Event 派生持久化及同步见 [Event TRD](event-retrieval-trd.md)：保留完整 Chunk Timeline，在全部覆盖 Refine 提交后由既有 Chunk INDEX 建立，待实现。本文保留算法与历史记录，不重复维护新 Event 合同。
 
 状态：实现合同已收敛（2026-09-28）；历史工作名仅用于解释演进
 原始讨论图是本地设计素材 `parse_big_graph.png`；本文文字与状态不变量才是可 Review 的规范来源。

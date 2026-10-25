@@ -39,3 +39,31 @@ def test_all_frames_share_one_extraction_budget(tmp_path, monkeypatch):
             max_height=720, timeout_seconds=1,
         )
     assert len(extracted) == 1
+
+
+def test_batch_decode_preserves_requested_times_and_reuses_frames(tmp_path):
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is unavailable")
+    source = tmp_path / "source.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=128x72:rate=24:duration=2", "-c:v", "libx264", str(source)],
+                   check=True, capture_output=True)
+    calls = []
+
+    def run(command):
+        calls.append(command)
+        subprocess.run(command, check=True, capture_output=True)
+
+    stamps = [166, 167, 500, 833, 1166, 1500, 1833, 1999]
+    rows = frame_sampler.extract_video_frames_batch(
+        source, stamps, output_dir=tmp_path / "frames", max_height=72, command_runner=run,
+    )
+    assert len(calls) == 1
+    assert [stamp for stamp, _ in rows] == stamps
+    assert rows[0][1] == rows[1][1]
+    actual = [int(path.stem.removeprefix("frame-")) for _, path in rows]
+    assert all(0 <= decoded - target <= 42 for decoded, target in zip(actual[:-1], stamps[:-1]))
+    assert actual[-1] == 1958  # final requested instant lies within the last frame
+    assert all(path.is_file() for _, path in rows)

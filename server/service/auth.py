@@ -199,13 +199,17 @@ class AuthService:
 
     @staticmethod
     def permissions(identity: AuthIdentity) -> AuthPermissions:
-        return AuthPermissions(can_upload=not identity.is_guest, can_manage=not identity.is_guest, can_configure=identity.role == "admin")
+        can_manage = not identity.is_guest and identity.tenant_id is not None
+        return AuthPermissions(can_upload=can_manage, can_manage=can_manage, can_configure=identity.role == "admin")
 
     def _identity(self, user: User) -> AuthIdentity:
         tenant = None if user.is_anonymous else self.repository.get_owned_tenant(user.id)
         if not user.is_anonymous and tenant is None:
             raise AuthError("个人资料空间不可用", status_code=403, code="TENANT_UNAVAILABLE")
-        return AuthIdentity(user.id, user.email, user.is_anonymous, tenant.id if tenant is not None else None, self.config.public_tenant_id, ("admin" if user.is_superuser else "user"), user.auth_version, "guest" if user.is_anonymous else "email", "cloud")
+        tenant_id = tenant.id if tenant is not None else None
+        if self.config.public_library_only and not user.is_superuser:
+            tenant_id = None
+        return AuthIdentity(user.id, user.email, user.is_anonymous, tenant_id, self.config.public_tenant_id, ("admin" if user.is_superuser else "user"), user.auth_version, "guest" if user.is_anonymous else "email", "cloud")
 
     def _require_guest(self, identity: AuthIdentity) -> None:
         if self.config.mode != "cloud" or not identity.is_guest:

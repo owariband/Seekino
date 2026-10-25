@@ -619,7 +619,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g04a",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g04a",
       "locked": false,
       "customData": {
         "stageId": "G04A",
@@ -1137,7 +1137,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g04b",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g04b",
       "locked": false,
       "customData": {
         "stageId": "G04B",
@@ -1655,7 +1655,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g05a",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g05a",
       "locked": false,
       "customData": {
         "stageId": "G05A",
@@ -2252,7 +2252,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g05b",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g05b",
       "locked": false,
       "customData": {
         "stageId": "G05B",
@@ -2876,7 +2876,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md",
+      "link": "../../docs/design/gateway-model-observability-trd.md",
       "locked": false,
       "customData": {},
       "text": "Ref: ../design/trd.md ｜ Evidence: model-observability-stages-evidence.md",

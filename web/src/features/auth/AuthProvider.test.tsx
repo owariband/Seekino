@@ -98,6 +98,24 @@ describe("cloud identity", () => {
     expect(screen.queryByText("可以上传")).not.toBeInTheDocument();
   });
 
+  it("lets a signed-in public-only viewer use the sample library without a personal source", async () => {
+    api.get.mockResolvedValue({ ...member, tenantId: null, permissions: guest.permissions });
+    mount();
+    expect(await screen.findByText("user-a:public-courses")).toBeInTheDocument();
+    expect(screen.getByText("只读体验")).toBeInTheDocument();
+    expect(screen.queryByText("来源：personal")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("lets administrators manage the public sample source", async () => {
+    api.get.mockResolvedValue({ ...member, permissions: { canUpload: true, canManage: true, canConfigure: true } });
+    mount();
+    await screen.findByText("可以上传");
+    await userEvent.setup().click(screen.getByText("公开课程"));
+    expect(screen.getByText("user-a:public-courses")).toBeInTheDocument();
+    expect(screen.getByText("可以上传")).toBeInTheDocument();
+  });
+
   it("switches a signed-in user between personal writes and public read-only data, then logs out to a new guest", async () => {
     api.get.mockResolvedValue(member);
     const queryClient = mount();

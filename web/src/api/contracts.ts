@@ -227,7 +227,6 @@ export interface VideoParseConfig {
   visual_input: {
     mode: "ordered_frames" | "video";
     fps: number;
-    max_frames_per_chunk: number;
     max_height: number;
   };
   [key: string]: unknown;

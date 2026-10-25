@@ -1,8 +1,8 @@
 # AniVAG 本机 Codex Bridge：原 5 批基线索引
 
-日期：2026-10-10。范围依据：[TRD 第 11 节](../design/codex-bridge-trd.md#bridge-checkout)及用户已确认的 localhost、通用 Bridge、项目根目录默认值和 Conversation/session 绑定。
+日期：2026-10-10。范围依据：[TRD 第 11 节](../../../docs/design/codex-bridge-trd.md#bridge-checkout)及用户已确认的 localhost、通用 Bridge、项目根目录默认值和 Conversation/session 绑定。
 
-**适用范围更新：** 用户已确认 local 默认 Supervisor 改用 Deep Agents SDK，并允许 Codex/Claude ACP Bridge。本索引和既有 SVG/场景的 37 文件、P01–P05 仅对应此前 Codex Bridge 基线，不覆盖新增目标。当前优先批次为 [TRD 第 12.1 节 D01](../design/codex-bridge-trd.md#supervisor-first-batch)，两类 SDK 的最新 44 文件范围以 [TRD 第 13 节](../design/codex-bridge-trd.md#bridge-full-scope)为准；本次未重画地图、迁移其标记或登记实现通过。以下进度和预算均按原 ACP 基线阅读。
+**适用范围更新：** 用户已确认 local 默认 Supervisor 改用 Deep Agents SDK，并允许 Codex/Claude ACP Bridge。本索引和既有 SVG/场景的 37 文件、P01–P05 仅对应此前 Codex Bridge 基线，不覆盖新增目标。当前优先批次为 [TRD 第 12.1 节 D01](../../../docs/design/codex-bridge-trd.md#supervisor-first-batch)，两类 SDK 的最新 44 文件范围以 [TRD 第 13 节](../../../docs/design/codex-bridge-trd.md#bridge-full-scope)为准；本次未重画地图、迁移其标记或登记实现通过。以下进度和预算均按原 ACP 基线阅读。
 
 主交付：[阶段图 SVG](agent-bridge-stages.svg)；[可编辑 Excalidraw 场景](agent-bridge-stages.excalidraw)。每个图中阶段节点包含功能、预计改动、用户验收和 Agent 指示。本文件提供文件分配、详细引用及证据索引，不代替阶段节点或 TRD。
 
@@ -10,17 +10,17 @@
 
 **原 ACP 基线当前位置：▶ P01 待执行阶段。** 原 TRD/check-out 已交付；P01–P05 的实现、接线、离线验证和真实运行验收均未开始。此前 plan-map 授权仅覆盖规划产物；当前新增目标与开工范围以最新 TRD/check-out 为准。
 
-字段 review 前置：用户要求模型字段先交由其 review。[字段评审稿](../design/codex-bridge-trd.md#bridge-field-review)包含持久 runtime 绑定、DTO/VO、活动/交互和快照合同，尚未定稿。P02/P04 涉及字段的实现待 review；P01 的通用 SDK 验证可独立进行。该 review 要求来自用户，不是自动新增的审批流程。
+字段 review 前置：用户要求模型字段先交由其 review。[字段评审稿](../../../docs/design/codex-bridge-trd.md#bridge-field-review)包含持久 runtime 绑定、DTO/VO、活动/交互和快照合同，尚未定稿。P02/P04 涉及字段的实现待 review；P01 的通用 SDK 验证可独立进行。该 review 要求来自用户，不是自动新增的审批流程。
 
 ## 批次与真实依赖
 
 | 批次 | 交付目标 | 首次涉及文件 | 执行依据 | 状态 |
 | --- | --- | ---: | --- | --- |
-| P01 | 通用 ACP Client 与本机 Codex 兼容验证 | 5 | TRD 第 3–6、8、[12 节](../design/codex-bridge-trd.md#bridge-first-batch) | 当前待执行；未实现、未验收 |
-| P02 | 后端 runtime/session 绑定、基本执行、交互回复和停止 API | 13 | TRD 第 2、4–6、8、10 节；[会话合同](../design/codex-bridge-trd.md#bridge-session) | 待字段 review、待执行 |
-| P03 | 共享视频工具与 MCP 接入 | 6 | TRD [第 7 节](../design/codex-bridge-trd.md#bridge-mcp)、第 10 节 | 待执行 |
-| P04 | 网页选择、工具/计划/交互、快照与刷新恢复 | 11 | TRD 第 8–10 节；[恢复合同](../design/codex-bridge-trd.md#bridge-recovery) | 待字段 review、待执行 |
-| P05 | 全链路真实验收、必要修正与运行说明 | 2 | TRD [第 14 节](../design/codex-bridge-trd.md#bridge-validation) | 待执行 |
+| P01 | 通用 ACP Client 与本机 Codex 兼容验证 | 5 | TRD 第 3–6、8、[12 节](../../../docs/design/codex-bridge-trd.md#bridge-first-batch) | 当前待执行；未实现、未验收 |
+| P02 | 后端 runtime/session 绑定、基本执行、交互回复和停止 API | 13 | TRD 第 2、4–6、8、10 节；[会话合同](../../../docs/design/codex-bridge-trd.md#bridge-session) | 待字段 review、待执行 |
+| P03 | 共享视频工具与 MCP 接入 | 6 | TRD [第 7 节](../../../docs/design/codex-bridge-trd.md#bridge-mcp)、第 10 节 | 待执行 |
+| P04 | 网页选择、工具/计划/交互、快照与刷新恢复 | 11 | TRD 第 8–10 节；[恢复合同](../../../docs/design/codex-bridge-trd.md#bridge-recovery) | 待字段 review、待执行 |
+| P05 | 全链路真实验收、必要修正与运行说明 | 2 | TRD [第 14 节](../../../docs/design/codex-bridge-trd.md#bridge-validation) | 待执行 |
 
 P01 → P02；P02 → P03、P04；P03、P04 → P05。P03 与 P04 可以在后端合同完成后并行开发；完整视频场景验收依赖 P03。P02 必须先提供可由开发客户端验证的交互回复和停止合同，不能把待审批任务的结束路径拖到网页实现后。
 
@@ -28,7 +28,7 @@ P01 的版本/权限/问询/恢复真实兼容验证是后续真实接入的门�
 
 ## 全量修改量
 
-按此前 Codex 首版的逐文件基线，旧范围预计 **37 个唯一文件**。以下保留原预算供比对；最新完整范围已由 [TRD 第 13 节](../design/codex-bridge-trd.md#bridge-full-scope)更新为 44 文件：
+按此前 Codex 首版的逐文件基线，旧范围预计 **37 个唯一文件**。以下保留原预算供比对；最新完整范围已由 [TRD 第 13 节](../../../docs/design/codex-bridge-trd.md#bridge-full-scope)更新为 44 文件：
 
 | 分类 | 文件数 | 预计行数 |
 | --- | ---: | --- |

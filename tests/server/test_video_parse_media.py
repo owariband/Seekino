@@ -34,6 +34,68 @@ def _fake_runner(commands):
     return run
 
 
+@pytest.mark.parametrize("video_required", [False, True])
+def test_episode_prepares_before_consumers_and_links_survive_owner_cleanup(tmp_path, video_required):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is unavailable")
+    source = tmp_path / "source.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=128x72:rate=24:duration=2.5", "-f", "lavfi", "-i",
+                    "sine=frequency=440:duration=2.5", "-c:v", "libx264", "-c:a", "aac",
+                    "-shortest", str(source)], check=True, capture_output=True)
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        subprocess.run(command, check=True, capture_output=True)
+
+    service = VideoParseMediaService(tmp_path / "media", command_runner=run)
+    task = str(uuid4())
+    owner = MediaLeaseIdentity(task, task, 1, execution_kind="video")
+    context = service.prepare_episode(owner, source_video=source, duration_ms=2500,
+        chunk_duration=1, visual_mode="ordered_frames", frame_fps=3, max_height=72,
+        ocr_enabled=True, overlap_ms=500, chunk_video_required=video_required, check_active=lambda: None)
+    with context as manifest:
+        rows = json.loads(manifest.read_text())["chunks"]
+        assert len(rows) == 3
+        assert [t for t, _ in rows[0]["ocr_frames"]] == [166, 500, 833]
+        assert [t for t, _ in rows[2]["ocr_frames"]] == [2125, 2375]
+        assert sum("-filter_script:v" in command for command in commands) == 1
+        if not video_required:
+            assert len(commands) == 2  # one whole audio decode and one whole video decode
+            assert not list(manifest.parent.glob("*.mp4"))
+        before = len(commands)
+        consumer = service.use_episode_chunk(MediaLeaseIdentity(task, str(uuid4()), 2),
+            video_lease_version=1, sequence_no=0, start_ms=0, end_ms=1000, check_active=lambda: None)
+        media = consumer.__enter__()
+        assert (media.video_path is not None) is video_required
+        assert len(commands) == before
+        assert (media.visual_start_ms, media.visual_end_ms) == (0, 1500)
+        assert all(os.stat(path).st_nlink >= 2 for _, path in media.frames)
+    assert not manifest.exists()
+    assert media.audio_path.is_file() and all(path.is_file() for _, path in media.frames)
+    consumer.__exit__(None, None, None)
+    assert not media.audio_path.exists()
+
+
+def test_episode_decode_failure_never_publishes_partial_assets(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = VideoParseMediaService(tmp_path / "media", command_runner=_fake_runner([]),
+                                    probe_duration=lambda _path: 1000)
+    task = str(uuid4())
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("decode failed")
+    monkeypatch.setattr("server.service.video_parse_media.extract_video_frames_batch", fail)
+    with pytest.raises(RuntimeError, match="decode failed"):
+        with service.prepare_episode(MediaLeaseIdentity(task, task, 1, execution_kind="video"),
+            source_video=source, duration_ms=1000, chunk_duration=1,
+            visual_mode="ordered_frames", frame_fps=3, max_height=72,
+            ocr_enabled=True, overlap_ms=0, check_active=lambda: None):
+            pytest.fail("Incomplete preparation must not admit chunk consumers")
+    assert list(service.base_directory.rglob("*")) == []
+
+
 def test_event_capture_seeks_original_absolute_time_and_cleans_on_consumer_failure(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
@@ -92,7 +154,6 @@ def test_media_is_isolated_by_task_and_lease_and_always_cleaned(tmp_path):
         end_seconds=20_000,
         visual_mode="ordered_frames",
         frame_fps=0.2,
-        max_frames=3,
         max_height=720,
         ocr_enabled=False,
     ) as media:
@@ -135,7 +196,7 @@ def test_visual_context_keeps_core_asr_and_samples_at_configured_fps(tmp_path):
     with service.prepare_chunk(
         _identity(), source_video=source, start_seconds=10_000, end_seconds=20_000,
         visual_start_ms=7000, visual_end_ms=23_000, visual_mode="ordered_frames",
-        frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False,
+        frame_fps=1, max_height=360, ocr_enabled=False,
     ) as media:
         assert media.visual_video_path != media.video_path
         assert media.visual_video_path.parent == media.video_path.parent
@@ -155,7 +216,7 @@ def test_visual_context_keeps_core_asr_and_samples_at_configured_fps(tmp_path):
 
 @pytest.mark.parametrize("overlap_ms,expected_frames", [(0, 180), (3000, 198)])
 @pytest.mark.parametrize("ocr_enabled", [False, True])
-def test_three_fps_preserves_all_chunk_frames_despite_legacy_cap(
+def test_three_fps_preserves_all_chunk_frames(
     tmp_path, overlap_ms, expected_frames, ocr_enabled,
 ):
     source = tmp_path / "source.mp4"
@@ -167,7 +228,7 @@ def test_three_fps_preserves_all_chunk_frames_despite_legacy_cap(
     with service.prepare_chunk(
         _identity(), source_video=source, start_seconds=10_000, end_seconds=70_000,
         visual_start_ms=10_000 - overlap_ms, visual_end_ms=70_000 + overlap_ms,
-        visual_mode="ordered_frames", frame_fps=3, max_frames=32,
+        visual_mode="ordered_frames", frame_fps=3,
         max_height=720, ocr_enabled=ocr_enabled,
     ) as media:
         times = [timestamp for timestamp, _ in media.frames]
@@ -189,7 +250,7 @@ def test_explicit_core_visual_bounds_reuse_existing_clip(tmp_path):
     with service.prepare_chunk(
         _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
         visual_start_ms=1000, visual_end_ms=2000, visual_mode="video",
-        frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False,
+        frame_fps=1, max_height=360, ocr_enabled=False,
     ) as media:
         assert media.visual_video_path == media.video_path
         assert media.frames == ()
@@ -208,7 +269,7 @@ def test_invalid_visual_bounds_do_not_create_media(tmp_path, bounds):
         with service.prepare_chunk(
             _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
             visual_start_ms=bounds[0], visual_end_ms=bounds[1], visual_mode="video",
-            frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False,
+            frame_fps=1, max_height=360, ocr_enabled=False,
         ):
             pytest.fail("invalid visual bounds must be rejected before preparing media")
     assert commands == []
@@ -238,7 +299,7 @@ def test_failed_visual_context_cleans_core_and_extended_media(tmp_path, failure)
         with service.prepare_chunk(
             _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
             visual_start_ms=0, visual_end_ms=3000, visual_mode="video",
-            frame_fps=1, max_frames=4, max_height=360, ocr_enabled=False, check_active=check,
+            frame_fps=1, max_height=360, ocr_enabled=False, check_active=check,
         ):
             pytest.fail("failed visual preparation must not yield media")
     assert len(commands) == 3
@@ -282,7 +343,7 @@ def test_video_mode_extracts_frames_only_for_ocr_or_fallback(
     with service.prepare_chunk(
         _identity(), source_video=source,
         start_seconds=0, end_seconds=5000, visual_mode="video",
-        frame_fps=1, max_frames=2, max_height=360, ocr_enabled=ocr_enabled,
+        frame_fps=1, max_height=360, ocr_enabled=ocr_enabled,
         visual_fallback_enabled=visual_fallback_enabled,
     ) as media:
         assert len(media.frames) == frame_count
@@ -310,7 +371,7 @@ def test_short_tail_keeps_a_core_frame_without_thinning_visual_context(
     with service.prepare_chunk(
         _identity(), source_video=source, start_seconds=60_000, end_seconds=60_100,
         visual_start_ms=57_000, visual_end_ms=60_100, visual_mode=visual_mode,
-        frame_fps=1, max_frames=1, max_height=360, ocr_enabled=ocr_enabled,
+        frame_fps=1, max_height=360, ocr_enabled=ocr_enabled,
         visual_fallback_enabled=visual_fallback_enabled,
     ) as media:
         visual_frames_needed = visual_mode == "ordered_frames" or visual_fallback_enabled
@@ -367,7 +428,7 @@ def test_cancellation_check_cleans_partially_materialized_workspace(tmp_path):
         with service.prepare_chunk(
             _identity(), source_video=source,
             start_seconds=0, end_seconds=5, visual_mode="video",
-            frame_fps=1, max_frames=2, max_height=360, ocr_enabled=False,
+            frame_fps=1, max_height=360, ocr_enabled=False,
             check_active=check,
         ):
             raise AssertionError("unreachable")
@@ -532,7 +593,7 @@ def test_fractional_video_duration_limits_frames_even_when_audio_is_longer(tmp_p
 
     with service.prepare_chunk(
         _identity(), source_video=source, start_seconds=0, end_seconds=9000,
-        visual_mode="ordered_frames", frame_fps=1, max_frames=9,
+        visual_mode="ordered_frames", frame_fps=1,
         max_height=64, ocr_enabled=False,
     ) as media:
         assert len(media.frames) == 9
@@ -559,7 +620,7 @@ def test_real_visual_overlap_does_not_extend_asr_audio_or_video(tmp_path):
     with service.prepare_chunk(
         _identity(), source_video=source, start_seconds=1000, end_seconds=2000,
         visual_start_ms=0, visual_end_ms=3000, visual_mode="ordered_frames",
-        frame_fps=3, max_frames=3, max_height=64, ocr_enabled=False,
+        frame_fps=3, max_height=64, ocr_enabled=False,
     ) as media:
         assert probe_video_duration_seconds(media.video_path) == 1000
         assert probe_video_duration_seconds(media.visual_video_path) == 3000

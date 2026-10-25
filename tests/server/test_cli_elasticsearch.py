@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -668,7 +669,9 @@ def test_init_db_ignores_unrelated_configuration_and_disposes_engine(
     monkeypatch, capsys, fails,
 ):
     closed = []
-    engine = SimpleNamespace(dispose=lambda: closed.append("database"))
+    engine = SimpleNamespace(
+        dialect=SimpleNamespace(name="sqlite"), dispose=lambda: closed.append("database"),
+    )
     monkeypatch.setenv("ANIVAG_MODEL_CONFIG", "/missing/model-config.yaml")
     monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")
     monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "invalid")
@@ -685,6 +688,11 @@ def test_init_db_ignores_unrelated_configuration_and_disposes_engine(
             raise RuntimeError("schema failed")
 
     monkeypatch.setattr(cli, "create_schema", create_schema)
+    from server.service import agent_checkpoint
+    monkeypatch.setattr(
+        agent_checkpoint, "create_agent_checkpoint_store",
+        lambda *_args, **_kwargs: SimpleNamespace(close=lambda: closed.append("checkpoint")),
+    )
     monkeypatch.setattr(sys, "argv", [
         "anivag-server", "init-db", "--database-url", "sqlite+pysqlite:///:memory:",
         "--environment", "test",
@@ -698,6 +706,32 @@ def test_init_db_ignores_unrelated_configuration_and_disposes_engine(
             "schemaCreated": True, "environment": "test",
         }
     assert closed == ["database"]
+
+
+def test_init_db_mysql_also_initializes_checkpoint_schema(monkeypatch, capsys):
+    closed = []
+    engine = SimpleNamespace(
+        dialect=SimpleNamespace(name="mysql"), dispose=lambda: closed.append("database"),
+    )
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(cli, "create_schema", lambda selected: None)
+    from server.service import agent_checkpoint
+    checkpoint = SimpleNamespace(close=lambda: closed.append("checkpoint"))
+    create_checkpoint = Mock(return_value=checkpoint)
+    monkeypatch.setattr(agent_checkpoint, "create_agent_checkpoint_store", create_checkpoint)
+    monkeypatch.setattr(sys, "argv", [
+        "anivag-server", "init-db",
+        "--database-url", "mysql+pymysql://user:pass@localhost/anivag_test",
+        "--environment", "test",
+    ])
+    cli.main()
+    assert create_checkpoint.call_args.kwargs["setup"] is True
+    assert create_checkpoint.call_args.kwargs["engine"] is engine
+    assert json.loads(capsys.readouterr().out) == {
+        "schemaCreated": True, "environment": "test",
+    }
+    assert closed == ["checkpoint", "database"]
 
 
 @pytest.mark.parametrize("failure", ["sessions", "store"])

@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -234,7 +235,7 @@ def test_sdk_state_is_isolated_by_conversation_and_shared_after_model_reload():
     reloaded.delete_thread("one")
     assert store.checkpointer.get_tuple({"configurable": {"thread_id": "one"}}) is None
     store.close()
-    assert store.checkpointer.get_tuple({"configurable": {"thread_id": "two"}}) is None
+    assert store.checkpointer.get_tuple({"configurable": {"thread_id": "two"}}) is not None
 
 
 def test_unconfirmed_turn_cannot_resume_and_discard_bootstraps_completed_history():
@@ -251,6 +252,50 @@ def test_unconfirmed_turn_cannot_resume_and_discard_bootstraps_completed_history
     texts = [item.text for item in script._calls[-1]["messages"]]
     assert "Unsaved" not in texts
     assert "Database history" in texts
+
+
+def test_failed_turn_preserves_previously_confirmed_checkpoint():
+    store = DeepAgentSessionStore()
+    first = _model(ScriptedModel(responses=[AIMessage(content="First draft")]), store=store)
+    _run(first, message="a1")
+    first.confirm_turn("conversation", "a1", "Committed answer")
+
+    def stop():
+        raise RuntimeError("stop this turn")
+
+    failing = _model(ScriptedModel(responses=[AIMessage(content="Uncommitted")]), store=store)
+    with pytest.raises(RuntimeError, match="stop this turn"):
+        _run(failing, message="a2", check=stop)
+    saved = store.checkpointer.get_tuple({"configurable": {"thread_id": "conversation"}})
+    assert saved is not None
+    assert saved.checkpoint["channel_values"]["messages"].value[-1].text == "Committed answer"
+
+    resumed = _model(ScriptedModel(responses=[AIMessage(content="Next answer")]), store=store)
+    _run(resumed, message="a3")
+    texts = [message.text for message in resumed.session_store.pending["conversation"].values["messages"]]
+    assert "Committed answer" in texts
+    assert "Uncommitted" not in texts
+
+
+def test_confirmation_failure_preserves_previous_checkpoint(monkeypatch):
+    store = DeepAgentSessionStore()
+    first = _model(ScriptedModel(responses=[AIMessage(content="First draft")]), store=store)
+    _run(first, message="a1")
+    first.confirm_turn("conversation", "a1", "Committed answer")
+    second = _model(ScriptedModel(responses=[AIMessage(content="Uncommitted")]), store=store)
+    _run(second, message="a2")
+    pending = store.pending["conversation"]
+    monkeypatch.setattr(
+        pending.graph, "update_state",
+        Mock(side_effect=RuntimeError("checkpoint write failed")),
+    )
+    with pytest.raises(RuntimeError, match="checkpoint write failed"):
+        second.confirm_turn("conversation", "a2", "Changed answer")
+    second.delete_thread("conversation")
+
+    saved = store.checkpointer.get_tuple({"configurable": {"thread_id": "conversation"}})
+    assert saved is not None
+    assert saved.checkpoint["channel_values"]["messages"].value[-1].text == "Committed answer"
 
 
 @pytest.mark.parametrize("total_timeout_enabled", [True, False])
@@ -301,7 +346,8 @@ def test_sdk_summary_offloads_history_without_own_context_controller():
         safety_margin_tokens=500, auto_compact_tokens=1_500, compact_target_tokens=200,
     )
     script = ScriptedModel(responses=[AIMessage(content="After summary")])
-    model = _model(script, policy=policy)
+    store = DeepAgentSessionStore()
+    model = _model(script, store=store, policy=policy)
     history = [
         {"messageId": f"history-{index}", "role": "user" if index % 2 == 0 else "assistant", "content": "Earlier detailed facts " * 100}
         for index in range(10)
@@ -309,10 +355,16 @@ def test_sdk_summary_offloads_history_without_own_context_controller():
     assert _run(model, history=history) == ["After summary"]
     assert len(script._calls) == 2
     assert any("Summary: the user asked" in item.text for item in script._calls[-1]["messages"])
-    graph = model.session_store.pending["conversation"].graph
-    state = graph.get_state({"configurable": {"thread_id": "conversation"}}).values
+    state = model.session_store.pending["conversation"].values
     assert any(path.startswith("/conversation_history/") for path in state["files"])
     assert len(state["messages"]) == 12
+    model.confirm_turn("conversation", "answer", "After summary")
+    next_script = ScriptedModel(responses=[AIMessage(content="Next answer")])
+    next_model = _model(next_script, store=store, policy=policy)
+    assert _run(next_model, message="a2") == ["Next answer"]
+    event = next_model.session_store.pending["conversation"].values["_summarization_event"]
+    assert "Summary: the user asked" in event["summary_message"].text
+    assert any("Summary: the user asked" in message.text for message in next_script._calls[0]["messages"])
 
 
 def test_summary_model_request_consumes_the_same_logical_call_budget():
@@ -492,8 +544,7 @@ def test_api_adapter_retains_profile_tokens_usage_and_never_calls_old_loop(monke
     assert len(usage) == 1 and usage[0].usage.total_tokens == 20
     assert usage[0].model == "actual-provider-model"
     assert usage[0].context["user_id"] == "owner"
-    graph = model.session_store.pending["conversation"].graph
-    message = graph.get_state({"configurable": {"thread_id": "conversation"}}).values["messages"][-1]
+    message = model.session_store.pending["conversation"].values["messages"][-1]
     assert message.usage_metadata == {"input_tokens": 13, "output_tokens": 7, "total_tokens": 20}
 
 

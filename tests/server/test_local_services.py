@@ -576,9 +576,15 @@ def main_worktree(tmp_path):
     return root
 
 
-@pytest.mark.parametrize("arguments", [[], ["start"], ["status"]])
-def test_shell_routes_to_main_before_loading_environment(main_worktree, tmp_path, arguments):
+@pytest.mark.parametrize("arguments", [[], ["start"], ["status"], ["stop"]])
+@pytest.mark.parametrize("source_branch", ["main", "dev"])
+def test_shell_routes_to_selected_branch_before_loading_environment(
+    main_worktree, tmp_path, arguments, source_branch,
+):
     root = main_worktree
+    if source_branch != "main":
+        subprocess.run(["git", "-C", str(root), "switch", "-c", source_branch],
+                       check=True, capture_output=True)
     launcher = Path(local_services.__file__).resolve().parent.parent / "start.sh"
     (root / "start.sh").write_bytes(launcher.read_bytes())
     subprocess.run(["git", "-C", str(root), "add", "start.sh"], check=True)
@@ -618,18 +624,19 @@ def test_shell_routes_to_main_before_loading_environment(main_worktree, tmp_path
     )
     uv.chmod(0o755)
     record = tmp_path / "launch.json"
+    branch_args = [] if source_branch == "main" else ["--branch", source_branch]
     result = subprocess.run(
-        ["bash", str(other / "start.sh"), *arguments], cwd=other,
+        ["bash", str(other / "start.sh"), *branch_args, *arguments], cwd=other,
         env={**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
              "LAUNCH_SOURCE": "inherited", "LAUNCH_RECORD": str(record)},
         capture_output=True, text=True, check=True,
     )
 
-    assert "[main]" in result.stdout
+    assert f"[{source_branch}]" in result.stdout
     assert json.loads(record.read_text()) == {
         "cwd": str(root.resolve()),
         "args": ["run", "--no-sync", "--env-file", ".env.local", "python",
-                 "scripts/local_services.py", *arguments],
+                 "scripts/local_services.py", *branch_args, *arguments],
         "inherited": None, "dotenv": "LAUNCH_SOURCE=main\n",
     }
     assert not (other / ".venv").exists()
@@ -661,12 +668,27 @@ def test_direct_entry_rejects_non_main_before_creating_state(monkeypatch, main_w
     state = root / "state"
     monkeypatch.setattr(local_services, "STATE", state)
     monkeypatch.setattr(sys, "argv", ["local_services.py", "start"])
-    local_services.require_main_worktree()
+    local_services.require_worktree_branch("main")
     subprocess.run(["git", "-C", str(root), *checkout], check=True, capture_output=True)
 
     with pytest.raises(RuntimeError, match="只允许 main"):
         local_services.main()
     assert not state.exists()
+
+
+def test_direct_entry_accepts_explicit_dev_branch(monkeypatch, main_worktree):
+    root = main_worktree
+    subprocess.run(["git", "-C", str(root), "switch", "-c", "dev"],
+                   check=True, capture_output=True)
+    monkeypatch.setattr(local_services, "ROOT", root)
+    monkeypatch.setattr(local_services, "STATE", root / "state")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "argv", ["local_services.py", "--branch", "dev", "status"])
+    monkeypatch.setattr(local_services, "configure", lambda: None)
+    monkeypatch.setattr(local_services, "status", lambda settings: True)
+
+    assert local_services.main() == 0
+    assert (root / "state/startup.lock").exists()
 
 
 @pytest.mark.parametrize(("name", "directory"), [("api", "server"), ("web", "web")])

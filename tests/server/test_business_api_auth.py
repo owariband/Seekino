@@ -118,6 +118,24 @@ def test_upload_and_job_routes_check_write_scope_before_business(
     assert response.json()["code"] == code
 
 
+@pytest.mark.parametrize("method,path,params", _ROUTES + [("GET", "/api/uploads/parse-config", {})])
+@pytest.mark.parametrize("tenant", ["public-tenant", "personal-tenant"])
+def test_public_only_account_cannot_reach_upload_or_job_business(method, path, params, tenant):
+    app, _ = _app(replace(_identity(), tenant_id=None))
+    with TestClient(app) as client:
+        client.cookies.set("session", "test-token")
+        response = client.request(
+            method, path, params={"tenantId": tenant, **params},
+            json={**_UPLOAD_BODY, "tenantId": tenant} if path.endswith("/create") else None,
+            headers={
+                "X-CSRF-Token": "trusted-csrf", "Idempotency-Key": "request-key",
+                "Content-Range": "bytes 0-3/4", "X-Content-SHA256": "a" * 64,
+            },
+        )
+    assert response.status_code == 403, response.text
+    assert response.json()["code"] == "PERMISSION_DENIED"
+
+
 @pytest.mark.parametrize("role,mode,tenant", [
     ("user", "cloud", "personal-tenant"),
     ("admin", "cloud", "public-tenant"),

@@ -40,6 +40,7 @@ from .repository.library import LibraryRepository
 from .repository.model_usage import ModelUsageRepository
 from .repository.upload import UploadRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
+from .service.agent_checkpoint import create_agent_checkpoint_store
 from .service.agent_chat import AgentChatService
 from .service.agent_attachments import AgentAttachmentService
 from .service.auth import AuthService
@@ -122,7 +123,7 @@ def prepare_service_configuration(
         )
     _validate_cloud_agent_timeout(settings, settings.agent)
     gateway_config = load_config(settings.model_config_path)
-    _validate_cloud_pi_harness(settings, gateway_config)
+    _validate_cloud_supervisor_harness(settings, gateway_config)
     validate_rerank_source(gateway_config, settings.retrieval)
     parse_defaults = ParseConfig.from_defaults(
         runtime=settings.parse,
@@ -139,11 +140,11 @@ def prepare_service_configuration(
     return gateway_config, parse_defaults
 
 
-def _validate_cloud_pi_harness(settings: ServerSettings, config: GatewayConfig) -> None:
+def _validate_cloud_supervisor_harness(settings: ServerSettings, config: GatewayConfig) -> None:
     if settings.auth.mode != "cloud":
         return
-    if config.supervisor_harness != "pi":
-        raise ValueError("cloud Server requires supervisor_harness: pi; set ANIVAG_MODEL_CONFIG to an API-backed cloud configuration")
+    if config.supervisor_harness != "deepagents":
+        raise ValueError("cloud Server requires supervisor_harness: deepagents; set ANIVAG_MODEL_CONFIG to an API-backed cloud configuration")
     for role, binding in config.normalized_models.items():
         while binding is not None:
             if isinstance(config.source(binding.source), (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
@@ -177,7 +178,11 @@ def _build_application_services(
         settings.agent_fallback_model
         or (configured_fallback.model if configured_fallback is not None else None)
     )
-    gateway_client = GatewayClient(gateway_config)
+    supervisor_sessions = None
+    if gateway_config.supervisor_harness == "deepagents":
+        supervisor_sessions = create_agent_checkpoint_store(settings.database_url, engine=resources.engine)
+        construction_cleanup.callback(supervisor_sessions.close)
+    gateway_client = GatewayClient(gateway_config, supervisor_sessions=supervisor_sessions)
     construction_cleanup.callback(gateway_client.close)
     agent_binding = gateway_config.resolve_model_binding("agent")
     if fallback_agent_model is not None and agent_binding.fallback is not None:

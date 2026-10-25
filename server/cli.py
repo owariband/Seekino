@@ -250,7 +250,14 @@ def main() -> None:
         pool_recycle_seconds=resolve_database_pool_recycle_seconds(),
     ) as (engine, sessions):
         if args.command == "init-db":
+            from .service.agent_checkpoint import create_agent_checkpoint_store
+
             create_schema(engine)
+            if engine.dialect.name == "mysql":
+                checkpoint_store = create_agent_checkpoint_store(
+                    resolve_database_url(args.database_url), setup=True, engine=engine,
+                )
+                checkpoint_store.close()
             result = {"schemaCreated": True, "environment": environment.value}
         elif args.command in {"request-es-index-rebuild", "rebuild-index"}:
             repository = VideoParsePersistenceService(sessions)

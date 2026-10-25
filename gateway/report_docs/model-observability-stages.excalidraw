@@ -619,7 +619,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g01",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g01",
       "locked": false,
       "customData": {
         "stageId": "G01",
@@ -1137,7 +1137,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g02",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g02",
       "locked": false,
       "customData": {
         "stageId": "G02",
@@ -1655,7 +1655,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g03a",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g03a",
       "locked": false,
       "customData": {
         "stageId": "G03A",
@@ -2173,7 +2173,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g03b",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g03b",
       "locked": false,
       "customData": {
         "stageId": "G03B",
@@ -2691,7 +2691,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g04a",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g04a",
       "locked": false,
       "customData": {
         "stageId": "G04A",
@@ -3209,7 +3209,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g04b",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g04b",
       "locked": false,
       "customData": {
         "stageId": "G04B",
@@ -3727,7 +3727,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g05a",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g05a",
       "locked": false,
       "customData": {
         "stageId": "G05A",
@@ -4324,7 +4324,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#g05b",
+      "link": "../../docs/design/gateway-model-observability-trd.md#g05b",
       "locked": false,
       "customData": {
         "stageId": "G05B",
@@ -4932,7 +4932,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md#plan",
+      "link": "../../docs/design/gateway-model-observability-trd.md#plan",
       "locked": false,
       "customData": {},
       "text": "G01 已签收；用户授权 Gateway＋Server 核心树。\nG02、G03A／G03B、G04A／G04B 已通过直接验证。\nG05A：378 passed、1 skipped；不含付费 Provider。\nG05B：默认跳过真实项目，等待 S2 配置。\nSDK 默认超时未达总截止；采用隔离 OTLP 出口。\n有界收尾不保证可靠送达；账本仍为 Server 真相。\nS1 已接线；普通回归受 Engine 缺口阻断。\nParse 当前仍为 08A；V1 退役独立保留。\nRef：../design/trd.md#plan。",
@@ -5406,7 +5406,7 @@
       "isDeleted": false,
       "boundElements": null,
       "updated": 1791331200000,
-      "link": "../design/trd.md",
+      "link": "../../docs/design/gateway-model-observability-trd.md",
       "locked": false,
       "customData": {},
       "text": "Ref: ../design/trd.md ｜ Evidence: model-observability-stages-evidence.md",

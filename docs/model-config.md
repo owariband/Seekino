@@ -1,5 +1,7 @@
 # 模型配置
 
+真实模型评测约定（2026-10-25）：后续生成式模型测试使用 Kimi K3.1 Pro（`k3.1-pro`），不再调用 GPT 系列，包括测试链路中的子任务、视觉理解、摘要、fallback 和额外 judge。历史 GPT benchmark 保留作只读对照；向量、ASR 和既有专用意图路由保持各自配置。开跑前核对实际生效配置及环境覆盖，运行后核对真实调用模型。该约定不自动切换正在运行的业务服务。
+
 `config.yaml` 的版本 2 把连接信息放在 `model_sources`，把模型定义放在 `models`。业务向 Gateway 传模型引用；Gateway 解析配置、校验能力并创建适配器。`agent_runtime` 保留运行参数，`video_parser` 保留采样和降级策略。密钥仍写在 `.env.local`，不要写进 YAML。
 
 配置存储仍是本地 YAML，通过 `ANIVAG_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑使用保存的模型快照；通过 API 显式重试时，Server 会读取当前本地配置，更新理解、精炼模型和视觉输入方式，保留已有 ASR、向量模型和任务拓扑。连接定义的变更仍需重启 Gateway 所在服务。这里没有引入数据库模型管理、HTTP CRUD 或云端配置。
@@ -74,6 +76,21 @@ models:
 保留现有 `models.agent` 即可继续为视频 Query、Evaluator 和 Chat 使用原来的 API 模型。`models.supervisor` 的来源、模型、推理和预算独立保存，不接受 `ANIVAG_AGENT_CHAT_MODEL` 或 `ANIVAG_AGENT_FALLBACK_MODEL` 覆盖。显式 `reasoning_effort` 优先，否则使用 `agent_runtime.supervisor_reasoning_effort`。模型绑定的超时、输出和上下文预算与已有 Agent 运行限制共同生效；例如本轮截止时间仍受 `agent_runtime.execution_timeout_seconds` 和 `supervisor_timeout_seconds` 约束。Codex 的 `max_output_tokens` 用于预算预留，不保证协议硬截断。
 
 使用 Deep Agents 时将 `supervisor_harness` 改为 `deepagents`，并将 `models.supervisor` 设为 OpenAI 兼容或 Ark API 模型，例如沿用 `models.agent` 中的 DeepSeek 与 Ark 回退绑定。该路径由 Deep Agents 管理模型和工具循环；Codex 路径由原生 Codex runtime 执行同一 Supervisor 业务工具。Codex harness 要求 `codex_app_server` 来源，不接受 `fallback`；Deep Agents 只接受 API 来源及单层 Ark API 回退，配置错配明确报错，不自动切换 harness。
+
+### Deep Agents checkpoint 持久化
+
+Cloud Chat 使用 `langgraph-checkpoint-mysql[pymysql]==3.0.0` 和现有 `mysql+pymysql` 数据库。Server 创建共享 `PyMySQLSaver`，`conversation_id` 直接作为 `thread_id`，不需要 `pi_host`、独立 Node 进程或 Conversation↔pi-session 映射。`pi_host` 和 `supervisor_harness: pi` 已退役，旧配置会明确校验失败。
+
+checkpoint 只保存已确认 turn：每轮先在内存执行，最终 SQL 消息提交成功后写入完整 graph state；失败、取消和关闭不删除上一份已确认状态，显式删除 Conversation 才删除 checkpoint。该机制用于下一轮恢复，不表示进程崩溃后自动续跑有副作用的工具。历史 Pi JSONL 不删除，旧 Conversation 没有 checkpoint 时仍按 SQL 展示历史冷启动，不承诺旧 tool 上下文无损迁移。
+
+首次部署或升级需显式初始化 Schema，API 启动不会自动执行迁移：
+
+```bash
+python -m server.cli init-db
+# 也可在环境评审后执行 docs/migrations/20261024_deepagents_checkpointer.sql
+```
+
+用户级 BYOK 的配置管理和授权注入不随 checkpoint 自动提供。MySQL checkpoint 写入、存储增长、retention、真实重启及 compact 恢复需按环境验收。
 
 旧配置未声明 `supervisor_harness` 时默认使用 Deep Agents；未声明独立 `models.supervisor` 时保留原先的 Agent source、Chat 角色模型及其环境覆盖。已有模型子任务的配置与冻结任务快照保持原有规则。本次选择入口不包含 ACP 完整会话、网页 Agent/目录选择或本机文件任务接线。
 

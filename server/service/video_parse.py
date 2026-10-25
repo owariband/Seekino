@@ -200,7 +200,32 @@ class VideoParseRuntimeService:
 
     async def prepare(self, lease: VideoParseLease) -> None:
         token = self._video_lease.set(lease)
+        media_context = None
         try:
+            task_input = await asyncio.to_thread(self._persistence.load_task_input, lease.video_parse_task_id)
+            if task_input.task.status != "COMPLETE":
+                config = self._parse_input(task_input).parse_config
+                visual = config.visual_input
+                video_required = visual.mode == "video"
+                if not video_required and config.models.asr.mode != "none":
+                    transport = self._transcription_model(config.models.asr)
+                    try:
+                        video_required = transport.input_mode != "audio"
+                    finally:
+                        transport.close()
+                media_context = self._media_service.prepare_episode(
+                    MediaLeaseIdentity(lease.video_parse_task_id, lease.video_parse_task_id,
+                                       lease.lease_version, execution_kind="video"),
+                    source_video=self._artifact_store.resolve(task_input.inference_proxy_uri or task_input.original_source_uri),
+                    duration_ms=task_input.duration_seconds, chunk_duration=config.chunk_duration,
+                    visual_mode=visual.mode, frame_fps=visual.fps, max_height=visual.max_height,
+                    ocr_enabled=config.ocr_enabled,
+                    overlap_ms=visual.context_overlap_seconds * 1000 if config.understanding_enabled else 0,
+                    visual_fallback_enabled=config.models.understanding.fallback is not None,
+                    chunk_video_required=video_required,
+                    check_active=lambda: self._require_video_active(lease),
+                )
+                await self._run_blocking(media_context.__enter__)
             await self.agent.InvokeVideoParse(lease.video_parse_task_id)
         except asyncio.CancelledError as error:
             if not getattr(error, "voiceprint_failed", False):
@@ -210,7 +235,11 @@ class VideoParseRuntimeService:
                     pass
             raise
         finally:
-            self._video_lease.reset(token)
+            try:
+                if media_context is not None:
+                    await cleanup_execution(media_context.__exit__, None, None, None)
+            finally:
+                self._video_lease.reset(token)
 
     async def understand(self, lease: ChunkParseLease) -> None:
         binding = _ChunkBinding(lease)
@@ -913,16 +942,14 @@ class VideoParseRuntimeService:
         if model.mode == "none":
             return {"transcript": []}
         duration = execution.allowed_end_seconds - execution.allowed_start_seconds
-        definition = ModelBinding.model_validate({
-            key: value for key, value in model.model_dump(exclude_none=True).items()
-            if key not in {"mode", "fps"}
-        }).model_copy(update={"kind": "transcription"})
-        transport = self._gateway.create_transcription_model(definition)
+        transport = self._transcription_model(model)
         try:
             if transport.input_mode == "audio":
                 payload = await self._run_blocking(transport.transcribe, media.audio_path)
                 analysis = normalize_transcription(payload, duration_seconds=duration)
             else:
+                if media.video_path is None:
+                    raise RuntimeError("Video ASR requires prepared chunk video")
                 agent = VideoASRAgent(transport, fps=model.fps)
                 analysis = await self._run_blocking(
                     agent.transcribe, media.video_path, duration_seconds=duration,
@@ -1663,31 +1690,18 @@ class VideoParseRuntimeService:
                 return binding.media
             if binding.state is None:
                 raise RuntimeError("Chunk execution state was not loaded")
-            config = execution.inputs.parse_config
             identity = MediaLeaseIdentity(
                 execution.video_parse_task_id,
                 execution.chunk_parse_task_id,
                 execution.lease.version,
                 execution_kind="chunk",
             )
-            overlap_ms = config.visual_input.context_overlap_seconds * 1000 if config.understanding_enabled else 0
-            context = self._media_service.prepare_chunk(
+            context = self._media_service.use_episode_chunk(
                 identity,
-                source_video=self._artifact_store.resolve(
-                    binding.state.source_media_ref
-                ),
-                start_seconds=execution.allowed_start_seconds,
-                end_seconds=execution.allowed_end_seconds,
-                visual_start_ms=max(0, execution.allowed_start_seconds - overlap_ms),
-                visual_end_ms=min(binding.state.task_input.duration_seconds,
-                                  execution.allowed_end_seconds + overlap_ms),
-                visual_mode=config.visual_input.mode,
-                frame_fps=config.visual_input.fps,
-                max_frames=config.visual_input.max_frames_per_chunk,
-                max_height=config.visual_input.max_height,
-                ocr_enabled=config.ocr_enabled,
-                # A visual fallback consumes extended frames; OCR consumes core frames.
-                visual_fallback_enabled=config.models.understanding.fallback is not None,
+                video_lease_version=binding.state.task_input.task.lease_version,
+                sequence_no=execution.sequence_no,
+                start_ms=execution.allowed_start_seconds,
+                end_ms=execution.allowed_end_seconds,
                 check_active=lambda: self._require_chunk_active(binding.lease),
             )
             try:
@@ -1700,6 +1714,13 @@ class VideoParseRuntimeService:
             return media
 
     # Model and indexing assembly ------------------------------------------
+
+    def _transcription_model(self, model):
+        definition = ModelBinding.model_validate({
+            key: value for key, value in model.model_dump(exclude_none=True).items()
+            if key not in {"mode", "fps"}
+        }).model_copy(update={"kind": "transcription"})
+        return self._gateway.create_transcription_model(definition)
 
     def _speaker_encoder(self, binding: SpeakerEmbeddingModelConfig | None) -> SpeakerEmbeddingModel:
         if binding is None:

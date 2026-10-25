@@ -129,9 +129,11 @@ def test_configuration_has_explicit_cloud_requirements(identities, monkeypatch):
     monkeypatch.setenv("ANIVAG_AUTH_OTP_ATTEMPT_LIMIT", "3")
     monkeypatch.setenv("ANIVAG_AUTH_QUERY_LIMIT_GUEST", "5")
     monkeypatch.setenv("ANIVAG_AUTH_COOKIE_SECURE", "false")
+    monkeypatch.setenv("ANIVAG_PUBLIC_LIBRARY_ONLY", "true")
     parsed = AuthConfig.from_environment()
     assert parsed.otp_attempt_limit == 3 and not parsed.cookie_secure
     assert parsed.query_limit_guest == 5 and parsed.concurrent_queries_user == 3
+    assert parsed.public_library_only
     assert "x" * 32 not in repr(parsed)
     with pytest.raises(ValueError):
         SMTPConfig(host="smtp.example.com", sender="bad\r\nheader")

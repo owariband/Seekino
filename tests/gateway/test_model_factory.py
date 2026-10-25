@@ -1095,70 +1095,37 @@ def test_same_provider_and_model_bindings_keep_sources_isolated_in_parallel(monk
         client.close()
 
 
-def test_pi_factories_share_one_application_client_and_close_it_once(monkeypatch, tmp_path):
-    from gateway.config import PiHostConfig
+def test_deepagent_factories_share_external_sessions_without_closing_them():
+    from gateway.agent_model.deepagents import DeepAgentSessionStore
 
-    constructed, closed = [], []
-
-    class SharedPiClient:
-        def __init__(self, **options):
-            self.options = options
-            constructed.append(self)
-
-        def close(self):
-            closed.append(self)
-
-    monkeypatch.setattr("gateway.pi.client.PiClient", SharedPiClient)
-    config = _config().model_copy(update={
-        "supervisor_harness": "pi",
-        "pi_host": PiHostConfig(
-            node_bin="configured-node", session_dir=str(tmp_path / "sessions"),
-            max_active_runs=3, max_model_requests=5, max_loaded_sessions=9,
-            max_session_bytes=48 * 1024 * 1024, max_cache_bytes=96 * 1024 * 1024,
-            session_ttl_seconds=123, max_transient_tasks=7,
-            startup_timeout_seconds=11, cancel_timeout_seconds=12, shutdown_timeout_seconds=13,
-        ),
-    })
-    client = model_factory.GatewayClient(config, environ={"API_KEY": "api-secret"})
+    closed = []
+    sessions = DeepAgentSessionStore(on_close=lambda: closed.append("sessions"))
+    config = _config().model_copy(update={"supervisor_harness": "deepagents"})
+    client = model_factory.GatewayClient(
+        config, environ={"API_KEY": "api-secret"}, supervisor_sessions=sessions,
+    )
     with ThreadPoolExecutor(max_workers=4) as pool:
         factories = list(pool.map(lambda _: client.create_agent_factory(_binding("api")), range(4)))
     try:
-        assert len(constructed) == 1
-        shared = constructed[0]
-        assert all(factory._pi_client is shared for factory in factories)
-        assert client._shared_pi_client() is shared
-        assert shared.options["command"] == "configured-node"
-        assert shared.options["args"][0].endswith("/gateway/pi/host/dist/src/main.js")
-        assert shared.options["config"] == {
-            "sessionDir": str(tmp_path / "sessions"), "maxActiveRuns": 3,
-            "maxModelRequests": 5, "maxLoadedSessions": 9, "sessionTtlSeconds": 123,
-            "maxSessionBytes": 48 * 1024 * 1024, "maxCacheBytes": 96 * 1024 * 1024,
-            "maxQueueBytes": 32 * 1024 * 1024, "maxLineBytes": 16 * 1024 * 1024,
-            "maxToolOutputBytes": 12 * 1024 * 1024, "maxTransientTasks": 7,
-        }
-        assert shared.options["startup_timeout"] == 11
-        assert shared.options["cancel_timeout"] == 12
-        assert shared.options["shutdown_timeout"] == 13
+        assert all(factory._supervisor_sessions is sessions for factory in factories)
         factories[0].close()
         assert closed == []
     finally:
         client.close()
         client.close()
-    assert closed == constructed
-    with pytest.raises(RuntimeError, match="Gateway client is closed"):
-        client._shared_pi_client()
+    assert closed == []
 
 
-def test_non_pi_factory_construction_does_not_allocate_a_pi_client(monkeypatch):
-    def forbidden_pi_client(**_options):
-        raise AssertionError("local API models must not allocate a Pi Host")
+def test_gateway_closes_internally_owned_sessions_once(monkeypatch):
+    from gateway.agent_model.deepagents import DeepAgentSessionStore
 
-    monkeypatch.setattr("gateway.pi.client.PiClient", forbidden_pi_client)
-    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "api-secret"})
-    try:
-        factory = client.create_agent_factory(_binding("api"))
-        assert factory.provider_name == "ark"
-        assert factory._pi_client is None
-        factory.close()
-    finally:
-        client.close()
+    closed = []
+    sessions = DeepAgentSessionStore(on_close=lambda: closed.append("sessions"))
+    monkeypatch.setattr(
+        "gateway.agent_model.deepagents.DeepAgentSessionStore", lambda: sessions,
+    )
+    config = _config().model_copy(update={"supervisor_harness": "deepagents"})
+    client = model_factory.GatewayClient(config, environ={"API_KEY": "api-secret"})
+    client.close()
+    client.close()
+    assert closed == ["sessions"]

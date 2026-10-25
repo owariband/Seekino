@@ -2,7 +2,7 @@
 
 更新时间：2026-09-28。
 
-> **Event 索引修订（2026-10-17，待实现）**：[Event 细粒度检索 TRD](event-retrieval-trd.md) 增加 MySQL Event 派生实体与独立 ES Event 集合；Chunk 的完整有序 Timeline 仍为权威事实，现有 Chunk 三路索引保留。任务与恢复以 [Parse Agent TRD](../../agent/video_parse_v2/design/trd.md) 当前基线为准，Interval 只 Refine，同一 ChunkTask 的 INDEX 阶段承担 Chunk/Event 同步。下文旧 Interval 索引及 Qdrant 运行状态说明保留原时点，不作为当前实现依据。
+> **Event 索引修订（2026-10-17，待实现）**：[Event 细粒度检索 TRD](event-retrieval-trd.md) 增加 MySQL Event 派生实体与独立 ES Event 集合；Chunk 的完整有序 Timeline 仍为权威事实，现有 Chunk 三路索引保留。任务与恢复以 [Parse Agent TRD](video-parse-harness-trd.md) 当前基线为准，Interval 只 Refine，同一 ChunkTask 的 INDEX 阶段承担 Chunk/Event 同步。下文旧 Interval 索引及 Qdrant 运行状态说明保留原时点，不作为当前实现依据。
 
 状态：当前先学习 RAGFlow，评审 ES 架构与 Index 设计。已有基础代码及验证记录见第 13 节；其中独立构建/发布方案已被下述决定替代，不能继续当作生产接线目标。当前文档同步不代表代码改接、真实 ES/MySQL 验证或数据切换已完成。
 
@@ -24,8 +24,8 @@
 | 资料 | 用途 |
 | --- | --- |
 | [refactor_2.md](refactor_2.md) | V2 任务、成果与 Worker 接入计划；确认它在执行时已经完成到哪一步 |
-| [Engine TRD](../../engine/parsev2/design/trd.md) | 第一章是正式解析合同；2.3 是三路检索设计，2.3.11 是 ES 接入与查询就绪边界 |
-| [Harness TRD](../../agent/video_parse_v2/design/trd.md) | Chunk/Interval 任务与成果合同、解析及索引状态机；独立索引发布表草案已撤销 |
+| [Engine TRD](video-parse-engine-trd.md) | 第一章是正式解析合同；2.3 是三路检索设计，2.3.11 是 ES 接入与查询就绪边界 |
+| [Harness TRD](video-parse-harness-trd.md) | Chunk/Interval 任务与成果合同、解析及索引状态机；独立索引发布表草案已撤销 |
 | [Harness README](../../agent/video_parse_v2/README.md) | 当前 ParseAgent 入口、注入边界与实现状态 |
 | [Engine Schema](../../engine/parsev2/schemas.py) | 对照目标合同与运行代码差距；不能用旧人物 ID 实现覆盖已确认的人名合同 |
 | [refactor_1.md](refactor_1.md) | Server 内部 Consumer 与纯 Engine 分工的历史依据，不照搬其中旧路径 |

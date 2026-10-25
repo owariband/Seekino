@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from io import BytesIO
 from types import SimpleNamespace
 from uuid import uuid4
@@ -272,6 +272,45 @@ def _course(api, *, tenant_id=None):
     state = api.services.library.get_series(series.series_id, tenant_id=tenant_id)
     assert api.services.media.publication_ready(state)
     return series.series_id, video_id
+
+
+@pytest.mark.parametrize("admin", [False, True])
+def test_public_library_only_preserves_viewing_and_chat_but_limits_management(cloud_api, admin):
+    auth = cloud_api.services.auth
+    auth.config = replace(auth.config, public_library_only=True, admin_emails=("admin@example.com",))
+    series_id, video_id = _course(cloud_api)
+    with TestClient(cloud_api.app) as client:
+        identity = _login(cloud_api, client, "admin@example.com" if admin else "viewer@example.com")
+        assert identity["permissions"] == {"canUpload": admin, "canManage": admin, "canConfigure": admin}
+        assert (identity["tenantId"] is not None) == admin
+        listed = client.get("/api/series/list", params={"tenantId": "platform-public"})
+        assert listed.status_code == 200, listed.text
+        assert any(item["seriesId"] == series_id for item in listed.json()["items"])
+        played = client.get("/api/videos/content", params={
+            "tenantId": "platform-public", "videoId": video_id, "variant": "playback",
+        })
+        assert played.status_code == 200, played.text
+        headers = {"X-CSRF-Token": identity["csrfToken"]}
+        created = client.post("/api/series/create", headers=headers, json={
+            "tenantId": "platform-public", "name": "Managed sample",
+        })
+        assert created.status_code == (201 if admin else 403), created.text
+        if not admin:
+            personal = auth.repository.get_owned_tenant(identity["userId"])
+            denied = client.post("/api/series/create", headers=headers, json={
+                "tenantId": personal.id, "name": "Unavailable personal upload",
+            })
+            assert denied.status_code == 403, denied.text
+            uploads = client.get("/api/uploads/list", params={"tenantId": "platform-public"})
+            assert uploads.status_code == 403, uploads.text
+        conversation_id = _conversation(client, identity)
+        sent = client.post("/api/agent/messages/send", params={"conversationId": conversation_id},
+                           headers={**headers, "Idempotency-Key": "public-sample-chat"}, json={
+                               "tenantId": "platform-public", "seriesIds": [series_id], "content": "找课程片段",
+                           })
+        assert sent.status_code == 200, sent.text
+        assert sent.json()["assistantMessage"]["status"] == "COMPLETED"
+        assert len(cloud_api.runtime.calls) == 1
 
 
 @pytest.mark.parametrize("path,params", [

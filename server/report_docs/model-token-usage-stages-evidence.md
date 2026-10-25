@@ -19,7 +19,7 @@ U02 八列 MySQL 历史验收为 **139 passed / 2 skipped**；endpoint 修复九
 
 - [阶段图](model-token-usage-stages.svg)：每个节点包含功能、改动、验收、Agent 指示和责任方。
 - [可编辑场景](model-token-usage-stages.excalidraw)：与 SVG 来自同一场景。
-- [设计](../design/model-token-usage.md)：唯一 schema、写入和聚合合同；图中的 `Ref` 均指向该文件的显式锚点。
+- [设计](../../docs/design/model-token-usage.md)：唯一 schema、写入和聚合合同；图中的 `Ref` 均指向该文件的显式锚点。
 - [开发 handoff](model-usage-handoff-20261008.md)：新 session 的阅读顺序、修改树、工作区基线与执行入口。
 
 本 Agent 本轮负责 handoff 中 Server 持久化/采集/API 和 Web 统计替换，以及阶段证据维护。
@@ -41,12 +41,12 @@ U02 八列 MySQL 历史验收为 **139 passed / 2 skipped**；endpoint 修复九
 
 | 阶段 | 设计引用 | 状态及完成证据 |
 |---|---|---|
-| U01 设计与 check-out | [职责](../design/model-token-usage.md#scope)、[schema](../design/model-token-usage.md#schema) | 设计与树已确认，本轮明确授权 U02–U05 实施。 |
-| U02 通用调用持久化 | [schema](../design/model-token-usage.md#schema)、[SQL 查询](../design/model-token-usage.md#query) | 六文件已实施；此前 SQLite/DDL 通过；2026-10-09 MySQL 8.4.11 独立测试库 139 passed / 2 skipped，真实存储验收通过。 |
-| U03 V2 与 Chat 采集 | [采集](../design/model-token-usage.md#recording) | 本轮99个唯一调用owner/JSON/预算通过：Parse17，chat_retrieval82（77生成+5检索embedding）；七failed已知用量与两unknown保留。429/409/49为各自历史。 |
-| U04 SQL 统计 API | [查询](../design/model-token-usage.md#query)、[公开合同](../design/model-token-usage.md#view) | SQL 聚合与 local/taskType/Token 合同已实施；补齐 HTTP 错误和部分 SDK 用量跨层验收后 41 passed；现有 GET 和五参数保留。 |
-| U05 统计页面 | [页面](../design/model-token-usage.md#view) | 六文件与此前typecheck/42直接测试完成；本轮真实99/known1204853/missing2，input/output/total为null，两视图复用、series筛选和刷新通过，pageErrors/httpErrors空。 |
-| U06 真实全流程验收 | [验收](../design/model-token-usage.md#acceptance) | ✓ 538冻结文件+十补丁范围的统计/系统通路及整chunk播放通过；保留补修前Parse→修复后Media/Chat，99/known1204853/missing2。逐事件时间精度未通过；ROOT并行清理未纳入。 |
+| U01 设计与 check-out | [职责](../../docs/design/model-token-usage.md#scope)、[schema](../../docs/design/model-token-usage.md#schema) | 设计与树已确认，本轮明确授权 U02–U05 实施。 |
+| U02 通用调用持久化 | [schema](../../docs/design/model-token-usage.md#schema)、[SQL 查询](../../docs/design/model-token-usage.md#query) | 六文件已实施；此前 SQLite/DDL 通过；2026-10-09 MySQL 8.4.11 独立测试库 139 passed / 2 skipped，真实存储验收通过。 |
+| U03 V2 与 Chat 采集 | [采集](../../docs/design/model-token-usage.md#recording) | 本轮99个唯一调用owner/JSON/预算通过：Parse17，chat_retrieval82（77生成+5检索embedding）；七failed已知用量与两unknown保留。429/409/49为各自历史。 |
+| U04 SQL 统计 API | [查询](../../docs/design/model-token-usage.md#query)、[公开合同](../../docs/design/model-token-usage.md#view) | SQL 聚合与 local/taskType/Token 合同已实施；补齐 HTTP 错误和部分 SDK 用量跨层验收后 41 passed；现有 GET 和五参数保留。 |
+| U05 统计页面 | [页面](../../docs/design/model-token-usage.md#view) | 六文件与此前typecheck/42直接测试完成；本轮真实99/known1204853/missing2，input/output/total为null，两视图复用、series筛选和刷新通过，pageErrors/httpErrors空。 |
+| U06 真实全流程验收 | [验收](../../docs/design/model-token-usage.md#acceptance) | ✓ 538冻结文件+十补丁范围的统计/系统通路及整chunk播放通过；保留补修前Parse→修复后Media/Chat，99/known1204853/missing2。逐事件时间精度未通过；ROOT并行清理未纳入。 |
 
 依赖：U01 → U02；U02 后 U03 与 U04 可并行；U04 → U05；U03 + U05 → U06。
 U03/U04 共用 `service/parse_usage.py` 和统计测试，分别按 capture/append 与 overview/aggregation 交接。

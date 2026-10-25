@@ -1,0 +1,493 @@
+{
+  "schema_version": 1,
+  "time_unit": "milliseconds",
+  "description": "query_capabilities: Small historical regression suite; reference positives are not exhaustive gold labels. All answers and facts stay outside model input.",
+  "datasets": {
+    "mygo-full": {
+      "series_id": "836fa9f0-2bf4-50fb-9c64-75526fa1dea9",
+      "description": "正式 MyGO 13 集。2026-10-15 已完成 Chunk 解析；2026-10-18 早期 Event 评测尚无本 scope 的 Event 覆盖。",
+      "source_media_included": false,
+      "media_sha256": null
+    },
+    "ep04-review": {
+      "series_id": "bdbf28ae-5404-58e4-8c98-699433499ffc",
+      "description": "独立 EP04 speaker-review 素材，历史 task version=11，24 Chunk、430 Event。",
+      "historical_parse_task_id": "0f681291-4f52-4254-a3be-91c1ee835c3c",
+      "source_media_included": false,
+      "media_sha256": null
+    }
+  },
+  "historical_environments": {
+    "2026-10-15-chat": {
+      "model": "gpt-6-astra",
+      "git_head": "620136ae96d95bcf92f3cfd2ef25d838cdba60b8",
+      "source_sha256": {
+        "engine/design/trd.md": "6d9923b9dc3c7ba628ddf67950a76be8025f843ff646d70ebd4b6aa221ac8c91",
+        "agent/chat/supervisor.py": "0b8b0d5c0f07f17cd320a7feb0ab1f92f89df90ff149920563366dbbe8ae9324",
+        "agent/chat/video_search/context.py": "4a7c0b1a412d74b78f198db900b4be441750ac724c975a9378dff968e0ac0b5e",
+        "agent/chat/video_search/output.py": "5b22dba6dc5414d02fc356cdc06fadc8c36f8c7364da3c2c1fe2754fd4b808b1",
+        "agent/chat/video_search/skills/retrieval/SKILL.md": "3f5f103b5143742b131bc4ad92f2d2c4e72ffb573a4bc57fd0888d14a94234a0",
+        "server/service/agent_chat.py": "e248fe9e6a3f45cfecf8980599618e4fb9110495b507ecb526cf9b3b855c6e80",
+        "server/service/video_retrieval.py": "2e865481c0b095b7903e597a91d768c1c2ebe149fa0bb9d2d7bb951b1ff1ad69",
+        "engine/parsev2/schemas.py": "532ad0fe9f0f4efaca0010947e824d86698a59239d08b92e3cd53cf5376659a2"
+      },
+      "uncommitted_changes": true,
+      "concurrency": "2 workers; observed model concurrency up to 4",
+      "execution_timeout_seconds": 600,
+      "top_k": 3,
+      "max_top_k": 20,
+      "limits_enabled": false
+    },
+    "2026-10-18-event": {
+      "model": "default live service bindings; see per-response model",
+      "git_head": null,
+      "concurrency": "Chinese drift/premise ran concurrently; retrieval calls sequential",
+      "ep04_retrieval_environment": {
+        "captured_at": "2026-10-18T06:38:12.403494+00:00",
+        "series_id": "bdbf28ae-5404-58e4-8c98-699433499ffc",
+        "target_chunk_id": "cd60254c-9e9f-5481-9fed-4e88ad61017d",
+        "chunk_index": "anivag_video_chunks_local_20261010_development",
+        "event_index": "seekino_video_events_development_v1",
+        "retrieval_config": {
+          "channel_top_k": 20,
+          "rrf_k": 60,
+          "lexical_weight": 1.0,
+          "text_weight": 1.0,
+          "vision_weight": 1.0,
+          "candidate_budget": null,
+          "sparse_weight": 0.0,
+          "rerank_enabled": false,
+          "search_default_top_k": 30
+        },
+        "event_contract": {
+          "semantic_encoder": {
+            "provider": "ark",
+            "model": "doubao-embedding-vision-250615",
+            "encoder_revision": "gateway-ark-embedding-v1",
+            "dimensions": 1024,
+            "normalization": "none",
+            "output_contract": "float-vector-v1"
+          },
+          "vision_encoder": {
+            "provider": "ark",
+            "model": "doubao-embedding-vision-250615",
+            "encoder_revision": "gateway-ark-embedding-v1",
+            "dimensions": 1024,
+            "normalization": "none",
+            "output_contract": "float-vector-v1"
+          },
+          "capture": {
+            "max_height": 720,
+            "fps": 1.0,
+            "max_frames": 3,
+            "mime_type": "image/jpeg",
+            "preprocess_revision": "ffmpeg-jpeg-q3-scale-cap-v1",
+            "strategy": "uniform_midpoint_v1",
+            "pooling": "l2-mean-v1"
+          },
+          "description_language": null,
+          "projection_version": "timeline-event-index-v1"
+        },
+        "method": "Sequential in-process calls, same production factories/config, no forced query vector reuse or index writes; per-stage wall time includes service IO."
+      },
+      "limitations": "No same-question Chunk-only end-to-end control; index contents and load not fully pinned."
+    }
+  },
+  "facts": {
+    "meeting-outside": {
+      "dataset": "mygo-full",
+      "episode": 1,
+      "start_ms": 247200,
+      "end_ms": 249200,
+      "quote": "あ、何か落とした？",
+      "speaker": "千早愛音",
+      "historical_chunk_id": "dec87524-ed30-52e2-8b3f-4977fab18552",
+      "provenance": {
+        "retired_path": "engine/design/mygo-chat-eval-20261015/T02.json",
+        "sha256": "dfbfb2c17d134c0a3d13c14314cbc8f20823a73589833e263c71dffb2da7becb"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth."
+    },
+    "meeting-class": {
+      "dataset": "mygo-full",
+      "episode": 1,
+      "start_ms": 305300,
+      "end_ms": 309100,
+      "quote": "高松燈です、よろしく。",
+      "speaker": "高松燈",
+      "historical_chunk_id": "d07e0fe0-ab2f-5e90-ba56-fdfc9518f555",
+      "provenance": {
+        "retired_path": "engine/design/mygo-chat-eval-20261015/T02.json",
+        "sha256": "dfbfb2c17d134c0a3d13c14314cbc8f20823a73589833e263c71dffb2da7becb"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth."
+    },
+    "meeting-lunch": {
+      "dataset": "mygo-full",
+      "episode": 1,
+      "start_ms": 382200,
+      "end_ms": 394500,
+      "quote": null,
+      "speaker": null,
+      "historical_chunk_id": "84d35a13-e2c0-5c31-9e8c-1e9203b60004",
+      "provenance": {
+        "retired_path": "engine/design/mygo-chat-eval-20261015/T02.json",
+        "sha256": "dfbfb2c17d134c0a3d13c14314cbc8f20823a73589833e263c71dffb2da7becb"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth."
+    },
+    "ha-ep02": {
+      "dataset": "mygo-full",
+      "episode": 2,
+      "start_ms": 519700,
+      "end_ms": 520000,
+      "quote": "は？",
+      "speaker": null,
+      "historical_chunk_id": "2de11966-e5e3-58f9-859c-73982a3932e6",
+      "provenance": {
+        "retired_path": "engine/design/mygo-chat-eval-20261015/T07.json",
+        "sha256": "f440b4118dd5c5c1f0cba7855bb47d8afd28b7882b3e9fff5761c0601e204671"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth."
+    },
+    "ha-ep04-missed": {
+      "dataset": "mygo-full",
+      "episode": 4,
+      "start_ms": 1031200,
+      "end_ms": 1031600,
+      "quote": "は？",
+      "speaker": "椎名立希",
+      "historical_chunk_id": "b56f3068-5718-58e8-9952-c544003f7a8e",
+      "provenance": {
+        "retired_path": "engine/design/mygo-chat-eval-20261015/T04.json",
+        "sha256": "aa2d3edb8c4d38a4841e62c977dee4b0ee74a37b3a3fda0682f49a6b3c5185b6"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth."
+    },
+    "high-handed-ep13": {
+      "dataset": "mygo-full",
+      "episode": 13,
+      "start_ms": 54600,
+      "end_ms": 56000,
+      "quote": "いいご身分ですわね。",
+      "speaker": "豊川祥子",
+      "historical_chunk_id": "ad1c7419-c11c-5280-9e2e-89456355bfe7",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/environment-coverage.json",
+        "sha256": "7831a00b75c76dd77943826ff552a0ab77f459d722705b04c0ac9aaa6250c1d9"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth."
+    },
+    "guitar-retort": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 1203200,
+      "end_ms": 1208700,
+      "quote": "ギターはコードに始まり コードに終わるんです。ドラムのあんたには分からないだろうけど。",
+      "speaker": "千早爱音",
+      "historical_chunk_id": "0044de20-6f7c-5d22-925b-d6f369b02cfd",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/ep04-zh-retrieval/event-premise-1.json",
+        "sha256": "d544e3f491f72dc453f12b2575f859a085396cb6a829fd8f06e477da15ce0825"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "396043d3f7c611beb36dcc6c017ee1062fb828007320020c789d8ca40f8af2dc"
+    },
+    "outsider-ep04": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 548000,
+      "end_ms": 549000,
+      "quote": "部外者は黙ってて。",
+      "speaker": "椎名立希",
+      "historical_chunk_id": "cd60254c-9e9f-5481-9fed-4e88ad61017d",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/experiment/ep04-groundtruth.json",
+        "sha256": "21f2ae37de01cf225f6ddbeb0691aa4535b515792446c1be17c0b741778179a3"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "37b02b5240bc807c5e54b39eeb447f075b74a36f0319283140c16239da21766b"
+    },
+    "leave-me-alone-422500": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 422500,
+      "end_ms": 423200,
+      "quote": "関係ありませんわ。",
+      "speaker": "丰川祥子",
+      "historical_chunk_id": "c3bfb1d7-f399-5d94-8b65-6a47a1c5979c",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/experiment/ep04-chinese-grading-notes.json",
+        "sha256": "5314e58be5c1e82ede7e5bcdf1b96bfbcdcf4d5e2c96032b2a65257757e71c88"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "1e6f440f4567ecaaccb45abd14c399f866bca5a9aff49d1b8b6349217b58f604"
+    },
+    "leave-me-alone-424500": {
+      "dataset": "ep04-review",
+      "episode": 4,
+      "start_ms": 424500,
+      "end_ms": 426300,
+      "quote": "もう、私に関わらないで。",
+      "speaker": "丰川祥子",
+      "historical_chunk_id": "c3bfb1d7-f399-5d94-8b65-6a47a1c5979c",
+      "provenance": {
+        "retired_path": "engine/design/event-retrieval-eval-20261018/experiment/ep04-chinese-grading-notes.json",
+        "sha256": "5314e58be5c1e82ede7e5bcdf1b96bfbcdcf4d5e2c96032b2a65257757e71c88"
+      },
+      "verification": "Historical canonical text and report review; not exhaustive human video/audio ground truth.",
+      "historical_event_id": "307580a3ef6d7bbba35a537d452fa0922b5d8de354557ef86425b016a3dbdc5c"
+    }
+  },
+  "cases": [
+    {
+      "id": "chat-T01",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "anon和tomori是怎么认识的？",
+      "reference_facts": [
+        "meeting-outside",
+        "meeting-class",
+        "meeting-lunch"
+      ],
+      "checks": {
+        "min_video_cards": 1
+      },
+      "rubric": [
+        "区分原片直接事实、后续回述与心理解释。",
+        "每项核心主张都有可播放来源；提到午餐回述时应附对应片段。"
+      ]
+    },
+    {
+      "id": "chat-T02",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "你刚才说的认识过程，哪些是原片直接表现出来的，哪些是你的解释？请回查支持结论的具体台词或动作，并给出对应片段。",
+      "reference_facts": [
+        "meeting-outside",
+        "meeting-class",
+        "meeting-lunch"
+      ],
+      "checks": {
+        "min_video_cards": 1,
+        "required_fact_groups": [
+          [
+            "meeting-outside"
+          ],
+          [
+            "meeting-class"
+          ],
+          [
+            "meeting-lunch"
+          ]
+        ]
+      },
+      "rubric": [
+        "在同一会话追问 T01；明确指出哪些是事实、哪些是解释。",
+        "补齐午餐回述并保证独白未被截断。"
+      ],
+      "after": "chat-T01"
+    },
+    {
+      "id": "chat-T03",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "MyGO里面有哪些特别燃的演出场面？推荐3段，说说为什么燃。",
+      "reference_facts": [],
+      "checks": {
+        "min_video_cards": 3
+      },
+      "rubric": [
+        "三段不重叠的演出，有证据支持推荐理由。",
+        "燃度属于偏好评价，不能用固定片段名单判唯一答案。"
+      ]
+    },
+    {
+      "id": "chat-T04",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "爱音有哪些特别搞笑的片段？帮我找3段，保留一点前后文，让我能看懂笑点。",
+      "reference_facts": [],
+      "checks": {
+        "min_video_cards": 3
+      },
+      "rubric": [
+        "三段爱音相关搞笑片段，保留前因和反应，理由有来源。"
+      ]
+    },
+    {
+      "id": "chat-T05",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "如果只能用5个片段回顾MyGO全剧，你认为最值得保留的精华是什么？按剧情顺序排好，说说为什么选它们。",
+      "reference_facts": [],
+      "checks": {
+        "min_video_cards": 5
+      },
+      "rubric": [
+        "五个片段按剧情排序，说明已审阅范围和取舍。",
+        "不能以局部 TopK 或五张卡声称完成全剧覆盖；需人工评审代表性。"
+      ]
+    },
+    {
+      "id": "chat-T06",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "帮我找MyGO里一个角色原本坐着，后来站起来离开的片段。我想看清楚起身前后的连续动作。",
+      "reference_facts": [],
+      "checks": {
+        "min_video_cards": 1
+      },
+      "rubric": [
+        "同一人物、同一场景中的坐下到起身离开，须人工连续看片核验。",
+        "稀疏帧和视觉检索权重不证明动作连续可见。"
+      ]
+    },
+    {
+      "id": "chat-T07",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "MyGO里哪些片段角色们只短促地说了一声“哈？”？不要长句，也不要连续哈哈大笑。告诉我找到的是原声还是字幕里的写法。",
+      "reference_facts": [
+        "ha-ep02",
+        "ha-ep04-missed"
+      ],
+      "checks": {
+        "min_video_cards": 1,
+        "required_fact_groups": [
+          [
+            "ha-ep02"
+          ],
+          [
+            "ha-ep04-missed"
+          ]
+        ]
+      },
+      "rubric": [
+        "区分独立短促发声与长句、叹气、喘气、笑声。",
+        "明确原声转写、字幕的来源，音型需回听。",
+        "两条已知正例用于防回归，不据此计算全剧召回率。"
+      ]
+    },
+    {
+      "id": "chat-T08",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "当前这一幕之前，有哪些相关的交流或事件？先说明当前发生了什么，再找更早的片段解释联系。",
+      "reference_facts": [],
+      "checks": {
+        "min_video_cards": 1,
+        "max_end_ms_by_episode": {
+          "10": 900000
+        }
+      },
+      "rubric": [
+        "根据当前播放上下文寻找此前交流，不能只复述当前场景。",
+        "证据不得越过第 10 集 15:00；人工核对场景理解是否传到检索角色。"
+      ],
+      "playback": {
+        "video_id": "6908be97-82c3-5b17-b2d4-522fdfd4917c",
+        "episode": 10,
+        "position_ms": 900000
+      }
+    },
+    {
+      "id": "chat-T09",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "当前是第10集15:00：爱音出现在爽世的学校门外，两人正沿校外道路移动，爽世在前，爱音在她身后。请找第10集15:00之前，她们之间与当前这一幕相关的交流或事件，先说明当前发生了什么，再用更早的片段解释联系。",
+      "reference_facts": [],
+      "checks": {
+        "min_video_cards": 1,
+        "max_end_ms_by_episode": {
+          "10": 900000
+        }
+      },
+      "rubric": [
+        "与 T08 同一锚点，仅把当前场景写明，不额外提供历史答案。",
+        "解释此前剧情与当前情节的联系，事实和人物动机推断分开。"
+      ],
+      "playback": {
+        "video_id": "6908be97-82c3-5b17-b2d4-522fdfd4917c",
+        "episode": 10,
+        "position_ms": 900000
+      }
+    },
+    {
+      "id": "chat-event-original",
+      "kind": "chat",
+      "dataset": "mygo-full",
+      "query": "真是高高在上的，出于哪一集？",
+      "reference_facts": [
+        "high-handed-ep13"
+      ],
+      "checks": {
+        "min_video_cards": 1,
+        "required_fact_groups": [
+          [
+            "high-handed-ep13"
+          ]
+        ]
+      },
+      "rubric": [
+        "确认原句、说话人及播放区间有来源；不能用回答中出现人物名代替核验。"
+      ]
+    },
+    {
+      "id": "chat-event-jp",
+      "kind": "chat",
+      "dataset": "ep04-review",
+      "query": "「部外者は黙ってて。」这句台词在哪个片段？是谁说的？",
+      "reference_facts": [
+        "outsider-ep04"
+      ],
+      "checks": {
+        "min_video_cards": 1,
+        "required_fact_groups": [
+          [
+            "outsider-ep04"
+          ]
+        ]
+      },
+      "rubric": [
+        "确认原句、说话人及播放区间有来源；不能用回答中出现人物名代替核验。"
+      ]
+    },
+    {
+      "id": "chat-event-drift",
+      "kind": "chat",
+      "dataset": "ep04-review",
+      "query": "我记得有人嫌另一个人多管闲事，差不多说“这又不关你的事，你少掺和”，帮我找那一段，确认是谁说的。",
+      "reference_facts": [
+        "outsider-ep04",
+        "leave-me-alone-422500",
+        "leave-me-alone-424500"
+      ],
+      "checks": {
+        "min_video_cards": 1
+      },
+      "rubric": [
+        "确认原句、说话人及播放区间有来源；不能用回答中出现人物名代替核验。",
+        "允许其他有证据支持的近义场景，人工核对原话差异，不把用户记错的前提写回事实。",
+        "参考场景不是唯一金标；找不到参考项不自动判语义错误。"
+      ]
+    },
+    {
+      "id": "chat-event-premise",
+      "kind": "chat",
+      "dataset": "ep04-review",
+      "query": "我记得有人说“不懂音乐就别来指点”，帮我找这段，是谁说的？原话可能记偏了。",
+      "reference_facts": [
+        "guitar-retort"
+      ],
+      "checks": {
+        "min_video_cards": 1
+      },
+      "rubric": [
+        "确认原句、说话人及播放区间有来源；不能用回答中出现人物名代替核验。",
+        "允许其他有证据支持的近义场景，人工核对原话差异，不把用户记错的前提写回事实。",
+        "参考场景不是唯一金标；找不到参考项不自动判语义错误。"
+      ]
+    }
+  ]
+}

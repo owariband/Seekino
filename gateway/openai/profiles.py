@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-OpenAIProfile = Literal["standard", "deepseek"]
+OpenAIProfile = Literal["standard", "deepseek", "kimi"]
 ReasoningEffort = Literal["none", "low", "high", "max"]
 
 _DEEPSEEK_NON_THINKING_EXTRA_BODY = {"thinking": {"type": "disabled"}}
@@ -25,6 +25,11 @@ def completion_options(
 
     if profile == "standard":
         return {}
+    if profile == "kimi":
+        options: dict[str, object] = {"temperature": 1}
+        if reasoning_effort != "none":
+            options["reasoning_effort"] = reasoning_effort
+        return options
     if profile != "deepseek":
         raise ValueError(f"unsupported OpenAI API profile: {profile}")
     if reasoning_effort == "none":
@@ -38,7 +43,7 @@ def completion_options(
 def uses_legacy_token_parameter(profile: OpenAIProfile) -> bool:
     """Whether this profile expects max_tokens for Chat Completions."""
 
-    if profile not in {"standard", "deepseek"}:
+    if profile not in {"standard", "deepseek", "kimi"}:
         raise ValueError(f"unsupported OpenAI API profile: {profile}")
     return profile == "deepseek"
 

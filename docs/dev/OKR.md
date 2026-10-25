@@ -1,6 +1,22 @@
 Objectives and Key Results
 目标与关键成果法
 
+# 2026-10-24
+反思自己个人AI团队的失职，定下新OKR指标
+time管理：10.26离职，10.27回成都+数据迁移，耽搁一天，10月剩余时间：不到4d
+
+主要任务：
+1. 保证cloud环境下部署完整项目可控user体验seekino全量功能
+2. 提供sandbox，允许agent直接进行plan-召回结果-video/html制作
+3. 解析增加分镜、高亮理解，支持剪辑制作
+
+时间不够，十月底上不了线，并行处理研究
+
+
+
+
+
+
 > 2026-10-24 旧实验退役说明：下文保留当时的观察；声纹、检测、图片出处实验的原始材料已删除，链接转到[结论摘要](design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)。构图／shot-tags 数据仅保存在被 Git 忽略的本地归档中，详见[恢复说明](design-experiment-cleanup.md#本地归档与恢复)。
 
 
@@ -96,7 +112,7 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 
 ### 2. 实时识别的sub-agent开发，接入chat supervisor
 
-状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../../agent/chat/design/实时parse_trd.md)，产品验收按 O0 进行。
+状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../design/realtime-parse-trd.md)，产品验收按 O0 进行。
 
 职责边界：本 Agent 负责实时区间理解 sub-agent、Chat Supervisor 的调用与结果整合，以及这条链路必需的 Server 适配。前端播放交互、全量 Parse / Refine / 索引算法、身份与 Workspace 体系、YouTube 下载和本机笔记生成由对应模块负责；本任务复用其接口，依赖缺口列 TODO。
 

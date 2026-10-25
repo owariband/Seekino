@@ -7,8 +7,8 @@
 ## 1. 阅读顺序、依据与本轮边界
 
 1. 本文中的用户最新约定优先于旧文档、旧测试及现有实现。
-2. 阅读 [Video Parse V2 TRD](../../agent/video_parse_v2/design/trd.md)，重点是 1.3.1、1.4、1.6～1.9。
-3. 阅读 [Engine TRD](../../engine/parsev2/design/trd.md) 第一章及 [现有 Engine Schema](../../engine/parsev2/schemas.py)，明确目标结果合同与实际实现的差距；Harness 不自行定义视频业务结果。
+2. 阅读 [Video Parse V2 TRD](video-parse-harness-trd.md)，重点是 1.3.1、1.4、1.6～1.9。
+3. 阅读 [Engine TRD](video-parse-engine-trd.md) 第一章及 [现有 Engine Schema](../../engine/parsev2/schemas.py)，明确目标结果合同与实际实现的差距；Harness 不自行定义视频业务结果。
 4. 阅读 [Harness README](../../agent/video_parse_v2/README.md) 和实际实现；框架名称与文件布局已整理过，不要重新设计入口命名。
 5. 历史交接文件位于 `/private/tmp/anivag-video-parse-v2-harness-handoff-2026-09-27.md`，仅作背景，不能覆盖本文的新约定。
 6. 按下面的源码导航读取本批实际调用链，再进入第 5 节的修改树；不能只读目标表结构就开始全局替换名称。
@@ -30,14 +30,14 @@
 
 | 资料路径 | 读取用途 | 当前效力与注意事项 |
 | --- | --- | --- |
-| [agent/video_parse_v2/design/trd.md](../../agent/video_parse_v2/design/trd.md) | Harness 主设计：任务/成果表、Prepare、调度、Listener、Refine、PrefixContext 与输入配置 | 编排与存储设计依据；第 2 节的新约定覆盖其尚未同步的字段描述。重点读 1.3.1、1.4、1.6～1.9 |
-| [engine/parsev2/design/trd.md](../../engine/parsev2/design/trd.md) | Engine 结果 Schema、时间/人物/Timeline 不变量，以及解析和 Retrieval Projection 的边界 | 第一章是本次接入需要的领域合同；第二章的检索规划不是当前批次的实现清单 |
+| [docs/design/video-parse-harness-trd.md](video-parse-harness-trd.md) | Harness 主设计：任务/成果表、Prepare、调度、Listener、Refine、PrefixContext 与输入配置 | 编排与存储设计依据；第 2 节的新约定覆盖其尚未同步的字段描述。重点读 1.3.1、1.4、1.6～1.9 |
+| [docs/design/video-parse-engine-trd.md](video-parse-engine-trd.md) | Engine 结果 Schema、时间/人物/Timeline 不变量，以及解析和 Retrieval Projection 的边界 | 第一章是本次接入需要的领域合同；第二章的检索规划不是当前批次的实现清单 |
 | [agent/video_parse_v2/README.md](../../agent/video_parse_v2/README.md) | 当前 Harness 文件布局、入口签名、注入边界、事务/通知语义及占位范围 | 当前框架导航；实际能力仍需对照源码，不等于 DB/模型业务已经完成 |
 | [engine/parsev2/schemas.py](../../engine/parsev2/schemas.py) 与 [tests/engine/parsev2/test_schemas.py](../../tests/engine/parsev2/test_schemas.py) | 已存在的 Engine Pydantic 类型、校验和测试入口 | 当前 `VideoParseResult.persons` 和 Timeline 人物引用已直接使用人名、正式时间为原视频整数秒；结果合同仍需接入实际 Harness/Worker 提交链 |
 | [docs/design/parse_big_graph.png](parse_big_graph.png) 与 [docs/design/ChunkUnderstandingWorkflow.png](ChunkUnderstandingWorkflow.png) | 用户原始总流程图、单 Chunk 并行分支与汇合图 | 帮助理解拓扑；图中文字和固定数字可能早于后续决定，数量/开关/命名以当前合同核对 |
 | [/private/tmp/anivag-video-parse-v2-harness-handoff-2026-09-27.md](/private/tmp/anivag-video-parse-v2-harness-handoff-2026-09-27.md) | 前置讨论、被否定的设计、框架完成范围、历史验证和工作区背景 | 本机临时历史快照，可能消失；仍有更名前路径，以当前 README/磁盘为准，不能作为唯一依赖 |
 | [docs/design/refactor_1.md](refactor_1.md) 与 [engine/README.md](../../engine/README.md) | 理解为什么复用 Server 内部 Consumer，以及 Engine/Server/Gateway 的职责边界 | 主要说明已有 V1 架构；refactor_1 开头已标历史快照，不复制旧路径、旧表结构或旧索引目标作为 V2 方案 |
-| [engine/parsev2/design/oldvsnew_chat.md](../../engine/parsev2/design/oldvsnew_chat.md) | 查 V1 产物、旧 compact、Timeline 与新需求的背景差异 | 2026-09-24 的只读调查；用于理解旧成果转换难点，不代替当前 V2 Schema |
+| [docs/design/oldvsnew_chat.md](oldvsnew_chat.md) | 查 V1 产物、旧 compact、Timeline 与新需求的背景差异 | 2026-09-24 的只读调查；用于理解旧成果转换难点，不代替当前 V2 Schema |
 | [docs/design/parse-v2-harness.md](parse-v2-harness.md) 与 [engine/parsev2/README.md](../../engine/parsev2/README.md) | 补充早期 Harness/Engine 分层讨论，追溯旧设计名词 | 含历史设计或未同步描述，仅作辅助；不能据此恢复旧主线，具体差异见下文 |
 | [.agents/skills/anivag-change-gate/SKILL.md](../../.agents/skills/anivag-change-gate/SKILL.md) 与 [/Users/bytedance/.codex/skills/hypnos-code/SKILL.md](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md) | 实施范围、批次修改树、验证与最小改动要求 | 前者位于项目内但也被 Git 忽略，后者是本机 skill 路径；换环境后按可用 skills 定位，不能假设仅克隆仓库即可获得全部资料 |
 
@@ -606,4 +606,4 @@ Agent Message 字段收敛已按 [Agent API 设计说明](agent-api.md) 在两�
 
 ## 8. 给后续实现模型的开场指令
 
-> 先直接读取 docs/design/refactor_2.md，并按第 1 节资料索引阅读 agent/video_parse_v2/design/trd.md、engine/parsev2/design/trd.md、engine/parsev2/schemas.py 和当前 Harness README；design 文件被 Git 忽略不代表不存在。两份 TRD 分别负责编排/存储与结果 Schema，留意索引中已标注的历史文档和实现差异。按 refactor_2.md 的最新约定解释旧 TRD：episode_order 必须生效；Interval 以最左 chunk_parse_task_id 作锚点、左闭右开，并按计划增加有序 chunk_parse_task_ids；compact 成果放 chunk_parse_content.detail；系统时间用 TIMESTAMP，VO 才转 Unix 毫秒，视频时间用秒。复用现有上传与 Worker 通道，按批次对齐任务/成果模型再接 ParseAgent。先查第 4 节真正未决的合同，再列本批最小修改树和验收；遵守用户已授予的范围，不重复确认已决定的设计。保留现有工作区修改，不全局重命名 Job，不开发本阶段以外的 embedding/index，不重新设计已确定的 Harness 结构。不要把文档中的建议或历史测试结果冒充已完成实现。
+> 先直接读取 docs/design/refactor_2.md，并按第 1 节资料索引阅读 docs/design/video-parse-harness-trd.md、docs/design/video-parse-engine-trd.md、engine/parsev2/schemas.py 和当前 Harness README；design 文件被 Git 忽略不代表不存在。两份 TRD 分别负责编排/存储与结果 Schema，留意索引中已标注的历史文档和实现差异。按 refactor_2.md 的最新约定解释旧 TRD：episode_order 必须生效；Interval 以最左 chunk_parse_task_id 作锚点、左闭右开，并按计划增加有序 chunk_parse_task_ids；compact 成果放 chunk_parse_content.detail；系统时间用 TIMESTAMP，VO 才转 Unix 毫秒，视频时间用秒。复用现有上传与 Worker 通道，按批次对齐任务/成果模型再接 ParseAgent。先查第 4 节真正未决的合同，再列本批最小修改树和验收；遵守用户已授予的范围，不重复确认已决定的设计。保留现有工作区修改，不全局重命名 Job，不开发本阶段以外的 embedding/index，不重新设计已确定的 Harness 结构。不要把文档中的建议或历史测试结果冒充已完成实现。

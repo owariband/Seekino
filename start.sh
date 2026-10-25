@@ -2,27 +2,39 @@
 set -euo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-main_dir=""
+source_branch=main
+if [[ "${1:-}" == --branch ]]; then
+  if [[ -z "${2:-}" || "${2}" == -* ]]; then
+    echo "用法：./start.sh [--branch 分支名] [start|status|stop]" >&2
+    exit 1
+  fi
+  source_branch="$2"
+  shift 2
+fi
+source_dir=""
 worktree_dir=""
 while IFS= read -r -d '' entry; do
   case "${entry}" in
     'worktree '*) worktree_dir="${entry#worktree }" ;;
-    'branch refs/heads/main')
-      if [[ -n "${main_dir}" ]]; then
-        echo "存在多个 main 工作区，无法确定启动来源。" >&2
+    "branch refs/heads/${source_branch}")
+      if [[ -n "${source_dir}" ]]; then
+        echo "存在多个 ${source_branch} 工作区，无法确定启动来源。" >&2
         exit 1
       fi
-      main_dir="${worktree_dir}"
+      source_dir="${worktree_dir}"
       ;;
   esac
 done < <(git -C "${project_dir}" worktree list --porcelain -z)
-if [[ -z "${main_dir}" || ! -f "${main_dir}/start.sh" ]]; then
-  echo "未找到已检出 main 分支的工作区；请先准备 main 工作区。" >&2
+if [[ -z "${source_dir}" || ! -f "${source_dir}/start.sh" ]]; then
+  echo "未找到已检出 ${source_branch} 分支的工作区；请先准备 ${source_branch} 工作区。" >&2
   exit 1
 fi
-if [[ "${project_dir}" != "${main_dir}" ]]; then
-  echo "[main] 使用工作区 ${main_dir}"
-  exec bash "${main_dir}/start.sh" "$@"
+if [[ "${source_branch}" != main ]]; then
+  set -- --branch "${source_branch}" "$@"
+fi
+if [[ "${project_dir}" != "${source_dir}" ]]; then
+  echo "[${source_branch}] 使用工作区 ${source_dir}"
+  exec bash "${source_dir}/start.sh" "$@"
 fi
 cd "${project_dir}"
 

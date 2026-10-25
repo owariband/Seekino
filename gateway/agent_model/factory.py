@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import hashlib
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Lock
@@ -31,7 +30,6 @@ from gateway.agent_model.contracts import (
     AgentLoopModel,
     StructuredToolAgentModel,
     SupervisorAgentModel,
-    AgentModelProfile,
 )
 from gateway.agent_model.deepagents import (
     DeepAgentSessionStore,
@@ -95,10 +93,9 @@ class AgentModelFactory:
         environ: Mapping[str, str] | None = None,
         binding: ModelBinding | None = None,
         codex_executor: ThreadPoolExecutor | None = None,
-        pi_client=None,
+        supervisor_sessions: DeepAgentSessionStore | None = None,
     ) -> None:
         self._config = config
-        self._pi_client = pi_client
         if binding is not None and binding.source != config.source:
             raise ValueError("Agent binding source must match agent_model.source")
         self._binding = binding
@@ -157,7 +154,8 @@ class AgentModelFactory:
         )
         self._close_lock = Lock()
         self._closed = False
-        self._supervisor_sessions = DeepAgentSessionStore()
+        self._supervisor_sessions = supervisor_sessions or DeepAgentSessionStore()
+        self._owns_supervisor_sessions = supervisor_sessions is None
 
     @property
     def provider_name(self) -> str:
@@ -178,7 +176,8 @@ class AgentModelFactory:
             if executor is not None and self._owns_codex_executor:
                 executor.shutdown(wait=False, cancel_futures=True)
         finally:
-            self._supervisor_sessions.close()
+            if self._owns_supervisor_sessions:
+                self._supervisor_sessions.close()
 
     def _controls(self, *, request_timeout_seconds, max_output_tokens, max_input_chars, context_window_policy, mcp):
         if self._closed:
@@ -272,7 +271,7 @@ class AgentModelFactory:
     def build_supervisor(
         self,
         *,
-        harness: Literal["deepagents", "codex", "pi"],
+        harness: Literal["deepagents", "codex"],
         model: str,
         reasoning_effort: AgentReasoningEffort,
         request_timeout_seconds: float,
@@ -291,40 +290,8 @@ class AgentModelFactory:
         )
         if harness == "deepagents":
             return self.build_deep_agent(**options, total_timeout_enabled=total_timeout_enabled)
-        if harness == "pi":
-            from gateway.constants import ARK_OPENAI_BASE_URL
-            from gateway.pi.supervisor import PiSupervisorModel
-            if not isinstance(self._primary, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
-                raise ValueError("Pi Supervisor requires an OpenAI-compatible or Ark API source")
-            if self._fallback is not None:
-                raise ValueError("Pi Supervisor requires one model profile without fallback")
-            if self._pi_client is None:
-                raise ValueError("Pi Supervisor requires the application-owned PiClient")
-            if mcp:
-                raise ValueError("Pi tools must use the host's explicit business tool allowlist")
-            controls = self._controls(
-                request_timeout_seconds=request_timeout_seconds, max_output_tokens=max_output_tokens,
-                max_input_chars=max_input_chars, context_window_policy=context_window_policy, mcp=mcp,
-            )
-            key = self._api_keys[self._config.source]
-            endpoint = self._primary.base_url if isinstance(self._primary, OpenAIModelSourceConfig) else ARK_OPENAI_BASE_URL
-            revision = hashlib.sha256(f"{endpoint}\0{key}\0{model}".encode()).hexdigest()[:24]
-            profile = AgentModelProfile(
-                id=f"configured:{self._config.source}", revision=revision,
-                provider=self.provider_name, model=model, api_key=key, base_url=endpoint,
-                supports_vision_input=self._config.supports_vision_input,
-                max_output_tokens=controls["max_output_tokens"],
-                context_window_tokens=controls["context_window_policy"].context_window_tokens,
-                reasoning_effort=reasoning_effort,
-            )
-            return PiSupervisorModel(
-                client=self._pi_client, profile=profile,
-                request_timeout_seconds=controls["request_timeout_seconds"],
-                max_input_chars=controls["max_input_chars"],
-                total_timeout_enabled=total_timeout_enabled,
-            )
         if harness != "codex":
-            raise ValueError("Supervisor harness must be deepagents, codex or pi")
+            raise ValueError("Supervisor harness must be deepagents or codex")
         if not isinstance(self._primary, CodexModelSourceConfig):
             raise ValueError("Codex Supervisor requires a codex_app_server source")
         controls = self._controls(

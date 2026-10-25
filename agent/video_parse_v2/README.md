@@ -274,6 +274,6 @@ state. `ChunkUnderstandingWorkflow.InvokeUnderstanding` always calls runtime cle
 same fenced `ChunkExecution`; orphan cleanup after process death belongs to the
 Worker reaper.
 
-The task-state contract is [`design/trd.md`](design/trd.md); the shared Canvas
+The task-state contract is [`design/trd.md`](../../docs/design/video-parse-harness-trd.md); the shared Canvas
 contract and implementation evidence are in
-[`../design/utils_context_canvas.md`](../design/utils_context_canvas.md).
+[`../design/utils_context_canvas.md`](../../docs/design/context-canvas-design.md).

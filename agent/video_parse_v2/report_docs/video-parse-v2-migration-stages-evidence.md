@@ -37,7 +37,7 @@
 
 MySQL 保存任务、租约、预算与正式成果，ES 是可重建投影。本阶段不引 Redis，不恢复旧 build / publication 体系。
 
-Ref：[Agent TRD §0.3 / §1.3](../design/trd.md) · [Engine TRD §1.1 / §2.3.11](../../../engine/parsev2/design/trd.md) · [队列与工作区决定](../../../docs/video-parse-v2-handoff.md:19)
+Ref：[Agent TRD §0.3 / §1.3](../../../docs/design/video-parse-harness-trd.md) · [Engine TRD §1.1 / §2.3.11](../../../docs/design/video-parse-engine-trd.md) · [队列与工作区决定](../../../docs/video-parse-v2-handoff.md:19)
 
 <a id="stage-02"></a>
 <a id="c03"></a>
@@ -53,7 +53,7 @@ Ref：[Agent TRD §0.3 / §1.3](../design/trd.md) · [Engine TRD §1.1 / §2.3.1
 
 解析合同保持已确认语义。待确认的是 mapping（nested / 类别字段）、文字 / 视觉编码、具体字面规则及完整候选身份；样本的 NFC 连续子串仍是提案。原声与译文区分、人物与对白同事件、questions 不冒充对白已确定。未决不阻塞独立后端修复。
 
-Ref：[Agent TRD §1.3.1 / §1.4 / §1.9](../design/trd.md) · [Engine TRD §1.2–1.7 / §2.3.10–12](../../../engine/parsev2/design/trd.md) · [ES 子计划 P2](../../../engine/parsev2/design/es-development-plan-review.md:113) · [Chunk 评审样本（提案）](../../../engine/parsev2/design/es-chunk-index-review.md)
+Ref：[Agent TRD §1.3.1 / §1.4 / §1.9](../../../docs/design/video-parse-harness-trd.md) · [Engine TRD §1.2–1.7 / §2.3.10–12](../../../docs/design/video-parse-engine-trd.md) · [ES 子计划 P2](../../../docs/design/es-development-plan-review.md:113) · [Chunk 评审样本（提案）](../../../docs/design/es-chunk-index-review.md)
 
 <a id="stage-03"></a>
 <a id="c02"></a>
@@ -67,7 +67,7 @@ retry 复用任务 ID / 解析版本 / 冻结配置；普通 reparse 新 ID、�
 
 2026-10-02 的 short-window 上传 / HTTP retry 组合场景复现了合法唯一短窗口被旧准备校验拒绝的 409。本批最小修复让 `server/repository/upload.py::_parse_preparation_complete()` 直接消费已有 Engine `plan_intervals()` 的实际 start / count，不修改 Engine 或短窗口合同；直接短窗矩阵及最终同版验证在[本批 checkpoint](#checkpoint-20261002)登记。
 
-Ref：[五表模型](../../../server/model/job.py:219) · [任务入口 / retry / reparse](../../../server/repository/upload.py:252) · [半迁移 gate](../../../server/database.py:170) · [V2用量模型](../../../server/model/parse_usage.py:45) · [Agent TRD §1.3.1 / §1.9.1](../design/trd.md)
+Ref：[五表模型](../../../server/model/job.py:219) · [任务入口 / retry / reparse](../../../server/repository/upload.py:252) · [半迁移 gate](../../../server/database.py:170) · [V2用量模型](../../../server/model/parse_usage.py:45) · [Agent TRD §1.3.1 / §1.9.1](../../../docs/design/video-parse-harness-trd.md)
 
 <a id="stage-04"></a>
 <a id="c05"></a>
@@ -78,7 +78,7 @@ Ref：[五表模型](../../../server/model/job.py:219) · [任务入口 / retry 
 
 90% 基础 COMPLETE 开下一批；短视频仍有唯一短窗；Refine 只提交实际修改字段，scope 原子并集，不按窗序串行。Prefix 独立游标与租约，不作为主完成屏障；启用和关闭路径分别验收。
 
-Ref：[Agent TRD §0.3 / §1.1–1.2 / §1.5–1.8](../design/trd.md) · [Engine TRD §1.6 / §2.3.10](../../../engine/parsev2/design/trd.md) · [六 handler 装配](../../../server/bootstrap.py:478) · [基础提交](../../../server/repository/video_parse.py:501) · [Refine提交](../../../server/repository/video_parse.py:647)
+Ref：[Agent TRD §0.3 / §1.1–1.2 / §1.5–1.8](../../../docs/design/video-parse-harness-trd.md) · [Engine TRD §1.6 / §2.3.10](../../../docs/design/video-parse-engine-trd.md) · [六 handler 装配](../../../server/bootstrap.py:478) · [基础提交](../../../server/repository/video_parse.py:501) · [Refine提交](../../../server/repository/video_parse.py:647)
 
 <a id="stage-05"></a>
 <a id="c09"></a>
@@ -88,7 +88,7 @@ Ref：[Agent TRD §0.3 / §1.1–1.2 / §1.5–1.8](../design/trd.md) · [Engine
 
 正文版本与执行租约版本互不替代；exact identity 须覆盖 parent / media / phase / member / range 等适用字段。模型请求前预留累计预算，恢复不归零；媒体按 execution kind / task / lease 隔离。取消释放不应增加 retry / error。
 
-Ref：[Agent TRD §1.3 / §1.4 / §1.9.6](../design/trd.md) · [DB Queue](../../../server/mq/video_parse_queue.py:69) · [Consumer](../../../server/mq/video_parse_consumer.py:160) · [Runtime预算与媒体](../../../server/service/video_parse.py:185) · [预算事务](../../../server/repository/video_parse.py:949)
+Ref：[Agent TRD §1.3 / §1.4 / §1.9.6](../../../docs/design/video-parse-harness-trd.md) · [DB Queue](../../../server/mq/video_parse_queue.py:69) · [Consumer](../../../server/mq/video_parse_consumer.py:160) · [Runtime预算与媒体](../../../server/service/video_parse.py:185) · [预算事务](../../../server/repository/video_parse.py:949)
 
 <a id="stage-06"></a>
 <a id="c07"></a>
@@ -99,7 +99,7 @@ Ref：[Agent TRD §1.3 / §1.4 / §1.9.6](../design/trd.md) · [DB Queue](../../
 
 逐 Chunk 等全部关联 Refine 提交（INDEXING / INDEXING_FAILED / COMPLETE），不等全部关联窗口 COMPLETE；scope 不是放行凭据。读当前正文，稳定 ES ID = parse_task_id:video_chunk_id，bulk 逐项、当前来源版本、查询可见性都满足才完成。ES 失败只恢复索引。图中双窗口是验收场景，不是本轮实测。
 
-Ref：[Agent TRD：Interval 区间、scope 与索引放行](../design/trd.md:485) · [Engine TRD §2.3.10–11](../../../engine/parsev2/design/trd.md:1086) · [Engine 索引管线](../../../engine/retrieval/index_pipeline.py) · [Server 索引协调器](../../../server/service/video_parse_index_coordinator.py) · [ES旧写保护 / 可见性](../../../server/storage/elasticsearch.py:273) · [ES子计划 P2 / P3](../../../engine/parsev2/design/es-development-plan-review.md:113)
+Ref：[Agent TRD：Interval 区间、scope 与索引放行](../../../docs/design/video-parse-harness-trd.md:485) · [Engine TRD §2.3.10–11](../../../docs/design/video-parse-engine-trd.md:1086) · [Engine 索引管线](../../../engine/retrieval/index_pipeline.py) · [Server 索引协调器](../../../server/service/video_parse_index_coordinator.py) · [ES旧写保护 / 可见性](../../../server/storage/elasticsearch.py:273) · [ES子计划 P2 / P3](../../../docs/design/es-development-plan-review.md:113)
 
 <a id="stage-07a"></a>
 <a id="b01"></a>
@@ -142,7 +142,7 @@ AgentRuntime 已按 execution mode 隔离 V1 transcript 与 V2 lexical tool / pr
 
 基础三路的固定评测集与效果 / 定位 / 延迟 / 成本阈值，以及 rerank 的 scorer、预算、失败策略和可选扩展的本版范围 / 质量门槛仍待用户确认；默认关闭不等于完成或获准延期。
 
-Ref：[ES 子计划 P4–P6](../../../engine/parsev2/design/es-development-plan-review.md:131) · [Engine TRD §2.3.3 / §2.3.11–12](../../../engine/parsev2/design/trd.md) · [正式检索装配](../../../server/bootstrap.py) · [V2 检索与 Engine TODO](../../../server/service/video_retrieval.py) · [任务投影与 action gate](../../../server/repository/job.py) · [业务 CLI](../../../server/cli.py) · [Web 任务观察 / 操作](../../../web/src/features/tasks/TasksPage.tsx) · [ES 评测入口](../../../evals/recall/cli.py)
+Ref：[ES 子计划 P4–P6](../../../docs/design/es-development-plan-review.md:131) · [Engine TRD §2.3.3 / §2.3.11–12](../../../docs/design/video-parse-engine-trd.md) · [正式检索装配](../../../server/bootstrap.py) · [V2 检索与 Engine TODO](../../../server/service/video_retrieval.py) · [任务投影与 action gate](../../../server/repository/job.py) · [业务 CLI](../../../server/cli.py) · [Web 任务观察 / 操作](../../../web/src/features/tasks/TasksPage.tsx) · [ES 评测入口](../../../evals/recall/cli.py)
 
 <a id="stage-08b"></a>
 
@@ -152,7 +152,7 @@ Ref：[ES 子计划 P4–P6](../../../engine/parsev2/design/es-development-plan-
 
 先明确目标环境、数据范围、负责人、切换窗口和恢复方案。适用07B / 08A通过及操作授权是前置；Agent Message breaking contract 还要求调用方兼容和非空历史回填方案，不能对非空库直接执行只支持空表的现有 SQL。未进行实际迁移、ES重建、重启或发布；生产旧链退场与发布证据不能由代码存在推出。
 
-Ref：[ES子计划 P7](../../../engine/parsev2/design/es-development-plan-review.md:159) · [当前环境与未执行记录](../../../docs/video-parse-v2-handoff.md:19) · [迁移草案目录（不是直接执行批准）](../../../docs/migrations/)
+Ref：[ES子计划 P7](../../../docs/design/es-development-plan-review.md:159) · [当前环境与未执行记录](../../../docs/video-parse-v2-handoff.md:19) · [迁移草案目录（不是直接执行批准）](../../../docs/migrations/)
 
 <a id="source-evidence"></a>
 ## 七项缺口：R5 实现与直接证据

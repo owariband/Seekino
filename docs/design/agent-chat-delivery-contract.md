@@ -1,6 +1,6 @@
 # Agent Runtime：Query / Evaluator Loop 与 Chat 工具交付
 
-> **Event 业务工具最终合同（2026-10-17）**：以 [Sub-Chunk / Event TRD](../../server/design/sub-chunk-trd.md) 为唯一实施依据。Event ES 独立提供词法、文本及抽帧视觉向量检索，不新增 Event / Frame SQL 表；完整 Timeline 与既有 Chunk Evidence 保持权威。Query / Evaluator 可直接细搜或限制已召回 Chunk 再搜，不增加意图路由器。下文 2026-09-18 的模型、状态及 SSE 描述保留原记录时点，不作为当前实现状态的证明。
+> **Event 业务工具最终合同（2026-10-17）**：以 [Sub-Chunk / Event TRD](sub-chunk-trd.md) 为唯一实施依据。Event ES 独立提供词法、文本及抽帧视觉向量检索，不新增 Event / Frame SQL 表；完整 Timeline 与既有 Chunk Evidence 保持权威。Query / Evaluator 可直接细搜或限制已召回 Chunk 再搜，不增加意图路由器。下文 2026-09-18 的模型、状态及 SSE 描述保留原记录时点，不作为当前实现状态的证明。
 
 日期：2026-09-18。状态：三 Agent 代码已按用户确认的结构完成本地开发，已通过仿真模型、SQLite、ASGI 与 DOM 回归，并完成真实 DeepSeek Query / Evaluator / Chat + 开发 MySQL / Qdrant 联调；浏览器媒体回放仍需单独验收。Query Agent 与 Evaluator Agent 最多循环 3 轮；事实性结论必须提交非空 `selected_video_ranges`。Evaluator complete 后，存在 approved evidence 时 Chat Agent 首次以 `tool_choice=required` 进入有边界自主循环，并至少调用一次 `submit_video_item({video_chunk_id, claim})`；成功提交后恢复 `auto`。服务端从 Evaluator 已放行的 `selected_video_ranges` 绑定播放范围，完整校验并提交后才交付成功结果。这一实现替代此前强制批量提交视频、默认一次返工和直接交付审核草稿的旧基线。
 

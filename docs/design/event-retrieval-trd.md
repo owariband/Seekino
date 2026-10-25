@@ -1,6 +1,6 @@
 # Event 细粒度检索：当前合同与历史方案
 
-修订：2026-10-17。当前唯一实施依据为 [Seekino Sub-Chunk / Event 检索最终 TRD](../../server/design/sub-chunk-trd.md)。实施记录与运行索引覆盖分别核对，不以设计说明代替运行验收。
+修订：2026-10-17。当前唯一实施依据为 [Seekino Sub-Chunk / Event 检索最终 TRD](sub-chunk-trd.md)。实施记录与运行索引覆盖分别核对，不以设计说明代替运行验收。
 
 最终合同取代本文件早期的 MySQL Event 表、仅词法细搜和 Event 向量另行评测方案：
 
@@ -23,7 +23,7 @@
 
 修订：2026-10-17，v1。状态：已确认的设计方向与实施合同，待实现；本文不表示 Event 表、ES 索引或 Agent 工具已经接通。具体表名与工具名是工作名，实施时沿用项目命名惯例。
 
-本文集中维护 Event 持久化、投影同步和检索工具的跨层合同。[Engine TRD](../../engine/parsev2/design/trd.md) 维护解析与算法边界，[Parse Agent TRD](../../agent/video_parse_v2/design/trd.md) 维护任务、租约和恢复，[Chat 交付合同](agent-chat-delivery-contract.md) 维护业务工具与答案交付。[视觉媒体检索 TRD](visual-retrieval-trd.md) 维护媒体输入；输入模态与检索粒度分别演进。
+本文集中维护 Event 持久化、投影同步和检索工具的跨层合同。[Engine TRD](video-parse-engine-trd.md) 维护解析与算法边界，[Parse Agent TRD](video-parse-harness-trd.md) 维护任务、租约和恢复，[Chat 交付合同](agent-chat-delivery-contract.md) 维护业务工具与答案交付。[视觉媒体检索 TRD](visual-retrieval-trd.md) 维护媒体输入；输入模态与检索粒度分别演进。
 
 ## 1. 问题与本次目标
 

@@ -523,6 +523,7 @@ def build_openai_chat_model(
     supports_vision_input: bool = False,
     fallback_supports_vision_input: bool = False,
 ) -> _AgentChatOpenAI:
+    profile_options = completion_options(api_profile, reasoning_effort)
     model = _AgentChatOpenAI(
         model=model_name,
         provider_name=provider_name,
@@ -542,12 +543,12 @@ def build_openai_chat_model(
             if use_legacy_token_parameter is None
             else use_legacy_token_parameter
         ),
-        temperature=0,
+        temperature=profile_options.pop("temperature", 0),
         max_retries=0,
         timeout=request_timeout_seconds,
         use_responses_api=False,
         streaming=False,
-        **completion_options(api_profile, reasoning_effort),
+        **profile_options,
     )
     model.set_provider_error_types(provider_error_types)
     return model
@@ -598,7 +599,7 @@ class OpenAIStructuredToolAgentModel:
             raise ValueError("configure either fallback_model or fallback_adapter")
         if not provider_name.strip():
             raise ValueError("provider_name must not be empty")
-        if api_profile not in {"standard", "deepseek"}:
+        if api_profile not in {"standard", "deepseek", "kimi"}:
             raise ValueError(f"unsupported OpenAI API profile: {api_profile}")
         if reasoning_effort not in {"none", "low", "high", "max"}:
             raise ValueError("unsupported reasoning_effort")

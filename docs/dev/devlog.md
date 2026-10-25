@@ -22,6 +22,10 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-25：按能力整合 benchmark 并纠正选集口径](#devlog-benchmark-layout-20261025) | 查询覆盖、Chat behavior、历史证据归属 |
+| [2026-10-25：同一 chunk 的 ReAct、Deep Agents 与 Codex 解析实测](#devlog-parse-harness-ab-20261025) | Parse harness 简化、compact 预算、EP04 画外音身份 |
+| [2026-10-25：Deep Agents + Kimi K3.1 Pro 查询能力覆盖回归](#devlog-chat-kimi-mygo-20261025) | 旧 multi-agent 多任务用例；非 Chat behavior 验收 |
+| [2026-10-24：Cloud Chat 去 Pi Host 与 Deep Agents 持久化 Checkpoint](#devlog-cloud-chat-checkpoint-20261024) | C20、harness 职责重复、上下文恢复与部署复杂度 |
 | [2026-10-24：Chat 前置 low / none 实测与 cloud 选型](#devlog-query-hook-chat-model-ab-20261024) | C19、前置模型替代、体验与建设成本 |
 | [2026-10-24：Jev 旧链路与主 Chat 直接处理的真实端到端对照](#devlog-jev-chat-ab-20261024) | C19、意图路由、部署复杂度 |
 | [2026-10-23：Canvas 完整条目读取、可修复反馈与端到端评估](#devlog-canvas-20261023) | B06、C07、C18 |
@@ -88,13 +92,249 @@
 
 </details>
 
+<a id="devlog-benchmark-layout-20261025"></a>
+
+## 2026-10-25：按能力整合 benchmark 并纠正选集口径
+
+### 1. 问题与现状
+
+原 `evals/mygo` 同时放着 13 个旧 multi-agent Chat 任务和 13 个直接检索配置，名称不能表达所测能力。“高高在上／说话无趣”对应的 10 个端到端场景只保存在两份被忽略的本地实验目录；早期路由组件又单独放在 `evals/query_router`。这导致此前选择错误评测集，拿查询覆盖结果回答 Chat 应变能力问题。
+
+### 2. 方案候选
+
+选择按能力划分 [evals/benchmark](../../evals/benchmark/README.md)：`query_capabilities` 查询能力覆盖、`chat_behavior` 对话理解与应变、`retrieval_quality` 检索质量、`intent_routing` 意图路由与改写。模型和 harness 留在运行条件中。没有按 multi-agent／Deep Agents 分目录，也没有新增 `etc` 桶或通用评测框架；延迟、声纹、Parse 等现有专门诊断入口列为相邻评测。
+
+原 MyGO runner 迁到共享 `run.py`，要求显式 `--suite`，校验 fixture 与 live 模式一致。两个旧集合的输入／历史观测按 kind 拆分，保留原 ID 与评分逻辑；新增 Chat behavior 精简基线，携带原始 fixture、协议、评审、来源 SHA 和失败。其当前 cases 使用第二轮明确 MyGO 五人首次登台的冻结题目，第一轮的含糊题仍按当时输入与 `unassessed` 保留。新模型测试继续约定 Kimi `k3.1-pro`。
+
+本轮实际修改树（`R` 为移位并调整引用，`A` 为新增维护入口或从本地产物提升的精简记录，`M` 只修改本次相关内容）：
+
+```text
+AniVAG/
+├── evals/
+│   └── benchmark/
+│       ├── [A] README.md                         ← 分类、运行与维护入口
+│       ├── [R] run.py                            ← 原 mygo/run.py；必须显式选择 suite
+│       ├── query_capabilities/
+│       │   ├── [R] README.md                     ← 原 MyGO 说明；明确查询覆盖口径
+│       │   ├── [R] cases.json                    ← 原混合集的 13 个 Chat 输入
+│       │   ├── [R] baseline.jsonl                ← 对应 13 条旧观测
+│       │   └── [A] kimi-20261025.jsonl            ← 13 条 Kimi 观测、失败与复核
+│       ├── chat_behavior/
+│       │   ├── [A] README.md                     ← 10 个场景逐例验收与运行边界
+│       │   ├── [A] cases.json                    ← 最新正式冻结输入与完整历史
+│       │   └── baselines/
+│       │       ├── [A] jev-vs-direct-20261024.jsonl ← 40 条历史观测、协议与旧版输入
+│       │       └── [A] hook-models-20261024.jsonl   ← 60 条历史观测、协议与新版输入
+│       ├── retrieval_quality/
+│       │   ├── [A] README.md                     ← 独立检索使用与评分边界
+│       │   ├── [A] cases.json                    ← 拆出 13 个直接检索配置
+│       │   └── [A] baseline.jsonl                ← 拆出 23 条历史检索观测
+│       └── intent_routing/                       ← 原 query_router
+│           ├── [R] README.md                     ← 标明组件层级与历史 Codex 边界
+│           ├── [R] cases.json                    ← 原 14 个输入保持不变
+│           ├── [R] openrouter_jev.py             ← 更新模块命令
+│           ├── [R] chat_rewriter.py              ← 更新 import
+│           ├── [R] local_rewriter.py             ← 原样移位
+│           ├── [R] template_rewriter.py          ← 更新 import
+│           └── [R] rewrite_prompt.txt            ← 原样移位
+├── tests/
+│   └── evals/
+│       └── [R] test_benchmark.py                 ← 原测试迁移；保护 suite 与历史版本边界
+├── docs/
+│   ├── [M] README.md                             ← 统一 benchmark 索引
+│   ├── design/
+│   │   └── [M] visual-retrieval-trd.md            ← 更新历史证据链接
+│   └── dev/
+│       ├── [M] devlog.md                         ← 本条与前次误选范围纠正
+│       ├── [M] problems.md                       ← 区分 Chat／检索证据链接
+│       └── [M] design-experiment-cleanup.md       ← 指向新入口，保留旧清理统计
+├── deploy/
+│   └── [M] README.md                             ← 更新路由评测路径
+├── [M] README.md                                 ← 新索引
+└── [M] README.en.md                              ← 新索引
+```
+
+### 3. 方案验证
+
+`.venv/bin/pytest -q tests/evals/test_benchmark.py`：**19 passed**，包含既有来源／多轮／时间范围／输出保护测试，新增显式选集及历史题目版本边界。离线 replay 得到旧 Chat **13/13 完成、12/13 来源通过**，Kimi **11/13、9/13**，直接检索 **19/23、16/23**，均没有模型／API 调用。Jev dry-run 读取 14 个输入，移动后的改写模块通过离线入口导入检查。
+
+逐条迁移审计确认原 26 个输入不变、原 36 条基线行无损拆分；两轮 Chat 的 100 条输入版本、最终回答、实际卡片、耗时和源文件 SHA 对齐；Kimi 的 13 条观测除明确不搬运的庞大 HTTP 原始证据外保持一致。原本地实验目录未删除。更新的 benchmark 本地文件链接均可解析；全仓 `git diff --check` 仍发现此前已有的 `docs/dev/reflection.md` EOF 空行与 `docs/research/2026-10-24-shot.md` 尾空格，本轮未修改这两处，当前任务涉及文件的检查通过。
+
+本轮没有复跑模型，也没有新的语义质量结论。`chat_behavior` 已有可维护输入、协议与历史结果，但旧端到端 runner 依赖历史源码／Codex 会话和临时脚本，尚未迁成当前 Deep Agents + Kimi 可直接复跑的入口；该后续工作不能用无历史单句请求或路由 dry-run 冒充完成。
+
+### 4. 指标对比
+
+按本轮开始前快照区分已有 dirty 工作区：本轮最终涉及 **29 个文件位置：12 个移位、9 个新增、8 个既有文档修改**；其中评测 Python 入口 5 个、测试 1 个、文档 13 个、数据／prompt 10 个，生产代码 0。对照开工快照逐文件执行 `git diff --no-index --numstat`，合计 **+1210 / -467 行**（含数据拆分／归档）；评测 Python 与测试合计 +86 / -21，文档 +280 / -57，数据与 prompt +844 / -389。新文件尚未 staged，原无关 dirty 变更不计入这些数字。拆分前 26 个混合用例／36 条基线，拆分后仍为 13+13／13+23；另提升 10 个对话场景／100 条历史观测及 13 条 Kimi 观测。新增数据是已有实验的精简归档，不是新样本或新实测成绩。
+
+业务收益是用户能直接找到所需对话题、比较时不会默认选错分母；新增维护成本为四份能力说明与独立结果档案。复用现有 runner，没有增加服务依赖、自动 LLM judge、数据 Schema、API、模型配置或前端改动。原 Python CLI/import 路径随迁移更新；历史本地脚本保留当时路径，不承诺原封不动在现代码上复跑。未重启、迁移、commit 或 push，原有无关工作区变更保留。
+
+<a id="devlog-chat-kimi-mygo-20261025"></a>
+
+## 2026-10-25：Deep Agents + Kimi K3.1 Pro 的查询能力覆盖回归
+
+记录范围：后续生成式模型评测改用 Kimi K3.1 Pro。本轮实际选用了原 `evals/mygo` 的 13 个 Chat 用例，各一次、串行，现归入 [query_capabilities](../../evals/benchmark/query_capabilities/README.md)；13 个直接检索配置未重跑。**选集与用户原意不符：这组来自旧 multi-agent 多类型任务，用户要的是“高高在上／说话无趣”对应的 [chat_behavior 10 题](../../evals/benchmark/chat_behavior/README.md)。本轮不能作为后者的验收。** 已完成实际所跑用例的执行或失败记录、返回证据复核和资源清理。**11/13 执行完成、9/13 通过自动结构／已知来源检查；历史为 13/13、12/13。自动通过不是语义准确率。**
+
+### 1. 问题与现状
+
+前一条去 Pi Host 的决策解决职责重复与部署复杂度，尚不能说明历史 Chat 业务质量提高。本轮检查相识追问、推荐、全剧回顾、连续动作、短促台词、播放上下文及记忆偏差台词定位。历史九题使用 `gpt-6-astra`，四条 Event Chat 使用 `gpt-5.6-sol`；历史记录只读，没有重新调用 GPT。
+
+当前正式 MyGO scope 的 EP02 最新任务 `509d458d-5c53-4de8-b4f4-412826402c71` 已是 `INDEXING_FAILED`，生产检索按最新任务规则实际覆盖 **12/13 集**；独立 EP04 scope 可检索。视频文件都可读取。这个前提影响全剧覆盖与 T07 的 EP02 正例，不能算成模型漏召回；EP04 17:11.2–17:11.6 的「は？」在本轮 T04 返回证据中仍然存在，T07 漏掉它具有当前数据依据。
+
+### 2. 方案候选
+
+采用当前生产工具、服务和 Deep Agents 运行路径，通过 FastAPI TestClient 发真实 ASGI HTTP 建会话／发送消息，复用 canonical benchmark 的输入和评分函数；答案、参考事实不送给模型。T01→T02 共用新会话，其他题独立建会话。生成式绑定（Supervisor、Query、视觉、摘要、重排）均指向 `k3.1-pro`，去掉生成式 fallback；既有 Jev 分类、Qwen 改写和 Doubao embedding 保持原配置。业务服务默认配置未切换。
+
+历史比较用于判断现状回归。模型、Prompt、解析内容、部分数据就绪状态和旧运行并发条件不同，本轮没有恢复旧 Pi 做同模型 A/B，也没有用历史 GPT 再跑一轮。结论不能单独归因于 Deep Agents 或 Kimi，亦不代表 Kimi 调优后的上限。
+
+### 3. 方案验证
+
+- Kimi Coding `/models` 与一次红色图片探针确认 `k3.1-pro` 可用；探针报告 150 token，单独保存，不混入正式用量。实际生成调用没有 GPT；证据字段中的历史 GPT 解析标签是旧素材来源。
+- 固定 `reasoning_effort=low`、输出上限 8192；Supervisor 上下文 64000、压缩阈值 48000、保留 24000；`limits_enabled=false`，Query 阶段 480 秒、执行及 Supervisor 总预算 1200 秒。中途没有调参、改 Prompt 或生产逻辑。319 个生产 Python 文件的哈希、模型配置与 fixture 在三批之间一致，最终源码未变化；ES 索引 UUID／文档数按索引名归一后前后一致。
+- 初批 T01、T02 完成后，原先复用的 MySQL／ES 被外部信号关闭，T03 中断、后续未真正执行。保留两题结果和中断用量，再由测试持有依赖生命周期重跑尚未完成部分。该中断不计为 Kimi 质量失败，也没有隐去其成本。
+- T05 在 1200.1 秒以 HTTP 502、`AGENT_MODEL_ERROR`／根因 `ReadTimeout` 结束。T06 检索工具已返回，线程随后阻塞于 SSL socket read，超过总预算仍未返回；约 1323.8 秒时停止自己的测试进程，作为失败保留，后续七题用相同配置继续。T05、T06 未重试。T06 的时间来自外部时间戳观察，不是终态 HTTP 的 `perf_counter` 样本；不得作为精确成功延迟。
+- 11 条完成消息的返回正文与持久化正文一致。因环境中断留下的 T03 和外部停止的 T06 均通过既有取消接口关闭为 FAILED；T05 原本已是 FAILED。本轮拥有的 MySQL、ES、Qwen 进程均已停止，没有迁移、重解析、commit 或 push。
+- `.venv/bin/pytest -q tests/evals/test_mygo_benchmark.py`：14 passed；合并 JSONL 通过 canonical 离线 replay，得到相同的 13／11／9 计数。14 份素材的媒体 Range 请求均返回 206；这仅证明文件可读取，没有完整浏览器播放、连续动作或逐句音频核验。
+- 复核方式为本次 Assistant 对最终回答、真实卡片区间及返回来源文字逐例检查，没有另开模型 judge，也不是独立人工盲审。精简观测、失败与评审现收录于 [query_capabilities/Kimi](../../evals/benchmark/query_capabilities/kimi-20261025.jsonl)。原始运行保存在 [本地实验目录](../../outputs/verification/mygo-kimi-20261025/)，包括 [合并观测](../../outputs/verification/mygo-kimi-20261025/observations.jsonl)、[汇总](../../outputs/verification/mygo-kimi-20261025/summary.json)、[证据复核](../../outputs/verification/mygo-kimi-20261025/reviews.json) 和 [最终审计](../../outputs/verification/mygo-kimi-20261025/final-audit.json)；outputs 属于本地忽略产物。
+
+### 4. 指标对比
+
+耗时单位为秒。历史九题使用客户端耗时，四条 Event Chat 使用服务端耗时；当前使用 ASGI HTTP 客户端计时，T06 单独注明外部停止。各题仅一次，不报告 P95、全库召回率或整体回答准确率。
+
+| 用例 | 历史耗时 | 本轮耗时 | 自动检查 | 返回证据复核 |
+|---|---:|---:|---|---|
+| chat-T01 | 215.6 | 55.2 | 通过 | 两段相识片段；事实与人物心理解释仍混杂。 |
+| chat-T02 | 215.1 | 149.7 | 来源未通过 | 漏课堂自我介绍、午餐回述；初遇另有 0.4 秒严格边界差。 |
+| chat-T03 | 188.7 | 1180.4 | 通过 | 三张演出卡，但正文把实际 EP12 的第三段写成 EP13。 |
+| chat-T04 | 204.4 | 87.7 | 通过 | 三段笑点有来源；正文编号 1、3、2 与卡片顺序不一致。 |
+| chat-T05 | 277.4 | 1200.1 | 执行失败 | 1200 秒后 HTTP 502／ReadTimeout，没有完成五段回顾。 |
+| chat-T06 | 108.6 | 1323.8（外部中止） | 执行失败 | 超过执行预算仍阻塞于 SSL 读取，外部停止；没有最终动作片段。 |
+| chat-T07 | 154.0 | 519.6 | 来源未通过 | 漏可检索的 EP04 正例；EP02 不可检索；声称 11 处却交付 9 卡。 |
+| chat-T08 | 91.2 | 378.6 | 通过 | 前序关系检索更具体，但正文引用暂停点之后的对话。 |
+| chat-T09 | 249.2 | 236.2 | 通过 | 关系链和时间约束基本成立；末卡截在所引台词开始处。 |
+| chat-event-original | 103.4 | 111.5 | 通过 | EP13、祥子、原句与前后语境匹配；译本推测未独立核验。 |
+| chat-event-jp | 226.1 | 38.3 | 通过 | EP04、立希、日文原句与实际播放区间匹配。 |
+| chat-event-drift | 156.1 | 92.1 | 通过 | 找到参考近义场景并给出替代；对“与此无关”的译义有过度归因。 |
+| chat-event-premise | 154.1 | 204.7 | 通过 | 定位到参考台词，但把参考说话人爱音说成爽世。 |
+
+四条 Event Chat 的平均记录耗时为 159.9→111.6 秒，但 premise 的说话人错误、drift 的译义限制仍然存在，不能据此称质量整体提高。九题当前记录耗时中位数为 378.6 秒，历史为 204.4 秒；包含失败及外部中止的统计只反映本次任务记录，不是服务延迟分位数。T03 单题 112 次 Kimi 请求、约 274.5 万已报告累计 token；T05 64 次、约 150.0 万，仍未完成。
+
+正式 13 题记录 **330 次 Kimi 请求，7,806,132 已报告累计 token**（输入 7,645,459、输出 160,673；输入中缓存 5,213,053）。其中 217 次属于 `structured_query`；4 次失败请求缺供应商用量，另有 T06 未终止请求无终态用量，不能当作零。外部环境中断的旧 T03 尝试另耗 8 次 Kimi 请求、181,811 token；不混入正式 13 题，也不删除。未核定实际账单价格，未换算金额。各批共有 562 条已结束调用记录，call_id 全部唯一，GPT 调用数为 0。
+
+需要补充的业务验收与取舍：
+
+1. **收敛与失败成本。**复杂题多次耗尽 Query 阶段；关闭调用次数限制后，时间预算无法防止大量低收益回合。`agent/chat/supervisor.py` 只合并成功 Query 的证据，失败报告不携带已找到的候选，会让主 Agent 重新检索。应评估停止条件、超时的已验证候选交接，以及能够真正终止阻塞 I/O 的执行边界。两次上下文压缩后仍超过应用估算预算的告警一并保留，不能仅凭告警断定根因。
+2. **实际交付一致性。**T03 把 EP12 写为 EP13；T07 声称 11 处却只有 9 卡。`submit_video_item` 按 `video_chunk_id` 覆盖修改，同一 Chunk 中的多个时间段无法分别保留；本轮 EP04 12:09／12:33／12:44 正好暴露这个合同限制。正文数量、集数、区间应和最终卡片核对，单纯检查“有卡”不足。
+3. **播放时间约束。**T08 卡片没有越界，正文却引用 15:03.9、15:05.7、15:55.2 的未来对白来解释 15:00 场景；已从最新 V2 证据核实。时间过滤需要约束当前理解输入和正文推理，而不只约束最终卡片。T09 明确不提前断定后续谈话，表现较好，但末卡结束在所引句开始处。
+4. **身份与不确定性。**premise 的参考说话人是爱音，当前源转写 target speaker 为空，回答仍确定地写成爽世。应保留身份未知，或增加有根据的核验；自动来源覆盖通过不代表人物身份正确。EP02 索引就绪后仍需补全受数据前提影响的回归。
+
+本轮新增的是可复核的失败样例和用量证据，生产架构复杂度没有变化：当轮生产代码改动 0，仅补充两份文档及本地测试产物。去 Pi 的职责简化收益仍由前条实现记录支持；在所选**查询能力覆盖**用例中，Deep Agents + Kimi 存在收敛／超时、交付与时间／身份约束问题。用户指定的 **Chat behavior 10 题仍未在当前体系上复跑**，不能由本轮推断其通过或失败；后续生成式对照继续使用 Kimi。
+
+<a id="devlog-cloud-chat-checkpoint-20261024"></a>
+
+## 2026-10-24：Cloud Chat 去 Pi Host 与 Deep Agents 持久化 Checkpoint
+
+记录范围：Cloud Chat Supervisor 的架构决策、实现与验收。本地 Codex／Claude、Parse 和 Sandbox 不在本条修改范围内。已完成代码实现、离线回归、开发环境真实 Chat 对照和 MySQL 重启恢复；生产迁移与部署验收未执行。真实对照同时暴露耗时与输出时间一致性风险，不写成无差异通过。
+
+### 1. 问题与现状
+
+云端引入 pi 时有明确约束：不能采用一个 Conversation 一个 Codex 进程，不准备在云端维护 Codex 账号；目标单机 4 CPU／8 GB，希望一个 Host 复用多 Conversation；当时 Deep Agents 使用 `InMemorySaver` 且忽略 `session_context`，原生上下文、compact 和跨进程恢复尚未形成可靠合同。引入 pi 因而避免了当时立即自研 SessionManager，并提供了单 Node Host 多会话、tool 历史和 compaction。历史验证仅覆盖 fake API、协议与隔离，H03 容量、RSS、p95、真实模型等待与费用均未验收，见[历史职责拆分](#devlog-history-42)。
+
+后续排查还修正了早期失败归因：任务 `4065a67a-358b-4640-910b-46a04601ed5b` 的 chunk 0 重试耗尽，现存 trace 显示模型输出“自然语言总结＋JSON”，最终不符合 `CanvasCompletion` Schema。这是输出合同与恢复策略问题，不能用来证明 Deep Agents 工具循环存在同类故障。
+
+pi 接入后仍保留 SQL 展示消息和业务终态，同时增加 `runtimeSessions` 的 sessionFile／leaf／digest、pi JSONL 原生上下文、Python↔Node IPC 和确认／回滚。Host 在 JSONL 不可用时仅按 SQL user／assistant 重建，tool call／result 无法原样恢复。由此形成“外部 SessionManager 已存在，但业务仍需维护映射和有损降级”的协调成本。
+
+现在 Deep Agents＋LangGraph 持久化 checkpointer 已提供另一套实现：graph state 按 `thread_id` 保存，原生 messages、tool 结果、compact 后状态及 StateBackend 的 `files` 均可进入 checkpoint。当前单实例不需要独立 Node 故障域或多 API worker 共享 Host，因此 pi 的模型／工具循环、原生上下文、compact 和恢复职责出现重复。这里的“冗余”是当前约束下的职责重复，不是历史上错误引入，也不是已证明 Deep Agents 性能更好。
+
+修改前静态基线：pi 路径包含 1,592 行生产代码和 1,162 行测试代码（不含 lockfile 和设计文档），`PiHostConfig` 有 15 个专属字段；Chat 激活后每个 API worker 额外运行一个 Node Host。净维护成本不能仅按这些删除量计算，因为新接入、测试和迁移仍有成本。
+
+### 2. 方案候选
+
+| 方案 | 收益与适用边界 | 代价与本次选择 |
+|---|---|---|
+| 保留 pi Host | 保留成熟 SessionManager、独立故障域；适合未来多 worker 或独立生命周期成为硬需求 | 保留 Node、IPC、session 映射和 JSONL 运维；当前不选 |
+| Deep Agents＋现成持久化 saver | 复用现有 loop、compact 和 checkpoint；去掉额外 harness 进程，可复用现有 MySQL | **本次选择**；仍需接入、BYOK 边界核对、兼容测试、迁移和运维 |
+| Deep Agents＋自研 ContextStore | 完全掌握 SQL 投影和 compact 合同 | 现成 saver 不满足时才采用，不预先增加一套存储引擎 |
+| Chat 直接使用模型 API | 少一层 SDK | 不适合开放式多轮工具 Chat；Parse 的直接 API 决策不混入本条 |
+
+最终选择 Deep Agents＋`PyMySQLSaver==3.0.0`。`PyMySQLSaver` 的依赖声明接受当前 `langgraph-checkpoint==4.2.0`，源码包含 `task_path` 和 pending-write 恢复；是否存在 DeltaChannel 行为差异必须以实际测试判断，不能把“可安装”记成“已兼容”。
+
+实现采用“本轮内存执行，SQL 消息确认后才以 `Overwrite` 提交完整 checkpoint”的方式。内存 checkpoint 只是本轮临时状态，MySQL 只保存已确认状态；失败、取消和关闭不得删除已确认历史，只有显式删除 Conversation 才删除对应 checkpoint。没有 checkpoint 的旧 Conversation 仍按现有 SQL 展示历史冷启动，历史 pi JSONL 保留但不承诺旧 tool 上下文无损迁移。`runtimeSessions` 继续服务本地 Codex，不顺手清理。
+
+### 3. 方案验证
+
+已完成以下实现与离线验证：
+
+1. 接入 `PyMySQLSaver`、Server 生命周期及现有 SQLAlchemy 连接池；`init-db` 才执行 `setup()`，API 启动不自动迁移。增加[checkpoint Schema](../migrations/20261024_deepagents_checkpointer.sql)，已在开发库初始化，未在生产数据库执行。
+2. 每轮使用独立内存 checkpoint；确认后以 `Overwrite` 写入完整持久状态。专项覆盖确认提交、失败与取消、确认写失败、关闭、显式删除、tool 历史和 compact/offload。checkpoint 与连接专项为 **34 passed／2 skipped**。
+3. Chat、Gateway、Server 和 cloud 相关套件为 **782 passed／4 skipped／10 failed**。这 10 个配置失败在 `79776d0` 原始版本上逐项复现，不属于本次回归。
+4. 全量非 live 测试为 **4,905 passed／107 skipped／1 deselected／12 failed**。除上述 10 项外，另外 `test_imports_do_not_load_v1_in_a_fresh_process[common]` 与 `test_fallback_media_is_checked_against_the_active_context_budget` 也在原始版本复现；因此 12 项均为既有失败，本次没有新增失败。
+
+随后完成开发环境真实验收：
+
+5. 开发库执行 `init-db` 后，真实 MySQL 的 6 个 checkpoint 集成用例全部通过，覆盖 tool 历史、DeltaChannel、compact 摘要事件和 offload 文件恢复。
+6. Codex Supervisor 连续三轮均完成；Deep Agents＋DeepSeek Supervisor 连续三轮均完成，并在第二轮后重启 API。数据库回放恢复 **30 条原生消息，其中 13 条 ToolMessage**，最后一条为重启后的第三轮回答，证明恢复不是只依赖 SQL 展示文本。视频资源按 Range 返回 **206 Partial Content／video/mp4**。
+7. 对照使用同一 MyGO series、同一组三轮问题和新 Conversation。Codex 为 `codex_local/gpt-5.6-sol`，Deep Agents 为 `deepseek_api/deepseek-flash`，检索子任务继续使用 Codex。因此这是产品版本对照，不是同模型纯 harness A/B；原始结果与质量发现见[comparison.json](../../outputs/verification/chat-harness-ab-20261025/comparison.json)。
+
+真实对照发现：Deep Agents 第二轮更快，但第一、第三轮明显更慢；第三轮文案为 18:00–18:18，视频块结束时间却为 18:38.1，存在 20.1 秒结束时间不一致。不能把“正常完成和重启恢复”写成“性能或质量不下降”。
+
+### 4. 指标对比
+
+#### 真实 Chat 对照
+
+| 轮次 | Codex 用时 | Deep Agents 用时 | 倍数（Deep Agents／Codex） | 业务观察 |
+|---|---:|---:|---:|---|
+| 第 1 轮 | 32.914 s | 166.444 s | 5.06× | 均完成；Deep Agents 更冗长，视频范围为 50–60 s，Codex 为 54.6–56.0 s |
+| 第 2 轮 | 16.054 s | 3.564 s | 0.22× | 均正确引用上一轮 speaker、集数和时间，证明多轮上下文有效 |
+| 第 3 轮 | 18.234 s | 75.975 s | 4.17× | Deep Agents 重启后完成连续检索，但出现文案与视频块结束时间不一致 |
+| 合计 | 67.202 s | 245.983 s | 3.66× | 均完成 3/3 轮；不能据此推断普遍时延分布 |
+
+#### 架构、恢复与成本
+
+| 指标 | 修改前 | 修改后当前结果 | 证据状态 |
+|---|---:|---:|---|
+| 额外 Node Host／API worker | 1 | 代码路径已为 0 | 源码与开发 API 确认；生产未重启 |
+| Python↔Node IPC 与 pi-session 映射 | 存在 | 已删除 | 源码确认 |
+| pi_host 专属配置字段 | 15 | 0 | 源码确认；旧配置明确拒绝 |
+| 跨轮上下文主要存储 | SQL＋pi JSONL | MySQL checkpoint | 开发库已验证；生产未迁移 |
+| pi 生产／测试源码 | 1,592／1,162 行 | 共删除 2,754 行 | 静态删除量，不等于净收益 |
+| package／lock 配置 | 1,548 行 | 同步删除 | 主要为 lockfile，不计作认知收益 |
+| 新增 MySQL 接入／迁移／集成测试 | 无 | 57／55／145 行 | 新增运维与验证成本 |
+| 本轮相关文件 | 多一层 pi 架构 | 42 个文件（21 M／16 D／5 A） | 不含并行文档迁移的内容归属 |
+| 离线回归 | 历史 pi Python 520 passed、Node 24 passed | 相关 782 passed；全量 4,905 passed | 既有 12 失败原始版本均复现 |
+| 真实 MySQL 集成 | 未接入 | 6 passed | tool、DeltaChannel、compact、offload 均通过 |
+| 重启后原生上下文 | SQL 降级路径丢失 | 30 条消息／13 条 ToolMessage 可回放 | 开发环境实测 |
+| BYOK | pi 有 profile 通道；Server 未找到实际 `model_profile=` 注入 | 未宣称新增 BYOK；保持当前授权模型边界 | 用户级 BYOK 仍未形成端到端验收 |
+| 完成率、正确性、覆盖度 | 无同条件基线 | 两组均完成 3/3 轮；Deep Agents 第三轮存在时间不一致 | 小样本，不能声称质量不下降 |
+| token、费用、RSS 与存储增长 | 无有效对照 | 未测 | 新增 DB 写入和 retention 成本仍待量化 |
+
+本轮确定的技术结果是：pi 的重复进程与映射被删除，Deep Agents 能正常完成真实多轮 Chat，MySQL 能跨进程恢复原生工具上下文。当前不能给出性能或质量不下降的结论；Deep Agents 的耗时和第三轮时间一致性需要后续处理，生产迁移仍需单独验收。
+
+### 5. Kimi K3.1 Pro 接入复验（2026-10-25）
+
+本次只增加 Chat 的 Kimi Coding Plan 模型适配，不改变 Parse、根目录 `config.yaml`、数据库 Schema 或生产部署。最小直连 `k3.1-pro` 成功，返回 `ok`，烟测为 91 prompt tokens＋46 completion tokens＝137 total tokens；该数值不包含后续 Chat 消耗。现有 `standard` 请求原样探针被 HTTP 400 拒绝，服务端明确返回 `invalid temperature: only 1 is allowed for this model`，因此新增独立 `kimi` profile：使用 `temperature=1`、透传 `reasoning_effort`，保持 `max_completion_tokens`，不影响 DeepSeek 的 `temperature=0` 与 thinking 合同。
+
+Agent 工具循环、结构化检索和配置解析的 6 个定向合同测试全部通过；相关 Gateway 套件为 **356 passed／1 failed**。剩余失败是未修改的根配置选择 `codex_local`，而既有默认配置断言期待 `deepseek_api`，不属于 Kimi 请求适配失败。
+
+真实验收使用同一 MyGO series、同一组三轮问题，Chat `agent` 与 `supervisor` 均配置 `kimi_coding/k3.1-pro`、`reasoning_effort=low`，Conversation 为 `932a3aec-c9cf-4f32-a371-6b75fc84ccab`。真实流量覆盖 Supervisor 工具循环；结构化检索路径由 mock-transport 合同测试覆盖，不把本次结果写成所有子代理路径均已 live 验收。
+
+| 轮次 | Kimi 用时 | 结果 |
+|---|---:|---|
+| 第 1 轮 | 53.044 s | 正确定位第 13 集约 00:54.6–00:56，返回 50–60 s 视频块 |
+| 第 2 轮 | 25.730 s | 正确沿用上一轮台词、speaker、集数和时间 |
+| 第 3 轮 | 29.358 s | API 重启后完成；文案与视频块均为 21:01.7–21:10.7 |
+| 合计 | 108.132 s | 3/3 轮 COMPLETED；小样本不能外推 p95 或普遍性能 |
+
+第二轮后仅重启开发 API（PID 29003→29742），MySQL／Elasticsearch 与数据保持运行。重启后的图状态回放得到 **24 条原生消息、9 条 ToolMessage**，同时包含第一轮时间锚点和第三轮回答；视频 Range 请求返回 **206／video/mp4**、1,024 bytes。第三轮首次 `read_retrieval_evidence` 出现一次 `UNKNOWN_ITEM`，随后通过新检索恢复；三轮 query-hook router 均完成，但未启动的本地 rewriter 均以 `ConnectError` fallback，以上问题未在本次修改。
+
+原始结果见[kimi-results.json](../../outputs/verification/chat-harness-ab-20261025/kimi-results.json)。本次没有测量生产 compact 频率、长任务 Plan 额度消耗、RSS、存储增长或同模型质量对照，不能据此声称质量不下降或性能普遍优于 Codex／DeepSeek。测试启动的本地 API、Web、MySQL、Elasticsearch 已全部停止；未执行生产迁移、生产重启、commit 或 push。
+
 <a id="devlog-canvas-20261023"></a>
 
 ## 2026-10-23：Canvas 完整条目读取、可修复反馈与端到端评估
 
 记录范围：2026-10-22 至 2026-10-23 的工具修订、已有实验及本次成本核算。本文整理既有结果，没有为写文档再发起模型实验，也没有改变生产配置或计费规则。后续实验按日期追加，保留当时的模型、数据、源码和价格口径。
 
-相关设计：[ContextCanvas 设计与历史实施记录](../../agent/design/utils_context_canvas.md)、[工具设计研究](../../docs/research/2026-10-22-canvas-agent-tool-design.md)。历史文档中的 Chat Canvas 和 greedy 打包状态不代表当前实现。
+相关设计：[ContextCanvas 设计与历史实施记录](../design/context-canvas-design.md)、[工具设计研究](../../docs/research/2026-10-22-canvas-agent-tool-design.md)。历史文档中的 Chat Canvas 和 greedy 打包状态不代表当前实现。
 
 ### 1. 问题与现状
 
@@ -129,7 +369,7 @@ Canvas 已在模型消息之外持有完整草稿、引用和只读源证据。�
 
 原编号 **B06、C07、C18**。B06 是早期共用结构化 Canvas 设计，C07 是需盘点的参数修正反馈，C18 是真实调用中 overview 默认、单/批 start/end 双语义及引用恢复造成误用。批读当时已经存在，不能写成新功能。下述历史数据不能替代那一轮的实际交付与测试。
 
-来源：[B06/C07/C18](problems.md)、[通用 Canvas 工具](../../agent/utils/context_canvas_tools.py)、[Canvas 设计](../../agent/design/utils_context_canvas.md)。
+来源：[B06/C07/C18](problems.md)、[通用 Canvas 工具](../../agent/utils/context_canvas_tools.py)、[Canvas 设计](../design/context-canvas-design.md)。
 
 ### 2. 方案候选
 
@@ -456,7 +696,7 @@ B12仍未全面闭环：B0编码前单人准入、Refine归因只读/受限合�
 
 v25 完整重跑与 v24 比较，两个目标均最终正确；实际声纹预填输入没有完整捕获，证明链来自 B0 结果、规则、后续决策与最终事件，不能声称逐字留证了该阶段输入。ASR、Understanding 和参考池重新生成，单次 2/2 不能确定纯提示因果或全片准确率。证据：[v25 报告](../../outputs/verification/ep04-offscreen-rerun-20261022/report.md)。
 
-B12原材料还记录声学工具接入1319 passed；这是代码回归，完整音频工具数值复现、12范围/231窗及失败重跑分别在对应条目，不重复计算为另一套身份评测。参考设计：[声纹TRD](../../agent/video_parse_v2/design/voiceprint-trd.md)。
+B12原材料还记录声学工具接入1319 passed；这是代码回归，完整音频工具数值复现、12范围/231窗及失败重跑分别在对应条目，不重复计算为另一套身份评测。参考设计：[声纹TRD](../design/voiceprint-trd.md)。
 
 ### 4. 指标对比
 
@@ -609,7 +849,7 @@ v21 有 69 次 DNS 与 1 次 timeout，只有 1/24 Understanding 完成。v22 �
 
 **TRD中的宿主实现与离线交付：**
 
-来源：[video-summarize-trd.md](../video-summarize-trd.md)，无明确文档日期；迁移文件名 `20261021_video_metadata.sql` 不作为实施日期。目标在全部 Refine 提交后生成官方标题、事实简介、真实集数及封面；源码和离线测试已交付，TRD 明确未迁移、未重启、未发真实摘要、未跑真实 MySQL 并发，归档不把这些状态改成已部署。
+来源：[video-summarize-trd.md](../design/video-summarize-trd.md)，无明确文档日期；迁移文件名 `20261021_video_metadata.sql` 不作为实施日期。目标在全部 Refine 提交后生成官方标题、事实简介、真实集数及封面；源码和离线测试已交付，TRD 明确未迁移、未重启、未发真实摘要、未跑真实 MySQL 并发，归档不把这些状态改成已部署。
 
 Summarize 独立于 Chat，与 Index 并行、不等待 Prefix，也不阻塞父 Parse COMPLETE。历史视频不会自动全量补跑。
 
@@ -787,7 +1027,7 @@ EP01/EP02 分别 425/372 events，共 797/797 期望事件匹配，缺失为 0�
 
 ### 1. 问题与现状
 
-同一上下文里“找台词”和“评价助手回答”容易被误判，需要三分类 respond／retrieve／mixed；分类器与 query rewrite 又是不同任务。Jev 只输出类别与分数，不能替代改写器。10/20 的早期离线路由/改写候选实验独立运行，当时未接入 Chat Supervisor，也没有执行 state 内的业务工具。[完整实验与脚本入口](../../evals/query_router/README.md)
+同一上下文里“找台词”和“评价助手回答”容易被误判，需要三分类 respond／retrieve／mixed；分类器与 query rewrite 又是不同任务。Jev 只输出类别与分数，不能替代改写器。10/20 的早期离线路由/改写候选实验独立运行，当时未接入 Chat Supervisor，也没有执行 state 内的业务工具。[完整实验与脚本入口](../../evals/benchmark/intent_routing/README.md)
 
 **同主题的接入验证：**
 
@@ -886,7 +1126,7 @@ Refine 需要为指定对白完成声纹审查，但旧流程可能在缺少必�
 
 ### 1. 问题与现状
 
-需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../../engine/design/shot-tagging-experiment-brief.md)、[字段 schema](../../engine/design/shot-composition-schema.md)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
+需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../design/shot-tagging-experiment-brief.md)、[字段 schema](../design/shot-composition-schema.md)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
 
 ### 2. 方案候选
 
@@ -1126,7 +1366,7 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 1. 问题与现状
 
-原正式 13 集 scope 有 312 chunks，却没有 Event published receipts；另一个 EP04 实验任务的 430 Events 不能代替该 scope 的索引。自然台词 query 先报 Event not ready，再回退 chunk；因此先判断实际数据范围和 readiness，不能把尚无索引当成检索模型失败。[原 scope 实验](../../evals/mygo/README.md#历史结论event)
+原正式 13 集 scope 有 312 chunks，却没有 Event published receipts；另一个 EP04 实验任务的 430 Events 不能代替该 scope 的索引。自然台词 query 先报 Event not ready，再回退 chunk；因此先判断实际数据范围和 readiness，不能把尚无索引当成检索模型失败。[原 scope 实验](../../evals/benchmark/query_capabilities/README.md#历史结论event)
 
 ### 2. 方案候选
 
@@ -1136,7 +1376,7 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 3. 方案验证
 
-独立 EP04 v11 有 24 chunks／430 Events，日语「部外者は黙ってて。」Event 首位为立希 548–549 秒、播放 540–553 秒。两条自然中文 Chat 均无需 chunk fallback；其中目标 Event 初次 rank 22 不在首屏，改 query 后 rank 11 才曝光。完整召回集合不等于模型实际已读集合。[EP04 日语](../../evals/mygo/README.md#历史结论event)、[EP04 中文](../../evals/mygo/README.md#历史结论event)
+独立 EP04 v11 有 24 chunks／430 Events，日语「部外者は黙ってて。」Event 首位为立希 548–549 秒、播放 540–553 秒。两条自然中文 Chat 均无需 chunk fallback；其中目标 Event 初次 rank 22 不在首屏，改 query 后 rank 11 才曝光。完整召回集合不等于模型实际已读集合。[EP04 日语](../../evals/benchmark/query_capabilities/README.md#历史结论event)、[EP04 中文](../../evals/benchmark/query_capabilities/README.md#历史结论event)
 
 随后正式 13 集回填 312/312 chunks、7,103/7,103 Events；验证 content id／version／SHA 未变，16:17 完成、16:19 核验，INDEX retry errors=0。图像 query 的原图同源首位 EP01 9:02.3–9:04.3、cos 0.9294221；只写构图则可能命中 EP13 类似大／小主体，宽泛描述还可命中 ED。文字候选池 20 与图片 40 不同，top_k 又是父 chunk 数，不能直接做公平模态优劣比较。[构图研究归档摘要](design-experiment-cleanup.md#构图模型与图库)
 
@@ -1282,7 +1522,7 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 1. 问题与现状
 
-10/17–10/18 的 EP04 多轮实验将声纹准备、Refine 和 Index 串起来，暴露出重启、参考库变更引发的 generation refresh、混合 ASR 时间段和静态可见人物误归名。下面记录历史 v4–v11，不把当时方案当成现行生产结论；较新的 offscreen／短句状态见 [voiceprint TRD](../../agent/video_parse_v2/design/voiceprint-trd.md)，后续验证由对应日期另记。
+10/17–10/18 的 EP04 多轮实验将声纹准备、Refine 和 Index 串起来，暴露出重启、参考库变更引发的 generation refresh、混合 ASR 时间段和静态可见人物误归名。下面记录历史 v4–v11，不把当时方案当成现行生产结论；较新的 offscreen／短句状态见 [voiceprint TRD](../design/voiceprint-trd.md)，后续验证由对应日期另记。
 
 ### 2. 方案候选
 
@@ -1477,7 +1717,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 1. 问题与现状
 
-13 集 ready 的 MyGO scope 上，9 次请求、8 个 conversation 均技术完成，但返回 COMPLETED 不等于语义任务完成。任务覆盖人物关系、精彩／搞笑片段、全剧归纳、动作、短台词和当前播放位置。T01 存在无充分证据的心理解释及午餐卡遗漏，T02 追问才补；T07 短台词检索漏掉此前 T04 已出现的 EP04 17:11.2–17:11.6 立希「は？」。[总报告](../../evals/mygo/README.md#历史结论chat)、[历史回答与基线](../../evals/mygo/baseline.jsonl)
+13 集 ready 的 MyGO scope 上，9 次请求、8 个 conversation 均技术完成，但返回 COMPLETED 不等于语义任务完成。任务覆盖人物关系、精彩／搞笑片段、全剧归纳、动作、短台词和当前播放位置。T01 存在无充分证据的心理解释及午餐卡遗漏，T02 追问才补；T07 短台词检索漏掉此前 T04 已出现的 EP04 17:11.2–17:11.6 立希「は？」。[总报告](../../evals/benchmark/query_capabilities/README.md#历史结论chat)、[历史回答与基线](../../evals/benchmark/query_capabilities/baseline.jsonl)
 
 ### 2. 方案候选
 
@@ -1487,7 +1727,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 3. 方案验证
 
-使用 gpt-6-astra，两个 worker 的任务并发，峰值模型并行 4；因此不是隔离资源的性能基准。原实验逐条保存回复、tool trace、usage 和源数据索引；2026-10-24 已将问题、历史回答、用量及关键诊断收敛为 benchmark，旧 deep trace 已退役。本次归档没有重跑或全量重解析。[运行汇总](../../evals/mygo/baseline.jsonl)、[诊断摘要](../../evals/mygo/baseline.jsonl)、[归档范围](../../evals/mygo/README.md#归档与清理边界)
+使用 gpt-6-astra，两个 worker 的任务并发，峰值模型并行 4；因此不是隔离资源的性能基准。原实验逐条保存回复、tool trace、usage 和源数据索引；2026-10-24 已将问题、历史回答、用量及关键诊断收敛为 benchmark，旧 deep trace 已退役。本次归档没有重跑或全量重解析。[运行汇总](../../evals/benchmark/query_capabilities/baseline.jsonl)、[诊断摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[归档范围](../../evals/benchmark/query_capabilities/README.md#归档与清理边界)
 
 ### 4. 指标对比
 
@@ -1581,7 +1821,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 原编号 **B10、B11**。计划停服会消耗业务失败预算，父任务阶段收尾还可能被全局视频槽占用；阶段 deadline 后，等待取消不代表底层线程/SDK/远端请求已停止，租约清空后重试可能与旧调用重叠。B10/B11 在原文仍待完整修复，不能因手动恢复部分任务或晚到结果被拒绝而称生命周期已闭环。
 
-来源：[B10/B11](problems.md)、[ExecutionCalls](../../server/utils/execution.py)、[Consumer](../../server/mq/video_parse_consumer.py)、[Queue](../../server/mq/video_parse_queue.py)、[实时解析候选设计](../../agent/chat/design/实时parse_trd.md)。
+来源：[B10/B11](problems.md)、[ExecutionCalls](../../server/utils/execution.py)、[Consumer](../../server/mq/video_parse_consumer.py)、[Queue](../../server/mq/video_parse_queue.py)、[实时解析候选设计](../design/realtime-parse-trd.md)。
 
 ### 2. 方案候选
 
@@ -1605,7 +1845,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 1. 问题与现状
 
-10/13–10/18 的设计讨论逐步区分“同源”“同一实体”“特征相似”“事件解释”“声音事件”。同样输入一张图片，找原片与找类似构图的成功标准不同；“首次”“全部”“后来”又涉及范围和故事／播放顺序。TopK 的局部合理候选不能自动支持整集、全剧或因果解释。[检索 TRD](../../engine/design/multimodel-retrieve-trd.md)、[多模态研究（10/17 初稿、10/18 更新）](../../engine/design/多模态理解解析研究.md)
+10/13–10/18 的设计讨论逐步区分“同源”“同一实体”“特征相似”“事件解释”“声音事件”。同样输入一张图片，找原片与找类似构图的成功标准不同；“首次”“全部”“后来”又涉及范围和故事／播放顺序。TopK 的局部合理候选不能自动支持整集、全剧或因果解释。[检索 TRD](../design/multimodel-retrieve-trd.md)、[多模态研究（10/17 初稿、10/18 更新）](../design/多模态理解解析研究.md)
 
 ### 2. 方案候选
 
@@ -1653,7 +1893,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 原编号 **C08、C09、C10、C11**。C08 是业务图继承 Supervisor 的 InMemorySaver 引发序列化失败，已修；C11 是旧 API 进程未加载新配置，重载后复测通过。C09 的真实 SDK 暴露 default general-purpose task 与假模型预期不同，尚未定位；C10 的实时理解 partial 来自三个相邻失败 Chunk，主 Parse 已失败，根因未逐个追完。四者不可统一写作“Chat 工具坏了”。
 
-来源：[C08–C11](problems.md)、[Chat Runtime](../../agent/chat/video_search/runtime.py)、[实时 Parse TRD](../../agent/chat/design/实时parse_trd.md)。
+来源：[C08–C11](problems.md)、[Chat Runtime](../../agent/chat/video_search/runtime.py)、[实时 Parse TRD](../design/realtime-parse-trd.md)。
 
 ### 2. 方案候选
 
@@ -1703,7 +1943,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-来源：[身份TRD](../../server/design/user-tenant-trd.md)、[身份交接](../../server/report_docs/user-tenant-handoff-20261010.md)、[Series共享TRD](../../server/design/series-sharing-trd.md)、[Local/Cloud设计](../../server/design/local-cloud-trd.md)。身份阶段分隔离MySQL/Redis、模拟浏览器与真实HTTPS/OTP流程验证；本机共享迁移不等于手机cloud数据库已迁移。
+来源：[身份TRD](../design/user-tenant-trd.md)、[身份交接](../../server/report_docs/user-tenant-handoff-20261010.md)、[Series共享TRD](../design/series-sharing-trd.md)、[Local/Cloud设计](../design/local-cloud-trd.md)。身份阶段分隔离MySQL/Redis、模拟浏览器与真实HTTPS/OTP流程验证；本机共享迁移不等于手机cloud数据库已迁移。
 
 **材料冲突：**Local/Cloud 10/21仍写“普通用户public/private尚未实现”，Sharing明确记录10/19 phase1本机后前端及开发库迁移完成、独立phone/cloud库未迁移。分别保留代码/本机与cloud环境状态；不能据旧状态认定功能全无，也不能认定所有部署均已支持。
 
@@ -1727,7 +1967,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-[本地Bridge TRD](../../gateway/bridge/design/codex-bridge-trd.md)、[旧阶段表](../../gateway/bridge/report_docs/agent-bridge-stages.md)、[Pi Host TRD](../../gateway/pi/design/pi-host-trd.md)对读。旧P01“未开始”是原规划，10/21本地文档已核对接线文件存在；存在不等于完整Bridge或真实迁移验收。Pi通过真实Python→Node→本机fake API验证，不调用外部模型。
+[本地Bridge TRD](../design/codex-bridge-trd.md)、[旧阶段表](../../gateway/bridge/report_docs/agent-bridge-stages.md)、[Pi Host TRD](../design/pi-host-trd.md)对读。旧P01“未开始”是原规划，10/21本地文档已核对接线文件存在；存在不等于完整Bridge或真实迁移验收。Pi通过真实Python→Node→本机fake API验证，不调用外部模型。
 
 ### 4. 指标对比
 
@@ -1798,7 +2038,7 @@ Gateway 统一调用记录与上下文，Server 按稳定 call_id 入账和业�
 
 ### 3. 方案验证
 
-[Server 用量 TRD](../../server/design/model-token-usage.md)、[阶段证据](../../server/report_docs/model-token-usage-stages-evidence.md)、[最新交接](../../server/report_docs/model-usage-handoff-20261008.md)、[Gateway TRD](../../gateway/design/trd.md)和[追踪验证](../../gateway/report_docs/model-observability-stages-evidence.md)分别记录账本与追踪。读取的是历史验收；部分 `/private/tmp` 原始证据已失效，不能直接承诺原命令可复跑。
+[Server 用量 TRD](../design/model-token-usage.md)、[阶段证据](../../server/report_docs/model-token-usage-stages-evidence.md)、[最新交接](../../server/report_docs/model-usage-handoff-20261008.md)、[Gateway TRD](../design/gateway-model-observability-trd.md)和[追踪验证](../../gateway/report_docs/model-observability-stages-evidence.md)分别记录账本与追踪。读取的是历史验收；部分 `/private/tmp` 原始证据已失效，不能直接承诺原命令可复跑。
 
 ### 4. 指标对比
 
@@ -1995,7 +2235,7 @@ Engine 显式拥有 transcribe→understand→embed→persist 算法顺序；Ser
 
 ### 3. 方案验证
 
-[职责重构](../design/refactor_1.md)、[V2 存储批次](../design/refactor_2.md)、[ES 历史提案](../design/refactor_3_es_qdrant.md)、[V2 阶段证据](../../agent/video_parse_v2/report_docs/video-parse-v2-migration-stages-evidence.md)、[解析任务 TRD](../../agent/video_parse_v2/design/trd.md)、[Engine TRD](../../engine/parsev2/design/trd.md)、[Sub-Chunk 最终合同](../../server/design/sub-chunk-trd.md)按日期对读。验证分代码/替身、隔离真实存储、真实模型产品闭环；不同日期和重叠测试集不累加。
+[职责重构](../design/refactor_1.md)、[V2 存储批次](../design/refactor_2.md)、[ES 历史提案](../design/refactor_3_es_qdrant.md)、[V2 阶段证据](../../agent/video_parse_v2/report_docs/video-parse-v2-migration-stages-evidence.md)、[解析任务 TRD](../design/video-parse-harness-trd.md)、[Engine TRD](../design/video-parse-engine-trd.md)、[Sub-Chunk 最终合同](../design/sub-chunk-trd.md)按日期对读。验证分代码/替身、隔离真实存储、真实模型产品闭环；不同日期和重叠测试集不累加。
 
 阶段表的 08A 未签收是当时状态；后续实测已在本 devlog 的 ASR、Event V3 和解析实验中单列，不能反向改写旧阶段结论，也不能凭较新代码存在宣布所有迁移门槛关闭。
 
@@ -2150,7 +2390,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 
 ### 1. 问题与现状
 
-来源：[reflection_1.md](reflection_1.md)。复盘指出产品原目标是本地素材解析并由 Codex 辅助剪辑，过程中范围扩大、上线时间缺少约束、外部反馈和文档责任不足。这里归档为治理问题，不把个人自责当技术结论。相关 [角色 NPC TRD](../../training/character_NPC/anon_trd.md) 是 0 字节空文件，只能确认缺少需求/方案/验收记录，不能推断项目已训练、成功或失败。
+来源：[reflection_1.md](reflection_1.md)。复盘指出产品原目标是本地素材解析并由 Codex 辅助剪辑，过程中范围扩大、上线时间缺少约束、外部反馈和文档责任不足。这里归档为治理问题，不把个人自责当技术结论。相关 [角色 NPC TRD](../design/character-npc-trd.md) 是 0 字节空文件，只能确认缺少需求/方案/验收记录，不能推断项目已训练、成功或失败。
 
 ### 2. 方案候选
 
@@ -2204,7 +2444,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 
 ### 3. 方案验证
 
-[实时Parse TRD](../../agent/chat/design/实时parse_trd.md)记录Supervisor的understand_current_video接线，冻结毫秒位置，校验可访问范围；Graph/数据库宿主51 passed。综合1027项首跑1023 passed / 1 skipped / 3 failed，修复既有Bootstrap替身后受影响组37 passed，原集合最终1026项通过/1项跳过，重叠不重复计数。
+[实时Parse TRD](../design/realtime-parse-trd.md)记录Supervisor的understand_current_video接线，冻结毫秒位置，校验可访问范围；Graph/数据库宿主51 passed。综合1027项首跑1023 passed / 1 skipped / 3 failed，修复既有Bootstrap替身后受影响组37 passed，原集合最终1026项通过/1项跳过，重叠不重复计数。
 
 ### 4. 指标对比
 
@@ -2499,3 +2739,106 @@ none 的 Gateway 直接记录 **2,165,120 token**，另有 2 个 Chat、2 个 Qu
 | 最低实际账单 | 暂不能判断；总 token、缓存、不同模型计价和失败用量不能合并成未经验证的美元节省额 |
 
 Cloud 保留 Jev 的决定不表示它已全面解决任务：8B 抽错目标、取证不收敛、时间/片段描述和证据边界问题仍存在，未在本次文档补记中修改。后续若调整默认，仍应围绕这些具体失败扩大独立样本，再评估质量与成本；不能仅以“前置 20/20”或一次总 token 较少作为发布验收。
+
+<a id="devlog-parse-harness-ab-20261025"></a>
+
+## 2026-10-25：同一 chunk 的 ReAct、Deep Agents 与 Codex 解析实测
+
+### 问题与现状
+
+目标是判断 Parse 是否能去掉 Deep Agents 建图层、保留普通 ReAct 和简单 compact，从而减少维护对象。用户观察到移除 harness 后解析变差，本轮构造可复跑实验并实际调用模型，没有修改生产解析路径。
+
+当前理解阶段向 Gateway 传入 `tool_harness="deepagents"`，但 native Codex 分支直接进入 Codex adapter；Deep Agents 与 Codex 是两条替代路径，不能把它们理解为前后叠加的两层。Parse 的 Deep Agents profile 已关闭默认摘要 middleware、通用 subagent 和文件工具；实际模型可见工具只有 Canvas 读、写、完成。源码依据：[model_factory.py](../../gateway/model_factory.py)、[deepagents_multimodal.py](../../gateway/agent_model/deepagents_multimodal.py)。
+
+质量目标沿用 MyGO EP04 的已知问题：约 47–49 秒「祥ちゃんも悪くない／也不是小祥的错」，用户已经确认说话人是**长崎爽世**。不能用“有合法 JSON”“对白数量多”或“所有 speaker 都非空”代替这个身份目标，历史依据见[原记录](#devlog-history-29)及 [problems.md](problems.md)。
+
+### 方案候选
+
+| 路径 | 本轮实现 | 保留的职责与边界 |
+|---|---|---|
+| LangChain ReAct + Kimi | 将 `create_deep_agent` 替换为 `langchain.agents.create_agent`，去掉 StateBackend 和 FilesystemMiddleware | 保留现有 provider adapter、超时/取消、错误恢复、完成校验和 ContextWindowController；不是新写一套 compact，也尚未删除 Python 的 Deep Agents import |
+| 当前 Parse Deep Agents + Kimi | 使用现有 Parse profile 和 graph | 作为同模型、同业务合同的基线；不启用生产本来就未使用的额外能力 |
+| Codex + Kimi | 临时 custom provider，通过原生 Responses 调用 `k3.1-pro` | 使用当前 Codex 工具和完成合同；仅进程级配置，不修改用户全局 Codex 设置 |
+| Codex + 原有 GPT 配置 | 原有 `models.vision = codex_local/gpt-6-luna/high` | 按用户要求，在 Codex + Kimi 完成合同失败后保留实际可运行的产品基线；不同模型/effort/协议，不能据此证明纯 harness 因果 |
+
+Kimi 使用 `k3.1-pro / low`，API 两组均为 `temperature=1`、每请求 `max_tokens=8192`、600 秒总调用期限、无 fallback。当前 vision factory 拒绝非 none 的 reasoning_effort，因此实验在相同 transport 包装中显式注入 `low`，没有改生产 factory。Kimi 官方文档列出视觉输入、最长 1M 上下文和 Codex Responses 接入：[模型能力](https://www.kimi.com/code/docs/kimi-code/models.html)、[Codex 接入](https://www.kimi.com/code/docs/third-party-tools/codex)。这说明可以尝试该组合，不等于本项目完成合同已经兼容。
+
+本轮结论支持继续收敛 Parse 建图层，但未授权或实施生产替换。Deep Agents 的部署工时、内存、包体节省没有实测；Cloud Chat 仍使用它，不能把 Parse 替换直接记作全仓依赖退役。
+
+### 方案验证
+
+冻结 EP04 chunk 0 的 `[0, 60000)` ms，使用同一份 180 张图片（3 fps、最高 720p）、19 条 ASR、31 条 OCR 和背景。模型收到图片与文本证据，没有收到原始音频。复用当前 Canvas、业务 prompt、读写工具、Pydantic Schema 和时间范围校验；每次新建内存 Canvas/native session，不重新跑 ASR/OCR，不经过 Refine、Prefix、索引或数据库提交。
+
+ReAct、Deep Agents 和 GPT Codex 各跑两次，串行执行；API 两组第二轮反转顺序。另有 Codex + Kimi 默认合同 1 次、移除提前 JSON Schema 的诊断 2 次，以及原 128k 预算的人工中止诊断 1 次。预检、离线 fake transport 和中止诊断不混入完成率主表。版本为 LangChain 1.4.4、Deep Agents 0.7.23、LangGraph 1.2.11、openai-codex 0.156.1。
+
+九次正式/原生诊断的 prompt、业务工具定义、图片哈希、证据、runner 和源码快照一致。进一步在真实 180 图输入上截取 API 两组首轮请求，除 timeout 外，完整请求字典完全相同，包括图片、系统/用户提示、工具 Schema、模型和采样参数，SHA-256 均为 `4fc7f9f6eb769c2e709371a7d63d047ee26d56df15e0f5ea031fd9b266eac672`。证据：[offline-wire-equality.json](../../outputs/verification/parse-harness-kimi-20261025/offline-wire-equality.json)。后续工具历史仍可能分化，不能将两次样本的耗时差直接归因于框架。
+
+**评分分开看：**
+
+- 在正式输出前冻结 15 条 OCR 字幕锚点、6 条可见人物辅助 speaker 锚点、4 项画面事实。文字按规范化相似度及时间重叠匹配，不使用模型裁判。15/15 表示覆盖已有证据，既不是独立人工转写准确率，也不保证时间和身份正确。
+- 47 秒目标另用既有用户确认真值评分；该历史记录在首批输出后找回，单独保存，始终没有注入模型输入。
+- 逐条补看事件描述、人物表、画面文字和关键帧；这是 Agent 的补充审读，不是盲评人工金标。尤其同时检查 `speaker` 与 description，防止把字段留空误算成“没有身份错误”。
+
+**旧预算诊断：**原配置为 context 128000、auto compact 90000、target 60000。首轮 provider 实际输入为 **225965 token**；本地图片保守估算使整体约为 **384769 token**，而扣除输出和安全余量后的最大输入仅 **117760**。固定图片前缀不会被 compact 移走，`ContextWindowController.prepare()` 在 hard limit 下反复清除最新工具回执；投影又取本地估算与 provider 校准值的较大者，无法靠较低实测值校正估算。ReAct 实际跑到 **154.6 秒、12 次请求启动、12 次 compact、35 次读取/35 条回执释放、0 条事件写入** 后由操作者停止，已观测至少 **2,493,432 token**，最后一次 usage 缺失。它不是自然超时，也不算质量完成样本。证据：[trace.jsonl](../../outputs/verification/parse-harness-kimi-20261025/react-r1/trace.jsonl)、[operator-stop.json](../../outputs/verification/parse-harness-kimi-20261025/react-r1/operator-stop.json)、[context.py](../../gateway/agent_model/context.py)。同一控制器也被 Deep Agents 使用，但本轮没有实跑旧预算的 Deep Agents，不能替它虚构失败结果。
+
+主对照将 Kimi 的实验窗口设为 **1048576**，auto/target 为 **786432/524288**；API 两组此后均完成且 **0 次 compact**。这证明当前输入与旧预算冲突，以及该 compact 行为会破坏循环进展；不证明长期 compact 质量已通过。GPT 保留原 binding，context/输出预算字段不代表原生 Codex 内部与 API 使用同一套限制；SDK 当前也没有传入与 API `max_tokens=8192` 等价的硬输出上限。
+
+**Codex + Kimi 的合同诊断：**保留当前提前 output Schema 时，两次 native turn 都直接返回 `{"complete":true}`，没有业务工具成功，最终 `MissingRequiredFunctionCallError`。只去掉提前 Schema 后，两次均能读写 Canvas，留下覆盖完整的 draft，但最终给出自然语言而非有效 JSON，仍以 `MissingStructuredQueryDraftError` 失败。一个独立小工具 nonce 预检也呈现“无 Schema 时实际调用、带 Schema 时跳过”的区别。不能说 Codex 完全不能连接 Kimi；当前组合的问题集中在工具调用与结构化结束合同。draft 有内容不能算完整成功，也没有手工补 receipt 把失败改成成功。证据：[codex-kimi-tool-capability.json](../../outputs/verification/parse-harness-kimi-20261025/codex-kimi-tool-capability.json)。
+
+复跑入口是 [evals/parse_harness.py](../../evals/parse_harness.py)，例如从仓库根目录执行：
+
+```bash
+uv run --no-sync --env-file .env.local python -m evals.parse_harness \
+  --arm react \
+  --inputs outputs/verification/ep04-chunk0-direct-schema-20261025 \
+  --config outputs/verification/parse-harness-kimi-20261025/kimi-config.yaml \
+  --context-window 1048576 \
+  --out outputs/verification/parse-harness-kimi-20261025/replication-react
+```
+
+替换 `--arm deepagents` 可复跑同模型基线；`--arm codex --context-window 1048576` 为 Kimi 默认合同，额外 `--native-no-schema` 为诊断。原 GPT 基线使用 `--arm codex --codex-gpt-baseline` 并省略 `--context-window`。每次必须选新的 `--out`；真实调用会使用已有认证及额度。离线重算：`.venv/bin/python outputs/verification/parse-harness-kimi-20261025/analyze.py`。输入和原始 trace 在 Git 忽略的本地产物目录，换机器须携带这些材料，不能只克隆仓库就声称可复跑同一输入。
+
+现有回归命令 `.venv/bin/python -m pytest -q -p no:cacheprovider tests/gateway/test_deepagents_multimodal.py tests/gateway/test_context_window.py` 为 **46 passed**。将 factory 换成实验 ReAct 后，复用其中的 Parse harness 用例为 **28 passed**，另有 2 个 pytest 插件重复导入警告；这是同一批用例的替换执行，不是额外 28 个独立用例。runner 编译通过。所有真实运行后源码快照核对无漂移。
+
+本次实际纳入版本管理的变更范围只有新增实验 runner 与追加本 devlog；没有生产代码、API、数据库、默认模型配置或前端行为变更，未重启服务、迁移、commit 或 push。源码快照、输入配置、评分器、参考锚点、每次 result/draft/trace/assessment、矩阵及补充审读均保存在 [本地产物目录](../../outputs/verification/parse-harness-kimi-20261025/)。
+
+后续待验证事项：共享预算应识别“固定媒体本身已经超限”，不再靠丢弃新回执维持无进展循环；ReAct 的简化应保留当前错误恢复和完成校验；Codex + Kimi 需要独立修复工具与最终 receipt 合同；身份问题需要在更多已确认台词上验证证据/推断策略。以上均未在本轮修改。若要证明 Codex harness 本身是否带来收益，仍须同一 GPT 模型直连 API 与 Codex 对照，当前用户授权的跨模型基线不能回答这个纯因果问题。
+
+### 指标对比
+
+主表的“完成”只表示有效完成 receipt、Canvas Schema 和时间范围通过；不表示语义全部正确。每格两次数值按 r1/r2 排列：
+
+| 指标 | ReAct + Kimi low | Deep Agents + Kimi low | Codex + 原有 GPT high |
+|---|---:|---:|---:|
+| 结构完成 | 2/2 | 2/2 | 2/2 |
+| 实际耗时，秒 | 201.99 / 234.87 | 180.59 / 144.49 | 138.08 / 137.11 |
+| 平均耗时，秒 | 218.43 | 162.54 | 137.59 |
+| 字幕锚点覆盖 | 15/15、15/15 | 15/15、15/15 | 15/15、15/15 |
+| 6 条辅助锚点的 speaker | 均 6 条命名一致 | 均 6 条命名一致 | 均 6 条留空；非 6 条错名 |
+| 47 秒用户确认目标 | 两次均错为千早爱音 | 两次均错为千早爱音 | 两次 speaker 留空；r2 描述仍错归粉发女生 |
+| 业务工具调用 | 9 / 8 | 9 / 9 | 10 / 14 |
+| 可恢复工具错误 | 1 / 1 | 0 / 0 | 0 / 0 |
+| API 模型请求轮数 | 6 / 6 | 4 / 5 | 原生内部轮数，不以 outer turn 冒充同口径 |
+| host compact 次数 | 0 / 0 | 0 / 0 | 原生管理，不按 API 控制器计数 |
+| 总 token | 1,447,244 / 1,450,959 | 954,007 / 1,195,587 | 2,045,646 / 1,830,853 |
+| 平均总 token | 1,449,101.5 | 1,074,797 | 1,938,249.5 |
+
+完整结构评分见 [comparison.json](../../outputs/verification/parse-harness-kimi-20261025/comparison.json)，汇总见 [aggregate.json](../../outputs/verification/parse-harness-kimi-20261025/aggregate.json)。Token 为各次输入/输出用量的累计，cached 和 reasoning 属于子集，不重复相加。缓存未清除，未取得实际账单；GPT 与 Kimi 也不是同价单位。GPT 两次在首次工具前均出现 4 次 WebSocket 重连通知，运行自行恢复，上表耗时包含重连。两次重复不能用于 p95、显著性或稳定速度排名。
+
+原生 Kimi 的失败必须保留在结果里：
+
+| Codex + Kimi 诊断 | 结构完成 | 耗时，秒 | 业务工具 | draft 字幕覆盖 | 47 秒 speaker | 总 token |
+|---|---:|---:|---:|---:|---|---:|
+| 当前提前 Schema | 0/1 | 30.71 | 0 | 0/15 | 无事件 | 455,441 |
+| 去提前 Schema，r1 | 0/1 | 239.26 | 8 | 15/15 | 错为高松灯 | 1,216,162 |
+| 去提前 Schema，r2 | 0/1 | 156.67 | 9 | 15/15 | 错为高松灯 | 1,202,264 |
+
+具体质量差异见 [visual-review.json](../../outputs/verification/parse-harness-kimi-20261025/visual-review.json)：
+
+- ReAct 两次均因引用不在 persons 中的丰川祥子导致整批写入被拒，随后按反馈修正并完成。Deep Agents 两次没有这个错误。它增加了本轮 ReAct 的调用成本，但首轮请求完全一致、样本仅两次，不能证明框架本身更容易生成此类错误。
+- Kimi API 四次均保留台阶夜景、爱音/灯并坐、灯低头/抱膝、爽世到场等画面事实，仍然全部错认 47 秒画外音。Codex + Kimi 的 draft 也错认该句，增加 native harness 并没有纠正它。
+- GPT 两次全部对白 speaker 留空（19/19 与 11/11），人物表也均未识别长崎爽世，影响按人物检索。第二次 description 又把 47 秒及后续「誰も悪くない」归给粉发女生，说明只检查空 speaker 会漏掉正文中的错误身份推断。
+- 50.166 秒购物袋实际画面为 **SUNWAY SUNWAY**，已存 OCR 为 **SUNDAY SUNDAY**。Deep Agents r1 修正了它，r2 又照抄错误 OCR；ReAct r1 和 GPT r1 同样照抄，其余部分输出未提袋上文字。这是可见质量差异，不是稳定的框架胜负。
+- ReAct r2 将后续爽世台词的开始时间对齐到 52833 ms 字幕锚点；多次其他输出沿用 48400 ms ASR 起点，相差约 4.43 秒。这里只比较证据时间一致性，未重新听音建立独立发声起止真值。分组输出较少的对白事件仍覆盖全部锚点，不能把事件数直接当召回率。
+
+对当前问题的判断是：**本轮未观察到 Codex 是该 chunk 解析质量的必要条件；也没有证据说明 ReAct 因缺少 Deep Agents 就丢失了字幕覆盖。**当前最明确的循环故障是共享 compact 与固定媒体预算不匹配；改用合理实验预算后，ReAct 和 Deep Agents 都能完成，但同样没有解决关键身份错误。Deep Agents 在这两次样本中耗时和 token 更少，GPT 更快但身份输出不完整且仍有正文误归属。生产简化是否值得上线，仍需修复预算行为、保持业务合同，并在多 chunk/长上下文及已知身份错误集上验收；本轮没有测量维护人时、部署内存或长期 compact 质量，不能把这项局部对照写成全面质量不退化。

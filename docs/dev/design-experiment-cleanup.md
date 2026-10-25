@@ -83,7 +83,7 @@ N02 第一轮重复呈现弱身份标签，Agent 将同源信息误当独立佐�
 
 仅在五人草稿库中排第一不能证明识别改进：补入缺失竞争人物后，爽世目标的逐条均值仍排第二。候选多样性或参考条数增加没有在本样本证明必然更好。弱标签、同一来源的重复描述、画面中有人张嘴都不能替代独立身份核验。参见保留的 [聚类与选源退役摘要](#聚类与选源)。
 
-旧 75% 准备门槛和 VoiceprintAgent 选源路线已被后续 B0 接入合同取代；WavLM、K-means、medoid 仍属于后续实验，不能据“没有接入生产”宣称算法已被证明无效。当前决定以 [voiceprint-trd.md](../../agent/video_parse_v2/design/voiceprint-trd.md) 为准。
+旧 75% 准备门槛和 VoiceprintAgent 选源路线已被后续 B0 接入合同取代；WavLM、K-means、medoid 仍属于后续实验，不能据“没有接入生产”宣称算法已被证明无效。当前决定以 [voiceprint-trd.md](../design/voiceprint-trd.md) 为准。
 
 ### v6 网络失败与 v7 性能结论
 
@@ -109,7 +109,7 @@ N04 使用同一组六张原图探索图片透传、候选核验和执行预算�
 
 ### 过时架构图和代码示例
 
-N06 的图明确写着 `Interval: REFINING → INDEXING → COMPLETE`，把索引执行、重试和 Prefix 更新后的重索引交给 Interval。当前合同为 Interval 仅 Refine、同一 ChunkTask 承担 Parse/Index；这不是两张都有效的架构图。保留的依据为 [Parse Agent TRD](../../agent/video_parse_v2/design/trd.md) 和 [Engine TRD](../../engine/parsev2/design/trd.md)。
+N06 的图明确写着 `Interval: REFINING → INDEXING → COMPLETE`，把索引执行、重试和 Prefix 更新后的重索引交给 Interval。当前合同为 Interval 仅 Refine、同一 ChunkTask 承担 Parse/Index；这不是两张都有效的架构图。保留的依据为 [Parse Agent TRD](../design/video-parse-harness-trd.md) 和 [Engine TRD](../design/video-parse-engine-trd.md)。
 
 N07 示例演示使用假模型执行两轮 Query/Evaluator、传递 advice、复用证据和回调，不执行真实 Provider／SQL／HTTP。它引用的 `server.agent` 和 `tests/server/test_agent_runtime.py` 已不存在，不能继续称为当前可运行示例。需要学习现有行为时，从 [video_search/runtime.py](../../agent/chat/video_search/runtime.py) 与 `tests/agent/chat/` 开始；示例中“证据复用和确定性输出校验”的意图可以保留，旧导入路径和接口不再保留为合同。
 
@@ -177,7 +177,7 @@ AniVAG/
 
 ## 第二轮：MyGO benchmark 整理与删除
 
-同日按用户“帮我整理一下，然后就删掉多余 file”的授权，将两次 MyGO 评测收敛到 [evals/mygo/README.md](../../evals/mygo/README.md)。第一轮保留的这两个评测目录及旧总报告现已退役；下面为本轮新增删除，不与上面的 88,113 个重复计数。
+同日按用户“帮我整理一下，然后就删掉多余 file”的授权，将两次 MyGO 评测收敛到当时的 `evals/mygo`。2026-10-25 又按能力拆分到 [evals/benchmark](../../evals/benchmark/README.md)，下方链接指向现入口，原文件数／体积／修改树仍描述 10-24 的清理。第一轮保留的这两个评测目录及旧总报告现已退役；下面为本轮新增删除，不与上面的 88,113 个重复计数。
 
 | 删除范围 | 文件数 | 原 Git 状态 |
 | --- | ---: | --- |
@@ -188,10 +188,10 @@ AniVAG/
 
 实际删除 **68,188,954 字节（约 65.03 MiB）**，移除 64 个空目录。新 benchmark 四个文件合计 324,757 字节；加一份离线测试共 332,568 字节，约 325 KiB。四个文件承接以下内容：
 
-- [cases.json](../../evals/mygo/cases.json)：26 个用例，即 13 个 Chat 用例与 13 个检索配置；保留输入、scope、播放上下文、多轮关系、10 条参考事实和评分要求。
-- [baseline.jsonl](../../evals/mygo/baseline.jsonl)：36 条历史观测，即 13 条 Chat 与 23 条检索观测；保留完整最终回答、实际播放卡、精简候选、排名与耗时、已有用量、历史判断及必要诊断。
-- [run.py](../../evals/mygo/run.py)：默认离线校验，支持历史回放及显式真实运行；新运行只产生一份 JSONL，写入被忽略的 `outputs/verification/`，已有输出拒绝覆盖。
-- [README.md](../../evals/mygo/README.md)：保存实验背景、操作方法、历史结论、评分和数据前提。Chat 的覆盖／上下文交接问题，以及 Event 就绪条件、候选曝光与最终交付的区别，都在这里归纳。
+- 用例现分为 [Chat cases](../../evals/benchmark/query_capabilities/cases.json) 与 [检索 cases](../../evals/benchmark/retrieval_quality/cases.json)：合计仍为 26 个，即 13 个 Chat 用例与 13 个检索配置；保留输入、scope、播放上下文、多轮关系、10 条去重参考事实和评分要求。
+- 观测现分为 [Chat baseline](../../evals/benchmark/query_capabilities/baseline.jsonl) 与 [检索 baseline](../../evals/benchmark/retrieval_quality/baseline.jsonl)：合计仍为 36 条，即 13 条 Chat 与 23 条检索观测；保留完整最终回答、实际播放卡、精简候选、排名与耗时、已有用量、历史判断及必要诊断。
+- [run.py](../../evals/benchmark/run.py)：默认离线校验，支持历史回放及显式真实运行；新运行只产生一份 JSONL，写入被忽略的 `outputs/verification/`，已有输出拒绝覆盖。
+- [README.md](../../evals/benchmark/query_capabilities/README.md)：保存实验背景、操作方法、历史结论、评分和数据前提。Chat 的覆盖／上下文交接问题，以及 Event 就绪条件、候选曝光与最终交付的区别，都在这里归纳。
 
 旧日志、重复 SSE、全部候选正文、原生 rollout、图片、源码快照和展开报告已删除，不能再进行原始全链路取证。源路径与 SHA-256 仅保留为历史来源说明，不是当前文件依赖，也不能用于恢复已删除内容。固定事实不代表穷尽金标；人工评审要求继续保留，不把任务完成或来源检查通过等同于回答准确率。
 
@@ -312,7 +312,7 @@ AniVAG/
 | `chat-image-origin` | 73 | 24.007 | 70 个退役；3 张来源图片随构图归档 |
 | `composition-models` | 660 | 1,325.698 | 全部本地归档，含 shot-gallery、shot-tags 和已有六个 ZIP |
 
-保留的工程入口是 [MyGO benchmark](../../evals/mygo/README.md)、当前设计合同及 `outputs/verification/` 下的正式验收材料。没有用这些旧实验生成新的伪真值或准确率，也没有把未解决图片案例自动升级为有标准答案的 benchmark。退役目录的完整日志、试听、逐条矩阵和复算脚本不再提供；下列摘要保存的是当时的观察和限制。
+保留的工程入口是 [MyGO benchmark](../../evals/benchmark/query_capabilities/README.md)、当前设计合同及 `outputs/verification/` 下的正式验收材料。没有用这些旧实验生成新的伪真值或准确率，也没有把未解决图片案例自动升级为有标准答案的 benchmark。退役目录的完整日志、试听、逐条矩阵和复算脚本不再提供；下列摘要保存的是当时的观察和限制。
 
 ### 声纹基础实验
 
@@ -339,7 +339,7 @@ AniVAG/
 - 24 个 Chunk、378 条 ASR cue 切成 436 个短窗，另有 3 个留出版本，共 439 段音频；226 个窗参与拟合。在 L2 向量上运行普通欧氏 K-means，尝试 K=2–12；不是球面 K-means，也没有 PCA／白化。自动选择 K=2 时爱音与爽世目标落入同簇，轮廓系数不能替代人物分离质量或真实人数。
 - K=8 选源后，用相同六人物候选池复核：爽世逐条均值 0.529157 仍低于乐奈 0.529823；质心分数则为爽世 0.593479、乐奈 0.529823。只展示有利聚合会掩盖失败，不能认定问题已解决。
 - VoiceprintAgent 最终轮用时 149.47 秒，登记 15 条、5 人，未达到 11 人名单中至少 6 人的覆盖门槛，`ready=False`，没有发布正式声库。Agent 当时依赖候选资料和图片，没有完成独立听音身份验收；画面张嘴、台词提到某个人名均不足以确定说话人。
-- 五人草稿库中爽世第一，补回缺失竞争人物后逐条均值仍落后乐奈；旧库中爱音本来已第一。增加候选或参考条数没有在本样本证明必然改善。试听与旧报告整体退役，生产声纹合同仍以 [voiceprint-trd.md](../../agent/video_parse_v2/design/voiceprint-trd.md) 为准。
+- 五人草稿库中爽世第一，补回缺失竞争人物后逐条均值仍落后乐奈；旧库中爱音本来已第一。增加候选或参考条数没有在本样本证明必然改善。试听与旧报告整体退役，生产声纹合同仍以 [voiceprint-trd.md](../design/voiceprint-trd.md) 为准。
 
 ### VoiceprintAgent 历次迭代
 

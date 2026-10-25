@@ -281,7 +281,16 @@ class _RecoveringElasticsearchBoundary(_ElasticsearchBoundary):
 
 
 def _write_media(command) -> None:
-    Path(command[-1]).write_bytes(b"prepared-media")
+    target = Path(command[-1].replace("%012d", "000000000000"))
+    if target.suffix == ".wav":
+        import wave
+        with wave.open(str(target), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b"\0\0" * 16000)
+    else:
+        target.write_bytes(b"prepared-media")
 
 
 def _parse_config() -> dict:
@@ -295,6 +304,7 @@ def _parse_config() -> dict:
         "interval_duration": 30,
         "batch_max_size": 2,
         "models": models,
+        "ocr_enabled": False,
     }).model_dump(mode="json")
 
 
@@ -465,7 +475,7 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
     (120_000, 121_000, 3, (117_000, 121_000)),
     (60_000, 120_000, 0, (60_000, 120_000)),
 ])
-def test_visual_context_is_clamped_without_expanding_core_media(
+def test_chunk_reuses_prepared_episode_without_expanding_core_media(
     monkeypatch, tmp_path, start_ms, end_ms, overlap_seconds, visual_bounds,
 ):
     config = _parse_config()
@@ -478,30 +488,32 @@ def test_visual_context_is_clamped_without_expanding_core_media(
     binding = SimpleNamespace(
         lock=asyncio.Lock(), media=None, media_context=None, lease=object(),
         state=SimpleNamespace(source_media_ref=str(tmp_path / "source.mp4"),
-                              task_input=SimpleNamespace(duration_seconds=121_000)),
+                              task_input=SimpleNamespace(duration_seconds=121_000, task=SimpleNamespace(lease_version=4))),
     )
     calls = []
 
     @contextmanager
     def prepare(_identity, **options):
         calls.append(options)
-        yield PreparedVideoParseMedia(tmp_path / "core.mp4", tmp_path / "core.wav", ())
+        yield PreparedVideoParseMedia(tmp_path / "core.mp4", tmp_path / "core.wav", (),
+                                      visual_start_ms=visual_bounds[0], visual_end_ms=visual_bounds[1])
 
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._artifact_store = _ArtifactResolver()
-    runtime._media_service = SimpleNamespace(prepare_chunk=prepare)
+    runtime._media_service = SimpleNamespace(use_episode_chunk=prepare)
     monkeypatch.setattr(runtime, "_require_chunk_execution", lambda _execution: binding)
     monkeypatch.setattr(runtime, "_require_chunk_active", lambda _lease: None)
 
     async def run():
         media = await runtime._ensure_chunk_media(execution)
+        assert (media.visual_start_ms, media.visual_end_ms) == visual_bounds
         assert await runtime._ensure_chunk_media(execution) is media
         await runtime.cleanup_chunk_execution(execution)
 
     asyncio.run(run())
     assert len(calls) == 1
-    assert (calls[0]["start_seconds"], calls[0]["end_seconds"]) == (start_ms, end_ms)
-    assert (calls[0]["visual_start_ms"], calls[0]["visual_end_ms"]) == visual_bounds
+    assert (calls[0]["start_ms"], calls[0]["end_ms"]) == (start_ms, end_ms)
+    assert calls[0]["video_lease_version"] == 4 and calls[0]["sequence_no"] == execution.sequence_no
     assert binding.media is None and binding.media_context is None
 
 
@@ -740,6 +752,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     )
 
     async def generate_multimodal(_self, _binding, _inputs, **options):
+        assert list((tmp_path / "media-work").rglob("episode.json"))
         with track_model_call(provider="fixture", model="vision", operation="video_parse") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
         canvas = options["canvas"]
@@ -1588,6 +1601,7 @@ def voiceprint_host(monkeypatch, tmp_path):
     from server.service.video_parse_model_calls import VideoParseModelCallManager
 
     values = default_video_parse_v2_config().model_dump(mode="json")
+    values["models"]["asr"]["mode"] = "none"
     values["voiceprint"] = {"max_tool_calls": 12, "execution_timeout_seconds": 2.0}
     values["models"]["voiceprint"] = {
         "source": "ark_default", "model": "voice-selector", "request_timeout_seconds": 2.0,
@@ -1634,7 +1648,9 @@ def voiceprint_host(monkeypatch, tmp_path):
     encoder = Encoder()
     source = SimpleNamespace(
         duration_seconds=60_000, original_source_uri="artifact://original", series_id="series",
-        task=SimpleNamespace(video_id="video", detail={"voiceprint": {"ready": False}}),
+        inference_proxy_uri=None,
+        task=SimpleNamespace(status="PARSING", video_id="video", parse_config=values,
+                             detail={"voiceprint": {"ready": False}}),
     )
 
     def register(_lease, **arguments):
@@ -1668,6 +1684,7 @@ def voiceprint_host(monkeypatch, tmp_path):
     )
     runtime._artifact_store = SimpleNamespace(resolve=lambda uri: original if uri == "artifact://original" else pytest.fail(uri))
     runtime._media_service = VideoParseMediaService(tmp_path / "media", command_runner=write_audio)
+    monkeypatch.setattr(runtime._media_service, "prepare_episode", lambda *_args, **_kwargs: nullcontext())
     runtime._model_manager = ContextVar("voiceprint-host-manager", default=None)
     runtime._video_lease = ContextVar("voiceprint-host-lease", default=lease)
     monkeypatch.setattr(runtime, "_require_video_active", lambda _lease: None)
@@ -2389,6 +2406,11 @@ def test_voiceprint_cancel_before_phase_binding_stops_again_before_consumer_rele
     )
     runtime._video_lease = ContextVar("voiceprint-cancel-before-binding-lease", default=None)
     runtime._model_manager = ContextVar("voiceprint-cancel-before-binding-manager", default=None)
+    runtime._artifact_store = SimpleNamespace(resolve=lambda _uri: tmp_path / "unused.mp4")
+    runtime._media_service = SimpleNamespace(prepare_episode=lambda *_args, **_kwargs: nullcontext())
+    runtime._parse_input = lambda _source: ParseInput.model_validate({
+        "series_id": "series", "video_id": "video", "parse_config": _parse_config(),
+    })
 
     async def invoke(current_task_id):
         await runtime.load_voiceprint_input(current_task_id, LeaseToken(
@@ -2401,7 +2423,10 @@ def test_voiceprint_cancel_before_phase_binding_stops_again_before_consumer_rele
 
     async def execute():
         task = asyncio.create_task(runtime.prepare(lease))
-        assert await asyncio.to_thread(entered.wait, 1)
+        ready = await asyncio.to_thread(entered.wait, 1)
+        if not ready and task.done():
+            await task
+        assert ready
         task.cancel()
         with pytest.raises(BlockingCallCancelled) as caught:
             await task
