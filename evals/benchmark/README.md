@@ -4,12 +4,14 @@
 
 | 评测集 | 衡量什么 | 当前规模 | 输入与结果 |
 | --- | --- | --- | --- |
-| [query_capabilities · 查询能力覆盖](query_capabilities/README.md) | 人物关系、推荐、全剧回顾、动作、短台词、播放上下文等多类型任务的完成能力；原 multi-agent 那组 | 13 个 Chat 用例；13 条旧基线 + 13 条 Kimi 观测 | [cases](query_capabilities/cases.json) · [旧基线](query_capabilities/baseline.jsonl) · [Kimi](query_capabilities/kimi-20261025.jsonl) |
-| [chat_behavior · 对话理解与应变](chat_behavior/README.md) | 接住反馈、切换意图、理解指代与否定、按顺序完成多个请求、诚实表达证据边界 | 10 个对话场景；两轮历史实验共 100 条观测 | [cases](chat_behavior/cases.json) · [历史结果](chat_behavior/baselines/) |
-| [retrieval_quality · 检索质量](retrieval_quality/README.md) | 给定 scope/query/参数时，Event 与 Chunk 是否召回已知证据及其排名 | 13 个检索配置；23 条历史观测 | [cases](retrieval_quality/cases.json) · [baseline](retrieval_quality/baseline.jsonl) |
-| [intent_routing · 意图路由与改写](intent_routing/README.md) | 前置 respond/retrieve/mixed 分类与检索 query 改写，不包含完整 Chat 交付 | 13 个路由场景 + 1 个 API 协议 smoke | [cases](intent_routing/cases.json) · [脚本及历史记录](intent_routing/README.md) |
+| [query_capabilities · 查询能力覆盖](query_capabilities/README.md) | 人物关系、推荐、全剧回顾、动作、短台词、播放上下文等多类型任务的完成能力；原 multi-agent 那组 | 13 个 Chat 用例；13 条旧基线 + 13 条旧 Kimi + 39 条三框架对照 | [cases](query_capabilities/cases.json) · [三框架 Kimi](query_capabilities/harnesses-kimi-20261026.jsonl) · [旧基线](query_capabilities/baseline.jsonl) |
+| [chat_behavior · 对话理解与应变](chat_behavior/README.md) | 接住反馈、切换意图、理解指代与否定、按顺序完成多个请求、诚实表达证据边界 | 10 个对话场景；100 条历史观测 + 60 条三框架对照 | [cases](chat_behavior/cases.json) · [三框架 Kimi](chat_behavior/baselines/harnesses-kimi-20261026.jsonl) · [历史结果](chat_behavior/baselines/) |
+| [retrieval_quality · 检索质量](retrieval_quality/README.md) | 给定 scope/query/参数时，Event 与 Chunk 是否召回已知证据及其排名 | 13 个检索配置；23 条历史观测 + 13 条当前检查 | [cases](retrieval_quality/cases.json) · [baseline](retrieval_quality/baseline.jsonl) · [当前实测](reports/chat-harness-kimi-20261026.md#独立组件结果) |
+| [intent_routing · 意图路由与改写](intent_routing/README.md) | 前置 respond/retrieve/mixed 分类与检索 query 改写，不包含完整 Chat 交付 | 13 个路由场景 + 1 个 API 协议 smoke；本轮 Kimi 重跑 | [cases](intent_routing/cases.json) · [脚本及历史记录](intent_routing/README.md) · [当前实测](reports/chat-harness-kimi-20261026.md#独立组件结果) |
 
 想调整“真是高高在上呢 哪里出现过”之后又说“你说话怎么这么无趣”的那组，直接编辑 **[chat_behavior/cases.json](chat_behavior/cases.json)**；逐例验收要求在同目录 README。`query_capabilities` 也有一句相近的出处查询，但不含这一组反馈与意图切换场景。
+
+最新实测见 **[Kimi：Deep Agents / Pi / Codex 对照报告](reports/chat-harness-kimi-20261026.md)**：99 条主计划记录，另有 13 条直接检索与 14 条路由／协议组件检查。分别保留执行状态、内容质量、交付、耗时和用量；失败、环境中断、单独补跑及评审修订均可追溯。
 
 ## 运行入口
 
@@ -19,14 +21,15 @@
 .venv/bin/python -m evals.benchmark.run --suite query_capabilities
 .venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/baseline.jsonl
 .venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/kimi-20261025.jsonl
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/harnesses-kimi-20261026.jsonl
 .venv/bin/python -m evals.benchmark.run --suite retrieval_quality --replay evals/benchmark/retrieval_quality/baseline.jsonl
 .venv/bin/python -m evals.benchmark.intent_routing.openrouter_jev --dry-run
-.venv/bin/pytest -q tests/evals/test_benchmark.py
+.venv/bin/pytest -q tests/evals/test_benchmark.py tests/evals/test_harness_comparison.py
 ```
 
 [run.py](run.py) 从原 MyGO runner 移入，支持**查询能力覆盖、检索质量**，要求显式传 `--suite`，避免默认选错集合。真实运行方式见各目录 README；模型由目标服务／项目配置决定，runner 不会自动切换成 Kimi，运行前必须核对实际绑定及 fallback。
 
-`chat_behavior` 本轮固化了输入、逐例标准、协议和结果。原端到端 runner 依赖当时的源码快照、Codex 会话和临时依赖脚本，仍作为本地实验档案保留；**尚未迁成当前 Deep Agents + Kimi 可直接复跑的入口**。不能用只发送 `state.query`、忽略 `recent_messages` 的调用替代这套评测，也不能把路由器 dry-run 当作 Chat 验收。
+三框架对照入口为 [compare.py](compare.py)，绑定适配在 [harnesses.py](harnesses.py)。默认只输出离线计划；真实运行需要显式 `--live`、Kimi 配置、已有 SQL/ES/素材、改写服务及隔离恢复的 Pi 依赖，准备命令见报告。它将完整 `recent_messages` 写入每例新会话，经实际 ASGI HTTP 入口执行；T01→T02 保留同会话追问。不能用无历史单句或路由 dry-run 代替这套 Chat 验收。生产模型配置和全局 Codex 配置不由对照入口修改。
 
 ## 结果与维护约定
 

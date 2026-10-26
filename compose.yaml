@@ -1,7 +1,109 @@
 name: anivag-local
 
-# Development dependencies only. API, Consumer, Vite and ffmpeg run on the host.
+# Local single-user stack. Explicit service names still support host development.
+x-application: &application
+  image: anivag-api:local
+  build:
+    context: .
+    dockerfile: deploy/docker/Dockerfile
+    target: api
+  init: true
+  env_file:
+    - path: .env.docker
+      required: false
+  environment:
+    ANIVAG_ENVIRONMENT: development
+    ANIVAG_AUTH_MODE: local
+    ANIVAG_DATABASE_URL: mysql+pymysql://root@mysql:3306/anivag_development?charset=utf8mb4
+    ANIVAG_ELASTICSEARCH_URL: http://elasticsearch:9200
+    ANIVAG_ELASTICSEARCH_INDEX: ${ANIVAG_ELASTICSEARCH_INDEX:-anivag_video_chunks_development}
+    SEEKINO_ELASTICSEARCH_EVENT_INDEX: ${SEEKINO_ELASTICSEARCH_EVENT_INDEX:-seekino_video_events_development_v3}
+    ANIVAG_MODEL_CONFIG: /data/config/config.yaml
+    ANIVAG_ARTIFACT_ROOT: /data/artifacts
+    ANIVAG_LOG_DIRECTORY: /data/logs
+    ANIVAG_HTTP_HOST: 0.0.0.0
+    ANIVAG_HTTP_PORT: "9621"
+    ANIVAG_ALLOWED_ORIGINS: http://127.0.0.1:${ANIVAG_WEB_PORT:-5173},http://localhost:${ANIVAG_WEB_PORT:-5173}
+    ANIVAG_PARSE_EXECUTION_MODE: v2
+    ANIVAG_VIDEO_CONCURRENCY: ${ANIVAG_VIDEO_CONCURRENCY:-1}
+    ANIVAG_PARSE_CONCURRENCY: ${ANIVAG_PARSE_CONCURRENCY:-1}
+    ANIVAG_REFINE_CONCURRENCY: ${ANIVAG_REFINE_CONCURRENCY:-1}
+    ANIVAG_INDEX_CONCURRENCY: ${ANIVAG_INDEX_CONCURRENCY:-1}
+    ANIVAG_ASR_CONCURRENCY: ${ANIVAG_ASR_CONCURRENCY:-1}
+    CODEX_HOME: /data/codex
+  volumes:
+    - app_data:/data
+  extra_hosts:
+    - host.docker.internal:host-gateway
+
 services:
+  initialize:
+    <<: *application
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - app_data:/data
+      - type: bind
+        source: ${ANIVAG_MODEL_CONFIG:-./config.yaml}
+        target: /app/model-template.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /data/config
+        if [ ! -f "$$ANIVAG_MODEL_CONFIG" ]; then
+          cp /app/model-template.yaml "$$ANIVAG_MODEL_CONFIG"
+        fi
+        python -c 'import os, sys; from server.config import ServerSettings; from server.bootstrap import prepare_service_configuration; from gateway.config import required_api_key_env_names; config, _ = prepare_service_configuration(ServerSettings.from_environment()); missing = [key for key in required_api_key_env_names(config) if not os.environ.get(key, "").strip()]; sys.exit("Set credentials in .env.docker: " + ", ".join(missing) if missing else 0)'
+        python -m server.cli init-db
+        python -m server.cli init-es-index
+
+  api:
+    <<: *application
+    restart: unless-stopped
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${ANIVAG_HTTP_PORT:-9621}:9621"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - 'import http.client, json; c = http.client.HTTPConnection("127.0.0.1", 9621, timeout=4); c.request("GET", "/healthz"); r = c.getresponse(); h = json.load(r); assert r.status == 200 and h["status"] == "ok" and h["components"]["parseConsumer"]["status"] == "running"'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 60s
+
+  web:
+    image: anivag-web:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+      target: web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ANIVAG_WEB_PORT:-5173}:80"
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
   mailpit:
     image: axllent/mailpit:v1.31.6
     profiles: [mock-email]
@@ -79,6 +181,7 @@ services:
     stop_grace_period: 60s
 
 volumes:
+  app_data:
   redis_data:
   mysql_data:
   elasticsearch_data:

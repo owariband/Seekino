@@ -1,6 +1,6 @@
 # Query Capabilities · 查询能力覆盖
 
-保留 2026-10-15 旧 multi-agent 的九轮 Chat 能力摸底，以及 2026-10-18 的四条端到端台词定位，共 **13 个 Chat 用例、13 条旧历史观测、10 条参考证据**；另收录 2026-10-25 Deep Agents + Kimi 的 13 条观测。它覆盖不同任务类型，名称不绑定 multi-agent 或某个模型。原先混放的 13 个直接检索配置、23 条观测已拆到 [retrieval_quality](../retrieval_quality/README.md)。
+保留 2026-10-15 旧 multi-agent 的九轮 Chat 能力摸底，以及 2026-10-18 的四条端到端台词定位，共 **13 个 Chat 用例、13 条旧历史观测、10 条参考证据**；另收录 2026-10-25 Deep Agents + Kimi 的 13 条观测，以及 2026-10-26 同为 Kimi 的三框架对照 39 条记录。它覆盖不同任务类型，名称不绑定 multi-agent 或某个模型。原先混放的 13 个直接检索配置、23 条观测已拆到 [retrieval_quality](../retrieval_quality/README.md)。
 
 要评估“高高在上”之后用户吐槽“说话无趣”时的反馈与意图切换，应使用 [chat_behavior](../chat_behavior/README.md)。本目录虽有相近出处题，但不是那套 10 个对话场景。这里没有全剧穷尽金标或主观偏好金标，不报告整体准确率或全库 Recall@K。
 
@@ -12,9 +12,10 @@
 | [共享 run.py](../run.py) | 默认离线验证；历史回放；显式 `--suite query_capabilities --live chat` 运行真实 HTTP Chat |
 | [baseline.jsonl](baseline.jsonl) | 13 条旧 Chat 观测；原回答、实际播放卡、阶段耗时、已有用量、原报告判断及源文件 SHA-256 |
 | [kimi-20261025.jsonl](kimi-20261025.jsonl) | Deep Agents + Kimi 的 13 条精简观测，含失败、证据复核、用量／数据限制和原产物 SHA；不作为对话行为验收 |
+| [harnesses-kimi-20261026.jsonl](harnesses-kimi-20261026.jsonl) | Deep Agents / Pi / Codex 使用 Kimi 的 39 条主要记录，含 1 条依赖阻塞；Kimi 原评分、证据复核与明确修订分别保留 |
 | 本文件 | 使用方法、数据前提、历史结论、评分边界 |
 
-新运行只写一份 `outputs/verification/query_capabilities-*.jsonl`，包含运行说明及逐例结果。普通运行不导出候选目录、源码副本、重复 SSE 或逐角色 README。失败记录保留，已有输出拒绝覆盖；不自动重试可能已被服务端接受的 Chat 请求。
+普通 `run.py` 新运行写一份 `outputs/verification/query_capabilities-*.jsonl`，包含运行说明及逐例结果，不导出候选目录、源码副本、重复 SSE 或逐角色 README。跨框架 `compare.py` 为核对模型输入、原生历史和故障归因，另外保留本地完整证据，精简记录才提升到本目录。失败记录保留；普通 runner 的已有输出拒绝覆盖，不自动重试可能已被服务端接受的 Chat 请求。
 
 ## 离线使用
 
@@ -25,6 +26,7 @@
 .venv/bin/python -m evals.benchmark.run --suite query_capabilities --dry-run --only chat-T02
 .venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/baseline.jsonl
 .venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/kimi-20261025.jsonl
+.venv/bin/python -m evals.benchmark.run --suite query_capabilities --replay evals/benchmark/query_capabilities/harnesses-kimi-20261026.jsonl
 .venv/bin/pytest -q tests/evals/test_benchmark.py
 ```
 
@@ -72,7 +74,13 @@ Chat 使用现有 JSON 消息接口，不测 HTTP SSE 首字／首卡延迟，�
 
 来源匹配要求 scope、集数和时间覆盖一致；Event 另核对原句与说话人。稳定时间／文本锚点用于避免重新解析后 Event ID 改变导致假失败，旧 Chunk／Event ID 保留为来源说明。Chunk 检查只证明父块覆盖，不能证明模型精读了某句话；Event `best_rank` 是完整融合排名，`top_k` 限制的是父 Chunk 数。模糊问题允许未列出的合理答案，自动检查后始终保留人工评分要求。
 
-没有自动 LLM judge，没有用旧回答训练评分器，也不把 `COMPLETED`、关键词出现、卡片数量当成语义通过。人工评审结果应随对应新运行记录保存，注明评审者、标准与依据。
+`run.py` 只做机械来源检查，没有自动 LLM judge。2026-10-26 三框架实验另在计时结束后使用 Kimi rubric 评分，并由执行代理核对证据、保留有理由的修订；这是同模型评审，不是独立人工金标。没有用旧回答训练评分器，也不把 `COMPLETED`、关键词出现、卡片数量当成语义通过。评审结果随对应运行记录保存，注明评审者、标准与依据。
+
+## 当前 Kimi 三框架对照
+
+完整方法、逐例分数和限制见 [对照报告](../reports/chat-harness-kimi-20261026.md)。三套共用当前 Query、检索、Jev/Qwen 前置链路与数据，仅替换 Supervisor harness；没有复原整套旧 multi-agent 架构。每套计划 13 条，实际完成 Deep Agents **12/13**、Pi **11/13**、Codex **10/13**。Codex T01 供应商过载导致 T02 阻塞，两题另外补跑仅供诊断，不覆盖主成绩。
+
+T05 前置路由冲突、T07 同一 chunk 更新覆盖卡片、T08/T09 正文越过暂停点、错误前提题的人物误归属，均有实际失败证据。来源机械检查不能发现全部这些问题；EP01/EP04 的旧时间锚点也会产生假失败。T02 的固定“午餐回述”标准比字面追问更强，连续动作与短促音型仍缺独立连续音视频核验。这些边界随结果保存，本轮没有边测边改题或修生产链路。
 
 ## 历史结论：Chat
 
@@ -110,4 +118,4 @@ Chat 使用现有 JSON 消息接口，不测 HTTP SSE 首字／首卡延迟，�
 
 两个旧评测目录及旁边的旧 MyGO 总报告，共 532 个文件，已由本套 benchmark 承接。保留原问题、历史完整最终回答、实际播放卡、十条参考事实、直接检索的精简候选、历史判断及相关诊断；旧日志、全部候选正文、原生 rollout、图片、源码快照和展开报告退役后，不能再进行原始逐字节或逐候选全链路取证。
 
-`provenance.retired_path`、源文件 SHA-256 和 Git 迁移 manifest 是历史来源说明；它们不作为可打开的现存文件链接，也不声称能从 SHA 恢复原始文件。新 benchmark 独立于两个旧目录，验证与运行均不读取它们。此次整理只做离线校验与模拟请求，尚未执行新一轮真实模型评测。详细清理记录见 [统一清理总结](../../../docs/dev/design-experiment-cleanup.md)。
+`provenance.retired_path`、源文件 SHA-256 和 Git 迁移 manifest 是历史来源说明；它们不作为可打开的现存文件链接，也不声称能从 SHA 恢复原始文件。新 benchmark 独立于两个旧目录，验证与运行均不读取它们。上述旧档案整理只做离线校验与模拟请求；后续真实 Kimi 运行分别记录在对应日期的基线与报告中。详细清理记录见 [统一清理总结](../../../docs/dev/design-experiment-cleanup.md)。

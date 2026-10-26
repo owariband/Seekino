@@ -40,12 +40,18 @@
 
 ## 当前如何使用
 
+2026-10-26 已完成 **Kimi `k3.1-pro` × Deep Agents / Pi / Codex × 每题两次**的 60 条主观测，见 [三框架基线](baselines/harnesses-kimi-20261026.jsonl) 和 [完整对照报告](../reports/chat-harness-kimi-20261026.md)。本轮使用上述完整冻结历史，前置 Jev/Qwen、业务 Prompt、Query 与工具共用，仅替换 Supervisor harness；没有调用 GPT 生成模型。
+
+“高高在上→说话无趣”原场景中，Deep Agents 和 Codex 均两次接住当前反馈，Pi 两次仍复述旧剧情。通过仅表示遵守该场景的反馈／意图要求，不代表独立用户评测证明更有趣。两条未明确乐队名的首次 Live 题保留对象歧义；当前固定 `holdout_mixed` 已明确 MyGO 五人。
+
+新基线分别保存实际交付正文、Pi 原始增量的语义诊断拼接、动作顺序、用量、Kimi 原评分和执行代理的明确证据修订。Pi 的增量断段不能用诊断拼接掩盖；未找到精确台词的诚实回答也不能冒充完成目标。失败、未知用量、时钟异常与评分失败的补评记录保留，同模型评分不是独立人工金标。分维度分数和延迟配对口径以报告为准。
+
 先编辑／评审 `cases.json` 与本文件的验收表，离线完整性检查执行：
 
 ```bash
-.venv/bin/pytest -q tests/evals/test_benchmark.py
+.venv/bin/pytest -q tests/evals/test_benchmark.py tests/evals/test_harness_comparison.py
 ```
 
-本轮是目录与基线整理，没有新跑这 10 题，也没有把依赖历史 Codex 环境的临时 runner 当作现成的 Deep Agents runner。下一轮接入当前 Chat 入口时，必须使用完整历史、固定 MyGO scope `836fa9f0-2bf4-50fb-9c64-75526fa1dea9`、每次新会话；真实记录最终回答、工具顺序、交付卡片和终态。原实验通过受控 fixture 写入历史后调用真实 HTTP；不能把历史拼成一条普通用户消息或跳过历史来声称复现。
+[compare.py](../compare.py) 是当前三框架复跑入口，默认只输出离线计划。真实运行需显式 `--live`，并准备报告列出的 Kimi 配置、SQL/ES、素材、改写服务及隔离 Pi 依赖。入口将完整历史写入新会话，再调用真实 ASGI HTTP；使用固定 MyGO scope `836fa9f0-2bf4-50fb-9c64-75526fa1dea9`，记录回答、工具顺序、卡片和终态。不能把历史拼成一条普通用户消息或跳过历史来声称复现。
 
-生成式模型按约定使用 `k3.1-pro`，`expected` 与验收标准不进入模型输入。模型与 harness 的结论须分开，并记录 Jev/Qwen 是否仍存在、索引可用范围与预算；目录整理没有验证模型、架构或延迟是否改进。
+生成式模型按约定使用 `k3.1-pro`，`expected` 与验收标准不进入被测模型输入。模型与 harness 的结论须分开，并记录 Jev/Qwen 是否仍存在、索引可用范围与预算；每题两次只能支持这批固定回归观察，不报告显著性、P95 或通用智能排名。

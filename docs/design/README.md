@@ -39,6 +39,7 @@
 |---|---|---|
 | Parse V2 任务编排 | [video-parse-harness-trd.md](video-parse-harness-trd.md) | 主 TRD：任务与成果、Prepare、调度、租约、Refine、Prefix 和恢复；同一 ChunkTask 承担 Parse / Index。 |
 | Parse V2 领域算法 | [video-parse-engine-trd.md](video-parse-engine-trd.md) | 领域合同：解析结果 Schema、时间与人物规则、解析和投影边界；旧检索章节结合最新 Event 合同阅读。 |
+| Parse 模型输出协议 | [parse-output-xml.md](parse-output-xml.md) | 设计稿：无缩进 XML、标签与正文分行、任务级语言默认值与程序派生字段；尚未接入生产链路。 |
 | 声纹与台词归属 | [voiceprint-trd.md](voiceprint-trd.md) | 专项 TRD：声纹准备、比较、原子台词及说话人归属；保留历次实验的适用边界。 |
 | 整集摘要 | [video-summarize-trd.md](video-summarize-trd.md) | 专项 TRD：官方标题、事实简介、封面与真实集数的证据约束、职责及发布流程。 |
 | 分镜解析 | [shot_parse_trd.md](shot_parse_trd.md) | 草稿占位，目前仅有 background 提示，尚无完整设计。 |

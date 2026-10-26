@@ -22,6 +22,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-26：Kimi 同模型 Chat 三框架对照](#devlog-chat-harness-kimi-20261026) | C19、Pi / Deep Agents / Codex、查询覆盖与交付合同 |
 | [2026-10-25：按能力整合 benchmark 并纠正选集口径](#devlog-benchmark-layout-20261025) | 查询覆盖、Chat behavior、历史证据归属 |
 | [2026-10-25：同一 chunk 的 ReAct、Deep Agents 与 Codex 解析实测](#devlog-parse-harness-ab-20261025) | Parse harness 简化、compact 预算、EP04 画外音身份 |
 | [2026-10-25：Deep Agents + Kimi K3.1 Pro 查询能力覆盖回归](#devlog-chat-kimi-mygo-20261025) | 旧 multi-agent 多任务用例；非 Chat behavior 验收 |
@@ -91,6 +92,50 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-chat-harness-kimi-20261026"></a>
+
+## 2026-10-26：Kimi 同模型 Chat 三框架对照
+
+### 1. 问题与现状
+
+去 Pi Host 的生产简化已有工程证据，但此前 Deep Agents + Kimi 只跑了旧 multi-agent 的查询覆盖题，不能回答 C19“高高在上→说话无趣”的对话能力，也不能隔离历史 GPT 与当前 Kimi 的模型差异。此次使用整理后的两个 Chat 集，另检查公共检索和路由组件；报告入口为 [Kimi 三框架对照](../../evals/benchmark/reports/chat-harness-kimi-20261026.md)。
+
+基线固定为当前生产 Chat Prompt、工具、Query 和数据；仅替换 Supervisor harness。正式 MyGO EP02 最新索引失败，其余 12 集及独立 EP04 可用。本次不把整套旧 multi-agent 架构、不同日期模型成绩或自动来源检查当作框架效果对照。
+
+### 2. 方案候选
+
+历史成绩对比成本低，但模型、Prompt、预算与索引状态不同；只测路由或裸模型又不能覆盖完整历史和产品交付。因此选择同为 Kimi `k3.1-pro` 的 Deep Agents、隔离恢复的退役 Pi、Codex 自定义 provider 对照，通过真实 ASGI HTTP 入口及 SQL/ES 执行业务。用户要求的两类能力分别统计：10 个行为场景每套两遍，共 60 条；13 个查询任务每套一次，共 39 条。
+
+Supervisor、Query 等可配置业务生成角色及后置评分均用 Kimi，无 GPT 业务调用或生成 fallback；公共 Jev/Qwen 前置链路和 Doubao embedding 保留。Deep Agents/Pi 走 Chat Completions，Codex 走 Responses；三套原生指令、压缩和输出控制不能完全等同，结论限定为框架及适配器的产品组合效果。Pi 仅在实验目录恢复，补 Kimi 不支持 developer role 的兼容配置，没有重新引入生产 Host。
+
+新增维护面是 `evals/benchmark/compare.py`、`harnesses.py` 两个评测入口、三项离线保护测试与精简结果；不新增生产运行层、自动线上评分器或 sandbox 接入。既有去 Pi 变更所减少的 Host、配置与代码属于前一记录的收益，不能再次记成本轮删减。
+
+### 3. 方案验证
+
+冻结 326 个相关 Python 文件、配置与用例 SHA，最终版本／包／配置核对不变。完整历史写入独立会话，T01→T02 继承各自上一轮回答并跨 worker；固定顶层串行、轮换 arm 顺序，Supervisor 总预算 480 秒，外部 watchdog 570 秒。真实输入核对中，同组 Prompt 和工具一致，只有 T02 自然继承不同上轮历史。没有把参考答案送给被测模型。
+
+原始查询批次受系统时间间隔及 DNS/连接中断影响，14 条原件完整保留，整组排除并重跑 39 条，未择优覆盖失败。行为 60 条保留，其中时钟异常影响的整组三方样本从延迟配对子集排除；正式超时仍计失败。恢复批次无同类时钟异常。Codex T01 另有一次供应商过载，T02 依赖阻塞；主实验后单独补跑成功，61.5／121.1 秒，确认该次跨 worker 历史承接可工作，但没有覆盖主成绩，仍缺 T02 冻结标准的午餐回述。
+
+Kimi 在计时结束后打乱样本、隐藏 arm 标签评分，执行代理逐条核对证据并针对人物冲突补看四张已有检查帧。原裁判分、初审与修订分别保存，不声称独立人工金标。连续动作／短促音型仍缺连续看片和回听；T02 标准比字面追问更强、旧时间锚点漂移等题目问题单列，不边测边改题。
+
+`.venv/bin/pytest -q tests/evals/test_benchmark.py tests/evals/test_harness_comparison.py`：**22 passed**；新入口编译通过，默认只输出 99 条离线计划且不调用 API。最终 SQL 核对 98 条实际主请求为 92 COMPLETED／6 FAILED；另外 1 条 BLOCKED 未发送。自有额外 19 条预检／中断／补跑消息也均为终态，无 PROCESSING 或正文持久化不一致。数据快照保持 14 视频、44 任务及原状态摘要。
+
+未验证的架构维度包括长上下文压缩保真、并发容量／RSS、常驻 Host 复用、崩溃／跨节点恢复、sandbox 生命周期与权限隔离。这些仍是 Deep Agents 选型应衡量的成本和风险，不能由短场景通过率代替。
+
+### 4. 指标对比
+
+执行完成：Deep Agents **32/33**、Pi **31/33**、Codex **29/33**；分母含 Codex 1 条前置依赖阻塞。完成不代表内容达标，质量与逐例证据另见报告及 [60 条行为基线](../../evals/benchmark/chat_behavior/baselines/harnesses-kimi-20261026.jsonl)、[39 条查询基线](../../evals/benchmark/query_capabilities/harnesses-kimi-20261026.jsonl)。Pi 的 31 条完成回答均存在增量断段，实际 HTTP 与 SQL 一致；内容诊断拼接与实际交付分开评分，不能将适配合同故障泛化成 Pi 智力差。
+
+任务与证据通过数：行为 Deep Agents **16/20**、Pi **14/20**、Codex **14/20**；查询分别 **5/13、4/13、5/13**。原 C19 反馈 Deep Agents／Codex 各 2/2 通过，Pi 两次仍复述旧剧情；不将此等同幽默感偏好实验。考虑交付后的综合通过数，行为为 **16/20、0/20、14/20**，查询为 **4/13、0/13、5/13**；Pi 的零分源于适配断段，Deep Agents 查询另有正文缺段。继续以 Deep Agents 为默认是合理工程选择，但本次不支持其全面优于 Codex；错误前提题中 Deep Agents 误认说话人，Pi/Codex 正确，明确保留回归。
+
+99 条主记录均完成评分与复核；2 条评分输出上限失败保留原件后仅补评，没有重跑 Chat。4 条修改维度分、1 条只纠正理由，其余保留 Kimi 原判断。评分实际上下文受绑定限制为 128k，离线核对 101 个主／诊断评分包，在初评及补评预算下原始载荷均未被截断。实际限制、原分与修订记录随基线保存。
+
+三套共同未完成 T05 五片段回顾，实际都收到 Jev“不新增检索”的冲突说明；独立路由 13/13 标签正确并未覆盖这个输入。直接检索 13/13 执行、9/13 通过旧机械来源检查，另有 1/1 结构协议 smoke；它们不合入 Chat 分母或冒充语义准确率。其他具体缺口包括同 chunk 重复提交覆盖卡片、正文越过暂停点、静帧推断说话人和过度确定的人物动机。
+
+干净成功配对的行为平均耗时为 Deep Agents **92.9s**、Pi **74.6s**、Codex **94.9s**（每套 17 条）；查询为 **115.4s／124.6s／152.0s**（每套 8 条）。失败与时钟异常未混进这个条件化平均值，但都留在完成率及原记录中。无缓存隔离、无 P95／显著性推断；已知 token 是缺失调用存在时的观测下界，不据此换算金额或宣布成本胜者。
+
+本轮 canonical 变更 **10 文件：6 新增、4 修改；评测源码 2、测试 1、文档 5、数据 2，生产代码 0**，详细修改树在报告。收益是首次获得当前同模型、完整历史、实际交付的三框架证据；新增成本为离线适配、档案及后置评分调用。本次启动的 Qwen 进程已停止，原有 SQL/ES/API 不动；保留测试会话、原生 checkpoint 和检查帧供追溯。无迁移、重解析、commit 或 push，无关工作区变更保留。
 
 <a id="devlog-benchmark-layout-20261025"></a>
 

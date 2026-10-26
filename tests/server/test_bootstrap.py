@@ -13,6 +13,7 @@ from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config, ParseI
 from engine.common.config import VideoParseRuntimeConfig
 from engine.rag.nlp.query import accept_query_vector
 from engine.rag.retrieval.contracts import QueryEncodingRequest
+from gateway.agent_model.deepagents import DeepAgentSessionStore
 from gateway.config import (
     ArkModelSourceConfig, ClaudeCodeModelSourceConfig, CodexModelSourceConfig,
     EmbeddingModelBinding, ModelBinding,
@@ -394,7 +395,6 @@ def test_process_assembly_receives_runtime_configuration(
     config_path = tmp_path / "models.yaml"
     config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
     monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
-    from gateway.agent_model.deepagents import DeepAgentSessionStore
     monkeypatch.setattr(
         bootstrap, "create_agent_checkpoint_store", lambda *_args, **_kwargs: DeepAgentSessionStore(),
     )
@@ -621,6 +621,9 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
     advanced_retrieval,
     summary_mode,
 ):
+    monkeypatch.setattr(
+        bootstrap, "create_agent_checkpoint_store", lambda *_args, **_kwargs: DeepAgentSessionStore(),
+    )
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)
@@ -754,6 +757,9 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.setattr(
+        bootstrap, "create_agent_checkpoint_store", lambda *_args, **_kwargs: DeepAgentSessionStore(),
+    )
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)

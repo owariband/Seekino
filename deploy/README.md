@@ -1,45 +1,49 @@
 # 部署与本地运行
 
-首次安装推荐阅读[本地配置指南：API 模型 + Docker 数据库](local-setup.md)，包含当前 dev 的模型示例、checkpoint 初始化、日常启动和 Docker 覆盖范围。
+首次安装推荐阅读[本地配置指南：Docker 全栈 + DeepAgents](local-setup.md)，包含一键启动、现有 Kimi / Codex 接入、checkpoint 初始化、配置持久化与 Windows 使用方式。
 
 已有原生 MySQL、Elasticsearch 和 Python 环境时，可以继续使用；HTTPS 入口不要求
 Docker。macOS 的 Nginx 安装、本地证书、8443 入口与手机信任步骤见
 [原生 Nginx 本地 HTTPS](nginx/README.md)。Nginx 独立于 Python API 和 Vite 运行。
 
-## 可选：Docker 数据库 + 本地应用
+## 默认：Docker 全栈
 
-根目录 `compose.yaml` 默认运行 MySQL 8.4 和 Elasticsearch 8.19.22。
-Python Server（含 V2 Parse Consumer）、Vite、ffmpeg、模型 SDK 在宿主机运行。
-无需构建应用镜像，修改代码后按原来的方式调试。
-`./start.sh` 会复用已有 MySQL、校验 ES 集群和索引映射；ES 必须事先准备，
-脚本不会启动原生 ES 进程。正式流程只使用 V2，不需要 Qdrant。
+根目录 `compose.yaml` 默认运行 Web（Nginx）、Python API（含 V2 Parse Consumer）、
+MySQL 8.4 和 Elasticsearch 8.19.22。ffmpeg 和模型 SDK 已放进应用镜像，
+`initialize` 服务先检查配置、初始化业务表与 checkpoint、创建或校验索引。
+默认模型只调用 API，使用 DeepAgents；无需本地模型权重或宿主机 Python / Node.js。
 
 ## 首次运行
 
-1. 安装并启动 Docker Desktop，或 Docker Engine + Compose（需支持 `up --wait`）。
-2. 本机安装 uv、Node 24+、npm、ffmpeg / ffprobe。
-3. 在仓库根目录执行 `cp .env.example .env.local`（已有文件则保留），填写模型密钥，
-   并显式配置 `ANIVAG_ELASTICSEARCH_URL` 和 `ANIVAG_ELASTICSEARCH_INDEX`。
-   根模型配置还依赖本机 Codex、Whisper 和可选模型服务；首次试用可选上面指南的 API 模型配置。
-4. 执行 `docker compose --env-file .env.local up -d --wait mysql elasticsearch`。
-5. 依次执行 `uv run --env-file .env.local python -m server.cli init-db` 和
-   `uv run --no-sync --env-file .env.local python -m server.cli init-es-index`，前者同时初始化 DeepAgents checkpoint 表。
-6. 在当前 dev 工作区执行 `./start.sh --branch dev`；main 工作区使用 `./start.sh`，访问 `http://127.0.0.1:5173`。
+1. 安装并启动 Docker Desktop，或 Docker Engine + 当前版本的 Compose 插件。
+   Windows 选择 WSL2 / Linux containers，可直接使用 PowerShell 执行启动命令。
+2. 在仓库根目录执行 `cp deploy/docker/env.example .env.docker`（已有文件则保留），
+   填写 `ARK_API_KEY`、`DEEPSEEK_API_KEY`，确认账号可访问 `config.yaml` 中的模型。
+3. 执行 `docker compose --env-file .env.docker up --build -d --wait`。
+4. 访问 `http://127.0.0.1:5173`；同一端口的 `/docs`、`/healthz` 由 Web 转发至 API。
 
-Compose 先启动数据库并等待健康检查通过；原脚本随后复用数据库，
-校验 MySQL 业务表和 ES 索引，再启动本地应用；脚本本身不初始化 checkpoint 表。
-按顺序执行，前一步失败时先修复，再继续下一步。
-首次下载镜像或 Python 依赖需要网络；容器启动成功不表示模型密钥和视频解析已验证。
+首次下载镜像和构建需要网络；容器健康不表示模型密钥和视频解析已完成验收。
+配置与凭据持久化、切换 Kimi / Codex 和当前验证范围见[本地配置指南](local-setup.md)。
+
+## 可选：Docker 数据库 + 宿主机开发
+
+在宿主机安装 Python 3.12、uv、Node 24+、npm、ffmpeg / ffprobe，按
+[README 的开发步骤](../README.md#宿主机开发可选) 准备 `.env.local`、依赖与数据库表。
+`./start.sh --branch dev` 使用已检出的 dev 工作区；main 使用 `./start.sh`。
+脚本复用 MySQL，校验 ES 集群和索引；不会启动 ES，也不会初始化 checkpoint 表，
+首次仍须执行 `python -m server.cli init-db`。正式流程只使用 V2。
 
 只准备基础设施时，无需模型密钥或本地 Python 环境：
 
 ```bash
-docker compose up -d --wait
+docker compose up -d --wait mysql elasticsearch
 docker compose ps
 docker compose logs -f mysql elasticsearch
 ```
 
 ## 本地模拟验证码邮件
+
+以下针对宿主机开发环境；默认 Docker 全栈使用免登录的 `local` 模式。
 
 使用可选的 [Mailpit](https://mailpit.axllent.org/docs/install/docker/) 收件箱测试邮箱登录，
 无需域名、邮箱授权码或付费发信服务。Seekino 仍通过现有 SMTP 发送验证码；Mailpit
@@ -91,13 +95,15 @@ docker compose --env-file .env.local --profile mock-email stop mailpit
 
 正常从 Web 选择并上传本机视频，不需要把样例视频挂载到数据库容器。
 任务页查看解析进度；完成后在搜索页提问并播放返回的时间证据。
-ffmpeg 和模型调用在宿主机执行，原有 CLI、断点调试和模型登录方式继续使用。
+全栈模式中 ffmpeg 和模型调用在 API 容器内执行；宿主机开发模式保留原有 CLI、断点调试和模型登录方式。
 
 | 内容 | 位置 |
 |---|---|
-| 视频、切片、关键帧、解析文件 | 本机 `ANIVAG_ARTIFACT_ROOT`，默认 `outputs/server/artifacts` |
-| 本机进程 PID、启动日志 | `outputs/local-services/` |
-| 应用结构化日志 | `ANIVAG_LOG_DIRECTORY`，默认 `outputs/server/logs` |
+| Docker 视频、切片、关键帧、解析文件 | `app_data` 卷中的 `/data/artifacts` |
+| Docker 有效模型配置、日志、Codex 登录 | `app_data` 卷中的 `/data/config`、`/data/logs`、`/data/codex` |
+| 宿主机开发媒体 | 本机 `ANIVAG_ARTIFACT_ROOT`，默认 `outputs/server/artifacts` |
+| 宿主机进程 PID、启动日志 | `outputs/local-services/` |
+| 宿主机应用结构化日志 | `ANIVAG_LOG_DIRECTORY`，默认 `outputs/server/logs` |
 | MySQL | Docker volume `anivag-local_mysql_data` |
 | ES 索引 | Docker volume `anivag-local_elasticsearch_data` |
 
@@ -108,9 +114,9 @@ CLI search 使用同一套 V2 检索。`./start.sh` 要求 ES 集群为 yellow/g
 或执行索引重建。隔离集成测试须另用 `ANIVAG_TEST_DATABASE_URL`、
 `ANIVAG_TEST_ELASTICSEARCH_URL` 和独立测试索引。
 
-备份/迁移时需同时保留 MySQL 业务事实和宿主机媒体。ES 可从当前 V2 成果重建，
+备份/迁移时需同时保留 MySQL 业务事实和对应模式下的媒体。ES 可从当前 V2 成果重建，
 仅复制索引不能作为完整备份。
-容器没有代码或模型密钥挂载；数据库端口仅绑定 `127.0.0.1`。
+模型密钥通过 `.env.docker` 注入运行环境，不写入镜像；所有发布端口仅绑定 `127.0.0.1`。
 MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose 用于本地开发。
 
 <a id="local-assets"></a>
@@ -271,21 +277,37 @@ mysql -uroot -h127.0.0.1 -e "PURGE BINARY LOGS BEFORE NOW() - INTERVAL 1 HOUR;"
 
 ## 停止、重启和日志
 
+Docker 全栈使用同一份环境文件：
+
 ```bash
-./start.sh stop          # 停止脚本管理的本机应用；保留数据库容器
-docker compose stop     # 需要时再停止数据库，数据保留
-docker compose up -d --wait && ./start.sh  # 再次选择 Docker 模式，复用数据库卷
+docker compose --env-file .env.docker stop
+docker compose --env-file .env.docker up -d --wait
+docker compose --env-file .env.docker logs -f api
 ```
 
 `docker compose down` 删除容器和网络但保留 named volumes。
-不要在需要保留视频库时执行 `docker compose down -v`，它会删除数据库卷。
+不要在需要保留视频库时执行 `docker compose down -v`，它会删除数据库和应用数据卷。
+
+宿主机开发时分别管理应用和数据库：
+
+```bash
+./start.sh --branch dev stop
+docker compose --env-file .env.local stop mysql elasticsearch
+docker compose --env-file .env.local up -d --wait mysql elasticsearch
+./start.sh --branch dev
+```
+
 `start.sh stop` 会停止它自己管理的本机进程，包括由它启动的原生 MySQL；
 不会停止 Compose 容器或其它程序启动的数据库。
 如果只运行 `./start.sh` 而容器未运行，脚本会尝试启动本机 MySQL；ES 不可达时启动失败。
 
 ## 自定义端口
 
-Compose 不解析应用连接 URL，也不会自动读取 `.env.local`。自定义端口时，
+**Docker 全栈：** 在 `.env.docker` 修改 `ANIVAG_WEB_PORT`、`ANIVAG_HTTP_PORT`、
+`ANIVAG_MYSQL_PORT`、`ANIVAG_ELASTICSEARCH_PORT` 即可。容器之间仍使用内部服务名和端口，
+无需修改数据库连接 URL。详细示例见[本地配置指南](local-setup.md)。
+
+**宿主机开发：** Compose 不解析应用连接 URL，也不会自动读取 `.env.local`。自定义端口时，
 请在 `.env.local` 中同时配置容器发布端口和应用连接 URL，并显式传入 `--env-file`：
 
 ```dotenv
@@ -297,9 +319,10 @@ ANIVAG_ELASTICSEARCH_INDEX=anivag_video_chunks_development
 ```
 
 ```bash
-docker compose --env-file .env.local up -d --wait && ./start.sh
+docker compose --env-file .env.local up -d --wait mysql elasticsearch
+./start.sh
 # 后续管理也使用同一份配置：
-docker compose --env-file .env.local stop
+docker compose --env-file .env.local stop mysql elasticsearch
 ```
 
 宿主机 Python 使用 `127.0.0.1` 发布端口访问 MySQL 和 ES，连接 URL 不使用 Compose 服务名。

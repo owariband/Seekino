@@ -3,12 +3,12 @@
 config_version: 2
 
 # Select the primary chat harness at startup; model bindings stay independent.
-supervisor_harness: codex
+supervisor_harness: deepagents
 
 # Once per Chat turn: Jev chooses the template; text Qwen fills only retrieval_query.
 # The 8B endpoint is a separate llama-server, started with enable_thinking=false.
 query_hook:
-  enabled: true
+  enabled: false
   router_endpoint: https://openrouter.ai/api/alpha/decisions
   router_model: typesafe/jev-1.14
   router_api_key_env: OPENROUTER_JEV_API_KEY
@@ -38,34 +38,32 @@ model_sources:
     adapter: ark
     provider: ark
     api_key_env: ARK_API_KEY
-  whisper_local:
-    adapter: openai_audio
-    provider: whisper.cpp
-    base_url: http://127.0.0.1:18842/v1
-    api_key_env: WHISPER_API_KEY
-    response_format: verbose_json
+  # Optional sources: select them in models; unused sources require no credentials.
+  kimi_coding:
+    adapter: openai
+    provider: kimi
+    profile: kimi
+    base_url: https://api.kimi.com/coding/v1
+    api_key_env: KIMI_API_KEY
   codex_local:
     adapter: codex_app_server
     provider: codex
     max_concurrency: 10
 
-  campplus_local:
-    adapter: campplus
-    provider: local
-    checkpoint_path: /Users/bytedance/workspace/other-project/AniVAG/outputs/local-models/campplus/campplus_cn_common.bin
-    cpu_threads: 6
-    max_audio_seconds: 30
-
 models:
   agent:
-    source: codex_local
-    model: gpt-5.6-sol
-    supports_vision_input: true
+    source: deepseek_api
+    model: deepseek-flash
     max_output_tokens: 8192
-    request_timeout_seconds: 600
+    request_timeout_seconds: 180
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-0-lite-260428
+      max_output_tokens: 8192
+      request_timeout_seconds: 180
   supervisor:
-    source: codex_local
-    model: gpt-5.6-sol
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
     supports_vision_input: true
     reasoning_effort: low
     max_output_tokens: 8192
@@ -76,12 +74,13 @@ models:
     compact_target_tokens: 60000
     max_input_chars: 400000
   transcription:
-    source: whisper_local
-    model: large-v3-turbo
+    kind: transcription
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
     request_timeout_seconds: 600
   vision:
-    source: codex_local
-    model: gpt-6-luna
+    source: ark_default
+    model: doubao-seed-2-1-pro-260628
     supports_vision_input: true
     max_output_tokens: 8192
     reasoning_effort: high
@@ -99,15 +98,15 @@ models:
     request_timeout_seconds: 1200
   # A dedicated OCR binding enables subtitle/text extraction before Understanding.
   ocr:
-    source: codex_local
-    model: gpt-6-luna
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
     supports_vision_input: true
     reasoning_effort: medium
     max_output_tokens: 8192
     request_timeout_seconds: 600
   summarize:
-    source: codex_local
-    model: gpt-6-luna
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
     supports_vision_input: true
     max_output_tokens: 8192
     reasoning_effort: high
@@ -124,11 +123,6 @@ models:
     dimensions: 1024
     video_fps: 1.0
     request_timeout_seconds: 600
-  speaker:
-    kind: speaker_embedding
-    source: campplus_local
-    model: iic/speech_campplus_sv_zh-cn_16k-common
-    request_timeout_seconds: 30
   rerank:
     kind: rerank
     source: deepseek_api

@@ -54,14 +54,18 @@ models:
 
 顶层 `supervisor_harness` 选择 `deepagents` 或 `codex`，与 `models.supervisor` 一起在 Server 启动时加载。修改 harness、模型或连接配置后重启 Server；`agent_runtime` 中已有的运行预算仍按原规则用于新消息。
 
-仓库默认配置选择 Codex harness：
+仓库默认配置选择 `deepagents`：Supervisor、视觉、转写和 embedding 使用 Ark API，检索 Agent 和重排使用 DeepSeek API。可选的 `kimi_coding` 和 `codex_local` 来源已经声明，未选中时无需准备对应凭据或登录；查询改写默认关闭，不依赖本机模型权重。
+
+Kimi 继续使用现有 OpenAI 兼容适配器和 `profile: kimi`。在同一份有效 YAML 中将 `models.supervisor.source` 改为 `kimi_coding`、`model` 改为 `k3.1-pro`，保持 `supervisor_harness: deepagents`，并设置 `KIMI_API_KEY`。其他生成式角色也可独立选择相同来源；选择 API 模型名不会自动替换转写或 embedding。
+
+需要 Codex Supervisor 时，在同一份 YAML 中替换以下字段；其他预算字段可沿用原值：
 
 ```yaml
 supervisor_harness: codex
 models:
   supervisor:
     source: codex_local
-    model: gpt-6-astra
+    model: gpt-5.6-sol
     supports_vision_input: true
     reasoning_effort: low
     max_output_tokens: 8192
@@ -83,7 +87,7 @@ Cloud Chat 使用 `langgraph-checkpoint-mysql[pymysql]==3.0.0` 和现有 `mysql+
 
 checkpoint 只保存已确认 turn：每轮先在内存执行，最终 SQL 消息提交成功后写入完整 graph state；失败、取消和关闭不删除上一份已确认状态，显式删除 Conversation 才删除 checkpoint。该机制用于下一轮恢复，不表示进程崩溃后自动续跑有副作用的工具。历史 Pi JSONL 不删除，旧 Conversation 没有 checkpoint 时仍按 SQL 展示历史冷启动，不承诺旧 tool 上下文无损迁移。
 
-首次部署或升级需显式初始化 Schema，API 启动不会自动执行迁移：
+首次部署或升级需显式初始化 Schema，API 进程不会自动执行迁移。完整 Docker 启动链的 `initialize` 服务会先运行这一入口，成功后才启动 API；宿主机运行时手动执行：
 
 ```bash
 python -m server.cli init-db
