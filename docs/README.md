@@ -8,7 +8,8 @@
 |---|---|---|
 | [dev/problems.md](dev/problems.md) | 问题与待办的唯一状态入口 | 维护稳定编号、问题范围、验收条件、最新进展及 TODO / 已解决（DONE）；关联对应 devlog 和证据。沿用文件内的排序与编号规则。 |
 | [dev/devlog.md](dev/devlog.md) | 技术决策、实验和业务效果的历史记录 | 按日期与主题维护固定四段结构，记录选择理由、结果和代价；不维护 TODO / DONE，不充当任务看板。技术修改统一记在此文件，不按模块另建 devlog。 |
-| [技术设计分类索引](design/README.md)、[ui-design/](ui-design/) | 技术设计、接口、数据合同与交互约定 | 技术设计统一放在 `docs/design/`，按 feature 在分类索引登记，模块 README 链接对应设计；明确候选方案、已选设计及被替代的历史方案，设计确认不等于已部署。问题和执行待办关联 problems，实施过程和效果关联 devlog。 |
+| [设计演进与主题索引](design/README.md)、[ui-design/](ui-design/) | 技术设计、接口、数据合同与交互约定 | 技术设计放在 `docs/design/` 下的 MVP、Agent Harness、产品复审三个阶段，由阶段 README 记录日期、提出视角与背景，再按主题登记；第二阶段图统一放 diagram/，模块 README 链接对应设计；明确候选方案、已选设计及被替代的历史方案，设计确认不等于已部署。问题和执行待办关联 problems，实施过程和效果关联 devlog。 |
+| [报告索引](report/README.md) | 模块实施报告、阶段图、验收证据与交付说明 | 统一放在 `docs/report/<实际模块路径>/`，如 gateway/bridge；原 report_docs 不再分散在代码目录。保留报告时点和验证边界，当前任务状态仍由 problems 维护。 |
 | [research/](research/)、[notes/](notes/) | 调研依据、技术解释、假设与候选思路 | 标明来源、日期和适用边界；研究结论不直接作为本项目已实现或效果达标的证明。 |
 | [migrations/](migrations/) | 可执行的数据库变更脚本与迁移依据 | 脚本存在不代表已执行；实际环境、执行结果和验证证据记入 devlog，相关待办状态由 problems 维护。 |
 | [outputs/verification](../outputs/verification/)、[旧实验退役摘要](dev/design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)、[Benchmark 索引](../evals/benchmark/README.md) | 当前验收、benchmark 与旧实验结论 | Benchmark 按查询能力覆盖、对话行为、检索质量、意图路由分开；原 `evals/mygo` 和 `evals/query_router` 已迁移。`engine/experiment/` 已整体退役，构图／shot-tags 仅留本地忽略归档。当前验收产物和 benchmark 保留来源，样本数或运行完成不直接代表业务质量。 |

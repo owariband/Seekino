@@ -1,7 +1,7 @@
 # Seekino UI Design · Product Facts
 
 > 核对日期：2026-09-14
-> 事实来源：仓库根 `README.md`、`transfer.md`、`docs/design/各个阶段目标.md`，以及仓库远端 `https://github.com/owariband/Seekino.git`
+> 事实来源：仓库根 `README.md`、`transfer.md`、`docs/design/01-mvp/各个阶段目标.md`，以及仓库远端 `https://github.com/owariband/Seekino.git`
 > 当前代码基线：`1f0662d`（`main`）
 
 ## 已确认的产品事实

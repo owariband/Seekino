@@ -11,8 +11,8 @@ Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直�
 AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
 不再增加 Agent Session 容器。独立 Harness 用 LangGraph 编排 Query / Evaluator 最多
 3 轮，审核通过后由 Chat 实时输出最终正文，Output 保留结构化视频证据。
-完整接口见 [Agent API 对接文档](../docs/design/agent-api.md)。旧 Agent Session
-及 Conversation 固定 Scope 数据库结构会被 init-db / create_schema 拒绝；[迁移步骤](../docs/design/agent-api.md#8-已有数据库升级)
+完整接口见 [Agent API 对接文档](../docs/design/01-mvp/agent-api.md)。旧 Agent Session
+及 Conversation 固定 Scope 数据库结构会被 init-db / create_schema 拒绝；[迁移步骤](../docs/design/01-mvp/agent-api.md#8-已有数据库升级)
 保留 Conversation ID 与消息，本次未对真实开发 / 生产库执行 DDL。
 
 Engine 构造不依赖媒体、数据库或模型的 ASR/OCR 正式事件，并提供索引投影、embedding
@@ -168,7 +168,7 @@ MySQL 表使用 InnoDB。正式 V2 状态由 VideoParseTask、ChunkParseTask、I
 ## Upload-to-Search API 与进程内 Consumer
 
 前端对接所需的完整请求、响应、分片续传、任务 SSE 与检索契约见
-[前端 API 对接文档](../docs/design/frontend-api.md)。
+[前端 API 对接文档](../docs/design/01-mvp/frontend-api.md)。
 
 先初始化 MySQL，再启动唯一常驻的 seekino Server：
 

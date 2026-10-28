@@ -61,6 +61,6 @@ uv run --no-sync --env-file .env.local pytest -q tests/server/test_elasticsearch
 `:9200` 未监听，未恢复该节点，未启动 MySQL / API / Consumer / Web 或调用真实模型。
 真实 MySQL Schema、V2 mode 和产品上传仍待下一批检查；07B / 08A 尚未完整验收。
 
-问题与证明边界见 [VP2-007](../../docs/design/potential_problems.md#vp2-007真实-es-mapping-默认分词器被-server-校验误拒绝)。
+问题与证明边界见 [VP2-007](../../docs/design/02-agent-harness/potential_problems.md#vp2-007真实-es-mapping-默认分词器被-server-校验误拒绝)。
 
 安装方法：[Elastic 官方 archive 文档](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/targz.html)。

@@ -22,8 +22,8 @@
 </p>
 
 <p align="center">
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12" /></a>
-  <a href="web/package.json"><img src="https://img.shields.io/badge/Node.js-24%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 24+" /></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12" /></a>
+  <a href="web/package.json"><img src="https://img.shields.io/badge/Node.js-24%2B-339933?logo=nodedotjs&amp;logoColor=white" alt="Node.js 24+" /></a>
   <img src="https://img.shields.io/badge/Self--hosted-本地部署-6C5CE7" alt="Self-hosted" />
 </p>
 
@@ -254,7 +254,7 @@ flowchart LR
 
 Supervisor 可以直接回答、搜索网页、调用视频检索，或按冻结的播放位置理解当前及相邻 Chunk。检索结果直接带来源证据，需要更多上下文时可按片段 ID 和游标续读。
 
-正式服务使用 **V2 + MySQL + Elasticsearch**，Consumer 与 API 在同一 Server 进程运行；local 模式无需 Redis 或外部消息队列。更多设计见 [Parse V2 Agent](agent/video_parse_v2/README.md) 与 [Context Canvas](docs/design/context-canvas-design.md)。
+正式服务使用 **V2 + MySQL + Elasticsearch**，Consumer 与 API 在同一 Server 进程运行；local 模式无需 Redis 或外部消息队列。更多设计见 [Parse V2 Agent](agent/video_parse_v2/README.md) 与 [Context Canvas](docs/design/02-agent-harness/context-canvas-design.md)。
 
 </details>
 
@@ -266,7 +266,7 @@ Supervisor 可以直接回答、搜索网页、调用视频检索，或按冻结
 `model_sources` 定义协议、认证与 Provider，`models` 绑定对话、转写、视觉、embedding 与 rerank 等角色。`supervisor_harness` 选择 Codex 或 Deep Agents；来源、模型或 harness 修改后需重启 Server。已有素材库不要随意更换 embedding 模型、来源或维度。详见 [模型配置](docs/model-config.md)。
 
 **local 与 cloud 身份**<br />
-默认 `SEEKINO_AUTH_MODE=local`，本机无需登录。`cloud` 模式额外需要签名秘密、Redis、SMTP 和同源 HTTPS；游客、登录用户与公开内容按服务端权限隔离。详见 [用户 / Tenant 交接说明](server/report_docs/user-tenant-handoff-20261010.md)。
+默认 `SEEKINO_AUTH_MODE=local`，本机无需登录。`cloud` 模式额外需要签名秘密、Redis、SMTP 和同源 HTTPS；游客、登录用户与公开内容按服务端权限隔离。详见 [用户 / Tenant 交接说明](docs/report/server/user-tenant-handoff-20261010.md)。
 
 **已有数据库升级**<br />
 `init-db` 与 `init-es-index` 可重复执行，但不自动迁移旧库或重建不兼容索引。升级前阅读 [Server 说明](server/README.md)，并核对 [身份迁移](docs/migrations/20261010_user_tenant_identity.sql) 与 [媒体毫秒迁移](docs/migrations/20261008_video_timeline_milliseconds.sql)。

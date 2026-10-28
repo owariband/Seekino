@@ -112,7 +112,7 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 
 ### 2. 实时识别的sub-agent开发，接入chat supervisor
 
-状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../design/realtime-parse-trd.md)，产品验收按 O0 进行。
+状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../design/02-agent-harness/realtime-parse-trd.md)，产品验收按 O0 进行。
 
 职责边界：本 Agent 负责实时区间理解 sub-agent、Chat Supervisor 的调用与结果整合，以及这条链路必需的 Server 适配。前端播放交互、全量 Parse / Refine / 索引算法、身份与 Workspace 体系、YouTube 下载和本机笔记生成由对应模块负责；本任务复用其接口，依赖缺口列 TODO。
 

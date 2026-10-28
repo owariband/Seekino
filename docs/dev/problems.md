@@ -583,7 +583,7 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 3. cloud 配置、共享 store 生命周期、初始化和既有 Chat 回归通过；真实 MySQL `setup()` 与恢复使用隔离数据库。
 4. 真实业务 case 固定模型、数据、工具和预算，对比较完成率、证据正确性、覆盖度、完整时延、U/C/W/O、RSS 与存储增长。没有数据时明确写未测，不用删除代码量替代整体收益。
 
-依据：[统一 devlog](devlog.md#devlog-cloud-chat-checkpoint-20261024)、[Deep Agents 适配器](../../gateway/agent_model/deepagents.py)、[历史 pi Host TRD](../design/pi-host-trd.md)。
+依据：[统一 devlog](devlog.md#devlog-cloud-chat-checkpoint-20261024)、[Deep Agents 适配器](../../gateway/agent_model/deepagents.py)、[历史 pi Host TRD](../design/02-agent-harness/pi-host-trd.md)。
 
 ### C19：Chat Agent 误把表达反馈当台词检索，Query Router 需明确本轮任务再追加提示
 
@@ -963,7 +963,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 #### 2026-10-20：补全声学变化工具设计与 Prepare→Refine 归因边界
 
 - 用户进一步明确：Refine拿到准备阶段的归因后不得随意改名或置null，就DIALOGUE而言只处理跨Chunk衔接／合并。该约束需要Canvas和提交检查实施，不能只靠prompt；当前实现仍允许后续窗口重新决策，尚未收紧。
-- 原TRD为[agent/video_parse_v2/design/voiceprint-trd.md](../design/voiceprint-trd.md)，受`.gitignore`的`**/design/`规则忽略。最新职责、算法和分批实现设计已按用户要求同步回main主工作区的原目录，并与隔离worktree同名副本保持一致；历史原文完整保留。此次仅合入相关设计与本节记录，保留主工作区其他修改；该TRD仍不随PR推送，本条提供可追踪索引。
+- 原TRD为[agent/video_parse_v2/design/voiceprint-trd.md](../design/02-agent-harness/voiceprint-trd.md)，受`.gitignore`的`**/design/`规则忽略。最新职责、算法和分批实现设计已按用户要求同步回main主工作区的原目录，并与隔离worktree同名副本保持一致；历史原文完整保留。此次仅合入相关设计与本节记录，保留主工作区其他修改；该TRD仍不随PR推送，本条提供可追踪索引。
 - 首批设计沿用CAM++／1秒窗／400ms步长，比较时间矩阵的左右内部与跨侧相似度，排除自身／共享PCM／重复PCM的虚假支持，不聚类、不预设人数。连续块变化和短尾差异均可成为重ASR待复核范围；短尾缺少内部非重叠配对时明确支持不足，不能再次按最小成簇数量丢掉。算法和阈值尚未验收，现有矩阵不等于自动定位已成功；单embedding无法独立确认同时发声。
 - 接入目标是在Understanding模型调用前程序扫描，Agent展开候选并复用冻结ASR局部重转写，提交前处理已知混人及残余；B0在收集／编码前检查资格。原ASR只读，有新局部ASR证据时允许在授权Chunk内校正旧cue时间，不能机械锁死错误原范围。
 - 当前B0是排名／分档artifact，只有`prefill+ACCEPT`预填，其余可能保留Understanding旧姓名。因此不能直接锁住当前speaker就称为高置信归因；还须明确准备阶段可采纳归因与未决的交付。现有`merge_refinement_content`是并发三方合并，不是两条台词的合并工具；正式合并还缺源事件保留／去重和证据继承合同。本次仅整理设计，未改生产逻辑、B0／encoder／阈值，未运行模型、部署、重解析、提交或推送。
@@ -978,7 +978,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - **初始选样分组记录：6个历史混人范围中5个触发复核，原选普通对照的6条中2条触发；其中第12条现已确认混人、提示正确。** 用户圈出的两条13秒长段均捕捉到末尾差异，但v17爽世短范围未触发，v18爱音目标附近仍缺候选。历史6范围来自两个场景的多个重叠版本，触发率不能当作独立泛化准确率；普通对照的额外复核也仍需回听。4条短输入／短对照无候选不能当单人认证。
 - 预先列出的短侧门槛敏感性：0.10时混人5/6、普通4/6触发；主0.15为5/6、2/6；0.20为4/6、1/6。保留漏检与额外触发的取舍，未挑结果替换主设置。结论是可继续验证为局部重ASR的辅助提醒，不能作为自动切分或B0单人准入证明；同时发声及真实A→B→A音频仍未验收。
 - 新增49个算法语义测试（含1s／400ms A→B、A→B→A和短尾），完整`tests/engine/parsev2`为267 passed、0 failed。独立非调用算法的复算覆盖228主扫描、96组敏感性结果、103个Foote点，最大误差5.5511e-16。首次实测前已修复并回归“低支持尾峰被升级成完整支持峰”的review发现。
-- [实验结果与证据](../../outputs/worktrees/ep04-segmentation-20261020/outputs/verification/ep04-speaker-change-20261020/run-v1/report.md)保留全部样本、参数／代码摘要、PNG和JSON；最新实现状态与结论已同步main原目录的[voiceprint-trd.md](../design/voiceprint-trd.md)。本轮未重ASR、重解析、部署、重启、迁移、commit、push或合并PR，未改主工作区其他代码。
+- [实验结果与证据](../../outputs/worktrees/ep04-segmentation-20261020/outputs/verification/ep04-speaker-change-20261020/run-v1/report.md)保留全部样本、参数／代码摘要、PNG和JSON；最新实现状态与结论已同步main原目录的[voiceprint-trd.md](../design/02-agent-harness/voiceprint-trd.md)。本轮未重ASR、重解析、部署、重启、迁移、commit、push或合并PR，未改主工作区其他代码。
 - 后续按用户要求提供 [12 条矩阵 HTML](../../outputs/verification/ep04-speaker-change-20261020/matrices-12.html)：6 个历史合并输入加 6 条普通长台词，每条保留矩阵数值与原音频。主工作区和隔离副本均有可独立离线打开的文件。TRD 第 3 节补齐当前实际扫描、0.10／0.15 分支、连续点合并和支持不足处理；此次仅展示冻结结果，未重新编码或更改参数。
 
 - 后续按用户“停顿可能造成误判”的假设，复用本地 pyannote 官方 VAD 对 12 条做窗口过滤对照；保留原时间网格／邻域／CAM++／反差门槛，仅可选 mask 排除配对。主设置语音占比≥50%：历史触发 5/6→3/6、普通 2/6→2/6；第11条误报与第12条正确提示均未过滤任何窗（该句前面的5/6、2/6保留初始选样分组口径，最新分组见本节首条），爱音部分候选因支持不足消失，不能当作修好。25% 为 5/6、2/6；75% 为 2/6、1/6。新增 13 个 mask 语义测试，engine 280 passed。见 [VAD 对照记录](../../outputs/verification/ep04-speaker-change-20261020/vad-mask-report.md) 与 TRD 第 7 节；未接生产或重解析。
@@ -1210,7 +1210,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 3. **在同一批 Event 候选关键帧上接续构图实验。**对同一图库提取原图 embedding、PCP 类别分布、人物框图 embedding，比较单路与可调权重融合；分别评议构图类别，以及人物位置、大小和排列。原图 embedding 不替代人物框图特征。
 4. **区分候选召回与构图排序。**先确认相似画面是否进入 Event 候选集，再评价构图特征是否把它排上来；候选池外的画面不能被当作排序模型失败。Chat 发现的例子作为候选线索，经人工核对后使用，不直接当作完整标准答案集。
 
-依赖边界：早期 [Event 细粒度检索 TRD](../design/event-retrieval-trd.md) 的仅词法方案已成为历史记录；当前以 [Sub-Chunk 检索 TRD](../design/sub-chunk-trd.md) 和实际代码为准，独立 Event 索引包含文本、视觉向量及抽帧来源元数据。当前视觉向量由每 Event 最多 3 帧聚合，临时 JPEG 不持久保存，也没有建立逐帧 PCP／人物框图特征库。因此“Event 检索完成”表示可以接续定位和取帧，不能自动标为构图相似检索已完成。
+依赖边界：早期 [Event 细粒度检索 TRD](../design/02-agent-harness/event-retrieval-trd.md) 的仅词法方案已成为历史记录；当前以 [Sub-Chunk 检索 TRD](../design/02-agent-harness/sub-chunk-trd.md) 和实际代码为准，独立 Event 索引包含文本、视觉向量及抽帧来源元数据。当前视觉向量由每 Event 最多 3 帧聚合，临时 JPEG 不持久保存，也没有建立逐帧 PCP／人物框图特征库。因此“Event 检索完成”表示可以接续定位和取帧，不能自动标为构图相似检索已完成。
 
 恢复实验的条件：目标视频的 Event 检索可用，命中可追溯到原片时间并取得对应帧，形成相较 17 图更丰富且各方法共用的候选集；随后用固定查询和人工评议检查召回、排序及人物布局差异。当前不预先选定最佳模型、权重或宣称全库效果。
 
@@ -1587,7 +1587,7 @@ low耗时约为none的6.59倍，Token增加约19.8%。两段理解仍并行：�
 
 用户提出“约15分钟完成高质量解析”的预期。**在修复前冻结轮去掉失败重试、沿用该轮首次理解和精修耗时，曾粗估约16分钟**（理解约10分钟、精修约6分钟、准备和索引），该历史估算不是本轮100.3秒的实测结果。最新默认配置未保证固定时限，也没有由完成时长证明高质量；视觉信息变少和空精修已留证。既有验收只确认新Parse通路与相对ASR的秒级时间一致性，未认证毫秒音轨真值或全部人物/动作/对白语义；ASR输出秒、程序保存毫秒的修复继续有效。
 
-依据：[模型适配器](../../gateway/ark/multimodal.py)、[SSE 终态处理](../../gateway/ark/sse.py)、[引用校验](../../engine/parsev2/schemas.py)、[Chunk Workflow](../../agent/video_parse_v2/understanding/workflow.py)、[宿主与 fallback](../../server/service/video_parse.py)、[Consumer 退避](../../server/mq/video_parse_consumer.py)、[最新运行证据索引](../../server/report_docs/model-token-usage-stages-evidence.md)。原始证据 `/private/tmp/seekino-asr-reparse-20261009/` 的 `source/`、`environment.json`、`stage-observations.jsonl`、`understanding-schema-diagnosis.json`、`state-latest.json`、`audit-parse-timing-final.json` 与 `acceptance-final.json`；装配/持久层有后续ROOT变化，根因以该冻结源码及实际调用记录为准。
+依据：[模型适配器](../../gateway/ark/multimodal.py)、[SSE 终态处理](../../gateway/ark/sse.py)、[引用校验](../../engine/parsev2/schemas.py)、[Chunk Workflow](../../agent/video_parse_v2/understanding/workflow.py)、[宿主与 fallback](../../server/service/video_parse.py)、[Consumer 退避](../../server/mq/video_parse_consumer.py)、[最新运行证据索引](../report/server/model-token-usage-stages-evidence.md)。原始证据 `/private/tmp/seekino-asr-reparse-20261009/` 的 `source/`、`environment.json`、`stage-observations.jsonl`、`understanding-schema-diagnosis.json`、`state-latest.json`、`audit-parse-timing-final.json` 与 `acceptance-final.json`；装配/持久层有后续ROOT变化，根因以该冻结源码及实际调用记录为准。
 
 #### 2026-09-23：ParseV1 历史实测数据与统计口径
 

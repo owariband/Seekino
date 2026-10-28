@@ -192,12 +192,12 @@ Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 本地由用户连接自己安装、认证的 Codex 或 Claude Code。Seekino 负责连接、会话交接、
 业务工具和界面，进程开销由用户本机承担；原生 runtime 的内部调度与进程机制由其自身
 及上游维护。本地不要求安装 Pi，也不纳入云端的单进程优化目标。接入边界见
-[本地 Bridge TRD](../docs/design/codex-bridge-trd.md)。
+[本地 Bridge TRD](../docs/design/02-agent-harness/codex-bridge-trd.md)。
 
 云端由 Seekino 提供统一的 Deep Agents harness，支持 API 模型、长对话和工具调用。
 当前部署目标是一个 Python API worker，不再启动独立 Node Host。模型／工具循环、原生
 上下文和 compact 由 Deep Agents 负责，LangGraph checkpoint 由 `PyMySQLSaver` 持久化到
-现有 MySQL。历史 Pi Host 设计仅作[退役参考](../docs/design/pi-host-trd.md)，决策与验收见
+现有 MySQL。历史 Pi Host 设计仅作[退役参考](../docs/design/02-agent-harness/pi-host-trd.md)，决策与验收见
 [统一 devlog](../docs/dev/devlog.md#devlog-cloud-chat-checkpoint-20261024)。
 
 ### 云端 Deep Agents 与 MySQL checkpoint

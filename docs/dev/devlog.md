@@ -379,7 +379,7 @@ Agent 工具循环、结构化检索和配置解析的 6 个定向合同测试�
 
 记录范围：2026-10-22 至 2026-10-23 的工具修订、已有实验及本次成本核算。本文整理既有结果，没有为写文档再发起模型实验，也没有改变生产配置或计费规则。后续实验按日期追加，保留当时的模型、数据、源码和价格口径。
 
-相关设计：[ContextCanvas 设计与历史实施记录](../design/context-canvas-design.md)、[工具设计研究](../../docs/research/2026-10-22-canvas-agent-tool-design.md)。历史文档中的 Chat Canvas 和 greedy 打包状态不代表当前实现。
+相关设计：[ContextCanvas 设计与历史实施记录](../design/02-agent-harness/context-canvas-design.md)、[工具设计研究](../../docs/research/2026-10-22-canvas-agent-tool-design.md)。历史文档中的 Chat Canvas 和 greedy 打包状态不代表当前实现。
 
 ### 1. 问题与现状
 
@@ -414,7 +414,7 @@ Canvas 已在模型消息之外持有完整草稿、引用和只读源证据。�
 
 原编号 **B06、C07、C18**。B06 是早期共用结构化 Canvas 设计，C07 是需盘点的参数修正反馈，C18 是真实调用中 overview 默认、单/批 start/end 双语义及引用恢复造成误用。批读当时已经存在，不能写成新功能。下述历史数据不能替代那一轮的实际交付与测试。
 
-来源：[B06/C07/C18](problems.md)、[通用 Canvas 工具](../../agent/utils/context_canvas_tools.py)、[Canvas 设计](../design/context-canvas-design.md)。
+来源：[B06/C07/C18](problems.md)、[通用 Canvas 工具](../../agent/utils/context_canvas_tools.py)、[Canvas 设计](../design/02-agent-harness/context-canvas-design.md)。
 
 ### 2. 方案候选
 
@@ -741,7 +741,7 @@ B12仍未全面闭环：B0编码前单人准入、Refine归因只读/受限合�
 
 v25 完整重跑与 v24 比较，两个目标均最终正确；实际声纹预填输入没有完整捕获，证明链来自 B0 结果、规则、后续决策与最终事件，不能声称逐字留证了该阶段输入。ASR、Understanding 和参考池重新生成，单次 2/2 不能确定纯提示因果或全片准确率。证据：[v25 报告](../../outputs/verification/ep04-offscreen-rerun-20261022/report.md)。
 
-B12原材料还记录声学工具接入1319 passed；这是代码回归，完整音频工具数值复现、12范围/231窗及失败重跑分别在对应条目，不重复计算为另一套身份评测。参考设计：[声纹TRD](../design/voiceprint-trd.md)。
+B12原材料还记录声学工具接入1319 passed；这是代码回归，完整音频工具数值复现、12范围/231窗及失败重跑分别在对应条目，不重复计算为另一套身份评测。参考设计：[声纹TRD](../design/02-agent-harness/voiceprint-trd.md)。
 
 ### 4. 指标对比
 
@@ -894,7 +894,7 @@ v21 有 69 次 DNS 与 1 次 timeout，只有 1/24 Understanding 完成。v22 �
 
 **TRD中的宿主实现与离线交付：**
 
-来源：[video-summarize-trd.md](../design/video-summarize-trd.md)，无明确文档日期；迁移文件名 `20261021_video_metadata.sql` 不作为实施日期。目标在全部 Refine 提交后生成官方标题、事实简介、真实集数及封面；源码和离线测试已交付，TRD 明确未迁移、未重启、未发真实摘要、未跑真实 MySQL 并发，归档不把这些状态改成已部署。
+来源：[video-summarize-trd.md](../design/02-agent-harness/video-summarize-trd.md)，无明确文档日期；迁移文件名 `20261021_video_metadata.sql` 不作为实施日期。目标在全部 Refine 提交后生成官方标题、事实简介、真实集数及封面；源码和离线测试已交付，TRD 明确未迁移、未重启、未发真实摘要、未跑真实 MySQL 并发，归档不把这些状态改成已部署。
 
 Summarize 独立于 Chat，与 Index 并行、不等待 Prefix，也不阻塞父 Parse COMPLETE。历史视频不会自动全量补跑。
 
@@ -1171,7 +1171,7 @@ Refine 需要为指定对白完成声纹审查，但旧流程可能在缺少必�
 
 ### 1. 问题与现状
 
-需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../design/shot-tagging-experiment-brief.md)、[字段 schema](../design/shot-composition-schema.md)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
+需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../design/02-agent-harness/shot-tagging-experiment-brief.md)、[字段 schema](../design/02-agent-harness/shot-composition-schema.md)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
 
 ### 2. 方案候选
 
@@ -1567,7 +1567,7 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 1. 问题与现状
 
-10/17–10/18 的 EP04 多轮实验将声纹准备、Refine 和 Index 串起来，暴露出重启、参考库变更引发的 generation refresh、混合 ASR 时间段和静态可见人物误归名。下面记录历史 v4–v11，不把当时方案当成现行生产结论；较新的 offscreen／短句状态见 [voiceprint TRD](../design/voiceprint-trd.md)，后续验证由对应日期另记。
+10/17–10/18 的 EP04 多轮实验将声纹准备、Refine 和 Index 串起来，暴露出重启、参考库变更引发的 generation refresh、混合 ASR 时间段和静态可见人物误归名。下面记录历史 v4–v11，不把当时方案当成现行生产结论；较新的 offscreen／短句状态见 [voiceprint TRD](../design/02-agent-harness/voiceprint-trd.md)，后续验证由对应日期另记。
 
 ### 2. 方案候选
 
@@ -1804,7 +1804,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 3. 方案验证
 
-[视觉检索TRD](../design/visual-retrieval-trd.md)记录10/16后端交付；[Event早期方案](../design/event-retrieval-trd.md)已被Sub-Chunk合同替代，输入模态与检索粒度分别评估。8个后端文件511 passed / 1 skipped，隔离MySQL附件迁移/发布锁2 passed；开发库31会话、72消息旧字段逐项不变，72条旧消息附件为NULL。
+[视觉检索TRD](../design/02-agent-harness/visual-retrieval-trd.md)记录10/16后端交付；[Event早期方案](../design/02-agent-harness/event-retrieval-trd.md)已被Sub-Chunk合同替代，输入模态与检索粒度分别评估。8个后端文件511 passed / 1 skipped，隔离MySQL附件迁移/发布锁2 passed；开发库31会话、72消息旧字段逐项不变，72条旧消息附件为NULL。
 
 ### 4. 指标对比
 
@@ -1866,7 +1866,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 原编号 **B10、B11**。计划停服会消耗业务失败预算，父任务阶段收尾还可能被全局视频槽占用；阶段 deadline 后，等待取消不代表底层线程/SDK/远端请求已停止，租约清空后重试可能与旧调用重叠。B10/B11 在原文仍待完整修复，不能因手动恢复部分任务或晚到结果被拒绝而称生命周期已闭环。
 
-来源：[B10/B11](problems.md)、[ExecutionCalls](../../server/utils/execution.py)、[Consumer](../../server/mq/video_parse_consumer.py)、[Queue](../../server/mq/video_parse_queue.py)、[实时解析候选设计](../design/realtime-parse-trd.md)。
+来源：[B10/B11](problems.md)、[ExecutionCalls](../../server/utils/execution.py)、[Consumer](../../server/mq/video_parse_consumer.py)、[Queue](../../server/mq/video_parse_queue.py)、[实时解析候选设计](../design/02-agent-harness/realtime-parse-trd.md)。
 
 ### 2. 方案候选
 
@@ -1890,7 +1890,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 1. 问题与现状
 
-10/13–10/18 的设计讨论逐步区分“同源”“同一实体”“特征相似”“事件解释”“声音事件”。同样输入一张图片，找原片与找类似构图的成功标准不同；“首次”“全部”“后来”又涉及范围和故事／播放顺序。TopK 的局部合理候选不能自动支持整集、全剧或因果解释。[检索 TRD](../design/multimodel-retrieve-trd.md)、[多模态研究（10/17 初稿、10/18 更新）](../design/多模态理解解析研究.md)
+10/13–10/18 的设计讨论逐步区分“同源”“同一实体”“特征相似”“事件解释”“声音事件”。同样输入一张图片，找原片与找类似构图的成功标准不同；“首次”“全部”“后来”又涉及范围和故事／播放顺序。TopK 的局部合理候选不能自动支持整集、全剧或因果解释。[检索 TRD](../design/02-agent-harness/multimodel-retrieve-trd.md)、[多模态研究（10/17 初稿、10/18 更新）](../design/02-agent-harness/多模态理解解析研究.md)
 
 ### 2. 方案候选
 
@@ -1938,7 +1938,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 原编号 **C08、C09、C10、C11**。C08 是业务图继承 Supervisor 的 InMemorySaver 引发序列化失败，已修；C11 是旧 API 进程未加载新配置，重载后复测通过。C09 的真实 SDK 暴露 default general-purpose task 与假模型预期不同，尚未定位；C10 的实时理解 partial 来自三个相邻失败 Chunk，主 Parse 已失败，根因未逐个追完。四者不可统一写作“Chat 工具坏了”。
 
-来源：[C08–C11](problems.md)、[Chat Runtime](../../agent/chat/video_search/runtime.py)、[实时 Parse TRD](../design/realtime-parse-trd.md)。
+来源：[C08–C11](problems.md)、[Chat Runtime](../../agent/chat/video_search/runtime.py)、[实时 Parse TRD](../design/02-agent-harness/realtime-parse-trd.md)。
 
 ### 2. 方案候选
 
@@ -1968,7 +1968,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-[字段命名合同与迁移验证](../design/base-model-field-names.md)在隔离MySQL 8.4.11验证空库、带数据迁移、全行保留、重复执行拒绝和异常预检。该批未执行业务数据库迁移，不把后续业务库状态反写为当时完成。
+[字段命名合同与迁移验证](../design/02-agent-harness/base-model-field-names.md)在隔离MySQL 8.4.11验证空库、带数据迁移、全行保留、重复执行拒绝和异常预检。该批未执行业务数据库迁移，不把后续业务库状态反写为当时完成。
 
 ### 4. 指标对比
 
@@ -1988,7 +1988,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-来源：[身份TRD](../design/user-tenant-trd.md)、[身份交接](../../server/report_docs/user-tenant-handoff-20261010.md)、[Series共享TRD](../design/series-sharing-trd.md)、[Local/Cloud设计](../design/local-cloud-trd.md)。身份阶段分隔离MySQL/Redis、模拟浏览器与真实HTTPS/OTP流程验证；本机共享迁移不等于手机cloud数据库已迁移。
+来源：[身份TRD](../design/02-agent-harness/user-tenant-trd.md)、[身份交接](../report/server/user-tenant-handoff-20261010.md)、[Series共享TRD](../design/02-agent-harness/series-sharing-trd.md)、[Local/Cloud设计](../design/02-agent-harness/local-cloud-trd.md)。身份阶段分隔离MySQL/Redis、模拟浏览器与真实HTTPS/OTP流程验证；本机共享迁移不等于手机cloud数据库已迁移。
 
 **材料冲突：**Local/Cloud 10/21仍写“普通用户public/private尚未实现”，Sharing明确记录10/19 phase1本机后前端及开发库迁移完成、独立phone/cloud库未迁移。分别保留代码/本机与cloud环境状态；不能据旧状态认定功能全无，也不能认定所有部署均已支持。
 
@@ -2012,7 +2012,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-[本地Bridge TRD](../design/codex-bridge-trd.md)、[旧阶段表](../../gateway/bridge/report_docs/agent-bridge-stages.md)、[Pi Host TRD](../design/pi-host-trd.md)对读。旧P01“未开始”是原规划，10/21本地文档已核对接线文件存在；存在不等于完整Bridge或真实迁移验收。Pi通过真实Python→Node→本机fake API验证，不调用外部模型。
+[本地Bridge TRD](../design/02-agent-harness/codex-bridge-trd.md)、[旧阶段表](../report/gateway/bridge/agent-bridge-stages.md)、[Pi Host TRD](../design/02-agent-harness/pi-host-trd.md)对读。旧P01“未开始”是原规划，10/21本地文档已核对接线文件存在；存在不等于完整Bridge或真实迁移验收。Pi通过真实Python→Node→本机fake API验证，不调用外部模型。
 
 ### 4. 指标对比
 
@@ -2061,7 +2061,7 @@ low 丢失 34/36 events、19/21 dialogues，语义验收为 FAILED。该例没�
 
 ### 3. 方案验证
 
-先做ASR局部诊断和91项直接回归，再以同一原片及默认模型/fps/重试/fallback完整重跑，核对SQL、媒体DTO、receipt与ES版本。来源：[ASR修复和完整重跑](../../server/report_docs/model-usage-handoff-20261008.md)。旧26ms失败记录保留，新运行不追认旧数据正确。
+先做ASR局部诊断和91项直接回归，再以同一原片及默认模型/fps/重试/fallback完整重跑，核对SQL、媒体DTO、receipt与ES版本。来源：[ASR修复和完整重跑](../report/server/model-usage-handoff-20261008.md)。旧26ms失败记录保留，新运行不追认旧数据正确。
 
 ### 4. 指标对比
 
@@ -2083,7 +2083,7 @@ Gateway 统一调用记录与上下文，Server 按稳定 call_id 入账和业�
 
 ### 3. 方案验证
 
-[Server 用量 TRD](../design/model-token-usage.md)、[阶段证据](../../server/report_docs/model-token-usage-stages-evidence.md)、[最新交接](../../server/report_docs/model-usage-handoff-20261008.md)、[Gateway TRD](../design/gateway-model-observability-trd.md)和[追踪验证](../../gateway/report_docs/model-observability-stages-evidence.md)分别记录账本与追踪。读取的是历史验收；部分 `/private/tmp` 原始证据已失效，不能直接承诺原命令可复跑。
+[Server 用量 TRD](../design/02-agent-harness/model-token-usage.md)、[阶段证据](../report/server/model-token-usage-stages-evidence.md)、[最新交接](../report/server/model-usage-handoff-20261008.md)、[Gateway TRD](../design/02-agent-harness/gateway-model-observability-trd.md)和[追踪验证](../report/gateway/model-observability-stages-evidence.md)分别记录账本与追踪。读取的是历史验收；部分 `/private/tmp` 原始证据已失效，不能直接承诺原命令可复跑。
 
 ### 4. 指标对比
 
@@ -2102,7 +2102,7 @@ Gateway 统一调用记录与上下文，Server 按稳定 call_id 入账和业�
 
 ### 1. 问题与现状
 
-[潜在问题记录](../design/potential_problems.md)的 VP2-001～007 混有已复现缺陷、已修复项和测试环境限制。产品影响涉及 retry 死锁、合法短视频恢复被拒、成果与索引身份不一致、索引启动误拒；仅观察到的生命周期风险不能升级成生产事故。
+[潜在问题记录](../design/02-agent-harness/potential_problems.md)的 VP2-001～007 混有已复现缺陷、已修复项和测试环境限制。产品影响涉及 retry 死锁、合法短视频恢复被拒、成果与索引身份不一致、索引启动误拒；仅观察到的生命周期风险不能升级成生产事故。
 
 ### 2. 方案候选
 
@@ -2244,7 +2244,7 @@ C02 记录等待 8/29/29 秒失败，随后 77 秒成功，跟问 8 秒失败后
 
 ### 3. 方案验证
 
-[Harness 调教日志](../design/agent-harness调教log.md)和[上下文设计修复](../design/agent_harness_context修复.md)记录 overflow 根因、实际状态替换、六轮工具批次压力测试、usage 校准和硬边界恢复。09/19 全量为 831 passed / 8 skipped / 9 failed，失败属于当时 Parse timing/SSE fixture；真实 1/6/13/26 集质量/容量实验仍待完成。
+[Harness 调教日志](../design/02-agent-harness/agent-harness调教log.md)和[上下文设计修复](../design/02-agent-harness/agent_harness_context修复.md)记录 overflow 根因、实际状态替换、六轮工具批次压力测试、usage 校准和硬边界恢复。09/19 全量为 831 passed / 8 skipped / 9 failed，失败属于当时 Parse timing/SSE fixture；真实 1/6/13/26 集质量/容量实验仍待完成。
 
 ### 4. 指标对比
 
@@ -2280,7 +2280,7 @@ Engine 显式拥有 transcribe→understand→embed→persist 算法顺序；Ser
 
 ### 3. 方案验证
 
-[职责重构](../design/refactor_1.md)、[V2 存储批次](../design/refactor_2.md)、[ES 历史提案](../design/refactor_3_es_qdrant.md)、[V2 阶段证据](../../agent/video_parse_v2/report_docs/video-parse-v2-migration-stages-evidence.md)、[解析任务 TRD](../design/video-parse-harness-trd.md)、[Engine TRD](../design/video-parse-engine-trd.md)、[Sub-Chunk 最终合同](../design/sub-chunk-trd.md)按日期对读。验证分代码/替身、隔离真实存储、真实模型产品闭环；不同日期和重叠测试集不累加。
+[职责重构](../design/02-agent-harness/refactor_1.md)、[V2 存储批次](../design/02-agent-harness/refactor_2.md)、[ES 历史提案](../design/02-agent-harness/refactor_3_es_qdrant.md)、[V2 阶段证据](../report/agent/video_parse_v2/video-parse-v2-migration-stages-evidence.md)、[解析任务 TRD](../design/02-agent-harness/video-parse-harness-trd.md)、[Engine TRD](../design/02-agent-harness/video-parse-engine-trd.md)、[Sub-Chunk 最终合同](../design/02-agent-harness/sub-chunk-trd.md)按日期对读。验证分代码/替身、隔离真实存储、真实模型产品闭环；不同日期和重叠测试集不累加。
 
 阶段表的 08A 未签收是当时状态；后续实测已在本 devlog 的 ASR、Event V3 和解析实验中单列，不能反向改写旧阶段结论，也不能凭较新代码存在宣布所有迁移门槛关闭。
 
@@ -2318,7 +2318,7 @@ B03 全量 844 passed/8 skipped，跳过为未配置隔离 MySQL 库；保留反
 
 ### 3. 方案验证
 
-计划先用 20–50 条核验样本验证编码、训练、保存与重载，再用未参与训练的片段做质量/成本比较，最后回归 Timeline 和检索。以上都是计划；没有实施或效果通过记录。来源：[Qwen 调教方案](../design/Qwen调教.md)。
+计划先用 20–50 条核验样本验证编码、训练、保存与重载，再用未参与训练的片段做质量/成本比较，最后回归 Timeline 和检索。以上都是计划；没有实施或效果通过记录。来源：[Qwen 调教方案](../design/01-mvp/Qwen调教.md)。
 
 ### 4. 指标对比
 
@@ -2338,7 +2338,7 @@ B03 全量 844 passed/8 skipped，跳过为未配置隔离 MySQL 库；保留反
 
 ### 3. 方案验证
 
-同一失败 Chunk 做输入/模型实验，再从第七集 10/24 checkpoint 续跑，检查时间归属与逐 checkpoint 结构；之后人工审计全片语义。实验的 wall time 与分组耗时之和不同，不混算速度排名。来源：[模型调教日志](../design/模型调教log.md)。该文引用的旧 `packages/engine` 产物路径仅为历史记录，本文不声称仍能直接复跑。
+同一失败 Chunk 做输入/模型实验，再从第七集 10/24 checkpoint 续跑，检查时间归属与逐 checkpoint 结构；之后人工审计全片语义。实验的 wall time 与分组耗时之和不同，不混算速度排名。来源：[模型调教日志](../design/01-mvp/模型调教log.md)。该文引用的旧 `packages/engine` 产物路径仅为历史记录，本文不声称仍能直接复跑。
 
 ### 4. 指标对比
 
@@ -2435,7 +2435,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 
 ### 1. 问题与现状
 
-来源：[reflection_1.md](reflection_1.md)。复盘指出产品原目标是本地素材解析并由 Codex 辅助剪辑，过程中范围扩大、上线时间缺少约束、外部反馈和文档责任不足。这里归档为治理问题，不把个人自责当技术结论。相关 [角色 NPC TRD](../design/character-npc-trd.md) 是 0 字节空文件，只能确认缺少需求/方案/验收记录，不能推断项目已训练、成功或失败。
+来源：[reflection_1.md](reflection_1.md)。复盘指出产品原目标是本地素材解析并由 Codex 辅助剪辑，过程中范围扩大、上线时间缺少约束、外部反馈和文档责任不足。这里归档为治理问题，不把个人自责当技术结论。相关 [角色 NPC TRD](../design/02-agent-harness/character-npc-trd.md) 是 0 字节空文件，只能确认缺少需求/方案/验收记录，不能推断项目已训练、成功或失败。
 
 ### 2. 方案候选
 
@@ -2489,7 +2489,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 
 ### 3. 方案验证
 
-[实时Parse TRD](../design/realtime-parse-trd.md)记录Supervisor的understand_current_video接线，冻结毫秒位置，校验可访问范围；Graph/数据库宿主51 passed。综合1027项首跑1023 passed / 1 skipped / 3 failed，修复既有Bootstrap替身后受影响组37 passed，原集合最终1026项通过/1项跳过，重叠不重复计数。
+[实时Parse TRD](../design/02-agent-harness/realtime-parse-trd.md)记录Supervisor的understand_current_video接线，冻结毫秒位置，校验可访问范围；Graph/数据库宿主51 passed。综合1027项首跑1023 passed / 1 skipped / 3 failed，修复既有Bootstrap替身后受影响组37 passed，原集合最终1026项通过/1项跳过，重叠不重复计数。
 
 ### 4. 指标对比
 
