@@ -1,1 +1,1 @@
-"""Model-provider adapters used by anivag."""
+"""Model-provider adapters used by seekino."""

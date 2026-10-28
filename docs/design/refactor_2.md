@@ -10,15 +10,15 @@
 2. 阅读 [Video Parse V2 TRD](video-parse-harness-trd.md)，重点是 1.3.1、1.4、1.6～1.9。
 3. 阅读 [Engine TRD](video-parse-engine-trd.md) 第一章及 [现有 Engine Schema](../../engine/parsev2/schemas.py)，明确目标结果合同与实际实现的差距；Harness 不自行定义视频业务结果。
 4. 阅读 [Harness README](../../agent/video_parse_v2/README.md) 和实际实现；框架名称与文件布局已整理过，不要重新设计入口命名。
-5. 历史交接文件位于 `/private/tmp/anivag-video-parse-v2-harness-handoff-2026-09-27.md`，仅作背景，不能覆盖本文的新约定。
+5. 历史交接文件位于 `/private/tmp/seekino-video-parse-v2-harness-handoff-2026-09-27.md`，仅作背景，不能覆盖本文的新约定。
 6. 按下面的源码导航读取本批实际调用链，再进入第 5 节的修改树；不能只读目标表结构就开始全局替换名称。
-7. 实现前遵循 [anivag-change-gate](../../.agents/skills/anivag-change-gate/SKILL.md) 与本机 [hypnos-code](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md)；以用户当次授权和已确认批次为准，不重复索取已有授权。
+7. 实现前遵循 [seekino-change-gate](../../.agents/skills/seekino-change-gate/SKILL.md) 与本机 [hypnos-code](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md)；以用户当次授权和已确认批次为准，不重复索取已有授权。
 
 本文初稿阶段仅维护了本文件；此后批次 0～2 已按第 7 节记录实施。两份 TRD 和 Git 跟踪规则仍未修改；新空库已按当前 ORM 建表，但已有库升级迁移仍未执行。本文及 TRD 都被 `.gitignore` 的 `**/design/` 忽略，后续模型必须直接打开，不能依赖 `git diff` 或默认 `rg` 找到它们。
 
 ### 1.1 资料根目录与冲突处理
 
-本机项目根目录为 `/Users/bytedance/workspace/other-project/AniVAG`。下表中的仓库路径均相对此根目录；Markdown 链接相对本文件，可直接打开。迁移工作区后使用新的项目根目录，不能把本机用户名写进业务代码。
+本机项目根目录为 `/Users/bytedance/workspace/other-project/Seekino`。下表中的仓库路径均相对此根目录；Markdown 链接相对本文件，可直接打开。迁移工作区后使用新的项目根目录，不能把本机用户名写进业务代码。
 
 - **目标行为依据**：用户最新明确决定，以及对应领域的当前 TRD。本文第 2 节记录本轮约定及具体建议，第 4 节仍标为建议/待定的内容不是用户已经批准的设计。
 - **现状证据**：当前源码和测试用于判断现在能做什么、哪里需要改；旧实现不能反过来否定已确认的新约定。
@@ -35,11 +35,11 @@
 | [agent/video_parse_v2/README.md](../../agent/video_parse_v2/README.md) | 当前 Harness 文件布局、入口签名、注入边界、事务/通知语义及占位范围 | 当前框架导航；实际能力仍需对照源码，不等于 DB/模型业务已经完成 |
 | [engine/parsev2/schemas.py](../../engine/parsev2/schemas.py) 与 [tests/engine/parsev2/test_schemas.py](../../tests/engine/parsev2/test_schemas.py) | 已存在的 Engine Pydantic 类型、校验和测试入口 | 当前 `VideoParseResult.persons` 和 Timeline 人物引用已直接使用人名、正式时间为原视频整数秒；结果合同仍需接入实际 Harness/Worker 提交链 |
 | [docs/design/parse_big_graph.png](parse_big_graph.png) 与 [docs/design/ChunkUnderstandingWorkflow.png](ChunkUnderstandingWorkflow.png) | 用户原始总流程图、单 Chunk 并行分支与汇合图 | 帮助理解拓扑；图中文字和固定数字可能早于后续决定，数量/开关/命名以当前合同核对 |
-| [/private/tmp/anivag-video-parse-v2-harness-handoff-2026-09-27.md](/private/tmp/anivag-video-parse-v2-harness-handoff-2026-09-27.md) | 前置讨论、被否定的设计、框架完成范围、历史验证和工作区背景 | 本机临时历史快照，可能消失；仍有更名前路径，以当前 README/磁盘为准，不能作为唯一依赖 |
+| [/private/tmp/seekino-video-parse-v2-harness-handoff-2026-09-27.md](/private/tmp/seekino-video-parse-v2-harness-handoff-2026-09-27.md) | 前置讨论、被否定的设计、框架完成范围、历史验证和工作区背景 | 本机临时历史快照，可能消失；仍有更名前路径，以当前 README/磁盘为准，不能作为唯一依赖 |
 | [docs/design/refactor_1.md](refactor_1.md) 与 [engine/README.md](../../engine/README.md) | 理解为什么复用 Server 内部 Consumer，以及 Engine/Server/Gateway 的职责边界 | 主要说明已有 V1 架构；refactor_1 开头已标历史快照，不复制旧路径、旧表结构或旧索引目标作为 V2 方案 |
 | [docs/design/oldvsnew_chat.md](oldvsnew_chat.md) | 查 V1 产物、旧 compact、Timeline 与新需求的背景差异 | 2026-09-24 的只读调查；用于理解旧成果转换难点，不代替当前 V2 Schema |
 | [docs/design/parse-v2-harness.md](parse-v2-harness.md) 与 [engine/parsev2/README.md](../../engine/parsev2/README.md) | 补充早期 Harness/Engine 分层讨论，追溯旧设计名词 | 含历史设计或未同步描述，仅作辅助；不能据此恢复旧主线，具体差异见下文 |
-| [.agents/skills/anivag-change-gate/SKILL.md](../../.agents/skills/anivag-change-gate/SKILL.md) 与 [/Users/bytedance/.codex/skills/hypnos-code/SKILL.md](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md) | 实施范围、批次修改树、验证与最小改动要求 | 前者位于项目内但也被 Git 忽略，后者是本机 skill 路径；换环境后按可用 skills 定位，不能假设仅克隆仓库即可获得全部资料 |
+| [.agents/skills/seekino-change-gate/SKILL.md](../../.agents/skills/seekino-change-gate/SKILL.md) 与 [/Users/bytedance/.codex/skills/hypnos-code/SKILL.md](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md) | 实施范围、批次修改树、验证与最小改动要求 | 前者位于项目内但也被 Git 忽略，后者是本机 skill 路径；换环境后按可用 skills 定位，不能假设仅克隆仓库即可获得全部资料 |
 
 已核对的资料差异，接手时特别注意：
 
@@ -236,7 +236,7 @@ chunk_parse_content.detail
 ### 批次 1：任务/成果模型、身份与迁移脚本
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── [M] database.py                 ← 注册新模型；按迁移范围校验 TIMESTAMP
 │   ├── [M] identity.py                 ← 新解析任务身份；保留已有稳定 Video/Chunk ID
@@ -257,7 +257,7 @@ AniVAG/
 ### 批次 2：上传输入、配置快照、任务创建与重解析
 
 ```text
-AniVAG/
+Seekino/
 └── server/
     ├── config/
     │   └── [M] parse_profile.py         ← 核对旧配置与 V2 固定配置的边界
@@ -281,7 +281,7 @@ AniVAG/
 ### 批次 3：复用 Worker 通道，接入 V2 与事务持久化
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── [M] bootstrap.py                ← 装配模型、Engine、DB 操作与共享 Listener
 │   ├── mq/
@@ -323,7 +323,7 @@ AniVAG/
 ### 批次 4：Prefix compact 与费用归属
 
 ```text
-AniVAG/
+Seekino/
 ├── agent/
 │   └── video_parse_v2/
 │       └── precompact/
@@ -349,7 +349,7 @@ compact 遵循 2.4：成果入 `chunk_parse_content.detail`；后台执行位置
 ### 批次 5：查询、VO 时间转换与前端上传/任务展示
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── model/
 │   │   ├── [M] job_progress.py          ← 新任务 detail/完成计数的展示投影
@@ -409,7 +409,7 @@ AniVAG/
 ### 批次 6：旧成果读取兼容及最终清理
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── [M] cli.py                      ← 旧 import-parse 的兼容或明确停用路径
 │   ├── model/
@@ -436,7 +436,7 @@ AniVAG/
 测试必须保护行为变化，不能只把旧类名、字段名替换后继续断言旧语义。以下是预计需要检查和按批次修改的现有测试；仅被路径搜索命中的 fixture，不应顺便重构测试架构。
 
 ```text
-AniVAG/
+Seekino/
 ├── tests/
 │   ├── agent/
 │   │   └── video_parse_v2/
@@ -517,7 +517,7 @@ npm --prefix web test
 git diff --check
 ```
 
-MySQL 集成测试使用既有 `ANIVAG_TEST_DATABASE_URL`，部分还需要索引环境；只能使用明确的测试环境。未配置时报告 skipped/未验证，不能当作通过，也不能自动借用用户业务库。以上命令是各批次的验证入口；批次 0～2 的实际执行结果见第 7 节。
+MySQL 集成测试使用既有 `SEEKINO_TEST_DATABASE_URL`，部分还需要索引环境；只能使用明确的测试环境。未配置时报告 skipped/未验证，不能当作通过，也不能自动借用用户业务库。以上命令是各批次的验证入口；批次 0～2 的实际执行结果见第 7 节。
 
 ## 7. 范围、估算与交付记录
 
@@ -566,12 +566,12 @@ MySQL 集成测试使用既有 `ANIVAG_TEST_DATABASE_URL`，部分还需要索�
 
 | 命令 | 结果 | 说明 |
 | --- | --- | --- |
-| `env ANIVAG_TEST_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/anivag_video_parse_v2_refactor_test?charset=utf8mb4' .venv/bin/python -B -m pytest tests/server -q` | 769 passed, 3 skipped, 1 warning | Agent Timing 合表后重跑完整服务端测试；真实 MySQL 门禁已打开，3 项其他环境门禁仍跳过。此总数包含共享工作区中新增、未计入批次 0～2 改动量的测试 |
+| `env SEEKINO_TEST_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/seekino_video_parse_v2_refactor_test?charset=utf8mb4' .venv/bin/python -B -m pytest tests/server -q` | 769 passed, 3 skipped, 1 warning | Agent Timing 合表后重跑完整服务端测试；真实 MySQL 门禁已打开，3 项其他环境门禁仍跳过。此总数包含共享工作区中新增、未计入批次 0～2 改动量的测试 |
 | `.venv/bin/python -B -m pytest tests/agent/video_parse_v2 -q` | 28 passed | 只验证现有 Harness 框架/输入合同，不代表真实模型或持久化执行已接通 |
-| `.venv/bin/python -B -m server.cli init-db --database-url 'mysql+pymysql://root@127.0.0.1:33307/anivag_video_parse_v2_development?charset=utf8mb4' --environment development` | 通过；重复执行也通过 | 在新隔离 MySQL 8.4 实例（`127.0.0.1:33307`）的空开发交付库由当前 ORM 成功创建全部表；对同一交付库重复 `init-db` 也通过 Schema 门禁 |
-| `.venv/bin/python -B -m server.cli init-db --database-url 'mysql+pymysql://root@127.0.0.1:33307/anivag_video_parse_v2_refactor_test?charset=utf8mb4' --environment test` | 通过 | 空测试库由当前 ORM 成功创建全部表 |
-| `env ANIVAG_TEST_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/anivag_video_parse_v2_refactor_test?charset=utf8mb4' .venv/bin/python -B -m pytest tests/server/test_mysql_integration.py -q` | 9 passed in 2.92s | Agent Timing 合表后在独立测试库重跑；覆盖并发 V2 retry/reparse、同 Series 集序并发约束、分片上传 claim/lease fencing，以及既有导入回滚、删除和跨连接锁路径 |
-| `env ANIVAG_TEST_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/anivag_video_parse_v2_refactor_test?charset=utf8mb4' .venv/bin/python -B -m pytest tests/server/test_agent_chat_service.py::test_mysql_agent_timing_roundtrips_through_message_detail -q` | 1 passed in 3.39s | 最后一次定向复跑：真实 MySQL 验证 Assistant 消息创建、纯耗时 checkpoint 不改消息 version/updated_at、中间阶段、完成后的 `detail.timing` 持久化往返及清理 |
+| `.venv/bin/python -B -m server.cli init-db --database-url 'mysql+pymysql://root@127.0.0.1:33307/seekino_video_parse_v2_development?charset=utf8mb4' --environment development` | 通过；重复执行也通过 | 在新隔离 MySQL 8.4 实例（`127.0.0.1:33307`）的空开发交付库由当前 ORM 成功创建全部表；对同一交付库重复 `init-db` 也通过 Schema 门禁 |
+| `.venv/bin/python -B -m server.cli init-db --database-url 'mysql+pymysql://root@127.0.0.1:33307/seekino_video_parse_v2_refactor_test?charset=utf8mb4' --environment test` | 通过 | 空测试库由当前 ORM 成功创建全部表 |
+| `env SEEKINO_TEST_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/seekino_video_parse_v2_refactor_test?charset=utf8mb4' .venv/bin/python -B -m pytest tests/server/test_mysql_integration.py -q` | 9 passed in 2.92s | Agent Timing 合表后在独立测试库重跑；覆盖并发 V2 retry/reparse、同 Series 集序并发约束、分片上传 claim/lease fencing，以及既有导入回滚、删除和跨连接锁路径 |
+| `env SEEKINO_TEST_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/seekino_video_parse_v2_refactor_test?charset=utf8mb4' .venv/bin/python -B -m pytest tests/server/test_agent_chat_service.py::test_mysql_agent_timing_roundtrips_through_message_detail -q` | 1 passed in 3.39s | 最后一次定向复跑：真实 MySQL 验证 Assistant 消息创建、纯耗时 checkpoint 不改消息 version/updated_at、中间阶段、完成后的 `detail.timing` 持久化往返及清理 |
 | `.venv/bin/python -B -m pytest -q` 加下列 6 个定向用例 | 6 passed, 1 warning | 补足重复完成、固定快照读取、历史保留和时间绑定的代码级证据；这些用例不使用真实 MySQL，不折算为上行 9 项集成测试 |
 | `.venv/bin/python -m compileall -q server agent/video_parse_v2 engine/parsev2` | 通过 | Python 模块编译检查通过 |
 | `git diff --check` | 通过 | 未发现空白错误 |

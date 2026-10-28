@@ -6,15 +6,15 @@
 
 ## 1. 为什么做 Pi Host
 
-**AniVAG 为云端提供统一 Pi harness，让用户通过自己配置的模型 API 完成长对话、长工具调用和复杂任务链，并让多用户共享有限的服务器资源。**
+**Seekino 为云端提供统一 Pi harness，让用户通过自己配置的模型 API 完成长对话、长工具调用和复杂任务链，并让多用户共享有限的服务器资源。**
 
 初始部署环境是 4 CPU / 8 GB 的 CPU 服务器。模型推理由用户配置的 API 提供，服务器负责业务、Agent 编排、上下文和工具执行。不能继续按用户或对话创建一个完整 Codex / pi 进程，否则重复加载运行时、依赖和缓存会放大内存占用，存在 OOM 风险。
 
 本项目要交付一个由 Python Gateway 管理的 Node Pi Host。该 Node 进程只加载一份 Pi SDK 代码，异步执行多个独立对话；通过会话淘汰、活跃任务准入、模型请求与工具并发限制，控制真实内存和 CPU 消耗。
 
-本地采用用户自带运行时的产品方式：用户自行安装、认证并连接自己的 Codex 或 Claude Code，使用其原生能力。AniVAG 提供连接、会话交接、业务工具和界面；原生 runtime 的进程结构、内部调度和内存优化由其自身及上游维护，资源由用户本机承担。本地不要求用户安装 Pi，不承担本项云端单进程优化目标。
+本地采用用户自带运行时的产品方式：用户自行安装、认证并连接自己的 Codex 或 Claude Code，使用其原生能力。Seekino 提供连接、会话交接、业务工具和界面；原生 runtime 的进程结构、内部调度和内存优化由其自身及上游维护，资源由用户本机承担。本地不要求用户安装 Pi，不承担本项云端单进程优化目标。
 
-第三方 runtime 通过公开协议和 SDK 集成，不以控制其内部实现为前提。AniVAG 仍负责关闭自己创建的连接和适配器，避免自身接入泄漏；用户独立启动的 CLI 进程不由 AniVAG 接管。
+第三方 runtime 通过公开协议和 SDK 集成，不以控制其内部实现为前提。Seekino 仍负责关闭自己创建的连接和适配器，避免自身接入泄漏；用户独立启动的 CLI 进程不由 Seekino 接管。
 
 ### 1.1 已确认的产品与工程边界
 
@@ -35,7 +35,7 @@
 
 ## 2. 当前代码与研究依据
 
-AniVAG 当前 [CodexSession](../../gateway/codex/client.py) 拥有一个 app-server 进程。[CodexAgentModel](../../gateway/codex/agent.py) 在 invocation 创建该对象并在结束时关闭；恢复 native thread 不等于复用进程。这是本次优化针对的现有机制，不是对线上 RSS 或 OOM 的实测归因。
+Seekino 当前 [CodexSession](../../gateway/codex/client.py) 拥有一个 app-server 进程。[CodexAgentModel](../../gateway/codex/agent.py) 在 invocation 创建该对象并在结束时关闭；恢复 native thread 不等于复用进程。这是本次优化针对的现有机制，不是对线上 RSS 或 OOM 的实测归因。
 
 现有 [Supervisor 模型合同](../../gateway/agent_model/contracts.py) 已有 `run_agent`、`confirm_turn`、`discard_turn`、`delete_thread`。[聊天服务](../../server/service/agent_chat.py) 已读写 `Conversation.detail.runtimeSessions`，并在 SQL 保存最终答案后确认运行时状态。[Repository](../../server/repository/agent.py) 已校验 runtime 更新属于当前 Conversation 的最新执行。Pi 接入优先复用这些边界。
 
@@ -172,7 +172,7 @@ SSE 断线只结束客户端消费，不自动取消已接受的业务执行。�
 
 ### 7.1 真实完成点
 
-Pi 的 `agent_end` 可能后接自动重试或压缩续跑，不能直接映射为 AniVAG 消息 COMPLETED。普通 prompt 的 Promise 完成覆盖其后续处理，但 preflight 失败不保证发出 agent_settled；Host 以本次调用收口并检查最终错误/取消状态。
+Pi 的 `agent_end` 可能后接自动重试或压缩续跑，不能直接映射为 Seekino 消息 COMPLETED。普通 prompt 的 Promise 完成覆盖其后续处理，但 preflight 失败不保证发出 agent_settled；Host 以本次调用收口并检查最终错误/取消状态。
 
 prompt resolve 也不保证模型成功，最终 assistant 可能携带 error/aborted。`getLastAssistantText()` 只能提取文字，不能决定 `success=true`。Pi 执行结束后仍须通过业务输出校验和 SQL 提交，才能发布业务终态。
 
@@ -236,7 +236,7 @@ usage 沿用现有 Gateway 记录合同；归属绑定当前消息和用户配�
 - 原生 Node 测试、Python 协议测试与真实 Python → Node → 本机 fake API 集成覆盖凭据隔离、工具回调、取消、字节限制、淘汰与重启恢复。服务层测试覆盖 SQL 成功后确认、提交失败后丢弃。
 - 用户级配置保存、撤销/轮换策略、界面以及不同配置的业务工具能力选择仍待接入；尤其 `SupervisorRuntime` 当前按默认模型能力选择视觉工具，BYOK 批次必须同步改为当次授权配置。
 
-本轮验证结果：相关 Python 回归 **520 passed / 1 skipped / 1 deselected**；跳过项缺少 `ANIVAG_TEST_DATABASE_URL`，排除项为既有默认配置测试，它要求 DeepSeek 而当前用户本地配置选择 Codex。另有一项现有 Starlette 弃用警告。Node **24 tests passed**，构建和类型检查通过，生产依赖审计为 0 个已知漏洞。Python 回归包含真实 SDK、两个不同用户凭据、Python 工具、缓存淘汰，以及终止测试 Host 后从原文件恢复的验证；未调用真实外部模型。
+本轮验证结果：相关 Python 回归 **520 passed / 1 skipped / 1 deselected**；跳过项缺少 `SEEKINO_TEST_DATABASE_URL`，排除项为既有默认配置测试，它要求 DeepSeek 而当前用户本地配置选择 Codex。另有一项现有 Starlette 弃用警告。Node **24 tests passed**，构建和类型检查通过，生产依赖审计为 0 个已知漏洞。Python 回归包含真实 SDK、两个不同用户凭据、Python 工具、缓存淘汰，以及终止测试 Host 后从原文件恢复的验证；未调用真实外部模型。
 
 H01 当前实现的隔离与协议验收已通过；H02 已完成聊天接线、提交协调与 cloud 校验，用户级配置管理仍待完成；H03 尚未执行目标服务器容量验收。
 
@@ -279,14 +279,14 @@ H01 当前实现的隔离与协议验收已通过；H02 已完成聊天接线、
 
 Pi JSONL 会写入受控持久目录；部署需构建独立 Node 包。尚未执行迁移、上线、服务重启、commit 或 push。本文所在 design 目录按仓库现有忽略规则维护，未改变忽略策略。
 
-本次实现没有 fork pi 核心；云端 subagent runner 属于 AniVAG 的扩展接入。若后续固定 SDK 的能力不能满足新增合同，再以证据评估最小上游变更。
+本次实现没有 fork pi 核心；云端 subagent runner 属于 Seekino 的扩展接入。若后续固定 SDK 的能力不能满足新增合同，再以证据评估最小上游变更。
 
 ### 本轮实际修改树
 
 共 30 个文件：16 个新增、14 个修改，无删除或重命名。树内仅记录本轮修改；共享文件已有的其他工作区改动保留。
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] .gitignore
 │   影响：忽略 Host 依赖和编译产物。
 ├── .github/

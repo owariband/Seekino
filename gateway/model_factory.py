@@ -363,7 +363,7 @@ class GatewayClient:
             executor = self._codex_executors.get(source_name)
             if executor is None:
                 executor = ThreadPoolExecutor(
-                    max_workers=source.max_concurrency, thread_name_prefix="anivag-codex",
+                    max_workers=source.max_concurrency, thread_name_prefix="seekino-codex",
                 )
                 self._codex_executors[source_name] = executor
             return executor

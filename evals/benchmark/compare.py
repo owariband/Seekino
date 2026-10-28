@@ -246,8 +246,8 @@ def main() -> None:
     parser.add_argument("--cancel", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.config, args.out = args.config.resolve(), args.out.resolve()
-    os.environ["ANIVAG_MODEL_CONFIG"] = str(args.config)
-    for key in ("ANIVAG_AGENT_CHAT_MODEL", "ANIVAG_AGENT_QUERY_MODEL", "ANIVAG_AGENT_FALLBACK_MODEL", "ANIVAG_MODEL_TRACE_DIR"):
+    os.environ["SEEKINO_MODEL_CONFIG"] = str(args.config)
+    for key in ("SEEKINO_AGENT_CHAT_MODEL", "SEEKINO_AGENT_QUERY_MODEL", "SEEKINO_AGENT_FALLBACK_MODEL", "SEEKINO_MODEL_TRACE_DIR"):
         os.environ.pop(key, None)
     from gateway.config import load_config
     config = load_config(args.config); validate_kimi(config)

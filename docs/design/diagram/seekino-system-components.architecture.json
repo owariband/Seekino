@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "AniVAG 目标系统组件架构",
+    "title": "Seekino 目标系统组件架构",
     "locale": "zh-CN",
     "quality_profile": "showcase",
     "viewBox": [1200, 650],
@@ -311,7 +311,7 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "AniVAG Server",
+      "label": "Seekino Server",
       "wraps": [
         "conversation_service",
         "retrieval_evidence_service",
@@ -322,7 +322,7 @@
     },
     {
       "kind": "region",
-      "label": "AniVAG Engine · Pipeline & Model Adapters",
+      "label": "Seekino Engine · Pipeline & Model Adapters",
       "wraps": [
         "hybrid_retrieval_pipeline",
         "gateway",

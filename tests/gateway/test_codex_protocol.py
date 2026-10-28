@@ -209,7 +209,7 @@ def test_tool_bridge_does_not_count_tool_exceptions_as_success() -> None:
         ("mcpServer/elicitation/request", {"action": "cancel"}),
     ],
 )
-def test_tool_bridge_denies_non_anivag_server_requests(
+def test_tool_bridge_denies_non_seekino_server_requests(
     method: str,
     expected: dict[str, Any],
 ) -> None:

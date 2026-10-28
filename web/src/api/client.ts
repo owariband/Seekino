@@ -84,7 +84,7 @@ function accountContext(connection: ApiConnection): RequestContext {
 }
 
 function authRequired(connection: ApiConnection): void {
-  window.dispatchEvent(new CustomEvent("anivag-auth-required", {
+  window.dispatchEvent(new CustomEvent("seekino-auth-required", {
     detail: { connectionId: connection.id },
   }));
 }

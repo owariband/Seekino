@@ -1,11 +1,11 @@
 # 2026-10-10 UI 参考与纠正截图
 
-本目录备份这轮 Seekino（此前名为 AniVAG）UI 迭代中已确认由用户提供的六张原始截图，按参考顺序编号。图片逐字节复制，未裁剪、压缩或修改标注；源文件均存在，复制后已核对 SHA-256 一致。早期条目保留当时的品牌与要求表述，后续实现以最新纠正意见为准。
+本目录备份这轮 Seekino（此前名为 Seekino）UI 迭代中已确认由用户提供的六张原始截图，按参考顺序编号。图片逐字节复制，未裁剪、压缩或修改标注；源文件均存在，复制后已核对 SHA-256 一致。早期条目保留当时的品牌与要求表述，后续实现以最新纠正意见为准。
 
 | 编号 | 图片 | 原始文件 | 要求或用途摘要 |
 | --- | --- | --- | --- |
-| 01 | [首页系列参考](01-homepage-series-reference.png) | `codex-clipboard-VhNxKa.png` | 参考大海报横排与流媒体首页布局，沿用 AniVAG 的色调及独有功能。 |
-| 02 | [顶部导航标注](02-top-navigation-annotations.png) | `codex-clipboard-IFzutd.png` | 整体布局改为顶部导航：左上 AniVAG 品牌，中部现有功能入口，右上登录与头像。 |
+| 01 | [首页系列参考](01-homepage-series-reference.png) | `codex-clipboard-VhNxKa.png` | 参考大海报横排与流媒体首页布局，沿用 Seekino 的色调及独有功能。 |
+| 02 | [顶部导航标注](02-top-navigation-annotations.png) | `codex-clipboard-IFzutd.png` | 整体布局改为顶部导航：左上 Seekino 品牌，中部现有功能入口，右上登录与头像。 |
 | 03 | [首页大图参考](03-homepage-hero-reference.png) | `codex-clipboard-6mUJcb.png` | 首屏大图展示上次观看进度对应的画面，下方展示系列；使用真实内容与观看记录。 |
 | 04 | [重复画面问题反馈](04-duplicate-frames-feedback.png) | `codex-clipboard-WJS7TQ.png` | 问题截图：hero、系列卡片和选集重复展示同一帧。当时方案为续播 hero、稳定系列封面与按需展开选集；其中首页展开选集已被第 06 张的独立系列详情页要求取代。 |
 | 05 | [最新播放页标注](05-watch-page-annotations.png) | `codex-clipboard-kk6Pz2.png` | 播放画面置于顶部导航下，右侧对话框按需打开；画面下方左侧简介，右侧后续几集。播放时不命中顶部任何 tab。 |

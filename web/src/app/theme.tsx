@@ -9,7 +9,7 @@ import {
 
 import type { ThemeMode } from "../api/contracts";
 
-const STORAGE_KEY = "anivag-theme";
+const STORAGE_KEY = "seekino-theme";
 
 interface ThemeContextValue {
   theme: ThemeMode;

@@ -3,16 +3,16 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-server_bin="${ANIVAG_LLAMA_CPP_SERVER_BIN:-llama-server}"
-model_path="${ANIVAG_LLAMA_CPP_MODEL_PATH:-${script_dir}/models/qwen3-vl-8b-q4_k_m.gguf}"
-mmproj_path="${ANIVAG_LLAMA_CPP_MMPROJ_PATH:-${script_dir}/models/mmproj-qwen3-vl-8b-q8_0.gguf}"
-host="${ANIVAG_LLAMA_CPP_HOST:-127.0.0.1}"
-port="${ANIVAG_LLAMA_CPP_PORT:-8080}"
-context_size="${ANIVAG_LLAMA_CPP_CONTEXT_SIZE:-65536}"
-video_fps="${ANIVAG_LLAMA_CPP_VIDEO_FPS:-0.5}"
-video_timestamp_interval="${ANIVAG_LLAMA_CPP_VIDEO_TIMESTAMP_INTERVAL:-2000}"
-ffmpeg_dir="${ANIVAG_LLAMA_CPP_FFMPEG_DIR:-/opt/homebrew/bin}"
-model_alias="${ANIVAG_LLAMA_CPP_MODEL_ALIAS:-anivag-qwen3-vl-direct}"
+server_bin="${SEEKINO_LLAMA_CPP_SERVER_BIN:-llama-server}"
+model_path="${SEEKINO_LLAMA_CPP_MODEL_PATH:-${script_dir}/models/qwen3-vl-8b-q4_k_m.gguf}"
+mmproj_path="${SEEKINO_LLAMA_CPP_MMPROJ_PATH:-${script_dir}/models/mmproj-qwen3-vl-8b-q8_0.gguf}"
+host="${SEEKINO_LLAMA_CPP_HOST:-127.0.0.1}"
+port="${SEEKINO_LLAMA_CPP_PORT:-8080}"
+context_size="${SEEKINO_LLAMA_CPP_CONTEXT_SIZE:-65536}"
+video_fps="${SEEKINO_LLAMA_CPP_VIDEO_FPS:-0.5}"
+video_timestamp_interval="${SEEKINO_LLAMA_CPP_VIDEO_TIMESTAMP_INTERVAL:-2000}"
+ffmpeg_dir="${SEEKINO_LLAMA_CPP_FFMPEG_DIR:-/opt/homebrew/bin}"
+model_alias="${SEEKINO_LLAMA_CPP_MODEL_ALIAS:-seekino-qwen3-vl-direct}"
 
 if ! command -v "${server_bin}" >/dev/null 2>&1; then
   echo "llama-server not found: ${server_bin}" >&2

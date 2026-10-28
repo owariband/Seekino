@@ -10,7 +10,7 @@
 - 当前修复：手动 retry 统一为 Interval → Chunk → parent；另外记录持久失败意图、停止该视频新派单，让已领取 Chunk / Refine / Index 正常提交或实际回收后，再发布整集失败。自然收尾不能代替一致锁序；已有活跃租约检查发生在取锁之后。
 - 验证：在 `tests/server/test_mysql_integration.py` 使用独立连接和已取得行锁的 Event 同步，覆盖 retry 与 Worker 领取／提交竞争、有限等待、整笔回滚及成果／租约不被部分重置。不以 Barrier 同时起跑或 SQLite 通过替代锁竞争证明。
 - 补充验证：增加 Chunk / Refine / Index × 有效租约 / 已到期 owner 的 6 个真实场景，在真实成果 UPDATE 后、事务提交前暂停；并发执行完整回收与收口，必须保持运行态，提交后保留成果并最终失败。原两条锁序竞争用例不弱化。
-- 历史环境阻塞：2026-10-06 首次以此前隔离的 `anivag_v2_local_20261005_test` 配置尝试全 25 个 MySQL 用例，localhost:3306 拒绝连接。10 个失败 / 15 个 setup errors 均为建连失败，没有执行锁竞争；该次不算修复复验结果。
+- 历史环境阻塞：2026-10-06 首次以此前隔离的 `seekino_v2_local_20261005_test` 配置尝试全 25 个 MySQL 用例，localhost:3306 拒绝连接。10 个失败 / 15 个 setup errors 均为建连失败，没有执行锁竞争；该次不算修复复验结果。
 - 本次真实复验：用户要求继续测试后，仅启动项目已有 MySQL 实例，确认版本为 8.4.11、隔离级别为 REPEATABLE READ；不启动 API / Worker，不初始化目录或迁移业务数据。原 2 个 retry / 提交锁循环场景与新增 6 个提交收口场景串行定向运行 3 轮，分别为 8 passed（3.15s / 3.21s / 3.17s）；完整 MySQL 集成文件为 25 passed（4.37s），没有跳过或 `1213 Deadlock`。
 - 同版最终回归：Queue、Repository、Upload、Worker、普通 reparse API 和真实 MySQL 集成合并运行，149 passed（12.62s），1 条已有 Starlette deprecation warning。竞争夹具的 `mysql-v2-*` Series 查询为 0，测试库仍为原 21 张表；不据此证明其他全库夹具或业务数据验收。
 - 处理边界：本轮没有新增生产或测试代码修改，只补本条证据；未调用付费模型、未 commit / push。MySQL 保持运行，其他服务未启动。本项修复在覆盖的真实竞争场景中未再复现死锁，不承诺系统所有路径永不死锁，也不代表 07B / 08A 全部必需项通过；当前阶段标记不移动。

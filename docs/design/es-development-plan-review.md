@@ -1,6 +1,6 @@
 # Engine-first 检索重构：阶段计划与当前实现评审
 
-核对日期：2026-10-02。对象：当前 AniVAG 工作区（含未提交、未跟踪代码），不是单独的 Git HEAD。本文是**阶段计划与现状报告**，不自动授权迁移、清理、服务重启或发布。本次只更新地图与核对源码；历史业务测试按原日期和范围保留，见 §6。
+核对日期：2026-10-02。对象：当前 Seekino 工作区（含未提交、未跟踪代码），不是单独的 Git HEAD。本文是**阶段计划与现状报告**，不自动授权迁移、清理、服务重启或发布。本次只更新地图与核对源码；历史业务测试按原日期和范围保留，见 §6。
 
 **主交付：[整体阶段图 SVG](es-development-plan-review.svg)**。逐阶段阅读：[P0–P3](es-development-plan-review-p0-p3.svg)、[P4–P7](es-development-plan-review-p4-p7.svg)。[可编辑 Excalidraw 源图](es-development-plan-review.excalidraw)。三张 SVG 均从同一源场景导出。
 
@@ -84,7 +84,7 @@ Engine Retrieval Processing Pipeline
 
 Engine 可以定义纯数据合同、Protocol/port 和确定性算法。Engine 不读取文件、数据库或网络，不导入 Elasticsearch/SQLAlchemy/模型 SDK，也不依赖 Agent、Server 或 Gateway 的具体类型。物理 adapter 可以按运行环境翻译 Engine 计划，但不能改变字段语义、revision、候选身份、融合或证据判据。
 
-这个分层参考本地 `../ragflow` 的“正式输出 → 中间 Chunk/IndexDoc → 存储后端”的持久化边界；RAGFlow 的目录结构、字段权重和具体公式不自动成为 AniVAG 规范，也不会让 ES 取得业务事实所有权。
+这个分层参考本地 `../ragflow` 的“正式输出 → 中间 Chunk/IndexDoc → 存储后端”的持久化边界；RAGFlow 的目录结构、字段权重和具体公式不自动成为 Seekino 规范，也不会让 ES 取得业务事实所有权。
 
 ### 2.2 视频 Dense 的输入合同
 

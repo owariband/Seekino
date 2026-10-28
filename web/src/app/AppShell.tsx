@@ -52,7 +52,7 @@ function AccountControls({ onLogin, mobile = false }: { onLogin: () => void; mob
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ failure: unknown } | null>(null);
   const signedIn = accountIdentity && !accountIdentity.isGuest;
-  return <section id="anivag-account-panel" className={styles.account} aria-label={t("当前账号")}>
+  return <section id="seekino-account-panel" className={styles.account} aria-label={t("当前账号")}>
     {!mobile ? <header><strong>{signedIn ? accountIdentity.email || t("已登录") : t("未登录")}</strong><span>{t("账号与资料来源")}</span></header> : null}
     <div className={styles.accountAction}>
       {accountStatus === "unconfigured" ? <span title={t("连接账号服务后，可登录并访问远端资料")}>{t("未连接账号服务")}</span>
@@ -192,7 +192,7 @@ export function AppShell() {
           <div className={styles.accountMenu} ref={accountRef} onBlur={(event) => {
             if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setAccountOpen(false);
           }}>
-            <button className={styles.accountTrigger} type="button" ref={avatarRef} onClick={() => setAccountOpen((open) => !open)} aria-label={t("打开账号菜单")} aria-expanded={accountOpen} aria-controls="anivag-account-panel" title={signedIn ? accountIdentity.email || t("我的账号") : t("登录与账号")}>
+            <button className={styles.accountTrigger} type="button" ref={avatarRef} onClick={() => setAccountOpen((open) => !open)} aria-label={t("打开账号菜单")} aria-expanded={accountOpen} aria-controls="seekino-account-panel" title={signedIn ? accountIdentity.email || t("我的账号") : t("登录与账号")}>
               <span className={styles.avatar}>{signedIn && accountIdentity.email ? accountIdentity.email.slice(0, 1).toUpperCase() : <UserRound size={21} strokeWidth={1.6} aria-hidden="true" />}</span><ChevronDown size={13} aria-hidden="true" />
             </button>
             {accountOpen ? <AccountControls onLogin={() => { avatarRef.current?.focus(); setAccountOpen(false); openLogin(); }} /> : null}

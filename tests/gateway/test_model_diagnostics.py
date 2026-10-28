@@ -41,9 +41,9 @@ class Unserializable:
 def test_disabled_and_nonparse_capture_do_not_serialize_or_create_artifacts(tmp_path, monkeypatch, caplog, enabled, context):
     root = tmp_path / "trace"
     if enabled:
-        monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+        monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(root))
     else:
-        monkeypatch.delenv("ANIVAG_MODEL_TRACE_DIR", raising=False)
+        monkeypatch.delenv("SEEKINO_MODEL_TRACE_DIR", raising=False)
     request = Unserializable()
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     with model_call_context(context):
@@ -58,7 +58,7 @@ def test_disabled_and_nonparse_capture_do_not_serialize_or_create_artifacts(tmp_
 
 def test_request_and_response_media_share_private_checksum_verified_hardlinks_without_mutation(tmp_path, monkeypatch):
     root = tmp_path / "trace"
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(root))
     media_url = "data:video/mp4;base64," + base64.b64encode(b"offline-video" * 5000).decode()
     request = {"model": "offline", "input": [{"role": "user", "content": [
         {"type": "input_text", "text": "private prompt"},
@@ -119,7 +119,7 @@ def test_restoration_rejects_paths_and_symlinks_outside_call_directory(tmp_path)
 
 def test_concurrent_calls_keep_task_ownership_and_publish_complete_shared_media(tmp_path, monkeypatch):
     root = tmp_path / "trace"
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(root))
     media_url = "data:video/mp4;base64," + base64.b64encode(b"shared-video" * 100000).decode()
     barrier = Barrier(4)
     original_link = os.link
@@ -164,7 +164,7 @@ def test_concurrent_calls_keep_task_ownership_and_publish_complete_shared_media(
 
 
 def test_nested_same_call_is_recorded_once_and_nested_other_call_restores_parent(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     ignored = Unserializable()
     with model_call_context({"video_parse_task_id": "outer"}):
         with track_model_call(provider="ark", model="offline", operation="outer") as outer:
@@ -185,7 +185,7 @@ def test_nested_same_call_is_recorded_once_and_nested_other_call_restores_parent
 
 
 def test_nested_nonparse_capture_does_not_write_to_outer_parse(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     ignored = Unserializable()
     with model_call_context({"video_parse_task_id": "outer"}):
         outer = ModelCallTracker(provider="ark", model="offline", operation="outer")
@@ -201,7 +201,7 @@ def test_nested_nonparse_capture_does_not_write_to_outer_parse(tmp_path, monkeyp
 
 
 def test_authentication_fields_are_redacted_without_logging_request_or_response_bodies(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     request = {
         "headers": {"Authorization": "Bearer hidden-auth"},
@@ -228,7 +228,7 @@ def test_authentication_fields_are_redacted_without_logging_request_or_response_
 @pytest.mark.parametrize("raise_original", [False, True])
 def test_diagnostic_io_failure_preserves_result_exception_and_resets_context(tmp_path, monkeypatch, caplog, failure, raise_original):
     root = tmp_path / "trace"
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(root))
     request = {"input": ["data:image/png;base64,cHJpdmF0ZQ=="]}
     if failure == "directory":
         root.write_text("blocked")
@@ -274,7 +274,7 @@ def test_diagnostic_io_failure_preserves_result_exception_and_resets_context(tmp
 
 
 def test_event_limit_marks_truncation_and_stops_later_serialization(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     assert diagnostics._MAX_EVENT_BYTES == 32 * 1024 * 1024
     ignored = Unserializable()
     with model_call_context({"video_parse_task_id": "parse-large"}):
@@ -294,7 +294,7 @@ def test_event_limit_marks_truncation_and_stops_later_serialization(tmp_path, mo
 
 
 def test_sdk_serialization_preserves_omitted_fields_explicit_nulls_and_empty_text(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     wire = {"type": "response.completed", "sequence_number": 1, "response": {
         "id": "response-empty", "status": "completed", "model": "offline", "error": None,
         "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]}],
@@ -315,7 +315,7 @@ def test_sdk_serialization_preserves_omitted_fields_explicit_nulls_and_empty_tex
 
 
 def test_exception_chain_and_provider_request_id_are_recorded_without_leaking_auth_or_urls(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     inner = ValueError("Authorization=inner-key https://provider.invalid/private?token=hidden data:image/png;base64,cHJpdmF0ZQ==")
     inner.request_id = "inner-request"
     inner.status_code = 400
@@ -351,9 +351,9 @@ def test_exception_with_broken_string_preserves_original_failure_and_request_cor
             raise ValueError("private failure while rendering provider exception")
 
     if enabled:
-        monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+        monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     else:
-        monkeypatch.delenv("ANIVAG_MODEL_TRACE_DIR", raising=False)
+        monkeypatch.delenv("SEEKINO_MODEL_TRACE_DIR", raising=False)
     original = BrokenMessage()
     usage = []
     with model_call_context({"video_parse_task_id": "parse-broken"}), capture_model_usage(usage.append):
@@ -384,7 +384,7 @@ def test_exception_with_broken_string_preserves_original_failure_and_request_cor
     ("Bearer synthetic-plain-bearer api_key=synthetic-plain-api-key", ("synthetic-plain-bearer", "synthetic-plain-api-key")),
 ])
 def test_credentials_in_json_arguments_and_error_messages_are_redacted(tmp_path, monkeypatch, caplog, text, secrets):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     original_error = RuntimeError(text)
     with model_call_context({"video_parse_task_id": "parse-json-auth"}):
         with pytest.raises(RuntimeError) as caught:
@@ -407,7 +407,7 @@ def test_namespace_response_is_saved_but_transport_objects_are_not_traversed(tmp
             self.api_key = "private-transport-key"
             self.body = "private-transport-body"
 
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     response = SimpleNamespace(id="offline-response", output=[SimpleNamespace(text="offline-answer")], error=None)
     original = deepcopy(response)
     transport = Transport()
@@ -439,7 +439,7 @@ def _output_preview(directory, caplog):
 
 @pytest.mark.parametrize("length", [1, 2000, 4000])
 def test_output_preview_keeps_short_text_once_without_overlapping_head_and_tail(tmp_path, monkeypatch, caplog, length):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     text = "x" * length
     response = {"id": "response-short", "status": "completed", "output": [
@@ -468,7 +468,7 @@ def test_output_preview_keeps_short_text_once_without_overlapping_head_and_tail(
     ("头🐱" * 1000, "中🙂" * 150, "尾🐶" * 1000),
 ])
 def test_output_preview_counts_unicode_characters_and_saves_exact_2000_character_edges(tmp_path, monkeypatch, caplog, head, middle, tail):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     text = head + middle + tail
     response = SimpleNamespace(id="response-long", status="completed", output=[SimpleNamespace(
@@ -486,7 +486,7 @@ def test_output_preview_counts_unicode_characters_and_saves_exact_2000_character
 
 
 def test_output_preview_records_tool_only_sdk_arguments_and_deduplicates_terminal_events(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     arguments = json.dumps({"operations": [{"op": "patch_event", "event_ref": "event-1"}]})
     wire = {"type": "response.completed", "sequence_number": 3, "response": {
@@ -514,7 +514,7 @@ def test_output_preview_records_tool_only_sdk_arguments_and_deduplicates_termina
 
 @pytest.mark.parametrize("status", ["completed", "failed", "incomplete"])
 def test_output_preview_records_empty_sdk_terminal_status_and_ignores_nonterminal_sse(tmp_path, monkeypatch, caplog, status):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     terminal = construct_type(type_=ResponseStreamEvent, value={
         "type": "response." + status, "sequence_number": 2,
@@ -541,9 +541,9 @@ def test_output_preview_records_empty_sdk_terminal_status_and_ignores_nontermina
 def test_disabled_and_chat_calls_do_not_emit_output_preview_or_output_log(tmp_path, monkeypatch, caplog, enabled, context):
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     if enabled:
-        monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+        monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     else:
-        monkeypatch.delenv("ANIVAG_MODEL_TRACE_DIR", raising=False)
+        monkeypatch.delenv("SEEKINO_MODEL_TRACE_DIR", raising=False)
     response = {"id": "ignored", "status": "completed", "output": [
         {"type": "message", "content": [{"type": "output_text", "text": "ignored-private-answer"}]},
     ]}
@@ -556,7 +556,7 @@ def test_disabled_and_chat_calls_do_not_emit_output_preview_or_output_log(tmp_pa
 
 
 def test_output_preview_redacts_credentials_before_cutting_and_preserves_response(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     prefix = "Bearer synthetic-preview-bearer\n"
     suffix = '\n{"api_key":"synthetic-preview-api-key"}'
@@ -580,7 +580,7 @@ def test_output_preview_redacts_credentials_before_cutting_and_preserves_respons
 
 
 def test_http_failure_without_terminal_response_does_not_fabricate_output_preview(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     original_error = RuntimeError("offline HTTP error")
     with model_call_context({"video_parse_task_id": "parse-http-error"}):
@@ -595,7 +595,7 @@ def test_http_failure_without_terminal_response_does_not_fabricate_output_previe
 
 @pytest.mark.parametrize("status", ["completed", "failed", "incomplete"])
 def test_streamed_text_is_used_when_terminal_is_empty_and_done_does_not_duplicate_deltas(tmp_path, monkeypatch, caplog, status):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     parts = ["开头" * 500, "middle" * 1000, "尾巴" * 500]
     text = "".join(parts)
@@ -631,7 +631,7 @@ def test_streamed_text_is_used_when_terminal_is_empty_and_done_does_not_duplicat
 
 
 def test_stream_interruption_preserves_partial_output_and_original_exception(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     original_error = ConnectionError("offline stream interrupted")
     text = "已输出🐱的内容"
@@ -656,7 +656,7 @@ def test_stream_interruption_preserves_partial_output_and_original_exception(tmp
 
 
 def test_output_preview_supports_chat_choices_text_and_function_arguments(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     response = SimpleNamespace(id="chat-response", choices=[SimpleNamespace(message=SimpleNamespace(
         content="chat completion text", tool_calls=[SimpleNamespace(
@@ -678,7 +678,7 @@ def test_output_preview_supports_chat_choices_text_and_function_arguments(tmp_pa
 
 
 def test_truncated_event_recording_still_preserves_terminal_output_preview(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     response = {"id": "response-after-cap", "status": "completed", "output_text": "after event cap"}
     with model_call_context({"video_parse_task_id": "parse-preview-cap"}):
@@ -694,7 +694,7 @@ def test_truncated_event_recording_still_preserves_terminal_output_preview(tmp_p
 
 
 def test_local_schema_failure_retains_provider_completed_status_and_failed_client_status(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     response = {"id": "response-invalid-schema", "status": "completed", "output_text": "invalid schema text"}
     original_error = ValueError("local schema validation failed")
@@ -712,7 +712,7 @@ def test_local_schema_failure_retains_provider_completed_status_and_failed_clien
 
 
 def test_tool_only_stream_interruption_preserves_arguments_and_function_identity(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     original_error = ConnectionError("offline tool stream interrupted")
     fragments = ['{"operations":[', '{"op":"patch_event"}']
@@ -748,7 +748,7 @@ def test_tool_only_stream_interruption_preserves_arguments_and_function_identity
     ('{"from":"terminal"}', '{"from":"terminal"}', "terminal"),
 ])
 def test_function_argument_done_replaces_delta_text_and_terminal_arguments_take_precedence(tmp_path, monkeypatch, caplog, terminal_arguments, expected, source):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     caplog.set_level(logging.INFO, logger="gateway.model_diagnostics")
     with model_call_context({"video_parse_task_id": "parse-tool-done"}):
         with track_model_call(provider="ark", model="offline", operation="understand") as call:

@@ -252,7 +252,7 @@ Content-Type: image/png
 - 规范、有序附件引用只存入独立 `agent_message.attachments JSON NULL` 列，对外使用正式 `attachments` 字段，不复制到 `detail`、`extraContext` 或历史视频 `reference`。已有消息的 SQL NULL 读取为 `[]`；迁移不回填旧行，不改变历史更新时间。首版无独立资源表，会话归属以 MySQL 为准，manifest 只保存媒体事实。
 - 幂等比较纳入规范附件引用；同一个 key 配不同附件应冲突。预览 URL 等展示信息由引用派生，不参与请求身份，避免刷新地址引起重复执行。
 - 用户消息 VO 在历史列表和现有 SSE 消息快照中返回附件展示信息，前端据此恢复预览；无需新增一种附件流式事件。本轮输入是“图片＋明确文字问题”，不顺带改变纯图片无文字发送规则。
-- 上传字节／像素限制使用注入的同一份 `ServerSettings.images`，沿用 `ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES` 和 `ANIVAG_MAX_IMAGE_PIXELS`。背景图缩放参数及模型工具图像预算不作为 Chat 上传约束；后续算法消费限制单独设计。
+- 上传字节／像素限制使用注入的同一份 `ServerSettings.images`，沿用 `SEEKINO_MAX_IMAGE_UPLOAD_SIZE_BYTES` 和 `SEEKINO_MAX_IMAGE_PIXELS`。背景图缩放参数及模型工具图像预算不作为 Chat 上传约束；后续算法消费限制单独设计。
 
 附件内容通过 `GET /api/agent/attachments/content?tenantId=...&conversationId=...&mediaUri=...` 鉴权读取。上传响应使用非空的 MIME、字节数和预览 URL；历史消息若 manifest 丢失，仍返回 `mediaUri`，其他三个字段为 `null` 并记录异常，避免整页历史消失。原件丢失而 manifest 尚在时保留描述，内容读取返回媒体丢失错误。
 

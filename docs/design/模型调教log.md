@@ -1,4 +1,4 @@
-# AniVAG 视频理解模型调教日志
+# Seekino 视频理解模型调教日志
 
 更新时间：2026-09-13（Asia/Shanghai）
 
@@ -129,7 +129,7 @@ VideoRAG 的视觉阶段也不是把完整 MP4 原样交给一个模型后直接
 - ImageBind 生成视觉向量；
 - GPT-4o / mini 等文本模型再负责实体、图谱和问答。
 
-所以 VideoRAG 的经验真正指向的是“**短视觉上下文 + 分阶段处理**”，而不是“MiniCPM 一步生成严格毫秒级 Timeline”。它的目标是检索与问答，也与 AniVAG 的最终事件 Schema 不同。
+所以 VideoRAG 的经验真正指向的是“**短视觉上下文 + 分阶段处理**”，而不是“MiniCPM 一步生成严格毫秒级 Timeline”。它的目标是检索与问答，也与 Seekino 的最终事件 Schema 不同。
 
 ### 5.2 MiniCPM 为什么没有立刻照搬
 
@@ -142,7 +142,7 @@ VideoRAG 原代码使用的 MiniCPM-V 2.6 BNB NF4/CUDA 路径不能原样搬到�
 - Qwen3-VL-8B Instruct `Q4_K_M`；
 - `Q8_0` 视觉 projector；
 - 本地文件合计约 `5.78GB`；
-- 通过 Ollama/Metal 运行，模型名为 `anivag-qwen3-vl:8b-q4-64k`。
+- 通过 Ollama/Metal 运行，模型名为 `seekino-qwen3-vl:8b-q4-64k`。
 
 选择它是因为它已有多图、OCR、anime 与时序能力信号，而且当时不需要继续下载。
 
@@ -265,7 +265,7 @@ VideoRAG fine 的真实口径是每个 30 秒输入组固定 15 帧。66 秒窗�
 
 Qwen 不接收 SeriesBible、历史 Context、候选 ASR、Canonical ownership 规则，也不计算毫秒或 event type。Engine 根据 Frame 编号做确定性时间映射。Doubao Pro 第二阶段只接收文本化观察、空候选 ASR、SeriesBible 与前一个 VideoChunk 的 Context，再输出既有 `VideoTimeline`；它不接收 MP4 或图片。
 
-诊断脚本：`/private/tmp/anivag_qwen_neutral_doubao_refine_segment0010.py`。
+诊断脚本：`/private/tmp/seekino_qwen_neutral_doubao_refine_segment0010.py`。
 
 ### 8.2 Qwen 中性视觉阶段结果
 
@@ -468,7 +468,7 @@ hf.co/openbmb/MiniCPM-V-2_6-gguf:Q4_K_M
 字幕信息量都显著优于 MiniCPM。
 
 这次结果解释了“为什么 VideoRAG 选它，我们却觉得它很废物”：VideoRAG 让 MiniCPM 生成
-召回候选窗口的粗/精 caption，链路里还有 transcript、ImageBind 和文本 LLM；AniVAG 此处却
+召回候选窗口的粗/精 caption，链路里还有 transcript、ImageBind 和文本 LLM；Seekino 此处却
 要求它从 15 帧中抽出不串帧、可追溯的细粒度证据。两种任务的质量门槛不同，不能从
 VideoRAG 的工程选型推出 MiniCPM 比 Qwen 更适合我们的 Schema。
 

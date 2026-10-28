@@ -37,7 +37,7 @@ def test_hydrate_keeps_database_evidence_output(monkeypatch, capsys) -> None:
     monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: factory)
     monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "hydrate", *chunk_ids, "--tenant-id", "workspace",
+        "seekino-server", "hydrate", *chunk_ids, "--tenant-id", "workspace",
         "--database-url", "sqlite+pysqlite:///:memory:", "--environment", "test",
     ])
 
@@ -65,7 +65,7 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
         def __init__(self, client, **kwargs):
             assert client is created[0]
             assert kwargs == {
-                "index_name": "anivag_video_chunks_test",
+                "index_name": "seekino_video_chunks_test",
                 "environment": cli.DatabaseEnvironment.TEST,
                 "semantic_dimensions": 2,
                 "vision_dimensions": 3,
@@ -74,13 +74,13 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
         def ensure_index(self):
             created[0].ready = True
 
-    monkeypatch.delenv("ANIVAG_DATABASE_URL", raising=False)
+    monkeypatch.delenv("SEEKINO_DATABASE_URL", raising=False)
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "init-es-index", "--environment", "test",
+        "seekino-server", "init-es-index", "--environment", "test",
         "--elasticsearch-url", "http://127.0.0.1:9200",
-        "--elasticsearch-index", "anivag_video_chunks_test",
+        "--elasticsearch-index", "seekino_video_chunks_test",
         "--elasticsearch-api-key", "test-key",
         "--elasticsearch-index-generation", "7",
         "--text-vector-dimensions", "2",
@@ -94,7 +94,7 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
     assert created[0].ready and created[0].closed
     assert json.loads(capsys.readouterr().out) == {
         "schemaReady": True,
-        "index": "anivag_video_chunks_test",
+        "index": "seekino_video_chunks_test",
         "indexGeneration": 7,
     }
 
@@ -127,9 +127,9 @@ def test_init_event_index_uses_separate_target_and_full_contract_without_databas
     monkeypatch.setattr(cli, "build_event_elasticsearch_storage", build_event_store)
     monkeypatch.setattr(cli, "open_database_storage", lambda *_args, **_kwargs: pytest.fail("used database"))
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "init-event-index", "--environment", "test",
+        "seekino-server", "init-event-index", "--environment", "test",
         "--elasticsearch-url", "http://127.0.0.1:9200",
-        "--elasticsearch-index", "anivag_video_chunks_test",
+        "--elasticsearch-index", "seekino_video_chunks_test",
         "--event-index", EventStore.index_name, "--max-height", "480",
     ])
     cli.main()
@@ -164,7 +164,7 @@ def test_event_status_is_read_only_and_does_not_allocate_index_or_models(monkeyp
     monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(cli, "open_elasticsearch_storage", lambda *_args, **_kwargs: pytest.fail("used ES"))
     monkeypatch.setattr(cli, "load_config", lambda *_args, **_kwargs: pytest.fail("loaded model"))
-    monkeypatch.setattr(sys, "argv", ["anivag-server", "event-index-status", "--environment", "test",
+    monkeypatch.setattr(sys, "argv", ["seekino-server", "event-index-status", "--environment", "test",
                                      "--database-url", "sqlite+pysqlite:///:memory:",
                                      "--video-parse-task-id", "task-1"])
     cli.main()
@@ -197,11 +197,11 @@ def test_event_backfill_uses_task_encoder_and_shared_event_capture_settings(monk
 
     monkeypatch.setattr(cli, "open_database_storage", database)
     monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
-    monkeypatch.setenv("ANIVAG_PARSE_MAX_HEIGHT", "480")
+    monkeypatch.setenv("SEEKINO_PARSE_MAX_HEIGHT", "480")
     monkeypatch.setattr(cli, "open_elasticsearch_storage", lambda *_args, **_kwargs: pytest.fail("used ES"))
-    monkeypatch.setattr(sys, "argv", ["anivag-server", "request-es-index-rebuild", "--environment", "test",
+    monkeypatch.setattr(sys, "argv", ["seekino-server", "request-es-index-rebuild", "--environment", "test",
         "--database-url", "sqlite+pysqlite:///:memory:", "--video-parse-task-id", "task-1", "--with-events",
-        "--elasticsearch-url", "http://127.0.0.1:9200", "--elasticsearch-index", "anivag_video_chunks_test",
+        "--elasticsearch-url", "http://127.0.0.1:9200", "--elasticsearch-index", "seekino_video_chunks_test",
         "--event-index", "seekino_video_events_test_v1"])
     cli.main()
     target = calls["target"]
@@ -216,9 +216,9 @@ def test_event_backfill_uses_task_encoder_and_shared_event_capture_settings(monk
 def test_init_es_index_rejects_wrong_environment_before_connecting(monkeypatch) -> None:
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("connected"))
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "init-es-index", "--environment", "test",
+        "seekino-server", "init-es-index", "--environment", "test",
         "--elasticsearch-url", "http://127.0.0.1:9200",
-        "--elasticsearch-index", "anivag_video_chunks_development",
+        "--elasticsearch-index", "seekino_video_chunks_development",
     ])
 
     with pytest.raises(ValueError, match="test component"):
@@ -246,9 +246,9 @@ def test_init_es_index_closes_client_on_schema_error(monkeypatch) -> None:
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "init-es-index", "--environment", "test",
+        "seekino-server", "init-es-index", "--environment", "test",
         "--elasticsearch-url", "http://127.0.0.1:9200",
-        "--elasticsearch-index", "anivag_video_chunks_test",
+        "--elasticsearch-index", "seekino_video_chunks_test",
     ])
 
     with pytest.raises(RuntimeError, match="mapping differs"):
@@ -285,10 +285,10 @@ def test_request_es_index_rebuild_schedules_one_v2_task(
     )
     monkeypatch.setattr(cli, "VideoParsePersistenceService", Repository)
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server",
+        "seekino-server",
         "request-es-index-rebuild",
         "--database-url",
-        "mysql+pymysql://root@127.0.0.1:3306/anivag_test",
+        "mysql+pymysql://root@127.0.0.1:3306/seekino_test",
         "--environment",
         "test",
         "--video-parse-task-id",
@@ -298,7 +298,7 @@ def test_request_es_index_rebuild_schedules_one_v2_task(
     cli.main()
 
     assert calls == {
-        "database_url": "mysql+pymysql://root@127.0.0.1:3306/anivag_test",
+        "database_url": "mysql+pymysql://root@127.0.0.1:3306/seekino_test",
         "environment": cli.DatabaseEnvironment.TEST,
         "task_id": "task-1",
     }
@@ -313,9 +313,9 @@ def test_business_commands_default_execution_mode_from_environment(
     monkeypatch, configured_mode,
 ) -> None:
     if configured_mode is None:
-        monkeypatch.delenv("ANIVAG_PARSE_EXECUTION_MODE", raising=False)
+        monkeypatch.delenv("SEEKINO_PARSE_EXECUTION_MODE", raising=False)
     else:
-        monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", configured_mode)
+        monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", configured_mode)
     parser = cli._build_parser()
 
     search = parser.parse_args([
@@ -359,12 +359,12 @@ def test_rebuild_index_v2_requests_task_without_index_client(
         elasticsearch_caller, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("used ES"),
     )
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server",
+        "seekino-server",
         "rebuild-index",
         "--execution-mode",
         "v2",
         "--database-url",
-        "mysql+pymysql://root@127.0.0.1:3306/anivag_test",
+        "mysql+pymysql://root@127.0.0.1:3306/seekino_test",
         "--environment",
         "test",
         "--video-parse-task-id",
@@ -374,7 +374,7 @@ def test_rebuild_index_v2_requests_task_without_index_client(
     cli.main()
 
     assert calls == {
-        "database_url": "mysql+pymysql://root@127.0.0.1:3306/anivag_test",
+        "database_url": "mysql+pymysql://root@127.0.0.1:3306/seekino_test",
         "environment": cli.DatabaseEnvironment.TEST,
         "task_id": "task-2",
     }
@@ -387,12 +387,12 @@ def test_rebuild_index_v2_requests_task_without_index_client(
 def test_rebuild_index_v2_requires_video_parse_task_id(monkeypatch) -> None:
     monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server",
+        "seekino-server",
         "rebuild-index",
         "--execution-mode",
         "v2",
         "--database-url",
-        "mysql+pymysql://root@127.0.0.1:3306/anivag_test",
+        "mysql+pymysql://root@127.0.0.1:3306/seekino_test",
         "--environment",
         "test",
     ])
@@ -479,18 +479,18 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
         }),
     )
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server",
+        "seekino-server",
         "search",
         "--execution-mode",
         "v2",
         "--database-url",
-        "mysql+pymysql://root@127.0.0.1:3306/anivag_test",
+        "mysql+pymysql://root@127.0.0.1:3306/seekino_test",
         "--environment",
         "test",
         "--elasticsearch-url",
         "http://127.0.0.1:9200",
         "--elasticsearch-index",
-        "anivag_video_chunks_test",
+        "seekino_video_chunks_test",
         "--elasticsearch-index-generation",
         "7",
         "--elasticsearch-api-key",
@@ -526,7 +526,7 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
 
     assert calls["client"] == ("http://127.0.0.1:9200", "test-key")
     assert calls["store"] == {
-        "index_name": "anivag_video_chunks_test",
+        "index_name": "seekino_video_chunks_test",
         "environment": cli.DatabaseEnvironment.TEST,
         "semantic_dimensions": 2,
         "vision_dimensions": 2,
@@ -603,18 +603,18 @@ def test_search_v2_closes_elasticsearch_client_on_failure(monkeypatch) -> None:
         }),
     )
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server",
+        "seekino-server",
         "search",
         "--execution-mode",
         "v2",
         "--database-url",
-        "mysql+pymysql://root@127.0.0.1:3306/anivag_test",
+        "mysql+pymysql://root@127.0.0.1:3306/seekino_test",
         "--environment",
         "test",
         "--elasticsearch-url",
         "http://127.0.0.1:9200",
         "--elasticsearch-index",
-        "anivag_video_chunks_test",
+        "seekino_video_chunks_test",
         "--query",
         "query",
         "--series-id",
@@ -628,7 +628,7 @@ def test_search_v2_closes_elasticsearch_client_on_failure(monkeypatch) -> None:
 
 @pytest.mark.parametrize("command", ["search", "rebuild-index"])
 def test_business_commands_reject_retired_execution_mode(monkeypatch, command):
-    monkeypatch.delenv("ANIVAG_PARSE_EXECUTION_MODE", raising=False)
+    monkeypatch.delenv("SEEKINO_PARSE_EXECUTION_MODE", raising=False)
     arguments = [command, "--execution-mode", "v1"]
     if command == "search":
         arguments.extend(["--query", "crying", "--series-id", "series-1"])
@@ -639,16 +639,16 @@ def test_business_commands_reject_retired_execution_mode(monkeypatch, command):
 
 @pytest.mark.parametrize("command", ["sync-index", "reconcile-index"])
 def test_cli_does_not_expose_retired_qdrant_commands(monkeypatch, command):
-    monkeypatch.delenv("ANIVAG_PARSE_EXECUTION_MODE", raising=False)
+    monkeypatch.delenv("SEEKINO_PARSE_EXECUTION_MODE", raising=False)
     with pytest.raises(SystemExit) as error:
         cli._build_parser().parse_args([command])
     assert error.value.code == 2
 
 
 def test_cli_rejects_retired_environment_mode_for_search(monkeypatch):
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v1")
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "search", "--query", "query", "--series-id", "series",
+        "seekino-server", "search", "--query", "query", "--series-id", "series",
     ])
     with pytest.raises(ValueError, match="V1 execution is retired"):
         cli.main()
@@ -672,11 +672,11 @@ def test_init_db_ignores_unrelated_configuration_and_disposes_engine(
     engine = SimpleNamespace(
         dialect=SimpleNamespace(name="sqlite"), dispose=lambda: closed.append("database"),
     )
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", "/missing/model-config.yaml")
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "invalid")
-    monkeypatch.setenv("ANIVAG_TEXT_VECTOR_DIMENSIONS", "invalid")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "invalid")
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", "/missing/model-config.yaml")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v1")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX_GENERATION", "invalid")
+    monkeypatch.setenv("SEEKINO_TEXT_VECTOR_DIMENSIONS", "invalid")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_TEXT_WEIGHT", "invalid")
     monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
     monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *args, **kwargs: pytest.fail("used ES"))
@@ -694,7 +694,7 @@ def test_init_db_ignores_unrelated_configuration_and_disposes_engine(
         lambda *_args, **_kwargs: SimpleNamespace(close=lambda: closed.append("checkpoint")),
     )
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "init-db", "--database-url", "sqlite+pysqlite:///:memory:",
+        "seekino-server", "init-db", "--database-url", "sqlite+pysqlite:///:memory:",
         "--environment", "test",
     ])
     if fails:
@@ -721,8 +721,8 @@ def test_init_db_mysql_also_initializes_checkpoint_schema(monkeypatch, capsys):
     create_checkpoint = Mock(return_value=checkpoint)
     monkeypatch.setattr(agent_checkpoint, "create_agent_checkpoint_store", create_checkpoint)
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "init-db",
-        "--database-url", "mysql+pymysql://user:pass@localhost/anivag_test",
+        "seekino-server", "init-db",
+        "--database-url", "mysql+pymysql://user:pass@localhost/seekino_test",
         "--environment", "test",
     ])
     cli.main()
@@ -754,7 +754,7 @@ def test_cli_closes_resources_when_storage_construction_fails(monkeypatch, failu
             "init-es-index", "--elasticsearch-url", "http://127.0.0.1:9200",
             "--elasticsearch-index", "construction_test",
         ]
-    monkeypatch.setattr(sys, "argv", ["anivag-server", *argv, "--environment", "test"])
+    monkeypatch.setattr(sys, "argv", ["seekino-server", *argv, "--environment", "test"])
     with pytest.raises(RuntimeError, match="construction failed"):
         cli.main()
     assert closed == ["database" if failure == "sessions" else "elasticsearch"]
@@ -782,17 +782,17 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.setenv("CLI_EMBEDDING_KEY", "selected-key")
     if timeout_override is None:
-        monkeypatch.delenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", raising=False)
+        monkeypatch.delenv("SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS", raising=False)
     else:
-        monkeypatch.setenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", str(timeout_override))
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "2")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_CHANNEL_TOP_K", "12")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_RRF_K", "48")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", "0.5")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "0.4")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_VISION_WEIGHT", "0.6")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", "22")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_RERANK_ENABLED", "true")
+        monkeypatch.setenv("SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS", str(timeout_override))
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_FPS", "2")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_CHANNEL_TOP_K", "12")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_RRF_K", "48")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_LEXICAL_WEIGHT", "0.5")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_TEXT_WEIGHT", "0.4")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_VISION_WEIGHT", "0.6")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_CANDIDATE_BUDGET", "22")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_RERANK_ENABLED", "true")
     parsed = default_video_parse_v2_config()
     parsed = parsed.model_copy(update={"models": parsed.models.model_copy(update={
         "embedding": parsed.models.embedding.model_copy(update={
@@ -860,7 +860,7 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
 
     monkeypatch.setattr(cli, "build_retrieval_service", build_and_record)
     monkeypatch.setattr(sys, "argv", [
-        "anivag-server", "search", "--environment", "test",
+        "seekino-server", "search", "--environment", "test",
         "--database-url", "sqlite+pysqlite:///:memory:",
         "--elasticsearch-url", "http://127.0.0.1:9200",
         "--elasticsearch-index", "endpoint_test",
@@ -914,7 +914,7 @@ assert not any(name == prefix or name.startswith(prefix + '.')
 
 @pytest.mark.parametrize("command", ["import-parse", "backfill-keyframes"])
 def test_retired_v1_cli_commands_are_not_registered(monkeypatch, command):
-    monkeypatch.setattr(sys, "argv", ["anivag-server", command])
+    monkeypatch.setattr(sys, "argv", ["seekino-server", command])
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 2

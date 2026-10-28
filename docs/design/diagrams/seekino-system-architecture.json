@@ -2,10 +2,10 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "AniVAG · 私有视频语义检索架构",
+    "title": "Seekino · 私有视频语义检索架构",
     "subtitle": "从本地视频到可核验片段：离线解析、三层存储、Agent 检索与可恢复执行",
     "locale": "zh-CN",
-    "output": "docs/design/diagrams/anivag-system-architecture.html",
+    "output": "docs/design/diagrams/seekino-system-architecture.html",
     "animation": "none",
     "quality_profile": "showcase",
     "viewBox": [1380, 720],

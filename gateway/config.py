@@ -634,28 +634,28 @@ class GatewayConfig(BaseModel):
                 raise ValueError(f"model binding {ref!r} is not configured") from error
         environment = os.environ if environ is None else environ
         model_keys = {
-            "transcription": ("ANIVAG_TRANSCRIPT_MODEL",),
-            "vision": ("ANIVAG_VIDEO_MODEL",),
-            "agent": ("ANIVAG_AGENT_CHAT_MODEL", "ANIVAG_DEEPSEEK_CHAT_MODEL"),
-            "chat": ("ANIVAG_AGENT_CHAT_MODEL", "ANIVAG_DEEPSEEK_CHAT_MODEL"),
-            "query": ("ANIVAG_AGENT_QUERY_MODEL",),
-            "evaluator": ("ANIVAG_AGENT_EVALUATOR_MODEL",),
-            "agent_fallback": ("ANIVAG_AGENT_FALLBACK_MODEL",),
-            "rerank": ("ANIVAG_RERANK_MODEL",),
+            "transcription": ("SEEKINO_TRANSCRIPT_MODEL",),
+            "vision": ("SEEKINO_VIDEO_MODEL",),
+            "agent": ("SEEKINO_AGENT_CHAT_MODEL", "SEEKINO_DEEPSEEK_CHAT_MODEL"),
+            "chat": ("SEEKINO_AGENT_CHAT_MODEL", "SEEKINO_DEEPSEEK_CHAT_MODEL"),
+            "query": ("SEEKINO_AGENT_QUERY_MODEL",),
+            "evaluator": ("SEEKINO_AGENT_EVALUATOR_MODEL",),
+            "agent_fallback": ("SEEKINO_AGENT_FALLBACK_MODEL",),
+            "rerank": ("SEEKINO_RERANK_MODEL",),
         }
         selected = next((environment[key].strip() for key in model_keys.get(ref, ()) if environment.get(key, "").strip()), None)
         updates = {"model": selected} if selected else {}
         if configured_ref == "agent" and binding.fallback is not None:
-            fallback_model = environment.get("ANIVAG_AGENT_FALLBACK_MODEL", "").strip()
+            fallback_model = environment.get("SEEKINO_AGENT_FALLBACK_MODEL", "").strip()
             if fallback_model:
                 updates["fallback"] = binding.fallback.model_copy(update={"model": fallback_model})
         if configured_ref == "vision":
-            enabled = environment.get("ANIVAG_FALLBACK_ENABLED")
+            enabled = environment.get("SEEKINO_FALLBACK_ENABLED")
             fallback_enabled = self.video_parser.fallback.enabled
             if enabled is not None:
                 normalized = enabled.strip().lower()
                 if normalized not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
-                    raise ValueError("ANIVAG_FALLBACK_ENABLED must be a boolean value")
+                    raise ValueError("SEEKINO_FALLBACK_ENABLED must be a boolean value")
                 fallback_enabled = normalized in {"1", "true", "yes", "on"}
             updates["fallback"] = (
                 binding.fallback if "fallback" in binding.model_fields_set
@@ -673,8 +673,8 @@ class GatewayConfig(BaseModel):
         if not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"model binding {ref!r} is not an embedding binding")
         environment = os.environ if environ is None else environ
-        selected = environment.get("ANIVAG_VIDEO_EMBEDDING_MODEL", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
-        fps = environment.get("ANIVAG_VIDEO_EMBEDDING_FPS", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        selected = environment.get("SEEKINO_VIDEO_EMBEDDING_MODEL", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        fps = environment.get("SEEKINO_VIDEO_EMBEDDING_FPS", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
         # Import only after config types are initialized: model_sources consumes them.
         from gateway.model_sources import ModelReference, ModelReferenceType
         configured = self.normalized_models["embedding"]
@@ -1039,7 +1039,7 @@ def _legacy_agent_config(
 
 
 def resolve_config_path(config_path: str | Path | None = None) -> Path:
-    configured_path = config_path or os.getenv("ANIVAG_MODEL_CONFIG")
+    configured_path = config_path or os.getenv("SEEKINO_MODEL_CONFIG")
     return Path(configured_path or _DEFAULT_CONFIG_PATH).expanduser().resolve()
 
 

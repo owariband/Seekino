@@ -628,7 +628,7 @@ def migrate(engine, *, targets: Mapping[str, dict] | None = None,
         locked = False
         try:
             if apply:
-                locked = connection.scalar(text("SELECT GET_LOCK('anivag_chunk_task_migration', 0)")) == 1
+                locked = connection.scalar(text("SELECT GET_LOCK('seekino_chunk_task_migration', 0)")) == 1
                 if not locked:
                     raise RuntimeError("another task migration is running")
                 connection.commit()
@@ -678,19 +678,19 @@ def migrate(engine, *, targets: Mapping[str, dict] | None = None,
             return report
         finally:
             if locked:
-                connection.execute(text("SELECT RELEASE_LOCK('anivag_chunk_task_migration')"))
+                connection.execute(text("SELECT RELEASE_LOCK('seekino_chunk_task_migration')"))
                 connection.commit()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database-url", default=os.getenv("ANIVAG_DATABASE_URL"), required=not os.getenv("ANIVAG_DATABASE_URL"))
+    parser.add_argument("--database-url", default=os.getenv("SEEKINO_DATABASE_URL"), required=not os.getenv("SEEKINO_DATABASE_URL"))
     parser.add_argument("--task-targets", type=Path)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--writers-stopped", action="store_true")
     parser.add_argument("--environment", choices=[v.value for v in DatabaseEnvironment], required=True)
-    parser.add_argument("--elasticsearch-url", default=os.getenv("ANIVAG_ELASTICSEARCH_URL"))
-    parser.add_argument("--elasticsearch-index", default=os.getenv("ANIVAG_ELASTICSEARCH_INDEX"))
+    parser.add_argument("--elasticsearch-url", default=os.getenv("SEEKINO_ELASTICSEARCH_URL"))
+    parser.add_argument("--elasticsearch-index", default=os.getenv("SEEKINO_ELASTICSEARCH_INDEX"))
     parser.add_argument("--vector-dimensions", type=int, default=None)
     args = parser.parse_args()
     targets = json.loads(args.task_targets.read_text()) if args.task_targets else {}
@@ -701,7 +701,7 @@ def main() -> None:
             from server.config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
             from server.storage.elasticsearch import ElasticsearchVideoChunkStore
             config = ElasticsearchConfig(args.elasticsearch_url, args.elasticsearch_index,
-                                         api_key=os.getenv("ANIVAG_ELASTICSEARCH_API_KEY") or None)
+                                         api_key=os.getenv("SEEKINO_ELASTICSEARCH_API_KEY") or None)
             config.validate_environment(DatabaseEnvironment(args.environment))
             dimensions, _ = resolve_vector_dimensions(text_dimensions=args.vector_dimensions)
             with open_elasticsearch_client(config) as client:

@@ -41,7 +41,7 @@ async function mockCloud(page: Page, { empty = false } = {}) {
   await page.addInitScript(() => {
     const originalFetch = window.fetch;
     const calls: { path: string; credentials?: RequestCredentials }[] = [];
-    Object.assign(window, { anivagFetchCalls: calls });
+    Object.assign(window, { seekinoFetchCalls: calls });
     window.fetch = (input, init) => {
       calls.push({ path: String(input), credentials: init?.credentials });
       return originalFetch(input, init);
@@ -57,7 +57,7 @@ async function mockCloud(page: Page, { empty = false } = {}) {
     const replyIdentity = async (next: AuthIdentity) => {
       identity = next;
       await route.fulfill({ json: next, headers: {
-        "set-cookie": `anivag_auth=${next.userId}; HttpOnly; SameSite=Lax; Path=/`,
+        "set-cookie": `seekino_auth=${next.userId}; HttpOnly; SameSite=Lax; Path=/`,
       } });
     };
     if (url.pathname === "/api/auth/me") {
@@ -107,12 +107,12 @@ test("bootstraps an HttpOnly guest session and shows an empty public catalog", a
   await expect(page.getByRole("link", { name: "资料库", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "设置", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "前往资料库上传视频" })).toHaveCount(0);
-  const authCookie = (await context.cookies()).find((cookie) => cookie.name === "anivag_auth");
+  const authCookie = (await context.cookies()).find((cookie) => cookie.name === "seekino_auth");
   expect(authCookie).toMatchObject({ value: guest.userId, httpOnly: true, sameSite: "Lax" });
-  expect(await page.evaluate(() => document.cookie)).not.toContain("anivag_auth");
+  expect(await page.evaluate(() => document.cookie)).not.toContain("seekino_auth");
   expect(mock.requests.filter(({ path }) => path.startsWith("/api/auth/")).map(({ path }) => path))
     .toEqual(["/api/auth/me", "/api/auth/guest"]);
-  expect(mock.requests.find(({ path }) => path === "/api/series/list")?.cookie).toContain("anivag_auth=guest-a");
+  expect(mock.requests.find(({ path }) => path === "/api/series/list")?.cookie).toContain("seekino_auth=guest-a");
   expect(await page.locator("script[src]").first().getAttribute("src")).toMatch(/^\/assets\//);
   expect(mock.unexpected).toEqual([]);
   expect(mock.pageErrors).toEqual([]);
@@ -139,7 +139,7 @@ test("logs in by email, isolates public and personal data, then resets to a new 
   await expect(page.getByRole("link", { name: "资料库", exact: true })).toBeVisible();
   for (const path of ["/api/auth/email/send", "/api/auth/email/verify"]) {
     expect(mock.requests.find((request) => request.path === path)).toMatchObject({
-      method: "POST", cookie: "anivag_auth=guest-a", csrf: guest.csrfToken,
+      method: "POST", cookie: "seekino_auth=guest-a", csrf: guest.csrfToken,
       body: path.endsWith("verify") ? { email: member.email, code: "123456" } : { email: member.email },
     });
   }
@@ -157,13 +157,13 @@ test("logs in by email, isolates public and personal data, then resets to a new 
   await expect(source.locator("option")).toHaveCount(1);
   await expect(page.getByRole("link", { name: "资料库", exact: true })).toHaveCount(0);
   expect(mock.requests.find(({ path }) => path === "/api/auth/logout")).toMatchObject({
-    method: "POST", cookie: "anivag_auth=member-a", csrf: member.csrfToken,
+    method: "POST", cookie: "seekino_auth=member-a", csrf: member.csrfToken,
   });
-  expect((await context.cookies()).find((cookie) => cookie.name === "anivag_auth"))
+  expect((await context.cookies()).find((cookie) => cookie.name === "seekino_auth"))
     .toMatchObject({ value: loggedOutGuest.userId, httpOnly: true });
   const fetches = await page.evaluate(() => (window as Window & {
-    anivagFetchCalls: { path: string; credentials?: RequestCredentials }[];
-  }).anivagFetchCalls);
+    seekinoFetchCalls: { path: string; credentials?: RequestCredentials }[];
+  }).seekinoFetchCalls);
   expect(fetches.filter(({ path }) => path.startsWith("/api/")).every(({ credentials }) => credentials === "include")).toBe(true);
   expect(mock.unexpected).toEqual([]);
   expect(mock.pageErrors).toEqual([]);

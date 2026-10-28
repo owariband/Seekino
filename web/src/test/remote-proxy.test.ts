@@ -67,7 +67,7 @@ describe("localhost remote development proxy", () => {
           return;
         }
         response.setHeader("Set-Cookie", [
-          "anivag_auth=guest-token; Domain=remote.invalid; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
+          "seekino_auth=guest-token; Domain=remote.invalid; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
           "tracking=discarded; Path=/",
         ]);
       }
@@ -107,7 +107,7 @@ describe("localhost remote development proxy", () => {
   });
 
   it("keeps the remote optional and defines the fixed development connection only when configured", async () => {
-    vi.stubEnv("ANIVAG_REMOTE_API_URL", "");
+    vi.stubEnv("SEEKINO_REMOTE_API_URL", "");
     vi.stubEnv("VITE_REMOTE_API_BASE_URL", "");
     vi.stubEnv("VITE_REMOTE_API_ORIGIN", "");
     if (typeof viteConfig !== "function") throw new Error("Vite config must resolve environment values");
@@ -116,7 +116,7 @@ describe("localhost remote development proxy", () => {
     expect(local.server?.proxy?.["/api"]).toEqual({ target: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/), changeOrigin: false });
     expect(local.server?.proxy?.["/healthz"]).toEqual(local.server?.proxy?.["/api"]);
 
-    vi.stubEnv("ANIVAG_REMOTE_API_URL", upstreamOrigin);
+    vi.stubEnv("SEEKINO_REMOTE_API_URL", upstreamOrigin);
     const configured = await viteConfig({ command: "serve", mode: "test" });
     expect(configured.define?.["import.meta.env.VITE_REMOTE_API_BASE_URL"]).toBe('"/remote"');
     expect(configured.define?.["import.meta.env.VITE_REMOTE_API_ORIGIN"]).toBe(JSON.stringify(upstreamOrigin));
@@ -129,15 +129,15 @@ describe("localhost remote development proxy", () => {
 
   it("rejects unsafe upstream configuration", () => {
     for (const target of ["http://remote.example", "https://remote.example/api", "https://user:password@remote.example", "https://remote.example?target=other", "https://remote.example/#fragment"]) {
-      expect(() => remoteDevelopmentProxy(target)).toThrow("ANIVAG_REMOTE_API_URL");
+      expect(() => remoteDevelopmentProxy(target)).toThrow("SEEKINO_REMOTE_API_URL");
     }
-    expect(() => remoteDevelopmentProxy("https://remote.example", "invalid cookie")).toThrow("ANIVAG_REMOTE_COOKIE_NAME");
+    expect(() => remoteDevelopmentProxy("https://remote.example", "invalid cookie")).toThrow("SEEKINO_REMOTE_COOKIE_NAME");
     expect(remoteDevelopmentProxy("https://remote.example").options.target).toBe("https://remote.example");
   });
 
   it("creates a guest with upstream origin checks and scopes only the remote session cookie", async () => {
     const result = await send(browserOrigin, "/remote/api/auth/guest", {
-      Origin: browserOrigin, "Sec-Fetch-Site": "same-origin", Cookie: "anivag_auth=local-token; unrelated=private",
+      Origin: browserOrigin, "Sec-Fetch-Site": "same-origin", Cookie: "seekino_auth=local-token; unrelated=private",
       Authorization: "Bearer local-credential", "X-Forwarded-Host": "other.example", "X-Forwarded-Proto": "https",
     }, "{}");
     expect(result.status).toBe(200);
@@ -149,7 +149,7 @@ describe("localhost remote development proxy", () => {
     expect(upstreamRequest.headers["x-forwarded-proto"]).toBeUndefined();
     const cookies = result.headers["set-cookie"]!;
     expect(cookies).toHaveLength(1);
-    expect(cookies[0]).toMatch(/^anivag_remote_[a-f0-9]{16}=guest-token;/);
+    expect(cookies[0]).toMatch(/^seekino_remote_[a-f0-9]{16}=guest-token;/);
     expect(cookies[0]).toContain("HttpOnly");
     expect(cookies[0]).toContain("SameSite=Lax");
     expect(cookies[0]).toContain("Max-Age=600");
@@ -161,7 +161,7 @@ describe("localhost remote development proxy", () => {
     const guest = await send(browserOrigin, "/remote/api/auth/guest", { Origin: browserOrigin }, "{}");
     const remoteCookie = guest.headers["set-cookie"]![0]!.split(";")[0]!;
     const result = await send(browserOrigin, "/remote/api/uploads/parts?partNumber=2", {
-      Origin: browserOrigin, Cookie: `anivag_auth=local-token; ${remoteCookie}; another=private`,
+      Origin: browserOrigin, Cookie: `seekino_auth=local-token; ${remoteCookie}; another=private`,
       "X-CSRF-Token": "remote-csrf", "Idempotency-Key": "upload-key", "Content-Range": "bytes 2-4/8",
     }, "234");
     expect(result.status).toBe(200);
@@ -169,7 +169,7 @@ describe("localhost remote development proxy", () => {
     expect(forwarded.path).toBe("/api/uploads/parts?partNumber=2");
     expect(forwarded.method).toBe("POST");
     expect(forwarded.body).toBe("234");
-    expect(forwarded.headers.cookie).toBe("anivag_auth=guest-token");
+    expect(forwarded.headers.cookie).toBe("seekino_auth=guest-token");
     expect(forwarded.headers["x-csrf-token"]).toBe("remote-csrf");
     expect(forwarded.headers["idempotency-key"]).toBe("upload-key");
     expect(forwarded.headers["content-range"]).toBe("bytes 2-4/8");

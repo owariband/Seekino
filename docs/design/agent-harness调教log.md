@@ -80,7 +80,7 @@ InvalidParameter: Total tokens of multi-modal content and text exceed max messag
 - Query Tool 不再返回每个 hit 中重复的 Series 背景和工程元数据；Evaluator 只接收一份 `available_evidence`，历史 Turn 只保留调用与审核元数据。
 - Series 背景按 Series 注入一次；历史结果保留有界的 ID、时间、`videoCompact` 和 matched evidence，用于解析“上条第二段”等指代，但不重放完整 Evidence。
 - Reference Evidence 只在 Query 阶段作为检索依据出现；Evaluator/Chat 使用本轮重新召回并核验后的唯一 Evidence，避免相同 Chunk 再复制一份。
-- 新增 `ANIVAG_AGENT_MAX_PROMPT_CHARS`，默认字符预算为 `200,000`；超限在本地终止并输出可操作错误，不再等待 Provider 返回泛化 400。
+- 新增 `SEEKINO_AGENT_MAX_PROMPT_CHARS`，默认字符预算为 `200,000`；超限在本地终止并输出可操作错误，不再等待 Provider 返回泛化 400。
 - Agent 执行失败现在记录异常链和稳定业务 ID，不记录原始 Prompt、用户正文或背景载荷，能够保留 Provider code/request ID 供排障。
 
 ## 2026-09-19：5–6 集范围仍反复爆 Context，13 集扩容风险
@@ -277,7 +277,7 @@ InvalidParameter: Total tokens of multi-modal content and text exceed max messag
 ### `videoChunkId` 核验结果
 
 - `videoChunkId` 是 canonical UUID，也是 `video_chunk.video_chunk_id` 的全局主键。
-- 当前通过 `UUIDv5(videoId, sequenceNo)` 确定性生成；准确 seed 为 `anivag:video-segment`。
+- 当前通过 `UUIDv5(videoId, sequenceNo)` 确定性生成；准确 seed 为 `seekino:video-segment`。
 - `sequenceNo` 才是单个 Video 内的切片顺序号；数据库另有 `(video_id, sequence_no)` 唯一约束。
 - 因此 Draft 与最终 Video Item 以 `videoChunkId` 去重符合当前领域模型。
 
@@ -329,7 +329,7 @@ Evaluator 输出 EvalDecision(action, advice)
 |---|---|
 | `gateway/agent_model/context.py` | Provider 无关的 token ledger、阈值判断、replacement history、window identity 与硬上限恢复 |
 | `gateway/agent_model/tool_loop.py` / `gateway/openai/structured.py` | 把相同 Controller 接入自定义 function loop 和 LangChain/LangGraph middleware，并采集真实 Provider usage |
-| `agent/chat/video_search/context.py` | 将 anivag canonical Workspace 投影成有界 navigation checkpoint |
+| `agent/chat/video_search/context.py` | 将 seekino canonical Workspace 投影成有界 navigation checkpoint |
 | `agent/chat/video_search/workspace.py` | 保存模型消息之外的 Retrieval/Draft/approved Draft/render canonical state |
 | `agent/chat/video_search/query.py` / `evaluator.py` / `chat.py` | 定义角色固定锚点、一次性初始快照和 checkpoint callback |
 | `server/config/agent.py` / `settings.py` | 保存窗口、预留、软阈值和目标阈值配置 |
@@ -353,11 +353,11 @@ Evaluator 输出 EvalDecision(action, advice)
 
 | 环境变量 | 默认值 | 语义 |
 |---|---:|---|
-| `ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS` | `64000` | Provider context window |
-| `ANIVAG_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS` | `4096` | 输入侧安全余量 |
-| `ANIVAG_AGENT_AUTO_COMPACT_TOKENS` | `48000` | 自动换窗软阈值 |
-| `ANIVAG_AGENT_COMPACT_TARGET_TOKENS` | `24000` | replacement history 目标水位 |
-| `ANIVAG_AGENT_MAX_OUTPUT_TOKENS` | `4096` | 输出预留，同时参与硬输入预算 |
+| `SEEKINO_AGENT_CONTEXT_WINDOW_TOKENS` | `64000` | Provider context window |
+| `SEEKINO_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS` | `4096` | 输入侧安全余量 |
+| `SEEKINO_AGENT_AUTO_COMPACT_TOKENS` | `48000` | 自动换窗软阈值 |
+| `SEEKINO_AGENT_COMPACT_TARGET_TOKENS` | `24000` | replacement history 目标水位 |
+| `SEEKINO_AGENT_MAX_OUTPUT_TOKENS` | `4096` | 输出预留，同时参与硬输入预算 |
 
 ### 已发生问题与新增防线
 

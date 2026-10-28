@@ -15,7 +15,7 @@ class Client:
         self.mapping = {
             "dynamic": "strict",
             "_meta": {
-                "index_contract_version": "anivag-video-chunk-es-5",
+                "index_contract_version": "seekino-video-chunk-es-5",
                 "projection_version": "parse-v2-chunk-index-v1",
                 "analysis_contract_version": "cjk-1",
                 "media_time_unit": "milliseconds",

@@ -27,7 +27,7 @@ import type {
 
 interface StoredIdentity { key: string; id?: string }
 const conversations = new Map<string, Promise<AgentConversationView>>();
-const conversationStorageKey = () => identityStorageKey("anivag-agent-conversation");
+const conversationStorageKey = () => identityStorageKey("seekino-agent-conversation");
 
 function storedIdentity(storageKey: string): StoredIdentity {
   const saved = localStorage.getItem(storageKey);
@@ -48,8 +48,8 @@ async function ensureConversation(): Promise<AgentConversationView> {
   const pending = conversations.get(storageKey);
   if (pending) return pending;
   const promise = (async () => {
-    localStorage.removeItem(`anivag-agent-session:${TENANT_ID}`);
-    const legacySeriesId = localStorage.getItem("anivag-selected-series");
+    localStorage.removeItem(`seekino-agent-session:${TENANT_ID}`);
+    const legacySeriesId = localStorage.getItem("seekino-selected-series");
     const legacyIdentity = legacySeriesId ? localStorage.getItem(`${storageKey}:${legacySeriesId}`) : null;
     if (!localStorage.getItem(storageKey) && legacyIdentity) {
       try {

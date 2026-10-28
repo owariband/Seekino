@@ -35,13 +35,13 @@ describe("interface language", () => {
   });
 
   it("syncs language changes from another tab without consuming unrelated storage", () => {
-    localStorage.setItem("anivag-theme", "dark");
+    localStorage.setItem("seekino-theme", "dark");
     render(<I18nProvider><LanguageControl /></I18nProvider>);
     act(() => window.dispatchEvent(new StorageEvent("storage", { key: LOCALE_STORAGE_KEY, newValue: "en" })));
     expect(screen.getByText("Settings")).toBeInTheDocument();
-    act(() => window.dispatchEvent(new StorageEvent("storage", { key: "anivag-theme", newValue: "light" })));
+    act(() => window.dispatchEvent(new StorageEvent("storage", { key: "seekino-theme", newValue: "light" })));
     expect(screen.getByText("Settings")).toBeInTheDocument();
-    expect(localStorage.getItem("anivag-theme")).toBe("dark");
+    expect(localStorage.getItem("seekino-theme")).toBe("dark");
   });
 
   it("keeps switching in the current tab when browser storage is unavailable", () => {

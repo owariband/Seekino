@@ -187,7 +187,7 @@ Parse 接入工具循环时，需要保持已确认的输出预算、reasoning �
 - 修改前及首次源码抽取后，原有 7 个回归文件均为 **299 passed, 1 skipped**。
 - [工具测试](../../tests/agent/chat/test_tools.py) 新增 3 项：禁止导入 Chat 的独立进程直接使用通用工具；同一类型的旧入口兼容及草稿反馈、日志适配；通用 UTF-8 分段反馈、分页与旧游标拒绝。
 - 最终运行 `tests/agent/chat/{test_tools,test_runtime,test_supervisor,test_realtime_understanding}.py` 与 `tests/gateway/test_tool_images.py`：**215 passed**。
-- 最终运行 `tests/server/{test_agent_chat_service,test_sse_events}.py`：**87 passed, 1 skipped**；跳过项需要未配置的 `ANIVAG_TEST_DATABASE_URL`。合计 **302 passed, 1 skipped**，覆盖图片 artifact、审核与播放范围、流式输出、取消、范围隔离及现有错误映射。
+- 最终运行 `tests/server/{test_agent_chat_service,test_sse_events}.py`：**87 passed, 1 skipped**；跳过项需要未配置的 `SEEKINO_TEST_DATABASE_URL`。合计 **302 passed, 1 skipped**，覆盖图片 artifact、审核与播放范围、流式输出、取消、范围隔离及现有错误映射。
 - 最终完整回归曾因另一项并行迁移暂时缺失 `server.constants.workspace` 在收集阶段中断；该迁移随后更新为 `server.constants.tenant`，以上最终 Server 回归在其更新后通过。本批未修改该迁移文件。
 - 本批没有服务启动或重启、现存数据库操作、付费模型联调、commit 或 push。局部测试通过不代表 ContextCanvas 整体已完成。
 
@@ -329,7 +329,7 @@ Chat 生产路径移除 `AgentWorkspace` 别名，Query、Evaluator、最终 Cha
 <summary>本批实际修改树</summary>
 
 ```text
-AniVAG/
+Seekino/
 ├── agent/
 │   ├── chat/
 │   │   └── video_search/

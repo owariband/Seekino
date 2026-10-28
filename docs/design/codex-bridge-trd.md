@@ -1,11 +1,11 @@
-# AniVAG 本地 Agent 接入 TRD：Codex / Claude Code 与既有 Supervisor
+# Seekino 本地 Agent 接入 TRD：Codex / Claude Code 与既有 Supervisor
 
 更新日期：2026-10-21。原方案日期：2026-10-10。
 状态：本次明确本地与云端的产品目的，维护设计和源码现状；没有实施云端 Pi Host。
 
-**当前产品决定：本地由用户连接自己安装、认证的 Codex 或 Claude Code，自行使用其原生运行时；云端由 AniVAG 提供 Pi harness，并负责多用户资源效率与隔离。** 本地不要求用户安装 Pi。本地原生 runtime 可以按自身机制创建进程，其内存、进程数量和内部调度不属于云端 Pi Host 的优化职责。
+**当前产品决定：本地由用户连接自己安装、认证的 Codex 或 Claude Code，自行使用其原生运行时；云端由 Seekino 提供 Pi harness，并负责多用户资源效率与隔离。** 本地不要求用户安装 Pi。本地原生 runtime 可以按自身机制创建进程，其内存、进程数量和内部调度不属于云端 Pi Host 的优化职责。
 
-AniVAG 在本地负责公开协议接入、会话交接、业务工具、界面，以及自身创建连接的关闭。原生模型循环、压缩、内部调度和进程结构由外部 runtime 及其上游维护；集成不以改写或控制这些内部实现为前提。用户已有 CLI 进程不由 AniVAG 接管。此边界适用于第三方运行时，不以其全部组件是否开源作为前提。
+Seekino 在本地负责公开协议接入、会话交接、业务工具、界面，以及自身创建连接的关闭。原生模型循环、压缩、内部调度和进程结构由外部 runtime 及其上游维护；集成不以改写或控制这些内部实现为前提。用户已有 CLI 进程不由 Seekino 接管。此边界适用于第三方运行时，不以其全部组件是否开源作为前提。
 
 云端目标是让 4 CPU / 8 GB 等受限服务器通过一个 Node Pi Host 支持多个独立长期对话，用户可配置自己的模型 API；凭据、对话和一次性任务的具体边界统一维护在 [云端 Pi Host TRD](pi-host-trd.md)。本文件只负责本地接入，不能将本地一会话一原生进程的模式直接作为云端方案。
 
@@ -17,15 +17,15 @@ AniVAG 在本地负责公开协议接入、会话交接、业务工具、界面�
 
 ## 1. 历史接入目标与范围（2026-10-10）
 
-localhost 提供三种会话运行方式：默认的 AniVAG Supervisor 使用 Deep Agents SDK 和用户配置的模型 API；用户也可选择自己安装、认证的 Codex 或 Claude runtime，经 ACP Bridge 结合视频内容操作本机文件。AniVAG 提供会话界面、身份与资源管理及视频工具。
+localhost 提供三种会话运行方式：默认的 Seekino Supervisor 使用 Deep Agents SDK 和用户配置的模型 API；用户也可选择自己安装、认证的 Codex 或 Claude runtime，经 ACP Bridge 结合视频内容操作本机文件。Seekino 提供会话界面、身份与资源管理及视频工具。
 
 用户已明确选择复用成熟 harness，不再为 Supervisor 维护自研模型/工具循环。Supervisor 保留视频业务规则与结果投影，执行机制交给 Deep Agents。外部接入层保持通用，Codex 与 Claude 使用同一 ACP Client，分别使用上游 codex-acp 与 claude-agent-acp；选择 Bridge 后由对应原生 runtime 担任主 Agent。现有受限模型组件、视频 Chat/解析仍使用的公共循环保持其现有职责。云端新能力、Pi、远程主机与完整文件管理器不属于本次范围。
 
 已确认的用户体验：
 
-1. 新会话默认 Supervisor；选择 Codex/Claude Bridge 时可指定已有绝对目录，默认由 Server 明确解析为 AniVAG 项目根目录。
+1. 新会话默认 Supervisor；选择 Codex/Claude Bridge 时可指定已有绝对目录，默认由 Server 明确解析为 Seekino 项目根目录。
 2. 内置 Supervisor 的 thread_id 直接使用 Conversation.id；一个 Bridge Conversation 对应一个 ACP 主 session，每条消息对应一个 prompt。
-3. 用户发送“总结当前视频，将知识点补进 notes.md，保留已有内容”，Codex 调用 AniVAG 视频工具并修改文件。
+3. 用户发送“总结当前视频，将知识点补进 notes.md，保留已有内容”，Codex 调用 Seekino 视频工具并修改文件。
 4. 网页显示正文、工具进度、计划、审批与问题，并提供停止和刷新恢复。
 5. Bridge 绑定后的 Agent 与目录固定；更换时新建 Conversation。内置 Supervisor 首批使用 SDK 虚拟 StateBackend，无需绑定本机 cwd。
 
@@ -39,7 +39,7 @@ localhost 提供三种会话运行方式：默认的 AniVAG Supervisor 使用 De
 | --- | --- | --- |
 | gateway/agent_model | 内置 Supervisor 的模型适配、SDK 执行、上下文与回调接线 | 薄接 create_deep_agent；不重写其 loop、summarizer、ToolNode 或 checkpointer |
 | gateway/bridge | 外部 Agent 连接、session 操作、协议回调、生命周期与取消 | 薄接 ACP Python SDK；不拥有 Conversation、用户或视频语义 |
-| 上游 codex-acp / claude-agent-acp | ACP 与各家原生 Runtime 的转换 | 使用固定版本依赖，不在 AniVAG 重写 provider 适配器 |
+| 上游 codex-acp / claude-agent-acp | ACP 与各家原生 Runtime 的转换 | 使用固定版本依赖，不在 Seekino 重写 provider 适配器 |
 | agent/chat | 聊天业务上下文、共享视频工具与已核验结果 | supervisor.py 消费内置 harness；bridge.py 消费通用 ACP Client；不引入 codex.py 或 claude.py 聊天分支 |
 | server | local 检查、目录、Conversation 绑定、持久消息、执行快照、HTTP/SSE 和 MCP 权限 | 沿用现有 service/repository/API 层级 |
 | web | Agent/目录选择、输出与工具活动、交互回答、停止、重连 | 扩展现有聊天组件，按当前连接查询后端能力 |
@@ -48,7 +48,7 @@ AgentModelFactory 新增 Supervisor 的 Deep Agents 装配入口；原 build_str
 
 ### 2.1 SDK 接入边界
 
-内置路径为 Supervisor → gateway/agent_model 的薄接线 → create_deep_agent → 已配置 API 模型与业务工具。历史消息改为 SDK messages 输入，自动摘要与大结果卸载直接使用 SDK middleware。保留已核验视频答案、来源校验、当次资源范围和视频任务预算；这些由 AniVAG 工具与宿主执行。
+内置路径为 Supervisor → gateway/agent_model 的薄接线 → create_deep_agent → 已配置 API 模型与业务工具。历史消息改为 SDK messages 输入，自动摘要与大结果卸载直接使用 SDK middleware。保留已核验视频答案、来源校验、当次资源范围和视频任务预算；这些由 Seekino 工具与宿主执行。
 
 外部路径为 bridge.py → gateway/bridge → ACP Python SDK → 对应适配器 → 原生 runtime。会话、工具循环、压缩、文件和命令执行由 Codex/Claude 负责。共享视频工具在 Python 内直接调用，外部通过 MCP 调用。
 
@@ -74,15 +74,15 @@ Deep Agents 通过 BaseChatModel 接模型。当前 OpenAI/DeepSeek、Ark 来源
 
 直接复用 SDK 的 spawn_agent_process、initialize、new_session、prompt、load_session/resume_session 和 cancel。请求 ID、JSON-RPC 数据类型、管道读取与写入由 SDK 处理，不再自研 stdio dispatcher。[SDK 示例](https://agentclientprotocol.github.io/python-sdk/quickstart/)
 
-SDK 回调使用异步任务；等待用户回答不会占用唯一读循环。客户端待交互记录、API 归属检查和任务终态仍由 AniVAG 管理。[连接实现](https://github.com/agentclientprotocol/python-sdk/blob/0.12.1/src/acp/connection.py)
+SDK 回调使用异步任务；等待用户回答不会占用唯一读循环。客户端待交互记录、API 归属检查和任务终态仍由 Seekino 管理。[连接实现](https://github.com/agentclientprotocol/python-sdk/blob/0.12.1/src/acp/connection.py)
 
-SessionAccumulator 可以复用消息、工具状态和计划合并；contrib 是实验 API，需锁定版本。它不提供 AniVAG 数据库持久化、HTTP 订阅或待审批 registry。PermissionBroker/ToolCallTracker 主要用于 Agent 侧发起请求，不当作客户端审批状态机。[Contrib 说明](https://agentclientprotocol.github.io/python-sdk/contrib/)
+SessionAccumulator 可以复用消息、工具状态和计划合并；contrib 是实验 API，需锁定版本。它不提供 Seekino 数据库持久化、HTTP 订阅或待审批 registry。PermissionBroker/ToolCallTracker 主要用于 Agent 侧发起请求，不当作客户端审批状态机。[Contrib 说明](https://agentclientprotocol.github.io/python-sdk/contrib/)
 
 ## 4. 本机链路与生命周期
 
 ```mermaid
 flowchart LR
-    Web["AniVAG Web"] <-->|HTTP / SSE| Server["Server：Conversation 与执行"]
+    Web["Seekino Web"] <-->|HTTP / SSE| Server["Server：Conversation 与执行"]
     Server --> Supervisor["默认：Supervisor 业务接线"]
     Supervisor --> Deep["gateway/agent_model：Deep Agents SDK"]
     Deep --> Model["用户配置的 API 模型"]
@@ -92,7 +92,7 @@ flowchart LR
     Bridge <-->|ACP / stdio| Adapter["上游 codex-acp / claude-agent-acp"]
     Adapter <-->|原生协议| Native["用户本机 Codex / Claude runtime"]
     Native <-->|原生文件与命令工具| Files["已绑定本机目录"]
-    Native <-->|MCP / Streamable HTTP| MCP["AniVAG MCP endpoint"]
+    Native <-->|MCP / Streamable HTTP| MCP["Seekino MCP endpoint"]
     MCP --> Video
 ```
 
@@ -104,7 +104,7 @@ ACP 操作必须由持续存在的 asyncio loop 托管，不能每条消息临�
 
 服务关闭先取消活跃 prompt、结束待交互、回收本服务启动的 adapter，最后关闭视频与数据库资源。释放进程不删除用户的 session，不接管用户已有 CLI/桌面会话。
 
-首版 ACP Client 不声明文件与终端执行能力；Codex/Claude 使用自身原生文件与 shell 工具。AniVAG 接收执行事件与审批，避免增加文件代理或终端执行器。
+首版 ACP Client 不声明文件与终端执行能力；Codex/Claude 使用自身原生文件与 shell 工具。Seekino 接收执行事件与审批，避免增加文件代理或终端执行器。
 
 ## 5. 配置、目录与权限的实际语义
 
@@ -134,7 +134,7 @@ ACP SDK 默认只继承精简环境；宿主必须显式保留实际使用的 CO
 
 首批先验证这一组合。额外可写目录、网络或受管权限存在不兼容时明确报告，不静默切换 full-access。完整个人权限继承作为上游 TODO；若必须修补适配器，另核对该兼容补丁，不将 provider 逻辑放回 agent/chat。
 
-上述 auto_review/workspace-write 限制只描述 Codex。Claude 单独验收其实际设置来源、permission mode、目录与审批往返；不将 Codex 模式映射套给 Claude。内置 Supervisor 的 StateBackend 是虚拟状态，真实资源访问仍受 AniVAG 业务工具检查约束，SDK 文件权限不能代替自定义工具的鉴权。
+上述 auto_review/workspace-write 限制只描述 Codex。Claude 单独验收其实际设置来源、permission mode、目录与审批往返；不将 Codex 模式映射套给 Claude。内置 Supervisor 的 StateBackend 是虚拟状态，真实资源访问仍受 Seekino 业务工具检查约束，SDK 文件权限不能代替自定义工具的鉴权。
 
 人工审批显示适配器提供的 optionId 和说明，自动 reviewer 的结果按实际事件呈现。每次回复重新检查执行归属与待交互状态。
 
@@ -162,13 +162,13 @@ ACP SDK 默认只继承精简环境；宿主必须显式保留实际使用的 CO
 
 type=bridge 表示外部运行方式，agent 表示所选 Agent；旧会话没有此绑定时仍使用 Supervisor。未创建外部 session 时 sessionId 可为空。消息仍是 USER/ASSISTANT，不新增 bridge role 或 is_bridge。
 
-ACP sessionId 是不透明恢复键。Codex 的 thread/session 内部映射由上游适配器拥有；AniVAG 不要求所有 Agent 同时提供 threadId，也不依赖两种 ID 相等。
+ACP sessionId 是不透明恢复键。Codex 的 thread/session 内部映射由上游适配器拥有；Seekino 不要求所有 Agent 同时提供 threadId，也不依赖两种 ID 相等。
 
 environment 由 Server 在创建时记录；执行时以当前 AuthConfig/AuthIdentity.mode 为权威。cloud 不因 metadata 写了 local 而启动 Bridge。能力查询使用浏览器当前选中的 Server，不能从网页域名判断运行环境。
 
 第一次发送的顺序是：校验身份与目录 → 建立外部 session → 在租户/所有者约束下锁定 Conversation 并合并写入 sessionId → 成功提交绑定 → prompt。绑定写入失败不能开始文件任务。JSON 重新赋值，保留未知元信息；会话幂等比较包含已绑定 Agent 和目录。
 
-已有进程复用同一 session；进程丢失则 initialize 后按能力调用 resume_session，或 load_session。load 会通过 session_update 回放历史，恢复阶段应识别回放，避免再次插入 AniVAG 消息或追加到当前回答。恢复后不重新发送全量聊天历史。[ACP 会话设置](https://agentclientprotocol.com/protocol/v1/session-setup)
+已有进程复用同一 session；进程丢失则 initialize 后按能力调用 resume_session，或 load_session。load 会通过 session_update 回放历史，恢复阶段应识别回放，避免再次插入 Seekino 消息或追加到当前回答。恢复后不重新发送全量聊天历史。[ACP 会话设置](https://agentclientprotocol.com/protocol/v1/session-setup)
 
 服务崩溃或进程失联后不自动重发可能已修改文件的 prompt。ACP 恢复并不保证能查询所有 provider 的旧 turn 终态；不能确认时将该消息标记为结果未知/执行中断，保留 session，供用户核对后发新任务。缺失 session 或目录时明确失败，不自动新建并重放。
 
@@ -249,7 +249,7 @@ D01 沿用现有 answer.*、消息状态和界面，SDK 原生流在接线层投
 
 ACP 0.12.1 的 elicitation 能力属于实验接口。必须实现并声明所支持的 form/url 能力；未实现的形式明确拒绝，不宣告全量支持。特别验证 Codex 原生提问是否被完整映射。[适配器问询实现](https://github.com/agentclientprotocol/codex-acp/blob/main/src/CodexElicitationHandler.ts)
 
-待交互记录绑定本服务进程、ACP session、AniVAG message 和交互 ID。回复、停止与订阅均重新鉴权；过期、跨用户和重复回复不能产生第二次有效响应。prompt 终态、取消和进程退出均清理等待。人工等待不消耗视频子任务执行预算。
+待交互记录绑定本服务进程、ACP session、Seekino message 和交互 ID。回复、停止与订阅均重新鉴权；过期、跨用户和重复回复不能产生第二次有效响应。prompt 终态、取消和进程退出均清理等待。人工等待不消耗视频子任务执行预算。
 
 复用原 message 状态与阶段，不扩 SQL 状态枚举。Gateway 不生成产品数据库状态；Server 在完成或失败时持久化实际结果。
 
@@ -328,7 +328,7 @@ Deep Agents 模型调用含摘要/附加调用，均走现有 usage/tracing；�
 ### 12.1 D01：内置 Supervisor 改为 Deep Agents（当时优先）
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] pyproject.toml  ← 引入固定 Deep Agents 与必要 LangChain 约束；影响：SDK 直接依赖
 ├── [M] uv.lock  ← 解析兼容组合；影响：依赖升级可复现
 ├── gateway/
@@ -365,7 +365,7 @@ D01 共 14 文件：生产 6、依赖 2、测试 5、说明 1；A 2、M 12，无
 沿用原 ACP P01 的五文件边界。SDK 客户端不为 Codex/Claude 各写一份；测试参数化两家能力差异。首次接入依次验证 Codex 和 Claude，未安装或未验收的 profile 不在网页宣告可用。
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] pyproject.toml  ← 增加固定 ACP SDK；影响：新的直接依赖
 ├── [M] uv.lock  ← 锁定依赖解析；影响：可复现安装
 ├── gateway/
@@ -388,7 +388,7 @@ ACP P01 完成条件：离线验证回调不阻塞、事件归属、取消与退
 以下包含 D01 与 ACP 首版，不额外叠加统计。此前 37 文件只对应 Codex 基线；本次增加内置 harness 必需的 5 个唯一文件与 Server 启动配置/测试 2 个文件，共 44 个唯一文件。Claude 复用已有 ACP、业务、MCP、DTO/UI 和参数化测试文件，不新增 provider 业务文件。实施前若新证据要求扩围则更新 check-out。
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] pyproject.toml  ← Deep Agents/ACP/MCP 直接依赖；影响：固定 SDK 组合
 ├── [M] uv.lock  ← 依赖锁定；影响：安装可复现
 ├── gateway/
@@ -488,7 +488,7 @@ AniVAG/
 | AB-07 | 归属与幂等 | 重复发送不启动第二任务；跨会话/用户回复无效；cloud 无法启用 |
 | AB-08 | 旧路径与连接 | Deep Agents Supervisor/受限子任务模型/视频结果兼容；切换后端隔离旧事件 |
 
-离线测试覆盖 AniVAG 接线与行为：Deep Agents 用 SDK 的真实图加替身模型验证，ACP 用替身连接验证宿主；不重写上游循环或协议测试。D01 实施后的直接检查：
+离线测试覆盖 Seekino 接线与行为：Deep Agents 用 SDK 的真实图加替身模型验证，ACP 用替身连接验证宿主；不重写上游循环或协议测试。D01 实施后的直接检查：
 
 ```text
 .venv/bin/python -m pytest tests/gateway/test_deepagents.py tests/gateway/test_agent_factory.py tests/agent/chat/test_supervisor.py tests/server/test_bootstrap.py tests/server/test_agent_chat_service.py -q

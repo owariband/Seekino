@@ -4,7 +4,7 @@ set -euo pipefail
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 state_dir="${project_dir}/outputs/local-services/elasticsearch"
 version=8.19.22
-es_port="${ANIVAG_ELASTICSEARCH_PORT:-9200}"
+es_port="${SEEKINO_ELASTICSEARCH_PORT:-9200}"
 es_url="http://127.0.0.1:${es_port}"
 
 elasticsearch_ready() {
@@ -20,7 +20,7 @@ elasticsearch_ready() {
 }
 
 if [[ ! "${es_port}" =~ ^[0-9]+$ ]] || ((es_port < 1 || es_port > 65535)); then
-  echo "ANIVAG_ELASTICSEARCH_PORT 必须在 1–65535 之间。" >&2
+  echo "SEEKINO_ELASTICSEARCH_PORT 必须在 1–65535 之间。" >&2
   exit 1
 fi
 if elasticsearch_ready; then
@@ -43,7 +43,7 @@ esac
 
 distribution="${state_dir}/distribution/elasticsearch-${version}"
 mkdir -p "${state_dir}/downloads" "${state_dir}/distribution" "${state_dir}/data" "${state_dir}/logs"
-if [[ ! -f "${distribution}/.anivag-installed" || ! -x "${distribution}/bin/elasticsearch" ]]; then
+if [[ ! -f "${distribution}/.seekino-installed" || ! -x "${distribution}/bin/elasticsearch" ]]; then
   archive="elasticsearch-${version}-darwin-${architecture}.tar.gz"
   download_url="https://artifacts.elastic.co/downloads/elasticsearch/${archive}"
   echo "[下载] Elasticsearch ${version} / ${architecture}（含 JDK）"
@@ -57,7 +57,7 @@ if [[ ! -f "${distribution}/.anivag-installed" || ! -x "${distribution}/bin/elas
   (cd "${state_dir}/downloads" && shasum -a 512 -c "${archive}.sha512")
   install_dir="$(mktemp -d "${state_dir}/distribution/.install-XXXXXX")"
   tar -xzf "${state_dir}/downloads/${archive}" -C "${install_dir}"
-  touch "${install_dir}/elasticsearch-${version}/.anivag-installed"
+  touch "${install_dir}/elasticsearch-${version}/.seekino-installed"
   if [[ -e "${distribution}" ]]; then
     previous_dir="${distribution}.previous-$(date +%Y%m%d%H%M%S)"
     if [[ -e "${previous_dir}" ]]; then
@@ -86,7 +86,7 @@ with open(sys.argv[1], "ab") as log:
                    check=True, timeout=120)
 ' "${state_dir}/console.log" \
   "${distribution}/bin/elasticsearch" -d -p "${state_dir}/elasticsearch.pid" \
-  -Ecluster.name=anivag-local -Enode.name=anivag-local-es \
+  -Ecluster.name=seekino-local -Enode.name=seekino-local-es \
   -Enetwork.host=127.0.0.1 -Ehttp.port="${es_port}" -Etransport.port=0 \
   -Ediscovery.type=single-node -Expack.security.enabled=false \
   -Expack.security.autoconfiguration.enabled=false -Expack.ml.enabled=false \

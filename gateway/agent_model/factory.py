@@ -142,7 +142,7 @@ class AgentModelFactory:
         self._codex_executor = (
             codex_executor or ThreadPoolExecutor(
                 max_workers=self._primary.max_concurrency,
-                thread_name_prefix="anivag-codex",
+                thread_name_prefix="seekino-codex",
             )
             if isinstance(self._primary, CodexModelSourceConfig)
             else None

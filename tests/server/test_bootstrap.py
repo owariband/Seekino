@@ -112,7 +112,7 @@ def test_frame_inspection_settings_require_positive_integers(name, value):
 
 def test_frame_inspection_settings_follow_yaml_environment_default_precedence(monkeypatch, tmp_path):
     for name in tuple(os.environ):
-        if name.startswith("ANIVAG_AGENT_"):
+        if name.startswith("SEEKINO_AGENT_"):
             monkeypatch.delenv(name, raising=False)
     configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
     runtime_values = configuration.setdefault("agent_runtime", {})
@@ -123,8 +123,8 @@ def test_frame_inspection_settings_follow_yaml_environment_default_precedence(mo
     defaults, _ = read_global_agent_settings(path)
     assert (defaults.frame_max_height, defaults.maximum_frame_inspections) == (720, 12)
 
-    monkeypatch.setenv("ANIVAG_AGENT_FRAME_MAX_HEIGHT", "480")
-    monkeypatch.setenv("ANIVAG_AGENT_MAXIMUM_FRAME_INSPECTIONS", "5")
+    monkeypatch.setenv("SEEKINO_AGENT_FRAME_MAX_HEIGHT", "480")
+    monkeypatch.setenv("SEEKINO_AGENT_MAXIMUM_FRAME_INSPECTIONS", "5")
     environment, _ = read_global_agent_settings(path)
     assert (environment.frame_max_height, environment.maximum_frame_inspections) == (480, 5)
 
@@ -160,21 +160,21 @@ def test_application_construction_closes_allocated_clients_when_setup_fails(
     from redis.exceptions import ConnectionError as RedisConnectionError
     from server.caller import redis as redis_caller
     for name in tuple(os.environ):
-        if name.startswith("ANIVAG_"):
+        if name.startswith("SEEKINO_"):
             monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
-    monkeypatch.setenv("ANIVAG_DATABASE_URL", "sqlite+pysqlite:///:memory:")
-    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "failure_test")
+    monkeypatch.setenv("SEEKINO_ENVIRONMENT", "test")
+    monkeypatch.setenv("SEEKINO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("SEEKINO_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "failure_test")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     if mode == "cloud":
-        monkeypatch.setenv("ANIVAG_AUTH_MODE", "cloud")
-        monkeypatch.setenv("ANIVAG_AUTH_SECRET_KEY", "x" * 32)
-        monkeypatch.setenv("ANIVAG_AUTH_REDIS_URL", "redis://127.0.0.1:16379/15")
-        monkeypatch.setenv("ANIVAG_SMTP_HOST", "smtp.example.com")
-        monkeypatch.setenv("ANIVAG_SMTP_SENDER", "noreply@example.com")
+        monkeypatch.setenv("SEEKINO_AUTH_MODE", "cloud")
+        monkeypatch.setenv("SEEKINO_AUTH_SECRET_KEY", "x" * 32)
+        monkeypatch.setenv("SEEKINO_AUTH_REDIS_URL", "redis://127.0.0.1:16379/15")
+        monkeypatch.setenv("SEEKINO_SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("SEEKINO_SMTP_SENDER", "noreply@example.com")
         configuration = yaml.safe_load((
             Path(__file__).parents[1] / "gateway" / "fixtures" / "legacy-config.yaml"
         ).read_text())
@@ -182,7 +182,7 @@ def test_application_construction_closes_allocated_clients_when_setup_fails(
         configuration["agent_model"].pop("fallback")
         config_path = tmp_path / "cloud-models.yaml"
         config_path.write_text(yaml.safe_dump(configuration))
-        monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+        monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
         monkeypatch.setattr(
             bootstrap, "create_agent_checkpoint_store",
             lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None),
@@ -294,14 +294,14 @@ def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations
 
 
 def test_parse_execution_settings_reach_the_frozen_task(monkeypatch, tmp_path):
-    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
-    monkeypatch.setenv("ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'config.sqlite'}")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "config_test")
-    monkeypatch.setenv("ANIVAG_PARSE_BATCH_MAX_SIZE", "7")
-    monkeypatch.setenv("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "0.25")
-    monkeypatch.setenv("ANIVAG_MQ_RETRY_BASE_SECONDS", "9")
-    monkeypatch.setenv("ANIVAG_MQ_RETRY_MAX_SECONDS", "81")
+    monkeypatch.setenv("SEEKINO_ENVIRONMENT", "test")
+    monkeypatch.setenv("SEEKINO_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'config.sqlite'}")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "config_test")
+    monkeypatch.setenv("SEEKINO_PARSE_BATCH_MAX_SIZE", "7")
+    monkeypatch.setenv("SEEKINO_PARSE_DISPATCH_INTERVAL_SECONDS", "0.25")
+    monkeypatch.setenv("SEEKINO_MQ_RETRY_BASE_SECONDS", "9")
+    monkeypatch.setenv("SEEKINO_MQ_RETRY_MAX_SECONDS", "81")
 
     settings = ServerSettings.from_environment()
     _gateway, profile = bootstrap.prepare_service_configuration(settings)
@@ -353,19 +353,19 @@ def test_process_assembly_receives_runtime_configuration(
     expected_retrieval_timeout,
 ):
     for name in tuple(os.environ):
-        if name.startswith("ANIVAG_"):
+        if name.startswith("SEEKINO_"):
             monkeypatch.delenv(name, raising=False)
     if global_timeout is not None:
-        monkeypatch.setenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", str(global_timeout))
-    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
+        monkeypatch.setenv("SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS", str(global_timeout))
+    monkeypatch.setenv("SEEKINO_ENVIRONMENT", "test")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v2")
     monkeypatch.setenv(
-        "ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'bootstrap.sqlite'}"
+        "SEEKINO_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'bootstrap.sqlite'}"
     )
-    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "bootstrap_test")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_API_KEY", "test-key")
+    monkeypatch.setenv("SEEKINO_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "bootstrap_test")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_API_KEY", "test-key")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
@@ -394,7 +394,7 @@ def test_process_assembly_receives_runtime_configuration(
         }
     config_path = tmp_path / "models.yaml"
     config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
     monkeypatch.setattr(
         bootstrap, "create_agent_checkpoint_store", lambda *_args, **_kwargs: DeepAgentSessionStore(),
     )
@@ -427,9 +427,9 @@ def test_process_assembly_receives_runtime_configuration(
     )
     assert settings.agent_request_timeout_seconds == global_timeout
     # Change the environment after loading Settings to prove assembly uses it.
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "unexpected-env-model")
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "0.5")
-    monkeypatch.setenv("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "2048")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_MODEL", "unexpected-env-model")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_FPS", "0.5")
+    monkeypatch.setenv("SEEKINO_BACKGROUND_IMAGE_MAX_EDGE", "2048")
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", _ElasticsearchClient)
     received = {}
     real_create_engine = mysql_caller.create_database_engine
@@ -625,27 +625,27 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         bootstrap, "create_agent_checkpoint_store", lambda *_args, **_kwargs: DeepAgentSessionStore(),
     )
     for name in tuple(os.environ):
-        if name.startswith("ANIVAG_"):
+        if name.startswith("SEEKINO_"):
             monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
+    monkeypatch.setenv("SEEKINO_ENVIRONMENT", "test")
     monkeypatch.setenv(
-        "ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'v2-bootstrap.sqlite'}"
+        "SEEKINO_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'v2-bootstrap.sqlite'}"
     )
-    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "bootstrap_test")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "7")
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
+    monkeypatch.setenv("SEEKINO_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "bootstrap_test")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX_GENERATION", "7")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v2")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
     if summary_mode == "missing_role":
         configuration["models"].pop("summarize", None)
     if summary_mode == "disabled":
-        monkeypatch.setenv("ANIVAG_SUMMARIZE_ENABLED", "false")
+        monkeypatch.setenv("SEEKINO_SUMMARIZE_ENABLED", "false")
     config_path = tmp_path / "models.yaml"
     config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
     settings = ServerSettings.from_environment()
     if advanced_retrieval:
         settings = replace(settings, retrieval=RetrievalConfig(
@@ -761,15 +761,15 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
         bootstrap, "create_agent_checkpoint_store", lambda *_args, **_kwargs: DeepAgentSessionStore(),
     )
     for name in tuple(os.environ):
-        if name.startswith("ANIVAG_"):
+        if name.startswith("SEEKINO_"):
             monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
-    monkeypatch.setenv("ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'endpoint-bootstrap.sqlite'}")
-    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "endpoint_bootstrap_test")
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "ep-A")
+    monkeypatch.setenv("SEEKINO_ENVIRONMENT", "test")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v2")
+    monkeypatch.setenv("SEEKINO_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'endpoint-bootstrap.sqlite'}")
+    monkeypatch.setenv("SEEKINO_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "endpoint_bootstrap_test")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_MODEL", "ep-A")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     settings = ServerSettings.from_environment()
@@ -881,14 +881,14 @@ def test_v2_mode_requires_elasticsearch_before_allocating_services(
     tmp_path,
 ):
     for name in tuple(os.environ):
-        if name.startswith("ANIVAG_"):
+        if name.startswith("SEEKINO_"):
             monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
+    monkeypatch.setenv("SEEKINO_ENVIRONMENT", "test")
     monkeypatch.setenv(
-        "ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'missing-es.sqlite'}"
+        "SEEKINO_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'missing-es.sqlite'}"
     )
-    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
+    monkeypatch.setenv("SEEKINO_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v2")
     settings = ServerSettings.from_environment()
 
     with pytest.raises(ValueError, match="Video Parse V2 requires"):
@@ -1136,7 +1136,7 @@ def test_retrieval_uses_gateway_encoder_metadata_and_independent_rerank_binding(
 
 def test_query_embedder_preserves_frozen_binding_without_business_environment_overrides(monkeypatch):
     received = {}
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "new-default")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_MODEL", "new-default")
     binding = EmbeddingModelBinding(
         source="selected-connection", model="frozen-embedding", dimensions=512,
         video_fps=2, request_timeout_seconds=30, kind="embedding",

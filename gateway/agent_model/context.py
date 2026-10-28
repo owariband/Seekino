@@ -18,7 +18,7 @@ _MAX_CHECKPOINT_CHARACTERS = 12_000
 _MAX_ACTIVITY_SUMMARY_CHARACTERS = 8_000
 _MAX_SUMMARY_LINE_CHARACTERS = 500
 _RECENT_NON_TOOL_MESSAGES = 4
-_COMPACTION_MARKER = "anivag_context_checkpoint"
+_COMPACTION_MARKER = "seekino_context_checkpoint"
 
 ContextCheckpoint = Callable[[], object]
 OpenAIMessage = dict[str, Any]

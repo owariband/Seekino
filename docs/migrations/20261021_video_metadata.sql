@@ -1,4 +1,4 @@
--- anivag controlled migration: optional per-video viewing metadata.
+-- seekino controlled migration: optional per-video viewing metadata.
 -- Existing videos retain the episode-number title and keyframe cover fallback.
 
 ALTER TABLE video

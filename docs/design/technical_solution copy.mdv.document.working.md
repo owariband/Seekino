@@ -1,4 +1,4 @@
-# AniVAG 技术方案续篇（工作补充）
+# Seekino 技术方案续篇（工作补充）
 
 > 本文件续接原技术方案正文，自第 14 章开始记录已确认的工程结构决策与后续实施状态。它是开发过程中的工作补充，不替代原 `.mdv` 文档。
 
@@ -6,10 +6,10 @@
 
 ### 14.1 根目录就是工程与应用边界
 
-AniVAG 是一个完整应用工程，不是准备发布到 PyPI、供其他项目按 SDK 方式安装的 Python 公共包。因此，仓库根目录直接承担工程边界，不再增加 `packages/`、`src/`、`anivag/` 三层包装：
+Seekino 是一个完整应用工程，不是准备发布到 PyPI、供其他项目按 SDK 方式安装的 Python 公共包。因此，仓库根目录直接承担工程边界，不再增加 `packages/`、`src/`、`seekino/` 三层包装：
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 ├── engine/
 ├── gateway/
@@ -19,7 +19,7 @@ AniVAG/
 └── uv.lock
 ```
 
-根 `pyproject.toml` 统一声明运行与开发依赖，并设置 `tool.uv.package = false`。它的作用是管理整个应用的 Python 环境和工具配置，而不是构建、安装或向外发布一个名为 `anivag` 的 Python 包。
+根 `pyproject.toml` 统一声明运行与开发依赖，并设置 `tool.uv.package = false`。它的作用是管理整个应用的 Python 环境和工具配置，而不是构建、安装或向外发布一个名为 `seekino` 的 Python 包。
 
 `server/`、`engine/`、`gateway/` 是应用内部的模块命名空间：
 
@@ -31,7 +31,7 @@ AniVAG/
 
 ### 14.2 领域切片术语
 
-AniVAG 的正式视频时间片统一称为 `VideoChunk`，主键为 `videoChunkId`。解析结果、用于
+Seekino 的正式视频时间片统一称为 `VideoChunk`，主键为 `videoChunkId`。解析结果、用于
 召回的 `VideoChunkRetrievalDocument`、Text/Vision Embedding、候选与 Evidence 都必须
 归属于同一个 VideoChunk，不能再为解析或检索建立另一套并行切片身份。
 
@@ -44,7 +44,7 @@ AniVAG 的正式视频时间片统一称为 `VideoChunk`，主键为 `videoChunk
 
 ### 14.3 不使用 `packages/` 的依据
 
-`packages/` 适合一个仓库同时维护多个可独立构建、独立发布、独立版本化的包。AniVAG 当前没有这些需求：Server、Engine 与 Gateway 要共同组成同一个产品，使用同一套依赖锁、测试入口与部署上下文。继续保留 `packages/*/pyproject.toml` 会人为产生三套包边界和多个入口，增加依赖漂移与运行方式歧义。
+`packages/` 适合一个仓库同时维护多个可独立构建、独立发布、独立版本化的包。Seekino 当前没有这些需求：Server、Engine 与 Gateway 要共同组成同一个产品，使用同一套依赖锁、测试入口与部署上下文。继续保留 `packages/*/pyproject.toml` 会人为产生三套包边界和多个入口，增加依赖漂移与运行方式歧义。
 
 本项目参考 DoVideoAI、VideoRAG、LightRAG 时，只吸收以下工程思想：
 
@@ -53,7 +53,7 @@ AniVAG 的正式视频时间片统一称为 `VideoChunk`，主键为 `videoChunk
 - 通过清楚的存储适配边界隔离数据库或向量库实现；
 - 让可执行入口、配置、测试和部署方式对工程使用者可发现。
 
-不照搬它们面向公共 SDK、可安装库、示例集合或多包仓库的目录外形。目录设计的依据是 AniVAG 自身的所有权、运行进程、依赖方向和部署边界，而不是与参考项目保持文件名一致。
+不照搬它们面向公共 SDK、可安装库、示例集合或多包仓库的目录外形。目录设计的依据是 Seekino 自身的所有权、运行进程、依赖方向和部署边界，而不是与参考项目保持文件名一致。
 
 ## 15. 当前实现与完整蓝图
 
@@ -62,7 +62,7 @@ AniVAG 的正式视频时间片统一称为 `VideoChunk`，主键为 `videoChunk
 下列清单表达的是结构迁移及 M1 Upload-to-Search 后端落地后的实际代码范围，不表示完整工程未来只会有这些文件。Web 与部署目录仍遵循“出现真实实现时再建立”。
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── api/                  # app、依赖装配与独立进程入口
 │   ├── worker/               # Durable Worker、处理编排与进程入口
@@ -114,7 +114,7 @@ AniVAG/
 以下是产品成熟后的职责地图。它描述最终应具备的工程面，而不是要求当前阶段一次性生成所有文件。
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── api/                 # HTTP 应用、依赖装配、路由和协议转换
 │   │   ├── app.py
@@ -294,7 +294,7 @@ uv run python -m server.worker
 | 项目 | 状态 | 记录 |
 | --- | --- | --- |
 | 根工程环境 | 已完成 | 使用根 `pyproject.toml` 与 `uv.lock`，`tool.uv.package = false`。 |
-| 移除多包结构 | 已完成 | 代码迁至根级 `server/`、`engine/`、`gateway/`，不再采用 `packages/`、`src/`、`anivag/` 包装。 |
+| 移除多包结构 | 已完成 | 代码迁至根级 `server/`、`engine/`、`gateway/`，不再采用 `packages/`、`src/`、`seekino/` 包装。 |
 | 模块导入边界 | 已完成 | 根级内部模块命名空间；`__init__.py` 不承担 barrel export。 |
 | 测试与评测归位 | 已完成 | 测试集中在根 `tests/`，召回评测产物归入 `evals/`。 |
 | MDV 设计基线 | 已完成 | Reference `v_0b6632b1a51f0e7b7269a8eabb328367` 与 Document `v_97d26af35995f1ac340fba8a7973e774` 已提交且 aligned；Document 精确绑定该 Reference Version。 |

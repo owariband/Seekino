@@ -3,10 +3,10 @@ docs/notes/
 docs/ui-design/
 /transfer.md
 /.baoyu-skills/
-/.agents/skills/anivag-change-gate/
+/.agents/skills/seekino-change-gate/
 /engines/*
 /assets/diagrams/*
-!/assets/diagrams/anivag-open-source-architecture.png
+!/assets/diagrams/seekino-open-source-architecture.png
 /assets/seekino-mascot-pixel/out/
 /infographic/
 /docs/*.dataflow.json

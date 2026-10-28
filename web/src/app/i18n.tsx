@@ -2,7 +2,7 @@ import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, 
 
 import { localeTag, translate, type Locale, type MessageParams } from "../shared/messages";
 
-export const LOCALE_STORAGE_KEY = "anivag-locale";
+export const LOCALE_STORAGE_KEY = "seekino-locale";
 
 interface I18nValue {
   locale: Locale;

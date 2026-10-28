@@ -295,7 +295,7 @@ def test_factory_selects_configured_protocol_and_controls(monkeypatch, source, m
 def test_frozen_binding_never_reapplies_model_environment(monkeypatch):
     constructed = []
     _replace(monkeypatch, "gateway.codex.agent", "CodexAgentModel", constructed)
-    client = model_factory.GatewayClient(_config(), environ={"ANIVAG_VIDEO_MODEL": "different-remote-endpoint"})
+    client = model_factory.GatewayClient(_config(), environ={"SEEKINO_VIDEO_MODEL": "different-remote-endpoint"})
     binding = _binding(supports_vision_input=True)
     model = client.create_generative_model(binding)
     try:
@@ -699,7 +699,7 @@ def test_embedding_and_transcription_use_resolved_typed_bindings(monkeypatch):
     monkeypatch.setattr("gateway.embedding.build_embedding_model", build)
     monkeypatch.setattr("gateway.transcription.build_transcription_model", build)
     client = model_factory.GatewayClient(_config(), environ={
-        "API_KEY": "a", "SPEECH_KEY": "s", "ANIVAG_VIDEO_EMBEDDING_MODEL": "ignored-endpoint",
+        "API_KEY": "a", "SPEECH_KEY": "s", "SEEKINO_VIDEO_EMBEDDING_MODEL": "ignored-endpoint",
     })
     embedding = EmbeddingModelBinding(
         source="api", model="frozen-encoder", dimensions=1024, video_fps=0.5,
@@ -732,7 +732,7 @@ def test_generic_rerank_wraps_generation_and_releases_delegate(monkeypatch):
 
 
 def test_agent_factory_preserves_existing_api_with_frozen_selection():
-    client = model_factory.GatewayClient(_config(), environ={"ANIVAG_AGENT_CHAT_MODEL": "ignored"})
+    client = model_factory.GatewayClient(_config(), environ={"SEEKINO_AGENT_CHAT_MODEL": "ignored"})
     try:
         factory = client.create_agent_factory(_binding())
         assert factory._config.model == "configured-model"

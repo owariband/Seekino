@@ -90,7 +90,7 @@
 
 ## 比较范围与方法
 
-本次评测针对 AniVAG 的 Chat Supervisor 集成。共计划 **99 条主要观测**：10 个对话行为场景 × 3 个 harness × 2 次，以及 13 个查询覆盖任务 × 3 个 harness × 1 次。依赖轮次失败时，追问题按协议记 `BLOCKED`，不能冒充实际向模型发送过。另执行 13 个直接检索配置、14 个意图路由／结构化协议用例，分别报告，不合并分母。
+本次评测针对 Seekino 的 Chat Supervisor 集成。共计划 **99 条主要观测**：10 个对话行为场景 × 3 个 harness × 2 次，以及 13 个查询覆盖任务 × 3 个 harness × 1 次。依赖轮次失败时，追问题按协议记 `BLOCKED`，不能冒充实际向模型发送过。另执行 13 个直接检索配置、14 个意图路由／结构化协议用例，分别报告，不合并分母。
 
 三套的 Supervisor、Query 等可配置业务生成角色以及后置评分均使用 **Kimi `k3.1-pro`**，reasoning effort 为 `low`，没有 GPT 调用或业务生成 fallback。共同的前置 Jev 路由、Qwen 改写与 Doubao embedding 保持不变；独立路由组件测试使用 Kimi，不能把它当作端到端路径已经替换 Jev/Qwen 的证据。Codex 在这里指通过自定义 provider 接 Kimi 的执行框架。
 
@@ -213,7 +213,7 @@ benchmark_out=outputs/verification/chat-harness-kimi-new
 .venv/bin/python -c 'from pathlib import Path; import sys; from evals.benchmark.harnesses import prepare_pi; prepare_pi(Path(sys.argv[1]))' "$benchmark_out/legacy-pi"
 npm --prefix "$benchmark_out/legacy-pi/host" ci
 npm --prefix "$benchmark_out/legacy-pi/host" run build
-UV_CACHE_DIR=/private/tmp/anivag-eval-uv-cache uv run --no-sync --env-file .env.local \
+UV_CACHE_DIR=/private/tmp/seekino-eval-uv-cache uv run --no-sync --env-file .env.local \
   python -m evals.benchmark.compare \
   --config outputs/verification/chat-harness-kimi-recovery-20261026/model-config.yaml \
   --out "$benchmark_out" --live

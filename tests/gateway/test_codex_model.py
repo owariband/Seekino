@@ -227,9 +227,9 @@ def test_native_diagnostics_preserve_sdk_error_without_prompt(
 ) -> None:
     trace_root = tmp_path / "trace"
     if enabled:
-        monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(trace_root))
+        monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(trace_root))
     else:
-        monkeypatch.delenv("ANIVAG_MODEL_TRACE_DIR", raising=False)
+        monkeypatch.delenv("SEEKINO_MODEL_TRACE_DIR", raising=False)
     sdk_error = RuntimeError("upstream turn failed")
     sdk_error.code = "upstream_error"
     sdk_error.status_code = 503

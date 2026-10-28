@@ -172,7 +172,7 @@ G02 至 G05 均未执行。
 实际修改树如下。每个 `[M]` 表示修改本批开始时已存在的文件。
 
 ```text
-AniVAG/
+Seekino/
 └── gateway/
     ├── design/
     │   └── [M] trd.md ← 确认 Langfuse 平台并记录费用边界
@@ -255,7 +255,7 @@ TRD 补接入合同和八个阶段表。
 因此目前不能承诺接入简单或一次到位。
 
 本批地图由既有临时工具的官方 `exportToSvg` 重新导出。
-命令：`node render.mjs`，工作目录为 `/private/tmp/anivag-observability-map-jexpxd_a/`。
+命令：`node render.mjs`，工作目录为 `/private/tmp/seekino-observability-map-jexpxd_a/`。
 静态核对：`python3 validate-development.py`，在同一临时目录执行。
 临时工具与验证脚本不是产品依赖。
 
@@ -310,8 +310,8 @@ uv run --env-file .env.local python -m tests.manual.server_mq_once --once
 | 既有 MQ 三条回归 | `.venv/bin/pytest tests/server/test_bootstrap.py -q -k 'mq_once or mq_entrypoint'` 在收集阶段失败，未执行用例；当前 `engine.rag` 缺少 Server 仍引用的 `reuse_embedding_artifact` |
 | 迁移前基线复核 | 写前 `server/mq/__main__.py` 在当前工作区同样报上述 ImportError；没有通过修补 Engine 绕过外部问题 |
 
-隔离对照脚本与写前内容位于 `/private/tmp/anivag-cli-refactor-20261007/`。
-复核命令：`env PYTHONPATH=. .venv/bin/python /private/tmp/anivag-cli-refactor-20261007/verify_moved_entrypoints.py`。
+隔离对照脚本与写前内容位于 `/private/tmp/seekino-cli-refactor-20261007/`。
+复核命令：`env PYTHONPATH=. .venv/bin/python /private/tmp/seekino-cli-refactor-20261007/verify_moved_entrypoints.py`。
 隔离验证不等于当前真实 Server 导入或账本联验通过。
 
 ### 8.2 当前阶段职责与下一批
@@ -323,7 +323,7 @@ uv run --env-file .env.local python -m tests.manual.server_mq_once --once
 
 首批候选 G02 是 `gateway/usage.py` 与 `tests/gateway/test_usage.py`，共两个既有文件。
 完成标准为 ended_at、粒度、上下文快照、开始/终态分发、显式 fanout 与旧 capture 替换/恢复兼容；unknown 保持未知。
-G01 签收并进入执行后，G04A 可与 G02 并行；原型仅拟在 `/private/tmp/anivag-langfuse-lifecycle-probe/` 新增 pyproject.toml 和 probe.py，并生成 uv.lock/report.json，尚未创建或安装。
+G01 签收并进入执行后，G04A 可与 G02 并行；原型仅拟在 `/private/tmp/seekino-langfuse-lifecycle-probe/` 新增 pyproject.toml 和 probe.py，并生成 uv.lock/report.json，尚未创建或安装。
 G04B 必须等待 G02 和 G04A 均通过；SDK 阻塞关闭和进程退出上限尚未证明，不能承诺一次到位。
 
 ### 8.3 Gateway 完整核心候选树
@@ -334,7 +334,7 @@ G04B 必须等待 G02 和 G04A 均通过；SDK 阻塞关闭和进程退出上限
 若 G04A 需要不同导出架构，应重新核对树和规模。
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] pyproject.toml ← G04B 声明已验证 SDK/OTel 组合
 ├── [M] uv.lock ← 锁定同一组合
 ├── gateway/
@@ -371,7 +371,7 @@ S1 需 10 个既有文件：5 个生产接点及 5 个直接测试。
 它阻塞 Server 联验和整链验收，不阻塞 Gateway 离线模块开发。
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── [M] bootstrap.py ← 初始化/注入桥接，活动调用退出后关闭
 │   └── service/
@@ -441,8 +441,8 @@ HTTP 200 中的部分拒绝不能算全部成功，协议依据：[OTLP partial 
 `exported` 仅为 HTTP 传输确认；`dropped` 为已知拒绝；`unconfirmed` 为未收到确认，可能已经被后端接收。
 机制收尾通过不等于可靠投递、exactly-once 或真实项目可见性通过。
 
-G04A 可复现资料：`/private/tmp/anivag-langfuse-lifecycle-probe/{pyproject.toml,uv.lock,sdk_probe.py,transport_probe.py,report.py,report.json}`。
-命令：`uv run --project /private/tmp/anivag-langfuse-lifecycle-probe python /private/tmp/anivag-langfuse-lifecycle-probe/report.py`。
+G04A 可复现资料：`/private/tmp/seekino-langfuse-lifecycle-probe/{pyproject.toml,uv.lock,sdk_probe.py,transport_probe.py,report.py,report.json}`。
+命令：`uv run --project /private/tmp/seekino-langfuse-lifecycle-probe python /private/tmp/seekino-langfuse-lifecycle-probe/report.py`。
 候选 SDK 4.17.0 + OTel 1.45.0 可解析，但请求 10ms 的 flush 实测约405ms，不能证明整体收尾截止。
 隔离出口原型正常排空约30ms、积压约29ms、堵塞约361ms；最后一项由产品机制强制收尾，owned 线程和进程均退出。
 正式项目只安装实际消费的 OTel API、SDK 和 proto-common；未加入未使用的 Langfuse SDK。
@@ -466,8 +466,8 @@ unknown 的 usage_source 按合同省略，不强填 synthetic_result。
 该入口默认跳过，代码存在和本地回归均不证明真实后端验收。
 
 Server 原始命令、选择范围和可复现 runner：
-`/private/tmp/anivag-langfuse-implementation-20261007/{server-verification-record.md,verify_server.py}`。
-复现命令：`.venv/bin/python /private/tmp/anivag-langfuse-implementation-20261007/verify_server.py`。
+`/private/tmp/seekino-langfuse-implementation-20261007/{server-verification-record.md,verify_server.py}`。
+复现命令：`.venv/bin/python /private/tmp/seekino-langfuse-implementation-20261007/verify_server.py`。
 runner 检查实际 tracing 模块位置；缺失 Engine placeholder 一旦被实际调用就失败。
 两项保留失败：
 
@@ -482,7 +482,7 @@ tests/server/test_video_retrieval_service.py::test_v2_retrieval_rejects_cross_ch
 ### 9.3 实际修改树
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] pyproject.toml ← 声明实际消费的 OTel 1.45.0 依赖
 ├── [M] uv.lock ← 解析并锁定同一组合
 ├── gateway/
@@ -539,9 +539,9 @@ S3 和 Parse V2 的当前位置 08A 继续独立维护。
 ### 9.4 地图与工作区交付核验
 
 使用既有临时工具的官方 `@excalidraw/excalidraw@0.18.1 exportToSvg` 导出。
-命令：`node render.mjs`，工作目录 `/private/tmp/anivag-observability-map-jexpxd_a/`。
+命令：`node render.mjs`，工作目录 `/private/tmp/seekino-observability-map-jexpxd_a/`。
 静态核对：`python3 validate-langfuse-implementation.py`，同一工作目录。
-原始实施基线和授权集合：`/private/tmp/anivag-langfuse-implementation-20261007/baseline.json`。
+原始实施基线和授权集合：`/private/tmp/seekino-langfuse-implementation-20261007/baseline.json`。
 三个 SVG 已逐张查看中文、卡片、当前徽标和依赖线。
 
 | 最终核验 | 结果 |
@@ -553,20 +553,20 @@ S3 和 Parse V2 的当前位置 08A 继续独立维护。
 | 写前基线保护 | 528 个原基线路径中，33 个授权原路径变化、495 个内容一致；另新增3个授权目标；范围外变化为0 |
 | 空白与暂存 | git diff --check 通过；TRD/索引无尾随空白；暂存区为空 |
 
-核验输出：`/private/tmp/anivag-observability-map-jexpxd_a/langfuse-implementation-validation.json`。
+核验输出：`/private/tmp/seekino-observability-map-jexpxd_a/langfuse-implementation-validation.json`。
 以上统计只属于本批，既有 dirty/untracked/ignored 成果原样保留。
 逐文件对照本批写前副本的行数变化：12 个生产文件 +901/-81，13 个测试文件 +1269/-41。
 另有2个依赖文件和9个文档/图文件；图源排版变化不计入生产代码规模。
 该基线已包含前一批 CLI 迁移及其他任务改动，不能用当前 git HEAD 总 diff 代替本批统计。
 授权路径中的 `git diff --stat` / `--numstat` 相对 HEAD 汇总为25个 tracked文件 +1347/-137。
 该值包含同文件此前改动，且不含三个新增目标与八个 untracked/ignored设计文件；本批规模采用上述写前副本对照值。
-原始 stat/numstat 与逐文件对照存于 `/private/tmp/anivag-langfuse-implementation-20261007/{tracked-head-stat.txt,tracked-head-numstat.txt,diff-summary.json}`。
+原始 stat/numstat 与逐文件对照存于 `/private/tmp/seekino-langfuse-implementation-20261007/{tracked-head-stat.txt,tracked-head-numstat.txt,diff-summary.json}`。
 
 ### 9.5 下一步可执行范围
 
 代码和离线范围已完成，不再列新的生产修改批次。
 G05B 的现有入口是 `tests/gateway/test_langfuse_integration.py::test_real_langfuse_v2_observations_read_back`。
-取得 S2 专用项目、base URL 和本机凭据后，显式设置 `ANIVAG_LANGFUSE_INTEGRATION=1` 才运行。
+取得 S2 专用项目、base URL 和本机凭据后，显式设置 `SEEKINO_LANGFUSE_INTEGRATION=1` 才运行。
 模拟调用无需真实模型；必须读回实际 observation，不能只看出口 HTTP ACK。
 Server 普通回归需 Engine 负责人先恢复有效导出和检索 identity 合同，然后沿上述十文件回归范围联验。
 如果真实项目验收暴露合同差异，应先定位归属，并在既有职责与授权内修正；不得因此自动扩展 Engine、部署或存储范围。

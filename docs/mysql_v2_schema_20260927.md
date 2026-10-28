@@ -1,4 +1,4 @@
-# AniVAG Video Parse V2 MySQL 实际 Schema 报告
+# Seekino Video Parse V2 MySQL 实际 Schema 报告
 
 生成日期：2026-09-27。数据源：MySQL `information_schema` 与对每张业务表执行的只读 `COUNT(*)`。
 
@@ -6,18 +6,18 @@
 
 ## 实例与使用边界
 
-- Schema：`anivag_video_parse_v2_development`
+- Schema：`seekino_video_parse_v2_development`
 - MySQL：`8.4.11`；本次直连会话 `time_zone=SYSTEM`，全局 `time_zone=SYSTEM`。
 - Schema 默认字符集/排序规则：`utf8mb4` / `utf8mb4_0900_ai_ci`。
 - 实例只绑定 loopback，端口为 `127.0.0.1:33307`，独立于项目通常使用的 `3306`。
 - 实际 datadir 为 `outputs/mysql-v2-refactor-20260927/`，独立于默认实例使用的 `outputs/local-services/mysql`。
 - 本实例由独立 `mysqld` 进程运行；`start.sh` 的默认 MySQL 数据目录仍是 `outputs/local-services/mysql`，不能用它代替这套实例的重启方式。
 - 这是本地临时隔离实例，未从旧库复制任何数据；23 张表逐表 `COUNT(*)` 均为 0。
-- 同实例测试库 `anivag_video_parse_v2_refactor_test` 也有相同的 23 张表、333 个字段；测试数据已清理，逐表 `COUNT(*)` 均为 0。
+- 同实例测试库 `seekino_video_parse_v2_refactor_test` 也有相同的 23 张表、333 个字段；测试数据已清理，逐表 `COUNT(*)` 均为 0。
 - 应用连接该实例时需显式设置：
 
 ```bash
-export ANIVAG_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/anivag_video_parse_v2_development?charset=utf8mb4'
+export SEEKINO_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/seekino_video_parse_v2_development?charset=utf8mb4'
 ```
 
 该连接示例不包含密码，只适用于这套本地 loopback 临时实例。应用通过自身数据库引擎连接时会设置 UTC session time zone；上面记录的 `SYSTEM` 是本报告原始只读连接的实测值。
@@ -28,7 +28,7 @@ export ANIVAG_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/anivag_video_pa
 /opt/homebrew/bin/mysqld --no-defaults \
   --datadir="$PWD/outputs/mysql-v2-refactor-20260927" \
   --bind-address=127.0.0.1 --port=33307 \
-  --socket=/private/tmp/anivag-v2-33307.sock \
+  --socket=/private/tmp/seekino-v2-33307.sock \
   --pid-file="$PWD/outputs/mysql-v2-refactor-20260927/mysql.pid" \
   --log-error="$PWD/outputs/mysql-v2-refactor-20260927/mysql.err" \
   --mysqlx=OFF --daemonize
@@ -998,4 +998,4 @@ export ANIVAG_DATABASE_URL='mysql+pymysql://root@127.0.0.1:33307/anivag_video_pa
 - 外键总表共 31 条，等于 `information_schema.TABLE_CONSTRAINTS` 的 31 条 FOREIGN KEY。
 - 主键 23、唯一约束 18、CHECK 76 的数量均直接来自实际实例。
 - 23 张表精确总行数为 0，确认该独立开发库是空库；旧库数据未复制。
-- 测试库 `anivag_video_parse_v2_refactor_test` 的 23 张同名表、333 个字段也已逐表读取，清理测试数据后精确总行数为 0。
+- 测试库 `seekino_video_parse_v2_refactor_test` 的 23 张同名表、333 个字段也已逐表读取，清理测试数据后精确总行数为 0。

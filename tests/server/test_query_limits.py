@@ -20,9 +20,9 @@ from server.service.auth import AuthService
 
 @pytest.fixture
 def query_service():
-    url = os.getenv("ANIVAG_TEST_AUTH_REDIS_URL")
+    url = os.getenv("SEEKINO_TEST_AUTH_REDIS_URL")
     if not url:
-        pytest.skip("set ANIVAG_TEST_AUTH_REDIS_URL to an isolated test Redis")
+        pytest.skip("set SEEKINO_TEST_AUTH_REDIS_URL to an isolated test Redis")
     redis = Redis.from_url(url, decode_responses=True)
     redis.ping()
     service = AuthService(

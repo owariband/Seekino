@@ -202,13 +202,13 @@ export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }:
       if (!connectionId || connectionId === account.current.connection?.id) void refreshAccount(controller.signal);
     };
     window.addEventListener("focus", onFocus);
-    window.addEventListener("anivag-auth-required", onAuthRequired);
+    window.addEventListener("seekino-auth-required", onAuthRequired);
     return () => {
       controller.abort();
       ++primaryVersion.current;
       ++accountVersion.current;
       window.removeEventListener("focus", onFocus);
-      window.removeEventListener("anivag-auth-required", onAuthRequired);
+      window.removeEventListener("seekino-auth-required", onAuthRequired);
     };
   }, [connectPrimary, refreshAccount]);
 

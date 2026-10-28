@@ -334,7 +334,7 @@ List、Send 和 SSE 复用同一个 MessageView。没有单独的 token / 草稿
 | EvaluatorDecision | `approved: bool, feedback: string, corrected_query: string?` | Evaluator 放行，或反馈一次返工 |
 | SceneRetrievalArguments | `query, workspace_id, series_ids, top_k` | 确定性 Tool 的调用参数；Scope 来自 Service |
 
-当前这些内部模型使用 snake_case，不是 HTTP DTO。Chat 的意图改写与草稿回答属于同一个模型角色；Evaluator 可以选用相同或不同模型。模型配置来自 `ANIVAG_AGENT_CHAT_MODEL`、`ANIVAG_AGENT_EVALUATOR_MODEL` 和 Gateway 配置，不在 UI 写死。
+当前这些内部模型使用 snake_case，不是 HTTP DTO。Chat 的意图改写与草稿回答属于同一个模型角色；Evaluator 可以选用相同或不同模型。模型配置来自 `SEEKINO_AGENT_CHAT_MODEL`、`SEEKINO_AGENT_EVALUATOR_MODEL` 和 Gateway 配置，不在 UI 写死。
 
 当前 AgentGraphState 字段为：`workspace_id, user_message, history, series_context, series_ids, requested_top_k, retrieval_query, retrieval_top_k, search_result, evaluator_feedback, review_action, retry_count, answer`。这些运行数据每次 invoke 独立创建，不保存在共享 Service 的可变属性上。降级分支如需知道是否出现过显式审核拒绝，应在本轮执行上下文记录这个事实。
 

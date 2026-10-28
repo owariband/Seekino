@@ -51,7 +51,7 @@ test("switches EN/ZH immediately and retains the choice after a reload", async (
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page).toHaveTitle("Seekino · Watch and Discover");
-  expect(await page.evaluate(() => localStorage.getItem("anivag-locale"))).toBe("en");
+  expect(await page.evaluate(() => localStorage.getItem("seekino-locale"))).toBe("en");
   const requestsBeforeSwitch = mock.requests.length;
   await page.getByRole("radio", { name: "ZH 中文" }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
@@ -60,7 +60,7 @@ test("switches EN/ZH immediately and retains the choice after a reload", async (
   await page.reload();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   await expect(page.getByRole("radio", { name: "EN English" })).toHaveAttribute("aria-checked", "true");
-  await page.screenshot({ path: "/private/tmp/anivag-locale-y_vrdu2o/settings-en-desktop.png", fullPage: true });
+  await page.screenshot({ path: "/private/tmp/seekino-locale-y_vrdu2o/settings-en-desktop.png", fullPage: true });
   expect(mock.unexpected).toEqual([]);
   expect(mock.errors).toEqual([]);
 });
@@ -80,7 +80,7 @@ test("lets a guest choose English without exposing global configuration", async 
 
 test("localizes a client-generated request failure in the page error state", async ({ page }) => {
   const mock = await mockService(page);
-  await page.addInitScript(() => localStorage.setItem("anivag-locale", "en"));
+  await page.addInitScript(() => localStorage.setItem("seekino-locale", "en"));
   await page.route("**/api/usage/overview?**", (route) => route.fulfill({ status: 503, body: "Unavailable" }));
   await page.goto("/usage");
   await expect(page.getByRole("alert")).toContainText("Request failed (HTTP 503)");
@@ -92,7 +92,7 @@ test("localizes a client-generated request failure in the page error state", asy
 test("shows English empty states on narrow screens without horizontal page overflow", async ({ page }) => {
   const mock = await mockService(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => localStorage.setItem("anivag-locale", "en"));
+  await page.addInitScript(() => localStorage.setItem("seekino-locale", "en"));
   for (const path of ["/settings", "/watch", "/library", "/tasks", "/usage", "/search"]) {
     await page.goto(path);
     await expect(page.locator("main")).toBeVisible();
@@ -100,7 +100,7 @@ test("shows English empty states on narrow screens without horizontal page overf
     // No business records are present, so all visible Chinese would be untranslated interface copy.
     expect((await page.locator("main").innerText()).replace(/ZH\s*中文/g, ""), path).not.toMatch(/[\p{Script=Han}]/u);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), path).toBe(true);
-    if (path === "/settings") await page.screenshot({ path: "/private/tmp/anivag-locale-y_vrdu2o/settings-en-mobile.png", fullPage: true });
+    if (path === "/settings") await page.screenshot({ path: "/private/tmp/seekino-locale-y_vrdu2o/settings-en-mobile.png", fullPage: true });
   }
   expect(mock.unexpected).toEqual([]);
   expect(mock.errors).toEqual([]);

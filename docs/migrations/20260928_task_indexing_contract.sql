@@ -1,4 +1,4 @@
--- AniVAG controlled migration: Interval indexing and task failure boundaries.
+-- Seekino controlled migration: Interval indexing and task failure boundaries.
 -- Run against a backed-up database with ALL application writers stopped.
 -- This script supports only empty V2 task/result tables and empty (or absent)
 -- ES publication tables. It refuses existing task/results instead of guessing

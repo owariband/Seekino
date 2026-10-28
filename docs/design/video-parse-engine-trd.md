@@ -296,7 +296,7 @@ Engine 可以通过 `VideoParseResult.model_json_schema()` 向 Harness 提供原
 > 调查基线：2026-09-26，本地 `../ragflow`，commit
 > `313ca90f6abd7682fe8523e16fd67b3653a3fa84`。
 > 以下记录源码中的实际机制；Python 普通文档入库、可配置 Pipeline、Go 实现和
-> Agentic RAG 的行为分别说明。对 AniVAG 的借鉴放在最后，不直接改变第一章的 Parse Schema。
+> Agentic RAG 的行为分别说明。对 Seekino 的借鉴放在最后，不直接改变第一章的 Parse Schema。
 
 ### 2.1.1 先统一术语：召回、融合、精筛
 
@@ -623,7 +623,7 @@ RAPTOR 对内容聚类、生成摘要，并对摘要编码；检索可以命中�
 源码：[表格行构造](/Users/bytedance/workspace/other-project/ragflow/rag/app/table.py:615)、
 [图片 OCR 与描述](/Users/bytedance/workspace/other-project/ragflow/rag/app/picture.py:78)。
 
-### 2.1.9 对 AniVAG 的借鉴：把解析和检索的对应关系写明确
+### 2.1.9 对 Seekino 的借鉴：把解析和检索的对应关系写明确
 
 下面是从上述实现得到的设计启发，尚未作为本项目的新增实现：
 
@@ -643,7 +643,7 @@ V2 要解决的是让各路检索从同一份正式事实派生，并明确新�
 
 #### 把示例中的五个字段对应到我们的设计
 
-| RAGFlow 示例中的概念 | 对 AniVAG 的启发 | 由谁产生 |
+| RAGFlow 示例中的概念 | 对 Seekino 的启发 | 由谁产生 |
 | --- | --- | --- |
 | `text`：可阅读的内容 | 按所选策略，将事件描述与所需语言的对白组织成文本检索 / 重排输入；Video Source 不要求独立的 `text` 字段 | Engine 定义投影规则，消费已经确认的 Timeline |
 | `keywords`：重要词语 | 人物名、动作词、屏幕文字等可以成为词项检索输入 | 先复用正式字段；需要额外提取时，再定义可选增强步骤 |
@@ -669,8 +669,8 @@ Index Schema：检索后端怎样保存检索表示、词项、向量和定位�
 当新需求依赖正式结果没有记录的事实时，仍需补充解析合同或证据处理。
 通用 Harness 通过接收 Engine 提供的 Schema 复用，不把这五个字段硬编码成固定解析流程。
 
-参考：[现有检索文本构造](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:97)、
-[现有三路融合](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:172)。
+参考：[现有检索文本构造](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:97)、
+[现有三路融合](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:172)。
 
 #### Chunk 前后上下文的粒度
 
@@ -782,7 +782,7 @@ type SourceEnrichment = {
 
 ### 2.1.10 视频多模态精筛的补充调查
 
-本小节记录可供 AniVAG 后续评估的模型能力，不能当成 RAGFlow 普通文本重排已经实现的行为。
+本小节记录可供 Seekino 后续评估的模型能力，不能当成 RAGFlow 普通文本重排已经实现的行为。
 
 - **视觉 Encoder 已有成熟实现。** CLIP / SigLIP 类图文模型支持图文表示匹配；
   BLIP 的图文匹配分支会把图片特征交给文本模型，并通过打分头判断匹配程度。
@@ -902,7 +902,7 @@ Engine 定义纯投影、编码/融合及事实核验合同；Server 执行租�
 具体字段、索引完成判定、回填及版本边界统一见 [Event 最终 TRD](sub-chunk-trd.md)，不在本节维护第二份定义。
 
 以下是基于已确认 Source 结构的解析与召回提案，尚未实现。RAGFlow 的具体行为以 2.1
-的本地源码调查为准；这里对 AniVAG 的选择不代表 RAGFlow 所有路径都采用相同策略。
+的本地源码调查为准；这里对 Seekino 的选择不代表 RAGFlow 所有路径都采用相同策略。
 
 已确定统一使用 Elasticsearch：MySQL 保存正式解析结果、Chunk 基础解析状态、Interval Refine / 索引状态及主任务汇总；Elasticsearch
 承接词项检索、Chunk 文本语义向量与视频向量检索。Qdrant 从目标架构中移除。
@@ -967,8 +967,8 @@ Query + 可信搜索范围
 Reranker 消费可读的实际事件、对白或视频证据；生成问题只作为召回线索。
 明确过滤条件和权限约束持续生效，模型分数不能覆盖它们；RRF 分数也不视为相关性概率。
 
-初始融合基线继续复用 AniVAG 已有的三路加权 RRF；权重和召回数通过视频查询评测调整。
-源码：[现有融合](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:172)。
+初始融合基线继续复用 Seekino 已有的三路加权 RRF；权重和召回数通过视频查询评测调整。
+源码：[现有融合](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:172)。
 
 ### 2.3.4 第一版范围与成本控制
 
@@ -1007,7 +1007,7 @@ Reranker 消费可读的实际事件、对白或视频证据；生成问题只�
 
 Query 使用与各索引兼容的查询编码器：语义和问题路使用其文本编码合同，视觉路使用与
 视频向量对齐的文本编码合同。不同向量空间分别检索，后续融合排名。
-已有视频编码调用见 [Gateway](/Users/bytedance/workspace/other-project/AniVAG/gateway/ark/embedding.py:40)。
+已有视频编码调用见 [Gateway](/Users/bytedance/workspace/other-project/Seekino/gateway/ark/embedding.py:40)。
 
 ### 2.3.6 多路候选、融合与防漏规则
 
@@ -1015,7 +1015,7 @@ Query 使用与各索引兼容的查询编码器：语义和问题路使用其�
 不成为语义 / 视觉路的强制前提。查询规划主要调整预算和权重，避免一次意图判断就关闭
 可能有用的通道。明确的原话要求保留原字面，并在返回前验证实际对白或画面文字。
 
-以下数字是便于启动评测的参数建议，尚无 AniVAG 评测结论，也不是 RAGFlow 的默认配置；
+以下数字是便于启动评测的参数建议，尚无 Seekino 评测结论，也不是 RAGFlow 的默认配置；
 重排与视频精读参数仅在相应能力启用后生效：
 
 | 参数 | 起步建议 |
@@ -1051,7 +1051,7 @@ rerank_pool = 每路保留名额的并集，再按 RRF 补足剩余名额
 ### 2.3.7 RAGFlow 依据与视频扩展边界
 
 本轮依据本地 RAGFlow commit `313ca90f6abd7682fe8523e16fd67b3653a3fa84`。
-源码可以证明机制存在；对 AniVAG 视频查询的效果需要由本项目的评测证明。
+源码可以证明机制存在；对 Seekino 视频查询的效果需要由本项目的评测证明。
 
 | 设计点 | RAGFlow 中的直接依据 | 我们的选择 |
 | --- | --- | --- |
@@ -1061,7 +1061,7 @@ rerank_pool = 每路保留名额的并集，再按 RRF 补足剩余名额
 | 候选重排 | [rerank_by_model](/Users/bytedance/workspace/other-project/ragflow/rag/nlp/search.py:664) 用自然文本打分；[retrieval](/Users/bytedance/workspace/other-project/ragflow/rag/nlp/search.py:710) 限定候选窗口，默认 64 | 文本问题消费实际事件与对白；视觉问题按预算使用视频证据 |
 | 命中后展开证据 | [retrieval_by_children](/Users/bytedance/workspace/other-project/ragflow/rag/nlp/search.py:1085) 按 mom_id 读取父内容；[上下文](/Users/bytedance/workspace/other-project/ragflow/rag/flow/chunker/token_chunker.py:191) 控制邻近文本预算 | 展开 Chunk / 相邻片段，同时保留真正命中时间 |
 | 空结果补召回 | [search](/Users/bytedance/workspace/other-project/ragflow/rag/nlp/search.py:337) 的空结果分支尝试调整词项条件或 Dense-only 查询 | 采用有上限的补召回，保留所有必须满足的条件 |
-| 视频向量、人物时序校验 | 上述 RAGFlow 普通文本链路没有提供对应的视频实现依据 | 视频向量复用 AniVAG 已有 Gateway，人物与时序校验是本项目的扩展 |
+| 视频向量、人物时序校验 | 上述 RAGFlow 普通文本链路没有提供对应的视频实现依据 | 视频向量复用 Seekino 已有 Gateway，人物与时序校验是本项目的扩展 |
 
 普通 ES 混合路径还会把全文条件放进 KNN filter，不能概括为所有 RAGFlow 检索都做
 独立两路加 RRF；参见 [ES 查询组装](/Users/bytedance/workspace/other-project/ragflow/rag/utils/es_conn.py:244)。
@@ -1267,14 +1267,14 @@ payload 并不会自动获得这些能力。词项后端已选择 Elasticsearch�
 原话等硬条件在进入最终短名单前校验；普通全文命中和生成问题不能代替对白证据。
 读取来源、约束校验和返回结果使用相同的解析任务及内容版本，不混用不同来源的成果。
 
-现有 V1 的 [台词匹配](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:244)
-对已读取的 ASR 文本做匹配；[服务编排](/Users/bytedance/workspace/other-project/AniVAG/server/service/video_retrieval.py:143)
+现有 V1 的 [台词匹配](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:244)
+对已读取的 ASR 文本做匹配；[服务编排](/Users/bytedance/workspace/other-project/Seekino/server/service/video_retrieval.py:143)
 调用它并检索文本 / 视频向量。上述分字段词项索引属于待补齐能力，不能把现有三路称为
 已经实现了这里的 V2 全文方案。
 
 RAGFlow 可直接学习的依据是 [Tokenizer 的字段加工](/Users/bytedance/workspace/other-project/ragflow/rag/flow/tokenizer/tokenizer.py:148)
 与 [Query 的分字段权重](/Users/bytedance/workspace/other-project/ragflow/rag/nlp/query.py:28)。
-具体到视频的对白角色、事件来源时间和视频编码输入，是 AniVAG 的设计。
+具体到视频的对白角色、事件来源时间和视频编码输入，是 Seekino 的设计。
 
 ### 2.3.11 Elasticsearch 统一检索：Engine 与存储适配器的职责
 
@@ -1354,13 +1354,13 @@ ES 内置融合功能；ES 版本、语言分析器和向量 mapping 在适配�
 
 当前运行路径仍使用 Qdrant，后续沿现有职责边界替换：
 
-- [Engine 检索算法](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:97)
+- [Engine 检索算法](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:97)
   已有文本投影与 RRF；V2 的词项投影、查询策略在 Engine 的检索侧增加。
-- [Server 检索服务](/Users/bytedance/workspace/other-project/AniVAG/server/service/video_retrieval.py:45)
+- [Server 检索服务](/Users/bytedance/workspace/other-project/Seekino/server/service/video_retrieval.py:45)
   已组织 MySQL、Query 编码和 Qdrant 查询；替换后从 ES 获取三路候选，交回 Engine 融合。
-- [现有存储适配器](/Users/bytedance/workspace/other-project/AniVAG/server/storage/qdrant.py:72)
+- [现有存储适配器](/Users/bytedance/workspace/other-project/Seekino/server/storage/qdrant.py:72)
   的向量读写由拟新增的 `server/storage/elasticsearch.py` 接替，并增加词项检索；新文件尚未创建。
-- [依赖装配](/Users/bytedance/workspace/other-project/AniVAG/server/bootstrap.py:124)
+- [依赖装配](/Users/bytedance/workspace/other-project/Seekino/server/bootstrap.py:124)
   改为创建 ES 客户端并注入 Service；配置、CLI、部署、评测入口与相关测试同步替换 Qdrant 依赖。
 
 索引同步、重试、对账和删除清理由 Server 继续负责，改为面向 ES 执行。迁移时优先复用
@@ -1380,7 +1380,7 @@ RAGFlow 的 [FulltextQueryer](/Users/bytedance/workspace/other-project/ragflow/r
 
 所查默认 ES 路径同时处理全文与 Dense KNN，见
 [MatchDenseExpr 分支](/Users/bytedance/workspace/other-project/ragflow/rag/utils/es_conn.py:253)。
-AniVAG 同样采用 ES 统一保存词项与向量，额外保留独立的视频向量字段。上述策略与适配
+Seekino 同样采用 ES 统一保存词项与向量，额外保留独立的视频向量字段。上述策略与适配
 分工可供学习；RAGFlow 的目录名和 Dealer 内部编排不要求原样迁入我们的纯 Engine。
 
 #### 索引完成与失败恢复
@@ -1419,7 +1419,7 @@ MySQL 与 ES 不做跨库事务，不维护独立 build ID、发布指针或逐 
 索引失败同样记录在 Interval 上。
 
 幂等写入、失败重试和按任务 / 视频范围清理 ES 记录仍由 Server 负责，不依赖被删除的三表。
-当前 [IndexSyncService](/Users/bytedance/workspace/other-project/AniVAG/server/service/parsev1/index_sync.py:20)
+当前 [IndexSyncService](/Users/bytedance/workspace/other-project/Seekino/server/service/parsev1/index_sync.py:20)
 只面向现有 Qdrant 路径。现有 ES 三表及配套代码也需要改接主任务流程；本文的设计调整
 不代表已完成 ORM、Worker、CLI、建库校验或数据库迁移。
 
@@ -1457,7 +1457,7 @@ MySQL 与 ES 不做跨库事务，不维护独立 build ID、发布指针或逐 
 源码依据：[RAPTOR 生成](/Users/bytedance/workspace/other-project/ragflow/rag/svr/task_executor_refactor/raptor_service.py:344)。
 所查 is_tree=False 分支保存摘要文本、向量、分词字段和层级；is_tree=True 分支保存结构树。
 不能由输入携带来源就推断所有落库分支都完整保存了来源：当前非树摘要物化分支未写入
-source_chunk_ids，AniVAG 需要显式落实自己的来源映射。
+source_chunk_ids，Seekino 需要显式落实自己的来源映射。
 
 ## 3.2 TODO：学习 GraphRAG 的实体与关系检索
 

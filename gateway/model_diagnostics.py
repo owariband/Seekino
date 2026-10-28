@@ -209,7 +209,7 @@ def capture_model_diagnostics(call, request):
     if _capture.get() is not None and _capture.get()[1] is call:
         yield
         return
-    root = os.environ.get("ANIVAG_MODEL_TRACE_DIR")
+    root = os.environ.get("SEEKINO_MODEL_TRACE_DIR")
     token = _capture.set(None)
     if root and call.context.get("video_parse_task_id"):
         try:

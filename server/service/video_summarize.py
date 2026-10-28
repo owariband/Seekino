@@ -233,7 +233,7 @@ class VideoSummarizeService:
         if len(data) != result.cover_image.size_bytes:
             raise ValueError("summary cover bytes do not match the inspection receipt")
         filename = "summary-" + hashlib.sha256(data).hexdigest() + extensions[header]
-        with TemporaryDirectory(prefix="anivag-summary-cover-") as directory:
+        with TemporaryDirectory(prefix="seekino-summary-cover-") as directory:
             path = Path(directory) / filename
             path.write_bytes(data)
             execution.manager.check_active()

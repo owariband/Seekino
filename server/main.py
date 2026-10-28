@@ -88,11 +88,11 @@ def create_http_application(*, settings: ServerSettings | None = None) -> FastAP
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m server.api",
-        description="Run the anivag HTTP API process.",
+        description="Run the seekino HTTP API process.",
     )
-    parser.add_argument("--host", default=os.getenv("ANIVAG_HTTP_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("ANIVAG_HTTP_PORT", "9621")))
-    parser.add_argument("--log-level", type=str.casefold, default=os.getenv("ANIVAG_LOG_LEVEL", "info"))
+    parser.add_argument("--host", default=os.getenv("SEEKINO_HTTP_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("SEEKINO_HTTP_PORT", "9621")))
+    parser.add_argument("--log-level", type=str.casefold, default=os.getenv("SEEKINO_LOG_LEVEL", "info"))
     args = parser.parse_args()
     settings = ServerSettings.from_environment()
     configure_logging(

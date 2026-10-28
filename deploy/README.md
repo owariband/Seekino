@@ -53,19 +53,19 @@ docker compose logs -f mysql elasticsearch
 在 `.env.local` 中将现有 SMTP 配置改为：
 
 ```dotenv
-ANIVAG_SMTP_HOST=127.0.0.1
-ANIVAG_SMTP_PORT=1025
-ANIVAG_SMTP_USERNAME=
-ANIVAG_SMTP_PASSWORD=
-ANIVAG_SMTP_SENDER=noreply@seekino.test
-ANIVAG_SMTP_USE_SSL=false
-ANIVAG_SMTP_START_TLS=false
+SEEKINO_SMTP_HOST=127.0.0.1
+SEEKINO_SMTP_PORT=1025
+SEEKINO_SMTP_USERNAME=
+SEEKINO_SMTP_PASSWORD=
+SEEKINO_SMTP_SENDER=noreply@seekino.test
+SEEKINO_SMTP_USE_SSL=false
+SEEKINO_SMTP_START_TLS=false
 ```
 
 应用运行在宿主机，因此使用 `127.0.0.1`，而不是容器服务名 `mailpit`。
 SMTP 默认启用 STARTTLS，此处必须显式关闭，匹配 Mailpit 的本地无 TLS 接口。
-若 1025 或 8025 被占用，可在 `.env.local` 设置 `ANIVAG_MAILPIT_SMTP_PORT` 或
-`ANIVAG_MAILPIT_WEB_PORT`；更改 SMTP 发布端口时，同时更新 `ANIVAG_SMTP_PORT`。
+若 1025 或 8025 被占用，可在 `.env.local` 设置 `SEEKINO_MAILPIT_SMTP_PORT` 或
+`SEEKINO_MAILPIT_WEB_PORT`；更改 SMTP 发布端口时，同时更新 `SEEKINO_SMTP_PORT`。
 
 启动本地验证码依赖：
 
@@ -73,10 +73,10 @@ SMTP 默认启用 STARTTLS，此处必须显式关闭，匹配 Mailpit 的本地
 docker compose --env-file .env.local --profile cloud-auth --profile mock-email up -d --wait redis mailpit
 ```
 
-测试账号登录时，Server 需以 `ANIVAG_AUTH_MODE=cloud` 启动，并配齐至少 32 字节的
-独立随机签名秘密及 Redis 连接。`ANIVAG_AUTH_QUERY_LEASE_SECONDS` 必须大于
+测试账号登录时，Server 需以 `SEEKINO_AUTH_MODE=cloud` 启动，并配齐至少 32 字节的
+独立随机签名秘密及 Redis 连接。`SEEKINO_AUTH_QUERY_LEASE_SECONDS` 必须大于
 `config.yaml` 的 `execution_timeout_seconds`（当前为 1200 秒，可为本次测试设租约
-1800 秒）。使用普通 HTTP 的内网测试入口时设置 `ANIVAG_AUTH_COOKIE_SECURE=false`；
+1800 秒）。使用普通 HTTP 的内网测试入口时设置 `SEEKINO_AUTH_COOKIE_SECURE=false`；
 正式 HTTPS 入口使用 `true`。SMTP 配置在 Server 启动时读取。
 
 在 Seekino 登录框填写测试邮箱（例如 `tester@example.com`），点击发送验证码；
@@ -101,18 +101,18 @@ docker compose --env-file .env.local --profile mock-email stop mailpit
 |---|---|
 | Docker 视频、切片、关键帧、解析文件 | `app_data` 卷中的 `/data/artifacts` |
 | Docker 有效模型配置、日志、Codex 登录 | `app_data` 卷中的 `/data/config`、`/data/logs`、`/data/codex` |
-| 宿主机开发媒体 | 本机 `ANIVAG_ARTIFACT_ROOT`，默认 `outputs/server/artifacts` |
+| 宿主机开发媒体 | 本机 `SEEKINO_ARTIFACT_ROOT`，默认 `outputs/server/artifacts` |
 | 宿主机进程 PID、启动日志 | `outputs/local-services/` |
-| 宿主机应用结构化日志 | `ANIVAG_LOG_DIRECTORY`，默认 `outputs/server/logs` |
-| MySQL | Docker volume `anivag-local_mysql_data` |
-| ES 索引 | Docker volume `anivag-local_elasticsearch_data` |
+| 宿主机应用结构化日志 | `SEEKINO_LOG_DIRECTORY`，默认 `outputs/server/logs` |
+| MySQL | Docker volume `seekino-local_mysql_data` |
+| ES 索引 | Docker volume `seekino-local_elasticsearch_data` |
 
-`ANIVAG_PARSE_EXECUTION_MODE` 只接受 `v2`。新上传任务由 DB Queue 的 V2 Worker 执行，
+`SEEKINO_PARSE_EXECUTION_MODE` 只接受 `v2`。新上传任务由 DB Queue 的 V2 Worker 执行，
 Refine 成果提交后进入索引阶段，ES 写入与验证成功后完成任务；API、Agent Chat 和
 CLI search 使用同一套 V2 检索。`./start.sh` 要求 ES 集群为 yellow/green，并校验索引 Schema。
 已有数据库升级步骤见 [Server README](../server/README.md)。容器就绪不会迁移历史数据
-或执行索引重建。隔离集成测试须另用 `ANIVAG_TEST_DATABASE_URL`、
-`ANIVAG_TEST_ELASTICSEARCH_URL` 和独立测试索引。
+或执行索引重建。隔离集成测试须另用 `SEEKINO_TEST_DATABASE_URL`、
+`SEEKINO_TEST_ELASTICSEARCH_URL` 和独立测试索引。
 
 备份/迁移时需同时保留 MySQL 业务事实和对应模式下的媒体。ES 可从当前 V2 成果重建，
 仅复制索引不能作为完整备份。
@@ -130,11 +130,11 @@ MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose �
 ### 先确定运行依据
 
 1. 读取 `.env.local` 中的配置变量名与本地路径，不输出密钥值。优先核对
-   `ANIVAG_MODEL_CONFIG`、`ANIVAG_ARTIFACT_ROOT`、数据库 URL、ES 索引及代际；
+   `SEEKINO_MODEL_CONFIG`、`SEEKINO_ARTIFACT_ROOT`、数据库 URL、ES 索引及代际；
    不用根目录 `config.yaml` 或 `.env.example` 覆盖现有运行配置。
-2. 本次 `ANIVAG_MODEL_CONFIG` 指向 `outputs/local-services/main-model-config.yaml`，
+2. 本次 `SEEKINO_MODEL_CONFIG` 指向 `outputs/local-services/main-model-config.yaml`，
    其中模型绑定和 Agent 预算与根配置不同。该文件与 `.env.local` 必须配套恢复。
-3. 主业务库为 `anivag_local_20261010_development`，媒体根为
+3. 主业务库为 `seekino_local_20261010_development`，媒体根为
    `outputs/server/local-20261010/artifacts`，其 `development/` 子目录也必须保留。
    手机测试另用 `outputs/local-services/cloud-auth/phone.env`、同目录 `model-config.yaml`、
    `seekino_phone_dev` 和 `outputs/phone-test/artifacts`；仅在需要恢复手机测试环境时携带这一套。
@@ -185,7 +185,7 @@ uv run --no-sync --env-file .env.local python scripts/local_whisper.py
 |---|---|---|
 | MySQL 业务数据 | 是，保存资料库、任务、解析成果及应用对话等 | 做一致性逻辑导出并验证恢复，与媒体配套保存。不要只复制部分 `.ibd` 或把运行中的数据目录作为唯一备份 |
 | MySQL binlog | 用于复制、CDC、按时间点恢复；不是完整逻辑备份恢复到其快照状态的必需附件 | 本次约 67.15 GiB。只有确认复制/CDC/PITR 保留需求、完整备份和恢复验证后，才能决定不携带哪些历史日志；清理走 MySQL 管理命令，不手动删除文件 |
-| 实际 `ANIVAG_ARTIFACT_ROOT` | 是 | 保留完整媒体、切片、帧图、对话附件及环境子目录。数据库使用 `artifact://development/...` 相对 URI；新机可以调整根路径，但必须保持内部结构和数据库对应关系 |
+| 实际 `SEEKINO_ARTIFACT_ROOT` | 是 | 保留完整媒体、切片、帧图、对话附件及环境子目录。数据库使用 `artifact://development/...` 相对 URI；新机可以调整根路径，但必须保持内部结构和数据库对应关系 |
 | `assets/example_video_mygo/` 与手机测试媒体 | 主服务依赖已发布媒体；原始样例还被部分评测引用 | 手机环境可整套选择不恢复。原始样例只有在确认业务副本完整、哈希一致且所需评测不再引用后才可省略；不能仅凭文件名判断重复 |
 | `outputs/verification/` | 不是生产启动依赖，但包含验收证据及评测辅助输入 | 保留报告、协议、配置、真值/用例、来源版本、关键结果和代表性失败证据。逐实验确认其余大日志、重复帧和中间结果可以放弃；重跑可能需要模型费用，结果也未必相同 |
 | `outputs/worktrees/` | main 启动不依赖这些实验工作区 | 先保存 base commit、tracked diff（含二进制）、untracked 文件和必要的 ignored 文件，核对没有运行进程引用后才能移除 worktree。单独保存 Git patch 不包含未跟踪文件 |
@@ -213,7 +213,7 @@ uv run --no-sync --env-file .env.local python scripts/local_whisper.py
 - Windows 优先在 WSL2 中恢复现有 Bash/POSIX 启动链。Python、Node 依赖按锁文件重装，
   CAM++ 需 `speaker` 可选依赖（extra）；本机二进制和 GPU 后端重新准备，修正绝对路径。
 - MySQL 和 Elasticsearch 可用 Compose 恢复；ES 备份采用 snapshot，或从保留的业务事实和媒体重建并验证索引合同。
-  `ANIVAG_MYSQL_BUFFER_POOL_SIZE=8G` 当前只由原生启动器消费；Compose 需显式设置对应 mysqld 参数，
+  `SEEKINO_MYSQL_BUFFER_POOL_SIZE=8G` 当前只由原生启动器消费；Compose 需显式设置对应 mysqld 参数，
   并根据新机内存调整。不要把 `.env.local` 中出现该变量等同于容器配置已生效。
 - 先核对资产和配置，再验证数据库、媒体可读性、索引及模型服务身份；模型调用验收与 API 健康检查分别记录。
   验收记录包括一次已解析视频播放、已有资料检索，以及在获准调用模型后的一次 ASR/改写/声纹检查。
@@ -303,19 +303,19 @@ docker compose --env-file .env.local up -d --wait mysql elasticsearch
 
 ## 自定义端口
 
-**Docker 全栈：** 在 `.env.docker` 修改 `ANIVAG_WEB_PORT`、`ANIVAG_HTTP_PORT`、
-`ANIVAG_MYSQL_PORT`、`ANIVAG_ELASTICSEARCH_PORT` 即可。容器之间仍使用内部服务名和端口，
+**Docker 全栈：** 在 `.env.docker` 修改 `SEEKINO_WEB_PORT`、`SEEKINO_HTTP_PORT`、
+`SEEKINO_MYSQL_PORT`、`SEEKINO_ELASTICSEARCH_PORT` 即可。容器之间仍使用内部服务名和端口，
 无需修改数据库连接 URL。详细示例见[本地配置指南](local-setup.md)。
 
 **宿主机开发：** Compose 不解析应用连接 URL，也不会自动读取 `.env.local`。自定义端口时，
 请在 `.env.local` 中同时配置容器发布端口和应用连接 URL，并显式传入 `--env-file`：
 
 ```dotenv
-ANIVAG_DATABASE_URL=mysql+pymysql://root@127.0.0.1:13306/anivag_development?charset=utf8mb4
-ANIVAG_MYSQL_PORT=13306
-ANIVAG_ELASTICSEARCH_URL=http://127.0.0.1:19200
-ANIVAG_ELASTICSEARCH_PORT=19200
-ANIVAG_ELASTICSEARCH_INDEX=anivag_video_chunks_development
+SEEKINO_DATABASE_URL=mysql+pymysql://root@127.0.0.1:13306/seekino_development?charset=utf8mb4
+SEEKINO_MYSQL_PORT=13306
+SEEKINO_ELASTICSEARCH_URL=http://127.0.0.1:19200
+SEEKINO_ELASTICSEARCH_PORT=19200
+SEEKINO_ELASTICSEARCH_INDEX=seekino_video_chunks_development
 ```
 
 ```bash
@@ -326,7 +326,7 @@ docker compose --env-file .env.local stop mysql elasticsearch
 ```
 
 宿主机 Python 使用 `127.0.0.1` 发布端口访问 MySQL 和 ES，连接 URL 不使用 Compose 服务名。
-此 Compose 使用固定项目名 `anivag-local`，多个 checkout 默认共享同一组开发卷。
+此 Compose 使用固定项目名 `seekino-local`，多个 checkout 默认共享同一组开发卷。
 需要独立环境时，设置不同的 `COMPOSE_PROJECT_NAME` 和端口，并在所有启停命令中保持一致。
 
 ## 已有本地数据

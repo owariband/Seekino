@@ -10,7 +10,7 @@
 本轮源码/测试仅十文件，生产 +106/-10、测试 +264/-11，维护既有五产物；没有改八列 Schema 或模型配置，没有新增 commit/push。Provider schema 的真实 Responses probe 单独 1 call / 2,740 Token，无 owner、不写主 SQL，与 99 次主账分开。
 初始冻版 23 测试文件 894 passed / 1 skipped，唯一 MySQL timing 后在独立库 1 passed / 0 skipped；schema 35 passed、冻结媒体 158 passed、Supervisor ROOT154 / 冻结152 passed 分开记录。最新 ROOT 六文件 195 passed 仅离线兼容，不把并行清理写作真实全链覆盖。
 前轮 532 文件 + 四补丁的 49 calls / 357,825 Token、endpoint 的 686 passed / 三 callback 10,403 Token，以及更早失败均保留为各自历史，不混入本轮账。
-当前原始证据在 `/private/tmp/anivag-usage-multichunk-20261009/`，各阶段、限制和历史结果见[证据索引](../../server/report_docs/model-token-usage-stages-evidence.md)；本设计继续作为唯一 Schema 与行为合同。
+当前原始证据在 `/private/tmp/seekino-usage-multichunk-20261009/`，各阶段、限制和历史结果见[证据索引](../../server/report_docs/model-token-usage-stages-evidence.md)；本设计继续作为唯一 Schema 与行为合同。
 
 <a id="scope"></a>
 ## 1. 目标、职责与当前证据
@@ -269,13 +269,13 @@ Token 合同保留调用数、输入/输出、缓存读/写、推理、总量、
 
 依赖：`U01 → U02`；U02 后 U03 与 U04 可并行；`U04 → U05`；`U03 + U05 → U06`。
 真实存储环境缺失会限制 U02 的 MySQL 验收与 U06；不阻塞文档、代码开发或离线单测。
-2026-10-09 用户已授权联调及任务内修复；本轮使用专用 `anivag_usage_multichunk_20261009_052927_test`，默认双chunk、SQL/ES、API/Web与最新检索Chat的统计/通路已验证。逐事件精度失败不被通路通过覆盖；上一轮532+4、毫秒库及独立embedding I/O各保留历史范围，不混用数据。
+2026-10-09 用户已授权联调及任务内修复；本轮使用专用 `seekino_usage_multichunk_20261009_052927_test`，默认双chunk、SQL/ES、API/Web与最新检索Chat的统计/通路已验证。逐事件精度失败不被通路通过覆盖；上一轮532+4、毫秒库及独立embedding I/O各保留历史范围，不混用数据。
 本轮各阶段已按实际树check-out；源码实施、隔离环境及任务内最小修复均有明确授权。U01–U06统计完成，地图无正在执行的统计阶段；逐事件精度后续验证与同期ROOT V1/Qdrant清理未因此获得真实验收状态。
 
 U02 已执行修改树（沿用原 proposal）：
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── model/
 │   │   ├── [M] parse_usage.py                 ← 新增 ModelUsageRecord，保留旧表模型
@@ -298,7 +298,7 @@ U02 源码批次不装配 observer、不切 API、不改页面；注册模型沿
 U03 已执行树（原 11M，加用户本次授权补修 1M，共 12M）：
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] config.yaml                           ← 将现有 tracing.enabled 设为 false
 ├── server/
 │   ├── [M] bootstrap.py                      ← 装配 SQL repo/observer，停止 LF 装配
@@ -325,7 +325,7 @@ U04 同步现有六处文档的相关段落：`README.md`、`server/README.md`�
 U05 已执行树如下：
 
 ```text
-AniVAG/
+Seekino/
 └── web/
     └── src/
         ├── api/
@@ -368,5 +368,5 @@ ParseUsageDetails 目前未挂载，不预建 TaskDetails 功能，不修改 Tas
 初始23文件894passed/1skip（27.32s），唯一MySQL timing在独立库1passed/0skip补验；schema35passed（2.72s）及真实无owner的独立probe2740Token不混主账；冻结媒体158passed，Supervisor ROOT154/冻结152分别记载。ROOT最新六文件195passed（19.96s）仅离线；不得扩展至并行清理真实运行。
 本轮没有真实rerank、SDK明细、同名run跨类型或无owner主账覆盖，这些保留离线边界。三轮Chat35/301660、19/202021、28/298496与Parse17/known402676共同构成99主账；schemaprobe、前轮49/357825、endpoint三callback10403和更早账本均分开。
 最终 `acceptance-final.json` 七项统计/通路检查均true，eventPrecisionCertified=false、cleanupCompleted=true。临时API7827于07:00:09.322656UTC以SIGTERM正常关闭，Web59930于07:07:53.234UTC以SIGINT/exit0关闭；07:08:24.967914UTC的cleanup确认9622/5174不监听，3306/6333/9200复用依赖继续运行，测试数据和证据保留。
-当前证据入口为 `/private/tmp/anivag-usage-multichunk-20261009/` 的 `environment.json`、`source-manifest.json`、`source-manifest-patched.json`、`source-patches.json`、`parse-result.json`、`intent-retry/chat-result.json`、`intent-retry/chat-replay-verification.json`、`intent-retry/semantic-answer-review.json`、`timeline-precision-proof.json`、`audit-multichunk-final.json`、`ui-verification.json`、`offline-tests.json`、`timing-mysql-tests.json`、`own-schema-tests.json`、`deepseek-schema-probe.json`、`media-tests.json`、`own-supervisor-tests.json`、`root-focused-tests.json`、`independent-code-review.json`、`acceptance-final.json`、`cleanup.json`、`api-stop-7827.json` 与 `web-stop.json`；详细生命周期见证据索引最新节。
+当前证据入口为 `/private/tmp/seekino-usage-multichunk-20261009/` 的 `environment.json`、`source-manifest.json`、`source-manifest-patched.json`、`source-patches.json`、`parse-result.json`、`intent-retry/chat-result.json`、`intent-retry/chat-replay-verification.json`、`intent-retry/semantic-answer-review.json`、`timeline-precision-proof.json`、`audit-multichunk-final.json`、`ui-verification.json`、`offline-tests.json`、`timing-mysql-tests.json`、`own-schema-tests.json`、`deepseek-schema-probe.json`、`media-tests.json`、`own-supervisor-tests.json`、`root-focused-tests.json`、`independent-code-review.json`、`acceptance-final.json`、`cleanup.json`、`api-stop-7827.json` 与 `web-stop.json`；详细生命周期见证据索引最新节。
 前轮532+4与更旧结果保留于索引各历史节。旧两轮临时目录因daemon recovery已消失，原路径和结果不代表文件仍可读。本轮没有新增commit/push，原有源码、并行变化与用户改动全部保留。

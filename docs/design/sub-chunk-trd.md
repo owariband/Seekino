@@ -136,7 +136,7 @@ MyGO 实验使用“高高在上／居高临下”、指定 speaker、已确认 
 - 2026-10-17：持久化上述最终设计，用户授权按 check-out 范围直接开发。当前开始实现；尚未创建运行索引、回填或重启服务。
 - 2026-10-17：实现 Event 纯模型/投影、image 编码与池化、独立 Event ES Store、INDEX 冻结目标/缓存/发布验收、显式补建及删除补偿；接入三通道 Event 查询、SQL 回源和 Query / Evaluator 的 `search_video_events`，复用原 Chunk Canvas。
 - 2026-10-17：按 hypnos-code / hypnos-review 进行实现、自审与跨层交叉检查，已修正：旧 Chunk 快路径漏补 Event 的风险、Writer 使用只读索引绑定导致首次创建失败、旧 Task 画面高度与查询合同分叉、Event/Chunk 策略版本混用、失败调用未进入最终 trace、检索不必要拉取完整向量、ES 部分响应被当作完整发布证明，以及大量 Chunk 来源条件的 bool 膨胀。来源范围优化仍按同 `(task, version)` 分组，不拆散授权元组。
-- 2026-10-17：一次统一定向回归 **1477 passed / 9 skipped**，覆盖 Engine Event/旧 Chunk、Server INDEX/Repository/Media/配置/CLI/Bootstrap/Upload/ES/检索和 Agent 工具/运行闭环。9 项跳过依赖未配置的 `ANIVAG_TEST_ELASTICSEARCH_URL`；仅有既有 Starlette 测试依赖弃用提示。该数字是一次运行结果，不累加重叠分组测试。
+- 2026-10-17：一次统一定向回归 **1477 passed / 9 skipped**，覆盖 Engine Event/旧 Chunk、Server INDEX/Repository/Media/配置/CLI/Bootstrap/Upload/ES/检索和 Agent 工具/运行闭环。9 项跳过依赖未配置的 `SEEKINO_TEST_ELASTICSEARCH_URL`；仅有既有 Starlette 测试依赖弃用提示。该数字是一次运行结果，不累加重叠分组测试。
 - 2026-10-17：最终 ES/CLI 补丁与 Supervisor/抽帧回归 **202 passed**；补充真实 SQLite Repository → INDEX 双索引发布 → Event 查询/批量回源 → 原业务 Canvas 的纵向用例，并与 Coordinator/Bootstrap 复测 **9 passed**。这些运行存在重叠，不累计为独立用例总数。纵向用例仅替换模型、FFmpeg 命令和 ES I/O，未连接真实外部服务。最终本次范围的 hypnos-review 未再发现必须修正项，`git diff --check` 通过。
 
 ### 运行入口与验证边界

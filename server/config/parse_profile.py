@@ -489,7 +489,7 @@ class ParseConfig(ContractModel):
                 source=asr_binding.source,
                 mode=runtime.asr_mode,
                 model=runtime.transcript_model or asr_binding.model,
-                fps=runtime.transcript_fps or float(os.getenv("ANIVAG_TRANSCRIPT_FPS") or parser.transcript_fps),
+                fps=runtime.transcript_fps or float(os.getenv("SEEKINO_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,
                 max_output_tokens=runtime.transcript_max_output_tokens or asr_binding.max_output_tokens,
                 request_timeout_seconds=asr_binding.request_timeout_seconds,
@@ -497,7 +497,7 @@ class ParseConfig(ContractModel):
             vision=ParseVisionConfig(
                 source=vision_binding.source,
                 model=runtime.video_model or vision_binding.model,
-                fps=runtime.video_fps or float(os.getenv("ANIVAG_VIDEO_FPS") or parser.video_fps),
+                fps=runtime.video_fps or float(os.getenv("SEEKINO_VIDEO_FPS") or parser.video_fps),
                 input_mode=vision_input_mode,
                 max_frames_per_window=vision_max_frames,
                 max_output_tokens=runtime.video_max_output_tokens or vision_binding.max_output_tokens,
@@ -557,9 +557,9 @@ def resolve_embedding_config(
 ) -> ParseEmbeddingConfig:
     environment = dict(os.environ)
     if model is not None:
-        environment.pop("ANIVAG_VIDEO_EMBEDDING_MODEL", None)
+        environment.pop("SEEKINO_VIDEO_EMBEDDING_MODEL", None)
     if video_fps is not None:
-        environment.pop("ANIVAG_VIDEO_EMBEDDING_FPS", None)
+        environment.pop("SEEKINO_VIDEO_EMBEDDING_FPS", None)
     definition = gateway.resolve_embedding_binding(environ=environment)
     updates = {"dimensions": dimensions}
     if model is not None:

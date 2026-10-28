@@ -1,4 +1,4 @@
-# AniVAG 游客与用户租户体系 TRD
+# Seekino 游客与用户租户体系 TRD
 
 更新日期：2026-10-10。
 
@@ -170,7 +170,7 @@ ES 旧 v5 索引使用独立复制工具，先运行 dry run：
 uv run python -m scripts.migrate_tenant_index --source old_development --destination tenant_development --environment development
 ```
 
-停 API/Worker 写入后，使用相同命令追加 `--apply` 复制到新 v6 物理索引；成功验证后才切换 `ANIVAG_ELASTICSEARCH_INDEX`。`ANIVAG_ELASTICSEARCH_INDEX_GENERATION` 保留原值，旧索引不修改、不删除，ID、external version 和向量保留，不重做 embedding。版本保留依据 [Elasticsearch 8.19 Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/docs-reindex.html)。此工具及 SQL 均未对现有数据执行。
+停 API/Worker 写入后，使用相同命令追加 `--apply` 复制到新 v6 物理索引；成功验证后才切换 `SEEKINO_ELASTICSEARCH_INDEX`。`SEEKINO_ELASTICSEARCH_INDEX_GENERATION` 保留原值，旧索引不修改、不删除，ID、external version 和向量保留，不重做 embedding。版本保留依据 [Elasticsearch 8.19 Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/docs-reindex.html)。此工具及 SQL 均未对现有数据执行。
 
 职责划分遵循分层目录：[AuthConfig](../../server/config/auth.py)、[SMTPConfig](../../server/config/email.py)、[身份常量](../../server/constants/identity.py)、[Tenant 常量](../../server/constants/tenant.py)、[认证常量](../../server/constants/auth.py)、[数据库常量](../../server/constants/database.py)、[认证错误](../../server/error/auth.py)、[凭据/CSRF/HMAC 工具](../../server/utils/auth.py)、[邮箱规范化/SMTP 工具](../../server/utils/email.py)、[身份 Repository](../../server/repository/identity.py)、[AuthService](../../server/service/auth.py)、[访问与额度规则](../../server/service/access.py)。业务事务和 Redis Lua 保留在 service/repository。
 
@@ -202,7 +202,7 @@ uv run python -m scripts.migrate_tenant_index --source old_development --destina
 
 依据已有 [RAGFlow／Dify 调研报告](../../outputs/reports/2026-10-09/ragflow-users-tenants-report.html#dify-reference)：Dify 的发布应用使用 EndUser 表示访问者，访问者继承发布方 App／Tenant 范围，不因访问获得个人租户；RAGFlow 分离 User、Tenant 和成员关系。
 
-AniVAG 吸收公开资源归发布方、个人资源归 Tenant 的思路，统一同一产品内游客到正式学习用户的身份。首版单所有者可由 `Tenant.owner_user_id` 表达，暂不需要成员表；账号绑定、API Token、团队邀请等在实际需求出现时加入。
+Seekino 吸收公开资源归发布方、个人资源归 Tenant 的思路，统一同一产品内游客到正式学习用户的身份。首版单所有者可由 `Tenant.owner_user_id` 表达，暂不需要成员表；账号绑定、API Token、团队邀请等在实际需求出现时加入。
 
 后续部署工作包括真实 SMTP 配置与发信、受控执行 SQL/ES 迁移、公开课程准备、同源 HTTPS/反代、浏览器完整流程和运维观察；后续产品能力包括游客保留/清理、按实际 Token 的硬预算、团队成员和多设备会话管理。这些均不改变本轮两个核心 SQL 模型和内容层级。
 

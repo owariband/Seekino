@@ -193,7 +193,7 @@ class OfflinePacker:
         request = Request(
             url,
             headers={
-                "User-Agent": "Mozilla/5.0 AniVAG-Offline-Packager/1.0",
+                "User-Agent": "Mozilla/5.0 Seekino-Offline-Packager/1.0",
                 "Accept": "*/*",
             },
         )
@@ -226,7 +226,7 @@ class OfflinePacker:
         if existing:
             return existing
         data, content_type, label = self.read_bytes(reference)
-        token = f"__ANIVAG_OFFLINE_ASSET_{len(self.assets) + 1:04d}__"
+        token = f"__SEEKINO_OFFLINE_ASSET_{len(self.assets) + 1:04d}__"
         name = reference.name if isinstance(reference, Path) else urlparse(reference).path
         self.assets[token] = {
             "mime": mime_for(name, content_type),
@@ -362,7 +362,7 @@ class OfflinePacker:
                 raise RuntimeError(f"Unpackaged {name} in {label}: {value}")
         for match in FETCH_RE.finditer(source):
             value = match.group("value")
-            if not self.passthrough(value) and not value.startswith("__ANIVAG_OFFLINE_"):
+            if not self.passthrough(value) and not value.startswith("__SEEKINO_OFFLINE_"):
                 raise RuntimeError(
                     f"Authored runtime fetch/import is not self-contained in {label}: {value}"
                 )
@@ -382,7 +382,7 @@ class OfflinePacker:
             if path in self.active_compositions:
                 raise RuntimeError(f"Nested composition cycle detected at {path}")
             return existing
-        token = f"__ANIVAG_OFFLINE_COMPOSITION_{len(self.composition_tokens) + 1:04d}__"
+        token = f"__SEEKINO_OFFLINE_COMPOSITION_{len(self.composition_tokens) + 1:04d}__"
         self.composition_tokens[path] = token
         self.active_compositions.add(path)
         try:
@@ -450,7 +450,7 @@ def make_document(
         for token, item in packer.assets.items()
     }
     manifest = {
-        "format": "anivag.hyperframes.offline-html",
+        "format": "seekino.hyperframes.offline-html",
         "formatVersion": 1,
         "hyperframesVersion": version,
         "width": width,
@@ -475,7 +475,7 @@ def make_document(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="generator" content="AniVAG HyperFrames offline packager">
+  <meta name="generator" content="Seekino HyperFrames offline packager">
   <title>{safe_title}</title>
   <style>
     :root {{ color-scheme: dark; background: #08070a; }}
@@ -492,7 +492,7 @@ def make_document(
   <main><hyperframes-player id="film" width="{width}" height="{height}" controls></hyperframes-player></main>
   <div id="status" role="status" aria-live="polite">正在载入离线短片…</div>
   <noscript>这个离线短片需要浏览器启用 JavaScript。</noscript>
-  <script type="application/json" id="anivag-offline-manifest">{manifest_json}</script>
+  <script type="application/json" id="seekino-offline-manifest">{manifest_json}</script>
   <script>{player_source}</script>
   <script>
     (() => {{
@@ -542,7 +542,7 @@ def make_document(
       film.addEventListener('ready', event => {{
         status.textContent = '正在载入离线素材…';
         document.documentElement.dataset.timelineReady = 'true';
-        const manifestNode = document.getElementById('anivag-offline-manifest');
+        const manifestNode = document.getElementById('seekino-offline-manifest');
         const value = JSON.parse(manifestNode.textContent);
         value.duration = event.detail?.duration || film.duration || null;
         manifestNode.textContent = JSON.stringify(value);

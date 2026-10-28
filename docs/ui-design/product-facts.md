@@ -1,16 +1,16 @@
-# AniVAG UI Design · Product Facts
+# Seekino UI Design · Product Facts
 
 > 核对日期：2026-09-14
-> 事实来源：仓库根 `README.md`、`transfer.md`、`docs/design/各个阶段目标.md`，以及仓库远端 `https://github.com/owariband/AniVAG.git`
+> 事实来源：仓库根 `README.md`、`transfer.md`、`docs/design/各个阶段目标.md`，以及仓库远端 `https://github.com/owariband/Seekino.git`
 > 当前代码基线：`1f0662d`（`main`）
 
 ## 已确认的产品事实
 
-- AniVAG 是面向事件级视频检索与时间证据定位的多模态视频理解产品。
+- Seekino 是面向事件级视频检索与时间证据定位的多模态视频理解产品。
 - M1 的首个落地场景是“动画名场面自然语言召回与定位”，不是自动评选名场面。
 - 核心用户任务是：导入多集动画视频，等待建库，输入对梗、动作、人物关系或情绪变化的自然语言描述，得到可核验的集数、时间戳、关键帧与文本证据，并跳转播放。
 - M1 是本地单用户端到端产品；注册、登录、权限、会员、管理后台与多租户计费不属于首版 UI。
-- 产品规划明确需要 Web UI，但当前仓库尚未实现 AniVAG Web Client；上游 `engines/VideoRAG/Vimo-desktop` 的 Electron UI 仅作为功能与实现参考，不是 AniVAG 品牌或现成 design system。
+- 产品规划明确需要 Web UI，但当前仓库尚未实现 Seekino Web Client；上游 `engines/VideoRAG/Vimo-desktop` 的 Electron UI 仅作为功能与实现参考，不是 Seekino 品牌或现成 design system。
 - 当前工程已具备解析、双路召回、MySQL 事实源与 Qdrant 派生索引等后端基础；完整上传、常驻 Job Runtime、Conversation Service 与正式 Web API 仍是后续阶段，设计稿不得把它们描述成已经上线的能力。
 
 ## 用户确认的交互决策（2026-09-14）

@@ -226,9 +226,9 @@ Q19 则同时涉及神态和变化过程。
 # research
 建议研究顺序是：先定义第三点的任务与成功标准，再设计第二点的评测，最后用评测指导第一点的检索优化。
 
-我读了这份 [TRD](/Users/bytedance/workspace/other-project/AniVAG/engine/design/trd.md)。**这三类都是我们需要解决的问题，而且第三点应该成为前两点的设计依据。** 我建议研究顺序是：**先定义第三点的任务与成功标准，再设计第二点的评测，最后用评测指导第一点的检索优化。**
+我读了这份 [TRD](/Users/bytedance/workspace/other-project/Seekino/engine/design/trd.md)。**这三类都是我们需要解决的问题，而且第三点应该成为前两点的设计依据。** 我建议研究顺序是：**先定义第三点的任务与成功标准，再设计第二点的评测，最后用评测指导第一点的检索优化。**
 
-对于可行性，我的判断是：**可以做出实用的版本，现有 AniVAG 也有不少可复用基础；但这些需求需要几种不同的执行流程，不能都靠“把问题做 embedding → 找 TopK → rerank”完成。**
+对于可行性，我的判断是：**可以做出实用的版本，现有 Seekino 也有不少可复用基础；但这些需求需要几种不同的执行流程，不能都靠“把问题做 embedding → 找 TopK → rerank”完成。**
 
 “Anon 和 Tomori 怎么认识的”其实很适合检索增强回答：系统先找到相识过程的证据，再组织解释。困难在于答案可能分散在多个片段里，并没有哪个片段的描述恰好叫“她们是怎么认识的”。而“哈了一声”需要声音证据，“课程精华”需要全局覆盖，“特别搞笑”需要偏好判断。这些差异必须进入系统设计。
 
@@ -266,7 +266,7 @@ Q19 则同时涉及神态和变化过程。
 5. **按证据组织答案。**  
    给出相识过程，每个关键事实关联到具体片段和时间点。缺少某部分时说明缺口，不用模型记得的剧情补成视频事实。
 
-这就是“多次检索＋跨证据组合”。**第一版可以在现有索引和 Agent 上做，不需要先建设完整知识图谱。** 当前的 `search_video_graph` 中，graph 指的是 Query/Evaluator/Chat 工作流，也不是已经存在的实体关系图谱。[当前工具实现](/Users/bytedance/workspace/other-project/AniVAG/agent/chat/supervisor.py:403)
+这就是“多次检索＋跨证据组合”。**第一版可以在现有索引和 Agent 上做，不需要先建设完整知识图谱。** 当前的 `search_video_graph` 中，graph 指的是 Query/Evaluator/Chat 工作流，也不是已经存在的实体关系图谱。[当前工具实现](/Users/bytedance/workspace/other-project/Seekino/agent/chat/supervisor.py:403)
 
 “课程精华”则需要另一条路径。直接搜索“这门课的精华”，很可能只返回几个措辞显著的片段，遗漏其他章节的重要内容。应当先形成：
 
@@ -288,7 +288,7 @@ Q19 则同时涉及神态和变化过程。
 
 ---
 
-**落到 AniVAG，我建议补齐三个部分：检索计划、多粒度证据、针对问题的复核。**
+**落到 Seekino，我建议补齐三个部分：检索计划、多粒度证据、针对问题的复核。**
 
 第一，检索计划需要明确“这次任务要什么证据”。
 
@@ -320,7 +320,7 @@ flowchart TD
 
 第二，表示与检索粒度需要匹配任务。
 
-当前已有事件类型、人物、说话人和时间戳，但主检索实体仍是固定 Chunk，各事件文本会合并成 Chunk 表示。[事件结构](/Users/bytedance/workspace/other-project/AniVAG/engine/parsev2/schemas.py:30)、[索引投影](/Users/bytedance/workspace/other-project/AniVAG/engine/rag/indexing/projection.py:118)
+当前已有事件类型、人物、说话人和时间戳，但主检索实体仍是固定 Chunk，各事件文本会合并成 Chunk 表示。[事件结构](/Users/bytedance/workspace/other-project/Seekino/engine/parsev2/schemas.py:30)、[索引投影](/Users/bytedance/workspace/other-project/Seekino/engine/rag/indexing/projection.py:118)
 
 建议逐步支持三个层次：
 
@@ -338,8 +338,8 @@ flowchart TD
 
 当前代码中有两处特别值得优先衔接：
 
-- **当前画面理解已存在，但结果尚未明确传入后续历史检索。** `search_video_graph(query)` 实际执行的是原始输入，没有把实时理解结果或新生成的子查询作为检索任务传进去。所以“当前画面 → 抽取概念 → 查历史”需要补上明确的数据传递。[Supervisor 调用位置](/Users/bytedance/workspace/other-project/AniVAG/agent/chat/supervisor.py:232)
-- **Engine 已有图片/GIF 查询合同，但在线搜索入口仍只接文本。** 这是以图、以短视频检索可以复用的基础，还不能算已具备完整用户流程。[Engine 查询计划](/Users/bytedance/workspace/other-project/AniVAG/engine/rag/query_pipeline.py:16)、[在线入口](/Users/bytedance/workspace/other-project/AniVAG/server/service/video_retrieval.py:100)
+- **当前画面理解已存在，但结果尚未明确传入后续历史检索。** `search_video_graph(query)` 实际执行的是原始输入，没有把实时理解结果或新生成的子查询作为检索任务传进去。所以“当前画面 → 抽取概念 → 查历史”需要补上明确的数据传递。[Supervisor 调用位置](/Users/bytedance/workspace/other-project/Seekino/agent/chat/supervisor.py:232)
+- **Engine 已有图片/GIF 查询合同，但在线搜索入口仍只接文本。** 这是以图、以短视频检索可以复用的基础，还不能算已具备完整用户流程。[Engine 查询计划](/Users/bytedance/workspace/other-project/Seekino/engine/rag/query_pipeline.py:16)、[在线入口](/Users/bytedance/workspace/other-project/Seekino/server/service/video_retrieval.py:100)
 
 对第一点的召回优化，我会优先验证：**每路 Top20 是否漏候选、事件级表示是否改善短目标召回、不同意图的通道权重是否有效，以及原片复核能否减少错误结果。** 独立 rerank 的收益放在固定候选池上测，这样能知道它解决了多少排序问题。
 
@@ -455,7 +455,7 @@ Anthropic 将 evaluator-optimizer 推荐给评价标准清晰、迭代能产生�
 
 ### 3. RAPTOR / GraphRAG 给我们的价值：形成可覆盖的内容目录，并能下钻到原证据
 
-RAPTOR 将文本片段递归聚类与摘要，保留不同粒度的节点并在多层检索；其研究对象是长文本问答，并不直接证明在 AniVAG 视频上的收益。[RAPTOR 原论文](https://arxiv.org/html/2401.18059v1)
+RAPTOR 将文本片段递归聚类与摘要，保留不同粒度的节点并在多层检索；其研究对象是长文本问答，并不直接证明在 Seekino 视频上的收益。[RAPTOR 原论文](https://arxiv.org/html/2401.18059v1)
 
 GraphRAG Global Search 使用指定层级的 community reports，分批生成要点后聚合；选择更细层级可增加细节，也增加模型工作量。它的重点是支持全库聚合问题，而不是只取几个相似段落。[Global Search 官方方法](https://microsoft.github.io/graphrag/query/global_search/)
 

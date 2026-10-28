@@ -44,26 +44,26 @@ def _config_without_agent_runtime(monkeypatch, tmp_path: Path, request) -> None:
     payload.pop("agent_runtime", None)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
 
 
-def _clean_anivag_environment(monkeypatch) -> None:
-    model_config_path = os.environ["ANIVAG_MODEL_CONFIG"]
+def _clean_seekino_environment(monkeypatch) -> None:
+    model_config_path = os.environ["SEEKINO_MODEL_CONFIG"]
     for name in tuple(os.environ):
-        if name.startswith("ANIVAG_"):
+        if name.startswith("SEEKINO_"):
             monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", model_config_path)
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", model_config_path)
     monkeypatch.setenv(
-        "ANIVAG_DATABASE_URL",
-        "mysql+pymysql://user:password@127.0.0.1/anivag_development",
+        "SEEKINO_DATABASE_URL",
+        "mysql+pymysql://user:password@127.0.0.1/seekino_development",
     )
 
 
 def test_video_summary_limits_have_independent_environment_settings(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_SUMMARIZE_MAXIMUM_READ_CHARS", "6000")
-    monkeypatch.setenv("ANIVAG_SUMMARIZE_EXECUTION_TIMEOUT_SECONDS", "120.5")
-    monkeypatch.setenv("ANIVAG_SUMMARIZE_ENABLED", "false")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_SUMMARIZE_MAXIMUM_READ_CHARS", "6000")
+    monkeypatch.setenv("SEEKINO_SUMMARIZE_EXECUTION_TIMEOUT_SECONDS", "120.5")
+    monkeypatch.setenv("SEEKINO_SUMMARIZE_ENABLED", "false")
     settings = ServerSettings.from_environment()
     assert settings.summarize.maximum_read_chars == 6000
     assert settings.summarize.execution_timeout_seconds == 120.5
@@ -82,7 +82,7 @@ def test_video_summary_rejects_unbounded_or_invalid_limits(values):
 
 
 def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
 
     settings = ServerSettings.from_environment()
 
@@ -151,55 +151,55 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
 
 
 def test_server_settings_select_exactly_one_parse_worker_family(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "V2")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "V2")
 
     assert ServerSettings.from_environment().parse_execution_mode == "v2"
 
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v1")
     with pytest.raises(ValueError, match="V1 execution is retired"):
         ServerSettings.from_environment()
 
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "both")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "both")
     with pytest.raises(ValueError, match="must be 'v2'"):
         ServerSettings.from_environment()
 
 
 @pytest.mark.parametrize(("name", "value"), [
-    ("ANIVAG_PARSE_BATCH_MAX_SIZE", "0"),
-    ("ANIVAG_PARSE_BATCH_MAX_SIZE", "-1"),
-    ("ANIVAG_PARSE_BATCH_MAX_SIZE", "1.5"),
-    ("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "-0.5"),
-    ("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "nan"),
-    ("ANIVAG_PARSE_DISPATCH_INTERVAL_SECONDS", "inf"),
+    ("SEEKINO_PARSE_BATCH_MAX_SIZE", "0"),
+    ("SEEKINO_PARSE_BATCH_MAX_SIZE", "-1"),
+    ("SEEKINO_PARSE_BATCH_MAX_SIZE", "1.5"),
+    ("SEEKINO_PARSE_DISPATCH_INTERVAL_SECONDS", "-0.5"),
+    ("SEEKINO_PARSE_DISPATCH_INTERVAL_SECONDS", "nan"),
+    ("SEEKINO_PARSE_DISPATCH_INTERVAL_SECONDS", "inf"),
 ])
 def test_parse_scheduler_environment_rejects_invalid_values(monkeypatch, name, value):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError):
         ServerSettings.from_environment()
 
 
 def test_elasticsearch_settings_are_explicit_and_environment_isolated(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_API_KEY", "test-key")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "7")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "seekino_video_chunks_development")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_API_KEY", "test-key")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX_GENERATION", "7")
 
     config = ServerSettings.from_environment().elasticsearch
 
     assert config is not None
     assert config.url == "http://127.0.0.1:9200"
-    assert config.index_name == "anivag_video_chunks_development"
+    assert config.index_name == "seekino_video_chunks_development"
     assert config.api_key == "test-key"
     assert config.index_generation == 7
 
 
 def test_elasticsearch_index_generation_defaults_to_one(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "seekino_video_chunks_development")
 
     config = ServerSettings.from_environment().elasticsearch
 
@@ -211,10 +211,10 @@ def test_elasticsearch_index_generation_defaults_to_one(monkeypatch) -> None:
 def test_elasticsearch_index_generation_must_be_a_positive_integer(
     monkeypatch, value
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", value)
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "seekino_video_chunks_development")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX_GENERATION", value)
 
     with pytest.raises(ValueError, match="positive integer"):
         ServerSettings.from_environment()
@@ -223,12 +223,12 @@ def test_elasticsearch_index_generation_must_be_a_positive_integer(
 def test_elasticsearch_index_generation_must_fit_external_version_contract(
     monkeypatch,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
     monkeypatch.setenv(
-        "ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development"
+        "SEEKINO_ELASTICSEARCH_INDEX", "seekino_video_chunks_development"
     )
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", str(1 << 31))
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX_GENERATION", str(1 << 31))
 
     with pytest.raises(ValueError, match="external version contract"):
         ServerSettings.from_environment()
@@ -238,19 +238,19 @@ def test_elasticsearch_index_generation_must_fit_external_version_contract(
     ("url", "index_name", "message"),
     [
         ("http://127.0.0.1:9200", "", "configured together"),
-        ("", "anivag_video_chunks_development", "configured together"),
-        ("http://127.0.0.1:9200/path", "anivag_video_chunks_development", "origin"),
-        ("http://127.0.0.1:9200", "anivag_video_chunks_test", "dev component"),
+        ("", "seekino_video_chunks_development", "configured together"),
+        ("http://127.0.0.1:9200/path", "seekino_video_chunks_development", "origin"),
+        ("http://127.0.0.1:9200", "seekino_video_chunks_test", "dev component"),
     ],
 )
 def test_elasticsearch_settings_reject_incomplete_or_unsafe_values(
     monkeypatch, url, index_name, message,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     if url:
-        monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", url)
+        monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", url)
     if index_name:
-        monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", index_name)
+        monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", index_name)
 
     with pytest.raises(ValueError, match=message):
         ServerSettings.from_environment()
@@ -270,46 +270,46 @@ def test_config_yaml_exposes_agent_timeouts() -> None:
 
 
 def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_TEXT_VECTOR_DIMENSIONS", "1024")
-    monkeypatch.setenv("ANIVAG_VISION_VECTOR_DIMENSIONS", "768")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_TEXT_VECTOR_DIMENSIONS", "1024")
+    monkeypatch.setenv("SEEKINO_VISION_VECTOR_DIMENSIONS", "768")
 
     with pytest.raises(ValueError, match="must match"):
         ServerSettings.from_environment()
 
 
 def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     overrides = {
-        "ANIVAG_SSE_POLL_SECONDS": "0.5",
-        "ANIVAG_SSE_KEEPALIVE_SECONDS": "8",
-        "ANIVAG_RETRIEVAL_CHANNEL_TOP_K": "32",
-        "ANIVAG_RETRIEVAL_SEARCH_DEFAULT_TOP_K": "45",
-        "ANIVAG_RETRIEVAL_RRF_K": "45",
-        "ANIVAG_RETRIEVAL_LEXICAL_WEIGHT": "2.0",
-        "ANIVAG_RETRIEVAL_TEXT_WEIGHT": "0",
-        "ANIVAG_RETRIEVAL_VISION_WEIGHT": "1.5",
-        "ANIVAG_RETRIEVAL_CANDIDATE_BUDGET": "80",
-        "ANIVAG_RETRIEVAL_SPARSE_WEIGHT": "0.75",
-        "ANIVAG_RETRIEVAL_RERANK_ENABLED": "true",
-        "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS": "1200",
-        "ANIVAG_VIDEO_EMBEDDING_MODEL": " embedding-test-model ",
-        "ANIVAG_VIDEO_EMBEDDING_FPS": "2.0",
-        "ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES": "2048",
-        "ANIVAG_MAX_IMAGE_PIXELS": "1000000",
-        "ANIVAG_BACKGROUND_IMAGE_MAX_EDGE": "512",
-        "ANIVAG_LOG_DIRECTORY": "outputs/test-logs",
-        "ANIVAG_LOG_LEVEL": "DEBUG",
-        "ANIVAG_LOG_MAX_BYTES": "2048",
-        "ANIVAG_LOG_BACKUP_COUNT": "2",
-        "ANIVAG_MQ_CONSUMER_ID": "consumer-a",
-        "ANIVAG_MQ_LEASE_SECONDS": "120",
-        "ANIVAG_MQ_HEARTBEAT_SECONDS": "30",
-        "ANIVAG_MQ_POLL_SECONDS": "0.25",
-        "ANIVAG_MQ_RETRY_BASE_SECONDS": "12",
-        "ANIVAG_MQ_RETRY_MAX_SECONDS": "120",
-        "ANIVAG_CHUNK_DURATION_SECONDS": "75",
-        "ANIVAG_CONTEXT_OVERLAP_SECONDS": "5",
+        "SEEKINO_SSE_POLL_SECONDS": "0.5",
+        "SEEKINO_SSE_KEEPALIVE_SECONDS": "8",
+        "SEEKINO_RETRIEVAL_CHANNEL_TOP_K": "32",
+        "SEEKINO_RETRIEVAL_SEARCH_DEFAULT_TOP_K": "45",
+        "SEEKINO_RETRIEVAL_RRF_K": "45",
+        "SEEKINO_RETRIEVAL_LEXICAL_WEIGHT": "2.0",
+        "SEEKINO_RETRIEVAL_TEXT_WEIGHT": "0",
+        "SEEKINO_RETRIEVAL_VISION_WEIGHT": "1.5",
+        "SEEKINO_RETRIEVAL_CANDIDATE_BUDGET": "80",
+        "SEEKINO_RETRIEVAL_SPARSE_WEIGHT": "0.75",
+        "SEEKINO_RETRIEVAL_RERANK_ENABLED": "true",
+        "SEEKINO_DATABASE_POOL_RECYCLE_SECONDS": "1200",
+        "SEEKINO_VIDEO_EMBEDDING_MODEL": " embedding-test-model ",
+        "SEEKINO_VIDEO_EMBEDDING_FPS": "2.0",
+        "SEEKINO_MAX_IMAGE_UPLOAD_SIZE_BYTES": "2048",
+        "SEEKINO_MAX_IMAGE_PIXELS": "1000000",
+        "SEEKINO_BACKGROUND_IMAGE_MAX_EDGE": "512",
+        "SEEKINO_LOG_DIRECTORY": "outputs/test-logs",
+        "SEEKINO_LOG_LEVEL": "DEBUG",
+        "SEEKINO_LOG_MAX_BYTES": "2048",
+        "SEEKINO_LOG_BACKUP_COUNT": "2",
+        "SEEKINO_MQ_CONSUMER_ID": "consumer-a",
+        "SEEKINO_MQ_LEASE_SECONDS": "120",
+        "SEEKINO_MQ_HEARTBEAT_SECONDS": "30",
+        "SEEKINO_MQ_POLL_SECONDS": "0.25",
+        "SEEKINO_MQ_RETRY_BASE_SECONDS": "12",
+        "SEEKINO_MQ_RETRY_MAX_SECONDS": "120",
+        "SEEKINO_CHUNK_DURATION_SECONDS": "75",
+        "SEEKINO_CONTEXT_OVERLAP_SECONDS": "5",
     }
     for name, value in overrides.items():
         monkeypatch.setenv(name, value)
@@ -350,9 +350,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
 def test_server_settings_do_not_read_legacy_media_millisecond_variables(
     monkeypatch,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_CHUNK_DURATION_MS", "75000")
-    monkeypatch.setenv("ANIVAG_CONTEXT_OVERLAP_MS", "5000")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_CHUNK_DURATION_MS", "75000")
+    monkeypatch.setenv("SEEKINO_CONTEXT_OVERLAP_MS", "5000")
 
     settings = ServerSettings.from_environment()
 
@@ -361,13 +361,13 @@ def test_server_settings_do_not_read_legacy_media_millisecond_variables(
 
 
 def test_server_settings_accepts_legacy_worker_environment(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_WORKER_ID", "legacy-worker")
-    monkeypatch.setenv("ANIVAG_WORKER_LEASE_SECONDS", "180")
-    monkeypatch.setenv("ANIVAG_WORKER_HEARTBEAT_SECONDS", "45")
-    monkeypatch.setenv("ANIVAG_WORKER_POLL_SECONDS", "0.5")
-    monkeypatch.setenv("ANIVAG_WORKER_RETRY_BASE_SECONDS", "20")
-    monkeypatch.setenv("ANIVAG_WORKER_RETRY_MAX_SECONDS", "200")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_WORKER_ID", "legacy-worker")
+    monkeypatch.setenv("SEEKINO_WORKER_LEASE_SECONDS", "180")
+    monkeypatch.setenv("SEEKINO_WORKER_HEARTBEAT_SECONDS", "45")
+    monkeypatch.setenv("SEEKINO_WORKER_POLL_SECONDS", "0.5")
+    monkeypatch.setenv("SEEKINO_WORKER_RETRY_BASE_SECONDS", "20")
+    monkeypatch.setenv("SEEKINO_WORKER_RETRY_MAX_SECONDS", "200")
 
     settings = ServerSettings.from_environment()
 
@@ -382,31 +382,31 @@ def test_server_settings_accepts_legacy_worker_environment(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("ANIVAG_SSE_POLL_SECONDS", "0"),
-        ("ANIVAG_SSE_KEEPALIVE_SECONDS", "-1"),
-        ("ANIVAG_SSE_KEEPALIVE_SECONDS", "nan"),
-        ("ANIVAG_VIDEO_EMBEDDING_FPS", "inf"),
-        ("ANIVAG_RETRIEVAL_CHANNEL_TOP_K", "0"),
-        ("ANIVAG_RETRIEVAL_RRF_K", "-1"),
-        ("ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", "nan"),
-        ("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "nan"),
-        ("ANIVAG_RETRIEVAL_VISION_WEIGHT", "-1"),
-        ("ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", "0"),
-        ("ANIVAG_RETRIEVAL_SPARSE_WEIGHT", "nan"),
-        ("ANIVAG_RETRIEVAL_SPARSE_WEIGHT", "-1"),
-        ("ANIVAG_RETRIEVAL_RERANK_ENABLED", "invalid"),
-        ("ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", "0"),
-        ("ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES", "0"),
-        ("ANIVAG_MAX_IMAGE_PIXELS", "-1"),
-        ("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "0"),
-        ("ANIVAG_LOG_LEVEL", "invalid"),
-        ("ANIVAG_LOG_MAX_BYTES", "0"),
-        ("ANIVAG_LOG_BACKUP_COUNT", "-1"),
-        ("ANIVAG_MQ_POLL_SECONDS", "0"),
+        ("SEEKINO_SSE_POLL_SECONDS", "0"),
+        ("SEEKINO_SSE_KEEPALIVE_SECONDS", "-1"),
+        ("SEEKINO_SSE_KEEPALIVE_SECONDS", "nan"),
+        ("SEEKINO_VIDEO_EMBEDDING_FPS", "inf"),
+        ("SEEKINO_RETRIEVAL_CHANNEL_TOP_K", "0"),
+        ("SEEKINO_RETRIEVAL_RRF_K", "-1"),
+        ("SEEKINO_RETRIEVAL_LEXICAL_WEIGHT", "nan"),
+        ("SEEKINO_RETRIEVAL_TEXT_WEIGHT", "nan"),
+        ("SEEKINO_RETRIEVAL_VISION_WEIGHT", "-1"),
+        ("SEEKINO_RETRIEVAL_CANDIDATE_BUDGET", "0"),
+        ("SEEKINO_RETRIEVAL_SPARSE_WEIGHT", "nan"),
+        ("SEEKINO_RETRIEVAL_SPARSE_WEIGHT", "-1"),
+        ("SEEKINO_RETRIEVAL_RERANK_ENABLED", "invalid"),
+        ("SEEKINO_DATABASE_POOL_RECYCLE_SECONDS", "0"),
+        ("SEEKINO_MAX_IMAGE_UPLOAD_SIZE_BYTES", "0"),
+        ("SEEKINO_MAX_IMAGE_PIXELS", "-1"),
+        ("SEEKINO_BACKGROUND_IMAGE_MAX_EDGE", "0"),
+        ("SEEKINO_LOG_LEVEL", "invalid"),
+        ("SEEKINO_LOG_MAX_BYTES", "0"),
+        ("SEEKINO_LOG_BACKUP_COUNT", "-1"),
+        ("SEEKINO_MQ_POLL_SECONDS", "0"),
     ],
 )
 def test_server_settings_reject_invalid_runtime_tuning(monkeypatch, name, value):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     monkeypatch.setenv(name, value)
 
     with pytest.raises(ValueError):
@@ -414,35 +414,35 @@ def test_server_settings_reject_invalid_runtime_tuning(monkeypatch, name, value)
 
 
 def test_server_settings_rejects_invalid_mq_timing(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_MQ_LEASE_SECONDS", "60")
-    monkeypatch.setenv("ANIVAG_MQ_HEARTBEAT_SECONDS", "60")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_MQ_LEASE_SECONDS", "60")
+    monkeypatch.setenv("SEEKINO_MQ_HEARTBEAT_SECONDS", "60")
     with pytest.raises(ValueError, match="heartbeat_interval"):
         ServerSettings.from_environment()
 
 
 
 def test_server_settings_reject_disabling_all_retrieval_channels(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", "0")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "0")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_VISION_WEIGHT", "0")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_LEXICAL_WEIGHT", "0")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_TEXT_WEIGHT", "0")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_VISION_WEIGHT", "0")
 
     with pytest.raises(ValueError, match="at least one recall channel"):
         ServerSettings.from_environment()
 
 
 def test_scoped_database_settings_ignore_unrelated_invalid_configuration(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", "/missing/model-config.yaml")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "invalid")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "invalid")
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_CHANNEL_TOP_K", "invalid")
-    monkeypatch.setenv("ANIVAG_TEXT_VECTOR_DIMENSIONS", "invalid")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", "/missing/model-config.yaml")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "invalid")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX_GENERATION", "invalid")
+    monkeypatch.setenv("SEEKINO_PARSE_EXECUTION_MODE", "v1")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_CHANNEL_TOP_K", "invalid")
+    monkeypatch.setenv("SEEKINO_TEXT_VECTOR_DIMENSIONS", "invalid")
 
     assert resolve_environment() is DatabaseEnvironment.DEVELOPMENT
-    assert resolve_database_url() == os.environ["ANIVAG_DATABASE_URL"]
+    assert resolve_database_url() == os.environ["SEEKINO_DATABASE_URL"]
     assert resolve_database_pool_recycle_seconds() == 3600
     assert resolve_agent_request_timeout_seconds() is None
     assert resolve_artifact_root() == Path("outputs/server/artifacts")
@@ -450,15 +450,15 @@ def test_scoped_database_settings_ignore_unrelated_invalid_configuration(monkeyp
 
 
 def test_explicit_settings_inputs_override_invalid_environment(monkeypatch, tmp_path):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     for name in (
-        "ANIVAG_ENVIRONMENT", "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS",
-        "ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", "ANIVAG_PARSE_MAX_HEIGHT",
-        "ANIVAG_PARSE_EXECUTION_MODE",
+        "SEEKINO_ENVIRONMENT", "SEEKINO_DATABASE_POOL_RECYCLE_SECONDS",
+        "SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS", "SEEKINO_PARSE_MAX_HEIGHT",
+        "SEEKINO_PARSE_EXECUTION_MODE",
     ):
         monkeypatch.setenv(name, "invalid")
-    monkeypatch.setenv("ANIVAG_DATABASE_URL", " ")
-    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", "ignored-root")
+    monkeypatch.setenv("SEEKINO_DATABASE_URL", " ")
+    monkeypatch.setenv("SEEKINO_ARTIFACT_ROOT", "ignored-root")
 
     assert resolve_environment("test") is DatabaseEnvironment.TEST
     assert resolve_database_url(" sqlite+pysqlite:///:memory: ") == "sqlite+pysqlite:///:memory:"
@@ -473,9 +473,9 @@ def test_explicit_settings_inputs_override_invalid_environment(monkeypatch, tmp_
     (None, None), ("", None), (" ", None), ("45.5", 45.5),
 ])
 def test_agent_request_timeout_has_no_implicit_ceiling(monkeypatch, value, expected):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     if value is not None:
-        monkeypatch.setenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", value)
+        monkeypatch.setenv("SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS", value)
 
     assert resolve_agent_request_timeout_seconds() == expected
     assert ServerSettings.from_environment().agent_request_timeout_seconds == expected
@@ -493,13 +493,13 @@ def test_explicit_settings_inputs_keep_existing_validation(resolver, value):
 
 
 def test_elasticsearch_overrides_are_scoped_and_can_clear_api_key(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.delenv("ANIVAG_DATABASE_URL")
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", "/missing/model-config.yaml")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "invalid")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "invalid")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "invalid")
-    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_API_KEY", "environment-key")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.delenv("SEEKINO_DATABASE_URL")
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", "/missing/model-config.yaml")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_URL", "invalid")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX", "invalid")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_INDEX_GENERATION", "invalid")
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_API_KEY", "environment-key")
 
     config = ElasticsearchConfig.from_environment(
         DatabaseEnvironment.TEST, url="http://127.0.0.1:9200",
@@ -516,8 +516,8 @@ def test_elasticsearch_overrides_are_scoped_and_can_clear_api_key(monkeypatch):
 
 
 def test_vector_dimensions_override_bad_environment_and_preserve_index_initialization(monkeypatch):
-    monkeypatch.setenv("ANIVAG_TEXT_VECTOR_DIMENSIONS", "invalid")
-    monkeypatch.setenv("ANIVAG_VISION_VECTOR_DIMENSIONS", "invalid")
+    monkeypatch.setenv("SEEKINO_TEXT_VECTOR_DIMENSIONS", "invalid")
+    monkeypatch.setenv("SEEKINO_VISION_VECTOR_DIMENSIONS", "invalid")
     assert resolve_vector_dimensions(text_dimensions=2, vision_dimensions=3) == (2, 3)
     with pytest.raises(ValueError, match="must match"):
         resolve_vector_dimensions(text_dimensions=2, vision_dimensions=3, require_matching=True)
@@ -528,7 +528,7 @@ def test_retrieval_overrides_precede_invalid_environment_and_keep_zero_values(mo
         "CHANNEL_TOP_K", "RRF_K", "LEXICAL_WEIGHT", "TEXT_WEIGHT", "VISION_WEIGHT",
         "CANDIDATE_BUDGET", "SPARSE_WEIGHT", "RERANK_ENABLED", "SEARCH_DEFAULT_TOP_K",
     ):
-        monkeypatch.setenv("ANIVAG_RETRIEVAL_" + name, "invalid")
+        monkeypatch.setenv("SEEKINO_RETRIEVAL_" + name, "invalid")
 
     config = RetrievalConfig.from_environment(
         channel_top_k=30, rrf_k=45, lexical_weight=1, text_weight=0,
@@ -543,12 +543,12 @@ def test_retrieval_overrides_precede_invalid_environment_and_keep_zero_values(mo
 
 
 def test_retrieval_partial_overrides_inherit_other_environment_values(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_CHANNEL_TOP_K", "32")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", "2")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", "80")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_SPARSE_WEIGHT", "0.75")
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_RERANK_ENABLED", "true")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_CHANNEL_TOP_K", "32")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_LEXICAL_WEIGHT", "2")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_CANDIDATE_BUDGET", "80")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_SPARSE_WEIGHT", "0.75")
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_RERANK_ENABLED", "true")
 
     config = RetrievalConfig.from_environment(rrf_k=20)
     assert (config.channel_top_k, config.rrf_k, config.lexical_weight) == (32, 20, 2)
@@ -566,22 +566,22 @@ def test_retrieval_search_default_rejects_non_positive_or_non_integer_values(val
 
 @pytest.mark.parametrize("value", ["0", "-1", "1.5", "invalid"])
 def test_retrieval_search_default_rejects_invalid_environment(monkeypatch, value):
-    monkeypatch.setenv("ANIVAG_RETRIEVAL_SEARCH_DEFAULT_TOP_K", value)
+    monkeypatch.setenv("SEEKINO_RETRIEVAL_SEARCH_DEFAULT_TOP_K", value)
     with pytest.raises(ValueError):
         RetrievalConfig.from_environment()
 
 
 def test_embedding_resolution_shares_endpoint_identity_and_explicit_overrides(monkeypatch):
     gateway = load_config()
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "ep-selected")
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "2")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_MODEL", "ep-selected")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_FPS", "2")
     config = resolve_embedding_config(gateway, dimensions=512)
     assert config.model == "ep-selected"
     assert config.encoder_model == gateway.multimodal_embedding.model
     assert config.video_fps == 2 and config.dimensions == 512
     assert isinstance(gateway.model_sources[config.source], ArkModelSourceConfig)
 
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "invalid")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_FPS", "invalid")
     explicit = resolve_embedding_config(
         gateway, dimensions=1024, model=gateway.multimodal_embedding.model, video_fps=1,
     )
@@ -590,12 +590,12 @@ def test_embedding_resolution_shares_endpoint_identity_and_explicit_overrides(mo
 
 
 def test_parse_defaults_preserve_settings_snapshot_after_embedding_environment_changes(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     settings = ServerSettings.from_environment()
     gateway = load_config()
     assert settings.video_embedding_model is None and settings.video_embedding_fps is None
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "ep-later-environment")
-    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "invalid")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_MODEL", "ep-later-environment")
+    monkeypatch.setenv("SEEKINO_VIDEO_EMBEDDING_FPS", "invalid")
 
     defaults = ParseConfig.from_defaults(
         runtime=settings.parse, gateway=gateway, upload=settings.upload, images=settings.images,
@@ -623,7 +623,7 @@ def test_request_generation_uses_the_es_version_boundary():
 
 
 def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     settings = ServerSettings.from_environment()
     gateway = load_config()
     defaults = ParseConfig.from_defaults(
@@ -664,10 +664,10 @@ def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):
 def test_parse_vision_source_freezes_compatible_media_without_changing_other_bindings(
     monkeypatch, source, model, budget, input_mode,
 ):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     settings = ServerSettings.from_environment()
     gateway = load_config()
-    payload = yaml.safe_load(Path(os.environ["ANIVAG_MODEL_CONFIG"]).read_text())
+    payload = yaml.safe_load(Path(os.environ["SEEKINO_MODEL_CONFIG"]).read_text())
     if gateway.config_version == 2:
         payload["models"]["vision"].update(
             source=source, model=model, max_output_tokens=budget, reasoning_effort="none",
@@ -726,13 +726,13 @@ def test_unset_vision_reasoning_preserves_legacy_request_shape(by_alias):
 
 
 def test_retrieval_model_limits_reuse_yaml_runtime_precedence(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     payload["agent_runtime"] = {"execution_timeout_seconds": 45, "max_output_tokens": 2048}
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    monkeypatch.setenv("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "90")
-    monkeypatch.setenv("ANIVAG_AGENT_MAX_OUTPUT_TOKENS", "4096")
+    monkeypatch.setenv("SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("SEEKINO_AGENT_MAX_OUTPUT_TOKENS", "4096")
 
     assert resolve_retrieval_model_limits(config_path, request_timeout_seconds=120) == (45, 2048)
     assert resolve_retrieval_model_limits(config_path, request_timeout_seconds=15) == (15, 2048)
@@ -747,39 +747,39 @@ def test_retrieval_config_rejects_nonboolean_rerank_flag(rerank_enabled):
 
 
 def test_server_settings_reject_agent_default_above_maximum(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_AGENT_DEFAULT_TOP_K", "21")
-    monkeypatch.setenv("ANIVAG_AGENT_MAX_TOP_K", "20")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_AGENT_DEFAULT_TOP_K", "21")
+    monkeypatch.setenv("SEEKINO_AGENT_MAX_TOP_K", "20")
 
     with pytest.raises(ValueError, match="must be at least"):
         ServerSettings.from_environment()
 
 
 def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     overrides = {
-        "ANIVAG_AGENT_QUERY_MODEL": "query-model",
-        "ANIVAG_AGENT_CHAT_MODEL": "output-model",
-        "ANIVAG_AGENT_FALLBACK_MODEL": "fallback-model",
-        "ANIVAG_AGENT_MAX_LOOP_TURNS": "2",
-        "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN": "5",
-        "ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN": "9",
-        "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN": "3",
-        "ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN": "7",
-        "ANIVAG_AGENT_LIMITS_ENABLED": "true",
-        "ANIVAG_AGENT_MAX_OUTPUT_TOKENS": "2048",
-        "ANIVAG_AGENT_MAX_PROMPT_CHARS": "120000",
-        "ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS": "32000",
-        "ANIVAG_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS": "2048",
-        "ANIVAG_AGENT_AUTO_COMPACT_TOKENS": "24000",
-        "ANIVAG_AGENT_COMPACT_TARGET_TOKENS": "12000",
-        "ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES": "8192",
-        "ANIVAG_AGENT_MAX_READ_CHARS_PER_CALL": "4096",
-        "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE": "10",
-        "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS": "45",
-        "ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS": "300",
-        "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
-        "ANIVAG_AGENT_MAX_CONCURRENT_KICKS": "2",
+        "SEEKINO_AGENT_QUERY_MODEL": "query-model",
+        "SEEKINO_AGENT_CHAT_MODEL": "output-model",
+        "SEEKINO_AGENT_FALLBACK_MODEL": "fallback-model",
+        "SEEKINO_AGENT_MAX_LOOP_TURNS": "2",
+        "SEEKINO_AGENT_MAX_MODEL_CALLS_PER_TURN": "5",
+        "SEEKINO_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN": "9",
+        "SEEKINO_AGENT_MAX_TOOL_CALLS_PER_TURN": "3",
+        "SEEKINO_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN": "7",
+        "SEEKINO_AGENT_LIMITS_ENABLED": "true",
+        "SEEKINO_AGENT_MAX_OUTPUT_TOKENS": "2048",
+        "SEEKINO_AGENT_MAX_PROMPT_CHARS": "120000",
+        "SEEKINO_AGENT_CONTEXT_WINDOW_TOKENS": "32000",
+        "SEEKINO_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS": "2048",
+        "SEEKINO_AGENT_AUTO_COMPACT_TOKENS": "24000",
+        "SEEKINO_AGENT_COMPACT_TARGET_TOKENS": "12000",
+        "SEEKINO_AGENT_MAX_TOOL_RESULT_BYTES": "8192",
+        "SEEKINO_AGENT_MAX_READ_CHARS_PER_CALL": "4096",
+        "SEEKINO_AGENT_MAX_CATALOG_ITEMS_PER_PAGE": "10",
+        "SEEKINO_AGENT_STAGE_TIMEOUT_SECONDS": "45",
+        "SEEKINO_AGENT_SUPERVISOR_TIMEOUT_SECONDS": "300",
+        "SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
+        "SEEKINO_AGENT_MAX_CONCURRENT_KICKS": "2",
     }
     for name, value in overrides.items():
         monkeypatch.setenv(name, value)
@@ -811,14 +811,14 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
 
 
 def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    monkeypatch.setenv("ANIVAG_DEEPSEEK_CHAT_MODEL", "legacy-chat-model")
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_DEEPSEEK_CHAT_MODEL", "legacy-chat-model")
 
     settings = ServerSettings.from_environment()
 
     assert settings.agent_chat_model == "legacy-chat-model"
 
-    monkeypatch.setenv("ANIVAG_AGENT_CHAT_MODEL", "current-chat-model")
+    monkeypatch.setenv("SEEKINO_AGENT_CHAT_MODEL", "current-chat-model")
 
     settings = ServerSettings.from_environment()
 
@@ -826,34 +826,34 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
 
 
 @pytest.mark.parametrize("name,value", [
-    ("ANIVAG_AGENT_MAX_LOOP_TURNS", "4"),
-    ("ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN", "0"),
-    ("ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN", "0"),
-    ("ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN", "0"),
-    ("ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN", "0"),
-    ("ANIVAG_AGENT_LIMITS_ENABLED", "maybe"),
-    ("ANIVAG_AGENT_MAX_OUTPUT_TOKENS", "0"),
-    ("ANIVAG_AGENT_MAX_PROMPT_CHARS", "0"),
-    ("ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS", "4096"),
-    ("ANIVAG_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS", "60000"),
-    ("ANIVAG_AGENT_AUTO_COMPACT_TOKENS", "60000"),
-    ("ANIVAG_AGENT_COMPACT_TARGET_TOKENS", "48000"),
-    ("ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES", "511"),
-    ("ANIVAG_AGENT_MAX_READ_CHARS_PER_CALL", "0"),
-    ("ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE", "101"),
-    ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "nan"),
-    ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "0"),
-    ("ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "nan"),
-    ("ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "0"),
-    ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
-    ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
-    ("ANIVAG_AGENT_MAX_CONCURRENT_KICKS", "0"),
-    ("ANIVAG_AGENT_WEB_SEARCH_MAX_RESULTS", "21"),
-    ("ANIVAG_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "61"),
-    ("ANIVAG_AGENT_SUPERVISOR_REASONING_EFFORT", "invalid"),
+    ("SEEKINO_AGENT_MAX_LOOP_TURNS", "4"),
+    ("SEEKINO_AGENT_MAX_MODEL_CALLS_PER_TURN", "0"),
+    ("SEEKINO_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN", "0"),
+    ("SEEKINO_AGENT_MAX_TOOL_CALLS_PER_TURN", "0"),
+    ("SEEKINO_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN", "0"),
+    ("SEEKINO_AGENT_LIMITS_ENABLED", "maybe"),
+    ("SEEKINO_AGENT_MAX_OUTPUT_TOKENS", "0"),
+    ("SEEKINO_AGENT_MAX_PROMPT_CHARS", "0"),
+    ("SEEKINO_AGENT_CONTEXT_WINDOW_TOKENS", "4096"),
+    ("SEEKINO_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS", "60000"),
+    ("SEEKINO_AGENT_AUTO_COMPACT_TOKENS", "60000"),
+    ("SEEKINO_AGENT_COMPACT_TARGET_TOKENS", "48000"),
+    ("SEEKINO_AGENT_MAX_TOOL_RESULT_BYTES", "511"),
+    ("SEEKINO_AGENT_MAX_READ_CHARS_PER_CALL", "0"),
+    ("SEEKINO_AGENT_MAX_CATALOG_ITEMS_PER_PAGE", "101"),
+    ("SEEKINO_AGENT_STAGE_TIMEOUT_SECONDS", "nan"),
+    ("SEEKINO_AGENT_STAGE_TIMEOUT_SECONDS", "0"),
+    ("SEEKINO_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "nan"),
+    ("SEEKINO_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "0"),
+    ("SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
+    ("SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
+    ("SEEKINO_AGENT_MAX_CONCURRENT_KICKS", "0"),
+    ("SEEKINO_AGENT_WEB_SEARCH_MAX_RESULTS", "21"),
+    ("SEEKINO_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "61"),
+    ("SEEKINO_AGENT_SUPERVISOR_REASONING_EFFORT", "invalid"),
 ])
 def test_invalid_agent_execution_budget_is_rejected(monkeypatch, name, value):
-    _clean_anivag_environment(monkeypatch)
+    _clean_seekino_environment(monkeypatch)
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError):
         ServerSettings.from_environment()
@@ -862,13 +862,13 @@ def test_invalid_agent_execution_budget_is_rejected(monkeypatch, name, value):
 def test_global_agent_settings_yaml_overrides_environment_and_keeps_fallbacks(
     monkeypatch,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     payload["agent_runtime"] = {"default_top_k": 5, "stage_timeout_seconds": 75}
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    monkeypatch.setenv("ANIVAG_AGENT_DEFAULT_TOP_K", "2")
-    monkeypatch.setenv("ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES", "4096")
+    monkeypatch.setenv("SEEKINO_AGENT_DEFAULT_TOP_K", "2")
+    monkeypatch.setenv("SEEKINO_AGENT_MAX_TOOL_RESULT_BYTES", "4096")
 
     config, revision = read_global_agent_settings(config_path)
     settings = ServerSettings.from_environment()
@@ -880,9 +880,9 @@ def test_global_agent_settings_yaml_overrides_environment_and_keeps_fallbacks(
 
 
 def test_global_agent_reasoning_settings_support_yaml_patch_and_environment(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
-    monkeypatch.setenv("ANIVAG_AGENT_QUERY_REASONING_EFFORT", " HIGH ")
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
+    monkeypatch.setenv("SEEKINO_AGENT_QUERY_REASONING_EFFORT", " HIGH ")
     config, revision = read_global_agent_settings(config_path)
     assert config.query_reasoning_effort == "high"
     assert config.supervisor_reasoning_effort == "none"
@@ -895,9 +895,9 @@ def test_global_agent_reasoning_settings_support_yaml_patch_and_environment(monk
 
 
 def test_total_timeout_switch_supports_environment_yaml_and_settings_patch(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
-    monkeypatch.setenv("ANIVAG_AGENT_TOTAL_TIMEOUT_ENABLED", "false")
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
+    monkeypatch.setenv("SEEKINO_AGENT_TOTAL_TIMEOUT_ENABLED", "false")
     config, revision = read_global_agent_settings(config_path)
     assert config.total_timeout_enabled is False
     assert config.execution_timeout_seconds == 480
@@ -919,8 +919,8 @@ def test_total_timeout_switch_supports_environment_yaml_and_settings_patch(monke
 def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
     monkeypatch,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     before = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     _, revision = read_global_agent_settings(config_path)
 
@@ -959,8 +959,8 @@ def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
 def test_global_agent_settings_patch_preserves_external_yaml_comments(
     monkeypatch,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     original = "# model note\n" + config_path.read_text(encoding="utf-8")
     original = original.replace(
         "video_parser:\n",
@@ -986,8 +986,8 @@ def test_global_agent_settings_patch_preserves_external_yaml_comments(
 def test_global_agent_settings_patch_rejects_external_alias_dependency(
     monkeypatch,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     original = (
         "agent_runtime:\n  max_output_tokens: &output_budget 4096\n\n"
         + config_path.read_text(encoding="utf-8")
@@ -1020,8 +1020,8 @@ def test_global_agent_settings_patch_rejects_external_alias_dependency(
 def test_global_agent_settings_reject_invalid_patch_without_writing(
     monkeypatch, values,
 ) -> None:
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     original = config_path.read_bytes()
     _, revision = read_global_agent_settings(config_path)
     with pytest.raises(ValueError):
@@ -1030,8 +1030,8 @@ def test_global_agent_settings_reject_invalid_patch_without_writing(
 
 
 def test_global_agent_settings_reject_invalid_manual_yaml(monkeypatch) -> None:
-    _clean_anivag_environment(monkeypatch)
-    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    config_path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     payload["agent_runtime"] = {"default_top_k": "five"}
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
@@ -1072,8 +1072,8 @@ def test_event_sampling_configuration_has_one_source_and_preserves_encoder():
 
 
 def test_retired_agent_settings_are_read_only_compatible(monkeypatch):
-    _clean_anivag_environment(monkeypatch)
-    path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    _clean_seekino_environment(monkeypatch)
+    path = Path(os.environ["SEEKINO_MODEL_CONFIG"])
     document = yaml.safe_load(path.read_text())
     document["agent_runtime"] = {"evaluator_policy": "always", "single_pass_result": True, "maximum_parallel_queries": 2}
     path.write_text(yaml.safe_dump(document))

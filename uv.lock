@@ -15,7 +15,7 @@ wheels = [
 ]
 
 [[package]]
-name = "anivag"
+name = "seekino"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

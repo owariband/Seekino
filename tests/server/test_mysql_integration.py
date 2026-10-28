@@ -49,13 +49,13 @@ from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 from server.utils.time import datetime_to_unix_time_ms
 
-TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
+TEST_DATABASE_URL = os.getenv("SEEKINO_TEST_DATABASE_URL")
 
 
 def test_mysql_agent_attachments_migration_preserves_history_and_is_repeatable():
-    url = os.getenv("ANIVAG_MIGRATION_TEST_DATABASE_URL")
+    url = os.getenv("SEEKINO_MIGRATION_TEST_DATABASE_URL")
     if not url:
-        pytest.skip("ANIVAG_MIGRATION_TEST_DATABASE_URL is not configured")
+        pytest.skip("SEEKINO_MIGRATION_TEST_DATABASE_URL is not configured")
     engine = create_database_engine(url, environment=DatabaseEnvironment.TEST)
     assert engine.url.database and engine.url.database.endswith("_migration_test"), (
         "requires dedicated disposable migration test database"
@@ -118,7 +118,7 @@ def test_mysql_agent_attachments_migration_preserves_history_and_is_repeatable()
         engine.dispose()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_conversation_attachment_publication_lock_serializes_deletion():
     engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
@@ -180,7 +180,7 @@ def _seed_legacy_job(factory, *, video_id, series_id):
     return job_id
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_agent_message_detail_request_idempotency_and_pairing():
     engine = create_database_engine(
         TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST,
@@ -256,7 +256,7 @@ def test_mysql_agent_message_detail_request_idempotency_and_pairing():
         engine.dispose()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(tmp_path):
     engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
@@ -355,7 +355,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         engine.dispose()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
     tmp_path,
 ):
@@ -467,7 +467,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
 @pytest.fixture
 def mysql_v2_series():
     if not TEST_DATABASE_URL:
-        pytest.skip("ANIVAG_TEST_DATABASE_URL is not configured")
+        pytest.skip("SEEKINO_TEST_DATABASE_URL is not configured")
     engine = create_database_engine(
         TEST_DATABASE_URL, environment=DatabaseEnvironment.TEST,
     )
@@ -1110,7 +1110,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
         event.remove(engine, "after_cursor_execute", after_query)
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monkeypatch):
     engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
@@ -1166,7 +1166,7 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
         engine.dispose()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
@@ -1263,7 +1263,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
         engine.dispose()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
     tmp_path,
 ):
@@ -1384,7 +1384,7 @@ def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
         engine.dispose()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_enforces_episode_order_under_concurrent_requests(tmp_path) -> None:
     engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
     create_schema(engine)

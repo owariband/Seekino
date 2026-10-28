@@ -472,7 +472,7 @@ Server 普通联验仍受 Engine 缺口限制；真实后端和部署条件按 S
 | 节点项 | 执行依据 |
 | --- | --- |
 | 功能 | 在生产桥接前证明候选 SDK 可解析、可使用，并验证关闭调用和进程退出的上限 |
-| 改动 | 专用临时目录 `/private/tmp/anivag-langfuse-lifecycle-probe/` 内已创建 pyproject.toml、uv.lock、sdk_probe.py、transport_probe.py、report.py、report.json；固定 SDK/OTel/httpx 候选并记录关闭结果；正式依赖仅在 G04B 写回；临时脚本不是产品文件 |
+| 改动 | 专用临时目录 `/private/tmp/seekino-langfuse-lifecycle-probe/` 内已创建 pyproject.toml、uv.lock、sdk_probe.py、transport_probe.py、report.py、report.json；固定 SDK/OTel/httpx 候选并记录关闭结果；正式依赖仅在 G04B 写回；临时脚本不是产品文件 |
 | 验收 | 已核 `langfuse==4.17.0` 与 OTel `1.45.0`；10ms SDK flush 请求实际约405ms；隔离出口正常/积压自然排空、堵塞时在截止内由产品机制强制关闭且资源退出；报告区分明确丢弃和未确认送达；实验清理不能算 SDK 总截止通过；正式机制还需 G04B 直接测试 |
 | Agent | Gateway 追踪负责人；来源为本次完整实施授权；前置 G01，不依赖 G02 最终字段；按 [tracing §5.1–5.3](#tracing) 核验；选择同一 tracing.py 内的私有 OTel 与隔离 OTLP 出口；扩大生产文件或公共行为时重新核对范围 |
 

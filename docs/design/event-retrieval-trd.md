@@ -150,7 +150,7 @@ Tenant、Series/Video 的实际授权 Scope 和可检索任务由 Server 从本�
 ## 6. 版本、回填与实施边界
 
 - Event 的 MySQL 派生模型、ES mapping、投影及检索算法建立各自首版合同。实际常量名和索引物理名在实施时确定，本次不改运行配置。
-- 当前 Chunk ES `anivag-video-chunk-es-6`、Chunk 投影 `parse-v2-chunk-index-v1`、来源 `parse-v2-video-result-v1`、Chunk RRF `query-adaptive-three-channel-rrf-v2` 不因新增 Event 自动升级；只有相应结构或语义改变时才提升对应合同。不把 Parse V2 整体改名为 V3。
+- 当前 Chunk ES `seekino-video-chunk-es-6`、Chunk 投影 `parse-v2-chunk-index-v1`、来源 `parse-v2-video-result-v1`、Chunk RRF `query-adaptive-three-channel-rrf-v2` 不因新增 Event 自动升级；只有相应结构或语义改变时才提升对应合同。不把 Parse V2 整体改名为 V3。
 - 部署需新增 Event 表的增量迁移，并为现有正式 Chunk 执行受控 Index 重建/回填；保留完整 Timeline 和已有消息。历史 SQL、数据库实测快照及检索报告不改写成“当时已有 Event”。本文不生成或执行迁移。
 - 回填从当前正式版本生成，复用成功的 Parse/Refine，不调用模型重新解析。即使 Chunk ES 可复用，也须验证 Event 集合；旧任务的 COMPLETE 不能直接当作新 Event 能力就绪。
 - Event 纳入必需索引交付时，通过现有目标 generation/兼容合同及受控 Index 重排识别新要求；不得修改不可变任务配置后悄悄声称旧完成凭据满足新要求。具体升级入口在实施前与现有 rebuild 合同对齐，不能靠增加正文版本掩盖覆盖缺口。

@@ -227,7 +227,7 @@ def test_ipc_thread_start_failure_reclaims_spawned_process_and_sockets(monkeypat
     assert all(connection.fileno() == -1 for connection in sockets)
 
 
-@pytest.mark.skipif(os.environ.get("ANIVAG_LANGFUSE_INTEGRATION") != "1",
+@pytest.mark.skipif(os.environ.get("SEEKINO_LANGFUSE_INTEGRATION") != "1",
                     reason="Explicit real Langfuse project authorization and credentials required")
 def test_real_langfuse_v2_observations_read_back() -> None:
     """Opt-in synthetic records; no model, media, or customer content is sent."""
@@ -248,11 +248,11 @@ def test_real_langfuse_v2_observations_read_back() -> None:
             "trace_id": trace_id, "parent_span_id": "1" * 16,
             "run_id": run_id, "session_id": run_id, "cost_cny": "1.25", "cost_currency": "CNY",
         }):
-            with track_model_call(provider="synthetic", model="anivag-synthetic-model", operation="generate") as tracker:
+            with track_model_call(provider="synthetic", model="seekino-synthetic-model", operation="generate") as tracker:
                 tracker.usage = TokenUsage(10, 3, 13, 4, 2)
-            with track_model_call(provider="synthetic", model="anivag-synthetic-embedding", operation="text_embedding") as tracker:
+            with track_model_call(provider="synthetic", model="seekino-synthetic-embedding", operation="text_embedding") as tracker:
                 tracker.usage = TokenUsage(0, 0, 0, None, None)
-            with track_model_call(provider="synthetic", model="anivag-synthetic-aggregate", operation="agent",
+            with track_model_call(provider="synthetic", model="seekino-synthetic-aggregate", operation="agent",
                                   granularity="sdk_turn_run", usage_source="synthetic_result"):
                 pass
     finally:
@@ -278,7 +278,7 @@ def test_real_langfuse_v2_observations_read_back() -> None:
             time.sleep(0.5)
     assert len(rows) == 4, "HTTP export acknowledgements alone do not prove backend records are readable"
     by_name = {row["name"]: row for row in rows}
-    root, generation = by_name["anivag.execute"], by_name["generate"]
+    root, generation = by_name["seekino.execute"], by_name["generate"]
     assert root["parentObservationId"] == "1" * 16
     assert all(row["traceId"] == trace_id and row["sessionId"] == run_id for row in rows)
     assert all(row["environment"] == "integration-test" and row["release"] == "synthetic-probe" for row in rows)
@@ -291,7 +291,7 @@ def test_real_langfuse_v2_observations_read_back() -> None:
         end = datetime.fromisoformat(observation["endTime"].replace("Z", "+00:00"))
         assert abs(start.timestamp() * 1000 - call.started_at) <= 1
         assert abs(end.timestamp() * 1000 - call.ended_at) <= 1
-    assert generation["model"] == "anivag-synthetic-model"
+    assert generation["model"] == "seekino-synthetic-model"
     assert generation["usageDetails"] == {"input": 10, "output": 3, "total": 13}
     assert by_name["text_embedding"]["type"] == "EMBEDDING"
     assert by_name["text_embedding"]["usageDetails"] == {"input": 0, "output": 0, "total": 0}

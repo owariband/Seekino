@@ -101,7 +101,7 @@ class VideoFrameReader:
                         raise FrameReadError("FRAME_SOURCE_UNAVAILABLE", "Cached frame bytes no longer match their provenance.", retryable=True)
             else:
                 source = self._artifacts.resolve(current.original_source_uri)
-                with tempfile.TemporaryDirectory(prefix="anivag-frame-inspection-") as directory:
+                with tempfile.TemporaryDirectory(prefix="seekino-frame-inspection-") as directory:
                     for index, timestamp in enumerate(timestamps):
                         # Each extraction consumes the same deadline, including prior DB and I/O work.
                         extracted = extract_video_frames(
@@ -137,7 +137,7 @@ class VideoFrameReader:
                                 "Still frames contain no audio and do not prove continuous motion."],
             }
             remaining()
-            with tempfile.TemporaryDirectory(prefix="anivag-frame-manifest-") as directory:
+            with tempfile.TemporaryDirectory(prefix="seekino-frame-manifest-") as directory:
                 manifest_path = Path(directory) / "manifest.json"
                 manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
                 manifest = self._artifacts.publish_video_artifact(

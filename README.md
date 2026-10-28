@@ -266,7 +266,7 @@ Supervisor 可以直接回答、搜索网页、调用视频检索，或按冻结
 `model_sources` 定义协议、认证与 Provider，`models` 绑定对话、转写、视觉、embedding 与 rerank 等角色。`supervisor_harness` 选择 Codex 或 Deep Agents；来源、模型或 harness 修改后需重启 Server。已有素材库不要随意更换 embedding 模型、来源或维度。详见 [模型配置](docs/model-config.md)。
 
 **local 与 cloud 身份**<br />
-默认 `ANIVAG_AUTH_MODE=local`，本机无需登录。`cloud` 模式额外需要签名秘密、Redis、SMTP 和同源 HTTPS；游客、登录用户与公开内容按服务端权限隔离。详见 [用户 / Tenant 交接说明](server/report_docs/user-tenant-handoff-20261010.md)。
+默认 `SEEKINO_AUTH_MODE=local`，本机无需登录。`cloud` 模式额外需要签名秘密、Redis、SMTP 和同源 HTTPS；游客、登录用户与公开内容按服务端权限隔离。详见 [用户 / Tenant 交接说明](server/report_docs/user-tenant-handoff-20261010.md)。
 
 **已有数据库升级**<br />
 `init-db` 与 `init-es-index` 可重复执行，但不自动迁移旧库或重建不兼容索引。升级前阅读 [Server 说明](server/README.md)，并核对 [身份迁移](docs/migrations/20261010_user_tenant_identity.sql) 与 [媒体毫秒迁移](docs/migrations/20261008_video_timeline_milliseconds.sql)。
@@ -315,7 +315,7 @@ Seekino/
 
 - **部署与配置：** [本地配置指南](deploy/local-setup.md) · [开发部署](deploy/README.md) · [模型配置](docs/model-config.md)
 - **产品与开发：** [Server](server/README.md) · [Web](web/README.md) · [设计文档](docs/design/README.md) · [问题清单](docs/dev/problems.md)
-- **质量与实验：** [Benchmark](evals/benchmark/README.md) · [短片创作实验](.agents/skills/anivag-short-video/SKILL.md)
+- **质量与实验：** [Benchmark](evals/benchmark/README.md) · [短片创作实验](.agents/skills/seekino-short-video/SKILL.md)
 
 <details>
 <summary><strong>References：相关论文与工程实践</strong></summary>

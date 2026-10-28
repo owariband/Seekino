@@ -131,7 +131,7 @@ SDK 每次 run_query 创建新的 Agent / messages，不使用共享 checkpoint�
 
 其 kick 是私有零参数方法，外部通过 followup / steer / send 唤醒驱动器，输入存于 Inbox。其 step 方法也在该仓库自己执行模型流和工具调用，并未将内层循环交给 LangChain。[输入入口](../../../deepseek-harness/packages/core/agent-loop/src/agent.ts#L113)、[内部 Step](../../../deepseek-harness/packages/core/agent-loop/src/agent.ts#L332)
 
-AniVAG 借鉴 kick → turn 的组织方式，同时按本项目约定：一次 Kick 固定一个用户请求，内部 Turn 固定一轮 Query / Evaluator。Codex 的 Thread 对应 Conversation，Turn 对应这里一次 Kick 的完整任务；Codex 内部再进行模型请求和工具执行。[本地 Codex 实现](../../../codex/codex-rs/core/src/session/turn.rs#L142)、[Codex 官方术语](https://learn.chatgpt.com/docs/app-server#core-primitives)
+Seekino 借鉴 kick → turn 的组织方式，同时按本项目约定：一次 Kick 固定一个用户请求，内部 Turn 固定一轮 Query / Evaluator。Codex 的 Thread 对应 Conversation，Turn 对应这里一次 Kick 的完整任务；Codex 内部再进行模型请求和工具执行。[本地 Codex 实现](../../../codex/codex-rs/core/src/session/turn.rs#L142)、[Codex 官方术语](https://learn.chatgpt.com/docs/app-server#core-primitives)
 
 ### 3.5 AgentChat 应用层与 Harness 执行层
 
@@ -273,7 +273,7 @@ typecheck / build 通过。8 个跳过项均来自未配置真实 MySQL 测试�
 | tests/gateway/test_agent_model.py / test_models.py / test_sse_proxy.py | 实际 SDK 配合 HTTP MockTransport / 假 ChatModel 工具调用、模型调用预算、DeepSeek 主请求与 Ark Lite 原位 fallback、业务 Tool 不重放、视频工具请求 / acknowledgement / 最终文本、required 契约、usage / Schema / finish reason / 错误 |
 | web 的 client / useAgentConversation / SearchPage / EvidencePlayer 测试 | SSE 分段解析、逐消息动画多选 / [] 全部、切换选择保留 Conversation 与历史、乱序保护、快照恢复、Markdown、缩略图与 DOM metadata / 范围暂停 |
 
-SQLite、ASGI、实际 SDK 配合 HTTP MockTransport / 仿真 Provider 事件与 jsdom 仍不代表全部真实模型质量或浏览器解码播放已验收。2026-09-18 已用开发 MySQL / Qdrant 和 MyGO 真实数据完成一条双 Turn E2E：Query、Evaluator、Chat 均由 DeepSeek Flash 主路径完成，无 Lite fallback，交付 3 个视频块并持久化 completed；这只覆盖一个代表性查询，不替代完整场景矩阵。MySQL 集成测试需要 ANIVAG_TEST_DATABASE_URL，未配置时跳过。Evaluator 目前审核结构化文本，没有再次看视频 / 关键帧独立核验人物；最终 Chat 正文没有第二次 Evaluator 审核。
+SQLite、ASGI、实际 SDK 配合 HTTP MockTransport / 仿真 Provider 事件与 jsdom 仍不代表全部真实模型质量或浏览器解码播放已验收。2026-09-18 已用开发 MySQL / Qdrant 和 MyGO 真实数据完成一条双 Turn E2E：Query、Evaluator、Chat 均由 DeepSeek Flash 主路径完成，无 Lite fallback，交付 3 个视频块并持久化 completed；这只覆盖一个代表性查询，不替代完整场景矩阵。MySQL 集成测试需要 SEEKINO_TEST_DATABASE_URL，未配置时跳过。Evaluator 目前审核结构化文本，没有再次看视频 / 关键帧独立核验人物；最终 Chat 正文没有第二次 Evaluator 审核。
 
 ## 7. 可复现命令与后续顺序
 

@@ -151,7 +151,7 @@ N09 的早期轮次先完成 2,360 个唯一图像向量，再复用缓存扩到
 除本文件外，实际修改的入口如下；具体删除文件由上面的准确范围和三份审计例外定义。
 
 ```text
-AniVAG/
+Seekino/
 ├── transfer.md
 ├── docs/
 │   ├── design/
@@ -202,7 +202,7 @@ AniVAG/
 `[A]` 表示本轮新增，`[M]` 表示本轮修改已有工作区文件，`[D]` 表示本轮删除。目录下数百个本地产物按上表的完整目录范围列示；下树单列七个已跟踪的删除文件。
 
 ```text
-AniVAG/
+Seekino/
 ├── evals/mygo/
 │   ├── [A] README.md
 │   ├── [A] cases.json
@@ -269,7 +269,7 @@ AniVAG/
 ### 实际修改树与验证
 
 ```text
-AniVAG/
+Seekino/
 ├── docs/dev/
 │   └── [M] design-experiment-cleanup.md
 └── engine/experiment/composition-models/
@@ -410,7 +410,7 @@ with archive.open("rb") as source:
     for block in iter(lambda: source.read(1024 * 1024), b""):
         checksum.update(block)
 assert checksum.hexdigest() == catalog["sha256"]
-restored = Path(tempfile.mkdtemp(prefix="anivag-composition-restore-"))
+restored = Path(tempfile.mkdtemp(prefix="seekino-composition-restore-"))
 with zipfile.ZipFile(archive) as bundle:
     bundle.extractall(restored)
 print(restored)
@@ -423,7 +423,7 @@ print(restored)
 ### 本轮修改范围与验证
 
 ```text
-AniVAG/
+Seekino/
 ├── docs/dev/design-experiment-cleanup.md      # 汇总退役结论和恢复方法
 ├── docs/{README.md,dev/{devlog.md,problems.md,OKR.md}}
 ├── agent/video_parse_v2/design/voiceprint-trd.md

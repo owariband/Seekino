@@ -560,7 +560,7 @@ Harness 只再做一次不可绕过的 generic hard cap
 
 可以共享 `bounded_response`、cursor、序列化计量等基础库，但不能把语义责任重新推回 Agent 或一个通用 middleware。
 
-## 2. anivag 应该提供多粒度 Tool，而不是一个 `get_full`
+## 2. seekino 应该提供多粒度 Tool，而不是一个 `get_full`
 
 “完整内容可访问”应该像 Codex 的 `skills.read`：**完整资源可以通过稳定 cursor 全部遍历，但任何一次调用都不返回无界内容。**
 
@@ -603,7 +603,7 @@ Codex 对 Skill 也不是把所有正文永久塞进 Prompt：
 - 选中某个 Skill 后才读取它的 `SKILL.md`；主 Skill prompt 仍有 8KB 硬上限；见 [`extension.rs`](../../../codex/codex-rs/ext/skills/src/extension.rs)。
 - 大量 Tool schema 也可以 deferred，先只给 namespace/description，再用 `tool_search` 找到并在下一次调用中暴露具体 Tool；见 [`ToolExposure`](../../../codex/codex-rs/tools/src/tool_executor.rs) 和 [`tool_search_spec.rs`](../../../codex/codex-rs/core/src/tools/handlers/tool_search_spec.rs)。
 
-anivag 应该按三个 Agent 提供 Role Skill，而不是继续把 Tool 说明堆进各自 system prompt：
+seekino 应该按三个 Agent 提供 Role Skill，而不是继续把 Tool 说明堆进各自 system prompt：
 
 ```text
 shared/evidence-navigation
@@ -646,7 +646,7 @@ Tool 单次有界
 
 Agent 可以通过 Tool 主动请求 checkpoint/new context window，但真正的硬阈值、是否允许继续采样、replacement history 如何构造，必须由 Harness 掌握。不能把“不爆 Context”的正确性依赖于模型记得主动 compact。
 
-## 5. anivag 当前代码与目标的具体差距
+## 5. seekino 当前代码与目标的具体差距
 
 本节记录 2026-09-19 改造前的历史快照：当时 `search_video_chunk_evidence` 会把
 `project_search_result` 生成的整包 Evidence 返回，再调用 `context_budget.consume(...)`。
@@ -661,7 +661,7 @@ append 到 messages。以下旧行为用于解释改造动机，不代表当前�
 - Chat 会把 approved selected evidence 投影进 Prompt，当时只有 `submit_video_item`。
 - 当时只有 Query 直接拼接一份 Retrieval Skill，还没有给三个 Agent 配置 Skill catalog 和各自 Tool workflow。
 
-所以 anivag 的正确改造顺序应该是：
+所以 seekino 的正确改造顺序应该是：
 
 1. 先定义所有 Tool 都必须通过的 `BoundedToolOutput` 测试规范：服务端 cap、序列化后大小、cursor 稳定性、单条过大行为、空预算行为。
 2. 把现有检索 Tool 拆成 Evidence cards/detail/field page，完整 Evidence 留在 Store。
@@ -740,7 +740,7 @@ Read Tool
 当前代码中的 `videoChunkId` 是 canonical UUID，也是 `video_chunk.video_chunk_id` 的全局主键，不是只在单个 Video 内有效的顺序号。它由下式确定性生成：
 
 ```text
-videoChunkId = UUIDv5("anivag:video-segment", videoId, sequenceNo)
+videoChunkId = UUIDv5("seekino:video-segment", videoId, sequenceNo)
 ```
 
 同一个 Video 内另有独立的 `sequenceNo`，数据库同时对 `(video_id, sequence_no)` 建唯一约束。因此 Draft 和最终 Video Item 都按 `videoChunkId` 去重是成立的；重复 upsert 不应生成第二个 item。
@@ -806,7 +806,7 @@ Evaluator 的 `complete` 不是无条件可信：Server 记录其是否完整读
 
 三个 `SKILL.md` 只描述作品无关的方法、Tool 协议与角色权限，明确禁止写入或依赖任何具体动画、人物、集数、剧情、台词或镜头特例。检索示例也只使用抽象占位描述。
 
-当前代码配置新增：`ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES`（默认 16384）和 `ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE`（默认 20）；两层 Tool 需要多次读取，因此 `ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN` 默认调整为 24。
+当前代码配置新增：`SEEKINO_AGENT_MAX_TOOL_RESULT_BYTES`（默认 16384）和 `SEEKINO_AGENT_MAX_CATALOG_ITEMS_PER_PAGE`（默认 20）；两层 Tool 需要多次读取，因此 `SEEKINO_AGENT_MAX_TOOL_CALLS_PER_TURN` 默认调整为 24。
 
 ---
 
@@ -822,7 +822,7 @@ Evaluator 的 `complete` 不是无条件可信：Server 记录其是否完整读
 
 - `gateway/agent_model/context.py` 独占通用模型执行机制：窗口预算、Provider token ledger、换窗状态、replacement history、硬上限恢复。只属于该协议的 marker、估算系数和摘要上限作为模块私有常量保留在这里；`gateway/constants.py` 没有被污染。
 - `gateway/agent_model/tool_loop.py` 与具体 Provider Adapter 是接入层：自定义 function-calling loop 和 LangChain/LangGraph loop 在每次模型调用前都经过同一个 Context Window Controller，并回填 Provider 的真实 `input_tokens`。
-- `agent/chat/video_search/context.py` 只负责 anivag 领域投影：从外部 canonical Workspace 生成有界 navigation checkpoint，不把完整 Evidence 或 claim 重新塞回 Prompt。
+- `agent/chat/video_search/context.py` 只负责 seekino 领域投影：从外部 canonical Workspace 生成有界 navigation checkpoint，不把完整 Evidence 或 claim 重新塞回 Prompt。
 - `agent/chat/video_search/workspace.py` 只负责每次 Kick 的 canonical 状态与线程安全快照。
 - `agent/chat/video_search/query.py`、`evaluator.py`、`chat.py` 只负责各角色的稳定任务锚点、可压缩初始快照和 checkpoint 回调。
 - `server/config/agent.py` / `settings.py` 保存可配置预算；`server/bootstrap.py` 负责组装，未新增全局杂项常量。
@@ -833,7 +833,7 @@ Evaluator 的 `complete` 不是无条件可信：Server 记录其是否完整读
 
 默认窗口为 64K tokens，预留 4096 output + 4096 safety；48K 自动 compact，目标 24K，硬输入边界为 55,808 tokens。另保留 200,000 字符的应用级兜底。若连固定指令、Tool schema 或单条当前用户输入本身都超过硬边界，系统会在调用 Provider 前明确失败；不会伪装成“已经成功 compact”。
 
-这不是逐行复制 Codex：Codex 可使用 Responses API 的 remote opaque compaction item，anivag 当前仍是 Chat Completions/Ark/DeepSeek，所以采用可审计的本地 replacement checkpoint。相同的是 token 水位、自动换窗、历史替换、window identity、canonical state 重注入和硬边界恢复；anivag 的摘要载荷使用确定性的活动索引与 typed Workspace checkpoint，避免让摘要成为事实源。
+这不是逐行复制 Codex：Codex 可使用 Responses API 的 remote opaque compaction item，seekino 当前仍是 Chat Completions/Ark/DeepSeek，所以采用可审计的本地 replacement checkpoint。相同的是 token 水位、自动换窗、历史替换、window identity、canonical state 重注入和硬边界恢复；seekino 的摘要载荷使用确定性的活动索引与 typed Workspace checkpoint，避免让摘要成为事实源。
 
 验证结果：Context/Gateway/Agent/Tool/配置聚焦回归全部通过；全量回归为 831 passed、8 skipped、9 failed。9 个失败都来自工作树中另一组 Parse Job timing 改动：`ParseJobState` 已新增 `processing_duration_ms`、`processing_timing_complete`，但 `tests/server/test_sse_events.py` 的旧 fixture 未提供它们；与本次 Context Harness 调用链无关，我没有越权修改那组代码。
 

@@ -2,7 +2,7 @@
 
 更新日期：2026-10-24。
 
-本文按**地址、凭证、数据源**三个维度记录已确认的产品方向、当前实现与待办。品牌使用 Seekino；既有 `ANIVAG_*` 环境变量、Cookie 名及存储标识保留兼容，不在本设计中批量更名。
+本文按**地址、凭证、数据源**三个维度记录已确认的产品方向、当前实现与待办。品牌使用 Seekino；既有 `SEEKINO_*` 环境变量、Cookie 名及存储标识保留兼容，不在本设计中批量更名。
 
 状态：当前先打通云网页的游客浏览与邮箱登录体验。本地工作台接入官方云是后续方向，桌面封装和数据同步延后。原 `5173 → 9621` 和 `.env.local` 保持 local 管理员，原视频资料可读；Nginx `https://10.254.47.100:8443` 连接独立 cloud API 9622，使用私有 phone 配置及独立数据库、Chunk/Event 索引和媒体目录。浏览器已确认 local 原页面恢复、cloud 游客可进入正常页面，验证码注册、再次登录、权限和退出共通过 31 项检查。用户已反馈完成 iPhone 证书安装，手机实际访问与视频业务仍待验收。公司的证书未修改。操作方式见[原生 HTTPS 部署说明](../../deploy/nginx/README.md)。
 
@@ -14,9 +14,9 @@
 | 凭证 | 这个后端如何识别请求者，并允许其做什么？ | `local/cloud` 是后端信任策略；登录哪个实例，就使用那个实例签发的凭证 |
 | 数据源 | 上传、浏览、检索和修改的是哪个实例、哪个 Tenant 的资料？ | 选择远端资料不等于复制到本地；登录也不等于同步 |
 
-`ANIVAG_AUTH_MODE=local` 表示信任能够访问该后端的使用者，以固定本机 owner 身份操作。当前代码使用 `local-user/local-default`，权限等同本地管理员。这个“无账号 owner”与云端 guest 不同：前者可以管理本机资料，后者只能按服务端规则访问公共内容。
+`SEEKINO_AUTH_MODE=local` 表示信任能够访问该后端的使用者，以固定本机 owner 身份操作。当前代码使用 `local-user/local-default`，权限等同本地管理员。这个“无账号 owner”与云端 guest 不同：前者可以管理本机资料，后者只能按服务端规则访问公共内容。
 
-`ANIVAG_AUTH_MODE=cloud` 表示请求必须经过 guest 或邮箱账号的身份和资源权限检查。它既可运行在云服务器，也可运行在电脑上做联调；把本地 Docker 的 mode 改为 cloud，不会自动获得公网 IP、域名或开放端口。mode 与 `ANIVAG_ENVIRONMENT`、模型来源及模型运行位置独立。
+`SEEKINO_AUTH_MODE=cloud` 表示请求必须经过 guest 或邮箱账号的身份和资源权限检查。它既可运行在云服务器，也可运行在电脑上做联调；把本地 Docker 的 mode 改为 cloud，不会自动获得公网 IP、域名或开放端口。mode 与 `SEEKINO_ENVIRONMENT`、模型来源及模型运行位置独立。
 
 服务端绑定 `127.0.0.1` 仅接受本机网络连接；绑定内网 IP 或 `0.0.0.0` 会扩大可达范围，还受 Docker 端口映射、防火墙和网络路由影响。Docker 内监听所有接口与宿主机发布端口是两个边界，宿主机映射到 `127.0.0.1:端口` 才限定为本机入口。
 
@@ -50,8 +50,8 @@
 
 | 场景 | 目标运行方式 | 进程与资源责任 |
 |---|---|---|
-| 本地 | 用户自行安装、登录并连接 Codex / Claude Code | 原生 runtime 按自身机制运行，资源由用户本机承担；AniVAG 负责接入及自身连接的生命周期 |
-| 云端 | 一个 Python API worker 内运行 Deep Agents；`conversation_id` 直接作为 `thread_id`，checkpoint 存入现有 MySQL | AniVAG 负责模型与工具循环、确认后持久化、并发限制、取消和恢复；不再运行 Node Pi Host |
+| 本地 | 用户自行安装、登录并连接 Codex / Claude Code | 原生 runtime 按自身机制运行，资源由用户本机承担；Seekino 负责接入及自身连接的生命周期 |
+| 云端 | 一个 Python API worker 内运行 Deep Agents；`conversation_id` 直接作为 `thread_id`，checkpoint 存入现有 MySQL | Seekino 负责模型与工具循环、确认后持久化、并发限制、取消和恢复；不再运行 Node Pi Host |
 
 云端资源目标仍以 4 CPU / 8 GB 为初始验收环境。每轮先在内存执行，SQL 消息确认后才提交完整 checkpoint；失败、取消和关闭不删除上一份已确认状态。没有 checkpoint 的旧 Conversation 继续按 SQL 展示历史冷启动，不承诺历史 Pi JSONL 中的 tool 上下文无损迁移。
 
@@ -76,11 +76,11 @@ Server 负责模型配置的用户归属、凭据保存与读取授权、配置�
 
 | 参数 | 当前默认值 | 语义 |
 |---|---|---|
-| `ANIVAG_AUTH_TOKEN_TTL_SECONDS` | 604800 秒（7 天） | Cookie 中登录凭证的有效期 |
-| `ANIVAG_AUTH_OTP_TTL_SECONDS` | 300 秒（5 分钟） | 单次验证码挑战有效期 |
-| `ANIVAG_AUTH_OTP_ATTEMPT_LIMIT` | 5 次 | 当前验证码错误达到上限后删除挑战 |
-| `ANIVAG_AUTH_SEND_COOLDOWN_SECONDS` | 60 秒 | 同一邮箱的重发冷却，另有邮箱/guest/IP 窗口限流 |
-| `ANIVAG_AUTH_QUERY_LEASE_SECONDS` | 600 秒 | 查询并发占用的过期保护，不是登录或验证码时长 |
+| `SEEKINO_AUTH_TOKEN_TTL_SECONDS` | 604800 秒（7 天） | Cookie 中登录凭证的有效期 |
+| `SEEKINO_AUTH_OTP_TTL_SECONDS` | 300 秒（5 分钟） | 单次验证码挑战有效期 |
+| `SEEKINO_AUTH_OTP_ATTEMPT_LIMIT` | 5 次 | 当前验证码错误达到上限后删除挑战 |
+| `SEEKINO_AUTH_SEND_COOLDOWN_SECONDS` | 60 秒 | 同一邮箱的重发冷却，另有邮箱/guest/IP 窗口限流 |
+| `SEEKINO_AUTH_QUERY_LEASE_SECONDS` | 600 秒 | 查询并发占用的过期保护，不是登录或验证码时长 |
 
 Redis 保存验证码的 HMAC 摘要，不保存明文验证码。成功验证原子消费挑战；重新发码覆盖该 guest/邮箱的旧码并重新计时；发送失败清理本次挑战。挑战绑定 guest ID、auth_version 和邮箱，因此须在申请验证码的同一浏览器会话、同一站点地址完成验证，可以在另一台设备查看邮件内容。
 
@@ -97,13 +97,13 @@ Mailpit 用 SMTP 接收验证码并提供本地收件箱，不投递到收件人
 宿主机上的 Server 连接本地 Mailpit 使用以下配置，真实 SMTP 配置默认保持不变：
 
 ```dotenv
-ANIVAG_SMTP_HOST=127.0.0.1
-ANIVAG_SMTP_PORT=1025
-ANIVAG_SMTP_USERNAME=
-ANIVAG_SMTP_PASSWORD=
-ANIVAG_SMTP_SENDER=noreply@seekino.test
-ANIVAG_SMTP_USE_SSL=false
-ANIVAG_SMTP_START_TLS=false
+SEEKINO_SMTP_HOST=127.0.0.1
+SEEKINO_SMTP_PORT=1025
+SEEKINO_SMTP_USERNAME=
+SEEKINO_SMTP_PASSWORD=
+SEEKINO_SMTP_SENDER=noreply@seekino.test
+SEEKINO_SMTP_USE_SSL=false
+SEEKINO_SMTP_START_TLS=false
 ```
 
 `START_TLS` 默认是 true，模拟收件箱须显式关闭。真实 SMTP 可使用隐式 SSL 或 STARTTLS，但两者不能同时启用；浏览器到 Nginx 的 HTTPS 与 SMTP 自身的 TLS 是两条独立连接。
@@ -128,11 +128,11 @@ Seekino 的 O/CN 只是内部显示名称，没有为 CA 加上名称范围约�
 
 本轮 Nginx 1.31.7 已 stop/start 绑定 `10.254.47.100:8443`，只代理独立 cloud API 9622，新叶证书 SAN 包含该 IP；系统 curl 验证 HTTPS 通过。cloud 无 Cookie 的 `/me` 返回 401，游客引导后正常显示页面；真实 HTTPS OTP 注册、Redis 300 秒过期、SMTP 捕获和退出撤销均已验证。原 local API 9621 及 `.env.local` 已恢复原状态，Vite 5173 保留浏览器 Host/端口，仍免登录使用本机管理员。Nginx 内网启动拒绝代理无凭证即可访问的 API，避免误发布 local。新 CA 仅对 SSL 始终信任；旧项目测试 CA 已撤信任，公司的证书未修改。用户已反馈完成 iPhone CA 安装，手机实际访问及视频上传/播放仍待验收。
 
-内网手机联调额外指定 `ANIVAG_HTTPS_BIND=<电脑内网IP>`，配合 cloud 策略及独立测试入口；具体脚本的限制和命令以部署说明为准。电脑与手机处于同一公司网络不保证互通，还需路由、Wi-Fi/VLAN 隔离及防火墙放行该端口。手机的 localhost 指手机自身。
+内网手机联调额外指定 `SEEKINO_HTTPS_BIND=<电脑内网IP>`，配合 cloud 策略及独立测试入口；具体脚本的限制和命令以部署说明为准。电脑与手机处于同一公司网络不保证互通，还需路由、Wi-Fi/VLAN 隔离及防火墙放行该端口。手机的 localhost 指手机自身。
 
 正式云入口使用域名和公信 CA 签发的证书，并安排续期；本地 CA 不能作为面向陌生用户的正式证书方案。TLS 证明连接到证书对应地址并保护传输，不授予管理员权限，也不把自托管站点变成官方站点。TLS 配置原则见 [Nginx HTTPS 官方文档](https://nginx.org/en/docs/http/configuring_https_servers.html)。
 
-Cookie 当前是 `HttpOnly; SameSite=Lax; Path=/`，`Secure` 由 `ANIVAG_AUTH_COOKIE_SECURE` 控制，默认 true。HTTPS 联调和正式部署保持 true；仅临时普通 HTTP 的内网测试可显式设 false。LAN IP 的普通 HTTP 不能依赖浏览器发送 Secure Cookie，不能将该失败误认为验证码或 Redis 故障。属性含义见 [Set-Cookie 文档](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)。
+Cookie 当前是 `HttpOnly; SameSite=Lax; Path=/`，`Secure` 由 `SEEKINO_AUTH_COOKIE_SECURE` 控制，默认 true。HTTPS 联调和正式部署保持 true；仅临时普通 HTTP 的内网测试可显式设 false。LAN IP 的普通 HTTP 不能依赖浏览器发送 Secure Cookie，不能将该失败误认为验证码或 Redis 故障。属性含义见 [Set-Cookie 文档](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)。
 
 代理必须保留以下边界，并按实际请求验收：
 

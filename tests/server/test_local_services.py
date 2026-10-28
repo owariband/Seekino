@@ -182,7 +182,7 @@ def test_config_digest_distinguishes_hot_settings_from_restart_settings(
         "maximum_concurrent_kicks": 4,
     }
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
     first = config_digest()
 
     config["agent_runtime"]["stage_timeout_seconds"] = 240
@@ -261,8 +261,8 @@ def test_api_ready_rejects_invalid_health_payload(monkeypatch, payload) -> None:
 
 @pytest.mark.parametrize("tenant_id", ["local-default", "local & test/+库"])
 def test_library_ready_uses_current_tenant_route(monkeypatch, tenant_id) -> None:
-    monkeypatch.setenv("ANIVAG_AUTH_MODE", "local")
-    monkeypatch.setenv("ANIVAG_LOCAL_TENANT_ID", tenant_id)
+    monkeypatch.setenv("SEEKINO_AUTH_MODE", "local")
+    monkeypatch.setenv("SEEKINO_LOCAL_TENANT_ID", tenant_id)
     scopes = []
 
     def list_series(**scope):
@@ -296,7 +296,7 @@ def test_library_ready_uses_current_tenant_route(monkeypatch, tenant_id) -> None
 
 
 def test_start_requires_model_key_before_launching_server(monkeypatch) -> None:
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.setattr(local_services, "listening", lambda _port: False)
     monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
@@ -306,7 +306,7 @@ def test_start_requires_model_key_before_launching_server(monkeypatch) -> None:
 
 
 def test_start_requires_deepseek_key_before_launching_server(monkeypatch) -> None:
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(local_services, "listening", lambda _port: False)
@@ -327,7 +327,7 @@ def test_start_requires_configured_parse_fallback_key_name(monkeypatch) -> None:
         fallback_enabled=True,
     )
     config.video_parser.fallback.deepseek.api_key_env = "CUSTOM_DEEPSEEK_API_KEY"
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.delenv("CUSTOM_DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(local_services, "load_config", lambda: config)
@@ -355,7 +355,7 @@ def test_start_local_cli_providers_reach_launch_without_agent_api_key(
     def stop_at_launch(*_args, **_kwargs) -> None:
         raise LaunchReached
 
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.setattr(
         local_services,
@@ -376,7 +376,7 @@ def test_start_claude_api_key_mode_requires_configured_key(monkeypatch) -> None:
         auth_mode="api_key",
         api_key_env="CUSTOM_ANTHROPIC_API_KEY",
     )
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.delenv("CUSTOM_ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(
@@ -396,7 +396,7 @@ def test_local_start_validates_explicit_elasticsearch_before_applications(monkey
     requests = []
     settings = SimpleNamespace(
         elasticsearch=SimpleNamespace(
-            url="http://127.0.0.1:9200", index_name="anivag_video_chunks_dev",
+            url="http://127.0.0.1:9200", index_name="seekino_video_chunks_dev",
             api_key=None,
         ),
         environment="development", text_vector_dimensions=3,
@@ -472,7 +472,7 @@ def test_local_status_includes_explicit_elasticsearch_health(
     requests = []
     closed = []
     settings = SimpleNamespace(
-        database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
+        database_url="mysql+pymysql://root@127.0.0.1:3306/seekino_development",
         elasticsearch=SimpleNamespace(url="http://127.0.0.1:9200", api_key=None),
     )
 
@@ -490,8 +490,8 @@ def test_local_status_includes_explicit_elasticsearch_health(
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "get", lambda _url: b"ready")
     monkeypatch.setattr(local_services, "api_ready", lambda _url: True)
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
-    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_WEB_PORT", "5173")
 
     assert local_services.status(settings) is expected
     assert "Elasticsearch health" in capsys.readouterr().out
@@ -507,7 +507,7 @@ def test_local_mysql_missing_database_closes_admin_and_application_engines(
     from sqlalchemy.exc import OperationalError
 
     settings = SimpleNamespace(
-        database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
+        database_url="mysql+pymysql://root@127.0.0.1:3306/seekino_development",
         environment="development",
     )
     events = []
@@ -555,7 +555,7 @@ def test_local_mysql_missing_database_closes_admin_and_application_engines(
     else:
         local_services.start_mysql(settings)
 
-    assert events[0].startswith("CREATE DATABASE IF NOT EXISTS `anivag_development`")
+    assert events[0].startswith("CREATE DATABASE IF NOT EXISTS `seekino_development`")
     assert events[-1] == "application closed"
     assert events.count("admin closed") == 1
     assert events.count("application closed") == 1
@@ -765,8 +765,8 @@ def test_owned_listener_requires_exact_managed_pid(monkeypatch, pid, listeners, 
 def test_refresh_only_stale_managed_applications(monkeypatch, tmp_path, name, change):
     monkeypatch.setattr(local_services, "ROOT", tmp_path)
     monkeypatch.setattr(local_services, "STATE", tmp_path)
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
-    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_WEB_PORT", "5173")
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "owned_listener", lambda _name, _port: True)
     monkeypatch.setattr(local_services, "owned_pid", lambda _name: 123)
@@ -792,8 +792,8 @@ def test_refresh_only_stale_managed_applications(monkeypatch, tmp_path, name, ch
 def test_refresh_rejects_any_unknown_listener_before_stopping(monkeypatch, tmp_path, unknown):
     monkeypatch.setattr(local_services, "ROOT", tmp_path)
     monkeypatch.setattr(local_services, "STATE", tmp_path)
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
-    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_WEB_PORT", "5173")
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "owned_listener", lambda name, _port: name != unknown)
     monkeypatch.setattr(local_services, "config_digest", lambda: pytest.fail("must preflight both ports"))

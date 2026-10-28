@@ -43,7 +43,7 @@ def build_app(
     resolved_settings = settings
 
     app = FastAPI(
-        title="anivag Server",
+        title="seekino Server",
         version="0.1.0",
         lifespan=lifespan,
     )

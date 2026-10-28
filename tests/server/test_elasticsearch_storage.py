@@ -94,7 +94,7 @@ def client():
 @pytest.fixture
 def store(client):
     return ElasticsearchVideoChunkStore(
-        client, index_name="anivag_test_storage", environment="test",
+        client, index_name="seekino_test_storage", environment="test",
         semantic_dimensions=2, vision_dimensions=2,
     )
 
@@ -246,7 +246,7 @@ def test_mapping_default_search_analyzer_does_not_relax_other_fields(
 
 def test_existing_build_mapping_requires_explicit_replacement(store, client):
     store.ensure_index()
-    client.indices.mapping["_meta"]["index_contract_version"] = "anivag-video-chunk-es-1"
+    client.indices.mapping["_meta"]["index_contract_version"] = "seekino-video-chunk-es-1"
 
     with pytest.raises(ElasticsearchIndexSchemaError, match="metadata differs"):
         store.ensure_index()
@@ -757,7 +757,7 @@ def test_sparse_mapping_storage_inspection_and_invalid_weights(store, client, ID
 
 def test_old_physical_contract_is_rejected_without_mutating_the_index(store, client):
     store.ensure_index()
-    client.indices.mapping["_meta"]["index_contract_version"] = "anivag-video-chunk-es-4"
+    client.indices.mapping["_meta"]["index_contract_version"] = "seekino-video-chunk-es-4"
     before = deepcopy(client.indices.mapping)
     with pytest.raises(ElasticsearchIndexSchemaError, match="metadata differs"):
         store.ensure_index()

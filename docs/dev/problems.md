@@ -51,7 +51,7 @@
 | 10 月 18 日，截至扫描快照 | **1,733,251，约 173.33 万** | **321,869，约 32.19 万** | **47,785,845,629 bytes，47.786 GB** |
 | 补建窗口 15:31:46–16:17:04 | **1,144,814，约 114.48 万** | **206,137，约 20.61 万** | **44,105,531,159 bytes，44.106 GB** |
 
-补建窗口的表级 UPDATE 统计全部属于 `anivag_local_20261010_development`：
+补建窗口的表级 UPDATE 统计全部属于 `seekino_local_20261010_development`：
 
 | 表 | UPDATE_ROWS 事件数 | UPDATE 事件字节量 |
 | --- | ---: | ---: |
@@ -219,7 +219,7 @@
 S（Shared，共享）和 X（Exclusive，排他）描述的是锁的**访问模式**，不是不同的数据对象，也不单独决定锁的粒度。本次发生冲突的两种锁都落在同一个数据库对象上：
 
 ```text
-数据库：anivag_local_20261010_development
+数据库：seekino_local_20261010_development
 表／索引：series / PRIMARY
 记录：id = 836fa9f0-2bf4-50fb-9c64-75526fa1dea9（mygo）
 粒度：这一条主键索引记录，对应这一行 Series
@@ -437,7 +437,7 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 #### 本次处理与服务加载
 
-- 沿用已授权的 API 重启范围，只重新加载 AniVAG API；没有追加生产代码修改，也没有把视觉配置改回 Ark。C08 的两个 `compile(checkpointer=False)` 和外层 `durability="async"` 保留。
+- 沿用已授权的 API 重启范围，只重新加载 Seekino API；没有追加生产代码修改，也没有把视觉配置改回 Ark。C08 的两个 `compile(checkpointer=False)` 和外层 `durability="async"` 保留。
 - 旧 API 收到 SIGTERM 后停止监听，但仍等待一个现有 HTTP 长连接关闭；SIGINT 后也未退出。核对 PID 与原启动签名后，仅对旧 API `80107` 使用 SIGKILL 完成退出，再启动 API；Web、MySQL 和其他进程未停止。
 - 新 API PID 为 `11135`，`14:20:00` 完成启动；parse consumer 为 `running`，Web PID 仍为 `41425`。重启后 `/api/agent/global-settings` 与 `/api/agent/messages/options` 均返回 HTTP 200，全局配置 revision 与当前磁盘一致。接口恢复仅证明配置阻断解除，完整业务证据见下述复测。
 
@@ -927,7 +927,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 **已做但未部署：撤掉 Understanding 改台词区间的权限**
 
-- 用户已明确要求只允许 Refine 调整台词时间。隔离工作树 `/private/tmp/anivag-understanding-asr-bounds-20261019` 基于 PR #5 分支 tip `504b9b4`，有四个未提交文件：`timelineEvent_canvas.py`、`prompts.py`、`test_context_canvas.py`、`test_framework.py`。不是主工作区已部署的修复。
+- 用户已明确要求只允许 Refine 调整台词时间。隔离工作树 `/private/tmp/seekino-understanding-asr-bounds-20261019` 基于 PR #5 分支 tip `504b9b4`，有四个未提交文件：`timelineEvent_canvas.py`、`prompts.py`、`test_context_canvas.py`、`test_framework.py`。不是主工作区已部署的修复。
 - 宿主检查 Understanding 新 DIALOGUE 必须对应本 Chunk 一条有效 ASR cue 的完整区间，既有 DIALOGUE 时间只读；试图合并、拆分、扩大或绕过类型修改会得到可恢复工具反馈，不能只靠 Prompt。Refine 保留时间调整能力，原声音证据随区间变化失效；无可用 ASR 的既有回退路径保留。
 - 前一轮代码验证记录：新增 34 个用例，要求的八组共 **1155 passed、0 failed**（engine 218、agent 329、voiceprint 115、worker 220、queue 131、repository 125、artifact 12、model_calls 5）。本次文档维护未重跑；单测不证明真实人物归因正确。**尚未 commit/push、重启或重新解析，未验证真实音频效果。该限制只能防止 Understanding 二次合并，不能修复 ASR 本来已合并的 cue。**
 
@@ -1074,7 +1074,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - 自动化验证分两组：Agent/Repository/Queue/Worker/Upload/Gateway **540 项通过**，配置及媒体 **338 项通过**；数据库用例为测试隔离环境，尚未进行真实 MySQL 多 Consumer 锁竞争验收。未改 ASR Prompt，未重启服务、迁移、运行真实生成 Agent、写回 speaker 或重解析任何一集。
 - 真实音频验证复用 [声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)，只取 `sequence_no<12` 的 16 条固定参考，每人 4 条，目标不入参考。使用本次 `_embed_speaker_segment` 从同一原视频直接 downmix 到 16k mono PCM16，再经 Gateway 调用官方固定 CAM++；17 次实际提取 completed，输出均为有限、归一化 192 维向量，临时 WAV/租约标记清理通过。此处声道为 mono downmix，与原实验的首声道协议不同，不将数值差异解释成准确率提升。
 - 目标 `47100–48800ms`、实际 1700ms 的候选为：长崎爽世 **0.82694462**、高松灯 **0.51958897**、千早爱音 **0.44891524**、椎名立希 **0.39888920**；第一/二差值 **0.30735565**。相似度不是概率；这些样本的身份依据沿用实验清单/用户授权，不能外推整集准确率，也不等于真实 Refine 已正确识别并写回爽世。
-- 原视频 SHA-256 `50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814`；目标 PCM SHA-256 `8587a4c56232d357e5b1c3d6e9ee2560dd378bfefe51c943ec15a484fb3b9f08`。本次临时验证输出 `/tmp/anivag-voiceprint-smoke-20261017/result.json` 包含每条向量、来源、实际模型 revision、候选及调用 ID，文件 SHA-256 `a8ec8321961faf0f5ac3736b9a8da85fb218d13478ec709931a783ab4e3518b2`，目标 call ID `dc7d49db-2c41-4562-8bcc-cc5d458a7c92`。临时依赖/官方源码/权重仅在 `/tmp`，未同步项目主环境；临时目录可能被系统清理，固定来源与协议仍见清单及 [声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)。
+- 原视频 SHA-256 `50e981e49a3d74e8c0aca7571ffae8265b88f6388f1d34849876b61ad8bf5814`；目标 PCM SHA-256 `8587a4c56232d357e5b1c3d6e9ee2560dd378bfefe51c943ec15a484fb3b9f08`。本次临时验证输出 `/tmp/seekino-voiceprint-smoke-20261017/result.json` 包含每条向量、来源、实际模型 revision、候选及调用 ID，文件 SHA-256 `a8ec8321961faf0f5ac3736b9a8da85fb218d13478ec709931a783ab4e3518b2`，目标 call ID `dc7d49db-2c41-4562-8bcc-cc5d458a7c92`。临时依赖/官方源码/权重仅在 `/tmp`，未同步项目主环境；临时目录可能被系统清理，固定来源与协议仍见清单及 [声纹基础实验退役摘要](design-experiment-cleanup.md#声纹基础实验)。
 
 #### 2026-10-17：重启后的 EP04 VoiceprintAgent 实测
 
@@ -1106,7 +1106,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - **工具与收口：** `get_speaker_list` 返回每人的 `refs_count/target_refs_count` 及 `references=[{source_ref,start_ms,end_ms}]`，Agent 能对应 sources 避开已登记台词，不接收向量。`register_voiceprint` 可对同人多次追加，回执包含 `added`、该人物的参考进度和来源元数据。Agent 达到人物覆盖后继续补充多参考，在达到目标、可用来源耗尽或接近本阶段预算时、预算真正耗尽前调用完成工具。`finish` 要求名单内所有不足目标者（含零参考）提供非空 `skip_reasons`；缺原因返回 `ready=false`、`missing_reason_speakers`、`reference_counts`、目标及提示。说明齐全且 **具有效参考的人物数 > speaker_list_size/2** 才可 ready，空名单可零参考结束；理由不绕过多数门禁，也不额外建立“来源耗尽”审计框架。模型、截音、数据库失败及真实预算耗尽仍真实上抛，不能伪装成“收不够参考”。
 - 来源继续限于达到半数 Understanding 时固定的授权快照，预算/取消/恢复复用现有准备阶段；不为凑 5 等全部 chunk，不因后续更多台词触发无界补采或整轮 Refine。本轮调整采集策略、工具进度和完成检查，保持现有多参考存储及质心聚合；是否切换逐条均值/权重另按更多目标的验证结果决定。实现当时尚未进行第四集重解析，后续真实 v5 结果见下节；全片准确率仍未统计。
 
-- **本次代码验证：** `.venv/bin/python -m pytest -q tests/server/test_video_parse_voiceprint.py tests/server/test_video_parse_worker.py tests/agent/video_parse_v2/test_voiceprint.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_repository.py tests/agent/video_parse_v2/test_framework.py --tb=short`：**408 passed**，覆盖独立来源、区间/PCM 去重、上限与幂等、缺额说明、Refine 准入以及既有失败/取消/恢复。新增 MySQL 重叠登记与第 5 名额竞争两例已通过 collect-only；当前未配置专用 `ANIVAG_TEST_DATABASE_URL`，未执行真实 MySQL 竞争，也未初始化测试库。`git diff --check` 与本轮独立 hypnos-review 通过。该代码修改阶段没有重启、迁移、重解析或 commit/push；后续按用户授权重启与复测见下节。
+- **本次代码验证：** `.venv/bin/python -m pytest -q tests/server/test_video_parse_voiceprint.py tests/server/test_video_parse_worker.py tests/agent/video_parse_v2/test_voiceprint.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_repository.py tests/agent/video_parse_v2/test_framework.py --tb=short`：**408 passed**，覆盖独立来源、区间/PCM 去重、上限与幂等、缺额说明、Refine 准入以及既有失败/取消/恢复。新增 MySQL 重叠登记与第 5 名额竞争两例已通过 collect-only；当前未配置专用 `SEEKINO_TEST_DATABASE_URL`，未执行真实 MySQL 竞争，也未初始化测试库。`git diff --check` 与本轮独立 hypnos-review 通过。该代码修改阶段没有重启、迁移、重解析或 commit/push；后续按用户授权重启与复测见下节。
 
 
 #### 2026-10-17：关闭 Prefix/Compact 后，第四集 v5 多参考端到端通过
@@ -1132,7 +1132,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 - 当前修复在 `finish_voiceprint_preparation` 同一事务读取未 ready 的参考，按 speaker/model/revision 检查组内一致性；不增 runtime 成果副本或缓存，不重新调用模型。实验初值为至少 5 条独立参考、核心均值 >=0.60、候选对核心均值 <=0.50、gap >=0.18，唯一来源为 `server/constants/parse.py`。少样本不阻止原收口，不强制每组删最低；显著异常返回 ready=false、来源/区间、均值、gap 及修正提示，不静默删条或改姓名。
 - 准备工具由原四个增至五个：新增 `unregister_voiceprint(source_ref)` 幂等单条撤销；`register_voiceprint` 可用 `replace_source_ref`，新 embedding 成功后事务替换，含同来源更精确子区间，失败保留旧条。无可靠替代时可撤销后以 `skip_reasons` 说明不足 5 条，具参考人数仍须严格过半；理由不能绕过仍存在的异常。ready 后继续按静态成果使用，不因 timeline 后续编辑重验或重跑。
 - 本次执行 `.venv/bin/python -m pytest -q tests/server/test_video_parse_voiceprint.py tests/agent/video_parse_v2/test_voiceprint.py tests/server/test_video_parse_worker.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_repository.py tests/agent/video_parse_v2/test_framework.py --tb=short`：**463 passed，23.56 秒**，仅既有 Starlette 弃用警告。覆盖完成门禁、阈值和编码器分组、显式替换/撤销及回滚、旧租约/来源保护、预算/取消与真实失败保留；此前 408 项及各轮部署/验证事实仍保留其原日期和合同。
-- 实际导入 `_voiceprint_consistency` 回放 v9 原 25 条向量，与独立核算一致返回灯 47.6 秒、立希 487.1 秒、祥子 293.9 秒三条可疑参考，报告在 `/tmp/anivag-voiceprint-consistency-replay.json`，没有写数据库或新增仓库实验文件。回放不是泛化准确率，后二条仍无独立真值；真实 MySQL 并发、实际 Agent 重选及全片准确率尚未验收。本轮没有服务重启、迁移、重解析或 commit/push。
+- 实际导入 `_voiceprint_consistency` 回放 v9 原 25 条向量，与独立核算一致返回灯 47.6 秒、立希 487.1 秒、祥子 293.9 秒三条可疑参考，报告在 `/tmp/seekino-voiceprint-consistency-replay.json`，没有写数据库或新增仓库实验文件。回放不是泛化准确率，后二条仍无独立真值；真实 MySQL 并发、实际 Agent 重选及全片准确率尚未验收。本轮没有服务重启、迁移、重解析或 commit/push。
 
 验收分别检查：新 ASR 是否真的在换人处分条；首次与最终 Timeline 是否纠正为爽世或有依据保留未知；Refine 是否实际取得图片、提交了哪些事件；最终索引／Chat 是否使用新版本。即使 Chat 答对，也保留 ASR 和数据库未修复的判定。相邻窗口重算见 B07，不在本项顺带修改调度。
 
@@ -1415,12 +1415,12 @@ Codex invocation 包含整个 native agent 执行，不等于一次底层采样�
 
 - Parse Task：`d470e300-9813-4c19-a62e-f52503e2e1ae`；Video：`e709a2d8-aabb-509e-b323-e7f9aa7018b2`。本轮实际使用 `codex_local / gpt-6-astra`、`reasoning_effort=low`；Refine 跟随 Understanding 模型绑定。
 - Gateway 对 native adapter 直接执行 `CodexAgentModel.generate()`，走 Codex 原生 app-server agent；Server 传入 `tool_harness="deepagents"` 不代表本轮经过 DeepAgents 图或其 hook。
-- 当前 `request_timeout_seconds=600` 作为整个 native invocation 的 deadline，覆盖会话启动、模型生成、工具调用、工具后的 hook 等待和结果返回。到期由 AniVAG 终止 session，并报 `Codex Agent execution deadline expired`；不是一次供应商 HTTP 请求必然等待了十分钟。
-- 已观测到的主要模式是逐项读取之间的同步等待：AniVAG 已将成功工具回执交给 Codex，调用工具的 Agent 脚本仍要等 PostToolUse 完成，才能拿到结果并继续下一次读取。
+- 当前 `request_timeout_seconds=600` 作为整个 native invocation 的 deadline，覆盖会话启动、模型生成、工具调用、工具后的 hook 等待和结果返回。到期由 Seekino 终止 session，并报 `Codex Agent execution deadline expired`；不是一次供应商 HTTP 请求必然等待了十分钟。
+- 已观测到的主要模式是逐项读取之间的同步等待：Seekino 已将成功工具回执交给 Codex，调用工具的 Agent 脚本仍要等 PostToolUse 完成，才能拿到结果并继续下一次读取。
 
 ```text
 Agent 脚本请求 get_context_canvas(item 1)
-    → AniVAG 执行读取，将成功结果交给 Codex
+    → Seekino 执行读取，将成功结果交给 Codex
     → Codex await PostToolUse hook
     → hook 完成后，结果才交回调用脚本
     → 脚本请求 item 2，重复上述过程
@@ -1469,7 +1469,7 @@ Agent 脚本请求 get_context_canvas(item 1)
 
 状态：功能及相对 ASR 的秒级时间链路已通过；人物名单校验已按用户明确规则缩小至 `DIALOGUE`。理解/精修输出预算与思考控制已完成源码、兼容性、离线和同片真实通路验证，约100.3秒完成；ASR 保持原设置。视觉事件输出变少，完整语义质量未验收。失败恢复、总时限和退避配置仍待处理。以下37分钟耗时与失败记录对应修复前冻结源码。
 
-本次使用同一 90132ms 原片、原默认配置，在隔离 namespace `anivag_asr_reparse_20261009_081508_test` 重跑 task `d3046375-9d70-4a8d-972d-98fd6429f519`。服务运行开工时 `c8c5d2c + dirty` 的 539 文件冻结源码，模型、fps、重试和 fallback 没有临时调整；后续并行工作区变化未加载到该服务，以下根因严格对应本次运行。
+本次使用同一 90132ms 原片、原默认配置，在隔离 namespace `seekino_asr_reparse_20261009_081508_test` 重跑 task `d3046375-9d70-4a8d-972d-98fd6429f519`。服务运行开工时 `c8c5d2c + dirty` 的 539 文件冻结源码，模型、fps、重试和 fallback 没有临时调整；后续并行工作区变化未加载到该服务，以下根因严格对应本次运行。
 
 **并行已经生效，但最慢 Chunk 的连续失败重试决定了总耗时。** 两段几乎同时开始，第二段约 9 分 57 秒完成，第一段因三次主模型失败及恢复花了 30 分 46 秒。唯一 Interval 需要两段均成功，随后才执行跨段精修；增加并发槽位不能缩短同一 Chunk 内依次发生的失败尝试。
 
@@ -1510,7 +1510,7 @@ Agent 脚本请求 get_context_canvas(item 1)
 
 回归验证：新增六种非对白事件 × 两个人物引用字段的12项原文保留/JSON往返用例，另有1项混合事件排序用例；13项在旧实现下均失败。修改后 `.venv/bin/pytest -q tests/engine/parsev2 tests/agent/video_parse_v2/test_framework.py` 为82项通过，`.venv/bin/pytest -q tests/engine/test_index_projection.py` 为17项通过，合计99项通过；独立只读审阅通过。
 
-使用首轮调用 `84a7dc7a-7031-48f0-b241-d1966e833328` 的未修改 raw JSON 离线重放：38条事件通过完整 `VideoParseResult` 校验及 `[0,60000)` 时间范围检查；第17、22、29条均为 `ACTION`，原附注及全部正文/时间完整保留。原始证据文件内容不变，没有新模型调用或数据库写入。验证记录为 `/private/tmp/anivag-dialogue-persons-20261009/raw-replay-verification.json`；本项结果说明旧名单阻断已解除，不代表重新完成真实全流程或确认模型描述中的人物归属。
+使用首轮调用 `84a7dc7a-7031-48f0-b241-d1966e833328` 的未修改 raw JSON 离线重放：38条事件通过完整 `VideoParseResult` 校验及 `[0,60000)` 时间范围检查；第17、22、29条均为 `ACTION`，原附注及全部正文/时间完整保留。原始证据文件内容不变，没有新模型调用或数据库写入。验证记录为 `/private/tmp/seekino-dialogue-persons-20261009/raw-replay-verification.json`；本项结果说明旧名单阻断已解除，不代表重新完成真实全流程或确认模型描述中的人物归属。
 
 #### 理解/精修默认预算与思考控制修复（2026-10-09）
 
@@ -1520,9 +1520,9 @@ Ark 结构化与流式路径均处理控制值：`none` 显式发送 `thinking={
 
 离线验证覆盖配置传播、旧快照恢复、实际 SDK 请求参数、refine 继承与上传幂等兼容：`.venv/bin/pytest -q tests/gateway/test_config.py tests/gateway/test_model_config_v2.py tests/gateway/test_models.py tests/gateway/test_usage.py tests/server/test_config.py tests/server/test_video_parse_worker.py tests/server/test_upload_service.py tests/engine/parsev1/test_model_sources.py tests/engine/parsev2 tests/agent/video_parse_v2/test_framework.py --tb=short`，**573 passed**；仅有既有 Starlette/AnyIO 弃用警告。修复后的独立只读源码复核通过。
 
-第一次实测 namespace `anivag_parse_budget_20261009_121056_test`、task `75501ba3-6d8d-410c-a653-bc2dc134c4b6` 在 ASR 供应商连接阶段即失败；恢复时数据库只保留4条 failed candidate_transcript，tokens 均缺失，父任务仍为 PARSING。进程及临时目录已消失，不能把该轮作为性能或端到端通过证据，也不能将缺失用量当零。已恢复原 MySQL/ES 数据目录；按原第6集680秒起点与相同 ffmpeg 参数重建素材，大小9999051、SHA256 `ddbecf396cb32193e99c5168428adf97b6cdd6627103d534a69dc0da36f2e4b5`、精确时长90.131708秒与原记录完全一致，取整为90132ms。恢复后的新一轮证据保存到持久目录 `outputs/verification/vision-controls-20261009-resumed/`。
+第一次实测 namespace `seekino_parse_budget_20261009_121056_test`、task `75501ba3-6d8d-410c-a653-bc2dc134c4b6` 在 ASR 供应商连接阶段即失败；恢复时数据库只保留4条 failed candidate_transcript，tokens 均缺失，父任务仍为 PARSING。进程及临时目录已消失，不能把该轮作为性能或端到端通过证据，也不能将缺失用量当零。已恢复原 MySQL/ES 数据目录；按原第6集680秒起点与相同 ffmpeg 参数重建素材，大小9999051、SHA256 `ddbecf396cb32193e99c5168428adf97b6cdd6627103d534a69dc0da36f2e4b5`、精确时长90.131708秒与原记录完全一致，取整为90132ms。恢复后的新一轮证据保存到持久目录 `outputs/verification/vision-controls-20261009-resumed/`。
 
-恢复后 task `f8e59ff7-1c05-4ec4-b788-c742353aa6eb`、namespace `anivag_parse_budget_resume_20261009_132118_test` 使用 `29b8051 + dirty` 的542文件冻结源码、原 Series 元数据和字节相同的素材。新旧 profile 与固定任务快照只差 Vision 的两个控制值；没有请求级配置覆盖。父任务、两 Chunk 和唯一 Interval 全部 COMPLETE，Chunk/Interval retry均0。提交到轮询观测终态为 **100.285秒**（13:22:03–13:23:44 UTC），其中 coordinator 观测时长95.470秒；轮询时间与处理时间分别保留，数据库 `processing_duration_ms=0` 不用作有效耗时。
+恢复后 task `f8e59ff7-1c05-4ec4-b788-c742353aa6eb`、namespace `seekino_parse_budget_resume_20261009_132118_test` 使用 `29b8051 + dirty` 的542文件冻结源码、原 Series 元数据和字节相同的素材。新旧 profile 与固定任务快照只差 Vision 的两个控制值；没有请求级配置覆盖。父任务、两 Chunk 和唯一 Interval 全部 COMPLETE，Chunk/Interval retry均0。提交到轮询观测终态为 **100.285秒**（13:22:03–13:23:44 UTC），其中 coordinator 观测时长95.470秒；轮询时间与处理时间分别保留，数据库 `processing_duration_ms=0` 不用作有效耗时。
 
 | 同片观测 | 修复前冻结轮 | 本轮 |
 | --- | ---: | ---: |
@@ -1552,7 +1552,7 @@ ASR原始17/11条秒制估计全部精确等于独立计算的 `round(seconds*10
 
 用户要求理解和精修改用轻推理对照。新轮只复制上一轮 `none` 的542文件冻结源码，将测试副本 `models.vision.reasoning_effort` 改为 `low`；其余541文件字节相同。视频仍为同一SHA256、9999051字节、90132ms，Series prompt元数据、65536输出预算、ASR、备用模型、并发和重试配置均保持；普通上传无请求级覆盖，ROOT默认仍为 `none`。两轮实际ASR分句与文字存在差异，因此只证明配置单项变化，不能宣称逐字prompt相同的严格A/B或仅由reasoning造成全部差异。
 
-本轮 namespace `anivag_parse_budget_resume_20261009_135022_test`，task `5940fbfb-439f-4a66-b066-68d8bc97c91d`；13:56:47–14:07:48 UTC提交至终态轮询 **661.334秒**。之前的沙箱本地连接拒绝发生在提交前，没有创建第二个任务或消耗模型Token，不计入解析墙钟。父任务、两Chunk和唯一Interval均COMPLETE，Chunk/Interval retry均0；这只表示执行通路结束，**本轮语义质量验收失败**。
+本轮 namespace `seekino_parse_budget_resume_20261009_135022_test`，task `5940fbfb-439f-4a66-b066-68d8bc97c91d`；13:56:47–14:07:48 UTC提交至终态轮询 **661.334秒**。之前的沙箱本地连接拒绝发生在提交前，没有创建第二个任务或消耗模型Token，不计入解析墙钟。父任务、两Chunk和唯一Interval均COMPLETE，Chunk/Interval retry均0；这只表示执行通路结束，**本轮语义质量验收失败**。
 
 | 同片对照 | 关闭推理 none | 轻推理 low |
 | --- | ---: | ---: |
@@ -1587,7 +1587,7 @@ low耗时约为none的6.59倍，Token增加约19.8%。两段理解仍并行：�
 
 用户提出“约15分钟完成高质量解析”的预期。**在修复前冻结轮去掉失败重试、沿用该轮首次理解和精修耗时，曾粗估约16分钟**（理解约10分钟、精修约6分钟、准备和索引），该历史估算不是本轮100.3秒的实测结果。最新默认配置未保证固定时限，也没有由完成时长证明高质量；视觉信息变少和空精修已留证。既有验收只确认新Parse通路与相对ASR的秒级时间一致性，未认证毫秒音轨真值或全部人物/动作/对白语义；ASR输出秒、程序保存毫秒的修复继续有效。
 
-依据：[模型适配器](../../gateway/ark/multimodal.py)、[SSE 终态处理](../../gateway/ark/sse.py)、[引用校验](../../engine/parsev2/schemas.py)、[Chunk Workflow](../../agent/video_parse_v2/understanding/workflow.py)、[宿主与 fallback](../../server/service/video_parse.py)、[Consumer 退避](../../server/mq/video_parse_consumer.py)、[最新运行证据索引](../../server/report_docs/model-token-usage-stages-evidence.md)。原始证据 `/private/tmp/anivag-asr-reparse-20261009/` 的 `source/`、`environment.json`、`stage-observations.jsonl`、`understanding-schema-diagnosis.json`、`state-latest.json`、`audit-parse-timing-final.json` 与 `acceptance-final.json`；装配/持久层有后续ROOT变化，根因以该冻结源码及实际调用记录为准。
+依据：[模型适配器](../../gateway/ark/multimodal.py)、[SSE 终态处理](../../gateway/ark/sse.py)、[引用校验](../../engine/parsev2/schemas.py)、[Chunk Workflow](../../agent/video_parse_v2/understanding/workflow.py)、[宿主与 fallback](../../server/service/video_parse.py)、[Consumer 退避](../../server/mq/video_parse_consumer.py)、[最新运行证据索引](../../server/report_docs/model-token-usage-stages-evidence.md)。原始证据 `/private/tmp/seekino-asr-reparse-20261009/` 的 `source/`、`environment.json`、`stage-observations.jsonl`、`understanding-schema-diagnosis.json`、`state-latest.json`、`audit-parse-timing-final.json` 与 `acceptance-final.json`；装配/持久层有后续ROOT变化，根因以该冻结源码及实际调用记录为准。
 
 #### 2026-09-23：ParseV1 历史实测数据与统计口径
 
@@ -1664,7 +1664,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 
 正确证据为第 13 集 Chunk `ad1c7419-c11c-5280-9e2e-89456355bfe7`，所属 Video 为 `e6a02c10-7b93-5af9-b21a-9e431bd130e6`。Transcript 在 `54600–56000 ms` 记载豊川祥子对若葉睦说「いいご身分ですわね。」，中文译文为「真是居高临下啊」。最终播放器范围为 `37500–60000 ms`，覆盖前后对话。用户记忆中的中文措辞与证据译文不同，需要核验近义表达。
 
-两轮实际 `model_usage` 均记录 Supervisor／Query／Evaluator／内部 Chat 使用 `gpt-6-astra`，Embedding 为 `doubao-embedding-vision-250615`；检索策略均为 `query-adaptive-three-channel-rrf-v2`，日志中的 ES index 名均为 `anivag_video_chunks_local_20261010_development`。失败轮比成功轮多选一个 EP04 复核 Series，但仍包含正确的第 13 集。以上排除了本样本中“换了模型”与“第 13 集不在 Scope”这两种解释；同名 index 不证明两个时点的全部文档／版本完全一致。
+两轮实际 `model_usage` 均记录 Supervisor／Query／Evaluator／内部 Chat 使用 `gpt-6-astra`，Embedding 为 `doubao-embedding-vision-250615`；检索策略均为 `query-adaptive-three-channel-rrf-v2`，日志中的 ES index 名均为 `seekino_video_chunks_local_20261010_development`。失败轮比成功轮多选一个 EP04 复核 Series，但仍包含正确的第 13 集。以上排除了本样本中“换了模型”与“第 13 集不在 Scope”这两种解释；同名 index 不证明两个时点的全部文档／版本完全一致。
 
 #### 未经证实的前提最早出现在哪里
 
@@ -1675,7 +1675,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 
 提出可撤回的搜索假设本身合理；需要防止把候选相关性、作品背景或模型联想当成已验证前提，并据此不断增加约束。该样本呈现“首批候选 → 人物／场景假设 → 后续搜索继续围绕该假设”的轨迹，存在候选锚定和确认偏差的表现。**具体由首批候选、模型既有知识还是 Character Bible 背景触发最初联想，现有 Trace 无法区分各自贡献，尚不能确定。**不得把推测写成已经定位的内部认知根因。
 
-**背景输入补核：实际包含关系与行为信息。**失败轮原始 Supervisor prompt 的两个 Series 均有 `characterBible=[]`，但 `importantExtraData.content` 各自传入完整的 `12581` 字符 Markdown Character Bible，包含 9 条 `relation_notes` 和 9 条 `behavior_notes`，不能只看空数组就判断没有背景关系。实际输入包括“若叶睦与祥子是青梅竹马、与爽世同班”“爱音与立希容易发生言语冲突”“爽世对旧乐队和丰川祥子有强烈情感牵引”等；`ANIVAG_RUNTIME_CONTEXT_START/END` 标记之外的完整正文也在 prompt 内。现代码的 `load_video_context()` 保留选定 Series，`project_inputs()` 直接带入 `series_context`，没有在 Chat 路径只提取运行时标记段或过滤关系／行为字段。背景里未出现本次目标台词、“第10集／16分钟”或“ANON TOKYO”这些具体检索条件，因此“有关系背景”是已确认输入事实，“该背景导致本次错误假设”仍未证明；原始完整 Query prompt 的历史留档限制不变。依据：[背景原文件](../../assets/mygo_background_referrence/characters.md)、[背景装配](../../server/service/agent_chat.py)、[Query 输入投影](../../agent/chat/video_search/context.py)及上述 Supervisor 原始 rollout 第 9 行。
+**背景输入补核：实际包含关系与行为信息。**失败轮原始 Supervisor prompt 的两个 Series 均有 `characterBible=[]`，但 `importantExtraData.content` 各自传入完整的 `12581` 字符 Markdown Character Bible，包含 9 条 `relation_notes` 和 9 条 `behavior_notes`，不能只看空数组就判断没有背景关系。实际输入包括“若叶睦与祥子是青梅竹马、与爽世同班”“爱音与立希容易发生言语冲突”“爽世对旧乐队和丰川祥子有强烈情感牵引”等；`SEEKINO_RUNTIME_CONTEXT_START/END` 标记之外的完整正文也在 prompt 内。现代码的 `load_video_context()` 保留选定 Series，`project_inputs()` 直接带入 `series_context`，没有在 Chat 路径只提取运行时标记段或过滤关系／行为字段。背景里未出现本次目标台词、“第10集／16分钟”或“ANON TOKYO”这些具体检索条件，因此“有关系背景”是已确认输入事实，“该背景导致本次错误假设”仍未证明；原始完整 Query prompt 的历史留档限制不变。依据：[背景原文件](../../assets/mygo_background_referrence/characters.md)、[背景装配](../../server/service/agent_chat.py)、[Query 输入投影](../../agent/chat/video_search/context.py)及上述 Supervisor 原始 rollout 第 9 行。
 
 #### 为什么之前的成功也不能证明检索稳定
 
@@ -1916,7 +1916,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 
 **待实施的恢复入口必须与调度一起设计。** 对最新任务校验版本、删除状态、失败意图及父／子／Prefix 租约；正在执行时返回明确原因，已经排队时返回幂等的排队结果，确需恢复时保留完成产物并唤醒有界恢复调度。不能仅以 `lease_owner=NULL` 就清空子任务或强制重做，也不能只是新增一个把状态改成 PARSING 的按钮——这两集调用现有 retry 后仍需等待父协调器，已证明“重新排队”与“马上续跑”不是一回事。页面需要直接展示恢复等待原因、下一次调度时间和可执行操作；验收须覆盖“另一个长任务仍运行时，中断任务也能在有界时间内恢复”，并保持模型调用并发限制。
 
-本轮另修复了一个启动脚本的小问题：Web 页面品牌已是 Seekino，旧探针硬编码 HTML 必须包含 `anivag`，错误拒绝复用正常的 5173 端口。`scripts/local_services.py` 改为检查 Vite 客户端与 `/src/main.tsx` 入口，随后仍验证 Web 的资料库 API 代理；修改后 `./start.sh start` 成功。此探针错误与解析调度缺陷分别处理。现有启动脚本测试为 24 passed／8 failed；8 个失败都来自 `_model_config()` 测试替身缺少当前配置函数使用的 `normalized_models`。在测试进程内恢复旧探针后，仍得到同样的 8 个失败，未修改这些无关测试或配置代码。
+本轮另修复了一个启动脚本的小问题：Web 页面品牌已是 Seekino，旧探针硬编码 HTML 必须包含 `seekino`，错误拒绝复用正常的 5173 端口。`scripts/local_services.py` 改为检查 Vite 客户端与 `/src/main.tsx` 入口，随后仍验证 Web 的资料库 API 代理；修改后 `./start.sh start` 成功。此探针错误与解析调度缺陷分别处理。现有启动脚本测试为 24 passed／8 failed；8 个失败都来自 `_model_config()` 测试替身缺少当前配置函数使用的 `normalized_models`。在测试进程内恢复旧探针后，仍得到同样的 8 个失败，未修改这些无关测试或配置代码。
 
 补充依据：[手动续跑接口](../../server/api/uploads.py)、[续跑状态校验和成果保留](../../server/repository/upload.py)、[操作能力投影](../../server/api/jobs.py)、[任务页按钮](../../web/src/features/tasks/TasksPage.tsx)、[上传恢复入口](../../web/src/features/uploads/UploadProvider.tsx)、[启动探针](../../scripts/local_services.py)；本机 10:13、10:21 MySQL 快照、10:20 两次续跑 HTTP 200 与 10:22 健康／任务列表检查。这里记录的是恢复资格与已观察到的子任务推进，不代表六个未完成视频已经解析完成。
 
@@ -1959,7 +1959,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 | 空闲轮询、任务量增大后的 DB 调度负担 | 消息发现与分发 | Redis Streams 的阻塞读取和消费组可能有帮助；本轮没有吞吐／锁等待基准证明这里是瓶颈 |
 | 电脑自动睡眠，Worker 无法续心跳 | 执行宿主暂停 | 不能；同机 Redis 不能让睡眠中的 Worker 工作，异机接管仍需要可访问的媒体和正确的旧执行隔离 |
 
-MySQL 本身并不排斥队列表：官方明确将 `SKIP LOCKED` 用于多会话访问队列表时避开已锁记录。AniVAG 的领取逻辑已经使用它；当前还拥有“创建业务记录和待执行任务可在同一数据库事务提交”的便利。需要修复的是我们在其上实现的停止、重试和调度规则，不能由这次故障推导出 MySQL 队列必然不可靠。[MySQL 锁定读取](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)、[当前领取代码](../../server/mq/video_parse_queue.py)。B09 的 Video 外键／Series 事务锁顺序也是独立问题：换成 Redis 分发任务不会消除这些业务 SQL。
+MySQL 本身并不排斥队列表：官方明确将 `SKIP LOCKED` 用于多会话访问队列表时避开已锁记录。Seekino 的领取逻辑已经使用它；当前还拥有“创建业务记录和待执行任务可在同一数据库事务提交”的便利。需要修复的是我们在其上实现的停止、重试和调度规则，不能由这次故障推导出 MySQL 队列必然不可靠。[MySQL 锁定读取](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)、[当前领取代码](../../server/mq/video_parse_queue.py)。B09 的 Video 外键／Series 事务锁顺序也是独立问题：换成 Redis 分发任务不会消除这些业务 SQL。
 
 #### 本地 RagFlow 实际怎么做
 
@@ -1987,7 +1987,7 @@ Redis Streams 消费组提供消息分摊、待确认记录和阻塞等待；XPE
 2. **允许消息重复，成果提交必须幂等。** “成果已提交，XACK 前退出”会重复投递。新 Worker 应先读任务版本和完成状态，已完成则确认跳过；未完成才领取执行。Redis 的消息 ownership 不会替旧进程撤销已经发出的模型请求，仍需保留任务版本／租约校验和索引版本保护，拒绝旧执行迟到提交。这是跨 DB、模型和索引写入边界的设计要求。
 3. **Redis 自身的持久化和运行维护。** 需要配置并验证重启恢复、持久化、容量及清理策略。RDB 是定时快照，AOF 的刷盘策略也有不同的丢失窗口；不能把内存队列当成天然比现有 DB 更耐故障。任务可由 DB 补投时，可降低消息层丢失对业务的影响。[Redis 持久化](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)。
 
-AniVAG 虽已有 `redis>=5,<7` 客户端依赖，目前 Redis 接入属于 cloud auth 的 OTP／限流／查询并发控制；local 模式不创建该客户端。它不是已经部署好的解析队列，迁移仍需独立的队列配置与生命周期管理，不能把认证 Redis 的职责直接混进解析队列。[当前 Redis 接入](../../server/caller/redis.py)、[认证配置](../../server/config/auth.py)。
+Seekino 虽已有 `redis>=5,<7` 客户端依赖，目前 Redis 接入属于 cloud auth 的 OTP／限流／查询并发控制；local 模式不创建该客户端。它不是已经部署好的解析队列，迁移仍需独立的队列配置与生命周期管理，不能把认证 Redis 的职责直接混进解析队列。[当前 Redis 接入](../../server/caller/redis.py)、[认证配置](../../server/config/auth.py)。
 
 #### 建议分批解决与验收
 
@@ -2053,7 +2053,7 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 
 另一个接入成本较低的云候选是 Groq `whisper-large-v3-turbo`：官方价 **0.04 美元／音频小时**，支持多语种、`verbose_json` 句段时间戳及 OpenAI Audio Transcriptions 协议；`whisper-large-v3` 为 0.111 美元／小时。可用账号和网络需实际核对，未将美元按假设汇率换算成人民币。[Groq 官方模型与价格／协议](https://console.groq.com/docs/speech-to-text)。本地 Whisper 可避免按调用支付 API 费用，但需要本地计算资源及 adapter／兼容服务，当前项目没有直接的本地 Whisper 执行入口。[Whisper 官方实现](https://github.com/openai/whisper)
 
-**切换边界：** AniVAG 已有 `openai_audio` 适配器，可发送准备好的 16kHz 单声道 WAV 并读取 `verbose_json.segments`；兼容服务可复用这条通路。只有 `json.text` 的响应会退化为整个 Chunk 一个时间范围，不能当作等价的句段字幕。国内上述异步接口仍需适配。已有失败任务的 `retry_parse()` 明确保留 ASR 冻结配置，只刷新理解／Refine，因此修改 YAML 后按原按钮重试不会切换这批任务的 ASR；需要单独定义保留完成 Chunk、只对未完成部分更新 ASR 的恢复策略，并保留配置与成果来源记录。[现有音频适配器](../../gateway/transcription.py)、[时间戳规范化](../../engine/common/transcription.py)、[重试冻结配置](../../server/service/upload.py)
+**切换边界：** Seekino 已有 `openai_audio` 适配器，可发送准备好的 16kHz 单声道 WAV 并读取 `verbose_json.segments`；兼容服务可复用这条通路。只有 `json.text` 的响应会退化为整个 Chunk 一个时间范围，不能当作等价的句段字幕。国内上述异步接口仍需适配。已有失败任务的 `retry_parse()` 明确保留 ASR 冻结配置，只刷新理解／Refine，因此修改 YAML 后按原按钮重试不会切换这批任务的 ASR；需要单独定义保留完成 Chunk、只对未完成部分更新 ASR 的恢复策略，并保留配置与成果来源记录。[现有音频适配器](../../gateway/transcription.py)、[时间戳规范化](../../engine/common/transcription.py)、[重试冻结配置](../../server/service/upload.py)
 
 ### B08：索引版本策略、Embedding 存储边界与 JSON 数值精度
 
@@ -2123,7 +2123,7 @@ ES 已有 ID／版本 V、向量 A
 
 优先级：待确认。状态：已观察到，独立问题，本次未修复；不阻断 C08 的这次真实 Chat 执行。
 
-- 当前代码为 `anivag_supervisor` 注册禁用 general-purpose SubAgent 的 harness profile，wrapper 的 `model_name` 使用 `anivag_supervisor:<configured-model>`；真实适配器追踪仍报告实际 provider，例如 DeepSeek／Ark。profile 匹配路径是否符合预期仍待独立复核，不能直接把猜测写成根因。
+- 当前代码为 `seekino_supervisor` 注册禁用 general-purpose SubAgent 的 harness profile，wrapper 的 `model_name` 使用 `seekino_supervisor:<configured-model>`；真实适配器追踪仍报告实际 provider，例如 DeepSeek／Ark。profile 匹配路径是否符合预期仍待独立复核，不能直接把猜测写成根因。
 - 本次真实回归的模型 operation／工具列表包含 `read_file,task,search_web,search_video_graph,understand_current_video`，而已有 fake-model 测试预期不包含 `task`。这里的 `task` 是 SDK 默认 general-purpose 工具，不是已注册的视频业务 SubAgent；工具列表包含它不代表本轮实际调用了它。
 - 待办归属：`gateway/agent_model` 的 SDK harness 配置适配。先以真实 provider 适配器复核 profile 选择与最终绑定工具，再确定最小修复；保留当前两个业务工具和专业工作流，不借此迁移整个 SubAgent 架构。
 - 验收：真实 DeepSeek／Ark 适配器与 fake-model 都不再暴露被明确禁用的默认 `task`，普通视频工具调用、会话 checkpoint 和错误传播仍通过。

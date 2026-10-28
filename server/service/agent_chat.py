@@ -239,7 +239,7 @@ class AgentChatService:
         self._monotonic_clock = monotonic_clock
         self._executor = ThreadPoolExecutor(
             max_workers=self._config.maximum_concurrent_kicks,
-            thread_name_prefix="anivag-agent",
+            thread_name_prefix="seekino-agent",
         )
         self._lock = Lock()
         self._executions: dict[str, AgentMessageExecution] = {}

@@ -3709,7 +3709,7 @@
       "created": 1790602727485,
       "link": null,
       "locked": false,
-      "name": "03  对 AniVAG 的启示：沿用现有 TRD，补齐字段到查询的合同"
+      "name": "03  对 Seekino 的启示：沿用现有 TRD，补齐字段到查询的合同"
     },
     {
       "id": "3fae031605b84c4e",
@@ -3768,8 +3768,8 @@
       "created": 1790602727485,
       "link": null,
       "locked": false,
-      "text": "03  对 AniVAG 的启示：沿用现有 TRD，补齐字段到查询的合同",
-      "originalText": "03  对 AniVAG 的启示：沿用现有 TRD，补齐字段到查询的合同",
+      "text": "03  对 Seekino 的启示：沿用现有 TRD，补齐字段到查询的合同",
+      "originalText": "03  对 Seekino 的启示：沿用现有 TRD，补齐字段到查询的合同",
       "fontSize": 34,
       "fontFamily": 2,
       "textAlign": "left",
@@ -3805,8 +3805,8 @@
       "created": 1790602727485,
       "link": null,
       "locked": false,
-      "text": "AniVAG 目标设计 · 不表示已实现｜Engine TRD §2.3.10–2.3.12 / Agent TRD 状态机｜本图未引入新表或新发布机制。",
-      "originalText": "AniVAG 目标设计 · 不表示已实现｜Engine TRD §2.3.10–2.3.12 / Agent TRD 状态机｜本图未引入新表或新发布机制。",
+      "text": "Seekino 目标设计 · 不表示已实现｜Engine TRD §2.3.10–2.3.12 / Agent TRD 状态机｜本图未引入新表或新发布机制。",
+      "originalText": "Seekino 目标设计 · 不表示已实现｜Engine TRD §2.3.10–2.3.12 / Agent TRD 状态机｜本图未引入新表或新发布机制。",
       "fontSize": 20,
       "fontFamily": 2,
       "textAlign": "left",

@@ -1,4 +1,4 @@
-"""Validated runtime configuration for the anivag Server process."""
+"""Validated runtime configuration for the seekino Server process."""
 
 from .mq import MQConsumerConfig
 from .settings import ServerSettings

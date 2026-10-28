@@ -660,7 +660,7 @@ class VideoParseRuntimeService:
                              separators=(",", ":"), allow_nan=False).encode()
         checksum = hashlib.sha256(content).hexdigest()
         check_active()
-        with tempfile.TemporaryDirectory(prefix="anivag-voiceprint-") as directory:
+        with tempfile.TemporaryDirectory(prefix="seekino-voiceprint-") as directory:
             path = Path(directory) / "scoring.json"
             path.write_bytes(content)
             check_active()

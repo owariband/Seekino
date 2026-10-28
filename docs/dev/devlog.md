@@ -154,7 +154,7 @@ Kimi 在计时结束后打乱样本、隐藏 arm 标签评分，执行代理逐�
 本轮实际修改树（`R` 为移位并调整引用，`A` 为新增维护入口或从本地产物提升的精简记录，`M` 只修改本次相关内容）：
 
 ```text
-AniVAG/
+Seekino/
 ├── evals/
 │   └── benchmark/
 │       ├── [A] README.md                         ← 分类、运行与维护入口
@@ -2526,7 +2526,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 - 两个独立 OS 进程，每组 10 个场景 × 2 次重复，共 40 次。按配对顺序交替先跑旧/新，第二轮反转场景顺序；同时只发起一个顶层请求，保留超时后的迟到终态与 usage。每次新建独立 SQL/native 会话，种入相同历史；没有共享上一条测试生成的回答。
 - 两组 Supervisor 均为 `gpt-5.6-luna / medium`、Codex harness；Query 为同一 `gpt-5.6-luna / high`，同一 embedding、工具 schema 与 runtime 设置。总超时均为 240 秒，`limits_enabled=false`。服务端 cache 未清空，fresh native session 不等于冷 cache；两次重复不提供 p95 或统计显著性结论。
 - 旧组冻结 Supervisor 源码 SHA-256 为 `62e5b794eb8d93b2911dbf30f8e5cf5f26ed6946d515b57f7aa062c46a067730`，新组为 `a7f0a1c5ad14ee9835855b855fcf61c92d936cdb7826a6693dd43ac4578fe949`。旧组真实调用 Jev `typesafe/jev-1.14`（响应版本 `jev-1.14-20261014`）与本地 Qwen3-8B-Q4_K_M；新组 `_query_hook=None`，将原始消息原样交给 Chat。完整源码与配置元数据分别保存在 `old/`、`new/`。
-- 使用原有 MyGO 13 集数据、MySQL、Elasticsearch 与真实工具。索引 `anivag_video_chunks_local_20261010_development`，前后 UUID 与文档数 **71,736** 一致。检索结果存在 `partial=true` 和第 2 集覆盖不足警告；能确认已命中的正例，不能证明全剧中不存在某句台词。
+- 使用原有 MyGO 13 集数据、MySQL、Elasticsearch 与真实工具。索引 `seekino_video_chunks_local_20261010_development`，前后 UUID 与文档数 **71,736** 一致。检索结果存在 `partial=true` 和第 2 集覆盖不足警告；能确认已命中的正例，不能证明全剧中不存在某句台词。
 - 通过实际 `/api/agent/conversations/create`、`/api/agent/messages/send` 的 ASGI HTTP 路径执行，记录发送到最终持久化/HTTP 错误的耗时；不包括新建会话、准备 fixture、真实客户端网络传输和浏览器渲染。首个文本可能只是过程说明，不等于首次给出正确答案。
 - 20 对 Supervisor 入口的历史、动态上下文、工具 schema 与原始请求一致；新组没有隐式改写原始消息。进一步读取对应 native rollout，**40/40 的历史消息均按原文、原顺序出现在当前 prompt 前**。旧组 `r1-holdout_mixed`、新组 `r2-retrieve_correct_negation` 有历史注入确认超时警告，但原生日志确认消息实际存在；不能将警告直接解释为历史丢失。证据：[input-audit.json](../../outputs/verification/jev-chat-e2e-ab-20261024/input-audit.json)、[native-history-audit.json](../../outputs/verification/jev-chat-e2e-ab-20261024/native-history-audit.json)。
 - 保存每次 HTTP 响应、阶段耗时、Jev 返回标签、8B 槽位、实际传入 Chat 的消息、工具参数、返回给模型的证据正文、可见回答与 provider/SDK usage。仅工具调用成功不足以判定任务完成；逐条对照当前请求、执行顺序、证据、提交片段与最终文本，审读记录见 [reviews.json](../../outputs/verification/jev-chat-e2e-ab-20261024/reviews.json)。这是 Agent 审读，未做独立人工盲评或全剧逐帧标注。
@@ -2659,7 +2659,7 @@ models:
 - 三组主 Chat 均为 `gpt-5.6-luna / medium`，Query 为同模型 `/ high`，新前置为同模型 `/ low` 或 `/ none`，均走当前 Codex harness；Jev 为 `typesafe/jev-1.14`，改写为本地 Qwen3-8B-Q4_K_M。同一工具、embedding、MyGO 数据、240 秒完整任务 deadline、`limits_enabled=false`。前置预检使用过 20 秒预算，已排除，正式三组均为 8 秒预算。正式运行没有改 prompt、case、生产代码或 runner。
 - 通过真实 `/api/agent/conversations/create` 和 `/api/agent/messages/send` 的 ASGI HTTP 路径测量，从 send 到最终响应/持久化或 HTTP 错误；不计建会话、写 fixture、真实客户端网络和浏览器渲染。FTT 使用记录器捕获的主模型首次 `handle_text` 回调作为代理指标，可能是“我去查一下”等过程说明，**不是浏览器实际首 token 或首个正确结果时间**。SDK/服务端缓存未清空，新会话不等于冷缓存；不是并发负载测试。
 - [输入审计](../../outputs/verification/query-hook-chat-model-ab-20261024/input-audit.json) 验证 **20/20 三元组**的主 Chat prompt、历史正文、工具 schema、原始请求一致；low/none 前置 prompt 与 schema 相同，SDK 实际请求的 effort 分别为 low/none，主 Chat 仍为 medium。**60/60 native 会话都按原文、顺序收到历史**，无历史注入确认警告。生产文件、case、runner SHA-256 与冻结记录一致。
-- 沿用 MyGO 13 集资料，返回证据仍有 `partial=true`、第 2 集覆盖不足等限制。Chunk 索引 `anivag_video_chunks_local_20261010_development` 的实验前后 UUID 和 **71,736** 文档数一致。Event 索引 `seekino_video_events_development_v3` 使用固定配置；本次只额外取得运行中与结束时快照，两者 UUID/文档数 **59,730** 一致，**没有把该快照冒充实验前快照**。未启动解析或重建索引。
+- 沿用 MyGO 13 集资料，返回证据仍有 `partial=true`、第 2 集覆盖不足等限制。Chunk 索引 `seekino_video_chunks_local_20261010_development` 的实验前后 UUID 和 **71,736** 文档数一致。Event 索引 `seekino_video_events_development_v3` 使用固定配置；本次只额外取得运行中与结束时快照，两者 UUID/文档数 **59,730** 一致，**没有把该快照冒充实验前快照**。未启动解析或重建索引。
 - 逐条审读 HTTP 文本、过程顺序、工具参数/证据、提交片段和返回卡片描述，见 [reviews.json](../../outputs/verification/query-hook-chat-model-ab-20261024/reviews.json)。`pass` 为完整处理当前任务且说法与证据一致，`partial` 为近似片段、回应错位、时间/片段描述错误或越过证据，`fail` 为错目标、漏任务或超时。没有把标签正确、工具返回成功当作业务通过。对话措辞存在审读判断，例如 low 第二次“并非明确排斥”按未明确表达排斥判通过；none 第二次 C19 转为品评用户原句判部分。未做独立人工盲评，不能把这些分数包装成客观大样本正确率。
 - 正例锚点包括第 13 集 54.6–56 秒「いいご身分ですわね。」和第 7 集 607.7–610.8 秒首次 live 对白。首次登台请求接受经证据确认的同场演出片段，不要求必须截到这句对白，例如 Jev 第二轮提交 840–900 秒的演奏片段可通过；若卡片明确宣称包含这句对白而所选范围没有，则计部分。雨中等人与“说话无趣”两类仅得到近似候选，未确认全剧不存在精确目标，不以索引缺失证明不存在。
 

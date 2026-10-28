@@ -46,7 +46,7 @@ class VideoSummarizeConfig:
     def from_environment(cls) -> "VideoSummarizeConfig":
         values = {}
         for name, default in asdict(cls()).items():
-            env_name = "ANIVAG_SUMMARIZE_" + name.upper()
+            env_name = "SEEKINO_SUMMARIZE_" + name.upper()
             raw = os.getenv(env_name)
             if raw is None:
                 continue

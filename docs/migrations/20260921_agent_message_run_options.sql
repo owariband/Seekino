@@ -1,4 +1,4 @@
--- anivag controlled migration: persist the per-message Agent execution budget.
+-- seekino controlled migration: persist the per-message Agent execution budget.
 -- Existing messages predate configurable budgets and therefore remain NULL.
 
 ALTER TABLE agent_message

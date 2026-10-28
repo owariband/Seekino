@@ -179,7 +179,7 @@ class _ProcessExporter:
                 "timeout": settings.export_timeout_seconds,
             }).encode()
             configuration_frame = struct.pack("!I", len(configuration)) + configuration
-            self._thread = Thread(target=self._pump, args=(configuration_frame,), name="anivag-trace-ipc", daemon=True)
+            self._thread = Thread(target=self._pump, args=(configuration_frame,), name="seekino-trace-ipc", daemon=True)
             self._thread.start()
         except Exception:
             self._closing.set()
@@ -354,11 +354,11 @@ class LangfuseTracing:
                         self._settings, public_key, secret_key, _tracing_base_url(base_url),
                     )
                 self._provider = TracerProvider(
-                    resource=Resource({"service.name": "anivag-gateway"}), shutdown_on_exit=False,
+                    resource=Resource({"service.name": "seekino-gateway"}), shutdown_on_exit=False,
                     span_limits=SpanLimits(max_attributes=128, max_attribute_length=4096, max_events=0),
                 )
                 self._provider.add_span_processor(SimpleSpanProcessor(self._exporter))
-                self._tracer = self._provider.get_tracer("anivag.gateway", "1")
+                self._tracer = self._provider.get_tracer("seekino.gateway", "1")
             except Exception:
                 self._unavailable = True
                 if self._exporter is not None:
@@ -378,7 +378,7 @@ class LangfuseTracing:
             tracer = self._ensure_tracer()
             if tracer is not None and parent is None:
                 attributes = {
-                    "langfuse.observation.type": "span", "langfuse.trace.name": "anivag.execute",
+                    "langfuse.observation.type": "span", "langfuse.trace.name": "seekino.execute",
                     "langfuse.environment": self._settings.environment,
                 }
                 if self._settings.release:
@@ -390,7 +390,7 @@ class LangfuseTracing:
                 if isinstance(session, (str, int)):
                     attributes["session.id"] = str(session)[:256]
                     attributes["langfuse.session.id"] = str(session)[:256]
-                span = tracer.start_span("anivag.execute", context=_parent_context(context), attributes=attributes)
+                span = tracer.start_span("seekino.execute", context=_parent_context(context), attributes=attributes)
                 token = self._scope_span.set(span)
         except Exception:
             _logger.warning("Model tracing scope creation failed; model result and ledger are preserved")

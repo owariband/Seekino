@@ -68,12 +68,12 @@ from server.utils.time import datetime_to_unix_time_ms
 
 @pytest.fixture
 def isolated_store():
-    url = os.getenv("ANIVAG_TEST_ELASTICSEARCH_URL")
+    url = os.getenv("SEEKINO_TEST_ELASTICSEARCH_URL")
     if not url:
-        pytest.skip("ANIVAG_TEST_ELASTICSEARCH_URL is not configured")
-    api_key = os.getenv("ANIVAG_TEST_ELASTICSEARCH_API_KEY")
+        pytest.skip("SEEKINO_TEST_ELASTICSEARCH_URL is not configured")
+    api_key = os.getenv("SEEKINO_TEST_ELASTICSEARCH_API_KEY")
     client = Elasticsearch(url, api_key=api_key, request_timeout=15)
-    index_name = f"anivag_test_{uuid4().hex}"
+    index_name = f"seekino_test_{uuid4().hex}"
     store = ElasticsearchVideoChunkStore(
         client, index_name=index_name, environment="test",
         semantic_dimensions=2, vision_dimensions=2,

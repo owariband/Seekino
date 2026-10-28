@@ -1,10 +1,10 @@
 # 本地 Sandbox 与 DeepAgents 接入研究
 
-研究日期：2026-10-26。目标：为 AniVAG local mode 找到已有的本地隔离执行能力，验证能否保留 Kimi / DeepAgents，只替换命令执行后端。
+研究日期：2026-10-26。目标：为 Seekino local mode 找到已有的本地隔离执行能力，验证能否保留 Kimi / DeepAgents，只替换命令执行后端。
 
 **结论：本地隔离 sandbox 有现成实现，不要求 LangSmith 云账号，也不要求把模型循环换成 Codex。Codex 的独立 sandbox 命令、Anthropic Sandbox Runtime 都能隔离本地进程。** 之前围绕 LangSmith 托管服务展开的讨论没有覆盖这个方向；不能把某个托管产品的部署条件理解成本地 sandbox 的必要条件。
 
-本文件是资料与接入边界核对，不代表已完成 AniVAG 创作后端接线。实际运行结果应与下述官方能力分开记录。
+本文件是资料与接入边界核对，不代表已完成 Seekino 创作后端接线。实际运行结果应与下述官方能力分开记录。
 
 ## 优先阅读的官方资料
 
@@ -56,7 +56,7 @@ Anthropic 已把本地隔离实现发布为独立的 `@anthropic-ai/sandbox-runt
 建议保持已有 Kimi / DeepAgents，采用工具访问 sandbox 的模式：
 
 ```text
-AniVAG 宿主：模型、检索、会话状态
+Seekino 宿主：模型、检索、会话状态
     → DeepAgents 文件与 execute 工具
     → BaseSandbox 适配
     → 本地 Codex sandbox / srt
@@ -70,7 +70,7 @@ AniVAG 宿主：模型、检索、会话状态
 
 薄适配仍需承担：工作区和权限策略、参数传递、stdout / stderr / 退出码、超时与取消、文件传入传出及清理。不能把“几个接口”理解成已经完成生产隔离。尤其文件传输由宿主实现时，也必须限制在当前工作区，避免绕过命令沙箱。
 
-现有 AniVAG 把后端设为 `StateBackend`，文件工具仅开放 `read_file`。因此把某个 runtime 安装到机器上还不会自动让现有 Supervisor 获得创作执行能力；需要明确接入 backend 并开放对应工具。[当前装配](../../gateway/agent_model/deepagents.py)
+现有 Seekino 把后端设为 `StateBackend`，文件工具仅开放 `read_file`。因此把某个 runtime 安装到机器上还不会自动让现有 Supervisor 获得创作执行能力；需要明确接入 backend 并开放对应工具。[当前装配](../../gateway/agent_model/deepagents.py)
 
 ## 5. 最短验证路径与边界
 
@@ -82,7 +82,7 @@ AniVAG 宿主：模型、检索、会话状态
 
 运行环境为 macOS、本机 `codex-cli 0.163.0`。探针只运行 Python 和 FFmpeg，没有模型调用或 LangSmith 服务请求。证据：[探针源码](../../outputs/verification/local-sandbox-20261026/probe.py)、[完整命令参数](../../outputs/verification/local-sandbox-20261026/command.json)、[结构化结果](../../outputs/verification/local-sandbox-20261026/result.json)。
 
-命令使用显式命名权限 profile `anivag-local-proof`，保留 `--include-managed-config`，以 `:minimal` 为只读基础，增加 Homebrew 工具目录、Python runtime、探针目录和源视频的读取权限，显式业务写权限只给 `work/`，`denied/` 合成测试目录设为不可访问；网络关闭。Codex 的 macOS 进程策略还包含系统临时目录等基础许可，因此这里不声称所有工作区外路径均不可写。具体参数保存在 `command.json`，不能把这套路径配置直接当成生产通用策略。
+命令使用显式命名权限 profile `seekino-local-proof`，保留 `--include-managed-config`，以 `:minimal` 为只读基础，增加 Homebrew 工具目录、Python runtime、探针目录和源视频的读取权限，显式业务写权限只给 `work/`，`denied/` 合成测试目录设为不可访问；网络关闭。Codex 的 macOS 进程策略还包含系统临时目录等基础许可，因此这里不声称所有工作区外路径均不可写。具体参数保存在 `command.json`，不能把这套路径配置直接当成生产通用策略。
 
 | 检查 | 实测结果 |
 | --- | --- |
@@ -106,7 +106,7 @@ FFmpeg 从已有的 60 秒 EP04 素材剪出了 [preview.mp4](../../outputs/veri
 ## 7. 实际改动与验证范围
 
 ```text
-AniVAG/
+Seekino/
 ├── docs/
 │   └── research/
 │       └── [A] 2026-10-26-local-sandbox-deepagents.md  ← 官方资料、源码核对与实测记录

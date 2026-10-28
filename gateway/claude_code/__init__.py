@@ -1,4 +1,4 @@
-"""Claude Agent SDK adapter for AniVAG agent runtimes."""
+"""Claude Agent SDK adapter for Seekino agent runtimes."""
 
 from .agent import ClaudeAgentModel, ClaudeAgentModelError
 

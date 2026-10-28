@@ -54,10 +54,10 @@ constants/workspace.py 改名为 constants/tenant.py。没有增加 Workspace �
 
 最终定向回归命令：
 ```sh
-env ANIVAG_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests/server/test_auth.py tests/server/test_query_limits.py tests/server/test_business_api_auth.py tests/server/test_cloud_access.py tests/server/test_cloud_library_access.py tests/server/test_cloud_agent_runtime.py tests/server/test_sse_events.py tests/server/test_database.py tests/server/test_tenant_index_migration.py -q --tb=short
+env SEEKINO_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests/server/test_auth.py tests/server/test_query_limits.py tests/server/test_business_api_auth.py tests/server/test_cloud_access.py tests/server/test_cloud_library_access.py tests/server/test_cloud_agent_runtime.py tests/server/test_sse_events.py tests/server/test_database.py tests/server/test_tenant_index_migration.py -q --tb=short
 ```
 
-临时 MySQL 仅 Unix socket，skip_networking=ON、port=0，不读取.env.local；验证后 mysqladmin shutdown 成功。证据保存在 /private/tmp/anivag-identity-mysql-1k1xx2z_/validation_result.json、legacy_snapshot.json、current_snapshot.json 和 server.log。临时 Redis16379已通过 SHUTDOWN NOSAVE 关闭，未使用 FLUSHDB，未操作已有服务。
+临时 MySQL 仅 Unix socket，skip_networking=ON、port=0，不读取.env.local；验证后 mysqladmin shutdown 成功。证据保存在 /private/tmp/seekino-identity-mysql-1k1xx2z_/validation_result.json、legacy_snapshot.json、current_snapshot.json 和 server.log。临时 Redis16379已通过 SHUTDOWN NOSAVE 关闭，未使用 FLUSHDB，未操作已有服务。
 
 ## 改动量与共享工作区边界
 
@@ -66,7 +66,7 @@ env ANIVAG_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests
 - 当前整个共享工作区 git diff --shortstat 快照：216 files changed, 6439 insertions(+), 3490 deletions(-)。这是所有 Agent/原有修改合计，不可作为本任务独占改动量。
 - 清单覆盖的已跟踪路径 git diff --numstat 汇总：158条路径，+5010/-2256行；部分路径有并行改动及前次已授权 Mixin 清理，同样不代表本任务单独新增量。新增未跟踪文件不计入 Git numstat。
 - staged 为空。快照时未跟踪文件61份，随后新增本报告；其中包含其他 Agent 及原有工作，未加入暂存。TRD 原目录被 gitignore，未 force-add。
-- 合同替换基线保存在 /private/tmp/anivag-identity-baseline-pdwlnbis/manifest.json 及镜像原文，可用于分离共享文件中的文本更名。原有未跟踪的实时识别测试仅修改其中范围字段，树中标 M。
+- 合同替换基线保存在 /private/tmp/seekino-identity-baseline-pdwlnbis/manifest.json 及镜像原文，可用于分离共享文件中的文本更名。原有未跟踪的实时识别测试仅修改其中范围字段，树中标 M。
 - 用户最新要求补齐 config/constants/utils/error 归属，新增相关认证模块在该职责内；未进行其他领域的错误类搬迁或目录重构。
 - 全库 git diff --check 当前只报共享 agent/chat/video_search/context.py 新增末尾空行；基线只有一个换行，当前并行版本有两个。本任务没有清理该并行内容。排除该文件的其余已跟踪 diff 空白检查通过，新增ES文件另行检查通过。
 
@@ -75,7 +75,7 @@ env ANIVAG_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests
 树描述本任务在各文件的调整；共享文件中的实时识别、模型输出和解析框架等其他并行变化由相应 Agent 负责，本报告不将其计入游客功能实现。
 
 ```text
-AniVAG/
+Seekino/
 ├── agent/
 │   └── chat/
 │       ├── common/
@@ -541,7 +541,7 @@ AuthService 只借用注入的 Redis，不负责创建、探活或关闭，已�
 ### caller 实际修改树
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── caller/
 │   │   ├── [A] __init__.py  ← 外部依赖层入口
@@ -605,7 +605,7 @@ AniVAG/
 
 最终回归命令：
 ```sh
-env ANIVAG_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests/server/test_caller.py tests/server/test_bootstrap.py tests/server/test_auth.py tests/server/test_query_limits.py tests/server/test_cloud_access.py tests/server/test_database.py tests/server/test_cli_elasticsearch.py tests/server/test_local_services.py tests/server/test_tenant_index_migration.py -q --tb=short
+env SEEKINO_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests/server/test_caller.py tests/server/test_bootstrap.py tests/server/test_auth.py tests/server/test_query_limits.py tests/server/test_cloud_access.py tests/server/test_database.py tests/server/test_cli_elasticsearch.py tests/server/test_local_services.py tests/server/test_tenant_index_migration.py -q --tb=short
 ```
 
 ## 2026-10-10 补充：进程总装配与模块子装配
@@ -631,7 +631,7 @@ CLI 是另一个一次性进程入口。其资源上下文明确指 `caller.mysq
 ### 总装配实际修改树
 
 ```text
-AniVAG/
+Seekino/
 ├── server/
 │   ├── [A] main.py  ← 进程总装配与 ApplicationRuntime
 │   │   影响：统一配置检查、启动、构造失败和停机资源回收
@@ -681,7 +681,7 @@ AniVAG/
 最终定向回归：**338 passed，零 skip**。覆盖 Main、Caller、Bootstrap、CLI、V2 Worker、邮箱认证、真实 Redis 额度、cloud 权限、业务接口鉴权、公开课程、cloud Agent Runtime、SSE、本地服务脚本。认证与额度使用16379端口的独立Redis，MySQL使用隔离SQLite或SDK替身，ES、邮件、模型使用替身；没有连接现有MySQL／ES或真实SMTP。
 
 ```sh
-env ANIVAG_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests/server/test_main.py tests/server/test_caller.py tests/server/test_bootstrap.py tests/server/test_cli_elasticsearch.py tests/server/test_video_parse_worker.py tests/server/test_auth.py tests/server/test_query_limits.py tests/server/test_cloud_access.py tests/server/test_business_api_auth.py tests/server/test_cloud_library_access.py tests/server/test_cloud_agent_runtime.py tests/server/test_sse_events.py tests/server/test_local_services.py -q --tb=short
+env SEEKINO_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests/server/test_main.py tests/server/test_caller.py tests/server/test_bootstrap.py tests/server/test_cli_elasticsearch.py tests/server/test_video_parse_worker.py tests/server/test_auth.py tests/server/test_query_limits.py tests/server/test_cloud_access.py tests/server/test_business_api_auth.py tests/server/test_cloud_library_access.py tests/server/test_cloud_agent_runtime.py tests/server/test_sse_events.py tests/server/test_local_services.py -q --tb=short
 ```
 
 另一次包含test_api.py的四组回归为 **166 passed、12 failed**。12项失败属于该测试的旧Agent Stub：仍调用get_draft_catelog、read_trieve_item、update_draft_item、update_video_item，与当前并行开发的Canvas工具契约不一致。用本轮基线旧HTTP工厂重跑test_agent_conversation_send_and_list_messages，仍返回502并发生KeyError('get_draft_catelog')，证明该失败已存在且与总装配改动无关。未修改职责外的Agent代码或旧Stub。此项TODO归Agent Canvas／API测试维护方，需要更新替身后重跑这12项。
@@ -710,9 +710,9 @@ Main/API/CLI 的 `--help` 均通过，原启动命令、端口、日志参数和
 
 候选完整Python回归命令：
 ```sh
-env ANIVAG_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests -q --tb=short
+env SEEKINO_TEST_AUTH_REDIS_URL=redis://127.0.0.1:16379/15 .venv/bin/pytest tests -q --tb=short
 ```
 
-发布范围统计：206 files changed, 8934 insertions(+), 2131 deletions(-)。精确提交清单及基线证据保存在/private/tmp/anivag-identity-publish；分支和提交号以本次Git提交及推送回执为准。
+发布范围统计：206 files changed, 8934 insertions(+), 2131 deletions(-)。精确提交清单及基线证据保存在/private/tmp/seekino-identity-publish；分支和提交号以本次Git提交及推送回执为准。
 
 推送准备期间另一并行任务已发布2d5ce92（ContextCanvas）。本次提交已接到该父提交，保留已发布Canvas流程，合并Tenant字段并适配API模型替身；合并后必要回归test_api/test_main/test_caller/test_bootstrap为142 passed、零失败。上述2573项全量结果对应合并前隔离候选；未在新父提交上重复全量。未纳入未提交Realtime或其他provider修改。

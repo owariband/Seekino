@@ -21,7 +21,7 @@
   <a href="#references">References</a>
 </p>
 
-Seekino (formerly AniVAG) turns your videos into a searchable footage library. Import videos, analyze visuals and dialogue, describe what you need, and retrieve clips with timestamps that lead back to the original. Video analysis and retrieval are also available through APIs for your own tools and workflows.
+Seekino (formerly Seekino) turns your videos into a searchable footage library. Import videos, analyze visuals and dialogue, describe what you need, and retrieve clips with timestamps that lead back to the original. Video analysis and retrieval are also available through APIs for your own tools and workflows.
 
 ## Under construction
 
@@ -109,7 +109,7 @@ After starting the service, inspect requests and responses in the [OpenAPI docs]
 
 ## Creative experiments
 
-A separate experiment has already connected retrieval, clip preparation and HyperFrames composition into an offline HTML short video. See the [short-video experiment workflow](.agents/skills/anivag-short-video/SKILL.md). It explores reusing retrieved footage; check its scripts and configuration against the current API before using them.
+A separate experiment has already connected retrieval, clip preparation and HyperFrames composition into an offline HTML short video. See the [short-video experiment workflow](.agents/skills/seekino-short-video/SKILL.md). It explores reusing retrieved footage; check its scripts and configuration against the current API before using them.
 
 The project is still evolving. Analysis, retrieval and answers can be inaccurate, so check them against the original footage. Known issues and planned work are listed in the [issue list](docs/dev/problems.md) (in Chinese).
 
@@ -193,7 +193,7 @@ With Docker Compose:
 docker compose --env-file .env.local up -d --wait mysql elasticsearch
 ```
 
-On first start, Compose creates the default development database `anivag_development`, and database ports are only published on `127.0.0.1`. The server, web app and ffmpeg still run on the host. If you use an existing MySQL, create the database and account named in `ANIVAG_DATABASE_URL` first; `init-db` only creates tables, not the database.
+On first start, Compose creates the default development database `seekino_development`, and database ports are only published on `127.0.0.1`. The server, web app and ffmpeg still run on the host. If you use an existing MySQL, create the database and account named in `SEEKINO_DATABASE_URL` first; `init-db` only creates tables, not the database.
 
 Then initialise or verify the current schema and ES index:
 
@@ -224,7 +224,7 @@ uv run --no-sync --env-file .env.local -- npm --prefix web run dev -- --host 127
 
 `python -m server.api` forwards to the official `server.main` entry point. The API process already includes the V2 consumer, so no separate worker is needed. Stop each hand-started process with Ctrl-C. Stop the databases with `docker compose --env-file .env.local stop mysql elasticsearch`; their volumes are kept.
 
-The Vite proxy reads `ANIVAG_HTTP_HOST` / `ANIVAG_HTTP_PORT` from the same environment. To use a custom web port, change `--port` above and `ANIVAG_ALLOWED_ORIGINS`. Changing `ANIVAG_WEB_PORT` alone does not change the port of a hand-started Vite.
+The Vite proxy reads `SEEKINO_HTTP_HOST` / `SEEKINO_HTTP_PORT` from the same environment. To use a custom web port, change `--port` above and `SEEKINO_ALLOWED_ORIGINS`. Changing `SEEKINO_WEB_PORT` alone does not change the port of a hand-started Vite.
 
 #### Optional: local launcher
 
@@ -238,9 +238,9 @@ The repository includes a launcher for lazily starting local MySQL, reusing the 
 
 The launcher defaults to the checked-out `main` worktree and its `.env.local`. Use `./start.sh --branch dev` (and `--branch dev status` / `--branch dev stop`) for an existing dev worktree. `start` uses current local files, including uncommitted changes, without pulling or switching branches. Managed API/Web processes are refreshed when their source directory, file contents, or configuration changes; unchanged processes are reused, and unknown port owners are rejected. MySQL/ES are not stopped by this refresh.
 
-The launcher checks the API library and the web proxy against the current `tenantId` contract, using the local tenant configured in `ANIVAG_LOCAL_TENANT_ID`. Elasticsearch must be reachable before you start: the script verifies the cluster and index but does not start ES. `stop` only stops processes the launcher manages. It does not stop a hand-started API/web or the Compose databases.
+The launcher checks the API library and the web proxy against the current `tenantId` contract, using the local tenant configured in `SEEKINO_LOCAL_TENANT_ID`. Elasticsearch must be reachable before you start: the script verifies the cluster and index but does not start ES. `stop` only stops processes the launcher manages. It does not stop a hand-started API/web or the Compose databases.
 
-Launcher data and logs go to `outputs/local-services/`. Media goes to `outputs/server/artifacts/` by default, configurable with `ANIVAG_ARTIFACT_ROOT`. An existing MySQL/ES is reused as configured, and old schemas are never altered automatically. For Docker and port details, see the [development deployment notes](deploy/README.md) (in Chinese).
+Launcher data and logs go to `outputs/local-services/`. Media goes to `outputs/server/artifacts/` by default, configurable with `SEEKINO_ARTIFACT_ROOT`. An existing MySQL/ES is reused as configured, and old schemas are never altered automatically. For Docker and port details, see the [development deployment notes](deploy/README.md) (in Chinese).
 
 </details>
 
@@ -296,7 +296,7 @@ The top-level `supervisor_harness` chooses between the Codex and Deep Agents exe
 
 The gateway supports OpenAI-compatible APIs, Ark, a local Codex login, the Claude SDK and more; each model role and harness has its own capability requirements. Restart the server after changing a source, model or harness. It will not silently switch execution style when the config doesn't match.
 
-`agent_runtime` parameters saved from the Settings page are written to the server's `config.yaml`. The next new message uses the new values; an answer already in progress keeps the parameters it started with. `maximum_concurrent_kicks`, model connections and other startup settings need a server restart. Runtime parameters set explicitly in YAML override the matching `ANIVAG_AGENT_*` environment fallbacks.
+`agent_runtime` parameters saved from the Settings page are written to the server's `config.yaml`. The next new message uses the new values; an answer already in progress keeps the parameters it started with. `maximum_concurrent_kicks`, model connections and other startup settings need a server restart. Runtime parameters set explicitly in YAML override the matching `SEEKINO_AGENT_*` environment fallbacks.
 
 The Model Usage page reads MySQL `model_usage`. It covers V2 parsing/indexing and assistant calls, and shows only recorded tokens and known subtotals. Failed records may be missing, and unknown usage is never counted as zero. It does not calculate cost or enforce hard token quotas. The production bootstrap **does not wire up the Langfuse writer/reader**, so setting `tracing.enabled` to true does not turn on server tracing; the standalone module and config fields are still kept.
 
@@ -307,7 +307,7 @@ For source configuration see [model configuration](docs/model-config.md) and [ga
 <details>
 <summary>Local and cloud identity</summary>
 
-The default `ANIVAG_AUTH_MODE=local` uses `local-user` / `local-default`, with no login on your own machine.
+The default `SEEKINO_AUTH_MODE=local` uses `local-user` / `local-default`, with no login on your own machine.
 
 `cloud` mode also needs a signing secret, Redis, SMTP and same-origin HTTPS. Redis stores verification-code digests, rate limits and concurrency leases; MySQL stores users, tenants and resource ownership. You can start the optional development Redis from Compose:
 
@@ -350,14 +350,14 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-Real integration tests need separate `ANIVAG_TEST_DATABASE_URL`, `ANIVAG_TEST_ELASTICSEARCH_URL` and `ANIVAG_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider. Known issues and pending acceptance checks are recorded in the [issue list](docs/dev/problems.md).
+Real integration tests need separate `SEEKINO_TEST_DATABASE_URL`, `SEEKINO_TEST_ELASTICSEARCH_URL` and `SEEKINO_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider. Known issues and pending acceptance checks are recorded in the [issue list](docs/dev/problems.md).
 
 Passing unit tests, builds, isolated SQL/ES tests and mocked-API browser tests is not the same as a full acceptance run with real models. Semantic quality, cold-start latency of on-demand understanding, real SMTP and full browser end-to-end runs each need separate acceptance. A successful `/healthz` only means the consumer is running.
 
 ## Repository and docs
 
 ```text
-anivag/
+seekino/
 ├── config.yaml / .env.example   # Model defaults and environment template
 ├── gateway/                    # Model protocols and source adapters
 ├── engine/                     # parsev2, rag and shared media utilities

@@ -4,7 +4,7 @@
 
 `config.yaml` 的版本 2 把连接信息放在 `model_sources`，把模型定义放在 `models`。业务向 Gateway 传模型引用；Gateway 解析配置、校验能力并创建适配器。`agent_runtime` 保留运行参数，`video_parser` 保留采样和降级策略。密钥仍写在 `.env.local`，不要写进 YAML。
 
-配置存储仍是本地 YAML，通过 `ANIVAG_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑使用保存的模型快照；通过 API 显式重试时，Server 会读取当前本地配置，更新理解、精炼模型和视觉输入方式，保留已有 ASR、向量模型和任务拓扑。连接定义的变更仍需重启 Gateway 所在服务。这里没有引入数据库模型管理、HTTP CRUD 或云端配置。
+配置存储仍是本地 YAML，通过 `SEEKINO_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑使用保存的模型快照；通过 API 显式重试时，Server 会读取当前本地配置，更新理解、精炼模型和视觉输入方式，保留已有 ASR、向量模型和任务拓扑。连接定义的变更仍需重启 Gateway 所在服务。这里没有引入数据库模型管理、HTTP CRUD 或云端配置。
 
 ## 模型定义与默认引用
 
@@ -77,7 +77,7 @@ models:
     max_input_chars: 400000
 ```
 
-保留现有 `models.agent` 即可继续为视频 Query、Evaluator 和 Chat 使用原来的 API 模型。`models.supervisor` 的来源、模型、推理和预算独立保存，不接受 `ANIVAG_AGENT_CHAT_MODEL` 或 `ANIVAG_AGENT_FALLBACK_MODEL` 覆盖。显式 `reasoning_effort` 优先，否则使用 `agent_runtime.supervisor_reasoning_effort`。模型绑定的超时、输出和上下文预算与已有 Agent 运行限制共同生效；例如本轮截止时间仍受 `agent_runtime.execution_timeout_seconds` 和 `supervisor_timeout_seconds` 约束。Codex 的 `max_output_tokens` 用于预算预留，不保证协议硬截断。
+保留现有 `models.agent` 即可继续为视频 Query、Evaluator 和 Chat 使用原来的 API 模型。`models.supervisor` 的来源、模型、推理和预算独立保存，不接受 `SEEKINO_AGENT_CHAT_MODEL` 或 `SEEKINO_AGENT_FALLBACK_MODEL` 覆盖。显式 `reasoning_effort` 优先，否则使用 `agent_runtime.supervisor_reasoning_effort`。模型绑定的超时、输出和上下文预算与已有 Agent 运行限制共同生效；例如本轮截止时间仍受 `agent_runtime.execution_timeout_seconds` 和 `supervisor_timeout_seconds` 约束。Codex 的 `max_output_tokens` 用于预算预留，不保证协议硬截断。
 
 使用 Deep Agents 时将 `supervisor_harness` 改为 `deepagents`，并将 `models.supervisor` 设为 OpenAI 兼容或 Ark API 模型，例如沿用 `models.agent` 中的 DeepSeek 与 Ark 回退绑定。该路径由 Deep Agents 管理模型和工具循环；Codex 路径由原生 Codex runtime 执行同一 Supervisor 业务工具。Codex harness 要求 `codex_app_server` 来源，不接受 `fallback`；Deep Agents 只接受 API 来源及单层 Ark API 回退，配置错配明确报错，不自动切换 harness。
 
@@ -135,7 +135,7 @@ model_sources:
   campplus_local:
     adapter: campplus
     provider: local
-    checkpoint_path: /opt/anivag/models/campplus/campplus_cn_common.bin
+    checkpoint_path: /opt/seekino/models/campplus/campplus_cn_common.bin
     cpu_threads: 6
     max_audio_seconds: 30
 models:
@@ -170,7 +170,7 @@ torch／torchaudio 2.8.0、NumPy 2.2.6、SciPy 1.15.3，PyYAML 复用主依赖�
 上游完整训练依赖或 `modelscope`。以下是部署者按实际目录执行的准备命令：
 
 ```bash
-SPEAKER_HOME=/opt/anivag/models/campplus
+SPEAKER_HOME=/opt/seekino/models/campplus
 mkdir -p "$SPEAKER_HOME"
 git clone https://github.com/modelscope/3D-Speaker.git "$SPEAKER_HOME/3D-Speaker"
 git -C "$SPEAKER_HOME/3D-Speaker" checkout 065629c313eaf1a01c65c640c46d77e61e9607b4
@@ -256,7 +256,7 @@ token 计费。VoiceprintAgent、登记事务及 Refine 准入已接通；`confi
 
 `GatewayConfig.resolve_model_binding(ref)` 和 `resolve_embedding_binding(ref)` 返回完整绑定，保留所有显式超时、输出、推理、上下文和回退参数。传入已冻结绑定时不会重新应用环境覆盖。`model_dump()` 的 `normalized_models` 保存归一结果，可直接加载回原配置。
 
-现有环境覆盖集中在 Gateway resolver：转写 `ANIVAG_TRANSCRIPT_MODEL`，视觉 `ANIVAG_VIDEO_MODEL`，Agent 优先 `ANIVAG_AGENT_CHAT_MODEL` 再 `ANIVAG_DEEPSEEK_CHAT_MODEL`，Query/Evaluator 使用对应 `ANIVAG_AGENT_QUERY_MODEL` / `ANIVAG_AGENT_EVALUATOR_MODEL`，Agent 回退使用 `ANIVAG_AGENT_FALLBACK_MODEL`，重排使用 `ANIVAG_RERANK_MODEL`。向量默认引用使用 `ANIVAG_VIDEO_EMBEDDING_MODEL` / `ANIVAG_VIDEO_EMBEDDING_FPS`，视觉回退开关使用 `ANIVAG_FALLBACK_ENABLED`。空白模型覆盖忽略；覆盖模型名不会切换来源和协议，任意自定义引用不继承 Agent 默认模型覆盖。
+现有环境覆盖集中在 Gateway resolver：转写 `SEEKINO_TRANSCRIPT_MODEL`，视觉 `SEEKINO_VIDEO_MODEL`，Agent 优先 `SEEKINO_AGENT_CHAT_MODEL` 再 `SEEKINO_DEEPSEEK_CHAT_MODEL`，Query/Evaluator 使用对应 `SEEKINO_AGENT_QUERY_MODEL` / `SEEKINO_AGENT_EVALUATOR_MODEL`，Agent 回退使用 `SEEKINO_AGENT_FALLBACK_MODEL`，重排使用 `SEEKINO_RERANK_MODEL`。向量默认引用使用 `SEEKINO_VIDEO_EMBEDDING_MODEL` / `SEEKINO_VIDEO_EMBEDDING_FPS`，视觉回退开关使用 `SEEKINO_FALLBACK_ENABLED`。空白模型覆盖忽略；覆盖模型名不会切换来源和协议，任意自定义引用不继承 Agent 默认模型覆盖。
 
 预算归一遵循以下规则：显式绑定字段优先；缺省超时为旧 Parse 的 600 秒；支持输出预算的生成协议缺省取 `agent_runtime.max_output_tokens`，再取旧 Agent 的输出预算。文本上下文、余量、输入字符数和压缩阈值继承 `agent_runtime`；若旧配置没有对应字段，使用兼容值 128000 / 2048 / 400000。声明视觉输入的绑定缺省使用 128000 token、2048 余量和 400000 字符，避免旧视觉 65536 输出预算受到文本 64000 窗口限制。
 

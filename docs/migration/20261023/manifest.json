@@ -17,7 +17,7 @@
     "docs/design/agent-loop-references.md",
     "docs/design/agent-runtime-design.md",
     "docs/design/agent_harness_refactor.md",
-    "docs/design/anivag-pv-design.md",
+    "docs/design/seekino-pv-design.md",
     "docs/design/event-retrieval-trd.md",
     "docs/design/parse-v2-harness.md",
     "docs/design/potential_problems.md",
@@ -371,12 +371,12 @@
       "skipped_dependency_links": [
         {
           "path": ".venv",
-          "target": "/Users/bytedance/workspace/other-project/AniVAG/.venv",
+          "target": "/Users/bytedance/workspace/other-project/Seekino/.venv",
           "tracked": false
         },
         {
           "path": "web/node_modules",
-          "target": "/Users/bytedance/workspace/other-project/AniVAG/web/node_modules",
+          "target": "/Users/bytedance/workspace/other-project/Seekino/web/node_modules",
           "tracked": false
         }
       ]

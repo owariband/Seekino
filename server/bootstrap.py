@@ -118,8 +118,8 @@ def prepare_service_configuration(
         raise ValueError("formal Server execution supports only Video Parse V2")
     if settings.elasticsearch is None:
         raise ValueError(
-            "Video Parse V2 requires ANIVAG_ELASTICSEARCH_URL and "
-            "ANIVAG_ELASTICSEARCH_INDEX"
+            "Video Parse V2 requires SEEKINO_ELASTICSEARCH_URL and "
+            "SEEKINO_ELASTICSEARCH_INDEX"
         )
     _validate_cloud_agent_timeout(settings, settings.agent)
     gateway_config = load_config(settings.model_config_path)
@@ -144,7 +144,7 @@ def _validate_cloud_supervisor_harness(settings: ServerSettings, config: Gateway
     if settings.auth.mode != "cloud":
         return
     if config.supervisor_harness != "deepagents":
-        raise ValueError("cloud Server requires supervisor_harness: deepagents; set ANIVAG_MODEL_CONFIG to an API-backed cloud configuration")
+        raise ValueError("cloud Server requires supervisor_harness: deepagents; set SEEKINO_MODEL_CONFIG to an API-backed cloud configuration")
     for role, binding in config.normalized_models.items():
         while binding is not None:
             if isinstance(config.source(binding.source), (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):

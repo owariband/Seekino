@@ -69,7 +69,7 @@ def load_snapshot(task_id, out):
         if snapshot["task"]["id"] != task_id:
             raise ValueError("Existing snapshot belongs to another task")
         return snapshot
-    engine = create_engine(os.environ["ANIVAG_DATABASE_URL"])
+    engine = create_engine(os.environ["SEEKINO_DATABASE_URL"])
     try:
         with engine.connect() as connection:
             if engine.dialect.name == "mysql":
@@ -173,7 +173,7 @@ def embed_queries(snapshot, queries, out, config_path):
     if len(frozen_models) != 1:
         raise ValueError("Task does not have exactly one frozen voiceprint model/revision")
     frozen = json.loads(next(iter(frozen_models)))
-    source = Path(os.environ.get("ANIVAG_ARTIFACT_ROOT", "outputs/server/artifacts")) / unquote(task["source_uri"].split("://", 1)[1])
+    source = Path(os.environ.get("SEEKINO_ARTIFACT_ROOT", "outputs/server/artifacts")) / unquote(task["source_uri"].split("://", 1)[1])
     if not source.is_file():
         raise FileNotFoundError(f"Source media does not exist: {source}")
     gateway = GatewayClient(load_config(config_path))
@@ -489,7 +489,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-id", default=TASK_ID)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--config", default=os.environ.get("ANIVAG_MODEL_CONFIG", "config.yaml"))
+    parser.add_argument("--config", default=os.environ.get("SEEKINO_MODEL_CONFIG", "config.yaml"))
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--render-only", action="store_true")
     parser.add_argument("--recommend", choices=METHODS)

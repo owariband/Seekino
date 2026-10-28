@@ -130,7 +130,7 @@ def _tool_response(
 
 
 class CodexToolBridge:
-    """Serve app-server requests while denying every non-AniVAG capability."""
+    """Serve app-server requests while denying every non-Seekino capability."""
 
     def __init__(
         self,

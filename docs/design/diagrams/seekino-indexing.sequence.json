@@ -2,20 +2,20 @@
   "schema_version": 1,
   "diagram_type": "sequence",
   "meta": {
-    "title": "AniVAG 动画建库主链时序",
+    "title": "Seekino 动画建库主链时序",
     "locale": "zh-CN",
-    "output": "anivag-indexing.sequence.html",
+    "output": "seekino-indexing.sequence.html",
     "quality_profile": "showcase",
     "viewBox": [1080, 670]
   },
   "participants": [
     { "id": "anime_viewer", "type": "external", "label": "用户", "sublabel": "动画视频" },
     { "id": "anime_workbench", "type": "frontend", "label": "Web 工作台", "sublabel": "导入 + SSE" },
-    { "id": "anime_gateway", "type": "backend", "label": "AniVAG API", "sublabel": "任务入口" },
+    { "id": "anime_gateway", "type": "backend", "label": "Seekino API", "sublabel": "任务入口" },
     { "id": "anime_job_db", "type": "database", "label": "Job Store", "sublabel": "状态真源" },
     { "id": "anime_indexer", "type": "backend", "label": "Index Worker", "sublabel": "阶段执行" },
     { "id": "anime_artifacts", "type": "cloud", "label": "产物存储", "sublabel": "媒体产物" },
-    { "id": "anime_rag", "type": "backend", "label": "AniVAG Engine", "sublabel": "领域算法" },
+    { "id": "anime_rag", "type": "backend", "label": "Seekino Engine", "sublabel": "领域算法" },
     { "id": "anime_ai", "type": "external", "label": "模型服务", "sublabel": "Audio / VLM" },
     { "id": "anime_index_db", "type": "database", "label": "Index Store", "sublabel": "版本化索引" }
   ],

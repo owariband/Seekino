@@ -49,8 +49,8 @@ def init(
 ) -> CallerResources:
     if settings.elasticsearch is None:
         raise ValueError(
-            "Video Parse V2 requires ANIVAG_ELASTICSEARCH_URL and "
-            "ANIVAG_ELASTICSEARCH_INDEX"
+            "Video Parse V2 requires SEEKINO_ELASTICSEARCH_URL and "
+            "SEEKINO_ELASTICSEARCH_INDEX"
         )
     with ExitStack() as construction_cleanup:
         engine, session_factory = mysql.build_database_storage(

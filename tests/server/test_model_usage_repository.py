@@ -16,12 +16,12 @@ from server.model.parse_usage import ModelUsage
 from server.repository.model_usage import MAX_USAGE_RECORDS, ModelUsageConflictError, ModelUsageRepository
 from server.utils.time import datetime_to_unix_time_ms
 
-TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
+TEST_DATABASE_URL = os.getenv("SEEKINO_TEST_DATABASE_URL")
 NOW = datetime(2026, 10, 8, 1, 2, 3, 456000, tzinfo=UTC)
 
 
 @pytest.fixture(params=["sqlite", pytest.param("mysql", marks=pytest.mark.skipif(
-    not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured",
+    not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured",
 ))])
 def storage(request):
     engine = create_database_engine(

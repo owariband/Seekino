@@ -460,7 +460,7 @@ def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
     embedding["dimensions"] = 512
     config_path = tmp_path / "custom.yaml"
     _write_config(config_path, payload)
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
 
     config = load_config()
 

@@ -34,12 +34,12 @@ _RETIRED_FIELDS = frozenset({
     "evaluator_low_confidence_rank",
 })
 _ENV_NAMES = {
-    name: "ANIVAG_AGENT_" + name.upper()
+    name: "SEEKINO_AGENT_" + name.upper()
     for name in _FIELD_NAMES
 }
 _ENV_NAMES.update({
-    "maximum_top_k": "ANIVAG_AGENT_MAX_TOP_K",
-    "maximum_concurrent_kicks": "ANIVAG_AGENT_MAX_CONCURRENT_KICKS",
+    "maximum_top_k": "SEEKINO_AGENT_MAX_TOP_K",
+    "maximum_concurrent_kicks": "SEEKINO_AGENT_MAX_CONCURRENT_KICKS",
 })
 _AUTO_MAXIMUMS = (
     ("max_model_calls_per_turn", "maximum_model_calls_per_turn"),

@@ -260,7 +260,7 @@ describe("VideoPlayer", () => {
 
   it("keeps legacy local reads and final writes local after the active source changes", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
-    localStorage.setItem("anivag-watch-progress:v2", JSON.stringify([
+    localStorage.setItem("seekino-watch-progress:v2", JSON.stringify([
       { seriesId: "series-1", videoId: "video-1", positionSeconds: 12, durationSeconds: 120, updatedAt: 100 },
     ]));
     const localKey = playbackProgressStorageKey();
@@ -270,7 +270,7 @@ describe("VideoPlayer", () => {
       configureDataSource(personalSource("user-a"));
       metadata(media);
       expect(media.currentTime).toBe(12);
-      expect(localStorage.getItem("anivag-watch-progress:v2")).toBeNull();
+      expect(localStorage.getItem("seekino-watch-progress:v2")).toBeNull();
       expect(readWatchHistory()).toEqual([]);
 
       media.currentTime = 18;

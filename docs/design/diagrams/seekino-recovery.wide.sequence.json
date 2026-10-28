@@ -2,9 +2,9 @@
   "schema_version": 1,
   "diagram_type": "sequence",
   "meta": {
-    "title": "AniVAG 失败重试与断点续跑时序",
+    "title": "Seekino 失败重试与断点续跑时序",
     "locale": "zh-CN",
-    "output": "anivag-recovery.wide.sequence.html",
+    "output": "seekino-recovery.wide.sequence.html",
     "quality_profile": "showcase",
     "column_fit": "spread",
     "viewBox": [1080, 590]
@@ -13,7 +13,7 @@
     { "id": "resume_worker", "type": "backend", "label": "Index Worker", "sublabel": "可重入执行器" },
     { "id": "resume_store", "type": "database", "label": "Job Store", "sublabel": "lease + checkpoint" },
     { "id": "resume_artifacts", "type": "cloud", "label": "产物存储", "sublabel": "已完成产物" },
-    { "id": "resume_engine", "type": "backend", "label": "AniVAG Engine", "sublabel": "事件批处理" },
+    { "id": "resume_engine", "type": "backend", "label": "Seekino Engine", "sublabel": "事件批处理" },
     { "id": "resume_model", "type": "external", "label": "模型服务", "sublabel": "VLM / Embedding" }
   ],
   "segments": [

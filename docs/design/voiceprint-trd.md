@@ -249,7 +249,7 @@ for t in 第二个及后续窗口起点:
 ### 5. 当前接入范围与后续验收
 
 ```text
-AniVAG/
+Seekino/
 ├── agent/video_parse_v2/
 │   ├── tools.py                    # Parse 工具 schema 与阶段集合，含两个新工具
 │   ├── voiceprint.py               # 保留准备编排，工具定义移至 tools.py
@@ -380,7 +380,7 @@ voiceprintAgent挑的注册样本本身可能有误需要refine改正的
 - 本次 review 修复回归：Server 的 `test_video_parse_worker.py`、`test_video_parse_voiceprint.py`、`test_video_parse_queue.py`、`test_video_parse_repository.py`、`test_artifact_storage.py` **491 passed**；context-canvas、Agent voiceprint、纯 matching **148 passed**；另新增“真实 artifact 发布 → manifest 事务提交 → Refine 读取同一内容”端到端用例 **1 passed**，合计 **640 项通过**。新增覆盖 artifact 内容／任务／模型／计数完整性、checksum 与事务失败、引用来源共享池、文本 SetEvent 来源保持、高 gap 失败条件冲突，以及 compare 不输出伪冲突。`git diff --check` 通过。
 - EP04 存储测量：[测量数据](../../outputs/verification/speaker-algo-20261018/b0-storage-review.json)。使用该任务现有缓存的 339 句、335 条有效 CAM++ 向量离线重放，候选分数／排名／gap 完全一致。canonical UTF-8 JSON：manifest **876 B**，artifact **5820991 B（约 5.55 MiB）**；保留数据库中其他 detail 字段、仅替换 voiceprint 分支后，完整 detail **99028 B（约 96.7 KiB）**，其中其他 detail 序列化为 98138 B。按修复前生产字段重放的旧 inline detail 为 45359685 B，字段口径与先前约 27 MB 的估计不同。历史数据库仍是原有任务（实际 detail 246992 B），本次没有回写该任务、重新编码、重解析或执行迁移。完整准备数据只写入 verification 的测量 artifact。
 - 本次保留“全终态后准备并记录失败清单，再发布整任务失败”的现有策略。代价是已知失败的任务仍会消耗一次有界的音频准备／评分时间；收益是保留完整诊断结果，不再改动已经验过的调度和失败清单合同。立即失败是可选的资源节省策略，本次没有实施。
-- 综合运行时两次遇到旧 `test_worker_runs_real_agent_repository_and_stage_commits` 记账断言（4 条 ModelUsage 中 used_call_ids 缺少两条 index 记录），单独重跑和最终 Server 组通过。临时只读基线探针恢复 HEAD 的 `_aggregate_video_task` 后，30 次中 28 次通过、2 次出现同类记账／active reservation 断言；证据在 `/private/tmp/anivag-accounting-baseline-cehe1bpg/result.json`。具体覆盖写入事务未定位，SQLite 并发丢失更新是推测，不是已证明根因；本次未修改无关记账实现。
+- 综合运行时两次遇到旧 `test_worker_runs_real_agent_repository_and_stage_commits` 记账断言（4 条 ModelUsage 中 used_call_ids 缺少两条 index 记录），单独重跑和最终 Server 组通过。临时只读基线探针恢复 HEAD 的 `_aggregate_video_task` 后，30 次中 28 次通过、2 次出现同类记账／active reservation 断言；证据在 `/private/tmp/seekino-accounting-baseline-cehe1bpg/result.json`。具体覆盖写入事务未定位，SQLite 并发丢失更新是推测，不是已证明根因；本次未修改无关记账实现。
 - 歌曲使用已提交事件描述标记，重叠使用 DIALOGUE 区间；不是新声学歌曲或多人检测器，不硬编码 EP04 时间段。旧离线目标 gap≈0.0816；本次 v12 使用新的 Understanding 结果，实际效果如下，不将标签一致性视为准确率。
 - 2026-10-19，经用户授权重启 API 并测试隔离 EP04：v12 `cc57cf42-4c69-427d-b6a0-e9523f22bc8e` 已 COMPLETE，24/24 Understanding、22/22 Refine、24/24 Index 完成。[实测报告](../../outputs/verification/speaker-b0-integration-20261019/actual-test-summary.md)及 [JSON](../../outputs/verification/speaker-b0-integration-20261019/actual-test-summary.json)。317 条 DIALOGUE、315 条有效向量，2 条不足 400 ms 保留空候选；36 项工程检查通过。最终 speaker_source 为 understanding 206、voice_default 93、refine_edit 18。所有目标区间未变化，因此本轮没有实际覆盖区间失效分支，该分支仍仅有单测证据。
 - 实测存储：最终 task.detail 为 122049 数据库字节，canonical voiceprint manifest 为 909 B，artifact 为 5202615 B。逐句复算全部排名、分差、分档与排除规则一致。ACCEPT 98、CONFLICT 38、NO_VOICE 95、其余 86；标签一致性 208/277（75.09%），ACCEPT 已命名集合 89/97（91.75%），均不是身份准确率，也不能与旧 339 句数据直接比较。

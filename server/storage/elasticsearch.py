@@ -26,7 +26,7 @@ from ..database import DatabaseEnvironment
 from ..constants.parse import MAX_INDEX_GENERATION
 from ..utils.validation import canonical_uuid, require_nonempty_text
 
-INDEX_CONTRACT_VERSION = "anivag-video-chunk-es-6"
+INDEX_CONTRACT_VERSION = "seekino-video-chunk-es-6"
 ANALYSIS_CONTRACT_VERSION = "cjk-1"
 _MAX_EXTERNAL_VERSION = 9_223_372_036_854_775_807
 _EXTERNAL_VERSION_SHIFT = 31

@@ -1552,7 +1552,7 @@ def test_frozen_codex_visual_model_uses_gateway_native_harness(monkeypatch, tmp_
     monkeypatch.setattr("gateway.codex.agent.CodexAgentModel", native_model)
     monkeypatch.setattr("gateway.agent_model.deepagents_multimodal.generate_with_deepagents", unexpected_api_harness)
     monkeypatch.setattr("gateway.agent_model.multimodal.generate_with_tools", unexpected_api_harness)
-    monkeypatch.setenv("ANIVAG_VIDEO_MODEL", "outdated-remote-endpoint")
+    monkeypatch.setenv("SEEKINO_VIDEO_MODEL", "outdated-remote-endpoint")
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._gateway_config = load_config()
     runtime._gateway_config.model_sources["native_codex"] = CodexModelSourceConfig()

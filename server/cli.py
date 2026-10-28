@@ -22,8 +22,8 @@ from .service.video_parse_persistence import VideoParsePersistenceService
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="anivag-server",
-        description="Manage anivag persistence and formal video retrieval.",
+        prog="seekino-server",
+        description="Manage seekino persistence and formal video retrieval.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -47,7 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     init_database = subparsers.add_parser(
         "init-db",
-        help="Create the initial anivag persistence schema.",
+        help="Create the initial seekino persistence schema.",
     )
     _add_database_arguments(init_database)
 
@@ -112,7 +112,7 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument(
         "--config",
         type=Path,
-        help="Gateway model config; defaults to ANIVAG_MODEL_CONFIG/config.yaml.",
+        help="Gateway model config; defaults to SEEKINO_MODEL_CONFIG/config.yaml.",
     )
     search.add_argument(
         "--embedding-model",
@@ -124,7 +124,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _add_database_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--database-url",
-        help="SQLAlchemy MySQL URL; defaults to ANIVAG_DATABASE_URL.",
+        help="SQLAlchemy MySQL URL; defaults to SEEKINO_DATABASE_URL.",
     )
     _add_environment_argument(parser)
 
@@ -141,7 +141,7 @@ def _add_execution_mode_argument(parser: argparse.ArgumentParser) -> None:
         "--execution-mode",
         choices=("v2",),
         type=_execution_mode,
-        help="Formal execution supports only v2; defaults to ANIVAG_PARSE_EXECUTION_MODE.",
+        help="Formal execution supports only v2; defaults to SEEKINO_PARSE_EXECUTION_MODE.",
     )
 
 
@@ -194,7 +194,7 @@ def main() -> None:
         if elasticsearch is None:
             raise ValueError(
                 "Elasticsearch URL and index are required via command options or "
-                "ANIVAG_ELASTICSEARCH_URL and ANIVAG_ELASTICSEARCH_INDEX"
+                "SEEKINO_ELASTICSEARCH_URL and SEEKINO_ELASTICSEARCH_INDEX"
             )
         text_dimensions, vision_dimensions = resolve_vector_dimensions(
             text_dimensions=args.text_vector_dimensions,

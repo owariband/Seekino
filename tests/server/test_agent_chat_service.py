@@ -2345,12 +2345,12 @@ def test_repository_deletes_terminal_conversation_and_returns_snapshot(build_ser
 
 
 @pytest.mark.skipif(
-    not os.getenv("ANIVAG_TEST_DATABASE_URL"),
-    reason="ANIVAG_TEST_DATABASE_URL is not configured",
+    not os.getenv("SEEKINO_TEST_DATABASE_URL"),
+    reason="SEEKINO_TEST_DATABASE_URL is not configured",
 )
 def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
     engine = create_database_engine(
-        os.environ["ANIVAG_TEST_DATABASE_URL"],
+        os.environ["SEEKINO_TEST_DATABASE_URL"],
         environment=DatabaseEnvironment.TEST,
     )
     conversation_id, user_id, assistant_id = (str(uuid4()) for _ in range(3))

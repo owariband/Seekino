@@ -62,7 +62,7 @@
 
    默认只监听 `127.0.0.1:8443`，地址为 `https://localhost:8443`。
    脚本不会启动、停止或切换 Python API 的认证模式，也不会读取 `.env.local`。
-   API 端口不同时显式传入 `ANIVAG_HTTP_PORT`；HTTPS 端口使用 `ANIVAG_HTTPS_PORT`。
+   API 端口不同时显式传入 `SEEKINO_HTTP_PORT`；HTTPS 端口使用 `SEEKINO_HTTPS_PORT`。
    `start` 也会调用证书生成脚本，始终使用 `seekino-ca` 和 `seekino-certs`，
    不复用旧 `ca/`。已有 Nginx 进程须先 stop 再 start 才会切换到新证书。
 
@@ -97,34 +97,34 @@
 覆盖到 `.env.local`。独立配置保留所需模型配置和连接凭证，使用至少 32 字节随机签名秘密：
 
 ```dotenv
-ANIVAG_AUTH_MODE=cloud
-ANIVAG_AUTH_SECRET_KEY=<本机随机签名秘密>
-ANIVAG_AUTH_REDIS_URL=redis://127.0.0.1:16379/1
-ANIVAG_AUTH_COOKIE_NAME=seekino_phone_auth
-ANIVAG_REDIS_PORT=16379
-ANIVAG_AUTH_COOKIE_SECURE=true
-ANIVAG_AUTH_QUERY_LEASE_SECONDS=1800
-ANIVAG_SMTP_HOST=127.0.0.1
-ANIVAG_SMTP_PORT=1025
-ANIVAG_SMTP_USERNAME=
-ANIVAG_SMTP_PASSWORD=
-ANIVAG_SMTP_SENDER=noreply@seekino.test
-ANIVAG_SMTP_USE_SSL=false
-ANIVAG_SMTP_START_TLS=false
-ANIVAG_MAILPIT_SMTP_PORT=1025
-ANIVAG_MAILPIT_WEB_PORT=8025
-ANIVAG_HTTP_HOST=127.0.0.1
-ANIVAG_HTTP_PORT=9622
-ANIVAG_ENVIRONMENT=development
-ANIVAG_DATABASE_URL=mysql+pymysql://<本机数据库凭证>@127.0.0.1:3306/seekino_phone_dev?charset=utf8mb4
-ANIVAG_ELASTICSEARCH_INDEX=seekino_phone_chunks_dev
+SEEKINO_AUTH_MODE=cloud
+SEEKINO_AUTH_SECRET_KEY=<本机随机签名秘密>
+SEEKINO_AUTH_REDIS_URL=redis://127.0.0.1:16379/1
+SEEKINO_AUTH_COOKIE_NAME=seekino_phone_auth
+SEEKINO_REDIS_PORT=16379
+SEEKINO_AUTH_COOKIE_SECURE=true
+SEEKINO_AUTH_QUERY_LEASE_SECONDS=1800
+SEEKINO_SMTP_HOST=127.0.0.1
+SEEKINO_SMTP_PORT=1025
+SEEKINO_SMTP_USERNAME=
+SEEKINO_SMTP_PASSWORD=
+SEEKINO_SMTP_SENDER=noreply@seekino.test
+SEEKINO_SMTP_USE_SSL=false
+SEEKINO_SMTP_START_TLS=false
+SEEKINO_MAILPIT_SMTP_PORT=1025
+SEEKINO_MAILPIT_WEB_PORT=8025
+SEEKINO_HTTP_HOST=127.0.0.1
+SEEKINO_HTTP_PORT=9622
+SEEKINO_ENVIRONMENT=development
+SEEKINO_DATABASE_URL=mysql+pymysql://<本机数据库凭证>@127.0.0.1:3306/seekino_phone_dev?charset=utf8mb4
+SEEKINO_ELASTICSEARCH_INDEX=seekino_phone_chunks_dev
 SEEKINO_ELASTICSEARCH_EVENT_INDEX=seekino_phone_events_dev
-ANIVAG_ARTIFACT_ROOT=<仓库绝对路径>/outputs/phone-test/artifacts
-ANIVAG_LOG_DIRECTORY=<仓库绝对路径>/outputs/local-services/cloud-auth/logs
+SEEKINO_ARTIFACT_ROOT=<仓库绝对路径>/outputs/phone-test/artifacts
+SEEKINO_LOG_DIRECTORY=<仓库绝对路径>/outputs/local-services/cloud-auth/logs
 FORWARDED_ALLOW_IPS=127.0.0.1,::1
 ```
 
-API 的 `ANIVAG_ALLOWED_ORIGINS` 加入实际的 `https://<电脑内网IP>:8443`，保留已有
+API 的 `SEEKINO_ALLOWED_ORIGINS` 加入实际的 `https://<电脑内网IP>:8443`，保留已有
 开发 origin。1800 秒租约大于当前 1200 秒总执行超时；调整模型执行配置时一起核对。
 
 ```bash
@@ -163,7 +163,7 @@ uv run --no-sync --env-file outputs/local-services/cloud-auth/phone.env python d
 ### 手机 HTTPS 入口
 
 先确认独立 9622 API 已按 cloud 模式配置；local 模式会信任操作者为本地管理员，不能用于
-验证游客与账号隔离。HTTPS 入口继续使用 `ANIVAG_AUTH_COOKIE_SECURE=true`。
+验证游客与账号隔离。HTTPS 入口继续使用 `SEEKINO_AUTH_COOKIE_SECURE=true`。
 同机 Nginx 是直接入口时，可显式限定 API 的 `FORWARDED_ALLOW_IPS=127.0.0.1,::1`。
 修改 API 环境配置后，需要按原有方式重启 API 才会生效。
 
@@ -172,7 +172,7 @@ uv run --no-sync --env-file outputs/local-services/cloud-auth/phone.env python d
 
    ```bash
    ./deploy/nginx/start.sh stop
-   ANIVAG_HTTPS_BIND=10.254.1.2 ANIVAG_HTTP_PORT=9622 ./deploy/nginx/start.sh
+   SEEKINO_HTTPS_BIND=10.254.1.2 SEEKINO_HTTP_PORT=9622 ./deploy/nginx/start.sh
    ```
 
    脚本将实际绑定地址加入证书 SAN；不是填写 `0.0.0.0`。切换网络、IP 改变时需

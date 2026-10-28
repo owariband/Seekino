@@ -29,7 +29,7 @@
 | 工程边界补充 | [technical_solution copy.mdv.document.working.md](technical_solution%20copy.mdv.document.working.md) | 原方案的工作补充，自第 14 章记录工程结构决策；不替代原 MDV。 |
 | 开发计划原稿 | [re0_dev_plan.mdv](re0_dev_plan.mdv) | MDV 计划材料；按原文日期与上下文阅读。 |
 | 工程问题构想 | [各种工程问题构想.mdv](各种工程问题构想.mdv) | MDV 构想材料；保留讨论来源，不作为当前任务清单。 |
-| 产品宣传 PV | [anivag-pv-design.md](anivag-pv-design.md) | 宣传短片创意、音乐分析、制作方案与历史能力验证。 |
+| 产品宣传 PV | [seekino-pv-design.md](seekino-pv-design.md) | 宣传短片创意、音乐分析、制作方案与历史能力验证。 |
 
 ## 视频解析与理解
 
@@ -127,12 +127,12 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](sub-chunk-trd.md)。视�
 | 检索阶段计划 | [源场景](es-development-plan-review.excalidraw)、[总图](es-development-plan-review.svg)、[P0–P3](es-development-plan-review-p0-p3.svg)、[P4–P7](es-development-plan-review-p4-p7.svg) | 检索开发阶段评审图。 |
 | Cloud 架构 | [源场景](seekino-cloud-architecture.excalidraw)、[SVG](seekino-cloud-architecture.svg)、[PNG](seekino-cloud-architecture.png) | Local / Cloud 架构图。 |
 | Cloud 部署 | [源场景](seekino-cloud-deployment.excalidraw)、[SVG](seekino-cloud-deployment.svg)、[PNG](seekino-cloud-deployment.png) | 云端部署图。 |
-| 系统组件 | [交互图](diagram/anivag-system-components.html)、[规格](diagram/anivag-system-components.architecture.json) | 系统组件及依赖。 |
-| 系统架构 | [交互图](diagrams/anivag-system-architecture.html)、[规格](diagrams/anivag-system-architecture.json) | 系统架构视图。 |
-| M1 架构 | [交互图](diagrams/anivag-animation-m1.architecture.html)、[规格](diagrams/anivag-animation-m1.architecture.json) | 动画解析与检索 M1 架构。 |
-| 索引流程 | [交互图](diagrams/anivag-indexing.sequence.html)、[规格](diagrams/anivag-indexing.sequence.json) | 索引时序。 |
-| 中断恢复 | [交互图](diagrams/anivag-recovery.wide.sequence.html)、[规格](diagrams/anivag-recovery.wide.sequence.json) | 恢复时序。 |
-| 检索流程 | [交互图](diagrams/anivag-search.compact.sequence.html)、[规格](diagrams/anivag-search.compact.sequence.json) | 检索时序。 |
+| 系统组件 | [交互图](diagram/seekino-system-components.html)、[规格](diagram/seekino-system-components.architecture.json) | 系统组件及依赖。 |
+| 系统架构 | [交互图](diagrams/seekino-system-architecture.html)、[规格](diagrams/seekino-system-architecture.json) | 系统架构视图。 |
+| M1 架构 | [交互图](diagrams/seekino-animation-m1.architecture.html)、[规格](diagrams/seekino-animation-m1.architecture.json) | 动画解析与检索 M1 架构。 |
+| 索引流程 | [交互图](diagrams/seekino-indexing.sequence.html)、[规格](diagrams/seekino-indexing.sequence.json) | 索引时序。 |
+| 中断恢复 | [交互图](diagrams/seekino-recovery.wide.sequence.html)、[规格](diagrams/seekino-recovery.wide.sequence.json) | 恢复时序。 |
+| 检索流程 | [交互图](diagrams/seekino-search.compact.sequence.html)、[规格](diagrams/seekino-search.compact.sequence.json) | 检索时序。 |
 | MDV 图片 | [.mdv-assets/](.mdv-assets/) | MDV 关联资源，随原文档保留。 |
 
 ## 维护约定

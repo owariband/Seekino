@@ -6,7 +6,7 @@
 
 ## 结论
 
-对 AniVAG 当前问题，最稳妥的结论是：
+对 Seekino 当前问题，最稳妥的结论是：
 
 > 同一段语音、同时间出现的原文字幕和翻译字幕，应归属于同一个
 > `DIALOGUE` Timeline Event；但不应被拼成一个无法区分语言的字符串。
@@ -30,7 +30,7 @@ Projection 负责把一个 Dialogue 的多语言文本拆成多个检索表示�
 `event_id` 层折叠，只返回一次 Dialogue，避免双语内容重复投票。
 
 这不是某个开源项目已经定义好的“视频双语字幕 Schema”。它是把现有项目中已经成熟的三类
-能力组合到 AniVAG：
+能力组合到 Seekino：
 
 1. multilingual retrieval；
 2. multiple representations per parent；
@@ -69,7 +69,7 @@ datastore 实验。它为不同语言的 Wikipedia 分别建立 BGE-M3 索引，
 - [BERGEN repository](https://github.com/naver/bergen)
 
 边界：BERGEN 研究的是不同语言语料库，不负责把同一条视频 Dialogue 的翻译版本折叠为一个
-事件。因此它直接支持“语言表示应独立评测”，但不直接规定 AniVAG 的 parent/event Schema。
+事件。因此它直接支持“语言表示应独立评测”，但不直接规定 Seekino 的 parent/event Schema。
 
 ### RAGFlow：通过查询翻译扩展跨语言召回
 
@@ -104,7 +104,7 @@ documents，再从 child metadata 取 `doc_id`，按首次出现顺序去重 par
 - [LangChain `ParentDocumentRetriever` source](https://github.com/langchain-ai/langchain/blob/master/libs/langchain/langchain_classic/retrievers/parent_document_retriever.py)
 
 边界：源码中的标准例子是 chunk-to-parent，而不是 multilingual version management。将日语和
-中文 representation 作为 children、将 Dialogue Event 作为 parent，是 AniVAG 对通用原语的
+中文 representation 作为 children、将 Dialogue Event 作为 parent，是 Seekino 对通用原语的
 映射。不过“child 命中后只返回一次 parent”本身是源码已有的行为，不是新发明。
 
 ### Qdrant、Elasticsearch 和 Weaviate：按逻辑身份折叠结果
@@ -127,7 +127,7 @@ prefetch、RRF，并按 `document_id` group。官方将它总结为一个 schema
 - [Weaviate `groupBy`](https://docs.weaviate.io/weaviate/api/graphql/get)
 
 边界：这些 grouping/collapse 功能是通用搜索能力，不是字幕专用功能。把所有语言 child 的
-group key 设置为同一 `event_id` 是 AniVAG 的设计推导。
+group key 设置为同一 `event_id` 是 Seekino 的设计推导。
 
 ## 四类多语言 RAG 策略不是互斥方案
 
@@ -156,7 +156,7 @@ dense/sparse/multi-vector retrieval；multilingual-e5 也支持约 100 种语言
 把 query 翻译成一个或多个目标语言，可以改善 BM25 或单语索引的跨语言召回。RAGFlow 已采用
 这一方式；BERGEN 将 NLLB query translation 作为可选实验分支。
 
-但翻译可能损坏人名、专有名词、双关或剧中造词。因此对 AniVAG，它更适合作为基于评测启用的
+但翻译可能损坏人名、专有名词、双关或剧中造词。因此对 Seekino，它更适合作为基于评测启用的
 recall fallback，而不是 P0 的唯一检索路径，也不应覆盖用户原 query。
 
 相关一手研究：
@@ -176,7 +176,7 @@ BM25、Exact 和 n-gram 负责保住原词、原句、人名、术语与字幕�
 - [Elasticsearch language analyzers](https://www.elastic.co/docs/reference/text-analysis/analysis-lang-analyzer)
 - [Elasticsearch multi-fields](https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/multi-fields)
 
-AniVAG 已计划 Exact、BM25 与字符 n-gram；具体 tokenizer 和权重必须用项目自己的日中查询集
+Seekino 已计划 Exact、BM25 与字符 n-gram；具体 tokenizer 和权重必须用项目自己的日中查询集
 评测，不能仅凭模型宣称决定。
 
 ### 4. Hybrid retrieval and reranking
@@ -187,7 +187,7 @@ Dense 主要补跨语言语义 recall，lexical 主要补精确词项和实体�
 融合时必须先处理“同一 Dialogue 的多个语言表示”。否则一条有日中双语字幕的事件可能比只有
 一种文本的事件多两张票，造成结构性偏置。
 
-## 对 AniVAG 的建议
+## 对 Seekino 的建议
 
 ### 领域层：只有一个 Dialogue Event
 
@@ -353,7 +353,7 @@ transcript(zh-Hans) = 所有 Dialogue 的 zh-Hans variants
 问题：增加延迟和费用，并可能破坏人物名、剧中术语或双关。应先以原 query + multilingual
 retrieval 为 P0，再通过召回评测决定是否增加 query expansion fallback。
 
-## 需要用 AniVAG 数据验证的事项
+## 需要用 Seekino 数据验证的事项
 
 这次研究不能替代项目级 evaluation。实现前至少需要建立以下查询切片：
 

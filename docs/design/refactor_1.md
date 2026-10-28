@@ -11,17 +11,17 @@ parse(Compact, VideoChunk) -> Result
 retrieve(...) -> RetrievalResult
 ```
 
-算法是否作为独立 PSM、独立进程运行并不是关键。当前只有 anivag Server 一个调用方，算法层本质上只是 Server 调用的 `parse` 和 `retrieve` 两个函数，因此完全可以与 Server 运行在同一个进程中。算法层需要保持清晰的函数边界，但不应仅仅为了边界而被强制拆成独立服务。
+算法是否作为独立 PSM、独立进程运行并不是关键。当前只有 seekino Server 一个调用方，算法层本质上只是 Server 调用的 `parse` 和 `retrieve` 两个函数，因此完全可以与 Server 运行在同一个进程中。算法层需要保持清晰的函数边界，但不应仅仅为了边界而被强制拆成独立服务。
 
 当前架构真正的问题，是把 DB Queue、Queue Consumer 和算法接口混在了一起：上传工程被当作 Producer，算法接口被当作 Consumer，又额外启动了一个 `server.mq` 进程放在二者之间。这样相当于把本应属于 Server 内部的后台消费循环提升成了独立 MQ/Worker 服务，同时把算法运行时也装进了这个进程，导致持久化、任务消费、业务编排和算法调用的职责边界全部混乱。
 
-DB Queue 没有必要单独做成一个进程。Queue 中的任务已经存放在数据库里，事务提交后天然具备持久性；任务能否在 Server 重启后恢复，取决于数据库中的 Job 状态、Claim、Lease 和 Fencing，而不是取决于是否存在一个独立 Worker 进程。Producer 和 Consumer 都可以属于同一个 anivag Server：上传接口负责写入任务，Server 内部的后台线程负责领取任务，再直接调用 `parse` 或 `retrieve`。
+DB Queue 没有必要单独做成一个进程。Queue 中的任务已经存放在数据库里，事务提交后天然具备持久性；任务能否在 Server 重启后恢复，取决于数据库中的 Job 状态、Claim、Lease 和 Fencing，而不是取决于是否存在一个独立 Worker 进程。Producer 和 Consumer 都可以属于同一个 seekino Server：上传接口负责写入任务，Server 内部的后台线程负责领取任务，再直接调用 `parse` 或 `retrieve`。
 
 因此需要重新区分三个概念：
 
 ```text
 DB Queue  = MySQL 表、事务和任务状态，不是一个进程
-Consumer  = anivag Server 内部的后台消费循环，不是一个独立 PSM
+Consumer  = seekino Server 内部的后台消费循环，不是一个独立 PSM
 Algorithm = parse / retrieve 两个清晰的算法接口，不要求独立部署
 ```
 
@@ -57,7 +57,7 @@ Algorithm    = Server 调用的 parse / retrieve 函数
                   │ enqueue         │ claim
                   │                 ▼
 
-┌──────────────── anivag Server：唯一 PSM / 单进程 ────────────────┐
+┌──────────────── seekino Server：唯一 PSM / 单进程 ────────────────┐
 │                                                                 │
 │  HTTP API                                                       │
 │  ├── Upload API                                                 │
@@ -131,7 +131,7 @@ Job 并不会因为 Consumer 线程或 Server 进程退出而丢失。
 
 ## 当前 `server.mq` 的问题
 
-当前 [server/mq/__main__.py](/Users/bytedance/workspace/other-project/AniVAG/server/mq/__main__.py:54) 实际做了三件事：
+当前 [server/mq/__main__.py](/Users/bytedance/workspace/other-project/Seekino/server/mq/__main__.py:54) 实际做了三件事：
 
 ```text
 启动 DB Queue Consumer
@@ -215,7 +215,7 @@ DELETE 请求
 删除独立常驻 Worker 进程：是
 删除 server/mq package：否
 保留 server/mq 作为消息基础设施边界：是
-ParseJobConsumer 在 anivag Server 进程内运行：是
+ParseJobConsumer 在 seekino Server 进程内运行：是
 ```
 
 `server/mq` 与“是否单独部署一个进程”是两个不同维度。当前用 MySQL 实现持久化 Queue，未来接入 RocketMQ 时也继续由 `server/mq` 承接消息投递和消费适配；Algorithm、Checkpoint、Artifact 和索引业务不能因此进入 MQ 层。
@@ -227,7 +227,7 @@ ParseJobConsumer 在 anivag Server 进程内运行：是
 最终运行结构收敛为：
 
 ```text
-anivag Server：唯一 Backend PSM / 单进程
+seekino Server：唯一 Backend PSM / 单进程
 │
 ├── FastAPI / Control Plane
 │   ├── UploadSession API
@@ -275,7 +275,7 @@ MySQL
 
 ```text
 当前：API Process + 独立 server.mq Worker Process
-目标：一个 anivag Server Process + 进程内 ParseJobConsumer Thread
+目标：一个 seekino Server Process + 进程内 ParseJobConsumer Thread
 ```
 
 MySQL Claim、Lease、Heartbeat、Retry、Reaper 和 Fencing 全部保留。进程合并不等于删除这些机制，它们仍负责重启恢复、多实例误启动保护和迟到结果隔离。
@@ -333,7 +333,7 @@ M  server/model/vo/systemVO.py
 M  server/config/settings.py
 M  server/config/__init__.py
 M  .env.example
-   使用新的内部 MQ 配置对象；第一版继续兼容 ANIVAG_WORKER_* 环境变量。
+   使用新的内部 MQ 配置对象；第一版继续兼容 SEEKINO_WORKER_* 环境变量。
 
 M  scripts/local_services.py
    删除 worker_pid、独立 launch/status/stop 和 worker.log readiness；
@@ -392,7 +392,7 @@ shutdown
 
 ### 验收条件
 
-- 本地启动后只有一个 anivag Server 进程，不再有常驻 Worker 子进程；
+- 本地启动后只有一个 seekino Server 进程，不再有常驻 Worker 子进程；
 - Upload complete 创建的 QUEUED Job 能由进程内 Consumer 正常处理；
 - Retry、Reaper、Heartbeat 和 Fencing 行为与改造前一致；
 - API shutdown 不出现后台线程继续使用已关闭资源；
@@ -413,11 +413,11 @@ shutdown
 - `bootstrap.py` 成为 API 与单任务诊断入口共用的唯一 Composition Root；
 - `/healthz` 已暴露 `components.parseConsumer.status`，fatal 时返回 `degraded`，且不公开
   数据库或 Provider 异常正文；
-- `scripts/local_services.py` 只启动 anivag Server，不再管理 Worker PID、进程、readiness
+- `scripts/local_services.py` 只启动 seekino Server，不再管理 Worker PID、进程、readiness
   或 `worker.log`；
 - `python -m server.mq` 只允许 `--once`，写独立的 `mq.log`，不再提供常驻运行方式；
-- MQ 与 IndexSync retry 配置已经解耦；新配置使用 `ANIVAG_MQ_*` 和
-  `ANIVAG_INDEX_SYNC_*`，旧 `ANIVAG_WORKER_*` 继续作为兼容回退；
+- MQ 与 IndexSync retry 配置已经解耦；新配置使用 `SEEKINO_MQ_*` 和
+  `SEEKINO_INDEX_SYNC_*`，旧 `SEEKINO_WORKER_*` 继续作为兼容回退；
 - `server/mq/worker.py` 和 `tests/server/test_worker_runtime.py` 已删除，并新增独立的
   Consumer 与 MySQL Queue 测试。
 
@@ -441,7 +441,7 @@ shutdown
 ```
 
 另外，`python -m compileall -q server tests/server`、`python -m server.mq --help` 和
-`git diff --check` 均通过。8 个跳过项全部是因为未配置 `ANIVAG_TEST_DATABASE_URL` 的
+`git diff --check` 均通过。8 个跳过项全部是因为未配置 `SEEKINO_TEST_DATABASE_URL` 的
 真实 MySQL 集成测试；SQLite Queue、Consumer、Fencing、Bootstrap、API 生命周期和健康检查
 测试均已执行。本阶段没有修改数据库 Schema、Job 状态机、前端删除行为或 Algorithm
 契约，也没有接入 RocketMQ。
@@ -572,7 +572,7 @@ D：无
 
 另外，阶段 2 定向测试为 `63 passed`；`python -m compileall -q engine server tests/engine tests/server`、
 CLI 两级 `--help` 和 `git diff --check` 均通过。8 个跳过项仍是因为没有配置
-`ANIVAG_TEST_DATABASE_URL` 的真实 MySQL 集成测试；SQLite Repository、恢复、Fencing、
+`SEEKINO_TEST_DATABASE_URL` 的真实 MySQL 集成测试；SQLite Repository、恢复、Fencing、
 迟到写隔离、ASR 背压及异常关闭测试均已执行。
 
 当前有两个明确留给后续生命周期治理的事项：lease 隔离会保留未被 DB URI 引用的旧 attempt
@@ -605,9 +605,9 @@ ParseJob
 保留期必须配置化，不在业务代码中硬编码：
 
 ```text
-ANIVAG_CANCELLED_RETENTION_DAYS
-ANIVAG_RETENTION_PURGE_INTERVAL_SECONDS
-ANIVAG_RETENTION_PURGE_BATCH_SIZE
+SEEKINO_CANCELLED_RETENTION_DAYS
+SEEKINO_RETENTION_PURGE_INTERVAL_SECONDS
+SEEKINO_RETENTION_PURGE_BATCH_SIZE
 ```
 
 若没有另行产品决定，首版默认可采用保留 7 天、每小时扫描、每批 100 条。

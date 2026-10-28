@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare AniVAG Agent-approved source clips for a HyperFrames project."""
+"""Prepare Seekino Agent-approved source clips for a HyperFrames project."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def prepare(client: httpx.Client, args: argparse.Namespace) -> None:
     output = args.output.resolve()
     clips_dir = output / "assets" / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
-    conversation_key = f"anivag-short-conv-{uuid.uuid4()}"
+    conversation_key = f"seekino-short-conv-{uuid.uuid4()}"
     conversation = request_json(
         client,
         "POST",
@@ -101,9 +101,9 @@ def prepare(client: httpx.Client, args: argparse.Namespace) -> None:
         json={"workspaceId": args.workspace_id, "title": args.query[:255]},
     )
     conversation_id = conversation["conversationId"]
-    message_key = f"anivag-short-msg-{uuid.uuid4()}"
+    message_key = f"seekino-short-msg-{uuid.uuid4()}"
     prompt = (
-        "请只使用所选 AniVAG 本地系列的视频证据，不要搜索网页。请调用视频检索，"
+        "请只使用所选 Seekino 本地系列的视频证据，不要搜索网页。请调用视频检索，"
         "围绕目标选择适合短片编排的有序片段，并给出简洁串联文案。"
         f"最多选择 {args.max_clips} 个片段。短片目标：{args.query}"
     )
@@ -119,22 +119,22 @@ def prepare(client: httpx.Client, args: argparse.Namespace) -> None:
     )
     answer = result["assistantMessage"]
     if answer.get("status") != "COMPLETED":
-        raise RuntimeError(f"AniVAG Agent failed: {answer.get('lastError') or answer.get('status')}")
+        raise RuntimeError(f"Seekino Agent failed: {answer.get('lastError') or answer.get('status')}")
     agent_model = answer.get("modelName")
     if agent_model != args.expected_agent_model:
         raise RuntimeError(
-            "AniVAG Agent model mismatch: "
+            "Seekino Agent model mismatch: "
             f"expected {args.expected_agent_model!r}, got {agent_model!r}"
         )
     search = answer.get("searchResult")
     blocks = answer.get("renderBlocks") or []
     if not search:
-        raise RuntimeError("AniVAG Agent completed without an approved search result")
+        raise RuntimeError("Seekino Agent completed without an approved search result")
     video_blocks = [block for block in blocks if block.get("type") == "video"]
     if not video_blocks:
-        raise RuntimeError("AniVAG Agent found no approved video material; refine the query")
+        raise RuntimeError("Seekino Agent found no approved video material; refine the query")
     if len(video_blocks) > args.max_clips:
-        raise RuntimeError("AniVAG Agent returned more video blocks than --max-clips")
+        raise RuntimeError("Seekino Agent returned more video blocks than --max-clips")
 
     hits = {
         hit["candidate"]["videoChunkId"]: hit

@@ -59,7 +59,7 @@ type SearchPageProps = {
 export interface SearchPageHandle {
   focusComposer(): void;
 }
-const messageOptionsStorageKey = () => identityStorageKey("anivag-agent-message-options");
+const messageOptionsStorageKey = () => identityStorageKey("seekino-agent-message-options");
 type StoredMessageOptions = { overrides?: MessageOptionOverrides; serverOptions?: AgentMessageOptions; selection?: SelectedMessageOptions };
 const messageOptionNames = ["maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"] as const;
 

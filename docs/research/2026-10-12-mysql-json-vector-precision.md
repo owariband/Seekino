@@ -31,7 +31,7 @@ MySQL 默认构建选择 bundled RapidJSON，也支持 system 依赖；该 CMake
 
 ### 已证实：独立解析实验已隔离输入阶段
 
-从官方 tag 下载 bundled headers，在 `/private/tmp/anivag-mysql-json-precision/` 用 `clang++ -std=c++17 -O0` 编译 Reader 实验；没有 MySQL、数据库存储或 `my_gcvt` 参与。
+从官方 tag 下载 bundled headers，在 `/private/tmp/seekino-mysql-json-precision/` 用 `clang++ -std=c++17 -O0` 编译 Reader 实验；没有 MySQL、数据库存储或 `my_gcvt` 参与。
 比较相同输入的默认 flag、full flag，以及本机 `strtod` 的十六进制 double 值。实验打印 `default_flags=0`、`full_flag=16`。
 
 | 输入十进制 | 参考 binary64 | 默认解析 | 默认误差 | full 与参考相同 |
@@ -113,7 +113,7 @@ synthetic source 才可能从索引结构重建数值；不能把内部 float32 
  "index.default_pipeline":"_none","index.final_pipeline":"_none"}
 ```
 
-同次只读 mapping 返回 `_source={}`，没有 includes/excludes；两路向量均为 1024 维 cosine、HNSW（`m=16`、`ef_construction=100`），未采用 int8 类型，索引合同为 `anivag-video-chunk-es-6`。
+同次只读 mapping 返回 `_source={}`，没有 includes/excludes；两路向量均为 1024 维 cosine、HNSW（`m=16`、`ef_construction=100`），未采用 int8 类型，索引合同为 `seekino-video-chunk-es-6`。
 因此当前实际索引已证实使用原始 stored source 路径，排除 synthetic source、source 过滤和配置的 ingest pipeline；这份快照不证明所有历史写入时刻的配置都相同。
 
 ## 归因与后续验证边界

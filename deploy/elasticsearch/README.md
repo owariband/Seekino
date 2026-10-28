@@ -20,14 +20,14 @@ bash deploy/elasticsearch/start.sh
 本地 `.env.local` 连接配置：
 
 ```dotenv
-ANIVAG_ELASTICSEARCH_URL=http://127.0.0.1:9200
-ANIVAG_ELASTICSEARCH_INDEX=anivag_video_chunks_v2_development
-ANIVAG_ELASTICSEARCH_INDEX_GENERATION=1
-ANIVAG_TEST_ELASTICSEARCH_URL=http://127.0.0.1:9200
+SEEKINO_ELASTICSEARCH_URL=http://127.0.0.1:9200
+SEEKINO_ELASTICSEARCH_INDEX=seekino_video_chunks_v2_development
+SEEKINO_ELASTICSEARCH_INDEX_GENERATION=1
+SEEKINO_TEST_ELASTICSEARCH_URL=http://127.0.0.1:9200
 ```
 
-如设置 `ANIVAG_ELASTICSEARCH_PORT`，须同时调整以上 URL。
-集成测试自行创建 UUID 命名的 `anivag_test_*` 索引并只清理自身索引，不使用开发索引。
+如设置 `SEEKINO_ELASTICSEARCH_PORT`，须同时调整以上 URL。
+集成测试自行创建 UUID 命名的 `seekino_test_*` 索引并只清理自身索引，不使用开发索引。
 
 ```bash
 curl --noproxy '*' http://127.0.0.1:9200/_cluster/health

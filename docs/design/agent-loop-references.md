@@ -1,6 +1,6 @@
 # Agent Loop 与 Output Node：源码参考
 
-核对日期：2026-09-15。以下结论基于公开源码与明确标注的本地源码；这是参考与设计记录，未修改 AniVAG 业务代码。
+核对日期：2026-09-15。以下结论基于公开源码与明确标注的本地源码；这是参考与设计记录，未修改 Seekino 业务代码。
 
 ## 1. 优先看 Google 的完整应用示例：循环出口与前端消费
 
@@ -12,7 +12,7 @@
 
 可借鉴：明确的循环出口、来源数据与最终答案绑定、节点进度与答案消费的区分。
 
-适配边界：它审核检索材料；达到轮数上限也进入 finalize_answer，该节点调用模型生成答案。AniVAG 最新方案同样把最终 Chat 放在循环出口，但明确要求每轮 Query 的 draft output 和视频证据接受 Evaluator 审核；事实性结论必须包含非空 `selected_video_ranges`，只有 complete 才进入 Chat，3 次 continue 走失败路径。存在 approved evidence 时，Chat 首次使用 `tool_choice=required` 并至少调用一次 `submit_video_item`，成功提交后恢复 `auto`；确定性 Output Node 只绑定实际提交且已放行的证据。最终逻辑顺序保存在 `renderBlocks`，成功 SSE 在数据库 commit 后原子释放。
+适配边界：它审核检索材料；达到轮数上限也进入 finalize_answer，该节点调用模型生成答案。Seekino 最新方案同样把最终 Chat 放在循环出口，但明确要求每轮 Query 的 draft output 和视频证据接受 Evaluator 审核；事实性结论必须包含非空 `selected_video_ranges`，只有 complete 才进入 Chat，3 次 continue 走失败路径。存在 approved evidence 时，Chat 首次使用 `tool_choice=required` 并至少调用一次 `submit_video_item`，成功提交后恢复 `auto`；确定性 Output Node 只绑定实际提交且已放行的证据。最终逻辑顺序保存在 `renderBlocks`，成功 SSE 在数据库 commit 后原子释放。
 
 ## 2. 最贴近两个 Agent 的回边：LangGraph Reflection
 
@@ -24,7 +24,7 @@
 
 可借鉴：主 Agent / 审核 Agent 子图组合、审核反馈回到生成方、累计对话作为下一轮输入。
 
-适配边界：结束依赖末条消息类型，不是用户定义的 complete / continue；没有独立 Output Node；框架剩余步数不足也可能结束，不代表审核通过。AniVAG 把主生成方对应为 Query，使用显式 EvaluatorDecision、LoopTurn 记录与业务 3 轮上限；放行后才进入独立 Chat 自主块生成，保留反馈语义，不照搬结束判定。
+适配边界：结束依赖末条消息类型，不是用户定义的 complete / continue；没有独立 Output Node；框架剩余步数不足也可能结束，不代表审核通过。Seekino 把主生成方对应为 Query，使用显式 EvaluatorDecision、LoopTurn 记录与业务 3 轮上限；放行后才进入独立 Chat 自主块生成，保留反馈语义，不照搬结束判定。
 
 ## 3. 输出结构与循环运行时：Agno
 
@@ -36,9 +36,9 @@
 
 可借鉴：业务轮数与终止条件单独配置；步骤输出有明确数据结构；每轮输出、媒体与运行记录有明确归属。
 
-适配边界：通用 Loop 不直接保证最终结果来自 Chat，也不保证终止时获得审核通过的答案；仍需应用自己的输出选择与放行规则。AniVAG 已使用 LangGraph，可将这些原则落实在现有图内，无需为了参考而切换依赖。
+适配边界：通用 Loop 不直接保证最终结果来自 Chat，也不保证终止时获得审核通过的答案；仍需应用自己的输出选择与放行规则。Seekino 已使用 LangGraph，可将这些原则落实在现有图内，无需为了参考而切换依赖。
 
-## 4. AniVAG 的最小适配
+## 4. Seekino 的最小适配
 
 ```text
 Query（计划 / 检索 / draft output）
@@ -58,7 +58,7 @@ Query（计划 / 检索 / draft output）
 - evaluator decision / advice：独立控制与反馈数据，不放进 final_output 充当 Chat 正文。
 - 模型路由：Query、Evaluator、Chat 默认使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash）。Provider 请求或模型响应异常时，失败的单次调用在当前消息 / Tool 状态上原位 fallback 到 Ark Doubao Lite；已完成的业务 Tool 与 acknowledgement 保留且不重跑。业务 Tool 错误、取消 / deadline / 预算等控制错误和本地输入校验错误不触发模型降级。
 - 视频交付仍使用现有 videoChunkId / videoId / startMs / endMs。浏览器原视频路径为 /api/videos/content；规范片段 HTTP 接口与范围播放验收另行实现。
-- 参考项目提供循环或输出机制，未验证其中任何一个具有 AniVAG 所需的完整视频解析、证据校验、Conversation 隔离与 MySQL 快照 SSE 闭环。
+- 参考项目提供循环或输出机制，未验证其中任何一个具有 Seekino 所需的完整视频解析、证据校验、Conversation 隔离与 MySQL 快照 SSE 闭环。
 
 完整本地设计：[agent-chat-delivery-contract.md](agent-chat-delivery-contract.md)。
 
@@ -68,4 +68,4 @@ Query（计划 / 检索 / draft output）
 
 本地只读参考：[ReactLoopAgent](../../../deepseek-harness/packages/core/agent-loop/src/agent.ts#L64)。[kick](../../../deepseek-harness/packages/core/agent-loop/src/agent.ts#L210) 是 private async kick(): Promise<void>，零参数，内部 while (await this.turn()) {}。[turn](../../../deepseek-harness/packages/core/agent-loop/src/agent.ts#L246) 负责用户任务的 turn/start / turn/end 与内部 Step；Inbox 还有排队输入时返回 true，所以同一次 Kick 能继续处理多个用户 Turn。[step](../../../deepseek-harness/packages/core/agent-loop/src/agent.ts#L332) 在该项目内部完成 Provider 流与工具执行，没有使用 LangChain 封装这一层。
 
-可借鉴 kick → turn 的主流程组织。AniVAG 的业务定义固定为一次 Kick 对应一个用户请求，一轮 Turn 对应一次 Query / Evaluator；Agent 内部 Step 可由所选 SDK 接管。具体数据归属、交付生命周期和术语差异统一维护在 [最新设计第 3 节](agent-chat-delivery-contract.md#3-harness-的-loop--kick--turn)，不直接照搬该项目的 Inbox 驱动器与插件系统。
+可借鉴 kick → turn 的主流程组织。Seekino 的业务定义固定为一次 Kick 对应一个用户请求，一轮 Turn 对应一次 Query / Evaluator；Agent 内部 Step 可由所选 SDK 接管。具体数据归属、交付生命周期和术语差异统一维护在 [最新设计第 3 节](agent-chat-delivery-contract.md#3-harness-的-loop--kick--turn)，不直接照搬该项目的 Inbox 驱动器与插件系统。

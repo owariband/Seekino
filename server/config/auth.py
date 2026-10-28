@@ -15,7 +15,7 @@ class AuthConfig:
     secret_key: str = field(default="", repr=False)
     redis_url: str = field(default="", repr=False)
     redis_timeout_seconds: int = 5
-    cookie_name: str = "anivag_auth"
+    cookie_name: str = "seekino_auth"
     cookie_secure: bool = True
     token_ttl_seconds: int = 7 * 24 * 60 * 60
     public_tenant_id: str = DEFAULT_PUBLIC_TENANT_ID
@@ -87,31 +87,31 @@ class AuthConfig:
             "concurrent_queries_guest", "concurrent_queries_user", "query_lease_seconds",
             "guest_max_model_calls",
         ):
-            values[name] = int(os.getenv(f"ANIVAG_AUTH_{name.upper()}", str(getattr(defaults, name))))
+            values[name] = int(os.getenv(f"SEEKINO_AUTH_{name.upper()}", str(getattr(defaults, name))))
         def enabled(name: str, default: bool) -> bool:
             value = os.getenv(name, str(default)).strip().lower()
             if value not in {"true", "false", "1", "0"}:
                 raise ValueError(f"{name} must be true or false")
             return value in {"true", "1"}
         return cls(
-            mode=os.getenv("ANIVAG_AUTH_MODE", defaults.mode),
-            public_library_only=enabled("ANIVAG_PUBLIC_LIBRARY_ONLY", defaults.public_library_only),
-            secret_key=os.getenv("ANIVAG_AUTH_SECRET_KEY", ""),
-            redis_url=os.getenv("ANIVAG_AUTH_REDIS_URL", ""),
-            cookie_name=os.getenv("ANIVAG_AUTH_COOKIE_NAME", defaults.cookie_name),
-            cookie_secure=enabled("ANIVAG_AUTH_COOKIE_SECURE", defaults.cookie_secure),
-            public_tenant_id=os.getenv("ANIVAG_PUBLIC_TENANT_ID", defaults.public_tenant_id),
-            local_tenant_id=os.getenv("ANIVAG_LOCAL_TENANT_ID", defaults.local_tenant_id),
-            admin_emails=tuple(value.strip().lower() for value in os.getenv("ANIVAG_AUTH_ADMIN_EMAILS", "").split(",") if value.strip()),
+            mode=os.getenv("SEEKINO_AUTH_MODE", defaults.mode),
+            public_library_only=enabled("SEEKINO_PUBLIC_LIBRARY_ONLY", defaults.public_library_only),
+            secret_key=os.getenv("SEEKINO_AUTH_SECRET_KEY", ""),
+            redis_url=os.getenv("SEEKINO_AUTH_REDIS_URL", ""),
+            cookie_name=os.getenv("SEEKINO_AUTH_COOKIE_NAME", defaults.cookie_name),
+            cookie_secure=enabled("SEEKINO_AUTH_COOKIE_SECURE", defaults.cookie_secure),
+            public_tenant_id=os.getenv("SEEKINO_PUBLIC_TENANT_ID", defaults.public_tenant_id),
+            local_tenant_id=os.getenv("SEEKINO_LOCAL_TENANT_ID", defaults.local_tenant_id),
+            admin_emails=tuple(value.strip().lower() for value in os.getenv("SEEKINO_AUTH_ADMIN_EMAILS", "").split(",") if value.strip()),
             smtp=SMTPConfig(
-                host=os.getenv("ANIVAG_SMTP_HOST", ""),
-                port=int(os.getenv("ANIVAG_SMTP_PORT", "587")),
-                username=os.getenv("ANIVAG_SMTP_USERNAME", ""),
-                password=os.getenv("ANIVAG_SMTP_PASSWORD", ""),
-                sender=os.getenv("ANIVAG_SMTP_SENDER", ""),
-                use_ssl=enabled("ANIVAG_SMTP_USE_SSL", False),
-                start_tls=enabled("ANIVAG_SMTP_START_TLS", True),
-                timeout_seconds=float(os.getenv("ANIVAG_SMTP_TIMEOUT_SECONDS", "10")),
+                host=os.getenv("SEEKINO_SMTP_HOST", ""),
+                port=int(os.getenv("SEEKINO_SMTP_PORT", "587")),
+                username=os.getenv("SEEKINO_SMTP_USERNAME", ""),
+                password=os.getenv("SEEKINO_SMTP_PASSWORD", ""),
+                sender=os.getenv("SEEKINO_SMTP_SENDER", ""),
+                use_ssl=enabled("SEEKINO_SMTP_USE_SSL", False),
+                start_tls=enabled("SEEKINO_SMTP_START_TLS", True),
+                timeout_seconds=float(os.getenv("SEEKINO_SMTP_TIMEOUT_SECONDS", "10")),
             ),
             **values,
         )

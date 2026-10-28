@@ -76,8 +76,8 @@ def test_explicit_deepagents_selection_rejects_a_legacy_native_agent_source():
 def test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate():
     config = GatewayConfig.model_validate(payload())
     environment = {
-        "ANIVAG_AGENT_CHAT_MODEL": "chat-override",
-        "ANIVAG_AGENT_FALLBACK_MODEL": "fallback-override",
+        "SEEKINO_AGENT_CHAT_MODEL": "chat-override",
+        "SEEKINO_AGENT_FALLBACK_MODEL": "fallback-override",
     }
     supervisor = config.resolve_model_binding("supervisor", environ=environment)
     assert supervisor == config.resolve_model_binding("supervisor", environ={})
@@ -111,8 +111,8 @@ def test_independent_api_supervisor_preserves_its_fallback_and_required_credenti
     }
     config = GatewayConfig.model_validate(data)
     binding = config.resolve_model_binding("supervisor", environ={
-        "ANIVAG_AGENT_CHAT_MODEL": "wrong-primary",
-        "ANIVAG_AGENT_FALLBACK_MODEL": "wrong-fallback",
+        "SEEKINO_AGENT_CHAT_MODEL": "wrong-primary",
+        "SEEKINO_AGENT_FALLBACK_MODEL": "wrong-fallback",
     })
     assert binding.model == "supervisor-primary"
     assert binding.fallback.model == "supervisor-fallback"
@@ -322,7 +322,7 @@ def test_arbitrary_model_references_and_explicit_query_do_not_use_business_alias
     }
     config = GatewayConfig.model_validate(data)
     assert config.resolve_model_binding("query", environ={}).model == "explicit-query"
-    reader = config.resolve_model_binding("document_reader", environ={"ANIVAG_AGENT_CHAT_MODEL": "other"})
+    reader = config.resolve_model_binding("document_reader", environ={"SEEKINO_AGENT_CHAT_MODEL": "other"})
     assert reader.model == "custom-reader" and reader.request_timeout_seconds == 73
     assert not reader.supports_vision_input
     assert GatewayConfig.model_validate(config.model_dump()) == config
@@ -357,15 +357,15 @@ def test_frozen_bindings_preserve_all_parameters_and_skip_environment_overrides(
         ),
     )
     resolved = config.resolve_model_binding(frozen, environ={
-        "ANIVAG_VIDEO_MODEL": "later-vision", "ANIVAG_FALLBACK_ENABLED": "false",
-        "ANIVAG_AGENT_FALLBACK_MODEL": "later-fallback",
+        "SEEKINO_VIDEO_MODEL": "later-vision", "SEEKINO_FALLBACK_ENABLED": "false",
+        "SEEKINO_AGENT_FALLBACK_MODEL": "later-fallback",
     })
     assert resolved.model_dump(exclude={"fallback"}) == frozen.model_dump(exclude={"fallback"})
     assert resolved.fallback.model == "frozen-fallback"
     assert resolved.fallback.request_timeout_seconds == 72
     assert resolved.fallback.max_output_tokens == 4096
     assert resolved.fallback.reasoning_effort == "low"
-    assert config.resolve_model_binding(resolved, environ={"ANIVAG_VIDEO_MODEL": "ignored"}) == resolved
+    assert config.resolve_model_binding(resolved, environ={"SEEKINO_VIDEO_MODEL": "ignored"}) == resolved
 
 
 def test_old_vision_output_budget_uses_visual_context_compatibility_defaults():
@@ -396,22 +396,22 @@ def test_context_budget_reserves_the_largest_fallback_output():
 def test_model_name_environment_priority_and_fallback_switch_remain_at_resolver():
     config = GatewayConfig.model_validate(payload())
     binding = config.resolve_model_binding("agent", environ={
-        "ANIVAG_AGENT_CHAT_MODEL": " preferred ", "ANIVAG_DEEPSEEK_CHAT_MODEL": "older",
-        "ANIVAG_AGENT_FALLBACK_MODEL": "fallback-override",
+        "SEEKINO_AGENT_CHAT_MODEL": " preferred ", "SEEKINO_DEEPSEEK_CHAT_MODEL": "older",
+        "SEEKINO_AGENT_FALLBACK_MODEL": "fallback-override",
     })
     assert binding.model == "preferred" and binding.fallback.model == "fallback-override"
-    assert config.resolve_model_binding("query", environ={"ANIVAG_AGENT_QUERY_MODEL": "query-only"}).model == "query-only"
-    assert config.resolve_model_binding("vision", environ={"ANIVAG_FALLBACK_ENABLED": "off"}).fallback is None
+    assert config.resolve_model_binding("query", environ={"SEEKINO_AGENT_QUERY_MODEL": "query-only"}).model == "query-only"
+    assert config.resolve_model_binding("vision", environ={"SEEKINO_FALLBACK_ENABLED": "off"}).fallback is None
     with pytest.raises(ValueError, match="boolean"):
-        config.resolve_model_binding("vision", environ={"ANIVAG_FALLBACK_ENABLED": "invalid"})
+        config.resolve_model_binding("vision", environ={"SEEKINO_FALLBACK_ENABLED": "invalid"})
     data = payload()
     data["models"]["vision"]["fallback"] = None
-    assert GatewayConfig.model_validate(data).resolve_model_binding("vision", environ={"ANIVAG_FALLBACK_ENABLED": "true"}).fallback is None
+    assert GatewayConfig.model_validate(data).resolve_model_binding("vision", environ={"SEEKINO_FALLBACK_ENABLED": "true"}).fallback is None
     data = payload()
     data["video_parser"]["fallback"]["enabled"] = False
     config = GatewayConfig.model_validate(data)
     restored = GatewayConfig.model_validate(config.model_dump())
-    assert config.resolve_model_binding("vision", environ={"ANIVAG_FALLBACK_ENABLED": "true"}) == restored.resolve_model_binding("vision", environ={"ANIVAG_FALLBACK_ENABLED": "true"})
+    assert config.resolve_model_binding("vision", environ={"SEEKINO_FALLBACK_ENABLED": "true"}) == restored.resolve_model_binding("vision", environ={"SEEKINO_FALLBACK_ENABLED": "true"})
 
 
 def test_embedding_binding_keeps_endpoint_encoder_identity_and_frozen_fps():
@@ -427,7 +427,7 @@ def test_embedding_binding_keeps_endpoint_encoder_identity_and_frozen_fps():
     assert binding.model == "ep-configured" and binding.encoder_model == "doubao-embedding-vision-250615"
     assert binding.dimensions == 1536 and binding.request_timeout_seconds == 87
     assert config.resolve_embedding_binding(binding, environ={
-        "ANIVAG_VIDEO_EMBEDDING_MODEL": "ep-later", "ANIVAG_VIDEO_EMBEDDING_FPS": "invalid",
+        "SEEKINO_VIDEO_EMBEDDING_MODEL": "ep-later", "SEEKINO_VIDEO_EMBEDDING_FPS": "invalid",
     }) == binding
     assert GatewayConfig.model_validate(config.model_dump()) == config
     del data["models"]["embedding"]["encoder_model"]
@@ -438,7 +438,7 @@ def test_embedding_binding_keeps_endpoint_encoder_identity_and_frozen_fps():
 def test_legacy_embedding_environment_endpoint_override_uses_configured_encoder():
     config = load_config(LEGACY)
     binding = config.resolve_embedding_binding(environ={
-        "ANIVAG_VIDEO_EMBEDDING_MODEL": "ep-override", "ANIVAG_VIDEO_EMBEDDING_FPS": "2",
+        "SEEKINO_VIDEO_EMBEDDING_MODEL": "ep-override", "SEEKINO_VIDEO_EMBEDDING_FPS": "2",
     })
     assert binding.model == "ep-override"
     assert binding.encoder_model == config.multimodal_embedding.model

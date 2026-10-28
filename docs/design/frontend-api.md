@@ -1,4 +1,4 @@
-# anivag 前端 API 对接文档
+# seekino 前端 API 对接文档
 
 > 状态：Upload-to-Search M1 与 Agent Chat 基础接口已实现；真实模型聊天联调与异常恢复仍待验收/补齐
 >
@@ -1171,7 +1171,7 @@ uv run --env-file .env.local python -m server.cli init-db
 uv run --env-file .env.local python -m server.api
 ```
 
-`server.api` 是唯一常驻的 anivag Server 进程。它同时提供 HTTP API，并在进程内启动
+`server.api` 是唯一常驻的 seekino Server 进程。它同时提供 HTTP API，并在进程内启动
 ParseJobConsumer，从 MySQL DB Queue Claim ParseJob；任务持久性、Lease 和 Fencing
 仍以 MySQL 为准，不依赖进程内内存队列。
 
@@ -1285,7 +1285,7 @@ Conversation 创建和消息发送必须带 `Idempotency-Key`，最长 128 字�
    消费 POST 流，`EventSource` 仅用于 GET 状态快照。
 
    `content` 为 1～20000 字符，不能只包含空白。`topK` 可省略或为 `null`，当前默认 8，
-   Service 上限默认 20；分别由 `ANIVAG_AGENT_DEFAULT_TOP_K`、`ANIVAG_AGENT_MAX_TOP_K`
+   Service 上限默认 20；分别由 `SEEKINO_AGENT_DEFAULT_TOP_K`、`SEEKINO_AGENT_MAX_TOP_K`
    配置。HTTP Schema 的 1～100 只是外层限制，超过 Service 上限仍返回 `400`。
    最终候选数可能小于 `topK`，也可以为 0。
 
@@ -1400,9 +1400,9 @@ join 回源，必须属于当前消息范围；视频卡片不能从当前多选
 不会重写历史记录。发生 Lite fallback 时只记结构化 warning，不改写该字段。页面可显示最近
 一条 ASSISTANT 的主模型名，无记录时显示“尚未调用”。
 
-Query、Evaluator 和 Chat 可分别使用 `ANIVAG_AGENT_QUERY_MODEL`、
-`ANIVAG_AGENT_EVALUATOR_MODEL`、`ANIVAG_AGENT_CHAT_MODEL` 覆盖；未设置时都使用 Gateway
-`config.yaml` 的 `agent_model.model`（DeepSeek Flash）。`ANIVAG_AGENT_FALLBACK_MODEL`
+Query、Evaluator 和 Chat 可分别使用 `SEEKINO_AGENT_QUERY_MODEL`、
+`SEEKINO_AGENT_EVALUATOR_MODEL`、`SEEKINO_AGENT_CHAT_MODEL` 覆盖；未设置时都使用 Gateway
+`config.yaml` 的 `agent_model.model`（DeepSeek Flash）。`SEEKINO_AGENT_FALLBACK_MODEL`
 默认取 `video_parser.transcript_model`（Ark Doubao Lite）。Provider 请求失败或响应结构非法时，
 失败的单次模型调用在当前消息 / Tool 状态上原位降级；已完成的业务 Tool 和 acknowledgement
 继续复用，不重新执行。业务 Tool 错误、取消 / deadline / 预算等控制错误和本地输入校验错误
@@ -1505,7 +1505,7 @@ data: {"conversationId":"...","messages":[...]}
 - REST 首次加载超过 500 条时按最后一个 `sequenceNo` 继续分页；GET 完整快照不受该
   REST 上限截断，目前每轮重读全部消息，长对话容量优化仍待做。
 - 默认每 1 秒检查变化，每 15 秒空闲发送 `: keep-alive`，可通过
-  `ANIVAG_SSE_POLL_SECONDS`、`ANIVAG_SSE_KEEPALIVE_SECONDS` 调整。
+  `SEEKINO_SSE_POLL_SECONDS`、`SEEKINO_SSE_KEEPALIVE_SECONDS` 调整。
 
 数据库是终态事实源。前端可以展示“检索与审核中”和获批后的正文流，不能制造未提供的
 百分比进度；进程崩溃后的运行恢复与跨 Worker 增量重放尚未实现。

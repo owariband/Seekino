@@ -150,7 +150,7 @@ class BridgeClient:
         self._initialize_response = await asyncio.wait_for(
             self._connection.initialize(
                 protocol_version=PROTOCOL_VERSION, client_capabilities=capabilities,
-                client_info=Implementation(name="anivag", version="0.1.0"),
+                client_info=Implementation(name="seekino", version="0.1.0"),
             ), timeout=self._startup_timeout,
         )
         if self._initialize_response.protocol_version != PROTOCOL_VERSION:

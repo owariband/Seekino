@@ -54,7 +54,7 @@ def build_inspect_video_frames_tool(
         _logger.info("event=video_frame_inspection_started context=%s start_ms=%s end_ms=%s frame_count=%s timestamps_ms=%s",
                      json.dumps(identity), start, end, frame_count, timestamps)
         try:
-            with TemporaryDirectory(prefix="anivag-tool-frames-") as directory:
+            with TemporaryDirectory(prefix="seekino-tool-frames-") as directory:
                 frames = []
                 for index, timestamp in enumerate(timestamps):
                     check_control()

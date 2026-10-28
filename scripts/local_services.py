@@ -56,18 +56,18 @@ def dotenv_variable_names(path: str | Path) -> tuple[str, ...]:
 
 
 def config_digest() -> str:
-    values = {key: value for key, value in os.environ.items() if key.startswith(("ANIVAG_", "VITE_"))}
+    values = {key: value for key, value in os.environ.items() if key.startswith(("SEEKINO_", "VITE_"))}
     model_config = load_config()
     api_key_names = required_api_key_env_names(model_config)
     for key in sorted(api_key_names):
         value = os.environ.get(key, "")
         values[key] = hashlib.sha256(value.encode()).hexdigest()
     configured_model_path = Path(
-        os.environ.get("ANIVAG_MODEL_CONFIG", str(ROOT / "config.yaml"))
+        os.environ.get("SEEKINO_MODEL_CONFIG", str(ROOT / "config.yaml"))
     ).expanduser().resolve()
     configured_pricing_path = Path(
         os.environ.get(
-            "ANIVAG_MODEL_PRICING_CONFIG",
+            "SEEKINO_MODEL_PRICING_CONFIG",
             str(ROOT / "config/model-pricing.yaml"),
         )
     ).expanduser().resolve()
@@ -89,36 +89,36 @@ def config_digest() -> str:
 
 def configure() -> ServerSettings:
     defaults = {
-        "ANIVAG_ENVIRONMENT": "development",
-        "ANIVAG_DATABASE_URL": "mysql+pymysql://root@127.0.0.1:3306/anivag_development?charset=utf8mb4",
-        "ANIVAG_HTTP_HOST": "127.0.0.1",
-        "ANIVAG_HTTP_PORT": "9621",
-        "ANIVAG_WEB_PORT": "5173",
-        "ANIVAG_ARTIFACT_ROOT": str(ROOT / "outputs/server/artifacts"),
+        "SEEKINO_ENVIRONMENT": "development",
+        "SEEKINO_DATABASE_URL": "mysql+pymysql://root@127.0.0.1:3306/seekino_development?charset=utf8mb4",
+        "SEEKINO_HTTP_HOST": "127.0.0.1",
+        "SEEKINO_HTTP_PORT": "9621",
+        "SEEKINO_WEB_PORT": "5173",
+        "SEEKINO_ARTIFACT_ROOT": str(ROOT / "outputs/server/artifacts"),
     }
     for key, value in defaults.items():
         if not os.environ.get(key):
             os.environ[key] = value
-    web_port = port("ANIVAG_WEB_PORT")
+    web_port = port("SEEKINO_WEB_PORT")
     os.environ.setdefault(
-        "ANIVAG_ALLOWED_ORIGINS",
+        "SEEKINO_ALLOWED_ORIGINS",
         f"http://127.0.0.1:{web_port},http://localhost:{web_port}",
     )
     settings = ServerSettings.from_environment()
     if settings.elasticsearch is None:
-        raise RuntimeError("本地启动需要 ANIVAG_ELASTICSEARCH_URL 和 ANIVAG_ELASTICSEARCH_INDEX。")
+        raise RuntimeError("本地启动需要 SEEKINO_ELASTICSEARCH_URL 和 SEEKINO_ELASTICSEARCH_INDEX。")
     database = make_url(settings.database_url)
     if settings.environment.value != "development":
-        raise RuntimeError("本地启动脚本只支持 ANIVAG_ENVIRONMENT=development。")
+        raise RuntimeError("本地启动脚本只支持 SEEKINO_ENVIRONMENT=development。")
     if database.drivername != "mysql+pymysql":
         raise RuntimeError("本地启动脚本需要 mysql+pymysql 数据库 URL。")
-    hosts = [database.host, os.environ["ANIVAG_HTTP_HOST"]]
+    hosts = [database.host, os.environ["SEEKINO_HTTP_HOST"]]
     if settings.elasticsearch is not None:
         hosts.append(urlsplit(settings.elasticsearch.url).hostname)
     for host in hosts:
         if host not in ("127.0.0.1", "localhost"):
             raise RuntimeError("本地启动脚本只支持 127.0.0.1 / localhost。")
-    port("ANIVAG_HTTP_PORT")
+    port("SEEKINO_HTTP_PORT")
     # Validate the development database name before starting or creating anything.
     engine = create_database_engine(settings.database_url, environment=settings.environment)
     close_database_engine(engine)
@@ -156,13 +156,13 @@ def get(url: str) -> bytes | None:
 
 
 def binary(name: str, *fallbacks: Path) -> str:
-    found = os.environ.get(f"ANIVAG_{name.upper()}_BIN") or shutil.which(name)
+    found = os.environ.get(f"SEEKINO_{name.upper()}_BIN") or shutil.which(name)
     if found and shutil.which(found):
         return shutil.which(found)
     for candidate in fallbacks:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
-    raise RuntimeError(f"找不到 {name}，请安装，或设置 ANIVAG_{name.upper()}_BIN。")
+    raise RuntimeError(f"找不到 {name}，请安装，或设置 SEEKINO_{name.upper()}_BIN。")
 
 
 def signature(pid: int) -> str:
@@ -225,7 +225,7 @@ def owned_listener(name: str, number: int) -> bool:
 
 
 def refresh_applications() -> None:
-    for name, key in (("api", "ANIVAG_HTTP_PORT"), ("web", "ANIVAG_WEB_PORT")):
+    for name, key in (("api", "SEEKINO_HTTP_PORT"), ("web", "SEEKINO_WEB_PORT")):
         number = port(key)
         if listening(number) and not owned_listener(name, number):
             raise RuntimeError(f"{name} 端口 {number} 被非本启动器管理的进程占用；请先停止该进程。")
@@ -289,7 +289,7 @@ def start_mysql(settings: ServerSettings) -> None:
         if url.username != "root" or url.password:
             raise RuntimeError(
                 "MySQL 未运行；脚本自建实例使用 root / 空密码。"
-                "请先启动配置的已有实例，或将 ANIVAG_DATABASE_URL 改为本地 root / 空密码 URL。"
+                "请先启动配置的已有实例，或将 SEEKINO_DATABASE_URL 改为本地 root / 空密码 URL。"
             )
         datadir.mkdir(exist_ok=True)
         if not (datadir / "mysql").is_dir():
@@ -302,12 +302,12 @@ def start_mysql(settings: ServerSettings) -> None:
                     stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120,
                 )
         # Keep the Unix socket short enough even when the repository path is long.
-        socket_path = Path("/tmp") / f"anivag-mysql-{os.getuid()}-{mysql_port}.sock"
+        socket_path = Path("/tmp") / f"seekino-mysql-{os.getuid()}-{mysql_port}.sock"
         launch("mysql", [
             mysqld, "--no-defaults", f"--datadir={datadir}", "--bind-address=127.0.0.1",
             f"--port={mysql_port}", f"--socket={socket_path}",
             f"--pid-file={STATE / 'mysql-server.pid'}", "--mysqlx=OFF",
-            f"--innodb-buffer-pool-size={os.environ.get('ANIVAG_MYSQL_BUFFER_POOL_SIZE', '128M')}",
+            f"--innodb-buffer-pool-size={os.environ.get('SEEKINO_MYSQL_BUFFER_POOL_SIZE', '128M')}",
             "--binlog-expire-logs-seconds=604800",  # Keep seven days of binary logs.
             # Log only changed columns (FULL if CDC is added); compress transactions.
             "--binlog-row-image=MINIMAL", "--binlog-transaction-compression=ON",
@@ -390,7 +390,7 @@ def library_ready(base: str) -> bool:
 
 
 def start_applications() -> None:
-    api_port = port("ANIVAG_HTTP_PORT")
+    api_port = port("SEEKINO_HTTP_PORT")
     api_base = f"http://127.0.0.1:{api_port}"
     model_config = load_config()
     missing_api_keys = [
@@ -404,7 +404,7 @@ def start_applications() -> None:
     refresh_applications()
     if listening(api_port):
         if not api_ready(api_base):
-            raise RuntimeError(f"API 端口 {api_port} 已占用，未识别到 anivag API。")
+            raise RuntimeError(f"API 端口 {api_port} 已占用，未识别到 seekino API。")
         print(f"[复用] API :{api_port}", flush=True)
     else:
         if owned_pid("api"):
@@ -414,12 +414,12 @@ def start_applications() -> None:
     if not library_ready(api_base):
         raise RuntimeError("API 已监听但资料库查询失败，请查看 api.log。")
 
-    web_port = port("ANIVAG_WEB_PORT")
+    web_port = port("SEEKINO_WEB_PORT")
     web_base = f"http://127.0.0.1:{web_port}"
     if listening(web_port):
         page = get(web_base)
         if page is None or b"/@vite/client" not in page or b"/src/main.tsx" not in page:
-            raise RuntimeError(f"Web 端口 {web_port} 已占用，未识别到 anivag Vite。")
+            raise RuntimeError(f"Web 端口 {web_port} 已占用，未识别到 seekino Vite。")
         print(f"[复用] Web :{web_port}", flush=True)
     else:
         if owned_pid("web"):
@@ -440,8 +440,8 @@ def status(settings: ServerSettings) -> bool:
     database_port = make_url(settings.database_url).port or 3306
     checks = {
         "MySQL TCP": listening(database_port),
-        "API / Parse Consumer": api_ready(f"http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}"),
-        "Web": get(f"http://127.0.0.1:{port('ANIVAG_WEB_PORT')}/@vite/client") is not None,
+        "API / Parse Consumer": api_ready(f"http://127.0.0.1:{port('SEEKINO_HTTP_PORT')}"),
+        "Web": get(f"http://127.0.0.1:{port('SEEKINO_WEB_PORT')}/@vite/client") is not None,
     }
     if settings.elasticsearch is not None:
         config = settings.elasticsearch
@@ -477,7 +477,7 @@ def stop(names: tuple[str, ...] = ("web", "api", "mysql")) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="懒启动 anivag 全部 localhost 服务。")
+    parser = argparse.ArgumentParser(description="懒启动 seekino 全部 localhost 服务。")
     parser.add_argument(
         "command",
         choices=("start", "status", "stop", "_env-names"),
@@ -516,8 +516,8 @@ def main() -> int:
             if child.poll() is not None:
                 raise RuntimeError(f"{name} 已退出，请查看 outputs/local-services/{name}.log。")
         print(
-            f"\n服务已就绪：\n  Web  http://127.0.0.1:{port('ANIVAG_WEB_PORT')}"
-            f"\n  API  http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}/docs"
+            f"\n服务已就绪：\n  Web  http://127.0.0.1:{port('SEEKINO_WEB_PORT')}"
+            f"\n  API  http://127.0.0.1:{port('SEEKINO_HTTP_PORT')}/docs"
             f"\n  状态 ./start.sh --branch {args.branch} status"
             f"\n  停止 ./start.sh --branch {args.branch} stop"
             "\n  日志 outputs/local-services/*.log",

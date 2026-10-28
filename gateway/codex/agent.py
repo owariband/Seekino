@@ -45,7 +45,7 @@ from .protocol import dynamic_tool_specs, strict_output_schema
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
 
 # A minimal live turn with pinned openai-codex 0.156.1 reports roughly 12,900
-# input tokens before AniVAG's variable prompt and tool contract are considered.
+# input tokens before Seekino's variable prompt and tool contract are considered.
 # Round upward and recalibrate this adapter reserve when upgrading openai-codex.
 _CODEX_BASE_INPUT_RESERVE_TOKENS = 13_000
 
@@ -104,7 +104,7 @@ def _failure_reason(error: BaseException) -> ModelFailureReason:
 
 
 class CodexAgentModel:
-    """Adapt the local Codex app-server to AniVAG's two Agent model protocols."""
+    """Adapt the local Codex app-server to Seekino's two Agent model protocols."""
 
     provider_name = CODEX_PROVIDER
     supports_vision_input = True
@@ -173,7 +173,7 @@ class CodexAgentModel:
         self._owns_executor = executor is None
         self._executor = executor or ThreadPoolExecutor(
             max_workers=max_concurrency,
-            thread_name_prefix="anivag-codex",
+            thread_name_prefix="seekino-codex",
         )
         self._sessions: set[SessionLike] = set()
         self._closed = False

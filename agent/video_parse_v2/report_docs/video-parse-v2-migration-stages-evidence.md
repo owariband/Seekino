@@ -213,7 +213,7 @@ R5 统一定向命令覆盖 database / usage / bootstrap / repository / queue / 
 
 此前 `real_agent_repository` Worker 用例只证明 SQLite 与替身的组件协作；旧 MySQL 用例主要覆盖同视频版本竞争、旧 ES 用例未覆盖全部恢复出口，这是本批补证前的调查事实。现在已经新增跨集 Prefix、retry / Worker、新 ES 恢复出口及同版 HTTP 产品组合场景，不能继续把它们列作尚未实现，也不能因为用例存在就宣称真实验证通过；07B 仍按场景和同版运行证据签收。
 
-本批重新核对时，`ANIVAG_TEST_DATABASE_URL`、`ANIVAG_TEST_ELASTICSEARCH_URL`、`ANIVAG_ELASTICSEARCH_URL` 仍均未配置，未打印凭据或连接外部环境。R5 的 **12 skipped** 是历史记录；本批入口当前分别为 MySQL **19 skipped**、ES **6 skipped**。SQLite / fake ES 不能替代真实锁竞争、真实查询可见性或故障语义；固定评测集与质量 / 定位 / 延迟 / 成本阈值尚未确认，02 未获批准，因此 07B / 08A 仍未通过。数据切换和发布未证明，本批也没有 commit / push、迁移、ES 重建、服务重启、发布或付费模型调用。
+本批重新核对时，`SEEKINO_TEST_DATABASE_URL`、`SEEKINO_TEST_ELASTICSEARCH_URL`、`SEEKINO_ELASTICSEARCH_URL` 仍均未配置，未打印凭据或连接外部环境。R5 的 **12 skipped** 是历史记录；本批入口当前分别为 MySQL **19 skipped**、ES **6 skipped**。SQLite / fake ES 不能替代真实锁竞争、真实查询可见性或故障语义；固定评测集与质量 / 定位 / 延迟 / 成本阈值尚未确认，02 未获批准，因此 07B / 08A 仍未通过。数据切换和发布未证明，本批也没有 commit / push、迁移、ES 重建、服务重启、发布或付费模型调用。
 
 `invalidator` 当前仍保留 `prefix.committed_leases`。R5 的“游标重新推进后的旧 marker / ABA 尚未单独验证”已被本批组合结果补齐：历史检测为 True → 失效后 False → 新链重推后 True，而旧写入 / heartbeat / retry / release 继续拒绝，新链正常提交。本地结果没有发现旧 Worker 写权限复活，也不构成清理历史或重做架构的依据；真实 MySQL 竞争证明仍留 07B。
 

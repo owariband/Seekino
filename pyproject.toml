@@ -1,5 +1,5 @@
 [project]
-name = "anivag"
+name = "seekino"
 version = "0.1.0"
 description = "Event-level multimodal video retrieval application"
 readme = "README.md"

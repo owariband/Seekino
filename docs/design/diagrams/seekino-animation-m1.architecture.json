@@ -2,21 +2,21 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "AniVAG 动画优先 M1 三层架构",
+    "title": "Seekino 动画优先 M1 三层架构",
     "locale": "zh-CN",
-    "output": "anivag-animation-m1.architecture.html",
+    "output": "seekino-animation-m1.architecture.html",
     "quality_profile": "showcase",
     "viewBox": [1320, 820]
   },
   "components": [
     { "id": "anime_user", "type": "external", "label": "动画观众", "sublabel": "导入动画 / 查询名场面", "pos": [40, 340], "size": [150, 72] },
     { "id": "anime_web", "type": "frontend", "label": "Web 工作台", "sublabel": "进度、结果卡片、播放器", "pos": [250, 340], "size": [180, 72] },
-    { "id": "anime_api", "type": "backend", "label": "AniVAG API", "sublabel": "视频导入、任务、检索", "pos": [510, 340], "size": [180, 72] },
+    { "id": "anime_api", "type": "backend", "label": "Seekino API", "sublabel": "视频导入、任务、检索", "pos": [510, 340], "size": [180, 72] },
     { "id": "anime_jobs", "type": "backend", "label": "任务编排器", "sublabel": "状态推进 / 重试 / 恢复", "pos": [760, 185], "size": [190, 76], "tag": "工程流转核心" },
     { "id": "anime_jobstore", "type": "database", "label": "Job Store", "sublabel": "任务真源 + Checkpoint", "pos": [1050, 105], "size": [190, 76] },
     { "id": "anime_worker", "type": "backend", "label": "Index Worker", "sublabel": "领取任务并执行阶段", "pos": [1030, 265], "size": [190, 76] },
     { "id": "anime_media", "type": "cloud", "label": "媒体与产物存储", "sublabel": "视频、音频片段、关键帧", "pos": [1030, 455], "size": [190, 76] },
-    { "id": "anime_engine", "type": "backend", "label": "AniVAG Engine", "sublabel": "事件切分、召回、融合", "pos": [760, 505], "size": [190, 76], "tag": "算法所有权" },
+    { "id": "anime_engine", "type": "backend", "label": "Seekino Engine", "sublabel": "事件切分、召回、融合", "pos": [760, 505], "size": [190, 76], "tag": "算法所有权" },
     { "id": "anime_models", "type": "external", "label": "模型服务", "sublabel": "Audio / VLM / Embedding", "pos": [510, 645], "size": [180, 76] },
     { "id": "anime_indices", "type": "database", "label": "三类检索索引", "sublabel": "语音文本 / 视觉 / 角色事件", "pos": [1030, 645], "size": [190, 76] }
   ],

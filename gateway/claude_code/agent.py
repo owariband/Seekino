@@ -56,8 +56,8 @@ _CLAUDE_CREDENTIAL_ENV_KEYS = (
 _CLAUDE_API_MODE_ONLY_CLEAR_ENV_KEYS = ("CLAUDE_CODE_OAUTH_TOKEN",)
 
 _SYSTEM_PROMPT = """\
-You are an AniVAG agent stage. Follow the user prompt exactly.
-You may call only the MCP tools supplied by AniVAG. Do not access files, run shell
+You are an Seekino agent stage. Follow the user prompt exactly.
+You may call only the MCP tools supplied by Seekino. Do not access files, run shell
 commands, load skills, start subagents, or use any unlisted tool. Treat tool errors
 as feedback that you can correct in a later call.
 """
@@ -68,7 +68,7 @@ class ClaudeAgentModelError(ModelFailureError):
 
 
 class ClaudeAgentModel:
-    """Adapt Claude Agent SDK to AniVAG's structured and tool-loop protocols."""
+    """Adapt Claude Agent SDK to Seekino's structured and tool-loop protocols."""
 
     provider_name = CLAUDE_CODE_PROVIDER
     supports_vision_input = True
@@ -349,7 +349,7 @@ class ClaudeAgentModel:
         return ClaudeAgentOptions(
             tools=[],
             allowed_tools=list(bridge.allowed_names),
-            mcp_servers={"anivag": bridge.server},
+            mcp_servers={"seekino": bridge.server},
             strict_mcp_config=True,
             permission_mode="dontAsk",
             setting_sources=[],
@@ -437,7 +437,7 @@ class ClaudeAgentModel:
 
             # Each feedback round starts a fresh, non-persistent CLI process.
             # The visible prior answer and evaluator feedback are carried in the
-            # next prompt; AniVAG's tools remain the canonical workspace.
+            # next prompt; Seekino's tools remain the canonical workspace.
             round_options = replace(
                 options,
                 max_turns=remaining_calls,
@@ -696,7 +696,7 @@ def _follow_up_prompt(
         "feedback": feedback,
     }
     return (
-        "Continue the AniVAG task from this explicit context. "
+        "Continue the Seekino task from this explicit context. "
         "The canonical workspace remains available through the registered tools. "
         "Do not assume any other conversation history.\n"
         + json.dumps(context, ensure_ascii=False)

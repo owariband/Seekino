@@ -52,15 +52,15 @@ from server.utils.time import datetime_to_unix_time_ms
 
 def test_database_environment_requires_physically_separate_databases() -> None:
     development = create_database_engine(
-        "mysql+pymysql://user:password@127.0.0.1/anivag_development",
+        "mysql+pymysql://user:password@127.0.0.1/seekino_development",
         environment=DatabaseEnvironment.DEVELOPMENT,
     )
-    assert development.url.database == "anivag_development"
+    assert development.url.database == "seekino_development"
     assert development.url.query["charset"] == "utf8mb4"
 
     with pytest.raises(ValueError, match="test database name"):
         create_database_engine(
-            "mysql+pymysql://user:password@127.0.0.1/anivag",
+            "mysql+pymysql://user:password@127.0.0.1/seekino",
             environment=DatabaseEnvironment.TEST,
         )
     with pytest.raises(ValueError, match="SQLite is only allowed"):
@@ -70,17 +70,17 @@ def test_database_environment_requires_physically_separate_databases() -> None:
         )
     with pytest.raises(ValueError, match="test database name"):
         create_database_engine(
-            "mysql+pymysql://user:password@127.0.0.1/anivag",
+            "mysql+pymysql://user:password@127.0.0.1/seekino",
             environment="test",
         )
     with pytest.raises(ValueError, match="charset must be utf8mb4"):
         create_database_engine(
-            "mysql+pymysql://user:password@127.0.0.1/anivag_test?charset=latin1",
+            "mysql+pymysql://user:password@127.0.0.1/seekino_test?charset=latin1",
             environment=DatabaseEnvironment.TEST,
         )
     with pytest.raises(ValueError, match="charset must be utf8mb4"):
         create_database_engine(
-            "mysql+pymysql://user:password@127.0.0.1/anivag_test"
+            "mysql+pymysql://user:password@127.0.0.1/seekino_test"
             "?charset=utf8mb4&charset=latin1",
             environment=DatabaseEnvironment.TEST,
         )

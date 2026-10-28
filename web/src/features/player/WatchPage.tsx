@@ -16,8 +16,8 @@ import { seriesPath, watchPath } from "../library/seriesLinks";
 import { useAuth } from "../auth/AuthProvider";
 import styles from "./watch.module.css";
 
-const PANEL_WIDTH_KEY = "anivag-watch-panel-width";
-const PAUSE_ON_SEND_KEY = "anivag-watch-pause-on-send";
+const PANEL_WIDTH_KEY = "seekino-watch-panel-width";
+const PAUSE_ON_SEND_KEY = "seekino-watch-pause-on-send";
 const MIN_PANEL_WIDTH = 320;
 
 type PlaybackExtraContext = {

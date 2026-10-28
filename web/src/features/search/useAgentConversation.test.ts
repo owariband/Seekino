@@ -548,19 +548,19 @@ describe("Conversation state", () => {
   });
 
   it("migrates the previous selected series' saved Conversation once and restores its messages", async () => {
-    localStorage.setItem("anivag-selected-series", "old-series");
-    localStorage.setItem("anivag-agent-conversation:local-default:old-series", JSON.stringify({ key: "old-key", id: "conv-legacy" }));
+    localStorage.setItem("seekino-selected-series", "old-series");
+    localStorage.setItem("seekino-agent-conversation:local-default:old-series", JSON.stringify({ key: "old-key", id: "conv-legacy" }));
     vi.mocked(listAgentMessages).mockResolvedValue(page([message("conv-legacy", { status: "COMPLETED", content: "原有聊天" })]));
     const { result } = renderHook(() => useAgentConversation());
     await waitFor(() => expect(result.current.conversationId).toBe("conv-legacy"));
     expect(result.current.messages[0]?.content).toBe("原有聊天");
     expect(createAgentConversation).not.toHaveBeenCalled();
-    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!)).toEqual({ key: "old-key", id: "conv-legacy" });
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!)).toEqual({ key: "old-key", id: "conv-legacy" });
   });
 
   it("uses a new creation key for an unfinished legacy request with the old scope payload", async () => {
-    localStorage.setItem("anivag-selected-series", "old-series");
-    localStorage.setItem("anivag-agent-conversation:local-default:old-series", JSON.stringify({ key: "old-key" }));
+    localStorage.setItem("seekino-selected-series", "old-series");
+    localStorage.setItem("seekino-agent-conversation:local-default:old-series", JSON.stringify({ key: "old-key" }));
     await ready();
     expect(createAgentConversation).toHaveBeenCalledOnce();
     expect(vi.mocked(createAgentConversation).mock.calls[0]![0]).not.toBe("old-key");
@@ -615,7 +615,7 @@ describe("Conversation state", () => {
 
   it("persists an explicitly selected Conversation for the next mount", async () => {
     const selected = await ready("conv-B");
-    const stored = JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!);
+    const stored = JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!);
     expect(stored).toMatchObject({ id: "conv-B" });
     expect(stored.key).toEqual(expect.any(String));
     selected.unmount();
@@ -636,11 +636,11 @@ describe("Conversation state", () => {
 
     rendered.rerender({ id: "conv-B" });
     await waitFor(() => expect(rendered.result.current.conversationId).toBe("conv-B"));
-    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!)).toMatchObject({ id: "conv-B" });
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!)).toMatchObject({ id: "conv-B" });
 
     act(() => finishAutomaticCreation(conversation("conv-A")));
     await waitFor(() => expect(createAgentConversation).toHaveBeenCalledOnce());
-    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!)).toMatchObject({ id: "conv-B" });
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!)).toMatchObject({ id: "conv-B" });
   });
 
   it("clears a deleted active Conversation and closes its subscription", async () => {
@@ -653,14 +653,14 @@ describe("Conversation state", () => {
   });
 
   it("restores a saved Conversation on remount and waits for a running Kick snapshot", async () => {
-    localStorage.setItem("anivag-agent-session:local-default", JSON.stringify({ key: "legacy-key", id: "legacy" }));
+    localStorage.setItem("seekino-agent-session:local-default", JSON.stringify({ key: "legacy-key", id: "legacy" }));
     const first = await ready(); first.unmount();
     vi.mocked(listAgentMessages).mockResolvedValue(page([message("conv-A")]));
     const { result } = await ready();
     expect(getAgentConversation).toHaveBeenCalledWith("conv-A");
     expect(createAgentConversation).toHaveBeenCalledOnce();
     expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String));
-    expect(localStorage.getItem("anivag-agent-session:local-default")).toBeNull();
+    expect(localStorage.getItem("seekino-agent-session:local-default")).toBeNull();
     expect(result.current.searching).toBe(true);
     act(() => { void result.current.send("second query"); });
     expect(streamAgentMessage).not.toHaveBeenCalled();
@@ -726,7 +726,7 @@ describe("Conversation state", () => {
 
   it("replaces a deleted Conversation identity and preserves it across network failures", async () => {
     const first = await ready(); first.unmount();
-    const savedKey = JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).key;
+    const savedKey = JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).key;
     vi.mocked(getAgentConversation).mockRejectedValue(new ApiClientError(404, { message: "deleted" }));
     const second = await ready();
     expect(vi.mocked(createAgentConversation).mock.calls[1]![0]).not.toBe(savedKey);

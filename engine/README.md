@@ -1,6 +1,6 @@
-# anivag Engine
+# seekino Engine
 
-Engine 是 anivag 的领域算法边界。视频解析算法位于 `parsev2/`，Agent 运行程序位于
+Engine 是 seekino 的领域算法边界。视频解析算法位于 `parsev2/`，Agent 运行程序位于
 `agent/video_parse_v2/`，检索算法位于 `rag/`。版本无关的媒体与模型能力从 `common/` 导入。
 Engine 不拥有生产任务、租约、Artifact 或数据库；这些生命周期由 Server 负责，外部模型请求由 Gateway 实现。
 
@@ -134,8 +134,8 @@ HTTP 搜索与聊天共用当前 `agent_runtime` 的 topK 配置：下限为 1�
 单价来源：[方舟模型价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh)、
 [DeepSeek 模型价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)。
 原始记录与可执行样本脚本分别位于
-`/private/tmp/anivag-p6-e2e-stk66klm/result.json`、
-`/private/tmp/anivag-p6-e2e-stk66klm/acceptance.py`；脚本要求独立测试 MySQL／ES 与
+`/private/tmp/seekino-p6-e2e-stk66klm/result.json`、
+`/private/tmp/seekino-p6-e2e-stk66klm/acceptance.py`；脚本要求独立测试 MySQL／ES 与
 本地配置的模型密钥，合成视频由 ffmpeg 生成，正式事件不声称来自真实解析模型。
 
 当前业务选择值为 endpoint 别名，实际响应为 `doubao-embedding-vision-250615`；
@@ -143,7 +143,7 @@ HTTP 搜索与聊天共用当前 `agent_runtime` 的 topK 配置：下限为 1�
 协议，因此当前采样合同会明确拒绝它。验收单独使用 `251215`，未改业务模型配置。
 GIF 有序帧／相对时间输入与帧级同源确认尚无本批已证明的外部编码协议。
 
-已有物理索引须按当前 `anivag-video-chunk-es-5` mapping 新建／重建；旧 mapping 会被
+已有物理索引须按当前 `seekino-video-chunk-es-5` mapping 新建／重建；旧 mapping 会被
 明确拒绝，不会自动迁移。配置或规则改变由发布方提高现有 generation，分别核对
 写成功、查询就绪和业务可搜索。本批只使用独立临时实例与测试索引，未切换数据或
 发布；历史计划中的旧字段和旧路径说明不能覆盖这里的当前合同。

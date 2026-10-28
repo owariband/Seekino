@@ -1712,7 +1712,7 @@ def test_parse_retry_preserves_snapshot_after_yaml_changes(
     prepared_v2_retry, tmp_path, monkeypatch, parent_state,
 ):
     service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
-    monkeypatch.delenv("ANIVAG_VIDEO_MODEL", raising=False)
+    monkeypatch.delenv("SEEKINO_VIDEO_MODEL", raising=False)
     config_path = tmp_path / "retry-models.yaml"
     payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
     payload["models"]["vision"].update(

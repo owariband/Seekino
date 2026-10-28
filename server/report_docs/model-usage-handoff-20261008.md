@@ -1,6 +1,6 @@
-# AniVAG model_usage 统计替换开发 handoff
+# Seekino model_usage 统计替换开发 handoff
 
-初始日期：2026-10-08；更新日期：2026-10-09。项目根目录：`/Users/bytedance/workspace/other-project/AniVAG`。
+初始日期：2026-10-08；更新日期：2026-10-09。项目根目录：`/Users/bytedance/workspace/other-project/Seekino`。
 原始源码改造基准：`main@c4b4cbc`，含当时已有未提交修改；前轮双chunk基准为 c8c5d2c + 开始时全部dirty的538tracked冻版（包含common）与十个必要补丁，实际Parse先于补修完成，随后验证Media/Chat。同期V1/Qdrant清理未纳入该真实服务；接手时重新核对，不reset或覆盖。
 
 ## 当前续接入口：秒制 ASR 修复后完整 ParseV2 重跑通过
@@ -13,7 +13,7 @@
 
 验收范围为完整Parse系统通路及相对ASR的秒级时间一致性：第一段最后一次ASR15句匹配14句，短句`はい。`（0–600ms）未独立匹配，明确不认证；第二段13/13匹配。**毫秒音轨真值精度仍未认证**，毫秒是统一存储单位。本次未重新验证Chat/UI，也未改写旧60004–60030ms或前轮99条账本；后者读前/读后payload SHA相同。向量首报的exact-double比较有1 ULP表示差异，实际mapping的float存储逐维bits一致后审计通过；首份失败报告与精度核实证据保留，未修改业务数据来通过审计。
 
-真实操作沿用已有隔离联调授权，namespace `anivag_asr_reparse_20261009_081508_test`、workspace `asr-reparse-20261009-081508`，未创建Qdrant集合。API69657/9622于 **08:58:21UTC** SIGTERM正常关闭，3306/9200/6333继续运行，测试库/索引/媒体/证据保留。本轮仅回写本handoff和证据索引，无生产源码改动、commit或push。运行期间ROOT出现后续并行修改（08:58核对为26路径），全部保留且未加载到这次冻结服务；调整的ASR及prompts仍与运行快照一致，不能把此验收扩称后续ROOT的全量验收。证据目录 `/private/tmp/anivag-asr-reparse-20261009/`，详细阶段原值、失败/账本、审计与生命周期见[证据索引最新节](model-token-usage-stages-evidence.md)。
+真实操作沿用已有隔离联调授权，namespace `seekino_asr_reparse_20261009_081508_test`、workspace `asr-reparse-20261009-081508`，未创建Qdrant集合。API69657/9622于 **08:58:21UTC** SIGTERM正常关闭，3306/9200/6333继续运行，测试库/索引/媒体/证据保留。本轮仅回写本handoff和证据索引，无生产源码改动、commit或push。运行期间ROOT出现后续并行修改（08:58核对为26路径），全部保留且未加载到这次冻结服务；调整的ASR及prompts仍与运行快照一致，不能把此验收扩称后续ROOT的全量验收。证据目录 `/private/tmp/seekino-asr-reparse-20261009/`，详细阶段原值、失败/账本、审计与生命周期见[证据索引最新节](model-token-usage-stages-evidence.md)。
 
 ## 前轮 ASR 输出边界修复与局部诊断（完整重跑前历史）
 
@@ -23,7 +23,7 @@ understanding/refine prompt已明确输入是归一后的原视频全局毫秒�
 
 离线六文件分三组完整 **43+15+33=91 passed，0 failed，0 skipped**；此前ASR/交接/V1合同分别实际出现10/4/3个定向失败，修复后通过。独立代码审阅passed，无阻断。真实ASR诊断使用前轮原片的第二段 **60000–90132ms** 与原冻结ASR绑定/fps1，得到14句秒制对白；首句 **4.5–5.1秒→4500–5100ms**，诊断全局投影 **64500–65100ms**。最后一条模型估计到30.3秒，超过30.132秒片段168ms，被既有转换器裁至30132ms；原始probe的raw边界检查failed仍保留，七项转换/裁剪/调用/范围检查通过，不改写为全项通过。该独立一次candidate_transcript调用 **14,602 Token** 不写SQL，不混前轮99条账本。
 
-该局部修复轮当时没有重新执行完整Parse/understanding/refine、没有改旧60004–60030ms时间或认证逐句对齐，也未启动服务、迁移、commit/push；后续完整新Parse已在上节单独验收，不能用本节ASR局部结果替代它。该轮代码/测试基线、真实raw秒/转换后毫秒、失败边界和独立审阅在 `/private/tmp/anivag-asr-seconds-20261009/`，详见[证据索引](model-token-usage-stages-evidence.md)。保留下述历史统计结论和原始证据。
+该局部修复轮当时没有重新执行完整Parse/understanding/refine、没有改旧60004–60030ms时间或认证逐句对齐，也未启动服务、迁移、commit/push；后续完整新Parse已在上节单独验收，不能用本节ASR局部结果替代它。该轮代码/测试基线、真实raw秒/转换后毫秒、失败边界和独立审阅在 `/private/tmp/seekino-asr-seconds-20261009/`，详见[证据索引](model-token-usage-stages-evidence.md)。保留下述历史统计结论和原始证据。
 
 ## 前轮双chunk统计验收入口
 
@@ -37,7 +37,7 @@ task559ce12a-ea72-4d6d-867e-e7261e21be60的parent/两child/Interval均COMPLETE�
 
 **时间质量边界必须随结论保留：**验证了结构/全局毫秒范围/整chunk播放；seq1当前version2的Interval模型updates在60004–60030ms的26ms内含多句对白，逐事件时间精度未通过。Chat/DTO原值、旧内容覆写与ASR原证未持久化，不能追认混入步骤或猜乘1000修改历史值；下一步强化understanding/refine的毫秒/全局offset约束后真实reParse验证。本轮不扩大prompt修复或模型重跑。默认V2未登记keyframes，图片覆盖unobserved。
 
-初始冻版23测试文件894passed/1skip（27.32s），唯一MySQL timing另库1passed0skip；schema35、冻结媒体158、Supervisor ROOT154/冻结152分别记录。真实Provider Responses VideoParseResult text-only probe1call/2740Token为独立无owner/noSQL诊断，不混99或17Parse。当前原始目录/private/tmp/anivag-usage-multichunk-20261009/中的independent-code-review.json无程序阻断、acceptance-final.json限定统计系统通路通过；intent-retry/semantic-answer-review.json的完整内容覆盖仅指已存解析数据，eventPrecisionCertified=false，timeline-precision-proof.json保存26ms精度缺口。完整时序/修改树/验证与生命周期见[证据索引最新节](model-token-usage-stages-evidence.md)。五产物仍是既有ignored/untracked文件，接手保留全部工作区改动。
+初始冻版23测试文件894passed/1skip（27.32s），唯一MySQL timing另库1passed0skip；schema35、冻结媒体158、Supervisor ROOT154/冻结152分别记录。真实Provider Responses VideoParseResult text-only probe1call/2740Token为独立无owner/noSQL诊断，不混99或17Parse。当前原始目录/private/tmp/seekino-usage-multichunk-20261009/中的independent-code-review.json无程序阻断、acceptance-final.json限定统计系统通路通过；intent-retry/semantic-answer-review.json的完整内容覆盖仅指已存解析数据，eventPrecisionCertified=false，timeline-precision-proof.json保存26ms精度缺口。完整时序/修改树/验证与生命周期见[证据索引最新节](model-token-usage-stages-evidence.md)。五产物仍是既有ignored/untracked文件，接手保留全部工作区改动。
 
 最终acceptance-final.json七项统计/通路检查true、eventPrecisionCertified=false、cleanupCompleted=true。API7827于07:00:09.322656UTC SIGTERM正常关闭；Web59930于07:07:53.234UTC SIGINT/exit0关闭。cleanup.json在07:08:24.967914UTC确认9622/5174关闭、3306/6333/9200继续监听，testDataRetained=true；api-stop-7827.json/web-stop.json保留精确进程证据，未删测试数据或新增commit/push。
 
@@ -54,7 +54,7 @@ U03 实际集中 callback/owner采集、U04 local SQL overview 与 U05 Token 页
 媒体合同最小修复后，默认请求的新独立Chat `626e188f-3a12-4442-95f3-6350ea073a62` 实际命中同Chunk，**21调用/146,303 Token**，在无用户单位提示下回答 **0–12.095秒（0–12095毫秒）**；结构化范围仍0–12095ms。固定key POST重放不新增调用。
 全workspace独立SQL/API与真实页面均为 **49calls/357,825 Token/missing0，input308,560/output49,265，9模型分组/3run**；owner/JSON、预算usedIDs精确/active为空、receipt/ES/provenance一致，页面两视图复用、series筛选和刷新通过，pageErrors/httpErrors均为空。`audit-final.json` 为 passed / `fullFlowPassed=true`。
 最终`acceptance-final.json`十一项均true；临时API89122于03:54:07UTC以SIGTERM关闭，Web43330于04:01:39.937UTC以SIGINT/exit0关闭。04:02:11.259068UTC的`cleanup.json`确认9622/5174关闭、基础3306/6333/9200仍运行，测试数据与证据保留。
-运行namespace为 `anivag_usage_u06_fixed_20261009_024542_test`，workspace为 `usage-u06-fixed-20261009-024542`，隔离API9622/Web5174；操作沿用既有真实联调授权。证据目录 `/private/tmp/anivag-usage-u06-fixed-20261009/` 保存环境、补丁/哈希、解析/两Chat、独立审计、真实UI与本轮前五文件baseline，详见索引末节。
+运行namespace为 `seekino_usage_u06_fixed_20261009_024542_test`，workspace为 `usage-u06-fixed-20261009-024542`，隔离API9622/Web5174；操作沿用既有真实联调授权。证据目录 `/private/tmp/seekino-usage-u06-fixed-20261009/` 保存环境、补丁/哈希、解析/两Chat、独立审计、真实UI与本轮前五文件baseline，详见索引末节。
 本轮状态兼容相关组134passed/1skip（13.54s），唯一MySQL timing在另一个专用库补验1passed/0skip（pytest2.56s、helper5.426s），主联调数据保持；Agent媒体prompt合同152passed（1.28s）。
 11:42起并行engine/common迁移45tracked变化与common新增全部保留，随后由另一工作提交为当前HEAD `c8c5d2cd9d28485dea0e5990de8813ef39a71a6f`；本轮四补丁仍dirty，root未执行该commit/push。迁移未装入本轮冻结真实服务，最新工作区七文件离线兼容293passed/27skip（11.46s）和AST/字节检查通过，不能写作该迁移已真实全链验收。
 
@@ -64,11 +64,11 @@ endpoint身份修复已完成九生产/六测试，相关十五测试文件 **68
 可选`encoder_model`的新默认身份从根 **config.yaml已配置的Gateway实际模型绑定**冻结，upload/reparse保留到快照；旧字段缺失只采用Server已配置绑定。index/query/sparse使用canonical，SDK仍请求原ep，actualmodel/usage不改写，错误响应仍strict拒绝。
 reparse(None)锁住最近task继承完整配置后冻结新task；terminal/pending takeover不回到初次session。仅fingerprint的requested配置JSON省略`encoder_model=None`，其他null/显式值与effective快照保持；scope比较canonical身份保留边界。
 当时原ep的text、3000ms/fps1video、query三调用实际250615/1024维通过，callback JSON共 **10,403 Token**；该局部轮没有SQL/ES/Chat，`fullFlowPassed=false`，不混入该历史轮49calls账本。
-前轮原始文件仍在 `/private/tmp/anivag-endpoint-fix-20261009/`；更旧两轮U06临时目录已因daemon recovery消失，文档保留原路径和必要结果，不宣称旧文件仍可读。
+前轮原始文件仍在 `/private/tmp/seekino-endpoint-fix-20261009/`；更旧两轮U06临时目录已因daemon recovery消失，文档保留原路径和必要结果，不宣称旧文件仍可读。
 
 ## 前一轮 224cbbc + dirty 毫秒默认联调（身份修复前历史）
 
-本节保留当时 532 tracked 冻结源码验收，原证据路径 `/private/tmp/anivag-usage-u06-ms-20261009/` 已消失。
+本节保留当时 532 tracked 冻结源码验收，原证据路径 `/private/tmp/seekino-usage-u06-ms-20261009/` 已消失。
 独立三文件 53 passed；同一短片为 12012 ms，`video.duration_seconds` 注释为 `media_time_milliseconds`。默认 fps=1 / max_frames=60 得到 13 个非空帧，末帧 11550 ms 在 EOF 前；chunk 和 refinement 最终 COMPLETE。
 默认任务 `57085694-6167-4ca4-a5ef-e561144eebe2` 当时 parent/interval 为 INDEXING_FAILED、ES=0，strict response model 校验将原 ep 路由误作编码身份，与实际 250615 不同；该阻断已经后续修复，不代表当前状态。
 当时十条调用 / 142,374 Token / missing 0 与 SQL/API/统计页和预算完全一致；七 completed / 三 failed、失败用量 75,130 保留，active/lease 清理，532/532 哈希一致。统计页两视图/筛选/刷新通过，另 `/api/series/get` 的 400 不等于全应用无错。
@@ -78,7 +78,7 @@ reparse(None)锁住最近task继承完整配置后冻结新task；terminal/pendi
 
 本节保留前一轮实际范围及限制；毫秒重构与修复未纳入该次运行，不代替当前冻结工作区的默认配置重验。
 2026-10-09 用户明确“然后可以进行联调测试吧”，授权隔离建表、服务运行和真实模型测试；U02 在 MySQL 8.4.11 专用测试库完成 **139 passed / 2 skipped**，两项跳过仅为 SQLite 参数的 MySQL 并发专项。
-本次隔离运行的 531 个 tracked 源码文件逐字节匹配已推送 `e296d9b8ab1a54122826c1c7fca4c093ecb8fbcc`；根 HEAD 的后续 `224cbbc` 与检索等 dirty 不在本次运行范围。数据库、ES index、Qdrant collection 均使用专用 `anivag_usage_u06_20261009_test`。
+本次隔离运行的 531 个 tracked 源码文件逐字节匹配已推送 `e296d9b8ab1a54122826c1c7fca4c093ecb8fbcc`；根 HEAD 的后续 `224cbbc` 与检索等 dirty 不在本次运行范围。数据库、ES index、Qdrant collection 均使用专用 `seekino_usage_u06_20261009_test`。
 本次 pinned 提交的十二文件离线基线为 **409 passed / 28 skipped**，Web **42 passed** 与 typecheck 通过；与上述历史工作区 429 passed 分别登记。
 首条 12 秒 V2 任务 `4ddff2be-98e2-4583-b04f-802697e9254c` 在模型调用前媒体准备失败；SQL 用量与 ES 命中均为零，此尝试保留为实际失败证据。
 真实 direct Chat `df9f29f2-8a0b-4c0f-a695-86304d0600e2` 已成功，DeepSeek Flash 742 + 6 = 748 Token；没有实际检索工具调用，operation 标签不证明分支触发。
@@ -95,7 +95,7 @@ reparse(None)锁住最近task继承完整配置后冻结新task；terminal/pendi
 
 ## 先读这些依据
 
-1. 项目 `.agents/skills/anivag-change-gate/SKILL.md` 与可用的 `hypnos-code`、`check-out`、`plan-map` 技能。沿用既有职责和实际启动指令的授权，不反复索取已授予的权限。
+1. 项目 `.agents/skills/seekino-change-gate/SKILL.md` 与可用的 `hypnos-code`、`check-out`、`plan-map` 技能。沿用既有职责和实际启动指令的授权，不反复索取已授予的权限。
 2. [Server 设计](../../docs/design/model-token-usage.md)：schema、采集、SQL/聚合和 API 的有效合同。该目录被 `**/design/` 忽略，必须直接读取，不因普通 rg/git status 看不到而判缺失。
 3. [阶段图](model-token-usage-stages.svg)、[可编辑场景](model-token-usage-stages.excalidraw)和[证据索引](model-token-usage-stages-evidence.md)。U01–U06统计完成，图无正在执行的统计阶段；最新539文件冻版Parse与秒级时间一致性通过，毫秒音轨真值精度未认证。旧538+十补丁的26ms时间缺口、旧Chat/UI验收及532+四补丁结果分别作为历史保留；后续并行ROOT修改不混入最新运行范围。
 4. 对照目标阶段读真实调用链和测试范本，然后按阶段 check-out。已有文档不能代替源码核对。
@@ -165,14 +165,14 @@ V2 已是默认流程，保留显式 V1 opt-in 和旧统计表/历史；新表�
 U03/U04 共用 service 与测试，分别负责 capture/append 和 overview/aggregation；并行 Agent 不同时覆写共享区域。
 每批记录实现、直接验证、真实环境验收各自状态；按有效证据维护主图/源图/索引，不提前移动当前位置。
 推进地图须按 plan-map 用官方 Excalidraw 能力导出，不能单独手改 SVG 使其与源图分叉。
-本次已在 `/private/tmp/anivag-model-usage-map-20261008` 恢复官方 exportToSvg 导出工具，并同步原生场景及 SVG；业务依赖未改。
+本次已在 `/private/tmp/seekino-model-usage-map-20261008` 恢复官方 exportToSvg 导出工具，并同步原生场景及 SVG；业务依赖未改。
 
 ## U02–U05 预计修改树
 
 这是已核对并执行的范围，含用户本次追加授权。叶子标明阶段，共 32 个唯一文件（30M、2A）。
 
 ```text
-AniVAG/
+Seekino/
 ├── [M] .env.example                          ← U04 本地统计说明；保留可选 LF 空字段
 ├── [M] config.yaml                           ← U03 默认 tracing.enabled=false
 ├── [M] README.md                             ← U04 更新用量来源与配置说明
@@ -274,7 +274,7 @@ tests/server/test_video_parse_index_coordinator.py
 新增 report_docs 文档尚未提交，TRD 被忽略但已存在；不 force add、不清理工作区或借本任务自动提交。
 原交接没有验证服务健康、测试库连接、模型配置或运行依赖；本次仅补字段存在性核查与离线验证，不能宣称真实在线流程已跑通。
 如需读 `.env.local` 只查所需字段存在性，禁止输出密钥、完整连接串或自由文本载荷。
-测试使用 ANIVAG_TEST_DATABASE_URL 与 DatabaseEnvironment.TEST，独立 *_test 库；缺配置按真实限制记录，不拿 development/production 数据冒充测试。
+测试使用 SEEKINO_TEST_DATABASE_URL 与 DatabaseEnvironment.TEST，独立 *_test 库；缺配置按真实限制记录，不拿 development/production 数据冒充测试。
 旧 Langfuse 地址/密钥缺失不阻塞本方案，禁止继续其部署/下载待办。
 
 ## 验证入口（本轮统计与通路通过，逐事件精度未通过；并行清理另做离线）
@@ -307,7 +307,7 @@ U06 按实际有效启动配置运行，至少真实 V2 和一条 Chat，对实�
 用户已实际发送以下指令，构成本次 U02–U05 源码与离线验证的执行授权；不扩展为真实环境操作授权：
 
 ```text
-请读取 /Users/bytedance/workspace/other-project/AniVAG/server/report_docs/model-usage-handoff-20261008.md，续接 AniVAG 的本地 Token 统计 refactor。
+请读取 /Users/bytedance/workspace/other-project/Seekino/server/report_docs/model-usage-handoff-20261008.md，续接 Seekino 的本地 Token 统计 refactor。
 表名已确认 model_usage，usage/metadata JSON 与八列 schema 按设计；使用 hypnos-code、check-out 和现有 plan-map。
 先完成 U02 阶段级 check-out，然后按 handoff 的 U02–U05 修改树连续执行已列代码、配置、测试和说明文档，不要再重新设计 schema。
 每阶段核对并回写证据，保留已有工作区改动。真实 MySQL 建表、服务运行和 U06 联调先核实具体操作授权；环境待办不阻断已授权的源码与离线验证。

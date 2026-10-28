@@ -1,4 +1,4 @@
-先给结论：对 AniVAG 来说，下一步不应该只是把“三路 RRF”机械扩成“四路、五路”，而应该建设一套“粗召回 → 细粒度定位 → 重排核验 → 时间证据展开”的分层检索。
+先给结论：对 Seekino 来说，下一步不应该只是把“三路 RRF”机械扩成“四路、五路”，而应该建设一套“粗召回 → 细粒度定位 → 重排核验 → 时间证据展开”的分层检索。
 
 稀疏向量/BM25 值得加入，但更适合作为低成本的词法召回实验；结合目前评测结果，真正更可能提高 Precision@1、缩短片段长度的，是 event/utterance/shot 级细粒度索引与候选重排。
 
@@ -6,7 +6,7 @@
 
 这套教程可以按下面的链路理解：
 
-| 阶段 | 核心问题 | 典型技术 | AniVAG 对应物 |
+| 阶段 | 核心问题 | 典型技术 | Seekino 对应物 |
 |---|---|---|---|
 | 数据准备 | 原始数据怎样变成证据 | 清洗、分块、语义切块 | 视频解析、ASR、TimelineEvent |
 | 索引单元 | 什么东西作为一次召回候选 | Chunk、Sentence Window、父子节点 | 60 秒 VideoChunk、Event、Cue、Shot |
@@ -90,7 +90,7 @@ BM25 主要考虑：
 5. BM25 与 Dense/Vision 的融合权重。
 6. 单路及融合后的回归评测。
 
-AniVAG 包含中文描述、日语原文和人物专名，不能直接使用默认英文分词。Qdrant 当前支持 `multilingual` tokenizer，官方明确建议非空格语言使用它，并要求写入和查询保持相同设置：[Qdrant Full-Text Search](https://qdrant.tech/documentation/search/text-search/full-text-search/)。
+Seekino 包含中文描述、日语原文和人物专名，不能直接使用默认英文分词。Qdrant 当前支持 `multilingual` tokenizer，官方明确建议非空格语言使用它，并要求写入和查询保持相同设置：[Qdrant Full-Text Search](https://qdrant.tech/documentation/search/text-search/full-text-search/)。
 
 ## 三、先校正一下当前两种向量的命名
 
@@ -102,9 +102,9 @@ AniVAG 包含中文描述、日语原文和人物专名，不能直接使用默�
 | VLM 生成的 caption，再走 Text Embedding | Text Embedding | Visual-caption Text Dense |
 | canonical MP4/帧，直接走 `embed_video` | Video/Multimodal Embedding | Vision/Video Dense |
 
-目前代码中的 `vision` 是第三种：直接对 canonical 视频调用 `embed_video()`，不是 caption 向量。[embed.py](/Users/bytedance/workspace/other-project/AniVAG/engine/parse/embed.py:98)
+目前代码中的 `vision` 是第三种：直接对 canonical 视频调用 `embed_video()`，不是 caption 向量。[embed.py](/Users/bytedance/workspace/other-project/Seekino/engine/parse/embed.py:98)
 
-当前 `text` 则由 `self_compact`、owned event description 和台词共同组成。[video_retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:95)
+当前 `text` 则由 `self_compact`、owned event description 和台词共同组成。[video_retrieval.py](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:95)
 
 因此：
 
@@ -112,7 +112,7 @@ AniVAG 包含中文描述、日语原文和人物专名，不能直接使用默�
 - 如果真的是“VLM 先写 caption，再把 caption 向量化”，它本质还是 Text Dense，只不过文本内容描述画面。
 - Visual-caption Text 很可能和现有综合语义 Text 高度重合，除非评测证明有独立增益，否则不值得专门再维护一路。
 
-## 四、AniVAG 适合建立哪些检索层次
+## 四、Seekino 适合建立哪些检索层次
 
 我建议按“路由层、粗召回层、证据原子层、精排层”组织，而不是平铺一堆向量。
 
@@ -160,7 +160,7 @@ self_compact
 
 - 动作、物体、颜色、服装、场景、镜头构图。
 
-但当前一个向量压缩整个 60 秒视频，粒度明显偏粗。现有 smoke 中 Vision Hit@1 只有 25%，等权 RRF 反而低于 Text 单路；文档也已经明确指出整段 60 秒 Vision Vector 对台词和画面标题查询噪声较大。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/AniVAG/evals/recall/ep07.recall-smoke.md:43)
+但当前一个向量压缩整个 60 秒视频，粒度明显偏粗。现有 smoke 中 Vision Hit@1 只有 25%，等权 RRF 反而低于 Text 单路；文档也已经明确指出整段 60 秒 Vision Vector 对台词和画面标题查询噪声较大。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/Seekino/evals/recall/ep07.recall-smoke.md:43)
 
 所以 Vision 应该：
 
@@ -194,7 +194,7 @@ self_compact
 - 稀有名词。
 - Query 与原文只有部分关键词重合，而不是完整连续短语。
 
-当前 Transcript 通道是规范化后的连续字面短语匹配，不是 BM25。[video_retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:242)
+当前 Transcript 通道是规范化后的连续字面短语匹配，不是 BM25。[video_retrieval.py](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:242)
 
 两者的关系是：
 
@@ -206,7 +206,7 @@ self_compact
 
 ### 3. Event / Utterance 证据原子层：最值得建设
 
-这是我认为 AniVAG 下一步最有价值的层。
+这是我认为 Seekino 下一步最有价值的层。
 
 当前解析结果已经有：
 
@@ -375,14 +375,14 @@ payload
 4. 将各自 Top-K 转成现有 `RankedVideoChunkMatch`。
 5. 继续使用 Engine 侧 Weighted RRF。
 
-Qdrant 也支持通过 `prefetch` 在库内执行 Dense + Sparse + RRF：[Qdrant Hybrid Queries](https://qdrant.tech/documentation/search/hybrid-queries/)。不过 AniVAG 第一版建议继续保留应用层融合，因为：
+Qdrant 也支持通过 `prefetch` 在库内执行 Dense + Sparse + RRF：[Qdrant Hybrid Queries](https://qdrant.tech/documentation/search/hybrid-queries/)。不过 Seekino 第一版建议继续保留应用层融合，因为：
 
 - 还要加入 MySQL Transcript exact 通道。
 - 要保存每路 rank/score 做诊断。
 - 当前项目使用的是 1-based rank、`rrfK=60` 和自己的加权公式。
 - Qdrant 当前 RRF 默认参数和加权公式与现实现并不完全相同，迁移需要专门做排序一致性测试。
 
-另外，当前 Qdrant Adapter 只声明和写入 `text`、`vision` 两个 named vector。[qdrant.py](/Users/bytedance/workspace/other-project/AniVAG/server/storage/qdrant.py:97)  
+另外，当前 Qdrant Adapter 只声明和写入 `text`、`vision` 两个 named vector。[qdrant.py](/Users/bytedance/workspace/other-project/Seekino/server/storage/qdrant.py:97)<br>
 加入 sparse 后建议使用新的 collection schema/version 并从 MySQL 真源重建，不要偷偷修改现有生产 Collection。
 
 ## 七、结合当前结果，建议的落地顺序
@@ -463,7 +463,7 @@ F：E + Shot Vision
 
 Datawhale 的评估章节也强调必须把检索相关性、生成忠实度和答案相关性分开诊断，且每次实验尽量只修改一个变量：[RAG 系统评估](https://github.com/datawhalechina/all-in-rag/blob/main/docs/chapter6/18_system_evaluation.md)。
 
-## 九、你给的“格式化生成”章节对 AniVAG 的意义
+## 九、你给的“格式化生成”章节对 Seekino 的意义
 
 这一章不是新的 RAG 召回技术。它解决的是：
 
@@ -479,7 +479,7 @@ Datawhale 的评估章节也强调必须把检索相关性、生成忠实度和�
 
 详见 [格式化生成章节](https://github.com/datawhalechina/all-in-rag/blob/main/docs/chapter5/16_formatted_generation.md)。
 
-AniVAG 其实已经落实得比较好了：
+Seekino 其实已经落实得比较好了：
 
 - `RetrievalChannelWeights`
 - `DraftItem`
@@ -488,7 +488,7 @@ AniVAG 其实已经落实得比较好了：
 - `FinalRenderBlock`
 - `RetrievalTraceEntry`
 
-都采用了严格 Pydantic Schema，并校验 ID、时间范围、重复项和字段类型。[state.py](/Users/bytedance/workspace/other-project/AniVAG/server/agent/video_search/state.py:27)
+都采用了严格 Pydantic Schema，并校验 ID、时间范围、重复项和字段类型。[state.py](/Users/bytedance/workspace/other-project/Seekino/server/agent/video_search/state.py:27)
 
 后面可以进一步把 Query Agent 的计划也结构化成：
 
@@ -526,7 +526,7 @@ self_compact + events + event.text ─Text Dense─┼─ 加权 RRF ─ Top-K C
 完整 60 秒视频 Chunk ─────────Vision Dense──┘
 ```
 
-Qdrant 里也确实只有 `text` 和 `vision` 两个向量字段；Transcript 路不在 Qdrant 中。[qdrant.py](/Users/bytedance/workspace/other-project/AniVAG/server/storage/qdrant.py:14)
+Qdrant 里也确实只有 `text` 和 `vision` 两个向量字段；Transcript 路不在 Qdrant 中。[qdrant.py](/Users/bytedance/workspace/other-project/Seekino/server/storage/qdrant.py:14)
 
 ## 一、当前三路实际是什么
 
@@ -542,7 +542,7 @@ Qdrant 里也确实只有 `text` 和 `vision` 两个向量字段；Transcript �
 4. 用字符串 `find()` 搜索连续子串；
 5. 每个 Chunk 只保留一个最佳命中。
 
-实现见 [video_retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:244) 和 [video_retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:397)。
+实现见 [video_retrieval.py](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:244) 和 [video_retrieval.py](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:397)。
 
 所以“完全不支持 ASR 原台词召回”是不准确的：
 
@@ -570,7 +570,7 @@ self_compact
 + 每个 owned event 的 text
 ```
 
-见 [video_retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:97)。
+见 [video_retrieval.py](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:97)。
 
 而 `self_compact` 也不是另一套独立摘要。它就是把当前 Chunk 的 owned events 格式化成：
 
@@ -578,7 +578,7 @@ self_compact
 [时间范围] EVENT_TYPE description；台词：text
 ```
 
-见 [understand.py](/Users/bytedance/workspace/other-project/AniVAG/engine/parsev1/understand.py:375)。
+见 [understand.py](/Users/bytedance/workspace/other-project/Seekino/engine/parsev1/understand.py:375)。
 
 因此目前的数据关系其实是：
 
@@ -604,7 +604,7 @@ owned events
 
 ### 3. Vision：完整 Chunk 的视频向量
 
-这一点你的理解基本正确：每个 canonical Chunk 的整段视频被压成一个 Vision Dense Vector。[embed.py](/Users/bytedance/workspace/other-project/AniVAG/engine/parsev1/embed.py:144)
+这一点你的理解基本正确：每个 canonical Chunk 的整段视频被压成一个 Vision Dense Vector。[embed.py](/Users/bytedance/workspace/other-project/Seekino/engine/parsev1/embed.py:144)
 
 它适合粗粒度查找：
 
@@ -724,9 +724,9 @@ end_seconds
 text
 ```
 
-没有 `speaker_id`。[schemas.py](/Users/bytedance/workspace/other-project/AniVAG/engine/parsev1/schemas.py:22)
+没有 `speaker_id`。[schemas.py](/Users/bytedance/workspace/other-project/Seekino/engine/parsev1/schemas.py:22)
 
-`TimelineEvent` 同样没有结构化 speaker 字段，只有 description 和 text；说话人如果存在，只是模型写在自然语言 description 里。[schemas.py](/Users/bytedance/workspace/other-project/AniVAG/engine/parsev1/schemas.py:36)
+`TimelineEvent` 同样没有结构化 speaker 字段，只有 description 和 text；说话人如果存在，只是模型写在自然语言 description 里。[schemas.py](/Users/bytedance/workspace/other-project/Seekino/engine/parsev1/schemas.py:36)
 
 此外，当前每个 Chunk 只保留一个最佳 Transcript 命中，最终每路只取 Top 20。因此它不能可靠回答：
 
@@ -795,7 +795,7 @@ BM25只能帮助“找到出现‘哈’的地方”，不能解决“是谁说�
 
 都会直接进入向量。
 
-之前的 `r06` 就是正确台词存在，但解析把乐奈的回答归给了高松灯，最终 Text 和 Vision 都排到第 8。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/AniVAG/evals/recall/ep07.recall-smoke.md:77)
+之前的 `r06` 就是正确台词存在，但解析把乐奈的回答归给了高松灯，最终 Text 和 Vision 都排到第 8。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/Seekino/evals/recall/ep07.recall-smoke.md:77)
 
 RRF 不会纠正源数据错误，只会融合多个带错的排序。
 
@@ -821,11 +821,11 @@ Semantic：人物因惊讶或疑问发出简短回应
 Visual：人物惊讶、疑惑的表情与说话镜头
 ```
 
-但当前接口只有一条 Query。Agent 可以主动拆成多次检索，Skill 也鼓励这么做，但这是依赖 LLM 临场规划的，不是稳定的检索管线。[retrieval/SKILL.md](/Users/bytedance/workspace/other-project/AniVAG/agent/chat/video_search/skills/retrieval/SKILL.md:58)
+但当前接口只有一条 Query。Agent 可以主动拆成多次检索，Skill 也鼓励这么做，但这是依赖 LLM 临场规划的，不是稳定的检索管线。[retrieval/SKILL.md](/Users/bytedance/workspace/other-project/Seekino/agent/chat/video_search/skills/retrieval/SKILL.md:58)
 
 ### 4. Transcript 当前是全量线性扫描
 
-每次查询会从 MySQL 加载当前范围内所有可搜索 Chunk 的 Transcript，再在 Python 中逐 Chunk 做字符串查找。[video.py](/Users/bytedance/workspace/other-project/AniVAG/server/repository/video.py:723)
+每次查询会从 MySQL 加载当前范围内所有可搜索 Chunk 的 Transcript，再在 Python 中逐 Chunk 做字符串查找。[video.py](/Users/bytedance/workspace/other-project/Seekino/server/repository/video.py:723)
 
 复杂度近似：
 
@@ -864,7 +864,7 @@ BM25/倒排索引的价值不仅是“排序更聪明”，还包括不再每次
 \frac{w}{60 + rank}
 \]
 
-见 [video_retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/engine/retrieval/video_retrieval.py:205)。
+见 [video_retrieval.py](/Users/bytedance/workspace/other-project/Seekino/engine/retrieval/video_retrieval.py:205)。
 
 它不知道：
 
@@ -895,7 +895,7 @@ channel_top_k = 20
 rrf_k = 60
 ```
 
-见 [retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/server/config/retrieval.py:8)。
+见 [retrieval.py](/Users/bytedance/workspace/other-project/Seekino/server/config/retrieval.py:8)。
 
 单路中：
 
@@ -927,7 +927,7 @@ rank 20 = 1/80 = 0.0125
 
 所以“多路投票”不一定代表多份独立证据。
 
-仓库现有实验也已经看到这一点：Text Hit@1 是 58.3%，等权 RRF 反而降到 41.7%。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/AniVAG/evals/recall/ep07.recall-smoke.md:50)
+仓库现有实验也已经看到这一点：Text Hit@1 是 58.3%，等权 RRF 反而降到 41.7%。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/Seekino/evals/recall/ep07.recall-smoke.md:50)
 
 ### 8. Top-20 截断发生在融合之前
 
@@ -1004,7 +1004,7 @@ Agent/Evaluator 可以发现候选不对，但它们不是一个稳定的候选�
 
 ### 12. Fallback 质量只被展示，没有进入排序
 
-`is_fallback` 会被验证并在限制说明里提示“证据粒度可能较粗”，但不会降低融合得分。[video_retrieval.py](/Users/bytedance/workspace/other-project/AniVAG/server/service/video_retrieval.py:332)
+`is_fallback` 会被验证并在限制说明里提示“证据粒度可能较粗”，但不会降低融合得分。[video_retrieval.py](/Users/bytedance/workspace/other-project/Seekino/server/service/video_retrieval.py:332)
 
 因此：
 
@@ -1029,7 +1029,7 @@ Agent/Evaluator 可以发现候选不对，但它们不是一个稳定的候选�
 - 没有分镜顺序查询；
 - 报告评估的还是 Text/Vision 双路，而不是现在完整的三路。
 
-该文档自己也明确写了，这是 exploratory smoke，不是统计上有代表性的 benchmark。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/AniVAG/evals/recall/ep07.recall-smoke.md:71)
+该文档自己也明确写了，这是 exploratory smoke，不是统计上有代表性的 benchmark。[ep07.recall-smoke.md](/Users/bytedance/workspace/other-project/Seekino/evals/recall/ep07.recall-smoke.md:71)
 
 ## 四、我认为现在真正的优先级
 
@@ -1327,7 +1327,7 @@ Rerank 的作用是对候选做绝对相关性或成对相关性判断，必要�
 
 ### 3. “多路相关证据重复投票”是什么意思
 
-RRF 默认把每一路当成相对独立的投票者，但 AniVAG 的通道并不完全独立：
+RRF 默认把每一路当成相对独立的投票者，但 Seekino 的通道并不完全独立：
 
 - Exact Phrase 使用原始 ASR；
 - BM25 也将使用原始 ASR；

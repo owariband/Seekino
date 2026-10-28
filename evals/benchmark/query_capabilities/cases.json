@@ -46,7 +46,7 @@
         "captured_at": "2026-10-18T06:38:12.403494+00:00",
         "series_id": "bdbf28ae-5404-58e4-8c98-699433499ffc",
         "target_chunk_id": "cd60254c-9e9f-5481-9fed-4e88ad61017d",
-        "chunk_index": "anivag_video_chunks_local_20261010_development",
+        "chunk_index": "seekino_video_chunks_local_20261010_development",
         "event_index": "seekino_video_events_development_v1",
         "retrieval_config": {
           "channel_top_k": 20,

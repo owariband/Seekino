@@ -17,7 +17,7 @@ from langchain_core.tools import BaseTool
 from gateway.schema_normalization import inline_schema_refs
 from gateway.media import ToolImageArtifact
 
-_SERVER_NAME = "anivag"
+_SERVER_NAME = "seekino"
 
 
 @dataclass(slots=True)
@@ -141,7 +141,7 @@ async def _run_sync_tool(base_tool: BaseTool, tool_call: dict[str, Any]) -> Any:
 
     Thread(
         target=run,
-        name=f"anivag-claude-tool-{base_tool.name}",
+        name=f"seekino-claude-tool-{base_tool.name}",
         daemon=True,
     ).start()
     return await completed

@@ -42,7 +42,7 @@ def initializer(tmp_path):
         environment = {
             **os.environ,
             "PATH": str(binary) + os.pathsep + os.environ.get("PATH", ""),
-            "ANIVAG_MODEL_CONFIG": str(config),
+            "SEEKINO_MODEL_CONFIG": str(config),
             "CALL_LOG": str(calls),
             **overrides,
         }

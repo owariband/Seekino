@@ -394,7 +394,7 @@ describe("WatchPage", () => {
     await screen.findByTestId("video-player");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
     fireEvent.click(screen.getByRole("switch", { name: "发送问题时暂停视频" }));
-    expect(localStorage.getItem("anivag-watch-pause-on-send")).toBe("false");
+    expect(localStorage.getItem("seekino-watch-pause-on-send")).toBe("false");
     view.unmount();
 
     renderPage();
@@ -416,7 +416,7 @@ describe("WatchPage", () => {
 
     fireEvent.click(pauseOnSend);
     expect(pauseOnSend).toBeChecked();
-    expect(localStorage.getItem("anivag-watch-pause-on-send")).toBe("true");
+    expect(localStorage.getItem("seekino-watch-pause-on-send")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "聊天" }));
     mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 31_234, wasPlaying: true });
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
@@ -628,12 +628,12 @@ describe("WatchPage", () => {
     fireEvent.pointerUp(divider, { pointerId: 1 });
     expect(divider).toHaveAttribute("aria-valuenow", "600");
     expect(page.style.getPropertyValue("--watch-panel-width")).toBe("600px");
-    expect(localStorage.getItem("anivag-watch-panel-width")).toBe("600");
+    expect(localStorage.getItem("seekino-watch-panel-width")).toBe("600");
   });
 
   it("clamps a saved wide sidebar to the viewport without losing the preference, and resizes from its visible width", async () => {
     const widthMock = vi.spyOn(window, "innerWidth", "get").mockReturnValue(1440);
-    localStorage.setItem("anivag-watch-panel-width", "850");
+    localStorage.setItem("seekino-watch-panel-width", "850");
     try {
       renderPage();
       await screen.findByTestId("video-player");
@@ -647,7 +647,7 @@ describe("WatchPage", () => {
       expect(divider).toHaveAttribute("aria-valuenow", "580");
       expect(divider).toHaveAttribute("aria-valuemax", "580");
       expect(page.style.getPropertyValue("--watch-panel-width")).toBe("580px");
-      expect(localStorage.getItem("anivag-watch-panel-width")).toBe("850");
+      expect(localStorage.getItem("seekino-watch-panel-width")).toBe("850");
 
       widthMock.mockReturnValue(1440);
       fireEvent(window, new Event("resize"));
@@ -658,7 +658,7 @@ describe("WatchPage", () => {
       fireEvent(window, new Event("resize"));
       fireEvent.keyDown(divider, { key: "ArrowRight" });
       expect(divider).toHaveAttribute("aria-valuenow", "556");
-      expect(localStorage.getItem("anivag-watch-panel-width")).toBe("556");
+      expect(localStorage.getItem("seekino-watch-panel-width")).toBe("556");
 
       widthMock.mockReturnValue(1440);
       fireEvent(window, new Event("resize"));

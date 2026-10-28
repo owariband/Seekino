@@ -39,7 +39,7 @@ def migrate(client, *, source: str, destination: str, environment: DatabaseEnvir
     if set(mapping) != {source}:
         raise ValueError("source must name exactly one physical index")
     legacy = mapping[source]["mappings"]
-    if (legacy.get("_meta", {}).get("index_contract_version") != "anivag-video-chunk-es-5"
+    if (legacy.get("_meta", {}).get("index_contract_version") != "seekino-video-chunk-es-5"
             or legacy.get("properties", {}).get("workspace_id", {}).get("type") != "keyword"):
         raise ValueError("source must use the legacy v5 workspace contract")
     stored_source = legacy.get("_source", {})
@@ -90,13 +90,13 @@ def main() -> None:
     parser.add_argument("--source", required=True)
     parser.add_argument("--destination", required=True)
     parser.add_argument("--environment", choices=[item.value for item in DatabaseEnvironment], required=True)
-    parser.add_argument("--elasticsearch-url", default=os.getenv("ANIVAG_ELASTICSEARCH_URL"))
+    parser.add_argument("--elasticsearch-url", default=os.getenv("SEEKINO_ELASTICSEARCH_URL"))
     parser.add_argument("--text-vector-dimensions", type=int)
     parser.add_argument("--vision-vector-dimensions", type=int)
     parser.add_argument("--apply", action="store_true", help="create and copy into the new index")
     arguments = parser.parse_args()
     config = ElasticsearchConfig(arguments.elasticsearch_url or "", arguments.destination,
-                                 api_key=os.getenv("ANIVAG_ELASTICSEARCH_API_KEY") or None)
+                                 api_key=os.getenv("SEEKINO_ELASTICSEARCH_API_KEY") or None)
     dimensions = resolve_vector_dimensions(text_dimensions=arguments.text_vector_dimensions,
                                           vision_dimensions=arguments.vision_vector_dimensions)
     with open_elasticsearch_client(config) as client:

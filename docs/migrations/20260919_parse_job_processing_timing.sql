@@ -1,12 +1,12 @@
--- anivag controlled migration: keep ParseJob processing time on the job row.
+-- seekino controlled migration: keep ParseJob processing time on the job row.
 --
 -- Stop parse workers first. This migration folds the now-removed attempt
 -- timing history into series_parse_job, then drops the two detail tables.
 -- Run 20260918_unix_time_ms.sql first when upgrading an existing installation.
 
-DROP PROCEDURE IF EXISTS anivag_assert_parse_timing_migratable;
+DROP PROCEDURE IF EXISTS seekino_assert_parse_timing_migratable;
 DELIMITER //
-CREATE PROCEDURE anivag_assert_parse_timing_migratable()
+CREATE PROCEDURE seekino_assert_parse_timing_migratable()
 BEGIN
     IF EXISTS (
         SELECT 1
@@ -20,8 +20,8 @@ BEGIN
 END//
 DELIMITER ;
 
-CALL anivag_assert_parse_timing_migratable();
-DROP PROCEDURE anivag_assert_parse_timing_migratable;
+CALL seekino_assert_parse_timing_migratable();
+DROP PROCEDURE seekino_assert_parse_timing_migratable;
 
 ALTER TABLE series_parse_job
     ADD COLUMN IF NOT EXISTS processing_duration_ms BIGINT NOT NULL DEFAULT 0,
@@ -29,9 +29,9 @@ ALTER TABLE series_parse_job
     ADD CONSTRAINT ck_series_parse_job_processing_duration
         CHECK (processing_duration_ms >= 0);
 
-DROP PROCEDURE IF EXISTS anivag_fold_parse_job_timing;
+DROP PROCEDURE IF EXISTS seekino_fold_parse_job_timing;
 DELIMITER //
-CREATE PROCEDURE anivag_fold_parse_job_timing()
+CREATE PROCEDURE seekino_fold_parse_job_timing()
 BEGIN
     -- A Job that ran before timing existed has no trustworthy duration.
     UPDATE series_parse_job
@@ -80,5 +80,5 @@ BEGIN
 END//
 DELIMITER ;
 
-CALL anivag_fold_parse_job_timing();
-DROP PROCEDURE anivag_fold_parse_job_timing;
+CALL seekino_fold_parse_job_timing();
+DROP PROCEDURE seekino_fold_parse_job_timing;

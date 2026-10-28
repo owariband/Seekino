@@ -1,4 +1,4 @@
-# AniVAG：一个 Chunk 的 ES 索引与检索设计评审
+# Seekino：一个 Chunk 的 ES 索引与检索设计评审
 
 > **2026-10-17 范围补充**：本稿的“一 Chunk 一条 ES 文档”样例继续描述 Chunk 索引。[Event TRD](event-retrieval-trd.md) 另增可重建的 MySQL/ES Event 投影，保留 Chunk 完整 Timeline，不改写本稿人工样例或据此宣称新工具已验证。索引任务归属以 [Parse Agent TRD](video-parse-harness-trd.md) 当前基线为准：Interval 只 Refine，ChunkTask INDEX 承担 Chunk/Event 同步，取代本文 §8 的旧 Interval 索引流程。新 Event 合同使用绝对整数毫秒；本稿历史示例不作为时间单位依据。
 
@@ -234,7 +234,7 @@ Query 文字分别经文字语义编码器与视频空间相容的文字编码�
 
 ## 4. ES JSON 与 mapping 提案
 
-示例物理索引名：`anivag_chunks_dev_review_v1`，文档 `_id=t7:c012`。此 ID 不包含 Interval ID，避免重叠窗口产生重复文档；不包含内容版本，重建替换同一任务的同一 Chunk。索引名只表示物理配置，不能当作跨库发布状态。
+示例物理索引名：`seekino_chunks_dev_review_v1`，文档 `_id=t7:c012`。此 ID 不包含 Interval ID，避免重叠窗口产生重复文档；不包含内容版本，重建替换同一任务的同一 Chunk。索引名只表示物理配置，不能当作跨库发布状态。
 
 **下方向量数值为手写示意，4/6 维只是让完整 JSON 可阅读，不是实际模型维度或部署配置。** 落地必须用各路确定的模型维度替换 mapping 与输入。两路独立采用 cosine / HNSW 是此评审基线，不做 HNSW 参数调优。
 
@@ -313,7 +313,7 @@ Query 文字分别经文字语义编码器与视频空间相容的文字编码�
 
 ```json
 {
-  "settings": {"analysis": {"analyzer": {"anivag_cjk_review": {"type": "cjk", "stopwords": "_none_"}}}},
+  "settings": {"analysis": {"analyzer": {"seekino_cjk_review": {"type": "cjk", "stopwords": "_none_"}}}},
   "mappings": {
     "dynamic": "strict",
     "_meta": {"status": "DESIGN_REVIEW_ONLY", "vector_values": "synthetic; dims 4/6 are illustrative, not a model choice"},
@@ -335,21 +335,21 @@ Query 文字分别经文字语义编码器与视频空间相容的文字编码�
         "type": "object",
         "dynamic": "strict",
         "properties": {
-          "dialogue_original": {"type": "text", "analyzer": "anivag_cjk_review", "search_analyzer": "anivag_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
-          "dialogue_translation": {"type": "text", "analyzer": "anivag_cjk_review", "search_analyzer": "anivag_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
-          "screen_text": {"type": "text", "analyzer": "anivag_cjk_review", "search_analyzer": "anivag_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
+          "dialogue_original": {"type": "text", "analyzer": "seekino_cjk_review", "search_analyzer": "seekino_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
+          "dialogue_translation": {"type": "text", "analyzer": "seekino_cjk_review", "search_analyzer": "seekino_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
+          "screen_text": {"type": "text", "analyzer": "seekino_cjk_review", "search_analyzer": "seekino_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
           "person_names": {
             "type": "text",
-            "analyzer": "anivag_cjk_review",
-            "search_analyzer": "anivag_cjk_review",
+            "analyzer": "seekino_cjk_review",
+            "search_analyzer": "seekino_cjk_review",
             "similarity": "BM25",
             "position_increment_gap": 100,
             "fields": {"exact": {"type": "keyword"}}
           },
-          "event_description": {"type": "text", "analyzer": "anivag_cjk_review", "search_analyzer": "anivag_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
-          "keywords": {"type": "text", "analyzer": "anivag_cjk_review", "search_analyzer": "anivag_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
-          "questions": {"type": "text", "analyzer": "anivag_cjk_review", "search_analyzer": "anivag_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
-          "summary": {"type": "text", "analyzer": "anivag_cjk_review", "search_analyzer": "anivag_cjk_review", "similarity": "BM25", "position_increment_gap": 100}
+          "event_description": {"type": "text", "analyzer": "seekino_cjk_review", "search_analyzer": "seekino_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
+          "keywords": {"type": "text", "analyzer": "seekino_cjk_review", "search_analyzer": "seekino_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
+          "questions": {"type": "text", "analyzer": "seekino_cjk_review", "search_analyzer": "seekino_cjk_review", "similarity": "BM25", "position_increment_gap": 100},
+          "summary": {"type": "text", "analyzer": "seekino_cjk_review", "search_analyzer": "seekino_cjk_review", "similarity": "BM25", "position_increment_gap": 100}
         }
       },
       "lexical_fields": {"type": "object", "enabled": false},

@@ -29,7 +29,7 @@ from .multimodal import ToolModelSession, _encode_inputs, tool_model_session
 from .tool_loop import _copy_assistant_reasoning, _function_tool_spec
 
 _Result = TypeVar("_Result", bound=BaseModel)
-_HARNESS_PROVIDER = "anivag_parse"
+_HARNESS_PROVIDER = "seekino_parse"
 register_harness_profile(_HARNESS_PROVIDER, HarnessProfile(
     base_system_prompt="",
     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
@@ -243,7 +243,7 @@ def generate_with_deepagents(
                 ),
                 _ParseControlMiddleware(model, completion_name=result_type.__name__, business_tools=tools),
             ],
-            name="anivag_parse",
+            name="seekino_parse",
         )
         state = graph.invoke(
             {"messages": [HumanMessage(content=session.content, id=anchor_id)]},

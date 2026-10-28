@@ -10,7 +10,7 @@ def create_redis_client(config: AuthConfig) -> Redis | None:
     if config.mode == "local":
         return None
     if not config.redis_url:
-        raise ValueError("cloud authentication requires ANIVAG_AUTH_REDIS_URL")
+        raise ValueError("cloud authentication requires SEEKINO_AUTH_REDIS_URL")
     client = Redis.from_url(
         config.redis_url, decode_responses=True,
         socket_timeout=config.redis_timeout_seconds,

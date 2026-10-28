@@ -1,4 +1,4 @@
-# anivag Multi-Agent API 对接文档
+# seekino Multi-Agent API 对接文档
 
 > 状态：首个可运行纵向闭环
 >
@@ -308,8 +308,8 @@ Message 新增，或同一 ASSISTANT Message 从 `PROCESSING` 变成 `COMPLETED/
 当前完整状态，所以前端不需要依赖丢失的中间事件恢复。
 
 快照不受 List Message 的单页 500 条上限截断；List 接口仍按原来的分页参数工作。
-轮询与保活间隔由 `ANIVAG_SSE_POLL_SECONDS`（默认 1 秒）和
-`ANIVAG_SSE_KEEPALIVE_SECONDS`（默认 15 秒）配置，保活按经过时间计算。
+轮询与保活间隔由 `SEEKINO_SSE_POLL_SECONDS`（默认 1 秒）和
+`SEEKINO_SSE_KEEPALIVE_SECONDS`（默认 15 秒）配置，保活按经过时间计算。
 
 GET SSE 只恢复数据库快照，不再次启动 Kick，也不回放未持久化的正文交付事件。刷新或断线后，
 正在执行的消息仍显示 PROCESSING，任务正常完成后从快照得到完整结果。
@@ -368,33 +368,33 @@ Message 状态：
 ## 7. 模型配置
 
 ```text
-ANIVAG_AGENT_QUERY_MODEL
-ANIVAG_AGENT_EVALUATOR_MODEL
-ANIVAG_AGENT_CHAT_MODEL
-ANIVAG_AGENT_FALLBACK_MODEL
-ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS=180
-ANIVAG_AGENT_HISTORY_MESSAGE_LIMIT=12
-ANIVAG_AGENT_DEFAULT_TOP_K=8
-ANIVAG_AGENT_MAX_TOP_K=20
-ANIVAG_AGENT_MAX_LOOP_TURNS=3
-ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN=6
-ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN=4
-ANIVAG_AGENT_MAX_OUTPUT_TOKENS=4096
-ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS=600
-ANIVAG_AGENT_MAX_CONCURRENT_KICKS=4
+SEEKINO_AGENT_QUERY_MODEL
+SEEKINO_AGENT_EVALUATOR_MODEL
+SEEKINO_AGENT_CHAT_MODEL
+SEEKINO_AGENT_FALLBACK_MODEL
+SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS=180
+SEEKINO_AGENT_HISTORY_MESSAGE_LIMIT=12
+SEEKINO_AGENT_DEFAULT_TOP_K=8
+SEEKINO_AGENT_MAX_TOP_K=20
+SEEKINO_AGENT_MAX_LOOP_TURNS=3
+SEEKINO_AGENT_MAX_MODEL_CALLS_PER_TURN=6
+SEEKINO_AGENT_MAX_TOOL_CALLS_PER_TURN=4
+SEEKINO_AGENT_MAX_OUTPUT_TOKENS=4096
+SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS=600
+SEEKINO_AGENT_MAX_CONCURRENT_KICKS=4
 ```
 
 Query、Evaluator 和 Chat 默认都使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash），
 通过 `agent_model.provider` 指定的 DeepSeek endpoint 调用；`agent_model.reasoning_effort` 固定为
 `none`，请求显式关闭 thinking。Query 使用 LangChain Tool Calling，Evaluator 使用一次 required
 function call，Chat 使用有边界的 function-calling loop；三个角色可分别用对应环境变量覆盖模型名。
-`ANIVAG_AGENT_FALLBACK_MODEL` 默认取 `video_parser.transcript_model`（Ark Doubao Lite）。Provider
+`SEEKINO_AGENT_FALLBACK_MODEL` 默认取 `video_parser.transcript_model`（Ark Doubao Lite）。Provider
 请求失败或模型响应结构非法时，失败的单次模型调用在当前消息与 Tool 状态上原位切到 Lite；
 已完成的业务 Tool 结果与 acknowledgement 继续复用，不重新执行检索或视频提交。业务 Tool
 错误、取消 / deadline / 预算等控制错误和本地输入校验错误不会触发模型降级。消息
 `modelName` 记录 Chat 的 DeepSeek 主模型，发生 Lite fallback 时只记录结构化 warning。
-`ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS` 限制单次 Provider
-请求，`ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS` 则覆盖最多三轮 Query/Evaluator 和最终
+`SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS` 限制单次 Provider
+请求，`SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS` 则覆盖最多三轮 Query/Evaluator 和最终
 Chat；两者不是同一个超时窗口。
 
 Chat 是 text-only、非 token 流式的自主工具循环。存在获批 Evidence 时，第一次调用使用

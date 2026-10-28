@@ -20,13 +20,13 @@ def test_mysql_client_sets_charset_pool_options_and_utc_session(monkeypatch):
     monkeypatch.setattr(mysql_caller.event, "listen", listen)
 
     result = mysql_caller.create_database_engine(
-        "mysql+pymysql://user:password@127.0.0.1/anivag_test",
+        "mysql+pymysql://user:password@127.0.0.1/seekino_test",
         environment=DatabaseEnvironment.TEST, pool_recycle_seconds=1200,
     )
 
     assert result is engine
     url = create.call_args.args[0]
-    assert url.database == "anivag_test" and url.query["charset"] == "utf8mb4"
+    assert url.database == "seekino_test" and url.query["charset"] == "utf8mb4"
     assert create.call_args.kwargs == {"pool_pre_ping": True, "pool_recycle": 1200}
     listen.assert_called_once_with(engine, "connect", mysql_caller._set_mysql_session_timezone_utc)
     cursor = Mock()
@@ -42,7 +42,7 @@ def test_mysql_listener_registration_failure_disposes_allocated_engine(monkeypat
     monkeypatch.setattr(mysql_caller.event, "listen", Mock(side_effect=RuntimeError("listener failed")))
     with pytest.raises(RuntimeError, match="listener failed"):
         mysql_caller.create_database_engine(
-            "mysql+pymysql://user:password@127.0.0.1/anivag_test",
+            "mysql+pymysql://user:password@127.0.0.1/seekino_test",
             environment=DatabaseEnvironment.TEST,
         )
     engine.dispose.assert_called_once()
@@ -63,7 +63,7 @@ def test_mysql_admin_client_uses_validated_target_connection_without_database(mo
     monkeypatch.setattr(mysql_caller.event, "listen", listen)
 
     result = mysql_caller.create_admin_database_engine(
-        "mysql+pymysql://user:password@127.0.0.1:3307/anivag_development",
+        "mysql+pymysql://user:password@127.0.0.1:3307/seekino_development",
         environment=DatabaseEnvironment.DEVELOPMENT,
     )
 
@@ -81,10 +81,10 @@ def test_mysql_admin_client_uses_validated_target_connection_without_database(mo
 
 
 @pytest.mark.parametrize(("url", "environment", "message"), [
-    ("mysql+pymysql://localhost/anivag", DatabaseEnvironment.PRODUCTION, "not allowed in production"),
-    ("mysql+pymysql://localhost/anivag", DatabaseEnvironment.DEVELOPMENT, "development database name"),
+    ("mysql+pymysql://localhost/seekino", DatabaseEnvironment.PRODUCTION, "not allowed in production"),
+    ("mysql+pymysql://localhost/seekino", DatabaseEnvironment.DEVELOPMENT, "development database name"),
     ("mysql+pymysql://localhost/", DatabaseEnvironment.TEST, "must select a database"),
-    ("mysql+pymysql://localhost/anivag_test?charset=latin1", DatabaseEnvironment.TEST, "charset must be utf8mb4"),
+    ("mysql+pymysql://localhost/seekino_test?charset=latin1", DatabaseEnvironment.TEST, "charset must be utf8mb4"),
     ("sqlite+pysqlite:///:memory:", DatabaseEnvironment.TEST, "requires a MySQL database URL"),
 ])
 def test_mysql_admin_rejects_unsafe_connections_before_creating_client(monkeypatch, url, environment, message):
@@ -100,7 +100,7 @@ def test_elasticsearch_client_context_passes_timeout_and_closes_once(monkeypatch
     client = Mock()
     create = Mock(return_value=client)
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", create)
-    config = ElasticsearchConfig("http://127.0.0.1:9200", "anivag_test", api_key="test-key")
+    config = ElasticsearchConfig("http://127.0.0.1:9200", "seekino_test", api_key="test-key")
 
     def command():
         with elasticsearch_caller.open_elasticsearch_client(config, request_timeout_seconds=3) as selected:
@@ -122,14 +122,14 @@ def test_elasticsearch_default_timeout_is_left_to_sdk(monkeypatch):
     client = Mock()
     create = Mock(return_value=client)
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", create)
-    config = ElasticsearchConfig("http://127.0.0.1:9200", "anivag_test")
+    config = ElasticsearchConfig("http://127.0.0.1:9200", "seekino_test")
     assert elasticsearch_caller.create_elasticsearch_client(config) is client
     create.assert_called_once_with(config.url, api_key=None)
 
 
 def test_event_store_borrows_client_without_initializing_index(monkeypatch):
     client = Mock()
-    config = ElasticsearchConfig("http://127.0.0.1:9200", "anivag_test")
+    config = ElasticsearchConfig("http://127.0.0.1:9200", "seekino_test")
     store = elasticsearch_caller.build_event_elasticsearch_storage(
         client, config, environment=DatabaseEnvironment.TEST,
         semantic_dimensions=512, vision_dimensions=1024,
@@ -144,12 +144,12 @@ def test_event_store_borrows_client_without_initializing_index(monkeypatch):
 def test_event_index_configuration_uses_seekino_variable_and_environment_guard(monkeypatch):
     monkeypatch.setenv("SEEKINO_ELASTICSEARCH_EVENT_INDEX", "seekino_custom_event_test")
     config = ElasticsearchConfig.from_environment(
-        DatabaseEnvironment.TEST, url="http://127.0.0.1:9200", index_name="anivag_test",
+        DatabaseEnvironment.TEST, url="http://127.0.0.1:9200", index_name="seekino_test",
     )
     assert config.event_index_name == "seekino_custom_event_test"
     with pytest.raises(ValueError, match="test component"):
         ElasticsearchConfig.from_environment(
-            DatabaseEnvironment.TEST, url="http://127.0.0.1:9200", index_name="anivag_test",
+            DatabaseEnvironment.TEST, url="http://127.0.0.1:9200", index_name="seekino_test",
             event_index_name="seekino_production_events",
         )
 
@@ -159,7 +159,7 @@ def test_elasticsearch_wrong_environment_fails_before_allocating_client(monkeypa
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", create)
     with pytest.raises(ValueError, match="test component"):
         elasticsearch_caller.build_elasticsearch_storage(
-            ElasticsearchConfig("http://127.0.0.1:9200", "anivag"),
+            ElasticsearchConfig("http://127.0.0.1:9200", "seekino"),
             environment=DatabaseEnvironment.TEST, semantic_dimensions=2, vision_dimensions=2,
         )
     create.assert_not_called()
@@ -169,7 +169,7 @@ def test_redis_local_mode_and_missing_cloud_url_do_not_allocate_client(monkeypat
     create = Mock()
     monkeypatch.setattr(redis_caller.Redis, "from_url", create)
     assert redis_caller.create_redis_client(AuthConfig()) is None
-    with pytest.raises(ValueError, match="ANIVAG_AUTH_REDIS_URL"):
+    with pytest.raises(ValueError, match="SEEKINO_AUTH_REDIS_URL"):
         redis_caller.create_redis_client(AuthConfig(mode="cloud", secret_key="x" * 32))
     create.assert_not_called()
 
@@ -216,7 +216,7 @@ def test_caller_init_keeps_local_redis_disabled_and_passes_storage_configuration
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", create_store)
     monkeypatch.setattr(redis_caller.Redis, "from_url", create_redis)
     settings = SimpleNamespace(
-        database_url="mysql+pymysql://localhost/anivag_test",
+        database_url="mysql+pymysql://localhost/seekino_test",
         environment=DatabaseEnvironment.TEST, database_pool_recycle_seconds=1200,
         auth=AuthConfig(),
         elasticsearch=ElasticsearchConfig("http://127.0.0.1:9200", "aggregate_test", api_key="test-key"),
@@ -260,7 +260,7 @@ def test_caller_init_releases_previous_resources_when_next_dependency_fails(monk
         Mock(side_effect=RuntimeError("store setup failed")),
     )
     settings = SimpleNamespace(
-        database_url="mysql+pymysql://localhost/anivag_test",
+        database_url="mysql+pymysql://localhost/seekino_test",
         environment=DatabaseEnvironment.TEST, database_pool_recycle_seconds=1200,
         auth=AuthConfig(mode="cloud", secret_key="x" * 32, redis_url="redis://localhost/15"),
         elasticsearch=ElasticsearchConfig("http://127.0.0.1:9200", "aggregate_test"),
@@ -278,7 +278,7 @@ def test_caller_init_releases_previous_resources_when_next_dependency_fails(monk
 def test_caller_rejects_missing_elasticsearch_before_creating_clients(monkeypatch):
     create = Mock()
     monkeypatch.setattr(mysql_caller, "create_database_engine", create)
-    with pytest.raises(ValueError, match="ANIVAG_ELASTICSEARCH_URL"):
+    with pytest.raises(ValueError, match="SEEKINO_ELASTICSEARCH_URL"):
         caller.init(SimpleNamespace(elasticsearch=None), semantic_dimensions=512, vision_dimensions=512)
     create.assert_not_called()
 

@@ -123,13 +123,13 @@ def test_configuration_has_explicit_cloud_requirements(identities, monkeypatch):
     with pytest.raises(ValueError, match="SMTP"):
         AuthService(repository, config, redis=borrowed_redis)
     assert not borrowed_redis.closed
-    monkeypatch.setenv("ANIVAG_AUTH_MODE", "cloud")
-    monkeypatch.setenv("ANIVAG_AUTH_SECRET_KEY", "x" * 32)
-    monkeypatch.setenv("ANIVAG_AUTH_REDIS_URL", "redis://127.0.0.1:6379/15")
-    monkeypatch.setenv("ANIVAG_AUTH_OTP_ATTEMPT_LIMIT", "3")
-    monkeypatch.setenv("ANIVAG_AUTH_QUERY_LIMIT_GUEST", "5")
-    monkeypatch.setenv("ANIVAG_AUTH_COOKIE_SECURE", "false")
-    monkeypatch.setenv("ANIVAG_PUBLIC_LIBRARY_ONLY", "true")
+    monkeypatch.setenv("SEEKINO_AUTH_MODE", "cloud")
+    monkeypatch.setenv("SEEKINO_AUTH_SECRET_KEY", "x" * 32)
+    monkeypatch.setenv("SEEKINO_AUTH_REDIS_URL", "redis://127.0.0.1:6379/15")
+    monkeypatch.setenv("SEEKINO_AUTH_OTP_ATTEMPT_LIMIT", "3")
+    monkeypatch.setenv("SEEKINO_AUTH_QUERY_LIMIT_GUEST", "5")
+    monkeypatch.setenv("SEEKINO_AUTH_COOKIE_SECURE", "false")
+    monkeypatch.setenv("SEEKINO_PUBLIC_LIBRARY_ONLY", "true")
     parsed = AuthConfig.from_environment()
     assert parsed.otp_attempt_limit == 3 and not parsed.cookie_secure
     assert parsed.query_limit_guest == 5 and parsed.concurrent_queries_user == 3
@@ -141,12 +141,12 @@ def test_configuration_has_explicit_cloud_requirements(identities, monkeypatch):
 
 def test_redis_timeout_loads_from_environment_and_requires_positive_integer(monkeypatch):
     assert AuthConfig().redis_timeout_seconds == 5
-    monkeypatch.setenv("ANIVAG_AUTH_REDIS_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("SEEKINO_AUTH_REDIS_TIMEOUT_SECONDS", "12")
     assert AuthConfig.from_environment().redis_timeout_seconds == 12
     for invalid in (0, -1, True, 1.5):
         with pytest.raises(ValueError, match="redis_timeout_seconds must be a positive integer"):
             AuthConfig(redis_timeout_seconds=invalid)
-    monkeypatch.setenv("ANIVAG_AUTH_REDIS_TIMEOUT_SECONDS", "0")
+    monkeypatch.setenv("SEEKINO_AUTH_REDIS_TIMEOUT_SECONDS", "0")
     with pytest.raises(ValueError, match="redis_timeout_seconds must be a positive integer"):
         AuthConfig.from_environment()
 
@@ -477,9 +477,9 @@ def test_invalid_email_rejected(email):
 
 @pytest.fixture
 def real_redis_cloud(identities):
-    url = os.getenv("ANIVAG_TEST_AUTH_REDIS_URL")
+    url = os.getenv("SEEKINO_TEST_AUTH_REDIS_URL")
     if not url:
-        pytest.skip("set ANIVAG_TEST_AUTH_REDIS_URL to an isolated temporary Redis")
+        pytest.skip("set SEEKINO_TEST_AUTH_REDIS_URL to an isolated temporary Redis")
     # A random HMAC key isolates this run's challenge/rate keys without FLUSHDB.
     config = AuthConfig(mode="cloud", secret_key=uuid4().hex, redis_url=url,
                         cookie_secure=False, send_cooldown_seconds=1)

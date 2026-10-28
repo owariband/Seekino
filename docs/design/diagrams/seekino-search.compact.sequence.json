@@ -2,9 +2,9 @@
   "schema_version": 1,
   "diagram_type": "sequence",
   "meta": {
-    "title": "AniVAG 名场面检索与时间证据时序",
+    "title": "Seekino 名场面检索与时间证据时序",
     "locale": "zh-CN",
-    "output": "anivag-search.compact.sequence.html",
+    "output": "seekino-search.compact.sequence.html",
     "quality_profile": "showcase",
     "viewBox": [1080, 670]
   },

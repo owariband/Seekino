@@ -1,9 +1,9 @@
-# anivag Server
+# seekino Server
 
 Server 的正式 Upload-to-Search 链路只使用 V2、MySQL 和 Elasticsearch：分片上传与
 环境隔离的 Artifact Store 提供媒体，VideoParseTask/Chunk/Interval/Prefix 状态机保存恢复事实，
 ES 保存同版本的检索投影。API、Agent Chat 和 CLI 共用 V2 检索 Service；
-`ANIVAG_PARSE_EXECUTION_MODE` 只接受 `v2`，启动必须显式配置 ES。
+`SEEKINO_PARSE_EXECUTION_MODE` 只接受 `v2`，启动必须显式配置 ES。
 模型协议由 Gateway 实现，Server 进程内复用 Engine 的领域转换、索引投影和融合能力。
 V1 解析、旧 Consumer、Qdrant 客户端及离线导入工具已删除；历史表的 ORM 映射仅供已有数据清理使用。
 
@@ -71,7 +71,7 @@ HTTP 专用 Request/View 定义于 `server/model/dto/` 和 `server/model/vo/`，
 ## 后台任务与共享代码
 
 `server/mq/` 是消息基础设施边界，当前使用 MySQL DB Queue，不依赖外部消息中间件。
-anivag Server 启动进程内 V2 Consumer 领取任务，再调用业务处理服务；Event 仍只
+seekino Server 启动进程内 V2 Consumer 领取任务，再调用业务处理服务；Event 仍只
 表达已经发生的事实。API 保存完整视频并提交 VideoParseTask 后，Consumer 在同一 Server
 进程继续处理，浏览器关闭不影响已经入队的任务。
 
@@ -103,13 +103,13 @@ CLI 与 HTTP 是并列的调用入口，CLI 直接调用既有 Service/Repositor
 CLI 自建 DB/ES 在命令成功或失败后关闭，查询与评分 SDK 按每次调用创建并关闭；
 完整应用继续由 `ApplicationServices` 持有资源并按既有顺序释放。
 
-部署调优项已补到 `.env.example`：`ANIVAG_SSE_POLL_SECONDS`、
-`ANIVAG_SSE_KEEPALIVE_SECONDS`、`ANIVAG_DATABASE_POOL_RECYCLE_SECONDS`、
-`ANIVAG_RETRIEVAL_CHANNEL_TOP_K`、`ANIVAG_RETRIEVAL_RRF_K` 和非 Agent 向量双路默认权重
-`ANIVAG_RETRIEVAL_TEXT_WEIGHT` / `ANIVAG_RETRIEVAL_VISION_WEIGHT`。
+部署调优项已补到 `.env.example`：`SEEKINO_SSE_POLL_SECONDS`、
+`SEEKINO_SSE_KEEPALIVE_SECONDS`、`SEEKINO_DATABASE_POOL_RECYCLE_SECONDS`、
+`SEEKINO_RETRIEVAL_CHANNEL_TOP_K`、`SEEKINO_RETRIEVAL_RRF_K` 和非 Agent 向量双路默认权重
+`SEEKINO_RETRIEVAL_TEXT_WEIGHT` / `SEEKINO_RETRIEVAL_VISION_WEIGHT`。
 Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与进程内 Consumer 使用同一套配置。
-Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `ANIVAG_MQ_*` 配置；旧的
-`ANIVAG_WORKER_*` 名称暂时作为兼容回退。冻结 Index Sync 的配置不再由正式 Settings 暴露。
+Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `SEEKINO_MQ_*` 配置；旧的
+`SEEKINO_WORKER_*` 名称暂时作为兼容回退。冻结 Index Sync 的配置不再由正式 Settings 暴露。
 
 V1 Job 与 V2 Task SSE 都忽略纯心跳变化，并在发送终态快照后关闭。快照中的
 `canRetry` / `canReparse` / `canDelete` 只代表该次读取时的精确租约门禁；终态后租约变化
@@ -134,18 +134,18 @@ Elasticsearch 索引使用相同的物理隔离规则：测试以 `_test` 结尾
 创建开发库后初始化表结构：
 
 ```sql
-CREATE DATABASE anivag_development
+CREATE DATABASE seekino_development
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_0900_ai_ci;
 ```
 
 ```bash
-export ANIVAG_ENVIRONMENT=development
-export ANIVAG_DATABASE_URL='mysql+pymysql://anivag:password@127.0.0.1:3306/anivag_development?charset=utf8mb4'
-export ANIVAG_ELASTICSEARCH_URL='http://127.0.0.1:9200'
-export ANIVAG_ELASTICSEARCH_INDEX='anivag_video_chunks_development'
-export ANIVAG_TEXT_VECTOR_DIMENSIONS=1024
-export ANIVAG_VISION_VECTOR_DIMENSIONS=1024
+export SEEKINO_ENVIRONMENT=development
+export SEEKINO_DATABASE_URL='mysql+pymysql://seekino:password@127.0.0.1:3306/seekino_development?charset=utf8mb4'
+export SEEKINO_ELASTICSEARCH_URL='http://127.0.0.1:9200'
+export SEEKINO_ELASTICSEARCH_INDEX='seekino_video_chunks_development'
+export SEEKINO_TEXT_VECTOR_DIMENSIONS=1024
+export SEEKINO_VISION_VECTOR_DIMENSIONS=1024
 
 uv sync
 uv run python -m server.cli init-db
@@ -170,7 +170,7 @@ MySQL 表使用 InnoDB。正式 V2 状态由 VideoParseTask、ChunkParseTask、I
 前端对接所需的完整请求、响应、分片续传、任务 SSE 与检索契约见
 [前端 API 对接文档](../docs/design/frontend-api.md)。
 
-先初始化 MySQL，再启动唯一常驻的 anivag Server：
+先初始化 MySQL，再启动唯一常驻的 seekino Server：
 
 ```bash
 uv run python -m server.cli init-db
@@ -272,8 +272,8 @@ Server 内的 API/Consumer 依赖同一个 `ArtifactStore` 边界，当前 M1 ad
 
 ## 运行日志
 
-anivag Server 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
-`ANIVAG_LOG_LEVEL=info`；也可用 `python -m server.api --log-level debug` 覆盖。
+seekino Server 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
+`SEEKINO_LOG_LEVEL=info`；也可用 `python -m server.api --log-level debug` 覆盖。
 日志文件不依赖 `./start.sh`，直接启动 Server 也会落盘：
 
 ```text
@@ -283,8 +283,8 @@ outputs/server/logs/development/api.log
 一次性运行 `python -m tests.manual.server_mq_once --once` 时会单独写入同目录的 `mq.log`；该文件只属于
 诊断入口，不代表存在常驻 MQ 或 Worker 进程。
 
-test / production 使用各自目录。`ANIVAG_LOG_DIRECTORY` 可覆盖日志根目录；
-`ANIVAG_LOG_MAX_BYTES` 默认 10485760（10 MB），`ANIVAG_LOG_BACKUP_COUNT` 默认 5。
+test / production 使用各自目录。`SEEKINO_LOG_DIRECTORY` 可覆盖日志根目录；
+`SEEKINO_LOG_MAX_BYTES` 默认 10485760（10 MB），`SEEKINO_LOG_BACKUP_COUNT` 默认 5。
 文件满后轮转为 `api.log.1` 到 `api.log.5`，`.1` 为最新历史文件。
 通过 `./start.sh` 启动时，`outputs/local-services/api.log`、`web.log`、
 `mysql.log` 保存脚本启动的原生数据库输出，包含启动信息；这组脚本输出文件不轮转。
@@ -326,7 +326,7 @@ uv run python -m server.cli init-es-index --help
 ```
 
 初始化要求显式配置隔离环境的 ES URL、索引名及向量维度。正式模式为
-`ANIVAG_PARSE_EXECUTION_MODE=v2`，上传只建立带接纳标记的 V2 任务，DB Queue
+`SEEKINO_PARSE_EXECUTION_MODE=v2`，上传只建立带接纳标记的 V2 任务，DB Queue
 Consumer 会执行 Prepare、Chunk Understanding、Interval Refine、逐 Chunk 索引放行、
 ES 写入与恢复扫描。缺少 ES 配置或选择 `v1` 时 Server 会拒绝启动。
 `sync-es-index`、`repair-es-published`、`cleanup-es-deleted` 和
@@ -340,7 +340,7 @@ ES 写入与恢复扫描。缺少 ES 配置或选择 `v1` 时 Server 会拒绝�
 [`20260928_v2_worker_runtime.sql`](../docs/migrations/20260928_v2_worker_runtime.sql)。
 迁移不会由应用启动自动执行；新库直接使用当前 ORM 建表。
 
-ES mapping 合同升级为 `anivag-video-chunk-es-4`，旧物理索引无法通过合同检查，
+ES mapping 合同升级为 `seekino-video-chunk-es-4`，旧物理索引无法通过合同检查，
 需另行重建。当前初始化命令不执行数据迁移。`search` 和 `rebuild-index` 的
 `--execution-mode` 只接受 `v2`。`rebuild-index` 必须指定当前 `--video-parse-task-id`，
 只重置该任务的索引阶段，再由 Worker 从已提交成果恢复写入，不直接创建外部索引客户端。

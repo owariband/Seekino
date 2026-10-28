@@ -1,4 +1,4 @@
-# AniVAG 本机 Codex Bridge：原 5 批基线索引
+# Seekino 本机 Codex Bridge：原 5 批基线索引
 
 日期：2026-10-10。范围依据：[TRD 第 11 节](../../../docs/design/codex-bridge-trd.md#bridge-checkout)及用户已确认的 localhost、通用 Bridge、项目根目录默认值和 Conversation/session 绑定。
 

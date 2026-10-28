@@ -29,10 +29,10 @@
 | [Harness README](../../agent/video_parse_v2/README.md) | 当前 ParseAgent 入口、注入边界与实现状态 |
 | [Engine Schema](../../engine/parsev2/schemas.py) | 对照目标合同与运行代码差距；不能用旧人物 ID 实现覆盖已确认的人名合同 |
 | [refactor_1.md](refactor_1.md) | Server 内部 Consumer 与纯 Engine 分工的历史依据，不照搬其中旧路径 |
-| [anivag-change-gate](../../.agents/skills/anivag-change-gate/SKILL.md) | 根据实际授权和改动范围安排执行批次 |
+| [seekino-change-gate](../../.agents/skills/seekino-change-gate/SKILL.md) | 根据实际授权和改动范围安排执行批次 |
 | [hypnos-code](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md) | 保持既有分层、最小改动和可验证性 |
 
-本机项目根目录：/Users/bytedance/workspace/other-project/AniVAG。
+本机项目根目录：/Users/bytedance/workspace/other-project/Seekino。
 
 本文的相对文件路径均相对此仓库；Markdown 链接相对本文。迁移到其他机器后替换根目录，不把本机路径写进产品代码。
 
@@ -180,7 +180,7 @@ Chunk 检索视图由正式结果、固定拓扑和可选增强装配：
 | [conf/mapping.json](../../../ragflow/conf/mapping.json) | 全文字段与 dense_vector 映射 |
 | [common/settings.py](../../../ragflow/common/settings.py) | 存储选择和检索器装配边界 |
 
-RAGFlow 的默认 ES 路径同时保存全文与向量。它的目录结构、所有词权重或融合公式不自动成为 AniVAG 合同，也不能据此声称 MySQL 与 ES 有跨库事务。
+RAGFlow 的默认 ES 路径同时保存全文与向量。它的目录结构、所有词权重或融合公式不自动成为 Seekino 合同，也不能据此声称 MySQL 与 ES 有跨库事务。
 
 ## 4. 索引与查询的具体改造要求
 
@@ -343,7 +343,7 @@ M：修改；R：重命名并调整实现，箭头后为原路径；A：新增�
 列入清单不表示必须机械修改所有文件。实现前按最新源码收缩范围；新增范围应有具体消费方和验收依据。
 
 ~~~text
-AniVAG/
+Seekino/
 ├── agent/
 │   └── chat/
 │       └── video_search/
@@ -579,9 +579,9 @@ AniVAG/
 - 前端测试：重点检查词项来源解释、旧结果读取和证据播放范围。
 - 小规模离线评测：分别记录词项、语义、视频及融合指标，比较召回、时间定位、延迟和成本。
 
-ES 集成测试通过独立的 `ANIVAG_TEST_ELASTICSEARCH_URL`（可选 `ANIVAG_TEST_ELASTICSEARCH_API_KEY`）及唯一测试索引前缀隔离；未配置时跳过，不连接业务实例。
+ES 集成测试通过独立的 `SEEKINO_TEST_ELASTICSEARCH_URL`（可选 `SEEKINO_TEST_ELASTICSEARCH_API_KEY`）及唯一测试索引前缀隔离；未配置时跳过，不连接业务实例。
 
-MySQL 测试沿用 ANIVAG_TEST_DATABASE_URL。测试只能清理自己创建的隔离数据。未配置环境时报告 skipped/未验证，不能自动使用开发或生产业务库。
+MySQL 测试沿用 SEEKINO_TEST_DATABASE_URL。测试只能清理自己创建的隔离数据。未配置环境时报告 skipped/未验证，不能自动使用开发或生产业务库。
 
 优先运行受改动直接影响的测试，随后按具体风险扩大；不为文档改动启动数据库或调用模型。
 
@@ -663,7 +663,7 @@ Qdrant 字符串核对结果按用途判断：运行依赖、历史报告兼容�
 >
 > 2026-09-28 已撤销“旧版继续服务，新版完整后切换”的要求。当前选定任务非 COMPLETE 时，即使 ES 仍有旧值也不可检索；各通道与 MySQL 事实须匹配同一任务及内容版本。沿两份 TRD 的任务状态机落实批次 5，不新增独立发布指针，不混用 generation、内容版本和解析次数。
 >
-> 遵循 anivag-change-gate 和 hypnos-code，尊重已有授权，不重复询问已经决定的后端与需求。先完成可独立验收的批次，保留其他会话修改；需要扩大范围时给出具体原因、修改树和影响。按第 9 节验证，明确区分代码完成、真实环境验证、数据切换与未完成事项。
+> 遵循 seekino-change-gate 和 hypnos-code，尊重已有授权，不重复询问已经决定的后端与需求。先完成可独立验收的批次，保留其他会话修改；需要扩大范围时给出具体原因、修改树和影响。按第 9 节验证，明确区分代码完成、真实环境验证、数据切换与未完成事项。
 
 ## 13. 2026-09-27 实施状态与交接
 
@@ -679,13 +679,13 @@ Qdrant 字符串核对结果按用途判断：运行依赖、历史报告兼容�
 | Chat 历史兼容 | 历史 trace 继续按 transcript=ASR 读取，新 trace 合同可用 lexical/semantic/visual；卡片能承载 lexical 排名；旧结果与新合同经 API/前端投影测试 | live Tool 仍调用 `search(transcript_weight=...)`，没有偷换成 ES 词项；新 live 参数、trace 写入与检索服务需同批切换 |
 | 离线评测 ES 后端 | 旧 V1 双向量评测的 Qdrant 适配改为独立 ES 评测索引，保留 local 精确基线、旧报告读取和数据集隔离 | 离线评测单测通过；真实 ES 评测测试未运行；该入口尚不读取 V2 正式词项，不代表生产三路评测完成 |
 | 客户端依赖 | `pyproject.toml` 与 `uv.lock` 增加 Elasticsearch Python 8.19 客户端 | 依赖安装和锁文件成功；Qdrant 仍是生产依赖，尚不可移除 |
-| 可选运行入口 | `ANIVAG_ELASTICSEARCH_*` 配置、Bootstrap 客户端生命周期、显式 `init-es-index` CLI 与 Compose 的 ES profile 已加入；显式配置 ES 时本地启动脚本还会校验集群和索引映射 | 未改旧 Qdrant 默认服务；本机无 Docker，未启动 Compose；真实 ES 配置和服务启动未验证 |
+| 可选运行入口 | `SEEKINO_ELASTICSEARCH_*` 配置、Bootstrap 客户端生命周期、显式 `init-es-index` CLI 与 Compose 的 ES profile 已加入；显式配置 ES 时本地启动脚本还会校验集群和索引映射 | 未改旧 Qdrant 默认服务；本机无 Docker，未启动 Compose；真实 ES 配置和服务启动未验证 |
 | MySQL 构建/发布基础 | `server/model/index_publication.py`、`server/repository/index_publication.py` 与独立迁移：冻结每 Chunk 事实 JSON、时间、词项投影、两路向量、来源摘要和编码合同；desired/published 指针、租约/代际栅栏、整版 READY 条件发布、固定 build 回读、授权范围检查及删除 tombstone/全构建枚举 | 定向仓储/DDL 测试通过；正式 V2 成果组装 Writer、ES 真正查询就绪证明、删除/对账 Worker、生产查询、实际迁移及真实 MySQL 测试未接；这不是 V2 整版发布完成 |
 | 向量复用判定 | `server/service/embedding_reuse.py` 只在可信来源、输入摘要和完整编码合同相容时返回已有向量；导入路径的视频摘要或缺元数据返回具名缺口 | 纯函数测试通过；普通 V1 向量元数据缺 provider/revision/fps 等，不能默认自动复用；尚未接正式成果 Writer，Worker 只消费已冻结向量，也未调用模型 |
 | ES 构建 Worker | `server/service/es_index_build.py` 从冻结快照重建 ES 文档，租约/代际下批量写入，逐项搜索确认可见后置 READY；整版再次验证后按 MySQL fence 发布；超时部分成功、过期租约、删除交错和 READY 漂移可重试或阻断发布 | Worker/仓储定向 44 passed、3 skipped；真实 ES/MySQL 测试环境未配置；尚未有 V2 正式成果 Writer、生产调度及 tombstone 周期清理。发布候选前 N 长期失败可能使后续构建饥饿，接调度前需处理 |
 | 固定版本 ES 查询核心 | `server/service/es_published_search.py` 按授权 Series 一次固定已发布 build map，三路搜索复用该 map；启用向量前检查编码合同，仅词项查询不调用 Gateway；按 `(video, build, Chunk)` 批量回查冻结事实并比较版本与摘要 | 仓储/服务定向 46 passed、1 skipped；返回不透明 `fact_snapshot` 和词项来源，尚未装配成正式 V2 Evidence，也未替换生产 API/Chat 的 V1 检索 |
 
-早期基础批及相关旧链路的 Python 回归合跑为 **583 passed、4 skipped**；随后 Worker、固定版本查询、词项说明和本地部署入口又各有定向测试通过，最终合并回归数量需在本批收尾重新统计。`git diff --check`、`uv lock --check` 与前端 TypeScript typecheck 均通过。未配置 `ANIVAG_TEST_ELASTICSEARCH_URL`、`ANIVAG_ES_PUBLICATION_TEST_DATABASE_URL`，本机无 Docker；未运行真实 ES/MySQL 验证、业务数据迁移、服务重启、commit 或 push。Compose 只经静态解析与 profile 断言，没有实际启动。
+早期基础批及相关旧链路的 Python 回归合跑为 **583 passed、4 skipped**；随后 Worker、固定版本查询、词项说明和本地部署入口又各有定向测试通过，最终合并回归数量需在本批收尾重新统计。`git diff --check`、`uv lock --check` 与前端 TypeScript typecheck 均通过。未配置 `SEEKINO_TEST_ELASTICSEARCH_URL`、`SEEKINO_ES_PUBLICATION_TEST_DATABASE_URL`，本机无 Docker；未运行真实 ES/MySQL 验证、业务数据迁移、服务重启、commit 或 push。Compose 只经静态解析与 profile 断言，没有实际启动。
 
 ### 13.1 旧发布方案的实现与缺口（历史记录，非当前接线指令）
 

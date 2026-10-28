@@ -97,9 +97,9 @@ Library API 增加可空 `displayName`、`description`；图片继续走 `thumbn
 
 ## 配置与运行
 
-在 `config.yaml` 配置视觉模型角色 `models.summarize`，独立运行参数来自 `VideoSummarizeConfig` 和 `ANIVAG_SUMMARIZE_*` 环境变量。只有角色存在且开关开启时才装配 handler；旧配置缺少该角色时不会执行。
+在 `config.yaml` 配置视觉模型角色 `models.summarize`，独立运行参数来自 `VideoSummarizeConfig` 和 `SEEKINO_SUMMARIZE_*` 环境变量。只有角色存在且开关开启时才装配 handler；旧配置缺少该角色时不会执行。
 
-默认并发 1、最多 2 次失败重试、总超时 600 秒。Summarize 不设置模型轮次、工具调用次数或看帧次数上限；保留执行超时、取消、租约及单次读取/媒体大小约束。旧任务快照中的三个次数配置不再生效。`ANIVAG_SUMMARIZE_ENABLED=false` 可关闭自动执行。
+默认并发 1、最多 2 次失败重试、总超时 600 秒。Summarize 不设置模型轮次、工具调用次数或看帧次数上限；保留执行超时、取消、租约及单次读取/媒体大小约束。旧任务快照中的三个次数配置不再生效。`SEEKINO_SUMMARIZE_ENABLED=false` 可关闭自动执行。
 
 标题定位优先追踪前几个 Chunk 的 SCENE、ON_SCREEN_TEXT 中“标题、片头、OP、作品标识”等线索，依据事件时间检查 OP 结束到正片开始的过渡及相邻 Chunk，并在候选窗口局部取帧核验。作品 logo 只提供定位线索；本集标题和集数仍需直接画面文字证据，支持 `#N` 集号，排除 ED、下集预告及推断。未命中时缩窄或平移候选窗口，避免反复全片稀疏采样。
 
@@ -128,7 +128,7 @@ Web 使用 `format.test.ts`、`WatchPage.test.tsx` 和 TypeScript typecheck。�
 与预计树相比，新增了两个必要的兼容调整：`repository/video_parse_interval.py` 支持 Refine 凭据当前读；`service/video_parse_prefix.py` 支持摘要发布非等待取锁。原计划的 `tests/server/test_parse_usage.py` 无需改动，使用既有测试与摘要宿主测试验证用量归属。
 
 ```text
-AniVAG/
+Seekino/
 ├── agent/
 │   └── video_summarize/
 │       ├── [A] __init__.py  ← 导出 Agent 合同
@@ -216,6 +216,6 @@ AniVAG/
 - 为核对归因，仅在独立测试进程通过 `/private/tmp` 插件还原这三个用例原先的 OCR 关闭默认，三项均通过。未修改其生产配置或旧测试断言；常规回归里的三项失败仍待 OCR 变更对应修复。
 - Web：`format.test.ts` 和 `WatchPage.test.tsx` 共 **36 passed**，`npm run typecheck` 通过。
 - Upload 整份回归 **105 passed**；覆盖摘要运行时重解析、删除、解析重试和索引重试。
-- 审查并修复了标题长度、全角数字、下集预告证据、真实整集的模型调用预算、MySQL 旧快照校验、Video/Task 等待锁和 SQLite savepoint 回滚边界。未运行真实 MySQL 并发测试（当前未配置 `ANIVAG_TEST_DATABASE_URL`）或真实模型质量评测。
+- 审查并修复了标题长度、全角数字、下集预告证据、真实整集的模型调用预算、MySQL 旧快照校验、Video/Task 等待锁和 SQLite savepoint 回滚边界。未运行真实 MySQL 并发测试（当前未配置 `SEEKINO_TEST_DATABASE_URL`）或真实模型质量评测。
 
 实际 8 个新增生产文件共 1052 行。上述 38 个既有路径的当前 `git diff --numstat` 汇总为新增 916 行、删除 100 行；这包含共享文件中保留的其他会话改动，不能视为本次净增量。14 个新增文件另行计数；staged 为空，未创建提交。
