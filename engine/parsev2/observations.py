@@ -10,17 +10,26 @@ from pydantic import BaseModel, ConfigDict, Field
 from .schemas import DialogueEvent, DialogueTextVariant, OnScreenTextEvent, VideoParseResult
 
 
+class ASRWord(TypedDict):
+    text: str
+    start_ms: int | None
+    end_ms: int | None
+    score: float | None
+
+
 class ASRCue(TypedDict):
     start_seconds: int
     end_seconds: int
     text: str
     speaker_id: NotRequired[str | None]
+    words: NotRequired[list[ASRWord]]
 
 
 class ASRResult(TypedDict):
     """Normalized transcript with absolute source-video millisecond bounds."""
 
     transcript: list[ASRCue]
+    language: NotRequired[str]
 
 
 class OCRLine(BaseModel):

@@ -49,6 +49,19 @@ model_sources:
     adapter: codex_app_server
     provider: codex
     max_concurrency: 10
+  # Recommended optional local ASR with alignment; install weights before selecting.
+  # See docs/model-config.md. These are example paths, not auto-download targets.
+  whisperx_local:
+    adapter: whisperx
+    provider: local
+    device: cpu
+    compute_type: int8
+    batch_size: 8
+    cpu_threads: 6
+    alignment_models:
+      en: /opt/seekino/models/whisperx/align-en
+      zh: /opt/seekino/models/whisperx/align-zh
+      ja: /opt/seekino/models/whisperx/align-ja
 
 models:
   agent:
@@ -74,6 +87,7 @@ models:
     compact_target_tokens: 60000
     max_input_chars: 400000
   transcription:
+    # To opt in: source: whisperx_local; model: /absolute/path/to/CT2-model
     kind: transcription
     source: ark_default
     model: doubao-seed-2-0-lite-260428

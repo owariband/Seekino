@@ -32,7 +32,7 @@ from engine.rag import (
 from engine.rag.encoding import EmbeddingRequest, SparseEmbeddingRequest, accept_sparse_result
 from gateway.config import (
     ArkModelSourceConfig, CodexModelSourceConfig, ModelBinding,
-    OpenAIAudioSourceConfig, load_config,
+    OpenAIAudioSourceConfig, WhisperXSourceConfig, load_config,
 )
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
@@ -361,12 +361,13 @@ def _create_task(factory, source: Path) -> str:
     return task_id
 
 
-@pytest.mark.parametrize("adapter", ["openai_audio", "ark", "none"])
+@pytest.mark.parametrize("adapter", ["openai_audio", "ark", "none", "whisperx"])
 def test_transcription_uses_frozen_source_prepared_media_and_absolute_milliseconds(
     monkeypatch, tmp_path, adapter,
 ):
     source = (
-        OpenAIAudioSourceConfig(
+        WhisperXSourceConfig(alignment_models={"en": "/models/align-en"})
+        if adapter == "whisperx" else OpenAIAudioSourceConfig(
             provider="speech", base_url="https://speech.example/v1",
             api_key_env="TEST_ASR_KEY",
         )
@@ -422,13 +423,20 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
         return media
 
     def transcribe(path, **kwargs):
-        assert adapter == "openai_audio"
+        assert adapter in {"openai_audio", "whisperx"}
         assert path == media.audio_path
         calls.append(("audio", kwargs))
-        return {"segments": [
-            {"start": 1.5, "end": 4, "text": "hello", "speaker_id": "speaker1"},
+        result = {"segments": [
+            {"start": 1.5, "end": 4, "text": "hello", "speaker_id": None if adapter == "whisperx" else "speaker1"},
             {"start": 3, "end": 4, "text": "outside"},
         ]}
+        if adapter == "whisperx":
+            result["language"] = "en"
+            result["segments"][0]["words"] = [
+                {"word": "hello", "start": 1.5, "end": 4, "score": 0.9},
+                {"word": "unknown"},
+            ]
+        return result
 
     def build_model(model, **kwargs):
         assert adapter == "ark"
@@ -448,12 +456,21 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
 
     monkeypatch.setattr(runtime, "_ensure_chunk_media", MethodType(prepared_media, runtime))
     monkeypatch.setattr("gateway.transcription.transcribe_audio", transcribe)
+    monkeypatch.setattr("gateway.local.whisperx.WhisperXRuntime.transcribe",
+                        lambda self, path, check: transcribe(path))
     monkeypatch.setattr("gateway.transcription.ArkMultimodalModel", build_model)
     result = asyncio.run(runtime.transcribe_chunk(execution))
 
-    assert result == {"transcript": [] if adapter == "none" else [{
+    expected = {"transcript": [] if adapter == "none" else [{
         "start_seconds": 13_500, "end_seconds": 15_000, "text": "hello", "speaker_id": "speaker1",
     }]}
+    if adapter == "whisperx":
+        expected["language"] = "en"
+        expected["transcript"][0].update(speaker_id=None, words=[
+            {"text": "hello", "start_ms": 13_500, "end_ms": 15_000, "score": 0.9},
+            {"text": "unknown", "start_ms": None, "end_ms": None, "score": None},
+        ])
+    assert result == expected
     if adapter == "openai_audio":
         assert calls == [("audio", {
             "model": "frozen-speech", "provider": "speech",
@@ -465,6 +482,8 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
             "request_timeout_seconds": 45, "max_output_tokens": 2048,
             "reasoning_effort": None, "api_key": "test-key",
         })]
+    elif adapter == "whisperx":
+        assert calls == [("audio", {})]
     else:
         assert calls == []
 

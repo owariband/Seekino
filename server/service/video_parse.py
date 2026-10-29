@@ -958,35 +958,16 @@ class VideoParseRuntimeService:
             await cleanup_execution(transport.close)
         if not isinstance(analysis, TranscriptAnalysis):
             analysis = TranscriptAnalysis.model_validate(analysis)
-        return {"transcript": []}
-        duration = execution.allowed_end_seconds - execution.allowed_start_seconds
-        transport = self._transcription_model(model)
-        try:
-            if transport.input_mode == "audio":
-                payload = await self._run_blocking(transport.transcribe, media.audio_path)
-                analysis = normalize_transcription(payload, duration_seconds=duration)
-            else:
-                if media.video_path is None:
-                    raise RuntimeError("Video ASR requires prepared chunk video")
-                agent = VideoASRAgent(transport, fps=model.fps)
-                analysis = await self._run_blocking(
-                    agent.transcribe, media.video_path, duration_seconds=duration,
-                )
-        finally:
-            await cleanup_execution(transport.close)
-        if not isinstance(analysis, TranscriptAnalysis):
-            analysis = TranscriptAnalysis.model_validate(analysis)
-        return {
-            "transcript": [
-                {
-                    "start_seconds": cue.start_seconds + execution.allowed_start_seconds,
-                    "end_seconds": cue.end_seconds + execution.allowed_start_seconds,
-                    "text": cue.text,
-                    "speaker_id": cue.speaker_id,
-                }
-                for cue in analysis.transcript
-            ]
-        }
+        result = analysis.model_dump()
+        offset = execution.allowed_start_seconds
+        for cue in result["transcript"]:
+            cue["start_seconds"] += offset
+            cue["end_seconds"] += offset
+            for word in cue.get("words", []):
+                for key in ("start_ms", "end_ms"):
+                    if word[key] is not None:
+                        word[key] += offset
+        return result
 
     async def read_chunk_text(self, execution: ChunkExecution) -> OCRResult:
         media = await self._ensure_chunk_media(execution)

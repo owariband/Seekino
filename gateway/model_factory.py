@@ -16,7 +16,7 @@ from gateway.config import (
     AgentFallbackConfig, AgentModelConfig, ArkModelSourceConfig,
     ClaudeCodeModelSourceConfig, CodexModelSourceConfig, EmbeddingModelBinding,
     GatewayConfig, ModelBinding, ModelSourceConfig, OpenAIModelSourceConfig,
-    OpenAIVisionSourceConfig, resolve_source_api_key,
+    OpenAIVisionSourceConfig, WhisperXSourceConfig, resolve_source_api_key,
 )
 from gateway.errors import ContentFilterError
 from gateway.multimodal import (
@@ -318,6 +318,7 @@ class GatewayClient:
         self._environ = os.environ if environ is None else environ
         self._resources: set[_OwnedResource] = set()
         self._codex_executors: dict[str, ThreadPoolExecutor] = {}
+        self._whisperx_runtimes: dict[tuple[str, str], Any] = {}
         owns_supervisor_sessions = supervisor_sessions is None and config.supervisor_harness == "deepagents"
         if owns_supervisor_sessions:
             from gateway.agent_model.deepagents import DeepAgentSessionStore
@@ -457,8 +458,20 @@ class GatewayClient:
         from gateway.transcription import build_transcription_model
         binding = self._binding(ref, "transcription")
         source = self.config.source(binding.source)
+        options = {}
+        if isinstance(source, WhisperXSourceConfig):
+            from gateway.local.whisperx import WhisperXRuntime
+            with self._lock:
+                if self._closed:
+                    raise RuntimeError("Gateway client is closed")
+                key = (binding.source, binding.model)
+                runtime = self._whisperx_runtimes.get(key)
+                if runtime is None:
+                    runtime = WhisperXRuntime(binding.model, source)
+                    self._whisperx_runtimes[key] = runtime
+            options["local_runtime"] = runtime
         return self._own(
-            build_transcription_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ)),
+            build_transcription_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ), **options),
             source=binding.source,
         )
 
@@ -523,6 +536,7 @@ class GatewayClient:
             self._closed = True
             resources, self._resources = tuple(self._resources), set()
             executors, self._codex_executors = tuple(self._codex_executors.values()), {}
+            local_runtimes, self._whisperx_runtimes = tuple(self._whisperx_runtimes.values()), {}
         failure = None
         for resource in resources:
             try:
@@ -532,6 +546,11 @@ class GatewayClient:
         for executor in executors:
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
+            except BaseException as error:
+                failure = failure or error
+        for runtime in local_runtimes:
+            try:
+                runtime.close()
             except BaseException as error:
                 failure = failure or error
         if self._owns_supervisor_sessions:

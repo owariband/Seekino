@@ -43,6 +43,10 @@ _ADAPTER_CAPABILITIES = {
         transcription=True, transcription_input_mode="audio",
         supports_reasoning_effort=False, supports_output_limit=False,
     ),
+    "whisperx": AdapterCapabilities(
+        transcription=True, transcription_input_mode="audio",
+        supports_reasoning_effort=False, supports_output_limit=False,
+    ),
     "codex_app_server": AdapterCapabilities(
         generative=True, rerank=True, visual_input_mode="ordered_frames",
     ),

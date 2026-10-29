@@ -153,6 +153,29 @@ class OpenAIAudioSourceConfig(BaseModel):
     response_format: Literal["verbose_json", "json"] = "verbose_json"
 
 
+class WhisperXSourceConfig(BaseModel):
+    """Optional in-process ASR and forced alignment using user-installed weights."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: Literal["whisperx"] = "whisperx"
+    provider: Literal["local"] = "local"
+    device: Literal["cpu", "cuda"] = "cpu"
+    compute_type: Literal["int8", "float32", "float16", "int8_float16"] = "int8"
+    batch_size: int = Field(default=8, ge=1, le=64, strict=True)
+    cpu_threads: int = Field(default=6, ge=1, le=64, strict=True)
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
+    alignment_models: dict[Annotated[str, Field(pattern=r"^[a-z]{2,3}$")], _NonEmptyString] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_local_alignment(self) -> "WhisperXSourceConfig":
+        if self.device == "cpu" and self.compute_type not in {"int8", "float32"}:
+            raise ValueError("WhisperX CPU requires int8 or float32")
+        if self.language is not None and self.language not in self.alignment_models:
+            raise ValueError("WhisperX language requires a configured alignment model")
+        return self
+
+
 class OpenAIVisionSourceConfig(BaseModel):
     """Chat Completions with images and structured JSON output."""
 
@@ -209,6 +232,7 @@ ModelSourceConfig = (
     | CodexModelSourceConfig
     | ClaudeCodeModelSourceConfig
     | OpenAIAudioSourceConfig
+    | WhisperXSourceConfig
     | OpenAIVisionSourceConfig
     | CampPlusModelSourceConfig
     | OllamaEmbeddingSourceConfig
