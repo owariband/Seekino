@@ -681,6 +681,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+2026-10-29 整片增量：新建 WhisperX 任务支持默认视频级转写，原 Chunk ASR 节点改为读取相交 cues，保留绝对时间及只读证据；旧任务缺省仍逐块执行。内存缓存随协调器租约释放，重启会重新转写；未实现持久 ASR checkpoint。ASR 时间加入既有有效总时长。代码与离线验证已完成，真实整片识别质量、资源、吞吐和运行部署仍待验收；没有启动全量解析。[设计](../design/03-product-reassessment/local-whisperx-asr-trd.md#视频级转写与-chunk-读取)、[本次验证](devlog.md#devlog-full-video-asr-20261029)。
+
 排序日期：2026-10-29。状态：TODO（正式接入、三语实机部署与 Karpathy 任务提交已完成；完整系列效果及字幕消费待验收）。
 
 用户需要可自行下载模型、直接运行项目代码的低 API 成本 ASR，并用强制对齐支持字幕时间。此前本机实验是 whisper.cpp，正式配置为 Ark，不能算 WhisperX 已接入。

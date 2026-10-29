@@ -186,6 +186,12 @@ Server 按原有正式解析链路准备 16 kHz、单声道 PCM16 WAV；Gateway 
 
 实现与测试边界见[WhisperX 接入设计](design/03-product-reassessment/local-whisperx-asr-trd.md)。安装指引按[WhisperX 固定版本](https://github.com/m-bain/whisperX/tree/v3.8.6)和[对齐实现](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/alignment.py)核对；不将协议测试视为真实模型质量验收。
 
+### 整片 ASR 的配置与兼容
+
+新建 WhisperX 解析任务默认冻结 `models.asr.scope: video`：先转写完整原片音轨，再由原 Chunk ASR 节点读取与窗口相交的完整 cues。时间已经是原片绝对毫秒，不重复加 Chunk 偏移；Understanding 的输出仍受本段可写范围约束。上传解析配置可显式选择 `asr.scope: chunk` 回退逐块转写。未指定 scope 的历史任务仍按 chunk 执行，普通重试不会改变冻结配置。
+
+整片模式仅支持音频 Provider，且要求开启 Understanding。缓存属于当前进程内的视频协调器执行，退出后释放；重启恢复会重新转写，但保留已提交 Chunk。整片结果没有持久 checkpoint。需为完整音轨配置足够的转写请求超时；整片 ASR 完成前尚无第一个 Chunk 理解结果。识别质量、长音频峰值内存和端到端速度仍需真实对照，本次未启动全量解析。
+
 ## 本地声音向量
 
 声音身份特征使用独立的 `speaker_embedding` 能力。以下片段分别合入现有的

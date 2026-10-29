@@ -310,14 +310,16 @@ def _lock_model_execution_lease(
 def record_execution_timing(
     session: Session,
     *,
-    lease: ChunkParseLease | IntervalParseLease,
+    lease: VideoParseLease | ChunkParseLease | IntervalParseLease,
     started_at_ms: int,
     elapsed_ms: int,
     finished: bool,
     outcome: str,
     sampled_at: datetime,
 ) -> bool:
-    if isinstance(lease, ChunkParseLease):
+    if isinstance(lease, VideoParseLease):
+        phase, kind, task_id = "asr", "video", lease.video_parse_task_id
+    elif isinstance(lease, ChunkParseLease):
         phase = "understand" if lease.phase == ChunkTaskPhase.PARSE else "index"
         kind, task_id = "chunk", lease.chunk_parse_task_id
     else:
@@ -330,12 +332,17 @@ def record_execution_timing(
     }
     key = f"{phase}:{task_id}:{lease.lease_version}"
     parent = _locked_parent_task(session, lease.video_parse_task_id)
-    child = (chunk_store.get_task(session, task_id, for_update=True)
+    child = (parent if isinstance(lease, VideoParseLease) else
+             chunk_store.get_task(session, task_id, for_update=True)
              if isinstance(lease, ChunkParseLease)
              else interval_store.get_task(session, task_id, for_update=True))
-    if child is None or child.video_task_id != lease.video_parse_task_id:
+    if child is None or (not isinstance(lease, VideoParseLease) and child.video_task_id != lease.video_parse_task_id):
         return False
-    if isinstance(lease, ChunkParseLease):
+    if isinstance(lease, VideoParseLease):
+        active = (parent.lease_owner == lease.worker_id and parent.lease_version == lease.lease_version
+                  and parent.lease_expire_time is not None and parent.lease_expire_time > sampled_at)
+        committed = False
+    elif isinstance(lease, ChunkParseLease):
         active = _matching_chunk_lease(child, lease, sampled_at)
         result = chunk_store.get_content(session, child.id)
         receipt = result.detail if result is not None and isinstance(result.detail, dict) else {}

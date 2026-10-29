@@ -878,7 +878,7 @@ class VideoParsePersistenceService:
 
     def record_execution_timing(
         self,
-        lease: ChunkParseLease | IntervalParseLease,
+        lease: VideoParseLease | ChunkParseLease | IntervalParseLease,
         *,
         started_at_ms: int,
         elapsed_ms: int,
@@ -895,9 +895,9 @@ class VideoParsePersistenceService:
             raise ValueError("finished must be a boolean")
         if not isinstance(outcome, str) or not outcome.strip():
             raise ValueError("outcome must be nonempty text")
-        if not (isinstance(lease, ChunkParseLease)
+        if not (isinstance(lease, (VideoParseLease, ChunkParseLease))
                 or isinstance(lease, IntervalParseLease) and lease.phase == "REFINING"):
-            raise ValueError("timing supports only Chunk Parse/Index and Interval Refine")
+            raise ValueError("timing supports only Video ASR, Chunk Parse/Index and Interval Refine")
 
         sampled_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:

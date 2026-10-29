@@ -180,6 +180,7 @@ export interface ParseConfig {
   };
   asr: {
     mode: "lite" | "none";
+    scope?: "chunk" | "video";
     model: string;
     fps: number;
     maxOutputTokens: number | null;

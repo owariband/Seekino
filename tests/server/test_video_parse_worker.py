@@ -3469,7 +3469,7 @@ def test_media_reaper_uses_exact_queue_identity_and_fails_closed():
     }
 
 
-@pytest.mark.parametrize("kind", ["chunk", "refine", "index", "video"])
+@pytest.mark.parametrize("kind", ["chunk", "refine", "index", "video", "asr"])
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
 def test_execution_timing_records_short_runs_without_changing_results(monkeypatch, kind, outcome):
     from server.model.dto.jobDTO import ChunkParseLease, IntervalParseLease
@@ -3511,7 +3511,8 @@ def test_execution_timing_records_short_runs_without_changing_results(monkeypatc
 
     async def execute():
         async with runtime._model_stage(lease, None, sequence_no=None,
-                category="embedding" if kind == "index" else "parse", check_active=lambda: None):
+                category="embedding" if kind == "index" else "parse", check_active=lambda: None,
+                stage="asr" if kind == "asr" else None):
             clock[0] += 0.025
             if outcome != "completed":
                 raise error

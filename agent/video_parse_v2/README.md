@@ -245,6 +245,14 @@ service prepares media and executes the model. With Understanding
 disabled, the workflow directly calls Engine's pure observation-to-event
 conversion and applies the same time-range validation before committing.
 
+With `models.asr.scope=video`, the host transcribes the original audio once before
+publishing episode media, then the same Chunk ASR entry selects overlapping cues.
+Cues retain complete text and absolute times as boundary context; write bounds
+and TimelineEvent stay unchanged. This mode requires Understanding and an audio
+provider. Its cache belongs to the current coordinator lease in the shared
+RuntimeService; recovery rebuilds it without discarding committed Chunk content.
+No persistent ASR checkpoint is implied. Historical snapshots default to `chunk`.
+
 Refine input includes each member's content, version, bounds, sequence, and
 ordered scope, plus original evidence and full content fingerprints. Understanding,
 [`ParseContextCanvas`](timelineEvent_canvas.py) in Refine and Prefix uses the same [`ContextCanvas`](../utils/context_canvas.py)

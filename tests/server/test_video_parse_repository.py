@@ -234,6 +234,23 @@ def test_legacy_complete_is_not_zero_event_coverage(repository):
     assert repo.event_index_status(task_id)["covered_chunks"] == 0
 
 
+def test_video_asr_timing_is_fenced_and_survives_chunk_work(repository):
+    factory, queue, repo, task_id, lease, _ = _prepare(repository, chunk_count=1)
+    started = datetime_to_unix_time_ms(NOW)
+    assert repo.record_execution_timing(lease, started_at_ms=started, elapsed_ms=1000, now=NOW)
+    assert not repo.record_execution_timing(replace(lease, worker_id="stale"), started_at_ms=started,
+                                          elapsed_ms=2000, now=NOW)
+    assert not repo.record_execution_timing(replace(lease, lease_version=lease.lease_version + 1),
+                                          started_at_ms=started, elapsed_ms=2000, now=NOW)
+    assert repo.record_execution_timing(lease, started_at_ms=started, elapsed_ms=1500,
+                                      finished=True, outcome="completed", now=NOW)
+    assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is not None
+    with factory() as session:
+        entry = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"][
+            f"asr:{task_id}:{lease.lease_version}"]
+        assert entry["execution_kind"] == "video" and entry["elapsed_ms"] == 1500 and entry["finished"]
+
+
 def test_execution_timing_is_monotonic_frozen_and_preserves_runtime(repository):
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
     lease = queue.claim_chunk("timed", lease_duration=timedelta(minutes=5), now=NOW)
