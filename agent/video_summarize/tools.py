@@ -159,24 +159,31 @@ def build_tools(
                 if evidence.chunk_parse_task_id is not None:
                     content = canvas.get("chunks", evidence.chunk_parse_task_id)["content"]
                     if evidence.field in {"title", "episode_order"}:
-                        events = [event for event in content.get("timeline", ())
-                                  if isinstance(event, dict) and event.get("event_type") == "ON_SCREEN_TEXT"
-                                  and evidence.quote in event.get("text", "")]
+                        if evidence.field == "title" and submission.title_kind == "generated":
+                            events = [event for event in content.get("timeline", ())
+                                      if isinstance(event, dict)
+                                      and any(evidence.quote in text for text in _source_strings(event))]
+                            texts = _source_strings(content)
+                        else:
+                            events = [event for event in content.get("timeline", ())
+                                      if isinstance(event, dict) and event.get("event_type") == "ON_SCREEN_TEXT"
+                                      and evidence.quote in event.get("text", "")]
+                            texts = [event["text"] for event in events]
                         # A substring must not conceal the source event's preview context.
-                        if any(_is_preview(event.get("text", "") + " " + event.get("description", ""))
-                               for event in events):
+                        if _is_preview(evidence.quote) or any(
+                            _is_preview(" ".join(_source_strings(event))) for event in events
+                        ):
                             raise AgentToolFeedbackError(
                                 "PREVIEW_EVIDENCE", "The cited event identifies a next-episode preview.",
                                 "Review this episode's temporal context and cite its own title card; "
                                 "never trim preview markers from a quote to claim the next episode's identity.",
                             )
-                        texts = [event["text"] for event in events]
                     else:
                         texts = _source_strings(content)
                     if evidence.field == "cover" or not any(evidence.quote in text for text in texts):
                         raise AgentToolFeedbackError(
                             "UNSUPPORTED_EVIDENCE", "Chunk citation does not contain the claimed source text.",
-                            "Quote exact ON_SCREEN_TEXT for title/episode_order, exact content for description, "
+                            "Quote exact ON_SCREEN_TEXT for official title/episode_order, exact content for generated title/description, "
                             "and a successfully inspected frame for cover.",
                         )
                 else:
@@ -186,7 +193,9 @@ def build_tools(
                             "PREVIEW_EVIDENCE", "The inspected-frame citation identifies a next-episode preview.",
                             "Use evidence belonging to the current episode, or omit the unsupported field.",
                         )
-                if evidence.field == "title" and (submission.title is None or submission.title not in evidence.quote):
+                if evidence.field == "title" and (submission.title is None or (
+                    submission.title_kind == "official" and submission.title not in evidence.quote
+                )):
                     raise AgentToolFeedbackError(
                         "UNSUPPORTED_TITLE", "Title does not match its quoted title-card text.",
                         "Use the explicit source title, or leave title null when uncertain.",

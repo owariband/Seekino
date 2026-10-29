@@ -11,12 +11,12 @@ import { SeriesActionsMenu } from "../library/SeriesActionsMenu";
 import { seriesPath, watchPath } from "../library/seriesLinks";
 import { episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
-import { readWatchHistory } from "./playbackProgress";
+import { readWatchHistory, type WatchProgress } from "./playbackProgress";
 import { PlaybackFrame } from "./PlaybackFrame";
 import { useI18n } from "../../app/i18n";
 import styles from "./watch.module.css";
 
-function SeriesArtwork({ series }: { series: SeriesSummary }) {
+function SeriesArtwork({ series, history }: { series: SeriesSummary; history: WatchProgress[] }) {
   const containerRef = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -28,19 +28,22 @@ function SeriesArtwork({ series }: { series: SeriesSummary }) {
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+  const seriesHistory = history.filter((item) => item.seriesId === series.seriesId);
   const detail = useQuery({
     queryKey: ["series-detail", series.seriesId, series.tenantId], queryFn: () => getSeries(series.seriesId, series.tenantId),
-    enabled: visible && !series.cover, retry: shouldRetryApiRequest,
+    enabled: visible && (seriesHistory.length > 0 || !series.cover), retry: shouldRetryApiRequest,
   });
   const playable = [...(detail.data?.videos ?? [])].filter((video) => video.playbackStatus === "READY" && video.playbackUrl)
     .sort((a, b) => a.episodeOrder - b.episodeOrder || a.uploadSequence - b.uploadSequence);
-  const video = playable[0];
+  const recent = seriesHistory.find((item) => playable.some((video) => video.videoId === item.videoId));
+  const cover = series.cover ?? detail.data?.cover;
+  const video = playable.find((item) => item.videoId === recent?.videoId) ?? (!cover ? playable[0] : undefined);
   return <span className={styles.seriesCover} ref={containerRef}>
     <span className={styles.coverFallback} aria-hidden="true"><Clapperboard size={30} strokeWidth={1} /><b>{seriesTitle(series)}</b></span>
-    {video && !series.cover ? <PlaybackFrame className={styles.seriesFrame}
-      src={mediaUrl(video.playbackUrl)} positionSeconds={previewFramePosition(video.durationSeconds)}
-      poster={mediaUrl(video.thumbnail?.url ?? null)} />
-      : series.cover ? <img key={series.cover.url} src={mediaUrl(series.cover.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+    {video || cover ? <PlaybackFrame className={styles.seriesFrame}
+      src={mediaUrl(video?.playbackUrl ?? null)}
+      positionSeconds={video ? recent ? Math.min(recent.positionSeconds, video.durationSeconds) : previewFramePosition(video.durationSeconds) : 0}
+      poster={mediaUrl(cover?.url ?? video?.thumbnail?.url ?? null)} /> : null}
   </span>;
 }
 
@@ -48,6 +51,11 @@ export function WatchHomePage() {
   const { t, locale } = useI18n();
   const { series, isLoading, error } = useWorkspace();
   const { activeSource, canUpload } = useAuth();
+  const [history, setHistory] = useState(() => readWatchHistory());
+  useEffect(() => {
+    // Read after the departing player saves its final position during cleanup.
+    setHistory(readWatchHistory());
+  }, [activeSource.key]);
   const shelfRef = useRef<HTMLDivElement>(null);
   const [shelfEdges, setShelfEdges] = useState({ previous: false, next: false });
   useEffect(() => {
@@ -67,7 +75,6 @@ export function WatchHomePage() {
     const shelf = shelfRef.current;
     shelf?.scrollBy({ left: direction * shelf.clientWidth * 0.85, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   };
-  const history = readWatchHistory();
   const recent = history.find((item) => series.some((entry) => entry.seriesId === item.seriesId));
   const activeSeriesId = recent?.seriesId ?? series[0]?.seriesId ?? null;
   const selectedSeries = series.find((item) => item.seriesId === activeSeriesId);
@@ -89,6 +96,7 @@ export function WatchHomePage() {
   const recentVideo = recentDetail.data?.videos.find((item) => item.videoId === recent?.videoId && item.playbackStatus === "READY" && item.playbackUrl);
   const heroSeries = recentVideo ? recentSeries : selectedSeries;
   const heroVideo = recentVideo ?? firstPlayable;
+  const heroCover = heroSeries?.cover ?? (recentVideo ? recentDetail.data?.cover : detailQuery.data?.cover);
   const heroPosition = recentVideo && recent ? recent.positionSeconds : Math.min(30_000, (heroVideo?.durationSeconds ?? 0) * 0.1);
 
   return (
@@ -97,8 +105,8 @@ export function WatchHomePage() {
 
       {heroSeries ? (
         <section className={styles.hero} aria-label={t("继续观看推荐")}>
-          <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(heroVideo?.playbackUrl ?? null)} positionSeconds={heroPosition}
-            poster={mediaUrl(heroVideo?.thumbnail?.url ?? heroSeries.cover?.url ?? null)} />
+          <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(recentVideo || !heroCover ? heroVideo?.playbackUrl ?? null : null)} positionSeconds={heroPosition}
+            poster={mediaUrl(heroCover?.url ?? heroVideo?.thumbnail?.url ?? null)} />
           <div className={styles.heroContent}>
             <span className={styles.heroKicker}>{recentVideo ? t("继续上次的故事") : t("从这里开始")}</span>
             <h2>{seriesTitle(heroSeries)}</h2>
@@ -144,7 +152,7 @@ export function WatchHomePage() {
               {series.map((item) => (
                 <article key={item.seriesId} className={styles.seriesCard}>
                   <Link className={styles.seriesCardLink} to={seriesPath(item)}>
-                    <SeriesArtwork series={item} />
+                    <SeriesArtwork series={item} history={history} />
                     <span><strong>{seriesTitle(item)}</strong><small>{t("{count} 集 · 查看系列", { count: item.videoCount })}</small></span>
                   </Link>
                   <div className={styles.seriesCardFooter}>

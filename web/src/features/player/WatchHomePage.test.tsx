@@ -28,8 +28,8 @@ vi.mock("./playbackProgress", () => ({
   saveVideoProgress: mocks.saveVideoProgress,
 }));
 vi.mock("./PlaybackFrame", () => ({
-  PlaybackFrame: ({ src, positionSeconds }: { src: string; positionSeconds: number }) => (
-    <div data-testid="playback-frame" data-src={src} data-position={positionSeconds} />
+  PlaybackFrame: ({ src, positionSeconds, poster }: { src: string | null; positionSeconds: number; poster?: string | null }) => (
+    <div data-testid="playback-frame" data-src={src} data-position={positionSeconds} data-poster={poster} />
   ),
 }));
 
@@ -190,7 +190,7 @@ describe("WatchHomePage", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/series\/series-b\?tenantId=local-default$/);
   });
 
-  it("keeps the supplied series cover even when that series has watch history", async () => {
+  it("uses the last watched frame over the series cover, keeping that cover as a loading fallback", async () => {
     const coveredSeries = { ...secondSeries, cover: { imageId: "cover-b", url: "/series-b-cover.jpg", expiresAt: null } };
     mocks.useWorkspace.mockReturnValue({ series: [firstSeries, coveredSeries], isLoading: false, error: null });
     mocks.readWatchHistory.mockReturnValue([{
@@ -202,12 +202,14 @@ describe("WatchHomePage", () => {
     const hero = screen.getByRole("region", { name: "继续观看推荐" });
     await within(hero).findByRole("link", { name: "继续观看" });
     const seriesCard = screen.getByRole("link", { name: /乙系列/ });
-    expect(seriesCard.querySelector("img")).toHaveAttribute("src", expect.stringContaining("/series-b-cover.jpg"));
-    expect(within(seriesCard).queryByTestId("playback-frame")).not.toBeInTheDocument();
+    const frame = await within(seriesCard).findByTestId("playback-frame");
+    await waitFor(() => expect(frame).toHaveAttribute("data-position", "45000"));
+    expect(frame).toHaveAttribute("data-src", expect.stringContaining("videoId=b-2"));
+    expect(frame).toHaveAttribute("data-poster", expect.stringContaining("/series-b-cover.jpg"));
     expect(within(hero).getByTestId("playback-frame")).toHaveAttribute("data-position", "45000");
   });
 
-  it("uses a stable representative frame for a series without a cover instead of its watch progress", async () => {
+  it("updates a series card to its latest saved progress when returning to the homepage", async () => {
     mocks.useWorkspace.mockReturnValue({ series: [secondSeries], isLoading: false, error: null });
     mocks.getSeries.mockResolvedValue(detail(secondSeries, [
       video("series-b", "b-2", 2),
@@ -220,8 +222,8 @@ describe("WatchHomePage", () => {
     const { unmount } = renderPage();
     const seriesCard = screen.getByRole("link", { name: /乙系列/ });
     const representativeFrame = await within(seriesCard).findByTestId("playback-frame");
-    expect(representativeFrame.getAttribute("data-src")).toContain("videoId=b-1");
-    expect(representativeFrame).toHaveAttribute("data-position", "420000");
+    expect(representativeFrame.getAttribute("data-src")).toContain("videoId=b-2");
+    expect(representativeFrame).toHaveAttribute("data-position", "45000");
 
     mocks.readWatchHistory.mockReturnValue([{
       seriesId: "series-b", videoId: "b-2", positionSeconds: 90_000,
@@ -233,8 +235,25 @@ describe("WatchHomePage", () => {
     const updatedFrame = await within(updatedCard).findByTestId("playback-frame");
     expect(within(screen.getByRole("region", { name: "继续观看推荐" })).getByTestId("playback-frame"))
       .toHaveAttribute("data-position", "90000");
-    expect(updatedFrame.getAttribute("data-src")).toContain("videoId=b-1");
-    expect(updatedFrame).toHaveAttribute("data-position", "420000");
+    expect(updatedFrame.getAttribute("data-src")).toContain("videoId=b-2");
+    expect(updatedFrame).toHaveAttribute("data-position", "90000");
+    expect(mocks.saveVideoProgress).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps the selected Summary artwork when history is absent or stale: stale=%s", async (stale) => {
+    const coveredSeries = { ...firstSeries, cover: { imageId: "summary-cover", url: "/chosen-summary.jpg", expiresAt: null } };
+    mocks.useWorkspace.mockReturnValue({ series: [coveredSeries], isLoading: false, error: null });
+    mocks.getSeries.mockResolvedValue(detail(coveredSeries, [video("series-a", "a-1", 1), video("series-a", "a-2", 2)]));
+    mocks.readWatchHistory.mockReturnValue(stale ? [{ seriesId: "series-a", videoId: "deleted", positionSeconds: 45_000,
+      durationSeconds: 120_000, updatedAt: 10 }] : []);
+    renderPage();
+    const hero = screen.getByRole("region", { name: "继续观看推荐" });
+    expect(await within(hero).findByRole("link", { name: "播放本集" })).toHaveAttribute("href", "/watch/series-a/a-1?tenantId=local-default");
+    for (const region of [hero, screen.getByRole("link", { name: /甲系列.*查看系列/ })]) {
+      const frame = within(region).getByTestId("playback-frame");
+      expect(frame).toHaveAttribute("data-poster", expect.stringContaining("/chosen-summary.jpg"));
+      expect(frame).not.toHaveAttribute("data-src");
+    }
     expect(mocks.saveVideoProgress).not.toHaveBeenCalled();
   });
 

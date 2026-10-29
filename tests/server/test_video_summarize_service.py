@@ -163,6 +163,7 @@ def test_summary_uses_frozen_limits_records_usage_and_publishes_exact_cover(tmp_
     assert asyncio.run(service.run_next()) is True
 
     assert model.options.get("max_model_calls") is None
+    assert model.options["tool_harness"] == "deepagents"
     assert model.options["request_timeout_seconds"] == 120
     assert service.received_limits.maximum_read_chars == 3000
     assert model.closed
@@ -189,6 +190,75 @@ def test_summary_model_failure_retries_only_summary(tmp_path):
     assert persistence.retries[0]["max_retries"] == 2
     assert persistence.retries[0]["error"] == "ValueError"
     assert model.closed
+
+
+@pytest.mark.parametrize("submit", [True, False], ids=["submitted", "completion-only"])
+def test_summary_chat_tools_use_completion_tool_and_require_validated_submission(tmp_path, monkeypatch, submit):
+    from agent.video_summarize import VideoSummarizeAgent
+    from gateway.config import ModelBinding, OpenAIVisionSourceConfig
+    from gateway.model_factory import GatewayClient
+    from tests.gateway.test_multimodal_agent import ChatCompletions, _chat_response
+
+    service, persistence, _, _, _ = _service(tmp_path)
+    description = "A person waves toward the camera."
+    persistence.inputs.chunks[0].content["timeline"] = [{"description": description}]
+
+    def call(identity, name, arguments):
+        response = _chat_response(identity, name)
+        response.choices[0].message.tool_calls[0].function.arguments = json.dumps(arguments)
+        return response
+
+    # The real failure returned this plain JSON without any business tool call.
+    # The harness must ask for correction rather than accepting it as completion.
+    premature = _chat_response()
+    premature.choices[0].message.content = '{"completed":false}'
+    responses = ChatCompletions([
+        premature,
+        call("read", "get_context_canvas", {"collection": "chunks", "references": ["chunk"]}),
+        *([call("submit", "submit_video_summary", {
+            "description": description,
+            "evidence": [{"field": "description", "chunk_parse_task_id": "chunk", "quote": description}],
+        })] if submit else []),
+        call("complete", "SummaryCompletion", {"completed": True}),
+    ])
+    closed = []
+    monkeypatch.setattr("gateway.openai.vision.OpenAI", lambda **kwargs: SimpleNamespace(
+        chat=SimpleNamespace(completions=responses), close=lambda: closed.append(True),
+    ))
+    config = load_config()
+    config.model_sources["summary_fixture"] = OpenAIVisionSourceConfig(
+        provider="portable", base_url="https://offline.invalid", api_key_env="SUMMARY_FIXTURE_KEY",
+    )
+    binding = ModelBinding(
+        source="summary_fixture", model="offline-summary", supports_vision_input=True,
+        max_output_tokens=8192, request_timeout_seconds=30,
+    )
+    persistence.lease.config_snapshot["model"] = binding.model_dump(mode="json")
+    client = GatewayClient(config, environ={"SUMMARY_FIXTURE_KEY": "offline"})
+    service._gateway = client
+    service.agent = VideoSummarizeAgent(runtime=service)
+    try:
+        assert asyncio.run(service.run_next()) is True
+    finally:
+        client.close()
+
+    assert len(responses.requests) == (4 if submit else 3)
+    assert closed
+    for request in responses.requests:
+        assert "response_format" not in request
+        assert request["tool_choice"] == "required"
+        assert {tool["function"]["name"] for tool in request["tools"]} == {
+            "get_context_canvas", "inspect_video_frames", "submit_video_summary", "SummaryCompletion",
+        }
+    assert "ordinary final text is not a completion" in json.dumps(responses.requests[1]["messages"])
+    if submit:
+        assert not persistence.retries
+        assert persistence.completed[0][0].description == description
+        assert any(message.get("tool_call_id") == "submit" and '"submitted":true' in message["content"].replace(" ", "")
+                   for message in responses.requests[-1]["messages"])
+    else:
+        assert not persistence.completed
+        assert persistence.retries[0]["error"] == "RuntimeError"
 
 
 @pytest.mark.parametrize("timed_out", [False, True], ids=["shutdown", "timeout"])

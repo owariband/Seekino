@@ -81,10 +81,20 @@ class VideoSummarySubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
+    title_kind: Literal["official", "generated"] = Field(
+        default="official",
+        description="Use official for an explicit title card; generated for a concise content-based fallback when no official title is found.",
+    )
     description: str = Field(min_length=1)
     episode_order: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
     cover: FrameReference | None = None
     evidence: list[SummaryEvidence] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def generated_title_is_short(self) -> Self:
+        if self.title_kind == "generated" and (self.title is None or len(self.title) > 80):
+            raise ValueError("a generated title must contain 1 to 80 characters")
+        return self
 
 
 class SummaryCompletion(BaseModel):

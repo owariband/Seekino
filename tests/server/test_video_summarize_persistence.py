@@ -139,6 +139,24 @@ def test_occupied_episode_keeps_existing_order_and_saves_other_metadata(reposito
     assert _state(factory, task_id)["episode_order_conflict"]
 
 
+def test_generated_title_is_published_with_provenance_without_changing_episode_order(repository):
+    factory, _queue, repo, task_id, _video_lease = _ready(repository)
+    lease = _claim(repo)
+    result = VideoSummaryResult(VideoSummarySubmission(
+        title="街角的重逢", title_kind="generated", description="两人终于在街角相遇。",
+        evidence=[{"field": "title", "chunk_parse_task_id": "source", "quote": "在街角相遇"},
+                  {"field": "description", "chunk_parse_task_id": "source", "quote": "在街角相遇"}],
+    ), None)
+    assert repo.complete_summary(lease, result, cover_uri=None, now=AT)
+    with factory() as session:
+        video = session.get(Video, lease.video_id)
+        assert video.display_name == "街角的重逢"
+        assert video.episode_order == 1
+    saved = _state(factory, task_id)["result"]
+    assert saved["title_kind"] == "generated"
+    assert saved["evidence"] == result.submission.model_dump(mode="json")["evidence"]
+
+
 @pytest.mark.parametrize("change", ["content", "manual_order", "deleted", "new_parse"])
 def test_stale_result_cannot_modify_video_or_parent(repository, change):
     factory, _queue, repo, task_id, _video_lease = _ready(repository)

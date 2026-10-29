@@ -28,11 +28,21 @@ episode title itself. Exclude ending credits (ED) and next-episode previews.
 
 Compose a concise, factual description of this episode's main events, avoiding
 invented motivations and details from other episodes. Cite exact chunk text for
-description evidence. Preserve the source's language for its official title.
-title is the explicit episode title, at most 255 characters, not the Series name or a generated headline.
+description evidence. Prefer the explicit official title of THIS video/episode:
+set title_kind="official", preserve its source language, and keep title within 255 characters.
+Do not use the Series name as the episode title. If no reliable official title is
+found after reviewing the full content and likely title-card windows, set
+title_kind="generated" and create a short, factual display title based on this video's
+main content. Aim for 6-20 Chinese characters (or a similarly brief phrase), never
+more than 80 characters. Use Chinese for a generated title, preserving necessary
+source names. Cite exact content or an inspected frame supporting that title;
+the generated wording need not appear verbatim in the source. Avoid invented
+identities, motivations, episode numbers, sensational claims and preview content.
+Do not present a generated title as official. Only leave title null if even a
+grounded content-based title is impossible; use title_kind="official" in that case.
 episode_order is only an explicitly evidenced positive episode number. Inspect
 actual frames around possible title cards with inspect_video_frames when needed;
-use the returned inspection_id and zero-based frame_index. Title/number evidence
+use the returned inspection_id and zero-based frame_index. Official title/number evidence
 must be a direct title-card observation or exact ON_SCREEN_TEXT text, never
 dialogue, a filename, the existing order, or an inferred position in the plot.
 Confirm that a title card belongs to THIS episode using its temporal position
@@ -44,7 +54,8 @@ preview markers to pass off the next episode's title or number as this episode.
 When frame evidence is ambiguous, inspect surrounding moments and compare the
 episode's opening/body/ending context; if ownership remains unclear, abstain.
 Compare contradictory candidates across the full episode; if they remain
-ambiguous, leave the affected title/episode_order null. Quote the episode marker
+ambiguous, use a grounded generated title instead of an uncertain official title
+and leave the affected episode_order null. Quote the episode marker
 with its number (e.g. 第十二話, Episode 12 or #12), not a bare unexplained numeral.
 
 Choose an informative, clear, representative cover only from a successfully
@@ -54,11 +65,13 @@ never invent an image URL or a receipt. If no useful inspected frame exists, use
 
 Submit with submit_video_summary after reviewing all chunks. Each evidence item
 has field, quote, and EITHER chunk_parse_task_id OR inspection_id plus frame_index.
-For title, quote the actual title text; for episode_order, quote the explicit
+For an official title, quote the actual title text; for a generated title, quote
+the source content supporting its main subject/action; for episode_order, quote the explicit
 episode marker and number; for cover, describe the inspected image. Every non-null
 title/episode_order/cover and the description require their own evidence. Only a
 successful submission completes this task; correct rejected tool calls before
-finishing. Afterwards return {{"completed":true}}. Do not put a replacement summary
+finishing. Afterwards complete the provided structured completion contract with
+completed=true. Do not put a replacement summary
 in the final model response. Request complete items first; follow the Tool response
 when the configured result byte budget requires smaller batches.
 """

@@ -1,8 +1,67 @@
-# Video Summarize 技术设计
+# 1. 问题与现状
+
+**Video Summarize 技术设计，2026-10-29 标题规则与系列封面展示修订。** 用户期望解析后由 Summary Agent 替换素材文件名。当前链路已在全部 Refine 提交后自动触发，授权的 EP04 8–20 秒验收片已实际完成 Kimi 总结、简介与封面发布；但没有本集标题卡时 `title=null`，且资料库仍只显示 `originalFilename`，导致“总结成功”没有带来可读标题。
+
+基线见 [SQL 审计](../../../outputs/verification/native-local-20261029/summary-title-audit.json)。本次只调整标题策略、证据校验和资料库展示，复用已提交解析与现有发布事务；不改变集数证据、解析完成条件、租约及版本校验，也不批量重解析 MyGO。
+
+同日追加的系列封面需求：未观看时，从各集 Summary 已发布的推荐封面中稳定随机选择一张；观看后使用本身份上次观看位置的原片画面。修改前 Repository 仅取第一部有关键帧的视频，Summary 封面没有关键帧时甚至不入候选；观看首页卡片有封面时不读取进度。此次复用已有封面和浏览器观看记录，不修改 Summary 选帧模型、数据库 Schema 或解析任务。
+
+# 2. 影响因素、假设与评价指标
+
+两个因素分别是正式标题缺失时的输出策略与前端字段选择。用户确认采用“优先正式标题，没有时按内容生成简短标题”。假设已有解析内容足以支持简短事实标题；工具可确定性核对引用存在、读取覆盖与长度，但语义是否忠实、正式标题是否确实不存在仍需模型判断及样例复核。
+
+| 指标 | 基线 | 验收标准 | 方法与证据 |
+| --- | --- | --- | --- |
+| 无标题卡视频的可读标题 | 同一 12 秒片 `title/display_name=null` | 非空、简短、与片段主内容一致，标记 `generated` | 复用相同 Chunk，单次 Kimi summary 后核对 SQL、引用与画面 |
+| 资料库标题 | `native-acceptance-ep04-12s.mp4` | 优先显示 `displayName`，缺省保留文件名回退 | 真实浏览器刷新资料库 |
+| 事实与发布护栏 | 官方标题和集数需直接证据 | 官方规则保持；生成标题不能无引用、混入预告或推断集数；解析版本/内容不变 | 工具及持久化回归、重跑前后指纹与版本核对 |
+
+系列封面的验收护栏：候选必须来自本 Series 的已发布 `cover_uri`，无候选才回退关键帧/原片预览；同一候选集在刷新和集数排序变化时保持选择稳定；观看后卡片和系列头图使用最新有效记录的整数毫秒位置；删除/不可播放的视频不用于进度封面。封面预览不能写入观看记录。观看记录沿用按身份隔离的本地存储，不宣称跨设备同步。
+
+# 3. 改造方案与建模
+
+复用已有 `title`、`display_name`、提交工具和同事务发布，新增结果字段 `title_kind=official|generated`，默认 `official` 兼容旧结果。正式标题保留原语言和 255 字符上限；没有可靠正式标题时，按片段主要内容生成中文短标题，目标 6–20 字、硬上限 80 字，并保留引用。来源类型存入现有 summary 结果 JSON，无需数据库增列。资料库优先展示 `displayName`，文件名保留在 tooltip 和回退中。
+
+先做工具/持久化回归和前端检查，再在已授权 12 秒范围重跑 summary；不重新执行 ASR、Understand、Refine 或 Index。详细输入、调度、失败、并发与兼容合同见下文。
+
+系列默认封面在现有 Library 数据投影处按 `SHA-256(series_id:video_id)` 稳定抽选 Summary 候选，不写随机状态或增加表；候选新增/删除时允许重新选择。Media 继续核验受管图片并沿用缺片回退。前端首页卡片、大图及系列页优先使用有效观看位置；未观看时静态显示服务返回的封面，不再加载另一个任意时间的视频帧覆盖它。未产出 Summary 时保留现有回退。
+
+# 4. 对照实验与结果分析
+
+本次使用同一验收视频及既有 Chunk，保留 [重跑前状态](../../../outputs/verification/summary-title-20261029/before.json)、[重跑结果](../../../outputs/verification/summary-title-20261029/after.json) 和 [脚本](../../../outputs/verification/summary-title-20261029/rerun_summary.py)。离线回归：Summary Agent / Service / Persistence 共 75 passed；前端 App / format 共 65 passed，typecheck 与 production build 通过。
+
+Kimi `k3.1-pro` 单次重跑 59.591 秒完成，生成 9 字标题「台阶夜谈《春日影》」，`title_kind=generated`，SQL `display_name` 一致；5 次模型请求全部 completed，stage 均为 summarize。标题主旨与引用对白、台阶夜景原帧相符；这是 Assistant 对同一调试样例的复核，不是独立盲评。解析保持版本 4 / COMPLETE，Chunk 版本及来源指纹不变；结果集数为 null，数据库原组织集数 1 保留。基线来自先前真实运行，不是多轮盲测；不据单例推断整季标题质量或延迟分布。
+
+验收脚本首次在写入和模型调用之前因读 DTO 元数据字段失败；改为读取 Video ORM 后执行成功，未增加一次模型试验。
+
+系列封面追加验收：后端 Library/Media/公开访问 74 passed，前端 WatchHome/SeriesPage/PlaybackFrame/观看进度 47 passed，typecheck/build 通过。首次测试失败来自新增用例的重复视频 hash 与 `it.each` 参数形状，修正测试数据后通过。浏览器对同一真实 12 秒视频验证：无历史的 localhost 站点只加载 Summary 静态封面；原 127.0.0.1 页面保留用户进度，卡片视频帧为 8.544 秒。未用清空用户观看记录制造无历史状态。多集候选与排序稳定性由隔离 SQLite 用例验证；当前真实库只有一个已发布的 Summary 视频封面，不能宣称已做多集视觉质量比较。
+
+| 系列封面行为 | 修改前 | 修改后验证 |
+|---|---|---|
+| Summary 封面无关键帧 | 不入系列候选 | 隔离数据中正常入选并生成可读图片引用 |
+| 有观看记录的卡片 | 固定系列封面/代表帧 | 本机实测停在 8.544 秒，旧 Summary 图片作为加载回退 |
+| 无观看记录的卡片 | 第一集关键帧 | 本机显示已发布 Summary 图片，未创建预览 video |
+| 浏览预览更新进度 | 不应发生 | 前端用例保持无写入，原页面进度不变 |
+
+# 5. 试点验证与推广决策
+
+试点仅为一段 12 秒视频：它没有本集标题卡，能直接验证用户要求的生成回退；正式标题路径以已有及新增离线回归保护，长视频标题卡发现率待测。既有 Summary 自动触发与配置入口继续使用，不增加历史全库补跑机制或专用队列。生成标题增加可读性，同时引入语义误概括风险，因此保留 `title_kind` 与证据供追溯。
+
+系列封面试点复用现有 Summary 成果，无新增模型调用或数据迁移。前端热更新后做真实页面检查，服务通过现有启动脚本加载后端选择规则；持久化任务继续按现有恢复流程推进。没有额外重跑 Summary 来美化验收样本。证据保存于 `outputs/verification/series-artwork-20261029/`。
+
+# 6. 结果验收与闭环
+
+实现、真实 summary 发布及浏览器展示均完成：资料库刷新后由文件名变为生成标题，观看页及选集同步采用该标题，原文件名保留可查。确认无活跃解析/总结/聊天后仅重启 API，新源码已加载，MySQL/ES/Web 进程未变，健康与资料库代理查询通过。证据：[资料库截图](../../../outputs/verification/summary-title-20261029/library-title.jpg)、[观看页截图](../../../outputs/verification/summary-title-20261029/watch-title.jpg)、[API 加载记录](../../../outputs/verification/summary-title-20261029/api-reload.json)。
+
+采用该规则供后续自动 Summary 使用，已有完成结果不自动重跑；正式标题路径通过离线回归，整季真实标题质量仍未验证。状态统一维护于 [F08](../../dev/problems.md#f08summary-标题未落到资料库展示且无正式标题时缺少回退)，决策及比较见 [devlog](../../dev/devlog.md#devlog-summary-title-20261029)。旧 MyGO 数据恢复与整季重解析是独立问题，不能由本次标题验收替代。
+
+2026-10-29 系列封面行为已实现、回归并在本机发布。当前观看页和系列页遵循“未看用 Summary，已看用上次进度”；本机有多集 Summary 候选后的整体审美效果仍待实际产出。状态见 [F09](../../dev/problems.md#f09系列封面未使用-summary-候选及上次观看画面)，过程见 [devlog](../../dev/devlog.md#devlog-series-artwork-20261029)。
+
+# Video Summarize 技术设计：现行合同与历史实施记录
 
 ## 目标与边界
 
-在单个 Video 的全部 Refine 结果提交后，独立生成本集的官方标题、简短简介、推荐封面和有明确证据的真实集数。它是 `agent/video_summarize/` 下的独立 Agent，与 Parse、Refine、Prefix 并列，不属于 Chat Agent。
+在单个 Video 的全部 Refine 结果提交后，独立提取本集的官方标题、无正式标题时生成内容短标题，并生成简短简介、推荐封面和有明确证据的真实集数。它是 `agent/video_summarize/` 下的独立 Agent，与 Parse、Refine、Prefix 并列，不属于 Chat Agent。
 
 Summarize 与 embedding/index 并行，不加入解析完成条件，不等待 Prefix。失败、超时或重试只影响本次摘要；父解析任务 COMPLETE 后摘要仍可执行。现有 Prefix 保留。未取得可靠证据的标题、集数或封面保持原值，不根据文件名、当前排序或剧情推断官方集数。
 
@@ -35,14 +94,15 @@ Summarize 与 embedding/index 并行，不加入解析完成条件，不等待 P
 
 输出包括：
 
-- `title`：可空，最多 255 字符；必须是明确的本集标题卡文字。
+- `title`：优先明确的本集正式标题，最多 255 字符；无可靠正式标题时按本视频主要内容生成短标题，目标 6–20 个汉字、最多 80 字符；连内容标题也缺少依据时可空。
+- `title_kind`：`official` 或 `generated`，缺省为 `official` 兼容原有结果；`generated` 必须有非空短标题。
 - `description`：必填，本集的简短事实简介，附 Chunk 或帧证据。
 - `episode_order`：可空，明确的正整数编号；引用必须含无歧义的编号标记，支持中文数字及全角数字。
 - `cover`：可空，已登记的 `inspection_id + frame_index`。
 - `evidence`：每个输出字段的来源引用与原文/画面观察。
 - 程序组装的 `frame_receipts` 和实际封面图片字节；回执与模型提交内容分开保存。
 
-标题、集数的文本证据只接受正式 `ON_SCREEN_TEXT`；对匹配事件的完整文本和描述检查明确的次回/下集预告标记，不能截断 quote 绕过。帧证据的本集归属仍由视觉模型结合前后时序判断；有冲突时应放弃该字段。
+正式标题、集数的文本证据只接受正式 `ON_SCREEN_TEXT`；生成标题可引用 Chunk 的场景、对白等确实存在的文本，标题措辞不要求逐字出现。两类标题均检查引用及匹配事件完整内容中的次回/下集预告标记，不能截断 quote 绕过。帧证据必须有真实取帧回执，本集归属仍由视觉模型结合前后时序判断；正式标题候选冲突时可退回有依据的内容短标题，集数冲突仍放弃该字段。
 
 ## 调度与状态
 
@@ -89,11 +149,11 @@ Summary 独立事务在 MySQL 使用 READ COMMITTED，避免候选扫描或 Libr
 | `description` | LONGTEXT | 本集简介 |
 | `cover_uri` | LONGTEXT | 已发布推荐封面的位置 |
 
-迁移脚本：`docs/migrations/20261021_video_metadata.sql`。已有数据保持空值。部署新代码前需要对已有 MySQL 库执行这份增列迁移；本次开发未执行该迁移。
+迁移脚本：`docs/migrations/20261021_video_metadata.sql`。已有数据保持空值。部署新代码前需要对已有 MySQL 库执行这份增列迁移。初版开发记录为未执行该迁移；2026-10-29 本机库已有这三个字段且真实发布成功，本次标题策略无需新增迁移。
 
 Library API 增加可空 `displayName`、`description`；图片继续走 `thumbnail`，不向前端暴露 `cover_uri`。推荐封面缺失或不可读时回退原关键帧；独立的 `video_cover` 图片 ID 不改变原关键帧序号与权限规则。
 
-观看页只消费标题、简介和 thumbnail，缺省时沿用 Episode N 和原关键帧。Chat 保留请求原始 extra_context 用于幂等重放，在实际构造 Agent 输入时重新读取当前 Video 集数，从而兼容旧页面在自动改号后继续提问。
+观看页消费标题、简介和 thumbnail，缺省时沿用 Episode N 和原关键帧。资料库优先显示 `displayName`，再回退原文件名和集数；原文件名仍保留在 tooltip 中，不重命名媒体文件。Chat 保留请求原始 extra_context 用于幂等重放，在实际构造 Agent 输入时重新读取当前 Video 集数，从而兼容旧页面在自动改号后继续提问。
 
 ## 配置与运行
 
@@ -101,11 +161,11 @@ Library API 增加可空 `displayName`、`description`；图片继续走 `thumbn
 
 默认并发 1、最多 2 次失败重试、总超时 600 秒。Summarize 不设置模型轮次、工具调用次数或看帧次数上限；保留执行超时、取消、租约及单次读取/媒体大小约束。旧任务快照中的三个次数配置不再生效。`SEEKINO_SUMMARIZE_ENABLED=false` 可关闭自动执行。
 
-标题定位优先追踪前几个 Chunk 的 SCENE、ON_SCREEN_TEXT 中“标题、片头、OP、作品标识”等线索，依据事件时间检查 OP 结束到正片开始的过渡及相邻 Chunk，并在候选窗口局部取帧核验。作品 logo 只提供定位线索；本集标题和集数仍需直接画面文字证据，支持 `#N` 集号，排除 ED、下集预告及推断。未命中时缩窄或平移候选窗口，避免反复全片稀疏采样。
+标题定位优先追踪前几个 Chunk 的 SCENE、ON_SCREEN_TEXT 中“标题、片头、OP、作品标识”等线索，依据事件时间检查 OP 结束到正片开始的过渡及相邻 Chunk，并在候选窗口局部取帧核验。作品 logo 只提供定位线索；本集正式标题和集数仍需直接画面文字证据，支持 `#N` 集号，排除 ED、下集预告及推断。未命中时缩窄或平移候选窗口，避免反复全片稀疏采样；完整审阅后仍无可靠正式标题则生成有依据的内容短标题。
 
 用量仍归属原 VideoParseTask，通过 `stage=summarize` 区分。取消和超时会取消 provider；后台线程实际退出前保留占用的租约/调用句柄，避免并发重复执行。
 
-第一版不提供历史批量补跑界面或摘要专用管理页面；历史 Video 不自动补跑，已有解析结果可由受控内部调用 `mark_summary_ready` 排队。
+第一版不提供历史批量补跑界面或摘要专用管理页面；历史 Video 不自动补跑，已有解析结果可由受控内部调用 `mark_summary_ready` 排队。同一来源指纹已完成时该方法不会重复排队；本次验收先保存旧状态，再在同一事务内显式重置并领取唯一目标的 summary 租约，复用正常执行与发布校验。
 
 ## 验证
 
@@ -119,9 +179,9 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider \
   tests/server/test_video_parse_model_calls.py
 ```
 
-Web 使用 `format.test.ts`、`WatchPage.test.tsx` 和 TypeScript typecheck。真实 MySQL 并发和真实模型质量需在配置测试数据库/模型后验证；SQLite 回归不能替代 MySQL 锁行为验证。本次开发未对线上/开发服务发起真实摘要调用。
+Web 使用 `format.test.ts`、`WatchPage.test.tsx` 和 TypeScript typecheck。真实 MySQL 并发和真实模型质量需在配置测试数据库/模型后验证；SQLite 回归不能替代 MySQL 锁行为验证。初版开发未对线上/开发服务发起真实摘要调用；2026-10-29 单片真实 Kimi/MySQL 及页面验证见第 4–6 节，不替代真实并发压测。
 
-## 本次实际修改范围
+## 初版实际修改范围（历史记录）
 
 实际涉及 52 个文件：生产 34 个、测试 16 个、文档/迁移 2 个；新增 14 个、修改 38 个，无删除或重命名。
 
