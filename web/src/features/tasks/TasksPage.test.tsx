@@ -93,12 +93,13 @@ afterEach(() => {
 });
 
 describe("V2 task observation", () => {
-  it("hides internal parsing statistics in release while preserving progress, errors and actions", async () => {
+  it("hides internal parsing statistics in release while preserving duration, progress, errors and actions", async () => {
     workspace.displayMode = "release";
     const failed: VideoParseTaskView = {
       ...task("PARSING_FAILED"),
       chunkCount: 24,
       detail: {
+        timing: { recorded: true, complete: false, activeExecutions: 0, effectiveDurationMs: 125_000 },
         progress: {
           completedChunks: 24, totalChunks: 24, completedRefines: 8, totalRefines: 22,
           completedUnits: 32, totalUnits: 70, percent: 95 * 32 / 46,
@@ -117,7 +118,9 @@ describe("V2 task observation", () => {
     expect(screen.queryByLabelText("解析任务进度")).not.toBeInTheDocument();
     expect(screen.queryByText("模型消耗")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/usage/overview"))).toBe(false);
-    expect(container).not.toHaveTextContent(/固定切片|理解|Refine|索引\s*0\s*\/\s*22|完成单元|有效解析时长/);
+    expect(container).not.toHaveTextContent(/固定切片|理解|Refine|索引\s*0\s*\/\s*22|完成单元/);
+    expect(screen.getByText("有效解析时长").parentElement).toHaveTextContent("02:05");
+    expect(screen.getByText("有效解析时长").parentElement).toHaveAttribute("title", "仅统计实际解析时间，排队和停机不计入");
     expect(screen.getByText("解析失败")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: `重试解析 ${failed.originalFilename}` })).toBeEnabled();
     expect(screen.getByRole("button", { name: `整集重新解析 ${failed.originalFilename}` })).toBeEnabled();

@@ -475,7 +475,7 @@ export function TasksPage() {
               <div className={styles.jobDetail}>
                 <dl>
                   <div><dt>{t("文件")}</dt><dd title={filename}>{filename}</dd></div>
-                  {isDebug ? <div title={t("仅统计实际解析时间，排队和停机不计入")}><dt>{t("有效解析时长")}</dt><dd>{processingDurationText(task, locale)}</dd></div> : null}
+                  <div title={t("仅统计实际解析时间，排队和停机不计入")}><dt>{t("有效解析时长")}</dt><dd>{processingDurationText(task, locale)}</dd></div>
                   <div><dt>{t("更新于")}</dt><dd>{new Date(task.updateTime).toLocaleTimeString(formatLocale, { hour: "2-digit", minute: "2-digit" })}</dd></div>
                 </dl>
               </div>

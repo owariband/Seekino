@@ -48,6 +48,14 @@
 依据：[原生启动说明](../../deploy/README.md#可选全原生本机开发)、[运行报告](../../outputs/verification/native-local-20261029/runtime-report.json)、[安装与检查记录](../../outputs/verification/native-local-20261029/setup-report.json)、[本次 devlog](devlog.md#devlog-native-local-20261029)。
 
 
+### F10：普通展示模式隐藏解析有效总时长
+
+排序日期：2026-10-29。状态：已解决（代码与定向测试；生产部署未验证）。
+
+任务 API 已返回有效解析时长，但任务页以 `isDebug` 限制显示，prod/release 用户无法查看。现已解除该字段的 debug 限制，沿用服务端实际执行区间的时长口径和未开始／未记录空态，排队与停机不计入。内部 Chunk、Refine、索引计数和模型用量明细继续由 debug 控制。
+
+任务页 20 项测试、TypeScript 检查通过。未重启或部署生产服务。依据：[任务页设计](../ui-design/tasks-simplification-approved.md)、[本次 devlog](devlog.md#devlog-release-parse-duration-20261029)。
+
 ### F07：观看聊天面板的固定栏和输入工具栏挤占正文空间
 
 排序日期：2026-10-29。
