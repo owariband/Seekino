@@ -4,6 +4,14 @@
 
 本页的“定位”区分主设计、专项合同、草案和历史参考，不表示功能已实现或已部署。当前问题与完成状态见 [problems.md](../dev/problems.md)，决策、实验与验收记录见 [devlog.md](../dev/devlog.md)，完整文档分工见 [docs/README.md](../README.md)。
 
+## TRD 通用规范（必读）
+
+**每次新增 TRD，必须先完整阅读并遵循 [common/trd-principle.md](common/trd-principle.md)。** 该规范适用于 Feature、Fix、Refactor、Performance 等各类需求及所有发展阶段；实质修订已有 TRD 时，同样按规范补充本次涉及的设计与证据。
+
+TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素与指标拆解、方案改造、对照实验、试点取舍和结果闭环六个流程，并随项目实际变化同步更新。初稿中的假设与计划、执行中的实测证据和最终验收结论必须区分；具体要求以 principle 原文为准。
+
+`common/` 保存跨阶段共用的设计原则。新增需求 TRD 仍按下述阶段与主题归档；完善既有文档时保留原有大架构、关键流程和历史依据，在对应位置补充，不因套用规范擅自重写全文。
+
 ## 发展阶段
 
 | 阶段 | 当时主要回答的问题 | 时间背景与入口 | 归入的原文件 |
@@ -53,9 +61,11 @@
 |---|---|---|
 | Parse V2 任务编排 | [video-parse-harness-trd.md](02-agent-harness/video-parse-harness-trd.md) | 主 TRD：任务与成果、Prepare、调度、租约、Refine、Prefix 和恢复；同一 ChunkTask 承担 Parse / Index。 |
 | Parse V2 领域算法 | [video-parse-engine-trd.md](02-agent-harness/video-parse-engine-trd.md) | 领域合同：解析结果 Schema、时间与人物规则、解析和投影边界；旧检索章节结合最新 Event 合同阅读。 |
-| Parse 模型输出协议 | [parse-output-xml.md](03-product-reassessment/parse-output-xml.md) | 设计稿：无缩进 XML、标签与正文分行、任务级语言默认值与程序派生字段；尚未接入生产链路。 |
+| 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；宿主接入与兼容仍待实施。 |
+| 本地 WhisperX 与字幕时间证据 | [local-whisperx-asr-trd.md](03-product-reassessment/local-whisperx-asr-trd.md) | 可选正式 ASR、强制对齐、字词毫秒合同、模型安装与真实效果验收边界。 |
+| Parse XML v2 历史方案 | [parse-output-xml.md](03-product-reassessment/parse-output-xml.md) | 2026-10-26 协议原稿；新候选与验证口径见解析性能主 TRD，保留历史设计来源。 |
 | 声纹与台词归属 | [voiceprint-trd.md](02-agent-harness/voiceprint-trd.md) | 专项 TRD：声纹准备、比较、原子台词及说话人归属；保留历次实验的适用边界。 |
-| 整集摘要 | [video-summarize-trd.md](02-agent-harness/video-summarize-trd.md) | 专项 TRD：官方标题、事实简介、封面与真实集数的证据约束、职责及发布流程。 |
+| 整集摘要 | [video-summarize-trd.md](02-agent-harness/video-summarize-trd.md) | 专项 TRD：优先正式标题、无标题时生成内容短标题，事实简介、封面与真实集数的证据约束、职责及发布流程；系列默认封面与观看进度展示。 |
 | 分镜解析 | [shot_parse_trd.md](02-agent-harness/shot_parse_trd.md) | 草稿占位，目前仅有 background 提示，尚无完整设计。 |
 | Parse V2 早期拓扑 | [parse-v2-harness.md](02-agent-harness/parse-v2-harness.md) | 历史算法与拓扑设计；任务、Index 归属和恢复以 Harness 主 TRD 为入口。 |
 | Parse V2 存储接入 | [refactor_2.md](02-agent-harness/refactor_2.md) | 存储与调用链重构记录，含阶段约定和历史实施结果。 |
@@ -68,6 +78,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
+| 本地文本向量与可选视觉索引 | [local-text-embedding-trd.md](03-product-reassessment/local-text-embedding-trd.md) | 课程实验：Qwen3-Embedding-0.6B、冻结输入模式、纯文本索引与原多模态兼容。 |
 | Event / Sub-Chunk 检索 | [sub-chunk-trd.md](02-agent-harness/sub-chunk-trd.md) | 主 TRD：独立 Event ES 索引、词法与文本／视觉向量、抽帧、发布及恢复合同。 |
 | 视觉媒体输入与检索 | [visual-retrieval-trd.md](02-agent-harness/visual-retrieval-trd.md) | 专项 TRD：文字与视觉查询分工，图片、GIF、MP4 输入及检索接入。 |
 | Event 早期方案 | [event-retrieval-trd.md](02-agent-harness/event-retrieval-trd.md) | 历史方案与后续合同说明；当前实施依据已转到 Sub-Chunk TRD。 |

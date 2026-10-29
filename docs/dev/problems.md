@@ -17,6 +17,14 @@
 
 以下按原文主体问题的修复或澄清记录归档；待部署、待真实样本复测及性能验收等限制仍以各条正文为准。
 
+### B16：面试前保护旧闭环并撤销 NPC 实验与 ACP Client 裁剪
+
+排序日期：2026-10-29。
+
+状态：已解决（本轮裁剪已撤销）。用户随后明确 2026-10-30 面试需用旧闭环展示，旧能力还承担其他工作依赖，不能仅按新创作目标判断删除。已恢复此前删除的 9 个文件及 `agent-client-protocol` 依赖，并撤销对应退役说明；MCP 和其他任务已有修改保留。恢复后的定向验证见 devlog。
+
+面试前停止进一步裁剪和结构重构，保留解析、导出、检索、问答、陪看、Cloud、素材管理及其依赖。SVG／Three.js 角色宣传片保留为探索方向，不作为明天已完成的演示承诺。历史删除经过仍保存在 [原记录](devlog.md#devlog-pv-scope-prune-20261029)，恢复决定与当前边界见 [恢复记录](devlog.md#devlog-interview-preserve-20261029)。源码恢复不等于演示环境已启动或真实模型闭环已复验。
+
 ### B18：全原生 localhost 环境与真实业务验收
 
 排序日期：2026-10-29。
@@ -39,6 +47,37 @@
 
 依据：[原生启动说明](../../deploy/README.md#可选全原生本机开发)、[运行报告](../../outputs/verification/native-local-20261029/runtime-report.json)、[安装与检查记录](../../outputs/verification/native-local-20261029/setup-report.json)、[本次 devlog](devlog.md#devlog-native-local-20261029)。
 
+
+### F07：观看聊天面板的固定栏和输入工具栏挤占正文空间
+
+排序日期：2026-10-29。
+
+状态：已解决（本机浏览器验证）。用户截图中“边看边聊”标题、聊天/选集页签和常驻“发送问题时暂停视频”开关占据三行，底部附件、系列选择和发送按钮所在行也过高。已删除冗余标题，将页签、观看设置和关闭按钮合并为一行；暂停开关移入按需展开的观看设置，保留原偏好持久化与发送暂停行为。嵌入式聊天输入区减少内边距，附件/发送按钮缩为 30 px，并限制长系列名溢出。
+
+本机浏览器在 491×815 和 1280×900 视口实测：顶部工具栏 41 px、底部工具栏 30 px、空输入框 88 px，页面没有水平溢出；设置开关、Esc 收起与焦点恢复、点击外部收起、选集切换和面板开合通过。观看页 24 项测试、类型检查和 production build 通过。本轮只验证 UI，不新增模型调用，也未把 B17 的旧资料库恢复标为完成。
+
+依据：[本次 devlog](devlog.md#devlog-watch-chat-compact-20261029)、[窄窗口截图](../../outputs/verification/watch-chat-compact-20261029/compact-chat-narrow.jpg)、[桌面截图](../../outputs/verification/watch-chat-compact-20261029/compact-chat-desktop.jpg)。
+
+### F08：Summary 标题未落到资料库展示且无正式标题时缺少回退
+
+排序日期：2026-10-29。
+
+状态：已解决（本机短片真实验收）。Summary Agent 已在全部 Refine 提交后接入，先前 Kimi 验收已发布简介及封面；用户仍看到文件名，是因为原规则缺少标题卡就返回 null，而资料库没有优先消费 `displayName`。用户确认改为“优先正式标题，没有时按内容生成简短标题”。
+
+已增加 `title_kind=official|generated`，正式标题保持直接证据要求，无可靠正式标题时生成有引用的中文短标题；生成标题硬上限 80 字符，集数仍不允许推断。类型及证据保存在现有 summary 结果 JSON，无需新迁移。资料库优先 `displayName`，原文件名保留 tooltip/回退。
+
+复用 EP04 8–20 秒验收片的原 Chunk，只重跑 Kimi summary，59.591 秒完成，5 次模型请求均成功。标题由 null 变为「台阶夜谈《春日影》」，SQL、资料库和观看页一致；解析仍为版本 4 / COMPLETE，Chunk 版本和来源指纹未变，未推断实际集数。后端相关测试 75 passed，前端 App/format 65 passed，typecheck/build 通过。确认无活跃任务后仅重启 API，MySQL/ES/Web 保留原进程，健康与资料库访问通过。整季标题质量尚未验证，历史结果不会自动补跑，B17 旧业务数据恢复仍独立保留 TODO。
+
+依据：[主 TRD](../design/02-agent-harness/video-summarize-trd.md)、[本次 devlog](devlog.md#devlog-summary-title-20261029)、[真实结果](../../outputs/verification/summary-title-20261029/after.json)、[资料库截图](../../outputs/verification/summary-title-20261029/library-title.jpg)。
+
+
+### F09：系列封面未使用 Summary 候选及上次观看画面
+
+排序日期：2026-10-29。状态：已解决（代码、隔离回归与本机单候选实查）。用户要求未观看系列随机使用各集 Summary 选出的封面，观看后改为上次观看位置的原片画面。
+
+Library 原先只挑第一部有关键帧的视频；现在优先从已发布 Summary 封面中稳定随机选取，候选不变时刷新/集数排序不会更换。观看首页卡片、大图及系列页使用有效观看记录覆盖默认图；没有 Summary 时保留原片预览。沿用身份隔离的浏览器记录，预览不写进度，无跨设备同步或新增数据库结构。
+
+后端 74 项、前端 47 项相关测试及 typecheck/build 通过。真实页面验证同一视频的无历史 Summary 静态图与已有历史 8.544 秒画面，未修改用户观看记录；服务已加载新规则。当前 Karpathy 尚无 Summary 封面，仍走回退；多集真实审美效果待产出后观察。设计：[Video Summarize TRD](../design/02-agent-harness/video-summarize-trd.md)；证据与取舍：[devlog](devlog.md#devlog-series-artwork-20261029)。
 
 ### B14：Event 索引补建反复重写大 JSON，45 分钟产生 20.61 万个 UPDATE 事件与 44.106 GB binlog
 
@@ -583,6 +622,7 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 以下保留未修复、部分完成或同条目仍有主体问题未解决的记录，已实施的阶段性修复与历史证据一并保留。
 
+
 ### B15：localhost MCP 与外部 Agent 素材取用闭环
 
 排序日期：2026-10-29。
@@ -611,6 +651,37 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 - 剩余验收：读取真实旧业务数据库或其备份；按旧 URI 与哈希关联原片，核对派生媒体，验证播放与 ES 检索。只有表结构或原片不能恢复旧解析成果，评测 fixture 不作为业务数据库替代品。本轮新开发库初始化不代表恢复了旧库。
 
 依据：[媒体目录与迁移合同](../../deploy/README.md#persistent-media-root)、[原片清单](../../assets/library/recovery/mygo-20261029.json)、[本次 devlog](devlog.md#devlog-persistent-media-20261029)。
+
+### B19：课程本地文本向量与可关闭的视觉索引
+
+排序日期：2026-10-29。
+
+状态：TODO（本地接入、视觉向量开关、llama.cpp 独立运行和正式 MySQL 单任务冒烟已完成；恢复与课程闭环验收待做）。用户选择本地 Qwen3-Embedding-0.6B、1024 维，明确要求视觉向量可关闭，保留 OCR/VLM 理解。修改前 Ark-only 编码和强制视觉索引阻碍此方案；19:08 的旧模型请求还出现供应商 404。
+
+验收：本地模型真实编码；显式 text 模式冻结至任务；Chunk/Event 不调用视觉编码也能正确发布和恢复；查询仅使用匹配文本空间；默认多模态检查不退化；隔离课程样本保留来源、时间、召回与延迟证据。代码、单测、实模运行和完整课程效果分开报告。不得以同维度混用新旧向量。
+
+2026-10-29 实证：4 个课程片段经本地 Whisper 转写后人工投影、实际 Qwen 编码与隔离 ES 发布；8 条中文查询均首位命中预期片段并核对文件/时间，0 次视觉编码。仅 4 个候选，问题在读过转写后编写，不能作为整库质量结论。真实 MySQL 完成/重启恢复、HTTP 回看与追问仍待验证。50 项集成测试（含真实隔离 ES）通过，CLI/sparse 追加修复的 631 项组合回归通过，计数有重叠。
+
+设计：[本地文本向量 TRD](../design/03-product-reassessment/local-text-embedding-trd.md)；过程与指标：[devlog](devlog.md#devlog-local-text-embedding-20261029)。原始证据：`outputs/verification/local-text-embedding-20261029/`。本轮未切换主服务、未重建旧业务索引、未批量解析全课程。
+
+后续更新（2026-10-29）：按用户选择完成 Ollama → llama.cpp 直连，独立原生程序与 GGUF
+路径已通过无 Ollama 服务的真实编码。修复本地启动器遗漏 text 模式导致的索引合同冲突。
+用户收窄范围前已提交的唯一 60 秒任务为 COMPLETE；用户随后明确本项只做 embedding，
+Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看或追问验收。
+临时验收 API 与 Whisper 已关闭，embedding 服务独立保留。见
+[直连接入记录](devlog.md#devlog-llama-cpp-embedding-20261029)。
+
+### B20：本地 WhisperX 正式接入与字幕时间证据
+
+排序日期：2026-10-29。状态：TODO（正式接入、三语实机部署与 Karpathy 任务提交已完成；完整系列效果及字幕消费待验收）。
+
+用户需要可自行下载模型、直接运行项目代码的低 API 成本 ASR，并用强制对齐支持字幕时间。此前本机实验是 whisper.cpp，正式配置为 Ark，不能算 WhisperX 已接入。
+
+本次加入 `adapter: whisperx`、可选依赖、正式 Gateway 工厂与共享模型生命周期；转写后执行 align，字词结果经 Engine 毫秒归一及 Server 原片偏移后随 ASR evidence 保留，未知字词时间为 null。配置改名 `config/local-dev-config.yaml` 并更新本机环境入口，保留原有云端来源作为可选项。未安装本地 ML extra 也可运行原链路。字幕分行、展示和导出仍未实现。
+
+2026-10-29 后续部署：已安装可选运行时并校验 large-v3、英/中/日对齐权重；三语短样本经正式 Gateway 取得有效字词时间，中文为合成语音且存在“字幕→字母”识别错误。75 项相关回归通过。本机开发服务已切换 WhisperX 和本地 Qwen3 文本 embedding；使用新 ES 索引保留旧向量数据。8 集 Karpathy 原片（约 14.61 小时）通过正式 API 创建持久解析任务，首集已被消费者领取。启动观察中 Kimi 视觉请求出现远端断开和 HTTP 504，消费者正在重试；本地 ASR 验证通过不等于 VLM/索引闭环通过。验收边界：未完成全系列解析、人工对齐精度评测、恢复验证和播放器字幕。证据见[部署报告](../report/gateway/local/whisperx-deployment-20261029.md)。
+
+设计与部署：[WhisperX TRD](../design/03-product-reassessment/local-whisperx-asr-trd.md)、[模型配置](../model-config.md#本地-whisperx-asr-与对齐)；过程与测试结果：[devlog](devlog.md#devlog-whisperx-20261029)。
 
 ### C20：Cloud Chat 的 pi 与 Deep Agents 上下文职责重复，需收敛持久化与恢复合同
 
@@ -1389,6 +1460,40 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 排序日期：2026-10-17。
 
 优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：2026-10-12 已取得真实整集完成的耗时收敛里程碑；历史问题、已实施修复与仍待优化的边界按下列日期分别记录。
+
+#### 2026-10-29：补足多片段质量证据，身份缺证与模型优劣分开验证
+
+状态：TODO（质量证据扩展；不重开已结束的协议选型）。用户指出，47 秒画外音在 K3 和豆包均失败，当前模型输入没有音频或可靠说话人身份，不能将此归因为豆包 non-thinking 质量低，也不能证明串行无法接 Refine。错误事实保留，音频/身份补证、模型配置、thinking 开关和串并行调度分别验收；匿名声音分组不自动等于具名角色，补证可前置或后置。
+
+本任务 Agent 已将更长、多元样本计划补入 [主 TRD §4.7](../design/03-product-reassessment/video-parse-performance-trd.md#47-多片段质量验证计划分开模型能力身份补证与调度)：建议 6 个新连续 2 分钟片段、12 个 60 秒 Chunk，覆盖 6 类场景，首轮两模型一次筛查建议 24 次，先冻结样本/独立金标及预算。具体素材窗口、金标和后续消融预算尚未冻结；本次未新增调用或改生产。用户随后纠正架构基线：应比较携带实际前文、无强制后置 Refine 的轻量串行 workflow，与现有并行理解及其 Refine；独立调用按顺序发出不是前者。24 次模型筛查不回答完整架构优劣，该阶段另计完整成本及长序列质量。已知身份问题继续关联 [B12](#b12asr-匿名说话人分组不准refine-看帧后仍未纠正目标归属)，完整纠偏见 [devlog](devlog.md#devlog-parse-quality-attribution-20261029)。
+
+#### 2026-10-29：协议选型结束，采用精简 JSON，质量优先
+
+本轮协议选型：**DONE（研究与决策）**。用户已决定“精简了schema，但是不换xml，因为收益不明显”，并明确不为解析效率盲目追求单 Chunk 30 秒；接受既有可靠并行解析策略及其更高人力成本，认为足以满足当前效率需求。完整决定见 [主 TRD §1.4](../design/03-product-reassessment/video-parse-performance-trd.md#14-最终取舍精简-schema继续-json质量优先)、[决策 devlog](devlog.md#devlog-parse-protocol-decision-20261029)。
+
+后续采用精简 JSON 与 SHOT 方向，不再自动续跑 XML 或为 30 秒目标裁剪视觉输入。两轮数据和失败保留，不把用户的工程取舍写成新测得的并行加速或质量通过。**生产接入与 B07 其余问题仍为 TODO**：由解析模块维护者落实新合同、宿主提交及下游兼容，核验既有并行策略下的内容质量、整集到索引可见耗时、完成率、恢复和成本；不以协议决策完成代替实施完成。
+
+下列实验段落保留各自结束时的判断；其中“下一步”建议由本次最终取舍收敛，不再自动触发新的协议/输入预算实验。
+
+#### 2026-10-29：精简字段并新增 SHOT 后，XML 仍未获得替换依据
+
+状态：TODO。按用户意图取消 participants、visible_persons 与根级 persons，新增 SHOT；用相同字段的精简 JSON/XML 再执行 8 次。全部复用首轮图片、本地 Whisper 转写及背景，OCR 关闭，没有新增 ASR/OCR 调用。见 [第二轮报告](../report/agent/video_parse_v2/parse-compact-shot-20261029.md)、[主 TRD §4.6](../design/03-product-reassessment/video-parse-performance-trd.md#46-第二轮实际结果精简有局部收益xml-没有整体优势)、[devlog](devlog.md#devlog-parse-compact-shot-20261029)。
+
+K3 JSON/XML 尝试耗时中位数为 118.52/144.57 s（XML +21.97%），豆包为 44.41/52.50 s（+18.21%，JSON 含一次合同失败）。8/8 completed，合同有效 JSON 3/4、XML 4/4；58 项定向测试、223/223 证据一致性检查通过。字段精简减少了 JSON 正文生成负担，但 XML 没有同字段性能优势，K3 前置等待仍大。
+
+名单缺失不再计错；八份均有 SHOT 和具名对白，已知 47 秒爽世画外音仍为 0/8 正确，最快 JSON 还有跨人合并。保留精简合同方向，暂不切换 XML；下一步由本任务 Agent 完善主体/分段、镜头动作分工、画面文字，再冻结视觉输入预算实验。生产 Canvas tools、SHOT/旧数据/索引兼容及整集恢复尚未接入验证，不能关闭 B07。
+
+#### 2026-10-29：单块协议对照完成，暂不切换到 XML
+
+状态：TODO。EP04 原视频已恢复并核对为旧 SHA；本地 Whisper large-v3-turbo Q5 转写完成，本轮依用户要求关闭独立 OCR。K3 low、豆包 2.1 Pro disabled 各执行 JSON/XML 两次，共 8 次；完整结果见 [报告](../report/agent/video_parse_v2/parse-protocol-20261029.md)、[主 TRD §4.4](../design/03-product-reassessment/video-parse-performance-trd.md#44-2026-10-29-实际结果与取舍) 和 [devlog](devlog.md#devlog-parse-protocol-20261029)。
+
+K3 尝试耗时中位数 103.22→100.17 s（−2.96%），未达探索门槛；豆包 98.73→64.68 s（−34.49%）包含两组各一次校验失败，且 XML 存在 speaker/participants 遗漏、跨人台词合并，不能作同质量提速。四份 XML 均为合法 XML，换行无解析问题；一份违反单主类型合同。两协议各 3/4 通过领域/范围校验，但画面文字、分类及已知爽世画外音身份仍不合格。缓存差异和小样本限制保留。
+
+24 项离线测试、44/44 证据一致性检查通过；没有生产接线、数据库提交或整集验收。下一步由本任务 Agent 结合用户 Schema 意图收紧身份/分段合同，再做同字段精简 JSON 和视觉输入预算对照；不继续无上限重复当前合同。观察准备约 5.33 s 只代表模型已加载的一次本地 ASR，不能据此关闭 B07 或永久删除 OCR。
+
+#### 2026-10-28：Understanding 输出协议与新机复测准备
+
+状态：TODO，生产 Understanding 仍使用 Canvas tools。[解析性能主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md) 已按 common principle 明确影响因素、计时/质量口径、事件包装 XML 与直接 JSON 对照及宿主 Canvas 接入边界。前序实验 decoder 的 24 项离线测试通过，只支持本地转换与内存往返；没有新模型或整集成绩。用户将在下载后提供原视频，旧验证输入与原文尚未恢复。下一步由本任务 Agent 校验素材、冻结观察与模型参数，先完成 8 次有界协议探索；正式替换仍需质量、性能及下游集成证据。历史约 31 秒不能视为本项完成，FFmpeg 常驻/warm-up 也未被证实为根因。决策与验证边界见 [devlog](devlog.md#devlog-parse-performance-20261028)。
 
 #### 2026-10-17：Refine 引入 event 粒度三方合并
 

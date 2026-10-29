@@ -354,8 +354,8 @@ rg 'upload_session_id=会话ID|job=任务ID|request_id=请求编号' outputs/ser
 ### ES 初始化与 V2 接入进度
 
 `init-es-index` 创建或校验显式配置的 ES 8.19 物理索引。
-V2 的索引阶段属于 `interval_parse_task`：Refine 成果提交后进入 `INDEXING`，
-ES 写入与就绪检查成功后才进入 `COMPLETE`；索引失败保留成果，恢复该 Interval
+V2 的索引阶段属于 `chunk_parse_task`：相关 Interval Refine 成果提交后放行 Chunk 的 INDEX 阶段，
+ES 写入与就绪检查成功后该 Chunk 才进入 `COMPLETE`；索引失败保留成果，恢复该 Chunk
 的索引阶段。ES 文档按 `parse_task_id:video_chunk_id` 稳定覆盖，保留来源内容版本。
 
 ```bash

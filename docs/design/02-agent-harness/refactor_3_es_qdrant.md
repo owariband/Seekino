@@ -29,7 +29,7 @@
 | [Harness README](../../../agent/video_parse_v2/README.md) | 当前 ParseAgent 入口、注入边界与实现状态 |
 | [Engine Schema](../../../engine/parsev2/schemas.py) | 对照目标合同与运行代码差距；不能用旧人物 ID 实现覆盖已确认的人名合同 |
 | [refactor_1.md](refactor_1.md) | Server 内部 Consumer 与纯 Engine 分工的历史依据，不照搬其中旧路径 |
-| [seekino-change-gate](../../../.agents/skills/seekino-change-gate/SKILL.md) | 根据实际授权和改动范围安排执行批次 |
+| [项目工作边界](../../../AGENTS.md#5-工作方式与修改边界) | 2026-10-28 起统一由 AGENTS.md 维护；根据实际授权和改动范围安排执行批次 |
 | [hypnos-code](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md) | 保持既有分层、最小改动和可验证性 |
 
 本机项目根目录：/Users/bytedance/workspace/other-project/Seekino。
@@ -663,7 +663,7 @@ Qdrant 字符串核对结果按用途判断：运行依赖、历史报告兼容�
 >
 > 2026-09-28 已撤销“旧版继续服务，新版完整后切换”的要求。当前选定任务非 COMPLETE 时，即使 ES 仍有旧值也不可检索；各通道与 MySQL 事实须匹配同一任务及内容版本。沿两份 TRD 的任务状态机落实批次 5，不新增独立发布指针，不混用 generation、内容版本和解析次数。
 >
-> 遵循 seekino-change-gate 和 hypnos-code，尊重已有授权，不重复询问已经决定的后端与需求。先完成可独立验收的批次，保留其他会话修改；需要扩大范围时给出具体原因、修改树和影响。按第 9 节验证，明确区分代码完成、真实环境验证、数据切换与未完成事项。
+> 遵循 [项目工作边界](../../../AGENTS.md#5-工作方式与修改边界)，编码偏好按需使用可用的 hypnos-code，尊重已有授权，不重复询问已经决定的后端与需求。先完成可独立验收的批次，保留其他会话修改；需要扩大目标范围时给出具体原因、方案和影响。按第 9 节验证，明确区分代码完成、真实环境验证、数据切换与未完成事项。
 
 ## 13. 2026-09-27 实施状态与交接
 

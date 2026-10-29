@@ -15,6 +15,10 @@
 
 ## Agent / video_parse_v2
 
+最新实验：[2026-10-29 精简字段与 SHOT 的 JSON/XML 对照](agent/video_parse_v2/parse-compact-shot-20261029.md)。复用本地 Whisper、关闭独立 OCR，同字段 8 次未显示 XML 性能优势；最终选择精简 JSON，不换 XML，不再追求单 Chunk 30 秒，质量优先并沿用既有并行策略。此前的[首轮完整 JSON/XML 对照](agent/video_parse_v2/parse-protocol-20261029.md)独立保留，均未接入生产。
+
+质量复核：[豆包 2.1 Pro non-thinking 的业务问题清单](agent/video_parse_v2/doubao-nonthinking-quality-review-20261029.md)。逐份核对两轮八份原文，区分身份/分段/时间/构图错误、文字遗漏、合同失败与已改善项；无新增模型调用。
+
 背景：Parse V2 的迁移阶段、职责与验收证据。正文版本为 R6 / 2026-10-02 checkpoint，含此前多次基线；本次搬迁不改变阶段完成判断。
 
 - [video-parse-v2-migration-stages-acceptance-01-04.excalidraw](agent/video_parse_v2/video-parse-v2-migration-stages-acceptance-01-04.excalidraw)
@@ -26,6 +30,8 @@
 - [video-parse-v2-migration-stages.svg](agent/video_parse_v2/video-parse-v2-migration-stages.svg)
 
 ## Gateway
+
+本机部署：[2026-10-29 WhisperX 三语部署与 Karpathy 解析启动](gateway/local/whisperx-deployment-20261029.md)，包含实际权重、样本、配置切换、验证边界与原始证据位置。
 
 背景：2026-10-07 起的统一模型记录与观测实施。保留当时 G01–G05 的证据、限制和图中状态。
 

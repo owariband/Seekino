@@ -4,7 +4,9 @@
 
 `config.yaml` 的版本 2 把连接信息放在 `model_sources`，把模型定义放在 `models`。业务向 Gateway 传模型引用；Gateway 解析配置、校验能力并创建适配器。`agent_runtime` 保留运行参数，`video_parser` 保留采样和降级策略。密钥仍写在 `.env.local`，不要写进 YAML。
 
-配置存储仍是本地 YAML，通过 `SEEKINO_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑使用保存的模型快照；通过 API 显式重试时，Server 会读取当前本地配置，更新理解、精炼模型和视觉输入方式，保留已有 ASR、向量模型和任务拓扑。连接定义的变更仍需重启 Gateway 所在服务。这里没有引入数据库模型管理、HTTP CRUD 或云端配置。
+配置存储仍是本地 YAML，通过 `SEEKINO_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑和 API `retry` 都保留任务保存的模型与解析配置快照。要切换已有视频的解析模型，须调用 `reparse` 并显式传入新的 `parseConfig`；可先通过 `GET /api/uploads/parse-config` 读取服务当前加载的默认配置。未提供 `parseConfig` 的 `reparse` 沿用最近一次任务的配置快照，仅将索引 generation 更新为当前生效版本。连接定义的变更仍需重启 Gateway 所在服务。这里没有引入数据库模型管理、HTTP CRUD 或云端配置。
+
+本机开发配置使用 `config/local-dev-config.yaml`（2026-10-29 从 `local-kimi.yaml` 更名），由 `.env.local` 的 `SEEKINO_MODEL_CONFIG` 指向。它是完整开发环境配置，各角色可选择不同供应商；Kimi 只是其中部分角色的当前选择，不属于文件作用域。新名字不改变已选择的模型。
 
 ## 模型定义与默认引用
 
@@ -124,6 +126,66 @@ python -m server.cli init-db
 
 `openai_audio` 调用 `POST /audio/transcriptions`。Engine 用 FFmpeg 把每个分析窗口转换为单声道、16 kHz WAV 后上传，临时音频在成功或失败后自动清理。`verbose_json` 支持 `segments[].start/end/text`，时间单位为秒，进入项目后乘以 1000 并舍入为整数毫秒，限制在窗口范围内；已有 `start_seconds` / `end_seconds` 字段名保留。接口仅支持 JSON 文本时，设置 `response_format: json`；这时只有整个窗口级别的时间范围，没有句级时间戳。只兼容聊天接口的服务不能作为该 ASR 来源。没有音轨或抽取失败会报错，不会伪造空转写。
 
+## 本地 WhisperX ASR 与对齐
+
+需要本地低调用成本及字幕字词时间时，推荐可选的 `adapter: whisperx`。项目直接在 Gateway 进程中调用 **WhisperX 3.8.6 的转写和强制对齐**；无需启动兼容 HTTP 服务。WhisperX 内部使用 faster-whisper，用户不需要另写一套 faster-whisper 接线。原 Ark 和 `openai_audio` 仍可选择；未选本地来源时不导入 WhisperX、不加载权重。安装与本地计算仍有磁盘、内存和耗时成本，效果与速度需按自己的素材验证。
+
+准备依赖及权重（由用户主动执行；服务不会自动下载）：
+
+```bash
+uv sync --extra whisperx
+# 已使用 CAM++ 时保留两项：uv sync --extra speaker --extra whisperx
+uv run --no-sync python -m nltk.downloader punkt_tab
+
+# 当前本机部署使用完整 large-v3；CPU/int8 的速度和精度仍需按素材评估。
+# ASR 必须为 CTranslate2 目录，不能填写 whisper.cpp 的 ggml-*.bin。
+uv run --no-sync hf download Systran/faster-whisper-large-v3 --local-dir /opt/seekino/models/whisperx/large-v3
+uv run --no-sync hf download facebook/wav2vec2-base-960h --local-dir /opt/seekino/models/whisperx/align-en
+# 根据素材语言补充，仅需下载会使用的语言：
+uv run --no-sync hf download jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn --local-dir /opt/seekino/models/whisperx/align-zh
+uv run --no-sync hf download jonatasgrosman/wav2vec2-large-xlsr-53-japanese --local-dir /opt/seekino/models/whisperx/align-ja
+```
+
+Whisper large-v3 本身支持多语言，只下载一套；本接入采用的 wav2vec2 对齐模型有各自语言的字/音素词表，因此按英语、中文、日语分别准备。2026-10-29 本机权重已落在 `outputs/local-models/whisperx/`，固定 revision 和 SHA-256 见[部署验收](report/gateway/local/whisperx-deployment-20261029.md)。
+
+以上 `/opt/seekino/models/whisperx` 需替换成用户可写、服务可读的稳定模型目录；`punkt_tab` 需安装到服务运行用户的 NLTK 数据路径。ASR、按语言选择的对齐模型是两套权重，下载 Whisper 权重本身不会提供强制对齐能力。VAD 使用该版本包内的 pyannote checkpoint；本接入不启用说话人 diarization，不需要 diarization 的 HF token。系统仍需项目既有的 FFmpeg。
+
+若服务用户的默认缓存目录不可写，在 `.env.local` 中把 `NLTK_DATA` 指向已安装的 NLTK 数据目录，`TORCH_HOME` 和 `MPLCONFIGDIR` 指向服务可写目录。本机已使用上述模型目录下的 `nltk_data`、`torch-cache` 和 `matplotlib`；不需要修改第三方包或禁用 NLTK 的网络安全检查。
+
+在当前使用的完整 YAML 中配置来源，并替换 `models.transcription`：
+
+```yaml
+model_sources:
+  whisperx_local:
+    adapter: whisperx
+    provider: local
+    device: cpu              # CUDA 环境可设 cuda；当前不支持 MPS
+    compute_type: int8       # CPU: int8 / float32；CUDA 可用 float16
+    batch_size: 1            # 本机 16 GB 内存；显存充足时再实测调大
+    cpu_threads: 6
+    # language: en          # 不填则自动识别，识别出的语言必须有对齐模型
+    alignment_models:
+      en: /opt/seekino/models/whisperx/align-en
+      zh: /opt/seekino/models/whisperx/align-zh
+      ja: /opt/seekino/models/whisperx/align-ja
+models:
+  transcription:
+    kind: transcription
+    source: whisperx_local
+    model: /opt/seekino/models/whisperx/large-v3
+    request_timeout_seconds: 600
+```
+
+该绑定不使用 API key、`fps`、推理档位或输出 Token 上限。只下载英语对齐模型时，可只保留 `en` 并设置 `language: en`；自动识别得到未配置的语言会明确失败。路径不存在、依赖缺失、对齐加载或推理失败均明确报错，不静默返回“已对齐”的转写。单段对齐无法定位的文本仍保留，字词时间为未知。
+
+Server 按原有正式解析链路准备 16 kHz、单声道 PCM16 WAV；Gateway 输出 WhisperX 秒单位结果；Engine 转为整数毫秒并裁剪到窗口；Server 再加原视频偏移。`transcript[].start_seconds/end_seconds` 沿用项目历史名称，实际仍为毫秒；新增可选 `language` 和 `transcript[].words`，字词包含 `text/start_ms/end_ms/score`，两个时间可同时为 `null`。中文、日文的词元可能是单字。无声输入保留空转写；本接入的 `speaker_id` 为 `null`，声纹和人物身份仍走既有独立链路。
+
+字词时间仅保留有对齐分数的声学定位，WhisperX 为未对齐词插值补出的时间不作为精确证据；句段时间可能仍是上游回退范围。完整结果随现有不可变 ASR evidence 写入 Chunk detail，无需数据库迁移。旧模型响应不增加空的 `words` 字段。字幕的行长、换行、停留时间及 SRT/WebVTT/播放器展示仍需在消费层基于这份证据实现，不由 Gateway 决定。
+
+同一 Gateway 的同一 source/model 共享并串行使用加载后的 ASR 与各语言对齐模型；关闭单个 Chunk 句柄不卸载权重，关闭 Gateway 后释放引用。调用沿用 usage、取消与超时控制；原生推理无法强行中断，运行中的取消或超时在模型返回后拒绝结果。默认 `uv sync` 不安装本地 ML extra；之后运行其他 `uv` 命令时应保留所需 extra 或用 `--no-sync`，避免移除已安装的可选依赖。
+
+实现与测试边界见[WhisperX 接入设计](design/03-product-reassessment/local-whisperx-asr-trd.md)。安装指引按[WhisperX 固定版本](https://github.com/m-bain/whisperX/tree/v3.8.6)和[对齐实现](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/alignment.py)核对；不将协议测试视为真实模型质量验收。
+
 ## 本地声音向量
 
 声音身份特征使用独立的 `speaker_embedding` 能力。以下片段分别合入现有的
@@ -238,9 +300,86 @@ token 计费。VoiceprintAgent、登记事务及 Refine 准入已接通；`confi
 
 能力注册和供应商适配器属于 Gateway，业务不维护供应商白名单。`openai_vision` 和普通 `openai` Chat 协议不支持 `reasoning_effort` 的非 `none` 设置；DeepSeek profile、Ark 和 Codex 保留各自实现的推理控制。`openai_audio` 不接受生成 token 限额。模型输出预算用于上下文规划；Codex app-server 不保证通过协议硬性截断到此 token 数。
 
-`models.embedding` 保存 `dimensions`、`video_fps` 和可选 `encoder_model`。Ark 的 `ep-...` 是请求路由，不是向量模型身份，必须声明实际 `encoder_model`；使用直接模型名时，另写的 `encoder_model` 必须与其一致。旧配置的 endpoint 环境覆盖会保留原模型作为 encoder 身份。文本 Embeddings 接口不能直接替代当前视频向量接口，查询与索引必须使用兼容向量空间；更换实际 encoder 模型需要重新生成索引。
+`models.embedding` 保存 `dimensions`、`video_fps`、`input_mode`、可选 `query_instruction` 和 `encoder_model`。Ark 的 `ep-...` 是请求路由，不是向量模型身份，必须声明实际 `encoder_model`；使用直接模型名时，另写的 `encoder_model` 必须与其一致。旧配置的 endpoint 环境覆盖会保留原模型作为 encoder 身份。查询与索引必须使用兼容向量空间；更换实际 encoder 模型需要重新生成索引。
 
-来源名（如 `asr_default`）只是用户定义的标识；`adapter` 决定协议，`provider` 标识供应商。连接 URL 沿用原来的 HTTPS 要求，不允许用户名、密码、查询参数和片段。供应商专用 WebSocket 或任务轮询 ASR 不属于 `openai_audio`。
+### 本地文本向量与视觉向量开关
+
+`input_mode: multimodal` 是默认值，生成 Chunk 视频向量与 Event 图片向量。
+设置 `input_mode: text` 后，只生成文本向量并使用词法/文本召回，索引阶段不再抽帧或
+调用图片/视频编码；ASR、OCR、VLM 理解由各自配置控制，不随此开关关闭。
+模式和查询指令会冻结到任务，已有任务不会因修改 YAML 自动改变。
+
+本地直接使用 llama.cpp 时，使用以下来源与绑定（合入同一份模型配置对应节点）：
+
+```yaml
+model_sources:
+  llama_embedding_local:
+    adapter: llama_cpp_embedding
+    provider: llama_cpp
+    base_url: http://127.0.0.1:18843
+models:
+  embedding:
+    kind: embedding
+    source: llama_embedding_local
+    model: seekino-qwen3-embedding-0.6b
+    dimensions: 1024
+    input_mode: text
+    query_instruction: Given a question about a machine learning course, retrieve relevant lecture passages that answer the question.
+    video_fps: 1.0
+    request_timeout_seconds: 120
+```
+
+在准备好本机原生程序和 GGUF 后，从仓库根目录执行
+`uv run --no-sync python scripts/run_local_embedding.py`。默认读取
+`outputs/tools/llama.cpp/llama-server`（Windows 为 `llama-server.exe`）和
+`outputs/local-models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q8_0.gguf`；
+可通过 `--binary`、`--model` 指定路径。启动器不安装依赖、不下载模型、不启动 ASR。
+程序在前台运行，Ctrl-C 停止；运行期间模型保持加载，没有实现自动空闲卸载。
+本次只在 Mac ARM64 验证；其他系统须准备对应原生程序和所需库，不代表已完成跨平台验收。
+
+适配器使用 `/v1/embeddings`，base_url 填服务根地址，不加 `/v1`；启动器固定
+`--embedding --pooling last`、1 个槽位和 4096 token 上下文。超长输入报错，
+需要更长输入时显式增大 `--context-size`，同时核对内存。查询指令、协议和归一化
+进入独立 encoder revision，不能直接混用 Ollama/Ark 已有向量。
+本次已在 Ollama 端口关闭时完成真实编码，不依赖 Ollama daemon。
+
+本地 Qwen 示例（合入现有配置的对应节点；Ollama 需先运行并下载模型）：
+
+```yaml
+model_sources:
+  ollama_local:
+    adapter: ollama_embedding
+    provider: ollama
+    base_url: http://127.0.0.1:11434
+models:
+  embedding:
+    kind: embedding
+    source: ollama_local
+    model: qwen3-embedding:0.6b
+    dimensions: 1024
+    input_mode: text
+    query_instruction: Given a question about a machine learning course, retrieve relevant lecture passages that answer the question.
+    video_fps: 1.0  # 保留兼容字段；text 模式不执行视频编码
+    request_timeout_seconds: 120
+```
+
+Ollama 不需要 API Key，使用原生 `/api/embed`。文档直接编码，查询增加配置的
+`Instruct: ...\nQuery: ...`，指令与归一化规则进入 encoder revision；响应模型、维数、
+有限非零向量均需验证，超长输入明确拒绝截断。该适配器仅支持文本；开启视觉向量需
+选择支持图片和视频的编码器，不能仅把 Qwen 文本绑定的模式改成 multimodal。
+
+本地适配器不输出模型 sparse 向量，`SEEKINO_RETRIEVAL_SPARSE_WEIGHT` 必须为 `0`
+（默认值）；这不影响 BM25 词法检索。不兼容设置会在启动或上传时明确拒绝。
+`init-es-index --config <配置文件>` 自动根据生效 `input_mode` 初始化 mapping；
+可选 `--text-only` 只用于断言配置一致，不会覆盖配置强行切换模式。
+
+同一物理索引固定编码与模态合同。首次从 Ark 多模态切换本地文本模型，应使用新的
+`SEEKINO_ELASTICSEARCH_INDEX` 与 `SEEKINO_ELASTICSEARCH_EVENT_INDEX`，再显式生成
+对应向量；不能混用旧向量或只切查询模型。上传接口会拒绝与活动索引模式、模型或查询
+指令不一致的任务配置，因此这是部署/素材库级设置，并非任意单次上传的 UI 开关。
+方案与实验边界见 [本地文本向量 TRD](design/03-product-reassessment/local-text-embedding-trd.md)。
+
+来源名（如 `asr_default`）只是用户定义的标识；`adapter` 决定协议，`provider` 标识供应商。云端连接 URL 沿用原来的 HTTPS 要求，本地 Ollama 另允许 loopback HTTP；不允许 URL 中包含用户名、密码、查询参数和片段。供应商专用 WebSocket 或任务轮询 ASR 不属于 `openai_audio`。
 
 ## 旧配置兼容规则
 

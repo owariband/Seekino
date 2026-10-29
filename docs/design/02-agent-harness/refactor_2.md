@@ -12,7 +12,7 @@
 4. 阅读 [Harness README](../../../agent/video_parse_v2/README.md) 和实际实现；框架名称与文件布局已整理过，不要重新设计入口命名。
 5. 历史交接文件位于 `/private/tmp/seekino-video-parse-v2-harness-handoff-2026-09-27.md`，仅作背景，不能覆盖本文的新约定。
 6. 按下面的源码导航读取本批实际调用链，再进入第 5 节的修改树；不能只读目标表结构就开始全局替换名称。
-7. 实现前遵循 [seekino-change-gate](../../../.agents/skills/seekino-change-gate/SKILL.md) 与本机 [hypnos-code](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md)；以用户当次授权和已确认批次为准，不重复索取已有授权。
+7. 实现前遵循 [项目工作边界](../../../AGENTS.md#5-工作方式与修改边界)，编码偏好按需使用可用的 `hypnos-code`；以用户当次授权和已确认批次为准，不重复索取已有授权。工作边界入口于 2026-10-28 合并到 AGENTS.md。
 
 本文初稿阶段仅维护了本文件；此后批次 0～2 已按第 7 节记录实施。两份 TRD 和 Git 跟踪规则仍未修改；新空库已按当前 ORM 建表，但已有库升级迁移仍未执行。本文及 TRD 都被 `.gitignore` 的 `**/design/` 忽略，后续模型必须直接打开，不能依赖 `git diff` 或默认 `rg` 找到它们。
 
@@ -39,7 +39,7 @@
 | [docs/design/refactor_1.md](refactor_1.md) 与 [engine/README.md](../../../engine/README.md) | 理解为什么复用 Server 内部 Consumer，以及 Engine/Server/Gateway 的职责边界 | 主要说明已有 V1 架构；refactor_1 开头已标历史快照，不复制旧路径、旧表结构或旧索引目标作为 V2 方案 |
 | [docs/design/oldvsnew_chat.md](oldvsnew_chat.md) | 查 V1 产物、旧 compact、Timeline 与新需求的背景差异 | 2026-09-24 的只读调查；用于理解旧成果转换难点，不代替当前 V2 Schema |
 | [docs/design/parse-v2-harness.md](parse-v2-harness.md) 与 [engine/parsev2/README.md](../../../engine/parsev2/README.md) | 补充早期 Harness/Engine 分层讨论，追溯旧设计名词 | 含历史设计或未同步描述，仅作辅助；不能据此恢复旧主线，具体差异见下文 |
-| [.agents/skills/seekino-change-gate/SKILL.md](../../../.agents/skills/seekino-change-gate/SKILL.md) 与 [/Users/bytedance/.codex/skills/hypnos-code/SKILL.md](/Users/bytedance/.codex/skills/hypnos-code/SKILL.md) | 实施范围、批次修改树、验证与最小改动要求 | 前者位于项目内但也被 Git 忽略，后者是本机 skill 路径；换环境后按可用 skills 定位，不能假设仅克隆仓库即可获得全部资料 |
+| [AGENTS.md](../../../AGENTS.md) 与按需使用的 `hypnos-code` | 实施范围、授权、验证与最小必要改动 | 2026-10-28 起项目工作边界统一在 AGENTS.md；个人编码技能按当前环境的可用 skills 定位 |
 
 已核对的资料差异，接手时特别注意：
 

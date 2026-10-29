@@ -95,7 +95,7 @@ reparse(None)锁住最近task继承完整配置后冻结新task；terminal/pendi
 
 ## 先读这些依据
 
-1. 项目 `.agents/skills/seekino-change-gate/SKILL.md` 与可用的 `hypnos-code`、`check-out`、`plan-map` 技能。沿用既有职责和实际启动指令的授权，不反复索取已授予的权限。
+1. [项目工作边界](../../../AGENTS.md#5-工作方式与修改边界)（2026-10-28 合并后的入口）；历史提及的 `hypnos-code`、`check-out`、`plan-map` 技能按当前任务与实际可用性选用。沿用既有职责和实际启动指令的授权，不反复索取已授予的权限。
 2. [Server 设计](../../design/02-agent-harness/model-token-usage.md)：schema、采集、SQL/聚合和 API 的有效合同。该目录被 `**/design/` 忽略，必须直接读取，不因普通 rg/git status 看不到而判缺失。
 3. [阶段图](model-token-usage-stages.svg)、[可编辑场景](model-token-usage-stages.excalidraw)和[证据索引](model-token-usage-stages-evidence.md)。U01–U06统计完成，图无正在执行的统计阶段；最新539文件冻版Parse与秒级时间一致性通过，毫秒音轨真值精度未认证。旧538+十补丁的26ms时间缺口、旧Chat/UI验收及532+四补丁结果分别作为历史保留；后续并行ROOT修改不混入最新运行范围。
 4. 对照目标阶段读真实调用链和测试范本，然后按阶段 check-out。已有文档不能代替源码核对。

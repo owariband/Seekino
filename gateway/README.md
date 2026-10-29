@@ -9,6 +9,12 @@ Gateway 是 seekino 的模型调用边界。除把统一输入转换成 Provider
 Tool Loop、Adapter 选择和 Provider fallback。它不拥有 Video、Query、Speaker、
 Conversation 或 Parse Job 等领域语义。
 
+Gateway 可控的 API 工具循环在上下文压缩时优先保留近期、有长度上限的工具反馈。
+Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改写成“已完成”；
+硬预算释放大块结果时也保留最多 500 字符的控制反馈。摘要不是业务事实来源，
+完整证据仍需回到相应 Catalog/Read 工具读取。2026-10-29 的真实失败与回归证据见
+[本机业务验收记录](../docs/dev/devlog.md#devlog-native-local-20261029)。
+
 ## 目录边界
 
 - `agent_model/`：Provider 无关的 Agent Model 协议、上下文治理、Tool Loop 与错误；
@@ -19,7 +25,7 @@ Conversation 或 Parse Job 等领域语义。
 - `claude_code/`：Claude Agent SDK Adapter；
 - `bridge/`：用户本机原生 Agent 的 ACP 连接；已有 Client，完整产品接入仍需验收；
 - `../docs/design/pi-host-trd.md`：已退役的云端 Pi Host 历史设计；当前使用 Deep Agents＋MySQL checkpoint；
-- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CPU CAM++ Adapter；
+- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX Adapter；
 - 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
 
@@ -58,6 +64,18 @@ finally:
     model.close()
     client.close()
 ```
+
+## 可选本地转写
+
+`create_transcription_model("transcription")` / `create("transcription", "transcription")`
+支持 `adapter: whisperx`，在进程内完成转写及强制对齐，推荐用于需要本地 ASR 和
+字幕字词定位的场景。输入为宿主准备的 16 kHz 单声道 PCM16 WAV，返回上游秒单位的
+`segments`、`words` 与 `language`；Engine 负责一次毫秒转换，Server 加视频偏移。
+无对齐分数的词保留文本且不提供插值时间，不进行人物识别或字幕排版。
+
+依赖和权重可选、延迟加载，必须由用户预先安装；同一 Gateway 的 source/model
+共享串行 runtime，单次句柄关闭不重复卸载模型，Gateway 关闭释放引用。
+配置、依赖、权重路径和原生推理取消限制见[本地 WhisperX ASR 与对齐](../docs/model-config.md#本地-whisperx-asr-与对齐)。
 
 ## 声音向量接口
 
@@ -355,6 +373,17 @@ fallback source。当前支持 OpenAI → Ark 与 Ark → Ark；Codex 和 Claude
 
 `DoubaoMultimodalEmbedder` 保留文本与视频向量能力。文本查询和 VideoChunk 使用同一模型，
 进入同一向量空间。Embedding 不返回 VideoChunk 内部时间戳，也不替代上层的视频理解流程。
+
+本地文本向量可使用 `ollama_embedding` 来源和 `input_mode: text`，通过 Ollama 原生
+`/api/embed` 调用 Qwen3-Embedding-0.6B；无需 API Key。文档与查询模板分别固定，查询
+指令属于 encoder revision；响应必须符合模型身份、维数和有限非零向量合同。该适配器
+不伪造图片、视频或 Sparse 能力。是否建立视觉索引由宿主的冻结配置控制，见
+[本地文本配置与开关](../docs/model-config.md#本地文本向量与视觉向量开关)。
+
+也支持 `llama_cpp_embedding`：直接调用 llama.cpp 的 `/v1/embeddings`，无需 Ollama
+服务。Qwen 使用 last-token pooling，查询指令与文档分别编码；同样检查模型身份、
+维数和有限非零向量，并记录真实 prompt token 用量。本地启动入口为
+`scripts/run_local_embedding.py`，只启动 embedding，不涉及 Whisper 或解析任务。
 
 ## 依赖与验证
 
