@@ -47,6 +47,7 @@ from .service.auth import AuthService
 from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
+from .service.mcp_retrieval import McpRetrievalService
 from .service.parse_usage import ParseUsageService
 from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
@@ -73,6 +74,7 @@ class ApplicationServices:
     realtime_understanding: RealtimeUnderstandingService | None = None
     auth: AuthService | None = None
     agent_attachments: AgentAttachmentService | None = None
+    mcp_retrieval: McpRetrievalService | None = None
     _closed: bool = field(default=False, init=False, repr=False)
 
     def start(self) -> None:
@@ -495,4 +497,8 @@ def _build_application_services(
         tracing=tracing,
         realtime_understanding=realtime_service,
         auth=auth,
+        mcp_retrieval=McpRetrievalService(
+            library=library, media=media, event_retrieval=event_retrieval,
+            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id,
+        ) if settings.auth.mode == "local" else None,
     )

@@ -583,6 +583,16 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 以下保留未修复、部分完成或同条目仍有主体问题未解决的记录，已实施的阶段性修复与历史证据一并保留。
 
+### B15：localhost MCP 与外部 Agent 素材取用闭环
+
+排序日期：2026-10-29。
+
+优先级：高。状态：**MCP 实现、离线验证、真实 Codex 客户端发现与直接工具调用已通过；模型自主调用超时，真实素材到作品演示仍待恢复数据，保持 TODO。** 目标是在 10 月 30 日早上前让 Codex 实际发现 Seekino 工具、检索 Event、核对版本、取得媒体并完成外部作品。用户确认先恢复旧机 MyGO，后续另提供一系列视频。
+
+现有 Event 检索和媒体服务已复用到本地 `/mcp`，暴露 `list_series`、`retrieve`、`read_evidence`。固定宿主 local tenant，回读重验任务/内容版本/事件身份，对外时间为整数毫秒；Cloud 不挂载，远端及转发连接拒绝。本轮不接通用 Sandbox、不改解析或索引算法。
+
+验收须分别记录工具协议、实际 Codex 连接、真实数据检索与媒体消费。目前可见 API/数据库/ES 未监听，`.env.local` 指定的媒体根为空；隔离 fixture 不代替真实视频验收。实现与检查结果见 [devlog](devlog.md#devlog-local-mcp-20261028)，设计见 [MCP 接入 TRD](../design/03-product-reassessment/mcp-access-trd.md)。
+
 ### B17：持久媒体目录与旧资料库恢复
 
 2026-10-29 补充：hypnos 要求将整个 `assets/` 加入 Git ignore，排除未跟踪素材；已跟踪发布资产保留。此前“未忽略”的检查仅描述当时状态，媒体仍须独立备份。

@@ -22,6 +22,8 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-29：本机部署与 MCP 分组提交](#devlog-deploy-mcp-publish-20261029) | B15、B17、B18；提交范围与验证 |
+| [2026-10-29：localhost MCP 与外部 Agent 检索接入](#devlog-local-mcp-20261028) | B15、MCP 工具与素材取用 |
 | [2026-10-29：全原生 localhost 环境与 Kimi 业务验收](#devlog-native-local-20261029) | B18、本机部署与真实运行 |
 | [2026-10-29：持久媒体移入 assets/library 与旧数据恢复核验](#devlog-persistent-media-20261029) | B17、持久媒体与换机恢复 |
 | [2026-10-26：Kimi 同模型 Chat 三框架对照](#devlog-chat-harness-kimi-20261026) | C19、Pi / Deep Agents / Codex、查询覆盖与交付合同 |
@@ -94,6 +96,66 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-deploy-mcp-publish-20261029"></a>
+
+## 2026-10-29：本机部署与 MCP 分组提交
+
+### 问题与现状
+
+hypnos 要求仅提交、推送已完成的本机部署与持久化目录、MCP 接入，并忽略新素材。多个会话共享 dev 工作区，当前还混有本地向量、WhisperX、Summary 标题和 UI 改动。B18 的历史真实短片验收使用当时完整工作区，不能当作本次分离提交版本的新实机验证。
+
+### 方案候选
+
+从 `424a2fb5` 提取两组必要修改，在独立临时副本验证；共享文件仅选取相关内容。保留原生启动器、媒体根默认值、FFmpeg 兼容和 SSE 停服修复，以及 localhost MCP 三工具、证据核验和 API 装配。`assets/` 未跟踪素材由 Git ignore 排除，已跟踪发布资产保留，媒体和数据库仍须独立备份；本地个人模型配置不入库。
+
+### 方案验证
+
+隔离副本运行部署、配置、生命周期、抽帧、媒体、持久层、MCP、bootstrap 和 HTTP API 的 11 个测试文件：898 项通过，2 项失败。失败项属于误选的本地文本向量新增测试，其对应功能不在提交范围；已将该测试文件完全恢复为基准版本并排除其改动，原有 5 个同类用例单独复验通过。未删改共享工作区中的这两个新增测试。`uv lock --check --offline` 通过，保持原锁定依赖版本，仅将既有 MCP SDK 显式列为直接依赖。原始日志在本机 `/private/tmp/seekino-publish-20261029/tests.log`，临时证据不随 Git 分发。
+
+### 指标对比
+
+本次限定为两组可独立追溯的提交；排除本地向量、WhisperX、Summary 标题及 UI 的其他改动。未重启服务、迁移真实数据或调用模型，没有新增实机性能与质量结论。B15/B17 的剩余业务验收继续按原问题记录推进。
+
+<a id="devlog-local-mcp-20261028"></a>
+
+## 2026-10-29：localhost MCP 与外部 Agent 检索接入
+
+### 问题与现状
+
+关联 [B15](problems.md#b15localhost-mcp-与外部-agent-素材取用闭环)。10 月 28 日提出、跨午夜实施。用户优先要求在 10 月 30 日早上前通过 Codex 演示 Seekino 的素材取用，首版明确 localhost。已有 Event 检索只注入内部 Agent，缺少对外工具发现、稳定证据读取与媒体交付。Cloud 的通用执行和 HTML 作品后置；用户确认演示先恢复旧机 MyGO，再提供新系列。
+
+本机 `.env.local` 的非秘密配置指向 development/local、API 127.0.0.1:9621、`outputs/server/artifacts`。当前可见监听中没有 API/MySQL/ES，该媒体根为空；未启动正式服务或执行数据迁移。不能将此处的隔离 fixture 当作 MyGO 召回结果。
+
+### 方案候选
+
+选择同一 API 进程挂载 `/mcp`，复用已安装并锁定的 `mcp==2.2.0` SDK。工具合同来自 Python 类型、Field 参数说明和 docstring，SDK 发布 `tools/list` 并分派 `tools/call`。`McpRetrievalService` 只组织本地范围、有界输出和版本化回读；Event 排序和 SQL 核验仍由原服务执行。没有引入内部 Chat 循环或新执行器。
+
+协议限定 local 和真实 loopback，校验 Host/Origin、拒绝代理转发；Cloud 不挂载。`evidence_ref` 是带来源版本的定位引用，不是授权凭证；回读重新 hydrate，时间以 ms 输出。原片 URL 复用现有媒体接口，缺失媒体明确警告。方案及阶段边界见 [主 TRD](../design/03-product-reassessment/mcp-access-trd.md)。
+
+### 方案验证
+
+- `UV_CACHE_DIR=/private/tmp/seekino-uv-cache uv lock --check --offline`：136 packages，锁文件一致。MCP 已是传递依赖，本轮只显式声明直接依赖，未升级现有包。
+- `uv run --no-sync python -m pytest tests/server/test_mcp.py tests/server/test_mcp_transport.py tests/server/test_mcp_retrieval.py -q`（使用上述临时 uv cache）：53 passed。包含真实 SQLite/Library/ArtifactStore/MediaService 的来源回读与版本 1→2 后拒绝旧引用；ES 和 codec probe 使用 stub。
+- `uv run --no-sync python -m pytest tests/server/test_bootstrap.py tests/server/test_api.py tests/server/test_video_event_retrieval.py tests/server/test_media_views.py tests/server/test_search_lexical_contract.py -m 'not live_agent' -q`：260 passed。两组共同出现已有 Starlette/AnyIO deprecation warning。
+- 临时 loopback Uvicorn 端点使用本次真实传输代码、明确标记 `TEST_FIXTURE_ONLY` 的目录服务；MCP 2.2 SDK 完成初始化、发现三个工具并调用 `list_series`。结果见 [SDK 网络证据](../../outputs/verification/mcp-local-20261028/sdk-smoke.json)。测试脚本初次沿用旧 SDK 三流返回而失败，按本机 2.2 的两个流签名修正后成功；生产代码不受该脚本错误影响。
+- 使用本机 `codex-cli 0.165.0-alpha.1.2`、临时 MCP 配置、ephemeral 会话仅允许 `list_series`；模型采样连续 `request timed out`，110 秒后结束，服务端业务调用数为 0。保留 [摘要](../../outputs/verification/mcp-local-20261028/summary.json) 与 [Codex 事件](../../outputs/verification/mcp-local-20261028/codex.jsonl)。不能称为模型自主调用成功；全局 Codex 配置未修改。
+- 随后使用同一实际 CLI 的 app-server 协议，创建临时会话，按名称禁用既有 MCP，仅启用本次测试端点。`mcpServerStatus/list` 返回 connected 及三个工具的名称、说明和参数 Schema；`mcpServer/tool/call` 直接调用 `list_series`，宿主记录恰好一次，返回唯一 fixture 名称。全程 0 个模型 turn。证据：[真实 Codex 工具清单](../../outputs/verification/mcp-local-20261028/codex-appserver-tools.json)、[调用结果](../../outputs/verification/mcp-local-20261028/codex-appserver-smoke.json)。它验证实际客户端发现/执行，不能替代前述失败的模型自主调用或真实素材验收。
+
+未验证真实 MySQL/ES/模型检索、MyGO 媒体下载和制作作品；用户准备恢复数据后再执行。临时测试进程退出后已关闭端点。未重启正式服务、重建索引、迁移、commit 或 push。
+
+### 指标对比
+
+| 维度 | 修改前 | 本次结果与限制 |
+|---|---|---|
+| 对外工具 | 无产品 MCP | 三个工具的发现、调用与参数说明可用 |
+| 证据回读 | 内部 Agent 状态组织 | 独立引用、SQL 重验、按需分页；不依赖原 Agent run 内存 |
+| 素材获取 | HTTP 媒体能力已有 | 工具提供绝对本机媒体 URL；真实素材仍待恢复 |
+| 自动化验证 | 无 MCP 覆盖 | 53 个定向测试、260 个既有相关回归通过 |
+| 实际 Codex 客户端 | 未测 | app-server 发现三个工具、一次直接调用成功；输入为明确 fixture |
+| 模型自主调用 | 未测 | Codex 请求超时，未完成，保留失败记录 |
+| 数据与运维成本 | 已有 API/DB/ES | 无迁移或新常驻服务；新增 SDK 入口和薄业务投影 |
+| 业务交付 | 外部 Agent 无正式入口 | 实现可接入，真实素材到作品闭环尚未完成 |
 
 <a id="devlog-native-local-20261029"></a>
 

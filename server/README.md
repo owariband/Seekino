@@ -72,6 +72,33 @@ HTTP 专用 Request/View 定义于 `server/model/dto/` 和 `server/model/vo/`，
 再取消仍打开的 SSE 等请求并进入应用生命周期关闭。Consumer、Agent 等业务服务先收尾，
 随后释放数据库、ES 等 Caller 资源；这 5 秒不截断业务服务的关闭过程。
 
+## 本机 MCP：供 Codex 等外部 Agent 调用
+
+`SEEKINO_AUTH_MODE=local` 时，正常 API 进程同时提供 Streamable HTTP MCP：`http://127.0.0.1:9621/mcp`。若 API 端口不同，使用实际端口。无需单独启动 MCP 进程；Cloud 模式不提供这个入口。
+
+| 工具 | 参数与结果 |
+|---|---|
+| `list_series` | `offset=0, limit=20`，分页列出本地系列与状态，`next_offset` 用于续页 |
+| `retrieve` | `query` 必填，可选 `series_ids`、`top_k=5`、`event_types`、`speaker`；返回 Event 证据及 `evidence_ref` |
+| `read_evidence` | 接收 `evidence_ref`，重验当前任务/内容版本，返回事件、分页 Chunk 上下文与媒体 URL |
+
+`top_k` 是不同 Chunk 的数量（最多 20），不是 Event 数量；同一 Chunk 可以包含多条命中事件。默认搜索本地 READY 系列，超过 50 个时先用 `list_series` 选择范围。Event 索引未覆盖会返回 `EVENT_INDEX_NOT_READY`，不会伪装成“没有匹配”。
+
+视频时间全部使用整数毫秒，区间左闭右开。`read_evidence` 的 `next_evidence_ref` 继续读取同一来源版本的上下文；`EVIDENCE_STALE` 表示需要重新检索。`original_url` 可用于下载原片，`playback_url` 仅在编解码检查通过时提供；地址指向本机 API，源媒体缺失时返回警告。外部 Agent 自行下载、按毫秒区间剪辑，MCP 不运行制作代码。
+
+在已恢复正常 API/数据库/ES/媒体的本机，可为一次 Codex 会话临时配置：
+
+```bash
+codex -c 'mcp_servers.seekino.url="http://127.0.0.1:9621/mcp"' \
+  -c 'mcp_servers.seekino.required=true'
+```
+
+然后让 Codex“调用 Seekino 的 list_series；选择已可检索的系列，retrieve 一个实际内容，再 read_evidence 核对来源并取得媒体”。如需持久保存连接，使用 `codex mcp add seekino --url http://127.0.0.1:9621/mcp`；该命令会修改用户的 Codex MCP 配置，本轮实现没有代为执行。连接方式见 [Codex 官方 MCP 文档](https://learn.chatgpt.com/docs/extend/mcp)。
+
+MCP SDK 根据服务端函数签名、类型和说明生成工具 JSON Schema，通过 `tools/list` 提供给客户端；实际请求通过 `tools/call` 调用现有 Service。协议客户端测试不等于真实素材可用，正式演示还需要已解析并完成 Event 索引的视频和对应媒体。
+
+本版限定直接 loopback 连接，同时检查 Host/Origin 并拒绝转发头；请直接连接 API 端口，不经过 Vite、Nginx 或 Docker 代理。它没有提供 Cloud PAT/OAuth 接入，也不能把此本机端点直接暴露到公网。主合同与验收边界见 [MCP 接入 TRD](../docs/design/03-product-reassessment/mcp-access-trd.md)。
+
 ## 后台任务与共享代码
 
 `server/mq/` 是消息基础设施边界，当前使用 MySQL DB Queue，不依赖外部消息中间件。
