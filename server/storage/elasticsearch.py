@@ -167,6 +167,7 @@ class ElasticsearchVideoChunkStore:
         environment: DatabaseEnvironment | str,
         semantic_dimensions: int,
         vision_dimensions: int,
+        vision_enabled: bool = True,
     ) -> None:
         self.index_name = require_nonempty_text(index_name, "index_name")
         if self.index_name != self.index_name.lower():
@@ -192,6 +193,9 @@ class ElasticsearchVideoChunkStore:
         self._client = client
         self.semantic_dimensions = semantic_dimensions
         self.vision_dimensions = vision_dimensions
+        if type(vision_enabled) is not bool:
+            raise ValueError("vision_enabled must be a boolean")
+        self.vision_enabled = vision_enabled
 
     def ensure_index(self) -> None:
         """Create only an absent index, then verify its actual mapping contract."""
@@ -466,7 +470,8 @@ class ElasticsearchVideoChunkStore:
                 for name in _SOURCE_FIELDS)
             and isinstance(source.get("lexical_fields"), list)
             and isinstance(source.get("semantic_text"), str)
-            and _valid_stored_vector(source.get("vision_vector"), self.vision_dimensions)
+            and (_valid_stored_vector(source.get("vision_vector"), self.vision_dimensions)
+                 if self.vision_enabled else source.get("vision_vector") is None)
             and (not semantic_required or _valid_stored_vector(source.get("semantic_vector"), self.semantic_dimensions))
             and (not sparse_required or _stored_sparse_weights(source.get("sparse_vector")) is not None)
         )
@@ -667,6 +672,8 @@ class ElasticsearchVideoChunkStore:
         index_generation: int, limit: int,
         exact: bool = False,
     ) -> list[VideoChunkIndexMatch]:
+        if not self.vision_enabled:
+            raise ValueError("text-only index does not support the vision channel")
         return self._search_vector(
             query_vector, "vision_vector", self.vision_dimensions,
             tenant_id=tenant_id, series_ids=series_ids,
@@ -895,9 +902,11 @@ class ElasticsearchVideoChunkStore:
             _validated_vector(document.semantic_vector, self.semantic_dimensions, "semantic_vector")
             if document.semantic_vector is not None else None
         )
+        if self.vision_enabled != (document.vision_vector is not None):
+            raise ValueError("vision vector presence must match the index mode")
         vision_vector = _validated_vector(
             document.vision_vector, self.vision_dimensions, "vision_vector"
-        )
+        ) if self.vision_enabled else None
         source = {
             "tenant_id": document.tenant_id,
             "series_id": document.series_id,
@@ -925,6 +934,7 @@ class ElasticsearchVideoChunkStore:
         return {
             "dynamic": "strict",
             "_meta": {
+                **({"vision_enabled": False} if not self.vision_enabled else {}),
                 "index_contract_version": INDEX_CONTRACT_VERSION,
                 "projection_version": INDEX_PROJECTION_VERSION,
                 "analysis_contract_version": ANALYSIS_CONTRACT_VERSION,

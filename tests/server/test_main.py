@@ -27,10 +27,11 @@ def test_configuration_is_validated_before_callers_are_initialized(monkeypatch):
     initialize.assert_not_called()
 
 
-def test_application_initializes_callers_before_business_services(monkeypatch):
+@pytest.mark.parametrize("input_mode", ["multimodal", "text"])
+def test_application_initializes_callers_before_business_services(monkeypatch, input_mode):
     events = []
     settings, gateway_config, resources, services = object(), object(), Mock(), Mock()
-    parse_defaults = SimpleNamespace(embedding=SimpleNamespace(dimensions=1024))
+    parse_defaults = SimpleNamespace(embedding=SimpleNamespace(dimensions=1024, input_mode=input_mode))
     prepare = Mock(side_effect=lambda value: events.append("configuration") or (gateway_config, parse_defaults))
     initialize = Mock(side_effect=lambda *args, **kwargs: events.append("callers") or resources)
     build = Mock(side_effect=lambda *args, **kwargs: events.append("business") or services)
@@ -42,7 +43,8 @@ def test_application_initializes_callers_before_business_services(monkeypatch):
 
     assert events == ["configuration", "callers", "business"]
     prepare.assert_called_once_with(settings)
-    initialize.assert_called_once_with(settings, semantic_dimensions=1024, vision_dimensions=1024)
+    initialize.assert_called_once_with(settings, semantic_dimensions=1024, vision_dimensions=1024,
+                                       vision_enabled=input_mode == "multimodal")
     build.assert_called_once_with(settings, resources, gateway_config=gateway_config, parse_defaults=parse_defaults)
     assert runtime.resources is resources
     assert runtime.services is services
@@ -52,7 +54,7 @@ def test_application_initializes_callers_before_business_services(monkeypatch):
 
 def test_business_construction_failure_releases_callers(monkeypatch):
     resources = Mock()
-    parse_defaults = SimpleNamespace(embedding=SimpleNamespace(dimensions=1024))
+    parse_defaults = SimpleNamespace(embedding=SimpleNamespace(dimensions=1024, input_mode="multimodal"))
     monkeypatch.setattr(main_module, "prepare_service_configuration", Mock(return_value=(object(), parse_defaults)))
     monkeypatch.setattr(main_module.caller, "init", Mock(return_value=resources))
     monkeypatch.setattr(main_module, "build_application_services", Mock(side_effect=RuntimeError("business failed")))

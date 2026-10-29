@@ -234,7 +234,7 @@ def test_caller_init_keeps_local_redis_disabled_and_passes_storage_configuration
     create_elasticsearch.assert_called_once_with(settings.elasticsearch.url, api_key="test-key")
     create_store.assert_called_once_with(
         client, index_name="aggregate_test", environment=DatabaseEnvironment.TEST,
-        semantic_dimensions=512, vision_dimensions=1024,
+        semantic_dimensions=512, vision_dimensions=1024, vision_enabled=True,
     )
     create_redis.assert_not_called()
     resources.close()

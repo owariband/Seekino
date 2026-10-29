@@ -46,7 +46,8 @@ class ElasticsearchVideoEventStore:
     def bind_contract(self, contract: EventIndexingContract, *, create: bool = False) -> None:
         contract = EventIndexingContract.model_validate(contract)
         if (contract.semantic_encoder.dimensions != self.semantic_dimensions
-                or contract.vision_encoder.dimensions != self.vision_dimensions):
+                or contract.vision_encoder is not None
+                and contract.vision_encoder.dimensions != self.vision_dimensions):
             raise ElasticsearchIndexSchemaError("Event contract and store dimensions differ")
         if self._contract is not None and self._contract.contract_id != contract.contract_id:
             raise ElasticsearchIndexSchemaError("one Event store cannot change its fixed contract")
@@ -252,6 +253,8 @@ class ElasticsearchVideoEventStore:
     ) -> tuple[RawEventHit, ...]:
         if channel not in ("semantic", "vision"):
             raise ValueError("unknown Event vector channel")
+        if channel == "vision" and self._contract is not None and self._contract.vision_encoder is None:
+            raise ValueError("text-only Event index does not support the vision channel")
         field = "semantic_vectors.vector" if channel == "semantic" else "vision_vector"
         dimensions = self.semantic_dimensions if channel == "semantic" else self.vision_dimensions
         vector = _validated_vector(query_vector, dimensions, "query_vector")
@@ -338,7 +341,11 @@ class ElasticsearchVideoEventStore:
         document = EventIndexDocument.model_validate(source)
         for semantic in document.semantic_vectors:
             _validated_vector(semantic.vector, self.semantic_dimensions, "semantic_vectors.vector")
-        _validated_vector(document.vision_vector, self.vision_dimensions, "vision_vector")
+        vision_enabled = self._contract is None or self._contract.vision_encoder is not None
+        if vision_enabled != (document.vision_vector is not None):
+            raise ValueError("Event vision vector presence must match the frozen index contract")
+        if document.vision_vector is not None:
+            _validated_vector(document.vision_vector, self.vision_dimensions, "vision_vector")
         if (canonical_uuid(document.parse_task_id, "parse_task_id") != document.parse_task_id
                 or canonical_uuid(document.video_chunk_id, "video_chunk_id") != document.video_chunk_id):
             raise ValueError("Event document IDs must use canonical UUIDs")

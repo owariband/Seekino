@@ -46,6 +46,37 @@ def _document(plan):
     return finalize_event_index(plan, _artifacts(plan), [0.6, 0.8], frames)
 
 
+def test_text_only_events_keep_text_and_times_without_capture_or_vision():
+    visual = _contract()
+    contract = EventIndexingContract(
+        semantic_encoder=visual.semantic_encoder, vision_encoder=None, capture=None,
+    )
+    assert contract.contract_id != visual.contract_id
+    plans = plan_event_index("task", "chunk", 2, _result(), 0, 7000, contract)
+    for plan in plans:
+        assert plan.frame_timestamps_ms == ()
+        document = finalize_event_index(plan, _artifacts(plan), None, ())
+        assert document.vision_vector is None
+        assert document.detail.capture.frames == ()
+        assert document.event_id == plan.event_id
+        assert document.lexical_fields == plan.lexical_fields
+        assert len(document.semantic_vectors) == len(plan.semantic_requests)
+        assert EventIndexDocument.model_validate(document.as_source()) == document
+    plan = plans[0]
+    with pytest.raises(ValueError, match="must not include vision"):
+        finalize_event_index(plan, _artifacts(plan), [0.6, 0.8], ())
+
+
+def test_event_mode_cannot_silently_remove_multimodal_evidence():
+    visual = _contract()
+    with pytest.raises(ValueError, match="enabled together"):
+        EventIndexingContract(semantic_encoder=visual.semantic_encoder,
+                             vision_encoder=visual.vision_encoder, capture=None)
+    plan = plan_event_index("task", "chunk", 2, _result(), 0, 7000, visual)[0]
+    with pytest.raises(ValueError, match="requires a vision vector"):
+        finalize_event_index(plan, _artifacts(plan), None, ())
+
+
 def test_event_projection_keeps_seven_types_and_root_ownership():
     result, contract = _result(), _contract()
     before = compute_index_projection_revision(project_chunk_index(result, chunk_start_seconds=0, chunk_end_seconds=7000))

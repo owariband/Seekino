@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 if TYPE_CHECKING:
-    from gateway.config import ArkModelSourceConfig, EmbeddingModelBinding
+    from gateway.config import EmbeddingModelBinding, ModelSourceConfig
 
 
 class EmbeddingResult(BaseModel):
@@ -64,18 +64,28 @@ class EmbeddingModelInfo:
 
 
 def describe_embedding_model(
-    binding: EmbeddingModelBinding, source: ArkModelSourceConfig,
+    binding: EmbeddingModelBinding, source: ModelSourceConfig,
 ) -> EmbeddingModelInfo:
     """Describe the configured encoder without allocating a client or reading keys."""
     from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
-    from gateway.config import ArkModelSourceConfig
+    from gateway.config import ArkModelSourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
 
-    if not isinstance(source, ArkModelSourceConfig):
+    if isinstance(source, OllamaEmbeddingSourceConfig):
+        from gateway.local.embedding import ollama_encoder_revision
+
+        revision = ollama_encoder_revision(binding.query_instruction)
+    elif isinstance(source, LlamaCppEmbeddingSourceConfig):
+        from gateway.local.llama_cpp_embedding import llama_cpp_encoder_revision
+
+        revision = llama_cpp_encoder_revision(binding.query_instruction)
+    elif isinstance(source, ArkModelSourceConfig):
+        revision = DOUBAO_MULTIMODAL_EMBEDDING_REVISION
+    else:
         raise TypeError(f"unsupported embedding adapter {source.adapter!r}")
     return EmbeddingModelInfo(
         provider_name=source.provider, model_name=binding.model,
         encoder_model=binding.encoder_model or binding.model,
-        encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+        encoder_revision=revision,
         dimensions=binding.dimensions,
     )
 
@@ -119,9 +129,9 @@ class _OwnedEmbeddingModel:
 
 def build_embedding_model(
     binding: EmbeddingModelBinding,
-    source: ArkModelSourceConfig,
+    source: ModelSourceConfig,
     *,
-    api_key: str,
+    api_key: str | None,
 ) -> EmbeddingModel:
     """Construct the configured encoder without resolving names or credentials."""
     from arkruntime import Ark
@@ -130,7 +140,37 @@ def build_embedding_model(
         DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
         DoubaoMultimodalEmbedder,
     )
-    from gateway.config import ArkModelSourceConfig
+    from gateway.config import ArkModelSourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
+
+    if isinstance(source, OllamaEmbeddingSourceConfig):
+        from gateway.local.embedding import OllamaTextEmbedder, ollama_encoder_revision
+
+        if binding.input_mode != "text":
+            raise ValueError("ollama_embedding requires input_mode=text")
+        delegate = OllamaTextEmbedder(
+            binding.model, base_url=source.base_url, dimensions=binding.dimensions,
+            query_instruction=binding.query_instruction,
+            request_timeout_seconds=binding.request_timeout_seconds or 600,
+        )
+        return _OwnedEmbeddingModel(
+            delegate, delegate, binding=binding, source=source,
+            encoder_revision=ollama_encoder_revision(binding.query_instruction),
+        )
+
+    if isinstance(source, LlamaCppEmbeddingSourceConfig):
+        from gateway.local.llama_cpp_embedding import LlamaCppTextEmbedder, llama_cpp_encoder_revision
+
+        if binding.input_mode != "text":
+            raise ValueError("llama_cpp_embedding requires input_mode=text")
+        delegate = LlamaCppTextEmbedder(
+            binding.model, base_url=source.base_url, dimensions=binding.dimensions,
+            query_instruction=binding.query_instruction,
+            request_timeout_seconds=binding.request_timeout_seconds or 600,
+        )
+        return _OwnedEmbeddingModel(
+            delegate, delegate, binding=binding, source=source,
+            encoder_revision=llama_cpp_encoder_revision(binding.query_instruction),
+        )
 
     if not isinstance(source, ArkModelSourceConfig):
         raise TypeError(f"unsupported embedding adapter {source.adapter!r}")

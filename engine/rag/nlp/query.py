@@ -25,6 +25,8 @@ def plan_text_query_signals(
 
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be nonblank")
+    if policy.vision_weight and index_contract.vision_encoder is None:
+        raise ValueError("text-only index does not support the vision channel")
     bindings: dict[str, QueryEncoderBinding] = {}
     for value in encoder_bindings:
         binding = QueryEncoderBinding.model_validate(value)

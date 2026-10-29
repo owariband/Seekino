@@ -109,6 +109,7 @@ def _upload_service(
     parse_defaults=None,
     video_parse_index_store=None,
     video_event_index_store=None,
+    video_parse_query_encoder_supports_sparse=True,
     probe_duration=None,
 ):
     engine, _video_repository = repository
@@ -158,6 +159,7 @@ def _upload_service(
                 dimensions=active_embedding.dimensions,
             ),
             video_parse_query_encoder_source=active_embedding.source,
+            video_parse_query_encoder_supports_sparse=video_parse_query_encoder_supports_sparse,
         ),
     )
 
@@ -236,6 +238,24 @@ def test_upload_freezes_endpoint_encoder_identity_without_changing_its_route(
     assert frozen["encoder_model"] == "doubao-embedding-vision-250615"
     assert config.models.embedding.encoder_model == encoder_model
     assert service.get_session(session.upload_session_id, tenant_id="local-default").parse_config == session.parse_config
+
+
+@pytest.mark.parametrize("field,value", [("input_mode", "text"), ("query_instruction", "Find courses")])
+def test_upload_rejects_changed_embedding_contract_before_creating_session(repository, tmp_path, field, value):
+    _engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+    config = _video_parse_config_with_dimensions(2)
+    config = config.model_copy(update={"models": config.models.model_copy(update={
+        "embedding": config.models.embedding.model_copy(update={field: value}),
+    })})
+    with pytest.raises(ValueError, match=field):
+        service.create_session(
+            tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+            total_size_bytes=10, idempotency_key="wrong-text-contract", parse_config=config,
+        )
+    assert service.list_sessions(tenant_id="local-default") == []
 
 
 def test_upload_rejects_endpoint_bound_to_a_different_encoder(repository, tmp_path):

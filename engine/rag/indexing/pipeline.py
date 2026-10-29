@@ -47,7 +47,7 @@ class ChunkIndexSource:
     chunk_start_seconds: int
     chunk_end_seconds: int
     result: VideoParseResult
-    visual_input: VisualInputManifest
+    visual_input: VisualInputManifest | None
     enrichments: tuple[SourceEnrichment, ...] = ()
 
     def __post_init__(self) -> None:
@@ -79,13 +79,15 @@ class ChunkIndexingContract:
 
     retrieval_contract_id: str
     semantic_encoder: EncoderContract
-    vision_encoder: EncoderContract
-    visual_input_contract: VisualInputContract
+    vision_encoder: EncoderContract | None
+    visual_input_contract: VisualInputContract | None
     description_language: str | None = None
     index_generation: int = 1
     sparse_encoder: SparseEncoderContract | None = None
 
     def __post_init__(self) -> None:
+        if (self.vision_encoder is None) != (self.visual_input_contract is None):
+            raise ValueError("vision encoder and visual input contract must be enabled together")
         if not _nonblank(self.retrieval_contract_id):
             raise ValueError("retrieval_contract_id must be nonblank")
         if self.description_language is not None and not _nonblank(
@@ -104,11 +106,15 @@ class ChunkIndexingContract:
         return compute_encoder_id("text", self.semantic_encoder)
 
     @property
-    def vision_input_contract_id(self) -> str:
+    def vision_input_contract_id(self) -> str | None:
+        if self.visual_input_contract is None:
+            return None
         return compute_visual_input_contract_id(self.visual_input_contract)
 
     @property
-    def vision_encoder_id(self) -> str:
+    def vision_encoder_id(self) -> str | None:
+        if self.vision_encoder is None:
+            return None
         return compute_encoder_id(
             "video",
             self.vision_encoder,
@@ -130,7 +136,7 @@ class ChunkIndexPlan:
     chunk_end_seconds: int
     projection: ChunkIndexProjection
     semantic_request: EmbeddingRequest | None
-    vision_request: EmbeddingRequest
+    vision_request: EmbeddingRequest | None
     sparse_encoder: SparseEncoderContract | None = None
     sparse_request: SparseEmbeddingRequest | None = None
 
@@ -144,9 +150,7 @@ class ChunkIndexPlan:
 
     @property
     def encoding_requests(self) -> tuple[EmbeddingRequest, ...]:
-        if self.semantic_request is None:
-            return (self.vision_request,)
-        return (self.semantic_request, self.vision_request)
+        return tuple(request for request in (self.semantic_request, self.vision_request) if request is not None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +190,7 @@ class VideoChunkIndexDocument:
     chunk_end_seconds: int
     projection: ChunkIndexProjection
     semantic_vector: tuple[float, ...] | None
-    vision_vector: tuple[float, ...]
+    vision_vector: tuple[float, ...] | None
     sparse_token_weights: tuple[tuple[str, float], ...] | None = None
     ordered_frames_manifest: OrderedFramesManifest | None = None
 
@@ -242,7 +246,7 @@ def plan_chunk_index(
         channel="vision",
         encoder=contract.vision_encoder,
         visual_input=source.visual_input,
-    )
+    ) if contract.vision_encoder is not None else None
     sparse_request = (
         SparseEmbeddingRequest(
             encoder=contract.sparse_encoder,
@@ -297,7 +301,7 @@ def finalize_chunk_index(
     vision_vector = validate_embedding_artifact(
         plan.vision_request,
         by_channel["vision"],
-    )
+    ) if plan.vision_request is not None else None
     sparse_weights = None
     if (
         plan.sparse_request is None
@@ -332,7 +336,8 @@ def finalize_chunk_index(
         sparse_token_weights=sparse_weights,
         ordered_frames_manifest=(
             plan.vision_request.visual_input
-            if isinstance(plan.vision_request.visual_input, OrderedFramesManifest)
+            if plan.vision_request is not None
+            and isinstance(plan.vision_request.visual_input, OrderedFramesManifest)
             and plan.vision_request.visual_input.sampling is not None
             else None
         ),
@@ -351,9 +356,15 @@ def compute_source_revision(result: VideoParseResult) -> str:
 
 def _validate_visual_input(
     source: ChunkIndexSource,
-    contract: VisualInputContract,
+    contract: VisualInputContract | None,
 ) -> None:
     manifest = source.visual_input
+    if contract is None:
+        if manifest is not None:
+            raise ValueError("text-only indexing must not declare visual input")
+        return
+    if manifest is None:
+        raise ValueError("multimodal indexing requires visual input")
     if manifest.input_contract != contract:
         raise ValueError("visual input manifest differs from the indexing contract")
     if isinstance(manifest, VideoClipManifest):

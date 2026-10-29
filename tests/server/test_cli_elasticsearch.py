@@ -48,7 +48,25 @@ def test_hydrate_keeps_database_evidence_output(monkeypatch, capsys) -> None:
     ]
 
 
-def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) -> None:
+def _write_index_model_config(tmp_path, input_mode):
+    payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    if input_mode == "text":
+        payload["model_sources"]["local_embedding"] = {
+            "adapter": "ollama_embedding", "provider": "ollama", "base_url": "http://127.0.0.1:11434",
+        }
+        payload["models"]["embedding"].update(
+            source="local_embedding", model="qwen3-embedding:0.6b", input_mode="text",
+        )
+    path = tmp_path / "index-models.yaml"
+    path.write_text(yaml.safe_dump(payload))
+    return path
+
+
+@pytest.mark.parametrize("input_mode,text_only", [("multimodal", False), ("text", False), ("text", True)])
+@pytest.mark.parametrize("explicit_config", [False, True])
+def test_init_es_index_is_explicit_and_needs_no_database(
+    monkeypatch, tmp_path, capsys, input_mode, text_only, explicit_config,
+) -> None:
     created = []
 
     class Client:
@@ -69,12 +87,20 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
                 "environment": cli.DatabaseEnvironment.TEST,
                 "semantic_dimensions": 2,
                 "vision_dimensions": 3,
+                "vision_enabled": input_mode == "multimodal",
             }
 
         def ensure_index(self):
             created[0].ready = True
 
     monkeypatch.delenv("SEEKINO_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    config_path = _write_index_model_config(tmp_path, input_mode)
+    config_arguments = ["--config", str(config_path)] if explicit_config else []
+    if not explicit_config:
+        monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
+    monkeypatch.setattr("gateway.model_factory.GatewayClient", lambda *_args, **_kwargs: pytest.fail("created model client"))
     monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(sys, "argv", [
@@ -85,7 +111,7 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
         "--elasticsearch-index-generation", "7",
         "--text-vector-dimensions", "2",
         "--vision-vector-dimensions", "3",
-    ])
+    ] + config_arguments + (["--text-only"] if text_only else []))
 
     cli.main()
 
@@ -97,6 +123,18 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
         "index": "seekino_video_chunks_test",
         "indexGeneration": 7,
     }
+
+
+def test_init_es_index_rejects_text_only_flag_with_multimodal_config_before_connecting(monkeypatch, tmp_path):
+    config_path = _write_index_model_config(tmp_path, "multimodal")
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("connected"))
+    monkeypatch.setattr(sys, "argv", [
+        "seekino-server", "init-es-index", "--environment", "test", "--text-only",
+        "--config", str(config_path), "--elasticsearch-url", "http://127.0.0.1:9200",
+        "--elasticsearch-index", "seekino_video_chunks_test",
+    ])
+    with pytest.raises(ValueError, match="requires models.embedding.input_mode=text"):
+        cli.main()
 
 
 def test_init_event_index_uses_separate_target_and_full_contract_without_database(monkeypatch, capsys):
@@ -137,7 +175,7 @@ def test_init_event_index_uses_separate_target_and_full_contract_without_databas
     contract = calls["contract"]
     assert contract.capture.max_height == 480
     assert contract.semantic_encoder == contract.vision_encoder
-    assert calls["event_storage"] == calls["storage"]
+    assert calls["storage"] == {**calls["event_storage"], "vision_enabled": True}
     assert json.loads(capsys.readouterr().out) == {
         "schemaReady": True, "index": EventStore.index_name, "contractId": contract.contract_id,
     }
@@ -530,6 +568,7 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
         "environment": cli.DatabaseEnvironment.TEST,
         "semantic_dimensions": 2,
         "vision_dimensions": 2,
+        "vision_enabled": True,
     }
     assert calls["embedder"] == ("cli-model", 2, 2.0)
     retrieval_options = calls["retrieval"]
@@ -545,6 +584,8 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
     assert retrieval_options == {
         "expected_index_generation": 7,
         "expected_embedding_source": "ark_default",
+        "expected_embedding_input_mode": "multimodal",
+        "expected_query_instruction": None,
         "lexical_weight": 1.0,
         "candidate_budget": None,
         "sparse_weight": 0.0,

@@ -14,6 +14,7 @@ from gateway.config import (
     ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, load_config,
 )
 from gateway.model_factory import GatewayClient
+from gateway.multimodal import adapter_capabilities
 from gateway.query_hook import QueryHookModels
 from gateway.tracing import LangfuseTracing
 from gateway.web_search import WebSearcher
@@ -260,6 +261,7 @@ def _build_application_services(
     if event_store is not None:
         event_contract = resolve_event_indexing_contract(
             video_parse_query_encoder, max_height=parse_defaults.window.analysis_max_height,
+            vision_enabled=parse_defaults.embedding.input_mode == "multimodal",
         )
         event_retrieval = build_event_retrieval_service(
             parse_persistence, event_store, gateway_config=gateway_config,
@@ -277,6 +279,9 @@ def _build_application_services(
         parse_defaults=parse_defaults,
         video_parse_query_encoder=video_parse_query_encoder,
         video_parse_query_encoder_source=parse_defaults.embedding.source,
+        video_parse_query_encoder_supports_sparse=adapter_capabilities(
+            gateway_config.source(parse_defaults.embedding.source).adapter,
+        ).sparse_embedding,
         video_event_index_store=event_store,
     )
     v2_queue = MySqlVideoParseQueue(session_factory, video_concurrency=settings.parse.video_concurrency)

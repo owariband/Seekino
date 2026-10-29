@@ -33,6 +33,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_environment_argument(init_es_index)
     _add_elasticsearch_arguments(init_es_index)
+    init_es_index.add_argument("--config", type=Path, help="Gateway model config; defaults to SEEKINO_MODEL_CONFIG/config.yaml.")
+    init_es_index.add_argument("--embedding-model")
+    init_es_index.add_argument("--text-only", action="store_true", help="Require the configured embedding input_mode=text; index mode otherwise follows the model config automatically.")
 
     init_events = subparsers.add_parser("init-event-index", help="Create or validate the fixed Seekino Event index contract.")
     _add_environment_argument(init_events)
@@ -203,16 +206,22 @@ def main() -> None:
         )
 
     if args.command in {"init-es-index", "init-event-index"}:
+        gateway = load_config(args.config)
+        embedding = resolve_embedding_config(
+            gateway, model=args.embedding_model, dimensions=text_dimensions,
+        )
+        vision_enabled = embedding.input_mode == "multimodal"
+        if getattr(args, "text_only", False) and vision_enabled:
+            raise ValueError("--text-only requires models.embedding.input_mode=text in the active model configuration")
         with open_elasticsearch_storage(
             elasticsearch, environment=environment,
             semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
+            vision_enabled=vision_enabled,
         ) as (_client, store):
             event_contract = None
             if args.command == "init-event-index":
                 if text_dimensions != vision_dimensions:
                     raise ValueError("the configured shared Event encoder requires matching dimensions")
-                gateway = load_config(args.config)
-                embedding = resolve_embedding_config(gateway, model=args.embedding_model, dimensions=text_dimensions)
                 event_contract = _event_contract(gateway, embedding, max_height=resolve_parse_max_height(args.max_height))
                 store = build_event_elasticsearch_storage(
                     _client, elasticsearch, environment=environment,
@@ -288,6 +297,7 @@ def main() -> None:
             with open_elasticsearch_storage(
                 elasticsearch, environment=environment,
                 semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
+                vision_enabled=embedding.input_mode == "multimodal",
             ) as (_client, store):
                 service, _encoder = build_retrieval_service(
                     VideoParsePersistenceService(sessions), store,
@@ -323,7 +333,7 @@ def _event_contract(gateway, embedding, *, max_height):
     return resolve_event_indexing_contract(EncoderContract(
         provider=metadata.provider_name, model=metadata.encoder_model,
         encoder_revision=metadata.encoder_revision, dimensions=metadata.dimensions,
-    ), max_height=max_height)
+    ), max_height=max_height, vision_enabled=embedding.input_mode == "multimodal")
 
 
 def _positive_int(value: str) -> int:

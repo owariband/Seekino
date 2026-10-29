@@ -419,6 +419,7 @@ def start_elasticsearch(settings: ServerSettings) -> None:
             client, index_name=config.index_name, environment=settings.environment,
             semantic_dimensions=settings.text_vector_dimensions,
             vision_dimensions=settings.vision_vector_dimensions,
+            vision_enabled=load_config(getattr(settings, "model_config_path", None)).resolve_embedding_binding().input_mode == "multimodal",
         ).ensure_index()
     except Exception as exc:
         raise RuntimeError(

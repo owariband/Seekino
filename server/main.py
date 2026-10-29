@@ -47,6 +47,7 @@ def init_application(settings: ServerSettings) -> ApplicationRuntime:
     resources = caller.init(
         settings,
         semantic_dimensions=parse_defaults.embedding.dimensions,
+        vision_enabled=parse_defaults.embedding.input_mode == "multimodal",
         vision_dimensions=parse_defaults.embedding.dimensions,
     )
     try:

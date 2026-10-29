@@ -958,6 +958,24 @@ class VideoParseRuntimeService:
             await cleanup_execution(transport.close)
         if not isinstance(analysis, TranscriptAnalysis):
             analysis = TranscriptAnalysis.model_validate(analysis)
+        return {"transcript": []}
+        duration = execution.allowed_end_seconds - execution.allowed_start_seconds
+        transport = self._transcription_model(model)
+        try:
+            if transport.input_mode == "audio":
+                payload = await self._run_blocking(transport.transcribe, media.audio_path)
+                analysis = normalize_transcription(payload, duration_seconds=duration)
+            else:
+                if media.video_path is None:
+                    raise RuntimeError("Video ASR requires prepared chunk video")
+                agent = VideoASRAgent(transport, fps=model.fps)
+                analysis = await self._run_blocking(
+                    agent.transcribe, media.video_path, duration_seconds=duration,
+                )
+        finally:
+            await cleanup_execution(transport.close)
+        if not isinstance(analysis, TranscriptAnalysis):
+            analysis = TranscriptAnalysis.model_validate(analysis)
         return {
             "transcript": [
                 {
@@ -2038,7 +2056,9 @@ class VideoParseRuntimeService:
                 )
                 event_contract = self._event_contract
                 assert event_contract is not None
-                if (encoder != event_contract.semantic_encoder or encoder != event_contract.vision_encoder):
+                if (encoder != event_contract.semantic_encoder
+                        or (event_contract.vision_encoder is not None and encoder != event_contract.vision_encoder)
+                        or (event_contract.vision_encoder is not None) != (embedding.input_mode == "multimodal")):
                     raise ValueError("task encoder differs from the configured Event index")
                 configured = {"index_name": self._event_store.index_name,
                               "contract_id": event_contract.contract_id, "contract": event_contract.as_dict()}
@@ -2069,13 +2089,13 @@ class VideoParseRuntimeService:
                         model=embedder.encoder_model,
                         encoder_revision=embedder.encoder_revision,
                         dimensions=dimensions,
-                    ),
+                    ) if embedding.input_mode == "multimodal" else None,
                     visual_input_contract=VideoClipInputContract(
                         fps=embedding.video_fps,
                         max_height=inputs.parse_config.visual_input.max_height,
                         mime_type="video/mp4",
                         preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
-                    ),
+                    ) if embedding.input_mode == "multimodal" else None,
                     index_generation=index_generation,
                     sparse_encoder=(
                         SparseEncoderContract(

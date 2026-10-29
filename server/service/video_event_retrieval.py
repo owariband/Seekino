@@ -34,13 +34,17 @@ class VideoEventRetrievalService:
         exact: bool = False, tracing: LangfuseTracing | None = None,
     ) -> None:
         self._contract = EventIndexingContract.model_validate(contract)
-        self._policy = RetrievalPolicy.model_validate(policy)
+        self._policy = RetrievalPolicy.model_validate(policy.model_copy(update={
+            **({"vision_weight": 0.0} if contract.vision_encoder is None else {}),
+        }))
         if self._policy.sparse_weight:
             raise ValueError("Event retrieval has lexical, semantic and vision channels")
         if (store.semantic_dimensions != contract.semantic_encoder.dimensions
-                or store.vision_dimensions != contract.vision_encoder.dimensions):
+                or (contract.vision_encoder is not None
+                    and store.vision_dimensions != contract.vision_encoder.dimensions)):
             raise ValueError("Event query and document dimensions differ")
-        if vision_embedder is None and contract.semantic_encoder != contract.vision_encoder:
+        if (contract.vision_encoder is not None and vision_embedder is None
+                and contract.semantic_encoder != contract.vision_encoder):
             raise ValueError("distinct Event encoders require a distinct compatible vision query embedder")
         if not isinstance(exact, bool):
             raise ValueError("exact must be a bool")
@@ -74,6 +78,7 @@ class VideoEventRetrievalService:
             "top_k": top_k, "candidate_budget": max(top_k, self._policy.candidate_budget),
             **({"lexical_weight": lexical_weight, "semantic_weight": text_weight,
                 "vision_weight": vision_weight} if lexical_weight is not None else {}),
+            **({"vision_weight": 0.0} if self._contract.vision_encoder is None else {}),
         }))
         query = query.strip()
         try:

@@ -125,6 +125,43 @@ def _document(ids, *, question: str = "银河蓝松饼行动"):
     )
 
 
+def test_text_only_store_readiness_accepts_absent_vision_only_in_text_mode(client, IDs):
+    store = ElasticsearchVideoChunkStore(
+        client, index_name="seekino_text_test", environment="test",
+        semantic_dimensions=2, vision_dimensions=2, vision_enabled=False,
+    )
+    store.ensure_index()
+    document = replace(_document(IDs), vision_vector=None)
+    source = store._document_source(document)
+    physical_id = document_id(document.parse_task_id, document.video_chunk_id)
+    client.search_response = {"hits": {"hits": [{"_id": physical_id, "_source": source}]}}
+    client.mget_response = {"docs": [{"_id": physical_id, "found": True, "_source": source}]}
+    assert store.inspect_exact([document]) == {physical_id: True}
+    assert store.verify_ready([document])
+    assert store.is_current(source, semantic_required=True)
+    assert source["vision_vector"] is None
+    assert client.indices.mapping["_meta"]["vision_enabled"] is False
+    with pytest.raises(ValueError, match="index mode"):
+        store._document_source(_document(IDs))
+    with pytest.raises(ValueError, match="text-only index"):
+        store.search_vision([1., 0.], tenant_id="local-default", series_ids=[IDs.series],
+                            parse_tasks_by_video_id={IDs.video: IDs.parse_task}, index_generation=1, limit=1)
+
+
+def test_multimodal_store_still_requires_vision_and_rejects_text_mapping(store, client, IDs):
+    with pytest.raises(ValueError, match="index mode"):
+        store._document_source(replace(_document(IDs), vision_vector=None))
+    source = store._document_source(_document(IDs))
+    assert not store._matches_source(source | {"vision_vector": None}, source)
+    store.ensure_index()
+    text = ElasticsearchVideoChunkStore(
+        client, index_name=store.index_name, environment="test",
+        semantic_dimensions=2, vision_dimensions=2, vision_enabled=False,
+    )
+    with pytest.raises(ElasticsearchIndexSchemaError, match="metadata"):
+        text.ensure_index()
+
+
 def _id(document: VideoChunkIndexDocument) -> str:
     return document_id(document.parse_task_id, document.video_chunk_id)
 

@@ -116,6 +116,7 @@ class _Repository:
 
 
 class _Store:
+    vision_enabled = True
     semantic_dimensions = 2
     vision_dimensions = 2
 
@@ -141,7 +142,7 @@ class _Store:
             expected["chunk_start_seconds"], expected["chunk_end_seconds"],
         )
         state = self.states[(expected["parse_task_id"], expected["video_chunk_id"])]
-        return (key in self.ready and state.vision_vector_present
+        return (key in self.ready and (state.vision_vector_present or not self.vision_enabled)
                 and (not semantic_required or state.semantic_vector_present)
                 and (not sparse_required or state.sparse_token_weights is not None))
 
@@ -170,9 +171,9 @@ class _Store:
                 content_version=item.content_version,
                 index_generation=item.index_generation,
                 semantic_vector=tuple(item.semantic_vector) if item.semantic_vector else None,
-                vision_vector=tuple(item.vision_vector),
+                vision_vector=tuple(item.vision_vector) if item.vision_vector is not None else None,
                 semantic_vector_present=item.semantic_vector is not None,
-                vision_vector_present=True,
+                vision_vector_present=item.vision_vector is not None,
                 sparse_token_weights=item.sparse_token_weights,
             )
         return [

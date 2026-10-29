@@ -115,7 +115,7 @@ class EventEmbedder(_Embedder):
         return EmbeddingResult(model="embed-v1", modality="image", vector=vector)
 
 
-def _event_setup(tmp_path, *, event_count=1, warm_chunk=True):
+def _event_setup(tmp_path, *, event_count=1, warm_chunk=True, text_only=False):
     ids, media, snapshot = _fixture(tmp_path)
     content = _content()
     content["timeline"][0].update(start_seconds=1000, end_seconds=5000, text_variants=[
@@ -142,8 +142,11 @@ def _event_setup(tmp_path, *, event_count=1, warm_chunk=True):
 
     media_service = VideoParseMediaService(tmp_path / "media-work", command_runner=run)
     chunk_contract = _contract()
+    if text_only:
+        chunk_contract = replace(chunk_contract, vision_encoder=None, visual_input_contract=None)
+        chunk_store.vision_enabled = False
     event_contract = EventIndexingContract(semantic_encoder=chunk_contract.semantic_encoder,
-        vision_encoder=chunk_contract.vision_encoder, capture=EventFrameContract(max_height=720))
+        vision_encoder=chunk_contract.vision_encoder, capture=None if text_only else EventFrameContract(max_height=720))
     events = EventStore()
     target = dict(index_name=events.index_name, contract_id=event_contract.contract_id, contract=event_contract.as_dict())
     lease = replace(_lease(ids["video_task"], ids["chunk"], ids["chunk_task"]), lease_version=9)

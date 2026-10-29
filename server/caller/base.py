@@ -45,7 +45,7 @@ class CallerResources:
 
 
 def init(
-    settings: ServerSettings, *, semantic_dimensions: int, vision_dimensions: int,
+    settings: ServerSettings, *, semantic_dimensions: int, vision_dimensions: int, vision_enabled: bool = True,
 ) -> CallerResources:
     if settings.elasticsearch is None:
         raise ValueError(
@@ -63,6 +63,7 @@ def init(
         elasticsearch_client, elasticsearch_store = elasticsearch.build_elasticsearch_storage(
             settings.elasticsearch, environment=settings.environment,
             semantic_dimensions=semantic_dimensions, vision_dimensions=vision_dimensions,
+            vision_enabled=vision_enabled,
         )
         construction_cleanup.callback(elasticsearch.close_elasticsearch_client, elasticsearch_client)
         event_store = elasticsearch.build_event_elasticsearch_storage(

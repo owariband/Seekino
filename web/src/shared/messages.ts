@@ -470,6 +470,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "向量化与执行": "Embeddings and execution",
   "索引模型：{model} · {dimensions} 维": "Index model: {model} · {dimensions} dimensions",
   "视频向量化 FPS": "Video embedding FPS",
+  "视觉向量已关闭；仍保留画面理解与文字检索。": "Visual embeddings are disabled; visual understanding and text search remain enabled.",
   "模型请求超时（秒）": "Model request timeout (seconds)",
   "最多尝试次数": "Maximum attempts",
   "解析配置尚未加载完成": "Parse settings have not finished loading.",

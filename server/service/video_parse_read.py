@@ -266,6 +266,8 @@ def resolve_retrieval_scope(
                 embedding.encoder_model or embedding.model,
                 embedding.dimensions,
                 embedding.video_fps,
+                embedding.input_mode,
+                embedding.query_instruction,
                 config.visual_input.max_height,
             )
             if shared_contract is None:

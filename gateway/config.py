@@ -122,6 +122,26 @@ class ArkModelSourceConfig(BaseModel):
     api_key_env: _NonEmptyString = "ARK_API_KEY"
 
 
+class OllamaEmbeddingSourceConfig(BaseModel):
+    """Ollama's native text embedding API; local HTTP needs no API key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: Literal["ollama_embedding"] = "ollama_embedding"
+    provider: Literal["ollama"] = "ollama"
+    base_url: _AudioBaseUrl
+
+
+class LlamaCppEmbeddingSourceConfig(BaseModel):
+    """Local llama.cpp OpenAI-compatible embedding endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: Literal["llama_cpp_embedding"] = "llama_cpp_embedding"
+    provider: Literal["llama_cpp"] = "llama_cpp"
+    base_url: _AudioBaseUrl
+
+
 class OpenAIAudioSourceConfig(BaseModel):
     """Audio Transcriptions protocol, independent of Chat Completions."""
 
@@ -191,6 +211,8 @@ ModelSourceConfig = (
     | OpenAIAudioSourceConfig
     | OpenAIVisionSourceConfig
     | CampPlusModelSourceConfig
+    | OllamaEmbeddingSourceConfig
+    | LlamaCppEmbeddingSourceConfig
 )
 _ModelSourceConfigField = Annotated[
     ModelSourceConfig,
@@ -222,6 +244,8 @@ class EmbeddingModelBinding(ModelBinding):
     dimensions: int = Field(ge=1, le=2048)
     video_fps: float = Field(ge=0.2, le=5.0)
     encoder_model: _NonEmptyString | None = None
+    input_mode: Literal["multimodal", "text"] = "multimodal"
+    query_instruction: _NonEmptyString | None = None
 
 
 class AgentFallbackConfig(BaseModel):
@@ -551,6 +575,12 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{ref} does not support adapter {source.adapter!r} for {kind}")
         if kind == "embedding" and not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"{ref} embedding binding requires dimensions and video_fps")
+        if isinstance(binding, EmbeddingModelBinding):
+            if isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig)):
+                if binding.input_mode != "text":
+                    raise ValueError(f"{source.adapter} requires input_mode=text")
+            elif binding.query_instruction is not None:
+                raise ValueError("query_instruction is only supported by local text embedding adapters")
         if binding.supports_vision_input and capabilities.visual_input_mode is None:
             raise ValueError(f"adapter {source.adapter!r} does not support image input")
         supports_reasoning = capabilities.supports_reasoning_effort and not (

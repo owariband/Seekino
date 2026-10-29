@@ -243,7 +243,9 @@ function ParseConfigFields({ value, defaults, onChange }: {
       <summary>{t("向量化与执行")}</summary>
       <div className={styles.configGrid}>
         <div className={styles.configLocked}>{t("索引模型：{model} · {dimensions} 维", { model: value.embedding.model, dimensions: value.embedding.dimensions })}</div>
-        <ConfigNumber label={t("视频向量化 FPS")} value={value.embedding.videoFps} min={0.2} max={5} step="any" onChange={(v) => update("embedding", { videoFps: v ?? 0 })} />
+        {value.embedding.inputMode === "text"
+          ? <div className={styles.configLocked}>{t("视觉向量已关闭；仍保留画面理解与文字检索。")}</div>
+          : <ConfigNumber label={t("视频向量化 FPS")} value={value.embedding.videoFps} min={0.2} max={5} step="any" onChange={(v) => update("embedding", { videoFps: v ?? 0 })} />}
         <ConfigNumber label={t("模型请求超时（秒）")} value={value.execution.requestTimeoutSeconds} min={configuredMin(0.01, defaults.execution.requestTimeoutSeconds)} max={configuredMax(3600, defaults.execution.requestTimeoutSeconds)} step="any" onChange={(v) => update("execution", { requestTimeoutSeconds: v ?? 0 })} />
         <ConfigNumber label={t("最多尝试次数")} value={value.execution.maxAttempts} min={1} max={configuredMax(10, defaults.execution.maxAttempts)} onChange={(v) => update("execution", { maxAttempts: v ?? 0 })} />
       </div>

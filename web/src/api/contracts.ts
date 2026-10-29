@@ -216,6 +216,8 @@ export interface ParseConfig {
     model: string;
     dimensions: number;
     videoFps: number;
+    inputMode?: "multimodal" | "text";
+    queryInstruction?: string | null;
   };
   execution: {
     requestTimeoutSeconds: number;

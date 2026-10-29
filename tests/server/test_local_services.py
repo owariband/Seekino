@@ -391,7 +391,8 @@ def test_start_claude_api_key_mode_requires_configured_key(monkeypatch) -> None:
         local_services.start_applications()
 
 
-def test_local_start_validates_explicit_elasticsearch_before_applications(monkeypatch) -> None:
+@pytest.mark.parametrize("input_mode", ["text", "multimodal"])
+def test_local_start_validates_explicit_elasticsearch_before_applications(monkeypatch, input_mode) -> None:
     events: list[str] = []
     requests = []
     settings = SimpleNamespace(
@@ -411,6 +412,7 @@ def test_local_start_validates_explicit_elasticsearch_before_applications(monkey
 
     class FakeStore:
         def __init__(self, _client, **_kwargs) -> None:
+            assert _kwargs["vision_enabled"] is (input_mode == "multimodal")
             events.append("store")
 
         def ensure_index(self) -> None:
@@ -424,6 +426,8 @@ def test_local_start_validates_explicit_elasticsearch_before_applications(monkey
     monkeypatch.setattr(local_services, "ElasticsearchVideoChunkStore", FakeStore)
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "launch", lambda *_a, **_k: pytest.fail("reuse must not launch ES"))
+
+    monkeypatch.setattr(local_services, "load_config", lambda _path: SimpleNamespace(resolve_embedding_binding=lambda: SimpleNamespace(input_mode=input_mode)))
 
     local_services.start_elasticsearch(settings)
 
