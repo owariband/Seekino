@@ -200,7 +200,7 @@ class ContextWindowController:
                 > self.policy.compact_target_tokens
             ):
                 candidate[stable_end] = _checkpoint_message(
-                    summary=_clip(summary, 1_000),
+                    summary=_summarize_activity(compactable, maximum_characters=1_000),
                     checkpoint=rendered_checkpoint,
                     window_number=next_window_number,
                     window_id=next_window_id,
@@ -309,6 +309,7 @@ class ContextWindowController:
                 break
             message = messages[index]
             tool_call_id = str(message.get("tool_call_id") or "")
+            result_summary = _tool_result_metadata(message.get("content"))
             original_bytes = len(
                 _serialized_text(message.get("content")).encode("utf-8")
             )
@@ -318,6 +319,7 @@ class ContextWindowController:
                     "tool": tool_names.get(tool_call_id),
                     "tool_call_id": tool_call_id,
                     "original_bytes": original_bytes,
+                    "result_summary": result_summary,
                     "recoverable": True,
                     "instruction": (
                         "Canonical state remains outside message history. Use the "
@@ -502,12 +504,16 @@ def _matching_assistant_index(
     return tool_index + 1
 
 
-def _summarize_activity(messages: list[OpenAIMessage]) -> str:
+def _summarize_activity(
+    messages: list[OpenAIMessage], *, maximum_characters: int = _MAX_ACTIVITY_SUMMARY_CHARACTERS,
+) -> str:
     if not messages:
         return "No older completed activity was available to compact."
     tool_names = _tool_names_by_call_id(messages)
     lines = []
-    for message in messages:
+    # Keep the newest feedback when only a small summary fits beside fixed media.
+    # In particular, a rejected write must not become an apparent completed write.
+    for message in reversed(messages):
         role = message.get("role")
         if role == "assistant":
             content = _clip(_serialized_text(message.get("content")), 300)
@@ -540,9 +546,17 @@ def _summarize_activity(messages: list[OpenAIMessage]) -> str:
             )
             if content:
                 lines.append(f"{role}: {content}")
-        if sum(len(line) for line in lines) >= _MAX_ACTIVITY_SUMMARY_CHARACTERS:
+        if sum(len(line) + 1 for line in lines) >= maximum_characters:
             break
-    return _clip("\n".join(lines), _MAX_ACTIVITY_SUMMARY_CHARACTERS)
+    retained = []
+    remaining = maximum_characters
+    for line in lines:
+        if remaining <= 0:
+            break
+        rendered = _clip(line, remaining)[:remaining]
+        retained.append(rendered)
+        remaining -= len(rendered) + 1
+    return "\n".join(reversed(retained))
 
 
 def _tool_result_metadata(content: object) -> str:
@@ -550,10 +564,18 @@ def _tool_result_metadata(content: object) -> str:
     try:
         value = json.loads(text)
     except (TypeError, ValueError):
-        return f"completed; output_bytes={len(text.encode('utf-8'))}"
+        value = None
     if not isinstance(value, dict):
-        return f"completed; output_bytes={len(text.encode('utf-8'))}"
+        prefix = f"output_bytes={len(text.encode('utf-8'))}; feedback="
+        return prefix + _clip(text, _MAX_SUMMARY_LINE_CHARACTERS - len(prefix))
+    if value.get("context_window") == "tool_result_released" and isinstance(value.get("result_summary"), str):
+        return _clip(value["result_summary"], _MAX_SUMMARY_LINE_CHARACTERS)
     keys = (
+        "batch_id",
+        "revision",
+        "expected_revision",
+        "current_revision",
+        "replayed",
         "accepted",
         "operation",
         "video_chunk_id",
@@ -564,7 +586,18 @@ def _tool_result_metadata(content: object) -> str:
         "complete",
         "next_cursor",
     )
-    metadata = {key: value[key] for key in keys if key in value}
+    metadata = {}
+    if isinstance(value.get("error"), dict):
+        error = value["error"]
+        metadata["error"] = {
+            key: _clip(error[key], limit) if isinstance(error[key], str) else error[key]
+            for key, limit in (("code", 64), ("retryable", 32), ("retry_hint", 128), ("message", 256))
+            if key in error and isinstance(error[key], (str, bool, int, float, type(None)))
+        }
+    metadata.update({
+        key: _clip(value[key], 128) if isinstance(value[key], str) else value[key]
+        for key in keys if key in value and isinstance(value[key], (str, bool, int, float, type(None)))
+    })
     metadata["output_bytes"] = len(text.encode("utf-8"))
     return _clip(
         json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
