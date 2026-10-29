@@ -1,5 +1,5 @@
 import { Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from "lucide-react";
-import { forwardRef, type KeyboardEvent, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, type KeyboardEvent, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 
 import { errorMessage, mediaUrl } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
@@ -77,20 +77,25 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     };
   }, [pointerHeld]);
 
-  useEffect(() => {
-    positionRef.current = 0;
-    durationRef.current = video.durationSeconds;
-    progressReadyRef.current = false;
-    lastWriteAtRef.current = 0;
-    initializedKeyRef.current = null;
-    setCurrentSeconds(0);
-    setDurationSeconds(video.durationSeconds);
-    setMediaReady(false);
-    setPlaying(false);
-    setVolume(1);
-    setMuted(false);
-    setPlaybackRate(1);
-    setPlayError(null);
+  useLayoutEffect(() => {
+    // Metadata may already be available for a cached source. A duration refresh
+    // does not replace the media element or invalidate an initialized player.
+    if (initializedKeyRef.current !== mediaKey) {
+      positionRef.current = 0;
+      durationRef.current = video.durationSeconds;
+      progressReadyRef.current = false;
+      lastWriteAtRef.current = 0;
+      initializedKeyRef.current = null;
+      setCurrentSeconds(0);
+      setDurationSeconds(video.durationSeconds);
+      setMediaReady(false);
+      setPlaying(false);
+      setVolume(1);
+      setMuted(false);
+      setPlaybackRate(1);
+      setPlayError(null);
+      if (mediaRef.current && mediaRef.current.readyState >= HTMLMediaElement.HAVE_METADATA) onLoadedMetadata();
+    }
     return () => {
       if (progressReadyRef.current) {
         saveVideoProgress({ seriesId: video.seriesId, videoId: video.videoId, positionSeconds: positionRef.current, durationSeconds: durationRef.current }, progressStorageKey);

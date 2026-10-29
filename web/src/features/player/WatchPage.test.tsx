@@ -154,6 +154,12 @@ function renderPage(path = "/watch/series-1/video-2", withShell = false) {
   );
 }
 
+function openPauseSetting() {
+  const settings = screen.getByRole("button", { name: "观看设置" });
+  if (!settings.closest("details")?.open) fireEvent.click(settings);
+  return screen.getByRole("switch", { name: "发送问题时暂停视频" });
+}
+
 beforeEach(() => {
   mocks.useAuth.mockReturnValue({ canManage: true });
   localStorage.clear();
@@ -361,7 +367,7 @@ describe("WatchPage", () => {
     renderPage();
     await screen.findByTestId("supervisor-chat");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    expect(screen.getByRole("switch", { name: "发送问题时暂停视频" })).toBeChecked();
+    expect(openPauseSetting()).toBeChecked();
     expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
@@ -393,14 +399,25 @@ describe("WatchPage", () => {
     const view = renderPage();
     await screen.findByTestId("video-player");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    fireEvent.click(screen.getByRole("switch", { name: "发送问题时暂停视频" }));
+    const settings = screen.getByRole("button", { name: "观看设置" });
+    expect(settings.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText("边看边聊")).not.toBeInTheDocument();
+    const preference = openPauseSetting();
+    fireEvent.click(preference);
     expect(localStorage.getItem("seekino-watch-pause-on-send")).toBe("false");
+    fireEvent.keyDown(preference, { key: "Escape" });
+    expect(settings.closest("details")).not.toHaveAttribute("open");
+    expect(settings).toHaveFocus();
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "false");
+    fireEvent.click(settings);
+    fireEvent.pointerDown(screen.getByTestId("video-player"));
+    expect(settings.closest("details")).not.toHaveAttribute("open");
     view.unmount();
 
     renderPage();
     const player = await screen.findByTestId("video-player");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    const pauseOnSend = screen.getByRole("switch", { name: "发送问题时暂停视频" });
+    const pauseOnSend = openPauseSetting();
     const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     expect(pauseOnSend).not.toBeChecked();
     mocks.getSnapshot.mockReturnValue({ positionSeconds: 21_567, wasPlaying: true });
@@ -521,7 +538,7 @@ describe("WatchPage", () => {
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
     mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 18_000, wasPlaying: false });
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
-    fireEvent.click(screen.getByRole("switch", { name: "发送问题时暂停视频" }));
+    fireEvent.click(openPauseSetting());
     fireEvent.keyDown(composer, { key: "Tab", shiftKey: true });
     expect(player).toHaveFocus();
     expect(mocks.focusPlayer).toHaveBeenCalledOnce();
