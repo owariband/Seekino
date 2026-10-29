@@ -60,7 +60,8 @@ def test_episode_prepares_before_consumers_and_links_survive_owner_cleanup(tmp_p
         assert len(rows) == 3
         assert [t for t, _ in rows[0]["ocr_frames"]] == [166, 500, 833]
         assert [t for t, _ in rows[2]["ocr_frames"]] == [2125, 2375]
-        assert sum("-filter_script:v" in command for command in commands) == 1
+        assert sum(any(flag in command for flag in ("-filter_script:v", "-/filter:v"))
+                   for command in commands) == 1
         if not video_required:
             assert len(commands) == 2  # one whole audio decode and one whole video decode
             assert not list(manifest.parent.glob("*.mp4"))

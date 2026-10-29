@@ -22,6 +22,8 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-29：全原生 localhost 环境与 Kimi 业务验收](#devlog-native-local-20261029) | B18、本机部署与真实运行 |
+| [2026-10-29：持久媒体移入 assets/library 与旧数据恢复核验](#devlog-persistent-media-20261029) | B17、持久媒体与换机恢复 |
 | [2026-10-26：Kimi 同模型 Chat 三框架对照](#devlog-chat-harness-kimi-20261026) | C19、Pi / Deep Agents / Codex、查询覆盖与交付合同 |
 | [2026-10-25：按能力整合 benchmark 并纠正选集口径](#devlog-benchmark-layout-20261025) | 查询覆盖、Chat behavior、历史证据归属 |
 | [2026-10-25：同一 chunk 的 ReAct、Deep Agents 与 Codex 解析实测](#devlog-parse-harness-ab-20261025) | Parse harness 简化、compact 预算、EP04 画外音身份 |
@@ -92,6 +94,78 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-native-local-20261029"></a>
+
+## 2026-10-29：全原生 localhost 环境与 Kimi 业务验收
+
+### 问题与现状
+
+关联 [B18](problems.md#b18全原生-localhost-环境与真实业务验收) 与 [B17](problems.md#b17持久媒体目录与旧资料库恢复)。用户最终要求 MySQL、ES、API 和 Web 都在本机运行，避免 Docker，方便测试实验。既有 Python 3.12.16、uv、Node 24.22.1、npm 和 FFmpeg 9.0.2 可用，但没有原生 MySQL / ES；启动器不负责启动 ES，MySQL 默认数据仍在易被当作输出的目录。原片归档已完成，旧业务成果尚未找到，不能把新库初始化称为旧库恢复。
+
+### 方案候选
+
+按用户选择使用官方 macOS arm64 归档，安装程序放在可重新下载的 `outputs/tools`，数据库持久文件移出默认日志位置，采用 `data/mysql`、`data/elasticsearch`；媒体沿用 `assets/library`。本机 `.env.local` 选择二进制路径，保留凭据。既有 `start.sh --branch dev` 统一启动、检查、停止原生服务，不增加 Docker、独立队列或本地模型权重。ES heap 配置为 512 MiB、MySQL buffer pool 为 128 MiB，均仅绑定 loopback；这是配置值，不是整套服务的实测总内存或耗电值。
+
+用户明确允许 EP04 原片 8–20 秒的 12 秒验收片向外部模型发送必要媒体/派生信息及检索问答，并进一步要求尽量使用 Kimi。本机有效配置单独保存在 `config/local-dev-config.yaml`（原 `local-kimi.yaml`，2026-10-29 更名），通过 `SEEKINO_MODEL_CONFIG` 选中，七个生成式角色使用 `kimi_coding/k3.1-pro`，ASR 与 embedding 使用 Ark 专用模型，向量保持 1024 维；不修改仓库面向其他环境的默认模型组合。验收只使用这一短片，未重解析 12 集归档素材。
+
+### 方案验证
+
+- 官方归档校验：MySQL 8.4.13，165,362,783 bytes，官方 MD5 匹配；ES 8.19.22，517,276,189 bytes，官方 SHA-512 匹配。下载中断后续传完成，二进制实际运行版本与选择一致。来源与校验值保存在 [setup-report.json](../../outputs/verification/native-local-20261029/setup-report.json)。
+- 原生启动器加入 ES 启动、MySQL basedir 自动识别、checkpoint / Event 初始化、exec 后 PID 归属及退出竞态保护；专项最终 82 passed。旧 MySQL 非空目录仍要求明确选择，不会悄悄切换成新空库。现有 FFmpeg 9 不再接受 `-filter_script:v`，改为探测 `-/filter:v` 能力并保留旧版 fallback；抽帧与解析媒体 51 passed，含本机真实 FFmpeg。前端 `npm --prefix web run build` 通过。
+- 四项服务启动成功，MySQL 28 张表及 22 条 checkpoint migration 可读；两个 ES 主分片正常，单节点 yellow 由副本未分配造成。API / Parse Consumer 健康，前端代理与直接 API 资料库响应一致。空库阶段完整 `stop → start` 通过且未重复初始化 MySQL；浏览器资料库和播放器正常渲染，Docker socket 不存在。记录见 [runtime-report.json](../../outputs/verification/native-local-20261029/runtime-report.json)。
+- 短片上传与播放：上传、分片、complete 均成功，全文 HTTP SHA-256 与源片 `88a4220cf3a206ae94727c2a1b535b65d424f0f92618ebe07baaaa9c3b48484a` 一致；206 Range 字节与 `Content-Range` 正确，ffprobe 识别 H.264 / AAC、640×360、12.012 秒。浏览器实际播放从 0 推进到 12012 ms。证据见 [http-report.json](../../outputs/verification/native-local-20261029/http-report.json) 与 [播放器截图](../../outputs/verification/native-local-20261029/browser-player.jpg)。
+- 首次 Kimi 配置继承了视觉 `high/medium`，在本机通用视觉适配器构造阶段失败；改为 `none` 后七角色构造检查通过。该路径实际省略 reasoning 参数，不表示关闭供应商 thinking。当前实现的 `retry` 保持冻结配置，必须用显式 `parseConfig` 的 `reparse` 才能采用修正配置；本轮据源码修正了原模型文档的错误说明。失败版本 1 保留，同一视频的版本 2 已完成 ASR / Kimi OCR，但理解出现反复工具调用并超时。
+- Context 诊断：临时开启本地原始工具 trace，证实模型误填 Schema 字段后，压缩摘要丢失了“Extra inputs are not permitted”的纠错反馈；37 张图片固定估算约 75,776 tokens，也高于原 60,000 压缩目标。通用压缩改为近期反馈优先、保留有界错误/版本回执；真实记录离线重放从丢失错误变为保留错误，压缩后估算仅增加 4 tokens。直接 24 passed；扩大 Gateway 回归 243 passed、1 个既有 fixture 耗尽失败，已用 HEAD 原始 context.py 独立复现，不能写成全套通过。见 [真实记录重放](../../outputs/verification/native-local-20261029/context-feedback-trace-replay.json)。本机 Kimi 本地预算设为 262,144 tokens、压缩目标 150,000；未验证长视频或账号 1M 上下文权限。
+- 观看页 SSE 暴露 Uvicorn 默认无期限 HTTP drain 会阻塞 lifespan 退出。`server.main` 增加 5 秒 HTTP 收尾期限，之后仍按原顺序等待业务清理，不跳过租约或强杀；原生启动、入口、生命周期相关测试合计 95 passed（含前述 82，不能相加）。
+- 版本 3 的 Kimi 理解与 Refine 成功；索引调用旧 `doubao-embedding-vision-250615` 返回当前账号/接入点不可用的 404。改用 `251215` 的合成文本真实预检返回 1024 维，耗时 0.871 秒。新模型采用独立 Chunk/Event 物理索引，冻结的旧任务不改，显式新配置创建版本 4。旧模型并非全网停服：官方只标 EOM、保留存量服务，见 [官方公告](https://docs.volcengine.com/docs/ark/model-deprecation-notice?lang=zh)。
+- 总结路径漏传工具 harness，导致同时约束必选工具与最终 JSON，真实六次响应均未调用工具。总结宿主改用已有 DeepAgents 完成工具合同，仍要求 `submit_video_summary` 成功；对应 Agent/Service/Persistence/Gateway 回归 166 passed。见 [诊断记录](../../outputs/verification/native-local-20261029/summary-harness-diagnosis.json)。版本 4 已加载此修复，真实总结成功，104 字描述及封面完成发布并通过 SQL/HTTP/文件哈希核对。
+
+- 版本 4 最终为 `COMPLETE`，API `processingDurationMs=316737`（约 5 分 17 秒，非旧 SQL 兼容字段）；发布 1 个 Chunk、6 个 Event。查询“粉色长发女生说春日影是首好歌”返回这段视频和 [0,12012) ms，证据与原片开头字幕一致。Kimi 观看问答调用 `understand_current_video` 后回答中日原句，SSE `answer.completed`，42.8 秒，两条消息及最新 checkpoint messages blob 54,180 bytes 持久保存。见 [检索报告](../../outputs/verification/native-local-20261029/http-report.json)、[问答报告](../../outputs/verification/native-local-20261029/chat-report.json)。Parse/Refine 验收配置为 `maxModelCalls=12`、`maxAttempts=1`；Summary 与 Chat 沿用各自预算，不表示整个业务只有 12 次模型调用。
+- 完整带数据重启：保持真实 SSE 连接，四项受管服务 10.418 秒正常停止，再用相同持久目录启动。只读事务核对最新任务、Chunk/Event 精确版本、媒体哈希、摘要和封面、消息正文、checkpoint 引用均通过。核验脚本早期因 SQL `usage` 保留字未引用而报错，修正查询后通过，未修改业务数据来迁就验收。见 [重启前](../../outputs/verification/native-local-20261029/persistence-before-restart.json)、[重启后](../../outputs/verification/native-local-20261029/persistence-report.json) 与 [SSE 停服记录](../../outputs/verification/native-local-20261029/sse-shutdown-report.json)。
+- 浏览器实查修复：媒体 `readyState=4` 却进度条 disabled；测试复现 metadata 提前到达及同媒体时长刷新导致就绪状态被清空两条路径，未声称已唯一确定现场事件顺序。播放器改用 layout 初始化并读取已有 metadata，同一媒体时长刷新保留状态；48 项播放器/观看页相关测试、51 项播放器/身份隔离测试分别通过（重叠不相加），typecheck / production build 通过。浏览器重启后实测 Home、End、后退 10 秒，停在 2.012 秒，原问答可恢复；[前后证据](../../outputs/verification/native-local-20261029/player-readiness-diagnosis.json)、[最终截图](../../outputs/verification/native-local-20261029/browser-acceptance-final.jpg)。
+- 用量边界：已记录全部失败/成功解析版本，而非只呈现最后成功一次。`model_usage` 中 107 条解析记录有 104 条返回 tokens，已报告总量 1,254,023（其中已报告 cached input 1,001,145 是 input 子集），另 3 条未知；本次 Chat 另有 3 条、13,338 tokens。`parse_model_call` 为空，数据库没有本次费用估算或账单金额；不把未知费用写成 0，两张表及 SDK 聚合不重复相加。额外合成文本预检单列，不计入视频任务。见 [用量历史](../../outputs/verification/native-local-20261029/usage-history-report.json)。临时详细 trace 配置和防休眠进程已关闭，既有诊断证据保留。
+
+### 指标对比
+
+本机从无 MySQL / ES、无法启动正式链路，变为四项原生服务可启动、HTTP 数据边界可访问、真实短片可上传与播放，持久数据库和媒体目录有明确保留规则。新增维护成本是两套本机数据库二进制及少量启动器生命周期逻辑；省去本机容器虚拟机。没有测量长期耗电差异，不以 heap / buffer 配置代替进程总占用。生成式配置已切 Kimi，真实短片验收中暴露的配置、Context 反馈、总结工具合同、长连接退出与播放器就绪问题已修复并完成本机闭环。最后成功解析约 5 分 17 秒、观看问答约 42.8 秒，只能作为这一样本的实测，不能视作长视频性能或全面质量达标。旧 MyGO 解析成果恢复仍是独立缺口。
+
+<a id="devlog-persistent-media-20261029"></a>
+
+## 2026-10-29：持久媒体移入 assets/library 与旧数据恢复核验
+
+### 问题与现状
+
+关联 [B17](problems.md#b17持久媒体目录与旧资料库恢复)。用户重新下载 MyGO，希望复用旧 MySQL 成果，并要求重要原片不要继续以 `outputs/server/artifacts` 为默认目录。本机旧媒体根实查无文件，原片此前已移到 Git 忽略的 `assets/example_video_mygo`；数据库保存的 `artifact://...` 不会自动扫描样例目录。最初 MySQL 3306 拒绝连接，Docker 未运行，不能以素材已到位代替旧库恢复。
+
+同日全原生环境验收后，用户发现首页只有新验收视频，质疑已迁来的数据库为何没有恢复 MyGO。追加调查只读核对运行中 API 的连接目标、本实例全部数据库、已知 SQL 和迁移归档，区分“旧库已经存在但未连接”与“迁移材料未包含旧业务数据”；没有据此创建替代系列、导入 SQL 或重解析旧 MyGO。
+
+### 方案候选
+
+直接复制可保持路径，但会增加约 5.06 GB 的独立副本；指向根外样例目录的软链接不满足存储路径边界。选择现有 `SEEKINO_ARTIFACT_ROOT` 配置能力，将宿主机默认和本机有效值改成 `assets/library`，保留环境与 URI 合同。原片归档到 `sources/mygo`，通过同盘硬链接保留旧评测路径，待取得旧库记录后再按实际 URI 建立正式关联；不虚构系列、视频 ID 或解析成果。Docker 既有持久卷合同没有改动。
+
+用户在恢复准备过程中明确不希望本机运行 Docker，已执行停止；云服务器部署方式仍在讨论。随后按用户授权将私钥移到本机 `~/.ssh/seekino.pem`（0600），保留既有配置并添加 `seekino-server` SSH 别名。主机可 ping 通，但首次直接连接 22 端口及独立 TCP 复核超时，尚未进入认证。用户补充已有 docrag 的 Clash 专用代理方案后，SSH 接入本机 SOCKS，并仅为新服务器 IP 的 TCP 22 增加同一日本节点优先规则。持久订阅规则和运行配置均备份、校验并热加载，12 个既有代理组选择保持不变；随后以 `ubuntu` 成功登录，第二次合成数据传输也成功，规则计数记录两次命中。先前超时不能据此归因为远端安全组。
+
+远端只读检查：4 vCPU、约 7.25 GiB 总内存／6.67 GiB 可用、约 107.6 GiB 磁盘剩余和 1.94 GiB swap；常见项目路径未发现 Seekino，3306/9200 未监听。未安装或启动远端数据库、上传素材、部署应用。可选分工是本机 API/前端/原片、云端 MySQL/ES，避免先上传全部素材，但数据库跨代理访问的实际性能未验证。
+
+### 方案验证
+
+- `test_config.py`、`test_local_services.py`、`test_artifact_storage.py`：422 passed、1 个 Starlette 弃用 warning，17.63 秒。验证默认值、显式覆盖与既有存储边界，不代表真实资料库可用。
+- 12 个完整 MP4 共 5,055,403,557 bytes，移动前后 SHA-256 和大小一致，`ffprobe` 可识别 H.264/AAC；新归档与样例路径 inode 相同。10 集哈希命中历史验收记录，EP01、EP07 历史哈希未确认，第 11 集 `.part` 保留在 Downloads。实际 `.env.local` 解析为 `assets/library`，12 个持久原片路径均未被 Git ignore。记录见 [原片清单](../../assets/library/recovery/mygo-20261029.json)。
+- 限定检查换机报告、personal 迁移清单和 `seekino-archive-20261028`，未发现旧 MyGO 业务备份。另在 `~/Documents/ChatGPT/casual/work/seekino-rename-20261028/database-before.sql` 找到 57,017 bytes 的 MySQL 8.4.13 dump：28 个表结构，仅 `checkpoint_migrations` 含 INSERT，无视频或解析业务行。未导入该空业务备份，不从检查范围推断所有数据已丢失。
+- 追加实机证据：运行中 API PID 85892 的进程环境与 `.env.local` 均连接 `127.0.0.1:3306/seekino_development`，输出未包含凭据。只读 `@@datadir` 确认为仓库 `data/mysql/`，版本 8.4.13；`SHOW DATABASES` 只有四个系统库和一个 `seekino_development`。该库 28 张表中，`series=1`、`video=1`、`video_parse_task=4`、`chunk_parse_content=2`、`interval_parse_content=2`。这是当时单条验收视频的快照，不是旧 MyGO 13 集已经恢复后被首页隐藏，也未发现同实例内另一个旧业务库可直接切换。
+- 核对原始库名与导出来源：`/Users/hypnos/Documents/ChatGPT/casual/work/seekino-rename-20261028/baseline-before-rename/deploy/README.md:137` 记载旧主业务库为 `anivag_local_20261010_development`；`/Users/hypnos/Documents/ChatGPT/casual/work/seekino-rename-20261028/database-before.sql:3` 的头部却是 `anivag_development`，SHA-256 为 `b8f68819f1906fd3b33e30fb8df17193efcd92fd5fe1045b05972db643e2a56f`，唯一 INSERT 位于 `checkpoint_migrations`。该 dump 同目录的 `model-and-namespace-notes.txt:65–67` 也记载切换前业务表为空、索引 0 文档，因此使用新空开发库。现有文档中的 `seekino_local_20261010_development` 是命名空间修改后的文字，不能据此推定真实旧库已经搬迁或改名。
+- 核对迁移范围：`/Users/hypnos/workspace/restore-report.json:354` 明确写明目录迁移未恢复数据库等运行依赖；仓内[换机材料范围](../migration/20261023/README.md#仍需私下备份的内容)和[迁移清单](../migration/20261023/manifest.json)也将数据库备份列为私有材料。使用 `rg` 有界检查项目、`seekino-rename-20261028` 和恢复报告指向的 `seekino-archive-20261028`，并只读检查 rename 目录的 `source-before.tar.gz`、`personal-before.tar.gz` 以及 archive 目录的 `source-snapshots.tar.gz` 成员；其中只找到源码迁移 SQL，没有旧业务 dump 或 MySQL 数据文件。归档内 `Seekino/.env.local` 本来就指向空业务库 `anivag_development`；本机旧路径 `outputs/local-services/mysql` 不存在。没有启动 Docker、停服、导入 SQL 或写入业务数据；未检查到的旧设备、其他备份和停止的实例存储仍不能排除。
+- 本轮没有读到旧业务库，未关联正式 video URI、恢复派生媒体或验证播放/检索；没有重解析、ES 重建、供应商请求或付费模型调用。源码目录修改与旧资料库恢复分别报告。
+- SSH 合成上传：16 MiB 数据传给远端 `wc -c` 计数后丢弃，没有远端文件；包括建连在内共 16.942 秒，有效吞吐约 7.92 Mbps。按该单次样本线性估算 5.055 GB 约 85 分钟，仅供选择部署位置参考，不是视频实际上传或持续带宽测量。
+
+### 指标对比
+
+宿主机三处默认入口及本机有效配置由 `outputs/server/artifacts` 对齐到 `assets/library`，持久媒体的目录语义更明确；历史 URI 和存储算法不变。12 个原片从仅存在于忽略的样例路径，增加可见的持久归档路径，新增视频内容占用为 0 bytes（硬链接的目录元数据另计）。硬链接共享修改，不是独立备份。旧视频播放、历史解析成果与搜索可用性尚无恢复结果，不能宣称业务闭环完成；后续取决于旧业务数据来源和选定部署位置。
+
+追加核对将当前缺口定位为：正在使用的实例及已检查迁移材料均未包含真正旧主业务库，而已找到的 dump 来自另一空业务库。B17 保持 TODO，下一步仍是取得 `anivag_local_20261010_development` 的业务备份或完整旧实例存储，再核对原片引用和索引；现有证据不支持“旧 MyGO 已全部永久丢失”的结论。
+
+同日用户随后确认旧电脑与整机备份均不可用，并要求核对项目 `docs/migrations`。已逐项检查 22 个 SQL，INSERT 目标只有 `_bm_*` 临时结构校验表、默认本地 user/tenant、checkpoint 版本表，没有旧 MyGO 业务行；这些文件可升级已有库，不能恢复丢失内容。同时检查 personal 本地全部 Git 历史的备份候选、AniVAG `untracked.tar`、学习报告源码 tar/zip，以及 Documents/Downloads/Desktop/workspace 的数据库和归档候选；未发现可恢复的旧业务库或完整解析导出。本机 Time Machine 未列出本地快照或目的地。Docker 磁盘仍存在，但本轮没有启动 Docker 或读取其文件系统内容，不将其计作已排除；10 月 28 日初始化记录与现有 SQL 均指向当时新建的空库。审计证据见 [database-audit-20261029.json](../../assets/library/recovery/database-audit-20261029.json)。未导入 SQL、修改业务库或调用模型；12 集完整原片约 284.10 分钟仍可用于后续重建，第 11 集仍为 `.part`。重建会产生新的解析结果，不能称为原库恢复，超出已授权 12 秒实模验收的整集调用尚未执行。
 
 <a id="devlog-chat-harness-kimi-20261026"></a>
 

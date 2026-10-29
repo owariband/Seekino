@@ -269,7 +269,7 @@ def resolve_database_pool_recycle_seconds(value: int | str | None = None) -> int
 
 def resolve_artifact_root(value: Path | str | None = None) -> Path:
     return Path(
-        value if value is not None else os.getenv("SEEKINO_ARTIFACT_ROOT", "outputs/server/artifacts")
+        value if value is not None else os.getenv("SEEKINO_ARTIFACT_ROOT", "assets/library")
     ).expanduser()
 
 

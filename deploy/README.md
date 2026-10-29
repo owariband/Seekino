@@ -30,8 +30,8 @@ MySQL 8.4 和 Elasticsearch 8.19.22。ffmpeg 和模型 SDK 已放进应用镜像
 在宿主机安装 Python 3.12、uv、Node 24+、npm、ffmpeg / ffprobe，按
 [README 的开发步骤](../README.md#宿主机开发可选) 准备 `.env.local`、依赖与数据库表。
 `./start.sh --branch dev` 使用已检出的 dev 工作区；main 使用 `./start.sh`。
-脚本复用 MySQL，校验 ES 集群和索引；不会启动 ES，也不会初始化 checkpoint 表，
-首次仍须执行 `python -m server.cli init-db`。正式流程只使用 V2。
+脚本复用已监听的 MySQL/ES，或启动已安装的原生程序；随后通过既有初始化入口
+校验业务表、Deep Agents checkpoint 和 Chunk/Event 索引。正式流程只使用 V2。
 
 只准备基础设施时，无需模型密钥或本地 Python 环境：
 
@@ -40,6 +40,42 @@ docker compose up -d --wait mysql elasticsearch
 docker compose ps
 docker compose logs -f mysql elasticsearch
 ```
+
+## 可选：全原生本机开发
+
+安装 MySQL 8.4 与 Elasticsearch 8.19，并准备 Python 3.12、uv、Node 24+、npm、
+ffmpeg/ffprobe 及项目依赖。下载解压的原生程序可以在 `.env.local` 指定完整路径：
+
+```dotenv
+SEEKINO_MYSQLD_BIN=/absolute/path/to/mysql/bin/mysqld
+SEEKINO_ELASTICSEARCH_BIN=/absolute/path/to/elasticsearch/bin/elasticsearch
+SEEKINO_MYSQL_DATA_DIR=data/mysql
+SEEKINO_ELASTICSEARCH_DATA_DIR=data/elasticsearch
+SEEKINO_ELASTICSEARCH_HEAP_SIZE=512m
+```
+
+保留同一文件已有数据库 URL、ES URL/索引、模型配置与凭据；不要用示例覆盖已有配置。
+ES HTTP 端口取 `SEEKINO_ELASTICSEARCH_URL`，内部 transport 端口默认是 HTTP 端口加 100，
+可由 `SEEKINO_ELASTICSEARCH_TRANSPORT_PORT` 覆盖。自建实例使用单节点、仅 loopback、
+无认证 HTTP；带 API key 或 HTTPS 的已有实例需要由其原管理方式启动。
+
+```bash
+./start.sh --branch dev
+./start.sh --branch dev status
+./start.sh --branch dev stop
+```
+
+启动器不会下载软件。端口已有服务时先复用并验证；没有服务时使用配置的原生二进制。
+`stop` 按记录的 PID 与进程身份仅停止本启动器启动的 Web、API、ES、MySQL，
+不会停止复用的外部服务，也不删除数据。原生数据库目录为 `data/mysql`、`data/elasticsearch`，
+媒体为 `assets/library`；进程 PID、启动日志和 ES 日志仍在 `outputs/local-services`。
+API 先给 HTTP 请求 5 秒收尾时间，关闭尚未结束的 SSE 后按业务生命周期退出。
+若在途任务收尾超过启动器每个进程的 15 秒等待，`stop` 会提示稍后重试并保留数据库运行，
+不会强杀 API 或提前停止其仍需使用的 MySQL、ES。
+
+若旧 `outputs/local-services/mysql` 非空且没有显式 `SEEKINO_MYSQL_DATA_DIR`，启动器会停止并提示，
+防止悄悄改用新空库。可以显式指向旧目录继续使用，或先备份并完成迁移，再选择新目录；
+这里没有自动迁移、删除旧库或重建已有索引。`init-db` 与 `init-event-index` 校验失败时不启动 API。
 
 ## 本地模拟验证码邮件
 
@@ -101,9 +137,10 @@ docker compose --env-file .env.local --profile mock-email stop mailpit
 |---|---|
 | Docker 视频、切片、关键帧、解析文件 | `app_data` 卷中的 `/data/artifacts` |
 | Docker 有效模型配置、日志、Codex 登录 | `app_data` 卷中的 `/data/config`、`/data/logs`、`/data/codex` |
-| 宿主机开发媒体 | 本机 `SEEKINO_ARTIFACT_ROOT`，默认 `outputs/server/artifacts` |
+| 宿主机开发媒体 | 本机 `SEEKINO_ARTIFACT_ROOT`，默认 `assets/library` |
 | 宿主机进程 PID、启动日志 | `outputs/local-services/` |
 | 宿主机应用结构化日志 | `SEEKINO_LOG_DIRECTORY`，默认 `outputs/server/logs` |
+| 启动器管理的原生 MySQL / ES | `SEEKINO_MYSQL_DATA_DIR` / `SEEKINO_ELASTICSEARCH_DATA_DIR`，默认 `data/mysql` / `data/elasticsearch` |
 | MySQL | Docker volume `seekino-local_mysql_data` |
 | ES 索引 | Docker volume `seekino-local_elasticsearch_data` |
 
@@ -118,6 +155,31 @@ CLI search 使用同一套 V2 检索。`./start.sh` 要求 ES 集群为 yellow/g
 仅复制索引不能作为完整备份。
 模型密钥通过 `.env.docker` 注入运行环境，不写入镜像；所有发布端口仅绑定 `127.0.0.1`。
 MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose 用于本地开发。
+
+<a id="persistent-media-root"></a>
+
+### 持久媒体目录与旧路径迁移
+
+自 2026-10-29 起，宿主机默认使用 `assets/library/` 保存正式原片、代理、帧图与附件，
+`assets/` 下未跟踪素材由 Git ignore 排除，已有被 Git 跟踪的发布资产继续保留。
+Git 忽略不等于删除或备份；媒体仍须和 MySQL 做配套备份。Docker 全栈的
+`app_data` 持久卷及 `/data/artifacts` 不因宿主机默认值改变而迁移。
+
+已有 `.env.local` 中的 `SEEKINO_ARTIFACT_ROOT` 优先于默认值，应用不会自动移动旧文件。
+切换旧环境前应先核对实际配置及目录内容，并按以下顺序操作：
+
+1. 停止写入该媒体根的 API/Consumer，保留原目录和对应数据库的可恢复备份。
+2. 将旧根的完整内容迁到 `assets/library/`，保留 `development/`、`test/`、`production/`
+   等环境子目录及内部结构；目标已有文件时逐项核对，不覆盖不同内容。
+3. 将有效环境配置改为 `SEEKINO_ARTIFACT_ROOT=assets/library`，重启服务。
+   数据库中的 `artifact://development/...` URI 不随根目录改变，无需批量改写。
+4. 核对旧视频的 SHA-256、大小、原片播放及派生媒体可读性，再独立验证检索。
+   仅修改配置或启动成功不能作为恢复完成的依据。
+
+只有重新下载的原片时，先按旧库 `video.hash`、`size_bytes` 匹配，再按 `source_uri`
+恢复文件位置。同一文件系统可用硬链接保留样例路径，避免重复占用视频空间；
+硬链接共享文件内容，不适合在任一路径原地修改原片。指向媒体根以外的软链接会被存储边界拒绝。
+补回原片不会自动恢复缺失的 MySQL、封面、帧图或 ES 索引。
 
 <a id="local-assets"></a>
 
@@ -288,7 +350,7 @@ docker compose --env-file .env.docker logs -f api
 `docker compose down` 删除容器和网络但保留 named volumes。
 不要在需要保留视频库时执行 `docker compose down -v`，它会删除数据库和应用数据卷。
 
-宿主机开发时分别管理应用和数据库：
+使用 Docker 数据库的宿主机开发路线，分别管理应用和数据库：
 
 ```bash
 ./start.sh --branch dev stop
@@ -297,9 +359,11 @@ docker compose --env-file .env.local up -d --wait mysql elasticsearch
 ./start.sh --branch dev
 ```
 
-`start.sh stop` 会停止它自己管理的本机进程，包括由它启动的原生 MySQL；
+`start.sh stop` 会停止它自己管理的本机进程，包括由它启动的原生 MySQL 和 ES；
 不会停止 Compose 容器或其它程序启动的数据库。
-如果只运行 `./start.sh` 而容器未运行，脚本会尝试启动本机 MySQL；ES 不可达时启动失败。
+如果数据库端口尚未监听，脚本会尝试启动已安装并配置的原生 MySQL 和 ES；
+程序缺失、配置不符合本机运行合同或服务未就绪时启动失败。全原生环境使用同一组
+`start.sh` 命令启停，安装和路径配置见[全原生本机开发](#可选全原生本机开发)。
 
 ## 自定义端口
 

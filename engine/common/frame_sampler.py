@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 from bisect import bisect_left
 from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
 from time import monotonic
+
+
+@lru_cache(maxsize=16)
+def _filter_script_option(ffmpeg_bin: str) -> str:
+    # FFmpeg 7 added file-backed options; FFmpeg 9 removed -filter_script.
+    # Probe argument parsing without decoding media, once per executable, so
+    # older distro builds can keep using the legacy option without guessing versions.
+    probe = subprocess.run(
+        [ffmpeg_bin, "-hide_banner", "-/filter:v", os.devnull, "-version"],
+        capture_output=True, timeout=5,
+    )
+    if probe.returncode and b"Unrecognized option '/filter:v'" in probe.stderr:
+        return "-filter_script:v"
+    probe.check_returncode()
+    return "-/filter:v"
 
 
 def extract_video_frames_batch(
@@ -35,7 +52,7 @@ def extract_video_frames_batch(
     script = directory / "sampling.filter"
     script.write_text(f"setpts=PTS-STARTPTS,select='{expression}',scale=-2:min({max_height}\\,ih)")
     command = [ffmpeg_bin, "-v", "error", "-i", str(Path(video_path).resolve()),
-               "-map", "0:v:0", "-filter_script:v", str(script), "-fps_mode", "passthrough",
+               "-map", "0:v:0", _filter_script_option(ffmpeg_bin), str(script), "-fps_mode", "passthrough",
                "-enc_time_base", "1:1000", "-q:v", "3", "-frame_pts", "1",
                "-y", str(directory / "frame-%012d.jpg")]
     if command_runner is None:

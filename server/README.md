@@ -68,6 +68,10 @@ HTTP 专用 Request/View 定义于 `server/model/dto/` 和 `server/model/vo/`，
 应用报告留在 `server/schema.py`。`server/api/app.py` 只创建应用、配置生命周期与中间件、
 注册异常处理和 Router。
 
+`python -m server.api` 收到停服信号后停止接受连接，最多等待 5 秒让现有 HTTP 请求收尾，
+再取消仍打开的 SSE 等请求并进入应用生命周期关闭。Consumer、Agent 等业务服务先收尾，
+随后释放数据库、ES 等 Caller 资源；这 5 秒不截断业务服务的关闭过程。
+
 ## 后台任务与共享代码
 
 `server/mq/` 是消息基础设施边界，当前使用 MySQL DB Queue，不依赖外部消息中间件。
@@ -269,6 +273,12 @@ started / evidence / delta / completed / failed；`messages/events` 单独恢复
 Artifact URI 形如 `artifact://development/...`，test/development/production 使用独立目录；
 Server 内的 API/Consumer 依赖同一个 `ArtifactStore` 边界，当前 M1 adapter 是
 `LocalArtifactStore`。
+
+宿主机的持久媒体根目录默认是 `assets/library/`，由 `SEEKINO_ARTIFACT_ROOT` 配置；
+Docker 全栈继续使用持久卷中的 `/data/artifacts`。原片、帧图与附件需要和 MySQL 配套备份。
+旧环境显式配置的 `outputs/server/artifacts` 等路径不会自动迁移；更换根目录时保留
+`development/` 等环境子目录及其内部结构，数据库中的 `artifact://...` URI 可以保持不变。
+迁移步骤见 [部署说明](../deploy/README.md#persistent-media-root)。
 
 ## 运行日志
 

@@ -445,7 +445,7 @@ def test_scoped_database_settings_ignore_unrelated_invalid_configuration(monkeyp
     assert resolve_database_url() == os.environ["SEEKINO_DATABASE_URL"]
     assert resolve_database_pool_recycle_seconds() == 3600
     assert resolve_agent_request_timeout_seconds() is None
-    assert resolve_artifact_root() == Path("outputs/server/artifacts")
+    assert resolve_artifact_root() == Path("assets/library")
     assert resolve_parse_max_height() == 720
 
 

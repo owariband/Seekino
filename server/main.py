@@ -108,6 +108,9 @@ def main() -> None:
         log_level=args.log_level,
         log_config=None,
         access_log=False,
+        # Open SSE streams must not indefinitely postpone lifespan shutdown.
+        # Business services still finish closing before Caller resources close.
+        timeout_graceful_shutdown=5,
     )
 
 

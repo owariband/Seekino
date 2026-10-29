@@ -80,13 +80,17 @@ models:
 
 上述示例只切换 Supervisor；`models.agent`、`vision`、`vision_fallback`、`ocr`、`summarize`、`rerank` 可以分别选择 `kimi_coding` / `k3.1-pro`，保留各角色现有预算、超时及视觉能力字段。转写和 embedding 保持各自专用模型。Kimi endpoint 和模型权限可对照 [Kimi 官方文档](https://www.kimi.com/code/docs/)。
 
+推理字段须按实际适配路径设置：Chat 的 Agent / Supervisor 支持 `profile: kimi` 和 `reasoning_effort: low`；通过 `GatewayClient.create_generative_model` 构造的 `vision`、`vision_fallback`、`ocr`、`summarize`、`rerank` 当前使用 `OpenAIVisionModel`，其 `reasoning_effort` 只能设为 `none` 或不设置，沿用其他供应商的 `high` / `medium` 会在构造时失败。这条路径中的 `none` 表示请求省略推理参数，使用供应商默认行为，不等于关闭 Kimi thinking。
+
+切换后先使用实际生效的 YAML 和环境变量，对上述五个角色执行 `GatewayClient.create_generative_model` 构造并关闭资源；这项检查不发模型请求，可以发现配置加载校验未覆盖的适配错误。构造通过后仍需以短片验证 OCR、解析、索引与问答，不能替代真实模型验收。
+
 | 有效模型配置 | 所需凭据 |
 | --- | --- |
 | 当前默认 Ark + DeepSeek | `ARK_API_KEY`、`DEEPSEEK_API_KEY` |
 | 仅 Supervisor 切换到 Kimi，其余保持默认 | 上述两项，加 `KIMI_API_KEY` |
 | 所有生成式角色及 fallback 使用 Kimi，转写和向量保留 Ark | `KIMI_API_KEY`、`ARK_API_KEY` |
 
-第三种方案还需处理 `models.agent.fallback`：切换到 Kimi，或移除与主模型重复的 fallback；同时核对 `models.vision_fallback`。只填 Key 或只改 Supervisor 都不能移除仍被其他角色使用的凭据。上述三种组合已通过配置校验，补齐环境模板不会改变仓库的默认模型选择。
+第三种方案还需处理 `models.agent.fallback`：切换到 Kimi，或移除与主模型重复的 fallback；同时核对 `models.vision_fallback`。只填 Key 或只改 Supervisor 都不能移除仍被其他角色使用的凭据。上述三种组合的配置加载校验不代表所有角色已通过运行时构造或真实调用；补齐环境模板不会改变仓库的默认模型选择。
 
 ### 可选 Codex
 

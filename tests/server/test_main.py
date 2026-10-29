@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.responses import StreamingResponse
 
 from server import main as main_module
 from server.api import app as app_module
@@ -157,7 +159,80 @@ def test_process_entrypoint_loads_settings_once_and_passes_them_to_uvicorn(monke
     assert run.call_args.kwargs == {
         "factory": True, "host": "0.0.0.0", "port": 19621,
         "log_level": "debug", "log_config": None, "access_log": False,
+        "timeout_graceful_shutdown": 5,
     }
     assert logging.call_args.args == ("api",)
     assert logging.call_args.kwargs["environment"] == "development"
     assert logging.call_args.kwargs["config"].level == "debug"
+
+
+def test_http_shutdown_cancels_open_stream_then_closes_application(monkeypatch):
+    events = []
+    services = SimpleNamespace(
+        mcp_retrieval=None,
+        start=lambda: events.append("start"),
+        close=lambda: events.append("business_close"),
+    )
+    runtime = main_module.ApplicationRuntime(
+        services=services,
+        resources=SimpleNamespace(close=lambda: events.append("callers_close")),
+    )
+    monkeypatch.setattr(main_module, "init_application", lambda _settings: runtime)
+    settings = SimpleNamespace(auth=AuthConfig(), sse=SSEConfig(), allowed_origins=())
+    app = main_module.create_http_application(settings=settings)
+
+    async def exercise():
+        first_body = asyncio.Event()
+        never_disconnect = asyncio.Event()
+
+        @app.get("/shutdown-stream")
+        async def stream():
+            async def body():
+                try:
+                    yield "event: messages\ndata: {}\n\n"
+                    await never_disconnect.wait()
+                finally:
+                    events.append("stream_closed")
+
+            return StreamingResponse(body(), media_type="text/event-stream")
+
+        async def receive():
+            await never_disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body" and message.get("body"):
+                first_body.set()
+
+        # Run the real ASGI stream and Uvicorn shutdown without opening a socket.
+        # A short deadline exercises the same cancellation path as the entrypoint.
+        config = main_module.uvicorn.Config(
+            app, lifespan="on", log_config=None, timeout_graceful_shutdown=0.01,
+        )
+        config.load()
+        server = main_module.uvicorn.Server(config)
+        server.servers = []
+        server.lifespan = config.lifespan_class(config)
+        await server.lifespan.startup()
+        request = asyncio.create_task(app({
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1", "method": "GET", "scheme": "http",
+            "path": "/shutdown-stream", "raw_path": b"/shutdown-stream",
+            "query_string": b"", "root_path": "", "headers": [],
+            "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 2),
+        }, receive, send))
+        server.server_state.tasks.add(request)
+        request.add_done_callback(server.server_state.tasks.discard)
+        try:
+            await asyncio.wait_for(first_body.wait(), timeout=2)
+            assert not request.done()
+            assert events == ["start"]
+            await asyncio.wait_for(server.shutdown(), timeout=2)
+            with pytest.raises(asyncio.CancelledError):
+                await request
+        finally:
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+
+    asyncio.run(exercise())
+    assert events == ["start", "stream_closed", "business_close", "callers_close"]

@@ -5,6 +5,8 @@ docs/ui-design/
 /.baoyu-skills/
 /.agents/skills/seekino-change-gate/
 /engines/*
+# Local media and generated assets; existing tracked release assets remain tracked.
+/assets/
 /assets/diagrams/*
 !/assets/diagrams/seekino-open-source-architecture.png
 /assets/seekino-mascot-pixel/out/
@@ -15,6 +17,9 @@ docs/ui-design/
 **/experiment/
 
 # Local development state
+# Persistent database files: back up using MySQL/Elasticsearch tools, not Git.
+/data/mysql/
+/data/elasticsearch/
 /.claude-tmp/
 /.kimi-tmp/
 /.research/

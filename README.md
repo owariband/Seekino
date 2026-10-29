@@ -178,7 +178,9 @@ uv run --no-sync --env-file .env.local -- python -m server.main
 uv run --no-sync --env-file .env.local -- npm --prefix web run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-main 工作区使用 `./start.sh`、`./start.sh status`、`./start.sh stop`。启动器只管理宿主机进程；停止数据库使用 `docker compose --env-file .env.local stop mysql elasticsearch`。更多端口、日志和旧环境恢复说明见[开发部署说明](deploy/README.md)。
+main 工作区使用 `./start.sh`、`./start.sh status`、`./start.sh stop`。启动器只管理宿主机进程；本路线的 Docker 数据库使用 `docker compose --env-file .env.local stop mysql elasticsearch` 停止。更多端口、日志和旧环境恢复说明见[开发部署说明](deploy/README.md)。
+
+不使用 Docker 时，按[全原生本机开发](deploy/README.md#可选全原生本机开发)安装并配置 MySQL、Elasticsearch，使用同一组 `start.sh` 命令。启动器复用已监听的数据库，或启动配置的原生程序；`stop` 只停止它管理的进程，包括由它启动的原生 MySQL 和 ES。数据库默认保存到 `data/mysql/`、`data/elasticsearch/`，媒体默认保存到 `assets/library/`，旧数据不会自动迁移。
 
 </details>
 

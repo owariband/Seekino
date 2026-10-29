@@ -17,6 +17,29 @@
 
 以下按原文主体问题的修复或澄清记录归档；待部署、待真实样本复测及性能验收等限制仍以各条正文为准。
 
+### B18：全原生 localhost 环境与真实业务验收
+
+排序日期：2026-10-29。
+
+类型：本机部署、运行验证。状态：**已解决：全原生 MySQL、ES、API、Web 已运行，授权的 12 秒短片完成上传、Kimi 解析/总结、索引、检索、观看问答及重启后持久化验收。** 用户最终选择本机开发，不运行 Docker，要求整套服务跑通，并明确允许这段 12 秒短片调用外部模型，随后要求尽量使用 Kimi。
+
+
+2026-10-29 19:28（Asia/Shanghai）闭环验收：同一视频版本 4 为 `COMPLETE`，API 记录处理用时 316,737 ms；当前 MySQL / ES 精确对应 1 个 Chunk、6 个 Event。检索“粉色长发女生说春日影是首好歌”命中正确视频与 [0,12012) ms 范围，无 warning；Kimi 观看问答实际调用 `understand_current_video`，42.8 秒完成，回答原句与画面字幕一致，两条消息及 checkpoint 均落库。摘要和封面已发布并核对磁盘/SQL/HTTP 内容。保持真实 SSE 连接时四项原生服务 10.418 秒正常停止，随后重启，任务、索引、媒体、摘要、消息和 checkpoint 再次核对全部通过。
+
+播放器最终实查发现已加载媒体仍禁用进度控件，修复 metadata 初始化与同媒体时长刷新后的状态同步；浏览器已验证进度条定位及后退 10 秒，暂停位置为 2.012 秒。相关播放器/观看页测试 48 passed，播放器/进度/身份隔离回归 51 passed（两组重叠），类型检查与最终 production build 通过。临时模型 trace 配置及防休眠进程已关闭，四项本机服务保留运行。七个生成式角色配置为 Kimi；ASR 使用 Ark `doubao-seed-2-0-lite-260428`，向量使用已实测的 `doubao-embedding-vision-251215` / 1024 维及独立新索引。
+
+验收范围是这一短片与单次检索、单轮观看问答；没有据此宣称长视频质量或跨视频召回全部达标。旧 12 集原片归档不等于旧 MySQL 解析成果已恢复，B17 继续保持 TODO。证据：[重启后持久化报告](../../outputs/verification/native-local-20261029/persistence-report.json)、[真实 SSE 停服](../../outputs/verification/native-local-20261029/sse-shutdown-report.json)、[浏览器结果](../../outputs/verification/native-local-20261029/browser-acceptance-final.jpg)。
+
+以下是闭环前的初验记录，保留配置错误与失败版本的追溯信息：
+
+- 已实施：从官方安装包配置 MySQL 8.4.13 / Elasticsearch 8.19.22 Apple Silicon 原生运行时；本机 `.env.local` 指向安装路径，数据分别保存到 `data/mysql` / `data/elasticsearch`，媒体仍为 `assets/library`。数据库底层文件不提交 Git，但明确不是缓存。启动器增加 ES 原生启动与既有 checkpoint / Event index 初始化，保留已存在实例复用和旧 MySQL 目录保护。
+- 兼容修复：本机 FFmpeg 9.0.2 已移除 `-filter_script:v`，抽帧改为探测文件参数能力并使用 `-/filter:v`；旧版本显式不支持时仍使用旧参数。原生启动器专项最终 82 passed，抽帧与解析媒体 51 passed，前端 production build 通过。
+- 实机验证：四个服务均仅监听 `127.0.0.1`，API / Parse Consumer 健康，Web 代理查询与直接 API 一致；MySQL 28 张表及 22 条 checkpoint migration 可读，Chunk / Event 两个索引可用。ES 单节点 yellow 的未分配项均为副本，两个主分片正常。执行完整 `stop → start` 成功，MySQL 未重复初始化；浏览器正常显示新开发库空状态。Docker socket 不存在，云服务器未部署。
+- 真实验收进展：EP04 8–20 秒、12 秒验收片已上传；HTTP 全文 SHA-256 一致、206 Range 精确字节和 H.264/AAC 元数据检查通过。自动审批最初要求确认媒体外传，用户随后明确授权并指定优先 Kimi；本机 `config/local-dev-config.yaml`（原 `local-kimi.yaml`，2026-10-29 更名） 将七个生成式角色设为 `kimi_coding/k3.1-pro`，转写与向量仍为 Ark。首版因继承视觉 `reasoning_effort=high/medium` 在调用前失败，修正为 `none` 并通过七角色无网络构造检查；显式带新配置重解析同一视频为版本 2，保留版本 1 的失败证据。Kimi OCR 实际请求已返回成功，理解仍在执行；检索与观看问答尚未验收完成。不能将环境健康写成视频全链路验收完成，也不等于 B17 的旧 MyGO 成果恢复。
+
+依据：[原生启动说明](../../deploy/README.md#可选全原生本机开发)、[运行报告](../../outputs/verification/native-local-20261029/runtime-report.json)、[安装与检查记录](../../outputs/verification/native-local-20261029/setup-report.json)、[本次 devlog](devlog.md#devlog-native-local-20261029)。
+
+
 ### B14：Event 索引补建反复重写大 JSON，45 分钟产生 20.61 万个 UPDATE 事件与 44.106 GB binlog
 
 排序日期：2026-10-19。
@@ -559,6 +582,25 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 ## TODO（待修复解决）
 
 以下保留未修复、部分完成或同条目仍有主体问题未解决的记录，已实施的阶段性修复与历史证据一并保留。
+
+### B17：持久媒体目录与旧资料库恢复
+
+2026-10-29 补充：hypnos 要求将整个 `assets/` 加入 Git ignore，排除未跟踪素材；已跟踪发布资产保留。此前“未忽略”的检查仅描述当时状态，媒体仍须独立备份。
+
+排序日期：2026-10-29。
+
+类型：持久资产布局、换机恢复。状态：**媒体默认目录和本机配置已改为 `assets/library`，12 集原片已归档并校验；旧 MyGO 数据库成果与实际播放、检索尚未恢复，保持 TODO。** 用户要求重要原片离开易被视为临时输出的目录，并复用过去 MySQL 中的解析成果；随后明确不希望本机运行 Docker，最终选择全原生 localhost，环境配置与验收进展见 B18。
+
+- 已完成：配置解析、启动器和 `.env.example` 的媒体默认根一致，本机 `.env.local` 同步；`assets/library` 不加入 ignore。旧媒体根实查没有文件，无文件需要从旧根迁走。12 个完整 MP4 共 5,055,403,557 bytes，保存于 `assets/library/sources/mygo/`，与旧样例目录为同盘硬链接；大小、SHA-256、inode 对应关系已核验，`ffprobe` 可识别音视频。第 11 集仍为下载中的 `.part`，未纳入恢复。
+- 恢复依据：10 集哈希与历史验收记录一致，EP01、EP07 未找到历史哈希依据；尚未与真实旧库核对。改名前的部署记录指定旧 MyGO 主业务库为 `anivag_local_20261010_development`；找到的本机 `seekino-rename-20261028/database-before.sql` 实际导出自另一个库 `anivag_development`，为 57,017 bytes、28 个表结构，只有 `checkpoint_migrations` 含 INSERT，没有视频和解析成果，不能作为旧 MyGO 备份导入。
+- 同日追加只读核对：运行中 API 的进程环境与 `.env.local` 均指向 `127.0.0.1:3306/seekino_development`；MySQL 8.4.13 实际数据目录为 `data/mysql/`。该实例除系统库外只有这一个业务库，`series=1`、`video=1`、`video_parse_task=4`、`chunk_parse_content=2`、`interval_parse_content=2`，对应本轮单条验收视频及其解析版本；没有另一个已加载的旧库可直接切换。这个快照不代表旧设备或其他数据库实例的状态。
+- 同日恢复请求补查：用户明确旧电脑和整机备份均已不可用，并指认 `docs/migrations`。逐项检查该目录 22 个 SQL：INSERT 仅写入 `_bm_*` 临时结构校验表、默认本地 user/tenant 和 checkpoint 版本，不包含 MyGO 的系列、视频、解析成果或对话数据。个人仓库 Git 历史、AniVAG 未跟踪源码包及学习报告源码归档也未找到业务备份；本机 Time Machine 未列出快照或备份目的地。现有原片可作为重建输入，但不能据此恢复旧 ID、解析版本或消息历史。本轮未执行升级脚本、导入 SQL、启动 Docker 或触发整集重解析；[逐文件审计](../../assets/library/recovery/database-audit-20261029.json)保留文件哈希和检查范围。
+- 迁移缺口：`/Users/hypnos/workspace/restore-report.json` 明确记录目录迁移未恢复数据库；10 月 28 日命名空间切换记录也说明当时检查的 `anivag_development` 业务表为空，所以启用了新空库。项目与已知迁移目录的有界搜索，以及三份源码／个人归档的成员核对，未发现旧 MyGO 业务 dump 或 MySQL 数据文件。仓内[换机材料范围](../migration/20261023/README.md#仍需私下备份的内容)明确将数据库备份列为另行私下保存的内容；完整核对路径见下方 devlog。未排除旧设备、其他备份或停止的数据库存储，不能断言旧数据永久丢失。
+- 验证：配置、启动器与存储相关测试 422 passed；实际配置解析为 `assets/library`，12 个原片路径均未被 Git ignore。曾启动 Docker Desktop 进行恢复准备，用户提出不使用 Docker 后已执行停止；未导入 SQL、重建索引或触发模型调用。
+- 云端准备：按用户授权配置本机 `seekino-server` SSH 别名与 0600 私钥，未把密钥写入仓库。直连超时后，按用户提供的 docrag 经验增加本机 SOCKS ProxyCommand 和目标 IP/22 端口的日本节点规则，实际登录及 16 MiB 合成传输通过。服务器 4 vCPU、约 8 GB 内存、约 108 GiB 磁盘剩余；常见项目路径未发现 Seekino，MySQL/ES 未监听。保持既有代理组选项，未实施云端部署或上传原片。
+- 剩余验收：读取真实旧业务数据库或其备份；按旧 URI 与哈希关联原片，核对派生媒体，验证播放与 ES 检索。只有表结构或原片不能恢复旧解析成果，评测 fixture 不作为业务数据库替代品。本轮新开发库初始化不代表恢复了旧库。
+
+依据：[媒体目录与迁移合同](../../deploy/README.md#persistent-media-root)、[原片清单](../../assets/library/recovery/mygo-20261029.json)、[本次 devlog](devlog.md#devlog-persistent-media-20261029)。
 
 ### C20：Cloud Chat 的 pi 与 Deep Agents 上下文职责重复，需收敛持久化与恢复合同
 
