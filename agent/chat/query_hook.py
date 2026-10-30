@@ -226,7 +226,7 @@ class QueryHook:
     def _append(state: _HookState) -> dict:
         state["control"].check()
         candidate = state["retrieval_query"]
-        hint = f"\n候选检索用语（JSON 字符串）：{context_json(candidate)}" if candidate else ""
+        hint = f"\n候选检索用语：{context_json(candidate)}" if candidate else ""
         return {"output": (
             f"{state['query']}\n\n[本轮处理说明｜应用生成]\n"
             f"{TEMPLATES[state['action']]}{hint}\n{TURN_SCOPE}\n[/本轮处理说明]"

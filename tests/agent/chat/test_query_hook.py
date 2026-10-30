@@ -67,7 +67,7 @@ def test_combined_decision_preserves_original_without_calling_legacy_models(acti
     assert callable(options["check_control"])
     assert [c.operation for c in usage] == ["query_hook_decision"]
     assert usage[0].context["stage"] == "query_hook"
-    assert ("候选检索用语（JSON 字符串）：" in output) == (query is not None)
+    assert ("候选检索用语：" in output) == (query is not None)
 
 
 @pytest.mark.parametrize("payload", [
@@ -145,7 +145,7 @@ def test_template_branch_preserves_original_and_never_asks_8b_to_route(action):
         assert "真是高高在上呢" in output
     else:
         assert "不新增视频检索" in output
-        assert "候选检索用语（JSON 字符串）：" not in output
+        assert "候选检索用语：" not in output
 
 
 def test_mixed_does_not_force_response_order_or_rewrite_response_task():
@@ -155,7 +155,7 @@ def test_mixed_does_not_force_response_order_or_rewrite_response_task():
     output = hook(models)(inputs, ExecutionControl(None))
     assert inputs["user_message"] in output
     assert "先后顺序遵循当前原文" in output
-    assert "候选检索用语（JSON 字符串）：\"她后来参加活动的画面\"" in output
+    assert "候选检索用语：\"她后来参加活动的画面\"" in output
 
 
 def test_route_failure_uses_original_and_rewrite_failure_retains_template():
@@ -168,7 +168,7 @@ def test_route_failure_uses_original_and_rewrite_failure_retains_template():
     models.rewrite_error = QueryHookModelError("unavailable")
     output = hook(models)(inputs, ExecutionControl(None))
     assert "简单检索" in output
-    assert "候选检索用语（JSON 字符串）：" not in output
+    assert "候选检索用语：" not in output
 
 
 @pytest.mark.parametrize("stage", ["route", "rewrite"])
@@ -264,7 +264,7 @@ def test_each_turn_is_independent_and_usage_keeps_parent_identity():
         models.action = "respond"
         second = before(inputs, ExecutionControl(None))
     assert "简单检索" in first and "简单回应" in second
-    assert "候选检索用语（JSON 字符串）：" not in second
+    assert "候选检索用语：" not in second
     assert [call.model for call in usage] == ["jev", "8b", "jev"]
     assert all(call.context["stage"] == "query_hook" for call in usage)
     assert all(call.context["tenant_id"] == "tenant" and call.context["run_id"] == "run" for call in usage)
