@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：模型连接异常分类、有限重试与可诊断日志。2026-10-30 初稿，PR 待创建。
+需求：模型连接异常分类、有限重试与可诊断日志。2026-10-30，[PR #13](https://github.com/owariband/Seekino/pull/13)。
 
 Karpathy v3 任务在直接 JSON 理解链路失败。OpenAI SDK 的 APIConnectionError、APITimeoutError、HTTP 504 原样穿透 Gateway；节点重试只识别 Python/httpx 异常或 MODEL_TIMEOUT。最终被呈现为“执行异常”，并停止整集派发。正式节点终止日志没有异常链，无法区分网络断连与服务端超时。
 
