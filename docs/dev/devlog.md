@@ -22,6 +22,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-30：正式 Kimi 生成入口接入流式](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
 | [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
 | [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
 | [2026-10-30：Understanding 直接 JSON 与 30k 正式接入](#devlog-parse-direct-json-20261030) | B07、实现闭环 |
@@ -114,6 +115,36 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-kimi-streaming-20261030"></a>
+
+## 2026-10-30：正式 Kimi 生成入口接入流式
+
+### 问题与现状
+
+正式 Kimi direct JSON 和视觉工具调用固定 `stream=False`，MyGO EP04 首个长 Chunk 在 3 / 1 / 0.5 fps 下各一次返回 504。历史 `k3` Responses 流式实验已有成功记录，但没有及时对照正式 `k3.1-pro` Chat 接线，降帧实验没有解决问题。详细基线和适用边界见 [TRD](../design/03-product-reassessment/kimi-streaming-trd.md)。
+
+### 方案候选
+
+优先修复明确遗漏的流式接线，保留 FPS、Prompt、Schema、模型与推理配置以隔离变量。Kimi profile 自动使用 Chat SSE，直接结果与工具轮次共用 SDK 分片收集；收齐终止 choice 后校验，不执行增量工具。测试暴露旧工具校验只为 DeepSeek 保留 reasoning，因而同时在 Kimi Chat 轮次补回 `reasoning_content`。保留 SDK 零重试，传输读取失败/EOF 使用既有错误类型，取消关闭流，分片之间检查预算；无事件的阻塞读取仍受 HTTP 超时约束。
+
+### 方案验证
+
+独立分支 `fix/kimi-streaming`、[PR #20](https://github.com/owariband/Seekino/pull/20)，首提交 `218d96a1` 仅含 TRD。真实 OpenAI SDK + HTTP MockTransport 覆盖正式工厂、三种入口、尾部 usage、reasoning、工具参数、取消、预算、断流及诊断。相关七个测试文件 281 passed / 1 failed；唯一失败为既有 fallback context 用例，在未改的 `dev` / `df83c3f9` 同样失败。
+
+22:59 只发出一次合成红蓝图请求，正式 `vision` 工厂、`k3.1-pro`、30k max tokens、60 秒、无自动重试，JSON 校验通过。探针首次执行在发送请求前因误读句柄层属性退出，修正探针后才发出这一次请求。
+
+用户追加一次原 189 帧的真实素材授权，并明确要求直接测试 Parse；23:18–23:23 改为调用正式 `ParseAgent.chunk_workflow.InvokeUnderstanding()` → Server → Gateway，复用原帧和 ASR，仅在本地接收提交结果。实际发出请求与原失败请求核对一致（流式和传输控制除外）。338.941 秒完成，21 个事件通过 Schema、时间范围和 Canvas；另有 22 项 Parse Prompt/服务层测试通过。原始结果见 [实施记录](../report/gateway/kimi-streaming-20261030.md)。未扩展为 HTTP 上传、持久任务、Refine、索引、整集质量或服务部署验收。
+
+### 指标对比
+
+| 指标 | 修改前 | 修改后实测 | 边界 |
+| --- | --- | --- | --- |
+| Kimi 正式生成入口请求 | `stream=False` | `stream=True` + include_usage | 直接 JSON、legacy、Deep Agents 均由工厂测试覆盖 |
+| 合成图流式完成 | 未测此流式版本 | 首片 5.520 秒、总计 7.431 秒、110 片 | 单请求，不能推算长视频性能 |
+| 合成图 usage | 不适用 | 242 input、122 output，其中 84 reasoning | 总计 364 tokens，未估计真实视频 context |
+| 原视频 Chunk | 原 3 fps 301.732 秒 504；其他两档各一次也失败 | 原 3 fps 流式 338.941 秒通过，首片 28.729 秒 | 单样本真实 Parse，通过不等于总体稳定性 |
+| 原视频 Chunk tokens | 504 未返回 usage | input 238222 / output 11618（含 reasoning 9250） | 输入占配置窗口 90.874%，未重新实测低 FPS |
 
 <a id="devlog-full-video-asr-20261029"></a>
 

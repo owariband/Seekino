@@ -404,7 +404,9 @@ class GatewayClient:
                 if isinstance(source, OpenAIVisionSourceConfig) else {}
             )
             delegate = OpenAIVisionModel(
-                **common, provider=source.provider, base_url=source.base_url, api_key=key, **options,
+                **common, provider=source.provider, base_url=source.base_url, api_key=key,
+                stream=isinstance(source, OpenAIModelSourceConfig) and source.profile == "kimi",
+                **options,
             )
         elif isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
             common.update(

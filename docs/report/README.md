@@ -31,6 +31,8 @@
 
 ## Gateway
 
+流式接入：[2026-10-30 正式 Kimi 生成与 Parse 入口验证](gateway/kimi-streaming-20261030.md)。工厂、直接 JSON 与视觉工具 SSE 覆盖；合成图和原 189 帧长 Chunk 均完成，部署与整集效果单独验收。
+
 API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-20261030.md)。两轮各 10 路短文本请求全部通过，关闭重试，保留串行对照、逐请求时间与用量；不等于长视频解析吞吐验收。
 
 本机部署：[2026-10-29 WhisperX 三语部署与 Karpathy 解析启动](gateway/local/whisperx-deployment-20261029.md)，包含实际权重、样本、配置切换、验证边界与原始证据位置。
