@@ -107,6 +107,61 @@ def _prepare(factory, queue, task_id: str, *, chunk_count: int):
     return repo, lease, prepared
 
 
+def _whole_video_asr_task(factory):
+    task_id = _task(factory, chunk_count=2, accepted=True)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        config = deepcopy(task.parse_config)
+        config["models"]["asr"].update(mode="lite", scope="video")
+        config["execution"]["max_retry_count"] = 1
+        task.parse_config = config
+    return task_id
+
+
+def test_video_asr_blocks_resumed_chunks_until_current_lease_is_prepared(repository):
+    from dataclasses import replace
+
+    engine, _ = repository
+    factory = create_session_factory(engine)
+    task_id = _whole_video_asr_task(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=1)
+    repo, lease, prepared = _prepare(factory, queue, task_id, chunk_count=2)
+    assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.finish_video_asr_preparation(replace(lease, worker_id="stale"), now=NOW)
+    repo.finish_video_asr_preparation(lease, now=NOW)
+    assert queue.release_execution(lease, now=NOW)
+    assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None
+    resumed = queue.claim_video("resumed", lease_duration=timedelta(minutes=5), now=NOW)
+    assert resumed.lease_version > lease.lease_version
+    assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None
+    repo.finish_video_asr_preparation(resumed, now=NOW)
+    child = queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW)
+    assert child.chunk_parse_task_id == prepared.chunk_parse_task_ids[0]
+
+
+@pytest.mark.parametrize("failure", ["provider", "expired_lease"])
+def test_resumed_video_asr_failure_has_a_finite_prepare_budget(repository, failure):
+    engine, _ = repository
+    factory = create_session_factory(engine)
+    task_id = _whole_video_asr_task(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=1)
+    repo, lease, _ = _prepare(factory, queue, task_id, chunk_count=2)
+    clock = NOW
+    for attempt in range(2):
+        if failure == "provider":
+            result = queue.retry_video(lease, error="ASR failed", now=clock)
+            assert result.prepare_failure_count == attempt + 1
+        else:
+            clock = lease.lease_expire_time + timedelta(seconds=1)
+            assert queue.reap_expired_videos(now=clock) == 1
+        clock += timedelta(minutes=10)
+        lease = queue.claim_video("resumed", lease_duration=timedelta(minutes=5), now=clock)
+        assert (lease is None) == (attempt == 1)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).status == "PARSING_FAILED"
+
+
 def test_video_claim_requires_explicit_v2_acceptance(repository):
     engine, _unused = repository
     factory = create_session_factory(engine)

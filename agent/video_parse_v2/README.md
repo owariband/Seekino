@@ -256,6 +256,18 @@ service prepares media and executes the model. With Understanding
 disabled, the workflow directly calls Engine's pure observation-to-event
 conversion and applies the same time-range validation before committing.
 
+With `models.asr.scope=video`, the host transcribes the original audio once before
+publishing episode media, then the same Chunk ASR entry selects overlapping cues.
+Cues retain complete text and absolute times as boundary context; write bounds
+and TimelineEvent stay unchanged. This mode requires Understanding and an audio
+provider. Its cache belongs to the current coordinator lease in the shared
+RuntimeService; recovery rebuilds it without discarding committed Chunk content.
+No persistent ASR checkpoint is implied. Historical snapshots default to `chunk`.
+Chunk admission requires the current coordinator's preparation receipt, written
+only after both transcript and media are ready. Recovery invalidates the old
+receipt; ASR preparation errors and expired preparation leases share the finite
+Prepare retry budget. New on-demand playback tasks retain Chunk-scoped ASR.
+
 Refine input includes each member's content, version, bounds, sequence, and
 ordered scope, plus original evidence and full content fingerprints. Understanding
 receives ASR/OCR and background directly and returns one `VideoParseResult` JSON

@@ -45,6 +45,8 @@ from ..service.video_parse_task import (
     _latest_video_task_id,
     _submitted_intervals_by_member,
     _video_failure_status as _task_failure_status,
+    _requires_video_asr,
+    _video_asr_prepared,
 )
 from ..repository import video_parse_task as task_store
 from ..service.video_parse_voiceprint import _record_voiceprint_failure as _voiceprint_failure
@@ -136,7 +138,7 @@ class MySqlVideoParseQueue:
                 and parent.status == "PENDING"
             )):
                 return None
-            if not _phase_capacity(session, parent, "parse"):
+            if not _phase_capacity(session, parent, "parse", now=claimed_at):
                 return None
             child = session.scalar(select(ChunkParseTask).where(
                 ChunkParseTask.id == chunk_parse_task_id,
@@ -230,7 +232,7 @@ class MySqlVideoParseQueue:
                     VideoParseTask.id == parent_id,
                 ).with_for_update(skip_locked=True))
                 if (not _eligible_parent(parent) or phase == ChunkTaskPhase.PARSE and parent.status != "PARSING"
-                    or not _phase_capacity(session, parent, stage)):
+                    or not _phase_capacity(session, parent, stage, now=claimed_at)):
                     continue
                 children = list(session.scalars(select(ChunkParseTask).join(
                     VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
@@ -305,7 +307,7 @@ class MySqlVideoParseQueue:
                     or (parent.parse_config.get("voiceprint") is not None
                         or parent.parse_config.get("voiceprint_mode", "off") != "off")
                     and dict((parent.detail or {}).get("voiceprint") or {}).get("ready") is not True
-                    or not _phase_capacity(session, parent, "refine")):
+                    or not _phase_capacity(session, parent, "refine", now=claimed_at)):
                     continue
                 candidates = list(session.scalars(select(IntervalParseTask).where(
                     IntervalParseTask.video_task_id == parent.id,
@@ -601,21 +603,11 @@ class MySqlVideoParseQueue:
             prepare_failure_count = None
             retry_at = failed_at + timedelta(seconds=execution["retry_initial_delay_seconds"])
             exhausted = False
-            if task.status == "PREPARING":
-                detail = _ensure_runtime(task.detail)
-                runtime = detail[RUNTIME_DETAIL_KEY]
-                failures = runtime.get(PREPARE_FAILURES_KEY, 0)
-                if type(failures) is not int or failures < 0:
-                    raise ValueError("persisted Prepare failure count must be a nonnegative integer")
-                failures += 1
-                prepare_failure_count = failures
-                runtime[PREPARE_FAILURES_KEY] = failures
-                task.detail = detail
-                exhausted = failures > execution["max_retry_count"]
-                retry_at = failed_at + task_retry_delay(
-                    execution["retry_initial_delay_seconds"], execution["retry_max_delay_seconds"],
-                    failures,
-                )
+            if task.status == "PREPARING" or (
+                task.status == "PARSING" and _requires_video_asr(task) and not _video_asr_prepared(task)
+            ):
+                prepare_failure_count, exhausted = _record_prepare_failure(task, failed_at)
+                retry_at = task.next_execute_time
             elif task.status == "PARSING":
                 # An error loading/binding the snapshot can roll back the active
                 # marker itself. Real coordinator failures still have a finite budget.
@@ -807,11 +799,16 @@ class MySqlVideoParseQueue:
                     continue
                 # Waiting coordinators are free to resume; interrupted voice preparation
                 # spends the same finite failure budget as an explicit execution error.
-                failures, exhausted = _record_voiceprint_failure(session, task, reaped_at)
+                asr_pending = (task.status in {"PREPARING", "PARSING"}
+                               and _requires_video_asr(task) and not _video_asr_prepared(task))
+                failures, exhausted = (_record_prepare_failure(task, reaped_at) if asr_pending
+                                       else _record_voiceprint_failure(session, task, reaped_at))
                 if failures is None:
                     task.next_execute_time = reaped_at
                 elif (task.last_error or {}).get("code") != "PARSE_NODE_FAILED":
-                    task.last_error = _error_detail("Voiceprint preparation coordinator lease expired")
+                    task.last_error = _error_detail(
+                        "Video ASR preparation coordinator lease expired" if asr_pending
+                        else "Voiceprint preparation coordinator lease expired")
                 task.lease_owner = None
                 task.lease_expire_time = None
                 task.heartbeat_time = None
@@ -959,7 +956,12 @@ def _eligible_parent(parent: VideoParseTask | None) -> bool:
                 and _video_failure_status(parent) is None)
 
 
-def _phase_capacity(session: Session, parent: VideoParseTask, phase: str) -> bool:
+def _phase_capacity(session: Session, parent: VideoParseTask, phase: str, *, now: datetime) -> bool:
+    if phase == "parse" and _requires_video_asr(parent) and (
+        not _video_asr_prepared(parent) or parent.lease_owner is None
+        or parent.lease_expire_time is None or parent.lease_expire_time <= now
+    ):
+        return False
     execution = _execution_config(parent.parse_config)
     if phase == "refine":
         statement = select(func.count(IntervalParseTask.id)).where(
@@ -1055,6 +1057,22 @@ def _fail_child(child, parent: VideoParseTask, now: datetime, error: str,
     child.finish_time = now if exhausted else None
     child.last_error = _error_detail(error)
     child.update_time = datetime_to_unix_time_ms(now)
+
+
+def _record_prepare_failure(task: VideoParseTask, now: datetime) -> tuple[int, bool]:
+    detail = _ensure_runtime(task.detail)
+    runtime = detail[RUNTIME_DETAIL_KEY]
+    failures = runtime.get(PREPARE_FAILURES_KEY, 0)
+    if type(failures) is not int or failures < 0:
+        raise ValueError("persisted Prepare failure count must be a nonnegative integer")
+    failures += 1
+    runtime[PREPARE_FAILURES_KEY] = failures
+    task.detail = detail
+    execution = _execution_config(task.parse_config)
+    task.next_execute_time = now + task_retry_delay(
+        execution["retry_initial_delay_seconds"], execution["retry_max_delay_seconds"], failures,
+    )
+    return failures, failures > execution["max_retry_count"]
 
 
 def _record_voiceprint_failure(session: Session, parent: VideoParseTask, now: datetime, *, pending_failure: bool = False):

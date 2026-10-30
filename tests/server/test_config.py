@@ -622,6 +622,27 @@ def test_request_generation_uses_the_es_version_boundary():
         }))
 
 
+def test_whisperx_defaults_freeze_video_scope_and_explicit_chunk_scope_round_trips(monkeypatch):
+    from gateway.config import WhisperXSourceConfig
+    _clean_seekino_environment(monkeypatch)
+    settings, gateway = ServerSettings.from_environment(), load_config()
+    binding = gateway.resolve_model_binding("transcription").model_copy(update={"source": "local_asr"})
+    gateway = gateway.model_copy(update={
+        "model_sources": {**gateway.model_sources, "local_asr": WhisperXSourceConfig(alignment_models={"en": "/align"})},
+        "normalized_models": {**gateway.normalized_models, "transcription": binding},
+    })
+    profile = ParseConfig.from_defaults(
+        runtime=settings.parse, gateway=gateway, upload=settings.upload, images=settings.images,
+        embedding_model=settings.video_embedding_model, embedding_dimensions=settings.text_vector_dimensions,
+        embedding_fps=settings.video_embedding_fps,
+    )
+    assert profile.asr.scope == "video"
+    assert profile.to_video_parse_v2().models.asr.model_dump()["scope"] == "video"
+    old = profile.model_copy(update={"asr": profile.asr.model_copy(update={"scope": "chunk"})})
+    assert "scope" not in old.model_dump()["asr"]
+    assert "scope" not in old.to_video_parse_v2().models.asr.model_dump()
+
+
 def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):
     _clean_seekino_environment(monkeypatch)
     settings = ServerSettings.from_environment()

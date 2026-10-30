@@ -609,6 +609,17 @@ class ParseJobRepository:
                 # Historical Interval Index measurements remain valid audit data.
                 if submitted and bound and child.lease_version > bound:
                     children[("index", "interval", child.id)] = (child, bound + 1, child.lease_version)
+            config = record.parse_config if isinstance(record.parse_config, dict) else {}
+            models = config.get("models") if isinstance(config.get("models"), dict) else {}
+            asr = models.get("asr") if isinstance(models.get("asr"), dict) else {}
+            if asr.get("scope") == "video" and asr.get("mode") != "none":
+                versions = [entry.get("lease_version") for entry in entries.values()
+                            if isinstance(entry, dict) and entry.get("phase") == "asr"
+                            and entry.get("execution_task_id") == record.id
+                            and type(entry.get("lease_version")) is int
+                            and 1 <= entry["lease_version"] <= record.lease_version] if valid_ledger else []
+                covered = covered and bool(versions)
+                children[("asr", "video", record.id)] = (record, 1, max(versions, default=0))
             spans, seen, active = [], set(), 0
             fields = {"phase", "execution_kind", "execution_task_id", "lease_version", "worker_id",
                       "started_at_ms", "elapsed_ms", "finished", "outcome"}
@@ -630,7 +641,8 @@ class ParseJobRepository:
                 child = identity[0]
                 if not entry["finished"]:
                     live = (child.lease_version == version and child.lease_owner == entry["worker_id"]
-                        and child.status == ("RUNNING" if entry["execution_kind"] == "chunk" else "REFINING")
+                        and (child.status in {"PENDING", "PREPARING", "PARSING"} if entry["execution_kind"] == "video"
+                             else child.status == ("RUNNING" if entry["execution_kind"] == "chunk" else "REFINING"))
                         and (entry["execution_kind"] != "chunk" or child.phase == (ChunkTaskPhase.PARSE if phase == "understand" else ChunkTaskPhase.INDEX))
                         and child.lease_expire_time is not None
                         and datetime_to_unix_time_ms(child.lease_expire_time) > observed_at_ms)

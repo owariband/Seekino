@@ -54,7 +54,7 @@ from agent.video_parse_v2.state import (
     VideoTaskStatus,
 )
 from engine.common.transcription import TranscriptAnalysis, VideoASRAgent, normalize_transcription
-from engine.parsev2.observations import ASRResult, OCRResult
+from engine.parsev2.observations import ASRResult, OCRResult, select_asr_window
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import VideoParseResult
 from engine.parsev2.validation import (
@@ -194,6 +194,8 @@ class VideoParseRuntimeService:
             "video_parse_v2_model_manager", default=None
         )
         self._change_events: dict[str, threading.Event] = {}
+        # Ready before episode media is published; scoped to the coordinator lease.
+        self._video_transcripts: dict[tuple[str, int], ASRResult] = {}
         self.agent = ParseAgent(runtime=self)
 
     # Consumer entry points -------------------------------------------------
@@ -201,10 +203,15 @@ class VideoParseRuntimeService:
     async def prepare(self, lease: VideoParseLease) -> None:
         token = self._video_lease.set(lease)
         media_context = None
+        video_asr = False
         try:
             task_input = await asyncio.to_thread(self._persistence.load_task_input, lease.video_parse_task_id)
             if task_input.task.status != "COMPLETE":
                 config = self._parse_input(task_input).parse_config
+                if (config.models.asr.mode != "none" and config.models.asr.scope == "video"
+                        and task_input.task.status in {"PENDING", "PREPARING", "PARSING"}):
+                    video_asr = True
+                    await self._prepare_video_asr(lease, task_input, config.models.asr)
                 visual = config.visual_input
                 video_required = visual.mode == "video"
                 if not video_required and config.models.asr.mode != "none":
@@ -226,6 +233,8 @@ class VideoParseRuntimeService:
                     check_active=lambda: self._require_video_active(lease),
                 )
                 await self._run_blocking(media_context.__enter__)
+                if video_asr:
+                    await asyncio.to_thread(self._persistence.finish_video_asr_preparation, lease)
             await self.agent.InvokeVideoParse(lease.video_parse_task_id)
         except asyncio.CancelledError as error:
             if not getattr(error, "voiceprint_failed", False):
@@ -239,7 +248,37 @@ class VideoParseRuntimeService:
                 if media_context is not None:
                     await cleanup_execution(media_context.__exit__, None, None, None)
             finally:
+                if video_asr:
+                    self._video_transcripts.pop((lease.video_parse_task_id, lease.lease_version), None)
                 self._video_lease.reset(token)
+
+    async def _prepare_video_asr(self, lease, task_input, model) -> None:
+        """Transcribe once before publishing media to any Chunk consumer."""
+        async with self._model_stage(
+            lease, task_input, sequence_no=None, category="parse", stage="asr",
+            check_active=lambda: self._require_video_active(lease),
+        ):
+            transport = self._transcription_model(model)
+            try:
+                if transport.input_mode != "audio":
+                    raise ValueError("video ASR scope requires an audio transcription provider")
+                context = self._media_service.prepare_speaker_audio(
+                    MediaLeaseIdentity(lease.video_parse_task_id, lease.video_parse_task_id,
+                                       lease.lease_version, execution_kind="video"),
+                    source_video=self._artifact_store.resolve(task_input.original_source_uri),
+                    start_ms=0, end_ms=task_input.duration_seconds,
+                    check_active=lambda: self._require_video_active(lease),
+                )
+                try:
+                    audio = await self._run_blocking(context.__enter__)
+                    payload = await self._run_blocking(transport.transcribe, audio)
+                    analysis = normalize_transcription(payload, duration_seconds=task_input.duration_seconds)
+                    self._require_video_active(lease)
+                    self._video_transcripts[(lease.video_parse_task_id, lease.lease_version)] = analysis.model_dump()
+                finally:
+                    await cleanup_execution(context.__exit__, None, None, None)
+            finally:
+                await cleanup_execution(transport.close)
 
     async def understand(self, lease: ChunkParseLease) -> None:
         binding = _ChunkBinding(lease)
@@ -941,6 +980,16 @@ class VideoParseRuntimeService:
         model = execution.inputs.parse_config.models.asr
         if model.mode == "none":
             return {"transcript": []}
+        if model.scope == "video":
+            binding = self._require_chunk_execution(execution)
+            key = (execution.video_parse_task_id, binding.state.task_input.task.lease_version)
+            transcript = self._video_transcripts.get(key)
+            if transcript is None:
+                raise VideoParseLeaseLostError("Video ASR cache is unavailable for this coordinator lease")
+            return select_asr_window(
+                transcript, start_ms=execution.allowed_start_seconds,
+                end_ms=execution.allowed_end_seconds,
+            )
         duration = execution.allowed_end_seconds - execution.allowed_start_seconds
         transport = self._transcription_model(model)
         try:
@@ -1551,6 +1600,7 @@ class VideoParseRuntimeService:
         track_execution = (
             isinstance(lease, ChunkParseLease)
             or isinstance(lease, IntervalParseLease) and category == "parse"
+            or isinstance(lease, VideoParseLease) and stage == "asr"
         )
         timing_started_at = time.time_ns() // 1_000_000
         timing_started = time.monotonic()
@@ -1722,7 +1772,7 @@ class VideoParseRuntimeService:
     def _transcription_model(self, model):
         definition = ModelBinding.model_validate({
             key: value for key, value in model.model_dump(exclude_none=True).items()
-            if key not in {"mode", "fps"}
+            if key not in {"mode", "fps", "scope"}
         }).model_copy(update={"kind": "transcription"})
         return self._gateway.create_transcription_model(definition)
 
