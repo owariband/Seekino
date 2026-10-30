@@ -44,16 +44,19 @@ def set_paused(session: Session, task_id: str, *, tenant_id: str, paused: bool,
     task.lease_version += 1
     task.lease_owner = task.lease_expire_time = task.heartbeat_time = None
     task.next_execute_time = _PAUSE_HOLD if paused else now
-    if paused:
-        for store, running, waiting in ((chunks, "RUNNING", "QUEUED"), (intervals, "REFINING", "WAITING")):
-            for child in store.list_tasks(session, task.id, for_update=True):
-                if child.status == running:
-                    child.status = waiting
-                    child.lease_version += 1
-                    child.lease_owner = child.lease_expire_time = None
-                    child.start_time = None
-                    child.update_time = now_ms
-                    store.save_task(session, child)
+    for store, running, waiting in ((chunks, "RUNNING", "QUEUED"), (intervals, "REFINING", "WAITING")):
+        for child in store.list_tasks(session, task.id, for_update=True):
+            if paused and child.status == running:
+                child.status = waiting
+                child.lease_version += 1
+                child.lease_owner = child.lease_expire_time = None
+                child.start_time = None
+            if child.status in {"QUEUED", "WAITING"}:
+                # Old realtime consumers check child due time before acquiring
+                # parent capacity. Park these too during a rolling deployment.
+                child.next_execute_time = _PAUSE_HOLD if paused else now
+                child.update_time = now_ms
+                store.save_task(session, child)
     if paused:
         for entry in runtime.get("execution_timing", {}).get("entries", {}).values():
             if isinstance(entry, dict) and not entry.get("finished", False):

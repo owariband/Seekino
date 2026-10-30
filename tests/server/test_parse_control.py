@@ -70,6 +70,8 @@ def test_pause_blocks_realtime_and_due_claims_even_without_hold_time(repository)
         from sqlalchemy import select
         child=s.scalar(select(ChunkParseTask).where(ChunkParseTask.video_task_id==task_id))
         child_id=child.id
+    with factory.begin() as s:
+        s.get(ChunkParseTask,child_id).next_execute_time=NOW
     assert queue.claim_realtime_chunk(child_id,'x',lease_duration=timedelta(minutes=1),now=NOW) is None
 
 
@@ -93,3 +95,20 @@ def test_pause_projection_and_asr_stage(repository):
     view=project_video_parse_task(repo.get_video_parse_task_detail(task_id,tenant_id='mine'))
     assert view.is_paused and view.can_resume and not view.can_pause
     assert view.active_stage is None and not view.can_reparse
+
+
+def test_old_realtime_consumer_cannot_bypass_pause(repository, monkeypatch):
+    factory=create_session_factory(repository[0])
+    task_id=_task(factory,chunk_count=2,accepted=True)
+    queue=MySqlVideoParseQueue(factory,video_concurrency=1)
+    _,lease,_=_prepare(factory,queue,task_id,chunk_count=2)
+    with factory.begin() as s:
+        set_paused(s,task_id,tenant_id='mine',paused=True,expected_version=1,
+                   expected_lease_version=lease.lease_version,now=NOW)
+    from sqlalchemy import select
+    with factory() as s:
+        child_id=s.scalar(select(ChunkParseTask.id).where(ChunkParseTask.video_task_id==task_id))
+    monkeypatch.setattr('server.mq.video_parse_queue.is_paused', lambda _: False)
+    assert queue.claim_realtime_chunk(child_id,'old',lease_duration=timedelta(minutes=1),now=NOW) is None
+    with factory() as s:
+        assert not s.get(VideoParseTask,task_id).capacity_acquired
