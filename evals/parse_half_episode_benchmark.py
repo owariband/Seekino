@@ -147,10 +147,12 @@ def run_a(args):
     from gateway.usage import ModelCallTracker, ModelCallCancelledError
     from engine.parsev2.observations import select_asr_window
 
-    out = args.out / 'a-current'
+    resuming = args.phase == 'resume-a'
+    out = args.out / ('a-resume-once' if resuming else 'a-current')
     out.mkdir(exist_ok=True)
     if (out / 'run-start.json').exists():
         raise ValueError('A already attempted; no implicit rerun')
+    os.environ['SEEKINO_MODEL_TRACE_DIR'] = str(out / 'model-trace')
     settings = ServerSettings.from_environment()
     runtime = init_application(settings)
     consumer = runtime.services.parse_consumer
@@ -158,7 +160,7 @@ def run_a(args):
     service = consumer._handlers.understand.__self__
     # Bound actual provider attempts, including Refine tool rounds and retries.
     counter_lock = threading.Lock()
-    calls = []
+    calls = json.loads((args.out / 'a-current/admitted-calls.json').read_text()) if resuming else []
     timers = []
     original_mark = ModelCallTracker.mark_request_started
     def mark(tracker):
@@ -177,6 +179,11 @@ def run_a(args):
     ModelCallTracker.mark_request_started = mark
     original_asr = service._prepare_video_asr
     async def capture_asr(lease, task_input, model):
+        if resuming:
+            transcript = json.loads((args.out / 'common/full-asr.json').read_text())
+            service._video_transcripts[(lease.video_parse_task_id, lease.lease_version)] = transcript
+            save(out / 'asr-reused.json', {'source': 'common/full-asr.json', 'sha256': digest(args.out / 'common/full-asr.json')})
+            return
         began = time.monotonic()
         await original_asr(lease, task_input, model)
         transcript = service._video_transcripts[(lease.video_parse_task_id, lease.lease_version)]
@@ -256,30 +263,42 @@ def run_a(args):
             identity = check(client.get('/api/auth/me'))
             tenant = identity['tenantId']
             client.headers['X-CSRF-Token'] = identity['csrfToken']
-            background = (args.out / 'background.md').read_text()
-            series = check(client.post('/api/series/create', json={'tenantId': tenant,
-                'name': 'MyGO EP04 half episode A/B 2026-10-30', 'transcriptLanguageHint': 'ja',
-                'importantExtraData': {'format': 'markdown', 'content': background}}))
-            save(out / 'series.json', series)
-            video = args.out / 'ep04-first-12min.mp4'
-            size = video.stat().st_size
-            config = json.loads((args.out / 'a-requested-config.json').read_text())
-            upload = check(client.post('/api/uploads/create', params={'seriesId': series['seriesId']},
-                headers={'Idempotency-Key': 'half-episode-ab-20261030'}, json={'tenantId': tenant,
-                'episodeOrder': 4, 'originalFilename': video.name, 'totalSizeBytes': size,
-                'mediaType': 'video/mp4', 'contentSha256': digest(video), 'parseConfig': config}))
-            with video.open('rb') as stream:
-                for seq in upload['missingSegmentNumbers']:
-                    start = seq * upload['preferredSegmentSizeBytes']
-                    stream.seek(start)
-                    data = stream.read(min(upload['preferredSegmentSizeBytes'], size - start))
-                    check(client.put('/api/uploads/segments/upload', params={'tenantId': tenant,
-                        'uploadSessionId': upload['uploadSessionId'], 'segmentNumber': seq},
-                        headers={'Content-Range': f'bytes {start}-{start+len(data)-1}/{size}',
-                        'X-Content-SHA256': hashlib.sha256(data).hexdigest(), 'Content-Type': 'application/octet-stream'}, content=data))
-            complete = check(client.post('/api/uploads/complete', params={'tenantId': tenant, 'uploadSessionId': upload['uploadSessionId']}))
-            save(out / 'complete.json', complete)
-            task_id = complete['videoParseTaskId']
+            if resuming:
+                prior = json.loads((args.out / 'a-current/run-start.json').read_text())
+                task_id = prior['task_id']
+                state = check(client.get('/api/jobs/video-parse/get', params={'tenantId': tenant, 'videoParseTaskId': task_id}))
+                assert state['status'] == 'PARSING_FAILED' and state['canRetry'], state
+                retried = check(client.post('/api/uploads/retry-parse', params={'tenantId': tenant,
+                    'uploadSessionId': state['uploadSessionId'], 'expectedJobVersion': state['version'],
+                    'expectedLeaseVersion': state['leaseVersion']}))
+                save(out / 'retry.json', retried)
+            else:
+                task_id = None
+            if not resuming:
+                background = (args.out / 'background.md').read_text()
+                series = check(client.post('/api/series/create', json={'tenantId': tenant,
+                    'name': 'MyGO EP04 half episode A/B 2026-10-30', 'transcriptLanguageHint': 'ja',
+                    'importantExtraData': {'format': 'markdown', 'content': background}}))
+                save(out / 'series.json', series)
+                video = args.out / 'ep04-first-12min.mp4'
+                size = video.stat().st_size
+                config = json.loads((args.out / 'a-requested-config.json').read_text())
+                upload = check(client.post('/api/uploads/create', params={'seriesId': series['seriesId']},
+                    headers={'Idempotency-Key': 'half-episode-ab-20261030'}, json={'tenantId': tenant,
+                    'episodeOrder': 4, 'originalFilename': video.name, 'totalSizeBytes': size,
+                    'mediaType': 'video/mp4', 'contentSha256': digest(video), 'parseConfig': config}))
+                with video.open('rb') as stream:
+                    for seq in upload['missingSegmentNumbers']:
+                        start = seq * upload['preferredSegmentSizeBytes']
+                        stream.seek(start)
+                        data = stream.read(min(upload['preferredSegmentSizeBytes'], size - start))
+                        check(client.put('/api/uploads/segments/upload', params={'tenantId': tenant,
+                            'uploadSessionId': upload['uploadSessionId'], 'segmentNumber': seq},
+                            headers={'Content-Range': f'bytes {start}-{start+len(data)-1}/{size}',
+                            'X-Content-SHA256': hashlib.sha256(data).hexdigest(), 'Content-Type': 'application/octet-stream'}, content=data))
+                complete = check(client.post('/api/uploads/complete', params={'tenantId': tenant, 'uploadSessionId': upload['uploadSessionId']}))
+                save(out / 'complete.json', complete)
+                task_id = complete['videoParseTaskId']
             save(out / 'run-start.json', {'epoch': time.time(), 'task_id': task_id, 'tenant_id': tenant, 'gate': 'first successful chunk before other model requests'})
             consumer.start()
             previous = None
@@ -452,7 +471,7 @@ def run_b(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=['prepare', 'start-storage', 'run-a', 'run-b', 'stop-storage'])
+    parser.add_argument('phase', choices=['prepare', 'start-storage', 'run-a', 'resume-a', 'run-b', 'stop-storage'])
     parser.add_argument('--source-root', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
@@ -464,6 +483,8 @@ def main():
         environment(args)
     if args.phase == 'stop-storage':
         local_services(args).stop(('embedding', 'elasticsearch', 'mysql'))
+    elif args.phase == 'resume-a':
+        run_a(args)
     else:
         globals()[args.phase.replace('-', '_')](args)
 

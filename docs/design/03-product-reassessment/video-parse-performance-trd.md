@@ -1,5 +1,7 @@
 # 1. 问题与现状
 
+2026-10-30 连续半集新增证据：[独立对照 TRD](parse-half-episode-ab-trd.md)、[结果报告](../../report/agent/video_parse_v2/parse-half-episode-ab-20261030.md)、[PR #19](https://github.com/owariband/Seekino/pull/19)。用户最新要求比较同一连续12分钟的当前完整体系与带真实前文的 Doubao non-thinking 串行方案。实际 A 无完整正文；B 连续前10分钟完整、7块严格通过，第11块超时，完整对照未完成且已停止新增调用。50项需求核查中36核心事实保留、6局部可用、6错误、2未定；发现跨块错人、跨人合并与时间错位。本次完整响应中位109.52秒，未复现30秒收益；不能用这些统计证明相对A更差或整体几乎不可用。下文旧日期决策/结果保留，最新执行边界以该报告为准。
+
 **需求：视频解析耗时治理与 Understanding 输出协议验证。** 类型为 `perf`；协议接线属于实现手段，独立正确性修复按 `fix` 记录。更新：2026-10-30（Asia/Shanghai）。遵循 [TRD Principle](../common/trd-principle.md)。
 
 已完成两轮各 8 次单 Chunk 协议实验。第二轮按用户意图取消人物名单并增加 SHOT，同字段精简 XML 的尝试耗时中位数比 JSON 高 21.97%（K3）/18.21%（豆包），未取得替换依据；豆包 JSON 仍有一次合同失败，全部结果仍错认已知画外音。用户已作出最终取舍：保留 Schema 精简，继续使用 JSON，不采用 XML；解析质量优先，不再追求单 Chunk 30 秒，以既有可靠并行解析策略满足当前效率需求。此次协议选型研究结束。2026-10-30 已在 dev 将正式 Understanding 改为直接 JSON、宿主原子导入 Canvas，并将默认及本机视觉主模型/fallback 输出预算改为 30,000；Refine 保留工具。精简字段/SHOT 合同仍未迁移，服务加载与新实模时延尚待验证。问题状态统一归入 [problems B07](../../dev/problems.md#b07视频解析成本高昂且耗时超过片长数倍)，阶段决策见 [初稿 devlog](../../dev/devlog.md#devlog-parse-performance-20261028)、[首轮实验 devlog](../../dev/devlog.md#devlog-parse-protocol-20261029)、[精简合同实验 devlog](../../dev/devlog.md#devlog-parse-compact-shot-20261029)、[最终取舍 devlog](../../dev/devlog.md#devlog-parse-protocol-decision-20261029)。本文维护设计、验收口径及证据边界，不另建任务看板。
