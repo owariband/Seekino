@@ -77,6 +77,7 @@ from .video_parse_content import (
 )
 from .video_parse_prefix import invalidate_series_prefixes_from, _series_prefix_frontier
 from . import video_parse_content as content_ops
+from . import video_parse_task as task_ops
 from . import video_parse_prefix as prefix_ops
 from . import video_parse_voiceprint as voiceprint_ops
 from . import video_parse_model_calls as execution_ops
@@ -875,6 +876,44 @@ class VideoParsePersistenceService:
             )
             session.flush()
             return _task_state(task_store.get_task(session, task.id))
+
+    def reserve_refine_provider_retry(
+        self,
+        lease: IntervalParseLease,
+        *,
+        max_retries: int,
+        now: datetime | None = None,
+    ) -> int | None:
+        """Charge a provider retry before waiting, independently of logic retries."""
+        if type(max_retries) is not int or max_retries <= 0:
+            raise ValueError("max_retries must be a positive integer")
+        reserved_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            parent = task_ops._locked_parent_task(session, lease.video_parse_task_id)
+            interval = content_ops._locked_interval_lease(
+                session, lease, reserved_at, "REFINING",
+            )
+            detail = deepcopy(dict(parent.detail or {}))
+            runtime = detail.get(RUNTIME_DETAIL_KEY, {})
+            if not isinstance(runtime, dict):
+                raise VideoParseConflictError("worker runtime must be a mapping")
+            retries = runtime.get("refine_provider_retries", {})
+            if not isinstance(retries, dict):
+                raise VideoParseConflictError("refine provider retries must be a mapping")
+            count = retries.get(interval.id, 0)
+            if type(count) is not int or count < 0:
+                raise VideoParseConflictError("refine provider retry count must be a nonnegative integer")
+            if count >= max_retries:
+                return None
+            # One entry per persisted Interval, retained when its lease changes.
+            count += 1
+            retries[interval.id] = count
+            runtime["refine_provider_retries"] = retries
+            detail[RUNTIME_DETAIL_KEY] = runtime
+            parent.detail = detail
+            parent.update_time = datetime_to_unix_time_ms(reserved_at)
+            task_store.save_task(session, parent)
+            return count
 
     def record_execution_timing(
         self,

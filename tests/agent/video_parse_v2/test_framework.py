@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agent.common.chunk_understanding import understand_chunk
+from agent.utils.errors import AgentToolFeedbackError
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion
 from agent.video_parse_v2.prompts import build_understanding_prompt
@@ -300,6 +301,61 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
         task_id
     ))
     assert calls[-3:] == ["commit", "notify", "cleanup"]
+
+
+@pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
+@pytest.mark.parametrize("merged", [False, True])
+def test_direct_chunk_workflow_preserves_asr_bounds_and_rejects_merged_dialogue(offset_ms, merged):
+    task_id = "chunk-task-0"
+    execution = ChunkExecution(
+        task_id, "video-task-1", int(offset_ms != 0), offset_ms, offset_ms + 20_000,
+        offset_ms, offset_ms + 20_000, _inputs(), _lease(),
+    )
+    asr_result = {"transcript": [
+        {"start_seconds": offset_ms + 1000, "end_seconds": offset_ms + 3000,
+         "text": "それで灯ちゃんたち傷つけて", "speaker_id": "speaker1"},
+        {"start_seconds": offset_ms + 3500, "end_seconds": offset_ms + 4500,
+         "text": "祥ちゃんも悪くない", "speaker_id": "speaker2"},
+    ]}
+    events = [{
+        "event_type": "DIALOGUE", "start_seconds": cue["start_seconds"],
+        "end_seconds": cue["end_seconds"], "description": cue["text"],
+        "participants": [], "visible_persons": [], "speaker": None,
+        "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": cue["text"]}],
+    } for cue in asr_result["transcript"]]
+    if merged:
+        events = [{**events[0], "end_seconds": events[-1]["end_seconds"]}]
+
+    async def understand(loaded, *, prompt, **kwargs):
+        assert loaded is execution and kwargs["asr_result"] is asr_result
+        assert "canvas" not in kwargs
+        assert "exactly match one original cue interval" in prompt
+        return VideoParseResult.model_validate({"persons": [], "timeline": events})
+
+    runtime = SimpleNamespace(
+        load_chunk_execution=AsyncMock(return_value=execution),
+        prepare_chunk_visual=AsyncMock(), transcribe_chunk=AsyncMock(return_value=asr_result),
+        understand_chunk=AsyncMock(side_effect=understand), commit_chunk_result=AsyncMock(),
+        notify_chunk_committed=AsyncMock(), cleanup_chunk_execution=AsyncMock(),
+    )
+    run = ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(task_id)
+    if merged:
+        with pytest.raises(AgentToolFeedbackError) as error:
+            asyncio.run(run)
+        assert error.value.code == "ASR_DIALOGUE_RANGE_REQUIRED"
+        runtime.commit_chunk_result.assert_not_awaited()
+        runtime.notify_chunk_committed.assert_not_awaited()
+    else:
+        asyncio.run(run)
+        runtime.commit_chunk_result.assert_awaited_once()
+        result = runtime.commit_chunk_result.await_args.args[1]
+        assert [(event.start_seconds, event.end_seconds) for event in result.timeline] == [
+            (cue["start_seconds"], cue["end_seconds"]) for cue in asr_result["transcript"]
+        ]
+        assert runtime.commit_chunk_result.await_args.kwargs["evidence"]["asr"] == asr_result
+        runtime.notify_chunk_committed.assert_awaited_once_with(execution)
+    runtime.understand_chunk.assert_awaited_once()
+    runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
 
 @pytest.mark.parametrize("ocr_enabled", [False, True])

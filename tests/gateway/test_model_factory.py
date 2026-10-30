@@ -415,6 +415,125 @@ def test_deepagents_dispatch_stays_in_gateway(monkeypatch):
             tools=[tool], tool_harness="deepagents",
         ).answer == "grounded"
         assert calls[0][0] is delegates[0] and delegates[0].calls == []
+        assert "stop_feedback" not in calls[0][2]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("source,module,name", [
+    ("native", "gateway.codex.agent", "CodexAgentModel"),
+    ("claude", "gateway.claude_code.agent", "ClaudeAgentModel"),
+])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_native_completion_feedback_is_forwarded_only_when_provided(monkeypatch, source, module, name, enabled):
+    delegates = []
+    _replace(monkeypatch, module, name, delegates)
+    client = model_factory.GatewayClient(_config(), environ={})
+    model = client.create_generative_model(_binding(source))
+    delegates[0].run_structured = delegates[0].generate
+    feedback = (lambda: None) if enabled else None
+    try:
+        assert model.generate(
+            [TextInput("evidence")], schema_name="answer", result_type=Result, stop_feedback=feedback,
+        ).answer == "ok"
+        options = delegates[0].calls[0][1]
+        if enabled:
+            assert options["stop_feedback"] is feedback
+        else:
+            assert "stop_feedback" not in options
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("tools_enabled,harness", [(True, "legacy"), (False, "deepagents")])
+def test_api_completion_feedback_rejects_unsupported_routes_before_request(monkeypatch, tools_enabled, harness):
+    from langchain_core.tools import StructuredTool
+    delegates = []
+    _replace(monkeypatch, "gateway.ark.multimodal", "ArkMultimodalModel", delegates)
+    tool = StructuredTool.from_function(lambda value: value, name="read", description="Read evidence")
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "a"})
+    model = client.create_generative_model(_binding("api"))
+    try:
+        with pytest.raises(ValueError, match="stop_feedback requires"):
+            model.generate([TextInput("evidence")], schema_name="answer", result_type=Result,
+                           tools=[tool] if tools_enabled else [], tool_harness=harness, stop_feedback=lambda: None)
+        assert delegates[0].calls == []
+    finally:
+        client.close()
+
+
+def test_shared_api_completion_feedback_keeps_the_same_harness_options(monkeypatch):
+    from langchain_core.tools import StructuredTool
+    primary, fallback, requests = [], [], []
+    _replace(monkeypatch, "gateway.ark.multimodal", "ArkMultimodalModel", primary)
+    _replace(monkeypatch, "gateway.openai.vision", "OpenAIVisionModel", fallback)
+
+    def generate(adapter, inputs, **options):
+        requests.append((adapter, options))
+        return Result(answer="ok")
+
+    monkeypatch.setattr("gateway.agent_model.deepagents_multimodal.generate_with_deepagents", generate)
+    tool = StructuredTool.from_function(lambda value: value, name="read", description="Read evidence")
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "a", "VISION_KEY": "v"})
+    model = client.create_generative_model(_binding("api", fallback=_binding("vision_api")))
+    feedback = lambda: None
+    try:
+        assert model.generate([TextInput("evidence")], schema_name="answer", result_type=Result,
+                              tools=[tool], tool_harness="deepagents", stop_feedback=feedback).answer == "ok"
+        assert requests[0][0] is primary[0]
+        assert requests[0][1]["fallback_model"] is fallback[0]
+        assert requests[0][1]["stop_feedback"] is feedback
+        assert requests[0][1]["max_model_calls"] is None
+        assert fallback[0].calls == []
+    finally:
+        client.close()
+
+
+def test_native_to_http_fallback_keeps_feedback_and_remaining_deadline_in_real_harness(monkeypatch):
+    import json
+    from langchain_core.tools import StructuredTool
+    from gateway.agent_model.deepagents_multimodal import generate_with_deepagents
+    from tests.gateway.test_multimodal_agent import Responses, _model, _response
+
+    clock, primary, reads, requests = [100.0], [], [], []
+    monkeypatch.setattr(model_factory, "monotonic", lambda: clock[0])
+    _replace(monkeypatch, "gateway.codex.agent", "CodexAgentModel", primary)
+
+    def completion(identity):
+        response = _response(identity, "Result")
+        response.output[0].arguments = json.dumps({"answer": "ok"})
+        return response
+
+    responses = Responses([_response("read", "read"), completion("premature"),
+                           _response("review", "read"), completion("accepted")])
+    monkeypatch.setattr("gateway.ark.multimodal.ArkMultimodalModel", lambda *_args, **_options: _model("ark", responses, budget=8192))
+
+    def generate(adapter, inputs, **options):
+        requests.append(options)
+        return generate_with_deepagents(adapter, inputs, **options)
+
+    monkeypatch.setattr("gateway.agent_model.deepagents_multimodal.generate_with_deepagents", generate)
+    tool = StructuredTool.from_function(lambda value: reads.append(value) or "reviewed", name="read", description="Read evidence")
+    client = model_factory.GatewayClient(_config(), environ={"API_KEY": "a"})
+    model = client.create_generative_model(_binding(fallback=_binding("api")))
+
+    def filtered(_inputs, **options):
+        assert options["stop_feedback"] is feedback
+        clock[0] += 3
+        raise ContentFilterError("filtered", code="content_filter")
+
+    feedback = lambda: "VOICEPRINT_REVIEW_REQUIRED: review the existing evidence." if len(reads) < 2 else None
+    primary[0].generate = filtered
+    try:
+        assert model.generate([TextInput("evidence")], schema_name="answer", result_type=Result,
+                              tools=[tool], tool_harness="deepagents", stop_feedback=feedback,
+                              request_timeout_seconds=5, max_model_calls=4).answer == "ok"
+        assert requests[0]["stop_feedback"] is feedback
+        assert requests[0]["request_timeout_seconds"] == 2
+        assert requests[0]["max_model_calls"] == 4
+        assert len(responses.requests) == 4 and len(reads) == 2
+        history = json.dumps(responses.requests[2]["input"])
+        assert "VOICEPRINT_REVIEW_REQUIRED" in history and '"call_id": "read"' in history
     finally:
         client.close()
 

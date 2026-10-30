@@ -13,3 +13,12 @@ class ParseError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool) -> None:
         self.retryable = retryable
         super().__init__(message)
+
+
+class RefineProviderRetryExhaustedError(ParseError):
+    """Provider retries are exhausted without spending a logic retry."""
+
+    def __init__(self, message: str, *, reason: str, retries: int) -> None:
+        self.reason = reason
+        self.provider_retries = retries
+        super().__init__(message, retryable=False)

@@ -3660,3 +3660,21 @@ Framework、Queue、Worker、模型调用预算、API、SSE、Bootstrap 定向�
 | 长视频真实完成率/内存峰值 | 仍有未完成任务 | 本轮未实测，不宣称改善数值 |
 
 最终补充验证：并行协调器错误不覆盖首个 `PARSE_NODE_FAILED`，失败后迟到 Chunk 提交被拒绝；最终 Worker/Queue 回归 **299 passed（14.09 秒）**，`git diff --check` 通过。上述测试集合有重叠，不相加为独立用例总数。
+
+## 2026-10-30：合并 PR #5 后整理 dev 发布
+
+### 问题与现状
+
+hypnos 要求先处理 PR #5 冲突并合入 main，再整理 dev 发布；后续每个 feature 单独分支和 PR。PR #5 的旧 Repository 已被拆分，与当前 Service/DTO 层发生冲突；其历史 EP04 失败记录不能代替后续全量 Chunk 程序门禁的当前状态。
+
+### 方案候选
+
+PR #5 保持原编号，新增逻辑迁入现有 Service，整理为单个规范 feat(parse) 提交后在 GitHub 合并。dev 已验证快照分代码和文档两个提交 push；临时发布分支合入新 main，完整保留 main 的 .gitignore，dev 忽略规则保持原样。发布冲突保留直接 JSON、节点有限重试、全量 Chunk 门禁和 Refine 声纹决策；现行 dev 模型配置优先于旧 PR 配置。
+
+### 方案验证
+
+dev 快照 952 passed。PR #5 初轮组合 1619 passed，旧测试接口迁移后 Worker 223 passed。发布组合初轮 2152 passed；三项旧 Canvas/ASR 测试已适配直接 JSON，Agent 全组 347 passed，另修正 Claude bridge 测试的旧命名。Gateway fallback-budget 用例在未修改 main 同样失败，保留基线限制，不修改断言掩盖失败。没有重启服务或运行真实模型；PR 与提交号以 GitHub 为准。
+
+### 指标对比
+
+PR #5 从 12 个不统一标题的提交整理为一个 feat(parse) 提交；旧 Repository 不恢复；main 的 ignore 文件以 blob 身份核验不变。发布只合并已存在的工作线，不合入独立的整视频 ASR PR #9。

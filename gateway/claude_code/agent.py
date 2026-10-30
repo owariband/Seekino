@@ -167,6 +167,7 @@ class ClaudeAgentModel:
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
         image_urls: Sequence[str] = (),
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _ResultModel:
         prompt, image_content = self._prepare_input(prompt, initial_messages=initial_messages, image_urls=image_urls)
         timeout = self._validate_call(
@@ -194,27 +195,19 @@ class ClaudeAgentModel:
                     image_content=image_content,
                     timeout_seconds=min(timeout, remaining),
                     check_control=check_control,
+                    bridge=bridge if stop_feedback is not None else None,
+                    stop_feedback=stop_feedback,
+                    max_model_calls=max_model_calls,
+                    result_type=result_type if stop_feedback is not None else None,
                 ),
                 timeout_seconds=timeout,
                 check_control=check_control,
-            )[0]
+            )[-1]
         except ClaudeSDKError as exc:
             raise ClaudeAgentModelError(f"Claude Agent SDK request failed: {exc}") from exc
 
         self._raise_for_result_error(response.result)
-        value = response.result.structured_output
-        if value is None and response.result.result:
-            try:
-                value = json.loads(response.result.result)
-            except json.JSONDecodeError:
-                value = None
-        try:
-            return result_type.model_validate(value)
-        except ValidationError as exc:
-            raise MissingStructuredQueryDraftError(
-                "Claude Agent ended without its required structured result",
-                reason=ModelFailureReason.INVALID_MODEL_RESPONSE,
-            ) from exc
+        return _structured_result(response, result_type)
 
     def run_agent_loop(
         self,
@@ -417,6 +410,7 @@ class ClaudeAgentModel:
         stop_feedback: Callable[[], str | None] | None = None,
         handle_text: Callable[[str], None] | None = None,
         max_model_calls: int | None = None,
+        result_type: type[_ResultModel] | None = None,
     ) -> list[_Response]:
         deadline = monotonic() + timeout_seconds
         responses: list[_Response] = []
@@ -445,6 +439,7 @@ class ClaudeAgentModel:
             )
             client = self._client_factory(round_options)
             entered = False
+            feedback = None
             try:
                 await self._await_with_control(
                     client.__aenter__(),
@@ -476,18 +471,42 @@ class ClaudeAgentModel:
                     response = _response_from_messages(messages)
                     _capture_usage(tracker, response.result, self.model_name)
                     self._raise_for_result_error(response.result)
+                used_turns += max(response.result.num_turns, 1)
+                if max_model_calls is not None and used_turns > max_model_calls:
+                    raise ClaudeAgentModelError(
+                        "Claude Agent loop exceeded max_model_calls",
+                        reason=ModelFailureReason.LOOP_LIMIT,
+                    )
+                if result_type is not None:
+                    value = _structured_result(response, result_type)
+                    self._check_control(check_control)
+                    if monotonic() >= deadline:
+                        raise AgentModelTimeoutError("Claude Agent request deadline expired")
+                    feedback = stop_feedback() if stop_feedback is not None else None
+                    self._check_control(check_control)
+                    if monotonic() >= deadline:
+                        raise AgentModelTimeoutError("Claude Agent request deadline expired")
             finally:
                 if entered:
                     await client.__aexit__(None, None, None)
 
             responses.append(response)
             self._check_control(check_control)
-            used_turns += max(response.result.num_turns, 1)
-            if max_model_calls is not None and used_turns > max_model_calls:
-                raise ClaudeAgentModelError(
-                    "Claude Agent loop exceeded max_model_calls",
-                    reason=ModelFailureReason.LOOP_LIMIT,
+
+            if result_type is not None:
+                if not feedback:
+                    return responses
+                if max_model_calls is not None and used_turns >= max_model_calls:
+                    raise ClaudeAgentModelError(
+                        "Claude Agent loop exhausted max_model_calls before stop",
+                        reason=ModelFailureReason.LOOP_LIMIT,
+                    )
+                prompt = _follow_up_prompt(
+                    original_prompt=initial_prompt,
+                    previous_response=value.model_dump_json(),
+                    feedback=feedback,
                 )
+                continue
 
             if bridge is None:
                 return responses
@@ -641,6 +660,22 @@ class _Response:
         self.messages = messages
         self.result = result
         self.text = text
+
+
+def _structured_result(response: _Response, result_type: type[_ResultModel]) -> _ResultModel:
+    value = response.result.structured_output
+    if value is None and response.result.result:
+        try:
+            value = json.loads(response.result.result)
+        except json.JSONDecodeError:
+            value = None
+    try:
+        return result_type.model_validate(value)
+    except ValidationError as exc:
+        raise MissingStructuredQueryDraftError(
+            "Claude Agent ended without its required structured result",
+            reason=ModelFailureReason.INVALID_MODEL_RESPONSE,
+        ) from exc
 
 
 def _response_from_messages(messages: list[Any]) -> _Response:

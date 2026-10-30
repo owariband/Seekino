@@ -678,11 +678,15 @@ class MySqlVideoParseQueue:
 
     def retry_interval(
         self, lease: IntervalParseLease, *, error: str, retry_at: datetime,
-        now: datetime | None = None,
+        now: datetime | None = None, provider_retry_exhausted: bool = False,
     ) -> bool:
-        return self._retry_child(lease, error=error, retry_at=retry_at, now=now)
+        return self._retry_child(
+            lease, error=error, retry_at=retry_at, now=now, terminal=provider_retry_exhausted,
+        )
 
-    def _retry_child(self, lease, *, error: str, retry_at: datetime, now: datetime | None) -> bool:
+    def _retry_child(
+        self, lease, *, error: str, retry_at: datetime, now: datetime | None, terminal: bool = False,
+    ) -> bool:
         failed_at = now if now is not None else now_utc()
         model = ChunkParseTask if isinstance(lease, ChunkParseLease) else IntervalParseTask
         task_id = lease.chunk_parse_task_id if isinstance(lease, ChunkParseLease) else lease.interval_parse_task_id
@@ -695,7 +699,7 @@ class MySqlVideoParseQueue:
             child = session.scalar(select(model).where(model.id == task_id).with_for_update())
             if not _matches_child(child, parent, lease, failed_at, allow_deadline=True):
                 return False
-            _fail_child(child, parent, failed_at, error, retry_at=retry_at)
+            _fail_child(child, parent, failed_at, error, retry_at=retry_at, terminal=terminal)
             _aggregate_video_task(session, parent.id, failed_at, release_terminal_lease=True)
             return True
 
@@ -1039,10 +1043,11 @@ def _matches_child(task, parent: VideoParseTask, lease, now: datetime, *, allow_
 
 
 def _fail_child(child, parent: VideoParseTask, now: datetime, error: str,
-                *, retry_at: datetime | None = None) -> None:
+                *, retry_at: datetime | None = None, terminal: bool = False) -> None:
     execution = _execution_config(parent.parse_config)
-    child.retry_count += 1
-    exhausted = child.retry_count > execution["max_retry_count"]
+    if not terminal:
+        child.retry_count += 1
+    exhausted = terminal or child.retry_count > execution["max_retry_count"]
     if isinstance(child, ChunkParseTask):
         child.status = "FAILED" if exhausted else "QUEUED"
     else:

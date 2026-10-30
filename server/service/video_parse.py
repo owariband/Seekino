@@ -24,13 +24,15 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
+from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
-from agent.utils.tool import as_langchain_tools
+from agent.utils.tool import as_langchain_tools, build_agent_tool
+from agent.utils.tool_result import JsonToolResult
 from agent.utils.video_frames import build_inspect_video_frames_tool
 from agent.video_parse_v2.timelineEvent_canvas import (
-    CanvasCompletion, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
+    CanvasCompletion, FinishVoiceprintReview, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
 )
 from agent.video_parse_v2.input import (
     GenerativeModelConfig,
@@ -72,6 +74,7 @@ from engine.rag import (
 )
 from engine.rag.indexing.events import EventIndexingContract
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
+from gateway.agent_model.errors import ModelFailureError, ModelFailureReason, QueryModelIncompleteError
 from gateway.embedding import EmbeddingModel
 from gateway.model_factory import GatewayClient
 from gateway.speaker_embedding import SpeakerEmbeddingModel, SpeakerEmbeddingResult
@@ -81,11 +84,18 @@ from gateway.usage import ModelCallCancelledError, model_call_context
 
 from ..config.parse_profile import index_contract_fingerprint
 from ..constants.parse import (
-    PARSE_RETRIEVAL_CONTRACT, RUNTIME_DETAIL_KEY, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_DIMENSIONS,
+    RUNTIME_DETAIL_KEY,
+    PARSE_RETRIEVAL_CONTRACT, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_LEGACY_METHOD_VERSION,
+    VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
+    VOICEPRINT_B0_DIMENSIONS,
     VOICEPRINT_B0_MIN_AUDIO_MS, VOICEPRINT_B0_TRIM_FRACTION, VOICEPRINT_B0_ACCEPT_GAP,
     VOICEPRINT_B0_ACCEPT_DURATION_MS, VOICEPRINT_B0_ACCEPT_MIN_CUES,
     VOICEPRINT_B0_CONFLICT_GAP, VOICEPRINT_B0_NO_VOICE_DURATION_MS,
     VOICEPRINT_B0_WINDOW_MS, VOICEPRINT_B0_DIRECT_MAX_MS,
+    VOICEPRINT_B0_LABEL_MIN_RANK, VOICEPRINT_B0_LABEL_MIN_MARGIN,
+    VOICEPRINT_B0_LABEL_MIN_DURATION_MS, VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
+    VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION, VOICEPRINT_B0_LABEL_TAIL_MIN_REFS,
+    REFINE_PROVIDER_RETRY_DELAYS_SECONDS,
 )
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
@@ -273,8 +283,40 @@ class VideoParseRuntimeService:
                 sequence_no=None,
                 category="parse",
                 check_active=lambda: self._require_interval_active(lease),
-            ):
-                await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
+            ) as manager:
+                while True:
+                    try:
+                        await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
+                        return
+                    except ModelFailureError as error:
+                        if (task_input.task.parse_config.get("voiceprint_mode", "off") == "off" or error.reason not in {
+                            ModelFailureReason.PROVIDER_CAPACITY, ModelFailureReason.PROVIDER_RATE_LIMIT,
+                        }):
+                            raise
+                        manager.check_active()
+                        retry = await asyncio.to_thread(
+                            self._persistence.reserve_refine_provider_retry, lease,
+                            max_retries=len(REFINE_PROVIDER_RETRY_DELAYS_SECONDS),
+                        )
+                        if retry is None:
+                            raise RefineProviderRetryExhaustedError(
+                                "Refine transient provider retry budget exhausted",
+                                reason=error.reason, retries=len(REFINE_PROVIDER_RETRY_DELAYS_SECONDS),
+                            ) from error
+                        delay = REFINE_PROVIDER_RETRY_DELAYS_SECONDS[retry - 1]
+                        _logger.info(
+                            "event=refine_provider_retry task=%s interval=%s lease=%s "
+                            "reason=%s retry=%s max_retries=%s delay_seconds=%s",
+                            lease.video_parse_task_id, lease.interval_parse_task_id, lease.lease_version,
+                            error.reason, retry, len(REFINE_PROVIDER_RETRY_DELAYS_SECONDS), delay,
+                        )
+                        remaining = delay
+                        while remaining > 0:
+                            manager.check_active()
+                            step = min(1.0, remaining)
+                            await asyncio.sleep(step)
+                            remaining -= step
+                        manager.check_active()
         finally:
             self._interval_lease.reset(token)
 
@@ -596,6 +638,8 @@ class VideoParseRuntimeService:
         source: VideoParseTaskInputState, lease: VideoParseLease, *,
         check_active: Callable[[], None],
     ) -> dict:
+        from engine.parsev2.voiceprint_matching import score_voiceprint_batch
+
         started = time.monotonic()
         if encoder.dimensions != VOICEPRINT_B0_DIMENSIONS:
             raise ValueError("B0 requires the frozen 192-dimensional CAM++ encoder")
@@ -640,12 +684,21 @@ class VideoParseRuntimeService:
             sample["overlap"] = any(other["id"] != sample["id"]
                                     and other["start_ms"] < sample["end_ms"]
                                     and sample["start_ms"] < other["end_ms"] for other in samples)
+        parameters = self._voiceprint_parameters()
+        batch = score_voiceprint_batch(
+            samples, model=encoder.model_name, encoder_revision=encoder.encoder_revision,
+            **{key: parameters[key] for key in (
+                "dimensions", "min_duration_ms", "trim_fraction", "label_min_rank", "label_min_margin",
+                "label_min_duration_ms", "label_min_ref_count", "label_min_ref_higher_fraction",
+                "label_tail_min_refs",
+            )},
+        )
         lines = []
-        for sample in samples:
+        for sample, score in zip(samples, batch["scores"], strict=True):
             check_active()
-            lines.append(self._score_voiceprint_sample(sample, samples))
+            lines.append(self._score_voiceprint_sample(sample, samples, parameters=parameters, score=score))
         return {"method_version": VOICEPRINT_B0_METHOD_VERSION,
-                "parameters": self._voiceprint_parameters(),
+                "parameters": parameters, "hygiene": batch["hygiene"],
                 "model": {"name": encoder.model_name, "encoder_revision": encoder.encoder_revision},
                 "samples": [sample for sample in samples if "vector" in sample],
                 "lines": lines, "failed_chunks": snapshot["failed_chunks"],
@@ -704,25 +757,55 @@ class VideoParseRuntimeService:
                 "accept_duration_ms": VOICEPRINT_B0_ACCEPT_DURATION_MS,
                 "accept_min_cues": VOICEPRINT_B0_ACCEPT_MIN_CUES,
                 "conflict_gap": VOICEPRINT_B0_CONFLICT_GAP,
-                "no_voice_duration_ms": VOICEPRINT_B0_NO_VOICE_DURATION_MS}
+                "no_voice_duration_ms": VOICEPRINT_B0_NO_VOICE_DURATION_MS,
+                "label_min_rank": VOICEPRINT_B0_LABEL_MIN_RANK,
+                "label_min_margin": VOICEPRINT_B0_LABEL_MIN_MARGIN,
+                "label_min_duration_ms": VOICEPRINT_B0_LABEL_MIN_DURATION_MS,
+                "label_min_ref_count": VOICEPRINT_B0_LABEL_MIN_REF_COUNT,
+                "label_min_ref_higher_fraction": VOICEPRINT_B0_LABEL_MIN_REF_HIGHER_FRACTION,
+                "label_tail_min_refs": VOICEPRINT_B0_LABEL_TAIL_MIN_REFS}
 
     @staticmethod
-    def _score_voiceprint_sample(query: dict, samples: list[dict], *, parameters: dict | None = None) -> dict:
+    def _score_voiceprint_sample(
+        query: dict, samples: list[dict], *, parameters: dict | None = None,
+        excluded_reference_ids: Sequence[str] = (), method_version: str | None = None,
+        score: dict | None = None,
+    ) -> dict:
         from engine.parsev2.voiceprint_matching import classify_voiceprint_result, score_voiceprint_line
 
-        parameters = parameters if parameters is not None else VideoParseRuntimeService._voiceprint_parameters()
+        version = VOICEPRINT_B0_METHOD_VERSION if method_version is None else method_version
+        label_keys = ("label_min_rank", "label_min_margin", "label_min_duration_ms", "label_min_ref_count")
+        policy_keys = {
+            VOICEPRINT_B0_LEGACY_METHOD_VERSION: (),
+            VOICEPRINT_B0_COHERENCE_METHOD_VERSION: (*label_keys, "label_min_consistency"),
+            VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION: (*label_keys, "label_min_ref_higher_fraction"),
+            VOICEPRINT_B0_METHOD_VERSION: (*label_keys, "label_min_ref_higher_fraction", "label_tail_min_refs"),
+        }
+        if version not in policy_keys:
+            raise ValueError("Unsupported frozen B0 scoring method: " + str(version))
+        if parameters is None:
+            if method_version is not None:
+                raise ValueError("An explicit B0 method requires its frozen parameters")
+            parameters = VideoParseRuntimeService._voiceprint_parameters()
         scoring_keys = ("dimensions", "min_duration_ms", "trim_fraction")
-        score = score_voiceprint_line(
-            query, samples, model=query["model"], encoder_revision=query["encoder_revision"],
-            **{key: parameters[key] for key in scoring_keys},
-        )
+        band_keys = ("accept_gap", "accept_duration_ms", "accept_min_cues", "conflict_gap", "no_voice_duration_ms")
+        missing = set((*scoring_keys, *band_keys, *policy_keys[version])) - parameters.keys()
+        if missing:
+            raise ValueError("Frozen B0 scoring parameters are incomplete: " + ", ".join(sorted(missing)))
+        if score is None:
+            score = score_voiceprint_line(
+                query, samples, model=query["model"], encoder_revision=query["encoder_revision"],
+                excluded_reference_ids=excluded_reference_ids,
+                **{key: parameters[key] for key in scoring_keys},
+                **{key: parameters[key] for key in policy_keys[version]},
+            )
         band = classify_voiceprint_result(
             score, current_label=query.get("label"), song=query.get("song", False),
             overlap=query.get("overlap", False),
-            **{key: value for key, value in parameters.items() if key not in scoring_keys},
+            **{key: parameters[key] for key in band_keys},
         )
         return {**{key: value for key, value in query.items() if key != "vector"},
-                **score, **band, "method_version": VOICEPRINT_B0_METHOD_VERSION,
+                **score, **band, "method_version": version,
                 "similarity_metric": "cosine", "similarity_is_probability": False}
 
     async def generate_voiceprint_preparation(
@@ -1129,6 +1212,8 @@ class VideoParseRuntimeService:
                     "conflicts": [line["id"] for line in lines if line["band"] == "CONFLICT"],
                     "accept_disagreements": [line["id"] for line in lines
                                              if line["band"] == "ACCEPT" and line["conflict"]],
+                    "doubtful_labels": [line["id"] for line in lines if line.get("label_doubtful") is True],
+                    "previous_decisions": list(item.detail.get("voiceprint_decisions", [])),
                 }
         return {
             "interval_parse_task_id": snapshot.interval_parse_task_id,
@@ -1175,6 +1260,68 @@ class VideoParseRuntimeService:
             or snapshot["inputs"].parse_config.models.understanding
         )
         tools = self._canvas_tools(canvas)
+        voice_review_enabled = snapshot["inputs"].parse_config.voiceprint_mode != "off"
+        stop_feedback = None
+        if voice_review_enabled:
+            def voice_review_feedback() -> str:
+                details = canvas.voiceprint_review_diagnostics()
+                return (
+                    "Voice review has not accepted the current Canvas: "
+                    + json.dumps({
+                        "revision": details["revision"], "gate_failure": details["gate_failure"],
+                        "missing_count": len(details["missing"]), "inconsistent_count": len(details["inconsistent"]),
+                        "first_unresolved_event": next(iter(details["events"]), None),
+                    }, ensure_ascii=False, sort_keys=True)
+                    + ". Keep the current draft and successful tool receipts. Resolve the listed decision "
+                    "(edit the speaker only if your decision changes it); review any other conflicts, then call "
+                    "finish_voiceprint_review again before completing."
+                )
+
+            def stop_feedback() -> str | None:
+                manager = self._model_manager.get()
+                if manager is not None:
+                    manager.check_active()
+                if canvas.voiceprint_review_passed():
+                    return None
+                _logger.info(
+                    "event=refine_voice_review_completion_deferred task=%s interval=%s details=%s",
+                    snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                    json.dumps(canvas.voiceprint_review_diagnostics(), ensure_ascii=False, sort_keys=True),
+                )
+                return voice_review_feedback()
+
+            def finish_voiceprint_review(*, complete: bool) -> JsonToolResult:
+                del complete
+                manager = self._model_manager.get()
+                if manager is not None:
+                    manager.check_active()
+                feedback = canvas.finish_voiceprint_review()
+                _logger.info(
+                    "event=refine_voice_review_checked task=%s interval=%s ready=%s missing=%s inconsistent=%s",
+                    snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                    feedback["ready"], feedback["missing"], feedback["inconsistent"],
+                )
+                if not feedback["ready"]:
+                    _logger.info(
+                        "event=refine_voice_review_unresolved task=%s interval=%s details=%s",
+                        snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                        json.dumps(canvas.voiceprint_review_diagnostics(), ensure_ascii=False, sort_keys=True),
+                    )
+                    raise AgentToolFeedbackError(
+                        "VOICEPRINT_REVIEW_REQUIRED", voice_review_feedback(),
+                        "Record consistent voice_decisions (edit speakers only when needed), then call "
+                        "finish_voiceprint_review again. Do not complete until the gate succeeds.",
+                    )
+                return JsonToolResult(success=True, payload=feedback)
+
+            tools.extend(as_langchain_tools([build_agent_tool(
+                name="finish_voiceprint_review", args_schema=FinishVoiceprintReview,
+                description=(
+                    "Check the current Canvas voice decisions before CanvasCompletion. "
+                    "Resolve every returned missing or inconsistent event_ref, then retry this gate."
+                ),
+                func=finish_voiceprint_review, maximum_result_bytes=32_000,
+            )]))
         encoder: SpeakerEmbeddingModel | None = None
         encoder_binding: SpeakerEmbeddingModelConfig | None = None
         if snapshot["inputs"].parse_config.voiceprint_enabled:
@@ -1211,6 +1358,8 @@ class VideoParseRuntimeService:
                             encoder, source, lease, references,
                             start_ms=start_ms, end_ms=end_ms, check_active=check_active,
                             parameters=scoring["parameters"], lines=scoring["lines"],
+                            excluded_reference_ids=scoring.get("hygiene", {}).get("excluded_reference_ids", []),
+                            method_version=scoring.get("method_version", VOICEPRINT_B0_LEGACY_METHOD_VERSION),
                         )
                         reference_ids = {reference_id for candidate in result["candidates"]
                                          for reference_id in candidate["reference_ids"]}
@@ -1225,6 +1374,10 @@ class VideoParseRuntimeService:
                                 "model", "encoder_revision", "gap", "candidate_margin",
                                 "reason", "candidate_count", "similarity_metric",
                                 "similarity_is_probability",
+                                "label_score", "label_rank", "label_count", "label_margin",
+                                "label_ref_count", "label_ref_consistency", "label_doubtful",
+                                "label_ref_higher_count", "label_ref_higher_fraction",
+                                "label_doubtful_basis",
                             ) if key in result},
                             "candidates": [{key: value for key, value in candidate.items()
                                             if key not in {"src", "reference_ids"}}
@@ -1277,14 +1430,27 @@ class VideoParseRuntimeService:
         try:
             if encoder_binding is not None:
                 encoder = self._speaker_encoder(encoder_binding)
-            return await self._generate_text_structured(
+            receipt = await self._generate_text_structured(
                 binding,
                 prompt,
                 tools=tools, canvas=canvas,
                 result_type=CanvasCompletion,
                 max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
                 tool_harness="deepagents",
+                **({"stop_feedback": stop_feedback, "enforce_model_call_limit": True} if voice_review_enabled else {}),
             )
+            if voice_review_enabled and (canvas.voiceprint_review() is None or not canvas.voiceprint_review_passed()):
+                _logger.info(
+                    "event=refine_voice_review_completion_rejected task=%s interval=%s details=%s",
+                    snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+                    json.dumps(canvas.voiceprint_review_diagnostics(), ensure_ascii=False, sort_keys=True),
+                )
+                raise QueryModelIncompleteError(
+                    "Refine completed before finish_voiceprint_review accepted the current Canvas: "
+                    + json.dumps(canvas.voiceprint_review_status(), ensure_ascii=False, sort_keys=True),
+                    reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
+                )
+            return receipt
         finally:
             if encoder is not None:
                 await cleanup_execution(encoder.close)
@@ -1293,6 +1459,8 @@ class VideoParseRuntimeService:
         self,
         snapshot: RefineInput,
         result: ValidatedIntervalRefinement,
+        *,
+        voiceprint_decisions: list[dict] | None = None,
     ) -> bool:
         lease = self._require_interval_token(
             snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING"
@@ -1302,6 +1470,14 @@ class VideoParseRuntimeService:
             for task_id, sequence in snapshot["member_sequence_nos"].items()
         }
         member_updates: dict[str, dict[str, object]] = {}
+        detail = {"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]}
+        if snapshot["inputs"].parse_config.voiceprint_mode != "off":
+            if voiceprint_decisions is None:
+                raise QueryModelIncompleteError(
+                    "Refine commit requires the completed Canvas voice decisions",
+                    reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
+                )
+            detail["voiceprint_decisions"] = voiceprint_decisions
         for update in result.updates:
             task_id = task_ids[update.sequence_no]
             values = update.model_dump(
@@ -1319,7 +1495,7 @@ class VideoParseRuntimeService:
                     task_id: content.model_dump(mode="json")
                     for task_id, content in snapshot["member_contents"].items()
                 },
-                detail={"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]},
+                detail=detail,
             )
         except VideoParseSnapshotConflictError as error:
             _logger.info(
@@ -1816,6 +1992,7 @@ class VideoParseRuntimeService:
         self, encoder: SpeakerEmbeddingModel, source: VideoParseTaskInputState,
         lease: IntervalParseLease, samples: list[dict], *, start_ms: int, end_ms: int,
         check_active: Callable[[], None], parameters: dict | None = None, lines: list[dict] | None = None,
+        excluded_reference_ids: Sequence[str] = (), method_version: str | None = None,
     ) -> dict:
         matching = [row for row in (lines if lines is not None else samples)
                     if row["start_ms"] < end_ms and start_ms < row["end_ms"]]
@@ -1829,7 +2006,10 @@ class VideoParseRuntimeService:
                 encoder, source, lease, start_ms=start_ms, end_ms=end_ms, check_active=check_active,
             )
             query.update(vector=embedding.vector, pcm_sha256=digest)
-        result = self._score_voiceprint_sample(query, samples, parameters=parameters)
+        result = self._score_voiceprint_sample(
+            query, samples, parameters=parameters, excluded_reference_ids=excluded_reference_ids,
+            method_version=method_version,
+        )
         # A subrange may span several edited events and has no single current label.
         for key in ("band", "conflict", "review_reason"):
             result.pop(key, None)
@@ -1922,6 +2102,7 @@ class VideoParseRuntimeService:
         max_model_calls: int | None = None,
         enforce_model_call_limit: bool = False,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _Result:
         manager = self._model_manager.get()
         if tools:
@@ -1934,12 +2115,14 @@ class VideoParseRuntimeService:
                 fallback_inputs=fallback_inputs,
                 tool_harness=tool_harness,
                 enforce_model_call_limit=enforce_model_call_limit,
+                **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
             )
         return await self._run_blocking(
             self._invoke_multimodal, binding, inputs,
             schema_name=schema_name, result_type=result_type,
             fallback_inputs=fallback_inputs,
             check_control=manager.check_active if manager is not None else None,
+            **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
         )
 
     async def _generate_text_structured(
@@ -1953,12 +2136,14 @@ class VideoParseRuntimeService:
         enforce_model_call_limit: bool = False,
         canvas: ContextCanvas | None = None,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _Result:
         return await self._generate_multimodal(
             binding, [TextInput(prompt)], schema_name=result_type.__name__,
             result_type=result_type, tools=tools, canvas=canvas, max_model_calls=max_model_calls,
             tool_harness=tool_harness,
             enforce_model_call_limit=enforce_model_call_limit,
+            **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
         )
 
     def _invoke_multimodal(
@@ -1975,6 +2160,7 @@ class VideoParseRuntimeService:
         check_control=None,
         fallback_inputs=None,
         tool_harness: Literal["legacy", "deepagents"] = "legacy",
+        stop_feedback: Callable[[], str | None] | None = None,
     ) -> _Result:
         definition = ModelBinding.model_validate(binding.model_dump(exclude_none=True))
         requires_vision = any(isinstance(item, (ImageInput, VideoInput)) for item in inputs)
@@ -2001,10 +2187,11 @@ class VideoParseRuntimeService:
             return model.generate(
                 inputs, schema_name=schema_name, result_type=result_type,
                 tools=tools,
-                # Existing task request budgets are enforced by the call manager.
+                # Pass an explicit loop ceiling only for stages that opt into it.
                 max_model_calls=max_model_calls if enforce_model_call_limit else None,
                 check_control=check_control, context_checkpoint=context_checkpoint,
                 fallback_inputs=fallback_inputs, tool_harness=tool_harness,
+                **({"stop_feedback": stop_feedback} if stop_feedback is not None else {}),
             )
         finally:
             model.close()

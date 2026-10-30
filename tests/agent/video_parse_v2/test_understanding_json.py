@@ -70,7 +70,7 @@ def test_direct_json_preserves_full_result_and_original_evidence_at_commit():
         "start_seconds": 61_000, "end_seconds": 63_000,
         "text": "バンドやりたい？", "speaker_id": "speaker1",
         "words": [{"word": "バンド", "start_ms": 61_000, "end_ms": 61_700, "score": 0.9}],
-    }]}
+    }, {"start_seconds": 65_000, "end_seconds": 67_000, "text": "うん。", "speaker_id": "speaker2"}]}
     original_asr = deepcopy(asr)
     ocr = OCRResult.model_validate({"lines": [{
         "start_seconds": 61_000, "end_seconds": 63_000,

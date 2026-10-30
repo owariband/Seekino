@@ -1,15 +1,13 @@
 # Local design notes and generated visual / architecture artifacts
+**/design/
 docs/notes/
 docs/ui-design/
 /transfer.md
 /.baoyu-skills/
+/.agents/skills/anivag-change-gate/
 /engines/*
-# Local media and generated assets; existing tracked release assets remain tracked.
-/assets/
-# Local reference-analysis experiments and session handoff copies.
-/seekino/
 /assets/diagrams/*
-!/assets/diagrams/seekino-open-source-architecture.png
+!/assets/diagrams/anivag-open-source-architecture.png
 /assets/seekino-mascot-pixel/out/
 /infographic/
 /docs/*.dataflow.json
@@ -18,12 +16,7 @@ docs/ui-design/
 **/experiment/
 
 # Local development state
-# Persistent database files: back up using MySQL/Elasticsearch tools, not Git.
-/data/mysql/
-/data/elasticsearch/
 /.claude-tmp/
-/.kimi-tmp/
-/.research/
 .DS_Store
 **/.DS_Store
 .env

@@ -27,7 +27,7 @@ from gateway.agent_model.errors import (
 from gateway.claude_code import ClaudeAgentModel, ClaudeAgentModelError
 from gateway.claude_code.tools import ToolInvocationState, _build_sdk_tool
 from gateway.agent_model.context import ContextWindowPolicy
-from gateway.usage import capture_model_usage
+from gateway.usage import ModelCallCancelledError, capture_model_usage
 
 
 class _Answer(BaseModel):
@@ -167,6 +167,191 @@ def test_structured_result_uses_sdk_json_schema_without_network() -> None:
     assert options.skills == []
     assert options.effort == "high"
     assert options.thinking is None
+
+
+def test_structured_stop_feedback_uses_latest_result_and_shared_canvas_bridge():
+    created = []
+    batches = deque([
+        [_result(structured={"answer": "draft"})],
+        [_result(structured={"answer": "resolved"})],
+    ])
+
+    class Client(_FakeClient):
+        closed = False
+
+        async def __aexit__(self, *_args):
+            self.closed = True
+            return False
+
+    def factory(options):
+        client = Client(options, [batches.popleft()])
+        created.append(client)
+        return client
+
+    feedback_text = "Resolve the current Canvas before completion: " + "event-ref " * 100
+    feedback = iter([feedback_text, None])
+    reviews = []
+
+    def review():
+        assert not created[-1].closed
+        reviews.append(len(created))
+        return next(feedback)
+
+    records = []
+    with capture_model_usage(records.append):
+        result = _model(factory).run_structured(
+            "original instruction", tools=[_tool()], result_type=_Answer,
+            max_model_calls=3, stop_feedback=review,
+        )
+
+    assert result.answer == "resolved" and reviews == [1, 2]
+    assert len(created) == 2 and all(client.closed for client in created)
+    assert [client.options.max_turns for client in created] == [3, 2]
+    assert created[0].options.mcp_servers["seekino"] is created[1].options.mcp_servers["seekino"]
+    assert created[0].options.output_format == created[1].options.output_format
+    assert created[1].options.output_format["schema"]["properties"]["answer"]["type"] == "string"
+    payload = json.loads(created[1].prompts[0].split("\n", 1)[1])
+    assert payload == {
+        "original_instruction": "original instruction",
+        "previous_response": '{"answer":"draft"}',
+        "feedback": feedback_text,
+    }
+    assert len(records) == 2 and all(record.status == "completed" for record in records)
+
+
+@pytest.mark.parametrize("first_turns,limit,second_turns,expected_clients", [
+    (1, 1, 1, 1),
+    (2, 3, 2, 2),
+])
+def test_structured_stop_feedback_keeps_cumulative_turn_budget(
+    first_turns, limit, second_turns, expected_clients,
+):
+    created = []
+    batches = deque([
+        [_result(structured={"answer": "draft"}, turns=first_turns)],
+        [_result(structured={"answer": "resolved"}, turns=second_turns)],
+    ])
+
+    def factory(options):
+        client = _FakeClient(options, [batches.popleft()])
+        created.append(client)
+        return client
+
+    feedback = []
+
+    def review():
+        feedback.append("repair")
+        return "repair"
+
+    with pytest.raises(ClaudeAgentModelError) as caught:
+        _model(factory).run_structured(
+            "answer", tools=[_tool()], result_type=_Answer,
+            max_model_calls=limit, stop_feedback=review,
+        )
+    assert caught.value.reason == ModelFailureReason.LOOP_LIMIT
+    assert len(created) == expected_clients and feedback == ["repair"]
+    if expected_clients == 2:
+        assert created[1].options.max_turns == limit - first_turns
+
+
+@pytest.mark.parametrize("structured,text", [
+    ({"answer": 3}, None), (None, "not-json"), (None, None),
+])
+def test_structured_feedback_rejects_invalid_result_before_review(structured, text):
+    created = []
+
+    def factory(options):
+        client = _FakeClient(options, [[_result(structured=structured, text=text)]])
+        created.append(client)
+        return client
+
+    with pytest.raises(MissingStructuredQueryDraftError) as caught:
+        _model(factory).run_structured(
+            "answer", tools=[_tool()], result_type=_Answer, max_model_calls=2,
+            stop_feedback=lambda: pytest.fail("malformed output reached the stop gate"),
+        )
+    assert caught.value.reason == ModelFailureReason.INVALID_MODEL_RESPONSE
+    assert len(created) == 1
+
+
+def test_structured_feedback_checks_cancellation_before_next_round():
+    cancelled = False
+    created = []
+    checks = []
+
+    def factory(options):
+        client = _FakeClient(options, [[_result(structured={"answer": "draft"})]])
+        created.append(client)
+        return client
+
+    def check_control():
+        checks.append(cancelled)
+        if cancelled:
+            raise ModelCallCancelledError("cancelled during stop feedback")
+
+    def review():
+        nonlocal cancelled
+        assert checks[-1] is False
+        cancelled = True
+        return "repair"
+
+    with pytest.raises(ModelCallCancelledError, match="cancelled during stop feedback"):
+        _model(factory).run_structured(
+            "answer", tools=[_tool()], result_type=_Answer, max_model_calls=2,
+            stop_feedback=review, check_control=check_control,
+        )
+    assert len(created) == 1 and checks[-1] is True
+
+
+def test_structured_feedback_does_not_run_after_cancellation():
+    cancelled = False
+    created = []
+
+    class Client(_FakeClient):
+        async def receive_response(self):
+            nonlocal cancelled
+            async for message in super().receive_response():
+                yield message
+            cancelled = True
+
+    def factory(options):
+        client = Client(options, [[_result(structured={"answer": "draft"})]])
+        created.append(client)
+        return client
+
+    def check_control():
+        if cancelled:
+            raise ModelCallCancelledError("cancelled before stop feedback")
+
+    with pytest.raises(ModelCallCancelledError, match="before stop feedback"):
+        _model(factory).run_structured(
+            "answer", tools=[_tool()], result_type=_Answer, max_model_calls=2,
+            stop_feedback=lambda: pytest.fail("cancelled call reached the stop gate"),
+            check_control=check_control,
+        )
+    assert len(created) == 1
+
+
+def test_structured_feedback_does_not_reset_deadline(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr("gateway.claude_code.agent.monotonic", lambda: now[0])
+    created = []
+
+    def factory(options):
+        client = _FakeClient(options, [[_result(structured={"answer": "draft"})]])
+        created.append(client)
+        return client
+
+    def review():
+        now[0] += 3.0
+        return "repair"
+
+    with pytest.raises(AgentModelTimeoutError, match="deadline expired"):
+        _model(factory).run_structured(
+            "answer", tools=[_tool()], result_type=_Answer, max_model_calls=2,
+            stop_feedback=review,
+        )
+    assert len(created) == 1
 
 
 @pytest.mark.parametrize("structured", [False, True])
