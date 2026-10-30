@@ -366,7 +366,7 @@ export function TasksPage() {
             ? progress.percent ?? 0
             : (currentStageIndex / (PIPELINE.length - 1)) * 100;
           const progressText = progress
-            ? progress.percent === null ? t("准备中") : `${Number(progress.percent.toFixed(1))}%`
+            ? progress.percent === null ? "—" : `${Number(progress.percent.toFixed(1))}%`
             : task.status === "COMPLETE" ? "100%" : task.status === "PENDING" ? "0%" : "—";
           const stageTitle = paused ? t("已保留解析成果，继续后接着处理")
             : task.activeStage === "asr" ? t("整集语音转写中")
