@@ -2041,7 +2041,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert video_parse_task.json()["uploadSessionId"] == upload_id
     assert video_parse_task.json()["durationSeconds"] == 12
     assert video_parse_task.json()["canRetry"] is False
-    assert video_parse_task.json()["canReparse"] is False
+    assert video_parse_task.json()["canReparse"] is True
     video_parse_tasks = client.get(
         "/api/jobs/video-parse/list",
         params={

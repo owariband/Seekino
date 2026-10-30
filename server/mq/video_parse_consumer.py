@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import TypeVar
 
 from agent.video_parse_v2.state import ChunkTaskPhase
+from gateway.agent_model.errors import ModelFailureReason
 
 from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from ..utils.time import now_utc
@@ -29,6 +30,7 @@ class VideoParseConsumerHandlers:
     prefix: Callable[[], Awaitable[bool]] | None = None
     maintenance: Callable[[], Awaitable[object]] | None = None
     summarize: Callable[[], Awaitable[bool]] | None = None
+    failure: Callable[[str], None] | None = None
 
 
 _Lease = TypeVar("_Lease", VideoParseLease, ChunkParseLease, IntervalParseLease)
@@ -401,6 +403,21 @@ class VideoParseConsumer:
             await self._release_cancelled(lease, error)
             raise
         except Exception as exc:
+            if lease.phase == ChunkTaskPhase.PARSE:
+                stage = getattr(exc, "parse_node_stage", "understanding")
+                if stage not in {"asr", "visual", "ocr", "understanding", "commit"}:
+                    stage = "understanding"
+                reason = getattr(exc, "reason", None)
+                reason = (str(reason) if reason in set(ModelFailureReason)
+                          else "timeout" if isinstance(exc, TimeoutError) else "execution_failed")
+                recorded = await asyncio.to_thread(
+                    self._queue.fail_chunk, lease, error=str(exc), stage=stage, reason=reason,
+                )
+                _logger.error("event=video_parse_node_failed task=%s stage=%s reason=%s recorded=%s",
+                              lease.video_parse_task_id, stage, reason, recorded)
+                if recorded and self._handlers.failure is not None:
+                    self._handlers.failure(lease.video_parse_task_id)
+                return
             retry_at = now_utc() + task_retry_delay(
                 lease.retry_initial_delay_seconds,
                 lease.retry_max_delay_seconds,

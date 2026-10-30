@@ -96,7 +96,7 @@ models:
     source: ark_default
     model: doubao-seed-2-1-pro-260628
     supports_vision_input: true
-    max_output_tokens: 8192
+    max_output_tokens: 30000
     reasoning_effort: high
     request_timeout_seconds: 600
     context_window_tokens: 128000
@@ -108,7 +108,7 @@ models:
     source: deepseek_api
     model: deepseek-flash
     reasoning_effort: none
-    max_output_tokens: 8192
+    max_output_tokens: 30000
     request_timeout_seconds: 1200
   # A dedicated OCR binding enables subtitle/text extraction before Understanding.
   ocr:

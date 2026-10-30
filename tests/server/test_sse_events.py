@@ -451,7 +451,10 @@ def test_unaccepted_pending_video_parse_task_can_be_taken_over() -> None:
             detail={"_worker_runtime_v2": {"accepted": True}},
         ),
     )
-    assert jobs_api.project_video_parse_task(accepted).can_reparse is False
+    assert jobs_api.project_video_parse_task(accepted).can_reparse is True
+    assert jobs_api.project_video_parse_task(
+        replace(accepted, has_active_execution_lease=True)
+    ).can_reparse is False
 
 
 @pytest.mark.parametrize(

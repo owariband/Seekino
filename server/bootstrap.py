@@ -469,6 +469,7 @@ def _build_application_services(
         VideoParseConsumerHandlers(
             prepare=v2_runtime.prepare,
             understand=v2_runtime.understand,
+            failure=v2_runtime.notify_task_failed,
             refine=v2_runtime.refine,
             index=v2_runtime.index,
             prefix=v2_runtime.run_next_prefix,

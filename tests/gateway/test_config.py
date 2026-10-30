@@ -161,7 +161,7 @@ def test_default_config_uses_canonical_agent_sources() -> None:
     assert config.video_parser.transcript_model == "doubao-seed-2-0-lite-260428"
     assert config.video_parser.vision_source == "ark_default"
     assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
-    assert config.video_parser.vision_max_output_tokens == 8192
+    assert config.video_parser.vision_max_output_tokens == 30000
     assert config.video_parser.vision_reasoning_effort == "high"
     resolved = config.resolve_model_binding("vision", environ={})
     assert resolved.supports_vision_input
