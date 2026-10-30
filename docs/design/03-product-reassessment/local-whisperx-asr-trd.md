@@ -2,6 +2,8 @@
 
 日期：2026-10-29。主题：可选本地 WhisperX ASR、强制对齐与字幕时间证据。
 
+整片 ASR 增量关联：[PR #9](https://github.com/owariband/Seekino/pull/9)，现有分支 `codex/full-video-asr`。依赖 dev 已提交的 WhisperX 接入、直接 JSON 与节点重试修复（截至 `80bb293d`）；本 PR 先向 dev 集成，再随后续发布进入 main，独立发布 PR #10 不含此增量。
+
 用户希望 Seekino 直接提供可选的 WhisperX 接入：用户自行安装依赖和下载模型后，可用正式解析代码完成低 API 调用成本的转写，并取得后续字幕需要的字词时间。推荐 WhisperX 的原因是它同时提供转写和声学强制对齐。
 
 修改前 `gateway/transcription.py` 只有 Ark 视频与 OpenAI Audio 两条通路；本机正式配置选择 Ark。`scripts/local_whisper.py` 是独立 whisper.cpp 服务，`evals/parse_protocol_benchmark.py` 对它的调用属于实验，不能视作正式 WhisperX 接入。仅保留句段文本与时间，不能按字词重组字幕行。`config/local-kimi.yaml` 同时管生成、转写和向量，文件名误导了配置作用域。
@@ -57,6 +59,8 @@ models.transcription + model_sources.whisperx_local
 - Server 在发布该轮整片媒体、调度新 Chunk 前，从原片提取完整 16 kHz mono PCM16 音轨，经既有 Gateway 转写及对齐。归一化为原片绝对毫秒后，在同一个 RuntimeService 内按 `(parse_task_id, video_lease_version)` 缓存结果。沿用视频租约、模型调用预算与取消控制；成功后才发布缓存，失效租约不得发布。
 - 原 `transcribe_chunk` 保持返回 `ASRResult`，选择 `cue.start < chunk.end && cue.end > chunk.start` 的完整 cues，保留原始文本、时间和 words。每次深复制，避免 Chunk 修改共享数据；不再加 Chunk 起点。Understanding 的可写区间保持原合同，跨界原句只提供上下文，不扩大事件写入权限。
 - 采用现有单 RuntimeService 的进程内 Consumer；不支持将同一视频的协调器和 Chunk 分配给互不共享内存的服务实例。缓存缺失明确失败，不伪装为空转写。协调器退出后释放缓存，服务重启或新协调器重试会重新转写；已提交 Chunk 沿用既有恢复逻辑。没有整片 ASR 的持久 checkpoint。
+- Chunk 领取还需当前视频租约下的 `asr_prepared_lease_version` 回执，由 Server 在内存转写与整片媒体均准备成功后写入原任务 detail。新协调器租约天然使旧回执失效；回执不保存转写文本，不是可跨重启恢复的成果。恢复时排队 Chunk 不会提前领取并消耗执行超时。视频准备失败以及准备中租约过期计入既有 Prepare 失败预算，超过冻结的重试次数后停止，避免 PARSING 恢复阶段无限重建。
+- 新建的仅供观看问答按需解析任务保持 `scope=chunk`，因为该路径没有整片协调器和视频缓存；已经存在的完整解析任务仍保留原冻结配置。正式全片默认值不改变按需观看的职责。
 - 临时整片音频在实际原生推理退出后清理；文本缓存生命周期不延长音频内存生命周期。整片调用超时覆盖整段转写，需按素材长度配置 `request_timeout_seconds`。首个 Chunk 需等待整片 ASR，这是相对逐 Chunk 的延迟代价。
 - 2026-10-30 的目标负载是先完成一个视频的 ASR，再让 10 个 Understanding Chunk 读取结果。WhisperX 已由 Gateway 按来源与模型复用 runtime，并在内部串行推理；前置 ASR 解决逐块排队转写与理解槽位的耦合，不额外创建 10 个本地模型。初次部署保持 `SEEKINO_VIDEO_CONCURRENCY=1`，单独调整 `SEEKINO_PARSE_CONCURRENCY=10`；Refine、Summary 可能同时调用 Kimi，因此 Parse 的 10 个槽位不等于账号总在途上限 10。
 - `asr` 阶段沿现有 execution_timing 账本在视频租约下采样，任务总时长继续取执行区间并集；排队及停机不计入。普通 release 时长展示已由前置提交开放。本次无需数据库迁移或新队列。
@@ -78,6 +82,10 @@ models.transcription + model_sources.whisperx_local
 视频级增量使用替身模型和隔离 SQLite 验证；两个并发 Chunk 共用一次整片转写，58–62 秒的跨界 cue 在两者中均保留相同绝对时间，恢复后重建一次缓存。失败、取消、缺证和时长投影的测试记录见 [devlog](../../dev/devlog.md#devlog-full-video-asr-20261029)。这些结果不证明识别准确率或整集速度改善。
 
 2026-10-30 增补：整片 ASR 分支同步 dev 的直接 JSON 与节点内重试实现，回归扩展到 10 个 Chunk 同时进入真实 Understanding 子图；替身模型对一个 Chunk 注入一次暂态超时，最终全部提交，ASR 仍只调用一次。验证同时覆盖协调器退出后重新转写，不能将本次内存复用解释为跨重启复用。组合回归结果记录于同一 devlog。
+
+落地审查另复现三个失败断言：恢复中的 Chunk 被提前领取、ASR Provider 失败未计入 Prepare 预算、重复租约过期仍可继续领取视频。新增租约回执与预算接线后，Queue/整片 ASR **141 项通过**；按需观看兼容 **26 项通过**。两组使用隔离 SQLite/替身模型，不将恢复正确性当成整节课程吞吐证据。
+
+最终组合回归 **1,017 passed**，与上述定向用例重叠。真实本地增量验证采用 Micrograd 原片前 100 秒：正式 ASR hook 调用一次 WhisperX，得到 12 条 cues、334 个带时间的词；10 个并发 Chunk 窗口均能读取，6 条句子跨窗口保留。ASR 用时 331.318 秒、探针进程峰值 RSS 2,565,750,784 bytes；有另一条开发 API/Consumer 同机运行，不能作为隔离性能或整节课程 ETA。探针替代租约/计时持久层及媒体读取准入，不调用 Kimi或写入业务库；原始结果、探针与组合日志见 [devlog](../../dev/devlog.md#devlog-full-video-asr-20261029)。
 
 # 5. 试点验证与推广决策
 

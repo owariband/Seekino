@@ -233,6 +233,8 @@ class VideoParseRuntimeService:
                     check_active=lambda: self._require_video_active(lease),
                 )
                 await self._run_blocking(media_context.__enter__)
+                if video_asr:
+                    await asyncio.to_thread(self._persistence.finish_video_asr_preparation, lease)
             await self.agent.InvokeVideoParse(lease.video_parse_task_id)
         except asyncio.CancelledError as error:
             if not getattr(error, "voiceprint_failed", False):

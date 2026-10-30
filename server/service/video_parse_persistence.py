@@ -69,6 +69,8 @@ from .video_parse_task import (
     _ensure_runtime,
     _latest_video_task_id,
     _set_capacity_acquired,
+    _requires_video_asr,
+    _video_failure_status,
 )
 from .video_parse_content import (
     _normalize_event_index_target,
@@ -177,7 +179,13 @@ class VideoParsePersistenceService:
                         VideoParseTaskStatus.INDEXING_FAILED.value,
                     }:
                         raise VideoParseConflictError("Video has an active task from another Parse pipeline")
-                    config = default_parse_config
+                    # On-demand playback has no full-video coordinator/cache.
+                    # Freeze its own Chunk scope without changing full-parse defaults.
+                    config = default_parse_config.model_copy(update={
+                        "models": default_parse_config.models.model_copy(update={
+                            "asr": default_parse_config.models.asr.model_copy(update={"scope": "chunk"}),
+                        }),
+                    })
                     task = VideoParseTaskData(
                         id=str(uuid4()), video_id=video_id, pipeline_version="v2",
                         status=VideoParseTaskStatus.PENDING.value,
@@ -499,6 +507,23 @@ class VideoParsePersistenceService:
                 )
             session.flush()
             return _task_state(task_store.get_task(session, task.id))
+
+    def finish_video_asr_preparation(
+        self, lease: VideoParseLease, *, now: datetime | None = None,
+    ) -> None:
+        prepared_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            task = _locked_video_lease(session, lease, prepared_at)
+            if (task.is_deleted or _latest_video_task_id(session, task.video_id) != task.id
+                    or _video_failure_status(task) is not None):
+                raise VideoParseLeaseLostError("Video ASR preparation is no longer current")
+            if not _requires_video_asr(task) or task.status not in {"PREPARING", "PARSING"}:
+                raise VideoParseConflictError("Video ASR preparation is not pending")
+            detail = _ensure_runtime(task.detail)
+            detail[RUNTIME_DETAIL_KEY]["asr_prepared_lease_version"] = lease.lease_version
+            task.detail = detail
+            task.update_time = datetime_to_unix_time_ms(prepared_at)
+            task_store.save_task(session, task)
 
     def begin_voiceprint_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,

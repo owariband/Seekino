@@ -50,7 +50,8 @@ def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resum
     runtime._video_transcripts = {}
     runtime._video_lease = ContextVar("video_asr_lease", default=None)
     runtime._model_manager = ContextVar("video_asr_manager", default=None)
-    runtime._persistence = SimpleNamespace(load_task_input=lambda _: task_input)
+    runtime._persistence = SimpleNamespace(load_task_input=lambda _: task_input,
+                                          finish_video_asr_preparation=lambda _: None)
     runtime._parse_input = lambda _: inputs
     runtime._artifact_store = SimpleNamespace(resolve=lambda uri: tmp_path / uri)
     runtime._require_video_active = lambda _: None

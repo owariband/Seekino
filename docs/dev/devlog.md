@@ -149,6 +149,13 @@
 - **方案验证：** 扩展既有测试为 2/10 个 Chunk，进入真实 Understanding 子图后用 Barrier 保证同时在途，对其中一个注入暂态超时；最终每个 Chunk 仅提交一次，ASR 每轮仍调用一次，协调器恢复再调用一次。组合回归 **1,014 passed、1 个既有 Starlette 弃用警告**；命令为 `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -p no:cacheprovider tests/server/test_full_video_asr.py tests/server/test_config.py tests/server/test_video_parse_worker.py tests/server/test_video_parse_repository.py tests/server/test_job_repository.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_media.py tests/server/test_parse_output_budget.py tests/agent/video_parse_v2 tests/engine/parsev2/test_observations.py --tb=short -q`，使用已有 Python 3.12 venv，39.65 秒完成。原始临时日志 `/private/tmp/seekino-full-video-asr-dev-integration-tests.log`，测试与行为断言保留在仓库；与此前 813 项重叠，不累加。
 - **指标对比：** 离线并发覆盖从 2 个扩大为 10 个 Chunk，新增理解失败恢复而 ASR 不增加调用的证据；实模速度、资源和稳定性仍未测。本机 WhisperX 超时仍为 1,200 秒，是否覆盖整节课程必须单独实测；旧任务普通 retry 不更新 scope/输出预算。下一步是新配置的隔离试点及端到端验收，不能直接把短请求 10 路成功当成长课程通过。
 
+2026-10-30 落地补强与真实 ASR 冒烟（同一需求）：
+
+- **问题与现状：** SQLite 复现 3 项失败：已有拓扑的 PARSING 任务重建 ASR 时，Chunk 仍可领取并提前计时；ASR Provider 异常没有增加 Prepare 失败计数；重复准备租约过期也未耗尽该预算。另外，新建观看问答的按需任务没有整片协调器，不能直接继承 video scope。用户随后将本 chat 的职责收回到 PR #9；此前仅修改本机 Video/Parse 为 3/3 并启动 MySQL、ES、embedding，未由本 chat 启动 API/Consumer 或创建新的课程解析版本。
+- **方案候选：** 复用现有任务 detail 保存 `asr_prepared_lease_version`，在转写缓存和媒体都就绪后写入，Chunk 领取校验当前租约；新租约使旧回执失效。准备错误和租约过期复用有限 Prepare 失败预算。按需观看新任务保持 chunk scope。无需新表、持久转写格式或 TimelineEvent 迁移。
+- **方案验证：** 修复后 Queue/全片 ASR 141 passed；扩大组合回归为 **1,017 passed、1 个既有 Starlette 弃用警告**，观看兼容单独 **26 passed**。组合命令沿上面的 1,014 项入口，新增 3 个恢复用例；观看命令为 `python -m pytest tests/server/test_realtime_understanding.py -q`。实模使用当前 large-v3 CPU/int8、batch 1、6 CPU threads，从原始 Micrograd 视频取 `[0,100000)` ms，调用实际 `VideoParseRuntimeService._prepare_video_asr`、Gateway、音轨提取与 WhisperX，再并发调用 10 次 `transcribe_chunk`；租约/计时持久层及媒体读取准入由探针替代，不修改业务数据库、不调用 Kimi。一次 ASR 成功，12 条 cues、334 个有效词时间，10 个窗口均非空，6 条 cue 跨窗口保留。证据：[结果](../../outputs/verification/full-video-asr-live-20261030/result.json)、[探针](../../outputs/verification/full-video-asr-live-20261030/probe.py)、[模型日志](../../outputs/verification/full-video-asr-live-20261030/probe.log)、[组合回归](../../outputs/verification/full-video-asr-live-20261030/regression.log)。
+- **指标对比：** 恢复期领取/无界失败的 3 个复现断言由失败转通过；真实 ASR hook 和 10 窗口取证从未测变为一个成功样本。ASR 阶段 **331.318 秒**，探针进程峰值 RSS **2,565,750,784 bytes**（macOS `ru_maxrss`）；当时另一条开发 API/Consumer 已启动，因此存在共享机器负载，数值不代表独占资源性能、整片峰值或全课程 ETA。旧路径未做同条件 A/B，不报告加速或准确率提升；本次可支持提交评审，真实整节课程及 Kimi/Refine/Index 端到端仍待验收。
+
 <a id="devlog-kimi-concurrency-20261030"></a>
 
 ## 2026-10-30：Kimi Code API 10 路并发实测

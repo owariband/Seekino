@@ -192,6 +192,8 @@ Server 按原有正式解析链路准备 16 kHz、单声道 PCM16 WAV；Gateway 
 
 新建 WhisperX 解析任务默认冻结 `models.asr.scope: video`：先转写完整原片音轨，再由原 Chunk ASR 节点读取与窗口相交的完整 cues。时间已经是原片绝对毫秒，不重复加 Chunk 偏移；Understanding 的输出仍受本段可写范围约束。上传解析配置可显式选择 `asr.scope: chunk` 回退逐块转写。未指定 scope 的历史任务仍按 chunk 执行，普通重试不会改变冻结配置。
 
+仅为观看问答新建的按需任务仍冻结 `scope: chunk`；它不启动整片协调器。完整解析恢复时，在当前租约的 ASR 与媒体都准备好之前不会领取新的 Chunk，避免排队等待提前耗尽 Chunk 的执行时限；准备错误和准备租约过期受既有 Prepare 重试预算约束。
+
 整片模式仅支持音频 Provider，且要求开启 Understanding。缓存属于当前进程内的视频协调器执行，退出后释放；重启恢复会重新转写，但保留已提交 Chunk。整片结果没有持久 checkpoint。需为完整音轨配置足够的转写请求超时；整片 ASR 完成前尚无第一个 Chunk 理解结果。识别质量、长音频峰值内存和端到端速度仍需真实对照，本次未启动全量解析。
 
 ## 本地声音向量
