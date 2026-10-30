@@ -203,3 +203,5 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 `agent/chat/design/realtime_understanding_graph.svg` 与 `engine/parsev2/design/` 的 5 个 Excalidraw / SVG 文件也已迁入本目录，文件名保持不变，见上方图表索引。
 
 </details>
+
+- [任务历史版本筛选](03-product-reassessment/task-history-filter-trd.md)：任务页区分最新与已被替代的解析版本。

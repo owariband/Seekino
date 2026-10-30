@@ -2544,3 +2544,7 @@ Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐�
 - 现状：TasksPage 的任务列表使用 jobs/list 每 5 秒轮询，工具栏却写着“SSE 实时更新”。上传面板订阅指定 Job SSE 是另一条已实现路径。
 - 修复方向：文案准确说明定期刷新。不要为匹配文案增加当前未实现的 Workspace 级 SSE。
 - 依据：[TasksPage.tsx](../../web/src/features/tasks/TasksPage.tsx)。
+
+### 2026-10-30：任务页混淆当前与历史解析版本
+
+状态：TODO（实现、21 项任务页回归、构建与独立真实 API 预览通过，待合并部署）。旧版本不可重试是既有权限约束，但列表缺少版本区分；新增当前／历史／全部版本筛选，默认只显示最新版本，历史显示替代说明。删除仍是上传聚合粒度，本次不删除任何记录或视频。设计与证据见 [TRD](../design/03-product-reassessment/task-history-filter-trd.md)。

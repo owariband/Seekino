@@ -2,6 +2,14 @@ export type Locale = "zh" | "en";
 export type MessageParams = Readonly<Record<string, string | number>>;
 
 export const englishMessages: Readonly<Record<string, string>> = {
+  "筛选任务版本": "Filter task versions",
+  "当前任务": "Current tasks",
+  "历史任务": "Historical tasks",
+  "全部版本": "All versions",
+  "解析版本 {version}": "Parse version {version}",
+  "已由版本 {version} 替代，仅供查看历史记录。": "Superseded by version {version}. Kept for reference only.",
+  "此历史版本解析失败，后续进度请查看当前任务。": "This historical version failed. View the current task for subsequent progress.",
+  "没有符合当前筛选条件的任务。": "No tasks match the selected filters.",
   "{name} 的系列选项": "Options for {name}",
   "系列可见性": "Series visibility",
   "系列操作": "Series actions",
