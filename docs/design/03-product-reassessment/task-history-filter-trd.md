@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-日期：2026-10-30。分支：`fix/task-history-filter`。PR：创建后回填。
+日期：2026-10-30。分支：`fix/task-history-filter`。PR：[#11](https://github.com/owariband/Seekino/pull/11)，目标 `dev`。
 
 用户在任务页把 Karpathy 历史失败版本误认成当前任务失败，且找不到重试按钮。TasksPage 获取所有分页与版本，却只允许最新版本操作；Server 的 can_retry 同样要求 observation.is_latest。最新版本判断已按 videoId/version 实现，但仅用于操作按钮。删除入口以 UploadSession 为粒度，会影响整个视频，不能用于清理一条历史记录。
 
