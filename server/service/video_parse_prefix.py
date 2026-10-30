@@ -5,6 +5,8 @@ The caller owns the transaction; repositories perform SQL and explicit saves.
 
 from __future__ import annotations
 
+from .parse_control import is_paused
+
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -435,7 +437,7 @@ def claim_next_prefix(
     config = task.parse_config
     detail = _ensure_runtime(task.detail)
     runtime = deepcopy(detail[RUNTIME_DETAIL_KEY])
-    if runtime.get("accepted") is not True:
+    if runtime.get("accepted") is not True or is_paused(task):
         return None
     prefix = deepcopy(runtime["prefix"])
     next_execute_ms = prefix.get("next_execute_time_ms", 0)

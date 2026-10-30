@@ -23,6 +23,18 @@ class ParseJobService:
         self._repository = repository
         self._library = library
 
+    def set_paused(self, video_parse_task_id: str, *, tenant_id: str, paused: bool,
+                   expected_version: int, expected_lease_version: int) -> VideoParseTaskDetail:
+        from .parse_control import set_paused
+        from ..utils.time import now_utc
+        task_id = canonical_uuid(video_parse_task_id, "video_parse_task_id")
+        tenant_id = require_nonempty_text(tenant_id, "tenant_id")
+        with self._repository.transaction() as session:
+            set_paused(session, task_id, tenant_id=tenant_id, paused=paused,
+                       expected_version=expected_version, expected_lease_version=expected_lease_version,
+                       now=now_utc())
+        return self.get_video_parse_task(task_id, tenant_id=tenant_id)
+
     def get_video_parse_task(
         self,
         video_parse_task_id: str,

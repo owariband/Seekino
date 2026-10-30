@@ -8,11 +8,11 @@
 
 # 3. 改造方案与建模
 
-使用任务 detail 中的 execution_control.paused 作为独立控制状态，不改变业务 phase 或 accepted 合同。Service 持有事务，在父任务锁下设置控制状态，撤销父/Chunk/Interval/Prefix/Summary 租约；未完成子任务回到可领取态。队列、实时准备、Prefix、Summary 的入口统一检查 paused。继续恢复派发，不创建新版本。API 暴露 isPaused、canPause、canResume；任务页显示暂停/继续和整集语音转写阶段，保留原视频。原生 ASR 不可强制中断，停止为尽力取消且迟到结果被 fencing 拒绝。历史过滤复用独立 PR11。
+使用任务 detail 中的 execution_control.paused 作为独立控制状态，不改变业务 phase 或 accepted 合同。Service 持有事务，在父任务锁下设置控制状态，撤销父/Chunk/Interval/Prefix/Summary 租约；未完成子任务回到可领取态。队列、实时准备、Prefix、Summary 的入口统一检查 paused。继续恢复派发，不创建新版本。为兼容尚未重启的旧 Consumer，暂停同时将父任务与 Prefix/Summary 的调度时间设置到 2037-01-01（MySQL TIMESTAMP 范围内）；新入口以持久 paused 标记为准，不依赖日期，继续时恢复为当前时间。API 暴露 isPaused、canPause、canResume；任务页显示暂停/继续和整集语音转写阶段，保留原视频。原生 ASR 不可强制中断，停止为尽力取消且迟到结果被 fencing 拒绝。历史过滤复用独立 PR11。
 
 # 4. 对照实验与结果分析
 
-基线没有暂停。先测暂停后不能领取、旧 lease 不得提交、恢复版本/成果不变、越权和历史任务拒绝，再验证前端按钮与请求。结果待测。
+基线没有暂停。先测暂停后不能领取、旧 lease 不得提交、恢复版本/成果不变、越权和历史任务拒绝，再验证前端按钮与请求。180 项队列/总结/实时解析测试通过；新增门禁与状态投影测试、任务页暂停继续交互通过。13:43 开发库实操暂停 Micrograd，父租约 6→7、容量 true→false，活动 Chunk 租约 3→0；Building GPT 原 lease=1 / PID 40888 保持不变。
 
 # 5. 试点验证与方案取舍
 
@@ -20,4 +20,4 @@
 
 # 6. 结果验收与闭环
 
-实现与验证待完成。目标是其他任务释放执行资源，Building GPT 独立推进，并有用户可操作的暂停/继续入口。整集解析完成另行验收。
+实现和隔离测试完成；开发任务已暂停。页面部署与浏览器验收尚待完成。目标是其他任务释放执行资源，Building GPT 独立推进，并有用户可操作的暂停/继续入口。整集解析完成另行验收。

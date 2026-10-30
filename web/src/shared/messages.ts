@@ -2,6 +2,12 @@ export type Locale = "zh" | "en";
 export type MessageParams = Readonly<Record<string, string | number>>;
 
 export const englishMessages: Readonly<Record<string, string>> = {
+  "解析已暂停": "Parsing paused",
+  "已保留解析成果，继续后接着处理": "Saved results are retained. Resume to continue.",
+  "整集语音转写中": "Transcribing full video",
+  "暂停解析": "Pause parsing",
+  "继续解析": "Resume parsing",
+  "正在更新…": "Updating…",
   "{name} 的系列选项": "Options for {name}",
   "系列可见性": "Series visibility",
   "系列操作": "Series actions",

@@ -36,6 +36,7 @@ from ..model.job import (
     interval_full_ready_mask,
 )
 from ..model.video import VideoChunk
+from ..service.parse_control import is_paused
 from ..service.video_parse_task import (
     _aggregate_video_task,
     _advance_ready_chunks,
@@ -99,7 +100,7 @@ class MySqlVideoParseQueue:
                 or_(VideoParseTask.lease_owner.is_(None), VideoParseTask.lease_expire_time <= claimed_at),
                 VideoParseTask.next_execute_time <= claimed_at,
             ).with_for_update(skip_locked=True))
-            if task is None or _latest_video_task_id(session, task.video_id) != task.id:
+            if task is None or is_paused(task) or _latest_video_task_id(session, task.video_id) != task.id:
                 return None
             runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
             if (not _accepted(task) and runtime.get("realtime_only") is not True
@@ -128,7 +129,7 @@ class MySqlVideoParseQueue:
             parent = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == parent_id,
             ).with_for_update(skip_locked=True))
-            if (parent is None or parent.is_deleted
+            if (parent is None or parent.is_deleted or is_paused(parent)
                 or _latest_video_task_id(session, parent.video_id) != parent.id
                 or _video_failure_status(parent) is not None):
                 return None
@@ -180,7 +181,7 @@ class MySqlVideoParseQueue:
                     VideoParseTask.next_execute_time <= claimed_at,
                     VideoParseTask.is_deleted.is_(False),
                 ).with_for_update(skip_locked=True))
-                if (parent is None or not _accepted(parent)
+                if (parent is None or is_paused(parent) or not _accepted(parent)
                     or _video_failure_status(parent) is not None
                     or not self._acquire_capacity(session, parent)):
                     continue
@@ -951,7 +952,7 @@ def _capacity_acquired():
 
 
 def _eligible_parent(parent: VideoParseTask | None) -> bool:
-    return bool(parent is not None and not parent.is_deleted and _accepted(parent)
+    return bool(parent is not None and not parent.is_deleted and not is_paused(parent) and _accepted(parent)
                 and parent.capacity_acquired and parent.status in {"PARSING", "INDEXING"}
                 and _video_failure_status(parent) is None)
 

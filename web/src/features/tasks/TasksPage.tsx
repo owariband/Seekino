@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import {
   Activity,
+  Pause,
+  Play,
   CheckCircle2,
   CircleAlert,
   Clock3,
@@ -20,6 +22,7 @@ import {
   listAllVideoParseTasks,
   reparseUpload,
   retryUploadParse,
+  setVideoParsePaused,
   shouldRetryApiRequest,
 } from "../../api/client";
 import type {
@@ -32,7 +35,11 @@ import { useUploads } from "../uploads/UploadProvider";
 import { ParseUsageDetails } from "./ParseUsageDetails";
 import styles from "./tasks.module.css";
 
-type Filter = "all" | VideoParseTaskStatus;
+type Filter = "all" | "paused" | VideoParseTaskStatus;
+
+function isPaused(task: VideoParseTaskView): boolean {
+  return task.isPaused ?? task.detail.execution_control?.paused ?? false;
+}
 
 const PIPELINE = ["解析画面与对白", "发布检索结果", "可检索"];
 
@@ -102,6 +109,7 @@ export function TasksPage() {
   const isDebug = displayMode === "debug";
   const { forgetDeletedSession, openDialog, syncRequeuedParse } = useUploads();
   const queryClient = useQueryClient();
+  const [controllingTaskIds, setControllingTaskIds] = useState<ReadonlySet<string>>(() => new Set());
   const [filter, setFilter] = useState<Filter>("all");
   const [deletingUploadSessionIds, setDeletingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [retryingUploadSessionIds, setRetryingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -115,6 +123,23 @@ export function TasksPage() {
     retry: shouldRetryApiRequest,
     refetchInterval: 5_000,
   });
+
+  const togglePause = async (task: VideoParseTaskView) => {
+    const id = task.videoParseTaskId;
+    if (controllingTaskIds.has(id)) return;
+    setControllingTaskIds((current) => new Set(current).add(id));
+    setActionErrors((current) => { const next = { ...current }; delete next[id]; return next; });
+    try {
+      const updated = await setVideoParsePaused(task, !isPaused(task));
+      queryClient.setQueryData<VideoParseTaskView[]>(["video-parse-tasks"], (current) =>
+        current?.map((item) => item.videoParseTaskId === id ? mergeTaskProjection(item, updated) : item));
+    } catch (error) {
+      setActionErrors((current) => ({ ...current, [id]: errorMessage(error, locale) }));
+    } finally {
+      setControllingTaskIds((current) => { const next = new Set(current); next.delete(id); return next; });
+      void queryClient.invalidateQueries({ queryKey: ["video-parse-tasks"] });
+    }
+  };
 
   const deleteTask = async (task: VideoParseTaskView) => {
     const uploadSessionId = task.uploadSessionId;
@@ -261,8 +286,8 @@ export function TasksPage() {
   const tasks = tasksQuery.data ?? [];
   const visibleTasks = filter === "all"
     ? tasks
-    : tasks.filter((task) => task.status === filter);
-  const runningCount = tasks.filter((task) => activeStatuses.has(task.status)).length;
+    : tasks.filter((task) => filter === "paused" ? isPaused(task) : !isPaused(task) && task.status === filter);
+  const runningCount = tasks.filter((task) => !isPaused(task) && activeStatuses.has(task.status)).length;
   const completedCount = tasks.filter((task) => task.status === "COMPLETE").length;
   const latestVersionByVideo = new Map<string, number>();
   for (const task of tasks) {
@@ -298,6 +323,7 @@ export function TasksPage() {
             ["PENDING", t("排队中")],
             ["PREPARING", t("准备中")],
             ["PARSING", t("解析中")],
+            ["paused", t("解析已暂停")],
             ["INDEXING", t("发布中")],
             ["PARSING_FAILED", t("解析异常")],
             ["INDEXING_FAILED", t("索引异常")],
@@ -316,6 +342,8 @@ export function TasksPage() {
           <div className={styles.loadState} data-error="true"><CircleAlert size={22} /><h2>{t("暂时无法读取任务")}</h2><p>{errorMessage(tasksQuery.error, locale)}</p></div>
         ) : null}
         {visibleTasks.map((task) => {
+          const paused = isPaused(task);
+          const controlling = controllingTaskIds.has(task.videoParseTaskId);
           const currentStageIndex = PIPELINE_STAGE_INDEX[task.status];
           const progress = task.detail.progress;
           const pipelineProgress = progress
@@ -324,7 +352,9 @@ export function TasksPage() {
           const progressText = progress
             ? progress.percent === null ? t("准备中") : `${Number(progress.percent.toFixed(1))}%`
             : task.status === "COMPLETE" ? "100%" : task.status === "PENDING" ? "0%" : "—";
-          const stageTitle = activeStatuses.has(task.status)
+          const stageTitle = paused ? t("已保留解析成果，继续后接着处理")
+            : task.activeStage === "asr" ? t("整集语音转写中")
+            : activeStatuses.has(task.status)
             ? t("正在{value0}", { value0: t(PIPELINE[currentStageIndex]!) })
             : t(statusText[task.status]);
           const uploadSessionId = task.uploadSessionId ?? null;
@@ -346,8 +376,8 @@ export function TasksPage() {
                   {activeStatuses.has(task.status) ? <span className={styles.jobStage}>{stageTitle}</span> : null}
                 </div>
                 <div className={styles.jobActions}>
-                  <div className={styles.jobStatus} data-status={task.status}>
-                    <i />{t(statusText[task.status])}
+                  <div className={styles.jobStatus} data-status={paused ? "PAUSED" : task.status}>
+                    <i />{t(paused ? "解析已暂停" : task.activeStage === "asr" ? "整集语音转写中" : statusText[task.status])}
                   </div>
                   <div className={styles.jobPercent} aria-label={t("解析进度")}>
                     <small>{t("解析进度")}</small>
@@ -360,11 +390,20 @@ export function TasksPage() {
                 <span className={styles.uploadState}><CheckCircle2 size={14} />{t("文件已上传")}</span>
                 {uploadSessionId && latest ? (
                   <div className={styles.controlButtons}>
+                    {task.canPause || task.canResume ? (
+                      <button className="button-secondary" type="button"
+                        disabled={controlling || deleting || retrying || reparsing}
+                        onClick={() => void togglePause(task)}
+                        aria-label={`${t(paused ? "继续解析" : "暂停解析")} ${filename}`}>
+                        {paused ? <Play size={14} /> : <Pause size={14} />}
+                        {controlling ? t("正在更新…") : t(paused ? "继续解析" : "暂停解析")}
+                      </button>
+                    ) : null}
                     {task.canRetry ? (
                       <button
                         className={clsx("button-primary", styles.retryTask)}
                         type="button"
-                        disabled={deleting || retrying || reparsing}
+                        disabled={controlling || deleting || retrying || reparsing}
                         onClick={() => void retryParse(task)}
                         aria-label={t("重试解析 {value0}", { value0: filename })}
                         title={t("重试当前解析任务")}
@@ -376,7 +415,7 @@ export function TasksPage() {
                       <button
                         className={clsx("button-secondary", styles.reparseTask)}
                         type="button"
-                        disabled={deleting || retrying || reparsing}
+                        disabled={controlling || deleting || retrying || reparsing}
                         onClick={() => {
                           setConfirmingDeleteTaskId(null);
                           setConfirmingReparseTaskId(task.videoParseTaskId);
@@ -390,7 +429,7 @@ export function TasksPage() {
                     <button
                       className={clsx("button-secondary", styles.deleteTask)}
                       type="button"
-                      disabled={!task.canDelete || deleting || retrying || reparsing}
+                      disabled={!task.canDelete || controlling || deleting || retrying || reparsing}
                       onClick={() => {
                         setConfirmingReparseTaskId(null);
                         setConfirmingDeleteTaskId(task.videoParseTaskId);
@@ -436,7 +475,7 @@ export function TasksPage() {
                     <button
                       className={clsx("button-secondary", styles.confirmDelete)}
                       type="button"
-                      disabled={!task.canDelete || deleting || retrying || reparsing}
+                      disabled={!task.canDelete || controlling || deleting || retrying || reparsing}
                       onClick={() => void deleteTask(task)}
                       aria-label={t("确认删除 {value0}", { value0: filename })}
                     >

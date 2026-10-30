@@ -398,6 +398,14 @@ export function deleteUploadSession(uploadSessionId: string): Promise<UploadSess
   );
 }
 
+export function setVideoParsePaused(task: VideoParseTaskView, paused: boolean): Promise<VideoParseTaskView> {
+  return requestJson(
+    `/api/jobs/video-parse/control?videoParseTaskId=${encodeURIComponent(task.videoParseTaskId)}` +
+    `&tenantId=${TENANT_QUERY}&paused=${paused}&expectedJobVersion=${task.version}&expectedLeaseVersion=${task.leaseVersion}`,
+    { method: "POST" },
+  );
+}
+
 export function retryUploadParse(
   uploadSessionId: string,
   expectedJobVersion: number,
