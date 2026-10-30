@@ -703,7 +703,7 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 2026-10-29 整片增量：新建 WhisperX 任务支持默认视频级转写，原 Chunk ASR 节点改为读取相交 cues，保留绝对时间及只读证据；旧任务缺省仍逐块执行。内存缓存随协调器租约释放，重启会重新转写；未实现持久 ASR checkpoint。ASR 时间加入既有有效总时长。代码与离线验证已完成，真实整片识别质量、资源、吞吐和运行部署仍待验收；没有启动全量解析。[设计](../design/03-product-reassessment/local-whisperx-asr-trd.md#视频级转写与-chunk-读取)、[本次验证](devlog.md#devlog-full-video-asr-20261029)。
 
-2026-10-30 增补：独立 [PR #9](https://github.com/owariband/Seekino/pull/9) 同步 dev 的直接 JSON 与节点重试修复，扩展离线验证为 10 个 Chunk 并发且一个理解节点暂态失败，仍仅进行一次整片 ASR。运行服务未部署；当前本机 1,200 秒 ASR 超时是否覆盖长课程待测，旧任务需新解析版本才能采用 video scope。B07/B22 的实现和隔离验证不能替代课程全链路稳定性验收。
+2026-10-30 增补：独立 [PR #12](https://github.com/owariband/Seekino/pull/12)（由 #9 迁移至 `feat/full-video-asr`，实现与验证保留）同步 dev 的直接 JSON 与节点重试修复，扩展离线验证为 10 个 Chunk 并发且一个理解节点暂态失败，仍仅进行一次整片 ASR。运行服务未部署；当前本机 1,200 秒 ASR 超时是否覆盖长课程待测，旧任务需新解析版本才能采用 video scope。B07/B22 的实现和隔离验证不能替代课程全链路稳定性验收。
 
 同日落地补强：复现并修复恢复时 Chunk 提前领取、视频 ASR 失败/过期租约未进入有限准备预算的问题。当前租约的 ASR 与媒体准备完成后才写入派发回执；新租约不复用旧回执。观看问答新建的按需任务保持 chunk scope。测试与实机小样本边界继续记录于同一 devlog；此增量尚未合并或部署。
 

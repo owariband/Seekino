@@ -156,6 +156,8 @@
 - **方案验证：** 修复后 Queue/全片 ASR 141 passed；扩大组合回归为 **1,017 passed、1 个既有 Starlette 弃用警告**，观看兼容单独 **26 passed**。组合命令沿上面的 1,014 项入口，新增 3 个恢复用例；观看命令为 `python -m pytest tests/server/test_realtime_understanding.py -q`。实模使用当前 large-v3 CPU/int8、batch 1、6 CPU threads，从原始 Micrograd 视频取 `[0,100000)` ms，调用实际 `VideoParseRuntimeService._prepare_video_asr`、Gateway、音轨提取与 WhisperX，再并发调用 10 次 `transcribe_chunk`；租约/计时持久层及媒体读取准入由探针替代，不修改业务数据库、不调用 Kimi。一次 ASR 成功，12 条 cues、334 个有效词时间，10 个窗口均非空，6 条 cue 跨窗口保留。证据：[结果](../../outputs/verification/full-video-asr-live-20261030/result.json)、[探针](../../outputs/verification/full-video-asr-live-20261030/probe.py)、[模型日志](../../outputs/verification/full-video-asr-live-20261030/probe.log)、[组合回归](../../outputs/verification/full-video-asr-live-20261030/regression.log)。
 - **指标对比：** 恢复期领取/无界失败的 3 个复现断言由失败转通过；真实 ASR hook 和 10 窗口取证从未测变为一个成功样本。ASR 阶段 **331.318 秒**，探针进程峰值 RSS **2,565,750,784 bytes**（macOS `ru_maxrss`）；当时另一条开发 API/Consumer 已启动，因此存在共享机器负载，数值不代表独占资源性能、整片峰值或全课程 ETA。旧路径未做同条件 A/B，不报告加速或准确率提升；本次可支持提交评审，真实整节课程及 Kimi/Refine/Index 端到端仍待验收。
 
+2026-10-30 PR 关联迁移：用户要求分支只表达需求类型，不含 Agent 身份。将同一实现提交 `b2fb02c4` 迁至 `feat/full-video-asr`，创建 [PR #12](https://github.com/owariband/Seekino/pull/12) 替代 [PR #9](https://github.com/owariband/Seekino/pull/9)。迁移时核对两个远端 PR 的 head SHA 一致；后续只更新 TRD、问题清单和本条关联记录，业务代码及既有验证结果不变。Agent 身份写在新 PR 描述中，不重新执行模型或解析任务。
+
 <a id="devlog-kimi-concurrency-20261030"></a>
 
 ## 2026-10-30：Kimi Code API 10 路并发实测
