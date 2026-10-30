@@ -3753,6 +3753,19 @@ Karpathy v3 的 4 次成功 Kimi 请求耗时 183–296 秒；EP1 504 请求实�
 | 正式完整视频成功 | 0 | 待验证，不能用离线测试代替 |
 
 
+## 2026-10-30：解析任务暂停、继续与准备阶段显示（B22）
+
+### 问题与现状
+用户只要 Building GPT，Micrograd 仍占视频容量并运行 3 个 Chunk；Building GPT 实际已取得容量，13:26 起执行整集 ASR，页面仅显示“准备中”。
+
+### 方案候选
+采用独立持久 paused 标记，保留 accepted 与业务 phase，暂停撤销父/子/Prefix/Summary 租约、释放容量，继续沿用任务和已提交内容。未采用删除媒体或伪造失败。兼容旧 Consumer 使用远期调度时间；新调度入口显式检查 paused。原生 WhisperX 不可抢占，迟到结果以租约隔离。
+
+### 方案验证
+队列/总结/实时解析相关 180 项测试通过；补充门禁和 API 状态投影后暂停专项 5 项通过；任务页 21 项通过，包含暂停→继续请求及 leaseVersion 变化。开发库在 13:43 执行暂停 Micrograd，日志出现取消/lease lost 且 recorded=false，旧执行没有覆盖暂停事实。Building GPT 原 lease=1、PID 40888 持续运行。页面部署验收和整集完成仍未验证。
+
+### 指标对比
+Micrograd 活动 Chunk 租约 3→0、容量 true→false，未删除视频、内容或创建新解析版本。新增控制事务和两个公开控制布尔能力字段；无数据库 schema 迁移。整片 ASR 为内存缓存，重启会丢失运行，因此不能用部署重启冒充无损切换；执行速度与整集质量收益未测。
 <a id="devlog-full-video-asr-rollout-20261030"></a>
 ## 2026-10-30：GPT 整集启用视频级 ASR 与 10 路 Understanding
 

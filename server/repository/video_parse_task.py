@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import Session
 
 from ..model.dto.jobDTO import VideoParseTaskData, VideoData, SeriesData
@@ -19,6 +19,7 @@ def list_due_summary_task_ids(session: Session, now_ms: int, *, limit: int = 64)
     status = summary["status"].as_string()
     return list(session.scalars(select(VideoParseTask.id).where(
         VideoParseTask.is_deleted.is_(False),
+        func.coalesce(VideoParseTask.detail["execution_control"]["paused"].as_boolean(), False).is_(False),
         or_(
             and_(status.in_(["PENDING", "RETRY_WAIT"]),
                  summary["next_execute_time_ms"].as_integer() <= now_ms),

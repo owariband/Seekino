@@ -430,3 +430,7 @@ uv run python -m server.cli hydrate \
   00000000-0000-0000-0000-000000000000 \
   11111111-1111-1111-1111-111111111111
 ```
+
+### 解析暂停与继续
+
+任务控制使用 `POST /api/jobs/video-parse/control`，参数为 `tenantId`、`videoParseTaskId`、`paused`、`expectedJobVersion`、`expectedLeaseVersion`。仅当前正式活动任务可以操作，冲突返回 409；读取投影提供 `isPaused/canPause/canResume/activeStage`。暂停保留版本与已提交结果，撤销在途租约并释放容量；原生模型调用可能在返回到取消检查点后才真正退出。详见[设计](../docs/design/03-product-reassessment/parse-pause-resume-trd.md)。

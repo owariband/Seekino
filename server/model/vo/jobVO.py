@@ -40,6 +40,10 @@ class VideoParseTaskView(ContractModel):
     original_filename: str | None = None
     upload_session_id: str | None = None
     duration_seconds: int | None = Field(default=None, gt=0)
+    is_paused: bool = False
+    can_pause: bool = False
+    can_resume: bool = False
+    active_stage: str | None = None
     can_retry: bool = False
     can_reparse: bool = False
     can_delete: bool = False

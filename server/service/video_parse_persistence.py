@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .parse_control import is_paused
+
 import hashlib
 import json
 import math
@@ -164,6 +166,8 @@ class VideoParsePersistenceService:
                     runtime.get("execution_mode") == "v2"
                     or (runtime.get("execution_mode") is None and task.pipeline_version == "v2")
                 )
+                if task is not None and is_paused(task):
+                    raise VideoParseConflictError("解析已暂停，请先继续解析")
                 if is_v2:
                     config = ParseConfig.model_validate(task.parse_config)
                     if task.chunk_count != math.ceil(video.duration_ms / (config.chunk_duration * 1000)):
@@ -201,6 +205,8 @@ class VideoParsePersistenceService:
                         }}, create_time=datetime_to_unix_time_ms(created_at), update_time=datetime_to_unix_time_ms(created_at),
                     )
                     task_store.insert_task(session, task)
+                if task is not None and is_paused(task):
+                    raise VideoParseConflictError("解析已暂停，请先继续解析")
                 if is_v2:
                     task_store.save_task(session, task)
                 session.flush()

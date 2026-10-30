@@ -93,6 +93,33 @@ afterEach(() => {
 });
 
 describe("V2 task observation", () => {
+  it("pauses and resumes the same task with version fencing and displays ASR", async () => {
+    workspace.displayMode = "release";
+    let current: VideoParseTaskView = { ...task("PREPARING", "gpt"), canPause: true, activeStage: "asr" };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/control?")) {
+        const paused = url.includes("paused=true");
+        current = { ...current, isPaused: paused, canPause: !paused, canResume: paused,
+          activeStage: null, leaseVersion: current.leaseVersion + 1 };
+        return response(current);
+      }
+      return response({ items: [current], total: 1, hasMore: false, nextCursor: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+    expect(await screen.findAllByText("整集语音转写中")).not.toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "暂停解析 gpt.mp4" }));
+    expect(await screen.findByRole("button", { name: "继续解析 gpt.mp4" })).toBeEnabled();
+    expect(screen.getByText("已保留解析成果，继续后接着处理")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "继续解析 gpt.mp4" }));
+    expect(await screen.findByRole("button", { name: "暂停解析 gpt.mp4" })).toBeEnabled();
+    const calls = fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.includes("/control?"));
+    expect(calls[0]).toContain("paused=true&expectedJobVersion=1&expectedLeaseVersion=0");
+    expect(calls[1]).toContain("paused=false&expectedJobVersion=1&expectedLeaseVersion=1");
+    expect(current.version).toBe(1);
+  });
+
   it("defaults to current versions across all pages and filters status after version scope", async () => {
     workspace.displayMode = "release";
     const old = { ...task("PARSING_FAILED", "old"), videoId: "shared", version: 1 };
@@ -305,7 +332,7 @@ describe("V2 task observation", () => {
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("Refine 9 / 22");
   });
 
-  it("shows preparation instead of a percentage before the topology is ready", async () => {
+  it("keeps unknown progress separate from preparation status before topology is ready", async () => {
     const preparing: VideoParseTaskView = {
       ...task("PREPARING"),
       detail: {
@@ -323,7 +350,7 @@ describe("V2 task observation", () => {
     renderPage();
 
     await screen.findByText(preparing.originalFilename!);
-    expect(screen.getByLabelText("解析进度")).toHaveTextContent("准备中");
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("—");
     expect(screen.getByLabelText("解析进度")).not.toHaveTextContent("%");
   });
 

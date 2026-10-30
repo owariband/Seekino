@@ -24,6 +24,9 @@ class ParseJobRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
+    def transaction(self):
+        return self._session_factory.begin()
+
     def get_video_parse_task(
         self,
         video_parse_task_id: str,

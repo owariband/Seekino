@@ -31,3 +31,10 @@ router.add_api_route(
     jobs.stream_video_parse_task_events,
     methods=["GET"],
 )
+
+router.add_api_route(
+    "/api/jobs/video-parse/control",
+    jobs.set_video_parse_paused,
+    methods=["POST"],
+    response_model=VideoParseTaskView,
+)

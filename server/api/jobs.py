@@ -13,6 +13,7 @@ from ..config.sse import SSEConfig
 from ..model.job import VideoParseTaskStatus
 from ..model.dto.jobDTO import VideoParseTaskDetail, VideoParseTaskState
 from ..service.job import ParseJobService
+from ..service.parse_control import is_paused, ACTIVE_STATUSES
 from ..service.access import require_tenant_write
 from ..error.auth import AuthError
 from ..service.pagination import decode_cursor, encode_cursor
@@ -38,6 +39,21 @@ def get_video_parse_task(
         tenant_id=tenant_id,
     )
     return project_video_parse_task(state)
+
+
+def set_video_parse_paused(
+    request: Request,
+    video_parse_task_id: str = Query(alias="videoParseTaskId"),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+    paused: bool = Query(),
+    expected_version: int = Query(alias="expectedJobVersion", ge=1),
+    expected_lease_version: int = Query(alias="expectedLeaseVersion", ge=0),
+) -> VideoParseTaskView:
+    require_tenant_write(get_identity(request), tenant_id)
+    return project_video_parse_task(get_services(request).jobs.set_paused(
+        video_parse_task_id, tenant_id=tenant_id, paused=paused,
+        expected_version=expected_version, expected_lease_version=expected_lease_version,
+    ))
 
 
 def list_video_parse_tasks(
@@ -187,6 +203,16 @@ def project_video_parse_task(
 ) -> VideoParseTaskView:
     observation = state if isinstance(state, VideoParseTaskDetail) else None
     task = observation.task if observation is not None else state
+    paused = is_paused(task)
+    runtime = task.detail.get("_worker_runtime_v2", {})
+    controllable = (observation is not None and observation.is_latest
+                    and task.status in ACTIVE_STATUSES and runtime.get("accepted") is True)
+    active_stage = None
+    if task.status == "PREPARING" and task.lease_owner and not paused:
+        entry = runtime.get("execution_timing", {}).get("entries", {}).get(
+            f"asr:{task.video_parse_task_id}:{task.lease_version}", {})
+        if entry.get("outcome") == "running":
+            active_stage = "asr"
     error = None
     if task.last_error is not None:
         error = Failure(
@@ -262,6 +288,10 @@ def project_video_parse_task(
         duration_seconds=(
             observation.duration_seconds if observation is not None else None
         ),
+        is_paused=paused,
+        can_pause=bool(controllable and not paused),
+        can_resume=bool(controllable and paused),
+        active_stage=active_stage,
         can_retry=(
             observation is not None
             and observation.is_latest
@@ -275,7 +305,8 @@ def project_video_parse_task(
             }
         ),
         can_reparse=(
-            observation is not None
+            not paused
+            and observation is not None
             and observation.is_latest
             and not observation.has_active_prefix_suffix_lease
             and observation.upload_session_id is not None

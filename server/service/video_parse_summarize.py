@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .parse_control import is_paused
+
 import hashlib
 import json
 from copy import deepcopy
@@ -53,7 +55,7 @@ def current_summary_lease(task: VideoParseTaskData | None, lease: VideoSummarize
 def _source(session: Session, task: VideoParseTaskData, *, episode_order: int | None = None,
             lock_background: bool = False):
     runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY, {})
-    if (task.is_deleted or runtime.get("accepted") is not True
+    if (task.is_deleted or is_paused(task) or runtime.get("accepted") is not True
             or task_store.latest_video_task_id(session, task.video_id) != task.id):
         return None
     video = task_store.get_video(session, task.video_id)

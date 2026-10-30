@@ -294,6 +294,7 @@ export interface VideoParseTaskView {
   lastError: Failure | null;
   isTest: boolean;
   detail: Record<string, unknown> & {
+    execution_control?: { paused: boolean };
     progress?: {
       completedChunks: number;
       totalChunks: number;
@@ -328,6 +329,10 @@ export interface VideoParseTaskView {
   uploadSessionId: string | null;
   /** Source video duration in integer milliseconds. */
   durationSeconds: number | null;
+  isPaused?: boolean;
+  canPause?: boolean;
+  canResume?: boolean;
+  activeStage?: "asr" | null;
   canRetry: boolean;
   canReparse: boolean;
   canDelete: boolean;
