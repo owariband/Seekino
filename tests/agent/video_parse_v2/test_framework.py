@@ -577,7 +577,11 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
 
 
 @pytest.mark.parametrize("recover", [True, False])
-def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover):
+@pytest.mark.parametrize("reason", [None, "model_connection_error", "model_timeout", "model_gateway_timeout", "model_service_unavailable"])
+def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover, reason):
+    from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
+    error = (ModelFailureError("provider failure", reason=ModelFailureReason(reason))
+             if reason else TimeoutError("provider timeout"))
     inputs = _inputs()
     policy = inputs.parse_config.execution.model_copy(update={
         "max_retry_count": 2, "retry_initial_delay_seconds": 0.001, "retry_max_delay_seconds": 0.001,
@@ -590,7 +594,7 @@ def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover)
         runtime.commit_chunk_result.assert_not_awaited()
         attempts.append(kwargs["asr_result"])
         if not recover or len(attempts) < 2:
-            raise TimeoutError("provider timeout")
+            raise error
         return _result()
     runtime = SimpleNamespace(
         load_chunk_execution=AsyncMock(return_value=execution), prepare_chunk_visual=AsyncMock(),
@@ -604,7 +608,7 @@ def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover)
         runtime.commit_chunk_result.assert_awaited_once()
         assert runtime.commit_chunk_result.await_args.args[1] == _result()
     else:
-        with pytest.raises(TimeoutError) as failure:
+        with pytest.raises(type(error)) as failure:
             asyncio.run(run)
         assert failure.value.parse_node_stage == "understanding"
         runtime.commit_chunk_result.assert_not_awaited()

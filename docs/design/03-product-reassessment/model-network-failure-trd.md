@@ -18,13 +18,13 @@ Karpathy v3 任务在直接 JSON 理解链路失败。OpenAI SDK 的 APIConnecti
 
 # 3. 改造方案与建模
 
-Gateway 将无工具视觉请求的 SDK 暂态错误转换为通用 ModelFailureError，保留 cause。API 超时先于连接错误分类；504 单独标为上游网关超时。429、500、502、503 为暂态服务异常。Agent 按通用 reason 判断重试，不依赖 Provider SDK。Server 显示明确中文错误并复用已有脱敏异常链记录，终止事件不伪装成重试事件。
+Gateway 将无工具视觉请求的 SDK 暂态错误转换为通用 ModelFailureError，保留 cause。API 超时先于连接错误分类；504 单独标为上游网关超时。429、500、502、503 为暂态服务异常。Agent 按通用 reason 判断重试，不依赖 Provider SDK。直接 JSON 路径接上既有 opt-in model_diagnostics，逐请求保存异常链。Server 显示明确中文错误并复用已有脱敏异常链记录，终止事件不伪装成重试事件。
 
 流程：Provider 异常 → Gateway 分类 → 节点有限退避 → 成功提交或耗尽后终止 → 安全提示与诊断日志。取消优先于连接异常。保留租约、版本、幂等、既有 deadline 与终止后停止派发合同；不迁移数据、不改并发或图像采样。
 
 # 4. 对照实验与结果分析
 
-先用真实 SDK + MockTransport 复现不同错误，验证单次调用不在 SDK 内暗中重试；再测节点判定、API 提示和终止日志。改造结果待测。以上真实耗时只用于诊断，不据此估计 p95/p99 或长期成功率。
+先用真实 SDK + MockTransport 复现不同错误，验证单次调用不在 SDK 内暗中重试；再测节点判定、API 提示和终止日志。2026-10-30 隔离回归 233 passed（19.18 秒）：`tests/gateway/test_openai_media.py`、`tests/gateway/test_model_diagnostics.py`、`tests/agent/video_parse_v2/test_framework.py`、`tests/server/test_video_parse_queue.py`。新增 MockTransport 覆盖断连、连接拒绝、读超时、429/500/502/503/504 和 400/401；trace 验证保留 RemoteProtocolError、504 状态码且不包含密钥。节点成功恢复/耗尽验证最多 3 次、ASR 只运行一次。以上真实耗时只用于诊断，不据此估计 p95/p99 或长期成功率。
 
 # 5. 试点验证与方案取舍
 
@@ -32,4 +32,4 @@ Gateway 将无工具视觉请求的 SDK 暂态错误转换为通用 ModelFailure
 
 # 6. 结果验收与闭环
 
-当前：调查完成，修复待实施，正式整集闭环待验证。不能把模型接口可访问、离线测试通过或一个 Chunk 成功当成整集完成。下一步：完成分类与日志回归、创建独立 PR、部署并观察 EP1。
+当前：调查与修复实现完成，233 项相关回归通过；正式部署与整集闭环待验证。不能把模型接口可访问、离线测试通过或一个 Chunk 成功当成整集完成。下一步：创建独立 PR、部署并观察 EP1。

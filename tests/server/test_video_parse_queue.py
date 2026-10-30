@@ -1010,6 +1010,10 @@ def test_consumer_logs_retry_cause_without_sensitive_payloads(
     if phase == "understand":
         assert calls == [(lease, {"error": str(error), "stage": "understanding", "reason": "model_timeout"})]
         assert "video_parse_node_failed" in caplog.text
+        assert "event=video_parse_v2_terminal_error" in caplog.text
+        assert f'root_error_type="{type(deepest).__name__}"' in caplog.text
+        assert 'root_status_code=502' in caplog.text
+        assert 'error_chain=' in caplog.text
         assert "private" not in caplog.text
         assert "video_parse_v2_retry" not in caplog.text
         return
@@ -1831,7 +1835,13 @@ def test_finalize_sweep_skips_no_op_updates_and_pages_every_task_by_id(repositor
         assert session.get(VideoParseTask, second).update_time == stamps[second][0]
 
 
-def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
+@pytest.mark.parametrize("reason,message", [
+    ("model_timeout", "模型请求超时"),
+    ("model_connection_error", "模型服务连接异常"),
+    ("model_gateway_timeout", "模型服务网关超时"),
+    ("model_service_unavailable", "模型服务暂不可用"),
+])
+def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository, reason, message):
     from server.repository.video_parse_task import task_data
     from server.service.video_parse_task import _task_state
     from server.api.jobs import project_video_parse_task
@@ -1844,7 +1854,7 @@ def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
     sibling = queue.claim_chunk("second", lease_duration=timedelta(minutes=1), now=NOW)
     assert first and sibling
     assert queue.fail_chunk(first, error="private provider token", stage="understanding",
-                            reason="model_timeout", now=NOW)
+                            reason=reason, now=NOW)
     queue.retry_video(video_lease, error="coordinator stopped after node failure", now=NOW)
     assert not queue.heartbeat_chunk(sibling, lease_duration=timedelta(minutes=1), now=NOW)
     assert queue.claim_chunk("new", lease_duration=timedelta(minutes=1), now=NOW) is None
@@ -1854,7 +1864,7 @@ def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
         parent = session.get(VideoParseTask, task_id)
         view = project_video_parse_task(_task_state(task_data(parent)))
         assert view.last_error.code == "PARSE_NODE_FAILED"
-        assert "视频理解" in view.last_error.message and "超时" in view.last_error.message
+        assert "视频理解" in view.last_error.message and message in view.last_error.message
         assert "private" not in view.last_error.message
     from server.service.video_parse_content import _locked_chunk_lease
     from server.service.video_parse_errors import VideoParseLeaseLostError

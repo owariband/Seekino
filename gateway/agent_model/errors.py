@@ -15,6 +15,9 @@ class ModelFailureReason(StrEnum):
     LOOP_LIMIT = "loop_limit"
     INVALID_MODEL_RESPONSE = "invalid_model_response"
     MODEL_TIMEOUT = "model_timeout"
+    MODEL_CONNECTION_ERROR = "model_connection_error"
+    MODEL_GATEWAY_TIMEOUT = "model_gateway_timeout"
+    MODEL_SERVICE_UNAVAILABLE = "model_service_unavailable"
 
 
 class ModelFailureError(RuntimeError):
