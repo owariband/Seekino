@@ -650,6 +650,8 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 排序日期：2026-10-30。
 
+10-30 续版关联：节点内重试不重复本轮 ASR，但 GPT 实测在最终网络失败后退出协调器，完整转写缓存仍被清理。跨协调器/跨重启复用由 [B20](#b20本地-whisperx-正式接入与字幕时间证据)的新跟进承接；暂停和网络分类继续保留原职责，不把新 PR 扩成全部任务控制重写。
+
 2026-10-30 暂停控制进展：新增 [暂停/继续设计](../design/03-product-reassessment/parse-pause-resume-trd.md)、持久控制 API 与任务页入口，隔离测试通过。开发库 Micrograd 已暂停（容量已释放、活动 Chunk 租约归零），Building GPT 保持原进程进行整集 ASR。旧 Consumer 通过未来调度时间兼容暂停，正式新入口同时检查 paused。13:56 本机 5173 浏览器验收通过，进行中为 1、ASR 阶段与暂停/继续入口准确，幂等暂停成功、旧租约返回 409；未中断 GPT 的原进程。Understanding 失败的阶段复用仍属本条待办，不能由暂停能力推定解决。
 
 
@@ -709,6 +711,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**10-30 新一轮跟进：** #12 整片前置复用与 #15 阶段日志均已合入 dev；需求仍为 TODO。[Draft PR #18](https://github.com/owariband/Seekino/pull/18)（`fix/video-asr-recovery`）围绕“长视频 ASR 代价高，且下游失败后成果不可复用”开启 Draft 跟进，当前提交背景续版、修复方案与实测证据。拟按 `video_parse_content` 独立保存完成产物，补租约安全发布/恢复、正式 Metal 转写与独立对齐，并通过完整课程验收。下一项是完成后重启/失败重试的复现与持久化修复；这些实现及运行切换尚未完成。沿用[原主设计](../design/03-product-reassessment/local-whisperx-asr-trd.md)，关联 B07、B22 和模型网络问题，不新建重复状态入口。
+
 2026-10-29 整片增量：新建 WhisperX 任务支持默认视频级转写，原 Chunk ASR 节点改为读取相交 cues，保留绝对时间及只读证据；旧任务缺省仍逐块执行。内存缓存随协调器租约释放，重启会重新转写；未实现持久 ASR checkpoint。ASR 时间加入既有有效总时长。代码与离线验证已完成，真实整片识别质量、资源、吞吐和运行部署仍待验收；没有启动全量解析。[设计](../design/03-product-reassessment/local-whisperx-asr-trd.md#视频级转写与-chunk-读取)、[本次验证](devlog.md#devlog-full-video-asr-20261029)。
 
 2026-10-30 增补：独立 [PR #12](https://github.com/owariband/Seekino/pull/12)（由 #9 迁移至 `feat/full-video-asr`，实现与验证保留）同步 dev 的直接 JSON 与节点重试修复，扩展离线验证为 10 个 Chunk 并发且一个理解节点暂态失败，仍仅进行一次整片 ASR。运行服务未部署；当前本机 1,200 秒 ASR 超时是否覆盖长课程待测，旧任务需新解析版本才能采用 video scope。B07/B22 的实现和隔离验证不能替代课程全链路稳定性验收。
@@ -718,6 +722,10 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 2026-10-30 13:26 上线进展：用户明确要求上线后，PR #12 合入 dev `029faa34`，本机演示 API 已重启加载。完整《Let's build GPT》新任务 v5 冻结 `models.asr.scope=video`、Parse 并发 10、ASR 超时 14,400 秒；正式日志已进入视频级 `asr` 阶段，输入为 6,979.873 秒完整音轨。原逐块版本成果保留；整集转写、10 路真实 Understanding、最终索引及课程检索追问尚未完成，不将本次部署记为整集验收通过。[部署证据与边界](devlog.md#devlog-full-video-asr-rollout-20261030)。
 
 同日可观测性补充：WhisperX Adapter 新增关联调用／任务 context 的阶段、30 秒存活及转写／对齐进度日志；85 项定向回归通过。当前已启动的整片调用无法补入新的回调，使用每 30 秒读取任务及进程状态的独立日志保持本轮可追踪，不重启 API。百分比只代表对应阶段的上游片段比例，尚无回调时保留未知；本轮整集耗时仍待测。[验证与生效边界](devlog.md#devlog-whisperx-progress-20261030)。
+
+2026-10-30 14:46 核验：GPT 整片 WhisperX 已于 14:42:41 完成，实际 76 分 31.557 秒，随后真实启动 10 个 Understanding 调用。用户质疑时长后实测本机 M5 Metal：同一 GPT 60 秒音频为 3.760／3.474 秒，300 秒音频为 12.992 秒；同 Turbo Q5 模型的 CPU 60 秒对照为 17.196 秒。四次归一化校验通过。GPU 使用独立 whisper.cpp，未切换正式 WhisperX、未做强制对齐或整集 GPU 验收；本机性能适配和完整闭环仍待解决。[实测报告](../report/gateway/local/whisper-metal-benchmark-20261030.md)。
+
+同日 15:08 全量补验：116 分 20 秒 GPT 原音轨的 Metal Turbo Q5 单路转写实际 293.578 秒，含提取和启动约 5 分钟，2,476 cues 全量归一化通过，完整原始/规范化结果已落盘；尚无强制对齐和人工质量验收。正式任务此前因 Kimi 504 后重试 DNS 失败停止，保留 8/117 Chunk。协调器退出就清理整片内存转写，失败重试也会重做；视频级 ASR 持久化和正式 Metal 接线是待解决的恢复/性能阻塞，实验文件不冒充生产 checkpoint。详细证据续记同一报告。
 
 排序日期：2026-10-29。状态：TODO（正式接入、三语实机部署与 Karpathy 任务提交已完成；完整系列效果及字幕消费待验收）。
 

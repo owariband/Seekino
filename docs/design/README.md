@@ -64,7 +64,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 | 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；dev 已接入宿主直接 JSON 与 30k；精简字段/SHOT 兼容迁移及实模验收待完成。 |
 | 解析暂停与继续 | [parse-pause-resume-trd.md](03-product-reassessment/parse-pause-resume-trd.md) | 保留成果、释放容量、撤销租约，任务页显示语音转写与暂停状态。 |
 | 模型连接失败恢复 | [model-network-failure-trd.md](03-product-reassessment/model-network-failure-trd.md) | 直接 JSON 的暂态错误分类、有限重试与异常链诊断。 |
-| 本地 WhisperX 与字幕时间证据 | [local-whisperx-asr-trd.md](03-product-reassessment/local-whisperx-asr-trd.md) | 可选正式 ASR、强制对齐、字词毫秒合同、模型安装与真实效果验收边界。 |
+| 本地 ASR、字幕证据与失败恢复 | [local-whisperx-asr-trd.md](03-product-reassessment/local-whisperx-asr-trd.md) | WhisperX/整片复用的原实现；10-30 续版跟进视频级持久成果、Metal 正式接线与跨失败恢复，实测和待实施分开。 |
 | Parse XML v2 历史方案 | [parse-output-xml.md](03-product-reassessment/parse-output-xml.md) | 2026-10-26 协议原稿；新候选与验证口径见解析性能主 TRD，保留历史设计来源。 |
 | 声纹与台词归属 | [voiceprint-trd.md](02-agent-harness/voiceprint-trd.md) | 专项 TRD：声纹准备、比较、原子台词及说话人归属；保留历次实验的适用边界。 |
 | 整集摘要 | [video-summarize-trd.md](02-agent-harness/video-summarize-trd.md) | 专项 TRD：优先正式标题、无标题时生成内容短标题，事实简介、封面与真实集数的证据约束、职责及发布流程；系列默认封面与观看进度展示。 |

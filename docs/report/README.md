@@ -31,6 +31,8 @@
 
 ## Gateway
 
+本机 ASR 性能与恢复边界：[2026-10-30 GPT 整集 Metal 实测](gateway/local/whisper-metal-benchmark-20261030.md)，附[可审阅指标 JSON](gateway/local/whisper-metal-benchmark-20261030.json)。完整 116 分钟音轨转写约 5 分钟；明确区分 CPU WhisperX 的 VAD/对齐、实验落盘与未完成的正式持久恢复。
+
 API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-20261030.md)。两轮各 10 路短文本请求全部通过，关闭重试，保留串行对照、逐请求时间与用量；不等于长视频解析吞吐验收。
 
 本机部署：[2026-10-29 WhisperX 三语部署与 Karpathy 解析启动](gateway/local/whisperx-deployment-20261029.md)，包含实际权重、样本、配置切换、验证边界与原始证据位置。

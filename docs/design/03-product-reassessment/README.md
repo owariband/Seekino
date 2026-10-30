@@ -34,7 +34,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [local-text-embedding-trd.md](local-text-embedding-trd.md) | 2026-10-29，课程 P0 与本地运行需求 | 本地 Qwen 文本向量和可关闭的视觉索引，保留 OCR/VLM | 实验与兼容性分别验证，不把本地编码通过视为全课程质量通过 |
 | [parse-pause-resume-trd.md](parse-pause-resume-trd.md) | 2026-10-30，单集优先解析 | 持久暂停、继续、租约隔离和实际阶段显示 | 已实操释放非目标任务容量，整集完成另行验收 |
 | [model-network-failure-trd.md](model-network-failure-trd.md) | 2026-10-30，Karpathy 连接异常 | SDK 分类、节点重试、可诊断日志 | 区分连接异常、网关超时与整集闭环验收 |
-| [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29，本地 ASR 与字幕需求 | 正式 WhisperX 转写及强制对齐、整片内存结果复用与 Chunk 区间读取 | 代码与离线回归、真实模型效果、播放器字幕分别验收 |
+| [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29 本地 ASR；10-30 整集失败后的续版 | 原 WhisperX/整片内存复用；新发现 76 分钟前置耗时及协调器退出丢成果，跟进持久产物和正式 Metal 路径 | #12/#15 已合并；GPU 全集约 5 分钟仅是转写实测，持久恢复、独立对齐及完整闭环仍待实施/验收 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 
 ## 本次讨论确定的复审问题
