@@ -16,12 +16,14 @@ from openai_codex.client import CodexClient
 from openai_codex.errors import CodexError
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem, ConfigReadResponse, ErrorNotification, ItemCompletedNotification, ThreadResumeResponse,
+    TurnCompletedNotification, TurnError, TurnStatus,
     ReasoningEffort as CodexReasoningEffort,
 )
 from openai_codex.models import Notification
 from pydantic import BaseModel
 
 from gateway.media import prepare_input_messages
+from gateway.agent_model.errors import ModelFailureError, provider_failure_reason
 
 from .protocol import CodexToolBridge, dynamic_tool_specs
 
@@ -196,6 +198,21 @@ def _thread_id(response: object) -> str:
     if not isinstance(value, str) or not value:
         raise RuntimeError("Codex thread/start returned no thread id")
     return value
+
+
+def _turn_failure(error: TurnError) -> RuntimeError:
+    details = (
+        error.codex_error_info.model_dump(mode="json", by_alias=True)
+        if error.codex_error_info is not None else None
+    )
+    failure = RuntimeError(error.message)
+    failure.codex_error_info = details
+    reason = provider_failure_reason(failure)
+    if reason is not None:
+        classified = ModelFailureError(error.message, reason=reason)
+        classified.codex_error_info = details
+        return classified
+    return failure
 
 
 class CodexSession:
@@ -438,11 +455,20 @@ class CodexSession:
                 if self._closed or self._thread is None or payload.thread_id != self._thread.id:
                     return
                 if fatal:
-                    self._turn_errors.setdefault(payload.turn_id, RuntimeError(payload.error.message))
+                    self._turn_errors.setdefault(payload.turn_id, _turn_failure(payload.error))
             _logger.warning(
                 "codex_turn_error thread_id=%s turn_id=%s will_retry=%s http_status=%s fatal=%s",
                 payload.thread_id, payload.turn_id, payload.will_retry, http_status, fatal,
             )
+            return
+        if (
+            isinstance(payload, TurnCompletedNotification)
+            and payload.turn.status == TurnStatus.failed and payload.turn.error is not None
+        ):
+            with self._lock:
+                if self._closed or self._thread is None or payload.thread_id != self._thread.id:
+                    return
+                self._turn_errors[payload.turn.id] = _turn_failure(payload.turn.error)
             return
         if self._handle_text is None or not isinstance(payload, ItemCompletedNotification):
             return
@@ -535,6 +561,7 @@ class CodexSession:
         except BaseException:
             if self._callback_error is not None:
                 raise self._callback_error
+            self.raise_if_failed()
             raise
         finally:
             with self._lock:

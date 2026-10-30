@@ -738,6 +738,127 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 ### B12：ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属
 
+2026-10-30 合并说明：hypnos 确认后续已通过等待全量 Chunk 完成后的程序处理解决，以下为 PR #5 的历史排查记录，不作为当前未解决状态。
+
+#### 2026-10-19：排查链路、音频区间漂移与当前结论
+
+**固定验收对象与统计边界**
+
+- 仅针对隔离 EP04 系列 `bdbf28ae-5404-58e4-8c98-699433499ffc`、视频 `0019c16c-a7b7-5f6c-8275-5019869c1207`。用户确认约 `47.4–48.7s` 的「祥ちゃんも悪くない」是**长崎爽世**，约 `293.5–296.0s` 的「長崎そよちゃんと…」是**千早爱音**。真值指目标台词，不代表包含它的十几秒长片段全由此人发声。
+- 下表时间均为原视频绝对秒；新证据字段使用整数 `start_ms/end_ms`。历史 `start_seconds/end_seconds` 在当前 V2 实际存毫秒，不能再次乘除 1000。top1/gap 是声学排名及 cosine 分差，不是正确概率。
+- 版本号指实际解析任务版本，不把离线算法、Refine replay 或裁剪变体另算生产版本。失败任务只能说明已保存部分；任务 COMPLETE 也不能替代人物正确性验收。尚无全片人工真值，不能认定“除了两句都对”。
+
+**排查如何转向，哪些结论不能混在一起**
+
+1. 最早围绕声源质量排查：参考人物错标、稀有人物参考不足、单质心与多参考、聚类方案，之后选择 CAM++／B0 trimmed centroid。旧 v11 声库确实把爱音目标句收进祥子参考、爽世目标句收进灯参考；这些不是假问题，但优化参考并没有校验目标音频是否包含多个人。
+2. 后来修 Refine 的证据供给与决策：预先评分、flag/prefill、强制逐冲突记录、完成门禁、label_doubtful、tail 检验、top1 lead 提示与重叠窗口反馈。这解决“模型可能完全不调声音工具”和“声音正确但未采用”的部分流程缺口，却仍默认一个 DIALOGUE 可以用一个 speaker 表达。把候选排名改对、把结果填入 Canvas、最终提交正确，是三个不同验收点。
+3. 用户听出约 `45–48s` 和 `292–297s` 可能有尾音、短促「啊？」、交替说话，提出裁掉末尾对照。实际做了固定尾裁实验，但选用的是 v12 原始短区间；这两条短区间的 top1 本来已正确。此前用这个结果回答后续版本的长区间问题，属于**输入基线未对齐**，不能据此说之前的错误不存在或已修复。
+4. 继续回溯 v11 起每轮的 ASR、首次 Understanding、声纹 artifact 和最终事件，才发现目标所指已从约 1～2 秒短句扩大为 3.6、7.2、11.4、13.3 秒。评分对象变了，参考池与 Understanding 标签也随每轮变化；相同 B0 算法并不意味着实际比较了同一音频、同一声库。
+5. 当前有直接证据的主输入缺陷是：**ASR 有时直接跨说话人合并；Understanding 又会把本来分开的 ASR cues 合成一个长 DIALOGUE；B0 对长事件整体编码，Refine 往往只改这一整段的单一姓名或 null。** 因而排查重点应先保护音频分人边界，再评估人物匹配。固定裁尾没有稳定改善，不等于已证明短语气词、重叠或毫秒级边界不重要。
+
+**v11～v18 实际任务索引**
+
+| 版本 | task_id | 本轮状态／证据适用范围 |
+| --- | --- | --- |
+| v11 | `0f681291-4f52-4254-a3be-91c1ee835c3c` | COMPLETE；旧 VoiceprintAgent 参考池，以下声学排名为后续离线复核 |
+| v12 | `cc57cf42-4c69-427d-b6a0-e9523f22bc8e` | COMPLETE；B0 初次生产接入的比较基线 |
+| v13 | `9dd66201-3b6a-45b8-a2f6-dcd0d5513f74` | PARSING_FAILED；24 个 Chunk ASR 均因 `403 AccountOverdueError` 失败，无 Understanding／Refine 可评 |
+| v14 | `58288805-6e51-4f4d-9fee-21e38104114e` | PARSING_FAILED；已有局部评分／Refine，不作为全片成功样本 |
+| v15 | `080731f4-ac5c-49ed-9caa-3921212f0ceb` | PARSING_FAILED；同上 |
+| v16 | `54371266-091e-418d-af3f-8740f85e53f4` | PARSING_FAILED；爽世所在 Chunk 未贡献准备评分 |
+| v17 | `9bb8aa31-8217-4c67-9b86-19bc8782348a` | PARSING_FAILED；已有局部评分／Refine |
+| v18 | `b8d48ae8-e352-48e4-b9b5-a7444c4ca036` | 此前终态数据库核对为 COMPLETE；准备 artifact 可复核。目录中的 `latest.json` 是较早 PARSING 快照，不能单独证明终态 |
+
+**爽世目标句：原始 ASR → 实际评分区间 → 人物结果**
+
+| 版本 | 原始 ASR 区间（秒） | Understanding／评分区间（秒） | top1 / gap | 已保存人物或限制 |
+| --- | --- | --- | --- | --- |
+| v11 | 47.5–48.8 | 47.5–48.8（离线复核） | 祥子 / 0.121401 | 最终灯；旧池复核，不能冒充生产 B0 调用记录 |
+| v12 | 47.4–48.7 | 47.4–48.7 | 爽世 / 0.062722，CONFLICT | Understanding 爱音 → 最终爽世，`refine_edit` |
+| v13 | 无有效结果 | 无 | 无 | ASR 失败，不造分数 |
+| v14 | 47.3–48.8 | 47.3–48.8 | 爽世 / 0.104821，CONFLICT | Understanding 爱音 → Refine null；理由 `label doubtful, speaker unresolved` |
+| v15 | **35.4–48.7** | **35.4–48.7，13.3s** | 爱音 / 0.198523，ACCEPT | Understanding 灯 → 爱音，`voice_default`；ASR 已跨前文合并 |
+| v16 | 留存 ASR 38.7–48.7 | **无该句的准备评分** | 无 | 对应 Chunk 失败；后来留存长事件不能倒推为本轮声纹输入 |
+| v17 | **45.2–48.8** | **45.2–48.8，3.6s** | 爱音 / 0.132242，band=null | Understanding／最终爱音；长段包含前一句与爽世目标句 |
+| v18 | **35.3–48.5** | **35.3–48.5，13.2s** | 爱音 / 0.091359，band=null | Understanding／最终爱音；未拆出爽世目标短句 |
+
+**爱音目标句：原始 ASR → 实际评分区间 → 人物结果**
+
+| 版本 | 目标 ASR cue（秒） | Understanding／评分区间（秒） | top1 / gap | 已保存人物或限制 |
+| --- | --- | --- | --- | --- |
+| v11 | 293.5–296.0 | 293.5–296.0（离线复核） | 爱音 / 0.151062 | 最终祥子；声学复核正确不代表 Refine 当时采用 |
+| v12 | 293.5–296.0 | 293.5–296.0 | 爱音 / 0.063694，CONFLICT | Understanding／最终祥子；top1 正确，决策未纠正 |
+| v13 | 无有效结果 | 无 | 无 | ASR 失败 |
+| v14 | 293.4–296.0 | **288.8–296.0，7.2s** | 爱音 / 0.135117，CONFLICT | Understanding 睦 → 爱音；姓名纠正不能证明长区间单人 |
+| v15 | 293.5–295.3 | **291.3–299.0，7.7s** | 爱音 / 0.037342，NO_VOICE | Understanding／最终 null；另有 295.4–299.0 事件，与长段重叠 |
+| v16 | 293.6–296.0 | 293.6–296.0 | 爱音 / 0.033992，NO_VOICE | Understanding／最终 null；说明区间合并不是全部错误的唯一原因 |
+| v17 | 293.9–295.3 | **289.6–296.8，7.2s** | 爱音 / 0.105198，CONFLICT | Understanding null → 爱音；仍把多个短应答合成一句 |
+| v18 | 293.4–295.7 | **284.3–295.7，11.4s** | 爽世 / 0.010109，NO_VOICE | Understanding 睦 → 最终 null；不能当作爱音短句本身的评分 |
+
+v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的准备结果。各轮参考池并未冻结，不能把跨轮分差变化全部归因于区间。另用同一份 v11 数据离线运行 B0 时，两句 top1 分别为爽世／爱音，gap 为 `0.081574/0.119693`；这是算法对照，不是新一轮生产解析。
+
+依据：[v11 逐句复核](../../outputs/verification/speaker-agreement-20261018/v11-lines.jsonl)、[旧参考池快照](../../outputs/verification/speaker-algo-20261018/source-snapshot.json)、[算法对照](../../outputs/verification/speaker-algo-20261018/report.md)、[v12 实际接入验收](../../outputs/verification/speaker-b0-integration-20261019/actual-test-summary.md)、[v13 失败](../../outputs/verification/speaker-voice-decisions-20261019-v13/run-failure-report.md)、[v14 终态报告](../../outputs/verification/speaker-voice-loo-luna-20261019-v14/terminal-voice-report.md)、[v15 报告](../../outputs/verification/speaker-voice-ranking-retry-20261019-v15/ranking-voice-report.json)、[v16 报告](../../outputs/verification/speaker-voice-lead005-20261019-v16/ranking-voice-report.json)、[v17 报告](../../outputs/verification/speaker-voice-feedback-20261019-v17/ranking-voice-report.json)、[v18 首次 Understanding](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/original-known-cases.json)、[v18 声纹索引](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/manifest.json)。
+
+**谁合并了区间：已定位到生成层，不能笼统归罪 Refine**
+
+- **ASR 已经合并爽世侧。** v15 原始模型输出就是 `35.4–48.7s`；v17 是 `45.2–48.8s`；v18 是 `35.3–48.5s`。这些范围不是声纹程序、数据库或 Refine 后来扩大的。v17/v18 的首 Chunk 视频内容 SHA 和规范化请求 SHA 相同，ASR 返回边界仍不同，属于相同输入下实际生成结果不稳定；这不证明具体是哪种模型内部机制导致。
+- 当前 ASR 使用豆包多模态视频转写 `doubao-seed-2-0-lite-260428`，Prompt 虽已要求按声音分 `speaker1/2`、换人拆条，但不是经过独立验收的专用 diarization／强制对齐模型。`engine/common/transcription.py` 的后处理只转换时间、裁范围、过滤与排序，Server 只加 Chunk 偏移；未找到 Python 主动拼接 ASR 行的逻辑。视频抽样 `fps=1` 不能解释为音频只能精确到一秒。
+- **Understanding 又扩大爱音侧。** v18 ASR 目标仍是 `293.4–295.7s`，但 `before_any_refine=true` 的首次 Understanding 已保存为 `284.3–295.7s`。v17 原 ASR 分开的 `289.6–290.1`「うん」、`291.5–292.7`「長崎？」、`293.9–295.3` 目标句、`295.4–296.8`「あ…」，被 Understanding 合为 `289.6–296.8s`。这是 Refine 前就存在的跨 cue 合并；生成的 description 中的人物名也不是真值。
+- **B0 忠实评分了错误粒度。** 准备阶段读取 Understanding DIALOGUE 的完整 start/end。当前直接编码上限为 30 秒，上述所有长段均落在整段单向量路径，没有内部换人切分；来源 cue IDs 只用于追溯和排除，不能把整段还原成目标短句。整段 top1 即使是某个真实参与者，也不能表示每一句都由其说出。范围调整后旧声音证据失效的机制，无法防止准备前就已合并的范围。
+- **Refine 决策仍是另一层未完成项。** v12 爱音句已是正确 top1，最终却保留祥子；另有 v15 `212.8–214.8s` 短应答，较早提交的 seq3 窗口记录 `voice_top1`／爽世，reason 却写“未达置信改写门槛，故撤回改名并保留原理解”，与其决策含义矛盾；较晚提交的 seq1 窗口又记录 null，reason 为“爽世领先原标签爱音仅0.082，低于0.10阈值；短促重复肯定语音不足以可靠确认。”后者虽填了 `evidence_type=contradiction`，文字仍未指出具体反证。结构化一致性通过不等于 reason 内容有说服力。窗口能看到 scope、更新来源与已有 reason，不代表这些信息构成禁止后写的锁；现有事件／字段合并也不等于人物共识投票。必须按真实提交先后核对，不能按窗口空间顺序假定“全部上下文已达成人物共识”。此例与两个固定验收句分开记录，不拿生成标签充当人工真值；原始记录见 [v15 逐窗口决策 TSV](../../outputs/verification/speaker-voice-ranking-retry-20261019-v15/ranking-voice-window-records.tsv)。
+
+依据：[v17/v18 原始 ASR 对照](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/upstream-v17-v18-asr-comparison.json)、[v17 首次 Understanding](../../outputs/verification/speaker-voice-feedback-20261019-v17/understanding-snapshot.json)、[v18 首次 Understanding](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/understanding-snapshot.json)、[ASR 生成及规范化](../../engine/common/transcription.py)、[转写适配](../../gateway/transcription.py)、[声纹准备／直接编码](../../server/service/video_parse.py)、[媒体切片](../../server/service/video_parse_media.py)、[声纹时长常量](../../server/constants/parse.py)。
+
+**裁尾实验：实际支持什么，不支持什么**
+
+- 实验固定 v12 artifact（SHA256 `d74a30b5a3fcc60475dd48cb256ff188fb3eb12e1f5066dbc9b528a0ae14edbd`）、CAM++192/L2 encoder 和每组引用集合，排除目标自身、同 cue、重叠与重复 PCM。包含两条 v12 原句、用户近似范围、v17 宽范围及六个候选同人对照，共 **12 组 × 5 个尾裁长度 = 60 个变体；57 个评分、3 个因不足 400ms 明确不可编码**。原始 PCM、向量、top3 重现及组内 kept reference IDs 不变断言通过；12 组完整音频各额外重复编码一次，每组两次向量逐分量一致。
+
+| 对照 | 完整结果 | 裁尾结果 | 能得出的结论 |
+| --- | --- | --- | --- |
+| 爱音 v12，293.5–296.0s | 爱音，gap 0.063694 | 裁 1s 后仍爱音，gap 0.064896；向量 cosine 0.937040 | 固定裁尾未带来预期的大幅改善 |
+| 爽世 v12，47.4–48.7s | 爽世，gap 0.062722 | 裁 0.5s 后仍爽世，gap 降至 0.027858；裁 1s 后剩 300ms，不可编码 | 裁短可削弱证据；不能盲目统一裁一秒 |
+| 候选同人对照 | 六条按预定条件选择，未经人工确认 | 可裁 1s 的四条 cosine 为 0.796348–0.983656；全部 28 个可评分控制变体保持原 top1 | 向量变化本身不足以证明多人；此处不是人工准确率 |
+| 同一 v12 来源池，爽世短句与宽区间 | 47.4–48.7s top1 爽世 0.767560 | 45.2–48.8s top1 爱音 0.794759，gap 0.076922 | 短／长范围排名不同；按各自完整范围排除后引用数为 314／313，**不是仅改变波形的严格单变量对照**，也不要与 v17 自己池的 gap 0.132242 混用 |
+
+尚未人工逐毫秒标注或专门移除中间语气词，固定截掉末尾未必碰到真正干扰；缩短也改变音素、时长及参考可靠性。因此本轮结论是“不能靠固定裁尾或向量漂移判断换人”，而非“已排除短语气词影响”。相较于该未证实假设，数秒至十几秒跨 cue 合并已有直接上游证据，应优先处理。
+
+依据：[实验报告](../../outputs/verification/speaker-tail-crop-20261019/report.md)、[协议](../../outputs/verification/speaker-tail-crop-20261019/protocol.json)、[完整 TSV](../../outputs/verification/speaker-tail-crop-20261019/results.tsv)、[对照试听页](../../outputs/verification/speaker-tail-crop-20261019/listening.html)。首次实验因 ffmpeg 输入侧 `-to` 与生产输出侧 `-t` 参数不一致触发 `AssertionError: control_soyo_1300`；已对齐提取方式、保留断言并完整复跑通过，失败日志也保留，未通过弱化检查制造重现。
+
+**已做但未部署：撤掉 Understanding 改台词区间的权限**
+
+- 用户已明确要求只允许 Refine 调整台词时间。隔离工作树 `/private/tmp/anivag-understanding-asr-bounds-20261019` 基于 PR #5 分支 tip `504b9b4`，有四个未提交文件：`timelineEvent_canvas.py`、`prompts.py`、`test_context_canvas.py`、`test_framework.py`。不是主工作区已部署的修复。
+- 宿主检查 Understanding 新 DIALOGUE 必须对应本 Chunk 一条有效 ASR cue 的完整区间，既有 DIALOGUE 时间只读；试图合并、拆分、扩大或绕过类型修改会得到可恢复工具反馈，不能只靠 Prompt。Refine 保留时间调整能力，原声音证据随区间变化失效；无可用 ASR 的既有回退路径保留。
+- 前一轮代码验证记录：新增 34 个用例，要求的八组共 **1155 passed、0 failed**（engine 218、agent 329、voiceprint 115、worker 220、queue 131、repository 125、artifact 12、model_calls 5）。本次文档维护未重跑；单测不证明真实人物归因正确。**尚未 commit/push、重启或重新解析，未验证真实音频效果。该限制只能防止 Understanding 二次合并，不能修复 ASR 本来已合并的 cue。**
+
+**下一步工具职责与论文依据：尚未实现或实测**
+
+需要的是对音频做 **speaker segmentation／diarization** 的独立工具：判断区间内是否单人、何时换人、何处重叠。必须同时覆盖先后换人 `A→B→A` 和同时两人发声；只做 overlap detection 会漏掉依次说话。输出应保留匿名 speaker 活动区间、切换／重叠位置、方法及不确定性，而非直接承诺“这是爽世”。整段 `compare_speaker` 回答“更像谁”，不能代替“是否混了多个人”。
+
+| 论文／官方实现 | 与本问题直接相关的能力 | 边界 |
+| --- | --- | --- |
+| Bredin & Laurent，2021，[End-to-end speaker segmentation for overlap-aware resegmentation](https://arxiv.org/abs/2104.04045) | 在局部音频中联合表示语音活动、换人及重叠，可用于已有分段的重新切分 | 约 16ms 是输出步长，不是边界准确率保证；未证明 EP04 语气词可稳定分出 |
+| Plaquet & Bredin，2023，[Powerset multi-class cross entropy loss for neural speaker diarization](https://arxiv.org/abs/2310.13025) | 将无声、单人、多人同时活动的组合设为类别，改进局部说话人活动预测 | **不是将两个人的声纹向量混成一个新人物模板**，也不是音轨分离或真名识别；仍需全局关联及本域验证 |
+| [pyannote Community-1 官方模型卡](https://huggingface.co/pyannote/speaker-diarization-community-1) | 可本地运行的完整匿名分人候选，支持下载后离线运行，适合作为旁路对照 | 首次需取得模型访问权限；保留 regular 输出的重叠信息，exclusive 输出不能证明本来只有一人；本轮未下载、运行或验收 |
+
+建议先离线测实际失败的 v15/v17/v18 **完整长区间**，同时保留 v12 原始短句与人工确认的普通单人对照；人工分别标记发声边界、匿名同人关系、姓名和重叠，再看换人漏检、单人误报、短应答与边界误差。随后才在同一冻结 CAM++／B0 参考池中比较切分前后排名，继续排除目标自身／同 cue／重叠／重复 PCM，避免把参考池变化误当分段收益。不得只测两个目标或只看标签一致率后宣称全片准确。
+
+若验证有效，保护参考池的程序检查必须发生在 B0 收集／编码之前；只给 Refine 一个可选工具，既可能不调用，也无法撤销已经混入声库的长音频。Understanding 可以读取声学证据并命名，时间调整权限仍遵守用户要求留给 Refine；确认混人的整段不能直接作为单人物参考。具体模型、阈值、分段与文本对齐方式待离线结果决定，本项尚未增加生产接线、Worker 或调度阶段。详细研究笔记见 [本地论文与实现调研](../../outputs/verification/speaker-diarization-research-20261019/report.md)。
+
+**尚未解决与交接要求**
+
+- ASR 匿名分组与换人边界不稳定，Understanding 限权尚未部署，专门分段模型还没在两个目标上跑过；现有整段 B0 分数不能作为混合音频里某一句的身份证明。
+- 参考错名、短语音／声态变化、稀有角色与参考数量仍有误差；纠正区间后也不能预设 B0 必然正确。已有正确 top1 却被 Refine 保留错名／写 null，以及重叠窗口覆盖，需单独按动作与提交链验收。
+- 后续每次报告至少携带 task/version、原 ASR cue、首次 Understanding、实际编码范围、参考 artifact checksum、top3/gap、逐窗口 decision/reason 和最终来源，不能再只拿台词文本或一个时间点跨版本比较。人物效果验收以人工听音为准，不能把“八组测试通过”或“解析 COMPLETE”说成两个经典错例已稳定修好。
+- 本次只维护本文件，保留下方历史。链接中的 `outputs/verification/` 属于被 Git 忽略的本地证据，未随文档自动加入 PR；文档落盘、证据可复现、纳入提交及生产部署是四件事。本次无生产改动、API／数据库写入、重启、重解析、迁移、commit、push 或 merge。
+
+#### 2026-10-20：限权修复与排查记录交付，运行效果仍待验收
+
+- 10 月 19 日的临时工作树已不存在；本轮从原始执行记录恢复五份 patch，并与历史 Git blob／最终 diff 核对一致，没有另写一版修复。恢复位置为 `/private/tmp/anivag-voice-handoff-20261020`，基于 PR #5 的 `504b9b4`；临时路径不作为长期交付依据。
+- 限权修复已提交为 `7ea879b`（`fix(parse): preserve ASR dialogue intervals in Understanding`），四文件 `+321/-4`，其中生产代码 `+38/-4`、测试新增 283 行。交付分支为 `claude/refine-voice-conflict-decisions`，PR #5 保持未合并；上文“未提交”是 10 月 19 日的历史状态，当前为**已提交、未部署／未实音频验收**。
+- 本轮重新运行八组测试：engine 218、agent 329、voiceprint 115、worker 220、queue 131、repository 125、artifact 12、model_calls 5，共 **1155 passed、0 failed、1 条第三方弃用警告，27.02 秒**。命令为项目 `.venv/bin/python -m pytest` 加上述八组路径、`-q`；首次沙箱运行因 `Network access to "openaipublic.blob.core.windows.net" was blocked: domain is not on the allowlist for the current sandbox mode.` 中断，允许公开 tokenizer 依赖下载后完整复跑通过，未改测试或断言。
+- 本轮只提交四文件限权修复与本条 B12 文档更新，不包含同文件其他工作线的 B14 内容、离线音频／outputs 或主工作区其他改动。未重启 API、重解析、迁移或合并；不把单测通过视为两个固定错例已修复。下一步仍是验证独立的换人／重叠检测，ASR 已合并的 cue 不在此次限权修复能力内。
+
+
 排序日期：2026-10-19。
 
 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
