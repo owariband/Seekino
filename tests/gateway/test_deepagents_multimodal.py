@@ -358,6 +358,97 @@ def test_explicit_model_call_budget_stops_without_another_provider_request():
     assert len(responses.requests) == 1
 
 
+def test_completion_feedback_keeps_canvas_and_history_after_existing_completion_protections():
+    canvas, tools, calls = _canvas("refine")
+    revision = canvas.revision
+    combined = _write(canvas)
+    combined.output.extend(_finish("mixed-completion").output)
+    responses = Responses([_finish("before-read"), _read(), combined,
+                           _finish("unreviewed"), _read("review"), _finish()])
+    checked = []
+
+    def feedback():
+        before = canvas.snapshot()
+        checked.append((tuple(calls), before.revision))
+        message = "VOICEPRINT_REVIEW_REQUIRED: review this draft's evidence." if calls.count("get_context_canvas") < 2 else None
+        assert canvas.snapshot() == before
+        return message
+
+    assert _run(_model("deepseek", responses), tools, stop_feedback=feedback).complete
+    assert calls == ["get_context_canvas", "write_context_canvas", "get_context_canvas"]
+    assert checked == [(tuple(calls[:2]), revision + 1), (tuple(calls), revision + 1)]
+    assert canvas.revision == revision + 1 and len(canvas.result("member").timeline) == 1
+    history = json.dumps(responses.requests[4]["input"])
+    assert "VOICEPRINT_REVIEW_REQUIRED" in history and "Do not repeat successful writes" in history
+    assert '"call_id": "write"' in history and '"call_id": "read"' in history
+
+
+def test_rejected_completion_feedback_obeys_the_existing_model_call_budget():
+    canvas, tools, calls = _canvas()
+    before = canvas.snapshot()
+    responses = Responses([_read(), _finish("first"), _finish("second"), _finish("unused")])
+    feedback_calls = []
+
+    def feedback():
+        feedback_calls.append(True)
+        return "VOICEPRINT_REVIEW_REQUIRED: correct the current draft."
+
+    with pytest.raises(QueryModelIncompleteError) as caught:
+        _run(_model("deepseek", responses), tools, stop_feedback=feedback, max_model_calls=3)
+    assert caught.value.reason == ModelFailureReason.LOOP_LIMIT
+    assert len(responses.requests) == 3 and len(feedback_calls) == 2
+    assert calls == ["get_context_canvas"] and canvas.snapshot() == before
+
+
+@pytest.mark.parametrize("stop", ["deadline", "cancel"])
+def test_completion_feedback_cannot_extend_deadline_or_hide_cancellation(monkeypatch, stop):
+    canvas, tools, calls = _canvas()
+    before = canvas.snapshot()
+    responses = Responses([_read(), _finish()])
+    fallback = Responses([_finish("unused")])
+    clock, cancelled = [100.0], [False]
+    monkeypatch.setattr("gateway.agent_model.deepagents_multimodal.monotonic", lambda: clock[0])
+
+    def check():
+        if cancelled[0]:
+            raise RuntimeError("execution cancelled")
+
+    def feedback():
+        clock[0] = 131.0 if stop == "deadline" else clock[0]
+        cancelled[0] = stop == "cancel"
+        return "VOICEPRINT_REVIEW_REQUIRED: continue."
+
+    with pytest.raises(QueryModelIncompleteError if stop == "deadline" else RuntimeError) as caught:
+        _run(_model("deepseek", responses), tools, stop_feedback=feedback, check_control=check,
+             fallback_model=_model("deepseek", fallback))
+    if stop == "deadline":
+        assert caught.value.reason == ModelFailureReason.MODEL_TIMEOUT
+    else:
+        assert str(caught.value) == "execution cancelled"
+    assert len(responses.requests) == 2 and fallback.requests == []
+    assert calls == ["get_context_canvas"] and canvas.snapshot() == before
+
+
+def test_completion_feedback_survives_the_actual_shared_http_fallback_switch():
+    canvas, tools, calls = _canvas("refine")
+    revision = canvas.revision
+    primary = Responses([_read(), ContentFilterError("filtered", code="content_filter")])
+    fallback = Responses([_finish("unreviewed"), _write(canvas), _finish()])
+    checks = []
+
+    def feedback():
+        checks.append(canvas.revision)
+        return "VOICEPRINT_REVIEW_REQUIRED: correct the current draft." if not canvas.result("member").timeline else None
+
+    assert _run(_model("ark", primary), tools, stop_feedback=feedback,
+                fallback_model=_model("deepseek", fallback)).complete
+    assert checks == [revision, revision + 1]
+    assert calls == ["get_context_canvas", "write_context_canvas"] and canvas.revision == revision + 1
+    assert len(primary.requests) == 2 and len(fallback.requests) == 3
+    history = json.dumps(fallback.requests[1]["input"])
+    assert "VOICEPRINT_REVIEW_REQUIRED" in history and '"call_id": "read"' in history
+
+
 def test_separate_runs_do_not_restore_old_canvas_or_tool_history():
     responses = Responses([_read("first-read"), _finish("first-complete"), _read("second-read"), _finish("second-complete")])
     model = _model("deepseek", responses)

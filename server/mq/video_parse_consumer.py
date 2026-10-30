@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TypeVar
 
+from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
 from agent.video_parse_v2.state import ChunkTaskPhase
 
 from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
@@ -103,6 +104,9 @@ def _log_retry_failure(
     if isinstance(lease, VideoParseLease):
         fields["coordinator_attempt"] = lease.attempt_count
         fields["prepare_failure_count"] = prepare_failure_count
+    if isinstance(error, RefineProviderRetryExhaustedError):
+        fields["provider_retries"] = error.provider_retries
+        fields["retry_budget"] = "provider"
     for field, attribute in (
         ("root_error_code", "code"), ("root_status_code", "status_code"),
         ("model_request_id", "request_id"), ("response_id", "response_id"),
@@ -117,8 +121,13 @@ def _log_retry_failure(
         for key, value in fields.items()
     )
     _logger.warning("event=video_parse_v2_retry %s", details)
-    if (recorded and not isinstance(lease, VideoParseLease)
-        and lease.retry_count + 1 > lease.max_retry_count):
+    if recorded and isinstance(error, RefineProviderRetryExhaustedError):
+        _logger.error(
+            'event=video_parse_v2_terminal_error terminal_reason="provider_retry_budget_exhausted" %s',
+            details,
+        )
+    elif (recorded and not isinstance(lease, VideoParseLease)
+          and lease.retry_count + 1 > lease.max_retry_count):
         _logger.error(
             'event=video_parse_v2_terminal_error terminal_reason="child_retry_budget_exhausted" %s',
             details,
@@ -436,15 +445,20 @@ class VideoParseConsumer:
                 lease.retry_initial_delay_seconds, lease.retry_max_delay_seconds, lease.retry_count + 1,
             )
             retry_at = now_utc() + delay
+            retry_options = (
+                {"provider_retry_exhausted": True}
+                if isinstance(exc, RefineProviderRetryExhaustedError) else {}
+            )
             recorded = await asyncio.to_thread(
                 self._queue.retry_interval,
                 lease,
                 error=str(exc),
                 retry_at=retry_at,
+                **retry_options,
             )
             _log_retry_failure(
                 lease, phase="refine",
-                error=exc, recorded=recorded, retry_at=retry_at,
+                error=exc, recorded=recorded, retry_at=None if retry_options else retry_at,
             )
 
     async def _run_prefix(self) -> None:
