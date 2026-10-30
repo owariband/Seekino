@@ -167,5 +167,10 @@ def _retryable_node_error(error: Exception) -> bool:
     # Cancellation, stale leases, invalid input and exhausted budgets are not
     # transient model failures. The surrounding execution deadline never resets.
     if isinstance(error, ModelFailureError):
-        return error.reason == ModelFailureReason.MODEL_TIMEOUT
+        return error.reason in {
+            ModelFailureReason.MODEL_TIMEOUT,
+            ModelFailureReason.MODEL_CONNECTION_ERROR,
+            ModelFailureReason.MODEL_GATEWAY_TIMEOUT,
+            ModelFailureReason.MODEL_SERVICE_UNAVAILABLE,
+        }
     return isinstance(error, (TimeoutError, ConnectionError, TransportError))

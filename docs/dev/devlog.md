@@ -3704,3 +3704,27 @@ Framework、Queue、Worker、模型调用预算、API、SSE、Bootstrap 定向�
 | 长视频真实完成率/内存峰值 | 仍有未完成任务 | 本轮未实测，不宣称改善数值 |
 
 最终补充验证：并行协调器错误不覆盖首个 `PARSE_NODE_FAILED`，失败后迟到 Chunk 提交被拒绝；最终 Worker/Queue 回归 **299 passed（14.09 秒）**，`git diff --check` 通过。上述测试集合有重叠，不相加为独立用例总数。
+
+
+## 2026-10-30：直接 JSON 模型连接失败诊断与恢复
+
+### 问题与现状
+
+Karpathy v3 的 4 次成功 Kimi 请求耗时 183–296 秒；EP1 504 请求实际 312 秒，不能把含 ASR 的 969 秒当成推理时长。EP4/5 与 EP7/8 各有 4 个请求在同一时刻连接失败。现有日志遗漏 cause，无法确定断连责任端；SDK 错误未命中节点重试。
+
+### 方案候选
+
+采用 Gateway 通用错误分类、现有有限节点重试及脱敏日志。直接 JSON 接上已有 opt-in 诊断，记录每次调用的异常链；保留既有并发、租约与 deadline。仅增加提示不足以恢复暂态错误，无限重试会掩盖持续故障，均不采用。
+
+### 方案验证
+
+使用真实 OpenAI SDK 和 MockTransport 产生连接、读取超时、429/500/502/503/504 与 400/401，检查原因与重试资格；工作流验证最多 3 次且 ASR 不重复执行；取消优先，公开错误不包含原始 provider 内容。测试结果见 [TRD](../design/03-product-reassessment/model-network-failure-trd.md)。本机证据 `outputs/verification/karpathy-start-20261030/kimi-call-timings.json`，按模型请求起止统计。EP1 正式 retry 继续原 v3，整集完成仍待验证。
+
+### 指标对比
+
+| 指标 | 基线 | 本次改造 |
+|---|---|---|
+| 连接/超时/504 公开原因 | 执行异常 | 分别显示连接异常、模型请求超时、服务网关超时 |
+| 节点暂态重试 | SDK 错误漏判 | 最多 2 次重试，共 3 次尝试，沿用 deadline |
+| 原始原因追溯 | 直接 JSON 缺 trace、终止缺 cause | opt-in 逐请求 trace + 脱敏终止异常链 |
+| 正式完整视频成功 | 0 | 待验证，不能用离线测试代替 |

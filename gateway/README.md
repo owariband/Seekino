@@ -492,3 +492,6 @@ uv run pytest tests/gateway/test_tracing.py tests/gateway/test_langfuse_integrat
 自托管 v4；此轮未向真实后端发送数据。
 [官方 v2 Observations 查询合同](https://langfuse.com/docs/api-and-data-platform/features/public-api)
 说明字段组、时间范围和版本兼容性。
+
+
+直接 JSON `OpenAIVisionModel` 将连接中断、客户端超时、上游 504 和暂态服务错误分别转换为通用 `ModelFailureReason`，保留异常链供宿主诊断；有限重试由调用方节点负责，SDK 内不另启重试。认证/坏请求原样失败，主动取消优先。该路径支持已有 `SEEKINO_MODEL_TRACE_DIR` 本地 opt-in trace。详见 [模型连接失败恢复](../docs/design/03-product-reassessment/model-network-failure-trd.md)。
