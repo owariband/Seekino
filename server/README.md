@@ -142,6 +142,11 @@ Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与进程内 Consumer
 Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `SEEKINO_MQ_*` 配置；旧的
 `SEEKINO_WORKER_*` 名称暂时作为兼容回退。冻结 Index Sync 的配置不再由正式 Settings 暴露。
 
+Understanding 子图各节点按冻结配置对暂态错误有限重试；最终 Parse 异常由 Consumer
+记录 `PARSE_NODE_FAILED` 并通知任务订阅，不再重排整个 Chunk。该视频停止新派发，
+兄弟任务失去续租资格，迟到提交被拒绝；任务 API/SSE 返回失败阶段与受控错误原因。
+原生 ASR 已进入的阻塞推理需返回控制点后才响应取消。进程崩溃恢复及 Index/Refine 重试独立保留。
+
 V1 Job 与 V2 Task SSE 都忽略纯心跳变化，并在发送终态快照后关闭。快照中的
 `canRetry` / `canReparse` / `canDelete` 只代表该次读取时的精确租约门禁；终态后租约变化
 不会延长 SSE，客户端应重新 GET/list。Web TasksPage 每 5 秒刷新列表，UploadProvider
@@ -269,6 +274,11 @@ V2 `retry-parse` 复用失败的当前任务，从已提交成果和失败阶段
 Task 和内容版本。请求仍使用 `expectedJobVersion` 这个参数名，V2 下它承载当前 Task 的
 `version`，在事务内防止重复或过期操作。检索只选择当前最新、未删除且 `COMPLETE` 的
 Task；新版本重解析期间不会静默回退到旧 Task。
+
+已排队或已停止的非终态任务也可通过 `reparse` 采用修正后的配置，但父任务及所有
+Interval/Chunk 执行租约必须先完成回收。新版本创建后，旧非终态版本撤销调度资格和容量，
+保留原快照与历史成果。仅修改 YAML 或调用 `retry-parse` 不会改变已提交任务的 OCR 开关。
+共享媒体尚未发布时，Chunk 同时检查父任务是否仍在原租约下准备，防止等待已经停止的生产者。
 
 删除分两阶段执行。第一个 MySQL 事务锁定 UploadSession 和关联任务，校验正在执行的
 Lease，将 UploadSession 标记为 `EXPIRED`，以 `last_error_code=DELETION_PENDING` 保存墓碑，

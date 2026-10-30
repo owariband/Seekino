@@ -17,6 +17,16 @@
 
 以下按原文主体问题的修复或澄清记录归档；待部署、待真实样本复测及性能验收等限制仍以各条正文为准。
 
+### B21：Kimi Code API 10 路并发能力未验证
+
+排序日期：2026-10-30。
+
+状态：已解决（当前账号短请求并发疑问已实测澄清）。使用开发配置同一 Kimi Code Key / `k3.1-pro`，先做 3 次串行对照，再连续两轮各 10 路并发；23/23 请求 HTTP 200、JSON 标识与答案正确，零 429、零自动重试。两轮并发整组耗时分别为 6.582 s、7.646 s，峰值客户端 HTTP 在途均为 10，合计 6,484 tokens。
+
+本次只发送合成代码题，未调整服务槽位、重启或改写业务数据。该结果支持当前账号可用 10 路短请求，不证明服务端推理实例数量、长期频控余量或长视频并行质量/吞吐；实际解析优化仍由 B07 跟进。配置里的 `codex_local.max_concurrency=10` 与 Kimi 无关。
+
+依据：[实测报告](../report/gateway/kimi-concurrency-20261030.md)、[devlog](devlog.md#devlog-kimi-concurrency-20261030)、[逐请求原始结果](../../outputs/verification/kimi-concurrency-20261030/results.json)。
+
 ### B16：面试前保护旧闭环并撤销 NPC 实验与 ACP Client 裁剪
 
 排序日期：2026-10-29。
@@ -630,6 +640,16 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 以下保留未修复、部分完成或同条目仍有主体问题未解决的记录，已实施的阶段性修复与历史证据一并保留。
 
+
+### B22：Understanding 失败导致整块重跑与缺少任务停止控制
+
+排序日期：2026-10-30。
+
+状态：TODO（节点重试和最终失败停止已实现；真实运行验收、手动暂停与任务清理未完成）。hypnos 发现解析持续空转，要求 Understanding 内部 node 自行有限重试，Consumer 收到最终异常后停止该视频任务并返回前端错误。原实现 Consumer 重新排队整个 Chunk，导致成功但尚未提交的 ASR 可能重复执行。
+
+2026-10-30：拆分 ASR、视觉准备、OCR、理解节点；暂态错误只重试失败节点，成功观察保存在本次子图状态内。最终失败持久化 `PARSE_NODE_FAILED`，停止新派发、拒绝兄弟任务续租和迟到提交，沿用任务通知与 API/SSE 展示阶段及原因。进程崩溃的租约回收仍独立存在；本地原生 ASR 已进入的阻塞调用不保证立即取消。未重启服务、未变更真实任务，未声称内存峰值已经实测改善。
+
+仍待：真实失败到前端验收；指定视频暂停、一键全量暂停和保留素材的无用任务清理。设计见 [失败边界](../design/03-product-reassessment/video-parse-performance-trd.md#61-2026-10-30understanding-节点重试与最终失败边界)，验证见 [devlog](devlog.md#devlog-node-retry-20261030)。
 
 ### B15：localhost MCP 与外部 Agent 素材取用闭环
 
@@ -1468,6 +1488,14 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 排序日期：2026-10-17。
 
 优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：2026-10-12 已取得真实整集完成的耗时收敛里程碑；历史问题、已实施修复与仍待优化的边界按下列日期分别记录。
+
+#### 2026-10-30：Understanding 直接 JSON 与输出上限落地
+
+状态：TODO（代码与隔离回归完成，运行服务加载与实模效果待验）。dev 已去除 Understanding Canvas 工具循环，证据直接输入，宿主校验后原子写 Canvas；Refine 保留工具。默认及实际本机 YAML 的视觉主模型/fallback 已由 8,192 改为 30,000，旧任务快照不被覆盖。相关回归 **380 passed**，未重启、未调用实模，不宣称已量化提速。精简字段/SHOT 迁移仍是独立剩余事项。见 [TRD §3.3](../design/03-product-reassessment/video-parse-performance-trd.md#33-接入职责与失败路径2026-10-30-已实现直接-json) 与 [devlog](devlog.md#devlog-parse-direct-json-20261030)。
+
+#### 2026-10-29：Karpathy OCR 配置偏差与失败恢复
+
+状态：TODO（修复已部署，真实解析推进验证中）。本批原快照错误开启独立 OCR；已按用户原定关闭 OCR 的要求移除本机默认绑定，并通过正式 reparse 服务为 8 集创建 v2 快照，保留原视频与旧版本。另修 provider token 校准向下失效造成的新证据反复释放，以及父任务停止后子任务仍等待媒体并续租的问题。659 项定向测试通过；完整解析和索引成功仍需运行证据。详见 [TRD §3.6](../design/03-product-reassessment/video-parse-performance-trd.md#36-正式调用与恢复修复)、[devlog](devlog.md#devlog-karpathy-parse-recovery-20261029)。
 
 #### 2026-10-29：补足多片段质量证据，身份缺证与模型优劣分开验证
 

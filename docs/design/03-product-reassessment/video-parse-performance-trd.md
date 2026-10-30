@@ -1,8 +1,8 @@
 # 1. 问题与现状
 
-**需求：视频解析耗时治理与 Understanding 输出协议验证。** 类型为 `perf`；协议接线属于实现手段，独立正确性修复按 `fix` 记录。更新：2026-10-29（Asia/Shanghai）。遵循 [TRD Principle](../common/trd-principle.md)。
+**需求：视频解析耗时治理与 Understanding 输出协议验证。** 类型为 `perf`；协议接线属于实现手段，独立正确性修复按 `fix` 记录。更新：2026-10-30（Asia/Shanghai）。遵循 [TRD Principle](../common/trd-principle.md)。
 
-已完成两轮各 8 次单 Chunk 协议实验。第二轮按用户意图取消人物名单并增加 SHOT，同字段精简 XML 的尝试耗时中位数比 JSON 高 21.97%（K3）/18.21%（豆包），未取得替换依据；豆包 JSON 仍有一次合同失败，全部结果仍错认已知画外音。用户已作出最终取舍：保留 Schema 精简，继续使用 JSON，不采用 XML；解析质量优先，不再追求单 Chunk 30 秒，以既有可靠并行解析策略满足当前效率需求。此次协议选型研究结束；精简合同尚未接入生产，生产 Understanding 仍使用 Canvas tools。问题状态统一归入 [problems B07](../../dev/problems.md#b07视频解析成本高昂且耗时超过片长数倍)，阶段决策见 [初稿 devlog](../../dev/devlog.md#devlog-parse-performance-20261028)、[首轮实验 devlog](../../dev/devlog.md#devlog-parse-protocol-20261029)、[精简合同实验 devlog](../../dev/devlog.md#devlog-parse-compact-shot-20261029)、[最终取舍 devlog](../../dev/devlog.md#devlog-parse-protocol-decision-20261029)。本文维护设计、验收口径及证据边界，不另建任务看板。
+已完成两轮各 8 次单 Chunk 协议实验。第二轮按用户意图取消人物名单并增加 SHOT，同字段精简 XML 的尝试耗时中位数比 JSON 高 21.97%（K3）/18.21%（豆包），未取得替换依据；豆包 JSON 仍有一次合同失败，全部结果仍错认已知画外音。用户已作出最终取舍：保留 Schema 精简，继续使用 JSON，不采用 XML；解析质量优先，不再追求单 Chunk 30 秒，以既有可靠并行解析策略满足当前效率需求。此次协议选型研究结束。2026-10-30 已在 dev 将正式 Understanding 改为直接 JSON、宿主原子导入 Canvas，并将默认及本机视觉主模型/fallback 输出预算改为 30,000；Refine 保留工具。精简字段/SHOT 合同仍未迁移，服务加载与新实模时延尚待验证。问题状态统一归入 [problems B07](../../dev/problems.md#b07视频解析成本高昂且耗时超过片长数倍)，阶段决策见 [初稿 devlog](../../dev/devlog.md#devlog-parse-performance-20261028)、[首轮实验 devlog](../../dev/devlog.md#devlog-parse-protocol-20261029)、[精简合同实验 devlog](../../dev/devlog.md#devlog-parse-compact-shot-20261029)、[最终取舍 devlog](../../dev/devlog.md#devlog-parse-protocol-decision-20261029)。本文维护设计、验收口径及证据边界，不另建任务看板。
 
 ## 1.1 用户问题与期望
 
@@ -15,8 +15,8 @@
 | 环节 | 核对到的事实 | 对本次工作的约束 |
 | --- | --- | --- |
 | 媒体准备 | 已有整集批量抽帧、一次音轨提取和共享资产路径；见 [媒体 Service](../../../server/service/video_parse_media.py)、[历史交接 §2.2](handoff_to_new_pc.md) | 不从零重做，也不将 FFmpeg 常驻作为已证实解法 |
-| Understanding | [workflow._understand](../../../agent/video_parse_v2/understanding/workflow.py) 建 Canvas 并登记观察，最终读取 `canvas.result`；[Service.understand_chunk](../../../server/service/video_parse.py) 使用 `CanvasCompletion`、Canvas tools 和 Deep Agents | 只改变最终回答 Prompt 不会完成接入；返回结果必须进入既有提交边界 |
-| 模型调用 | [Gateway factory](../../../gateway/model_factory.py) 的结构化生成入口预检 JSON Schema；[Ark adapter](../../../gateway/ark/multimodal.py) 有结构化输出约束；已有文本流入口不能直接等同于所需的多图文本生成 | 必须支持真实的多模态原始文本返回，不能向强制 JSON 通道塞 XML |
+| Understanding | [workflow._understand](../../../agent/video_parse_v2/understanding/workflow.py) 建 Canvas 并登记观察，最终读取 `canvas.result`；[Service.understand_chunk](../../../server/service/video_parse.py) 直接生成 `VideoParseResult` JSON；宿主原子写入人物及事件 | Refine 继续用 Canvas tools 和 Deep Agents；旧提交边界不变 |
+| 模型调用 | [Gateway factory](../../../gateway/model_factory.py) 的结构化生成入口预检 JSON Schema；[Ark adapter](../../../gateway/ark/multimodal.py) 有结构化输出约束；已有文本流入口不能直接等同于所需的多图文本生成 | 正式接入复用现有结构化 JSON 生成与终态校验，不接 XML；实验普通文本通道与此不同 |
 | 领域与下游 | [VideoParseResult](../../../engine/parsev2/schemas.py)、[时间校验](../../../engine/parsev2/validation.py)、[ParseContextCanvas](../../../agent/video_parse_v2/timelineEvent_canvas.py) 已定义结果与提交约束 | 首轮 XML 可转换旧对象；第二轮 SHOT/删名单改变语义合同，暂存实验模型，不能直接承诺旧链路兼容 |
 | 协议实验 | [首轮](../../report/agent/video_parse_v2/parse-protocol-20261029.md) 8 次有 6 份合同有效；[第二轮](../../report/agent/video_parse_v2/parse-compact-shot-20261029.md) 8 次有 7 份有效；相关测试合计 58 项通过 | 精简后 XML 未显示整体性能收益；两轮均未通过已知画外音目标，未验证生产端到端提速 |
 
@@ -43,9 +43,13 @@
 - **输出协议采用 JSON，保留 Schema 精简与 SHOT 方向。** XML 的替换收益不足以支持新增接入和维护成本，本轮协议选型闭环，不继续默认追加 XML 对照。
 - **质量优先。** 不为达到 30 秒而减少必要事实、削弱身份/时间判断或压缩必要推理；单块耗时保留为诊断数据，不是孤立的硬性目标。
 - **沿用既有可靠并行解析策略。** 接受用户指出的更高人力成本，认为该策略足以满足当前效率需求；以整集到索引可见的墙钟、完成率、失败恢复、成本和内容质量评价实际表现，不用单块速度代替吞吐与交付。此处记录用户的工程取舍，不新增未经测量的并行加速比或人力成本数值。
-- **实施状态分别记录。** 精简合同已完成实验，生产 Schema/SHOT、宿主直接 JSON 输出、旧数据与下游兼容尚未接线。本轮不改生产或并发配置；后续接入沿用现有提交与恢复边界。
+- **实施状态分别记录。** 精简合同已完成实验，生产 Schema/SHOT、旧数据与下游兼容尚未迁移；2026-10-30 已先接入宿主直接 JSON 输出与 30k，沿用现有提交与恢复边界，未修改并发配置或重启服务。
 
 此前提出的视觉输入裁剪实验不再作为自动续跑事项。用户随后要求以更长、更多元的片段补足质量证据，新增 §4.7 的分阶段计划；它不重开 XML 选型，也不以证明某供应商较差为目标。47 秒身份错误属于两模型共有的缺证场景，不能由此推定豆包 non-thinking 质量更低或串行无法 Refine。说话人/分段问题保留在原入口，补证机制与调度方式分别验证。用户进一步明确比较对象是“携带前文上下文的轻量串行 workflow”；此前实验只是独立请求按顺序执行，不能代表该基线。保留当前生产并行是现行选择，其额外复杂度是否优于这个串行方案仍未由本轮证明。
+
+## 1.5 2026-10-29：Karpathy 正式任务未推进的独立故障
+
+用户发现正式任务持续失败。8 集提交快照意外启用了独立 OCR，与用户要求关闭 OCR 不一致；前两集出现 OCR `finish_reason=length`、连接断开/超时，理解阶段累计 119 次成功 HTTP 返回却未提交 Chunk。Context Controller 在 provider 实报约 248K 后仍取约 422K 的通用图片估算上界，持续释放新读到的工具结果；恢复时还发现子任务等待已停止父任务的媒体文件，却继续给自己续租。原始快照及修复验证保存在 `outputs/verification/parse-failures-20261029/`，与上文协议实验分开解释。
 
 # 2. 影响因素、假设与评价指标
 
@@ -56,7 +60,7 @@
 | 因素 | 已有证据与未知部分 | 下一项对照及影响的决策 |
 | --- | --- | --- |
 | F1 媒体重复准备与冷启动 | 批量解码已实现；历史整集媒体准备 24.32 s，但整个流程反而变慢。没有“每块 FFmpeg 启动必浪费几秒”的独立测量 | 分别记录进程启动、探测、解码与复用时间；固定媒体输出比较重复准备/共享资产，再决定是否仍需改媒体路径 |
-| F2 工具职责与上下文 | 当前模型仍需读观察、写 Canvas、检查与完成；旧 Canvas 和零工具实验的帧数、并发也不同 | 同一输入比较 Canvas 与直接输出，统计请求轮次、工具读写、输入预算与质量；只在独立实验中改变工具条件 |
+| F2 工具职责与上下文 | 改造前模型需读观察、写 Canvas、检查与完成；10-30 已去除此职责；旧 Canvas 和零工具实验的帧数、并发不同 | 同一输入比较 Canvas 与直接输出，统计请求轮次、工具读写、输入预算与质量；只在独立实验中改变工具条件 |
 | F3 模型与 thinking | reasoning 和首正文等待可能很长；首正文前还混合上传、排队、预填充等 | 固定精确模型版本与实际出站 effort；同模型内做协议对照。不可观测的服务端阶段保持未知 |
 | F4 输出协议与冗余字段 | 首轮 XML 对完整 JSON 的任务负担不同；名单遗漏不应在删除该需求后继续判为业务质量失败，但说话人/主体错误仍有业务影响 | 第二轮采用同字段精简 JSON/XML，均去掉人物名单并增加 SHOT；保持业务事实检查。新旧轮次包含多项共同任务变化，不能将差值全部归因于删除两个字段 |
 | F5 视觉输入与缓存 | 180 张 720p 帧；旧 detail=low 减少输入 token，却出现单字化。新旧缓存命中不同 | 首轮固定图像字节、顺序和 detail；记录 cached tokens，交叉顺序复跑。后续单独调整 FPS/分辨率/detail，不混进协议结论 |
@@ -81,6 +85,10 @@
 10% 保留为两轮协议实验的原始筛选门槛，未因最终决定而倒改为达标。当前不继续追求协议提速或单块 30 秒；生产接入仍需按业务冻结绝对内容覆盖、时间误差及可接受成本，现有探索数据不代替验收。
 
 每组报告全部耗时、成功/失败数、样本量、日期窗口、并发和缓存条件。首轮每组 2 次，只报告原始值、范围和探索性中位数，不发布 p95/p99 或“稳定快多少”。扩大样本后再按实际数量报告经验分位数及其局限；不得用均值掩盖超时。失败耗时独立列出，同时计入全部尝试成本；重试条件下从首次开始到有效结果的时间另算。
+
+## 2.3 正式运行故障的验证口径
+
+本次固定 WhisperX large-v3、3 fps、720 高度与全部视觉帧，按用户要求关闭独立 OCR。诊断指标为新版本 OCR 请求数（应为 0）、provider 实报与压缩估算关系、停止父任务后媒体等待是否退出。结果指标为真实 Chunk 的内容/ASR 时间证据提交，随后检查 Refine 与索引；服务启动和 HTTP 200 不作为解析完成。基线为前两集 0 个提交 Chunk；整集完成率与耗时仍需完整运行观察。
 
 # 3. 改造方案与建模
 
@@ -128,14 +136,14 @@
 
 上述规则已经落在实验 decoder，覆盖的是实验输入合同。最终字段语义仍由用户继续完善；任何改变须同步 Prompt、decoder、样例与质量检查表，再开始对照。旧 v2 原文保留供历史阅读，不能混用两版 Prompt。
 
-## 3.3 接入职责与失败路径（设计，尚未实施）
+## 3.3 接入职责与失败路径（2026-10-30 已实现直接 JSON）
 
-本节描述首轮可转 `VideoParseResult` 的接入职责。第二轮新增 SHOT 后暂存独立 `CompactTimeline`，不能直接声称兼容旧 Canvas，也不通过将 SHOT 改写为 SCENE 来规避生产枚举。未来接入需同步领域枚举、名单消费/出镜条件、旧数据读取与索引合同，再沿用下面的宿主提交边界。
+本次按用户点名的两项先落地去工具与输出预算，沿用生产 `VideoParseResult`，不做字段或枚举迁移。第二轮新增 SHOT 后暂存独立 `CompactTimeline`，不能直接声称兼容旧 Canvas，也不通过将 SHOT 改写为 SCENE 来规避生产枚举。未来接入需同步领域枚举、名单消费/出镜条件、旧数据读取与索引合同，再沿用下面的宿主提交边界。
 
 ```mermaid
 flowchart TD
     E[宿主准备图片、ASR/OCR、人物背景及范围] --> M[Understanding 一次调用：零 Canvas tools]
-    M --> R[完整原始 XML 或 JSON 与 provider 终态]
+    M --> R[完整 JSON 与 provider 终态]
     R --> V[解码、确定性派生、领域和时间校验]
     V -->|通过| C[宿主调用 Canvas.write：原子批次]
     C --> S[canvas.result → 现有提交边界]
@@ -146,12 +154,12 @@ flowchart TD
 ```
 
 1. **Agent：** 新模式直接提供真实证据与输出合同，去除“先读 Canvas、写入、核验、complete”的旧 Prompt；模型只做人物、内容、时间与类型判断。保留 Canvas 作为宿主内部结构，其他 Agent 的工具仍按各自职责使用。
-2. **Gateway：** 提供支持图片、有序输入、流式原始文本和真实终态的调用能力；XML 与 JSON 对照都用普通文本返回和本地校验。模型 ID、thinking、detail、token 上限记录实际出站值，不能仅保存配置意图。业务 XML 解码不放进 provider adapter。
+2. **Gateway：** 正式路径复用 `generate(result_type=VideoParseResult, tools=())`，各现有适配器按原结构化 JSON 通道处理和校验终态。Understanding 不进入 DeepAgents 工具循环；Refine 不变。模型 ID、thinking、detail 与输出预算继续由任务冻结绑定提供。
 3. **宿主 Service / 领域边界：** 解码为 `VideoParseResult` 后调用现有 Canvas 的 Python 写入接口，`persons` 和全部 events 一次原子提交；保留 revision、batch 幂等和时间校验。`workflow` 最终消费 `canvas.result`，必须确认写入后有结果，避免“模型返回了但 Canvas 仍为空”。
 4. **兼容与恢复：** 对外 API、数据库 Schema、Event 类型和毫秒语义不迁移；`speaker_source` 由实际宿主链路记录。Refine/Prefix/索引保持原合同，不能从内存往返测试推定数据库集成已通过。生产不得依赖 `evals/` 或 `outputs/verification/` 的代码。
 5. **失败：** 探索轮不启用隐式模型修复或 fallback；所有错误保留。后续接入使用既有任务失败、重试、取消与版本机制，失败不提交部分 Timeline；若需额外修复调用，单列耗时/质量/成本后再决策。
 
-完整实施前先验证协议能产生质量合格结果，再形成最小生产修改范围；当前未选择最终 Gateway API 签名或切换配置。
+`config.yaml` 与本机 `.env.local` 指定的 `config/local-dev-config.yaml` 的 `vision` / `vision_fallback` 均为 `max_output_tokens: 30000`；其他角色不统一改值。此前 30,000 只写在实验脚本里，正式 YAML 仍为 8,192。服务启动时加载配置；已有任务保留冻结预算，普通重试不覆盖。提高输出上限防止截断，不保证更快；本次不重启服务、不改已有任务快照。
 
 ## 3.4 模型与观察源约束
 
@@ -177,6 +185,15 @@ flowchart TD
 两种 Prompt 的虚构样例已离线验证归一化相同；不再向 JSON 组附完整生产 JSON Schema。新合同测试 34 项、旧合同测试 24 项，合计 **58 passed**。旧 24 项中的 Canvas/Refine 往返只证明旧合同兼容，不能外推到 SHOT。实验解码器不自动猜人物、补名单或修复模型原文。
 
 本轮的成功标准按业务事实而非已删字段重新冻结：对白与 speaker、动作主体、镜头/场景分类、爽世入场、SUNWAY/ESP、已确认的约 47 秒画外音以及合法范围；旧名单缺失不再计错。完整金标、独立盲审和精确音频边界仍缺失。相同字段下 XML 相对 JSON 达到 ≥10% 探索收益且无关键质量退化才考虑扩大试点；两次重复不足以决定生产推广。
+
+## 3.6 正式调用与恢复修复
+
+- 本机 `models.ocr` 绑定删除，令正式默认配置关闭独立 OCR。已提交任务的快照不可随 YAML 静默变化；通过既有 reparse 服务创建新版本，原视频和旧版本保留。
+- reparse 支持已排队或已停止且全部执行租约已回收的任务。锁住父任务及 Interval/Chunk 行，拒绝任何残留执行租约；新版本建立时撤销旧非终态版本的 `accepted` 和容量占用，防止重复调度。运行中的任务仍须先停止并走正常租约回收。
+- Gateway 使用最近一次 provider 输入 token 加后续消息变化量校准估算，允许校准向下；忽略 0/缺失用量。字符预算和其他上下文约束继续生效。
+- 媒体文件尚未就绪时额外检查父任务版本、持有者、阶段和失败收尾状态。父任务已停止或换租约则退出等待；已发布媒体的现有硬链接复用保持原行为。
+
+独立 OCR 的分批尝试已撤回：它不符合本批关闭 OCR 的目标。本次不降低视觉帧率、不切换 Understanding 模型，也不以故障修复代替精简 Schema 的生产接入。
 
 # 4. 对照实验与结果分析
 
@@ -314,6 +331,23 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider test
 
 输入/模型能力不兼容、金标关键分歧未解决、输出截断或预算耗尽时保留失败并停止相应实验；不通过降帧或补调用掩盖问题。每阶段可据证据停止，不以“证明原选择正确”为完成条件。
 
+## 4.8 故障复现与定向回归
+
+修复后 659 项定向测试通过，覆盖 Gateway 上下文/DeepAgents、Parse worker/媒体、UploadService 与 Queue。新增用例复现 198 张图片的估算高于实报时释放新证据的问题，验证生产者停止后等待退出，以及排队/停止任务采用新配置后旧版本不会再被领取；活动租约仍被拒绝。证据见 `outputs/verification/parse-failures-20261029/tests-final.log`。这组测试不证明模型内容质量。
+
+## 4.9 直接 JSON 与 30k 正式接入回归（2026-10-30）
+
+本次 dev 修改不再等待新的协议研究：证据随 Prompt 直接传入，模型返回完整 JSON，宿主校验时间与领域合同后原子导入人物/事件，再走原事务提交。完整 ASR 词对齐仍存证据，初始 Prompt 只投影 cue 文本、边界和匿名声源，Refine 可读取完整词对齐。
+
+| 指标/护栏 | 修改前 | 修改后及验证 |
+| --- | --- | --- |
+| Understanding 模型工具职责 | 读证据、写 Canvas、回读、完成工具 | 无工具；正常成功路径一次生成，宿主完成校验与写入 |
+| 默认/本机视觉输出上限 | 8,192 tokens | 30,000 tokens；包含 fallback，Refine 无独立绑定时复用 |
+| 下游合同与失败 | Canvas 输出后提交 | 人物/全部事件一次写入；越界、非法结果不提交；清理和节点重试测试通过 |
+| 正式时延/质量收益 | 未有同条件新基线 | 本轮未调用实模，不能给提速百分比 |
+
+回归命令：`UV_CACHE_DIR=/tmp/seekino-uv-cache uv run --no-sync python -m pytest tests/agent/video_parse_v2 tests/server/test_video_parse_worker.py tests/server/test_parse_output_budget.py tests/gateway/test_config.py -q --tb=short`，**380 passed**。覆盖 Agent、Canvas、实际 Service/Repository 的隔离组件链路，Provider/ES 使用测试替身；不是线上或实模质量验收。日志：`outputs/verification/parse-direct-json-20261030/tests.log`。另配置相关三文件 409 passed；扩展 Gateway 回归发现 `test_fallback_media_is_checked_against_the_active_context_budget` 在已有上下文改动下失败（固定 1,024 预算、不读取此次 YAML），保留独立排查，不称全量测试通过。
+
 # 5. 试点验证与方案取舍
 
 两轮已由本任务 Agent 执行，XML 没有扩大试点的依据，用户已决定不采用。后续试点仅针对选定的精简 JSON 及宿主接入，须先完善上述合同与质量缺口；不要求先把单块压到 30 秒。接入时用至少三个事先选定的不同片段验证对白密集、动作/切镜、画面文字/画外音，并加入相邻 Chunk 边界；这些样本与调试片段区分。绝对质量阈值和调用预算在具体实施前冻结，本轮不自动启动。
@@ -324,19 +358,24 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider test
 
 若质量退化、错误结果被提交、取消后仍生成，或整集交付效率/成本出现不可接受退化，则停止扩大范围并回到相应因素；不以未达到单块 30 秒拒绝质量合格且整集表现可接受的结果。接入保留旧调用策略的可恢复路径，试点成果与旧版本隔离，不覆盖已验证内容；具体配置和恢复操作随接入设计落实。本文计划不构成服务重启、数据迁移或生产推广的操作授权。
 
+## 5.1 Karpathy 运行试点
+
+2026-10-29 23:44（Asia/Shanghai）恢复正式服务，8 集均采用 v2 快照，`ocr_enabled=false` 且 `models.ocr=null`，保持 60 秒 Chunk、3 fps、WhisperX large-v3 与本地 Qwen3 embedding。第一集作为真实推进观察点，其余按既有并发排队。新请求、提交证据与剩余问题以 [故障修复记录](../../dev/devlog.md#devlog-karpathy-parse-recovery-20261029) 和 `live-progress.json` 为依据；不得把新任务入队写成整集解析完成。
+
 # 6. 结果验收与闭环
 
-| 回到原问题 | 截至 2026-10-29 的证据与决定 | 仍需取得的证据 |
+| 回到原问题 | 截至 2026-10-30 的证据与决定 | 仍需取得的证据 |
 | --- | --- | --- |
 | XML 是否可可靠解析、兼容旧 Canvas？ | 两轮八份 XML 均语法合法，首轮 3/4、第二轮 4/4 合同有效；可解析不构成选用理由，决定不采用 | 无 XML 接入事项；保留实验与旧合同内存兼容证据 |
 | 是否值得替换直接 JSON？ | 协议选型已决定：精简 Schema、继续 JSON，不换 XML；本轮选型研究结束 | 精简 JSON 质量与生产接入仍待完成；按 §4.7 扩展多元质量验证，不重开 XML 或自动裁剪输入 |
-| 是否消除 Understanding 对 Canvas tools 的依赖？ | 职责方案已明确：模型输出，宿主校验并写 Canvas；尚未接线 | Prompt/Gateway/宿主改造后的实际调用与恢复证据 |
+| 是否消除 Understanding 对 Canvas tools 的依赖？ | dev 已接线直接 JSON，宿主校验并原子写 Canvas；380 项回归通过 | 服务加载、新实模业务质量与整体时延；精简字段/SHOT 仍另行迁移 |
 | 如何处置单块时长与整体效率？ | 用户决定质量优先，不再盲目追求单块 30 秒；既有可靠并行策略足以承担当前效率需求 | 新合同接入时核验整集表现、成本与恢复；B07 的既有重算等未完成问题不因此自动关闭 |
 
-本轮协议选型已结束：采用精简 JSON 方向，不换 XML，不继续单块 30 秒竞速或自动续跑视觉预算实验。后续由解析模块维护者完成所选合同的质量完善、宿主接入与下游兼容，沿用既有并行策略；本轮仅记录该实施方向，不将设计决定写成已部署。旧原文缺失、精确时间质量及新合同整集验证的限制仍保留，原始质量失败不改写。用户新增的多片段验证需求按 §4.7 分离模型、身份补证与调度因素，样本/金标及新增调用预算尚未冻结。
+本轮协议选型已结束：采用精简 JSON 方向，不换 XML，不继续单块 30 秒竞速或自动续跑视觉预算实验。后续由解析模块维护者完成所选合同的质量完善、宿主接入与下游兼容，沿用既有并行策略；2026-10-30 已完成直接 JSON 接线，精简合同仍待迁移，未将源码完成写成服务已部署。旧原文缺失、精确时间质量及新合同整集验证的限制仍保留，原始质量失败不改写。用户新增的多片段验证需求按 §4.7 分离模型、身份补证与调度因素，样本/金标及新增调用预算尚未冻结。
 
 | 日期 | 原判断或方案 | 新证据 | 调整与影响 |
 | --- | --- | --- | --- |
+| 2026-10-30 | 去工具/30k 停留在实验 | 用户要求直接落地；正式 YAML 仍为 8,192，Understanding 仍做 Canvas 工具循环 | dev 接入直接 JSON 与 30k，保持现有 Schema；实模时延及运行服务加载另验 |
 | 2026-10-28 | “每 Chunk 启 FFmpeg、未常驻”可能是主要浪费 | 整集复用已实现，历史媒体对照整体反而 +25.27% | 将重复解码与启动/warm-up 分开测，不能预先承诺常驻收益 |
 | 2026-10-28 | 旧 v2 直接以类型作为事件标签，正文包含姓名 | 用户提出 event 包装、speaker 属性与 description；离线 decoder 可转换 | 以新候选复测，保留 v2 原稿；不预设包装一定更省 token |
 | 2026-10-28 | 可直接沿用旧 EP04 输入比较 | 用户确认新机素材尚未下载，旧原始证据缺失 | 等文件建立新冻结基线，不补造旧模型输出或复跑结论 |
@@ -349,3 +388,13 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider test
 | 2026-10-29 | 曾将串并行主要简化为相同证据/Refine 下的并发度差异 | 用户指出对方实际是前文传递的轻量串行 workflow，可能无需后置跨块 Refine | 修正架构基线为“带历史串行、无强制 Refine”对“现有并行及实际 Refine”；此前单块实验不证明并行必要，完整成本收益尚待测 |
 
 协议选型研究在 B07 中记录为 DONE；精简合同生产实施及 B07 其他正确性、重算、兼容和恢复事项仍按各自证据保留 TODO。停止 XML 方案、接受现有并行策略，不等同于这些剩余问题已被修复。
+
+
+## 6.1 2026-10-30：Understanding 节点重试与最终失败边界
+
+- **问题与现状：** Consumer 曾在 Understanding 最终异常后重新排队整个 Chunk，成功但未提交的 ASR 因此可能重跑。hypnos 明确要求子图节点自行重试，最终异常只交给 Consumer 停止任务并通知前端。
+- **因素与指标：** 验证理解节点尝试次数、ASR/抽帧次数、失败后新领取数量、失败内容提交次数，以及 API 错误是否可读。节点重试不能重置总执行截止时间或持久模型调用预算。
+- **方案：** ASR、视觉准备、OCR、理解分别配置有限 RetryPolicy；超时/传输异常重试当前节点，配置/预算等不可恢复异常直接上抛。最终失败记录 `PARSE_NODE_FAILED`，停止该视频新派发、拒绝续租与迟到提交，通过既有任务通知/API/SSE 暴露阶段和错误原因。提交阶段不自动重放。
+- **实验：** 离线故障注入覆盖理解超时恢复/耗尽，要求 ASR 和视觉准备各一次、只提交成功结果；Queue 用例覆盖同视频并行任务停止及安全错误消息。验证结果见 [本次记录](../../dev/devlog.md#devlog-node-retry-20261030)。
+- **试点：** 本轮未重启服务、未调用真实模型、未修改真实任务数据。需要新进程加载代码后再验真实失败到前端的闭环；原生 ASR 阻塞推理只能在返回控制点后响应取消，不承诺立即释放内存。
+- **验收：** 实现与离线验证不代表整集解析达标；崩溃租约恢复、Index/Refine 原有策略保持独立。手动暂停单视频/全部任务及只清理任务的入口不在本次实现范围，状态入口见 [B22](../../dev/problems.md#b22understanding-失败导致整块重跑与缺少任务停止控制)。
