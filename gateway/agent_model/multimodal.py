@@ -22,6 +22,7 @@ from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.media import encode_media_file
 from gateway.multimodal import ImageInput, MultimodalInput, TextInput, VideoInput
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.openai.streaming import request_chat_stream
 from gateway.usage import ModelCallControlError, model_call_context, track_model_call
 
 from .context import ContextCheckpoint, ContextWindowOverflow, ContextWindowPolicy, preflight_context
@@ -430,9 +431,11 @@ def _request_chat_turn(
     request = {
         "model": endpoint.model, "messages": _chat_input(messages, endpoint),
         "tools": specs, "tool_choice": choice,
-        "stream": False, "timeout": min(remaining, adapter._request_timeout_seconds),
+        "stream": adapter._stream, "timeout": min(remaining, adapter._request_timeout_seconds),
         adapter._token_parameter: adapter.max_output_tokens,
     }
+    if adapter._stream:
+        request["stream_options"] = {"include_usage": True}
     if enforce_final_schema:
         request["response_format"] = ({"type": "json_schema", "json_schema": {
             "name": schema_name, "strict": True, "schema": result_type.model_json_schema(),
@@ -447,9 +450,15 @@ def _request_chat_turn(
                 check_control()
             _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
-                response = endpoint.client.chat.completions.create(**request)
+                response = (
+                    request_chat_stream(
+                        endpoint.client.chat.completions, usage_call=call,
+                        check_control=check_control, **request,
+                    ) if adapter._stream else endpoint.client.chat.completions.create(**request)
+                )
             except APIError as error:
                 call.capture_response(error)
+                call.raise_if_cancelled()
                 if getattr(error, "code", None) == "content_filter":
                     raise ContentFilterError("Vision output rejected", code="content_filter") from error
                 raise QueryModelIncompleteError(
@@ -467,6 +476,10 @@ def _request_chat_turn(
                 require_tool_call=enforce_final_schema and choice == "required",
                 require_visible_text_on_stop=enforce_final_schema and visible,
             )
+            if adapter._stream:
+                reasoning = getattr(response.choices[0].message, "reasoning_content", None)
+                if isinstance(reasoning, str):
+                    turn[2]["reasoning_content"] = reasoning
             parsed = None
             if enforce_final_schema and turn[0] == "stop":
                 try:

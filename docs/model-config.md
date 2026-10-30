@@ -62,6 +62,8 @@ models:
 
 Kimi 继续使用现有 OpenAI 兼容适配器和 `profile: kimi`。在同一份有效 YAML 中将 `models.supervisor.source` 改为 `kimi_coding`、`model` 改为 `k3.1-pro`，保持 `supervisor_harness: deepagents`，并设置 `KIMI_API_KEY`。其他生成式角色也可独立选择相同来源；选择 API 模型名不会自动替换转写或 embedding。
 
+`profile: kimi` 的 `GatewayClient.create_generative_model()` 自动启用 Chat Completions 流式接收，适用于直接 JSON 和视觉工具轮次，无需新增 YAML 开关。它不改变 FPS、模型、reasoning 参数或业务重试预算；流收齐后沿用结果校验。其他 profile 保持原协议。实现与验证见 [Kimi 流式接入 TRD](design/03-product-reassessment/kimi-streaming-trd.md)。
+
 需要 Codex Supervisor 时，在同一份 YAML 中替换以下字段；其他预算字段可沿用原值：
 
 ```yaml

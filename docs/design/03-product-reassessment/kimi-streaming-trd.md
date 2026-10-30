@@ -1,11 +1,11 @@
 # 1. 问题与现状
 
-需求：正式 Kimi 视频解析接入 Chat Completions 流式响应。日期：2026-10-30。阶段：设计初稿，尚未实施。
+需求：正式 Kimi 视频解析接入 Chat Completions 流式响应。日期：2026-10-30。阶段：代码接入与合成图验证完成；长 Chunk 与服务部署待验收。
 
-- 分支：`fix/kimi-streaming`；目标分支：`dev`；PR：创建后回填。
+- 分支：`fix/kimi-streaming`；目标分支：`dev`；[PR #20](https://github.com/owariband/Seekino/pull/20)。首提交 `218d96a1` 仅包含 TRD 初稿。
 - 当前问题状态由 [problems.md](../../dev/problems.md) 维护；实验与决策写入 [devlog.md](../../dev/devlog.md)。
 
-正式 Kimi `profile: kimi` 经 `GatewayClient._build_generative` 进入 `OpenAIVisionModel`。直接返回解析 JSON 的调用和携带视觉工具的调用分别在 `gateway/openai/vision.py`、`gateway/agent_model/multimodal.py` 固定发送 `stream=False`。用户期待沿用历史成功实验的流式方式，但正式链路尚未接入。
+修复前，正式 Kimi `profile: kimi` 经 `GatewayClient._build_generative` 进入 `OpenAIVisionModel`。直接返回解析 JSON 的调用和携带视觉工具的调用分别在 `gateway/openai/vision.py`、`gateway/agent_model/multimodal.py` 固定发送 `stream=False`。用户期待沿用历史成功实验的流式方式，但正式链路没有接入。
 
 2026-10-30，MyGO EP04 首个 Chunk（视觉输入 0–63 秒）的非流式请求均返回 HTTP 504：3 fps / 189 帧耗时 301.732 秒，1 fps / 63 帧耗时 419.475 秒，0.5 fps / 32 帧耗时 337.148 秒；后两次各一次、最多 600 秒、SDK 无自动重试。未返回 usage，不能从帧数推算实测 context 占用率，也不能以单次结果估计总体成功率。原始证据保留在本地 `outputs/verification/kimi-fps-ab-20261030-2115/`。
 
@@ -33,19 +33,20 @@
 4. 将断流/读取失败映射为既有模型失败原因，保持取消优先、关闭流及客户端、不增加自动重试；流式读取期间执行控制与时间预算检查。
 5. 无数据迁移、无解析 Schema 变化。工具轮次沿用既有 Canvas 与 Server 的事务/提交边界。部署前需将本分支集成至实际服务所用代码。
 
-顺序：先提交本 TRD 初稿，再实现最小共用协议收集与工厂接入，先以真实 SDK + 模拟 HTTP SSE 验证，再进行有界模型验证。不会以文档中的试点计划扩大真实素材调用授权。
+已按此顺序实施。协议收集复用 OpenAI SDK `ChatCompletionStreamState`，额外检查单个 completion 的终止 choice，保存末尾 usage，并逐分片检查控制和总预算；无事件的阻塞读取沿用 HTTP 超时。自动化测试发现旧工具合同只为 DeepSeek 透传 `reasoning_content`，本次在流式 Chat 轮次补回完整 reasoning，以供 Kimi 下一轮请求使用。未改动通用 Responses 工具循环或其他 provider 的默认协议。
 
 # 4. 对照实验与结果分析
 
-计划对照同一 HTTP fixture 在修改前后的行为：完整 JSON 分片、末尾空 choices usage、工具参数与 reasoning 分片、多工具索引、EOF、HTTP/读取错误、length/content_filter、取消及超时。通过 Gateway 工厂构造正式 Kimi 模型验证实际路由；运行现有 OpenAI media 与相关 Gateway 测试覆盖非 Kimi 行为。
+通过正式 Gateway 工厂 + HTTP MockTransport 覆盖完整 JSON 分片、末尾空 choices usage、工具参数与 reasoning 分片、多工具索引、EOF、读取错误、length/content_filter、取消、宿主控制及超时。三种入口（直接 JSON、legacy、Deep Agents）均实际发送流式请求；既有 OpenAI media 与工厂测试覆盖非 Kimi 行为。
 
 | 指标 | 基线实测 | 方案实测 | 判断 |
 | --- | --- | --- | --- |
-| 正式请求 `stream` | `False`（源码） | 待测 | 待实施 |
-| 模拟完整与异常流合同 | 尚无 Kimi SSE 覆盖 | 待测 | 待实施 |
+| 正式请求 `stream` | `False`（源码） | 三入口均为 `True`，并请求末尾 usage | 工厂测试通过 |
+| 模拟完整与异常流合同 | 尚无 Kimi SSE 覆盖 | 新增测试通过；相关七文件 281 passed / 1 failed | 失败为既有 Ark → DeepSeek fallback context 测试，基线同样失败 |
+| 真实合成图接口兼容 | 此流式版本未测 | 1 次通过；首片 5.520 秒、完成 7.431 秒、110 片；364 tokens | 仅合成图兼容验证 |
 | 真实 0–63 秒 Chunk 完成 | 3 次非流式均 504，参数不同，不能合并为成功率估计 | 待授权实测 | 未验证 |
 
-执行后记录版本、命令、测试数量与证据。若只有模拟验证通过，则仅宣称接入和协议合同已验证，不宣称正式素材 504 已解决。
+完整命令、环境、既有失败复现与原始合成图结果见 [实施记录](../../report/gateway/kimi-streaming-20261030.md)。在未修改 `dev` / `df83c3f9` 单独复跑失败用例，同样 `StopIteration`；未将其混入本次修复。单张合成图不能代替正式素材验收，不宣称原视频 504 已解决。
 
 # 5. 试点验证与方案取舍
 
@@ -55,4 +56,4 @@
 
 # 6. 结果验收与闭环
 
-初稿状态：实现、自动化测试、真实素材效果与部署均未完成。下一步是协议收集与正式工厂入口实施。交付时分别记录接入、测试、真实模型和部署结论；真实 Chunk 尚未验证前，原问题保留 TODO，不标记解决。
+代码已实现，新增协议与正式工厂测试通过，真实 Kimi 合成图流式成功。当前工作分支完成接入，尚未集成/重启正式服务，未追加真实视频调用。原问题 B23 保持 TODO；下一步是在明确授权的单个长 Chunk 上保持其他参数不变复测，再核对实际服务加载。由当前项目维护者/Agent 执行；既有两次真实素材授权已耗尽，不能将本设计中的试点计划当作追加授权。

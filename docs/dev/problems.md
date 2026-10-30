@@ -659,6 +659,16 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 仍待：真实失败到前端验收；指定视频暂停、一键全量暂停和保留素材的无用任务清理。设计见 [失败边界](../design/03-product-reassessment/video-parse-performance-trd.md#61-2026-10-30understanding-节点重试与最终失败边界)，验证见 [devlog](devlog.md#devlog-node-retry-20261030)。
 
+### B23：正式 Kimi 长 Chunk 仍使用非流式调用并反复 504
+
+排序日期：2026-10-30。
+
+状态：TODO（`fix/kimi-streaming` / [PR #20](https://github.com/owariband/Seekino/pull/20) 已接入流式，真实长 Chunk 与服务加载待验证）。MyGO EP04 首个 0–63 秒 Chunk 的 3 / 1 / 0.5 fps 非流式请求分别在 301.732 / 419.475 / 337.148 秒返回 504；均未取得 usage，不能声称降帧改善成功率或量化 context 使用量。历史流式成功实验使用 `k3` / Responses，与当前 `k3.1-pro` / Chat 请求存在差异，调查应优先核对协议接线。
+
+修复让 `profile: kimi` 的直接 JSON、legacy / Deep Agents 视觉工具轮次统一使用 `stream=True`，保留完整结果/工具校验、推理连续性和末尾 usage，EOF / 读取失败不返回半截结果。2026-10-30 22:59，通过正式工厂入口发送一张合成红蓝图：首片 5.520 秒、总计 7.431 秒、110 个分片，JSON 通过，242 input + 122 output tokens。该小图只证明接口兼容；原视频两次调用授权已用完，未追加发送真实素材，未启动解析任务或重启服务。
+
+协议及相关回归 281 passed，另 1 个 Ark → DeepSeek fallback context 用例失败，在未修改的 `dev` / `df83c3f9` 同样复现，未夹带修复。证据见 [TRD](../design/03-product-reassessment/kimi-streaming-trd.md)、[实施记录](../report/gateway/kimi-streaming-20261030.md)、[devlog](devlog.md#devlog-kimi-streaming-20261030)。
+
 ### B15：localhost MCP 与外部 Agent 素材取用闭环
 
 排序日期：2026-10-29。

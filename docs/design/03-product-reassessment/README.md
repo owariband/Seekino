@@ -34,6 +34,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [local-text-embedding-trd.md](local-text-embedding-trd.md) | 2026-10-29，课程 P0 与本地运行需求 | 本地 Qwen 文本向量和可关闭的视觉索引，保留 OCR/VLM | 实验与兼容性分别验证，不把本地编码通过视为全课程质量通过 |
 | [parse-pause-resume-trd.md](parse-pause-resume-trd.md) | 2026-10-30，单集优先解析 | 持久暂停、继续、租约隔离和实际阶段显示 | 已实操释放非目标任务容量，整集完成另行验收 |
 | [model-network-failure-trd.md](model-network-failure-trd.md) | 2026-10-30，Karpathy 连接异常 | SDK 分类、节点重试、可诊断日志 | 区分连接异常、网关超时与整集闭环验收 |
+| [kimi-streaming-trd.md](kimi-streaming-trd.md) | 2026-10-30，长 Chunk 504 与历史流式成功记录 | 正式 Kimi 生成入口接入 Chat SSE，收齐后校验和执行工具 | 单独验证代码接入、流式接口兼容性、真实素材效果与部署 |
 | [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29，本地 ASR 与字幕需求 | 正式 WhisperX 转写及强制对齐、整片内存结果复用与 Chunk 区间读取 | 代码与离线回归、真实模型效果、播放器字幕分别验收 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 

@@ -20,6 +20,7 @@ from gateway.multimodal import (
 )
 from gateway.usage import track_model_call
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.openai.streaming import request_chat_stream
 
 _Result = TypeVar("_Result", bound=BaseModel)
 
@@ -40,6 +41,7 @@ class OpenAIVisionModel:
         max_output_tokens: int = 8192,
         token_parameter: str = "max_tokens",
         response_format: str = "json_schema",
+        stream: bool = False,
     ) -> None:
         self.model_name = model
         self.provider_name = provider
@@ -49,6 +51,7 @@ class OpenAIVisionModel:
         self._max_tokens = max_output_tokens
         self._token_parameter = token_parameter
         self._format = response_format
+        self._stream = stream
 
     @property
     def max_output_tokens(self) -> int:
@@ -133,9 +136,12 @@ class OpenAIVisionModel:
             model=self.model_name,
             messages=[{"role": "user", "content": content}],
             response_format=output_format,
-            stream=False,
+            stream=self._stream,
+            timeout=timeout,
             **{self._token_parameter: self._max_tokens},
         )
+        if self._stream:
+            request["stream_options"] = {"include_usage": True}
         with OpenAI(
             base_url=self._base_url,
             api_key=self._api_key,
@@ -151,8 +157,18 @@ class OpenAIVisionModel:
                     unregister_cancel = call.add_cancel_callback(client.close)
                     try:
                         call.raise_if_cancelled()
-                        response = client.chat.completions.create(**request)
+                        if check_control is not None:
+                            check_control()
+                        response = (
+                            request_chat_stream(
+                                client.chat.completions, usage_call=call,
+                                check_control=check_control, **request,
+                            ) if self._stream else client.chat.completions.create(**request)
+                        )
                         record_model_event("response", response)
+                        call.raise_if_cancelled()
+                        if check_control is not None:
+                            check_control()
                     except APIError as error:
                         call.capture_response(error)
                         call.raise_if_cancelled()
@@ -184,7 +200,9 @@ class OpenAIVisionModel:
                             "Vision output rejected", code="content_filter"
                         )
                     if choice.finish_reason != "stop":
-                        raise RuntimeError(
-                            f"Vision response did not complete: {choice.finish_reason}"
+                        raise ModelFailureError(
+                            f"Vision response did not complete: {choice.finish_reason}",
+                            reason=(ModelFailureReason.OUTPUT_TOKEN_LIMIT if choice.finish_reason == "length"
+                                    else ModelFailureReason.INVALID_MODEL_RESPONSE),
                         )
                     return result_type.model_validate_json(choice.message.content or "")

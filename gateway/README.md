@@ -38,6 +38,13 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 连接、预算和回退从配置解析，供应商实例创建与关闭均在 Gateway 内完成。Engine
 和 Server 保留抽帧、转写提示词、时间戳归一、检索候选身份与任务状态等业务职责。
 
+`profile: kimi` 的生成接口使用 Chat Completions SSE（`stream=True`、
+`stream_options.include_usage=True`），覆盖直接 JSON 与 legacy / Deep Agents 视觉工具轮次。
+`openai/streaming.py` 复用 SDK 的分片累积，等待终止 choice 后才允许结果校验或工具执行；
+保留 `reasoning_content` 和尾部 usage，并在分片之间检查取消和时间预算。
+其他 profile 保留既有协议。接入依据和真实素材验证边界见
+[Kimi 流式接入 TRD](../docs/design/03-product-reassessment/kimi-streaming-trd.md)。
+
 当前配置由本地 YAML 提供。未来云端配置存储将向同一配置合同提供有效定义；
 数据库、租户权限和配置管理 API 属于 Server 配置管理，不进入模型工厂。
 
