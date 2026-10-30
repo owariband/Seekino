@@ -22,6 +22,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
 | [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
 | [2026-10-30：Understanding 直接 JSON 与 30k 正式接入](#devlog-parse-direct-json-20261030) | B07、实现闭环 |
 | [2026-10-29：Karpathy OCR 配置纠正与解析恢复](#devlog-karpathy-parse-recovery-20261029) | B07、B20、真实任务恢复 |
@@ -113,6 +114,49 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-full-video-asr-20261029"></a>
+
+## 2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取
+
+### 1. 问题与现状
+
+正式 ASR 按 Chunk 调用；用户希望先转写全片，原 ASR 节点仅取对应区间，避免把这项改造扩大成 TimelineEvent 重构。跨界语音可能受固定切分影响，但准确率改善尚未实测。prod/release 时长展示已由前置提交 `c84a2169` 开放。
+
+### 2. 方案候选
+
+采用用户提出的进程内视频级转写缓存，按任务和协调器租约隔离；新增 WhisperX 默认配置选择 video scope，历史任务仍为 chunk。缓存准备成功后发布媒体，Chunk 深复制所有相交 cues，保留原句及绝对毫秒。没有新增持久 checkpoint 或事件身份；重启需要重新转写。将前移的 ASR 纳入已有租约计时和执行区间并集，避免展示漏计。
+
+### 3. 方案验证
+
+离线替身模型验证并发两 Chunk 仅转写一次、相交边界、字词时间、深复制、恢复重建、失败与取消资源清理、旧配置和总时长。SQLite 验证视频计时拒绝失效租约，任务投影包括 ASR，缺失样本保持不完整。最终定向回归 **813 passed**（全片 ASR、配置、Worker、持久化、任务投影、全部 Parse V2 Agent 与观察合同）；保留既有 Starlette 弃用警告。独立工作区前端 production build（含 TypeScript）与 diff 检查通过。真实 WhisperX 全片、质量与峰值内存仍未测；未修改现有业务任务或部署运行服务。
+
+### 4. 指标对比
+
+| 指标 | 原行为 | 本次离线证据或限制 |
+|---|---|---|
+| 同轮两 Chunk 的 ASR 调用 | 每块调用 | 共享一次视频转写；恢复重新调用一次 |
+| 跨界 58–62 秒 cue | 受 Chunk 音轨切分 | 两 Chunk 均收到完整原句与同一绝对时间 |
+| 总有效时长 | 只计子任务执行 | 纳入视频 ASR，保留区间并集、缺失和失败口径 |
+| 识别质量、资源与速度 | 待对照 | 未测；首个 Chunk 增加等待整片转写的时间 |
+
+新增一个配置字段、区间选择函数和视频准备缓存，复用原 Gateway、任务和提交边界。状态入口为 [B20](problems.md#b20本地-whisperx-正式接入与字幕时间证据)。
+
+2026-10-30 接续核验与集成（同一需求）：
+
+- **问题与现状：** 本机日志在 00:29 停机前仍显示 Canvas 工具循环及 8,192 输出预算；一个 Chunk 在 666,900 ms 后因模型读取超时失败。11:27–11:30 的只读进程/status 核对显示 API/Consumer、Web、MySQL、ES 均未就绪，不能把已提交修复称为运行稳定。PR #9 又落后于 dev 的 `13114f83`/`80bb293d`，产生 devlog 合并冲突。
+- **方案候选：** 将最新 dev 合入原功能分支，保留直接 JSON、节点内重试与最终失败停止机制，解决文档冲突时保留两侧记录。沿用内存 ASR 方案；使用 Video=1 控制整片准备、Parse=10 释放理解并发。没有修改本机仍为 Parse=2 的配置或启动真实任务。
+- **方案验证：** 扩展既有测试为 2/10 个 Chunk，进入真实 Understanding 子图后用 Barrier 保证同时在途，对其中一个注入暂态超时；最终每个 Chunk 仅提交一次，ASR 每轮仍调用一次，协调器恢复再调用一次。组合回归 **1,014 passed、1 个既有 Starlette 弃用警告**；命令为 `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -p no:cacheprovider tests/server/test_full_video_asr.py tests/server/test_config.py tests/server/test_video_parse_worker.py tests/server/test_video_parse_repository.py tests/server/test_job_repository.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_media.py tests/server/test_parse_output_budget.py tests/agent/video_parse_v2 tests/engine/parsev2/test_observations.py --tb=short -q`，使用已有 Python 3.12 venv，39.65 秒完成。原始临时日志 `/private/tmp/seekino-full-video-asr-dev-integration-tests.log`，测试与行为断言保留在仓库；与此前 813 项重叠，不累加。
+- **指标对比：** 离线并发覆盖从 2 个扩大为 10 个 Chunk，新增理解失败恢复而 ASR 不增加调用的证据；实模速度、资源和稳定性仍未测。本机 WhisperX 超时仍为 1,200 秒，是否覆盖整节课程必须单独实测；旧任务普通 retry 不更新 scope/输出预算。下一步是新配置的隔离试点及端到端验收，不能直接把短请求 10 路成功当成长课程通过。
+
+2026-10-30 落地补强与真实 ASR 冒烟（同一需求）：
+
+- **问题与现状：** SQLite 复现 3 项失败：已有拓扑的 PARSING 任务重建 ASR 时，Chunk 仍可领取并提前计时；ASR Provider 异常没有增加 Prepare 失败计数；重复准备租约过期也未耗尽该预算。另外，新建观看问答的按需任务没有整片协调器，不能直接继承 video scope。用户随后将本 chat 的职责收回到 PR #9；此前仅修改本机 Video/Parse 为 3/3 并启动 MySQL、ES、embedding，未由本 chat 启动 API/Consumer 或创建新的课程解析版本。
+- **方案候选：** 复用现有任务 detail 保存 `asr_prepared_lease_version`，在转写缓存和媒体都就绪后写入，Chunk 领取校验当前租约；新租约使旧回执失效。准备错误和租约过期复用有限 Prepare 失败预算。按需观看新任务保持 chunk scope。无需新表、持久转写格式或 TimelineEvent 迁移。
+- **方案验证：** 修复后 Queue/全片 ASR 141 passed；扩大组合回归为 **1,017 passed、1 个既有 Starlette 弃用警告**，观看兼容单独 **26 passed**。组合命令沿上面的 1,014 项入口，新增 3 个恢复用例；观看命令为 `python -m pytest tests/server/test_realtime_understanding.py -q`。实模使用当前 large-v3 CPU/int8、batch 1、6 CPU threads，从原始 Micrograd 视频取 `[0,100000)` ms，调用实际 `VideoParseRuntimeService._prepare_video_asr`、Gateway、音轨提取与 WhisperX，再并发调用 10 次 `transcribe_chunk`；租约/计时持久层及媒体读取准入由探针替代，不修改业务数据库、不调用 Kimi。一次 ASR 成功，12 条 cues、334 个有效词时间，10 个窗口均非空，6 条 cue 跨窗口保留。证据：[结果](../../outputs/verification/full-video-asr-live-20261030/result.json)、[探针](../../outputs/verification/full-video-asr-live-20261030/probe.py)、[模型日志](../../outputs/verification/full-video-asr-live-20261030/probe.log)、[组合回归](../../outputs/verification/full-video-asr-live-20261030/regression.log)。
+- **指标对比：** 恢复期领取/无界失败的 3 个复现断言由失败转通过；真实 ASR hook 和 10 窗口取证从未测变为一个成功样本。ASR 阶段 **331.318 秒**，探针进程峰值 RSS **2,565,750,784 bytes**（macOS `ru_maxrss`）；当时另一条开发 API/Consumer 已启动，因此存在共享机器负载，数值不代表独占资源性能、整片峰值或全课程 ETA。旧路径未做同条件 A/B，不报告加速或准确率提升；本次可支持提交评审，真实整节课程及 Kimi/Refine/Index 端到端仍待验收。
+
+2026-10-30 PR 关联迁移：用户要求分支只表达需求类型，不含 Agent 身份。将同一实现提交 `b2fb02c4` 迁至 `feat/full-video-asr`，创建 [PR #12](https://github.com/owariband/Seekino/pull/12) 替代 [PR #9](https://github.com/owariband/Seekino/pull/9)。迁移时核对两个远端 PR 的 head SHA 一致；后续只更新 TRD、问题清单和本条关联记录，业务代码及既有验证结果不变。Agent 身份写在新 PR 描述中，不重新执行模型或解析任务。
 
 <a id="devlog-kimi-concurrency-20261030"></a>
 
@@ -3684,3 +3728,26 @@ Framework、Queue、Worker、模型调用预算、API、SSE、Bootstrap 定向�
 | 历史重试／删除 | 无按钮但缺解释 | 仍无按钮，解释为何只供追溯 |
 
 范围为本次只读列表样本与组件回归，不能证明解析成功率改善。部署待合并，状态见 problems。
+
+## 2026-10-30：直接 JSON 模型连接失败诊断与恢复
+
+### 问题与现状
+
+Karpathy v3 的 4 次成功 Kimi 请求耗时 183–296 秒；EP1 504 请求实际 312 秒，不能把含 ASR 的 969 秒当成推理时长。EP4/5 与 EP7/8 各有 4 个请求在同一时刻连接失败。现有日志遗漏 cause，无法确定断连责任端；SDK 错误未命中节点重试。
+
+### 方案候选
+
+采用 Gateway 通用错误分类、现有有限节点重试及脱敏日志。直接 JSON 接上已有 opt-in 诊断，记录每次调用的异常链；保留既有并发、租约与 deadline。仅增加提示不足以恢复暂态错误，无限重试会掩盖持续故障，均不采用。
+
+### 方案验证
+
+使用真实 OpenAI SDK 和 MockTransport 产生连接、读取超时、429/500/502/503/504 与 400/401，检查原因与重试资格；工作流验证最多 3 次且 ASR 不重复执行；取消优先，公开错误不包含原始 provider 内容。测试结果见 [TRD](../design/03-product-reassessment/model-network-failure-trd.md)。本机证据 `outputs/verification/karpathy-start-20261030/kimi-call-timings.json`，按模型请求起止统计。EP1 正式 retry 继续原 v3，整集完成仍待验证。
+
+### 指标对比
+
+| 指标 | 基线 | 本次改造 |
+|---|---|---|
+| 连接/超时/504 公开原因 | 执行异常 | 分别显示连接异常、模型请求超时、服务网关超时 |
+| 节点暂态重试 | SDK 错误漏判 | 最多 2 次重试，共 3 次尝试，沿用 deadline |
+| 原始原因追溯 | 直接 JSON 缺 trace、终止缺 cause | opt-in 逐请求 trace + 脱敏终止异常链 |
+| 正式完整视频成功 | 0 | 待验证，不能用离线测试代替 |

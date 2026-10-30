@@ -186,6 +186,17 @@ def _video_failure_status(task: VideoParseTaskData) -> str | None:
     } else None
 
 
+def _requires_video_asr(task: VideoParseTaskData) -> bool:
+    asr = (task.parse_config.get("models") or {}).get("asr") or {}
+    return asr.get("mode") != "none" and asr.get("scope") == "video"
+
+
+def _video_asr_prepared(task: VideoParseTaskData) -> bool:
+    # This is a lease-scoped dispatch receipt, never a durable transcript.
+    runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY) or {}
+    return runtime.get("asr_prepared_lease_version") == task.lease_version
+
+
 def _aggregate_video_task(
     session: Session, video_parse_task_id: str, now: datetime,
     *, release_terminal_lease: bool = False, failure_status: str | None = None,

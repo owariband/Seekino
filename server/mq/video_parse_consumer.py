@@ -72,6 +72,7 @@ def _failure_log_text(value: object) -> str | int | None:
 def _log_retry_failure(
     lease: _Lease, *, phase: str, error: Exception,
     recorded: bool, retry_at: datetime | None, prepare_failure_count: int | None = None,
+    terminal: bool = False,
 ) -> None:
     chain: list[BaseException] = []
     seen: set[int] = set()
@@ -118,6 +119,9 @@ def _log_retry_failure(
         f"{key}={json.dumps(value, ensure_ascii=False)}"
         for key, value in fields.items()
     )
+    if terminal:
+        _logger.error("event=video_parse_v2_terminal_error %s", details)
+        return
     _logger.warning("event=video_parse_v2_retry %s", details)
     if (recorded and not isinstance(lease, VideoParseLease)
         and lease.retry_count + 1 > lease.max_retry_count):
@@ -415,6 +419,10 @@ class VideoParseConsumer:
                 )
                 _logger.error("event=video_parse_node_failed task=%s stage=%s reason=%s recorded=%s",
                               lease.video_parse_task_id, stage, reason, recorded)
+                _log_retry_failure(
+                    lease, phase=stage, error=exc, recorded=recorded,
+                    retry_at=None, terminal=True,
+                )
                 if recorded and self._handlers.failure is not None:
                     self._handlers.failure(lease.video_parse_task_id)
                 return

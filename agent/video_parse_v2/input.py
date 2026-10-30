@@ -93,6 +93,14 @@ class GenerativeModelConfig(_ModelPolicy):
 class ASRModelConfig(GenerativeModelConfig):
     mode: Literal["lite", "none"]
     fps: float = Field(gt=0)
+    scope: Literal["chunk", "video"] = "chunk"
+
+    @model_serializer(mode="wrap")
+    def serialize_asr(self, handler):
+        values = self.serialize_policy(handler)
+        if self.scope == "chunk":
+            values.pop("scope", None)
+        return values
 
 
 class EmbeddingModelConfig(_InputModel):
@@ -202,6 +210,8 @@ class ParseConfig(_InputModel):
 
     @model_validator(mode="after")
     def validate_config_limits(self) -> ParseConfig:
+        if not self.understanding_enabled and self.models.asr.mode != "none" and self.models.asr.scope == "video":
+            raise ValueError("video ASR requires Understanding to interpret boundary-crossing cues")
         # ceil(interval_duration / chunk_duration) 必须能由现有 bitmap 表示。
         if self.interval_duration > self.chunk_duration * 63:
             raise ValueError("interval_duration requires more than 63 chunks")

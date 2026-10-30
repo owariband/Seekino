@@ -266,3 +266,70 @@ def test_audio_uses_transcriptions_multipart_protocol(monkeypatch, tmp_path):
     assert b"third-party-asr" in requests[0].content
     assert b"fake-wav" in requests[0].content
     assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("failure,reason", [
+    ("disconnect", "model_connection_error"),
+    ("connect", "model_connection_error"),
+    ("timeout", "model_timeout"),
+    (504, "model_gateway_timeout"),
+    (429, "model_service_unavailable"),
+    (500, "model_service_unavailable"),
+    (502, "model_service_unavailable"),
+    (503, "model_service_unavailable"),
+    (400, None), (401, None),
+])
+def test_direct_vision_classifies_real_sdk_transport_errors(monkeypatch, tmp_path, failure, reason):
+    from gateway.usage import model_call_context
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path / "trace"))
+    from openai import APIError
+    from gateway.agent_model.errors import ModelFailureError
+    from agent.video_parse_v2.understanding.workflow import _retryable_node_error
+    requests = []
+    def handler(request):
+        requests.append(request)
+        if failure == "disconnect":
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        if failure == "connect":
+            raise httpx.ConnectError("Connection refused")
+        if failure == "timeout":
+            raise httpx.ReadTimeout("read timed out")
+        return httpx.Response(failure, json={"error": {"message": "provider failure"}})
+    clients = install_transport(monkeypatch, "gateway.openai.vision", handler)
+    model = OpenAIVisionModel("vision", provider="test", base_url="https://test.invalid/v1", api_key="offline")
+    with model_call_context({"video_parse_task_id": "parse-network-test"}), pytest.raises(ModelFailureError if reason else APIError) as raised:
+        model.generate([TextInput("describe")], schema_name="scene", result_type=Result)
+    events_path = next((tmp_path / "trace").glob("*/events.jsonl"))
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    error_event = next(event for event in events if event["event"] == "error")
+    chain = error_event["payload"]["chain"]
+    assert chain[0]["type"] == type(raised.value).__name__
+    if failure == "disconnect":
+        assert chain[-1]["type"] == "RemoteProtocolError"
+    if failure == 504:
+        assert any(item.get("status_code") == 504 for item in chain)
+    assert "offline" not in events_path.read_text()
+    assert len(requests) == 1  # Retries belong to the node, not an unseen SDK loop.
+    assert all(client.is_closed for client in clients)
+    if reason:
+        assert raised.value.reason == reason
+        assert isinstance(raised.value.__cause__, APIError)
+        assert _retryable_node_error(raised.value)
+    else:
+        assert not _retryable_node_error(raised.value)
+
+
+def test_direct_vision_cancellation_is_not_retried_as_connection_failure(monkeypatch):
+    admitted = []
+    class Control:
+        def acquire(self, call):
+            admitted.append(call)
+        def release(self, call):
+            pass
+    def handler(request):
+        admitted[-1].cancel()
+        raise httpx.RemoteProtocolError("closed by cancellation")
+    install_transport(monkeypatch, "gateway.openai.vision", handler)
+    model = OpenAIVisionModel("vision", provider="test", base_url="https://test.invalid/v1", api_key="offline")
+    with control_model_calls(Control()), pytest.raises(ModelCallCancelledError):
+        model.generate([TextInput("describe")], schema_name="scene", result_type=Result)

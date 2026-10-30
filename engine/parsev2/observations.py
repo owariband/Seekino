@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +31,23 @@ class ASRResult(TypedDict):
 
     transcript: list[ASRCue]
     language: NotRequired[str]
+
+
+def select_asr_window(result: ASRResult, *, start_ms: int, end_ms: int) -> ASRResult:
+    """Select overlapping cues without changing their absolute source times.
+
+    Whole cues supply boundary context; Understanding still writes only inside
+    its authorized window. Copies prevent one consumer from changing the cache.
+    """
+    if type(start_ms) is not int or type(end_ms) is not int or not 0 <= start_ms < end_ms:
+        raise ValueError("ASR window must be increasing nonnegative milliseconds")
+    selected: ASRResult = {"transcript": [
+        deepcopy(cue) for cue in result["transcript"]
+        if cue["start_seconds"] < end_ms and cue["end_seconds"] > start_ms
+    ]}
+    if "language" in result:
+        selected["language"] = result["language"]
+    return selected
 
 
 class OCRLine(BaseModel):

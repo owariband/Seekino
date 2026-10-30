@@ -518,6 +518,25 @@ def test_v2_timing_unions_parallel_spans_and_preserves_zero(repository, elapsed,
         assert session.get(VideoParseTask, task_id).processing_duration_ms == 0
 
 
+@pytest.mark.parametrize("record_asr", [False, True])
+def test_full_video_asr_is_included_in_total_and_missing_samples_remain_incomplete(repository, record_asr):
+    jobs, factory, task_id, chunks, _, _ = _seed_v2_tracking(repository)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.parse_config = {**parent.parse_config, "models": {
+            **parent.parse_config["models"], "asr": {**parent.parse_config["models"]["asr"], "scope": "video"}}}
+        parent.lease_version = 2  # A later coordinator may resume only indexing.
+    entries = {f"understand:{child}:1": _timing_entry("understand", child, started=3000 + i * 500)
+               for i, child in enumerate(chunks)}
+    if record_asr:
+        entries[f"asr:{task_id}:1"] = {**_timing_entry("asr", task_id, started=1000, elapsed=2000),
+                                       "execution_kind": "video"}
+    _store_timing(factory, task_id, entries)
+    timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert timing["effectiveDurationMs"] == (3500 if record_asr else 1500)
+    assert timing["complete"] is record_asr
+
+
 def test_v2_old_attempts_have_unknown_timing_and_unready_topology_has_no_percent(repository):
     jobs, factory, task_id, _, intervals, _ = _seed_v2_tracking(repository)
     detail = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default")

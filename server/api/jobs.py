@@ -201,6 +201,9 @@ def project_video_parse_task(
         stage = {"asr": "语音转写", "visual": "画面准备", "ocr": "画面文字识别",
                  "understanding": "视频理解", "commit": "结果提交"}.get(task.last_error.get("stage"), "解析")
         reason = {"model_timeout": "模型请求超时", "timeout": "执行超时",
+                  "model_connection_error": "模型服务连接异常（网络连接中断或不可达）",
+                  "model_gateway_timeout": "模型服务网关超时（HTTP 504）",
+                  "model_service_unavailable": "模型服务暂不可用或请求受限",
                   "output_token_limit": "模型输出被截断", "loop_limit": "模型调用次数耗尽",
                   "required_tool_missing": "模型未提交必要结果",
                   "invalid_model_response": "模型返回不符合结果要求"}.get(task.last_error.get("reason"), "执行异常")

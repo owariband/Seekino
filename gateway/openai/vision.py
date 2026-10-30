@@ -5,10 +5,11 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 from langchain_core.tools import BaseTool
-from openai import APIError, OpenAI
+from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
 from pydantic import BaseModel
 
 from gateway.errors import ContentFilterError
+from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.media import encode_media_file
 from gateway.multimodal import (
@@ -18,6 +19,7 @@ from gateway.multimodal import (
     validate_generate_request,
 )
 from gateway.usage import track_model_call
+from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 
 _Result = TypeVar("_Result", bound=BaseModel)
 
@@ -127,6 +129,13 @@ class OpenAIVisionModel:
                 }
             )
         timeout = min(self._timeout, request_timeout_seconds or self._timeout)
+        request = dict(
+            model=self.model_name,
+            messages=[{"role": "user", "content": content}],
+            response_format=output_format,
+            stream=False,
+            **{self._token_parameter: self._max_tokens},
+        )
         with OpenAI(
             base_url=self._base_url,
             api_key=self._api_key,
@@ -138,35 +147,44 @@ class OpenAIVisionModel:
                 model=self.model_name,
                 operation=schema_name,
             ) as call:
-                unregister_cancel = call.add_cancel_callback(client.close)
-                try:
-                    call.raise_if_cancelled()
-                    response = client.chat.completions.create(
-                        model=self.model_name,
-                        messages=[{"role": "user", "content": content}],
-                        response_format=output_format,
-                        stream=False,
-                        **{self._token_parameter: self._max_tokens},
-                    )
-                except APIError as error:
-                    call.capture_response(error)
-                    if getattr(error, "code", None) == "content_filter":
+                with capture_model_diagnostics(call, request):
+                    unregister_cancel = call.add_cancel_callback(client.close)
+                    try:
+                        call.raise_if_cancelled()
+                        response = client.chat.completions.create(**request)
+                        record_model_event("response", response)
+                    except APIError as error:
+                        call.capture_response(error)
+                        call.raise_if_cancelled()
+                        if getattr(error, "code", None) == "content_filter":
+                            raise ContentFilterError(
+                                "Vision output rejected", code="content_filter"
+                            ) from error
+                        if isinstance(error, APITimeoutError):
+                            reason = ModelFailureReason.MODEL_TIMEOUT
+                        elif isinstance(error, APIConnectionError):
+                            reason = ModelFailureReason.MODEL_CONNECTION_ERROR
+                        elif getattr(error, "status_code", None) == 504:
+                            reason = ModelFailureReason.MODEL_GATEWAY_TIMEOUT
+                        elif getattr(error, "status_code", None) in {429, 500, 502, 503}:
+                            reason = ModelFailureReason.MODEL_SERVICE_UNAVAILABLE
+                        else:
+                            raise
+                        raise ModelFailureError(
+                            "Vision model request failed", reason=reason,
+                        ) from error
+                    finally:
+                        unregister_cancel()
+                    call.capture_response(response)
+                    if not response.choices:
+                        raise RuntimeError("Vision API returned no choices")
+                    choice = response.choices[0]
+                    if choice.finish_reason == "content_filter":
                         raise ContentFilterError(
                             "Vision output rejected", code="content_filter"
-                        ) from error
-                    raise
-                finally:
-                    unregister_cancel()
-                call.capture_response(response)
-                if not response.choices:
-                    raise RuntimeError("Vision API returned no choices")
-                choice = response.choices[0]
-                if choice.finish_reason == "content_filter":
-                    raise ContentFilterError(
-                        "Vision output rejected", code="content_filter"
-                    )
-                if choice.finish_reason != "stop":
-                    raise RuntimeError(
-                        f"Vision response did not complete: {choice.finish_reason}"
-                    )
-                return result_type.model_validate_json(choice.message.content or "")
+                        )
+                    if choice.finish_reason != "stop":
+                        raise RuntimeError(
+                            f"Vision response did not complete: {choice.finish_reason}"
+                        )
+                    return result_type.model_validate_json(choice.message.content or "")

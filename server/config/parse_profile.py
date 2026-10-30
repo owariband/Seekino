@@ -139,11 +139,19 @@ class ParseWindowConfig(ContractModel):
 class ParseASRConfig(ContractModel):
     source: str = Field(default="ark_default", min_length=1)
     mode: Literal["lite", "none"]
+    scope: Literal["chunk", "video"] = "chunk"
     model: str = Field(min_length=1)
     fps: float = Field(ge=0.2, le=5.0)
     max_output_tokens: int | None = Field(default=None, ge=256, le=262_144)
     concurrency: int = Field(ge=1)
     request_timeout_seconds: float | None = Field(default=None, gt=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_asr(self, handler):
+        values = handler(self)
+        if self.scope == "chunk":
+            values.pop("scope", None)
+        return values
 
 
 class ParseVisionConfig(ContractModel):
@@ -347,6 +355,7 @@ class ParseConfig(ContractModel):
                     request_timeout_seconds=self.asr.request_timeout_seconds or self.execution.request_timeout_seconds,
                     max_output_tokens=self.asr.max_output_tokens,
                     mode=self.asr.mode,
+                    scope=self.asr.scope,
                     fps=self.asr.fps,
                 ),
                 understanding=VideoParseV2GenerativeModelConfig(
@@ -499,6 +508,7 @@ class ParseConfig(ContractModel):
             asr=ParseASRConfig(
                 source=asr_binding.source,
                 mode=runtime.asr_mode,
+                scope="video" if gateway.source(asr_binding.source).adapter == "whisperx" else "chunk",
                 model=runtime.transcript_model or asr_binding.model,
                 fps=runtime.transcript_fps or float(os.getenv("SEEKINO_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,
