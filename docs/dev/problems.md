@@ -650,7 +650,7 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 排序日期：2026-10-30。
 
-2026-10-30 暂停控制进展：新增 [暂停/继续设计](../design/03-product-reassessment/parse-pause-resume-trd.md)、持久控制 API 与任务页入口，隔离测试通过。开发库 Micrograd 已暂停（容量已释放、活动 Chunk 租约归零），Building GPT 保持原进程进行整集 ASR。旧 Consumer 通过未来调度时间兼容暂停，正式新入口同时检查 paused。页面部署验收尚待完成；Understanding 失败的阶段复用仍属本条待办，不能由暂停能力推定解决。
+2026-10-30 暂停控制进展：新增 [暂停/继续设计](../design/03-product-reassessment/parse-pause-resume-trd.md)、持久控制 API 与任务页入口，隔离测试通过。开发库 Micrograd 已暂停（容量已释放、活动 Chunk 租约归零），Building GPT 保持原进程进行整集 ASR。旧 Consumer 通过未来调度时间兼容暂停，正式新入口同时检查 paused。13:56 本机 5173 浏览器验收通过，进行中为 1、ASR 阶段与暂停/继续入口准确，幂等暂停成功、旧租约返回 409；未中断 GPT 的原进程。Understanding 失败的阶段复用仍属本条待办，不能由暂停能力推定解决。
 
 
 状态：TODO（节点重试和最终失败停止已实现；真实运行验收、手动暂停与任务清理未完成）。hypnos 发现解析持续空转，要求 Understanding 内部 node 自行有限重试，Consumer 收到最终异常后停止该视频任务并返回前端错误。原实现 Consumer 重新排队整个 Chunk，导致成功但尚未提交的 ASR 可能重复执行。
