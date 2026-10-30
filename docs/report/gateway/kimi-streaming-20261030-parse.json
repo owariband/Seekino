@@ -1,0 +1,62 @@
+{
+  "entrypoint": "ParseAgent.chunk_workflow.InvokeUnderstanding",
+  "service_path": "VideoParseRuntimeService.understand_chunk -> _generate_multimodal -> Gateway",
+  "fps": 3,
+  "frame_count": 189,
+  "visual_range_ms": [
+    0,
+    63000
+  ],
+  "writable_range_ms": [
+    0,
+    60000
+  ],
+  "model": "k3.1-pro",
+  "cached_asr": true,
+  "request_count": 1,
+  "chunks": 11539,
+  "calls": [
+    {
+      "call_id": "c8053547-d99b-4677-9d70-2595d52e0bae",
+      "model": "k3.1-pro",
+      "status": "completed",
+      "request_id": null,
+      "usage": {
+        "input_tokens": 238222,
+        "output_tokens": 11618,
+        "total_tokens": 249840,
+        "cached_input_tokens": null,
+        "reasoning_tokens": 9250,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    }
+  ],
+  "parse_valid": true,
+  "production_task_modified": false,
+  "sdk_retries": 0,
+  "workflow_retries": 0,
+  "hard_deadline_seconds": 600,
+  "started_at": "2026-10-30T23:18:01.328727+08:00",
+  "request_matches_baseline_except_stream": true,
+  "first_chunk_seconds": 28.729,
+  "domain_time_and_canvas_valid": true,
+  "event_count": 21,
+  "event_types": {
+    "SCENE": 1,
+    "DIALOGUE": 16,
+    "EMOTION": 2,
+    "ACTION": 2
+  },
+  "factual_quality_manually_verified": false,
+  "seconds": 338.941,
+  "finished_at": "2026-10-30T23:23:40.262470+08:00",
+  "configured_context_window_tokens": 262144,
+  "input_context_percent": 90.874,
+  "input_plus_actual_output_context_percent": 95.306
+}

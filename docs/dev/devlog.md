@@ -132,7 +132,9 @@
 
 独立分支 `fix/kimi-streaming`、[PR #20](https://github.com/owariband/Seekino/pull/20)，首提交 `218d96a1` 仅含 TRD。真实 OpenAI SDK + HTTP MockTransport 覆盖正式工厂、三种入口、尾部 usage、reasoning、工具参数、取消、预算、断流及诊断。相关七个测试文件 281 passed / 1 failed；唯一失败为既有 fallback context 用例，在未改的 `dev` / `df83c3f9` 同样失败。
 
-22:59 只发出一次合成红蓝图请求，正式 `vision` 工厂、`k3.1-pro`、30k max tokens、60 秒、无自动重试，JSON 校验通过。探针首次执行在发送请求前因误读句柄层属性退出，修正探针后才发出这一次请求。原始结果见 [实施记录](../report/gateway/kimi-streaming-20261030.md)。真实长 Chunk 效果和服务部署尚未验收。
+22:59 只发出一次合成红蓝图请求，正式 `vision` 工厂、`k3.1-pro`、30k max tokens、60 秒、无自动重试，JSON 校验通过。探针首次执行在发送请求前因误读句柄层属性退出，修正探针后才发出这一次请求。
+
+用户追加一次原 189 帧的真实素材授权，并明确要求直接测试 Parse；23:18–23:23 改为调用正式 `ParseAgent.chunk_workflow.InvokeUnderstanding()` → Server → Gateway，复用原帧和 ASR，仅在本地接收提交结果。实际发出请求与原失败请求核对一致（流式和传输控制除外）。338.941 秒完成，21 个事件通过 Schema、时间范围和 Canvas；另有 22 项 Parse Prompt/服务层测试通过。原始结果见 [实施记录](../report/gateway/kimi-streaming-20261030.md)。未扩展为 HTTP 上传、持久任务、Refine、索引、整集质量或服务部署验收。
 
 ### 指标对比
 
@@ -141,7 +143,8 @@
 | Kimi 正式生成入口请求 | `stream=False` | `stream=True` + include_usage | 直接 JSON、legacy、Deep Agents 均由工厂测试覆盖 |
 | 合成图流式完成 | 未测此流式版本 | 首片 5.520 秒、总计 7.431 秒、110 片 | 单请求，不能推算长视频性能 |
 | 合成图 usage | 不适用 | 242 input、122 output，其中 84 reasoning | 总计 364 tokens，未估计真实视频 context |
-| 原视频 Chunk | 三档 FPS 各一次 504 | 待授权复测 | 未认定 504 已解决 |
+| 原视频 Chunk | 原 3 fps 301.732 秒 504；其他两档各一次也失败 | 原 3 fps 流式 338.941 秒通过，首片 28.729 秒 | 单样本真实 Parse，通过不等于总体稳定性 |
+| 原视频 Chunk tokens | 504 未返回 usage | input 238222 / output 11618（含 reasoning 9250） | 输入占配置窗口 90.874%，未重新实测低 FPS |
 
 <a id="devlog-full-video-asr-20261029"></a>
 

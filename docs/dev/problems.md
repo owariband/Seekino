@@ -663,11 +663,13 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 排序日期：2026-10-30。
 
-状态：TODO（`fix/kimi-streaming` / [PR #20](https://github.com/owariband/Seekino/pull/20) 已接入流式，真实长 Chunk 与服务加载待验证）。MyGO EP04 首个 0–63 秒 Chunk 的 3 / 1 / 0.5 fps 非流式请求分别在 301.732 / 419.475 / 337.148 秒返回 504；均未取得 usage，不能声称降帧改善成功率或量化 context 使用量。历史流式成功实验使用 `k3` / Responses，与当前 `k3.1-pro` / Chat 请求存在差异，调查应优先核对协议接线。
+状态：TODO（`fix/kimi-streaming` / [PR #20](https://github.com/owariband/Seekino/pull/20) 已接入流式，真实首个 Chunk 已通过；服务加载与整集验收待完成）。MyGO EP04 首个 0–63 秒 Chunk 的 3 / 1 / 0.5 fps 非流式请求分别在 301.732 / 419.475 / 337.148 秒返回 504；当时均未取得 usage，不能声称降帧改善成功率或量化 context 使用量。历史流式成功实验使用 `k3` / Responses，与当前 `k3.1-pro` / Chat 请求存在差异，调查应优先核对协议接线。
 
-修复让 `profile: kimi` 的直接 JSON、legacy / Deep Agents 视觉工具轮次统一使用 `stream=True`，保留完整结果/工具校验、推理连续性和末尾 usage，EOF / 读取失败不返回半截结果。2026-10-30 22:59，通过正式工厂入口发送一张合成红蓝图：首片 5.520 秒、总计 7.431 秒、110 个分片，JSON 通过，242 input + 122 output tokens。该小图只证明接口兼容；原视频两次调用授权已用完，未追加发送真实素材，未启动解析任务或重启服务。
+修复让 `profile: kimi` 的直接 JSON、legacy / Deep Agents 视觉工具轮次统一使用 `stream=True`，保留完整结果/工具校验、推理连续性和末尾 usage，EOF / 读取失败不返回半截结果。2026-10-30 22:59，通过正式工厂入口发送一张合成红蓝图：首片 5.520 秒、总计 7.431 秒、110 个分片，JSON 通过，242 input + 122 output tokens，该小图只证明接口兼容。
 
-协议及相关回归 281 passed，另 1 个 Ark → DeepSeek fallback context 用例失败，在未修改的 `dev` / `df83c3f9` 同样复现，未夹带修复。证据见 [TRD](../design/03-product-reassessment/kimi-streaming-trd.md)、[实施记录](../report/gateway/kimi-streaming-20261030.md)、[devlog](devlog.md#devlog-kimi-streaming-20261030)。
+23:18–23:23，取得用户新增单次授权后，直接调用正式 `ParseAgent.chunk_workflow.InvokeUnderstanding()`，经 Server/Gateway 使用原 3 fps / 189 帧和缓存 ASR；实际模型请求与原基线核对一致（仅流式及传输控制不同）。首片 28.729 秒，338.941 秒成功；Schema、0–60000 ms 时间范围和 Canvas 导入通过，产出 21 个事件。输入 238222 tokens（配置窗口 90.874%），输出 11618（含 reasoning 9250）。只调用一次、无重试，保存本地结果；未修改正式任务、未重启服务，不代表 HTTP/数据库提交、Refine、索引或整集质量验收。
+
+协议及相关回归 281 passed，另 1 个 Ark → DeepSeek fallback context 用例失败，在未修改的 `dev` / `df83c3f9` 同样复现，未夹带修复；另有 22 项 Parse Prompt/服务层测试通过。证据见 [TRD](../design/03-product-reassessment/kimi-streaming-trd.md)、[实施记录](../report/gateway/kimi-streaming-20261030.md)、[devlog](devlog.md#devlog-kimi-streaming-20261030)。
 
 ### B15：localhost MCP 与外部 Agent 素材取用闭环
 

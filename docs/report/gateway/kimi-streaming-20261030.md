@@ -1,6 +1,6 @@
 # Kimi 正式生成入口流式接入验证
 
-日期：2026-10-30，Asia/Shanghai。基线：`dev` / `df83c3f9`；变更：`fix/kimi-streaming` / [PR #20](https://github.com/owariband/Seekino/pull/20)。设计入口：[TRD](../../design/03-product-reassessment/kimi-streaming-trd.md)。此记录验证代码接入和单张合成图接口兼容性，尚未验证长视频 Chunk 成功或服务部署。
+日期：2026-10-30，Asia/Shanghai。基线：`dev` / `df83c3f9`；变更：`fix/kimi-streaming` / [PR #20](https://github.com/owariband/Seekino/pull/20)。设计入口：[TRD](../../design/03-product-reassessment/kimi-streaming-trd.md)。此记录验证代码接入、合成图接口兼容和正式 Parse 单 Chunk 成功；服务部署和整集闭环未验收。
 
 ## 接入与自动化验证
 
@@ -30,6 +30,28 @@ python -m pytest tests/gateway/test_kimi_streaming.py tests/gateway/test_openai_
 
 [原始结果 JSON](kimi-streaming-20261030-synthetic.json) 随报告保存。更完整的本地诊断与探针在实施 worktree 的 `outputs/verification/kimi-streaming-20261030/`，属于忽略的本地产物，不承诺其他 checkout 自动具备。
 
+## 直接调用正式 Parse 单 Chunk 入口
+
+用户追加明确授权一次原 3 fps / 189 帧流式测试，随后要求直接测试 Parse 接口。本次使用 `ParseAgent.chunk_workflow.InvokeUnderstanding()` → `VideoParseRuntimeService.understand_chunk()` → `_generate_multimodal()` → Gateway，执行正式 Prompt 构建、时间范围校验与 Canvas 导入。只替换测试数据的加载/落盘：从原实验保存的帧和 ASR 读取，提交结果写本地文件；没有改写模型调用或以手写请求代替 Parse 流程。
+
+运行前核对 189 个源帧 SHA-256、Prompt 与 Schema；在发出请求前再次断言实际请求与原失败请求一致，仅 `stream=True`、`stream_options.include_usage=True` 和超时控制不同。全程仅允许一次 Kimi 调用，SDK 与工作流重试均为 0，外层进程硬截止 600 秒。执行代码为 `f82fabc2`，本地脚本 `outputs/verification/kimi-streaming-20261030/parse_probe.py --bounded`，同目录保留 request-audit、逐片 trace 和解析结果。
+
+| 项目 | 原非流式基线 | 本次流式 Parse 实测 |
+| --- | --- | --- |
+| 输入范围 | 0–63 秒，3 fps / 189 帧 | 相同，逐字节/参数核对 |
+| 开始 / 结束 | 原始记录见前述 TRD | 23:18:01 / 23:23:40 |
+| 首个分片 | 不适用 | 28.729 秒 |
+| 总耗时与结果 | 301.732 秒，HTTP 504 | 338.941 秒，完成并通过校验 |
+| 终止状态 | 无完整响应 | `stop`，11539 个分片 |
+| Parse 校验 | 未取得输出 | Schema、0–60000 ms 时间范围、Canvas 导入均通过 |
+| 事件 | 无结果 | 21：SCENE 1、DIALOGUE 16、EMOTION 2、ACTION 2 |
+| Tokens | 无 usage | input 238222、output 11618、total 249840；reasoning 9250 包含在 output 中 |
+| 窗口占用 | 不可测 | input / 配置 262144 = 90.874%；输入加实际输出 = 95.306% |
+
+[原始 Parse 汇总 JSON](kimi-streaming-20261030-parse.json)。这里的窗口是本地模型配置值，不将其当作供应商账户能力的独立验证。一次成功不能估计成功率，也不意味着流式降低了输入 token。没有追加低 FPS 请求或人工核对全部剧情事实。
+
+另外执行 `python -m pytest tests/agent/video_parse_v2/test_understanding_json.py tests/server/test_video_parse_worker.py::test_understanding_uses_direct_json_and_refine_retains_canvas_tools -q`：22 passed，1 个 Starlette/AnyIO deprecation warning，2.70 秒。
+
 ## 尚未验证
 
-MyGO EP04 原 0–63 秒长 Chunk 仍待流式复测。先前两次真实素材授权已用于 1 / 0.5 fps 非流式请求，未追加外传。该小图结果不能说明流式消除了视觉预处理等待、上游首片前 504、context 压力或内容质量问题。HTTP 无事件期间由现有读取超时限制；持续产生分片时检查总预算。未修改 FPS/推理参数、未自动重试真实素材、未重启服务或更改任务状态。
+本次单 Chunk 采用缓存媒体/ASR 和本地结果文件，没有验收 HTTP 上传、持久任务的租约/数据库提交、Refine、索引、整集质量或正式服务加载。HTTP 无事件期间由现有读取超时限制；持续产生分片时检查总预算。未修改 FPS/推理参数、未自动重试真实素材、未重启服务或更改正式任务状态。
