@@ -332,7 +332,7 @@ describe("V2 task observation", () => {
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("Refine 9 / 22");
   });
 
-  it("shows preparation instead of a percentage before the topology is ready", async () => {
+  it("keeps unknown progress separate from preparation status before topology is ready", async () => {
     const preparing: VideoParseTaskView = {
       ...task("PREPARING"),
       detail: {
@@ -350,7 +350,7 @@ describe("V2 task observation", () => {
     renderPage();
 
     await screen.findByText(preparing.originalFilename!);
-    expect(screen.getByLabelText("解析进度")).toHaveTextContent("准备中");
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("—");
     expect(screen.getByLabelText("解析进度")).not.toHaveTextContent("%");
   });
 
