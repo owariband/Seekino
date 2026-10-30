@@ -1507,6 +1507,10 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 
 优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：2026-10-12 已取得真实整集完成的耗时收敛里程碑；历史问题、已实施修复与仍待优化的边界按下列日期分别记录。
 
+#### 2026-10-30：连续半集对照未完成，已有十分钟内容核查
+
+状态：TODO。用户要求当前完整体系与 Doubao non-thinking 带真实前文串行解析同一12分钟。独立 [PR #19](https://github.com/owariband/Seekino/pull/19) 实际 A 两次首段尝试无正文；B 连续前10分钟完整、7块严格合同通过，第11块首正文前超时，未取得完整对照。已有50项源片需求核查：36核心事实保留、6局部可用、6错误、2未定；这不是输出准确率，保留事实仍可能定位错误。发现祥子误作睦并跨块延续、多人对白合并、重复及时间错位；不支持直接交付精确素材，也不支持笼统判为几乎不可用。B完整请求中位109.52秒；实报251.8万输入/1.94万输出，另有缺失usage。执行超过一小时未交付完整对照后，已停止请求和独占服务，不扩大调用。见 [TRD](../design/03-product-reassessment/parse-half-episode-ab-trd.md)、[报告](../report/agent/video_parse_v2/parse-half-episode-ab-20261030.md)、[devlog](devlog.md#devlog-half-episode-ab-20261030)。
+
 #### 2026-10-30：Understanding 直接 JSON 与输出上限落地
 
 状态：TODO（代码与隔离回归完成，运行服务加载与实模效果待验）。dev 已去除 Understanding Canvas 工具循环，证据直接输入，宿主校验后原子写 Canvas；Refine 保留工具。默认及实际本机 YAML 的视觉主模型/fallback 已由 8,192 改为 30,000，旧任务快照不被覆盖。相关回归 **380 passed**，未重启、未调用实模，不宣称已量化提速。精简字段/SHOT 迁移仍是独立剩余事项。见 [TRD §3.3](../design/03-product-reassessment/video-parse-performance-trd.md#33-接入职责与失败路径2026-10-30-已实现直接-json) 与 [devlog](devlog.md#devlog-parse-direct-json-20261030)。
