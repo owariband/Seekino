@@ -1,0 +1,130 @@
+{
+  "recorded_date": "2026-10-30",
+  "timezone": "Asia/Shanghai",
+  "purpose": "Reviewable measurements; no raw course transcript or credentials",
+  "hardware": {
+    "chip": "Apple M5",
+    "gpu_cores": 10,
+    "cpu_cores": 10,
+    "unified_memory_bytes": 17179869184,
+    "metal_recommended_max_working_set_bytes_rounded": 12713120000,
+    "swap_used_mib_before_test": 6536.5
+  },
+  "model": {
+    "name": "large-v3-turbo-q5_0",
+    "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    "parameters": {
+      "response_format": "verbose_json",
+      "language": "en",
+      "temperature": "0.0",
+      "max_context": "0",
+      "best_of": "5",
+      "beam_size": "5",
+      "temperature_inc": "0.0"
+    }
+  },
+  "short_samples": [
+    {
+      "backend": "metal",
+      "sample": "intro",
+      "index": 0,
+      "audio_seconds": 60,
+      "request_seconds": 3.7602903750012047,
+      "real_time_factor": 0.06267150625002008,
+      "speed_multiple": 15.95621455164371,
+      "startup_seconds": 1.0189589580004395,
+      "normalization": "passed",
+      "cue_count": 22
+    },
+    {
+      "backend": "metal",
+      "sample": "middle",
+      "index": 1,
+      "audio_seconds": 300,
+      "request_seconds": 12.99197812499915,
+      "real_time_factor": 0.043306593749997166,
+      "speed_multiple": 23.091171884190626,
+      "startup_seconds": 1.0189589580004395,
+      "normalization": "passed",
+      "cue_count": 104
+    },
+    {
+      "backend": "metal",
+      "sample": "intro",
+      "index": 2,
+      "audio_seconds": 60,
+      "request_seconds": 3.473806500001956,
+      "real_time_factor": 0.0578967750000326,
+      "speed_multiple": 17.272119215611525,
+      "startup_seconds": 1.0189589580004395,
+      "normalization": "passed",
+      "cue_count": 22
+    },
+    {
+      "backend": "cpu",
+      "sample": "intro",
+      "index": 0,
+      "audio_seconds": 60,
+      "request_seconds": 17.19623091700123,
+      "real_time_factor": 0.2866038486166872,
+      "speed_multiple": 3.489136677077323,
+      "startup_seconds": 0.4184964170017338,
+      "normalization": "passed",
+      "cue_count": 22
+    }
+  ],
+  "full_episode": {
+    "audio_seconds": 6979.873,
+    "request_seconds": 293.57761895899966,
+    "extraction_seconds": 5.854428915998142,
+    "startup_seconds": 0.8209624589981104,
+    "real_time_factor": 0.04206059608233555,
+    "speed_multiple": 23.77522177865606,
+    "cue_count": 2476,
+    "word_entries": 24088,
+    "normalization": "passed",
+    "empty_words": 0,
+    "reversed_words": 0,
+    "coverage": {
+      "all_minute_windows": 117,
+      "windows_with_cues": 117,
+      "empty_windows": [],
+      "first_cue_start_ms": 0,
+      "last_cue_end_ms": 6979640,
+      "max_identical_adjacent_text_run": 1,
+      "peak_sampled_rss_bytes": 2551758848,
+      "total_measured_stage_seconds": 300.2530103339959,
+      "coverage_is_not_transcription_accuracy": true,
+      "production_checkpoint_integration": false,
+      "raw.json_sha256": "cb56bfff1493dc61c1ca957cbcb8afcebff4fe81bdc7432e6eec3b40283731cb",
+      "normalized.json_sha256": "d847fae41c184b8e6505f5369857d80c864fdfb287fa1b5b0acb0c222a8992e4"
+    }
+  },
+  "production": {
+    "task_id": "650f7c9c-1e69-43b9-ac63-12bd355ede1e",
+    "asr_model": "full large-v3 CPU int8 with VAD and forced alignment",
+    "asr_seconds": 4591.557,
+    "asr_completed_at": "2026-10-30T14:42:41+08:00",
+    "observed_understanding_concurrency": 10,
+    "status_after_failure": "PARSING_FAILED",
+    "committed_chunks": 8,
+    "planned_chunks": 117,
+    "failures": [
+      {
+        "at": "2026-10-30T14:49:19+08:00",
+        "kind": "HTTP 504 Gateway Time-out"
+      },
+      {
+        "at": "2026-10-30T14:51:49+08:00",
+        "kind": "DNS gaierror",
+        "message": "[Errno 8] nodename nor servname provided, or not known"
+      }
+    ]
+  },
+  "limitations": [
+    "GPU uses Turbo Q5 without forced alignment or VAD; not a same-quality comparison with production CPU",
+    "No human WER/CER gold set",
+    "No production checkpoint integration",
+    "No new production run in this documentation PR"
+  ]
+}

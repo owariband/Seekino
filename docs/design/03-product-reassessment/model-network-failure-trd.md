@@ -2,6 +2,10 @@
 
 需求：模型连接异常分类、有限重试与可诊断日志。2026-10-30，[PR #13](https://github.com/owariband/Seekino/pull/13)。
 
+10-30 15:08 关联续版：#13 已合入 dev，以下原始提交阶段的部署描述保留历史口径。GPT v5 本次先在 14:49:19 收到 504，节点有限重试后于 14:51:49 以 `APIConnectionError → ConnectError → gaierror` 终止，停在 8/117 Chunk。后续 DNS/HTTPS 探测可达，不证明长请求稳定，也没有证据将本次归因于此前 Clash 关闭。分类和重试已执行，供应商/DNS 的剩余不确定性仍由本需求跟进。
+
+这一故障同时触发整片 ASR 协调器退出并清理内存，使此前 76 分 32 秒的计算不能在新协调器中复用。该后果由 [ASR 主设计续版](local-whisperx-asr-trd.md)承接：视频级持久成果、正式 GPU 接线及下游失败后的零重复 ASR 验收。新跟进不把持久化当成修复网络，也不把再次可连接当成整集成功。详见[同一实测报告](../../report/gateway/local/whisper-metal-benchmark-20261030.md)。
+
 Karpathy v3 任务在直接 JSON 理解链路失败。OpenAI SDK 的 APIConnectionError、APITimeoutError、HTTP 504 原样穿透 Gateway；节点重试只识别 Python/httpx 异常或 MODEL_TIMEOUT。最终被呈现为“执行异常”，并停止整集派发。正式节点终止日志没有异常链，无法区分网络断连与服务端超时。
 
 2026-10-30 实测：EP1 Chunk 0 的模型请求为 12:01:45–12:06:57（311.88 秒），返回 nginx 504；969 秒是含 ASR 的 Chunk 总耗时。EP4/5 四个不同起点请求均在 12:14:22 连接失败，EP7/8 四个请求在 12:22:44 连接失败，未达到 600 秒请求阈值。共同连接中断是假设，无法由缺失的底层异常链判定责任端。四个已成功请求耗时 183–296 秒，输入 232510–243436 tokens，仍有 reasoning tokens。错误重试不能解决输入规模与服务性能问题。
