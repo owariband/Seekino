@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：连续半集的完整解析体系与 Doubao 2.1 Pro non-thinking 串行方案对照。类型：perf。日期：2026-10-30（Asia/Shanghai）。分支：`perf/parse-half-episode-ab`。PR：首个纯 TRD 提交推送后回填。
+需求：连续半集的完整解析体系与 Doubao 2.1 Pro non-thinking 串行方案对照。类型：perf。日期：2026-10-30（Asia/Shanghai）。分支：`perf/parse-half-episode-ab`。PR：[#19](https://github.com/owariband/Seekino/pull/19)，目标 dev。
 
 用户要判断：为了将 60 秒 Chunk 解析压到约 30 秒，当前可接近该速度的 Doubao non-thinking 方案是否付出了不可接受的素材质量代价。2026-10-30 用户明确对照应是目前体系完整解析连续约 12 分钟，与 Doubao 串行解析同一半集，比较完整输出。
 
