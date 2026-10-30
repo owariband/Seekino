@@ -3728,3 +3728,53 @@ Karpathy v3 的 4 次成功 Kimi 请求耗时 183–296 秒；EP1 504 请求实�
 | 节点暂态重试 | SDK 错误漏判 | 最多 2 次重试，共 3 次尝试，沿用 deadline |
 | 原始原因追溯 | 直接 JSON 缺 trace、终止缺 cause | opt-in 逐请求 trace + 脱敏终止异常链 |
 | 正式完整视频成功 | 0 | 待验证，不能用离线测试代替 |
+
+
+<a id="devlog-full-video-asr-rollout-20261030"></a>
+## 2026-10-30：GPT 整集启用视频级 ASR 与 10 路 Understanding
+
+### 问题与现状
+
+关联 B20。16:00 演示目标最终确定为完整《Let's build GPT》，本地第 7 集、时长 6,979.873 秒、117 个 Chunk。此前 v4 仍使用逐块 WhisperX，Parse 并发 6；与本机其他任务共享串行 ASR runtime，理解槽位包含 ASR 排队。用户明确要求将整片 ASR 改造上线，避免继续只验证分支。
+
+### 方案候选
+
+继续逐块解析可以保留已有进度，但不能满足本次明确要求的 ASR 前置。选用已实现的整片 ASR 方案，合入 dev 网络修复后部署 PR #12；通过正式 reparse 创建 v5，冻结 `scope=video`、Parse 并发 10、0.5 FPS，并将 ASR 超时从 1,200 秒调为 14,400 秒。超时是保护上限，不是 ETA。保持 WhisperX large-v3、CPU/int8、batch 1 和对齐合同；Refine 并发 10、Video 准入 3 保持现有值。整片 ASR 完成后才能派发 Chunk；缓存仍不支持跨重启恢复。
+
+### 方案验证
+
+同步 dev 网络修复后的定向回归为 **367 passed，18.13 秒**，覆盖整片 ASR、Queue/Worker、OpenAI 网络错误及 Understanding 框架，与此前测试集合重叠。PR #12 于 13:22 合入 dev `029faa34a332d4c1fcc4550985bf6ba261cc92d9`；演示用本机 development API PID 40888 于 13:24 启动并通过健康检查。没有云端或独立 production 环境部署，也没有数据库迁移。
+
+GPT v5 任务 `650f7c9c-1e69-43b9-ac63-12bd355ede1e` 于 13:26:08 通过 `/api/uploads/reparse` 创建，13:26:09 正式日志记录视频级 `phase=asr`。音轨头核验为 16 kHz 单声道、6,979.873 秒、223,356,200 字节。进入 ASR 时任务为 PREPARING，Chunk 尚未派发，符合前置门禁。旧 v4 已停止；已提交的 8 个 Chunk、2 个 Refine 与 1 个索引结果留在历史版本，不冒充新版本成果。确认旧 API 已退出后，使用既有 `release_execution` 释放其剩余 3 个子任务租约，再提交新版本。
+
+原片 HTTP Range 返回 206；浏览器实际播放从 00:00 推进至 00:10，显示整集 116:19。检索、引用跳转和追问尚待新版本完整索引后验收。配置快照、部署元数据、回归日志、音轨核验与阶段观察保存在本机 `outputs/verification/gpt-full-demo-20261030/`；主要文件为 `deployment.json`、`video-asr-submitted-task.json`、`full-asr-audio.json`、`deploy-regression.log` 与 `video-asr-progress.jsonl`。
+
+### 指标对比
+
+已核实的变化为逐块 ASR → 视频级前置、Parse 槽位 6 → 10、ASR 超时 1,200 → 14,400 秒。尚未取得整集 ASR 完成耗时、真实 10 路 Kimi 同时执行、全流程耗时和课程回答质量证据，不能声称 16:00 前一定完成或准确率提高。没有增加数据库表或新服务；代价是首个理解 Chunk 需等待整片转写，进程重启仍会重做 ASR，Refine 可能使 Kimi 总在途请求数超过 10。
+
+
+<a id="devlog-whisperx-progress-20261030"></a>
+## 2026-10-30：WhisperX 阶段、进度与本轮无重启观测
+
+### 问题与现状
+
+关联 B20。GPT 整片 ASR 从 13:26:09 开始，13:32:30 记录英语语言识别，随后原生采样确认 CTranslate2 Whisper 解码活跃；现有日志无法区分等待共享 runtime、模型加载、转写与对齐，更无法回答当前百分比。13:34 任务仍为 PREPARING，用户要求预估耗时并补日志。
+
+### 方案候选
+
+接入已安装 WhisperX 3.8.6 的 `transcribe(progress_callback=...)` 和 `align(progress_callback=...)`，在 Gateway 记录通用调用进度，宿主只透传关联 context。采用 INFO `local_asr_progress`，覆盖等待、读音频、模型加载、转写（包含 VAD）、对齐模型加载、对齐和结果归一。首次上游回调、每增加约 5 个百分点及达到 100% 时记录进度；独立日志线程每 30 秒记录阶段存活，退出时停止并回收。
+
+保留音频长度、设备／精度／batch／线程、调用 ID、总／阶段耗时、阶段百分比和距上次推进时间。百分比基于上游片段，不换算成视频分钟或端到端完成率；无回调时保留 null，不伪造 VAD 百分比或精确 ETA。转写 100% 仍需对齐；异常只记类型，不写转写正文与原始异常文本。观测回调不改变结果、超时、取消和原生资源释放语义。
+
+### 方案验证
+
+WhisperX、转写工厂、用量及整片 ASR 定向回归 **85 passed，4.90 秒**。覆盖模型／aligner 复用、字词合同、阶段切换、调用关联、进度节流、对齐失败不报告成功、共享 runtime 等待超时，以及无上游回调时仍有存活日志且调用退出后线程结束。这些是替身模型验证，不冒充新的真实 ASR 速度或识别质量实验。
+
+本轮正在运行的调用早于代码修改，不能安全补入进度回调。未为日志重启 PID 40888；启动只读 `trace-live-asr.py`，每 30 秒记录正式任务状态、ASR 日志阶段／累计耗时、API 负载、内存及 Chunk 进度。13:46 仍为原租约 1、ASR running、约 20 分钟、无终止错误，百分比未知。原始证据在本机 `outputs/verification/gpt-full-demo-20261030/` 的 `asr-live-trace.jsonl`、`asr-live-trace-latest.json`、`progress-logging-tests.log`、`asr-historical-timings.json`、`asr-estimate.json`。Adapter 新日志需进程加载新代码后才能用于新调用。
+
+### 指标对比
+
+此前同机两课程共享串行 runtime 的连续 14 个完成间隔中位数 53.007 秒、范围 46.835–127.589 秒，对应约 60 秒音频块。避免把包含锁等待的单次调用总时长直接当推理时间；按中位数线性外推完整 6,979.873 秒约 103 分钟，暂以 90–120 分钟作为安排时间的粗估。小样本、整片 VAD／对齐、后续资源竞争均可能改变结果，不是测得的整集 ETA，16:00 完整闭环仍有时间风险。
+
+增加的是每个在途 ASR 调用一个低频日志线程和有限回调，不增加模型实例、外部服务、数据库表或业务状态。当前任务获得连续状态记录，未来调用可以精确区分阶段及上游进度；本轮已执行部分仍无逐段百分比，不能追溯恢复不存在的日志。
