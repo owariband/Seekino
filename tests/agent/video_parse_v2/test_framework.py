@@ -11,7 +11,7 @@ from agent.common.chunk_understanding import understand_chunk
 from agent.utils.errors import AgentToolFeedbackError
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion
-from agent.video_parse_v2.prompts import build_canvas_understanding_prompt
+from agent.video_parse_v2.prompts import build_understanding_prompt
 from agent.video_parse_v2.scheduler import ChunkScheduler, claimable_chunk_sequences
 from agent.video_parse_v2.understanding import ChunkUnderstandingWorkflow
 from agent.video_parse_v2.input import ParseInput
@@ -259,18 +259,16 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             }]})
 
         async def understand_chunk(self, loaded, **kwargs):
-            canvas = kwargs["canvas"]
-            assert build_canvas_understanding_prompt(execution, canvas=canvas) == kwargs["prompt"]
+            assert "canvas" not in kwargs
+            assert build_understanding_prompt(
+                execution, asr_result=asr_result, ocr_result=kwargs["ocr_result"],
+            ) == kwargs["prompt"]
             assert kwargs["ocr_result"].lines[0].text == "screen text"
             assert kwargs["asr_result"] is asr_result
-            evidence = canvas.get("evidence", task_id)
-            assert evidence["ocr"]["lines"][0]["text"] == "screen text"
-            assert evidence["asr"] == asr_result
+            assert '"text": "screen text"' in kwargs["prompt"]
+            assert '"text": "hello"' in kwargs["prompt"]
             assert f"[{offset_ms}, {offset_ms + 20_000})" in kwargs["prompt"]
             assert "integer source-video milliseconds" in kwargs["prompt"]
-            assert evidence["asr"]["transcript"][0]["start_seconds"] == offset_ms + 1000
-            assert evidence["asr"]["transcript"][0]["end_seconds"] == offset_ms + 3000
-            assert evidence["asr"]["transcript"][0]["speaker_id"] == "speaker1"
             assert "speaker_id" in kwargs["prompt"]
             assert "current input clip only" in kwargs["prompt"]
             assert "DIALOGUE.speaker MUST be JSON null" in kwargs["prompt"]
@@ -280,11 +278,7 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             assert "do not multiply or divide" in time_contract
             assert "1000" in time_contract and "offset" in time_contract
             calls.append("understand")
-            canvas.write(role="understanding", batch_id="initial", expected_revision=canvas.revision, operations=[
-                {"op": "persons", "member_ref": task_id, "action": "add", "values": ["爱音"]},
-                {"op": "add_event", "member_ref": task_id, "key": "initial-event", "event": _result(offset_ms=offset_ms).timeline[0]},
-            ])
-            return canvas.result(task_id)
+            return _result(offset_ms=offset_ms)
 
         async def commit_chunk_result(self, loaded, result, *, evidence):
             assert loaded is execution
@@ -310,7 +304,8 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
 
 
 @pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
-def test_chunk_workflow_rejects_merged_dialogue_and_recovers_with_asr_bounds(offset_ms) -> None:
+@pytest.mark.parametrize("merged", [False, True])
+def test_direct_chunk_workflow_preserves_asr_bounds_and_rejects_merged_dialogue(offset_ms, merged):
     task_id = "chunk-task-0"
     execution = ChunkExecution(
         task_id, "video-task-1", int(offset_ms != 0), offset_ms, offset_ms + 20_000,
@@ -322,60 +317,44 @@ def test_chunk_workflow_rejects_merged_dialogue_and_recovers_with_asr_bounds(off
         {"start_seconds": offset_ms + 3500, "end_seconds": offset_ms + 4500,
          "text": "祥ちゃんも悪くない", "speaker_id": "speaker2"},
     ]}
+    events = [{
+        "event_type": "DIALOGUE", "start_seconds": cue["start_seconds"],
+        "end_seconds": cue["end_seconds"], "description": cue["text"],
+        "participants": [], "visible_persons": [], "speaker": None,
+        "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": cue["text"]}],
+    } for cue in asr_result["transcript"]]
+    if merged:
+        events = [{**events[0], "end_seconds": events[-1]["end_seconds"]}]
 
-    async def understand(loaded, *, canvas, prompt, **kwargs):
+    async def understand(loaded, *, prompt, **kwargs):
         assert loaded is execution and kwargs["asr_result"] is asr_result
-        assert canvas.get("evidence", task_id)["asr"] == asr_result
-        before = canvas.snapshot()
-        assert ("evidence", task_id) in before.readonly_entries
-        assert prompt == build_canvas_understanding_prompt(execution, canvas=canvas)
-        assert "ASR cue" in prompt and "Only Refine" in prompt
-        assert "Resolve wording, timing and attribution" not in prompt
-        assert "Separate the utterances where their boundaries are supported" not in prompt
-        event = {
-            "event_type": "DIALOGUE", "start_seconds": offset_ms + 1000,
-            "end_seconds": offset_ms + 4500, "description": "两个人先后说话",
-            "participants": [], "visible_persons": [], "speaker": None,
-            "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": "合并台词"}],
-        }
-        with pytest.raises(AgentToolFeedbackError) as error:
-            canvas.write(role="understanding", batch_id="merged", expected_revision=canvas.revision, operations=[
-                {"op": "persons", "member_ref": task_id, "action": "add", "values": ["爱音"]},
-                {"op": "add_event", "member_ref": task_id, "key": "merged", "event": event},
-            ])
-        assert error.value.code == "ASR_DIALOGUE_RANGE_REQUIRED"
-        assert error.value.retry_hint
-        assert canvas.snapshot() == before
-        canvas.write(role="understanding", batch_id="exact-cues", expected_revision=canvas.revision, operations=[
-            {"op": "add_event", "member_ref": task_id, "key": f"cue-{index}", "event": {
-                **event, "start_seconds": cue["start_seconds"], "end_seconds": cue["end_seconds"],
-                "description": cue["text"],
-                "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": cue["text"]}],
-            }}
-            for index, cue in enumerate(asr_result["transcript"])
-        ])
-        assert canvas.get("evidence", task_id)["asr"] == asr_result
-        assert ("evidence", task_id) in canvas.snapshot().readonly_entries
-        return canvas.result(task_id)
+        assert "canvas" not in kwargs
+        assert "exactly match one original cue interval" in prompt
+        return VideoParseResult.model_validate({"persons": [], "timeline": events})
 
     runtime = SimpleNamespace(
         load_chunk_execution=AsyncMock(return_value=execution),
-        prepare_chunk_visual=AsyncMock(),
-        transcribe_chunk=AsyncMock(return_value=asr_result),
-        understand_chunk=AsyncMock(side_effect=understand),
-        commit_chunk_result=AsyncMock(),
-        notify_chunk_committed=AsyncMock(),
-        cleanup_chunk_execution=AsyncMock(),
+        prepare_chunk_visual=AsyncMock(), transcribe_chunk=AsyncMock(return_value=asr_result),
+        understand_chunk=AsyncMock(side_effect=understand), commit_chunk_result=AsyncMock(),
+        notify_chunk_committed=AsyncMock(), cleanup_chunk_execution=AsyncMock(),
     )
-    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(task_id))
+    run = ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(task_id)
+    if merged:
+        with pytest.raises(AgentToolFeedbackError) as error:
+            asyncio.run(run)
+        assert error.value.code == "ASR_DIALOGUE_RANGE_REQUIRED"
+        runtime.commit_chunk_result.assert_not_awaited()
+        runtime.notify_chunk_committed.assert_not_awaited()
+    else:
+        asyncio.run(run)
+        runtime.commit_chunk_result.assert_awaited_once()
+        result = runtime.commit_chunk_result.await_args.args[1]
+        assert [(event.start_seconds, event.end_seconds) for event in result.timeline] == [
+            (cue["start_seconds"], cue["end_seconds"]) for cue in asr_result["transcript"]
+        ]
+        assert runtime.commit_chunk_result.await_args.kwargs["evidence"]["asr"] == asr_result
+        runtime.notify_chunk_committed.assert_awaited_once_with(execution)
     runtime.understand_chunk.assert_awaited_once()
-    runtime.commit_chunk_result.assert_awaited_once()
-    result = runtime.commit_chunk_result.await_args.args[1]
-    assert [(event.start_seconds, event.end_seconds) for event in result.timeline] == [
-        (cue["start_seconds"], cue["end_seconds"]) for cue in asr_result["transcript"]
-    ]
-    assert runtime.commit_chunk_result.await_args.kwargs["evidence"]["asr"] == asr_result
-    runtime.notify_chunk_committed.assert_awaited_once_with(execution)
     runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
 
@@ -651,3 +630,42 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
     committed = runtime.commit_prefix_refinement.await_args.args[1]
     assert committed.update is not None
     assert committed.update.sequence_no == 0
+
+
+@pytest.mark.parametrize("recover", [True, False])
+def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover):
+    inputs = _inputs()
+    policy = inputs.parse_config.execution.model_copy(update={
+        "max_retry_count": 2, "retry_initial_delay_seconds": 0.001, "retry_max_delay_seconds": 0.001,
+    })
+    inputs = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={"execution": policy})})
+    execution = ChunkExecution("chunk-task-0", "video-task-1", 0, 0, 20_000, 0, 20_000, inputs, _lease())
+    attempts = []
+    async def understand(loaded, **kwargs):
+        assert "canvas" not in kwargs
+        runtime.commit_chunk_result.assert_not_awaited()
+        attempts.append(kwargs["asr_result"])
+        if not recover or len(attempts) < 2:
+            raise TimeoutError("provider timeout")
+        return _result()
+    runtime = SimpleNamespace(
+        load_chunk_execution=AsyncMock(return_value=execution), prepare_chunk_visual=AsyncMock(),
+        transcribe_chunk=AsyncMock(return_value={"transcript": []}),
+        understand_chunk=AsyncMock(side_effect=understand), commit_chunk_result=AsyncMock(),
+        notify_chunk_committed=AsyncMock(), cleanup_chunk_execution=AsyncMock(),
+    )
+    run = ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding("chunk-task-0")
+    if recover:
+        asyncio.run(run)
+        runtime.commit_chunk_result.assert_awaited_once()
+        assert runtime.commit_chunk_result.await_args.args[1] == _result()
+    else:
+        with pytest.raises(TimeoutError) as failure:
+            asyncio.run(run)
+        assert failure.value.parse_node_stage == "understanding"
+        runtime.commit_chunk_result.assert_not_awaited()
+    assert len(attempts) == (2 if recover else 3)
+    assert all(asr is attempts[0] for asr in attempts)
+    runtime.transcribe_chunk.assert_awaited_once()
+    runtime.prepare_chunk_visual.assert_awaited_once()
+    runtime.cleanup_chunk_execution.assert_awaited_once()

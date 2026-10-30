@@ -1,4 +1,4 @@
-"""Run localhost applications from the selected worktree and reuse databases."""
+"""Run localhost applications and native databases from the selected worktree."""
 from __future__ import annotations
 
 import argparse
@@ -56,18 +56,18 @@ def dotenv_variable_names(path: str | Path) -> tuple[str, ...]:
 
 
 def config_digest() -> str:
-    values = {key: value for key, value in os.environ.items() if key.startswith(("ANIVAG_", "VITE_"))}
+    values = {key: value for key, value in os.environ.items() if key.startswith(("SEEKINO_", "VITE_"))}
     model_config = load_config()
     api_key_names = required_api_key_env_names(model_config)
     for key in sorted(api_key_names):
         value = os.environ.get(key, "")
         values[key] = hashlib.sha256(value.encode()).hexdigest()
     configured_model_path = Path(
-        os.environ.get("ANIVAG_MODEL_CONFIG", str(ROOT / "config.yaml"))
+        os.environ.get("SEEKINO_MODEL_CONFIG", str(ROOT / "config.yaml"))
     ).expanduser().resolve()
     configured_pricing_path = Path(
         os.environ.get(
-            "ANIVAG_MODEL_PRICING_CONFIG",
+            "SEEKINO_MODEL_PRICING_CONFIG",
             str(ROOT / "config/model-pricing.yaml"),
         )
     ).expanduser().resolve()
@@ -89,36 +89,36 @@ def config_digest() -> str:
 
 def configure() -> ServerSettings:
     defaults = {
-        "ANIVAG_ENVIRONMENT": "development",
-        "ANIVAG_DATABASE_URL": "mysql+pymysql://root@127.0.0.1:3306/anivag_development?charset=utf8mb4",
-        "ANIVAG_HTTP_HOST": "127.0.0.1",
-        "ANIVAG_HTTP_PORT": "9621",
-        "ANIVAG_WEB_PORT": "5173",
-        "ANIVAG_ARTIFACT_ROOT": str(ROOT / "outputs/server/artifacts"),
+        "SEEKINO_ENVIRONMENT": "development",
+        "SEEKINO_DATABASE_URL": "mysql+pymysql://root@127.0.0.1:3306/seekino_development?charset=utf8mb4",
+        "SEEKINO_HTTP_HOST": "127.0.0.1",
+        "SEEKINO_HTTP_PORT": "9621",
+        "SEEKINO_WEB_PORT": "5173",
+        "SEEKINO_ARTIFACT_ROOT": str(ROOT / "assets/library"),
     }
     for key, value in defaults.items():
         if not os.environ.get(key):
             os.environ[key] = value
-    web_port = port("ANIVAG_WEB_PORT")
+    web_port = port("SEEKINO_WEB_PORT")
     os.environ.setdefault(
-        "ANIVAG_ALLOWED_ORIGINS",
+        "SEEKINO_ALLOWED_ORIGINS",
         f"http://127.0.0.1:{web_port},http://localhost:{web_port}",
     )
     settings = ServerSettings.from_environment()
     if settings.elasticsearch is None:
-        raise RuntimeError("本地启动需要 ANIVAG_ELASTICSEARCH_URL 和 ANIVAG_ELASTICSEARCH_INDEX。")
+        raise RuntimeError("本地启动需要 SEEKINO_ELASTICSEARCH_URL 和 SEEKINO_ELASTICSEARCH_INDEX。")
     database = make_url(settings.database_url)
     if settings.environment.value != "development":
-        raise RuntimeError("本地启动脚本只支持 ANIVAG_ENVIRONMENT=development。")
+        raise RuntimeError("本地启动脚本只支持 SEEKINO_ENVIRONMENT=development。")
     if database.drivername != "mysql+pymysql":
         raise RuntimeError("本地启动脚本需要 mysql+pymysql 数据库 URL。")
-    hosts = [database.host, os.environ["ANIVAG_HTTP_HOST"]]
+    hosts = [database.host, os.environ["SEEKINO_HTTP_HOST"]]
     if settings.elasticsearch is not None:
         hosts.append(urlsplit(settings.elasticsearch.url).hostname)
     for host in hosts:
         if host not in ("127.0.0.1", "localhost"):
             raise RuntimeError("本地启动脚本只支持 127.0.0.1 / localhost。")
-    port("ANIVAG_HTTP_PORT")
+    port("SEEKINO_HTTP_PORT")
     # Validate the development database name before starting or creating anything.
     engine = create_database_engine(settings.database_url, environment=settings.environment)
     close_database_engine(engine)
@@ -156,13 +156,13 @@ def get(url: str) -> bytes | None:
 
 
 def binary(name: str, *fallbacks: Path) -> str:
-    found = os.environ.get(f"ANIVAG_{name.upper()}_BIN") or shutil.which(name)
+    found = os.environ.get(f"SEEKINO_{name.upper()}_BIN") or shutil.which(name)
     if found and shutil.which(found):
         return shutil.which(found)
     for candidate in fallbacks:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
-    raise RuntimeError(f"找不到 {name}，请安装，或设置 ANIVAG_{name.upper()}_BIN。")
+    raise RuntimeError(f"找不到 {name}，请安装，或设置 SEEKINO_{name.upper()}_BIN。")
 
 
 def signature(pid: int) -> str:
@@ -225,7 +225,7 @@ def owned_listener(name: str, number: int) -> bool:
 
 
 def refresh_applications() -> None:
-    for name, key in (("api", "ANIVAG_HTTP_PORT"), ("web", "ANIVAG_WEB_PORT")):
+    for name, key in (("api", "SEEKINO_HTTP_PORT"), ("web", "SEEKINO_WEB_PORT")):
         number = port(key)
         if listening(number) and not owned_listener(name, number):
             raise RuntimeError(f"{name} 端口 {number} 被非本启动器管理的进程占用；请先停止该进程。")
@@ -266,10 +266,30 @@ def wait_ready(name: str, check, *, timeout: int = 60) -> None:
         child = CHILDREN.get(name)
         if child and child.poll() is not None:
             raise RuntimeError(f"{name} 提前退出，请查看 outputs/local-services/{name}.log。")
+        # Native launchers may exec a JVM after Popen. Preserve ownership even
+        # when readiness times out; only a live child handle authorizes this.
+        if child is not None:
+            path = STATE / f"{name}.pid.json"
+            record = json.loads(path.read_text())
+            current_signature = signature(child.pid)
+            if record["pid"] == child.pid and current_signature and record["signature"] != current_signature:
+                record["signature"] = current_signature
+                path.write_text(json.dumps(record))
         if check():
             return
         time.sleep(0.5)
     raise RuntimeError(f"{name} 在 {timeout} 秒内未就绪，请查看 outputs/local-services/{name}.log。")
+
+
+def mysql_data_directory() -> Path:
+    configured = os.environ.get("SEEKINO_MYSQL_DATA_DIR")
+    legacy = STATE / "mysql"
+    if not configured and legacy.exists() and any(legacy.iterdir()):
+        raise RuntimeError(
+            f"检测到旧 MySQL 数据目录 {legacy}；不会自动改用空库或迁移数据。"
+            "请显式设置 SEEKINO_MYSQL_DATA_DIR 指向要继续使用的目录，或完成备份迁移后再切换。"
+        )
+    return Path(configured).expanduser().resolve() if configured else ROOT / "data/mysql"
 
 
 def start_mysql(settings: ServerSettings) -> None:
@@ -284,30 +304,37 @@ def start_mysql(settings: ServerSettings) -> None:
             "mysqld", Path("/opt/homebrew/opt/mysql@8.4/bin/mysqld"),
             Path("/usr/local/opt/mysql@8.4/bin/mysqld"),
         )
-        datadir = STATE / "mysql"
+        datadir = mysql_data_directory()
+        mysql_command = [mysqld, "--no-defaults"]
+        # Official tarballs and resolved Homebrew keg binaries carry their
+        # resources beside bin/. Other system layouts retain MySQL's defaults.
+        basedir = Path(mysqld).resolve().parent.parent
+        if (basedir / "share").is_dir() and (basedir / "lib").is_dir():
+            mysql_command.append(f"--basedir={basedir}")
+        mysql_command.append(f"--datadir={datadir}")
         # A new managed instance uses its own passwordless loopback root account.
         if url.username != "root" or url.password:
             raise RuntimeError(
                 "MySQL 未运行；脚本自建实例使用 root / 空密码。"
-                "请先启动配置的已有实例，或将 ANIVAG_DATABASE_URL 改为本地 root / 空密码 URL。"
+                "请先启动配置的已有实例，或将 SEEKINO_DATABASE_URL 改为本地 root / 空密码 URL。"
             )
-        datadir.mkdir(exist_ok=True)
+        datadir.mkdir(parents=True, exist_ok=True)
         if not (datadir / "mysql").is_dir():
             if any(datadir.iterdir()):
                 raise RuntimeError("MySQL 数据目录非空但未初始化；请检查，脚本不会覆盖。")
             print("[初始化] 项目独立 MySQL 数据目录（首次启动）", flush=True)
             with (STATE / "mysql.log").open("ab") as log:
                 subprocess.run(
-                    [mysqld, "--no-defaults", "--initialize-insecure", f"--datadir={datadir}"],
+                    [*mysql_command, "--initialize-insecure"],
                     stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120,
                 )
         # Keep the Unix socket short enough even when the repository path is long.
-        socket_path = Path("/tmp") / f"anivag-mysql-{os.getuid()}-{mysql_port}.sock"
+        socket_path = Path("/tmp") / f"seekino-mysql-{os.getuid()}-{mysql_port}.sock"
         launch("mysql", [
-            mysqld, "--no-defaults", f"--datadir={datadir}", "--bind-address=127.0.0.1",
+            *mysql_command, "--bind-address=127.0.0.1",
             f"--port={mysql_port}", f"--socket={socket_path}",
             f"--pid-file={STATE / 'mysql-server.pid'}", "--mysqlx=OFF",
-            f"--innodb-buffer-pool-size={os.environ.get('ANIVAG_MYSQL_BUFFER_POOL_SIZE', '128M')}",
+            f"--innodb-buffer-pool-size={os.environ.get('SEEKINO_MYSQL_BUFFER_POOL_SIZE', '128M')}",
             "--binlog-expire-logs-seconds=604800",  # Keep seven days of binary logs.
             # Log only changed columns (FULL if CDC is added); compress transactions.
             "--binlog-row-image=MINIMAL", "--binlog-transaction-compression=ON",
@@ -344,23 +371,70 @@ def start_elasticsearch(settings: ServerSettings) -> None:
     config = settings.elasticsearch
     if config is None:
         raise RuntimeError("本地启动需要显式配置 Elasticsearch。")
+    address = urlsplit(config.url)
+    http_port = address.port or (443 if address.scheme == "https" else 80)
+    started = False
+    if listening(http_port):
+        print(f"[复用] Elasticsearch :{http_port}", flush=True)
+    else:
+        if owned_pid("elasticsearch"):
+            raise RuntimeError("已有脚本启动的 Elasticsearch 尚未就绪，请查看 elasticsearch.log。")
+        if address.scheme != "http" or address.hostname not in {"127.0.0.1", "localhost"} or config.api_key:
+            raise RuntimeError(
+                "脚本自建 Elasticsearch 仅支持无认证的 loopback HTTP；请先启动配置的已有实例。"
+            )
+        executable = binary("elasticsearch")
+        heap = os.getenv("SEEKINO_ELASTICSEARCH_HEAP_SIZE", "512m")
+        if not re.fullmatch(r"[1-9][0-9]*[mMgG]", heap):
+            raise RuntimeError("SEEKINO_ELASTICSEARCH_HEAP_SIZE 必须是 512m、1g 等正整数内存大小。")
+        transport_port = port("SEEKINO_ELASTICSEARCH_TRANSPORT_PORT", http_port + 100)
+        data = Path(os.getenv("SEEKINO_ELASTICSEARCH_DATA_DIR", str(ROOT / "data/elasticsearch"))).expanduser().resolve()
+        logs = STATE / "elasticsearch-logs"
+        data.mkdir(parents=True, exist_ok=True)
+        logs.mkdir(parents=True, exist_ok=True)
+        launch("elasticsearch", [
+            executable,
+            "-Ecluster.name=seekino-local", "-Enode.name=seekino-local",
+            "-Enetwork.host=127.0.0.1", "-Ehttp.host=127.0.0.1", "-Etransport.host=127.0.0.1",
+            f"-Ehttp.port={http_port}",
+            f"-Etransport.port={transport_port}", "-Ediscovery.type=single-node",
+            "-Expack.security.enabled=false", "-Expack.security.autoconfiguration.enabled=false",
+            f"-Epath.data={data}", f"-Epath.logs={logs}",
+        ], env={**os.environ, "ES_JAVA_OPTS": f"-Xms{heap} -Xmx{heap}"})
+        started = True
     client = create_elasticsearch_client(config, request_timeout_seconds=5)
     try:
-        health = client.cluster.health(wait_for_status="yellow", timeout="2s")
-        if health.get("timed_out") or health.get("status") not in {"yellow", "green"}:
+        def ready() -> bool:
+            try:
+                health = client.cluster.health(wait_for_status="yellow", timeout="2s")
+                return not health.get("timed_out") and health.get("status") in {"yellow", "green"}
+            except Exception:
+                return False
+
+        if started:
+            wait_ready("elasticsearch", ready, timeout=120)
+        elif not ready():
             raise RuntimeError("Elasticsearch 集群未达到 yellow 状态")
         ElasticsearchVideoChunkStore(
             client, index_name=config.index_name, environment=settings.environment,
             semantic_dimensions=settings.text_vector_dimensions,
             vision_dimensions=settings.vision_vector_dimensions,
+            vision_enabled=load_config(getattr(settings, "model_config_path", None)).resolve_embedding_binding().input_mode == "multimodal",
         ).ensure_index()
     except Exception as exc:
         raise RuntimeError(
-            "Elasticsearch 未就绪或索引合同不匹配；请检查 Compose 的 elasticsearch 服务。"
+            "Elasticsearch 未就绪或索引合同不匹配；请检查配置的实例或 outputs/local-services/elasticsearch.log。"
         ) from exc
     finally:
         close_elasticsearch_client(client)
     print(f"[就绪] Elasticsearch / {config.index_name}，索引 Schema 已校验", flush=True)
+
+
+def initialize_storage() -> None:
+    # Reuse the existing initialization contracts, including Deep Agents
+    # checkpoints and the independent Event index; never rebuild existing data.
+    for command in ("init-db", "init-event-index"):
+        subprocess.run([sys.executable, "-m", "server.cli", command], cwd=ROOT, check=True)
 
 
 def api_ready(base: str) -> bool:
@@ -390,7 +464,7 @@ def library_ready(base: str) -> bool:
 
 
 def start_applications() -> None:
-    api_port = port("ANIVAG_HTTP_PORT")
+    api_port = port("SEEKINO_HTTP_PORT")
     api_base = f"http://127.0.0.1:{api_port}"
     model_config = load_config()
     missing_api_keys = [
@@ -404,7 +478,7 @@ def start_applications() -> None:
     refresh_applications()
     if listening(api_port):
         if not api_ready(api_base):
-            raise RuntimeError(f"API 端口 {api_port} 已占用，未识别到 anivag API。")
+            raise RuntimeError(f"API 端口 {api_port} 已占用，未识别到 seekino API。")
         print(f"[复用] API :{api_port}", flush=True)
     else:
         if owned_pid("api"):
@@ -414,12 +488,12 @@ def start_applications() -> None:
     if not library_ready(api_base):
         raise RuntimeError("API 已监听但资料库查询失败，请查看 api.log。")
 
-    web_port = port("ANIVAG_WEB_PORT")
+    web_port = port("SEEKINO_WEB_PORT")
     web_base = f"http://127.0.0.1:{web_port}"
     if listening(web_port):
         page = get(web_base)
         if page is None or b"/@vite/client" not in page or b"/src/main.tsx" not in page:
-            raise RuntimeError(f"Web 端口 {web_port} 已占用，未识别到 anivag Vite。")
+            raise RuntimeError(f"Web 端口 {web_port} 已占用，未识别到 seekino Vite。")
         print(f"[复用] Web :{web_port}", flush=True)
     else:
         if owned_pid("web"):
@@ -440,8 +514,8 @@ def status(settings: ServerSettings) -> bool:
     database_port = make_url(settings.database_url).port or 3306
     checks = {
         "MySQL TCP": listening(database_port),
-        "API / Parse Consumer": api_ready(f"http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}"),
-        "Web": get(f"http://127.0.0.1:{port('ANIVAG_WEB_PORT')}/@vite/client") is not None,
+        "API / Parse Consumer": api_ready(f"http://127.0.0.1:{port('SEEKINO_HTTP_PORT')}"),
+        "Web": get(f"http://127.0.0.1:{port('SEEKINO_WEB_PORT')}/@vite/client") is not None,
     }
     if settings.elasticsearch is not None:
         config = settings.elasticsearch
@@ -460,13 +534,17 @@ def status(settings: ServerSettings) -> bool:
     return all(checks.values())
 
 
-def stop(names: tuple[str, ...] = ("web", "api", "mysql")) -> None:
+def stop(names: tuple[str, ...] = ("web", "api", "elasticsearch", "mysql")) -> None:
     for name in names:
         pid = owned_pid(name)
         if not pid:
             print(f"[跳过] {name}：没有本脚本管理的存活进程")
             continue
-        os.killpg(pid, signal.SIGTERM)
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            # The verified owner may exit between inspection and signalling.
+            pass
         deadline = time.monotonic() + 15
         while signature(pid) and time.monotonic() < deadline:
             time.sleep(0.2)
@@ -477,7 +555,7 @@ def stop(names: tuple[str, ...] = ("web", "api", "mysql")) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="懒启动 anivag 全部 localhost 服务。")
+    parser = argparse.ArgumentParser(description="懒启动 seekino 全部 localhost 服务。")
     parser.add_argument(
         "command",
         choices=("start", "status", "stop", "_env-names"),
@@ -511,13 +589,14 @@ def main() -> int:
             binary(tool)
         start_mysql(settings)
         start_elasticsearch(settings)
+        initialize_storage()
         start_applications()
         for name, child in CHILDREN.items():
             if child.poll() is not None:
                 raise RuntimeError(f"{name} 已退出，请查看 outputs/local-services/{name}.log。")
         print(
-            f"\n服务已就绪：\n  Web  http://127.0.0.1:{port('ANIVAG_WEB_PORT')}"
-            f"\n  API  http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}/docs"
+            f"\n服务已就绪：\n  Web  http://127.0.0.1:{port('SEEKINO_WEB_PORT')}"
+            f"\n  API  http://127.0.0.1:{port('SEEKINO_HTTP_PORT')}/docs"
             f"\n  状态 ./start.sh --branch {args.branch} status"
             f"\n  停止 ./start.sh --branch {args.branch} stop"
             "\n  日志 outputs/local-services/*.log",

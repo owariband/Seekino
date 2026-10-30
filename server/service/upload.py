@@ -70,6 +70,7 @@ class UploadService:
         parse_defaults: ParseConfig,
         video_parse_query_encoder: EncoderContract | None = None,
         video_parse_query_encoder_source: str | None = None,
+        video_parse_query_encoder_supports_sparse: bool = True,
         video_event_index_store: ElasticsearchVideoEventStore | None = None,
     ) -> None:
         if (video_parse_query_encoder is None) != (
@@ -97,6 +98,7 @@ class UploadService:
         self._parse_defaults = parse_defaults
         self._video_parse_query_encoder = video_parse_query_encoder
         self._video_parse_query_encoder_source = video_parse_query_encoder_source
+        self._video_parse_query_encoder_supports_sparse = video_parse_query_encoder_supports_sparse
 
     @property
     def parse_defaults(self) -> ParseConfig:
@@ -624,6 +626,8 @@ class UploadService:
     def _resolve_parse_config(self, config: ParseConfig | VideoParseV2Config) -> VideoParseV2Config:
         if isinstance(config, ParseConfig):
             config = config.resolve_execution(self._parse_defaults).to_video_parse_v2()
+        if config.indexing.sparse_enabled and not self._video_parse_query_encoder_supports_sparse:
+            raise ValueError("parse_config.indexing.sparse_enabled is not supported by the active embedding source")
         indexing = self._parse_defaults.indexing
         generation = indexing.index_generation if indexing is not None else None
         if type(generation) is not int or generation <= 0:
@@ -645,9 +649,11 @@ class UploadService:
             return config
         embedding = config.models.embedding
         dimensions = embedding.dimensions
+        if (embedding.input_mode == "multimodal") != getattr(store, "vision_enabled", True):
+            raise ValueError("parse_config.models.embedding.input_mode must match the active Elasticsearch index mode")
         if (
             dimensions != store.semantic_dimensions
-            or dimensions != store.vision_dimensions
+            or (embedding.input_mode == "multimodal" and dimensions != store.vision_dimensions)
         ):
             raise ValueError(
                 "parse_config.models.embedding.dimensions must match "
@@ -676,6 +682,9 @@ class UploadService:
                 "parse_config.models.embedding must match the exact active "
                 "V2 query encoder source, model, and dimensions"
             )
+        if (self._parse_defaults is not None
+                and embedding.query_instruction != self._parse_defaults.embedding.query_instruction):
+            raise ValueError("embedding query_instruction must match the active query encoder")
         resolved_embedding = embedding.model_copy(update={"encoder_model": reference.model})
         return config.model_copy(update={
             "models": config.models.model_copy(update={"embedding": resolved_embedding}),

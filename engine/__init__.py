@@ -1,1 +1,1 @@
-"""anivag algorithm modules."""
+"""seekino algorithm modules."""

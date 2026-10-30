@@ -18,7 +18,7 @@ from server.model.job import VideoParseTask
 from server.model.upload import UploadSession
 from server.model.tenant import Tenant
 from server.model.user import User
-from server.model.video import Series, SeriesVisibility, Video
+from server.model.video import Series, SeriesVisibility, Video, VideoChunk
 from server.repository.identity import default_public_nickname
 from server.repository.library import LibraryRepository, VideoEpisodeOrderConflictError
 from server.model.video import VideoIndexStatus
@@ -180,6 +180,46 @@ def test_video_metadata_and_episode_order_share_transaction(repository, parsed_v
     public = library_api.project_video(result, media, access="public").model_dump(by_alias=True)
     assert public["displayName"] == result.display_name and public["description"] == result.description
     assert "coverUri" not in public
+
+
+def test_series_artwork_prefers_summary_covers_and_stays_stable_across_episode_order(repository, seed_video, tmp_path):
+    factory, _videos, library = _library(repository)
+    first = seed_video(factory, episode_order=1)
+    with factory.begin() as session:
+        session.get(Video, first.video_id).hash = "b" * 64
+    second = seed_video(factory, series_id=first.series_id, episode_order=2)
+    with factory.begin() as session:
+        session.get(Video, second.video_id).hash = "c" * 64
+    third = seed_video(factory, series_id=first.series_id, episode_order=3)
+    store = LocalArtifactStore(tmp_path / "covers", environment="test")
+    frame = store.base_directory / "frame.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-image")
+    frame_uri = store.uri_for_path(frame)
+    with factory.begin() as session:
+        session.get(VideoChunk, first.video_chunk_ids[0]).keyframe_uris = [frame_uri]
+        for item in (second, third):
+            session.get(Video, item.video_id).cover_uri = frame_uri
+    media = MediaService(library, store)
+    before = library.get_series(first.series_id, tenant_id="local-default")
+    chosen = before.representative_video.video_id
+    assert chosen in {second.video_id, third.video_id}
+    assert not before.representative_video.keyframe_uris
+    summary = library_api.project_series_summary(before, media)
+    assert summary.cover is not None
+    assert summary.cover == library_api.project_series_detail(before, media).cover
+    assert library.list_series(tenant_id="local-default")[0].representative_video.video_id == chosen
+    with factory.begin() as session:
+        session.get(Video, second.video_id).episode_order = 4
+    after = library.get_series(first.series_id, tenant_id="local-default")
+    assert after.representative_video.video_id == chosen
+    with factory.begin() as session:
+        session.get(Video, chosen).cover_uri = None
+    remaining = library.get_series(first.series_id, tenant_id="local-default").representative_video
+    assert remaining.video_id in {second.video_id, third.video_id} - {chosen}
+    with factory.begin() as session:
+        session.get(Video, remaining.video_id).cover_uri = None
+    fallback = library.get_series(first.series_id, tenant_id="local-default")
+    assert fallback.representative_video.video_id == first.video_id
 
 
 def test_v2_library_status_uses_latest_video_parse_task(repository, parsed_video):

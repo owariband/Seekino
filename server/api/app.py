@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 import logging
 import time
 from uuid import uuid4
@@ -41,16 +41,32 @@ def build_app(
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
 ) -> FastAPI:
     resolved_settings = settings
-
-    app = FastAPI(
-        title="anivag Server",
-        version="0.1.0",
-        lifespan=lifespan,
-    )
-    app.state.services = services
-    app.state.auth_config = resolved_settings.auth if resolved_settings else getattr(
+    auth_config = resolved_settings.auth if resolved_settings else getattr(
         getattr(services, "auth", None), "config", AuthConfig()
     )
+    mcp_service = getattr(services, "mcp_retrieval", None)
+    mcp_app = None
+    if auth_config.mode == "local" and mcp_service is not None:
+        from .mcp import create_mcp_app
+
+        mcp_app = create_mcp_app(mcp_service, auth_mode=auth_config.mode)
+
+    @asynccontextmanager
+    async def application_lifespan(app):
+        async with AsyncExitStack() as stack:
+            if lifespan is not None:
+                await stack.enter_async_context(lifespan(app))
+            if mcp_app is not None:
+                await stack.enter_async_context(mcp_app.router.lifespan_context(mcp_app))
+            yield
+
+    app = FastAPI(
+        title="seekino Server",
+        version="0.1.0",
+        lifespan=application_lifespan,
+    )
+    app.state.services = services
+    app.state.auth_config = auth_config
     app.state.sse_config = resolved_settings.sse if resolved_settings else SSEConfig()
     app.state.retrieval_config = getattr(resolved_settings, "retrieval", RetrievalConfig())
     app.state.model_config_path = getattr(resolved_settings, "model_config_path", None)
@@ -106,6 +122,8 @@ def build_app(
         code: {"model": ApiError}
         for code in (400, 401, 403, 404, 409, 410, 422, 429, 500, 502, 503)
     })
+    if mcp_app is not None:
+        app.mount("/", mcp_app)
     generate_openapi = app.openapi
 
     def configured_openapi():

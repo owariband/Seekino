@@ -1,4 +1,4 @@
--- AniVAG controlled migration: immutable ES build snapshots and publication.
+-- Seekino controlled migration: immutable ES build snapshots and publication.
 -- HISTORICAL ONLY: these draft tables are retired by
 -- 20260928_task_indexing_contract.sql. Do not apply this script to new databases.
 -- The forward migration also works when none of these three tables exists.

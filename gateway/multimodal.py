@@ -19,6 +19,7 @@ class AdapterCapabilities:
     rerank: bool = False
     transcription: bool = False
     embedding: bool = False
+    sparse_embedding: bool = False
     speaker_embedding: bool = False
     visual_input_mode: Literal["video", "ordered_frames"] | None = None
     transcription_input_mode: Literal["video", "audio"] | None = None
@@ -28,7 +29,7 @@ class AdapterCapabilities:
 
 _ADAPTER_CAPABILITIES = {
     "ark": AdapterCapabilities(
-        generative=True, rerank=True, transcription=True, embedding=True,
+        generative=True, rerank=True, transcription=True, embedding=True, sparse_embedding=True,
         visual_input_mode="video", transcription_input_mode="video",
     ),
     "openai": AdapterCapabilities(
@@ -42,12 +43,22 @@ _ADAPTER_CAPABILITIES = {
         transcription=True, transcription_input_mode="audio",
         supports_reasoning_effort=False, supports_output_limit=False,
     ),
+    "whisperx": AdapterCapabilities(
+        transcription=True, transcription_input_mode="audio",
+        supports_reasoning_effort=False, supports_output_limit=False,
+    ),
     "codex_app_server": AdapterCapabilities(
         generative=True, rerank=True, visual_input_mode="ordered_frames",
     ),
     "claude_sdk": AdapterCapabilities(generative=True, rerank=True),
     "campplus": AdapterCapabilities(
         speaker_embedding=True, supports_reasoning_effort=False, supports_output_limit=False,
+    ),
+    "llama_cpp_embedding": AdapterCapabilities(
+        embedding=True, supports_reasoning_effort=False, supports_output_limit=False,
+    ),
+    "ollama_embedding": AdapterCapabilities(
+        embedding=True, supports_reasoning_effort=False, supports_output_limit=False,
     ),
 }
 

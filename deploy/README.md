@@ -1,45 +1,85 @@
 # 部署与本地运行
 
-首次安装推荐阅读[本地配置指南：API 模型 + Docker 数据库](local-setup.md)，包含当前 dev 的模型示例、checkpoint 初始化、日常启动和 Docker 覆盖范围。
+首次安装推荐阅读[本地配置指南：Docker 全栈 + DeepAgents](local-setup.md)，包含一键启动、现有 Kimi / Codex 接入、checkpoint 初始化、配置持久化与 Windows 使用方式。
 
 已有原生 MySQL、Elasticsearch 和 Python 环境时，可以继续使用；HTTPS 入口不要求
 Docker。macOS 的 Nginx 安装、本地证书、8443 入口与手机信任步骤见
 [原生 Nginx 本地 HTTPS](nginx/README.md)。Nginx 独立于 Python API 和 Vite 运行。
 
-## 可选：Docker 数据库 + 本地应用
+## 默认：Docker 全栈
 
-根目录 `compose.yaml` 默认运行 MySQL 8.4 和 Elasticsearch 8.19.22。
-Python Server（含 V2 Parse Consumer）、Vite、ffmpeg、模型 SDK 在宿主机运行。
-无需构建应用镜像，修改代码后按原来的方式调试。
-`./start.sh` 会复用已有 MySQL、校验 ES 集群和索引映射；ES 必须事先准备，
-脚本不会启动原生 ES 进程。正式流程只使用 V2，不需要 Qdrant。
+根目录 `compose.yaml` 默认运行 Web（Nginx）、Python API（含 V2 Parse Consumer）、
+MySQL 8.4 和 Elasticsearch 8.19.22。ffmpeg 和模型 SDK 已放进应用镜像，
+`initialize` 服务先检查配置、初始化业务表与 checkpoint、创建或校验索引。
+默认模型只调用 API，使用 DeepAgents；无需本地模型权重或宿主机 Python / Node.js。
 
 ## 首次运行
 
-1. 安装并启动 Docker Desktop，或 Docker Engine + Compose（需支持 `up --wait`）。
-2. 本机安装 uv、Node 24+、npm、ffmpeg / ffprobe。
-3. 在仓库根目录执行 `cp .env.example .env.local`（已有文件则保留），填写模型密钥，
-   并显式配置 `ANIVAG_ELASTICSEARCH_URL` 和 `ANIVAG_ELASTICSEARCH_INDEX`。
-   根模型配置还依赖本机 Codex、Whisper 和可选模型服务；首次试用可选上面指南的 API 模型配置。
-4. 执行 `docker compose --env-file .env.local up -d --wait mysql elasticsearch`。
-5. 依次执行 `uv run --env-file .env.local python -m server.cli init-db` 和
-   `uv run --no-sync --env-file .env.local python -m server.cli init-es-index`，前者同时初始化 DeepAgents checkpoint 表。
-6. 在当前 dev 工作区执行 `./start.sh --branch dev`；main 工作区使用 `./start.sh`，访问 `http://127.0.0.1:5173`。
+1. 安装并启动 Docker Desktop，或 Docker Engine + 当前版本的 Compose 插件。
+   Windows 选择 WSL2 / Linux containers，可直接使用 PowerShell 执行启动命令。
+2. 在仓库根目录执行 `cp deploy/docker/env.example .env.docker`（已有文件则保留），
+   填写 `ARK_API_KEY`、`DEEPSEEK_API_KEY`，确认账号可访问 `config.yaml` 中的模型。
+3. 执行 `docker compose --env-file .env.docker up --build -d --wait`。
+4. 访问 `http://127.0.0.1:5173`；同一端口的 `/docs`、`/healthz` 由 Web 转发至 API。
 
-Compose 先启动数据库并等待健康检查通过；原脚本随后复用数据库，
-校验 MySQL 业务表和 ES 索引，再启动本地应用；脚本本身不初始化 checkpoint 表。
-按顺序执行，前一步失败时先修复，再继续下一步。
-首次下载镜像或 Python 依赖需要网络；容器启动成功不表示模型密钥和视频解析已验证。
+首次下载镜像和构建需要网络；容器健康不表示模型密钥和视频解析已完成验收。
+配置与凭据持久化、切换 Kimi / Codex 和当前验证范围见[本地配置指南](local-setup.md)。
+
+## 可选：Docker 数据库 + 宿主机开发
+
+在宿主机安装 Python 3.12、uv、Node 24+、npm、ffmpeg / ffprobe，按
+[README 的开发步骤](../README.md#宿主机开发可选) 准备 `.env.local`、依赖与数据库表。
+`./start.sh --branch dev` 使用已检出的 dev 工作区；main 使用 `./start.sh`。
+脚本复用已监听的 MySQL/ES，或启动已安装的原生程序；随后通过既有初始化入口
+校验业务表、Deep Agents checkpoint 和 Chunk/Event 索引。正式流程只使用 V2。
 
 只准备基础设施时，无需模型密钥或本地 Python 环境：
 
 ```bash
-docker compose up -d --wait
+docker compose up -d --wait mysql elasticsearch
 docker compose ps
 docker compose logs -f mysql elasticsearch
 ```
 
+## 可选：全原生本机开发
+
+安装 MySQL 8.4 与 Elasticsearch 8.19，并准备 Python 3.12、uv、Node 24+、npm、
+ffmpeg/ffprobe 及项目依赖。下载解压的原生程序可以在 `.env.local` 指定完整路径：
+
+```dotenv
+SEEKINO_MYSQLD_BIN=/absolute/path/to/mysql/bin/mysqld
+SEEKINO_ELASTICSEARCH_BIN=/absolute/path/to/elasticsearch/bin/elasticsearch
+SEEKINO_MYSQL_DATA_DIR=data/mysql
+SEEKINO_ELASTICSEARCH_DATA_DIR=data/elasticsearch
+SEEKINO_ELASTICSEARCH_HEAP_SIZE=512m
+```
+
+保留同一文件已有数据库 URL、ES URL/索引、模型配置与凭据；不要用示例覆盖已有配置。
+ES HTTP 端口取 `SEEKINO_ELASTICSEARCH_URL`，内部 transport 端口默认是 HTTP 端口加 100，
+可由 `SEEKINO_ELASTICSEARCH_TRANSPORT_PORT` 覆盖。自建实例使用单节点、仅 loopback、
+无认证 HTTP；带 API key 或 HTTPS 的已有实例需要由其原管理方式启动。
+
+```bash
+./start.sh --branch dev
+./start.sh --branch dev status
+./start.sh --branch dev stop
+```
+
+启动器不会下载软件。端口已有服务时先复用并验证；没有服务时使用配置的原生二进制。
+`stop` 按记录的 PID 与进程身份仅停止本启动器启动的 Web、API、ES、MySQL，
+不会停止复用的外部服务，也不删除数据。原生数据库目录为 `data/mysql`、`data/elasticsearch`，
+媒体为 `assets/library`；进程 PID、启动日志和 ES 日志仍在 `outputs/local-services`。
+API 先给 HTTP 请求 5 秒收尾时间，关闭尚未结束的 SSE 后按业务生命周期退出。
+若在途任务收尾超过启动器每个进程的 15 秒等待，`stop` 会提示稍后重试并保留数据库运行，
+不会强杀 API 或提前停止其仍需使用的 MySQL、ES。
+
+若旧 `outputs/local-services/mysql` 非空且没有显式 `SEEKINO_MYSQL_DATA_DIR`，启动器会停止并提示，
+防止悄悄改用新空库。可以显式指向旧目录继续使用，或先备份并完成迁移，再选择新目录；
+这里没有自动迁移、删除旧库或重建已有索引。`init-db` 与 `init-event-index` 校验失败时不启动 API。
+
 ## 本地模拟验证码邮件
+
+以下针对宿主机开发环境；默认 Docker 全栈使用免登录的 `local` 模式。
 
 使用可选的 [Mailpit](https://mailpit.axllent.org/docs/install/docker/) 收件箱测试邮箱登录，
 无需域名、邮箱授权码或付费发信服务。Seekino 仍通过现有 SMTP 发送验证码；Mailpit
@@ -49,19 +89,19 @@ docker compose logs -f mysql elasticsearch
 在 `.env.local` 中将现有 SMTP 配置改为：
 
 ```dotenv
-ANIVAG_SMTP_HOST=127.0.0.1
-ANIVAG_SMTP_PORT=1025
-ANIVAG_SMTP_USERNAME=
-ANIVAG_SMTP_PASSWORD=
-ANIVAG_SMTP_SENDER=noreply@seekino.test
-ANIVAG_SMTP_USE_SSL=false
-ANIVAG_SMTP_START_TLS=false
+SEEKINO_SMTP_HOST=127.0.0.1
+SEEKINO_SMTP_PORT=1025
+SEEKINO_SMTP_USERNAME=
+SEEKINO_SMTP_PASSWORD=
+SEEKINO_SMTP_SENDER=noreply@seekino.test
+SEEKINO_SMTP_USE_SSL=false
+SEEKINO_SMTP_START_TLS=false
 ```
 
 应用运行在宿主机，因此使用 `127.0.0.1`，而不是容器服务名 `mailpit`。
 SMTP 默认启用 STARTTLS，此处必须显式关闭，匹配 Mailpit 的本地无 TLS 接口。
-若 1025 或 8025 被占用，可在 `.env.local` 设置 `ANIVAG_MAILPIT_SMTP_PORT` 或
-`ANIVAG_MAILPIT_WEB_PORT`；更改 SMTP 发布端口时，同时更新 `ANIVAG_SMTP_PORT`。
+若 1025 或 8025 被占用，可在 `.env.local` 设置 `SEEKINO_MAILPIT_SMTP_PORT` 或
+`SEEKINO_MAILPIT_WEB_PORT`；更改 SMTP 发布端口时，同时更新 `SEEKINO_SMTP_PORT`。
 
 启动本地验证码依赖：
 
@@ -69,10 +109,10 @@ SMTP 默认启用 STARTTLS，此处必须显式关闭，匹配 Mailpit 的本地
 docker compose --env-file .env.local --profile cloud-auth --profile mock-email up -d --wait redis mailpit
 ```
 
-测试账号登录时，Server 需以 `ANIVAG_AUTH_MODE=cloud` 启动，并配齐至少 32 字节的
-独立随机签名秘密及 Redis 连接。`ANIVAG_AUTH_QUERY_LEASE_SECONDS` 必须大于
+测试账号登录时，Server 需以 `SEEKINO_AUTH_MODE=cloud` 启动，并配齐至少 32 字节的
+独立随机签名秘密及 Redis 连接。`SEEKINO_AUTH_QUERY_LEASE_SECONDS` 必须大于
 `config.yaml` 的 `execution_timeout_seconds`（当前为 1200 秒，可为本次测试设租约
-1800 秒）。使用普通 HTTP 的内网测试入口时设置 `ANIVAG_AUTH_COOKIE_SECURE=false`；
+1800 秒）。使用普通 HTTP 的内网测试入口时设置 `SEEKINO_AUTH_COOKIE_SECURE=false`；
 正式 HTTPS 入口使用 `true`。SMTP 配置在 Server 启动时读取。
 
 在 Seekino 登录框填写测试邮箱（例如 `tester@example.com`），点击发送验证码；
@@ -91,27 +131,55 @@ docker compose --env-file .env.local --profile mock-email stop mailpit
 
 正常从 Web 选择并上传本机视频，不需要把样例视频挂载到数据库容器。
 任务页查看解析进度；完成后在搜索页提问并播放返回的时间证据。
-ffmpeg 和模型调用在宿主机执行，原有 CLI、断点调试和模型登录方式继续使用。
+全栈模式中 ffmpeg 和模型调用在 API 容器内执行；宿主机开发模式保留原有 CLI、断点调试和模型登录方式。
 
 | 内容 | 位置 |
 |---|---|
-| 视频、切片、关键帧、解析文件 | 本机 `ANIVAG_ARTIFACT_ROOT`，默认 `outputs/server/artifacts` |
-| 本机进程 PID、启动日志 | `outputs/local-services/` |
-| 应用结构化日志 | `ANIVAG_LOG_DIRECTORY`，默认 `outputs/server/logs` |
-| MySQL | Docker volume `anivag-local_mysql_data` |
-| ES 索引 | Docker volume `anivag-local_elasticsearch_data` |
+| Docker 视频、切片、关键帧、解析文件 | `app_data` 卷中的 `/data/artifacts` |
+| Docker 有效模型配置、日志、Codex 登录 | `app_data` 卷中的 `/data/config`、`/data/logs`、`/data/codex` |
+| 宿主机开发媒体 | 本机 `SEEKINO_ARTIFACT_ROOT`，默认 `assets/library` |
+| 宿主机进程 PID、启动日志 | `outputs/local-services/` |
+| 宿主机应用结构化日志 | `SEEKINO_LOG_DIRECTORY`，默认 `outputs/server/logs` |
+| 启动器管理的原生 MySQL / ES | `SEEKINO_MYSQL_DATA_DIR` / `SEEKINO_ELASTICSEARCH_DATA_DIR`，默认 `data/mysql` / `data/elasticsearch` |
+| MySQL | Docker volume `seekino-local_mysql_data` |
+| ES 索引 | Docker volume `seekino-local_elasticsearch_data` |
 
-`ANIVAG_PARSE_EXECUTION_MODE` 只接受 `v2`。新上传任务由 DB Queue 的 V2 Worker 执行，
+`SEEKINO_PARSE_EXECUTION_MODE` 只接受 `v2`。新上传任务由 DB Queue 的 V2 Worker 执行，
 Refine 成果提交后进入索引阶段，ES 写入与验证成功后完成任务；API、Agent Chat 和
 CLI search 使用同一套 V2 检索。`./start.sh` 要求 ES 集群为 yellow/green，并校验索引 Schema。
 已有数据库升级步骤见 [Server README](../server/README.md)。容器就绪不会迁移历史数据
-或执行索引重建。隔离集成测试须另用 `ANIVAG_TEST_DATABASE_URL`、
-`ANIVAG_TEST_ELASTICSEARCH_URL` 和独立测试索引。
+或执行索引重建。隔离集成测试须另用 `SEEKINO_TEST_DATABASE_URL`、
+`SEEKINO_TEST_ELASTICSEARCH_URL` 和独立测试索引。
 
-备份/迁移时需同时保留 MySQL 业务事实和宿主机媒体。ES 可从当前 V2 成果重建，
+备份/迁移时需同时保留 MySQL 业务事实和对应模式下的媒体。ES 可从当前 V2 成果重建，
 仅复制索引不能作为完整备份。
-容器没有代码或模型密钥挂载；数据库端口仅绑定 `127.0.0.1`。
+模型密钥通过 `.env.docker` 注入运行环境，不写入镜像；所有发布端口仅绑定 `127.0.0.1`。
 MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose 用于本地开发。
+
+<a id="persistent-media-root"></a>
+
+### 持久媒体目录与旧路径迁移
+
+自 2026-10-29 起，宿主机默认使用 `assets/library/` 保存正式原片、代理、帧图与附件，
+`assets/` 下未跟踪素材由 Git ignore 排除，已有被 Git 跟踪的发布资产继续保留。
+Git 忽略不等于删除或备份；媒体仍须和 MySQL 做配套备份。Docker 全栈的
+`app_data` 持久卷及 `/data/artifacts` 不因宿主机默认值改变而迁移。
+
+已有 `.env.local` 中的 `SEEKINO_ARTIFACT_ROOT` 优先于默认值，应用不会自动移动旧文件。
+切换旧环境前应先核对实际配置及目录内容，并按以下顺序操作：
+
+1. 停止写入该媒体根的 API/Consumer，保留原目录和对应数据库的可恢复备份。
+2. 将旧根的完整内容迁到 `assets/library/`，保留 `development/`、`test/`、`production/`
+   等环境子目录及内部结构；目标已有文件时逐项核对，不覆盖不同内容。
+3. 将有效环境配置改为 `SEEKINO_ARTIFACT_ROOT=assets/library`，重启服务。
+   数据库中的 `artifact://development/...` URI 不随根目录改变，无需批量改写。
+4. 核对旧视频的 SHA-256、大小、原片播放及派生媒体可读性，再独立验证检索。
+   仅修改配置或启动成功不能作为恢复完成的依据。
+
+只有重新下载的原片时，先按旧库 `video.hash`、`size_bytes` 匹配，再按 `source_uri`
+恢复文件位置。同一文件系统可用硬链接保留样例路径，避免重复占用视频空间；
+硬链接共享文件内容，不适合在任一路径原地修改原片。指向媒体根以外的软链接会被存储边界拒绝。
+补回原片不会自动恢复缺失的 MySQL、封面、帧图或 ES 索引。
 
 <a id="local-assets"></a>
 
@@ -124,11 +192,11 @@ MySQL 的 root 空密码与当前单机开发默认值一致，这份 Compose �
 ### 先确定运行依据
 
 1. 读取 `.env.local` 中的配置变量名与本地路径，不输出密钥值。优先核对
-   `ANIVAG_MODEL_CONFIG`、`ANIVAG_ARTIFACT_ROOT`、数据库 URL、ES 索引及代际；
+   `SEEKINO_MODEL_CONFIG`、`SEEKINO_ARTIFACT_ROOT`、数据库 URL、ES 索引及代际；
    不用根目录 `config.yaml` 或 `.env.example` 覆盖现有运行配置。
-2. 本次 `ANIVAG_MODEL_CONFIG` 指向 `outputs/local-services/main-model-config.yaml`，
+2. 本次 `SEEKINO_MODEL_CONFIG` 指向 `outputs/local-services/main-model-config.yaml`，
    其中模型绑定和 Agent 预算与根配置不同。该文件与 `.env.local` 必须配套恢复。
-3. 主业务库为 `anivag_local_20261010_development`，媒体根为
+3. 主业务库为 `seekino_local_20261010_development`，媒体根为
    `outputs/server/local-20261010/artifacts`，其 `development/` 子目录也必须保留。
    手机测试另用 `outputs/local-services/cloud-auth/phone.env`、同目录 `model-config.yaml`、
    `seekino_phone_dev` 和 `outputs/phone-test/artifacts`；仅在需要恢复手机测试环境时携带这一套。
@@ -179,7 +247,7 @@ uv run --no-sync --env-file .env.local python scripts/local_whisper.py
 |---|---|---|
 | MySQL 业务数据 | 是，保存资料库、任务、解析成果及应用对话等 | 做一致性逻辑导出并验证恢复，与媒体配套保存。不要只复制部分 `.ibd` 或把运行中的数据目录作为唯一备份 |
 | MySQL binlog | 用于复制、CDC、按时间点恢复；不是完整逻辑备份恢复到其快照状态的必需附件 | 本次约 67.15 GiB。只有确认复制/CDC/PITR 保留需求、完整备份和恢复验证后，才能决定不携带哪些历史日志；清理走 MySQL 管理命令，不手动删除文件 |
-| 实际 `ANIVAG_ARTIFACT_ROOT` | 是 | 保留完整媒体、切片、帧图、对话附件及环境子目录。数据库使用 `artifact://development/...` 相对 URI；新机可以调整根路径，但必须保持内部结构和数据库对应关系 |
+| 实际 `SEEKINO_ARTIFACT_ROOT` | 是 | 保留完整媒体、切片、帧图、对话附件及环境子目录。数据库使用 `artifact://development/...` 相对 URI；新机可以调整根路径，但必须保持内部结构和数据库对应关系 |
 | `assets/example_video_mygo/` 与手机测试媒体 | 主服务依赖已发布媒体；原始样例还被部分评测引用 | 手机环境可整套选择不恢复。原始样例只有在确认业务副本完整、哈希一致且所需评测不再引用后才可省略；不能仅凭文件名判断重复 |
 | `outputs/verification/` | 不是生产启动依赖，但包含验收证据及评测辅助输入 | 保留报告、协议、配置、真值/用例、来源版本、关键结果和代表性失败证据。逐实验确认其余大日志、重复帧和中间结果可以放弃；重跑可能需要模型费用，结果也未必相同 |
 | `outputs/worktrees/` | main 启动不依赖这些实验工作区 | 先保存 base commit、tracked diff（含二进制）、untracked 文件和必要的 ignored 文件，核对没有运行进程引用后才能移除 worktree。单独保存 Git patch 不包含未跟踪文件 |
@@ -207,7 +275,7 @@ uv run --no-sync --env-file .env.local python scripts/local_whisper.py
 - Windows 优先在 WSL2 中恢复现有 Bash/POSIX 启动链。Python、Node 依赖按锁文件重装，
   CAM++ 需 `speaker` 可选依赖（extra）；本机二进制和 GPU 后端重新准备，修正绝对路径。
 - MySQL 和 Elasticsearch 可用 Compose 恢复；ES 备份采用 snapshot，或从保留的业务事实和媒体重建并验证索引合同。
-  `ANIVAG_MYSQL_BUFFER_POOL_SIZE=8G` 当前只由原生启动器消费；Compose 需显式设置对应 mysqld 参数，
+  `SEEKINO_MYSQL_BUFFER_POOL_SIZE=8G` 当前只由原生启动器消费；Compose 需显式设置对应 mysqld 参数，
   并根据新机内存调整。不要把 `.env.local` 中出现该变量等同于容器配置已生效。
 - 先核对资产和配置，再验证数据库、媒体可读性、索引及模型服务身份；模型调用验收与 API 健康检查分别记录。
   验收记录包括一次已解析视频播放、已有资料检索，以及在获准调用模型后的一次 ASR/改写/声纹检查。
@@ -271,39 +339,58 @@ mysql -uroot -h127.0.0.1 -e "PURGE BINARY LOGS BEFORE NOW() - INTERVAL 1 HOUR;"
 
 ## 停止、重启和日志
 
+Docker 全栈使用同一份环境文件：
+
 ```bash
-./start.sh stop          # 停止脚本管理的本机应用；保留数据库容器
-docker compose stop     # 需要时再停止数据库，数据保留
-docker compose up -d --wait && ./start.sh  # 再次选择 Docker 模式，复用数据库卷
+docker compose --env-file .env.docker stop
+docker compose --env-file .env.docker up -d --wait
+docker compose --env-file .env.docker logs -f api
 ```
 
 `docker compose down` 删除容器和网络但保留 named volumes。
-不要在需要保留视频库时执行 `docker compose down -v`，它会删除数据库卷。
-`start.sh stop` 会停止它自己管理的本机进程，包括由它启动的原生 MySQL；
+不要在需要保留视频库时执行 `docker compose down -v`，它会删除数据库和应用数据卷。
+
+使用 Docker 数据库的宿主机开发路线，分别管理应用和数据库：
+
+```bash
+./start.sh --branch dev stop
+docker compose --env-file .env.local stop mysql elasticsearch
+docker compose --env-file .env.local up -d --wait mysql elasticsearch
+./start.sh --branch dev
+```
+
+`start.sh stop` 会停止它自己管理的本机进程，包括由它启动的原生 MySQL 和 ES；
 不会停止 Compose 容器或其它程序启动的数据库。
-如果只运行 `./start.sh` 而容器未运行，脚本会尝试启动本机 MySQL；ES 不可达时启动失败。
+如果数据库端口尚未监听，脚本会尝试启动已安装并配置的原生 MySQL 和 ES；
+程序缺失、配置不符合本机运行合同或服务未就绪时启动失败。全原生环境使用同一组
+`start.sh` 命令启停，安装和路径配置见[全原生本机开发](#可选全原生本机开发)。
 
 ## 自定义端口
 
-Compose 不解析应用连接 URL，也不会自动读取 `.env.local`。自定义端口时，
+**Docker 全栈：** 在 `.env.docker` 修改 `SEEKINO_WEB_PORT`、`SEEKINO_HTTP_PORT`、
+`SEEKINO_MYSQL_PORT`、`SEEKINO_ELASTICSEARCH_PORT` 即可。容器之间仍使用内部服务名和端口，
+无需修改数据库连接 URL。详细示例见[本地配置指南](local-setup.md)。
+
+**宿主机开发：** Compose 不解析应用连接 URL，也不会自动读取 `.env.local`。自定义端口时，
 请在 `.env.local` 中同时配置容器发布端口和应用连接 URL，并显式传入 `--env-file`：
 
 ```dotenv
-ANIVAG_DATABASE_URL=mysql+pymysql://root@127.0.0.1:13306/anivag_development?charset=utf8mb4
-ANIVAG_MYSQL_PORT=13306
-ANIVAG_ELASTICSEARCH_URL=http://127.0.0.1:19200
-ANIVAG_ELASTICSEARCH_PORT=19200
-ANIVAG_ELASTICSEARCH_INDEX=anivag_video_chunks_development
+SEEKINO_DATABASE_URL=mysql+pymysql://root@127.0.0.1:13306/seekino_development?charset=utf8mb4
+SEEKINO_MYSQL_PORT=13306
+SEEKINO_ELASTICSEARCH_URL=http://127.0.0.1:19200
+SEEKINO_ELASTICSEARCH_PORT=19200
+SEEKINO_ELASTICSEARCH_INDEX=seekino_video_chunks_development
 ```
 
 ```bash
-docker compose --env-file .env.local up -d --wait && ./start.sh
+docker compose --env-file .env.local up -d --wait mysql elasticsearch
+./start.sh
 # 后续管理也使用同一份配置：
-docker compose --env-file .env.local stop
+docker compose --env-file .env.local stop mysql elasticsearch
 ```
 
 宿主机 Python 使用 `127.0.0.1` 发布端口访问 MySQL 和 ES，连接 URL 不使用 Compose 服务名。
-此 Compose 使用固定项目名 `anivag-local`，多个 checkout 默认共享同一组开发卷。
+此 Compose 使用固定项目名 `seekino-local`，多个 checkout 默认共享同一组开发卷。
 需要独立环境时，设置不同的 `COMPOSE_PROJECT_NAME` 和端口，并在所有启停命令中保持一致。
 
 ## 已有本地数据

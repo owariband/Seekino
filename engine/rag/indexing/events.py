@@ -25,10 +25,16 @@ class EventIndexingContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     semantic_encoder: EncoderContract
-    vision_encoder: EncoderContract
-    capture: EventFrameContract
+    vision_encoder: EncoderContract | None
+    capture: EventFrameContract | None
     description_language: str | None = Field(default=None, min_length=1, pattern=r"\S")
     projection_version: Literal["timeline-event-index-v3"] = EVENT_PROJECTION_VERSION
+
+    @model_validator(mode="after")
+    def validate_visual_contract(self) -> EventIndexingContract:
+        if (self.vision_encoder is None) != (self.capture is None):
+            raise ValueError("Event vision encoder and capture must be enabled together")
+        return self
 
     @property
     def contract_id(self) -> str:
@@ -109,16 +115,19 @@ class EventIndexDocument(BaseModel):
     speaker: str | None = Field(default=None, min_length=1, pattern=r"\S")
     lexical_fields: tuple[EventLexicalField, ...]
     semantic_vectors: tuple[EventSemanticVector, ...]
-    vision_vector: tuple[Annotated[float, Field(strict=True, allow_inf_nan=False)], ...]
+    vision_vector: tuple[Annotated[float, Field(strict=True, allow_inf_nan=False)], ...] | None
     detail: EventIndexDetail
 
     @model_validator(mode="after")
     def validate_document(self) -> EventIndexDocument:
         if self.event_type != "DIALOGUE" and self.speaker is not None:
             raise ValueError("Only DIALOGUE can have a speaker")
-        validate_embedding_vector(self.vision_vector, dimensions=len(self.vision_vector))
-        if not self.lexical_fields or not self.detail.capture.frames:
-            raise ValueError("Event documents require text and realized capture frames")
+        if self.vision_vector is not None:
+            validate_embedding_vector(self.vision_vector, dimensions=len(self.vision_vector))
+        if not self.lexical_fields:
+            raise ValueError("Event documents require text")
+        if (self.vision_vector is not None) != bool(self.detail.capture.frames):
+            raise ValueError("Event vision vectors require realized capture frames; text-only documents have neither")
         dialogue_fields = [field for field in self.lexical_fields if field.field == "dialogue"]
         if bool(dialogue_fields) != (self.event_type == "DIALOGUE"):
             raise ValueError("Only DIALOGUE Events require dialogue lexical fields")
@@ -219,21 +228,29 @@ def plan_event_index(
             lexical_fields=lexical,
             semantic_requests=tuple(semantic_requests),
             capture_start_ms=start, capture_end_ms=end,
-            frame_timestamps_ms=contract.capture.timestamps(start, end), contract=contract,
+            frame_timestamps_ms=contract.capture.timestamps(start, end) if contract.capture is not None else (),
+            contract=contract,
         ))
     return tuple(plans)
 
 
 def finalize_event_index(
     plan: EventIndexPlan, semantic_artifacts: Sequence[EmbeddingArtifact],
-    vision_vector: Sequence[float], frames: Sequence[CaptureFrame],
+    vision_vector: Sequence[float] | None, frames: Sequence[CaptureFrame],
 ) -> EventIndexDocument:
     if len(semantic_artifacts) != len(plan.semantic_requests):
         raise ValueError("Every Event semantic request requires exactly one artifact")
     semantic = tuple(EventSemanticVector(
         **item.source.model_dump(), vector=validate_embedding_artifact(item.request, artifact),
     ) for item, artifact in zip(plan.semantic_requests, semantic_artifacts, strict=True))
-    vision = validate_embedding_vector(vision_vector, dimensions=plan.contract.vision_encoder.dimensions)
+    if plan.contract.vision_encoder is None:
+        if vision_vector is not None or frames:
+            raise ValueError("text-only Event indexing must not include vision vectors or frames")
+        vision = None
+    else:
+        if vision_vector is None:
+            raise ValueError("multimodal Event indexing requires a vision vector")
+        vision = validate_embedding_vector(vision_vector, dimensions=plan.contract.vision_encoder.dimensions)
     prepared = tuple(CaptureFrame.model_validate(frame) for frame in frames)
     if tuple(frame.requested_at_ms for frame in prepared) != plan.frame_timestamps_ms:
         raise ValueError("Event capture frames differ from the planned timestamps")

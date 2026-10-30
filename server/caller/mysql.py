@@ -126,7 +126,7 @@ def _validate_database_url(
             raise ValueError("SQLite is only allowed for isolated tests")
         return
     if backend != "mysql":
-        raise ValueError("anivag persistence requires a MySQL database URL")
+        raise ValueError("seekino persistence requires a MySQL database URL")
     if not database_name:
         raise ValueError("database URL must select a database")
 

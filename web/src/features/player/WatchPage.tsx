@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, MessageCircle, Play, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, MessageCircle, Play, Settings2, X } from "lucide-react";
 import { type CSSProperties, type Dispatch, type KeyboardEvent, type PointerEvent, type ReactNode, type SetStateAction, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -16,8 +16,8 @@ import { seriesPath, watchPath } from "../library/seriesLinks";
 import { useAuth } from "../auth/AuthProvider";
 import styles from "./watch.module.css";
 
-const PANEL_WIDTH_KEY = "anivag-watch-panel-width";
-const PAUSE_ON_SEND_KEY = "anivag-watch-pause-on-send";
+const PANEL_WIDTH_KEY = "seekino-watch-panel-width";
+const PAUSE_ON_SEND_KEY = "seekino-watch-pause-on-send";
 const MIN_PANEL_WIDTH = 320;
 
 type PlaybackExtraContext = {
@@ -58,6 +58,7 @@ export function WatchPage() {
   const playerRef = useRef<VideoPlayerHandle>(null);
   const chatRef = useRef<SearchPageHandle>(null);
   const panelToggleRef = useRef<HTMLButtonElement>(null);
+  const settingsRef = useRef<HTMLDetailsElement>(null);
   const playbackContextRef = useRef<PlaybackExtraContext | null>(null);
   const previousVideoId = useRef(videoId);
   const draggingRef = useRef(false);
@@ -147,6 +148,7 @@ export function WatchPage() {
     draggingRef.current = false;
     setResizing(false);
     setPanelOpen(false);
+    if (settingsRef.current) settingsRef.current.open = false;
     panelToggleRef.current?.focus();
   };
 
@@ -194,6 +196,15 @@ export function WatchPage() {
   useEffect(() => {
     try { window.localStorage.setItem(PAUSE_ON_SEND_KEY, String(pauseOnSend)); } catch { /* The setting still works for this visit. */ }
   }, [pauseOnSend]);
+
+  useEffect(() => {
+    const closeSettingsOutside = (event: globalThis.PointerEvent) => {
+      const settings = settingsRef.current;
+      if (settings?.open && event.target instanceof Node && !settings.contains(event.target)) settings.open = false;
+    };
+    document.addEventListener("pointerdown", closeSettingsOutside);
+    return () => document.removeEventListener("pointerdown", closeSettingsOutside);
+  }, []);
 
   useEffect(() => {
     const sync = () => setViewportWidth(window.innerWidth);
@@ -287,15 +298,28 @@ export function WatchPage() {
           }}
         /> : null}
 
-        <div className={styles.panelHeader}><strong>{t("边看边聊")}</strong><button type="button" onClick={closePanel} aria-label={t("关闭对话面板")}><X size={20} aria-hidden="true" /></button></div>
-        <div className={styles.sideTabs} role="tablist" aria-label={t("观看侧栏内容")}>
-          <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />{t("聊天")}</button>
-          <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />{t("选集")}</button>
+        <div className={styles.panelToolbar}>
+          <div className={styles.sideTabs} role="tablist" aria-label={t("观看侧栏内容")}>
+            <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />{t("聊天")}</button>
+            <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />{t("选集")}</button>
+          </div>
+          <details ref={settingsRef} className={styles.watchSettings} onKeyDown={(event) => {
+            if (event.key !== "Escape" || !event.currentTarget.open) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.open = false;
+            event.currentTarget.querySelector("summary")?.focus();
+          }}>
+            <summary role="button" aria-label={t("观看设置")} title={t("观看设置")}><Settings2 size={16} aria-hidden="true" /></summary>
+            <div className={styles.watchSettingsPopover}>
+              <label className={styles.pauseOnSend}>
+                <span>{t("发送问题时暂停视频")}</span>
+                <input type="checkbox" role="switch" checked={pauseOnSend} onChange={(event) => setPauseOnSend(event.target.checked)} />
+              </label>
+            </div>
+          </details>
+          <button className={styles.panelClose} type="button" onClick={closePanel} aria-label={t("关闭对话面板")}><X size={18} aria-hidden="true" /></button>
         </div>
-        {panelTab === "chat" ? <label className={styles.pauseOnSend}>
-          <span>{t("发送问题时暂停视频")}</span>
-          <input type="checkbox" role="switch" checked={pauseOnSend} onChange={(event) => setPauseOnSend(event.target.checked)} />
-        </label> : null}
         <div
           id="watch-chat-panel"
           className={styles.chatPanel}

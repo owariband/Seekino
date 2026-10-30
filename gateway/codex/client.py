@@ -32,7 +32,7 @@ _logger = logging.getLogger(__name__)
 
 
 _BASE_INSTRUCTIONS = """\
-You are a bounded AniVAG reasoning component. Use only {allowed_tools}
+You are a bounded Seekino reasoning component. Use only {allowed_tools}
 for external actions. Do not use shell commands, file access, {mcp_restriction}
 apps, plugins, browser tools, web search, user-input tools, or permission tools.
 Return the requested answer or structured result directly.
@@ -318,7 +318,7 @@ class CodexSession:
                 # Start before turn/start: the reader can receive tools before
                 # its response. Never borrow the model's bounded executor here.
                 self._dispatcher = WorkerThread(
-                    target=self._run_callbacks, name="anivag-codex-events", daemon=True,
+                    target=self._run_callbacks, name="seekino-codex-events", daemon=True,
                 )
                 self._dispatcher.start()
         try:

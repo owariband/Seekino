@@ -1,287 +1,284 @@
-# 本地配置指南：API 模型 + Docker 数据库
+# 本地 Docker 配置指南
 
-适用范围：2026-10-25 的 `dev` 工作区，包括尚未提交的启动器和 DeepAgents checkpoint 改动。本文供开发者和早期试用者配置环境；对外发布前，需将依赖的改动一并发布，并用干净 clone 验收。
+默认使用 DeepAgents 和远程 API 模型。MySQL、Elasticsearch、API、解析 Consumer、ffmpeg、Web 都由 Compose 启动，宿主机无需安装 Python、Node、ffmpeg 或运行 `start.sh`。
 
-当前可用链路是上传视频、解析入库、检索、观看与连续对话。HTML 页面、HTML 幻灯片和 HTML 短片是后续创作产物方向；Chat 尚未接入可写文件、执行代码的 sandbox，安装本地服务不会自动获得这些能力。
+这份配置用于本机单用户资料库，端口只绑定 `127.0.0.1`。云端公开服务的身份、HTTPS 和凭据策略另见[云端部署说明](cloud/README.md)。Chat 创作 sandbox 尚未接入；应用运行在 Docker 内不等于 Agent 已获得执行代码的工具。
 
-## 1. 选择安装路线
+## 1. 准备 Docker 和凭据
 
-推荐首次安装使用 **模型走 API、数据库用 Docker、应用运行在宿主机**。视频和业务数据保存在自己的电脑上，模型调用仍会向所选供应商发送相应内容。
+Windows/macOS 安装并启动 Docker Desktop；Linux 使用 Docker Engine 与 Compose。Windows 选择 Linux containers，通常使用 WSL 2 后端，直接在 PowerShell 执行下列命令即可，不需要额外进入 WSL 终端。环境要求见 [Docker Windows 官方说明](https://docs.docker.com/desktop/setup/install/windows-install/)。
 
-| 组件 | 当前运行方式 |
-| --- | --- |
-| MySQL 8.4、Elasticsearch 8.19.22 | 根目录 Compose；含健康检查、持久卷、loopback 端口 |
-| API、视频解析 Consumer | 宿主机 Python 3.12，同一服务进程 |
-| Web | 宿主机 Node 24+ / Vite |
-| ffmpeg / ffprobe | 宿主机安装 |
-| 对话、视觉、转写、embedding | 本指南配置为远程 API |
-| Redis、Mailpit | Compose 可选 profile；普通 local 模式不需要 |
-| 创作 sandbox、HTML 产物发布和预览 | 当前尚未接入 |
-
-macOS 是现有本机运行环境。Linux 可按同样的宿主机 + Compose 路线配置，但本次未实机验收；Windows 建议在 WSL2 内完成这套配置，未验证原生 Windows 启动。启动器依赖 Bash、`fcntl`、`ps`、`lsof` 和 POSIX 进程信号。
-
-这里的整套服务包含数据库、索引、视频处理和应用，不能套用“单个创作 sandbox 用 1 核 2 GB”的资源估算。先降低解析并发，再按自己的视频规模观察内存和磁盘用量。
-
-## 2. 安装基础工具
-
-需要 Git、[uv](https://docs.astral.sh/uv/getting-started/installation/)、Python **3.12**、Node.js **24+**、npm、ffmpeg、ffprobe、lsof，以及已启动的 Docker Desktop 或 Docker Engine + Compose。
-
-Compose 需要支持 `up --wait`；[Docker 官方入门](https://docs.docker.com/compose/gettingstarted/)说明了安装前提。macOS 使用原生 ES 的替代路线见[原生 Elasticsearch](elasticsearch/README.md)，已有原生 MySQL 也可以继续使用。
-
-在仓库根目录执行：
+使用支持 `env_file.required` 与 `up --wait` 的新版 Compose：
 
 ```bash
-uv sync --locked
-npm --prefix web ci
 docker compose version
-ffmpeg -version
-ffprobe -version
 ```
 
-更新仓库后也应运行 `uv sync --locked` 和 `npm --prefix web ci`。懒人脚本只在 Python 环境不存在或 Vite 缺失时安装依赖，不能代替锁文件更新后的同步。
-
-## 3. 准备私有环境文件
+在仓库根目录首次复制简短环境模板；已有 `.env.docker` 则编辑原文件，保留自己的配置：
 
 ```bash
-test -f .env.local || cp .env.example .env.local
-mkdir -p outputs/local-services
+cp deploy/docker/env.example .env.docker
 ```
 
-首次安装可沿用 `.env.example` 的开发数据库和索引名。在 `.env.local` 中设置或替换以下项目；已有环境应保留原数据库、索引和媒体目录，不用下面的默认值覆盖它们。
+PowerShell 也可使用 `Copy-Item deploy/docker/env.example .env.docker`。填写：
 
 ```dotenv
-ANIVAG_ENVIRONMENT=development
-ANIVAG_AUTH_MODE=local
-ANIVAG_LOCAL_TENANT_ID=local-default
-ANIVAG_DATABASE_URL=mysql+pymysql://root@127.0.0.1:3306/anivag_development?charset=utf8mb4
-ANIVAG_ELASTICSEARCH_URL=http://127.0.0.1:9200
-ANIVAG_ELASTICSEARCH_INDEX=anivag_video_chunks_development
-SEEKINO_ELASTICSEARCH_EVENT_INDEX=seekino_video_events_development_v3
-ANIVAG_ARTIFACT_ROOT=outputs/server/artifacts
-ANIVAG_MODEL_CONFIG=outputs/local-services/local-api-models.yaml
-KIMI_API_KEY=填写自己的Kimi凭据
-ARK_API_KEY=填写自己的Ark凭据
-
-# 单人首次验收从低并发开始；以后按机器和供应商限额调高。
-ANIVAG_VIDEO_CONCURRENCY=1
-ANIVAG_PARSE_CONCURRENCY=1
-ANIVAG_REFINE_CONCURRENCY=1
-ANIVAG_INDEX_CONCURRENCY=1
-ANIVAG_ASR_CONCURRENCY=1
+ARK_API_KEY=你的Ark凭据
+DEEPSEEK_API_KEY=你的DeepSeek凭据
 ```
 
-local 模式无需注册、Redis 或 SMTP。首次安装不要启用 `ANIVAG_AUTH_MODE=cloud`；云端身份的 Redis、SMTP、签名秘密和租约约束另见[部署说明](README.md)。
+默认 Supervisor、视觉、OCR、摘要、转写和向量使用 Ark；检索 Agent 和重排使用 DeepSeek。模型 ID 沿用项目已有 API 配置，实际使用前需核对账户权限或改为自己的 endpoint。默认关闭可选查询改写，不需要 Codex 登录、Whisper、Qwen 或 CAM++ 权重。
 
-## 4. 配置不依赖本地权重的模型
+若本机已运行开发服务，在 `.env.docker` 中改发布端口，避免占用同一套端口。例如 Web 5174、API 9622、MySQL 3307、ES 9201。容器内部仍使用 `mysql:3306`、`elasticsearch:9200`、`api:9621`，发布端口变化不改变容器间地址。
 
-把下列完整 YAML 保存为 `outputs/local-services/local-api-models.yaml`。它让生成式 Agent、视觉、OCR、摘要和重排走 Kimi，embedding 和转写走 Ark；关闭可选的 Jev / 本地 Qwen 查询改写，不配置本地 CAM++ 声纹。
+## 2. 一条命令启动
 
-这是一份减少本机安装依赖的起步配置，与开发机当前的 Whisper / CAM++ 组合不同。本次只验证配置与应用配置装配，**未对这一整套组合做真实模型调用和上传验收**。转写使用项目已有的 Ark 视频转写适配器，其效果应另测；需要 Whisper 或自己的音频 API 时，按[转写配置](../docs/model-config.md#ds--第三方-asr)替换 `transcription`。
+```bash
+docker compose --env-file .env.docker up --build -d --wait
+```
 
-Kimi endpoint 和 `k3.1-pro` 沿用当前 dev 绑定，也可在 [Kimi 官方文档](https://www.kimi.com/code/docs/)核对。使用与 endpoint 匹配且有模型权限的个人凭据；Ark 模型 ID 或 endpoint 也须以自己的账户实际权限为准。YAML 只存密钥变量名。
+首次构建需要联网下载镜像、Python 和前端依赖。启动顺序为：
+
+1. MySQL、Elasticsearch 健康检查通过。
+2. `initialize` 首次导入模型配置，检查配置与必需凭据，运行现有 `init-db` 和 `init-es-index`。
+3. `init-db` 创建业务表和 DeepAgents checkpoint 表；初始化失败会阻止 API 启动。
+4. API 和进程内 Consumer 就绪后启动 Nginx 静态 Web。
+
+默认入口：
+
+- Web：<http://127.0.0.1:5173>
+- API 文档：<http://127.0.0.1:5173/docs>，也可直连 <http://127.0.0.1:9621/docs>
+- 健康检查：<http://127.0.0.1:5173/healthz>
+
+首次为空库，没有预装已解析素材。创建系列、上传一个短视频，等待解析和索引完成，再验证检索、视频播放和两轮连续对话。服务健康不代表模型权限、解析效果和工具调用已通过实际验收。
+
+已有数据库会先检查兼容性；这条启动链不会自动迁移旧业务数据或替换不兼容索引。旧版本升级按报错和 [Server 说明](../server/README.md)处理。
+
+## 3. 模型仍用现有配置方式
+
+不维护按供应商拆分的 YAML。继续使用现有 `model_sources`、`models`、`supervisor_harness` 和 `SEEKINO_MODEL_CONFIG`，完整字段见[模型配置](../docs/model-config.md)。
+
+`.env.docker` 中的 `SEEKINO_MODEL_CONFIG=./config.yaml` 指向**首次导入的宿主机文件**，相对路径以仓库根目录为准，也可以选择自己的既有 YAML。初始化后，容器使用持久卷中的 `/data/config/config.yaml`，设置页修改也保存到这里。普通启动和镜像重建不会覆盖这份有效配置。
+
+首次启动前可以直接编辑源 YAML；已经启动过的实例，按本节末尾的步骤重新导入。凭据始终写在 `.env.docker`，不要放进 YAML。
+
+### 可选 Kimi
+
+项目已经声明 `kimi_coding` 来源，沿用 `adapter: openai`、`profile: kimi` 和 `https://api.kimi.com/coding/v1`。将同一份 YAML 中以下字段改为对应值，保留其余模型和预算设置：
 
 ```yaml
-config_version: 2
 supervisor_harness: deepagents
-query_hook:
-  enabled: false
-tracing:
-  enabled: false
-  environment: development
-
-model_sources:
-  kimi_coding:
-    adapter: openai
-    provider: kimi
-    profile: kimi
-    base_url: https://api.kimi.com/coding/v1
-    api_key_env: KIMI_API_KEY
-  ark_default:
-    adapter: ark
-    provider: ark
-    api_key_env: ARK_API_KEY
-
 models:
-  agent:
-    source: kimi_coding
-    model: k3.1-pro
-    supports_vision_input: true
-    reasoning_effort: low
-    max_output_tokens: 8192
-    request_timeout_seconds: 600
   supervisor:
     source: kimi_coding
     model: k3.1-pro
     supports_vision_input: true
     reasoning_effort: low
-    max_output_tokens: 8192
-    request_timeout_seconds: 1200
-    context_window_tokens: 64000
-    context_safety_margin_tokens: 4096
-    auto_compact_tokens: 48000
-    compact_target_tokens: 24000
-    max_input_chars: 200000
-  transcription:
-    kind: transcription
-    source: ark_default
-    model: doubao-seed-2-0-lite-260428
-    request_timeout_seconds: 600
-  vision:
-    source: kimi_coding
-    model: k3.1-pro
-    supports_vision_input: true
-    reasoning_effort: low
-    max_output_tokens: 8192
-    request_timeout_seconds: 600
-  ocr:
-    source: kimi_coding
-    model: k3.1-pro
-    supports_vision_input: true
-    reasoning_effort: low
-    max_output_tokens: 8192
-    request_timeout_seconds: 600
-  summarize:
-    source: kimi_coding
-    model: k3.1-pro
-    supports_vision_input: true
-    reasoning_effort: low
-    max_output_tokens: 8192
-    request_timeout_seconds: 600
-  embedding:
-    kind: embedding
-    source: ark_default
-    model: doubao-embedding-vision-250615
-    dimensions: 1024
-    video_fps: 1.0
-    request_timeout_seconds: 600
-  rerank:
-    kind: rerank
-    source: kimi_coding
-    model: k3.1-pro
-    reasoning_effort: low
-    max_output_tokens: 8192
-    request_timeout_seconds: 180
-
-agent_runtime:
-  limits_enabled: true
-  total_timeout_enabled: true
-  maximum_concurrent_kicks: 1
-  maximum_parallel_queries: 1
-  query_reasoning_effort: low
-  supervisor_reasoning_effort: low
-  stage_timeout_seconds: 480
-  supervisor_timeout_seconds: 1200
-  execution_timeout_seconds: 1200
-
-video_parser:
-  transcript_fps: 1.0
-  video_fps: 1.0
-  fallback:
-    enabled: false
-    frame_fps: 0.5
-    group_duration_seconds: 30
-    max_frames_per_group: 15
-    max_height: 720
 ```
 
-这个 profile 不需要 Codex 登录、`DEEPSEEK_API_KEY`、`WHISPER_API_KEY`、`OPENROUTER_JEV_API_KEY`、8B 改写权重或声纹依赖。不要同时保留旧的 `ANIVAG_AGENT_*_MODEL`、`ANIVAG_TRANSCRIPT_MODEL` 等模型覆盖；它们可能把有效模型重新改掉。已有素材库不要随意更换 embedding 模型、来源或维度，索引和编码器身份必须匹配。
+宿主机开发在项目根目录 `.env.local` 填写 `KIMI_API_KEY`；完整容器部署填写 `.env.docker`。密钥只提供鉴权，不会自动切换模型；endpoint、profile 和模型选择继续由同一份有效 YAML 管理，不新增同名环境变量。后端模型密钥不要放进 `web/.env.local` 或任何 `VITE_*` 变量。
 
-可先执行纯配置检查，不调用模型、不连接数据库：
+上述示例只切换 Supervisor；`models.agent`、`vision`、`vision_fallback`、`ocr`、`summarize`、`rerank` 可以分别选择 `kimi_coding` / `k3.1-pro`，保留各角色现有预算、超时及视觉能力字段。转写和 embedding 保持各自专用模型。Kimi endpoint 和模型权限可对照 [Kimi 官方文档](https://www.kimi.com/code/docs/)。
 
-```bash
-uv run --no-sync --env-file .env.local python -c 'from gateway.config import load_config, required_api_key_env_names; c = load_config(); print("harness:", c.supervisor_harness); print("required keys:", required_api_key_env_names(c))'
-```
+推理字段须按实际适配路径设置：Chat 的 Agent / Supervisor 支持 `profile: kimi` 和 `reasoning_effort: low`；通过 `GatewayClient.create_generative_model` 构造的 `vision`、`vision_fallback`、`ocr`、`summarize`、`rerank` 当前使用 `OpenAIVisionModel`，其 `reasoning_effort` 只能设为 `none` 或不设置，沿用其他供应商的 `high` / `medium` 会在构造时失败。这条路径中的 `none` 表示请求省略推理参数，使用供应商默认行为，不等于关闭 Kimi thinking。
 
-应显示 `deepagents`，所需密钥变量名为 `ARK_API_KEY`、`KIMI_API_KEY`。这只校验配置结构，不验证密钥有效性或模型效果。
+切换后先使用实际生效的 YAML 和环境变量，对上述五个角色执行 `GatewayClient.create_generative_model` 构造并关闭资源；这项检查不发模型请求，可以发现配置加载校验未覆盖的适配错误。构造通过后仍需以短片验证 OCR、解析、索引与问答，不能替代真实模型验收。
 
-## 5. 初始化数据库、checkpoint 和索引
-
-首次安装默认数据库时执行：
-
-```bash
-docker compose --env-file .env.local up -d --wait mysql elasticsearch
-uv run --no-sync --env-file .env.local python -m server.cli init-db
-uv run --no-sync --env-file .env.local python -m server.cli init-es-index
-```
-
-按顺序运行，前一步失败时先修复再继续。Compose 首次初始化只创建默认库 `anivag_development`；自定义数据库 URL 时先创建对应数据库和账号权限。`init-db` 初始化当前业务 Schema 和 DeepAgents checkpoint 表，不创建数据库。
-
-**不要省略 `init-db`。** 当前懒人脚本调用 `create_schema()`，只覆盖业务表；它没有调用 checkpoint saver 的 `setup()`。已有表且服务健康，不代表新库的连续对话已可用。
-
-旧数据库不能按新安装处理。业务 Schema 不兼容时，遵照报错和[已有数据库升级说明](../server/README.md)评估迁移；ES mapping 不兼容时需规划重建。上述命令不会自动迁移旧业务数据或替换不兼容索引。
-
-Compose 端口与应用连接要一起修改：例如 MySQL 改发布端口时，同时调整 `ANIVAG_MYSQL_PORT` 和 `ANIVAG_DATABASE_URL`；ES 对应 `ANIVAG_ELASTICSEARCH_PORT` 与 `ANIVAG_ELASTICSEARCH_URL`。这份空密码、loopback Compose 用于本地开发。
-
-## 6. 启动、检查与停止
-
-当前 `dev` 工作区使用：
-
-```bash
-./start.sh --branch dev
-./start.sh --branch dev status
-```
-
-默认 `./start.sh` 仍定位已检出的 `main` 工作区。`--branch dev` 只选择已有 dev worktree，不会切换、拉取或创建分支。启动器复用数据库，校验 API / Consumer、资料库查询和 Web 代理；源码或启动配置变化时，会更新自己管理的 API/Web。
-
-访问 [Web](http://127.0.0.1:5173)、[API 文档](http://127.0.0.1:9621/docs)、[健康状态](http://127.0.0.1:9621/healthz)。首次没有任何视频属于正常空库状态，仓库不附带可直接使用的已解析素材库。
-
-验收依次做：创建系列 → 上传一个短视频 → 等待解析和索引完成 → 检索片段 → 播放来源视频 → 连续追问两轮。`/healthz` 正常只证明服务就绪，不能代替转写、embedding、模型工具调用和 checkpoint 的真实验收。
-
-日常停止：
-
-```bash
-./start.sh --branch dev stop
-docker compose --env-file .env.local stop mysql elasticsearch
-```
-
-第一条只停止启动器管理的进程，Docker 数据库需单独停止；已有原生 ES、Whisper 和查询改写服务也不归它管理。停止保留数据。需要继续运行时，先启动所用数据库，再执行启动器。
-
-### 手动启动替代方式
-
-希望前台调试或安装版本尚不支持 `--branch` 时，完成前面的初始化后，分别在两个终端运行：
-
-```bash
-# 终端一，仓库根目录
-uv run --no-sync --env-file .env.local python -m server.main
-```
-
-```bash
-# 终端二，仓库根目录
-uv run --no-sync --env-file .env.local npm --prefix web run dev -- --host 127.0.0.1 --port 5173 --strictPort
-```
-
-用 Ctrl-C 分别停止。手动命令中，已 export 的同名 shell 环境变量优先于 env 文件；启动器则会先清除 `.env.local` 中已有变量的 shell 覆盖。自定义 Web 端口时同步修改 `ANIVAG_WEB_PORT`、允许的来源与手动 Vite 的 `--port`。
-
-## 7. 数据、日志与常见问题
-
-| 内容 | 默认位置 |
+| 有效模型配置 | 所需凭据 |
 | --- | --- |
-| 私有配置 | `.env.local`、`outputs/local-services/local-api-models.yaml` |
-| 媒体、切片、帧、附件 | `ANIVAG_ARTIFACT_ROOT`，默认 `outputs/server/artifacts` |
-| 启动器日志和 PID | `outputs/local-services/`，重点查看 `api.log`、`web.log` |
-| 应用日志 | 默认 `outputs/server/logs` |
-| Compose 业务库和 checkpoint | `anivag-local_mysql_data` volume |
-| Compose ES 数据 | `anivag-local_elasticsearch_data` volume |
+| 当前默认 Ark + DeepSeek | `ARK_API_KEY`、`DEEPSEEK_API_KEY` |
+| 仅 Supervisor 切换到 Kimi，其余保持默认 | 上述两项，加 `KIMI_API_KEY` |
+| 所有生成式角色及 fallback 使用 Kimi，转写和向量保留 Ark | `KIMI_API_KEY`、`ARK_API_KEY` |
 
-备份至少包含 MySQL、对应媒体和有效配置；仅复制 ES 或 Git 仓库不足以恢复素材库。不要把 `outputs/` 整体当缓存，也不要用 `docker compose down -v` 作为日常停止命令。
+第三种方案还需处理 `models.agent.fallback`：切换到 Kimi，或移除与主模型重复的 fallback；同时核对 `models.vision_fallback`。只填 Key 或只改 Supervisor 都不能移除仍被其他角色使用的凭据。上述三种组合的配置加载校验不代表所有角色已通过运行时构造或真实调用；补齐环境模板不会改变仓库的默认模型选择。
 
-| 症状 | 优先检查 |
+### 可选 Codex
+
+继续使用已有 `codex_app_server` 适配器。将 Supervisor 改为：
+
+```yaml
+supervisor_harness: codex
+models:
+  supervisor:
+    source: codex_local
+    model: gpt-5.6-sol
+    supports_vision_input: true
+    reasoning_effort: low
+```
+
+这是修改现有字段的片段，不是替换整个文件。Codex Supervisor 不接受 `fallback`；若原绑定有该字段，切换时移除。模型 ID 可改为自己账户可用的 ID。其他角色仍按各自绑定运行。
+
+镜像复用项目锁定的 `openai-codex` SDK 和随包 runtime，不另装一套宿主机 Codex。先在容器内完成个人登录：
+
+```bash
+docker compose --env-file .env.docker run --build --rm --no-deps api codex login --device-auth -c 'cli_auth_credentials_store="file"'
+```
+
+按终端给出的链接和一次性验证码，在浏览器完成授权；设备登录须由个人或工作区设置允许，见 [OpenAI 登录说明](https://learn.chatgpt.com/docs/auth)。登录状态与原生会话保存在持久卷 `/data/codex`，API 使用同一 `CODEX_HOME`。这不会复用宿主机的私有 Codex 目录。
+
+完成后使用第 2 节的 Compose 启动命令。检查登录状态可以运行：
+
+```bash
+docker compose --env-file .env.docker run --rm --no-deps api codex login status
+```
+
+### 已有实例更新配置
+
+只修改 API Key 或环境参数后，重新执行 `docker compose --env-file .env.docker up -d --wait`，让 Compose 重建环境发生变化的服务；仅 `restart` 不会更新容器环境。
+
+如果修改了宿主机 YAML 或 `SEEKINO_MODEL_CONFIG`，明确重新导入，以下步骤会替换有效模型 YAML，但保留媒体和数据库：
+
+```bash
+docker compose --env-file .env.docker stop web api
+docker compose --env-file .env.docker run --rm --no-deps initialize cp /app/model-template.yaml /data/config/config.yaml
+docker compose --env-file .env.docker up -d --wait
+```
+
+重新导入会同时替换设置页保存的 Agent 参数。如需保留，先导出有效配置再编辑：
+
+```bash
+docker compose --env-file .env.docker cp api:/data/config/config.yaml ./config.saved.yaml
+```
+
+可将 `SEEKINO_MODEL_CONFIG` 指向这个文件。不要在已有素材库上随意更换 embedding 模型、来源或维度，索引与编码器身份必须匹配。
+
+宿主机服务地址 `127.0.0.1` 在容器里指容器自身。连接自己部署的模型时，应使用容器可达地址；Linux Compose 已配置 `host.docker.internal`。现有 `openai_audio` 校验仅允许远端 HTTPS 或 loopback HTTP，宿主机 Whisper 的非 loopback 地址需要 HTTPS；Docker 不绕过这个校验，也不自动部署本地模型权重。
+
+## 4. 日常运行与数据
+
+```bash
+docker compose --env-file .env.docker ps -a
+docker compose --env-file .env.docker logs --tail=100 initialize api web
+docker compose --env-file .env.docker stop
+docker compose --env-file .env.docker up -d --wait
+```
+
+更新代码后再次执行带 `--build` 的启动命令。`initialize` 成功后显示 `Exited (0)` 属于正常状态，它是一次性初始化服务。
+
+| 数据 | 默认位置 |
 | --- | --- |
-| 找不到 main 工作区 | 当前版本用 `./start.sh --branch dev`，或按手动启动章节运行 |
-| 仍提示 Codex / DeepSeek / Whisper 密钥 | `ANIVAG_MODEL_CONFIG` 是否指向本指南 YAML；检查 shell 和模型角色覆盖 |
-| API 正常，首次 Chat 报 checkpoint 表不存在 | 使用同一 `.env.local` 执行 `server.cli init-db` |
-| 首次模型调用 401 / 403 / 模型不存在 | 密钥与 endpoint 是否对应、模型权限、账户可用模型 ID；启动器只检查必需密钥是否非空 |
-| 本地模型服务未运行 | 本指南 profile 不依赖它们；使用根配置时需另行启动 Whisper / Qwen 并准备 CAM++ |
-| 上传后解析失败 | `api.log`、任务错误、转写/视觉/embedding 权限、ffmpeg 和磁盘空间 |
-| Docker 数据库启动端口冲突 | 是否已有原生 MySQL/ES；选用其中一套或同时修改发布端口和应用连接 |
-| 页面显示正常但查不到内容 | 空库、解析未完成或索引合同不匹配；按任务状态和日志定位 |
+| 模型、全局 Agent 设置 | `seekino-local_app_data` 卷的 `/data/config/config.yaml` |
+| 视频、切片、帧、附件 | 同一卷的 `/data/artifacts` |
+| 应用日志 | 同一卷的 `/data/logs`；容器标准输出也可用 `compose logs` 查看 |
+| Codex 登录与会话 | 同一卷的 `/data/codex` |
+| 业务数据、DeepAgents checkpoint | `seekino-local_mysql_data` 卷 |
+| ES 索引 | `seekino-local_elasticsearch_data` 卷 |
 
-本地 UI 也支持连接固定的远端资料源，配置见 [Web README](../web/README.md)；它不自动同步本机视频，也不表示本地和远端模型配置共用。
+`stop` 和普通 `down` 保留命名卷；`down -v` 会删除它们，不能作为日常停止命令。备份至少保留 MySQL、`app_data` 和私有环境文件，ES 不能替代完整备份。应用镜像不包含 `.env`、个人登录目录、视频或本机权重。
 
-## 8. Docker 当前覆盖与验收边界
+| 问题 | 检查方式 |
+| --- | --- |
+| `Set credentials in .env.docker` | 按报错变量名填写所选来源需要的密钥；不会打印密钥值 |
+| 修改 YAML 后没生效 | 已有有效配置保存在持久卷，按“已有实例更新配置”重新导入 |
+| `initialize` 失败 | 查看它的日志；检查旧库兼容性、ES mapping、配置和凭据 |
+| API 正常但模型调用失败 | 核对供应商模型权限、endpoint、转写与 embedding；启动不会做付费探测 |
+| 端口占用 | 修改 `.env.docker` 发布端口，或停止占用的本机服务 |
+| Windows 构建失败 | 确认 Docker Desktop 已运行、选用 Linux containers，检查代理与镜像下载网络 |
 
-根 Compose 已有数据库镜像、健康检查、持久卷和可选的 Redis/Mailpit。仓库当前没有 Seekino 应用 Dockerfile、API/Web 镜像发布、全栈 Compose 或创作 sandbox 镜像；CI 也没有完整 Compose 安装验收。`docker compose up` 只启动基础设施。
+## 5. 宿主机开发仍可使用
 
-本指南核对了当前源码、Compose YAML、模型配置与纯配置装配。检查机器没有 Docker CLI，未执行容器拉取、全新 Docker 安装、Linux/WSL2 验收或这份 API profile 的付费模型调用。现有开发机的健康状态只代表其已配置环境，不能当作新用户安装成功的证据。
+需要断点调试或 Vite 热更新时，只启动数据库，再按 [README 的宿主机步骤](../README.md#宿主机开发可选)运行 API/Web：
 
-后续降低安装门槛，优先补齐可发布的 API 模型模板、统一的业务表/checkpoint 初始化入口、API/Web/ffmpeg 应用镜像，以及从空卷启动到首轮对话的安装验收；HTML 创作 sandbox 还需单独接入。
+```bash
+docker compose up -d --wait mysql elasticsearch
+```
+
+该路线使用 `.env.local` 和宿主机工具；`./start.sh --branch dev` 仍只管理宿主机进程。完整 Docker 路线不经过它，因此不依赖 Windows 上的 Bash、`fcntl` 或 `lsof`。两条路线若同时运行，需要隔离端口、数据库和媒体。
+
+## 验证边界
+
+本次配置已通过以下检查：
+
+- Compose CLI 解析默认服务、可选 profile、自定义端口和包含空格的模型路径。
+- 初始化脚本的首次导入、失败中止、重复运行，以及设置页原子写入后的配置保留测试。
+- 默认 DeepAgents、现有 Kimi / Codex 绑定和服务配置 / 装配回归测试。
+- 前端生产构建、Nginx 配置语法检查；Linux amd64 / arm64 的锁定依赖解析 dry-run。
+
+以上是原容器部署配置的验证记录。2026-10-28 已在新 Mac 验证 MySQL/Elasticsearch 容器健康、宿主机依赖和前端构建；完整应用镜像构建、Windows Docker Desktop 与供应商付费调用仍未实测。
+
+## 6. 默认模型凭据与 M5 本地替代
+
+### 默认配置实际需要的 Key
+
+宿主机开发在根目录 `.env.local` 填写；完整容器部署在 `.env.docker` 填写。
+第三方凭据名称保持供应商名称，不属于项目命名空间：
+
+| 变量 | 当前模型角色 | 缺失时的影响 |
+| --- | --- | --- |
+| `ARK_API_KEY` | Supervisor、转写、视觉理解、OCR、摘要、文本/图片/视频向量，以及 Agent fallback | 默认配置无法完成解析和向量检索；当前启动器会在启动应用前拒绝缺失的必需凭据 |
+| `DEEPSEEK_API_KEY` | 检索 Agent、重排、视觉 fallback | 默认配置无法运行这些角色；当前启动器同样会拒绝缺失凭据 |
+
+`KIMI_API_KEY`、`ANTHROPIC_API_KEY`、查询改写相关凭据均不被当前默认配置选中，无须填写。
+`ARK_API_KEY` 需要在方舟账户中有对应模型权限；有 Key 不代表 `config.yaml` 中所有模型 ID 都已开通。
+初始化 MySQL/ES、前端编译和离线单元测试不需要模型 Key。两项 Key 的非空检查不能代替真实模型验收。
+
+官方入口：[方舟 Key 管理](https://docs.volcengine.com/docs/ark/manage-api-keys?lang=zh)、
+[方舟模型开通与首次调用](https://docs.volcengine.com/docs/ark/quick-start?lang=zh)、
+[DeepSeek API 鉴权](https://api-docs.deepseek.com/api/deepseek-api/)。
+
+### 只有一个 Ark Key 的配置方案
+
+可以在现有 `config.yaml` 中把 `models.agent`、`models.rerank`、`models.vision_fallback`
+的 `source` 改为 `ark_default`，`model` 改为账户可用的豆包生成模型；当前配置中的
+`doubao-seed-2-0-lite-260428` 是候选值。移除 `models.agent.fallback` 中重复的同来源 fallback。
+保留其他角色与预算字段，并核对所有仍选中的 fallback。
+
+2026-10-28 已在内存中使用上述调整通过配置校验，`required_api_key_env_names` 仅返回
+`ARK_API_KEY`。主配置仍保留原供应商组合，未替用户切换模型，也未执行付费探测。
+这是可减少供应商凭据数量的方案；实际质量、延迟与模型权限仍需验证。
+
+### 零云端 Key 的本地模型路线
+
+本次机器实测硬件为 Apple M5、16 GiB 统一内存。以下是候选组合，不代表已安装或已通过端到端模型验收。
+
+| 职责 | 本地候选 | 当前接入边界 |
+| --- | --- | --- |
+| 对话、工具调用、视觉/OCR、摘要、生成式重排 | Qwen3-VL-4B-Instruct 的 4-bit MLX 版本，使用 MLX-VLM；文本角色也可用独立小型文本模型 | 需要验证工具调用和结构化输出；当前 `openai` / `openai_vision` 来源只允许 HTTPS，本机 HTTP 需要有边界的 loopback 支持或本机可信 HTTPS |
+| 语音转写 | 多语言 Whisper small / medium，使用 whisper.cpp 的 Metal 支持 | 项目已有 `openai_audio`，允许 loopback HTTP；服务端需要提供匹配的 Audio Transcriptions 路径和带时间戳输出，原生 whisper.cpp HTTP 接口不能未经核对就当作完全兼容 |
+| 文本、图片、视频向量 | Qwen3-VL-Embedding-2B，评估 MLX-VLM 的多模态 embedding 服务 | 当前 `gateway/embedding.py` 只实现 Ark，需要新增本地 adapter、对齐预处理/编码器身份；即使仍取 1024 维，也必须重新编码并建立新索引 |
+
+依据：[Qwen3-VL](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct)、
+[Qwen3-VL-Embedding](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)、
+[MLX-VLM](https://github.com/Blaizzy/mlx-vlm)、
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp)。
+
+16 GiB 同时承载系统、IDE、数据库、VLM、转写和向量模型会有内存压力。建议先从小模型、
+4K–8K 上下文、较少视频帧和串行处理开始，按阶段加载/卸载模型；不要沿用云模型的长上下文和高并发预算。
+这些是待本机压测的起点，不能推断为相同云端质量或实时处理速度。
+本地模型不需要云供应商 Key；个别兼容 SDK 的非空 `api_key` 字段可能使用本机占位值，但不能把占位值填进当前云模型配置来绕过校验。
+
+## 7. Seekino 命名空间切换（2026-10-28）
+
+项目包名、环境变量、容器项目、默认数据库/索引、Cookie、浏览器存储、Agent 内部标识与文件名已统一使用 Seekino。
+环境变量使用 `SEEKINO_*`；默认开发库为 `seekino_development`，默认 Chunk 索引为
+`seekino_video_chunks_development`，Compose 项目为 `seekino-local`。
+
+这是一次完整命名空间切换，不提供旧配置前缀的透明兼容：
+
+- 两份本机 `.env.local` 已同步改名，供应商密钥值不改动。
+- Series、Video、Chunk、ContextSnapshot 和 ParseJob 的 UUID5 输入命名空间已切换；已有实体不会自动获得新的 ID。
+- ES 索引合同版本已更新；旧索引不能直接视为兼容的新索引。
+- 旧 Cookie、主题、语言、播放记录和会话缓存不会自动导入新浏览器命名空间；既有用户可能需要重新登录和设置偏好。
+- 本机切换前已核对：业务表为空，只有 checkpoint schema 的迁移记录；搜索索引为 0 文档。
+  因此本机使用新的空开发库/索引，并保留切换前 SQL 与索引定义备份。
+- 有真实业务数据的其他部署必须先制定数据库外键、确定性 ID、素材引用、会话和 ES 重建迁移方案，不能仅替换名称或直接重建。
+
+本轮已验证宿主机前端构建、新数据库容器健康和初始化；完整应用镜像构建、实际供应商请求与本地模型效果仍需各自验收。
+
+### 本机验证结果与尚存问题
+
+2026-10-28 命名空间改名后：`uv sync --locked --offline`、前端生产构建通过；
+前端 551 项测试通过；真实 MySQL/ES/Checkpoint 相关测试 51 通过、1 跳过。
+后端非 live-agent 全量测试为 4960 通过、107 跳过、1 未选中、9 失败。
+随后在改名前源码快照上复跑全部 9 个失败用例，9 个均复现，因此不能归因为本次改名，
+也不能宣称后端测试全部通过。测试使用临时 NumPy/SciPy 依赖层，未改项目依赖声明。
+
+现存失败包括：测试引用已不存在的 `engine.common.model_factory`；Langfuse 接入头断言；
+3 个模型默认配置/独立 Supervisor 断言；1 个多模态 fallback 上下文预算用例；
+3 个真实视频处理用例。视频失败已确认是 FFmpeg 9 不再接受代码使用的
+`-filter_script:v` 参数，后续完成视频端到端验收前需要修复此兼容性问题。
+
+`./start.sh --branch dev` 已完成数据库和索引检查，但因两个默认供应商 Key 为空，
+按预期停止在 API/Web 启动前；付费模型调用与完整视频流程未验收。
+新命名 MySQL 和 Elasticsearch 容器健康。旧容器停止后，旧数据卷和网络应继续保留；
+确认备份可恢复且新实例验证完成后，再显式清理旧资源。不要用删除卷作为常规启动步骤。

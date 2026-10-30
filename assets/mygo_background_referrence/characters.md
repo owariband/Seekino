@@ -1,8 +1,8 @@
 # MyGO!!!!! Character Bible
 
-本文件是 anivag 在解析《BanG Dream! It's MyGO!!!!!》时使用的人物消歧背景。它只帮助模型把画面中的人物映射到稳定角色 ID，不能替代当前视频中的可见、可听证据。
+本文件是 seekino 在解析《BanG Dream! It's MyGO!!!!!》时使用的人物消歧背景。它只帮助模型把画面中的人物映射到稳定角色 ID，不能替代当前视频中的可见、可听证据。
 
-<!-- ANIVAG_RUNTIME_CONTEXT_START -->
+<!-- SEEKINO_RUNTIME_CONTEXT_START -->
 
 作品：《BanG Dream! It's MyGO!!!!!》。以下九人是人物消歧候选：MyGO!!!!! 的五位成员，以及若葉睦、豊川祥子、三角初華、八幡海鈴四位重要关联人物。不能把关联人物自动归为 MyGO!!!!! 成员，也不能假定画面中的每个人都在候选名单内。
 
@@ -22,7 +22,7 @@
 
 时间字段必须使用相对视频起点的整数秒：60 秒 VideoChunk 的末尾应写作约 `60`。
 
-<!-- ANIVAG_RUNTIME_CONTEXT_END -->
+<!-- SEEKINO_RUNTIME_CONTEXT_END -->
 
 ## 使用规则
 
@@ -211,4 +211,4 @@
 - 四位关联人物的后续身份与关系补充：[《BanG Dream! Ave Mujica》官方角色页](https://anime.bang-dream.com/avemujica/character/)。后续信息仅作消歧参考，不能替代当前视频证据。
 - 人物基础资料与立绘：上述各角色官方人物页。
 - 新增四张立绘经 [mygo-mujica-archive 的 cards-wikia 分类](https://github.com/Furinaaa-Cancan/mygo-mujica-archive/tree/main/assets/AveMujica/art/cards-wikia)取得；其[来源说明](https://github.com/Furinaaa-Cancan/mygo-mujica-archive/blob/main/assets/README.md)标明通过 Bandori Fandom API 整理。镜像目录名不代表图片中的人物已进入 Ave Mujica 时间线；本次使用的是 MyGO 时期的正常人物形象。
-- 官方页面标注相关图片、照片和插画禁止未经授权复制或转载；本目录中的图片只用于 anivag 本地研究和模型能力验证，并已通过 `.gitignore` 排除。
+- 官方页面标注相关图片、照片和插画禁止未经授权复制或转载；本目录中的图片只用于 seekino 本地研究和模型能力验证，并已通过 `.gitignore` 排除。

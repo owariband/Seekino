@@ -83,7 +83,7 @@ N02 第一轮重复呈现弱身份标签，Agent 将同源信息误当独立佐�
 
 仅在五人草稿库中排第一不能证明识别改进：补入缺失竞争人物后，爽世目标的逐条均值仍排第二。候选多样性或参考条数增加没有在本样本证明必然更好。弱标签、同一来源的重复描述、画面中有人张嘴都不能替代独立身份核验。参见保留的 [聚类与选源退役摘要](#聚类与选源)。
 
-旧 75% 准备门槛和 VoiceprintAgent 选源路线已被后续 B0 接入合同取代；WavLM、K-means、medoid 仍属于后续实验，不能据“没有接入生产”宣称算法已被证明无效。当前决定以 [voiceprint-trd.md](../design/voiceprint-trd.md) 为准。
+旧 75% 准备门槛和 VoiceprintAgent 选源路线已被后续 B0 接入合同取代；WavLM、K-means、medoid 仍属于后续实验，不能据“没有接入生产”宣称算法已被证明无效。当前决定以 [voiceprint-trd.md](../design/02-agent-harness/voiceprint-trd.md) 为准。
 
 ### v6 网络失败与 v7 性能结论
 
@@ -109,7 +109,7 @@ N04 使用同一组六张原图探索图片透传、候选核验和执行预算�
 
 ### 过时架构图和代码示例
 
-N06 的图明确写着 `Interval: REFINING → INDEXING → COMPLETE`，把索引执行、重试和 Prefix 更新后的重索引交给 Interval。当前合同为 Interval 仅 Refine、同一 ChunkTask 承担 Parse/Index；这不是两张都有效的架构图。保留的依据为 [Parse Agent TRD](../design/video-parse-harness-trd.md) 和 [Engine TRD](../design/video-parse-engine-trd.md)。
+N06 的图明确写着 `Interval: REFINING → INDEXING → COMPLETE`，把索引执行、重试和 Prefix 更新后的重索引交给 Interval。当前合同为 Interval 仅 Refine、同一 ChunkTask 承担 Parse/Index；这不是两张都有效的架构图。保留的依据为 [Parse Agent TRD](../design/02-agent-harness/video-parse-harness-trd.md) 和 [Engine TRD](../design/02-agent-harness/video-parse-engine-trd.md)。
 
 N07 示例演示使用假模型执行两轮 Query/Evaluator、传递 advice、复用证据和回调，不执行真实 Provider／SQL／HTTP。它引用的 `server.agent` 和 `tests/server/test_agent_runtime.py` 已不存在，不能继续称为当前可运行示例。需要学习现有行为时，从 [video_search/runtime.py](../../agent/chat/video_search/runtime.py) 与 `tests/agent/chat/` 开始；示例中“证据复用和确定性输出校验”的意图可以保留，旧导入路径和接口不再保留为合同。
 
@@ -151,7 +151,7 @@ N09 的早期轮次先完成 2,360 个唯一图像向量，再复用缓存扩到
 除本文件外，实际修改的入口如下；具体删除文件由上面的准确范围和三份审计例外定义。
 
 ```text
-AniVAG/
+Seekino/
 ├── transfer.md
 ├── docs/
 │   ├── design/
@@ -202,7 +202,7 @@ AniVAG/
 `[A]` 表示本轮新增，`[M]` 表示本轮修改已有工作区文件，`[D]` 表示本轮删除。目录下数百个本地产物按上表的完整目录范围列示；下树单列七个已跟踪的删除文件。
 
 ```text
-AniVAG/
+Seekino/
 ├── evals/mygo/
 │   ├── [A] README.md
 │   ├── [A] cases.json
@@ -269,7 +269,7 @@ AniVAG/
 ### 实际修改树与验证
 
 ```text
-AniVAG/
+Seekino/
 ├── docs/dev/
 │   └── [M] design-experiment-cleanup.md
 └── engine/experiment/composition-models/
@@ -339,7 +339,7 @@ AniVAG/
 - 24 个 Chunk、378 条 ASR cue 切成 436 个短窗，另有 3 个留出版本，共 439 段音频；226 个窗参与拟合。在 L2 向量上运行普通欧氏 K-means，尝试 K=2–12；不是球面 K-means，也没有 PCA／白化。自动选择 K=2 时爱音与爽世目标落入同簇，轮廓系数不能替代人物分离质量或真实人数。
 - K=8 选源后，用相同六人物候选池复核：爽世逐条均值 0.529157 仍低于乐奈 0.529823；质心分数则为爽世 0.593479、乐奈 0.529823。只展示有利聚合会掩盖失败，不能认定问题已解决。
 - VoiceprintAgent 最终轮用时 149.47 秒，登记 15 条、5 人，未达到 11 人名单中至少 6 人的覆盖门槛，`ready=False`，没有发布正式声库。Agent 当时依赖候选资料和图片，没有完成独立听音身份验收；画面张嘴、台词提到某个人名均不足以确定说话人。
-- 五人草稿库中爽世第一，补回缺失竞争人物后逐条均值仍落后乐奈；旧库中爱音本来已第一。增加候选或参考条数没有在本样本证明必然改善。试听与旧报告整体退役，生产声纹合同仍以 [voiceprint-trd.md](../design/voiceprint-trd.md) 为准。
+- 五人草稿库中爽世第一，补回缺失竞争人物后逐条均值仍落后乐奈；旧库中爱音本来已第一。增加候选或参考条数没有在本样本证明必然改善。试听与旧报告整体退役，生产声纹合同仍以 [voiceprint-trd.md](../design/02-agent-harness/voiceprint-trd.md) 为准。
 
 ### VoiceprintAgent 历次迭代
 
@@ -410,7 +410,7 @@ with archive.open("rb") as source:
     for block in iter(lambda: source.read(1024 * 1024), b""):
         checksum.update(block)
 assert checksum.hexdigest() == catalog["sha256"]
-restored = Path(tempfile.mkdtemp(prefix="anivag-composition-restore-"))
+restored = Path(tempfile.mkdtemp(prefix="seekino-composition-restore-"))
 with zipfile.ZipFile(archive) as bundle:
     bundle.extractall(restored)
 print(restored)
@@ -423,7 +423,7 @@ print(restored)
 ### 本轮修改范围与验证
 
 ```text
-AniVAG/
+Seekino/
 ├── docs/dev/design-experiment-cleanup.md      # 汇总退役结论和恢复方法
 ├── docs/{README.md,dev/{devlog.md,problems.md,OKR.md}}
 ├── agent/video_parse_v2/design/voiceprint-trd.md

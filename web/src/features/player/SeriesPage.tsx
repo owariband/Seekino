@@ -49,7 +49,7 @@ export function SeriesPage() {
       : seriesQuery.isError ? <div className={styles.state}><Mascot mood="oops" size={64} /><p role="alert">{t("读取视频系列失败：{message}", { message: errorMessage(seriesQuery.error, locale) })}</p><button className="button-secondary" type="button" onClick={() => void seriesQuery.refetch()}>{t("重试")}</button><Link to="/watch">{t("返回首页")}</Link></div>
       : series ? <>
         <section className={styles.hero} aria-label={t("系列介绍")}>
-          <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(featured?.playbackUrl ?? null)} positionSeconds={framePosition}
+          <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(recent || !series.cover ? featured?.playbackUrl ?? null : null)} positionSeconds={framePosition}
             poster={mediaUrl(series.cover?.url ?? featured?.thumbnail?.url ?? null)} />
           <div className={styles.heroToolbar}>
             <Link className={styles.back} to="/watch"><ArrowLeft size={17} aria-hidden="true" />{t("全部系列")}</Link>

@@ -17,8 +17,8 @@ vi.mock("../../api/client", async (importOriginal) => ({
   getSeries: mocks.getSeries,
 }));
 vi.mock("./PlaybackFrame", () => ({
-  PlaybackFrame: ({ src, positionSeconds }: { src: string | null; positionSeconds: number }) => (
-    <span data-testid="playback-frame" data-src={src} data-position={positionSeconds} />
+  PlaybackFrame: ({ src, positionSeconds, poster }: { src: string | null; positionSeconds: number; poster?: string | null }) => (
+    <span data-testid="playback-frame" data-src={src} data-position={positionSeconds} data-poster={poster} />
   ),
 }));
 
@@ -80,6 +80,22 @@ beforeEach(() => {
 afterEach(() => { cleanup(); configureDataSource(localSource); vi.clearAllMocks(); mocks.canManage = true; });
 
 describe("SeriesPage", () => {
+  it.each([false, true])("uses Summary artwork until a watched position exists: watched=%s", async (watched) => {
+    mocks.getSeries.mockResolvedValue({ ...series, cover: { imageId: "summary-cover", url: "/chosen-summary.jpg", expiresAt: null } });
+    if (watched) saveVideoProgress({ seriesId: series.seriesId, videoId: "a-2", positionSeconds: 45_125, durationSeconds: 120_000 });
+    renderPage();
+    await screen.findByRole("heading", { name: "甲系列", level: 1 });
+    const frame = within(screen.getByRole("region", { name: "系列介绍" })).getByTestId("playback-frame");
+    expect(frame).toHaveAttribute("data-poster", expect.stringContaining("/chosen-summary.jpg"));
+    if (watched) {
+      expect(frame).toHaveAttribute("data-src", expect.stringContaining("videoId=a-2"));
+      expect(frame).toHaveAttribute("data-position", "45125");
+    } else {
+      expect(frame).not.toHaveAttribute("data-src");
+      expect(screen.getByRole("link", { name: "开始观看" })).toHaveAttribute("href", "/watch/series-a/a-1?tenantId=local-default");
+    }
+  });
+
   it("reads a shared deep link using its tenant and hides management and private background", async () => {
     mocks.getSeries.mockResolvedValue({ ...series, tenantId: "another-owner", access: "public", visibility: "public",
       publisher: { kind: "user", displayName: "分享者", avatar: null },

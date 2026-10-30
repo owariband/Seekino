@@ -46,9 +46,9 @@ umask 077
 mkdir -p "${state_dir}/seekino-certs"
 # Keep this project's CA isolated. Installing it into an OS trust store is manual.
 export CAROOT="${state_dir}/seekino-ca"
-bind="${ANIVAG_HTTPS_BIND:-127.0.0.1}"
-port="${ANIVAG_HTTPS_PORT:-8443}"
-api_port="${ANIVAG_HTTP_PORT:-9621}"
+bind="${SEEKINO_HTTPS_BIND:-127.0.0.1}"
+port="${SEEKINO_HTTPS_PORT:-8443}"
+api_port="${SEEKINO_HTTP_PORT:-9621}"
 config_path="${state_dir}/nginx.conf"
 if [[ "${action}" == check ]]; then
   config_path="$(mktemp "${state_dir}/nginx-check-XXXXXX")"
@@ -63,7 +63,7 @@ project, config_path = map(Path, sys.argv[1:3])
 bind, port, api_port = sys.argv[3:]
 address = ipaddress.IPv4Address(bind)
 if address.is_unspecified or address.is_multicast:
-    raise SystemExit("ANIVAG_HTTPS_BIND 请使用 127.0.0.1 或本机具体的内网 IPv4 地址")
+    raise SystemExit("SEEKINO_HTTPS_BIND 请使用 127.0.0.1 或本机具体的内网 IPv4 地址")
 if any(not value.isascii() or not value.isdigit() or not 1024 <= int(value) <= 65535
        for value in (port, api_port)):
     raise SystemExit("本地 HTTPS 和 API 端口必须在 1024–65535 之间")

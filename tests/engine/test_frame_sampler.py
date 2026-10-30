@@ -7,6 +7,47 @@ import pytest
 from engine.common import frame_sampler
 
 
+def test_batch_uses_legacy_file_filter_when_new_option_is_unavailable(tmp_path, monkeypatch):
+    probes = []
+
+    def legacy_ffmpeg(command, **_kwargs):
+        probes.append(command)
+        return subprocess.CompletedProcess(
+            command, 1, stdout=b"", stderr=b"Unrecognized option '/filter:v'.\n",
+        )
+
+    monkeypatch.setattr(frame_sampler.subprocess, "run", legacy_ffmpeg)
+    commands = []
+
+    def decode(command):
+        commands.append(command)
+        script = Path(command[command.index("-filter_script:v") + 1])
+        assert script.read_text().startswith("setpts=PTS-STARTPTS,select=")
+        Path(command[-1].replace("%012d", "000000000000")).write_bytes(b"frame")
+
+    executable = str(tmp_path / "legacy-ffmpeg")
+    for name in ("first", "second"):
+        rows = frame_sampler.extract_video_frames_batch(
+            tmp_path / "source.mp4", [0], output_dir=tmp_path / name,
+            max_height=72, ffmpeg_bin=executable, command_runner=decode,
+        )
+        assert rows[0][1].is_file()
+    assert len(probes) == 1
+    assert len(commands) == 2
+
+
+def test_filter_capability_probe_does_not_hide_executable_failures(tmp_path, monkeypatch):
+    def broken_ffmpeg(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command, 127, stdout=b"", stderr=b"error while loading shared libraries",
+        )
+
+    monkeypatch.setattr(frame_sampler.subprocess, "run", broken_ffmpeg)
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        frame_sampler._filter_script_option(str(tmp_path / "broken-ffmpeg"))
+    assert failure.value.returncode == 127
+
+
 def test_frame_extraction_terminates_a_process_that_exceeds_the_budget(
     tmp_path, monkeypatch,
 ):

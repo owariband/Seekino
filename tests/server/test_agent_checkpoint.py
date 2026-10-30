@@ -12,7 +12,7 @@ from gateway.agent_model.context import ContextWindowPolicy
 from server.service.agent_checkpoint import create_agent_checkpoint_store
 from tests.gateway.test_deepagents import ScriptedModel, _model, _run
 
-TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
+TEST_DATABASE_URL = os.getenv("SEEKINO_TEST_DATABASE_URL")
 
 
 def test_checkpoint_store_rejects_non_mysql_and_missing_database():
@@ -33,12 +33,12 @@ def test_checkpoint_store_sets_up_and_closes_connection(monkeypatch):
     monkeypatch.setattr(checkpoint_pymysql, "PyMySQLSaver", lambda _connection: saver)
 
     store = create_agent_checkpoint_store(
-        "mysql+pymysql://user:pass@localhost:3307/anivag_test?charset=utf8mb4",
+        "mysql+pymysql://user:pass@localhost:3307/seekino_test?charset=utf8mb4",
         setup=True,
     )
     assert connect.call_args.kwargs == {
         "host": "localhost", "user": "user", "password": "pass",
-        "database": "anivag_test", "port": 3307,
+        "database": "seekino_test", "port": 3307,
         "charset": "utf8mb4", "autocommit": True,
     }
     saver.setup.assert_called_once_with()
@@ -53,7 +53,7 @@ def test_checkpoint_store_uses_engine_connection_factory(monkeypatch):
 
     saver = Mock()
     engine = Mock()
-    engine.url = make_url("mysql+pymysql://user:pass@localhost/anivag_test")
+    engine.url = make_url("mysql+pymysql://user:pass@localhost/seekino_test")
     engine.raw_connection = Mock()
     monkeypatch.setattr(checkpoint_pymysql, "PyMySQLSaver", Mock(return_value=saver))
     store = create_agent_checkpoint_store("unused", engine=engine, setup=True)
@@ -74,12 +74,12 @@ def test_checkpoint_store_closes_connection_when_setup_fails(monkeypatch):
     monkeypatch.setattr(checkpoint_pymysql, "PyMySQLSaver", lambda _connection: saver)
     with pytest.raises(RuntimeError, match="setup failed"):
         create_agent_checkpoint_store(
-            "mysql+pymysql://user:pass@localhost/anivag_test", setup=True,
+            "mysql+pymysql://user:pass@localhost/seekino_test", setup=True,
         )
     connection.close.assert_called_once_with()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_restores_native_tool_history_after_store_rebuild():
     thread = f"checkpoint-{uuid4()}"
     tool = StructuredTool.from_function(
@@ -111,7 +111,7 @@ def test_mysql_restores_native_tool_history_after_store_rebuild():
         store.close()
 
 
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_restores_compaction_and_offloaded_files_after_store_rebuild():
     thread = f"checkpoint-compact-{uuid4()}"
     policy = ContextWindowPolicy(

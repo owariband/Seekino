@@ -15,13 +15,13 @@ from gateway.ark.embedding import DoubaoMultimodalEmbedder
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tests.manual.gateway_embedding",
-        description="Smoke-test anivag model gateway capabilities.",
+        description="Smoke-test seekino model gateway capabilities.",
     )
     parser.add_argument(
         "--config",
         type=Path,
         help=(
-            "Model config YAML; defaults to ANIVAG_MODEL_CONFIG or the "
+            "Model config YAML; defaults to SEEKINO_MODEL_CONFIG or the "
             "repository-root config.yaml."
         ),
     )
@@ -79,14 +79,14 @@ def main() -> None:
     embedding_config = config.multimodal_embedding
     model = (
         args.model
-        or os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
+        or os.getenv("SEEKINO_VIDEO_EMBEDDING_MODEL")
         or embedding_config.model
     )
     dimensions = args.dimensions
     if dimensions is None:
         dimensions = int(
             os.getenv(
-                "ANIVAG_EMBEDDING_DIMENSIONS",
+                "SEEKINO_EMBEDDING_DIMENSIONS",
                 str(embedding_config.dimensions),
             )
         )
@@ -94,7 +94,7 @@ def main() -> None:
     if fps is None:
         fps = float(
             os.getenv(
-                "ANIVAG_VIDEO_EMBEDDING_FPS",
+                "SEEKINO_VIDEO_EMBEDDING_FPS",
                 str(embedding_config.fps),
             )
         )

@@ -657,12 +657,17 @@
 .embeddedPage .whyLine span, .embeddedPage .candidateThumbnailFallback span { font-size: .69rem; line-height: 1.4; }
 .embeddedPage :is(.candidate, .candidateSelected):has(> :is(.whyLine, .candidateThumbnailFallback)) { grid-template-columns: minmax(0, 1fr); }
 .embeddedPage :is(.candidate, .candidateSelected):has(> :is(.whyLine, .candidateThumbnailFallback)) > :is(.candidateTop, strong, blockquote) { grid-column: 1; }
-.embeddedPage .composerArea { width: 100%; padding: 8px 0 0; border-top: 1px solid var(--line); }
-.embeddedPage .composer { gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
+.embeddedPage .composerArea { width: 100%; padding: 6px 0 0; border-top: 1px solid var(--line); }
+.embeddedPage .composer { gap: 4px; padding: 8px 10px 6px; border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
 .embeddedPage .composer textarea { min-height: 38px; max-height: 130px; font-size: .82rem; line-height: 1.5; }
-.embeddedPage .composerToolbar { position: relative; min-height: 28px; gap: 6px; margin-top: 3px; }
-.embeddedPage .composerControls { gap: 4px; }
-.embeddedPage .scopePicker summary { min-height: 28px; padding: 0 6px; background: transparent; font-size: .67rem; }
+.embeddedPage .composerToolbar { position: relative; min-height: 30px; align-items: center; gap: 6px; margin-top: 0; }
+.embeddedPage .composerControls { min-width: 0; flex: 1; flex-wrap: nowrap; gap: 2px; }
+.embeddedPage .addAttachment, .embeddedPage .sendButton { width: 30px; height: 30px; padding: 0; }
+.embeddedPage .addAttachment svg { width: 18px; height: 18px; }
+.embeddedPage .composerControls > .scopePicker { min-width: 0; max-width: 100%; flex: 0 1 auto; }
+.embeddedPage .scopePicker summary { min-height: 28px; gap: 4px; padding: 0 4px; background: transparent; font-size: .67rem; }
+.embeddedPage .scopePicker summary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.embeddedPage .scopePicker summary > svg { flex-shrink: 0; }
 .embeddedPage .answerSettingsPicker summary small { display: none; }
 .embeddedPage .scopeOptions { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; width: min(340px, 100cqw); max-width: none; }
 .embeddedPage .answerSettings { right: 0; left: auto; }

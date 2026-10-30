@@ -1,4 +1,0 @@
-interface:
-  display_name: "AniVAG Short Video"
-  short_description: "Create offline HyperFrames films via AniVAG and Codex"
-  default_prompt: "Use $anivag-short-video to have AniVAG's local Codex Agent find grounded clips, then deliver a self-contained offline HyperFrames HTML film."

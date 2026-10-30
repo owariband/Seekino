@@ -51,13 +51,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--artifact-root", default=os.environ.get("ANIVAG_ARTIFACT_ROOT"))
+    parser.add_argument("--artifact-root", default=os.environ.get("SEEKINO_ARTIFACT_ROOT"))
     args = parser.parse_args()
 
     from gateway.config import load_config
     from gateway.model_factory import GatewayClient
 
-    engine = create_engine(os.environ["ANIVAG_DATABASE_URL"])
+    engine = create_engine(os.environ["SEEKINO_DATABASE_URL"])
     with engine.connect() as connection:
         task = connection.execute(text(
             "select t.detail, v.source_uri, v.duration_ms from video_parse_task t "
@@ -87,7 +87,7 @@ def main() -> None:
                           "label": event.get("speaker"), "text": original})
     lines.sort(key=lambda item: item["start_ms"])
 
-    gateway = GatewayClient(load_config(os.environ.get("ANIVAG_MODEL_CONFIG", "config.yaml")))
+    gateway = GatewayClient(load_config(os.environ.get("SEEKINO_MODEL_CONFIG", "config.yaml")))
     encoder = gateway.create_speaker_embedding_model("speaker")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     try:

@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from hashlib import sha256
 import json
 import logging
-from typing import Protocol
+from typing import Literal, Protocol
 
 from engine.rag import EncoderContract, VIDEO_CLIP_PREPROCESS_REVISION
 from engine.rag.encoding import SparseEncoderContract, accept_sparse_result
@@ -65,6 +65,8 @@ class VideoParseRetrievalService:
         embedder: QueryEmbedder, *, semantic_encoder: EncoderContract,
         expected_index_generation: int,
         expected_embedding_source: str | None = None,
+        expected_embedding_input_mode: Literal["multimodal", "text"] = "multimodal",
+        expected_query_instruction: str | None = None,
         channel_top_k: int = _DEFAULT_RETRIEVAL_CONFIG.channel_top_k,
         rrf_k: int = _DEFAULT_RETRIEVAL_CONFIG.rrf_k,
         lexical_weight: float = _DEFAULT_RETRIEVAL_CONFIG.lexical_weight,
@@ -75,8 +77,9 @@ class VideoParseRetrievalService:
         reranker: StructuredTextReranker | None = None,
         exact: bool = False, tracing: LangfuseTracing | None = None,
     ) -> None:
-        if (store.semantic_dimensions != store.vision_dimensions
-                or store.semantic_dimensions != semantic_encoder.dimensions):
+        vision_enabled = expected_embedding_input_mode == "multimodal"
+        if (store.semantic_dimensions != semantic_encoder.dimensions
+                or (vision_enabled and store.vision_dimensions != semantic_encoder.dimensions)):
             raise ValueError("query encoder and both store dimensions must match")
         if (isinstance(expected_index_generation, bool)
                 or not isinstance(expected_index_generation, int)
@@ -87,9 +90,13 @@ class VideoParseRetrievalService:
         if expected_embedding_source is not None and (
                 not isinstance(expected_embedding_source, str) or not expected_embedding_source.strip()):
             raise ValueError("expected_embedding_source must be nonblank when supplied")
+        if getattr(store, "vision_enabled", True) != vision_enabled:
+            raise ValueError("query and store vision modes must match")
+        self._expected_embedding_input_mode = expected_embedding_input_mode
+        self._expected_query_instruction = expected_query_instruction
         self._policy = RetrievalPolicy(
             lexical_weight=lexical_weight, semantic_weight=text_weight,
-            vision_weight=vision_weight, sparse_weight=sparse_weight,
+            vision_weight=vision_weight if vision_enabled else 0.0, sparse_weight=sparse_weight,
             channel_top_k=channel_top_k,
             candidate_budget=channel_top_k if candidate_budget is None else candidate_budget,
             top_k=1, rrf_k=rrf_k,
@@ -125,6 +132,7 @@ class VideoParseRetrievalService:
             "candidate_budget": max(top_k, self._policy.candidate_budget),
             **({"lexical_weight": lexical_weight, "semantic_weight": text_weight,
                 "vision_weight": vision_weight} if lexical_weight is not None else {}),
+            **({"vision_weight": 0.0} if self._expected_embedding_input_mode == "text" else {}),
         }))
         if self._candidate_budget is None:
             policy = policy.model_copy(update={
@@ -144,6 +152,9 @@ class VideoParseRetrievalService:
         if selected.index_generation != self._expected_index_generation:
             raise RetrievalIndexConsistencyError("selected V2 task index generation differs from the active Elasticsearch generation")
         embedding = selected.parse_config.models.embedding
+        if (embedding.input_mode != self._expected_embedding_input_mode
+                or embedding.query_instruction != self._expected_query_instruction):
+            raise RetrievalIndexConsistencyError("selected V2 task embedding mode or query instruction differs from the active encoder")
         if (policy.semantic_weight or policy.vision_weight or policy.sparse_weight) and (
                 self._expected_embedding_source is not None
                 and embedding.source != self._expected_embedding_source):
@@ -161,11 +172,12 @@ class VideoParseRetrievalService:
             raise RetrievalIndexConsistencyError("selected V2 task embedding model or dimensions differ from the active query encoder contract")
         contract = ChunkIndexingContract(
             retrieval_contract_id="parse-v2-retrieval-v1",
-            semantic_encoder=self._semantic_encoder, vision_encoder=self._semantic_encoder,
+            semantic_encoder=self._semantic_encoder,
+            vision_encoder=self._semantic_encoder if embedding.input_mode == "multimodal" else None,
             visual_input_contract=VideoClipInputContract(
                 fps=embedding.video_fps, max_height=selected.parse_config.visual_input.max_height,
                 mime_type="video/mp4", preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
-            ), index_generation=selected.index_generation,
+            ) if embedding.input_mode == "multimodal" else None, index_generation=selected.index_generation,
             sparse_encoder=SparseEncoderContract(
                 provider=self._semantic_encoder.provider, model=reference.model,
                 encoder_revision=self._semantic_encoder.encoder_revision,
@@ -179,7 +191,8 @@ class VideoParseRetrievalService:
         bindings = tuple(QueryEncoderBinding(
             channel=channel, document_encoder_id=getattr(contract, f"{channel}_encoder_id"),
             query_encoder=self._semantic_encoder,
-            compatibility_provenance="Ark multimodal vectorization: shared text/image/video embedding space",
+            compatibility_provenance=("shared text document/query encoder" if channel == "semantic"
+                                      else "configured shared multimodal embedding space"),
         ) for channel in ("semantic", "vision") if policy.weights[channel])
         plan = plan_retrieval_query(query, scope=scope, index_contract=contract,
                                     policy=policy, encoder_bindings=bindings)

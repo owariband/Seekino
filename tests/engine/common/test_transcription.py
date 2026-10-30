@@ -40,6 +40,41 @@ def test_json_only_asr_retains_honest_window_level_timing():
     )
 
 
+def test_aligned_words_convert_once_clamp_and_preserve_unknown_times():
+    result = normalize_transcription({"language": "zh", "segments": [{
+        "start": 0.1, "end": 3, "text": "你 好 2026",
+        "words": [
+            {"word": "你", "start": 0, "end": 0.4567, "score": 0.95},
+            {"word": "好", "start": 0.5, "end": 3, "score": 0.8},
+            {"word": "2026"},
+            {"word": "边界", "start": 2, "end": 3},
+            {"word": "未知", "start": 1},
+        ],
+    }]}, duration_seconds=2000)
+    assert result.model_dump() == {"language": "zh", "transcript": [{
+        "start_seconds": 100, "end_seconds": 2000, "text": "你 好 2026", "speaker_id": None,
+        "words": [
+            {"text": "你", "start_ms": 100, "end_ms": 457, "score": 0.95},
+            {"text": "好", "start_ms": 500, "end_ms": 2000, "score": 0.8},
+            *[{"text": text, "start_ms": None, "end_ms": None, "score": None}
+              for text in ("2026", "边界", "未知")],
+        ],
+    }]}
+
+
+@pytest.mark.parametrize("word", [
+    None, {"word": " "}, {"word": "bad", "start": True, "end": 1},
+    {"word": "bad", "start": float("nan"), "end": 1},
+    {"word": "bad", "start": 1, "end": 0.5},
+    {"word": "bad", "score": float("nan")},
+])
+def test_malformed_word_alignment_is_rejected(word):
+    with pytest.raises(ValueError):
+        normalize_transcription({"segments": [{
+            "start": 0, "end": 1, "text": "bad", "words": [word],
+        }]}, duration_seconds=1000)
+
+
 @pytest.mark.parametrize(
     "payload",
     [

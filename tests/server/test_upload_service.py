@@ -109,6 +109,7 @@ def _upload_service(
     parse_defaults=None,
     video_parse_index_store=None,
     video_event_index_store=None,
+    video_parse_query_encoder_supports_sparse=True,
     probe_duration=None,
 ):
     engine, _video_repository = repository
@@ -158,6 +159,7 @@ def _upload_service(
                 dimensions=active_embedding.dimensions,
             ),
             video_parse_query_encoder_source=active_embedding.source,
+            video_parse_query_encoder_supports_sparse=video_parse_query_encoder_supports_sparse,
         ),
     )
 
@@ -236,6 +238,24 @@ def test_upload_freezes_endpoint_encoder_identity_without_changing_its_route(
     assert frozen["encoder_model"] == "doubao-embedding-vision-250615"
     assert config.models.embedding.encoder_model == encoder_model
     assert service.get_session(session.upload_session_id, tenant_id="local-default").parse_config == session.parse_config
+
+
+@pytest.mark.parametrize("field,value", [("input_mode", "text"), ("query_instruction", "Find courses")])
+def test_upload_rejects_changed_embedding_contract_before_creating_session(repository, tmp_path, field, value):
+    _engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+    config = _video_parse_config_with_dimensions(2)
+    config = config.model_copy(update={"models": config.models.model_copy(update={
+        "embedding": config.models.embedding.model_copy(update={field: value}),
+    })})
+    with pytest.raises(ValueError, match=field):
+        service.create_session(
+            tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+            total_size_bytes=10, idempotency_key="wrong-text-contract", parse_config=config,
+        )
+    assert service.list_sessions(tenant_id="local-default") == []
 
 
 def test_upload_rejects_endpoint_bound_to_a_different_encoder(repository, tmp_path):
@@ -493,6 +513,37 @@ def test_reparse_without_config_inherits_the_latest_task_and_freezes_endpoint_id
         assert tasks[1].parse_config == expected
         assert tasks[2].parse_config == expected
         assert session.get(UploadSession, upload.upload_session_id).parse_config == upload.parse_config
+
+
+@pytest.mark.parametrize("status", ["PENDING", "PARSING"])
+def test_reparse_stopped_task_uses_new_config_and_never_reclaims_old_version(repository, tmp_path, status):
+    engine, _store, _repository, service = _upload_service(repository, tmp_path)
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        old = session.get(VideoParseTask, completed.video_parse_task_id)
+        old.status = status
+        old.detail = {RUNTIME_DETAIL_KEY: {"accepted": True, "capacity_acquired": True}}
+        original_config = old.parse_config
+    replacement = VideoParseV2Config.model_validate(original_config).model_copy(update={"ocr_enabled": False})
+    result = service.reparse(upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+                             parse_config=replacement)
+    assert result.version == 2 and result.parse_config["ocr_enabled"] is False
+    with factory() as session:
+        old = session.get(VideoParseTask, completed.video_parse_task_id)
+        assert old.parse_config == original_config
+        assert old.detail[RUNTIME_DETAIL_KEY]["accepted"] is False
+        assert old.detail[RUNTIME_DETAIL_KEY]["superseded_by"] == result.video_parse_task_id
+    claimed = MySqlVideoParseQueue(factory, video_concurrency=1).claim_video(
+        "test", lease_duration=timedelta(seconds=30),
+    )
+    assert claimed.video_parse_task_id == result.video_parse_task_id
+    with pytest.raises(UploadStateError, match="must drain"):
+        service.reparse(upload.upload_session_id, tenant_id="local-default", expected_job_version=2,
+                        parse_config=replacement)
 
 
 @pytest.mark.parametrize("status", ["INDEXING_FAILED", "PENDING"])
@@ -1712,7 +1763,7 @@ def test_parse_retry_preserves_snapshot_after_yaml_changes(
     prepared_v2_retry, tmp_path, monkeypatch, parent_state,
 ):
     service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
-    monkeypatch.delenv("ANIVAG_VIDEO_MODEL", raising=False)
+    monkeypatch.delenv("SEEKINO_VIDEO_MODEL", raising=False)
     config_path = tmp_path / "retry-models.yaml"
     payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
     payload["models"]["vision"].update(

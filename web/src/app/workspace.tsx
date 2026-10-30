@@ -53,7 +53,7 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 export function WorkspaceProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
   const { activeSource } = useAuth();
-  const seriesStorageKey = identityStorageKey("anivag-selected-series", "anivag-selected-series");
+  const seriesStorageKey = identityStorageKey("seekino-selected-series", "seekino-selected-series");
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(
     () => window.localStorage.getItem(seriesStorageKey),
   );

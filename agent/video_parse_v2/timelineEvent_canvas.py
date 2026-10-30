@@ -541,6 +541,13 @@ class ParseContextCanvas(ContextCanvas):
                 key: json.dumps(item, ensure_ascii=False, sort_keys=True)
                 for key, item in value.items()
             })
+            if isinstance(value.get("asr"), dict):
+                # Dialogue interpretation usually needs cue text and boundaries;
+                # retain full word alignment in canonical evidence / section asr.
+                transcript = deepcopy(value["asr"])
+                for cue in transcript.get("transcript", []):
+                    cue.pop("words", None)
+                sections["asr_transcript"] = json.dumps(transcript, ensure_ascii=False, sort_keys=True)
         return sections
 
     def checkpoint(self, *, role: str | None = None) -> str:

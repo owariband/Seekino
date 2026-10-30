@@ -161,7 +161,7 @@ def test_structured_result_uses_sdk_json_schema_without_network() -> None:
     assert options.output_format["type"] == "json_schema"
     assert options.output_format["schema"]["properties"]["answer"]["type"] == "string"
     assert options.tools == []
-    assert options.allowed_tools == ["mcp__anivag__lookup"]
+    assert options.allowed_tools == ["mcp__seekino__lookup"]
     assert options.permission_mode == "dontAsk"
     assert options.setting_sources == []
     assert options.skills == []
@@ -207,7 +207,7 @@ def test_structured_stop_feedback_uses_latest_result_and_shared_canvas_bridge():
     assert result.answer == "resolved" and reviews == [1, 2]
     assert len(created) == 2 and all(client.closed for client in created)
     assert [client.options.max_turns for client in created] == [3, 2]
-    assert created[0].options.mcp_servers["anivag"] is created[1].options.mcp_servers["anivag"]
+    assert created[0].options.mcp_servers["seekino"] is created[1].options.mcp_servers["seekino"]
     assert created[0].options.output_format == created[1].options.output_format
     assert created[1].options.output_format["schema"]["properties"]["answer"]["type"] == "string"
     payload = json.loads(created[1].prompts[0].split("\n", 1)[1])
@@ -766,7 +766,7 @@ def test_tool_exception_becomes_error_result() -> None:
     assert result["content"][0]["text"] == "bad input"
 
 
-def test_options_expose_only_anivag_mcp_tools() -> None:
+def test_options_expose_only_seekino_mcp_tools() -> None:
     created: list[_FakeClient] = []
 
     def factory(options):
@@ -783,7 +783,7 @@ def test_options_expose_only_anivag_mcp_tools() -> None:
     options = created[0].options
 
     assert options.tools == []
-    assert options.allowed_tools == ["mcp__anivag__lookup"]
+    assert options.allowed_tools == ["mcp__seekino__lookup"]
     assert options.can_use_tool is None
 
 

@@ -1,4 +1,4 @@
--- AniVAG controlled migration: Video Parse V2 task/result tables and UTC time.
+-- Seekino controlled migration: Video Parse V2 task/result tables and UTC time.
 -- Historical 2026-09-27 schema. For the current task/Interval indexing contract,
 -- follow with 20260928_task_indexing_contract.sql while the V2 tables are empty.
 -- Fresh databases should use the current application's init-db instead.

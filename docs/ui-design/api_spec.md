@@ -1,4 +1,4 @@
-# AniVAG UI API Specification
+# Seekino UI API Specification
 
 > 文件：api_spec.md  
 > 对应 UI：A「青瓷札记」及正式 Web 的资料库、传输案台、解析任务、Agent 工作台、证据窗口和设置  
@@ -1184,7 +1184,7 @@ interface SettingsView {
     mediaDirectory: string;           // 展示本地保存位置，不作为媒体读取 URL
     allowedMediaDirectories: string[]; // 后端允许切换的目录，空数组时不可切换
     writable: boolean;
-    totalUsedBytes: number;           // 当前 Workspace 的 AniVAG 受管媒体／产物用量
+    totalUsedBytes: number;           // 当前 Workspace 的 Seekino 受管媒体／产物用量
     freeBytes: number | null;         // 当前写入目录文件系统剩余容量，未知时 null
   };
   retrieval: {

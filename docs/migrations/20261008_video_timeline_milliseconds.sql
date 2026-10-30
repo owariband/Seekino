@@ -1,4 +1,4 @@
--- AniVAG controlled migration: integer media seconds -> integer milliseconds.
+-- Seekino controlled migration: integer media seconds -> integer milliseconds.
 -- Existing column names and BIGINT types are retained. No records are deleted.
 --
 -- Scope: databases with no committed parse content, checkpoints, embeddings,

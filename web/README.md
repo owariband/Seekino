@@ -1,6 +1,6 @@
-# anivag Web
+# seekino Web
 
-anivag 的正式 Web 前端。视觉基于已确认的 A「青瓷札记」，通过同一套功能组件连接
+seekino 的正式 Web 前端。视觉基于已确认的 A「青瓷札记」，通过同一套功能组件连接
 FastAPI 正式数据。前端不内置 Series、视频、任务或检索结果；API 不可用时只展示明确的
 连接错误与空态。
 
@@ -15,7 +15,7 @@ FastAPI 正式数据。前端不内置 Series、视频、任务或检索结果�
 - Vitest + Testing Library：业务逻辑与主流程组件测试。
 - Playwright：预留浏览器端验收测试入口。
 
-上传没有引入通用上传面板。anivag 使用自定义分片号、`Content-Range`、SHA-256、
+上传没有引入通用上传面板。seekino 使用自定义分片号、`Content-Range`、SHA-256、
 `Idempotency-Key` 和服务端恢复点；将这段协议收敛在 `UploadProvider` 中，比在通用库上
 叠加适配层更短，也更容易保证进度语义准确。
 
@@ -37,7 +37,7 @@ src/
 主要数据流：
 
 ```text
-anivag HTTP API
+seekino HTTP API
        ↓
 WorkspaceProvider ── Series 选择与运行模式
        ↓
@@ -53,6 +53,8 @@ UploadProvider ───── 3 文件并行、3 分片 worker、暂停恢复�
 - 传输案台：批次总进度、每个视频独立进度、最多 3 文件并行；刷新页面后可重新选择同名同大小的原文件，只补服务端缺失分片，合并中的会话可直接继续合并。
 - 解析任务：阶段时间线、进度、Chunk checkpoint、用量、错误与自动重试状态；以 UploadSession 为整任务删除粒度，FAILED 主任务可手动重试并沿用检查点。
 - 设置：白天/黑夜主题、API 连接信息与数据边界说明。
+
+观看首页和系列页使用服务返回的 Summary 推荐封面；未观看时保持静态图，观看后显示上次播放位置。没有 Summary 图片时回退原片预览。观看历史沿用按身份隔离的浏览器本地存储，尚不跨设备同步，封面预览不写入观看历史。
 
 ## 启动
 
@@ -101,12 +103,12 @@ release；也可用 `curl -H 'x-use-ppe: 1' http://127.0.0.1:9621/api/system/run
 在 `web/.env.local` 增加固定的远端服务地址，然后重启 Vite：
 
 ```bash
-ANIVAG_REMOTE_API_URL=https://your-anivag-server.example
-ANIVAG_REMOTE_COOKIE_NAME=anivag_auth
+SEEKINO_REMOTE_API_URL=https://your-seekino-server.example
+SEEKINO_REMOTE_COOKIE_NAME=seekino_auth
 ```
 
-`ANIVAG_REMOTE_COOKIE_NAME` 必须与远端的 `ANIVAG_AUTH_COOKIE_NAME` 一致，默认均为
-`anivag_auth`。未配置地址时只使用当前服务。环境变量优先于 `.env` 文件；远端目标必须
+`SEEKINO_REMOTE_COOKIE_NAME` 必须与远端的 `SEEKINO_AUTH_COOKIE_NAME` 一致，默认均为
+`seekino_auth`。未配置地址时只使用当前服务。环境变量优先于 `.env` 文件；远端目标必须
 为 HTTPS origin，不带路径或凭据，独立的本机测试服务可以使用 loopback HTTP 地址。
 
 开发代理自动提供 `/remote/api` 和 `/remote/healthz`，同时注入
@@ -116,7 +118,7 @@ ANIVAG_REMOTE_COOKIE_NAME=anivag_auth
 Secure 属性，上游 HTTPS 校验保持开启。登录、退出和远端失联均不改变本机资料归属。
 切换资料来源不会上传本机资料；本次没有实现资料同步。
 
-这个代理仅供 Vite 开发联调。生产构建不会把 `ANIVAG_REMOTE_API_URL` 自动转换为
+这个代理仅供 Vite 开发联调。生产构建不会把 `SEEKINO_REMOTE_API_URL` 自动转换为
 `/remote`；生产环境应单独部署同源代理，并配置 `VITE_REMOTE_API_BASE_URL`。若服务
 返回同上游的绝对 `/api` 媒体地址，配置 `VITE_REMOTE_API_ORIGIN` 可将它映射到该代理。
 实际验证码登录还需要远端身份服务、Redis 和 SMTP 正常运行。

@@ -70,16 +70,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      ANIVAG_TEST_DATABASE_URL: mysql+pymysql://anivag:anivag-ci@127.0.0.1:3306/anivag_test?charset=utf8mb4
+      SEEKINO_TEST_DATABASE_URL: mysql+pymysql://seekino:seekino-ci@127.0.0.1:3306/seekino_test?charset=utf8mb4
       UV_DEFAULT_INDEX: https://pypi.org/simple
 
     services:
       mysql:
         image: mysql:8.4
         env:
-          MYSQL_DATABASE: anivag_test
-          MYSQL_USER: anivag
-          MYSQL_PASSWORD: anivag-ci
+          MYSQL_DATABASE: seekino_test
+          MYSQL_USER: seekino
+          MYSQL_PASSWORD: seekino-ci
           MYSQL_ROOT_PASSWORD: root-ci
         ports:
           - 3306:3306
@@ -183,7 +183,7 @@ jobs:
 
       - name: Run simple DeepSeek Agent example
         env:
-          ANIVAG_RUN_LIVE_AGENT_TEST: "1"
+          SEEKINO_RUN_LIVE_AGENT_TEST: "1"
           DEEPSEEK_API_KEY: ${{ secrets.CI_DEEPSEEK_API_KEY }}
         run: |
           if [[ -z "$DEEPSEEK_API_KEY" ]]; then

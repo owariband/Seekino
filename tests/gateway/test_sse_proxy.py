@@ -55,7 +55,7 @@ def _empty_output_summary(caplog: pytest.LogCaptureFixture) -> dict[str, object]
 
 
 def test_parse_diagnostic_records_sdk_empty_terminal_and_worker_request_id(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     event = _sdk_completed_event([
         {"id": "m", "type": "message", "role": "assistant", "status": "completed",
          "content": [{"type": "output_text", "text": "", "annotations": []}]},
@@ -80,7 +80,7 @@ def test_parse_diagnostic_records_sdk_empty_terminal_and_worker_request_id(tmp_p
 
 
 def test_parse_asr_sse_diagnostic_captures_request_and_response_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(tmp_path))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(tmp_path))
     event = _sdk_completed_event([
         {"id": "m", "type": "message", "role": "assistant", "status": "completed",
          "content": [{"type": "output_text", "text": '{"transcript":"hello"}', "annotations": []}]},

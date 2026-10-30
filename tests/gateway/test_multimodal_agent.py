@@ -576,7 +576,7 @@ def test_parse_diagnostics_restore_each_round_and_exclude_chat(monkeypatch, tmp_
     from gateway.model_diagnostics import restore_diagnostic_media
 
     root = tmp_path / "model-traces"
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(root))
     inputs, _frames = _inputs(tmp_path, provider)
     prompt = "Preserve the full prompt, schemas, and exact tool feedback."
     inputs.append(TextInput(prompt))
@@ -639,7 +639,7 @@ def test_parse_diagnostics_preserve_empty_sdk_response_error_chain_and_request_i
     from arkruntime.types.responses.response_stream_event import ResponseStreamEvent
 
     root = tmp_path / "model-traces"
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(root))
     event = construct_type(type_=ResponseStreamEvent, value={
         "type": "response.completed", "sequence_number": 0, "response": {
             "id": "sdk-empty-response", "object": "response", "created_at": 1,
@@ -687,7 +687,7 @@ def test_parse_diagnostics_preserve_empty_sdk_response_error_chain_and_request_i
 
 def test_parse_diagnostics_keep_response_when_final_schema_validation_fails(monkeypatch, tmp_path):
     root = tmp_path / "model-traces"
-    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    monkeypatch.setenv("SEEKINO_MODEL_TRACE_DIR", str(root))
     invalid = _response()
     invalid.output[0].content[0].text = '{"done":"not-a-boolean"}'
     responses, usage = Responses([_response("read"), invalid]), []

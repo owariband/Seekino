@@ -75,6 +75,9 @@ def _video_chunk_state(chunk: VideoChunkData) -> VideoChunkState:
 def _locked_chunk_lease(
     session: Session, lease: ChunkParseLease, now: datetime
 ) -> ChunkParseTaskData:
+    parent = task_store.get_task(session, lease.video_parse_task_id, for_update=True)
+    if parent is not None and (parent.last_error or {}).get("code") == "PARSE_NODE_FAILED":
+        raise VideoParseLeaseLostError("Video parsing stopped after a final node failure")
     task = chunk_store.get_task(session, lease.chunk_parse_task_id, for_update=True)
     if not _matching_chunk_lease(task, lease, now):
         raise VideoParseLeaseLostError("ChunkParseTask lease is no longer current")
@@ -826,6 +829,9 @@ def _locked_interval_lease(
     now: datetime,
     expected_status: str,
 ) -> IntervalParseTaskData:
+    parent = task_store.get_task(session, lease.video_parse_task_id, for_update=True)
+    if parent is not None and (parent.last_error or {}).get("code") == "PARSE_NODE_FAILED":
+        raise VideoParseLeaseLostError("Video parsing stopped after a final node failure")
     interval = interval_store.get_task(session, lease.interval_parse_task_id, for_update=True)
     if (
         not _matching_interval_lease(interval, lease, now)

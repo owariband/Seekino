@@ -182,9 +182,9 @@ describe("cloud request identity", () => {
     release(new Response(JSON.stringify({ seriesId: "private-result" })));
     await rejected;
     expect(videoContentUrl("video-id")).toBe("/api/videos/content?videoId=video-id&tenantId=personal-id");
-    expect(identityStorageKey("anivag-agent-conversation")).toBe(`anivag-agent-conversation:${encodeURIComponent(PRIMARY_CONNECTION.id)}:member-id:personal-id`);
+    expect(identityStorageKey("seekino-agent-conversation")).toBe(`seekino-agent-conversation:${encodeURIComponent(PRIMARY_CONNECTION.id)}:member-id:personal-id`);
     configureApiIdentity(member, "public-courses");
-    expect(identityStorageKey("anivag-agent-conversation")).toBe(`anivag-agent-conversation:${encodeURIComponent(PRIMARY_CONNECTION.id)}:member-id:public-courses`);
+    expect(identityStorageKey("seekino-agent-conversation")).toBe(`seekino-agent-conversation:${encodeURIComponent(PRIMARY_CONNECTION.id)}:member-id:public-courses`);
   });
 });
 
@@ -351,12 +351,12 @@ describe("independent account and data connections", () => {
     configureDataSource(source());
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
     const required = vi.fn();
-    window.addEventListener("anivag-auth-required", required);
+    window.addEventListener("seekino-auth-required", required);
     try {
       await expect(getSeries("series-id")).rejects.toMatchObject({ status: 401 });
       expect(required).toHaveBeenCalledWith(expect.objectContaining({ detail: { connectionId: remote.id } }));
     } finally {
-      window.removeEventListener("anivag-auth-required", required);
+      window.removeEventListener("seekino-auth-required", required);
     }
   });
 

@@ -13,6 +13,7 @@ from gateway.config import (
     TracingConfig,
     agent_api_key_env_names,
     load_config,
+    required_api_key_env_names,
 )
 
 
@@ -158,16 +159,43 @@ def test_default_config_uses_canonical_agent_sources() -> None:
     assert agent_api_key_env_names(config) == ("ARK_API_KEY", "DEEPSEEK_API_KEY")
 
     assert config.video_parser.transcript_model == "doubao-seed-2-0-lite-260428"
-    assert config.video_parser.vision_source == "codex_local"
-    assert config.video_parser.video_model == "gpt-6-astra"
-    assert config.video_parser.vision_max_output_tokens == 8192
-    assert config.video_parser.vision_reasoning_effort == "low"
+    assert config.video_parser.vision_source == "ark_default"
+    assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
+    assert config.video_parser.vision_max_output_tokens == 30000
+    assert config.video_parser.vision_reasoning_effort == "high"
     resolved = config.resolve_model_binding("vision", environ={})
     assert resolved.supports_vision_input
     assert resolved.context_window_tokens == 128000
     assert resolved.request_timeout_seconds == 600
     assert config.multimodal_embedding.model == "doubao-embedding-vision-250615"
     assert config.agent_runtime["stage_timeout_seconds"] == 480
+
+
+def test_repository_defaults_require_only_api_credentials() -> None:
+    config = load_config(Path(__file__).resolve().parents[2] / "config.yaml")
+    assert config.supervisor_harness == "deepagents"
+    assert not config.query_hook.enabled
+    assert required_api_key_env_names(config) == ("ARK_API_KEY", "DEEPSEEK_API_KEY")
+    for binding in config.normalized_models.values():
+        assert isinstance(config.source(binding.source), (OpenAIModelSourceConfig, ArkModelSourceConfig))
+
+
+@pytest.mark.parametrize("harness,source,model,keys", [
+    ("deepagents", "kimi_coding", "k3.1-pro", ("ARK_API_KEY", "DEEPSEEK_API_KEY", "KIMI_API_KEY")),
+    ("codex", "codex_local", "gpt-5.6-sol", ("ARK_API_KEY", "DEEPSEEK_API_KEY")),
+])
+def test_existing_bindings_select_optional_supervisor_without_another_profile(
+    tmp_path, harness, source, model, keys,
+) -> None:
+    payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    payload["supervisor_harness"] = harness
+    payload["models"]["supervisor"].update(source=source, model=model)
+    target = tmp_path / "config.yaml"
+    _write_config(target, payload)
+    config = load_config(target)
+    assert config.supervisor_harness == harness
+    assert config.resolve_model_binding("supervisor").model == model
+    assert required_api_key_env_names(config) == keys
 
 
 def test_parse_only_config_gets_legacy_compatible_agent_defaults(tmp_path: Path) -> None:
@@ -432,7 +460,7 @@ def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
     embedding["dimensions"] = 512
     config_path = tmp_path / "custom.yaml"
     _write_config(config_path, payload)
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
 
     config = load_config()
 

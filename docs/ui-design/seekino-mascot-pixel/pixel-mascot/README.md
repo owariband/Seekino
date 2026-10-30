@@ -36,7 +36,7 @@ node scripts/reel.mjs             # 生成 ../out/seekino-pixel-reel.mp4（需 C
 node scripts/contact.mjs <out.png> <state> [width] [from] [count] [cols]   # 逐帧拼图检查
 ```
 
-Chromium 借用的是 `AniVAG/web/node_modules` 里的 Playwright。
+Chromium 借用的是 `Seekino/web/node_modules` 里的 Playwright。
 
 ## 短片
 

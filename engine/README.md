@@ -1,6 +1,6 @@
-# anivag Engine
+# seekino Engine
 
-Engine 是 anivag 的领域算法边界。视频解析算法位于 `parsev2/`，Agent 运行程序位于
+Engine 是 seekino 的领域算法边界。视频解析算法位于 `parsev2/`，Agent 运行程序位于
 `agent/video_parse_v2/`，检索算法位于 `rag/`。版本无关的媒体与模型能力从 `common/` 导入。
 Engine 不拥有生产任务、租约、Artifact 或数据库；这些生命周期由 Server 负责，外部模型请求由 Gateway 实现。
 
@@ -10,6 +10,11 @@ Engine 不拥有生产任务、租约、Artifact 或数据库；这些生命周�
 `*_seconds`／`*Seconds` 字段名。例如 `8.008` 秒视频记录为 `8008`。配置中的
 Chunk／Interval／重叠／分组时长仍为秒，FPS 仍为帧／秒；超时与租约单位不变。
 FFprobe、ASR、FFmpeg 和播放器在接入边界完成秒与毫秒转换；页面展示小数秒。
+
+本地 WhisperX 的字词对齐由 `common/transcription.py` 统一规范化为可选
+`transcript[].words`：`text/start_ms/end_ms/score`，未知时间为一对 `null`。
+这些时间相对当前音频窗口；Server 加偏移后作为原视频绝对毫秒保存至 ASR evidence。
+句段旧字段名和非 WhisperX 响应保持兼容；字幕排版不在此时间归一层实现。
 历史整数秒数据须由 Server 迁移并标识单位，不能直接按新语义读取。
 
 ## 代码边界
@@ -50,6 +55,12 @@ rag/
 调用方提供可信 COMPLETE 任务及正式事实，执行媒体读取、模型调用和 ES 查询；
 Engine 只产出中立计划、校验返回值并执行策略。文字输入可以产生兼容的文字或视觉
 Dense 信号，输入模态不与召回通道一一绑定。
+
+课程纯文本索引可显式令 Chunk 的 `vision_encoder` / `visual_input_contract`、Event 的
+`vision_encoder` / `capture` 成对为 None；此时不产生视觉编码计划，文档没有视觉向量，
+Event capture frames 为空，并拒绝视觉查询通道。多模态合同仍要求完整视觉表示；缺失
+向量不能用零向量或文本向量代替。模式属于冻结索引合同，变更需新物理索引，详见
+[本地文本向量设计](../docs/design/03-product-reassessment/local-text-embedding-trd.md)。
 
 `nlp/query.py` 处理文字查询，`vision/query.py` 处理图片／GIF 查询。图片和 GIF
 保留媒体输入；GIF 保留完整帧序及相对时间。实际编码协议和产品接入仍需外部验收。
@@ -134,8 +145,8 @@ HTTP 搜索与聊天共用当前 `agent_runtime` 的 topK 配置：下限为 1�
 单价来源：[方舟模型价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh)、
 [DeepSeek 模型价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)。
 原始记录与可执行样本脚本分别位于
-`/private/tmp/anivag-p6-e2e-stk66klm/result.json`、
-`/private/tmp/anivag-p6-e2e-stk66klm/acceptance.py`；脚本要求独立测试 MySQL／ES 与
+`/private/tmp/seekino-p6-e2e-stk66klm/result.json`、
+`/private/tmp/seekino-p6-e2e-stk66klm/acceptance.py`；脚本要求独立测试 MySQL／ES 与
 本地配置的模型密钥，合成视频由 ffmpeg 生成，正式事件不声称来自真实解析模型。
 
 当前业务选择值为 endpoint 别名，实际响应为 `doubao-embedding-vision-250615`；
@@ -143,7 +154,7 @@ HTTP 搜索与聊天共用当前 `agent_runtime` 的 topK 配置：下限为 1�
 协议，因此当前采样合同会明确拒绝它。验收单独使用 `251215`，未改业务模型配置。
 GIF 有序帧／相对时间输入与帧级同源确认尚无本批已证明的外部编码协议。
 
-已有物理索引须按当前 `anivag-video-chunk-es-5` mapping 新建／重建；旧 mapping 会被
+已有物理索引须按当前 `seekino-video-chunk-es-5` mapping 新建／重建；旧 mapping 会被
 明确拒绝，不会自动迁移。配置或规则改变由发布方提高现有 generation，分别核对
 写成功、查询就绪和业务可搜索。本批只使用独立临时实例与测试索引，未切换数据或
 发布；历史计划中的旧字段和旧路径说明不能覆盖这里的当前合同。

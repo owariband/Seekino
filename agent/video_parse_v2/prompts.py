@@ -42,40 +42,18 @@ def build_understanding_prompt(
     asr_result: ASRResult,
     ocr_result: OCRResult | None,
 ) -> str:
-    """Describe trusted media bounds while leaving the formal Schema to Engine."""
+    """Supply observations directly; the host validates and imports the JSON draft."""
 
-    return build_chunk_understanding_prompt(
-        start_ms=execution.allowed_start_seconds,
-        end_ms=execution.allowed_end_seconds,
-        asr_result=asr_result,
-        ocr_result=ocr_result,
-    )
-
-
-def build_canvas_understanding_prompt(execution: ChunkExecution, *, canvas: ParseContextCanvas) -> str:
-    """Bind video interpretation, evidence reads and event edits to this chunk."""
-
-    member_ref = execution.chunk_parse_task_id
-    write_example = {
-        "batch_id": "draft-1", "expected_revision": canvas.revision,
-        "operations": [{
-            "op": "add_event", "member_ref": member_ref, "key": "utterance-1",
-            "event": {
-                "event_type": "DIALOGUE",
-                "start_seconds": execution.allowed_start_seconds,
-                "end_seconds": min(execution.allowed_start_seconds + 1000, execution.allowed_end_seconds),
-                "description": "人物说出已核实的台词", "participants": [], "visible_persons": [],
-                "speaker": None,
-                "text_variants": [{"language": "und", "role": "ORIGINAL", "text": "已核实的原文"}],
-            },
-        }],
+    # Keep complete word alignment in persisted evidence for Refine. Initial
+    # interpretation needs the complete cue text, times and anonymous voice IDs.
+    transcript = {
+        **asr_result,
+        "transcript": [{key: value for key, value in cue.items() if key != "words"}
+                       for cue in asr_result["transcript"]],
     }
     return "\n".join((
-        "You are the understanding agent for one fixed video chunk. Your responsibility is to interpret the supplied video using ASR and available OCR evidence, and maintain timelineEvent through the Canvas tools.",
-        "The draft starts with empty persons and timeline. ASR/OCR are read-only observations; registering or reading them does not create timelineEvent. You must write the supported interpretation as structured events.",
-        f"Your member_ref is {json.dumps(member_ref)}. Only add events inside [{execution.allowed_start_seconds}, {execution.allowed_end_seconds}).",
-        _canvas_instructions(),
-
+        "You are the understanding model for one fixed video chunk. Interpret the supplied media and observations and return one complete JSON object matching VideoParseResult.",
+        "Return only the JSON object with persons and timeline, without Markdown fences, commentary or a completion receipt. No tools are available. The host validates and saves the complete result.",
         "Interpretation responsibilities:",
         "Mandatory speaker rule: if the available evidence cannot reliably identify who is speaking, DIALOGUE.speaker MUST be JSON null. Prefer leaving a low-confidence or conflicting attribution unknown to assigning the wrong person. Do not fill a name by guessing from conversational order, a visible or mentioned person, or a plausible plot. Keep intelligible dialogue even when its speaker is unknown; null is an accepted result, not a gap that must be filled.",
         "ASR has the evidence shape {\"transcript\":[{\"start_seconds\":integer,\"end_seconds\":integer,\"text\":string,\"speaker_id\":string|null}]}; older observations may omit speaker_id. It is not a timelineEvent payload. Do not copy the raw ASR result into timeline or mechanically convert each cue without understanding it.",
@@ -95,24 +73,18 @@ def build_canvas_understanding_prompt(execution: ChunkExecution, *, canvas: Pars
         "For ordered frames, including a visual fallback, the host-supplied frame timestamp list is already absolute milliseconds: do not add the clip offset or convert it again. Images contain no audio; do not claim to have heard speech from sampled frames.",
         "For every written event, start_seconds and end_seconds are integer milliseconds with start < end, fully inside the authorized range; these legacy field names do not mean seconds.",
 
-        "Your tools and the required workflow:",
-        "1. READ evidence and context with get_context_canvas. Use these exact argument examples for the current chunk:",
-        "ASR: " + json.dumps({"collection": "evidence", "reference": member_ref, "section": "asr"}),
-        "OCR: " + json.dumps({"collection": "evidence", "reference": member_ref, "section": "ocr"}),
-        "Background: " + json.dumps({"collection": "background", "reference": "context", "section": "content"}),
-        "Member and persons: " + json.dumps({"collection": "members", "reference": member_ref, "section": "content"}),
-        "OCR null means no OCR evidence is available; do not claim OCR succeeded or invent its result. evidence/media contains only media identity and bounds, not dialogue. The checkpoint and overview contain navigation, not the transcript.",
-        "Without reference, get_context_canvas returns the catalog; only if next_cursor is non-null, pass it as catalog_cursor to continue. With reference or references, section defaults to content and reads complete items. Select asr or ocr for those evidence sections. Detail payloads contain JSON in content. On truncated=true, read remaining_references in smaller batches. Only for an oversized single section, use reference with char_start/char_end; on RANGE_TOO_LARGE use suggested_end as char_end and continue from the returned end. Explicit section=overview lists section names and sizes.",
-        "2. INTERPRET the media with those observations, then WRITE supported events with write_context_canvas. Its arguments are batch_id, expected_revision and operations. Use the latest revision from a read or write receipt; batch related changes together. A failed atomic batch applies no operations: correct the reported error before continuing.",
-        "Use op=persons with member_ref, action=add/remove/set and values to maintain person names. Use op=add_event with member_ref, a stable unique key and a complete event to create an event. Every event requires event_type, start_seconds, end_seconds, description, participants and visible_persons; DIALOGUE also requires speaker and nonempty text_variants; ON_SCREEN_TEXT also requires language and text.",
-        "The following write is a SYNTAX EXAMPLE ONLY. Replace its sample times, wording and key with actual supported facts and use the latest revision; do not submit the example as an observed event:",
-        json.dumps(write_example, ensure_ascii=False),
-        "Read the write receipt for the new revision and issued event references. Use op=patch_event with event_ref and fields to correct description, speaker, language or text; only non-dialogue events may have start_seconds/end_seconds corrected here. Use op=event_array with event_ref, field, action and values to edit participants, visible_persons or text_variants; op=set_event with event_ref and the complete event to correct event_type, preserving any dialogue interval. Reuse issued references rather than inventing them. Use a new batch_id for changed operations; an identical batch may be replayed with its original batch_id.",
-        "Use get_context_canvas and write_context_canvas to maintain the draft, and CanvasCompletion to report completion. Evidence/background are read-only; set_compact belongs to Prefix, not your responsibility. Use op=remove_event with event_ref to explicitly remove an unsupported or duplicate event; omitted events remain unchanged.",
-        "3. VERIFY the current Canvas draft: get_context_canvas(collection=\"events\") lists event references; read relevant events together with references=[...]; section defaults to content. Returned items are complete. On truncated=true, read remaining_references in smaller batches. Event content is a known section: skip per-event overview. Only oversized single entries need reference with char_start/char_end. Reread the member persons as needed. Check supported dialogue coverage, visual interpretation, absolute timing, person references and duplicate utterances; correct problems with write_context_canvas.",
-        "4. COMPLETE only after evidence review, successful writes for supported events and rereading the resulting draft. Reading catalogs, writing only persons, or narrating intended events is not completion. Do not leave timeline empty when the media/evidence supports dialogue or visual events; an empty timeline is appropriate only when the reviewed inputs genuinely support no event, never as a shortcut around tool errors or missing reads.",
-        "After these steps, call the CanvasCompletion tool with {\"complete\":true}. The program assembles persons/timeline from Canvas; the completion tool reports that the draft is ready. Do not return the completion receipt or events as prose or JSON in your final text.",
-        canvas.checkpoint(),
+        "Order timeline by start_seconds. Check dialogue coverage, visual facts, person references, duplicate utterances and authorized time bounds before returning. An empty timeline is valid only when the supplied inputs support no event.",
+        "speaker_source is host-owned provenance; omit it from your output.",
+        "OCR null means no separate OCR evidence is available. You may read text directly from the supplied media; do not claim an OCR service ran.",
+        build_chunk_understanding_prompt(
+            start_ms=execution.allowed_start_seconds,
+            end_ms=execution.allowed_end_seconds,
+            asr_result=transcript,
+            ocr_result=ocr_result,
+        ),
+        "Background context: " + json.dumps(
+            execution.background, ensure_ascii=False, allow_nan=False, sort_keys=True,
+        ),
     ))
 
 
@@ -159,7 +131,7 @@ def build_refine_prompt(
     return "\n".join((
         f"Refine the fixed Interval [{start_sequence_no}, {end_sequence_no}).",
         _canvas_instructions(),
-        "Read member scopes, current events and original ASR/OCR separately through get_context_canvas.",
+        "Read member scopes, current events and original ASR/OCR separately through get_context_canvas. Prefer evidence section asr_transcript for cue text and boundaries; full section asr retains word alignment for precision checks.",
         "Correct existing events or add supported omissions with write_context_canvas. Preserve unrelated events and existing time bounds unless evidence establishes a timing correction.",
         "Resolve names, references and cross-boundary events only from supplied evidence. Missing original observations are unavailable evidence, not permission to invent them.",
         "Review unresolved speakers, apparent speaker changes and conflicts between ASR voice groups and surrounding events. When inspect_video_frames is available, use it to examine relevant source frames; narrow start_ms/end_ms and choose frame_count=1–4 inside its authorized range.",

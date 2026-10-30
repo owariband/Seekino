@@ -2041,7 +2041,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert video_parse_task.json()["uploadSessionId"] == upload_id
     assert video_parse_task.json()["durationSeconds"] == 12
     assert video_parse_task.json()["canRetry"] is False
-    assert video_parse_task.json()["canReparse"] is False
+    assert video_parse_task.json()["canReparse"] is True
     video_parse_tasks = client.get(
         "/api/jobs/video-parse/list",
         params={
@@ -3188,11 +3188,11 @@ def test_global_agent_settings_patch_requires_loopback(tmp_path):
 def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
     from server.config.settings import ServerSettings
 
-    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
-    monkeypatch.setenv("ANIVAG_DATABASE_URL", "sqlite+pysqlite:///:memory:")
-    monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
-    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "ui_contract_test")
-    monkeypatch.setenv("ANIVAG_ALLOWED_ORIGINS", "http://localhost:5173")
+    monkeypatch.setenv("SEEKINO_ENVIRONMENT", "test")
+    monkeypatch.setenv("SEEKINO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("SEEKINO_QDRANT_URL", "http://127.0.0.1:6333")
+    monkeypatch.setenv("SEEKINO_QDRANT_COLLECTION", "ui_contract_test")
+    monkeypatch.setenv("SEEKINO_ALLOWED_ORIGINS", "http://localhost:5173")
     existing, _, _ = _client(tmp_path)
     service = existing.app.state.services.agent
     try:

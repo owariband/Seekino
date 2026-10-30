@@ -48,7 +48,7 @@ class ParseExportTime(BaseModel):
 
 
 class ParseExportRecord(VideoParseResult):
-    schema_version: Literal["anivag.parse-export.v1"] = "anivag.parse-export.v1"
+    schema_version: Literal["seekino.parse-export.v1"] = "seekino.parse-export.v1"
     source: ParseExportSource
     time: ParseExportTime = Field(default_factory=ParseExportTime)
 

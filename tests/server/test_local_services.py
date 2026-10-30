@@ -182,7 +182,7 @@ def test_config_digest_distinguishes_hot_settings_from_restart_settings(
         "maximum_concurrent_kicks": 4,
     }
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
     first = config_digest()
 
     config["agent_runtime"]["stage_timeout_seconds"] = 240
@@ -261,8 +261,8 @@ def test_api_ready_rejects_invalid_health_payload(monkeypatch, payload) -> None:
 
 @pytest.mark.parametrize("tenant_id", ["local-default", "local & test/+库"])
 def test_library_ready_uses_current_tenant_route(monkeypatch, tenant_id) -> None:
-    monkeypatch.setenv("ANIVAG_AUTH_MODE", "local")
-    monkeypatch.setenv("ANIVAG_LOCAL_TENANT_ID", tenant_id)
+    monkeypatch.setenv("SEEKINO_AUTH_MODE", "local")
+    monkeypatch.setenv("SEEKINO_LOCAL_TENANT_ID", tenant_id)
     scopes = []
 
     def list_series(**scope):
@@ -296,7 +296,7 @@ def test_library_ready_uses_current_tenant_route(monkeypatch, tenant_id) -> None
 
 
 def test_start_requires_model_key_before_launching_server(monkeypatch) -> None:
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.setattr(local_services, "listening", lambda _port: False)
     monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
@@ -306,7 +306,7 @@ def test_start_requires_model_key_before_launching_server(monkeypatch) -> None:
 
 
 def test_start_requires_deepseek_key_before_launching_server(monkeypatch) -> None:
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(local_services, "listening", lambda _port: False)
@@ -327,7 +327,7 @@ def test_start_requires_configured_parse_fallback_key_name(monkeypatch) -> None:
         fallback_enabled=True,
     )
     config.video_parser.fallback.deepseek.api_key_env = "CUSTOM_DEEPSEEK_API_KEY"
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.delenv("CUSTOM_DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(local_services, "load_config", lambda: config)
@@ -355,7 +355,7 @@ def test_start_local_cli_providers_reach_launch_without_agent_api_key(
     def stop_at_launch(*_args, **_kwargs) -> None:
         raise LaunchReached
 
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.setattr(
         local_services,
@@ -376,7 +376,7 @@ def test_start_claude_api_key_mode_requires_configured_key(monkeypatch) -> None:
         auth_mode="api_key",
         api_key_env="CUSTOM_ANTHROPIC_API_KEY",
     )
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.delenv("CUSTOM_ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(
@@ -391,12 +391,13 @@ def test_start_claude_api_key_mode_requires_configured_key(monkeypatch) -> None:
         local_services.start_applications()
 
 
-def test_local_start_validates_explicit_elasticsearch_before_applications(monkeypatch) -> None:
+@pytest.mark.parametrize("input_mode", ["text", "multimodal"])
+def test_local_start_validates_explicit_elasticsearch_before_applications(monkeypatch, input_mode) -> None:
     events: list[str] = []
     requests = []
     settings = SimpleNamespace(
         elasticsearch=SimpleNamespace(
-            url="http://127.0.0.1:9200", index_name="anivag_video_chunks_dev",
+            url="http://127.0.0.1:9200", index_name="seekino_video_chunks_dev",
             api_key=None,
         ),
         environment="development", text_vector_dimensions=3,
@@ -411,6 +412,7 @@ def test_local_start_validates_explicit_elasticsearch_before_applications(monkey
 
     class FakeStore:
         def __init__(self, _client, **_kwargs) -> None:
+            assert _kwargs["vision_enabled"] is (input_mode == "multimodal")
             events.append("store")
 
         def ensure_index(self) -> None:
@@ -422,6 +424,10 @@ def test_local_start_validates_explicit_elasticsearch_before_applications(monkey
 
     monkeypatch.setattr(local_services, "create_elasticsearch_client", create_client)
     monkeypatch.setattr(local_services, "ElasticsearchVideoChunkStore", FakeStore)
+    monkeypatch.setattr(local_services, "listening", lambda _port: True)
+    monkeypatch.setattr(local_services, "launch", lambda *_a, **_k: pytest.fail("reuse must not launch ES"))
+
+    monkeypatch.setattr(local_services, "load_config", lambda _path: SimpleNamespace(resolve_embedding_binding=lambda: SimpleNamespace(input_mode=input_mode)))
 
     local_services.start_elasticsearch(settings)
 
@@ -442,6 +448,7 @@ def test_local_start_rejects_unready_elasticsearch_without_schema_write(monkeypa
             closed.append(True)
 
     monkeypatch.setattr(local_services, "create_elasticsearch_client", lambda *_args, **_kwargs: FakeClient())
+    monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(
         local_services, "ElasticsearchVideoChunkStore",
         lambda *_args, **_kwargs: pytest.fail("schema must not be touched"),
@@ -472,7 +479,7 @@ def test_local_status_includes_explicit_elasticsearch_health(
     requests = []
     closed = []
     settings = SimpleNamespace(
-        database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
+        database_url="mysql+pymysql://root@127.0.0.1:3306/seekino_development",
         elasticsearch=SimpleNamespace(url="http://127.0.0.1:9200", api_key=None),
     )
 
@@ -490,8 +497,8 @@ def test_local_status_includes_explicit_elasticsearch_health(
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "get", lambda _url: b"ready")
     monkeypatch.setattr(local_services, "api_ready", lambda _url: True)
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
-    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_WEB_PORT", "5173")
 
     assert local_services.status(settings) is expected
     assert "Elasticsearch health" in capsys.readouterr().out
@@ -507,7 +514,7 @@ def test_local_mysql_missing_database_closes_admin_and_application_engines(
     from sqlalchemy.exc import OperationalError
 
     settings = SimpleNamespace(
-        database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
+        database_url="mysql+pymysql://root@127.0.0.1:3306/seekino_development",
         environment="development",
     )
     events = []
@@ -555,7 +562,7 @@ def test_local_mysql_missing_database_closes_admin_and_application_engines(
     else:
         local_services.start_mysql(settings)
 
-    assert events[0].startswith("CREATE DATABASE IF NOT EXISTS `anivag_development`")
+    assert events[0].startswith("CREATE DATABASE IF NOT EXISTS `seekino_development`")
     assert events[-1] == "application closed"
     assert events.count("admin closed") == 1
     assert events.count("application closed") == 1
@@ -765,8 +772,8 @@ def test_owned_listener_requires_exact_managed_pid(monkeypatch, pid, listeners, 
 def test_refresh_only_stale_managed_applications(monkeypatch, tmp_path, name, change):
     monkeypatch.setattr(local_services, "ROOT", tmp_path)
     monkeypatch.setattr(local_services, "STATE", tmp_path)
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
-    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_WEB_PORT", "5173")
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "owned_listener", lambda _name, _port: True)
     monkeypatch.setattr(local_services, "owned_pid", lambda _name: 123)
@@ -792,8 +799,8 @@ def test_refresh_only_stale_managed_applications(monkeypatch, tmp_path, name, ch
 def test_refresh_rejects_any_unknown_listener_before_stopping(monkeypatch, tmp_path, unknown):
     monkeypatch.setattr(local_services, "ROOT", tmp_path)
     monkeypatch.setattr(local_services, "STATE", tmp_path)
-    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
-    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_WEB_PORT", "5173")
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "owned_listener", lambda name, _port: name != unknown)
     monkeypatch.setattr(local_services, "config_digest", lambda: pytest.fail("must preflight both ports"))
@@ -813,3 +820,261 @@ def test_stop_does_not_signal_reused_pid(monkeypatch, tmp_path):
     local_services.stop(("api",))
 
     assert (tmp_path / "api.pid.json").exists()
+
+
+def test_mysql_data_directory_preserves_legacy_data_until_explicit_selection(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    monkeypatch.setattr(local_services, "STATE", tmp_path / "outputs/local-services")
+    monkeypatch.delenv("SEEKINO_MYSQL_DATA_DIR", raising=False)
+    destination = tmp_path / "data/mysql"
+    assert local_services.mysql_data_directory() == destination
+    assert not destination.exists()
+
+    legacy = local_services.STATE / "mysql"
+    legacy.mkdir(parents=True)
+    existing = legacy / "ibdata1"
+    existing.write_bytes(b"existing database")
+    with pytest.raises(RuntimeError, match="旧 MySQL 数据目录"):
+        local_services.mysql_data_directory()
+    assert not destination.exists()
+    assert existing.read_bytes() == b"existing database"
+
+    monkeypatch.setenv("SEEKINO_MYSQL_DATA_DIR", str(legacy))
+    assert local_services.mysql_data_directory() == legacy
+    assert existing.read_bytes() == b"existing database"
+
+
+def test_native_elasticsearch_uses_persistent_data_and_loopback_before_schema(monkeypatch, tmp_path):
+    from server.config.elasticsearch import ElasticsearchConfig
+
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    monkeypatch.setattr(local_services, "STATE", tmp_path / "outputs/local-services")
+    monkeypatch.setattr(local_services, "listening", lambda _port: False)
+    monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
+    monkeypatch.setattr(local_services, "binary", lambda name: f"/tools/{name}")
+    monkeypatch.delenv("SEEKINO_ELASTICSEARCH_DATA_DIR", raising=False)
+    monkeypatch.delenv("SEEKINO_ELASTICSEARCH_TRANSPORT_PORT", raising=False)
+    monkeypatch.setenv("SEEKINO_ELASTICSEARCH_HEAP_SIZE", "512m")
+    settings = SimpleNamespace(
+        elasticsearch=ElasticsearchConfig("http://127.0.0.1:9201", "seekino_chunks_development"),
+        environment="development", text_vector_dimensions=3, vision_vector_dimensions=3,
+    )
+    events = []
+    launches = []
+    client = SimpleNamespace(
+        cluster=SimpleNamespace(health=lambda **_kw: {"status": "yellow"}),
+        close=lambda: events.append("closed"),
+    )
+    monkeypatch.setattr(local_services, "create_elasticsearch_client", lambda *_a, **_k: client)
+    monkeypatch.setattr(local_services, "launch", lambda name, args, **kw: launches.append((name, args, kw)))
+
+    def wait(name, check, *, timeout):
+        assert name == "elasticsearch" and timeout == 120
+        assert check()
+        events.append("ready")
+
+    monkeypatch.setattr(local_services, "wait_ready", wait)
+    monkeypatch.setattr(local_services, "ElasticsearchVideoChunkStore", lambda *_a, **_k:
+                        SimpleNamespace(ensure_index=lambda: events.append("schema")))
+    local_services.start_elasticsearch(settings)
+
+    assert events == ["ready", "schema", "closed"]
+    name, args, kw = launches[0]
+    assert name == "elasticsearch" and args[0] == "/tools/elasticsearch"
+    assert "-Epath.data=" + str(tmp_path / "data/elasticsearch") in args
+    assert "-Epath.logs=" + str(local_services.STATE / "elasticsearch-logs") in args
+    assert "-Enetwork.host=127.0.0.1" in args
+    assert "-Ehttp.host=127.0.0.1" in args and "-Etransport.host=127.0.0.1" in args
+    assert "-Ehttp.port=9201" in args and "-Etransport.port=9301" in args
+    assert "-Ediscovery.type=single-node" in args
+    assert "-Expack.security.autoconfiguration.enabled=false" in args
+    assert kw["env"]["ES_JAVA_OPTS"] == "-Xms512m -Xmx512m"
+
+
+@pytest.mark.parametrize("url,api_key", [
+    ("https://127.0.0.1:9200", None), ("http://127.0.0.1:9200", "configured"),
+])
+def test_native_elasticsearch_does_not_replace_missing_authenticated_instance(monkeypatch, url, api_key):
+    monkeypatch.setattr(local_services, "listening", lambda _port: False)
+    monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
+    monkeypatch.setattr(local_services, "launch", lambda *_a, **_k: pytest.fail("must not launch unsecured substitute"))
+    with pytest.raises(RuntimeError, match="请先启动配置的已有实例"):
+        local_services.start_elasticsearch(SimpleNamespace(
+            elasticsearch=SimpleNamespace(url=url, api_key=api_key),
+        ))
+
+
+def test_wait_ready_records_exec_identity_only_for_live_child(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    monkeypatch.setattr(local_services, "CHILDREN", {
+        "elasticsearch": SimpleNamespace(pid=123, poll=lambda: None),
+    })
+    record = tmp_path / "elasticsearch.pid.json"
+    record.write_text(json.dumps({"pid": 123, "signature": "launcher", "config": "kept"}))
+    monkeypatch.setattr(local_services, "signature", lambda _pid: "java process")
+
+    local_services.wait_ready("elasticsearch", lambda: True)
+
+    assert json.loads(record.read_text()) == {"pid": 123, "signature": "java process", "config": "kept"}
+    assert local_services.owned_pid("elasticsearch") == 123
+
+
+def test_wait_ready_timeout_preserves_ownership_after_native_exec(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    monkeypatch.setattr(local_services, "CHILDREN", {
+        "elasticsearch": SimpleNamespace(pid=123, poll=lambda: None),
+    })
+    record = tmp_path / "elasticsearch.pid.json"
+    record.write_text(json.dumps({"pid": 123, "signature": "launcher"}))
+    monkeypatch.setattr(local_services, "signature", lambda _pid: "java process")
+    ticks = iter([0, 0, 2])
+    monkeypatch.setattr(local_services.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(local_services.time, "sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="未就绪"):
+        local_services.wait_ready("elasticsearch", lambda: False, timeout=1)
+
+    assert local_services.owned_pid("elasticsearch") == 123
+
+
+def test_wait_ready_does_not_refresh_identity_of_exited_child(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    monkeypatch.setattr(local_services, "CHILDREN", {
+        "elasticsearch": SimpleNamespace(pid=123, poll=lambda: 1),
+    })
+    record = tmp_path / "elasticsearch.pid.json"
+    original = json.dumps({"pid": 123, "signature": "old process"})
+    record.write_text(original)
+    monkeypatch.setattr(local_services, "signature", lambda _pid: pytest.fail("cannot adopt another process"))
+
+    with pytest.raises(RuntimeError, match="提前退出"):
+        local_services.wait_ready("elasticsearch", lambda: True)
+
+    assert record.read_text() == original
+
+
+def test_default_stop_only_signals_owned_native_databases(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    live = {"elasticsearch": 123}
+    monkeypatch.setattr(local_services, "owned_pid", lambda name: live.get(name))
+    monkeypatch.setattr(local_services, "signature", lambda _pid: "" if not live else "alive")
+    signals = []
+
+    def kill(pid, signal):
+        signals.append((pid, signal))
+        live.clear()
+
+    monkeypatch.setattr(local_services.os, "killpg", kill)
+    local_services.stop()
+    assert signals == [(123, local_services.signal.SIGTERM)]
+
+
+def test_stop_tolerates_owner_exiting_before_signal(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "STATE", tmp_path)
+    record = tmp_path / "elasticsearch.pid.json"
+    record.write_text(json.dumps({"pid": 123, "signature": "old process"}))
+    owners = iter([123, None])
+    monkeypatch.setattr(local_services, "owned_pid", lambda _: next(owners))
+    monkeypatch.setattr(local_services, "signature", lambda _: "")
+
+    def kill(*_args):
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(local_services.os, "killpg", kill)
+    local_services.stop(("elasticsearch",))
+    assert not record.exists()
+
+
+@pytest.mark.parametrize("layout", ["tarball", "homebrew_symlink", "system"])
+def test_native_mysql_initialization_and_start_share_explicit_distribution_root(
+    monkeypatch, tmp_path, layout,
+):
+    from contextlib import contextmanager
+
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    state = tmp_path / "outputs/local-services"
+    state.mkdir(parents=True)
+    monkeypatch.setattr(local_services, "STATE", state)
+    monkeypatch.delenv("SEEKINO_MYSQL_DATA_DIR", raising=False)
+    distribution = tmp_path / "installed mysql"
+    binary_dir = distribution / ("sbin" if layout == "system" else "bin")
+    binary_dir.mkdir(parents=True)
+    (binary_dir / "mysqld").touch()
+    if layout != "system":
+        (distribution / "share").mkdir()
+        (distribution / "lib").mkdir()
+    if layout == "homebrew_symlink":
+        link = tmp_path / "opt-mysql"
+        link.symlink_to(distribution, target_is_directory=True)
+        executable = link / "bin/mysqld"
+    else:
+        executable = binary_dir / "mysqld"
+    monkeypatch.setattr(local_services, "binary", lambda *_args: str(executable))
+    monkeypatch.setattr(local_services, "listening", lambda _: False)
+    monkeypatch.setattr(local_services, "owned_pid", lambda _: None)
+    monkeypatch.setattr(local_services, "wait_ready", lambda *_args: None)
+    initialized = []
+    launched = []
+    monkeypatch.setattr(local_services.subprocess, "run", lambda args, **kw: initialized.append(args))
+    monkeypatch.setattr(local_services, "launch", lambda name, args: launched.append(args))
+
+    @contextmanager
+    def connection():
+        yield SimpleNamespace(execute=lambda _: None)
+
+    engine = SimpleNamespace(connect=connection, dispose=lambda: None)
+    monkeypatch.setattr(local_services, "create_database_engine", lambda *_args, **kw: engine)
+    monkeypatch.setattr(local_services, "create_schema", lambda _: None)
+    local_services.start_mysql(SimpleNamespace(
+        database_url="mysql+pymysql://root@127.0.0.1:3306/seekino_development",
+        environment="development",
+    ))
+
+    for command in [initialized[0], launched[0]]:
+        assert command[:2] == [str(executable), "--no-defaults"]
+        assert f"--datadir={tmp_path / 'data/mysql'}" in command
+        assert (f"--basedir={distribution}" in command) is (layout != "system")
+    assert "--initialize-insecure" in initialized[0]
+    assert "--initialize-insecure" not in launched[0]
+    assert "--bind-address=127.0.0.1" in launched[0]
+
+
+@pytest.mark.parametrize("failed", [None, "init-db", "init-event-index"])
+def test_storage_initialization_reuses_cli_and_stops_on_failure(monkeypatch, failed):
+    calls = []
+
+    def run(args, **kwargs):
+        assert kwargs == {"cwd": local_services.ROOT, "check": True}
+        calls.append(args)
+        if args[-1] == failed:
+            raise subprocess.CalledProcessError(1, args)
+
+    monkeypatch.setattr(local_services.subprocess, "run", run)
+    if failed:
+        with pytest.raises(subprocess.CalledProcessError):
+            local_services.initialize_storage()
+    else:
+        local_services.initialize_storage()
+    expected = ["init-db"] if failed == "init-db" else ["init-db", "init-event-index"]
+    assert calls == [[sys.executable, "-m", "server.cli", command] for command in expected]
+
+
+def test_start_initializes_checkpoint_and_event_index_before_api(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_services, "ROOT", tmp_path)
+    monkeypatch.setattr(local_services, "STATE", tmp_path / "outputs/local-services")
+    monkeypatch.setattr(local_services, "CHILDREN", {})
+    monkeypatch.setattr(local_services, "require_worktree_branch", lambda _: None)
+    monkeypatch.setattr(local_services, "configure", lambda: "settings")
+    monkeypatch.setattr(local_services, "binary", lambda _: "unused")
+    monkeypatch.setenv("SEEKINO_HTTP_PORT", "9621")
+    monkeypatch.setenv("SEEKINO_WEB_PORT", "5173")
+    monkeypatch.setattr(sys, "argv", ["local_services.py", "start"])
+    monkeypatch.chdir(tmp_path)
+    events = []
+    monkeypatch.setattr(local_services, "start_mysql", lambda _: events.append("mysql"))
+    monkeypatch.setattr(local_services, "start_elasticsearch", lambda _: events.append("es"))
+    monkeypatch.setattr(local_services, "initialize_storage", lambda: events.append("initialize"))
+    monkeypatch.setattr(local_services, "start_applications", lambda: events.append("applications"))
+
+    assert local_services.main() == 0
+    assert events == ["mysql", "es", "initialize", "applications"]

@@ -59,7 +59,7 @@ from .fallback import log_model_fallback
 from .tool_loop import _copy_assistant_reasoning, _function_tool_spec
 
 _logger = logging.getLogger(__name__)
-_HARNESS_PROVIDER = "anivag_supervisor"
+_HARNESS_PROVIDER = "seekino_supervisor"
 
 # The built-in Supervisor owns a virtual workspace. Business subagents retain
 # their existing review/commit contracts and are exposed as scoped tools.
@@ -455,7 +455,7 @@ class DeepAgentsSupervisorModel:
                 return create_deep_agent(
                     model=model, tools=list(tools), system_prompt=prompt,
                     middleware=middleware, backend=backend,
-                    checkpointer=checkpointer, name="anivag_supervisor",
+                    checkpointer=checkpointer, name="seekino_supervisor",
                 )
 
             checkpoint_graph = build_graph(self.session_store.checkpointer)

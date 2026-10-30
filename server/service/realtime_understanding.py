@@ -335,7 +335,7 @@ class RealtimeUnderstandingService:
                 self._frames.move_to_end(key)
                 return replace(cached, chunk_id=target.chunk_id)
         source = self._artifacts.resolve(context.source_uri)
-        with tempfile.TemporaryDirectory(prefix="anivag-realtime-frame-") as directory:
+        with tempfile.TemporaryDirectory(prefix="seekino-realtime-frame-") as directory:
             extracted = extract_video_frames(
                 source, [timestamp], output_dir=directory, max_height=max_height,
                 timeout_seconds=self._remaining(context.request),

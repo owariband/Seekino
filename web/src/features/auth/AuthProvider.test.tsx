@@ -285,7 +285,7 @@ describe("local data with a remote account", () => {
     mount(remote);
     await screen.findByText("账号：guest-a");
     const calls = api.get.mock.calls.length;
-    await act(async () => window.dispatchEvent(new CustomEvent("anivag-auth-required", { detail: { connectionId: "other-local" } })));
+    await act(async () => window.dispatchEvent(new CustomEvent("seekino-auth-required", { detail: { connectionId: "other-local" } })));
     expect(api.get).toHaveBeenCalledTimes(calls);
   });
 
@@ -297,7 +297,7 @@ describe("local data with a remote account", () => {
     queryClient.setQueryData(["local-work"], "keep");
     const { ApiClientError } = await import("../../api/client");
     api.get.mockRejectedValue(new ApiClientError(401, null));
-    await act(async () => window.dispatchEvent(new CustomEvent("anivag-auth-required", { detail: { connectionId: remote.id } })));
+    await act(async () => window.dispatchEvent(new CustomEvent("seekino-auth-required", { detail: { connectionId: remote.id } })));
     expect(await screen.findByText("账号：guest-a")).toBeInTheDocument();
     expect(screen.getByTestId("scope")).toHaveTextContent(scope!);
     expect(queryClient.getQueryData(["local-work"])).toBe("keep");
@@ -312,7 +312,7 @@ describe("local data with a remote account", () => {
     const { ApiClientError } = await import("../../api/client");
     api.get.mockRejectedValue(new ApiClientError(401, null));
     api.guest.mockRejectedValue(new Error("游客连接失败"));
-    await act(async () => window.dispatchEvent(new CustomEvent("anivag-auth-required", { detail: { connectionId: remote.id } })));
+    await act(async () => window.dispatchEvent(new CustomEvent("seekino-auth-required", { detail: { connectionId: remote.id } })));
     expect(await screen.findByText("local-user:local-default")).toBeInTheDocument();
     expect(screen.getByText("账号：未连接")).toBeInTheDocument();
     expect(queryClient.getQueryData(["private-work"])).toBeUndefined();

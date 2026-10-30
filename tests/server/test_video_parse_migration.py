@@ -618,9 +618,9 @@ def test_repeat_verifies_publication_and_dependencies_without_resetting(defect):
 
 @pytest.fixture
 def migration_engine():
-    url = os.getenv("ANIVAG_MIGRATION_TEST_DATABASE_URL")
+    url = os.getenv("SEEKINO_MIGRATION_TEST_DATABASE_URL")
     if not url:
-        pytest.skip("ANIVAG_MIGRATION_TEST_DATABASE_URL is not configured")
+        pytest.skip("SEEKINO_MIGRATION_TEST_DATABASE_URL is not configured")
     engine = create_database_engine(url, environment=DatabaseEnvironment.TEST)
     assert engine.url.database and engine.url.database.endswith("_migration_test"), "requires dedicated disposable migration test database"
     create_schema(engine)

@@ -212,7 +212,7 @@ class VideoSummarizeService:
             try:
                 return model.generate(
                     [TextInput(prompt)], schema_name="VideoSummaryCompletion", result_type=SummaryCompletion,
-                    tools=as_langchain_tools(tools),
+                    tools=as_langchain_tools(tools), tool_harness="deepagents",
                     request_timeout_seconds=execution.config.execution_timeout_seconds,
                     check_control=execution.manager.check_active,
                 )
@@ -233,7 +233,7 @@ class VideoSummarizeService:
         if len(data) != result.cover_image.size_bytes:
             raise ValueError("summary cover bytes do not match the inspection receipt")
         filename = "summary-" + hashlib.sha256(data).hexdigest() + extensions[header]
-        with TemporaryDirectory(prefix="anivag-summary-cover-") as directory:
+        with TemporaryDirectory(prefix="seekino-summary-cover-") as directory:
             path = Path(directory) / filename
             path.write_bytes(data)
             execution.manager.check_active()

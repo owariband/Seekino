@@ -2,8 +2,8 @@
 
 来源均为 Seekino 仓库现有资产（只读引用，未修改仓库）：
 
-- 几何：`AniVAG/assets/mascot/seekino-side.svg`（侧面）、`AniVAG/assets/mascot/seekino-logo.svg`（3/4 主形象）
-- 组件：`AniVAG/web/src/shared/Mascot.tsx`（已有 idle / seek / puzzled / oops / swim / hop 情绪）
+- 几何：`Seekino/assets/mascot/seekino-side.svg`（侧面）、`Seekino/assets/mascot/seekino-logo.svg`（3/4 主形象）
+- 组件：`Seekino/web/src/shared/Mascot.tsx`（已有 idle / seek / puzzled / oops / swim / hop 情绪）
 - 色板：`seekino-logo.svg` 注释 + `web/src/shared/mascot.module.css` + 全局 tokens
 
 | 角色 | 色值 |

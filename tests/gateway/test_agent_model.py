@@ -241,7 +241,7 @@ def test_function_loop_releases_oversized_tool_result_before_next_request() -> N
 
     assert len(completions.calls) == 2
     second_messages = completions.calls[1]["messages"]
-    assert "anivag_context_checkpoint" in second_messages[1]["content"]
+    assert "seekino_context_checkpoint" in second_messages[1]["content"]
     released = json.loads(second_messages[-1]["content"])
     assert released["context_window"] == "tool_result_released"
     assert released["original_bytes"] == 20_000

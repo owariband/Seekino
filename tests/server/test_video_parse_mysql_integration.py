@@ -26,9 +26,9 @@ from tests.server.test_video_parse_repository import _refinement_inputs
 
 @pytest.fixture
 def mysql_capacity():
-    database_url = os.getenv("ANIVAG_TEST_DATABASE_URL")
+    database_url = os.getenv("SEEKINO_TEST_DATABASE_URL")
     if not database_url:
-        pytest.skip("ANIVAG_TEST_DATABASE_URL is not configured")
+        pytest.skip("SEEKINO_TEST_DATABASE_URL is not configured")
     engine = create_database_engine(database_url, environment=DatabaseEnvironment.TEST)
     assert engine.dialect.name == "mysql", "Capacity and lease races require real MySQL"
     create_schema(engine)

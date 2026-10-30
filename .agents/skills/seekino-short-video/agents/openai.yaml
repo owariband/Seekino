@@ -1,0 +1,4 @@
+interface:
+  display_name: "Seekino Short Video"
+  short_description: "Create offline HyperFrames films via Seekino and Codex"
+  default_prompt: "Use $seekino-short-video to have Seekino's local Codex Agent find grounded clips, then deliver a self-contained offline HyperFrames HTML film."

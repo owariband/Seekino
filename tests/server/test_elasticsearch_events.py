@@ -112,6 +112,37 @@ def test_missing_index_is_recoverable_and_does_not_create_on_query(storage):
     assert store.inspect(["absent"]) == {"absent": None}
 
 
+def test_text_only_event_index_persists_and_recovers_without_fake_vision(storage):
+    client, store = storage
+    contract = EventIndexingContract(semantic_encoder=_contract().semantic_encoder,
+                                    vision_encoder=None, capture=None)
+    store.ensure_index(contract)
+    source = _document().as_source() | {"vision_vector": None, "detail": {"capture": {"frames": []}}}
+    document = EventIndexDocument.model_validate(source)
+    store.bulk_upsert([document], refresh="wait_for")
+    assert store.inspect([document.event_id]) == {document.event_id: document}
+    assert store.verify_ready([document])
+    assert client.documents[document.event_id]["vision_vector"] is None
+    with pytest.raises(ValueError, match="frozen index contract"):
+        store.bulk_upsert([_document()])
+    with pytest.raises(ValueError, match="text-only Event index"):
+        store.search_vector([1., 0.], channel="vision", sources=[], filters=EventFilters(), limit=1)
+
+
+def test_multimodal_event_store_rejects_text_only_document_and_contract(storage):
+    client, store = storage
+    store.ensure_index(_contract())
+    source = _document().as_source() | {"vision_vector": None, "detail": {"capture": {"frames": []}}}
+    with pytest.raises(ValueError, match="frozen index contract"):
+        store.bulk_upsert([EventIndexDocument.model_validate(source)])
+    other = ElasticsearchVideoEventStore(client, index_name=store.index_name, environment="test",
+                                        semantic_dimensions=2, vision_dimensions=2)
+    text = EventIndexingContract(semantic_encoder=_contract().semantic_encoder,
+                                vision_encoder=None, capture=None)
+    with pytest.raises(ElasticsearchIndexSchemaError, match="metadata"):
+        other.bind_contract(text)
+
+
 def test_event_schema_has_only_agreed_fields_and_freezes_complete_contract(storage):
     client, store = storage
     contract = _contract()

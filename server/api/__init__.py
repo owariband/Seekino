@@ -1,1 +1,1 @@
-"""HTTP boundary for the anivag Server."""
+"""HTTP boundary for the seekino Server."""

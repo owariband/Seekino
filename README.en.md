@@ -21,7 +21,7 @@
   <a href="#references">References</a>
 </p>
 
-Seekino (formerly AniVAG) turns your videos into a searchable footage library. Import videos, analyze visuals and dialogue, describe what you need, and retrieve clips with timestamps that lead back to the original. Video analysis and retrieval are also available through APIs for your own tools and workflows.
+Seekino (formerly Seekino) turns your videos into a searchable footage library. Import videos, analyze visuals and dialogue, describe what you need, and retrieve clips with timestamps that lead back to the original. Video analysis and retrieval are also available through APIs for your own tools and workflows.
 
 ## Under construction
 
@@ -109,15 +109,52 @@ After starting the service, inspect requests and responses in the [OpenAPI docs]
 
 ## Creative experiments
 
-A separate experiment has already connected retrieval, clip preparation and HyperFrames composition into an offline HTML short video. See the [short-video experiment workflow](.agents/skills/anivag-short-video/SKILL.md). It explores reusing retrieved footage; check its scripts and configuration against the current API before using them.
+A separate experiment has already connected retrieval, clip preparation and HyperFrames composition into an offline HTML short video. See the [short-video experiment workflow](.agents/skills/seekino-short-video/SKILL.md). It explores reusing retrieved footage; check its scripts and configuration against the current API before using them.
 
 The project is still evolving. Analysis, retrieval and answers can be inaccurate, so check them against the original footage. Known issues and planned work are listed in the [issue list](docs/dev/problems.md) (in Chinese).
 
 ## Quick start
 
-Run all commands from the repository root. These steps are for a local development setup. The default `local` mode needs no login.
+The recommended first install runs **Web, API, video processing, MySQL and Elasticsearch in Docker**, with **DeepAgents** and API models by default. Local mode needs no application login.
 
-### 1. Prepare the environment and configuration
+Install Docker Desktop, or Docker Engine with a current Compose plugin. On Windows, select **WSL2 / Linux containers**; the commands also work in PowerShell. Python, Node.js, ffmpeg and the model SDKs are included in the images.
+
+From the repository root:
+
+```bash
+cp deploy/docker/env.example .env.docker
+```
+
+Fill in `ARK_API_KEY` and `DEEPSEEK_API_KEY` in `.env.docker`, and confirm your accounts can access the models selected in `config.yaml`. Keep an existing environment file instead of overwriting it. Then start everything:
+
+```bash
+docker compose --env-file .env.docker up --build -d --wait
+```
+
+Initialization checks the configuration and creates the business tables, DeepAgents checkpoints and search indexes before starting the API and Web. Existing databases still require the documented upgrade procedure.
+
+- Web: <http://127.0.0.1:5173>
+- API docs: <http://127.0.0.1:5173/docs>
+- Health: <http://127.0.0.1:5173/healthz>; the API is also published on port `9621`.
+
+Kimi and Codex remain optional through the existing source/model/harness fields in **the same `config.yaml`**. No extra provider YAML is required. Kimi uses `KIMI_API_KEY`; Codex uses the bundled SDK runtime and a persistent container login. See the [Docker setup guide](deploy/local-setup.md) for these steps, custom ports and configuration updates.
+
+The `app_data` volume stores media, logs, the effective model configuration and Codex credentials; MySQL and ES have separate volumes. The model YAML is imported only on first launch, preserving changes saved by the Settings page. `stop` and `down` retain volumes; `down -v` deletes them.
+
+```bash
+docker compose --env-file .env.docker ps
+docker compose --env-file .env.docker logs -f api
+docker compose --env-file .env.docker stop
+```
+
+Full container startup and Windows validation are still pending; see the guide for the checks completed. After startup, upload a short video, wait for parsing, retrieve a clip and ask two follow-up questions. A healthy HTTP endpoint does not validate the model pipeline. Remote model calls send the relevant media or text to the configured provider and may incur charges.
+
+### Host development (optional)
+
+<details>
+<summary>Run API and Web on the host, with Docker databases</summary>
+
+#### 1. Prepare the environment and configuration
 
 You need Python **3.12** (`>=3.12,<3.13`), `uv`, Node.js **24+**, npm, ffmpeg and ffprobe. Storage uses MySQL **8.4** and Elasticsearch **8.19.x**. Bring your own, or use the repository's Compose file (ES is pinned to 8.19.22).
 
@@ -133,12 +170,12 @@ Fill in model credentials and local connection details in `.env.local`. The defa
 
 | Model role | Default source | What you need |
 | --- | --- | --- |
-| Chat Supervisor, video search agent, frame understanding | Local Codex | The current OS user is logged in to Codex. The executable can be set in the source config. |
-| Speech transcription | Local Whisper service | Prepare the model files and a compatible audio endpoint, or configure your own transcription service. |
+| Chat Supervisor, transcription, frame understanding, OCR and summaries | Ark | Set `ARK_API_KEY`. No local weights are required by the default configuration. |
+| Video search agent | DeepSeek, with an Ark fallback | Set both API keys. |
 | Embeddings | Ark | Set `ARK_API_KEY`. |
 | Reranking, text fallback when vision fails | DeepSeek | Set `DEEPSEEK_API_KEY`. |
 
-Adjust the [model configuration](docs/model-config.md) to the models or endpoints you have. The default `supervisor_harness: codex` needs the matching Codex source. If you switch to API models, change the harness and the Supervisor binding together.
+Adjust the [model configuration](docs/model-config.md) to the models or endpoints you have. The default `supervisor_harness: deepagents` uses an API source. To select Codex, change the harness and Supervisor binding together. Kimi uses the existing OpenAI-compatible adapter and `kimi` profile.
 
 | Where | What |
 | --- | --- |
@@ -148,7 +185,7 @@ Adjust the [model configuration](docs/model-config.md) to the models or endpoint
 
 When running by hand, exported shell variables with the same name take priority over `uv --env-file`. Use the same configuration in both terminals.
 
-### 2. Prepare MySQL and Elasticsearch
+#### 2. Prepare MySQL and Elasticsearch
 
 With Docker Compose:
 
@@ -156,7 +193,7 @@ With Docker Compose:
 docker compose --env-file .env.local up -d --wait mysql elasticsearch
 ```
 
-On first start, Compose creates the default development database `anivag_development`, and database ports are only published on `127.0.0.1`. The server, web app and ffmpeg still run on the host. If you use an existing MySQL, create the database and account named in `ANIVAG_DATABASE_URL` first; `init-db` only creates tables, not the database.
+On first start, Compose creates the default development database `seekino_development`, and database ports are only published on `127.0.0.1`. The server, web app and ffmpeg still run on the host. If you use an existing MySQL, create the database and account named in `SEEKINO_DATABASE_URL` first; `init-db` only creates tables, not the database.
 
 Then initialise or verify the current schema and ES index:
 
@@ -167,7 +204,7 @@ uv run --no-sync --env-file .env.local -- python -m server.cli init-es-index
 
 Both commands can be re-run, but they do not migrate old databases or rebuild incompatible indexes automatically. Old identity fields, time units or index contracts raise an upgrade error; see "Upgrading an existing database" under Architecture and deployment below.
 
-### 3. Start the API and the web app
+#### 3. Start the API and the web app
 
 Terminal 1:
 
@@ -185,13 +222,13 @@ uv run --no-sync --env-file .env.local -- npm --prefix web run dev -- --host 127
 - API docs: <http://127.0.0.1:9621/docs>
 - Consumer status: <http://127.0.0.1:9621/healthz>
 
-`python -m server.api` forwards to the official `server.main` entry point. The API process already includes the V2 consumer, so no separate worker is needed. Stop each hand-started process with Ctrl-C. Stop the Compose databases with `docker compose stop`; their volumes are kept.
+`python -m server.api` forwards to the official `server.main` entry point. The API process already includes the V2 consumer, so no separate worker is needed. Stop each hand-started process with Ctrl-C. Stop the databases with `docker compose --env-file .env.local stop mysql elasticsearch`; their volumes are kept.
 
-The Vite proxy reads `ANIVAG_HTTP_HOST` / `ANIVAG_HTTP_PORT` from the same environment. To use a custom web port, change `--port` above and `ANIVAG_ALLOWED_ORIGINS`. Changing `ANIVAG_WEB_PORT` alone does not change the port of a hand-started Vite.
+The Vite proxy reads `SEEKINO_HTTP_HOST` / `SEEKINO_HTTP_PORT` from the same environment. To use a custom web port, change `--port` above and `SEEKINO_ALLOWED_ORIGINS`. Changing `SEEKINO_WEB_PORT` alone does not change the port of a hand-started Vite.
 
-### Optional: local launcher
+#### Optional: local launcher
 
-The repository includes a launcher for lazily starting local MySQL, reusing the API/web processes and managing them:
+The repository includes a launcher for starting installed native MySQL and Elasticsearch when needed, reusing the API/web processes and managing them:
 
 ```bash
 ./start.sh
@@ -199,11 +236,15 @@ The repository includes a launcher for lazily starting local MySQL, reusing the 
 ./start.sh stop
 ```
 
-The launcher uses the checked-out `main` worktree and loads its `.env.local`, including when the updated entry point is invoked from another worktree. `start` uses current local files, including uncommitted changes, without pulling or switching branches. Managed API/Web processes are refreshed when their source directory, file contents, or configuration changes; unchanged processes are reused, and unknown port owners are rejected. MySQL/ES are not stopped by this refresh. Frozen worktrees retain their old launchers, so use the main directory entry point.
+The launcher defaults to the checked-out `main` worktree and its `.env.local`. Use `./start.sh --branch dev` (and `--branch dev status` / `--branch dev stop`) for an existing dev worktree. `start` uses current local files, including uncommitted changes, without pulling or switching branches. Managed API/Web processes are refreshed when their source directory, file contents, or configuration changes; unchanged processes are reused, and unknown port owners are rejected. MySQL/ES are not stopped by this refresh.
 
-The launcher checks the API library and the web proxy against the current `tenantId` contract, using the local tenant configured in `ANIVAG_LOCAL_TENANT_ID`. Elasticsearch must be reachable before you start: the script verifies the cluster and index but does not start ES. `stop` only stops processes the launcher manages. It does not stop a hand-started API/web or the Compose databases.
+The launcher checks the API library and the web proxy against the current `tenantId` contract, using the local tenant configured in `SEEKINO_LOCAL_TENANT_ID`. It reuses listening MySQL/Elasticsearch instances or starts installed native binaries, then validates schemas, checkpoints and indices. `stop` only stops processes the launcher manages. It does not stop a hand-started API/web or the Compose databases.
 
-Launcher data and logs go to `outputs/local-services/`. Media goes to `outputs/server/artifacts/` by default, configurable with `ANIVAG_ARTIFACT_ROOT`. An existing MySQL/ES is reused as configured, and old schemas are never altered automatically. For Docker and port details, see the [development deployment notes](deploy/README.md) (in Chinese).
+To run entirely without Docker, follow the [native local setup](deploy/README.md#可选全原生本机开发) (in Chinese) to install MySQL and Elasticsearch and configure their executable paths. Use the same launcher commands above; `stop` also stops native databases started by the launcher.
+
+Native database data defaults to `data/mysql/` and `data/elasticsearch/`; launcher logs and PID records go to `outputs/local-services/`. Persistent media goes to `assets/library/` by default, configurable with `SEEKINO_ARTIFACT_ROOT`. Existing media roots are not moved automatically; preserve their environment directories and back them up together with MySQL. An existing MySQL/ES is reused as configured, and old business schemas are never migrated automatically. For native binary paths, legacy data protection, Docker and port details, see the [development deployment notes](deploy/README.md) (in Chinese).
+
+</details>
 
 ## Architecture and deployment
 
@@ -253,11 +294,11 @@ Video durations, event/chunk boundaries, playback positions and frame times are 
 
 `model_sources` describes protocol adapters, authentication and providers. `models` defines each model and its source. The app currently uses the `supervisor`, `agent`, `transcription`, `vision`, `vision_fallback`, `embedding` and `rerank` roles. Parameters such as vector dimensions and video sampling rate live in `models.embedding`. By default, Refine reuses the fixed Understanding model.
 
-The top-level `supervisor_harness` chooses between the Codex and Deep Agents execution styles, and `models.supervisor` binds the Supervisor model on its own. `models.agent` still picks the model for video-search subtasks. By default the Supervisor and frame understanding use Codex with vision input enabled explicitly. Whether other models receive raw images depends on each model's `supports_vision_input` and its adapter. Switching sources never switches the embedding model automatically.
+The top-level `supervisor_harness` chooses between the Codex and Deep Agents execution styles, and `models.supervisor` binds the Supervisor model on its own. `models.agent` still picks the model for video-search subtasks. By default the Supervisor uses DeepAgents with Ark, and frame understanding also uses Ark. Whether other models receive raw images depends on each model's `supports_vision_input` and its adapter. Switching sources never switches the embedding model automatically.
 
 The gateway supports OpenAI-compatible APIs, Ark, a local Codex login, the Claude SDK and more; each model role and harness has its own capability requirements. Restart the server after changing a source, model or harness. It will not silently switch execution style when the config doesn't match.
 
-`agent_runtime` parameters saved from the Settings page are written to the server's `config.yaml`. The next new message uses the new values; an answer already in progress keeps the parameters it started with. `maximum_concurrent_kicks`, model connections and other startup settings need a server restart. Runtime parameters set explicitly in YAML override the matching `ANIVAG_AGENT_*` environment fallbacks.
+`agent_runtime` parameters saved from the Settings page are written to the server's `config.yaml`. The next new message uses the new values; an answer already in progress keeps the parameters it started with. `maximum_concurrent_kicks`, model connections and other startup settings need a server restart. Runtime parameters set explicitly in YAML override the matching `SEEKINO_AGENT_*` environment fallbacks.
 
 The Model Usage page reads MySQL `model_usage`. It covers V2 parsing/indexing and assistant calls, and shows only recorded tokens and known subtotals. Failed records may be missing, and unknown usage is never counted as zero. It does not calculate cost or enforce hard token quotas. The production bootstrap **does not wire up the Langfuse writer/reader**, so setting `tracing.enabled` to true does not turn on server tracing; the standalone module and config fields are still kept.
 
@@ -268,7 +309,7 @@ For source configuration see [model configuration](docs/model-config.md) and [ga
 <details>
 <summary>Local and cloud identity</summary>
 
-The default `ANIVAG_AUTH_MODE=local` uses `local-user` / `local-default`, with no login on your own machine.
+The default `SEEKINO_AUTH_MODE=local` uses `local-user` / `local-default`, with no login on your own machine.
 
 `cloud` mode also needs a signing secret, Redis, SMTP and same-origin HTTPS. Redis stores verification-code digests, rate limits and concurrency leases; MySQL stores users, tenants and resource ownership. You can start the optional development Redis from Compose:
 
@@ -278,7 +319,7 @@ docker compose --env-file .env.local --profile cloud-auth up -d --wait redis
 
 Guests can only read content that is public and ready, and their conversations are isolated per guest. After logging in with an email code, a user gets a personal tenant and can switch between personal and public content. Library management and global settings are controlled by server permissions; public read access never grants platform write access.
 
-Cloud mode limits request counts and concurrency. Guests share a per-IP request budget; local mode has no request quota. These limits are separate from token statistics. A production reverse proxy must forward the HTTPS scheme and client address correctly. See [.env.example](.env.example) for the settings and the [user/tenant handoff notes](server/report_docs/user-tenant-handoff-20261010.md) for identity details and migration.
+Cloud mode limits request counts and concurrency. Guests share a per-IP request budget; local mode has no request quota. These limits are separate from token statistics. A production reverse proxy must forward the HTTPS scheme and client address correctly. See [.env.example](.env.example) for the settings and the [user/tenant handoff notes](docs/report/server/user-tenant-handoff-20261010.md) for identity details and migration.
 
 Business HTTP scoping fields now use **`tenantId`**. Some older docs still show `workspaceId` examples; follow the current OpenAPI and DTOs.
 
@@ -311,14 +352,14 @@ npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
 
-Real integration tests need separate `ANIVAG_TEST_DATABASE_URL`, `ANIVAG_TEST_ELASTICSEARCH_URL` and `ANIVAG_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider. Known issues and pending acceptance checks are recorded in the [issue list](docs/dev/problems.md).
+Real integration tests need separate `SEEKINO_TEST_DATABASE_URL`, `SEEKINO_TEST_ELASTICSEARCH_URL` and `SEEKINO_TEST_AUTH_REDIS_URL`. Tests against real models must be enabled explicitly and may cost money with your provider. Known issues and pending acceptance checks are recorded in the [issue list](docs/dev/problems.md).
 
 Passing unit tests, builds, isolated SQL/ES tests and mocked-API browser tests is not the same as a full acceptance run with real models. Semantic quality, cold-start latency of on-demand understanding, real SMTP and full browser end-to-end runs each need separate acceptance. A successful `/healthz` only means the consumer is running.
 
 ## Repository and docs
 
 ```text
-anivag/
+seekino/
 ├── config.yaml / .env.example   # Model defaults and environment template
 ├── gateway/                    # Model protocols and source adapters
 ├── engine/                     # parsev2, rag and shared media utilities
@@ -339,10 +380,10 @@ Most module docs below are written in Chinese.
 
 - [Design document index](docs/design/README.md) · [Documentation conventions](docs/README.md)
 - [Benchmark index](evals/benchmark/README.md): query capabilities, chat behavior, retrieval quality and intent routing.
-- [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](docs/design/context-canvas-design.md)
+- [Parse V2 Agent](agent/video_parse_v2/README.md) · [Context Canvas](docs/design/02-agent-harness/context-canvas-design.md)
 - [Current-position understanding](agent/chat/realtime_understanding/runtime.py) · [Server](server/README.md)
 - [Web](web/README.md) · [Gateway](gateway/README.md) · [Engine](engine/README.md)
-- [Model configuration](docs/model-config.md) · [Model token usage](docs/parse-model-usage.md) · [User/tenant](server/report_docs/user-tenant-handoff-20261010.md)
+- [Model configuration](docs/model-config.md) · [Model token usage](docs/parse-model-usage.md) · [User/tenant](docs/report/server/user-tenant-handoff-20261010.md)
 - [Development deployment](deploy/README.md) · [Issue list](docs/dev/problems.md)
 
 ## References

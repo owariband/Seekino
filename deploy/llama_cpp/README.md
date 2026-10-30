@@ -1,6 +1,6 @@
 # llama.cpp direct-video runtime
 
-该 runtime 保留为 anivag 本地 Qwen3-VL 的直接视频 A/B 实验入口。Gateway 仍保留
+该 runtime 保留为 seekino 本地 Qwen3-VL 的直接视频 A/B 实验入口。Gateway 仍保留
 HTTP adapter，但当前正式 `parse-video` fallback 已改为官方 DeepSeek Flash 的分组抽帧
 链路，不会读取本目录配置，也不负责启动或停止本进程。
 
@@ -30,7 +30,7 @@ Q8_0 projector。首次验证可从 Ollama manifest 解析真实 blob；验证�
   --video-fps 0.5 \
   --video-timestamp-interval 2000 \
   --video-ffmpeg-dir /opt/homebrew/bin \
-  --alias anivag-qwen3-vl-direct \
+  --alias seekino-qwen3-vl-direct \
   --host 127.0.0.1 \
   --port 8080
 ```

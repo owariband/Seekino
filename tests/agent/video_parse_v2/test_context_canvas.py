@@ -1276,6 +1276,29 @@ def test_original_evidence_and_state_remain_readable_after_checkpoint_and_edits(
     assert canvas.get("evidence", "member") == before
 
 
+def test_aligned_asr_evidence_retains_word_times_and_nulls_in_json():
+    canvas = _canvas()
+    asr = {"language": "en", "transcript": [{
+        "start_seconds": 1000, "end_seconds": 3000, "text": "hello 2026",
+        "speaker_id": None, "words": [
+            {"text": "hello", "start_ms": 1000, "end_ms": 2000, "score": 0.9},
+            {"text": "2026", "start_ms": None, "end_ms": None, "score": None},
+        ],
+    }]}
+    canvas.register_evidence("aligned-asr", {"asr": asr})
+    retained = json.loads(json.dumps(canvas.get("evidence", "aligned-asr")))
+    assert retained["asr"] == asr
+    sections = canvas.sections("evidence", "aligned-asr", role="refine")
+    assert json.loads(sections["asr"]) == asr
+    assert json.loads(sections["asr_transcript"]) == {
+        "language": "en", "transcript": [{
+            "start_seconds": 1000, "end_seconds": 3000, "text": "hello 2026", "speaker_id": None,
+        }],
+    }
+    asr["transcript"][0]["words"].clear()
+    assert canvas.get("evidence", "aligned-asr") == retained
+
+
 @pytest.mark.parametrize("origin", ["initial", "added"])
 def test_explicit_remove_only_deletes_the_named_editable_event(origin):
     canvas = _canvas()

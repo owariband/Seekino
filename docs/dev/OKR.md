@@ -73,7 +73,7 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 
 
 ### https://learn.chatgpt.com/docs/app-server，supervisor变成完备的agent harness runtime，subagent作为可选必备tool
-我想要用户在anivag能够用它自己的codex,然后还能像用codex那样允许codex操作本机文件呢?如果是这样我们应该怎么处理?
+我想要用户在seekino能够用它自己的codex,然后还能像用codex那样允许codex操作本机文件呢?如果是这样我们应该怎么处理?
 云端就先不管吧,就假设localhost的场景
 
 ## P2
@@ -93,14 +93,14 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 
 ### O4. 本地 / YouTube 视频的按需理解与课程库联动
 
-状态：本地实时理解首版已实现并通过离线测试，当前优先完成 O0 的真实使用验收；YouTube、课程库扩展与本机产物后置。后续承接九月份“实时识别的 sub-agent 开发，接入 chat supervisor”的规划，将 YouTube 媒体获取、当前区间理解与课程库检索集成到 AniVAG。页面脚本或侧边栏作为客户端提供播放上下文，复用同一套视频理解与召回能力。
+状态：本地实时理解首版已实现并通过离线测试，当前优先完成 O0 的真实使用验收；YouTube、课程库扩展与本机产物后置。后续承接九月份“实时识别的 sub-agent 开发，接入 chat supervisor”的规划，将 YouTube 媒体获取、当前区间理解与课程库检索集成到 Seekino。页面脚本或侧边栏作为客户端提供播放上下文，复用同一套视频理解与召回能力。
 
 - KR1：用户暂停本地视频并提问时，Chat Supervisor 调用实时识别 sub-agent。已有适用的解析结果时复用；没有时只解析暂停位置附近的指定区间，取得转录和关键帧并回答，无需等待整集下载、全量 Parse 或索引完成。
 - KR2：接入 YouTube URL、视频标识与当前播放时间，优先取得提问区间的可解码音视频。媒体获取层适配本地文件和 YouTube 来源，为实时识别 sub-agent 提供统一的视频来源与时间区间；首版面向普通点播视频。
 - KR3：Chat Supervisor 按问题组合当前区间理解与已解析资料检索。“刚才那张图是什么意思”走实时识别；“其他课程哪里讲过这个”走课程库检索；复合问题组合两类证据。当前区间小解析直接用于回答，历史检索沿用已有索引就绪规则。
 - KR4：成果保留原视频时间位置和来源；保存区间成果与整集解析完成分别管理。当前首版持久化基础 Chunk 结果并复用，派生观察与上下文使用有界进程缓存；临时不保存等可配置模式留待后续扩展，尚未实现。
 - KR5：用户选择完整收录课程时，支持后台下载与解析同时推进。下载器准备好可解码片段后交给解析任务，解析当前片段时继续获取后续内容；当前提问区间优先处理。下载和解析分别展示进度，并支持取消与重试。
-- KR6：用户本机 Codex / Claude Code 可以取得当前区间理解结果和 AniVAG 课程库证据，在选定的本机学习目录生成笔记或代码。产物分别保留当前视频位置和课程库出处；本机文件操作由本机 Agent 执行，AniVAG 提供内容、证据和访问接口。
+- KR6：用户本机 Codex / Claude Code 可以取得当前区间理解结果和 Seekino 课程库证据，在选定的本机学习目录生成笔记或代码。产物分别保留当前视频位置和课程库出处；本机文件操作由本机 Agent 执行，Seekino 提供内容、证据和访问接口。
 - KR7：验收“未全量解析的 YouTube 课程播放 → 暂停并问刚才那张图 → 取得区间转录和关键帧 → Agent 解释”，再验收“解释这张图，找到云端另一门课的相关讲解，整理到本机学习目录”。回答和笔记中的两类来源均可核对并定位回原视频。
 
 执行顺序：先完成已有上传 / 解析 / 检索 / 播放 / Chat 主链路与本地实时理解的 O0 验收及必要修复，再接 YouTube 区间媒体获取与页面播放上下文，随后验证课程库联动和本机 Agent 产物，最后补齐完整收录时的下载 / 解析并行流程。
@@ -112,7 +112,7 @@ P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Ser
 
 ### 2. 实时识别的sub-agent开发，接入chat supervisor
 
-状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../design/realtime-parse-trd.md)，产品验收按 O0 进行。
+状态（2026-10-10）：`realtime_understanding`、公共 Chunk 组件与 Supervisor 工具已实现，离线测试通过；当前进入真实视频＋真实模型的使用验收与性能基准阶段。实现记录见 [实时parse_trd.md](../design/02-agent-harness/realtime-parse-trd.md)，产品验收按 O0 进行。
 
 职责边界：本 Agent 负责实时区间理解 sub-agent、Chat Supervisor 的调用与结果整合，以及这条链路必需的 Server 适配。前端播放交互、全量 Parse / Refine / 索引算法、身份与 Workspace 体系、YouTube 下载和本机笔记生成由对应模块负责；本任务复用其接口，依赖缺口列 TODO。
 
@@ -248,7 +248,7 @@ Content-Type: application/json
 
 ```json
 {
-  "schema_version": "anivag.parse-export.v1",
+  "schema_version": "seekino.parse-export.v1",
   "source": {
     "video_id": "11111111-1111-4111-8111-111111111111",
     "parse_task_id": "22222222-2222-4222-8222-222222222222",

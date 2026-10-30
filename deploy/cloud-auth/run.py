@@ -50,7 +50,7 @@ def main() -> None:
         settings = local.configure()
         if settings.auth.mode != "cloud":
             raise RuntimeError("请先加载手机测试的 cloud 环境配置。")
-        api_port = local.port("ANIVAG_HTTP_PORT")
+        api_port = local.port("SEEKINO_HTTP_PORT")
         if (api_port != 9622 or make_url(settings.database_url).database != "seekino_phone_dev"
                 or settings.artifact_root.resolve() != (ROOT / "outputs/phone-test/artifacts").resolve()
                 or settings.elasticsearch.index_name != "seekino_phone_chunks_dev"
@@ -62,9 +62,9 @@ def main() -> None:
             local.start_elasticsearch(settings)
             subprocess.run([sys.executable, "-m", "server.cli", "init-event-index"], check=True)
             return
-        redis_port = local.port("ANIVAG_REDIS_PORT", 16379)
-        smtp_port = local.port("ANIVAG_MAILPIT_SMTP_PORT", 1025)
-        inbox_port = local.port("ANIVAG_MAILPIT_WEB_PORT", 8025)
+        redis_port = local.port("SEEKINO_REDIS_PORT", 16379)
+        smtp_port = local.port("SEEKINO_MAILPIT_SMTP_PORT", 1025)
+        inbox_port = local.port("SEEKINO_MAILPIT_WEB_PORT", 8025)
         redis_url = urlsplit(settings.auth.redis_url)
         if redis_url.hostname != "127.0.0.1" or redis_url.port != redis_port:
             raise RuntimeError("认证 Redis URL 必须匹配本项目的 loopback Redis 端口。")

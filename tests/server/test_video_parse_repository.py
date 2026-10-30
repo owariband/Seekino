@@ -3023,7 +3023,7 @@ def test_v2_chunk_media_api_reads_current_publication_and_registered_images(tmp_
     assert client.get(image_url).status_code == 409
 
 
-@pytest.mark.parametrize("field", ["source", "model", "dimensions", "video_fps", "max_height"])
+@pytest.mark.parametrize("field", ["source", "model", "dimensions", "video_fps", "max_height", "input_mode", "query_instruction"])
 def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_changes(
     repository, field,
 ):
@@ -3048,7 +3048,7 @@ def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_cha
             embedding = dict(config["models"]["embedding"])
             embedding[field] = {
                 "source": "other-source", "model": "other-model", "dimensions": 768,
-                "video_fps": 2.0,
+                "video_fps": 2.0, "input_mode": "text", "query_instruction": "Find course text",
             }[field]
             config["models"] = {**config["models"], "embedding": embedding}
         task.parse_config = config

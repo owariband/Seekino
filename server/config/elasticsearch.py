@@ -18,10 +18,10 @@ def resolve_vector_dimensions(
     require_matching: bool = False,
 ) -> tuple[int, int]:
     text = int(text_dimensions if text_dimensions is not None else os.getenv(
-        "ANIVAG_TEXT_VECTOR_DIMENSIONS", str(_DEFAULT_VECTOR_DIMENSIONS),
+        "SEEKINO_TEXT_VECTOR_DIMENSIONS", str(_DEFAULT_VECTOR_DIMENSIONS),
     ))
     vision = int(vision_dimensions if vision_dimensions is not None else os.getenv(
-        "ANIVAG_VISION_VECTOR_DIMENSIONS", str(_DEFAULT_VECTOR_DIMENSIONS),
+        "SEEKINO_VISION_VECTOR_DIMENSIONS", str(_DEFAULT_VECTOR_DIMENSIONS),
     ))
     if text <= 0 or vision <= 0:
         raise ValueError("text and vision vector dimensions must be greater than zero")
@@ -47,26 +47,26 @@ class ElasticsearchConfig:
         index_generation: int | str | None = None,
         event_index_name: str | None = None,
     ) -> "ElasticsearchConfig | None":
-        url = (url if url is not None else os.getenv("ANIVAG_ELASTICSEARCH_URL", "")).strip()
+        url = (url if url is not None else os.getenv("SEEKINO_ELASTICSEARCH_URL", "")).strip()
         index_name = (index_name if index_name is not None else os.getenv(
-            "ANIVAG_ELASTICSEARCH_INDEX", "",
+            "SEEKINO_ELASTICSEARCH_INDEX", "",
         )).strip()
-        api_key = (api_key if api_key is not None else os.getenv("ANIVAG_ELASTICSEARCH_API_KEY")) or None
+        api_key = (api_key if api_key is not None else os.getenv("SEEKINO_ELASTICSEARCH_API_KEY")) or None
         raw_index_generation = str(index_generation if index_generation is not None else os.getenv(
-            "ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "",
+            "SEEKINO_ELASTICSEARCH_INDEX_GENERATION", "",
         )).strip()
         if not (url or index_name or api_key or raw_index_generation):
             return None
         if not url or not index_name:
             raise ValueError(
-                "ANIVAG_ELASTICSEARCH_URL and ANIVAG_ELASTICSEARCH_INDEX "
+                "SEEKINO_ELASTICSEARCH_URL and SEEKINO_ELASTICSEARCH_INDEX "
                 "must be configured together"
             )
         try:
             index_generation = int(raw_index_generation or str(DEFAULT_INDEX_GENERATION))
         except ValueError:
             raise ValueError(
-                "ANIVAG_ELASTICSEARCH_INDEX_GENERATION must be a positive integer"
+                "SEEKINO_ELASTICSEARCH_INDEX_GENERATION must be a positive integer"
             ) from None
         config = cls(
             url=url,

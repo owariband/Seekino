@@ -1,4 +1,4 @@
--- AniVAG controlled migration: Video Parse V2 Worker runtime accounting.
+-- Seekino controlled migration: Video Parse V2 Worker runtime accounting.
 -- Apply after 20260927_video_parse_v2_tasks.sql and
 -- 20260928_task_indexing_contract.sql with all application writers stopped.
 -- MySQL DDL implicitly commits; inspect the schema after any error and do not

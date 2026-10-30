@@ -574,9 +574,19 @@ class UploadRepository:
             VideoParseTaskStatus.INDEXING_FAILED.value,
         }
         if latest.status not in terminal_statuses:
-            raise UploadStateError(
-                "only a complete or failed VideoParseTask can be reparsed"
-            )
+            # A stopped/queued task can adopt a corrected configuration through
+            # a new version. Never replace a coordinator or child still holding
+            # its lease, including an expired lease awaiting normal reclamation.
+            children = [
+                *session.scalars(select(IntervalParseTask).where(
+                    IntervalParseTask.video_task_id == latest.id,
+                ).order_by(IntervalParseTask.id).with_for_update()),
+                *session.scalars(select(ChunkParseTask).where(
+                    ChunkParseTask.video_task_id == latest.id,
+                ).order_by(ChunkParseTask.id).with_for_update()),
+            ]
+            if latest.lease_owner is not None or any(child.lease_owner is not None for child in children):
+                raise UploadStateError("the VideoParseTask executions must drain before reparsing")
         video = session.get(Video, upload.video_id)
         if video is None:
             raise UploadConflictError("upload session Video no longer exists")
@@ -628,7 +638,10 @@ class UploadRepository:
         )
         previous_detail = deepcopy(latest.detail or {})
         previous_runtime = previous_detail.get(RUNTIME_DETAIL_KEY, {})
-        if _revoke_summary(previous_runtime, pending=False, now=now):
+        revoked_summary = _revoke_summary(previous_runtime, pending=False, now=now)
+        if latest.status not in terminal_statuses:
+            previous_runtime.update(accepted=False, capacity_acquired=False, superseded_by=task.id)
+        if revoked_summary or latest.status not in terminal_statuses:
             previous_detail[RUNTIME_DETAIL_KEY] = previous_runtime
             latest.detail = previous_detail
         session.add(task)

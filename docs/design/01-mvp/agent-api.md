@@ -1,0 +1,530 @@
+# seekino Multi-Agent API 对接文档
+
+> 状态：首个可运行纵向闭环
+>
+> 更新时间：2026-09-18
+>
+> 面向对象：WebUI 对话、历史会话与 Agent 状态联调
+
+本文只描述独立 Agent 会话系统，不重复描述视频上传、解析任务或底层 `/api/search`
+契约。所有资源 ID 使用 camelCase Query 参数，不放入 Path；创建、列表、详情和发送动作
+分别显式使用 `create`、`list`、`get`、`send`。
+所有绝对时间字段都是 Unix epoch 毫秒整数（signed INT64 / MySQL `BIGINT`）；
+视频 `startSeconds/endSeconds` 是相对于原视频起点的整数秒，不是时间戳；
+Agent `totalDurationMs/stages[].durationMs` 是运行耗时毫秒，也不是时间戳。
+
+## 1. 领域关系
+
+```text
+Workspace
+└── AgentConversation（聊天历史）
+    └── AgentMessage
+        ├── USER（本次实际 seriesIds；detail.request.idempotencyKey 保存发送幂等键）
+        └── ASSISTANT（相邻序号的回复；同一 seriesIds + modelName + searchResult + renderBlocks；detail.timing 保存耗时）
+```
+
+- `AgentConversation`：直接属于 Workspace 的连续对话线程，保存标题和历史，不保存固定检索范围。
+- `AgentMessage`：MySQL 中的消息事实，USER / ASSISTANT 都保存本次发送解析后的实际 `seriesIds`。同一 Conversation 可以在后续发送选择不同动画；一次 Kick 内范围保持不变。ASSISTANT 用有序 `renderBlocks` 保存 Markdown 和视频窗口的交错关系；GET 快照和列表接口可完整恢复该顺序。
+- 同一发送的 USER 和 ASSISTANT 在同一 Conversation 中占相邻 `sequence_no`，以消息顺序与角色找回回复，不另存 `reply_to_message_id` 自外键。USER 的幂等键存于 `detail.request.idempotencyKey`，MySQL 在 `(conversation_id, JSON 路径表达式)` 上建唯一索引，保证同一 Conversation 内的发送键唯一。
+- `AgentMessage.detail.timing`：消息自身的 JSON 扩展数据，保存助手回答的开始时间、总耗时和各阶段耗时；没有独立的 Timing 表。`extra_context` 是用户请求上下文，不能用于保存服务端耗时。
+- LangGraph checkpoint 不是产品聊天记录；本轮产品状态全部由上述 MySQL 表持久化。
+
+## 2. Multi-Agent 协作图
+
+```text
+一次 AgentRuntime.kick()：
+    Query Agent：SDK 内部模型 / 工具循环，检索 Chunk 并提出候选播放范围
+        ↓
+    Evaluator Agent：complete / continue + advice
+        ├── continue 且尚未满 3 轮 → 下一轮 Query，读取原计划和全部工作记录
+        ├── 第 3 轮仍 continue → FAILED，最终 Chat 不调用
+        └── complete → Chat 自主循环
+                            ├── 有获批 Evidence：首次 tool_choice=required
+                            ├── 无获批 Evidence / 已提交片段：tool_choice=auto
+                            ├── 输出一段普通 Markdown
+                            ├── 调用 submit_video_item(video_chunk_id, claim)
+                            ├── 继续输出 Markdown 或再提交视频
+                            └── 自主结束
+                                      ↓
+                     Server 校验每个 ID，从获批 selected_video_ranges 绑定范围，生成有序 renderBlocks
+                                      ↓
+                     确定性 Output Node 补齐可信媒体信息
+                            ↓
+                     Service 原子保存 Assistant Message
+                            ↓
+                     answer.completed
+```
+
+Agent Tool 的参数 Schema 与构造器统一由 `agent/chat/video_search/tools/` 提供。Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.search`。模型参数只有
+`query` / `top_k` / `channel_weights`；Workspace / Series Scope 由当前 Kick 固定。完整实际召回、公开计划、
+草稿、审核意见和复用来源保存在各 `LoopTurn`，下一轮显式获得这些信息。
+
+代码职责：`server/service/agent_chat.py` 管会话与消息事务；`agent/chat/` 是独立于 HTTP 的
+Agent Runtime；`gateway/agent_model/` 提供 Provider 无关的模型执行协议、上下文治理和 Tool Loop，具体 Adapter 使用 LangChain `create_agent` / `ToolStrategy` 管 Query
+内层工具循环，`langgraph` 管外层审核循环。Evaluator 使用 text-only DeepSeek Chat Completions
+和单个 required function call 返回结构化审核；最终 Chat 同样通过 DeepSeek 的文本 Chat Completions
+运行有边界的自主工具循环；每轮可输出 Markdown、调用一个或多个
+`submit_video_item({video_chunk_id, claim})`，或结束。有获批 Evidence 时至少提交一个，
+之后可以只使用其任意子集；没有获批 Evidence 时可以不调用工具。Chat 自主决定
+Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID。Chat 不提交时间。
+Evaluator 放行后，Server 要求 Query 的 `selected_video_ranges` 与获批 Evidence 的 ID 集合
+完全一致，且每个范围都在对应 canonical Evidence 内；非法 complete 转为 continue。Output 仅按
+`video_chunk_id` 从该获批范围生成 `renderBlocks.startSeconds/endSeconds`，不存在 proposed / approved /
+canonical 三层范围或 fallback。
+视频 URI、标题等仍始终从可信 Evidence 补齐。逻辑块顺序保存在 `renderBlocks`；整个循环和数据库提交
+成功后才原子交付给前端，不暴露失败运行的半成品。
+
+## 3. 接口总览
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/api/series/list?workspaceId=...` | 复用已有 Series 列表，为动画多选提供 seriesId / name / status |
+| `POST` | `/api/agent/conversations/create` | 在 Workspace 中创建 Conversation |
+| `GET` | `/api/agent/conversations/list?workspaceId=...` | 列出 Workspace 的 Conversation |
+| `GET` | `/api/agent/conversations/get?conversationId=...` | 获取 Conversation |
+| `POST` | `/api/agent/conversations/delete?conversationId=...&workspaceId=...` | 删除终态 Conversation |
+| `GET` | `/api/agent/messages/list?conversationId=...` | 列出 Message |
+| `POST` | `/api/agent/messages/send?conversationId=...` | 发送用户消息 |
+| `GET` | `/api/agent/messages/events?conversationId=...` | 订阅 Message 状态快照 |
+
+Conversation 创建和消息发送均要求 `Idempotency-Key`。同一个 Key 配合相同字段会返回
+原资源或原消息；不同字段返回 `409 CONFLICT`。Conversation 创建 Key 的唯一范围是
+当前 Workspace，消息发送 Key 的唯一范围是当前 Conversation。
+
+## 4. Conversation
+
+### 4.1 创建
+
+```http
+POST /api/agent/conversations/create
+Idempotency-Key: 80d5cdda-...
+Content-Type: application/json
+
+{
+  "workspaceId": "local-default",
+  "title": "寻找春日影后的质问"
+}
+```
+
+响应 `201`：
+
+```json
+{
+  "conversationId": "3955f7ee-873d-42b4-9ea1-e3b6555ddc67",
+  "workspaceId": "local-default",
+  "title": "寻找春日影后的质问",
+  "messageCount": 0,
+  "lastMessageAt": null,
+  "createdAt": 1789434060000,
+  "updatedAt": 1789434060000
+}
+```
+
+创建 Conversation 不传 `seriesIds`，不校验或绑定动画。动画选择属于每次发送的请求。
+
+### 4.2 列表与详情
+
+```http
+GET /api/agent/conversations/list?workspaceId=local-default&limit=100
+GET /api/agent/conversations/get?conversationId={conversationId}&workspaceId=local-default
+```
+
+### 4.3 删除
+
+```http
+POST /api/agent/conversations/delete?conversationId={conversationId}&workspaceId=local-default
+```
+
+删除使用 Workspace 归属校验。Conversation 没有运行中的 ASSISTANT Message 时，
+事务物理删除 Conversation，MySQL 级联删除其 Message，并返回
+删除前的 `AgentConversationView`。存在 `PROCESSING` 回答时返回
+`409 MESSAGE_IN_PROGRESS`；该门禁用于避免删除与 checkpoint / complete / fail 回写竞态。
+删除 Conversation 不会删除视频、VideoChunk、Artifact 或 Qdrant 索引。
+
+## 5. Message
+
+### 5.1 发送
+
+```http
+POST /api/agent/messages/send?conversationId={conversationId}
+Idempotency-Key: 99946c6f-...
+Content-Type: application/json
+
+{
+  "workspaceId": "local-default",
+  "content": "第二段里的她为什么突然哭了？",
+  "seriesIds": ["77285f16-3e5b-592e-ba15-8b224b619806"],
+  "topK": 8
+}
+```
+
+`seriesIds` 可省略或传 `[]`，表示当前 Workspace 中全部 `READY` 动画；没有 READY 动画
+时返回 `409`，不会执行空 Scope 召回。显式数组去重并规范化，所有 ID 必须属于当前
+Workspace 且已 READY；UUID 规范化、去重并排序，选择顺序不影响幂等。缺失 / 跨 Workspace
+返回 `404`，未 READY 返回 `409`，不能静默
+移除显式选择项。前端复用 `GET /api/series/list?workspaceId=...` 获取 `SeriesView[]`，
+读取必填 `seriesId/name/status` 展示多选，非 READY 项不能新选，已选项仍可取消；空选择显示“全部可检索动画”。
+
+Service 在启动任务前展开并保存实际 Scope，USER / ASSISTANT 均返回这一 `seriesIds` 快照。
+Retrieve Tool 的闭包只使用当前 Kick 的 Scope，模型、advice 和前端后续选择不能扩大它。
+聊天历史传给 Query 时携带各消息 `seriesIds`，旧范围证据不能直接当作本次实际召回。
+
+`topK` 可省略，默认 `8`；当前服务端上限默认 `20`，同时限制每次召回和最终选中的不同片段数量。
+多次召回可以累积更多内部证据，交付结果仍遵守本次 TopK。一次发送先提交 USER Message 和
+`PROCESSING` ASSISTANT Message，再由 Service 拥有的执行任务运行 Harness。Query 草稿通过审核后，
+最终 Chat 整理正文；函数调用完整返回、校验通过且数据库事务成功，才更新同一个 ASSISTANT 为 `COMPLETED`。同一 Conversation 同时只允许一个
+ASSISTANT Message 处于 `PROCESSING`。
+
+响应 `200`：
+
+```json
+{
+  "userMessage": {
+    "messageId": "5f744756-...",
+    "conversationId": "3955f7ee-...",
+    "sequenceNo": 0,
+    "role": "USER",
+    "status": "COMPLETED",
+    "content": "第二段里的她为什么突然哭了？",
+    "seriesIds": ["77285f16-..."],
+    "modelName": null,
+    "searchResult": null,
+    "lastError": null,
+    "createdAt": 1789434120000,
+    "updatedAt": 1789434120000
+  },
+  "assistantMessage": {
+    "messageId": "8166b7b0-...",
+    "conversationId": "3955f7ee-...",
+    "sequenceNo": 1,
+    "role": "ASSISTANT",
+    "status": "COMPLETED",
+    "content": "当前范围内没有找到足够可信、值得播放核验的候选画面。",
+    "seriesIds": ["77285f16-..."],
+    "modelName": "deepseek-flash",
+    "searchResult": {
+      "seriesIds": ["77285f16-..."],
+      "searchedVideoIds": ["2a150753-..."],
+      "partial": false,
+      "warnings": [],
+      "retrievalTrace": [
+        {
+          "query": "人物突然哭泣，结合上一轮第二个候选的前后语境",
+          "topK": 8,
+          "strategyVersion": "query-adaptive-three-channel-rrf-v2",
+          "requestedWeights": {"transcript": 0.1, "semantic": 0.7, "visual": 0.2},
+          "effectiveWeights": {"transcript": 0.1, "semantic": 0.7, "visual": 0.2},
+          "resultCount": 0,
+          "videoChunkIds": []
+        }
+      ],
+      "hits": []
+    },
+    "renderBlocks": [
+      {
+        "type": "markdown",
+        "markdown": "当前范围内没有找到足够可信、值得播放核验的候选画面。"
+      }
+    ],
+    "lastError": null,
+    "createdAt": 1789434120000,
+    "updatedAt": 1789434124000
+  }
+}
+```
+
+上面是合法的“无可信候选”响应。Agent Message 的公开 `searchResult` 是 evidence-only 投影，
+不包含独立 `/api/search` 才有的顶层 `query` 和 `agentReply`。消息也不单列 `retrievalQuery`；
+`retrievalTrace[].query` 按实际调用顺序记录 Query Agent 的每次检索查询。`retrievalTrace` 还记录
+每次检索的受限 `topK`、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID，
+供调权实验复现；普通 `/api/search` 不返回该 Agent 专属字段。`renderBlocks` 是最终显示顺序：Markdown 块携带
+`markdown`，视频块携带 `videoChunkId` 和 Evaluator 审核通过的原视频媒体偏移 `startSeconds/endSeconds`。
+该范围应当是对应 canonical Chunk 的子区间；Query 提出候选范围，Evaluator 通过 advice 要求修订。
+候选范围越界不改变 retrieve 已召回 Chunk 的真实性，也不在 Evaluator 之前中止 Kick；
+但 Evaluator complete 只有在获批 ID 集合与 `selected_video_ranges` 一致、每个范围合法时才接受。
+Chat 只提交 `video_chunk_id + claim`，Output 从获批 `selected_video_ranges` 绑定范围。
+前端必须将视频块与同一消息的可信 `searchResult.hits` 关联，不得从块或正文自行构造媒体 URI。
+旧块缺失时间或范围非法时，Server 丢弃该块，不扩大为 canonical Chunk。`content` 保留为所有 Markdown 块
+的兼容汇总。存在候选时，`hits`
+包含选中的完整 Candidate、SelectionReason 和可安全交付给前端的 VideoChunkEvidence。
+每个 `hits[].evidence.seriesId` 都必填，来自 MySQL 对 Series / Video / VideoChunk 的批量
+join 回源，必须属于本次消息实际 `seriesIds`，不是由模型生成或从正文推断。
+
+这是一次明确的 Agent Message 合同收敛，不是向后兼容别名：公开消息同时移除
+`replyToMessageId`、`retrievalQuery` 和 Agent `searchResult.query`。前两项分别由同会话相邻消息
+顺序和 `retrievalTrace[].query` 取代；多次检索没有唯一、诚实的顶层 query，因此 Server 不返回
+伪兼容值。旧外部客户端必须与本版 API/Web 一起升级；发布前需单独确认调用方与有数据数据库的
+回填方案，当前空表迁移不能用于非空历史库。
+
+消息幂等比较正文、有效 `topK` 和规范化原请求 `seriesIds`，省略与 `[]` 等价。USER 内部
+独立保存 `requested_series_ids`；它不进入公开 DTO。Key 从 USER 的
+`detail.request.idempotencyKey` 读取，而 `requested_series_ids` 仍是原请求范围，不能用已展开的
+实际 `series_ids` 替代。相同 Key 的重放在重新展开当前动画
+之前读回原消息，因此新增动画不会改变旧“全部”请求的结果。相同 Key 改为显式范围，
+即使该范围恰好等于旧展开结果也返回 `409`。
+
+### 5.2 列表与 `modelName`
+
+```http
+GET /api/agent/messages/list
+  ?conversationId={conversationId}
+  &workspaceId=local-default
+  &afterSequenceNo=-1
+  &limit=200
+```
+
+响应直接返回按 `sequenceNo` 升序排列的 `AgentMessageView[]`。
+
+`modelName` 是所有 Message 的必返字段，但允许为 `null`：
+
+| Message | `modelName` | 前端语义 |
+| --- | --- | --- |
+| `USER` | `null` | 用户消息没有生成模型 |
+| `ASSISTANT` | 非空字符串 | 生成这条消息时实际使用的 Chat Agent 模型 |
+
+助手 Message 创建为 `PROCESSING` 时即保存模型名。模型配置以后发生变化，不会改写历史
+消息。因此前端展示“当前模型”时，应读取最新一条 ASSISTANT Message 的 `modelName`；
+不要从本地常量或当前环境配置推测。Evaluator 可以使用另一模型，但不会冒充回答模型；
+Message 上显示的是最终回答所属 Chat Agent 的模型。
+
+### 5.3 GET 消息快照 SSE
+
+```http
+GET /api/agent/messages/events
+  ?conversationId={conversationId}
+  &workspaceId=local-default
+Accept: text/event-stream
+```
+
+连接建立后立即发送完整快照：
+
+```text
+event: messages
+data: {"conversationId":"...","messages":[...]}
+```
+
+Message 新增，或同一 ASSISTANT Message 从 `PROCESSING` 变成 `COMPLETED/FAILED` 时，再发送
+新的完整快照。约 15 秒无变化时发送 SSE 注释 keep-alive。断线重连后首帧仍是 MySQL
+当前完整状态，所以前端不需要依赖丢失的中间事件恢复。
+
+快照不受 List Message 的单页 500 条上限截断；List 接口仍按原来的分页参数工作。
+轮询与保活间隔由 `SEEKINO_SSE_POLL_SECONDS`（默认 1 秒）和
+`SEEKINO_SSE_KEEPALIVE_SECONDS`（默认 15 秒）配置，保活按经过时间计算。
+
+GET SSE 只恢复数据库快照，不再次启动 Kick，也不回放未持久化的正文交付事件。刷新或断线后，
+正在执行的消息仍显示 PROCESSING，任务正常完成后从快照得到完整结果。
+
+### 5.4 POST 回答交付 SSE
+
+在同一发送接口增加 `Accept: text/event-stream`，Body 和 `Idempotency-Key` 与 JSON 调用一致：
+
+```http
+POST /api/agent/messages/send?conversationId={conversationId}
+Accept: text/event-stream
+Idempotency-Key: 99946c6f-...
+Content-Type: application/json
+
+{"workspaceId":"local-default","content":"找摔杯子的片段","seriesIds":[],"topK":8}
+```
+
+每帧有 `event`、`id: {messageId}:{sequence}` 和 JSON `data`；所有事件包含
+`conversationId`、助手 `messageId`、本次流内递增的整数 `sequence` 和 `occurredAt`。
+
+| event | 时机 | 附加字段 |
+| --- | --- | --- |
+| `answer.started` | USER / PROCESSING ASSISTANT 已提交 | `userMessage`、`assistantMessage` |
+| `answer.progress` | Query / Evaluator / Chat 阶段切换 | `phase`：RETRIEVING / EVALUATING / RESPONDING |
+| `answer.evidence` | 最终结果校验并提交后 | `searchResult`：由可信获批 Evidence 补齐的视频窗口，不含 `agentReply`，包含 `retrievalTrace`；兼容旧客户端 |
+| `answer.block` | Evidence 之后按 Chat 逻辑顺序发送 | `block`：Markdown 块，或含 `videoChunkId` 及已审批 `startSeconds/endSeconds` 的视频块 |
+| `answer.delta` | 最终结果校验并提交后 | `delta`：所有 Markdown 块的一次性兼容汇总 |
+| `answer.completed` | 最终结果成功提交后 | `userMessage`、`assistantMessage`：持久化快照 |
+| `answer.failed` | 执行失败且 FAILED 状态已保存 | `error`、`userMessage`、`assistantMessage` |
+| `answer.interrupted` | 当前订阅缓冲溢出或终态无法确认 | `error`；任务可能继续，转用 GET 快照恢复 |
+
+已失败的任务没有 completed。SSE 已开始后，模型 / 提交错误通过 failed 帧报告；开始之前的
+参数、归属、幂等冲突仍按 HTTP 错误返回。相同 Key 重放已完成消息只返回 started 和 completed；
+相同 Key 对 PROCESSING 请求返回 409，不重复启动执行。
+
+连接断开仅关闭订阅，Service 的任务继续执行。慢消费者导致缓冲溢出时返回
+`answer.interrupted`（`error.code=STREAM_INTERRUPTED`）并停止该订阅；这表示传输中断，不能据此将消息改为 FAILED。
+前端继续用 GET 快照等待真正终态。事件序号不是持久化重放游标；本阶段没有跨 Worker
+增量回放或进程崩溃后的 PROCESSING 执行恢复。
+
+## 6. 状态与错误
+
+Message 状态：
+
+- `PROCESSING`：执行任务正在进行 Query 工具循环、审核、最终 Chat 结构化调用或结果提交。
+- `COMPLETED`：`content`、`searchResult` 与有序 `renderBlocks` 已保存；每次检索的查询可由 `searchResult.retrievalTrace[].query` 查看。
+- `FAILED`：失败事实和 `lastError` 已保存；使用新 Idempotency-Key 重试。
+
+| HTTP | code | 含义 |
+| --- | --- | --- |
+| `400` | `INVALID_REQUEST` | ID、正文、Scope 或参数格式错误 |
+| `404` | `NOT_FOUND` | Conversation 或 Series 不属于 Workspace |
+| `409` | `CONFLICT` | 幂等冲突、同一对话已有消息执行中、Series 未 READY 或检索事实不一致 |
+| `502` | `AGENT_MODEL_ERROR` | Query/Evaluator/Chat 调用、输出或执行预算失败，或最多三轮仍未通过审核 |
+
+## 7. 模型配置
+
+```text
+SEEKINO_AGENT_QUERY_MODEL
+SEEKINO_AGENT_EVALUATOR_MODEL
+SEEKINO_AGENT_CHAT_MODEL
+SEEKINO_AGENT_FALLBACK_MODEL
+SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS=180
+SEEKINO_AGENT_HISTORY_MESSAGE_LIMIT=12
+SEEKINO_AGENT_DEFAULT_TOP_K=8
+SEEKINO_AGENT_MAX_TOP_K=20
+SEEKINO_AGENT_MAX_LOOP_TURNS=3
+SEEKINO_AGENT_MAX_MODEL_CALLS_PER_TURN=6
+SEEKINO_AGENT_MAX_TOOL_CALLS_PER_TURN=4
+SEEKINO_AGENT_MAX_OUTPUT_TOKENS=4096
+SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS=600
+SEEKINO_AGENT_MAX_CONCURRENT_KICKS=4
+```
+
+Query、Evaluator 和 Chat 默认都使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash），
+通过 `agent_model.provider` 指定的 DeepSeek endpoint 调用；`agent_model.reasoning_effort` 固定为
+`none`，请求显式关闭 thinking。Query 使用 LangChain Tool Calling，Evaluator 使用一次 required
+function call，Chat 使用有边界的 function-calling loop；三个角色可分别用对应环境变量覆盖模型名。
+`SEEKINO_AGENT_FALLBACK_MODEL` 默认取 `video_parser.transcript_model`（Ark Doubao Lite）。Provider
+请求失败或模型响应结构非法时，失败的单次模型调用在当前消息与 Tool 状态上原位切到 Lite；
+已完成的业务 Tool 结果与 acknowledgement 继续复用，不重新执行检索或视频提交。业务 Tool
+错误、取消 / deadline / 预算等控制错误和本地输入校验错误不会触发模型降级。消息
+`modelName` 记录 Chat 的 DeepSeek 主模型，发生 Lite fallback 时只记录结构化 warning。
+`SEEKINO_AGENT_REQUEST_TIMEOUT_SECONDS` 限制单次 Provider
+请求，`SEEKINO_AGENT_EXECUTION_TIMEOUT_SECONDS` 则覆盖最多三轮 Query/Evaluator 和最终
+Chat；两者不是同一个超时窗口。
+
+Chat 是 text-only、非 token 流式的自主工具循环。存在获批 Evidence 时，第一次调用使用
+`tool_choice=required`；成功提交至少一个片段后恢复 `auto`。没有获批 Evidence 时直接使用
+`auto`。DeepSeek 可以输出普通
+`message.content`、调用一个或多个 `submit_video_item`，或以 `finish_reason=stop` 结束。
+工具结果以 `role=tool` acknowledgement 送回模型，然后由模型自主决定下一步。
+每个工具调用的参数只允许 `video_chunk_id` 和 `claim`；获批 hits 非空时
+Chat 必须至少提交一个，但仍可只选其子集；Server 拒绝重复、未获批或 Schema 不合法的调用。
+Server 从 Evaluator 已批准的 `selected_video_ranges` 绑定时间；审批集合不一致或范围越界会拒绝交付，
+不使用 canonical Chunk 降级。完成的循环必须至少生成一段非空 Markdown，
+并受统一的模型调用次数与 Kick deadline 约束。循环或持久化任一失败，都不会向前端
+交付视频窗口或正文；已进入同步 Provider 请求后的取消仍需等待请求返回或超时。
+
+## 8. 已有数据库升级
+
+新数据库创建 `agent_conversation` 和 `agent_message` 两张 Agent 表，后者的 `detail.timing` 保存助手耗时，USER 的 `detail.request.idempotencyKey` 保存发送幂等键。消息对由同一 Conversation 的相邻序号和角色定位，不再有 `reply_to_message_id`；每次检索查询保留在结果轨迹中，不再有 `retrieval_query` 列。旧版 `agent_message_timing` 是历史结构，已有数据必须先回填到 `agent_message.detail` 再删表；有数据的库还需在删除原幂等键列前回填 USER 的 `detail.request.idempotencyKey`，检查新表达式唯一索引与消息配对。下文旧 Session / Scope 升级步骤不负责这些回填，不能直接套用在当前表上。已有数据库需要停写并
+备份后受控升级，不能依赖 `create_all()` 自动删表或改列；MySQL DDL 也不能靠事务自动回滚。
+`create_schema()` 检测到旧 `agent_session`、Conversation 的 `session_id` 或缺失的
+`workspace_id` 时拒绝初始化；Conversation 仍有 `series_ids`，或 Message 缺少 `series_ids`
+/ `requested_series_ids` 时也拒绝初始化，要求受控 message-scope migration。
+
+先用 `SHOW CREATE TABLE` 核对实际 Agent 表。下文按最早的 Session + 固定 Conversation
+Scope 结构写迁移顺序；已完成 Session 删除的数据库跳过归属复制、Session 外键 / 列 / 表
+和旧唯一键操作，只做消息 Scope 回填及 Conversation Scope 删除。字段或约束已存在时
+不重复添加，不能将整段 SQL 未经核对直接执行。
+
+仍有 Session 层时，先核对旧对话的 Workspace 归属，以下查询必须没有结果；有孤立对话时
+先修复归属，不能删除对话：
+
+```sql
+SELECT c.conversation_id
+FROM agent_conversation AS c
+LEFT JOIN agent_session AS s ON s.session_id = c.session_id
+WHERE s.workspace_id IS NULL;
+```
+
+将归属复制到 Conversation，保留原 Conversation ID 和全部消息：
+
+```sql
+ALTER TABLE agent_conversation ADD COLUMN workspace_id VARCHAR(64) NULL;
+UPDATE agent_conversation AS c
+JOIN agent_session AS s ON s.session_id = c.session_id
+SET c.workspace_id = s.workspace_id;
+```
+
+在建立新的 Workspace 幂等唯一键前检查旧 Session 之间的 Key 冲突：
+
+```sql
+SELECT workspace_id, idempotency_key, COUNT(*) AS conversation_count
+FROM agent_conversation
+GROUP BY workspace_id, idempotency_key
+HAVING COUNT(*) > 1;
+```
+
+有冲突时为冲突对话分配新的无冲突迁移 Key，并保留映射记录；不要删对话或修改消息 ID。
+
+在删除 Conversation 的 `series_ids` 前，将其固定 Scope 回填到所有历史消息。先新增
+可空列，完成回填 / 核对后再收紧实际 Scope 为 NOT NULL：
+
+```sql
+ALTER TABLE agent_message
+    ADD COLUMN series_ids JSON NULL,
+    ADD COLUMN requested_series_ids JSON NULL;
+
+UPDATE agent_message AS m
+JOIN agent_conversation AS c ON c.conversation_id = m.conversation_id
+SET m.series_ids = c.series_ids,
+    m.requested_series_ids = CASE
+        WHEN m.role = 'USER' THEN c.series_ids
+        ELSE NULL
+    END;
+```
+
+上述 SQL 先复制历史范围。随后由受控迁移脚本按当前 Service 的 `_canonical_scope` 规则，
+将每条 USER 的 `requested_series_ids` 做 UUID 规范化、去重并排序；例如 Python 使用
+`sorted({str(UUID(value)) for value in old_series_ids})`，遇到非法 ID 应停止迁移并修复来源。
+不能仅复制旧数组的选择顺序，否则新服务重试同 Key 会误报请求范围冲突。
+
+旧 USER 原本使用固定的显式 Conversation 范围，故 `requested_series_ids` 保存规范化后的
+该数组，不能写成 `[]` 并冒充历史“全部”请求；ASSISTANT 为 SQL NULL。两条消息的实际
+`series_ids` 均保留旧范围。检查以下查询无结果，再核对 USER / ASSISTANT 消息对范围相同、原消息 ID /
+序号 / content / status / search_result 不变，并检查历史 hits 的 evidence.seriesId 在其范围内：
+
+```sql
+SELECT message_id
+FROM agent_message
+WHERE series_ids IS NULL
+   OR JSON_TYPE(series_ids) <> 'ARRAY'
+   OR JSON_LENGTH(series_ids) = 0
+   OR (role = 'USER' AND (requested_series_ids IS NULL
+       OR JSON_TYPE(requested_series_ids) <> 'ARRAY'
+       OR JSON_LENGTH(requested_series_ids) = 0))
+   OR (role = 'ASSISTANT' AND requested_series_ids IS NOT NULL);
+
+ALTER TABLE agent_message
+    MODIFY COLUMN series_ids JSON NOT NULL;
+```
+
+复核所有 `workspace_id` 非空、对话和消息数量及内容不变，再用 `SHOW CREATE TABLE agent_conversation`
+确认指向旧 Session 的实际外键。以下查询生成对应的删除语句，核对并执行返回的语句后继续：
+
+```sql
+SELECT CONCAT('ALTER TABLE agent_conversation DROP FOREIGN KEY `',
+              CONSTRAINT_NAME, '`;') AS migration_statement
+FROM information_schema.KEY_COLUMN_USAGE
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'agent_conversation'
+  AND COLUMN_NAME = 'session_id'
+  AND REFERENCED_TABLE_NAME = 'agent_session';
+```
+
+完成外键移除后执行：
+
+```sql
+ALTER TABLE agent_conversation
+    DROP INDEX uq_agent_conversation_session_idempotency,
+    DROP COLUMN session_id,
+    MODIFY COLUMN workspace_id VARCHAR(64) NOT NULL,
+    ADD CONSTRAINT uq_agent_conversation_workspace_idempotency
+        UNIQUE (workspace_id, idempotency_key),
+    ADD INDEX ix_agent_conversation_workspace_id (workspace_id);
+DROP TABLE agent_session;
+```
+
+消息回填已核对成功后，移除 Conversation 的旧检索范围：
+
+```sql
+ALTER TABLE agent_conversation DROP COLUMN series_ids;
+```
+
+最后复核 Conversation 和 Message 数据及约束，再重新初始化并启动服务。以上是迁移步骤，
+本次代码重构没有对已有开发或生产数据库执行 DDL。

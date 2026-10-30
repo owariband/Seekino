@@ -14,6 +14,7 @@ from gateway.config import (
     ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, load_config,
 )
 from gateway.model_factory import GatewayClient
+from gateway.multimodal import adapter_capabilities
 from gateway.query_hook import QueryHookModels
 from gateway.tracing import LangfuseTracing
 from gateway.web_search import WebSearcher
@@ -47,6 +48,7 @@ from .service.auth import AuthService
 from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
+from .service.mcp_retrieval import McpRetrievalService
 from .service.parse_usage import ParseUsageService
 from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
@@ -73,6 +75,7 @@ class ApplicationServices:
     realtime_understanding: RealtimeUnderstandingService | None = None
     auth: AuthService | None = None
     agent_attachments: AgentAttachmentService | None = None
+    mcp_retrieval: McpRetrievalService | None = None
     _closed: bool = field(default=False, init=False, repr=False)
 
     def start(self) -> None:
@@ -118,8 +121,8 @@ def prepare_service_configuration(
         raise ValueError("formal Server execution supports only Video Parse V2")
     if settings.elasticsearch is None:
         raise ValueError(
-            "Video Parse V2 requires ANIVAG_ELASTICSEARCH_URL and "
-            "ANIVAG_ELASTICSEARCH_INDEX"
+            "Video Parse V2 requires SEEKINO_ELASTICSEARCH_URL and "
+            "SEEKINO_ELASTICSEARCH_INDEX"
         )
     _validate_cloud_agent_timeout(settings, settings.agent)
     gateway_config = load_config(settings.model_config_path)
@@ -144,7 +147,7 @@ def _validate_cloud_supervisor_harness(settings: ServerSettings, config: Gateway
     if settings.auth.mode != "cloud":
         return
     if config.supervisor_harness != "deepagents":
-        raise ValueError("cloud Server requires supervisor_harness: deepagents; set ANIVAG_MODEL_CONFIG to an API-backed cloud configuration")
+        raise ValueError("cloud Server requires supervisor_harness: deepagents; set SEEKINO_MODEL_CONFIG to an API-backed cloud configuration")
     for role, binding in config.normalized_models.items():
         while binding is not None:
             if isinstance(config.source(binding.source), (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
@@ -258,6 +261,7 @@ def _build_application_services(
     if event_store is not None:
         event_contract = resolve_event_indexing_contract(
             video_parse_query_encoder, max_height=parse_defaults.window.analysis_max_height,
+            vision_enabled=parse_defaults.embedding.input_mode == "multimodal",
         )
         event_retrieval = build_event_retrieval_service(
             parse_persistence, event_store, gateway_config=gateway_config,
@@ -275,6 +279,9 @@ def _build_application_services(
         parse_defaults=parse_defaults,
         video_parse_query_encoder=video_parse_query_encoder,
         video_parse_query_encoder_source=parse_defaults.embedding.source,
+        video_parse_query_encoder_supports_sparse=adapter_capabilities(
+            gateway_config.source(parse_defaults.embedding.source).adapter,
+        ).sparse_embedding,
         video_event_index_store=event_store,
     )
     v2_queue = MySqlVideoParseQueue(session_factory, video_concurrency=settings.parse.video_concurrency)
@@ -462,6 +469,7 @@ def _build_application_services(
         VideoParseConsumerHandlers(
             prepare=v2_runtime.prepare,
             understand=v2_runtime.understand,
+            failure=v2_runtime.notify_task_failed,
             refine=v2_runtime.refine,
             index=v2_runtime.index,
             prefix=v2_runtime.run_next_prefix,
@@ -495,4 +503,8 @@ def _build_application_services(
         tracing=tracing,
         realtime_understanding=realtime_service,
         auth=auth,
+        mcp_retrieval=McpRetrievalService(
+            library=library, media=media, event_retrieval=event_retrieval,
+            parse_persistence=parse_persistence, local_tenant_id=settings.auth.local_tenant_id,
+        ) if settings.auth.mode == "local" else None,
     )

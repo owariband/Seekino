@@ -96,6 +96,8 @@ class ASRModelConfig(GenerativeModelConfig):
 
 
 class EmbeddingModelConfig(_InputModel):
+    input_mode: Literal["multimodal", "text"] = "multimodal"
+    query_instruction: str | None = Field(default=None, min_length=1, pattern=r"\S")
     source: str = Field(min_length=1)
     model: str = Field(min_length=1)
     encoder_model: str | None = Field(default=None, min_length=1)

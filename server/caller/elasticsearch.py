@@ -37,7 +37,7 @@ def open_elasticsearch_client(
 
 def build_elasticsearch_storage(
     config: ElasticsearchConfig, *, environment: DatabaseEnvironment,
-    semantic_dimensions: int, vision_dimensions: int,
+    semantic_dimensions: int, vision_dimensions: int, vision_enabled: bool = True,
 ) -> tuple[Elasticsearch, ElasticsearchVideoChunkStore]:
     config.validate_environment(environment)
     client = create_elasticsearch_client(config)
@@ -45,7 +45,7 @@ def build_elasticsearch_storage(
         store = ElasticsearchVideoChunkStore(
             client, index_name=config.index_name, environment=environment,
             semantic_dimensions=semantic_dimensions,
-            vision_dimensions=vision_dimensions,
+            vision_dimensions=vision_dimensions, vision_enabled=vision_enabled,
         )
         return client, store
     except BaseException:
@@ -68,11 +68,12 @@ def build_event_elasticsearch_storage(
 @contextmanager
 def open_elasticsearch_storage(
     config: ElasticsearchConfig, *, environment: DatabaseEnvironment,
-    semantic_dimensions: int, vision_dimensions: int,
+    semantic_dimensions: int, vision_dimensions: int, vision_enabled: bool = True,
 ) -> Iterator[tuple[Elasticsearch, ElasticsearchVideoChunkStore]]:
     client, store = build_elasticsearch_storage(
         config, environment=environment,
         semantic_dimensions=semantic_dimensions, vision_dimensions=vision_dimensions,
+        vision_enabled=vision_enabled,
     )
     try:
         yield client, store

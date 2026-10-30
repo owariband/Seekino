@@ -280,7 +280,7 @@ describe("Search assistant presentation", () => {
   });
 
   it.each(["overrides", "selection"] as const)("ignores stored topK in %s and preserves other debug options", async (storageFormat) => {
-    const key = api.identityStorageKey("anivag-agent-message-options");
+    const key = api.identityStorageKey("seekino-agent-message-options");
     const overrides = { maxLoopTurns: 9, maxModelCallsPerTurn: 4, maxToolCallsPerTurn: 8 };
     const serverOptions = {
       topK: { defaultValue: 10, minimum: 1, maximum: 20 },

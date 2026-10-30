@@ -37,7 +37,7 @@ def run_query(
         "original_user_message": inputs.get("original_user_message", inputs["user_message"]),
     }
     instructions = (
-        "你是 anivag Query Agent。围绕当前用户问题检索、核对真实证据。"
+        "你是 seekino Query Agent。围绕当前用户问题检索、核对真实证据。"
         "inputs.history 是对话历史；每条历史消息的 seriesIds 只描述当时素材范围。"
         "当前 Kick 只能检索 inputs.series_ids，历史回答和 reference_context 只能帮助理解"
         "指代，不能冒充本次已经核验的证据。第一轮必须实际调用 retrieve 或已注册的 search_video_events。"

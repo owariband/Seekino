@@ -3,11 +3,29 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from gateway.multimodal import MultimodalModel, TextInput, VideoInput
 
 from .media_probe import probe_video_duration_seconds
+
+
+class TranscriptWord(BaseModel):
+    """Aligned lexical unit (a character for unspaced languages), in milliseconds."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1)
+    start_ms: int | None = Field(default=None, ge=0)
+    end_ms: int | None = Field(default=None, ge=0)
+    score: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "TranscriptWord":
+        if (self.start_ms is None) != (self.end_ms is None):
+            raise ValueError("word timestamps must both be known or both be null")
+        if self.start_ms is not None and self.end_ms <= self.start_ms:
+            raise ValueError("word timestamps must have positive duration")
+        return self
 
 
 class TranscriptCue(BaseModel):
@@ -17,12 +35,28 @@ class TranscriptCue(BaseModel):
     end_seconds: int = Field(ge=0)
     text: str = Field(min_length=1)
     speaker_id: str | None = None
+    words: list[TranscriptWord] | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_alignment(self, handler):
+        value = handler(self)
+        if self.words is None:
+            value.pop("words", None)
+        return value
 
 
 class TranscriptAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     transcript: list[TranscriptCue]
+    language: str | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_language(self, handler):
+        value = handler(self)
+        if self.language is None:
+            value.pop("language", None)
+        return value
 
 
 class _SecondsTranscriptCue(BaseModel):
@@ -123,6 +157,9 @@ def normalize_transcription(
     payload: dict, *, duration_seconds: int
 ) -> TranscriptAnalysis:
     """Convert provider seconds to integer milliseconds, retaining existing names."""
+    language = payload.get("language")
+    if language is not None and (not isinstance(language, str) or not language.strip()):
+        raise ValueError("ASR language must be a nonempty string")
     segments = payload.get("segments")
     if segments is not None and not isinstance(segments, list):
         raise ValueError("ASR segments must be a list")
@@ -145,10 +182,11 @@ def normalize_transcription(
                     TranscriptCue(
                         start_seconds=start_seconds, end_seconds=end_seconds, text=text,
                         speaker_id=segment.get("speaker_id"),
+                        words=_normalize_words(segment.get("words"), start_seconds, end_seconds),
                     )
                 )
         return TranscriptAnalysis(
-            transcript=sorted(cues, key=lambda cue: cue.start_seconds)
+            transcript=sorted(cues, key=lambda cue: cue.start_seconds), language=language,
         )
     text = payload.get("text", "" if segments == [] else None)
     if not isinstance(text, str):
@@ -161,5 +199,34 @@ def normalize_transcription(
             )
         ]
         if text.strip()
-        else []
+        else [], language=language,
     )
+
+
+def _normalize_words(words, start_ms: int, end_ms: int) -> list[TranscriptWord] | None:
+    if words is None:
+        return None
+    if not isinstance(words, list):
+        raise ValueError("ASR words must be a list")
+    result = []
+    for word in words:
+        if not isinstance(word, dict):
+            raise ValueError("ASR word must be an object")
+        text = word.get("word")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("ASR word must contain nonempty text")
+        start, end = word.get("start"), word.get("end")
+        for value in (start, end):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+                raise ValueError("ASR returned invalid word timestamps")
+        if start is not None and end is not None:
+            if end < start:
+                raise ValueError("ASR returned reversed word timestamps")
+            start, end = max(start_ms, round(start * 1000)), min(end_ms, round(end * 1000))
+            if start >= end:
+                start = end = None
+        else:
+            start = end = None
+        # Missing/zero-width/out-of-cue timing stays unknown; retain the text.
+        result.append(TranscriptWord(text=text, start_ms=start, end_ms=end, score=word.get("score")))
+    return result

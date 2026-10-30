@@ -1,12 +1,12 @@
 # 模型 Token 用量与 API 费用估算
 
-AniVAG 使用现有 MySQL 的 `model_usage` 记录 Gateway 最终调用事件，模型消耗页面查询这些本地记录。
+Seekino 使用现有 MySQL 的 `model_usage` 记录 Gateway 最终调用事件，模型消耗页面查询这些本地记录。
 统计范围包括 V2 视频解析/index 和整个助手问答；失败调用若有 provider 已确认用量，也会保留。
 页面展示 Token 和按配置估算的 API 费用；Codex 订阅调用保留 Token，排除金额估算。
 
 ## 配置与归属
 
-Server 复用现有 `ANIVAG_DATABASE_URL`，无需新的存储服务或 Langfuse 凭据。
+Server 复用现有 `SEEKINO_DATABASE_URL`，无需新的存储服务或 Langfuse 凭据。
 新表已登记在现有 init-db 模型集合；真实建表、服务启动/重启和模型运行应由运行负责人核实具体操作授权。
 仓库 `config.yaml` 的 `tracing.enabled=false`；bootstrap 停止装配 Langfuse writer/reader，保留可选模块和配置字段。
 
@@ -39,7 +39,7 @@ Claude `main_loop` 数字只证明主循环小计，相应完整核心总量为 
 
 ## 费用估算与 Codex 口径
 
-服务启动时读取 `ANIVAG_MODEL_PRICING_CONFIG` 指向的配置，默认 `config/model-pricing.yaml`，查询使用已加载的配置。
+服务启动时读取 `SEEKINO_MODEL_PRICING_CONFIG` 指向的配置，默认 `config/model-pricing.yaml`，查询使用已加载的配置。
 按每次实际模型调用的开始时刻、输入量和适用阶梯选择单价，再使用 Decimal 计算人民币金额，
 以十进制字符串返回；不能先汇总输入 Token 再套单次请求阶梯。
 SDK 实际模型明细仍替代父总数，不将两者重复计费。

@@ -92,6 +92,19 @@ def _plan(*, contract=None, policy=None, constraints=(), temporal=(), scope=None
                                 constraints=constraints, temporal_constraints=temporal)
 
 
+def test_text_only_contract_plans_lexical_and_semantic_without_visual_binding():
+    contract = replace(_contract(), vision_encoder=None, visual_input_contract=None)
+    plan = _plan(contract=contract, policy=_policy(vision_weight=0))
+    assert len(plan.encoding_requests) == 1
+    assert plan.encoding_requests[0].channels == ("semantic",)
+    assert plan.index_contract.vision_encoder_id is None
+    with pytest.raises(ValueError, match="text-only index"):
+        plan_retrieval_query("gradient", scope=_scope(), index_contract=contract, policy=_policy())
+    with pytest.raises(ValueError, match="text-only index"):
+        plan_retrieval_query(_visual_query("image"), scope=_scope(), index_contract=contract,
+                             policy=_policy(), encoder_bindings=())
+
+
 def _visual_query(kind):
     if kind == "image":
         return ImageQueryInput(input_sha256="a" * 64, mime_type="image/png", preprocess_revision="v1")

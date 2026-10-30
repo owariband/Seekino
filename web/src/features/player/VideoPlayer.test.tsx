@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { createRef } from "react";
+import { createRef, StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { configureDataSource, PRIMARY_CONNECTION } from "../../api/client";
@@ -155,6 +155,48 @@ describe("VideoPlayer", () => {
     expect(readVideoProgress("video-1")?.positionSeconds).toBe(4_567);
   });
 
+  it("initializes cached metadata without waiting for another loadedmetadata event", () => {
+    vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(HTMLMediaElement.HAVE_ENOUGH_DATA);
+    vi.spyOn(HTMLMediaElement.prototype, "duration", "get").mockReturnValue(12.012);
+    const ref = createRef<VideoPlayerHandle>();
+    const view = render(<VideoPlayer ref={ref} video={{ ...video(), durationSeconds: 12_012 }} atSeconds={2_345} />, { wrapper: StrictMode });
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+
+    expect(screen.getByRole("slider", { name: "播放进度" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "前进 10 秒" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "后退 10 秒" })).toBeEnabled();
+    expect(media.currentTime).toBe(2.345);
+    expect(ref.current?.getSnapshot()?.positionSeconds).toBe(2_345);
+    fireEvent.change(screen.getByRole("slider", { name: "播放进度" }), { target: { value: "10260" } });
+    expect(media.currentTime).toBe(10.26);
+    fireEvent.click(screen.getByRole("button", { name: "后退 10 秒" }));
+    expect(media.currentTime).toBeCloseTo(0.26);
+
+    view.rerender(<VideoPlayer ref={ref} video={{ ...video("video-2"), durationSeconds: 12_012 }} atSeconds={0} />);
+    expect(screen.getByLabelText<HTMLVideoElement>("EP 01 视频")).not.toBe(media);
+    expect(ref.current?.getSnapshot()?.positionSeconds).toBe(0);
+    expect(screen.getByRole("slider", { name: "播放进度" })).toBeEnabled();
+  });
+
+  it("keeps loaded media ready and its position when server duration is refreshed", () => {
+    const ref = createRef<VideoPlayerHandle>();
+    const view = render(<VideoPlayer ref={ref} video={{ ...video(), durationSeconds: 0 }} />);
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+    metadata(media);
+    media.currentTime = 118;
+    fireEvent.timeUpdate(media);
+
+    view.rerender(<VideoPlayer ref={ref} video={video()} />);
+
+    expect(screen.getByLabelText("EP 01 视频")).toBe(media);
+    expect(screen.getByRole("slider", { name: "播放进度" })).toBeEnabled();
+    expect(screen.getByRole("slider", { name: "播放进度" })).toHaveValue("118000");
+    expect(ref.current?.getSnapshot()?.positionSeconds).toBe(118_000);
+    expect(media.currentTime).toBe(118);
+    fireEvent.click(screen.getByRole("button", { name: "后退 10 秒" }));
+    expect(media.currentTime).toBe(108);
+  });
+
   it("seeks to explicit atSeconds before saved progress, including an explicit zero", () => {
     saveVideoProgress({ seriesId: "series-1", videoId: "video-1", positionSeconds: 30_000, durationSeconds: 120_000 });
     const view = render(<VideoPlayer video={video()} atSeconds={20_000} />);
@@ -260,7 +302,7 @@ describe("VideoPlayer", () => {
 
   it("keeps legacy local reads and final writes local after the active source changes", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
-    localStorage.setItem("anivag-watch-progress:v2", JSON.stringify([
+    localStorage.setItem("seekino-watch-progress:v2", JSON.stringify([
       { seriesId: "series-1", videoId: "video-1", positionSeconds: 12, durationSeconds: 120, updatedAt: 100 },
     ]));
     const localKey = playbackProgressStorageKey();
@@ -270,7 +312,7 @@ describe("VideoPlayer", () => {
       configureDataSource(personalSource("user-a"));
       metadata(media);
       expect(media.currentTime).toBe(12);
-      expect(localStorage.getItem("anivag-watch-progress:v2")).toBeNull();
+      expect(localStorage.getItem("seekino-watch-progress:v2")).toBeNull();
       expect(readWatchHistory()).toEqual([]);
 
       media.currentTime = 18;
@@ -287,7 +329,11 @@ describe("VideoPlayer", () => {
     expect(localStorage.getItem(playbackProgressStorageKey())).toBeNull();
   });
 
-  it("preserves separate progress for equal video IDs when switching accounts before unmount", () => {
+  it.each([false, true])("preserves separate progress for equal video IDs when switching accounts before unmount (cached=%s)", (cached) => {
+    if (cached) {
+      vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(HTMLMediaElement.HAVE_ENOUGH_DATA);
+      vi.spyOn(HTMLMediaElement.prototype, "duration", "get").mockReturnValue(120);
+    }
     configureDataSource(personalSource("user-a"));
     const firstKey = playbackProgressStorageKey();
     saveVideoProgress({ seriesId: "series-1", videoId: "video-1", positionSeconds: 12_000, durationSeconds: 120_000 });
@@ -296,10 +342,16 @@ describe("VideoPlayer", () => {
     configureDataSource(personalSource("user-a"));
     const view = render(<VideoPlayer video={video()} />);
     const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
-    metadata(media);
+    if (!cached) metadata(media);
     expect(media.currentTime).toBe(12);
 
     configureDataSource(personalSource("user-b"));
+    // The existing player remains bound to user A until the identity scope
+    // remounts it, even if a final server-duration update arrives first.
+    view.rerender(<VideoPlayer video={{ ...video(), durationSeconds: 119_999 }} />);
+    expect(screen.getByLabelText("EP 01 视频")).toBe(media);
+    expect(screen.getByRole("slider", { name: "播放进度" })).toBeEnabled();
+    expect(media.currentTime).toBe(12);
     media.currentTime = 32;
     fireEvent.timeUpdate(media);
     fireEvent.pause(media);
@@ -309,7 +361,7 @@ describe("VideoPlayer", () => {
 
     render(<VideoPlayer video={video()} />);
     const next = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
-    metadata(next);
+    if (!cached) metadata(next);
     expect(next.currentTime).toBe(70);
   });
 

@@ -1,4 +1,4 @@
--- AniVAG controlled migration: the pre-identity 22-table schema -> 24 tables.
+-- Seekino controlled migration: the pre-identity 22-table schema -> 24 tables.
 -- Prepared for review; the application never executes this file automatically.
 -- Apply after the existing V2/runtime and media-millisecond migrations, with
 -- API/Worker writes stopped and a verified backup. MySQL DDL implicitly commits:

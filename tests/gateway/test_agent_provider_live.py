@@ -19,8 +19,8 @@ class _MarkerArguments(BaseModel):
 
 @pytest.mark.live_agent
 def test_deepseek_agent_calls_a_tool_and_returns_visible_text() -> None:
-    if os.getenv("ANIVAG_RUN_LIVE_AGENT_TEST") != "1":
-        pytest.skip("set ANIVAG_RUN_LIVE_AGENT_TEST=1 to call the live provider")
+    if os.getenv("SEEKINO_RUN_LIVE_AGENT_TEST") != "1":
+        pytest.skip("set SEEKINO_RUN_LIVE_AGENT_TEST=1 to call the live provider")
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
         pytest.fail("DEEPSEEK_API_KEY is required for the live Agent smoke test")
@@ -36,13 +36,13 @@ def test_deepseek_agent_calls_a_tool_and_returns_visible_text() -> None:
         func=lookup_ci_marker,
         name="lookup_ci_marker",
         description=(
-            "Look up the fixed AniVAG CI marker. Call this tool before answering."
+            "Look up the fixed Seekino CI marker. Call this tool before answering."
         ),
         args_schema=_MarkerArguments,
     )
     config = AgentModelConfig(
         source="deepseek_ci",
-        model=os.getenv("ANIVAG_LIVE_AGENT_MODEL", "deepseek-flash"),
+        model=os.getenv("SEEKINO_LIVE_AGENT_MODEL", "deepseek-flash"),
         max_output_tokens=1_024,
         request_timeout_seconds=60,
         fallback=None,
@@ -76,7 +76,7 @@ def test_deepseek_agent_calls_a_tool_and_returns_visible_text() -> None:
     try:
         model.run_agent_loop(
             (
-                "Call lookup_ci_marker exactly once with name 'anivag-ci'. "
+                "Call lookup_ci_marker exactly once with name 'seekino-ci'. "
                 "After reading its result, answer with one short visible sentence."
             ),
             tools=[tool],
@@ -88,5 +88,5 @@ def test_deepseek_agent_calls_a_tool_and_returns_visible_text() -> None:
     finally:
         factory.close()
 
-    assert invocations == ["anivag-ci"]
+    assert invocations == ["seekino-ci"]
     assert "".join(visible_text).strip()

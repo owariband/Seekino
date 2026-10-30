@@ -37,15 +37,15 @@ class RetrievalConfig:
         defaults = cls()
         raw_search_default_top_k = (
             search_default_top_k if search_default_top_k is not None else os.getenv(
-                "ANIVAG_RETRIEVAL_SEARCH_DEFAULT_TOP_K", str(defaults.search_default_top_k),
+                "SEEKINO_RETRIEVAL_SEARCH_DEFAULT_TOP_K", str(defaults.search_default_top_k),
             )
         )
         raw_candidate_budget = (
             candidate_budget if candidate_budget is not None
-            else os.getenv("ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", "").strip() or None
+            else os.getenv("SEEKINO_RETRIEVAL_CANDIDATE_BUDGET", "").strip() or None
         )
         rerank = (rerank_enabled if rerank_enabled is not None else os.getenv(
-            "ANIVAG_RETRIEVAL_RERANK_ENABLED", str(defaults.rerank_enabled),
+            "SEEKINO_RETRIEVAL_RERANK_ENABLED", str(defaults.rerank_enabled),
         ))
         if isinstance(rerank, str):
             normalized = rerank.strip().casefold()
@@ -54,26 +54,26 @@ class RetrievalConfig:
             elif normalized in {"0", "false", "no", "off"}:
                 rerank = False
             else:
-                raise ValueError("ANIVAG_RETRIEVAL_RERANK_ENABLED must be a boolean value")
+                raise ValueError("SEEKINO_RETRIEVAL_RERANK_ENABLED must be a boolean value")
         return cls(
             channel_top_k=int(channel_top_k if channel_top_k is not None else os.getenv(
-                "ANIVAG_RETRIEVAL_CHANNEL_TOP_K", str(defaults.channel_top_k),
+                "SEEKINO_RETRIEVAL_CHANNEL_TOP_K", str(defaults.channel_top_k),
             )),
             rrf_k=int(rrf_k if rrf_k is not None else os.getenv(
-                "ANIVAG_RETRIEVAL_RRF_K", str(defaults.rrf_k),
+                "SEEKINO_RETRIEVAL_RRF_K", str(defaults.rrf_k),
             )),
             lexical_weight=float(lexical_weight if lexical_weight is not None else os.getenv(
-                "ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", str(defaults.lexical_weight),
+                "SEEKINO_RETRIEVAL_LEXICAL_WEIGHT", str(defaults.lexical_weight),
             )),
             text_weight=float(text_weight if text_weight is not None else os.getenv(
-                "ANIVAG_RETRIEVAL_TEXT_WEIGHT", str(defaults.text_weight),
+                "SEEKINO_RETRIEVAL_TEXT_WEIGHT", str(defaults.text_weight),
             )),
             vision_weight=float(vision_weight if vision_weight is not None else os.getenv(
-                "ANIVAG_RETRIEVAL_VISION_WEIGHT", str(defaults.vision_weight),
+                "SEEKINO_RETRIEVAL_VISION_WEIGHT", str(defaults.vision_weight),
             )),
             candidate_budget=int(raw_candidate_budget) if raw_candidate_budget is not None else None,
             sparse_weight=float(sparse_weight if sparse_weight is not None else os.getenv(
-                "ANIVAG_RETRIEVAL_SPARSE_WEIGHT", str(defaults.sparse_weight),
+                "SEEKINO_RETRIEVAL_SPARSE_WEIGHT", str(defaults.sparse_weight),
             )),
             rerank_enabled=rerank,
             search_default_top_k=(

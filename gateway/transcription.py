@@ -9,7 +9,7 @@ from typing import Literal, Protocol, TypeVar
 from pydantic import BaseModel
 
 from gateway.ark.multimodal import ArkMultimodalModel
-from gateway.config import ArkModelSourceConfig, ModelBinding, OpenAIAudioSourceConfig
+from gateway.config import ArkModelSourceConfig, ModelBinding, OpenAIAudioSourceConfig, WhisperXSourceConfig
 from gateway.multimodal import MultimodalInput
 from gateway.openai.audio import transcribe_audio
 
@@ -99,11 +99,15 @@ class _VideoTranscriptionModel:
 
 def build_transcription_model(
     binding: ModelBinding,
-    source: ArkModelSourceConfig | OpenAIAudioSourceConfig,
+    source: ArkModelSourceConfig | OpenAIAudioSourceConfig | WhisperXSourceConfig,
     *,
-    api_key: str,
+    api_key: str | None,
+    local_runtime=None,
 ) -> AudioTranscriptionModel | VideoTranscriptionModel:
     """Bind the provider transport without introducing ASR prompt or timing rules."""
+    if isinstance(source, WhisperXSourceConfig):
+        from gateway.local.whisperx import WhisperXTranscriptionModel
+        return WhisperXTranscriptionModel(binding, source, runtime=local_runtime)
     if isinstance(source, OpenAIAudioSourceConfig):
         return _AudioTranscriptionModel(binding, source, api_key=api_key)
     if isinstance(source, ArkModelSourceConfig):

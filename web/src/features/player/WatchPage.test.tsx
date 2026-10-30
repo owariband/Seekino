@@ -154,6 +154,12 @@ function renderPage(path = "/watch/series-1/video-2", withShell = false) {
   );
 }
 
+function openPauseSetting() {
+  const settings = screen.getByRole("button", { name: "观看设置" });
+  if (!settings.closest("details")?.open) fireEvent.click(settings);
+  return screen.getByRole("switch", { name: "发送问题时暂停视频" });
+}
+
 beforeEach(() => {
   mocks.useAuth.mockReturnValue({ canManage: true });
   localStorage.clear();
@@ -361,7 +367,7 @@ describe("WatchPage", () => {
     renderPage();
     await screen.findByTestId("supervisor-chat");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    expect(screen.getByRole("switch", { name: "发送问题时暂停视频" })).toBeChecked();
+    expect(openPauseSetting()).toBeChecked();
     expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
@@ -393,14 +399,25 @@ describe("WatchPage", () => {
     const view = renderPage();
     await screen.findByTestId("video-player");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    fireEvent.click(screen.getByRole("switch", { name: "发送问题时暂停视频" }));
-    expect(localStorage.getItem("anivag-watch-pause-on-send")).toBe("false");
+    const settings = screen.getByRole("button", { name: "观看设置" });
+    expect(settings.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText("边看边聊")).not.toBeInTheDocument();
+    const preference = openPauseSetting();
+    fireEvent.click(preference);
+    expect(localStorage.getItem("seekino-watch-pause-on-send")).toBe("false");
+    fireEvent.keyDown(preference, { key: "Escape" });
+    expect(settings.closest("details")).not.toHaveAttribute("open");
+    expect(settings).toHaveFocus();
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "false");
+    fireEvent.click(settings);
+    fireEvent.pointerDown(screen.getByTestId("video-player"));
+    expect(settings.closest("details")).not.toHaveAttribute("open");
     view.unmount();
 
     renderPage();
     const player = await screen.findByTestId("video-player");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    const pauseOnSend = screen.getByRole("switch", { name: "发送问题时暂停视频" });
+    const pauseOnSend = openPauseSetting();
     const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     expect(pauseOnSend).not.toBeChecked();
     mocks.getSnapshot.mockReturnValue({ positionSeconds: 21_567, wasPlaying: true });
@@ -416,7 +433,7 @@ describe("WatchPage", () => {
 
     fireEvent.click(pauseOnSend);
     expect(pauseOnSend).toBeChecked();
-    expect(localStorage.getItem("anivag-watch-pause-on-send")).toBe("true");
+    expect(localStorage.getItem("seekino-watch-pause-on-send")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "聊天" }));
     mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 31_234, wasPlaying: true });
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
@@ -521,7 +538,7 @@ describe("WatchPage", () => {
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
     mocks.pauseAndGetSnapshot.mockReturnValue({ positionSeconds: 18_000, wasPlaying: false });
     fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
-    fireEvent.click(screen.getByRole("switch", { name: "发送问题时暂停视频" }));
+    fireEvent.click(openPauseSetting());
     fireEvent.keyDown(composer, { key: "Tab", shiftKey: true });
     expect(player).toHaveFocus();
     expect(mocks.focusPlayer).toHaveBeenCalledOnce();
@@ -628,12 +645,12 @@ describe("WatchPage", () => {
     fireEvent.pointerUp(divider, { pointerId: 1 });
     expect(divider).toHaveAttribute("aria-valuenow", "600");
     expect(page.style.getPropertyValue("--watch-panel-width")).toBe("600px");
-    expect(localStorage.getItem("anivag-watch-panel-width")).toBe("600");
+    expect(localStorage.getItem("seekino-watch-panel-width")).toBe("600");
   });
 
   it("clamps a saved wide sidebar to the viewport without losing the preference, and resizes from its visible width", async () => {
     const widthMock = vi.spyOn(window, "innerWidth", "get").mockReturnValue(1440);
-    localStorage.setItem("anivag-watch-panel-width", "850");
+    localStorage.setItem("seekino-watch-panel-width", "850");
     try {
       renderPage();
       await screen.findByTestId("video-player");
@@ -647,7 +664,7 @@ describe("WatchPage", () => {
       expect(divider).toHaveAttribute("aria-valuenow", "580");
       expect(divider).toHaveAttribute("aria-valuemax", "580");
       expect(page.style.getPropertyValue("--watch-panel-width")).toBe("580px");
-      expect(localStorage.getItem("anivag-watch-panel-width")).toBe("850");
+      expect(localStorage.getItem("seekino-watch-panel-width")).toBe("850");
 
       widthMock.mockReturnValue(1440);
       fireEvent(window, new Event("resize"));
@@ -658,7 +675,7 @@ describe("WatchPage", () => {
       fireEvent(window, new Event("resize"));
       fireEvent.keyDown(divider, { key: "ArrowRight" });
       expect(divider).toHaveAttribute("aria-valuenow", "556");
-      expect(localStorage.getItem("anivag-watch-panel-width")).toBe("556");
+      expect(localStorage.getItem("seekino-watch-panel-width")).toBe("556");
 
       widthMock.mockReturnValue(1440);
       fireEvent(window, new Event("resize"));

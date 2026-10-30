@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from contextlib import AbstractContextManager
+import hashlib
 from typing import Literal
 
 from sqlalchemy import func, or_, select
@@ -420,9 +421,8 @@ class LibraryRepository:
                 ),
                 pending_upload_count=int(pending.get(record.id, 0)),
                 last_search=last_searches.get(record.id),
-                representative_video=next(
-                    (video for video in videos if video.series_id == record.id and video.keyframe_uris),
-                    None,
+                representative_video=_representative_video(
+                    [video for video in videos if video.series_id == record.id]
                 ),
                 publisher=publishers.get(record.tenant_id, (None, False))[0],
                 publisher_active=publishers.get(record.tenant_id, (None, False))[1],
@@ -597,6 +597,17 @@ class LibraryRepository:
             description=record.description,
             cover_uri=record.cover_uri,
         )
+
+
+def _representative_video(videos: list[VideoSummaryState]) -> VideoSummaryState | None:
+    covers = [video for video in videos if video.cover_uri]
+    if covers:
+        # Stable pseudo-random choice: refreshing or reordering episodes must not
+        # replace the artwork. A newly published Summary cover can join the pool.
+        return min(covers, key=lambda video: hashlib.sha256(
+            f"{video.series_id}:{video.video_id}".encode()
+        ).digest())
+    return next((video for video in videos if video.keyframe_uris), None)
 
 
 def _v2_series_status(videos: list[VideoSummaryState]) -> str:

@@ -286,6 +286,59 @@ def test_initial_snapshot_becomes_compactable_but_task_anchor_survives() -> None
     assert "chunk-1" in rendered
 
 
+@pytest.mark.parametrize("feedback,expected", [
+    (
+        "Invalid arguments for write_context_canvas: "
+        "operations.1.add_event.event.SCENE.event_type_unused: Extra inputs are not permitted. "
+        "Fix them and call the tool again.",
+        ["event_type_unused", "Extra inputs are not permitted", "Fix them"],
+    ),
+    (
+        json.dumps({"error": {"code": "STALE_REVISION", "message": "Expected revision 6, current is 7.",
+                              "retryable": True, "retry_hint": "Read the current Canvas and retry."}}),
+        ["STALE_REVISION", "current is 7", "Read the current Canvas"],
+    ),
+    (
+        json.dumps({"batch_id": "accepted-batch", "revision": 7, "replayed": False,
+                    "results": [{"event_ref": "event-1"}]}),
+        ["accepted-batch", '"revision":7', '"replayed":false'],
+    ),
+])
+def test_media_compaction_keeps_recent_write_feedback_after_evidence_reread(feedback, expected):
+    # Native Kimi trace: rejected SCENE field, then reread, then the 1000-char
+    # summary previously kept old reads and dropped the actual schema error.
+    anchor = {"role": "user", "content": [
+        {"type": "text", "text": "task " * 2600},
+        *({"type": "image_url", "image_url": {"url": f"data:image/png;base64,frame-{i}"}}
+          for i in range(37)),
+    ]}
+    messages = [anchor]
+    for number in range(4):
+        messages.extend([
+            _assistant_tool_call(f"old-{number}", "get_context_canvas"),
+            _tool_result(f"old-{number}", "old evidence " * 1000),
+        ])
+    messages.extend([
+        _assistant_tool_call("write", "write_context_canvas"), _tool_result("write", feedback),
+        _assistant_tool_call("reread", "get_context_canvas"),
+        _tool_result("reread", '{"revision":7,"content":"latest evidence"}'),
+    ])
+    controller = ContextWindowController(
+        policy=ContextWindowPolicy(128000, 8192, 2048, 90000, 60000),
+        maximum_input_characters=400000, label="media-feedback",
+    )
+    update = controller.prepare(messages, contract={"schema": "x" * 24000}, checkpoint=lambda: {})
+    assert update.compacted and update.reason == "auto"
+    assert update.cleared_tool_results == 0
+    assert update.messages[0] == anchor
+    assert update.messages[-1] == messages[-1]
+    summary = update.messages[1]["content"].split("<completed_activity>\n", 1)[1].split("\n</completed_activity>", 1)[0]
+    assert len(summary) <= 1000
+    assert all(value in summary for value in expected)
+    assert "old evidence " * 100 not in summary
+    assert update.after.estimated_tokens < controller.policy.maximum_input_tokens
+
+
 def test_provider_input_usage_takes_precedence_over_local_estimate() -> None:
     controller = ContextWindowController(
         policy=_policy(),
@@ -293,7 +346,7 @@ def test_provider_input_usage_takes_precedence_over_local_estimate() -> None:
         label="test",
     )
     controller.record_provider_input_tokens(
-        1_600,
+        1_500,
         request_estimated_tokens=100,
     )
     messages = [
@@ -313,6 +366,46 @@ def test_provider_input_usage_takes_precedence_over_local_estimate() -> None:
     assert update.before.estimated_tokens >= 1_500
     assert update.compacted is True
     assert update.reason == "auto"
+
+
+def test_provider_media_usage_calibrates_downward_and_keeps_fresh_evidence() -> None:
+    anchor = {"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,frame-{i}"}}
+        for i in range(198)
+    ]}
+    initial = [anchor, _assistant_tool_call("read", "get_context_canvas")]
+    controller = ContextWindowController(
+        policy=ContextWindowPolicy(262144, 8192, 4096, 200000, 150000),
+        maximum_input_characters=600000, label="karpathy-media",
+    )
+    estimate = measure_context(initial, {}).estimated_tokens
+    assert estimate > controller.policy.maximum_input_tokens
+    controller.record_provider_input_tokens(248000, request_estimated_tokens=estimate)
+    evidence = _tool_result("read", '{"text":"fresh transcript that must be read"}')
+
+    update = controller.prepare([*initial, evidence], contract={}, checkpoint=lambda: {})
+
+    assert update.before.estimated_tokens < controller.policy.maximum_input_tokens
+    assert update.cleared_tool_results == 0
+    assert update.messages[-1] == evidence
+    # A provider reporting a missing/zero usage must not erase the calibration.
+    controller.record_provider_input_tokens(0, request_estimated_tokens=estimate)
+    assert controller.prepare([*initial, evidence], contract={}).before == update.before
+
+
+def test_fixed_media_prefix_above_soft_trigger_keeps_previous_read_until_hard_limit():
+    messages = [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,frame"}},
+    ]}]
+    controller = ContextWindowController(policy=_policy(), maximum_input_characters=None, label="fixed-media")
+    controller.record_provider_input_tokens(2500, request_estimated_tokens=measure_context(messages, {}).estimated_tokens)
+    history = [*messages,
+               _assistant_tool_call("asr", "get_context_canvas"), _tool_result("asr", "complete dialogue"),
+               _assistant_tool_call("member", "get_context_canvas"), _tool_result("member", "current member")]
+    update = controller.prepare(history, contract={})
+    assert update.before.estimated_tokens > controller.policy.auto_compact_tokens
+    assert update.compacted is False
+    assert update.messages == history
 
 
 def test_hard_limit_releases_even_newest_tool_output_as_recoverable_receipt() -> None:
@@ -337,6 +430,8 @@ def test_hard_limit_releases_even_newest_tool_output_as_recoverable_receipt() ->
     assert update.reason == "hard_limit"
     assert update.cleared_tool_results == 1
     receipt = json.loads(update.messages[-1]["content"])
+    result_summary = receipt.pop("result_summary")
+    assert "feedback=" in result_summary and len(result_summary) <= 500
     assert receipt == {
         "context_window": "tool_result_released",
         "tool": "read_draft_item",
@@ -350,6 +445,42 @@ def test_hard_limit_releases_even_newest_tool_output_as_recoverable_receipt() ->
         ),
     }
     assert update.after.characters <= 2_000
+
+
+@pytest.mark.parametrize("payload,expected", [
+    (
+        "Invalid arguments for write_context_canvas: event_type_unused is forbidden. " + "details " * 1000,
+        ["Invalid arguments", "event_type_unused"],
+    ),
+    (
+        json.dumps({"error": {"code": "STALE_REVISION", "retryable": True,
+                              "retry_hint": "Read revision 7 before retrying.", "message": "details " * 1000}}),
+        ["STALE_REVISION", "Read revision 7"],
+    ),
+    (
+        json.dumps({"batch_id": "accepted-batch", "revision": 7, "replayed": True,
+                    "results": ["bulk-result" * 1000]}),
+        ["accepted-batch", '"revision":7', '"replayed":true'],
+    ),
+])
+def test_hard_release_keeps_bounded_tool_feedback_across_later_compaction(payload, expected):
+    messages = [{"role": "user", "content": "answer"},
+                _assistant_tool_call("current", "write_context_canvas"), _tool_result("current", payload)]
+    controller = ContextWindowController(policy=None, maximum_input_characters=2000, label="feedback")
+    update = controller.prepare(messages, contract={}, checkpoint=lambda: {})
+    assert update.cleared_tool_results == 1
+    receipt = json.loads(update.messages[-1]["content"])
+    assert len(receipt["result_summary"]) <= 500
+    assert all(value in receipt["result_summary"] for value in expected)
+    assert update.after.characters <= 2000
+    # Releasing a bulk payload must not lose its feedback on the next window.
+    newer = [*update.messages, _assistant_tool_call("reread", "get_context_canvas"),
+             _tool_result("reread", "new evidence")]
+    controller = ContextWindowController(policy=_policy(), maximum_input_characters=None, label="feedback-auto")
+    second = controller.prepare(newer, contract={"schema": "s" * 4000}, checkpoint=lambda: {})
+    assert second.compacted
+    rendered = json.dumps(second.messages, ensure_ascii=False)
+    assert all(value.replace('"', '\\"') in rendered for value in expected)
 
 
 @pytest.mark.parametrize(("policy", "character_threshold"), [(None, 100), (_policy(), None)])

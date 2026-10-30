@@ -18,7 +18,7 @@ _MAX_CHECKPOINT_CHARACTERS = 12_000
 _MAX_ACTIVITY_SUMMARY_CHARACTERS = 8_000
 _MAX_SUMMARY_LINE_CHARACTERS = 500
 _RECENT_NON_TOOL_MESSAGES = 4
-_COMPACTION_MARKER = "anivag_context_checkpoint"
+_COMPACTION_MARKER = "seekino_context_checkpoint"
 
 ContextCheckpoint = Callable[[], object]
 OpenAIMessage = dict[str, Any]
@@ -144,7 +144,7 @@ class ContextWindowController:
         if (
             isinstance(input_tokens, bool)
             or not isinstance(input_tokens, int)
-            or input_tokens < 0
+            or input_tokens <= 0
         ):
             return
         self._reported_input_tokens = input_tokens
@@ -160,9 +160,15 @@ class ContextWindowController:
         candidate = deepcopy(messages)
         before = self._project_active_tokens(measure_context(candidate, contract))
         hard_limit_reached = self._hard_limit_reached(before)
+        stable_end = _stable_prefix_end(candidate)
+        fixed = self._project_active_tokens(measure_context(candidate[:stable_end], contract))
         auto_limit_reached = (
             self.policy is not None
             and before.estimated_tokens >= self.policy.auto_compact_tokens
+            # Compacting history cannot reduce a fixed media prefix. If that
+            # prefix alone crosses the soft trigger, retain evidence until the
+            # actual hard budget needs space instead of rereading it every turn.
+            and fixed.estimated_tokens < self.policy.auto_compact_tokens
         )
         if not hard_limit_reached and not auto_limit_reached:
             return self._unchanged(candidate, before)
@@ -170,7 +176,6 @@ class ContextWindowController:
         reason: Literal["auto", "hard_limit"] = (
             "hard_limit" if hard_limit_reached else "auto"
         )
-        stable_end = _stable_prefix_end(candidate)
         recent_start = _recent_history_start(candidate, stable_end)
         compactable = candidate[stable_end:recent_start]
         recent = candidate[recent_start:]
@@ -200,7 +205,7 @@ class ContextWindowController:
                 > self.policy.compact_target_tokens
             ):
                 candidate[stable_end] = _checkpoint_message(
-                    summary=_clip(summary, 1_000),
+                    summary=_summarize_activity(compactable, maximum_characters=1_000),
                     checkpoint=rendered_checkpoint,
                     window_number=next_window_number,
                     window_id=next_window_id,
@@ -280,7 +285,10 @@ class ContextWindowController:
         )
         return replace(
             measurement,
-            estimated_tokens=max(measurement.estimated_tokens, projected),
+            # The provider measures the actual media encoding. Keeping the larger
+            # generic image estimate here repeatedly discards fresh tool evidence
+            # even after a successful request proves that estimate was too high.
+            estimated_tokens=projected,
         )
 
     def _clear_recent_tool_results(
@@ -309,6 +317,7 @@ class ContextWindowController:
                 break
             message = messages[index]
             tool_call_id = str(message.get("tool_call_id") or "")
+            result_summary = _tool_result_metadata(message.get("content"))
             original_bytes = len(
                 _serialized_text(message.get("content")).encode("utf-8")
             )
@@ -318,6 +327,7 @@ class ContextWindowController:
                     "tool": tool_names.get(tool_call_id),
                     "tool_call_id": tool_call_id,
                     "original_bytes": original_bytes,
+                    "result_summary": result_summary,
                     "recoverable": True,
                     "instruction": (
                         "Canonical state remains outside message history. Use the "
@@ -502,12 +512,16 @@ def _matching_assistant_index(
     return tool_index + 1
 
 
-def _summarize_activity(messages: list[OpenAIMessage]) -> str:
+def _summarize_activity(
+    messages: list[OpenAIMessage], *, maximum_characters: int = _MAX_ACTIVITY_SUMMARY_CHARACTERS,
+) -> str:
     if not messages:
         return "No older completed activity was available to compact."
     tool_names = _tool_names_by_call_id(messages)
     lines = []
-    for message in messages:
+    # Keep the newest feedback when only a small summary fits beside fixed media.
+    # In particular, a rejected write must not become an apparent completed write.
+    for message in reversed(messages):
         role = message.get("role")
         if role == "assistant":
             content = _clip(_serialized_text(message.get("content")), 300)
@@ -540,9 +554,17 @@ def _summarize_activity(messages: list[OpenAIMessage]) -> str:
             )
             if content:
                 lines.append(f"{role}: {content}")
-        if sum(len(line) for line in lines) >= _MAX_ACTIVITY_SUMMARY_CHARACTERS:
+        if sum(len(line) + 1 for line in lines) >= maximum_characters:
             break
-    return _clip("\n".join(lines), _MAX_ACTIVITY_SUMMARY_CHARACTERS)
+    retained = []
+    remaining = maximum_characters
+    for line in lines:
+        if remaining <= 0:
+            break
+        rendered = _clip(line, remaining)[:remaining]
+        retained.append(rendered)
+        remaining -= len(rendered) + 1
+    return "\n".join(reversed(retained))
 
 
 def _tool_result_metadata(content: object) -> str:
@@ -550,10 +572,18 @@ def _tool_result_metadata(content: object) -> str:
     try:
         value = json.loads(text)
     except (TypeError, ValueError):
-        return f"completed; output_bytes={len(text.encode('utf-8'))}"
+        value = None
     if not isinstance(value, dict):
-        return f"completed; output_bytes={len(text.encode('utf-8'))}"
+        prefix = f"output_bytes={len(text.encode('utf-8'))}; feedback="
+        return prefix + _clip(text, _MAX_SUMMARY_LINE_CHARACTERS - len(prefix))
+    if value.get("context_window") == "tool_result_released" and isinstance(value.get("result_summary"), str):
+        return _clip(value["result_summary"], _MAX_SUMMARY_LINE_CHARACTERS)
     keys = (
+        "batch_id",
+        "revision",
+        "expected_revision",
+        "current_revision",
+        "replayed",
         "accepted",
         "operation",
         "video_chunk_id",
@@ -564,7 +594,18 @@ def _tool_result_metadata(content: object) -> str:
         "complete",
         "next_cursor",
     )
-    metadata = {key: value[key] for key in keys if key in value}
+    metadata = {}
+    if isinstance(value.get("error"), dict):
+        error = value["error"]
+        metadata["error"] = {
+            key: _clip(error[key], limit) if isinstance(error[key], str) else error[key]
+            for key, limit in (("code", 64), ("retryable", 32), ("retry_hint", 128), ("message", 256))
+            if key in error and isinstance(error[key], (str, bool, int, float, type(None)))
+        }
+    metadata.update({
+        key: _clip(value[key], 128) if isinstance(value[key], str) else value[key]
+        for key in keys if key in value and isinstance(value[key], (str, bool, int, float, type(None)))
+    })
     metadata["output_bytes"] = len(text.encode("utf-8"))
     return _clip(
         json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),

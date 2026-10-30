@@ -1072,7 +1072,7 @@ describe("application shell", () => {
   });
 
   it("sends the answer settings selected beside the Chat composer", async () => {
-    localStorage.setItem("anivag-agent-message-options:local-default", JSON.stringify({
+    localStorage.setItem("seekino-agent-message-options:local-default", JSON.stringify({
       serverOptions: initialMessageOptions,
       selection: {
         topK: 5,
@@ -1108,7 +1108,7 @@ describe("application shell", () => {
       maxToolCallsPerTurn: 36,
     });
     expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("topK");
-    expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({
+    expect(JSON.parse(localStorage.getItem("seekino-agent-message-options:local-default")!)).toEqual({
       overrides: {
         maxLoopTurns: 100,
         maxModelCallsPerTurn: 9,
@@ -1119,7 +1119,7 @@ describe("application shell", () => {
   });
 
   it("keeps explicit overrides after a YAML change and omits untouched defaults", async () => {
-    localStorage.setItem("anivag-agent-message-options:local-default", JSON.stringify({
+    localStorage.setItem("seekino-agent-message-options:local-default", JSON.stringify({
       topK: 5,
       maxLoopTurns: 100,
       maxModelCallsPerTurn: 9,
@@ -1165,7 +1165,7 @@ describe("application shell", () => {
     const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
     expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("topK");
     expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("maxLoopTurns");
-    expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({ overrides: {} });
+    expect(JSON.parse(localStorage.getItem("seekino-agent-message-options:local-default")!)).toEqual({ overrides: {} });
     act(finishAnswer);
   });
 
@@ -1220,13 +1220,13 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
     expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation"));
   });
 
   it("reuses the recovered empty Conversation when the history list is unavailable", async () => {
@@ -1246,7 +1246,7 @@ describe("application shell", () => {
 
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation"));
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toBeEnabled();
   });
 
@@ -1346,7 +1346,7 @@ describe("application shell", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/conversations/delete"))).toBe(false);
 
     act(releaseCreation);
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
   });
 
   it("locks every deletion target while an explicitly selected Conversation is loading", async () => {
@@ -1358,7 +1358,7 @@ describe("application shell", () => {
     act(finishAnswer);
     await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await user.click(screen.getByRole("button", { name: "新建对话" }));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
     const original = fetchMock.getMockImplementation()!;
     let releaseSelection!: () => void;
@@ -1396,19 +1396,19 @@ describe("application shell", () => {
     act(finishAnswer);
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "新建对话" }));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 雨天门口，/ }));
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/conversations/delete"))).toBe(false);
     await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
     await waitFor(() => expect(screen.queryByRole("button", { name: /^删除对话 雨天门口，/ })).not.toBeInTheDocument());
-    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2");
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2");
 
     await user.click(screen.getByRole("button", { name: /^删除对话 新对话，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 新对话，/ }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(3));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-3"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-3"));
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/delete"))).toHaveLength(2);
   });
 
@@ -1437,7 +1437,7 @@ describe("application shell", () => {
     act(finishAnswer);
     await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await user.click(screen.getByRole("button", { name: "新建对话" }));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
     holdNextList = true;
     await user.click(screen.getByLabelText("打开对话记录"));
@@ -1446,7 +1446,7 @@ describe("application shell", () => {
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(screen.getByRole("button", { name: /^删除对话 雨天门口，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
     act(releaseList);
 
     await waitFor(() => expect(screen.queryByRole("button", { name: /^删除对话 雨天门口，/ })).not.toBeInTheDocument());
@@ -1505,7 +1505,7 @@ describe("application shell", () => {
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
     expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
   });
 

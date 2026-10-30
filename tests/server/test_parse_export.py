@@ -92,7 +92,7 @@ def test_export_preserves_complete_events_contract_and_original_positions(export
     indices = [i for i, event in enumerate(before["timeline"]) if event["event_type"] in wanted]
     assert record["timeline"] == [before["timeline"][i] for i in indices]
     assert record["persons"] == before["persons"]
-    assert record["schema_version"] == "anivag.parse-export.v1"
+    assert record["schema_version"] == "seekino.parse-export.v1"
     assert record["source"] == {
         "video_id": snapshot.video_id, "parse_task_id": snapshot.parse_task_id,
         "chunk_id": snapshot.chunk_id, "content_version": 3, "timeline_indices": indices,

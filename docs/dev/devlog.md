@@ -22,6 +22,28 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
+| [2026-10-30：Understanding 直接 JSON 与 30k 正式接入](#devlog-parse-direct-json-20261030) | B07、实现闭环 |
+| [2026-10-29：Karpathy OCR 配置纠正与解析恢复](#devlog-karpathy-parse-recovery-20261029) | B07、B20、真实任务恢复 |
+| [2026-10-29：普通展示模式开放解析有效总时长](#devlog-release-parse-duration-20261029) | F10、解析时长展示 |
+| [2026-10-29：本地向量直连 llama.cpp 与独立运行入口](#devlog-llama-cpp-embedding-20261029) | B19、本地 embedding 与运行依赖 |
+| [2026-10-29：系列封面采用 Summary 候选与上次观看画面](#devlog-series-artwork-20261029) | F09、观看封面规则 |
+| [2026-10-29：WhisperX 正式可选接入与字幕字词时间](#devlog-whisperx-20261029) | B20、本地 ASR 与字幕证据 |
+| [2026-10-29：本机部署与 MCP 分组提交](#devlog-deploy-mcp-publish-20261029) | B15、B17、B18；提交范围与验证 |
+| [2026-10-29：本地 Qwen 文本向量、视觉开关与课程片段小实验](#devlog-local-text-embedding-20261029) | B19、课程检索与本地模型 |
+| [2026-10-29：观看聊天面板收紧与设置折叠](#devlog-watch-chat-compact-20261029) | F07、观看聊天可用空间 |
+| [2026-10-29：Summary 正式标题优先与内容标题回退](#devlog-summary-title-20261029) | F08、解析元信息与资料库展示 |
+| [2026-10-29：身份缺证归因修正与多片段质量验证计划](#devlog-parse-quality-attribution-20261029) | B07、B12、证据与模型评测 |
+| [2026-10-29：采用精简 JSON，结束 XML 选型与单块 30 秒追求](#devlog-parse-protocol-decision-20261029) | B07、协议决定与质量优先 |
+| [2026-10-29：取消人物名单、增加 SHOT 的精简 JSON/XML 对照](#devlog-parse-compact-shot-20261029) | B07、协议归因与内容质量 |
+| [2026-10-29：本地 Whisper、无独立 OCR 的 JSON/XML 单块对照](#devlog-parse-protocol-20261029) | B07、输出协议与内容质量 |
+| [2026-10-29：全原生 localhost 环境与 Kimi 业务验收](#devlog-native-local-20261029) | B18、本机部署与真实运行 |
+| [2026-10-29：面试前保护旧闭环并撤销裁剪](#devlog-interview-preserve-20261029) | B16、演示与其他工作依赖 |
+| [2026-10-29：持久媒体移入 assets/library 与旧数据恢复核验](#devlog-persistent-media-20261029) | B17、持久媒体与换机恢复 |
+| [2026-10-29：按角色宣传片目标退役 NPC 实验与 ACP Client](#devlog-pv-scope-prune-20261029) | B16、制作目标与代码范围 |
+| [2026-10-29：localhost MCP 与外部 Agent 检索接入](#devlog-local-mcp-20261028) | B15、MCP 工具与素材取用 |
+| [2026-10-28：解析性能 TRD 与事件包装 XML 复测口径](#devlog-parse-performance-20261028) | B07、Understanding 职责与输出协议 |
+| [2026-10-26：Kimi 同模型 Chat 三框架对照](#devlog-chat-harness-kimi-20261026) | C19、Pi / Deep Agents / Codex、查询覆盖与交付合同 |
 | [2026-10-25：按能力整合 benchmark 并纠正选集口径](#devlog-benchmark-layout-20261025) | 查询覆盖、Chat behavior、历史证据归属 |
 | [2026-10-25：同一 chunk 的 ReAct、Deep Agents 与 Codex 解析实测](#devlog-parse-harness-ab-20261025) | Parse harness 简化、compact 预算、EP04 画外音身份 |
 | [2026-10-25：Deep Agents + Kimi K3.1 Pro 查询能力覆盖回归](#devlog-chat-kimi-mygo-20261025) | 旧 multi-agent 多任务用例；非 Chat behavior 验收 |
@@ -92,6 +114,723 @@
 
 </details>
 
+<a id="devlog-kimi-concurrency-20261030"></a>
+
+## 2026-10-30：Kimi Code API 10 路并发实测
+
+### 问题与现状
+
+用户希望确认当前 Kimi Code API 是否支持一次 10 路并发。官方介绍有最多 30 路的说明，但账号共享额度、滚动频控与实际请求负载可能影响结果；配置中的 `codex_local.max_concurrency=10` 又容易与 Kimi 混淆。关联 [B21](problems.md#b21kimi-code-api-10-路并发能力未验证)，本次目标是验证账号的 API 并发接受能力，不直接提高解析槽位。
+
+### 方案候选
+
+采用同一已配置 Key/`k3.1-pro`、Gateway Kimi profile 参数，发送不含业务数据的短 Python 输出题；做 3 次串行对照和两轮 10 路并发，关闭 SDK 重试及 fallback，用请求标识/整数答案校验响应完整性。HTTP hook 记录在途数与发出跨度，避免只创建多个协程却没有真正同时请求。选择有界短请求控制额度和现场干扰，不以此取代多模态长请求测试。
+
+### 方案验证
+
+2026-10-30 10:47（Asia/Shanghai）实测全部 23 请求成功；两轮并发分别 10/10，零 429、零网络错误、零重试。峰值 HTTP 在途均为 10，发出跨度为 5.957 ms 与 7.549 ms，响应模型均为 `k3.1-pro`。结果 token 合计 6,484，未查询套餐余额，不折算金额。没有修改服务配置、运行队列或业务库，不启动视频解析。API Key 未写入产物。
+
+证据和复跑入口见 [报告](../report/gateway/kimi-concurrency-20261030.md)、[逐请求记录](../../outputs/verification/kimi-concurrency-20261030/results.json)、[在途事件](../../outputs/verification/kimi-concurrency-20261030/events.json)。此次为原始 API 测试，未验证完整 Seekino Agent 工具循环，也未审计其他同时使用该账号的工具负载。
+
+### 指标对比
+
+串行 3 请求整组 14.306 s，单请求中位 4.665 s；并发第一轮 10 请求整组 6.582 s、中位 5.126 s，第二轮整组 7.646 s、中位 4.717 s。题数不同且连接有预热影响，不据整组耗时比宣称加速倍数；两轮样本不报告尾延迟或长期稳定率。结论是短请求 10 路可用，长上下文、视频帧、持续吞吐及整季完成时长仍未验证；保留现有生产槽位，避免将供应商可接受的请求并发误当整个解析系统的最优设置。
+
+<a id="devlog-release-parse-duration-20261029"></a>
+
+## 2026-10-29：普通展示模式开放解析有效总时长
+
+### 1. 问题与现状
+
+服务端已有实际执行区间的有效总时长，任务页却仅在 debug 模式展示，prod/release 用户无法查看。该数值排除排队和停机，不等于创建任务至完成的墙钟时间。
+
+### 2. 方案候选
+
+直接复用已有时长字段和格式化逻辑，解除展示的 `isDebug` 条件；无需新增计时 API 或修改数据。内部执行计数及模型用量明细仍只供 debug 使用。
+
+### 3. 方案验证
+
+更新既有 release 行为测试：后端有效时长 125000 ms 显示为 02:05，同时继续隐藏内部解析计数。任务页 20 项测试、TypeScript 检查与 production build 通过。未部署生产服务，未做生产浏览器验收。
+
+### 4. 指标对比
+
+release 从不显示解析时长变为显示后端已有的有效总时长；未开始／未记录和已记录零值沿用原规则。未新增请求、依赖或数据迁移，不声称改善解析速度。问题状态：[F10](problems.md#f10普通展示模式隐藏解析有效总时长)。
+
+
+<a id="devlog-module-publish-20261029"></a>
+
+## 2026-10-29：稳定模块分组提交与并发修复隔离
+
+### 问题与现状
+
+hypnos 要求忽略根目录 `seekino/` 的参考分析与会话交接副本，并将其余已稳定改动按模块 push 到普通 dev。工作区同时存在正在进行的解析失败修复，不能将变化中的现场文件整包视为已经验收。
+
+### 方案候选
+
+从 `45e3262c` 建立临时源码快照，按忽略规则、Summary 标题与系列封面、观看页、上下文错误反馈、本地 embedding、WhisperX 基础接入、解析协议实验、公共文档拆分提交。共享文件按功能切分。`/seekino/` 与已有 `/assets/` 保留本地且忽略；带本机绝对路径的 `config/local-dev-config.yaml` 不纳入提交。并发新增的 OCR、provider token 校准和媒体等待恢复修复保留在工作区，不纳入本次候选。
+
+### 方案验证
+
+针对准备提交的源码快照运行 34 个后端测试文件：**1496 passed**，39.29 秒，1 条既有 Starlette/AnyIO 弃用警告。覆盖 Summary、资料库、上下文、embedding、ASR、解析任务与索引、启动装配和实验协议；使用测试隔离环境，不代表真实模型效果。前端资料库/观看页相关的 5 个测试文件 **90 passed**；`npm --prefix web run build`（含 TypeScript 检查）通过。`uv lock --check --offline` 通过，204 个锁定包。本轮未运行真实模型、重启正式服务、迁移数据库或重建业务索引。
+
+本次验证快照保存在本机临时目录 `seekino-module-publish-v16btr2l`，不作为跨设备持久证据；对应测试入口及实现随模块提交。历史报告中的 `outputs/`、`assets/` 原始证据仍按原记录保存在本机或迁移材料中，不随源码发布，不能把新克隆仓库视为包含全部实验输入。
+
+### 指标对比
+
+从混合工作区改为八个可追踪模块提交；119 个文件纳入快照（共享文件可跨提交递进），参考视频、权重、数据库文件及本机配置不纳入。此次结果是提交范围与相关回归的确认；WhisperX 全系列解析、整库检索质量和并发修复的真实任务恢复仍按各项问题继续验收。
+
+<a id="devlog-deploy-mcp-publish-20261029"></a>
+
+## 2026-10-29：本机部署与 MCP 分组提交
+
+### 问题与现状
+
+hypnos 要求仅提交、推送已完成的本机部署与持久化目录、MCP 接入，并忽略新素材。多个会话共享 dev 工作区，当前还混有本地向量、WhisperX、Summary 标题和 UI 改动。B18 的历史真实短片验收使用当时完整工作区，不能当作本次分离提交版本的新实机验证。
+
+### 方案候选
+
+从 `424a2fb5` 提取两组必要修改，在独立临时副本验证；共享文件仅选取相关内容。保留原生启动器、媒体根默认值、FFmpeg 兼容和 SSE 停服修复，以及 localhost MCP 三工具、证据核验和 API 装配。`assets/` 未跟踪素材由 Git ignore 排除，已跟踪发布资产保留，媒体和数据库仍须独立备份；本地个人模型配置不入库。
+
+### 方案验证
+
+隔离副本运行部署、配置、生命周期、抽帧、媒体、持久层、MCP、bootstrap 和 HTTP API 的 11 个测试文件：898 项通过，2 项失败。失败项属于误选的本地文本向量新增测试，其对应功能不在提交范围；已将该测试文件完全恢复为基准版本并排除其改动，原有 5 个同类用例单独复验通过。未删改共享工作区中的这两个新增测试。`uv lock --check --offline` 通过，保持原锁定依赖版本，仅将既有 MCP SDK 显式列为直接依赖。原始日志在本机 `/private/tmp/seekino-publish-20261029/tests.log`，临时证据不随 Git 分发。
+
+### 指标对比
+
+本次限定为两组可独立追溯的提交；排除本地向量、WhisperX、Summary 标题及 UI 的其他改动。未重启服务、迁移真实数据或调用模型，没有新增实机性能与质量结论。B15/B17 的剩余业务验收继续按原问题记录推进。
+
+<a id="devlog-whisperx-20261029"></a>
+
+## 2026-10-29：WhisperX 正式可选接入与字幕字词时间
+
+### 问题与现状
+
+用户希望以可选本地 WhisperX 解决 ASR API 成本及字幕对齐。核对 dev：本机实验直连 whisper.cpp；正式 Gateway 只有 Ark/openai_audio。开发配置文件名 `local-kimi.yaml` 未反映多供应商、多角色范围。
+
+### 方案候选
+
+增加正式 `whisperx` 来源，在既有工厂内调用 WhisperX 3.8.6 的转写和 align，依赖/权重由用户选装。保留云 ASR。开发配置更名 `local-dev-config.yaml`。Gateway 复用 source/model runtime，Engine 转毫秒，Server 加原视频偏移并沿用 evidence JSON。无分数词移除上游插值时间；字幕排版与开关不由本次接入承担。
+
+### 方案验证
+
+首次 53 项定向测试中 7 项失败：测试环境未安装可选 NumPy，及测试修改冻结绑定。修正测试替身以匹配无 ML extra 环境，并使用不可变绑定副本；没有将真实模型失败改写为成功。随后 Gateway 配置/工厂/转写、Engine 和 Server 正式 ASR 入口共 189 passed。补查固定 upstream 实现，增加 tokenizer 及具体 Punkt 语言资源预检，防止缺文件时触发上游下载；新增 YAML 选择、Canvas 字词证据保留及回归后最终 **256 passed**。
+
+扩大到 Server 配置、完整 Parse Worker 和 observations 回归：首次 512 passed / 6 failed，六项均在既有声纹匹配模块导入 NumPy 时失败。用 `uv run --no-sync --with numpy==2.2.6` 仅在临时环境补包，复验 **518 passed**。项目 `.venv` 未改变，复查仍未安装 NumPy。这两组测试有 4 项重叠；均无真实模型请求，数据库测试用隔离 SQLite，不等于 MySQL 运行验收。完整复验入口：
+
+```bash
+uv run --no-sync python -m pytest tests/gateway/test_whisperx.py tests/gateway/test_transcription.py tests/gateway/test_config.py tests/gateway/test_model_factory.py tests/engine/common/test_transcription.py tests/server/test_video_parse_worker.py::test_transcription_uses_frozen_source_prepared_media_and_absolute_milliseconds tests/agent/video_parse_v2/test_context_canvas.py -q
+uv run --no-sync --with numpy==2.2.6 python -m pytest tests/server/test_config.py tests/server/test_video_parse_worker.py tests/engine/parsev2/test_observations.py -m "not live_agent" -q
+```
+
+依赖锁解析及 `uv lock --check --offline` 通过，新增 68 个可选依赖，既有包版本不变。默认环境未安装 WhisperX/NumPy；本轮没有下载权重、运行真实推理、重启服务或更换当前活动 ASR。原 `.env.local` 配置路径已更新，两个配置文件均可加载，旧文件不存在。相关 diff 空白检查和主 TRD 本地链接检查通过。
+
+2026-10-29 后续实机部署（同日，覆盖上述安装前状态）：使用 `uv sync --frozen --inexact --extra whisperx --extra speaker` 安装项目环境；large-v3 与三种语言对齐权重逐文件校验。英语/日语原片、中文合成语音经正式 Gateway 成功，分别得到 42/9/38 个有效字词时间。首次因默认 Torch 缓存权限失败，改为项目内 `TORCH_HOME` 后通过；中文合成首次返回空 WAV，重新通过 macOS 语音服务生成后验证，未绕过空音频检查。补跑 WhisperX、llama.cpp embedding、transcription 和 text-only indexing 测试 **75 passed**。
+
+「课程闭环进行」完成后独立复核 embedding 文档/查询的 1024 维单位向量，切换 `local-dev-config.yaml` 并重启开发服务。Qwen3 使用新 ES 索引和 generation 2，旧索引保留。8 集完整 Karpathy 原片经 Upload API 提交并形成 MySQL 任务，首集消费者已领取并调用真实 WhisperX；Kimi 视觉调用出现远端断开与 HTTP 504，进入自动重试，未将提交成功记作解析完成。模型固定版本、耗时、证据及恢复入口见[部署报告](../report/gateway/local/whisperx-deployment-20261029.md)。
+
+### 指标对比
+
+正式 ASR 来源新增本地 WhisperX；新合同保留 language/字词时间和对齐分数，旧响应形状回归通过。共享 runtime 测试中两次 Chunk 调用只有一次 ASR 加载、一次对应语言 aligner 加载；超时结果不会提交。API 成本减少属于本地方案的机制预期；三语单次调用耗时已记录，但整体吞吐、峰值内存、系统性识别质量和人工边界误差待测。中文样本的识别错误保留在证据中。依赖与各语言权重是新增维护成本。完整字幕功能未完成，不将字词证据接通写成播放器已支持字幕。主设计：[本地 WhisperX TRD](../design/03-product-reassessment/local-whisperx-asr-trd.md)，状态：[B20](problems.md#b20本地-whisperx-正式接入与字幕时间证据)。
+
+<a id="devlog-llama-cpp-embedding-20261029"></a>
+
+## 2026-10-29：本地向量直连 llama.cpp 与独立运行入口
+
+### 问题与现状
+
+用户希望直接使用 llama.cpp，缩短从本地 embedding 到课程解析验证的准备时间。
+上一轮已经跑通 Ollama 文本向量，但没有原生 llama.cpp embedding 适配器。过程中用户
+进一步收窄分工：本项只负责 local embedding 和 Ollama → llama.cpp，Whisper/音轨
+对齐由另一项工作完成，不做全量解析。相关状态为 [B19](problems.md#b19课程本地文本向量与可关闭的视觉索引)。
+
+### 方案候选
+
+采用已有原生 llama-server 和 Qwen Q8_0 GGUF，不安装新的推理框架。Gateway 增加
+`llama_cpp_embedding` 来源、能力声明与工厂接线；通过 `/v1/embeddings` 请求浮点向量，
+校验响应模型、单条 index、维数、有限非零值并归一化。查询单独添加 instruction，
+协议/指令使用独立 encoder revision。调用沿用 Gateway 用量、超时与取消边界。
+保留 Ollama 适配器供已有配置使用，直连运行不依赖该服务。
+
+新增 `scripts/run_local_embedding.py`，只启动准备好的原生程序与 GGUF，固定 last-token
+pooling、单槽位、4096 token 上下文与 loopback 18843。它不下载模型、不启动 ASR，
+也不是跨平台安装器；本次仅 Mac ARM64 实测。前台运行期间模型保持加载，未实现
+Ollama 的自动空闲卸载，用户需显式停止，这是减少模型管理层后的维护取舍。
+
+### 方案验证
+
+原生程序来自此前校验过的 Ollama 0.40.13 发布包，提取其中独立 ARM64 llama-server；
+`otool -L` 核对该架构只链接系统库。程序放在 `outputs/tools/llama.cpp/llama-server`，
+相关许可证一同保留。GGUF 使用独立路径
+`outputs/local-models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q8_0.gguf`，与原文件
+建立硬链接以免重复磁盘数据，运行不读取 Ollama manifest；SHA-256 已完整复核。
+[安装来源与哈希](../../outputs/verification/llama-course-loop-20261029/standalone-install.json)。
+
+独立进程启动后，通过真实 Gateway 进行文档、中文查询各一次编码，均为有限、
+L2=1 的 1024 维向量；同时检查 Ollama 11434 端口未监听。6002 token 超长请求返回
+400 `exceed_context_size_error`，没有静默截断。
+[最终探测](../../outputs/verification/llama-course-loop-20261029/standalone-gateway-probe.json)、
+[超长输入](../../outputs/verification/llama-course-loop-20261029/overlong-input.json)。
+
+早期真实接线暴露 `scripts/local_services.start_elasticsearch` 默认创建多模态 mapping，
+随后 CLI 按 text 合同检查失败。已修复启动器从同一模型配置读取 input_mode；失败时
+创建的空验收索引保留，后续使用新的独立索引，没有删除或重建旧业务库。
+
+在用户收窄范围前，已通过正式 HTTP 创建 Series 并提交唯一 60 秒 Micrograd 摘录，
+原片范围 10:00–11:00；独立 MySQL 数据库 `seekino_llama_course_20261029_test` 与
+`seekino_llama_course_*_20261029_test` ES 索引。任务
+`b5b1f1c5-6d7b-48bd-b52e-d5cc26b2cf7b` 完成：1 Chunk、1 Refine、1 已索引 Chunk，
+记录执行时长 109.346 秒，其中索引阶段 2.682 秒。该过程使用已有 Whisper.cpp 接口和
+豆包画面理解，不能当作 WhisperX/强制对齐接入或课程内容质量通过。
+[任务状态](../../outputs/verification/llama-course-loop-20261029/tasks-after-scope-change.json)。
+用户明确分工后没有新增解析/检索/问答任务，已停止本次临时 API/Whisper，见
+[范围收敛记录](../../outputs/verification/llama-course-loop-20261029/scope-stop.json)。
+
+验证：新 llama.cpp 适配测试 9 passed；原本地向量/text-only 测试 41 passed；
+本地启动器 83 passed（1 条既有 Starlette 警告）。测试覆盖调用合同、错误拒绝、
+编码指令、工厂、关闭行为，以及多模态/text 两种启动映射。不宣称全仓回归通过。
+未修改 Whisper 源码、默认业务模型配置或旧向量库；没有全量解析、重启恢复、
+浏览器回看与追问验收。之后与 Whisper 工作合流时，应使用相同编码合同的新索引。
+
+### 指标对比
+
+| 项目 | 原 Ollama 试点 | 本次 llama.cpp 直连 |
+| --- | --- | --- |
+| 运行依赖 | Ollama daemon + runner | 独立 llama-server；11434 未监听仍可编码 |
+| 运行文件 | 约 580.53 MiB 通用解压包，不含权重 | ARM64 可执行文件 19,658,832 bytes，另含许可证；非全平台完整包体对照 |
+| 权重 | Q8_0，639,150,592 bytes | 同一 GGUF，未再下载 |
+| 输出合同 | 1024 维、L2、查询 instruction | 相同维数/规则，独立协议 revision；未证明可直接混用旧向量 |
+| 启动映射 | 本地脚本遗漏 text 合同 | 按配置选择，83 项启动回归通过 |
+| 本机文档/查询编码 | 见上一轮测量，非同条件 A/B | 单次 314.54 / 20.80 ms，不作性能胜负或 SLA |
+
+本轮交付是 embedding 接入与运行依赖的实际切换；整体课程闭环仍等待后续合流验证。
+
+<a id="devlog-local-text-embedding-20261029"></a>
+
+## 2026-10-29：本地 Qwen 文本向量、视觉开关与课程片段小实验
+
+### 问题与现状
+
+用户选择 Qwen3-Embedding-0.6B 本地实验，要求视觉向量可关闭，课程继续保留 OCR/VLM
+理解。修改前 Gateway 的索引编码路径依赖 Ark，多模态合同强制要求 Chunk 视频和
+Event 图片向量；供应商请求还存在 404。因此仅替换模型名不能让纯文本模型完成索引。
+本次对应 [B19](problems.md#b19课程本地文本向量与可关闭的视觉索引) 与
+[主设计](../design/03-product-reassessment/local-text-embedding-trd.md)。
+
+### 方案候选
+
+沿用远程多模态编码可以保留视觉召回，但不能解决用户当前的配置依赖。本次按用户选择
+新增 Ollama 原生文本适配器，仍保留原多模态路径；未安装或比较 BGE-M3、Qwen3-VL。
+`input_mode: text` 关闭索引专用采帧、图片/视频向量及视觉召回，ASR/OCR/VLM 配置不变。
+模式、模型与查询指令冻结进任务，新的向量空间使用独立物理索引。
+
+查询使用配置的 `Instruct: ...\nQuery: ...`，文档直接编码；响应检查模型身份、维数、
+有限非零值并 L2 归一化，禁止静默截断。旧配置默认 multimodal，旧索引元数据保持兼容。
+索引初始化从配置推导模式；不支持的 sparse 向量配置在启动/上传持久化前拒绝，BM25
+仍可用。上传页面的 text 模式显示视觉关闭、隐藏无效 FPS；没有新增任意单任务模式切换。
+
+新增维护成本是本地推理服务、模型权重与启动管理；并未降低 ASR/VLM 的推理成本。
+模型 tag 本身可被重新下载覆盖，本轮保存实际 manifest digest；后续替换权重须重新
+核对模型身份并重建向量，不能以同 tag、同维度保证空间一致。
+
+### 方案验证
+
+环境为 Apple M5、16 GiB、Elasticsearch 8.19.22。安装官方 Ollama 0.40.13 到
+`outputs/tools/ollama/`，压缩包 SHA-256 为
+`bae29252232b9e1358cf5801a7d65a07442af18fb5467cb68c7fc3711f59c511`。
+模型为 `qwen3-embedding:0.6b / Q8_0`，权重 639,150,592 字节，manifest digest 为
+`ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d`。
+模型放在 `outputs/local-models/ollama/`，服务监听 `127.0.0.1:11434`，使用 Metal。
+服务当前独立运行，尚未加入项目统一启动脚本；退出后可用本次
+[启动脚本](../../outputs/verification/local-text-embedding-20261029/run-ollama.sh)恢复。
+
+取 4 段真实 Karpathy 原片各 60 秒：Micrograd 10:00–11:00、MLP 20:00–21:00、
+Backpropagation 20:00–21:00、Tokenizer 02:00–03:00。本地 Whisper large-v3-turbo Q5
+英文转写分别用时 4.383 / 3.397 / 3.859 / 4.032 秒；原始转写未经纠错。人工将文本
+投影为 OTHER Event，8 条中文问题在读过转写后编写、检索前固定。
+
+通过 [实验入口](../../evals/local_text_embedding.py) 调真实 Gateway 与 Engine：4 Chunk
+和 4 Event 使用本地 Qwen 编码，写入独占的随机 `seekino_local_text_test_*` 索引；
+检查发布、readiness、读回，执行词法/文本融合和 Engine 同版本来源核验。每条查询
+只编码一次，供两类索引共享。共 16 次文本编码，0 次视觉编码、0 次生成模型调用，
+读回额外编码 0 次；本次索引保留供查看。没有远程模型 API 调用费用。
+
+复跑命令（会新建另一个隔离测试索引，前提是本地 Ollama 与 ES 已运行）：
+
+```bash
+.venv/bin/python -m evals.local_text_embedding \
+  --config outputs/verification/local-text-embedding-20261029/config.yaml \
+  --dataset outputs/verification/local-text-embedding-20261029/dataset.json \
+  --output outputs/verification/local-text-embedding-20261029/trial-repeat.json \
+  --es-url http://127.0.0.1:9200 --keep-indexes
+```
+
+原始证据：[trial.json](../../outputs/verification/local-text-embedding-20261029/trial.json)、
+[dataset.json](../../outputs/verification/local-text-embedding-20261029/dataset.json)、
+[模型探测](../../outputs/verification/local-text-embedding-20261029/model-probe.json)、
+[指标汇总](../../outputs/verification/local-text-embedding-20261029/metrics-summary.json)。
+资料在本地 outputs 下，换机复跑需携带原视频、模型与实验材料。
+
+验证分层：Engine 相关定向回归 395 passed；Gateway 本地/Ark/factory 定向回归 118 passed；
+root 的 Gateway、text-only Server、实验入口和真实隔离 ES 组合 50 passed；最终 CLI、
+配置、启动与上传的 sparse 修复回归 631 passed。这些集合有重叠，不相加为独立总数。
+`npm --prefix web run typecheck` 通过。Gateway 配置测试另有 3 个既有失败，agent 以
+HEAD 版本配置代码复核仍失败，属于旧 fixture/默认配置假设不符，未在本次修复。
+没有运行全仓回归。恢复验证来自 Coordinator 替身测试；真实 ES 只验证发布和读回。
+
+未验证：完整 VLM 解析、正式 MySQL 任务终态/进程重启恢复、HTTP 回看追问、整库检索
+质量，以及多任务并发内存。来源核验针对本次输入事实与原视频路径/毫秒范围，不能
+等同生产 MySQL 回源。本轮未切换 `config/local-dev-config.yaml`（原 `local-kimi.yaml`，2026-10-29 更名） 或主服务，未迁移旧向量库，
+未批量解析全部课程。B19 因正式任务验证缺口保留 TODO。
+
+### 指标对比
+
+| 指标 | 修改前 | 本次实测 |
+| --- | --- | --- |
+| 无视觉编码完成索引 | 不支持 | 4 Chunk + 4 Event 发布/读回通过 |
+| 中文检索英文课程文本 | 无同数据基线 | 两类索引均 8/8 首位命中预期片段 |
+| 视觉编码次数 | 多模态合同必需 | 0 |
+| 本地模型 GPU 驻留 | 未部署 | Ollama 报告约 1.155 GiB，非系统总内存 |
+| 首次文档编码 | 未测 | 2.131 秒，包含首次加载影响 |
+| 课程实验查询编码，8 次 | 未测 | 中位 20.94 ms，范围 19.40–31.44 ms |
+| 编码 + 两类 ES 检索 + 来源核验，8 次 | 未测 | 中位 59.73 ms，范围 47.69–111.57 ms |
+
+这是一组 4 候选、读过转写后编写问题的探索性实验；8/8 不能作为整套课程召回准确率。
+耗时不含 HTTP、MySQL 或生成回答，也不能作为产品响应 SLA。已改善的是本地文本编码
+与无视觉索引可运行、错误配置提前暴露，正式课程闭环和质量收益仍需后续实跑。
+
+<a id="devlog-series-artwork-20261029"></a>
+
+## 2026-10-29：系列封面采用 Summary 候选与上次观看画面
+
+### 问题与现状
+
+用户觉得系列封面不合适，希望未观看时随机取各集 Summary 的推荐封面，观看后显示上次进度。原 Library 只选有关键帧的第一集；首页卡片有封面就不读取观看历史，大图还会用任意时间的预览帧盖掉静态封面。
+
+### 方案候选
+
+复用现有 `cover_uri` 与身份隔离的浏览器观看记录。服务端用 Series/Video ID 的稳定散列在 Summary 候选中抽选；比每次请求随机更稳定，且无需持久化随机状态。候选集改变时允许重新选取。前端只在有有效历史或缺少静态封面时加载原视频预览，保持毫秒和播放恢复合同。未引入跨设备观看记录或额外模型调用。
+
+### 方案验证
+
+后端 Library/Media/Cloud 权限回归 **74 passed**；前端 WatchHome、SeriesPage、PlaybackFrame、playbackProgress **47 passed**；typecheck/build 通过。新增测试首轮因 fixture 使用同一 hash 触发视频唯一约束、参数化数组被展开为函数参数而失败，分别修复测试数据和参数形状。多候选优先级、排序稳定、候选删除回退、过期观看记录、毫秒定位均有覆盖。
+
+使用当前真实开发 API：原 `127.0.0.1` 页面保留用户进度，卡片帧实际 `currentTime=8.544`、可见且 readyState 4；用独立 localhost 站点存储验证未观看状态，Summary 图片成功加载，卡片没有 video 元素。随后关闭临时页。截图与 DOM 验收保存在 `outputs/verification/series-artwork-20261029/`，无需清空或伪造用户历史。当前真实库只有一个 Summary 封面，多集候选效果仅有隔离测试。服务经 `start.sh --branch dev start` 加载新源码，MySQL/ES 复用，无数据迁移。
+
+### 指标对比
+
+| 行为 | 原先 | 当前 |
+|---|---|---|
+| 未看系列默认封面 | 首个有关键帧的集 | 稳定随机的 Summary 封面；缺失保留回退 |
+| 已看系列卡片 | 固定图或固定预览位置 | 上次观看位置的原片帧，本机为 8.544 秒 |
+| Summary 无关键帧 | 不入系列候选 | 仍可作为系列封面 |
+| 静态封面加载 | 大图会再取视频帧覆盖 | 未看时直接显示静态图；卡片图片懒加载 |
+
+收益是让现有 Summary 成果真正用于系列展示，并能从封面辨认观看位置；未做审美盲评或大规模加载性能测量。Karpathy 当前仍无 Summary 成果，回退图不能称为 Agent 已选图。状态见 [F09](problems.md#f09系列封面未使用-summary-候选及上次观看画面)。
+
+<a id="devlog-summary-title-20261029"></a>
+
+## 2026-10-29：Summary 正式标题优先与内容标题回退
+
+### 问题与现状
+
+关联 [F08](problems.md#f08summary-标题未落到资料库展示且无正式标题时缺少回退)。用户询问 Summary 是否已接入解析及为何没有替换标题。源码与本机 MySQL 确认：末次 Refine 已同事务排队，独立 summary 消费槽实际运行，12 秒 Kimi 验收结果为 COMPLETE，简介及封面已发布；但官方标题限定导致本片 `title=null`，资料库又仅显示文件名，两个因素共同造成体验缺口。
+
+### 方案候选
+
+按用户确认的规则优先提取正式标题，没有可靠正式标题时生成简短事实标题；新增 `title_kind` 并复用现有证据校验、结果 JSON 和发布事务。正式标题仍需标题卡文字，生成标题可引用确实存在的场景/对白或已检查帧，长度上限 80 字符；不放宽集数、预告排除或租约/版本校验。前端资料库优先显示 `displayName`，文件名保留 tooltip 和回退。收益是普通素材也有可读标题；代价是生成措辞的语义忠实性需要模型判断和样例复核，引用存在不等于自动证明标题完全正确。
+
+### 方案验证
+
+Summary Agent / Service / Persistence 75 passed，前端 App/format 65 passed，typecheck 与 production build 通过。保留 [前状态](../../outputs/verification/summary-title-20261029/before.json)，在同一事务内只重置并领取验收视频当前 summary，复用既有 12 秒解析，调用 Kimi `k3.1-pro` 完成 5 次 summarize 请求；没有新增 ASR、Understand、Refine、Index 或整集调用。验收脚本首次因 DTO 不含展示字段在写入/模型调用前退出，改用 Video ORM 后执行成功，原运行证据未覆盖。
+
+真实结果为「台阶夜谈《春日影》」，类型 generated；引用为粉发少女称赞《春日影》的原内容，台阶及夜晚由已检查原帧与同一 Chunk 支持。Assistant 核对原帧、引用、SQL 与页面，未用独立模型评分。浏览器确认资料库及观看页标题一致。最后在无活跃解析/总结/聊天时仅重启 API，加载新规则，MySQL/ES/Web PID 保持，健康与代理资料库查询通过。证据：[后状态及用量](../../outputs/verification/summary-title-20261029/after.json)、[资料库](../../outputs/verification/summary-title-20261029/library-title.jpg)、[观看页](../../outputs/verification/summary-title-20261029/watch-title.jpg)、[API 加载](../../outputs/verification/summary-title-20261029/api-reload.json)。
+
+### 指标对比
+
+| 指标 | 修改前 | 本次结果 |
+| --- | --- | --- |
+| 此片 Summary 标题 / Video display_name | null / null | 台阶夜谈《春日影》 / 同值，9 字符 |
+| 资料库行标题 | native-acceptance-ep04-12s.mp4 | 台阶夜谈《春日影》 |
+| Summary 实际集数 | null | null，组织集数仍为 1 |
+| Parse 版本与状态 | 4 / COMPLETE | 4 / COMPLETE，Chunk 版本及来源指纹不变 |
+| 本次 summary 单次耗时 | 未以同口径记录 | 59.591 秒，5 次模型请求成功，21,574 tokens |
+
+只验证一段无标题卡短片的回退和展示；正式标题识别受离线回归保护，整季真实质量、标题卡发现率及延迟分布未验证。未来自动 summary 使用新规则，历史 COMPLETE 不隐式补跑；此项不恢复旧 MyGO 数据，也未启动 13 集重解析。
+
+<a id="devlog-watch-chat-compact-20261029"></a>
+
+## 2026-10-29：观看聊天面板收紧与设置折叠
+
+### 问题与现状
+
+关联 [F07](problems.md#f07观看聊天面板的固定栏和输入工具栏挤占正文空间)。用户提供的窄窗口截图中，顶部“边看边聊”、页签和暂停开关占据三行固定空间，底部工具栏继承移动端 44 px 按钮，聊天正文被挤压。用户要求去掉冗余标题、移动设置并压低输入框下部高度。
+
+### 方案候选
+
+选择合并顶部工具栏，把暂停开关收进原生 `details` 观看设置；补充点击外部、Esc 和关闭面板时的收起行为，复用现有偏好存储。输入区仅覆盖观看页的 `.embeddedPage` 样式，附件/发送按钮改为 30 px，工具行取消额外上边距，系列名保持单行并按可用宽度截断。保留输入区域与系列选择入口，避免删减实际功能；不新增设置页或组件依赖。
+
+### 方案验证
+
+`npm --prefix web test -- src/features/player/WatchPage.test.tsx` 为 24 passed；原暂停偏好用例增加设置默认折叠、Esc 焦点恢复、点击外部收起等断言。`npm --prefix web run typecheck`、`npm --prefix web run build` 通过。浏览器连接现有真实验收视频与已保存对话，在 491×815 窄窗口和 1280×900 桌面视口验证布局，检查设置开关、Esc、外部点击、聊天/选集切换、面板关闭重开；检查完已恢复默认视口，暂停偏好恢复为开启。没有发送新问题或调用模型。
+
+证据：[浏览器量测](../../outputs/verification/watch-chat-compact-20261029/ui-report.json)、[窄窗口](../../outputs/verification/watch-chat-compact-20261029/compact-chat-narrow.jpg)、[桌面侧栏](../../outputs/verification/watch-chat-compact-20261029/compact-chat-desktop.jpg)、[设置弹层](../../outputs/verification/watch-chat-compact-20261029/settings.jpg)。未覆盖实体触屏设备或所有浏览器引擎。
+
+### 指标对比
+
+固定顶部由三行收敛为一行，改后实测 41 px；底部工具栏改后实测 30 px，空输入框实测 88 px，两种视口均无页面水平溢出。改前移动端按钮为 CSS 定义的 44 px，未重放旧实现做同视口像素量测，因此不报告整页净节省像素。正文可用空间增加，代价是暂停偏好需要多点击一次设置；交互状态仍由现有 React 偏好与原生 disclosure 管理，没有新增全局状态或依赖。此项不改变数据恢复、解析或问答业务质量结论。
+
+<a id="devlog-native-local-20261029"></a>
+
+## 2026-10-29：全原生 localhost 环境与 Kimi 业务验收
+
+### 问题与现状
+
+关联 [B18](problems.md#b18全原生-localhost-环境与真实业务验收) 与 [B17](problems.md#b17持久媒体目录与旧资料库恢复)。用户最终要求 MySQL、ES、API 和 Web 都在本机运行，避免 Docker，方便测试实验。既有 Python 3.12.16、uv、Node 24.22.1、npm 和 FFmpeg 9.0.2 可用，但没有原生 MySQL / ES；启动器不负责启动 ES，MySQL 默认数据仍在易被当作输出的目录。原片归档已完成，旧业务成果尚未找到，不能把新库初始化称为旧库恢复。
+
+### 方案候选
+
+按用户选择使用官方 macOS arm64 归档，安装程序放在可重新下载的 `outputs/tools`，数据库持久文件移出默认日志位置，采用 `data/mysql`、`data/elasticsearch`；媒体沿用 `assets/library`。本机 `.env.local` 选择二进制路径，保留凭据。既有 `start.sh --branch dev` 统一启动、检查、停止原生服务，不增加 Docker、独立队列或本地模型权重。ES heap 配置为 512 MiB、MySQL buffer pool 为 128 MiB，均仅绑定 loopback；这是配置值，不是整套服务的实测总内存或耗电值。
+
+用户明确允许 EP04 原片 8–20 秒的 12 秒验收片向外部模型发送必要媒体/派生信息及检索问答，并进一步要求尽量使用 Kimi。本机有效配置单独保存在 `config/local-dev-config.yaml`（原 `local-kimi.yaml`，2026-10-29 更名），通过 `SEEKINO_MODEL_CONFIG` 选中，七个生成式角色使用 `kimi_coding/k3.1-pro`，ASR 与 embedding 使用 Ark 专用模型，向量保持 1024 维；不修改仓库面向其他环境的默认模型组合。验收只使用这一短片，未重解析 12 集归档素材。
+
+### 方案验证
+
+- 官方归档校验：MySQL 8.4.13，165,362,783 bytes，官方 MD5 匹配；ES 8.19.22，517,276,189 bytes，官方 SHA-512 匹配。下载中断后续传完成，二进制实际运行版本与选择一致。来源与校验值保存在 [setup-report.json](../../outputs/verification/native-local-20261029/setup-report.json)。
+- 原生启动器加入 ES 启动、MySQL basedir 自动识别、checkpoint / Event 初始化、exec 后 PID 归属及退出竞态保护；专项最终 82 passed。旧 MySQL 非空目录仍要求明确选择，不会悄悄切换成新空库。现有 FFmpeg 9 不再接受 `-filter_script:v`，改为探测 `-/filter:v` 能力并保留旧版 fallback；抽帧与解析媒体 51 passed，含本机真实 FFmpeg。前端 `npm --prefix web run build` 通过。
+- 四项服务启动成功，MySQL 28 张表及 22 条 checkpoint migration 可读；两个 ES 主分片正常，单节点 yellow 由副本未分配造成。API / Parse Consumer 健康，前端代理与直接 API 资料库响应一致。空库阶段完整 `stop → start` 通过且未重复初始化 MySQL；浏览器资料库和播放器正常渲染，Docker socket 不存在。记录见 [runtime-report.json](../../outputs/verification/native-local-20261029/runtime-report.json)。
+- 短片上传与播放：上传、分片、complete 均成功，全文 HTTP SHA-256 与源片 `88a4220cf3a206ae94727c2a1b535b65d424f0f92618ebe07baaaa9c3b48484a` 一致；206 Range 字节与 `Content-Range` 正确，ffprobe 识别 H.264 / AAC、640×360、12.012 秒。浏览器实际播放从 0 推进到 12012 ms。证据见 [http-report.json](../../outputs/verification/native-local-20261029/http-report.json) 与 [播放器截图](../../outputs/verification/native-local-20261029/browser-player.jpg)。
+- 首次 Kimi 配置继承了视觉 `high/medium`，在本机通用视觉适配器构造阶段失败；改为 `none` 后七角色构造检查通过。该路径实际省略 reasoning 参数，不表示关闭供应商 thinking。当前实现的 `retry` 保持冻结配置，必须用显式 `parseConfig` 的 `reparse` 才能采用修正配置；本轮据源码修正了原模型文档的错误说明。失败版本 1 保留，同一视频的版本 2 已完成 ASR / Kimi OCR，但理解出现反复工具调用并超时。
+- Context 诊断：临时开启本地原始工具 trace，证实模型误填 Schema 字段后，压缩摘要丢失了“Extra inputs are not permitted”的纠错反馈；37 张图片固定估算约 75,776 tokens，也高于原 60,000 压缩目标。通用压缩改为近期反馈优先、保留有界错误/版本回执；真实记录离线重放从丢失错误变为保留错误，压缩后估算仅增加 4 tokens。直接 24 passed；扩大 Gateway 回归 243 passed、1 个既有 fixture 耗尽失败，已用 HEAD 原始 context.py 独立复现，不能写成全套通过。见 [真实记录重放](../../outputs/verification/native-local-20261029/context-feedback-trace-replay.json)。本机 Kimi 本地预算设为 262,144 tokens、压缩目标 150,000；未验证长视频或账号 1M 上下文权限。
+- 观看页 SSE 暴露 Uvicorn 默认无期限 HTTP drain 会阻塞 lifespan 退出。`server.main` 增加 5 秒 HTTP 收尾期限，之后仍按原顺序等待业务清理，不跳过租约或强杀；原生启动、入口、生命周期相关测试合计 95 passed（含前述 82，不能相加）。
+- 版本 3 的 Kimi 理解与 Refine 成功；索引调用旧 `doubao-embedding-vision-250615` 返回当前账号/接入点不可用的 404。改用 `251215` 的合成文本真实预检返回 1024 维，耗时 0.871 秒。新模型采用独立 Chunk/Event 物理索引，冻结的旧任务不改，显式新配置创建版本 4。旧模型并非全网停服：官方只标 EOM、保留存量服务，见 [官方公告](https://docs.volcengine.com/docs/ark/model-deprecation-notice?lang=zh)。
+- 总结路径漏传工具 harness，导致同时约束必选工具与最终 JSON，真实六次响应均未调用工具。总结宿主改用已有 DeepAgents 完成工具合同，仍要求 `submit_video_summary` 成功；对应 Agent/Service/Persistence/Gateway 回归 166 passed。见 [诊断记录](../../outputs/verification/native-local-20261029/summary-harness-diagnosis.json)。版本 4 已加载此修复，真实总结成功，104 字描述及封面完成发布并通过 SQL/HTTP/文件哈希核对。
+
+- 版本 4 最终为 `COMPLETE`，API `processingDurationMs=316737`（约 5 分 17 秒，非旧 SQL 兼容字段）；发布 1 个 Chunk、6 个 Event。查询“粉色长发女生说春日影是首好歌”返回这段视频和 [0,12012) ms，证据与原片开头字幕一致。Kimi 观看问答调用 `understand_current_video` 后回答中日原句，SSE `answer.completed`，42.8 秒，两条消息及最新 checkpoint messages blob 54,180 bytes 持久保存。见 [检索报告](../../outputs/verification/native-local-20261029/http-report.json)、[问答报告](../../outputs/verification/native-local-20261029/chat-report.json)。Parse/Refine 验收配置为 `maxModelCalls=12`、`maxAttempts=1`；Summary 与 Chat 沿用各自预算，不表示整个业务只有 12 次模型调用。
+- 完整带数据重启：保持真实 SSE 连接，四项受管服务 10.418 秒正常停止，再用相同持久目录启动。只读事务核对最新任务、Chunk/Event 精确版本、媒体哈希、摘要和封面、消息正文、checkpoint 引用均通过。核验脚本早期因 SQL `usage` 保留字未引用而报错，修正查询后通过，未修改业务数据来迁就验收。见 [重启前](../../outputs/verification/native-local-20261029/persistence-before-restart.json)、[重启后](../../outputs/verification/native-local-20261029/persistence-report.json) 与 [SSE 停服记录](../../outputs/verification/native-local-20261029/sse-shutdown-report.json)。
+- 浏览器实查修复：媒体 `readyState=4` 却进度条 disabled；测试复现 metadata 提前到达及同媒体时长刷新导致就绪状态被清空两条路径，未声称已唯一确定现场事件顺序。播放器改用 layout 初始化并读取已有 metadata，同一媒体时长刷新保留状态；48 项播放器/观看页相关测试、51 项播放器/身份隔离测试分别通过（重叠不相加），typecheck / production build 通过。浏览器重启后实测 Home、End、后退 10 秒，停在 2.012 秒，原问答可恢复；[前后证据](../../outputs/verification/native-local-20261029/player-readiness-diagnosis.json)、[最终截图](../../outputs/verification/native-local-20261029/browser-acceptance-final.jpg)。
+- 用量边界：已记录全部失败/成功解析版本，而非只呈现最后成功一次。`model_usage` 中 107 条解析记录有 104 条返回 tokens，已报告总量 1,254,023（其中已报告 cached input 1,001,145 是 input 子集），另 3 条未知；本次 Chat 另有 3 条、13,338 tokens。`parse_model_call` 为空，数据库没有本次费用估算或账单金额；不把未知费用写成 0，两张表及 SDK 聚合不重复相加。额外合成文本预检单列，不计入视频任务。见 [用量历史](../../outputs/verification/native-local-20261029/usage-history-report.json)。临时详细 trace 配置和防休眠进程已关闭，既有诊断证据保留。
+
+### 指标对比
+
+本机从无 MySQL / ES、无法启动正式链路，变为四项原生服务可启动、HTTP 数据边界可访问、真实短片可上传与播放，持久数据库和媒体目录有明确保留规则。新增维护成本是两套本机数据库二进制及少量启动器生命周期逻辑；省去本机容器虚拟机。没有测量长期耗电差异，不以 heap / buffer 配置代替进程总占用。生成式配置已切 Kimi，真实短片验收中暴露的配置、Context 反馈、总结工具合同、长连接退出与播放器就绪问题已修复并完成本机闭环。最后成功解析约 5 分 17 秒、观看问答约 42.8 秒，只能作为这一样本的实测，不能视作长视频性能或全面质量达标。旧 MyGO 解析成果恢复仍是独立缺口。
+
+<a id="devlog-persistent-media-20261029"></a>
+
+## 2026-10-29：持久媒体移入 assets/library 与旧数据恢复核验
+
+### 问题与现状
+
+关联 [B17](problems.md#b17持久媒体目录与旧资料库恢复)。用户重新下载 MyGO，希望复用旧 MySQL 成果，并要求重要原片不要继续以 `outputs/server/artifacts` 为默认目录。本机旧媒体根实查无文件，原片此前已移到 Git 忽略的 `assets/example_video_mygo`；数据库保存的 `artifact://...` 不会自动扫描样例目录。最初 MySQL 3306 拒绝连接，Docker 未运行，不能以素材已到位代替旧库恢复。
+
+同日全原生环境验收后，用户发现首页只有新验收视频，质疑已迁来的数据库为何没有恢复 MyGO。追加调查只读核对运行中 API 的连接目标、本实例全部数据库、已知 SQL 和迁移归档，区分“旧库已经存在但未连接”与“迁移材料未包含旧业务数据”；没有据此创建替代系列、导入 SQL 或重解析旧 MyGO。
+
+### 方案候选
+
+直接复制可保持路径，但会增加约 5.06 GB 的独立副本；指向根外样例目录的软链接不满足存储路径边界。选择现有 `SEEKINO_ARTIFACT_ROOT` 配置能力，将宿主机默认和本机有效值改成 `assets/library`，保留环境与 URI 合同。原片归档到 `sources/mygo`，通过同盘硬链接保留旧评测路径，待取得旧库记录后再按实际 URI 建立正式关联；不虚构系列、视频 ID 或解析成果。Docker 既有持久卷合同没有改动。
+
+用户在恢复准备过程中明确不希望本机运行 Docker，已执行停止；云服务器部署方式仍在讨论。随后按用户授权将私钥移到本机 `~/.ssh/seekino.pem`（0600），保留既有配置并添加 `seekino-server` SSH 别名。主机可 ping 通，但首次直接连接 22 端口及独立 TCP 复核超时，尚未进入认证。用户补充已有 docrag 的 Clash 专用代理方案后，SSH 接入本机 SOCKS，并仅为新服务器 IP 的 TCP 22 增加同一日本节点优先规则。持久订阅规则和运行配置均备份、校验并热加载，12 个既有代理组选择保持不变；随后以 `ubuntu` 成功登录，第二次合成数据传输也成功，规则计数记录两次命中。先前超时不能据此归因为远端安全组。
+
+远端只读检查：4 vCPU、约 7.25 GiB 总内存／6.67 GiB 可用、约 107.6 GiB 磁盘剩余和 1.94 GiB swap；常见项目路径未发现 Seekino，3306/9200 未监听。未安装或启动远端数据库、上传素材、部署应用。可选分工是本机 API/前端/原片、云端 MySQL/ES，避免先上传全部素材，但数据库跨代理访问的实际性能未验证。
+
+### 方案验证
+
+- `test_config.py`、`test_local_services.py`、`test_artifact_storage.py`：422 passed、1 个 Starlette 弃用 warning，17.63 秒。验证默认值、显式覆盖与既有存储边界，不代表真实资料库可用。
+- 12 个完整 MP4 共 5,055,403,557 bytes，移动前后 SHA-256 和大小一致，`ffprobe` 可识别 H.264/AAC；新归档与样例路径 inode 相同。10 集哈希命中历史验收记录，EP01、EP07 历史哈希未确认，第 11 集 `.part` 保留在 Downloads。实际 `.env.local` 解析为 `assets/library`，12 个持久原片路径均未被 Git ignore。记录见 [原片清单](../../assets/library/recovery/mygo-20261029.json)。
+- 限定检查换机报告、personal 迁移清单和 `seekino-archive-20261028`，未发现旧 MyGO 业务备份。另在 `~/Documents/ChatGPT/casual/work/seekino-rename-20261028/database-before.sql` 找到 57,017 bytes 的 MySQL 8.4.13 dump：28 个表结构，仅 `checkpoint_migrations` 含 INSERT，无视频或解析业务行。未导入该空业务备份，不从检查范围推断所有数据已丢失。
+- 追加实机证据：运行中 API PID 85892 的进程环境与 `.env.local` 均连接 `127.0.0.1:3306/seekino_development`，输出未包含凭据。只读 `@@datadir` 确认为仓库 `data/mysql/`，版本 8.4.13；`SHOW DATABASES` 只有四个系统库和一个 `seekino_development`。该库 28 张表中，`series=1`、`video=1`、`video_parse_task=4`、`chunk_parse_content=2`、`interval_parse_content=2`。这是当时单条验收视频的快照，不是旧 MyGO 13 集已经恢复后被首页隐藏，也未发现同实例内另一个旧业务库可直接切换。
+- 核对原始库名与导出来源：`/Users/hypnos/Documents/ChatGPT/casual/work/seekino-rename-20261028/baseline-before-rename/deploy/README.md:137` 记载旧主业务库为 `anivag_local_20261010_development`；`/Users/hypnos/Documents/ChatGPT/casual/work/seekino-rename-20261028/database-before.sql:3` 的头部却是 `anivag_development`，SHA-256 为 `b8f68819f1906fd3b33e30fb8df17193efcd92fd5fe1045b05972db643e2a56f`，唯一 INSERT 位于 `checkpoint_migrations`。该 dump 同目录的 `model-and-namespace-notes.txt:65–67` 也记载切换前业务表为空、索引 0 文档，因此使用新空开发库。现有文档中的 `seekino_local_20261010_development` 是命名空间修改后的文字，不能据此推定真实旧库已经搬迁或改名。
+- 核对迁移范围：`/Users/hypnos/workspace/restore-report.json:354` 明确写明目录迁移未恢复数据库等运行依赖；仓内[换机材料范围](../migration/20261023/README.md#仍需私下备份的内容)和[迁移清单](../migration/20261023/manifest.json)也将数据库备份列为私有材料。使用 `rg` 有界检查项目、`seekino-rename-20261028` 和恢复报告指向的 `seekino-archive-20261028`，并只读检查 rename 目录的 `source-before.tar.gz`、`personal-before.tar.gz` 以及 archive 目录的 `source-snapshots.tar.gz` 成员；其中只找到源码迁移 SQL，没有旧业务 dump 或 MySQL 数据文件。归档内 `Seekino/.env.local` 本来就指向空业务库 `anivag_development`；本机旧路径 `outputs/local-services/mysql` 不存在。没有启动 Docker、停服、导入 SQL 或写入业务数据；未检查到的旧设备、其他备份和停止的实例存储仍不能排除。
+- 本轮没有读到旧业务库，未关联正式 video URI、恢复派生媒体或验证播放/检索；没有重解析、ES 重建、供应商请求或付费模型调用。源码目录修改与旧资料库恢复分别报告。
+- SSH 合成上传：16 MiB 数据传给远端 `wc -c` 计数后丢弃，没有远端文件；包括建连在内共 16.942 秒，有效吞吐约 7.92 Mbps。按该单次样本线性估算 5.055 GB 约 85 分钟，仅供选择部署位置参考，不是视频实际上传或持续带宽测量。
+
+### 指标对比
+
+宿主机三处默认入口及本机有效配置由 `outputs/server/artifacts` 对齐到 `assets/library`，持久媒体的目录语义更明确；历史 URI 和存储算法不变。12 个原片从仅存在于忽略的样例路径，增加可见的持久归档路径，新增视频内容占用为 0 bytes（硬链接的目录元数据另计）。硬链接共享修改，不是独立备份。旧视频播放、历史解析成果与搜索可用性尚无恢复结果，不能宣称业务闭环完成；后续取决于旧业务数据来源和选定部署位置。
+
+追加核对将当前缺口定位为：正在使用的实例及已检查迁移材料均未包含真正旧主业务库，而已找到的 dump 来自另一空业务库。B17 保持 TODO，下一步仍是取得 `anivag_local_20261010_development` 的业务备份或完整旧实例存储，再核对原片引用和索引；现有证据不支持“旧 MyGO 已全部永久丢失”的结论。
+
+同日用户随后确认旧电脑与整机备份均不可用，并要求核对项目 `docs/migrations`。已逐项检查 22 个 SQL，INSERT 目标只有 `_bm_*` 临时结构校验表、默认本地 user/tenant、checkpoint 版本表，没有旧 MyGO 业务行；这些文件可升级已有库，不能恢复丢失内容。同时检查 personal 本地全部 Git 历史的备份候选、AniVAG `untracked.tar`、学习报告源码 tar/zip，以及 Documents/Downloads/Desktop/workspace 的数据库和归档候选；未发现可恢复的旧业务库或完整解析导出。本机 Time Machine 未列出本地快照或目的地。Docker 磁盘仍存在，但本轮没有启动 Docker 或读取其文件系统内容，不将其计作已排除；10 月 28 日初始化记录与现有 SQL 均指向当时新建的空库。审计证据见 [database-audit-20261029.json](../../assets/library/recovery/database-audit-20261029.json)。未导入 SQL、修改业务库或调用模型；12 集完整原片约 284.10 分钟仍可用于后续重建，第 11 集仍为 `.part`。重建会产生新的解析结果，不能称为原库恢复，超出已授权 12 秒实模验收的整集调用尚未执行。
+
+<a id="devlog-interview-preserve-20261029"></a>
+
+## 2026-10-29：面试前保护旧闭环并撤销裁剪
+
+### 问题与现状
+
+用户明确次日（2026-10-30）面试需要旧的解析、导出、检索、问答与陪看闭环，旧能力还服务于其他工作；新 SVG／Three.js 创作闭环短期无法作为已完成能力展示。先前仅从新作品的生产调用判断裁剪，遗漏了面试、研究与旧能力依赖这一使用边界。关联 [B16](problems.md#b16面试前保护旧闭环并撤销-npc-实验与-acp-client-裁剪)。
+
+### 方案候选
+
+停止继续裁剪，恢复本聊天此前删除的 NPC 实验、ACP Client、专用测试及依赖；不回滚整个工作区。逐项确认 9 个删除文件在裁剪前没有用户修改后，从 Git 原内容恢复；四份只有本轮退役改动的模块／历史入口恢复原内容。pyproject、uv.lock 与设计总索引仅逆转本聊天的删除片段，保留此前 MCP 新增及其他工作。
+
+面试前保留原功能和运行合同，不实施 Chat、Cloud、Web、供应商适配或数据库的退役与迁移。新方向以待验证探索表达；项目介绍围绕业务问题、方案取舍、验证结果与未解决边界组织。
+
+### 方案验证
+
+- 9 个文件已恢复，相关源码／测试与 Git 原内容一致；ACP 依赖与锁记录恢复后，pyproject 与 uv.lock 相对 HEAD 仅剩此前已有的 MCP 直接依赖新增。
+- `UV_CACHE_DIR=/private/tmp/seekino-uv-cache uv lock --check --offline`：136 packages，一致性检查通过。
+- `UV_CACHE_DIR=/private/tmp/seekino-uv-cache uv run --no-sync python -m pytest tests/gateway/test_bridge.py tests/training/test_character_npc_prepare_sft.py tests/gateway/test_model_factory.py tests/gateway/test_agent_factory.py tests/server/test_bootstrap.py tests/server/test_mcp.py tests/server/test_mcp_transport.py tests/server/test_mcp_retrieval.py -m 'not live_agent' -q`：364 passed，47.98 秒，1 条已有 Starlette/AnyIO deprecation warning。包含恢复的 ACP/NPC 专用测试及模型工厂、启动装配、MCP 定向回归；不是当前真实视频演示验收。
+- 只读探测默认 localhost 5173、9621、3306、9200，本次检查时均未监听；不能据此排除其他端口或远端部署。仓库保留素材库、检索和陪看截图及历史 benchmark，但它们不能替代明天运行环境的预演。本轮未启动／重启服务、访问真实模型或迁移数据。
+
+### 指标对比
+
+撤销上一轮 792 行源码、858 行专用测试与 4 行训练依赖的删除，锁定包数从 135 恢复至 136。该恢复保护既有工作范围，不宣称性能、准确率或作品质量提升。当前没有本聊天引入的功能裁剪；后续优先完成可复核的旧闭环演示准备与面试表述。
+
+<a id="devlog-pv-scope-prune-20261029"></a>
+
+## 2026-10-29：按角色宣传片目标退役 NPC 实验与 ACP Client
+
+本条是当时的删除经过；随后用户明确面试和其他依赖，本次删除已全部撤销，当前状态见 [恢复记录](#devlog-interview-preserve-20261029)。
+
+### 问题与现状
+
+关联 [B16](problems.md#b16面试前保护旧闭环并撤销-npc-实验与-acp-client-裁剪)。用户明确当前闭环：assets 艺术参考与 MyGO 视频支撑剧本、分镜和特效理解，由 Agent 融合风格，制作约一分钟、围绕千早爱音与“爱与勇气”主题的 SVG／Three.js 宣传片。完整原始目标与研究边界见 [既有研究笔记](../research/2026-10-29-reference-driven-svg-threejs.md)。用户要求裁掉不服务于该闭环的复杂度。
+
+依赖核查确认 `training/character_NPC/` 仅由专用测试引用；`gateway/bridge/` 是未接线的 ACP Client，仅由自身及专用测试使用，未进入 Server bootstrap。它与已实现的 Server MCP 是相反方向的接入，删除 ACP 不删除外部 Agent 素材入口。
+
+### 方案候选
+
+先删除上述两组独立源码、专用测试、训练 requirements 和 `agent-client-protocol` 依赖，并更新模块入口和历史源码链接。历史设计与研究保留，原有 MCP 未提交修改保留。没有引入替代抽象、功能开关或新部署形态。
+
+依赖审查同时发现内部 Chat/陪看可以退役，但需一起拆服务装配、OpenAPI 定制、会话存储和旧短片素材脚本；Cloud 身份需保留本地 User/Tenant 初始化，整套 Web 删除还会失去已有上传与任务管理入口。这些仍是待用户决定的产品兼容性边界，本条没有实施。正式 Parse 仍使用 Deep Agents 多模态工具执行，不能因 Chat 可删而一并删除共享 harness。原片、时序、角色证据与纠错职责继续服务于本次制作目标。
+
+### 方案验证
+
+- 剩余生产代码、测试、evals、脚本和技能 Python 中未发现 `gateway.bridge`、`acp`、`training.character_NPC` 的导入。
+- 直接 `uv lock --offline` 因临时 cache 缺失已有 Claude SDK 的解析元数据而失败；按现有锁文件仅移除 ACP 包及根依赖引用后，`UV_CACHE_DIR=/private/tmp/seekino-uv-cache uv lock --check --offline` 通过，135 packages，其余版本保持。
+- `UV_CACHE_DIR=/private/tmp/seekino-uv-cache uv run --no-sync python -m pytest tests/gateway/test_model_factory.py tests/gateway/test_agent_factory.py tests/server/test_bootstrap.py tests/server/test_mcp.py tests/server/test_mcp_transport.py tests/server/test_mcp_retrieval.py -m 'not live_agent' -q`：319 passed，33.54 秒；1 条已有 Starlette/AnyIO deprecation warning。覆盖保留的模型工厂、服务装配与 MCP 合同，使用隔离替身/SQLite，不证明真实模型效果。
+- 未启动正式服务、修改数据库或索引、删除媒体、调用真实模型、制作作品、commit 或 push。真实素材到一分钟作品的收益未验证。
+
+### 指标对比
+
+两组原有 9 文件共 1,654 物理行被删除：源码 792、专用测试 858、训练 requirements 4。直接依赖减少 1 项，锁定包从 136 减至 135。删除的测试仅服务于已退役模块，保留路径的 319 项定向回归通过。源码和测试行数分别报告，不把删除测试算成产品实现减少。
+
+这次减少的是两条无生产消费者的维护分支；未测得解析时间、检索精度或最终成片质量变化。内部 Chat/Cloud/Web 的大范围裁剪尚未实施，不将这次小范围退役称为整个项目已收敛。
+
+<a id="devlog-local-mcp-20261028"></a>
+
+## 2026-10-29：localhost MCP 与外部 Agent 检索接入
+
+### 问题与现状
+
+关联 [B15](problems.md#b15localhost-mcp-与外部-agent-素材取用闭环)。10 月 28 日提出、跨午夜实施。用户优先要求在 10 月 30 日早上前通过 Codex 演示 Seekino 的素材取用，首版明确 localhost。已有 Event 检索只注入内部 Agent，缺少对外工具发现、稳定证据读取与媒体交付。Cloud 的通用执行和 HTML 作品后置；用户确认演示先恢复旧机 MyGO，再提供新系列。
+
+本机 `.env.local` 的非秘密配置指向 development/local、API 127.0.0.1:9621、`outputs/server/artifacts`。当前可见监听中没有 API/MySQL/ES，该媒体根为空；未启动正式服务或执行数据迁移。不能将此处的隔离 fixture 当作 MyGO 召回结果。
+
+### 方案候选
+
+选择同一 API 进程挂载 `/mcp`，复用已安装并锁定的 `mcp==2.2.0` SDK。工具合同来自 Python 类型、Field 参数说明和 docstring，SDK 发布 `tools/list` 并分派 `tools/call`。`McpRetrievalService` 只组织本地范围、有界输出和版本化回读；Event 排序和 SQL 核验仍由原服务执行。没有引入内部 Chat 循环或新执行器。
+
+协议限定 local 和真实 loopback，校验 Host/Origin、拒绝代理转发；Cloud 不挂载。`evidence_ref` 是带来源版本的定位引用，不是授权凭证；回读重新 hydrate，时间以 ms 输出。原片 URL 复用现有媒体接口，缺失媒体明确警告。方案及阶段边界见 [主 TRD](../design/03-product-reassessment/mcp-access-trd.md)。
+
+### 方案验证
+
+- `UV_CACHE_DIR=/private/tmp/seekino-uv-cache uv lock --check --offline`：136 packages，锁文件一致。MCP 已是传递依赖，本轮只显式声明直接依赖，未升级现有包。
+- `uv run --no-sync python -m pytest tests/server/test_mcp.py tests/server/test_mcp_transport.py tests/server/test_mcp_retrieval.py -q`（使用上述临时 uv cache）：53 passed。包含真实 SQLite/Library/ArtifactStore/MediaService 的来源回读与版本 1→2 后拒绝旧引用；ES 和 codec probe 使用 stub。
+- `uv run --no-sync python -m pytest tests/server/test_bootstrap.py tests/server/test_api.py tests/server/test_video_event_retrieval.py tests/server/test_media_views.py tests/server/test_search_lexical_contract.py -m 'not live_agent' -q`：260 passed。两组共同出现已有 Starlette/AnyIO deprecation warning。
+- 临时 loopback Uvicorn 端点使用本次真实传输代码、明确标记 `TEST_FIXTURE_ONLY` 的目录服务；MCP 2.2 SDK 完成初始化、发现三个工具并调用 `list_series`。结果见 [SDK 网络证据](../../outputs/verification/mcp-local-20261028/sdk-smoke.json)。测试脚本初次沿用旧 SDK 三流返回而失败，按本机 2.2 的两个流签名修正后成功；生产代码不受该脚本错误影响。
+- 使用本机 `codex-cli 0.165.0-alpha.1.2`、临时 MCP 配置、ephemeral 会话仅允许 `list_series`；模型采样连续 `request timed out`，110 秒后结束，服务端业务调用数为 0。保留 [摘要](../../outputs/verification/mcp-local-20261028/summary.json) 与 [Codex 事件](../../outputs/verification/mcp-local-20261028/codex.jsonl)。不能称为模型自主调用成功；全局 Codex 配置未修改。
+- 随后使用同一实际 CLI 的 app-server 协议，创建临时会话，按名称禁用既有 MCP，仅启用本次测试端点。`mcpServerStatus/list` 返回 connected 及三个工具的名称、说明和参数 Schema；`mcpServer/tool/call` 直接调用 `list_series`，宿主记录恰好一次，返回唯一 fixture 名称。全程 0 个模型 turn。证据：[真实 Codex 工具清单](../../outputs/verification/mcp-local-20261028/codex-appserver-tools.json)、[调用结果](../../outputs/verification/mcp-local-20261028/codex-appserver-smoke.json)。它验证实际客户端发现/执行，不能替代前述失败的模型自主调用或真实素材验收。
+
+未验证真实 MySQL/ES/模型检索、MyGO 媒体下载和制作作品；用户准备恢复数据后再执行。临时测试进程退出后已关闭端点。未重启正式服务、重建索引、迁移、commit 或 push。
+
+### 指标对比
+
+| 维度 | 修改前 | 本次结果与限制 |
+|---|---|---|
+| 对外工具 | 无产品 MCP | 三个工具的发现、调用与参数说明可用 |
+| 证据回读 | 内部 Agent 状态组织 | 独立引用、SQL 重验、按需分页；不依赖原 Agent run 内存 |
+| 素材获取 | HTTP 媒体能力已有 | 工具提供绝对本机媒体 URL；真实素材仍待恢复 |
+| 自动化验证 | 无 MCP 覆盖 | 53 个定向测试、260 个既有相关回归通过 |
+| 实际 Codex 客户端 | 未测 | app-server 发现三个工具、一次直接调用成功；输入为明确 fixture |
+| 模型自主调用 | 未测 | Codex 请求超时，未完成，保留失败记录 |
+| 数据与运维成本 | 已有 API/DB/ES | 无迁移或新常驻服务；新增 SDK 入口和薄业务投影 |
+| 业务交付 | 外部 Agent 无正式入口 | 实现可接入，真实素材到作品闭环尚未完成 |
+
+<a id="devlog-parse-quality-attribution-20261029"></a>
+## 2026-10-29：身份缺证归因修正与多片段质量验证计划
+
+### 问题与现状
+
+用户指出：47 秒爽世画外音在 K3 和豆包都未正确归属；模型只收到帧和无身份转写，不能据此证明豆包 non-thinking 相对低质。原文错误及业务风险成立，但身份、合并和剧情立场可能是同一缺证错误链；重复同一片段不构成多样本泛化证据。
+
+### 方案候选
+
+保持精简 JSON 及既有并行取舍，新增 [主 TRD §4.7](../design/03-product-reassessment/video-parse-performance-trd.md#47-多片段质量验证计划分开模型能力身份补证与调度)，分别检验共同输入下的视觉/内容质量、声音身份补证、同豆包 thinking 消融、同依赖和上下文下的串并行。Refine 是处理阶段，声音/可信参考是证据；匿名音色簇不能直接给角色姓名，不预设音色补丁必然解决。用户进一步指出真正的串行基线会传递前文，可能无需独立跨块 Refine；因此架构对照修正为带历史的轻量串行 workflow 与现有并行及实际 Refine，不强制两者相同历史和后处理。
+
+### 方案验证
+
+本次只复核已有输入条件与结论、由独立 Agent 审查实验设计并修改文档，没有新增模型调用、金标、样本运行或生产修改。建议先选 6 个新的连续 2 分钟片段，按原 60 秒 Chunk 得到 12 块；同输入两模型一次筛查建议 24 次。具体路径/窗口、独立人工金标和预算待冻结；EP04 前 60 秒保留为回归，不计新验收样本。更长单次输入另作变量，不能暗中降帧或换上下文。
+
+### 指标对比
+
+| 维度 | 已有证据 | 本次修正与后续口径 |
+| --- | --- | --- |
+| 47 秒说话人 | 两模型均错，原输入无声音身份 | 错误保留；从供应商/thinking 独有劣势证据中拆出，按证据充分/不足分层 |
+| 独立样本 | 一个 60 秒片段多次重复 | 计划扩展多作品、多场景连续序列，尚未执行；不把重复次数当样本多样性 |
+| 模型与 thinking | K3 low 对比豆包 disabled | 前者是实际配置比较；thinking 因果需同一豆包版本单独消融 |
+| 身份与架构 | 单块独立请求不代表带历史串行；尚无完整策略对照 | 分开评估补证；架构比较允许串行前向传递上下文且不强制 Refine，对并行计入实际 Refine/重算成本，核对最终质量与整体墙钟 |
+
+收紧结论增加标注与独立对照工作量，避免把输入缺口误判成模型或架构因果。更多样本允许支持、否定或限定原判断，不以证明豆包较差或并行必胜作为目标。原 XML 不采用的决定保持，详细失败记录保留在[质量复核报告](../report/agent/video_parse_v2/doubao-nonthinking-quality-review-20261029.md)。
+
+<a id="devlog-parse-protocol-decision-20261029"></a>
+## 2026-10-29：采用精简 JSON，结束 XML 选型与单块 30 秒追求
+
+### 问题与现状
+
+关联 B07。两轮各 8 次协议实验已结束：字段精简降低正文负担，但 XML 相对同字段 JSON 没有足够替换收益；K3 前置等待和共同内容错误仍存在。用户据此作出最终决定，见 [主 TRD §1.4](../design/03-product-reassessment/video-parse-performance-trd.md#14-最终取舍精简-schema继续-json质量优先)，原始结果见 [第二轮报告](../report/agent/video_parse_v2/parse-compact-shot-20261029.md)。
+
+### 方案候选
+
+选择精简 Schema、继续 JSON，保留 SHOT 方向，不采用 XML。用户明确解析质量优先，没有必要盲目追求单 Chunk 30 秒；接受更高人力成本，认为既有可靠并行解析策略已足够承担当前效率需求。停止本轮协议扩跑，之前提出的视觉输入预算实验不再自动继续；未来仅针对具体整集瓶颈另行判断。
+
+### 方案验证
+
+本次是基于既有证据的工程决策和文档收敛，没有新增模型调用、并行实验或生产修改。两轮耗时、错误、样本量与原门槛保持原记录，不把停止方案写成质量达标。精简合同只在实验实现，生产 Schema/SHOT、宿主直接输出、旧数据与索引兼容仍待接入；由解析模块维护者推进时核验质量、整集表现及恢复。
+
+### 指标对比
+
+| 维度 | 此前探索口径 | 最终取舍及影响 |
+| --- | --- | --- |
+| 协议 | JSON/XML 对照，继续寻找提速收益 | 保留精简 JSON，不新增 XML 生产解析和维护成本；实验代码与证据留存 |
+| 单 Chunk 耗时 | 历史约 30～40 秒目标 | 不再把 30 秒作为优化/验收要求；耗时保留诊断，优先内容正确性和时间定位 |
+| 整体效率 | 拟继续协议和输入预算实验 | 沿用既有可靠并行策略，以整集到索引可见、完成率、恢复与成本评价；本次没有新加速比 |
+| 人力与维护成本 | 实验、协议接入及调优投入 | 接受用户指出的更高人力成本，停止收益不明确的 XML 扩张；未量化工时或金额 |
+| 完成范围 | 协议仍是候选，拟继续实验 | 本轮协议选型 DONE；生产接入及 B07 其他未完成事项保持 TODO |
+
+<a id="devlog-parse-compact-shot-20261029"></a>
+## 2026-10-29：取消人物名单、增加 SHOT 的精简 JSON/XML 对照
+
+### 问题与现状
+
+关联 B07。首轮 XML 对完整 JSON 不能隔离字段压缩与格式影响，且名单/身份、跨人合并及分类均有问题。用户希望取消 participants、visible_persons，增加镜头专用 enum，再测整体耗时。沿用 [主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md) 六阶段，不新建竞争设计；[第二轮报告](../report/agent/video_parse_v2/parse-compact-shot-20261029.md) 保存八次结果与质量边界。
+
+### 方案候选
+
+两组均取消逐事件名单与根级 persons，增加 SHOT，保留 speaker、动作主体、双语对白和毫秒时间。新增实验 CompactTimeline，共享字段、默认值与校验；JSON 也采用精简表达，不再比较完整 Schema 与缩略 XML。生产枚举尚无 SHOT，故不伪装成 SCENE 或填空名单接入 Canvas。保留旧合同实验供历史复现，生产配置和数据不改。
+
+### 方案验证
+
+同 EP04 前 60 秒、同 180 张 3 FPS 720p 帧、同本地 Whisper 观察与背景、OCR 关闭，逐文件及帧 hash 相同。K3 low、豆包 2.1 Pro disabled 各 JSON→XML→XML→JSON，8 次串行独立请求，零工具，无重试/修复/fallback。调用前冻结新版检查表，将已知 47 秒爽世画外音纳入但不发送答案；已删除名单不计为质量失败。
+
+58 项定向测试通过，223/223 证据一致性核验通过；8/8 completed，JSON/XML 标准语法全合法，合同通过率 3/4 与 4/4。豆包 JSON-1 的三条 SHOT 多了合同外 description，原样保留失败。非盲内容复核显示：八份都有镜头描述，125 条原始对白均带姓名，但 47 秒画外音仍全部错认；最快的豆包 JSON 还跨人合并。SUNWAY、ESP 各出现于 3/8 份，独立画面文字类型仍缺。无精确声学边界、完整金标或独立盲审，未验证生产、检索、恢复或整集。
+
+### 指标对比
+
+| 指标，每组 n=2 | 精简 JSON | 精简 XML | 结论与代价 |
+| --- | ---: | ---: | --- |
+| K3 全部尝试耗时中位数 | 118.52 s | 144.57 s | XML +21.97%，两次 XML 201.36/87.78 s，reasoning 波动显著 |
+| 豆包同口径 | 44.41 s | 52.50 s | XML +18.21%；JSON 包含一次失败，不能当合格成功延迟 |
+| K3 正文时段中位数 | 15.28 s | 17.92 s | XML 可见 token 少 16.15% 仍未更快 |
+| 豆包正文时段中位数 | 26.97 s | 27.07 s | 两者相近；XML 输出 token 反多 3.84% |
+| 关键目标正确数 | 0/4 | 0/4 | speaker 非空未解决真实身份；删字段不是此次错误的评分原因 |
+
+相比首轮，精简 JSON 正文 token 约减少 50%（K3）/57%（豆包），正文时段也缩短；K3 前置等待却上升。共同 Prompt/SHOT/字段及缓存均有变化，不将全部收益归给删除两字段。8 次累计尝试 720.00 s、1853036 total tokens，含失败，无账单金额；ASR 沿用首轮一次 5.33 s 测量，未另行执行。
+
+新增实验模型、解码器及 34 项测试有维护成本，但没有增加生产包装层。决定保留精简字段/SHOT 及精简 JSON 候选，不为性能切换 XML；下一步先完善画外音、跨人分段、类型与文字覆盖，再冻结视觉输入预算实验。B07 不关闭，不继续无上限重复同一协议。
+
+<a id="devlog-parse-protocol-20261029"></a>
+
+## 2026-10-29：本地 Whisper、无独立 OCR 的 JSON/XML 单块对照
+
+### 问题与现状
+
+关联 B07。EP04 已恢复且 SHA-256 与旧记录相同，但事件包装 XML 尚无实模证据，生产仍依赖 Canvas tools。用户要求测试新的 XML 是否降低单 Chunk Understanding 总耗时，并将观察条件改为 localhost Whisper、关闭独立 OCR。完整设计见 [主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md)，方法及全部原始值见 [实验报告](../report/agent/video_parse_v2/parse-protocol-20261029.md)。
+
+### 方案候选
+
+固定前 60 秒的 180 张 720p 图片、本地转写及人物背景，对照零工具完整领域 JSON 与事件包装 XML。两组均普通文本、本地校验，绕开生产强制 JSON Schema 通道；不修改生产模型配置或 Canvas 流程。同字段精简 JSON 留作下一轮归因；本轮不能把字段压缩、可省略属性和语法差异合成单一因果结论。
+
+本机编译 whisper.cpp、使用官方 large-v3-turbo Q5 权重并启动 localhost 服务，未改项目依赖或全局 ASR binding。独立 OCR 关闭仅作为本轮条件；PaddleOCR/DeepSeek-OCR-2 未调用。新增维护面为一个实验 runner，原文/源码快照保留在忽略目录；生产接线没有新增维护面。
+
+### 方案验证
+
+K3 `k3/low`、豆包 `doubao-seed-2-1-pro-260628/disabled` 各按 JSON→XML→XML→JSON 串行调用，共 8 次；每次 600 s 上限、30000 output tokens、无 SDK 重试/模型修复/fallback。原文、SSE、usage、输入/代码 hash、终态及错误见 [证据目录](../../outputs/verification/parse-protocol-20261029/)。全部 completed，JSON/XML 语法均 4/4 合法，协议/领域校验各 3/4 通过；豆包 XML 失败因同一 event 有两个主类型，豆包 JSON 失败因 speaker 不在 participants。未人工修复后提交。
+
+事前冻结局部视觉检查，随后由 Codex 非盲审；没有完整音视频金标。K3 XML 两次分别有 13/30、11/28 个空 participants；豆包 XML 首次 10 条对白全缺 speaker、15 个 event 全缺 participants，并合并跨人台词。画面文字与事件分类也不稳定。评审中补查项目已有的约 47 秒爽世画外音真值，八份原文均未正确归属，不能把 JSON 也不合格作为 XML 可上线的依据。
+
+24 项 decoder/Canvas/Refine 内存测试通过，冻结证据一致性核对 44/44；这些不代替语义验收。未经过 Seekino 生产 API、持久化、Refine/Prefix、检索或整集验证。决定保留 XML 候选，先修合同与共同质量问题，再做同字段 JSON 和输入预算实验；暂不替换生产协议。
+
+### 指标对比
+
+| 指标，每模型每协议 n=2 | JSON | XML | 判断 |
+| --- | ---: | ---: | --- |
+| K3 全部尝试总耗时中位数 | 103.22 s | 100.17 s | −2.96%，未达预设 10% 探索门槛 |
+| K3 正文时段中位数 | 33.48 s | 24.29 s | −27.46%，但首正文更晚；reasoning 中位数 29.5→1121.5 |
+| 豆包全部尝试总耗时中位数 | 98.73 s | 64.68 s | −34.49%，各含一次失败且 XML 内容退化，不能计为合格提速 |
+| 豆包正文时段中位数 | 53.76 s | 26.95 s | −49.87%，含遗漏身份和合并台词的影响 |
+| 协议/领域通过 | 3/4 | 3/4 | completed、格式合法不等于结果可用 |
+
+本地 ASR 观察准备约 5.33 s，其中抽音频 0.33 s，18 条转写；服务已加载，下载/编译/冷启动不计，Q5 精度未对照。八次 Understanding 总用量 1862756 tokens（含失败，reasoning 不重复相加）；未取得实际费用。K3 首次 JSON 无缓存、其余几乎全命中；豆包仅首份 XML 大量命中，其他均报告 0。缓存和服务时延波动尚不能隔离，不报告 p95/p99 或稳定降幅。正文变短已有证据，同质量整体加速和正式产品收益尚未成立。
+
+<a id="devlog-parse-performance-20261028"></a>
+
+## 2026-10-28：解析性能 TRD 与事件包装 XML 复测口径
+
+### 问题与现状
+
+关联 B07。旧实验已显示输出耗时可能下降，但还存在人物、事件分类和时间质量缺口；生产仍走 Canvas tools，新 Mac 的原视频与旧原始证据缺失。用户要求依照 [common TRD principle](../design/common/trd-principle.md) 统一记录问题、因素、方案和实验过程，再提供视频开展复测。
+
+### 方案候选
+
+建立 [解析性能主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md)，保留旧 XML v2 原稿并关联新事件包装候选。先比较零工具完整 JSON 与事件包装 XML；同字段精简 JSON 留作归因消融。模型负责理解和输出，宿主负责解码、校验及原子写 Canvas；不删除其他消费者的 Canvas 工具或改变领域/存储合同。区分媒体重复解码、冷启动、thinking、输出、ASR/OCR、缓存与失败重算，避免将假设当根因。
+
+### 方案验证
+
+前序实现的 [decoder 测试](../../tests/evals/test_parse_output_protocol.py) 24 项通过，覆盖排版、非法/截断输出、领域边界及 Canvas/Refine 内存往返。本轮仅维护文档与入口，不复跑业务测试或调用真实模型。计划恢复视频后冻结输入，K3 low 与 Doubao 2.1 Pro disabled 各做 JSON/XML 两次交叉顺序对照，共 8 次；精确模型 ID、权限和出站参数仍需预检。质量标注、真实调用、完整接线和整集结果均未取得。
+
+### 指标对比
+
+| 维度 | 本轮前 | 本轮后 | 证据与限制 |
+| --- | --- | --- | --- |
+| 设计与验收口径 | 旧协议稿、交接和本轮讨论分散 | 一份主 TRD 串起六阶段，关联 B07 和历史来源 | 维护成本增加一份主文档；历史稿只保留来源，避免双份现行合同 |
+| 新协议实际耗时与质量 | 无模型基线 | 仍待测 | 无原视频；不能把文档或离线测试当性能收益 |
+| Canvas 兼容 | 已有 24 项离线测试 | 兼容设计和未覆盖范围写入 TRD | 未验证持久化、Prefix、索引与失败恢复 |
+
+<a id="devlog-chat-harness-kimi-20261026"></a>
+
+## 2026-10-26：Kimi 同模型 Chat 三框架对照
+
+### 1. 问题与现状
+
+去 Pi Host 的生产简化已有工程证据，但此前 Deep Agents + Kimi 只跑了旧 multi-agent 的查询覆盖题，不能回答 C19“高高在上→说话无趣”的对话能力，也不能隔离历史 GPT 与当前 Kimi 的模型差异。此次使用整理后的两个 Chat 集，另检查公共检索和路由组件；报告入口为 [Kimi 三框架对照](../../evals/benchmark/reports/chat-harness-kimi-20261026.md)。
+
+基线固定为当前生产 Chat Prompt、工具、Query 和数据；仅替换 Supervisor harness。正式 MyGO EP02 最新索引失败，其余 12 集及独立 EP04 可用。本次不把整套旧 multi-agent 架构、不同日期模型成绩或自动来源检查当作框架效果对照。
+
+### 2. 方案候选
+
+历史成绩对比成本低，但模型、Prompt、预算与索引状态不同；只测路由或裸模型又不能覆盖完整历史和产品交付。因此选择同为 Kimi `k3.1-pro` 的 Deep Agents、隔离恢复的退役 Pi、Codex 自定义 provider 对照，通过真实 ASGI HTTP 入口及 SQL/ES 执行业务。用户要求的两类能力分别统计：10 个行为场景每套两遍，共 60 条；13 个查询任务每套一次，共 39 条。
+
+Supervisor、Query 等可配置业务生成角色及后置评分均用 Kimi，无 GPT 业务调用或生成 fallback；公共 Jev/Qwen 前置链路和 Doubao embedding 保留。Deep Agents/Pi 走 Chat Completions，Codex 走 Responses；三套原生指令、压缩和输出控制不能完全等同，结论限定为框架及适配器的产品组合效果。Pi 仅在实验目录恢复，补 Kimi 不支持 developer role 的兼容配置，没有重新引入生产 Host。
+
+新增维护面是 `evals/benchmark/compare.py`、`harnesses.py` 两个评测入口、三项离线保护测试与精简结果；不新增生产运行层、自动线上评分器或 sandbox 接入。既有去 Pi 变更所减少的 Host、配置与代码属于前一记录的收益，不能再次记成本轮删减。
+
+### 3. 方案验证
+
+冻结 326 个相关 Python 文件、配置与用例 SHA，最终版本／包／配置核对不变。完整历史写入独立会话，T01→T02 继承各自上一轮回答并跨 worker；固定顶层串行、轮换 arm 顺序，Supervisor 总预算 480 秒，外部 watchdog 570 秒。真实输入核对中，同组 Prompt 和工具一致，只有 T02 自然继承不同上轮历史。没有把参考答案送给被测模型。
+
+原始查询批次受系统时间间隔及 DNS/连接中断影响，14 条原件完整保留，整组排除并重跑 39 条，未择优覆盖失败。行为 60 条保留，其中时钟异常影响的整组三方样本从延迟配对子集排除；正式超时仍计失败。恢复批次无同类时钟异常。Codex T01 另有一次供应商过载，T02 依赖阻塞；主实验后单独补跑成功，61.5／121.1 秒，确认该次跨 worker 历史承接可工作，但没有覆盖主成绩，仍缺 T02 冻结标准的午餐回述。
+
+Kimi 在计时结束后打乱样本、隐藏 arm 标签评分，执行代理逐条核对证据并针对人物冲突补看四张已有检查帧。原裁判分、初审与修订分别保存，不声称独立人工金标。连续动作／短促音型仍缺连续看片和回听；T02 标准比字面追问更强、旧时间锚点漂移等题目问题单列，不边测边改题。
+
+`.venv/bin/pytest -q tests/evals/test_benchmark.py tests/evals/test_harness_comparison.py`：**22 passed**；新入口编译通过，默认只输出 99 条离线计划且不调用 API。最终 SQL 核对 98 条实际主请求为 92 COMPLETED／6 FAILED；另外 1 条 BLOCKED 未发送。自有额外 19 条预检／中断／补跑消息也均为终态，无 PROCESSING 或正文持久化不一致。数据快照保持 14 视频、44 任务及原状态摘要。
+
+未验证的架构维度包括长上下文压缩保真、并发容量／RSS、常驻 Host 复用、崩溃／跨节点恢复、sandbox 生命周期与权限隔离。这些仍是 Deep Agents 选型应衡量的成本和风险，不能由短场景通过率代替。
+
+### 4. 指标对比
+
+执行完成：Deep Agents **32/33**、Pi **31/33**、Codex **29/33**；分母含 Codex 1 条前置依赖阻塞。完成不代表内容达标，质量与逐例证据另见报告及 [60 条行为基线](../../evals/benchmark/chat_behavior/baselines/harnesses-kimi-20261026.jsonl)、[39 条查询基线](../../evals/benchmark/query_capabilities/harnesses-kimi-20261026.jsonl)。Pi 的 31 条完成回答均存在增量断段，实际 HTTP 与 SQL 一致；内容诊断拼接与实际交付分开评分，不能将适配合同故障泛化成 Pi 智力差。
+
+任务与证据通过数：行为 Deep Agents **16/20**、Pi **14/20**、Codex **14/20**；查询分别 **5/13、4/13、5/13**。原 C19 反馈 Deep Agents／Codex 各 2/2 通过，Pi 两次仍复述旧剧情；不将此等同幽默感偏好实验。考虑交付后的综合通过数，行为为 **16/20、0/20、14/20**，查询为 **4/13、0/13、5/13**；Pi 的零分源于适配断段，Deep Agents 查询另有正文缺段。继续以 Deep Agents 为默认是合理工程选择，但本次不支持其全面优于 Codex；错误前提题中 Deep Agents 误认说话人，Pi/Codex 正确，明确保留回归。
+
+99 条主记录均完成评分与复核；2 条评分输出上限失败保留原件后仅补评，没有重跑 Chat。4 条修改维度分、1 条只纠正理由，其余保留 Kimi 原判断。评分实际上下文受绑定限制为 128k，离线核对 101 个主／诊断评分包，在初评及补评预算下原始载荷均未被截断。实际限制、原分与修订记录随基线保存。
+
+三套共同未完成 T05 五片段回顾，实际都收到 Jev“不新增检索”的冲突说明；独立路由 13/13 标签正确并未覆盖这个输入。直接检索 13/13 执行、9/13 通过旧机械来源检查，另有 1/1 结构协议 smoke；它们不合入 Chat 分母或冒充语义准确率。其他具体缺口包括同 chunk 重复提交覆盖卡片、正文越过暂停点、静帧推断说话人和过度确定的人物动机。
+
+干净成功配对的行为平均耗时为 Deep Agents **92.9s**、Pi **74.6s**、Codex **94.9s**（每套 17 条）；查询为 **115.4s／124.6s／152.0s**（每套 8 条）。失败与时钟异常未混进这个条件化平均值，但都留在完成率及原记录中。无缓存隔离、无 P95／显著性推断；已知 token 是缺失调用存在时的观测下界，不据此换算金额或宣布成本胜者。
+
+本轮 canonical 变更 **10 文件：6 新增、4 修改；评测源码 2、测试 1、文档 5、数据 2，生产代码 0**，详细修改树在报告。收益是首次获得当前同模型、完整历史、实际交付的三框架证据；新增成本为离线适配、档案及后置评分调用。本次启动的 Qwen 进程已停止，原有 SQL/ES/API 不动；保留测试会话、原生 checkpoint 和检查帧供追溯。无迁移、重解析、commit 或 push，无关工作区变更保留。
+
 <a id="devlog-benchmark-layout-20261025"></a>
 
 ## 2026-10-25：按能力整合 benchmark 并纠正选集口径
@@ -109,7 +848,7 @@
 本轮实际修改树（`R` 为移位并调整引用，`A` 为新增维护入口或从本地产物提升的精简记录，`M` 只修改本次相关内容）：
 
 ```text
-AniVAG/
+Seekino/
 ├── evals/
 │   └── benchmark/
 │       ├── [A] README.md                         ← 分类、运行与维护入口
@@ -334,7 +1073,7 @@ Agent 工具循环、结构化检索和配置解析的 6 个定向合同测试�
 
 记录范围：2026-10-22 至 2026-10-23 的工具修订、已有实验及本次成本核算。本文整理既有结果，没有为写文档再发起模型实验，也没有改变生产配置或计费规则。后续实验按日期追加，保留当时的模型、数据、源码和价格口径。
 
-相关设计：[ContextCanvas 设计与历史实施记录](../design/context-canvas-design.md)、[工具设计研究](../../docs/research/2026-10-22-canvas-agent-tool-design.md)。历史文档中的 Chat Canvas 和 greedy 打包状态不代表当前实现。
+相关设计：[ContextCanvas 设计与历史实施记录](../design/02-agent-harness/context-canvas-design.md)、[工具设计研究](../../docs/research/2026-10-22-canvas-agent-tool-design.md)。历史文档中的 Chat Canvas 和 greedy 打包状态不代表当前实现。
 
 ### 1. 问题与现状
 
@@ -369,7 +1108,7 @@ Canvas 已在模型消息之外持有完整草稿、引用和只读源证据。�
 
 原编号 **B06、C07、C18**。B06 是早期共用结构化 Canvas 设计，C07 是需盘点的参数修正反馈，C18 是真实调用中 overview 默认、单/批 start/end 双语义及引用恢复造成误用。批读当时已经存在，不能写成新功能。下述历史数据不能替代那一轮的实际交付与测试。
 
-来源：[B06/C07/C18](problems.md)、[通用 Canvas 工具](../../agent/utils/context_canvas_tools.py)、[Canvas 设计](../design/context-canvas-design.md)。
+来源：[B06/C07/C18](problems.md)、[通用 Canvas 工具](../../agent/utils/context_canvas_tools.py)、[Canvas 设计](../design/02-agent-harness/context-canvas-design.md)。
 
 ### 2. 方案候选
 
@@ -696,7 +1435,7 @@ B12仍未全面闭环：B0编码前单人准入、Refine归因只读/受限合�
 
 v25 完整重跑与 v24 比较，两个目标均最终正确；实际声纹预填输入没有完整捕获，证明链来自 B0 结果、规则、后续决策与最终事件，不能声称逐字留证了该阶段输入。ASR、Understanding 和参考池重新生成，单次 2/2 不能确定纯提示因果或全片准确率。证据：[v25 报告](../../outputs/verification/ep04-offscreen-rerun-20261022/report.md)。
 
-B12原材料还记录声学工具接入1319 passed；这是代码回归，完整音频工具数值复现、12范围/231窗及失败重跑分别在对应条目，不重复计算为另一套身份评测。参考设计：[声纹TRD](../design/voiceprint-trd.md)。
+B12原材料还记录声学工具接入1319 passed；这是代码回归，完整音频工具数值复现、12范围/231窗及失败重跑分别在对应条目，不重复计算为另一套身份评测。参考设计：[声纹TRD](../design/02-agent-harness/voiceprint-trd.md)。
 
 ### 4. 指标对比
 
@@ -849,7 +1588,7 @@ v21 有 69 次 DNS 与 1 次 timeout，只有 1/24 Understanding 完成。v22 �
 
 **TRD中的宿主实现与离线交付：**
 
-来源：[video-summarize-trd.md](../design/video-summarize-trd.md)，无明确文档日期；迁移文件名 `20261021_video_metadata.sql` 不作为实施日期。目标在全部 Refine 提交后生成官方标题、事实简介、真实集数及封面；源码和离线测试已交付，TRD 明确未迁移、未重启、未发真实摘要、未跑真实 MySQL 并发，归档不把这些状态改成已部署。
+来源：[video-summarize-trd.md](../design/02-agent-harness/video-summarize-trd.md)，无明确文档日期；迁移文件名 `20261021_video_metadata.sql` 不作为实施日期。目标在全部 Refine 提交后生成官方标题、事实简介、真实集数及封面；源码和离线测试已交付，TRD 明确未迁移、未重启、未发真实摘要、未跑真实 MySQL 并发，归档不把这些状态改成已部署。
 
 Summarize 独立于 Chat，与 Index 并行、不等待 Prefix，也不阻塞父 Parse COMPLETE。历史视频不会自动全量补跑。
 
@@ -1126,7 +1865,7 @@ Refine 需要为指定对白完成声纹审查，但旧流程可能在缺少必�
 
 ### 1. 问题与现状
 
-需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../design/shot-tagging-experiment-brief.md)、[字段 schema](../design/shot-composition-schema.md)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
+需要知道 camera、composition、subjects、frame、content 五组结构化标签是否稳定，以及能否帮助“类似构图”检索。方案明确把 PCP 与 GroundingDINO 独立保留，content 只用于排除，不把内容重合偷偷当构图加分。[实验 brief](../design/02-agent-harness/shot-tagging-experiment-brief.md)、[字段 schema](../design/02-agent-harness/shot-composition-schema.md)、[Shot-tags 归档摘要](design-experiment-cleanup.md#shot-tags-标注与排序)
 
 ### 2. 方案候选
 
@@ -1522,7 +2261,7 @@ Event-first 读取完整 902 字 transcript，给出覆盖 54.6–56 秒目标�
 
 ### 1. 问题与现状
 
-10/17–10/18 的 EP04 多轮实验将声纹准备、Refine 和 Index 串起来，暴露出重启、参考库变更引发的 generation refresh、混合 ASR 时间段和静态可见人物误归名。下面记录历史 v4–v11，不把当时方案当成现行生产结论；较新的 offscreen／短句状态见 [voiceprint TRD](../design/voiceprint-trd.md)，后续验证由对应日期另记。
+10/17–10/18 的 EP04 多轮实验将声纹准备、Refine 和 Index 串起来，暴露出重启、参考库变更引发的 generation refresh、混合 ASR 时间段和静态可见人物误归名。下面记录历史 v4–v11，不把当时方案当成现行生产结论；较新的 offscreen／短句状态见 [voiceprint TRD](../design/02-agent-harness/voiceprint-trd.md)，后续验证由对应日期另记。
 
 ### 2. 方案候选
 
@@ -1759,7 +2498,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 3. 方案验证
 
-[视觉检索TRD](../design/visual-retrieval-trd.md)记录10/16后端交付；[Event早期方案](../design/event-retrieval-trd.md)已被Sub-Chunk合同替代，输入模态与检索粒度分别评估。8个后端文件511 passed / 1 skipped，隔离MySQL附件迁移/发布锁2 passed；开发库31会话、72消息旧字段逐项不变，72条旧消息附件为NULL。
+[视觉检索TRD](../design/02-agent-harness/visual-retrieval-trd.md)记录10/16后端交付；[Event早期方案](../design/02-agent-harness/event-retrieval-trd.md)已被Sub-Chunk合同替代，输入模态与检索粒度分别评估。8个后端文件511 passed / 1 skipped，隔离MySQL附件迁移/发布锁2 passed；开发库31会话、72消息旧字段逐项不变，72条旧消息附件为NULL。
 
 ### 4. 指标对比
 
@@ -1821,7 +2560,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 原编号 **B10、B11**。计划停服会消耗业务失败预算，父任务阶段收尾还可能被全局视频槽占用；阶段 deadline 后，等待取消不代表底层线程/SDK/远端请求已停止，租约清空后重试可能与旧调用重叠。B10/B11 在原文仍待完整修复，不能因手动恢复部分任务或晚到结果被拒绝而称生命周期已闭环。
 
-来源：[B10/B11](problems.md)、[ExecutionCalls](../../server/utils/execution.py)、[Consumer](../../server/mq/video_parse_consumer.py)、[Queue](../../server/mq/video_parse_queue.py)、[实时解析候选设计](../design/realtime-parse-trd.md)。
+来源：[B10/B11](problems.md)、[ExecutionCalls](../../server/utils/execution.py)、[Consumer](../../server/mq/video_parse_consumer.py)、[Queue](../../server/mq/video_parse_queue.py)、[实时解析候选设计](../design/02-agent-harness/realtime-parse-trd.md)。
 
 ### 2. 方案候选
 
@@ -1845,7 +2584,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 1. 问题与现状
 
-10/13–10/18 的设计讨论逐步区分“同源”“同一实体”“特征相似”“事件解释”“声音事件”。同样输入一张图片，找原片与找类似构图的成功标准不同；“首次”“全部”“后来”又涉及范围和故事／播放顺序。TopK 的局部合理候选不能自动支持整集、全剧或因果解释。[检索 TRD](../design/multimodel-retrieve-trd.md)、[多模态研究（10/17 初稿、10/18 更新）](../design/多模态理解解析研究.md)
+10/13–10/18 的设计讨论逐步区分“同源”“同一实体”“特征相似”“事件解释”“声音事件”。同样输入一张图片，找原片与找类似构图的成功标准不同；“首次”“全部”“后来”又涉及范围和故事／播放顺序。TopK 的局部合理候选不能自动支持整集、全剧或因果解释。[检索 TRD](../design/02-agent-harness/multimodel-retrieve-trd.md)、[多模态研究（10/17 初稿、10/18 更新）](../design/02-agent-harness/多模态理解解析研究.md)
 
 ### 2. 方案候选
 
@@ -1893,7 +2632,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 原编号 **C08、C09、C10、C11**。C08 是业务图继承 Supervisor 的 InMemorySaver 引发序列化失败，已修；C11 是旧 API 进程未加载新配置，重载后复测通过。C09 的真实 SDK 暴露 default general-purpose task 与假模型预期不同，尚未定位；C10 的实时理解 partial 来自三个相邻失败 Chunk，主 Parse 已失败，根因未逐个追完。四者不可统一写作“Chat 工具坏了”。
 
-来源：[C08–C11](problems.md)、[Chat Runtime](../../agent/chat/video_search/runtime.py)、[实时 Parse TRD](../design/realtime-parse-trd.md)。
+来源：[C08–C11](problems.md)、[Chat Runtime](../../agent/chat/video_search/runtime.py)、[实时 Parse TRD](../design/02-agent-harness/realtime-parse-trd.md)。
 
 ### 2. 方案候选
 
@@ -1923,7 +2662,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-[字段命名合同与迁移验证](../design/base-model-field-names.md)在隔离MySQL 8.4.11验证空库、带数据迁移、全行保留、重复执行拒绝和异常预检。该批未执行业务数据库迁移，不把后续业务库状态反写为当时完成。
+[字段命名合同与迁移验证](../design/02-agent-harness/base-model-field-names.md)在隔离MySQL 8.4.11验证空库、带数据迁移、全行保留、重复执行拒绝和异常预检。该批未执行业务数据库迁移，不把后续业务库状态反写为当时完成。
 
 ### 4. 指标对比
 
@@ -1943,7 +2682,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-来源：[身份TRD](../design/user-tenant-trd.md)、[身份交接](../../server/report_docs/user-tenant-handoff-20261010.md)、[Series共享TRD](../design/series-sharing-trd.md)、[Local/Cloud设计](../design/local-cloud-trd.md)。身份阶段分隔离MySQL/Redis、模拟浏览器与真实HTTPS/OTP流程验证；本机共享迁移不等于手机cloud数据库已迁移。
+来源：[身份TRD](../design/02-agent-harness/user-tenant-trd.md)、[身份交接](../report/server/user-tenant-handoff-20261010.md)、[Series共享TRD](../design/02-agent-harness/series-sharing-trd.md)、[Local/Cloud设计](../design/02-agent-harness/local-cloud-trd.md)。身份阶段分隔离MySQL/Redis、模拟浏览器与真实HTTPS/OTP流程验证；本机共享迁移不等于手机cloud数据库已迁移。
 
 **材料冲突：**Local/Cloud 10/21仍写“普通用户public/private尚未实现”，Sharing明确记录10/19 phase1本机后前端及开发库迁移完成、独立phone/cloud库未迁移。分别保留代码/本机与cloud环境状态；不能据旧状态认定功能全无，也不能认定所有部署均已支持。
 
@@ -1967,7 +2706,7 @@ C08 原工具约 7ms 内 TypeError、整轮 996ms；修复 219 + 37 项离线回
 
 ### 3. 方案验证
 
-[本地Bridge TRD](../design/codex-bridge-trd.md)、[旧阶段表](../../gateway/bridge/report_docs/agent-bridge-stages.md)、[Pi Host TRD](../design/pi-host-trd.md)对读。旧P01“未开始”是原规划，10/21本地文档已核对接线文件存在；存在不等于完整Bridge或真实迁移验收。Pi通过真实Python→Node→本机fake API验证，不调用外部模型。
+[本地Bridge TRD](../design/02-agent-harness/codex-bridge-trd.md)、[旧阶段表](../report/gateway/bridge/agent-bridge-stages.md)、[Pi Host TRD](../design/02-agent-harness/pi-host-trd.md)对读。旧P01“未开始”是原规划，10/21本地文档已核对接线文件存在；存在不等于完整Bridge或真实迁移验收。Pi通过真实Python→Node→本机fake API验证，不调用外部模型。
 
 ### 4. 指标对比
 
@@ -2016,7 +2755,7 @@ low 丢失 34/36 events、19/21 dialogues，语义验收为 FAILED。该例没�
 
 ### 3. 方案验证
 
-先做ASR局部诊断和91项直接回归，再以同一原片及默认模型/fps/重试/fallback完整重跑，核对SQL、媒体DTO、receipt与ES版本。来源：[ASR修复和完整重跑](../../server/report_docs/model-usage-handoff-20261008.md)。旧26ms失败记录保留，新运行不追认旧数据正确。
+先做ASR局部诊断和91项直接回归，再以同一原片及默认模型/fps/重试/fallback完整重跑，核对SQL、媒体DTO、receipt与ES版本。来源：[ASR修复和完整重跑](../report/server/model-usage-handoff-20261008.md)。旧26ms失败记录保留，新运行不追认旧数据正确。
 
 ### 4. 指标对比
 
@@ -2038,7 +2777,7 @@ Gateway 统一调用记录与上下文，Server 按稳定 call_id 入账和业�
 
 ### 3. 方案验证
 
-[Server 用量 TRD](../design/model-token-usage.md)、[阶段证据](../../server/report_docs/model-token-usage-stages-evidence.md)、[最新交接](../../server/report_docs/model-usage-handoff-20261008.md)、[Gateway TRD](../design/gateway-model-observability-trd.md)和[追踪验证](../../gateway/report_docs/model-observability-stages-evidence.md)分别记录账本与追踪。读取的是历史验收；部分 `/private/tmp` 原始证据已失效，不能直接承诺原命令可复跑。
+[Server 用量 TRD](../design/02-agent-harness/model-token-usage.md)、[阶段证据](../report/server/model-token-usage-stages-evidence.md)、[最新交接](../report/server/model-usage-handoff-20261008.md)、[Gateway TRD](../design/02-agent-harness/gateway-model-observability-trd.md)和[追踪验证](../report/gateway/model-observability-stages-evidence.md)分别记录账本与追踪。读取的是历史验收；部分 `/private/tmp` 原始证据已失效，不能直接承诺原命令可复跑。
 
 ### 4. 指标对比
 
@@ -2057,7 +2796,7 @@ Gateway 统一调用记录与上下文，Server 按稳定 call_id 入账和业�
 
 ### 1. 问题与现状
 
-[潜在问题记录](../design/potential_problems.md)的 VP2-001～007 混有已复现缺陷、已修复项和测试环境限制。产品影响涉及 retry 死锁、合法短视频恢复被拒、成果与索引身份不一致、索引启动误拒；仅观察到的生命周期风险不能升级成生产事故。
+[潜在问题记录](../design/02-agent-harness/potential_problems.md)的 VP2-001～007 混有已复现缺陷、已修复项和测试环境限制。产品影响涉及 retry 死锁、合法短视频恢复被拒、成果与索引身份不一致、索引启动误拒；仅观察到的生命周期风险不能升级成生产事故。
 
 ### 2. 方案候选
 
@@ -2199,7 +2938,7 @@ C02 记录等待 8/29/29 秒失败，随后 77 秒成功，跟问 8 秒失败后
 
 ### 3. 方案验证
 
-[Harness 调教日志](../design/agent-harness调教log.md)和[上下文设计修复](../design/agent_harness_context修复.md)记录 overflow 根因、实际状态替换、六轮工具批次压力测试、usage 校准和硬边界恢复。09/19 全量为 831 passed / 8 skipped / 9 failed，失败属于当时 Parse timing/SSE fixture；真实 1/6/13/26 集质量/容量实验仍待完成。
+[Harness 调教日志](../design/02-agent-harness/agent-harness调教log.md)和[上下文设计修复](../design/02-agent-harness/agent_harness_context修复.md)记录 overflow 根因、实际状态替换、六轮工具批次压力测试、usage 校准和硬边界恢复。09/19 全量为 831 passed / 8 skipped / 9 failed，失败属于当时 Parse timing/SSE fixture；真实 1/6/13/26 集质量/容量实验仍待完成。
 
 ### 4. 指标对比
 
@@ -2235,7 +2974,7 @@ Engine 显式拥有 transcribe→understand→embed→persist 算法顺序；Ser
 
 ### 3. 方案验证
 
-[职责重构](../design/refactor_1.md)、[V2 存储批次](../design/refactor_2.md)、[ES 历史提案](../design/refactor_3_es_qdrant.md)、[V2 阶段证据](../../agent/video_parse_v2/report_docs/video-parse-v2-migration-stages-evidence.md)、[解析任务 TRD](../design/video-parse-harness-trd.md)、[Engine TRD](../design/video-parse-engine-trd.md)、[Sub-Chunk 最终合同](../design/sub-chunk-trd.md)按日期对读。验证分代码/替身、隔离真实存储、真实模型产品闭环；不同日期和重叠测试集不累加。
+[职责重构](../design/02-agent-harness/refactor_1.md)、[V2 存储批次](../design/02-agent-harness/refactor_2.md)、[ES 历史提案](../design/02-agent-harness/refactor_3_es_qdrant.md)、[V2 阶段证据](../report/agent/video_parse_v2/video-parse-v2-migration-stages-evidence.md)、[解析任务 TRD](../design/02-agent-harness/video-parse-harness-trd.md)、[Engine TRD](../design/02-agent-harness/video-parse-engine-trd.md)、[Sub-Chunk 最终合同](../design/02-agent-harness/sub-chunk-trd.md)按日期对读。验证分代码/替身、隔离真实存储、真实模型产品闭环；不同日期和重叠测试集不累加。
 
 阶段表的 08A 未签收是当时状态；后续实测已在本 devlog 的 ASR、Event V3 和解析实验中单列，不能反向改写旧阶段结论，也不能凭较新代码存在宣布所有迁移门槛关闭。
 
@@ -2273,7 +3012,7 @@ B03 全量 844 passed/8 skipped，跳过为未配置隔离 MySQL 库；保留反
 
 ### 3. 方案验证
 
-计划先用 20–50 条核验样本验证编码、训练、保存与重载，再用未参与训练的片段做质量/成本比较，最后回归 Timeline 和检索。以上都是计划；没有实施或效果通过记录。来源：[Qwen 调教方案](../design/Qwen调教.md)。
+计划先用 20–50 条核验样本验证编码、训练、保存与重载，再用未参与训练的片段做质量/成本比较，最后回归 Timeline 和检索。以上都是计划；没有实施或效果通过记录。来源：[Qwen 调教方案](../design/01-mvp/Qwen调教.md)。
 
 ### 4. 指标对比
 
@@ -2293,7 +3032,7 @@ B03 全量 844 passed/8 skipped，跳过为未配置隔离 MySQL 库；保留反
 
 ### 3. 方案验证
 
-同一失败 Chunk 做输入/模型实验，再从第七集 10/24 checkpoint 续跑，检查时间归属与逐 checkpoint 结构；之后人工审计全片语义。实验的 wall time 与分组耗时之和不同，不混算速度排名。来源：[模型调教日志](../design/模型调教log.md)。该文引用的旧 `packages/engine` 产物路径仅为历史记录，本文不声称仍能直接复跑。
+同一失败 Chunk 做输入/模型实验，再从第七集 10/24 checkpoint 续跑，检查时间归属与逐 checkpoint 结构；之后人工审计全片语义。实验的 wall time 与分组耗时之和不同，不混算速度排名。来源：[模型调教日志](../design/01-mvp/模型调教log.md)。该文引用的旧 `packages/engine` 产物路径仅为历史记录，本文不声称仍能直接复跑。
 
 ### 4. 指标对比
 
@@ -2390,7 +3129,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 
 ### 1. 问题与现状
 
-来源：[reflection_1.md](reflection_1.md)。复盘指出产品原目标是本地素材解析并由 Codex 辅助剪辑，过程中范围扩大、上线时间缺少约束、外部反馈和文档责任不足。这里归档为治理问题，不把个人自责当技术结论。相关 [角色 NPC TRD](../design/character-npc-trd.md) 是 0 字节空文件，只能确认缺少需求/方案/验收记录，不能推断项目已训练、成功或失败。
+来源：[reflection_1.md](reflection_1.md)。复盘指出产品原目标是本地素材解析并由 Codex 辅助剪辑，过程中范围扩大、上线时间缺少约束、外部反馈和文档责任不足。这里归档为治理问题，不把个人自责当技术结论。相关 [角色 NPC TRD](../design/02-agent-harness/character-npc-trd.md) 是 0 字节空文件，只能确认缺少需求/方案/验收记录，不能推断项目已训练、成功或失败。
 
 ### 2. 方案候选
 
@@ -2444,7 +3183,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 
 ### 3. 方案验证
 
-[实时Parse TRD](../design/realtime-parse-trd.md)记录Supervisor的understand_current_video接线，冻结毫秒位置，校验可访问范围；Graph/数据库宿主51 passed。综合1027项首跑1023 passed / 1 skipped / 3 failed，修复既有Bootstrap替身后受影响组37 passed，原集合最终1026项通过/1项跳过，重叠不重复计数。
+[实时Parse TRD](../design/02-agent-harness/realtime-parse-trd.md)记录Supervisor的understand_current_video接线，冻结毫秒位置，校验可访问范围；Graph/数据库宿主51 passed。综合1027项首跑1023 passed / 1 skipped / 3 failed，修复既有Bootstrap替身后受影响组37 passed，原集合最终1026项通过/1项跳过，重叠不重复计数。
 
 ### 4. 指标对比
 
@@ -2481,7 +3220,7 @@ F02 最小方案对齐前端 READY，正式支持 PARTIAL 需独立定义范围�
 - 两个独立 OS 进程，每组 10 个场景 × 2 次重复，共 40 次。按配对顺序交替先跑旧/新，第二轮反转场景顺序；同时只发起一个顶层请求，保留超时后的迟到终态与 usage。每次新建独立 SQL/native 会话，种入相同历史；没有共享上一条测试生成的回答。
 - 两组 Supervisor 均为 `gpt-5.6-luna / medium`、Codex harness；Query 为同一 `gpt-5.6-luna / high`，同一 embedding、工具 schema 与 runtime 设置。总超时均为 240 秒，`limits_enabled=false`。服务端 cache 未清空，fresh native session 不等于冷 cache；两次重复不提供 p95 或统计显著性结论。
 - 旧组冻结 Supervisor 源码 SHA-256 为 `62e5b794eb8d93b2911dbf30f8e5cf5f26ed6946d515b57f7aa062c46a067730`，新组为 `a7f0a1c5ad14ee9835855b855fcf61c92d936cdb7826a6693dd43ac4578fe949`。旧组真实调用 Jev `typesafe/jev-1.14`（响应版本 `jev-1.14-20261014`）与本地 Qwen3-8B-Q4_K_M；新组 `_query_hook=None`，将原始消息原样交给 Chat。完整源码与配置元数据分别保存在 `old/`、`new/`。
-- 使用原有 MyGO 13 集数据、MySQL、Elasticsearch 与真实工具。索引 `anivag_video_chunks_local_20261010_development`，前后 UUID 与文档数 **71,736** 一致。检索结果存在 `partial=true` 和第 2 集覆盖不足警告；能确认已命中的正例，不能证明全剧中不存在某句台词。
+- 使用原有 MyGO 13 集数据、MySQL、Elasticsearch 与真实工具。索引 `seekino_video_chunks_local_20261010_development`，前后 UUID 与文档数 **71,736** 一致。检索结果存在 `partial=true` 和第 2 集覆盖不足警告；能确认已命中的正例，不能证明全剧中不存在某句台词。
 - 通过实际 `/api/agent/conversations/create`、`/api/agent/messages/send` 的 ASGI HTTP 路径执行，记录发送到最终持久化/HTTP 错误的耗时；不包括新建会话、准备 fixture、真实客户端网络传输和浏览器渲染。首个文本可能只是过程说明，不等于首次给出正确答案。
 - 20 对 Supervisor 入口的历史、动态上下文、工具 schema 与原始请求一致；新组没有隐式改写原始消息。进一步读取对应 native rollout，**40/40 的历史消息均按原文、原顺序出现在当前 prompt 前**。旧组 `r1-holdout_mixed`、新组 `r2-retrieve_correct_negation` 有历史注入确认超时警告，但原生日志确认消息实际存在；不能将警告直接解释为历史丢失。证据：[input-audit.json](../../outputs/verification/jev-chat-e2e-ab-20261024/input-audit.json)、[native-history-audit.json](../../outputs/verification/jev-chat-e2e-ab-20261024/native-history-audit.json)。
 - 保存每次 HTTP 响应、阶段耗时、Jev 返回标签、8B 槽位、实际传入 Chat 的消息、工具参数、返回给模型的证据正文、可见回答与 provider/SDK usage。仅工具调用成功不足以判定任务完成；逐条对照当前请求、执行顺序、证据、提交片段与最终文本，审读记录见 [reviews.json](../../outputs/verification/jev-chat-e2e-ab-20261024/reviews.json)。这是 Agent 审读，未做独立人工盲评或全剧逐帧标注。
@@ -2614,7 +3353,7 @@ models:
 - 三组主 Chat 均为 `gpt-5.6-luna / medium`，Query 为同模型 `/ high`，新前置为同模型 `/ low` 或 `/ none`，均走当前 Codex harness；Jev 为 `typesafe/jev-1.14`，改写为本地 Qwen3-8B-Q4_K_M。同一工具、embedding、MyGO 数据、240 秒完整任务 deadline、`limits_enabled=false`。前置预检使用过 20 秒预算，已排除，正式三组均为 8 秒预算。正式运行没有改 prompt、case、生产代码或 runner。
 - 通过真实 `/api/agent/conversations/create` 和 `/api/agent/messages/send` 的 ASGI HTTP 路径测量，从 send 到最终响应/持久化或 HTTP 错误；不计建会话、写 fixture、真实客户端网络和浏览器渲染。FTT 使用记录器捕获的主模型首次 `handle_text` 回调作为代理指标，可能是“我去查一下”等过程说明，**不是浏览器实际首 token 或首个正确结果时间**。SDK/服务端缓存未清空，新会话不等于冷缓存；不是并发负载测试。
 - [输入审计](../../outputs/verification/query-hook-chat-model-ab-20261024/input-audit.json) 验证 **20/20 三元组**的主 Chat prompt、历史正文、工具 schema、原始请求一致；low/none 前置 prompt 与 schema 相同，SDK 实际请求的 effort 分别为 low/none，主 Chat 仍为 medium。**60/60 native 会话都按原文、顺序收到历史**，无历史注入确认警告。生产文件、case、runner SHA-256 与冻结记录一致。
-- 沿用 MyGO 13 集资料，返回证据仍有 `partial=true`、第 2 集覆盖不足等限制。Chunk 索引 `anivag_video_chunks_local_20261010_development` 的实验前后 UUID 和 **71,736** 文档数一致。Event 索引 `seekino_video_events_development_v3` 使用固定配置；本次只额外取得运行中与结束时快照，两者 UUID/文档数 **59,730** 一致，**没有把该快照冒充实验前快照**。未启动解析或重建索引。
+- 沿用 MyGO 13 集资料，返回证据仍有 `partial=true`、第 2 集覆盖不足等限制。Chunk 索引 `seekino_video_chunks_local_20261010_development` 的实验前后 UUID 和 **71,736** 文档数一致。Event 索引 `seekino_video_events_development_v3` 使用固定配置；本次只额外取得运行中与结束时快照，两者 UUID/文档数 **59,730** 一致，**没有把该快照冒充实验前快照**。未启动解析或重建索引。
 - 逐条审读 HTTP 文本、过程顺序、工具参数/证据、提交片段和返回卡片描述，见 [reviews.json](../../outputs/verification/query-hook-chat-model-ab-20261024/reviews.json)。`pass` 为完整处理当前任务且说法与证据一致，`partial` 为近似片段、回应错位、时间/片段描述错误或越过证据，`fail` 为错目标、漏任务或超时。没有把标签正确、工具返回成功当作业务通过。对话措辞存在审读判断，例如 low 第二次“并非明确排斥”按未明确表达排斥判通过；none 第二次 C19 转为品评用户原句判部分。未做独立人工盲评，不能把这些分数包装成客观大样本正确率。
 - 正例锚点包括第 13 集 54.6–56 秒「いいご身分ですわね。」和第 7 集 607.7–610.8 秒首次 live 对白。首次登台请求接受经证据确认的同场演出片段，不要求必须截到这句对白，例如 Jev 第二轮提交 840–900 秒的演奏片段可通过；若卡片明确宣称包含这句对白而所选范围没有，则计部分。雨中等人与“说话无趣”两类仅得到近似候选，未确认全剧不存在精确目标，不以索引缺失证明不存在。
 
@@ -2842,3 +3581,100 @@ uv run --no-sync --env-file .env.local python -m evals.parse_harness \
 - ReAct r2 将后续爽世台词的开始时间对齐到 52833 ms 字幕锚点；多次其他输出沿用 48400 ms ASR 起点，相差约 4.43 秒。这里只比较证据时间一致性，未重新听音建立独立发声起止真值。分组输出较少的对白事件仍覆盖全部锚点，不能把事件数直接当召回率。
 
 对当前问题的判断是：**本轮未观察到 Codex 是该 chunk 解析质量的必要条件；也没有证据说明 ReAct 因缺少 Deep Agents 就丢失了字幕覆盖。**当前最明确的循环故障是共享 compact 与固定媒体预算不匹配；改用合理实验预算后，ReAct 和 Deep Agents 都能完成，但同样没有解决关键身份错误。Deep Agents 在这两次样本中耗时和 token 更少，GPT 更快但身份输出不完整且仍有正文误归属。生产简化是否值得上线，仍需修复预算行为、保持业务合同，并在多 chunk/长上下文及已知身份错误集上验收；本轮没有测量维护人时、部署内存或长期 compact 质量，不能把这项局部对照写成全面质量不退化。
+
+<a id="devlog-karpathy-parse-recovery-20261029"></a>
+## 2026-10-29：Karpathy OCR 配置纠正与解析恢复
+
+### 问题与现状
+
+用户发现正式任务连续失败。提交时本机配置仍有 `models.ocr`，8 集快照因此均为 `ocr_enabled=true`，没有落实用户关闭独立 OCR 的要求。前两集的模型调用统计有 9 次 OCR 失败（含截断/网络错误）、6 次成功，Understanding 有 119 次成功返回但 0 个已提交 Chunk。另有图片 token 估算不能向下校准和重启后无生产者的媒体等待问题；这些属于正式链路故障，不能归因于 WhisperX 未部署或 embedding 未就绪。
+
+### 方案候选
+
+先暂停失败运行。撤回临时 OCR 分批处理改动，移除本机独立 OCR 默认绑定；通过正式服务为全部 8 集创建新解析版本，而普通 retry 仍保持旧快照。扩展 reparse 支持已排队或已停止且租约完全回收的任务，保留历史并撤销旧非终态版本的调度资格/容量。Gateway 按 provider 实报校准上下文，媒体等待增加父任务存活检查。保持全部配置帧、ASR 模型及时间合同，不采用降低画面输入的办法掩盖问题。
+
+### 方案验证
+
+659 项定向测试通过：上下文估算/工具反馈、DeepAgents、Parse worker/媒体、UploadService 与持久 Queue。真实运行先拒绝了仍持有子任务租约的第二集；等待实际到期并通过 Queue 回收后，服务完成全部 8 集 v2 创建，没有越过活动租约。23:44 服务加载修复后恢复，8 个新快照的 OCR 均为 false。原始记录见 `outputs/verification/parse-failures-20261029/`；实时提交和模型操作统计记录在 `live-progress.json`，完整整集/索引效果仍待确认。
+
+### 指标对比
+
+| 指标 | 修复前 | 本次验证 | 边界 |
+| --- | --- | --- | --- |
+| 8 集独立 OCR 配置 | 8/8 开启，与要求不符 | 8/8 关闭，模型绑定为空 | 旧版本仍保留原快照，退出调度 |
+| 新证据压缩 | 固定图片估算约 422K，即使实报约 248K 仍释放工具结果 | 对应回归用例保留新证据 | 真实长上下文完成率仍需观察 |
+| 无生产者的媒体等待 | 子任务继续续租等待 | 生产者停止/更换租约用例立即退出 | 保留已就绪媒体复用 |
+| 相关测试 | 已复现上述缺陷 | 659 passed | 不代表模型质量达标 |
+| 内容提交与索引 | 前两集 0 个 Chunk 提交 | 验证进行中 | 不承诺 880 个 Chunk 已完成 |
+
+<a id="devlog-parse-direct-json-20261030"></a>
+## 2026-10-30：Understanding 直接 JSON 与 30k 正式接入
+
+### 问题与现状
+
+此前零工具和 30,000 只在 `evals/parse_protocol_benchmark.py` 生效，正式 Understanding 仍承担 Canvas 读写/核验/完成，默认及实际本机 YAML 仍为 8,192。协议决定未推进到宿主实现，形成实验与正式路径断层。
+
+### 方案候选
+
+按用户点名两项先落地：Understanding 直接生成 `VideoParseResult` JSON，宿主一次校验并原子写 Canvas；Refine 保留工具。复用 Gateway 结构化通道，不新增协议开关。默认和本机 `vision` / `vision_fallback` 改为 30,000，其他角色预算不改。字段精简/SHOT 需独立兼容迁移，本次保留原合同。
+
+### 方案验证
+
+`tests/agent/video_parse_v2`、`tests/server/test_video_parse_worker.py`、`tests/server/test_parse_output_budget.py`、`tests/gateway/test_config.py` 合计 **380 passed**；日志 `outputs/verification/parse-direct-json-20261030/tests.log`。覆盖无工具输入、人物/事件完整往返、词对齐原证据、非法时间整批拒绝、清理/重试、Refine 工具及隔离入库/检索组件链路。预算/配置三文件另有 409 passed；扩展 Gateway 测试有一项已有上下文分支回归失败，未修或宣称全量通过，详见主 TRD §4.9。未重启、未迁移旧任务、未实模验收或测时。
+
+### 指标对比
+
+| 项目 | 修改前 | 修改后 |
+| --- | --- | --- |
+| Understanding 工具职责 | 读/写/回读/完成 | 0 工具；正常成功路径一次 JSON 生成，宿主校验与导入 |
+| 视觉主模型/fallback 输出上限 | 8,192 | 30,000；旧任务冻结值不变 |
+| 维护成本 | 模型维护 Canvas revision/batch/事件操作 | 宿主一次批次导入，Refine 继续复用原工具 |
+| 时长、token、业务质量 | 历史协议实验 | 新正式链路未实测，不宣称提速百分比；输出上限用于避免截断 |
+
+源码在 dev 工作区；服务启动时加载配置，普通重试不会改旧快照。新默认需在服务加载修改后用于新解析版本。
+
+<a id="devlog-node-retry-20261030"></a>
+## 2026-10-30：Understanding 节点自行重试，最终异常停止视频任务
+
+### 问题与现状
+
+hypnos 要求失败节点自行重试，避免 Kimi 理解失败后 Consumer 重排整个 Chunk、连带再次运行已成功的本地 ASR。原链路的观察结果在单次子图内，整块重试无法复用未提交的 ASR。
+
+### 方案候选
+
+采用 Understanding 子图内 ASR、visual、OCR、understanding 分节点有限重试。暂态超时/传输异常使用任务冻结配置的重试次数与退避；总截止时间与持久模型调用预算不重置。最终异常上抛给 Consumer 后，只记录失败并通知，不再重排 Parse Chunk。同视频停止新领取，拒绝兄弟任务续租及迟到的 Chunk/Interval 提交；首个结构化错误保留，前端沿用任务 API/SSE 展示失败阶段和原因。提交不自动重放；进程崩溃恢复及 Index/Refine 策略独立保留。
+
+### 方案验证
+
+Framework、Queue、Worker、模型调用预算、API、SSE、Bootstrap 定向回归 580 passed（59.75 秒）。故障注入验证理解成功恢复与重试耗尽时，ASR/视觉准备均只执行一次；耗尽不提交结果，Consumer 不重排 Parse Chunk，Queue 拒绝兄弟任务续租与新领取，任务 API 返回受控错误。补充 Interval 提交保护后，Worker/Queue 回归 299 passed（12.08 秒）。随后增加并行协调器不能覆盖首个节点错误及迟到 Chunk 提交的用例，最终结果以本条补充记录为准。
+
+未重启服务、未调用真实模型、未迁移或清理真实任务。原生 ASR 已进入的阻塞调用仍需在返回控制点后取消，不能将此次测试写成内存峰值实测改善。手动暂停单视频/全量及任务清理未实施；状态统一见 B22。
+
+### 指标对比
+
+| 指标 | 原路径 | 当前离线证据 |
+| --- | --- | --- |
+| Understanding 超时重试范围 | Consumer 重新调度整个 Chunk | 节点内重试；成功观察复用 |
+| 理解失败后的 ASR 调用 | 整块再次执行可能重复转写 | 恢复/耗尽用例均为 1 次 |
+| 最终失败处理 | 排队直至任务重试耗尽 | 记录首个失败、停止派发、通知前端 |
+| 长视频真实完成率/内存峰值 | 仍有未完成任务 | 本轮未实测，不宣称改善数值 |
+
+最终补充验证：并行协调器错误不覆盖首个 `PARSE_NODE_FAILED`，失败后迟到 Chunk 提交被拒绝；最终 Worker/Queue 回归 **299 passed（14.09 秒）**，`git diff --check` 通过。上述测试集合有重叠，不相加为独立用例总数。
+
+## 2026-10-30：合并 PR #5 后整理 dev 发布
+
+### 问题与现状
+
+hypnos 要求先处理 PR #5 冲突并合入 main，再整理 dev 发布；后续每个 feature 单独分支和 PR。PR #5 的旧 Repository 已被拆分，与当前 Service/DTO 层发生冲突；其历史 EP04 失败记录不能代替后续全量 Chunk 程序门禁的当前状态。
+
+### 方案候选
+
+PR #5 保持原编号，新增逻辑迁入现有 Service，整理为单个规范 feat(parse) 提交后在 GitHub 合并。dev 已验证快照分代码和文档两个提交 push；临时发布分支合入新 main，完整保留 main 的 .gitignore，dev 忽略规则保持原样。发布冲突保留直接 JSON、节点有限重试、全量 Chunk 门禁和 Refine 声纹决策；现行 dev 模型配置优先于旧 PR 配置。
+
+### 方案验证
+
+dev 快照 952 passed。PR #5 初轮组合 1619 passed，旧测试接口迁移后 Worker 223 passed。发布组合初轮 2152 passed；三项旧 Canvas/ASR 测试已适配直接 JSON，Agent 全组 347 passed，另修正 Claude bridge 测试的旧命名。Gateway fallback-budget 用例在未修改 main 同样失败，保留基线限制，不修改断言掩盖失败。没有重启服务或运行真实模型；PR 与提交号以 GitHub 为准。
+
+### 指标对比
+
+PR #5 从 12 个不统一标题的提交整理为一个 feat(parse) 提交；旧 Repository 不恢复；main 的 ignore 文件以 blob 身份核验不变。发布只合并已存在的工作线，不合入独立的整视频 ASR PR #9。

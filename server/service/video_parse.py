@@ -84,6 +84,7 @@ from gateway.usage import ModelCallCancelledError, model_call_context
 
 from ..config.parse_profile import index_contract_fingerprint
 from ..constants.parse import (
+    RUNTIME_DETAIL_KEY,
     PARSE_RETRIEVAL_CONTRACT, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_LEGACY_METHOD_VERSION,
     VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
     VOICEPRINT_B0_DIMENSIONS,
@@ -712,7 +713,7 @@ class VideoParseRuntimeService:
                              separators=(",", ":"), allow_nan=False).encode()
         checksum = hashlib.sha256(content).hexdigest()
         check_active()
-        with tempfile.TemporaryDirectory(prefix="anivag-voiceprint-") as directory:
+        with tempfile.TemporaryDirectory(prefix="seekino-voiceprint-") as directory:
             path = Path(directory) / "scoring.json"
             path.write_bytes(content)
             check_active()
@@ -1040,17 +1041,16 @@ class VideoParseRuntimeService:
             await cleanup_execution(transport.close)
         if not isinstance(analysis, TranscriptAnalysis):
             analysis = TranscriptAnalysis.model_validate(analysis)
-        return {
-            "transcript": [
-                {
-                    "start_seconds": cue.start_seconds + execution.allowed_start_seconds,
-                    "end_seconds": cue.end_seconds + execution.allowed_start_seconds,
-                    "text": cue.text,
-                    "speaker_id": cue.speaker_id,
-                }
-                for cue in analysis.transcript
-            ]
-        }
+        result = analysis.model_dump()
+        offset = execution.allowed_start_seconds
+        for cue in result["transcript"]:
+            cue["start_seconds"] += offset
+            cue["end_seconds"] += offset
+            for word in cue.get("words", []):
+                for key in ("start_ms", "end_ms"):
+                    if word[key] is not None:
+                        word[key] += offset
+        return result
 
     async def read_chunk_text(self, execution: ChunkExecution) -> OCRResult:
         media = await self._ensure_chunk_media(execution)
@@ -1081,7 +1081,6 @@ class VideoParseRuntimeService:
         asr_result: ASRResult,
         ocr_result: OCRResult | None,
         prompt: str,
-        canvas: ParseContextCanvas,
     ) -> VideoParseResult:
         del asr_result, ocr_result
         media = await self._ensure_chunk_media(execution)
@@ -1123,18 +1122,13 @@ class VideoParseRuntimeService:
                 + str([timestamp for timestamp, _path in media.frames])
             )),
         ]
-        receipt = await self._generate_multimodal(
+        return await self._generate_multimodal(
             execution.inputs.parse_config.models.understanding,
             media_inputs,
             fallback_inputs=fallback_inputs,
             schema_name="video_parse_v2_chunk",
-            result_type=CanvasCompletion,
-            tools=self._canvas_tools(canvas), canvas=canvas,
-            max_model_calls=execution.inputs.parse_config.execution.max_model_calls,
-            tool_harness="deepagents",
+            result_type=VideoParseResult,
         )
-        CanvasCompletion.model_validate(receipt)
-        return canvas.result(execution.chunk_parse_task_id)
 
     async def commit_chunk_result(
         self,
@@ -1878,6 +1872,9 @@ class VideoParseRuntimeService:
                 start_ms=execution.allowed_start_seconds,
                 end_ms=execution.allowed_end_seconds,
                 check_active=lambda: self._require_chunk_active(binding.lease),
+                check_preparing=lambda: self._require_episode_preparing(
+                    execution.video_parse_task_id, binding.state.task_input.task.lease_version,
+                ),
             )
             try:
                 media = await self._run_blocking(context.__enter__)
@@ -1887,6 +1884,14 @@ class VideoParseRuntimeService:
             binding.media_context = context
             binding.media = media
             return media
+
+    def _require_episode_preparing(self, task_id: str, video_lease_version: int) -> None:
+        task = self._persistence.load_task_input(task_id).task
+        runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY, {})
+        if (task.lease_version != video_lease_version or task.lease_owner is None
+                or task.status not in {"PREPARING", "PARSING"}
+                or runtime.get("failure_status") is not None):
+            raise VideoParseLeaseLostError("Episode media producer stopped or changed lease")
 
     # Model and indexing assembly ------------------------------------------
 
@@ -2224,7 +2229,9 @@ class VideoParseRuntimeService:
                 )
                 event_contract = self._event_contract
                 assert event_contract is not None
-                if (encoder != event_contract.semantic_encoder or encoder != event_contract.vision_encoder):
+                if (encoder != event_contract.semantic_encoder
+                        or (event_contract.vision_encoder is not None and encoder != event_contract.vision_encoder)
+                        or (event_contract.vision_encoder is not None) != (embedding.input_mode == "multimodal")):
                     raise ValueError("task encoder differs from the configured Event index")
                 configured = {"index_name": self._event_store.index_name,
                               "contract_id": event_contract.contract_id, "contract": event_contract.as_dict()}
@@ -2255,13 +2262,13 @@ class VideoParseRuntimeService:
                         model=embedder.encoder_model,
                         encoder_revision=embedder.encoder_revision,
                         dimensions=dimensions,
-                    ),
+                    ) if embedding.input_mode == "multimodal" else None,
                     visual_input_contract=VideoClipInputContract(
                         fps=embedding.video_fps,
                         max_height=inputs.parse_config.visual_input.max_height,
                         mime_type="video/mp4",
                         preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
-                    ),
+                    ) if embedding.input_mode == "multimodal" else None,
                     index_generation=index_generation,
                     sparse_encoder=(
                         SparseEncoderContract(
@@ -2386,6 +2393,9 @@ class VideoParseRuntimeService:
             lease, lease_duration=self._lease_duration
         ):
             raise VideoParseLeaseLostError("Prefix lease is no longer current")
+
+    def notify_task_failed(self, video_parse_task_id: str) -> None:
+        self._notify_change(video_parse_task_id)
 
     def _notify_change(self, video_parse_task_id: str) -> None:
         event = self._change_events.get(video_parse_task_id)

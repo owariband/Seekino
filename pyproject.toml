@@ -1,5 +1,5 @@
 [project]
-name = "anivag"
+name = "seekino"
 version = "0.1.0"
 description = "Event-level multimodal video retrieval application"
 readme = "README.md"
@@ -18,6 +18,7 @@ dependencies = [
     "langchain-openai>=1.1,<2",
     "langgraph>=1.2,<2",
     "langgraph-checkpoint-mysql[pymysql]==3.0.0",
+    "mcp==2.2.0",
     "openai>=1.66,<3",
     "openai-codex==0.156.1",
     "opentelemetry-api==1.45.0",
@@ -33,6 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+whisperx = [
+    "whisperx==3.8.6",
+]
 speaker = [
     "numpy==2.2.6",
     "scipy==1.15.3",

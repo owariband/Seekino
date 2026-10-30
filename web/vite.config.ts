@@ -2,22 +2,22 @@ import { createHash } from "node:crypto";
 import { defineConfig, loadEnv, type Plugin, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 
-const apiTarget = `http://${process.env.ANIVAG_HTTP_HOST || "127.0.0.1"}:${process.env.ANIVAG_HTTP_PORT || "9621"}`;
+const apiTarget = `http://${process.env.SEEKINO_HTTP_HOST || "127.0.0.1"}:${process.env.SEEKINO_HTTP_PORT || "9621"}`;
 
-export function remoteDevelopmentProxy(targetValue: string, upstreamCookie = "anivag_auth") {
+export function remoteDevelopmentProxy(targetValue: string, upstreamCookie = "seekino_auth") {
   const target = new URL(targetValue);
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
   if ((target.protocol !== "https:" && !(target.protocol === "http:" && loopback))
     || target.username || target.password || target.pathname !== "/" || target.search || target.hash) {
-    throw new Error("ANIVAG_REMOTE_API_URL must be an HTTPS origin (HTTP is allowed only for loopback development)");
+    throw new Error("SEEKINO_REMOTE_API_URL must be an HTTPS origin (HTTP is allowed only for loopback development)");
   }
   if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/.test(upstreamCookie)) {
-    throw new Error("ANIVAG_REMOTE_COOKIE_NAME must be a valid session cookie name");
+    throw new Error("SEEKINO_REMOTE_COOKIE_NAME must be a valid session cookie name");
   }
   const cookieScope = createHash("sha256").update(`${target.origin}:${upstreamCookie}`).digest("hex").slice(0, 16);
-  const browserCookie = `anivag_remote_${cookieScope}`;
+  const browserCookie = `seekino_remote_${cookieScope}`;
   const plugin: Plugin = {
-    name: "anivag-remote-development-proxy",
+    name: "seekino-remote-development-proxy",
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         if (!/^\/remote(?:\/|\?|$)/.test(request.url || "")) return next();
@@ -92,8 +92,8 @@ export function remoteDevelopmentProxy(targetValue: string, upstreamCookie = "an
 
 export default defineConfig(({ command, mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ""), ...process.env };
-  const remote = command === "serve" && env.ANIVAG_REMOTE_API_URL?.trim()
-    ? remoteDevelopmentProxy(env.ANIVAG_REMOTE_API_URL.trim(), env.ANIVAG_REMOTE_COOKIE_NAME || "anivag_auth")
+  const remote = command === "serve" && env.SEEKINO_REMOTE_API_URL?.trim()
+    ? remoteDevelopmentProxy(env.SEEKINO_REMOTE_API_URL.trim(), env.SEEKINO_REMOTE_COOKIE_NAME || "seekino_auth")
     : undefined;
   return {
     plugins: [react(), ...(remote ? [remote.plugin] : [])],

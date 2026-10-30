@@ -26,7 +26,7 @@ interface AttachmentScope {
   entries: Map<string, AttachmentEntry>;
 }
 
-const attachmentIdentityKey = () => identityStorageKey("anivag-agent-attachments");
+const attachmentIdentityKey = () => identityStorageKey("seekino-agent-attachments");
 
 function releaseEntry(scope: AttachmentScope, id: string): void {
   const entry = scope.entries.get(id);

@@ -123,7 +123,9 @@ class VideoParseIndexCoordinator:
     ) -> None:
         if store.semantic_dimensions != contract.semantic_encoder.dimensions:
             raise ValueError("semantic dimensions differ between contract and store")
-        if store.vision_dimensions != contract.vision_encoder.dimensions:
+        if getattr(store, "vision_enabled", True) != (contract.vision_encoder is not None):
+            raise ValueError("vision mode differs between contract and store")
+        if contract.vision_encoder is not None and store.vision_dimensions != contract.vision_encoder.dimensions:
             raise ValueError("vision dimensions differ between contract and store")
         if isinstance(contract.visual_input_contract, OrderedFramesInputContract):
             raise ValueError(
@@ -132,7 +134,7 @@ class VideoParseIndexCoordinator:
         if contract.sparse_encoder is not None and not callable(getattr(embedder, "embed_sparse", None)):
             raise ValueError("the configured sparse encoder requires a Gateway sparse adapter")
         visual_contract = contract.visual_input_contract
-        if (
+        if visual_contract is not None and (
             visual_contract.mime_type != "video/mp4"
             or visual_contract.preprocess_revision
             != VIDEO_CLIP_PREPROCESS_REVISION
@@ -335,39 +337,41 @@ class VideoParseIndexCoordinator:
                         entry["semantic_artifacts"] = semantic_cache
                         pending[plan.event_id] = entry
                     semantic.append(artifact)
-                source = self._media_resolver(chunk.source_media_ref)
-                with self._media_service.prepare_event_frames(
-                    identity, source_video=source, timestamps_ms=plan.frame_timestamps_ms,
-                    max_height=contract.capture.max_height, check_active=self._check_active,
-                ) as paths:
-                    frames = tuple(CaptureFrame(requested_at_ms=timestamp, image_sha256=_file_sha256(path))
-                                   for timestamp, path in paths)
-                    requests = plan_event_frame_embeddings(contract.vision_encoder, frames, contract.capture)
-                    frame_cache = entry.get("frame_artifacts", {})
-                    frame_cache = dict(frame_cache) if isinstance(frame_cache, Mapping) else {}
-                    artifacts = []
-                    for request, (_, path) in zip(requests, paths, strict=True):
-                        self._check_active()
-                        key = request.encoder_id + ":" + request.input_sha256
-                        vector = image_vectors.get(key, frame_cache.get(key))
-                        artifact = None
-                        if vector is not None:
-                            try:
-                                artifact = accept_event_frame_embedding(request, modality="image",
-                                    model=request.encoder.model, vector=vector)
-                            except (TypeError, ValueError):
-                                pass
-                        if artifact is None:
-                            with parse_chunk_scope(chunk.sequence_no, category="embedding"):
-                                result = self._embedder.embed_image(path)
-                            artifact = accept_event_frame_embedding(request, modality=result.modality,
-                                model=result.model, vector=result.vector)
-                            frame_cache[key] = list(artifact.vector)
-                            entry["frame_artifacts"] = frame_cache
-                            pending[plan.event_id] = entry
-                        image_vectors[key] = artifact.vector
-                        artifacts.append(artifact)
-                    vision = aggregate_event_frame_embeddings(requests, artifacts, contract.capture)
+                vision, frames = None, ()
+                if contract.vision_encoder is not None:
+                    source = self._media_resolver(chunk.source_media_ref)
+                    with self._media_service.prepare_event_frames(
+                        identity, source_video=source, timestamps_ms=plan.frame_timestamps_ms,
+                        max_height=contract.capture.max_height, check_active=self._check_active,
+                    ) as paths:
+                        frames = tuple(CaptureFrame(requested_at_ms=timestamp, image_sha256=_file_sha256(path))
+                                       for timestamp, path in paths)
+                        requests = plan_event_frame_embeddings(contract.vision_encoder, frames, contract.capture)
+                        frame_cache = entry.get("frame_artifacts", {})
+                        frame_cache = dict(frame_cache) if isinstance(frame_cache, Mapping) else {}
+                        artifacts = []
+                        for request, (_, path) in zip(requests, paths, strict=True):
+                            self._check_active()
+                            key = request.encoder_id + ":" + request.input_sha256
+                            vector = image_vectors.get(key, frame_cache.get(key))
+                            artifact = None
+                            if vector is not None:
+                                try:
+                                    artifact = accept_event_frame_embedding(request, modality="image",
+                                        model=request.encoder.model, vector=vector)
+                                except (TypeError, ValueError):
+                                    pass
+                            if artifact is None:
+                                with parse_chunk_scope(chunk.sequence_no, category="embedding"):
+                                    result = self._embedder.embed_image(path)
+                                artifact = accept_event_frame_embedding(request, modality=result.modality,
+                                    model=result.model, vector=result.vector)
+                                frame_cache[key] = list(artifact.vector)
+                                entry["frame_artifacts"] = frame_cache
+                                pending[plan.event_id] = entry
+                            image_vectors[key] = artifact.vector
+                            artifacts.append(artifact)
+                        vision = aggregate_event_frame_embeddings(requests, artifacts, contract.capture)
                 document = finalize_event_index(plan, semantic, vision, frames)
                 entry = {**proof, "semantic_inputs": semantic_inputs, "document": document.as_source()}
                 pending[plan.event_id] = entry
@@ -411,26 +415,28 @@ class VideoParseIndexCoordinator:
         self._check_active()
         result = VideoParseResult.model_validate(chunk.content)
         visual_contract = self.contract.visual_input_contract
-        if not isinstance(visual_contract, VideoClipInputContract):
+        if visual_contract is not None and not isinstance(visual_contract, VideoClipInputContract):
             raise VideoParseIndexCoordinationError(
                 "the current Server adapter requires a video-clip input contract"
             )
 
-        source_video = self._media_resolver(chunk.source_media_ref)
         media_identity = MediaLeaseIdentity(
             snapshot.video_parse_task_id,
             chunk.chunk_parse_task_id,
             lease.lease_version,
             execution_kind="chunk",
         )
-        with self._media_service.prepare_video_segment(
-            media_identity,
-            source_video=source_video,
-            start_seconds=chunk.start_seconds,
-            end_seconds=chunk.end_seconds,
-            max_height=visual_contract.max_height,
-            check_active=self._check_active,
-        ) as video_path:
+        media_context = contextlib.nullcontext(None)
+        if visual_contract is not None:
+            media_context = self._media_service.prepare_video_segment(
+                media_identity,
+                source_video=self._media_resolver(chunk.source_media_ref),
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                max_height=visual_contract.max_height,
+                check_active=self._check_active,
+            )
+        with media_context as video_path:
             self._check_active()
             plan = plan_chunk_index(
                 ChunkIndexSource(
@@ -451,7 +457,7 @@ class VideoParseIndexCoordinator:
                         max_height=visual_contract.max_height,
                         mime_type=visual_contract.mime_type,
                         preprocess_revision=visual_contract.preprocess_revision,
-                    ),
+                    ) if visual_contract is not None else None,
                 ),
                 self.contract,
             )
@@ -488,7 +494,7 @@ class VideoParseIndexCoordinator:
                 representations[_receipt_key(request)] = _representation(artifact)
                 self._save_representations(lease, chunk, representations, receipt=receipt)
 
-            if "vision" not in artifacts:
+            if plan.vision_request is not None and "vision" not in artifacts:
                 request = plan.vision_request
                 self._check_active()
                 with parse_chunk_scope(chunk.sequence_no, category="embedding"):

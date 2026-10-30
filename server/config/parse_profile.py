@@ -96,14 +96,20 @@ def index_contract_fingerprint(embedding, *, provider: str, encoder_revision: st
         "fps": float(embedding.video_fps),
         "max_height": max_height,
     }
+    if embedding.input_mode != "multimodal":
+        identity["input_mode"] = embedding.input_mode
+    if embedding.query_instruction is not None:
+        identity["query_instruction"] = embedding.query_instruction
     return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def resolve_event_indexing_contract(
-    encoder: EncoderContract, *, max_height: int,
+    encoder: EncoderContract, *, max_height: int, vision_enabled: bool = True,
     environ: Mapping[str, str] | None = None,
 ) -> EventIndexingContract:
     """Resolve Event sampling once; tasks freeze the returned effective contract."""
+    if not vision_enabled:
+        return EventIndexingContract(semantic_encoder=encoder, vision_encoder=None, capture=None)
     environment = os.environ if environ is None else environ
     options: dict[str, Any] = {"max_height": max_height}
     for key, name, convert in (
@@ -221,6 +227,8 @@ class ParseFallbackConfig(ContractModel):
 
 
 class ParseEmbeddingConfig(ContractModel):
+    input_mode: Literal["multimodal", "text"] = "multimodal"
+    query_instruction: str | None = Field(default=None, min_length=1, pattern=r"\S")
     source: str = Field(default="ark_default", min_length=1)
     model: str = Field(min_length=1)
     encoder_model: str | None = Field(default=None, min_length=1)
@@ -369,6 +377,8 @@ class ParseConfig(ContractModel):
                 ocr=self.ocr,
                 prefix_context=None,
                 embedding=VideoParseV2EmbeddingModelConfig(
+                    input_mode=self.embedding.input_mode,
+                    query_instruction=self.embedding.query_instruction,
                     source=self.embedding.source,
                     model=self.embedding.model,
                     encoder_model=self.embedding.encoder_model,
@@ -477,6 +487,7 @@ class ParseConfig(ContractModel):
             dimensions=embedding_dimensions,
             video_fps=embedding_fps if embedding_fps is not None else embedding_binding.video_fps,
         )
+        validate_embedding_sparse_support(gateway, effective_embedding, sparse_enabled=sparse_enabled)
         embedding_info = describe_embedding_model(embedding_binding, gateway.source(embedding_binding.source))
         return cls(
             window=ParseWindowConfig(
@@ -489,7 +500,7 @@ class ParseConfig(ContractModel):
                 source=asr_binding.source,
                 mode=runtime.asr_mode,
                 model=runtime.transcript_model or asr_binding.model,
-                fps=runtime.transcript_fps or float(os.getenv("ANIVAG_TRANSCRIPT_FPS") or parser.transcript_fps),
+                fps=runtime.transcript_fps or float(os.getenv("SEEKINO_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,
                 max_output_tokens=runtime.transcript_max_output_tokens or asr_binding.max_output_tokens,
                 request_timeout_seconds=asr_binding.request_timeout_seconds,
@@ -497,7 +508,7 @@ class ParseConfig(ContractModel):
             vision=ParseVisionConfig(
                 source=vision_binding.source,
                 model=runtime.video_model or vision_binding.model,
-                fps=runtime.video_fps or float(os.getenv("ANIVAG_VIDEO_FPS") or parser.video_fps),
+                fps=runtime.video_fps or float(os.getenv("SEEKINO_VIDEO_FPS") or parser.video_fps),
                 input_mode=vision_input_mode,
                 max_frames_per_window=vision_max_frames,
                 max_output_tokens=runtime.video_max_output_tokens or vision_binding.max_output_tokens,
@@ -551,15 +562,28 @@ class ParseConfig(ContractModel):
         )
 
 
+def validate_embedding_sparse_support(
+    gateway: GatewayConfig, embedding: ParseEmbeddingConfig, *, sparse_enabled: bool,
+) -> None:
+    if not sparse_enabled:
+        return
+    source = gateway.source(embedding.source)
+    if not adapter_capabilities(source.adapter).sparse_embedding:
+        raise ValueError(
+            f"embedding source {embedding.source!r} ({source.adapter}) does not support sparse embeddings; "
+            "SEEKINO_RETRIEVAL_SPARSE_WEIGHT must be 0 for this source"
+        )
+
+
 def resolve_embedding_config(
     gateway: GatewayConfig, *, dimensions: int,
     model: str | None = None, video_fps: float | None = None,
 ) -> ParseEmbeddingConfig:
     environment = dict(os.environ)
     if model is not None:
-        environment.pop("ANIVAG_VIDEO_EMBEDDING_MODEL", None)
+        environment.pop("SEEKINO_VIDEO_EMBEDDING_MODEL", None)
     if video_fps is not None:
-        environment.pop("ANIVAG_VIDEO_EMBEDDING_FPS", None)
+        environment.pop("SEEKINO_VIDEO_EMBEDDING_FPS", None)
     definition = gateway.resolve_embedding_binding(environ=environment)
     updates = {"dimensions": dimensions}
     if model is not None:
@@ -568,6 +592,7 @@ def resolve_embedding_config(
         updates["video_fps"] = video_fps
     definition = gateway.resolve_embedding_binding(definition.model_copy(update=updates))
     return ParseEmbeddingConfig(
+        input_mode=definition.input_mode, query_instruction=definition.query_instruction,
         source=definition.source, model=definition.model,
         encoder_model=definition.encoder_model, dimensions=definition.dimensions,
         video_fps=definition.video_fps,

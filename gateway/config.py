@@ -122,6 +122,26 @@ class ArkModelSourceConfig(BaseModel):
     api_key_env: _NonEmptyString = "ARK_API_KEY"
 
 
+class OllamaEmbeddingSourceConfig(BaseModel):
+    """Ollama's native text embedding API; local HTTP needs no API key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: Literal["ollama_embedding"] = "ollama_embedding"
+    provider: Literal["ollama"] = "ollama"
+    base_url: _AudioBaseUrl
+
+
+class LlamaCppEmbeddingSourceConfig(BaseModel):
+    """Local llama.cpp OpenAI-compatible embedding endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: Literal["llama_cpp_embedding"] = "llama_cpp_embedding"
+    provider: Literal["llama_cpp"] = "llama_cpp"
+    base_url: _AudioBaseUrl
+
+
 class OpenAIAudioSourceConfig(BaseModel):
     """Audio Transcriptions protocol, independent of Chat Completions."""
 
@@ -131,6 +151,29 @@ class OpenAIAudioSourceConfig(BaseModel):
     base_url: _AudioBaseUrl
     api_key_env: _NonEmptyString
     response_format: Literal["verbose_json", "json"] = "verbose_json"
+
+
+class WhisperXSourceConfig(BaseModel):
+    """Optional in-process ASR and forced alignment using user-installed weights."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: Literal["whisperx"] = "whisperx"
+    provider: Literal["local"] = "local"
+    device: Literal["cpu", "cuda"] = "cpu"
+    compute_type: Literal["int8", "float32", "float16", "int8_float16"] = "int8"
+    batch_size: int = Field(default=8, ge=1, le=64, strict=True)
+    cpu_threads: int = Field(default=6, ge=1, le=64, strict=True)
+    language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
+    alignment_models: dict[Annotated[str, Field(pattern=r"^[a-z]{2,3}$")], _NonEmptyString] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_local_alignment(self) -> "WhisperXSourceConfig":
+        if self.device == "cpu" and self.compute_type not in {"int8", "float32"}:
+            raise ValueError("WhisperX CPU requires int8 or float32")
+        if self.language is not None and self.language not in self.alignment_models:
+            raise ValueError("WhisperX language requires a configured alignment model")
+        return self
 
 
 class OpenAIVisionSourceConfig(BaseModel):
@@ -189,8 +232,11 @@ ModelSourceConfig = (
     | CodexModelSourceConfig
     | ClaudeCodeModelSourceConfig
     | OpenAIAudioSourceConfig
+    | WhisperXSourceConfig
     | OpenAIVisionSourceConfig
     | CampPlusModelSourceConfig
+    | OllamaEmbeddingSourceConfig
+    | LlamaCppEmbeddingSourceConfig
 )
 _ModelSourceConfigField = Annotated[
     ModelSourceConfig,
@@ -222,6 +268,8 @@ class EmbeddingModelBinding(ModelBinding):
     dimensions: int = Field(ge=1, le=2048)
     video_fps: float = Field(ge=0.2, le=5.0)
     encoder_model: _NonEmptyString | None = None
+    input_mode: Literal["multimodal", "text"] = "multimodal"
+    query_instruction: _NonEmptyString | None = None
 
 
 class AgentFallbackConfig(BaseModel):
@@ -551,6 +599,12 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{ref} does not support adapter {source.adapter!r} for {kind}")
         if kind == "embedding" and not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"{ref} embedding binding requires dimensions and video_fps")
+        if isinstance(binding, EmbeddingModelBinding):
+            if isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig)):
+                if binding.input_mode != "text":
+                    raise ValueError(f"{source.adapter} requires input_mode=text")
+            elif binding.query_instruction is not None:
+                raise ValueError("query_instruction is only supported by local text embedding adapters")
         if binding.supports_vision_input and capabilities.visual_input_mode is None:
             raise ValueError(f"adapter {source.adapter!r} does not support image input")
         supports_reasoning = capabilities.supports_reasoning_effort and not (
@@ -634,28 +688,28 @@ class GatewayConfig(BaseModel):
                 raise ValueError(f"model binding {ref!r} is not configured") from error
         environment = os.environ if environ is None else environ
         model_keys = {
-            "transcription": ("ANIVAG_TRANSCRIPT_MODEL",),
-            "vision": ("ANIVAG_VIDEO_MODEL",),
-            "agent": ("ANIVAG_AGENT_CHAT_MODEL", "ANIVAG_DEEPSEEK_CHAT_MODEL"),
-            "chat": ("ANIVAG_AGENT_CHAT_MODEL", "ANIVAG_DEEPSEEK_CHAT_MODEL"),
-            "query": ("ANIVAG_AGENT_QUERY_MODEL",),
-            "evaluator": ("ANIVAG_AGENT_EVALUATOR_MODEL",),
-            "agent_fallback": ("ANIVAG_AGENT_FALLBACK_MODEL",),
-            "rerank": ("ANIVAG_RERANK_MODEL",),
+            "transcription": ("SEEKINO_TRANSCRIPT_MODEL",),
+            "vision": ("SEEKINO_VIDEO_MODEL",),
+            "agent": ("SEEKINO_AGENT_CHAT_MODEL", "SEEKINO_DEEPSEEK_CHAT_MODEL"),
+            "chat": ("SEEKINO_AGENT_CHAT_MODEL", "SEEKINO_DEEPSEEK_CHAT_MODEL"),
+            "query": ("SEEKINO_AGENT_QUERY_MODEL",),
+            "evaluator": ("SEEKINO_AGENT_EVALUATOR_MODEL",),
+            "agent_fallback": ("SEEKINO_AGENT_FALLBACK_MODEL",),
+            "rerank": ("SEEKINO_RERANK_MODEL",),
         }
         selected = next((environment[key].strip() for key in model_keys.get(ref, ()) if environment.get(key, "").strip()), None)
         updates = {"model": selected} if selected else {}
         if configured_ref == "agent" and binding.fallback is not None:
-            fallback_model = environment.get("ANIVAG_AGENT_FALLBACK_MODEL", "").strip()
+            fallback_model = environment.get("SEEKINO_AGENT_FALLBACK_MODEL", "").strip()
             if fallback_model:
                 updates["fallback"] = binding.fallback.model_copy(update={"model": fallback_model})
         if configured_ref == "vision":
-            enabled = environment.get("ANIVAG_FALLBACK_ENABLED")
+            enabled = environment.get("SEEKINO_FALLBACK_ENABLED")
             fallback_enabled = self.video_parser.fallback.enabled
             if enabled is not None:
                 normalized = enabled.strip().lower()
                 if normalized not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
-                    raise ValueError("ANIVAG_FALLBACK_ENABLED must be a boolean value")
+                    raise ValueError("SEEKINO_FALLBACK_ENABLED must be a boolean value")
                 fallback_enabled = normalized in {"1", "true", "yes", "on"}
             updates["fallback"] = (
                 binding.fallback if "fallback" in binding.model_fields_set
@@ -673,8 +727,8 @@ class GatewayConfig(BaseModel):
         if not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"model binding {ref!r} is not an embedding binding")
         environment = os.environ if environ is None else environ
-        selected = environment.get("ANIVAG_VIDEO_EMBEDDING_MODEL", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
-        fps = environment.get("ANIVAG_VIDEO_EMBEDDING_FPS", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        selected = environment.get("SEEKINO_VIDEO_EMBEDDING_MODEL", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        fps = environment.get("SEEKINO_VIDEO_EMBEDDING_FPS", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
         # Import only after config types are initialized: model_sources consumes them.
         from gateway.model_sources import ModelReference, ModelReferenceType
         configured = self.normalized_models["embedding"]
@@ -1039,7 +1093,7 @@ def _legacy_agent_config(
 
 
 def resolve_config_path(config_path: str | Path | None = None) -> Path:
-    configured_path = config_path or os.getenv("ANIVAG_MODEL_CONFIG")
+    configured_path = config_path or os.getenv("SEEKINO_MODEL_CONFIG")
     return Path(configured_path or _DEFAULT_CONFIG_PATH).expanduser().resolve()
 
 

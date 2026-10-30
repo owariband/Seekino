@@ -60,7 +60,8 @@ def test_episode_prepares_before_consumers_and_links_survive_owner_cleanup(tmp_p
         assert len(rows) == 3
         assert [t for t, _ in rows[0]["ocr_frames"]] == [166, 500, 833]
         assert [t for t, _ in rows[2]["ocr_frames"]] == [2125, 2375]
-        assert sum("-filter_script:v" in command for command in commands) == 1
+        assert sum(any(flag in command for flag in ("-filter_script:v", "-/filter:v"))
+                   for command in commands) == 1
         if not video_required:
             assert len(commands) == 2  # one whole audio decode and one whole video decode
             assert not list(manifest.parent.glob("*.mp4"))
@@ -76,6 +77,22 @@ def test_episode_prepares_before_consumers_and_links_survive_owner_cleanup(tmp_p
     assert media.audio_path.is_file() and all(path.is_file() for _, path in media.frames)
     consumer.__exit__(None, None, None)
     assert not media.audio_path.exists()
+
+
+def test_episode_wait_stops_when_producer_has_failed(tmp_path):
+    service = VideoParseMediaService(tmp_path / "media")
+    checks = []
+
+    def stopped():
+        raise RuntimeError("producer stopped")
+
+    with pytest.raises(RuntimeError, match="producer stopped"):
+        with service.use_episode_chunk(
+            _identity(), video_lease_version=1, sequence_no=0, start_ms=0, end_ms=1000,
+            check_active=lambda: checks.append("consumer alive"), check_preparing=stopped,
+        ):
+            pytest.fail("missing episode must not be published")
+    assert checks == ["consumer alive"]
 
 
 def test_episode_decode_failure_never_publishes_partial_assets(tmp_path, monkeypatch):

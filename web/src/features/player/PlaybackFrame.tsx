@@ -62,7 +62,7 @@ function Frame({ src, positionSeconds, poster, className, eager = false }: Playb
   }, [active, src, positionSeconds, failed]);
 
   return <span ref={wrapperRef} className={className}>
-    {poster ? <img key={poster} src={poster} alt="" style={{ ...imageStyle, visibility: ready ? "hidden" : "visible" }} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
+    {poster ? <img key={poster} src={poster} alt="" loading={eager ? "eager" : "lazy"} style={{ ...imageStyle, visibility: ready ? "hidden" : "visible" }} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
     {active && src && !failed ? <video ref={videoRef} muted playsInline preload={eager ? "auto" : "metadata"} aria-hidden="true" tabIndex={-1}
       style={{ ...imageStyle, visibility: ready ? "visible" : "hidden", opacity: ready ? 1 : 0 }} /> : null}
   </span>;

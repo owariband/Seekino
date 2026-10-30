@@ -17,9 +17,9 @@ interface LegacyWatchProgress {
   updatedAt: number;
 }
 
-const STORAGE_KEY = "anivag-watch-progress:v3";
-const SECONDS_STORAGE_KEY = "anivag-watch-progress:v2";
-const LEGACY_STORAGE_KEY = "anivag-watch-progress:v1";
+const STORAGE_KEY = "seekino-watch-progress:v3";
+const SECONDS_STORAGE_KEY = "seekino-watch-progress:v2";
+const LEGACY_STORAGE_KEY = "seekino-watch-progress:v1";
 const MAX_HISTORY = 100;
 
 function isWatchProgress(value: unknown): value is WatchProgress {

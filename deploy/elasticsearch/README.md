@@ -20,14 +20,14 @@ bash deploy/elasticsearch/start.sh
 本地 `.env.local` 连接配置：
 
 ```dotenv
-ANIVAG_ELASTICSEARCH_URL=http://127.0.0.1:9200
-ANIVAG_ELASTICSEARCH_INDEX=anivag_video_chunks_v2_development
-ANIVAG_ELASTICSEARCH_INDEX_GENERATION=1
-ANIVAG_TEST_ELASTICSEARCH_URL=http://127.0.0.1:9200
+SEEKINO_ELASTICSEARCH_URL=http://127.0.0.1:9200
+SEEKINO_ELASTICSEARCH_INDEX=seekino_video_chunks_v2_development
+SEEKINO_ELASTICSEARCH_INDEX_GENERATION=1
+SEEKINO_TEST_ELASTICSEARCH_URL=http://127.0.0.1:9200
 ```
 
-如设置 `ANIVAG_ELASTICSEARCH_PORT`，须同时调整以上 URL。
-集成测试自行创建 UUID 命名的 `anivag_test_*` 索引并只清理自身索引，不使用开发索引。
+如设置 `SEEKINO_ELASTICSEARCH_PORT`，须同时调整以上 URL。
+集成测试自行创建 UUID 命名的 `seekino_test_*` 索引并只清理自身索引，不使用开发索引。
 
 ```bash
 curl --noproxy '*' http://127.0.0.1:9200/_cluster/health
@@ -61,6 +61,6 @@ uv run --no-sync --env-file .env.local pytest -q tests/server/test_elasticsearch
 `:9200` 未监听，未恢复该节点，未启动 MySQL / API / Consumer / Web 或调用真实模型。
 真实 MySQL Schema、V2 mode 和产品上传仍待下一批检查；07B / 08A 尚未完整验收。
 
-问题与证明边界见 [VP2-007](../../docs/design/potential_problems.md#vp2-007真实-es-mapping-默认分词器被-server-校验误拒绝)。
+问题与证明边界见 [VP2-007](../../docs/design/02-agent-harness/potential_problems.md#vp2-007真实-es-mapping-默认分词器被-server-校验误拒绝)。
 
 安装方法：[Elastic 官方 archive 文档](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/targz.html)。

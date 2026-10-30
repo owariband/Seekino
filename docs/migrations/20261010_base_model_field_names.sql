@@ -1,4 +1,4 @@
--- AniVAG controlled MySQL 8.0.16+ migration: 24 identity/V2 business tables.
+-- Seekino controlled MySQL 8.0.16+ migration: 24 identity/V2 business tables.
 -- Prepared SQL only. Stop API/Worker/queue writes, release leases, take and verify
 -- a restorable backup, select the intended database, then use a client that stops
 -- on errors. Never use mysql --force. The application never executes this file.
@@ -53,7 +53,7 @@ BEGIN
     IF @@SESSION.group_concat_max_len < 1024 THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'use an utf8mb4 client with group_concat_max_len at least 1024';
     END IF;
-    SET migration_lock = CONCAT('anivag-base-model:', LEFT(SHA2(DATABASE(), 256), 40));
+    SET migration_lock = CONCAT('seekino-base-model:', LEFT(SHA2(DATABASE(), 256), 40));
     SELECT GET_LOCK(migration_lock, 0) INTO lock_acquired;
     IF lock_acquired <> 1 THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'another BaseModel migration owns the database migration lock';

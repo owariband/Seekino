@@ -583,7 +583,7 @@ class SupervisorRuntime:
             if len(tasks) == 1:
                 reports = [investigate(task_inputs[0])]
             else:
-                with ThreadPoolExecutor(max_workers=len(tasks), thread_name_prefix="anivag-query") as executor:
+                with ThreadPoolExecutor(max_workers=len(tasks), thread_name_prefix="seekino-query") as executor:
                     futures = {executor.submit(copy_context().run, investigate, scoped): index
                                for index, scoped in enumerate(task_inputs)}
                     reports = [None] * len(tasks)
@@ -1005,7 +1005,7 @@ class SupervisorRuntime:
              "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。\n"
              if realtime_available else "")
             +
-            "你是 anivag 对话助手，负责理解当前请求、按需取证并回应用户。\n"
+            "你是 seekino 对话助手，负责理解当前请求、按需取证并回应用户。\n"
             "先理解当前用户消息，再决定是否需要工具。历史用于理解指代和已有信息，不自动延续上一轮的检索目标；"
             "区分用户对你的反馈、处理已有文字的要求，以及查找视频证据的要求，这些事项可以同时存在。\n"
             "仅评价你的回答或纠正你的理解时，直接回应这项反馈即可。不要把反馈当作待查台词，"

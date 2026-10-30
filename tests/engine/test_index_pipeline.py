@@ -59,6 +59,33 @@ def _result(text: str = "我没事") -> VideoParseResult:
     })
 
 
+def test_text_only_plan_uses_only_semantic_artifact_and_keeps_source_identity():
+    contract = replace(_contract(), vision_encoder=None, visual_input_contract=None)
+    source = replace(_source(), visual_input=None)
+    plan = plan_chunk_index(source, contract)
+    assert plan.vision_request is None
+    assert [request.channel for request in plan.encoding_requests] == ["semantic"]
+    document = finalize_chunk_index(plan, _dense_artifacts(plan))
+    assert document.vision_vector is None
+    assert document.ordered_frames_manifest is None
+    assert document.semantic_vector is not None
+    assert document.parse_task_id == source.parse_task_id
+    assert document.content_version == source.content_version
+    assert document.receipt.index_generation == contract.index_generation
+    with pytest.raises(ValueError, match="artifacts do not match"):
+        finalize_chunk_index(plan, [])
+
+
+def test_visual_contract_must_be_enabled_as_a_pair_and_match_source_mode():
+    with pytest.raises(ValueError, match="enabled together"):
+        replace(_contract(), vision_encoder=None)
+    with pytest.raises(ValueError, match="requires visual input"):
+        plan_chunk_index(replace(_source(), visual_input=None), _contract())
+    text_contract = replace(_contract(), vision_encoder=None, visual_input_contract=None)
+    with pytest.raises(ValueError, match="must not declare visual input"):
+        plan_chunk_index(_source(), text_contract)
+
+
 def _clip_contract(**updates: object) -> VideoClipInputContract:
     values = {
         "fps": 1.0,

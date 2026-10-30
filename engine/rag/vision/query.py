@@ -27,6 +27,8 @@ def plan_visual_query_signals(
         query = GifQueryInput.model_validate(query)
     else:
         raise ValueError("visual query requires an image or gif input")
+    if index_contract.vision_encoder is None:
+        raise ValueError("text-only index does not support visual queries")
     if policy.vision_weight <= 0:
         raise ValueError("visual query requires an enabled vision channel")
     binding = None

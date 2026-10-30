@@ -16,7 +16,7 @@ from gateway.tracing import LangfuseTracing
 if TYPE_CHECKING:
     from gateway.model_factory import GatewayClient
 
-from ..config.parse_profile import ParseEmbeddingConfig
+from ..config.parse_profile import ParseEmbeddingConfig, validate_embedding_sparse_support
 from ..config.retrieval import RetrievalConfig
 from ..service.video_parse_persistence import VideoParsePersistenceService
 from ..service.retrieval_rerank import StructuredTextReranker
@@ -48,6 +48,9 @@ def build_retrieval_service(
 ) -> tuple[VideoParseRetrievalService, EncoderContract]:
     from gateway.model_factory import GatewayClient
 
+    validate_embedding_sparse_support(
+        gateway_config, embedding_config, sparse_enabled=retrieval_config.sparse_weight > 0,
+    )
     client = gateway_client if gateway_client is not None else GatewayClient(gateway_config)
     encoder, embedder = _build_query_embedding(
         client, embedding_config, request_timeout_seconds=request_timeout_seconds,
@@ -67,6 +70,8 @@ def build_retrieval_service(
         persistence, store, embedder, semantic_encoder=encoder,
         expected_index_generation=index_generation,
         expected_embedding_source=embedding_config.source,
+        expected_embedding_input_mode=embedding_config.input_mode,
+        expected_query_instruction=embedding_config.query_instruction,
         channel_top_k=retrieval_config.channel_top_k, rrf_k=retrieval_config.rrf_k,
         lexical_weight=retrieval_config.lexical_weight,
         text_weight=retrieval_config.text_weight, vision_weight=retrieval_config.vision_weight,
@@ -91,14 +96,16 @@ def build_event_retrieval_service(
     encoder, embedder = _build_query_embedding(
         client, embedding_config, request_timeout_seconds=request_timeout_seconds,
     )
-    if contract.semantic_encoder != encoder or contract.vision_encoder != encoder:
+    if contract.semantic_encoder != encoder or (
+            contract.vision_encoder is not None and contract.vision_encoder != encoder):
         raise ValueError("Event encoders differ from the declared shared multimodal query binding")
+    vision_weight = retrieval_config.vision_weight if contract.vision_encoder is not None else 0.0
     active = sum(value > 0 for value in (
-        retrieval_config.lexical_weight, retrieval_config.text_weight, retrieval_config.vision_weight,
+        retrieval_config.lexical_weight, retrieval_config.text_weight, vision_weight,
     ))
     policy = RetrievalPolicy(
         lexical_weight=retrieval_config.lexical_weight, semantic_weight=retrieval_config.text_weight,
-        vision_weight=retrieval_config.vision_weight, channel_top_k=retrieval_config.channel_top_k,
+        vision_weight=vision_weight, channel_top_k=retrieval_config.channel_top_k,
         candidate_budget=retrieval_config.candidate_budget or retrieval_config.channel_top_k * active,
         rrf_k=retrieval_config.rrf_k, top_k=1,
     )
@@ -112,6 +119,7 @@ def _build_query_embedding(
     client: GatewayClient, config: ParseEmbeddingConfig, *, request_timeout_seconds: float,
 ) -> tuple[EncoderContract, _LazyQueryEmbedder]:
     binding = EmbeddingModelBinding(
+        input_mode=config.input_mode, query_instruction=config.query_instruction,
         source=config.source, model=config.model, encoder_model=config.encoder_model,
         dimensions=config.dimensions, video_fps=config.video_fps,
         request_timeout_seconds=min(

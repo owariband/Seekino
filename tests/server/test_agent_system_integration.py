@@ -142,24 +142,24 @@ class _QueryEmbedder:
 
 
 @pytest.mark.skipif(
-    not (os.getenv("ANIVAG_TEST_DATABASE_URL") and os.getenv("ANIVAG_TEST_ELASTICSEARCH_URL")),
-    reason="ANIVAG_TEST_DATABASE_URL and ANIVAG_TEST_ELASTICSEARCH_URL are required",
+    not (os.getenv("SEEKINO_TEST_DATABASE_URL") and os.getenv("SEEKINO_TEST_ELASTICSEARCH_URL")),
+    reason="SEEKINO_TEST_DATABASE_URL and SEEKINO_TEST_ELASTICSEARCH_URL are required",
 )
 def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path) -> None:
     engine = create_database_engine(
-        os.environ["ANIVAG_TEST_DATABASE_URL"],
+        os.environ["SEEKINO_TEST_DATABASE_URL"],
         environment=DatabaseEnvironment.TEST,
     )
     session_factory = create_session_factory(engine)
     series_id, video_id, task_id = (str(uuid4()) for _ in range(3))
     tenant_id = "agent-system-ci"
     es_client = Elasticsearch(
-        os.environ["ANIVAG_TEST_ELASTICSEARCH_URL"],
-        api_key=os.getenv("ANIVAG_TEST_ELASTICSEARCH_API_KEY") or None,
+        os.environ["SEEKINO_TEST_ELASTICSEARCH_URL"],
+        api_key=os.getenv("SEEKINO_TEST_ELASTICSEARCH_API_KEY") or None,
         request_timeout=15,
     )
     store = ElasticsearchVideoChunkStore(
-        es_client, index_name=f"anivag_test_{uuid4().hex}",
+        es_client, index_name=f"seekino_test_{uuid4().hex}",
         environment=DatabaseEnvironment.TEST, semantic_dimensions=2, vision_dimensions=2,
     )
     service = None

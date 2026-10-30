@@ -1,4 +1,4 @@
--- AniVAG controlled migration: media timeline milliseconds -> integer seconds.
+-- Seekino controlled migration: media timeline milliseconds -> integer seconds.
 --
 -- This is a stop-the-world migration for the seconds-only m2 pipeline. It
 -- deliberately rebuilds derived parse data instead of teaching runtime code to
@@ -10,7 +10,7 @@
 --   3. Confirm the old *_ms columns exist and the new *_seconds columns do not.
 --   4. Record every jobs/<job_id> artifact directory; remove those derived job
 --      directories after this SQL succeeds and before the consumer restarts.
---   5. Clear/rebuild the AniVAG Qdrant collection before the API restarts. Its
+--   5. Clear/rebuild the Seekino Qdrant collection before the API restarts. Its
 --      payload has IDs rather than timeline fields, but its embedded text was
 --      generated from the old millisecond facts.
 --

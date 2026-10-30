@@ -1,4 +1,4 @@
--- anivag controlled migration: absolute timestamps become signed BIGINT Unix
+-- seekino controlled migration: absolute timestamps become signed BIGINT Unix
 -- milliseconds. Media-relative *_ms columns and duration fields are unchanged.
 --
 -- STOP: this historical schema cannot be converted with one implicit timezone.

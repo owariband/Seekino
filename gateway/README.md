@@ -1,13 +1,19 @@
-# anivag Gateway
+# seekino Gateway
 
 模型配置版本 2 的来源、各环节绑定及第三方 ASR/视觉接入说明见
 [模型配置](../docs/model-config.md)。下文旧版 `agent_model` 配置仍受支持；
 在版本 2 中对应 `models.agent`，同一环节不要同时填写两种格式。
 
-Gateway 是 anivag 的模型调用边界。除把统一输入转换成 Provider 请求并校验结构化
+Gateway 是 seekino 的模型调用边界。除把统一输入转换成 Provider 请求并校验结构化
 输出外，`agent_model/` 还提供 Provider 无关的 Agent Model 协议、上下文预算／换窗、
 Tool Loop、Adapter 选择和 Provider fallback。它不拥有 Video、Query、Speaker、
 Conversation 或 Parse Job 等领域语义。
+
+Gateway 可控的 API 工具循环在上下文压缩时优先保留近期、有长度上限的工具反馈。
+Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改写成“已完成”；
+硬预算释放大块结果时也保留最多 500 字符的控制反馈。摘要不是业务事实来源，
+完整证据仍需回到相应 Catalog/Read 工具读取。2026-10-29 的真实失败与回归证据见
+[本机业务验收记录](../docs/dev/devlog.md#devlog-native-local-20261029)。
 
 ## 目录边界
 
@@ -19,7 +25,7 @@ Conversation 或 Parse Job 等领域语义。
 - `claude_code/`：Claude Agent SDK Adapter；
 - `bridge/`：用户本机原生 Agent 的 ACP 连接；已有 Client，完整产品接入仍需验收；
 - `../docs/design/pi-host-trd.md`：已退役的云端 Pi Host 历史设计；当前使用 Deep Agents＋MySQL checkpoint；
-- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CPU CAM++ Adapter；
+- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX Adapter；
 - 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
 
@@ -58,6 +64,18 @@ finally:
     model.close()
     client.close()
 ```
+
+## 可选本地转写
+
+`create_transcription_model("transcription")` / `create("transcription", "transcription")`
+支持 `adapter: whisperx`，在进程内完成转写及强制对齐，推荐用于需要本地 ASR 和
+字幕字词定位的场景。输入为宿主准备的 16 kHz 单声道 PCM16 WAV，返回上游秒单位的
+`segments`、`words` 与 `language`；Engine 负责一次毫秒转换，Server 加视频偏移。
+无对齐分数的词保留文本且不提供插值时间，不进行人物识别或字幕排版。
+
+依赖和权重可选、延迟加载，必须由用户预先安装；同一 Gateway 的 source/model
+共享串行 runtime，单次句柄关闭不重复卸载模型，Gateway 关闭释放引用。
+配置、依赖、权重路径和原生推理取消限制见[本地 WhisperX ASR 与对齐](../docs/model-config.md#本地-whisperx-asr-与对齐)。
 
 ## 声音向量接口
 
@@ -156,7 +174,7 @@ from gateway.multimodal import TextInput, VideoInput
 
 
 model = LlamaCppMultimodalModel(
-    "anivag-qwen3-vl-direct",
+    "seekino-qwen3-vl-direct",
     base_url="http://127.0.0.1:8080",
     max_output_tokens=8192,
     request_timeout_seconds=1200,
@@ -189,15 +207,15 @@ Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 
 ## 本地与云端 Agent 的目标
 
-本地由用户连接自己安装、认证的 Codex 或 Claude Code。AniVAG 负责连接、会话交接、
+本地由用户连接自己安装、认证的 Codex 或 Claude Code。Seekino 负责连接、会话交接、
 业务工具和界面，进程开销由用户本机承担；原生 runtime 的内部调度与进程机制由其自身
 及上游维护。本地不要求安装 Pi，也不纳入云端的单进程优化目标。接入边界见
-[本地 Bridge TRD](../docs/design/codex-bridge-trd.md)。
+[本地 Bridge TRD](../docs/design/02-agent-harness/codex-bridge-trd.md)。
 
-云端由 AniVAG 提供统一的 Deep Agents harness，支持 API 模型、长对话和工具调用。
+云端由 Seekino 提供统一的 Deep Agents harness，支持 API 模型、长对话和工具调用。
 当前部署目标是一个 Python API worker，不再启动独立 Node Host。模型／工具循环、原生
 上下文和 compact 由 Deep Agents 负责，LangGraph checkpoint 由 `PyMySQLSaver` 持久化到
-现有 MySQL。历史 Pi Host 设计仅作[退役参考](../docs/design/pi-host-trd.md)，决策与验收见
+现有 MySQL。历史 Pi Host 设计仅作[退役参考](../docs/design/02-agent-harness/pi-host-trd.md)，决策与验收见
 [统一 devlog](../docs/dev/devlog.md#devlog-cloud-chat-checkpoint-20261024)。
 
 ### 云端 Deep Agents 与 MySQL checkpoint
@@ -245,8 +263,8 @@ Python↔Node IPC、pi-session 映射或 JSONL 会话目录。用户级 BYOK 的
 决定协议实现，`provider` 只用于 provenance、用量和价格归属，OpenAI 兼容协议的
 `profile` 处理不同 API 方言。版本 2 的 `models.agent` 与 `models.supervisor` 可分别绑定来源；
 旧配置没有独立 Supervisor 绑定时沿用 Agent 来源。
-`ANIVAG_AGENT_QUERY_MODEL`、`ANIVAG_AGENT_EVALUATOR_MODEL` 和
-`ANIVAG_AGENT_CHAT_MODEL` 仍可覆盖各角色的模型名。
+`SEEKINO_AGENT_QUERY_MODEL`、`SEEKINO_AGENT_EVALUATOR_MODEL` 和
+`SEEKINO_AGENT_CHAT_MODEL` 仍可覆盖各角色的模型名。
 
 内部 Supervisor 支持 `supervisor_harness=deepagents` 和 `codex`，按配置选择。
 Deep Agents 路径通过 `AgentModelFactory.build_deep_agent()` 使用 SDK；SDK 负责模型／工具
@@ -334,27 +352,38 @@ Claude API Key 模式把 `auth_mode` 改为 `api_key`，并添加
 `api_key` 模式同样会清空相互冲突的认证方式，只注入 `api_key_env` 指定的值。
 Claude 调用使用 `--no-session-persistence`，不会把问题、工具结果和回答写入个人
 `~/.claude/projects` 历史。每个审核回合启动新的 CLI 进程，并在下一轮提示中显式携带
-原始任务、上一轮可见回答和审核反馈；隐藏推理不跨回合保留，Agent 可以通过 AniVAG 工具
+原始任务、上一轮可见回答和审核反馈；隐藏推理不跨回合保留，Agent 可以通过 Seekino 工具
 重新读取规范工作区。认证目录保持不变，因此本机订阅模式可继续读取既有登录凭证。
 
-Codex app-server 与 Claude Agent SDK 当前都没有暴露可由 AniVAG 设置的硬输出 token
-上限。它们配置中的 `max_output_tokens` 用于 AniVAG 的上下文输出预留；实际调用仍由
+Codex app-server 与 Claude Agent SDK 当前都没有暴露可由 Seekino 设置的硬输出 token
+上限。它们配置中的 `max_output_tokens` 用于 Seekino 的上下文输出预留；实际调用仍由
 请求超时、模型调用次数和 provider 自身的输出上限约束。DeepSeek 的同名配置会直接
 传给模型 API。
 
 CLI provider 会在启动进程前检查初始提示、工具 Schema 和结构化输出 Schema 是否能放入
 `agent_runtime` 的上下文硬预算。Codex 还会加入按当前锁定 SDK 实测并向上取整的基础输入
-预留。Codex/Claude 内部后续工具回合的 transcript 不对 AniVAG 暴露，因此这项预检不执行
+预留。Codex/Claude 内部后续工具回合的 transcript 不对 Seekino 暴露，因此这项预检不执行
 伪压缩，也不把内部续轮描述成可由 Context Canvas 精确治理。
 
 修改 `model_sources`、`agent_model`、认证方式或可执行文件等模型连接配置后，需要重启
-Server。`ANIVAG_AGENT_FALLBACK_MODEL` 只覆盖已经配置的 fallback 模型，不会创建或猜测
+Server。`SEEKINO_AGENT_FALLBACK_MODEL` 只覆盖已经配置的 fallback 模型，不会创建或猜测
 fallback source。当前支持 OpenAI → Ark 与 Ark → Ark；Codex 和 Claude 不会隐式切换到 Ark。
 
 ## 多模态 Embedding
 
 `DoubaoMultimodalEmbedder` 保留文本与视频向量能力。文本查询和 VideoChunk 使用同一模型，
 进入同一向量空间。Embedding 不返回 VideoChunk 内部时间戳，也不替代上层的视频理解流程。
+
+本地文本向量可使用 `ollama_embedding` 来源和 `input_mode: text`，通过 Ollama 原生
+`/api/embed` 调用 Qwen3-Embedding-0.6B；无需 API Key。文档与查询模板分别固定，查询
+指令属于 encoder revision；响应必须符合模型身份、维数和有限非零向量合同。该适配器
+不伪造图片、视频或 Sparse 能力。是否建立视觉索引由宿主的冻结配置控制，见
+[本地文本配置与开关](../docs/model-config.md#本地文本向量与视觉向量开关)。
+
+也支持 `llama_cpp_embedding`：直接调用 llama.cpp 的 `/v1/embeddings`，无需 Ollama
+服务。Qwen 使用 last-token pooling，查询指令与文档分别编码；同样检查模型身份、
+维数和有限非零向量，并记录真实 prompt token 用量。本地启动入口为
+`scripts/run_local_embedding.py`，只启动 embedding，不涉及 Whisper 或解析任务。
 
 ## 依赖与验证
 
@@ -455,7 +484,7 @@ uv run pytest tests/gateway/test_tracing.py tests/gateway/test_langfuse_integrat
 ```
 
 真实后端验证默认跳过。获得具体项目写入授权并设置三个 `LANGFUSE_*` 环境变量后，可
-显式设置 `ANIVAG_LANGFUSE_INTEGRATION=1`，单独运行
+显式设置 `SEEKINO_LANGFUSE_INTEGRATION=1`，单独运行
 `tests/gateway/test_langfuse_integration.py::test_real_langfuse_v2_observations_read_back`。
 该入口只发送合成记录，不调用模型，再通过
 `GET /api/public/v2/observations` 的 `core,basic,model,usage,metadata,metrics,trace_context,io`

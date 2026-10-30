@@ -186,6 +186,61 @@ def test_dialogue_cannot_prove_title_and_unavailable_fields_can_be_omitted():
     assert canvas.result.title is None and canvas.result.episode_order is None and canvas.result.cover_image is None
 
 
+def _generated_summary():
+    summary = _summary(title="朋友们抵达车站", title_kind="generated", episode_order=None)
+    summary["evidence"] = [
+        {"field": "title", "chunk_parse_task_id": "chunk-0", "quote": "The friends reach station 0."},
+        summary["evidence"][2],
+    ]
+    return summary
+
+
+def test_generated_title_accepts_grounded_content_without_claiming_an_official_title():
+    inputs = _inputs()
+    for chunk in inputs.chunks:
+        chunk.content["timeline"] = chunk.content["timeline"][1:]
+    canvas, tools = _setup(inputs=inputs)
+    _read_all(tools, inputs)
+    assert tools["submit_video_summary"].execute(**_generated_summary()).success
+    assert canvas.result.title == "朋友们抵达车站"
+    assert canvas.result.submission.title_kind == "generated"
+    assert canvas.result.episode_order is None
+
+
+@pytest.mark.parametrize("change,code", [
+    ("fabricated_quote", "UNSUPPORTED_EVIDENCE"),
+    ("missing_evidence", "MISSING_EVIDENCE"),
+    ("invented_episode", "UNSUPPORTED_EPISODE"),
+    ("preview", "PREVIEW_EVIDENCE"),
+])
+def test_generated_title_still_requires_current_content_and_independent_episode_evidence(change, code):
+    inputs = _inputs()
+    if change == "preview":
+        inputs.chunks[0].content["timeline"][1]["context"] = "次回予告"
+    canvas, tools = _setup(inputs=inputs)
+    _read_all(tools, inputs)
+    summary = _generated_summary()
+    if change == "fabricated_quote":
+        summary["evidence"][0]["quote"] = "The friends win a race."
+    elif change == "missing_evidence":
+        summary["evidence"] = summary["evidence"][1:]
+    elif change == "invented_episode":
+        summary["episode_order"] = 4
+        summary["evidence"].append(_summary()["evidence"][1])
+    result = tools["submit_video_summary"].execute(**summary)
+    assert result.payload["error"]["code"] == code
+    assert canvas.result is None
+
+
+@pytest.mark.parametrize("title", [None, "", "长" * 81])
+def test_generated_title_must_be_present_and_concise(title):
+    canvas, tools = _setup()
+    _read_all(tools)
+    result = tools["submit_video_summary"].execute(**{**_generated_summary(), "title": title})
+    assert result.payload["error"]["code"] == "INVALID_SUMMARY"
+    assert canvas.result is None
+
+
 @pytest.mark.parametrize("field,quote", [
     ("description", "invented quote"), ("episode_order", "Episode 12 Episode 13"),
 ])

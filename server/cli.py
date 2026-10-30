@@ -22,8 +22,8 @@ from .service.video_parse_persistence import VideoParsePersistenceService
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="anivag-server",
-        description="Manage anivag persistence and formal video retrieval.",
+        prog="seekino-server",
+        description="Manage seekino persistence and formal video retrieval.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -33,6 +33,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_environment_argument(init_es_index)
     _add_elasticsearch_arguments(init_es_index)
+    init_es_index.add_argument("--config", type=Path, help="Gateway model config; defaults to SEEKINO_MODEL_CONFIG/config.yaml.")
+    init_es_index.add_argument("--embedding-model")
+    init_es_index.add_argument("--text-only", action="store_true", help="Require the configured embedding input_mode=text; index mode otherwise follows the model config automatically.")
 
     init_events = subparsers.add_parser("init-event-index", help="Create or validate the fixed Seekino Event index contract.")
     _add_environment_argument(init_events)
@@ -47,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     init_database = subparsers.add_parser(
         "init-db",
-        help="Create the initial anivag persistence schema.",
+        help="Create the initial seekino persistence schema.",
     )
     _add_database_arguments(init_database)
 
@@ -112,7 +115,7 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument(
         "--config",
         type=Path,
-        help="Gateway model config; defaults to ANIVAG_MODEL_CONFIG/config.yaml.",
+        help="Gateway model config; defaults to SEEKINO_MODEL_CONFIG/config.yaml.",
     )
     search.add_argument(
         "--embedding-model",
@@ -124,7 +127,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _add_database_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--database-url",
-        help="SQLAlchemy MySQL URL; defaults to ANIVAG_DATABASE_URL.",
+        help="SQLAlchemy MySQL URL; defaults to SEEKINO_DATABASE_URL.",
     )
     _add_environment_argument(parser)
 
@@ -141,7 +144,7 @@ def _add_execution_mode_argument(parser: argparse.ArgumentParser) -> None:
         "--execution-mode",
         choices=("v2",),
         type=_execution_mode,
-        help="Formal execution supports only v2; defaults to ANIVAG_PARSE_EXECUTION_MODE.",
+        help="Formal execution supports only v2; defaults to SEEKINO_PARSE_EXECUTION_MODE.",
     )
 
 
@@ -194,7 +197,7 @@ def main() -> None:
         if elasticsearch is None:
             raise ValueError(
                 "Elasticsearch URL and index are required via command options or "
-                "ANIVAG_ELASTICSEARCH_URL and ANIVAG_ELASTICSEARCH_INDEX"
+                "SEEKINO_ELASTICSEARCH_URL and SEEKINO_ELASTICSEARCH_INDEX"
             )
         text_dimensions, vision_dimensions = resolve_vector_dimensions(
             text_dimensions=args.text_vector_dimensions,
@@ -203,16 +206,22 @@ def main() -> None:
         )
 
     if args.command in {"init-es-index", "init-event-index"}:
+        gateway = load_config(args.config)
+        embedding = resolve_embedding_config(
+            gateway, model=args.embedding_model, dimensions=text_dimensions,
+        )
+        vision_enabled = embedding.input_mode == "multimodal"
+        if getattr(args, "text_only", False) and vision_enabled:
+            raise ValueError("--text-only requires models.embedding.input_mode=text in the active model configuration")
         with open_elasticsearch_storage(
             elasticsearch, environment=environment,
             semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
+            vision_enabled=vision_enabled,
         ) as (_client, store):
             event_contract = None
             if args.command == "init-event-index":
                 if text_dimensions != vision_dimensions:
                     raise ValueError("the configured shared Event encoder requires matching dimensions")
-                gateway = load_config(args.config)
-                embedding = resolve_embedding_config(gateway, model=args.embedding_model, dimensions=text_dimensions)
                 event_contract = _event_contract(gateway, embedding, max_height=resolve_parse_max_height(args.max_height))
                 store = build_event_elasticsearch_storage(
                     _client, elasticsearch, environment=environment,
@@ -288,6 +297,7 @@ def main() -> None:
             with open_elasticsearch_storage(
                 elasticsearch, environment=environment,
                 semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
+                vision_enabled=embedding.input_mode == "multimodal",
             ) as (_client, store):
                 service, _encoder = build_retrieval_service(
                     VideoParsePersistenceService(sessions), store,
@@ -323,7 +333,7 @@ def _event_contract(gateway, embedding, *, max_height):
     return resolve_event_indexing_contract(EncoderContract(
         provider=metadata.provider_name, model=metadata.encoder_model,
         encoder_revision=metadata.encoder_revision, dimensions=metadata.dimensions,
-    ), max_height=max_height)
+    ), max_height=max_height, vision_enabled=embedding.input_mode == "multimodal")
 
 
 def _positive_int(value: str) -> int:
