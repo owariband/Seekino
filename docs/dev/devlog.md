@@ -23,6 +23,9 @@
 | 记录 | 原问题编号 |
 |---|---|
 | [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
+| [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
+| [2026-10-30：Understanding 直接 JSON 与 30k 正式接入](#devlog-parse-direct-json-20261030) | B07、实现闭环 |
+| [2026-10-29：Karpathy OCR 配置纠正与解析恢复](#devlog-karpathy-parse-recovery-20261029) | B07、B20、真实任务恢复 |
 | [2026-10-29：普通展示模式开放解析有效总时长](#devlog-release-parse-duration-20261029) | F10、解析时长展示 |
 | [2026-10-29：本地向量直连 llama.cpp 与独立运行入口](#devlog-llama-cpp-embedding-20261029) | B19、本地 embedding 与运行依赖 |
 | [2026-10-29：系列封面采用 Summary 候选与上次观看画面](#devlog-series-artwork-20261029) | F09、观看封面规则 |
@@ -138,6 +141,35 @@
 | 识别质量、资源与速度 | 待对照 | 未测；首个 Chunk 增加等待整片转写的时间 |
 
 新增一个配置字段、区间选择函数和视频准备缓存，复用原 Gateway、任务和提交边界。状态入口为 [B20](problems.md#b20本地-whisperx-正式接入与字幕时间证据)。
+
+2026-10-30 接续核验与集成（同一需求）：
+
+- **问题与现状：** 本机日志在 00:29 停机前仍显示 Canvas 工具循环及 8,192 输出预算；一个 Chunk 在 666,900 ms 后因模型读取超时失败。11:27–11:30 的只读进程/status 核对显示 API/Consumer、Web、MySQL、ES 均未就绪，不能把已提交修复称为运行稳定。PR #9 又落后于 dev 的 `13114f83`/`80bb293d`，产生 devlog 合并冲突。
+- **方案候选：** 将最新 dev 合入原功能分支，保留直接 JSON、节点内重试与最终失败停止机制，解决文档冲突时保留两侧记录。沿用内存 ASR 方案；使用 Video=1 控制整片准备、Parse=10 释放理解并发。没有修改本机仍为 Parse=2 的配置或启动真实任务。
+- **方案验证：** 扩展既有测试为 2/10 个 Chunk，进入真实 Understanding 子图后用 Barrier 保证同时在途，对其中一个注入暂态超时；最终每个 Chunk 仅提交一次，ASR 每轮仍调用一次，协调器恢复再调用一次。组合回归 **1,014 passed、1 个既有 Starlette 弃用警告**；命令为 `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -p no:cacheprovider tests/server/test_full_video_asr.py tests/server/test_config.py tests/server/test_video_parse_worker.py tests/server/test_video_parse_repository.py tests/server/test_job_repository.py tests/server/test_video_parse_queue.py tests/server/test_video_parse_media.py tests/server/test_parse_output_budget.py tests/agent/video_parse_v2 tests/engine/parsev2/test_observations.py --tb=short -q`，使用已有 Python 3.12 venv，39.65 秒完成。原始临时日志 `/private/tmp/seekino-full-video-asr-dev-integration-tests.log`，测试与行为断言保留在仓库；与此前 813 项重叠，不累加。
+- **指标对比：** 离线并发覆盖从 2 个扩大为 10 个 Chunk，新增理解失败恢复而 ASR 不增加调用的证据；实模速度、资源和稳定性仍未测。本机 WhisperX 超时仍为 1,200 秒，是否覆盖整节课程必须单独实测；旧任务普通 retry 不更新 scope/输出预算。下一步是新配置的隔离试点及端到端验收，不能直接把短请求 10 路成功当成长课程通过。
+
+<a id="devlog-kimi-concurrency-20261030"></a>
+
+## 2026-10-30：Kimi Code API 10 路并发实测
+
+### 问题与现状
+
+用户希望确认当前 Kimi Code API 是否支持一次 10 路并发。官方介绍有最多 30 路的说明，但账号共享额度、滚动频控与实际请求负载可能影响结果；配置中的 `codex_local.max_concurrency=10` 又容易与 Kimi 混淆。关联 [B21](problems.md#b21kimi-code-api-10-路并发能力未验证)，本次目标是验证账号的 API 并发接受能力，不直接提高解析槽位。
+
+### 方案候选
+
+采用同一已配置 Key/`k3.1-pro`、Gateway Kimi profile 参数，发送不含业务数据的短 Python 输出题；做 3 次串行对照和两轮 10 路并发，关闭 SDK 重试及 fallback，用请求标识/整数答案校验响应完整性。HTTP hook 记录在途数与发出跨度，避免只创建多个协程却没有真正同时请求。选择有界短请求控制额度和现场干扰，不以此取代多模态长请求测试。
+
+### 方案验证
+
+2026-10-30 10:47（Asia/Shanghai）实测全部 23 请求成功；两轮并发分别 10/10，零 429、零网络错误、零重试。峰值 HTTP 在途均为 10，发出跨度为 5.957 ms 与 7.549 ms，响应模型均为 `k3.1-pro`。结果 token 合计 6,484，未查询套餐余额，不折算金额。没有修改服务配置、运行队列或业务库，不启动视频解析。API Key 未写入产物。
+
+证据和复跑入口见 [报告](../report/gateway/kimi-concurrency-20261030.md)、[逐请求记录](../../outputs/verification/kimi-concurrency-20261030/results.json)、[在途事件](../../outputs/verification/kimi-concurrency-20261030/events.json)。此次为原始 API 测试，未验证完整 Seekino Agent 工具循环，也未审计其他同时使用该账号的工具负载。
+
+### 指标对比
+
+串行 3 请求整组 14.306 s，单请求中位 4.665 s；并发第一轮 10 请求整组 6.582 s、中位 5.126 s，第二轮整组 7.646 s、中位 4.717 s。题数不同且连接有预热影响，不据整组耗时比宣称加速倍数；两轮样本不报告尾延迟或长期稳定率。结论是短请求 10 路可用，长上下文、视频帧、持续吞吐及整季完成时长仍未验证；保留现有生产槽位，避免将供应商可接受的请求并发误当整个解析系统的最优设置。
 
 <a id="devlog-release-parse-duration-20261029"></a>
 
@@ -3584,3 +3616,82 @@ uv run --no-sync --env-file .env.local python -m evals.parse_harness \
 - ReAct r2 将后续爽世台词的开始时间对齐到 52833 ms 字幕锚点；多次其他输出沿用 48400 ms ASR 起点，相差约 4.43 秒。这里只比较证据时间一致性，未重新听音建立独立发声起止真值。分组输出较少的对白事件仍覆盖全部锚点，不能把事件数直接当召回率。
 
 对当前问题的判断是：**本轮未观察到 Codex 是该 chunk 解析质量的必要条件；也没有证据说明 ReAct 因缺少 Deep Agents 就丢失了字幕覆盖。**当前最明确的循环故障是共享 compact 与固定媒体预算不匹配；改用合理实验预算后，ReAct 和 Deep Agents 都能完成，但同样没有解决关键身份错误。Deep Agents 在这两次样本中耗时和 token 更少，GPT 更快但身份输出不完整且仍有正文误归属。生产简化是否值得上线，仍需修复预算行为、保持业务合同，并在多 chunk/长上下文及已知身份错误集上验收；本轮没有测量维护人时、部署内存或长期 compact 质量，不能把这项局部对照写成全面质量不退化。
+
+<a id="devlog-karpathy-parse-recovery-20261029"></a>
+## 2026-10-29：Karpathy OCR 配置纠正与解析恢复
+
+### 问题与现状
+
+用户发现正式任务连续失败。提交时本机配置仍有 `models.ocr`，8 集快照因此均为 `ocr_enabled=true`，没有落实用户关闭独立 OCR 的要求。前两集的模型调用统计有 9 次 OCR 失败（含截断/网络错误）、6 次成功，Understanding 有 119 次成功返回但 0 个已提交 Chunk。另有图片 token 估算不能向下校准和重启后无生产者的媒体等待问题；这些属于正式链路故障，不能归因于 WhisperX 未部署或 embedding 未就绪。
+
+### 方案候选
+
+先暂停失败运行。撤回临时 OCR 分批处理改动，移除本机独立 OCR 默认绑定；通过正式服务为全部 8 集创建新解析版本，而普通 retry 仍保持旧快照。扩展 reparse 支持已排队或已停止且租约完全回收的任务，保留历史并撤销旧非终态版本的调度资格/容量。Gateway 按 provider 实报校准上下文，媒体等待增加父任务存活检查。保持全部配置帧、ASR 模型及时间合同，不采用降低画面输入的办法掩盖问题。
+
+### 方案验证
+
+659 项定向测试通过：上下文估算/工具反馈、DeepAgents、Parse worker/媒体、UploadService 与持久 Queue。真实运行先拒绝了仍持有子任务租约的第二集；等待实际到期并通过 Queue 回收后，服务完成全部 8 集 v2 创建，没有越过活动租约。23:44 服务加载修复后恢复，8 个新快照的 OCR 均为 false。原始记录见 `outputs/verification/parse-failures-20261029/`；实时提交和模型操作统计记录在 `live-progress.json`，完整整集/索引效果仍待确认。
+
+### 指标对比
+
+| 指标 | 修复前 | 本次验证 | 边界 |
+| --- | --- | --- | --- |
+| 8 集独立 OCR 配置 | 8/8 开启，与要求不符 | 8/8 关闭，模型绑定为空 | 旧版本仍保留原快照，退出调度 |
+| 新证据压缩 | 固定图片估算约 422K，即使实报约 248K 仍释放工具结果 | 对应回归用例保留新证据 | 真实长上下文完成率仍需观察 |
+| 无生产者的媒体等待 | 子任务继续续租等待 | 生产者停止/更换租约用例立即退出 | 保留已就绪媒体复用 |
+| 相关测试 | 已复现上述缺陷 | 659 passed | 不代表模型质量达标 |
+| 内容提交与索引 | 前两集 0 个 Chunk 提交 | 验证进行中 | 不承诺 880 个 Chunk 已完成 |
+
+<a id="devlog-parse-direct-json-20261030"></a>
+## 2026-10-30：Understanding 直接 JSON 与 30k 正式接入
+
+### 问题与现状
+
+此前零工具和 30,000 只在 `evals/parse_protocol_benchmark.py` 生效，正式 Understanding 仍承担 Canvas 读写/核验/完成，默认及实际本机 YAML 仍为 8,192。协议决定未推进到宿主实现，形成实验与正式路径断层。
+
+### 方案候选
+
+按用户点名两项先落地：Understanding 直接生成 `VideoParseResult` JSON，宿主一次校验并原子写 Canvas；Refine 保留工具。复用 Gateway 结构化通道，不新增协议开关。默认和本机 `vision` / `vision_fallback` 改为 30,000，其他角色预算不改。字段精简/SHOT 需独立兼容迁移，本次保留原合同。
+
+### 方案验证
+
+`tests/agent/video_parse_v2`、`tests/server/test_video_parse_worker.py`、`tests/server/test_parse_output_budget.py`、`tests/gateway/test_config.py` 合计 **380 passed**；日志 `outputs/verification/parse-direct-json-20261030/tests.log`。覆盖无工具输入、人物/事件完整往返、词对齐原证据、非法时间整批拒绝、清理/重试、Refine 工具及隔离入库/检索组件链路。预算/配置三文件另有 409 passed；扩展 Gateway 测试有一项已有上下文分支回归失败，未修或宣称全量通过，详见主 TRD §4.9。未重启、未迁移旧任务、未实模验收或测时。
+
+### 指标对比
+
+| 项目 | 修改前 | 修改后 |
+| --- | --- | --- |
+| Understanding 工具职责 | 读/写/回读/完成 | 0 工具；正常成功路径一次 JSON 生成，宿主校验与导入 |
+| 视觉主模型/fallback 输出上限 | 8,192 | 30,000；旧任务冻结值不变 |
+| 维护成本 | 模型维护 Canvas revision/batch/事件操作 | 宿主一次批次导入，Refine 继续复用原工具 |
+| 时长、token、业务质量 | 历史协议实验 | 新正式链路未实测，不宣称提速百分比；输出上限用于避免截断 |
+
+源码在 dev 工作区；服务启动时加载配置，普通重试不会改旧快照。新默认需在服务加载修改后用于新解析版本。
+
+<a id="devlog-node-retry-20261030"></a>
+## 2026-10-30：Understanding 节点自行重试，最终异常停止视频任务
+
+### 问题与现状
+
+hypnos 要求失败节点自行重试，避免 Kimi 理解失败后 Consumer 重排整个 Chunk、连带再次运行已成功的本地 ASR。原链路的观察结果在单次子图内，整块重试无法复用未提交的 ASR。
+
+### 方案候选
+
+采用 Understanding 子图内 ASR、visual、OCR、understanding 分节点有限重试。暂态超时/传输异常使用任务冻结配置的重试次数与退避；总截止时间与持久模型调用预算不重置。最终异常上抛给 Consumer 后，只记录失败并通知，不再重排 Parse Chunk。同视频停止新领取，拒绝兄弟任务续租及迟到的 Chunk/Interval 提交；首个结构化错误保留，前端沿用任务 API/SSE 展示失败阶段和原因。提交不自动重放；进程崩溃恢复及 Index/Refine 策略独立保留。
+
+### 方案验证
+
+Framework、Queue、Worker、模型调用预算、API、SSE、Bootstrap 定向回归 580 passed（59.75 秒）。故障注入验证理解成功恢复与重试耗尽时，ASR/视觉准备均只执行一次；耗尽不提交结果，Consumer 不重排 Parse Chunk，Queue 拒绝兄弟任务续租与新领取，任务 API 返回受控错误。补充 Interval 提交保护后，Worker/Queue 回归 299 passed（12.08 秒）。随后增加并行协调器不能覆盖首个节点错误及迟到 Chunk 提交的用例，最终结果以本条补充记录为准。
+
+未重启服务、未调用真实模型、未迁移或清理真实任务。原生 ASR 已进入的阻塞调用仍需在返回控制点后取消，不能将此次测试写成内存峰值实测改善。手动暂停单视频/全量及任务清理未实施；状态统一见 B22。
+
+### 指标对比
+
+| 指标 | 原路径 | 当前离线证据 |
+| --- | --- | --- |
+| Understanding 超时重试范围 | Consumer 重新调度整个 Chunk | 节点内重试；成功观察复用 |
+| 理解失败后的 ASR 调用 | 整块再次执行可能重复转写 | 恢复/耗尽用例均为 1 次 |
+| 最终失败处理 | 排队直至任务重试耗尽 | 记录首个失败、停止派发、通知前端 |
+| 长视频真实完成率/内存峰值 | 仍有未完成任务 | 本轮未实测，不宣称改善数值 |
+
+最终补充验证：并行协调器错误不覆盖首个 `PARSE_NODE_FAILED`，失败后迟到 Chunk 提交被拒绝；最终 Worker/Queue 回归 **299 passed（14.09 秒）**，`git diff --check` 通过。上述测试集合有重叠，不相加为独立用例总数。

@@ -395,7 +395,7 @@ class MySqlVideoParseQueue:
             parent = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == lease.video_parse_task_id,
             ).with_for_update())
-            if parent is None or parent.is_deleted:
+            if parent is None or parent.is_deleted or (parent.last_error or {}).get("code") == "PARSE_NODE_FAILED":
                 return False
             task = session.scalar(select(model).where(model.id == task_id).with_for_update())
             if not _matches_child(task, parent, lease, heartbeat_at):
@@ -627,7 +627,8 @@ class MySqlVideoParseQueue:
             task.lease_expire_time = None
             task.heartbeat_time = None
             task.finish_time = None
-            task.last_error = _error_detail(error)
+            if (task.last_error or {}).get("code") != "PARSE_NODE_FAILED":
+                task.last_error = _error_detail(error)
             task.update_time = datetime_to_unix_time_ms(failed_at)
             _aggregate_released_video(
                 session, task, failed_at,
@@ -640,6 +641,34 @@ class MySqlVideoParseQueue:
                 ),
                 prepare_failure_count=prepare_failure_count,
             )
+
+    def fail_chunk(self, lease: ChunkParseLease, *, error: str, stage: str,
+                   reason: str, now: datetime | None = None) -> bool:
+        """Consume a final subgraph failure without scheduling another attempt."""
+        failed_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            parent = session.scalar(select(VideoParseTask).where(
+                VideoParseTask.id == lease.video_parse_task_id,
+            ).with_for_update())
+            if parent is None or parent.is_deleted:
+                return False
+            child = session.scalar(select(ChunkParseTask).where(
+                ChunkParseTask.id == lease.chunk_parse_task_id,
+            ).with_for_update())
+            if not _matches_child(child, parent, lease, failed_at, allow_deadline=True):
+                return False
+            child.status = "FAILED"
+            child.finish_time = failed_at
+            child.lease_owner = None
+            child.lease_expire_time = None
+            child.last_error = _error_detail(error)
+            child.update_time = datetime_to_unix_time_ms(failed_at)
+            if (parent.last_error or {}).get("code") != "PARSE_NODE_FAILED":
+                # Only controlled descriptions go to the browser; raw errors stay internal.
+                parent.last_error = {"code": "PARSE_NODE_FAILED", "stage": stage, "reason": reason}
+            _aggregate_video_task(session, parent.id, failed_at,
+                                  release_terminal_lease=True, failure_status="PARSING_FAILED")
+            return True
 
     def retry_chunk(
         self, lease: ChunkParseLease, *, error: str, retry_at: datetime,
@@ -684,7 +713,7 @@ class MySqlVideoParseQueue:
                 if parent.lease_owner != lease.worker_id or parent.lease_version != lease.lease_version:
                     return False
                 _failures, exhausted = _record_voiceprint_failure(session, parent, released_at)
-                if _failures is not None:
+                if _failures is not None and (parent.last_error or {}).get("code") != "PARSE_NODE_FAILED":
                     parent.last_error = _error_detail("Voiceprint preparation execution interrupted before release")
                 parent.lease_owner = None
                 parent.lease_expire_time = None
@@ -781,7 +810,7 @@ class MySqlVideoParseQueue:
                 failures, exhausted = _record_voiceprint_failure(session, task, reaped_at)
                 if failures is None:
                     task.next_execute_time = reaped_at
-                else:
+                elif (task.last_error or {}).get("code") != "PARSE_NODE_FAILED":
                     task.last_error = _error_detail("Voiceprint preparation coordinator lease expired")
                 task.lease_owner = None
                 task.lease_expire_time = None

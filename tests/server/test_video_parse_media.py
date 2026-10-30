@@ -79,6 +79,22 @@ def test_episode_prepares_before_consumers_and_links_survive_owner_cleanup(tmp_p
     assert not media.audio_path.exists()
 
 
+def test_episode_wait_stops_when_producer_has_failed(tmp_path):
+    service = VideoParseMediaService(tmp_path / "media")
+    checks = []
+
+    def stopped():
+        raise RuntimeError("producer stopped")
+
+    with pytest.raises(RuntimeError, match="producer stopped"):
+        with service.use_episode_chunk(
+            _identity(), video_lease_version=1, sequence_no=0, start_ms=0, end_ms=1000,
+            check_active=lambda: checks.append("consumer alive"), check_preparing=stopped,
+        ):
+            pytest.fail("missing episode must not be published")
+    assert checks == ["consumer alive"]
+
+
 def test_episode_decode_failure_never_publishes_partial_assets(tmp_path, monkeypatch):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")

@@ -515,6 +515,37 @@ def test_reparse_without_config_inherits_the_latest_task_and_freezes_endpoint_id
         assert session.get(UploadSession, upload.upload_session_id).parse_config == upload.parse_config
 
 
+@pytest.mark.parametrize("status", ["PENDING", "PARSING"])
+def test_reparse_stopped_task_uses_new_config_and_never_reclaims_old_version(repository, tmp_path, status):
+    engine, _store, _repository, service = _upload_service(repository, tmp_path)
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        old = session.get(VideoParseTask, completed.video_parse_task_id)
+        old.status = status
+        old.detail = {RUNTIME_DETAIL_KEY: {"accepted": True, "capacity_acquired": True}}
+        original_config = old.parse_config
+    replacement = VideoParseV2Config.model_validate(original_config).model_copy(update={"ocr_enabled": False})
+    result = service.reparse(upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+                             parse_config=replacement)
+    assert result.version == 2 and result.parse_config["ocr_enabled"] is False
+    with factory() as session:
+        old = session.get(VideoParseTask, completed.video_parse_task_id)
+        assert old.parse_config == original_config
+        assert old.detail[RUNTIME_DETAIL_KEY]["accepted"] is False
+        assert old.detail[RUNTIME_DETAIL_KEY]["superseded_by"] == result.video_parse_task_id
+    claimed = MySqlVideoParseQueue(factory, video_concurrency=1).claim_video(
+        "test", lease_duration=timedelta(seconds=30),
+    )
+    assert claimed.video_parse_task_id == result.video_parse_task_id
+    with pytest.raises(UploadStateError, match="must drain"):
+        service.reparse(upload.upload_session_id, tenant_id="local-default", expected_job_version=2,
+                        parse_config=replacement)
+
+
 @pytest.mark.parametrize("status", ["INDEXING_FAILED", "PENDING"])
 def test_reparse_freezes_a_legacy_endpoint_snapshot_after_selecting_the_latest_task(
     repository, tmp_path, status,

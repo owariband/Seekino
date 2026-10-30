@@ -346,7 +346,7 @@ def test_provider_input_usage_takes_precedence_over_local_estimate() -> None:
         label="test",
     )
     controller.record_provider_input_tokens(
-        1_600,
+        1_500,
         request_estimated_tokens=100,
     )
     messages = [
@@ -366,6 +366,46 @@ def test_provider_input_usage_takes_precedence_over_local_estimate() -> None:
     assert update.before.estimated_tokens >= 1_500
     assert update.compacted is True
     assert update.reason == "auto"
+
+
+def test_provider_media_usage_calibrates_downward_and_keeps_fresh_evidence() -> None:
+    anchor = {"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,frame-{i}"}}
+        for i in range(198)
+    ]}
+    initial = [anchor, _assistant_tool_call("read", "get_context_canvas")]
+    controller = ContextWindowController(
+        policy=ContextWindowPolicy(262144, 8192, 4096, 200000, 150000),
+        maximum_input_characters=600000, label="karpathy-media",
+    )
+    estimate = measure_context(initial, {}).estimated_tokens
+    assert estimate > controller.policy.maximum_input_tokens
+    controller.record_provider_input_tokens(248000, request_estimated_tokens=estimate)
+    evidence = _tool_result("read", '{"text":"fresh transcript that must be read"}')
+
+    update = controller.prepare([*initial, evidence], contract={}, checkpoint=lambda: {})
+
+    assert update.before.estimated_tokens < controller.policy.maximum_input_tokens
+    assert update.cleared_tool_results == 0
+    assert update.messages[-1] == evidence
+    # A provider reporting a missing/zero usage must not erase the calibration.
+    controller.record_provider_input_tokens(0, request_estimated_tokens=estimate)
+    assert controller.prepare([*initial, evidence], contract={}).before == update.before
+
+
+def test_fixed_media_prefix_above_soft_trigger_keeps_previous_read_until_hard_limit():
+    messages = [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,frame"}},
+    ]}]
+    controller = ContextWindowController(policy=_policy(), maximum_input_characters=None, label="fixed-media")
+    controller.record_provider_input_tokens(2500, request_estimated_tokens=measure_context(messages, {}).estimated_tokens)
+    history = [*messages,
+               _assistant_tool_call("asr", "get_context_canvas"), _tool_result("asr", "complete dialogue"),
+               _assistant_tool_call("member", "get_context_canvas"), _tool_result("member", "current member")]
+    update = controller.prepare(history, contract={})
+    assert update.before.estimated_tokens > controller.policy.auto_compact_tokens
+    assert update.compacted is False
+    assert update.messages == history
 
 
 def test_hard_limit_releases_even_newest_tool_output_as_recoverable_receipt() -> None:

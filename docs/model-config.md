@@ -8,6 +8,8 @@
 
 本机开发配置使用 `config/local-dev-config.yaml`（2026-10-29 从 `local-kimi.yaml` 更名），由 `.env.local` 的 `SEEKINO_MODEL_CONFIG` 指向。它是完整开发环境配置，各角色可选择不同供应商；Kimi 只是其中部分角色的当前选择，不属于文件作用域。新名字不改变已选择的模型。
 
+本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
+
 ## 模型定义与默认引用
 
 `agent`、`vision`、`transcription`、`embedding`、`rerank` 是现有业务使用的默认引用。`models` 也接受任意命名引用，例如 `document_reader`；引用名称不决定供应商和协议。
@@ -410,3 +412,7 @@ Ollama 不需要 API Key，使用原生 `/api/embed`。文档直接编码，查�
 启动脚本按默认模型来源、独立 Supervisor 的主模型及回退、已启用的解析降级收集密钥，不要求未选中的第三方来源密钥。本机 Codex 来源没有 API key 变量要求；Ark 和 DeepSeek 连接仍分别使用它们声明的变量。密钥摘要用于检测启动配置变化，不输出密钥内容。
 
 兼容性基线保存在 `tests/gateway/fixtures/legacy-config.yaml`；配置测试保护默认迁移、任意引用、能力校验、独立重排/向量绑定、预算完整保留及旧任务冻结规则。
+
+### 解析输出预算（2026-10-30）
+
+仓库默认配置与本机 `config/local-dev-config.yaml` 的 `models.vision`、`models.vision_fallback` 均设 `max_output_tokens: 30000`。Understanding 使用直接 JSON；Refine 仍用工具，未指定独立模型时复用 Understanding 的冻结绑定。该值是生成上限，增加它不等于加速；Chat/OCR 等角色不随之改值。配置在服务启动时加载，已有解析任务保留创建时的快照；普通重试不会把旧 8,192 改成 30,000，采用新配置应使用既有新解析版本入口。

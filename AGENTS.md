@@ -53,6 +53,7 @@ Seekino 将视频转成可检索、可回看、可追溯来源的素材库。主
 - 搜索代码与文档优先使用 `rg` / `rg --files`。先读实际调用点和相关测试，再决定实现；发现旧路径失效时从设计索引与当前源码定位，不把旧名称直接写入新代码。
 - 根据任务选用项目技能：调研看 [research](.agents/skills/research/SKILL.md)，需要压力检验方案时看 [grilling](.agents/skills/grilling/SKILL.md)，素材短片工作看 [seekino-short-video](.agents/skills/seekino-short-video/SKILL.md)。编码偏好在相关实现或审查中按需使用可用的 `hypnos-code`，纯文档修改无需自动加载。仅按适用条件使用，不因技能存在而扩大任务。
 - 服务重启、真实数据迁移或清理、commit 和 push 依照任务已有明确授权执行；文档中的计划和示例命令不构成操作授权。
+- 2026-10-30 起，每个 feature 或独立修复使用单独分支和 PR，默认向 `dev` 集成；并行工作使用独立 worktree，避免多个 chat 在同一工作区混写。`dev → main` 作为单独发布 PR，由用户在 GitHub 完成合并。发布需要保留 `main` 的 `.gitignore` 时，使用临时集成分支并核对文件与目标分支完全一致，不修改 `dev` 的忽略规则。
 - 默认使用中文沟通，保留代码和接口的原始名称。先说结论，再说明依据、变化与验证；遇到阻塞写清缺口和下一项可执行动作。
 
 ## 6. 验证与交付

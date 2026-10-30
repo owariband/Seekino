@@ -445,6 +445,13 @@ def test_aligned_asr_evidence_retains_word_times_and_nulls_in_json():
     canvas.register_evidence("aligned-asr", {"asr": asr})
     retained = json.loads(json.dumps(canvas.get("evidence", "aligned-asr")))
     assert retained["asr"] == asr
+    sections = canvas.sections("evidence", "aligned-asr", role="refine")
+    assert json.loads(sections["asr"]) == asr
+    assert json.loads(sections["asr_transcript"]) == {
+        "language": "en", "transcript": [{
+            "start_seconds": 1000, "end_seconds": 3000, "text": "hello 2026", "speaker_id": None,
+        }],
+    }
     asr["transcript"][0]["words"].clear()
     assert canvas.get("evidence", "aligned-asr") == retained
 

@@ -169,6 +169,7 @@ class VideoParseMediaService:
     def use_episode_chunk(
         self, identity: MediaLeaseIdentity, *, video_lease_version: int,
         sequence_no: int, start_ms: int, end_ms: int, check_active: Callable[[], None],
+        check_preparing: Callable[[], None] | None = None,
     ) -> Iterator[PreparedVideoParseMedia]:
         """Link ready episode assets into the consumer's existing lease workspace."""
         episode = (self.base_directory / identity.video_parse_task_id
@@ -176,6 +177,8 @@ class VideoParseMediaService:
         # A resumed coordinator may still be rebuilding its new lease's assets.
         while not (episode / "episode.json").is_file():
             check_active()
+            if check_preparing is not None:
+                check_preparing()
             time.sleep(0.1)
         check_active()
         row = json.loads((episode / "episode.json").read_text())["chunks"][sequence_no]

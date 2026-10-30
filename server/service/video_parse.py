@@ -81,7 +81,7 @@ from gateway.usage import ModelCallCancelledError, model_call_context
 
 from ..config.parse_profile import index_contract_fingerprint
 from ..constants.parse import (
-    PARSE_RETRIEVAL_CONTRACT, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_DIMENSIONS,
+    PARSE_RETRIEVAL_CONTRACT, RUNTIME_DETAIL_KEY, VOICEPRINT_B0_METHOD_VERSION, VOICEPRINT_B0_DIMENSIONS,
     VOICEPRINT_B0_MIN_AUDIO_MS, VOICEPRINT_B0_TRIM_FRACTION, VOICEPRINT_B0_ACCEPT_GAP,
     VOICEPRINT_B0_ACCEPT_DURATION_MS, VOICEPRINT_B0_ACCEPT_MIN_CUES,
     VOICEPRINT_B0_CONFLICT_GAP, VOICEPRINT_B0_NO_VOICE_DURATION_MS,
@@ -1045,7 +1045,6 @@ class VideoParseRuntimeService:
         asr_result: ASRResult,
         ocr_result: OCRResult | None,
         prompt: str,
-        canvas: ParseContextCanvas,
     ) -> VideoParseResult:
         del asr_result, ocr_result
         media = await self._ensure_chunk_media(execution)
@@ -1087,18 +1086,13 @@ class VideoParseRuntimeService:
                 + str([timestamp for timestamp, _path in media.frames])
             )),
         ]
-        receipt = await self._generate_multimodal(
+        return await self._generate_multimodal(
             execution.inputs.parse_config.models.understanding,
             media_inputs,
             fallback_inputs=fallback_inputs,
             schema_name="video_parse_v2_chunk",
-            result_type=CanvasCompletion,
-            tools=self._canvas_tools(canvas), canvas=canvas,
-            max_model_calls=execution.inputs.parse_config.execution.max_model_calls,
-            tool_harness="deepagents",
+            result_type=VideoParseResult,
         )
-        CanvasCompletion.model_validate(receipt)
-        return canvas.result(execution.chunk_parse_task_id)
 
     async def commit_chunk_result(
         self,
@@ -1750,6 +1744,9 @@ class VideoParseRuntimeService:
                 start_ms=execution.allowed_start_seconds,
                 end_ms=execution.allowed_end_seconds,
                 check_active=lambda: self._require_chunk_active(binding.lease),
+                check_preparing=lambda: self._require_episode_preparing(
+                    execution.video_parse_task_id, binding.state.task_input.task.lease_version,
+                ),
             )
             try:
                 media = await self._run_blocking(context.__enter__)
@@ -1759,6 +1756,14 @@ class VideoParseRuntimeService:
             binding.media_context = context
             binding.media = media
             return media
+
+    def _require_episode_preparing(self, task_id: str, video_lease_version: int) -> None:
+        task = self._persistence.load_task_input(task_id).task
+        runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY, {})
+        if (task.lease_version != video_lease_version or task.lease_owner is None
+                or task.status not in {"PREPARING", "PARSING"}
+                or runtime.get("failure_status") is not None):
+            raise VideoParseLeaseLostError("Episode media producer stopped or changed lease")
 
     # Model and indexing assembly ------------------------------------------
 
@@ -2249,6 +2254,9 @@ class VideoParseRuntimeService:
             lease, lease_duration=self._lease_duration
         ):
             raise VideoParseLeaseLostError("Prefix lease is no longer current")
+
+    def notify_task_failed(self, video_parse_task_id: str) -> None:
+        self._notify_change(video_parse_task_id)
 
     def _notify_change(self, video_parse_task_id: str) -> None:
         event = self._change_events.get(video_parse_task_id)

@@ -32,17 +32,20 @@ def test_selection_keeps_boundary_context_and_never_mutates_shared_words():
 
 
 @pytest.mark.parametrize("outcome", ["success", "provider_failure", "lease_lost"])
-def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resume(tmp_path, outcome):
+@pytest.mark.parametrize("chunk_count", [2, 10])
+def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resume(tmp_path, outcome, chunk_count):
     config = _parse_config()
     config["models"]["asr"]["mode"] = "lite"
     config["models"]["asr"]["scope"] = "video"
     config["visual_input"]["mode"] = "video"
+    config["execution"]["retry_initial_delay_seconds"] = 0.001
+    config["execution"]["retry_max_delay_seconds"] = 0.001
     inputs = ParseInput(series_id="series", video_id="video", parse_config=config)
     task_id, video_id = str(uuid4()), str(uuid4())
     lease = VideoParseLease(task_id, video_id, "worker", 1, datetime.now(UTC) + timedelta(minutes=5), 1, 3, {})
     task_input = SimpleNamespace(task=SimpleNamespace(status="PARSING", lease_version=1),
                                  original_source_uri="source.mp4", inference_proxy_uri=None,
-                                 duration_seconds=120000)
+                                 duration_seconds=chunk_count * 60000)
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._video_transcripts = {}
     runtime._video_lease = ContextVar("video_asr_lease", default=None)
@@ -76,7 +79,7 @@ def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resum
 
     @contextmanager
     def audio(*args, **kwargs):
-        assert kwargs["start_ms"] == 0 and kwargs["end_ms"] == 120000
+        assert kwargs["start_ms"] == 0 and kwargs["end_ms"] == chunk_count * 60000
         path = tmp_path / "full.wav"
         path.write_bytes(b"audio")
         try:
@@ -103,12 +106,50 @@ def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resum
             chunk_start_seconds=index * 60000, chunk_end_seconds=(index + 1) * 60000,
             allowed_start_seconds=index * 60000, allowed_end_seconds=(index + 1) * 60000,
             inputs=inputs, lease=LeaseToken("worker", 1, lease.lease_expire_time),
-        ) for index in range(2)]
+        ) for index in range(chunk_count)]
         results = await asyncio.gather(*(runtime.transcribe_chunk(execution) for execution in executions))
         assert results[0] == results[1]
         assert results[0]["transcript"][0]["start_seconds"] == 58000
         assert results[1]["transcript"][0]["words"][0]["start_ms"] == 58000
+        assert all(result == {"language": "en", "transcript": []} for result in results[2:])
         snapshots.append(results)
+
+        # Exercise the current dev subgraph, including its node-local retry,
+        # after all ten chunks have entered Understanding together.
+        from agent.video_parse_v2.understanding.workflow import ChunkUnderstandingWorkflow
+        from engine.parsev2.schemas import VideoParseResult
+
+        by_id = {execution.chunk_parse_task_id: execution for execution in executions}
+        attempts, committed = {}, []
+        ready = asyncio.Event()
+
+        async def load(task_id):
+            return by_id[task_id]
+
+        async def understand(execution, *, asr_result, ocr_result, prompt):
+            index = execution.sequence_no
+            attempts[index] = attempts.get(index, 0) + 1
+            assert asr_result == results[index]
+            if len(attempts) == chunk_count:
+                ready.set()
+            await asyncio.wait_for(ready.wait(), 2)
+            if index == 0 and attempts[index] == 1:
+                raise TimeoutError("transient understanding failure")
+            return VideoParseResult(persons=[], timeline=[])
+
+        async def commit(execution, result, **kwargs):
+            committed.append(execution.sequence_no)
+
+        runtime.load_chunk_execution = load
+        runtime.understand_chunk = understand
+        runtime.commit_chunk_result = commit
+        runtime.cleanup_chunk_execution = prepared
+        runtime.notify_chunk_committed = prepared
+        workflow = ChunkUnderstandingWorkflow(runtime=runtime)
+        await asyncio.gather(*(workflow.InvokeUnderstanding(task_id) for task_id in by_id))
+        assert sorted(committed) == list(range(chunk_count))
+        assert attempts == {index: 2 if index == 0 else 1 for index in range(chunk_count)}
+        assert len(calls) == len(snapshots)  # Neither Chunk reads nor retries rerun ASR.
 
     runtime.agent = SimpleNamespace(InvokeVideoParse=parse)
     if outcome == "success":

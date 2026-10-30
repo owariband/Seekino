@@ -144,7 +144,7 @@ class ContextWindowController:
         if (
             isinstance(input_tokens, bool)
             or not isinstance(input_tokens, int)
-            or input_tokens < 0
+            or input_tokens <= 0
         ):
             return
         self._reported_input_tokens = input_tokens
@@ -160,9 +160,15 @@ class ContextWindowController:
         candidate = deepcopy(messages)
         before = self._project_active_tokens(measure_context(candidate, contract))
         hard_limit_reached = self._hard_limit_reached(before)
+        stable_end = _stable_prefix_end(candidate)
+        fixed = self._project_active_tokens(measure_context(candidate[:stable_end], contract))
         auto_limit_reached = (
             self.policy is not None
             and before.estimated_tokens >= self.policy.auto_compact_tokens
+            # Compacting history cannot reduce a fixed media prefix. If that
+            # prefix alone crosses the soft trigger, retain evidence until the
+            # actual hard budget needs space instead of rereading it every turn.
+            and fixed.estimated_tokens < self.policy.auto_compact_tokens
         )
         if not hard_limit_reached and not auto_limit_reached:
             return self._unchanged(candidate, before)
@@ -170,7 +176,6 @@ class ContextWindowController:
         reason: Literal["auto", "hard_limit"] = (
             "hard_limit" if hard_limit_reached else "auto"
         )
-        stable_end = _stable_prefix_end(candidate)
         recent_start = _recent_history_start(candidate, stable_end)
         compactable = candidate[stable_end:recent_start]
         recent = candidate[recent_start:]
@@ -280,7 +285,10 @@ class ContextWindowController:
         )
         return replace(
             measurement,
-            estimated_tokens=max(measurement.estimated_tokens, projected),
+            # The provider measures the actual media encoding. Keeping the larger
+            # generic image estimate here repeatedly discards fresh tool evidence
+            # even after a successful request proves that estimate was too high.
+            estimated_tokens=projected,
         )
 
     def _clear_recent_tool_results(

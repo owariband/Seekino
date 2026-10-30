@@ -197,6 +197,14 @@ def project_video_parse_task(
                 else "视频解析失败，请重试"
             ),
         )
+    if task.last_error and task.last_error.get("code") == "PARSE_NODE_FAILED":
+        stage = {"asr": "语音转写", "visual": "画面准备", "ocr": "画面文字识别",
+                 "understanding": "视频理解", "commit": "结果提交"}.get(task.last_error.get("stage"), "解析")
+        reason = {"model_timeout": "模型请求超时", "timeout": "执行超时",
+                  "output_token_limit": "模型输出被截断", "loop_limit": "模型调用次数耗尽",
+                  "required_tool_missing": "模型未提交必要结果",
+                  "invalid_model_response": "模型返回不符合结果要求"}.get(task.last_error.get("reason"), "执行异常")
+        error = Failure(code="PARSE_NODE_FAILED", message=f"{stage}失败：{reason}。本次解析已停止派发，请检查后手动重试。")
     public_detail = {
         key: value
         for key, value in task.detail.items()
@@ -270,6 +278,10 @@ def project_video_parse_task(
             and observation.upload_session_id is not None
             and (
                 task.status in _TERMINAL_VIDEO_PARSE_TASK_STATUSES
+                or (
+                    not observation.has_active_execution_lease
+                    and not _is_unaccepted_pending_task(task)
+                )
                 or (
                     observation.pending_takeover_enabled
                     and _is_unaccepted_pending_task(task)

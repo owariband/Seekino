@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import GenerativeModelConfig, ParseInput
-from agent.video_parse_v2.prompts import build_canvas_understanding_prompt
+from agent.video_parse_v2.prompts import build_understanding_prompt
 from agent.video_parse_v2.state import ChunkExecution, LeaseToken
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion, ParseContextCanvas
 from engine.common.transcription import TranscriptAnalysis
@@ -596,6 +596,28 @@ def test_ocr_host_uses_agent_prompt_and_shared_engine_result(monkeypatch, tmp_pa
     assert asyncio.run(runtime.read_chunk_text(execution)) is expected
 
 
+@pytest.mark.parametrize("changed", ["none", "version", "owner", "failure", "status"])
+def test_episode_producer_guard_rejects_stopped_or_replaced_parent(changed):
+    from server.service.video_parse_errors import VideoParseLeaseLostError
+
+    task = SimpleNamespace(lease_version=4, lease_owner="worker", status="PARSING", detail={})
+    if changed == "version":
+        task.lease_version = 5
+    elif changed == "owner":
+        task.lease_owner = None
+    elif changed == "failure":
+        task.detail = {"_worker_runtime_v2": {"failure_status": "PARSING_FAILED"}}
+    elif changed == "status":
+        task.status = "PARSING_FAILED"
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._persistence = SimpleNamespace(load_task_input=lambda _id: SimpleNamespace(task=task))
+    if changed == "none":
+        runtime._require_episode_preparing("video", 4)
+    else:
+        with pytest.raises(VideoParseLeaseLostError, match="producer stopped"):
+            runtime._require_episode_preparing("video", 4)
+
+
 @pytest.mark.parametrize(
     ("route", "encoder_model", "expected_model"),
     [
@@ -774,17 +796,12 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert list((tmp_path / "media-work").rglob("episode.json"))
         with track_model_call(provider="fixture", model="vision", operation="video_parse") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
-        canvas = options["canvas"]
-        reference = canvas.items("members")[0][0]
-        write = next(tool for tool in options["tools"] if tool.name == "write_context_canvas")
-        write.invoke({
-            "batch_id": "understanding", "expected_revision": canvas.revision,
-            "operations": [{"op": "add_event", "member_ref": reference, "key": "wave",
-                            "event": ActionEvent(event_type="ACTION", start_seconds=1000,
-                                                 end_seconds=4000, description="A hand waves in the frame.",
-                                                 participants=[], visible_persons=[]).model_dump(mode="json")}],
-        })
-        return CanvasCompletion(complete=True)
+        assert options["result_type"] is VideoParseResult
+        assert not options.get("tools") and "canvas" not in options
+        return VideoParseResult(persons=[], timeline=[ActionEvent(
+            event_type="ACTION", start_seconds=1000, end_seconds=4000,
+            description="A hand waves in the frame.", participants=[], visible_persons=[],
+        )])
 
     async def generate_text(_self, _binding, _prompt, **_options):
         with track_model_call(provider="fixture", model="refine", operation="chat") as tracker:
@@ -1059,18 +1076,13 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         model_calls["understanding"] += 1
         state = _self._require_chunk_binding().state
         assert state is not None
-        canvas = options["canvas"]
-        reference = canvas.items("members")[0][0]
-        write = next(tool for tool in options["tools"] if tool.name == "write_context_canvas")
-        write.invoke({
-            "batch_id": "understanding", "expected_revision": canvas.revision,
-            "operations": [{"op": "add_event", "member_ref": reference, "key": "wave",
-                            "event": ActionEvent(event_type="ACTION", start_seconds=state.start_seconds + 1000,
-                                                 end_seconds=state.start_seconds + 4000,
-                                                 description="A hand waves in the frame.",
-                                                 participants=[], visible_persons=[]).model_dump(mode="json")}],
-        })
-        return CanvasCompletion(complete=True)
+        assert options["result_type"] is VideoParseResult
+        assert not options.get("tools") and "canvas" not in options
+        return VideoParseResult(persons=[], timeline=[ActionEvent(
+            event_type="ACTION", start_seconds=state.start_seconds + 1000,
+            end_seconds=state.start_seconds + 4000,
+            description="A hand waves in the frame.", participants=[], visible_persons=[],
+        )])
 
     async def generate_text(_self, _binding, _prompt, **_options):
         model_calls["refine"] += 1
@@ -1268,10 +1280,11 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     ("ark_default", "video"),
     ("ark_default", "ordered_frames"),
     ("deepseek_api", "ordered_frames"),
+    ("kimi_coding", "ordered_frames"),
 ])
 @pytest.mark.parametrize("explicit_refine", [False, True])
 @pytest.mark.parametrize("overlap_ms", [0, 3000])
-def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
+def test_understanding_uses_direct_json_and_refine_retains_canvas_tools(
     monkeypatch, tmp_path, source, visual_mode, explicit_refine, overlap_ms,
 ):
     requests = []
@@ -1282,8 +1295,16 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
             self.name = model
             self.options = _options
 
-        def generate(self, *_args, **_options):
-            pytest.fail("understanding/refine must use the shared DeepAgents harness")
+        def generate(self, request_inputs, **options):
+            assert options["result_type"] is VideoParseResult
+            assert not options["tools"]
+            assert options["context_checkpoint"] is None
+            assert options["max_model_calls"] is None
+            requests.append((self.name, list(request_inputs), options))
+            return VideoParseResult(persons=[], timeline=[ActionEvent(
+                event_type="ACTION", start_seconds=21_000, end_seconds=23_000,
+                description="A supported test action.", participants=[], visible_persons=[],
+            )])
 
         def close(self):
             closed.append(self.name)
@@ -1291,41 +1312,27 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
     def generate_with_deepagents(adapter, request_inputs, **options):
         if source == "deepseek_api":
             assert adapter.options["base_url"] == "https://api.deepseek.com"
-            assert adapter.options["max_output_tokens"] == 8192
             assert adapter.options["reasoning_effort"] == "none"
         requests.append((adapter.name, list(request_inputs), options))
         tools = {tool.name: tool for tool in options["tools"]}
-        assert set(tools) == {"get_context_canvas", "write_context_canvas"} | (
-            {"inspect_video_frames"} if len(requests) > 1 else set()
-        )
+        assert set(tools) == {"get_context_canvas", "write_context_canvas", "inspect_video_frames"}
         evidence = json.loads(tools["get_context_canvas"].invoke({
             "collection": "evidence", "reference": "member", "section": "asr",
         }))
         assert "transcript" in evidence["content"]
-        if len(requests) == 1:
-            if overlap_ms:
-                rejected = json.loads(tools["write_context_canvas"].invoke({
-                    "batch_id": "outside-context", "expected_revision": evidence["revision"],
-                    "operations": [{
-                        "op": "add_event", "member_ref": "member", "key": "context-only",
-                        "event": ActionEvent(
-                            event_type="ACTION", start_seconds=19_000, end_seconds=19_500,
-                            description="Outside context must not be written.", participants=[], visible_persons=[],
-                        ).model_dump(mode="json"),
-                    }],
-                }))
-                assert "error" in rejected
-            receipt = json.loads(tools["write_context_canvas"].invoke({
-                "batch_id": "draft", "expected_revision": evidence["revision"],
-                "operations": [{
-                    "op": "add_event", "member_ref": "member", "key": "action",
-                    "event": ActionEvent(
-                        event_type="ACTION", start_seconds=21_000, end_seconds=23_000,
-                        description="A supported test action.", participants=[], visible_persons=[],
-                    ).model_dump(mode="json"),
-                }],
-            }))
-            assert receipt["revision"] > evidence["revision"]
+        events = json.loads(tools["get_context_canvas"].invoke({"collection": "events"}))
+        # The direct result is available to the existing Refine Canvas.
+        event_ref = events["items"][0]["reference"]
+        item = json.loads(tools["get_context_canvas"].invoke({
+            "collection": "events", "reference": event_ref,
+        }))
+        assert "A supported test action." in item["content"]
+        receipt = json.loads(tools["write_context_canvas"].invoke({
+            "batch_id": "refine-action", "expected_revision": item["revision"],
+            "operations": [{"op": "patch_event", "event_ref": event_ref,
+                            "fields": {"description": "A refined supported action."}}],
+        }))
+        assert receipt["revision"] > item["revision"]
         assert options["result_type"] is CanvasCompletion
         assert options["max_model_calls"] is None
         assert options["context_checkpoint"] is not None
@@ -1333,8 +1340,10 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
 
     monkeypatch.setenv("ARK_API_KEY", "fake-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-deepseek-key")
+    monkeypatch.setenv("KIMI_API_KEY", "fake-kimi-key")
     monkeypatch.setattr("gateway.ark.multimodal.ArkMultimodalModel", Model)
     monkeypatch.setattr("gateway.openai.multimodal.DeepSeekMultimodalModel", Model)
+    monkeypatch.setattr("gateway.openai.vision.OpenAIVisionModel", Model)
     monkeypatch.setattr("gateway.agent_model.deepagents_multimodal.generate_with_deepagents", generate_with_deepagents)
     config = _parse_config()
     config["visual_input"]["mode"] = visual_mode
@@ -1379,13 +1388,9 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
 
     monkeypatch.setattr(runtime, "_ensure_chunk_media", prepared_media)
     evidence = {"member": {"asr": {"transcript": []}, "ocr": None}}
-    canvas = ParseContextCanvas(scope="chunk:member", stage="understanding", evidence=evidence, members={
-        "member": {"sequence_no": 2, "version": 0, "bounds": (20_000, 30_000),
-                   "content": VideoParseResult(persons=[], timeline=[])},
-    })
     result = asyncio.run(runtime.understand_chunk(
         execution, asr_result={"transcript": []}, ocr_result=None,
-        prompt=build_canvas_understanding_prompt(execution, canvas=canvas), canvas=canvas,
+        prompt=build_understanding_prompt(execution, asr_result={"transcript": []}, ocr_result=None),
     ))
     assert len(result.timeline) == 1
     refine_canvas = ParseContextCanvas(scope="refine:interval", evidence=evidence, members={
@@ -1417,11 +1422,9 @@ def test_understanding_and_refine_share_deepagents_with_bound_media_and_canvas(
     else:
         assert primary_inputs[:-1] == [ImageInput(path=path) for _timestamp, path in media.frames]
         assert primary_inputs[-1].text.endswith("Ordered frame timestamps: [21000, 22000]")
-    fallback_inputs = requests[0][2]["fallback_inputs"]
-    assert fallback_inputs[:-1] == [ImageInput(path=path) for _timestamp, path in media.frames]
-    assert fallback_inputs[-1].text.endswith("Fallback ordered frame timestamps: [21000, 22000]")
     assert requests[1][1] == [TextInput("refine this interval")]
     assert requests[1][2]["fallback_inputs"] is None
+    assert refine_canvas.result("member").timeline[0].description == "A refined supported action."
     assert closed == ["fallback-model", "understanding-model"] + (
         ["refine-model"] if explicit_refine else ["fallback-model", "understanding-model"]
     )

@@ -826,6 +826,7 @@ def test_worker_retry_all_phases_use_saved_task_policy(
             calls.append((actual, kwargs))
             return True
 
+        fail_chunk = retry_chunk
         retry_interval = retry_chunk
 
     async def fail(_lease):
@@ -843,7 +844,9 @@ def test_worker_retry_all_phases_use_saved_task_policy(
     )
     asyncio.run(consumer._run_chunk(lease) if phase != "refine" else consumer._run_interval(lease, fail))
     expected = task_delay
-    assert calls == [(lease, {"error": "transient", "retry_at": NOW + timedelta(seconds=expected)})]
+    assert calls == [(lease, {"error": "transient", **(
+        {"stage": "understanding", "reason": "execution_failed"} if phase == "understand"
+        else {"retry_at": NOW + timedelta(seconds=expected)})})]
 
 
 @pytest.mark.parametrize("phase", ["understand", "refine", "index"])
@@ -935,6 +938,7 @@ def test_consumer_logs_retry_cause_without_sensitive_payloads(
             calls.append((actual, kwargs))
             return recorded
 
+        fail_chunk = retry_chunk
         retry_interval = retry_chunk
 
         def release_execution(self, *_args, **_kwargs):
@@ -1003,6 +1007,12 @@ def test_consumer_logs_retry_cause_without_sensitive_payloads(
         assert calls == [] and caplog.records == []
         return
     asyncio.run(run)
+    if phase == "understand":
+        assert calls == [(lease, {"error": str(error), "stage": "understanding", "reason": "model_timeout"})]
+        assert "video_parse_node_failed" in caplog.text
+        assert "private" not in caplog.text
+        assert "video_parse_v2_retry" not in caplog.text
+        return
     retry_at = NOW + timedelta(seconds=10)
     assert calls == [(lease, {"error": str(error), **({"retry_at": retry_at} if phase != "prepare" else {})})]
     assert consumer.failure is None
@@ -1686,6 +1696,7 @@ def test_consumer_deadline_cancels_a_stuck_call_even_while_heartbeats_succeed():
         def retry_chunk(self, claimed, **kwargs):
             retries.append((claimed, kwargs))
             return True
+        fail_chunk = retry_chunk
     async def handler(_lease):
         try:
             await asyncio.Event().wait()
@@ -1818,3 +1829,38 @@ def test_finalize_sweep_skips_no_op_updates_and_pages_every_task_by_id(repositor
         assert task.status == "PARSING"
         assert task.update_time == datetime_to_unix_time_ms(changed_at)
         assert session.get(VideoParseTask, second).update_time == stamps[second][0]
+
+
+def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
+    from server.repository.video_parse_task import task_data
+    from server.service.video_parse_task import _task_state
+    from server.api.jobs import project_video_parse_task
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    task_id = _task(factory, chunk_count=2, accepted=True, batch_size=2)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
+    _repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=2)
+    first = queue.claim_chunk("first", lease_duration=timedelta(minutes=1), now=NOW)
+    sibling = queue.claim_chunk("second", lease_duration=timedelta(minutes=1), now=NOW)
+    assert first and sibling
+    assert queue.fail_chunk(first, error="private provider token", stage="understanding",
+                            reason="model_timeout", now=NOW)
+    queue.retry_video(video_lease, error="coordinator stopped after node failure", now=NOW)
+    assert not queue.heartbeat_chunk(sibling, lease_duration=timedelta(minutes=1), now=NOW)
+    assert queue.claim_chunk("new", lease_duration=timedelta(minutes=1), now=NOW) is None
+    with factory() as session:
+        child = session.get(ChunkParseTask, first.chunk_parse_task_id)
+        assert child.status == "FAILED" and child.retry_count == 0
+        parent = session.get(VideoParseTask, task_id)
+        view = project_video_parse_task(_task_state(task_data(parent)))
+        assert view.last_error.code == "PARSE_NODE_FAILED"
+        assert "视频理解" in view.last_error.message and "超时" in view.last_error.message
+        assert "private" not in view.last_error.message
+    from server.service.video_parse_content import _locked_chunk_lease
+    from server.service.video_parse_errors import VideoParseLeaseLostError
+    with factory() as session, pytest.raises(VideoParseLeaseLostError):
+        _locked_chunk_lease(session, sibling, NOW)
+    assert queue.release_execution(sibling, now=NOW)
+    queue.reap_expired(now=NOW)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).status == "PARSING_FAILED"

@@ -134,6 +134,17 @@ Long videos receive only complete sliding windows. A video shorter than the
 configured Interval receives one `[0,n)` short window and still passes through
 Refine and indexing.
 
+Understanding subgraph nodes (`asr`, `visual`, `ocr`, `understanding`) own
+bounded retries for timeouts and transport failures, using the frozen execution
+retry configuration. Successful upstream observations stay in graph state;
+retrying Understanding does not rerun ASR. The execution deadline and durable
+model-call budget do not reset. Commit is not automatically replayed.
+A final Parse exception stops dispatch for that video, fences sibling writes,
+and publishes `PARSE_NODE_FAILED` through task API/SSE. Consumer records the
+failure without requeuing the Chunk. Existing process-crash lease recovery and
+Index/Refine retry policies remain separate. Native ASR already executing may
+finish its blocking call before cancellation takes effect.
+
 ## Runtime and transaction rules
 
 The runtime object supplies the operations actually consumed by each stage.
@@ -254,10 +265,15 @@ RuntimeService; recovery rebuilds it without discarding committed Chunk content.
 No persistent ASR checkpoint is implied. Historical snapshots default to `chunk`.
 
 Refine input includes each member's content, version, bounds, sequence, and
-ordered scope, plus original evidence and full content fingerprints. Understanding,
-[`ParseContextCanvas`](timelineEvent_canvas.py) in Refine and Prefix uses the same [`ContextCanvas`](../utils/context_canvas.py)
-implementation and shared `get_context_canvas` / `write_context_canvas` tools as
-Chat. Refine operations add or correct events; omitted events and fields remain
+ordered scope, plus original evidence and full content fingerprints. Understanding
+receives ASR/OCR and background directly and returns one `VideoParseResult` JSON
+object without tools. The host validates the complete result and imports persons
+and all events in one atomic `ParseContextCanvas.write` batch before the existing
+lease-fenced commit. Full ASR word alignment remains in immutable evidence; the
+initial prompt includes cue text, times and anonymous speaker IDs.
+[`ParseContextCanvas`](timelineEvent_canvas.py) in Refine and Prefix retains the same
+[`ContextCanvas`](../utils/context_canvas.py) implementation and shared
+`get_context_canvas` / `write_context_canvas` tools as Chat. Refine operations add or correct events; omitted events and fields remain
 unchanged, and event deletion is unavailable. Each batch validates an independent
 draft before publishing it. The program assembles the final timeline from Canvas;
 the model returns only a completion receipt.

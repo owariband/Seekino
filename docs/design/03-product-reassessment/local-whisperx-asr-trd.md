@@ -58,6 +58,7 @@ models.transcription + model_sources.whisperx_local
 - 原 `transcribe_chunk` 保持返回 `ASRResult`，选择 `cue.start < chunk.end && cue.end > chunk.start` 的完整 cues，保留原始文本、时间和 words。每次深复制，避免 Chunk 修改共享数据；不再加 Chunk 起点。Understanding 的可写区间保持原合同，跨界原句只提供上下文，不扩大事件写入权限。
 - 采用现有单 RuntimeService 的进程内 Consumer；不支持将同一视频的协调器和 Chunk 分配给互不共享内存的服务实例。缓存缺失明确失败，不伪装为空转写。协调器退出后释放缓存，服务重启或新协调器重试会重新转写；已提交 Chunk 沿用既有恢复逻辑。没有整片 ASR 的持久 checkpoint。
 - 临时整片音频在实际原生推理退出后清理；文本缓存生命周期不延长音频内存生命周期。整片调用超时覆盖整段转写，需按素材长度配置 `request_timeout_seconds`。首个 Chunk 需等待整片 ASR，这是相对逐 Chunk 的延迟代价。
+- 2026-10-30 的目标负载是先完成一个视频的 ASR，再让 10 个 Understanding Chunk 读取结果。WhisperX 已由 Gateway 按来源与模型复用 runtime，并在内部串行推理；前置 ASR 解决逐块排队转写与理解槽位的耦合，不额外创建 10 个本地模型。初次部署保持 `SEEKINO_VIDEO_CONCURRENCY=1`，单独调整 `SEEKINO_PARSE_CONCURRENCY=10`；Refine、Summary 可能同时调用 Kimi，因此 Parse 的 10 个槽位不等于账号总在途上限 10。
 - `asr` 阶段沿现有 execution_timing 账本在视频租约下采样，任务总时长继续取执行区间并集；排队及停机不计入。普通 release 时长展示已由前置提交开放。本次无需数据库迁移或新队列。
 
 # 4. 对照实验与结果分析
@@ -76,6 +77,8 @@ models.transcription + model_sources.whisperx_local
 
 视频级增量使用替身模型和隔离 SQLite 验证；两个并发 Chunk 共用一次整片转写，58–62 秒的跨界 cue 在两者中均保留相同绝对时间，恢复后重建一次缓存。失败、取消、缺证和时长投影的测试记录见 [devlog](../../dev/devlog.md#devlog-full-video-asr-20261029)。这些结果不证明识别准确率或整集速度改善。
 
+2026-10-30 增补：整片 ASR 分支同步 dev 的直接 JSON 与节点内重试实现，回归扩展到 10 个 Chunk 同时进入真实 Understanding 子图；替身模型对一个 Chunk 注入一次暂态超时，最终全部提交，ASR 仍只调用一次。验证同时覆盖协调器退出后重新转写，不能将本次内存复用解释为跨重启复用。组合回归结果记录于同一 devlog。
+
 # 5. 试点验证与推广决策
 
 试点先在隔离环境准备所选 CT2 权重及实际语言的对齐权重。固定语音清晰、静音、数字/标点、音乐背景、重叠发言、混合语言样本；保存音频 SHA、模型版本、硬件、原始转写、对齐结果及耗时。对同一 WhisperX 转写比较有/无强制对齐的人工边界误差与未对齐比例，再与当前 ASR 比较文本错误和资源成本。阈值需根据首次标注样本确定，探索结果不直接当质量验收。
@@ -85,5 +88,7 @@ models.transcription + model_sources.whisperx_local
 # 6. 问题闭环与验收边界
 
 整片增量交付为代码、离线验证及独立 PR；没有启动全量课程解析或切换运行服务。真实同模型准确率、整片峰值内存、首片段等待及整集吞吐仍待测。试点应先选择覆盖跨界句子的短片，比较完整音轨与逐 Chunk 的转写、时间和最终事件，保留无收益结果；不直接用前述三语短样本为整片模式背书。
+
+2026-10-30 核对的本机配置仍为 Video=1、Parse=2、Refine=10，WhisperX 请求超时 1,200 秒；服务处于停止状态。扩大到长课程前，应实测整片转写/对齐时长并设置可覆盖该阶段的超时，再让新解析版本冻结 `scope=video`、30,000 输出预算及目标并发。只改 YAML 或对旧任务执行普通 retry 都不会更新其冻结快照。Kimi 的两轮 10 路短请求测试仅说明当时账号接受能力，不替代多帧长请求、Refine/Index 和课程回看追问的验收。
 
 本次可交付边界是配置改名、正式可选接入、三语本机部署与 Karpathy 系列任务启动；字幕字词时间证据已接通。真实单样本证明可运行，播放器字幕产品效果、系统性识别质量及完整系列完成情况仍未验收。当前状态只维护在 [B20](../../dev/problems.md#b20本地-whisperx-正式接入与字幕时间证据)，过程与指标维护在 [devlog](../../dev/devlog.md#devlog-whisperx-20261029)，不在本 TRD 另建任务看板。
