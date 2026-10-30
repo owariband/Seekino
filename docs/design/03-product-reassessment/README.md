@@ -70,3 +70,5 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 相关原始调研仍在研究目录：[OmniScript](../../research/2026-10-24-omniscript.md)、[Supervisor / Sandbox](../../research/2026-10-25-supervisor-sandbox-langsmith.md)、[本地 Sandbox / DeepAgents](../../research/2026-10-26-local-sandbox-deepagents.md)。本次归档不更新外部论文或工具的事实判断；部分旧实验材料已缺失，复跑前按原交接核对输入与证据。
 
 [返回设计总索引](../README.md) · [报告索引](../../report/README.md)
+
+- [任务历史版本筛选](task-history-filter-trd.md)：2026-10-30，默认当前版本、历史追溯与操作权限说明。
