@@ -3854,7 +3854,7 @@ M5 10 核 GPU、16 GB 统一内存；Metal 建议工作集约 12.713 GB，不等
 
 ### 2. 方案候选
 
-从已核实的最新 dev `df83c3f9` 建立 `fix/video-asr-recovery`，沿原 ASR 主 TRD 续版，保留原设计和实验边界，不重开竞争方案。新 Draft 围绕昂贵 ASR 在下游失败后不能复用，先规划 `video_parse_content`＋ArtifactStore 的完成产物，再接正式 Metal 转写与独立对齐。网络根因继续关联 #13，暂停恢复关联 #16/#17；不扩大到无界重试、10 路小模型或学习画像。
+从已核实的最新 dev `df83c3f9` 建立 `fix/video-asr-recovery`，发布 [Draft PR #18](https://github.com/owariband/Seekino/pull/18)，沿原 ASR 主 TRD 续版，保留原设计和实验边界，不重开竞争方案。新 Draft 围绕昂贵 ASR 在下游失败后不能复用，先规划 `video_parse_content`＋ArtifactStore 的完成产物，再接正式 Metal 转写与独立对齐。网络根因继续关联 #13，暂停恢复关联 #16/#17；不扩大到无界重试、10 路小模型或学习画像。
 
 ### 3. 方案验证
 

@@ -711,7 +711,7 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
-**10-30 新一轮跟进：** #12 整片前置复用与 #15 阶段日志均已合入 dev；需求仍为 TODO。新分支 `fix/video-asr-recovery` 围绕“长视频 ASR 代价高，且下游失败后成果不可复用”开启 Draft 跟进，当前提交背景续版、修复方案与实测证据。拟按 `video_parse_content` 独立保存完成产物，补租约安全发布/恢复、正式 Metal 转写与独立对齐，并通过完整课程验收。下一项是完成后重启/失败重试的复现与持久化修复；这些实现及运行切换尚未完成。沿用[原主设计](../design/03-product-reassessment/local-whisperx-asr-trd.md)，关联 B07、B22 和模型网络问题，不新建重复状态入口。
+**10-30 新一轮跟进：** #12 整片前置复用与 #15 阶段日志均已合入 dev；需求仍为 TODO。[Draft PR #18](https://github.com/owariband/Seekino/pull/18)（`fix/video-asr-recovery`）围绕“长视频 ASR 代价高，且下游失败后成果不可复用”开启 Draft 跟进，当前提交背景续版、修复方案与实测证据。拟按 `video_parse_content` 独立保存完成产物，补租约安全发布/恢复、正式 Metal 转写与独立对齐，并通过完整课程验收。下一项是完成后重启/失败重试的复现与持久化修复；这些实现及运行切换尚未完成。沿用[原主设计](../design/03-product-reassessment/local-whisperx-asr-trd.md)，关联 B07、B22 和模型网络问题，不新建重复状态入口。
 
 2026-10-29 整片增量：新建 WhisperX 任务支持默认视频级转写，原 Chunk ASR 节点改为读取相交 cues，保留绝对时间及只读证据；旧任务缺省仍逐块执行。内存缓存随协调器租约释放，重启会重新转写；未实现持久 ASR checkpoint。ASR 时间加入既有有效总时长。代码与离线验证已完成，真实整片识别质量、资源、吞吐和运行部署仍待验收；没有启动全量解析。[设计](../design/03-product-reassessment/local-whisperx-asr-trd.md#视频级转写与-chunk-读取)、[本次验证](devlog.md#devlog-full-video-asr-20261029)。
 

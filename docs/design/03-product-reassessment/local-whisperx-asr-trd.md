@@ -2,7 +2,7 @@
 
 日期：2026-10-29。主题：可选本地 WhisperX ASR、强制对齐与字幕时间证据。
 
-**2026-10-30 续版：长视频 ASR 的可恢复成果与本机 GPU 执行。** 本轮沿用本主设计，不另建竞争 TRD；各节新增内容明确标为续版方案，原接入和上线前记录保留历史口径。跟进分支 `fix/video-asr-recovery`，实际状态统一维护在 [B20](../../dev/problems.md#b20本地-whisperx-正式接入与字幕时间证据)。
+**2026-10-30 续版：长视频 ASR 的可恢复成果与本机 GPU 执行。** 本轮沿用本主设计，不另建竞争 TRD；各节新增内容明确标为续版方案，原接入和上线前记录保留历史口径。跟进 [Draft PR #18](https://github.com/owariband/Seekino/pull/18)，分支 `fix/video-asr-recovery`，实际状态统一维护在 [B20](../../dev/problems.md#b20本地-whisperx-正式接入与字幕时间证据)。
 
 ## 10-30 续版背景：旧 PR 合并不等于需求闭环
 
