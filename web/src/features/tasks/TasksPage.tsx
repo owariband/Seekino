@@ -40,6 +40,7 @@ type Filter = "all" | "paused" | VideoParseTaskStatus;
 function isPaused(task: VideoParseTaskView): boolean {
   return task.isPaused ?? task.detail.execution_control?.paused ?? false;
 }
+type VersionFilter = "current" | "history" | "all";
 
 const PIPELINE = ["解析画面与对白", "发布检索结果", "可检索"];
 
@@ -111,6 +112,7 @@ export function TasksPage() {
   const queryClient = useQueryClient();
   const [controllingTaskIds, setControllingTaskIds] = useState<ReadonlySet<string>>(() => new Set());
   const [filter, setFilter] = useState<Filter>("all");
+  const [versionFilter, setVersionFilter] = useState<VersionFilter>("current");
   const [deletingUploadSessionIds, setDeletingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [retryingUploadSessionIds, setRetryingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [reparsingUploadSessionIds, setReparsingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -284,11 +286,6 @@ export function TasksPage() {
   };
 
   const tasks = tasksQuery.data ?? [];
-  const visibleTasks = filter === "all"
-    ? tasks
-    : tasks.filter((task) => filter === "paused" ? isPaused(task) : !isPaused(task) && task.status === filter);
-  const runningCount = tasks.filter((task) => !isPaused(task) && activeStatuses.has(task.status)).length;
-  const completedCount = tasks.filter((task) => task.status === "COMPLETE").length;
   const latestVersionByVideo = new Map<string, number>();
   for (const task of tasks) {
     latestVersionByVideo.set(
@@ -296,6 +293,14 @@ export function TasksPage() {
       Math.max(latestVersionByVideo.get(task.videoId) ?? 0, task.version),
     );
   }
+
+  const scopedTasks = tasks.filter((task) => {
+    const latest = task.version === latestVersionByVideo.get(task.videoId);
+    return versionFilter === "all" || (versionFilter === "current" ? latest : !latest);
+  });
+  const visibleTasks = filter === "all" ? scopedTasks : scopedTasks.filter((task) => filter === "paused" ? isPaused(task) : !isPaused(task) && task.status === filter);
+  const runningCount = scopedTasks.filter((task) => !isPaused(task) && activeStatuses.has(task.status)).length;
+  const completedCount = scopedTasks.filter((task) => task.status === "COMPLETE").length;
 
   return (
     <main className="page">
@@ -316,6 +321,17 @@ export function TasksPage() {
         <article><CheckCircle2 size={17} /><div><span>{t("已完成")}</span><strong>{completedCount}</strong></div></article>
       </section>
 
+      <div className={styles.toolbar}>
+        <div role="group" aria-label={t("筛选任务版本")}>
+          {([
+            ["current", t("当前任务")],
+            ["history", t("历史任务")],
+            ["all", t("全部版本")],
+          ] as const).map(([value, label]) => (
+            <button type="button" key={value} aria-pressed={versionFilter === value} className={versionFilter === value ? styles.filterActive : undefined} onClick={() => setVersionFilter(value)}>{label}</button>
+          ))}
+        </div>
+      </div>
       <div className={styles.toolbar}>
         <div role="group" aria-label={t("筛选解析任务")}>
           {([
@@ -373,7 +389,9 @@ export function TasksPage() {
                 {/* The episode names the card; the badge carries status, so only live stages repeat as a subline. */}
                 <div className={styles.jobName}>
                   <h2>{task.seriesName ? `${task.seriesName} · ` : ""}{episodeTitle(episodeOrder, locale)}</h2>
-                  {activeStatuses.has(task.status) ? <span className={styles.jobStage}>{stageTitle}</span> : null}
+                  <span className={styles.jobStage}>{t("解析版本 {version}", { version: task.version })} · {latest ? t("当前任务") : t("历史任务")}</span>
+                  {!latest ? <span className={styles.jobStage}>{t("已由版本 {version} 替代，仅供查看历史记录。", { version: latestVersionByVideo.get(task.videoId)! })}</span> : null}
+                  {latest && activeStatuses.has(task.status) ? <span className={styles.jobStage}>{stageTitle}</span> : null}
                 </div>
                 <div className={styles.jobActions}>
                   <div className={styles.jobStatus} data-status={paused ? "PAUSED" : task.status}>
@@ -523,17 +541,17 @@ export function TasksPage() {
 
               {failed ? (
                 <div className={styles.jobError}><CircleAlert size={15} /><div><strong>{t("失败原因")}</strong><p>{
-                  task.lastError?.message || (task.status === "INDEXING_FAILED"
+                  (latest ? task.lastError?.message : task.lastError?.message?.replace(/，请重试[。.]?$/, "")) || (!latest ? t("此历史版本解析失败，后续进度请查看当前任务。") : task.status === "INDEXING_FAILED"
                     ? t("检索索引发布失败，请重试")
                     : t("视频解析失败，请重试"))
                 }</p></div></div>
               ) : null}
-              {task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />{t("等待开始解析。")}</p> : null}
+              {latest && task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />{t("等待开始解析。")}</p> : null}
             </article>
           );
         })}
         {tasksQuery.isSuccess && visibleTasks.length === 0 ? (
-          <div className={styles.empty}><Activity size={25} strokeWidth={1.4} /><h2>{t("这里暂时很安静")}</h2><p>{t("上传视频后，可以在这里查看解析进度。")}</p></div>
+          <div className={styles.empty}><Activity size={25} strokeWidth={1.4} /><h2>{t("这里暂时很安静")}</h2><p>{tasks.length === 0 ? t("上传视频后，可以在这里查看解析进度。") : t("没有符合当前筛选条件的任务。")}</p></div>
         ) : null}
       </section>
     </main>

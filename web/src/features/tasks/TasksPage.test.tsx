@@ -120,6 +120,34 @@ describe("V2 task observation", () => {
     expect(current.version).toBe(1);
   });
 
+  it("defaults to current versions across all pages and filters status after version scope", async () => {
+    workspace.displayMode = "release";
+    const old = { ...task("PARSING_FAILED", "old"), videoId: "shared", version: 1 };
+    const latest = { ...task("COMPLETE", "latest"), videoId: "shared", version: 2 };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      return response(url.searchParams.has("cursor")
+        ? { items: [latest], total: 2, hasMore: false, nextCursor: null }
+        : { items: [old], total: 2, hasMore: true, nextCursor: "page2" });
+    }));
+    renderPage();
+    const user = userEvent.setup();
+    expect(await screen.findByText(latest.originalFilename!)).toBeInTheDocument();
+    expect(screen.queryByText(old.originalFilename!)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "解析异常" }));
+    expect(screen.getByText("没有符合当前筛选条件的任务。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "历史任务" }));
+    expect(screen.getByText(old.originalFilename!)).toBeInTheDocument();
+    expect(screen.getByText("已由版本 2 替代，仅供查看历史记录。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /重试解析/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /删除任务/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("视频解析失败，请重试")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "全部版本" }));
+    await user.click(screen.getByRole("button", { name: "全部" }));
+    expect(screen.getByText(old.originalFilename!)).toBeInTheDocument();
+    expect(screen.getByText(latest.originalFilename!)).toBeInTheDocument();
+  });
+
   it("hides internal parsing statistics in release while preserving duration, progress, errors and actions", async () => {
     workspace.displayMode = "release";
     const failed: VideoParseTaskView = {
@@ -524,6 +552,8 @@ describe("V2 task actions", () => {
       name: `删除任务 ${sibling.originalFilename}`,
     })).not.toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "全部版本" }));
+    expect(screen.getByText(sibling.originalFilename!)).toBeInTheDocument();
     await user.click(deleteLatest);
     await user.click(screen.getByRole("button", {
       name: `确认删除 ${failed.originalFilename}`,

@@ -77,6 +77,14 @@ finally:
 共享串行 runtime，单次句柄关闭不重复卸载模型，Gateway 关闭释放引用。
 配置、依赖、权重路径和原生推理取消限制见[本地 WhisperX ASR 与对齐](../docs/model-config.md#本地-whisperx-asr-与对齐)。
 
+WhisperX 使用 INFO 事件 `local_asr_progress` 记录等待共享 runtime、音频读取、模型加载、
+转写（含上游 VAD）、对齐模型加载、对齐和结果归一阶段。每 30 秒记录一次存活状态，
+上游转写／对齐回调首次返回、增加约 5 个百分点或达到 100% 时记录进度；包含调用 ID、
+宿主传入的关联 context、总／阶段耗时和距上次推进的时间，不记录音频或转写正文。
+`phase_percent` 仅表示当前阶段的上游片段比例，不是原片时间覆盖或整个解析任务的完成率；
+VAD 等尚无回调的阶段保留 null。转写 100% 后仍需对齐，最终检查通过才记录 completed；
+失败记录阶段与异常类型。回调不会改变字词处理、超时或取消合同。
+
 ## 声音向量接口
 
 `speaker_embedding` 提取说话人的声音特征，与检索使用的多模态 `embedding` 分开。
