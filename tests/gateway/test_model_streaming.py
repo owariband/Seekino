@@ -1,4 +1,4 @@
-"""Creation-time stream settings tested through real SDKs and mock HTTP."""
+"""Creation-time stream and temperature settings through real SDKs and mock HTTP."""
 import json
 from pathlib import Path
 
@@ -23,7 +23,7 @@ class Answer(BaseModel):
     answer: str
 
 
-def _wire(body, *, structured=False):
+def _wire(body, *, structured=False, tool_call=False):
     text = '{"answer":"ok"}'
     usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
     if "input" in body:
@@ -35,17 +35,23 @@ def _wire(body, *, structured=False):
         events = [{"type": "response.output_text.delta", "sequence_number": 0,
                    "output_index": 0, "content_index": 0, "item_id": "msg-1", "delta": text},
                   {"type": "response.completed", "sequence_number": 1, "response": response}]
+        if tool_call:
+            response["output"] = [{"type": "function_call", "id": "item-search", "call_id": "call-search",
+                                   "name": "search_evidence", "arguments": '{"query":"scene"}', "status": "completed"}]
+            events = [{"type": "response.completed", "sequence_number": 0, "response": response}]
     else:
         message = {"role": "assistant", "content": text}
-        if structured:
+        if structured or tool_call:
             message = {"role": "assistant", "content": None, "tool_calls": [{
-                "id": "finish-1", "type": "function", "function": {"name": "Answer", "arguments": text},
+                "id": "finish-1", "type": "function", "function": {
+                    "name": "search_evidence" if tool_call else "Answer",
+                    "arguments": '{"query":"scene"}' if tool_call else text},
             }]}
-        finish = "tool_calls" if structured else "stop"
+        finish = "tool_calls" if structured or tool_call else "stop"
         response = {"id": "chat-1", "object": "chat.completion", "created": 0,
                     "model": body["model"], "choices": [{"index": 0, "message": message, "finish_reason": finish}], "usage": usage}
         delta = {**message}
-        if structured:
+        if structured or tool_call:
             delta["tool_calls"] = [{**message["tool_calls"][0], "index": 0}]
         base = {"id": "chat-1", "object": "chat.completion.chunk", "created": 0, "model": body["model"]}
         events = [{**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
@@ -57,7 +63,7 @@ def _wire(body, *, structured=False):
                           text="".join("data: " + json.dumps(event) + "\n\n" for event in events) + "data: [DONE]\n\n")
 
 
-def _setup(monkeypatch, profile, *, structured=False, fail_primary=False):
+def _setup(monkeypatch, profile, *, structured=False, fail_primary=False, visual_tools=False):
     requests = []
 
     def respond(request):
@@ -66,7 +72,7 @@ def _setup(monkeypatch, profile, *, structured=False, fail_primary=False):
         if fail_primary and body["model"] == "primary" and len(requests) == 1:
             code = "content_filter" if fail_primary == "filter" else "temporary_failure"
             return httpx.Response(400 if code == "content_filter" else 502, json={"error": {"message": "temporary failure", "code": code}})
-        return _wire(body, structured=structured)
+        return _wire(body, structured=structured, tool_call=visual_tools and len(requests) == 1)
 
     def openai(**kwargs):
         return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond)))
@@ -90,10 +96,12 @@ def _setup(monkeypatch, profile, *, structured=False, fail_primary=False):
 
 
 def _run(gateway, binding, entry):
-    if entry in {"json", "transcription"}:
+    if entry in {"json", "transcription", "vision_tools"}:
         create = gateway.create_transcription_model if entry == "transcription" else gateway.create_generative_model
         return create(binding).generate(
             [TextInput("answer")], schema_name="answer", result_type=Answer,
+            **({"tools": [StructuredTool.from_function(lambda query: "evidence", name="search_evidence", description="Read evidence")],
+                "max_model_calls": 3} if entry == "vision_tools" else {}),
         ).answer
     factory = gateway.create_agent_factory(binding)
     tools = [StructuredTool.from_function(lambda query: "evidence", name="search_evidence", description="Read evidence")]
@@ -118,10 +126,12 @@ def _run(gateway, binding, entry):
 
 @pytest.mark.parametrize("profile", ["standard", "kimi", "deepseek", "ark"])
 @pytest.mark.parametrize("setting", [None, True, False], ids=["default", "enabled", "disabled"])
-@pytest.mark.parametrize("entry", ["json", "loop", "structured", "supervisor"])
-def test_all_factory_entries_execute_the_configured_transport(monkeypatch, profile, setting, entry):
-    gateway, requests = _setup(monkeypatch, profile, structured=entry == "structured")
+@pytest.mark.parametrize("temperature", [None, 0.2, 0.8], ids=["default-temperature", "temperature-0.2", "temperature-0.8"])
+@pytest.mark.parametrize("entry", ["json", "loop", "structured", "supervisor", "vision_tools"])
+def test_all_factory_entries_execute_the_configured_transport(monkeypatch, profile, setting, temperature, entry):
+    gateway, requests = _setup(monkeypatch, profile, structured=entry == "structured", visual_tools=entry == "vision_tools")
     binding = ModelBinding(source="selected", model="test-model", max_output_tokens=1024,
+                           **({} if temperature is None else {"temperature": temperature}),
                            **({} if setting is None else {"stream": setting}))
     usage = []
     try:
@@ -132,6 +142,7 @@ def test_all_factory_entries_execute_the_configured_transport(monkeypatch, profi
     expected = setting is not False
     assert requests and all(request["stream"] is expected for request in requests)
     for request in requests:
+        assert request["temperature"] == (1 if profile == "kimi" else temperature or 0)
         if "messages" in request:
             assert request.get("stream_options") == ({"include_usage": True} if expected else None)
     assert any(item.usage.input_tokens == 100 and item.usage.output_tokens == 10 for item in usage)
@@ -142,44 +153,52 @@ def test_all_factory_entries_execute_the_configured_transport(monkeypatch, profi
 def test_fallback_uses_its_own_stream_setting(monkeypatch, primary, entry):
     gateway, requests = _setup(monkeypatch, "kimi", structured=entry == "structured", fail_primary="filter" if entry == "json" else True)
     binding = ModelBinding(source="selected", model="primary", stream=primary, max_output_tokens=1024,
-                           fallback=ModelBinding(source="backup", model="fallback", stream=not primary, max_output_tokens=1024))
+                           temperature=0.2,
+                           fallback=ModelBinding(source="backup", model="fallback", stream=not primary, temperature=0.8, max_output_tokens=1024))
     try:
         assert _run(gateway, binding, entry) == "ok"
     finally:
         gateway.close()
     assert [(request["model"], request["stream"]) for request in requests] == [("primary", primary), ("fallback", not primary)]
+    assert [request["temperature"] for request in requests] == [1, 0.8]
 
 
 @pytest.mark.parametrize("primary", [True, False])
+@pytest.mark.parametrize("distinct_transport", [True, False])
 @pytest.mark.parametrize("entry", ["loop", "structured", "supervisor"])
-def test_same_ark_model_can_have_a_distinct_fallback_transport(monkeypatch, primary, entry):
+def test_same_ark_model_can_have_a_distinct_fallback_transport(monkeypatch, primary, distinct_transport, entry):
     gateway, requests = _setup(monkeypatch, "ark", structured=entry == "structured", fail_primary=True)
     binding = ModelBinding(
-        source="selected", model="primary", stream=primary, max_output_tokens=1024,
-        fallback=ModelBinding(source="backup", model="primary", stream=not primary, max_output_tokens=1024),
+        source="selected", model="primary", stream=primary, temperature=0.2, max_output_tokens=1024,
+        fallback=ModelBinding(source="backup", model="primary", stream=not primary if distinct_transport else primary,
+                              temperature=0.8, max_output_tokens=1024),
     )
     try:
         assert _run(gateway, binding, entry) == "ok"
     finally:
         gateway.close()
-    assert [request["stream"] for request in requests] == [primary, not primary]
+    assert [request["stream"] for request in requests] == [primary, not primary if distinct_transport else primary]
+    assert [request["temperature"] for request in requests] == [0.2, 0.8]
 
 
 @pytest.mark.parametrize("setting", [None, True, False])
 def test_video_transcription_generation_uses_its_binding_stream_setting(monkeypatch, setting):
     gateway, requests = _setup(monkeypatch, "ark")
     binding = ModelBinding(source="selected", model="video-asr", kind="transcription", max_output_tokens=1024,
+                           temperature=0.2,
                            **({} if setting is None else {"stream": setting}))
     try:
         assert _run(gateway, binding, "transcription") == "ok"
     finally:
         gateway.close()
     assert len(requests) == 1 and requests[0]["stream"] is (setting is not False)
+    assert requests[0]["temperature"] == 0.2
 
 
 @pytest.mark.parametrize("setting", [None, True, False])
+@pytest.mark.parametrize("temperature", [None, 0.8])
 @pytest.mark.parametrize("model_type", [OllamaMultimodalModel, LlamaCppMultimodalModel])
-def test_local_compatible_models_use_the_same_default_and_override(setting, model_type):
+def test_local_compatible_models_use_the_same_default_and_override(setting, temperature, model_type):
     requests = []
     def respond(request):
         body = json.loads(request.content)
@@ -188,11 +207,13 @@ def test_local_compatible_models_use_the_same_default_and_override(setting, mode
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         model = model_type("local", base_url="http://localhost:9000", max_output_tokens=1024,
                            request_timeout_seconds=10, client=client,
+                           **({} if temperature is None else {"temperature": temperature}),
                            **({"expected_server_video_fps": 1} if model_type is LlamaCppMultimodalModel else {}),
                            **({} if setting is None else {"stream": setting}))
         assert model.generate([TextInput("answer")], schema_name="answer", result_type=Answer).answer == "ok"
         assert json.loads("".join(model.stream_text([TextInput("answer")])))["answer"] == "ok"
     assert len(requests) == 2 and all(body["stream"] is (setting is not False) for body in requests)
+    assert all(body["temperature"] == (temperature or 0) for body in requests)
 
 
 @pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
@@ -202,13 +223,16 @@ def test_stream_configuration_rejects_non_boolean_values(value):
 
 
 @pytest.mark.parametrize("setting", [None, True, False])
-def test_query_rewriter_uses_its_creation_time_stream_setting(setting):
+@pytest.mark.parametrize("temperature", [None, 0.2])
+def test_query_rewriter_uses_its_creation_time_stream_setting(setting, temperature):
     requests = []
     def respond(request):
         body = json.loads(request.content)
         requests.append(body)
         return _wire(body)
-    config = QueryHookConfig(**({} if setting is None else {"rewriter_stream": setting}))
+    config = QueryHookConfig(**({} if setting is None else {"rewriter_stream": setting}),
+                             **({} if temperature is None else {"rewriter_temperature": temperature}))
     model = QueryHookModels(config, transport=httpx.MockTransport(respond))
     assert model.rewrite("answer", Answer, timeout_seconds=3).answer == "ok"
     assert len(requests) == 1 and requests[0]["stream"] is (setting is not False)
+    assert requests[0]["temperature"] == (temperature or 0)

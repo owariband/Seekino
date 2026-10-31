@@ -35,7 +35,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [parse-pause-resume-trd.md](parse-pause-resume-trd.md) | 2026-10-30，单集优先解析 | 持久暂停、继续、租约隔离和实际阶段显示 | 已实操释放非目标任务容量，整集完成另行验收 |
 | [model-network-failure-trd.md](model-network-failure-trd.md) | 2026-10-30，Karpathy 连接异常 | SDK 分类、节点重试、可诊断日志 | 区分连接异常、网关超时与整集闭环验收 |
 | [kimi-streaming-trd.md](kimi-streaming-trd.md) | 2026-10-30，长 Chunk 504 与历史流式成功记录 | 正式 Kimi 生成入口接入 Chat SSE，收齐后校验和执行工具 | 单独验证代码接入、流式接口兼容性、真实素材效果与部署 |
-| [model-streaming-trd.md](model-streaming-trd.md) | 2026-10-31，默认 stream 被 profile / 入口写死 | 通用模型配置、默认 true、显式 false、独立 fallback、共享协议接收与 Parse 快照 | 承接 Kimi 接入修复；隔离 HTTP 验证与真实部署、供应商效果分开验收 |
+| [model-streaming-trd.md](model-streaming-trd.md) | 2026-10-31，默认 stream 被 profile / 入口写死，temperature 缺少创建时配置 | 通用模型配置、默认 stream=true / temperature=0、Kimi 固定温度、独立 fallback、共享协议接收与 Parse 快照 | 承接 Kimi 接入修复；隔离 HTTP 验证与真实部署、供应商效果分开验收 |
 | [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29，本地 ASR 与字幕需求 | 正式 WhisperX 转写及强制对齐、整片内存结果复用与 Chunk 区间读取 | 代码与离线回归、真实模型效果、播放器字幕分别验收 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 

@@ -96,6 +96,7 @@ class QueryHookModels:
             model = LlamaCppMultimodalModel(
                 self._config.rewriter_model, base_url=self._config.rewriter_base_url,
                 stream=self._config.rewriter_stream,
+                temperature=self._config.rewriter_temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 request_timeout_seconds=timeout, expected_server_video_fps=0.5, client=client,
             )

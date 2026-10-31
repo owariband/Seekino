@@ -22,6 +22,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-31：模型 temperature 配置与 Kimi 固定值](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
 | [2026-10-31：模型 stream 通用配置与共享协议接收](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
 | [2026-10-30：正式 Kimi 生成入口接入流式](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
 | [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
@@ -3878,3 +3879,28 @@ WhisperX、转写工厂、用量及整片 ASR 定向回归 **85 passed，4.90 �
 开关决策从多个入口的硬编码变为一个通用绑定字段，默认 true 和显式 false 在正式创建路径可验证；接收器从 provider 目录收敛到两个协议模块。业务完整性校验保留，旧完整响应测试改为显式 false 兼容测试，默认行为由 SDK/HTTP 矩阵验证。额外复杂度主要是两种协议的终止语义和历史快照缺省处理，没有新增服务或数据库表。
 
 可确认的收益是消除 Chat / Parse 的配置分裂和遗漏入口；线上成功率、时延和费用未重新测量。流式不会减少输入 token，也不能保证首个事件前不超时。加载新代码后，旧配置缺少 stream 的生成请求会改变为默认流式；不支持 SSE 的远端需明确 false。新快照字段对旧版本恢复的兼容性需要在代码回滚前评估。
+
+<a id="devlog-model-temperature-20261031"></a>
+## 2026-10-31：模型 temperature 配置与 Kimi 固定值
+
+### 问题与现状
+
+关联 B24、[同一 TRD](../design/03-product-reassessment/model-streaming-trd.md) 和 [PR #22](https://github.com/owariband/Seekino/pull/22)。用户明确要求新增 temperature，提供默认值，并将 Kimi 限制为 1。修改前 `ModelBinding(temperature=0.2)` 被 Pydantic 以 `extra_forbidden` 拒绝；业务创建和 YAML 无法统一选择温度，各适配器固定 0 / 1 或省略。Kimi 固定 1 有 2026-10-25 实际 Coding Plan HTTP 400 记录，但没有温度对照实验说明它是质量最优值。
+
+### 方案候选
+
+沿用多数既有请求的 0 作为通用默认，不采用未经业务对照的 0.2 / 0.8 作为全局新默认；调用方可以显式配置。字段接受 [0, 2] 内有限数值，主模型和 fallback 独立保存。Kimi profile 在绑定解析和适配器中固定为 1，调用方可读取解析后的实际值；不按 provider 显示名猜测。原生 CLI 不支持温度，非默认值明确拒绝。
+
+温度贯穿 ModelBinding、旧 Agent 投影、工厂、Chat / Structured / Deep Agents、视觉 JSON / 工具轮次、Responses、Ark 视频转写和本地生成。Parse profile 与任务快照同步保留字段，旧快照缺字段仍按原形状序列化；独立 Query Hook 提供对应字段。使用轻量常量共享 Kimi 固定值，保持配置模块不加载 LangGraph runtime。
+
+### 方案验证
+
+设计先提交为 `27602542`。配置测试 **56 passed**；SDK + MockTransport 入口矩阵 **226 passed**，含 180 组 provider/profile × stream × temperature × 五入口组合，验证实际请求而非只检查构造对象。Kimi 所有请求为 1，普通模型保留显式值，同名 Ark fallback 也分别使用主 / 备温度。
+
+最终 Gateway 全量 **1548 passed、5 failed、1 skipped、1 deselected，45.15 秒**；5 项失败仍为此前在 dev 复现的默认配置、Langfuse header 与 fallback context 用例。Parse 配置 / OCR / Harness / runtime **425 passed，8.81 秒**；HTTP / SQLite 上传 **113 passed，9.34 秒**，包括温度提交、冻结和取回；前端 typecheck 通过。命令、原始日志及失败边界见[实施记录](../report/gateway/model-streaming-20261031.md#temperature-配置补充2026-10-31)。没有真实模型调用、服务重启或正式任务变化。
+
+### 指标对比
+
+显式温度从 schema 拒绝变为两个创建入口可用，最终请求矩阵由 79 项扩至 226 项；Gateway 通过数增加 203，既有失败数不变。Parse 相关通过数从 397 增至 425，HTTP 用例数量不变但新增温度传递断言。增加一个通用参数和对应快照字段，没有新增数据库表或服务。
+
+默认 0 是兼容选择，不保证质量收益。此前省略温度的普通视觉 / Ark Responses 现在发送 0，Kimi 视觉发送 1；独立音频、向量、声纹不转发生成温度，原生 CLI 默认占位也不控制其采样。新快照带 temperature，旧代码回滚需评估格式兼容。部署、在线成功率和业务质量仍未测量。

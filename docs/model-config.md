@@ -78,6 +78,32 @@ models:
 
 独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器使用 `query_hook.rewriter_stream`，默认 `true`。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
 
+## 模型 temperature 配置
+
+`models.<role>.temperature` 与内部 `ModelBinding.temperature` 共用同一配置合同：默认 `0.0`，接受 `[0, 2]` 内的有限数值，拒绝字符串、布尔值、`null`、NaN 和无穷。主模型与 fallback 独立配置；未配置的 fallback 使用自己的默认值，不继承主模型的温度。旧 `agent_model.temperature` / `agent_model.fallback.temperature` 同样保留到统一绑定。
+
+```yaml
+models:
+  agent:
+    source: deepseek_api
+    model: deepseek-flash
+    temperature: 0.2
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-0-lite-260428
+      temperature: 0.8
+```
+
+业务代码也可以直接调用 `gateway.create_generative_model(ModelBinding(source="deepseek_api", model="deepseek-flash", temperature=0.2))`，或将同一绑定传给 `create_agent_factory()`。Chat、Deep Agents、结构化 Agent、视觉 JSON/工具轮次、Responses 生成和 Ark 视频转写均使用绑定中的温度。
+
+**`profile: kimi` 固定生效为 `1.0`。** 即使原始配置写了 `0.2`，`GatewayConfig.resolve_model_binding()` 返回的有效值与最终请求仍为 `1.0`；底层 Kimi 适配器也保留这个约束。规则按 source 的 profile 判断，不按 provider 显示名猜测。依据为 `k3.1-pro` 的历史 HTTP 400：`invalid temperature: only 1 is allowed for this model`，见 [接入复验记录](dev/devlog.md)。这里按当前用户要求统一约束 Kimi profile，不推定未来型号能力。
+
+默认 `0` 延续原有多数调用路径的固定值，没有温度对照评测证明它是业务最优值。此前省略温度的普通视觉 / Ark Responses 请求现在明确发送 `0`，Kimi 视觉明确发送 `1`；供应商仍可施加更窄的合法值限制。业务质量需要另行评测。
+
+Parse 默认配置从已解析的模型绑定取得温度；配置 HTTP 接口接受 `vision.temperature`、`asr.temperature`、`fallback.temperature`，OCR 与直接 V2 任务模型也保留该字段。任务快照记录配置，恢复后继续传给 Gateway，Kimi 创建时仍强制 `1`。历史快照缺字段按 `0` 读取，序列化保持原有形状。新快照带有 `temperature`，回滚到旧代码前须检查任务格式兼容性。
+
+直接构造的 Ollama / llama.cpp 生成适配器支持 `temperature`，默认 `0`；独立 Query Hook 使用 `query_hook.rewriter_temperature`。Codex / Claude 原生协议不支持设置温度，非默认值会被明确拒绝，默认 `0` 仅是兼容占位，不会作为采样设置传给 CLI。独立音频 ASR、WhisperX、向量和声纹不会转发此生成参数。本次没有新增网页温度控件。
+
 ## Supervisor harness 与独立模型
 
 顶层 `supervisor_harness` 选择 `deepagents` 或 `codex`，与 `models.supervisor` 一起在 Server 启动时加载。修改 harness、模型或连接配置后重启 Server；`agent_runtime` 中已有的运行预算仍按原规则用于新消息。

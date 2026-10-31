@@ -60,7 +60,7 @@ def test_video_transport_retains_caller_prompt_schema_and_selected_model(monkeyp
     monkeypatch.setattr("gateway.transcription.ArkMultimodalModel", create)
     binding = ModelBinding(
         source="video_connection", model="selected-video", request_timeout_seconds=23,
-        max_output_tokens=1024, reasoning_effort="none", stream=stream,
+        max_output_tokens=1024, reasoning_effort="none", stream=stream, temperature=0.2,
     )
     model = build_transcription_model(binding, ArkModelSourceConfig(), api_key="explicit-key")
     inputs = [VideoInput(tmp_path / "video.mp4", fps=0.5), TextInput("caller ASR prompt")]
@@ -69,6 +69,7 @@ def test_video_transport_retains_caller_prompt_schema_and_selected_model(monkeyp
     assert constructed == [("selected-video", {
         "request_timeout_seconds": 23, "max_output_tokens": 1024,
         "reasoning_effort": "none", "api_key": "explicit-key", "stream": stream,
+        "temperature": 0.2,
     })]
     assert requests == [(inputs, {"schema_name": "candidate_transcript", "result_type": Transcript})]
     model.close()

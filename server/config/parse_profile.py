@@ -40,7 +40,7 @@ from .upload import UploadServiceConfig
 
 
 _MODEL_POLICY_FIELDS = (
-    "stream",
+    "stream", "temperature",
     "context_window_tokens", "context_safety_margin_tokens", "auto_compact_tokens",
     "compact_target_tokens", "max_input_chars",
 )
@@ -140,6 +140,7 @@ class ParseWindowConfig(ContractModel):
 class ParseASRConfig(ContractModel):
     source: str = Field(default="ark_default", min_length=1)
     stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     mode: Literal["lite", "none"]
     scope: Literal["chunk", "video"] = "chunk"
     model: str = Field(min_length=1)
@@ -153,14 +154,16 @@ class ParseASRConfig(ContractModel):
         values = handler(self)
         if self.scope == "chunk":
             values.pop("scope", None)
-        if "stream" not in self.model_fields_set:
-            values.pop("stream", None)
+        for name in ("stream", "temperature"):
+            if name not in self.model_fields_set:
+                values.pop(name, None)
         return values
 
 
 class ParseVisionConfig(ContractModel):
     source: str = Field(default="ark_default", min_length=1)
     stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     model: str = Field(min_length=1)
     input_mode: Literal["video", "ordered_frames"] = "video"
     fps: float = Field(ge=0.2, le=5.0)
@@ -187,8 +190,9 @@ class ParseVisionConfig(ContractModel):
                 alias = self.__class__.model_fields[name].alias
                 if alias is not None:
                     vision.pop(alias, None)
-        if "stream" not in self.model_fields_set:
-            vision.pop("stream", None)
+        for name in ("stream", "temperature"):
+            if name not in self.model_fields_set:
+                vision.pop(name, None)
         return vision
 
     @model_validator(mode="after")
@@ -215,6 +219,7 @@ class ParseContextConfig(ContractModel):
 class ParseFallbackConfig(ContractModel):
     source: str = Field(default="deepseek_api", min_length=1)
     stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     enabled: bool
     model: str = Field(min_length=1)
     frame_fps: float = Field(ge=0.2, le=5.0)
@@ -239,8 +244,9 @@ class ParseFallbackConfig(ContractModel):
                 alias = self.__class__.model_fields[name].alias
                 if alias is not None:
                     values.pop(alias, None)
-        if "stream" not in self.model_fields_set:
-            values.pop("stream", None)
+        for name in ("stream", "temperature"):
+            if name not in self.model_fields_set:
+                values.pop(name, None)
         return values
 
 
@@ -362,6 +368,7 @@ class ParseConfig(ContractModel):
                 asr=VideoParseV2ASRModelConfig(
                     source=self.asr.source,
                     stream=self.asr.stream,
+                    temperature=self.asr.temperature,
                     model=self.asr.model,
                     request_timeout_seconds=self.asr.request_timeout_seconds or self.execution.request_timeout_seconds,
                     max_output_tokens=self.asr.max_output_tokens,
@@ -519,6 +526,7 @@ class ParseConfig(ContractModel):
             asr=ParseASRConfig(
                 source=asr_binding.source,
                 stream=asr_binding.stream,
+                temperature=asr_binding.temperature,
                 mode=runtime.asr_mode,
                 scope="video" if gateway.source(asr_binding.source).adapter == "whisperx" else "chunk",
                 model=runtime.transcript_model or asr_binding.model,

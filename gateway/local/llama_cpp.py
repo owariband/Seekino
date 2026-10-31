@@ -44,6 +44,7 @@ class LlamaCppMultimodalModel:
         expected_server_video_fps: float,
         client: httpx.Client | None = None,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -59,6 +60,7 @@ class LlamaCppMultimodalModel:
             )
 
         self._stream = stream
+        self.temperature = temperature
         self._request_timeout_seconds = request_timeout_seconds
         self.model_name = model
         self.base_url = base_url.rstrip("/")
@@ -121,7 +123,7 @@ class LlamaCppMultimodalModel:
                     model=self.model_name, messages=[{"role": "user", "content": content}],
                     response_format={"type": "json_schema", "json_schema": {
                         "name": schema_name, "strict": True, "schema": schema,
-                    }}, temperature=0, max_tokens=self.max_output_tokens,
+                    }}, temperature=self.temperature, max_tokens=self.max_output_tokens,
                     timeout=self._request_timeout_seconds, extra_headers={"Authorization": omit},
                 )
             except APIStatusError as error:
@@ -158,6 +160,7 @@ class LlamaCppMultimodalModel:
             inputs=inputs,
             error_type=LlamaCppModelError,
             stream=self._stream, timeout=self._request_timeout_seconds, provider=self.provider_name,
+            temperature=self.temperature,
         )
 
 

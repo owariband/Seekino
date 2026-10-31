@@ -53,6 +53,7 @@ class DeepSeekMultimodalModel:
         fallback_model: DeadlineAwareMultimodalModel | None = None,
         client: Any | None = None,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -71,6 +72,7 @@ class DeepSeekMultimodalModel:
             raise ValueError("fallback_model must use the ark provider")
 
         self._stream = stream
+        self.temperature = temperature
         self.model_name = model
         self.primary_model_name = model
         self.fallback_model_name = (
@@ -189,7 +191,7 @@ class DeepSeekMultimodalModel:
                             }
                         },
                         reasoning={"effort": self.reasoning_effort},
-                        temperature=0,
+                        temperature=self.temperature,
                         max_output_tokens=self.max_output_tokens,
                         timeout=effective_timeout,
                     )

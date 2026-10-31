@@ -532,8 +532,9 @@ def build_openai_chat_model(
     supports_vision_input: bool = False,
     fallback_supports_vision_input: bool = False,
     stream: bool = True,
+    temperature: float = 0.0,
 ) -> _AgentChatOpenAI:
-    profile_options = completion_options(api_profile, reasoning_effort)
+    profile_options = completion_options(api_profile, reasoning_effort, temperature=temperature)
     model = _AgentChatOpenAI(
         model=model_name,
         provider_name=provider_name,
@@ -553,7 +554,6 @@ def build_openai_chat_model(
             if use_legacy_token_parameter is None
             else use_legacy_token_parameter
         ),
-        temperature=profile_options.pop("temperature", 0),
         max_retries=0,
         timeout=request_timeout_seconds,
         use_responses_api=False,
@@ -596,6 +596,7 @@ class OpenAIStructuredToolAgentModel:
         supports_vision_input: bool = False,
         fallback_supports_vision_input: bool = False,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -618,6 +619,7 @@ class OpenAIStructuredToolAgentModel:
         if reasoning_effort not in {"none", "low", "high", "max"}:
             raise ValueError("unsupported reasoning_effort")
         self._stream = stream
+        self.temperature = temperature
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self._fallback_supports_vision_input = fallback_supports_vision_input
@@ -730,6 +732,7 @@ class OpenAIStructuredToolAgentModel:
                     api_profile=self.api_profile,
                     model_name=self.model_name,
                     stream=self._stream,
+                    temperature=self.temperature,
                     client=client,
                     base_url=self.base_url or "https://api.openai.com/v1",
                     max_output_tokens=self.max_output_tokens,

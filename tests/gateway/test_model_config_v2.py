@@ -6,7 +6,7 @@ import yaml
 from pydantic import ValidationError
 
 from gateway.config import (
-    EmbeddingModelBinding, GatewayConfig, ModelBinding, load_config,
+    AgentFallbackConfig, AgentModelConfig, EmbeddingModelBinding, GatewayConfig, ModelBinding, QueryHookConfig, load_config,
     required_api_key_env_names, resolve_source_api_key,
 )
 from gateway.model_sources import ModelReference, ModelReferenceType
@@ -17,6 +17,67 @@ LEGACY = Path(__file__).parent / "fixtures/legacy-config.yaml"
 
 def payload():
     return yaml.safe_load((ROOT / "config.yaml").read_text())
+
+
+@pytest.mark.parametrize("role", ["agent", "vision", "supervisor"])
+@pytest.mark.parametrize("temperature", [0, 0.2, 0.8, 2])
+def test_yaml_temperature_survives_resolution_projection_and_freezing(role, temperature):
+    data = payload()
+    data["supervisor_harness"] = "deepagents"
+    data["models"]["supervisor"] = deepcopy(data["models"]["agent"])
+    data["models"][role]["temperature"] = temperature
+    data["models"][role]["fallback"] = {"source": "ark_default", "model": "backup", "temperature": 0.7}
+    config = GatewayConfig.model_validate(yaml.safe_load(yaml.safe_dump(data)))
+    binding = config.resolve_model_binding(role, environ={})
+    assert binding.temperature == temperature and binding.fallback.temperature == 0.7
+    frozen = ModelBinding.model_validate_json(binding.model_dump_json())
+    assert config.resolve_model_binding(frozen, environ={}) == binding
+    assert GatewayConfig.model_validate(config.model_dump()).resolve_model_binding(role, environ={}) == binding
+    if role == "agent":
+        assert config.agent_model.temperature == temperature and config.agent_model.fallback.temperature == 0.7
+
+
+@pytest.mark.parametrize("value", [True, False, "0.2", None, -0.1, 2.1, float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("schema", [ModelBinding, AgentModelConfig, AgentFallbackConfig, QueryHookConfig])
+def test_temperature_rejects_invalid_values_at_configuration_boundary(schema, value):
+    data = ({"rewriter_temperature": value} if schema is QueryHookConfig else
+            {"source": "source", "model": "model", "temperature": value})
+    if schema is AgentModelConfig:
+        data.update(max_output_tokens=1024, request_timeout_seconds=30)
+    with pytest.raises(ValidationError, match="temperature"):
+        schema.model_validate(data)
+
+
+def test_legacy_agent_temperature_defaults_to_zero_and_preserves_explicit_values():
+    data = yaml.safe_load(LEGACY.read_text())
+    default = GatewayConfig.model_validate(data).resolve_model_binding("agent", environ={})
+    assert default.temperature == 0 and default.fallback.temperature == 0
+    data["agent_model"]["temperature"] = 0.2
+    data["agent_model"]["fallback"]["temperature"] = 0.8
+    binding = GatewayConfig.model_validate(data).resolve_model_binding("agent", environ={})
+    assert binding.temperature == 0.2 and binding.fallback.temperature == 0.8
+
+
+@pytest.mark.parametrize("temperature", [None, 0, 0.2, 0.8, 1, 2])
+def test_kimi_profile_resolves_an_effective_fixed_temperature_for_primary_and_fallback(temperature):
+    data = payload()
+    data["model_sources"]["fixed"] = {"adapter": "openai", "provider": "custom-name", "profile": "kimi",
+                                       "base_url": "https://model.example/v1", "api_key_env": "OFFLINE_KEY"}
+    options = {} if temperature is None else {"temperature": temperature}
+    data["models"]["vision"] = {"source": "fixed", "model": "k3.1-pro", **options,
+                                 "fallback": {"source": "fixed", "model": "fallback", **options}}
+    config = GatewayConfig.model_validate(data)
+    resolved = config.resolve_model_binding("vision", environ={})
+    assert resolved.temperature == resolved.fallback.temperature == 1
+    assert config.resolve_model_binding(ModelBinding.model_validate_json(resolved.model_dump_json()), environ={}) == resolved
+
+
+def test_native_models_reject_an_unsupported_temperature_override():
+    data = payload()
+    data["supervisor_harness"] = "codex"
+    data["models"]["supervisor"] = {"source": "codex_local", "model": "native-model", "temperature": 0.2}
+    with pytest.raises(ValidationError, match="does not support temperature"):
+        GatewayConfig.model_validate(data)
 
 
 @pytest.mark.parametrize("role", ["agent", "vision", "supervisor"])

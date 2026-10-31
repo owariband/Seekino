@@ -316,6 +316,7 @@ def _request_turn(
         "model": endpoint.model, "input": _response_input(messages, endpoint),
         "tools": [{"type": "function", **spec["function"]} for spec in specs],
         "tool_choice": choice, "timeout": timeout,
+        "temperature": adapter.temperature,
     }
     if enforce_final_schema:
         schema = result_type.model_json_schema()
@@ -332,8 +333,6 @@ def _request_turn(
         request["thinking"] = {"type": "disabled"}
     elif adapter.reasoning_effort is not None:
         request["reasoning"] = {"effort": adapter.reasoning_effort}
-    if endpoint.provider == DEEPSEEK_PROVIDER:
-        request["temperature"] = 0
     with model_call_context({"agent_round": round_no}), track_model_call(
         provider=endpoint.provider, model=endpoint.model, operation=schema_name,
     ) as call, capture_model_diagnostics(call, {**request, "stream": adapter._stream}):
@@ -427,6 +426,7 @@ def _request_chat_turn(
         "model": endpoint.model, "messages": _chat_input(messages, endpoint),
         "tools": specs, "tool_choice": choice,
         "stream": adapter._stream, "timeout": min(remaining, adapter._request_timeout_seconds),
+        "temperature": adapter.temperature,
         adapter._token_parameter: adapter.max_output_tokens,
     }
     if adapter._stream:

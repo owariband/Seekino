@@ -180,6 +180,7 @@ export interface ParseConfig {
   };
   asr: {
     stream?: boolean;
+    temperature?: number;
     mode: "lite" | "none";
     scope?: "chunk" | "video";
     model: string;
@@ -189,6 +190,7 @@ export interface ParseConfig {
   };
   vision: {
     stream?: boolean;
+    temperature?: number;
     model: string;
     inputMode: "video" | "ordered_frames";
     fps: number;
@@ -206,6 +208,7 @@ export interface ParseConfig {
   };
   fallback: {
     stream?: boolean;
+    temperature?: number;
     enabled: boolean;
     model: string;
     frameFps: number;

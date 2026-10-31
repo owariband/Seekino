@@ -27,7 +27,7 @@ from gateway.agent_model.tool_loop import (
 from gateway.usage import ModelCallTracker, track_model_call
 from gateway.media import require_vision_input
 
-from .profiles import OpenAIProfile, ReasoningEffort, completion_options
+from .profiles import OpenAIProfile, ReasoningEffort, completion_options, effective_temperature
 
 _logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ class OpenAIAgentModel:
         client: Any | None = None,
         supports_vision_input: bool = False,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -73,6 +74,7 @@ class OpenAIAgentModel:
             raise ValueError("unsupported reasoning_effort")
 
         self._stream = stream
+        self.temperature = effective_temperature(profile, temperature)
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self.primary_model_name = model
@@ -308,13 +310,12 @@ class OpenAIAgentModel:
                 if self.profile == "deepseek"
                 else {"max_completion_tokens": self.max_output_tokens}
             )
-            profile_options = completion_options(self.profile, self.reasoning_effort)
+            profile_options = completion_options(self.profile, self.reasoning_effort, temperature=self.temperature)
             response = request_chat_completion(
                 client.chat.completions, usage_call=usage_call,
                 model=self.model_name,
                 messages=messages,
                 stream=self._stream,
-                temperature=profile_options.pop("temperature", 0),
                 timeout=timeout,
                 **token_options,
                 **profile_options,

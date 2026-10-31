@@ -42,6 +42,7 @@ class OllamaMultimodalModel:
         request_timeout_seconds: float,
         client: httpx.Client | None = None,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -53,6 +54,7 @@ class OllamaMultimodalModel:
             raise ValueError("request_timeout_seconds must be greater than zero")
 
         self._stream = stream
+        self.temperature = temperature
         self._request_timeout_seconds = request_timeout_seconds
         self.model_name = model
         self.base_url = base_url.rstrip("/")
@@ -101,7 +103,7 @@ class OllamaMultimodalModel:
                     model=self.model_name, messages=[{"role": "user", "content": content}],
                     response_format={"type": "json_schema", "json_schema": {
                         "name": schema_name, "strict": True, "schema": schema,
-                    }}, temperature=0, max_tokens=self.max_output_tokens,
+                    }}, temperature=self.temperature, max_tokens=self.max_output_tokens,
                     timeout=self._request_timeout_seconds, extra_headers={"Authorization": omit},
                 )
             except (APIError, ModelFailureError) as error:
@@ -135,6 +137,7 @@ class OllamaMultimodalModel:
             inputs=inputs,
             error_type=OllamaModelError,
             stream=self._stream, timeout=self._request_timeout_seconds, provider=self.provider_name,
+            temperature=self.temperature,
         )
 
 
@@ -142,12 +145,13 @@ def stream_openai_compatible_chat(
     client: httpx.Client, *, base_url: str, model: str, max_output_tokens: int,
     inputs: Sequence[MultimodalInput], error_type: type[RuntimeError],
     stream: bool = True, timeout: float = 600, provider: str = "local",
+    temperature: float = 0.0,
 ) -> Iterator[str]:
     content = text_only_inputs(inputs, input_type="text")
     completions = OpenAI(base_url=f"{base_url}/v1", api_key="local",
                          http_client=client, max_retries=0).chat.completions
     request = dict(model=model, messages=[{"role": "user", "content": content}],
-                   max_tokens=max_output_tokens, temperature=0, timeout=timeout,
+                   max_tokens=max_output_tokens, temperature=temperature, timeout=timeout,
                    extra_headers={"Authorization": omit})
     with track_model_call(provider=provider, model=model, operation="text_generation") as call:
         try:

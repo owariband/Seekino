@@ -648,6 +648,8 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 Gateway 回归 1345 passed，另 5 个失败均在未改业务代码的 `dev` 同环境复现；Parse 配置 / runtime 相关 397 passed，配置 HTTP / 上传服务隔离回归另有 113 passed，前端 typecheck 通过。本轮没有新真实模型请求、服务重启或任务变更，不能据此宣称所有供应商在线兼容或整集稳定。代码来源归因、配置兼容与验证证据见 [TRD](../design/03-product-reassessment/model-streaming-trd.md)、[实施记录](../report/gateway/model-streaming-20261031.md)、[devlog](devlog.md#devlog-model-streaming-20261031)。
 
+2026-10-31 同一 PR 补齐用户要求的 `temperature`：内部创建 / YAML 默认 0，可显式配置，Kimi profile 固定 1，主模型与 fallback 独立传递，Parse 配置与旧快照兼容。新增温度后最终 Gateway 为 1548 passed、仍有上述 5 项基线失败；Parse 配置 / runtime 425 passed，HTTP / SQLite 上传 113 passed，前端 typecheck 通过。配置功能已实现；PR 集成与服务加载仍待完成，不声称默认温度已通过业务质量评测。见[温度配置记录](devlog.md#devlog-model-temperature-20261031)。
+
 ### 模型暂态连接失败导致 Karpathy 整集停止（2026-10-30）
 
 直接 JSON 链路漏识别 SDK 连接/超时/504，节点未重试且用户只看到执行异常。修复增加明确原因、有限重试、逐请求 trace 和脱敏终止日志；隔离验证见 [TRD](../design/03-product-reassessment/model-network-failure-trd.md)。EP1 已恢复原 v3，整集成功与稳定性尚待正式验收。历史同时断连的责任端无法由旧日志补推，模型单次输入和耗时仍需独立评测。

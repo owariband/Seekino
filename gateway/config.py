@@ -25,6 +25,7 @@ from gateway.constants import (
     CODEX_APP_SERVER_ADAPTER,
     CODEX_PROVIDER,
     DEEPSEEK_PROVIDER,
+    KIMI_FIXED_TEMPERATURE,
     OPENAI_ADAPTER,
     OPENAI_DEEPSEEK_PROFILE,
     OPENAI_KIMI_PROFILE,
@@ -250,6 +251,7 @@ class ModelBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     source: _NonEmptyString
     stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     model: _NonEmptyString
     kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding"] | None = None
     request_timeout_seconds: float | None = Field(default=None, gt=0)
@@ -278,6 +280,7 @@ class AgentFallbackConfig(BaseModel):
 
     source: _NonEmptyString
     stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     supports_vision_input: bool = False
     model: _NonEmptyString
     request_timeout_seconds: float | None = Field(default=None, gt=0)
@@ -290,6 +293,7 @@ class AgentModelConfig(BaseModel):
 
     source: _NonEmptyString
     stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     supports_vision_input: bool = False
     model: _NonEmptyString
     max_output_tokens: int = Field(ge=256, le=262_144)
@@ -419,6 +423,7 @@ class QueryHookConfig(BaseModel):
     )
     rewriter_model: _NonEmptyString = "seekino-qwen3-text-8b-rewriter"
     rewriter_stream: bool = Field(default=True, strict=True)
+    rewriter_temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     rewriter_timeout_seconds: float = Field(default=4, gt=0)
     max_output_tokens: int = Field(default=256, ge=1, strict=True)
     history_message_limit: int = Field(default=6, ge=1, strict=True)
@@ -596,6 +601,8 @@ class GatewayConfig(BaseModel):
         capabilities = adapter_capabilities(source.adapter)
         if isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)) and not binding.stream:
             raise ValueError(f"{ref}: {source.adapter} uses a native streaming transport and does not support stream=false")
+        if isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)) and binding.temperature != 0:
+            raise ValueError(f"{ref}: {source.adapter} does not support temperature configuration")
         kind = "embedding" if isinstance(binding, EmbeddingModelBinding) else binding.kind or "generative"
         if kind in {"embedding", "transcription", "speaker_embedding"} and binding.fallback is not None:
             raise ValueError(f"{ref} {kind} does not support fallback")
@@ -629,9 +636,12 @@ class GatewayConfig(BaseModel):
             self._validate_binding(binding.fallback, ref=f"{ref}.fallback")
 
     def _complete_binding(self, binding: ModelBinding) -> ModelBinding:
-        capabilities = adapter_capabilities(self.source(binding.source).adapter)
+        source = self.source(binding.source)
+        capabilities = adapter_capabilities(source.adapter)
         runtime = self.agent_runtime
         values = binding.model_dump()
+        if isinstance(source, OpenAIModelSourceConfig) and source.profile == OPENAI_KIMI_PROFILE:
+            values["temperature"] = KIMI_FIXED_TEMPERATURE
         defaults = {
             "request_timeout_seconds": 600,
             "context_window_tokens": 128_000 if binding.supports_vision_input else runtime.get("context_window_tokens", 128_000),

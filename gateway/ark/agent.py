@@ -60,6 +60,7 @@ def request_ark_function_turn(
     seen_tool_call_ids: set[str],
     require_visible_text_on_stop: bool,
     stream: bool = True,
+    temperature: float = 0.0,
 ):
     if client is None or model_name is None:
         raise ArkFunctionCallingError("Ark fallback is not configured")
@@ -91,7 +92,7 @@ def request_ark_function_turn(
                     for message in messages
                 ],
                 stream=stream,
-                temperature=0,
+                temperature=temperature,
                 max_completion_tokens=max_output_tokens,
                 timeout=timeout,
                 tools=tool_specs,
@@ -150,7 +151,9 @@ class ArkFunctionCallingModel:
         api_key: str | None = None,
         supports_vision_input: bool = False,
         stream: bool = True,
+        temperature: float = 0.0,
         fallback_stream: bool | None = None,
+        fallback_temperature: float | None = None,
         fallback_supports_vision_input: bool = False,
     ) -> None:
         if not model.strip():
@@ -171,6 +174,8 @@ class ArkFunctionCallingModel:
                 "fallback_request_timeout_seconds must be greater than zero"
             )
         self._stream = stream
+        self.temperature = temperature
+        self._fallback_temperature = temperature if fallback_temperature is None else fallback_temperature
         self._fallback_stream = stream if fallback_stream is None else fallback_stream
         self.model_name = model
         self.supports_vision_input = supports_vision_input
@@ -178,6 +183,7 @@ class ArkFunctionCallingModel:
         self.primary_model_name = model
         has_fallback = fallback_model is not None and (
             fallback_model != model or self._fallback_stream != self._stream
+            or self._fallback_temperature != self.temperature
         )
         self.fallback_provider_name = ARK_PROVIDER if has_fallback else None
         self.fallback_model_name = fallback_model if has_fallback else None
@@ -255,6 +261,7 @@ class ArkFunctionCallingModel:
                         client,
                         model_name=model_name,
                         stream=self._fallback_stream if fallback_active else self._stream,
+                        temperature=self._fallback_temperature if fallback_active else self.temperature,
                         max_output_tokens=max_output_tokens,
                         tools=tools,
                         messages=messages,
@@ -346,10 +353,12 @@ class ArkFunctionCallingFallback:
         api_key: str | None = None,
         supports_vision_input: bool = False,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
         self._stream = stream
+        self.temperature = temperature
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self.max_output_tokens = max_output_tokens
@@ -384,6 +393,7 @@ class ArkFunctionCallingFallback:
             client,
             model_name=self.model_name,
             stream=self._stream,
+            temperature=self.temperature,
             max_output_tokens=self.max_output_tokens,
             tools=tools,
             messages=messages,
@@ -410,8 +420,10 @@ class ArkStructuredFallback:
         api_key: str | None = None,
         supports_vision_input: bool = False,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         self._stream = stream
+        self.temperature = temperature
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self.max_output_tokens = max_output_tokens
@@ -434,6 +446,7 @@ class ArkStructuredFallback:
             api_profile="standard",
             model_name=self.model_name,
             stream=self._stream,
+            temperature=self.temperature,
             client=client,
             base_url=ARK_OPENAI_BASE_URL,
             max_output_tokens=self.max_output_tokens,
@@ -462,10 +475,11 @@ class ArkStructuredToolAgentModel(OpenAIStructuredToolAgentModel):
         chat_model: Any | None = None,
         supports_vision_input: bool = False,
         stream: bool = True,
+        temperature: float = 0.0,
         fallback_supports_vision_input: bool = False,
     ) -> None:
         super().__init__(
-            model, stream=stream,
+            model, stream=stream, temperature=temperature,
             request_timeout_seconds=request_timeout_seconds,
             max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars,

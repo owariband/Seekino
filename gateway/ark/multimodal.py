@@ -44,6 +44,7 @@ class ArkMultimodalModel:
         client: Ark | None = None,
         api_key: str | None = None,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -57,6 +58,7 @@ class ArkMultimodalModel:
             raise ValueError("fallback_model must not be empty")
 
         self._stream = stream
+        self.temperature = temperature
         self.model_name = model
         self.primary_model_name = model
         self.fallback_model_name = (
@@ -138,6 +140,7 @@ class ArkMultimodalModel:
 
         request: dict[str, Any] = {
             "model": self.model_name,
+            "temperature": self.temperature,
             "input": [{"role": "user", "content": content}],
             "text": {
                 "format": {
@@ -219,6 +222,7 @@ class ArkMultimodalModel:
         content = text_only_inputs(inputs, input_type="input_text")
         request: dict[str, Any] = {
             "model": self.model_name,
+            "temperature": self.temperature,
             "input": [{"role": "user", "content": content}],
         }
         if self.max_output_tokens is not None:

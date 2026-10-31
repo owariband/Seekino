@@ -388,12 +388,14 @@ class GatewayClient:
             from gateway.ark.multimodal import ArkMultimodalModel
             delegate = ArkMultimodalModel(
                 **common, api_key=key, reasoning_effort=binding.reasoning_effort, stream=binding.stream,
+                temperature=binding.temperature,
             )
         elif isinstance(source, OpenAIModelSourceConfig) and source.profile == "deepseek":
             from gateway.openai.multimodal import DeepSeekMultimodalModel
             delegate = DeepSeekMultimodalModel(
                 **common, base_url=source.base_url, api_key=key,
                 reasoning_effort=binding.reasoning_effort or "none", stream=binding.stream,
+                temperature=binding.temperature,
             )
         elif isinstance(source, (OpenAIModelSourceConfig, OpenAIVisionSourceConfig)):
             from gateway.openai.vision import OpenAIVisionModel
@@ -406,6 +408,8 @@ class GatewayClient:
             delegate = OpenAIVisionModel(
                 **common, provider=source.provider, base_url=source.base_url, api_key=key,
                 stream=binding.stream,
+                temperature=binding.temperature,
+                profile=source.profile if isinstance(source, OpenAIModelSourceConfig) else "standard",
                 **options,
             )
         elif isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
@@ -499,11 +503,12 @@ class GatewayClient:
             raise ValueError("Agent models support one configured fallback")
         config = AgentModelConfig(
             source=binding.source, model=binding.model, stream=binding.stream,
+            temperature=binding.temperature,
             supports_vision_input=binding.supports_vision_input,
             max_output_tokens=binding.max_output_tokens,
             request_timeout_seconds=binding.request_timeout_seconds,
             fallback=(AgentFallbackConfig(**fallback.model_dump(include={
-                "source", "model", "stream", "supports_vision_input", "max_output_tokens",
+                "source", "model", "stream", "temperature", "supports_vision_input", "max_output_tokens",
                 "request_timeout_seconds", "reasoning_effort",
             })) if fallback is not None else None),
         )

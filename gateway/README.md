@@ -52,6 +52,14 @@ Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺�
 配置、完整性验证及线上效果边界见
 [模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。
 
+`ModelBinding.temperature` 同时支持 YAML 和内部创建参数，默认 `0.0`，范围 `[0, 2]`，
+主模型与 fallback 分别传递。Kimi profile 在绑定解析和适配器中固定为 `1.0`，可通过
+`resolve_model_binding()` 查看实际值。Chat、Structured、Deep Agents、视觉 JSON/工具和
+Ark 视频转写都使用该字段；旧 Parse 快照缺字段按 0 读取但不改原有序列化形状。
+原生 CLI 不支持设置温度，非默认值明确报错；独立音频和向量协议不转发。
+默认值是兼容选择，不是质量调参结论。完整例子与适用范围见
+[temperature 配置](../docs/model-config.md#模型-temperature-配置)。
+
 当前配置由本地 YAML 提供。未来云端配置存储将向同一配置合同提供有效定义；
 数据库、租户权限和配置管理 API 属于 Server 配置管理，不进入模型工厂。
 
