@@ -75,17 +75,17 @@ def _response(call_id=None, name="get_context_canvas", *, status="completed", in
     )
 
 
-def _model(provider, responses, *, budget=65536, reasoning="high", timeout=30):
+def _model(provider, responses, *, budget=65536, reasoning="high", timeout=30, stream=True):
     client = SimpleNamespace(responses=responses)
     if provider == "ark":
         return ArkMultimodalModel(
             "ark-vision", max_output_tokens=budget, reasoning_effort=reasoning,
-            request_timeout_seconds=timeout, client=client,
+            request_timeout_seconds=timeout, client=client, stream=stream,
         )
     return DeepSeekMultimodalModel(
         "deepseek-vision", base_url="https://example.invalid", api_key="offline",
         max_output_tokens=budget, reasoning_effort=reasoning,
-        request_timeout_seconds=timeout, client=client,
+        request_timeout_seconds=timeout, client=client, stream=stream,
     )
 
 
@@ -421,7 +421,7 @@ def test_responses_and_chat_fallback_share_history_and_endpoint_settings(
         chat=SimpleNamespace(completions=chat), close=lambda: closed.append(True),
     ))
     vision = OpenAIVisionModel(
-        "portable-vision", provider="portable", base_url="https://offline.invalid", api_key="offline",
+        "portable-vision", stream=False, provider="portable", base_url="https://offline.invalid", api_key="offline",
         max_output_tokens=8192, token_parameter="max_completion_tokens", response_format="json_object",
         request_timeout_seconds=7,
     )
@@ -516,7 +516,7 @@ def test_multimodal_request_log_correlates_controls_without_logging_payloads(
             chat=SimpleNamespace(completions=responses), close=lambda: None,
         ))
         model = OpenAIVisionModel(
-            "portable-vision", provider="portable", base_url="https://offline.invalid",
+            "portable-vision", stream=False, provider="portable", base_url="https://offline.invalid",
             api_key="API_KEY_SECRET", max_output_tokens=4096,
             token_parameter="max_completion_tokens", request_timeout_seconds=30,
         )
@@ -599,12 +599,12 @@ def test_parse_diagnostics_restore_each_round_and_exclude_chat(monkeypatch, tmp_
         assert all(payload["context"][key] == value for key, value in context.items())
         assert payload["context"]["agent_round"] == round_no
         restored = restore_diagnostic_media(payload["request"], directory)
-        assert restored == {**actual_request, "stream": provider == "ark"}
+        assert restored == {**actual_request, "stream": True}
         assert restored["tools"][0]["parameters"]["properties"]["value"]["type"] == "string"
         assert restored["text"]["format"]["schema"] == Completion.model_json_schema()
         assert restored["input"][0]["content"][-1]["text"] == prompt
         assert any(event["event"] == "response" for event in events)
-        assert any(event["event"] == "sse" for event in events) == (provider == "ark")
+        assert any(event["event"] == "sse" for event in events) is True
         saved.append(restored)
     assert len({call.context["agent_run_id"] for call in usage}) == 1
     second = saved[1]["input"]
@@ -623,7 +623,7 @@ def test_parse_diagnostics_restore_each_round_and_exclude_chat(monkeypatch, tmp_
         chat=SimpleNamespace(completions=chat), close=lambda: None,
     ))
     vision = OpenAIVisionModel(
-        "portable-vision", provider="portable", base_url="https://offline.invalid", api_key="offline",
+        "portable-vision", stream=False, provider="portable", base_url="https://offline.invalid", api_key="offline",
         request_timeout_seconds=30,
     )
     assert vision.generate([TextInput("Ordinary Chat.")], schema_name="completion", result_type=Completion,

@@ -387,13 +387,13 @@ class GatewayClient:
         if isinstance(source, ArkModelSourceConfig):
             from gateway.ark.multimodal import ArkMultimodalModel
             delegate = ArkMultimodalModel(
-                **common, api_key=key, reasoning_effort=binding.reasoning_effort,
+                **common, api_key=key, reasoning_effort=binding.reasoning_effort, stream=binding.stream,
             )
         elif isinstance(source, OpenAIModelSourceConfig) and source.profile == "deepseek":
             from gateway.openai.multimodal import DeepSeekMultimodalModel
             delegate = DeepSeekMultimodalModel(
                 **common, base_url=source.base_url, api_key=key,
-                reasoning_effort=binding.reasoning_effort or "none",
+                reasoning_effort=binding.reasoning_effort or "none", stream=binding.stream,
             )
         elif isinstance(source, (OpenAIModelSourceConfig, OpenAIVisionSourceConfig)):
             from gateway.openai.vision import OpenAIVisionModel
@@ -405,7 +405,7 @@ class GatewayClient:
             )
             delegate = OpenAIVisionModel(
                 **common, provider=source.provider, base_url=source.base_url, api_key=key,
-                stream=isinstance(source, OpenAIModelSourceConfig) and source.profile == "kimi",
+                stream=binding.stream,
                 **options,
             )
         elif isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
@@ -498,12 +498,12 @@ class GatewayClient:
         if fallback is not None and fallback.fallback is not None:
             raise ValueError("Agent models support one configured fallback")
         config = AgentModelConfig(
-            source=binding.source, model=binding.model,
+            source=binding.source, model=binding.model, stream=binding.stream,
             supports_vision_input=binding.supports_vision_input,
             max_output_tokens=binding.max_output_tokens,
             request_timeout_seconds=binding.request_timeout_seconds,
             fallback=(AgentFallbackConfig(**fallback.model_dump(include={
-                "source", "model", "supports_vision_input", "max_output_tokens",
+                "source", "model", "stream", "supports_vision_input", "max_output_tokens",
                 "request_timeout_seconds", "reasoning_effort",
             })) if fallback is not None else None),
         )

@@ -275,9 +275,9 @@ def test_ark_text_stream_preserves_original_deltas_and_output_budget() -> None:
 def test_local_models_stream_original_chat_deltas(provider, finish_reason) -> None:
     calls = []
     chunks = [
-        {"choices": [{"delta": {"content": "第一段"}, "finish_reason": None}]},
-        {"choices": [{"delta": {"content": "第二段"}, "finish_reason": None}]},
-        {"choices": [{"delta": {}, "finish_reason": finish_reason}]},
+        {"choices": [{"index": 0, "delta": {"content": "第一段"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": "第二段"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]},
     ]
     body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
     body += "data: [DONE]\n\n"
@@ -361,7 +361,7 @@ def test_deepseek_uses_official_responses_api_and_preserves_ordered_images(
     Image.new("RGB", (32, 64), "red").save(second_image, format="PNG")
     responses = FakeDeepSeekResponses(_result().model_dump_json())
     model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com/",
         api_key="test-key",
         max_output_tokens=777,
@@ -427,7 +427,7 @@ def test_deepseek_rejects_video_without_sending_a_request(tmp_path) -> None:
     video_path.write_bytes(b"video")
     responses = FakeDeepSeekResponses(_result().model_dump_json())
     model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -455,7 +455,7 @@ def test_deepseek_projects_real_parse_v2_union_without_mutating_schema(monkeypat
     }]}
     responses = FakeDeepSeekResponses(json.dumps(output))
     model = DeepSeekMultimodalModel(
-        "deepseek-flash", base_url="https://api.deepseek.com", api_key="test-key",
+        "deepseek-flash", stream=False, base_url="https://api.deepseek.com", api_key="test-key",
         max_output_tokens=1000, request_timeout_seconds=10,
         client=SimpleNamespace(responses=responses),
     )
@@ -492,7 +492,7 @@ def test_deepseek_projected_parse_v2_output_still_uses_domain_validation(invalid
     }]}
     responses = FakeDeepSeekResponses(json.dumps(output))
     model = DeepSeekMultimodalModel(
-        "deepseek-flash", base_url="https://api.deepseek.com", api_key="test-key",
+        "deepseek-flash", stream=False, base_url="https://api.deepseek.com", api_key="test-key",
         max_output_tokens=1000, request_timeout_seconds=10,
         client=SimpleNamespace(responses=responses),
     )
@@ -523,7 +523,7 @@ def test_deepseek_schema_preserves_business_property_names_and_literal_data() ->
               "parsed": {"persons": [], "timeline": []}}
     responses = FakeDeepSeekResponses(json.dumps(output))
     model = DeepSeekMultimodalModel(
-        "deepseek-flash", base_url="https://api.deepseek.com", api_key="test-key",
+        "deepseek-flash", stream=False, base_url="https://api.deepseek.com", api_key="test-key",
         max_output_tokens=1000, request_timeout_seconds=10,
         client=SimpleNamespace(responses=responses),
     )
@@ -551,7 +551,7 @@ def test_deepseek_schema_preserves_business_property_names_and_literal_data() ->
         (
             _result().model_dump_json(),
             "incomplete",
-            "exhausted max_output_tokens",
+            "did not complete",
         ),
         ('{"summary":"missing scenes"}', "completed", "does not match schema"),
     ],
@@ -563,7 +563,7 @@ def test_deepseek_rejects_invalid_structured_responses(
 ) -> None:
     responses = FakeDeepSeekResponses(output_text, status=status)
     model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -582,7 +582,7 @@ def test_deepseek_rejects_invalid_structured_responses(
 def test_deepseek_no_tools_honors_shorter_caller_timeout() -> None:
     responses = FakeDeepSeekResponses(_result().model_dump_json())
     model = DeepSeekMultimodalModel(
-        "selected-model", base_url="https://provider.example", api_key="test-key",
+        "selected-model", stream=False, base_url="https://provider.example", api_key="test-key",
         max_output_tokens=1024, request_timeout_seconds=10,
         client=SimpleNamespace(responses=responses),
     )
@@ -603,7 +603,7 @@ def test_deepseek_structured_model_falls_back_to_injected_ark_after_response_err
     responses = FakeDeepSeekResponses('{"summary":"missing scenes"}')
     fallback = FakeArkStructuredModel()
     model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -642,7 +642,7 @@ def test_deepseek_structured_model_falls_back_after_provider_error() -> None:
 
     fallback = FakeArkStructuredModel()
     model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -665,7 +665,7 @@ def test_deepseek_does_not_fall_back_for_invalid_input(tmp_path) -> None:
     fallback = FakeArkStructuredModel()
     responses = FakeDeepSeekResponses(_result().model_dump_json())
     model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -693,7 +693,7 @@ def test_deepseek_does_not_fall_back_after_shared_deadline_expires(
     fallback = FakeArkStructuredModel()
     responses = FakeDeepSeekResponses('{"summary":"missing scenes"}')
     model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -725,7 +725,7 @@ def test_deepseek_close_only_closes_owned_client(monkeypatch) -> None:
     owned_client = Client()
     monkeypatch.setattr("gateway.openai.multimodal.OpenAI", lambda **_kwargs: owned_client)
     owned_model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -733,7 +733,7 @@ def test_deepseek_close_only_closes_owned_client(monkeypatch) -> None:
     )
     external_client = Client()
     external_model = DeepSeekMultimodalModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=100,
@@ -772,7 +772,7 @@ def test_ollama_uses_configured_url_and_preserves_ordered_images(tmp_path) -> No
         )
 
     model = OllamaMultimodalModel(
-        "ollama-test-model",
+        "ollama-test-model", stream=False,
         base_url="http://ollama.test/custom-root/",
         max_output_tokens=777,
         request_timeout_seconds=12,
@@ -838,7 +838,7 @@ def test_ollama_rejects_video_without_sending_a_request(tmp_path) -> None:
         raise AssertionError(f"unexpected Ollama request: {request.url}")
 
     model = OllamaMultimodalModel(
-        "ollama-test-model",
+        "ollama-test-model", stream=False,
         base_url="http://ollama.test",
         max_output_tokens=100,
         request_timeout_seconds=10,
@@ -858,7 +858,7 @@ def test_ollama_wraps_http_errors() -> None:
         return httpx.Response(503, json={"error": "unavailable"})
 
     model = OllamaMultimodalModel(
-        "ollama-test-model",
+        "ollama-test-model", stream=False,
         base_url="http://ollama.test",
         max_output_tokens=100,
         request_timeout_seconds=10,
@@ -909,7 +909,7 @@ def test_ollama_rejects_invalid_structured_responses(
         return httpx.Response(200, json=completion)
 
     model = OllamaMultimodalModel(
-        "ollama-test-model",
+        "ollama-test-model", stream=False,
         base_url="http://ollama.test",
         max_output_tokens=100,
         request_timeout_seconds=10,
@@ -947,7 +947,7 @@ def test_llama_cpp_maps_text_image_and_video_in_input_order(tmp_path) -> None:
         )
 
     model = LlamaCppMultimodalModel(
-        "llama-cpp-test-model",
+        "llama-cpp-test-model", stream=False,
         base_url="http://llama-cpp.test/custom-root/",
         max_output_tokens=888,
         request_timeout_seconds=15,
@@ -1017,7 +1017,7 @@ def test_llama_cpp_rejects_video_fps_mismatch_without_sending_request(
         raise AssertionError(f"unexpected llama.cpp request: {request.url}")
 
     model = LlamaCppMultimodalModel(
-        "llama-cpp-test-model",
+        "llama-cpp-test-model", stream=False,
         base_url="http://llama-cpp.test",
         max_output_tokens=100,
         request_timeout_seconds=10,
@@ -1044,7 +1044,7 @@ def test_llama_cpp_wraps_http_errors_with_bounded_server_detail() -> None:
         )
 
     model = LlamaCppMultimodalModel(
-        "llama-cpp-test-model",
+        "llama-cpp-test-model", stream=False,
         base_url="http://llama-cpp.test",
         max_output_tokens=100,
         request_timeout_seconds=10,
@@ -1099,7 +1099,7 @@ def test_llama_cpp_rejects_invalid_structured_responses(
         return httpx.Response(200, json=completion)
 
     model = LlamaCppMultimodalModel(
-        "llama-cpp-test-model",
+        "llama-cpp-test-model", stream=False,
         base_url="http://llama-cpp.test",
         max_output_tokens=100,
         request_timeout_seconds=10,

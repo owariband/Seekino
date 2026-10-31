@@ -55,6 +55,7 @@ class VoiceprintConfig(_InputModel):
 class _ModelPolicy(_InputModel):
     """Optional controls keep historical snapshots readable without rewriting them."""
 
+    stream: bool = Field(default=True, strict=True)
     context_window_tokens: int | None = Field(default=None, gt=0)
     context_safety_margin_tokens: int | None = Field(default=None, ge=0)
     auto_compact_tokens: int | None = Field(default=None, gt=0)
@@ -68,6 +69,8 @@ class _ModelPolicy(_InputModel):
         for name in _ModelPolicy.model_fields:
             if getattr(self, name) is None:
                 values.pop(name, None)
+        if "stream" not in self.model_fields_set:
+            values.pop("stream", None)
         return values
 
 

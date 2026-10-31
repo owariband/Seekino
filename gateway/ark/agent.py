@@ -14,6 +14,8 @@ from openai import OpenAIError
 from gateway.constants import ARK_PROVIDER
 from gateway.constants import ARK_OPENAI_BASE_URL
 from gateway.errors import ContentFilterError
+from gateway.streaming.chat import request_chat_completion
+from gateway.agent_model.errors import ModelFailureError
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.agent_model.errors import ArkFunctionCallingError, ModelFailureReason
 from gateway.agent_model.fallback import log_model_fallback
@@ -57,6 +59,7 @@ def request_ark_function_turn(
     timeout: float,
     seen_tool_call_ids: set[str],
     require_visible_text_on_stop: bool,
+    stream: bool = True,
 ):
     if client is None or model_name is None:
         raise ArkFunctionCallingError("Ark fallback is not configured")
@@ -77,7 +80,8 @@ def request_ark_function_turn(
                 ",".join(tool.name for tool in tools),
                 max_output_tokens,
             )
-            response = client.chat.completions.create(
+            response = request_chat_completion(
+                client.chat.completions, usage_call=call,
                 model=model_name,
                 messages=[
                     {
@@ -86,7 +90,7 @@ def request_ark_function_turn(
                     }
                     for message in messages
                 ],
-                stream=False,
+                stream=stream,
                 temperature=0,
                 max_completion_tokens=max_output_tokens,
                 timeout=timeout,
@@ -94,7 +98,7 @@ def request_ark_function_turn(
                 tool_choice=tool_choice,
             )
         except Exception as exc:
-            call.capture_response(exc)
+            call.capture_response(exc, include_usage=False)
             if isinstance(exc, ContentFilterError) or getattr(exc, "code", None) in {
                 "content_filter", "OutputTextSensitiveContentDetected",
             }:
@@ -103,7 +107,7 @@ def request_ark_function_turn(
                     code="content_filter",
                     response_id=getattr(exc, "request_id", None),
                 ) from exc
-            if not isinstance(exc, (ArkError, OpenAIError, TimeoutError)):
+            if not isinstance(exc, (ArkError, OpenAIError, TimeoutError, ModelFailureError)):
                 raise
             raise ArkFunctionCallingError(
                 f"Ark request failed for model {model_name!r}",
@@ -145,6 +149,8 @@ class ArkFunctionCallingModel:
         client: Any | None = None,
         api_key: str | None = None,
         supports_vision_input: bool = False,
+        stream: bool = True,
+        fallback_stream: bool | None = None,
         fallback_supports_vision_input: bool = False,
     ) -> None:
         if not model.strip():
@@ -164,18 +170,17 @@ class ArkFunctionCallingModel:
             raise ValueError(
                 "fallback_request_timeout_seconds must be greater than zero"
             )
+        self._stream = stream
+        self._fallback_stream = stream if fallback_stream is None else fallback_stream
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self._fallback_supports_vision_input = fallback_supports_vision_input
         self.primary_model_name = model
-        self.fallback_provider_name = (
-            ARK_PROVIDER
-            if fallback_model is not None and fallback_model != model
-            else None
+        has_fallback = fallback_model is not None and (
+            fallback_model != model or self._fallback_stream != self._stream
         )
-        self.fallback_model_name = (
-            fallback_model if fallback_model != model else None
-        )
+        self.fallback_provider_name = ARK_PROVIDER if has_fallback else None
+        self.fallback_model_name = fallback_model if has_fallback else None
         self.max_output_tokens = max_output_tokens
         self.context_window_policy = context_window_policy
         self._request_timeout_seconds = request_timeout_seconds
@@ -217,6 +222,7 @@ class ArkFunctionCallingModel:
             api_key=self._api_key,
         )
         active_model = self.model_name
+        fallback_active = False
         try:
             def request_turn(
                 messages: list[dict[str, Any]],
@@ -226,8 +232,7 @@ class ArkFunctionCallingModel:
                 seen_tool_call_ids: set[str],
                 require_visible_text_on_stop: bool,
             ):
-                nonlocal active_model
-                fallback_active = active_model != self.model_name
+                nonlocal active_model, fallback_active
                 active_timeout = (
                     self._fallback_request_timeout_seconds
                     if fallback_active
@@ -242,13 +247,14 @@ class ArkFunctionCallingModel:
                 ):
                     require_vision_input(
                         messages, supports_vision_input=(
-                            self.supports_vision_input if model_name == self.model_name
+                            self.supports_vision_input if not fallback_active
                             else self._fallback_supports_vision_input
                         ), model_name=model_name,
                     )
                     return request_ark_function_turn(
                         client,
                         model_name=model_name,
+                        stream=self._fallback_stream if fallback_active else self._stream,
                         max_output_tokens=max_output_tokens,
                         tools=tools,
                         messages=messages,
@@ -271,7 +277,7 @@ class ArkFunctionCallingModel:
                         ),
                     )
                 except ArkFunctionCallingError as exc:
-                    if active_model != self.model_name or self.fallback_model_name is None:
+                    if fallback_active or self.fallback_model_name is None:
                         raise
                     fallback_timeout = timeout - (monotonic() - attempt_started_at)
                     if fallback_timeout <= 0:
@@ -288,6 +294,7 @@ class ArkFunctionCallingModel:
                         error=exc,
                     )
                     active_model = self.fallback_model_name
+                    fallback_active = True
                     return invoke(
                         active_model,
                         min(
@@ -338,9 +345,11 @@ class ArkFunctionCallingFallback:
         client: Any | None = None,
         api_key: str | None = None,
         supports_vision_input: bool = False,
+        stream: bool = True,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
+        self._stream = stream
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self.max_output_tokens = max_output_tokens
@@ -374,6 +383,7 @@ class ArkFunctionCallingFallback:
         return request_ark_function_turn(
             client,
             model_name=self.model_name,
+            stream=self._stream,
             max_output_tokens=self.max_output_tokens,
             tools=tools,
             messages=messages,
@@ -399,7 +409,9 @@ class ArkStructuredFallback:
         client: Any | None = None,
         api_key: str | None = None,
         supports_vision_input: bool = False,
+        stream: bool = True,
     ) -> None:
+        self._stream = stream
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self.max_output_tokens = max_output_tokens
@@ -421,6 +433,7 @@ class ArkStructuredFallback:
             provider_name=ARK_PROVIDER,
             api_profile="standard",
             model_name=self.model_name,
+            stream=self._stream,
             client=client,
             base_url=ARK_OPENAI_BASE_URL,
             max_output_tokens=self.max_output_tokens,
@@ -448,10 +461,11 @@ class ArkStructuredToolAgentModel(OpenAIStructuredToolAgentModel):
         api_key: str | None = None,
         chat_model: Any | None = None,
         supports_vision_input: bool = False,
+        stream: bool = True,
         fallback_supports_vision_input: bool = False,
     ) -> None:
         super().__init__(
-            model,
+            model, stream=stream,
             request_timeout_seconds=request_timeout_seconds,
             max_output_tokens=max_output_tokens,
             max_input_chars=max_input_chars,

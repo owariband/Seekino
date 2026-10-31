@@ -54,6 +54,30 @@ models:
 
 普通生成支持文本；接收图片的模型必须声明 `supports_vision_input: true`，且连接适配器支持图片输入。该声明由配置维护者根据模型能力设置，不会从模型名字猜测。为兼容已有版本 2 配置，保留引用 `vision`、`vision_fallback` 未声明该字段时默认允许视觉输入；任意新引用默认为文本。`fallback` 可内联另一份模型绑定，其来源、模型、超时、推理和预算分别保存。
 
+## 模型 stream 配置
+
+`models.<role>.stream` 是模型绑定的严格布尔配置，省略时默认 `true`，创建模型时统一传给协议适配器。它适用于已实现的 Chat Completions / Responses 生成入口，覆盖 Chat、Deep Agents、结构化工具、视觉 JSON/工具轮次和使用 Ark 生成接口的视频转写；不按模型名或 `profile: kimi` 特判。主模型和 fallback 各自配置，例如在原有绑定中添加：
+
+```yaml
+models:
+  vision:
+    source: kimi_coding
+    model: k3.1-pro
+    stream: true
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-1-pro-260628
+      stream: false
+```
+
+也可以在创建时传入 `ModelBinding(source="kimi_coding", model="k3.1-pro", stream=False)`。旧 `agent_model.stream` 和 `agent_model.fallback.stream` 会保留到统一绑定。字符串 `"false"`、数字 `0/1` 和 `null` 都不接受；需要兼容不支持 SSE 的服务时明确配置 `false`，错误时不会自动切换传输方式并重发。
+
+流式请求在 Gateway 收齐和校验后仍返回完整结果，工具参数也必须完整验证后才能执行。末尾 usage 会保留。`stream=true` 可以让响应生成期间持续接收事件，但不会减少输入 context，也不能保证首个事件之前不会超时。它不等于前端逐 token 展示；前端当前仍接收业务进度及答案快照。
+
+新 Parse 任务在配置快照中保存 `stream`，恢复时按快照创建模型。历史快照缺少字段时使用新的默认 `true`，序列化保持原有形状以保护幂等指纹；这意味着加载本次修复的服务后，未配置该字段的旧任务也会使用流式生成。显式 `false` 在普通续跑和 retry 中保留，切换已有任务配置仍按前述 reparse 约定执行。
+
+独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器使用 `query_hook.rewriter_stream`，默认 `true`。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
+
 ## Supervisor harness 与独立模型
 
 顶层 `supervisor_harness` 选择 `deepagents` 或 `codex`，与 `models.supervisor` 一起在 Server 启动时加载。修改 harness、模型或连接配置后重启 Server；`agent_runtime` 中已有的运行预算仍按原规则用于新消息。
@@ -62,7 +86,7 @@ models:
 
 Kimi 继续使用现有 OpenAI 兼容适配器和 `profile: kimi`。在同一份有效 YAML 中将 `models.supervisor.source` 改为 `kimi_coding`、`model` 改为 `k3.1-pro`，保持 `supervisor_harness: deepagents`，并设置 `KIMI_API_KEY`。其他生成式角色也可独立选择相同来源；选择 API 模型名不会自动替换转写或 embedding。
 
-`profile: kimi` 的 `GatewayClient.create_generative_model()` 自动启用 Chat Completions 流式接收，适用于直接 JSON 和视觉工具轮次，无需新增 YAML 开关。它不改变 FPS、模型、reasoning 参数或业务重试预算；流收齐后沿用结果校验。其他 profile 保持原协议。实现与验证见 [Kimi 流式接入 TRD](design/03-product-reassessment/kimi-streaming-trd.md)。
+Kimi 与其他 HTTP 生成模型使用上面的通用 `stream` 配置。2026-10-30 的 Kimi 单 Chunk 真实验证保留在 [历史接入 TRD](design/03-product-reassessment/kimi-streaming-trd.md)，不代表其他供应商或整集解析已经在线验收。
 
 需要 Codex Supervisor 时，在同一份 YAML 中替换以下字段；其他预算字段可沿用原值：
 

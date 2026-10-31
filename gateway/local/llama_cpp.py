@@ -5,6 +5,9 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import TypeVar
 
 import httpx
+from openai import OpenAI, APIError, APIStatusError, omit
+from gateway.streaming.chat import request_chat_completion
+from gateway.agent_model.errors import ModelFailureError
 from pydantic import BaseModel
 
 from gateway.schema_normalization import inline_schema_refs
@@ -40,6 +43,7 @@ class LlamaCppMultimodalModel:
         request_timeout_seconds: float,
         expected_server_video_fps: float,
         client: httpx.Client | None = None,
+        stream: bool = True,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -54,6 +58,8 @@ class LlamaCppMultimodalModel:
                 "expected_server_video_fps must be between 0.2 and 5.0"
             )
 
+        self._stream = stream
+        self._request_timeout_seconds = request_timeout_seconds
         self.model_name = model
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
@@ -108,46 +114,27 @@ class LlamaCppMultimodalModel:
             operation=schema_name,
         ) as call:
             try:
-                response = self._client.post(
-                    f"{self.base_url}/v1/chat/completions",
-                    json={
-                        "model": self.model_name,
-                        "messages": [{"role": "user", "content": content}],
-                        "response_format": {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": schema_name,
-                                "strict": True,
-                                "schema": schema,
-                            },
-                        },
-                        "temperature": 0,
-                        "max_tokens": self.max_output_tokens,
-                        "stream": False,
-                    },
+                response = request_chat_completion(
+                    OpenAI(base_url=f"{self.base_url}/v1", api_key="local",
+                           http_client=self._client, max_retries=0).chat.completions,
+                    stream=self._stream, usage_call=call,
+                    model=self.model_name, messages=[{"role": "user", "content": content}],
+                    response_format={"type": "json_schema", "json_schema": {
+                        "name": schema_name, "strict": True, "schema": schema,
+                    }}, temperature=0, max_tokens=self.max_output_tokens,
+                    timeout=self._request_timeout_seconds, extra_headers={"Authorization": omit},
                 )
-            except httpx.HTTPError as error:
-                raise LlamaCppModelError(
-                    f"llama.cpp request failed for model {self.model_name}: {error}"
-                ) from error
-
-            if not response.is_success:
-                detail = _llama_cpp_error_detail(response)
-                raise LlamaCppModelError(
-                    f"llama.cpp request failed for model {self.model_name}: "
-                    f"HTTP {response.status_code}; server detail: {detail}"
-                )
-
+            except APIStatusError as error:
+                detail = _llama_cpp_error_detail(error.response)
+                raise LlamaCppModelError(f"llama.cpp request failed for model {self.model_name}: HTTP {error.status_code}; server detail: {detail}") from error
+            except (APIError, ModelFailureError) as error:
+                raise LlamaCppModelError(f"llama.cpp request failed for model {self.model_name}: {error}") from error
             try:
-                response_payload = response.json()
-                call.capture_response(response_payload)
-                choice = response_payload["choices"][0]
-                output_text = choice["message"]["content"]
-                finish_reason = choice.get("finish_reason")
-            except (ValueError, KeyError, IndexError, TypeError) as error:
-                raise LlamaCppModelError(
-                    "llama.cpp returned an invalid chat completion envelope"
-                ) from error
+                choice = response.choices[0]
+                output_text = choice.message.content
+                finish_reason = choice.finish_reason
+            except (AttributeError, IndexError, TypeError) as error:
+                raise LlamaCppModelError("llama.cpp returned an invalid chat completion envelope") from error
             if finish_reason == "length":
                 raise LlamaCppModelError(
                     "llama.cpp exhausted max_output_tokens before completing the response"
@@ -170,6 +157,7 @@ class LlamaCppMultimodalModel:
             max_output_tokens=self.max_output_tokens,
             inputs=inputs,
             error_type=LlamaCppModelError,
+            stream=self._stream, timeout=self._request_timeout_seconds, provider=self.provider_name,
         )
 
 

@@ -28,6 +28,8 @@ from openai import OpenAI, OpenAIError
 from pydantic import BaseModel, PrivateAttr
 
 from gateway.errors import ContentFilterError
+from gateway.streaming.chat import request_chat_completion
+from gateway.agent_model.errors import ModelFailureError
 from gateway.agent_model.context import (
     ContextCheckpoint,
     ContextWindowController,
@@ -77,6 +79,7 @@ _query_usage_scope: ContextVar[_QueryRequestUsage | None] = ContextVar(
 class _AgentChatOpenAI(ChatOpenAI):
     """Validate Query tool responses and keep fallback at the model-call boundary."""
 
+    request_stream: bool = True
     provider_name: str = "openai"
     api_profile: OpenAIProfile = "standard"
     request_timeout_seconds: float
@@ -149,6 +152,7 @@ class _AgentChatOpenAI(ChatOpenAI):
         except BaseException as exc:
             if not isinstance(exc, (
                 *self._provider_error_types,
+                ModelFailureError,
                 QueryModelIncompleteError,
                 MissingStructuredQueryToolCallError,
             )):
@@ -192,11 +196,18 @@ class _AgentChatOpenAI(ChatOpenAI):
                 _raise_query_timeout(fallback_exc)
                 raise
 
-    def _generate_request(self, *args: Any, **kwargs: Any):
+    def _generate_request(self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any):
         with ExitStack() as stack:
             token = _query_usage_scope.set(_QueryRequestUsage(stack))
             try:
-                return super()._generate(*args, **kwargs)
+                if not self.request_stream:
+                    return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+                payload = self._get_request_payload(messages, stop=stop, **kwargs)
+                scope = _query_usage_scope.get()
+                assert scope is not None and scope.call is not None
+                payload["stream"] = self.request_stream
+                response = request_chat_completion(self.client, usage_call=scope.call, **payload)
+                return self._create_chat_result(response)
             finally:
                 _query_usage_scope.reset(token)
 
@@ -216,6 +227,7 @@ class _AgentChatOpenAI(ChatOpenAI):
         ):
             if payload.get("tool_choice") not in (None, "auto", "none"):
                 payload["tool_choice"] = "auto"
+        if self.api_profile in {"deepseek", "kimi"}:
             _copy_assistant_reasoning(
                 self._convert_input(input_).to_messages(), payload["messages"],
             )
@@ -287,10 +299,7 @@ class _AgentChatOpenAI(ChatOpenAI):
                     ),
                 )
         result = super()._create_chat_result(response, generation_info)
-        if (
-            self.api_profile == "deepseek"
-            and self.reasoning_effort in {"low", "high", "max"}
-        ):
+        if self.api_profile in {"deepseek", "kimi"}:
             for choice, generation in zip(
                 response.get("choices", []), result.generations,
             ):
@@ -522,6 +531,7 @@ def build_openai_chat_model(
     use_legacy_token_parameter: bool | None = None,
     supports_vision_input: bool = False,
     fallback_supports_vision_input: bool = False,
+    stream: bool = True,
 ) -> _AgentChatOpenAI:
     profile_options = completion_options(api_profile, reasoning_effort)
     model = _AgentChatOpenAI(
@@ -547,7 +557,10 @@ def build_openai_chat_model(
         max_retries=0,
         timeout=request_timeout_seconds,
         use_responses_api=False,
-        streaming=False,
+        request_stream=stream,
+        # This adapter aggregates model SSE before validating tools. Prevent
+        # LangChain callbacks from bypassing _generate via its own _stream.
+        disable_streaming=True,
         **profile_options,
     )
     model.set_provider_error_types(provider_error_types)
@@ -582,6 +595,7 @@ class OpenAIStructuredToolAgentModel:
         chat_model: BaseChatModel | None = None,
         supports_vision_input: bool = False,
         fallback_supports_vision_input: bool = False,
+        stream: bool = True,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -603,6 +617,7 @@ class OpenAIStructuredToolAgentModel:
             raise ValueError(f"unsupported OpenAI API profile: {api_profile}")
         if reasoning_effort not in {"none", "low", "high", "max"}:
             raise ValueError("unsupported reasoning_effort")
+        self._stream = stream
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self._fallback_supports_vision_input = fallback_supports_vision_input
@@ -714,6 +729,7 @@ class OpenAIStructuredToolAgentModel:
                     provider_name=self.provider_name,
                     api_profile=self.api_profile,
                     model_name=self.model_name,
+                    stream=self._stream,
                     client=client,
                     base_url=self.base_url or "https://api.openai.com/v1",
                     max_output_tokens=self.max_output_tokens,

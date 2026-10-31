@@ -123,7 +123,7 @@ def test_invalid_final_text_continues_without_repeating_successful_write(final_t
     bad_final.output[0].content[0].text = final_text
     responses = Responses([_write(canvas), bad_final, _finish()])
 
-    assert _run(_model("deepseek", responses), tools).complete
+    assert _run(_model("deepseek", responses, stream=False), tools).complete
 
     assert calls == ["write_context_canvas"]
     assert canvas.revision == revision + 1
@@ -293,7 +293,7 @@ def test_chat_vision_adapter_uses_same_completion_tools_without_json_response_fo
         chat=SimpleNamespace(completions=responses), close=lambda: closed.append(True),
     ))
     model = OpenAIVisionModel(
-        "portable-vision", provider="portable", base_url="https://offline.invalid", api_key="offline",
+        "portable-vision", stream=False, provider="portable", base_url="https://offline.invalid", api_key="offline",
         max_output_tokens=8192, token_parameter="max_completion_tokens", response_format="json_object",
         request_timeout_seconds=7,
     )

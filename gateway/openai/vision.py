@@ -20,7 +20,7 @@ from gateway.multimodal import (
 )
 from gateway.usage import track_model_call
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
-from gateway.openai.streaming import request_chat_stream
+from gateway.streaming.chat import request_chat_completion
 
 _Result = TypeVar("_Result", bound=BaseModel)
 
@@ -41,7 +41,7 @@ class OpenAIVisionModel:
         max_output_tokens: int = 8192,
         token_parameter: str = "max_tokens",
         response_format: str = "json_schema",
-        stream: bool = False,
+        stream: bool = True,
     ) -> None:
         self.model_name = model
         self.provider_name = provider
@@ -160,10 +160,10 @@ class OpenAIVisionModel:
                         if check_control is not None:
                             check_control()
                         response = (
-                            request_chat_stream(
+                            request_chat_completion(
                                 client.chat.completions, usage_call=call,
                                 check_control=check_control, **request,
-                            ) if self._stream else client.chat.completions.create(**request)
+                            )
                         )
                         record_model_event("response", response)
                         call.raise_if_cancelled()

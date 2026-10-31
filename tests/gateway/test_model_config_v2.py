@@ -19,6 +19,42 @@ def payload():
     return yaml.safe_load((ROOT / "config.yaml").read_text())
 
 
+@pytest.mark.parametrize("role", ["agent", "vision", "supervisor"])
+@pytest.mark.parametrize("stream", [True, False])
+def test_yaml_stream_survives_resolution_legacy_projection_and_freezing(role, stream):
+    data = payload()
+    data["supervisor_harness"] = "deepagents"
+    data["models"]["supervisor"] = deepcopy(data["models"]["agent"])
+    data["models"][role]["stream"] = stream
+    data["models"][role]["fallback"] = {"source": "ark_default", "model": "backup", "stream": not stream}
+    config = GatewayConfig.model_validate(yaml.safe_load(yaml.safe_dump(data)))
+    binding = config.resolve_model_binding(role, environ={})
+    assert binding.stream is stream and binding.fallback.stream is not stream
+    frozen = ModelBinding.model_validate_json(binding.model_dump_json())
+    assert config.resolve_model_binding(frozen, environ={}) == binding
+    assert GatewayConfig.model_validate(config.model_dump()).resolve_model_binding(role, environ={}) == binding
+    if role == "agent":
+        assert config.agent_model.stream is stream and config.agent_model.fallback.stream is not stream
+
+
+def test_legacy_agent_stream_setting_is_preserved_and_omission_defaults_on():
+    data = yaml.safe_load(LEGACY.read_text())
+    default = GatewayConfig.model_validate(data)
+    assert default.resolve_model_binding("agent", environ={}).stream
+    data["agent_model"]["stream"] = False
+    data["agent_model"]["fallback"]["stream"] = True
+    binding = GatewayConfig.model_validate(data).resolve_model_binding("agent", environ={})
+    assert not binding.stream and binding.fallback.stream
+
+
+def test_native_transport_rejects_an_unsupported_nonstreaming_override():
+    data = payload()
+    data["supervisor_harness"] = "codex"
+    data["models"]["supervisor"] = {"source": "codex_local", "model": "native-model", "stream": False}
+    with pytest.raises(ValidationError, match="native streaming transport"):
+        GatewayConfig.model_validate(data)
+
+
 def test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy():
     old = load_config(LEGACY)
     new = load_config(ROOT / "config.yaml")

@@ -10,9 +10,11 @@ from langchain_core.tools import BaseTool
 from openai import APIError, OpenAI
 
 from gateway.errors import ContentFilterError
+from gateway.streaming.chat import request_chat_completion
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.agent_model.errors import (
     ModelFailureReason,
+    ModelFailureError,
     OpenAIFunctionCallingError,
 )
 from gateway.agent_model.fallback import log_model_fallback
@@ -51,6 +53,7 @@ class OpenAIAgentModel:
         context_window_policy: ContextWindowPolicy | None = None,
         client: Any | None = None,
         supports_vision_input: bool = False,
+        stream: bool = True,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -69,6 +72,7 @@ class OpenAIAgentModel:
         if reasoning_effort not in {"none", "low", "high", "max"}:
             raise ValueError("unsupported reasoning_effort")
 
+        self._stream = stream
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self.primary_model_name = model
@@ -305,18 +309,19 @@ class OpenAIAgentModel:
                 else {"max_completion_tokens": self.max_output_tokens}
             )
             profile_options = completion_options(self.profile, self.reasoning_effort)
-            response = client.chat.completions.create(
+            response = request_chat_completion(
+                client.chat.completions, usage_call=usage_call,
                 model=self.model_name,
                 messages=messages,
-                stream=False,
+                stream=self._stream,
                 temperature=profile_options.pop("temperature", 0),
                 timeout=timeout,
                 **token_options,
                 **profile_options,
                 **tool_options,
             )
-        except APIError as error:
-            usage_call.capture_response(error)
+        except (APIError, ModelFailureError) as error:
+            usage_call.capture_response(error, include_usage=False)
             if getattr(error, "code", None) == "content_filter":
                 raise ContentFilterError(
                     f"{self.provider_name} filtered generated output",

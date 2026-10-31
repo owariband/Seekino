@@ -16,13 +16,13 @@ from langchain_core.tools import BaseTool
 from openai import APIError
 from pydantic import BaseModel
 
-from gateway.ark.sse import request_sse_response
+from gateway.streaming.responses import request_response
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
 from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.media import encode_media_file
 from gateway.multimodal import ImageInput, MultimodalInput, TextInput, VideoInput
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
-from gateway.openai.streaming import request_chat_stream
+from gateway.streaming.chat import request_chat_completion
 from gateway.usage import ModelCallControlError, model_call_context, track_model_call
 
 from .context import ContextCheckpoint, ContextWindowOverflow, ContextWindowPolicy, preflight_context
@@ -336,7 +336,7 @@ def _request_turn(
         request["temperature"] = 0
     with model_call_context({"agent_round": round_no}), track_model_call(
         provider=endpoint.provider, model=endpoint.model, operation=schema_name,
-    ) as call, capture_model_diagnostics(call, {**request, "stream": endpoint.provider == ARK_PROVIDER}):
+    ) as call, capture_model_diagnostics(call, {**request, "stream": adapter._stream}):
         close = getattr(endpoint.client, "close", None)
         unregister = call.add_cancel_callback(close) if callable(close) else lambda: None
         try:
@@ -345,15 +345,10 @@ def _request_turn(
                 check_control()
             _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
-                if endpoint.provider == ARK_PROVIDER:
-                    response, text = request_sse_response(
-                        endpoint.client.responses, usage_call=call,
-                        check_control=check_control, **request,
-                    )
-                else:
-                    response = endpoint.client.responses.create(**request)
-                    call.capture_response(response)
-                    text = _response_text(response)
+                response, text = request_response(
+                    endpoint.client.responses, stream=adapter._stream, usage_call=call,
+                    check_control=check_control, **request,
+                )
                 record_model_event("response", response)
             except Exception as error:
                 call.capture_response(error, include_usage=False)
@@ -450,11 +445,9 @@ def _request_chat_turn(
                 check_control()
             _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
-                response = (
-                    request_chat_stream(
-                        endpoint.client.chat.completions, usage_call=call,
-                        check_control=check_control, **request,
-                    ) if adapter._stream else endpoint.client.chat.completions.create(**request)
+                response = request_chat_completion(
+                    endpoint.client.chat.completions, usage_call=call,
+                    check_control=check_control, **request,
                 )
             except APIError as error:
                 call.capture_response(error)
@@ -476,10 +469,6 @@ def _request_chat_turn(
                 require_tool_call=enforce_final_schema and choice == "required",
                 require_visible_text_on_stop=enforce_final_schema and visible,
             )
-            if adapter._stream:
-                reasoning = getattr(response.choices[0].message, "reasoning_content", None)
-                if isinstance(reasoning, str):
-                    turn[2]["reasoning_content"] = reasoning
             parsed = None
             if enforce_final_schema and turn[0] == "stop":
                 try:
@@ -584,12 +573,3 @@ def _plain(value: Any) -> Any:
     if isinstance(value, SimpleNamespace):
         return _plain(vars(value))
     return value
-
-
-def _response_text(response: Any) -> str:
-    text = _field(response, "output_text")
-    if isinstance(text, str):
-        return text
-    return "".join(_field(content, "text", "") for item in _field(response, "output", []) or []
-                   if _field(item, "type") == "message" for content in _field(item, "content", []) or []
-                   if _field(content, "type") == "output_text")

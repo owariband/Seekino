@@ -638,6 +638,16 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 ## TODO（待修复解决）
 
+### B24：模型 stream 被入口写死且正式 Parse 丢失开关
+
+排序日期：2026-10-31。
+
+状态：TODO（[PR #22](https://github.com/owariband/Seekino/pull/22) 已实现并完成隔离验证，PR 集成、服务加载和新增线上验收待完成）。用户要求在创建模型时统一配置 stream，默认 true、显式 false；此前 Chat / Structured 固定 false，PR #20 又仅对 Kimi 视觉启用 true。旧前端 SSE 只证明业务事件连接存在，不证明模型请求流式。
+
+本次在 `ModelBinding`、旧 Agent 投影、工厂、共享 Chat Completions / Responses 接收器中统一开关，主模型与 fallback 独立保存。Parse profile 和持久快照补齐字段，恢复后传至正式 runtime 创建；历史快照缺省按 true 执行，序列化形状不变。流收齐后继续原 Schema / 工具验证，不执行半截工具参数，不自动改成非流式重发。
+
+Gateway 回归 1345 passed，另 5 个失败均在未改业务代码的 `dev` 同环境复现；Parse 配置 / runtime 相关 397 passed，配置 HTTP / 上传服务隔离回归另有 113 passed，前端 typecheck 通过。本轮没有新真实模型请求、服务重启或任务变更，不能据此宣称所有供应商在线兼容或整集稳定。代码来源归因、配置兼容与验证证据见 [TRD](../design/03-product-reassessment/model-streaming-trd.md)、[实施记录](../report/gateway/model-streaming-20261031.md)、[devlog](devlog.md#devlog-model-streaming-20261031)。
+
 ### 模型暂态连接失败导致 Karpathy 整集停止（2026-10-30）
 
 直接 JSON 链路漏识别 SDK 连接/超时/504，节点未重试且用户只看到执行异常。修复增加明确原因、有限重试、逐请求 trace 和脱敏终止日志；隔离验证见 [TRD](../design/03-product-reassessment/model-network-failure-trd.md)。EP1 已恢复原 v3，整集成功与稳定性尚待正式验收。历史同时断连的责任端无法由旧日志补推，模型单次输入和耗时仍需独立评测。

@@ -8,7 +8,7 @@ from arkruntime import Ark
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
-from gateway.ark.sse import request_sse_json, request_sse_text
+from gateway.streaming.responses import request_response, request_response_json, request_sse_text
 from gateway.constants import ARK_PROVIDER
 from gateway.agent_model.fallback import log_model_fallback
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
@@ -43,6 +43,7 @@ class ArkMultimodalModel:
         fallback_model: str | None = None,
         client: Ark | None = None,
         api_key: str | None = None,
+        stream: bool = True,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -55,6 +56,7 @@ class ArkMultimodalModel:
         if fallback_model is not None and not fallback_model.strip():
             raise ValueError("fallback_model must not be empty")
 
+        self._stream = stream
         self.model_name = model
         self.primary_model_name = model
         self.fallback_model_name = (
@@ -176,8 +178,9 @@ class ArkMultimodalModel:
                         else lambda: None
                     )
                     try:
-                        payload = request_sse_json(
-                            client.responses, usage_call=call, **request
+                        payload = request_response_json(
+                            client.responses, usage_call=call, stream=self._stream,
+                            check_control=check_control, **request
                         )
                     finally:
                         unregister_cancel()
@@ -238,9 +241,11 @@ class ArkMultimodalModel:
                     else lambda: None
                 )
                 try:
-                    yield from request_sse_text(
-                        client.responses, usage_call=call, **request
-                    )
+                    if self._stream:
+                        yield from request_sse_text(client.responses, usage_call=call, **request)
+                    else:
+                        _, text = request_response(client.responses, stream=False, usage_call=call, **request)
+                        yield text
                 finally:
                     unregister_cancel()
         finally:
