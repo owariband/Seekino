@@ -22,6 +22,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-31：Apple GPU ASR 与持久恢复拆成独立需求](#devlog-apple-gpu-asr-split-20261031) | B24、B20；模型执行与成果生命周期 |
 | [2026-10-30：正式 Kimi 生成入口接入流式](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
 | [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
 | [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
@@ -115,6 +116,33 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-apple-gpu-asr-split-20261031"></a>
+
+## 2026-10-31：Apple GPU ASR 与持久恢复拆成独立需求
+
+### 问题与现状
+
+[PR #18](https://github.com/owariband/Seekino/pull/18) 原计划同时交付本机 GPU ASR、对齐、成果保存和恢复、完整课程闭环。首次处理的性能/质量与下游失败后的成果复用是两个独立问题，混在一个 PR 中使评审、回滚和验收归因互相牵制。当前正式 WhisperX 仍使用 CT2 ASR，已有 Metal 实验未接到正式对齐链路；实验产物落盘也不代表 Server 恢复已实现。
+
+### 方案候选
+
+保留一个 PR 可以减少一轮接口协调，但会继续绑定不同层次的完成条件；将模型执行 feature 与持久恢复 fix 拆开需要显式阶段合同，却允许独立评审和验证。用户选择后者：[PR #21](https://github.com/owariband/Seekino/pull/21) 负责 whisper.cpp Metal、WhisperX 独立对齐、必要 speech 执行职责提取、阶段结果/生产者信息及正式接入；#18 负责业务保存、兼容核验、发布和恢复。#21 不依赖 #18 存储实现，默认先合入 dev；#18 随后同步接口、完成真实接线。采用 Seekino 组合已有独立 align API 的方向，本轮不 fork WhisperX；CPU 对齐先验证，MPS 依据实测取舍。
+
+### 方案验证
+
+在独立 worktree 的 `feat/apple-gpu-asr-alignment` 上，以 dev `83cc07e8` 为基线创建 [六流程 TRD](../design/03-product-reassessment/apple-gpu-asr-alignment-trd.md)，首提交 `8c4513a5` 仅包含该初稿。新建 Draft PR #21，已在 [#18 留言](https://github.com/owariband/Seekino/pull/18#issuecomment-6538022466) 记录拆分背景、范围、依赖和合并顺序，两处正文末尾均为 `-codex`。同步设计入口和 [B24](problems.md#b24-apple-gpu-asr)；结构、链接及 diff 检查覆盖本次文档。原工作区的未提交内容和 #18 工作区保持独立。
+
+固定源码和已有 cpp JSON 的核对支持继续验证外部 segments → align 接缝，但没有执行新组合推理、迁移、重启或业务测试。下一步先用已有 raw 与同一音频验证 CPU 对齐，再落实正式配置与阶段合同；短样本探索后、正式长片评测前冻结质量/资源/总耗时阈值。当前 PR 为设计起点，不能据此声称实现、效果或部署完成。
+
+### 指标对比
+
+| 观察项 | 拆分前 | 本次变化与边界 |
+|---|---|---|
+| 交付和验收归属 | #18 同时承担执行 feature 与成果恢复 fix | #21 与 #18 分别维护主设计和验证；新增一次阶段合同协调成本 |
+| 依赖方向 | GPU、存储与整体闭环混在同一实施序列 | #21 提供阶段能力，#18 消费并验收恢复；接口仍待实现 |
+| 语音耗时与质量 | 已有纯 ASR 历史实验，组合对齐缺证 | 本次无新增实测，未声称性能或质量改善 |
+| 产品收益 | 长课首次等待和失败重算均待改善 | 本次明确解决路径与责任，真实收益分别由两项验收证明 |
 
 <a id="devlog-kimi-streaming-20261030"></a>
 

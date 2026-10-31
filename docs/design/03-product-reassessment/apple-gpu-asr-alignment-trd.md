@@ -3,10 +3,10 @@
 主题：Apple GPU ASR 正式接入、WhisperX 强制对齐验证与语音阶段接口。提出日期：2026-10-31（Asia/Shanghai）。本稿记录已选方向、源码依据与待验证计划，不表示功能已经实现或部署。
 
 - 工作分支：`feat/apple-gpu-asr-alignment`；集成目标：`dev`。
-- PR：待创建；首个提交只包含本 TRD 初稿，创建后立即回填关联。
+- PR：[PR #21](https://github.com/owariband/Seekino/pull/21)；首个提交 `8c4513a5` 只包含本 TRD 初稿。
 - 负责人：本 chat 的 Codex，负责本 feature 的设计、实现与验证。
-- 关联修复：[PR #18](https://github.com/owariband/Seekino/pull/18)，分支 `fix/video-asr-recovery`，负责语音成果持久化与失败恢复。
-- 基础合同：[本地 WhisperX ASR 主设计](local-whisperx-asr-trd.md)、[Gateway](../../../gateway/README.md)、[Engine 时间约定](../../../engine/README.md#媒体时间单位)。问题状态统一见 [problems](../../dev/problems.md)，实验与取舍记入 [devlog](../../dev/devlog.md)。
+- 关联修复：[PR #18](https://github.com/owariband/Seekino/pull/18)，分支 `fix/video-asr-recovery`，负责语音成果持久化与失败恢复；[拆分背景与交接留言](https://github.com/owariband/Seekino/pull/18#issuecomment-6538022466)。
+- 基础合同：[本地 WhisperX ASR 主设计](local-whisperx-asr-trd.md)、[Gateway](../../../gateway/README.md)、[Engine 时间约定](../../../engine/README.md#媒体时间单位)。问题状态统一见 [B24](../../dev/problems.md#b24-apple-gpu-asr)，实验与取舍记入 [devlog](../../dev/devlog.md#devlog-apple-gpu-asr-split-20261031)。
 
 ## 1.1 触发场景与实际差距
 
