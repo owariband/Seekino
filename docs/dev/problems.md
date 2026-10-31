@@ -654,11 +654,13 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 状态：TODO（独立设计与需求拆分已建立；实现、真实组合效果和部署未完成）。现有 whisper.cpp Metal 纯转写实验不能证明正式 Gateway 已接入或字词对齐达标；正式 WhisperX 的 ASR 与 alignment device 仍耦合，Apple 配置使用 CPU。
 
+2026-10-31 pipeline 边界纠正：用户明确要保留 WhisperX 的 VAD、切分/合并、原片区间与强制对齐，仅替换识别后端。已收回“整片 whisper-cli 转写后单独 align”作为正式第一版的方案，它只能做局部接缝实验。当前 3.8.6 尚无通用 ASR backend 接口，下一步先划分公共流程与 tokenizer/Mel/CT2 解码职责，用替身验证旧路线与时间窗口后再接 cpp；不能用设备枚举或一轮 align 成功代替完整接入。尚无生产代码变更。
+
 2026-10-31 背景复核：用户指出初稿没有解释强对齐的产品用途、优先 Apple 本机的条件及租 GPU 的额外开发成本。已在同一 TRD 补充字幕重组、对白回看和剪辑所需的时间证据；区分已有字词合同与尚未验收的消费层，补入远端 CUDA 候选的收益、传输/部署/正式调用/运行维护工作及本机适配成本。验证计划新增同文本有/无强对齐的边界对照和执行位置总成本口径；成本与效果仍待测，功能状态不变。
 
 本需求从 [PR #18](https://github.com/owariband/Seekino/pull/18) 拆出，由本 chat 的 Codex 负责，分支 `feat/apple-gpu-asr-alignment`、[PR #21](https://github.com/owariband/Seekino/pull/21)，首提交 `8c4513a5` 仅含 [TRD 初稿](../design/03-product-reassessment/apple-gpu-asr-alignment-trd.md)。#21 负责 Metal ASR、WhisperX 对齐、必要的执行职责提取、raw/align 阶段合同及正式接入验证；#18 负责保存、兼容核验、发布与恢复。原接入及整片内存复用仍关联 [B20](#b20本地-whisperx-正式接入与字幕时间证据)，拆分决定见 [#18 留言](https://github.com/owariband/Seekino/pull/18#issuecomment-6538022466)。
 
-下一步先固定阶段结果和生产者信息合同，复用已有 cpp raw 验证 CPU 对齐，再实施 Gateway/Server hook 接线与旧调用兼容。质量、总耗时和资源阈值在正式长片评测前冻结；MPS 单独验证。合并顺序默认 #21 → dev → #18 同步并完成真实恢复验收 → dev，不把源码可调用或历史纯 ASR 耗时写成新组合已通过。设计结构、本地链接与 diff 已检查；本次未运行模型或业务测试。决策与验证边界见 [devlog](devlog.md#devlog-apple-gpu-asr-split-20261031)。
+完整 pipeline 的后端接口、阶段结果和生产者信息合同落实后，再实施 Gateway/Server hook 接线与旧调用兼容。质量、总耗时和资源阈值在正式长片评测前冻结；MPS 单独验证。合并顺序默认 #21 → dev → #18 同步并完成真实恢复验收 → dev，不把源码可调用或历史纯 ASR 耗时写成新组合已通过。设计结构、本地链接与 diff 已检查；本次未运行模型或业务测试。决策与验证边界见 [devlog](devlog.md#devlog-apple-gpu-asr-split-20261031)。
 
 ### B22：Understanding 失败导致整块重跑与缺少任务停止控制
 

@@ -26,7 +26,7 @@ Hypnos 正在本机把课程和视频建成可检索、可回看、可作为创�
 
 ASR 主要回答“说了什么”；强制对齐以音频和已有转写为输入，在给定文字顺序约束下寻找字词对应的声学位置，补充“这部分文字何时发声”。Whisper 自带的句段/token 时间与声学强制对齐采用不同机制，不能因为 JSON 有 start/end 就认定时间精度已经满足字幕和剪辑需要。WhisperX 的 [原论文](https://arxiv.org/abs/2303.00747v2) 将词级时间与强制音素对齐作为目标；这是方法依据，不是本项目已经达标的证据。
 
-项目已经有 WhisperX 依赖、英/中/日对齐资产、正式字词合同和短样本运行记录，因此优先复用它的独立 align 能力，避免另写对齐算法或丢掉已接通的字词结果。选择依据是已有能力与本次问题匹配；仍需用**同一份 ASR 文本的有/无强对齐对照**验证时间收益，而非只证明 align 可以运行。
+项目已经有 WhisperX 依赖、英/中/日对齐资产、正式字词合同和短样本运行记录，因此保留其 VAD、切分/合并及强制对齐流程，在 ASR 环节接入 Apple 后端。2026-10-31 用户进一步明确：目标是运行 WhisperX 的完整 pipeline，替换其中的识别后端；整片直接交给 whisper.cpp 后只调用 align 不等价。独立 align 入口可用于接缝实验和阶段恢复，但不能取代正式 pipeline。仍需用**同一份 ASR 文本的有/无强对齐对照**验证时间收益，而非只证明 align 可以运行。
 
 强制对齐不能修正 ASR 错词、漏词和幻觉，也不等于人物识别、翻译或字幕排版。[原部署报告](../../report/gateway/local/whisperx-deployment-20261029.md) 已出现中文“字幕”识别为“字母”但仍产出时间的例子，说明“有对齐结果”不等于“内容正确”。同样，整数毫秒是存储单位，不是毫秒级准确率承诺。对齐失败的词保留文本与未知时间，避免下游把插值结果当作实际发声边界。
 
@@ -66,19 +66,19 @@ ASR 主要回答“说了什么”；强制对齐以音频和已有转写为输�
 
 ## 1.3 本次交付边界
 
-包括：whisper.cpp Metal 正式配置与调用；WhisperX 3.8.6 对齐复用；必要的 `infra/inference/speech/` 执行职责提取；可分阶段调用与组合调用兼容；生产者信息；语言、时间、取消、进度和离线资产合同；真实对齐质量及资源验证。
+包括：保留 WhisperX 的 VAD、切分/合并、原音频时间归属与对齐流程，在 ASR 环节接入 whisper.cpp Metal；必要的 `infra/inference/speech/` 执行职责提取；可分阶段调用与组合调用兼容；生产者信息；语言、时间、取消、进度和离线资产合同；真实完整 pipeline 的质量及资源验证。对第三方库的最小 backend 接口扩展先在隔离环境验证，不能以运行时篡改共享 `.venv` 作为接入方式。
 
 不包括：`video_parse_content` 表、ArtifactStore 成果发布、缓存命中、任务租约或恢复策略、数据迁移；CAM++ 迁移、通用推理插件系统、全部模型进程统一管理；Kimi/DNS 根因修复、播放器字幕排版、跨语言翻译、人物识别与整个检索/Chat 功能重构。不会为目录整齐搬迁其他模块。
 
-Apple GPU 在本 feature 中首先指 ASR 的 Metal 执行。对齐先以 CPU 建立正确性基线，MPS 是独立验证项；不预设全部对齐计算必须在 GPU 上，也不将未经验证的 MPS 设为默认。
+Apple GPU 在本 feature 中首先指 ASR 的 Metal 执行。VAD 和对齐先以 CPU 建立正确性基线，MPS 是独立验证项；不预设全部阶段必须在 GPU 上，也不将未经验证的 MPS 设为默认。
 
 # 2. 影响因素、假设与评价指标
 
 ## 2.1 关键因素与可推翻的假设
 
-- **H1：外部 ASR 片段能直接进入 WhisperX 对齐。** 固定版的 `load_align_model/align` 与 ASR 对象独立，源码支持该接缝；真实片段边界是否足以稳定对齐仍需验证。若失败，先排查语言、分段和时间窗口，不能静默丢弃对齐或直接用 token 时间替代。
-- **H2：替换 ASR 后能改善本机总体语音处理时间。** Metal 纯转写已存在实测，但总耗时还包括音频准备、模型加载和对齐。对齐可能成为新的主要耗时，必须分阶段测量。
-- **H3：模型和 VAD 变化不会导致不可接受的内容退化。** 现有 WhisperX ASR 内含 Pyannote VAD，既有 whisper.cpp 实验未启用 VAD；Turbo/Full、量化和解码配置也会影响内容。不得把组合变化的收益全归因于 GPU。
+- **H1：WhisperX 可在保留公共流程的同时替换 ASR 后端。** 固定版的 `load_align_model/align` 与 ASR 对象独立，但 `FasterWhisperPipeline` 的 tokenizer、Mel 特征、批处理和语言检测仍绑定 CT2。需要验证最小 backend 接口能消费 WhisperX 的 VAD 音频块、保持输出顺序和原片时间，而不加载 CT2 模型或绕过 VAD；独立 align 可运行不足以证明该假设成立。
+- **H2：替换 ASR 后能改善本机总体语音处理时间。** Metal 纯转写已存在实测，但完整 pipeline 的总耗时还包括音频准备、VAD、分段传输、模型加载和对齐。逐片段调用成本和对齐都可能成为瓶颈，必须分阶段测量。
+- **H3：保留 VAD 后的新后端不会导致不可接受的内容退化。** 正式路线沿用 WhisperX Pyannote VAD；既有无 VAD 的 cpp 整片实验只作历史参照。Turbo/Full、量化、切片上下文和解码配置会影响内容；尽量固定 VAD 与样本，不能把组合变化的收益全归因于 GPU。
 - **H4：独立阶段不会破坏旧调用及 #18 接入。** 原始转写可不经 ASR 重算而再次交给对齐器；旧 CPU/CUDA 配置与最终结果形状继续兼容。对齐执行模块不持有数据库或任务状态。
 - **H5：声明的模型与设备能和实际执行相符。** 外部 whisper-server 在启动时加载模型；请求中的 model 字符串不能证明真实权重。需绑定固定本机部署实例与启动证据，能力或身份无法核实应明确失败，不能悄悄切回 CPU。
 - **H6：强制对齐的时间收益值得增加一个推理阶段。** 保持 ASR 文本不变，对照原生时间与对齐时间的人工边界误差、未定位比例和短语首尾覆盖；如果没有改善，返回语言、分段或对齐器选型排查，不能用字段齐全替代效果判断。
@@ -88,7 +88,7 @@ Apple GPU 在本 feature 中首先指 ASR 的 Metal 执行。对齐先以 CPU �
 
 | 类型 / 指标 | 定义与基线 | 目标或护栏 | 测量条件与证据 |
 |---|---|---|---|
-| 结果：正式入口接通 | 当前只有独立 cpp 实验；正式 WhisperX 为 CT2 | 配置经 Gateway 到 cpp，再到 WhisperX align；正式 Server hook 消费同合同 | 入口测试、真实样本、实际模型/设备记录；不能只调用新 helper |
+| 结果：正式入口接通 | 当前只有独立 cpp 实验；正式 WhisperX 为 CT2 | 配置经 Gateway 进入 WhisperX pipeline：VAD/分段 → cpp ASR → 原片时间归属 → align；正式 Server hook 消费同合同 | 入口测试、真实样本、实际模型/设备记录；须证明 VAD 在实际调用链中，不只调用 align helper |
 | 结果：阶段独立 | 当前单次调用返回最终结果 | 使用已取得 raw 结果调用 align，ASR 新调用数为 0；组合结果语义一致 | 假后端计数、错误注入、序列化往返；本 PR 不声称跨重启恢复已实现 |
 | 结果：完整语音耗时 | Metal Turbo 纯转写单次 182.360 s；组合耗时待测 | 对同源长音频分别报告 ASR、align、总墙钟；纯 ASR 暂沿 #18 的 ≤10 min 试点目标，总耗时门槛经短样本探索后冻结 | 固定音频/权重/参数、单路、冷/热区分；单次结果不报 p95 |
 | 护栏：识别质量 | 无完整人工真值，模型间文本一致度不等于准确率 | 标注集上测英语 WER、中文/日语 CER；记录专名、数字、否定词和静音幻觉；人工质量阈值待探索后、正式评测前冻结 | 固定代表样本与保留样本；保存参考转录和评分规则，不用 Full 自动当真值 |
@@ -109,9 +109,10 @@ Apple GPU 在本 feature 中首先指 ASR 的 Metal 执行。对齐先以 CPU �
 | 保持 CT2 ASR＋WhisperX 对齐 | 原合同与配置已有实现 | 当前 Apple 配置仍用 CPU | 保留为兼容路线及对照 |
 | 租 NVIDIA GPU，运行 WhisperX CUDA ASR＋对齐 | 可能直接复用现有 CUDA 路线，减少 Apple 后端适配并释放本机资源 | 增加远端环境、音轨传输、正式调用与运维边界；性能、费用和接入工时尚未实测 | 保留候选；本机质量/总耗时/资源不达标，或需持续批处理时重评 |
 | 仅用 whisper.cpp 结果 | 已有 Metal 部署与实验 | token 时间不提供原声学强制对齐合同 | 不作为要求对齐任务的静默替代 |
-| fork 或 monkey patch WhisperX ASR | 可改其内部流程 | 维护第三方分支，现有独立 align API 已能接外部结果 | 本轮不采用 |
-| Seekino 组合 cpp ASR＋WhisperX align | 复用 Metal 与对齐能力，阶段边界可服务 #18 | 要维护语言、时间、生产者信息与运行生命周期 | 采用此方向；效果待测 |
-| 新 Python C++ binding / 每次 CLI 调用 | 可选择进程内或自有子进程控制 | 新绑定维护或每次加载成本，未沿用当前已测部署 | 本轮先复用本机 whisper-server，必要性有证据后再调整 |
+| 大规模改写或运行时 monkey patch WhisperX | 可改内部流程 | 增加第三方维护与共享环境风险，偏离最小接口改造 | 不采用 |
+| 整片 cpp ASR＋独立 WhisperX align | 可快速验证对齐 API 和已有 raw 的适配 | 绕过 WhisperX 的 VAD/cut/merge，改变完整 pipeline，无法满足用户要求的替换边界 | 从正式方案降为接缝/对照实验 |
+| 为 WhisperX pipeline 增加最小 ASR backend 接口 | 保留 VAD/切片/时间归属和对齐，CT2 默认路线兼容；可形成独立上游提案 | 要拆开 tokenizer/特征/解码耦合，验证不同后端能力与生命周期 | 当前采用方向；接口与本机效果待实现验证 |
+| cpp 常驻服务、进程内绑定或 CLI | 是调用 ASR 引擎的不同方式，不决定是否保留 WhisperX pipeline | 服务需核验权重与进程归属；绑定需维护依赖；逐块 CLI 会重复加载 | 优先评估已有 whisper-server 的固定实例；不按每个 VAD 块启动 CLI，传输方式由模型复用与实际开销决定 |
 
 WhisperX 固定为项目现有 `3.8.6`；`whisperx` 包的依赖仍含 faster-whisper/CTranslate2，替换执行路径不会自动减掉这些安装依赖。本轮不同时做上游依赖瘦身。[上游独立入口](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/__init__.py)、[对齐源码](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/alignment.py)、[依赖声明](https://github.com/m-bain/whisperX/blob/v3.8.6/pyproject.toml)。
 
@@ -123,7 +124,7 @@ WhisperX 固定为项目现有 `3.8.6`；`whisperx` 包的依赖仍含 faster-wh
 |---|---|---|
 | 可复现环境与模型 | cpp 二进制/Metal、GGML、WhisperX 与分语言对齐权重的版本管理 | 远端驱动、CUDA/CT2/PyTorch 组合与权重部署、模型预热、实例重建后恢复环境；可以复用镜像与现有 CUDA 配置，不能当作零工作 |
 | 音频与结果传输 | 复用本地音轨，校验语言、时间和结果 | 本地文件路径不能直接供远端读取；需上传音轨、校验内容身份、取回结果并管理远端临时副本。断传/重传策略按所选方式补齐，模型权重应复用而非每个请求重传 |
-| 正式调用接入 | cpp → raw → align 的本机接口与旧调用兼容 | 将远端进程接到 Gateway，约定结果/版本、访问凭据、可达性、超时和并发上限；复用现有调用控制，不要求重做模型网关 |
+| 正式调用接入 | WhisperX 公共 pipeline 的 cpp 后端接口与旧调用兼容 | 将远端进程接到 Gateway，约定结果/版本、访问凭据、可达性、超时和并发上限；复用现有调用控制，不要求重做模型网关 |
 | 长任务失败与恢复 | 本机进程退出、取消与资源释放；成果持久化仍交给 #18 | 处理网络断开时“请求没完成还是仅结果没返回”的不确定性、远端仍在运行的取消、重试去重/成果取回及两端日志关联；具体可选单任务协议或可查询任务，不强制上独立队列 |
 | 运行与费用管理 | 本机 CPU/GPU/内存争用、电耗、模型缓存与维护 | 实例启停/健康检查、空闲时段计费、磁盘与传输费用核对、版本更新和故障定位；无人值守程度越高，需要覆盖的生命周期越多 |
 
@@ -133,11 +134,27 @@ WhisperX 固定为项目现有 `3.8.6`；`whisperx` 包的依赖仍含 faster-wh
 
 ### 3.1.2 当前选择的依据与重新选择的条件
 
-当前先在已有 Apple 本机验证 cpp ASR＋WhisperX align：复用已测的 Metal ASR、已有对齐资产及现有本地素材路径，在满足质量的前提下减少首次等待，并控制这轮新增的执行环境。语音接口保持阶段边界，今后选择远端不必改变 Server 的业务持久化职责。该决定是当前试点优先级，不是排除远端 GPU 的产品约束。
+当前先在已有 Apple 本机验证保留 WhisperX 完整 pipeline 的 cpp ASR 后端：复用已测的 Metal 引擎、已有对齐资产及现有本地素材路径，在满足质量的前提下减少首次等待，并控制这轮新增的执行环境。语音接口保持阶段边界，今后选择远端不必改变 Server 的业务持久化职责。该决定是当前试点优先级，不是排除远端 GPU 的产品约束。
 
 比较端到端等待时，本机应计入音频准备、冷/热加载、ASR、align 与结果归一；远端还应计入上传、排队/实例就绪和结果取回，不能只拿 GPU kernel 或 ASR 时长作比较。总成本分开报告一次性接入工时、后续维护投入，以及计算/存储/传输/失败重算的持续成本，不把已有本机算力写成运行零成本。
 
 若本机质量或总耗时达不到冻结目标、16 GiB 统一内存争用影响开发/解析，或实际需求变为长时间无人值守/批量吞吐，应重开执行位置比较。先用同音频、可解释的模型/量化差异和相同质量护栏做一个有界远端试验，再决定是否值得承担正式接入成本；本 TRD 不授权购租资源。两种执行位置都不能替代 #18 的成果持久化与恢复。
+
+### 3.1.3 保留 WhisperX pipeline 的后端接缝
+
+目标流程是 `WhisperX VAD → cut/merge → ASR backend → 原音频区间上的文本 → WhisperX align`。VAD 是语音活动检测，不是去噪；原片时间区间由 pipeline 保存，不能把去掉静音后的片段连续拼接而丢失偏移。cpp 只负责识别送入的音频块，不能用自己的片段时间替换 WhisperX 的区间归属。
+
+官方用法本来就先 `model.transcribe()` 再单独 `whisperx.align()`；分别调用这两个入口符合原流程。问题在于用整片 cpp 调用替掉前半段时绕过了其中的 VAD/cut/merge，不在于 align 是否通过独立函数调用。
+
+WhisperX 3.8.6 的 `FasterWhisperPipeline.transcribe` 同时执行公共 VAD 流程和 CT2 专属 tokenizer；`preprocess/_forward/get_iterator/detect_language` 又依赖 Mel 特征、CT2 encoder 与批量生成。现有 `load_model(model=...)` 参数不是通用 backend 协议，仅增加 `device=mps` 或传一个 cpp 对象不能完成替换。[固定版源码](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/asr.py)
+
+拟扩展边界：WhisperX 保有语音块、原音频区间、阶段顺序和回调；ASR backend 负责语言检测、模型专属预处理/解码以及按输入顺序返回每块文字。CT2 backend 保留原批处理；cpp backend 可先串行复用已加载模型，不宣称取得相同 batch 吞吐。不支持的解码选项须明确说明或拒绝，不伪造置信度，也不复制整份上游 pipeline 到 Seekino。
+
+路由须分别表达 ASR 后端及设备、VAD 设备、alignment device；Apple 候选为 cpp/Metal＋CPU VAD＋CPU 对齐，原 CPU/CUDA 路线保持原缺省语义。默认先显式配置，自动探测只能选择已经验证的组合，不能把“检测到 MPS”当作 CT2 ASR 可用证据。具体字段/API 名称在接口原型中确认。
+
+本机可用后，面向 WhisperX 的 issue/PR 应提炼为后端接口与分阶段设备选择的独立问题，附原 CT2 回归、完整 VAD→ASR→align 复现及测量；Seekino 的 Server、持久化和 Gateway 不进入上游补丁。先核对已有提案，本文不表示已向上游发帖或已获维护者接受。
+
+文章中关于 batch、硬件最低要求、原片上传量的事实边界，以及上游 main/3.8.6 的接口差异，见 [选型与上游核查](../../research/2026-10-31-whisperx-apple-backend-review.md)。用户提出的“先让自己的设备好用，再向上游建议”作为实施顺序保留；不把文章中的个人预算和直观感受改写成软件的通用限制。
 
 ## 3.2 职责与依赖方向
 
@@ -145,9 +162,10 @@ WhisperX 固定为项目现有 `3.8.6`；`whisperx` 包的依赖仍含 faster-wh
 flowchart TD
     S[Server 业务调用与阶段编排] --> G[Gateway 配置、调用控制与记录]
     G --> R[infra/inference/speech 执行模块]
-    R --> C[whisper.cpp ASR / Metal]
-    R --> F[兼容 CT2 ASR / CPU 或 CUDA]
-    C --> T[原始 segments 与 language]
+    R --> V[WhisperX VAD 与 cut/merge]
+    V --> C[whisper.cpp ASR / Metal]
+    V --> F[兼容 CT2 ASR / CPU 或 CUDA]
+    C --> T[WhisperX 原音频区间与识别文字]
     F --> T
     T --> A[WhisperX 强制对齐]
     A --> E[Engine 秒转毫秒及时间合同]
@@ -155,7 +173,7 @@ flowchart TD
     S -. PR18 实现 .-> P[成果保存、身份核验和恢复]
 ```
 
-- `infra/inference/speech/` 管音频输入、后端调用、对齐模型、串行执行、缓存和释放；不导入 Gateway/Server，不访问业务数据库。可先用 runtime、两个 ASR 适配器和 alignment 几个文件表达真实职责，不预建通用 registry。
+- `infra/inference/speech/` 管音频输入、WhisperX pipeline 装配、后端调用、模型缓存和释放；不导入 Gateway/Server，不访问业务数据库。WhisperX 的公共 VAD/分段与对齐逻辑由库继续负责，后端接缝以可审查的最小扩展实现，不复制一条删减后的 pipeline。按实际职责拆文件，不预建通用 registry。
 - Gateway 持有共享运行时，将配置映射为执行参数，管理调用/预算/取消与日志，提供既有组合入口和新的阶段能力；阶段日志不泄露转写正文。
 - Server 提取音频、选择业务范围、保持任务/媒体归属。本 feature 只做必要的调用兼容与接入验证；#18 增加保存和恢复编排。
 - Engine 继续将上游秒一次转换为整数毫秒；Server 按既有合同加原视频偏移，整片结果不重复加 Chunk 偏移。
@@ -167,7 +185,7 @@ flowchart TD
 
 | 能力 / 数据 | 本 feature 提供 | #18 负责 |
 |---|---|---|
-| `transcribe_raw(audio)` | 独立执行 ASR，返回原语言、片段文本与音频相对秒；不附伪造的声学对齐分数 | 保存 raw 成果、选择可复用版本 |
+| `transcribe_raw(audio)` | 执行 WhisperX 的 VAD/分段及所选 ASR backend，返回原语言、片段文字与原音频相对秒；不附伪造的声学对齐分数 | 保存 raw 成果、选择可复用版本 |
 | `align(audio, raw)` | 使用同一音频和既有 raw，输出已对齐字词与未知时间；不会隐式重跑 ASR | 选择恢复阶段；保存 aligned 成果；只在所需阶段完成后发准备回执 |
 | 生产者信息 | 实际后端、运行库版本、权重标识、语言策略、解码/VAD/对齐配置及结果 Schema 版本；ASR 与对齐分别可辨识 | 联合源媒体、任务与版本计算/校验兼容身份，决定命中，核对 aligned 对 raw 的依赖 |
 | 完整 `transcribe(audio)` | 保留已有组合调用语义和最终 payload；metadata 不随意塞进旧业务响应 | 尚未切换恢复编排的调用方可继续使用 |
@@ -179,13 +197,13 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 
 ## 3.4 协议、配置与兼容护栏
 
-1. **HTTP 合同固定版本。** 先核对本地 whisper.cpp `284029c07012d2000941a08d38a31ffb71f4734e`：`verbose_json` 中片段时间已是秒，`language` 为 `english` 等全名，需映射到 `en/zh/ja`；只取文本和粗片段进入 align，`words[].probability` 不映射为 alignment `score`。CLI JSON 的 `offsets` 则是毫秒，若以后支持 CLI 须单独解析。[server 源码](https://github.com/ggml-org/whisper.cpp/blob/284029c07012d2000941a08d38a31ffb71f4734e/examples/server/server.cpp#L1065)。
+1. **cpp 传输合同固定版本。** 已核对本地 whisper.cpp `284029c07012d2000941a08d38a31ffb71f4734e`：HTTP `verbose_json` 的片段时间为秒，`language` 为 `english` 等全名；CLI JSON 的 `offsets` 为毫秒、`result.language` 为语言代码。若使用对应传输须分别解析。正式后端向 WhisperX 返回当前音频块的文字与语言，由 pipeline 保持原片区间；`words[].probability` 不映射为 alignment `score`。[server 源码](https://github.com/ggml-org/whisper.cpp/blob/284029c07012d2000941a08d38a31ffb71f4734e/examples/server/server.cpp#L1065)。
 2. **语言与任务明确。** 已知语种显式传入，未知传 `auto`，不沿用英语实验默认值；关闭翻译并保留片段时间。`detect_language=true` 是检测后退出，不代替正常转写的 auto。缺少对应对齐模型明确报错，不自动下载或静默略过。
-3. **保持同一时间轴。** 复用宿主提供的 16 kHz mono PCM16 WAV，并转换为对齐使用的 float32 waveform；校验有限、正向和在音频范围内的时间。若以后启用 VAD 或切片，恢复原音频时间后才允许对齐。本轮先复现现有无 VAD cpp 基线，记录它与旧 Pyannote 路线的区别。[WhisperX ASR](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/asr.py)。
+3. **保持同一时间轴与 VAD。** 复用宿主提供的 16 kHz mono PCM16 WAV，并转换为 WhisperX 使用的 float32 waveform；VAD/cut/merge 保留原音频窗口，将窗口音频送给 cpp，文字回填原窗口后才进入 align。校验有限、正向和在音频范围内的时间。现有无 VAD cpp 整片结果只作为历史基线，不能作为正式 pipeline 的替代。[WhisperX ASR](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/asr.py)。
 4. **对齐依据。** 继续移除无 `score` 词的插值时间，保留文本；单段不可对齐沿用原粗时间与未知词时间语义，整个对齐调用失败不降级为完整成功。强制对齐不能纠正 ASR 漏词或幻觉。
-5. **配置分离。** 拟增加 ASR 后端与独立 alignment device，旧字段缺省映射原 CT2 路线；按后端校验模型格式及参数。优先保留 `adapter: whisperx` 的组合入口兼容，新路线用独立 source 名称；实际配置设计必须核对整片 scope、冻结参数与 #18 身份合同，不能只改查询侧或旧任务来源。
+5. **配置分离。** 拟分别表达 ASR 后端/设备、VAD 设备和 alignment device，旧字段缺省映射原 CT2 路线；按后端校验模型格式及参数。优先保留 `adapter: whisperx` 的组合入口兼容，新路线用独立 source 名称；实际配置设计必须核对整片 scope、冻结参数与 #18 身份合同，不能只改查询侧或旧任务来源。
 6. **设备与资产核实。** GGML、CT2、对齐模型分开管理。绑定实际 whisper-server 二进制/权重/启动参数，不能仅靠请求 model 字符串认定身份；禁止通过共享 server 的动态换模造成身份漂移。Metal 不可用时明确失败，旧 CPU 路线仅显式选择。保留 NLTK 数据预检、本地权重和 `model_cache_only=True`。
-7. **生命周期与取消。** 复用模型与客户端，单句柄关闭不卸载共享运行时。外部已有 server 与自有进程的关闭权限必须区分；关闭 HTTP 等待不证明服务端推理终止。等待、加载、ASR、对齐都受同一上层预算控制，取消/超时后的结果不得发布为成功，暂不承诺可抢占原生推理。
+7. **生命周期与取消。** 复用模型与客户端，单句柄关闭不卸载共享运行时。外部已有 server 与自有进程的关闭权限必须区分；固定版 cpp server 有检查连接关闭的 abort callback，但关闭 HTTP 等待仍不能代替实际停止/资源回收验证。等待、VAD、加载、ASR、对齐都受同一上层预算控制，取消/超时后的结果不得发布为成功，暂不承诺各阶段都可抢占。
 8. **MPS 边界。** WhisperX 3.8.6 通过 `.to(device)` 执行声学前向，随后 emission 回 CPU 做对齐计算；源码可传 MPS 不等于实际可用或整体更快。先以 CPU 对齐验收，MPS 单独同 raw 对照，保留失败结果。[对齐设备实现](https://github.com/m-bain/whisperX/blob/v3.8.6/whisperx/alignment.py#L242)。
 
 # 4. 对照实验与结果分析
@@ -203,9 +221,9 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 
 ## 4.2 分步验证计划
 
-1. **低成本接缝验证。** 复用已有 raw 与同一音频的代表片段，先验证语言归一、片段窗口、CPU 对齐和未知字词语义；独立校验中/日文、静音和跨句边界。失败先定位本阶段，避免反复重新跑整课 ASR。
+1. **低成本接缝验证。** 首先用替身验证 WhisperX 公共 pipeline 确实调用 VAD/cut/merge，再向后端传入对应音频窗口、按原时间顺序合并并进入 align；无声样本不能调用 ASR，旧 CT2 路线须回归。已有 cpp raw＋独立 align 可作为辅助实验，但不能通过它宣布完整接入成功。真实短样本覆盖语言归一、中/日文、静音与跨句边界，失败先定位本阶段。
 2. **离线合同与故障。** 覆盖 HTTP schema、无声、缺权重/语言、非法时间、序列化、生产者差异、超时/取消、关闭与共享复用。验证 `align(raw)` 没有 ASR 调用；运行相关 Gateway/Engine/Server 测试，其他外部依赖须核对隔离环境。
-3. **正式入口真实验证。** 经配置与 `GatewayClient` 调用 cpp→align，核对实际模型/Metal 与旧 CPU 路线；经现有 Server 语音 hook 验证最终 evidence 和 Chunk 时间，不以直接 helper 调用代替产品接入。
+3. **正式入口真实验证。** 经配置与 `GatewayClient` 调用 WhisperX VAD/cut/merge→cpp ASR→align，记录每阶段和模型/Metal 证据，并验证旧 CPU 路线；经现有 Server 语音 hook 验证最终 evidence 和 Chunk 时间，不以直接 helper 调用代替产品接入。
 4. **受控对照。** 固定 ASR 文本，比较 cpp 原生句段/可用词时间与强对齐时间：对两者都存在的边界计算人工起止误差，缺少词时间的基线报告能力缺口，不伪造插值。用相同短语的裁片/试听检查首尾是否完整，确认时间证据对消费任务的价值。再分别比较同 cpp 配置的直接调用与 Gateway 调用、同 raw 的 CPU 与可选 MPS 对齐；旧 CPU 全流程与新组合仅作产品方案比较，明确模型/VAD 差异。短样本每配置至少三次，标注冷/热；整课先一次诊断，不推断尾部统计。
 5. **有界长片验证。** 先冻结质量和总耗时验收阈值、资源停止条件，再使用完整 GPT 音频测 ASR/align/总时长和资源。探索先覆盖英/中/日各一个短样本及静音/数字/跨界场景；失败最多两轮有针对性的修正，超过后回到假设与方案评审，不连续无界跑整课。
 6. **执行位置重评。** 记录上述接入与维护工作、质量合格前的返工和总等待。触发 §3.1.2 条件且有资源/预算授权时，再比较一个固定远端 CUDA 配置；包含传输、冷启动、对齐与结果回收，同模型无法固定时明确质量和量化差异。当前只定义比较方法，不为补表格而租服务器。
@@ -235,7 +253,7 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 
 # 6. 结果验收与闭环
 
-本次建立的是独立 feature 的设计与交付边界。已有实验及固定源码支持继续验证 cpp＋WhisperX 组合；没有新实现、真实组合效果、MPS 稳定性或部署完成结论。
+本次建立的是独立 feature 的设计与交付边界。已有实验及固定源码支持继续验证 WhisperX pipeline 的 cpp ASR 后端；没有新实现、真实完整 pipeline 效果、MPS 稳定性或部署完成结论。独立 cpp 整片转写或单独 align 成功均不能代替此验收。
 
 | 原问题 / 交付 | 需要的验收证据 | 与 #18 的边界 |
 |---|---|---|
@@ -248,7 +266,7 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 
 关键验证完成后才能建议 feature 可合并；测试通过、效果通过、部署完成分别报告。完整课程检索/回看/追问仍作为关联产品目标，出现独立下游故障时明确归属，不扩大本 feature 的实现范围，也不宣称整体已闭环。
 
-下一项最小动作：固定阶段数据与生产者信息合同，用既有 cpp 输出验证 CPU 对齐接缝，再据证据实施。当前未完成的指标、阈值与实现由本 feature 负责人继续跟进，状态只在 problems 维护。
+下一项最小动作：固定 WhisperX 公共 pipeline 与 ASR backend 的接口，先用替身证明 VAD、切片区间和 CT2 缺省行为保持，再接本机 cpp 并验证完整链路。阶段数据和生产者信息继续服务 #18。当前未完成的指标、阈值与实现由本 feature 负责人继续跟进，状态只在 problems 维护。
 
 | 日期 | 原判断 | 新证据 / 决定 | 调整及影响 |
 |---|---|---|---|
@@ -257,5 +275,6 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 | 2026-10-31 | 统一 transcribe 返回最终结果即可 | #18 需要保存 raw，align 失败后不能重跑 ASR | 增加阶段能力，保持原组合入口兼容 |
 | 2026-10-31 | 初稿从后端接入差距开始，默认了强对齐和本机选型动机 | 用户指出缺少字幕/回看/剪辑需求、Apple 条件和租 GPU 开发成本背景 | 补充产品因果、远端最小实验与正式接入区别，以及双方成本；原架构与 PR 边界保留 |
 | 2026-10-31 | 原验证重点是 align 可运行与 CPU/MPS 比较 | 可运行不足以证明强对齐值得引入，纯 ASR 耗时也不能决定执行位置 | 增加同文本有/无对齐的时间定位对照、总成本口径和远端重评条件；没有新增实测结论 |
+| 2026-10-31 | 认为整片 cpp 转写＋独立 align 可作为正式第一版，进而提出自有 CLI 子进程 | 用户明确要保留 WhisperX pipeline；源码确认 VAD/cut/merge 位于 `FasterWhisperPipeline`，整片 cpp 会绕过它们 | 收回该正式接入方案，改为最小 ASR backend 接口扩展；保留 VAD/区间/对齐，优先模型复用，不逐块重启 CLI；尚未改生产代码 |
 
 -codex
