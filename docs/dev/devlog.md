@@ -22,6 +22,9 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-31：搁置 Apple WhisperX 改造，保留简单整片转写](#devlog-apple-whisperx-shelved-20261031) | B24、B20、B12；产品优先级与平台支持边界 |
+| [2026-10-31：全片转写与说话人处理分开评估](#devlog-asr-speaker-boundaries-20261031) | B24、B20、B12；WhisperX 改造重评与 Pyannote 候选 |
+| [2026-10-31：WhisperX 最小接缝验证与整课 VAD 中止](#devlog-whisperx-cpp-spike-20261031) | B24；局部 Python 改造、CPU VAD 成本与说话人归因边界 |
 | [2026-10-31：Apple GPU ASR 与持久恢复拆成独立需求](#devlog-apple-gpu-asr-split-20261031) | B24、B20；模型执行与成果生命周期 |
 | [2026-10-30：正式 Kimi 生成入口接入流式](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
 | [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
@@ -116,6 +119,75 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-apple-whisperx-shelved-20261031"></a>
+
+## 2026-10-31：搁置 Apple WhisperX 改造，保留简单整片转写
+
+### 问题与现状
+
+Apple WhisperX 的后端、VAD、对齐与设备适配逐步占用过多时间，尚未形成与投入相称的产品收益。用户明确指出这不是 Seekino 当前重点，决定搁置 PR #21，暂时保留自研声纹使用；不能把这次优先级取舍解释成所有旧建设无效，或隐去已有质量问题。
+
+### 方案候选
+
+停止扩大 WhisperX Apple 改造及 Pyannote 替换评估，PR #21 保留 Draft 和实验记录。WhisperX 继续作为可选接入供配置体验；Apple 暂采用 whisper.cpp/Metal 做简单整片音频转写，现有 CAM++ 保持不变。#18 的成果持久化与恢复独立推进，不再等待本 PR 的新阶段接口；本轮不切配置或实施新的转写接线。
+
+### 方案验证
+
+本轮只更新平台说明、TRD、问题状态、索引、研究/实验处置和 PR 搁置说明，检查文档链接与 diff。不运行模型、业务测试或服务部署；已有原型 13 项测试、26 秒短样本与整课中止证据保留在[报告](../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md)，不是本轮新增验证。用户重新决定前不恢复实验或替换工作。
+
+### 指标对比
+
+历史 cpp Turbo 纯 ASR 182.360 秒与新原型约 403 秒仍未结束的 CPU VAD 不构成同质量对照，但说明新增阶段成本不能忽略。当前没有完整 Apple WhisperX pipeline、人工对齐精度、Pyannote 本机效果或持久恢复的验收结论。停止投入后释放多少开发时间尚未量化；实际完成的是清理交付承诺与依赖，未把延期需求标成已解决。
+
+<a id="devlog-asr-speaker-boundaries-20261031"></a>
+
+## 2026-10-31：全片转写与说话人处理分开评估
+
+### 问题与现状
+
+整课 VAD 中止后，讨论暴露出将全片 ASR、词时间对齐、匿名 speaker 关联和人物命名混为同一收益的问题。当前 B0 按 Understanding 已有姓名匹配 CAM++ 特征；WhisperX 则有此次原型未调用的独立全片 diarization。不能由 ASR 分窗否定全片 speaker 能力，也不能由 Pyannote 不自动认识角色名推定整套自研流程必须保留。
+
+### 方案候选
+
+用户提出全片前置 ASR，以及在现有 CAM++ 使用层引入 Pyannote。纯转写与 speaker 处理可独立推进：cpp 产出并持久保存文字，Pyannote 建立全片匿名时间线，Seekino 保留可信人物绑定和证据合同。若第一条同时包含 diarization，则与后续声纹阶段执行的差别是时机；无论哪一处执行，均不能用逐 Chunk 独立编号代替全片关联。暂停扩大 WhisperX backend 改造，不把前置 VAD/强对齐作为当前闭环的必要条件；speaker 替换范围另归 B12，不扩进 #18 的持久恢复修复。
+
+### 方案验证
+
+已核对工作树调用链、Pyannote 4.0.7 / Community-1 与 WhisperX 3.8.6 源码。10/16 历史研究已建议先 Community-1 并复用其 embeddings，现有记录没有项目同条件对照证明自研更优。核查见[研究记录](../research/2026-10-31-pyannote-campplus-attribution.md)。本轮只同步需求和候选边界，没有模型调用、生产替换、服务重启或 PR 变更。
+
+### 指标对比
+
+现有纯 cpp 整课转写和 WhisperX 短样本可运行证据保留，不作为 speaker 质量证明；Pyannote 的本机整片耗时、多人分段/聚类错误及人物误归因改善均待测。后续验证需包含多人交替、短回应、混合长 cue 与重叠样本，分别评估声音分组、人物映射和成本，不用主要为单人讲解的整课跑通代替多人验收。已有时间合同、媒体与参考来源、unknown/冲突、版本及持久化基础继续复用，不能将这次方向纠正写成全部建设无效或原问题已解决。
+
+<a id="devlog-whisperx-cpp-spike-20261031"></a>
+
+## 2026-10-31：WhisperX 最小接缝验证与整课 VAD 中止
+
+### 问题与现状
+
+用户强调复用现有 cpp 模型服务，只替换 WhisperX 的 Python ASR 调用。此前将通用后端、完整参数兼容和上游化一起估算，夸大了最小接入规模。随后用户要求直接用《Let's build GPT》完整音轨验证，并在 CPU VAD 长时间运行时要求停止，进一步明确关注全片说话人归因的收益。
+
+### 方案候选
+
+先用固定 3.8.6 隔离副本增加可选 segment_transcriber，保留原 VAD/Cut & Merge、窗口回填和 align，初版仅显式语言、batch_size=1。复用 cpp 二进制/权重及本机临时服务，无 C++ 修改、共享包修改或正式配置切换。全片 ASR、强制对齐和全片 diarization 分属不同职责；本原型未调用 diarization，不能承诺跨 Chunk 人物一致性。
+
+### 方案验证
+
+核心 asr.py +69/-31 行，HTTP 适配 44 行。13 项定向测试通过；26 秒测试输入生成 3 个 VAD 窗口/3 次 cpp 请求，84 个词有声学分数和有效时间，依赖导入后计时约 7.010 秒。原版/修改版 CPU/int8 large-v3 在同音频上的文本、分数、窗口与进度完全一致。证据见[验证报告](../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md)。
+
+按用户要求对 6979.941625 秒 GPT 完整音频运行一次，校验音频/权重/二进制哈希与历史实验一致。12:18 用户要求停止时，总耗时 411.221 秒，约 403 秒处于未完成的 Pyannote CPU VAD；中断栈为 PyanNet/SincNet/conv1d，没有发出 ASR 请求，没有进入对齐。已终止并回收自有 cpp 进程，未重跑、未改设备继续实验。原始结果保留 KeyboardInterrupt，处置记录明确为用户主动停止，不伪造整课完成结果。
+
+### 指标对比
+
+| 指标 | 先前判断 / 基线 | 本次证据与边界 |
+|---|---|---|
+| 最小改造体量 | 按通用后端方案估算偏大 | 单个库文件 +69/-31 行，44 行 Python HTTP 适配即可验证接缝；正式交付仍需接线 |
+| 短样本可运行性 | cpp 与 WhisperX 完整流程接通未测 | 26 s 输入约 7.010 s，84 个有效时间词；不含导入，不代表精度达标 |
+| 旧 CPU 路径 | 重构可能改变默认分支 | 同样本真实模型输出完全一致；CUDA 与全部参数未覆盖 |
+| 整课成本 | 历史纯 cpp ASR 182.360 s，没有 VAD/align | 新流程约 403 s VAD 尚未结束即按用户要求停止；总时长未知，不计算加速比 |
+| 资源 | 单路 Apple 本机 | 本轮采样 Python+自有 cpp RSS 总和峰值约 2.157 GiB；非物理/GPU 独占内存，进程已回收 |
+| 身份归因 | 容易将整片 ASR 或字词对齐理解为全片身份一致 | 此原型未执行 diarization；匿名说话人跨窗统一与业务身份映射需单独评估 |
 
 <a id="devlog-apple-gpu-asr-split-20261031"></a>
 

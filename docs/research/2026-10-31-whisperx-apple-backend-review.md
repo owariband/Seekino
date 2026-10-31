@@ -2,6 +2,8 @@
 
 日期：2026-10-31。问题：在 Apple Silicon 上保留 WhisperX 的 VAD、Cut & Merge、原音频时间窗口与强制对齐，只将其中 ASR 后端换成 whisper.cpp，能否降低本地开发成本；文章中对 batching、硬件要求及上游扩展能力的判断是否准确。
 
+同日后续决定：用户已搁置 [PR #21](https://github.com/owariband/Seekino/pull/21)，停止 Apple WhisperX 改造及上游提案推进。以下保留当时的源码事实和候选方案，不作为当前实施计划；项目保留可选 WhisperX 体验，Apple 暂走 cpp 简单整片转写，现有 CAM++ 使用不变。最终取舍见[主 TRD](../design/03-product-reassessment/apple-gpu-asr-alignment-trd.md)。
+
 **结论：保留 WhisperX pipeline、只替换 ASR backend 的方向成立；需要拆出目前与 faster-whisper 耦合的后端接缝。** 项目固定的 WhisperX 3.8.6 没有可直接注入任意 ASR 的统一接口。它已有独立 align API，但“整段 whisper.cpp 转录后只调用 align”只是另一种组合，不能作为用户要求的完整 pipeline 替换方案。本文据用户澄清采用“原 VAD/Cut & Merge → 持续驻留的 cpp 后端识别各窗口 → 原时间窗口 → WhisperX 强制对齐”作为研究目标，不先改 CTranslate2 或 cpp 推理内核。
 
 ASR 后端、VAD 执行设备与对齐设备须分别理解；不能把 Metal 字符串传给 PyTorch VAD/aligner。上游提案可以围绕此边界准备，但现有相关 PR 尚不能当作已合入能力。本报告只记录资料、源码核对与候选设计，不声明本机接入已经实现或效果达标。

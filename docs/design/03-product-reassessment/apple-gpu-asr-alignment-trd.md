@@ -1,6 +1,12 @@
 # 1. 问题与现状
 
-主题：Apple GPU ASR 正式接入、WhisperX 强制对齐验证与语音阶段接口。提出日期：2026-10-31（北京时间，UTC+8）。本稿记录已选方向、源码依据与待验证计划，不表示功能已经实现或部署。
+主题：Apple GPU ASR 正式接入、WhisperX 强制对齐验证与语音阶段接口。提出日期：2026-10-31（北京时间，UTC+8）。本稿保留选型、源码依据、实验结果与搁置原因，不表示功能已经实现或部署。
+
+> **2026-10-31 最终取舍：搁置 PR #21，保留 Draft。** 用户明确认为 Apple 语音适配已占用过多时间，偏离 Seekino 当前产品重点。本轮停止 WhisperX backend/MPS/强对齐改造、Pyannote 替换评估及后续模型实验；现有 CAM++ 自研使用保持不变。下文方案、试点计划和原定合并顺序只作为历史依据，不再是执行计划或 #18 的前置条件，也不自动恢复。
+>
+> **当前支持边界：** 项目保留可选的 WhisperX 接入供自行配置体验；Apple Silicon 对当前 WhisperX 完整 GPU pipeline 的支持有限，没有正式接通 Metal/MPS 全流程。Apple 路线暂收敛为 whisper.cpp/Metal 的简单整片音频转写，已有独立整课实测；强对齐、全片 speaker 与产品持久恢复不作为该实测的已交付能力。持久化和失败恢复仍由 #18 独立跟进。详细配置见 [平台说明](../../model-config.md#本地-whisperx-asr-与对齐)，剩余问题保留在 [B24](../../dev/problems.md#b24-apple-gpu-asr) 与 B12。
+
+WhisperX 本身已有独立全片 diarization，ASR 切片不会使这项能力消失；本轮原型未调用它。搁置是当前产品优先级与投入的决定，不是证明 WhisperX/Pyannote 没有该能力，也不是证明原自研方案已经全面达标。[能力核查](../../research/2026-10-31-pyannote-campplus-attribution.md)与原型证据保留，待用户重新决定后再评估。
 
 - 工作分支：`feat/apple-gpu-asr-alignment`；集成目标：`dev`。
 - PR：[PR #21](https://github.com/owariband/Seekino/pull/21)；首个提交 `8c4513a5` 只包含本 TRD 初稿。
@@ -150,6 +156,8 @@ WhisperX 3.8.6 的 `FasterWhisperPipeline.transcribe` 同时执行公共 VAD 流
 
 拟扩展边界：WhisperX 保有语音块、原音频区间、阶段顺序和回调；ASR backend 负责语言检测、模型专属预处理/解码以及按输入顺序返回每块文字。CT2 backend 保留原批处理；cpp backend 可先串行复用已加载模型，不宣称取得相同 batch 吞吐。不支持的解码选项须明确说明或拒绝，不伪造置信度，也不复制整份上游 pipeline 到 Seekino。
 
+2026-10-31 最小原型收敛：用户明确只需 Python 调用层对接既有 cpp 模型服务，不应把通用后端框架、自动设备路由和全部选项等价作为前置。隔离副本用可选 `segment_transcriber` 回调，在 waveform 窗口处接入；asr.py 实际 +69/-31 行，HTTP 适配 44 行。显式英语、batch_size=1 的完整短样本与原 CPU 路径回归已通过，见[验证报告](../../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md)。这只是可行性原型，正式依赖交付、配置接线及阶段合同尚未完成。
+
 路由须分别表达 ASR 后端及设备、VAD 设备、alignment device；Apple 候选为 cpp/Metal＋CPU VAD＋CPU 对齐，原 CPU/CUDA 路线保持原缺省语义。默认先显式配置，自动探测只能选择已经验证的组合，不能把“检测到 MPS”当作 CT2 ASR 可用证据。具体字段/API 名称在接口原型中确认。
 
 本机可用后，面向 WhisperX 的 issue/PR 应提炼为后端接口与分阶段设备选择的独立问题，附原 CT2 回归、完整 VAD→ASR→align 复现及测量；Seekino 的 Server、持久化和 Gateway 不进入上游补丁。先核对已有提案，本文不表示已向上游发帖或已获维护者接受。
@@ -216,6 +224,8 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 | 10-30 GPT 完整课 CPU 与早期 Metal 实验 | CPU 全流程 4,591.557 s；早期 Turbo Metal 纯转写 293.578 s | [#18 实测报告](https://github.com/owariband/Seekino/blob/fix/video-asr-recovery/docs/report/gateway/local/whisper-metal-benchmark-20261030.md) | 同模型同质量的直接加速比；正式成果恢复 |
 | 10-30 晚 Full/Turbo 同条件 Metal 实验 | 同 6,979.941625 s 音频；Turbo 182.360 / Full 495.115 s，RSS 2.525 / 3.276 GiB | 本机原始 `outputs/verification/whisper-metal-full-vs-turbo-20261030/protocol.json`、`summary.json`、`REPORT.md`，位于主工作区，未随 worktree 复制 | 对齐总耗时、WER/CER、日语性能、并发容量；先前 293.578 s 与本轮不是同次运行 |
 | 10-31 固定源码与 JSON 静态核对 | align API 可独立调用；已有 Turbo/Full JSON 分别 2,476 / 2,550 段，结构检查未发现非法边界 | 本文源码链接及上述 `turbo/raw.json`、`full/raw.json` | 真实 cpp→align 效果已经通过 |
+| 10-31 最小 Python 原型 | 26 s 测试音频完整 VAD→cpp→align 约 7.010 s（不含依赖导入）；84 个词有分数及有效时间；13 项测试通过，原版/修改版 CPU 实跑结果一致 | [原型与整课报告](../../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md) | 人工时间精度、正式接入、多语种/CUDA/自动语言已验收 |
+| 10-31 用户指定 GPT 整课 | 411.221 s 时仍在 Pyannote CPU VAD，约 403 s VAD 未完成；用户要求停止，临时 cpp 已回收，ASR/align 未开始 | [中止记录与诊断](../../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md#指标对比与边界) | 整课流程通过、VAD 总耗时/ETA、MPS 加速或说话人归因效果 |
 
 晚间实验为 M5 / 10 GPU 核 / 16 GiB、单路、同 Q5_0、英语、beam/best_of 5、temperature 0、max_context 0、6 CPU 线程；无 VAD/声学对齐，各模型一次，磁盘缓存不冷且有既有系统负载。模型间文本一致度不作为准确率。原音频和转写正文属于本地未跟踪资产，PR 只提交必要的脱敏指标及引用。
 
@@ -241,6 +251,8 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 
 # 5. 试点验证与方案取舍
 
+2026-10-31 决定不继续试点：保留可选 WhisperX 体验入口及 Apple cpp 简单整片转写路线，将开发精力收回产品闭环。以下是搁置前的试点门槛与停止规则，保留作历史，不触发新的运行或部署。
+
 首轮由本 feature 负责人在隔离验证入口、单路本地 ASR 下执行，先短样本后完整 GPT；不重排课程任务或切换正在运行的服务。真实推理、部署和任务操作按当次明确授权与预算执行，本设计中的命令或计划本身不扩展授权。
 
 采用门槛：正式 Gateway/Server hook 已接通；CPU 对齐通过已冻结的质量护栏；新路线的模型/设备可追溯；阶段接口与旧合同回归通过；长音频总耗时与资源有证据。MPS 若无收益或不稳定，保留 CPU 对齐并记录决定，不据此宣布 Apple ASR 失败。
@@ -253,7 +265,9 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 
 # 6. 结果验收与闭环
 
-本次建立的是独立 feature 的设计与交付边界。已有实验及固定源码支持继续验证 WhisperX pipeline 的 cpp ASR 后端；没有新实现、真实完整 pipeline 效果、MPS 稳定性或部署完成结论。独立 cpp 整片转写或单独 align 成功均不能代替此验收。
+**最终决定为搁置，不标记完成或质量通过。** PR #21 保留 Draft，WhisperX Apple 改造与 Pyannote 替换均无当前排期；#18 不再等待本 PR 的 raw/align 新接口。已有实验产物落盘不等于业务持久化完成，Apple cpp 的简单全片转写也不等于整个视频理解、索引和检索链路已验收。恢复工作需由用户重新决定。
+
+本次已建立独立 feature 的设计与交付边界，并完成最小 Python 接缝的隔离短样本和原 CPU 路径回归；正式配置/依赖/业务接线、人工时间精度、MPS 稳定性和部署尚未验收。独立 cpp 整片转写或单独 align 成功均不能代替正式完整 pipeline 验收，隔离原型成功也不等于业务闭环完成。
 
 | 原问题 / 交付 | 需要的验收证据 | 与 #18 的边界 |
 |---|---|---|
@@ -266,7 +280,7 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 
 关键验证完成后才能建议 feature 可合并；测试通过、效果通过、部署完成分别报告。完整课程检索/回看/追问仍作为关联产品目标，出现独立下游故障时明确归属，不扩大本 feature 的实现范围，也不宣称整体已闭环。
 
-下一项最小动作：固定 WhisperX 公共 pipeline 与 ASR backend 的接口，先用替身证明 VAD、切片区间和 CT2 缺省行为保持，再接本机 cpp 并验证完整链路。阶段数据和生产者信息继续服务 #18。当前未完成的指标、阈值与实现由本 feature 负责人继续跟进，状态只在 problems 维护。
+本轮收尾只保存证据并同步搁置说明，不再安排 VAD/MPS、强对齐或 diarization 实验。CAM++ 现有使用保留；B12 的历史问题和质量边界继续记录，搁置替换不等于这些问题全部解决。当前状态只在 problems 维护。
 
 | 日期 | 原判断 | 新证据 / 决定 | 调整及影响 |
 |---|---|---|---|
@@ -276,5 +290,9 @@ raw/align 采用可序列化、版本明确的中立数据；对齐调用校验�
 | 2026-10-31 | 初稿从后端接入差距开始，默认了强对齐和本机选型动机 | 用户指出缺少字幕/回看/剪辑需求、Apple 条件和租 GPU 开发成本背景 | 补充产品因果、远端最小实验与正式接入区别，以及双方成本；原架构与 PR 边界保留 |
 | 2026-10-31 | 原验证重点是 align 可运行与 CPU/MPS 比较 | 可运行不足以证明强对齐值得引入，纯 ASR 耗时也不能决定执行位置 | 增加同文本有/无对齐的时间定位对照、总成本口径和远端重评条件；没有新增实测结论 |
 | 2026-10-31 | 认为整片 cpp 转写＋独立 align 可作为正式第一版，进而提出自有 CLI 子进程 | 用户明确要保留 WhisperX pipeline；源码确认 VAD/cut/merge 位于 `FasterWhisperPipeline`，整片 cpp 会绕过它们 | 收回该正式接入方案，改为最小 ASR backend 接口扩展；保留 VAD/区间/对齐，优先模型复用，不逐块重启 CLI；尚未改生产代码 |
+| 2026-10-31 | 把通用后端、完整兼容和上游化计入最小改造，估算工作量偏大 | 用户强调 Python 调用替换；隔离补丁仅 asr.py +69/-31 行与 44 行 HTTP 适配，完整短样本和原 CPU 对照通过 | 优先验证最小接缝，不因未经实际补丁验证的规模估算放弃强制对齐；正式接线和质量仍单独验收 |
+| 2026-10-31 | 短样本接通后继续整课测试 | GPT 整课 CPU VAD 超过 6 分钟仍未完成，用户要求停止并质疑全片身份归因收益 | 已中断并回收临时进程；先区分时间对齐和独立 diarization/人物映射，不能用接口可运行性替代产品收益 |
+| 2026-10-31 | 以保留 WhisperX 全流程为接入约束，并混淆全片 ASR 与 speaker 关联 | 上游有独立全片 diarization；当前 B0 按 Understanding 已有姓名匹配，10/16 研究早已建议先评估 Community-1，但未找到项目同条件优劣对照 | 暂停扩大 WhisperX 改造；将转写持久复用与 B12 的 speaker 方案分别跟进，Pyannote 接入位置及替代收益待验证；不因 ASR 分窗否定其全片 speaker 能力 |
+| 2026-10-31 | 继续评估 Apple WhisperX 与 Pyannote 组合 | 用户明确指出语音适配不是项目重点，要求搁置 PR，保留可选 WhisperX 和 Apple cpp 简单整片转写，现有自研先保留 | PR #21 维持 Draft 并标记搁置；停止后续实验与替换；#18 不等待本 PR；保留未验收边界，用户重新决定前不恢复 |
 
 -codex

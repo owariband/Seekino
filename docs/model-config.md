@@ -132,7 +132,11 @@ python -m server.cli init-db
 
 ## 本地 WhisperX ASR 与对齐
 
-需要本地低调用成本及字幕字词时间时，推荐可选的 `adapter: whisperx`。项目直接在 Gateway 进程中调用 **WhisperX 3.8.6 的转写和强制对齐**；无需启动兼容 HTTP 服务。WhisperX 内部使用 faster-whisper，用户不需要另写一套 faster-whisper 接线。原 Ark 和 `openai_audio` 仍可选择；未选本地来源时不导入 WhisperX、不加载权重。安装与本地计算仍有磁盘、内存和耗时成本，效果与速度需按自己的素材验证。
+需要本地低调用成本及字幕字词时间时，可选择 `adapter: whisperx`。项目直接在 Gateway 进程中调用 **WhisperX 3.8.6 的转写和强制对齐**；无需启动兼容 HTTP 服务。WhisperX 内部使用 faster-whisper，用户不需要另写一套 faster-whisper 接线。原 Ark 和 `openai_audio` 仍可选择；未选本地来源时不导入 WhisperX、不加载权重。安装与本地计算仍有磁盘、内存和耗时成本，效果与速度需按自己的素材验证。
+
+**平台支持边界（2026-10-31）：** WhisperX 保留为可选接入，供有相应依赖和算力的用户配置体验。当前适配器提供 CPU/CUDA 配置，Apple Silicon 的 WhisperX 完整 GPU 路线支持有限，尚未正式接通 Metal/MPS；[Apple 适配 PR #21](https://github.com/owariband/Seekino/pull/21)已搁置，不承诺继续改造或默认可用。
+
+Apple 路线暂采用 whisper.cpp/Metal 做简单整片音频转写，保留其已有整课实验。此处“整片”指 ASR，不表示已提供强制对齐、全片 speaker 归因或完整视频解析闭环；本 PR 未切换运行配置，正式接线和[成果持久恢复 #18](https://github.com/owariband/Seekino/pull/18)仍需各自验收。现有 CAM++ 使用保持不变，Pyannote 替换暂不推进。取舍与验证范围见[专项记录](design/03-product-reassessment/apple-gpu-asr-alignment-trd.md)。
 
 准备依赖及权重（由用户主动执行；服务不会自动下载）：
 
