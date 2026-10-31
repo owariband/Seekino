@@ -1,3 +1,4 @@
+# Complete-response contract cases explicitly select stream=False; see test_model_streaming.py for default SSE integration.
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -137,7 +138,7 @@ def _function_model(*responses, reasoning_effort: str | None = None):
     completions = _FunctionCompletions(*responses)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com",
@@ -380,7 +381,7 @@ def test_ark_agent_loop_guides_missing_required_tool_before_completion() -> None
         _agent_response("Pro completed the answer."),
     )
     model = ArkFunctionCallingModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         max_output_tokens=2048,
         request_timeout_seconds=30,
@@ -416,7 +417,7 @@ def test_ark_agent_loop_does_not_fallback_after_content_filter() -> None:
     filtered.code = "OutputTextSensitiveContentDetected"
     completions = _FunctionCompletions(filtered, _agent_response("fallback"))
     model = ArkFunctionCallingModel(
-        "doubao-pro", fallback_model="doubao-lite",
+        "doubao-pro", stream=False, fallback_model="doubao-lite",
         max_output_tokens=2048, request_timeout_seconds=30,
         client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
     )
@@ -430,7 +431,7 @@ def test_ark_agent_loop_does_not_fallback_after_content_filter() -> None:
 def test_ark_agent_loop_logs_output_token_interruption(caplog) -> None:
     response = _agent_response("partial", finish_reason="length", total_tokens=2058)
     model = ArkFunctionCallingModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model=None,
         max_output_tokens=2048,
         request_timeout_seconds=30,
@@ -459,7 +460,7 @@ def test_ark_agent_loop_logs_output_token_interruption(caplog) -> None:
 def test_ark_agent_loop_classifies_provider_timeout() -> None:
     completions = _FunctionCompletions(TimeoutError("provider timed out"))
     model = ArkFunctionCallingModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model=None,
         max_output_tokens=2048,
         request_timeout_seconds=30,
@@ -478,7 +479,7 @@ def test_ark_agent_loop_does_not_wrap_programming_error() -> None:
         _agent_response("fallback must not run"),
     )
     model = ArkFunctionCallingModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         max_output_tokens=2048,
         request_timeout_seconds=30,
@@ -497,7 +498,7 @@ def test_ark_agent_loop_preserves_final_fallback_failure_reason() -> None:
         _agent_response("invalid", role="user"),
     )
     model = ArkFunctionCallingModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         max_output_tokens=2048,
         request_timeout_seconds=30,
@@ -535,7 +536,7 @@ def test_deepseek_agent_loop_guides_missing_tool_without_switching_provider() ->
     )
     fallback = _FunctionCompletions(_agent_response("不应调用备用模型。"))
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com",
@@ -543,7 +544,7 @@ def test_deepseek_agent_loop_guides_missing_tool_without_switching_provider() ->
         max_output_tokens=2048,
         request_timeout_seconds=30,
         fallback_adapter=ArkFunctionCallingFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=2048,
             request_timeout_seconds=30,
             client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
@@ -602,7 +603,7 @@ def test_agent_loop_rejects_second_missing_required_tool_without_fallback() -> N
     )
     fallback = _FunctionCompletions(_agent_response("不应调用备用模型。"))
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com",
@@ -610,7 +611,7 @@ def test_agent_loop_rejects_second_missing_required_tool_without_fallback() -> N
         max_output_tokens=2048,
         request_timeout_seconds=30,
         fallback_adapter=ArkFunctionCallingFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=2048,
             request_timeout_seconds=30,
             client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
@@ -649,7 +650,7 @@ def test_ark_agent_loop_does_not_fallback_after_tool_handler_error() -> None:
         ),
     )
     model = ArkFunctionCallingModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         max_output_tokens=2048,
         request_timeout_seconds=30,
@@ -680,7 +681,7 @@ def test_ark_agent_loop_falls_back_when_pro_stops_without_final_text() -> None:
         _agent_response("Lite completed the answer."),
     )
     model = ArkFunctionCallingModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         max_output_tokens=2048,
         request_timeout_seconds=30,
@@ -720,7 +721,7 @@ def test_deepseek_agent_loop_falls_back_to_ark_in_place_after_tool_result() -> N
     )
     ark = _FunctionCompletions(_agent_response("Lite completed the answer."))
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com",
@@ -728,7 +729,7 @@ def test_deepseek_agent_loop_falls_back_to_ark_in_place_after_tool_result() -> N
         max_output_tokens=2048,
         request_timeout_seconds=30,
         fallback_adapter=ArkFunctionCallingFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=2048,
             request_timeout_seconds=30,
             client=SimpleNamespace(chat=SimpleNamespace(completions=ark)),
@@ -1265,7 +1266,7 @@ def test_agent_loop_keeps_caller_deadline_after_long_tool_call(
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     if provider == "deepseek":
         model = OpenAIAgentModel(
-            "deepseek-flash",
+            "deepseek-flash", stream=False,
             provider_name="deepseek",
             profile="deepseek",
             base_url="https://api.deepseek.com",
@@ -1276,7 +1277,7 @@ def test_agent_loop_keeps_caller_deadline_after_long_tool_call(
         )
     else:
         model = ArkFunctionCallingModel(
-            "doubao-pro",
+            "doubao-pro", stream=False,
             fallback_model=None,
             max_output_tokens=2048,
             request_timeout_seconds=180,
@@ -1508,7 +1509,7 @@ def test_deepseek_agent_loop_does_not_fallback_after_content_filter() -> None:
     ))
     fallback = _FunctionCompletions(_agent_response("must not be used"))
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com",
@@ -1516,7 +1517,7 @@ def test_deepseek_agent_loop_does_not_fallback_after_content_filter() -> None:
         max_output_tokens=2048,
         request_timeout_seconds=30,
         fallback_adapter=ArkFunctionCallingFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=2048,
             request_timeout_seconds=30,
             client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
@@ -1576,7 +1577,7 @@ def test_deepseek_agent_loop_owns_one_client_per_invocation(monkeypatch) -> None
 
     monkeypatch.setattr(openai_agent_module, "OpenAI", Client)
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com/",
@@ -1621,7 +1622,7 @@ def test_deepseek_agent_loop_closes_primary_when_fallback_construction_fails(
         fail_fallback_construction,
     )
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com/",
@@ -1629,7 +1630,7 @@ def test_deepseek_agent_loop_closes_primary_when_fallback_construction_fails(
         max_output_tokens=2048,
         request_timeout_seconds=30,
         fallback_adapter=ArkFunctionCallingFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=2048,
             request_timeout_seconds=30,
         ),
@@ -1668,7 +1669,7 @@ def test_deepseek_agent_loop_closes_both_clients_when_one_close_fails(
         lambda **_options: FallbackClient(),
     )
     model = OpenAIAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         profile="deepseek",
         base_url="https://api.deepseek.com/",
@@ -1676,7 +1677,7 @@ def test_deepseek_agent_loop_closes_both_clients_when_one_close_fails(
         max_output_tokens=2048,
         request_timeout_seconds=30,
         fallback_adapter=ArkFunctionCallingFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=2048,
             request_timeout_seconds=30,
         ),
@@ -1794,7 +1795,7 @@ def _query_chat_model(
     client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace()),
     )
-    return structured_module.build_openai_chat_model(
+    return structured_module.build_openai_chat_model(stream=False,
         provider_name=provider,
         api_profile="deepseek" if provider == "deepseek" else "standard",
         model_name=model_name,
@@ -2073,7 +2074,7 @@ def test_sdk_query_stops_when_stage_deadline_expires(monkeypatch) -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client
     )
 
     with pytest.raises(
@@ -2129,7 +2130,7 @@ def test_sdk_query_runs_actual_tool_round_trip_over_ark_transport() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     result = model.run_structured(
         "找到摔杯子的片段",
@@ -2185,7 +2186,7 @@ def test_deepseek_structured_agent_replays_reasoning_after_tool_call() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = OpenAIStructuredToolAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
@@ -2225,7 +2226,7 @@ def test_kimi_agent_loop_uses_fixed_temperature_and_reasoning_effort() -> None:
     completions = _FunctionCompletions(_agent_response("ok"))
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     model = OpenAIAgentModel(
-        "k3.1-pro",
+        "k3.1-pro", stream=False,
         provider_name="kimi",
         profile="kimi",
         base_url="https://api.kimi.com/coding/v1",
@@ -2274,7 +2275,7 @@ def test_kimi_structured_agent_uses_fixed_temperature_and_reasoning_effort() -> 
     )
     try:
         model = OpenAIStructuredToolAgentModel(
-            "k3.1-pro",
+            "k3.1-pro", stream=False,
             provider_name="kimi",
             api_profile="kimi",
             base_url="https://api.kimi.test/coding/v1",
@@ -2373,7 +2374,7 @@ def test_sdk_query_falls_back_to_lite_only_after_provider_failure() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         request_timeout_seconds=3,
         max_output_tokens=400,
@@ -2433,7 +2434,7 @@ def test_structured_agent_guides_missing_tool_call_in_same_session(
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
     with capture_model_usage(records.append):
@@ -2480,7 +2481,7 @@ def test_structured_agent_guides_malformed_tool_arguments() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
     result = model.run_structured(
@@ -2506,7 +2507,7 @@ def test_structured_missing_tool_retry_respects_model_call_limit() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
     with pytest.raises(ModelCallLimitExceededError):
@@ -2534,7 +2535,7 @@ def test_structured_missing_tool_retry_respects_stage_deadline(monkeypatch) -> N
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
     with pytest.raises(
@@ -2591,13 +2592,13 @@ def test_sdk_query_falls_back_from_deepseek_to_ark_with_same_request_state() -> 
         http_client=ark_http,
     )
     model = OpenAIStructuredToolAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
         api_key="test-deepseek-key",
         fallback_adapter=ArkStructuredFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=400,
             request_timeout_seconds=3,
             client=ark_client,
@@ -2689,13 +2690,13 @@ def test_sdk_query_cross_provider_fallback_keeps_completed_tool_result() -> None
         http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
     )
     model = OpenAIStructuredToolAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
         api_key="test-deepseek-key",
         fallback_adapter=ArkStructuredFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=400,
             request_timeout_seconds=3,
             client=ark_client,
@@ -2777,10 +2778,10 @@ def test_query_logs_incomplete_deepseek_then_guides_ark_without_tool(
         http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
     )
     model = OpenAIStructuredToolAgentModel(
-        "deepseek-flash", provider_name="deepseek", api_profile="deepseek",
+        "deepseek-flash", stream=False, provider_name="deepseek", api_profile="deepseek",
         base_url="https://api.deepseek.test/v1", api_key="test-deepseek-key",
         fallback_adapter=ArkStructuredFallback(
-            "doubao-lite", max_output_tokens=400,
+            "doubao-lite", stream=False, max_output_tokens=400,
             request_timeout_seconds=3, client=ark_client,
         ),
         request_timeout_seconds=3, max_output_tokens=400,
@@ -2896,7 +2897,7 @@ def test_sdk_query_retries_invalid_structured_draft_with_tool_feedback() -> None
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         request_timeout_seconds=3,
         max_output_tokens=400,
@@ -2936,7 +2937,7 @@ def test_sdk_query_stops_after_lite_also_omits_required_tool() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "doubao-pro",
+        "doubao-pro", stream=False,
         fallback_model="doubao-lite",
         request_timeout_seconds=3,
         max_output_tokens=400,
@@ -2996,13 +2997,13 @@ def test_sdk_query_does_not_fallback_after_content_filter() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
     )
     model = OpenAIStructuredToolAgentModel(
-        "deepseek-flash",
+        "deepseek-flash", stream=False,
         provider_name="deepseek",
         api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
         api_key="test-deepseek-key",
         fallback_adapter=ArkStructuredFallback(
-            "doubao-lite",
+            "doubao-lite", stream=False,
             max_output_tokens=400,
             request_timeout_seconds=3,
             client=ark_client,
@@ -3063,7 +3064,7 @@ def test_sdk_query_compacts_complete_messages_before_second_model_request() -> N
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400,
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400,
         max_input_chars=5_000, client=client,
     )
 
@@ -3092,7 +3093,7 @@ def test_sdk_query_sends_noncompactable_input_after_local_estimate_warning(caplo
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400,
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400,
         max_input_chars=1, client=client,
     )
     try:
@@ -3122,7 +3123,7 @@ def test_sdk_query_budget_stops_before_extra_model_request() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     with pytest.raises(ModelCallLimitExceededError):
         model.run_structured(
@@ -3167,7 +3168,7 @@ def test_sdk_query_continues_past_previous_model_call_limit() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     result = model.run_structured(
         "检索", tools=[_tool(retrieve)], result_type=QueryDraft,
@@ -3202,7 +3203,7 @@ def test_sdk_query_propagates_tool_stop_without_retry() -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", fallback_model="ark-lite",
+        "ark-test", stream=False, fallback_model="ark-lite",
         request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
     with pytest.raises(ExecutionStopped, match="cancelled"):
@@ -3234,7 +3235,7 @@ def test_sdk_query_does_not_accept_truncated_structured_tool_call() -> None:
         ),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     with pytest.raises(RuntimeError, match="length"):
         model.run_structured("检索", tools=[], result_type=QueryDraft, max_model_calls=2)
@@ -3267,7 +3268,7 @@ def test_sdk_query_checks_control_after_model_before_running_tools() -> None:
         ),
     )
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     with pytest.raises(RuntimeError, match="deadline exceeded"):
         model.run_structured(
@@ -3307,7 +3308,7 @@ def test_sdk_query_preserves_ark_ak_sk_authentication(monkeypatch) -> None:
     )
     monkeypatch.setattr(client, "_get_endpoint_sts_token", lambda *args: "test-sts")
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     result = model.run_structured("检索", tools=[], result_type=QueryDraft, max_model_calls=1)
     assert result.selected_video_chunk_ids == []
@@ -3341,7 +3342,7 @@ def test_sdk_query_default_client_is_owned_per_invocation(monkeypatch) -> None:
 
     monkeypatch.setattr(Ark, "volc", new_client)
     model = ArkStructuredToolAgentModel(
-        "ark-test", request_timeout_seconds=3, max_output_tokens=400
+        "ark-test", stream=False, request_timeout_seconds=3, max_output_tokens=400
     )
     for prompt in ("会话一", "会话二"):
         model.run_structured(prompt, tools=[], result_type=QueryDraft, max_model_calls=1)
@@ -3380,7 +3381,7 @@ def test_sdk_query_openai_compatible_providers_use_their_token_parameter(provide
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     model = OpenAIStructuredToolAgentModel(
-        "test-local",
+        "test-local", stream=False,
         provider_name=provider,
         api_profile="deepseek" if provider == "deepseek" else "standard",
         base_url="http://localhost:9000/v1",
@@ -3412,7 +3413,7 @@ def test_structured_input_preserves_current_and_historical_images(provider, visi
     client = (Ark(api_key="test", http_client=http) if provider == "ark"
               else OpenAI(api_key="test", base_url="https://example.test/v1", http_client=http))
     model_type = ArkStructuredToolAgentModel if provider == "ark" else OpenAIStructuredToolAgentModel
-    model = model_type("vision-model", request_timeout_seconds=3, max_output_tokens=400,
+    model = model_type("vision-model", stream=False, request_timeout_seconds=3, max_output_tokens=400,
                        max_input_chars=2000, client=client, supports_vision_input=vision)
     historical = "data:image/png;base64," + "A" * 20_000
     current = "data:image/png;base64,BBBB"
@@ -3456,12 +3457,12 @@ def test_structured_fallback_retains_images_or_rejects_unsupported_input(fallbac
     fallback_options = (
         {"fallback_model": "fallback", "fallback_supports_vision_input": fallback_vision}
         if fallback_kind == "same" else {"fallback_adapter": ArkStructuredFallback(
-            "fallback", max_output_tokens=400, request_timeout_seconds=3, client=fallback,
+            "fallback", stream=False, max_output_tokens=400, request_timeout_seconds=3, client=fallback,
             supports_vision_input=fallback_vision,
         )}
     )
     model = OpenAIStructuredToolAgentModel(
-        "primary", request_timeout_seconds=3, max_output_tokens=400, client=primary,
+        "primary", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=primary,
         supports_vision_input=True, **fallback_options,
     )
     image = "data:image/png;base64,AAAA"

@@ -54,6 +54,56 @@ models:
 
 普通生成支持文本；接收图片的模型必须声明 `supports_vision_input: true`，且连接适配器支持图片输入。该声明由配置维护者根据模型能力设置，不会从模型名字猜测。为兼容已有版本 2 配置，保留引用 `vision`、`vision_fallback` 未声明该字段时默认允许视觉输入；任意新引用默认为文本。`fallback` 可内联另一份模型绑定，其来源、模型、超时、推理和预算分别保存。
 
+## 模型 stream 配置
+
+`models.<role>.stream` 是模型绑定的严格布尔配置，省略时默认 `true`，创建模型时统一传给协议适配器。它适用于已实现的 Chat Completions / Responses 生成入口，覆盖 Chat、Deep Agents、结构化工具、视觉 JSON/工具轮次和使用 Ark 生成接口的视频转写；不按模型名或 `profile: kimi` 特判。主模型和 fallback 各自配置，例如在原有绑定中添加：
+
+```yaml
+models:
+  vision:
+    source: kimi_coding
+    model: k3.1-pro
+    stream: true
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-1-pro-260628
+      stream: false
+```
+
+也可以在创建时传入 `ModelBinding(source="kimi_coding", model="k3.1-pro", stream=False)`。旧 `agent_model.stream` 和 `agent_model.fallback.stream` 会保留到统一绑定。字符串 `"false"`、数字 `0/1` 和 `null` 都不接受；需要兼容不支持 SSE 的服务时明确配置 `false`，错误时不会自动切换传输方式并重发。
+
+流式请求在 Gateway 收齐和校验后仍返回完整结果，工具参数也必须完整验证后才能执行。末尾 usage 会保留。`stream=true` 可以让响应生成期间持续接收事件，但不会减少输入 context，也不能保证首个事件之前不会超时。它不等于前端逐 token 展示；前端当前仍接收业务进度及答案快照。
+
+新 Parse 任务在配置快照中保存 `stream`，恢复时按快照创建模型。历史快照缺少字段时使用新的默认 `true`，序列化保持原有形状以保护幂等指纹；这意味着加载本次修复的服务后，未配置该字段的旧任务也会使用流式生成。显式 `false` 在普通续跑和 retry 中保留，切换已有任务配置仍按前述 reparse 约定执行。
+
+独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器使用 `query_hook.rewriter_stream`，默认 `true`。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
+
+## 模型 temperature 配置
+
+`models.<role>.temperature` 与内部 `ModelBinding.temperature` 共用同一配置合同：默认 `0.0`，接受 `[0, 2]` 内的有限数值，拒绝字符串、布尔值、`null`、NaN 和无穷。主模型与 fallback 独立配置；未配置的 fallback 使用自己的默认值，不继承主模型的温度。旧 `agent_model.temperature` / `agent_model.fallback.temperature` 同样保留到统一绑定。
+
+```yaml
+models:
+  agent:
+    source: deepseek_api
+    model: deepseek-flash
+    temperature: 0.2
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-0-lite-260428
+      temperature: 0.8
+```
+
+业务代码也可以直接调用 `gateway.create_generative_model(ModelBinding(source="deepseek_api", model="deepseek-flash", temperature=0.2))`，或将同一绑定传给 `create_agent_factory()`。Chat、Deep Agents、结构化 Agent、视觉 JSON/工具轮次、Responses 生成和 Ark 视频转写均使用绑定中的温度。
+
+**`profile: kimi` 固定生效为 `1.0`。** 即使原始配置写了 `0.2`，`GatewayConfig.resolve_model_binding()` 返回的有效值与最终请求仍为 `1.0`；底层 Kimi 适配器也保留这个约束。规则按 source 的 profile 判断，不按 provider 显示名猜测。依据为 `k3.1-pro` 的历史 HTTP 400：`invalid temperature: only 1 is allowed for this model`，见 [接入复验记录](dev/devlog.md)。这里按当前用户要求统一约束 Kimi profile，不推定未来型号能力。
+
+默认 `0` 延续原有多数调用路径的固定值，没有温度对照评测证明它是业务最优值。此前省略温度的普通视觉 / Ark Responses 请求现在明确发送 `0`，Kimi 视觉明确发送 `1`；供应商仍可施加更窄的合法值限制。业务质量需要另行评测。
+
+Parse 默认配置从已解析的模型绑定取得温度；配置 HTTP 接口接受 `vision.temperature`、`asr.temperature`、`fallback.temperature`，OCR 与直接 V2 任务模型也保留该字段。任务快照记录配置，恢复后继续传给 Gateway，Kimi 创建时仍强制 `1`。历史快照缺字段按 `0` 读取，序列化保持原有形状。新快照带有 `temperature`，回滚到旧代码前须检查任务格式兼容性。
+
+直接构造的 Ollama / llama.cpp 生成适配器支持 `temperature`，默认 `0`；独立 Query Hook 使用 `query_hook.rewriter_temperature`。Codex / Claude 原生协议不支持设置温度，非默认值会被明确拒绝，默认 `0` 仅是兼容占位，不会作为采样设置传给 CLI。独立音频 ASR、WhisperX、向量和声纹不会转发此生成参数。本次没有新增网页温度控件。
+
 ## Supervisor harness 与独立模型
 
 顶层 `supervisor_harness` 选择 `deepagents` 或 `codex`，与 `models.supervisor` 一起在 Server 启动时加载。修改 harness、模型或连接配置后重启 Server；`agent_runtime` 中已有的运行预算仍按原规则用于新消息。
@@ -62,7 +112,7 @@ models:
 
 Kimi 继续使用现有 OpenAI 兼容适配器和 `profile: kimi`。在同一份有效 YAML 中将 `models.supervisor.source` 改为 `kimi_coding`、`model` 改为 `k3.1-pro`，保持 `supervisor_harness: deepagents`，并设置 `KIMI_API_KEY`。其他生成式角色也可独立选择相同来源；选择 API 模型名不会自动替换转写或 embedding。
 
-`profile: kimi` 的 `GatewayClient.create_generative_model()` 自动启用 Chat Completions 流式接收，适用于直接 JSON 和视觉工具轮次，无需新增 YAML 开关。它不改变 FPS、模型、reasoning 参数或业务重试预算；流收齐后沿用结果校验。其他 profile 保持原协议。实现与验证见 [Kimi 流式接入 TRD](design/03-product-reassessment/kimi-streaming-trd.md)。
+Kimi 与其他 HTTP 生成模型使用上面的通用 `stream` 配置。2026-10-30 的 Kimi 单 Chunk 真实验证保留在 [历史接入 TRD](design/03-product-reassessment/kimi-streaming-trd.md)，不代表其他供应商或整集解析已经在线验收。
 
 需要 Codex Supervisor 时，在同一份 YAML 中替换以下字段；其他预算字段可沿用原值：
 

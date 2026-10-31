@@ -75,6 +75,8 @@ class _VideoTranscriptionModel:
         self.model_name = binding.model
         self._model = ArkMultimodalModel(
             binding.model,
+            stream=binding.stream,
+            temperature=binding.temperature,
             request_timeout_seconds=binding.request_timeout_seconds,
             max_output_tokens=binding.max_output_tokens,
             reasoning_effort=binding.reasoning_effort,

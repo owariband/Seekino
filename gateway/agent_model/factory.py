@@ -100,6 +100,8 @@ class AgentModelFactory:
             raise ValueError("Agent binding source must match agent_model.source")
         self._binding = binding
         self._primary = model_sources[config.source]
+        if isinstance(self._primary, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)) and config.temperature != 0:
+            raise ValueError(f"{self._primary.adapter} does not support temperature configuration")
         fallback_config = config.fallback
         if (
             fallback_config is not None
@@ -340,7 +342,8 @@ class AgentModelFactory:
         if isinstance(source, OpenAIModelSourceConfig):
             api_key = self._required_key(self._config.source)
             return OpenAIStructuredToolAgentModel(
-                **common,
+                **common, stream=self._config.stream,
+                temperature=self._config.temperature,
                 provider_name=source.provider,
                 api_profile=source.profile,
                 base_url=source.base_url,
@@ -353,7 +356,8 @@ class AgentModelFactory:
             )
         if isinstance(source, ArkModelSourceConfig):
             return ArkStructuredToolAgentModel(
-                **common,
+                **common, stream=self._config.stream,
+                temperature=self._config.temperature,
                 fallback_adapter=self._structured_fallback(
                     request_timeout_seconds=request_timeout_seconds,
                     max_output_tokens=max_output_tokens,
@@ -406,7 +410,8 @@ class AgentModelFactory:
         source = self._primary
         if isinstance(source, OpenAIModelSourceConfig):
             return OpenAIAgentModel(
-                model,
+                model, stream=self._config.stream,
+                temperature=self._config.temperature,
                 base_url=source.base_url,
                 api_key=self._required_key(self._config.source),
                 max_output_tokens=max_output_tokens,
@@ -423,7 +428,10 @@ class AgentModelFactory:
             )
         if isinstance(source, ArkModelSourceConfig):
             return ArkFunctionCallingModel(
-                model,
+                model, stream=self._config.stream,
+                temperature=self._config.temperature,
+                fallback_stream=self._config.fallback.stream if self._config.fallback is not None else self._config.stream,
+                fallback_temperature=self._config.fallback.temperature if self._config.fallback is not None else self._config.temperature,
                 fallback_model=self._same_ark_fallback_model(),
                 max_output_tokens=max_output_tokens,
                 request_timeout_seconds=request_timeout_seconds,
@@ -493,6 +501,8 @@ class AgentModelFactory:
             ),
             api_key=self._required_key(self._config.fallback.source),
             supports_vision_input=self._config.fallback.supports_vision_input,
+            stream=self._config.fallback.stream,
+            temperature=self._config.fallback.temperature,
         )
 
     def _structured_fallback(
@@ -513,6 +523,8 @@ class AgentModelFactory:
             ),
             api_key=self._required_key(self._config.fallback.source),
             supports_vision_input=self._config.fallback.supports_vision_input,
+            stream=self._config.fallback.stream,
+            temperature=self._config.fallback.temperature,
         )
 
     def _fallback_max_output_tokens(self, primary: int) -> int:

@@ -20,7 +20,8 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 - `agent_model/`：Provider 无关的 Agent Model 协议、上下文治理、Tool Loop 与错误；
   `deepagents.py` 接入内部 Supervisor 的 Deep Agents SDK，`factory.py` 负责组装；
 - `openai/`：OpenAI 兼容协议及其 profile，DeepSeek 通过这里接入；
-- `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
+- `ark/`：Ark SDK、多模态、Agent 和 Embedding；
+- `streaming/`：共享 Chat Completions / Responses 请求与 SSE 完整性校验，按模型配置选择传输；
 - `codex/`：Codex app-server 会话与 Agent Adapter；
 - `claude_code/`：Claude Agent SDK Adapter；
 - `bridge/`：用户本机原生 Agent 的 ACP 连接；已有 Client，完整产品接入仍需验收；
@@ -38,12 +39,26 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 连接、预算和回退从配置解析，供应商实例创建与关闭均在 Gateway 内完成。Engine
 和 Server 保留抽帧、转写提示词、时间戳归一、检索候选身份与任务状态等业务职责。
 
-`profile: kimi` 的生成接口使用 Chat Completions SSE（`stream=True`、
-`stream_options.include_usage=True`），覆盖直接 JSON 与 legacy / Deep Agents 视觉工具轮次。
-`openai/streaming.py` 复用 SDK 的分片累积，等待终止 choice 后才允许结果校验或工具执行；
-保留 `reasoning_content` 和尾部 usage，并在分片之间检查取消和时间预算。
-其他 profile 保留既有协议。接入依据和真实素材验证边界见
-[Kimi 流式接入 TRD](../docs/design/03-product-reassessment/kimi-streaming-trd.md)。
+HTTP 生成模型在创建时读取 `ModelBinding.stream`，默认 `true`，显式 `false` 使用完整响应；
+主模型与 fallback 分别保留自己的配置，不按 Kimi profile 或业务入口决定开关。
+Chat、Deep Agents、结构化工具、视觉 JSON 和 Ark 视频转写复用 `streaming/` 的协议接收。
+Chat Completions 使用 SDK 解码和增量合并，保留推理字段、工具参数与尾部 usage；
+Responses 校验终止事件、事件顺序和最终正文。收齐并验证后才交付结果或执行工具；
+断流不交付部分结果，也不自动切换为非流式重放。
+Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺少字段时采用默认 `true`，
+读取和序列化旧快照不会凭空增加字段、改变原有指纹。
+本地 Ollama / llama.cpp 生成接口也复用 Chat 接收器；原生 CLI、独立音频和向量接口保留各自协议。
+前端业务 SSE 与模型 HTTP SSE 是不同连接，本次不改变前端按轮次接收 `answer.snapshot` 的交付方式。
+配置、完整性验证及线上效果边界见
+[模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。
+
+`ModelBinding.temperature` 同时支持 YAML 和内部创建参数，默认 `0.0`，范围 `[0, 2]`，
+主模型与 fallback 分别传递。Kimi profile 在绑定解析和适配器中固定为 `1.0`，可通过
+`resolve_model_binding()` 查看实际值。Chat、Structured、Deep Agents、视觉 JSON/工具和
+Ark 视频转写都使用该字段；旧 Parse 快照缺字段按 0 读取但不改原有序列化形状。
+原生 CLI 不支持设置温度，非默认值明确报错；独立音频和向量协议不转发。
+默认值是兼容选择，不是质量调参结论。完整例子与适用范围见
+[temperature 配置](../docs/model-config.md#模型-temperature-配置)。
 
 当前配置由本地 YAML 提供。未来云端配置存储将向同一配置合同提供有效定义；
 数据库、租户权限和配置管理 API 属于 Server 配置管理，不进入模型工厂。

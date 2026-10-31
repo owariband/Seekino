@@ -22,6 +22,8 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-31：模型 temperature 配置与 Kimi 固定值](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
+| [2026-10-31：模型 stream 通用配置与共享协议接收](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
 | [2026-10-30：正式 Kimi 生成入口接入流式](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
 | [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
 | [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
@@ -3845,3 +3847,60 @@ WhisperX、转写工厂、用量及整片 ASR 定向回归 **85 passed，4.90 �
 此前同机两课程共享串行 runtime 的连续 14 个完成间隔中位数 53.007 秒、范围 46.835–127.589 秒，对应约 60 秒音频块。避免把包含锁等待的单次调用总时长直接当推理时间；按中位数线性外推完整 6,979.873 秒约 103 分钟，暂以 90–120 分钟作为安排时间的粗估。小样本、整片 VAD／对齐、后续资源竞争均可能改变结果，不是测得的整集 ETA，16:00 完整闭环仍有时间风险。
 
 增加的是每个在途 ASR 调用一个低频日志线程和有限回调，不增加模型实例、外部服务、数据库表或业务状态。当前任务获得连续状态记录，未来调用可以精确区分阶段及上游进度；本轮已执行部分仍无逐段百分比，不能追溯恢复不存在的日志。
+
+
+<a id="devlog-model-streaming-20261031"></a>
+## 2026-10-31：模型 stream 通用配置与共享协议接收
+
+### 问题与现状
+
+关联 B24、[TRD](../design/03-product-reassessment/model-streaming-trd.md) 和 [PR #22](https://github.com/owariband/Seekino/pull/22)。用户指出 stream 应当在创建模型时配置，而不应由 Gateway 根据 Kimi profile 特判。历史核查确认 Chat 工具循环、Structured 和视觉入口各自写死过 false，相关测试固化了这一行为；前端业务 SSE 并不代表模型 HTTP 连接流式。
+
+2026-09-17 的 `862c2699` 同时引入 Chat `stream=False` 与测试断言；Git 作者/提交者为 Hypnos，但没有证据证明由用户亲自决定。2026-10-30 PR #20 的 Kimi 专属开关和其他 profile 非流式测试由本会话 Codex 实施，属于本次需要纠正的范围错误。详细历史见[实施记录](../report/gateway/model-streaming-20261031.md)。
+
+### 方案候选
+
+继续逐模型补开关会保留重复接收代码和入口差异；统一固定 true 又无法满足用户明确提出的创建时选择。采用 `ModelBinding.stream` 严格布尔、默认 true、显式 false，主模型和 fallback 独立保存，协议公共层仅执行有效配置。Chat Completions 和 Responses 分开实现完整性检查，复用 SDK 解码及 Chat 增量组装，完整轮次返回后再进行工具和 Schema 校验。
+
+除工厂与适配器外，Parse profile 和任务快照必须保存配置，否则 false 会在字段白名单处丢失。新快照明确保存开关，旧快照缺省按 true 执行但保持原有序列化形状。本地生成和 Query Hook 改写器复用同协议接收；原生 CLI 继续使用自身事件协议，拒绝显式 false。没有改 Prompt、采帧、上下文预算、业务提交条件或重试策略。
+
+### 方案验证
+
+真实 OpenAI / Ark SDK 加 HTTP MockTransport 覆盖 48 个主要入口组合，另测 fallback、同名 Ark fallback、视频转写、本地生成、Query Hook 与严格类型，共 79 项新传输测试。原故障集继续覆盖断流、缺失终止事件、截断、取消、超时、usage 和未完整工具参数不可执行。
+
+最终 Gateway 回归 **1345 passed、5 failed、1 skipped、1 deselected，41.01 秒**；5 项失败均在未改业务代码的 `dev` / `580df6cd` 同环境复现，为 3 项默认配置旧断言、1 项 Langfuse header 断言和 1 项既有 fallback context 用例。Parse 配置、OCR、Harness 输入及正式 runtime 创建相关回归 **397 passed，8.88 秒**，验证了保存 / 恢复 / 创建及历史快照兼容。命令、基线和日志入口见实施记录。
+
+配置 HTTP 路由与上传服务的 SQLite 隔离回归 **113 passed，10.83 秒**，验证默认配置读取、显式 true / false 提交、fallback 独立值持久化及取回，同时覆盖原幂等与恢复合同。前端 Parse 配置类型补齐可选字段，typecheck 通过。
+
+本轮没有重新调用真实模型、发送用户媒体、修改数据库任务或重启服务。PR #20 的单 Kimi Chunk 成功保留为历史证据，不扩大为所有供应商兼容性、整集质量或新版本线上验收。
+
+### 指标对比
+
+开关决策从多个入口的硬编码变为一个通用绑定字段，默认 true 和显式 false 在正式创建路径可验证；接收器从 provider 目录收敛到两个协议模块。业务完整性校验保留，旧完整响应测试改为显式 false 兼容测试，默认行为由 SDK/HTTP 矩阵验证。额外复杂度主要是两种协议的终止语义和历史快照缺省处理，没有新增服务或数据库表。
+
+可确认的收益是消除 Chat / Parse 的配置分裂和遗漏入口；线上成功率、时延和费用未重新测量。流式不会减少输入 token，也不能保证首个事件前不超时。加载新代码后，旧配置缺少 stream 的生成请求会改变为默认流式；不支持 SSE 的远端需明确 false。新快照字段对旧版本恢复的兼容性需要在代码回滚前评估。
+
+<a id="devlog-model-temperature-20261031"></a>
+## 2026-10-31：模型 temperature 配置与 Kimi 固定值
+
+### 问题与现状
+
+关联 B24、[同一 TRD](../design/03-product-reassessment/model-streaming-trd.md) 和 [PR #22](https://github.com/owariband/Seekino/pull/22)。用户明确要求新增 temperature，提供默认值，并将 Kimi 限制为 1。修改前 `ModelBinding(temperature=0.2)` 被 Pydantic 以 `extra_forbidden` 拒绝；业务创建和 YAML 无法统一选择温度，各适配器固定 0 / 1 或省略。Kimi 固定 1 有 2026-10-25 实际 Coding Plan HTTP 400 记录，但没有温度对照实验说明它是质量最优值。
+
+### 方案候选
+
+沿用多数既有请求的 0 作为通用默认，不采用未经业务对照的 0.2 / 0.8 作为全局新默认；调用方可以显式配置。字段接受 [0, 2] 内有限数值，主模型和 fallback 独立保存。Kimi profile 在绑定解析和适配器中固定为 1，调用方可读取解析后的实际值；不按 provider 显示名猜测。原生 CLI 不支持温度，非默认值明确拒绝。
+
+温度贯穿 ModelBinding、旧 Agent 投影、工厂、Chat / Structured / Deep Agents、视觉 JSON / 工具轮次、Responses、Ark 视频转写和本地生成。Parse profile 与任务快照同步保留字段，旧快照缺字段仍按原形状序列化；独立 Query Hook 提供对应字段。使用轻量常量共享 Kimi 固定值，保持配置模块不加载 LangGraph runtime。
+
+### 方案验证
+
+设计先提交为 `27602542`。配置测试 **56 passed**；SDK + MockTransport 入口矩阵 **226 passed**，含 180 组 provider/profile × stream × temperature × 五入口组合，验证实际请求而非只检查构造对象。Kimi 所有请求为 1，普通模型保留显式值，同名 Ark fallback 也分别使用主 / 备温度。
+
+最终 Gateway 全量 **1548 passed、5 failed、1 skipped、1 deselected，45.15 秒**；5 项失败仍为此前在 dev 复现的默认配置、Langfuse header 与 fallback context 用例。Parse 配置 / OCR / Harness / runtime **425 passed，8.81 秒**；HTTP / SQLite 上传 **113 passed，9.34 秒**，包括温度提交、冻结和取回；前端 typecheck 通过。命令、原始日志及失败边界见[实施记录](../report/gateway/model-streaming-20261031.md#temperature-配置补充2026-10-31)。没有真实模型调用、服务重启或正式任务变化。
+
+### 指标对比
+
+显式温度从 schema 拒绝变为两个创建入口可用，最终请求矩阵由 79 项扩至 226 项；Gateway 通过数增加 203，既有失败数不变。Parse 相关通过数从 397 增至 425，HTTP 用例数量不变但新增温度传递断言。增加一个通用参数和对应快照字段，没有新增数据库表或服务。
+
+默认 0 是兼容选择，不保证质量收益。此前省略温度的普通视觉 / Ark Responses 现在发送 0，Kimi 视觉发送 1；独立音频、向量、声纹不转发生成温度，原生 CLI 默认占位也不控制其采样。新快照带 temperature，旧代码回滚需评估格式兼容。部署、在线成功率和业务质量仍未测量。

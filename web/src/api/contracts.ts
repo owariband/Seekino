@@ -179,6 +179,8 @@ export interface ParseConfig {
     canonicalMaxHeight: number;
   };
   asr: {
+    stream?: boolean;
+    temperature?: number;
     mode: "lite" | "none";
     scope?: "chunk" | "video";
     model: string;
@@ -187,6 +189,8 @@ export interface ParseConfig {
     concurrency: number;
   };
   vision: {
+    stream?: boolean;
+    temperature?: number;
     model: string;
     inputMode: "video" | "ordered_frames";
     fps: number;
@@ -203,6 +207,8 @@ export interface ParseConfig {
     backgroundImageMaxEdge: number;
   };
   fallback: {
+    stream?: boolean;
+    temperature?: number;
     enabled: boolean;
     model: string;
     frameFps: number;

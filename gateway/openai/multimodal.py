@@ -22,6 +22,8 @@ from gateway.multimodal import (
     validate_generate_request,
 )
 from gateway.usage import track_model_call
+from gateway.streaming.responses import request_response
+from gateway.errors import SSEProxyError, ContentFilterError
 
 
 _MAX_DEEPSEEK_INLINE_IMAGE_BYTES = 32 * 1024 * 1024
@@ -50,6 +52,8 @@ class DeepSeekMultimodalModel:
         reasoning_effort: Literal["none", "low", "high", "max"] = "none",
         fallback_model: DeadlineAwareMultimodalModel | None = None,
         client: Any | None = None,
+        stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -67,6 +71,8 @@ class DeepSeekMultimodalModel:
         ):
             raise ValueError("fallback_model must use the ark provider")
 
+        self._stream = stream
+        self.temperature = temperature
         self.model_name = model
         self.primary_model_name = model
         self.fallback_model_name = (
@@ -172,7 +178,8 @@ class DeepSeekMultimodalModel:
                 operation=schema_name,
             ) as call:
                 try:
-                    response = self._client.responses.create(
+                    response, output_text = request_response(
+                        self._client.responses, stream=self._stream, usage_call=call, check_control=check_control,
                         model=self.model_name,
                         input=[{"role": "user", "content": content}],
                         text={
@@ -184,12 +191,14 @@ class DeepSeekMultimodalModel:
                             }
                         },
                         reasoning={"effort": self.reasoning_effort},
-                        temperature=0,
+                        temperature=self.temperature,
                         max_output_tokens=self.max_output_tokens,
                         timeout=effective_timeout,
                     )
-                except APIError as error:
-                    call.capture_response(error)
+                except ContentFilterError:
+                    raise
+                except (APIError, SSEProxyError) as error:
+                    call.capture_response(error, include_usage=False)
                     raise DeepSeekModelError(
                         f"DeepSeek request failed for model {self.model_name}: {error}"
                     ) from error
@@ -201,7 +210,6 @@ class DeepSeekMultimodalModel:
                     )
                 if getattr(response, "status", None) not in {None, "completed"}:
                     raise DeepSeekModelError("DeepSeek response did not complete")
-                output_text = getattr(response, "output_text", None)
                 if not isinstance(output_text, str) or not output_text.strip():
                     raise DeepSeekModelError("DeepSeek returned no output text")
 

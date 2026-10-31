@@ -10,9 +10,11 @@ from langchain_core.tools import BaseTool
 from openai import APIError, OpenAI
 
 from gateway.errors import ContentFilterError
+from gateway.streaming.chat import request_chat_completion
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.agent_model.errors import (
     ModelFailureReason,
+    ModelFailureError,
     OpenAIFunctionCallingError,
 )
 from gateway.agent_model.fallback import log_model_fallback
@@ -25,7 +27,7 @@ from gateway.agent_model.tool_loop import (
 from gateway.usage import ModelCallTracker, track_model_call
 from gateway.media import require_vision_input
 
-from .profiles import OpenAIProfile, ReasoningEffort, completion_options
+from .profiles import OpenAIProfile, ReasoningEffort, completion_options, effective_temperature
 
 _logger = logging.getLogger(__name__)
 
@@ -51,6 +53,8 @@ class OpenAIAgentModel:
         context_window_policy: ContextWindowPolicy | None = None,
         client: Any | None = None,
         supports_vision_input: bool = False,
+        stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -69,6 +73,8 @@ class OpenAIAgentModel:
         if reasoning_effort not in {"none", "low", "high", "max"}:
             raise ValueError("unsupported reasoning_effort")
 
+        self._stream = stream
+        self.temperature = effective_temperature(profile, temperature)
         self.model_name = model
         self.supports_vision_input = supports_vision_input
         self.primary_model_name = model
@@ -304,19 +310,19 @@ class OpenAIAgentModel:
                 if self.profile == "deepseek"
                 else {"max_completion_tokens": self.max_output_tokens}
             )
-            profile_options = completion_options(self.profile, self.reasoning_effort)
-            response = client.chat.completions.create(
+            profile_options = completion_options(self.profile, self.reasoning_effort, temperature=self.temperature)
+            response = request_chat_completion(
+                client.chat.completions, usage_call=usage_call,
                 model=self.model_name,
                 messages=messages,
-                stream=False,
-                temperature=profile_options.pop("temperature", 0),
+                stream=self._stream,
                 timeout=timeout,
                 **token_options,
                 **profile_options,
                 **tool_options,
             )
-        except APIError as error:
-            usage_call.capture_response(error)
+        except (APIError, ModelFailureError) as error:
+            usage_call.capture_response(error, include_usage=False)
             if getattr(error, "code", None) == "content_filter":
                 raise ContentFilterError(
                     f"{self.provider_name} filtered generated output",

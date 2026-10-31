@@ -2,6 +2,8 @@
 
 需求：正式 Kimi 视频解析接入 Chat Completions 流式响应。日期：2026-10-30。阶段：代码接入、合成图和正式 Parse 单 Chunk 验证完成；服务部署与整集验收待完成。
 
+2026-10-31 后续修订：本文件保留 PR #20 当时的接入与真实实验；通用模型开关和共享接收能力以 [模型 stream TRD](model-streaming-trd.md) / [PR #22](https://github.com/owariband/Seekino/pull/22) 为主，不再以 Kimi profile 决定是否流式。
+
 - 分支：`fix/kimi-streaming`；目标分支：`dev`；[PR #20](https://github.com/owariband/Seekino/pull/20)。首提交 `218d96a1` 仅包含 TRD 初稿。
 - 当前问题状态由 [problems.md](../../dev/problems.md) 维护；实验与决策写入 [devlog.md](../../dev/devlog.md)。
 
