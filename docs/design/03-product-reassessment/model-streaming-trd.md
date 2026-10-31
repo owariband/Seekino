@@ -12,6 +12,8 @@
 
 本次范围为已实现的 Chat Completions / Responses 生成协议，包括 Chat、结构化工具、视觉 JSON/工具轮次、本地兼容生成接口和使用 Ark 生成接口的视频转写。保留 SDK/CLI 原生协议、Embedding/独立音频 ASR、Prompt、Schema、模型参数、工具合同、事务和重试策略。前端逐 token 展示、服务重启、正式任务/数据库变更和新一轮真实素材请求不属于本次验收。
 
+2026-10-31 用户进一步要求在同一模型创建配置中新增 `temperature`，提供默认值并固定 Kimi 为 1。本次在原 PR 中补充该配置合同，修订上述“保留模型参数”的范围：普通 API 生成默认 0.0，业务代码与 YAML 可显式配置；Kimi profile 固定生效为 1.0。现有 `ModelBinding` 没有该字段，多数适配器写死 0，Kimi Chat 写死 1，部分视觉路径省略温度。默认 0 延续多数路径的行为，不表示已证明其业务质量最优；此前省略温度的 API 路径会改为明确发送 0，需单独说明。温度补充当前处于设计阶段，下面已有测试数字仅属于 stream 修复。
+
 # 2. 影响因素、假设与评价指标
 
 流式是传输协议能力，不由模型显示名或业务入口决定。Chat Completions 和 Responses 的终止事件、工具增量结构不同，应共享各自协议实现，不能把两种格式混合拼接。供应商特有的参数仍由适配器负责。
@@ -23,6 +25,7 @@
 | 参数与计量 | provider/profile 分别装配参数 | token 参数、Schema、工具、reasoning、末尾 usage 保留 | 请求内容及返回结果断言 |
 | 控制与回退 | 各入口已有取消、超时、fallback | 连接关闭、取消优先、失败原因及 fallback 合同保留；不增加自动重试 | 控制/网络故障注入及既有回归 |
 | 实际效果边界 | PR #20 单 Kimi Chunk 成功 | 本次证明共享接入和协议合同；其他供应商在线兼容性待测 | 自动化测试与历史真实证据分别报告 |
+| 温度配置传递 | schema 不接受 temperature，适配器固定值或省略 | 默认 0.0，显式 0–2 有限数值透传，主模型/fallback 独立，Kimi 固定 1.0 | 配置、实际 HTTP 请求、任务冻结/恢复与 HTTP 接口测试；待测 |
 
 # 3. 改造方案与建模
 
@@ -35,6 +38,10 @@
 
 没有数据库迁移。旧 YAML 和任务快照未配置 stream 时按新默认 true 执行；显式 false 保留非流式兼容入口。原生 CLI 沿用事件协议并拒绝显式 false；Embedding/独立音频 ASR 不转发 HTTP 生成协议 stream 参数。独立 Query Hook 的本地改写器使用 `query_hook.rewriter_stream`，默认 true。
 
+温度补充方案：`ModelBinding.temperature`、旧 Agent 配置及 fallback 同步增加有限数值字段，默认 0.0、范围 [0, 2]，拒绝布尔值、字符串、NaN 和无穷。Gateway 按来源将 Kimi profile 的有效温度统一归一为 1.0；底层 Kimi Chat 适配继续强制 1，避免直接构造适配器绕过限制。API Agent Loop、Structured、Deep Agents、视觉 JSON/工具、Responses、Ark 视频转写及独立本地改写器均传递温度。原生 CLI 未提供温度协议，非默认值明确报不支持，不声称默认 0 会控制 CLI 采样；Embedding/独立音频 ASR 不发送生成温度。
+
+Server 默认 Parse profile、主模型/fallback、Harness 快照与 runtime 保留温度。历史快照缺字段按 0 读取并保留原序列化形状，Kimi 在创建时仍归一为 1；新任务冻结有效值。现有 HTTP 配置 DTO 和前端类型同步字段，不新增 UI 控件。Kimi 固定值来自实际 Coding Plan `k3.1-pro` 的 HTTP 400 限制记录，见 [2026-10-25 接入记录](../../dev/devlog.md)；本次遵循用户指定的 profile 固定规则，不宣称所有未来 Kimi 型号都存在同一限制。
+
 # 4. 对照实验与结果分析
 
 实现后的入口验收使用真实 OpenAI / Ark SDK 和 HTTP MockTransport：标准兼容、Kimi、DeepSeek、Ark × 默认 / true / false × JSON / Agent Loop / Structured / Deep Agents Supervisor 共 48 个组合；另覆盖主模型和 fallback 独立配置、同名 Ark fallback、视频转写、本地模型和 Query Hook。实际检查发送的 stream、返回值和末尾 usage，不只检查构造参数。
@@ -45,6 +52,8 @@ Parse 配置、OCR、Harness 输入和正式 runtime 模型创建相关回归 39
 
 协议故障测试覆盖截断、缺失终止 choice / event、异常序号、最终文本不一致、取消、读取超时、工具半截参数与 usage。Gateway 全量回归和命令见 [实施记录](../../report/gateway/model-streaming-20261031.md)。全量发现的 5 项失败均在未改业务代码的 `dev` / `580df6cd` 同环境重现：3 项默认配置旧断言、1 项 Langfuse header 断言、1 项既有 fallback context 用例；未夹带修复，不记为通过。
 
+温度验证计划：先证明旧 schema 拒绝显式温度，再以相同隔离用例验证新字段默认/覆盖/边界；复用 SDK + MockTransport 入口矩阵检查最终请求，而非仅断言构造参数。覆盖 stream true/false、Kimi 固定值、fallback 独立值、Parse 保存恢复、旧快照指纹。新增验证结果待填写，不进行新供应商请求或真实任务操作。
+
 # 5. 试点验证与方案取舍
 
 本次使用隔离 worktree 和模拟 HTTP 响应，不读取密钥、不发送用户媒体、不改运行中服务。共享收集器降低遗漏入口的风险，但流式本身不降低上下文占用，也不能保证首包之前不超时。远端实际兼容性、性能和整集质量须用独立运行证据评价。
@@ -53,11 +62,15 @@ Parse 配置、OCR、Harness 输入和正式 runtime 模型创建相关回归 39
 
 运行新版本后可以通过模型绑定显式 false 选择完整响应；不会自动非流式重放。新任务快照增加 stream 字段，回滚到尚不认识该字段的旧版本前需要评估新任务恢复兼容性，不能声称任意代码回滚都没有数据格式影响。
 
+温度补充采用同一隔离接入验证作为内部配置功能试点。新增字段不提供质量收益承诺；固定默认值和 Kimi 约束的选择不替代业务效果评测。新快照含 temperature，旧代码回滚同样需要检查配置兼容性。
+
 # 6. 结果验收与闭环
 
 代码和隔离验证已完成，当前实现不再按 provider/profile 写死开关；正式 Parse 的保存、恢复和创建边界已接入。Gateway README、模型配置、设计索引、问题和 devlog 同步维护。交付通过原有 PR #22 进入 dev，不另拆 PR；合并与运行中服务加载另列，不能视为真实任务恢复。
 
 未验证：本次没有供应商在线请求、真实 Parse HTTP/数据库提交、服务重启或整集验收，不能由离线矩阵推断各模型线上成功率。原 Kimi 单 Chunk 真实结果保留在上游报告。问题状态仅维护在 [B24](../../dev/problems.md#b24模型-stream-被入口写死且正式-parse-丢失开关)。
+
+温度配置补充尚未实施；交付前须更新字段传递、Kimi 生效值和隔离验证证据，不能沿用 stream 的既有数字宣称 temperature 验收完成。
 
 ## 2026-10-31 决策澄清
 
