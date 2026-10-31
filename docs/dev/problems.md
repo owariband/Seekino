@@ -646,6 +646,26 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 以下保留未修复、部分完成或同条目仍有主体问题未解决的记录，已实施的阶段性修复与历史证据一并保留。
 
 
+<a id="b24-apple-gpu-asr"></a>
+
+### B24：Apple GPU ASR 尚未与正式 WhisperX 对齐链路接通
+
+排序日期：2026-10-31。
+
+状态：TODO／已搁置（2026-10-31 用户决定，PR #21 保留 Draft，不标记完成）。Apple 语音适配偏离当前产品重点，停止 WhisperX backend/MPS/强对齐改造与后续实验。项目保留可选 WhisperX 供配置体验；Apple 暂走 whisper.cpp/Metal 简单整片 ASR，已有独立整课实测，正式接线与业务持久恢复未因此验收。#18 独立处理保存和恢复，不再等待本 PR 的新接口。CAM++ 使用维持现状，Pyannote 替换评估一并暂停；用户重新决定前不恢复。支持说明见[模型配置](../model-config.md#本地-whisperx-asr-与对齐)，事实边界见[能力核查](../research/2026-10-31-pyannote-campplus-attribution.md)。
+
+以下保留搁置前的试验和拆分历史，其中 WhisperX 后端接口、阶段合同与合并顺序均不是当前执行计划。
+
+2026-10-31 12:18 验证进展：按用户提出的 Python 调用层替换实现隔离原型，核心 asr.py +69/-31 行、HTTP 适配 44 行；13 项定向测试与原版/修改版 CPU 实跑对照通过。26 秒测试输入完整 VAD→cpp/Metal→align 得到 84 个带分数和有效时间的词。随后用户指定 GPT 整课音频，运行 411.221 秒时仍处于 CPU VAD，尚无 ASR 请求；按用户“停”立即中断并回收临时 cpp。保留[验证报告](../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md)，不自动重跑。用户进一步关注全片说话人归因；本原型没有运行 diarization，不能将强制对齐当作跨片身份一致性证据。剩余时间、MPS VAD 效果和业务收益均未验证。
+
+2026-10-31 pipeline 边界纠正：用户明确要保留 WhisperX 的 VAD、切分/合并、原片区间与强制对齐，仅替换识别后端。已收回“整片 whisper-cli 转写后单独 align”作为正式第一版的方案，它只能做局部接缝实验。当前 3.8.6 尚无通用 ASR backend 接口，下一步先划分公共流程与 tokenizer/Mel/CT2 解码职责，用替身验证旧路线与时间窗口后再接 cpp；不能用设备枚举或一轮 align 成功代替完整接入。尚无生产代码变更。
+
+2026-10-31 背景复核：用户指出初稿没有解释强对齐的产品用途、优先 Apple 本机的条件及租 GPU 的额外开发成本。已在同一 TRD 补充字幕重组、对白回看和剪辑所需的时间证据；区分已有字词合同与尚未验收的消费层，补入远端 CUDA 候选的收益、传输/部署/正式调用/运行维护工作及本机适配成本。验证计划新增同文本有/无强对齐的边界对照和执行位置总成本口径；成本与效果仍待测，功能状态不变。
+
+本需求从 [PR #18](https://github.com/owariband/Seekino/pull/18) 拆出，由本 chat 的 Codex 负责，分支 `feat/apple-gpu-asr-alignment`、[PR #21](https://github.com/owariband/Seekino/pull/21)，首提交 `8c4513a5` 仅含 [TRD 初稿](../design/03-product-reassessment/apple-gpu-asr-alignment-trd.md)。#21 负责 Metal ASR、WhisperX 对齐、必要的执行职责提取、raw/align 阶段合同及正式接入验证；#18 负责保存、兼容核验、发布与恢复。原接入及整片内存复用仍关联 [B20](#b20本地-whisperx-正式接入与字幕时间证据)，拆分决定见 [#18 留言](https://github.com/owariband/Seekino/pull/18#issuecomment-6538022466)。
+
+完整 pipeline 的后端接口、阶段结果和生产者信息合同落实后，再实施 Gateway/Server hook 接线与旧调用兼容。质量、总耗时和资源阈值在正式长片评测前冻结；MPS 单独验证。合并顺序默认 #21 → dev → #18 同步并完成真实恢复验收 → dev，不把源码可调用或历史纯 ASR 耗时写成新组合已通过。设计结构、本地链接与 diff 已检查；本次未运行模型或业务测试。决策与验证边界见 [devlog](devlog.md#devlog-apple-gpu-asr-split-20261031)。
+
 ### B22：Understanding 失败导致整块重跑与缺少任务停止控制
 
 排序日期：2026-10-30。
@@ -918,6 +938,10 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 依据：[对照实验摘要](../../outputs/local-services/cloud-auth/query-rewrite-eval-20261020-171035/summary.md)、[完整输入／输出及样本 ID](../../outputs/local-services/cloud-auth/query-rewrite-eval-20261020-171035/report.json)、[运行日志摘录](../../outputs/local-services/cloud-auth/query-rewrite-eval-20261020-171035/runtime-log-excerpt.txt)，以及 2026-10-20 本次讨论中的用户测试反馈。`outputs/` 为本地实验产物，关键输入、结果、schema 和限制已保存在本条，避免后续仅依赖本地文件。
 
 ### B12：ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属
+
+2026-10-31 最终取舍：用户决定先保留现有 CAM++ 自研使用，Pyannote 替换与相关新实验暂停。下述同日重评仅保留为候选依据，没有实施替换；历史错误和验证边界保留，不因停止改造而改成“没有问题”或“已解决”。
+
+2026-10-31 方案重评：用户提出在当前 CAM++ 使用层引入 Pyannote，先建立全片匿名 speaker 关联，再映射业务人物。当前工作树 B0 使用 Understanding 已有姓名作参考标签，不能替代完整 diarization；Pyannote 及其 embeddings 可独立复用，是否保留 CAM++ 需比较增益。执行时机可以前置或放在后续声纹阶段，但覆盖范围须保留整片，不逐 Chunk 独立编号。该候选仍待多人样本、人物误归因与本机成本验证；原参考来源、unknown、冲突和持久化合同仍有价值，详见[研究记录](../research/2026-10-31-pyannote-campplus-attribution.md)。本轮未实施替换，不标记问题解决。
 
 排序日期：2026-10-19。
 

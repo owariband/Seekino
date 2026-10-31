@@ -22,6 +22,10 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-10-31：搁置 Apple WhisperX 改造，保留简单整片转写](#devlog-apple-whisperx-shelved-20261031) | B24、B20、B12；产品优先级与平台支持边界 |
+| [2026-10-31：全片转写与说话人处理分开评估](#devlog-asr-speaker-boundaries-20261031) | B24、B20、B12；WhisperX 改造重评与 Pyannote 候选 |
+| [2026-10-31：WhisperX 最小接缝验证与整课 VAD 中止](#devlog-whisperx-cpp-spike-20261031) | B24；局部 Python 改造、CPU VAD 成本与说话人归因边界 |
+| [2026-10-31：Apple GPU ASR 与持久恢复拆成独立需求](#devlog-apple-gpu-asr-split-20261031) | B24、B20；模型执行与成果生命周期 |
 | [2026-10-30：正式 Kimi 生成入口接入流式](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
 | [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
 | [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
@@ -115,6 +119,117 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-apple-whisperx-shelved-20261031"></a>
+
+## 2026-10-31：搁置 Apple WhisperX 改造，保留简单整片转写
+
+### 问题与现状
+
+Apple WhisperX 的后端、VAD、对齐与设备适配逐步占用过多时间，尚未形成与投入相称的产品收益。用户明确指出这不是 Seekino 当前重点，决定搁置 PR #21，暂时保留自研声纹使用；不能把这次优先级取舍解释成所有旧建设无效，或隐去已有质量问题。
+
+### 方案候选
+
+停止扩大 WhisperX Apple 改造及 Pyannote 替换评估，PR #21 保留 Draft 和实验记录。WhisperX 继续作为可选接入供配置体验；Apple 暂采用 whisper.cpp/Metal 做简单整片音频转写，现有 CAM++ 保持不变。#18 的成果持久化与恢复独立推进，不再等待本 PR 的新阶段接口；本轮不切配置或实施新的转写接线。
+
+### 方案验证
+
+本轮只更新平台说明、TRD、问题状态、索引、研究/实验处置和 PR 搁置说明，检查文档链接与 diff。不运行模型、业务测试或服务部署；已有原型 13 项测试、26 秒短样本与整课中止证据保留在[报告](../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md)，不是本轮新增验证。用户重新决定前不恢复实验或替换工作。
+
+### 指标对比
+
+历史 cpp Turbo 纯 ASR 182.360 秒与新原型约 403 秒仍未结束的 CPU VAD 不构成同质量对照，但说明新增阶段成本不能忽略。当前没有完整 Apple WhisperX pipeline、人工对齐精度、Pyannote 本机效果或持久恢复的验收结论。停止投入后释放多少开发时间尚未量化；实际完成的是清理交付承诺与依赖，未把延期需求标成已解决。
+
+<a id="devlog-asr-speaker-boundaries-20261031"></a>
+
+## 2026-10-31：全片转写与说话人处理分开评估
+
+### 问题与现状
+
+整课 VAD 中止后，讨论暴露出将全片 ASR、词时间对齐、匿名 speaker 关联和人物命名混为同一收益的问题。当前 B0 按 Understanding 已有姓名匹配 CAM++ 特征；WhisperX 则有此次原型未调用的独立全片 diarization。不能由 ASR 分窗否定全片 speaker 能力，也不能由 Pyannote 不自动认识角色名推定整套自研流程必须保留。
+
+### 方案候选
+
+用户提出全片前置 ASR，以及在现有 CAM++ 使用层引入 Pyannote。纯转写与 speaker 处理可独立推进：cpp 产出并持久保存文字，Pyannote 建立全片匿名时间线，Seekino 保留可信人物绑定和证据合同。若第一条同时包含 diarization，则与后续声纹阶段执行的差别是时机；无论哪一处执行，均不能用逐 Chunk 独立编号代替全片关联。暂停扩大 WhisperX backend 改造，不把前置 VAD/强对齐作为当前闭环的必要条件；speaker 替换范围另归 B12，不扩进 #18 的持久恢复修复。
+
+### 方案验证
+
+已核对工作树调用链、Pyannote 4.0.7 / Community-1 与 WhisperX 3.8.6 源码。10/16 历史研究已建议先 Community-1 并复用其 embeddings，现有记录没有项目同条件对照证明自研更优。核查见[研究记录](../research/2026-10-31-pyannote-campplus-attribution.md)。本轮只同步需求和候选边界，没有模型调用、生产替换、服务重启或 PR 变更。
+
+### 指标对比
+
+现有纯 cpp 整课转写和 WhisperX 短样本可运行证据保留，不作为 speaker 质量证明；Pyannote 的本机整片耗时、多人分段/聚类错误及人物误归因改善均待测。后续验证需包含多人交替、短回应、混合长 cue 与重叠样本，分别评估声音分组、人物映射和成本，不用主要为单人讲解的整课跑通代替多人验收。已有时间合同、媒体与参考来源、unknown/冲突、版本及持久化基础继续复用，不能将这次方向纠正写成全部建设无效或原问题已解决。
+
+<a id="devlog-whisperx-cpp-spike-20261031"></a>
+
+## 2026-10-31：WhisperX 最小接缝验证与整课 VAD 中止
+
+### 问题与现状
+
+用户强调复用现有 cpp 模型服务，只替换 WhisperX 的 Python ASR 调用。此前将通用后端、完整参数兼容和上游化一起估算，夸大了最小接入规模。随后用户要求直接用《Let's build GPT》完整音轨验证，并在 CPU VAD 长时间运行时要求停止，进一步明确关注全片说话人归因的收益。
+
+### 方案候选
+
+先用固定 3.8.6 隔离副本增加可选 segment_transcriber，保留原 VAD/Cut & Merge、窗口回填和 align，初版仅显式语言、batch_size=1。复用 cpp 二进制/权重及本机临时服务，无 C++ 修改、共享包修改或正式配置切换。全片 ASR、强制对齐和全片 diarization 分属不同职责；本原型未调用 diarization，不能承诺跨 Chunk 人物一致性。
+
+### 方案验证
+
+核心 asr.py +69/-31 行，HTTP 适配 44 行。13 项定向测试通过；26 秒测试输入生成 3 个 VAD 窗口/3 次 cpp 请求，84 个词有声学分数和有效时间，依赖导入后计时约 7.010 秒。原版/修改版 CPU/int8 large-v3 在同音频上的文本、分数、窗口与进度完全一致。证据见[验证报告](../report/gateway/local/whisperx-cpp-gpt-validation-20261031.md)。
+
+按用户要求对 6979.941625 秒 GPT 完整音频运行一次，校验音频/权重/二进制哈希与历史实验一致。12:18 用户要求停止时，总耗时 411.221 秒，约 403 秒处于未完成的 Pyannote CPU VAD；中断栈为 PyanNet/SincNet/conv1d，没有发出 ASR 请求，没有进入对齐。已终止并回收自有 cpp 进程，未重跑、未改设备继续实验。原始结果保留 KeyboardInterrupt，处置记录明确为用户主动停止，不伪造整课完成结果。
+
+### 指标对比
+
+| 指标 | 先前判断 / 基线 | 本次证据与边界 |
+|---|---|---|
+| 最小改造体量 | 按通用后端方案估算偏大 | 单个库文件 +69/-31 行，44 行 Python HTTP 适配即可验证接缝；正式交付仍需接线 |
+| 短样本可运行性 | cpp 与 WhisperX 完整流程接通未测 | 26 s 输入约 7.010 s，84 个有效时间词；不含导入，不代表精度达标 |
+| 旧 CPU 路径 | 重构可能改变默认分支 | 同样本真实模型输出完全一致；CUDA 与全部参数未覆盖 |
+| 整课成本 | 历史纯 cpp ASR 182.360 s，没有 VAD/align | 新流程约 403 s VAD 尚未结束即按用户要求停止；总时长未知，不计算加速比 |
+| 资源 | 单路 Apple 本机 | 本轮采样 Python+自有 cpp RSS 总和峰值约 2.157 GiB；非物理/GPU 独占内存，进程已回收 |
+| 身份归因 | 容易将整片 ASR 或字词对齐理解为全片身份一致 | 此原型未执行 diarization；匿名说话人跨窗统一与业务身份映射需单独评估 |
+
+<a id="devlog-apple-gpu-asr-split-20261031"></a>
+
+## 2026-10-31：Apple GPU ASR 与持久恢复拆成独立需求
+
+### 问题与现状
+
+[PR #18](https://github.com/owariband/Seekino/pull/18) 原计划同时交付本机 GPU ASR、对齐、成果保存和恢复、完整课程闭环。首次处理的性能/质量与下游失败后的成果复用是两个独立问题，混在一个 PR 中使评审、回滚和验收归因互相牵制。当前正式 WhisperX 仍使用 CT2 ASR，已有 Metal 实验未接到正式对齐链路；实验产物落盘也不代表 Server 恢复已实现。
+
+2026-10-31 背景复核：用户指出首稿只讲实现接缝，没有讲清为什么需要强对齐、为什么当前先用 Apple 本机，以及租 GPU 服务器的额外开发成本。这样即使六个章节齐全，仍无法从产品问题判断选型是否合理。文档日期同时改为“北京时间，UTC+8”；`Asia/Shanghai` 是 IANA 对北京时间采用的技术标识，并非用户所在地，面向读者无需沿用该名称。
+
+同日 pipeline 边界纠正：用户提供选型文章后，Codex 曾提出整片 `whisper-cli` 转写再调用独立 align；用户指出目标应是运行 WhisperX pipeline。该提议会绕过 WhisperX 的 VAD/cut/merge，替换范围超过识别后端，已明确收回。需要分别判断文章的目标取舍、技术事实和真正可替换的接口，不能把“能接 align”当成“保留了 pipeline”。
+
+### 方案候选
+
+保留一个 PR 可以减少一轮接口协调，但会继续绑定不同层次的完成条件；将模型执行 feature 与持久恢复 fix 拆开需要显式阶段合同，却允许独立评审和验证。用户选择后者：[PR #21](https://github.com/owariband/Seekino/pull/21) 负责 whisper.cpp Metal、WhisperX 独立对齐、必要 speech 执行职责提取、阶段结果/生产者信息及正式接入；#18 负责业务保存、兼容核验、发布和恢复。#21 不依赖 #18 存储实现，默认先合入 dev；#18 随后同步接口、完成真实接线。采用 Seekino 组合已有独立 align API 的方向，本轮不 fork WhisperX；CPU 对齐先验证，MPS 依据实测取舍。
+
+背景补充后的取舍：字词时间为字幕重组、对白定位和剪辑提供发声边界基础，不能把强对齐当成识别纠错或完整字幕产品。Apple 的优先级来自已有设备、素材和 Metal 实验，以及本机试点的交付路径；远端 NVIDIA/WhisperX CUDA 可能减少 Apple 适配并释放本机负载，但需补齐环境、音轨传输、正式调用、跨机器失败处理及费用管理。分别评估一次 SSH 实验和正式自动化接入，不把复杂集群当作租 GPU 的必要前提，也不宣称本机无维护成本。
+
+纠正后的当前方向：保留 WhisperX 公共 VAD、切片/合并、区间归属和对齐，增加最小 ASR backend 接缝；由后端承接各自的 tokenizer、特征和解码。原 CT2 批处理保留，cpp 优先复用已加载模型，首轮可串行识别窗口，避免逐块启动 CLI。ASR/VAD/alignment 设备分别表达。本机完整验证之后，再提炼不含 Seekino 业务代码的上游建议；尚未向上游发布 issue/PR。
+
+### 方案验证
+
+在独立 worktree 的 `feat/apple-gpu-asr-alignment` 上，以 dev `83cc07e8` 为基线创建 [六流程 TRD](../design/03-product-reassessment/apple-gpu-asr-alignment-trd.md)，首提交 `8c4513a5` 仅包含该初稿。新建 Draft PR #21，已在 [#18 留言](https://github.com/owariband/Seekino/pull/18#issuecomment-6538022466) 记录拆分背景、范围、依赖和合并顺序，两处正文末尾均为 `-codex`。同步设计入口和 [B24](problems.md#b24-apple-gpu-asr)；结构、链接及 diff 检查覆盖本次文档。原工作区的未提交内容和 #18 工作区保持独立。
+
+固定源码和已有 cpp JSON 的核对支持继续验证外部 segments → align 接缝，但没有执行新组合推理、迁移、重启或业务测试。下一步先用已有 raw 与同一音频验证 CPU 对齐，再落实正式配置与阶段合同；短样本探索后、正式长片评测前冻结质量/资源/总耗时阈值。当前 PR 为设计起点，不能据此声称实现、效果或部署完成。
+
+背景复核依据包括原 ASR 主设计、`TranscriptWord`/时间测试、三语部署报告与整体规划；另核对 [WhisperX 论文](https://arxiv.org/abs/2303.00747v2) 的方法目的及 [IANA 时区定义](https://data.iana.org/time-zones/tzdb/asia)。同一 TRD 补充有/无强对齐的人工边界与短语裁片对照，以及本机/远端端到端等待、一次性工程投入和持续费用的比较方法。当前只完成文档核对，未新增模型运行、服务器租用或成本实测；远端比较以本机不达标或负载需求变化为触发条件。
+
+文章核查与接口证据见 [研究记录](../research/2026-10-31-whisperx-apple-backend-review.md)。本地固定 3.8.6 的 `FasterWhisperPipeline` 确实把公共 VAD 与 CT2 tokenizer/Mel/语言检测耦合；文章的 `interleaved_context` 来自较新的上游 main，不能直接套用到当前依赖。期间仅用已有构建工具为固定 cpp 源码编译了 `whisper-cli` 目标，没有调用模型、修改共享 Python 包或切换运行服务；编译成功不作为接入证据。正式验证需覆盖完整 VAD→所选 ASR→align 及旧 CT2 回归。
+
+### 指标对比
+
+| 观察项 | 拆分前 | 本次变化与边界 |
+|---|---|---|
+| 交付和验收归属 | #18 同时承担执行 feature 与成果恢复 fix | #21 与 #18 分别维护主设计和验证；新增一次阶段合同协调成本 |
+| 依赖方向 | GPU、存储与整体闭环混在同一实施序列 | #21 提供阶段能力，#18 消费并验收恢复；接口仍待实现 |
+| 语音耗时与质量 | 已有纯 ASR 历史实验，组合对齐缺证 | 本次无新增实测，未声称性能或质量改善 |
+| 产品收益 | 长课首次等待和失败重算均待改善 | 本次明确解决路径与责任，真实收益分别由两项验收证明 |
+| 强对齐的价值判断 | 初稿主要验证可运行、时间合同和 CPU/MPS | 增加同文本有/无强对齐的人工边界与短语首尾覆盖；收益仍待测 |
+| 执行位置选型 | 初稿没有展开租 GPU 的收益与额外工作 | 补充双方投入、远端最小实验/正式接入区别及重评条件；费用/工时未估成实测值 |
+| 替换边界 | 初稿计划整片 cpp 转写后调用独立 align | 正式目标改为保留 WhisperX pipeline、只替换 ASR backend；当前只完成源码核查和设计纠正 |
 
 <a id="devlog-kimi-streaming-20261030"></a>
 

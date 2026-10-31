@@ -2,6 +2,8 @@
 
 日期：2026-10-29。主题：可选本地 WhisperX ASR、强制对齐与字幕时间证据。
 
+2026-10-31 后续需求拆分：Apple GPU ASR 接入、WhisperX 对齐验证与独立阶段接口由 [专项 TRD](apple-gpu-asr-alignment-trd.md) / [PR #21](https://github.com/owariband/Seekino/pull/21) 维护；成果持久化与失败恢复归 [PR #18](https://github.com/owariband/Seekino/pull/18)。拆分理由和交接见 [#18 留言](https://github.com/owariband/Seekino/pull/18#issuecomment-6538022466)。本文保留原接入及整片内存复用的合同与历史证据，不以新需求的设计替代实际验收。
+
 整片 ASR 增量关联：[PR #12](https://github.com/owariband/Seekino/pull/12)，工作分支 `feat/full-video-asr`；替代因分支命名迁移的 [PR #9](https://github.com/owariband/Seekino/pull/9)，保留全部实现与验证。依赖 dev 已提交的 WhisperX 接入、直接 JSON 与节点重试修复（截至 `80bb293d`）；本 PR 先向 dev 集成，再随后续发布进入 main，独立发布 PR #10 不含此增量。
 
 用户希望 Seekino 直接提供可选的 WhisperX 接入：用户自行安装依赖和下载模型后，可用正式解析代码完成低 API 调用成本的转写，并取得后续字幕需要的字词时间。推荐 WhisperX 的原因是它同时提供转写和声学强制对齐。

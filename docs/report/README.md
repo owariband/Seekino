@@ -31,6 +31,8 @@
 
 ## Gateway
 
+本地语音原型：[2026-10-31 WhisperX Python 接缝与 GPT 整课验证](gateway/local/whisperx-cpp-gpt-validation-20261031.md)。保留 VAD/Cut & Merge/对齐，只替换窗口 ASR；隔离原型与正式接入分别报告。
+
 流式接入：[2026-10-30 正式 Kimi 生成与 Parse 入口验证](gateway/kimi-streaming-20261030.md)。工厂、直接 JSON 与视觉工具 SSE 覆盖；合成图和原 189 帧长 Chunk 均完成，部署与整集效果单独验收。
 
 API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-20261030.md)。两轮各 10 路短文本请求全部通过，关闭重试，保留串行对照、逐请求时间与用量；不等于长视频解析吞吐验收。
