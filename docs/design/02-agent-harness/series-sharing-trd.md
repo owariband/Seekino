@@ -1,54 +1,56 @@
-# Seekino Series Sharing and Team Scope TRD
+# Seekino 系列共享与团队范围 TRD
 
-Status: phase 1 backend and frontend implemented. The native localhost development database was backed up and migrated on 2026-10-19; its API and Web now run the workspace implementation. The separate phone/cloud database has not been migrated in this rollout. Phase 2 remains a proposal. This document covers the confirmed requirement (registered users make their own Series private or public, and public Series show who shared them) and the proposed team scope (users in several teams, teams with several members).
+状态：第一阶段的前后端已经实现。2026-10-19 已备份并迁移本机原生开发数据库，API 和 Web 目前运行的是 Workspace 实现。本轮没有迁移独立的手机云端数据库。第二阶段仍是提案。已确认的需求是：注册用户可以将自己的系列设为私有或公开，公开系列显示分享者。团队范围尚待确认，初步设想是一个用户可以加入多个团队，一个团队可以有多名成员。
 
-Background: [User/Tenant TRD](user-tenant-trd.md), [Local/Cloud design](local-cloud-trd.md) §6.
+背景：[用户与租户 TRD](user-tenant-trd.md)、[本地／云端设计](local-cloud-trd.md)第 6 节。
 
-## 1. Recommendation in one paragraph
+## 1. 结论
 
-Keep `Tenant` as the container that owns content and sets authorization. Do not introduce a shared default-all tenant. Add a **Series-level read rule**: a caller can read a Series if they are a member of its tenant, or if the Series is `public`, ready, and its publisher is active. Store visibility as `series.visibility ∈ {private, public}`, where `private` means "members of the owning tenant only". For a personal tenant that means only the owner; for a future team tenant it means the whole team. This rule makes a separate `team` visibility value and a per-Series owner unnecessary for the first release. Team membership (phase 2) then replaces only the membership predicate `tenant_id == identity.tenant_id` with a membership lookup. The sharing rule does not change.
+`Tenant` 继续负责内容归属和授权，不引入所有人共享的默认 Tenant。新增**系列级读取规则**：调用者是系列所属 Tenant 的成员，或者系列已公开、内容已就绪且发布者有效，就可以读取该系列。可见性存为 `series.visibility ∈ {private, public}`；`private` 表示仅所属 Tenant 的成员可读，个人 Tenant 中只有所有者可读，未来团队 Tenant 中则是全团队可读。
 
-## 2. Baseline before phase 1
+因此，首版不必增加 `team` 可见性，也不必为每个系列单独保存所有者。第二阶段接入团队成员时，只需把 `tenant_id == identity.tenant_id` 这一成员判断改为查询成员关系，共享规则本身不变。
 
-| Area | Current behavior | Source |
+## 2. 第一阶段前的实现基线
+
+| 范围 | 当时行为 | 源码 |
 |---|---|---|
-| Tenant gate | Cloud reads allow only `identity.tenant_id` or the platform public tenant. Every Series, media, search and Agent entry point calls it first | [access.py](../../../server/service/access.py) `require_tenant_read` |
-| Publish | `is_published` is admin-only and only for the platform public tenant | [library.py](../../../server/api/library.py) `update_series` |
-| Public readiness | `publication_ready` requires every video to be READY, indexed and playable, with no pending uploads | [media.py](../../../server/service/media.py) |
-| Public listing | `list_public_series_page` loads every published Series in one tenant, then filters by readiness in Python | [library.py](../../../server/service/library.py) |
-| Retrieval scope | ES filters on one `tenant_id` term plus a `series_id` and `(video_id, parse_task_id)` allow-list. Hits are re-validated against that one tenant | [elasticsearch.py](../../../server/storage/elasticsearch.py) `_scope_query` |
-| Agent source | `source_tenant_id = body.source_tenant_id or body.tenant_id`. It is a single tenant, re-authorized when history evidence is read again | [agent.py](../../../server/api/agent.py) `_authorize_query_scope` |
-| Media URLs | `playback_url` is a plain `/api/videos/content?…` URL that is authorized on every request (Range included). Cloud responses use `Cache-Control: private, no-store` | [media.py](../../../server/service/media.py), [api/media.py](../../../server/api/media.py) |
-| Series identity | `derive_series_id(tenant_id, name)` is used on create and on file import when no explicit `series_id` is given | [identifiers.py](../../../server/model/identifiers.py), [parse_import.py](../../../server/service/parsev1/parse_import.py) |
-| Default nickname | Registration sets `nickname` to the email local part | [identity.py](../../../server/repository/identity.py) `login_email` |
-| Per-user records | `agent_conversation.owner_id`, `upload_session.creator_id`, `series_parse_job.creator_id`, `video_parse_task.creator_id`, `model_usage.user_id` already exist | [database.py](../../../server/database.py) `_check_identity_schema` |
+| Tenant 权限 | 云端只允许读取 `identity.tenant_id` 或平台公共 Tenant。系列、媒体、检索和 Agent 入口都先经过这项检查 | [access.py](../../../server/service/access.py) `require_tenant_read` |
+| 发布 | `is_published` 只能由管理员修改，且只用于平台公共 Tenant | [library.py](../../../server/api/library.py) `update_series` |
+| 公开条件 | `publication_ready` 要求全部视频均为 READY、已索引且可播放，同时没有待处理上传 | [media.py](../../../server/service/media.py) |
+| 公开列表 | `list_public_series_page` 先读取一个 Tenant 下的全部已发布系列，再用 Python 过滤未就绪内容 | [library.py](../../../server/service/library.py) |
+| 检索范围 | ES 按单个 `tenant_id`、一组 `series_id` 和 `(video_id, parse_task_id)` 白名单过滤；命中后仍按同一个 Tenant 复核 | [elasticsearch.py](../../../server/storage/elasticsearch.py) `_scope_query` |
+| Agent 来源 | `source_tenant_id = body.source_tenant_id or body.tenant_id`，只允许一个 Tenant；再次读取历史证据时重新鉴权 | [agent.py](../../../server/api/agent.py) `_authorize_query_scope` |
+| 媒体地址 | `playback_url` 是普通的 `/api/videos/content?…` 地址，每次请求（包括 Range）都鉴权。云端响应使用 `Cache-Control: private, no-store` | [media.py](../../../server/service/media.py)、[api/media.py](../../../server/api/media.py) |
+| 系列身份 | 创建系列和未显式提供 `series_id` 的文件导入，都使用 `derive_series_id(tenant_id, name)` | [identifiers.py](../../../server/model/identifiers.py)、[parse_import.py](../../../server/service/parsev1/parse_import.py) |
+| 默认昵称 | 注册时将邮箱 `@` 前的部分作为 `nickname` | [identity.py](../../../server/repository/identity.py) `login_email` |
+| 个人记录 | `agent_conversation.owner_id`、`upload_session.creator_id`、`series_parse_job.creator_id`、`video_parse_task.creator_id`、`model_usage.user_id` 已存在 | [database.py](../../../server/database.py) `_check_identity_schema` |
 
-Two facts make phase 1 cheap:
+第一阶段的改动较小，原因有两点：
 
-- **Visibility does not need to reach ES.** The search and Agent paths build the allowed Series list from MySQL before they build the ES scope. Visibility can therefore change, and be revoked, without reindexing.
-- **Revocation already works on the next read.** Media URLs are not bearer tokens, and history evidence goes through `require_series_access` every time it is read. Once those checks use the new rule, revoking a public Series cuts off later reads with no further mechanism.
+- **可见性不必写入 ES。** 检索和 Agent 会先从 MySQL 取得可访问的系列，再构造 ES 查询范围。因此修改或撤回公开状态都不需要重建索引。
+- **撤回后，下一次读取就会被拦截。** 媒体地址不是访问凭证，历史证据每次读取也都经过 `require_series_access`。这些检查换用新规则后，系列撤回即可阻止后续读取，不必再增加一套撤回机制。
 
-## 3. Phase 1 — personal public/private sharing (necessary)
+## 3. 第一阶段：个人系列公开／私有共享（必要）
 
 ### 3.1 Schema
 
-| Change | Detail |
+| 修改 | 说明 |
 |---|---|
-| `series.visibility` | `VARCHAR(16) NOT NULL DEFAULT 'private'`, `CHECK (visibility IN ('private','public'))`. Backfill: `'public'` where `is_published = 1`, then drop `is_published`. |
-| No `series.published_at` | Not added. Discovery uses existing `create_time` and `id` ordering. |
-| Index | `(visibility, create_time, id)` for the cross-tenant public listing. |
-| No `series.created_by` yet | While every non-platform tenant has exactly one owner, the creator can be derived exactly from `tenant.owner_id`. It must be added before any tenant gets a second member (§4). |
-| No membership table yet | Phase 1 membership is `tenant_id == identity.tenant_id` (local mode bypasses the check). |
+| `series.visibility` | `VARCHAR(16) NOT NULL DEFAULT 'private'`，并增加 `CHECK (visibility IN ('private','public'))`。先把 `is_published = 1` 的记录回填为 `'public'`，再删除 `is_published`。 |
+| 不增加 `series.published_at` | 公开列表继续按现有 `create_time` 和 `id` 排序。 |
+| 索引 | 为跨 Tenant 的公开列表增加 `(visibility, create_time, id)`。 |
+| 暂不增加 `series.created_by` | 每个非平台 Tenant 目前只有一个所有者，可以通过 `tenant.owner_id` 确定创建者。Tenant 增加第二名成员前必须补上这个字段（见第 4 节）。 |
+| 暂不增加成员表 | 第一阶段的成员判断是 `tenant_id == identity.tenant_id`，本地模式跳过检查。 |
 
-Why rename instead of reusing `is_published`: the meaning changes from "platform-curated listing, admin-only" to "owner-controlled, readable from other tenants". Every reader of the old flag has to be reviewed anyway, and a rename makes the type checker and tests find all of them. An enum also leaves room for a later `unlisted` (link-only) value without another rename.
+之所以改名而不复用 `is_published`，是因为字段含义已经从“仅管理员控制的平台精选发布”变成“所有者控制、其他 Tenant 也可读取”。原有读取方本来就需要逐一检查，改名还能让类型检查和测试找出遗漏。枚举也为以后增加 `unlisted`（仅持链接者可读）留出了空间，不必再次改名。
 
-### 3.2 Authorization rules
+### 3.2 授权规则
 
-Replace the tenant-first checks on Series-scoped resources with two functions in [access.py](../../../server/service/access.py):
+系列相关资源不再一律先按 Tenant 拒绝，而是在 [access.py](../../../server/service/access.py) 中使用下面两个函数：
 
 ```text
-is_member(identity, tenant_id)     # phase 1: local mode, or tenant_id == identity.tenant_id
-                                   # phase 2: active tenant_member row
+is_member(identity, tenant_id)     # 第一阶段：本地模式，或 tenant_id == identity.tenant_id
+                                   # 第二阶段：存在有效的 tenant_member 记录
 
 can_read_series(identity, series):
     local mode                                   -> allow
@@ -67,145 +69,145 @@ can_manage_series(identity, series):
     otherwise                                    -> 404
 ```
 
-- **Setting visibility** requires `can_manage_series`. Switching to `public` also requires `publication_ready(series, require_published=False)`, as today.
-- **Moderation takedown:** an admin can set *any* Series to `private`, so public user content can be removed. A non-member takedown accepts only the visibility field and returns `204` with no Series data; it does not grant read access to private content.
-- **Tenant-scoped resources stay member-only:** upload sessions, parse jobs and tasks, parse and model usage, and conversations keep `require_tenant_read`/`require_tenant_write`. A public Series opens only its own Series, Video, image, chunk and evidence reads. It never opens other Series, uploads, jobs, usage or conversations in the same tenant.
-- **Re-check order:** look up the Series by `(series_id, tenant_id)` first, check that the stored `tenant_id` matches, then apply `can_read_series`. Do not reject at the tenant gate before the lookup, which is what happens today.
+- **修改可见性**需要通过 `can_manage_series`。设为 `public` 时，还要像原来一样满足 `publication_ready(series, require_published=False)`。
+- **管理员下架：**管理员可以把任意系列改为 `private`，用于撤下用户公开的内容。管理员对非所属 Tenant 执行下架时，只能提交可见性字段；接口返回 `204`，不返回系列数据，也不因此获得私有内容的读取权限。
+- **Tenant 级资源仍仅成员可用：**上传会话、解析任务、解析与模型用量、对话继续使用 `require_tenant_read`／`require_tenant_write`。公开系列只开放自身的 Series、Video、图片、Chunk 和证据读取，不会同时开放同一 Tenant 下的其他系列、上传、任务、用量或对话。
+- **检查顺序：**先按 `(series_id, tenant_id)` 查出系列，确认保存的 `tenant_id` 一致，再执行 `can_read_series`。不能像原来一样，在查询系列之前就被 Tenant 权限挡住。
 
-Entry points to switch to `can_read_series`: `list_series`, `get_series`/`read_series`, `get_video_content` (playback and Range), `get_image_content`, `get_video_chunk`, search (`api/search.py`), Agent send (`_authorize_query_scope`), Agent history and evidence (`require_series_access`), and the SSE evidence projection.
+以下入口改用 `can_read_series`：`list_series`、`get_series`／`read_series`、`get_video_content`（播放及 Range）、`get_image_content`、`get_video_chunk`、检索（`api/search.py`）、Agent 发送消息（`_authorize_query_scope`）、Agent 历史与证据（`require_series_access`），以及 SSE 证据投影。
 
-### 3.3 What a public viewer sees
+### 3.3 公开访问者能看到什么
 
-Public viewers receive title, description, cover, ready videos, durations and playback/thumbnail views. Management fields (`latest_job_id`, `last_error`, `original_filename`, `total_bytes`, `important_extra_data`, transcript hints) are null; `pending_uploads` and `character_bible` are empty. Original filenames are also hidden in chunk/search/Agent history/SSE evidence responses. `variant=original` is member-only; public viewers use `playback`.
+公开访问者可以看到标题、简介、封面、已就绪视频、时长，以及播放和缩略图。管理字段（`latest_job_id`、`last_error`、`original_filename`、`total_bytes`、`important_extra_data`、转写提示）返回 null；`pending_uploads` 和 `character_bible` 返回空值。Chunk、检索、Agent 历史和 SSE 证据中也不能暴露原始文件名。`variant=original` 仅成员可用，公开访问者使用 `playback`。
 
-This is a response projection, not a separate confidential model context: parsing and Agent inference still use the Series background and character information, and known Series image URLs are readable when their Series is public. Those inputs may affect generated answers. Keeping selected background information confidential from public inference would require a separate model/tool input policy and is outside this backend batch.
+这里限制的是接口返回内容，不是另建一套供模型使用的保密上下文。解析和 Agent 推理仍会使用系列背景与人物信息；已知图片 URL 在所属系列公开后仍可读取，这些信息也可能影响生成答案。如果要在公开推理中隐藏部分背景，需要另行设计模型和工具的输入策略，不属于本批后端改动。
 
-### 3.4 Publisher (sharer) identity
+### 3.4 发布者（分享者）身份
 
-Return `publisher` on every Series summary and detail, derived from the owning tenant:
+每个系列摘要和详情都返回 `publisher`，由所属 Tenant 推导：
 
-| Tenant type | `publisher` |
+| Tenant 类型 | `publisher` |
 |---|---|
-| `personal` / `local` | `{kind: "user", display_name: owner.nickname, avatar: ImageAsset \| null}` |
-| `public` (platform) | `{kind: "platform", display_name: tenant.name, avatar: tenant avatar \| null}` |
-| `team` (phase 2) | `{kind: "team", display_name: tenant.name, avatar: …}`. A per-uploader byline is optional, from `created_by` |
+| `personal`／`local` | `{kind: "user", display_name: owner.nickname, avatar: ImageAsset \| null}` |
+| `public`（平台） | `{kind: "platform", display_name: tenant.name, avatar: tenant avatar \| null}` |
+| `team`（第二阶段） | `{kind: "team", display_name: tenant.name, avatar: …}`；如需显示上传者，可从 `created_by` 生成署名 |
 
-Contracts that must be fixed first:
+接入前还要明确两项合同：
 
-- **Privacy:** new accounts use a generated `用户-<short hash>` nickname. Public projection substitutes the same generated name for empty nicknames or legacy nicknames matching the owner's email/local part. Custom nicknames are preserved. No email is returned in `publisher`; no new User field is needed.
-- **Avatar format:** phase 1 returns `null` and the UI uses a placeholder. A future avatar upload must store an image ID in the existing image store and return an `ImageAsset`, rather than expose the existing free-form avatar field.
+- **隐私：**新账号使用生成的 `用户-<short hash>` 昵称。公开投影遇到空昵称，或与邮箱、邮箱前缀相同的旧昵称时，也替换为生成名；自定义昵称保留。`publisher` 不返回邮箱，也不需要给 User 增加字段。
+- **头像格式：**第一阶段返回 `null`，界面使用占位图。以后支持上传头像时，应在现有图片存储中保存图片 ID 并返回 `ImageAsset`，不能直接暴露现有自由文本头像字段。
 
-### 3.5 API changes
+### 3.5 API 修改
 
-| Endpoint | Change |
+| 接口 | 修改 |
 |---|---|
-| `POST /api/series/update` | `visibility` replaces `isPublished`. Owner-managed, plus an admin `private` takedown. Turning public is rejected unless the Series is ready. Member updates return Series detail; non-member admin takedowns return `204`. |
-| New `GET /api/series/public` | Cross-tenant discovery listing of public, ready Series with `publisher`, paginated. The cursor scope must not include the caller's tenant. |
-| `GET` series list / detail | Add `publisher` and `access: "member" \| "public"` so the UI knows when to hide edit, upload and job controls. `tenantId` stays as an addressing parameter that is checked against the stored value. |
-| Search / Agent send | `sourceTenantId` may name another user's tenant, but only with explicit `seriesIds`, each checked with `can_read_series`. An empty `seriesIds` means "all public Series" **only** for the platform public tenant, as today, which prevents enumerating another tenant. |
-| Media / image / chunk | Same URLs. Authorization goes through `can_read_series`, and `original` is member-only. |
+| `POST /api/series/update` | 用 `visibility` 替代 `isPublished`。所有者可管理自己的系列，管理员也可改为 `private` 下架。内容未就绪时不能公开。成员修改后返回系列详情；非成员管理员下架返回 `204`。 |
+| 新增 `GET /api/series/public` | 分页列出跨 Tenant 的公开且已就绪系列，并返回 `publisher`。游标范围不能包含调用者自己的 Tenant。 |
+| `GET` 系列列表／详情 | 增加 `publisher` 和 `access: "member" \| "public"`，前端据此隐藏编辑、上传和任务控件。`tenantId` 继续作为寻址参数，并核对它与保存值一致。 |
+| 检索／Agent 发送 | `sourceTenantId` 可以指向其他用户的 Tenant，但必须显式提供 `seriesIds`，并逐个通过 `can_read_series`。只有平台公共 Tenant 仍允许空 `seriesIds` 表示“全部公开系列”，避免借此枚举其他 Tenant。 |
+| 媒体／图片／Chunk | URL 不变；授权改用 `can_read_series`，`original` 仅成员可用。 |
 
-Agent turns reauthorize both the selected source and all historical sources reused as model input, including Series referenced through playback context. Checks run before model work, before JSON output, and before/after waiting for each SSE event. Revoking a historical source can therefore make a conversation unreadable/unusable until that source is accessible again; the user may start a new conversation with other sources.
+每轮 Agent 都要重新鉴权：既检查本轮选择的来源，也检查作为模型输入复用的全部历史来源，包括播放上下文引用的系列。检查发生在模型执行前、JSON 输出前，以及每个 SSE 事件等待前后。历史来源撤回后，原对话可能暂时无法读取或使用，直到该来源恢复可访问；用户也可以选择其他来源另开对话。
 
-Cross-publisher search in one query is **not** in phase 1 (see §5).
+第一阶段不支持在一次查询中跨发布者检索，见第 5 节。
 
-### 3.6 Migration (phase 1)
+### 3.6 第一阶段迁移
 
-- Migration: `docs/migrations/20261019_series_visibility.sql` adds `visibility`, backfills from `is_published`, adds its constraint/index and drops the old column. ORM, startup schema checks and backend DTO/VO are updated. Frontend contracts/consumers must be updated before switching a running deployment. The application does not run this migration automatically.
-- No ES migration and no reindex. No change to tenant IDs or Series ID derivation.
-- Local mode: no behavior change (local bypasses checks, and `visibility` is stored but has no effect). The local and phone cloud instances keep separate processes and data namespaces. Publishing from a local instance to the cloud is out of scope.
+- 迁移脚本 `docs/migrations/20261019_series_visibility.sql` 增加 `visibility`，从 `is_published` 回填，增加约束和索引，再删除旧列。ORM、启动时的 Schema 检查、后端 DTO／VO 同步修改。切换运行中的部署前，还要先更新前端合同和调用方。应用不会自动执行该迁移。
+- 不需要迁移或重建 ES，也不修改 Tenant ID 和系列 ID 的生成方式。
+- 本地模式行为不变：跳过权限检查，`visibility` 只保存、不生效。本地实例与手机云端实例继续使用独立进程和数据命名空间。本轮不支持从本地实例发布到云端。
 
-### 3.7 First release: whole-Series readiness
+### 3.7 首版公开条件：整个系列都已就绪
 
-`publication_ready` is all-or-nothing. With user uploads, adding episode 5 to a public Series hides episodes 1–4 until it is processed. Options:
+`publication_ready` 要求整个系列全部就绪。用户向已公开系列添加第 5 集后，前 4 集也会暂时对外隐藏，直到新集处理完成。可以选择：
 
-1. Keep all-or-nothing (current behavior, simplest; document the UX).
-2. Make the Series visible when at least one video is ready, and give public viewers and retrieval scopes only the ready videos. ES already scopes by `(video_id, parse_task_id)` pairs, so this is feasible without index changes.
+1. 保持整系列就绪（当前行为，最简单，但需要说明这种使用体验）。
+2. 至少一集就绪就公开系列，公开访问和检索只覆盖已就绪视频。ES 已按 `(video_id, parse_task_id)` 限定范围，因此不必修改索引。
 
-Phase 1 keeps option 1. Option 2 remains a future enhancement; it is not required for correctness.
+第一阶段选择方案 1。方案 2 留作后续改进，不影响当前权限规则的正确性。
 
-### 3.8 Acceptance matrix
+### 3.8 验收矩阵
 
-Run each endpoint in §3.2 for each viewer (guest, other user, owner, admin) against each Series state (private; public + ready; public + not ready; public then revoked; publisher disabled). Also cover:
+对第 3.2 节列出的每个入口，分别组合访问者（游客、其他用户、所有者、管理员）和系列状态（私有；公开且就绪；公开但未就绪；公开后撤回；发布者被禁用）逐项验证，还要覆盖：
 
-- Range requests after revocation.
-- Agent history evidence re-read after revocation.
-- SSE evidence projection.
-- Tenant-scoped endpoints (uploads, jobs, usage, conversations) stay 404 for non-members of a tenant that has a public Series.
-- Two users of the same public Series keep separate conversations.
+- 撤回后的 Range 请求。
+- 撤回后重新读取 Agent 历史证据。
+- SSE 证据投影。
+- 某 Tenant 有公开系列时，非成员访问其上传、任务、用量和对话仍返回 404。
+- 两个用户使用同一个公开系列时，各自对话保持独立。
 
-### 3.9 Frontend implementation
+### 3.9 前端实现
 
-- Series cards, details and the selected library Series expose a vertical ellipsis visibility menu only when the server returns `access: "member"`. Updates address the Series's own tenant and invalidate list/detail caches after success. Other users have no editing menu; server authorization remains authoritative.
-- Public data discovery uses `/api/series/public`. Public cards/details show the publisher with an initials fallback until managed avatar uploads exist.
-- Series and playback links carry the resource's `tenantId`; detail cache keys include it. The active account and connection are unchanged when viewing another publisher.
-- Chat keeps conversation/attachment ownership in the viewer's active scope and sends a separate `sourceTenantId` for retrieval. Each query selects Series from one publisher. Playback chat stays within its video's source, and historical clip follow-up selects the referenced Series rather than the default publisher.
-- This release adds no moderation dashboard. Platform administrators retain the backend's restricted takedown operation; the owner menu does not grant them arbitrary private-content editing.
-- Local visibility controls persist the flag for testing. They do not upload or synchronize local files into a separate cloud instance.
+- 只有服务端返回 `access: "member"` 时，系列卡片、详情和资料库当前系列才显示竖向省略号可见性菜单。修改请求使用该系列自己的 Tenant，成功后使列表和详情缓存失效。其他用户看不到编辑菜单，但最终权限仍由服务端决定。
+- 公开内容通过 `/api/series/public` 发现。卡片和详情显示发布者；受管头像上传实现前，用姓名首字符作为占位。
+- 系列和播放链接携带资源的 `tenantId`，详情缓存键也包含它。查看其他发布者时，不切换当前账号和连接。
+- Chat 的对话和附件仍属于访问者当前范围，检索则单独发送 `sourceTenantId`。每次查询只选择一个发布者的系列。播放中的对话继续使用当前视频来源；追问历史片段时选择被引用的系列，而不是默认发布者。
+- 本版不增加内容管理后台。平台管理员保留后端受限下架能力；所有者菜单不能让管理员任意编辑他人的私有内容。
+- 本地可见性控件只保存标志用于测试，不会把本地文件上传或同步到另一个云端实例。
 
-## 4. Phase 2 — team scope (optional until confirmed)
+## 4. 第二阶段：团队范围（确认前均为提案）
 
-### 4.1 Model
+### 4.1 模型
 
-| Change | Detail |
+| 修改 | 说明 |
 |---|---|
-| `tenant.type` | Add `'team'`. A team tenant requires `owner_id` (creator/billing owner) and gets its own `name` and `avatar`. |
-| `tenant_member` | `id, tenant_id, user_id, role, status, invited_by, create_time, update_time`; `UNIQUE(tenant_id, user_id)`; `role ∈ {owner, admin, member}`; `status ∈ {invited, active, removed}`. |
-| Backfill | One `owner/active` row per existing `local` and `personal` tenant, so membership is the only read path. `owner_id` stays for constraints and accounting. |
-| `series.created_by` | `VARCHAR(ID_LENGTH) NULL` FK to `user`. Backfill exactly from `tenant.owner_id` for personal and local tenants, `NULL` for the platform tenant. It must exist before any tenant gets a second member. |
+| `tenant.type` | 增加 `'team'`。团队 Tenant 必须有 `owner_id`（创建及计费负责人），并有独立的 `name` 和 `avatar`。 |
+| `tenant_member` | 字段为 `id, tenant_id, user_id, role, status, invited_by, create_time, update_time`；增加 `UNIQUE(tenant_id, user_id)`；`role ∈ {owner, admin, member}`；`status ∈ {invited, active, removed}`。 |
+| 回填 | 为现有每个 `local` 和 `personal` Tenant 写入一条 `owner/active` 成员记录，此后统一从成员关系判断权限。`owner_id` 继续用于约束和账务归属。 |
+| `series.created_by` | `VARCHAR(ID_LENGTH) NULL`，外键指向 `user`。个人和本地 Tenant 按 `tenant.owner_id` 精确回填，平台 Tenant 填 `NULL`。Tenant 增加第二名成员前必须有此字段。 |
 
-Unlike RAGFlow, a personal tenant is never joined by others. Teams are separate tenants. This avoids RAGFlow's dependence on `tenant.id == user.id` and its `me` visibility. "Private" stays tenant-scoped, and the creator is a separate column.
+与 RAGFlow 不同，其他用户不能加入个人 Tenant，团队使用独立 Tenant。这样不依赖 RAGFlow 的 `tenant.id == user.id` 和 `me` 可见性。`private` 始终表示 Tenant 内可见，创建者另存独立字段。
 
-### 4.2 Authorization
+### 4.2 授权
 
-- `is_member` becomes an active-membership lookup that runs **on every request** (or is cached with explicit invalidation). Do not put it in the token, so removal takes effect on the next request.
-- `AuthIdentity.tenant_id` becomes the *current / home* tenant used for defaults. It is not the authorization set.
-- Proposed role matrix (to confirm):
+- `is_member` 改为查询有效成员关系，**每次请求都检查**；如果使用缓存，必须明确失效机制。成员关系不写入令牌，确保移除成员后下一次请求即生效。
+- `AuthIdentity.tenant_id` 仅表示当前／默认 Tenant，用于填充默认值，不再代表全部授权范围。
+- 角色权限矩阵仍待确认：
 
-| Action | member | admin | owner |
+| 操作 | member | admin | owner |
 |---|---|---|---|
-| Read all team Series | ✓ | ✓ | ✓ |
-| Create Series, upload, start parse | ✓ | ✓ | ✓ |
-| Edit metadata / episode order | own (`created_by`) | all | all |
-| Delete Series | own | all | all |
-| Set visibility `public` | — | ✓ | ✓ |
-| Invite / remove members, change roles | — | ✓ (not owners) | ✓ |
-| Delete team / transfer ownership | — | — | ✓ |
+| 读取团队全部系列 | ✓ | ✓ | ✓ |
+| 创建系列、上传、启动解析 | ✓ | ✓ | ✓ |
+| 编辑元数据／集数顺序 | 自己创建的（`created_by`） | 全部 | 全部 |
+| 删除系列 | 自己创建的 | 全部 | 全部 |
+| 设为 `public` | — | ✓ | ✓ |
+| 邀请／移除成员、修改角色 | — | ✓（不能操作 owner） | ✓ |
+| 删除团队／转移所有权 | — | — | ✓ |
 
-- Personal records stay personal inside a team: conversations stay filtered by `owner_id`. Whether admins can see team usage (`model_usage`, parse usage) is a separate decision. The safe default is per-user only.
-- Global admin (`is_superuser`), tenant role, resource creator and resource visibility stay four separate checks, and none implies another.
+- 团队中的个人记录仍归个人：对话继续按 `owner_id` 隔离。管理员能否查看团队用量（`model_usage`、解析用量）需要单独决定，默认仅本人可见更稳妥。
+- 全局管理员（`is_superuser`）、Tenant 角色、资源创建者和资源可见性是四项独立判断，任何一项都不能替代另一项。
 
 ### 4.3 API
 
-- Team CRUD, invitations (email based, accept/decline, expiry), leave and remove (the last owner cannot leave), role changes.
-- `GET /api/me/tenants` and a tenant switcher. The frontend cancels old requests and SSE when switching, as required by the user/tenant TRD §7.
+- 团队增删改查、邮件邀请（接受／拒绝／过期）、退出和移除成员（最后一名 owner 不能退出）、角色修改。
+- 提供 `GET /api/me/tenants` 和 Tenant 切换入口。切换时，前端按用户租户 TRD 第 7 节取消旧请求和 SSE。
 
-### 4.4 Sharing a personal Series with a team
+### 4.4 与团队共享个人系列
 
-Phase 2 recommends **create in team** only. Moving an existing Series between tenants has to rewrite `tenant_id` in MySQL, in ES documents and in tenant-carrying child tables. The moved Series also no longer matches `derive_series_id(new_tenant, name)`, so a later file import by name without an explicit `series_id` would create a duplicate. A move feature must therefore always import by explicit ID. A grant table (share one Series with another tenant) is a further option and is not needed.
+第二阶段建议**直接在团队中创建**系列。把已有系列移到另一个 Tenant，需要同时修改 MySQL、ES 文档和携带 Tenant 的子表中的 `tenant_id`。移动后，系列也不再符合 `derive_series_id(new_tenant, name)`；以后按名称导入且未显式提供 `series_id` 时，会生成重复系列。因此，如果支持移动，后续导入必须始终使用显式 ID。也可以另设授权表，把一个系列共享给另一个 Tenant，但当前没有必要。
 
-### 4.5 Migration (phase 2)
+### 4.5 第二阶段迁移
 
-SQL: widen the `ck_tenant_type` CHECK, create `tenant_member`, backfill owner rows, add and backfill `series.created_by`. No ES change: retrieval scope stays per tenant and per Series.
+SQL 需要放宽 `ck_tenant_type` CHECK，创建 `tenant_member`，回填 owner 成员记录，再增加并回填 `series.created_by`。无需修改 ES，检索仍按 Tenant 和系列限定范围。
 
-## 5. Cross-publisher search (separate decision)
+## 5. 跨发布者检索（单独决策）
 
-ES `_scope_query`, `_TrustedScope` and Agent `sourceTenantId` each assume one tenant. To search "all public Series" across publishers in one query, change the trusted scope to a set of `(tenant_id, series_id)` pairs: use `terms` on `tenant_id`, keep the per-video `(video_id, parse_task_id)` allow-list, and validate each hit against its own pair. Persist `sourceTenantIds` (or per-Series tenant) in Agent message detail instead of a single `sourceTenantId`. Until then, the platform public tenant stays the default "search everything" pool, and user-published Series are searched one publisher at a time.
+ES `_scope_query`、`_TrustedScope` 和 Agent `sourceTenantId` 目前都假设只有一个 Tenant。要在一次查询中搜索“所有公开系列”，可信范围需要改为一组 `(tenant_id, series_id)`：`tenant_id` 使用 `terms`，保留每个视频的 `(video_id, parse_task_id)` 白名单，并按每条命中自己的 Tenant／Series 组合复核。Agent 消息详情也要保存 `sourceTenantIds`（或每个系列各自的 Tenant），不能只保存一个 `sourceTenantId`。在此之前，平台公共 Tenant 仍是默认的“搜索全部”范围，用户发布的系列则每次只检索一个发布者。
 
-## 6. Rejected options
+## 6. 不采用的方案
 
-| Option | Reason |
+| 方案 | 不采用的原因 |
 |---|---|
-| Shared default-all tenant | Removes the basis for content permissions and changes every derived Series ID. It would need a new ownership column on every tenant-carrying table. |
-| Toggle `is_published` for users without changing the read path | Other tenants would still be rejected by `require_tenant_read`, and the public listing only queries the platform tenant. |
-| Moving user Series into the platform public tenant to "publish" | Loses ownership, changes the derived ID, and lets the platform admin edit user content. |
-| Copying RAGFlow `me`/`team` | Gives no anonymous public access, and `me` depends on `tenant.id == user.id`. |
-| Per-Series `team` visibility in phase 1 | There are no team tenants yet. In this model, tenant-private already means team-visible. |
+| 所有人共享的默认 Tenant | 失去内容权限的归属基础，还会改变所有派生的系列 ID；每张携带 Tenant 的表也都需要另加所有者字段。 |
+| 只让普通用户切换 `is_published`，不修改读取链路 | 其他 Tenant 仍会被 `require_tenant_read` 拒绝，公开列表也只查询平台 Tenant。 |
+| 发布时把用户系列移到平台公共 Tenant | 会丢失原归属、改变派生 ID，还会让平台管理员获得用户内容的编辑权。 |
+| 照搬 RAGFlow 的 `me`／`team` | 不支持匿名公开访问，`me` 还依赖 `tenant.id == user.id`。 |
+| 第一阶段为每个系列增加 `team` 可见性 | 当前还没有团队 Tenant；在这套模型中，Tenant 私有本来就包含团队内可见。 |
 
-## 7. Order of work
+## 7. 实施顺序
 
-1. Phase 1 schema and migration, `can_read_series` / `can_manage_series`, switching every entry point in §3.2, public projection, admin takedown.
-2. Publisher contract (nickname confirmation, avatar image ID) and `GET /api/series/public`.
-3. Frontend: visibility control, publisher byline, `access`-based UI, discovery list.
-4. Readiness granularity (§3.7), if chosen.
-5. Phase 2 team model only after the role matrix is confirmed. Cross-publisher search (§5) is independent of phase 2.
+1. 第一阶段 Schema 与迁移、`can_read_series`／`can_manage_series`、第 3.2 节全部入口、公开字段投影和管理员下架。
+2. 发布者合同（确认昵称规则、头像图片 ID）和 `GET /api/series/public`。
+3. 前端可见性控件、发布者署名、按 `access` 控制界面和公开发现列表。
+4. 如决定采用，再调整第 3.7 节的就绪粒度。
+5. 角色矩阵确认后再实施第二阶段团队模型。跨发布者检索（第 5 节）可独立推进，不依赖第二阶段。

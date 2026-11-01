@@ -158,11 +158,11 @@
 
 ### 1. 问题与现状
 
-正式 ASR 按 Chunk 调用；用户希望先转写全片，原 ASR 节点仅取对应区间，避免把这项改造扩大成 TimelineEvent 重构。跨界语音可能受固定切分影响，但准确率改善尚未实测。prod/release 时长展示已由前置提交 `c84a2169` 开放。
+正式 ASR 逐 Chunk 调用，同一视频的相邻片段会重复等待转写，固定切分还可能截断跨界语音。需要改为先转写全片，原 ASR 节点只读取对应区间；改造不涉及 TimelineEvent 重构。整片转写能否改善识别准确率尚未实测。普通展示模式的时长已由前置提交 `c84a2169` 开放。
 
 ### 2. 方案候选
 
-采用用户提出的进程内视频级转写缓存，按任务和协调器租约隔离；新增 WhisperX 默认配置选择 video scope，历史任务仍为 chunk。缓存准备成功后发布媒体，Chunk 深复制所有相交 cues，保留原句及绝对毫秒。没有新增持久 checkpoint 或事件身份；重启需要重新转写。将前移的 ASR 纳入已有租约计时和执行区间并集，避免展示漏计。
+采用进程内视频级转写缓存，按任务和协调器租约隔离；新建 WhisperX 任务默认使用 video scope，历史任务仍使用 chunk。缓存准备成功后再发布媒体，Chunk 深复制所有相交 cues，保留原句和绝对毫秒。不新增持久 checkpoint 或事件身份，重启后仍需重新转写。将前移的 ASR 纳入已有租约计时和执行区间并集，避免时长统计漏掉这段工作。
 
 ### 3. 方案验证
 
@@ -201,7 +201,7 @@
 
 ### 问题与现状
 
-用户希望确认当前 Kimi Code API 是否支持一次 10 路并发。官方介绍有最多 30 路的说明，但账号共享额度、滚动频控与实际请求负载可能影响结果；配置中的 `codex_local.max_concurrency=10` 又容易与 Kimi 混淆。关联 [B21](problems.md#b21kimi-code-api-10-路并发能力未验证)，本次目标是验证账号的 API 并发接受能力，不直接提高解析槽位。
+当前需要确认当前 Kimi Code API 是否支持一次 10 路并发。官方介绍有最多 30 路的说明，但账号共享额度、滚动频控与实际请求负载可能影响结果；配置中的 `codex_local.max_concurrency=10` 又容易与 Kimi 混淆。关联 [B21](problems.md#b21kimi-code-api-10-路并发能力未验证)，本次目标是验证账号的 API 并发接受能力，不直接提高解析槽位。
 
 ### 方案候选
 
@@ -223,7 +223,7 @@
 
 ### 1. 问题与现状
 
-服务端已有实际执行区间的有效总时长，任务页却仅在 debug 模式展示，prod/release 用户无法查看。该数值排除排队和停机，不等于创建任务至完成的实际耗时时间。
+服务端已经记录实际执行区间的有效总时长，任务页却只在 debug 模式展示，普通用户无法查看。这个数值排除了排队和停机时间，不等于从创建任务到任务完成的实际耗时。
 
 ### 2. 方案候选
 
@@ -286,7 +286,7 @@ hypnos 要求仅提交、推送已完成的本机部署与持久化目录、MCP 
 
 ### 问题与现状
 
-用户希望以可选本地 WhisperX 解决 ASR API 成本及字幕对齐。核对 dev：本机实验直连 whisper.cpp；正式 Gateway 只有 Ark/openai_audio。开发配置文件名 `local-kimi.yaml` 未反映多供应商、多角色范围。
+云端 ASR 调用有费用，原有句段时间也不足以按字词生成字幕。需要正式接入可选的本地 WhisperX，在降低 API 依赖的同时保留字词时间。核对 dev 后确认：本机实验直连 whisper.cpp，正式 Gateway 只有 Ark／openai_audio；开发配置文件名 `local-kimi.yaml` 也无法体现它同时管理多个供应商和模型角色。
 
 ### 方案候选
 
@@ -319,10 +319,7 @@ uv run --no-sync --with numpy==2.2.6 python -m pytest tests/server/test_config.p
 
 ### 问题与现状
 
-用户希望直接使用 llama.cpp，缩短从本地 embedding 到课程解析验证的准备时间。
-上一轮已经跑通 Ollama 文本向量，但没有原生 llama.cpp embedding 适配器。过程中用户
-进一步收窄分工：本项只负责 local embedding 和 Ollama → llama.cpp，Whisper/音轨
-对齐由另一项工作完成，不做全量解析。相关状态为 [B19](problems.md#b19课程本地文本向量与可关闭的视觉索引)。
+上一轮已经跑通 Ollama 文本向量，但还缺少原生 llama.cpp embedding 适配器，本地模型接入到课程解析验证之间仍多一层服务依赖。需要直接连接 llama.cpp，缩短验证准备时间。本项只负责本地 embedding 和 Ollama → llama.cpp，Whisper／音轨对齐由另一项工作完成，不做全量解析。相关状态为 [B19](problems.md#b19课程本地文本向量与可关闭的视觉索引)。
 
 ### 方案候选
 
@@ -784,7 +781,7 @@ Summary Agent / Service / Persistence 75 passed，前端 App/format 65 passed，
 
 ### 问题与现状
 
-关联 B07。首轮 XML 对完整 JSON 不能隔离字段压缩与格式影响，且名单/身份、跨人合并及分类均有问题。用户希望取消 participants、visible_persons，增加镜头专用 enum，再测整体耗时。沿用 [主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md) 六阶段，不新建竞争设计；[第二轮报告](../report/agent/video_parse_v2/parse-compact-shot-20261029.md) 保存八次结果与质量边界。
+关联 B07。首轮 XML 对完整 JSON 不能隔离字段压缩与格式影响，且名单/身份、跨人合并及分类均有问题。当前需要取消 participants、visible_persons，增加镜头专用 enum，再测整体耗时。沿用 [主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md) 六阶段，不新建竞争设计；[第二轮报告](../report/agent/video_parse_v2/parse-compact-shot-20261029.md) 保存八次结果与质量边界。
 
 ### 方案候选
 
@@ -2571,7 +2568,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 1. 问题与现状
 
-用户希望上传表情包找出处，原Chat只有文字和历史视频引用；附件存储、消息恢复、模型看图与视觉索引查询是不同环节。后端能上传图片不等于Agent已读取或能找到正确片段。
+当前需要上传表情包找出处，原Chat只有文字和历史视频引用；附件存储、消息恢复、模型看图与视觉索引查询是不同环节。后端能上传图片不等于Agent已读取或能找到正确片段。
 
 ### 2. 方案候选
 
