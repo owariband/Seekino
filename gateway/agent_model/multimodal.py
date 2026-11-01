@@ -16,12 +16,13 @@ from langchain_core.tools import BaseTool
 from openai import APIError
 from pydantic import BaseModel
 
-from gateway.ark.sse import request_sse_response
+from gateway.streaming.responses import request_response
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
 from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.media import encode_media_file
 from gateway.multimodal import ImageInput, MultimodalInput, TextInput, VideoInput
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.streaming.chat import request_chat_completion
 from gateway.usage import ModelCallControlError, model_call_context, track_model_call
 
 from .context import ContextCheckpoint, ContextWindowOverflow, ContextWindowPolicy, preflight_context
@@ -315,6 +316,7 @@ def _request_turn(
         "model": endpoint.model, "input": _response_input(messages, endpoint),
         "tools": [{"type": "function", **spec["function"]} for spec in specs],
         "tool_choice": choice, "timeout": timeout,
+        "temperature": adapter.temperature,
     }
     if enforce_final_schema:
         schema = result_type.model_json_schema()
@@ -331,11 +333,9 @@ def _request_turn(
         request["thinking"] = {"type": "disabled"}
     elif adapter.reasoning_effort is not None:
         request["reasoning"] = {"effort": adapter.reasoning_effort}
-    if endpoint.provider == DEEPSEEK_PROVIDER:
-        request["temperature"] = 0
     with model_call_context({"agent_round": round_no}), track_model_call(
         provider=endpoint.provider, model=endpoint.model, operation=schema_name,
-    ) as call, capture_model_diagnostics(call, {**request, "stream": endpoint.provider == ARK_PROVIDER}):
+    ) as call, capture_model_diagnostics(call, {**request, "stream": adapter._stream}):
         close = getattr(endpoint.client, "close", None)
         unregister = call.add_cancel_callback(close) if callable(close) else lambda: None
         try:
@@ -344,15 +344,10 @@ def _request_turn(
                 check_control()
             _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
-                if endpoint.provider == ARK_PROVIDER:
-                    response, text = request_sse_response(
-                        endpoint.client.responses, usage_call=call,
-                        check_control=check_control, **request,
-                    )
-                else:
-                    response = endpoint.client.responses.create(**request)
-                    call.capture_response(response)
-                    text = _response_text(response)
+                response, text = request_response(
+                    endpoint.client.responses, stream=adapter._stream, usage_call=call,
+                    check_control=check_control, **request,
+                )
                 record_model_event("response", response)
             except Exception as error:
                 call.capture_response(error, include_usage=False)
@@ -430,9 +425,12 @@ def _request_chat_turn(
     request = {
         "model": endpoint.model, "messages": _chat_input(messages, endpoint),
         "tools": specs, "tool_choice": choice,
-        "stream": False, "timeout": min(remaining, adapter._request_timeout_seconds),
+        "stream": adapter._stream, "timeout": min(remaining, adapter._request_timeout_seconds),
+        "temperature": adapter.temperature,
         adapter._token_parameter: adapter.max_output_tokens,
     }
+    if adapter._stream:
+        request["stream_options"] = {"include_usage": True}
     if enforce_final_schema:
         request["response_format"] = ({"type": "json_schema", "json_schema": {
             "name": schema_name, "strict": True, "schema": result_type.model_json_schema(),
@@ -447,9 +445,13 @@ def _request_chat_turn(
                 check_control()
             _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
-                response = endpoint.client.chat.completions.create(**request)
+                response = request_chat_completion(
+                    endpoint.client.chat.completions, usage_call=call,
+                    check_control=check_control, **request,
+                )
             except APIError as error:
                 call.capture_response(error)
+                call.raise_if_cancelled()
                 if getattr(error, "code", None) == "content_filter":
                     raise ContentFilterError("Vision output rejected", code="content_filter") from error
                 raise QueryModelIncompleteError(
@@ -571,12 +573,3 @@ def _plain(value: Any) -> Any:
     if isinstance(value, SimpleNamespace):
         return _plain(vars(value))
     return value
-
-
-def _response_text(response: Any) -> str:
-    text = _field(response, "output_text")
-    if isinstance(text, str):
-        return text
-    return "".join(_field(content, "text", "") for item in _field(response, "output", []) or []
-                   if _field(item, "type") == "message" for content in _field(item, "content", []) or []
-                   if _field(content, "type") == "output_text")

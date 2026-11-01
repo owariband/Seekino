@@ -1,3 +1,4 @@
+# Complete-response contract cases explicitly select stream=False; see test_model_streaming.py for default SSE integration.
 from __future__ import annotations
 
 import json
@@ -498,7 +499,7 @@ def test_supervisor_total_timeout_switch_preserves_finite_http_budget(monkeypatc
         _completion(content="Answer after a slow tool"),
     ])
     adapter = OpenAIAgentModel(
-        "model", base_url="https://unused.invalid", api_key="test", max_output_tokens=100,
+        "model", stream=False, base_url="https://unused.invalid", api_key="test", max_output_tokens=100,
         request_timeout_seconds=2, client=client,
     )
     model = DeepAgentsSupervisorModel(
@@ -525,7 +526,7 @@ def test_supervisor_total_timeout_switch_preserves_finite_http_budget(monkeypatc
 def test_api_adapter_retains_profile_tokens_usage_and_never_calls_old_loop(monkeypatch):
     client = FakeClient([_completion()])
     adapter = OpenAIAgentModel(
-        "deepseek-model", base_url="https://unused.invalid", api_key="test", max_output_tokens=1234,
+        "deepseek-model", stream=False, base_url="https://unused.invalid", api_key="test", max_output_tokens=1234,
         request_timeout_seconds=17, provider_name="deepseek", profile="deepseek", reasoning_effort="high", client=client,
     )
     monkeypatch.setattr(adapter, "run_agent_loop", lambda *_args, **_kwargs: pytest.fail("old loop called"))
@@ -558,7 +559,7 @@ def test_invalid_provider_tool_arguments_return_receipt_and_allow_sdk_correction
         _completion(content="Corrected answer"),
     ])
     adapter = OpenAIAgentModel(
-        "model", base_url="https://unused.invalid", api_key="test",
+        "model", stream=False, base_url="https://unused.invalid", api_key="test",
         max_output_tokens=100, request_timeout_seconds=20, client=client,
     )
     calls = []
@@ -580,10 +581,10 @@ def test_api_fallback_preserves_ark_controls_and_is_sticky_for_turn(monkeypatch,
         _completion(content="", calls=[("search-1", "search", {"query": "q"})], finish="tool_calls"),
         _completion(content="Fallback answer"),
     ])
-    ark = ArkFunctionCallingFallback("fallback-model", max_output_tokens=77, request_timeout_seconds=9,
+    ark = ArkFunctionCallingFallback("fallback-model", stream=False, max_output_tokens=77, request_timeout_seconds=9,
                                      client=fallback, supports_vision_input=fallback_vision)
     adapter = OpenAIAgentModel(
-        "primary-model", base_url="https://unused.invalid", api_key="test", max_output_tokens=88,
+        "primary-model", stream=False, base_url="https://unused.invalid", api_key="test", max_output_tokens=88,
         request_timeout_seconds=20, client=primary, fallback_adapter=ark,
         supports_vision_input=True,
     )
@@ -617,7 +618,7 @@ def test_api_fallback_preserves_ark_controls_and_is_sticky_for_turn(monkeypatch,
 def test_ark_source_uses_existing_single_request_and_same_source_fallback():
     client = FakeClient([_completion(finish="length"), _completion(content="Ark answer")])
     adapter = ArkFunctionCallingModel(
-        "primary", fallback_model="fallback", max_output_tokens=90, request_timeout_seconds=20,
+        "primary", stream=False, fallback_model="fallback", max_output_tokens=90, request_timeout_seconds=20,
         fallback_max_output_tokens=55, fallback_request_timeout_seconds=8, client=client,
     )
     model = DeepAgentsSupervisorModel(

@@ -3153,7 +3153,9 @@ def test_canvas_input_rejects_invalid_persisted_scope_before_deriving_bounds(mon
 
 @pytest.mark.parametrize("max_output_tokens", [None, 65_536, 131_072])
 @pytest.mark.parametrize("enforce_model_call_limit", [False, True])
-def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatch, max_output_tokens, enforce_model_call_limit):
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("temperature", [0, 0.8])
+def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatch, max_output_tokens, enforce_model_call_limit, stream, temperature):
     captured = {}
 
     class Model:
@@ -3169,7 +3171,8 @@ def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatc
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._gateway_config = load_config()
     runtime._gateway = GatewayClient(runtime._gateway_config)
-    binding = GenerativeModelConfig(source="ark_default", model="model", request_timeout_seconds=60,
+    binding = GenerativeModelConfig(source="ark_default", model="model", request_timeout_seconds=60, stream=stream,
+                                    temperature=temperature,
                                     max_output_tokens=max_output_tokens, reasoning_effort="none",
                                     context_window_tokens=262144 if max_output_tokens == 131072 else 128000)
     expected = runtime._gateway_config.resolve_model_binding(
@@ -3184,6 +3187,8 @@ def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatc
                                        enforce_model_call_limit=enforce_model_call_limit)
     assert result.complete
     assert captured["constructed"]["max_output_tokens"] == expected.max_output_tokens
+    assert captured["constructed"]["stream"] is stream
+    assert captured["constructed"]["temperature"] == temperature
     assert captured["constructed"]["reasoning_effort"] == "none"
     policy = captured["generated"]["context_window_policy"]
     assert policy.output_reserve_tokens == expected.max_output_tokens

@@ -22,7 +22,7 @@ class RetrievalSlot(BaseModel):
 @pytest.fixture
 def config(monkeypatch):
     monkeypatch.setenv("TEST_JEV_KEY", "private-test-key")
-    return QueryHookConfig(router_api_key_env="TEST_JEV_KEY")
+    return QueryHookConfig(router_api_key_env="TEST_JEV_KEY", rewriter_stream=False)
 
 
 def _decision(choice="retrieve"):
@@ -200,9 +200,10 @@ def test_requests_clamp_timeout_and_disable_environment_proxies(config, monkeypa
     client_type = httpx.Client
     options = []
 
-    def client(**kwargs):
-        options.append(kwargs)
-        return client_type(**kwargs)
+    class client(client_type):
+        def __init__(self, **kwargs):
+            options.append(kwargs)
+            super().__init__(**kwargs)
 
     monkeypatch.setattr("gateway.query_hook.httpx.Client", client)
     models = QueryHookModels(config, transport=httpx.MockTransport(

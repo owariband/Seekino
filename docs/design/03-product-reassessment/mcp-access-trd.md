@@ -4,9 +4,9 @@
 
 用户需要在 2026-10-30 早上前演示 Codex 实际调用 Seekino 取得视频证据，并在外部 Agent 的工作区完成创作。改造前 Event 检索服务已有词法、语义和视觉通道及 MySQL 回源验证，但只注入内部 Agent；HTTP `/api/search` 使用 Chunk 检索，尚无外部 MCP 工具入口。本轮新增入口的实现与验证范围见第 4、6 节。
 
-本次产品边界：Seekino 提供素材库发现、Event 召回、证据续读与媒体取用；Codex 负责创作规划、文件、执行、修错及作品。Cloud 继续保留 Chat，微型 HTML 作品能力另行实施。历史 FFmpeg 探针不作为当前 MCP 或 Sandbox 的验收证据。
+分工上，Seekino 负责素材库浏览、Event 召回、证据续读和媒体取用；Codex 负责创作规划、文件操作、执行、排错和最终作品。Cloud 继续保留 Chat，微型 HTML 作品能力另行实现。历史 FFmpeg 探针不能作为当前 MCP 或 Sandbox 的验收证据。
 
-当前 Cloud 身份基于 Cookie/CSRF，尚无外部 PAT/OAuth 接入。本版只允许本机直连且 auth mode 为 local；不提前开放 Cloud。来源：[检索服务](../../../server/service/video_event_retrieval.py)、[HTTP 检索](../../../server/api/search.py)、[身份入口](../../../server/api/context.py)。
+当前 Cloud 使用 Cookie／CSRF 鉴权，尚未接入外部 PAT／OAuth。本版只允许在 `local` 认证模式下从本机直连，不提前开放 Cloud。来源：[检索服务](../../../server/service/video_event_retrieval.py)、[HTTP 检索](../../../server/api/search.py)、[身份入口](../../../server/api/context.py)。
 
 # 2. 影响因素、假设与评价指标
 
