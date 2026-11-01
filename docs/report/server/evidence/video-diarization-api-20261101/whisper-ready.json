@@ -1,0 +1,14 @@
+{
+  "launcher_pid": 12654,
+  "server_pid": 12655,
+  "port": 18842,
+  "health": {
+    "status": "ok"
+  },
+  "actual_backend": "Metal",
+  "require_metal": true,
+  "model": "large-v3-turbo-q5_0",
+  "weights_and_binary_match_previous_sha256": true,
+  "new_transcription_requested": false,
+  "runtime_file": "/Users/hypnos/workspace/agent/Seekino/outputs/local-services/whisper/runtime.json"
+}

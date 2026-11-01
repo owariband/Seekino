@@ -1,0 +1,48 @@
+{
+  "before": {
+    "latest_task_id": "c3970da1-53b7-4cf5-9bb2-15bfa01e9947",
+    "paused": true,
+    "asr_calls": 3,
+    "active_leases": {
+      "video_parse_task": 0,
+      "chunk_parse_task": 0,
+      "interval_parse_task": 0
+    },
+    "source_versions": {
+      "135931b4-2134-43e8-ab10-50cc3471d9dc": 2,
+      "0f71db1d-674c-455e-a119-fc215d2afa46": 1,
+      "867f6ad9-d425-4383-a40e-189a5965935e": 1
+    }
+  },
+  "after": {
+    "at": 1793514343.558574,
+    "latest_task_id": "c3970da1-53b7-4cf5-9bb2-15bfa01e9947",
+    "paused": true,
+    "status": "PARSING",
+    "lease_version": 2,
+    "asr_calls": 3,
+    "asr_new_calls": 0,
+    "active_leases": {
+      "video_parse_task": 0,
+      "chunk_parse_task": 0,
+      "interval_parse_task": 0
+    },
+    "source_content_checks": [
+      {
+        "sequence_no": 0,
+        "version": 2,
+        "unchanged": true
+      },
+      {
+        "sequence_no": 1,
+        "version": 1,
+        "unchanged": true
+      },
+      {
+        "sequence_no": 2,
+        "version": 1,
+        "unchanged": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "health": {
+    "status": "ok",
+    "serverTime": 1793530928292,
+    "components": {
+      "parseConsumer": {
+        "status": "running",
+        "failure": null
+      }
+    }
+  },
+  "original_tasks": [
+    {
+      "id": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+      "status": "PARSING",
+      "paused": "true"
+    },
+    {
+      "id": "6cf69603-6708-4d24-bee3-2dff0e858ad3",
+      "status": "PARSING",
+      "paused": "true"
+    },
+    {
+      "id": "c3970da1-53b7-4cf5-9bb2-15bfa01e9947",
+      "status": "PARSING",
+      "paused": "true"
+    }
+  ],
+  "asr_calls_total": 3,
+  "new_usage_records": 1
+}

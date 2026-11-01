@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "understanding-control_schema_source_range_members": true,
+    "understanding-candidate_schema_source_range_members": true,
+    "refine-canvas_schema_source_range_members": true,
+    "refine-json_schema_source_range_members": true,
+    "model_bindings_equal": true,
+    "refine_input_hash_equal": true,
+    "understanding_189_images_order_detail_equal": true,
+    "understanding_frame_labels_equal": true,
+    "candidate_omits_asr_implementation_name": true,
+    "candidate_preserves_all_197_asr_words": true,
+    "refine-canvas_29_visual_events_and_boundary_repairs": true,
+    "refine-json_29_visual_events_and_boundary_repairs": true,
+    "task_asr_source_content_unchanged": true
+  },
+  "scope": "Offline schema/input/result checks; not human audio accuracy or formal API acceptance."
+}

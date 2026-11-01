@@ -57,6 +57,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 ## Server
 
+[2026-11-01 Refine 中断候选的旧实现基线](server/refine-interruption-baseline-20261101.md)：固定 GPT v4 最终进度、成功/失败及含重试等待的中位数、冲突和用量覆盖率；只读留证，新增方案尚未实施。
+
 背景：2026-10-08–09 的模型用量交接与验收、2026-10-10 的用户/租户交付。不同报告的版本、环境和测试集合分别阅读。
 
 - [model-token-usage-stages-evidence.md](server/model-token-usage-stages-evidence.md)

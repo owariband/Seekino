@@ -1,0 +1,4 @@
+{
+  "status": 409,
+  "body": "{\"code\":\"SERIES_NOT_READY\",\"message\":\"所选系列尚未完成建库，请稍后重试\",\"requestId\":\"15430f20-2a91-410b-a379-0205b19dba56\",\"fieldErrors\":[],\"retryAt\":null}"
+}

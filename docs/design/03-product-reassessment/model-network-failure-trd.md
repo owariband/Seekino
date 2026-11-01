@@ -4,6 +4,8 @@
 
 10-30 15:08 关联续版：#13 已合入 dev，以下原始提交阶段的部署描述保留历史口径。GPT v5 本次先在 14:49:19 收到 504，节点有限重试后于 14:51:49 以 `APIConnectionError → ConnectError → gaierror` 终止，停在 8/117 Chunk。后续 DNS/HTTPS 探测可达，不证明长请求稳定，也没有证据将本次归因于此前 Clash 关闭。分类和重试已执行，供应商/DNS 的剩余不确定性仍由本需求跟进。
 
+10-31 关联复核：PR #18 的独立 GPT 任务 trace 确认 44 条 Kimi 请求均为 `stream:false`，9 次返回 nginx 504，耗时 312.043–355.989 秒；与受控注入的 503 分开。失败请求各含 189–198 张图片，成功理解请求仍为约 23.3 万–24.4 万输入 tokens。确认是上游 HTTP 504，未取得供应商内部超时原因，非流式与大输入的贡献待对照；本轮没有改成流式或重新跑完整课程。ASR 持久恢复新增转写为 0，详见[同轮实机报告](../../report/server/video-asr-api-recovery-20261031.md)。
+
 这一故障同时触发整片 ASR 协调器退出并清理内存，使此前 76 分 32 秒的计算不能在新协调器中复用。该后果由 [ASR 主设计续版](local-whisperx-asr-trd.md)承接：视频级持久成果、正式 GPU 接线及下游失败后的零重复 ASR 验收。新跟进不把持久化当成修复网络，也不把再次可连接当成整集成功。详见[同一实测报告](../../report/gateway/local/whisper-metal-benchmark-20261030.md)。
 
 Karpathy v3 任务在直接 JSON 理解链路失败。OpenAI SDK 的 APIConnectionError、APITimeoutError、HTTP 504 原样穿透 Gateway；节点重试只识别 Python/httpx 异常或 MODEL_TIMEOUT。最终被呈现为“执行异常”，并停止整集派发。正式节点终止日志没有异常链，无法区分网络断连与服务端超时。

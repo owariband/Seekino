@@ -25,12 +25,12 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 - `claude_code/`：Claude Agent SDK Adapter；
 - `bridge/`：用户本机原生 Agent 的 ACP 连接；已有 Client，完整产品接入仍需验收；
 - `../docs/design/pi-host-trd.md`：已退役的云端 Pi Host 历史设计；当前使用 Deep Agents＋MySQL checkpoint；
-- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX Adapter；
+- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX 和 pyannote Adapter；
 - 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
 
 业务层通过 `model_factory.GatewayClient` 获取模型。`create(kind, ref)` 按外部配置
-创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription` 五类模型，也提供对应的
+创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription`、`diarization` 六类模型，也提供对应的
 `create_*_model()` 类型入口。视觉理解使用生成接口和显式图片能力声明；来源适配器
 支持图片，并不表示该来源下的每个模型都能理解图片。
 
@@ -84,6 +84,22 @@ WhisperX 使用 INFO 事件 `local_asr_progress` 记录等待共享 runtime、�
 `phase_percent` 仅表示当前阶段的上游片段比例，不是原片时间覆盖或整个解析任务的完成率；
 VAD 等尚无回调的阶段保留 null。转写 100% 后仍需对齐，最终检查通过才记录 completed；
 失败记录阶段与异常类型。回调不会改变字词处理、超时或取消合同。
+
+## 可选本地说话人分组
+
+`create_diarization_model("diarization")` 调用离线 community-1 Pipeline，返回秒单位的
+regular 和 exclusive 匿名声源区间。它不执行转写、不命名人物；Engine 负责毫秒归一化，
+Server 负责独立成果、任务身份和租约。配置见[本地分组](../docs/model-config.md#本机可选说话人分组2026-11-01)。
+
+创建句柄不加载 ML 依赖或权重。同一 Gateway 的同一设备使用共享锁，单次推理完成即
+释放模型引用和 MPS 缓存；此串行选择不是硬件并发上限的测量。MPS 不可用或实际模型
+设备不符会报错，拒绝静默 CPU 回退。原生批次仅在回调控制点响应取消和期限。
+`cpu_threads` 是 PyTorch 进程级线程设置，同进程来源需保持一致。
+
+`local_diarization_progress` 日志包含加载、segmentation、embeddings、聚类等阶段、
+批次数、任务 context、单调与日历耗时以及回调时观察到的 MPS 分配。回调之间的张量峰值
+可能漏采，不能将该数当真实显存峰值；整机功耗、GPU 利用率与并发上限另测。
+macOS 推理期间临时使用 `caffeinate -i` 防止空闲休眠，结束即解除。
 
 ## 声音向量接口
 
@@ -502,4 +518,4 @@ uv run pytest tests/gateway/test_tracing.py tests/gateway/test_langfuse_integrat
 说明字段组、时间范围和版本兼容性。
 
 
-直接 JSON `OpenAIVisionModel` 将连接中断、客户端超时、上游 504 和暂态服务错误分别转换为通用 `ModelFailureReason`，保留异常链供宿主诊断；有限重试由调用方节点负责，SDK 内不另启重试。认证/坏请求原样失败，主动取消优先。该路径支持已有 `SEEKINO_MODEL_TRACE_DIR` 本地 opt-in trace。详见 [模型连接失败恢复](../docs/design/03-product-reassessment/model-network-failure-trd.md)。
+直接 JSON `OpenAIVisionModel` 当前以 `stream=False` 发送 Chat Completions 请求，等待完整 JSON 后校验；本地 HTTP 代理使用流式传输不等于请求启用了模型 SSE。它将连接中断、客户端超时、上游 504 和暂态服务错误分别转换为通用 `ModelFailureReason`，保留异常链供宿主诊断；有限重试由调用方节点负责，SDK 内不另启重试。认证/坏请求原样失败，主动取消优先。该路径支持已有 `SEEKINO_MODEL_TRACE_DIR` 本地 opt-in trace。详见 [模型连接失败恢复](../docs/design/03-product-reassessment/model-network-failure-trd.md)。

@@ -1,0 +1,62 @@
+{
+  "checked_at": "2026-11-01T02:14:26.423444+00:00",
+  "task_id": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+  "status": "PARSING",
+  "paused": true,
+  "lease_version": 22,
+  "video_duration_ms": 6979873,
+  "chunk_count": 117,
+  "understanding_committed": 30,
+  "understanding_range_ms": [
+    0,
+    1800000
+  ],
+  "events": {
+    "SCENE": 44,
+    "ACTION": 79,
+    "DIALOGUE": 193,
+    "ON_SCREEN_TEXT": 61,
+    "EMOTION": 2
+  },
+  "refine_complete": 3,
+  "refine_total": 115,
+  "refine_ranges_ms": [
+    [
+      0,
+      180000
+    ],
+    [
+      180000,
+      360000
+    ],
+    [
+      540000,
+      720000
+    ]
+  ],
+  "indexed_chunks": 1,
+  "indexed_events": 16,
+  "indexed_range_ms": [
+    0,
+    60000
+  ],
+  "asr_cues": 2476,
+  "asr_speaker_nonnull": 0,
+  "summary_present": false,
+  "qa_status": 409,
+  "qa_body": {
+    "code": "SERIES_NOT_READY",
+    "message": "所选系列尚未完成建库，请稍后重试",
+    "requestId": "15430f20-2a91-410b-a379-0205b19dba56",
+    "fieldErrors": [],
+    "retryAt": null
+  },
+  "qa_messages": 0,
+  "service_check": {
+    "api_pid": 2908,
+    "api_health": "ok",
+    "proxy_pid": 2777,
+    "restarted": false
+  },
+  "new_asr_or_model_calls_in_this_audit": 0
+}

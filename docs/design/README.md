@@ -61,7 +61,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 |---|---|---|
 | Parse V2 任务编排 | [video-parse-harness-trd.md](02-agent-harness/video-parse-harness-trd.md) | 主 TRD：任务与成果、Prepare、调度、租约、Refine、Prefix 和恢复；同一 ChunkTask 承担 Parse / Index。 |
 | Parse V2 领域算法 | [video-parse-engine-trd.md](02-agent-harness/video-parse-engine-trd.md) | 领域合同：解析结果 Schema、时间与人物规则、解析和投影边界；旧检索章节结合最新 Event 合同阅读。 |
-| 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；dev 已接入宿主直接 JSON 与 30k；精简字段/SHOT 兼容迁移及实模验收待完成。 |
+| 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 11-01 追加 Kimi 流式推理耗时诊断、全量帧时间配对试点；主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；dev 已接入宿主直接 JSON 与 30k；精简字段/SHOT 兼容迁移及实模验收待完成。 |
 | 解析暂停与继续 | [parse-pause-resume-trd.md](03-product-reassessment/parse-pause-resume-trd.md) | 保留成果、释放容量、撤销租约，任务页显示语音转写与暂停状态。 |
 | 模型连接失败恢复 | [model-network-failure-trd.md](03-product-reassessment/model-network-failure-trd.md) | 直接 JSON 的暂态错误分类、有限重试与异常链诊断。 |
 | 本地 ASR、字幕证据与失败恢复 | [local-whisperx-asr-trd.md](03-product-reassessment/local-whisperx-asr-trd.md) | WhisperX/整片复用的原实现；10-30 续版跟进视频级持久成果、Metal 正式接线与跨失败恢复，实测和待实施分开。 |

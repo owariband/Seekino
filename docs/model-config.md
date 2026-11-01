@@ -128,7 +128,85 @@ python -m server.cli init-db
 
 `openai_audio` 调用 `POST /audio/transcriptions`。Engine 用 FFmpeg 把每个分析窗口转换为单声道、16 kHz WAV 后上传，临时音频在成功或失败后自动清理。`verbose_json` 支持 `segments[].start/end/text`，时间单位为秒，进入项目后乘以 1000 并舍入为整数毫秒，限制在窗口范围内；已有 `start_seconds` / `end_seconds` 字段名保留。接口仅支持 JSON 文本时，设置 `response_format: json`；这时只有整个窗口级别的时间范围，没有句级时间戳。只兼容聊天接口的服务不能作为该 ASR 来源。没有音轨或抽取失败会报错，不会伪造空转写。
 
-## 本地 WhisperX ASR 与对齐
+## 本机 Apple GPU 测试：whisper.cpp Turbo（2026-10-31）
+
+本机当前默认转写为 `large-v3-turbo-q5_0`＋whisper.cpp Metal，通过既有 `openai_audio` 调用。它不导入 WhisperX／faster-whisper，也不执行声学强制对齐。句段／token 时间由 whisper.cpp 产生，进入 Engine 后仍归一化为整数毫秒；不能标为声学对齐。此处是明确选择的纯转写测试合同。
+
+```yaml
+model_sources:
+  whisper_cpp_local:
+    adapter: openai_audio
+    provider: whisper.cpp
+    base_url: http://127.0.0.1:18842/v1
+    api_key_env: WHISPER_API_KEY
+    response_format: verbose_json
+models:
+  transcription:
+    kind: transcription
+    source: whisper_cpp_local
+    model: large-v3-turbo-q5_0
+    request_timeout_seconds: 1200
+```
+
+`WHISPER_API_KEY=local-whisper` 是 loopback 客户端占位值，不代表原生服务启用了认证。当前主工作区 `.env.local` 选择 `config/local-dev-config.yaml`；切换仅改变该文件的 transcription 默认绑定并增加新来源，其他模型配置保留。旧 `whisperx_local` 仍可供历史冻结任务解析，但不被新任务默认选择，不能直接 Retry 旧 large-v3 任务来获得 Turbo。
+
+在工作树运行以下命令，路径替换为本机实际已准备的文件；`--config` 避免从错误工作树读取默认配置，`--binary`／`--model-dir` 可复用主工作区资产，无需复制权重：
+
+```bash
+uv run --no-sync python scripts/local_whisper.py \
+  --config /absolute/path/to/local-dev-config.yaml \
+  --binary /absolute/path/to/whisper-server \
+  --model-dir /absolute/path/to/whisper-models \
+  --require-metal
+```
+
+脚本根据绑定选择 `ggml-large-v3-turbo-q5_0.bin`，启用 GPU 默认路径和 flash attention，固定 processors=1、CPU threads=6、max-context=0、beam-size=5、best-of=5、无温度 fallback，语言默认 auto（可显式 `--language en`）。`--require-metal` 根据实际 backend 日志拒绝 CPU／非 Metal 回退；`--dry-run` 只检查文件并打印命令，不能作为 GPU 已使用的证据。
+
+WhisperX 的 `batch_size` 和 `compute_type=int8` 不适用于此来源；Q5_0 由权重文件决定。`--threads` 调整 CPU 线程，不是 GPU threads；`--processors=1` 也不是 WhisperX batch_size=1。当前原生 server 以单个模型互斥执行推理请求；ASR 并发与 Kimi／Chunk 并发独立。新建 whisper.cpp 解析任务默认 `scope=video`，读取／提交视频级成果；其他第三方音频源原默认及历史显式 Chunk scope 不变。
+
+启动、60 秒接线检查和完整 116 分 20 秒 Gateway 调用见[10-31 接线报告](report/gateway/local/whisper-metal-activation-20261031.md)。当前 whisper.cpp HTTP 成果身份按声明的来源／模型区分；本机 binary／权重摘要与解码参数保存在服务记录，不能把通用 HTTP 配置等同于已经核实远端权重。模型或服务解码参数变更须创建新解析版本。真实业务库迁移、117 Chunk 全流程和独立对齐另行验收。
+
+## 本机可选说话人分组（2026-11-01）
+
+可在上面的 whisper.cpp 整片转写之后追加 `models.diarization`。该能力调用 pyannote
+community-1 的 PyTorch/MPS Pipeline，不调用 faster-whisper。当前可选 `whisperx`
+依赖已包含所需 pyannote；实测版本为 pyannote.audio 4.0.7、torch/torchaudio 2.8.0。
+先取得模型访问授权并下载完整离线目录；凭据不写入模型配置或任务快照。
+
+```yaml
+model_sources:
+  pyannote_local:
+    adapter: pyannote
+    provider: local
+    device: mps
+    cpu_threads: 6
+    segmentation_batch_size: 32
+    embedding_batch_size: 32
+models:
+  diarization:
+    kind: diarization
+    source: pyannote_local
+    model: /absolute/local/speaker-diarization-community-1
+    request_timeout_seconds: 1200
+```
+
+这是追加配置，保留既有 `models.transcription`；新任务仍须启用 `asr.scope=video`。
+两项 batch 控制 pyannote 的神经网络批次，与 WhisperX 的 ASR batch_size 无关。
+MPS 不可用即失败，不自动落回 CPU；不强制 `num_speakers=1`。本轮单设备串行运行，
+Kimi 的 Chunk 并发独立。模型目录须包含 `config.yaml`、segmentation/embedding 权重
+与 PLDA 文件；首次校验权重摘要有磁盘读取成本。
+
+Server 将原始转写和分组分别保存为 `video_parse_content.asr/diarization`；原文及时间
+不被分组覆写。Preparing 恢复分别验证并复用成果，启用分组后须两者完成才放行 Chunk。
+旧库先执行[成果表迁移](migrations/20261031_video_parse_content.md)；旧任务未冻结分组
+时仍关闭，新解析版本可在同一 Video 内复用身份及摘要匹配的旧 ASR。
+
+Understanding/Refine 获得整片作用域的匿名编号：不覆盖或混合主声源的 cue 保持未知，
+匿名声源不等于具体人物。这条组合没有补上声学强制对齐；whisper.cpp 时间仍是原时间来源。
+VAD/分组资源见[整片实测](report/gateway/local/pyannote-mps-20261101.md)，实际接口验收
+单独记录，不将实验文件自动导入旧任务。
+
+## 可选 WhisperX ASR 与对齐
 
 需要本地低调用成本及字幕字词时间时，推荐可选的 `adapter: whisperx`。项目直接在 Gateway 进程中调用 **WhisperX 3.8.6 的转写和强制对齐**；无需启动兼容 HTTP 服务。WhisperX 内部使用 faster-whisper，用户不需要另写一套 faster-whisper 接线。原 Ark 和 `openai_audio` 仍可选择；未选本地来源时不导入 WhisperX、不加载权重。安装与本地计算仍有磁盘、内存和耗时成本，效果与速度需按自己的素材验证。
 
@@ -139,7 +217,7 @@ uv sync --extra whisperx
 # 已使用 CAM++ 时保留两项：uv sync --extra speaker --extra whisperx
 uv run --no-sync python -m nltk.downloader punkt_tab
 
-# 当前本机部署使用完整 large-v3；CPU/int8 的速度和精度仍需按素材评估。
+# 以下为可选 WhisperX 部署示例；当前本机测试使用上节 Turbo＋Metal。
 # ASR 必须为 CTranslate2 目录，不能填写 whisper.cpp 的 ggml-*.bin。
 uv run --no-sync hf download Systran/faster-whisper-large-v3 --local-dir /opt/seekino/models/whisperx/large-v3
 uv run --no-sync hf download facebook/wav2vec2-base-960h --local-dir /opt/seekino/models/whisperx/align-en
@@ -163,7 +241,7 @@ model_sources:
     provider: local
     device: cpu              # CUDA 环境可设 cuda；当前不支持 MPS
     compute_type: int8       # CPU: int8 / float32；CUDA 可用 float16
-    batch_size: 1            # 本机 16 GB 内存；显存充足时再实测调大
+    batch_size: 1            # 仅 WhisperX/faster-whisper 使用；按目标硬件实测
     cpu_threads: 6
     # language: en          # 不填则自动识别，识别出的语言必须有对齐模型
     alignment_models:
@@ -414,6 +492,10 @@ Ollama 不需要 API Key，使用原生 `/api/embed`。文档直接编码，查�
 启动脚本按默认模型来源、独立 Supervisor 的主模型及回退、已启用的解析降级收集密钥，不要求未选中的第三方来源密钥。本机 Codex 来源没有 API key 变量要求；Ark 和 DeepSeek 连接仍分别使用它们声明的变量。密钥摘要用于检测启动配置变化，不输出密钥内容。
 
 兼容性基线保存在 `tests/gateway/fixtures/legacy-config.yaml`；配置测试保护默认迁移、任意引用、能力校验、独立重排/向量绑定、预算完整保留及旧任务冻结规则。
+
+### 解析执行次数（2026-10-31）
+
+视频解析不设置整视频累计模型调用上限。`SEEKINO_MAX_MODEL_CALLS` 已停止读取，新任务配置不再生成 `execution.max_model_calls`；历史冻结快照读取时忽略该字段，不改写其 ASR 模型或已有正文。调用登记继续保留计数、幂等、租约校验与取消；各节点的 `max_retry_count`、执行期限及并发策略照常生效。Chat 的每轮设置属于另一合同。
 
 ### 解析输出预算（2026-10-30）
 

@@ -35,7 +35,7 @@
 
 现有关系可复用：Video 关联 Series，Chunk 关联 Video，Message 关联 Conversation，UploadSegment 关联 UploadSession，解析子任务和产物关联父任务或 Chunk。
 
-源码依据：[内容模型](../../../server/model/video.py)、[对话模型](../../../server/model/agent.py)、[上传模型](../../../server/model/upload.py)、[任务模型](../../../server/model/job.py)、[用量模型](../../../server/model/parse_usage.py)、[索引同步模型](../../../server/model/index_sync.py)。
+源码依据：[内容模型](../../../server/model/video.py)、[对话模型](../../../server/model/agent.py)、[上传模型](../../../server/model/upload.py)、[任务模型](../../../server/model/task.py)、[当时的 Job 模型](https://github.com/owariband/Seekino/blob/67223c16/server/model/job.py)（10-31 已退出）、[用量模型](../../../server/model/parse_usage.py)、[索引同步模型](../../../server/model/index_sync.py)。
 
 ## 3. 新增模型的职责
 
