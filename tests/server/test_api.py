@@ -36,17 +36,9 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.job import (
-    ParseJobStage,
-    ParseJobStatus,
-    SeriesParseJob,
-    VideoParseTask,
-    VideoChunkCheckpoint,
-    VideoChunkCheckpointStage,
-)
+from server.model.task import VideoParseTask
 from server.model.dto.agentDTO import AgentMessageState
 from server.model.video import Series, Video
-from server.model.upload import UploadSession
 from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
@@ -86,7 +78,6 @@ def _reported_items(report, tools):
         items.append({"video_chunk_id": identifier, "start_seconds": metadata["startSeconds"],
                       "end_seconds": metadata["endSeconds"], "claim": "真实片段支持回答。"})
     return items
-
 
 
 @dataclass
@@ -436,25 +427,6 @@ def _client(tmp_path: Path):
     return TestClient(create_app(services)), retrieval, job_repository
 
 
-def _retain_historical_v1_job(repository, completed: dict) -> str:
-    """Seed legacy rows for compatibility checks; upload completion is V2-only."""
-    assert completed["jobId"] is None
-    job_id = str(uuid4())
-    with repository._session_factory.begin() as session:
-        task = session.get(VideoParseTask, completed["videoParseTaskId"])
-        video = session.get(Video, completed["videoId"])
-        session.add(SeriesParseJob(
-            id=job_id, series_id=video.series_id, video_id=video.id,
-            pipeline_version="pipeline-v1", status="QUEUED", stage="QUEUED",
-            progress=0, attempt_count=0, max_attempts=3, lease_version=0,
-            next_execute_time=int(task.next_execute_time.timestamp() * 1000),
-        ))
-        session.flush()
-        upload = session.scalar(select(UploadSession).where(UploadSession.initial_task_id == task.id))
-        upload.job_id = job_id
-    return job_id
-
-
 def _create_series(
     client: TestClient,
     *,
@@ -512,6 +484,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/video-parse/get",
         "/api/jobs/video-parse/list",
         "/api/jobs/video-parse/events",
+        "/api/jobs/video-parse/control",
         "/api/usage/overview",
         "/api/videos/content",
         "/api/video-chunks/get",
@@ -1752,11 +1725,8 @@ def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_pa
         },
     )
     assert completed.status_code == 200, completed.text
-    job_id = _retain_historical_v1_job(jobs_repository, completed.json())
     video_parse_task_id = completed.json()["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
-        job = session.get(SeriesParseJob, job_id)
-        legacy_job_before = (job.status, job.version, job.attempt_count)
         task = session.get(VideoParseTask, video_parse_task_id)
         original_config = task.parse_config
         task.status = "PARSING_FAILED"
@@ -1793,11 +1763,9 @@ def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_pa
         task = session.get(VideoParseTask, video_parse_task_id)
         assert (task.status, task.version) == ("PREPARING", 1)
         assert task.parse_config == original_config
-        job = session.get(SeriesParseJob, job_id)
-        assert (job.status, job.version, job.attempt_count) == legacy_job_before
 
 
-def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
+def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_path):
     client, _retrieval, jobs_repository = _client(tmp_path)
     series_id = _create_series(client)
     created = client.post(
@@ -1833,39 +1801,15 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
             "uploadSessionId": upload_session_id,
         },
     ).json()
-    job_id = _retain_historical_v1_job(jobs_repository, completed)
     old_task_id = completed["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
-        job = session.get(SeriesParseJob, job_id)
-        job.status = ParseJobStatus.SUCCEEDED.value
-        job.stage = ParseJobStage.COMPLETED.value
-        job.progress = 100
-        job.attempt_count = 1
-        job.version = 6
-        job.finish_time = 1_789_639_200_000
-        legacy_job_before = (
-            job.status,
-            job.stage,
-            job.progress,
-            job.attempt_count,
-            job.version,
-            job.finish_time,
-        )
         task = session.get(VideoParseTask, old_task_id)
         old_config = task.parse_config
         task.status = "COMPLETE"
-        video = session.get(Video, job.video_id)
-        video.parse_status = ParseJobStatus.SUCCEEDED.value
+        video = session.get(Video, completed["videoId"])
+        video.parse_status = "COMPLETE"
         video.parse_progress = 100
         set_series_parse_status(session, series_id)
-        session.add(VideoChunkCheckpoint(
-            job_id=job_id,
-            sequence_no=0,
-            chunk_id="reparse-checkpoint",
-            stage=VideoChunkCheckpointStage.INDEXED.value,
-            start_ms=0,
-            end_ms=12,
-        ))
 
     params = {
         "tenantId": "local-default",
@@ -1907,19 +1851,6 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
         assert old_task.parse_config == old_config
         assert new_task.version == 2
         assert new_task.parse_config == replacement_config
-        assert session.get(
-            VideoChunkCheckpoint,
-            (job_id, 0),
-        ) is not None
-        job = session.get(SeriesParseJob, job_id)
-        assert (
-            job.status,
-            job.stage,
-            job.progress,
-            job.attempt_count,
-            job.version,
-            job.finish_time,
-        ) == legacy_job_before
     duplicate = client.post("/api/uploads/reparse", params=params)
     assert duplicate.status_code == 409
     with jobs_repository._session_factory() as session:
@@ -2018,7 +1949,6 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     )
     assert completed.status_code == 200, completed.text
     video_id = completed.json()["videoId"]
-    job_id = _retain_historical_v1_job(jobs_repository, completed.json())
     video_parse_task_id = completed.json()["videoParseTaskId"]
     video_parse_task = client.get(
         "/api/jobs/video-parse/get",
@@ -2073,8 +2003,6 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
         "/api/jobs/video-parse/list",
         params={"tenantId": "another-workspace"},
     ).json()["items"] == []
-    for path in ("/api/jobs/get", "/api/jobs/list", "/api/jobs/summary", "/api/jobs/events"):
-        assert client.get(path, params={"tenantId": "local-default", "jobId": job_id}).status_code == 404
 
     with jobs_repository._session_factory.begin() as session:
         task = session.get(VideoParseTask, video_parse_task_id)
@@ -2114,7 +2042,6 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert deleted.status_code == 200, deleted.text
     assert deleted.json()["status"] == "EXPIRED"
     assert deleted.json()["videoId"] is None
-    assert deleted.json()["jobId"] is None
     assert client.get(
         "/api/jobs/video-parse/get",
         params={"tenantId": "local-default", "videoParseTaskId": video_parse_task_id},

@@ -5,7 +5,7 @@ from pydantic import Field
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 
 from ...schema import ContractModel
-from ..job import VideoParseTaskStatus
+from ..task import VideoParseTaskStatus
 from .commonVO import Failure, UnixTimeMs
 
 

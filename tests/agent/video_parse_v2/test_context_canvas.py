@@ -40,6 +40,7 @@ def _voice_snapshot(mode="prefill", band="ACCEPT", *, source=None):
         event["speaker_source"] = source
     return {
         "interval_parse_task_id": "voice-interval", "video_parse_task_id": "video",
+        "inputs": _inputs(), "lease": _lease(),
         "start_sequence_no": 0, "chunk_count": 1,
         "member_sequence_nos": {"member": 0}, "member_versions": {"member": 1},
         "member_bounds": {"member": (0, 20_000)}, "member_scopes": {"member": [0]},
@@ -260,12 +261,13 @@ def test_normal_refine_reads_prepared_draft_and_commits_default_once(mode, expec
     snapshot = _voice_snapshot(mode)
     original = deepcopy(snapshot)
 
-    async def provider(_snapshot, *, canvas, prompt):
-        assert canvas.result("member").timeline[0].speaker == expected
-        review = json.loads(next(line for line in prompt.splitlines()
-                                 if line.startswith("Required voice review lists: ")).split(": ", 1)[1])
-        assert review["accept_disagreements"][0]["event_ref"] == canvas.items("events")[0][0]
-        return CanvasCompletion(complete=True)
+    async def provider(_snapshot, *, prompt, remaining_seconds):
+        data = json.loads(prompt.split("Input: ", 1)[1])
+        member = data["members"][0]
+        assert member["content"]["timeline"][0]["speaker"] == expected
+        assert member["evidence"]["voiceprint"] == snapshot["member_evidence"]["member"]["voiceprint"]
+        assert "speaker_source" not in member["content"]["timeline"][0]
+        return {"members": [{"sequence_no": member["sequence_no"], **member["content"]}]}
 
     runtime = SimpleNamespace(
         load_refine_input=AsyncMock(return_value=snapshot),
@@ -280,20 +282,17 @@ def test_normal_refine_reads_prepared_draft_and_commits_default_once(mode, expec
     assert snapshot == original
 
 
-def test_new_canvas_binds_new_event_references_and_explicit_conflicts_in_prompt():
-    from agent.video_parse_v2.prompts import build_refine_prompt
 
+def test_refine_prompt_exposes_original_voice_evidence_without_canvas_navigation():
+    from agent.video_parse_v2.prompts import build_refine_prompt
     snapshot = _voice_snapshot("flag", "CONFLICT")
-    first, second = ParseContextCanvas.from_refine(snapshot), ParseContextCanvas.from_refine(snapshot)
-    reference, value = second.items("events")[0]
-    assert reference != first.items("events")[0][0]
-    assert value["voice_evidence"]["event_ref"] == reference
-    prompt = build_refine_prompt(start_sequence_no=0, chunk_count=1, canvas=second)
-    review = json.loads(next(line for line in prompt.splitlines()
-                             if line.startswith("Required voice review lists: ")).split(": ", 1)[1])
-    assert review["conflicts"][0]["event_ref"] == reference
-    assert "爱音" in prompt and "unchanged candidate ranking" in prompt
-    assert json.loads(prompt.splitlines()[-1])["revision"] == second.revision
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    prompt = build_refine_prompt(snapshot=snapshot, canvas=canvas)
+    data = json.loads(prompt.split("Input: ", 1)[1])
+    assert data["members"][0]["evidence"]["voiceprint"]["conflicts"] == ["line-1"]
+    assert data["members"][0]["evidence"]["voiceprint"]["lines"][0]["candidates"][0]["similarity"] == .8
+    assert "event_ref" not in prompt and "get_context_canvas" not in prompt
+
 
 
 @pytest.mark.parametrize("error", [RuntimeError("failed"), TimeoutError("expired"), asyncio.CancelledError()])
@@ -598,12 +597,11 @@ def test_conflict_refreshes_only_refinement_and_retains_intervening_events():
         {**base, "member_contents": {"member": changed}, "member_versions": {"member": 2}},
     ]
 
-    async def refine(snapshot, *, canvas, prompt):
-        reference = canvas.items("events")[0][0]
-        canvas.write(role="refine", batch_id="correction", expected_revision=canvas.revision, operations=[
-            {"op": "patch_event", "event_ref": reference, "fields": {"description": "locally corrected"}},
-        ])
-        return CanvasCompletion(complete=True)
+    async def refine(snapshot, *, prompt, remaining_seconds):
+        body = json.loads(prompt.split("Input: ", 1)[1])
+        member = body["members"][0]
+        member["content"]["timeline"][0]["description"] = "locally corrected"
+        return {"members": [{"sequence_no": member["sequence_no"], **member["content"]}]}
 
     runtime = SimpleNamespace(
         load_refine_input=AsyncMock(side_effect=snapshots), generate_interval_refinement=AsyncMock(side_effect=refine),
@@ -616,6 +614,7 @@ def test_conflict_refreshes_only_refinement_and_retains_intervening_events():
     runtime.transcribe_chunk.assert_not_awaited()
     runtime.understand_chunk.assert_not_awaited()
     runtime.notify_interval_committed.assert_awaited_once()
+
 
 
 @pytest.mark.parametrize("correct_events", [False, True], ids=["no-changes", "two-corrections"])
@@ -631,50 +630,16 @@ def test_refine_batches_original_event_details_and_commits_once(correct_events):
         "member_contents": {ref: member["content"] for ref, member in members.items()},
         "member_versions": {ref: 1 for ref in members},
     }
-    calls = []
-
-    async def fake_provider(_snapshot, *, canvas, prompt):
-        assert "references=[...]" in prompt and "Skip overview" in prompt
-        assert "remaining_references" in prompt and "returned items are complete" in prompt
-        navigation = json.loads(prompt.splitlines()[-1])
-        references = [entry["reference"] for entry in navigation["collections"]["events"]]
-        tools = {tool.name: tool for tool in build_context_canvas_tools(
-            canvas, role="refine", read_collections=("members", "events"),
-            write_args_schema=ParseCanvasWrite, maximum_result_bytes=32_000,
-            maximum_read_chars=12_000, maximum_catalog_items=100, on_call=calls.append,
-        )}
-        remaining, reviewed = references, {}
-        while True:
-            raw = tools["get_context_canvas"].invoke({
-                "collection": "events", "references": remaining,
-            })
-            page = json.loads(raw)
-            assert "error" not in page and len(raw.encode("utf-8")) <= 32_000
-            assert page["revision"] == canvas.revision
-            assert "next_cursor" not in page
-            for item in page["items"]:
-                body = json.loads(item["content"])
-                source = body["source"]
-                assert body["event"] == members[body["member_ref"]]["content"]["timeline"][source["position"]]
-                assert item["reference"] not in reviewed
-                reviewed[item["reference"]] = body
-            assert page["items"]
-            remaining = page["remaining_references"]
-            assert len(calls) < len(references)
-            if not remaining:
-                break
-        assert len(reviewed) == 36
+    async def fake_provider(_snapshot, *, prompt, remaining_seconds):
+        assert "get_context_canvas" not in prompt and "write_context_canvas" not in prompt
+        body = json.loads(prompt.split("Input: ", 1)[1])
+        assert sum(len(m["content"]["timeline"]) for m in body["members"]) == 36
+        result = {"members": [{"sequence_no": m["sequence_no"], **m["content"]} for m in body["members"]]}
         if correct_events:
-            issued = {(body["member_ref"], body["source"]["position"]): ref for ref, body in reviewed.items()}
-            receipt = json.loads(tools["write_context_canvas"].invoke({
-                "batch_id": "two-local-corrections", "expected_revision": page["revision"],
-                "operations": [{
-                    "op": "event_array", "event_ref": issued[(f"member-{change['sequence_no']}", change["position"])],
-                    "field": "participants", "action": "add", "values": change["participants_add"],
-                } for change in fixture["corrections"]],
-            }))
-            assert len(receipt["results"]) == 2
-        return CanvasCompletion(complete=True)
+            for correction in fixture["corrections"]:
+                member = next(m for m in result["members"] if m["sequence_no"] == correction["sequence_no"])
+                member["timeline"][correction["position"]]["participants"].extend(correction["participants_add"])
+        return result
 
     runtime = SimpleNamespace(
         load_refine_input=AsyncMock(return_value=snapshot),
@@ -687,11 +652,10 @@ def test_refine_batches_original_event_details_and_commits_once(correct_events):
     runtime.notify_interval_committed.assert_awaited_once()
     result = runtime.commit_interval_refinement.await_args.args[1]
     if not correct_events:
-        assert calls.count("write_context_canvas") == 0 and result.updates == []
+        assert result.updates == []
     else:
         expected = {ref: deepcopy(member["content"]) for ref, member in members.items()}
         for change in fixture["corrections"]:
             expected[f"member-{change['sequence_no']}"]["timeline"][change["position"]] = change["expected_event"]
-        assert calls.count("write_context_canvas") == 1
         for update in result.updates:
             assert [event.model_dump(mode="json") for event in update.timeline] == expected[f"member-{update.sequence_no}"]["timeline"]

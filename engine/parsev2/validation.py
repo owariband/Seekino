@@ -45,8 +45,8 @@ class ChunkResultUpdate(_ValidationModel):
 class IntervalRefinementProposal(_ValidationModel):
     """Compatibility transport for complete snapshot-relative member fields.
 
-    Active agents assemble these fields from Canvas; model tools use explicit
-    local operations instead. Omitted members and fields stay unchanged.
+    The host derives these fields from validated complete Refine JSON or a
+    local Canvas draft. Omitted members and fields stay unchanged.
     """
 
     updates: list[ChunkResultUpdate] = Field(default_factory=list)
@@ -63,6 +63,44 @@ class ValidatedIntervalRefinement(_ValidationModel):
     """Program-assembled fields that differ from the bound input snapshot."""
 
     updates: list[ChunkResultUpdate]
+
+
+class RefinedMember(VideoParseResult):
+    """One complete model-produced member; persistent identity stays with the host."""
+
+    sequence_no: int = Field(ge=0, strict=True)
+
+
+class IntervalRefinementResult(_ValidationModel):
+    """Complete JSON returned by the direct Refine model."""
+
+    members: list[RefinedMember] = Field(min_length=1)
+
+
+def normalize_refinement_response(value: Any) -> Any:
+    """Order Refine timelines without changing event values or caller input.
+
+    The harness validates and, on failure, returns this same value, so error
+    locations always point into the rejected response provided to the model.
+    Canonical VideoParseResult validation remains strict for every caller.
+    """
+    if not isinstance(value, dict) or not isinstance(value.get("members"), list):
+        return value
+    members = []
+    for member in value["members"]:
+        timeline = member.get("timeline") if isinstance(member, dict) else None
+        # Never coerce, clip, deduplicate or infer an invalid time value.
+        if isinstance(timeline, list) and all(
+            isinstance(event, dict) and type(event.get("start_seconds")) is int
+            for event in timeline
+        ):
+            member = {**member, "timeline": sorted(timeline, key=lambda event: event["start_seconds"])}
+        members.append(member)
+    return {**value, "members": members}
+
+
+class RefinementResultError(ValueError):
+    """A correctable result-gate failure, distinct from lease/network failures."""
 
 
 class PrefixRefinementProposal(_ValidationModel):
@@ -115,13 +153,18 @@ def validate_result_time_range(
     *,
     start_seconds: int,
     end_seconds: int,
+    dialogue_bounds: tuple[int, int] | None = None,
 ) -> VideoParseResult:
     """Revalidate a result and keep every event inside the trusted media window."""
 
     _validate_bounds(start_seconds, end_seconds)
+    if dialogue_bounds is not None:
+        _validate_bounds(*dialogue_bounds)
     validated = VideoParseResult.model_validate(result)
     for event in validated.timeline:
-        if event.start_seconds < start_seconds or event.end_seconds > end_seconds:
+        start, end = (dialogue_bounds if dialogue_bounds is not None
+                      and event.event_type == "DIALOGUE" else (start_seconds, end_seconds))
+        if event.start_seconds < start or event.end_seconds > end:
             raise ValueError(
                 "timeline event falls outside the authorized media time range"
             )
@@ -238,15 +281,44 @@ def apply_chunk_update(
     return VideoParseResult.model_validate(values)
 
 
+def validate_refinement_result(
+    result: IntervalRefinementResult,
+    *,
+    members: Sequence[RefinementMember],
+    dialogue_bounds: tuple[int, int] | None = None,
+) -> ValidatedIntervalRefinement:
+    """Business gate for a complete result; never mutates or persists a snapshot."""
+    result = IntervalRefinementResult.model_validate(result)
+    expected = [member.sequence_no for member in members]
+    actual = [member.sequence_no for member in result.members]
+    if len(actual) != len(set(actual)) or set(actual) != set(expected):
+        raise RefinementResultError(
+            f"members.sequence_no: return every member exactly once; expected {expected}, got {actual}"
+        )
+    try:
+        return validate_interval_refinement(
+            IntervalRefinementProposal(updates=[
+                ChunkResultUpdate(sequence_no=member.sequence_no,
+                                  persons=member.persons, timeline=member.timeline)
+                for member in result.members
+            ]),
+            members=members, dialogue_bounds=dialogue_bounds,
+        )
+    except ValueError as error:
+        raise RefinementResultError(f"members.timeline: {error}") from error
+
+
 def validate_interval_refinement(
     proposal: IntervalRefinementProposal,
     *,
     members: Sequence[RefinementMember],
+    dialogue_bounds: tuple[int, int] | None = None,
 ) -> ValidatedIntervalRefinement:
     """Validate program-assembled fields against the exact refinement snapshot.
 
     The transaction must verify the base identity and merge these complete
-    fields against current content. Model-facing operations live in Canvas.
+    fields against current content. Direct Refine output passes through the
+    complete-result gate before reaching this internal update contract.
     """
 
     proposal = IntervalRefinementProposal.model_validate(proposal)
@@ -279,6 +351,7 @@ def validate_interval_refinement(
             candidate,
             start_seconds=interval_start,
             end_seconds=interval_end,
+            dialogue_bounds=dialogue_bounds,
         )
         actual_updates.append(update)
 

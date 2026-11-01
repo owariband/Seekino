@@ -20,7 +20,8 @@ from gateway.multimodal import ImageInput
 from gateway.errors import ContentFilterError
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
-from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue

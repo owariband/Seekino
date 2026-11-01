@@ -18,6 +18,7 @@ from agent.video_parse_v2.input import (
     FallbackModelConfig as VideoParseV2FallbackModelConfig,
     GenerativeModelConfig as VideoParseV2GenerativeModelConfig,
     ModelSnapshot as VideoParseV2ModelSnapshot,
+    DiarizationModelConfig as VideoParseV2DiarizationModelConfig,
     ParseConfig as VideoParseV2Config,
     VisualInputConfig as VideoParseV2VisualInputConfig,
 )
@@ -48,7 +49,7 @@ _EXECUTION_POLICY_FIELDS = (
     "retry_initial_delay_seconds", "retry_max_delay_seconds",
     "parse_concurrency", "refine_concurrency", "index_concurrency",
     "parse_execution_timeout_seconds", "refine_execution_timeout_seconds",
-    "index_execution_timeout_seconds", "max_model_calls",
+    "index_execution_timeout_seconds",
 )
 
 
@@ -251,7 +252,6 @@ class ParseExecutionConfig(ContractModel):
     parse_concurrency: int | None = Field(default=None, gt=0, strict=True)
     refine_concurrency: int | None = Field(default=None, gt=0, strict=True)
     index_concurrency: int | None = Field(default=None, gt=0, strict=True)
-    max_model_calls: int | None = Field(default=None, gt=0, strict=True)
     parse_execution_timeout_seconds: float | None = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
     refine_execution_timeout_seconds: float | None = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
     index_execution_timeout_seconds: float | None = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
@@ -265,6 +265,14 @@ class ParseExecutionConfig(ContractModel):
     retry_max_delay_seconds: float | None = Field(
         default=None, gt=0, strict=True, allow_inf_nan=False,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_call_limit(cls, values):
+        if isinstance(values, dict):
+            return {key: value for key, value in values.items()
+                    if key not in {"max_model_calls", "maxModelCalls"}}
+        return values
 
     @model_validator(mode="after")
     def validate_retry_delays(self) -> "ParseExecutionConfig":
@@ -295,6 +303,7 @@ class ParseConfig(ContractModel):
     version: Literal[2] = 2
     window: ParseWindowConfig
     asr: ParseASRConfig
+    diarization: VideoParseV2DiarizationModelConfig | None = None
     vision: ParseVisionConfig
     ocr: VideoParseV2GenerativeModelConfig | None = None
     context: ParseContextConfig
@@ -308,6 +317,8 @@ class ParseConfig(ContractModel):
         values = handler(self)
         if self.ocr is None:
             values.pop("ocr", None)
+        if self.diarization is None:
+            values.pop("diarization", None)
         return values
 
     def resolve_execution(self, defaults: "ParseConfig | None") -> "ParseConfig":
@@ -349,6 +360,7 @@ class ParseConfig(ContractModel):
             batch_max_size=self.execution.batch_max_size,
             dispatch_interval_seconds=self.execution.dispatch_interval_seconds,
             models=VideoParseV2ModelSnapshot(
+                diarization=self.diarization,
                 asr=VideoParseV2ASRModelConfig(
                     source=self.asr.source,
                     model=self.asr.model,
@@ -416,7 +428,6 @@ class ParseConfig(ContractModel):
                 max_retry_count=self.execution.max_attempts - 1,
                 retry_initial_delay_seconds=self.execution.retry_initial_delay_seconds,
                 retry_max_delay_seconds=self.execution.retry_max_delay_seconds,
-                max_model_calls=self.execution.max_model_calls,
             ),
             indexing=self.indexing,
         )
@@ -498,6 +509,16 @@ class ParseConfig(ContractModel):
         )
         validate_embedding_sparse_support(gateway, effective_embedding, sparse_enabled=sparse_enabled)
         embedding_info = describe_embedding_model(embedding_binding, gateway.source(embedding_binding.source))
+        diarization = None
+        if "diarization" in gateway.normalized_models:
+            binding = gateway.resolve_model_binding("diarization")
+            if binding.kind != "diarization":
+                raise ValueError("diarization model must use kind=diarization")
+            diarization = VideoParseV2DiarizationModelConfig.model_validate(
+                binding.model_dump(include={"source", "model", "request_timeout_seconds"}))
+        asr_source = gateway.source(asr_binding.source)
+        whole_video_asr = (asr_source.adapter == "whisperx"
+                           or (asr_source.adapter == "openai_audio" and asr_source.provider == "whisper.cpp"))
         return cls(
             window=ParseWindowConfig(
                 chunk_duration_seconds=runtime.chunk_duration_seconds,
@@ -505,10 +526,11 @@ class ParseConfig(ContractModel):
                 analysis_max_height=runtime.max_height,
                 canonical_max_height=runtime.max_height,
             ),
+            diarization=diarization,
             asr=ParseASRConfig(
                 source=asr_binding.source,
                 mode=runtime.asr_mode,
-                scope="video" if gateway.source(asr_binding.source).adapter == "whisperx" else "chunk",
+                scope="video" if whole_video_asr else "chunk",
                 model=runtime.transcript_model or asr_binding.model,
                 fps=runtime.transcript_fps or float(os.getenv("SEEKINO_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,
@@ -563,7 +585,6 @@ class ParseConfig(ContractModel):
                 parse_execution_timeout_seconds=runtime.parse_execution_timeout_seconds,
                 refine_execution_timeout_seconds=runtime.refine_execution_timeout_seconds,
                 index_execution_timeout_seconds=runtime.index_execution_timeout_seconds,
-                max_model_calls=runtime.max_model_calls,
                 batch_max_size=runtime.batch_max_size,
                 dispatch_interval_seconds=runtime.dispatch_interval_seconds,
                 retry_initial_delay_seconds=mq.retry_base.total_seconds(),

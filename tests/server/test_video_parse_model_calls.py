@@ -9,7 +9,7 @@ import pytest
 
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
 from gateway.usage import ModelCallCancelledError, ModelCallTracker
-from server.model.dto.jobDTO import ModelCallReservation, VideoParseLease
+from server.model.dto.taskDTO import ModelCallReservation, VideoParseLease
 from server.service.video_parse_model_calls import (
     ModelCallAdmissionError,
     VideoParseModelCallManager,
@@ -19,7 +19,7 @@ from server.utils.time import now_utc
 
 def test_summary_model_calls_continue_after_parse_completion_and_preserve_runtime(repository, monkeypatch):
     from server.constants.parse import RUNTIME_DETAIL_KEY
-    from server.model.job import VideoParseTask
+    from server.model.task import VideoParseTask
     from tests.server.test_video_summarize_persistence import AT, _claim, _ready
     from tests.server.test_video_parse_repository import _finish_ready_indexes
 
@@ -70,7 +70,7 @@ def test_summary_model_calls_continue_after_parse_completion_and_preserve_runtim
 def test_summary_call_admission_fences_replaced_execution(repository, monkeypatch, replacement):
     from gateway.usage import track_model_call
     from server.constants.parse import RUNTIME_DETAIL_KEY
-    from server.model.job import VideoParseTask
+    from server.model.task import VideoParseTask
     from tests.server.test_video_summarize_persistence import AT, _claim, _ready
 
     factory, _queue, persistence, task_id, _video_lease = _ready(repository)
@@ -120,7 +120,6 @@ class _Repository:
             worker_id=worker_id,
             first_reservation=True,
             used_calls=1,
-            max_calls=10,
             active_calls=1,
             lease_expire_time=now_utc() + lease_duration,
         )

@@ -12,7 +12,8 @@ from engine.rag.retrieval.contracts import RawEventHit, RetrievalPolicy
 from engine.rag.retrieval.events import EVENT_RETRIEVAL_STRATEGY_VERSION
 from engine.rag.vision.event_frames import EventFrameContract
 from gateway.embedding import EmbeddingResult
-from server.model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, VideoParseTask
 from server.service import video_parse_persistence as persistence_module
 from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 from server.service.video_event_retrieval import VideoEventRetrievalService

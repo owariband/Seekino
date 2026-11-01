@@ -21,7 +21,7 @@ from gateway.usage import (
 )
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
-from ..model.dto.jobDTO import (
+from ..model.dto.taskDTO import (
     ChunkParseLease,
     IntervalParseLease,
     ModelCallReservation,
@@ -30,7 +30,7 @@ from ..model.dto.jobDTO import (
     VideoParseLease,
     VideoParseTaskData,
 )
-from ..model.job import ChunkTaskPhase
+from ..model.task import ChunkTaskPhase
 from ..repository import video_parse_task as task_store
 from ..repository import video_parse_chunk as chunk_store
 from ..repository import video_parse_interval as interval_store
@@ -44,8 +44,6 @@ from .video_parse_task import (
     _locked_parent_task,
     _ensure_runtime,
     _latest_video_task_id,
-    _execution_config,
-    _positive_int,
 )
 from .video_parse_content import _matching_chunk_lease, _matching_interval_lease
 from .video_parse_prefix import _current_prefix_lease
@@ -87,11 +85,11 @@ class ModelCallReservations(Protocol):
 
 
 class ModelCallAdmissionError(ModelCallControlError):
-    """The persistent Video budget or execution lease denied a new request."""
+    """The persistent execution lease denied a new request."""
 
 
 class VideoParseModelCallManager:
-    """Reserve every observable provider request under one Video task budget.
+    """Track provider requests under their owning execution leases.
 
     This manager controls calls that enter ``gateway.usage.track_model_call``.
     It cannot count or cancel hidden network rounds performed inside an SDK.
@@ -148,7 +146,7 @@ class VideoParseModelCallManager:
             ) from error
         if reservation is None:
             raise ModelCallAdmissionError(
-                "model-call budget or execution lease is unavailable for "
+                "model-call execution lease is unavailable for "
                 f"VideoParseTask {self.video_parse_task_id}"
             )
         with self._lock:
@@ -270,7 +268,7 @@ def _lock_model_execution_lease(
     lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease | VideoSummarizeLease,
     now: datetime,
 ) -> VideoParseTaskData:
-    """Serialize the task budget and then fence the actual execution lease."""
+    """Serialize call reservations and fence the actual execution lease."""
     parent = _locked_parent_task(session, lease.video_parse_task_id)
 
     if isinstance(lease, ChunkParseLease):
@@ -412,9 +410,6 @@ def reserve_model_call(
 ) -> ModelCallReservation:
     identity = _model_execution_identity(lease)
     task = _lock_model_execution_lease(session, lease, reserved_at)
-    execution = _execution_config(task.parse_config)
-    # Keep the legacy snapshot value for reporting; cumulative calls do not limit admission.
-    max_calls = _positive_int(execution.get("max_model_calls"), "max_model_calls")
     detail = _ensure_runtime(task.detail)
     runtime = deepcopy(detail[RUNTIME_DETAIL_KEY])
     model_calls = deepcopy(runtime["model_calls"])
@@ -457,7 +452,6 @@ def reserve_model_call(
         worker_id=lease.worker_id,
         first_reservation=first,
         used_calls=len(used),
-        max_calls=max_calls,
         active_calls=len(active),
         lease_expire_time=expires_at,
     )

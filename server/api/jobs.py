@@ -10,8 +10,8 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..config.sse import SSEConfig
-from ..model.job import VideoParseTaskStatus
-from ..model.dto.jobDTO import VideoParseTaskDetail, VideoParseTaskState
+from ..model.task import VideoParseTaskStatus
+from ..model.dto.taskDTO import VideoParseTaskDetail, VideoParseTaskState
 from ..service.job import ParseJobService
 from ..service.parse_control import is_paused, ACTIVE_STATUSES
 from ..service.access import require_tenant_write
@@ -19,7 +19,7 @@ from ..error.auth import AuthError
 from ..service.pagination import decode_cursor, encode_cursor
 from .context import get_identity, get_services, get_sse_config, revalidate_identity
 from ..model.vo.commonVO import Page, Failure
-from ..model.vo.jobVO import VideoParseTaskView
+from ..model.vo.taskVO import VideoParseTaskView
 from ..utils.time import datetime_to_unix_time_ms
 
 _TERMINAL_VIDEO_PARSE_TASK_STATUSES = {

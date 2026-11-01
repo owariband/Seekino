@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api import jobs, parse_usage
 from ..model.vo.commonVO import Page
-from ..model.vo.jobVO import VideoParseTaskView
+from ..model.vo.taskVO import VideoParseTaskView
 from ..model.vo.parseUsageVO import UsageOverviewVO
 
 router = APIRouter()

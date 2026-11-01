@@ -12,7 +12,7 @@ import pytest
 from agent.video_parse_v2.input import ParseInput
 from agent.video_parse_v2.state import ChunkExecution, LeaseToken
 from engine.parsev2.observations import select_asr_window
-from server.model.dto.jobDTO import VideoParseLease
+from server.model.dto.taskDTO import VideoParseLease
 from server.service.video_parse import VideoParseRuntimeService
 from tests.server.test_video_parse_worker import _parse_config
 
@@ -33,7 +33,7 @@ def test_selection_keeps_boundary_context_and_never_mutates_shared_words():
 
 @pytest.mark.parametrize("outcome", ["success", "provider_failure", "lease_lost"])
 @pytest.mark.parametrize("chunk_count", [2, 10])
-def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resume(tmp_path, outcome, chunk_count):
+def test_one_video_transcription_feeds_concurrent_chunks_and_is_reused_on_resume(tmp_path, outcome, chunk_count):
     config = _parse_config()
     config["models"]["asr"]["mode"] = "lite"
     config["models"]["asr"]["scope"] = "video"
@@ -50,8 +50,13 @@ def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resum
     runtime._video_transcripts = {}
     runtime._video_lease = ContextVar("video_asr_lease", default=None)
     runtime._model_manager = ContextVar("video_asr_manager", default=None)
-    runtime._persistence = SimpleNamespace(load_task_input=lambda _: task_input,
-                                          finish_video_asr_preparation=lambda _: None)
+    stored = {}
+    runtime._video_asr_identity = lambda *_: {}
+    runtime._persistence = SimpleNamespace(
+        load_task_input=lambda _: task_input, finish_video_asr_preparation=lambda _: None,
+        load_or_begin_video_asr=lambda *_: stored.get("asr"),
+        commit_video_asr=lambda lease, identity, value: stored.update(asr=value),
+    )
     runtime._parse_input = lambda _: inputs
     runtime._artifact_store = SimpleNamespace(resolve=lambda uri: tmp_path / uri)
     runtime._require_video_active = lambda _: None
@@ -150,7 +155,7 @@ def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resum
         await asyncio.gather(*(workflow.InvokeUnderstanding(task_id) for task_id in by_id))
         assert sorted(committed) == list(range(chunk_count))
         assert attempts == {index: 2 if index == 0 else 1 for index in range(chunk_count)}
-        assert len(calls) == len(snapshots)  # Neither Chunk reads nor retries rerun ASR.
+        assert len(calls) == 1  # Chunk reads, retries and coordinator recovery reuse ASR.
 
     runtime.agent = SimpleNamespace(InvokeVideoParse=parse)
     if outcome == "success":
@@ -158,7 +163,7 @@ def test_one_video_transcription_feeds_concurrent_chunks_and_is_rebuilt_on_resum
         assert len(calls) == 1 and len(snapshots) == 1
         assert runtime._video_transcripts == {}
         asyncio.run(runtime.prepare(lease))
-        assert len(calls) == 2 and snapshots[0] == snapshots[1]
+        assert len(calls) == 1 and snapshots[0] == snapshots[1]
     else:
         with pytest.raises(RuntimeError, match="provider failed|lease lost"):
             asyncio.run(runtime.prepare(lease))
@@ -188,6 +193,9 @@ def test_cancelled_asr_retains_audio_and_provider_until_native_execution_exits(t
     closed = []
     audio_path = tmp_path / "full.wav"
     runtime = object.__new__(VideoParseRuntimeService)
+    runtime._video_asr_identity = lambda *_: {}
+    runtime._persistence = SimpleNamespace(load_or_begin_video_asr=lambda *_: None,
+                                          commit_video_asr=lambda *_: pytest.fail("cancelled ASR cannot commit"))
     runtime._model_manager = ContextVar("asr_cancel_manager", default=None)
     runtime._video_transcripts = {}
     runtime._artifact_store = SimpleNamespace(resolve=lambda uri: tmp_path / uri)
@@ -234,6 +242,68 @@ def test_cancelled_asr_retains_audio_and_provider_until_native_execution_exits(t
         release.set()
         await asyncio.wrap_future(caught.value.completion)
         assert not audio_path.exists() and closed == [True]
+
+    try:
+        asyncio.run(cancel())
+    finally:
+        release.set()
+
+
+def test_cancel_during_episode_preparation_defers_generator_cleanup(tmp_path):
+    """A stopped coordinator keeps its media context until __enter__ really exits."""
+    from threading import Event
+    from server.utils.execution import BlockingCallCancelled
+
+    started, release = Event(), Event()
+    closed = []
+    config = _parse_config()
+    config["models"]["asr"].update(mode="lite", scope="video")
+    inputs = ParseInput(series_id="series", video_id="video", parse_config=config)
+    identity = str(uuid4())
+    lease = SimpleNamespace(video_parse_task_id=identity, lease_version=1)
+    task_input = SimpleNamespace(task=SimpleNamespace(status="PREPARING"),
+        original_source_uri="source.mp4", inference_proxy_uri=None, duration_seconds=60000)
+    cached = {"language": "en", "transcript": []}
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._video_transcripts = {}
+    runtime._video_lease = ContextVar("cancel_video_lease", default=None)
+    runtime._model_manager = ContextVar("cancel_video_manager", default=None)
+    runtime._video_asr_identity = lambda *_: {}
+    runtime._parse_input = lambda _: inputs
+    runtime._artifact_store = SimpleNamespace(resolve=lambda uri: tmp_path / uri)
+    runtime._require_video_active = lambda _: None
+    runtime._persistence = SimpleNamespace(
+        load_task_input=lambda _: task_input,
+        load_or_begin_video_asr=lambda *_: cached,
+        stop_voiceprint_preparation=lambda _: None,
+        finish_video_asr_preparation=lambda _: pytest.fail("cancelled preparation cannot publish readiness"),
+    )
+    runtime._transcription_model = lambda _: pytest.fail("cached ASR must not load a provider")
+    runtime.agent = SimpleNamespace(InvokeVideoParse=lambda _: pytest.fail("cancelled preparation cannot dispatch"))
+
+    @contextmanager
+    def media(*args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        try:
+            yield
+        finally:
+            closed.append("media")
+
+    runtime._media_service = SimpleNamespace(prepare_episode=media)
+
+    async def cancel():
+        pending = asyncio.create_task(runtime.prepare(lease))
+        assert await asyncio.to_thread(started.wait, 2)
+        pending.cancel()
+        with pytest.raises(BlockingCallCancelled) as caught:
+            await pending
+        assert closed == []
+        assert runtime._video_transcripts == {}
+        release.set()
+        await asyncio.wrap_future(caught.value.completion)
+        assert closed == ["media"]
+        assert cached == {"language": "en", "transcript": []}
 
     try:
         asyncio.run(cancel())

@@ -346,7 +346,8 @@ def test_migration_preserves_failure_scope_and_committed_results_without_retry()
     parent = changes["video_parse_task"]["parent"]
     assert parent["status"] == "INDEXING_FAILED"
     assert parent["parse_config"]["models"] == before["video_parse_task"][0]["parse_config"]["models"]
-    assert parent["parse_config"]["execution"]["max_model_calls"] == before["video_parse_task"][0]["parse_config"]["execution"]["max_model_calls"]
+    assert "max_model_calls" not in parent["parse_config"]["execution"]
+    assert parent["parse_config"]["execution"]["max_retry_count"] == before["video_parse_task"][0]["parse_config"]["execution"]["max_retry_count"]
     assert "max_concurrent_model_calls" not in parent["parse_config"]["execution"]
     assert parent["parse_config"]["indexing"]["index_generation"] == 7
     assert "target_index_generation" not in parent

@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from tests.server.test_video_parse_repository import _refinement_inputs
-from sqlalchemy import String, delete, event, func, inspect, select, text
+from sqlalchemy import String, delete, event, inspect, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from server.database import (
@@ -22,21 +22,21 @@ from server.database import (
     create_session_factory,
 )
 from server.model.video import Series, Video, VideoChunk
-from server.model.job import (
+from server.model.parse_content import (
     ChunkParseContent,
-    ChunkParseTask,
     IntervalParseContent,
+)
+from server.model.task import (
+    ChunkParseTask,
     IntervalParseTask,
-    SeriesParseJob,
     VideoParseTask,
 )
 from server.model.agent import AgentConversation, AgentMessage
-from server.model.parse_usage import ParseModelCall, ParseUsageAttempt
-from server.model.upload import UploadSession, UploadSessionStatus
+from server.model.upload import UploadSession
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.utils.time import now_unix_time_ms, unix_time_ms_to_datetime
 from server.repository.agent import AgentRepository
-from server.model.dto.jobDTO import ChunkParseLease, IntervalParseLease, PrefixParseLease
+from server.model.dto.taskDTO import ChunkParseLease, IntervalParseLease, PrefixParseLease
 from engine.common.config import VideoParseRuntimeConfig
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
@@ -169,17 +169,6 @@ def _upload_defaults():
     )
 
 
-def _seed_legacy_job(factory, *, video_id, series_id):
-    """Preserve historical V1 queue/cleanup coverage after uploads became V2-only."""
-    job_id = str(uuid4())
-    with factory.begin() as session:
-        session.add(SeriesParseJob(
-            id=job_id, video_id=video_id, series_id=series_id,
-            pipeline_version="historical-v1", status="QUEUED", stage="QUEUED", progress=0,
-        ))
-    return job_id
-
-
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_agent_message_detail_request_idempotency_and_pairing():
     engine = create_database_engine(
@@ -301,7 +290,6 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         tenant_id="mysql-manual-retry",
     )
     assert completed.video_parse_task_id is not None
-    assert completed.job_id is None
     with session_factory.begin() as session:
         task = session.get(VideoParseTask, completed.video_parse_task_id)
         original_config = task.parse_config
@@ -346,9 +334,6 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
             )
             assert task.version == 1
             assert task.parse_config == original_config
-            assert session.scalar(select(func.count(SeriesParseJob.id)).where(
-                SeriesParseJob.series_id == series.series_id,
-            )) == 0
     finally:
         with session_factory.begin() as session:
             session.execute(delete(Series).where(Series.id == series.series_id))
@@ -410,7 +395,6 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
         )
         original_config = initial.parse_config
         initial.status = "COMPLETE"
-        assert completed.job_id is None
 
     barrier = Barrier(2)
 
@@ -453,9 +437,6 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
             ]
             assert [task.version for task in tasks] == [1, 2]
             assert tasks[0].parse_config == tasks[1].parse_config == original_config
-            assert session.scalar(select(func.count(SeriesParseJob.id)).where(
-                SeriesParseJob.series_id == series.series_id,
-            )) == 0
     finally:
         with session_factory.begin() as session:
             session.execute(
@@ -1167,103 +1148,6 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
-def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
-    engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
-    create_schema(engine)
-    session_factory = create_session_factory(engine)
-    series = LibraryService(LibraryRepository(session_factory)).create_series(
-        tenant_id="mysql-completed-delete",
-        name=f"Completed Upload Delete {uuid4()}",
-    )
-    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
-    uploads = UploadService(
-        UploadRepository(session_factory),
-        store, parse_defaults=_upload_defaults(),
-        config=UploadServiceConfig(
-            preferred_segment_size_bytes=4,
-            maximum_upload_size_bytes=1024,
-            pipeline_version="mysql-delete-v1",
-        ),
-        probe_duration=lambda _path: 10_000,
-    )
-    upload = uploads.create_session(
-        tenant_id="mysql-completed-delete",
-        series_id=series.series_id,
-        episode_order=1,
-        original_filename="episode.mp4",
-        media_type="video/mp4",
-        total_size_bytes=4,
-        idempotency_key="completed-delete",
-    )
-    uploads.upload_segment(
-        upload.upload_session_id,
-        0,
-        b"abcd",
-        tenant_id="mysql-completed-delete",
-        checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
-        start_byte=0,
-        end_byte_exclusive=4,
-        total_size_bytes=4,
-    )
-    completed = uploads.complete(
-        upload.upload_session_id,
-        tenant_id="mysql-completed-delete",
-    )
-    now = now_unix_time_ms()
-    call_id = str(uuid4())
-    legacy_job_id = _seed_legacy_job(
-        session_factory, video_id=completed.video_id, series_id=series.series_id,
-    )
-    with session_factory.begin() as session:
-        session.add(ParseUsageAttempt(
-            job_id=legacy_job_id,
-            attempt_count=1,
-            lease_version=1,
-            start_time=unix_time_ms_to_datetime(now),
-            recording_complete=True,
-        ))
-        session.add(ParseModelCall(
-            id=call_id,
-            job_id=legacy_job_id,
-            attempt_count=1,
-            lease_version=1,
-            tenant_id="mysql-completed-delete",
-            series_id=series.series_id,
-            video_id=completed.video_id,
-            provider="test",
-            model="test-model",
-            category="parse",
-            operation="parse",
-            start_time=unix_time_ms_to_datetime(now),
-            status="failed",
-        ))
-
-    try:
-        deleted = uploads.delete_session(
-            upload.upload_session_id,
-            tenant_id="mysql-completed-delete",
-        )
-        repeated = uploads.delete_session(
-            upload.upload_session_id,
-            tenant_id="mysql-completed-delete",
-        )
-        assert deleted.status == UploadSessionStatus.EXPIRED.value
-        assert repeated.version == deleted.version
-        with session_factory() as session:
-            tombstone = session.get(UploadSession, upload.upload_session_id)
-            assert tombstone.video_id is None and tombstone.job_id is None
-            assert tombstone.last_error_code is None
-            assert session.get(Video, completed.video_id) is None
-            assert session.get(SeriesParseJob, legacy_job_id) is None
-            assert session.get(ParseUsageAttempt, (legacy_job_id, 1, 1)) is None
-            assert session.get(ParseModelCall, call_id) is None
-    finally:
-        with session_factory.begin() as session:
-            session.execute(delete(Series).where(Series.id == series.series_id))
-        engine.dispose()
-
-
-@pytest.mark.skipif(not TEST_DATABASE_URL, reason="SEEKINO_TEST_DATABASE_URL is not configured")
 def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
     tmp_path,
 ):
@@ -1348,10 +1232,10 @@ def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
             for upload in pending
         ]
         assert [
-            (item.video_id, item.job_id, item.video_parse_task_id)
+            (item.video_id, item.video_parse_task_id)
             for item in replayed
         ] == [
-            (item.video_id, item.job_id, item.video_parse_task_id)
+            (item.video_id, item.video_parse_task_id)
             for item in completed
         ]
         with session_factory() as session:
@@ -1367,13 +1251,6 @@ def test_mysql_completes_distinct_uploads_in_one_series_concurrently(
             assert {task.video_id for task in tasks} == {video.id for video in videos}
             assert {task.id for task in tasks} == {
                 item.video_parse_task_id for item in completed
-            }
-            jobs = list(session.scalars(select(SeriesParseJob).where(
-                SeriesParseJob.series_id == series.series_id,
-            )))
-            assert jobs == []
-            assert {job.id for job in jobs} == {
-                item.job_id for item in completed if item.job_id is not None
             }
     finally:
         all_inserted.set()

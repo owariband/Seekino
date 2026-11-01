@@ -8,17 +8,22 @@ from copy import deepcopy
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session, aliased, load_only
 
-from ..model.dto.jobDTO import (
-    ChunkParseContentData,
+from ..model.dto.parseContentDTO import ChunkParseContentData
+from ..model.dto.taskDTO import (
     ChunkParseTaskData,
+    VideoParseTaskData,
+)
+from ..model.dto.libraryDTO import (
     SeriesData,
     VideoChunkData,
     VideoData,
+)
+from ..model.dto.searchDTO import (
     VideoParseRetrievalChunkData,
     VideoParseRetrievalTaskData,
-    VideoParseTaskData,
 )
-from ..model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
+from ..model.parse_content import ChunkParseContent
+from ..model.task import ChunkParseTask, VideoParseTask
 from ..model.video import Series, Video, VideoChunk
 from . import video_parse_chunk as chunk_store
 from . import video_parse_task as task_store

@@ -24,21 +24,37 @@ from engine.parsev2.validation import (
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
 from ..model.identifiers import derive_video_chunk_id
-from ..model.dto.jobDTO import (
-    ChunkParseContentState, ChunkExecutionState, ChunkParseLease,
-    IndexableChunkState, ChunkIndexingSnapshot, VideoParseTaskState,
-    VideoParseLease, VideoChunkState, IntervalMemberSnapshot, IntervalParseLease, RealtimeChunkState,
-    ChunkParseTaskData,
+from ..model.dto.parseContentDTO import (
+    ChunkParseContentState,
+    IndexableChunkState,
+    ChunkIndexingSnapshot,
+    IntervalMemberSnapshot,
     ChunkParseContentData,
-    IntervalParseTaskData,
     IntervalParseContentData,
+)
+from ..model.dto.taskDTO import (
+    ChunkExecutionState,
+    ChunkParseLease,
+    VideoParseTaskState,
+    VideoParseLease,
+    IntervalParseLease,
+    RealtimeChunkState,
+    ChunkParseTaskData,
+    IntervalParseTaskData,
     VideoParseTaskData,
+)
+from ..model.dto.libraryDTO import (
+    VideoChunkState,
     VideoChunkData,
     VideoData,
 )
-from ..model.job import (
-    ChunkTaskPhase, ChunkParseTaskStatus, IntervalParseTaskStatus,
-    VideoParseTaskStatus, interval_full_ready_mask, interval_ready_mask_bit,
+from ..model.task import (
+    ChunkTaskPhase,
+    ChunkParseTaskStatus,
+    IntervalParseTaskStatus,
+    VideoParseTaskStatus,
+    interval_full_ready_mask,
+    interval_ready_mask_bit,
     validate_interval_parse_task_members,
 )
 from ..repository import video_parse_chunk as chunk_store
@@ -953,6 +969,8 @@ def commit_interval_refinement(
     chunk_duration_ms = chunk_duration * 1000
     start_ms = consulted_scope[0] * chunk_duration_ms
     end_ms = min(video.duration_ms, (consulted_scope[-1] + 1) * chunk_duration_ms)
+    asr = (parent.parse_config.get("models") or {}).get("asr") or {}
+    dialogue_bounds = (0, video.duration_ms) if asr.get("scope") == "video" else None
     candidates = {}
     for chunk_task, chunk, result in rows:
         base = deepcopy(dict(input_contents[chunk_task.id]))
@@ -962,12 +980,13 @@ def commit_interval_refinement(
             raise VideoParseConflictError("refinement can only commit persons and timeline")
         proposed = validate_result_time_range(
             VideoParseResult.model_validate({**base, **deepcopy(dict(changed))}),
-            start_seconds=start_ms, end_seconds=end_ms,
+            start_seconds=start_ms, end_seconds=end_ms, dialogue_bounds=dialogue_bounds,
         ).model_dump(mode="json")
         try:
             merged = merge_refinement_content(base, current, proposed)
             candidates[chunk_task.id] = validate_result_time_range(
                 VideoParseResult.model_validate(merged), start_seconds=start_ms, end_seconds=end_ms,
+                dialogue_bounds=dialogue_bounds,
             ).model_dump(mode="json")
         except (RefinementMergeConflictError, ValidationError) as error:
             context = {"chunk_task_id": chunk_task.id, "chunk_id": chunk.id,

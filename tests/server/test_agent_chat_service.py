@@ -35,7 +35,8 @@ from server.model.agent import (
     AgentMessage,
 )
 from server.model.video import Series, Video
-from server.model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, VideoParseTask
 from server.model.dto.agentDTO import AgentMessageTimingState, AgentStageTimingState
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,

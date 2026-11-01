@@ -163,7 +163,6 @@ class ServerSettings:
                 parse_concurrency=_environment_int("SEEKINO_PARSE_CONCURRENCY", parse_defaults.parse_concurrency),
                 refine_concurrency=_environment_int("SEEKINO_REFINE_CONCURRENCY", parse_defaults.refine_concurrency),
                 index_concurrency=_environment_int("SEEKINO_INDEX_CONCURRENCY", parse_defaults.index_concurrency),
-                max_model_calls=_environment_int("SEEKINO_MAX_MODEL_CALLS", parse_defaults.max_model_calls),
                 parse_execution_timeout_seconds=_environment_float("SEEKINO_PARSE_EXECUTION_TIMEOUT_SECONDS", parse_defaults.parse_execution_timeout_seconds),
                 refine_execution_timeout_seconds=_environment_float("SEEKINO_REFINE_EXECUTION_TIMEOUT_SECONDS", parse_defaults.refine_execution_timeout_seconds),
                 index_execution_timeout_seconds=_environment_float("SEEKINO_INDEX_EXECUTION_TIMEOUT_SECONDS", parse_defaults.index_execution_timeout_seconds),

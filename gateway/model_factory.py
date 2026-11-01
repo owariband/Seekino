@@ -319,6 +319,7 @@ class GatewayClient:
         self._resources: set[_OwnedResource] = set()
         self._codex_executors: dict[str, ThreadPoolExecutor] = {}
         self._whisperx_runtimes: dict[tuple[str, str], Any] = {}
+        self._diarization_locks: dict[str, Any] = {}
         owns_supervisor_sessions = supervisor_sessions is None and config.supervisor_harness == "deepagents"
         if owns_supervisor_sessions:
             from gateway.agent_model.deepagents import DeepAgentSessionStore
@@ -404,7 +405,9 @@ class GatewayClient:
                 if isinstance(source, OpenAIVisionSourceConfig) else {}
             )
             delegate = OpenAIVisionModel(
-                **common, provider=source.provider, base_url=source.base_url, api_key=key, **options,
+                **common, provider=source.provider, base_url=source.base_url, api_key=key,
+                stream=isinstance(source, OpenAIModelSourceConfig) and source.profile == "kimi",
+                **options,
             )
         elif isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
             common.update(
@@ -475,6 +478,21 @@ class GatewayClient:
             source=binding.source,
         )
 
+    def create_diarization_model(self, ref: str | ModelBinding = "diarization") -> Any:
+        from gateway.config import PyannoteSourceConfig
+        from gateway.local.pyannote import PyannoteDiarizationModel
+        binding = self._binding(ref, "diarization")
+        source = self.config.source(binding.source)
+        if not isinstance(source, PyannoteSourceConfig):
+            raise TypeError("diarization requires a pyannote source")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Gateway client is closed")
+            # Different model handles on one device must not load duplicate pipelines.
+            device_lock = self._diarization_locks.setdefault(source.device, Lock())
+        return self._own(PyannoteDiarizationModel(binding, source, device_lock=device_lock),
+                         source=binding.source)
+
     def create_speaker_embedding_model(self, ref: str | ModelBinding = "speaker") -> Any:
         from gateway.speaker_embedding import build_speaker_embedding_model
         binding = self._binding(ref, "speaker_embedding")
@@ -513,7 +531,7 @@ class GatewayClient:
         ))
 
     def create(
-        self, kind: Literal["generative", "transcription", "embedding", "rerank", "speaker_embedding"],
+        self, kind: Literal["generative", "transcription", "embedding", "rerank", "speaker_embedding", "diarization"],
         ref: str | ModelBinding,
     ) -> Any:
         constructors = {
@@ -522,6 +540,7 @@ class GatewayClient:
             "embedding": self.create_embedding_model,
             "rerank": self.create_rerank_model,
             "speaker_embedding": self.create_speaker_embedding_model,
+            "diarization": self.create_diarization_model,
         }
         try:
             constructor = constructors[kind]

@@ -6,7 +6,6 @@ import pytest
 
 from server.model.identifiers import (
     derive_context_snapshot_id,
-    derive_parse_job_id,
     derive_series_id,
     derive_video_chunk_id,
     derive_video_id,
@@ -43,11 +42,6 @@ def test_video_chunk_id_uses_seekino_uuid_seed() -> None:
         derive_context_snapshot_id,
         ("00000000-0000-0000-0000-000000000001", 0),
         "8ea6d176-a79d-5909-96e2-32b09acd3c11",
-    ),
-    (
-        derive_parse_job_id,
-        ("00000000-0000-0000-0000-000000000001", " v1 "),
-        "ab92f4ec-7fff-511e-b9c5-d242e196a0e8",
     ),
 ])
 def test_entity_identifiers_match_seekino_namespace(derive_identifier, arguments, expected) -> None:

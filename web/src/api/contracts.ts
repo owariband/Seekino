@@ -83,7 +83,6 @@ export interface VideoSummary {
   playbackUrl: string | null;
   playbackUrlExpiresAt: UnixTimeMs | null;
   thumbnail: ImageAsset | null;
-  latestJobId: string | null;
   lastError: Failure | null;
 }
 
@@ -186,6 +185,7 @@ export interface ParseConfig {
     maxOutputTokens: number | null;
     concurrency: number;
   };
+  diarization?: { source: string; model: string; request_timeout_seconds: number } | null;
   vision: {
     model: string;
     inputMode: "video" | "ordered_frames";
@@ -256,7 +256,6 @@ export interface UploadSessionView {
   estimatedRemainingMs: number | null;
   expiresAt: UnixTimeMs;
   videoId: string | null;
-  jobId: string | null;
   initialVideoParseTaskId?: string | null;
   lastError: Failure | null;
   version: number;
@@ -268,7 +267,6 @@ export interface UploadSessionView {
 export interface UploadCompleteView {
   uploadSession: UploadSessionView;
   videoId: string;
-  jobId: string | null;
   videoParseTaskId: string;
 }
 
