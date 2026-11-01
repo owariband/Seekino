@@ -9,7 +9,7 @@ from pydantic import BaseModel, PydanticInvalidForJsonSchema, ValidationError
 
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
 from gateway.ark.multimodal import ArkMultimodalModel
-from gateway.ark.sse import request_sse_json, request_sse_text
+from gateway.streaming.responses import request_response_json, request_sse_text
 from gateway.errors import SSEProxyError
 from gateway.local.llama_cpp import LlamaCppMultimodalModel
 from gateway.local.ollama import OllamaMultimodalModel
@@ -114,7 +114,7 @@ def test_non_completed_sse_captures_terminal_usage(terminal):
     response.status = terminal.split(".")[1]
     provider = Responses(events=[SimpleNamespace(type=terminal, response=response)])
     with capture_model_usage(calls.append), pytest.raises(SSEProxyError):
-        request_sse_json(provider, model="model", input=[])
+        request_response_json(provider, model="model", input=[])
     assert len(calls) == 1
     assert calls[0].status == "failed"
     assert calls[0].usage.total_tokens == 130
@@ -147,7 +147,7 @@ def test_failed_request_without_usage_is_unknown_not_zero(mode):
             raise RuntimeError("network")
         provider.events = events()
     with capture_model_usage(calls.append), pytest.raises((RuntimeError, SSEProxyError)):
-        request_sse_json(provider, model="model", input=[])
+        request_response_json(provider, model="model", input=[])
     assert len(calls) == len(provider.calls) == 1
     assert calls[0].status == "failed"
     assert calls[0].usage is None
@@ -159,7 +159,7 @@ def test_observer_failure_does_not_change_result_or_retry(caplog):
     def observer(call):
         raise RuntimeError("storage failure")
     with capture_model_usage(observer):
-        assert request_sse_json(provider, model="model", input=[]) == {"summary": "ok"}
+        assert request_response_json(provider, model="model", input=[]) == {"summary": "ok"}
     assert len(provider.calls) == 1
     assert "Model usage observer failed" in caplog.text
     assert "storage failure" not in caplog.text
@@ -171,7 +171,7 @@ def test_deepseek_captures_usage_even_on_invalid_or_incomplete_output(status, te
     response = _response(text, _request_id="deepseek-request")
     response.status = status
     provider = Responses(response=response)
-    model = DeepSeekMultimodalModel("model", base_url="https://example.test", api_key="test-key",
+    model = DeepSeekMultimodalModel("model", stream=False, base_url="https://example.test", api_key="test-key",
                                    max_output_tokens=1000, request_timeout_seconds=10,
                                    client=SimpleNamespace(responses=provider))
     with capture_model_usage(calls.append):
@@ -235,7 +235,7 @@ def test_invalid_usage_metadata_is_not_used_as_a_token_estimate(caplog):
     response = _response()
     response.usage.input_tokens = -1
     with capture_model_usage(calls.append):
-        assert request_sse_json(Responses(response=response), model="model", input=[]) == {"summary": "ok"}
+        assert request_response_json(Responses(response=response), model="model", input=[]) == {"summary": "ok"}
     assert calls[0].usage is None
     assert "invalid token usage" in caplog.text
 
@@ -246,9 +246,9 @@ def test_nested_observers_restore_scope_and_missing_usage_stays_none():
     response.usage = None
     with capture_model_usage(outer.append):
         with capture_model_usage(inner.append):
-            request_sse_json(Responses(response=response), model="model", input=[])
-        request_sse_json(Responses(response=response), model="model", input=[])
-    request_sse_json(Responses(response=response), model="model", input=[])
+            request_response_json(Responses(response=response), model="model", input=[])
+        request_response_json(Responses(response=response), model="model", input=[])
+    request_response_json(Responses(response=response), model="model", input=[])
     assert len(outer) == len(inner) == 1
     assert outer[0].usage is None
     assert inner[0].usage is None
@@ -261,7 +261,7 @@ def test_nonterminal_initial_zero_usage_does_not_turn_interrupted_call_into_zero
     response.usage = SimpleNamespace(input_tokens=0, output_tokens=0, total_tokens=0)
     provider = Responses(events=[SimpleNamespace(type="response.created", response=response)])
     with capture_model_usage(calls.append), pytest.raises(SSEProxyError, match="without a terminal event"):
-        request_sse_json(provider, model="model", input=[])
+        request_response_json(provider, model="model", input=[])
     assert len(calls) == 1
     assert calls[0].status == "failed"
     assert calls[0].usage is None
@@ -282,7 +282,7 @@ def test_invalid_counter_totals_and_subsets_are_unknown(usage):
     response = _response()
     response.usage = usage
     with capture_model_usage(calls.append):
-        request_sse_json(Responses(response=response), model="model", input=[])
+        request_response_json(Responses(response=response), model="model", input=[])
     assert calls[0].usage is None
 
 
@@ -291,7 +291,7 @@ def test_unreported_cache_reasoning_and_modality_counts_stay_unknown():
     response = _response()
     response.usage = {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}
     with capture_model_usage(calls.append):
-        request_sse_json(Responses(response=response), model="model", input=[])
+        request_response_json(Responses(response=response), model="model", input=[])
     assert calls[0].usage == TokenUsage(10, 2, 12, None, None)
 
 
@@ -304,7 +304,7 @@ def test_reported_cache_write_and_ttl_are_preserved_without_changing_inclusive_t
                                  "cache_write_5m_tokens": 1, "cache_write_1h_tokens": 2},
     }
     with capture_model_usage(calls.append):
-        request_sse_json(Responses(response=response), model="model", input=[])
+        request_response_json(Responses(response=response), model="model", input=[])
     usage = calls[0].usage
     assert usage.input_tokens == 10 and usage.total_tokens == 12
     assert usage.cache_write_input_tokens == 3
@@ -434,7 +434,7 @@ def test_rejected_admission_is_not_recorded_as_a_provider_request():
         capture_model_usage(calls.append),
         pytest.raises(RuntimeError, match="budget exhausted"),
     ):
-        request_sse_json(provider, model="model", input=[])
+        request_response_json(provider, model="model", input=[])
 
     assert provider.calls == []
     assert calls == []
@@ -468,7 +468,7 @@ def test_control_cancellation_closes_stream_and_rejects_late_result():
 
     provider.create = create
     with control_model_calls(Control()), pytest.raises(ModelCallCancelledError):
-        request_sse_json(provider, model="model", input=[])
+        request_response_json(provider, model="model", input=[])
     assert provider_stream.closed
 
 

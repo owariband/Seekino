@@ -33,6 +33,33 @@ _OUTPUT_CONTENT_FILTER_CODES = frozenset(
 )
 
 
+def request_response(
+    responses: Any, *, stream: bool, usage_call: ModelCallTracker,
+    check_control: Callable[[], None] | None = None, **request: Any,
+) -> tuple[Any, str]:
+    """Return one verified Responses turn using the configured transport."""
+    if not isinstance(stream, bool):
+        raise TypeError("stream must be a boolean")
+    if stream:
+        return request_sse_response(responses, usage_call=usage_call, check_control=check_control, **request)
+    usage_call.raise_if_cancelled()
+    if check_control is not None:
+        check_control()
+    response = responses.create(stream=False, **request)
+    usage_call.capture_response(response)
+    record_model_event("response", response)
+    usage_call.raise_if_cancelled()
+    if check_control is not None:
+        check_control()
+    status = getattr(response, "status", None)
+    if status not in {None, "completed"}:
+        code = (getattr(getattr(response, "error", None), "code", None)
+                or getattr(getattr(response, "incomplete_details", None), "reason", None))
+        error_type = ContentFilterError if code in _OUTPUT_CONTENT_FILTER_CODES else SSEProxyError
+        raise error_type(f"Responses request did not complete: {status}", code=code, response_id=getattr(response, "id", None))
+    return response, _extract_response_text(response)
+
+
 def request_sse_response(
     responses: Any, *, usage_call: ModelCallTracker,
     check_control: Callable[[], None] | None = None, **request: Any,
@@ -48,30 +75,25 @@ def request_sse_response(
     return metadata["response"], metadata.get("output_text", "")
 
 
-def request_sse_json(
-    responses: Any, *, usage_call: ModelCallTracker | None = None, **request: Any
+def request_response_json(
+    responses: Any, *, usage_call: ModelCallTracker | None = None,
+    stream: bool = True, check_control: Callable[[], None] | None = None, **request: Any,
 ) -> dict[str, Any]:
-    with _usage_scope(usage_call, request) as call, capture_model_diagnostics(call, {**request, "stream": True}):
-        metadata: dict[str, Any] = {}
-        for _ in _request_sse_text(
-            responses, allow_terminal_text=True, metadata=metadata, usage_call=call, **request
-        ):
-            pass
-        output_text = metadata["output_text"]
+    with _usage_scope(usage_call, request) as call, capture_model_diagnostics(call, {**request, "stream": stream}):
+        response, output_text = request_response(
+            responses, stream=stream, usage_call=call, check_control=check_control, **request,
+        )
+        if not output_text:
+            raise SSEProxyError("Responses returned no output text", response_id=getattr(response, "id", None))
         try:
             payload = json.loads(output_text)
         except json.JSONDecodeError as error:
             raise SSEProxyError(
-                f"Ark Responses SSE returned invalid JSON at char {error.pos}",
-                response_id=metadata.get("response_id"),
-                partial_output_chars=len(output_text),
+                f"Responses returned invalid JSON at char {error.pos}",
+                response_id=getattr(response, "id", None), partial_output_chars=len(output_text),
             ) from error
         if not isinstance(payload, dict):
-            raise SSEProxyError(
-                "Ark Responses SSE JSON root must be an object",
-                response_id=metadata.get("response_id"),
-                partial_output_chars=len(output_text),
-            )
+            raise SSEProxyError("Responses JSON root must be an object", response_id=getattr(response, "id", None))
         return payload
 
 
@@ -154,7 +176,7 @@ def _request_sse_text(
             if isinstance(sequence, int):
                 if sequence <= last_sequence:
                     raise SSEProxyError(
-                        "Ark Responses SSE sequence is not strictly increasing",
+                        "Responses SSE sequence is not strictly increasing",
                         response_id=response_id,
                         partial_output_chars=_output_length(text_parts),
                     )
@@ -211,7 +233,7 @@ def _request_sse_text(
                 )
                 raise error_type(
                     getattr(error, "message", None)
-                    or "Ark Responses SSE failed",
+                    or "Responses SSE failed",
                     code=code,
                     response_id=response_id,
                     partial_output_chars=_output_length(text_parts),
@@ -228,7 +250,7 @@ def _request_sse_text(
                     if reason == "content_filter" or content_filter is not None
                     else SSEProxyError
                 )
-                message = reason or "Ark Responses SSE was incomplete"
+                message = reason or "Responses SSE was incomplete"
                 if filter_type:
                     message += f" ({filter_type})"
                 raise error_type(
@@ -243,7 +265,7 @@ def _request_sse_text(
             if event_type == "error":
                 raise SSEProxyError(
                     getattr(event, "message", None)
-                    or "Ark Responses SSE returned an error event",
+                    or "Responses SSE returned an error event",
                     code=getattr(event, "code", None),
                     response_id=response_id,
                     partial_output_chars=_output_length(text_parts),
@@ -255,7 +277,7 @@ def _request_sse_text(
 
     if completed_response is None:
         raise SSEProxyError(
-            "Ark Responses SSE ended without a terminal event",
+            "Responses SSE ended without a terminal event",
             response_id=response_id,
             partial_output_chars=_output_length(text_parts),
         )
@@ -264,7 +286,7 @@ def _request_sse_text(
     response_text = _extract_response_text(completed_response)
     if response_text and streamed_text and response_text != streamed_text:
         raise SSEProxyError(
-            "Ark Responses SSE output differs from the completed response",
+            "Responses SSE output differs from the completed response",
             response_id=response_id,
             partial_output_chars=len(streamed_text),
         )
@@ -363,7 +385,7 @@ def _request_sse_text(
             json.dumps(summary, ensure_ascii=False, separators=(",", ":")),
         )
         raise SSEProxyError(
-            "Ark Responses SSE returned no output text",
+            "Responses SSE returned no output text",
             response_id=response_id,
         )
 
@@ -402,7 +424,7 @@ def _join_streamed_text(
         done_text = done_texts.get(key, "")
         if delta_text and done_text and delta_text != done_text:
             raise SSEProxyError(
-                "Ark Responses SSE delta text differs from output_text.done",
+                "Responses SSE delta text differs from output_text.done",
                 response_id=response_id,
                 partial_output_chars=_output_length(text_parts),
             )

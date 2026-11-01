@@ -254,6 +254,8 @@ class _GatewayChatModel(BaseChatModel):
                     self._client,
                     model_name=adapter.fallback_model_name if fallback else adapter.model_name,
                     max_output_tokens=(adapter._fallback_max_output_tokens if fallback else adapter.max_output_tokens),
+                    stream=adapter._fallback_stream if fallback else adapter._stream,
+                    temperature=adapter._fallback_temperature if fallback else adapter.temperature,
                     tools=tools, messages=payload,
                     tool_specs=specs or None, tool_choice="auto" if specs else None,
                     timeout=min(request_timeout, adapter._fallback_request_timeout_seconds if fallback else adapter._request_timeout_seconds),

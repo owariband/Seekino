@@ -43,7 +43,8 @@ def test_audio_transport_uses_explicit_binding_and_preserves_provider_seconds(mo
     assert len(calls) == 1
 
 
-def test_video_transport_retains_caller_prompt_schema_and_selected_model(monkeypatch, tmp_path):
+@pytest.mark.parametrize("stream", [True, False])
+def test_video_transport_retains_caller_prompt_schema_and_selected_model(monkeypatch, tmp_path, stream):
     constructed = []
     requests = []
 
@@ -59,7 +60,7 @@ def test_video_transport_retains_caller_prompt_schema_and_selected_model(monkeyp
     monkeypatch.setattr("gateway.transcription.ArkMultimodalModel", create)
     binding = ModelBinding(
         source="video_connection", model="selected-video", request_timeout_seconds=23,
-        max_output_tokens=1024, reasoning_effort="none",
+        max_output_tokens=1024, reasoning_effort="none", stream=stream, temperature=0.2,
     )
     model = build_transcription_model(binding, ArkModelSourceConfig(), api_key="explicit-key")
     inputs = [VideoInput(tmp_path / "video.mp4", fps=0.5), TextInput("caller ASR prompt")]
@@ -67,7 +68,8 @@ def test_video_transport_retains_caller_prompt_schema_and_selected_model(monkeyp
     assert model.generate(inputs, schema_name="candidate_transcript", result_type=Transcript) is result
     assert constructed == [("selected-video", {
         "request_timeout_seconds": 23, "max_output_tokens": 1024,
-        "reasoning_effort": "none", "api_key": "explicit-key",
+        "reasoning_effort": "none", "api_key": "explicit-key", "stream": stream,
+        "temperature": 0.2,
     })]
     assert requests == [(inputs, {"schema_name": "candidate_transcript", "result_type": Transcript})]
     model.close()

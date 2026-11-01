@@ -638,6 +638,18 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 ## TODO（待修复解决）
 
+### B24：模型 stream 被入口写死且正式 Parse 丢失开关
+
+排序日期：2026-10-31。
+
+状态：TODO（[PR #22](https://github.com/owariband/Seekino/pull/22) 已实现并完成隔离验证，PR 集成、服务加载和新增线上验收待完成）。用户要求在创建模型时统一配置 stream，默认 true、显式 false；此前 Chat / Structured 固定 false，PR #20 又仅对 Kimi 视觉启用 true。旧前端 SSE 只证明业务事件连接存在，不证明模型请求流式。
+
+本次在 `ModelBinding`、旧 Agent 投影、工厂、共享 Chat Completions / Responses 接收器中统一开关，主模型与 fallback 独立保存。Parse profile 和持久快照补齐字段，恢复后传至正式 runtime 创建；历史快照缺省按 true 执行，序列化形状不变。流收齐后继续原 Schema / 工具验证，不执行半截工具参数，不自动改成非流式重发。
+
+Gateway 回归 1345 passed，另 5 个失败均在未改业务代码的 `dev` 同环境复现；Parse 配置 / runtime 相关 397 passed，配置 HTTP / 上传服务隔离回归另有 113 passed，前端 typecheck 通过。本轮没有新真实模型请求、服务重启或任务变更，不能据此宣称所有供应商在线兼容或整集稳定。代码来源归因、配置兼容与验证证据见 [TRD](../design/03-product-reassessment/model-streaming-trd.md)、[实施记录](../report/gateway/model-streaming-20261031.md)、[devlog](devlog.md#devlog-model-streaming-20261031)。
+
+2026-10-31 同一 PR 补齐用户要求的 `temperature`：内部创建 / YAML 默认 0，可显式配置，Kimi profile 固定 1，主模型与 fallback 独立传递，Parse 配置与旧快照兼容。新增温度后最终 Gateway 为 1548 passed、仍有上述 5 项基线失败；Parse 配置 / runtime 425 passed，HTTP / SQLite 上传 113 passed，前端 typecheck 通过。配置功能已实现；PR 集成与服务加载仍待完成，不声称默认温度已通过业务质量评测。见[温度配置记录](devlog.md#devlog-model-temperature-20261031)。
+
 ### 模型暂态连接失败导致 Karpathy 整集停止（2026-10-30）
 
 直接 JSON 链路漏识别 SDK 连接/超时/504，节点未重试且用户只看到执行异常。修复增加明确原因、有限重试、逐请求 trace 和脱敏终止日志；隔离验证见 [TRD](../design/03-product-reassessment/model-network-failure-trd.md)。EP1 已恢复原 v3，整集成功与稳定性尚待正式验收。历史同时断连的责任端无法由旧日志补推，模型单次输入和耗时仍需独立评测。
@@ -658,6 +670,18 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 2026-10-30：拆分 ASR、视觉准备、OCR、理解节点；暂态错误只重试失败节点，成功观察保存在本次子图状态内。最终失败持久化 `PARSE_NODE_FAILED`，停止新派发、拒绝兄弟任务续租和迟到提交，沿用任务通知与 API/SSE 展示阶段及原因。进程崩溃的租约回收仍独立存在；本地原生 ASR 已进入的阻塞调用不保证立即取消。未重启服务、未变更真实任务，未声称内存峰值已经实测改善。
 
 仍待：真实失败到前端验收；指定视频暂停、一键全量暂停和保留素材的无用任务清理。设计见 [失败边界](../design/03-product-reassessment/video-parse-performance-trd.md#61-2026-10-30understanding-节点重试与最终失败边界)，验证见 [devlog](devlog.md#devlog-node-retry-20261030)。
+
+### B23：正式 Kimi 长 Chunk 仍使用非流式调用并反复 504
+
+排序日期：2026-10-30。
+
+状态：TODO（`fix/kimi-streaming` / [PR #20](https://github.com/owariband/Seekino/pull/20) 已接入流式，真实首个 Chunk 已通过；服务加载与整集验收待完成）。MyGO EP04 首个 0–63 秒 Chunk 的 3 / 1 / 0.5 fps 非流式请求分别在 301.732 / 419.475 / 337.148 秒返回 504；当时均未取得 usage，不能声称降帧改善成功率或量化 context 使用量。历史流式成功实验使用 `k3` / Responses，与当前 `k3.1-pro` / Chat 请求存在差异，调查应优先核对协议接线。
+
+修复让 `profile: kimi` 的直接 JSON、legacy / Deep Agents 视觉工具轮次统一使用 `stream=True`，保留完整结果/工具校验、推理连续性和末尾 usage，EOF / 读取失败不返回半截结果。2026-10-30 22:59，通过正式工厂入口发送一张合成红蓝图：首片 5.520 秒、总计 7.431 秒、110 个分片，JSON 通过，242 input + 122 output tokens，该小图只证明接口兼容。
+
+23:18–23:23，取得用户新增单次授权后，直接调用正式 `ParseAgent.chunk_workflow.InvokeUnderstanding()`，经 Server/Gateway 使用原 3 fps / 189 帧和缓存 ASR；实际模型请求与原基线核对一致（仅流式及传输控制不同）。首片 28.729 秒，338.941 秒成功；Schema、0–60000 ms 时间范围和 Canvas 导入通过，产出 21 个事件。输入 238222 tokens（配置窗口 90.874%），输出 11618（含 reasoning 9250）。只调用一次、无重试，保存本地结果；未修改正式任务、未重启服务，不代表 HTTP/数据库提交、Refine、索引或整集质量验收。
+
+协议及相关回归 281 passed，另 1 个 Ark → DeepSeek fallback context 用例失败，在未修改的 `dev` / `df83c3f9` 同样复现，未夹带修复；另有 22 项 Parse Prompt/服务层测试通过。证据见 [TRD](../design/03-product-reassessment/kimi-streaming-trd.md)、[实施记录](../report/gateway/kimi-streaming-20261030.md)、[devlog](devlog.md#devlog-kimi-streaming-20261030)。
 
 ### B15：localhost MCP 与外部 Agent 素材取用闭环
 

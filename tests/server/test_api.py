@@ -667,7 +667,8 @@ def _background_png() -> bytes:
     return image_bytes.getvalue()
 
 
-def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stream", [True, False])
+def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_path: Path, stream: bool) -> None:
     client, _retrieval, _jobs = _client(tmp_path)
     defaults = ParseConfig.from_defaults(
         runtime=VideoParseRuntimeConfig(), gateway=load_config(),
@@ -683,6 +684,8 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
     assert response.json()["window"]["contextOverlapSeconds"] == 3
     assert "chunkDurationMs" not in response.json()["window"]
     assert response.json()["vision"]["fps"] == defaults.vision.fps
+    assert response.json()["vision"]["stream"] is True
+    assert response.json()["vision"]["temperature"] == 0
 
     invalid = response.json()
     invalid["vision"]["inputMode"] = "video"
@@ -702,6 +705,11 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
     series_id = _create_series(client)
     selected = response.json()
     selected["window"]["analysisMaxHeight"] = 480
+    selected["vision"]["stream"] = stream
+    selected["asr"]["stream"] = stream
+    selected["vision"]["temperature"] = 0.2
+    selected["asr"]["temperature"] = 0.3
+    selected["fallback"].update(enabled=True, stream=not stream, temperature=0.8)
     created = client.post(
         f"/api/uploads/create?seriesId={series_id}",
         headers={"Idempotency-Key": "configured-parse-upload"},
@@ -714,6 +722,13 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
     )
     assert created.status_code == 201
     assert created.json()["parseConfig"]["visual_input"]["max_height"] == 480
+    models = created.json()["parseConfig"]["models"]
+    assert models["understanding"]["stream"] is stream
+    assert models["asr"]["stream"] is stream
+    assert models["understanding"]["fallback"]["stream"] is not stream
+    assert models["understanding"]["temperature"] == 0.2
+    assert models["asr"]["temperature"] == 0.3
+    assert models["understanding"]["fallback"]["temperature"] == 0.8
     restored = client.get(
         "/api/uploads/get",
         params={"tenantId": "local-default", "uploadSessionId": created.json()["uploadSessionId"]},
