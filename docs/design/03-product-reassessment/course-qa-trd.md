@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-需求：课程学习闭环专项 QA 与跟版验收。提出日期：2026-11-01（Asia/Shanghai）。
+需求：课程学习闭环专项 QA 与跟版验收。提出日期：2026-11-01（北京时间）。
 
 工作分支：`chore/course-qa`；QA PR：[PR #24](https://github.com/owariband/Seekino/pull/24)，首个提交 `e6905baf` 只有本 TRD 初稿。主要跟踪 [PR #18](https://github.com/owariband/Seekino/pull/18)（`fix/video-asr-recovery`），上游设计为 [视频级 ASR 与恢复](local-whisperx-asr-trd.md)。QA 文档和工具独立向 `dev` 集成，不把上游尚未提交实现复制进 QA 分支，也不要求先合并实验 PR。上游进入 `dev` 后再验最终集成提交；上游负责解析、迁移和服务重启，本专项负责用户入口验收、证据与回归。
 
