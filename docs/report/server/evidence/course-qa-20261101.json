@@ -40,7 +40,12 @@
         "reasoning_tokens": 447,
         "total_tokens": 11295
       },
-      "model": "k3.1-pro"
+      "model": "k3.1-pro",
+      "ftt_seconds": 9.1726,
+      "ftt_first_output_kind": "progress_text",
+      "ftt_event_type": "answer.snapshot",
+      "ftt_event_sequence": 2,
+      "tt_seconds": 38.7964
     },
     {
       "case": "W02",
@@ -55,7 +60,12 @@
         "reasoning_tokens": 476,
         "total_tokens": 7334
       },
-      "model": "k3.1-pro"
+      "model": "k3.1-pro",
+      "ftt_seconds": 29.5763,
+      "ftt_first_output_kind": "answer_text",
+      "ftt_event_type": "answer.snapshot",
+      "ftt_event_sequence": 2,
+      "tt_seconds": 29.62
     },
     {
       "case": "W03",
@@ -70,7 +80,12 @@
         "reasoning_tokens": 3480,
         "total_tokens": 32749
       },
-      "model": "k3.1-pro"
+      "model": "k3.1-pro",
+      "ftt_seconds": 27.231,
+      "ftt_first_output_kind": "progress_text",
+      "ftt_event_type": "answer.snapshot",
+      "ftt_event_sequence": 2,
+      "tt_seconds": 178.2695
     }
   ],
   "grouped_median": null,
@@ -133,5 +148,18 @@
     "No base-cold parse, service crash, network failure injection or production deployment.",
     "No independent word-level acoustic alignment verification."
   ],
-  "raw_evidence": "outputs/verification/course-qa/20261101-baseline/ (local, ignored)"
+  "raw_evidence": "outputs/verification/course-qa/20261101-baseline/ (local, ignored)",
+  "latency_measurement": {
+    "source": "outputs/verification/course-qa/20261101-baseline/browser/events.jsonl (local, ignored)",
+    "scope": "client_sse",
+    "start": "performance.now() immediately before the browser fetch request",
+    "ftt": "First nonempty displayable assistant body received by the client, including progress prose; excludes empty/status/tool-state events.",
+    "tt": "Client receipt of answer.completed; failed or cancelled attempts are reported separately.",
+    "not_measured": [
+      "browser_first_paint",
+      "provider_time_to_first_token"
+    ],
+    "reconstruction_date": "2026-11-01",
+    "note": "Reconstructed from the original event log; no new model requests. first_substantive_seconds and completed_seconds are preserved."
+  }
 }
