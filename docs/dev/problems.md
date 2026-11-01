@@ -638,6 +638,19 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 ## TODO（待修复解决）
 
+<a id="chat-streaming-c23"></a>
+### C23：Chat 正文没有端到端流式交付，整包正文到达时间被误标为 FTT
+
+排序日期：2026-11-01。
+
+状态：TODO。沿用课程 QA 的 C23；原始产品要求见 [Chat 流式 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)，实施由 [Chat 流式 TRD](../design/03-product-reassessment/chat-streaming-trd.md) / [PR #25](https://github.com/owariband/Seekino/pull/25) 承接。依赖 #18，先集成上游再合并到 dev。
+
+课程 QA 的 9.173 / 29.576 / 27.231 秒是非流式完整正文到达耗时，真实 FTT 未采集，旧标注撤回。仅启用供应商 stream=true 仍会被 Gateway 收齐和 after_model 发布挡住。
+
+2026-11-01 进展：已接通 Deep Agents 的可展示正文增量、持久快照与调用来源，保留完整工具校验；浏览器分别采集接收、可见 DOM 和 TT，离线校验原始供应商正文与完成前展示后才输出有效 FTT。非流式、收齐缓冲、缺证、reasoning/空包反例不得填数。隔离回归和验证边界见[实施报告](../report/server/chat-streaming-20261101.md)及 [devlog](devlog.md#devlog-chat-streaming-delivery-20261101)。
+
+待验收：确定部署版本的正常观看页、真实长回答持续增长、Q02/Q03 同条件各至少三个样本、内容与原片来源质量、真实 FTT/TT 和性能目标。共享服务未重启，真实模型未调用，不能关闭 C23 或宣称提速达标。
+
 ### B24：模型 stream 被入口写死且正式 Parse 丢失开关
 
 排序日期：2026-10-31。

@@ -1,8 +1,10 @@
-"""Collect Chat Completions SSE before exposing a result or executing tools."""
+"""Forward optional display text while collecting verified results and tools."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import closing
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
@@ -11,8 +13,34 @@ from openai.lib.streaming.chat import ChatCompletionStreamState
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
-from gateway.model_diagnostics import record_model_event
+from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.usage import ModelCallTracker
+
+
+@dataclass(frozen=True)
+class ChatTextDelta:
+    text: str
+    call_id: str
+    sequence: int
+    received_at: float
+    elapsed_ms: float
+    first_text_ms: float | None
+    before_completion: bool
+
+
+_text_observer: ContextVar[Callable[[ChatTextDelta], None] | None] = ContextVar(
+    "chat_text_observer", default=None,
+)
+
+
+@contextmanager
+def observe_chat_text(observer: Callable[[ChatTextDelta], None] | None):
+    """Scope delivery to a public Supervisor invocation, excluding summarization."""
+    token = _text_observer.set(observer)
+    try:
+        yield
+    finally:
+        _text_observer.reset(token)
 
 
 def request_chat_completion(
@@ -23,19 +51,24 @@ def request_chat_completion(
     if not isinstance(stream, bool):
         raise TypeError("stream must be a boolean")
     request["stream"] = stream
-    usage_call.raise_if_cancelled()
-    if check_control is not None:
-        check_control()
     if stream:
         request["stream_options"] = {**request.get("stream_options", {}), "include_usage": True}
-        return request_chat_stream(completions, usage_call=usage_call, check_control=check_control, **request)
-    request.pop("stream_options", None)
-    response = completions.create(**request)
-    usage_call.capture_response(response)
-    usage_call.raise_if_cancelled()
-    if check_control is not None:
-        check_control()
-    return response
+    else:
+        request.pop("stream_options", None)
+    with capture_model_diagnostics(usage_call, request):
+        usage_call.raise_if_cancelled()
+        if check_control is not None:
+            check_control()
+        if stream:
+            return request_chat_stream(completions, usage_call=usage_call, check_control=check_control, **request)
+        record_model_event("chat_transport", {"stream": False, "started_monotonic": monotonic()})
+        response = completions.create(**request)
+        usage_call.capture_response(response)
+        record_model_event("response", response)
+        usage_call.raise_if_cancelled()
+        if check_control is not None:
+            check_control()
+        return response
 
 
 def request_chat_stream(
@@ -55,6 +88,7 @@ def request_chat_stream(
                 raise ModelFailureError("Chat completion stream returned an invalid delta") from error
     response = state.current_completion_snapshot
     response.usage = usage
+    record_model_event("response", response)
     return response
 
 
@@ -80,7 +114,11 @@ def _iter_chat_chunks(
     check_control: Callable[[], None] | None = None, **request: Any,
 ) -> Iterator[Any]:
     # The SDK decodes SSE. We additionally reject EOF without a terminal choice.
-    deadline = monotonic() + request["timeout"]
+    started_at = monotonic()
+    deadline = started_at + request["timeout"]
+    text_sequence = 0
+    first_text_ms = None
+    observer = _text_observer.get()
 
     def check() -> None:
         usage_call.raise_if_cancelled()
@@ -92,6 +130,7 @@ def _iter_chat_chunks(
             )
 
     check()
+    record_model_event("chat_transport", {"stream": True, "started_monotonic": started_at})
     stream = completions.create(**request)
     usage_call.capture_response(stream.response, include_usage=False)
     unregister = usage_call.add_cancel_callback(stream.close)
@@ -100,6 +139,7 @@ def _iter_chat_chunks(
     try:
         with stream:
             for chunk in stream:
+                received_at = monotonic()
                 check()
                 if not isinstance(chunk, ChatCompletionChunk):
                     try:
@@ -115,6 +155,23 @@ def _iter_chat_chunks(
                         raise ModelFailureError("Chat completion stream returned an unexpected choice")
                     received_choice = True
                     terminal = choice.finish_reason is not None
+                    text = choice.delta.content
+                    if isinstance(text, str) and text:
+                        elapsed_ms = (received_at - started_at) * 1000
+                        if first_text_ms is None and text.strip():
+                            first_text_ms = elapsed_ms
+                        text_sequence += 1
+                        delta = ChatTextDelta(
+                            text, usage_call.call_id, text_sequence, received_at,
+                            elapsed_ms, first_text_ms, not terminal,
+                        )
+                        record_model_event("chat_text_delta", {
+                            "sequence": text_sequence, "chars": len(text),
+                            "received_monotonic": received_at, "elapsed_ms": elapsed_ms,
+                            "first_text_ms": first_text_ms, "before_completion": not terminal,
+                        })
+                        if observer is not None:
+                            observer(delta)
                 yield chunk
             check()
     except (httpx.RequestError, httpx.StreamError) as error:
@@ -126,6 +183,10 @@ def _iter_chat_chunks(
         ) from error
     finally:
         unregister()
+        record_model_event("chat_transport_end", {
+            "finished_monotonic": monotonic(), "terminal": terminal,
+            "text_deltas": text_sequence, "first_text_ms": first_text_ms,
+        })
     if not received_choice or not terminal:
         raise ModelFailureError(
             "Chat completion stream ended without a terminal choice",

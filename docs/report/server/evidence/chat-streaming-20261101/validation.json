@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-01",
+  "timezone": "Asia/Shanghai",
+  "branch": "fix/chat-streaming-ftt",
+  "pr": "https://github.com/owariband/Seekino/pull/25",
+  "upstream_pr": 18,
+  "upstream_head": "b01afce92391384444c772d9602ae8b4f5464787",
+  "baseline_sync_commit": "aa214c63",
+  "real_model_calls": 0,
+  "shared_service_restarted": false,
+  "deployed": false,
+  "database": "isolated SQLite test fixtures",
+  "backend": {
+    "passed": 589,
+    "skipped": 1,
+    "failures": 0,
+    "seconds": 23.151,
+    "skipped_reason": "SEEKINO_TEST_DATABASE_URL is not configured"
+  },
+  "frontend": {
+    "passed": 159,
+    "files": 4,
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "browser": {
+    "passed": 1,
+    "channel": "local Chrome",
+    "transport": "simulated ReadableStream in real page",
+    "real_provider": false
+  },
+  "real_ftt_ms": null,
+  "real_tt_ms": null,
+  "source_sha256": {
+    "gateway/streaming/chat.py": "640b8b4f1fe1c1aa34f5e1c04a77b327a86c43b19e57450125cbde85c5a4dacb",
+    "gateway/agent_model/deepagents.py": "0286df2a55ffbf25ad7ce499b7b41d56d75a27ac6e31186d40d62717192a53e4",
+    "agent/chat/supervisor.py": "b451868c1832ac1bea3c0ab12608bed0880812a7cbd9f1feedaa6e81a44cc00f",
+    "server/service/agent_chat.py": "436101dda9fb3e92924cf39af32706e9e33d3af75b8addfe54d6e9aa1c29bd13",
+    "web/src/api/chatDelivery.ts": "6a0a31fe1dc9cf2a10db7f071af65896ededc4dff0f3f45bfacbab80add4d7b7",
+    "web/src/features/search/SearchPage.tsx": "f2b353b870d3d59701dd09931404f4f28c82543f14bd070512c298de2e5c88e4",
+    "scripts/verify_chat_streaming_trace.py": "22adf50a93866e17e3d53d8149294c79785380b5a78fab28e22a1945b6f0ebf4"
+  },
+  "final_timing_boundary_check": {
+    "passed": 17,
+    "deselected": 131,
+    "seconds": 3.04
+  },
+  "summary_isolation_check": {
+    "passed": 1,
+    "deselected": 7,
+    "seconds": 1.44,
+    "command": "python -m pytest tests/agent/chat/test_streaming_delivery.py -k compaction -q --tb=line"
+  }
+}

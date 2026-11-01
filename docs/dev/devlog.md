@@ -26,6 +26,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-01：完整模型响应挡住正文交付，课程首字耗时无法真实计量](#devlog-chat-streaming-delivery-20261101) | C23、Chat 流式交付与采证 |
 | [2026-10-31：模型温度被入口写死，业务配置无法生效](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
 | [2026-10-31：模型入口写死 stream，导致配置失效与长请求等待](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
 | [2026-10-30：Kimi 长 Chunk 非流式请求连续 504，阻塞 Parse](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
@@ -121,6 +122,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-chat-streaming-delivery-20261101"></a>
+## 2026-11-01：完整模型响应挡住正文交付，课程首字耗时无法真实计量
+
+### 问题与现状
+
+课程 QA 曾把完整正文到达时间误标为 FTT，旧 9.173 / 29.576 / 27.231 秒已撤回。上游默认 stream=true 解决了传输配置，但 Gateway 收齐、Deep Agents after_model 才发布，用户仍不能边生成边阅读。沿 C23 建立独立 [TRD](../design/03-product-reassessment/chat-streaming-trd.md) 和 [PR #25](https://github.com/owariband/Seekino/pull/25)，以 #18 最新 worktree 为基线；首个需求提交只有 TRD。
+
+### 方案候选
+
+仅修改 stream 开关不能解决上层缓冲。采用公开正文的可选增量观察器，工具与结构化结果保留原完整校验；Supervisor 累积快照保留空格与网页来源规则，首段立即保存，后续最多每 50 ms 一份。输出后的失败不回退拼接另一答案，正文前失败仍按原配置 fallback。复用既有私有 trace 和 SSE，无数据库迁移。
+
+### 方案验证
+
+供应商暂停终止包时，真实 SDK 解码经 Supervisor 到 SQLite 已能保存 PROCESSING 正文。显式非流式、禁用正文观察器的缓冲对照、缺证、仅 reasoning 及浏览器完成后才展示均不能得到有效 FTT。Chrome 模拟页面在模型完成前增长两次，保存截图和事件。定向回归、命令与原始证据见[报告](../report/server/chat-streaming-20261101.md)。未调用真实模型，未重启共享服务；真实课程观看页、质量和性能基线仍待采证，测试不能关闭 C23。
+
+### 指标对比
+
+业务目标是正文可持续阅读及首字证据可信，因此先验证交付时序和计量反例，再讨论速度。后端 589 passed / 1 skipped，另新增摘要隔离用例 1 passed；前端 159 passed、类型检查与构建通过，Chrome 1 passed；跳过项依赖独立 MySQL 测试配置。模拟首字不得作为性能结果，真实 FTT、TT 和 token 成本本轮均未测。代价是新增可选 SSE 来源与模型轮次边界，以及比整包模式更频繁的快照持久化；50 ms 合并限制写入频率，真实并发下数据库压力仍需观察。采纳实现进入独立试点，不宣称提速或部署完成。
 
 <a id="devlog-kimi-streaming-20261030"></a>
 

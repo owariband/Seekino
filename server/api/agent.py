@@ -39,6 +39,7 @@ from ..model.vo.agentVO import (
     AgentMessageOptionsView,
     AgentAnswerStartedView,
     AgentAnswerSnapshotView,
+    AgentAnswerModelCompletedView,
     AgentAnswerEvidenceView,
     AgentAnswerBlockView,
     AgentAnswerDeltaView,
@@ -724,6 +725,7 @@ def _agent_search_evidence_view(
 _ANSWER_EVENT_MODELS = {
     "answer.started": AgentAnswerStartedView,
     "answer.snapshot": AgentAnswerSnapshotView,
+    "answer.model.completed": AgentAnswerModelCompletedView,
     "answer.evidence": AgentAnswerEvidenceView,
     "answer.block": AgentAnswerBlockView,
     "answer.delta": AgentAnswerDeltaView,

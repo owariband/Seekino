@@ -848,6 +848,10 @@ class AgentChatService:
                     execution.publish({
                         "type": "answer.snapshot",
                         **_message_pair(AgentMessageSendState(initial.user_message, assistant)),
+                        **({"textStream": {
+                            **event["textStream"],
+                            "serverPublishedMonotonicMs": monotonic_ns() / 1_000_000,
+                        }} if event.get("textStream") is not None else {}),
                     })
                 snapshot_count += 1
                 partial_content = assistant.content or ""

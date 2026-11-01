@@ -43,12 +43,16 @@ HTTP 生成模型在创建时读取 `ModelBinding.stream`，默认 `true`，显�
 主模型与 fallback 分别保留自己的配置，不按 Kimi profile 或业务入口决定开关。
 Chat、Deep Agents、结构化工具、视觉 JSON 和 Ark 视频转写复用 `streaming/` 的协议接收。
 Chat Completions 使用 SDK 解码和增量合并，保留推理字段、工具参数与尾部 usage；
-Responses 校验终止事件、事件顺序和最终正文。收齐并验证后才交付结果或执行工具；
-断流不交付部分结果，也不自动切换为非流式重放。
+Responses 校验终止事件、事件顺序和最终正文。结构化结果与工具参数收齐并验证后才交付或执行；
+Deep Agents 的公开 Chat 正文可在收齐前逐段交付，失败时保留部分正文并由宿主标明终态；不自动切换为非流式重放。
 Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺少字段时采用默认 `true`，
 读取和序列化旧快照不会凭空增加字段、改变原有指纹。
 本地 Ollama / llama.cpp 生成接口也复用 Chat 接收器；原生 CLI、独立音频和向量接口保留各自协议。
-前端业务 SSE 与模型 HTTP SSE 是不同连接，本次不改变前端按轮次接收 `answer.snapshot` 的交付方式。
+前端业务 SSE 与模型 HTTP SSE 是不同连接。Deep Agents 通过可选正文观察器持续更新 `answer.snapshot`，
+以 `textStream` 关联供应商调用；`answer.model.completed` 是模型轮次边界，整轮持久终态仍为 `answer.completed`。
+`SEEKINO_CHAT_TRACE_DIR` 可单独开启本地 Chat 原始请求/SSE 采证（默认关闭，包含会话输入和模型输出）；
+文件使用既有私有权限与脱敏合同，不与 Parse 的 `SEEKINO_MODEL_TRACE_DIR` 开关混用。
+FTT 采证、兼容路径和未部署边界见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
 配置、完整性验证及线上效果边界见
 [模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。
 

@@ -27,6 +27,12 @@ DB Queue 按持久状态领取可执行任务；提交后的通知用于唤醒 V
 Elasticsearch 的连接、写入和恢复位于 `server/storage/`；业务正文与任务版本的 durable
 source 始终是 MySQL，ES 是可按当前合同重建的派生数据。
 
+## Chat 正文流式与计时证据
+
+Deep Agents 的实时正文仍通过持久化后的累积 `answer.snapshot` 发送，`textStream` 可选字段携带模型调用和增量来源；非流式、恢复快照及完成后补发不伪造来源。新增 `answer.model.completed` 仅表示一次模型调用结束，整轮完成仍等待原业务校验和持久提交。
+
+普通正文增量最多每 50 ms 保存一次快照，首段立即保存；取消/失败保留已保存内容，断开 SSE 不自动重跑请求。现有权限、版本与恢复合同继续生效，无数据库 Schema 迁移。有效 FTT 需关联供应商 trace 与浏览器实际展示，不能用服务端快照耗时替代。设计与验收见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
+
 ## 模型 Token 用量
 
 `GET /api/usage/overview?workspaceId=...` 从 `model_usage` 查询最近 30 天已记录调用。

@@ -1,8 +1,8 @@
 # 1. 问题与现状
 
-需求：Chat 正文真实流式交付与 FTT 可核验计量。建立日期：2026-11-01。业务与实施责任：Codex。当前为设计初稿，尚未实施或部署。
+需求：Chat 正文真实流式交付与 FTT 可核验计量。建立日期：2026-11-01。业务与实施责任：Codex。当前已完成第一轮实现与隔离验证，真实课程试点、FTT 基线和部署尚未完成。
 
-工作分支：`fix/chat-streaming-ftt`。跟进 PR：创建后回填。上游：[PR #18](https://github.com/owariband/Seekino/pull/18)，本地 worktree `full-video-asr/Seekino` 的已提交版本 `b6f5109d`；其正在合并远端 `174160a9`，本需求在独立 worktree 重现该同步，不修改上游暂存区。先合并 #18，再将本 PR 切回 `dev` 集成；本 PR 不独立交付上游 ASR 成果。
+工作分支：`fix/chat-streaming-ftt`。跟进 [PR #25](https://github.com/owariband/Seekino/pull/25)。上游：[PR #18](https://github.com/owariband/Seekino/pull/18)，本地 worktree `full-video-asr/Seekino` 的已提交版本 `b6f5109d`；建立需求时其正在合并远端 `174160a9`，本需求在独立 worktree 重现该同步，不修改上游暂存区。随后上游发布 `b01afce9`，本分支继续同步该正式版本。先合并 #18，再将本 PR 切回 `dev` 集成；本 PR 不独立交付上游 ASR 成果。
 
 产品要求以 [Chat 流式 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md) 为准（已读取本地 `course-qa` 的 `5eca33b5`）。专项 QA 的 C23 是原问题编号；本分支沿用 C23，不另建竞争状态表。课程用例与内容质量仍依赖课程 QA，ASR、解析、索引及 C22 的重复看帧问题不属于本需求。
 
@@ -65,6 +65,14 @@ sequenceDiagram
 
 设计风险：跨 chunk 的空格、链接与引用不可逐片 strip 或误插段落；模型摘要压缩不得冒充回答；高频小片段不得导致无界数据库写入。实施前用确定性测试验证这些因素，再确定最小接口。优先落在实际执行策略的 Gateway、Supervisor、Server、Web 层，不复制协议算法。
 
+2026-11-01 实现细化：
+
+- `observe_chat_text` 只绑定 Deep Agents 的公开 model 调用；通用接收器仅转发 `content`，摘要压缩、内部推理与工具参数不进入正文。完整结果依旧经过原校验。
+- `handle_text_delta` 为 Deep Agents 的可选扩展；原 `handle_text` 保留完整轮次合同，结束时核对已流式收到的原文，防止重复拼接。首个可见片段立即保存，后续片段合并为最多每 50 ms 一份快照；工具与终态仍同步提交。跨片段 URL 先拼完再按既有网页来源规则校验。
+- `answer.snapshot.textStream` 附调用 ID、delta 序号、模型首正文及进程内单调时间。`answer.model.completed` 标记当前模型调用完成，区别于整轮持久终态 `answer.completed`；非流式与完成后补发不附实时来源。
+- 浏览器在实际 fetch 前启动单调计时，通过 `seekino:chat-delivery` 记录接收、可见 DOM 观察及 TT；DOM 观察发生在下一帧，不冒充物理屏幕绘制时间。事件记录不含提问或回答正文，最多保留 64 个消息观察句柄。
+- 浏览器单独采样的 `fttMs` 保持 null，候选值保存在 `firstProviderTextReceivedMs`。开启独立的 `SEEKINO_CHAT_TRACE_DIR` 后，用 `scripts/verify_chat_streaming_trace.py` 关联原始 SSE 正文、实际请求、调用身份、服务器完成前转发及浏览器完成前展示；缺证、整包或缓冲反例输出无效及原因，只有证据齐备才给有效 FTT。真实请求与模拟样本必须在报告中分开。
+
 本需求不更换模型、不迁移数据库、不重启共享服务、不重跑课程解析。真实模型与浏览器试点应使用隔离测试配置、独立实例和明确运行版本。
 
 # 4. 对照实验与结果分析
@@ -73,9 +81,9 @@ sequenceDiagram
 
 | 对照项 | 基线 | 改造后 | 判断 |
 | --- | --- | --- | --- |
-| 完成前可见正文 | 源码显示 after_model 才发布；模拟待测 | 待测 | 以阻塞终止包期间收到的快照为证 |
+| 完成前可见正文 | 源码与禁用正文观察器反例均只在完成后发布 | 已在真实 SDK 解码 + Supervisor + SQLite 用例中证明供应商阻塞期间可读到持久正文 | 隔离模拟通过；真实模型待试点 |
 | 真实 FTT | 未采集 | 未采集 | 不计算提速比例 |
-| 最终文本 / 工具 / 终态 | 现有合同与回归用例 | 待测 | 必须保持正确 |
+| 最终文本 / 工具 / 终态 | 现有合同与回归用例 | 空格、网页 URL、完整工具参数、断流、fallback、取消与恢复纳入定向验证 | 结果见实施报告 |
 | 真实 Q02/Q03 FTT、TT、质量 | 旧 TT 可复核，旧 FTT 已撤回 | 待真实试点 | 条件不一致时不归因于流式 |
 
 原始验证记录保存在 `docs/report/server/` 下，记录代码版本、执行命令、样本、模型配置、运行版本及结果；不保存凭据或无关媒体。
@@ -88,6 +96,8 @@ sequenceDiagram
 
 # 6. 结果验收与闭环
 
-当前仅完成问题核对与设计预演。下一步是在新分支提交本 TRD 作为首个需求提交、建立 Draft PR、回填关联，再同步上游并实施确定性复现和修复。C23 保持 TODO，真实链路、有效 FTT 基线、性能目标及试点均未验收。
+本需求首个提交 `0dd141b0` 只包含本 TRD 初稿；[PR #25](https://github.com/owariband/Seekino/pull/25) 保持 Draft。增量交付、可选来源字段、浏览器采证与离线证据校验已实现，隔离验证及命令见[实施报告](../../report/server/chat-streaming-20261101.md)。C23 保持 TODO，真实模型 + 正常观看页的完整链路、有效 FTT 基线、正式性能目标及课程试点均未验收。
+
+下一项最小动作：在独立实例加载本 PR 的确定版本与模型配置，开启 Chat trace 并采集浏览器事件，先跑一条足够长的课程解释，执行证据校验器；链路合格后按 PRD 固定 Q02/Q03 问题、历史、播放位置、缓存和负载，各采至少三个真实样本。不得复用旧误标 FTT 数字，也不得用本次模拟毫秒数证明真实模型提速。
 
 最终回到原问题逐项记录：正文是否在模型完成前持续交付；有效 FTT 能否追溯；整包/缺证是否被拒绝计量；最终正文、工具、来源、取消和恢复是否符合合同。实现、测试、真实模型效果、部署分别报告。由 Codex 持续维护本 TRD 与 PR，专项 QA 保留课程用例与原始测量责任；未取得试点证据时不以 PR 创建或测试通过关闭问题。

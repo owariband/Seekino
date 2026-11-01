@@ -1930,7 +1930,7 @@ def test_provider_gets_initial_background_captions_and_updated_warm_turn(tmp_pat
         _completion(content="Next turn explanation."),
     ])
     adapter = OpenAIAgentModel(
-        "text-model", base_url="https://unused.invalid", api_key="test", client=client,
+        "text-model", base_url="https://unused.invalid", api_key="test", client=client, stream=False,
         request_timeout_seconds=30, provider_name="test", max_output_tokens=1000,
     )
     model = DeepAgentsSupervisorModel(

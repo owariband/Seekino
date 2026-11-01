@@ -503,6 +503,60 @@ def test_direct_supervisor_streams_persisted_prefix_without_replaying_final_text
     assert events[-1]["type"] == "answer.completed"
 
 
+@pytest.mark.parametrize("cancel", [False, True])
+def test_provider_delta_is_persisted_and_serializable_while_sdk_waits_for_completion(build_service, cancel):
+    from tests.agent.chat.test_streaming_delivery import chunk, wire_model
+    from server.model.vo.agentVO import AgentAnswerSnapshotView
+
+    entered, release = Event(), Event()
+    def script():
+        yield chunk(delta={"role": "assistant"})
+        yield chunk("正文先到 ")
+        entered.set()
+        assert release.wait(5), "test did not release provider"
+        yield chunk("后文完成")
+        yield chunk(delta={}, finish="stop")
+        yield b"data: [DONE]\n\n"
+    model, requests, wire, client = wire_model(script)
+    service, conversation, *_ = build_service(supervisor_model=model)
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="你好",
+                                      idempotency_key="provider-stream", stream=True)
+    try:
+        assert entered.wait(5)
+        while (event := execution.next_event(timeout=2))["type"] != "answer.snapshot":
+            pass
+        assert event["assistantMessage"]["content"] == "正文先到 "
+        assert not execution.future.done()
+        persisted = service.get_message(conversation.conversation_id, tenant_id="local-default",
+                                       message_id=execution.initial.assistant_message.message_id).assistant_message
+        assert persisted.content == "正文先到 " and persisted.status == "PROCESSING"
+        view = AgentAnswerSnapshotView.model_validate({**event,
+            "userMessage": _agent_message_view(event["userMessage"]),
+            "assistantMessage": _agent_message_view(event["assistantMessage"]),
+        }).model_dump(mode="json", by_alias=True)
+        assert view["textStream"]["origin"] == "provider_delta"
+        assert view["textStream"]["serverPublishedMonotonicMs"] >= view["textStream"]["providerReceivedMonotonicMs"]
+        execution.detach()
+        assert not execution.cancellation.is_set()
+        if cancel:
+            service.cancel_message(conversation.conversation_id, tenant_id="local-default", message_id=persisted.message_id)
+    finally:
+        release.set()
+    try:
+        if cancel:
+            with pytest.raises(AgentModelInvocationError):
+                execution.result()
+            completed = service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=persisted.message_id).assistant_message
+            assert completed.content == "正文先到 " and completed.status == "FAILED"
+            assert completed.last_error.code == "AGENT_CANCELLED"
+        else:
+            completed = execution.result().assistant_message
+            assert completed.content == "正文先到 后文完成" and completed.status == "COMPLETED"
+        assert len(requests) == 1 and requests[0]["stream"] and wire.closed
+    finally:
+        client.close()
+
+
 def test_supervisor_prefix_is_readable_before_model_completion_and_survives_disconnect(build_service):
     entered, release = Event(), Event()
 

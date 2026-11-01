@@ -1,4 +1,4 @@
-"""Opt-in local Parse request/response evidence; never sends diagnostics remotely."""
+"""Opt-in local Parse/Chat evidence; never sends diagnostics remotely."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -10,7 +10,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from time import time_ns
+from time import monotonic_ns, time_ns
 from types import SimpleNamespace
 
 _logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ def record_model_event(kind: str, value) -> None:
         _output_preview(kind, value, directory, call, state)
         if (directory / "truncated").exists():
             return
-        event = {"event": kind, "time_ns": time_ns(), "call_id": call.call_id,
+        event = {"event": kind, "time_ns": time_ns(), "monotonic_ns": monotonic_ns(), "call_id": call.call_id,
                  "provider_request_id": call.request_id, "payload": _plain(value, directory)}
         target = directory / "events.jsonl"
         with target.open("a", encoding="utf-8") as handle:
@@ -209,9 +209,11 @@ def capture_model_diagnostics(call, request):
     if _capture.get() is not None and _capture.get()[1] is call:
         yield
         return
-    root = os.environ.get("SEEKINO_MODEL_TRACE_DIR")
+    root = os.environ.get("SEEKINO_MODEL_TRACE_DIR") if call.context.get("video_parse_task_id") else (
+        os.environ.get("SEEKINO_CHAT_TRACE_DIR") if call.context.get("assistant_message_id") else None
+    )
     token = _capture.set(None)
-    if root and call.context.get("video_parse_task_id"):
+    if root and (call.context.get("video_parse_task_id") or call.context.get("assistant_message_id")):
         try:
             trace_root = Path(root).resolve()
             trace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
