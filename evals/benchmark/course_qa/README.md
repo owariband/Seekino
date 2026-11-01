@@ -12,6 +12,14 @@ Q 表示 query。`cases.json` v2 将 W01/W02/W03 更名为 Q01/Q02/Q03，每题�
 
 下一批素材先独立核对概念、代码/公式和缺证等代表题的原片依据；一门就绪课程即可验证目标/基础约束及找片段，两门相关课程就绪即可验跨课组织。Q01–Q03 保留为调试回归，并保留新位置作为验收样本。按基础/派生缓存、是否必须看图及后台负载分组，确认对照能回答“改哪一环才能更快完成用户任务”，再追加同条件调用；完整范围和当前缺口不在本目录另建状态表。
 
+FTT 采证缺口不阻断内容、工具决策与 TT 验收。`realtime-boundaries.json` 固定 RT04/RT05；`http_cases.py` 为每题创建独立 QA 会话，使用真实 HTTP SSE 记录完成时间和持久答案，始终将 FTT 标为未采集。先用 `snapshot.py` 核对隔离库、运行来源与已有 Chunk，再执行：
+
+```bash
+python evals/benchmark/course_qa/http_cases.py --api http://127.0.0.1:19621 --cases evals/benchmark/course_qa/realtime-boundaries.json --out outputs/verification/course-qa/<new-run>/http --live
+```
+
+此固定套件发送两次新问题，会产生模型费用；每题 240 秒期限，异常尝试取消后停止后续问题，取消回执仍需核对终态。它是 HTTP 内容／TT 验证，不代替浏览器交互、流式 FTT 或完整 CoT 采证。使用项目 Python 3.12 环境，输出目录必须全新。[首轮两题结果及记录边界](../../../docs/report/server/course-qa-reasoning-boundaries-20261101.md) 已回填主 TRD。
+
 `cases.json` 对应 PR #18 的隔离《Let's build GPT》素材，不指向开发库。视频时间是整数毫秒。`review` 是评审依据，不发送给模型。改变素材需同时更新 ID、位置与评审事实，并生成新版本；不能改题后覆盖旧结果。
 
 先用 `snapshot.py --help` 查看只读指纹采集参数。它要求测试库名以 `_test` 结尾，使用本机独立 MySQL，保存 Chunk 0/1/2 和任务状态。前后快照应使用不同的新目录。源码指纹只标识磁盘内容，运行进程是否加载它仍需部署证据。调用前另行记录当前 ASR 请求数及并发解析负载。

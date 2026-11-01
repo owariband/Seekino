@@ -1,0 +1,205 @@
+{
+  "date": "2026-11-01",
+  "qa_pr": 24,
+  "diagnostic_scope": "Existing QA checkpoint and recorded model usage; no full CoT recovered. Two new independent real HTTP questions; not browser or streaming FTT acceptance.",
+  "old_conversation_audit": {
+    "conversation_id": "b3cdcfae-6260-4367-a931-e6ec4beb21c5",
+    "checkpoint_messages": 14,
+    "ai_messages": 6,
+    "messages_with_reasoning_content": 0,
+    "raw_parse_trace_chat_capture": false,
+    "capture_gate": "capture_model_diagnostics requires video_parse_task_id; Chat provider response trace was not captured. Absence in storage does not prove the provider never returned a reasoning field.",
+    "q03_context_before_call": {
+      "source_dialogue_available": true,
+      "source_range_ms": [
+        74540,
+        94720
+      ],
+      "original_text_chars": 360,
+      "chunk_payloads_identical_after_new_observation": true,
+      "same_native_image_hashes": true,
+      "native_image_hash_basis": "SHA-256 of the complete image_url.url data URL string encoded as UTF-8",
+      "native_image_sha256": [
+        "ce52ba3d922d5d28cca6516b04f23fd54152e65e2464f1df75d4d5a9271bdc4e"
+      ],
+      "changed_tool_payload_fields": [
+        "frames",
+        "visual_summary"
+      ],
+      "realtime_tool_seconds": 78.411,
+      "visual_model_seconds": 77.126
+    },
+    "q03_observed_tool_decisions": [
+      {
+        "name": "understand_current_video",
+        "message_index": 8
+      },
+      {
+        "name": "submit_video_item",
+        "message_index": 11
+      }
+    ],
+    "q03_submission_feedback": {
+      "code": "VIDEO_EVIDENCE_UNAVAILABLE",
+      "message": "No video evidence is available.",
+      "retryable": true,
+      "retry_hint": "Retrieve video evidence directly or call query_video before submitting video items."
+    },
+    "reasoning_duration_seconds": null
+  },
+  "new_run": {
+    "runtime_disk_head": "b01afce92391384444c772d9602ae8b4f5464787",
+    "runtime_loaded_identity_confirmed": false,
+    "config_sha256": "b9f05901aac47b201f3d3fe001fa315cbf8f2a2aa1f66baae92afeef0891caab",
+    "source_drift": [],
+    "config_unchanged": true,
+    "base_chunks_unchanged": true,
+    "base_chunk_versions": [
+      {
+        "sequence_no": 0,
+        "version": 2
+      },
+      {
+        "sequence_no": 1,
+        "version": 2
+      },
+      {
+        "sequence_no": 2,
+        "version": 2
+      }
+    ],
+    "course_task_status_before": "PARSING_FAILED",
+    "course_task_status_after": "PARSING_FAILED",
+    "new_user_requests": 2,
+    "model_usage_records": 6,
+    "cases": [
+      {
+        "case": "RT04",
+        "conversation_id": "bd4358b4-229f-44b1-b1c8-9ea672b49ff2",
+        "message_id": "cd8d6050-cc70-4854-bec5-7cc9883c19de",
+        "status": "COMPLETED",
+        "ftt_seconds": null,
+        "ftt_status": "not_measured",
+        "tt_seconds": 82.30529208400003,
+        "realtime_tool_seconds": 49.626,
+        "model_calls": [
+          {
+            "operation": "supervisor",
+            "duration_seconds": 8.121,
+            "input_tokens": 4047,
+            "output_tokens": 264,
+            "reasoning_tokens": 115,
+            "total_tokens": 4311
+          },
+          {
+            "operation": "visual_observation",
+            "duration_seconds": 47.14,
+            "input_tokens": 1941,
+            "output_tokens": 1362,
+            "reasoning_tokens": 970,
+            "total_tokens": 3303
+          },
+          {
+            "operation": "supervisor",
+            "duration_seconds": 24.448,
+            "input_tokens": 6619,
+            "output_tokens": 595,
+            "reasoning_tokens": 500,
+            "total_tokens": 7214
+          }
+        ],
+        "quality_verdict": "targeted_content_check_passed",
+        "latency_verdict": "over_60_second_exploratory_target",
+        "review": "Response facts and declared range stay within 60000–90000 ms; no later language-model explanation."
+      },
+      {
+        "case": "RT05",
+        "conversation_id": "9aba6d0f-17e0-4038-bd4e-0459d5c6f67c",
+        "message_id": "0c33132a-b977-45ed-a931-7c2d52645c59",
+        "status": "COMPLETED",
+        "ftt_seconds": null,
+        "ftt_status": "not_measured",
+        "tt_seconds": 137.61159995799972,
+        "realtime_tool_seconds": 112.144,
+        "model_calls": [
+          {
+            "operation": "supervisor",
+            "duration_seconds": 8.038,
+            "input_tokens": 4021,
+            "output_tokens": 220,
+            "reasoning_tokens": 104,
+            "total_tokens": 4241
+          },
+          {
+            "operation": "visual_observation",
+            "duration_seconds": 110.249,
+            "input_tokens": 1928,
+            "output_tokens": 2711,
+            "reasoning_tokens": 2215,
+            "total_tokens": 4639
+          },
+          {
+            "operation": "supervisor",
+            "duration_seconds": 17.252,
+            "input_tokens": 6583,
+            "output_tokens": 452,
+            "reasoning_tokens": 315,
+            "total_tokens": 7035
+          }
+        ],
+        "quality_verdict": "targeted_content_check_passed",
+        "latency_verdict": "over_120_second_demo_blocker",
+        "review": "Rejects training-code premise; source frame confirms LearnGPT leaf-news page and a background nanoGPT tab, without readable training implementation."
+      }
+    ]
+  },
+  "limitations": [
+    "No saved full CoT or reasoning-phase timestamps for the historical chat.",
+    "No streaming FTT, browser render timing, or browser interaction acceptance in the new HTTP run.",
+    "Two different questions with one sample each; no pooled latency median or performance improvement claim.",
+    "Content checked against the source frame and existing ASR; no independent word-level acoustic alignment.",
+    "Disk fingerprints do not prove the process loaded all current on-disk changes."
+  ],
+  "local_evidence": [
+    {
+      "path": "outputs/verification/course-qa/20261101-reasoning-audit/checkpoint-meta.json",
+      "sha256": "5c3921c121e4765b147f7c92cba423dba9bea764a911c906c212cd584b391150",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-reasoning-audit/checkpoint-messages.json",
+      "sha256": "24f52e7613b46f484ceb56195471e3151f0ba636c615d75d96a691764820933f",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-boundaries/run/results.json",
+      "sha256": "9d8177fa52162c7713a6eac2750097b4d65a5e539d68270b6a7bef7de1c4b016",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-boundaries/run/events.jsonl",
+      "sha256": "5590e1e82d6057dbe768f62edb05ff796e96925523c3207e1749a86f9f3a678e",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-boundaries/model-usage.json",
+      "sha256": "6bb6e8212e1d5eedc95a5f5bf064384d7918ba676234075932e225ffa81f617c",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-boundaries/chat-api-excerpt.log",
+      "sha256": "010db718d272499f337098216fc8094f9e95e6e4e6c9519126a090c4ad456d35",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-boundaries/before/manifest.json",
+      "sha256": "9d6ab6ad4bbc815e60ff5dc35594762ba3e9069b5642fdb51c1daa4057309128",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-boundaries/after/manifest.json",
+      "sha256": "d3afea00829e2ce59e70abd56a06f55816022bea68412709a23ec59c6d21f728",
+      "local_ignored": true
+    }
+  ]
+}

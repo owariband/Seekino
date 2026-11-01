@@ -59,6 +59,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 课程闭环：[2026-11-01 独立 QA 首轮](server/course-qa-20261101.md)。真实浏览器三轮、来源跳转与恢复，保留 178 秒出处追问阻断、缓存条件和未提交运行代码的证据边界；不作为整课或七集放行。
 
+课程 QA 补测：[决策记录、时间范围与错误前提](server/course-qa-reasoning-boundaries-20261101.md)。核对 CoT 记录边界及 Q03 已有证据，新增 RT04/RT05 真实 HTTP 内容与 TT 验收；FTT 未采集，内容检查通过但时延未达标。
+
 背景：2026-10-08–09 的模型用量交接与验收、2026-10-10 的用户/租户交付。不同报告的版本、环境和测试集合分别阅读。
 
 - [model-token-usage-stages-evidence.md](server/model-token-usage-stages-evidence.md)
