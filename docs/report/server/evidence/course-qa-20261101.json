@@ -1,7 +1,6 @@
 {
   "date": "2026-11-01",
   "timezone": "UTC+08:00",
-  "timezone_label": "北京时间",
   "decision": "NOT_ACCEPTED",
   "qa_pr": 24,
   "tracked_pr": 18,
