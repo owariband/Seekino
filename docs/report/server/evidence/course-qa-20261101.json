@@ -28,7 +28,7 @@
   "base_chunks_unchanged": true,
   "results": [
     {
-      "case": "W01",
+      "case": "Q01",
       "message_id": "52d10c0c-191d-40f8-845a-4800bddddaca",
       "status": "COMPLETED",
       "first_substantive_seconds": 38.7265,
@@ -45,10 +45,11 @@
       "ftt_first_output_kind": "progress_text",
       "ftt_event_type": "answer.snapshot",
       "ftt_event_sequence": 2,
-      "tt_seconds": 38.7964
+      "tt_seconds": 38.7964,
+      "original_case_id": "W01"
     },
     {
-      "case": "W02",
+      "case": "Q02",
       "message_id": "563e31ca-6714-4477-a937-defff9468f6b",
       "status": "COMPLETED",
       "first_substantive_seconds": 29.5763,
@@ -65,10 +66,11 @@
       "ftt_first_output_kind": "answer_text",
       "ftt_event_type": "answer.snapshot",
       "ftt_event_sequence": 2,
-      "tt_seconds": 29.62
+      "tt_seconds": 29.62,
+      "original_case_id": "W02"
     },
     {
-      "case": "W03",
+      "case": "Q03",
       "message_id": "3e611420-b07f-4a6c-a5ca-c9b4af946fc4",
       "status": "COMPLETED",
       "first_substantive_seconds": 133.4789,
@@ -85,16 +87,16 @@
       "ftt_first_output_kind": "progress_text",
       "ftt_event_type": "answer.snapshot",
       "ftt_event_sequence": 2,
-      "tt_seconds": 178.2695
+      "tt_seconds": 178.2695,
+      "original_case_id": "W03"
     }
   ],
   "grouped_median": null,
   "median_note": "Different questions and derived-cache conditions; no valid same-condition sample group of size 3.",
   "tool_duration_seconds": {
-    "W01": 0.686,
-    "W03": 78.411
+    "Q01": 0.686,
+    "Q03": 78.411
   },
-  "w03_submit_error": "VIDEO_EVIDENCE_UNAVAILABLE",
   "browser": {
     "version": "156.0.8078.79",
     "errors": [],
@@ -161,5 +163,12 @@
     ],
     "reconstruction_date": "2026-11-01",
     "note": "Reconstructed from the original event log; no new model requests. first_substantive_seconds and completed_seconds are preserved."
-  }
+  },
+  "q03_submit_error": "VIDEO_EVIDENCE_UNAVAILABLE",
+  "case_id_aliases": {
+    "W01": "Q01",
+    "W02": "Q02",
+    "W03": "Q03"
+  },
+  "case_id_note": "Case labels updated to Q (query); original event logs and screenshots retain W01/W02/W03. Questions and measured values are unchanged."
 }
