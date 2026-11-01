@@ -1,0 +1,43 @@
+{
+  "started_at": "2026-10-30T22:59:05.692087+08:00",
+  "entrypoint": "GatewayClient.create_generative_model('vision').generate",
+  "code": "/private/tmp/seekino-kimi-streaming",
+  "model": "k3.1-pro",
+  "base_url": "https://api.kimi.com/coding/v1",
+  "image_source": "synthetic red/blue 128x64 PNG; no private media",
+  "stream": true,
+  "max_tokens": 30000,
+  "timeout_seconds": 60,
+  "sdk_retries": 0,
+  "maximum_requests": 1,
+  "calls": [
+    {
+      "call_id": "36969601-d978-4c8a-a9ea-b3bc0fa00347",
+      "model": "k3.1-pro",
+      "status": "completed",
+      "request_id": null,
+      "usage": {
+        "input_tokens": 242,
+        "output_tokens": 122,
+        "total_tokens": 364,
+        "cached_input_tokens": null,
+        "reasoning_tokens": 84,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    }
+  ],
+  "chunks": 110,
+  "first_chunk_seconds": 5.52,
+  "ok": true,
+  "result": {
+    "marker": "KIMI_STREAM_OK",
+    "description": "图片左半部分是红色，右半部分是蓝色。"
+  },
+  "seconds": 7.431
+}

@@ -231,7 +231,8 @@ def test_summary_chat_tools_use_completion_tool_and_require_validated_submission
     )
     binding = ModelBinding(
         source="summary_fixture", model="offline-summary", supports_vision_input=True,
-        max_output_tokens=8192, request_timeout_seconds=30,
+        # This business-tool fixture returns complete responses, not SSE chunks.
+        stream=False, max_output_tokens=8192, request_timeout_seconds=30,
     )
     persistence.lease.config_snapshot["model"] = binding.model_dump(mode="json")
     client = GatewayClient(config, environ={"SUMMARY_FIXTURE_KEY": "offline"})

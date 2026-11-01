@@ -95,6 +95,8 @@ class QueryHookModels:
         ) as client:
             model = LlamaCppMultimodalModel(
                 self._config.rewriter_model, base_url=self._config.rewriter_base_url,
+                stream=self._config.rewriter_stream,
+                temperature=self._config.rewriter_temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 request_timeout_seconds=timeout, expected_server_video_fps=0.5, client=client,
             )
@@ -103,5 +105,10 @@ class QueryHookModels:
                     [TextInput(prompt)], schema_name="retrieval_slot", result_type=result_type,
                 )
             except LlamaCppModelError as error:
-                kind = type(error.__cause__ or error).__name__
+                cause = error
+                while cause.__cause__ is not None:
+                    cause = cause.__cause__
+                    if isinstance(cause, QueryHookModelError):
+                        raise cause from None
+                kind = type(cause).__name__
                 raise QueryHookModelError(f"Rewriter failed ({kind})") from None

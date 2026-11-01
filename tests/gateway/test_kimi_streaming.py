@@ -274,7 +274,7 @@ def test_stream_cancellation_closes_transport_before_any_result(monkeypatch, wit
 
 def test_stream_checks_total_budget_even_while_chunks_continue(monkeypatch):
     clock = [0]
-    monkeypatch.setattr("gateway.openai.streaming.monotonic", lambda: clock[0])
+    monkeypatch.setattr("gateway.streaming.chat.monotonic", lambda: clock[0])
 
     def advance():
         clock[0] += 4
@@ -290,23 +290,16 @@ def test_stream_checks_total_budget_even_while_chunks_continue(monkeypatch):
     assert caught.value.reason == ModelFailureReason.MODEL_TIMEOUT and body.closed
 
 
-def test_other_profile_keeps_non_streaming_even_if_using_same_endpoint(monkeypatch):
+@pytest.mark.parametrize("profile", ["standard", "kimi"])
+def test_profiles_default_to_streaming_on_the_same_endpoint(monkeypatch, profile):
     def handler(request):
         body = json.loads(request.content)
-        assert body["stream"] is False and "stream_options" not in body
-        return httpx.Response(200, json={
-            "id": "result", "object": "chat.completion", "created": 0, "model": "k3.1-pro",
-            "choices": [{"index": 0, "finish_reason": "stop", "message": {
-                "role": "assistant", "content": '{"summary":"scene"}',
-            }}],
-        })
-
+        assert body["stream"] is True and body["stream_options"] == {"include_usage": True}
+        return _response(SSEBody(_json_chunks()))
     _transport(monkeypatch, handler)
-    gateway = _gateway("standard")
+    gateway = _gateway(profile)
     try:
-        assert _model(gateway).generate(
-            [TextInput("describe")], schema_name="scene", result_type=Result,
-        ).summary == "scene"
+        assert _model(gateway).generate([TextInput("describe")], schema_name="scene", result_type=Result).summary == "scene"
     finally:
         gateway.close()
 

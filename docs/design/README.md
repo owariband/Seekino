@@ -64,6 +64,8 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 | 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 11-01 追加 Kimi 流式推理耗时诊断、全量帧时间配对试点；主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；dev 已接入宿主直接 JSON 与 30k；精简字段/SHOT 兼容迁移及实模验收待完成。 |
 | 解析暂停与继续 | [parse-pause-resume-trd.md](03-product-reassessment/parse-pause-resume-trd.md) | 保留成果、释放容量、撤销租约，任务页显示语音转写与暂停状态。 |
 | 模型连接失败恢复 | [model-network-failure-trd.md](03-product-reassessment/model-network-failure-trd.md) | 直接 JSON 的暂态错误分类、有限重试与异常链诊断。 |
+| Kimi 流式接入 | [kimi-streaming-trd.md](03-product-reassessment/kimi-streaming-trd.md) | 正式生成入口的 Chat SSE、完整结果边界、工具推理连续性与真实素材复测。 |
+| 模型 stream / temperature 通用配置 | [model-streaming-trd.md](03-product-reassessment/model-streaming-trd.md) | 默认 stream=true、temperature=0；显式覆盖、Kimi 固定温度、fallback 独立配置、共享协议接收及 Parse 配置快照。 |
 | 本地 ASR、字幕证据与失败恢复 | [local-whisperx-asr-trd.md](03-product-reassessment/local-whisperx-asr-trd.md) | WhisperX/整片复用的原实现；10-30 续版跟进视频级持久成果、Metal 正式接线与跨失败恢复，实测和待实施分开。 |
 | Parse XML v2 历史方案 | [parse-output-xml.md](03-product-reassessment/parse-output-xml.md) | 2026-10-26 协议原稿；新候选与验证口径见解析性能主 TRD，保留历史设计来源。 |
 | 声纹与台词归属 | [voiceprint-trd.md](02-agent-harness/voiceprint-trd.md) | 专项 TRD：声纹准备、比较、原子台词及说话人归属；保留历次实验的适用边界。 |

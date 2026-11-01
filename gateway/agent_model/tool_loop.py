@@ -647,7 +647,7 @@ def _validated_agent_turn(
     assistant_message = {
         "role": "assistant", "content": content, "tool_calls": rendered_calls,
     }
-    if provider_label == "DeepSeek" and isinstance(reasoning_content, str):
+    if isinstance(reasoning_content, str):
         assistant_message["reasoning_content"] = reasoning_content
     return finish_reason, content, assistant_message, validated_calls
 
