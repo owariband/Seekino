@@ -1,0 +1,137 @@
+{
+  "date": "2026-11-01",
+  "timezone": "Asia/Shanghai",
+  "decision": "NOT_ACCEPTED",
+  "qa_pr": 24,
+  "tracked_pr": 18,
+  "remote_sha": "25accf180050b19f901bd231a16f3a6f8194edbb",
+  "qa_initial_commit": "e6905baf6c11e54385619ad14211bff328bdd9fa",
+  "runtime_head": "67223c16dbba2a89d811f4e8a677870b22309b90",
+  "runtime_dirty": true,
+  "disk_drift": [
+    "agent/video_parse_v2/README.md",
+    "engine/parsev2/validation.py"
+  ],
+  "frontend_differences_from_runtime": [
+    "web/src/api/contracts.ts",
+    "web/src/app/App.test.tsx",
+    "web/src/features/library/ParseExportDialog.test.tsx",
+    "web/src/features/player/SeriesPage.test.tsx",
+    "web/src/features/player/VideoPlayer.test.tsx",
+    "web/src/features/player/WatchHomePage.test.tsx",
+    "web/src/features/player/WatchPage.test.tsx",
+    "web/src/features/uploads/UploadProvider.test.tsx"
+  ],
+  "loaded_code_confirmed": false,
+  "config_sha256": "b9f05901aac47b201f3d3fe001fa315cbf8f2a2aa1f66baae92afeef0891caab",
+  "config_unchanged": true,
+  "base_chunks_unchanged": true,
+  "results": [
+    {
+      "case": "W01",
+      "message_id": "52d10c0c-191d-40f8-845a-4800bddddaca",
+      "status": "COMPLETED",
+      "first_substantive_seconds": 38.7265,
+      "completed_seconds": 38.7964,
+      "usage": {
+        "call_records": 2,
+        "input_tokens": 10625,
+        "output_tokens": 670,
+        "reasoning_tokens": 447,
+        "total_tokens": 11295
+      },
+      "model": "k3.1-pro"
+    },
+    {
+      "case": "W02",
+      "message_id": "563e31ca-6714-4477-a937-defff9468f6b",
+      "status": "COMPLETED",
+      "first_substantive_seconds": 29.5763,
+      "completed_seconds": 29.62,
+      "usage": {
+        "call_records": 1,
+        "input_tokens": 6747,
+        "output_tokens": 587,
+        "reasoning_tokens": 476,
+        "total_tokens": 7334
+      },
+      "model": "k3.1-pro"
+    },
+    {
+      "case": "W03",
+      "message_id": "3e611420-b07f-4a6c-a5ca-c9b4af946fc4",
+      "status": "COMPLETED",
+      "first_substantive_seconds": 133.4789,
+      "completed_seconds": 178.2695,
+      "usage": {
+        "call_records": 4,
+        "input_tokens": 28247,
+        "output_tokens": 4502,
+        "reasoning_tokens": 3480,
+        "total_tokens": 32749
+      },
+      "model": "k3.1-pro"
+    }
+  ],
+  "grouped_median": null,
+  "median_note": "Different questions and derived-cache conditions; no valid same-condition sample group of size 3.",
+  "tool_duration_seconds": {
+    "W01": 0.686,
+    "W03": 78.411
+  },
+  "w03_submit_error": "VIDEO_EVIDENCE_UNAVAILABLE",
+  "browser": {
+    "version": "156.0.8078.79",
+    "errors": [],
+    "seek": {
+      "before": 90,
+      "clicked": "跳转到 01:14",
+      "after": 74.5,
+      "played": {
+        "time": 75.513572,
+        "paused": false,
+        "error": null,
+        "ready": 4
+      },
+      "error_from_requested_ms": 0,
+      "quality": "Range begins before the leaf example; verify transcript separately."
+    },
+    "refresh_message_text_equal_ignoring_transient_status": true
+  },
+  "reliability": {
+    "completed_replay_status": 200,
+    "message_count_before": 6,
+    "message_count_after": 6,
+    "changed_payload_status": 409,
+    "inflight_replay_status": 409,
+    "cancel_ack_seconds": 0.0251637089995711,
+    "cancel_terminal_from_send_seconds": 13.209292250000544,
+    "cancel_status": "FAILED/AGENT_CANCELLED",
+    "recovery_seconds": 5.591059332999976,
+    "unready_scope": {
+      "status": 409,
+      "body": {
+        "code": "SERIES_NOT_READY",
+        "message": "所选系列尚未完成建库，请稍后重试",
+        "requestId": "5fa39cd5-486c-41ad-b9d2-a9a7cfc8bbec",
+        "fieldErrors": [],
+        "retryAt": null
+      }
+    }
+  },
+  "tests": {
+    "backend_passed": 196,
+    "backend_skipped": 1,
+    "frontend_passed": 140
+  },
+  "asr_new_calls": 0,
+  "model_usage_records": 9,
+  "known_total_tokens": 59066,
+  "coverage_limits": [
+    "Only one course in the isolated fixture; not seven-course acceptance.",
+    "No fresh process or final PR-head deployment verification.",
+    "No base-cold parse, service crash, network failure injection or production deployment.",
+    "No independent word-level acoustic alignment verification."
+  ],
+  "raw_evidence": "outputs/verification/course-qa/20261101-baseline/ (local, ignored)"
+}
