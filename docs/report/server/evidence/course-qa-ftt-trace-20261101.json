@@ -52,10 +52,10 @@
     ]
   },
   "measurement": {
-    "client_clock": "Browser performance.now(); FTT is receipt of first displayable assistant body, TT is receipt of answer.completed.",
+    "client_clock": "Browser performance.now(); first_body_received_seconds is receipt of the first complete-response body snapshot, TT is receipt of answer.completed. Streaming FTT is not measured.",
     "server_clock": "Epoch milliseconds in message timing and model usage; naive DB start_time converted with the recorded UTC offset of +8 hours.",
     "model_duration": "From track_model_call request start to its finish, including SDK request/response and validation; provider stages are not separated.",
-    "residual_note": "FTT minus model duration is an approximate total outside the recorded model call, not an exact network or queue breakdown.",
+    "residual_note": "First complete-response body arrival minus model duration is an approximate residual, not an FTT, network, or queue breakdown.",
     "provider_first_content_timestamp": null,
     "browser_first_paint_timestamp": null
   },
@@ -72,7 +72,7 @@
       "case": "Q02",
       "original_case_id": "W02",
       "message_id": "563e31ca-6714-4477-a937-defff9468f6b",
-      "ftt_seconds": 29.5763,
+      "ftt_seconds": null,
       "tt_seconds": 29.62,
       "first_output_kind": "answer_text",
       "first_body_event": {
@@ -84,8 +84,6 @@
       "server_before_first_model_seconds": 0.107,
       "first_model_duration_seconds": 29.37,
       "first_model_end_to_server_body_event_seconds": 0.009,
-      "approx_client_ftt_minus_model_duration_seconds": 0.2063,
-      "model_call_fraction_of_client_ftt": 0.993,
       "provider_first_content_seconds": null,
       "model_calls": [
         {
@@ -98,13 +96,18 @@
           "output_tokens": 587,
           "reasoning_tokens": 476
         }
-      ]
+      ],
+      "first_body_received_seconds": 29.5763,
+      "ftt_status": "not_measured",
+      "ftt_unavailable_reason": "non_streaming_model_response; provider first content and end-to-end incremental delivery were not measured",
+      "approx_first_body_wait_minus_model_duration_seconds": 0.2063,
+      "model_call_fraction_of_first_body_wait": 0.993
     },
     {
       "case": "Q03",
       "original_case_id": "W03",
       "message_id": "3e611420-b07f-4a6c-a5ca-c9b4af946fc4",
-      "ftt_seconds": 27.231,
+      "ftt_seconds": null,
       "tt_seconds": 178.2695,
       "first_output_kind": "progress_text",
       "first_body_event": {
@@ -116,8 +119,6 @@
       "server_before_first_model_seconds": 0.055,
       "first_model_duration_seconds": 27.071,
       "first_model_end_to_server_body_event_seconds": 0.032,
-      "approx_client_ftt_minus_model_duration_seconds": 0.16,
-      "model_call_fraction_of_client_ftt": 0.9941,
       "provider_first_content_seconds": null,
       "model_calls": [
         {
@@ -162,7 +163,12 @@
         }
       ],
       "realtime_tool_seconds": 78.411,
-      "visual_started_after_first_body": true
+      "visual_started_after_first_body": true,
+      "first_body_received_seconds": 27.231,
+      "ftt_status": "not_measured",
+      "ftt_unavailable_reason": "non_streaming_model_response; provider first content and end-to-end incremental delivery were not measured",
+      "approx_first_body_wait_minus_model_duration_seconds": 0.16,
+      "model_call_fraction_of_first_body_wait": 0.9941
     }
   ],
   "raw_evidence": [
@@ -181,5 +187,7 @@
       "sha256": "7202530307d84ce59d974c09cd30613990c40484d66d7e57f3533ed9ec5e7495",
       "local_ignored": true
     }
-  ]
+  ],
+  "metric_contract_version": 2,
+  "ftt_correction": "Historical FTT classification withdrawn: first-body times came from complete non-streaming model responses. They do not measure real streaming FTT."
 }

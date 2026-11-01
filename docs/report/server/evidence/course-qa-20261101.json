@@ -41,12 +41,15 @@
         "total_tokens": 11295
       },
       "model": "k3.1-pro",
-      "ftt_seconds": 9.1726,
-      "ftt_first_output_kind": "progress_text",
-      "ftt_event_type": "answer.snapshot",
-      "ftt_event_sequence": 2,
+      "ftt_seconds": null,
       "tt_seconds": 38.7964,
-      "original_case_id": "W01"
+      "original_case_id": "W01",
+      "first_body_received_seconds": 9.1726,
+      "ftt_status": "not_measured",
+      "ftt_unavailable_reason": "non_streaming_model_response; no provider content-delta timestamp or end-to-end incremental delivery evidence",
+      "first_body_output_kind": "progress_text",
+      "first_body_event_type": "answer.snapshot",
+      "first_body_event_sequence": 2
     },
     {
       "case": "Q02",
@@ -62,12 +65,15 @@
         "total_tokens": 7334
       },
       "model": "k3.1-pro",
-      "ftt_seconds": 29.5763,
-      "ftt_first_output_kind": "answer_text",
-      "ftt_event_type": "answer.snapshot",
-      "ftt_event_sequence": 2,
+      "ftt_seconds": null,
       "tt_seconds": 29.62,
-      "original_case_id": "W02"
+      "original_case_id": "W02",
+      "first_body_received_seconds": 29.5763,
+      "ftt_status": "not_measured",
+      "ftt_unavailable_reason": "non_streaming_model_response; no provider content-delta timestamp or end-to-end incremental delivery evidence",
+      "first_body_output_kind": "answer_text",
+      "first_body_event_type": "answer.snapshot",
+      "first_body_event_sequence": 2
     },
     {
       "case": "Q03",
@@ -83,12 +89,15 @@
         "total_tokens": 32749
       },
       "model": "k3.1-pro",
-      "ftt_seconds": 27.231,
-      "ftt_first_output_kind": "progress_text",
-      "ftt_event_type": "answer.snapshot",
-      "ftt_event_sequence": 2,
+      "ftt_seconds": null,
       "tt_seconds": 178.2695,
-      "original_case_id": "W03"
+      "original_case_id": "W03",
+      "first_body_received_seconds": 27.231,
+      "ftt_status": "not_measured",
+      "ftt_unavailable_reason": "non_streaming_model_response; no provider content-delta timestamp or end-to-end incremental delivery evidence",
+      "first_body_output_kind": "progress_text",
+      "first_body_event_type": "answer.snapshot",
+      "first_body_event_sequence": 2
     }
   ],
   "grouped_median": null,
@@ -155,14 +164,16 @@
     "source": "outputs/verification/course-qa/20261101-baseline/browser/events.jsonl (local, ignored)",
     "scope": "client_sse",
     "start": "performance.now() immediately before the browser fetch request",
-    "ftt": "First nonempty displayable assistant body received by the client, including progress prose; excludes empty/status/tool-state events.",
+    "ftt": "Not measured in this baseline. Requires verified live provider content deltas forwarded to the client without waiting for the complete model response.",
     "tt": "Client receipt of answer.completed; failed or cancelled attempts are reported separately.",
     "not_measured": [
-      "browser_first_paint",
-      "provider_time_to_first_token"
+      "real_streaming_ftt",
+      "provider_first_content_delta_time",
+      "browser_first_paint"
     ],
     "reconstruction_date": "2026-11-01",
-    "note": "Reconstructed from the original event log; no new model requests. first_substantive_seconds and completed_seconds are preserved."
+    "note": "The original FTT classification is withdrawn. Original client event timestamps, first substantive content, source readiness, and TT are preserved. No new model requests.",
+    "first_body_received": "Historical auxiliary metric: client receipt of the first displayable body from a complete non-streaming model response; not a valid streaming FTT."
   },
   "q03_submit_error": "VIDEO_EVIDENCE_UNAVAILABLE",
   "case_id_aliases": {
@@ -170,5 +181,12 @@
     "W02": "Q02",
     "W03": "Q03"
   },
-  "case_id_note": "Case labels updated to Q (query); original event logs and screenshots retain W01/W02/W03. Questions and measured values are unchanged."
+  "case_id_note": "Case labels updated to Q (query); original event logs and screenshots retain W01/W02/W03. Questions and measured values are unchanged.",
+  "metric_contract_version": 2,
+  "ftt_correction": {
+    "date": "2026-11-01",
+    "previous_classification": "Client receipt of a complete model-response snapshot was incorrectly reported as streaming FTT.",
+    "decision": "Withdraw all three historical FTT values and derived FTT conclusions. Preserve observed values only as first_body_received_seconds; TT is unchanged.",
+    "requirement": "docs/design/03-product-reassessment/chat-streaming-prd.md"
+  }
 }
