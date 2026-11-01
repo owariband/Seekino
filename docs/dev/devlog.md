@@ -26,11 +26,11 @@
 
 | 记录 | 原问题编号 |
 |---|---|
-| [2026-10-31：模型 temperature 配置与 Kimi 固定值](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
-| [2026-10-31：模型 stream 通用配置与共享协议接收](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
-| [2026-10-30：正式 Kimi 生成入口接入流式](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
-| [2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
-| [2026-10-30：Kimi Code API 10 路并发实测](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
+| [2026-10-31：模型温度被入口写死，业务配置无法生效](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
+| [2026-10-31：模型入口写死 stream，导致配置失效与长请求等待](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
+| [2026-10-30：Kimi 长 Chunk 非流式请求连续 504，阻塞 Parse](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
+| [2026-10-29—30：逐 Chunk 重复调用 ASR，长视频转写产生重复等待](#devlog-full-video-asr-20261029) | B20、视频级转写与时长 |
+| [2026-10-30：Kimi API 并发能力未验证，无法据此提高 Parse 并发](#devlog-kimi-concurrency-20261030) | B21、供应商并发与业务执行槽位 |
 | [2026-10-30：Understanding 直接 JSON 与 30k 正式接入](#devlog-parse-direct-json-20261030) | B07、实现闭环 |
 | [2026-10-29：Karpathy OCR 配置纠正与解析恢复](#devlog-karpathy-parse-recovery-20261029) | B07、B20、真实任务恢复 |
 | [2026-10-29：普通展示模式开放解析有效总时长](#devlog-release-parse-duration-20261029) | F10、解析时长展示 |
@@ -50,9 +50,9 @@
 | [2026-10-29：持久媒体移入 assets/library 与旧数据恢复核验](#devlog-persistent-media-20261029) | B17、持久媒体与换机恢复 |
 | [2026-10-29：按角色宣传片目标退役 NPC 实验与 ACP Client](#devlog-pv-scope-prune-20261029) | B16、制作目标与代码范围 |
 | [2026-10-29：localhost MCP 与外部 Agent 检索接入](#devlog-local-mcp-20261028) | B15、MCP 工具与素材取用 |
-| [2026-10-28：解析性能 TRD 与事件包装 XML 复测口径](#devlog-parse-performance-20261028) | B07、Understanding 职责与输出协议 |
+| [2026-10-28：Canvas 工具与 XML 协议对 Parse 耗时和质量的影响尚未验证](#devlog-parse-performance-20261028) | B07、Understanding 职责与输出协议 |
 | [2026-10-26：Kimi 同模型 Chat 三框架对照](#devlog-chat-harness-kimi-20261026) | C19、Pi / Deep Agents / Codex、查询覆盖与交付合同 |
-| [2026-10-25：按能力整合 benchmark 并纠正选集口径](#devlog-benchmark-layout-20261025) | 查询覆盖、Chat behavior、历史证据归属 |
+| [2026-10-25：评测集混放查询与对话任务，导致 Chat 能力被误判](#devlog-benchmark-layout-20261025) | 查询覆盖、Chat behavior、历史证据归属 |
 | [2026-10-25：同一 chunk 的 ReAct、Deep Agents 与 Codex 解析实测](#devlog-parse-harness-ab-20261025) | Parse harness 简化、compact 预算、EP04 画外音身份 |
 | [2026-10-25：Deep Agents + Kimi K3.1 Pro 查询能力覆盖回归](#devlog-chat-kimi-mygo-20261025) | 旧 multi-agent 多任务用例；非 Chat behavior 验收 |
 | [2026-10-24：Cloud Chat 去 Pi Host 与 Deep Agents 持久化 Checkpoint](#devlog-cloud-chat-checkpoint-20261024) | C20、harness 职责重复、上下文恢复与部署复杂度 |
@@ -110,7 +110,7 @@
 | [2026-09-21：Chat 未授权引用与泛化失败需要可追踪、可修正的反馈](#devlog-history-49) | C01、C02 |
 | [2026-09-20—2026-10-16：历史联调验收与能力边界不能被“已解决”清单吞掉](#devlog-history-50) | 独立实验/设计 |
 | [2026-09-17—09-19：Chat 上下文重复注入与有界读取的历史修复](#devlog-history-51) | 独立实验/设计 |
-| [2026-09-16—10-17：解析职责、Parse V2 存储与 ES 迁移的历史收敛](#devlog-history-52) | B03、B05 |
+| [2026-09-16—10-17：Parse 职责与版本状态断裂，导致任务成功但检索不可用](#devlog-history-52) | B03、B05 |
 | [2026-09-15：本地视觉模型微调与蒸馏候选（未训练）](#devlog-history-53) | 独立实验/设计 |
 | [2026-09-13：视频理解模型、输入方式与结构成功后的语义缺口](#devlog-history-54) | 独立实验/设计 |
 | [2026-09-13：EP07 双通道检索是否真的比纯文本更容易召回](#devlog-history-55) | 独立实验/设计 |
@@ -124,7 +124,7 @@
 
 <a id="devlog-kimi-streaming-20261030"></a>
 
-## 2026-10-30：正式 Kimi 生成入口接入流式
+## 2026-10-30：Kimi 长 Chunk 非流式请求连续 504，阻塞 Parse
 
 ### 问题与现状
 
@@ -154,7 +154,7 @@
 
 <a id="devlog-full-video-asr-20261029"></a>
 
-## 2026-10-29—30：整片 ASR 内存复用与 Chunk 区间读取
+## 2026-10-29—30：逐 Chunk 重复调用 ASR，长视频转写产生重复等待
 
 ### 1. 问题与现状
 
@@ -197,7 +197,7 @@
 
 <a id="devlog-kimi-concurrency-20261030"></a>
 
-## 2026-10-30：Kimi Code API 10 路并发实测
+## 2026-10-30：Kimi API 并发能力未验证，无法据此提高 Parse 并发
 
 ### 问题与现状
 
@@ -223,7 +223,7 @@
 
 ### 1. 问题与现状
 
-服务端已有实际执行区间的有效总时长，任务页却仅在 debug 模式展示，prod/release 用户无法查看。该数值排除排队和停机，不等于创建任务至完成的墙钟时间。
+服务端已有实际执行区间的有效总时长，任务页却仅在 debug 模式展示，prod/release 用户无法查看。该数值排除排队和停机，不等于创建任务至完成的实际耗时时间。
 
 ### 2. 方案候选
 
@@ -733,7 +733,7 @@ Summary Agent / Service / Persistence 75 passed，前端 App/format 65 passed，
 
 ### 问题与现状
 
-用户指出：47 秒爽世画外音在 K3 和豆包都未正确归属；模型只收到帧和无身份转写，不能据此证明豆包 non-thinking 相对低质。原文错误及业务风险成立，但身份、合并和剧情立场可能是同一缺证错误链；重复同一片段不构成多样本泛化证据。
+47 秒爽世画外音在 K3 和豆包中都被归错角色，直接影响按人物检索和回看。两个模型当时都只收到帧和无身份转写，因此不能据此判断豆包 non-thinking 的质量更低。身份、合并和剧情立场可能来自同一条缺证错误链；重复运行同一片段也不能证明问题在其他场景中同样存在。
 
 ### 方案候选
 
@@ -750,7 +750,7 @@ Summary Agent / Service / Persistence 75 passed，前端 App/format 65 passed，
 | 47 秒说话人 | 两模型均错，原输入无声音身份 | 错误保留；从供应商/thinking 独有劣势证据中拆出，按证据充分/不足分层 |
 | 独立样本 | 一个 60 秒片段多次重复 | 计划扩展多作品、多场景连续序列，尚未执行；不把重复次数当样本多样性 |
 | 模型与 thinking | K3 low 对比豆包 disabled | 前者是实际配置比较；thinking 因果需同一豆包版本单独消融 |
-| 身份与架构 | 单块独立请求不代表带历史串行；尚无完整策略对照 | 分开评估补证；架构比较允许串行前向传递上下文且不强制 Refine，对并行计入实际 Refine/重算成本，核对最终质量与整体墙钟 |
+| 身份与架构 | 单块独立请求不代表带历史串行；尚无完整策略对照 | 分开评估补证；架构比较允许串行前向传递上下文且不强制 Refine，对并行计入实际 Refine/重算成本，核对最终质量与整体实际耗时 |
 
 收紧结论增加标注与独立对照工作量，避免把输入缺口误判成模型或架构因果。更多样本允许支持、否定或限定原判断，不以证明豆包较差或并行必胜作为目标。原 XML 不采用的决定保持，详细失败记录保留在[质量复核报告](../report/agent/video_parse_v2/doubao-nonthinking-quality-review-20261029.md)。
 
@@ -776,7 +776,7 @@ Summary Agent / Service / Persistence 75 passed，前端 App/format 65 passed，
 | 协议 | JSON/XML 对照，继续寻找提速收益 | 保留精简 JSON，不新增 XML 生产解析和维护成本；实验代码与证据留存 |
 | 单 Chunk 耗时 | 历史约 30～40 秒目标 | 不再把 30 秒作为优化/验收要求；耗时保留诊断，优先内容正确性和时间定位 |
 | 整体效率 | 拟继续协议和输入预算实验 | 沿用既有可靠并行策略，以整集到索引可见、完成率、恢复与成本评价；本次没有新加速比 |
-| 人力与维护成本 | 实验、协议接入及调优投入 | 接受用户指出的更高人力成本，停止收益不明确的 XML 扩张；未量化工时或金额 |
+| 人力与维护成本 | 实验、协议接入及调优投入 | 继续投入 XML 实验和接入需要更多人力，但目前没有足够收益，因此停止后续 XML 实验；未量化工时或金额 |
 | 完成范围 | 协议仍是候选，拟继续实验 | 本轮协议选型 DONE；生产接入及 B07 其他未完成事项保持 TODO |
 
 <a id="devlog-parse-compact-shot-20261029"></a>
@@ -846,7 +846,7 @@ K3 `k3/low`、豆包 `doubao-seed-2-1-pro-260628/disabled` 各按 JSON→XML→X
 
 <a id="devlog-parse-performance-20261028"></a>
 
-## 2026-10-28：解析性能 TRD 与事件包装 XML 复测口径
+## 2026-10-28：Canvas 工具与 XML 协议对 Parse 耗时和质量的影响尚未验证
 
 ### 问题与现状
 
@@ -914,7 +914,7 @@ Kimi 在计时结束后打乱样本、隐藏 arm 标签评分，执行代理逐�
 
 <a id="devlog-benchmark-layout-20261025"></a>
 
-## 2026-10-25：按能力整合 benchmark 并纠正选集口径
+## 2026-10-25：评测集混放查询与对话任务，导致 Chat 能力被误判
 
 ### 1. 问题与现状
 
@@ -1556,7 +1556,7 @@ v25 的 247 条 ACCEPT 中，243 条明确保留 top1，2 条为 null，另 2 �
 | ASR cues / null speaker | 365 / 29 | 373 / 373 |
 | 最终对白 / null speaker | 368 / 82（22.28%） | 312 / 227（72.76%） |
 
-请求耗时总和不是并行墙钟：ASR 明显更快，完整流水线耗时几乎没有下降，最终有名人物覆盖显著减少。重复对白组 12→0 不能单独证明质量更好。整集 Turbo 默认 33.161 秒但只有 117 cues，包含重复错句；关闭历史后 35.765 秒、404 cues；large-v3 关闭历史 81.586 秒、333 cues，默认却用 167.826 秒输出 690 cues，其中 664 条为同一句重复。整集 Turbo 的 Understanding wall time 954.978 秒含 388.275 秒冷启动准备；large-v3 对应模型阶段 541.580 秒、313 条对白中 192 条 null。额外本地模型、上下文参数与跨窗口分发扩大维护范围，净费用和最终业务质量均未验证。
+请求耗时总和不是并行实际耗时：ASR 明显更快，完整流水线耗时几乎没有下降，最终有名人物覆盖显著减少。重复对白组 12→0 不能单独证明质量更好。整集 Turbo 默认 33.161 秒但只有 117 cues，包含重复错句；关闭历史后 35.765 秒、404 cues；large-v3 关闭历史 81.586 秒、333 cues，默认却用 167.826 秒输出 690 cues，其中 664 条为同一句重复。整集 Turbo 的 Understanding wall time 954.978 秒含 388.275 秒冷启动准备；large-v3 对应模型阶段 541.580 秒、313 条对白中 192 条 null。额外本地模型、上下文参数与跨窗口分发扩大维护范围，净费用和最终业务质量均未验证。
 
 <a id="devlog-history-03"></a>
 
@@ -2448,7 +2448,7 @@ v8 声纹 Agent 阶段 6:29.539，准备 encoder 25 次仅 3.914 秒。v11 31 re
 
 **原问题 C15 的停止方案与验证状态：**
 
-旧失败样本墙钟1200.199秒；同条另有旧架构run2的1107.097秒错误结果。采用10/18 Loop Control后的复测，以及10/19 Query-only移除它后的当前架构回归，均没有茶杯样本的墙钟、定位成功率、诚实无结果率或费用证据。历史外层上限 2 不再是当前实现保证；即使在当时，也不能直接换算成固定响应时间或证明单轮内部工具循环已收敛。茶杯失败、咖啡店扩展场景后成功与六图样本应共同作为回归集。
+旧失败样本实际耗时1200.199秒；同条另有旧架构run2的1107.097秒错误结果。采用10/18 Loop Control后的复测，以及10/19 Query-only移除它后的当前架构回归，均没有茶杯样本的实际耗时、定位成功率、诚实无结果率或费用证据。历史外层上限 2 不再是当前实现保证；即使在当时，也不能直接换算成固定响应时间或证明单轮内部工具循环已收敛。茶杯失败、咖啡店扩展场景后成功与六图样本应共同作为回归集。
 
 <a id="devlog-history-29"></a>
 
@@ -2521,7 +2521,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 已实现订阅结构化 ErrorNotification、匹配 thread/turn，fatal 或认证错误及时抛出，保留可重试语义，关闭无限连接重试；沿既有 FAILED 状态提交后发布。失败也写不进库则发 interrupted 促使读快照，不假装持久终态。未实施候选是不可变持久 deadline、过期失败收尾及拒绝迟到提交，不是 checkpoint 自动续跑。
 
-复用已有状态降低接口迁移成本，持久扫描仍需处理锁顺序、幂等重放与终态竞争。阶段累计时间和墙钟并存会增加用户认知负担，应明确标注，不能用一个短数字替代等待体验。
+复用已有状态降低接口迁移成本，持久扫描仍需处理锁顺序、幂等重放与终态竞争。阶段累计时间和实际耗时并存会增加用户认知负担，应明确标注，不能用一个短数字替代等待体验。
 
 ### 3. 方案验证
 
@@ -2703,7 +2703,7 @@ EP01 匿名标注审计覆盖 24 个 chunk；EP04 v1 完成全链路，但目标
 
 ### 4. 指标对比
 
-同版本重复调用的程序路径已避免；实际节省多少 embedding 请求、费用与墙钟未单独测量。五组 1024 维向量有限扰动中 cosine 最大变化约 1.11e-16，不保证近乎同分排序均不变；ULP 不是召回质量指标，改存储前后召回率无完整对照。跨 Refine/Index 共用 retry_count、历史 bulk item 日志不足与同版本缓存覆盖候选路径仍是原条独立未闭环项。
+同版本重复调用的程序路径已避免；实际节省多少 embedding 请求、费用与实际耗时未单独测量。五组 1024 维向量有限扰动中 cosine 最大变化约 1.11e-16，不保证近乎同分排序均不变；ULP 不是召回质量指标，改存储前后召回率无完整对照。跨 Refine/Index 共用 retry_count、历史 bulk item 日志不足与同版本缓存覆盖候选路径仍是原条独立未闭环项。
 
 <a id="devlog-history-39"></a>
 
@@ -2915,13 +2915,13 @@ MySQL 使用真实行锁和独立连接控制交错；ES 使用隔离真实节�
 
 历史候选包括 ASR durable checkpoint、媒体复用、有界并行、减少 fallback/重试浪费、有界正文批读、索引版本幂等。10 月 17 日按 Base/Current/Proposed 对事件三方合并，保留独立修改，仅同一事件或来源冲突时重做，避免任意修改都导致完整窗口生成作废。
 
-并行缩短墙钟但增加冲突和归因成本；checkpoint 增加恢复契约，须避免回到高频时长写表。降低 reasoning 并不自动保证质量：模型把整份时间线当局部 patch 替换时，即便工程检查通过也会丢内容。整体 token/cost、语义保留与 wall time 必须一起验收。
+并行缩短实际耗时但增加冲突和归因成本；checkpoint 增加恢复契约，须避免回到高频时长写表。降低 reasoning 并不自动保证质量：模型把整份时间线当局部 patch 替换时，即便工程检查通过也会丢内容。整体 token/cost、语义保留与 wall time 必须一起验收。
 
 ### 3. 方案验证
 
 9 月 23 日审计 7 jobs/17 attempts/675 calls，5 成功样本合计视频 118.508 分钟、Worker 已知时长至少 430.542 分钟。10 月 9 日同一 90.132 秒素材的 none/low 两轮分别约 100.285/661.334 秒，Refine 3.073→454.095 秒；low 最终只剩 2/36 事件，34/34 工程检查通过也不能证明语义正确。两轮 ASR 文本不同，不是完全同 prompt 对照。
 
-10 月 12 日 EP03 attempt=1 COMPLETE：理解 24/24、Refine 22/22、索引 22/22，68/68 单元；全链执行账本 complete=true。10 月 17 日 EP04 全集墙钟 38分43.518秒，54 次生成对应 22 窗口、32 次冲突刷新；三方合并收益只有离线候选验证，不能当作已节省这 32 次真实调用。
+10 月 12 日 EP03 attempt=1 COMPLETE：理解 24/24、Refine 22/22、索引 22/22，68/68 单元；全链执行账本 complete=true。10 月 17 日 EP04 全集实际耗时 38分43.518秒，54 次生成对应 22 窗口、32 次冲突刷新；三方合并收益只有离线候选验证，不能当作已节省这 32 次真实调用。
 
 ### 4. 指标对比
 
@@ -2929,11 +2929,11 @@ MySQL 使用真实行锁和独立连接控制交错；ES 使用隔离真实节�
 | --- | --- | --- |
 | V1 五个成功样本 | Worker/素材时长至少 3.633 倍；575 calls、17376984 tokens | 混合重试和不完整账本，不是纯单轮模型倍率 |
 | V1 三个完整计价样本 | 每集约 ¥14.76–¥15.47，均值约 ¥15.21 | 历史记录估算，其他调用缺价不能补零 |
-| V2 EP03 10/12 | 墙钟 28分16.029秒；全链有效并集 28分13.979秒 | 两种口径接近但不同 |
+| V2 EP03 10/12 | 实际耗时 28分16.029秒；全链有效并集 28分13.979秒 | 两种口径接近但不同 |
 | EP03 仅 Under+Refine | 有效并集 26分59.496秒 | “26 min”不包含 Index 尾段 1分14.483秒 |
 | EP03 模型用量 | 169 completed、0 failed；其中 Refine invocation 42 | invocation 包含原生 Agent 整次执行，不等于底层采样次数 |
 
-EP03 各阶段并行，阶段并集和 worker 累计时间不能直接相加；历史“90→110→37→26 分钟”混合不同集数、错误与配置，不能形成严格加速比。EP04 冲突生成占 Refine 累计时间 64.4%，不是可直接兑现的总墙钟降幅。
+EP03 各阶段并行，阶段并集和 worker 累计时间不能直接相加；历史“90→110→37→26 分钟”混合不同集数、错误与配置，不能形成严格加速比。EP04 冲突生成占 Refine 累计时间 64.4%，不是可直接兑现的总实际耗时降幅。
 
 <a id="devlog-history-48"></a>
 
@@ -3029,7 +3029,7 @@ C02 记录等待 8/29/29 秒失败，随后 77 秒成功，跟问 8 秒失败后
 
 <a id="devlog-history-52"></a>
 
-## 2026-09-16—10-17：解析职责、Parse V2 存储与 ES 迁移的历史收敛
+## 2026-09-16—10-17：Parse 职责与版本状态断裂，导致任务成功但检索不可用
 
 ### 1. 问题与现状
 
@@ -3176,7 +3176,7 @@ checkpoint 事务按本 Attempt 绝对累计值单调更新，ack/retry 结算�
 
 ### 4. 指标对比
 
-已移除 2 表和阶段写路径；实际少写多少事务、平均延迟/空间节省未测。duration 是 Worker 有效工作累计，不是素材时长或用户墙钟；失联历史保留 incomplete，不能补算成精确总耗时。
+已移除 2 表和阶段写路径；实际少写多少事务、平均延迟/空间节省未测。duration 是 Worker 有效工作累计，不是素材时长或用户实际耗时；失联历史保留 incomplete，不能补算成精确总耗时。
 
 <a id="devlog-history-57"></a>
 
@@ -3854,11 +3854,11 @@ WhisperX、转写工厂、用量及整片 ASR 定向回归 **85 passed，4.90 �
 
 
 <a id="devlog-model-streaming-20261031"></a>
-## 2026-10-31：模型 stream 通用配置与共享协议接收
+## 2026-10-31：模型入口写死 stream，导致配置失效与长请求等待
 
 ### 问题与现状
 
-关联 B24、[TRD](../design/03-product-reassessment/model-streaming-trd.md) 和 [PR #22](https://github.com/owariband/Seekino/pull/22)。用户指出 stream 应当在创建模型时配置，而不应由 Gateway 根据 Kimi profile 特判。历史核查确认 Chat 工具循环、Structured 和视觉入口各自写死过 false，相关测试固化了这一行为；前端业务 SSE 并不代表模型 HTTP 连接流式。
+关联 B24、[TRD](../design/03-product-reassessment/model-streaming-trd.md) 和 [PR #22](https://github.com/owariband/Seekino/pull/22)。stream 需要在创建模型时统一配置，不能由 Gateway 只对 Kimi profile 特判。历史核查确认 Chat 工具循环、Structured 和视觉入口各自写死过 false，相关测试固化了这一行为；前端业务 SSE 并不代表模型 HTTP 连接流式。
 
 2026-09-17 的 `862c2699` 同时引入 Chat `stream=False` 与测试断言；Git 作者/提交者为 Hypnos，但没有证据证明由用户亲自决定。2026-10-30 PR #20 的 Kimi 专属开关和其他 profile 非流式测试由本会话 Codex 实施，属于本次需要纠正的范围错误。详细历史见[实施记录](../report/gateway/model-streaming-20261031.md)。
 
@@ -3885,11 +3885,11 @@ WhisperX、转写工厂、用量及整片 ASR 定向回归 **85 passed，4.90 �
 可确认的收益是消除 Chat / Parse 的配置分裂和遗漏入口；线上成功率、时延和费用未重新测量。流式不会减少输入 token，也不能保证首个事件前不超时。加载新代码后，旧配置缺少 stream 的生成请求会改变为默认流式；不支持 SSE 的远端需明确 false。新快照字段对旧版本恢复的兼容性需要在代码回滚前评估。
 
 <a id="devlog-model-temperature-20261031"></a>
-## 2026-10-31：模型 temperature 配置与 Kimi 固定值
+## 2026-10-31：模型温度被入口写死，业务配置无法生效
 
 ### 问题与现状
 
-关联 B24、[同一 TRD](../design/03-product-reassessment/model-streaming-trd.md) 和 [PR #22](https://github.com/owariband/Seekino/pull/22)。用户明确要求新增 temperature，提供默认值，并将 Kimi 限制为 1。修改前 `ModelBinding(temperature=0.2)` 被 Pydantic 以 `extra_forbidden` 拒绝；业务创建和 YAML 无法统一选择温度，各适配器固定 0 / 1 或省略。Kimi 固定 1 有 2026-10-25 实际 Coding Plan HTTP 400 记录，但没有温度对照实验说明它是质量最优值。
+关联 B24、[同一 TRD](../design/03-product-reassessment/model-streaming-trd.md) 和 [PR #22](https://github.com/owariband/Seekino/pull/22)。业务需要通过模型创建入口和 YAML 统一配置 temperature，并将 Kimi 固定为 1。修改前 `ModelBinding(temperature=0.2)` 被 Pydantic 以 `extra_forbidden` 拒绝；业务创建和 YAML 无法统一选择温度，各适配器固定 0 / 1 或省略。Kimi 固定 1 有 2026-10-25 实际 Coding Plan HTTP 400 记录，但没有温度对照实验说明它是质量最优值。
 
 ### 方案候选
 

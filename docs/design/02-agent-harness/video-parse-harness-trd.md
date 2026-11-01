@@ -1,3 +1,17 @@
+# 1. 问题与现状
+
+视频解析需要同时处理长视频拆块、并发执行、失败恢复和索引放行。若 Agent、Engine 与 Server 的职责混在一起，容易出现重复执行、进程中断后无法复用已有成果，以及任务显示成功但检索仍不可用。本文明确一个 Video 的解析任务怎样调度，各层分别负责什么，以及满足什么条件后才能交付检索结果。
+
+## 思路与证据入口
+
+| 流程 | 本文对应内容 |
+| --- | --- |
+| 影响因素与评价指标 | 并发取消与成本风险见 §0.1；配置、容量和恢复约束见 §0.2、§0.4、§1.9 |
+| 方案设计 | 主链与索引放行见 §0.3；各组件职责和执行顺序见 §1 |
+| 对照实验与结果 | 既有任务迁移和验收记录见 §2；后续真实运行记录以实际日期为准 |
+| 试点验证与取舍 | §2.2 列出必须通过的验收；未完成的真实环境和整集验收不得写成已通过 |
+| 结果与最终决定 | 当前采用的合同及未决项保留在文首状态说明，历史方案只作追溯 |
+
 > **当前解析任务设计基线：2026-10-14，已确认、待实现。**
 > 本次修订采用 `ChunkTask + phase + status`：现有 Chunk 任务合并承担 Parse 与 Index，
 > Interval 任务只承担跨 Chunk 的 Refine；不新增 `ChunkIndexTask` / `chunk_index_task` 表。
@@ -9,15 +23,11 @@
 
 > **Event 投影最终合同（2026-10-17）**：以 [Sub-Chunk / Event TRD](sub-chunk-trd.md) 为准。保留 Chunk 的完整有序 Timeline，不新增 Event / Frame SQL 表或 Frame Index；全部覆盖 Refine 提交后，由既有 Chunk INDEX 派生独立 Event ES 的词法、文本向量及抽帧视觉向量，不增加 Agent 写库回调、任务或队列。有效 Event 目标首次 INDEX 冻结在 VideoParseTask.detail，不改变 ParseConfig；完成需核验同版 Chunk/Event，含空集合与存量回填。
 
-一整个agent for：一个video解析
-要求：engine提供内部schema
-不管engine怎么换策略，我们同一套agent harness都可以被复用填写同样的schema内容
+一个 Video 对应一个 ParseAgent。Engine 提供统一 Schema；Harness 可以调整解析策略，但输出合同保持不变。
 
-# 零、宏观设计架构
-整体：parseAgent（就被叫做这个）
-内部是一整套harness system
+# 方案设计：解析任务如何调度
 
-由langgraph实现的一个graph
+ParseAgent 内部由 LangGraph 执行。
 Graph 是 Agent 内部的执行程序，RunState 才是状态。现有 Chat 也是这样：没有公开的 ChatGraph，只有 Runtime 内部的私有 _graph。
 agent/chat/video_search/runtime.py:119
 ![parse_big_graph](diagram/parse_big_graph.png)
@@ -139,7 +149,7 @@ VideoParsePrepare：固定拓扑与配置，建立 ChunkTask / Interval 子任�
 上限限制的是被系统授予执行权的任务数，不保证依赖不足时始终跑满，也不承诺失联后远端供应商立即停止计算。
 
 
-# 一、聚焦架构
+# 各组件职责与执行顺序
 ## 1.1 `PrepareVideoParse`
 
 input args：
@@ -1102,7 +1112,7 @@ Parse、Refine、Index 的执行时长分别由上游 `execution.parse_execution
 实际Agent采集5人各5条，目标47500–48800ms从高松灯改成长崎爽世，声音比较及ES写回已核验。
 此为已知目标和端到端链路验收，含同场景近邻参考，不代表全片人物准确率；完整报告见B12及本地实验目录。
 
-同日 v8 在静态声纹契约和强制 null 提示下复测，Prefix/Compact 关闭，24/22/24 流程完成，墙钟30:08.913；
+同日 v8 在静态声纹契约和强制 null 提示下复测，Prefix/Compact 关闭，24/22/24 流程完成，实际耗时30:08.913；
 5人各5条参考在ready后不变，无声纹来源失效拒绝。目标仍被ASR合入35.6–48.6秒长段，Understanding及最终ES错归千早爱音，
 没有覆盖目标的成功声音比较记录，人物识别验收失败。与v7生成模型不同，不作单因素耗时或准确率结论；证据见B12及本地v8实验报告。
 
