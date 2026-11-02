@@ -1,5 +1,7 @@
 # Let’s build GPT 新版本全课解析对照（2026-11-02）
 
+> 11-02 16:06续跑：v5已按下文原因失败存档；Understanding修复后已另建v6 `72d0cdc1-f7f4-453e-b64e-8480239ab243`，运行中。下面保留v5的原始启动、失败和修复验证，末节记录v6，两个版本分别计时。
+
 本次继续 [PR #18](https://github.com/owariband/Seekino/pull/18) 的完整课程验收，分支 `fix/video-asr-recovery`。运行代码 `1c3aaa6c2ed40359f56541daacdc8401c941ee52`，API 从 `/Users/hypnos/.codex/worktrees/full-video-asr/Seekino` 启动。本文先记录实际启动与测量合同；完整解析、Refine 冲突收益和业务质量尚未取得结果。
 
 ## 问题与比较边界
@@ -66,3 +68,12 @@ Understanding在Gateway解析时直接按VideoParseResult拒绝，Agent只有网
 相关Agent、Worker真实接线、音频恢复及Refine更新回归390项通过。用v5 sequence13保存的真实响应重放业务门禁，通过正式Server修正方法发起1次真实Kimi文本请求，限定原600秒扣除已消耗319.450秒后的280.55秒；没有改写失败任务或提交重放结果到数据库。实际66.501秒完成，input7190、output2293（其中reasoning202），21个事件及所有合法内容逐项一致，只有6个非法空text_variants被删除，严格Schema通过。新ASR/抽帧均0，无图片输入。[重放摘要](evidence/understanding-schema-repair-20261102/live-summary.json)。
 
 这是单次真实错误修正成功，不能替代全课稳定性或人工语义准确率。v5保留失败；后续新版本单独运行计时，不将本次66.5秒相加后宣称v5成功。
+
+
+## v6：加载 Understanding 修复后新建全课（16:06）
+
+API已从同一worktree的`f3a3d43e0f3c91cfa4c3743cad684564bc521d52`重启，通过正式reparse在16:06:15新建v6 `72d0cdc1-f7f4-453e-b64e-8480239ab243`。完整117块和115区间重新运行；冻结ParseConfig与v5逐项一致，官方直连源配置也相同。v5保持PARSING_FAILED，没有在失败记录上混入修复后时间。
+
+2476条ASR和说话人分组再次校验复用，分别与v5正文相等，新增转写0。[v6启动证据](evidence/lets-build-gpt-clean-parse-20261102/v6-startup.json)。新进程API19621，日志、trace和30秒只读采集独立放在 `/Users/hypnos/workspace/agent/Seekino/outputs/verification/lets-build-gpt-clean-parse-v6-20261102/`；查看`latest.json`或最终`terminal.json`，不把v5的`latest.json`作为新版本状态。
+
+v6仍以完整解析/索引及58分10秒至69分48秒为目标，尚未完成。与v5的差异是新增有限Understanding格式修正；与v4比较时还包含此前Refine/排序/取消等改动，不能全归因为一项优化。检索、出处、回看、追问需要完整成果之后另行验收。

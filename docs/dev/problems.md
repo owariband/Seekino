@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
 **11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
 **11-01 19:12 全课续跑：** 已按明确选择将单块实验的Understanding并发恢复为10，通过正式reparse创建v4 `2a531c4f-2c73-4cc2-adaf-5156edc26236`，其余冻结配置不变；ASR/分组跨版本复用且正文一致，新增转写0。首轮10个真实Kimi流式请求均收到SSE，任务PARSING未暂停。独立采集本任务各阶段完成样本的中位数及失败数；整课117块、115个Refine区间、索引与问答仍待完成，状态保持TODO。[启动记录](../report/server/refine-direct-integration-20261101.md#后续10-路整课续跑启动2026-11-01-1912asiashanghai)。
@@ -1586,6 +1588,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
 **11-02 Understanding反馈修复：** 已补完整候选、字段路径和有限文本修正，共用原请求期限；390项相关回归通过。v5真实错误重放1次Kimi请求/66.501秒，只删6个非法空字段，原21个事件及其他合法内容一致。未改写v5终态，需新版本全课验收；状态保持TODO。[证据](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
