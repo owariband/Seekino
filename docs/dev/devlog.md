@@ -28,6 +28,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-02：视觉适配器拒绝 effort，解析无法采用 Kimi 3 low](#devlog-k3-low-20261102) | B07；显式请求参数与整课复验 |
 | [2026-11-02：无首事件阻塞读拖延解析，反复重开放大视觉输入开销](#devlog-first-sse-token-audit-20261102) | B07；100 秒期限、实际 effort 与重复输入审计 |
 | [2026-11-02：额度耗尽中止Refine，Understanding边界合同仍冲突](#devlog-v7-quota-prompt-gap-20261102) | B07；真实耗时、错误分类与未完成接入 |
 | [2026-11-02：单帧JPEG头缺失导致全课输入被拒绝](#devlog-image-header-failure-20261102) | B07、B20；根因待定位，新版本保留音频复用 |
@@ -147,6 +148,17 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-k3-low-20261102"></a>
+## 2026-11-02：视觉适配器拒绝 effort，解析无法采用 Kimi 3 low
+
+**问题与现状：** v7 使用 k3.1-pro，未发 reasoning_effort；十次正常 Understanding 的 reasoning 为 68,116 tokens，占输出 80.2%。配置校验允许 Kimi low，但生成工厂硬拒绝非 none，视觉请求也没传递字段，因而仅调整 YAML 无法试验显式低推理档位。不能把 none 当作 low，也不能由 reasoning 比例单独证明模型版本是慢的唯一原因。
+
+**方案候选：** 采用既有 Kimi profile 传递 low/high/max，直接 JSON、工具模式和备用模型都保留各自设置；标准 OpenAI 继续拒绝未支持的显式 effort，旧 null/none 保持省略。仅本次隔离 API 配置和新任务冻结改为 k3 low，音频、图片、Prompt、10/10/1 并发及预算保持；不改主工作区默认配置。
+
+**方案验证：** 新用例先复现工厂 ValueError，修改后 452 项定向回归通过（Kimi 流式、首 SSE、生成工厂、模型配置、媒体与通用 stream）。用真实 SDK 配离线 HTTP 检查发送字段，另测工具循环、非流式、none 省略及备用模型独立 effort。已核对旧 v7 失败、其他运行态任务全部暂停、三类任务无租约；真实新版本与性能验证尚待执行，按[TRD §4.24](../design/03-product-reassessment/video-parse-performance-trd.md#424-11-02显式-kimi-3-low-的整课复验计划)继续。
+
+**指标对比：** 配置能构造且请求参数生效由失败变为通过；这不是业务提速结论。v7 前十块 Understanding 阶段中位 264.465 秒、输入 2,434,057、输出 84,920；新版本中位耗时、token、修正/冲突及完整索引待测。模型版本与 effort 同时改变，网络时段不同，后续数据属于组合方案对比；保留 ASR/分组新增推理为零与业务质量护栏。
 
 <a id="devlog-first-sse-token-audit-20261102"></a>
 ## 2026-11-02：无首事件阻塞读拖延解析，反复重开放大视觉输入开销

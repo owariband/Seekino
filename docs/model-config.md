@@ -438,7 +438,7 @@ token 计费。VoiceprintAgent、登记事务及 Refine 准入已接通；`confi
 | 多模态向量 | Ark 多模态向量协议；配置来源可独立选择 Ark 连接 |
 | 声音向量 | `campplus` 进程内 CPU 推理；宿主提供 16 kHz 单声道 PCM16 WAV |
 
-能力注册和供应商适配器属于 Gateway，业务不维护供应商白名单。`openai_vision` 和普通 `openai` Chat 协议不支持 `reasoning_effort` 的非 `none` 设置；DeepSeek profile、Ark 和 Codex 保留各自实现的推理控制。`openai_audio` 不接受生成 token 限额。模型输出预算用于上下文规划；Codex app-server 不保证通过协议硬性截断到此 token 数。
+能力注册和供应商适配器属于 Gateway，业务不维护供应商白名单。`openai_vision` 和 `openai` 的 `standard` profile 不支持 `reasoning_effort` 的非 `none` 设置；`openai` 的 `kimi` profile 在直接 JSON、工具循环及备用模型请求中传递显式 `low/high/max`，例如 `model: k3` 配合 `reasoning_effort: low`。Kimi 的 `null/none` 保持省略请求参数，不能理解为 low 或关闭推理；实际行为由服务端默认决定。DeepSeek profile、Ark 和 Codex 保留各自实现的推理控制。`openai_audio` 不接受生成 token 限额。模型输出预算用于上下文规划；Codex app-server 不保证通过协议硬性截断到此 token 数。
 
 `models.embedding` 保存 `dimensions`、`video_fps`、`input_mode`、可选 `query_instruction` 和 `encoder_model`。Ark 的 `ep-...` 是请求路由，不是向量模型身份，必须声明实际 `encoder_model`；使用直接模型名时，另写的 `encoder_model` 必须与其一致。旧配置的 endpoint 环境覆盖会保留原模型作为 encoder 身份。查询与索引必须使用兼容向量空间；更换实际 encoder 模型需要重新生成索引。
 

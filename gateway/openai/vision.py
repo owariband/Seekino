@@ -22,7 +22,7 @@ from gateway.usage import track_model_call
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.streaming.chat import request_chat_completion
 from gateway.streaming.first_sse import FirstSSEDeadline
-from gateway.openai.profiles import OpenAIProfile, effective_temperature
+from gateway.openai.profiles import OpenAIProfile, ReasoningEffort, effective_temperature
 
 _Result = TypeVar("_Result", bound=BaseModel)
 
@@ -46,7 +46,13 @@ class OpenAIVisionModel:
         stream: bool = True,
         temperature: float = 0.0,
         profile: OpenAIProfile = "standard",
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> None:
+        if reasoning_effort not in (None, "none") and (
+            profile != "kimi" or reasoning_effort not in ("low", "high", "max")
+        ):
+            raise ValueError("Chat vision reasoning_effort requires Kimi low, high or max")
+        self._reasoning_effort = None if reasoning_effort in (None, "none") else reasoning_effort
         self.model_name = model
         self.provider_name = provider
         self._base_url = base_url
@@ -63,8 +69,8 @@ class OpenAIVisionModel:
         return self._max_tokens
 
     @property
-    def reasoning_effort(self) -> None:
-        return None
+    def reasoning_effort(self) -> ReasoningEffort | None:
+        return self._reasoning_effort
 
     @property
     def _request_timeout_seconds(self) -> float:
@@ -146,6 +152,8 @@ class OpenAIVisionModel:
             timeout=timeout,
             **{self._token_parameter: self._max_tokens},
         )
+        if self.reasoning_effort is not None:
+            request["reasoning_effort"] = self.reasoning_effort
         if self._stream:
             request["stream_options"] = {"include_usage": True}
         first_sse = FirstSSEDeadline(timeout) if self._stream else None

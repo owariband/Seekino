@@ -400,8 +400,6 @@ class GatewayClient:
             )
         elif isinstance(source, (OpenAIModelSourceConfig, OpenAIVisionSourceConfig)):
             from gateway.openai.vision import OpenAIVisionModel
-            if binding.reasoning_effort not in {None, "none"}:
-                raise ValueError("Chat vision generative models do not support reasoning_effort")
             options = (
                 dict(token_parameter=source.token_parameter, response_format=source.response_format)
                 if isinstance(source, OpenAIVisionSourceConfig) else {}
@@ -411,6 +409,7 @@ class GatewayClient:
                 stream=binding.stream,
                 temperature=binding.temperature,
                 profile=source.profile if isinstance(source, OpenAIModelSourceConfig) else "standard",
+                reasoning_effort=binding.reasoning_effort,
                 **options,
             )
         elif isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):

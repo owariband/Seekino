@@ -429,6 +429,8 @@ def _request_chat_turn(
         "temperature": adapter.temperature,
         adapter._token_parameter: adapter.max_output_tokens,
     }
+    if adapter.reasoning_effort is not None:
+        request["reasoning_effort"] = adapter.reasoning_effort
     if adapter._stream:
         request["stream_options"] = {"include_usage": True}
     if enforce_final_schema:

@@ -130,11 +130,10 @@ def _gateway(profile="kimi"):
     return GatewayClient(config, environ={"KIMI_TEST_KEY": "offline"})
 
 
-def _model(gateway):
-    return gateway.create_generative_model(ModelBinding(
-        source="selected", model="k3.1-pro", request_timeout_seconds=10,
-        max_output_tokens=30000, supports_vision_input=True,
-    ))
+def _model(gateway, **overrides):
+    values = dict(source="selected", model="k3.1-pro", request_timeout_seconds=10,
+                  max_output_tokens=30000, supports_vision_input=True)
+    return gateway.create_generative_model(ModelBinding(**{**values, **overrides}))
 
 
 def _response(body):
@@ -145,7 +144,8 @@ def _response(body):
 
 
 @pytest.mark.parametrize("harness", [None, "legacy", "deepagents"])
-def test_factory_kimi_streams_json_and_tools_with_usage_and_reasoning(monkeypatch, tmp_path, harness):
+@pytest.mark.parametrize("effort", [None, "low"])
+def test_factory_kimi_streams_json_and_tools_with_usage_and_reasoning(monkeypatch, tmp_path, harness, effort):
     requests, bodies, writes, usage = [], [], [], []
 
     def handler(request):
@@ -168,7 +168,7 @@ def test_factory_kimi_streams_json_and_tools_with_usage_and_reasoning(monkeypatc
     gateway = _gateway()
     try:
         with capture_model_usage(usage.append):
-            result = _model(gateway).generate(
+            result = _model(gateway, model="k3", reasoning_effort=effort).generate(
                 [TextInput("describe"), ImageInput(image, detail="low")],
                 schema_name="scene", result_type=Result,
                 tools=[_write_tool(writes)] if harness else [], max_model_calls=2,
@@ -179,7 +179,10 @@ def test_factory_kimi_streams_json_and_tools_with_usage_and_reasoning(monkeypatc
     assert result.summary == "scene"
     assert len(requests) == (2 if harness else 1)
     assert all(body["stream"] is True and body["stream_options"] == {"include_usage": True} for body in requests)
-    assert all(body["model"] == "k3.1-pro" and body["max_tokens"] == 30000 for body in requests)
+    assert all(body["model"] == "k3" and body["max_tokens"] == 30000 for body in requests)
+    assert all(body.get("reasoning_effort") == effort for body in requests)
+    if effort is None:
+        assert all("reasoning_effort" not in body for body in requests)
     if harness == "deepagents":
         assert all("response_format" not in body for body in requests)
     else:
@@ -362,3 +365,71 @@ def test_stream_honors_host_control_between_chunks(monkeypatch):
     finally:
         gateway.close()
     assert len(delivered) == 2 and body.closed
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("effort", [None, "none", "low", "high", "max"])
+def test_kimi_vision_sends_explicit_effort_and_omits_legacy_none(monkeypatch, stream, effort):
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        if stream:
+            return _response(SSEBody(_json_chunks()))
+        return httpx.Response(200, json={
+            "id": "result", "object": "chat.completion", "created": 0, "model": "k3",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {
+                "role": "assistant", "content": '{"summary":"scene"}',
+            }}],
+        })
+
+    _transport(monkeypatch, handler)
+    gateway = _gateway()
+    try:
+        result = _model(gateway, model="k3", stream=stream, reasoning_effort=effort).generate(
+            [TextInput("describe")], schema_name="scene", result_type=Result,
+        )
+    finally:
+        gateway.close()
+    assert result.summary == "scene" and len(requests) == 1
+    assert requests[0]["model"] == "k3" and requests[0]["stream"] is stream
+    assert requests[0]["temperature"] == 1
+    if effort in (None, "none"):
+        assert "reasoning_effort" not in requests[0]
+    else:
+        assert requests[0]["reasoning_effort"] == effort
+
+
+def test_kimi_fallback_keeps_its_own_effort(monkeypatch):
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return _response(SSEBody(_json_chunks(
+            finish="content_filter" if len(requests) == 1 else "stop",
+        )))
+
+    _transport(monkeypatch, handler)
+    gateway = _gateway()
+    try:
+        model = _model(gateway, model="k3", reasoning_effort="low", fallback=ModelBinding(
+            source="selected", model="k3", reasoning_effort="high", request_timeout_seconds=10,
+            max_output_tokens=30000, supports_vision_input=True,
+        ))
+        assert model.generate([TextInput("describe")], schema_name="scene", result_type=Result).summary == "scene"
+    finally:
+        gateway.close()
+    assert [body["reasoning_effort"] for body in requests] == ["low", "high"]
+
+
+def test_standard_vision_still_rejects_explicit_effort():
+    from gateway.openai.vision import OpenAIVisionModel
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        OpenAIVisionModel("standard-model", provider="standard", base_url="https://example.test",
+                          api_key="offline", reasoning_effort="low")
+    gateway = _gateway("standard")
+    try:
+        with pytest.raises(ValueError, match="reasoning_effort"):
+            _model(gateway, reasoning_effort="low")
+    finally:
+        gateway.close()
