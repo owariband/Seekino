@@ -1,9 +1,11 @@
 # Refine 共享成员冲突恢复：实现与本地验证
 
-日期：2026-11-02，Asia/Shanghai。分支 `fix/refine-conflict-recovery`，
-[Draft PR #26](https://github.com/owariband/Seekino/pull/26)。
-上游为 [PR #18](https://github.com/owariband/Seekino/pull/18) 的 `b01afce9`；首提交 `19e497ea`
-只有 TRD，后续实现沿[性能主设计 §3.12–3.13](../../design/03-product-reassessment/video-parse-performance-trd.md)。
+日期：2026-11-02，Asia/Shanghai。当前交付分支 `fix/video-asr-recovery`，
+[Draft PR #18](https://github.com/owariband/Seekino/pull/18)。
+实验时基于 `b01afce9` 在 `fix/refine-conflict-recovery` / [PR #26](https://github.com/owariband/Seekino/pull/26) 开发；
+同日范围复核确认这是 #18 的未完成验收修复，已撤回独立跟踪并保留全部提交归回 #18。
+`19e497ea` 记录设计、`5309547b` 记录实现与验证；该归并只更正文档与交付归属，不改变已测源码。
+设计沿[性能主设计 §3.12–3.13 / §6.10](../../design/03-product-reassessment/video-parse-performance-trd.md)。
 
 本轮完成源码和受控验证，没有重启 API、迁移业务库、重试课程或调用外部模型。
 真实 Kimi 并发耗时、token、语义质量和完整课程完成时间均未验收。
@@ -93,7 +95,7 @@ PYTHONDONTWRITEBYTECODE=1 /Users/hypnos/workspace/agent/Seekino/.venv/bin/python
 
 ## 验收边界与下一步
 
-采用本实现作为真实并发试验候选，PR 保持 Draft。通知只覆盖本 API 的普通 Refine；Prefix、
+采用本实现作为真实并发试验候选，#18 保持 Draft；#26 不再作为独立交付。通知只覆盖本 API 的普通 Refine；Prefix、
 其他进程和重启后的正确性仍由持久版本/租约保证。完整候选仅保留在当前执行内存，重启后
 从已提交成果重建，通知不冒充持久 checkpoint。
 
