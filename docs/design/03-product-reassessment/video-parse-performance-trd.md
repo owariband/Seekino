@@ -825,6 +825,8 @@ v7于18:01:41失败，实际515.164秒、10理解/0Refine/0索引，ASR重算0�
 
 **验收与闭环：** 11-03已补齐本次Responses解析入口并通过HTTP／HTTPS共44项期限／取消检查；Gateway范围1624 passed、5 failed、1 skipped、1 deselected，五项失败在未修改的2a0aef06临时快照均复现。共用期限不是供应商专用，但工具循环、其他调用方及外部共享客户端仍未全覆盖，接线矩阵见gateway README。已完成只读余额／模型列表查询；尚未启动Flash解析或产生本轮推理费用。后续在本节关联实际报告，B07/B20保持未完成，完整课程和问答仍需真实验收。
 
+11-03首轮正式v11（`93d60de9-b0ab-4aa6-aeea-342935e237b2`）在64.036秒、3个请求后终止，0理解／0Refine：DeepSeek严格Schema拒绝`Required properties must match all properties in the object`，没有模型输出或usage，前后余额均147.10元。实际缺失的是DIALOGUE的可选speaker_source字段；现有投影只处理oneOf，未按strict要求列全required。修复限定在适配器的Schema投影：已声明字段全部列入required、保留原nullable类型和业务模型默认值，不改业务Schema、不关闭strict；在同一个v11修复后重试，保留首轮失败记录，协议探针与整课费用分列。 修复后409项模型／工厂／用量回归通过；同一Understanding Schema的单次文本探针2.390秒被API接受，2715输入／10输出／0reasoning，估算0.002755元，明确不作课程内容样本。
+
 # 5. 试点验证与方案取舍
 
 两轮已由本任务 Agent 执行，XML 没有扩大试点的依据，用户已决定不采用。后续试点仅针对选定的精简 JSON 及宿主接入，须先完善上述合同与质量缺口；不要求先把单块压到 30 秒。接入时用至少三个事先选定的不同片段验证对白密集、动作/切镜、画面文字/画外音，并加入相邻 Chunk 边界；这些样本与调试片段区分。绝对质量阈值和调用预算在具体实施前冻结，本轮不自动启动。

@@ -472,7 +472,14 @@ def test_deepseek_projects_real_parse_v2_union_without_mutating_schema(monkeypat
     actual = response_format["schema"]
     timeline = actual["properties"]["timeline"]["items"]
     assert "oneOf" not in timeline and "discriminator" not in timeline
-    assert timeline["anyOf"] == canonical["properties"]["timeline"]["items"]["oneOf"]
+    for projected, original in zip(timeline["anyOf"], canonical["properties"]["timeline"]["items"]["oneOf"], strict=True):
+        assert projected["properties"] == original["properties"]
+        assert set(projected["required"]) == set(projected["properties"])
+        assert projected["additionalProperties"] is False
+    dialogue = timeline["anyOf"][2]
+    assert "speaker_source" in dialogue["required"]
+    assert {"type": "null"} in dialogue["properties"]["speaker_source"]["anyOf"]
+    assert "speaker_source" not in canonical["properties"]["timeline"]["items"]["oneOf"][2]["required"]
     assert len(timeline["anyOf"]) == 7
     assert timeline["anyOf"][2]["properties"]["event_type"]["const"] == "DIALOGUE"
     assert timeline["anyOf"][2]["properties"]["text_variants"]["minItems"] == 1
