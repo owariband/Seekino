@@ -108,8 +108,12 @@ def _transport(monkeypatch, handler):
     clients = []
 
     def create_client(**kwargs):
+        supplied = kwargs.pop("http_client", None)
+        hooks = supplied.event_hooks if supplied is not None else {}
+        if supplied is not None:
+            supplied.close()
         assert kwargs["max_retries"] == 0
-        http = httpx.Client(transport=httpx.MockTransport(handler))
+        http = httpx.Client(transport=httpx.MockTransport(handler), event_hooks=hooks)
         clients.append(http)
         return OpenAI(**kwargs, http_client=http)
 

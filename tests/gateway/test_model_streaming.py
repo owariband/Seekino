@@ -75,7 +75,11 @@ def _setup(monkeypatch, profile, *, structured=False, fail_primary=False, visual
         return _wire(body, structured=structured, tool_call=visual_tools and len(requests) == 1)
 
     def openai(**kwargs):
-        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+        supplied = kwargs.pop("http_client", None)
+        hooks = supplied.event_hooks if supplied is not None else {}
+        if supplied is not None:
+            supplied.close()
+        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond), event_hooks=hooks))
 
     def ark(**kwargs):
         return Ark(api_key="offline", base_url="https://ark.example/v1", max_retries=0,

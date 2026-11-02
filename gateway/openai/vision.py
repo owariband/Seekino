@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 from langchain_core.tools import BaseTool
-from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
+from openai import APIConnectionError, APIError, APITimeoutError, DefaultHttpxClient, OpenAI
 from pydantic import BaseModel
 
 from gateway.errors import ContentFilterError
@@ -21,6 +21,7 @@ from gateway.multimodal import (
 from gateway.usage import track_model_call
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.streaming.chat import request_chat_completion
+from gateway.streaming.first_sse import FirstSSEDeadline
 from gateway.openai.profiles import OpenAIProfile, effective_temperature
 
 _Result = TypeVar("_Result", bound=BaseModel)
@@ -147,11 +148,15 @@ class OpenAIVisionModel:
         )
         if self._stream:
             request["stream_options"] = {"include_usage": True}
+        first_sse = FirstSSEDeadline(timeout) if self._stream else None
         with OpenAI(
             base_url=self._base_url,
             api_key=self._api_key,
             timeout=timeout,
             max_retries=0,
+            **({"http_client": DefaultHttpxClient(
+                http2=False, event_hooks={"request": [first_sse.on_request]},
+            )} if first_sse is not None else {}),
         ) as client:
             with track_model_call(
                 provider=self.provider_name,
@@ -167,7 +172,7 @@ class OpenAIVisionModel:
                         response = (
                             request_chat_completion(
                                 client.chat.completions, usage_call=call,
-                                check_control=check_control, **request,
+                                check_control=check_control, first_sse_deadline=first_sse, **request,
                             )
                         )
                         record_model_event("response", response)

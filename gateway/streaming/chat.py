@@ -15,11 +15,13 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.model_diagnostics import record_model_event
 from gateway.usage import ModelCallTracker
+from gateway.streaming.first_sse import FirstSSEDeadline
 
 
 def request_chat_completion(
     completions: Any, *, stream: bool, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> ChatCompletion:
     """Execute the model's configured transport and return a complete turn."""
     if not isinstance(stream, bool):
@@ -30,7 +32,10 @@ def request_chat_completion(
         check_control()
     if stream:
         request["stream_options"] = {**request.get("stream_options", {}), "include_usage": True}
-        return request_chat_stream(completions, usage_call=usage_call, check_control=check_control, **request)
+        return request_chat_stream(
+            completions, usage_call=usage_call, check_control=check_control,
+            first_sse_deadline=first_sse_deadline, **request,
+        )
     request.pop("stream_options", None)
     response = completions.create(**request)
     usage_call.capture_response(response)
@@ -42,12 +47,16 @@ def request_chat_completion(
 
 def request_chat_stream(
     completions: Any, *, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> ChatCompletion:
     """Collect a verified turn with SDK delta assembly before executing tools."""
     state = ChatCompletionStreamState()
     usage = None
-    with closing(_iter_chat_chunks(completions, usage_call=usage_call, check_control=check_control, **request)) as chunks:
+    with closing(_iter_chat_chunks(
+        completions, usage_call=usage_call, check_control=check_control,
+        first_sse_deadline=first_sse_deadline, **request,
+    )) as chunks:
         for chunk in chunks:
             if chunk.usage is not None:
                 usage = chunk.usage
@@ -79,7 +88,8 @@ def stream_chat_text(completions: Any, *, usage_call: ModelCallTracker, **reques
 
 def _iter_chat_chunks(
     completions: Any, *, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> Iterator[Any]:
     # The SDK decodes SSE. We additionally reject EOF without a terminal choice.
     deadline = monotonic() + request["timeout"]
@@ -88,21 +98,32 @@ def _iter_chat_chunks(
         usage_call.raise_if_cancelled()
         if check_control is not None:
             check_control()
+        if first_sse_deadline is not None:
+            first_sse_deadline.raise_if_expired()
         if monotonic() >= deadline:
             raise ModelFailureError(
                 "Chat completion stream exceeded its time budget", reason=ModelFailureReason.MODEL_TIMEOUT,
             )
 
-    check()
-    stream = completions.create(**request)
-    usage_call.capture_response(stream.response, include_usage=False)
-    unregister = usage_call.add_cancel_callback(lambda: _cancel_chat_stream(stream))
     received_choice = False
     terminal = False
+    unregister = lambda: None
+    unregister_startup = lambda: None
+    if first_sse_deadline is not None:
+        first_sse_deadline.start()
+        unregister_startup = usage_call.add_cancel_callback(first_sse_deadline.interrupt)
     try:
+        check()
+        stream = completions.create(**request)
         with stream:
+            if first_sse_deadline is not None:
+                first_sse_deadline.attach_response(stream.response)
+            usage_call.capture_response(stream.response, include_usage=False)
+            unregister = usage_call.add_cancel_callback(lambda: _cancel_chat_stream(stream))
             for chunk in stream:
                 check()
+                if first_sse_deadline is not None:
+                    first_sse_deadline.received()
                 if not isinstance(chunk, ChatCompletionChunk):
                     try:
                         chunk = ChatCompletionChunk.model_validate(chunk.model_dump())
@@ -111,22 +132,28 @@ def _iter_chat_chunks(
                 usage_call.capture_response(chunk, include_usage=chunk.usage is not None)
                 record_model_event("sse", chunk)
                 for choice in chunk.choices:
-                    # Our requests ask for one completion. Reject ambiguous or
-                    # late deltas instead of silently consuming a partial turn.
+                    # Reject ambiguous or late deltas instead of accepting a partial turn.
                     if choice.index != 0 or terminal:
                         raise ModelFailureError("Chat completion stream returned an unexpected choice")
                     received_choice = True
                     terminal = choice.finish_reason is not None
                 yield chunk
             check()
-    except (httpx.RequestError, httpx.StreamError) as error:
+    except Exception as error:
+        # A watchdog-induced socket error is a retryable timeout, not task
+        # cancellation. Real caller cancellation keeps precedence in check().
         check()
-        raise ModelFailureError(
-            "Chat completion stream read failed",
-            reason=(ModelFailureReason.MODEL_TIMEOUT if isinstance(error, httpx.TimeoutException)
-                    else ModelFailureReason.MODEL_CONNECTION_ERROR),
-        ) from error
+        if isinstance(error, (httpx.RequestError, httpx.StreamError)):
+            raise ModelFailureError(
+                "Chat completion stream read failed",
+                reason=(ModelFailureReason.MODEL_TIMEOUT if isinstance(error, httpx.TimeoutException)
+                        else ModelFailureReason.MODEL_CONNECTION_ERROR),
+            ) from error
+        raise
     finally:
+        if first_sse_deadline is not None:
+            first_sse_deadline.close()
+        unregister_startup()
         unregister()
     if not received_choice or not terminal:
         raise ModelFailureError(

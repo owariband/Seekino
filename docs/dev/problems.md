@@ -1591,6 +1591,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
+**11-02 首 SSE 期限与 token 核对：** 当前 Parse 的无工具 OpenAI vision 入口已设 100 秒首事件期限，超时回到原有限重试；HTTP/HTTPS 故障注入和相关回归去重 401 项通过，隔离 API 已重启，未重新解析。v7 实际是 `k3.1-pro` 且未显式 low；三轮重开已有 usage 的 56 次累计 12,259,858 input / 429,877 output tokens，另 62 次费用未知。显式 effort 贯通、Understanding 时间合同冲突与整课闭环仍未完成，B07 保持 TODO。[报告](../report/gateway/first-sse-timeout-20261102.md)。
+
 **11-02 18:01 v7失败与接入核验：** 515.164秒后失败，10/117理解、0/115 Refine、0索引；Understanding阶段中位264.465秒、69条对白具名且无格式重试。8次Refine请求为7次Kimi五小时额度429及1次断连，没有模型输出，不能验收冲突优化。正式Understanding仍限制所有事件在Chunk内，与完整跨界ASR/语义完整话语要求冲突；实验候选未贯通到该Prompt和宿主门禁，此项保持TODO。额度耗尽错误分类也待完善；本轮没有重试任务。[证据](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-quota-terminal)。
 
 **11-02 17:53 v7重新整课解析：** v6因sequence28单帧缺少JPEG头五字节失败，842.076秒、20/117理解、3/115 Refine、1/117索引；截头程序来源未定位。已按正式reparse创建v7 `60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`，实现和冻结配置不变、图片重新生成、音频复用新转写0；目标帧发布后正常，实际发送与整课验收仍待观察。旧版本保留失败，B07保持TODO。[记录](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-fresh-run)。

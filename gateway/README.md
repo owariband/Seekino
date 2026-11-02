@@ -59,6 +59,13 @@ Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺�
 是否重发、期限与提交条件仍由宿主决定。验证见
 [取消与冲突恢复报告](../docs/report/server/refine-conflict-recovery-20261102.md)。
 
+当前 Parse 使用的无工具 OpenAI vision JSON 生成入口增加 100 秒首 SSE 期限：
+从 SDK 请求开始计时，未收到首个解码事件即关闭独占 HTTP/1 连接并返回 `MODEL_TIMEOUT`，
+业务重试仍由调用方控制。HTTP 头、注释心跳不计入；role/reasoning 等首个 SSE 到达后
+解除启动期限，继续遵守原总预算，较短调用预算优先。该机制未扩展到工具循环、
+Responses 或其他供应商协议。验证与资源释放边界见
+[首 SSE 期限报告](../docs/report/gateway/first-sse-timeout-20261102.md)。
+
 `ModelBinding.temperature` 同时支持 YAML 和内部创建参数，默认 `0.0`，范围 `[0, 2]`，
 主模型与 fallback 分别传递。Kimi profile 在绑定解析和适配器中固定为 `1.0`，可通过
 `resolve_model_binding()` 查看实际值。Chat、Structured、Deep Agents、视觉 JSON/工具和
