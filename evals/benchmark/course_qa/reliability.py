@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("--browser-output", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--cancel-after-text", action="store_true", help="Cancel a direct answer after at least 60 characters with readable text from provider snapshots")
     args = parser.parse_args()
     if not args.live or urlparse(args.api).hostname not in {"localhost", "127.0.0.1"}:
         parser.error("Explicit --live and an isolated loopback API are required")
@@ -57,6 +58,8 @@ def main() -> None:
     cid = response.json()["conversationId"]
     result["conversation_id"] = cid
     payload = {**original["payload"], "content": "请仔细核对当前画面和附近讲解，解释这里的文本生成例子。"}
+    if args.cancel_after_text:
+        payload = {"tenantId": "local-default", "content": "请用十五个短段落解释矩阵乘法，每段给一个具体例子；不要调用工具。", "seriesIds": []}
     key = f"course-qa-cancel-{uuid4()}"
     event_started = threading.Event()
     events = []
@@ -77,17 +80,24 @@ def main() -> None:
                             events.append(row)
                             with (args.out / "cancel-events.jsonl").open("a") as handle:
                                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-                            if event == "answer.started":
+                            if ((not args.cancel_after_text and event == "answer.started")
+                                or (args.cancel_after_text and event == "answer.snapshot"
+                                    and (row["data"].get("textStream") or {}).get("origin") == "provider_delta"
+                                    and len(row["data"].get("assistantMessage", {}).get("content") or "") >= 60
+                                    and any(c.isalnum() for c in row["data"]["assistantMessage"]["content"]))):
                                 event_started.set()
         except Exception as error:
             result["stream_error"] = repr(error)
 
     worker = threading.Thread(target=consume, daemon=True)
     worker.start()
-    assert event_started.wait(20), "No answer.started; inspect server before continuing"
+    assert event_started.wait(20), "Expected start/text event missing; inspect server before continuing"
     message_id = next(row["data"]["messageId"] for row in events if row["event"] == "answer.started")
     duplicate = client.post("/api/agent/messages/send", params={"conversationId": cid}, json=payload, headers={"Idempotency-Key": key})
     result["inflight_replay"] = {"status": duplicate.status_code, "body": duplicate.json()}
+    if args.cancel_after_text:
+        result["prefix_before_cancel"] = next(row["data"]["assistantMessage"]["content"] for row in reversed(events)
+                                              if row["event"] == "answer.snapshot" and row["data"].get("assistantMessage", {}).get("content"))
     cancelled_at = time.monotonic()
     cancellation = client.post("/api/agent/messages/cancel", params={"tenantId": "local-default", "conversationId": cid, "messageId": message_id})
     result["cancel"] = {"status": cancellation.status_code, "body": cancellation.json(), "response_seconds": time.monotonic() - cancelled_at}
@@ -102,6 +112,10 @@ def main() -> None:
     assert not worker.is_alive(), "Cancellation did not finish in observation window"
     assistant = [row for row in result["after_cancel"]["items"] if row["role"] == "ASSISTANT"]
     assert len(assistant) == 1 and assistant[0]["status"] == "FAILED" and assistant[0]["lastError"]["code"] == "AGENT_CANCELLED", assistant
+    if args.cancel_after_text:
+        result["cancel_prefix_preserved"] = assistant[0]["content"].startswith(result["prefix_before_cancel"].rstrip())
+        save()
+        assert result["cancel_prefix_preserved"], "Received text prefix was lost after cancellation"
 
     started = time.monotonic()
     recovery = client.post("/api/agent/messages/send", params={"conversationId": cid},

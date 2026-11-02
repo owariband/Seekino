@@ -17,6 +17,7 @@ const rows = [];
 const errors = [];
 const requests = [];
 const media = [];
+const deliveries = [];
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const state = async () => ({
@@ -29,10 +30,17 @@ const state = async () => ({
 await page.exposeFunction("recordQaEvent", row => {
   rows.push(row);
   appendFileSync(`${out}/events.jsonl`, JSON.stringify(row) + "\n");
-  if (row.event !== "answer.delta") console.log(JSON.stringify({ turn: row.turn, event: row.event, seconds: row.seconds }));
+  if (["answer.started", "answer.model.completed", "answer.completed", "answer.failed", "http.error", "observer.error"].includes(row.event)) console.log(JSON.stringify({ turn: row.turn, event: row.event, seconds: row.seconds }));
+});
+await page.exposeFunction("recordQaDelivery", row => {
+  deliveries.push(row);
+  appendFileSync(`${out}/delivery.jsonl`, JSON.stringify(row) + "\n");
 });
 await page.addInitScript(() => {
   localStorage.setItem("seekino-locale", "zh");
+  window.addEventListener("seekino:chat-delivery", event => {
+    void window.recordQaDelivery({ turn: window.qaTurn, ...event.detail });
+  });
   const original = window.fetch;
   window.fetch = async function(input, options) {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -124,6 +132,7 @@ try {
   process.exitCode = 1;
 } finally {
   save("requests", requests);
+  save("delivery", deliveries);
   save("browser-errors", errors);
   save("media", media);
   save("run", { live: Boolean(live), recordedEvents: rows.length, requests: requests.length, browserVersion: browser.version(), quality: "Requires human evidence review" });
