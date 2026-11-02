@@ -1,0 +1,126 @@
+{
+  "captured_at": "2026-11-02T08:20:47.728247+00:00",
+  "task_id": "72d0cdc1-f7f4-453e-b64e-8480239ab243",
+  "version": 6,
+  "status": "PARSING_FAILED",
+  "paused": false,
+  "start_time_ms": 1793606776665,
+  "finish_time_ms": 1793607618741,
+  "wall_elapsed_seconds": 842.076,
+  "processing_duration_ms": 788010,
+  "total_chunks": 117,
+  "understood_chunks": 20,
+  "chunk_states": [
+    {
+      "phase": 1,
+      "status": "FAILED",
+      "count": 10
+    },
+    {
+      "phase": 1,
+      "status": "QUEUED",
+      "count": 87
+    },
+    {
+      "phase": 2,
+      "status": "WAITING",
+      "count": 19
+    },
+    {
+      "phase": 3,
+      "status": "COMPLETE",
+      "count": 1
+    }
+  ],
+  "interval_states": [
+    {
+      "status": "COMPLETE",
+      "count": 3
+    },
+    {
+      "status": "WAITING",
+      "count": 112
+    }
+  ],
+  "stage_completed_attempts": {
+    "index": {
+      "n": 1,
+      "median_seconds": 4.324,
+      "min_seconds": 4.324,
+      "max_seconds": 4.324,
+      "attempt_outcomes": {
+        "completed": 1
+      }
+    },
+    "refine": {
+      "n": 3,
+      "median_seconds": 290.529,
+      "min_seconds": 260.806,
+      "max_seconds": 323.876,
+      "attempt_outcomes": {
+        "failed": 6,
+        "cancelled": 4,
+        "completed": 3
+      }
+    },
+    "understand": {
+      "n": 20,
+      "median_seconds": 280.024,
+      "min_seconds": 113.653,
+      "max_seconds": 496.879,
+      "attempt_outcomes": {
+        "completed": 20,
+        "failed": 4,
+        "cancelled": 6
+      }
+    }
+  },
+  "model_completed_requests": {
+    "index": {
+      "n": 22,
+      "median_seconds": 0.018,
+      "min_seconds": 0.016,
+      "max_seconds": 1.204,
+      "outcomes": {
+        "completed": 22
+      }
+    },
+    "refine": {
+      "n": 4,
+      "median_seconds": 275.548,
+      "min_seconds": 40.476,
+      "max_seconds": 323.753,
+      "outcomes": {
+        "failed": 19,
+        "completed": 4
+      }
+    },
+    "understand": {
+      "n": 20,
+      "median_seconds": 279.561,
+      "min_seconds": 113.138,
+      "max_seconds": 496.461,
+      "outcomes": {
+        "completed": 20,
+        "failed": 7
+      }
+    }
+  },
+  "refine_events": {
+    "refine_request_superseded": 9,
+    "refine_snapshot_refresh": 9,
+    "refine_result_repair": 1
+  },
+  "cancel_drain": {
+    "n": 9,
+    "median_seconds": 0.042,
+    "min_seconds": 0.027,
+    "max_seconds": 0.056
+  },
+  "last_error": {
+    "code": "PARSE_NODE_FAILED",
+    "message": "视频理解失败：执行异常。本次解析已停止派发，请检查后手动重试。"
+  },
+  "asr_new_calls": 0,
+  "sample_policy": "This task only. Successful attempt latency medians exclude running/failed/cancelled attempts. Parallel request durations never summed as total parse elapsed."
+}

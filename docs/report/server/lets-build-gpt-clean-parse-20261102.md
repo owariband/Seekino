@@ -1,6 +1,6 @@
 # Let’s build GPT 新版本全课解析对照（2026-11-02）
 
-> 11-02 16:06续跑：v5已按下文原因失败存档；Understanding修复后已另建v6 `72d0cdc1-f7f4-453e-b64e-8480239ab243`，运行中。下面保留v5的原始启动、失败和修复验证，末节记录v6，两个版本分别计时。
+> 11-02 17:53续跑：v6因单张输入图片缺少JPEG头失败，失败与追查见末节；已另建v7 `60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`，以下启动快照记录其运行状态。旧版本保留失败记录，分别计时；尚未完成整课验收。
 
 本次继续 [PR #18](https://github.com/owariband/Seekino/pull/18) 的完整课程验收，分支 `fix/video-asr-recovery`。运行代码 `1c3aaa6c2ed40359f56541daacdc8401c941ee52`，API 从 `/Users/hypnos/.codex/worktrees/full-video-asr/Seekino` 启动。本文先记录实际启动与测量合同；完整解析、Refine 冲突收益和业务质量尚未取得结果。
 
@@ -77,3 +77,28 @@ API已从同一worktree的`f3a3d43e0f3c91cfa4c3743cad684564bc521d52`重启，通
 2476条ASR和说话人分组再次校验复用，分别与v5正文相等，新增转写0。[v6启动证据](evidence/lets-build-gpt-clean-parse-20261102/v6-startup.json)。新进程API19621，日志、trace和30秒只读采集独立放在 `/Users/hypnos/workspace/agent/Seekino/outputs/verification/lets-build-gpt-clean-parse-v6-20261102/`；查看`latest.json`或最终`terminal.json`，不把v5的`latest.json`作为新版本状态。
 
 v6仍以完整解析/索引及58分10秒至69分48秒为目标，尚未完成。与v5的差异是新增有限Understanding格式修正；与v4比较时还包含此前Refine/排序/取消等改动，不能全归因为一项优化。检索、出处、回看、追问需要完整成果之后另行验收。
+
+
+<a id="v6-image-failure"></a>
+## v6 终态与图片截头追查
+
+v6于16:20:18.741进入PARSING_FAILED，实际经过842.076秒（14分02.076秒），Understanding20/117、Refine3/115、Index1/117，新ASR0。processingDurationMs=788010且计时不完整，不能用它替代实际起止用时。[终态证据](evidence/lets-build-gpt-clean-parse-20261102/v6-terminal.json)。
+
+首个原始错误来自sequence28的请求`cf203b92-2ea5-493b-a2ab-af91c18b57cf`：16:19:56.933保存请求，16:20:14收到400 `unsupported image format: application/octet-stream`，没有SSE或模型JSON。这不属于此前的JSON格式错误或Refine冲突。
+
+与v4成功请求`e6c1a2eb-a0ad-4d8d-a9ab-e2fe6527d6c6`逐字节比较，198帧中的197张相同；28:16.500的图片由100451字节变成100446字节，恰好缺少开头`ff d8 ff e0 00`五字节，余下内容完全一致。同一坏图两次真实请求0.808/0.564秒稳定返回同一个400，正常相邻图5.155秒收到200和首SSE。用当前正式sampler从原视频重新抽取目标及相邻帧，8.817秒完成，目标图与v4正常图片逐字节一致，正式Base64编码和诊断保存/恢复不改变数据。该本地抽取限制到28:17，不能视为一次完整解析试跑。
+
+这确认了失败请求的坏数据和直接拒绝原因，未确认截头发生的具体程序操作。最近Understanding修复改模型输出门禁，Refine修复改JSON快照/连接取消，时间标签改文字与图片的配对；抽帧、硬链接、读取/编码和诊断保存文件没有本PR独有修改。原临时帧已随任务收尾清理，缺少各阶段文件指纹，不能指认FFmpeg、并发、网络或其他进程为截头根因。[复现及来源证据](evidence/lets-build-gpt-clean-parse-20261102/v6-image-investigation.json)。
+
+<a id="v7-fresh-run"></a>
+## v7：保持实现与配置的新整课尝试
+
+17:53:05通过正式POST /api/uploads/reparse新建v7，Consumer于17:53:06.036开始执行，任务`60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`。v6已失败且无活动租约，保留历史记录、不再续跑；其他三个旧版本保持暂停。API归属、工作目录和零活动租约核实后，仅重启PR18的API为本轮隔离日志，MySQL/ES/embedding与原素材保持。
+
+HEAD `6f7c38fb`，业务实现仍为`f3a3d43e`；与v6冻结ParseConfig逐项一致，Understanding/Refine/Index并发10/10/1，完整117Chunk和115滑动Refine区间从头执行，图片重新生成。2476条ASR和独立说话人分组正文与v6分别相等，两份完成元数据均记录reused_from_task_id=v6，新转写0。这是音频缓存复用条件下的完整下游解析，不包含冷启动ASR推理耗时；本地风扇没有明显负载不能替代调用记录，本轮记录已明确没有重算模型。
+
+额外启动只读轮询，保留目标帧在整集目录、Chunk链接和实际请求中的哈希及异常原字节，不修改图片、不拦截模型请求。17:53:24首次观察、17:54:02 episode.json发布后观察均为100451字节且能解码，SHA与v4正常图一致。它是轮询快照，不能保证捕获每个瞬间，也尚未证明sequence28的实际发送或完成正常。
+
+17:56:55请求快照：已启动10个Understanding，10个已收到SSE，错误0个；具体首SSE与阶段进度见[启动证据](evidence/lets-build-gpt-clean-parse-20261102/v7-startup.json)。单次启动不证明偶发截头已修复，完整解析/索引与问答仍待验。
+
+原始材料：`outputs/verification/lets-build-gpt-clean-parse-v7-20261102/`中的run、audio-reuse、progress、request-telemetry、frame-audit以及model-trace。采集到任务终态结束，并释放本轮caffeinate；网络时间窗口与v6不同，不按首批时延宣称整体提速。

@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-02 17:53 v7音频复用核实：** 新完整117块任务`60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`已从v6校验复用2476条ASR和独立说话人分组，正文分别相等、两项元数据记录来源任务，新转写0。本轮无本地模型重算，不能用风扇观感判断是否有ASR输入；下游重做，完整课程、对齐及质量验收仍未完成。[记录](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-fresh-run)。
+
 **11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
 **11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
@@ -1588,6 +1590,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-02 17:53 v7重新整课解析：** v6因sequence28单帧缺少JPEG头五字节失败，842.076秒、20/117理解、3/115 Refine、1/117索引；截头程序来源未定位。已按正式reparse创建v7 `60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`，实现和冻结配置不变、图片重新生成、音频复用新转写0；目标帧发布后正常，实际发送与整课验收仍待观察。旧版本保留失败，B07保持TODO。[记录](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-fresh-run)。
 
 **11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
