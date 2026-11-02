@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-02 直连 v9 复验：** 新任务 `d7c13ca5-14f5-4201-8855-a2b94f07e68c` 的 ASR/独立分组与 v8 JSON及摘要逐项一致，新转写0；下游19理解/8 Refine/3索引后因错误时间事件终止。空timeline不是上游ASR正文丢失，整课与人工质量仍未通过。[报告](../report/gateway/kimi3-low-parse-20261102.md#v9-empty-results)。
+
 **11-02 21:56 v8 代理恢复后的音频复用：** 经正式 retry 恢复同一任务，完整音频成果仍命中，新 ASR=0；下游在 9 个 Understanding/2 个 Refine 后失败，且存在已提交空 timeline。音频复用与下游内容质量分别验收，完整课程、声学对齐及检索回看追问仍 TODO。[本轮报告](../report/gateway/kimi3-low-parse-20261102.md#proxy-retry)。
 
 **11-02 v8 音频复用：** K3 low 新任务 `2eef6cec-f494-407c-8939-cf415de1336e` 从 v7 校验复用 ASR 与独立分组，持久正文逐项相等、摘要相等，新 ASR=0。下游 100 秒首响应失败没有触发本地音频重算；完整课程仍未完成。[证据](../report/gateway/evidence/kimi3-low-20261102/audio-reuse.json)。
@@ -1594,6 +1596,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-02 直连 v9 终态与空结果定位：** 已通过正式 reparse 重开完整117块，任务 `d7c13ca5-14f5-4201-8855-a2b94f07e68c` 保持 k3 low/直连/10路，14分38秒后停在19理解/8 Refine/3索引，新ASR=0。致命原因是sequence27在27:00–28:00范围输出0–1ms OTHER，触发时间门禁，不是504。首块22条ASR却返回空timeline，原始SSE即如此；结构/时间遍历允许空数组，缺少内容检查，且稳定排序仅接Refine、范围ValueError在修正循环外。strict true/false的固定文本对照均保留22事件，不能据此关闭strict；模型极短输出诱因仍未定位。业务门禁修复未实施，未再次重开，B07仍TODO。[证据](../report/gateway/kimi3-low-parse-20261102.md#v9-empty-results)。
 
 **11-02 22:14 直连复测与取舍更正：** 同一原始 189 图请求显式禁用环境/端口代理，客户端第 2.577 秒发送完成、54.477 秒收到 SSE，HTTP 200/返回 k3。早先慢上传不是新增代理的充分依据；已撤回本轮专用分流并恢复 API 的 Kimi 直连。没有再次启动整课，9/117 理解、2/115 Refine、0 索引仍是前次失败的提交数；空 timeline、十路稳定性与完整闭环仍 TODO。[直连证据](../report/gateway/kimi3-low-parse-20261102.md#direct-retest)。
 

@@ -2,7 +2,9 @@
 
 [PR #18](https://github.com/owariband/Seekino/pull/18) · [评审看板](pr18-kanban.html) · [主 TRD §4.24](../../design/03-product-reassessment/video-parse-performance-trd.md#424-11-02显式-kimi-3-low-的整课复验计划)
 
-**最新结论（11-02 22:14 CST）：采用 Kimi 直连，不保留本轮专用代理规则。** 同一份 189 图、14.55 MB 请求显式禁用环境代理后，第 2.577 秒完成客户端发送、54.477 秒收到首 SSE，HTTP 200、返回 k3；不经过 7897。专用规则已撤回，API19621 已恢复 Kimi 直连。只测到首事件，没有再次启动整课；完整输出质量与十路稳定性仍未验收。详见[直连复测与最终取舍](#direct-retest)。
+**最新结论（11-02 23:03 CST）：已按正式 reparse 启动直连 v9，随后在 14 分 38 秒后失败。** 19/117 Understanding、8/115 Refine、3/117 索引，ASR/分组复用且新转写为 0。终止事件是 sequence 27 返回 0–1 ms 的 OTHER，超出其 27:00–28:00 授权范围；同时首次生成空 timeline 在直连中复现。当前已停止，完整课程仍未通过。详见[直连全课与空结果调查](#v9-empty-results)。
+
+**较早结论（11-02 22:14 CST）：采用 Kimi 直连，不保留本轮专用代理规则。** 同一份 189 图、14.55 MB 请求显式禁用环境代理后，第 2.577 秒完成客户端发送、54.477 秒收到首 SSE，HTTP 200、返回 k3；不经过 7897。专用规则已撤回，API19621 已恢复 Kimi 直连。只测到首事件，没有再次启动整课；完整输出质量与十路稳定性仍未验收。详见[直连复测与最终取舍](#direct-retest)。
 
 **较早结论（11-02 21:56 CST）：K3 图片输入可用，已修正代理绕过规则并实际恢复同一个 v8；整课仍未通过。** 代理重试运行 453.009 秒，提交 9/117 Understanding、完成 2/115 Refine、索引 0/117，最终仍因首 SSE 超时停止；新 ASR=0。抽查发现空 timeline 和单字人物名已提交，结构完成数不能当作质量通过数。详见[本轮代理与内容复核](#proxy-retry)。
 
@@ -142,3 +144,60 @@ K3 的官方[模型说明](https://www.kimi.com/code/docs/en/kimi-code/models.ht
 最终采用直接访问：撤回本轮增加的 Kimi 精确分流规则，运行时和当前订阅自定义规则均核对移除，其他规则与基础配置保留；没有切换全局模式或更换节点。隔离 API 启动环境恢复 Kimi 的 NO_PROXY 排除，核对零活动租约后仅重启该 API（PID 31574）。既有 `/healthz` 正常，HTTPX 对 Kimi URL 选择直接 `ConnectionPool`，不经过本地代理端口；模型配置、业务代码和失败任务未改。
 
 之前的代理试跑记录仍作为历史证据保留，当前任务继续 PARSING_FAILED，9 个 Understanding / 2 个 Refine / 0 索引。空 timeline 与修正后内容丢失没有因连通性通过而解决，后续验收应围绕固定失败样本。此次只验证当前直连条件和撤回临时分流，不追加有偿测试。[直连、撤回与 API 恢复证据](evidence/kimi3-low-20261102/proxy/direct-retest.json)。
+
+
+<a id="v9-empty-results"></a>
+## 直连 v9 完整课程与空结果调查（11-02）
+
+### 正式启动与终态
+
+按重新解析指令，经 `/api/uploads/reparse` 从 v8 新建 **v9 `d7c13ca5-14f5-4201-8855-a2b94f07e68c`**。旧失败成果保留，Chunk 结果重新生成；冻结 ParseConfig 与 v8 完全相等，k3 / low / stream=true、10/10/1 并发、100 秒首 SSE、完整图片与 Prompt 均保留。隔离 API PID 32447，装载 `55228d6d`，实际出站 TCP 连接 Kimi 的 443，无 7897 连接；ASR 与独立分组 JSON/摘要逐项相等，新 ASR=0。
+
+22:25:58.445–22:40:36.186（Asia/Shanghai），任务开始至终态为 877.741 秒；从 reparse 请求发出计为 **877.879 秒，14 分 38 秒**。最终 19/117 Understanding、8/115 Refine、3/117 Index。成功阶段中位为 Understanding 173.372 秒（n=19）、Refine 87.419 秒（n=8），这些样本包含不合格正文，不能据此宣称提速或质量达标。
+
+真实 Kimi 请求 76 次：Understanding 49 次（26 完整返回、15 传输错误、8 取消）；Refine 27 次（13 完整返回、7 成员更新取消、7 父任务失败取消）。Refine 有 7 次定向更新，旧请求退出 0.015–0.028 秒。请求时长不可相加当课程耗时；诊断对照另计，缺少 usage 的调用不视为免费。
+
+本次终止错误明确为 `ValueError: timeline event falls outside the authorized media time range`。sequence 27 的范围是 `[1620000,1680000)` ms（27:00–28:00），模型却返回一条 `[0,1)` ms 的 OTHER，正常 finish=stop。宿主正确拒绝该事件，随后父任务停止并撤销兄弟租约；后续 lease lost 是这次终止的连带结果。**本次致命事件不是合理 ASR 跨界 330 ms，也不是 504；它是模型返回了与当前视频位置不符的极短内容。** 当前任务自然失败，未再次 reparse。
+
+### 空 timeline 到底是什么
+
+`timeline` 保存 Chunk 的对白、画面、动作等事件。非空课程输入却得到 `timeline: []`，意味着本次理解没有产出任何事件；它与 ASR 原文丢失是不同问题，底层 ASR 仍完整。
+
+| 固定样本 | 实际输入与输出 | 已证实的事实 |
+| --- | --- | --- |
+| v8 sequence 1 初次 | 21 条非空 ASR；22 事件，其中 21 条对白，7,494 字符 | 因 start_seconds 排序被拒绝 |
+| v8 sequence 1 修正 | 原 Prompt + 全部 ASR + 完整被拒 JSON + 排序提示 | 模型返回 `{"persons":["Y"],"timeline":[]}`，31 字符，随后被接受 |
+| v8 sequence 6/7 初次 | 24/21 条非空 ASR、198 图 | 未进入格式修正就已返回空 timeline |
+| v9 sequence 0 初次，直连 | 22 条非空 ASR、189 图 | 返回 `{"persons":["-"],"timeline":[]}`；再次复现 |
+| v9 sequence 27 初次 | 27:00–28:00 的课程输入 | 返回 0–1 ms 的单个 OTHER，导致正式任务失败 |
+
+逐事件拼接供应商原始 SSE 的 `delta.content`，与最终 response content 一致；所查短输出 finish_reason=stop，正式 max_tokens=30000。不是 SDK 拼接漏字、应用层主动清空、音频输入为空或诊断探针 512 输出上限造成的截断。直连同样出现，不能将该语义错误仅归因于本地代理。
+
+### 为什么门禁没有拦住空内容
+
+1. `VideoParseResult.timeline` 定义为普通 list，没有最小长度；黑场、空输入等情况需要合法空结果。Schema 验证只遍历现有事件，空数组自然通过。现行时间范围校验也只遍历事件，无法拒绝空数组。
+2. Understanding 未把“输入有明确 ASR、输出却没有对白/事件”纳入业务结果检查；文本中有“只有无事件时才可为空”的要求，但代码没有对应约束。
+3. 宿主稳定排序目前仅在 Refine 接入，Understanding 仍把纯排序问题交回模型。反馈**确实包含完整原 JSON 与错误提示**；模型没有遵守“只改非法字段、保留其他内容”，而门禁也未核对修正前后的内容丢失。
+4. Understanding 的有限修正循环仅捕获结构 `ValidationError`；时间边界检查在循环之后，触发 `ValueError` 会直接终止阶段。sequence 27 因此没有进入带原 JSON 的业务错误修正。
+
+离线重放确认空数组同时通过 Schema 与时间门禁。对 v8 sequence 1 稳定排序可在保留全部 22 事件的情况下通过结构校验，但仍有从 59,670 ms 起的 ASR 对白超出 60,000 ms 的授权边界，后续范围门禁仍会拒绝。说明排序遗漏、内容覆盖和既有跨 Chunk 时间合同需要分别处理，单加排序不能宣称整课已修好。
+
+### 严格 JSON 模式对照与边界
+
+为了检查格式约束是否直接造成空输出，仅使用 v8 sequence 1 的同一份文本修正输入，不发图片、不提交成果；k3 low、temperature=1、30,000 输出上限、直连和输入内容保持，切换 `json_schema.strict`。
+
+| 有效对照 | strict=true | strict=false |
+| --- | --- | --- |
+| 完整返回用时 | 23.027 秒 | 36.397 秒 |
+| 首 SSE | 1.510 秒 | 4.831 秒 |
+| 输入 / 输出 / reasoning tokens | 6,843 / 2,039 / 22 | 6,843 / 2,060 / 43 |
+| 事件数 / 人物 | 22 / Andrej Karpathy | 22 / Andrej Karpathy |
+| 结构 / 后续时间门禁 | 结构通过；仍含跨界对白 | 结构通过；仍含跨界对白 |
+
+最初两次诊断因脚本误用 `mark_first_event()`、实际接口为 `received()`，在首 SSE 后 1.670/1.015 秒中止；它们是诊断脚本失败，未计入有效对照，usage 未知。修正脚本后才得到上表，因此本次诊断总调用 4 次、有效比较 2 次；没有掩盖或把前两次计为模型失败。
+
+两组均能保留 22 事件，**不支持“关闭 strict 即可修复”的结论**。本轮没有调整正式格式、模型、图片或业务代码。可确认的机制是“模型有时返回不足的内容，而现有业务门禁接受了空结果”；为什么相同模型有时产生这种极短输出，尚未隔离出确定诱因，不能直接归为 low 档位、网络、严格解码或某一条 Prompt。
+
+下一项收敛到 Understanding 的业务结果门禁：复用宿主稳定排序，对有明确音频证据却整份空掉/无对白的结果提供具体反馈，并让可修正的时间错误进入原有有界修正，同时保留源视频时间、租约与事务合同。具体空内容/噪声边界仍需设计与验证；不全局禁止所有合法空列表，不擅自补造模型未确认的事件。完整课程与质量继续由 B07/B20 跟踪。
+
+证据：[v9 身份与终态](evidence/kimi3-low-20261102/v9/summary.json)、[音频复用](evidence/kimi3-low-20261102/v9/audio-reuse.json)、[原始响应与输入抽查](evidence/kimi3-low-20261102/v9/output-audit.json)、[门禁离线重放](evidence/kimi3-low-20261102/v9/gate-replay.json)、[格式模式对照及脚本错误](evidence/kimi3-low-20261102/v9/schema-mode-comparison.json)、[致命时间边界](evidence/kimi3-low-20261102/v9/terminal-time-boundary.json)。完整 trace 和候选 JSON 保留在本机 `outputs/verification/lets-build-gpt-k3-low-v9-direct-20261102/`，不提交媒体、凭据或思考正文。
