@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 _logger = logging.getLogger(__name__)
 _capture: ContextVar[tuple[Path, object, dict] | None] = ContextVar("model_diagnostic_capture", default=None)
+_diagnostic_root: ContextVar[str | Path | None] = ContextVar("model_diagnostic_root", default=None)
 _SECRET_KEYS = {"authorization", "api_key", "apikey", "access_token", "secret_key"}
 _MAX_EVENT_BYTES = 32 * 1024 * 1024
 
@@ -205,15 +206,25 @@ def record_model_event(kind: str, value) -> None:
 
 
 @contextmanager
+def model_diagnostic_scope(directory: str | Path | None):
+    """Let the host select private diagnostics without interpreting business IDs."""
+    token = _diagnostic_root.set(directory)
+    try:
+        yield
+    finally:
+        _diagnostic_root.reset(token)
+
+
+@contextmanager
 def capture_model_diagnostics(call, request):
     if _capture.get() is not None and _capture.get()[1] is call:
         yield
         return
-    root = os.environ.get("SEEKINO_MODEL_TRACE_DIR") if call.context.get("video_parse_task_id") else (
-        os.environ.get("SEEKINO_CHAT_TRACE_DIR") if call.context.get("assistant_message_id") else None
-    )
+    root = _diagnostic_root.get()
+    if root is None and call.context.get("video_parse_task_id"):
+        root = os.environ.get("SEEKINO_MODEL_TRACE_DIR")
     token = _capture.set(None)
-    if root and (call.context.get("video_parse_task_id") or call.context.get("assistant_message_id")):
+    if root:
         try:
             trace_root = Path(root).resolve()
             trace_root.mkdir(mode=0o700, parents=True, exist_ok=True)

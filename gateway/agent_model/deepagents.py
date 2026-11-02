@@ -44,7 +44,7 @@ from gateway.ark.agent import (
 from gateway.media import ToolImageArtifact, prepare_input_messages, require_vision_input
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.usage import capture_model_usage
-from gateway.streaming.chat import ChatTextDelta, observe_chat_text
+from gateway.model_events import ModelTextDelta, observe_model_text
 
 from .context import ContextWindowPolicy, measure_context
 from .contracts import AgentLoopModel, SupervisorSessionContext
@@ -364,11 +364,11 @@ class _HostControlMiddleware(AgentMiddleware):
 class _PublicTextMiddleware(AgentMiddleware):
     """Observe only the model call inside summarization, not its private work."""
 
-    def __init__(self, observer: Callable[[ChatTextDelta], None] | None) -> None:
+    def __init__(self, observer: Callable[[ModelTextDelta], None] | None) -> None:
         self._observer = observer
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        with observe_chat_text(self._observer):
+        with observe_model_text(self._observer):
             return handler(request)
 
 
@@ -411,7 +411,7 @@ class DeepAgentsSupervisorModel:
         max_input_chars: int | None = None,
         image_urls: Sequence[str] = (),
         session_context: SupervisorSessionContext | None = None,
-        handle_text_delta: Callable[[ChatTextDelta], None] | None = None,
+        handle_text_delta: Callable[[ModelTextDelta], None] | None = None,
     ) -> None:
         del session_context
         if not prompt.strip() or not thread_id or not message_id:
@@ -450,7 +450,7 @@ class DeepAgentsSupervisorModel:
             model._remaining = remaining
             model._max_model_calls = max_model_calls
             model._max_input_chars = self._max_input_chars if max_input_chars is None else max_input_chars
-            def deliver_delta(delta: ChatTextDelta) -> None:
+            def deliver_delta(delta: ModelTextDelta) -> None:
                 check()
                 model._delivered_text = True
                 assert handle_text_delta is not None

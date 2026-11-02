@@ -74,3 +74,18 @@ uv run --no-sync python scripts/verify_chat_streaming_trace.py \
 浏览器原始证据只含身份、计时、状态和可见字数；服务端 opt-in trace 包含模型输入、输出和关联上下文，应按既有本地私有诊断合同保存。只有校验器返回 `valid=true` 才能引用 `ftt_ms`；`continuous_growth_verified=false` 的短回复不能单独验收长回答持续交付。失败 / 取消的候选接收时间仍保留，但缺少完整证据时不得改填成功指标。
 
 先选一条足够长的课程解释，核验真实增量与页面同时增长，再按 PRD 的 Q02/Q03 固定历史、播放位置、模型、缓存和负载，每组至少三个真实样本建立基线。原始错误 FTT 已撤回，不能用 9.173 / 29.576 / 27.231 秒计算收益；TT 与内容质量分开比较。FTT 性能目标在探索基线之后、正式对照之前确定。C23 保持 TODO，责任由本 PR 持续承接。
+
+<a id="boundary-review-20261102"></a>
+## 2026-11-02：模型事件与 Server 交付职责调整
+
+`ModelTextDelta` / `observe_model_text` 移至 Gateway 的通用事件模块，Supervisor 不再引用 Chat Completions 协议或控制发布频率。Server 的 `ChatSnapshotCoalescer` 负责写库前合并，业务边界、失败和取消刷新暂存前缀；模型完成后的刷新不携带实时来源。Chat 诊断目录由 Server 通过 `model_diagnostic_scope` 注入，Parse 原有诊断合同保留。
+
+| 验证 | 实际结果 |
+| --- | --- |
+| 无 Chat / Server 的 Gateway 并发订阅 | 两次 SDK 请求分别收到自身增量，完整结果保持一致 |
+| 快速连续正文 | Agent 无需等待 50 ms；Server 首段立即保存，窗口内仅保留最新快照，下一次满足间隔的增量正常交付 |
+| 模型完成、断流、取消 | 暂存正文保存；完成后刷新无实时标记，失败终态保留前缀 |
+| 工具循环 | 工具开始前前缀已保存，工具完成后的下一次模型首段立即交付 |
+| 定向后端回归 | **596 passed / 1 skipped，22.13 秒**；跳过 MySQL 专项，缺少 `SEEKINO_TEST_DATABASE_URL` |
+
+本轮命令在前述后端回归范围增加 `tests/gateway/test_model_events.py`，其余七个文件相同，使用 `-m 'not live_agent' -q --tb=line`。源码指纹与命令见[验证清单](evidence/chat-streaming-20261101/boundary-validation.json)，原始结果见[JUnit](evidence/chat-streaming-20261101/boundary-backend.xml)。11-01 的前端、浏览器记录仍是该日期的证据；本轮没有修改前端或重跑浏览器，没有真实模型调用或部署，FTT / TT 仍未测。

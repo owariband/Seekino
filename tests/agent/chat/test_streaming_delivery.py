@@ -1,6 +1,5 @@
 """Exercise real SDK SSE decoding through Deep Agents and public snapshots."""
 import json
-from time import sleep
 from types import SimpleNamespace
 
 import httpx
@@ -9,6 +8,7 @@ from openai import OpenAI
 from langchain_core.tools import StructuredTool
 
 from gateway.agent_model.deepagents import DeepAgentSessionStore, DeepAgentsSupervisorModel
+from gateway.model_diagnostics import model_diagnostic_scope
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.usage import model_call_context
 from tests.agent.chat.test_supervisor import _inputs, _runtime
@@ -55,7 +55,7 @@ def wire_model(script, *, stream=True, fallback=None):
     return model, requests, wire, client
 
 
-def test_provider_text_reaches_snapshots_before_terminal_and_keeps_whitespace(tmp_path, monkeypatch):
+def test_provider_text_reaches_snapshots_before_terminal_and_keeps_whitespace(tmp_path):
     events = []
     def snapshots():
         return [e for e in events if e["type"] == "answer.snapshot"]
@@ -65,17 +65,15 @@ def test_provider_text_reaches_snapshots_before_terminal_and_keeps_whitespace(tm
         yield chunk("Hello ")
         assert snapshots()[-1]["content"] == "Hello "
         assert snapshots()[-1]["textStream"]["beforeModelCompleted"]
-        sleep(0.06)
         yield chunk("world")
         assert snapshots()[-1]["content"] == "Hello world"
         assert not any(e["type"] == "answer.model.completed" for e in events)
         yield chunk(delta={}, finish="stop")
         yield b"data: [DONE]\n\n"
 
-    monkeypatch.setenv("SEEKINO_CHAT_TRACE_DIR", str(tmp_path / "trace"))
     model, requests, wire, client = wire_model(script)
     try:
-        with model_call_context({"assistant_message_id": "answer", "conversation_id": "conversation"}):
+        with model_call_context({"assistant_message_id": "answer", "conversation_id": "conversation"}), model_diagnostic_scope(tmp_path / "trace"):
             result = _runtime(model).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
         assert result.content == "Hello world"
         assert requests[0]["stream"] is True and wire.closed
@@ -104,7 +102,7 @@ def test_explicit_nonstream_produces_no_live_source():
 def test_streaming_transport_with_buffered_host_is_detected(monkeypatch):
     from contextlib import nullcontext
     events = []
-    monkeypatch.setattr("gateway.agent_model.deepagents.observe_chat_text", lambda observer: nullcontext())
+    monkeypatch.setattr("gateway.agent_model.deepagents.observe_model_text", lambda observer: nullcontext())
     def script():
         yield chunk(delta={"role": "assistant"})
         yield chunk("Hello world")
@@ -140,7 +138,7 @@ def test_failure_before_any_body_preserves_nonstream_fallback_configuration():
 
 def test_split_web_url_is_checked_after_assembly_without_duplicate_text():
     from time import monotonic
-    from gateway.streaming.chat import ChatTextDelta
+    from gateway.model_events import ModelTextDelta
     from tests.agent.chat.test_supervisor import FakeSupervisorModel
     class Model(FakeSupervisorModel):
         supports_text_deltas = True
@@ -149,8 +147,7 @@ def test_split_web_url_is_checked_after_assembly_without_duplicate_text():
             available["search_web"].invoke({"query": "source"})
             parts = ["Source [ref](ht", "tps:/", "/example.org/source", ") and https://unverified.invalid/end."]
             for i, part in enumerate(parts, 1):
-                handle_text_delta(ChatTextDelta(part, "call", i, monotonic(), i, 1, True))
-                sleep(0.06)
+                handle_text_delta(ModelTextDelta(part, "call", i, monotonic(), i, 1, True))
             handle_text("".join(parts))
     events = []
     result = _runtime(Model()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)

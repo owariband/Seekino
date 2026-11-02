@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass
+from contextlib import closing
 from time import monotonic
 from typing import Any
 
@@ -14,33 +12,8 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.model_events import ModelTextDelta, emit_model_text
 from gateway.usage import ModelCallTracker
-
-
-@dataclass(frozen=True)
-class ChatTextDelta:
-    text: str
-    call_id: str
-    sequence: int
-    received_at: float
-    elapsed_ms: float
-    first_text_ms: float | None
-    before_completion: bool
-
-
-_text_observer: ContextVar[Callable[[ChatTextDelta], None] | None] = ContextVar(
-    "chat_text_observer", default=None,
-)
-
-
-@contextmanager
-def observe_chat_text(observer: Callable[[ChatTextDelta], None] | None):
-    """Scope delivery to a public Supervisor invocation, excluding summarization."""
-    token = _text_observer.set(observer)
-    try:
-        yield
-    finally:
-        _text_observer.reset(token)
 
 
 def request_chat_completion(
@@ -118,7 +91,6 @@ def _iter_chat_chunks(
     deadline = started_at + request["timeout"]
     text_sequence = 0
     first_text_ms = None
-    observer = _text_observer.get()
 
     def check() -> None:
         usage_call.raise_if_cancelled()
@@ -161,7 +133,7 @@ def _iter_chat_chunks(
                         if first_text_ms is None and text.strip():
                             first_text_ms = elapsed_ms
                         text_sequence += 1
-                        delta = ChatTextDelta(
+                        delta = ModelTextDelta(
                             text, usage_call.call_id, text_sequence, received_at,
                             elapsed_ms, first_text_ms, not terminal,
                         )
@@ -170,8 +142,7 @@ def _iter_chat_chunks(
                             "received_monotonic": received_at, "elapsed_ms": elapsed_ms,
                             "first_text_ms": first_text_ms, "before_completion": not terminal,
                         })
-                        if observer is not None:
-                            observer(delta)
+                        emit_model_text(delta)
                 yield chunk
             check()
     except (httpx.RequestError, httpx.StreamError) as error:

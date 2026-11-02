@@ -649,6 +649,8 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 2026-11-01 进展：已接通 Deep Agents 的可展示正文增量、持久快照与调用来源，保留完整工具校验；浏览器分别采集接收、可见 DOM 和 TT，离线校验原始供应商正文与完成前展示后才输出有效 FTT。非流式、收齐缓冲、缺证、reasoning/空包反例不得填数。隔离回归和验证边界见[实施报告](../report/server/chat-streaming-20261101.md)及 [devlog](devlog.md#devlog-chat-streaming-delivery-20261101)。
 
+2026-11-02：增量合同从供应商协议文件独立为 Gateway 通用事件，Supervisor 移除发布频率控制，Server 负责快照合并和终态前缀保存；Chat 诊断目录由 Server 注入。相关回归 596 passed / 1 skipped，见[边界复核记录](../report/server/chat-streaming-20261101.md#boundary-review-20261102)。
+
 待验收：确定部署版本的正常观看页、真实长回答持续增长、Q02/Q03 同条件各至少三个样本、内容与原片来源质量、真实 FTT/TT 和性能目标。共享服务未重启，真实模型未调用，不能关闭 C23 或宣称提速达标。
 
 ### B24：模型 stream 被入口写死且正式 Parse 丢失开关

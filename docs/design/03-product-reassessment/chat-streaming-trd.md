@@ -1,12 +1,12 @@
 # 1. 问题与现状
 
-课程问答的延迟验收需要知道用户多久收到模型生成的第一个字。但 2026-11-01 的 QA 运行使用 `stream=false`，服务端拿到的是完整回答，无法测到生成过程中的首字。Q02 的 29.576 秒实际是三句话整段到达的时间，却被记为 FTT；整轮完成时间 TT 为 29.620 秒。这个测量无法区分首字等待与后续生成耗时，也就无法据此选择优化方向。
+课程问答的延迟验收需要知道用户多久收到模型生成的第一个字。但 2026-11-01 的 QA 运行使用 `stream=false`，服务端每次要等该次模型响应完整返回，无法测到生成过程中的首字。同一个 Agent 会话仍会在工具前发布“我先……”等正文、等待工具并继续推理；缺少的是单次模型调用内部的正文增量。Q02 的 29.576 秒实际是三句话整段到达的时间，却被记为 FTT；整轮完成时间 TT 为 29.620 秒。这个测量无法区分首字等待与后续生成耗时，也就无法据此选择优化方向。
 
 本次要让 Chat 在模型生成过程中交付正文，并取得可复核的真实 FTT。旧 9.173／29.576／27.231 秒的 FTT 标注已撤回，真实基线待测。原始证据和指标口径见[产品 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)。
 
 已同步的 PR #18 版本已支持默认 `stream=true`，但 `request_chat_stream` 仍收齐响应，Deep Agents 的 `after_model` 才发布正文。因此本次还需打通正文增量到页面的路径。范围限于 Chat；课程解析及 C22 的工具耗时优化仍由原需求维护。
 
-分支 `fix/chat-streaming-ftt`，跟进 [PR #25](https://github.com/owariband/Seekino/pull/25)，依赖 [PR #18](https://github.com/owariband/Seekino/pull/18) 的 `b01afce9`；先合并 #18，再切回 `dev` 集成。2026-11-01 更新；实现与模拟验证已完成，真实测量未完成。
+分支 `fix/chat-streaming-ftt`，跟进 [PR #25](https://github.com/owariband/Seekino/pull/25)，依赖 [PR #18](https://github.com/owariband/Seekino/pull/18) 的 `b01afce9`；先合并 #18，再切回 `dev` 集成。2026-11-02 更新；职责调整及相关隔离回归已完成，真实测量未完成。
 
 # 2. 影响因素、假设与评价指标
 
@@ -31,9 +31,11 @@
 
 沿用上游的 stream 配置和现有 SSE 快照，接通 **Provider content delta → Gateway → Chat Supervisor 累积正文 → Server 持久快照 → 页面**。仅改开关仍会被上层缓冲挡住，因此需要以下改动：
 
-1. Gateway 在接收正文时回调；Deep Agents 仅将公开回答转发给 Supervisor。内部推理和压缩摘要不展示，工具参数继续收齐校验。
-2. Supervisor 保留跨片段空格和 URL 校验，首段立即发布，后续按 50 ms 合并快照，避免逐 token 写库。完整回调与已接收文本核对，防止重复拼接。
-3. 快照的可选 `textStream` 记录调用与增量身份，`answer.model.completed` 标识该次模型结束。浏览器分别计接收、展示与 TT；通过原始请求和 delta 核验的候选值才记为有效 FTT。采集与核验命令见[实施报告](../../report/server/chat-streaming-20261101.md#真实试点采证方法与下一步)。
+1. Gateway 复用 `streaming/` 的供应商接收器，通过 `model_events.ModelTextDelta` 与作用域内订阅提供通用正文增量，不依赖 Agent / Server 业务代码。Deep Agents 仅为公开模型调用绑定订阅；内部推理和压缩摘要不展示，工具参数继续收齐校验。
+2. Supervisor 只组装并校验公开回答：保留跨片段空格、URL 和工具顺序，每次有效增量发布业务快照，完整回调核对原文以防重复。Server 的 `agent_chat_stream.ChatSnapshotCoalescer` 在写库前选择快照：每次模型调用的首段立即交付，后续在增量到达时按 50 ms 间隔合并，业务边界刷新暂存正文；取消 / 失败也保存已接收的合法前缀。
+3. 快照的可选 `textStream` 记录调用与增量身份，`answer.model.completed` 标识该次模型结束。Server 在该边界之后刷新暂存正文，刷新不携带实时来源，避免误判为完成前增长。浏览器分别计接收、展示与 TT；通过原始请求和 delta 核验的候选值才记为有效 FTT。采集与核验命令见[实施报告](../../report/server/chat-streaming-20261101.md#真实试点采证方法与下一步)。
+
+2026-11-02 边界调整：首版把协议内的 `ChatTextDelta` 和发布频率带进 Supervisor，现将事件合同独立、合并策略移到 Server；Chat 诊断目录也由 Server 注入通用 `model_diagnostic_scope`，Gateway 不再按 Chat 消息 ID 决定采集。复用原 SSE 输出接口，不新增跨层代理。Parse 的完整 JSON 校验、已有诊断开关和任务进度 SSE 保持原合同。
 
 已展示正文后断流，保留部分内容并标记失败，不拼接另一次 fallback 回答；首正文前仍可按原配置回退。显式 `stream=false` 保留兼容行为，FTT 为空。接口只新增可选字段与事件，无数据库迁移；代价是更多快照写入和调用关联记录。
 
@@ -46,6 +48,7 @@
 | 供应商完成前的正文 | 无 | SDK → Supervisor → SQLite 用例中已有持久正文；Chrome 页面模拟中增长两次 | 模拟验证支持去除缓冲；真实链路待测 |
 | 非流式 / 缓冲 / 缺证时的 FTT | 旧 QA 误填整包耗时 | 对应反例均返回无效及原因 | 计量反例通过 |
 | 最终文本、工具与异常 | 原合同 | 分片空格 / URL、工具参数、fallback、取消、恢复回归通过 | 已覆盖行为未见回归；MySQL 专项因缺少隔离配置跳过 |
+| 合并策略与事件隔离（11-02） | Supervisor 控制频率，并引用协议内事件类型 | Agent 无延时发布有效增量；Server 保留首段、合并后续并在结束 / 失败 / 取消时刷新；两个并发模型订阅互不串流 | 596 passed / 1 skipped，见[边界复核记录](../../report/server/chat-streaming-20261101.md#boundary-review-20261102) |
 | 真实 FTT / TT / token | FTT 缺失；历史 TT 见第 2 节 | 本轮未测 | 无速度或成本改善结论 |
 
 # 5. 试点验证与方案取舍

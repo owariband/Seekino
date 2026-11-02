@@ -48,10 +48,12 @@ Deep Agents 的公开 Chat 正文可在收齐前逐段交付，失败时保留�
 Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺少字段时采用默认 `true`，
 读取和序列化旧快照不会凭空增加字段、改变原有指纹。
 本地 Ollama / llama.cpp 生成接口也复用 Chat 接收器；原生 CLI、独立音频和向量接口保留各自协议。
-前端业务 SSE 与模型 HTTP SSE 是不同连接。Deep Agents 通过可选正文观察器持续更新 `answer.snapshot`，
-以 `textStream` 关联供应商调用；`answer.model.completed` 是模型轮次边界，整轮持久终态仍为 `answer.completed`。
-`SEEKINO_CHAT_TRACE_DIR` 可单独开启本地 Chat 原始请求/SSE 采证（默认关闭，包含会话输入和模型输出）；
-文件使用既有私有权限与脱敏合同，不与 Parse 的 `SEEKINO_MODEL_TRACE_DIR` 开关混用。
+`model_events.py` 定义通用 `ModelTextDelta` 与 `observe_model_text`，Chat Completions 接收器
+在接收正文时通知作用域内的调用方；事件不包含业务消息、HTTP SSE 或持久化策略。
+Deep Agents 只为公开模型调用绑定观察器，内部摘要不对外发布。Agent 负责回答组装与来源校验，
+Server 负责快照合并、消息持久化和页面 SSE，计时与交付合同见 [Server README](../server/README.md#chat-正文流式与计时证据)。
+宿主通过 `model_diagnostic_scope` 选择本地诊断目录；Chat 的 `SEEKINO_CHAT_TRACE_DIR`
+由 Server 读取并注入，文件沿用私有权限与脱敏合同。Parse 原有 `SEEKINO_MODEL_TRACE_DIR` 行为保留。
 FTT 采证、兼容路径和未部署边界见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
 配置、完整性验证及线上效果边界见
 [模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。

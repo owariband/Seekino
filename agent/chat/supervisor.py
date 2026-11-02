@@ -16,7 +16,7 @@ from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessio
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
-from gateway.streaming.chat import ChatTextDelta
+from gateway.model_events import ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from agent.utils.tool import AgentTool
@@ -372,7 +372,6 @@ class SupervisorRuntime:
         stream_call_id: str | None = None
         stream_text = ""
         stream_prefix: list = []
-        last_text_publish = 0.0
 
         def visible_text(value: str, *, final: bool) -> str:
             if web_search_attempted:
@@ -397,8 +396,8 @@ class SupervisorRuntime:
             ChatRenderDraft.validate_prefix(answer_blocks(candidate))
             return candidate
 
-        def accept_text_delta(delta: ChatTextDelta) -> None:
-            nonlocal stream_call_id, stream_text, stream_prefix, last_text_publish
+        def accept_text_delta(delta: ModelTextDelta) -> None:
+            nonlocal stream_call_id, stream_text, stream_prefix
             with tool_lock:
                 control.check()
                 if stream_call_id is None:
@@ -410,15 +409,10 @@ class SupervisorRuntime:
                 value = visible_text(stream_text, final=False)
                 if not value.strip():
                     return
-                # First text is immediate; later snapshots coalesce at most 20/s.
-                now = monotonic()
-                if last_text_publish and now - last_text_publish < 0.05:
-                    return
                 candidate = text_blocks(stream_prefix, value)
                 if candidate == render_blocks:
                     return
                 render_blocks[:] = candidate
-                last_text_publish = now
                 publish_snapshot(text_stream={
                     "origin": "provider_delta", "callId": delta.call_id,
                     "deltaSequence": delta.sequence,
@@ -429,7 +423,7 @@ class SupervisorRuntime:
                 })
 
         def accept_text(value: str) -> None:
-            nonlocal stream_call_id, stream_text, stream_prefix, last_text_publish
+            nonlocal stream_call_id, stream_text, stream_prefix
             with tool_lock:
                 control.check()
                 if stream_call_id is not None:
@@ -438,7 +432,6 @@ class SupervisorRuntime:
                     control.publish(inputs, {"type": "answer.model.completed", "callId": stream_call_id})
                     candidate = text_blocks(stream_prefix, visible_text(value, final=True)) if value.strip() else stream_prefix
                     stream_call_id, stream_text, stream_prefix = None, "", []
-                    last_text_publish = 0.0
                     if candidate != render_blocks:
                         render_blocks[:] = candidate
                         # A flush after completion is not a live provider delta.

@@ -26,6 +26,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-02：正文发布频率混入 Supervisor，流式交付职责需要分离](#devlog-chat-streaming-boundaries-20261102) | C23、模型事件合同与 Server 快照合并 |
 | [2026-11-01：完整模型响应挡住正文交付，课程首字耗时无法真实计量](#devlog-chat-streaming-delivery-20261101) | C23、Chat 流式交付与采证 |
 | [2026-10-31：模型温度被入口写死，业务配置无法生效](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
 | [2026-10-31：模型入口写死 stream，导致配置失效与长请求等待](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
@@ -122,6 +123,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-chat-streaming-boundaries-20261102"></a>
+## 2026-11-02：正文发布频率混入 Supervisor，流式交付职责需要分离
+
+### 问题与现状
+
+Chat 流式首版把协议内 `ChatTextDelta` 与 50 ms 发布频率带入 Supervisor，使回答组装承担了传输和写库频率策略；Gateway 也按 Chat 消息 ID 选择诊断目录。问题仍沿 [C23 / TRD](../design/03-product-reassessment/chat-streaming-trd.md) 跟进。
+
+### 方案候选
+
+独立 Gateway 通用正文事件，保留现有 SDK 解码；Supervisor 对每次有效增量组装并校验回答，Server 在持久化前合并快照。Chat 诊断目录改由 Server 注入通用作用域。复用原模型循环、Parse 接收和 HTTP SSE，不再增加跨层代理。
+
+### 方案验证
+
+真实 SDK 的模拟流经 Supervisor 和 SQLite 验证：首段立即可读，后续高频片段暂存，模型完成后刷新不再带实时标记；取消和断流保存暂存前缀，工具前后正文顺序保持。通用观察器的两个并发请求互不串流，私有摘要仍不展示。相关回归 596 passed / 1 skipped；原始结果见[报告](../report/server/chat-streaming-20261101.md#boundary-review-20261102)。
+
+### 指标对比
+
+本轮评价职责隔离与交付正确性，未做真实速度比较。发布策略从 Agent 移到 Server，增加一个通用事件模块和一个 Chat 快照组件；快照写入仍受 50 ms 合并限制，终态额外刷新最新前缀。MySQL 隔离配置缺失，真实模型 FTT / TT / token 与并发写入成本未测；未部署。
 
 <a id="devlog-chat-streaming-delivery-20261101"></a>
 ## 2026-11-01：完整模型响应挡住正文交付，课程首字耗时无法真实计量
