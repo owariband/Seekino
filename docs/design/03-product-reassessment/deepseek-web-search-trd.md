@@ -4,7 +4,7 @@ Chat 原本通过 `DDGS.text` 提供无需 API key 的网页搜索，却没有�
 
 本需求让用户在无需 API key 的 DDGS 与 DeepSeek 官方 Search API 之间显式选择，保留 Agent 的 `search_web(query)`、标题/URL/摘要结果与现有引用校验。默认兼容 DDGS；本机测试选择 DeepSeek 是部署配置，不是产品强制要求。涉及供应商请求、配置装配、各自查询长度及错误反馈，不新增网页抓取工具或修改视频检索。2026-11-02 修正此前移除 DDGS、只允许 DeepSeek 的方案；两种路径分别验证，不能凭 key 是否存在自动切换。
 
-分支 `feat/deepseek-web-search`；[PR #28](https://github.com/owariband/Seekino/pull/28) 直接向 `dev` 集成。网页搜索配置不依赖 ASR PR #18 或 Chat 流式 PR #25；此前 DeepSeek low 测试仅作为问题证据，不构成代码或合并依赖。2026-11-02 更新：两种配置已实现并验证，DeepSeek 真实页面接入通过；回答及引用质量未通过，PR 保持 Draft。
+分支 `feat/deepseek-web-search`；[PR #28](https://github.com/owariband/Seekino/pull/28) 直接向 `dev` 集成。网页搜索配置不依赖 ASR PR #18 或 Chat 流式 PR #25；此前 DeepSeek low 测试仅作为问题证据，不构成代码或合并依赖。2026-11-02 更新：两种配置已实现并验证，DeepSeek 真实页面接入通过；回答及引用质量仍待验收。联合回归后决定将搜索配置能力合入 dev；#25 先行合入后，本分支同步最新 dev 处理文本冲突，这不是新的功能依赖。
 
 # 2. 影响因素、假设与评价指标
 
@@ -54,6 +54,6 @@ Chat 原本通过 `DDGS.text` 提供无需 API key 的网页搜索，却没有�
 
 # 6. 结果验收与闭环
 
-免 key 默认、显式 API 选择及各自参数边界已验证，用户无需购买 API 即可保留原搜索方式。本需求测试实例显式选择 DeepSeek，真实页面接入证据保留原运行版本。答案仍有引用与事实错误，整体质量验收未通过；[C24](../../dev/problems.md#deepseek-web-search-c24) 保持 TODO，PR 保持 Draft，未合并或部署到主环境。
+免 key 默认、显式 API 选择及各自参数边界已验证，用户无需购买 API 即可保留原搜索方式。本需求测试实例显式选择 DeepSeek，真实页面接入证据保留原运行版本。答案仍有引用与事实错误，整体质量验收未通过；[C24](../../dev/problems.md#deepseek-web-search-c24) 保持 TODO。2026-11-02 决定通过 PR #28 将已验证的搜索配置能力集成到 dev；保留失败样本和后续质量验收，不宣称主环境已部署。
 
 下一步由本需求逐条比对工具返回 URL、模型引用及过滤结果，验证摘要使用与不准确断言。未取得证据前不将 API 成功或单次耗时写成质量、性能达标。

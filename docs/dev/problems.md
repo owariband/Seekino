@@ -638,6 +638,27 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 ## TODO（待修复解决）
 
+<a id="chat-streaming-c23"></a>
+### C23：Chat 正文没有端到端流式交付，整包正文到达时间被误标为 FTT
+
+排序日期：2026-11-01。
+
+状态：TODO。沿用课程 QA 的 C23；原始产品要求见 [Chat 流式 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)，实施由 [Chat 流式 TRD](../design/03-product-reassessment/chat-streaming-trd.md) / [PR #25](https://github.com/owariband/Seekino/pull/25) 承接。PR #25 已于 2026-11-02 直接合入 dev（`2cd27caa`），不依赖 ASR PR #18；待验收范围继续保留。
+
+课程 QA 的 9.173 / 29.576 / 27.231 秒是非流式完整正文到达耗时，真实 FTT 未采集，旧标注撤回。仅启用供应商 stream=true 仍会被 Gateway 收齐和 after_model 发布挡住。
+
+2026-11-01 进展：已接通 Deep Agents 的可展示正文增量、持久快照与调用来源，保留完整工具校验；浏览器分别采集接收、可见 DOM 和 TT，离线校验原始供应商正文与完成前展示后才输出有效 FTT。非流式、收齐缓冲、缺证、reasoning/空包反例不得填数。隔离回归和验证边界见[实施报告](../report/server/chat-streaming-20261101.md)及 [devlog](devlog.md#devlog-chat-streaming-delivery-20261101)。
+
+2026-11-02：增量合同从供应商协议文件独立为 Gateway 通用事件，Supervisor 移除发布频率控制，Server 负责快照合并和终态前缀保存；Chat 诊断目录由 Server 注入。相关回归 596 passed / 1 skipped，见[边界复核记录](../report/server/chat-streaming-20261101.md#boundary-review-20261102)。
+
+2026-11-02 真实试跑：本 worktree 独立 API/Web、专用 MySQL/ES 测试数据已启动；Chrome 长回答在模型完成前增长 15 次，首 token 27.211 s（`**`）、可读文字 32.811 s、TT 61.594 s；工具场景进度 13.234 s、TT 145.758 s。Gateway 接收记录已有 3.5–6.3 s 的批次空档。见[真实运行报告](../report/server/chat-streaming-live-20261102.md)。
+
+2026-11-02 后续：已将 Kimi Chat/Agent 的 `none` 映射为显式 `low`；415 项回归通过，独立实例真实请求确认生效。长解释单样本首 token 23.248 s、TT 52.186 s、reasoning 513 tokens，见[复测](../report/server/chat-streaming-live-20261102.md#kimi-low-20261102)。
+
+2026-11-02 DeepSeek 试跑：独立实例已切至 low；相同矩阵题首 token 4.758 s、TT 14.569 s，关闭推理为 0.769 / 7.989 s。四次普通 Chat 的流式核验通过；数学正确，但工具题措辞和引用未全部通过，详见[记录](../report/server/chat-streaming-live-20261102.md#deepseek-20261102)。本轮未修改业务实现，保留质量缺口。
+
+待验收：正常观看页、Q02/Q03 同条件各至少三个样本、内容与原片来源质量及性能目标。需明确格式前缀与可读正文的计量，并定位批量接收原因；不能用上述普通 Chat 试跑关闭 C23 或宣称提速达标。
+
 <a id="deepseek-web-search-c24"></a>
 ### C24：Chat 缺少搜索配置，用户无法选择免 key 或 API 接入
 
@@ -645,7 +666,7 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 [TRD](../design/03-product-reassessment/deepseek-web-search-trd.md) / [PR #28](https://github.com/owariband/Seekino/pull/28) 直接向 dev 集成，无 #18/#25 合并依赖。已支持默认 DDGS 免 key、显式选择 DeepSeek，保留结果与视频查询合同；配置修正回归 604 passed / 1 skipped，两种真实探针各返回 5 条。首版 DeepSeek 接入曾有 432 项回归通过。独立 DeepSeek low 页面两轮 9 次 Search 均成功，另有 1 次成功探针；单次搜索 0.303–0.839 s，整轮 12.859/13.765 s，不构成稳定性能对照。
 
-过滤说明能引导模型使用官方域名，但第二轮仍有 3 处未核实链接和不准确表述。接口接通不代表答案通过；下一步核对返回 URL、模型引用及过滤结果，改善摘要证据使用后再验收。原始样本与限制见[报告](../report/gateway/deepseek-web-search-20261102.md)；主环境未部署，PR 保持 Draft。
+过滤说明能引导模型使用官方域名，但第二轮仍有 3 处未核实链接和不准确表述。接口接通不代表答案通过；下一步核对返回 URL、模型引用及过滤结果，改善摘要证据使用后再验收。原始样本与限制见[报告](../report/gateway/deepseek-web-search-20261102.md)；主环境未部署；2026-11-02 决定通过 PR #28 向 dev 集成搜索配置，质量待验收事实继续保留。
 
 ### B24：模型 stream 被入口写死且正式 Parse 丢失开关
 

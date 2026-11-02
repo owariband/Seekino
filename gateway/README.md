@@ -43,12 +43,18 @@ HTTP 生成模型在创建时读取 `ModelBinding.stream`，默认 `true`，显�
 主模型与 fallback 分别保留自己的配置，不按 Kimi profile 或业务入口决定开关。
 Chat、Deep Agents、结构化工具、视觉 JSON 和 Ark 视频转写复用 `streaming/` 的协议接收。
 Chat Completions 使用 SDK 解码和增量合并，保留推理字段、工具参数与尾部 usage；
-Responses 校验终止事件、事件顺序和最终正文。收齐并验证后才交付结果或执行工具；
-断流不交付部分结果，也不自动切换为非流式重放。
+Responses 校验终止事件、事件顺序和最终正文。结构化结果与工具参数收齐并验证后才交付或执行；
+Deep Agents 的公开 Chat 正文可在收齐前逐段交付，失败时保留部分正文并由宿主标明终态；不自动切换为非流式重放。
 Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺少字段时采用默认 `true`，
 读取和序列化旧快照不会凭空增加字段、改变原有指纹。
 本地 Ollama / llama.cpp 生成接口也复用 Chat 接收器；原生 CLI、独立音频和向量接口保留各自协议。
-前端业务 SSE 与模型 HTTP SSE 是不同连接，本次不改变前端按轮次接收 `answer.snapshot` 的交付方式。
+`model_events.py` 定义通用 `ModelTextDelta` 与 `observe_model_text`，Chat Completions 接收器
+在接收正文时通知作用域内的调用方；事件不包含业务消息、HTTP SSE 或持久化策略。
+Deep Agents 只为公开模型调用绑定观察器，内部摘要不对外发布。Agent 负责回答组装与来源校验，
+Server 负责快照合并、消息持久化和页面 SSE，计时与交付合同见 [Server README](../server/README.md#chat-正文流式与计时证据)。
+宿主通过 `model_diagnostic_scope` 选择本地诊断目录；Chat 的 `SEEKINO_CHAT_TRACE_DIR`
+由 Server 读取并注入，文件沿用私有权限与脱敏合同。Parse 原有 `SEEKINO_MODEL_TRACE_DIR` 行为保留。
+FTT 采证、兼容路径和未部署边界见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
 配置、完整性验证及线上效果边界见
 [模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。
 
@@ -59,6 +65,8 @@ Ark 视频转写都使用该字段；旧 Parse 快照缺字段按 0 读取但不
 原生 CLI 不支持设置温度，非默认值明确报错；独立音频和向量协议不转发。
 默认值是兼容选择，不是质量调参结论。完整例子与适用范围见
 [temperature 配置](../docs/model-config.md#模型-temperature-配置)。
+
+Kimi Chat/Agent 的 `none` 映射为显式 `low`；`low/high/max` 保留，参见 [推理档位合同](../docs/model-config.md#kimi-chat-的-reasoning_effort)。
 
 当前配置由本地 YAML 提供。未来云端配置存储将向同一配置合同提供有效定义；
 数据库、租户权限和配置管理 API 属于 Server 配置管理，不进入模型工厂。

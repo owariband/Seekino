@@ -38,7 +38,7 @@ PYTHONDONTWRITEBYTECODE=1 /Users/hypnos/workspace/agent/Seekino/.venv/bin/python
 
 首轮使用普通关键词，命中旧邮件列表与第三方资料；回答把 asyncio 的运行方式限定为必须在 async def 内 await，并混用了旧版 time.sleep 的信号行为。官方文档列出多种[协程执行方式](https://docs.python.org/3/library/asyncio-task.html#coroutines)，而 [time.sleep](https://docs.python.org/3/library/time.html#time.sleep) 在信号处理器不抛异常时会继续等待。第二轮找到了官方页，仍把 time.sleep(0) 泛称为空等；该说法忽略 Windows 的让出时间片行为。两个失败样本均保留，未靠挑选成功回答验收。
 
-仅有摘要时，模型仍说过“核对原文”，引用了不在允许结果中的 URL。现有 URL 严格匹配和中文标点提取问题也未在本次更改。**供应商替换与配置接入已验证，回答和引用质量没有验收通过**；[C24](../../dev/problems.md#deepseek-web-search-c24) 保持 TODO，PR 保持 Draft。下一步应逐条对照工具返回 URL、模型引用及过滤结果，修复证据使用问题后再验收；不以搜索 API 的成功率替代问答质量。
+仅有摘要时，模型仍说过“核对原文”，引用了不在允许结果中的 URL。现有 URL 严格匹配和中文标点提取问题也未在本次更改。**供应商替换与配置接入已验证，回答和引用质量没有验收通过**；[C24](../../dev/problems.md#deepseek-web-search-c24) 保持 TODO；该轮试点后 PR 暂留 Draft，后续集成决定见本文末节。下一步应逐条对照工具返回 URL、模型引用及过滤结果，修复证据使用问题后再验收；不以搜索 API 的成功率替代问答质量。
 
 脱敏记录：[请求与计时](evidence/deepseek-web-search-20261102/provider.log)、[源码/查询/用量/样本](evidence/deepseek-web-search-20261102/verification.json)、[JUnit](evidence/deepseek-web-search-20261102/backend.xml)。完整页面回答和截图保留在独立 worktree 的 `outputs/verification/deepseek-web-search-20261102/`。
 
@@ -58,3 +58,12 @@ PYTHONDONTWRITEBYTECODE=1 /Users/hypnos/workspace/agent/Seekino/.venv/bin/python
 这两次是入口探针，各一个样本，不用于宣称稳定效果或总体提速。新增一次 DeepSeek Search 估算 $0.00075，不含此前调用；没有新增生成模型调用或重评答案质量。当前专用实例显式保留 DeepSeek，主工作区配置不变。
 
 新证据：[探针结果](evidence/deepseek-web-search-20261102/provider-choice-probes.json)、[修正源码与回归记录](evidence/deepseek-web-search-20261102/provider-choice-verification.json)。
+
+
+## 2026-11-02：与 Chat 流式联合验证及 dev 集成
+
+对 #25 `04eecafd` 和 #28 `8ea667c0` 的联合代码完成后端 1086 passed / 1 skipped、前端 159 passed，typecheck/build 通过。跳过项为缺少 `SEEKINO_TEST_DATABASE_URL` 的可选 MySQL 检查；本轮没有新增真实模型调用。GitHub 无远端 CI check，这些结果来自本机隔离验证。
+
+#25 已先合入 dev（`2cd27caa`）；#28 同步最新 dev，仅处理 Supervisor import 与三份文档插入冲突，保留双方内容。合并后的全部 Python/前端实现与测试逐文件核对，和上述已验证联合副本一致。此次只同步集成状态和旧依赖表述，未修改已记录的失败结果。验证清单见 [dev-integration-review.json](evidence/deepseek-web-search-20261102/dev-integration-review.json)。
+
+本轮决定交付流式计量和搜索配置能力；课程 Q02/Q03 复测、回答及引用质量继续跟进，合入 dev 不代表这些验收或主环境部署完成。

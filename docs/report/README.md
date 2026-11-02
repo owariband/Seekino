@@ -59,6 +59,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 ## Server
 
+Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-streaming-20261101.md)。供应商完成前正文持久化、非流式/缓冲反例、浏览器真实增长和 FTT 采证；真实课程模型与部署仍待试点。
+
 背景：2026-10-08–09 的模型用量交接与验收、2026-10-10 的用户/租户交付。不同报告的版本、环境和测试集合分别阅读。
 
 - [model-token-usage-stages-evidence.md](server/model-token-usage-stages-evidence.md)

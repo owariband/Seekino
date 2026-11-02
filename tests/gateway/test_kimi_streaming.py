@@ -317,7 +317,16 @@ def test_stream_records_incremental_and_final_diagnostics(monkeypatch, tmp_path)
     path, = tmp_path.glob("*/events.jsonl")
     events = [json.loads(line) for line in path.read_text().splitlines()]
     assert events[0]["payload"]["request"]["stream"] is True
-    assert [event["event"] for event in events] == ["request", *(["sse"] * 6), "response", "completed"]
+    assert events[0]["event"] == "request" and events[-1]["event"] == "completed"
+    assert sum(event["event"] == "sse" for event in events) == 6
+    transport, = [event for event in events if event["event"] == "chat_transport"]
+    end, = [event for event in events if event["event"] == "chat_transport_end"]
+    deltas = [event for event in events if event["event"] == "chat_text_delta"]
+    assert transport["payload"]["stream"] is True
+    assert end["payload"]["terminal"] is True
+    assert [event["payload"]["sequence"] for event in deltas] == [1, 2]
+    assert all(transport["monotonic_ns"] < delta["monotonic_ns"] < end["monotonic_ns"] for delta in deltas)
+    assert end["monotonic_ns"] < events[-2]["monotonic_ns"]
     assert events[-2]["payload"]["choices"][0]["message"]["content"] == '{"summary":"scene"}'
     assert events[-2]["provider_request_id"] == "kimi-request"
 
