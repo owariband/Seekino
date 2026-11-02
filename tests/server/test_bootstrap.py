@@ -392,7 +392,7 @@ def test_process_assembly_receives_runtime_configuration(
             "auto_compact_tokens": 22_000,
             "compact_target_tokens": 12_000,
         }
-    configuration["web_search"] = {"api_key_env": "SEARCH_ONLY_KEY", "base_url": "https://search.example.com"}
+    configuration["web_search"] = {"provider": "deepseek", "api_key_env": "SEARCH_ONLY_KEY", "base_url": "https://search.example.com"}
     config_path = tmp_path / "models.yaml"
     config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
     monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
@@ -503,6 +503,8 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.parse_consumer._poll_interval.total_seconds() == settings.mq.poll_interval_seconds
         assert services.parse_consumer._lease_duration == settings.mq.lease_duration
         search_config = services.agent._runtime._web_searcher._config
+        assert search_config.provider == "deepseek"
+        assert services.agent._runtime._web_searcher.max_query_chars == 128
         assert search_config.api_key_env == "SEARCH_ONLY_KEY"
         assert search_config.base_url == "https://search.example.com"
         runtime = services.agent._runtime._video_runtime

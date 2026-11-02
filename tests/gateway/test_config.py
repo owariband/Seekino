@@ -566,10 +566,22 @@ def test_web_search_configuration_is_independent_of_chat_model(tmp_path):
 
 
 @pytest.mark.parametrize("options", [
-    {"provider": "ddgs"}, {"api_key_env": ""}, {"base_url": "http://example.com"},
+    {"provider": "unknown"}, {"api_key_env": ""}, {"base_url": "http://example.com"},
     {"base_url": "https://user:key@example.com"}, {"base_url": "https://example.com?key=secret"},
 ])
 def test_web_search_configuration_rejects_invalid_provider_or_credentials(options):
     from gateway.config import WebSearchConfig
     with pytest.raises(ValidationError):
         WebSearchConfig(**options)
+
+
+def test_omitted_search_config_keeps_keyless_ddgs_default(tmp_path):
+    payload = _config_payload()
+    path = tmp_path / "default-search.yaml"
+    _write_config(path, payload)
+    config = load_config(path)
+    assert config.web_search.provider == "ddgs"
+    assert config.web_search.backend == "auto"
+    payload["web_search"] = {"provider": "ddgs", "backend": "duckduckgo"}
+    _write_config(path, payload)
+    assert load_config(path).web_search.backend == "duckduckgo"

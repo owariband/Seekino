@@ -103,9 +103,10 @@ class SuccessiveVideoRuntime(FakeVideoRuntime):
 
 
 class FakeWebSearcher:
-    def __init__(self, *, fail=False):
+    def __init__(self, *, fail=False, max_query_chars=500):
         self.calls = []
         self.fail = fail
+        self.max_query_chars = max_query_chars
 
     def search(self, query, *, max_results, timeout_seconds):
         self.calls.append((query, max_results, timeout_seconds))
@@ -2269,18 +2270,25 @@ def test_query_batch_does_not_multiply_a_smaller_model_allowance():
     assert video.calls == []
 
 
-def test_web_query_limit_does_not_shorten_video_query_contract():
+@pytest.mark.parametrize("provider,limit", [("ddgs", 500), ("deepseek", 128)])
+def test_web_schema_and_execution_use_selected_provider_limit(provider, limit):
     from pydantic import ValidationError
-    from agent.chat.supervisor import WebSearchArguments, VideoSearchArguments
-    assert WebSearchArguments(query="界" * 128).query == "界" * 128
+    from agent.chat.supervisor import VideoSearchArguments
+    from gateway.config import WebSearchConfig
+    from gateway.web_search import WebSearcher
+    selected = WebSearcher(WebSearchConfig(provider=provider))
+    web = FakeWebSearcher(max_query_chars=selected.max_query_chars)
+    model = FakeSupervisorModel(calls=("search_web", "search_web"), queries=("界" * limit, "界" * (limit + 1)))
+    runtime = _runtime(model, web=web)
+    schema = runtime._web_search_arguments
+    assert schema.model_json_schema()["properties"]["query"]["maxLength"] == limit
+    assert schema(query="界" * limit).query == "界" * limit
     with pytest.raises(ValidationError):
-        WebSearchArguments(query="界" * 129)
+        schema(query="界" * (limit + 1))
     assert VideoSearchArguments(query="界" * 500).query == "界" * 500
-    web = FakeWebSearcher()
-    model = FakeSupervisorModel(calls=("search_web",), queries=("界" * 129,))
-    _runtime(model, web=web).kick(_inputs(), load_video_context=lambda: [])
-    assert web.calls == []
-    assert model.tool_results[0]["error"]["code"] == "INVALID_ARGUMENTS"
+    runtime.kick(_inputs(), load_video_context=lambda: [])
+    assert len(web.calls) == 1 and web.calls[0][0] == "界" * limit
+    assert model.tool_results[1]["error"]["code"] == "INVALID_ARGUMENTS"
 
 
 def test_web_auth_failure_is_non_retryable_tool_feedback():

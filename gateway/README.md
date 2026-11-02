@@ -89,13 +89,14 @@ finally:
 
 ## 网页搜索
 
-`WebSearcher` 通过 DeepSeek 官方 `POST /v1/tools/search` 返回 `WebSearchHit(title, url, snippet)`；
-Server 从独立的 `web_search` 配置装配，与 Chat 模型选择无关。网页 query 上限 128 字符，
-保留搜索操作符、URL 校验和结果预算；优先使用 `summary`，不将摘要当作全文。
-缺 key、鉴权与额度错误不建议立即重试，408/429/5xx 和传输错误标为可重试；不自动切回其他供应商。
-日志记录供应商、请求 ID、HTTP 状态、耗时及结果数，不记录凭据、查询或正文。
-配置示例见[网页搜索配置](../docs/model-config.md#网页搜索配置)，验证边界见
-[DeepSeek 搜索 TRD](../docs/design/03-product-reassessment/deepseek-web-search-trd.md)。
+`WebSearcher` 根据独立 `web_search.provider` 选择 DDGS（默认，无 API key）或 DeepSeek 官方 Search API。
+Server 注入配置，Chat 模型选择与搜索供应商互不绑定；保留统一 `WebSearchHit(title, url, snippet)`。
+DDGS 查询限 500 字符，DeepSeek 限 128，Agent 工具 Schema 使用对应上限。两条路径共用 URL 校验、
+去重与摘要预算；保留 DDGS 依赖，只有选择 DeepSeek 时才读取搜索 key，不自动跨供应商回退。
+日志记录所选 provider/backend、请求 ID、可用的 HTTP 状态、耗时与结果数，不记录凭据或查询正文。
+DDGS 的 auto 由库选择后端；配置写错或指定了已禁用后端时明确失败，避免库静默改回 auto。
+配置示例见[网页搜索配置](../docs/model-config.md#网页搜索配置)，验证见
+[搜索配置 TRD](../docs/design/03-product-reassessment/deepseek-web-search-trd.md)。
 
 ## 可选本地转写
 

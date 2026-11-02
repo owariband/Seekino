@@ -4,7 +4,7 @@
 
 ## 接入与离线回归
 
-`Supervisor → WebSearcher → POST https://api.deepseek.com/v1/tools/search` 已在真实页面执行。Server 注入独立配置，使用已有 DeepSeek key；移除 DDGS 及其仅由该包引入的 lxml/primp 锁定项。网页查询限 128 字符，视频查询仍为 500。保留 URL 校验、去重、摘要预算与既有引用规则；配置/额度错误不可立即重试，408/429/5xx 和传输错误标为可重试。
+`Supervisor → WebSearcher → POST https://api.deepseek.com/v1/tools/search` 已在真实页面执行。首版 Server 注入 DeepSeek 配置，曾移除 DDGS 及其 lxml/primp 锁定项；同日后续修正已恢复原依赖，支持用户选择，见文末。网页查询限 128 字符，视频查询仍为 500。保留 URL 校验、去重、摘要预算与既有引用规则；配置/额度错误不可立即重试，408/429/5xx 和传输错误标为可重试。
 
 独立 `dev@56e79777` 基线的适配器、配置、Supervisor、Bootstrap、本地启动器回归 **432 passed，26.33 秒**，1 条既有 Starlette/AnyIO 弃用警告。首轮有两个既有完整响应测试桩未显式关闭 stream；补齐 `stream=False` 后通过，未因此引入 #25 代码。工具说明补充官方站点过滤后，Supervisor **137 passed**；该次缓存目录写入被本机权限拒绝，不影响断言。
 
@@ -41,3 +41,20 @@ PYTHONDONTWRITEBYTECODE=1 /Users/hypnos/workspace/agent/Seekino/.venv/bin/python
 仅有摘要时，模型仍说过“核对原文”，引用了不在允许结果中的 URL。现有 URL 严格匹配和中文标点提取问题也未在本次更改。**供应商替换与配置接入已验证，回答和引用质量没有验收通过**；[C24](../../dev/problems.md#deepseek-web-search-c24) 保持 TODO，PR 保持 Draft。下一步应逐条对照工具返回 URL、模型引用及过滤结果，修复证据使用问题后再验收；不以搜索 API 的成功率替代问答质量。
 
 脱敏记录：[请求与计时](evidence/deepseek-web-search-20261102/provider.log)、[源码/查询/用量/样本](evidence/deepseek-web-search-20261102/verification.json)、[JUnit](evidence/deepseek-web-search-20261102/backend.xml)。完整页面回答和截图保留在独立 worktree 的 `outputs/verification/deepseek-web-search-20261102/`。
+
+## 配置选择修正：保留免 API key 接入
+
+本机选择 DeepSeek 不应成为所有用户的强制配置。默认恢复 `provider: ddgs`，原 DDGS 9.16.0 依赖和锁定项不升级；`provider: deepseek` 显式启用官方 API。DDGS 不读取 API key，即使环境已有 DeepSeek key 也不会自动使用；任一路失败均不跨供应商回退。DDGS backend 可设 auto 或具体支持的后端，配置错误时明确失败。
+
+工具 Schema 从实际所选服务获取上限，DDGS 500、DeepSeek 128，视频查询仍为 500；Server 装配及启动器 key 变更检查同步覆盖。上述命令额外加入 `tests/agent/chat/test_query_hook.py`、`tests/server/test_agent_chat_service.py`，结果 **604 passed / 1 skipped，39.20 s**。跳过项仍缺少专用 MySQL 测试配置，既有 Starlette 弃用警告不影响断言。未引入 Chat 流式代码或修改 PR #25。
+
+同一公开查询 `asyncio.sleep site:docs.python.org`，结果上限 5、超时参数 8 秒：
+
+| 显式选择 | 适配器可用的 API 凭据 | 单次耗时 | 结果数 |
+| --- | --- | --- | --- |
+| DDGS / auto | 无 | 2.714 s | 5 |
+| DeepSeek | 配置的 DeepSeek key | 0.588 s | 5 |
+
+这两次是入口探针，各一个样本，不用于宣称稳定效果或总体提速。新增一次 DeepSeek Search 估算 $0.00075，不含此前调用；没有新增生成模型调用或重评答案质量。当前专用实例显式保留 DeepSeek，主工作区配置不变。
+
+新证据：[探针结果](evidence/deepseek-web-search-20261102/provider-choice-probes.json)、[修正源码与回归记录](evidence/deepseek-web-search-20261102/provider-choice-verification.json)。

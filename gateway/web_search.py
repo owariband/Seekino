@@ -14,7 +14,7 @@ import httpx
 
 from gateway.config import WebSearchConfig
 
-MAX_WEB_QUERY_CHARS = 128
+_QUERY_LIMITS = {"ddgs": 500, "deepseek": 128}
 _MAX_RESULTS = 20
 _MAX_TITLE_CHARS = 200
 _MAX_SNIPPET_CHARS = 600
@@ -48,6 +48,10 @@ class WebSearcher:
         self._environ = os.environ if environ is None else environ
         self._transport = transport
 
+    @property
+    def max_query_chars(self) -> int:
+        return _QUERY_LIMITS[self._config.provider]
+
     def search(
         self,
         query: str,
@@ -56,8 +60,8 @@ class WebSearcher:
         timeout_seconds: float,
     ) -> list[WebSearchHit]:
         normalized_query = query.strip()
-        if not normalized_query or len(normalized_query) > MAX_WEB_QUERY_CHARS:
-            raise ValueError(f"query must contain 1–{MAX_WEB_QUERY_CHARS} characters")
+        if not normalized_query or len(normalized_query) > self.max_query_chars:
+            raise ValueError(f"query must contain 1–{self.max_query_chars} characters")
         if type(max_results) is not int or not 1 <= max_results <= _MAX_RESULTS:
             raise ValueError(f"max_results must be between 1 and {_MAX_RESULTS}")
         if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= _MAX_TIMEOUT_SECONDS:
@@ -70,6 +74,10 @@ class WebSearcher:
         hits: list[WebSearchHit] = []
         outcome = "error"
         try:
+            if self._config.provider == "ddgs":
+                hits = self._search_ddgs(normalized_query, max_results=max_results, timeout_seconds=timeout_seconds)
+                outcome = "ok" if hits else "empty"
+                return hits
             key = self._environ.get(self._config.api_key_env, "").strip()
             if not key:
                 raise WebSearchError("DeepSeek search API key is not configured", retryable=False)
@@ -101,20 +109,40 @@ class WebSearcher:
         finally:
             # Do not log credentials, queries, response bodies or page contents.
             _logger.info(
-                "event=web_search_completed provider=deepseek request_id=%s "
+                "event=web_search_completed provider=%s backend=%s request_id=%s "
                 "provider_request_id=%s status_code=%s outcome=%s result_count=%s elapsed_ms=%.1f",
+                self._config.provider, self._config.backend if self._config.provider == "ddgs" else None,
                 request_id, provider_request_id, status_code, outcome, len(hits),
                 (monotonic() - started) * 1000,
             )
 
+    def _search_ddgs(self, query: str, *, max_results: int, timeout_seconds: float) -> list[WebSearchHit]:
+        from ddgs import DDGS
+        from ddgs.engines import ENGINES
 
-def _normalize_hits(rows: list[object], *, max_results: int) -> list[WebSearchHit]:
+        backends = [name.strip() for name in self._config.backend.split(",")]
+        if any(name not in {"auto", *ENGINES["text"]} for name in backends):
+            # DDGS otherwise silently substitutes auto for an unknown backend.
+            raise WebSearchError("Unsupported DDGS search backend", retryable=False)
+        try:
+            rows = DDGS(timeout=math.ceil(timeout_seconds)).text(
+                query, max_results=max_results, backend=",".join(backends),
+            )
+        except Exception as error:
+            raise WebSearchError("DDGS web search failed") from error
+        return _normalize_hits(rows, max_results=max_results, url_field="href", summary_fields=("body",))
+
+
+def _normalize_hits(
+    rows: list[object], *, max_results: int,
+    url_field: str = "url", summary_fields: tuple[str, ...] = ("summary", "snippet"),
+) -> list[WebSearchHit]:
     hits: list[WebSearchHit] = []
     seen_urls: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
             continue
-        raw_url = row.get("url")
+        raw_url = row.get(url_field)
         if not isinstance(raw_url, str) or len(raw_url) > _MAX_URL_CHARS:
             continue
         url = raw_url.strip()
@@ -134,9 +162,8 @@ def _normalize_hits(rows: list[object], *, max_results: int) -> list[WebSearchHi
         ):
             continue
         title = _short_text(row.get("title"), _MAX_TITLE_CHARS)
-        snippet = _short_text(row.get("summary"), _MAX_SNIPPET_CHARS) or _short_text(
-            row.get("snippet"), _MAX_SNIPPET_CHARS,
-        )
+        snippet = next((text for field in summary_fields
+                        if (text := _short_text(row.get(field), _MAX_SNIPPET_CHARS))), "")
         if not title:
             continue
         seen_urls.add(url)

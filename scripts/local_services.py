@@ -58,7 +58,9 @@ def dotenv_variable_names(path: str | Path) -> tuple[str, ...]:
 def config_digest() -> str:
     values = {key: value for key, value in os.environ.items() if key.startswith(("SEEKINO_", "VITE_"))}
     model_config = load_config()
-    api_key_names = {*required_api_key_env_names(model_config), model_config.web_search.api_key_env}
+    api_key_names = set(required_api_key_env_names(model_config))
+    if model_config.web_search.provider == "deepseek":
+        api_key_names.add(model_config.web_search.api_key_env)
     for key in sorted(api_key_names):
         value = os.environ.get(key, "")
         values[key] = hashlib.sha256(value.encode()).hexdigest()

@@ -11,7 +11,7 @@ from gateway.web_search import WebSearchError, WebSearcher
 
 
 def searcher(handler, *, config=None, environ=None):
-    return WebSearcher(config, environ={"DEEPSEEK_API_KEY": "private-test-key"} if environ is None else environ,
+    return WebSearcher(config or WebSearchConfig(provider="deepseek"), environ={"DEEPSEEK_API_KEY": "private-test-key"} if environ is None else environ,
                        transport=httpx.MockTransport(handler))
 
 
@@ -65,7 +65,7 @@ def test_128_unicode_characters_preserve_query_and_configuration():
     def handle(request):
         requests.append(request)
         return httpx.Response(200, json={"results": []})
-    config = WebSearchConfig(base_url="https://search.example.com/", api_key_env="SEARCH_KEY")
+    config = WebSearchConfig(provider="deepseek", base_url="https://search.example.com/", api_key_env="SEARCH_KEY")
     client = searcher(handle, config=config, environ={"SEARCH_KEY": "custom-key"})
     assert client.search("界" * 128, max_results=20, timeout_seconds=12) == []
     assert json.loads(requests[0].content)["query"] == "界" * 128
@@ -117,3 +117,80 @@ def test_malformed_json_is_a_provider_error():
         searcher(lambda request: httpx.Response(200, text="<html>upstream failure</html>")).search(
             "topic", max_results=3, timeout_seconds=5,
         )
+
+
+@pytest.mark.parametrize("backend", ["auto", "duckduckgo", "google, brave"])
+def test_ddgs_works_without_reading_api_keys_and_preserves_query(backend, monkeypatch, caplog):
+    class NoCredentials(dict):
+        def get(self, *args):
+            pytest.fail("DDGS must not read API credentials")
+    calls = []
+    class FakeDDGS:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+        def text(self, query, **kwargs):
+            calls.append((query, kwargs))
+            return [
+                {"title": " Official ", "href": "https://example.org/page", "body": " Summary ", "summary": "wrong provider field"},
+                {"title": "duplicate", "href": "https://example.org/page", "body": "duplicate"},
+                {"title": "unsafe", "href": "javascript:alert(1)", "body": "unsafe"},
+                {"title": "second", "href": "https://example.org/second", "body": "x" * 900},
+            ]
+    monkeypatch.setattr("ddgs.DDGS", FakeDDGS)
+    def unexpected(request):
+        pytest.fail("DDGS must not call DeepSeek")
+    client = WebSearcher(WebSearchConfig(provider="ddgs", backend=backend), environ=NoCredentials(),
+                         transport=httpx.MockTransport(unexpected))
+    query = "界" * 500
+    with caplog.at_level(logging.INFO, logger="gateway.web_search"):
+        hits = client.search(query, max_results=2, timeout_seconds=2.1)
+    assert calls == [{"timeout": 3}, (query, {"max_results": 2, "backend": backend.replace(" ", "")})]
+    assert client.max_query_chars == 500
+    assert hits[0].snippet == "Summary" and len(hits[1].snippet) == 600
+    assert "provider=ddgs" in caplog.text and query not in caplog.text
+    with pytest.raises(ValueError):
+        client.search("界" * 501, max_results=2, timeout_seconds=2.1)
+    assert len(calls) == 2
+
+
+def test_default_ddgs_does_not_switch_when_deepseek_key_exists(monkeypatch):
+    calls = []
+    class FakeDDGS:
+        def __init__(self, **kwargs):
+            pass
+        def text(self, query, **kwargs):
+            calls.append(query)
+            return []
+    monkeypatch.setattr("ddgs.DDGS", FakeDDGS)
+    client = WebSearcher(environ={"DEEPSEEK_API_KEY": "present-but-not-selected"})
+    assert client.search("topic", max_results=2, timeout_seconds=1) == []
+    assert calls == ["topic"]
+
+
+def test_invalid_ddgs_backend_is_not_silently_replaced_by_auto(monkeypatch):
+    monkeypatch.setattr("ddgs.DDGS", lambda **kwargs: pytest.fail("invalid backend must not send a query"))
+    with pytest.raises(WebSearchError, match="Unsupported DDGS") as error:
+        WebSearcher(WebSearchConfig(backend="unknown")).search("topic", max_results=2, timeout_seconds=1)
+    assert error.value.retryable is False
+
+
+def test_ddgs_failure_does_not_fall_back_to_paid_search(monkeypatch):
+    from ddgs.exceptions import TimeoutException
+    class FailingDDGS:
+        def __init__(self, **kwargs):
+            pass
+        def text(self, *args, **kwargs):
+            raise TimeoutException("timed out")
+    monkeypatch.setattr("ddgs.DDGS", FailingDDGS)
+    client = WebSearcher(environ={"DEEPSEEK_API_KEY": "available"},
+                         transport=httpx.MockTransport(lambda request: pytest.fail("no automatic paid fallback")))
+    with pytest.raises(WebSearchError) as error:
+        client.search("topic", max_results=2, timeout_seconds=1)
+    assert error.value.retryable and isinstance(error.value.__cause__, TimeoutException)
+
+
+def test_deepseek_failure_does_not_switch_to_ddgs(monkeypatch):
+    monkeypatch.setattr("ddgs.DDGS", lambda **kwargs: pytest.fail("no automatic DDGS fallback"))
+    with pytest.raises(WebSearchError) as error:
+        searcher(lambda request: httpx.Response(402)).search("topic", max_results=2, timeout_seconds=1)
+    assert error.value.retryable is False

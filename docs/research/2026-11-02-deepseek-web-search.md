@@ -40,3 +40,9 @@ Fetch 是独立的 `POST /v1/tools/fetch`：输入 `url`，返回 `title` 与 Ma
 建议在 Gateway 换 HTTP 适配，保留 `WebSearchHit` 和现有 URL 验证/去重；将查询输入合同收紧到 128，让超长输入明确失败而不是截断搜索操作符；`max_results≤20` 可直接映射 `count`；模型所读摘要优先取 `summary`，再套既有长度预算。保留总执行预算，不因增加重试突破超时。鉴权/余额等错误不应一律声称可立即重试，也不应静默回退 DDGS。这些是基于上述合同的接入建议，尚非已实现行为。
 
 先验证请求路径与 header、128 字符边界、空结果、非法 JSON/schema、401/402/429/504、URL 过滤和超时；再以当前 Python 官方文档问题做一次真实 UI 验收，核对实际供应商、返回链接、工具耗时与最终引用。真实 key 可用性、延迟、搜索质量及引用效果均待测；更换供应商本身不等于修好现有引用格式或模型事实错误。
+
+## 补充：原 DDGS 与用户选择
+
+本项目原锁定 `ddgs==9.16.0`，来自 [deedy5/ddgs](https://github.com/deedy5/ddgs/tree/v9.16.0)。这是无需供应商 API key 的元搜索库，公开文档列出多种后端；实际可用集合还受版本禁用标志影响。原调用未传 backend，使用 auto，库按可用引擎并发搜索、合并排序。DuckDuckGo 适配器直接访问 HTML 搜索入口并提取 title/href/body，并非其官方付费 API。[版本文档](https://pypi.org/project/ddgs/9.16.0/)、[DuckDuckGo 适配器](https://github.com/deedy5/ddgs/blob/v9.16.0/ddgs/engines/duckduckgo.py)、[后端调度源码](https://github.com/deedy5/ddgs/blob/v9.16.0/ddgs/ddgs.py)。
+
+此前建议直接移除 DDGS 过度绑定了本机选择。当前方案保留默认 DDGS，显式配置可选 DeepSeek；主模型与搜索方式独立，不根据 key 是否存在切换。以上旧调查与首版建议按形成时点阅读，实施及后续实测以 TRD 和报告为准。

@@ -12,24 +12,35 @@
 
 ## 网页搜索配置
 
-`search_web` 使用 DeepSeek 官方 Search API，与 `models.agent` / `models.supervisor` 独立。
-省略下列配置时采用所示默认值；缺少 key 只影响搜索工具，不阻塞不使用搜索的 Chat。
+`web_search.provider` 与 `models.agent` / `models.supervisor` 独立。用户选择免 API key 的
+DDGS 或 DeepSeek 官方 API；省略配置时兼容原来的 DDGS，不根据环境里是否存在 key 自动切换。
 
 ```yaml
+# 免 API key；仍需联网。backend 可选 auto 或 DDGS 支持的搜索后端。
+web_search:
+  provider: ddgs
+  backend: auto
+```
+
+```yaml
+# 显式选择 DeepSeek API，key 的值保存在环境变量中。
 web_search:
   provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
 ```
 
-key 保存在环境变量中。`base_url` 是 HTTPS 服务根地址，适配器追加 `/v1/tools/search`；
-不要填写完整 endpoint 或尾部 `/v1`。连接配置修改后重启 API；本地启动器也会检测
-所选搜索 key 的变更。查询限 128 字符，支持 `site:`、`lang:` 等官方操作符，
-返回供模型阅读的摘要；搜索失败不自动改用 DDGS。合同和实测见
-[DeepSeek 搜索 TRD](design/03-product-reassessment/deepseek-web-search-trd.md)。
+DDGS 查询限 500 字符，DeepSeek 限 128；Agent 的工具 Schema 跟随所选服务，视频查询仍为 500。
+`backend` 仅用于 DDGS，支持单个名称或逗号分隔的后端列表；不存在或被该版本禁用的后端会明确失败，
+不会由库偷偷改成 auto。auto 下库自行选择/组合后端，日志记录的是所选模式，不声称精确追踪了每条结果的底层引擎。
 
-2026-11-02 本需求按明确要求在独立测试实例使用 DeepSeek Flash low，不调用已无额度的 Kimi；
-这不改动主工作区的模型选择或已有视频任务快照。
+`base_url` / `api_key_env` 仅用于 DeepSeek，前者为 HTTPS 服务根地址，适配器追加 `/v1/tools/search`。
+连接配置修改后重启 API；仅选择 DeepSeek 时，本地启动器才跟踪搜索 key 的变化。
+两种方式均返回摘要，失败时不自动跨供应商回退。合同和实测见
+[搜索配置 TRD](design/03-product-reassessment/deepseek-web-search-trd.md)。
+
+2026-11-02 本需求的独立测试实例显式选择 DeepSeek Search，生成模型使用 DeepSeek Flash low；
+该选择不改变仓库默认行为、主工作区模型配置或已有视频任务快照。
 
 ## 模型定义与默认引用
 

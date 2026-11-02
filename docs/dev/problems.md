@@ -639,11 +639,11 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 ## TODO（待修复解决）
 
 <a id="deepseek-web-search-c24"></a>
-### C24：Chat 搜索供应商不明确，切换模型后网页检索仍走 DDGS
+### C24：Chat 缺少搜索配置，用户无法选择免 key 或 API 接入
 
-排序日期：2026-11-02。状态：TODO（供应商替换已验证，回答与引用质量待验收）。
+排序日期：2026-11-02。状态：TODO（免 key / API 选择已验证，回答与引用质量待验收）。
 
-[TRD](../design/03-product-reassessment/deepseek-web-search-trd.md) / [PR #28](https://github.com/owariband/Seekino/pull/28) 直接向 dev 集成，无 #18/#25 合并依赖。已替换为 DeepSeek 官方 Search，保留结果与视频查询合同；432 项回归通过。独立 DeepSeek low 页面两轮 9 次 Search 均成功，另有 1 次成功探针；单次搜索 0.303–0.839 s，整轮 12.859/13.765 s，不构成稳定性能对照。
+[TRD](../design/03-product-reassessment/deepseek-web-search-trd.md) / [PR #28](https://github.com/owariband/Seekino/pull/28) 直接向 dev 集成，无 #18/#25 合并依赖。已支持默认 DDGS 免 key、显式选择 DeepSeek，保留结果与视频查询合同；配置修正回归 604 passed / 1 skipped，两种真实探针各返回 5 条。首版 DeepSeek 接入曾有 432 项回归通过。独立 DeepSeek low 页面两轮 9 次 Search 均成功，另有 1 次成功探针；单次搜索 0.303–0.839 s，整轮 12.859/13.765 s，不构成稳定性能对照。
 
 过滤说明能引导模型使用官方域名，但第二轮仍有 3 处未核实链接和不准确表述。接口接通不代表答案通过；下一步核对返回 URL、模型引用及过滤结果，改善摘要证据使用后再验收。原始样本与限制见[报告](../report/gateway/deepseek-web-search-20261102.md)；主环境未部署，PR 保持 Draft。
 

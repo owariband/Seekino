@@ -435,7 +435,8 @@ class QueryHookConfig(BaseModel):
 class WebSearchConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["deepseek"] = "deepseek"
+    provider: Literal["ddgs", "deepseek"] = "ddgs"
+    backend: _NonEmptyString = "auto"
     base_url: _HttpsBaseUrl = "https://api.deepseek.com"
     api_key_env: _NonEmptyString = "DEEPSEEK_API_KEY"
 
