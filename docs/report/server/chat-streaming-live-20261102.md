@@ -96,3 +96,8 @@ DeepSeek low 长题有 640 reasoning tokens，首次 reasoning 在模型请求�
 两档分别用量 input/output **32,746/4,062**、**15,799/2,212** tokens，reasoning 分别 1,205/0（已包含在 output）。按官方高峰单价及实际缓存命中估算约 **$0.00823 / $0.00544**，合计 **$0.01366**；不是账单核验，不包含现有 `search_web` 的外部成本。
 
 独立 API 最终保留 DeepSeek low，页面仍为 `http://127.0.0.1:15175/search`；该选择基于本轮较少的事实性问题，不能外推总体准确率。参数、调用身份、计时、用量、原始文件哈希与质量核对见 [deepseek-validation.json](evidence/chat-streaming-20261102/deepseek-validation.json)。完整配置、请求、reasoning、正文和浏览器证据在本 worktree 的 `outputs/verification/chat-streaming-deepseek-{low,none}-20261102/`，不提交原始上下文。课程观看页及 Q02/Q03 尚未验证，C23 / PR 状态保持不变。
+
+
+### 可见页面复测：连续追问与工具过程
+
+随后在用户可见的内置浏览器完成三轮，实际五次请求均为 `deepseek-flash / low / stream=true`，页面总耗时分别显示 10 / 2 / 16 秒。这是页面秒级显示，不作为新增 FTT 样本。长题的具体计算正确，但将 BA 的形状泛化为 q×m，属于解释错误；追问 A 为 2×3、B 为 3×2 后，正确纠正为 AB 是 2×2、BA 是 3×3。工具题可见先发计划、两次搜索、继续回答，仍有两处未核实链接。该复测说明需要继续检查解释中的一般性结论，不能把例题算对等同于讲解准确。会话 `ee09cc62-af9a-4b9d-b947-9c2728d9a088`；原始 trace、截图及摘要保留在 `outputs/verification/chat-streaming-deepseek-low-active-20261102/`，页面已保留供继续体验。
