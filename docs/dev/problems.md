@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-02 v10 模型对照的音频复用：** K3.1 Pro low新任务 `af389a51-8050-4d86-a33f-d3b44dc22a04` 的ASR／独立分组JSON及摘要均与v9相同，新转写0；20份理解原始响应非空，18份落库，后续因五小时额度429终止。上游恢复通过不等于全文质量／对齐／检索问答已验收，B20保持未完成。[证据](../report/gateway/kimi31-pro-low-parse-20261102.md)。
+
 **11-02 直连 v9 复验：** 新任务 `d7c13ca5-14f5-4201-8855-a2b94f07e68c` 的 ASR/独立分组与 v8 JSON及摘要逐项一致，新转写0；下游19理解/8 Refine/3索引后因错误时间事件终止。空timeline不是上游ASR正文丢失，整课与人工质量仍未通过。[报告](../report/gateway/kimi3-low-parse-20261102.md#v9-empty-results)。
 
 **11-02 21:56 v8 代理恢复后的音频复用：** 经正式 retry 恢复同一任务，完整音频成果仍命中，新 ASR=0；下游在 9 个 Understanding/2 个 Refine 后失败，且存在已提交空 timeline。音频复用与下游内容质量分别验收，完整课程、声学对齐及检索回看追问仍 TODO。[本轮报告](../report/gateway/kimi3-low-parse-20261102.md#proxy-retry)。
@@ -1596,6 +1598,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-02 K3.1 Pro low 的 v10 对照终态：** 新建任务 `af389a51-8050-4d86-a33f-d3b44dc22a04`，全图／直连／10路及原门禁不变。对应前20块空timeline由K3的2份变0、单字／占位persons由4份变0；18份落库，另外2份排序错误与1份Refine多余content字段均带原JSON／提示进入修正，但遇到五小时额度429。410.168秒后18理解／5 Refine／3索引停止，54调用为26返回／20额度拒绝／8更新取消，新ASR=0；已知输入4,943,606 tokens，另外28次usage未知。当前已停止，不自动重试。局部模型表现改善，空内容门禁、Understanding排序与时间规则、额度分类及完整闭环仍TODO。[模型对照与证据](../report/gateway/kimi31-pro-low-parse-20261102.md)。
 
 **11-02 直连 v9 终态与空结果定位：** 已通过正式 reparse 重开完整117块，任务 `d7c13ca5-14f5-4201-8855-a2b94f07e68c` 保持 k3 low/直连/10路，14分38秒后停在19理解/8 Refine/3索引，新ASR=0。致命原因是sequence27在27:00–28:00范围输出0–1ms OTHER，触发时间门禁，不是504。首块22条ASR却返回空timeline，原始SSE即如此；结构/时间遍历允许空数组，缺少内容检查，且稳定排序仅接Refine、范围ValueError在修正循环外。strict true/false的固定文本对照均保留22事件，不能据此关闭strict；模型极短输出诱因仍未定位。业务门禁修复未实施，未再次重开，B07仍TODO。[证据](../report/gateway/kimi3-low-parse-20261102.md#v9-empty-results)。
 

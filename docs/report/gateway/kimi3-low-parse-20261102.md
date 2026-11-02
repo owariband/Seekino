@@ -2,7 +2,9 @@
 
 [PR #18](https://github.com/owariband/Seekino/pull/18) · [评审看板](pr18-kanban.html) · [主 TRD §4.24](../../design/03-product-reassessment/video-parse-performance-trd.md#424-11-02显式-kimi-3-low-的整课复验计划)
 
-**最新结论（11-02 23:03 CST）：已按正式 reparse 启动直连 v9，随后在 14 分 38 秒后失败。** 19/117 Understanding、8/115 Refine、3/117 索引，ASR/分组复用且新转写为 0。终止事件是 sequence 27 返回 0–1 ms 的 OTHER，超出其 27:00–28:00 授权范围；同时首次生成空 timeline 在直连中复现。当前已停止，完整课程仍未通过。详见[直连全课与空结果调查](#v9-empty-results)。
+**后续对照（11-02）：** 已按指令新建 K3.1 Pro low 的 v10；相同前20块未复现空timeline／单字人物名，18理解、5 Refine、3索引后因五小时额度429停止，新ASR=0。[完整模型对照与用量](kimi31-pro-low-parse-20261102.md)。本页保留K3 low的历史证据。
+
+**K3 low 结论（11-02 23:03 CST）：已按正式 reparse 启动直连 v9，随后在 14 分 38 秒后失败。** 19/117 Understanding、8/115 Refine、3/117 索引，ASR/分组复用且新转写为 0。终止事件是 sequence 27 返回 0–1 ms 的 OTHER，超出其 27:00–28:00 授权范围；同时首次生成空 timeline 在直连中复现。当前已停止，完整课程仍未通过。详见[直连全课与空结果调查](#v9-empty-results)。
 
 **较早结论（11-02 22:14 CST）：采用 Kimi 直连，不保留本轮专用代理规则。** 同一份 189 图、14.55 MB 请求显式禁用环境代理后，第 2.577 秒完成客户端发送、54.477 秒收到首 SSE，HTTP 200、返回 k3；不经过 7897。专用规则已撤回，API19621 已恢复 Kimi 直连。只测到首事件，没有再次启动整课；完整输出质量与十路稳定性仍未验收。详见[直连复测与最终取舍](#direct-retest)。
 
