@@ -16,6 +16,7 @@ from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessio
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
+from gateway.model_events import ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from agent.utils.tool import AgentTool
@@ -306,7 +307,7 @@ class SupervisorRuntime:
             )
             return evidence, selection
 
-        def publish_snapshot(*, completed: bool = False) -> tuple[dict, ...]:
+        def publish_snapshot(*, completed: bool = False, text_stream: dict | None = None) -> tuple[dict, ...]:
             content = answer_markdown()
             search_result = None
             if completed and video_result is not None:
@@ -330,6 +331,7 @@ class SupervisorRuntime:
             control.publish(inputs, {
                 "type": "answer.snapshot", "content": content, "searchResult": search_result,
                 "renderBlocks": public_blocks,
+                **({"textStream": text_stream} if text_stream is not None else {}),
             })
             return tuple(public_blocks)
 
@@ -367,26 +369,78 @@ class SupervisorRuntime:
                     return
                 publish_snapshot()
 
-        def accept_text(value: str) -> None:
+        stream_call_id: str | None = None
+        stream_text = ""
+        stream_prefix: list = []
+
+        def visible_text(value: str, *, final: bool) -> str:
+            if web_search_attempted:
+                if not final:
+                    # A URL (including its scheme) may span provider chunks. Keep
+                    # the unfinished token private until its boundary is known.
+                    tail = re.search(r"(?:https?://[^\s<>\])]*|https?:/?/?|https?|htt|ht|h)$", value)
+                    if tail is not None:
+                        value = value[:tail.start()]
+                value = _URL.sub(
+                    lambda match: match.group() if match.group() in web_sources else "[未核实链接]",
+                    value,
+                )
+            return value
+
+        def text_blocks(prefix: list, value: str) -> list:
+            candidate = list(prefix)
+            if candidate and isinstance(candidate[-1], MarkdownRenderBlock):
+                candidate[-1] = MarkdownRenderBlock(markdown=candidate[-1].markdown + "\n\n" + value)
+            else:
+                candidate.append(MarkdownRenderBlock(markdown=value))
+            ChatRenderDraft.validate_prefix(answer_blocks(candidate))
+            return candidate
+
+        def accept_text_delta(delta: ModelTextDelta) -> None:
+            nonlocal stream_call_id, stream_text, stream_prefix
             with tool_lock:
                 control.check()
-                value = value.strip()
+                if stream_call_id is None:
+                    stream_call_id = delta.call_id
+                    stream_prefix = list(render_blocks)
+                elif delta.call_id != stream_call_id:
+                    raise AgentModelInvocationError("A new model call replaced an unfinished streamed answer")
+                stream_text += delta.text
+                value = visible_text(stream_text, final=False)
+                if not value.strip():
+                    return
+                candidate = text_blocks(stream_prefix, value)
+                if candidate == render_blocks:
+                    return
+                render_blocks[:] = candidate
+                publish_snapshot(text_stream={
+                    "origin": "provider_delta", "callId": delta.call_id,
+                    "deltaSequence": delta.sequence,
+                    "modelFirstTextMs": delta.first_text_ms,
+                    "modelElapsedMs": delta.elapsed_ms,
+                    "providerReceivedMonotonicMs": delta.received_at * 1000,
+                    "beforeModelCompleted": delta.before_completion,
+                })
+
+        def accept_text(value: str) -> None:
+            nonlocal stream_call_id, stream_text, stream_prefix
+            with tool_lock:
+                control.check()
+                if stream_call_id is not None:
+                    if value != stream_text:
+                        raise AgentModelInvocationError("Completed model text differs from its streamed body")
+                    control.publish(inputs, {"type": "answer.model.completed", "callId": stream_call_id})
+                    candidate = text_blocks(stream_prefix, visible_text(value, final=True)) if value.strip() else stream_prefix
+                    stream_call_id, stream_text, stream_prefix = None, "", []
+                    if candidate != render_blocks:
+                        render_blocks[:] = candidate
+                        # A flush after completion is not a live provider delta.
+                        publish_snapshot()
+                    return
+                value = visible_text(value.strip(), final=True)
                 if not value:
                     return
-                if web_search_attempted:
-                    value = _URL.sub(
-                        lambda match: match.group() if match.group() in web_sources else "[未核实链接]",
-                        value,
-                    )
-                candidate = list(render_blocks)
-                if candidate and isinstance(candidate[-1], MarkdownRenderBlock):
-                    candidate[-1] = MarkdownRenderBlock(
-                        markdown=candidate[-1].markdown + "\n\n" + value,
-                    )
-                else:
-                    candidate.append(MarkdownRenderBlock(markdown=value))
-                ChatRenderDraft.validate_prefix(answer_blocks(candidate))
-                render_blocks[:] = candidate
+                render_blocks[:] = text_blocks(render_blocks, value)
                 publish_snapshot()
 
         def publish_child_progress(event: dict) -> None:
@@ -1079,6 +1133,8 @@ class SupervisorRuntime:
                     max_model_calls_per_turn if self._limits_enabled else None
                 ),
                 handle_text=accept_text,
+                **({"handle_text_delta": accept_text_delta}
+                   if getattr(self._model, "supports_text_deltas", False) else {}),
                 request_timeout_seconds=control.remaining_seconds(),
                 check_control=control.check,
                 max_input_chars=self._max_prompt_chars,

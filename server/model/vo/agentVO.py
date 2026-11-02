@@ -145,8 +145,25 @@ class AgentAnswerStartedView(AgentAnswerEventView, AgentMessageSendView):
     type: Literal["answer.started"] = "answer.started"
 
 
+class AgentTextStreamView(ContractModel):
+    origin: Literal["provider_delta"]
+    call_id: str
+    delta_sequence: int = Field(gt=0)
+    model_first_text_ms: float | None = Field(default=None, ge=0)
+    model_elapsed_ms: float = Field(ge=0)
+    provider_received_monotonic_ms: float = Field(ge=0)
+    server_published_monotonic_ms: float = Field(ge=0)
+    before_model_completed: bool
+
+
 class AgentAnswerSnapshotView(AgentAnswerEventView, AgentMessageSendView):
     type: Literal["answer.snapshot"] = "answer.snapshot"
+    text_stream: AgentTextStreamView | None = None
+
+
+class AgentAnswerModelCompletedView(AgentAnswerEventView):
+    type: Literal["answer.model.completed"] = "answer.model.completed"
+    call_id: str
 
 
 class AgentAnswerProgressView(AgentAnswerEventView):

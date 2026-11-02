@@ -35,10 +35,12 @@ def completion_options(
     if profile == "standard":
         return {"temperature": temperature}
     if profile == "kimi":
-        options: dict[str, object] = {"temperature": effective_temperature(profile, temperature)}
-        if reasoning_effort != "none":
-            options["reasoning_effort"] = reasoning_effort
-        return options
+        # Treat legacy "none" as minimum effort; omitting the field selects
+        # the provider default instead.
+        return {
+            "temperature": effective_temperature(profile, temperature),
+            "reasoning_effort": "low" if reasoning_effort == "none" else reasoning_effort,
+        }
     if profile != "deepseek":
         raise ValueError(f"unsupported OpenAI API profile: {profile}")
     if reasoning_effort == "none":
