@@ -42,6 +42,7 @@ def _model_config(
             api_key_env=fallback.deepseek.api_key_env,
         ),
         video_parser=SimpleNamespace(fallback=fallback),
+        web_search=SimpleNamespace(api_key_env="SEARCH_API_KEY"),
         model_dump=lambda mode: {
             "model_sources": [source.model_dump() for source in selected_sources],
             "agent_runtime": {},
@@ -128,6 +129,16 @@ def test_config_digest_tracks_configured_parse_fallback_api_key(monkeypatch) -> 
     monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "second")
 
     assert config_digest() != initial
+
+
+def test_config_digest_tracks_optional_search_key_without_requiring_it(monkeypatch) -> None:
+    monkeypatch.setattr(local_services, "load_config", lambda: _model_config(CodexModelSourceConfig()))
+    monkeypatch.delenv("SEARCH_API_KEY", raising=False)
+    missing = config_digest()
+    monkeypatch.setenv("SEARCH_API_KEY", "first")
+    configured = config_digest()
+    monkeypatch.setenv("SEARCH_API_KEY", "second")
+    assert len({missing, configured, config_digest()}) == 3
 
 
 @pytest.mark.parametrize(

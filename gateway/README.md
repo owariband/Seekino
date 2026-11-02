@@ -28,7 +28,7 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 - `../docs/design/pi-host-trd.md`：已退役的云端 Pi Host 历史设计；当前使用 Deep Agents＋MySQL checkpoint；
 - `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX Adapter；
 - 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
-  提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
+  提供共享协议和纯工具，`config.py` 描述来源、模型选择与网页搜索连接配置。
 
 业务层通过 `model_factory.GatewayClient` 获取模型。`create(kind, ref)` 按外部配置
 创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription` 五类模型，也提供对应的
@@ -86,6 +86,16 @@ finally:
     model.close()
     client.close()
 ```
+
+## 网页搜索
+
+`WebSearcher` 通过 DeepSeek 官方 `POST /v1/tools/search` 返回 `WebSearchHit(title, url, snippet)`；
+Server 从独立的 `web_search` 配置装配，与 Chat 模型选择无关。网页 query 上限 128 字符，
+保留搜索操作符、URL 校验和结果预算；优先使用 `summary`，不将摘要当作全文。
+缺 key、鉴权与额度错误不建议立即重试，408/429/5xx 和传输错误标为可重试；不自动切回其他供应商。
+日志记录供应商、请求 ID、HTTP 状态、耗时及结果数，不记录凭据、查询或正文。
+配置示例见[网页搜索配置](../docs/model-config.md#网页搜索配置)，验证边界见
+[DeepSeek 搜索 TRD](../docs/design/03-product-reassessment/deepseek-web-search-trd.md)。
 
 ## 可选本地转写
 

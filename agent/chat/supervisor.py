@@ -14,7 +14,7 @@ from typing import Annotated, Any, get_args
 
 from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessionContext
 from gateway.agent_model.errors import ModelInputTooLargeError
-from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
+from gateway.web_search import MAX_WEB_QUERY_CHARS, WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -64,6 +64,14 @@ class SearchArguments(BaseModel):
 
     query: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
+    ]
+
+
+class WebSearchArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_WEB_QUERY_CHARS),
     ]
 
 
@@ -429,8 +437,8 @@ class SupervisorRuntime:
                         success=False,
                         payload={"error": ToolError(
                             code="WEB_SEARCH_FAILED",
-                            message="Web search is temporarily unavailable.",
-                            retryable=True,
+                            message="Web search is unavailable.",
+                            retryable=exc.retryable,
                             retry_hint=(
                                 "Answer from other available sources or explain the limitation."
                             ),
@@ -899,8 +907,12 @@ class SupervisorRuntime:
             ),
             build_agent_tool(
                 func=search_web, name="search_web",
-                description="Search the public web. Cite only URLs returned by this tool.",
-                args_schema=SearchArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                description=(
+                    "Search the public web with DeepSeek using a query of at most 128 characters. "
+                    "Supports site:domain and lang:en filters; use filters when a specific source or language is requested. "
+                    "Returns summaries, not full page text. Cite only URLs returned by this tool."
+                ),
+                args_schema=WebSearchArguments, maximum_result_bytes=self._max_tool_result_bytes,
             ),
             build_agent_tool(
                 func=query_video, name="query_video",

@@ -10,6 +10,27 @@
 
 本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
 
+## 网页搜索配置
+
+`search_web` 使用 DeepSeek 官方 Search API，与 `models.agent` / `models.supervisor` 独立。
+省略下列配置时采用所示默认值；缺少 key 只影响搜索工具，不阻塞不使用搜索的 Chat。
+
+```yaml
+web_search:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+```
+
+key 保存在环境变量中。`base_url` 是 HTTPS 服务根地址，适配器追加 `/v1/tools/search`；
+不要填写完整 endpoint 或尾部 `/v1`。连接配置修改后重启 API；本地启动器也会检测
+所选搜索 key 的变更。查询限 128 字符，支持 `site:`、`lang:` 等官方操作符，
+返回供模型阅读的摘要；搜索失败不自动改用 DDGS。合同和实测见
+[DeepSeek 搜索 TRD](design/03-product-reassessment/deepseek-web-search-trd.md)。
+
+2026-11-02 本需求按明确要求在独立测试实例使用 DeepSeek Flash low，不调用已无额度的 Kimi；
+这不改动主工作区的模型选择或已有视频任务快照。
+
 ## 模型定义与默认引用
 
 `agent`、`vision`、`transcription`、`embedding`、`rerank` 是现有业务使用的默认引用。`models` 也接受任意命名引用，例如 `document_reader`；引用名称不决定供应商和协议。

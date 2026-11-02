@@ -1930,7 +1930,7 @@ def test_provider_gets_initial_background_captions_and_updated_warm_turn(tmp_pat
         _completion(content="Next turn explanation."),
     ])
     adapter = OpenAIAgentModel(
-        "text-model", base_url="https://unused.invalid", api_key="test", client=client,
+        "text-model", base_url="https://unused.invalid", api_key="test", client=client, stream=False,
         request_timeout_seconds=30, provider_name="test", max_output_tokens=1000,
     )
     model = DeepAgentsSupervisorModel(
@@ -2267,3 +2267,28 @@ def test_query_batch_does_not_multiply_a_smaller_model_allowance():
     )
     assert model.tool_results[0]["error"]["code"] == "QUERY_BUDGET_EXCEEDED"
     assert video.calls == []
+
+
+def test_web_query_limit_does_not_shorten_video_query_contract():
+    from pydantic import ValidationError
+    from agent.chat.supervisor import WebSearchArguments, VideoSearchArguments
+    assert WebSearchArguments(query="界" * 128).query == "界" * 128
+    with pytest.raises(ValidationError):
+        WebSearchArguments(query="界" * 129)
+    assert VideoSearchArguments(query="界" * 500).query == "界" * 500
+    web = FakeWebSearcher()
+    model = FakeSupervisorModel(calls=("search_web",), queries=("界" * 129,))
+    _runtime(model, web=web).kick(_inputs(), load_video_context=lambda: [])
+    assert web.calls == []
+    assert model.tool_results[0]["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_web_auth_failure_is_non_retryable_tool_feedback():
+    class UnauthorizedWebSearcher(FakeWebSearcher):
+        def search(self, *args, **kwargs):
+            raise WebSearchError("DeepSeek search returned HTTP 401", retryable=False)
+    model = FakeSupervisorModel(calls=("search_web",), answer="Search is unavailable.")
+    result = _runtime(model, web=UnauthorizedWebSearcher()).kick(_inputs(), load_video_context=lambda: [])
+    assert model.tool_results[0]["error"]["code"] == "WEB_SEARCH_FAILED"
+    assert model.tool_results[0]["error"]["retryable"] is False
+    assert result.content == "Search is unavailable."

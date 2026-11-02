@@ -552,3 +552,24 @@ def test_pi_configuration_is_rejected(tmp_path, field):
     _write_config(config_path, payload)
     with pytest.raises(ValidationError):
         load_config(config_path)
+
+
+def test_web_search_configuration_is_independent_of_chat_model(tmp_path):
+    payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    payload["web_search"] = {"provider": "deepseek", "base_url": "https://search.example.com/", "api_key_env": "SEARCH_KEY"}
+    path = tmp_path / "model-config.yaml"
+    path.write_text(yaml.safe_dump(payload))
+    config = load_config(path)
+    assert config.web_search.base_url == "https://search.example.com"
+    assert config.web_search.api_key_env == "SEARCH_KEY"
+    assert config.model_dump()["web_search"]["provider"] == "deepseek"
+
+
+@pytest.mark.parametrize("options", [
+    {"provider": "ddgs"}, {"api_key_env": ""}, {"base_url": "http://example.com"},
+    {"base_url": "https://user:key@example.com"}, {"base_url": "https://example.com?key=secret"},
+])
+def test_web_search_configuration_rejects_invalid_provider_or_credentials(options):
+    from gateway.config import WebSearchConfig
+    with pytest.raises(ValidationError):
+        WebSearchConfig(**options)

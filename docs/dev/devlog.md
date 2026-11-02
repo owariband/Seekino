@@ -26,6 +26,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-02：搜索使用未固定后端的 DDGS，切换模型未改变检索供应商](#devlog-deepseek-web-search-20261102) | C24、DeepSeek 官方搜索接入 |
 | [2026-10-31：模型温度被入口写死，业务配置无法生效](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
 | [2026-10-31：模型入口写死 stream，导致配置失效与长请求等待](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
 | [2026-10-30：Kimi 长 Chunk 非流式请求连续 504，阻塞 Parse](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
@@ -121,6 +122,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-deepseek-web-search-20261102"></a>
+## 2026-11-02：搜索使用未固定后端的 DDGS，切换模型未改变检索供应商
+
+### 问题与现状
+
+Chat 改用 DeepSeek 后，search_web 仍调用未指定 backend 的 DDGS，无法从模型配置判断真实搜索来源。已有工具样本还存在空结果和无效引用，需要将供应商接入与答案质量分开验证。[PR #28](https://github.com/owariband/Seekino/pull/28) / [TRD](../design/03-product-reassessment/deepseek-web-search-trd.md) 直接基于 dev；早期错误地将试跑环境写成 #18→#25→#28 合并依赖，现已剥离上游历史并纠正。
+
+### 方案候选
+
+接入官方独立 Search REST，复用现有 key、工具循环及标题/URL/摘要合同；不切换模型协议、不加入 Fetch 或额外生成调用。网页参数单独限制 128 字符，视频保持 500；按官方错误分级反馈，日志可确认供应商及耗时。移除 DDGS，搜索失败明确返回，不静默更换来源。
+
+### 方案验证
+
+独立 dev 基线相关回归 432 passed，工具过滤说明调整后 Supervisor 137 passed。真实页面两轮 9 次 Search 加一次探针均 HTTP 200、有结果。首轮普通关键词未找到直接官方文档；补充 site/lang 说明后，模型五次均限定官方站点并给出一条可核验文档链接。两个样本的无效引用和错误断言都保留，未因接口成功关闭质量验收。证据见[实施报告](../report/gateway/deepseek-web-search-20261102.md)。
+
+### 指标对比
+
+关注实际供应商、等待、调用成本和证据正确性。页面两轮 Search 分别 4/5 次，单次 0.303–0.839 s；Server 整轮 12.859/13.765 s，模型调用 3/4 次。相比旧 DDGS 仅能确认供应商明确，输入与历史不同，未声称总体提速。7 次模型调用 input 42,456 / output 2,911 tokens；10 次 Search 估算 $0.0075，不含生成、非账单。第二轮仍有 3 处未核实链接和事实表述缺陷，C24 保持 TODO；采用接入实现并保留独立测试页面，未向主环境部署。
 
 <a id="devlog-kimi-streaming-20261030"></a>
 
