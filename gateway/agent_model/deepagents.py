@@ -44,6 +44,7 @@ from gateway.ark.agent import (
 from gateway.media import ToolImageArtifact, prepare_input_messages, require_vision_input
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.usage import capture_model_usage
+from gateway.model_events import ModelTextDelta, observe_model_text
 
 from .context import ContextWindowPolicy, measure_context
 from .contracts import AgentLoopModel, SupervisorSessionContext
@@ -155,6 +156,7 @@ class _GatewayChatModel(BaseChatModel):
     _max_model_calls: int | None = PrivateAttr(default=None)
     _model_calls: int = PrivateAttr(default=0)
     _invalid_tool_messages: dict[str, ToolMessage] = PrivateAttr(default_factory=dict)
+    _delivered_text: bool = PrivateAttr(default=False)
 
     @property
     def _llm_type(self) -> str:
@@ -172,6 +174,7 @@ class _GatewayChatModel(BaseChatModel):
 
     def _generate(self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
         self._check()
+        self._delivered_text = False
         timeout = min(float(kwargs.get("timeout") or self._remaining()), self._remaining())
         tools = list(kwargs.get("tools") or [])
         specs = [
@@ -271,7 +274,7 @@ class _GatewayChatModel(BaseChatModel):
                 turn = request(fallback=self._fallback_active, request_timeout=timeout)
             except (OpenAIFunctionCallingError, ArkFunctionCallingError) as error:
                 fallback_model = getattr(adapter, "fallback_model_name", None)
-                if self._fallback_active or not fallback_model:
+                if self._fallback_active or not fallback_model or self._delivered_text:
                     raise
                 remaining = min(timeout - (monotonic() - started_at), self._remaining())
                 if remaining <= 0:
@@ -358,8 +361,21 @@ class _HostControlMiddleware(AgentMiddleware):
                 self._handle_text(message.text)
 
 
+class _PublicTextMiddleware(AgentMiddleware):
+    """Observe only the model call inside summarization, not its private work."""
+
+    def __init__(self, observer: Callable[[ModelTextDelta], None] | None) -> None:
+        self._observer = observer
+
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        with observe_model_text(self._observer):
+            return handler(request)
+
+
 class DeepAgentsSupervisorModel:
     """Run the SDK harness, confirming its final text after business storage."""
+
+    supports_text_deltas = True
 
     def __init__(
         self, *, session_store: DeepAgentSessionStore, model: str, provider_name: str,
@@ -395,6 +411,7 @@ class DeepAgentsSupervisorModel:
         max_input_chars: int | None = None,
         image_urls: Sequence[str] = (),
         session_context: SupervisorSessionContext | None = None,
+        handle_text_delta: Callable[[ModelTextDelta], None] | None = None,
     ) -> None:
         del session_context
         if not prompt.strip() or not thread_id or not message_id:
@@ -433,6 +450,11 @@ class DeepAgentsSupervisorModel:
             model._remaining = remaining
             model._max_model_calls = max_model_calls
             model._max_input_chars = self._max_input_chars if max_input_chars is None else max_input_chars
+            def deliver_delta(delta: ModelTextDelta) -> None:
+                check()
+                model._delivered_text = True
+                assert handle_text_delta is not None
+                handle_text_delta(delta)
             if self._context_window_policy is not None:
                 model._maximum_input_tokens = self._context_window_policy.maximum_input_tokens
                 # Application compaction thresholds are not the model's actual capacity.
@@ -453,6 +475,11 @@ class DeepAgentsSupervisorModel:
                     keep=("tokens", policy.compact_target_tokens), trim_tokens_to_summarize=max(1, summary_budget),
                     token_counter=_count_context_tokens,
                 ))
+            # Keep HostControl.before_model ahead of compaction so newly acquired
+            # images still participate in its budget; observe text only inside it.
+            middleware.append(_PublicTextMiddleware(
+                deliver_delta if handle_text_delta is not None else None,
+            ))
             def build_graph(checkpointer):
                 return create_deep_agent(
                     model=model, tools=list(tools), system_prompt=prompt,

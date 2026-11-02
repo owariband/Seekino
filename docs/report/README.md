@@ -31,6 +31,8 @@
 
 ## Gateway
 
+[2026-11-02 DeepSeek 网页搜索接入](gateway/deepseek-web-search-20261102.md)：独立 dev 基线、官方 HTTP 接入、离线边界与真实页面样本；保留回答质量失败案例。
+
 流式接入：[2026-10-30 正式 Kimi 生成与 Parse 入口验证](gateway/kimi-streaming-20261030.md)。工厂、直接 JSON 与视觉工具 SSE 覆盖；合成图和原 189 帧长 Chunk 均完成，部署与整集效果单独验收。
 
 API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-20261030.md)。两轮各 10 路短文本请求全部通过，关闭重试，保留串行对照、逐请求时间与用量；不等于长视频解析吞吐验收。
@@ -56,6 +58,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 - [agent-bridge-stages.svg](gateway/bridge/agent-bridge-stages.svg)
 
 ## Server
+
+Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-streaming-20261101.md)。供应商完成前正文持久化、非流式/缓冲反例、浏览器真实增长和 FTT 采证；真实课程模型与部署仍待试点。
 
 课程闭环：[2026-11-01 独立 QA 首轮](server/course-qa-20261101.md)。真实浏览器三轮、来源跳转与恢复，保留 178 秒出处追问阻断、缓存条件和未提交运行代码的证据边界；不作为整课或七集放行。
 

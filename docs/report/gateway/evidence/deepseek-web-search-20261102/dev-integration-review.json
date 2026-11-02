@@ -1,0 +1,38 @@
+{
+  "base": "56e7977721e51a61b20894c9d38fa775d9300c70",
+  "pr25": "04eecafd38bb7ec4e601c39d9f68f33059621daa",
+  "pr28": "8ea667c0c4755513e9ee92e6ff2b62b1815c9d7a",
+  "backend": {
+    "tests": 1087,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "frontend_passed": 159,
+  "typecheck": "passed",
+  "build": "passed",
+  "remote_checks": [],
+  "draft": [
+    25,
+    28
+  ],
+  "merge_conflicts": [
+    "agent/chat/supervisor.py",
+    "docs/design/03-product-reassessment/README.md",
+    "docs/dev/devlog.md",
+    "docs/dev/problems.md"
+  ],
+  "scope": "PR #28 synced latest dev; implementation and test files match the passed combined checkout byte-for-byte.",
+  "source_sha256": {
+    "agent/chat/supervisor.py": "d9184827af31774af26ebdfc3510f19546e498163696adb3bc480dd28cbf1a14",
+    "gateway/streaming/chat.py": "0302e2ea4ed995d91133f323c1b5d0a8941f94cd2f7fa7caf26c7f12a3d82a0b",
+    "gateway/agent_model/deepagents.py": "197bf78545038631cf01be26771ac9f946aa8a8fa1e3191848e46cfb918bbf44",
+    "gateway/web_search.py": "e22db95cd2f78c4a1fe55f4cf27ac40f981dfdaae082e65340c8949cf3c957d3",
+    "gateway/config.py": "ded4004d4ab1cff58c58df9aee38c19401e8e1314377ef495373312a9b3d02e0",
+    "server/service/agent_chat.py": "81a52705d883c9f9dd6b68a109d684a06b1406eadff90826fffb15de5fa8407f",
+    "server/service/agent_chat_stream.py": "9dc3f5076088328377efc982084efedd39173cb8e219da611e11b305dda0c6a4",
+    "web/src/api/chatDelivery.ts": "6a0a31fe1dc9cf2a10db7f071af65896ededc4dff0f3f45bfacbab80add4d7b7"
+  },
+  "actual_dev_after_pr25": "2cd27caae3fe3f34dd0e57dbbb516eadffbd4085",
+  "verified_identical_files": 624
+}

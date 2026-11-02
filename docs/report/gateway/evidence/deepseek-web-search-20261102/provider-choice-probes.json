@@ -1,0 +1,74 @@
+[
+  {
+    "provider": "ddgs",
+    "backend": "auto",
+    "api_credential_available_to_adapter": false,
+    "query": "asyncio.sleep site:docs.python.org",
+    "status": "success",
+    "result_count": 5,
+    "results": [
+      {
+        "title": "Coroutines and tasks — Python 3.15.2 documentation",
+        "url": "https://docs.python.org/3/library/asyncio-task.html",
+        "snippet_chars": 200
+      },
+      {
+        "title": "asyncio — Asynchronous I/O — Python 3.15.2 documentation",
+        "url": "https://docs.python.org/3/library/asyncio.html",
+        "snippet_chars": 351
+      },
+      {
+        "title": "A conceptual overview of asyncio — Python 3.15.2 documentation",
+        "url": "https://docs.python.org/3/howto/a-conceptual-overview-of-asyncio.html",
+        "snippet_chars": 338
+      },
+      {
+        "title": "High-level API Index — Python 3.15.2 documentation",
+        "url": "https://docs.python.org/3/library/asyncio-api-index.html",
+        "snippet_chars": 321
+      },
+      {
+        "title": "Developing with asyncio — Python 3.15.2 documentation",
+        "url": "https://docs.python.org/3/library/asyncio-dev.html",
+        "snippet_chars": 392
+      }
+    ],
+    "elapsed_ms": 2714.031
+  },
+  {
+    "provider": "deepseek",
+    "backend": null,
+    "api_credential_available_to_adapter": true,
+    "query": "asyncio.sleep site:docs.python.org",
+    "status": "success",
+    "result_count": 5,
+    "results": [
+      {
+        "title": "asyncio --- Asynchronous I/O",
+        "url": "https://docs.python.org/fr/3.12/library/asyncio.html#audit_event_cpython_run_stdin_0",
+        "snippet_chars": 128
+      },
+      {
+        "title": "asyncio — Entrées/Sorties asynchrones",
+        "url": "https://docs.python.org/fr/3.11/library/asyncio.html#asyncio-cli",
+        "snippet_chars": 70
+      },
+      {
+        "title": "asyncio — Asynchronous I/O",
+        "url": "https://docs.python.org/es/3/library/asyncio.html",
+        "snippet_chars": 140
+      },
+      {
+        "title": "asyncio --- 异步 I/O",
+        "url": "https://docs.python.org/zh-cn/3.15/library/asyncio.html#module-asyncio",
+        "snippet_chars": 155
+      },
+      {
+        "title": "A Conceptual Overview of asyncio",
+        "url": "https://docs.python.org/3.14/howto/a-conceptual-overview-of-asyncio.html",
+        "snippet_chars": 600
+      }
+    ],
+    "elapsed_ms": 587.878
+  }
+]

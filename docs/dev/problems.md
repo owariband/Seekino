@@ -678,11 +678,36 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 排序日期：2026-11-01。
 
-状态：TODO。独立 [PRD](../design/03-product-reassessment/chat-streaming-prd.md) 已建立，业务实现及真实流式验收待完成。原 QA 把非流式完整回复的正文到达时间标为 FTT，现已撤回三题旧 FTT，并将其字段置空；原数值另存为首段整包正文到达耗时。Q02/Q03 的 29.576/27.231 秒不是真实流式 FTT，无法据此判断模型首字或计算流式提速收益。
+状态：TODO。沿用课程 QA 的 C23；原始产品要求见 [Chat 流式 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)，实施由 [Chat 流式 TRD](../design/03-product-reassessment/chat-streaming-trd.md) / [PR #25](https://github.com/owariband/Seekino/pull/25) 承接。PR #25 已于 2026-11-02 直接合入 dev（`2cd27caa`），不依赖 ASR PR #18；待验收范围继续保留。
 
-实现缺口：历史入口 `stream=False`，内部 Deep Agents 在 `after_model` 才交付完整正文；QA 分支虽有 B24 的流式协议接收，仍先收齐模型结果。因此配置、供应商流式、页面实时增量必须分别验证。Q02/Q03 完整模型调用为 29.370/27.071 秒，结束后 9/32 ms 生成正文快照；这些仍是有效的整包等待证据。Kimi 的 `reasoning_effort=none` 只省略参数，实际存在推理 token，但没有逐阶段时间可推算其延迟。
+课程 QA 的 9.173 / 29.576 / 27.231 秒是非流式完整正文到达耗时，真实 FTT 未采集，旧标注撤回。仅启用供应商 stream=true 仍会被 Gateway 收齐和 after_model 发布挡住。
+
+2026-11-01 进展：已接通 Deep Agents 的可展示正文增量、持久快照与调用来源，保留完整工具校验；浏览器分别采集接收、可见 DOM 和 TT，离线校验原始供应商正文与完成前展示后才输出有效 FTT。非流式、收齐缓冲、缺证、reasoning/空包反例不得填数。隔离回归和验证边界见[实施报告](../report/server/chat-streaming-20261101.md)及 [devlog](devlog.md#devlog-chat-streaming-delivery-20261101)。
+
+2026-11-02：增量合同从供应商协议文件独立为 Gateway 通用事件，Supervisor 移除发布频率控制，Server 负责快照合并和终态前缀保存；Chat 诊断目录由 Server 注入。相关回归 596 passed / 1 skipped，见[边界复核记录](../report/server/chat-streaming-20261101.md#boundary-review-20261102)。
+
+2026-11-02 真实试跑：本 worktree 独立 API/Web、专用 MySQL/ES 测试数据已启动；Chrome 长回答在模型完成前增长 15 次，首 token 27.211 s（`**`）、可读文字 32.811 s、TT 61.594 s；工具场景进度 13.234 s、TT 145.758 s。Gateway 接收记录已有 3.5–6.3 s 的批次空档。见[真实运行报告](../report/server/chat-streaming-live-20261102.md)。
+
+2026-11-02 后续：已将 Kimi Chat/Agent 的 `none` 映射为显式 `low`；415 项回归通过，独立实例真实请求确认生效。长解释单样本首 token 23.248 s、TT 52.186 s、reasoning 513 tokens，见[复测](../report/server/chat-streaming-live-20261102.md#kimi-low-20261102)。
+
+2026-11-02 DeepSeek 试跑：独立实例已切至 low；相同矩阵题首 token 4.758 s、TT 14.569 s，关闭推理为 0.769 / 7.989 s。四次普通 Chat 的流式核验通过；数学正确，但工具题措辞和引用未全部通过，详见[记录](../report/server/chat-streaming-live-20261102.md#deepseek-20261102)。本轮未修改业务实现，保留质量缺口。
+
+待验收：正常观看页、Q02/Q03 同条件各至少三个样本、内容与原片来源质量及性能目标。需明确格式前缀与可读正文的计量，并定位批量接收原因；不能用上述普通 Chat 试跑关闭 C23 或宣称提速达标。
+
+历史更正（2026-11-01）：独立 [PRD](../design/03-product-reassessment/chat-streaming-prd.md) 已建立，业务实现及真实流式验收待完成。原 QA 把非流式完整回复的正文到达时间标为 FTT，现已撤回三题旧 FTT，并将其字段置空；原数值另存为首段整包正文到达耗时。Q02/Q03 的 29.576/27.231 秒不是真实流式 FTT，无法据此判断模型首字或计算流式提速收益。
+
+历史实现缺口：历史入口 `stream=False`，内部 Deep Agents 在 `after_model` 才交付完整正文；QA 分支虽有 B24 的流式协议接收，仍先收齐模型结果。因此配置、供应商流式、页面实时增量必须分别验证。Q02/Q03 完整模型调用为 29.370/27.071 秒，结束后 9/32 ms 生成正文快照；这些仍是有效的整包等待证据。Kimi 的 `reasoning_effort=none` 只省略参数，实际存在推理 token，但没有逐阶段时间可推算其延迟。
 
 验收：实际模型请求为流式，正文在足够长的模型生成结束前持续到达并展示；请求、供应商 delta、Server、客户端和页面证据可关联。非流式、上层收齐后转发、固定进度等反例不得产生合格 FTT；同时验证 TT、来源、取消和恢复，工具参数仍收齐校验。实现由独立修复分支承接，QA 以新真实流式基线复验，不能用旧数值作 FTT 对照。本次仅建立需求与纠正记录，没有新增模型调用或业务修改。依据见 [更正报告](../report/server/course-qa-20261101.md#ftt-trace)、[脱敏时间线](../report/server/evidence/course-qa-ftt-trace-20261101.json) 和 [更正记录](devlog.md#devlog-chat-streaming-metric-correction-20261101)。
+
+<a id="deepseek-web-search-c24"></a>
+### C24：Chat 缺少搜索配置，用户无法选择免 key 或 API 接入
+
+排序日期：2026-11-02。状态：TODO（免 key / API 选择已验证，回答与引用质量待验收）。
+
+[TRD](../design/03-product-reassessment/deepseek-web-search-trd.md) / [PR #28](https://github.com/owariband/Seekino/pull/28) 直接向 dev 集成，无 #18/#25 合并依赖。已支持默认 DDGS 免 key、显式选择 DeepSeek，保留结果与视频查询合同；配置修正回归 604 passed / 1 skipped，两种真实探针各返回 5 条。首版 DeepSeek 接入曾有 432 项回归通过。独立 DeepSeek low 页面两轮 9 次 Search 均成功，另有 1 次成功探针；单次搜索 0.303–0.839 s，整轮 12.859/13.765 s，不构成稳定性能对照。
+
+过滤说明能引导模型使用官方域名，但第二轮仍有 3 处未核实链接和不准确表述。接口接通不代表答案通过；下一步核对返回 URL、模型引用及过滤结果，改善摘要证据使用后再验收。原始样本与限制见[报告](../report/gateway/deepseek-web-search-20261102.md)；主环境未部署；2026-11-02 决定通过 PR #28 向 dev 集成搜索配置，质量待验收事实继续保留。
 
 ### B24：模型 stream 被入口写死且正式 Parse 丢失开关
 

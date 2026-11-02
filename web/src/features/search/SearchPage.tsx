@@ -1,3 +1,4 @@
+import { markChatTextRendered } from "../../api/chatDelivery";
 import { ArrowUp, ChevronDown, History, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
@@ -190,9 +191,20 @@ const answerComponents: Components = {
   table: ({ children }) => <div className={styles.answerTable}><table>{children}</table></div>,
 };
 
-function MarkdownAnswer({ markdown }: { markdown: string }) {
+function MarkdownAnswer({ markdown, conversationId, messageId }: { markdown: string; conversationId: string; messageId: string }) {
+  const element = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Observe committed, visible DOM on the next frame; this is separate from
+    // receipt and is not a claim about the exact physical paint timestamp.
+    const frame = requestAnimationFrame(() => {
+      if (element.current?.isConnected && element.current.getClientRects().length && element.current.textContent?.trim()) {
+        markChatTextRendered(conversationId, messageId, element.current.textContent.length);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [markdown, conversationId, messageId]);
   return (
-    <div className={styles.answerText}>
+    <div ref={element} className={styles.answerText}>
       <Markdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={defaultUrlTransform} components={answerComponents}>{markdown}</Markdown>
     </div>
   );
@@ -743,7 +755,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
                     {displayMode === "debug" && message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : message.searchResult?.partial ? <p className={styles.resultWarnings} role="status">{t("本次回答仅覆盖当前可检索的视频。")}</p> : null}
                     {messageRenderBlocks(message).map((block, index, blocks) => {
-                      if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} /></SeekContext.Provider>;
+                      if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} conversationId={message.conversationId} messageId={message.messageId} /></SeekContext.Provider>;
                       if (block.type === "tool") {
                         const active = message.status === "PROCESSING" && block.status === "inProgress";
                         const status = block.status === "completed" ? t("已完成") : block.status === "failed" ? t("调用失败") : active ? t("进行中") : t("未确认完成");
