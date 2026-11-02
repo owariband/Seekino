@@ -305,6 +305,17 @@ and a shared deadline still apply. Network/control/lease failures
 do not become Schema repair instructions. Snapshot conflicts refresh only Refine and
 do not reset that deadline. No result is committed before all checks pass.
 
+The host subscribes before loading the snapshot. After a successful transaction,
+only overlapping executions receive actual member content-version changes; scope-only
+and no-op commits do not interrupt generation. The host cancels only the current
+request, waits for transport/slot cleanup, and then signals `RefineInputChanged`.
+A complete response wins a simultaneous update and can still pass the existing merge.
+On refresh the Agent retains its latest complete candidate and precise validation or
+merge error alongside the newly loaded snapshot. It neither accumulates old candidates
+nor resumes hidden model reasoning. All generations share the original deadline.
+Notifications are process-local optimization; durable versions and leases still fence
+commits after restarts, missed notifications, Prefix or external-process writes.
+
 [`ParseContextCanvas`](timelineEvent_canvas.py) remains an internal Refine snapshot
 for prefill/provenance and diff calculation. Prefix still uses shared
 [`ContextCanvas`](../utils/context_canvas.py) tools. Complete Refine output may remove

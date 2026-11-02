@@ -598,7 +598,7 @@ def test_conflict_refreshes_only_refinement_and_retains_intervening_events():
     ]
 
     async def refine(snapshot, *, prompt, remaining_seconds):
-        body = json.loads(prompt.split("Input: ", 1)[1])
+        body, _ = json.JSONDecoder().raw_decode(prompt.split("Input: ", 1)[1])
         member = body["members"][0]
         member["content"]["timeline"][0]["description"] = "locally corrected"
         return {"members": [{"sequence_no": member["sequence_no"], **member["content"]}]}

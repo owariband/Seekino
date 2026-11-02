@@ -8,6 +8,15 @@ from ..input import ParseInput
 from ..state import LeaseToken
 
 
+class RefineInputChanged(RuntimeError):
+    """Refresh the snapshot without discarding the last complete candidate."""
+
+    def __init__(self, reason: str, *, context: dict[str, Any] | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.context = context or {}
+
+
 class RefineInput(TypedDict):
     """一次区间纠偏的输入快照；成员映射以 chunk_parse_task_id 为 key。"""
 

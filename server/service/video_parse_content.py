@@ -921,7 +921,7 @@ def commit_interval_refinement(
     input_contents: Mapping[str, Mapping[str, Any]],
     detail: Mapping[str, Any] | None,
     committed_at: datetime,
-) -> IntervalParseTaskData:
+) -> tuple[IntervalParseTaskData, dict[str, int]]:
     """Persist members and result under the caller's parent/Interval locks.
 
     The caller advances ready Chunks before committing this same transaction.
@@ -1010,6 +1010,7 @@ def commit_interval_refinement(
             interval.start_sequence_no + interval.chunk_count,
         )
     )
+    changed_member_versions = {}
     for chunk_task, _chunk, result in rows:
         current = deepcopy(dict(result.content or {}))
         updated = candidates[chunk_task.id]
@@ -1017,6 +1018,7 @@ def commit_interval_refinement(
         if content_changed:
             result.content = updated
             result.version += 1
+            changed_member_versions[chunk_task.id] = result.version
         current_detail = deepcopy(dict(result.detail or {}))
         current_detail["scope"] = _ordered_int_union(
             current_detail.get("scope"), member_scope
@@ -1046,4 +1048,4 @@ def commit_interval_refinement(
 
     session.flush()
 
-    return interval
+    return interval, changed_member_versions

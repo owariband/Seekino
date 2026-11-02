@@ -52,6 +52,13 @@ Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺�
 配置、完整性验证及线上效果边界见
 [模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。
 
+模型取消回调按资源嵌套逆序执行，先处理后来注册的流，再关闭客户端。同步 Chat SSE
+在取消已取得的 HTTP/1 响应时先唤醒 socket 阻塞读，再关闭流，避免仅 `close()` 后读线程
+继续等待。HTTP/2 不关闭可能共享的整条连接；尚无响应或未暴露 socket 的适配器保留
+既有取消与超时兜底。本地退出不代表供应商已停止计费。此处仅处理传输，业务更新、
+是否重发、期限与提交条件仍由宿主决定。验证见
+[取消与冲突恢复报告](../docs/report/server/refine-conflict-recovery-20261102.md)。
+
 `ModelBinding.temperature` 同时支持 YAML 和内部创建参数，默认 `0.0`，范围 `[0, 2]`，
 主模型与 fallback 分别传递。Kimi profile 在绑定解析和适配器中固定为 `1.0`，可通过
 `resolve_model_binding()` 查看实际值。Chat、Structured、Deep Agents、视觉 JSON/工具和

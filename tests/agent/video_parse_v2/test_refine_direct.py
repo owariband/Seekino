@@ -304,3 +304,73 @@ def test_repair_locations_refer_to_the_normalized_payload_supplied_to_model():
     )
     asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
     runtime.commit_interval_refinement.assert_awaited_once()
+
+
+def test_commit_conflict_retains_candidate_and_specific_reason_with_fresh_input():
+    from agent.video_parse_v2.refine.input import RefineInputChanged
+
+    snapshot = _voice_snapshot()
+    latest = deepcopy(snapshot)
+    latest["member_versions"]["member"] += 1
+    latest["member_contents"]["member"]["timeline"][0]["description"] = "neighbor committed correction"
+    candidate = response(snapshot)
+    candidate["members"][0]["timeline"][0]["description"] = "my uncommitted correction"
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(side_effect=[snapshot, latest]),
+        generate_interval_refinement=AsyncMock(side_effect=[candidate, response(latest)]),
+        commit_interval_refinement=AsyncMock(side_effect=[
+            RefineInputChanged("timeline_structure_changed", context={"first_mismatch": 2}), True,
+        ]), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    calls = runtime.generate_interval_refinement.await_args_list
+    prompt = calls[1].kwargs["prompt"]
+    assert "neighbor committed correction" in prompt
+    assert '"first_mismatch": 2' in prompt and "timeline_structure_changed" in prompt
+    assert json.loads(prompt.split("\nPrevious uncommitted candidate JSON:\n")[1]) == candidate
+    assert calls[1].kwargs["remaining_seconds"] < calls[0].kwargs["remaining_seconds"]
+    runtime.notify_interval_committed.assert_awaited_once()
+
+
+def test_update_during_schema_repair_keeps_rejected_json_and_field_location():
+    from agent.video_parse_v2.refine.input import RefineInputChanged
+
+    snapshot = _voice_snapshot()
+    config = snapshot["inputs"].parse_config
+    snapshot["inputs"] = snapshot["inputs"].model_copy(update={"parse_config": config.model_copy(
+        update={"execution": config.execution.model_copy(update={"max_retry_count": 1})},
+    )})
+    bad = response(snapshot)
+    bad["members"][0]["timeline"][0]["participants"] = []
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot),
+        generate_interval_refinement=AsyncMock(side_effect=[
+            bad, RefineInputChanged("member_content_updated", context={"changed_versions": {"member": 2}}),
+            response(snapshot),
+        ]), commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    calls = runtime.generate_interval_refinement.await_args_list
+    prompt = calls[2].kwargs["prompt"]
+    assert "members.0.timeline.0" in prompt
+    assert json.loads(prompt.split("\nPrevious uncommitted candidate JSON:\n")[1]) == bad
+    assert calls[2].kwargs["remaining_seconds"] < calls[0].kwargs["remaining_seconds"]
+    runtime.commit_interval_refinement.assert_awaited_once()
+
+
+def test_content_updates_cannot_extend_the_original_deadline(monkeypatch):
+    from agent.video_parse_v2.refine.input import RefineInputChanged
+    import agent.video_parse_v2.refine.agent as module
+
+    ticks = iter([0, 0, 100_000, 100_000])
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    snapshot = _voice_snapshot()
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot),
+        generate_interval_refinement=AsyncMock(side_effect=RefineInputChanged("member_content_updated")),
+        commit_interval_refinement=AsyncMock(), notify_interval_committed=AsyncMock(),
+    )
+    with pytest.raises(TimeoutError, match="deadline"):
+        asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    runtime.generate_interval_refinement.assert_awaited_once()
+    runtime.commit_interval_refinement.assert_not_awaited()

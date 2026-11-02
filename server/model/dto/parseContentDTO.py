@@ -27,6 +27,12 @@ class ChunkParseContentState:
 
 
 @dataclass(frozen=True, slots=True)
+class IntervalRefinementCommit:
+    ready_chunk_ids: tuple[str, ...]
+    changed_member_versions: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
 class IntervalMemberSnapshot:
     interval_parse_task_id: str
     video_parse_task_id: str

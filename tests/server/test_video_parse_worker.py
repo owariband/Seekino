@@ -1399,7 +1399,7 @@ def test_understanding_and_refine_use_direct_json(
     ))
     runtime._artifact_store = _ArtifactResolver()
     monkeypatch.setattr(runtime, "_require_interval_token", lambda *_args, **_kwargs: object())
-    refined = asyncio.run(runtime.generate_interval_refinement(
+    refined = asyncio.run(_bound_refine_generation(runtime,
         {"inputs": inputs, "video_parse_task_id": "video-task", "interval_parse_task_id": "interval",
          "lease": execution.lease, "member_bounds": {"member": (20_000, 30_000)}},
         prompt="refine this interval", remaining_seconds=17,
@@ -2801,7 +2801,7 @@ def test_refine_uses_retained_voice_evidence_without_starting_speaker_encoder(mo
         assert options["schema_name"] == "IntervalRefinementResult"
         return _complete_refine_prompt(supplied)
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
-    result = asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt=prompt, remaining_seconds=60))
+    result = asyncio.run(_bound_refine_generation(host.runtime, snapshot, prompt=prompt, remaining_seconds=60))
     assert len(result.members) == 1
 
 
@@ -2921,7 +2921,15 @@ def test_direct_refine_commit_keeps_snapshot_identity_without_reference_dependen
     reference = _voice_reference(host.encoder, "爽世", "soyo")
     host.runtime._persistence.load_voiceprint_references = lambda _lease: [reference]
     committed = []
-    host.runtime._persistence.commit_interval_refinement = lambda _lease, **values: committed.append(values)
+    from server.model.dto.parseContentDTO import IntervalRefinementCommit
+    from server.service.video_parse_refine_updates import RefineContentUpdates
+    host.runtime._refine_updates = RefineContentUpdates()
+
+    def commit(_lease, **values):
+        committed.append(values)
+        return IntervalRefinementCommit((), {})
+
+    host.runtime._persistence.commit_interval_refinement = commit
     monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_kwargs: lease)
     monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
     canvas = ParseContextCanvas(scope="refine:voice", members={"member": {
@@ -2983,7 +2991,10 @@ def test_refine_commit_conflict_logs_reason_and_safe_context(monkeypatch, voicep
     }
 
     with caplog.at_level("INFO", logger="server.service.video_parse"):
-        assert asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result())) is False
+        from agent.video_parse_v2.refine.input import RefineInputChanged
+        with pytest.raises(RefineInputChanged) as caught:
+            asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result()))
+        assert caught.value.reason == error.reason and caught.value.context == context
     message = next(record.getMessage() for record in caplog.records if "event=refine_commit_conflict" in record.getMessage())
     assert f"task={lease.video_parse_task_id}" in message and "video=video" in message
     assert f"interval {lease.interval_parse_task_id}" in message and "lease=2" in message
@@ -3009,7 +3020,7 @@ def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch
     })})
     assert config.models.refine is None
 
-    asyncio.run(runtime.generate_interval_refinement(
+    asyncio.run(_bound_refine_generation(runtime,
         {"inputs": SimpleNamespace(parse_config=config)}, prompt="refine",
         remaining_seconds=45,
     ))
@@ -3653,3 +3664,20 @@ def test_cancelled_parallel_calls_keep_the_lease_until_every_call_exits():
             await asyncio.gather(*tasks, return_exceptions=True)
 
     asyncio.run(execute())
+
+
+async def _bound_refine_generation(runtime, snapshot, **kwargs):
+    """Adapter-only tests enter the same request scope as the Refine worker."""
+    from server.service.video_parse_refine_updates import RefineSubscription
+    from tests.server.test_video_parse_model_calls import _manager, _Repository
+
+    snapshot = {"video_parse_task_id": "video-task", "interval_parse_task_id": "interval",
+                "member_versions": {"member": 1}, **snapshot}
+    runtime._refine_subscription = ContextVar("test-refine-subscription", default=RefineSubscription(
+        snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"], tuple(snapshot["member_versions"]),
+    ))
+    token = runtime._model_manager.set(_manager(_Repository()))
+    try:
+        return await runtime.generate_interval_refinement(snapshot, **kwargs)
+    finally:
+        runtime._model_manager.reset(token)

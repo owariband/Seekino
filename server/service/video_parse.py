@@ -38,7 +38,7 @@ from agent.video_parse_v2.input import (
     SpeakerEmbeddingModelConfig,
 )
 from agent.video_parse_v2.prefix.context import PrefixContext
-from agent.video_parse_v2.refine.input import RefineInput
+from agent.video_parse_v2.refine.input import RefineInput, RefineInputChanged
 from agent.video_parse_v2.refine.response import RefineModelResponse
 from agent.video_parse_v2.voiceprint import (
     VoiceprintInput, build_tools as build_voiceprint_tools,
@@ -74,6 +74,7 @@ from engine.rag import (
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
 from engine.rag.indexing.events import EventIndexingContract
+from gateway.agent_model.errors import ModelFailureError
 from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
 from gateway.embedding import EmbeddingModel
 from gateway.model_factory import GatewayClient
@@ -121,7 +122,8 @@ from .video_parse_media import (
     PreparedVideoParseMedia,
     VideoParseMediaService,
 )
-from .video_parse_model_calls import VideoParseModelCallManager
+from .video_parse_model_calls import ModelCallRequestScope, VideoParseModelCallManager
+from .video_parse_refine_updates import RefineContentUpdates, RefineSubscription
 
 
 _Result = TypeVar("_Result", bound=BaseModel)
@@ -195,6 +197,10 @@ class VideoParseRuntimeService:
         )
         self._model_manager: ContextVar[VideoParseModelCallManager | None] = ContextVar(
             "video_parse_v2_model_manager", default=None
+        )
+        self._refine_updates = RefineContentUpdates()
+        self._refine_subscription: ContextVar[RefineSubscription | None] = ContextVar(
+            "video_parse_v2_refine_subscription", default=None,
         )
         self._change_events: dict[str, threading.Event] = {}
         # Ready before episode media is published; scoped to the coordinator lease.
@@ -337,17 +343,22 @@ class VideoParseRuntimeService:
     async def refine(self, lease: IntervalParseLease) -> None:
         token = self._interval_lease.set(lease)
         try:
-            task_input = await asyncio.to_thread(
-                self._persistence.load_task_input, lease.video_parse_task_id
-            )
-            async with self._model_stage(
-                lease,
-                task_input,
-                sequence_no=None,
-                category="parse",
-                check_active=lambda: self._require_interval_active(lease),
-            ):
-                await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
+            # Subscribe before reading: commits racing snapshot loading must not be lost.
+            with self._refine_updates.subscribe(
+                lease.video_parse_task_id, lease.interval_parse_task_id, lease.chunk_parse_task_ids,
+            ) as subscription:
+                subscription_token = self._refine_subscription.set(subscription)
+                try:
+                    task_input = await asyncio.to_thread(
+                        self._persistence.load_task_input, lease.video_parse_task_id,
+                    )
+                    async with self._model_stage(
+                        lease, task_input, sequence_no=None, category="parse",
+                        check_active=lambda: self._require_interval_active(lease),
+                    ):
+                        await self.agent.interval_refine.InvokeRefine(lease.interval_parse_task_id)
+                finally:
+                    self._refine_subscription.reset(subscription_token)
         finally:
             self._interval_lease.reset(token)
 
@@ -1259,10 +1270,60 @@ class VideoParseRuntimeService:
             "request_timeout_seconds": min(binding.request_timeout_seconds, remaining_seconds),
             "fallback": fallback,
         })
-        return await self._generate_text_structured(
-            binding, prompt, tools=(), result_type=RefineModelResponse,
-            schema_name="IntervalRefinementResult",
-        )
+        subscription = self._refine_subscription.get()
+        manager = self._model_manager.get()
+        if (subscription is None or manager is None
+                or subscription.interval_id != snapshot["interval_parse_task_id"]):
+            raise RuntimeError("Refine generation requires its bound execution")
+        versions = snapshot["member_versions"]
+        changes = subscription.changes_since(versions)
+        if changes:
+            raise RefineInputChanged("member_content_updated", context={"changed_versions": changes})
+        subscription.generation += 1
+        scope = ModelCallRequestScope(manager)
+        with scope.capture(), model_call_context({"refine_generation": subscription.generation}):
+            request = asyncio.create_task(self._generate_text_structured(
+                binding, prompt, tools=(), result_type=RefineModelResponse,
+                schema_name="IntervalRefinementResult",
+            ))
+        changed = asyncio.create_task(subscription.wait(versions))
+        try:
+            async with asyncio.timeout(remaining_seconds):
+                await asyncio.wait((request, changed), return_when=asyncio.FIRST_COMPLETED)
+                # A complete candidate can still pass the transactional three-way merge.
+                if request.done():
+                    return request.result()
+                changes = changed.result()
+                started = time.monotonic()
+                await self._run_blocking(scope.cancel)
+                try:
+                    # Do not cancel the waiter: the blocking provider must actually exit
+                    # and release its reservation before a replacement can start.
+                    await asyncio.shield(request)
+                except (ModelCallCancelledError, ModelFailureError):
+                    pass
+                await asyncio.to_thread(manager.check_active)
+                _logger.info(
+                    "event=refine_request_superseded interval=%s generation=%s "
+                    "changed_members=%s drain_seconds=%.3f",
+                    snapshot["interval_parse_task_id"], subscription.generation,
+                    json.dumps(changes, sort_keys=True), time.monotonic() - started,
+                )
+                raise RefineInputChanged("member_content_updated", context={"changed_versions": changes})
+        finally:
+            changed.cancel()
+            try:
+                if not request.done():
+                    request.cancel()
+                    try:
+                        await request
+                    except BlockingCallCancelled:
+                        # Preserve the completion handle so Consumer defers lease release.
+                        raise
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            finally:
+                await asyncio.gather(changed, return_exceptions=True)
 
     async def commit_interval_refinement(
         self,
@@ -1285,7 +1346,7 @@ class VideoParseRuntimeService:
             if values:
                 member_updates[task_id] = values
         try:
-            await asyncio.to_thread(
+            receipt = await asyncio.to_thread(
                 self._persistence.commit_interval_refinement, lease,
                 interval_content=result.model_dump(mode="json"), member_updates=member_updates,
                 input_versions=snapshot["member_versions"],
@@ -1308,7 +1369,11 @@ class VideoParseRuntimeService:
                             "used_reference_count": len(snapshot.get("voiceprint_references", []))},
                            ensure_ascii=False, sort_keys=True),
             )
-            return False
+            raise RefineInputChanged(error.reason, context=error.context) from error
+        self._refine_updates.publish(
+            snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"],
+            receipt.changed_member_versions,
+        )
         return True
 
     async def notify_interval_committed(self, snapshot: RefineInput) -> None:

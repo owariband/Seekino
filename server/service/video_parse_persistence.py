@@ -23,6 +23,7 @@ from ..model.dto.parseContentDTO import (
     ChunkParseContentState,
     ChunkIndexingSnapshot,
     IntervalMemberSnapshot,
+    IntervalRefinementCommit,
     ParseExportChunkSnapshot,
 )
 from ..model.dto.taskDTO import (
@@ -800,7 +801,7 @@ class VideoParsePersistenceService:
         input_contents: Mapping[str, Mapping[str, Any]],
         detail: Mapping[str, Any] | None = None,
         now: datetime | None = None,
-    ) -> tuple[str, ...]:
+    ) -> IntervalRefinementCommit:
         """Merge independent event edits under current leases and commit once."""
 
         committed_at = now if now is not None else now_utc()
@@ -808,7 +809,7 @@ class VideoParsePersistenceService:
             locked_intervals = _locked_parent_intervals(
                 session, lease.video_parse_task_id
             )
-            interval = content_ops.commit_interval_refinement(
+            interval, changed_versions = content_ops.commit_interval_refinement(
                 session,
                 lease=lease,
                 interval_content=interval_content,
@@ -825,7 +826,9 @@ class VideoParsePersistenceService:
                 committed_at, locked_intervals=locked_intervals,
             )
             summary_ops.mark_summary_ready(session, interval.video_task_id, now=committed_at)
-            return tuple(queued)
+            receipt = IntervalRefinementCommit(tuple(queued), changed_versions)
+        # No notification may escape a transaction that later rolls back.
+        return receipt
 
     def bind_event_index_target(
         self, lease: ChunkParseLease, configured_target: Mapping[str, Any],

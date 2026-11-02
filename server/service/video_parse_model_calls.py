@@ -225,10 +225,51 @@ class VideoParseModelCallManager:
             raise ModelCallCancelledError("Parse V2 execution was cancelled")
 
 
+class ModelCallRequestScope:
+    """Cancel one generation while its execution retains admission and leases."""
+
+    def __init__(self, manager: VideoParseModelCallManager) -> None:
+        self._manager = manager
+        self._cancelled = Event()
+        self._lock = Lock()
+        self._active: dict[str, ModelCallTracker] = {}
+
+    @contextmanager
+    def capture(self) -> Iterator[None]:
+        with control_model_calls(self):
+            yield
+
+    def acquire(self, call: ModelCallTracker) -> None:
+        if self._cancelled.is_set():
+            raise ModelCallCancelledError("Refine request was superseded")
+        self._manager.acquire(call)
+        with self._lock:
+            cancelled = self._cancelled.is_set()
+            if not cancelled:
+                self._active[call.call_id] = call
+        if cancelled:
+            call.cancel()
+            self._manager.release(call)
+            raise ModelCallCancelledError("Refine request was superseded")
+
+    def release(self, call: ModelCallTracker) -> None:
+        with self._lock:
+            self._active.pop(call.call_id, None)
+        self._manager.release(call)
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled.set()
+            active = tuple(self._active.values())
+        for call in active:
+            call.cancel()
+
+
 __all__ = [
     "ExecutionLease",
     "ModelCallAdmissionError",
     "ModelCallReservations",
+    "ModelCallRequestScope",
     "VideoParseModelCallManager",
 ]
 

@@ -3295,3 +3295,24 @@ def test_direct_refine_persisted_dialogue_bounds_and_prefix(repository, scope, e
         stored = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
         assert stored.content["timeline"][0]["end_seconds"] == 31_440
         assert stored.version == prefix.content_version == 2
+
+
+@pytest.mark.parametrize("change_content", [False, True])
+def test_refine_receipt_reports_only_committed_body_changes(repository, change_content):
+    factory, queue, repo, _, parent, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, parent, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    lease = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    inputs = _refinement_inputs(repo, lease, now=at)
+    member = lease.chunk_parse_task_ids[0]
+    updates = {member: {"persons": ["corrected person"]}} if change_content else {}
+    receipt = repo.commit_interval_refinement(
+        lease, **inputs, interval_content={}, member_updates=updates, now=at,
+    )
+    assert receipt.changed_member_versions == ({member: 2} if change_content else {})
+    with factory() as session:
+        interval = session.get(IntervalParseTask, lease.interval_parse_task_id)
+        assert interval.status == "COMPLETE" and interval.lease_owner is None
+        for task_id, version in receipt.changed_member_versions.items():
+            row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == task_id))
+            assert row.version == version and row.content["persons"] == ["corrected person"]

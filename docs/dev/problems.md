@@ -1585,6 +1585,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
+**11-02 冲突恢复实现：** [PR #26](https://github.com/owariband/Seekino/pull/26) 已补提交后共享成员通知、请求范围取消及最近完整候选/错误位置续接，保留租约、三方合并与原期限。真实本地 HTTP 暴露 close 后阻塞读不退出，已补 HTTP/1 唤醒和嵌套清理顺序；HTTP/HTTPS 的 2+6 次验证全部可释放旧额度并继续新请求。相关扩展回归按唯一用例合并 2229 通过，5 项上游已有失败在 b01afce9 重现。原隔离服务现已停止，本轮没有重启 API 或真实模型调用；真实 Kimi 并发收益、内容质量和整课交付仍未验，B07 保持 TODO。[实现报告](../report/server/refine-conflict-recovery-20261102.md)、[TRD §3.13/4.18/6.9](../design/03-product-reassessment/video-parse-performance-trd.md)、[devlog](devlog.md#devlog-refine-conflict-recovery-20261102)。
+
 **11-01 21:56 基线与新方案评审：** v4重新查询为PARSING_FAILED：Understanding81/117、Refine53/115、Indexed47/117，运行约99分钟，新增ASR0。Refine成功尝试p50 247.989s（n=53），同53个成功区间首次执行至提交p50 820.336s；49次时间线冲突、39次Schema拒绝与36次超时存在共现。最后一批租约丢失根因未定位，现API仍未加载此前反馈/排序修复。已冻结[完整基线](../report/server/refine-interruption-baseline-20261101.md)；提交后通知、保存context、仅中断请求再重发为待review候选，未开发/部署/试跑，两组对照须先共同包含既有修复。完整课程及检索回看追问仍未验收，B07保持TODO。见[TRD §1.9–6.6](../design/03-product-reassessment/video-parse-performance-trd.md)、[devlog](devlog.md#devlog-refine-interruption-baseline-20261101)。
 
 **11-01 Refine反馈补强：** 已修复“仅带错误、没有上一份完整JSON”的修正上下文；纯排序由宿主确定性归一化，其他Schema/成员/时间/版本/租约校验保留。519项回归通过，2份真实错误输出（41/38事件）只重排即通过结构门禁、无额外模型请求。当前API未重启以保留整课在途请求；新行为接入、真实修正耗时/用量及共享Chunk冲突仍待验，B07保持TODO。见[devlog](devlog.md#devlog-refine-feedback-repair-20261101)。

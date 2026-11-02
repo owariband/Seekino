@@ -1,6 +1,8 @@
 """Collect Chat Completions SSE before exposing a result or executing tools."""
 from __future__ import annotations
 
+import socket
+
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from time import monotonic
@@ -94,7 +96,7 @@ def _iter_chat_chunks(
     check()
     stream = completions.create(**request)
     usage_call.capture_response(stream.response, include_usage=False)
-    unregister = usage_call.add_cancel_callback(stream.close)
+    unregister = usage_call.add_cancel_callback(lambda: _cancel_chat_stream(stream))
     received_choice = False
     terminal = False
     try:
@@ -131,3 +133,25 @@ def _iter_chat_chunks(
             "Chat completion stream ended without a terminal choice",
             reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
         )
+
+
+def _cancel_chat_stream(stream: Any) -> None:
+    """Wake a blocked HTTP/1 read before closing the response and its client.
+
+    Closing a socket from another thread alone may leave recv blocked. HTTP/2
+    connections can be multiplexed, so never shut down their shared socket.
+    """
+    try:
+        response = getattr(stream, "response", None)
+        extensions = getattr(response, "extensions", {})
+        if (not getattr(response, "is_closed", False)
+                and extensions.get("http_version") in {b"HTTP/1.0", b"HTTP/1.1"}):
+            network = extensions.get("network_stream")
+            sock = network.get_extra_info("socket") if network is not None else None
+            if sock is not None:
+                sock.shutdown(socket.SHUT_RDWR)
+    except (AttributeError, OSError):
+        # SDK/test transports may not expose a socket, or it may already be closed.
+        pass
+    finally:
+        stream.close()

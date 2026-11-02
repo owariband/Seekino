@@ -250,3 +250,49 @@ def test_heartbeat_cancels_active_transports_when_reservation_is_lost():
         manager.acquire(ModelCallTracker(
             provider="ark", model="embedding", operation="text_embedding"
         ))
+
+
+def test_request_scope_cancel_preserves_other_requests_and_parent_execution():
+    from server.service.video_parse_model_calls import ModelCallRequestScope
+
+    repository = _Repository()
+    manager = _manager(repository)
+    first, second = ModelCallRequestScope(manager), ModelCallRequestScope(manager)
+    a, b = (ModelCallTracker(provider="test", model="refine", operation="generate") for _ in range(2))
+    first.acquire(a)
+    second.acquire(b)
+    first.cancel()
+    assert a.cancelled and not b.cancelled
+    manager.raise_if_cancelled()
+    first.release(a)
+    second.release(b)
+    third = ModelCallRequestScope(manager)
+    c = ModelCallTracker(provider="test", model="refine", operation="generate")
+    third.acquire(c)
+    third.release(c)
+    assert len(repository.reserved) == len(repository.released) == 3
+
+
+@pytest.mark.parametrize("during_reservation", [False, True])
+def test_request_cancel_fences_admission_race(during_reservation):
+    from server.service.video_parse_model_calls import ModelCallRequestScope
+
+    repository = _Repository()
+    manager = _manager(repository)
+    scope = ModelCallRequestScope(manager)
+    if during_reservation:
+        reserve = repository.reserve_model_call
+
+        def racing_reserve(*args, **kwargs):
+            result = reserve(*args, **kwargs)
+            scope.cancel()
+            return result
+
+        repository.reserve_model_call = racing_reserve
+    else:
+        scope.cancel()
+    call = ModelCallTracker(provider="test", model="refine", operation="generate")
+    with pytest.raises(ModelCallCancelledError):
+        scope.acquire(call)
+    assert len(repository.reserved) == len(repository.released) == int(during_reservation)
+    manager.raise_if_cancelled()

@@ -236,3 +236,28 @@ def test_query_rewriter_uses_its_creation_time_stream_setting(setting, temperatu
     assert model.rewrite("answer", Answer, timeout_seconds=3).answer == "ok"
     assert len(requests) == 1 and requests[0]["stream"] is (setting is not False)
     assert requests[0]["temperature"] == (temperature or 0)
+
+
+@pytest.mark.parametrize("protocol", [b"HTTP/1.0", b"HTTP/1.1", b"HTTP/2", None])
+@pytest.mark.parametrize("already_closed", [False, True])
+@pytest.mark.parametrize("response_closed", [False, True])
+def test_stream_cancel_wakes_http1_reads_without_killing_multiplexed_connections(protocol, already_closed, response_closed):
+    import socket
+    from types import SimpleNamespace
+    from gateway.streaming.chat import _cancel_chat_stream
+
+    operations = []
+
+    def shutdown(how):
+        assert how == socket.SHUT_RDWR
+        operations.append("shutdown")
+        if already_closed:
+            raise OSError("socket closed")
+
+    stream = SimpleNamespace(
+        response=SimpleNamespace(is_closed=response_closed, extensions={"http_version": protocol, "network_stream": SimpleNamespace(
+            get_extra_info=lambda key: SimpleNamespace(shutdown=shutdown) if key == "socket" else None,
+        )}), close=lambda: operations.append("close"),
+    )
+    _cancel_chat_stream(stream)
+    assert operations == (["shutdown", "close"] if not response_closed and protocol in {b"HTTP/1.0", b"HTTP/1.1"} else ["close"])
