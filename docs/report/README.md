@@ -11,7 +11,11 @@
 | gateway/bridge/report_docs/ | [gateway/bridge/](gateway/bridge/) | 3 |
 | server/report_docs/ | [server/](server/) | 5 |
 
-设计按发展阶段进入 [设计索引](../design/README.md)，报告按负责模块进入本目录。报告中的时间、分支、测试数量及“已完成/待验收”是原记录的快照；今天的状态看 [problems](../dev/problems.md)，决策与验证沿革看 [devlog](../dev/devlog.md)。
+设计按发展阶段进入 [设计索引](../design/README.md)，报告按负责模块进入本目录。报告中的时间、分支、测试数量及“已完成/待验收”是原记录的快照；今天的状态看 [项目看板](../dev/kanban.html)，问题分析看 [problems](../dev/problems.md)，决策与验证沿革看 [devlog](../dev/devlog.md)。
+
+## Docs / dev / kanban
+
+[2026-11-02 单文件项目看板设计与验收](docs/dev/kanban/README.md)：真实条目导入、唯一状态入口迁移、桌面/移动端与离线保存重开验证。历史业务状态未重新验收。
 
 ## Agent / video_parse_v2
 
@@ -70,5 +74,5 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 1. 新报告放到与实际负责模块对应的路径，如 docs/report/gateway/bridge/；不要在代码模块下重新建立 report_docs。
 2. 文首说明报告时点、范围、代码或环境基线，以及尚未验证的事项；整理日期与实验/提出日期分开。
 3. 可编辑场景和导出图与报告共同维护；跳转链接指向现有设计、代码或证据。图中的旧目录文字和历史修改树保留原记录含义。
-4. 不在报告中再维护一套实时任务状态；与设计、problems、devlog 建立链接。
+4. 不在报告中再维护一套实时任务状态；与看板、设计、problems、devlog 建立链接。
 5. 历史迁移清单、来源校验值及基准快照仍保留原路径，本索引提供原 report_docs 到新目录的对照。

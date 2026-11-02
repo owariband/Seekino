@@ -2,7 +2,7 @@
 
 整理日期：2026-10-28（Asia/Shanghai）。技术设计统一保存在 `docs/design/`，先按发展阶段归属，再通过本页的主题索引查找。每份文档保留独立职责；跨阶段修订保留在原文，由阶段 README 说明时间与背景。
 
-本页的“定位”区分主设计、专项合同、草案和历史参考，不表示功能已实现或已部署。当前问题与完成状态见 [problems.md](../dev/problems.md)，决策、实验与验收记录见 [devlog.md](../dev/devlog.md)，完整文档分工见 [docs/README.md](../README.md)。
+本页的“定位”区分主设计、专项合同、草案和历史参考，不表示功能已实现或已部署。当前工作与完成状态见 [项目看板](../dev/kanban.html)，问题分析见 [problems.md](../dev/problems.md)，决策、实验与验收记录见 [devlog.md](../dev/devlog.md)，完整文档分工见 [docs/README.md](../README.md)。
 
 ## TRD 通用规范（必读）
 
@@ -114,6 +114,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 用户与租户 | [user-tenant-trd.md](02-agent-harness/user-tenant-trd.md) | 主 TRD：游客、用户、租户身份、资源归属与隔离边界。 |
 | Series 共享 | [series-sharing-trd.md](02-agent-harness/series-sharing-trd.md) | 专项 TRD：Series 共享、团队范围与访问合同。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
+| 项目管理看板 | [project-kanban-trd.md](03-product-reassessment/project-kanban-trd.md) | 单文件离线 Kanban：分类与三列状态，统一模块、需求、任务，关联 PR/TRD 和历史证据。 |
 
 ## 模型接入、用量与训练
 
@@ -143,7 +144,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 检索优化思路 | [RAG_perf_1.md](02-agent-harness/RAG_perf_1.md) | 分层召回、细粒度定位、重排与时间证据展开的候选分析。 |
 | RAG 调教记录 | [RAGretrieve调教.md](02-agent-harness/RAGretrieve调教.md) | 三路召回、RRF、权重和动态策略的历史机制说明与调教记录。 |
 | 视频理解模型实验 | [模型调教log.md](01-mvp/模型调教log.md) | 模型故障、抽帧降级、输入方式及候选路线的历史实验记录。 |
-| 潜在问题与验收缺口 | [potential_problems.md](02-agent-harness/potential_problems.md) | VP2 历史观察与验收材料；当前待办状态由 problems 维护。 |
+| 潜在问题与验收缺口 | [potential_problems.md](02-agent-harness/potential_problems.md) | VP2 历史观察与验收材料；当前待办状态由看板维护。 |
 
 ## 图表与附件
 
@@ -170,7 +171,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 1. 新增技术设计放入对应发展阶段，在该阶段 README 记录提出日期、视角和背景，并在本页对应主题登记。正文持续修订时保留原归属，补充后续演进；文件名表达功能，避免新增泛称 `trd.md`。
 2. 同一职责维护一份主设计；补充合同和历史方案明确链接主设计。设计被替代时保留来源，在文档开头及本索引说明后续入口。
 3. 模块 README 维护模块使用方式，并链接这里的设计；不在模块内另建设计副本。本文档目录中的草案、日志和 MDV 原稿保留其原有性质。
-4. 实施状态统一维护在 problems，实施过程与验证统一维护在 devlog。本索引不复制 TODO / DONE 或部署状态。
+4. 实施状态统一维护在看板，问题分析保留在 problems，实施过程与验证统一维护在 devlog。本索引不复制 TODO / PROGRESSING / DONE 或部署状态。
 5. 新调研继续放 [research/](../research/)，UI 设计继续放 [ui-design/](../ui-design/)，原始实验与验收证据保留各自目录。迁移或改名时同步更新正文、图片、阶段图及模块入口中的链接。
 
 <details>
