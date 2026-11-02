@@ -5,10 +5,11 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 from langchain_core.tools import BaseTool
-from openai import APIConnectionError, APIError, APITimeoutError, DefaultHttpxClient, OpenAI
+from openai import APIError, DefaultHttpxClient, OpenAI
 from pydantic import BaseModel
 
 from gateway.errors import ContentFilterError
+from gateway.openai.errors import transient_failure_reason
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.media import encode_media_file
@@ -194,15 +195,8 @@ class OpenAIVisionModel:
                             raise ContentFilterError(
                                 "Vision output rejected", code="content_filter"
                             ) from error
-                        if isinstance(error, APITimeoutError):
-                            reason = ModelFailureReason.MODEL_TIMEOUT
-                        elif isinstance(error, APIConnectionError):
-                            reason = ModelFailureReason.MODEL_CONNECTION_ERROR
-                        elif getattr(error, "status_code", None) == 504:
-                            reason = ModelFailureReason.MODEL_GATEWAY_TIMEOUT
-                        elif getattr(error, "status_code", None) in {429, 500, 502, 503}:
-                            reason = ModelFailureReason.MODEL_SERVICE_UNAVAILABLE
-                        else:
+                        reason = transient_failure_reason(error)
+                        if reason is None:
                             raise
                         raise ModelFailureError(
                             "Vision model request failed", reason=reason,

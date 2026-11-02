@@ -6,7 +6,7 @@ import httpx
 import pytest
 from openai import APIConnectionError
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from engine.parsev2.schemas import VideoParseResult
 from gateway.ark.multimodal import ArkMultimodalModel
@@ -504,7 +504,7 @@ def test_deepseek_projected_parse_v2_output_still_uses_domain_validation(invalid
         client=SimpleNamespace(responses=responses),
     )
 
-    with pytest.raises(DeepSeekModelError, match="does not match schema video_parse_v2_chunk"):
+    with pytest.raises(ValidationError):
         model.generate(
             [TextInput("Describe the video timeline")],
             schema_name="video_parse_v2_chunk", result_type=VideoParseResult,
@@ -578,7 +578,8 @@ def test_deepseek_rejects_invalid_structured_responses(
         client=SimpleNamespace(responses=responses),
     )
 
-    with pytest.raises(DeepSeekModelError, match=message):
+    error_type = ValidationError if "does not match schema" in message else DeepSeekModelError
+    with pytest.raises(error_type, match=message if error_type is DeepSeekModelError else "scenes"):
         model.generate(
             [TextInput("describe")],
             schema_name="structured_result",

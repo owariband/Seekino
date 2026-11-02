@@ -374,3 +374,44 @@ def test_content_updates_cannot_extend_the_original_deadline(monkeypatch):
         asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
     runtime.generate_interval_refinement.assert_awaited_once()
     runtime.commit_interval_refinement.assert_not_awaited()
+
+
+def test_responses_adapter_preserves_invalid_json_for_refine_repair():
+    from agent.video_parse_v2.refine.response import RefineModelResponse
+    from gateway.multimodal import TextInput
+    from gateway.openai.multimodal import DeepSeekMultimodalModel
+
+    snapshot = _voice_snapshot()
+    config = snapshot["inputs"].parse_config
+    snapshot["inputs"] = snapshot["inputs"].model_copy(update={"parse_config": config.model_copy(
+        update={"execution": config.execution.model_copy(update={"max_retry_count": 1})},
+    )})
+    valid = response(snapshot)
+    raw = json.dumps(valid)[:-1] + ",}"
+    outputs = iter([raw, json.dumps(valid)])
+    prompts = []
+
+    def create(**kwargs):
+        prompts.append(kwargs["input"][0]["content"][0]["text"])
+        return SimpleNamespace(status="completed", output_text=next(outputs), output=[])
+
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash", stream=False, base_url="https://example.test", api_key="test",
+        max_output_tokens=10000, request_timeout_seconds=600,
+        client=SimpleNamespace(responses=SimpleNamespace(create=create)),
+    )
+
+    async def generate(snapshot, *, prompt, remaining_seconds):
+        return model.generate([TextInput(prompt)], schema_name="IntervalRefinementResult",
+                              result_type=RefineModelResponse, request_timeout_seconds=remaining_seconds)
+
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot), generate_interval_refinement=generate,
+        commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("voice-interval"))
+    assert len(prompts) == 2
+    assert "line 1 column" in prompts[1]
+    rejected = prompts[1].split("Rejected response JSON:\n", 1)[1]
+    assert json.loads(rejected) == raw
+    runtime.commit_interval_refinement.assert_awaited_once()

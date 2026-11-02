@@ -8,9 +8,11 @@ from typing import Any, Literal, TypeVar
 
 from openai import APIError, DefaultHttpxClient, OpenAI
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
+from gateway.agent_model.errors import ModelFailureError
+from gateway.openai.errors import transient_failure_reason
 from gateway.agent_model.fallback import log_model_fallback
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.schema_normalization import inline_schema_refs
@@ -210,6 +212,12 @@ class DeepSeekMultimodalModel:
                     raise
                 except (APIError, SSEProxyError) as error:
                     call.capture_response(error, include_usage=False)
+                    call.raise_if_cancelled()
+                    reason = transient_failure_reason(error) if isinstance(error, APIError) else None
+                    if reason is not None:
+                        raise ModelFailureError(
+                            "Responses model request failed", reason=reason,
+                        ) from error
                     raise DeepSeekModelError(
                         f"DeepSeek request failed for model {self.model_name}: {error}"
                     ) from error
@@ -226,11 +234,14 @@ class DeepSeekMultimodalModel:
 
                 try:
                     return result_type.model_validate_json(output_text)
+                except ValidationError:
+                    # Preserve raw candidate and locations for the caller's result gate.
+                    raise
                 except (ValueError, TypeError) as error:
                     raise DeepSeekModelError(
                         f"DeepSeek output does not match schema {schema_name}"
                     ) from error
-        except DeepSeekModelError as error:
+        except (DeepSeekModelError, ModelFailureError, ValidationError) as error:
             if self._fallback_model is None:
                 raise
             fallback_timeout = effective_timeout - (
