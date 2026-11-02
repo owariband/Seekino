@@ -50,3 +50,20 @@ python scripts/verify_chat_streaming_trace.py \
 ```
 
 本轮确认真实长回答已去除上层整包交付等待，MySQL 持久快照和真实页面都已接入。普通 Chat 首轮试跑通过；课程观看页、Q02/Q03 同条件重复、原片依据质量与性能目标仍未验收，C23 保持 TODO，PR 保持 Draft。下一步先明确格式前缀与可读正文的计量展示，再核对接收端成批到达的原因，继续课程样本验证。
+
+<a id="kimi-low-20261102"></a>
+## 后续：none 映射 low 与 reasoning 内容复核
+
+原始 `reasoning_content` 已实际复核：矩阵样本主要在安排八段/1200 字、计算两组矩阵、检查段落和公式排版；工具样本在搜索空结果后调整关键词，随后补查 time.sleep。最慢的最后一轮主要权衡是否重试、是否能引用未搜索到的 URL、现有来源是否充分，以及三点回答的组织。完整英文按调用拼接为本地 `outputs/verification/chat-streaming-live-20261102/kimi-reasoning.txt`，不提交原始 reasoning。
+
+按本次明确调整，Kimi Chat/Agent 的请求 profile 将配置 `none` 映射为显式 `low`，不再省略参数；`low/high/max` 保留。已重启本任务的独立 API，未重启上游服务。通用视觉入口原本不支持该设置，本轮保持其合同。
+
+| 同一道长解释，每档一个新会话样本 | 旧 none（请求省略 effort） | none → low（请求已核对） |
+| --- | ---: | ---: |
+| 首正文 token 接收 | 27.211 s | 23.248 s |
+| 首次可读文字展示 | 32.811 s | 23.312 s |
+| 整轮 TT | 61.594 s | 52.186 s |
+| reasoning tokens | 638 | 513 |
+| input / output tokens | 3441 / 1800 | 3442 / 1754 |
+
+low 样本仍有 reasoning，最终正文一致，模型完成前持续展示，浏览器无 pageerror。415 项相关回归通过，覆盖 Agent/Structured 各档位与真实 SDK 请求映射。本轮还补齐了流式诊断新增事件对应的旧测试断言。没有同时间多轮对照，输入 token 与负载也不完全相同；只能确认实际参数生效和本次测量，不能宣称稳定提速。源码指纹、计时、用量及核验结果见 [验证记录](evidence/chat-streaming-20261102/kimi-low-validation.json)，[JUnit](evidence/chat-streaming-20261102/kimi-low-backend.xml)。PR #18 后续更新造成的集成冲突及课程验收仍待处理。

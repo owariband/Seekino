@@ -653,6 +653,8 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 2026-11-02 真实试跑：本 worktree 独立 API/Web、专用 MySQL/ES 测试数据已启动；Chrome 长回答在模型完成前增长 15 次，首 token 27.211 s（`**`）、可读文字 32.811 s、TT 61.594 s；工具场景进度 13.234 s、TT 145.758 s。Gateway 接收记录已有 3.5–6.3 s 的批次空档。见[真实运行报告](../report/server/chat-streaming-live-20261102.md)。
 
+2026-11-02 后续：已将 Kimi Chat/Agent 的 `none` 映射为显式 `low`；415 项回归通过，独立实例真实请求确认生效。长解释单样本首 token 23.248 s、TT 52.186 s、reasoning 513 tokens，见[复测](../report/server/chat-streaming-live-20261102.md#kimi-low-20261102)。
+
 待验收：正常观看页、Q02/Q03 同条件各至少三个样本、内容与原片来源质量及性能目标。需明确格式前缀与可读正文的计量，并定位批量接收原因；不能用本轮两个普通 Chat 样本关闭 C23 或宣称提速达标。
 
 ### B24：模型 stream 被入口写死且正式 Parse 丢失开关

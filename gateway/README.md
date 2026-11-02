@@ -66,6 +66,8 @@ Ark 视频转写都使用该字段；旧 Parse 快照缺字段按 0 读取但不
 默认值是兼容选择，不是质量调参结论。完整例子与适用范围见
 [temperature 配置](../docs/model-config.md#模型-temperature-配置)。
 
+Kimi Chat/Agent 的 `none` 映射为显式 `low`；`low/high/max` 保留，参见 [推理档位合同](../docs/model-config.md#kimi-chat-的-reasoning_effort)。
+
 当前配置由本地 YAML 提供。未来云端配置存储将向同一配置合同提供有效定义；
 数据库、租户权限和配置管理 API 属于 Server 配置管理，不进入模型工厂。
 

@@ -78,6 +78,12 @@ models:
 
 独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器使用 `query_hook.rewriter_stream`，默认 `true`。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
 
+## Kimi Chat 的 reasoning_effort
+
+Kimi Chat/Agent、Structured Agent 和 Deep Agents 的共享请求 profile 将 `reasoning_effort: none` 作为 `low` 的兼容别名，实际请求显式发送 `reasoning_effort: low`；显式 `low/high/max` 原样发送。此前 `none` 会省略该字段，使供应商采用默认思考档位。此映射不表示关闭思考，不修改保存的配置或历史任务快照。其他供应商及不支持该设置的通用视觉生成入口沿用原合同。
+
+2026-11-02 已用真实 Kimi 请求确认映射；单样本耗时与 reasoning 用量见 [Chat 实测记录](report/server/chat-streaming-live-20261102.md#kimi-low-20261102)。
+
 ## 模型 temperature 配置
 
 `models.<role>.temperature` 与内部 `ModelBinding.temperature` 共用同一配置合同：默认 `0.0`，接受 `[0, 2]` 内的有限数值，拒绝字符串、布尔值、`null`、NaN 和无穷。主模型与 fallback 独立配置；未配置的 fallback 使用自己的默认值，不继承主模型的温度。旧 `agent_model.temperature` / `agent_model.fallback.temperature` 同样保留到统一绑定。

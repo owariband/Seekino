@@ -1,0 +1,68 @@
+{
+  "date": "2026-11-02",
+  "timezone": "Asia/Shanghai",
+  "runtime": {
+    "pid": 18248,
+    "command": [
+      "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+      "-m",
+      "server.api"
+    ],
+    "cwd": "/Users/hypnos/.codex/worktrees/chat-streaming-ftt/Seekino",
+    "started_at": 1793610816.9840581,
+    "base_commit": "cc67dd4d4d8b4eb9815f3bae266c35747f053c33",
+    "profile_sha256": "535ada9fbedcc14b8d88111ef7151d0ad7ee2026025598afc9510c62133b8ab9",
+    "requested_reasoning_effort": "none",
+    "mapped_reasoning_effort": "low"
+  },
+  "actual_request": {
+    "model": "k3.1-pro",
+    "stream": true,
+    "reasoning_effort": "low"
+  },
+  "verification": {
+    "ftt_ms": 23247.5,
+    "valid": true,
+    "reason": "correlated live provider text and visible browser delivery",
+    "call_id": "3d6500ee-ca32-4ff7-beb0-763ffb263633",
+    "message_id": "403a5fb8-7cfe-450e-98a7-2905cef5075a",
+    "tt_ms": 52185.89999999851,
+    "first_text_rendered_ms": 23278,
+    "continuous_growth_verified": true,
+    "model_first_text_ms": 23007.071832998918
+  },
+  "first_readable_rendered_ms": 23312.2,
+  "reasoning": {
+    "events": 512,
+    "tokens": 513,
+    "first_received_ms": 1719.472,
+    "last_received_ms": 23006.386
+  },
+  "usage": {
+    "completion_tokens": 1754,
+    "prompt_tokens": 3442,
+    "total_tokens": 5196,
+    "completion_tokens_details": {
+      "reasoning_tokens": 513
+    }
+  },
+  "same_request_messages_as_previous_sample": true,
+  "final_provider_text_equal": true,
+  "final_status": "COMPLETED",
+  "browser_errors": [],
+  "backend_tests": {
+    "tests": "415",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "4.953"
+  },
+  "provider_trace_sha256": "b9851e14af9bfffd73a35611bd3c99f3ca49456fd060aaac8aed27728e89adec",
+  "browser_trace_sha256": "c3362250a674c8da7db2cbc6e1d3ab629d7d8f6de3462ef32bc107893bfca1c3",
+  "scope": "Kimi Chat/Agent, Structured Agent and Deep Agents request profiles; generic vision API contract unchanged.",
+  "limitations": [
+    "One sample per setting, fresh conversations; provider load/cache uncontrolled.",
+    "Changing effort reduces a requested budget; it does not disable model reasoning.",
+    "PR #18 integration conflict and course Q02/Q03 acceptance remain outstanding."
+  ]
+}
