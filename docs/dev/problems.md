@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
 **11-01 19:12 全课续跑：** 已按明确选择将单块实验的Understanding并发恢复为10，通过正式reparse创建v4 `2a531c4f-2c73-4cc2-adaf-5156edc26236`，其余冻结配置不变；ASR/分组跨版本复用且正文一致，新增转写0。首轮10个真实Kimi流式请求均收到SSE，任务PARSING未暂停。独立采集本任务各阶段完成样本的中位数及失败数；整课117块、115个Refine区间、索引与问答仍待完成，状态保持TODO。[启动记录](../report/server/refine-direct-integration-20261101.md#后续10-路整课续跑启动2026-11-01-1912asiashanghai)。
 
 **11-01 Refine正式接入：** 工作树已改为无模型工具的完整JSON，Refine/Engine业务门禁及Server版本/租约提交、Prefix跨界对白规则贯通；原API19621恢复。原真实前三块的隔离库副本经正式Consumer/Kimi/事务425.011秒完成、1次请求/零修正/零新ASR，版本2/1/1→3/2/2，45事件及已知补漏/去重/29视觉事件保留通过。516项相关回归通过。耗时高于历史247秒，不承诺稳定提速；原任务仍暂停且数据不变，副本试点未完成整课及真实索引/回看/追问，状态仍TODO。[接入报告](../report/server/refine-direct-integration-20261101.md)。
@@ -1584,6 +1586,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
 **11-02 冲突恢复实现与归属更正：** 改动统一归回 [PR #18](https://github.com/owariband/Seekino/pull/18)，撤回 #26 的独立跟踪；该缺陷属于 #18 尚未完成的解析验收。已补提交后共享成员通知、请求范围取消及最近完整候选/错误位置续接，保留租约、三方合并与原期限。真实本地 HTTP 暴露 close 后阻塞读不退出，已补 HTTP/1 唤醒和嵌套清理顺序；HTTP/HTTPS 的 2+6 次验证全部可释放旧额度并继续新请求。相关扩展回归按唯一用例合并 2229 通过，5 项上游已有失败在 b01afce9 重现。原隔离服务现已停止，本轮没有重启 API 或真实模型调用；真实 Kimi 并发收益、内容质量和整课交付仍未验，B07 保持 TODO。[实现报告](../report/server/refine-conflict-recovery-20261102.md)、[TRD §3.13/4.18/6.9](../design/03-product-reassessment/video-parse-performance-trd.md)、[devlog](devlog.md#devlog-refine-conflict-recovery-20261102)。
 
