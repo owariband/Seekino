@@ -1,0 +1,305 @@
+{
+  "captured_at": "2026-11-02T07:23:52.193886+00:00",
+  "task_id": "87f63b1f-1f7a-4d1f-bb05-fed572790a52",
+  "classification": "Eight ModelCallCancelledError traces matched by interval, generation, and terminal timestamp to refine_request_superseded, followed by a new generation containing the update notice. They are not eight failed business attempts.",
+  "recoveries": [
+    {
+      "interval_id": "6108b703-1fbc-48cd-ad13-a6d6e58c0b38",
+      "old_call_id": "4b05e919-8a10-4a35-9f82-5e4f82053c96",
+      "old_generation": 1,
+      "old_stopped_ns": 1793604160544176000,
+      "cancel_drain_seconds": 0.066,
+      "replacement_call_id": "992d31fb-9df7-4711-95f7-1c25043a9c2c",
+      "replacement_generation": 2,
+      "replacement_started_ns": 1793604160700031000,
+      "gap_until_new_request_seconds": 0.156,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "08bc38a6-6339-4636-97c7-92d0da0d2969": 2,
+            "80958376-7a25-4f6b-94f6-82a153de269a": 2
+          }
+        }
+      }
+    },
+    {
+      "interval_id": "1485add6-3ef2-4c75-bbb2-a1c69f36bbb6",
+      "old_call_id": "8736dc8c-b0af-48f4-9f3a-f29ceb018e2e",
+      "old_generation": 1,
+      "old_stopped_ns": 1793604138345827000,
+      "cancel_drain_seconds": 0.073,
+      "replacement_call_id": "a8d2b8ff-9858-439d-8fa2-8c35f930d80d",
+      "replacement_generation": 2,
+      "replacement_started_ns": 1793604138490326000,
+      "gap_until_new_request_seconds": 0.144,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "265879a3-fcec-47cc-a54d-d6c59af77934": 2,
+            "5b450499-e2fd-4099-bd66-374b98d84876": 2
+          }
+        }
+      }
+    },
+    {
+      "interval_id": "4a137ace-f629-429e-9384-83f42893b18e",
+      "old_call_id": "4800ed3f-e540-4af3-b8db-34c3c3087dac",
+      "old_generation": 1,
+      "old_stopped_ns": 1793604138330629000,
+      "cancel_drain_seconds": 0.041,
+      "replacement_call_id": "8fe2c7f9-4512-4c81-8674-b01e7f8827c1",
+      "replacement_generation": 2,
+      "replacement_started_ns": 1793604138476338000,
+      "gap_until_new_request_seconds": 0.146,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "5b450499-e2fd-4099-bd66-374b98d84876": 2
+          }
+        }
+      }
+    },
+    {
+      "interval_id": "ec515d1e-0dab-4184-877f-006ff59fc207",
+      "old_call_id": "028fcaef-a820-4fb9-a477-37d32ff3d90d",
+      "old_generation": 1,
+      "old_stopped_ns": 1793604160528453000,
+      "cancel_drain_seconds": 0.042,
+      "replacement_call_id": "42d346bf-ed3b-4581-b420-f85015d10b97",
+      "replacement_generation": 2,
+      "replacement_started_ns": 1793604160678112000,
+      "gap_until_new_request_seconds": 0.15,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "80958376-7a25-4f6b-94f6-82a153de269a": 2
+          }
+        }
+      }
+    },
+    {
+      "interval_id": "bd53cf79-0b46-4ac5-9697-2b582afddfa8",
+      "old_call_id": "0ed07090-28df-424b-9fda-f2eb38975a97",
+      "old_generation": 1,
+      "old_stopped_ns": 1793604138330079000,
+      "cancel_drain_seconds": 0.039,
+      "replacement_call_id": "b2cbe467-7e88-45c2-9345-36ce50bdd8b5",
+      "replacement_generation": 2,
+      "replacement_started_ns": 1793604138468868000,
+      "gap_until_new_request_seconds": 0.139,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "52a85383-45eb-4b68-b9bf-7b7042b52196": 2
+          }
+        }
+      }
+    },
+    {
+      "interval_id": "1ccf1fdf-4cb5-401c-8b60-ab7472486870",
+      "old_call_id": "318e76a1-c7e5-439c-9c55-fa9d3c0d32b6",
+      "old_generation": 1,
+      "old_stopped_ns": 1793604138330879000,
+      "cancel_drain_seconds": 0.037,
+      "replacement_call_id": "ef11f7e1-4f35-4697-972b-c82125b14b67",
+      "replacement_generation": 2,
+      "replacement_started_ns": 1793604138463397000,
+      "gap_until_new_request_seconds": 0.133,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "52a85383-45eb-4b68-b9bf-7b7042b52196": 2,
+            "265879a3-fcec-47cc-a54d-d6c59af77934": 2
+          }
+        }
+      }
+    },
+    {
+      "interval_id": "4a137ace-f629-429e-9384-83f42893b18e",
+      "old_call_id": "8fe2c7f9-4512-4c81-8674-b01e7f8827c1",
+      "old_generation": 2,
+      "old_stopped_ns": 1793604160529099000,
+      "cancel_drain_seconds": 0.04,
+      "replacement_call_id": "e2db9c16-2589-447e-97d2-47d17cf55b05",
+      "replacement_generation": 3,
+      "replacement_started_ns": 1793604160673068000,
+      "gap_until_new_request_seconds": 0.144,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "08bc38a6-6339-4636-97c7-92d0da0d2969": 2,
+            "54b15331-60af-4ab6-b915-46d23b307bbd": 2
+          }
+        }
+      }
+    },
+    {
+      "interval_id": "1485add6-3ef2-4c75-bbb2-a1c69f36bbb6",
+      "old_call_id": "a8d2b8ff-9858-439d-8fa2-8c35f930d80d",
+      "old_generation": 2,
+      "old_stopped_ns": 1793604160528260000,
+      "cancel_drain_seconds": 0.046,
+      "replacement_call_id": "6ffc82ec-9015-4936-97cc-33a6a940a82a",
+      "replacement_generation": 3,
+      "replacement_started_ns": 1793604160687946000,
+      "gap_until_new_request_seconds": 0.16,
+      "new_request_contains_update_notice": true,
+      "notice": {
+        "reason": "member_content_updated",
+        "details": {
+          "changed_versions": {
+            "54b15331-60af-4ab6-b915-46d23b307bbd": 2
+          }
+        }
+      }
+    }
+  ],
+  "stage_request_snapshot": {
+    "refine": {
+      "requests": 20,
+      "received_sse": 20,
+      "first_sse_max_seconds": 5.071,
+      "first_sse_median_seconds": 3.4185,
+      "completed": 2,
+      "errors": 0,
+      "cancelled_superseded": 8,
+      "cancelled_other": 0,
+      "pending_without_sse": []
+    },
+    "understand": {
+      "requests": 24,
+      "received_sse": 20,
+      "first_sse_max_seconds": 65.117,
+      "first_sse_median_seconds": 43.6525,
+      "completed": 19,
+      "errors": 0,
+      "cancelled_superseded": 0,
+      "cancelled_other": 0,
+      "pending_without_sse": [
+        {
+          "sequence_no": 20,
+          "elapsed_seconds": 13.666
+        },
+        {
+          "sequence_no": 21,
+          "elapsed_seconds": 10.713
+        },
+        {
+          "sequence_no": 22,
+          "elapsed_seconds": 5.583
+        },
+        {
+          "sequence_no": 23,
+          "elapsed_seconds": 0.334
+        }
+      ]
+    }
+  },
+  "interval_snapshot": [
+    {
+      "id": "bd53cf79-0b46-4ac5-9697-2b582afddfa8",
+      "start_sequence_no": 0,
+      "status": "REFINING",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:19:35.645000",
+      "finish_time": null,
+      "last_error": "null"
+    },
+    {
+      "id": "1ccf1fdf-4cb5-401c-8b60-ab7472486870",
+      "start_sequence_no": 1,
+      "status": "REFINING",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:19:36.128000",
+      "finish_time": null,
+      "last_error": "null"
+    },
+    {
+      "id": "70b7efa4-98b3-4790-9223-7b2555620d5d",
+      "start_sequence_no": 2,
+      "status": "COMPLETE",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:18:14.850000",
+      "finish_time": "2026-11-02 15:22:18.299000",
+      "last_error": "null"
+    },
+    {
+      "id": "1485add6-3ef2-4c75-bbb2-a1c69f36bbb6",
+      "start_sequence_no": 3,
+      "status": "REFINING",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:18:35.719000",
+      "finish_time": null,
+      "last_error": "null"
+    },
+    {
+      "id": "4a137ace-f629-429e-9384-83f42893b18e",
+      "start_sequence_no": 4,
+      "status": "REFINING",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:18:38.465000",
+      "finish_time": null,
+      "last_error": "null"
+    },
+    {
+      "id": "52a136a5-9eb1-4c52-814f-ee150bf66b07",
+      "start_sequence_no": 5,
+      "status": "COMPLETE",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:18:41.082000",
+      "finish_time": "2026-11-02 15:22:40.498000",
+      "last_error": "null"
+    },
+    {
+      "id": "6108b703-1fbc-48cd-ad13-a6d6e58c0b38",
+      "start_sequence_no": 6,
+      "status": "REFINING",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:18:15.327000",
+      "finish_time": null,
+      "last_error": "null"
+    },
+    {
+      "id": "ec515d1e-0dab-4184-877f-006ff59fc207",
+      "start_sequence_no": 7,
+      "status": "REFINING",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:18:48.949000",
+      "finish_time": null,
+      "last_error": "null"
+    },
+    {
+      "id": "5b9bbdfd-e9a3-41b5-a5bc-20841de869c4",
+      "start_sequence_no": 8,
+      "status": "REFINING",
+      "retry_count": 0,
+      "lease_version": 1,
+      "start_time": "2026-11-02 15:22:21.547000",
+      "finish_time": null,
+      "last_error": "null"
+    }
+  ],
+  "validation_boundary": "This sample proves cancellation, resource drain and prompt refresh after real commits, not successful completion of the refreshed generations or overall performance."
+}

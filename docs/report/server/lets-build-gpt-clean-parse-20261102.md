@@ -37,3 +37,12 @@ Understanding / Refine / Index按本任务的成功完成执行统计n、median�
 只读采集每30秒保存进度。原始运行目录为 `/Users/hypnos/workspace/agent/Seekino/outputs/verification/lets-build-gpt-clean-parse-20261102/`：`run.json`、`environment.json`、`reparse-request.json`、`audio-reuse.json`保存身份与启动事实；`latest.json`、`progress.jsonl`和到终态生成的`terminal.json`保存持久进度；`api.log`、`logs/`、`model-trace/`保留请求与并发证据；`summarize_trace.py`提取首SSE等时间，`request-telemetry.json`是其带时间戳快照。原始Prompt/图片/模型正文保留本地，不放入Git。
 
 本轮不靠删除校验、提高超时或暗中切模型让任务完成；若需要修代码或配置，先记录本版本失败/停止边界，不能把修改前后混成单个成功样本。完整课程索引完成后，检索→出处→回看→追问仍要单独验收；本次启动事实不能替代内容质量或产品闭环。
+
+
+## 首批 Refine 提交与真实更新通知（15:24观察）
+
+15:22:18与15:22:40，起点为sequence 2和5的两个Refine区间分别成功提交，成功执行耗时243.468秒、239.436秒。这些提交触发8次相邻旧请求取消；逐一关联trace确认错误为`ModelCallCancelledError`，取消后的8个下一代请求全部带有`Content update notice`和实际changed_versions。旧连接退出37–73毫秒，旧调用结束到下一代请求开始133–160毫秒。对应区间仍为lease_version=1、retry_count=0，没有把这8次更新当作业务重试耗尽；它们被底层`model_usage.status=failed`记录，统计时必须与真正失败分开。
+
+[首批更新证据](evidence/lets-build-gpt-clean-parse-20261102/first-refresh.json)保存提交区间、每代调用、取消和新请求时间、实际更新通知。两次提交影响有重叠，部分区间从generation 1更新到2后又更新到3，8次取消不等于8个独立区间。此时已证实的是提交后的定向通知、真实连接退出和新快照提示接续；这些被刷新的请求尚未完成，不能据此宣称已消除重算或节约多少解析总时间。
+
+15:24:00的进度为Understanding 19/117、Refine 2/115、已索引Chunk 0/117，经过11分36.280秒；10个Refine仍在执行，任务PARSING、lastError=null、新ASR仍为0。索引需要相关重叠区间都提交，不能把单个Interval的COMPLETE当成对应Chunk已经可检索。旧v4的99分钟失败终态与此处部分完成时点不作直接提速比例比较。
