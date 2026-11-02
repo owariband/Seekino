@@ -138,6 +138,12 @@ Understanding subgraph nodes (`asr`, `visual`, `ocr`, `understanding`) own
 bounded retries for timeouts and transport failures, using the frozen execution
 retry configuration. Successful upstream observations stay in graph state;
 retrying Understanding does not rerun ASR. The execution deadline does not reset.
+Understanding keeps the complete model candidate until the Agent validates the canonical
+`VideoParseResult`. A schema rejection supplies the original JSON and exact field paths
+for up to `max_retry_count` text-only repairs with the same frozen model; images and ASR
+are not sent or prepared again. The initial generation and repairs share the original
+request deadline. Media bounds, Canvas and transactional commit gates remain strict.
+
 Model requests remain lease-fenced and counted for usage, without a cumulative
 per-video call limit. Commit is not automatically replayed.
 A final Parse exception stops dispatch for that video, fences sibling writes,

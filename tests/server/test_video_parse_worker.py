@@ -23,6 +23,7 @@ from engine.common.transcription import TranscriptAnalysis
 from engine.parsev2.observations import OCRResult
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
 from agent.video_parse_v2.refine.response import RefineModelResponse
+from agent.video_parse_v2.understanding.response import UnderstandingModelResponse
 from engine.parsev2.validation import IntervalRefinementProposal, IntervalRefinementResult
 from engine.rag import (
     ChunkIndexingContract,
@@ -805,7 +806,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert list((tmp_path / "media-work").rglob("episode.json"))
         with track_model_call(provider="fixture", model="vision", operation="video_parse") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
-        assert options["result_type"] is VideoParseResult
+        assert options["result_type"] is UnderstandingModelResponse
         assert not options.get("tools") and "canvas" not in options
         return VideoParseResult(persons=[], timeline=[ActionEvent(
             event_type="ACTION", start_seconds=1000, end_seconds=4000,
@@ -1085,7 +1086,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         model_calls["understanding"] += 1
         state = _self._require_chunk_binding().state
         assert state is not None
-        assert options["result_type"] is VideoParseResult
+        assert options["result_type"] is UnderstandingModelResponse
         assert not options.get("tools") and "canvas" not in options
         return VideoParseResult(persons=[], timeline=[ActionEvent(
             event_type="ACTION", start_seconds=state.start_seconds + 1000,
@@ -1319,7 +1320,7 @@ def test_understanding_and_refine_use_direct_json(
                         "description": "A refined supported action.", "participants": [], "visible_persons": [],
                     }],
                 }]})
-            assert options["result_type"] is VideoParseResult
+            assert options["result_type"] is UnderstandingModelResponse
             assert not options["tools"]
             assert options["context_checkpoint"] is None
             assert options["max_model_calls"] is None

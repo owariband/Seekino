@@ -40,6 +40,7 @@ from agent.video_parse_v2.input import (
 from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput, RefineInputChanged
 from agent.video_parse_v2.refine.response import RefineModelResponse
+from agent.video_parse_v2.understanding.response import UnderstandingModelResponse
 from agent.video_parse_v2.voiceprint import (
     VoiceprintInput, build_tools as build_voiceprint_tools,
 )
@@ -1091,7 +1092,7 @@ class VideoParseRuntimeService:
         asr_result: ASRResult,
         ocr_result: OCRResult | None,
         prompt: str,
-    ) -> VideoParseResult:
+    ) -> UnderstandingModelResponse:
         del asr_result, ocr_result
         media = await self._ensure_chunk_media(execution)
         visual = execution.inputs.parse_config.visual_input
@@ -1129,7 +1130,27 @@ class VideoParseRuntimeService:
             media_inputs,
             fallback_inputs=fallback_inputs,
             schema_name="video_parse_v2_chunk",
-            result_type=VideoParseResult,
+            result_type=UnderstandingModelResponse,
+        )
+
+    async def repair_chunk_understanding(
+        self, execution: ChunkExecution, *, prompt: str, remaining_seconds: float,
+    ) -> UnderstandingModelResponse:
+        if remaining_seconds <= 0:
+            raise TimeoutError("Understanding result-gate deadline expired")
+        binding = execution.inputs.parse_config.models.understanding
+        fallback = binding.fallback
+        if fallback is not None:
+            fallback = fallback.model_copy(update={
+                "request_timeout_seconds": min(fallback.request_timeout_seconds, remaining_seconds),
+            })
+        binding = binding.model_copy(update={
+            "request_timeout_seconds": min(binding.request_timeout_seconds, remaining_seconds),
+            "fallback": fallback,
+        })
+        return await self._generate_text_structured(
+            binding, prompt, tools=(), result_type=UnderstandingModelResponse,
+            schema_name="video_parse_v2_chunk_repair",
         )
 
     async def commit_chunk_result(

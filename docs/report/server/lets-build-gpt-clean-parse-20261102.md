@@ -57,3 +57,12 @@ v5最终PARSING_FAILED，经过711.418秒（11分51.418秒），完成Understand
 Understanding在Gateway解析时直接按VideoParseResult拒绝，Agent只有网络类重试，没有保存完整错误输出并提供字段位置的格式修正流程；第一次ValidationError就触发全视频停止。随后7个Understanding与10个Refine被撤销是连带结果，不是17个独立根因；先前8次共享成员更新取消仍单独归类。被刷新Refine尚未完成，因此整课冲突优化收益未验收。
 
 下一步在同一PR18补齐Understanding业务结果门禁：请求仍携带规范Schema，先保留完整返回值，校验错误时用原JSON和精确路径做有限文本修正，不重新发送图片、抽帧或ASR，不放宽Schema；修正与首次生成共用原600秒请求窗口及既有最多2次修正，租约和最终提交门禁保持。先重放本次真实输出，再验相关测试与新运行版本；v5保留失败，不在其上混入新代码继续计时。
+
+
+## Understanding 反馈修复与真实输出重放
+
+原Schema保持不变；模型返回由`UnderstandingModelResponse`完整保留，Agent校验后才能进入原有时间、Canvas和事务门禁。非法字段或JSON语法错误携带最近完整候选和精确路径做文本修正，最多max_retry_count次，初次生成与修正共用请求期限。Gateway没有业务改动；ASR、抽帧、图片注入与并发配置均保持。
+
+相关Agent、Worker真实接线、音频恢复及Refine更新回归390项通过。用v5 sequence13保存的真实响应重放业务门禁，通过正式Server修正方法发起1次真实Kimi文本请求，限定原600秒扣除已消耗319.450秒后的280.55秒；没有改写失败任务或提交重放结果到数据库。实际66.501秒完成，input7190、output2293（其中reasoning202），21个事件及所有合法内容逐项一致，只有6个非法空text_variants被删除，严格Schema通过。新ASR/抽帧均0，无图片输入。[重放摘要](evidence/understanding-schema-repair-20261102/live-summary.json)。
+
+这是单次真实错误修正成功，不能替代全课稳定性或人工语义准确率。v5保留失败；后续新版本单独运行计时，不将本次66.5秒相加后宣称v5成功。

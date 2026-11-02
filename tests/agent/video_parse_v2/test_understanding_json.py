@@ -3,13 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
+from gateway.usage import ModelCallCancelledError
 
 from agent.video_parse_v2.state import ChunkExecution
 from agent.video_parse_v2.understanding import ChunkUnderstandingWorkflow
+from agent.video_parse_v2.understanding.response import UnderstandingModelResponse
 from engine.parsev2.observations import OCRResult
 from engine.parsev2.schemas import VideoParseResult
 from tests.agent.video_parse_v2.test_framework import _inputs, _lease
@@ -58,6 +62,7 @@ def _runtime(execution, *, result=None, asr=None, ocr=None):
         transcribe_chunk=AsyncMock(return_value=asr if asr is not None else {"transcript": []}),
         read_chunk_text=AsyncMock(return_value=ocr),
         understand_chunk=AsyncMock(return_value=result),
+        repair_chunk_understanding=AsyncMock(),
         commit_chunk_result=AsyncMock(),
         notify_chunk_committed=AsyncMock(),
         cleanup_chunk_execution=AsyncMock(),
@@ -114,6 +119,114 @@ def test_direct_json_preserves_full_result_and_original_evidence_at_commit():
     assert asr == original_asr
     runtime.notify_chunk_committed.assert_awaited_once_with(execution)
     runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
+
+
+def _repair_execution():
+    execution = _execution()
+    config = execution.inputs.parse_config
+    inputs = execution.inputs.model_copy(update={
+        "parse_config": config.model_copy(update={
+            "execution": config.execution.model_copy(update={"max_retry_count": 2}),
+        }),
+    })
+    return replace(execution, inputs=inputs)
+
+
+def _invalid_candidate():
+    candidate = _result().model_dump(mode="json")
+    candidate["timeline"][1]["text_variants"] = []
+    return candidate
+
+
+def test_understanding_transport_preserves_invalid_value_and_canonical_schema():
+    candidate = _invalid_candidate()
+    response = UnderstandingModelResponse.model_validate_json(json.dumps(candidate))
+    assert response.root == candidate
+    assert UnderstandingModelResponse.model_json_schema() == VideoParseResult.model_json_schema()
+    with pytest.raises(ValidationError):
+        VideoParseResult.model_validate(response.root)
+
+
+def test_schema_feedback_repairs_original_candidate_without_repeating_media():
+    execution = _repair_execution()
+    bad = _invalid_candidate()
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root=bad))
+    runtime.repair_chunk_understanding.return_value = UnderstandingModelResponse(root=_result().model_dump(mode="json"))
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    prompt = runtime.repair_chunk_understanding.await_args.kwargs["prompt"]
+    assert "timeline.1.ACTION.text_variants" in prompt
+    assert json.loads(prompt.split("Rejected response JSON:\n", 1)[1]) == bad
+    assert 0 < runtime.repair_chunk_understanding.await_args.kwargs["remaining_seconds"] <= 120
+    runtime.understand_chunk.assert_awaited_once()
+    runtime.transcribe_chunk.assert_awaited_once()
+    runtime.prepare_chunk_visual.assert_awaited_once()
+    runtime.commit_chunk_result.assert_awaited_once()
+    assert runtime.commit_chunk_result.await_args.args[1] == _result()
+
+
+@pytest.mark.parametrize("null_candidate", [False, True])
+def test_schema_repairs_are_bounded_and_never_commit_invalid_results(null_candidate):
+    execution = _repair_execution()
+    bad = None if null_candidate else _invalid_candidate()
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root=bad))
+    runtime.repair_chunk_understanding.return_value = UnderstandingModelResponse(root=bad)
+    with pytest.raises(ValidationError):
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    runtime.understand_chunk.assert_awaited_once()
+    assert runtime.repair_chunk_understanding.await_count == 2
+    runtime.commit_chunk_result.assert_not_awaited()
+    runtime.cleanup_chunk_execution.assert_awaited_once()
+
+
+def test_feedback_uses_latest_invalid_candidate_and_preserves_json_syntax_error():
+    execution = _repair_execution()
+    runtime = _runtime(execution)
+    raw = '{"persons": [], "timeline": ['
+    try:
+        UnderstandingModelResponse.model_validate_json(raw)
+    except ValidationError as error:
+        runtime.understand_chunk.side_effect = error
+    bad = _invalid_candidate()
+    runtime.repair_chunk_understanding.side_effect = [
+        UnderstandingModelResponse(root=bad), UnderstandingModelResponse(root=_result().model_dump(mode="json")),
+    ]
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    prompts = [c.kwargs["prompt"] for c in runtime.repair_chunk_understanding.await_args_list]
+    assert json.loads(prompts[0].split("Rejected response JSON:\n", 1)[1]) == raw
+    assert json.loads(prompts[1].split("Rejected response JSON:\n", 1)[1]) == bad
+    runtime.commit_chunk_result.assert_awaited_once()
+
+
+def test_schema_repair_does_not_reset_original_deadline(monkeypatch):
+    from agent.video_parse_v2.understanding import workflow
+    execution = _repair_execution()
+    clock = SimpleNamespace(value=0.0)
+    monkeypatch.setattr(workflow, "time", SimpleNamespace(monotonic=lambda: clock.value))
+    runtime = _runtime(execution)
+    async def generate(*_args, **_kwargs):
+        clock.value = 119
+        return UnderstandingModelResponse(root=_invalid_candidate())
+    async def repair(*_args, **kwargs):
+        assert kwargs["remaining_seconds"] == 1
+        clock.value = 121
+        return UnderstandingModelResponse(root=_result().model_dump(mode="json"))
+    runtime.understand_chunk.side_effect = generate
+    runtime.repair_chunk_understanding.side_effect = repair
+    with pytest.raises(TimeoutError, match="deadline"):
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime)._generate_result(execution, {"transcript": []}, None))
+    runtime.repair_chunk_understanding.assert_awaited_once()
+    runtime.commit_chunk_result.assert_not_awaited()
+
+
+def test_schema_repair_cancellation_is_not_retried():
+    execution = _repair_execution()
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root=_invalid_candidate()))
+    runtime.repair_chunk_understanding.side_effect = ModelCallCancelledError("model call cancelled")
+    with pytest.raises(ModelCallCancelledError):
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    runtime.repair_chunk_understanding.assert_awaited_once()
+    runtime.commit_chunk_result.assert_not_awaited()
+    runtime.cleanup_chunk_execution.assert_awaited_once()
 
 
 @pytest.mark.parametrize("understanding_enabled", [False, True])

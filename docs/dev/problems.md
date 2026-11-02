@@ -1587,6 +1587,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
+**11-02 Understanding反馈修复：** 已补完整候选、字段路径和有限文本修正，共用原请求期限；390项相关回归通过。v5真实错误重放1次Kimi请求/66.501秒，只删6个非法空字段，原21个事件及其他合法内容一致。未改写v5终态，需新版本全课验收；状态保持TODO。[证据](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
 **11-02 15:24 新试验终态：** v5因Understanding sequence13的6个ACTION额外空text_variants触发严格Schema拒绝，第一次错误没有guide修正就终止全视频；711.418秒、19理解/2Refine/0索引。8次Refine定向更新取消已真实接通，整体收益被新的Understanding门禁缺口阻断。保留v5失败证据，下一步补原JSON+字段路径的有限文本修正，另开解析版本计时；仍在#18范围内。[终态记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
 **11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
