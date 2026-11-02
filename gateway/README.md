@@ -59,12 +59,19 @@ Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺�
 是否重发、期限与提交条件仍由宿主决定。验证见
 [取消与冲突恢复报告](../docs/report/server/refine-conflict-recovery-20261102.md)。
 
-当前 Parse 使用的无工具 OpenAI vision JSON 生成入口增加 100 秒首 SSE 期限：
-从 SDK 请求开始计时，未收到首个解码事件即关闭独占 HTTP/1 连接并返回 `MODEL_TIMEOUT`，
-业务重试仍由调用方控制。HTTP 头、注释心跳不计入；role/reasoning 等首个 SSE 到达后
-解除启动期限，继续遵守原总预算，较短调用预算优先。该机制未扩展到工具循环、
-Responses 或其他供应商协议。验证与资源释放边界见
-[首 SSE 期限报告](../docs/report/gateway/first-sse-timeout-20261102.md)。
+首 SSE 期限是协议无关的请求策略，由 `streaming/first_sse.py` 统一提供100秒默认值。
+目前已接入无工具 OpenAI vision JSON（Chat Completions）和自有客户端的 DeepSeek
+JSON（Responses）两条解析路径；它不是 Kimi 专用策略。两条路径均从SDK请求开始计时，
+未收到首个解码事件即中断独占HTTP/1连接并返回 `MODEL_TIMEOUT`，业务重试仍由调用方控制。
+HTTP头、注释心跳不计入；role/reasoning 或 `response.created` 等首事件解除启动期限，
+原总预算与较短调用预算继续有效。取消后检查同样覆盖EOF，避免期限中断被误记为普通断流。
+DeepSeek直接JSON也进入公共请求诊断作用域，保留脱敏请求、原始SSE、完整响应及错误。
+
+接线范围尚不是整个Gateway：工具循环、其他Chat／Responses调用方、外部注入的共享客户端
+和其他供应商协议未全部接入；不能把公共机制存在当作所有入口已覆盖。自有请求使用独占连接，
+不会关闭共享HTTP/2连接。两种协议的HTTP／HTTPS期限与取消共用44项验证；
+[首 SSE 历史报告](../docs/report/gateway/first-sse-timeout-20261102.md)保留原覆盖边界，
+本次扩展与成本试点见[性能TRD §4.29](../docs/design/03-product-reassessment/video-parse-performance-trd.md#429-11-02deepseek-flash-整课费用对照计划)。
 
 `ModelBinding.temperature` 同时支持 YAML 和内部创建参数，默认 `0.0`，范围 `[0, 2]`，
 主模型与 fallback 分别传递。Kimi profile 在绑定解析和适配器中固定为 `1.0`，可通过
