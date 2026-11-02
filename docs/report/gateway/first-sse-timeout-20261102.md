@@ -1,5 +1,7 @@
 # 100 秒首 SSE 期限与 Kimi Parse 用量核对（2026-11-02）
 
+> 后续：已按 k3 + low 重新整课试跑，参数接通但大请求上传超时；见 [11-02 v8 结果](kimi3-low-parse-20261102.md)。本报告保留此前基线。
+
 > PR #18 评审入口：[HTML 小看板](pr18-kanban.html)。按 TODO / Progressing / Done 展示同一 PR 的交付范围与证据；状态快照以页面时间为准，并与 B07 / B20 同步维护。
 
 分支 `fix/video-asr-recovery`，[PR #18](https://github.com/owariband/Seekino/pull/18)。设计入口：[模型网络故障 TRD](../../design/03-product-reassessment/model-network-failure-trd.md#11-02-first-sse-result)。基线 HEAD `d60b1bf1`，本次变更见同一 PR；未另建需求或 PR。

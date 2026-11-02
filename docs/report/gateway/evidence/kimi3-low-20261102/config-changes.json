@@ -1,0 +1,44 @@
+[
+  {
+    "path": ".models.agent",
+    "before_model": "k3.1-pro",
+    "before_effort": "none",
+    "model": "k3",
+    "reasoning_effort": "low"
+  },
+  {
+    "path": ".models.supervisor",
+    "before_model": "k3.1-pro",
+    "before_effort": "none",
+    "model": "k3",
+    "reasoning_effort": "low"
+  },
+  {
+    "path": ".models.vision",
+    "before_model": "k3.1-pro",
+    "before_effort": "none",
+    "model": "k3",
+    "reasoning_effort": "low"
+  },
+  {
+    "path": ".models.vision_fallback",
+    "before_model": "k3.1-pro",
+    "before_effort": "none",
+    "model": "k3",
+    "reasoning_effort": "low"
+  },
+  {
+    "path": ".models.summarize",
+    "before_model": "k3.1-pro",
+    "before_effort": "none",
+    "model": "k3",
+    "reasoning_effort": "low"
+  },
+  {
+    "path": ".models.rerank",
+    "before_model": "k3.1-pro",
+    "before_effort": "none",
+    "model": "k3",
+    "reasoning_effort": "low"
+  }
+]

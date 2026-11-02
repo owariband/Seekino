@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-02 v8 音频复用：** K3 low 新任务 `2eef6cec-f494-407c-8939-cf415de1336e` 从 v7 校验复用 ASR 与独立分组，持久正文逐项相等、摘要相等，新 ASR=0。下游 100 秒首响应失败没有触发本地音频重算；完整课程仍未完成。[证据](../report/gateway/evidence/kimi3-low-20261102/audio-reuse.json)。
+
 **11-02 17:53 v7音频复用核实：** 新完整117块任务`60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`已从v6校验复用2476条ASR和独立说话人分组，正文分别相等、两项元数据记录来源任务，新转写0。本轮无本地模型重算，不能用风扇观感判断是否有ASR输入；下游重做，完整课程、对齐及质量验收仍未完成。[记录](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-fresh-run)。
 
 **11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
@@ -1590,6 +1592,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-02 20:35 K3 low 整课复验失败：** 参数缺口已补齐，452 项定向回归通过，代码 `2aaf9fa9` 已加载隔离 API；v8 `2eef6cec-f494-407c-8939-cf415de1336e` 实际请求均为 k3 / low / stream=true。467.434 秒后停在 0/117 Understanding，30 请求无 SSE（21 次 100 秒期限、9 次取消），Refine 未开始，usage 未知；不同于 v7 的额度 429。小文本 K3 low 在 10.276 秒成功；原始 Chunk 单路传输对照保留独立证据，不替代整课验收。没有再开新版本，下一步定位大视觉请求等待；时间合同、JPEG、质量与闭环仍 TODO。[报告](../report/gateway/kimi3-low-parse-20261102.md)。
 
 **11-02 首 SSE 期限与 token 核对：** 当前 Parse 的无工具 OpenAI vision 入口已设 100 秒首事件期限，超时回到原有限重试；HTTP/HTTPS 故障注入和相关回归去重 401 项通过，隔离 API 已重启，未重新解析。v7 实际是 `k3.1-pro` 且未显式 low；三轮重开已有 usage 的 56 次累计 12,259,858 input / 429,877 output tokens，另 62 次费用未知。显式 effort 贯通、Understanding 时间合同冲突与整课闭环仍未完成，B07 保持 TODO。[报告](../report/gateway/first-sse-timeout-20261102.md)。
 
