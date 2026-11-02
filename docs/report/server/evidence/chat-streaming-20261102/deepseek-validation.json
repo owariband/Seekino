@@ -1,0 +1,880 @@
+{
+  "base_commit": "75bfa116447c9a95a4ca5332a3262dc7ed9f3e37",
+  "comparison": {
+    "low": {
+      "messages_equal_kimi_low": true,
+      "tools_equal_kimi_low": true,
+      "first_body_deltas": [
+        "##",
+        " ",
+        "1",
+        ".",
+        " ",
+        "矩阵"
+      ]
+    },
+    "none": {
+      "messages_equal_kimi_low": true,
+      "tools_equal_kimi_low": true,
+      "first_body_deltas": [
+        "#",
+        " ",
+        "矩阵",
+        "乘法",
+        "入门",
+        "："
+      ]
+    }
+  },
+  "runs": {
+    "low": {
+      "effort": "low",
+      "manifest": {
+        "pid": 23552,
+        "command": [
+          "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+          "-m",
+          "server.api"
+        ],
+        "cwd": "/Users/hypnos/.codex/worktrees/chat-streaming-ftt/Seekino",
+        "started_at": 1793617610.277629,
+        "base_commit": "75bfa116447c9a95a4ca5332a3262dc7ed9f3e37",
+        "config_sha256": "558581fb84dab5bd4422428d6cf64036ea7c4a932217f0d5ee231c07fd9ae509",
+        "model": "deepseek-flash",
+        "profile": "deepseek",
+        "reasoning_effort": "low",
+        "changed_roles": [
+          "agent",
+          "supervisor",
+          "vision",
+          "vision_fallback",
+          "summarize",
+          "rerank"
+        ],
+        "kimi_key_removed": true,
+        "api_url": "http://127.0.0.1:19625",
+        "web_url": "http://127.0.0.1:15175/search",
+        "database": "seekino_chat_streaming_20261102_test",
+        "empty_library": true
+      },
+      "browser_errors": [],
+      "cases": [
+        {
+          "case": "long-answer",
+          "message_id": "b28973a6-1987-423e-8c00-5e35b07785d0",
+          "conversation_id": "ca58e1f8-1d03-4467-afa6-96d9e324fff3",
+          "status": "COMPLETED",
+          "verification": {
+            "ftt_ms": 4758,
+            "valid": true,
+            "reason": "correlated live provider text and visible browser delivery",
+            "call_id": "c8d9c255-6e9c-443f-931e-072a09464b48",
+            "message_id": "b28973a6-1987-423e-8c00-5e35b07785d0",
+            "tt_ms": 14569.20000000298,
+            "first_text_rendered_ms": 4844.400000002235,
+            "continuous_growth_verified": true,
+            "model_first_text_ms": 4465.487000001303
+          },
+          "growth_count_before_first_model_completed": 128,
+          "browser_first_rendered_chars": 13,
+          "call_ids": [
+            "c8d9c255-6e9c-443f-931e-072a09464b48"
+          ],
+          "raw_characters": 3339,
+          "cjk_characters": 1181,
+          "long_answer_exact_provider_text": true,
+          "unverified_link_markers": 0,
+          "tool_results": [],
+          "browser_sha256": "16fba92683a1eb937ad8d823e7a8e7aa3374e2f1592755a9120c083676f175ad",
+          "message_sha256": "f494dcbd6d4142fed0d568370a5756a2878e7b24af1e71afa24b4c887579600a"
+        },
+        {
+          "case": "tool-loop",
+          "message_id": "3a4d74bb-6a7d-468a-8044-f11fab9b9c7e",
+          "conversation_id": "ca58e1f8-1d03-4467-afa6-96d9e324fff3",
+          "status": "COMPLETED",
+          "verification": {
+            "ftt_ms": 1104.5,
+            "valid": true,
+            "reason": "correlated live provider text and visible browser delivery",
+            "call_id": "c62b6fcd-ac00-471c-9203-01059078042a",
+            "message_id": "3a4d74bb-6a7d-468a-8044-f11fab9b9c7e",
+            "tt_ms": 27261.599999997765,
+            "first_text_rendered_ms": 1131.699999999255,
+            "continuous_growth_verified": true,
+            "model_first_text_ms": 1048.743374998594
+          },
+          "growth_count_before_first_model_completed": 6,
+          "browser_first_rendered_chars": 1,
+          "call_ids": [
+            "c62b6fcd-ac00-471c-9203-01059078042a",
+            "f4ad6ff1-db45-4797-9c24-c9fda8d4bad0",
+            "838568cf-06ad-4a82-8ab0-708a91fb2c2b",
+            "1ef6d738-5026-43b0-937e-aa040afbbc9e"
+          ],
+          "raw_characters": 2114,
+          "cjk_characters": 547,
+          "long_answer_exact_provider_text": null,
+          "unverified_link_markers": 3,
+          "tool_results": [
+            {
+              "tool_call_id": "call_00_LFAQwhNahXvvtGypzEcz3716",
+              "name": "search_web",
+              "result_count": 5,
+              "error": null,
+              "urls": [
+                "https://docs.python.org/3/library/asyncio.html",
+                "https://docs.python.org/3/library/asyncio-task.html",
+                "https://docs.python.org/3/howto/a-conceptual-overview-of-asyncio.html",
+                "https://docs.python.org/3/library/asyncio-dev.html",
+                "https://docs.python.org/3/library/asyncio-threading.html"
+              ]
+            },
+            {
+              "tool_call_id": "call_01_1xqTEvumhAwux9kzosbk3602",
+              "name": "search_web",
+              "result_count": 5,
+              "error": null,
+              "urls": [
+                "https://docs.python.org/3/library/time.html",
+                "https://realpython.com/python-sleep/",
+                "https://www.geeksforgeeks.org/python/sleep-in-python/",
+                "https://python-academy.org/en/handbook/time.sleep",
+                "https://stackoverflow.com/questions/92928/time-sleep-sleeps-thread-or-process"
+              ]
+            },
+            {
+              "tool_call_id": "call_00_MKO6WHfODFQzB63jLbQe1472",
+              "name": "search_web",
+              "result_count": 5,
+              "error": null,
+              "urls": [
+                "https://docs.python.org/3/library/asyncio-task.html",
+                "https://stackoverflow.com/questions/62493718/how-asyncio-sleep-isnt-blocking-thread",
+                "https://superfastpython.com/asyncio-sleep/",
+                "https://superfastpython.com/what-is-asyncio-sleep-zero/",
+                "https://www.cs.unb.ca/~bremner/teaching/cs2613/books/python3-doc/library/asyncio-task.html"
+              ]
+            },
+            {
+              "tool_call_id": "call_00_deGt8thTTaPGdpsuv1mQ7640",
+              "name": "search_web",
+              "result_count": 5,
+              "error": null,
+              "urls": [
+                "https://docs.python.org/3.11/library/time.html?highlight=sleep",
+                "https://superfastpython.com/thread-sleep-in-python/",
+                "https://zetcode.com/python/time-sleep/",
+                "https://www.tutorialspoint.com/python/time_sleep.htm",
+                "https://www.askpython.com/python-modules/python-time-sleep-method"
+              ]
+            }
+          ],
+          "browser_sha256": "49e1c65794dc288491dcba88b30fe73be6d36a65b63edf9b3dc6c892cb0ddb8a",
+          "message_sha256": "1045840faa5c3641e63934f8f473d857d86307b85698d421c4f5a792eb0fad74"
+        }
+      ],
+      "calls": [
+        {
+          "call_id": "c8d9c255-6e9c-443f-931e-072a09464b48",
+          "message_id": "b28973a6-1987-423e-8c00-5e35b07785d0",
+          "started_at_ns": 1793617641084062000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoning_effort": "low",
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 4465.487000001303,
+          "model_duration_ms": 14257.724125000095,
+          "first_raw_sse_ms": 361.49220800143667,
+          "first_reasoning_ms": 802.4986250020447,
+          "last_reasoning_ms": 4456.203707999521,
+          "reasoning_delta_count": 640,
+          "body_delta_count": 1839,
+          "body_chars": 3339,
+          "max_body_gap_ms": 827.0927089979523,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 2480,
+            "prompt_tokens": 3910,
+            "total_tokens": 6390,
+            "completion_tokens_details": {
+              "reasoning_tokens": 640
+            },
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 3910
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-low-20261102/model-trace/c8d9c255-6e9c-443f-931e-072a09464b48/events.jsonl",
+          "trace_sha256": "01bb3c69ef7ea490c05b5e65893d4e93d1439b15412851045166d95bffa173e1",
+          "tool_calls": [],
+          "request_messages_sha256": "40109f46f82e77cc89bc0a7b23c7d38c90b3b9660b0ab4f25369d0939381eb12"
+        },
+        {
+          "call_id": "c62b6fcd-ac00-471c-9203-01059078042a",
+          "message_id": "3a4d74bb-6a7d-468a-8044-f11fab9b9c7e",
+          "started_at_ns": 1793617656031513000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoning_effort": "low",
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 1048.743374998594,
+          "model_duration_ms": 1627.9739159981546,
+          "first_raw_sse_ms": 116.79749999893829,
+          "first_reasoning_ms": 807.2231660007674,
+          "last_reasoning_ms": 1048.5507499979576,
+          "reasoning_delta_count": 32,
+          "body_delta_count": 42,
+          "body_chars": 83,
+          "max_body_gap_ms": 35.35375000137719,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 160,
+            "prompt_tokens": 5787,
+            "total_tokens": 5947,
+            "completion_tokens_details": {
+              "reasoning_tokens": 32
+            },
+            "prompt_tokens_details": {
+              "cached_tokens": 1280
+            },
+            "prompt_cache_hit_tokens": 1280,
+            "prompt_cache_miss_tokens": 4507
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-low-20261102/model-trace/c62b6fcd-ac00-471c-9203-01059078042a/events.jsonl",
+          "trace_sha256": "d1dc7c8028bf1795ed1ffd22da052a8340d2bef35cbff11dadd7f28f4f7136d5",
+          "tool_calls": [
+            {
+              "id": "call_00_LFAQwhNahXvvtGypzEcz3716",
+              "function": {
+                "arguments": "{\"query\": \"asyncio.sleep Python documentation site:docs.python.org\"}",
+                "name": "search_web",
+                "parsed_arguments": null
+              },
+              "type": "function",
+              "index": 0
+            },
+            {
+              "id": "call_01_1xqTEvumhAwux9kzosbk3602",
+              "function": {
+                "arguments": "{\"query\": \"docs.python.org time.sleep blocking function documentation\"}",
+                "name": "search_web",
+                "parsed_arguments": null
+              },
+              "type": "function",
+              "index": 1
+            }
+          ],
+          "request_messages_sha256": "5c882661be59c9490ef9dc91f651ad4a24745fec1fc6e589e08095d9aa4972cf"
+        },
+        {
+          "call_id": "f4ad6ff1-db45-4797-9c24-c9fda8d4bad0",
+          "message_id": "3a4d74bb-6a7d-468a-8044-f11fab9b9c7e",
+          "started_at_ns": 1793617663886046000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoning_effort": "low",
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 1146.8672499977401,
+          "model_duration_ms": 1459.1037919999508,
+          "first_raw_sse_ms": 170.42729199965834,
+          "first_reasoning_ms": 582.8444999970088,
+          "last_reasoning_ms": 1145.717291998153,
+          "reasoning_delta_count": 69,
+          "body_delta_count": 30,
+          "body_chars": 58,
+          "max_body_gap_ms": 50.87774999992689,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 159,
+            "prompt_tokens": 6884,
+            "total_tokens": 7043,
+            "completion_tokens_details": {
+              "reasoning_tokens": 69
+            },
+            "prompt_tokens_details": {
+              "cached_tokens": 5888
+            },
+            "prompt_cache_hit_tokens": 5888,
+            "prompt_cache_miss_tokens": 996
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-low-20261102/model-trace/f4ad6ff1-db45-4797-9c24-c9fda8d4bad0/events.jsonl",
+          "trace_sha256": "646f7eba788f9b2acf055d3cb6c4d3ab406a3f15deefdc32ebde0394f84f4219",
+          "tool_calls": [
+            {
+              "id": "call_00_MKO6WHfODFQzB63jLbQe1472",
+              "function": {
+                "arguments": "{\"query\": \"\\\"asyncio.sleep\\\" \\\"always suspends the current task, allowing other tasks to run\\\" coroutine delay\"}",
+                "name": "search_web",
+                "parsed_arguments": null
+              },
+              "type": "function",
+              "index": 0
+            }
+          ],
+          "request_messages_sha256": "f19dcde4bb9ff24171dd247bf50aae0d05b5fa0116bcfefaab43d080eb0c9ff9"
+        },
+        {
+          "call_id": "838568cf-06ad-4a82-8ab0-708a91fb2c2b",
+          "message_id": "3a4d74bb-6a7d-468a-8044-f11fab9b9c7e",
+          "started_at_ns": 1793617669713580000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoning_effort": "low",
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 1327.7918749990931,
+          "model_duration_ms": 1491.0022500007472,
+          "first_raw_sse_ms": 222.59054199821549,
+          "first_reasoning_ms": 601.425291999476,
+          "last_reasoning_ms": 1327.3548750003101,
+          "reasoning_delta_count": 109,
+          "body_delta_count": 32,
+          "body_chars": 63,
+          "max_body_gap_ms": 10.362041997723281,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 201,
+            "prompt_tokens": 7713,
+            "total_tokens": 7914,
+            "completion_tokens_details": {
+              "reasoning_tokens": 109
+            },
+            "prompt_tokens_details": {
+              "cached_tokens": 7040
+            },
+            "prompt_cache_hit_tokens": 7040,
+            "prompt_cache_miss_tokens": 673
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-low-20261102/model-trace/838568cf-06ad-4a82-8ab0-708a91fb2c2b/events.jsonl",
+          "trace_sha256": "e05132c5f367d00875dae621b22433a63cc1d447332c3868a29ba247f562a94c",
+          "tool_calls": [
+            {
+              "id": "call_00_deGt8thTTaPGdpsuv1mQ7640",
+              "function": {
+                "arguments": "{\"query\": \"\\\"time.sleep\\\" docs.python.org \\\"Suspend execution of the calling thread for the given number of seconds\\\"\"}",
+                "name": "search_web",
+                "parsed_arguments": null
+              },
+              "type": "function",
+              "index": 0
+            }
+          ],
+          "request_messages_sha256": "ae42ac2e15dc7ac7f893e398ddb14d2a4a2d701f16d566f6aa96bfb046ad95a9"
+        },
+        {
+          "call_id": "1ef6d738-5026-43b0-937e-aa040afbbc9e",
+          "message_id": "3a4d74bb-6a7d-468a-8044-f11fab9b9c7e",
+          "started_at_ns": 1793617676829723000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoning_effort": "low",
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 2980.2694999998494,
+          "model_duration_ms": 6374.2603749997215,
+          "first_raw_sse_ms": 174.04270800034283,
+          "first_reasoning_ms": 619.899000001169,
+          "last_reasoning_ms": 2966.132749999815,
+          "reasoning_delta_count": 355,
+          "body_delta_count": 706,
+          "body_chars": 1794,
+          "max_body_gap_ms": 363.8392909997492,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 1062,
+            "prompt_tokens": 8452,
+            "total_tokens": 9514,
+            "completion_tokens_details": {
+              "reasoning_tokens": 355
+            },
+            "prompt_tokens_details": {
+              "cached_tokens": 7808
+            },
+            "prompt_cache_hit_tokens": 7808,
+            "prompt_cache_miss_tokens": 644
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-low-20261102/model-trace/1ef6d738-5026-43b0-937e-aa040afbbc9e/events.jsonl",
+          "trace_sha256": "e0459a435aedce4f0363f0bcc9b4930701017e97524b1adfef018d50d8fb0ef6",
+          "tool_calls": [],
+          "request_messages_sha256": "599c2bbe545a16437bbcb8b52ef068a91a683d18b0382652d19bd6876e653681"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 32746,
+        "completion_tokens": 4062,
+        "total_tokens": 36808,
+        "prompt_cache_hit_tokens": 22016,
+        "prompt_cache_miss_tokens": 10730,
+        "reasoning_tokens": 1205,
+        "estimated_peak_usd": 0.008225495999999999
+      },
+      "reload_body_equal_excluding_completion_notification": true
+    },
+    "none": {
+      "effort": "none",
+      "manifest": {
+        "pid": 23731,
+        "command": [
+          "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+          "-m",
+          "server.api"
+        ],
+        "cwd": "/Users/hypnos/.codex/worktrees/chat-streaming-ftt/Seekino",
+        "started_at": 1793617732.002972,
+        "base_commit": "75bfa116447c9a95a4ca5332a3262dc7ed9f3e37",
+        "config_sha256": "50406dfcd6a2ddca06eb00b681d6722c365e56678e8e241d55a08d73ec7997b4",
+        "model": "deepseek-flash",
+        "profile": "deepseek",
+        "reasoning_effort": "none",
+        "changed_roles": [
+          "agent",
+          "supervisor",
+          "vision",
+          "vision_fallback",
+          "summarize",
+          "rerank"
+        ],
+        "kimi_key_removed": true,
+        "api_url": "http://127.0.0.1:19625",
+        "web_url": "http://127.0.0.1:15175/search",
+        "database": "seekino_chat_streaming_20261102_test",
+        "empty_library": true
+      },
+      "browser_errors": [],
+      "cases": [
+        {
+          "case": "long-answer",
+          "message_id": "2a4cb49a-9938-4f16-9864-3e574c1e39f6",
+          "conversation_id": "5bc1e4ad-3c0b-481b-a1b4-35cbe49d7673",
+          "status": "COMPLETED",
+          "verification": {
+            "ftt_ms": 769.3000000007451,
+            "valid": true,
+            "reason": "correlated live provider text and visible browser delivery",
+            "call_id": "9e5fb1a3-e75a-4b0c-b438-3e4192e4b093",
+            "message_id": "2a4cb49a-9938-4f16-9864-3e574c1e39f6",
+            "tt_ms": 7989.300000000745,
+            "first_text_rendered_ms": 880.0999999977648,
+            "continuous_growth_verified": true,
+            "model_first_text_ms": 525.0730830011889
+          },
+          "growth_count_before_first_model_completed": 105,
+          "browser_first_rendered_chars": 8,
+          "call_ids": [
+            "9e5fb1a3-e75a-4b0c-b438-3e4192e4b093"
+          ],
+          "raw_characters": 2407,
+          "cjk_characters": 896,
+          "long_answer_exact_provider_text": true,
+          "unverified_link_markers": 0,
+          "tool_results": [],
+          "browser_sha256": "da27d56fdc329503756def2dfe7fca0105923efeb88b97a12bc8eafa23a079bf",
+          "message_sha256": "e03a6a0127f2ac7b7748c8114dbc51c6b2757f3c17cb0e7598941df5f23144b3"
+        },
+        {
+          "case": "tool-loop",
+          "message_id": "7ce5c096-de8e-4f90-aa5b-6be825e55b8d",
+          "conversation_id": "5bc1e4ad-3c0b-481b-a1b4-35cbe49d7673",
+          "status": "COMPLETED",
+          "verification": {
+            "ftt_ms": 777.4000000022352,
+            "valid": true,
+            "reason": "correlated live provider text and visible browser delivery",
+            "call_id": "9eae91b7-3372-417d-8e14-6b6f15228b28",
+            "message_id": "7ce5c096-de8e-4f90-aa5b-6be825e55b8d",
+            "tt_ms": 14101.300000000745,
+            "first_text_rendered_ms": 798.1000000014901,
+            "continuous_growth_verified": true,
+            "model_first_text_ms": 721.9626670012076
+          },
+          "growth_count_before_first_model_completed": 4,
+          "browser_first_rendered_chars": 2,
+          "call_ids": [
+            "9eae91b7-3372-417d-8e14-6b6f15228b28",
+            "098d3c2e-7558-4883-aa4d-842a61526c48"
+          ],
+          "raw_characters": 1512,
+          "cjk_characters": 601,
+          "long_answer_exact_provider_text": null,
+          "unverified_link_markers": 2,
+          "tool_results": [
+            {
+              "tool_call_id": "call_00_MjfdHUsuSvR3hqn3K7bS1503",
+              "name": "search_web",
+              "result_count": 5,
+              "error": null,
+              "urls": [
+                "https://docs.python.org/3/library/asyncio.html",
+                "https://docs.pythonlang.cn/3/library/asyncio.html",
+                "https://docs.pyth.onl/zh-cn/3/library/asyncio.html",
+                "https://runebook.dev/zh/docs/python/library/asyncio-task/asyncio.sleep",
+                "https://www.runoob.com/python3/python-asyncio.html"
+              ]
+            },
+            {
+              "tool_call_id": "call_01_emtbYtRQwciQ8fVZ4q249695",
+              "name": "search_web",
+              "result_count": 5,
+              "error": null,
+              "urls": [
+                "https://docs.python.org/3/library/time.html",
+                "https://realpython.com/python-sleep/",
+                "https://www.geeksforgeeks.org/python/sleep-in-python/",
+                "https://docs.micropython.org/en/latest/library/time.html",
+                "https://python-academy.org/en/handbook/time.sleep"
+              ]
+            }
+          ],
+          "browser_sha256": "8125457e8359472880913cf484bff467a68a5e686a5bb295a6f6ae4ef8fe3053",
+          "message_sha256": "a81fe81712ce654296cd8eb7a609eb3a6551d44fe425bbd4da6fae20d8daf1f0"
+        }
+      ],
+      "calls": [
+        {
+          "call_id": "9e5fb1a3-e75a-4b0c-b438-3e4192e4b093",
+          "message_id": "2a4cb49a-9938-4f16-9864-3e574c1e39f6",
+          "started_at_ns": 1793617774964104000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "disabled"
+          },
+          "reasoning_effort": null,
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 525.0730830011889,
+          "model_duration_ms": 7735.393750001094,
+          "first_raw_sse_ms": 231.86483300014515,
+          "first_reasoning_ms": null,
+          "last_reasoning_ms": null,
+          "reasoning_delta_count": 0,
+          "body_delta_count": 1432,
+          "body_chars": 2407,
+          "max_body_gap_ms": 619.8920419992646,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 1432,
+            "prompt_tokens": 3885,
+            "total_tokens": 5317,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 3885
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-none-20261102/model-trace/9e5fb1a3-e75a-4b0c-b438-3e4192e4b093/events.jsonl",
+          "trace_sha256": "fc1675574e6d2ea80d8e3394183afb78d0852188447e18ef7b8eb60b5849bf93",
+          "tool_calls": [],
+          "request_messages_sha256": "40109f46f82e77cc89bc0a7b23c7d38c90b3b9660b0ab4f25369d0939381eb12"
+        },
+        {
+          "call_id": "9eae91b7-3372-417d-8e14-6b6f15228b28",
+          "message_id": "7ce5c096-de8e-4f90-aa5b-6be825e55b8d",
+          "started_at_ns": 1793617782931965000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "disabled"
+          },
+          "reasoning_effort": null,
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 721.9626670012076,
+          "model_duration_ms": 1222.5189579985454,
+          "first_raw_sse_ms": 267.48208299977705,
+          "first_reasoning_ms": null,
+          "last_reasoning_ms": null,
+          "reasoning_delta_count": 0,
+          "body_delta_count": 33,
+          "body_chars": 68,
+          "max_body_gap_ms": 71.54775000162772,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 117,
+            "prompt_tokens": 5354,
+            "total_tokens": 5471,
+            "prompt_tokens_details": {
+              "cached_tokens": 1280
+            },
+            "prompt_cache_hit_tokens": 1280,
+            "prompt_cache_miss_tokens": 4074
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-none-20261102/model-trace/9eae91b7-3372-417d-8e14-6b6f15228b28/events.jsonl",
+          "trace_sha256": "cc9fd7f6ff3ae37b02d4af37299389f467831924bc4d0fa3c37fd62bed63fed8",
+          "tool_calls": [
+            {
+              "id": "call_00_MjfdHUsuSvR3hqn3K7bS1503",
+              "function": {
+                "arguments": "{\"query\": \"asyncio.sleep Python 官方文档 docs.python.org\"}",
+                "name": "search_web",
+                "parsed_arguments": null
+              },
+              "type": "function",
+              "index": 0
+            },
+            {
+              "id": "call_01_emtbYtRQwciQ8fVZ4q249695",
+              "function": {
+                "arguments": "{\"query\": \"time.sleep docs.python.org library time\"}",
+                "name": "search_web",
+                "parsed_arguments": null
+              },
+              "type": "function",
+              "index": 1
+            }
+          ],
+          "request_messages_sha256": "81dfdd0f5b07f0a278abb2b3bc613aea763753963b1653b68654eebc9241e612"
+        },
+        {
+          "call_id": "098d3c2e-7558-4883-aa4d-842a61526c48",
+          "message_id": "7ce5c096-de8e-4f90-aa5b-6be825e55b8d",
+          "started_at_ns": 1793617792006286000,
+          "model": "deepseek-flash",
+          "stream": true,
+          "thinking": {
+            "type": "disabled"
+          },
+          "reasoning_effort": null,
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "model_first_text_ms": 768.6650830000872,
+          "model_duration_ms": 4945.581957999821,
+          "first_raw_sse_ms": 185.6527499985532,
+          "first_reasoning_ms": null,
+          "last_reasoning_ms": null,
+          "reasoning_delta_count": 0,
+          "body_delta_count": 662,
+          "body_chars": 1426,
+          "max_body_gap_ms": 82.74433300175588,
+          "gaps_over_1s": 0,
+          "usage": {
+            "completion_tokens": 663,
+            "prompt_tokens": 6560,
+            "total_tokens": 7223,
+            "prompt_tokens_details": {
+              "cached_tokens": 5376
+            },
+            "prompt_cache_hit_tokens": 5376,
+            "prompt_cache_miss_tokens": 1184
+          },
+          "trace_path": "outputs/verification/chat-streaming-deepseek-none-20261102/model-trace/098d3c2e-7558-4883-aa4d-842a61526c48/events.jsonl",
+          "trace_sha256": "345cb900a346cfc1deb13ebbef1ca117c9069b4f4820d0b1a963769b1bccb6fd",
+          "tool_calls": [],
+          "request_messages_sha256": "18ed4435506019acea47712a3e116f4bcd0297d6ed44bb88621ee562cfdc5e59"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 15799,
+        "completion_tokens": 2212,
+        "total_tokens": 18011,
+        "prompt_cache_hit_tokens": 6656,
+        "prompt_cache_miss_tokens": 9143,
+        "reasoning_tokens": 0,
+        "estimated_peak_usd": 0.005437236000000001
+      },
+      "reload_body_equal_excluding_completion_notification": true
+    }
+  },
+  "comparison_scope": {
+    "samples_per_case_and_mode": 1,
+    "long_question_messages_and_tool_schema_identical_to_kimi_low": true,
+    "tool_question_history_differs_after_generated_long_answer": true,
+    "controlled_load_or_cache": false,
+    "no_new_kimi_requests": true,
+    "runtime_code_changes": false,
+    "pricing_source": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "cost_is_published_peak_rate_estimate_not_invoice": true,
+    "external_web_search_cost_excluded": true
+  },
+  "accuracy_review": {
+    "method": "Independent Python integer matrix multiplication; source comparison with official Python documentation; actual tool-result URLs compared with raw response and persisted text.",
+    "matrix_checks": [
+      {
+        "case": "common example AB",
+        "actual": [
+          [
+            19,
+            22
+          ],
+          [
+            43,
+            50
+          ]
+        ],
+        "expected": [
+          [
+            19,
+            22
+          ],
+          [
+            43,
+            50
+          ]
+        ]
+      },
+      {
+        "case": "common example BA",
+        "actual": [
+          [
+            23,
+            34
+          ],
+          [
+            31,
+            46
+          ]
+        ],
+        "expected": [
+          [
+            23,
+            34
+          ],
+          [
+            31,
+            46
+          ]
+        ]
+      },
+      {
+        "case": "low exercise AB",
+        "actual": [
+          [
+            4,
+            13
+          ],
+          [
+            6,
+            15
+          ]
+        ],
+        "expected": [
+          [
+            4,
+            13
+          ],
+          [
+            6,
+            15
+          ]
+        ]
+      },
+      {
+        "case": "none exercise AB",
+        "actual": [
+          [
+            7,
+            10
+          ],
+          [
+            15,
+            6
+          ]
+        ],
+        "expected": [
+          [
+            7,
+            10
+          ],
+          [
+            15,
+            6
+          ]
+        ]
+      },
+      {
+        "case": "none exercise BA",
+        "actual": [
+          [
+            2,
+            13
+          ],
+          [
+            10,
+            11
+          ]
+        ],
+        "expected": [
+          [
+            2,
+            13
+          ],
+          [
+            10,
+            11
+          ]
+        ]
+      }
+    ],
+    "matrix_dimensions_and_row_column_rule": "correct in both answers",
+    "formatting": {
+      "low": "1181 CJK characters excluding formulas and Latin text; eight sections plus a separate exercise, so not strictly eight short paragraphs.",
+      "none": "896 CJK characters excluding formulas and Latin text; eight sections, with lists and multiple paragraphs; shorter than low.",
+      "ui": "Existing LaTeX rendering limitation remains; formulas appear as raw notation."
+    },
+    "tool_answer": {
+      "both": "Core distinction between suspending the current task and blocking the event-loop thread is correct; describing await as the only execution form is too absolute.",
+      "low": "Actual search snippets contain asyncio.sleep and time.sleep wording; three persisted unverified-link markers. Exact URL matching includes a Chinese closing parenthesis and rejects removal of ?highlight=sleep.",
+      "none": "Claims asyncio.sleep can only be used in async def and that official docs guarantee sleeping at least the requested interval. The former is disproved by asyncio.run(asyncio.sleep(0)); the cited asyncio.sleep documentation provides no such lower-bound guarantee. The model cites an asyncio-task child page absent from its search results. Two unverified-link markers remain.",
+      "strict_quality_pass": false
+    },
+    "references": [
+      "https://docs.python.org/3/library/asyncio-task.html#coroutines",
+      "https://docs.python.org/3/library/asyncio-task.html#asyncio.sleep",
+      "https://docs.python.org/3/library/time.html#time.sleep",
+      "https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.call_later"
+    ],
+    "counterexample": {
+      "code": "import asyncio; asyncio.run(asyncio.sleep(0))",
+      "result": null,
+      "executed": true
+    }
+  },
+  "active_instance": {
+    "pid": 23947,
+    "command": [
+      "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+      "-m",
+      "server.api"
+    ],
+    "cwd": "/Users/hypnos/.codex/worktrees/chat-streaming-ftt/Seekino",
+    "started_at": 1793618128.679509,
+    "base_commit": "75bfa116447c9a95a4ca5332a3262dc7ed9f3e37",
+    "config_sha256": "558581fb84dab5bd4422428d6cf64036ea7c4a932217f0d5ee231c07fd9ae509",
+    "model": "deepseek-flash",
+    "profile": "deepseek",
+    "reasoning_effort": "low",
+    "changed_roles": [
+      "agent",
+      "supervisor",
+      "vision",
+      "vision_fallback",
+      "summarize",
+      "rerank"
+    ],
+    "kimi_key_removed": true,
+    "api_url": "http://127.0.0.1:19625",
+    "web_url": "http://127.0.0.1:15175/search",
+    "database": "seekino_chat_streaming_20261102_test",
+    "empty_library": true
+  }
+}

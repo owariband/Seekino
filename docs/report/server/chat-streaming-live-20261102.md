@@ -1,6 +1,6 @@
 # Chat stream=true 真实运行：2026-11-02
 
-**正文已经能在模型完成前显示，但当前 Kimi 链路仍有较长的首次等待和成批输出。** 本轮从 [PR #25](https://github.com/owariband/Seekino/pull/25) 的 worktree 启动真实 API/Web，以 Chrome 提交两条问题，没有模拟模型或 HTTP。需求见 [TRD](../../design/03-product-reassessment/chat-streaming-trd.md)。
+**首轮 Kimi 测试确认正文能在模型完成前显示，但仍有较长的首次等待和成批输出。** 本轮从 [PR #25](https://github.com/owariband/Seekino/pull/25) 的 worktree 启动真实 API/Web，以 Chrome 提交两条问题，没有模拟模型或 HTTP。需求见 [TRD](../../design/03-product-reassessment/chat-streaming-trd.md)。
 
 ## 运行条件
 
@@ -67,3 +67,32 @@ python scripts/verify_chat_streaming_trace.py \
 | input / output tokens | 3441 / 1800 | 3442 / 1754 |
 
 low 样本仍有 reasoning，最终正文一致，模型完成前持续展示，浏览器无 pageerror。415 项相关回归通过，覆盖 Agent/Structured 各档位与真实 SDK 请求映射。本轮还补齐了流式诊断新增事件对应的旧测试断言。没有同时间多轮对照，输入 token 与负载也不完全相同；只能确认实际参数生效和本次测量，不能宣称稳定提速。源码指纹、计时、用量及核验结果见 [验证记录](evidence/chat-streaming-20261102/kimi-low-validation.json)，[JUnit](evidence/chat-streaming-20261102/kimi-low-backend.xml)。PR #18 后续更新造成的集成冲突及课程验收仍待处理。
+
+<a id="deepseek-20261102"></a>
+## 后续：DeepSeek 的速度与回答准确性
+
+Kimi 额度耗尽后，在同一独立实例改用 `deepseek-flash`，分别测试 `low` 与关闭推理。型号、开关与价格依据 [DeepSeek 模型页](https://api-docs.deepseek.com/quick_start/pricing/)及[推理文档](https://api-docs.deepseek.com/guides/thinking_mode/)。代码仍为 `75bfa116`；仅生成隔离配置，原先绑定 Kimi 的模型角色改指 DeepSeek，并从该进程环境移除 Kimi key，未修改主工作区配置。本轮只执行普通 Chat，未验证 Parse / Rerank 等角色。
+
+每档各一个新会话，依次提交与 Kimi 相同的矩阵题和工具题。长题实际 messages 和 tools 与 Kimi low 完全相同；工具题含各自生成的上一轮回答，历史不同。采样配置、缓存、运行时间与外部负载未控制，因此以下是试跑观察，不是严格 A/B 或稳定性能结论。
+
+| 用例与档位 | 首正文 token 接收 | 首次页面文字 | 整轮 TT | 模型 / 搜索调用数 |
+| --- | ---: | ---: | ---: | ---: |
+| 矩阵题，Kimi low（前次） | 23.248 s | 23.312 s 可读文字 | 52.186 s | 1 / 0 |
+| 矩阵题，DeepSeek low | 4.758 s | 4.844 s | 14.569 s | 1 / 0 |
+| 矩阵题，DeepSeek 关闭推理 | 0.769 s | 0.880 s | 7.989 s | 1 / 0 |
+| 工具题，DeepSeek low | 1.105 s | 1.132 s | 27.262 s | 4 / 4 |
+| 工具题，DeepSeek 关闭推理 | 0.777 s | 0.798 s | 14.101 s | 2 / 2 |
+
+工具题首段只是查找计划，不能当作实质答案。八次供应商请求均确认 `stream=true`；low 为 `thinking=enabled, reasoning_effort=low`，关闭推理为 `thinking=disabled`。四次浏览器请求全部完成，现有 FTT 核验器均返回有效且完成前持续增长。两道长回答分别在首模型完成前增长 128 / 105 次，正文与模型逐字一致；两组刷新后正文一致（忽略一次性的完成通知），pageerror 均为 0。
+
+DeepSeek low 长题有 640 reasoning tokens，首次 reasoning 在模型请求后 0.802 s、首正文 4.465 s；前次 Kimi low 为 513 reasoning tokens、首正文 23.007 s。DeepSeek 两档长题的最大正文片段间隔分别为 0.827 / 0.620 s，本次没有复现 Kimi 的数秒空档。这里只能比较接收记录，不能确定供应商内部耗时原因。
+
+**准确性没有全通过。** 独立 Python 复算确认两组矩阵例题、反向乘法、练习及维度判断正确。low 正文含 1181 个汉字（不含公式与英文），但八节之外又单列练习；关闭推理含 896 个汉字，内容更短。两者都不是严格八个短段落。页面仍显示原始 LaTeX，属于既有展示限制。
+
+工具题两档都正确解释了当前 Task 与事件循环线程的区别，但都把必须 `await` 说得过于绝对。关闭推理还写出“只能在 async def 使用”和“官方保证至少睡够指定时间”。实际执行 `asyncio.run(asyncio.sleep(0))` 即可反驳前者；[官方协程文档](https://docs.python.org/3/library/asyncio-task.html#coroutines)列出多种执行方式，[sleep 条目](https://docs.python.org/3/library/asyncio-task.html#asyncio.sleep)没有后者所称的时长下界保证。
+
+引用还有独立缺陷：low 已检索到函数原文，但模型省略 URL 的 `?highlight=sleep`，且现有 `_URL` 正则把中文右括号也纳入 URL；严格匹配最终留下 3 处“未核实链接”。关闭推理引用了未出现在本次结果中的 asyncio-task 子页面，另给 time 页加 anchor，留下 2 处标记。它们分别涉及证据约束与链接提取，不能把链接过滤后的完成状态算成引用验收通过。本轮记录问题，未扩大修改链接策略。
+
+两档分别用量 input/output **32,746/4,062**、**15,799/2,212** tokens，reasoning 分别 1,205/0（已包含在 output）。按官方高峰单价及实际缓存命中估算约 **$0.00823 / $0.00544**，合计 **$0.01366**；不是账单核验，不包含现有 `search_web` 的外部成本。
+
+独立 API 最终保留 DeepSeek low，页面仍为 `http://127.0.0.1:15175/search`；该选择基于本轮较少的事实性问题，不能外推总体准确率。参数、调用身份、计时、用量、原始文件哈希与质量核对见 [deepseek-validation.json](evidence/chat-streaming-20261102/deepseek-validation.json)。完整配置、请求、reasoning、正文和浏览器证据在本 worktree 的 `outputs/verification/chat-streaming-deepseek-{low,none}-20261102/`，不提交原始上下文。课程观看页及 Q02/Q03 尚未验证，C23 / PR 状态保持不变。
