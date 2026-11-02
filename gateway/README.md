@@ -28,7 +28,7 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 - `../docs/design/pi-host-trd.md`：已退役的云端 Pi Host 历史设计；当前使用 Deep Agents＋MySQL checkpoint；
 - `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX Adapter；
 - 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
-  提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
+  提供共享协议和纯工具，`config.py` 描述来源、模型选择与网页搜索连接配置。
 
 业务层通过 `model_factory.GatewayClient` 获取模型。`create(kind, ref)` 按外部配置
 创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription` 五类模型，也提供对应的
@@ -94,6 +94,17 @@ finally:
     model.close()
     client.close()
 ```
+
+## 网页搜索
+
+`WebSearcher` 根据独立 `web_search.provider` 选择 DDGS（默认，无 API key）或 DeepSeek 官方 Search API。
+Server 注入配置，Chat 模型选择与搜索供应商互不绑定；保留统一 `WebSearchHit(title, url, snippet)`。
+DDGS 查询限 500 字符，DeepSeek 限 128，Agent 工具 Schema 使用对应上限。两条路径共用 URL 校验、
+去重与摘要预算；保留 DDGS 依赖，只有选择 DeepSeek 时才读取搜索 key，不自动跨供应商回退。
+日志记录所选 provider/backend、请求 ID、可用的 HTTP 状态、耗时与结果数，不记录凭据或查询正文。
+DDGS 的 auto 由库选择后端；配置写错或指定了已禁用后端时明确失败，避免库静默改回 auto。
+配置示例见[网页搜索配置](../docs/model-config.md#网页搜索配置)，验证见
+[搜索配置 TRD](../docs/design/03-product-reassessment/deepseek-web-search-trd.md)。
 
 ## 可选本地转写
 

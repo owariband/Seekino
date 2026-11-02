@@ -459,6 +459,8 @@ class _VideoSupervisorModel(_DirectSupervisorModel):
 
 
 class _WebSearcherStub:
+    max_query_chars = 500
+
     def search(self, _query, *, max_results, timeout_seconds):
         assert max_results == 5
         assert timeout_seconds > 0

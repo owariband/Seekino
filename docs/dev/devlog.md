@@ -31,6 +31,7 @@
 | [2026-11-02：正文已提前交付，但模型接收流成批到达仍造成停顿](#devlog-chat-streaming-live-20261102) | C23、真实首字与页面增长 |
 | [2026-11-02：正文发布频率混入 Supervisor，流式交付职责需要分离](#devlog-chat-streaming-boundaries-20261102) | C23、模型事件合同与 Server 快照合并 |
 | [2026-11-01：完整模型响应挡住正文交付，课程首字耗时无法真实计量](#devlog-chat-streaming-delivery-20261101) | C23、Chat 流式交付与采证 |
+| [2026-11-02：搜索使用未固定后端的 DDGS，切换模型未改变检索供应商](#devlog-deepseek-web-search-20261102) | C24、DeepSeek 官方搜索接入 |
 | [2026-10-31：模型温度被入口写死，业务配置无法生效](#devlog-model-temperature-20261031) | B24、内部模型创建与 YAML 参数传递 |
 | [2026-10-31：模型入口写死 stream，导致配置失效与长请求等待](#devlog-model-streaming-20261031) | B24、Chat / Parse 默认流式与配置传递 |
 | [2026-10-30：Kimi 长 Chunk 非流式请求连续 504，阻塞 Parse](#devlog-kimi-streaming-20261030) | B23、长 Chunk 504 与协议接线 |
@@ -221,6 +222,28 @@ Chat 流式首版把协议内 `ChatTextDelta` 与 50 ms 发布频率带入 Super
 ### 指标对比
 
 业务目标是正文可持续阅读及首字证据可信，因此先验证交付时序和计量反例，再讨论速度。后端 589 passed / 1 skipped，另新增摘要隔离用例 1 passed；前端 159 passed、类型检查与构建通过，Chrome 1 passed；跳过项依赖独立 MySQL 测试配置。模拟首字不得作为性能结果，真实 FTT、TT 和 token 成本本轮均未测。代价是新增可选 SSE 来源与模型轮次边界，以及比整包模式更频繁的快照持久化；50 ms 合并限制写入频率，真实并发下数据库压力仍需观察。采纳实现进入独立试点，不宣称提速或部署完成。
+
+<a id="devlog-deepseek-web-search-20261102"></a>
+## 2026-11-02：搜索使用未固定后端的 DDGS，切换模型未改变检索供应商
+
+### 问题与现状
+
+Chat 改用 DeepSeek 后，search_web 仍调用未指定 backend 的 DDGS，无法从模型配置判断真实搜索来源。已有工具样本还存在空结果和无效引用，需要将供应商接入与答案质量分开验证。[PR #28](https://github.com/owariband/Seekino/pull/28) / [TRD](../design/03-product-reassessment/deepseek-web-search-trd.md) 直接基于 dev；早期错误地将试跑环境写成 #18→#25→#28 合并依赖，现已剥离上游历史并纠正。
+
+### 方案候选
+
+接入官方独立 Search REST，复用现有 key、工具循环及标题/URL/摘要合同；不切换模型协议、不加入 Fetch 或额外生成调用。网页参数单独限制 128 字符，视频保持 500；按官方错误分级反馈，日志可确认供应商及耗时。首版移除 DDGS 后，配置变成强制 API；随后按产品边界修正为默认 DDGS 免 key、显式选择 DeepSeek，两种方式均保留。搜索失败明确返回，不静默更换来源；本机选择不替代用户选择。
+
+### 方案验证
+
+首版独立 dev 基线相关回归 432 passed，工具过滤说明调整后 Supervisor 137 passed。配置选择修正后 604 passed / 1 skipped；DDGS 无 key 与 DeepSeek 显式 key 各一次探针均返回 5 条，耗时 2.714 / 0.588 s，仅用于接入验证。真实页面两轮 9 次 Search 加一次探针均 HTTP 200、有结果。首轮普通关键词未找到直接官方文档；补充 site/lang 说明后，模型五次均限定官方站点并给出一条可核验文档链接。两个样本的无效引用和错误断言都保留，未因接口成功关闭质量验收。证据见[实施报告](../report/gateway/deepseek-web-search-20261102.md)。
+
+
+2026-11-02 集成复核：#25 `04eecafd` 与 #28 `8ea667c0` 联合代码通过后端 1086 项、前端 159 项、typecheck/build；1 项可选 MySQL 检查缺配置跳过。#25 随后先合入 dev（`2cd27caa`），#28 同步 dev 并保留双方改动；源码与通过测试的联合副本一致。决定将流式交付和搜索配置进入 dev，课程、回答与引用质量待办继续保留。见[集成记录](../report/gateway/deepseek-web-search-20261102.md#2026-11-02与-chat-流式联合验证及-dev-集成)。
+
+### 指标对比
+
+关注实际供应商、等待、调用成本和证据正确性。页面两轮 Search 分别 4/5 次，单次 0.303–0.839 s；Server 整轮 12.859/13.765 s，模型调用 3/4 次。相比旧 DDGS 仅能确认供应商明确，输入与历史不同，未声称总体提速。7 次模型调用 input 42,456 / output 2,911 tokens；10 次 Search 估算 $0.0075，不含生成、非账单。第二轮仍有 3 处未核实链接和事实表述缺陷，C24 保持 TODO；采用接入实现并保留独立测试页面，未向主环境部署。
 
 <a id="devlog-kimi-streaming-20261030"></a>
 

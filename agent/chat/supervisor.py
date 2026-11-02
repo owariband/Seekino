@@ -17,7 +17,7 @@ from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
 from gateway.model_events import ModelTextDelta
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
@@ -160,6 +160,12 @@ class SupervisorRuntime:
         self._realtime_runtime = realtime_runtime
         self._model = supervisor_model
         self._web_searcher = web_searcher
+        self._web_search_arguments = create_model(
+            "WebSearchArguments", __base__=SearchArguments,
+            query=(Annotated[str, StringConstraints(
+                strip_whitespace=True, min_length=1, max_length=web_searcher.max_query_chars,
+            )], ...),
+        )
         self._max_web_results = max_web_results
         self._web_timeout_seconds = web_timeout_seconds
         self._execution_timeout_seconds = execution_timeout_seconds
@@ -483,8 +489,8 @@ class SupervisorRuntime:
                         success=False,
                         payload={"error": ToolError(
                             code="WEB_SEARCH_FAILED",
-                            message="Web search is temporarily unavailable.",
-                            retryable=True,
+                            message="Web search is unavailable.",
+                            retryable=exc.retryable,
                             retry_hint=(
                                 "Answer from other available sources or explain the limitation."
                             ),
@@ -953,8 +959,12 @@ class SupervisorRuntime:
             ),
             build_agent_tool(
                 func=search_web, name="search_web",
-                description="Search the public web. Cite only URLs returned by this tool.",
-                args_schema=SearchArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                description=(
+                    f"Search the public web using a query of at most {self._web_searcher.max_query_chars} characters. "
+                    "Use site:domain when a specific source is requested. "
+                    "Returns summaries, not full page text. Cite only URLs returned by this tool."
+                ),
+                args_schema=self._web_search_arguments, maximum_result_bytes=self._max_tool_result_bytes,
             ),
             build_agent_tool(
                 func=query_video, name="query_video",
