@@ -1591,6 +1591,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
+**11-02 18:01 v7失败与接入核验：** 515.164秒后失败，10/117理解、0/115 Refine、0索引；Understanding阶段中位264.465秒、69条对白具名且无格式重试。8次Refine请求为7次Kimi五小时额度429及1次断连，没有模型输出，不能验收冲突优化。正式Understanding仍限制所有事件在Chunk内，与完整跨界ASR/语义完整话语要求冲突；实验候选未贯通到该Prompt和宿主门禁，此项保持TODO。额度耗尽错误分类也待完善；本轮没有重试任务。[证据](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-quota-terminal)。
+
 **11-02 17:53 v7重新整课解析：** v6因sequence28单帧缺少JPEG头五字节失败，842.076秒、20/117理解、3/115 Refine、1/117索引；截头程序来源未定位。已按正式reparse创建v7 `60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`，实现和冻结配置不变、图片重新生成、音频复用新转写0；目标帧发布后正常，实际发送与整课验收仍待观察。旧版本保留失败，B07保持TODO。[记录](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-fresh-run)。
 
 **11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。

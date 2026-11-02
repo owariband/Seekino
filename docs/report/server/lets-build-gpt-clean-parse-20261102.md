@@ -1,6 +1,6 @@
 # Let’s build GPT 新版本全课解析对照（2026-11-02）
 
-> 11-02 17:53续跑：v6因单张输入图片缺少JPEG头失败，失败与追查见末节；已另建v7 `60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`，以下启动快照记录其运行状态。旧版本保留失败记录，分别计时；尚未完成整课验收。
+> 11-02 18:01终态：v7因Kimi五小时额度耗尽停止，515.164秒、10/117理解、0/115 Refine、0索引，新ASR0。末节记录终态、阶段指标及Understanding跨Chunk对白合同未接通的问题；此前启动记录按当时时点保留。
 
 本次继续 [PR #18](https://github.com/owariband/Seekino/pull/18) 的完整课程验收，分支 `fix/video-asr-recovery`。运行代码 `1c3aaa6c2ed40359f56541daacdc8401c941ee52`，API 从 `/Users/hypnos/.codex/worktrees/full-video-asr/Seekino` 启动。本文先记录实际启动与测量合同；完整解析、Refine 冲突收益和业务质量尚未取得结果。
 
@@ -102,3 +102,32 @@ HEAD `6f7c38fb`，业务实现仍为`f3a3d43e`；与v6冻结ParseConfig逐项一
 17:56:55请求快照：已启动10个Understanding，10个已收到SSE，错误0个；具体首SSE与阶段进度见[启动证据](evidence/lets-build-gpt-clean-parse-20261102/v7-startup.json)。单次启动不证明偶发截头已修复，完整解析/索引与问答仍待验。
 
 原始材料：`outputs/verification/lets-build-gpt-clean-parse-v7-20261102/`中的run、audio-reuse、progress、request-telemetry、frame-audit以及model-trace。采集到任务终态结束，并释放本轮caffeinate；网络时间窗口与v6不同，不按首批时延宣称整体提速。
+
+
+<a id="v7-quota-terminal"></a>
+## v7 终态、阶段表现与尚未解决的 Prompt 冲突
+
+18:01:41.200任务进入PARSING_FAILED，实际515.164秒（8分35.164秒），10/117 Understanding已提交，Refine0/115、Index0/117。最早Refine错误出现在17:58:26：Kimi返回429、`exceeded_current_quota_error`，明确提示五小时用量额度耗尽。八次请求覆盖四个区间，其中四次是追加重试；七次额度拒绝耗时0.387–0.462秒，一次连接被提前断开耗时36.872秒，均没有SSE或模型JSON。首个区间在第三次请求后耗尽原两次重试预算，18:00开始全任务收尾，其余已在执行的Understanding到18:01:41完成。不能把八次失败解释为Refine冲突重算、长推理或600秒超时。
+
+[完整统计与Prompt核验](evidence/lets-build-gpt-clean-parse-20261102/v7-outcome-analysis.json)区分阶段执行和模型请求耗时，以下仅汇总本轮十个完成样本，不将并行请求相加作为整课耗时。
+
+| 指标 | 本轮实测 |
+| --- | --- |
+| Understanding成功阶段 | n=10，中位264.465秒，最短213.470，最长458.682 |
+| Understanding模型请求 | n=10，中位263.853秒，最短212.939，最长457.951 |
+| 首SSE等待 | n=10，中位43.368秒，最大66.665 |
+| 首SSE后至请求结束 | 配对样本中位212.195秒；包括持续生成及传输，不能全算纯GPU计算 |
+| Understanding格式修正/模型重试 | 均0，十个请求首次通过 |
+| 每次input/output/reasoning tokens中位 | 244480.5 / 7955 / 6156；input包含全量视觉输入 |
+| 十次总input/output/reasoning tokens | 2434057 / 84920 / 68116；reasoning占output约80.2% |
+| 说话人 | 69条DIALOGUE均为Andrej Karpathy，无null；仅证明本批命名一致 |
+| Refine成功样本 | 0；不能计算有效推理中位数或宣称冲突收益 |
+| ASR/说话人重算 | 0；持久成果继续保留 |
+
+Prompt并未全部落实此前的简化方案。实验脚本`candidate_understanding`允许完整ASR对白跨Chunk，但正式`build_understanding_prompt`仍要求每个DIALOGUE是逻辑完整话语，同时每个事件必须在Chunk范围；共享Prompt和Server后缀再次施加同样限制，输入仍去掉words。Understanding的时间校验和Canvas也没有接入Refine所用的独立dialogue_bounds，不能只修改一行文字就声称贯通。
+
+这在十份真实请求中均能核对：ASR保留跨边界cue，却无词级时间。首块允许范围0–60000ms，末条ASR是59670–61180ms；可见推理反复讨论截断、合并或省略，最终DIALOGUE结束设为60000，未保留该cue末尾五个词。sequence6也在同样的边界问题上推敲。不能据此量化有多少秒完全由冲突造成，也不能断言最终整课永久丢词，因为后续Refine没有取得结果；但足以否定“Understanding跨Chunk对白策略已完整接入”的结论。
+
+目前已接通：全片声源/课程背景、时间标签配图、直接JSON Refine、原JSON与字段错误反馈、宿主稳定排序、共享成员更新通知。当前十个Understanding没有Schema错误，并不构成格式修复路径的新真实样本；本轮没有任何Refine成功提交，也无法新验证冲突通知。五小时额度错误仍被归为通用model_service_unavailable并按30/60秒退避，这是错误分类与恢复策略的缺口。首SSE短超时策略尚未实现，本轮没有600秒无首包样本。旧坏图已正常重抽，但仅执行到sequence9，未重新发送sequence28，截头根因仍未定位。
+
+本轮仅查询与补证据，未切模型、追加模型请求或恢复任务。接口canRetry=true，已完成十块仍保留；额度恢复后可针对同版本恢复，没必要单为额度错误再从零新建整集。供应商未给出精确重置时间，不能将五小时窗口解释为从报错时刻再等五小时。完整课程成功、58–70分钟目标与问答闭环仍未验收。
