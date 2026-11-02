@@ -1587,6 +1587,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
+**11-02 15:24 新试验终态：** v5因Understanding sequence13的6个ACTION额外空text_variants触发严格Schema拒绝，第一次错误没有guide修正就终止全视频；711.418秒、19理解/2Refine/0索引。8次Refine定向更新取消已真实接通，整体收益被新的Understanding门禁缺口阻断。保留v5失败证据，下一步补原JSON+字段路径的有限文本修正，另开解析版本计时；仍在#18范围内。[终态记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
 **11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
 
 **11-02 冲突恢复实现与归属更正：** 改动统一归回 [PR #18](https://github.com/owariband/Seekino/pull/18)，撤回 #26 的独立跟踪；该缺陷属于 #18 尚未完成的解析验收。已补提交后共享成员通知、请求范围取消及最近完整候选/错误位置续接，保留租约、三方合并与原期限。真实本地 HTTP 暴露 close 后阻塞读不退出，已补 HTTP/1 唤醒和嵌套清理顺序；HTTP/HTTPS 的 2+6 次验证全部可释放旧额度并继续新请求。相关扩展回归按唯一用例合并 2229 通过，5 项上游已有失败在 b01afce9 重现。原隔离服务现已停止，本轮没有重启 API 或真实模型调用；真实 Kimi 并发收益、内容质量和整课交付仍未验，B07 保持 TODO。[实现报告](../report/server/refine-conflict-recovery-20261102.md)、[TRD §3.13/4.18/6.9](../design/03-product-reassessment/video-parse-performance-trd.md)、[devlog](devlog.md#devlog-refine-conflict-recovery-20261102)。

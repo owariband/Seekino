@@ -46,3 +46,14 @@ Understanding / Refine / Index按本任务的成功完成执行统计n、median�
 [首批更新证据](evidence/lets-build-gpt-clean-parse-20261102/first-refresh.json)保存提交区间、每代调用、取消和新请求时间、实际更新通知。两次提交影响有重叠，部分区间从generation 1更新到2后又更新到3，8次取消不等于8个独立区间。此时已证实的是提交后的定向通知、真实连接退出和新快照提示接续；这些被刷新的请求尚未完成，不能据此宣称已消除重算或节约多少解析总时间。
 
 15:24:00的进度为Understanding 19/117、Refine 2/115、已索引Chunk 0/117，经过11分36.280秒；10个Refine仍在执行，任务PARSING、lastError=null、新ASR仍为0。索引需要相关重叠区间都提交，不能把单个Interval的COMPLETE当成对应Chunk已经可检索。旧v4的99分钟失败终态与此处部分完成时点不作直接提速比例比较。
+
+
+## 终态：Understanding 未提供格式修正机会（15:24:15）
+
+v5最终PARSING_FAILED，经过711.418秒（11分51.418秒），完成Understanding19/117、Refine2/115、Index0/117，新转写0。此前15:24进度是停机前快照，后台已停止继续派发；[终态](evidence/lets-build-gpt-clean-parse-20261102/terminal.json)保留完整口径。
+
+第一原始故障是sequence_no=13（13:00—14:00），call `9510e634-df2d-4275-9ffb-5b600e132115`：318.573秒返回完整结果，6个ACTION事件出现`text_variants: []`，在`timeline.3/5/7/9/13/16.ACTION.text_variants`触发`extra_forbidden`。[原始错误](evidence/lets-build-gpt-clean-parse-20261102/understanding-failure.json)。该请求有7080个SSE事件，首SSE60.756秒；不是504或网络未返回。
+
+Understanding在Gateway解析时直接按VideoParseResult拒绝，Agent只有网络类重试，没有保存完整错误输出并提供字段位置的格式修正流程；第一次ValidationError就触发全视频停止。随后7个Understanding与10个Refine被撤销是连带结果，不是17个独立根因；先前8次共享成员更新取消仍单独归类。被刷新Refine尚未完成，因此整课冲突优化收益未验收。
+
+下一步在同一PR18补齐Understanding业务结果门禁：请求仍携带规范Schema，先保留完整返回值，校验错误时用原JSON和精确路径做有限文本修正，不重新发送图片、抽帧或ASR，不放宽Schema；修正与首次生成共用原600秒请求窗口及既有最多2次修正，租约和最终提交门禁保持。先重放本次真实输出，再验相关测试与新运行版本；v5保留失败，不在其上混入新代码继续计时。

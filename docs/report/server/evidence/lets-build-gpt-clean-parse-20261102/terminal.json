@@ -1,0 +1,102 @@
+{
+  "captured_at": "2026-11-02T07:24:30.319436+00:00",
+  "task_id": "87f63b1f-1f7a-4d1f-bb05-fed572790a52",
+  "version": 5,
+  "status": "PARSING_FAILED",
+  "paused": false,
+  "start_time_ms": 1793603543953,
+  "finish_time_ms": 1793604255371,
+  "wall_elapsed_seconds": 711.418,
+  "processing_duration_ms": 650341,
+  "total_chunks": 117,
+  "understood_chunks": 19,
+  "chunk_states": [
+    {
+      "phase": 1,
+      "status": "FAILED",
+      "count": 8
+    },
+    {
+      "phase": 1,
+      "status": "QUEUED",
+      "count": 90
+    },
+    {
+      "phase": 2,
+      "status": "WAITING",
+      "count": 19
+    }
+  ],
+  "interval_states": [
+    {
+      "status": "COMPLETE",
+      "count": 2
+    },
+    {
+      "status": "WAITING",
+      "count": 113
+    }
+  ],
+  "stage_completed_attempts": {
+    "refine": {
+      "n": 2,
+      "median_seconds": 241.452,
+      "min_seconds": 239.436,
+      "max_seconds": 243.468,
+      "attempt_outcomes": {
+        "cancelled": 5,
+        "failed": 5,
+        "completed": 2
+      }
+    },
+    "understand": {
+      "n": 19,
+      "median_seconds": 253.172,
+      "min_seconds": 168.555,
+      "max_seconds": 362.693,
+      "attempt_outcomes": {
+        "completed": 19,
+        "cancelled": 7,
+        "failed": 1
+      }
+    }
+  },
+  "model_completed_requests": {
+    "refine": {
+      "n": 2,
+      "median_seconds": 241.333,
+      "min_seconds": 239.313,
+      "max_seconds": 243.353,
+      "outcomes": {
+        "failed": 18,
+        "completed": 2
+      }
+    },
+    "understand": {
+      "n": 19,
+      "median_seconds": 252.483,
+      "min_seconds": 167.614,
+      "max_seconds": 362.21,
+      "outcomes": {
+        "completed": 19,
+        "failed": 1
+      }
+    }
+  },
+  "refine_events": {
+    "refine_request_superseded": 8,
+    "refine_snapshot_refresh": 8
+  },
+  "cancel_drain": {
+    "n": 8,
+    "median_seconds": 0.042,
+    "min_seconds": 0.037,
+    "max_seconds": 0.073
+  },
+  "last_error": {
+    "code": "PARSE_NODE_FAILED",
+    "message": "视频理解失败：执行异常。本次解析已停止派发，请检查后手动重试。"
+  },
+  "asr_new_calls": 0,
+  "sample_policy": "This task only. Successful attempt latency medians exclude running/failed/cancelled attempts. Parallel request durations never summed as total parse elapsed."
+}
