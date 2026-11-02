@@ -208,7 +208,7 @@ Chat 流式首版把协议内 `ChatTextDelta` 与 50 ms 发布频率带入 Super
 
 ### 问题与现状
 
-课程 QA 曾把完整正文到达时间误标为 FTT，旧 9.173 / 29.576 / 27.231 秒已撤回。上游默认 stream=true 解决了传输配置，但 Gateway 收齐、Deep Agents after_model 才发布，用户仍不能边生成边阅读。沿 C23 建立独立 [TRD](../design/03-product-reassessment/chat-streaming-trd.md) 和 [PR #25](https://github.com/owariband/Seekino/pull/25)，以 #18 最新 worktree 为基线；首个需求提交只有 TRD。
+课程 QA 曾把完整正文到达时间误标为 FTT，旧 9.173 / 29.576 / 27.231 秒已撤回。上游默认 stream=true 解决了传输配置，但 Gateway 收齐、Deep Agents after_model 才发布，用户仍不能边生成边阅读。沿 C23 建立独立 [TRD](../design/03-product-reassessment/chat-streaming-trd.md) 和 [PR #25](https://github.com/owariband/Seekino/pull/25)，早期以 #18 worktree 试跑，首个需求提交只有 TRD。2026-11-02 核对 dev 已具备所需模型配置后，剥离 ASR 历史，改为独立向 dev 集成；试跑基线不再作为合并依赖。
 
 ### 方案候选
 

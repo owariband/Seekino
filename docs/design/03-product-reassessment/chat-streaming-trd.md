@@ -4,9 +4,9 @@
 
 本次要让 Chat 在模型生成过程中交付正文，并取得可复核的真实 FTT。旧 9.173／29.576／27.231 秒的 FTT 标注已撤回，真实基线待测。原始证据和指标口径见[产品 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)。
 
-已同步的 PR #18 版本已支持默认 `stream=true`，但 `request_chat_stream` 仍收齐响应，Deep Agents 的 `after_model` 才发布正文。因此本次还需打通正文增量到页面的路径。范围限于 Chat；课程解析及 C22 的工具耗时优化仍由原需求维护。
+`dev` 已支持默认 `stream=true`，但 `request_chat_stream` 仍收齐响应，Deep Agents 的 `after_model` 才发布正文。因此本次还需打通正文增量到页面的路径。范围限于 Chat；课程解析及 C22 的工具耗时优化仍由原需求维护。
 
-分支 `fix/chat-streaming-ftt`，跟进 [PR #25](https://github.com/owariband/Seekino/pull/25)，依赖 [PR #18](https://github.com/owariband/Seekino/pull/18) 的 `b01afce9`；先合并 #18，再切回 `dev` 集成。2026-11-02 更新；职责调整、相关隔离回归及普通 Chat 首轮真实测量已完成，课程观看页复测未完成。
+分支 `fix/chat-streaming-ftt`，跟进 [PR #25](https://github.com/owariband/Seekino/pull/25)，直接向 `dev` 集成，不依赖 ASR PR #18。2026-11-02 已剥离误带的 ASR 分支历史，仅保留本需求提交；早期试跑版本作为历史证据保留。职责调整、相关隔离回归及普通 Chat 首轮真实测量已完成，课程观看页复测未完成。
 
 # 2. 影响因素、假设与评价指标
 
@@ -29,7 +29,7 @@
 
 # 3. 改造方案与建模
 
-沿用上游的 stream 配置和现有 SSE 快照，接通 **Provider content delta → Gateway → Chat Supervisor 累积正文 → Server 持久快照 → 页面**。仅改开关仍会被上层缓冲挡住，因此需要以下改动：
+沿用 `dev` 的 stream 配置和现有 SSE 快照，接通 **Provider content delta → Gateway → Chat Supervisor 累积正文 → Server 持久快照 → 页面**。仅改开关仍会被上层缓冲挡住，因此需要以下改动：
 
 1. Gateway 复用 `streaming/` 的供应商接收器，通过 `model_events.ModelTextDelta` 与作用域内订阅提供通用正文增量，不依赖 Agent / Server 业务代码。Deep Agents 仅为公开模型调用绑定订阅；内部推理和压缩摘要不展示，工具参数继续收齐校验。
 2. Supervisor 只组装并校验公开回答：保留跨片段空格、URL 和工具顺序，每次有效增量发布业务快照，完整回调核对原文以防重复。Server 的 `agent_chat_stream.ChatSnapshotCoalescer` 在写库前选择快照：每次模型调用的首段立即交付，后续在增量到达时按 50 ms 间隔合并，业务边界刷新暂存正文；取消 / 失败也保存已接收的合法前缀。
@@ -65,6 +65,8 @@
 2026-11-02 DeepSeek 替代试跑（代码 `75bfa116`）：同一道矩阵题实际 messages/tools 与 Kimi low 相同，DeepSeek low 首 token / TT 为 4.758 / 14.569 s，关闭推理为 0.769 / 7.989 s；各一个样本。工具题分别 1.105 / 27.262 s、0.777 / 14.101 s，首 token 是进度提示。四次请求的流式关联和完成前增长通过；数学复算正确，但工具题出现过度断言及链接过滤缺陷，不能宣称质量全部通过。独立实例保留 DeepSeek low，未改业务代码或主配置；运行边界、准确性核对与用量见[试跑报告](../../report/server/chat-streaming-live-20261102.md#deepseek-20261102)。
 
 同日可见页面复测补充：矩阵长解释出现 BA 形状的一般性表述错误，给出矩形矩阵反例后能够纠正。后续质量验证须覆盖一般结论与连续追问，不能只复算数值例题。三轮页面演示及证据入口见上述试跑报告。
+
+2026-11-02 独立 dev 基线复核：基于 `56e79777` 仅重放本需求提交，排除 ASR、解析和数据库迁移。相关后端 **747 passed / 1 skipped**，前端 **159 passed**，类型检查与构建通过；跳过项仍缺少独立 MySQL 测试配置。本轮未重跑真实模型，早期运行数据保留原版本含义。
 
 # 5. 试点验证与方案取舍
 

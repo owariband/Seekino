@@ -643,7 +643,7 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 排序日期：2026-11-01。
 
-状态：TODO。沿用课程 QA 的 C23；原始产品要求见 [Chat 流式 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)，实施由 [Chat 流式 TRD](../design/03-product-reassessment/chat-streaming-trd.md) / [PR #25](https://github.com/owariband/Seekino/pull/25) 承接。依赖 #18，先集成上游再合并到 dev。
+状态：TODO。沿用课程 QA 的 C23；原始产品要求见 [Chat 流式 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)，实施由 [Chat 流式 TRD](../design/03-product-reassessment/chat-streaming-trd.md) / [PR #25](https://github.com/owariband/Seekino/pull/25) 承接。PR #25 直接向 dev 集成，不依赖 ASR PR #18。
 
 课程 QA 的 9.173 / 29.576 / 27.231 秒是非流式完整正文到达耗时，真实 FTT 未采集，旧标注撤回。仅启用供应商 stream=true 仍会被 Gateway 收齐和 after_model 发布挡住。
 

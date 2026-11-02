@@ -1,6 +1,6 @@
 # Chat 正文流式交付与 FTT 采证：2026-11-01 隔离验证
 
-需求见 [Chat 流式 TRD](../../design/03-product-reassessment/chat-streaming-trd.md)，跟进 [PR #25](https://github.com/owariband/Seekino/pull/25)，依赖 [PR #18](https://github.com/owariband/Seekino/pull/18)。本报告验证实现与模拟链路；没有调用真实模型、访问课程数据库、重启共享服务或部署。
+需求见 [Chat 流式 TRD](../../design/03-product-reassessment/chat-streaming-trd.md)，跟进 [PR #25](https://github.com/owariband/Seekino/pull/25)。早期实验基于含 #18 的版本；2026-11-02 已将本需求独立整理到 dev，历史测量仍按原版本解释。本报告验证实现与模拟链路；没有调用真实模型、访问课程数据库、重启共享服务或部署。
 
 ## 业务变化与证据边界
 
@@ -89,3 +89,9 @@ uv run --no-sync python scripts/verify_chat_streaming_trace.py \
 | 定向后端回归 | **596 passed / 1 skipped，22.13 秒**；跳过 MySQL 专项，缺少 `SEEKINO_TEST_DATABASE_URL` |
 
 本轮命令在前述后端回归范围增加 `tests/gateway/test_model_events.py`，其余七个文件相同，使用 `-m 'not live_agent' -q --tb=line`。源码指纹与命令见[验证清单](evidence/chat-streaming-20261101/boundary-validation.json)，原始结果见[JUnit](evidence/chat-streaming-20261101/boundary-backend.xml)。11-01 的前端、浏览器记录仍是该日期的证据；本轮没有修改前端或重跑浏览器，没有真实模型调用或部署，FTT / TT 仍未测。
+
+## 独立 dev 基线复核（2026-11-02）
+
+基于 `dev` 的 `56e79777` 只重放 Chat 需求提交，不再携带 PR #18 的 ASR、解析或数据库迁移。PR #25 直接以 dev 为目标。相关后端 747 passed / 1 skipped（27.03 秒），前端四个相关测试文件 159 passed，类型检查与构建通过；跳过项为未配置 `SEEKINO_TEST_DATABASE_URL` 的 MySQL 专项。新增重放不改变旧实模记录的运行版本，本轮没有实模调用。
+
+后端命令为上述主体命令补充 `tests/gateway/test_model_events.py`、`tests/gateway/test_agent_model.py` 与 `tests/gateway/test_kimi_streaming.py`；前端命令不变。本地 JUnit：`/private/tmp/seekino-pr25-dev-backend.xml`。
