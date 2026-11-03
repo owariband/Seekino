@@ -1,3 +1,4 @@
+import { beginChatDelivery } from "./chatDelivery";
 import { translate, type Locale } from "../shared/messages";
 
 import type {
@@ -681,32 +682,40 @@ export async function streamAgentMessage(
   const context = businessContext();
   signal = scopedSignal(signal, context.scopeSignal)!;
   signal.throwIfAborted();
-  const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, context.connection), {
-    method: "POST",
-    credentials: "include",
-    headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey,
-      ...(context.identity?.csrfToken ? { "X-CSRF-Token": context.identity.csrfToken } : {}),
-    },
-    body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments, sourceTenantId)),
-    signal,
-  });
-  signal.throwIfAborted();
-  if (!response.ok) {
-    if (response.status === 401) authRequired(context.connection);
-    const payload = await readError(response);
+  const delivery = beginChatDelivery(conversationId, idempotencyKey);
+  try {
+    const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, context.connection), {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey,
+        ...(context.identity?.csrfToken ? { "X-CSRF-Token": context.identity.csrfToken } : {}),
+      },
+      body: JSON.stringify(agentMessageBody(content, seriesIds, reference, options, extraContext, attachments, sourceTenantId)),
+      signal,
+    });
     signal.throwIfAborted();
-    throw new ApiClientError(response.status, payload, context.connection);
+    if (!response.ok) {
+      if (response.status === 401) authRequired(context.connection);
+      const payload = await readError(response);
+      signal.throwIfAborted();
+      throw new ApiClientError(response.status, payload, context.connection);
+    }
+    if (!response.body || !response.headers.get("Content-Type")?.includes("text/event-stream")) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error("服务未返回回答事件流");
+    }
+    await consumeEventStream(response.body, (type, data) => {
+      if (!type.startsWith("answer.")) return;
+      const event = { ...JSON.parse(data), type } as AgentAnswerEvent;
+      if (!Number.isInteger(event.sequence) || event.sequence <= 0) return;
+      if (event.conversationId === conversationId) {
+        delivery.receive(event);
+        onEvent(event);
+      }
+    }, signal);
+  } finally {
+    delivery.interrupt();
   }
-  if (!response.body || !response.headers.get("Content-Type")?.includes("text/event-stream")) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new Error("服务未返回回答事件流");
-  }
-  await consumeEventStream(response.body, (type, data) => {
-    if (!type.startsWith("answer.")) return;
-    const event = { ...JSON.parse(data), type } as AgentAnswerEvent;
-    if (!Number.isInteger(event.sequence) || event.sequence <= 0) return;
-    if (event.conversationId === conversationId) onEvent(event);
-  }, signal);
 }
 
 async function consumeEventStream(

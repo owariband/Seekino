@@ -41,11 +41,11 @@ from engine.rag.vision.event_frames import (
 from agent.video_parse_v2.state import ChunkTaskPhase
 from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
 
-from ..model.dto.jobDTO import (
+from ..model.dto.parseContentDTO import (
     IndexableChunkState,
     ChunkIndexingSnapshot,
-    ChunkParseLease,
 )
+from ..model.dto.taskDTO import ChunkParseLease
 from .video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 from ..storage.elasticsearch import (
     ElasticsearchIndexSchemaError,

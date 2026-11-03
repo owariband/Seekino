@@ -15,7 +15,7 @@ from typing import TypeVar
 from agent.video_parse_v2.state import ChunkTaskPhase
 from gateway.agent_model.errors import ModelFailureReason
 
-from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
+from ..model.dto.taskDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from ..utils.time import now_utc
 from ..utils.retry import task_retry_delay
 from .video_parse_queue import MySqlVideoParseQueue

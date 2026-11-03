@@ -28,3 +28,4 @@ class PrefixContext(TypedDict):
     background: NotRequired[dict[str, Any]]
     content_fingerprint: NotRequired[str]
     write_bounds: NotRequired[tuple[int, int]]
+    dialogue_bounds: NotRequired[tuple[int, int] | None]

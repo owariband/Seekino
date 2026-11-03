@@ -5,10 +5,11 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 from langchain_core.tools import BaseTool
-from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
+from openai import APIError, DefaultHttpxClient, OpenAI
 from pydantic import BaseModel
 
 from gateway.errors import ContentFilterError
+from gateway.openai.errors import transient_failure_reason
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.media import encode_media_file
@@ -21,7 +22,8 @@ from gateway.multimodal import (
 from gateway.usage import track_model_call
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.streaming.chat import request_chat_completion
-from gateway.openai.profiles import OpenAIProfile, effective_temperature
+from gateway.streaming.first_sse import FirstSSEDeadline
+from gateway.openai.profiles import OpenAIProfile, ReasoningEffort, effective_temperature
 
 _Result = TypeVar("_Result", bound=BaseModel)
 
@@ -45,7 +47,13 @@ class OpenAIVisionModel:
         stream: bool = True,
         temperature: float = 0.0,
         profile: OpenAIProfile = "standard",
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> None:
+        if reasoning_effort not in (None, "none") and (
+            profile != "kimi" or reasoning_effort not in ("low", "high", "max")
+        ):
+            raise ValueError("Chat vision reasoning_effort requires Kimi low, high or max")
+        self._reasoning_effort = None if reasoning_effort in (None, "none") else reasoning_effort
         self.model_name = model
         self.provider_name = provider
         self._base_url = base_url
@@ -62,8 +70,8 @@ class OpenAIVisionModel:
         return self._max_tokens
 
     @property
-    def reasoning_effort(self) -> None:
-        return None
+    def reasoning_effort(self) -> ReasoningEffort | None:
+        return self._reasoning_effort
 
     @property
     def _request_timeout_seconds(self) -> float:
@@ -145,13 +153,19 @@ class OpenAIVisionModel:
             timeout=timeout,
             **{self._token_parameter: self._max_tokens},
         )
+        if self.reasoning_effort is not None:
+            request["reasoning_effort"] = self.reasoning_effort
         if self._stream:
             request["stream_options"] = {"include_usage": True}
+        first_sse = FirstSSEDeadline(timeout) if self._stream else None
         with OpenAI(
             base_url=self._base_url,
             api_key=self._api_key,
             timeout=timeout,
             max_retries=0,
+            **({"http_client": DefaultHttpxClient(
+                http2=False, event_hooks={"request": [first_sse.on_request]},
+            )} if first_sse is not None else {}),
         ) as client:
             with track_model_call(
                 provider=self.provider_name,
@@ -167,7 +181,7 @@ class OpenAIVisionModel:
                         response = (
                             request_chat_completion(
                                 client.chat.completions, usage_call=call,
-                                check_control=check_control, **request,
+                                check_control=check_control, first_sse_deadline=first_sse, **request,
                             )
                         )
                         record_model_event("response", response)
@@ -181,15 +195,8 @@ class OpenAIVisionModel:
                             raise ContentFilterError(
                                 "Vision output rejected", code="content_filter"
                             ) from error
-                        if isinstance(error, APITimeoutError):
-                            reason = ModelFailureReason.MODEL_TIMEOUT
-                        elif isinstance(error, APIConnectionError):
-                            reason = ModelFailureReason.MODEL_CONNECTION_ERROR
-                        elif getattr(error, "status_code", None) == 504:
-                            reason = ModelFailureReason.MODEL_GATEWAY_TIMEOUT
-                        elif getattr(error, "status_code", None) in {429, 500, 502, 503}:
-                            reason = ModelFailureReason.MODEL_SERVICE_UNAVAILABLE
-                        else:
+                        reason = transient_failure_reason(error)
+                        if reason is None:
                             raise
                         raise ModelFailureError(
                             "Vision model request failed", reason=reason,

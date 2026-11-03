@@ -74,7 +74,6 @@ def _input_payload() -> dict:
                 "max_retry_count": 0,
                 "retry_initial_delay_seconds": 1,
                 "retry_max_delay_seconds": 30,
-                "max_model_calls": 100,
             },
         },
     }
@@ -88,7 +87,7 @@ def test_config_snapshot_round_trip_and_default_switches() -> None:
     assert inputs.parse_config.compact_enabled is False
     assert inputs.parse_config.prefix_context is None
     with pytest.raises(ValidationError, match="frozen"):
-        inputs.parse_config.execution.max_model_calls = 200
+        inputs.parse_config.execution.max_retry_count = 2
 
 
 def test_legacy_frame_cap_is_ignored_and_not_serialized() -> None:
@@ -185,12 +184,16 @@ def test_retry_maximum_cannot_be_below_initial_delay() -> None:
         ParseInput.model_validate(payload)
 
 
-@pytest.mark.parametrize("value", [0, -1, True, "100"])
-def test_call_budget_requires_a_positive_integer(value: object) -> None:
+@pytest.mark.parametrize("value", [1, 100, 0, None])
+def test_legacy_video_call_limit_is_ignored_on_recovery(value: object) -> None:
     payload = _input_payload()
     payload["parse_config"]["execution"]["max_model_calls"] = value
-    with pytest.raises(ValidationError):
-        ParseInput.model_validate(payload)
+    inputs = ParseInput.model_validate(payload)
+    execution = inputs.parse_config.execution
+    assert not hasattr(execution, "max_model_calls")
+    assert "max_model_calls" not in execution.model_dump()
+    assert "max_model_calls" not in execution.model_json_schema()["properties"]
+    assert execution.max_retry_count == payload["parse_config"]["execution"]["max_retry_count"]
 
 
 @pytest.mark.parametrize("value", [float("inf"), float("nan")])

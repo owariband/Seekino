@@ -50,7 +50,6 @@ class UploadSessionState:
     updated_at: datetime
     content_sha256: str | None = None
     completion_stage: str | None = None
-    job_id: str | None = None
     initial_video_parse_task_id: str | None = None
     version: int = 1
     missing_segment_numbers: tuple[int, ...] = ()
@@ -65,7 +64,6 @@ class UploadCompletionClaim:
     session: UploadSessionState
     segments: tuple[UploadSegmentState, ...]
     completion_token: str | None
-    existing_job_id: str | None
     existing_video_parse_task_id: str | None
 
     @property
@@ -77,7 +75,6 @@ class UploadCompletionClaim:
 class CompletedUploadState:
     session: UploadSessionState
     video_id: str
-    job_id: str | None
     video_parse_task_id: str
 
 
@@ -91,8 +88,6 @@ class UploadSessionDetail:
 class UploadSessionDeletion:
     session: UploadSessionState
     video_id: str | None
-    job_id: str | None
-    job_ids: tuple[str, ...]
     video_chunk_ids: tuple[str, ...]
     video_parse_document_keys: tuple[tuple[str, str], ...]
 

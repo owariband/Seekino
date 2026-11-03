@@ -6,7 +6,7 @@ from ..api import uploads
 from ..model.vo.commonVO import Page
 from ..api.schema import UploadCompleteView, UploadSegmentView, UploadSessionView
 from ..config.parse_profile import ParseConfig
-from ..model.vo.jobVO import VideoParseTaskView
+from ..model.vo.taskVO import VideoParseTaskView
 
 router = APIRouter()
 router.add_api_route(

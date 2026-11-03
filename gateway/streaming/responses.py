@@ -7,9 +7,14 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
+import httpx
+
+from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
+
 from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.usage import ModelCallTracker, track_model_call
+from gateway.streaming.first_sse import FirstSSEDeadline
 
 _logger = logging.getLogger(__name__)
 _DIAGNOSTIC_EVENT_TYPES = frozenset({
@@ -35,13 +40,17 @@ _OUTPUT_CONTENT_FILTER_CODES = frozenset(
 
 def request_response(
     responses: Any, *, stream: bool, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> tuple[Any, str]:
     """Return one verified Responses turn using the configured transport."""
     if not isinstance(stream, bool):
         raise TypeError("stream must be a boolean")
     if stream:
-        return request_sse_response(responses, usage_call=usage_call, check_control=check_control, **request)
+        return request_sse_response(
+            responses, usage_call=usage_call, check_control=check_control,
+            first_sse_deadline=first_sse_deadline, **request,
+        )
     usage_call.raise_if_cancelled()
     if check_control is not None:
         check_control()
@@ -62,14 +71,15 @@ def request_response(
 
 def request_sse_response(
     responses: Any, *, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> tuple[Any, str]:
     """Read a verified terminal response, including function-call-only turns."""
     metadata: dict[str, Any] = {}
     for _ in _request_sse_text(
         responses, allow_terminal_text=True, allow_function_calls=True,
         metadata=metadata, usage_call=usage_call, check_control=check_control,
-        **request,
+        first_sse_deadline=first_sse_deadline, **request,
     ):
         pass
     return metadata["response"], metadata.get("output_text", "")
@@ -122,14 +132,28 @@ def _request_sse_text(
     metadata: dict[str, Any] | None = None,
     allow_function_calls: bool = False,
     check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None,
     **request: Any,
 ) -> Iterator[str]:
     usage_call.raise_if_cancelled()
     if check_control is not None:
         check_control()
+    unregister_startup = lambda: None
+    if first_sse_deadline is not None:
+        first_sse_deadline.start()
+        unregister_startup = usage_call.add_cancel_callback(first_sse_deadline.interrupt)
     try:
+        usage_call.raise_if_cancelled()
         stream = responses.create(stream=True, **request)
-    except Exception as error:
+    except BaseException as error:
+        try:
+            usage_call.raise_if_cancelled()
+            if first_sse_deadline is not None:
+                first_sse_deadline.raise_if_expired()
+        finally:
+            if first_sse_deadline is not None:
+                first_sse_deadline.close()
+            unregister_startup()
         usage_call.capture_response(error)
         code = getattr(error, "code", None)
         if (
@@ -157,8 +181,12 @@ def _request_sse_text(
     stream_item_counts: Counter[str] = Counter()
 
     try:
+        if first_sse_deadline is not None:
+            first_sse_deadline.attach_response(stream.response)
         for event in stream:
             usage_call.raise_if_cancelled()
+            if first_sse_deadline is not None:
+                first_sse_deadline.received()
             if check_control is not None:
                 check_control()
             response = getattr(event, "response", None)
@@ -270,7 +298,24 @@ def _request_sse_text(
                     response_id=response_id,
                     partial_output_chars=_output_length(text_parts),
                 )
+        usage_call.raise_if_cancelled()
+        if first_sse_deadline is not None:
+            first_sse_deadline.raise_if_expired()
+    except Exception as error:
+        usage_call.raise_if_cancelled()
+        if first_sse_deadline is not None:
+            first_sse_deadline.raise_if_expired()
+            if isinstance(error, (httpx.RequestError, httpx.StreamError)):
+                raise ModelFailureError(
+                    "Responses stream read failed",
+                    reason=(ModelFailureReason.MODEL_TIMEOUT if isinstance(error, httpx.TimeoutException)
+                            else ModelFailureReason.MODEL_CONNECTION_ERROR),
+                ) from error
+        raise
     finally:
+        if first_sse_deadline is not None:
+            first_sse_deadline.close()
+        unregister_startup()
         unregister_cancel()
         if callable(close):
             close()

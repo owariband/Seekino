@@ -1,0 +1,46 @@
+{
+  "date": "2026-11-02",
+  "timezone": "Asia/Shanghai",
+  "branch": "fix/chat-streaming-ftt",
+  "pr": "https://github.com/owariband/Seekino/pull/25",
+  "base_commit": "e78ec672a7f523e7c4de1d492c6b18dba8a4a7ae",
+  "source": "working tree changes identified by source_sha256",
+  "command": "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python -m pytest tests/gateway/test_deepagents.py tests/gateway/test_model_streaming.py tests/gateway/test_model_events.py tests/gateway/test_model_diagnostics.py tests/agent/chat/test_supervisor.py tests/agent/chat/test_streaming_delivery.py tests/server/test_agent_chat_service.py tests/server/test_chat_streaming_trace.py -m 'not live_agent' -q --tb=line --junitxml=/private/tmp/chat-streaming-boundaries-backend.xml",
+  "backend": {
+    "tests": 597,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "seconds": 22.114
+  },
+  "skips": [
+    {
+      "test": "test_mysql_agent_timing_roundtrips_through_message_detail",
+      "reason": "SEEKINO_TEST_DATABASE_URL is not configured"
+    }
+  ],
+  "database": "isolated SQLite test fixtures",
+  "real_model_calls": 0,
+  "deployed": false,
+  "real_ftt_ms": null,
+  "real_tt_ms": null,
+  "frontend_changed": false,
+  "browser_rerun": false,
+  "source_sha256": {
+    "gateway/model_events.py": "4dd65f3e1fddacdd179d928d5340f1ed91d392e2431d78f97cf39d21946e66b1",
+    "gateway/streaming/chat.py": "0302e2ea4ed995d91133f323c1b5d0a8941f94cd2f7fa7caf26c7f12a3d82a0b",
+    "gateway/agent_model/deepagents.py": "197bf78545038631cf01be26771ac9f946aa8a8fa1e3191848e46cfb918bbf44",
+    "gateway/model_diagnostics.py": "04d25f463a69f996933027ba7cb2268c8a085a50fd7ce5d8d1ffb5e5b3715b64",
+    "agent/chat/supervisor.py": "95485ae00a5576960a370b586405492959e23328ccb531f8f01988a9e001721f",
+    "server/service/agent_chat.py": "81a52705d883c9f9dd6b68a109d684a06b1406eadff90826fffb15de5fa8407f",
+    "server/service/agent_chat_stream.py": "9dc3f5076088328377efc982084efedd39173cb8e219da611e11b305dda0c6a4",
+    "tests/gateway/test_deepagents.py": "a2af446218e0dd86860cdd5dee9264f6b73fcb432c313fd0af5310be74de1285",
+    "tests/gateway/test_model_streaming.py": "baf0917fa0c52441cc813702e557b41b0a781ff7a86892d2cc9fedb529abf752",
+    "tests/gateway/test_model_events.py": "caf2503f5104a82e8501b8d252f4af9de82b5927a65f038b9209bad82ee6d559",
+    "tests/gateway/test_model_diagnostics.py": "67843a99a4e00e7e704d5a820baaa229be613b2d61d0a5bff9b8c7f0cbd8ef1e",
+    "tests/agent/chat/test_supervisor.py": "01246fa8dd09d8e0db262856fe6ce996aa8520c7455698d71fe0abdcde13b504",
+    "tests/agent/chat/test_streaming_delivery.py": "9a2bb29df164034844d3d2acedf3ed67e6f2a327315d2cf66fe67159fd1c374a",
+    "tests/server/test_agent_chat_service.py": "330ac2ab46167732b0a71ae1203bc474164f4dc6485d0ec32640844af1612f63",
+    "tests/server/test_chat_streaming_trace.py": "58271fea410b9be4ddba591da95622ff162c273d6dd36a8abeaf2a0eaa19bb15"
+  }
+}

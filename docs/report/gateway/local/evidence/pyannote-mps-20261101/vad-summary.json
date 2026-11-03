@@ -1,0 +1,31 @@
+{
+  "started_at": "2026-11-01T02:31:02.507965+00:00",
+  "pid": 7451,
+  "device": "cpu",
+  "cpu_threads": 6,
+  "audio_duration_seconds": 6979.941625,
+  "parameter_count": 1472749,
+  "inference_batch_size": 32,
+  "load_seconds": 0.189,
+  "extraction_seconds": 3.135,
+  "inference_seconds": 268.17,
+  "elapsed_seconds": 274.551,
+  "merged_range_count": 288,
+  "speech_range_seconds": 6785.741250000011,
+  "process_peak_rss_bytes": 1392345088,
+  "peak_rss_bytes": 1232715776,
+  "process_peak_rss_gib": 1.296722412109375,
+  "sampled_peak_rss_gib": 1.1480560302734375,
+  "cpu_sample_median_percent": 250.5,
+  "cpu_sample_max_percent": 268.1,
+  "cpu_samples": 17,
+  "status": "completed",
+  "production_pipeline_integrated": false,
+  "diarization_status": "awaiting_huggingface_authorization",
+  "first_attempt": {
+    "pid": 7429,
+    "status": "measurement_script_failed",
+    "reason": "missing psutil in monitor; numpy.int64 progress serialization",
+    "completed_full_vad": false
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "task_id": "2eef6cec-f494-407c-8939-cf415de1336e",
+  "version": 8,
+  "attempt": "retry existing v8 with explicit AI proxy route",
+  "retry_requested_at": 1793625806.5346901,
+  "finished_at_ms": 1793626259544,
+  "elapsed_since_retry_seconds": 453.009,
+  "status": "PARSING_FAILED",
+  "paused": false,
+  "understanding_committed": 9,
+  "understanding_total": 117,
+  "refine_complete": 2,
+  "refine_total": 115,
+  "indexed": 0,
+  "asr_new_calls": 0,
+  "last_error": {
+    "code": "PARSE_NODE_FAILED",
+    "message": "视频理解失败：模型请求超时。本次解析已停止派发，请检查后手动重试。"
+  },
+  "successful_stage_attempt_latency": {
+    "refine": {
+      "n": 2,
+      "median_seconds": 54.621,
+      "min_seconds": 27.8,
+      "max_seconds": 81.443
+    },
+    "understand": {
+      "n": 9,
+      "median_seconds": 182.878,
+      "min_seconds": 51.744,
+      "max_seconds": 340.61
+    }
+  },
+  "request_statistics": {
+    "refine": {
+      "requests": 12,
+      "received_sse": 12,
+      "first_sse_max_seconds": 17.955,
+      "first_sse_median_seconds": 6.8225,
+      "completed": 5,
+      "errors": 0,
+      "cancelled_superseded": 4,
+      "cancelled_other": 3,
+      "pending_without_sse": []
+    },
+    "understand": {
+      "requests": 29,
+      "received_sse": 12,
+      "first_sse_max_seconds": 73.655,
+      "first_sse_median_seconds": 48.3685,
+      "completed": 12,
+      "errors": 8,
+      "cancelled_superseded": 0,
+      "cancelled_other": 9,
+      "pending_without_sse": []
+    }
+  },
+  "usage": {
+    "refine": {
+      "requests_with_usage": 5,
+      "input_tokens": 44724,
+      "output_tokens": 8934,
+      "reasoning_tokens": 3672
+    },
+    "understand": {
+      "requests_with_usage": 12,
+      "input_tokens": 2209356,
+      "output_tokens": 15086,
+      "reasoning_tokens": 4526
+    }
+  },
+  "requests_missing_usage": 24,
+  "refine_notifications": {
+    "refine_result_repair": 3,
+    "refine_request_superseded": 4,
+    "refine_snapshot_refresh": 4
+  },
+  "cancel_drain": {
+    "n": 4,
+    "median_seconds": 0.017,
+    "min_seconds": 0.016,
+    "max_seconds": 0.018
+  },
+  "deployment": {
+    "commit": "88283d79b91434879d76e81f61117cf941cf4ee7",
+    "previous_api_pid": 26165,
+    "api_process": {
+      "pid": 29305,
+      "command": [
+        "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+        "-m",
+        "server.api"
+      ],
+      "cwd": "/Users/hypnos/.codex/worktrees/full-video-asr/Seekino",
+      "started_at": 1793625742.632662
+    },
+    "health": {
+      "status": "ok",
+      "serverTime": 1793625744986,
+      "components": {
+        "parseConsumer": {
+          "status": "running",
+          "failure": null
+        }
+      }
+    },
+    "deployed_at": 1793625744.987913,
+    "proxy": "http://127.0.0.1:7897",
+    "no_proxy": "localhost,127.0.0.1,::1",
+    "model_config_sha256": "8361044dc6503c9c123f5265edff7bdae8be87a1b6ee83b279d263ab57bff86a",
+    "database": "seekino_video_asr_recovery_20261031_test"
+  },
+  "final_read_only_check": {
+    "at": 1793627790.448242,
+    "task_status": "PARSING_FAILED",
+    "paused": false,
+    "lease_version": 3,
+    "kimi_runtime_rules": [
+      {
+        "index": 0,
+        "type": "Domain",
+        "payload": "api.kimi.com",
+        "proxy": "🤖 AI服务",
+        "size": -1,
+        "extra": {
+          "disabled": false,
+          "hitCount": 42,
+          "hitAt": "2026-11-02T21:30:33.010364+08:00",
+          "missCount": 1501,
+          "missAt": "2026-11-02T21:56:30.369184+08:00"
+        }
+      }
+    ],
+    "persistent_rule_present": true,
+    "restart_persistence_tested": false
+  },
+  "quality_stop_check": {
+    "at": 1793627308.01188,
+    "action": "already stopped; no mutation",
+    "reason": "Content sanity review found multiple empty timelines and single-character person labels despite nonempty ASR; no full-course quality acceptance",
+    "before_status": "PARSING_FAILED",
+    "after_status": "PARSING_FAILED",
+    "paused": false,
+    "version": 8,
+    "lease_version": 3
+  },
+  "limitations": [
+    "Committed counts and successful-stage latency do not establish semantic quality; empty timelines and single-character names were persisted.",
+    "Elapsed is measured from this retry request. The durable parent startTime still belongs to the earlier failed attempt; old failed timing entries must not be mixed into retry counts.",
+    "Usage missing on 24 calls is unknown, not zero. Probe usage is excluded.",
+    "No further retry/reparse after this failure. No pause mutation occurred: task was already PARSING_FAILED when the quality stop check ran."
+  ]
+}

@@ -36,10 +36,9 @@ class VideoParseRuntimeConfig:
     parse_execution_timeout_seconds: float = 1800
     refine_execution_timeout_seconds: float = 1800
     index_execution_timeout_seconds: float = 1800
-    max_model_calls: int = 100
 
     def __post_init__(self) -> None:
-        for name in ("video_concurrency", "parse_concurrency", "refine_concurrency", "index_concurrency", "max_model_calls"):
+        for name in ("video_concurrency", "parse_concurrency", "refine_concurrency", "index_concurrency"):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")

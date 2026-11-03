@@ -75,7 +75,11 @@ def _setup(monkeypatch, profile, *, structured=False, fail_primary=False, visual
         return _wire(body, structured=structured, tool_call=visual_tools and len(requests) == 1)
 
     def openai(**kwargs):
-        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+        supplied = kwargs.pop("http_client", None)
+        hooks = supplied.event_hooks if supplied is not None else {}
+        if supplied is not None:
+            supplied.close()
+        return OpenAI(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(respond), event_hooks=hooks))
 
     def ark(**kwargs):
         return Ark(api_key="offline", base_url="https://ark.example/v1", max_retries=0,
@@ -143,6 +147,8 @@ def test_all_factory_entries_execute_the_configured_transport(monkeypatch, profi
     assert requests and all(request["stream"] is expected for request in requests)
     for request in requests:
         assert request["temperature"] == (1 if profile == "kimi" else temperature or 0)
+        if profile == "kimi" and entry in {"loop", "structured", "supervisor"}:
+            assert request["reasoning_effort"] == "low"
         if "messages" in request:
             assert request.get("stream_options") == ({"include_usage": True} if expected else None)
     assert any(item.usage.input_tokens == 100 and item.usage.output_tokens == 10 for item in usage)
@@ -236,3 +242,28 @@ def test_query_rewriter_uses_its_creation_time_stream_setting(setting, temperatu
     assert model.rewrite("answer", Answer, timeout_seconds=3).answer == "ok"
     assert len(requests) == 1 and requests[0]["stream"] is (setting is not False)
     assert requests[0]["temperature"] == (temperature or 0)
+
+
+@pytest.mark.parametrize("protocol", [b"HTTP/1.0", b"HTTP/1.1", b"HTTP/2", None])
+@pytest.mark.parametrize("already_closed", [False, True])
+@pytest.mark.parametrize("response_closed", [False, True])
+def test_stream_cancel_wakes_http1_reads_without_killing_multiplexed_connections(protocol, already_closed, response_closed):
+    import socket
+    from types import SimpleNamespace
+    from gateway.streaming.chat import _cancel_chat_stream
+
+    operations = []
+
+    def shutdown(how):
+        assert how == socket.SHUT_RDWR
+        operations.append("shutdown")
+        if already_closed:
+            raise OSError("socket closed")
+
+    stream = SimpleNamespace(
+        response=SimpleNamespace(is_closed=response_closed, extensions={"http_version": protocol, "network_stream": SimpleNamespace(
+            get_extra_info=lambda key: SimpleNamespace(shutdown=shutdown) if key == "socket" else None,
+        )}), close=lambda: operations.append("close"),
+    )
+    _cancel_chat_stream(stream)
+    assert operations == (["shutdown", "close"] if not response_closed and protocol in {b"HTTP/1.0", b"HTTP/1.1"} else ["close"])

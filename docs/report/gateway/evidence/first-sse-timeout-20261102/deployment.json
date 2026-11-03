@@ -1,0 +1,24 @@
+{
+  "restarted_at": 1793616702.20572,
+  "old_pid": 20256,
+  "new_process": {
+    "pid": 22571,
+    "command": [
+      "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+      "-m",
+      "server.api"
+    ],
+    "cwd": "/Users/hypnos/.codex/worktrees/full-video-asr/Seekino",
+    "started_at": 1793616699.87736
+  },
+  "health_status": 200,
+  "guard_seconds": 100,
+  "retry_or_reparse_called": false,
+  "owned_leases_before": 0,
+  "paused_active_tasks_verified": 3,
+  "implementation_sha256": {
+    "gateway/openai/vision.py": "36176ea173e3d770910ae26c28414077d6631eb71f122b352a0798414103ae32",
+    "gateway/streaming/chat.py": "0aa5035f4d1273a5d88ccb541e73f573ae5c793e45e0bafeeed400515fa1fff3",
+    "gateway/streaming/first_sse.py": "b42fd0d5b7f5e6cb7010a3e3b513a4ee5b14c8c4b813dd93f7f1250ed0a9233b"
+  }
+}

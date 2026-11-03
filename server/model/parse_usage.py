@@ -45,24 +45,6 @@ class ModelUsage(BaseModel):
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False)
 
 
-class ParseUsageAttempt(BaseModel):
-    __tablename__ = "parse_usage_attempt"
-    __table_args__ = MYSQL_TABLE_OPTIONS
-
-    job_id: Mapped[str] = mapped_column(
-        ForeignKey("series_parse_job.id"),
-        primary_key=True,
-    )
-    video_task_id: Mapped[str | None] = mapped_column(
-        ForeignKey("video_parse_task.id", ondelete="SET NULL"),
-        index=True,
-    )
-    attempt_count: Mapped[int] = mapped_column(Integer, primary_key=True)
-    lease_version: Mapped[int] = mapped_column(Integer, primary_key=True)
-    start_time: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
-    recording_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-
 class VideoParseUsageAttempt(BaseModel):
     __tablename__ = "video_parse_usage_attempt"
     __table_args__ = (
@@ -110,7 +92,6 @@ class ParseModelCall(BaseModel):
             "status IN ('completed', 'failed')",
             name="ck_parse_model_call_status",
         ),
-        Index("ix_parse_model_call_job_started", "job_id", "start_time"),
         Index(
             "ix_parse_model_call_video_parse_task_started",
             "video_task_id",
@@ -124,18 +105,6 @@ class ParseModelCall(BaseModel):
             "start_time",
         ),
         CheckConstraint(
-            "(job_id IS NOT NULL) <> (video_task_id IS NOT NULL)",
-            name="ck_parse_model_call_exactly_one_task",
-        ),
-        CheckConstraint(
-            "(video_task_id IS NULL "
-            "AND execution_kind IS NULL AND execution_task_id IS NULL) OR "
-            "(video_task_id IS NOT NULL "
-            "AND execution_kind IS NOT NULL AND execution_task_id IS NOT NULL)",
-            name="ck_parse_model_call_execution_identity",
-        ),
-        CheckConstraint(
-            "execution_kind IS NULL OR "
             "execution_kind IN ('video', 'chunk', 'interval', 'prefix')",
             name="ck_parse_model_call_execution_kind",
         ),
@@ -143,14 +112,11 @@ class ParseModelCall(BaseModel):
     )
 
     id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    job_id: Mapped[str | None] = mapped_column(
-        ForeignKey("series_parse_job.id"),
+    video_task_id: Mapped[str] = mapped_column(
+        ForeignKey("video_parse_task.id", ondelete="CASCADE"), nullable=False,
     )
-    video_task_id: Mapped[str | None] = mapped_column(
-        ForeignKey("video_parse_task.id", ondelete="CASCADE")
-    )
-    execution_kind: Mapped[str | None] = mapped_column(String(16))
-    execution_task_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
+    execution_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    execution_task_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     lease_version: Mapped[int] = mapped_column(Integer, nullable=False)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)

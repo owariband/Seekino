@@ -13,7 +13,7 @@ from server.api import jobs as jobs_api
 from server.config.parse_profile import default_video_parse_v2_config
 from server.config.sse import SSEConfig
 from server.model.dto.agentDTO import AgentMessageState
-from server.model.dto.jobDTO import VideoParseTaskDetail, VideoParseTaskState
+from server.model.dto.taskDTO import VideoParseTaskDetail, VideoParseTaskState
 from server.repository.agent import AgentConversationNotFoundError
 from server.utils.time import timedelta_to_ms
 

@@ -1,0 +1,350 @@
+{
+  "stage": "refine",
+  "variant": "canvas",
+  "status": "completed",
+  "elapsed_seconds": 593.6787650410006,
+  "usage": [
+    {
+      "call_id": "bbca1b49-aea5-4f40-ba54-a88b2e110793",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513224668,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513255246,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 1
+      },
+      "usage": {
+        "input_tokens": 9712,
+        "output_tokens": 1579,
+        "total_tokens": 11291,
+        "cached_input_tokens": null,
+        "reasoning_tokens": 160,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    },
+    {
+      "call_id": "365d394e-497d-4648-872b-dd6ce8741956",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513255263,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513270138,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 2
+      },
+      "usage": {
+        "input_tokens": 25833,
+        "output_tokens": 620,
+        "total_tokens": 26453,
+        "cached_input_tokens": 9472,
+        "reasoning_tokens": 223,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    },
+    {
+      "call_id": "78cd030c-9d1c-4d1b-9b9a-4e644bfe0eed",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513270144,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513557868,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 3
+      },
+      "usage": {
+        "input_tokens": 31042,
+        "output_tokens": 9347,
+        "total_tokens": 40389,
+        "cached_input_tokens": 25600,
+        "reasoning_tokens": 7846,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    },
+    {
+      "call_id": "98f675e4-4661-41ac-bc2d-f3ea62387ea9",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513557975,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513696046,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 4
+      },
+      "usage": {
+        "input_tokens": 39087,
+        "output_tokens": 4687,
+        "total_tokens": 43774,
+        "cached_input_tokens": 30976,
+        "reasoning_tokens": 2498,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    },
+    {
+      "call_id": "2b33138b-8b4c-4615-89ee-6b1cf987a2de",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513696061,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513738119,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 5
+      },
+      "usage": {
+        "input_tokens": 44451,
+        "output_tokens": 2344,
+        "total_tokens": 46795,
+        "cached_input_tokens": 38912,
+        "reasoning_tokens": 286,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    },
+    {
+      "call_id": "70b9f0c3-77fa-4f71-830f-60907631b872",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513738132,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513777906,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 6
+      },
+      "usage": {
+        "input_tokens": 47497,
+        "output_tokens": 2322,
+        "total_tokens": 49819,
+        "cached_input_tokens": 44288,
+        "reasoning_tokens": 221,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    },
+    {
+      "call_id": "2c2b1d48-55f7-407c-baf9-093f807f4a5d",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513777914,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513808690,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 7
+      },
+      "usage": {
+        "input_tokens": 50549,
+        "output_tokens": 1426,
+        "total_tokens": 51975,
+        "cached_input_tokens": 47360,
+        "reasoning_tokens": 171,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    },
+    {
+      "call_id": "ce51b78c-eadf-4b57-956a-00ce68813726",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "CanvasCompletion",
+      "started_at": 1793513808712,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513818251,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-canvas",
+        "src": "kimi_coding",
+        "agent_run_id": "a562a5d3318e49eeb3cf57e5f3a5598e",
+        "agent_round": 8
+      },
+      "usage": {
+        "input_tokens": 66500,
+        "output_tokens": 234,
+        "total_tokens": 66734,
+        "cached_input_tokens": 50432,
+        "reasoning_tokens": 183,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_context_canvas",
+      "at": 1793513255.2503538
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513255.251332
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513255.252832
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513255.253428
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513255.254998
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513270.139338
+    },
+    {
+      "name": "write_context_canvas",
+      "at": 1793513696.050378
+    },
+    {
+      "name": "write_context_canvas",
+      "at": 1793513738.122816
+    },
+    {
+      "name": "write_context_canvas",
+      "at": 1793513777.908117
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513808.694817
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513808.696353
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513808.699423
+    },
+    {
+      "name": "get_context_canvas",
+      "at": 1793513808.701748
+    }
+  ]
+}

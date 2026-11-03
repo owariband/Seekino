@@ -15,7 +15,7 @@ const video: VideoSummary = {
   originalFilename: "第一集.mp4", totalBytes: 1, durationSeconds: 120000, uploadStatus: "COMPLETED",
   parseStatus: "SUCCEEDED", uploadProgress: 100, parseProgress: 100, indexStatus: "READY",
   playbackStatus: "READY", playbackUrl: "/video-a", playbackUrlExpiresAt: null,
-  thumbnail: null, latestJobId: "task-a", lastError: null,
+  thumbnail: null, lastError: null,
 };
 const series: SeriesView = {
   seriesId: "series-a", tenantId: "owner-tenant", name: "我的系列", description: null,

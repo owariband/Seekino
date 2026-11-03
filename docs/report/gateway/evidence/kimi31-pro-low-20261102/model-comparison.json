@@ -1,0 +1,968 @@
+{
+  "captured_at": "2026-11-02T15:33:37.294326+00:00",
+  "baseline": "v9 k3 low",
+  "candidate": "v10 k3.1-pro low",
+  "comparison": [
+    {
+      "sequence_no": 0,
+      "call_id": "b2abde06-5fc9-432a-b854-537d837dd39e",
+      "images": 189,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 1,
+      "call_id": "815f8546-6700-460f-991d-8e588e81d652",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 2,
+      "call_id": "8d767060-cc2f-4182-acf8-2276a8152900",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 3,
+      "call_id": "311d7252-1a9e-4d6a-a44e-14518b6eeddb",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 4,
+      "call_id": "39ae39a1-a885-4bc7-9fb0-9e3eb3cca1b4",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 5,
+      "call_id": "93142d6e-51fb-4825-a450-934306147e85",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 6,
+      "call_id": "84195d9d-06af-4d8d-a45d-edda9212e364",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 7,
+      "call_id": "6838fd7b-a01a-4298-abed-19b07dcdea6d",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 8,
+      "call_id": "51a8e7a9-5ba6-4322-b475-52ec1cabdd54",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 9,
+      "call_id": "db7d0931-b689-447a-a0e7-897a5bb62cd8",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 10,
+      "call_id": "4520700b-31aa-45ad-88ac-ccadfb701c5d",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 11,
+      "call_id": "9774afb6-aa4e-4034-b3c1-e53d2fa8627a",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 12,
+      "call_id": "ae0837b2-ba04-4a16-a6bc-8611b5eba5be",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 13,
+      "call_id": "9d9a96b3-ee0c-45dc-84e4-9bcc53dce82b",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 14,
+      "call_id": "d864145d-bae7-4a06-968c-101810d86b76",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 15,
+      "call_id": "37930a16-b01e-4109-a3fc-0b1bdaf0adb0",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 16,
+      "call_id": "c3ee7216-42ae-425f-904f-f24416abea15",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 17,
+      "call_id": "5eccade4-61ae-432d-9b55-85af0e2944b4",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 18,
+      "call_id": "544e86c7-4597-4dc9-b867-0495e870ec9d",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 19,
+      "call_id": "3df2b337-c62b-4663-82a8-56e90ac60ea8",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 12,
+      "call_id": "b9767439-777f-4933-802b-8b73d97eeece",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 15,
+      "call_id": "8156e7e8-bac0-484f-b8f6-3435d7e7be56",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    },
+    {
+      "sequence_no": 12,
+      "call_id": "f1778970-0ec0-440c-a654-a2605e876bbd",
+      "images": 198,
+      "same_request_except_model": false,
+      "same_messages": false,
+      "same_schema": true,
+      "same_request_after_model_and_task_scope_normalization": true,
+      "same_image_hashes": true
+    }
+  ],
+  "completed_outputs": [
+    {
+      "stage": "understand",
+      "sequence_no": 0,
+      "call_id": "b2abde06-5fc9-432a-b854-537d837dd39e",
+      "repair": false,
+      "output_chars": 7617,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 3696,
+        "prompt_tokens": 233598,
+        "total_tokens": 237294,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1425
+        }
+      },
+      "events": 16,
+      "dialogue_events": 7,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 22
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 1,
+      "call_id": "815f8546-6700-460f-991d-8e588e81d652",
+      "repair": false,
+      "output_chars": 7346,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2129,
+        "prompt_tokens": 244439,
+        "total_tokens": 246568,
+        "completion_tokens_details": {
+          "reasoning_tokens": 6
+        }
+      },
+      "events": 14,
+      "dialogue_events": 11,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 2,
+      "call_id": "8d767060-cc2f-4182-acf8-2276a8152900",
+      "repair": false,
+      "output_chars": 4660,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2394,
+        "prompt_tokens": 244432,
+        "total_tokens": 246826,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1098
+        }
+      },
+      "events": 12,
+      "dialogue_events": 6,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 3,
+      "call_id": "311d7252-1a9e-4d6a-a44e-14518b6eeddb",
+      "repair": false,
+      "output_chars": 3746,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2177,
+        "prompt_tokens": 244508,
+        "total_tokens": 246685,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1146
+        }
+      },
+      "events": 9,
+      "dialogue_events": 6,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 23
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 4,
+      "call_id": "39ae39a1-a885-4bc7-9fb0-9e3eb3cca1b4",
+      "repair": false,
+      "output_chars": 4914,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2155,
+        "prompt_tokens": 244550,
+        "total_tokens": 246705,
+        "completion_tokens_details": {
+          "reasoning_tokens": 824
+        }
+      },
+      "events": 13,
+      "dialogue_events": 9,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 25
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 5,
+      "call_id": "93142d6e-51fb-4825-a450-934306147e85",
+      "repair": false,
+      "output_chars": 4786,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2187,
+        "prompt_tokens": 244438,
+        "total_tokens": 246625,
+        "completion_tokens_details": {
+          "reasoning_tokens": 875
+        }
+      },
+      "events": 11,
+      "dialogue_events": 7,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 6,
+      "call_id": "84195d9d-06af-4d8d-a45d-edda9212e364",
+      "repair": false,
+      "output_chars": 6156,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 3049,
+        "prompt_tokens": 244546,
+        "total_tokens": 247595,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1285
+        }
+      },
+      "events": 12,
+      "dialogue_events": 8,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 24
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 7,
+      "call_id": "6838fd7b-a01a-4298-abed-19b07dcdea6d",
+      "repair": false,
+      "output_chars": 3606,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2406,
+        "prompt_tokens": 244416,
+        "total_tokens": 246822,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1416
+        }
+      },
+      "events": 9,
+      "dialogue_events": 5,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 8,
+      "call_id": "51a8e7a9-5ba6-4322-b475-52ec1cabdd54",
+      "repair": false,
+      "output_chars": 3953,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2893,
+        "prompt_tokens": 244547,
+        "total_tokens": 247440,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1791
+        }
+      },
+      "events": 9,
+      "dialogue_events": 6,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 24
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 9,
+      "call_id": "db7d0931-b689-447a-a0e7-897a5bb62cd8",
+      "repair": false,
+      "output_chars": 4492,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 1973,
+        "prompt_tokens": 244513,
+        "total_tokens": 246486,
+        "completion_tokens_details": {
+          "reasoning_tokens": 697
+        }
+      },
+      "events": 10,
+      "dialogue_events": 7,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 24
+    },
+    {
+      "stage": "refine",
+      "sequence_no": null,
+      "call_id": "3ef2d4ef-091d-469c-b3f9-4bfb255fad43",
+      "repair": false,
+      "output_chars": 13095,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 3857,
+        "prompt_tokens": 10668,
+        "total_tokens": 14525,
+        "completion_tokens_details": {
+          "reasoning_tokens": 206
+        }
+      },
+      "members": [
+        {
+          "sequence_no": 1,
+          "events": 14,
+          "dialogue_events": 11
+        },
+        {
+          "sequence_no": 2,
+          "events": 11,
+          "dialogue_events": 5
+        },
+        {
+          "sequence_no": 3,
+          "events": 8,
+          "dialogue_events": 5
+        }
+      ]
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 10,
+      "call_id": "4520700b-31aa-45ad-88ac-ccadfb701c5d",
+      "repair": false,
+      "output_chars": 3940,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2228,
+        "prompt_tokens": 244422,
+        "total_tokens": 246650,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1143
+        }
+      },
+      "events": 10,
+      "dialogue_events": 5,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 11,
+      "call_id": "9774afb6-aa4e-4034-b3c1-e53d2fa8627a",
+      "repair": false,
+      "output_chars": 4270,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2427,
+        "prompt_tokens": 244426,
+        "total_tokens": 246853,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1203
+        }
+      },
+      "events": 11,
+      "dialogue_events": 7,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 12,
+      "call_id": "ae0837b2-ba04-4a16-a6bc-8611b5eba5be",
+      "repair": false,
+      "output_chars": 4032,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 1710,
+        "prompt_tokens": 244437,
+        "total_tokens": 246147,
+        "completion_tokens_details": {
+          "reasoning_tokens": 523
+        }
+      },
+      "events": 10,
+      "dialogue_events": 6,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 13,
+      "call_id": "9d9a96b3-ee0c-45dc-84e4-9bcc53dce82b",
+      "repair": false,
+      "output_chars": 4940,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2443,
+        "prompt_tokens": 244598,
+        "total_tokens": 247041,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1005
+        }
+      },
+      "events": 13,
+      "dialogue_events": 9,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 25
+    },
+    {
+      "stage": "refine",
+      "sequence_no": null,
+      "call_id": "97c94eef-b2dd-4ab9-bbdc-ab39c4dba464",
+      "repair": false,
+      "output_chars": 13614,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 4452,
+        "prompt_tokens": 10916,
+        "total_tokens": 15368,
+        "completion_tokens_details": {
+          "reasoning_tokens": 725
+        }
+      },
+      "members": [
+        {
+          "sequence_no": 4,
+          "events": 13,
+          "dialogue_events": 9
+        },
+        {
+          "sequence_no": 5,
+          "events": 10,
+          "dialogue_events": 6
+        },
+        {
+          "sequence_no": 6,
+          "events": 11,
+          "dialogue_events": 7
+        }
+      ]
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 14,
+      "call_id": "d864145d-bae7-4a06-968c-101810d86b76",
+      "repair": false,
+      "output_chars": 4379,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 1916,
+        "prompt_tokens": 244573,
+        "total_tokens": 246489,
+        "completion_tokens_details": {
+          "reasoning_tokens": 724
+        }
+      },
+      "events": 11,
+      "dialogue_events": 8,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 25
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 15,
+      "call_id": "37930a16-b01e-4109-a3fc-0b1bdaf0adb0",
+      "repair": false,
+      "output_chars": 5679,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2572,
+        "prompt_tokens": 244532,
+        "total_tokens": 247104,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1017
+        }
+      },
+      "events": 17,
+      "dialogue_events": 13,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 24
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 16,
+      "call_id": "c3ee7216-42ae-425f-904f-f24416abea15",
+      "repair": false,
+      "output_chars": 5191,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2628,
+        "prompt_tokens": 244459,
+        "total_tokens": 247087,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1038
+        }
+      },
+      "events": 13,
+      "dialogue_events": 9,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 19
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 17,
+      "call_id": "5eccade4-61ae-432d-9b55-85af0e2944b4",
+      "repair": false,
+      "output_chars": 3955,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2463,
+        "prompt_tokens": 244761,
+        "total_tokens": 247224,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1268
+        }
+      },
+      "events": 8,
+      "dialogue_events": 4,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 23
+    },
+    {
+      "stage": "refine",
+      "sequence_no": null,
+      "call_id": "55095975-bf87-4bce-aa73-de8930e531b6",
+      "repair": false,
+      "output_chars": 11442,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 3452,
+        "prompt_tokens": 10200,
+        "total_tokens": 13652,
+        "completion_tokens_details": {
+          "reasoning_tokens": 266
+        }
+      },
+      "members": [
+        {
+          "sequence_no": 7,
+          "events": 9,
+          "dialogue_events": 5
+        },
+        {
+          "sequence_no": 8,
+          "events": 8,
+          "dialogue_events": 5
+        },
+        {
+          "sequence_no": 9,
+          "events": 9,
+          "dialogue_events": 6
+        }
+      ]
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 18,
+      "call_id": "544e86c7-4597-4dc9-b867-0495e870ec9d",
+      "repair": false,
+      "output_chars": 3064,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 848,
+        "prompt_tokens": 244809,
+        "total_tokens": 245657,
+        "completion_tokens_details": {
+          "reasoning_tokens": 24
+        }
+      },
+      "events": 6,
+      "dialogue_events": 6,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 24
+    },
+    {
+      "stage": "understand",
+      "sequence_no": 19,
+      "call_id": "3df2b337-c62b-4663-82a8-56e90ac60ea8",
+      "repair": false,
+      "output_chars": 5111,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 2000,
+        "prompt_tokens": 244676,
+        "total_tokens": 246676,
+        "completion_tokens_details": {
+          "reasoning_tokens": 515
+        }
+      },
+      "events": 14,
+      "dialogue_events": 7,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "asr_cues": 21
+    },
+    {
+      "stage": "refine",
+      "sequence_no": null,
+      "call_id": "1e6c536b-b655-4e74-9e96-b3961872e996",
+      "repair": false,
+      "output_chars": 15002,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 4590,
+        "prompt_tokens": 11389,
+        "total_tokens": 15979,
+        "completion_tokens_details": {
+          "reasoning_tokens": 315
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 5120
+        },
+        "cached_tokens": 5120
+      },
+      "members": [
+        {
+          "sequence_no": 0,
+          "events": 16,
+          "dialogue_events": 7
+        },
+        {
+          "sequence_no": 1,
+          "events": 13,
+          "dialogue_events": 10
+        },
+        {
+          "sequence_no": 2,
+          "events": 11,
+          "dialogue_events": 5
+        }
+      ]
+    },
+    {
+      "stage": "refine",
+      "sequence_no": null,
+      "call_id": "eba5a299-247d-4f74-b847-f9ee98f29e29",
+      "repair": false,
+      "output_chars": 12736,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 3786,
+        "prompt_tokens": 10521,
+        "total_tokens": 14307,
+        "completion_tokens_details": {
+          "reasoning_tokens": 292
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 768
+        },
+        "cached_tokens": 768
+      },
+      "members": [
+        {
+          "sequence_no": 2,
+          "events": 11,
+          "dialogue_events": 5
+        },
+        {
+          "sequence_no": 3,
+          "events": 8,
+          "dialogue_events": 5
+        },
+        {
+          "sequence_no": 4,
+          "events": 13,
+          "dialogue_events": 9
+        }
+      ]
+    },
+    {
+      "stage": "refine",
+      "sequence_no": null,
+      "call_id": "b8c60b90-c4bb-462e-a9a8-b9472c6642c1",
+      "repair": false,
+      "output_chars": 11400,
+      "first_sse_model": "k3.1-pro",
+      "response_model": "k3.1-pro",
+      "finish_reason": "stop",
+      "raw_sse_equals_response": true,
+      "usage": {
+        "completion_tokens": 3326,
+        "prompt_tokens": 10232,
+        "total_tokens": 13558,
+        "completion_tokens_details": {
+          "reasoning_tokens": 173
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 4096
+        },
+        "cached_tokens": 4096
+      },
+      "members": [
+        {
+          "sequence_no": 6,
+          "events": 11,
+          "dialogue_events": 7
+        },
+        {
+          "sequence_no": 7,
+          "events": 9,
+          "dialogue_events": 5
+        },
+        {
+          "sequence_no": 8,
+          "events": 8,
+          "dialogue_events": 5
+        }
+      ]
+    }
+  ],
+  "semantic_quality_note": "Nonempty content and reasonable names are sanity checks, not full manual accuracy or coverage acceptance."
+}

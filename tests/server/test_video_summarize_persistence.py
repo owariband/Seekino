@@ -9,8 +9,10 @@ from sqlalchemy import select
 
 from agent.video_summarize.state import VideoSummaryResult, VideoSummarySubmission
 from server.constants.parse import RUNTIME_DETAIL_KEY
-from server.model.job import ChunkParseContent, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import VideoParseTask
 from server.model.video import Video
+from server.repository import video_parse_content as result_store
 from server.service.video_parse_errors import VideoParseLeaseLostError, VideoParseSnapshotConflictError
 from tests.server.test_video_parse_repository import (
     NOW, _prepare, _commit_all_chunks, _refinement_inputs, _finish_ready_indexes,
@@ -39,6 +41,11 @@ def _claim(repo, *, at=AT, snapshot=SNAPSHOT):
 def _state(factory, task_id):
     with factory() as session:
         return deepcopy(session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["summarize"])
+
+
+def _saved_summary(factory, task_id):
+    with factory() as session:
+        return result_store.load_result(session, task_id, "summary")
 
 
 def _result(*, order=3):
@@ -119,7 +126,10 @@ def test_publish_metadata_and_episode_order_atomically_and_preserve_runtime_sibl
         assert (video.display_name, video.description, video.cover_uri) == ("迷路", "两人终于在街角相遇。", "artifact://cover.jpg")
         assert session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["other_phase"] == {"new": True}
     assert _state(factory, task_id)["status"] == "COMPLETE"
-    assert _state(factory, task_id)["frame_receipts"] == list(_result().frame_receipts)
+    saved = _saved_summary(factory, task_id)
+    assert saved["frame_receipts"] == list(_result().frame_receipts)
+    assert saved["cover_uri"] == "artifact://cover.jpg"
+    assert not {"result", "frame_receipts"}.intersection(_state(factory, task_id))
     assert _claim(repo) is None
 
 
@@ -152,7 +162,7 @@ def test_generated_title_is_published_with_provenance_without_changing_episode_o
         video = session.get(Video, lease.video_id)
         assert video.display_name == "街角的重逢"
         assert video.episode_order == 1
-    saved = _state(factory, task_id)["result"]
+    saved = _saved_summary(factory, task_id)["submission"]
     assert saved["title_kind"] == "generated"
     assert saved["evidence"] == result.submission.model_dump(mode="json")["evidence"]
 

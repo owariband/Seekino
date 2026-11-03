@@ -1,4 +1,4 @@
-"""Opt-in local Parse request/response evidence; never sends diagnostics remotely."""
+"""Opt-in local Parse/Chat evidence; never sends diagnostics remotely."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -10,11 +10,12 @@ import logging
 import os
 from pathlib import Path
 import re
-from time import time_ns
+from time import monotonic_ns, time_ns
 from types import SimpleNamespace
 
 _logger = logging.getLogger(__name__)
 _capture: ContextVar[tuple[Path, object, dict] | None] = ContextVar("model_diagnostic_capture", default=None)
+_diagnostic_root: ContextVar[str | Path | None] = ContextVar("model_diagnostic_root", default=None)
 _SECRET_KEYS = {"authorization", "api_key", "apikey", "access_token", "secret_key"}
 _MAX_EVENT_BYTES = 32 * 1024 * 1024
 
@@ -189,7 +190,7 @@ def record_model_event(kind: str, value) -> None:
         _output_preview(kind, value, directory, call, state)
         if (directory / "truncated").exists():
             return
-        event = {"event": kind, "time_ns": time_ns(), "call_id": call.call_id,
+        event = {"event": kind, "time_ns": time_ns(), "monotonic_ns": monotonic_ns(), "call_id": call.call_id,
                  "provider_request_id": call.request_id, "payload": _plain(value, directory)}
         target = directory / "events.jsonl"
         with target.open("a", encoding="utf-8") as handle:
@@ -205,13 +206,25 @@ def record_model_event(kind: str, value) -> None:
 
 
 @contextmanager
+def model_diagnostic_scope(directory: str | Path | None):
+    """Let the host select private diagnostics without interpreting business IDs."""
+    token = _diagnostic_root.set(directory)
+    try:
+        yield
+    finally:
+        _diagnostic_root.reset(token)
+
+
+@contextmanager
 def capture_model_diagnostics(call, request):
     if _capture.get() is not None and _capture.get()[1] is call:
         yield
         return
-    root = os.environ.get("SEEKINO_MODEL_TRACE_DIR")
+    root = _diagnostic_root.get()
+    if root is None and call.context.get("video_parse_task_id"):
+        root = os.environ.get("SEEKINO_MODEL_TRACE_DIR")
     token = _capture.set(None)
-    if root and call.context.get("video_parse_task_id"):
+    if root:
         try:
             trace_root = Path(root).resolve()
             trace_root.mkdir(mode=0o700, parents=True, exist_ok=True)

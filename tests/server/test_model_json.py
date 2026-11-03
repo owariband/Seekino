@@ -6,7 +6,7 @@ from sqlalchemy import Column, Integer, MetaData, Table, create_engine, select, 
 from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import StatementError
 
-from server.model.job import ChunkParseContent
+from server.model.parse_content import ChunkParseContent
 from server.model.video import VideoChunkEmbedding
 
 

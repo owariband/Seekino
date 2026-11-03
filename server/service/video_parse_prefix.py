@@ -19,13 +19,13 @@ from engine.parsev2.schemas import VideoParseResult
 from engine.parsev2.validation import parse_content_fingerprint, validate_result_time_range
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
-from ..model.dto.jobDTO import (
-    ChunkParseContentState,
+from ..model.dto.parseContentDTO import ChunkParseContentState
+from ..model.dto.taskDTO import (
     PrefixParseLease,
-    VideoData,
     VideoParseTaskData,
 )
-from ..model.job import (
+from ..model.dto.libraryDTO import VideoData
+from ..model.task import (
     IntervalParseTaskStatus,
     VideoParseTaskStatus,
 )
@@ -293,10 +293,13 @@ def commit_prefix(
     if type(chunk_duration) is not int or chunk_duration <= 0:
         raise VideoParseConflictError("frozen parse config has an invalid chunk_duration")
     chunk_duration_ms = chunk_duration * 1000
+    asr = (task.parse_config.get("models") or {}).get("asr") or {}
+    dialogue_bounds = (0, video.duration_ms) if asr.get("scope") == "video" else None
     updated = validate_result_time_range(
         VideoParseResult.model_validate(updated),
         start_seconds=scope[0] * chunk_duration_ms,
         end_seconds=min(video.duration_ms, (scope[-1] + 1) * chunk_duration_ms),
+        dialogue_bounds=dialogue_bounds,
     ).model_dump(mode="json")
     changed = updated != current
     reset: tuple[str, ...] = ()

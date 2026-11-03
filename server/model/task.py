@@ -1,3 +1,4 @@
+"""Current parse task state, leases, scheduling and Interval membership rules."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -23,44 +24,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from agent.video_parse_v2.state import ChunkTaskPhase, ChunkTaskStatus
 
 from ..constants.parse import CAPACITY_ACQUIRED_KEY, RUNTIME_DETAIL_KEY
+from ..utils.time import now_utc
 from .base import BaseModel
-from .types import StringEncodedJSON
-from ..utils.time import now_unix_time_ms, now_utc
-from .video import (
-    ID_LENGTH,
-    LONG_TEXT,
-    MYSQL_TABLE_OPTIONS,
-    UTC_TIMESTAMP,
-)
-
-
-class ParseJobStatus(StrEnum):
-    QUEUED = "QUEUED"
-    RUNNING = "RUNNING"
-    RETRY_WAIT = "RETRY_WAIT"
-    SUCCEEDED = "SUCCEEDED"
-    FAILED = "FAILED"
-
-
-class ParseJobStage(StrEnum):
-    QUEUED = "QUEUED"
-    PREPARING = "PREPARING"
-    SPLIT_READY = "SPLIT_READY"
-    PARSING = "PARSING"
-    TEXT_EMBEDDING = "TEXT_EMBEDDING"
-    VISION_EMBEDDING = "VISION_EMBEDDING"
-    PERSISTING = "PERSISTING"
-    INDEXING = "INDEXING"
-    COMPLETED = "COMPLETED"
-
-
-class VideoChunkCheckpointStage(StrEnum):
-    PREPARED = "PREPARED"
-    SPLIT_READY = "SPLIT_READY"
-    PARSED = "PARSED"
-    TEXT_EMBEDDED = "TEXT_EMBEDDED"
-    VISION_EMBEDDED = "VISION_EMBEDDED"
-    INDEXED = "INDEXED"
+from .video import ID_LENGTH, MYSQL_TABLE_OPTIONS, UTC_TIMESTAMP
 
 
 class VideoParseTaskStatus(StrEnum):
@@ -81,133 +47,6 @@ class IntervalParseTaskStatus(StrEnum):
     REFINING = "REFINING"
     COMPLETE = "COMPLETE"
     PARSING_FAILED = "PARSING_FAILED"
-
-
-class SeriesParseJob(BaseModel):
-    __tablename__ = "series_parse_job"
-    __table_args__ = (
-        UniqueConstraint(
-            "video_id",
-            "pipeline_version",
-            name="uq_series_parse_job_video_pipeline",
-        ),
-        CheckConstraint(
-            "status IN ('QUEUED', 'RUNNING', 'RETRY_WAIT', "
-            "'SUCCEEDED', 'FAILED')",
-            name="ck_series_parse_job_status",
-        ),
-        CheckConstraint(
-            "stage IN ('QUEUED', 'PREPARING', 'SPLIT_READY', 'PARSING', "
-            "'TEXT_EMBEDDING', 'VISION_EMBEDDING', 'PERSISTING', "
-            "'INDEXING', 'COMPLETED')",
-            name="ck_series_parse_job_stage",
-        ),
-        CheckConstraint(
-            "progress BETWEEN 0 AND 100",
-            name="ck_series_parse_job_progress",
-        ),
-        CheckConstraint(
-            "attempt_count >= 0",
-            name="ck_series_parse_job_attempt_count",
-        ),
-        CheckConstraint(
-            "max_attempts > 0",
-            name="ck_series_parse_job_max_attempts",
-        ),
-        CheckConstraint(
-            "lease_version >= 0",
-            name="ck_series_parse_job_lease_version",
-        ),
-        CheckConstraint(
-            "processing_duration_ms >= 0",
-            name="ck_series_parse_job_processing_duration",
-        ),
-        CheckConstraint("version >= 1", name="ck_series_parse_job_version"),
-        Index("ix_series_parse_job_due", "status", "next_execute_time"),
-        MYSQL_TABLE_OPTIONS,
-    )
-
-    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    creator_id: Mapped[str | None] = mapped_column(String(64))
-    series_id: Mapped[str] = mapped_column(
-        ForeignKey("series.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    video_id: Mapped[str] = mapped_column(
-        ForeignKey("video.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    pipeline_version: Mapped[str] = mapped_column(String(128), nullable=False)
-    parse_config: Mapped[dict | None] = mapped_column(JSON)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-    stage: Mapped[str] = mapped_column(String(32), nullable=False)
-    progress: Mapped[int] = mapped_column(Integer, nullable=False)
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    next_execute_time: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
-    lease_owner: Mapped[str | None] = mapped_column(String(128))
-    lease_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    lease_expire_time: Mapped[int | None] = mapped_column(BigInteger)
-    heartbeat_time: Mapped[int | None] = mapped_column(BigInteger)
-    start_time: Mapped[int | None] = mapped_column(BigInteger)
-    finish_time: Mapped[int | None] = mapped_column(BigInteger)
-    processing_duration_ms: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=0,
-    )
-    processing_timing_complete: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=True,
-    )
-    last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
-
-
-class VideoChunkCheckpoint(BaseModel):
-    __tablename__ = "video_chunk_checkpoint"
-    __table_args__ = (
-        CheckConstraint(
-            "sequence_no >= 0",
-            name="ck_video_chunk_checkpoint_sequence",
-        ),
-        CheckConstraint(
-            "stage IN ('PREPARED', 'SPLIT_READY', 'PARSED', "
-            "'TEXT_EMBEDDED', 'VISION_EMBEDDED', 'INDEXED')",
-            name="ck_video_chunk_checkpoint_stage",
-        ),
-        CheckConstraint(
-            "(start_ms IS NULL AND end_ms IS NULL) OR "
-            "(start_ms IS NOT NULL AND end_ms IS NOT NULL AND "
-            "start_ms >= 0 AND end_ms > start_ms)",
-            name="ck_video_chunk_checkpoint_range",
-        ),
-        Index("ix_video_chunk_checkpoint_job_stage", "job_id", "stage"),
-        MYSQL_TABLE_OPTIONS,
-    )
-
-    job_id: Mapped[str] = mapped_column(
-        ForeignKey("series_parse_job.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    sequence_no: Mapped[int] = mapped_column(Integer, primary_key=True)
-    chunk_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
-    stage: Mapped[str] = mapped_column(String(32), nullable=False)
-    start_ms: Mapped[int | None] = mapped_column(BigInteger)
-    end_ms: Mapped[int | None] = mapped_column(BigInteger)
-    chunk_media_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
-    analysis_window_media_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
-    parse_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
-    text_embedding_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
-    vision_embedding_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
-    last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
 
 
 class VideoParseTask(BaseModel):
@@ -421,30 +260,8 @@ class ChunkTask(BaseModel):
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
-# Keep existing imports stable while the same physical task row gains Index.
+# The same physical task row owns Parse and Index execution.
 ChunkParseTask = ChunkTask
-
-class ChunkParseContent(BaseModel):
-    __tablename__ = "chunk_parse_content"
-    __table_args__ = (
-        UniqueConstraint(
-            "chunk_task_id",
-            name="uq_chunk_parse_content_task",
-        ),
-        CheckConstraint("version > 0", name="ck_chunk_parse_content_version"),
-        MYSQL_TABLE_OPTIONS,
-    )
-
-    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    chunk_task_id: Mapped[str] = mapped_column(
-        ForeignKey("chunk_parse_task.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    content: Mapped[Any | None] = mapped_column(JSON)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    detail: Mapped[dict[str, Any] | None] = mapped_column(
-        StringEncodedJSON(string_path=("_index_embeddings_v2", "representations")),
-    )
 
 
 class IntervalParseTask(BaseModel):
@@ -539,18 +356,6 @@ class IntervalParseTask(BaseModel):
     start_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     finish_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-
-
-class IntervalParseContent(BaseModel):
-    __tablename__ = "interval_parse_content"
-    __table_args__ = MYSQL_TABLE_OPTIONS
-
-    interval_task_id: Mapped[str] = mapped_column(
-        ForeignKey("interval_parse_task.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    content: Mapped[Any] = mapped_column(JSON, nullable=False)
-    detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
 def interval_sequence_range(start_sequence_no: int, chunk_count: int) -> range:

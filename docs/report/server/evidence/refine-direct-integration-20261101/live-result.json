@@ -1,0 +1,32 @@
+{
+  "task": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+  "interval": "854924e7-0952-4f03-b940-dd072a67aeb6",
+  "elapsed_seconds": 425.01136425000004,
+  "state": {
+    "id": "854924e7-0952-4f03-b940-dd072a67aeb6",
+    "status": "COMPLETE",
+    "lease_version": 10,
+    "retry_count": 0,
+    "last_error": "null"
+  },
+  "asr_new_calls": 0,
+  "versions_before": [
+    2,
+    1,
+    1
+  ],
+  "versions_after": [
+    3,
+    2,
+    2
+  ],
+  "receipt_count": 1,
+  "original_database_unchanged": true,
+  "database": "seekino_refine_direct_20261101_test",
+  "test_scope": "production consumer, runtime, Kimi and MySQL commit; copied real inputs",
+  "active_model_slot_rows_delta": 0,
+  "model_requests": 1,
+  "new_usage_records": 1,
+  "fresh_process_completed_interval_not_reclaimed": true,
+  "model_call_counter_note": "parse_model_call holds active reservations, which are released after completion; requests are counted from trace, not reservation row delta."
+}
