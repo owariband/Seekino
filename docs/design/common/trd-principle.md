@@ -2,6 +2,9 @@ background：
 由于seekino功能复杂度较高，因此各类feature、fix、refactor、performance需求常常需要较为完备的下述流程：
 发现问题——列出影响因素、结果指标——围绕影响因素改造——进行实验结果对比——敲定方案解决问题
 因此我们提出一个common，所有trd均需要遵循的principle 规范所有agent的需求跟进trd
+历史错误认知：单人开发（只是有各类agent）不需要多branch管理，导致遇到各类需求代码混杂混乱、无法check是否真的接入、需求具有依赖性但是无法分清边界交付等极其混沌的管理问题
+因此后续只要是能够开trd的任何需求，要求必须开一个branch + pr跟踪其开发，该pr第一个提交必须是trd
+
 
 # 一个需求：拿到问题后你该如何处理？
 
@@ -15,6 +18,31 @@ background：
 以下在上述六个流程下补充具体要求。
 
 每项关键改动必须关联待解决的问题、作用因素和验证方法；每项完成结论必须关联实际证据及其适用范围。实现完成、测试通过、效果达标和运行稳定是不同结论，不能相互替代。
+**同时，每一个trd的建立都必须和一个branch pr绑定**
+branch命名风格严格按照feat/fix/refactor/perf/docs/chore...绑定，同时commit msg也必须严格按照此类风格
+每一次commit严格按照格式：
+eg.
+feat: xxxxx
+- problem:xxxx
+- solution abstract:xxxx
+- other detailed bullet...
+
+IMPORTANT！！！
+过往bad cases：claude提出的claude/xxxxx
+![pr by claude](image.png)
+禁止学习！负面教材！
+工作分支必须采用前述 `<type>/<short-description>` 命名，不得使用 `claude/`、`codex/` 等 Agent 名称作为分支前缀。
+Agent 身份只需在创建 PR 时于正文末尾署名一次，按实际参与的 Agent 填写，例如 `— Prepared by Codex` 或 `— Prepared by Claude`。
+例如 PR 刚提出的时候：
+
+```text
+xxxx
+xxx
+— Prepared by Codex
+```
+
+即可
+
 
 ## 1. 问题与现状
 

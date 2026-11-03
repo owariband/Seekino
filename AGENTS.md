@@ -38,9 +38,13 @@ Seekino 将视频转成可检索、可回看、可追溯来源的素材库。主
 
 **每次新增 TRD，必须完整阅读并遵循 [TRD Principle](docs/design/common/trd-principle.md)；实质修订已有 TRD 时，同样按规范补充本次涉及的内容。** TRD 以 `# 1. 问题与现状` 开头，清晰呈现六个 key process；初稿写问题、假设与验证计划，执行中补证据，闭环时回到原问题验收。详细要求维护在 principle 中，不另建一份竞争规范。
 
+- 单人开发且由多个 Agent 协作，仍须隔离需求和交付边界。项目曾因多个需求混写，出现代码混杂、无法确认是否实际接入、依赖关系与交付范围不清的问题；不能以单人开发为由省略分支与 PR 管理。
+- **凡能够形成 TRD 的需求，必须绑定独立工作分支和 PR；该需求在 PR 中的首个提交必须是 TRD 初稿，不得夹带实现代码或先提交实现再补设计。** TRD 记录分支名与 PR 链接，PR 描述链接对应 TRD；创建 PR 后及时回填关联，开发过程持续更新同一份 TRD。
+- 需求存在依赖时，在 TRD 与 PR 中明确关联上游 TRD / PR、依赖内容、合并顺序及本次交付边界。验收须核对实际调用链或产品入口是否接入，并记录验证证据；上游代码存在、局部实现完成或合并成功不能代替接入验收。
 - 保留用户提供的原始大架构、关键流程、术语与论述。用户要求“完善”“补充”时，在原结构上添砖加瓦；未经明确要求，不以同义概括替换原文，不擅自删除关键段落或重组全文。
 - 新设计放在 `docs/design/` 对应发展阶段，按 [设计索引维护约定](docs/design/README.md#维护约定) 更新阶段 README 与主题入口；跨阶段修订保留一份主设计，历史方案明确关联后续入口。
 - [problems.md](docs/dev/problems.md) 是问题 TODO / DONE 的唯一当前状态入口；[devlog.md](docs/dev/devlog.md) 保存决策、实验、收益与代价，沿用“问题与现状／方案候选／方案验证／指标对比”四段结构。
+- devlog 的标题写问题的技术原因及其业务影响，正文用自然中文记录我们的假设、排查、验证和取舍，不用“用户指出”代替业务问题。指标先说明影响范围与选择理由，再比较时间、token、业务效果和代价；详细要求以 [devlog 维护原则](docs/dev/devlog.md#维护原则) 为准。
 - TRD 保存现行设计、关键决策与验收依据，通过链接关联问题状态和实验记录；不要在 TRD、索引和报告中另建独立维护的任务看板。历史结论保留日期、证据和验证边界。
 - 技术修改按 [文档维护职责](docs/README.md) 同步相关设计、问题和 devlog。调研放 `docs/research/`，实施报告放 `docs/report/<实际模块路径>/`，原始实验与验收证据保留在对应目录。
 - 没有实测的数据标为预期或待测。实现完成、测试通过、真实效果达标与部署完成分别说明，不能互相代替。
@@ -54,6 +58,9 @@ Seekino 将视频转成可检索、可回看、可追溯来源的素材库。主
 - 根据任务选用项目技能：调研看 [research](.agents/skills/research/SKILL.md)，需要压力检验方案时看 [grilling](.agents/skills/grilling/SKILL.md)，素材短片工作看 [seekino-short-video](.agents/skills/seekino-short-video/SKILL.md)。编码偏好在相关实现或审查中按需使用可用的 `hypnos-code`，纯文档修改无需自动加载。仅按适用条件使用，不因技能存在而扩大任务。
 - 服务重启、真实数据迁移或清理、commit 和 push 依照任务已有明确授权执行；文档中的计划和示例命令不构成操作授权。
 - 2026-10-30 起，每个 feature 或独立修复使用单独分支和 PR，默认向 `dev` 集成；并行工作使用独立 worktree，避免多个 chat 在同一工作区混写。`dev → main` 作为单独发布 PR，由用户在 GitHub 完成合并。发布需要保留 `main` 的 `.gitignore` 时，使用临时集成分支并核对文件与目标分支完全一致，不修改 `dev` 的忽略规则。
+- 工作分支严格采用 `<type>/<short-description>` 命名，使用 `feat`、`fix`、`refactor`、`perf`、`docs`、`chore` 等规范类型；类型表达需求性质，描述标识具体需求。禁止使用 `claude/`、`codex/` 等 Agent 名称作为分支前缀。
+- Agent 身份在创建 PR 时于正文末尾署名一次即可，使用 `— Prepared by Codex` 或 `— Prepared by Claude`，按实际参与的 Agent 填写；完整示例见 [TRD Principle](docs/design/common/trd-principle.md)。
+- 每次 commit 的标题必须采用 `<type>: <summary>`，标题与正文之间留一空行，正文至少包含 `- problem:` 与 `- solution abstract:` 两项，其他细节按需增加 bullet。类型按本次提交的实际变更选择；完整格式与示例以 [TRD Principle](docs/design/common/trd-principle.md) 为准，提交前必须核对。
 - 默认使用中文沟通，保留代码和接口的原始名称。先说结论，再说明依据、变化与验证；遇到阻塞写清缺口和下一项可执行动作。
 
 ## 6. 验证与交付
