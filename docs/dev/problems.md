@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-03 收口与分工：** #18 的音频持久恢复、解析 Agent 工具／Prompt、直接 JSON Refine 及请求控制按已有证据收口；本问题的性能、内容质量及产品验收仍保持后续状态，不据此关闭整个主题。传统任务查询 1038 与 Consumer 故障转 [PR #30](https://github.com/owariband/Seekino/pull/30)。当前 v11 的 117 理解／106 Refine／96 索引及音频摘要已留存，Git 合并不清空这些成果。[交接](../report/server/pr18-scope-handoff-20261103.md)。
+
 **11-03 11:53质量核对：** 117块Understanding完成，但全课未完成。319次出站均deepseek-flash／none；已知费用约¥31.26，69次未知。第10／25／60块虽已索引，仍将ASR只保留为ACTION概述而丢失原文对白；第53块合并文字却套用较早cue时间，起点相对ASR提前21.04秒。两类缺陷都通过结构门禁，必须另行验证原话覆盖与时间对应。本轮只读留证，未切换档位或重跑数据。[逐块审计](../report/gateway/deepseek-flash-chunk-audit-20261103.md)。
 
 **11-03 Flash v11与对白范围修复：** 新网络恢复原隔离存储与进程后，正式任务保留既有成果；因原始ASR cue末端1920300超过Chunk末端1920000而停止，确认Understanding仍有旧严格包含规则。已贯通Prompt／Canvas／业务校验／数据库提交的整片对白权限，602项回归通过，9b0eb280加载API后继续同一个v11；恢复时保留31理解／28Refine／28索引，新ASR=0。11:29已核实该跨界cue原样落库且ES身份对应同一正文版本，新纠错0；完整课程及人工质量仍待验，不把部分速度或费用写成整集成功。[Flash费用与恢复](../report/gateway/deepseek-flash-parse-20261103.md)。
@@ -1409,6 +1411,8 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 ### B13：解析启动负载尖峰、Codex 重复加载 MCP 与任务列表过量读取
 
+**11-03 新增独立后端修复（TODO）：** [PR #30](https://github.com/owariband/Seekino/pull/30) 跟进长任务全行排序查询 1038 与 Consumer OperationalError；前者已稳定复现，后者根因待定位。只读交接保留原 v11 成果，当前 Consumer 已停止，不能以等待代替恢复。范围、证据和恢复约束见[交接报告](../report/server/pr18-scope-handoff-20261103.md)。
+
 排序日期：2026-10-18。
 
 - 状态：2026-10-18 MCP 实例开关已实现，并完成 bundled Codex 无推理启动/恢复验证；任务列表轻量投影尚未实施。未重启现有服务，真实解析负载收益尚未验收。历史现场任务为隔离第四集 v10 `6ec42661-5938-4857-b7d0-d4a9d2eb77e2`；接手后只读详情已确认 COMPLETE、70/70 单元完成、lastError=null，不能沿用此前 PARSING 状态。
@@ -1602,6 +1606,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-03 收口与分工：** #18 的音频持久恢复、解析 Agent 工具／Prompt、直接 JSON Refine 及请求控制按已有证据收口；本问题的性能、内容质量及产品验收仍保持后续状态，不据此关闭整个主题。传统任务查询 1038 与 Consumer 故障转 [PR #30](https://github.com/owariband/Seekino/pull/30)。当前 v11 的 117 理解／106 Refine／96 索引及音频摘要已留存，Git 合并不清空这些成果。[交接](../report/server/pr18-scope-handoff-20261103.md)。
 
 **11-03 11:53质量核对：** 117块Understanding完成，但全课未完成。319次出站均deepseek-flash／none；已知费用约¥31.26，69次未知。第10／25／60块虽已索引，仍将ASR只保留为ACTION概述而丢失原文对白；第53块合并文字却套用较早cue时间，起点相对ASR提前21.04秒。两类缺陷都通过结构门禁，必须另行验证原话覆盖与时间对应。本轮只读留证，未切换档位或重跑数据。[逐块审计](../report/gateway/deepseek-flash-chunk-audit-20261103.md)。
 

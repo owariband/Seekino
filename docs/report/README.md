@@ -63,6 +63,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 ## Server
 
+[PR #18 范围收口与现有任务交接](server/pr18-scope-handoff-20261103.md)：已验证的解析修复收口，后端查询与 Consumer 转 PR #30；保留同一 v11 任务、音频与 Chunk 成果。
+
 PR 交付核对：[2026-11-01 PR #18 实现提交与整合复核](server/pr18-delivery-20261101.md)，区分已提交代码、基线失败、服务加载与未完成的整课验收。
 
 [2026-11-01 Refine 中断候选的旧实现基线](server/refine-interruption-baseline-20261101.md)：固定 GPT v4 最终进度、成功/失败及含重试等待的中位数、冲突和用量覆盖率；只读留证，新增方案尚未实施。
