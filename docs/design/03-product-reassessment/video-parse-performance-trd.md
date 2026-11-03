@@ -823,7 +823,7 @@ v7于18:01:41失败，实际515.164秒、10理解/0Refine/0索引，ASR重算0�
 
 **试点与取舍：** 服务切换前核对当前进程、控制目录和三类活跃租约，只重启本worktree隔离API，复用已有ASR／分组。100元是本轮用户充值的支出背景，不扩大为多个模型或多轮完整课程实验；同一试点保留已有成果，发生明确阻断则先定位而不自动重开。
 
-**验收与闭环：** 11-03已补齐本次Responses解析入口并通过HTTP／HTTPS共44项期限／取消检查；Gateway范围1624 passed、5 failed、1 skipped、1 deselected，五项失败在未修改的2a0aef06临时快照均复现。共用期限不是供应商专用，但工具循环、其他调用方及外部共享客户端仍未全覆盖，接线矩阵见gateway README。已完成只读余额／模型列表查询；尚未启动Flash解析或产生本轮推理费用。后续在本节关联实际报告，B07/B20保持未完成，完整课程和问答仍需真实验收。
+**验收与闭环：** 11-03已补齐本次Responses解析入口并通过HTTP／HTTPS共44项期限／取消检查；Gateway范围1624 passed、5 failed、1 skipped、1 deselected，五项失败在未修改的2a0aef06临时快照均复现。共用期限不是供应商专用，但工具循环、其他调用方及外部共享客户端仍未全覆盖，接线矩阵见gateway README。这一接线检查完成时尚未启动Flash；随后正式v11的各次执行、费用和恢复证据见下文及[运行报告](../../report/gateway/deepseek-flash-parse-20261103.md)。B07/B20仍保留完整课程和问答验收，不把接线通过当作产品闭环。
 
 11-03首轮正式v11（`93d60de9-b0ab-4aa6-aeea-342935e237b2`）在64.036秒、3个请求后终止，0理解／0Refine：DeepSeek严格Schema拒绝`Required properties must match all properties in the object`，没有模型输出或usage，前后余额均147.10元。实际缺失的是DIALOGUE的可选speaker_source字段；现有投影只处理oneOf，未按strict要求列全required。修复限定在适配器的Schema投影：已声明字段全部列入required、保留原nullable类型和业务模型默认值，不改业务Schema、不关闭strict；在同一个v11修复后重试，保留首轮失败记录，协议探针与整课费用分列。 修复后409项模型／工厂／用量回归通过；同一Understanding Schema的单次文本探针2.390秒被API接受，2715输入／10输出／0reasoning，估算0.002755元，明确不作课程内容样本。
 
@@ -848,7 +848,7 @@ v7于18:01:41失败，实际515.164秒、10理解/0Refine/0索引，ASR重算0�
 
 **试点与取舍：** 继续原v11，保留31个Understanding与既有Refine／索引／音频成果，重启本worktree API后通过正式retry恢复。接线修复前后的进程段分别统计；此后Prompt合同发生纠正，不能再将全部v11视为单一不变Prompt的模型速度对照。
 
-**验收与闭环：** Agent、宿主、事务与Engine相关602项回归通过，覆盖完整cue经Canvas原样提交、数据库独立读取冻结权限、原片／视觉越界拒绝、旧租约拒绝和实时理解原范围。准备加载本worktree API复验同一v11并检查真实出站Prompt和提交；完整课程及人工内容质量尚未完成，B07/B20不提前关闭。
+**验收与闭环：** Agent、宿主、事务与Engine相关602项回归通过，覆盖完整cue经Canvas原样提交、数据库独立读取冻结权限、原片／视觉越界拒绝、旧租约拒绝和实时理解原范围。9b0eb280已加载本worktree API并经正式retry恢复同一v11。11:29 CST真实核对：sequence31首次新输出原样保留[1917740,1920300)，没有因这300ms再发纠错；MySQL正文version=3、timeline_index=9保留同一时间，ES已索引并匹配同一task／chunk／version／timeline_index。实际出站Prompt包含整片对白规则且没有旧全事件Chunk限制。证据见[请求与索引回源核对](../../report/gateway/deepseek-flash-parse-20261103.md#完整对白的真实提交)。完整课程及人工内容质量尚未完成，B07/B20不提前关闭。
 
 # 5. 试点验证与方案取舍
 

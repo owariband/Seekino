@@ -31,6 +31,8 @@
 
 ## Gateway
 
+[2026-11-03 DeepSeek Flash 整课费用与恢复](gateway/deepseek-flash-parse-20261103.md)：按同一任务记录协议接线、网络恢复、纯排序与完整 ASR 对白权限修复；保留真实提交／索引身份证据、分段用时及未知用量，不以运行快照替代整课验收。
+
 本机 ASR 性能与恢复边界：[2026-10-30 GPT 整集 Metal 实测](gateway/local/whisper-metal-benchmark-20261030.md)，附[可审阅指标 JSON](gateway/local/whisper-metal-benchmark-20261030.json)。完整 116 分钟音轨转写约 5 分钟；明确区分 CPU WhisperX 的 VAD/对齐、实验落盘与未完成的正式持久恢复。
 
 流式接入：[2026-10-30 正式 Kimi 生成与 Parse 入口验证](gateway/kimi-streaming-20261030.md)。工厂、直接 JSON 与视觉工具 SSE 覆盖；合成图和原 189 帧长 Chunk 均完成，部署与整集效果单独验收。
