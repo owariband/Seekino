@@ -28,8 +28,8 @@ from ..constants.parse import (
     VOICEPRINT_CONSISTENCY_MAX_CANDIDATE_MEAN,
     VOICEPRINT_B0_MIN_AUDIO_MS,
 )
-from ..model.dto.jobDTO import IntervalParseLease, VideoParseLease, VideoParseTaskData
-from ..model.job import (
+from ..model.dto.taskDTO import IntervalParseLease, VideoParseLease, VideoParseTaskData
+from ..model.task import (
     ChunkTaskPhase,
     VideoParseTaskStatus,
 )

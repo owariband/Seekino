@@ -20,7 +20,7 @@ def engine():
 
 
 def test_all_business_tables_inherit_indexed_nullable_audit_columns(engine):
-    assert len(Base.metadata.tables) == 24
+    assert len(Base.metadata.tables) == 22
     assert "base_model" not in Base.metadata.tables
     for mapper in Base.registry.mappers:
         assert issubclass(mapper.class_, BaseModel)

@@ -1,0 +1,751 @@
+{
+  "understanding-control": {
+    "status": "completed",
+    "elapsed_seconds": 272.58342108299985,
+    "error_type": null,
+    "error": null,
+    "provider_requests": null,
+    "tools": {},
+    "usage": {
+      "input_tokens": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "cached_input_tokens": null
+    },
+    "usage_missing_requests": null,
+    "calls": [],
+    "tool_calls_returned": {},
+    "tool_errors": [],
+    "trace_gap": "This control invocation omitted task-id context required by diagnostics; its usage observer also could not deepcopy MappingProxyType. Wall time and result retained; SSE/CoT/usage unavailable. Both observers corrected for subsequent arms; no rerun.",
+    "speech_diff": {
+      "asr_word_count": 197,
+      "output_word_count": 183,
+      "changes": [
+        {
+          "op": "replace",
+          "asr": "then",
+          "output": "that"
+        },
+        {
+          "op": "delete",
+          "asr": "now this is just one example of a prompt people have come up with",
+          "output": ""
+        }
+      ]
+    },
+    "persons": [
+      "Andrej Karpathy"
+    ],
+    "event_counts": {
+      "SCENE": 1,
+      "ACTION": 3,
+      "DIALOGUE": 6,
+      "ON_SCREEN_TEXT": 3,
+      "EMOTION": 1
+    },
+    "speakers": {
+      "Andrej Karpathy": 6
+    },
+    "boundary_dialogues": []
+  },
+  "understanding-candidate": {
+    "status": "completed",
+    "elapsed_seconds": 318.59173391700097,
+    "error_type": null,
+    "error": null,
+    "provider_requests": 1,
+    "tools": {},
+    "usage": {
+      "input_tokens": 232615,
+      "output_tokens": 12162,
+      "reasoning_tokens": 7346,
+      "cached_input_tokens": 228760
+    },
+    "usage_missing_requests": 0,
+    "calls": [
+      {
+        "call_id": "47e41de1-ca29-4395-8e54-e9ce1a281037",
+        "last_event": "completed",
+        "elapsed_seconds": 318.529758,
+        "request_chars": 72697,
+        "message_count": 1,
+        "tools_offered": [],
+        "first_sse_seconds": 23.645812,
+        "reasoning_seconds": 223.528406,
+        "output_seconds": 71.335515,
+        "reasoning_chars": 29208,
+        "usage": {
+          "completion_tokens": 12162,
+          "prompt_tokens": 232615,
+          "total_tokens": 244777,
+          "completion_tokens_details": {
+            "reasoning_tokens": 7346
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 228760
+          },
+          "cached_tokens": 228760
+        },
+        "tools_returned": []
+      }
+    ],
+    "tool_calls_returned": {},
+    "tool_errors": [],
+    "speech_diff": {
+      "asr_word_count": 197,
+      "output_word_count": 197,
+      "changes": []
+    },
+    "persons": [
+      "Andrej Karpathy"
+    ],
+    "event_counts": {
+      "SCENE": 1,
+      "DIALOGUE": 22,
+      "ON_SCREEN_TEXT": 6,
+      "ACTION": 7
+    },
+    "speakers": {
+      "Andrej Karpathy": 22
+    },
+    "boundary_dialogues": [
+      {
+        "start_seconds": 59670,
+        "end_seconds": 61180,
+        "description": "讲师结束对当前提示词示例的说明。",
+        "participants": [
+          "Andrej Karpathy"
+        ],
+        "visible_persons": [
+          "Andrej Karpathy"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Andrej Karpathy",
+        "text_variants": [
+          {
+            "language": "en",
+            "role": "ORIGINAL",
+            "text": "of a prompt people have come up with"
+          }
+        ]
+      }
+    ]
+  },
+  "refine-canvas": {
+    "status": "completed",
+    "elapsed_seconds": 593.6787650410006,
+    "error_type": null,
+    "error": null,
+    "provider_requests": 8,
+    "tools": {
+      "get_context_canvas": 10,
+      "write_context_canvas": 3
+    },
+    "usage": {
+      "input_tokens": 314671,
+      "output_tokens": 22559,
+      "reasoning_tokens": 11588,
+      "cached_input_tokens": 247040
+    },
+    "usage_missing_requests": 0,
+    "calls": [
+      {
+        "call_id": "2b33138b-8b4c-4615-89ee-6b1cf987a2de",
+        "last_event": "completed",
+        "elapsed_seconds": 42.055234,
+        "request_chars": 163705,
+        "message_count": 14,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 1.724519,
+        "reasoning_seconds": 10.863166,
+        "output_seconds": null,
+        "reasoning_chars": 979,
+        "tool_args_seconds": 29.463145,
+        "usage": {
+          "completion_tokens": 2344,
+          "prompt_tokens": 44451,
+          "total_tokens": 46795,
+          "completion_tokens_details": {
+            "reasoning_tokens": 286
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 38912
+          },
+          "cached_tokens": 38912
+        },
+        "tools_returned": [
+          "write_context_canvas"
+        ]
+      },
+      {
+        "call_id": "2c2b1d48-55f7-407c-baf9-093f807f4a5d",
+        "last_event": "completed",
+        "elapsed_seconds": 30.774667,
+        "request_chars": 182996,
+        "message_count": 18,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 3.219402,
+        "reasoning_seconds": 9.362796,
+        "output_seconds": null,
+        "reasoning_chars": 742,
+        "tool_args_seconds": 18.188046,
+        "usage": {
+          "completion_tokens": 1426,
+          "prompt_tokens": 50549,
+          "total_tokens": 51975,
+          "completion_tokens_details": {
+            "reasoning_tokens": 171
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 47360
+          },
+          "cached_tokens": 47360
+        },
+        "tools_returned": [
+          "get_context_canvas",
+          "get_context_canvas",
+          "get_context_canvas",
+          "get_context_canvas"
+        ]
+      },
+      {
+        "call_id": "365d394e-497d-4648-872b-dd6ce8741956",
+        "last_event": "completed",
+        "elapsed_seconds": 14.874131,
+        "request_chars": 92162,
+        "message_count": 8,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 1.861073,
+        "reasoning_seconds": 9.633909,
+        "output_seconds": null,
+        "reasoning_chars": 1209,
+        "tool_args_seconds": 3.376885,
+        "usage": {
+          "completion_tokens": 620,
+          "prompt_tokens": 25833,
+          "total_tokens": 26453,
+          "completion_tokens_details": {
+            "reasoning_tokens": 223
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 9472
+          },
+          "cached_tokens": 9472
+        },
+        "tools_returned": [
+          "get_context_canvas"
+        ]
+      },
+      {
+        "call_id": "70b9f0c3-77fa-4f71-830f-60907631b872",
+        "last_event": "completed",
+        "elapsed_seconds": 39.772825,
+        "request_chars": 173398,
+        "message_count": 16,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 2.382995,
+        "reasoning_seconds": 8.6746,
+        "output_seconds": null,
+        "reasoning_chars": 635,
+        "tool_args_seconds": 28.711738,
+        "usage": {
+          "completion_tokens": 2322,
+          "prompt_tokens": 47497,
+          "total_tokens": 49819,
+          "completion_tokens_details": {
+            "reasoning_tokens": 221
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 44288
+          },
+          "cached_tokens": 44288
+        },
+        "tools_returned": [
+          "write_context_canvas"
+        ]
+      },
+      {
+        "call_id": "78cd030c-9d1c-4d1b-9b9a-4e644bfe0eed",
+        "last_event": "completed",
+        "elapsed_seconds": 287.722534,
+        "request_chars": 109084,
+        "message_count": 10,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 1.61828,
+        "reasoning_seconds": 263.046754,
+        "output_seconds": 3.859212,
+        "reasoning_chars": 33534,
+        "tool_args_seconds": 19.185391,
+        "usage": {
+          "completion_tokens": 9347,
+          "prompt_tokens": 31042,
+          "total_tokens": 40389,
+          "completion_tokens_details": {
+            "reasoning_tokens": 7846
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 25600
+          },
+          "cached_tokens": 25600
+        },
+        "tools_returned": [
+          "write_context_canvas"
+        ]
+      },
+      {
+        "call_id": "98f675e4-4661-41ac-bc2d-f3ea62387ea9",
+        "last_event": "completed",
+        "elapsed_seconds": 138.066044,
+        "request_chars": 144161,
+        "message_count": 12,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 2.657176,
+        "reasoning_seconds": 104.793474,
+        "output_seconds": 0.012877,
+        "reasoning_chars": 10319,
+        "tool_args_seconds": 30.594525,
+        "usage": {
+          "completion_tokens": 4687,
+          "prompt_tokens": 39087,
+          "total_tokens": 43774,
+          "completion_tokens_details": {
+            "reasoning_tokens": 2498
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 30976
+          },
+          "cached_tokens": 30976
+        },
+        "tools_returned": [
+          "write_context_canvas"
+        ]
+      },
+      {
+        "call_id": "bbca1b49-aea5-4f40-ba54-a88b2e110793",
+        "last_event": "completed",
+        "elapsed_seconds": 30.577657,
+        "request_chars": 40088,
+        "message_count": 2,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 2.63124,
+        "reasoning_seconds": 7.82729,
+        "output_seconds": null,
+        "reasoning_chars": 846,
+        "tool_args_seconds": 20.109188,
+        "usage": {
+          "completion_tokens": 1579,
+          "prompt_tokens": 9712,
+          "total_tokens": 11291,
+          "completion_tokens_details": {
+            "reasoning_tokens": 160
+          }
+        },
+        "tools_returned": [
+          "get_context_canvas",
+          "get_context_canvas",
+          "get_context_canvas",
+          "get_context_canvas",
+          "get_context_canvas"
+        ]
+      },
+      {
+        "call_id": "ce51b78c-eadf-4b57-956a-00ce68813726",
+        "last_event": "completed",
+        "elapsed_seconds": 9.539111,
+        "request_chars": 233573,
+        "message_count": 23,
+        "tools_offered": [
+          "get_context_canvas",
+          "write_context_canvas",
+          "CanvasCompletion"
+        ],
+        "first_sse_seconds": 2.518283,
+        "reasoning_seconds": 7.015567,
+        "output_seconds": null,
+        "reasoning_chars": 935,
+        "tool_args_seconds": 0.001664,
+        "usage": {
+          "completion_tokens": 234,
+          "prompt_tokens": 66500,
+          "total_tokens": 66734,
+          "completion_tokens_details": {
+            "reasoning_tokens": 183
+          },
+          "prompt_tokens_details": {
+            "cached_tokens": 50432
+          },
+          "cached_tokens": 50432
+        },
+        "tools_returned": [
+          "CanvasCompletion"
+        ]
+      }
+    ],
+    "tool_calls_returned": {
+      "write_context_canvas": 4,
+      "get_context_canvas": 10,
+      "CanvasCompletion": 1
+    },
+    "tool_errors": [
+      "Invalid arguments for write_context_canvas: operations.5.set_event.event.DIALOGUE: Value error, speaker must be a participant when set; operations.9.set_event.event.DIALOGUE: Value error, speaker must be a participant when set; operations.11.set_event.event.DIALOGUE: Value error, speaker must be a participant when set. Fix them and call the tool again."
+    ],
+    "speech_diff": {
+      "asr_word_count": 550,
+      "output_word_count": 547,
+      "changes": [
+        {
+          "op": "replace",
+          "asr": "then",
+          "output": "that"
+        },
+        {
+          "op": "replace",
+          "asr": "chat gpt",
+          "output": "chatgpt"
+        },
+        {
+          "op": "replace",
+          "asr": "too",
+          "output": "2"
+        },
+        {
+          "op": "replace",
+          "asr": "a note",
+          "output": "an ode"
+        },
+        {
+          "op": "delete",
+          "asr": "a",
+          "output": ""
+        },
+        {
+          "op": "replace",
+          "asr": "can use",
+          "output": "news"
+        },
+        {
+          "op": "replace",
+          "asr": "and",
+          "output": "in"
+        },
+        {
+          "op": "replace",
+          "asr": "jetgpt",
+          "output": "chatgpt"
+        }
+      ]
+    },
+    "member_event_counts": {
+      "0": 16,
+      "1": 15,
+      "2": 14
+    },
+    "visual_diff": {
+      "0": {
+        "unchanged_except_person_labels": 10,
+        "removed_or_changed": [],
+        "added_or_changed": []
+      },
+      "1": {
+        "unchanged_except_person_labels": 10,
+        "removed_or_changed": [],
+        "added_or_changed": []
+      },
+      "2": {
+        "unchanged_except_person_labels": 9,
+        "removed_or_changed": [],
+        "added_or_changed": []
+      }
+    },
+    "event_counts": {
+      "SCENE": 8,
+      "ACTION": 9,
+      "DIALOGUE": 16,
+      "ON_SCREEN_TEXT": 10,
+      "EMOTION": 2
+    },
+    "speakers": {
+      "Andrej Karpathy": 16
+    },
+    "boundary_dialogues": [
+      {
+        "start_seconds": 50400,
+        "end_seconds": 61180,
+        "description": "比较两次输出后，讲解者总结 ChatGPT 是概率性系统，同一个提示词可以得到多个不同回答，并引出人们构想的提示词示例。",
+        "participants": [
+          "Andrej Karpathy"
+        ],
+        "visible_persons": [
+          "Andrej Karpathy"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Andrej Karpathy",
+        "text_variants": [
+          {
+            "language": "en",
+            "role": "ORIGINAL",
+            "text": "So you can see that ChatGPT is a probabilistic system, and for any one prompt, it can give us multiple answers, sort of replying to it. Now, this is just one example of a prompt people have come up with."
+          }
+        ]
+      },
+      {
+        "start_seconds": 113520,
+        "end_seconds": 121660,
+        "description": "讲解概括语言模型的工作方式：给定序列的开头，模型续写并得到结果。",
+        "participants": [
+          "Andrej Karpathy"
+        ],
+        "visible_persons": [
+          "Andrej Karpathy"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Andrej Karpathy",
+        "text_variants": [
+          {
+            "language": "en",
+            "role": "ORIGINAL",
+            "text": "what it is doing is it is completing the sequence. So I give it the start of a sequence, and it completes the sequence with the outcome."
+          }
+        ]
+      },
+      {
+        "start_seconds": 178450,
+        "end_seconds": 181440,
+        "description": "讲解音频继续说明该架构在随后五年中的扩展影响，句子在本片段结束时尚未完成。",
+        "participants": [
+          "Andrej Karpathy"
+        ],
+        "visible_persons": [
+          "Andrej Karpathy"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Andrej Karpathy",
+        "text_variants": [
+          {
+            "language": "en",
+            "role": "ORIGINAL",
+            "text": "in the next five years after and so"
+          }
+        ]
+      }
+    ]
+  },
+  "refine-json": {
+    "status": "completed",
+    "elapsed_seconds": 246.96261879200028,
+    "error_type": null,
+    "error": null,
+    "provider_requests": 1,
+    "tools": {},
+    "usage": {
+      "input_tokens": 11307,
+      "output_tokens": 10360,
+      "reasoning_tokens": 5663,
+      "cached_input_tokens": null
+    },
+    "usage_missing_requests": 0,
+    "calls": [
+      {
+        "call_id": "5af4a4fd-86c5-435e-8b38-00bd2a607216",
+        "last_event": "completed",
+        "elapsed_seconds": 246.935828,
+        "request_chars": 41743,
+        "message_count": 1,
+        "tools_offered": [],
+        "first_sse_seconds": 3.725301,
+        "reasoning_seconds": 172.932595,
+        "output_seconds": 70.262344,
+        "reasoning_chars": 23695,
+        "usage": {
+          "completion_tokens": 10360,
+          "prompt_tokens": 11307,
+          "total_tokens": 21667,
+          "completion_tokens_details": {
+            "reasoning_tokens": 5663
+          }
+        },
+        "tools_returned": []
+      }
+    ],
+    "tool_calls_returned": {},
+    "tool_errors": [],
+    "speech_diff": {
+      "asr_word_count": 550,
+      "output_word_count": 547,
+      "changes": [
+        {
+          "op": "replace",
+          "asr": "then",
+          "output": "that"
+        },
+        {
+          "op": "replace",
+          "asr": "chat gpt",
+          "output": "chatgpt"
+        },
+        {
+          "op": "replace",
+          "asr": "too",
+          "output": "2"
+        },
+        {
+          "op": "replace",
+          "asr": "a note",
+          "output": "an ode"
+        },
+        {
+          "op": "delete",
+          "asr": "a",
+          "output": ""
+        },
+        {
+          "op": "replace",
+          "asr": "can use",
+          "output": "news"
+        },
+        {
+          "op": "replace",
+          "asr": "and",
+          "output": "in"
+        },
+        {
+          "op": "replace",
+          "asr": "the",
+          "output": "a"
+        },
+        {
+          "op": "replace",
+          "asr": "of a",
+          "output": "on the"
+        },
+        {
+          "op": "replace",
+          "asr": "jetgpt",
+          "output": "chatgpt"
+        }
+      ]
+    },
+    "member_event_counts": {
+      "0": 16,
+      "1": 15,
+      "2": 14
+    },
+    "visual_diff": {
+      "0": {
+        "unchanged_except_person_labels": 10,
+        "removed_or_changed": [],
+        "added_or_changed": []
+      },
+      "1": {
+        "unchanged_except_person_labels": 10,
+        "removed_or_changed": [],
+        "added_or_changed": []
+      },
+      "2": {
+        "unchanged_except_person_labels": 9,
+        "removed_or_changed": [],
+        "added_or_changed": []
+      }
+    },
+    "event_counts": {
+      "SCENE": 8,
+      "ACTION": 9,
+      "DIALOGUE": 16,
+      "ON_SCREEN_TEXT": 10,
+      "EMOTION": 2
+    },
+    "speakers": {
+      "Andrej Karpathy": 16
+    },
+    "boundary_dialogues": [
+      {
+        "start_seconds": 50400,
+        "end_seconds": 61180,
+        "description": "比较两次输出后，讲解者总结 ChatGPT 是概率性系统，同一个提示词可以得到多个不同回答，并引出这只是人们构想出的众多提示词之一。",
+        "participants": [
+          "Andrej Karpathy"
+        ],
+        "visible_persons": [
+          "Andrej Karpathy"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Andrej Karpathy",
+        "text_variants": [
+          {
+            "language": "en",
+            "role": "ORIGINAL",
+            "text": "So you can see that ChatGPT is a probabilistic system, and for any one prompt, it can give us multiple answers, sort of replying to it. Now, this is just one example of a prompt people have come up with."
+          }
+        ]
+      },
+      {
+        "start_seconds": 113520,
+        "end_seconds": 121660,
+        "description": "Andrej Karpathy 概括语言模型的工作方式：给定序列的开头，模型续写并得到结果。",
+        "participants": [
+          "Andrej Karpathy"
+        ],
+        "visible_persons": [
+          "Andrej Karpathy"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Andrej Karpathy",
+        "text_variants": [
+          {
+            "language": "en",
+            "role": "ORIGINAL",
+            "text": "what it is doing is it is completing the sequence. So I give it the start of a sequence, and it completes the sequence with the outcome."
+          }
+        ]
+      },
+      {
+        "start_seconds": 178450,
+        "end_seconds": 181440,
+        "description": "讲解音频继续说明该架构在随后五年中的扩展影响，句子在现有 ASR 结束时尚未完成。",
+        "participants": [
+          "Andrej Karpathy"
+        ],
+        "visible_persons": [
+          "Andrej Karpathy"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Andrej Karpathy",
+        "text_variants": [
+          {
+            "language": "en",
+            "role": "ORIGINAL",
+            "text": "in the next five years after and so"
+          }
+        ]
+      }
+    ]
+  }
+}

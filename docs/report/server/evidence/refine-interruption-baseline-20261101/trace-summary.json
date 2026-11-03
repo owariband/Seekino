@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-11-01T13:56:23.189114+00:00",
+  "task_id": "2a531c4f-2c73-4cc2-adaf-5156edc26236",
+  "attempts_with_failure": 49,
+  "failure_reasons": {
+    "model_timeout": 36,
+    "model_connection_error": 3,
+    "null": 10
+  },
+  "request_error_types": {
+    "ValidationError": 39,
+    "ModelFailureError": 39,
+    "ModelCallCancelledError": 10
+  },
+  "schema_error_types": {
+    "timeline_order": 34,
+    "1 validation error for IntervalRefinementResult\nmembers.0.content\n  Extra inputs are not permitted [type=extra_forbidden, input_value=None, input_type=NoneType]\n    For further information visit [redacted_url]": 4,
+    "3 validation errors for IntervalRefinementResult\nmembers.0.content\n  Extra inputs are not permitted [type=extra_forbidden, input_value=None, input_type=NoneType]\n    For further information visit [redacted_url]\nmembers.1.content\n  Extra inputs are not permitted [type=extra_forbidden, input_value=None, input_type=NoneType]\n    For further informatio": 1
+  },
+  "commit_conflict_reasons": {
+    "timeline_structure_changed": 49
+  },
+  "failure_profiles": [
+    {
+      "reason": "model_timeout",
+      "had_commit_conflict": true,
+      "had_schema_error": true,
+      "attempts": 22
+    },
+    {
+      "reason": "model_timeout",
+      "had_commit_conflict": true,
+      "had_schema_error": false,
+      "attempts": 7
+    },
+    {
+      "reason": "model_timeout",
+      "had_commit_conflict": false,
+      "had_schema_error": true,
+      "attempts": 7
+    },
+    {
+      "reason": "model_connection_error",
+      "had_commit_conflict": false,
+      "had_schema_error": false,
+      "attempts": 3
+    },
+    {
+      "reason": null,
+      "had_commit_conflict": true,
+      "had_schema_error": false,
+      "attempts": 4
+    },
+    {
+      "reason": null,
+      "had_commit_conflict": false,
+      "had_schema_error": false,
+      "attempts": 6
+    }
+  ]
+}

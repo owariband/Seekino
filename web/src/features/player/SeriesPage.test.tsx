@@ -29,7 +29,7 @@ function video(videoId: string, episodeOrder: number, uploadSequence = episodeOr
     uploadStatus: "COMPLETED", parseStatus: "SUCCEEDED", uploadProgress: 100,
     parseProgress: 100, indexStatus: "READY", playbackStatus: "READY",
     playbackUrl: `/api/videos/content?videoId=${videoId}`, playbackUrlExpiresAt: null,
-    thumbnail: null, latestJobId: null, lastError: null,
+    thumbnail: null, lastError: null,
   };
 }
 

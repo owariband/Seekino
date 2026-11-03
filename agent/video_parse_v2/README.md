@@ -94,13 +94,23 @@ It includes:
 
 - Chunk/Interval duration, batch size, and dispatch interval;
 - visual input mode and bounds, OCR/Understanding/Prefix switches;
-- retry, concurrency, and durable model-call budgets;
+- retry and concurrency policies; lease-fenced model-call accounting;
 - credential-free effective model identities and request controls for ASR,
   Understanding/Refine, optional OCR/Prefix/Voiceprint, speaker embedding and retrieval embedding.
 
 Credentials remain in application configuration. Recovery uses the task's model
 snapshot rather than current global defaults. A missing explicit Refine model
 means reuse the fixed Understanding binding.
+
+Whole-video ASR cues retain their source timestamps across Chunk boundaries.
+The Server supplies `ChunkExecution.dialogue_bounds` from the frozen ASR scope
+and original video duration; Understanding Prompt, Canvas, result validation and
+the independent database commit gate all honor that same DIALOGUE authority.
+Visual events stay within the Chunk's visual authority, and dialogue outside the
+source video is still invalid. Refinement resolves overlapping complete cues.
+Schema and genuine time errors return the full normalized candidate plus exact
+locations within the existing retry/deadline budget; a legal cross-Chunk cue
+requires no model repair.
 
 ## Main execution
 
@@ -121,7 +131,7 @@ VoiceprintAgent (optional, within the existing Video coordinator)
   → transaction commits detail.voiceprint.ready=true; remaining Understanding continues
         ↓
 IntervalRefine workers
-  independent member snapshot + original evidence → local Canvas corrections
+  independent member snapshot + original evidence → complete members JSON → business result gate
   → check all member versions/fingerprints + validate complete results
   → transactionally save changed content + scope union + INDEXING
         ↓
@@ -137,8 +147,15 @@ Refine and indexing.
 Understanding subgraph nodes (`asr`, `visual`, `ocr`, `understanding`) own
 bounded retries for timeouts and transport failures, using the frozen execution
 retry configuration. Successful upstream observations stay in graph state;
-retrying Understanding does not rerun ASR. The execution deadline and durable
-model-call budget do not reset. Commit is not automatically replayed.
+retrying Understanding does not rerun ASR. The execution deadline does not reset.
+Understanding keeps the complete model candidate until the Agent validates the canonical
+`VideoParseResult`. A schema rejection supplies the original JSON and exact field paths
+for up to `max_retry_count` text-only repairs with the same frozen model; images and ASR
+are not sent or prepared again. The initial generation and repairs share the original
+request deadline. Media bounds, Canvas and transactional commit gates remain strict.
+
+Model requests remain lease-fenced and counted for usage, without a cumulative
+per-video call limit. Commit is not automatically replayed.
 A final Parse exception stops dispatch for that video, fences sibling writes,
 and publishes `PARSE_NODE_FAILED` through task API/SSE. Consumer records the
 failure without requeuing the Chunk. Existing process-crash lease recovery and
@@ -239,14 +256,14 @@ fence and finite failure/recovery facts; normal cancellation and waiting are fre
 Preparation failures/timeouts and active-phase crashes use the existing failure
 closure; committed preparation is skipped after restart, even if notification was lost.
 
-Refine can call `compare_speaker(start_ms,end_ms)` for null or conflicting named
-speakers. The host excludes self/overlap, repeated PCM and incompatible encoders,
-then returns cosine candidates, margin and provenance.
-Cosine is not a probability. Refine uses its existing Canvas to change speaker or
-retain null. Prepared speaker labels and registered audio ranges are trusted static
-results for this task. Refine never revalidates them against later timeline edits
-or rejects a commit because a reference event changed; comparison references are
-retained only for diagnostics.
+Direct Refine consumes retained voice evidence and host-prepared speaker labels.
+It does not invoke `compare_speaker`, inspect new frames, or start a speaker encoder.
+Existing preparation and comparison implementations remain available to their other
+callers. Prepared references remain static task evidence; Refine commits are not
+rejected merely because a referenced timeline event later changed. Host-owned
+`speaker_source` survives unchanged audio ranges and attribution; changed/new
+attribution or audio bounds are marked `refine_edit` when provenance is tracked.
+
 
 The ASR provider returns seconds; the service converts them once to absolute
 integer milliseconds before using the Engine-owned transcript contract. OCR
@@ -261,12 +278,27 @@ publishing episode media, then the same Chunk ASR entry selects overlapping cues
 Cues retain complete text and absolute times as boundary context; write bounds
 and TimelineEvent stay unchanged. This mode requires Understanding and an audio
 provider. Its cache belongs to the current coordinator lease in the shared
-RuntimeService; recovery rebuilds it without discarding committed Chunk content.
-No persistent ASR checkpoint is implied. Historical snapshots default to `chunk`.
+RuntimeService; the Server first validates durable `video_parse_content.asr`
+and rebuilds the cache without another transcription when media, producer and schema match.
+Historical snapshots default to `chunk`.
 Chunk admission requires the current coordinator's preparation receipt, written
 only after both transcript and media are ready. Recovery invalidates the old
 receipt; ASR preparation errors and expired preparation leases share the finite
 Prepare retry budget. New on-demand playback tasks retain Chunk-scoped ASR.
+
+Optional frozen `models.diarization` adds a whole-video preparation stage after ASR.
+The host persists its anonymous voice turns independently; either completed stage survives
+failure/restart. Both must be ready before Chunk admission. The ASR copy consumed by
+Understanding declares `speaker_scope=video`, `speaker_scope_id` and dominant `speaker_ids`;
+matching scope and label refer to a consistent candidate voice across chunks. Missing or
+mixed dominant turns remain unknown. Anonymous IDs alone do not identify people.
+Each Understanding request includes `all_speakers` with the voice scope, complete
+voice-group catalog/count and background-provided known speakers. The Series JSON
+background may supply `all_speakers` and lecturer/narrator context. An explicit mapping
+or a known sole lecturer plus consistent whole-video voice/media can support a name;
+a cast list or voice count alone cannot. Reuse supported mappings in Refine;
+missing/conflicting identity remains `speaker=null`. Original ASR text and timestamps
+stay unchanged; the combination does not imply acoustic forced alignment.
 
 Refine input includes each member's content, version, bounds, sequence, and
 ordered scope, plus original evidence and full content fingerprints. Understanding
@@ -275,12 +307,42 @@ object without tools. The host validates the complete result and imports persons
 and all events in one atomic `ParseContextCanvas.write` batch before the existing
 lease-fenced commit. Full ASR word alignment remains in immutable evidence; the
 initial prompt includes cue text, times and anonymous speaker IDs.
-[`ParseContextCanvas`](timelineEvent_canvas.py) in Refine and Prefix retains the same
-[`ContextCanvas`](../utils/context_canvas.py) implementation and shared
-`get_context_canvas` / `write_context_canvas` tools as Chat. Refine operations add or correct events; omitted events and fields remain
-unchanged, and event deletion is unavailable. Each batch validates an independent
-draft before publishing it. The program assembles the final timeline from Canvas;
-the model returns only a completion receipt.
+Refine receives complete member contents and retained observations once and returns
+`IntervalRefinementResult` (`members`, each with `sequence_no`, `persons`, `timeline`).
+It has no model-facing tools or separate completion receipt. The business result
+gate validates the domain Schema, exact member set and time authority, then derives
+only actual changes. A Refine-only response transport retains the full JSON value
+while requesting the same canonical model schema. The host stably sorts integer
+timeline starts, then strictly validates; no other event values are repaired.
+Schema/member errors return the entire latest rejected response and matching field
+locations for correction. Invalid JSON syntax retains the raw text. Previous failed
+responses are replaced rather than accumulated. The existing finite retry policy
+and a shared deadline still apply. Network/control/lease failures
+do not become Schema repair instructions. Snapshot conflicts refresh only Refine and
+do not reset that deadline. No result is committed before all checks pass.
+
+The host subscribes before loading the snapshot. After a successful transaction,
+only overlapping executions receive actual member content-version changes; scope-only
+and no-op commits do not interrupt generation. The host cancels only the current
+request, waits for transport/slot cleanup, and then signals `RefineInputChanged`.
+A complete response wins a simultaneous update and can still pass the existing merge.
+On refresh the Agent retains its latest complete candidate and precise validation or
+merge error alongside the newly loaded snapshot. It neither accumulates old candidates
+nor resumes hidden model reasoning. All generations share the original deadline.
+Notifications are process-local optimization; durable versions and leases still fence
+commits after restarts, missed notifications, Prefix or external-process writes.
+
+[`ParseContextCanvas`](timelineEvent_canvas.py) remains an internal Refine snapshot
+for prefill/provenance and diff calculation. Prefix still uses shared
+[`ContextCanvas`](../utils/context_canvas.py) tools. Complete Refine output may remove
+duplicate/unsupported events; missing or repeated member results are rejected.
+
+With frozen ASR `scope=video`, complete DIALOGUE may cross nominal Chunk/Interval
+bounds, but must stay inside the source video. Visual events retain their existing
+authorized range. Refine and Prefix input, draft and final transaction validation
+share this rule. The current Understanding prompt and initial Chunk commit retain
+their existing boundary contract; this change does not deploy the slower experimental
+Understanding prompt. Full ASR observations remain immutable.
 
 Commit checks the Interval lease and unsubmitted state, locks member rows in
 fixed order, and checks every input member version and fingerprint before any

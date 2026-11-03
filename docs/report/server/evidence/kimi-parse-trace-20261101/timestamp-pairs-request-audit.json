@@ -1,0 +1,342 @@
+[
+  {
+    "call_id": "bdba67ff-2e63-464a-8d05-6b4a283aaa94",
+    "sequence_no": 33,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "302cd834197117ee3d3f43570cafdf7fe43a703b8cc741e19252a516cb6d391e",
+    "timestamps_sha256": "0b62fb22ec80e16ac83fb5f70d360a607d8a66f504e9536ea028544baa1fe836",
+    "visual_bounds_ms": [
+      1977000,
+      2043000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "925c370d-fecf-4638-87ee-4352eaf7ebbb",
+    "sequence_no": 28,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "5c6b16d9b80579c068f1d36f723c855f2cefa5f1c36a32dc53946297bacd657e",
+    "timestamps_sha256": "c35bc558700cfc3d91be7e924686e803898420bb6e7188a6374d4bfea145f014",
+    "visual_bounds_ms": [
+      1677000,
+      1743000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "c5209923-fdfd-475a-8021-a6ef3b2687ab",
+    "sequence_no": 31,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "75d73d496919d7e50b1fe4187c1aee1deba8f050aa6c15d94218106073068fac",
+    "timestamps_sha256": "2064146c7618cdc46d6940677e2066d82b447554bd307e6aae2d09ccecdf70cd",
+    "visual_bounds_ms": [
+      1857000,
+      1923000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "8b14d1a1-7715-4535-909c-7d591f5a2a1e",
+    "sequence_no": 24,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "43103c27e23353f18af651e82d791a18ccd32b1ce26140cf2d1390764e309688",
+    "timestamps_sha256": "7b6cec3d023b31293f842bbb12318d539b085aeddc2a9585bddfc02926233a38",
+    "visual_bounds_ms": [
+      1437000,
+      1503000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "61ff6090-36d3-4e3e-89f1-cef6b6a91dad",
+    "sequence_no": 39,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "e90fb96a95c2b11e77873d8fd63e567e581b40fd2af0e67b19a8ff5a8d3ac6dc",
+    "timestamps_sha256": "4bc52e899d831600b8598a804d55cc636052bee98dc58c19b3504c6550648fac",
+    "visual_bounds_ms": [
+      2337000,
+      2403000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "7230d1e9-d2d8-419e-9d30-b98740202877",
+    "sequence_no": 34,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "85c816b78d98c80ec4aceeb8acf4632aed1ba73abd8307f380e37f8c66b45b1f",
+    "timestamps_sha256": "c9878ef92d03b703952176c5a955cfd3091298f577f721eee4d884d48b4925fb",
+    "visual_bounds_ms": [
+      2037000,
+      2103000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "07cc0bf1-068b-455c-886c-bbdad6d039e5",
+    "sequence_no": 37,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "5937364cba79407ab3a9d325181417ec58c8b9c7a6160b8cfd792c72b0d6cb25",
+    "timestamps_sha256": "78b4c5b782e2e20a5b370733848a9a1a7bbee1e4e54116c343a096ffe0677395",
+    "visual_bounds_ms": [
+      2217000,
+      2283000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "3dcb5c9f-3a83-4688-898a-ee5d0503835f",
+    "sequence_no": 32,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "5b53a3b5d611887e2f706e8b4eaf37c22e0424b006d3ee585cc2623aacc7637d",
+    "timestamps_sha256": "92d841925a3e4e4c4ab6ee12486cad51a27e6c4e6e7f6fad297141da0823ce3c",
+    "visual_bounds_ms": [
+      1917000,
+      1983000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "eebc1fa3-674c-4932-982d-c1048da47bfa",
+    "sequence_no": 30,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "8043a06d1c90dbf1cfaeb5481155f2f08d827c3d342e137ace95a4a57ec24eb0",
+    "timestamps_sha256": "e8586bf8a55b9bfd28b59cef2bcfa530c6f3306f9f66c2ffa8d54d0477a4d015",
+    "visual_bounds_ms": [
+      1797000,
+      1863000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "89c26555-7940-4866-b1b4-6eb4758126c6",
+    "sequence_no": 35,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "f437b096885732dace56018cb08543422b91e4a47ff43dd43e9e309662b2608c",
+    "timestamps_sha256": "80ad85ecb0701e88cac64be6154a6e08a599493d74518424bdb14afde0481739",
+    "visual_bounds_ms": [
+      2097000,
+      2163000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "cf2c6103-55b5-4d56-9308-de5804214670",
+    "sequence_no": 21,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "185ce02d930857f76500ce60f268d5b385db4977a0f1f3c36888cd4f1b19ccec",
+    "timestamps_sha256": "6627e9d199c558a08358c994c0f695c0905e51f50e8b18f43cc860b98e944a03",
+    "visual_bounds_ms": [
+      1257000,
+      1323000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "95180ead-322a-405c-a5bb-6b30696ffa17",
+    "sequence_no": 29,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "7ed9622a621a4740dd0f7e0daab8344bee1286fff05a26d10537a787ad440efc",
+    "timestamps_sha256": "55204f1c623b14611782e30d37d6aa1ee821473ae1ae4969889236f9fad78319",
+    "visual_bounds_ms": [
+      1737000,
+      1803000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "36dcb227-d094-43c8-bf83-3222748d832b",
+    "sequence_no": 26,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "96d7a14fcb43546b6fcacad0df197cc277a783bb07320285ff4de321f459a32c",
+    "timestamps_sha256": "36826aca041e29edc11944c98a7d9116112fe35ef055fa71588ce03f41351034",
+    "visual_bounds_ms": [
+      1557000,
+      1623000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "1b2539b8-3393-447b-ba53-649bd87ff559",
+    "sequence_no": 38,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "16d34013be9b781e17cc742af93f9ac09719789b3faee681233a5c887e9f7750",
+    "timestamps_sha256": "a1868d7d3e8bf9c7ba26099265482ebc2deb2a347595781b0916975880eb59d9",
+    "visual_bounds_ms": [
+      2277000,
+      2343000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "4d3b5b3f-3bc5-4a2b-87a4-02b186c85ab8",
+    "sequence_no": 23,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "7e94fcfd85664fa5bcd5ad04693d1dd58222b0de2d092ffbb0e1e61cb3ee1f7f",
+    "timestamps_sha256": "cc437c63975f0db7b7157945c3267490696a135c79a62cdeb7ed134a8e0931d5",
+    "visual_bounds_ms": [
+      1377000,
+      1443000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "1f3b3194-def0-4e2e-b8a5-bcf8566f9781",
+    "sequence_no": 20,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "d8fb36742c15f4458aba5f3d09196c4a76e49af348f3018ab6a406197a384c55",
+    "timestamps_sha256": "d24490276c9046738e82ddbecc2a2bbb904ffab9c7c5cbe8b3d3c3d6b23df26e",
+    "visual_bounds_ms": [
+      1197000,
+      1263000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "436c3239-f88c-4574-b144-e77c471be17e",
+    "sequence_no": 36,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "ee7309e0c2c50678733774678c916247fb9f9fb1aeb6186fabaccf7b2c526d52",
+    "timestamps_sha256": "fadc593b1e89fbb75acbdfb566d6d649458f43b78aa29ec9c4ef722ae5e84557",
+    "visual_bounds_ms": [
+      2157000,
+      2223000
+    ],
+    "same_images_as_previous_run": null,
+    "same_timestamps_as_previous_run": null,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "884f53a1-0cfe-46ad-a81a-0a866df4f857",
+    "sequence_no": 22,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "5d47955ff8ec541ad3fb29d8a106ffb0d8e4940d57da5efecdc59e357f200518",
+    "timestamps_sha256": "2cdd319eb13061cba49aa76aa87037f958a0b21340b34ceb1e1b57339c091baa",
+    "visual_bounds_ms": [
+      1317000,
+      1383000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "3575db54-e21e-4cce-8084-f6c3ea92f495",
+    "sequence_no": 25,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "a5347ecfa32c1a1de343504cfd1387a0db673588a23fd71b149b7dd089a96fc4",
+    "timestamps_sha256": "cd43d9429d8e74330b8b99b41ac0a57351b05ccfc5130789cc7a7934b7447064",
+    "visual_bounds_ms": [
+      1497000,
+      1563000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  },
+  {
+    "call_id": "45c14a3d-a071-4b71-a2f8-72017cb828e5",
+    "sequence_no": 27,
+    "image_count": 198,
+    "label_count": 198,
+    "image_list_sha256": "db82f8c5afdedb613c168543dc4bc679937e782390d9cebef6e41050b9f3715d",
+    "timestamps_sha256": "2e0d121546306166cd6dff427edad17e83f5c8c79a4611a3006336933382973a",
+    "visual_bounds_ms": [
+      1617000,
+      1683000
+    ],
+    "same_images_as_previous_run": true,
+    "same_timestamps_as_previous_run": true,
+    "stream": true,
+    "model": "k3.1-pro",
+    "paired": true
+  }
+]

@@ -15,7 +15,8 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.service.video_parse_persistence import VideoParseLeaseLostError, VideoParsePersistenceService

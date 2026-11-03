@@ -125,10 +125,17 @@ class SpeakerEmbeddingModelConfig(_InputModel):
     request_timeout_seconds: float = Field(gt=0)
 
 
+class DiarizationModelConfig(_InputModel):
+    source: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    request_timeout_seconds: float = Field(gt=0)
+
+
 class ModelSnapshot(_InputModel):
     """Effective model selection persisted with the task, without credentials."""
 
     asr: ASRModelConfig
+    diarization: DiarizationModelConfig | None = None
     understanding: GenerativeModelConfig
     refine: GenerativeModelConfig | None = None
     ocr: GenerativeModelConfig | None = None
@@ -140,7 +147,7 @@ class ModelSnapshot(_InputModel):
     @model_serializer(mode="wrap")
     def serialize_models(self, handler):
         values = handler(self)
-        for name in ("voiceprint", "speaker_embedding"):
+        for name in ("voiceprint", "speaker_embedding", "diarization"):
             if getattr(self, name) is None:
                 values.pop(name, None)
         return values
@@ -156,7 +163,14 @@ class ExecutionConfig(_InputModel):
     max_retry_count: int = Field(ge=0)
     retry_initial_delay_seconds: float = Field(gt=0)
     retry_max_delay_seconds: float = Field(gt=0)
-    max_model_calls: int = Field(gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_call_limit(cls, values):
+        # Historical frozen tasks remain executable without a cumulative call cap.
+        if isinstance(values, dict):
+            return {key: value for key, value in values.items() if key != "max_model_calls"}
+        return values
 
     @model_validator(mode="after")
     def validate_retry_delays(self) -> ExecutionConfig:
@@ -199,6 +213,14 @@ class ParseConfig(_InputModel):
     voiceprint_mode: Literal["off", "flag", "prefill"] = "off"
     execution: ExecutionConfig
     indexing: IndexingConfig
+
+    @model_validator(mode="after")
+    def validate_diarization_scope(self):
+        if self.models.diarization is not None and (
+            self.models.asr.mode == "none" or self.models.asr.scope != "video"
+        ):
+            raise ValueError("diarization requires enabled whole-video ASR")
+        return self
 
     @model_serializer(mode="wrap")
     def serialize_config(self, handler):

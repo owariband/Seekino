@@ -611,3 +611,19 @@ def test_old_record_constructor_remains_compatible():
     assert record.ended_at is None
     assert record.granularity == "provider_request"
     assert record.usage_source is None and not record.context
+
+
+def test_cancellation_closes_inner_transports_before_clients_and_runs_once():
+    from gateway.usage import ModelCallTracker
+
+    call = ModelCallTracker(provider="test", model="test", operation="test")
+    closed = []
+    call.add_cancel_callback(lambda: closed.append("client"))
+    unregister = call.add_cancel_callback(lambda: closed.append("removed"))
+    call.add_cancel_callback(lambda: closed.append("stream"))
+    unregister()
+    call.cancel()
+    call.cancel()
+    assert closed == ["stream", "client"]
+    call.add_cancel_callback(lambda: closed.append("late stream"))
+    assert closed == ["stream", "client", "late stream"]

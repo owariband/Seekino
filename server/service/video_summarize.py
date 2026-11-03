@@ -25,7 +25,7 @@ from gateway.multimodal import TextInput, adapter_capabilities
 from gateway.usage import model_call_context
 
 from ..config.video_summarize import VideoSummarizeConfig
-from ..model.dto.jobDTO import VideoSummarizeLease
+from ..model.dto.taskDTO import VideoSummarizeLease
 from ..storage.artifact import ArtifactStore
 from ..utils.execution import ExecutionCalls, execution_calls, run_blocking
 from ..utils.retry import task_retry_delay

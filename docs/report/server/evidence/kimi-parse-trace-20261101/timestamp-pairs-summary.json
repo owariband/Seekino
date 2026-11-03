@@ -1,0 +1,137 @@
+{
+  "calls": 109,
+  "understanding_completed": 10,
+  "refine_timeouts": [
+    "f99984fd-8540-4c40-8801-a2859e60c708",
+    "4def0b49-55f3-4340-8db7-d1bb441ef49e",
+    "74f9a834-aaf9-4e1f-95c8-5e3efc64abf0"
+  ],
+  "understanding": [
+    {
+      "call_id": "1f3b3194-def0-4e2e-b8a5-bcf8566f9781",
+      "sequence_no": 20,
+      "start": "2026-11-01T09:24:14.389+08:00",
+      "elapsed_seconds": 301.012,
+      "first_sse_seconds": 79.961,
+      "first_content_seconds": 279.071,
+      "request_image_count": 198,
+      "reasoning_tokens": 7143,
+      "input_tokens": 244011,
+      "output_tokens": 8628
+    },
+    {
+      "call_id": "cf2c6103-55b5-4d56-9308-de5804214670",
+      "sequence_no": 21,
+      "start": "2026-11-01T09:24:18.686+08:00",
+      "elapsed_seconds": 399.559,
+      "first_sse_seconds": 186.21,
+      "first_content_seconds": 375.758,
+      "request_image_count": 198,
+      "reasoning_tokens": 5496,
+      "input_tokens": 244041,
+      "output_tokens": 7198
+    },
+    {
+      "call_id": "884f53a1-0cfe-46ad-a81a-0a866df4f857",
+      "sequence_no": 22,
+      "start": "2026-11-01T09:24:21.170+08:00",
+      "elapsed_seconds": 392.288,
+      "first_sse_seconds": 198.764,
+      "first_content_seconds": 360.526,
+      "request_image_count": 198,
+      "reasoning_tokens": 5585,
+      "input_tokens": 244230,
+      "output_tokens": 7719
+    },
+    {
+      "call_id": "4d3b5b3f-3bc5-4a2b-87a4-02b186c85ab8",
+      "sequence_no": 23,
+      "start": "2026-11-01T09:24:21.179+08:00",
+      "elapsed_seconds": 453.21,
+      "first_sse_seconds": 212.41,
+      "first_content_seconds": 421.23,
+      "request_image_count": 198,
+      "reasoning_tokens": 6527,
+      "input_tokens": 244151,
+      "output_tokens": 8718
+    },
+    {
+      "call_id": "8b14d1a1-7715-4535-909c-7d591f5a2a1e",
+      "sequence_no": 24,
+      "start": "2026-11-01T09:24:24.256+08:00",
+      "elapsed_seconds": 338.97,
+      "first_sse_seconds": 148.417,
+      "first_content_seconds": 313.973,
+      "request_image_count": 198,
+      "reasoning_tokens": 4857,
+      "input_tokens": 244209,
+      "output_tokens": 6369
+    },
+    {
+      "call_id": "3575db54-e21e-4cce-8084-f6c3ea92f495",
+      "sequence_no": 25,
+      "start": "2026-11-01T09:24:24.292+08:00",
+      "elapsed_seconds": 343.712,
+      "first_sse_seconds": 170.843,
+      "first_content_seconds": 319.4,
+      "request_image_count": 198,
+      "reasoning_tokens": 4642,
+      "input_tokens": 244162,
+      "output_tokens": 5924
+    },
+    {
+      "call_id": "36dcb227-d094-43c8-bf83-3222748d832b",
+      "sequence_no": 26,
+      "start": "2026-11-01T09:24:24.316+08:00",
+      "elapsed_seconds": 372.857,
+      "first_sse_seconds": 208.282,
+      "first_content_seconds": 347.671,
+      "request_image_count": 198,
+      "reasoning_tokens": 4766,
+      "input_tokens": 244164,
+      "output_tokens": 6145
+    },
+    {
+      "call_id": "45c14a3d-a071-4b71-a2f8-72017cb828e5",
+      "sequence_no": 27,
+      "start": "2026-11-01T09:24:27.398+08:00",
+      "elapsed_seconds": 452.81,
+      "first_sse_seconds": 173.583,
+      "first_content_seconds": 414.858,
+      "request_image_count": 198,
+      "reasoning_tokens": 7275,
+      "input_tokens": 244105,
+      "output_tokens": 9695
+    },
+    {
+      "call_id": "925c370d-fecf-4638-87ee-4352eaf7ebbb",
+      "sequence_no": 28,
+      "start": "2026-11-01T09:24:29.577+08:00",
+      "elapsed_seconds": 361.325,
+      "first_sse_seconds": 192.742,
+      "first_content_seconds": 346.07,
+      "request_image_count": 198,
+      "reasoning_tokens": 5101,
+      "input_tokens": 244080,
+      "output_tokens": 6200
+    },
+    {
+      "call_id": "95180ead-322a-405c-a5bb-6b30696ffa17",
+      "sequence_no": 29,
+      "start": "2026-11-01T09:24:31.921+08:00",
+      "elapsed_seconds": 382.763,
+      "first_sse_seconds": 175.806,
+      "first_content_seconds": 364.837,
+      "request_image_count": 198,
+      "reasoning_tokens": 6141,
+      "input_tokens": 244128,
+      "output_tokens": 7302
+    }
+  ],
+  "understanding_model_seconds": {
+    "min": 301.012,
+    "median": 377.81,
+    "mean": 379.851,
+    "max": 453.21
+  }
+}

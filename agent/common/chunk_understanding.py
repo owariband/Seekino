@@ -19,12 +19,17 @@ def build_understanding_prompt(
     end_ms: int,
     asr_result: ASRResult,
     ocr_result: OCRResult | None,
+    dialogue_bounds: tuple[int, int] | None = None,
 ) -> str:
     """Keep normalized observations and time authority independent of tasks."""
 
     return "\n".join((
         "Analyze the prepared media for one fixed video chunk.",
         (
+            f"Visual events must stay inside [{start_ms}, {end_ms}) ms. "
+            f"DIALOGUE from whole-video ASR may cross Chunk boundaries within "
+            f"[{dialogue_bounds[0]}, {dialogue_bounds[1]}) ms."
+            if dialogue_bounds is not None else
             "Only report events inside the authorized half-open source-video range "
             f"[{start_ms}, {end_ms})."
         ),

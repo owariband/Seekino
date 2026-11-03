@@ -13,16 +13,18 @@ from sqlalchemy.orm import Session
 from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
 
 from ..constants.parse import RUNTIME_DETAIL_KEY, CAPACITY_ACQUIRED_KEY
-from ..model.dto.jobDTO import (
+from ..model.dto.taskDTO import (
     IntervalParseTaskData,
-    SeriesData,
-    VideoData,
     VideoParseLease,
     VideoParseTaskData,
     VideoParseTaskInputState,
     VideoParseTaskState,
 )
-from ..model.job import (
+from ..model.dto.libraryDTO import (
+    SeriesData,
+    VideoData,
+)
+from ..model.task import (
     ChunkTaskPhase,
     ChunkParseTaskStatus,
     VideoParseTaskStatus,

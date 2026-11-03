@@ -1,6 +1,8 @@
 """Forward optional display text while collecting verified results and tools."""
 from __future__ import annotations
 
+import socket
+
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from time import monotonic
@@ -14,11 +16,13 @@ from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.model_events import ModelTextDelta, emit_model_text
 from gateway.usage import ModelCallTracker
+from gateway.streaming.first_sse import FirstSSEDeadline
 
 
 def request_chat_completion(
     completions: Any, *, stream: bool, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> ChatCompletion:
     """Execute the model's configured transport and return a complete turn."""
     if not isinstance(stream, bool):
@@ -33,7 +37,10 @@ def request_chat_completion(
         if check_control is not None:
             check_control()
         if stream:
-            return request_chat_stream(completions, usage_call=usage_call, check_control=check_control, **request)
+            return request_chat_stream(
+                completions, usage_call=usage_call, check_control=check_control,
+                first_sse_deadline=first_sse_deadline, **request,
+            )
         record_model_event("chat_transport", {"stream": False, "started_monotonic": monotonic()})
         response = completions.create(**request)
         usage_call.capture_response(response)
@@ -46,12 +53,16 @@ def request_chat_completion(
 
 def request_chat_stream(
     completions: Any, *, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> ChatCompletion:
     """Collect a verified turn with SDK delta assembly before executing tools."""
     state = ChatCompletionStreamState()
     usage = None
-    with closing(_iter_chat_chunks(completions, usage_call=usage_call, check_control=check_control, **request)) as chunks:
+    with closing(_iter_chat_chunks(
+        completions, usage_call=usage_call, check_control=check_control,
+        first_sse_deadline=first_sse_deadline, **request,
+    )) as chunks:
         for chunk in chunks:
             if chunk.usage is not None:
                 usage = chunk.usage
@@ -84,7 +95,8 @@ def stream_chat_text(completions: Any, *, usage_call: ModelCallTracker, **reques
 
 def _iter_chat_chunks(
     completions: Any, *, usage_call: ModelCallTracker,
-    check_control: Callable[[], None] | None = None, **request: Any,
+    check_control: Callable[[], None] | None = None,
+    first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> Iterator[Any]:
     # The SDK decodes SSE. We additionally reject EOF without a terminal choice.
     started_at = monotonic()
@@ -96,23 +108,34 @@ def _iter_chat_chunks(
         usage_call.raise_if_cancelled()
         if check_control is not None:
             check_control()
+        if first_sse_deadline is not None:
+            first_sse_deadline.raise_if_expired()
         if monotonic() >= deadline:
             raise ModelFailureError(
                 "Chat completion stream exceeded its time budget", reason=ModelFailureReason.MODEL_TIMEOUT,
             )
 
-    check()
-    record_model_event("chat_transport", {"stream": True, "started_monotonic": started_at})
-    stream = completions.create(**request)
-    usage_call.capture_response(stream.response, include_usage=False)
-    unregister = usage_call.add_cancel_callback(stream.close)
     received_choice = False
     terminal = False
+    unregister = lambda: None
+    unregister_startup = lambda: None
+    if first_sse_deadline is not None:
+        first_sse_deadline.start()
+        unregister_startup = usage_call.add_cancel_callback(first_sse_deadline.interrupt)
     try:
+        check()
+        record_model_event("chat_transport", {"stream": True, "started_monotonic": started_at})
+        stream = completions.create(**request)
         with stream:
+            if first_sse_deadline is not None:
+                first_sse_deadline.attach_response(stream.response)
+            usage_call.capture_response(stream.response, include_usage=False)
+            unregister = usage_call.add_cancel_callback(lambda: _cancel_chat_stream(stream))
             for chunk in stream:
                 received_at = monotonic()
                 check()
+                if first_sse_deadline is not None:
+                    first_sse_deadline.received()
                 if not isinstance(chunk, ChatCompletionChunk):
                     try:
                         chunk = ChatCompletionChunk.model_validate(chunk.model_dump())
@@ -121,8 +144,7 @@ def _iter_chat_chunks(
                 usage_call.capture_response(chunk, include_usage=chunk.usage is not None)
                 record_model_event("sse", chunk)
                 for choice in chunk.choices:
-                    # Our requests ask for one completion. Reject ambiguous or
-                    # late deltas instead of silently consuming a partial turn.
+                    # Reject ambiguous or late deltas instead of accepting a partial turn.
                     if choice.index != 0 or terminal:
                         raise ModelFailureError("Chat completion stream returned an unexpected choice")
                     received_choice = True
@@ -145,14 +167,21 @@ def _iter_chat_chunks(
                         emit_model_text(delta)
                 yield chunk
             check()
-    except (httpx.RequestError, httpx.StreamError) as error:
+    except Exception as error:
+        # A watchdog-induced socket error is a retryable timeout, not task
+        # cancellation. Real caller cancellation keeps precedence in check().
         check()
-        raise ModelFailureError(
-            "Chat completion stream read failed",
-            reason=(ModelFailureReason.MODEL_TIMEOUT if isinstance(error, httpx.TimeoutException)
-                    else ModelFailureReason.MODEL_CONNECTION_ERROR),
-        ) from error
+        if isinstance(error, (httpx.RequestError, httpx.StreamError)):
+            raise ModelFailureError(
+                "Chat completion stream read failed",
+                reason=(ModelFailureReason.MODEL_TIMEOUT if isinstance(error, httpx.TimeoutException)
+                        else ModelFailureReason.MODEL_CONNECTION_ERROR),
+            ) from error
+        raise
     finally:
+        if first_sse_deadline is not None:
+            first_sse_deadline.close()
+        unregister_startup()
         unregister()
         record_model_event("chat_transport_end", {
             "finished_monotonic": monotonic(), "terminal": terminal,
@@ -163,3 +192,25 @@ def _iter_chat_chunks(
             "Chat completion stream ended without a terminal choice",
             reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
         )
+
+
+def _cancel_chat_stream(stream: Any) -> None:
+    """Wake a blocked HTTP/1 read before closing the response and its client.
+
+    Closing a socket from another thread alone may leave recv blocked. HTTP/2
+    connections can be multiplexed, so never shut down their shared socket.
+    """
+    try:
+        response = getattr(stream, "response", None)
+        extensions = getattr(response, "extensions", {})
+        if (not getattr(response, "is_closed", False)
+                and extensions.get("http_version") in {b"HTTP/1.0", b"HTTP/1.1"}):
+            network = extensions.get("network_stream")
+            sock = network.get_extra_info("socket") if network is not None else None
+            if sock is not None:
+                sock.shutdown(socket.SHUT_RDWR)
+    except (AttributeError, OSError):
+        # SDK/test transports may not expose a socket, or it may already be closed.
+        pass
+    finally:
+        stream.close()

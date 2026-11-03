@@ -15,7 +15,7 @@ from ..constants.parse import (
     RUNTIME_DETAIL_KEY,
     VIDEO_PARSE_CAPACITY_LOCK_NAME,
 )
-from ..model.dto.jobDTO import (
+from ..model.dto.taskDTO import (
     ChunkScheduleEntryState,
     ChunkScheduleState,
     ChunkParseLease,
@@ -24,11 +24,13 @@ from ..model.dto.jobDTO import (
     VideoParseLease,
     VideoParseRetryResult,
 )
-from ..model.job import (
+from ..model.parse_content import (
     ChunkParseContent,
+    IntervalParseContent,
+)
+from ..model.task import (
     ChunkParseTask,
     ChunkParseTaskStatus,
-    IntervalParseContent,
     IntervalParseTask,
     IntervalParseTaskStatus,
     VideoParseTask,

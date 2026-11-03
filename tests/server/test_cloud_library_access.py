@@ -24,7 +24,7 @@ from server.database import create_schema, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
 from server.model.dto.agentDTO import AgentMessageState
 from server.model.dto.authDTO import AuthIdentity
-from server.model.job import VideoParseTask
+from server.model.task import VideoParseTask
 from server.model.tenant import Tenant
 from server.model.upload import UploadSession
 from server.model.user import User
@@ -282,7 +282,7 @@ def test_owner_shares_safe_public_detail_and_can_revoke_media(cloud_library):
         assert detail["transcriptLanguageHint"] is None
         assert detail["importantExtraData"] is None
         assert detail["characterBible"] == [] and detail["pendingUploads"] == []
-        for field in ("originalFilename", "totalBytes", "latestJobId", "lastError"):
+        for field in ("originalFilename", "totalBytes", "lastError"):
             assert detail["videos"][0][field] is None
         assert "owner background secret" not in response.text and "owner character secret" not in response.text
         assert f.client.get("/api/series/list", params={"tenantId": "tenant-alice"}).status_code == 404

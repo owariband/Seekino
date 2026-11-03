@@ -1,0 +1,43 @@
+{
+  "stage": "refine",
+  "variant": "json",
+  "status": "completed",
+  "elapsed_seconds": 246.96261879200028,
+  "usage": [
+    {
+      "call_id": "5af4a4fd-86c5-435e-8b38-00bd2a607216",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "DirectRefineResult",
+      "started_at": 1793513834797,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793514081735,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "refine",
+        "arm": "refine-json",
+        "src": "kimi_coding"
+      },
+      "usage": {
+        "input_tokens": 11307,
+        "output_tokens": 10360,
+        "total_tokens": 21667,
+        "cached_input_tokens": null,
+        "reasoning_tokens": 5663,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    }
+  ],
+  "tools": []
+}

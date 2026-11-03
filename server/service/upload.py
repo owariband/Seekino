@@ -21,7 +21,7 @@ from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadSegmentState, UploadSessionDetail,
     UploadSessionState,
 )
-from ..model.dto.jobDTO import VideoParseTaskState
+from ..model.dto.taskDTO import VideoParseTaskState
 from ..repository import video_parse_task as task_store
 from ..repository.upload import (
     UploadConflictError,
@@ -368,8 +368,6 @@ class UploadService:
                         self._video_event_index_store.bulk_delete(keys, refresh="wait_for")
                         if not self._video_event_index_store.verify_absent(keys):
                             raise RuntimeError("Event index cleanup was not visible")
-            for job_id in deletion.job_ids:
-                self._artifact_store.delete_job_artifacts(job_id)
             if deletion.video_id is not None:
                 self._artifact_store.delete_video_artifacts(
                     deletion.session.series_id,
@@ -377,8 +375,8 @@ class UploadService:
                 )
         except Exception:
             _logger.exception(
-                "upload_cleanup_failed upload_session_id=%s video_id=%s job_id=%s",
-                session_id, deletion.video_id, deletion.job_id,
+                "upload_cleanup_failed upload_session_id=%s video_id=%s",
+                session_id, deletion.video_id,
             )
             raise
         state = self._repository.finish_delete_session(
@@ -536,7 +534,6 @@ class UploadService:
             return CompletedUploadState(
                 session=claim.session,
                 video_id=claim.session.video_id,
-                job_id=claim.existing_job_id,
                 video_parse_task_id=claim.existing_video_parse_task_id,
             )
         assert claim.completion_token is not None
@@ -616,8 +613,8 @@ class UploadService:
 
         self._artifact_store.delete_upload_staging(session_id)
         _logger.info(
-            "upload_completed upload_session_id=%s video_id=%s job_id=%s video_parse_task_id=%s duration_ms=%.1f",
-            session_id, completed.video_id, completed.job_id,
+            "upload_completed upload_session_id=%s video_id=%s video_parse_task_id=%s duration_ms=%.1f",
+            session_id, completed.video_id,
             completed.video_parse_task_id,
             (time.perf_counter() - started_at) * 1000,
         )

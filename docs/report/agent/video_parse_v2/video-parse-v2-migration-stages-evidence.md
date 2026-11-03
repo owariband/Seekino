@@ -67,7 +67,7 @@ retry 复用任务 ID / 解析版本 / 冻结配置；普通 reparse 新 ID、�
 
 2026-10-02 的 short-window 上传 / HTTP retry 组合场景复现了合法唯一短窗口被旧准备校验拒绝的 409。本批最小修复让 `server/repository/upload.py::_parse_preparation_complete()` 直接消费已有 Engine `plan_intervals()` 的实际 start / count，不修改 Engine 或短窗口合同；直接短窗矩阵及最终同版验证在[本批 checkpoint](#checkpoint-20261002)登记。
 
-Ref：[五表模型](../../../../server/model/job.py:219) · [任务入口 / retry / reparse](../../../../server/repository/upload.py:252) · [半迁移 gate](../../../../server/database.py:170) · [V2用量模型](../../../../server/model/parse_usage.py:45) · [Agent TRD §1.3.1 / §1.9.1](../../../design/02-agent-harness/video-parse-harness-trd.md)
+Ref：[任务模型（现路径）](../../../../server/model/task.py) · [成果模型（现路径）](../../../../server/model/parse_content.py) · [任务入口 / retry / reparse](../../../../server/repository/upload.py:252) · [半迁移 gate](../../../../server/database.py:170) · [V2用量模型](../../../../server/model/parse_usage.py:45) · [Agent TRD §1.3.1 / §1.9.1](../../../design/02-agent-harness/video-parse-harness-trd.md)
 
 <a id="stage-04"></a>
 <a id="c05"></a>

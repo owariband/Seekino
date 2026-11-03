@@ -8,7 +8,8 @@ from sqlalchemy import event, select
 
 from server.constants.parse import RUNTIME_DETAIL_KEY
 from server.database import create_session_factory
-from server.model.job import ChunkParseContent, ChunkParseTask, ChunkTaskPhase, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, ChunkTaskPhase, VideoParseTask
 from server.model.video import Series, Video, VideoChunk
 from server.service.video_parse_errors import VideoParseConflictError, VideoParseTaskNotFoundError
 from server.service.video_parse_persistence import VideoParsePersistenceService

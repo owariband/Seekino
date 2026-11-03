@@ -1,0 +1,30 @@
+{
+  "call_id": "9510e634-df2d-4275-9ffb-5b600e132115",
+  "stage": "understand",
+  "sequence_no": 13,
+  "interval_task_id": null,
+  "refine_generation": null,
+  "retry_count": 0,
+  "stream": true,
+  "started_ns": 1793603932335175000,
+  "first_sse_ns": 1793603993091573000,
+  "first_sse_seconds": 60.756,
+  "sse_count": 7080,
+  "terminal_ns": 1793604250908013000,
+  "client_elapsed_seconds": 318.573,
+  "outcome": "error",
+  "error": {
+    "chain": [
+      {
+        "type": "ValidationError",
+        "message": "6 validation errors for VideoParseResult\ntimeline.3.ACTION.text_variants\n  Extra inputs are not permitted [type=extra_forbidden, input_value=[], input_type=list]\n    For further information visit [redacted_url]\ntimeline.5.ACTION.text_variants\n  Extra inputs are not permitted [type=extra_forbidden, input_value=[], input_type=list]\n    For further information visit [redacted_url]\ntimeline.7.ACTION.text_variants\n  Extra inputs are not permitted [type=extra_forbidden, input_value=[], input_type=list]\n    For further information visit [redacted_url]\ntimeline.9.ACTION.text_variants\n  Extra inputs are not permitted [type=extra_forbidden, input_value=[], input_type=list]\n    For further information visit [redacted_url]\ntimeline.13.ACTION.text_variants\n  Extra inputs are not permitted [type=extra_forbidden, input_value=[], input_type=list]\n    For further information visit [redacted_url]\ntimeline.16.ACTION.text_variants\n  Extra inputs are not permitted [type=extra_forbidden, input_value=[], input_type=list]\n    For further information visit [redacted_url]",
+        "code": null,
+        "status_code": null,
+        "response_id": null,
+        "request_id": null,
+        "reason": null,
+        "partial_output_chars": null
+      }
+    ]
+  }
+}

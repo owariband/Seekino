@@ -429,6 +429,8 @@ def _request_chat_turn(
         "temperature": adapter.temperature,
         adapter._token_parameter: adapter.max_output_tokens,
     }
+    if adapter.reasoning_effort is not None:
+        request["reasoning_effort"] = adapter.reasoning_effort
     if adapter._stream:
         request["stream_options"] = {"include_usage": True}
     if enforce_final_schema:
@@ -469,6 +471,10 @@ def _request_chat_turn(
                 require_tool_call=enforce_final_schema and choice == "required",
                 require_visible_text_on_stop=enforce_final_schema and visible,
             )
+            if adapter._stream:
+                reasoning = getattr(response.choices[0].message, "reasoning_content", None)
+                if isinstance(reasoning, str):
+                    turn[2]["reasoning_content"] = reasoning
             parsed = None
             if enforce_final_schema and turn[0] == "stop":
                 try:

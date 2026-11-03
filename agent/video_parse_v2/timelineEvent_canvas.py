@@ -15,7 +15,8 @@ from agent.utils.errors import AgentToolFeedbackError
 from engine.parsev2.schemas import DialogueTextVariant, TimelineEvent, VideoParseResult
 from engine.parsev2.validation import (
     ChunkResultUpdate, ValidatedIntervalRefinement, ValidatedPrefixRefinement,
-    validate_result_time_range,
+    validate_result_time_range, IntervalRefinementResult, RefinedMember,
+    RefinementMember, validate_refinement_result,
 )
 
 
@@ -141,6 +142,7 @@ class ParseContextCanvas(ContextCanvas):
         compact: dict[str, str] | None = None,
         compact_limits: tuple[int, int] | None = None,
         write_bounds: tuple[int, int] | None = None,
+        dialogue_bounds: tuple[int, int] | None = None,
     ) -> None:
         super().__init__(scope=scope)
         if not members:
@@ -155,6 +157,7 @@ class ParseContextCanvas(ContextCanvas):
             ref for ref, result in self._initial.items()
             if any(getattr(event, "speaker_source", None) is not None for event in result.timeline)
         }
+        self._dialogue_bounds = dialogue_bounds
         self._compact_limits = compact_limits
         self._voiceprint_modes: dict[str, str] = {}
         self._write_bounds = write_bounds or (
@@ -213,6 +216,7 @@ class ParseContextCanvas(ContextCanvas):
             evidence=snapshot.get("member_evidence", {}),
             background=snapshot.get("background", {}),
             write_bounds=snapshot.get("write_bounds"),
+            dialogue_bounds=snapshot.get("dialogue_bounds"),
         )
         canvas._apply_voiceprint()
         return canvas
@@ -311,6 +315,7 @@ class ParseContextCanvas(ContextCanvas):
             },
             compact_limits=(config.series_compact_max_chars, config.video_compact_max_chars),
             write_bounds=context.get("write_bounds"),
+            dialogue_bounds=context.get("dialogue_bounds"),
         )
 
     def catalog(self, collection: str, *, role: str) -> list[dict[str, Any]]:
@@ -480,6 +485,44 @@ class ParseContextCanvas(ContextCanvas):
     def register_evidence(self, reference: str, value: dict[str, Any]) -> None:
         self.put("evidence", reference, value, readonly=True)
 
+    def accept_refinement(self, result: IntervalRefinementResult) -> ValidatedIntervalRefinement:
+        """Validate complete JSON and retain host-owned speaker provenance.
+
+        Canvas is only an execution-local draft here, never a model-facing tool.
+        Acceptance does not mutate the draft or write business data.
+        """
+        result = IntervalRefinementResult.model_validate(result)
+        members = [
+            RefinementMember(value["sequence_no"], *value["bounds"], self._initial[ref])
+            for ref, value in sorted(self._authority.items(), key=lambda item: item[1]["sequence_no"])
+        ]
+        validate_refinement_result(result, members=members, dialogue_bounds=self._dialogue_bounds)
+        refs = {value["sequence_no"]: ref for ref, value in self._authority.items()}
+        normalized = []
+        for member in result.members:
+            ref = refs[member.sequence_no]
+            prepared = self.result(ref)
+            events = []
+            for event in member.timeline:
+                value = event.model_dump(mode="json")
+                value.pop("speaker_source", None)
+                if event.event_type == "DIALOGUE" and self._tracks_speaker_source(ref):
+                    matching = [old for old in prepared.timeline if old.event_type == "DIALOGUE"
+                                and (old.start_seconds, old.end_seconds, old.speaker)
+                                == (event.start_seconds, event.end_seconds, event.speaker)]
+                    value["speaker_source"] = (
+                        matching[0].speaker_source or "understanding"
+                        if len(matching) == 1 else "refine_edit"
+                    )
+                events.append(value)
+            normalized.append(RefinedMember(
+                sequence_no=member.sequence_no, persons=member.persons, timeline=events,
+            ))
+        return validate_refinement_result(
+            IntervalRefinementResult(members=normalized),
+            members=members, dialogue_bounds=self._dialogue_bounds,
+        )
+
     def interval_result(self) -> ValidatedIntervalRefinement:
         updates = []
         for member_ref, member in self._authority.items():
@@ -545,9 +588,12 @@ class ParseContextCanvas(ContextCanvas):
             self._event(draft, reference)
             event = value["event"]
             times = (event["start_seconds"], event["end_seconds"])
+            write_bounds = (self._dialogue_bounds if self._dialogue_bounds is not None
+                            and event["event_type"] == "DIALOGUE" else self._write_bounds)
             if self._initial_times.get(reference) != times and (
-                times[0] < self._write_bounds[0] or times[1] > self._write_bounds[1]
+                times[0] < write_bounds[0] or times[1] > write_bounds[1]
             ):
                 raise ValueError("new events and timing changes must stay inside the authorized write window")
         for member_ref in self._authority:
-            validate_result_time_range(self._result(draft, member_ref), start_seconds=start, end_seconds=end)
+            validate_result_time_range(self._result(draft, member_ref), start_seconds=start, end_seconds=end,
+                                       dialogue_bounds=self._dialogue_bounds)

@@ -11,8 +11,7 @@ from sqlalchemy.orm import Session
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.identifiers import derive_series_id
-from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
-from ..model.dto.jobDTO import VideoData
+from ..model.dto.libraryDTO import SeriesState, VideoData, VideoSummaryState
 from ..model.video import SeriesVisibility
 from ..repository.library import LibraryRepository, VideoEpisodeOrderConflictError
 from ..storage.artifact import ArtifactStore

@@ -1,0 +1,43 @@
+{
+  "stage": "understanding",
+  "variant": "candidate",
+  "status": "completed",
+  "elapsed_seconds": 318.59173391700097,
+  "usage": [
+    {
+      "call_id": "47e41de1-ca29-4395-8e54-e9ce1a281037",
+      "provider": "kimi",
+      "model": "k3.1-pro",
+      "operation": "video_parse_v2_chunk",
+      "started_at": 1793512890188,
+      "request_id": null,
+      "status": "completed",
+      "ended_at": 1793513208720,
+      "granularity": "provider_request",
+      "usage_source": "provider_usage",
+      "usage_scope": null,
+      "context": {
+        "video_parse_task_id": "experiment-prompt-refine-ab-20261101",
+        "experiment": "prompt-refine-ab-20261101",
+        "stage": "understanding",
+        "arm": "understanding-candidate",
+        "src": "kimi_coding"
+      },
+      "usage": {
+        "input_tokens": 232615,
+        "output_tokens": 12162,
+        "total_tokens": 244777,
+        "cached_input_tokens": 228760,
+        "reasoning_tokens": 7346,
+        "text_input_tokens": null,
+        "image_input_tokens": null,
+        "audio_input_tokens": null,
+        "cached_audio_input_tokens": null,
+        "cache_write_input_tokens": null,
+        "cache_write_5m_input_tokens": null,
+        "cache_write_1h_input_tokens": null
+      }
+    }
+  ],
+  "tools": []
+}

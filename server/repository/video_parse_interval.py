@@ -8,8 +8,10 @@ from copy import deepcopy
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..model.dto.jobDTO import IntervalParseTaskData, IntervalParseContentData
-from ..model.job import IntervalParseTask, IntervalParseContent
+from ..model.dto.taskDTO import IntervalParseTaskData
+from ..model.dto.parseContentDTO import IntervalParseContentData
+from ..model.task import IntervalParseTask
+from ..model.parse_content import IntervalParseContent
 
 
 def task_data(row: IntervalParseTask) -> IntervalParseTaskData:

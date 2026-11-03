@@ -177,6 +177,18 @@ class WhisperXSourceConfig(BaseModel):
         return self
 
 
+class PyannoteSourceConfig(BaseModel):
+    """Offline audio diarization; no person names or video/task state."""
+
+    model_config = ConfigDict(extra="forbid")
+    adapter: Literal["pyannote"] = "pyannote"
+    provider: Literal["local"] = "local"
+    device: Literal["cpu", "mps", "cuda"] = "mps"
+    cpu_threads: int = Field(default=6, ge=1, le=64, strict=True)
+    segmentation_batch_size: int = Field(default=32, ge=1, strict=True)
+    embedding_batch_size: int = Field(default=32, ge=1, strict=True)
+
+
 class OpenAIVisionSourceConfig(BaseModel):
     """Chat Completions with images and structured JSON output."""
 
@@ -234,6 +246,7 @@ ModelSourceConfig = (
     | ClaudeCodeModelSourceConfig
     | OpenAIAudioSourceConfig
     | WhisperXSourceConfig
+    | PyannoteSourceConfig
     | OpenAIVisionSourceConfig
     | CampPlusModelSourceConfig
     | OllamaEmbeddingSourceConfig
@@ -253,7 +266,7 @@ class ModelBinding(BaseModel):
     stream: bool = Field(default=True, strict=True)
     temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     model: _NonEmptyString
-    kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding"] | None = None
+    kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding", "diarization"] | None = None
     request_timeout_seconds: float | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
     reasoning_effort: ReasoningEffort | None = None
@@ -614,7 +627,7 @@ class GatewayConfig(BaseModel):
         if isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)) and binding.temperature != 0:
             raise ValueError(f"{ref}: {source.adapter} does not support temperature configuration")
         kind = "embedding" if isinstance(binding, EmbeddingModelBinding) else binding.kind or "generative"
-        if kind in {"embedding", "transcription", "speaker_embedding"} and binding.fallback is not None:
+        if kind in {"embedding", "transcription", "speaker_embedding", "diarization"} and binding.fallback is not None:
             raise ValueError(f"{ref} {kind} does not support fallback")
         if kind == "embedding" and binding.supports_vision_input:
             raise ValueError(f"{ref} embedding does not use generative supports_vision_input")
@@ -637,11 +650,11 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{source.adapter} does not support reasoning_effort")
         if not capabilities.supports_output_limit and binding.max_output_tokens is not None:
             raise ValueError(f"{source.adapter} does not support max_output_tokens")
-        if kind == "speaker_embedding" and any(getattr(binding, name) is not None for name in (
+        if kind in {"speaker_embedding", "diarization"} and any(getattr(binding, name) is not None for name in (
             "context_window_tokens", "context_safety_margin_tokens", "auto_compact_tokens",
             "compact_target_tokens", "max_input_chars",
         )):
-            raise ValueError(f"{ref} speaker_embedding does not use generative context budgets")
+            raise ValueError(f"{ref} {kind} does not use generative context budgets")
         if binding.fallback is not None:
             self._validate_binding(binding.fallback, ref=f"{ref}.fallback")
 
@@ -658,7 +671,7 @@ class GatewayConfig(BaseModel):
             "context_safety_margin_tokens": 2048 if binding.supports_vision_input else runtime.get("context_safety_margin_tokens", 2048),
             "max_input_chars": 400_000 if binding.supports_vision_input else runtime.get("max_prompt_chars", 400_000),
         }
-        if binding.kind == "speaker_embedding":
+        if binding.kind in {"speaker_embedding", "diarization"}:
             return binding.model_copy(update={
                 "request_timeout_seconds": binding.request_timeout_seconds or defaults["request_timeout_seconds"],
             })

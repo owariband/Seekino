@@ -21,7 +21,7 @@ from gateway.config import load_config
 from gateway.media import ToolImage
 from gateway.usage import TokenUsage, track_model_call
 from server.config.video_summarize import VideoSummarizeConfig
-from server.model.dto.jobDTO import ModelCallReservation
+from server.model.dto.taskDTO import ModelCallReservation
 from server.service.parse_usage import ParseUsageService
 from server.service.video_summarize import VideoSummarizeService
 from server.utils.time import now_utc
@@ -77,7 +77,7 @@ class _Persistence:
     def reserve_model_call(self, lease, call_id, *, lease_duration):
         self.calls.append(call_id)
         return ModelCallReservation(
-            lease.video_parse_task_id, call_id, lease.worker_id, True, 1, 100, 1,
+            lease.video_parse_task_id, call_id, lease.worker_id, True, 1, 1,
             now_utc() + lease_duration,
         )
 
@@ -231,7 +231,8 @@ def test_summary_chat_tools_use_completion_tool_and_require_validated_submission
     )
     binding = ModelBinding(
         source="summary_fixture", model="offline-summary", supports_vision_input=True,
-        max_output_tokens=8192, request_timeout_seconds=30,
+        # This business-tool fixture returns complete responses, not SSE chunks.
+        stream=False, max_output_tokens=8192, request_timeout_seconds=30,
     )
     persistence.lease.config_snapshot["model"] = binding.model_dump(mode="json")
     client = GatewayClient(config, environ={"SUMMARY_FIXTURE_KEY": "offline"})
@@ -328,7 +329,8 @@ def test_real_summary_agent_tools_host_and_sql_complete_offline(tmp_path, monkey
     from agent.video_summarize import VideoSummarizeAgent
     from server.constants.parse import RUNTIME_DETAIL_KEY
     from server.database import DatabaseEnvironment, create_database_engine, create_schema
-    from server.model.job import ChunkParseContent, VideoParseTask
+    from server.model.parse_content import ChunkParseContent
+    from server.model.task import VideoParseTask
     from server.model.video import Video
     from server.repository.model_usage import ModelUsageRepository
     from server.storage.artifact import LocalArtifactStore
@@ -398,7 +400,10 @@ def test_real_summary_agent_tools_host_and_sql_complete_offline(tmp_path, monkey
             video = session.get(Video, task.video_id)
             summary = task.detail[RUNTIME_DETAIL_KEY]["summarize"]
             assert summary["status"] == "COMPLETE"
-            assert summary["result"]["description"] == expected_description
+            from server.repository import video_parse_content as result_store
+            saved = result_store.load_result(session, task_id, "summary")
+            assert saved["submission"]["description"] == expected_description
+            assert "result" not in summary and "frame_receipts" not in summary
             assert video.description == expected_description
             assert video.display_name is None and video.cover_uri is None and video.episode_order == 1
             assert task.status == original_status
