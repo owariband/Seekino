@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "series_id": "34646a50-bdad-5207-837c-5d0e90adcc0f",
+  "video_id": "cd7c4da8-051c-5c6a-b95f-9fdaffefbeee",
+  "position_ms": 90000,
+  "precondition": "Each case starts a new QA conversation. Base chunks 0, 1, 2 must already have persisted content. Review text is not sent to the model.",
+  "turns": [
+    {
+      "id": "RT04",
+      "query": "只根据 01:00 到 01:30 已经播放过的内容，讲师举了什么例子？不要使用 01:30 之后的讲解。",
+      "review": "Explain the prompt examples and leaf-news example visible or spoken within 60000–90000 ms. Do not cite or rely on later explanation or a range ending after 90000 ms. Verify against the saved ASR and source frames; this is a time-scope test, not retrieval."
+    },
+    {
+      "id": "RT05",
+      "query": "这里是不是已经在演示 Transformer 的训练代码了？如果不是，请指出画面实际在做什么。",
+      "review": "Correct the false premise. At 90000 ms the screen shows the LearnGPT leaf-news example, not Transformer training code. The explanation must be grounded in the current frame, not a general description of Transformer."
+    }
+  ]
+}

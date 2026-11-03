@@ -104,6 +104,8 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Agent Runtime | [agent-runtime-design.md](01-mvp/agent-runtime-design.md) | Runtime 结构与执行边界的设计记录，含旧 Session / 多 Agent 历史方案。 |
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |
 | 当前播放位置理解 | [realtime-parse-trd.md](02-agent-harness/realtime-parse-trd.md) | 专项 TRD：实时理解、临时解析与 Supervisor 接线；附执行流程图。 |
+| 课程闭环跟版 QA | [course-qa-trd.md](03-product-reassessment/course-qa-trd.md) | 专项验收：以有来源学习任务、可用结果时间和课程覆盖组织目标找课、观看追问及恢复测试，识别性能敏感环节；区分运行基线、最终 PR 和公开部署。 |
+| Chat 正文流式与 FTT 可信验收 | [chat-streaming-prd.md](03-product-reassessment/chat-streaming-prd.md) | 产品需求：撤回整包正文到达耗时的 FTT 误标，补齐模型到页面的真实增量交付及可追溯计时；实现与性能待验收。 |
 | Agent Loop 参考 | [agent-loop-references.md](01-mvp/agent-loop-references.md) | 源码与设计参考：循环出口、Output Node 及前端消费。 |
 | 陪看与按需解析 | [agent_harness_refactor.md](02-agent-harness/agent_harness_refactor.md) | 候选产品与 Harness 讨论：当前内容解释、历史召回和按需解析。 |
 | 上下文隔离修复 | [agent_harness_context修复.md](02-agent-harness/agent_harness_context修复.md) | 历史讨论与修复记录：上下文隔离、证据读取、草稿和工具输出约束。 |

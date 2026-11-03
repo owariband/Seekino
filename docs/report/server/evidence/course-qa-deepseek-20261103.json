@@ -1,0 +1,620 @@
+{
+  "reported_date": "2026-11-03",
+  "runtime_head": "1deff37c6c621fcc08966194402505a830575318",
+  "runtime_parents": [
+    "e2d4acafcf7e8c9b707e1d78ba7d480af68508e8",
+    "737f6d7b731f4884d3428cc28c2af016d44d3ee7"
+  ],
+  "qa_branch_head": "b0093570bc612d7c9913334f70cb9dc7dade0708",
+  "scope": "PR18 plus dev joint runtime; not pure dev deployment; isolated copied data; no manual schema or frozen-config edits in accepted fixture",
+  "chat": "deepseek-flash / low / stream=true",
+  "background_parse_consumer_enabled": false,
+  "course_task_status": "PARSING_FAILED",
+  "configuration_and_source_unchanged_during_r2": true,
+  "base_chunks_unchanged": true,
+  "streaming_definition": "FTT and TT use frontend chat-delivery monotonic request clock; provider trace and before-completion DOM growth are verified. Markdown prefixes can be first content.",
+  "cases": [
+    {
+      "round": "r1",
+      "case": "Q01",
+      "message_id": "d71b8b67-aea0-41cb-892a-1b4651ecf916",
+      "conversation_id": "dbc8f6d5-7ec9-4058-b8d1-0f8b14e4d657",
+      "ftt_seconds": 1.4862000000029802,
+      "tt_seconds": 9.10589999999851,
+      "ftt_valid": true,
+      "first_dom_text_seconds": 1.5137000000029803,
+      "first_readable_snapshot_seconds": 1.4862000000029802,
+      "first_content": "我先",
+      "continuous_growth_verified": true,
+      "model_calls": [
+        {
+          "call_id": "bd5a402b-3a57-4baa-b607-d6500c898596",
+          "assistant_message_id": "d71b8b67-aea0-41cb-892a-1b4651ecf916",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 1.3796422080049524,
+          "terminal": true,
+          "text_deltas": 11,
+          "reasoning_chars": 225,
+          "tool_calls": [
+            "understand_current_video"
+          ],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/bd5a402b-3a57-4baa-b607-d6500c898596/events.jsonl",
+          "sha256": "182b10d4f2ea68f71bfca995960c49a0f3ad0eaa59325f8607e80d1c88869c93",
+          "request_time_ns": 1793634446284514000
+        },
+        {
+          "call_id": "343d7449-4231-4a43-943c-ecf9e90fd8a9",
+          "assistant_message_id": "d71b8b67-aea0-41cb-892a-1b4651ecf916",
+          "model": "k3.1-pro",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": null,
+          "duration_seconds": 0.001455750003515277,
+          "terminal": false,
+          "text_deltas": 0,
+          "reasoning_chars": 0,
+          "tool_calls": [],
+          "errors": [
+            {
+              "type": "ModelFailureError",
+              "status_code": null,
+              "reason": "model_connection_error"
+            },
+            {
+              "type": "APIConnectionError",
+              "status_code": null,
+              "reason": null
+            },
+            {
+              "type": "ConnectError",
+              "status_code": null,
+              "reason": null
+            },
+            {
+              "type": "ConnectError",
+              "status_code": null,
+              "reason": null
+            },
+            {
+              "type": "ConnectionRefusedError",
+              "status_code": null,
+              "reason": null
+            }
+          ],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/343d7449-4231-4a43-943c-ecf9e90fd8a9/events.jsonl",
+          "sha256": "4eaab2a52c37d435244b686da7c35fd62c0da6f4bc973540eddfad39c53c64a5",
+          "request_time_ns": 1793634447988685000
+        },
+        {
+          "call_id": "790037ec-d0d8-48d4-aa64-aa525382b515",
+          "assistant_message_id": "d71b8b67-aea0-41cb-892a-1b4651ecf916",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 3.912058709000121,
+          "terminal": true,
+          "text_deltas": 0,
+          "reasoning_chars": 1526,
+          "tool_calls": [
+            "submit_video_item"
+          ],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/790037ec-d0d8-48d4-aa64-aa525382b515/events.jsonl",
+          "sha256": "7d5b85903367ee7e37a04eb165b66ed59d4a18df4d0d71e13ca985870221f13b",
+          "request_time_ns": 1793634448041256000
+        },
+        {
+          "call_id": "d7a472c1-be5c-436e-b40a-189cc64cd4fa",
+          "assistant_message_id": "d71b8b67-aea0-41cb-892a-1b4651ecf916",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 3.017551082994032,
+          "terminal": true,
+          "text_deltas": 323,
+          "reasoning_chars": 44,
+          "tool_calls": [],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/d7a472c1-be5c-436e-b40a-189cc64cd4fa/events.jsonl",
+          "sha256": "8add1aa268c33846d4d586334f3ade3efc5dde5def77d20e7aa154552fefa432",
+          "request_time_ns": 1793634451981544000
+        }
+      ],
+      "answer_chars": 585,
+      "quality": "Partial: transcript-grounded identification, current frame unavailable, answer too long"
+    },
+    {
+      "round": "r1",
+      "case": "Q02",
+      "message_id": "ec9ad2c1-2e58-4761-a40f-0df61a5907ca",
+      "conversation_id": "dbc8f6d5-7ec9-4058-b8d1-0f8b14e4d657",
+      "ftt_seconds": 1.8266000000014901,
+      "tt_seconds": 4.29279999999702,
+      "ftt_valid": true,
+      "first_dom_text_seconds": 1.8662000000029801,
+      "first_readable_snapshot_seconds": 1.8267000000029803,
+      "first_content": "这个",
+      "continuous_growth_verified": true,
+      "model_calls": [
+        {
+          "call_id": "474d4416-75d9-47e4-ac65-c9fa84a6c000",
+          "assistant_message_id": "ec9ad2c1-2e58-4761-a40f-0df61a5907ca",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 4.206112874999235,
+          "terminal": true,
+          "text_deltas": 333,
+          "reasoning_chars": 988,
+          "tool_calls": [],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/474d4416-75d9-47e4-ac65-c9fa84a6c000/events.jsonl",
+          "sha256": "d6b7c06b70dab629dd70fbf2dae100dbc6474e2d06cf7021e9af8bd338ffd717",
+          "request_time_ns": 1793634456225375000
+        }
+      ],
+      "answer_chars": 580,
+      "quality": "Failed concise-answer constraint: more than three sentences"
+    },
+    {
+      "round": "r1",
+      "case": "Q03",
+      "message_id": "155e1518-728b-4a22-a412-2acd9590f062",
+      "conversation_id": "dbc8f6d5-7ec9-4058-b8d1-0f8b14e4d657",
+      "ftt_seconds": 3.394,
+      "tt_seconds": 5.69260000000149,
+      "ftt_valid": true,
+      "first_dom_text_seconds": 3.43189999999851,
+      "first_readable_snapshot_seconds": 3.44969999999553,
+      "first_content": "**",
+      "continuous_growth_verified": true,
+      "model_calls": [
+        {
+          "call_id": "f98a4199-f00f-4afb-bc06-a03fbf7fe6e7",
+          "assistant_message_id": "155e1518-728b-4a22-a412-2acd9590f062",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 5.616667290996702,
+          "terminal": true,
+          "text_deltas": 394,
+          "reasoning_chars": 1880,
+          "tool_calls": [],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/f98a4199-f00f-4afb-bc06-a03fbf7fe6e7/events.jsonl",
+          "sha256": "e7ac7b2eb74ee6b22cedbceba7ef25218080c353825a5971ebafe62aca2d1e80",
+          "request_time_ns": 1793634461492151000
+        }
+      ],
+      "answer_chars": 901,
+      "quality": "Source text grounded; numeric seconds not clickable; no extra tool calls"
+    },
+    {
+      "round": "r2",
+      "case": "Q01",
+      "message_id": "25e6ff46-8756-47e5-8b4f-82998e722e65",
+      "conversation_id": "96057f51-59f8-4c06-b01d-1a09f84b65d2",
+      "ftt_seconds": 1.0617999999970198,
+      "tt_seconds": 7.44070000000298,
+      "ftt_valid": true,
+      "first_dom_text_seconds": 1.0817000000029802,
+      "first_readable_snapshot_seconds": 1.0617999999970198,
+      "first_content": "我来",
+      "continuous_growth_verified": true,
+      "model_calls": [
+        {
+          "call_id": "8290f161-1e4f-4872-a5c4-81e30bea4dea",
+          "assistant_message_id": "25e6ff46-8756-47e5-8b4f-82998e722e65",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 0.9892061659993487,
+          "terminal": true,
+          "text_deltas": 12,
+          "reasoning_chars": 0,
+          "tool_calls": [
+            "understand_current_video"
+          ],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/8290f161-1e4f-4872-a5c4-81e30bea4dea/events.jsonl",
+          "sha256": "8b15d273cbfb1eb013033c3bcab6fe4e234d497ccf5802fe91842e4014ff4ac7",
+          "request_time_ns": 1793634885530904000
+        },
+        {
+          "call_id": "d4543e7f-74f9-4b31-8762-e3e1bc419596",
+          "assistant_message_id": "25e6ff46-8756-47e5-8b4f-82998e722e65",
+          "model": "k3.1-pro",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": null,
+          "duration_seconds": 0.4584438749952824,
+          "terminal": false,
+          "text_deltas": 0,
+          "reasoning_chars": 0,
+          "tool_calls": [],
+          "errors": [
+            {
+              "type": "ModelFailureError",
+              "status_code": null,
+              "reason": "model_service_unavailable"
+            },
+            {
+              "type": "RateLimitError",
+              "status_code": 429,
+              "reason": null
+            },
+            {
+              "type": "HTTPStatusError",
+              "status_code": null,
+              "reason": null
+            }
+          ],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/d4543e7f-74f9-4b31-8762-e3e1bc419596/events.jsonl",
+          "sha256": "027c0454c6eaa8ee8aae6f0bb74f6b37a72a33d276385fcddce189c94ac29289",
+          "request_time_ns": 1793634886903645000
+        },
+        {
+          "call_id": "6c423cb7-d04f-43bd-93b5-66f197e64b32",
+          "assistant_message_id": "25e6ff46-8756-47e5-8b4f-82998e722e65",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 5.138934667003923,
+          "terminal": true,
+          "text_deltas": 352,
+          "reasoning_chars": 1278,
+          "tool_calls": [],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/6c423cb7-d04f-43bd-93b5-66f197e64b32/events.jsonl",
+          "sha256": "3a8c03e7360ac90b905eada3f353d1602d6edd1ffbb953cee1bd7ee9a6c13ae9",
+          "request_time_ns": 1793634887419348000
+        }
+      ],
+      "answer_chars": 640,
+      "quality": "Partial: transcript-grounded identification, current frame unavailable, answer too long"
+    },
+    {
+      "round": "r2",
+      "case": "Q02",
+      "message_id": "31b5d4d5-ffb3-41e2-aa96-219ec41bbea2",
+      "conversation_id": "96057f51-59f8-4c06-b01d-1a09f84b65d2",
+      "ftt_seconds": 1.7658999999985099,
+      "tt_seconds": 3.76420000000298,
+      "ftt_valid": true,
+      "first_dom_text_seconds": 1.7807000000029802,
+      "first_readable_snapshot_seconds": 1.8192999999970199,
+      "first_content": "**",
+      "continuous_growth_verified": true,
+      "model_calls": [
+        {
+          "call_id": "1bd4563a-8d64-4770-9dd4-810d194cf13d",
+          "assistant_message_id": "31b5d4d5-ffb3-41e2-aa96-219ec41bbea2",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 3.687304500002938,
+          "terminal": true,
+          "text_deltas": 283,
+          "reasoning_chars": 852,
+          "tool_calls": [],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/1bd4563a-8d64-4770-9dd4-810d194cf13d/events.jsonl",
+          "sha256": "433da0de0b1fcc74553116f5939e60207c4c06116cbafd69d7eab552c2839581",
+          "request_time_ns": 1793634893470498000
+        }
+      ],
+      "answer_chars": 528,
+      "quality": "Failed concise-answer constraint: more than three sentences"
+    },
+    {
+      "round": "r2",
+      "case": "Q03",
+      "message_id": "c247968d-268d-447b-9177-af8e092e61cd",
+      "conversation_id": "96057f51-59f8-4c06-b01d-1a09f84b65d2",
+      "ftt_seconds": 2.50239999999851,
+      "tt_seconds": 10.58459999999404,
+      "ftt_valid": true,
+      "first_dom_text_seconds": 2.53079999999702,
+      "first_readable_snapshot_seconds": 2.50239999999851,
+      "first_content": "最关键",
+      "continuous_growth_verified": true,
+      "model_calls": [
+        {
+          "call_id": "8e28a8a1-c08a-40d5-b786-c5006c1eb653",
+          "assistant_message_id": "c247968d-268d-447b-9177-af8e092e61cd",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 3.370597209002881,
+          "terminal": true,
+          "text_deltas": 44,
+          "reasoning_chars": 994,
+          "tool_calls": [
+            "submit_video_item"
+          ],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/8e28a8a1-c08a-40d5-b786-c5006c1eb653/events.jsonl",
+          "sha256": "197dfb85551453d430cc6d395ed8eef58ece8756507e861ddeaed3d5406bca00",
+          "request_time_ns": 1793634898243015000
+        },
+        {
+          "call_id": "2fc0218b-9336-4081-a0c7-de2174ad85b6",
+          "assistant_message_id": "c247968d-268d-447b-9177-af8e092e61cd",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 1.6180469999962952,
+          "terminal": true,
+          "text_deltas": 0,
+          "reasoning_chars": 489,
+          "tool_calls": [
+            "understand_current_video"
+          ],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/2fc0218b-9336-4081-a0c7-de2174ad85b6/events.jsonl",
+          "sha256": "4f433968185e1dfa4f553f6588463b8bfa71a76755623d979e3591bae5b7fadf",
+          "request_time_ns": 1793634901630358000
+        },
+        {
+          "call_id": "2d148a3a-7ffa-4b97-a7af-0904fb37c256",
+          "assistant_message_id": "c247968d-268d-447b-9177-af8e092e61cd",
+          "model": "k3.1-pro",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": null,
+          "duration_seconds": 0.4785013340006117,
+          "terminal": false,
+          "text_deltas": 0,
+          "reasoning_chars": 0,
+          "tool_calls": [],
+          "errors": [
+            {
+              "type": "ModelFailureError",
+              "status_code": null,
+              "reason": "model_service_unavailable"
+            },
+            {
+              "type": "RateLimitError",
+              "status_code": 429,
+              "reason": null
+            },
+            {
+              "type": "HTTPStatusError",
+              "status_code": null,
+              "reason": null
+            }
+          ],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/2d148a3a-7ffa-4b97-a7af-0904fb37c256/events.jsonl",
+          "sha256": "ab853f292ee4a80f6c2c1dd2f2dc093381542e37c14ad73965af2712a07688db",
+          "request_time_ns": 1793634903449127000
+        },
+        {
+          "call_id": "9092d491-1d5c-4431-b446-585226ce8183",
+          "assistant_message_id": "c247968d-268d-447b-9177-af8e092e61cd",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 1.3577672080064076,
+          "terminal": true,
+          "text_deltas": 0,
+          "reasoning_chars": 0,
+          "tool_calls": [
+            "submit_video_item"
+          ],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/9092d491-1d5c-4431-b446-585226ce8183/events.jsonl",
+          "sha256": "8e20b0672133dd042faabd203fff200a0c10fdd19db2bda45eb5f2e976612513",
+          "request_time_ns": 1793634903966990000
+        },
+        {
+          "call_id": "8316a390-4688-4c96-b28b-314721ab3e6a",
+          "assistant_message_id": "c247968d-268d-447b-9177-af8e092e61cd",
+          "model": "deepseek-flash",
+          "stream": true,
+          "reasoning_effort": "low",
+          "thinking": {
+            "type": "enabled"
+          },
+          "duration_seconds": 3.369110958999954,
+          "terminal": true,
+          "text_deltas": 383,
+          "reasoning_chars": 192,
+          "tool_calls": [],
+          "errors": [],
+          "local_trace": "outputs/verification/course-qa/20261102-joint-flash/model-trace/8316a390-4688-4c96-b28b-314721ab3e6a/events.jsonl",
+          "sha256": "598c09f6d3de99cbeb926b5259833cf21f2a8fb6c4329e8801e85a3c6a83ae64",
+          "request_time_ns": 1793634905343084000
+        }
+      ],
+      "answer_chars": 859,
+      "quality": "Source text grounded and timestamp seek verified; two invalid card submissions and repeated visual observation"
+    }
+  ],
+  "reliability": {
+    "completed_replay_status": 200,
+    "completed_replay_unchanged": true,
+    "changed_payload_status": 409,
+    "inflight_replay_status": 409,
+    "cancel_ack_seconds": 0.0060024170015822165,
+    "stream_finished": true,
+    "cancel_error": "AGENT_CANCELLED",
+    "prefix_chars": 63,
+    "prefix_preserved": true,
+    "recovery_seconds": 1.8396796670058393,
+    "recovery_completed": true,
+    "unready_scope_status": 409
+  },
+  "regression": {
+    "passed": 533,
+    "skipped": 1
+  },
+  "fixture_preparation_attempt_excluded": "outputs/verification/course-qa/20261102-dev-flash/excluded-from-acceptance.json",
+  "limitations": [
+    "Kimi visual path failed (round 1 refused local proxy; round 2 upstream 429 quota). TT is for partial-evidence answers, not successful visual QA.",
+    "Two rounds have different visual failures and cannot establish controlled model-speed improvement or percentiles.",
+    "First readable snapshot is receipt, not exact physical paint.",
+    "Full course retrieval, seven-course learning path, load stability and public deployment remain untested."
+  ],
+  "local_evidence": [
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r1/delivery.json",
+      "sha256": "00ff6b5fd42f259b32a7f793915db0672e131f493cbcafefbc3491532bd9797f"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r1/events.jsonl",
+      "sha256": "2f73094d068b8e390f3f19c027a2b773e2877298d0fa8c75a2a5adc88159dde3"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r1/requests.json",
+      "sha256": "9e886e3d8f4aae8e0f19ae2ce041087f00bbf4a2a4a423c6975053f2adc8cded"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r1/refresh.json",
+      "sha256": "577465222ac63d21667dd5ed99de677aced51dfaa9564d82ca05f28dc883a73e"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r1/browser-errors.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r2/delivery.json",
+      "sha256": "d85605655567605be668a0feb1ccffa1b82264f6106ecbe4f951916b16ae878e"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r2/events.jsonl",
+      "sha256": "76209b1e9796bc813b2fb23ad86bf413a0c8adb66df414e1d9bbec5395a0b6fa"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r2/requests.json",
+      "sha256": "33f2c6f69baf3932f408b58c7e8fb4a2796ac1659a35a497a4698caacb6305db"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r2/refresh.json",
+      "sha256": "debb48746050461b78f1dee787fad4115691571eebb7cc9ac0d5940c2318c60a"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/browser-r2/browser-errors.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/model-usage.json",
+      "sha256": "0958bed27f8ce982e6b7e7c687e287af073346d093fe5541be41b137ff21bccc"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/before/manifest.json",
+      "sha256": "fd364666cb58c651ca894dfc23ec9be8d0422450f25f788908b343f9a6f9b89a"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/before-r2/manifest.json",
+      "sha256": "93ca66b9edc09915942543fae11bf86c5783bb5090cbf88763144abf7335db84"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/after/manifest.json",
+      "sha256": "0ec28057436afffd41e06c4e2e2bdb90f6079749b8592271abf766502543202b"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/before-r2/chunks.json",
+      "sha256": "07694d61006050232f080328c270c08a8e2b1144d01ae717ec31282be6c4516c"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/after/chunks.json",
+      "sha256": "07694d61006050232f080328c270c08a8e2b1144d01ae717ec31282be6c4516c"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/fixture-copy.json",
+      "sha256": "b5dfc65864ac92e61700dbf806f75768023e996b1e851dfea948d21912d806ec"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/endpoint-correction.json",
+      "sha256": "f0322c12cdff52c442759e504d0edf3271c9efc2a0ddbb8230107f2fd738bdd2"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/reliability-readable/result.json",
+      "sha256": "9113af7eb3015c729433ec57ea074501e84d6a0e0327059e9ce3ae5e3cbc40d3"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/joint-regression.xml",
+      "sha256": "e40abdc2239586e162448abfff162fa46b1628d6fb8142a742acbf664954e1c9"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/first-sse-regression.xml",
+      "sha256": "1646b7652a9c1e00b0e05c4fa303376c695b7d74b0ce55f785f3f5742cd626ac"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/r2-persisted-messages.json",
+      "sha256": "4db72d218caa5dcfc446b49a7b6dbafd8d4d60fbe8e7a5a028e336afdcb38d31"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/source-seek.json",
+      "sha256": "f732f80be33885150bdda8801ff9ab5a6adc65e01e0c9937bad310e9d31106f3"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/streaming-validation-r1.json",
+      "sha256": "c86d4a0e76a30e4d33b4a6a9f25adc831f65d80c01d930836f87c9265daf5f7d"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261102-joint-flash/streaming-validation-r2.json",
+      "sha256": "251e63a1f0c49dabeb236d8b01b7209e0da7053e50ad6bbdd1ce409e3a0efa81"
+    }
+  ],
+  "source_seek": {
+    "conversation_id": "96057f51-59f8-4c06-b01d-1a09f84b65d2",
+    "before": {
+      "time": 90,
+      "paused": true
+    },
+    "label": "跳转到 00:47",
+    "immediate": {
+      "time": 90,
+      "paused": true
+    },
+    "positioned": {
+      "time": 47.6,
+      "paused": true
+    },
+    "explicit_play_clicked": true,
+    "after": {
+      "time": 48.077244,
+      "paused": false
+    },
+    "new_model_requests": 0,
+    "expected_target_seconds": 47.6,
+    "passed": true
+  }
+}

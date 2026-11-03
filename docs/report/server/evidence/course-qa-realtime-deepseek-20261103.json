@@ -1,0 +1,168 @@
+{
+  "date": "2026-11-03",
+  "runtime_head": "1deff37c6c621fcc08966194402505a830575318",
+  "scope": "QA-only derived realtime binding override; production code and frozen task unchanged",
+  "chat_and_realtime_model": "deepseek-flash",
+  "reasoning_effort": "low",
+  "first_browser_round": [
+    {
+      "case": "Q01",
+      "ftt_ms": 1263.2999999999302,
+      "valid": true,
+      "reason": "correlated live provider text and visible browser delivery",
+      "call_id": "4cb61c1e-0e0e-4ae1-b31e-e277322f3143",
+      "message_id": "6e772f9c-a974-4279-b91a-47ed5cc56d9e",
+      "tt_ms": 11026.399999999907,
+      "first_text_rendered_ms": 1281.5,
+      "continuous_growth_verified": true,
+      "model_first_text_ms": 904.1817920000312,
+      "first_content": "我先",
+      "quality": "Visual observation failed with HTTP 400; existing transcript fallback is not successful visual QA"
+    },
+    {
+      "case": "Q02",
+      "ftt_ms": 4009.0999999999767,
+      "valid": true,
+      "reason": "correlated live provider text and visible browser delivery",
+      "call_id": "103958ca-cc81-4bb4-977e-66f04003cfb5",
+      "message_id": "2749b943-9f63-4fee-9926-14fa83b949df",
+      "tt_ms": 5354,
+      "first_text_rendered_ms": 4031.5999999999767,
+      "continuous_growth_verified": true,
+      "model_first_text_ms": 3922.3056250000354,
+      "first_content": "1",
+      "quality": "Three numbered explanation sentences plus a source line; concise-format assessment separate from latency"
+    },
+    {
+      "case": "Q03",
+      "ftt_ms": 2689.8000000000466,
+      "valid": true,
+      "reason": "correlated live provider text and visible browser delivery",
+      "call_id": "c1da1ef0-a3c1-43cb-96ad-78bb26992319",
+      "message_id": "a88fe93c-b84c-4e10-a6a0-b59bb580c0e1",
+      "tt_ms": 8590.400000000023,
+      "first_text_rendered_ms": 2716.20000000007,
+      "continuous_growth_verified": true,
+      "model_first_text_ms": 2619.719084000053,
+      "first_content": "我先",
+      "quality": "Visual observation failed with HTTP 400; existing transcript fallback is not successful visual QA"
+    }
+  ],
+  "unchanged_source_config_and_chunks": true,
+  "observed_http_error": {
+    "type": "BadRequestError",
+    "status_code": 400,
+    "message": "Error code: 400 - {'error': {'message': 'Required properties must match all properties in the object (request_id: 095e2ccd-d4a5-484b-adbb-fbd66e34ec46)', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "body": {
+      "message": "Required properties must match all properties in the object (request_id: 095e2ccd-d4a5-484b-adbb-fbd66e34ec46)",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "invalid_request_error"
+    }
+  },
+  "schema_issue": {
+    "strict": true,
+    "properties": [
+      "summary",
+      "captions"
+    ],
+    "original_required": [
+      "summary"
+    ],
+    "probe_required": [
+      "summary",
+      "captions"
+    ]
+  },
+  "required_only_probe": {
+    "seconds": 7.039663958999881,
+    "provider_completed": true,
+    "pipeline_status": "failed",
+    "output_fenced": true,
+    "review_only_unfenced_valid": true,
+    "observed_visible_facts": [
+      "LearnGPT page",
+      "leaf news example",
+      "presenter at bottom right"
+    ],
+    "quality_limit": "Not a full visual quality pass; response also speculates about other software on screen"
+  },
+  "official_docs": [
+    "https://api-docs.deepseek.com/zh-cn/guides/vision/",
+    "https://api-docs.deepseek.com/zh-cn/quick_start/error_codes/"
+  ],
+  "evidence": [
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/launch.py",
+      "sha256": "52f721b13f17739a17384614aed6c3e8b8f536f4c81cc2ae23576e91aab4f738"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/api.process.json",
+      "sha256": "475f90cba5a46bce15bd4690871fa154cf2264dfb1755ddd097ad207ca01ca10"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/binding-overrides.jsonl",
+      "sha256": "8447798c4bd8da03aa08f370cdb7d29c8415bafcca8f197ed90b9fbcecaade58"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/before/manifest.json",
+      "sha256": "acf4e2a19ab1df9cfe1d01dfdb6c10721b1abdc6198978227067578ea358c8b0"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/after/manifest.json",
+      "sha256": "ad576ce0f5ddca063d92fc38f6e91707ebd1c46677b9e728a7437f5ddd7a806d"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/before/chunks.json",
+      "sha256": "07694d61006050232f080328c270c08a8e2b1144d01ae717ec31282be6c4516c"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/after/chunks.json",
+      "sha256": "07694d61006050232f080328c270c08a8e2b1144d01ae717ec31282be6c4516c"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/browser-r1/delivery.json",
+      "sha256": "c8372fc06d21472d3e58ce9c9303045b1ae0b14f7543bd318eacdacb70e564f0"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/browser-r1/events.jsonl",
+      "sha256": "4a3ec00284d2e9e448acbcbe14a2cdd958c3bf7217d818a7ec63a4f20fdfa70b"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/browser-r1/requests.json",
+      "sha256": "80e2a60c8417391e35dbdb62c843f7fcee972b1b468489f7bb2d20438642bdd9"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/browser-r1/browser-errors.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/browser-r1/refresh.json",
+      "sha256": "9105fd12d418b4dead6e684973f2b4ed4a94c7004f29f10ce13ff6dc5a00994b"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/streaming-validation.json",
+      "sha256": "e9c4b87857e0c64f6ab36039f392dca3ef16e4b086a4824c5c5c53aabf148ace"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/visual-error-probe.json",
+      "sha256": "2efc7b7112ad6cfd4136427edbecf4f79f655bb3a959a48bf3ccfc2e15e49e8b"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/visual-schema-probe.json",
+      "sha256": "21108ec276e69935134e8146c9da1c407d7bca2049695bfe98ac555e27a18ed3"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/visual-schema-probe-schema.json",
+      "sha256": "e874d3de37d7377ab39728a8f3b9ecc336d018fa78546b121bf424a0bed91e49"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/visual-schema-capture.json",
+      "sha256": "14bd26f6886ab9a64c21a141c7c3c246b18d253f25fa66740fa8c576010ed1e7"
+    },
+    {
+      "path": "outputs/verification/course-qa/20261103-realtime-ds-flash/visual-schema-capture-events.jsonl",
+      "sha256": "f2fc32b7864f5ac8eda514c7b258ad73d4f34e84a0fc8f452250cbd1a29c403f"
+    }
+  ]
+}

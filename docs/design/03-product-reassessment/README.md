@@ -30,6 +30,9 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 |---|---|---|---|
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
 | [deepseek-web-search-trd.md](deepseek-web-search-trd.md) | 2026-11-02，Chat 更换模型后搜索仍走未固定 backend 的 DDGS | 免 key DDGS 与 DeepSeek API 独立配置，明确请求、费用和错误合同 | 直接向 dev 集成；接口接入与回答、引用质量分别验收 |
+
+| [course-qa-trd.md](course-qa-trd.md) | 2026-11-01，课程宣传前的产品闭环验收 | 整课解析不应阻断已有片段的真实观看 QA；独立 worktree 跟踪 #18，固定用例与运行版本 | 浏览器路径、模型质量、时延、可靠性和最终部署分别判定；首轮证据不能替代七集验收 |
+| [chat-streaming-prd.md](chat-streaming-prd.md) | 2026-11-01，课程 QA 把完整回复的到达时间误标为流式 FTT | 撤回错误指标，要求模型正文在生成过程中持续交付到页面，并据此并列评价 FTT 与 TT | 独立产品需求；原始日志保留，旧 FTT 无效，真实增量链路及新基线待验收 |
 | [handoff_to_new_pc.md](handoff_to_new_pc.md) | 2026-10-26 的多任务交接，含 10-24–25 探索 | 换机前保存真实停点、尝试过程、未完成项与后续理由 | 跨阶段交接；保留三条主线和环境差异，不将局部探针当作完整产品交付 |
 | [parse-output-xml.md](parse-output-xml.md) | 2026-10-26 协议设计稿 | 在保留有效信息的前提下降低解析输出负担 | 交接时尚未正式接入；须同时验证内容质量、时间定位与整集耗时 |
 | [video-parse-performance-trd.md](video-parse-performance-trd.md) | 2026-10-28 建立；10-29 补两轮实模证据 | 解析异常长的因素拆解、完整/精简 JSON 与 XML 对照、SHOT 候选及宿主 Canvas 接入边界 | 解析性能主入口；最终采用精简 JSON、不换 XML，质量优先并沿用既有并行策略；10-30 dev 已接入直接 JSON 与 30k，精简合同迁移及实模验收待完成 |

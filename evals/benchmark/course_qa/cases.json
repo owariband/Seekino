@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "series_id": "34646a50-bdad-5207-837c-5d0e90adcc0f",
+  "video_id": "cd7c4da8-051c-5c6a-b95f-9fdaffefbeee",
+  "position_ms": 90000,
+  "precondition": "Isolated GPT course fixture; chunks 0, 1, 2 have persisted content. Expected facts are for reviewers only and must not be sent to the model.",
+  "turns": [
+    {
+      "id": "Q01",
+      "query": "请结合当前暂停位置的画面与附近讲解，说明讲师正在演示什么，以及这与这节课要做的事情有什么关系。请简短回答，并说明依据来自哪个时间范围。",
+      "review": "Identify the leaf-falling breaking-news example and ChatGPT text generation; distinguish the current example from the course's later GPT implementation. Verify every timestamp against source video/ASR.",
+      "legacy_id": "W01"
+    },
+    {
+      "id": "Q02",
+      "query": "你刚才说的这个例子为什么能引出这节课的目标？我知道基本的矩阵乘法，但还没学过 Transformer，请用三句话解释，不要把后面还没讲的内容当成我已经看过。",
+      "review": "Resolve '这个例子' to Q01, keep beginner explanation grounded and separate later content/inference from current evidence.",
+      "legacy_id": "W02"
+    },
+    {
+      "id": "Q03",
+      "query": "请给我刚才解释中最关键的一处原片依据：具体是哪一段讲解、什么时间？把老师明确说的和你为了帮助理解补充的解释分开。",
+      "review": "Provide a real, clickable source time, distinguish lecturer statements from explanation, and preserve the prior conversation.",
+      "legacy_id": "W03"
+    }
+  ]
+}

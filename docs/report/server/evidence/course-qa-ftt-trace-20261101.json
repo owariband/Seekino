@@ -1,0 +1,193 @@
+{
+  "date": "2026-11-01",
+  "qa_pr": 24,
+  "baseline": "course-qa-20261101.json",
+  "case_id_aliases": {
+    "W01": "Q01",
+    "W02": "Q02",
+    "W03": "Q03"
+  },
+  "new_model_requests": 0,
+  "runtime": {
+    "head": "67223c16dbba2a89d811f4e8a677870b22309b90",
+    "dirty": true,
+    "loaded_code_confirmed": false,
+    "worktree": "full-video-asr/Seekino",
+    "source_fingerprints": [
+      {
+        "path": "gateway/openai/agent.py",
+        "sha256": "2c27fb545a0e036a4c472a271b60a0c34adf53b5a5ec8ac1895f64c2f1acaa7e",
+        "matches_baseline_manifest": true,
+        "line": 311,
+        "excerpt": "stream=False,"
+      },
+      {
+        "path": "gateway/agent_model/deepagents.py",
+        "sha256": "0d80fc28957fa36dabfac8cd70ed134a019ac57cdf8c5ddb216aa501f2832d7e",
+        "matches_baseline_manifest": true,
+        "line": 351,
+        "excerpt": "def after_model(self, state: Any, runtime: Any) -> None:"
+      },
+      {
+        "path": "gateway/agent_model/factory.py",
+        "sha256": "b4e760d2a2c5d1618c169c54dcb766f0bf0599fd2ffb31ca1ada837d6bbae8ce",
+        "matches_baseline_manifest": true,
+        "line": 260,
+        "excerpt": "agent_model=adapter,"
+      },
+      {
+        "path": "agent/chat/supervisor.py",
+        "sha256": "8d4a78fd0103ac4fa0d398027ed344ee42fef761ff6c22ec164ef1e9423e4305",
+        "matches_baseline_manifest": true,
+        "line": 370,
+        "excerpt": "def accept_text(value: str) -> None:"
+      },
+      {
+        "path": "gateway/openai/profiles.py",
+        "sha256": "9d25c8fcb8abc749f7d4ac6a075db135ec3a4961d05478d5b2e66eda89954cb5",
+        "matches_baseline_manifest": true,
+        "line": 30,
+        "excerpt": "if reasoning_effort != \"none\":"
+      }
+    ]
+  },
+  "measurement": {
+    "client_clock": "Browser performance.now(); first_body_received_seconds is receipt of the first complete-response body snapshot, TT is receipt of answer.completed. Streaming FTT is not measured.",
+    "server_clock": "Epoch milliseconds in message timing and model usage; naive DB start_time converted with the recorded UTC offset of +8 hours.",
+    "model_duration": "From track_model_call request start to its finish, including SDK request/response and validation; provider stages are not separated.",
+    "residual_note": "First complete-response body arrival minus model duration is an approximate residual, not an FTT, network, or queue breakdown.",
+    "provider_first_content_timestamp": null,
+    "browser_first_paint_timestamp": null
+  },
+  "config_and_code": {
+    "supervisor_model": "k3.1-pro",
+    "configured_reasoning_effort": "none",
+    "historical_kimi_profile_behavior": "none omits reasoning_effort; no thinking-disable instruction is sent by this adapter contract.",
+    "historical_publication": "stream=False; text is handed to Supervisor in after_model, then published as answer.snapshot.",
+    "qa_code_before_investigation": "c93877de",
+    "qa_transport_behavior": "gateway/streaming/chat.py request_chat_stream collects all deltas; gateway/agent_model/deepagents.py after_model still publishes the complete text."
+  },
+  "cases": [
+    {
+      "case": "Q02",
+      "original_case_id": "W02",
+      "message_id": "563e31ca-6714-4477-a937-defff9468f6b",
+      "ftt_seconds": null,
+      "tt_seconds": 29.62,
+      "first_output_kind": "answer_text",
+      "first_body_event": {
+        "event": "answer.snapshot",
+        "sequence": 2,
+        "server_epoch_ms": 1793533889766
+      },
+      "server_processing_start_epoch_ms": 1793533860280,
+      "server_before_first_model_seconds": 0.107,
+      "first_model_duration_seconds": 29.37,
+      "first_model_end_to_server_body_event_seconds": 0.009,
+      "provider_first_content_seconds": null,
+      "model_calls": [
+        {
+          "role": "supervisor",
+          "start_epoch_ms": 1793533860387,
+          "end_epoch_ms": 1793533889757,
+          "duration_seconds": 29.37,
+          "input_tokens": 6747,
+          "cached_input_tokens": 3328,
+          "output_tokens": 587,
+          "reasoning_tokens": 476
+        }
+      ],
+      "first_body_received_seconds": 29.5763,
+      "ftt_status": "not_measured",
+      "ftt_unavailable_reason": "non_streaming_model_response; provider first content and end-to-end incremental delivery were not measured",
+      "approx_first_body_wait_minus_model_duration_seconds": 0.2063,
+      "model_call_fraction_of_first_body_wait": 0.993
+    },
+    {
+      "case": "Q03",
+      "original_case_id": "W03",
+      "message_id": "3e611420-b07f-4a6c-a5ca-c9b4af946fc4",
+      "ftt_seconds": null,
+      "tt_seconds": 178.2695,
+      "first_output_kind": "progress_text",
+      "first_body_event": {
+        "event": "answer.snapshot",
+        "sequence": 2,
+        "server_epoch_ms": 1793533918180
+      },
+      "server_processing_start_epoch_ms": 1793533891022,
+      "server_before_first_model_seconds": 0.055,
+      "first_model_duration_seconds": 27.071,
+      "first_model_end_to_server_body_event_seconds": 0.032,
+      "provider_first_content_seconds": null,
+      "model_calls": [
+        {
+          "role": "supervisor",
+          "start_epoch_ms": 1793533891077,
+          "end_epoch_ms": 1793533918148,
+          "duration_seconds": 27.071,
+          "input_tokens": 6899,
+          "cached_input_tokens": 3328,
+          "output_tokens": 512,
+          "reasoning_tokens": 334
+        },
+        {
+          "role": "visual_observation",
+          "start_epoch_ms": 1793533919250,
+          "end_epoch_ms": 1793533996376,
+          "duration_seconds": 77.126,
+          "input_tokens": 1937,
+          "cached_input_tokens": 1280,
+          "output_tokens": 2107,
+          "reasoning_tokens": 1680
+        },
+        {
+          "role": "supervisor",
+          "start_epoch_ms": 1793533996600,
+          "end_epoch_ms": 1793534024451,
+          "duration_seconds": 27.851,
+          "input_tokens": 9561,
+          "cached_input_tokens": 6656,
+          "output_tokens": 701,
+          "reasoning_tokens": 490
+        },
+        {
+          "role": "supervisor",
+          "start_epoch_ms": 1793534024469,
+          "end_epoch_ms": 1793534069209,
+          "duration_seconds": 44.74,
+          "input_tokens": 9850,
+          "cached_input_tokens": 9549,
+          "output_tokens": 1182,
+          "reasoning_tokens": 976
+        }
+      ],
+      "realtime_tool_seconds": 78.411,
+      "visual_started_after_first_body": true,
+      "first_body_received_seconds": 27.231,
+      "ftt_status": "not_measured",
+      "ftt_unavailable_reason": "non_streaming_model_response; provider first content and end-to-end incremental delivery were not measured",
+      "approx_first_body_wait_minus_model_duration_seconds": 0.16,
+      "model_call_fraction_of_first_body_wait": 0.9941
+    }
+  ],
+  "raw_evidence": [
+    {
+      "path": "outputs/verification/course-qa/20261101-baseline/manifest-before.json",
+      "sha256": "2058058fc854a555c7f6f23fb29fc79a47a24ba2c0fa4691b66ddb7d9db6c34f",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-baseline/model-usage.json",
+      "sha256": "656ccec0a1796b2d9179300cee56d04f470e4ff9604b11d35e3c00be708f8135",
+      "local_ignored": true
+    },
+    {
+      "path": "outputs/verification/course-qa/20261101-baseline/browser/events.jsonl",
+      "sha256": "7202530307d84ce59d974c09cd30613990c40484d66d7e57f3533ed9ec5e7495",
+      "local_ignored": true
+    }
+  ],
+  "metric_contract_version": 2,
+  "ftt_correction": "Historical FTT classification withdrawn: first-body times came from complete non-streaming model responses. They do not measure real streaming FTT."
+}

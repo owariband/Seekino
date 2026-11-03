@@ -8,6 +8,7 @@
 | [chat_behavior · 对话理解与应变](chat_behavior/README.md) | 接住反馈、切换意图、理解指代与否定、按顺序完成多个请求、诚实表达证据边界 | 10 个对话场景；100 条历史观测 + 60 条三框架对照 | [cases](chat_behavior/cases.json) · [三框架 Kimi](chat_behavior/baselines/harnesses-kimi-20261026.jsonl) · [历史结果](chat_behavior/baselines/) |
 | [retrieval_quality · 检索质量](retrieval_quality/README.md) | 给定 scope/query/参数时，Event 与 Chunk 是否召回已知证据及其排名 | 13 个检索配置；23 条历史观测 + 13 条当前检查 | [cases](retrieval_quality/cases.json) · [baseline](retrieval_quality/baseline.jsonl) · [当前实测](reports/chat-harness-kimi-20261026.md#独立组件结果) |
 | [intent_routing · 意图路由与改写](intent_routing/README.md) | 前置 respond/retrieve/mixed 分类与检索 query 改写，不包含完整 Chat 交付 | 13 个路由场景 + 1 个 API 协议 smoke；本轮 Kimi 重跑 | [cases](intent_routing/cases.json) · [脚本及历史记录](intent_routing/README.md) · [当前实测](reports/chat-harness-kimi-20261026.md#独立组件结果) |
+| [course_qa · 课程闭环验收](course_qa/README.md) | 真实浏览器连续追问、来源回看、时延及 HTTP 恢复 | 固定一门课程三轮；完整课程和七集覆盖另验 | [cases](course_qa/cases.json) · [2026-11-01 首轮报告](../../docs/report/server/course-qa-20261101.md) |
 
 想调整“真是高高在上呢 哪里出现过”之后又说“你说话怎么这么无趣”的那组，直接编辑 **[chat_behavior/cases.json](chat_behavior/cases.json)**；逐例验收要求在同目录 README。`query_capabilities` 也有一句相近的出处查询，但不含这一组反馈与意图切换场景。
 

@@ -1,0 +1,258 @@
+{
+  "date": "2026-11-03",
+  "fix_commit": "f8a25175",
+  "runtime_commit": "3697104212388933fe5c606481257ac989142196",
+  "runtime_base": "PR18 e2d4acaf + dev 737f6d7b",
+  "source_branch": "codex/deepseek-realtime-schema",
+  "test_command": "python -m pytest tests/gateway/test_models.py tests/server/test_realtime_understanding.py -q",
+  "offline_tests": {
+    "passed": 72,
+    "seconds": 5.48
+  },
+  "model": {
+    "chat": "deepseek-flash",
+    "realtime": "deepseek-flash",
+    "reasoning_effort": "low",
+    "temperature": 0,
+    "stream": true,
+    "fallback": null
+  },
+  "runtime_variant": "Derived realtime model selection remains a QA launcher override; direct Responses diagnostics instrumented without changing request or result; parse consumer disabled.",
+  "position_ms": 90000,
+  "rounds": [
+    {
+      "round": 1,
+      "visual_state": "uncached precise frame observation",
+      "understand_current_video_ms": 5469,
+      "metrics": {
+        "Q01": {
+          "ftt_ms": 1421.2000000001863,
+          "valid": true,
+          "reason": "correlated live provider text and visible browser delivery",
+          "call_id": "9c7f18fc-e14a-4b54-97f7-decf1f1e49ee",
+          "message_id": "75e74b74-4b39-45f3-9f96-a1f36c16a266",
+          "tt_ms": 22256.399999999907,
+          "first_text_rendered_ms": 1463.5,
+          "continuous_growth_verified": true,
+          "model_first_text_ms": 931.699750000007,
+          "first_provider_text": "我先",
+          "first_content_type": "progress prose"
+        },
+        "Q02": {
+          "ftt_ms": 3110.5999999996275,
+          "valid": true,
+          "reason": "correlated live provider text and visible browser delivery",
+          "call_id": "9b014812-4567-443a-9d1c-5701640b5f51",
+          "message_id": "83922586-39cd-4b7b-b720-5ae26b2d3661",
+          "tt_ms": 5287.899999999907,
+          "first_text_rendered_ms": 3126.6999999997206,
+          "continuous_growth_verified": true,
+          "model_first_text_ms": 3018.3918749999066,
+          "first_provider_text": "三",
+          "first_content_type": "format or introductory prefix"
+        },
+        "Q03": {
+          "ftt_ms": 4026,
+          "valid": true,
+          "reason": "correlated live provider text and visible browser delivery",
+          "call_id": "c30bafad-ea1e-4517-b3f5-0d32a6444d00",
+          "message_id": "6c0cc50c-3b13-4f36-8407-5c93c6ed979d",
+          "tt_ms": 6282.200000000186,
+          "first_text_rendered_ms": 4057.3000000002794,
+          "continuous_growth_verified": true,
+          "model_first_text_ms": 883.0799170000319,
+          "first_provider_text": "**",
+          "first_content_type": "Markdown formatting prefix"
+        }
+      },
+      "refresh_answer_preserved": true,
+      "browser_errors": []
+    },
+    {
+      "round": 2,
+      "visual_state": "derived frame observation cache hit",
+      "understand_current_video_ms": 224,
+      "metrics": {
+        "Q01": {
+          "ftt_ms": 1060.1999999997206,
+          "valid": true,
+          "reason": "correlated live provider text and visible browser delivery",
+          "call_id": "b35897d9-2368-4c5c-92cb-c42095ae36ea",
+          "message_id": "a5384f9e-6d40-41c8-8dbf-cfc8159bab55",
+          "tt_ms": 7691.5,
+          "first_text_rendered_ms": 1093.5,
+          "continuous_growth_verified": true,
+          "model_first_text_ms": 911.7148750001434,
+          "first_provider_text": "我先",
+          "first_content_type": "progress prose"
+        },
+        "Q02": {
+          "ftt_ms": 2783,
+          "valid": true,
+          "reason": "correlated live provider text and visible browser delivery",
+          "call_id": "926678f8-7f82-4d00-8ef7-fd8034fae4d5",
+          "message_id": "d0a2f2cd-14b3-4435-b099-81b179df6be9",
+          "tt_ms": 5005.600000000093,
+          "first_text_rendered_ms": 2814.600000000093,
+          "continuous_growth_verified": true,
+          "model_first_text_ms": 2681.3619160002418,
+          "first_provider_text": "三",
+          "first_content_type": "format or introductory prefix"
+        },
+        "Q03": {
+          "ftt_ms": 3894.2999999998137,
+          "valid": true,
+          "reason": "correlated live provider text and visible browser delivery",
+          "call_id": "be5a0db0-0f17-4ee0-ac4a-0af77044b98b",
+          "message_id": "288f5c45-b898-4970-8921-ec7a863915bb",
+          "tt_ms": 12184.899999999907,
+          "first_text_rendered_ms": 3932.100000000093,
+          "continuous_growth_verified": true,
+          "model_first_text_ms": 3798.9917089998926,
+          "first_provider_text": "关键",
+          "first_content_type": "substantive answer opening"
+        }
+      },
+      "refresh_answer_preserved": true,
+      "browser_errors": []
+    }
+  ],
+  "raw_root": "outputs/verification/course-qa/20261103-deepseek-caption",
+  "quality": {
+    "main_scene": "Leaf-news prompt and ChatGPT reply correctly identified",
+    "visual_error": "Background editor misidentified as Xcode; source frame does not support that identification",
+    "followup": "Context retained; both Q02 responses exceed three sentences through added source explanations",
+    "citations": "Returned source intervals 47640-61180 and 85380-94720 ms are reused; explicit distinction between lecturer facts and added explanations",
+    "tool_failure": "Five submit_video_item calls rejected, one query_video call rejected; failure guidance caused extra work",
+    "playback": "Time links work despite answer claiming no playable evidence",
+    "release_verdict": "Partial path verified; complete product acceptance remains open"
+  },
+  "data_unchanged": {
+    "chunks": true,
+    "task": true
+  },
+  "raw_hashes": {
+    "after/chunks.json": "07694d61006050232f080328c270c08a8e2b1144d01ae717ec31282be6c4516c",
+    "after/manifest.json": "0aba4dc3c5bd5e2b70196814d7139c074731f1366c9cf8dfdea5a0250c1f00f0",
+    "after/task.json": "16b396f038c4a8bc98bba3ef90be78028e72be0605e1ff75d0382c7d173318ba",
+    "api.log": "cb496aac2e1d45460c0ddb1737b90b45a2cfaf785953ade18be63a04a9fb0379",
+    "api.process.json": "bcd570ca990ba42b48c734a9cd4ff73d4b7390f96f27ee626910ffa811eeb884",
+    "before/chunks.json": "07694d61006050232f080328c270c08a8e2b1144d01ae717ec31282be6c4516c",
+    "before/manifest.json": "b6600007fba4b24fc5ea5a100d0f4c73fcda4fa32a3b6489417cad38c33d8acc",
+    "before/task.json": "16b396f038c4a8bc98bba3ef90be78028e72be0605e1ff75d0382c7d173318ba",
+    "binding-overrides.jsonl": "150caf90c4b759c90faf64a419381403d4f7b23a6312fc8fdf4476b9365d6fae",
+    "browser-r1/Q01.json": "7a80f9fe18887432e6c619b072f9ee11a95285da5adb0217a81d9d3c186bf3a2",
+    "browser-r1/Q01.png": "0cbc13980bdf899fb56176af2fdbb856ca36507d2b7a836073a225da8c4042a3",
+    "browser-r1/Q02.json": "7d723ac45818c6beff0afc81af058a320c3a94e876e083752567ba6bca7e34d1",
+    "browser-r1/Q02.png": "e5c7b05c74d848c1c103d027bdc27fd33a828d60a76c18f8e69c8cd1ab5b98b0",
+    "browser-r1/Q03.json": "b1bc7985a116645b36e00a18ffdfd72d56e2ef556e070ae9587c016f26bc05c7",
+    "browser-r1/Q03.png": "b5f2ef00e8cf99bad823f36cafbcc939aad5a739b8d1c49672578ec6b5c6fd9e",
+    "browser-r1/browser-errors.json": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "browser-r1/delivery.json": "9186512bc162d5b901696f72fcc0dde2b17a0d49a6505fe7c4d1b7e2835f4e6f",
+    "browser-r1/delivery.jsonl": "d571a712bdbbfac40d1cc6f2f83596db086960ff49fc8861bef23a4a2a72db31",
+    "browser-r1/events.jsonl": "333a8d71da14356918fb8b38dc7e91d3fbb00925661704a3d353af421c8154a3",
+    "browser-r1/initial.json": "3a84eb58cf90ffc4ed752ceb40e177271aa5e3f96e1650db1891fa717d0f0def",
+    "browser-r1/initial.png": "b7a8ca73cfd6c2ed34c5b945781af19f38da4e90b3ef74fc812ede03793c8954",
+    "browser-r1/media.json": "753e65e2d9f9a6478f0357eb5ef21e598cdfbbc12dd63c8536854d3b9020772a",
+    "browser-r1/refresh.json": "995eae5c72eeb86955f86a70cb1a126688eb2681b0a82f6dcdd21881008b0984",
+    "browser-r1/refresh.png": "c28c87a0000e84e218ff2d53f335ff2e6413bfca515a8d17cbeae1055af53222",
+    "browser-r1/requests.json": "311142b0140d53c839481d9755caedc1785a1567d055ddb95dd5fadb480fa4da",
+    "browser-r1/run.json": "62d660245121e203450334758b171d544c86bb3a884cd87e033662608b32a91f",
+    "browser-r1/seek.json": "4fdcbb1d3473ec1b899422cbd83f1bd54e1f6acb61cc2de3c2e62e5eb188280f",
+    "browser-r1/seek.png": "bd83bfa75ddf549bd07a66ee625b6bc705822ee108542b7d18023d8c9eb9df05",
+    "browser-r1/time-links.json": "33fc0fef12fe12430da7e31647682ee98fc02a99501ad3953b5f0ddf5166fb0e",
+    "browser-r2/Q01.json": "e4aebe8a7c471b9f2d2ff8cae953a448f3e2392ce0f39c03c5e1dbb42252c707",
+    "browser-r2/Q01.png": "5735fc8acb17c2a414a6e057f77bd1a647ab40c8df715fdc1cf0d9f0330974f6",
+    "browser-r2/Q02.json": "e060e34db37588deb925dae5fafc00e9509b4020eca3d26324dd7c3bed1708b2",
+    "browser-r2/Q02.png": "b68a08c28b818af14695b9d1f4c7b6abe49c86b79d9cf1adae048e23f68b29cf",
+    "browser-r2/Q03.json": "2a9a587bf1d96ea31e85020821d140bab4d3bdb5c286fadc00bfdb1ef8ee5cb9",
+    "browser-r2/Q03.png": "dc785f7827139960c5f1574701ea63b372e07dfa64c9a4d40b5b24e7b7b0f46e",
+    "browser-r2/browser-errors.json": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "browser-r2/delivery.json": "37a8cfc73ef470842f9024bea9bc2466e2e17ee0bdc7bfc284f002d85e75503e",
+    "browser-r2/delivery.jsonl": "77278a616752e7a37619f1c603141255a423619df48443cad9f0cd22f95ab2d3",
+    "browser-r2/events.jsonl": "f3ee283c196a819e37d499f93f575c6574e0fe50bed8a25cd147abdce9c92e42",
+    "browser-r2/initial.json": "3a84eb58cf90ffc4ed752ceb40e177271aa5e3f96e1650db1891fa717d0f0def",
+    "browser-r2/initial.png": "a0b0d274c1314f256c91a4b19c81d8fdd626424a63a281bc01b3da121228f328",
+    "browser-r2/media.json": "96077b44cb75bbda7886327a195c6892a95923b1cc5b6b6c549d08591f64e4b1",
+    "browser-r2/refresh.json": "8b07655a63fbbefae5e214c5a196e5419f260ed1c5882e15e0bc68e5b0782cac",
+    "browser-r2/refresh.png": "4c3be31bc8e302da971dbcd7a2db1cd5eff2513654ac88cb956fd2801561bd75",
+    "browser-r2/requests.json": "38b1e9ec789cdbf8ac24d19b4197bee735c76106d5f697a8352a9ca8d34e9871",
+    "browser-r2/run.json": "e7e4814f6f994513728aa896b93eafcd8545719f055974dc3f8da1a71f96e334",
+    "browser-r2/seek.json": "1d82fdfc134ef64a33c595485e28dedd880d0d5e74cc413cb0e2a0f8b7b263fa",
+    "browser-r2/seek.png": "f4acd4622e7c7c668ae8a82ceff852b0b9df214f299704c4651d0de8671bf2da",
+    "browser-r2/time-links.json": "a2d18863d1668b136efb778ff098cb5056e36a00e38066fd30efcb54f8f0667f",
+    "launch.py": "9b12ddc20d43bede9692dbbfbb504268db1ac1f0cabcaafa6cddc5fab73476dc",
+    "logs/test/api.log": "ccec6a6244b3ac54216eeb9bcc28445ce93437581a05189b175040ebe16f59d3",
+    "model-config.yaml": "30e1eda4e5797c9608e20eff30119e04800427e7131881a7d1c9262a7ad65ba9",
+    "model-trace/1ef3751d-c3a8-4bd9-811a-19f4772481b9/events.jsonl": "f7b6948909b15bae46a09ffe6875a1b4475eb6eecb69c880324b6ca44b9dcfe4",
+    "model-trace/1ef3751d-c3a8-4bd9-811a-19f4772481b9/output-preview.json": "7922be1944c31cfb20af13525a9ca3106620f5596695872def1a00f8d869a48a",
+    "model-trace/376a2a62-55ab-45d8-9446-a3de5d588a31/events.jsonl": "42069685f4d42e4633bd64d7835e2bab3bdf8d88336afdd6d2d7de6390dc371f",
+    "model-trace/376a2a62-55ab-45d8-9446-a3de5d588a31/output-preview.json": "5d4e67789e1b8d200e03cb1b74fd8d53b6d797dc4e8e9e1aa0330d18afd7f353",
+    "model-trace/3ed52ca7-c964-4b3a-b3ba-3306dabf8578/events.jsonl": "535e1674bc8fc2cda530b509eb939845b1e98defc5fbb099acbe49dbda7c4484",
+    "model-trace/3ed52ca7-c964-4b3a-b3ba-3306dabf8578/output-preview.json": "51edef0b3211ea723f7a29df150c6d57e85363f717df1f385db067143fbbfb14",
+    "model-trace/466d1649-12a1-4f13-8e92-6d8369e3f7e2/events.jsonl": "623492b80f5823299341a23524a51cba3681647564833ba25d46976ab401d071",
+    "model-trace/466d1649-12a1-4f13-8e92-6d8369e3f7e2/output-preview.json": "a21de1d9f0b0a3e277adf5e9115449d9a7cfa5f65245d40b69d5cdf808ad9681",
+    "model-trace/61d04609-0b70-41e6-a36d-71606da2397b/events.jsonl": "f93e0528e6da040f4257ce0aa38cb18569a94e86acb7083a3e166d113b2f40e5",
+    "model-trace/61d04609-0b70-41e6-a36d-71606da2397b/output-preview.json": "7cc78d9b28e97aa3fb0634324d52ae5197fb17d973119a2ddd96a7998526542d",
+    "model-trace/73d4d572-fec2-4323-86ac-7a109794ae56/events.jsonl": "e2cc8f5502fa5c926ec714a85afd8c2705eafc0a05bdbaade179e59686eacb60",
+    "model-trace/73d4d572-fec2-4323-86ac-7a109794ae56/output-preview.json": "85fe57dd74d2dbc6dbb3a4208b9df81205e217d096db41a100c8f128a848fad3",
+    "model-trace/868b9a32-29f4-4d5e-b29a-fa488153ef87/events.jsonl": "5f4f2332376b297f460e3f4900a23426db2f816c1e07c16217edea2240f57ec9",
+    "model-trace/868b9a32-29f4-4d5e-b29a-fa488153ef87/output-preview.json": "df23a03c68a5408407bab22012275c5f10653ca78dcd8d51a80bf1fe63c691d8",
+    "model-trace/926678f8-7f82-4d00-8ef7-fd8034fae4d5/events.jsonl": "60bb5941d84bf15e033cf11ff21fca3dd3fff2f55b6102e4e15b569c5ad5e28d",
+    "model-trace/926678f8-7f82-4d00-8ef7-fd8034fae4d5/output-preview.json": "357de568a90fe1c5e3bf23295b4eb9c3f5a315ce9b50c0be06231286c48af86a",
+    "model-trace/9b014812-4567-443a-9d1c-5701640b5f51/events.jsonl": "31a666546bdfbb08e703aaf4529d4e810856bb781d34b7c9bd16fbbbb3464dda",
+    "model-trace/9b014812-4567-443a-9d1c-5701640b5f51/output-preview.json": "c66036e74f26ab996aadfb6ad900c9eab137790436fde4c6fd74667a78ec6d47",
+    "model-trace/9c7f18fc-e14a-4b54-97f7-decf1f1e49ee/events.jsonl": "3ac9ceb669bcaae05d45bd2ab4429ec4dc85986eab2d923bbf9a580b35188304",
+    "model-trace/9c7f18fc-e14a-4b54-97f7-decf1f1e49ee/output-preview.json": "e91e0312015bba75b47b62b904b4be7aaaf955fa0393e0ad2a7fd1b629c17b18",
+    "model-trace/a4ec29f6-dfdf-4a5e-9431-206efaea2247/events.jsonl": "02ba0260dc36dbc54139dc31f111875f51a43421a2d15bc98c8bd490ca516260",
+    "model-trace/a4ec29f6-dfdf-4a5e-9431-206efaea2247/output-preview.json": "f1af7f8d735a9d3d4d97ee50f374e867305d8f2664f5d678ba55cc058c107d77",
+    "model-trace/b35897d9-2368-4c5c-92cb-c42095ae36ea/events.jsonl": "8bf80242a6a1aa3e4c8fea4750a0c4b3d3237aa924f3904c50fbac77fa8f291d",
+    "model-trace/b35897d9-2368-4c5c-92cb-c42095ae36ea/output-preview.json": "b489abab6983ae63b9419396148b59ee6e1e41630083b49c0b8a1c526ad810f7",
+    "model-trace/be5a0db0-0f17-4ee0-ac4a-0af77044b98b/events.jsonl": "a8503aa026b30e6a7da827cc368ffa0e73c1d3e47641b98448857427cdde9716",
+    "model-trace/be5a0db0-0f17-4ee0-ac4a-0af77044b98b/output-preview.json": "412b94298769538f24f6e4622923795fe623662903e7fcd3a4fd70d1dabb762d",
+    "model-trace/c30bafad-ea1e-4517-b3f5-0d32a6444d00/events.jsonl": "15adc013e890f23ddf1dd4d197a2f6d73ed24f1068c334ccb1cb91533759fba0",
+    "model-trace/c30bafad-ea1e-4517-b3f5-0d32a6444d00/output-preview.json": "e7106bf9b6d4cd264cf00009603bfc91a94d5b0a530969743f4c81e082752490",
+    "model-trace/e694a311-138b-4d1b-b406-ec26481e53a6/events.jsonl": "4852c48d70212f3d8e0634eaad7545e123bfa81055688cc54d063f09774b8417",
+    "model-trace/e694a311-138b-4d1b-b406-ec26481e53a6/output-preview.json": "14db7dc39c4a3174fd7fbbda3fb1379c04bc254e7e56dd117f5ce6ce9525b6eb",
+    "source-seek-r1.json": "ce5f9accb339a30400d43ebf16593e6bf6998786bd5aed7cfd22f00104876ea6",
+    "source-seek-r1.png": "49477fb826ddcdb138cb8968000c28f148b5978815795681f1c868b84c4f659e",
+    "streaming-validation-r1.json": "968135538e6289e8c789996e397331b6682dc62b63161cb150b5a1ce9e5a45d6",
+    "streaming-validation-r2.json": "3d9990421151c38b650d40b832dbb16a347399e39e4746a00f99dcbd533a961a"
+  },
+  "source_seek": {
+    "conversation": "77ef5581-9716-4664-ae8c-ef98c05746ba",
+    "buttons": [
+      {
+        "text": "01:25",
+        "title": "跳转到 01:25"
+      },
+      {
+        "text": "01:34",
+        "title": "跳转到 01:34"
+      },
+      {
+        "text": "01:30",
+        "title": "跳转到 01:30"
+      }
+    ],
+    "before": {
+      "time": 90,
+      "paused": true
+    },
+    "label": "跳转到 01:25",
+    "positioned": {
+      "time": 85.4,
+      "paused": true
+    },
+    "after": {
+      "time": 85.973466,
+      "paused": false
+    },
+    "new_model_requests": 0,
+    "expected_target_seconds": 85.4,
+    "passed": true,
+    "assertion_correction": "Timecode label rounds to 01:25; the verified source interval and actual linked position retain 85.4 seconds."
+  },
+  "vision_call_id": "466d1649-12a1-4f13-8e92-6d8369e3f7e2",
+  "fix_pr": "https://github.com/owariband/Seekino/pull/29"
+}
