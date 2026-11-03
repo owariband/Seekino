@@ -753,6 +753,8 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
 
+**11-03 11:53质量核对：** 117块Understanding完成，但全课未完成。319次出站均deepseek-flash／none；已知费用约¥31.26，69次未知。第10／25／60块虽已索引，仍将ASR只保留为ACTION概述而丢失原文对白；第53块合并文字却套用较早cue时间，起点相对ASR提前21.04秒。两类缺陷都通过结构门禁，必须另行验证原话覆盖与时间对应。本轮只读留证，未切换档位或重跑数据。[逐块审计](../report/gateway/deepseek-flash-chunk-audit-20261103.md)。
+
 **11-03 Flash v11与对白范围修复：** 新网络恢复原隔离存储与进程后，正式任务保留既有成果；因原始ASR cue末端1920300超过Chunk末端1920000而停止，确认Understanding仍有旧严格包含规则。已贯通Prompt／Canvas／业务校验／数据库提交的整片对白权限，602项回归通过，9b0eb280加载API后继续同一个v11；恢复时保留31理解／28Refine／28索引，新ASR=0。11:29已核实该跨界cue原样落库且ES身份对应同一正文版本，新纠错0；完整课程及人工质量仍待验，不把部分速度或费用写成整集成功。[Flash费用与恢复](../report/gateway/deepseek-flash-parse-20261103.md)。
 
 **11-02 v10 模型对照的音频复用：** K3.1 Pro low新任务 `af389a51-8050-4d86-a33f-d3b44dc22a04` 的ASR／独立分组JSON及摘要均与v9相同，新转写0；20份理解原始响应非空，18份落库，后续因五小时额度429终止。上游恢复通过不等于全文质量／对齐／检索问答已验收，B20保持未完成。[证据](../report/gateway/kimi31-pro-low-parse-20261102.md)。
@@ -1600,6 +1602,8 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 依据：[通用 Canvas](../../agent/utils/context_canvas.py)、[读取参数与批读分支](../../agent/utils/context_canvas_tools.py)、[预算与范围](../../agent/utils/tool_output.py)、[Chat Canvas 适配](../../agent/chat/video_search/video_search_canvas.py)、[角色工具装配](../../agent/chat/video_search/tools/registry.py)、[Chat 工具适配](../../agent/chat/video_search/tools/canvas.py)、[读审计](../../agent/chat/video_search/tools/shared.py)、[Parse Refine 提示](../../agent/video_parse_v2/prompts.py)、[通用 Canvas 测试](../../tests/agent/utils/test_context_canvas.py)、[B 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)、[C 工具错误摘要](../../evals/benchmark/query_capabilities/baseline.jsonl)。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
+
+**11-03 11:53质量核对：** 117块Understanding完成，但全课未完成。319次出站均deepseek-flash／none；已知费用约¥31.26，69次未知。第10／25／60块虽已索引，仍将ASR只保留为ACTION概述而丢失原文对白；第53块合并文字却套用较早cue时间，起点相对ASR提前21.04秒。两类缺陷都通过结构门禁，必须另行验证原话覆盖与时间对应。本轮只读留证，未切换档位或重跑数据。[逐块审计](../report/gateway/deepseek-flash-chunk-audit-20261103.md)。
 
 **11-03 Flash v11与对白范围修复：** 新网络恢复原隔离存储与进程后，正式任务保留既有成果；因原始ASR cue末端1920300超过Chunk末端1920000而停止，确认Understanding仍有旧严格包含规则。已贯通Prompt／Canvas／业务校验／数据库提交的整片对白权限，602项回归通过，9b0eb280加载API后继续同一个v11；恢复时保留31理解／28Refine／28索引，新ASR=0。11:29已核实该跨界cue原样落库且ES身份对应同一正文版本，新纠错0；完整课程及人工质量仍待验，不把部分速度或费用写成整集成功。[Flash费用与恢复](../report/gateway/deepseek-flash-parse-20261103.md)。
 

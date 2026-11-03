@@ -6,6 +6,10 @@
 
 任务 `93d60de9-b0ab-4aa6-aeea-342935e237b2`，课程 Let's build GPT，116分20秒／117 Chunk。当前代码 `9b0eb280`、API19621/PID5212；模型 `deepseek-flash`、Responses、`reasoning.effort=none`、stream=true、直连。全量图片、10/10/1并发和模型绑定不变；第六段执行纠正了此前漏接的完整ASR对白Prompt与时间权限，因此各段不混为单一不变Prompt的对照。ASR和说话人分组复用，新增转写0。
 
+## 11:53 逐块费用与质量审计
+
+[全部117块／115区间交互明细](deepseek-flash-chunk-audit-20261103.html)与[审计说明](deepseek-flash-chunk-audit-20261103.md)已保存。117理解／95Refine／87索引，已有usage估算¥31.26219472，69条费用未知；319个实际出站全部Flash none，非low。第10、25、60块已索引但无DIALOGUE；第53块合并文字后相对ASR提前约21秒。结构通过不能代替原话与时间正确，相关质量问题仍未修复。上方11:34是历史快照，费用仍非整集终值。
+
 ## 已定位的协议缺口
 
 1. Responses没有接上共用100秒首SSE期限及完整请求诊断，现已补齐。策略不是Kimi专用；本轮覆盖两条解析入口，不代表整个Gateway所有工具循环都已覆盖。
