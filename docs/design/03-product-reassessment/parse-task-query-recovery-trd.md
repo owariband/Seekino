@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-主题：长解析任务的大 JSON 查询与 Consumer 故障恢复。日期：2026-11-03。分支：`fix/parse-task-query-recovery`。PR：创建后回填。关联问题：B13（任务列表过量读取）、B10（执行恢复）。
+主题：长解析任务的大 JSON 查询与 Consumer 故障恢复。日期：2026-11-03。分支：`fix/parse-task-query-recovery`。PR：[Draft #30](https://github.com/owariband/Seekino/pull/30)。关联问题：B13（任务列表过量读取）、B10（执行恢复）。
 
 本需求独立于 [PR #18](https://github.com/owariband/Seekino/pull/18) 的 ASR 持久恢复、解析 Agent、工具与 Prompt 修复。11-03 经范围复核，传统 Server / MySQL 查询与 Consumer 故障由本 PR 接手；性能、内容保真与产品 QA 不扩大为本次后端修复。依赖 #18 的成果模型与恢复能力；先合入 #18，再整合本分支并实施验证，目标分支为 dev。
 
