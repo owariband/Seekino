@@ -2,7 +2,7 @@
 
 整理日期：2026-10-28（Asia/Shanghai）。归类依据：文档最初要解决的问题、正文日期、MDV 版本元数据及 Git 历史；文件修改时间不作为提出时间。
 
-阶段归属与当前有效性分开记录。跨阶段修订的文档保留一份正文；表中“后续”说明演进，不把旧文中的“当前”“已完成”解释为今天的状态。实施状态由 [项目看板](../../dev/kanban.html) 维护，问题分析见 [problems](../../dev/problems.md)，决策和验证见 [devlog](../../dev/devlog.md)。
+阶段归属与当前有效性分开记录。跨阶段修订的文档保留一份正文；表中“后续”说明演进，不把旧文中的“当前”“已完成”解释为今天的状态。实施状态由 [管理工作台](../../dev/workbench.html) 维护，问题分析见 [problems](../../dev/problems.md)，决策和验证见 [devlog](../../dev/devlog.md)。
 
 ## 本阶段的提出背景
 
@@ -30,7 +30,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 |---|---|---|---|
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
 | [deepseek-web-search-trd.md](deepseek-web-search-trd.md) | 2026-11-02，Chat 更换模型后搜索仍走未固定 backend 的 DDGS | 免 key DDGS 与 DeepSeek API 独立配置，明确请求、费用和错误合同 | 直接向 dev 集成；接口接入与回答、引用质量分别验收 |
-| [project-kanban-trd.md](project-kanban-trd.md) | 2026-11-02，统一模块、需求与任务管理 | 以分类和三列看板连接分散的问题、PR、TRD 与 devlog，保留历史证据 | 单文件离线维护；历史 DONE 沿用原验收范围，PR 信息按采集时点阅读 |
+| [management-workbench-trd.md](management-workbench-trd.md) | 2026-11-02 统一看板；2026-11-03 升级为管理工作台 | 以分类和看板连接分散的问题、PR、TRD 与 devlog；后续加入里程碑、课程闭环地图与验收门槛，服务周四课程闭环验收 | 单文件离线维护；历史 DONE 沿用原验收范围，PR 信息、课程进度与费用按采集时点阅读 |
 | [handoff_to_new_pc.md](handoff_to_new_pc.md) | 2026-10-26 的多任务交接，含 10-24–25 探索 | 换机前保存真实停点、尝试过程、未完成项与后续理由 | 跨阶段交接；保留三条主线和环境差异，不将局部探针当作完整产品交付 |
 | [parse-output-xml.md](parse-output-xml.md) | 2026-10-26 协议设计稿 | 在保留有效信息的前提下降低解析输出负担 | 交接时尚未正式接入；须同时验证内容质量、时间定位与整集耗时 |
 | [video-parse-performance-trd.md](video-parse-performance-trd.md) | 2026-10-28 建立；11-01 补 Kimi 推理耗时与帧时间配对续跑 | 解析异常长的因素拆解、完整/精简 JSON 与 XML 对照、SHOT 候选及宿主 Canvas 接入边界 | 解析性能主入口；最终采用精简 JSON、不换 XML，质量优先并沿用既有并行策略；10-30 dev 已接入直接 JSON 与 30k，精简合同迁移及实模验收待完成 |

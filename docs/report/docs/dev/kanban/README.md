@@ -1,6 +1,6 @@
 # 单文件项目看板：设计与验收记录
 
-日期：2026-11-02（Asia/Shanghai）。需求 PM-01，分支 `feat/project-kanban`，[PR #27](https://github.com/owariband/Seekino/pull/27)，目标 `dev`。本记录是本次交付快照；最新工作状态以 [看板](../../../../dev/kanban.html) 为准。[主 TRD](../../../../design/03-product-reassessment/project-kanban-trd.md) 的初稿在首提交 `06845112` 中独立提交。
+日期：2026-11-02（Asia/Shanghai）。需求 PM-01，分支 `feat/project-kanban`，[PR #27](https://github.com/owariband/Seekino/pull/27)，目标 `dev`。本记录是本次交付快照；最新工作状态以 [管理工作台](../../../../dev/workbench.html)（2026-11-03 由看板改名） 为准。[主 TRD](../../../../design/03-product-reassessment/management-workbench-trd.md) 的初稿在首提交 `06845112` 中独立提交。
 
 ## 实际交付
 

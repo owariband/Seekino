@@ -11,7 +11,11 @@
 | gateway/bridge/report_docs/ | [gateway/bridge/](gateway/bridge/) | 3 |
 | server/report_docs/ | [server/](server/) | 5 |
 
-设计按发展阶段进入 [设计索引](../design/README.md)，报告按负责模块进入本目录。报告中的时间、分支、测试数量及“已完成/待验收”是原记录的快照；今天的状态看 [项目看板](../dev/kanban.html)，问题分析看 [problems](../dev/problems.md)，决策与验证沿革看 [devlog](../dev/devlog.md)。
+设计按发展阶段进入 [设计索引](../design/README.md)，报告按负责模块进入本目录。报告中的时间、分支、测试数量及“已完成/待验收”是原记录的快照；今天的状态看 [管理工作台](../dev/workbench.html)，问题分析看 [problems](../dev/problems.md)，决策与验证沿革看 [devlog](../dev/devlog.md)。
+
+## Docs / dev / workbench
+
+[2026-11-03 管理工作台与课程闭环地图](docs/dev/workbench/README.md)：同步 Kimi 工作区 revision 4，新增里程碑概览、闭环地图、验收门槛与四列看板，36 项浏览器检查。门槛结果引用已有 QA 报告，未重跑业务验收。
 
 ## Docs / dev / kanban
 

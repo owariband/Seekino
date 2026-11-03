@@ -2,7 +2,7 @@
 
 整理日期：2026-10-28（Asia/Shanghai）。技术设计统一保存在 `docs/design/`，先按发展阶段归属，再通过本页的主题索引查找。每份文档保留独立职责；跨阶段修订保留在原文，由阶段 README 说明时间与背景。
 
-本页的“定位”区分主设计、专项合同、草案和历史参考，不表示功能已实现或已部署。当前工作与完成状态见 [项目看板](../dev/kanban.html)，问题分析见 [problems.md](../dev/problems.md)，决策、实验与验收记录见 [devlog.md](../dev/devlog.md)，完整文档分工见 [docs/README.md](../README.md)。
+本页的“定位”区分主设计、专项合同、草案和历史参考，不表示功能已实现或已部署。当前工作与完成状态见 [管理工作台](../dev/workbench.html)，问题分析见 [problems.md](../dev/problems.md)，决策、实验与验收记录见 [devlog.md](../dev/devlog.md)，完整文档分工见 [docs/README.md](../README.md)。
 
 ## TRD 通用规范（必读）
 
@@ -116,7 +116,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 用户与租户 | [user-tenant-trd.md](02-agent-harness/user-tenant-trd.md) | 主 TRD：游客、用户、租户身份、资源归属与隔离边界。 |
 | Series 共享 | [series-sharing-trd.md](02-agent-harness/series-sharing-trd.md) | 专项 TRD：Series 共享、团队范围与访问合同。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
-| 项目管理看板 | [project-kanban-trd.md](03-product-reassessment/project-kanban-trd.md) | 单文件离线 Kanban：分类与三列状态，统一模块、需求、任务，关联 PR/TRD 和历史证据。 |
+| 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |
 
 ## 模型接入、用量与训练
 
