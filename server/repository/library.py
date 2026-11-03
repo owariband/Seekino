@@ -12,9 +12,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
-from ..model.dto.jobDTO import VideoData
-from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoSummaryState
-from ..model.job import VideoParseTask, VideoParseTaskStatus
+from ..model.dto.libraryDTO import (
+    SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoData, VideoSummaryState,
+)
+from ..model.task import VideoParseTask, VideoParseTaskStatus
 from ..model.upload import UploadSession
 from ..model.tenant import Tenant
 from ..model.user import User
@@ -503,12 +504,11 @@ class LibraryRepository:
                 index_status = VideoIndexStatus.FAILED
             else:
                 index_status = VideoIndexStatus.NOT_READY
-            parse_status = task_status or video.parse_status
+            parse_status = task_status or VideoParseTaskStatus.PENDING.value
             states.append(self._video_state(
                 video,
                 tenant_id=tenant_id,
                 index_status=index_status,
-                latest_job_id=None,
                 parse_status=parse_status,
                 parse_progress=(
                     100
@@ -567,7 +567,6 @@ class LibraryRepository:
         *,
         tenant_id: str,
         index_status: VideoIndexStatus,
-        latest_job_id: str | None,
         parse_status: str,
         parse_progress: int | None,
         last_error: str | None,
@@ -590,7 +589,6 @@ class LibraryRepository:
             upload_progress=record.upload_progress,
             parse_progress=parse_progress,
             index_status=index_status,
-            latest_job_id=latest_job_id,
             last_error=last_error,
             keyframe_uris=keyframe_uris,
             display_name=record.display_name,

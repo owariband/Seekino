@@ -7,9 +7,10 @@ from engine.parsev2.planning import interval_size, plan_intervals
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import aliased, Session, sessionmaker
 
-from ..model.dto.jobDTO import VideoParseTaskDetail, VideoParseTaskInputState, VideoParseTaskState
-from ..model.job import ChunkTaskPhase, ChunkParseContent, ChunkParseTask, IntervalParseContent, IntervalParseTask, VideoParseTask
-from ..model.job_progress import calculate_video_parse_progress
+from ..model.dto.taskDTO import VideoParseTaskDetail, VideoParseTaskInputState, VideoParseTaskState
+from ..model.task import ChunkTaskPhase, ChunkParseTask, IntervalParseTask, VideoParseTask
+from ..model.parse_content import ChunkParseContent, IntervalParseContent
+from ..model.task_progress import calculate_video_parse_progress
 from ..model.upload import UploadSession, UploadSessionStatus
 from ..model.video import Series, Video, VideoChunk
 from ..utils.time import datetime_to_unix_time_ms, now_unix_time_ms, unix_time_ms_to_datetime

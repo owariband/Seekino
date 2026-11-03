@@ -20,7 +20,7 @@ from server.config.auth import AuthConfig
 from server.config.sse import SSEConfig
 from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
-from server.model.job import VideoParseTask
+from server.model.task import VideoParseTask
 from server.config.parse_profile import default_video_parse_v2_config
 from server.model.video import Series, SeriesVisibility, Video, VideoChunk
 from server.repository.agent import AgentRepository

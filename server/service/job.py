@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Literal
 
-from ..model.dto.jobDTO import VideoParseTaskDetail
-from ..model.job import VideoParseTaskStatus
+from ..model.dto.taskDTO import VideoParseTaskDetail
+from ..model.task import VideoParseTaskStatus
 from ..repository.job import ParseJobRepository
 from .library import LibraryService
 from ..utils.validation import canonical_uuid, require_nonempty_text

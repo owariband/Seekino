@@ -5,7 +5,7 @@ import pytest
 from arkruntime._models import construct_type
 from arkruntime.types.responses.response_stream_event import ResponseStreamEvent
 
-from gateway.ark.sse import request_sse_json, request_sse_response, request_sse_text
+from gateway.streaming.responses import request_response_json, request_sse_response, request_sse_text
 from gateway.errors import SSEProxyError
 from gateway.model_diagnostics import capture_model_diagnostics
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
@@ -88,7 +88,7 @@ def test_parse_asr_sse_diagnostic_captures_request_and_response_once(tmp_path, m
     stream = FakeStream([event])
     usage = []
     with model_call_context({"video_parse_task_id": "parse-asr", "stage": "asr"}), capture_model_usage(usage.append):
-        result = request_sse_json(FakeResponses(stream), model="test", input=[{"role": "user", "content": "ASR prompt"}])
+        result = request_response_json(FakeResponses(stream), model="test", input=[{"role": "user", "content": "ASR prompt"}])
     assert result == {"transcript": "hello"} and stream.closed
     events = [json.loads(line) for line in (tmp_path / usage[0].call_id / "events.jsonl").read_text().splitlines()]
     assert [item["event"] for item in events] == ["request", "sse", "completed"]
@@ -167,7 +167,7 @@ def test_empty_output_log_bounds_unknown_dictionary_shapes_and_excludes_payloads
     stream = FakeStream([SimpleNamespace(type="private-event", sequence_number=0),
                          SimpleNamespace(type="response.completed", sequence_number=1, response=response)])
     with pytest.raises(SSEProxyError, match="no output text"):
-        request_sse_json(FakeResponses(stream), model="test", input=[])
+        request_response_json(FakeResponses(stream), model="test", input=[])
     summary = _empty_output_summary(caplog)
     assert summary["event_types"] == {"other": 1, "response.completed": 1}
     assert summary["output_count"] == 40 and summary["item_types"] == {"other": 32}
@@ -225,7 +225,7 @@ def test_tool_only_terminal_response_keeps_usage_and_closes_stream() -> None:
     assert stream.closed
     assert len(calls) == 1 and calls[0].usage.total_tokens == 92
     with pytest.raises(SSEProxyError, match="no output text"):
-        request_sse_json(FakeResponses(FakeStream(stream.events)), model="test", input=[])
+        request_response_json(FakeResponses(FakeStream(stream.events)), model="test", input=[])
 
 
 def _output_response(response_id: str, text: str) -> object:
@@ -240,7 +240,7 @@ def _output_response(response_id: str, text: str) -> object:
     )
 
 
-def test_request_sse_json_collects_only_output_text() -> None:
+def test_request_response_json_collects_only_output_text() -> None:
     text = json.dumps({"summary": "ok", "events": []})
     response = _output_response("response-1", text)
     stream = FakeStream(
@@ -288,7 +288,7 @@ def test_request_sse_json_collects_only_output_text() -> None:
     )
     responses = FakeResponses(stream)
 
-    assert request_sse_json(responses, model="test", input=[]) == {
+    assert request_response_json(responses, model="test", input=[]) == {
         "summary": "ok",
         "events": [],
     }
@@ -296,7 +296,7 @@ def test_request_sse_json_collects_only_output_text() -> None:
     assert stream.closed is True
 
 
-def test_request_sse_json_exposes_failed_response_metadata() -> None:
+def test_request_response_json_exposes_failed_response_metadata() -> None:
     stream = FakeStream(
         [
             SimpleNamespace(
@@ -327,7 +327,7 @@ def test_request_sse_json_exposes_failed_response_metadata() -> None:
     )
 
     with pytest.raises(SSEProxyError, match="output rejected") as caught:
-        request_sse_json(FakeResponses(stream), model="test", input=[])
+        request_response_json(FakeResponses(stream), model="test", input=[])
 
     assert caught.value.code == "OutputTextSensitiveContentDetected"
     assert caught.value.response_id == "response-2"
@@ -362,19 +362,19 @@ def test_request_sse_json_exposes_failed_response_metadata() -> None:
         ),
     ],
 )
-def test_request_sse_json_rejects_non_completed_terminal_events(
+def test_request_response_json_rejects_non_completed_terminal_events(
     terminal_event: object,
     message: str,
 ) -> None:
     stream = FakeStream([terminal_event])
 
     with pytest.raises(SSEProxyError, match=message):
-        request_sse_json(FakeResponses(stream), model="test", input=[])
+        request_response_json(FakeResponses(stream), model="test", input=[])
 
     assert stream.closed is True
 
 
-def test_request_sse_json_rejects_stream_without_terminal_event() -> None:
+def test_request_response_json_rejects_stream_without_terminal_event() -> None:
     stream = FakeStream(
         [
             SimpleNamespace(
@@ -386,12 +386,12 @@ def test_request_sse_json_rejects_stream_without_terminal_event() -> None:
     )
 
     with pytest.raises(SSEProxyError, match="without a terminal event"):
-        request_sse_json(FakeResponses(stream), model="test", input=[])
+        request_response_json(FakeResponses(stream), model="test", input=[])
 
     assert stream.closed is True
 
 
-def test_request_sse_json_rejects_empty_completed_response() -> None:
+def test_request_response_json_rejects_empty_completed_response() -> None:
     response = SimpleNamespace(id="response-5", output=[])
     stream = FakeStream(
         [
@@ -404,7 +404,7 @@ def test_request_sse_json_rejects_empty_completed_response() -> None:
     )
 
     with pytest.raises(SSEProxyError, match="no output text"):
-        request_sse_json(FakeResponses(stream), model="test", input=[])
+        request_response_json(FakeResponses(stream), model="test", input=[])
 
     assert stream.closed is True
 

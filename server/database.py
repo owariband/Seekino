@@ -37,6 +37,7 @@ _UNIX_TIME_MS_COLUMNS = {
     "agent_conversation": {"create_time", "last_message_time", "update_time"},
     "agent_message": {"create_time", "update_time"},
     "chunk_parse_content": {"create_time", "update_time"},
+    "video_parse_content": {"create_time", "update_time"},
     "chunk_parse_task": {"create_time", "update_time"},
     "context_snapshot": {"create_time", "update_time"},
     "index_sync_intent": {
@@ -49,24 +50,13 @@ _UNIX_TIME_MS_COLUMNS = {
     "interval_parse_task": {"create_time", "update_time"},
     "model_usage": {"create_time", "update_time"},
     "parse_model_call": {"create_time", "update_time"},
-    "parse_usage_attempt": {"create_time", "update_time"},
     "series": {"create_time", "update_time"},
-    "series_parse_job": {
-        "create_time",
-        "finish_time",
-        "heartbeat_time",
-        "lease_expire_time",
-        "next_execute_time",
-        "start_time",
-        "update_time",
-    },
     "tenant": {"create_time", "update_time"},
     "upload_segment": {"create_time", "update_time"},
     "upload_session": {"create_time", "update_time"},
     "user": {"create_time", "update_time"},
     "video": {"create_time", "update_time"},
     "video_chunk": {"create_time", "update_time"},
-    "video_chunk_checkpoint": {"create_time", "update_time"},
     "video_chunk_embedding": {"create_time", "update_time"},
     "video_chunk_info": {"create_time", "parse_time", "update_time"},
     "video_parse_task": {"create_time", "update_time"},
@@ -88,7 +78,6 @@ _UTC_TIMESTAMP_COLUMNS = {
     },
     "model_usage": {"start_time"},
     "parse_model_call": {"start_time"},
-    "parse_usage_attempt": {"start_time"},
     "upload_session": {"completion_start_time", "expire_time", "finish_time"},
     "video_parse_task": {
         "finish_time",
@@ -101,6 +90,10 @@ _UTC_TIMESTAMP_COLUMNS = {
 }
 
 _V2_TASK_COLUMNS = {
+    "video_parse_content": {
+        "id", "video_task_id", "asr", "diarization", "summary", "version", "detail",
+        "create_time", "create_date", "update_time", "update_date",
+    },
     "video_parse_task": {
         "attempt_count",
         "chunk_count",
@@ -195,7 +188,6 @@ _V2_TASK_COLUMNS = {
 
 _V2_LINK_COLUMNS = {
     "upload_session": {"detail", "initial_task_id", "parse_config"},
-    "parse_usage_attempt": {"video_task_id"},
     "parse_model_call": {"video_task_id"},
 }
 
@@ -233,19 +225,7 @@ _LEGACY_FIELD_NAMES = {
         "video_chunk_id",
         "video_parse_task_id",
     },
-    "parse_usage_attempt": {"started_at", "video_parse_task_id"},
     "series": {"created_at", "series_id", "updated_at"},
-    "series_parse_job": {
-        "available_at",
-        "completed_at",
-        "created_at",
-        "created_by_user_id",
-        "heartbeat_at",
-        "job_id",
-        "lease_expires_at",
-        "started_at",
-        "updated_at",
-    },
     "tenant": {"created_at", "owner_user_id", "tenant_id", "updated_at"},
     "upload_segment": {
         "actual_size_bytes",
@@ -289,12 +269,6 @@ _LEGACY_FIELD_NAMES = {
         "updated_at",
         "video_chunk_id",
     },
-    "video_chunk_checkpoint": {
-        "chunk_end_seconds",
-        "chunk_start_seconds",
-        "updated_at",
-        "video_chunk_id",
-    },
     "video_chunk_embedding": {"created_at", "updated_at", "video_chunk_id"},
     "video_chunk_info": {"model_name", "model_provider", "parsed_at", "video_chunk_id"},
     "video_parse_task": {"created_by_user_id"},
@@ -325,7 +299,8 @@ def create_schema(engine: Engine) -> None:
     # connection module depend on concrete repositories.
     from .model import agent as _agent_models  # noqa: F401
     from .model import index_sync as _index_sync_models  # noqa: F401
-    from .model import job as _job_models  # noqa: F401
+    from .model import task as _task_models  # noqa: F401
+    from .model import parse_content as _parse_content_models  # noqa: F401
     from .model import parse_usage as _parse_usage_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401
     from .model import video as _video_models  # noqa: F401
@@ -334,6 +309,17 @@ def create_schema(engine: Engine) -> None:
 
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
+    retired = existing_tables.intersection({"series_parse_job", "video_chunk_checkpoint", "parse_usage_attempt"})
+    retired_links = {
+        f"{table_name}.job_id"
+        for table_name in {"upload_session", "parse_model_call"}.intersection(existing_tables)
+        if "job_id" in {column["name"] for column in inspector.get_columns(table_name)}
+    }
+    if retired or retired_links:
+        raise SchemaUpgradeRequiredError(
+            "retired parse models require scripts/migrate_retired_parse_models.py before init-db: "
+            + ", ".join(sorted(retired | retired_links))
+        )
     legacy_scope = {
         f"{table_name}.workspace_id"
         for table_name in {"series", "upload_session", "agent_conversation", "model_usage", "parse_model_call"}.intersection(existing_tables)
@@ -493,11 +479,6 @@ def create_schema(engine: Engine) -> None:
             "phase", "version", "reference", "requested_run_options",
             "last_error_code", "last_error_message", "extra_context",
         },
-        "series_parse_job": {
-            "version",
-            "processing_duration_ms",
-            "processing_timing_complete",
-        },
         "video": {"duration_ms", "display_name", "description", "cover_uri"},
         "video_chunk": {
             "start_ms",
@@ -505,8 +486,7 @@ def create_schema(engine: Engine) -> None:
             "window_start_ms",
             "window_end_ms",
         },
-        "video_chunk_checkpoint": {"start_ms", "end_ms"},
-        "upload_session": {"sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
+        "upload_session": {"sha256", "completion_stage", "version", "last_error_code", "request_fingerprint"},
     }.items():
         if table_name not in existing_tables:
             continue
@@ -520,7 +500,7 @@ def create_schema(engine: Engine) -> None:
 
     has_existing_core_schema = bool(
         existing_tables.intersection(
-            {"series", "video", "upload_session", "series_parse_job"}
+            {"series", "video", "upload_session"}
         )
     )
     missing_v2_schema: set[str] = set()
@@ -558,7 +538,20 @@ def create_schema(engine: Engine) -> None:
             + ", ".join(sorted(missing_v2_schema))
         )
 
-    from .model.job import ChunkTask, IntervalParseTask, VideoParseTask
+    from .model.task import ChunkTask, IntervalParseTask, VideoParseTask
+    from .model.parse_content import VideoParseContent
+
+    if "video_parse_content" in existing_tables:
+        differences = _schema_structure_differences(inspector, existing_tables, (VideoParseContent.__table__,))
+        columns = {column["name"]: column for column in inspector.get_columns("video_parse_content")}
+        for name in ("asr", "diarization", "summary", "detail"):
+            if name in columns and not isinstance(columns[name]["type"], JSON):
+                differences.add(f"video_parse_content.{name}.type")
+        if differences:
+            raise SchemaUpgradeRequiredError(
+                "Video parse results require scripts/migrate_video_parse_content.py; incompatible: "
+                + ", ".join(sorted(differences))
+            )
     from .model.parse_usage import (
         ModelUsage,
         ParseModelCall,
@@ -747,7 +740,6 @@ def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> N
         "agent_conversation": {"tenant_id", "owner_id"},
         "model_usage": {"tenant_id", "user_id"},
         "parse_model_call": {"tenant_id"},
-        "series_parse_job": {"creator_id"},
         "video_parse_task": {"creator_id"},
     }
     if not existing_tables.intersection({*required, "video", "user", "tenant"}):

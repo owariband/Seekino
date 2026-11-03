@@ -20,17 +20,18 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 - `agent_model/`：Provider 无关的 Agent Model 协议、上下文治理、Tool Loop 与错误；
   `deepagents.py` 接入内部 Supervisor 的 Deep Agents SDK，`factory.py` 负责组装；
 - `openai/`：OpenAI 兼容协议及其 profile，DeepSeek 通过这里接入；
-- `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
+- `ark/`：Ark SDK、多模态、Agent 和 Embedding；
+- `streaming/`：共享 Chat Completions / Responses 请求与 SSE 完整性校验，按模型配置选择传输；
 - `codex/`：Codex app-server 会话与 Agent Adapter；
 - `claude_code/`：Claude Agent SDK Adapter；
 - `bridge/`：用户本机原生 Agent 的 ACP 连接；已有 Client，完整产品接入仍需验收；
 - `../docs/design/pi-host-trd.md`：已退役的云端 Pi Host 历史设计；当前使用 Deep Agents＋MySQL checkpoint；
-- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX Adapter；
+- `local/`：Ollama、llama.cpp 多模态 Adapter，以及进程内 CAM++、WhisperX 和 pyannote Adapter；
 - 根目录的 `multimodal.py`、`embedding.py`、`speaker_embedding.py`、`media.py`、`schema_normalization.py`
-  提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
+  提供共享协议和纯工具，`config.py` 描述来源、模型选择与网页搜索连接配置。
 
 业务层通过 `model_factory.GatewayClient` 获取模型。`create(kind, ref)` 按外部配置
-创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription` 五类模型，也提供对应的
+创建 `generative`、`embedding`、`speaker_embedding`、`rerank`、`transcription`、`diarization` 六类模型，也提供对应的
 `create_*_model()` 类型入口。视觉理解使用生成接口和显式图片能力声明；来源适配器
 支持图片，并不表示该来源下的每个模型都能理解图片。
 
@@ -38,12 +39,58 @@ Schema 错误和重试提示、写入的 batch/revision 回执不会被笼统改
 连接、预算和回退从配置解析，供应商实例创建与关闭均在 Gateway 内完成。Engine
 和 Server 保留抽帧、转写提示词、时间戳归一、检索候选身份与任务状态等业务职责。
 
-`profile: kimi` 的生成接口使用 Chat Completions SSE（`stream=True`、
-`stream_options.include_usage=True`），覆盖直接 JSON 与 legacy / Deep Agents 视觉工具轮次。
-`openai/streaming.py` 复用 SDK 的分片累积，等待终止 choice 后才允许结果校验或工具执行；
-保留 `reasoning_content` 和尾部 usage，并在分片之间检查取消和时间预算。
-其他 profile 保留既有协议。接入依据和真实素材验证边界见
-[Kimi 流式接入 TRD](../docs/design/03-product-reassessment/kimi-streaming-trd.md)。
+HTTP 生成模型在创建时读取 `ModelBinding.stream`，默认 `true`，显式 `false` 使用完整响应；
+主模型与 fallback 分别保留自己的配置，不按 Kimi profile 或业务入口决定开关。
+Chat、Deep Agents、结构化工具、视觉 JSON 和 Ark 视频转写复用 `streaming/` 的协议接收。
+Chat Completions 使用 SDK 解码和增量合并，保留推理字段、工具参数与尾部 usage；
+Responses 校验终止事件、事件顺序和最终正文。结构化结果与工具参数收齐并验证后才交付或执行；
+Deep Agents 的公开 Chat 正文可在收齐前逐段交付，失败时保留部分正文并由宿主标明终态；不自动切换为非流式重放。
+Parse 创建任务时保存开关，恢复后继续传给工厂；旧快照缺少字段时采用默认 `true`，
+读取和序列化旧快照不会凭空增加字段、改变原有指纹。
+本地 Ollama / llama.cpp 生成接口也复用 Chat 接收器；原生 CLI、独立音频和向量接口保留各自协议。
+`model_events.py` 定义通用 `ModelTextDelta` 与 `observe_model_text`，Chat Completions 接收器
+在接收正文时通知作用域内的调用方；事件不包含业务消息、HTTP SSE 或持久化策略。
+Deep Agents 只为公开模型调用绑定观察器，内部摘要不对外发布。Agent 负责回答组装与来源校验，
+Server 负责快照合并、消息持久化和页面 SSE，计时与交付合同见 [Server README](../server/README.md#chat-正文流式与计时证据)。
+宿主通过 `model_diagnostic_scope` 选择本地诊断目录；Chat 的 `SEEKINO_CHAT_TRACE_DIR`
+由 Server 读取并注入，文件沿用私有权限与脱敏合同。Parse 原有 `SEEKINO_MODEL_TRACE_DIR` 行为保留。
+FTT 采证、兼容路径和未部署边界见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
+配置、完整性验证及线上效果边界见
+[模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。
+
+模型取消回调按资源嵌套逆序执行，先处理后来注册的流，再关闭客户端。同步 Chat SSE
+在取消已取得的 HTTP/1 响应时先唤醒 socket 阻塞读，再关闭流，避免仅 `close()` 后读线程
+继续等待。HTTP/2 不关闭可能共享的整条连接；尚无响应或未暴露 socket 的适配器保留
+既有取消与超时兜底。本地退出不代表供应商已停止计费。此处仅处理传输，业务更新、
+是否重发、期限与提交条件仍由宿主决定。验证见
+[取消与冲突恢复报告](../docs/report/server/refine-conflict-recovery-20261102.md)。
+
+首 SSE 期限是协议无关的请求策略，由 `streaming/first_sse.py` 统一提供100秒默认值。
+目前已接入无工具 OpenAI vision JSON（Chat Completions）和自有客户端的 DeepSeek
+JSON（Responses）两条解析路径；它不是 Kimi 专用策略。两条路径均从SDK请求开始计时，
+未收到首个解码事件即中断独占HTTP/1连接并返回 `MODEL_TIMEOUT`，业务重试仍由调用方控制。
+HTTP头、注释心跳不计入；role/reasoning 或 `response.created` 等首事件解除启动期限，
+原总预算与较短调用预算继续有效。取消后检查同样覆盖EOF，避免期限中断被误记为普通断流。
+DeepSeek直接JSON也进入公共请求诊断作用域，保留脱敏请求、原始SSE、完整响应及错误。
+两条解析入口共用SDK暂态错误分类：连接／超时／504／暂态服务错误交给宿主原有有限重试，
+认证／坏请求保留永久失败；JSON校验保留ValidationError及原始候选／字段位置，
+由宿主结果门禁反馈。显式配置的跨Provider fallback保留。
+
+接线范围尚不是整个Gateway：工具循环、其他Chat／Responses调用方、外部注入的共享客户端
+和其他供应商协议未全部接入；不能把公共机制存在当作所有入口已覆盖。自有请求使用独占连接，
+不会关闭共享HTTP/2连接。两种协议的HTTP／HTTPS期限与取消共用44项验证；
+[首 SSE 历史报告](../docs/report/gateway/first-sse-timeout-20261102.md)保留原覆盖边界，
+本次扩展与成本试点见[性能TRD §4.29](../docs/design/03-product-reassessment/video-parse-performance-trd.md#429-11-02deepseek-flash-整课费用对照计划)。
+
+`ModelBinding.temperature` 同时支持 YAML 和内部创建参数，默认 `0.0`，范围 `[0, 2]`，
+主模型与 fallback 分别传递。Kimi profile 在绑定解析和适配器中固定为 `1.0`，可通过
+`resolve_model_binding()` 查看实际值。Chat、Structured、Deep Agents、视觉 JSON/工具和
+Ark 视频转写都使用该字段；旧 Parse 快照缺字段按 0 读取但不改原有序列化形状。
+原生 CLI 不支持设置温度，非默认值明确报错；独立音频和向量协议不转发。
+默认值是兼容选择，不是质量调参结论。完整例子与适用范围见
+[temperature 配置](../docs/model-config.md#模型-temperature-配置)。
+
+Kimi Chat/Agent 的 `none` 映射为显式 `low`；`low/high/max` 保留，参见 [推理档位合同](../docs/model-config.md#kimi-chat-的-reasoning_effort)。
 
 当前配置由本地 YAML 提供。未来云端配置存储将向同一配置合同提供有效定义；
 数据库、租户权限和配置管理 API 属于 Server 配置管理，不进入模型工厂。
@@ -72,6 +119,17 @@ finally:
     client.close()
 ```
 
+## 网页搜索
+
+`WebSearcher` 根据独立 `web_search.provider` 选择 DDGS（默认，无 API key）或 DeepSeek 官方 Search API。
+Server 注入配置，Chat 模型选择与搜索供应商互不绑定；保留统一 `WebSearchHit(title, url, snippet)`。
+DDGS 查询限 500 字符，DeepSeek 限 128，Agent 工具 Schema 使用对应上限。两条路径共用 URL 校验、
+去重与摘要预算；保留 DDGS 依赖，只有选择 DeepSeek 时才读取搜索 key，不自动跨供应商回退。
+日志记录所选 provider/backend、请求 ID、可用的 HTTP 状态、耗时与结果数，不记录凭据或查询正文。
+DDGS 的 auto 由库选择后端；配置写错或指定了已禁用后端时明确失败，避免库静默改回 auto。
+配置示例见[网页搜索配置](../docs/model-config.md#网页搜索配置)，验证见
+[搜索配置 TRD](../docs/design/03-product-reassessment/deepseek-web-search-trd.md)。
+
 ## 可选本地转写
 
 `create_transcription_model("transcription")` / `create("transcription", "transcription")`
@@ -91,6 +149,22 @@ WhisperX 使用 INFO 事件 `local_asr_progress` 记录等待共享 runtime、�
 `phase_percent` 仅表示当前阶段的上游片段比例，不是原片时间覆盖或整个解析任务的完成率；
 VAD 等尚无回调的阶段保留 null。转写 100% 后仍需对齐，最终检查通过才记录 completed；
 失败记录阶段与异常类型。回调不会改变字词处理、超时或取消合同。
+
+## 可选本地说话人分组
+
+`create_diarization_model("diarization")` 调用离线 community-1 Pipeline，返回秒单位的
+regular 和 exclusive 匿名声源区间。它不执行转写、不命名人物；Engine 负责毫秒归一化，
+Server 负责独立成果、任务身份和租约。配置见[本地分组](../docs/model-config.md#本机可选说话人分组2026-11-01)。
+
+创建句柄不加载 ML 依赖或权重。同一 Gateway 的同一设备使用共享锁，单次推理完成即
+释放模型引用和 MPS 缓存；此串行选择不是硬件并发上限的测量。MPS 不可用或实际模型
+设备不符会报错，拒绝静默 CPU 回退。原生批次仅在回调控制点响应取消和期限。
+`cpu_threads` 是 PyTorch 进程级线程设置，同进程来源需保持一致。
+
+`local_diarization_progress` 日志包含加载、segmentation、embeddings、聚类等阶段、
+批次数、任务 context、单调与日历耗时以及回调时观察到的 MPS 分配。回调之间的张量峰值
+可能漏采，不能将该数当真实显存峰值；整机功耗、GPU 利用率与并发上限另测。
+macOS 推理期间临时使用 `caffeinate -i` 防止空闲休眠，结束即解除。
 
 ## 声音向量接口
 
@@ -509,4 +583,4 @@ uv run pytest tests/gateway/test_tracing.py tests/gateway/test_langfuse_integrat
 说明字段组、时间范围和版本兼容性。
 
 
-直接 JSON `OpenAIVisionModel` 将连接中断、客户端超时、上游 504 和暂态服务错误分别转换为通用 `ModelFailureReason`，保留异常链供宿主诊断；有限重试由调用方节点负责，SDK 内不另启重试。认证/坏请求原样失败，主动取消优先。该路径支持已有 `SEEKINO_MODEL_TRACE_DIR` 本地 opt-in trace。详见 [模型连接失败恢复](../docs/design/03-product-reassessment/model-network-failure-trd.md)。
+直接 JSON `OpenAIVisionModel` 当前以 `stream=False` 发送 Chat Completions 请求，等待完整 JSON 后校验；本地 HTTP 代理使用流式传输不等于请求启用了模型 SSE。它将连接中断、客户端超时、上游 504 和暂态服务错误分别转换为通用 `ModelFailureReason`，保留异常链供宿主诊断；有限重试由调用方节点负责，SDK 内不另启重试。认证/坏请求原样失败，主动取消优先。该路径支持已有 `SEEKINO_MODEL_TRACE_DIR` 本地 opt-in trace。详见 [模型连接失败恢复](../docs/design/03-product-reassessment/model-network-failure-trd.md)。

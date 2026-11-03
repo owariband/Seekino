@@ -25,6 +25,7 @@ from gateway.constants import (
     CODEX_APP_SERVER_ADAPTER,
     CODEX_PROVIDER,
     DEEPSEEK_PROVIDER,
+    KIMI_FIXED_TEMPERATURE,
     OPENAI_ADAPTER,
     OPENAI_DEEPSEEK_PROFILE,
     OPENAI_KIMI_PROFILE,
@@ -176,6 +177,18 @@ class WhisperXSourceConfig(BaseModel):
         return self
 
 
+class PyannoteSourceConfig(BaseModel):
+    """Offline audio diarization; no person names or video/task state."""
+
+    model_config = ConfigDict(extra="forbid")
+    adapter: Literal["pyannote"] = "pyannote"
+    provider: Literal["local"] = "local"
+    device: Literal["cpu", "mps", "cuda"] = "mps"
+    cpu_threads: int = Field(default=6, ge=1, le=64, strict=True)
+    segmentation_batch_size: int = Field(default=32, ge=1, strict=True)
+    embedding_batch_size: int = Field(default=32, ge=1, strict=True)
+
+
 class OpenAIVisionSourceConfig(BaseModel):
     """Chat Completions with images and structured JSON output."""
 
@@ -233,6 +246,7 @@ ModelSourceConfig = (
     | ClaudeCodeModelSourceConfig
     | OpenAIAudioSourceConfig
     | WhisperXSourceConfig
+    | PyannoteSourceConfig
     | OpenAIVisionSourceConfig
     | CampPlusModelSourceConfig
     | OllamaEmbeddingSourceConfig
@@ -249,8 +263,10 @@ class ModelBinding(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     source: _NonEmptyString
+    stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     model: _NonEmptyString
-    kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding"] | None = None
+    kind: Literal["generative", "rerank", "transcription", "embedding", "speaker_embedding", "diarization"] | None = None
     request_timeout_seconds: float | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
     reasoning_effort: ReasoningEffort | None = None
@@ -276,6 +292,8 @@ class AgentFallbackConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: _NonEmptyString
+    stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     supports_vision_input: bool = False
     model: _NonEmptyString
     request_timeout_seconds: float | None = Field(default=None, gt=0)
@@ -287,6 +305,8 @@ class AgentModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: _NonEmptyString
+    stream: bool = Field(default=True, strict=True)
+    temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     supports_vision_input: bool = False
     model: _NonEmptyString
     max_output_tokens: int = Field(ge=256, le=262_144)
@@ -415,12 +435,23 @@ class QueryHookConfig(BaseModel):
         "http://127.0.0.1:18841"
     )
     rewriter_model: _NonEmptyString = "seekino-qwen3-text-8b-rewriter"
+    rewriter_stream: bool = Field(default=True, strict=True)
+    rewriter_temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     rewriter_timeout_seconds: float = Field(default=4, gt=0)
     max_output_tokens: int = Field(default=256, ge=1, strict=True)
     history_message_limit: int = Field(default=6, ge=1, strict=True)
     history_max_chars: int = Field(default=2000, ge=1, strict=True)
     query_max_chars: int = Field(default=2000, ge=1, strict=True)
     total_timeout_seconds: float = Field(default=8, gt=0)
+
+
+class WebSearchConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["ddgs", "deepseek"] = "ddgs"
+    backend: _NonEmptyString = "auto"
+    base_url: _HttpsBaseUrl = "https://api.deepseek.com"
+    api_key_env: _NonEmptyString = "DEEPSEEK_API_KEY"
 
 
 class GatewayConfig(BaseModel):
@@ -437,6 +468,7 @@ class GatewayConfig(BaseModel):
     multimodal_embedding: MultimodalEmbeddingConfig
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     query_hook: QueryHookConfig = Field(default_factory=QueryHookConfig)
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     # Runtime tuning is validated by the Server, which owns its constraints.
     agent_runtime: dict[str, object] = Field(default_factory=dict)
     normalized_models: dict[str, EmbeddingModelBinding | ModelBinding] = Field(
@@ -590,8 +622,12 @@ class GatewayConfig(BaseModel):
     def _validate_binding(self, binding: ModelBinding, *, ref: str) -> None:
         source = self.source(binding.source)
         capabilities = adapter_capabilities(source.adapter)
+        if isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)) and not binding.stream:
+            raise ValueError(f"{ref}: {source.adapter} uses a native streaming transport and does not support stream=false")
+        if isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)) and binding.temperature != 0:
+            raise ValueError(f"{ref}: {source.adapter} does not support temperature configuration")
         kind = "embedding" if isinstance(binding, EmbeddingModelBinding) else binding.kind or "generative"
-        if kind in {"embedding", "transcription", "speaker_embedding"} and binding.fallback is not None:
+        if kind in {"embedding", "transcription", "speaker_embedding", "diarization"} and binding.fallback is not None:
             raise ValueError(f"{ref} {kind} does not support fallback")
         if kind == "embedding" and binding.supports_vision_input:
             raise ValueError(f"{ref} embedding does not use generative supports_vision_input")
@@ -614,25 +650,28 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{source.adapter} does not support reasoning_effort")
         if not capabilities.supports_output_limit and binding.max_output_tokens is not None:
             raise ValueError(f"{source.adapter} does not support max_output_tokens")
-        if kind == "speaker_embedding" and any(getattr(binding, name) is not None for name in (
+        if kind in {"speaker_embedding", "diarization"} and any(getattr(binding, name) is not None for name in (
             "context_window_tokens", "context_safety_margin_tokens", "auto_compact_tokens",
             "compact_target_tokens", "max_input_chars",
         )):
-            raise ValueError(f"{ref} speaker_embedding does not use generative context budgets")
+            raise ValueError(f"{ref} {kind} does not use generative context budgets")
         if binding.fallback is not None:
             self._validate_binding(binding.fallback, ref=f"{ref}.fallback")
 
     def _complete_binding(self, binding: ModelBinding) -> ModelBinding:
-        capabilities = adapter_capabilities(self.source(binding.source).adapter)
+        source = self.source(binding.source)
+        capabilities = adapter_capabilities(source.adapter)
         runtime = self.agent_runtime
         values = binding.model_dump()
+        if isinstance(source, OpenAIModelSourceConfig) and source.profile == OPENAI_KIMI_PROFILE:
+            values["temperature"] = KIMI_FIXED_TEMPERATURE
         defaults = {
             "request_timeout_seconds": 600,
             "context_window_tokens": 128_000 if binding.supports_vision_input else runtime.get("context_window_tokens", 128_000),
             "context_safety_margin_tokens": 2048 if binding.supports_vision_input else runtime.get("context_safety_margin_tokens", 2048),
             "max_input_chars": 400_000 if binding.supports_vision_input else runtime.get("max_prompt_chars", 400_000),
         }
-        if binding.kind == "speaker_embedding":
+        if binding.kind in {"speaker_embedding", "diarization"}:
             return binding.model_copy(update={
                 "request_timeout_seconds": binding.request_timeout_seconds or defaults["request_timeout_seconds"],
             })

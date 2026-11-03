@@ -103,9 +103,10 @@ class SuccessiveVideoRuntime(FakeVideoRuntime):
 
 
 class FakeWebSearcher:
-    def __init__(self, *, fail=False):
+    def __init__(self, *, fail=False, max_query_chars=500):
         self.calls = []
         self.fail = fail
+        self.max_query_chars = max_query_chars
 
     def search(self, query, *, max_results, timeout_seconds):
         self.calls.append((query, max_results, timeout_seconds))
@@ -1930,7 +1931,7 @@ def test_provider_gets_initial_background_captions_and_updated_warm_turn(tmp_pat
         _completion(content="Next turn explanation."),
     ])
     adapter = OpenAIAgentModel(
-        "text-model", base_url="https://unused.invalid", api_key="test", client=client,
+        "text-model", base_url="https://unused.invalid", api_key="test", client=client, stream=False,
         request_timeout_seconds=30, provider_name="test", max_output_tokens=1000,
     )
     model = DeepAgentsSupervisorModel(
@@ -2267,3 +2268,35 @@ def test_query_batch_does_not_multiply_a_smaller_model_allowance():
     )
     assert model.tool_results[0]["error"]["code"] == "QUERY_BUDGET_EXCEEDED"
     assert video.calls == []
+
+
+@pytest.mark.parametrize("provider,limit", [("ddgs", 500), ("deepseek", 128)])
+def test_web_schema_and_execution_use_selected_provider_limit(provider, limit):
+    from pydantic import ValidationError
+    from agent.chat.supervisor import VideoSearchArguments
+    from gateway.config import WebSearchConfig
+    from gateway.web_search import WebSearcher
+    selected = WebSearcher(WebSearchConfig(provider=provider))
+    web = FakeWebSearcher(max_query_chars=selected.max_query_chars)
+    model = FakeSupervisorModel(calls=("search_web", "search_web"), queries=("界" * limit, "界" * (limit + 1)))
+    runtime = _runtime(model, web=web)
+    schema = runtime._web_search_arguments
+    assert schema.model_json_schema()["properties"]["query"]["maxLength"] == limit
+    assert schema(query="界" * limit).query == "界" * limit
+    with pytest.raises(ValidationError):
+        schema(query="界" * (limit + 1))
+    assert VideoSearchArguments(query="界" * 500).query == "界" * 500
+    runtime.kick(_inputs(), load_video_context=lambda: [])
+    assert len(web.calls) == 1 and web.calls[0][0] == "界" * limit
+    assert model.tool_results[1]["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_web_auth_failure_is_non_retryable_tool_feedback():
+    class UnauthorizedWebSearcher(FakeWebSearcher):
+        def search(self, *args, **kwargs):
+            raise WebSearchError("DeepSeek search returned HTTP 401", retryable=False)
+    model = FakeSupervisorModel(calls=("search_web",), answer="Search is unavailable.")
+    result = _runtime(model, web=UnauthorizedWebSearcher()).kick(_inputs(), load_video_context=lambda: [])
+    assert model.tool_results[0]["error"]["code"] == "WEB_SEARCH_FAILED"
+    assert model.tool_results[0]["error"]["retryable"] is False
+    assert result.content == "Search is unavailable."

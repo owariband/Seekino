@@ -319,6 +319,7 @@ class GatewayClient:
         self._resources: set[_OwnedResource] = set()
         self._codex_executors: dict[str, ThreadPoolExecutor] = {}
         self._whisperx_runtimes: dict[tuple[str, str], Any] = {}
+        self._diarization_locks: dict[str, Any] = {}
         owns_supervisor_sessions = supervisor_sessions is None and config.supervisor_harness == "deepagents"
         if owns_supervisor_sessions:
             from gateway.agent_model.deepagents import DeepAgentSessionStore
@@ -387,25 +388,28 @@ class GatewayClient:
         if isinstance(source, ArkModelSourceConfig):
             from gateway.ark.multimodal import ArkMultimodalModel
             delegate = ArkMultimodalModel(
-                **common, api_key=key, reasoning_effort=binding.reasoning_effort,
+                **common, api_key=key, reasoning_effort=binding.reasoning_effort, stream=binding.stream,
+                temperature=binding.temperature,
             )
         elif isinstance(source, OpenAIModelSourceConfig) and source.profile == "deepseek":
             from gateway.openai.multimodal import DeepSeekMultimodalModel
             delegate = DeepSeekMultimodalModel(
                 **common, base_url=source.base_url, api_key=key,
-                reasoning_effort=binding.reasoning_effort or "none",
+                reasoning_effort=binding.reasoning_effort or "none", stream=binding.stream,
+                temperature=binding.temperature,
             )
         elif isinstance(source, (OpenAIModelSourceConfig, OpenAIVisionSourceConfig)):
             from gateway.openai.vision import OpenAIVisionModel
-            if binding.reasoning_effort not in {None, "none"}:
-                raise ValueError("Chat vision generative models do not support reasoning_effort")
             options = (
                 dict(token_parameter=source.token_parameter, response_format=source.response_format)
                 if isinstance(source, OpenAIVisionSourceConfig) else {}
             )
             delegate = OpenAIVisionModel(
                 **common, provider=source.provider, base_url=source.base_url, api_key=key,
-                stream=isinstance(source, OpenAIModelSourceConfig) and source.profile == "kimi",
+                stream=binding.stream,
+                temperature=binding.temperature,
+                profile=source.profile if isinstance(source, OpenAIModelSourceConfig) else "standard",
+                reasoning_effort=binding.reasoning_effort,
                 **options,
             )
         elif isinstance(source, (CodexModelSourceConfig, ClaudeCodeModelSourceConfig)):
@@ -477,6 +481,21 @@ class GatewayClient:
             source=binding.source,
         )
 
+    def create_diarization_model(self, ref: str | ModelBinding = "diarization") -> Any:
+        from gateway.config import PyannoteSourceConfig
+        from gateway.local.pyannote import PyannoteDiarizationModel
+        binding = self._binding(ref, "diarization")
+        source = self.config.source(binding.source)
+        if not isinstance(source, PyannoteSourceConfig):
+            raise TypeError("diarization requires a pyannote source")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Gateway client is closed")
+            # Different model handles on one device must not load duplicate pipelines.
+            device_lock = self._diarization_locks.setdefault(source.device, Lock())
+        return self._own(PyannoteDiarizationModel(binding, source, device_lock=device_lock),
+                         source=binding.source)
+
     def create_speaker_embedding_model(self, ref: str | ModelBinding = "speaker") -> Any:
         from gateway.speaker_embedding import build_speaker_embedding_model
         binding = self._binding(ref, "speaker_embedding")
@@ -498,12 +517,13 @@ class GatewayClient:
         if fallback is not None and fallback.fallback is not None:
             raise ValueError("Agent models support one configured fallback")
         config = AgentModelConfig(
-            source=binding.source, model=binding.model,
+            source=binding.source, model=binding.model, stream=binding.stream,
+            temperature=binding.temperature,
             supports_vision_input=binding.supports_vision_input,
             max_output_tokens=binding.max_output_tokens,
             request_timeout_seconds=binding.request_timeout_seconds,
             fallback=(AgentFallbackConfig(**fallback.model_dump(include={
-                "source", "model", "supports_vision_input", "max_output_tokens",
+                "source", "model", "stream", "temperature", "supports_vision_input", "max_output_tokens",
                 "request_timeout_seconds", "reasoning_effort",
             })) if fallback is not None else None),
         )
@@ -515,7 +535,7 @@ class GatewayClient:
         ))
 
     def create(
-        self, kind: Literal["generative", "transcription", "embedding", "rerank", "speaker_embedding"],
+        self, kind: Literal["generative", "transcription", "embedding", "rerank", "speaker_embedding", "diarization"],
         ref: str | ModelBinding,
     ) -> Any:
         constructors = {
@@ -524,6 +544,7 @@ class GatewayClient:
             "embedding": self.create_embedding_model,
             "rerank": self.create_rerank_model,
             "speaker_embedding": self.create_speaker_embedding_model,
+            "diarization": self.create_diarization_model,
         }
         try:
             constructor = constructors[kind]

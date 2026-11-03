@@ -9,7 +9,8 @@ from sqlalchemy import select
 
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
-from server.model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, VideoParseTask
 from server.model.video import Series, Video, VideoChunk
 from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY, VideoParsePersistenceService
 from server.utils.time import datetime_to_unix_time_ms

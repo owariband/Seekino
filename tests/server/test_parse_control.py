@@ -1,7 +1,7 @@
 from datetime import timedelta
 import pytest
 from server.database import create_session_factory
-from server.model.job import VideoParseTask, ChunkParseTask
+from server.model.task import VideoParseTask, ChunkParseTask
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.service.parse_control import set_paused, is_paused
 from server.service.video_parse_errors import VideoParseConflictError

@@ -40,10 +40,12 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.job import (
+from server.model.parse_content import (
     ChunkParseContent,
-    ChunkParseTask,
     IntervalParseContent,
+)
+from server.model.task import (
+    ChunkParseTask,
     IntervalParseTask,
     VideoParseTask,
 )

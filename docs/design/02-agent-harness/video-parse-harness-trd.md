@@ -1,3 +1,17 @@
+# 1. 问题与现状
+
+视频解析需要同时处理长视频拆块、并发执行、失败恢复和索引放行。若 Agent、Engine 与 Server 的职责混在一起，容易出现重复执行、进程中断后无法复用已有成果，以及任务显示成功但检索仍不可用。本文明确一个 Video 的解析任务怎样调度，各层分别负责什么，以及满足什么条件后才能交付检索结果。
+
+## 思路与证据入口
+
+| 流程 | 本文对应内容 |
+| --- | --- |
+| 影响因素与评价指标 | 并发取消与成本风险见 §0.1；配置、容量和恢复约束见 §0.2、§0.4、§1.9 |
+| 方案设计 | 主链与索引放行见 §0.3；各组件职责和执行顺序见 §1 |
+| 对照实验与结果 | 既有任务迁移和验收记录见 §2；后续真实运行记录以实际日期为准 |
+| 试点验证与取舍 | §2.2 列出必须通过的验收；未完成的真实环境和整集验收不得写成已通过 |
+| 结果与最终决定 | 当前采用的合同及未决项保留在文首状态说明，历史方案只作追溯 |
+
 > **当前解析任务设计基线：2026-10-14，已确认、待实现。**
 > 本次修订采用 `ChunkTask + phase + status`：现有 Chunk 任务合并承担 Parse 与 Index，
 > Interval 任务只承担跨 Chunk 的 Refine；不新增 `ChunkIndexTask` / `chunk_index_task` 表。
@@ -9,15 +23,11 @@
 
 > **Event 投影最终合同（2026-10-17）**：以 [Sub-Chunk / Event TRD](sub-chunk-trd.md) 为准。保留 Chunk 的完整有序 Timeline，不新增 Event / Frame SQL 表或 Frame Index；全部覆盖 Refine 提交后，由既有 Chunk INDEX 派生独立 Event ES 的词法、文本向量及抽帧视觉向量，不增加 Agent 写库回调、任务或队列。有效 Event 目标首次 INDEX 冻结在 VideoParseTask.detail，不改变 ParseConfig；完成需核验同版 Chunk/Event，含空集合与存量回填。
 
-一整个agent for：一个video解析
-要求：engine提供内部schema
-不管engine怎么换策略，我们同一套agent harness都可以被复用填写同样的schema内容
+一个 Video 对应一个 ParseAgent。Engine 提供统一 Schema；Harness 可以调整解析策略，但输出合同保持不变。
 
-# 零、宏观设计架构
-整体：parseAgent（就被叫做这个）
-内部是一整套harness system
+# 方案设计：解析任务如何调度
 
-由langgraph实现的一个graph
+ParseAgent 内部由 LangGraph 执行。
 Graph 是 Agent 内部的执行程序，RunState 才是状态。现有 Chat 也是这样：没有公开的 ChatGraph，只有 Runtime 内部的私有 _graph。
 agent/chat/video_search/runtime.py:119
 ![parse_big_graph](diagram/parse_big_graph.png)
@@ -25,22 +35,20 @@ agent/chat/video_search/runtime.py:119
 
 
 
-有一个必须执行的前置`VideoParsePrepare`
-node 执行的操作：
-1. 读取 Video 已持久化且固定的 `VideoChunk` 拓扑；首次 Prepare 尚未生成时，按照 Video 的固定 Chunk 生成合同仅持久化顺序和 `[start_seconds, end_seconds)` 边界，后续解析任务复用同一批 `VideoChunk`
-Chunk 媒体不持久化；Worker 执行任务时从 `video.original_source_uri` 解析原视频，通过 FFmpeg 将所需 Chunk / AnalysisWindow 生成到当前 Task / Lease 隔离的临时目录，本次任务的媒体消费结束后清理，失败重试时重新生成
-临时路径不进入 DB、Checkpoint 或 RunState；正常完成、取消和 Lease 丢失时主动清理，进程强杀或断电留下的过期目录由 Worker 启动和周期 Reaper 在确认 Lease 失效后清理
-持久化 Chunk / Interval 拓扑，供 Repository 成果事务及 DB Queue 后续扫描使用
-根据 input config 中的 `chunk_duration` 和 `interval_duration`，动态计算区间所需的 Chunk 数量 `interval_size`
-2. Prepare 完成后进入 ChunkScheduler；Interval readiness 由成果事务维护，DB Queue 扫描并原子领取
+解析前必须执行 `VideoParsePrepare`，完成两项工作：
 
-随后进入`ChunkScheduler`
-3. 根据切片结果划分出batch，batch之间几乎强串行
-4. 通过一定指数避让stream式对各个chunk依次并行执行 understanding（第一层单chunk解析）
-随后进入`ChunkUnderstandingWorkflow`
-Understanding 可读取原 Chunk 前后各 `visual_input.context_overlap_seconds` 秒的视觉上下文，首尾裁剪到原视频边界；
-ASR 音视频、OCR、Canvas 写入及最终索引仍限定原 Chunk。额外画面只辅助理解，不创建相邻 Chunk 的重复事件。
-5. 当前 batch 至少 90% 已提交 Understanding 成果时，开启下一 batch 的 stream 式 understanding，不等待索引
+1. 读取 Video 已持久化的固定 `VideoChunk` 拓扑。首次 Prepare 尚未生成拓扑时，只按固定 Chunk 合同持久化顺序和 `[start_seconds, end_seconds)` 边界，后续解析复用同一批 `VideoChunk`。
+   - Chunk 媒体不持久化。Worker 从 `video.original_source_uri` 读取原视频，用 FFmpeg 把所需 Chunk／AnalysisWindow 生成到当前 Task／Lease 隔离的临时目录；本次媒体用完即清理，失败重试时重新生成。
+   - 临时路径不写入 DB、Checkpoint 或 RunState。正常完成、取消和 Lease 丢失时主动清理；进程强杀或断电留下的过期目录，由 Worker 启动流程和周期 Reaper 在确认 Lease 失效后清理。
+   - 持久化 Chunk／Interval 拓扑，供 Repository 提交成果和 DB Queue 后续扫描。
+   - 根据 input config 中的 `chunk_duration` 和 `interval_duration`，计算每个 Interval 所需的 Chunk 数 `interval_size`。
+2. Prepare 完成后进入 ChunkScheduler。Interval 的就绪状态由成果事务维护，DB Queue 扫描后原子领取。
+
+ChunkScheduler 按切片结果划分批次，并按指数退避错峰启动各 Chunk 的 Understanding。批次之间保留较强的顺序约束，但不要求前一批索引完成才开放后一批。
+
+Understanding 可以读取原 Chunk 前后各 `visual_input.context_overlap_seconds` 秒的视觉上下文，首尾裁剪到原视频边界。ASR 音视频、OCR、Canvas 写入和最终索引仍限定在原 Chunk；额外画面只辅助理解，不能生成相邻 Chunk 的重复事件。
+
+当前批次至少 90% 的 Understanding 成果提交后，开放下一批，不等待索引。
 
 声纹功能开启时，已提交 Understanding 的 Chunk 数达到 `ceil(chunk_count × 0.75)`，
 Video 协调器便调用独立的 `VoiceprintAgent`；不等待全部 Chunk，剩余 Understanding 继续按原队列规则执行。
@@ -58,15 +66,11 @@ Interval 的 Refine 成果提交后进入 `COMPLETE`，不再承担索引状态�
 单 Chunk 的 `ChunkUnderstandingWorkflow` 仍在基础解析成果提交后结束；后续 Index 由同一任务行的下一阶段执行。
 
 
-然后最后异步的后台`PrefixContextAgent`：
-对于当前chunk， if其前置的所有chunk全部被解析成功，参照v1逻辑维护其compact字段内容维护其前置背景，并可以根据compact context来修改相应的asr或者别的信息微调，然后相关内容需要重新embd
+最后是异步执行的 `PrefixContextAgent`。当前 Chunk 之前的所有 Chunk 都解析成功后，参照 V1 逻辑维护 compact 字段中的前置背景；必要时可以根据 compact context 微调 ASR 或其他信息。影响检索内容的修改需要重新生成 embedding。
 
 ## 0.1 必须要考虑的风险
 
-由于并发带来了效率，也带来了可能的大量成本浪费——当进程在任何时候异常中断时，我们都应该主动尝试对每一个model api调用尝试强制中断，防止大量并行调用浪费token和金钱，同时得不到我们系统的统计
-用户的钱会莫名其妙的消失还trace不到（没错我的钱会这样！好好给我节约啊！）
-因此这样的全局LLM api调用需要加一个切片，来用一个全局单例统一管理并可以执行中断
-这个是引入并发的代价
+并发提高了效率，也放大了异常中断时的成本。进程退出时，需要主动取消仍在执行的模型 API 调用，避免并行请求继续消耗 token 和费用，却没有进入系统用量记录。因此，全局 LLM API 调用必须由统一管理入口负责记录、追踪和取消。这是引入并发必须承担的控制成本。
 
 ## 0.2 Harness input config
 
@@ -139,20 +143,21 @@ VideoParsePrepare：固定拓扑与配置，建立 ChunkTask / Interval 子任�
 上限限制的是被系统授予执行权的任务数，不保证依赖不足时始终跑满，也不承诺失联后远端供应商立即停止计算。
 
 
-# 一、聚焦架构
+# 各组件职责与执行顺序
 ## 1.1 `PrepareVideoParse`
 
-input args：
-`input config`（包含 `chunk_duration`、`interval_duration` 等）
-`seriesId + videoId`
-获取到相应的video后进行chunk的生成，每一个chunk有自己的Id，按照顺序生成，chunk的综合唯一标识id即为拼接结果
+输入参数：
 
+- `input config`：包含 `chunk_duration`、`interval_duration` 等配置。
+- `seriesId + videoId`：定位待解析视频。
 
-1. 根据 `videoId` 读取固定的 `VideoChunk` 拓扑；首次 Prepare 尚未生成时，按照 Video 的固定 Chunk 生成合同仅持久化顺序和时间边界
-不持久化 Chunk / AnalysisWindow 媒体；Worker 按 Task / Lease 从原视频生成隔离的临时输入，并在本次任务的媒体消费结束后清理
-持久化 Chunk / Interval 拓扑，供 Repository 成果事务及 DB Queue 后续扫描使用
-根据 input config 中的 `chunk_duration` 和 `interval_duration`，动态计算区间所需的 Chunk 数量 `interval_size`
-2. Prepare 完成后进入 ChunkScheduler；Interval readiness 由成果事务维护，DB Queue 扫描并原子领取
+读取视频后按顺序生成 Chunk，每个 Chunk 都有自己的 ID，综合唯一标识由对应部分拼接而成。
+
+1. 根据 `videoId` 读取固定的 `VideoChunk` 拓扑。首次 Prepare 尚未生成拓扑时，按固定 Chunk 合同只持久化顺序和时间边界。
+   不持久化 Chunk／AnalysisWindow 媒体；Worker 按 Task／Lease 从原视频生成隔离的临时输入，本次媒体用完即清理。
+   持久化 Chunk／Interval 拓扑，供 Repository 提交成果和 DB Queue 后续扫描。
+   根据 input config 中的 `chunk_duration` 和 `interval_duration`，计算每个 Interval 所需的 Chunk 数 `interval_size`。
+2. Prepare 完成后进入 ChunkScheduler。Interval 的就绪状态由成果事务维护，DB Queue 扫描后原子领取。
 
 Interval 从起点 Chunk 开始取连续的 `interval_size` 个 Chunk；例如 Chunk 为 20 秒、Interval 为 60 秒时，每个区间需要 3 个 Chunk。
 以 Chunk 序号表示区间时，`s = start_sequence_no`，`e = s + chunk_count`，成员满足
@@ -169,8 +174,7 @@ DB Queue 扫描满 mask 的 Interval，在领取事务中重新检查 readiness�
 Worker 领取成功后调用 Refine，重复扫描不能重复提交。
 这里的 bitmap 只表示成员基础解析就绪，与供 Agent 读取的 `scope` 分开。
 
-`output`:
-chunk_list
+输出：`chunk_list`。
 
 
 ## 1.2 `ChunkScheduler`
@@ -180,28 +184,17 @@ chunk_list
 `execution.parse_concurrency` 控制该 Video 的理解并发，`dispatch_interval_seconds` 控制启动间隔；
 批次大小与执行并发不再混用。具体原子领取机制见 0.4，调度规则见 1.7。
 
-## 1.3 db queue的选型
-每一个chunk和interval需要设置相应的db table，原因在于并发解析一次中断可能有十几个checkpoint需要恢复
-并且并行并发前提下谁最先开始根本就不重要，所以我们更需要的是select xxx where status=$our_target_status 的item继续放进worker作为task继续处理
+## 1.3 DB Queue 选型
 
-但是chunk和interval一个table就够了吗？
-还是对于chunkId额外存储分成两个table，一个用于持久化解析结果，另一个用于标识解析任务state？
-或者如果我们要拆表，以后还可以进行refactor？
+每个 Chunk 和 Interval 都需要对应的数据库任务记录。并发解析中断时，可能有十几个 checkpoint 等待恢复；任务开始先后并不重要，关键是能通过 `SELECT ... WHERE status = <目标状态>` 找到待执行记录，再交给 Worker 继续处理。
 
-不，考虑语义的拆分，我们应该分成两个table——一个负责任务时的state流转，另一个负责最终成果的存储
-两个table：
-chunk_task（由现有 chunk_parse_task 原位演进）
-——> chunk_parse_content
+任务状态和最终成果分表保存：`chunk_task`（由现有 `chunk_parse_task` 原位演进）负责状态流转，`chunk_parse_content` 负责成果存储。这样拆表后，后续可以分别演进任务调度与内容结构。
 
-ChunkTask 负责 Parse 与 Index 的阶段、执行状态和恢复；content 保存当前有效解析成果及可复用的 embedding checkpoint。
-每次针对一个 Video 发起的解析由 `video_parse_task` 记录，其 `id` 即本次解析的任务 ID。
-Chunk、Interval 任务通过现有 `video_task_id` 关联 `video_parse_task.id`；Chunk 任务负责理解和索引，
-Interval 任务只负责跨 Chunk 的 Refine，主任务汇总完成情况。
-视频本身由 `video_parse_task.video_id` 关联。
-因为一个video后续可能可以重新解析，是按照新添加任务的方式，还是旧有video_parse_task重新再执行一次的语义方式？（失败重试：继续同一个 video_parse_task_id，复用已完成成果。
-用户重新解析、修改解析配置：新建 video_parse_task，增加 version。）
+ChunkTask 负责 Parse 与 Index 的阶段、执行状态和恢复；content 保存当前有效的解析成果及可复用的 embedding checkpoint。每次针对一个 Video 发起的解析由 `video_parse_task` 记录，其 `id` 就是本次解析的任务 ID。Chunk、Interval 任务通过现有 `video_task_id` 关联 `video_parse_task.id`；Chunk 任务负责理解和索引，Interval 任务只负责跨 Chunk 的 Refine，主任务汇总完成情况，视频本身由 `video_parse_task.video_id` 关联。
 
-## 1.3.1 相关db model设计确定
+同一 Video 后续可以重新解析，分两种情况：失败重试继续使用同一个 `video_parse_task_id`，复用已完成成果；主动重新解析或修改配置时，新建 `video_parse_task` 并增加 version。
+
+## 1.3.1 相关数据库模型设计
 
 ### `video`
 
@@ -554,7 +547,7 @@ content    JSON         NULL          基础成果及后续 Refine / Prefix 更�
 version                INT           NOT NULL
 create_time           TIMESTAMP       NOT NULL
 update_time           TIMESTAMP       NOT NULL
-detail    JSON        NULL        里面存一点额外信息，例如相关模型配置，还有一开始识别出来的原始信息etc
+detail    JSON        NULL        额外信息，例如相关模型配置和初始识别结果
 
 FK (chunk_task_id)
   -> chunk_task(id)
@@ -1102,7 +1095,7 @@ Parse、Refine、Index 的执行时长分别由上游 `execution.parse_execution
 实际Agent采集5人各5条，目标47500–48800ms从高松灯改成长崎爽世，声音比较及ES写回已核验。
 此为已知目标和端到端链路验收，含同场景近邻参考，不代表全片人物准确率；完整报告见B12及本地实验目录。
 
-同日 v8 在静态声纹契约和强制 null 提示下复测，Prefix/Compact 关闭，24/22/24 流程完成，墙钟30:08.913；
+同日 v8 在静态声纹契约和强制 null 提示下复测，Prefix/Compact 关闭，24/22/24 流程完成，实际耗时30:08.913；
 5人各5条参考在ready后不变，无声纹来源失效拒绝。目标仍被ASR合入35.6–48.6秒长段，Understanding及最终ES错归千早爱音，
 没有覆盖目标的成功声音比较记录，人物识别验收失败。与v7生成模型不同，不作单因素耗时或准确率结论；证据见B12及本地v8实验报告。
 

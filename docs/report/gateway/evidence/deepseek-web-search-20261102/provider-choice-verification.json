@@ -1,0 +1,27 @@
+{
+  "date": "2026-11-02",
+  "base_commit": "3cd51191b723fb12d5b3b6184b03b7c293f8f075",
+  "source_sha256": {
+    "gateway/web_search.py": "e22db95cd2f78c4a1fe55f4cf27ac40f981dfdaae082e65340c8949cf3c957d3",
+    "gateway/config.py": "ded4004d4ab1cff58c58df9aee38c19401e8e1314377ef495373312a9b3d02e0",
+    "agent/chat/supervisor.py": "8411ad40d8a7ca5cf4e2210df45fe441ffa8127a428cba4e8882c00a0a25cb54",
+    "scripts/local_services.py": "4c5e2ca7ee9eda3dbf113cef06b5093597e60dbf071b8110cf8acf1cfafbef30",
+    "pyproject.toml": "02cdc82ca12107ee697f090587df677b35f5eedefdb377c87d39215071cf7ecb",
+    "uv.lock": "d7316cf7c55dcbfb139d127acf03be8b073b4ad337653ad9b78c01cf981ea2de"
+  },
+  "backend": {
+    "passed": 604,
+    "skipped": 1,
+    "failed": 0,
+    "seconds": 39.2
+  },
+  "skip": "optional MySQL timing check: SEEKINO_TEST_DATABASE_URL not configured",
+  "default_provider": "ddgs",
+  "deepseek_requires_explicit_selection": true,
+  "direct_probes": {
+    "ddgs_results": 5,
+    "deepseek_results": 5
+  },
+  "new_generation_calls": 0,
+  "answer_quality_retested": false
+}

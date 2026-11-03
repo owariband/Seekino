@@ -1,0 +1,30 @@
+{
+  "old_task_id": "2eef6cec-f494-407c-8939-cf415de1336e",
+  "task_id": "d7c13ca5-14f5-4201-8855-a2b94f07e68c",
+  "old_content_id": "0db96ccc-1087-4df7-9887-cad384b58e91",
+  "new_content_id": "fdc9d458-475f-452e-bd30-dc3fdef99237",
+  "content": {
+    "asr": {
+      "equal": true,
+      "sha256": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4",
+      "keys": [
+        "language",
+        "transcript"
+      ]
+    },
+    "diarization": {
+      "equal": true,
+      "sha256": "8875920a4ccd7134fa7597d070346529f59fe5b041e53a4bb527500eaa99cd8c",
+      "keys": [
+        "turns",
+        "schema_version",
+        "exclusive_turns"
+      ]
+    }
+  },
+  "new_detail_keys": [
+    "asr",
+    "diarization"
+  ],
+  "asr_new_calls": 0
+}

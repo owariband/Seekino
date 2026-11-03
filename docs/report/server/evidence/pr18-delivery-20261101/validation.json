@@ -1,0 +1,89 @@
+{
+  "implementation_commit": "15d1bbae",
+  "documentation_commit": "b6f5109d",
+  "integrated_remote": "174160a94af97e7d700a492660b382c3ef010234",
+  "backend": {
+    "target": "/Users/hypnos/.codex/worktrees/full-video-asr/Seekino",
+    "command": [
+      "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "tests/agent/video_parse_v2",
+      "tests/engine/parsev2",
+      "tests/gateway",
+      "tests/server",
+      "-m",
+      "not live_agent",
+      "-q",
+      "--tb=short"
+    ],
+    "exit_code": 1,
+    "elapsed_seconds": 123.014,
+    "summary": "5 failed, 4681 passed, 121 skipped, 1 deselected, 66 warnings in 120.23s (0:02:00)",
+    "failed_tests": [
+      "tests/gateway/test_langfuse_integration.py::test_offline_otlp_payload_headers_hierarchy_and_time",
+      "tests/gateway/test_model_config_v2.py::test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy",
+      "tests/gateway/test_model_config_v2.py::test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate",
+      "tests/gateway/test_model_config_v2.py::test_codex_supervisor_without_independent_binding_requires_the_agent_source_to_match",
+      "tests/gateway/test_multimodal_agent.py::test_fallback_media_is_checked_against_the_active_context_budget"
+    ]
+  },
+  "baseline": {
+    "target": "/private/tmp/seekino-pr18-baseline-174160a9",
+    "command": [
+      "/Users/hypnos/workspace/agent/Seekino/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "tests/gateway/test_langfuse_integration.py::test_offline_otlp_payload_headers_hierarchy_and_time",
+      "tests/gateway/test_model_config_v2.py::test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy",
+      "tests/gateway/test_model_config_v2.py::test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate",
+      "tests/gateway/test_model_config_v2.py::test_codex_supervisor_without_independent_binding_requires_the_agent_source_to_match",
+      "tests/gateway/test_multimodal_agent.py::test_fallback_media_is_checked_against_the_active_context_budget",
+      "-q",
+      "--tb=short"
+    ],
+    "exit_code": 1,
+    "elapsed_seconds": 2.082,
+    "failed_tests": [
+      "tests/gateway/test_langfuse_integration.py::test_offline_otlp_payload_headers_hierarchy_and_time",
+      "tests/gateway/test_model_config_v2.py::test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy",
+      "tests/gateway/test_model_config_v2.py::test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate",
+      "tests/gateway/test_model_config_v2.py::test_codex_supervisor_without_independent_binding_requires_the_agent_source_to_match",
+      "tests/gateway/test_multimodal_agent.py::test_fallback_media_is_checked_against_the_active_context_budget"
+    ],
+    "all_final_failures_reproduced": true
+  },
+  "frontend": {
+    "typecheck_exit_code": 0,
+    "test_files_passed": 7,
+    "tests_passed": 153,
+    "test_elapsed_seconds": 10.44,
+    "scope": "seven changed test files; package.json and lockfile identical to installed workspace"
+  },
+  "raw_logs": {
+    "pre-merge-tests.log": {
+      "path": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/pr18-delivery-20261101/pre-merge-tests.log",
+      "sha256": "c7604bfda5efe10354a4c0b731d538032f2638fae9e4604c2ef717a8bb6ded92"
+    },
+    "integrated-regression.log": {
+      "path": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/pr18-delivery-20261101/integrated-regression.log",
+      "sha256": "16649d2faab622f1ed8f7a4d1de17225ed4551dfe28a63947a7d09c380d58e0f"
+    },
+    "final-regression.log": {
+      "path": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/pr18-delivery-20261101/final-regression.log",
+      "sha256": "bf8926c6120e66762364964e1235569d20104af07277acba925d6a2c3b3bec84"
+    },
+    "remote-baseline-five.log": {
+      "path": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/pr18-delivery-20261101/remote-baseline-five.log",
+      "sha256": "0b517ae28de06e4fff25b92ee2fc77a92ef11d6490bb184435c5cac661f1af2d"
+    }
+  },
+  "original_comparison_table_sha256": "cedd08d339773d7f7140e476448e9da9a62514fdfb14df7e4218e7790c1ef95c",
+  "new_interruption_implemented": false,
+  "service_restarted": false,
+  "model_calls_added": 0
+}

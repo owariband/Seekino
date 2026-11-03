@@ -32,7 +32,7 @@ const pendingUpload: UploadSessionView = {
   totalSizeBytes: 10, contentSha256: null, preferredSegmentSizeBytes: 10, totalSegments: 1,
   status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0, missingSegmentNumbers: [0],
   completionStage: null, completionProgress: null, estimatedRemainingMs: null, expiresAt: 100,
-  videoId: null, jobId: null, lastError: null, version: 1, createdAt: 1, updatedAt: 1,
+  videoId: null, lastError: null, version: 1, createdAt: 1, updatedAt: 1,
 };
 
 const initialMessageOptions: AgentMessageOptions = {
@@ -106,7 +106,6 @@ const videoWithoutProgress: VideoSummary = {
   playbackUrl: "/api/videos/content?videoId=video-without-progress",
   playbackUrlExpiresAt: null,
   thumbnail: null,
-  latestJobId: "job-without-ranges",
   lastError: null,
 };
 

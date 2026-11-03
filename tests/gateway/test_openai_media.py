@@ -1,3 +1,4 @@
+# Complete-response contract cases explicitly select stream=False; see test_model_streaming.py for default SSE integration.
 import json
 
 import httpx
@@ -52,7 +53,11 @@ def install_transport(monkeypatch, module, handler):
     clients = []
 
     def create_client(**kwargs):
-        http = httpx.Client(transport=httpx.MockTransport(handler))
+        supplied = kwargs.pop("http_client", None)
+        hooks = supplied.event_hooks if supplied is not None else {}
+        if supplied is not None:
+            supplied.close()
+        http = httpx.Client(transport=httpx.MockTransport(handler), event_hooks=hooks)
         clients.append(http)
         return OpenAI(**kwargs, http_client=http)
 
@@ -95,7 +100,7 @@ def test_vision_sends_images_to_selected_endpoint_and_validates_json(
     image = tmp_path / "frame.png"
     image.write_bytes(b"test-image")
     model = OpenAIVisionModel(
-        "custom-vision",
+        "custom-vision", stream=False,
         provider="custom",
         base_url="https://vision.example/v1",
         api_key="fake-test-key",
@@ -137,7 +142,7 @@ def test_vision_tools_keep_selected_protocol_budget_and_real_usage(
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"test-image")
     model = OpenAIVisionModel(
-        "custom-vision", provider="portable", base_url="https://vision.example/v1",
+        "custom-vision", stream=False, provider="portable", base_url="https://vision.example/v1",
         api_key="offline", max_output_tokens=131072, token_parameter=token_parameter,
         response_format=output_format, request_timeout_seconds=19,
     )
@@ -181,7 +186,7 @@ def test_vision_tool_control_cancels_transport_before_canvas_write(monkeypatch):
 
     clients = install_transport(monkeypatch, "gateway.openai.vision", handler)
     model = OpenAIVisionModel(
-        "custom-vision", provider="portable", base_url="https://vision.example/v1", api_key="offline",
+        "custom-vision", stream=False, provider="portable", base_url="https://vision.example/v1", api_key="offline",
     )
     with control_model_calls(Control()), capture_model_usage(usage.append), pytest.raises(ModelCallCancelledError):
         model.generate(
@@ -223,7 +228,7 @@ def test_vision_rejects_incomplete_filtered_or_invalid_output(
 
     clients = install_transport(monkeypatch, "gateway.openai.vision", handler)
     model = OpenAIVisionModel(
-        "vision",
+        "vision", stream=False,
         provider="custom",
         base_url="https://vision.example/v1",
         api_key="fake-test-key",
@@ -296,7 +301,7 @@ def test_direct_vision_classifies_real_sdk_transport_errors(monkeypatch, tmp_pat
             raise httpx.ReadTimeout("read timed out")
         return httpx.Response(failure, json={"error": {"message": "provider failure"}})
     clients = install_transport(monkeypatch, "gateway.openai.vision", handler)
-    model = OpenAIVisionModel("vision", provider="test", base_url="https://test.invalid/v1", api_key="offline")
+    model = OpenAIVisionModel("vision", stream=False, provider="test", base_url="https://test.invalid/v1", api_key="offline")
     with model_call_context({"video_parse_task_id": "parse-network-test"}), pytest.raises(ModelFailureError if reason else APIError) as raised:
         model.generate([TextInput("describe")], schema_name="scene", result_type=Result)
     events_path = next((tmp_path / "trace").glob("*/events.jsonl"))
@@ -330,6 +335,6 @@ def test_direct_vision_cancellation_is_not_retried_as_connection_failure(monkeyp
         admitted[-1].cancel()
         raise httpx.RemoteProtocolError("closed by cancellation")
     install_transport(monkeypatch, "gateway.openai.vision", handler)
-    model = OpenAIVisionModel("vision", provider="test", base_url="https://test.invalid/v1", api_key="offline")
+    model = OpenAIVisionModel("vision", stream=False, provider="test", base_url="https://test.invalid/v1", api_key="offline")
     with control_model_calls(Control()), pytest.raises(ModelCallCancelledError):
         model.generate([TextInput("describe")], schema_name="scene", result_type=Result)

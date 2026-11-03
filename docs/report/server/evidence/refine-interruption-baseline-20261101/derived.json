@@ -1,0 +1,22 @@
+{
+  "attempts": 102,
+  "unique_intervals_started": 63,
+  "completed_intervals": 53,
+  "successful_interval_first_attempt_to_commit_seconds": {
+    "n": 53,
+    "median": 820.336,
+    "min": 160.551,
+    "max": 2050.847,
+    "method": "persisted started_at_ms through final completed started_at_ms + elapsed_ms; includes retry waits; successful intervals only"
+  },
+  "requests_per_attempt": {
+    "3": 26,
+    "2": 30,
+    "1": 44,
+    "4": 2
+  },
+  "streams": {
+    "true": 190
+  },
+  "failed_attempt_occupied_share": 0.5723456564271452
+}

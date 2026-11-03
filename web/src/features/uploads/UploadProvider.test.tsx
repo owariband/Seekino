@@ -54,7 +54,7 @@ const session: UploadSessionView = {
   totalSizeBytes: 10, contentSha256: null, preferredSegmentSizeBytes: 4, totalSegments: 3,
   status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0,
   missingSegmentNumbers: [0, 1, 2], completionStage: null, completionProgress: null,
-  estimatedRemainingMs: null, expiresAt: 100, videoId: null, jobId: null, lastError: null,
+  estimatedRemainingMs: null, expiresAt: 100, videoId: null, lastError: null,
   version: 1, createdAt: 1, updatedAt: 1,
 };
 
@@ -333,7 +333,6 @@ describe("upload deletion", () => {
     mocks.completeUpload.mockResolvedValue({
       uploadSession: { ...completing, status: "COMPLETED", completionStage: null },
       videoId: "video-a",
-      jobId: "job-a",
       videoParseTaskId: "task-a",
     });
     vi.stubGlobal("EventSource", class {
@@ -372,7 +371,6 @@ describe("upload deletion", () => {
         initialVideoParseTaskId: "task-a",
       },
       videoId: "video-a",
-      jobId: null,
       videoParseTaskId: "task-a",
     });
     let source!: EventTarget & { close: ReturnType<typeof vi.fn>; url: string };

@@ -83,7 +83,6 @@ export interface VideoSummary {
   playbackUrl: string | null;
   playbackUrlExpiresAt: UnixTimeMs | null;
   thumbnail: ImageAsset | null;
-  latestJobId: string | null;
   lastError: Failure | null;
 }
 
@@ -179,6 +178,8 @@ export interface ParseConfig {
     canonicalMaxHeight: number;
   };
   asr: {
+    stream?: boolean;
+    temperature?: number;
     mode: "lite" | "none";
     scope?: "chunk" | "video";
     model: string;
@@ -186,7 +187,10 @@ export interface ParseConfig {
     maxOutputTokens: number | null;
     concurrency: number;
   };
+  diarization?: { source: string; model: string; request_timeout_seconds: number } | null;
   vision: {
+    stream?: boolean;
+    temperature?: number;
     model: string;
     inputMode: "video" | "ordered_frames";
     fps: number;
@@ -203,6 +207,8 @@ export interface ParseConfig {
     backgroundImageMaxEdge: number;
   };
   fallback: {
+    stream?: boolean;
+    temperature?: number;
     enabled: boolean;
     model: string;
     frameFps: number;
@@ -256,7 +262,6 @@ export interface UploadSessionView {
   estimatedRemainingMs: number | null;
   expiresAt: UnixTimeMs;
   videoId: string | null;
-  jobId: string | null;
   initialVideoParseTaskId?: string | null;
   lastError: Failure | null;
   version: number;
@@ -268,7 +273,6 @@ export interface UploadSessionView {
 export interface UploadCompleteView {
   uploadSession: UploadSessionView;
   videoId: string;
-  jobId: string | null;
   videoParseTaskId: string;
 }
 
@@ -697,9 +701,21 @@ interface AgentAnswerEventBase {
   occurredAt: UnixTimeMs;
 }
 
+export interface AgentTextStream {
+  origin: "provider_delta";
+  callId: string;
+  deltaSequence: number;
+  modelFirstTextMs: number | null;
+  modelElapsedMs: number;
+  providerReceivedMonotonicMs: number;
+  serverPublishedMonotonicMs: number;
+  beforeModelCompleted: boolean;
+}
+
 export type AgentAnswerEvent =
   | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.started" | "answer.snapshot" | "answer.completed";
+      textStream?: AgentTextStream | null;
     })
   | (AgentAnswerEventBase & {
       type: "answer.evidence";
@@ -708,6 +724,7 @@ export type AgentAnswerEvent =
   | (AgentAnswerEventBase & { type: "answer.block"; block: AgentRenderBlock })
   | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase; timing?: AgentMessageTiming | null })
   | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
+  | (AgentAnswerEventBase & { type: "answer.model.completed"; callId: string })
   | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.failed";
       error: Failure;

@@ -1,0 +1,5 @@
+pmset -g log, captured 2026-11-01 Asia/Shanghai:
+2026-11-01 10:49:37 +0800 Sleep: Entering Sleep state due to 'Idle Sleep', 1048 secs
+2026-11-01 11:07:05 +0800 DarkWake: RTC/SleepService, 2 secs
+2026-11-01 11:07:07 +0800 Sleep: Sleep Service Back to Sleep, 247 secs
+2026-11-01 11:11:14 +0800 Wake: keyboard/HID Activity

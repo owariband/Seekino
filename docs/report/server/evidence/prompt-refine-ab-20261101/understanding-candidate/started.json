@@ -1,0 +1,23 @@
+{
+  "at": 1793512890.125685,
+  "stage": "understanding",
+  "variant": "candidate",
+  "source_call_id": "d38de9b9-67e2-4eb1-b45c-15ee8ac42859",
+  "refine_input_sha256": "ec92c2d36d84790f3d2904a0f27a23bf6c97c548eef3c31885c2c6dc20a59291",
+  "binding": {
+    "source": "kimi_coding",
+    "model": "k3.1-pro",
+    "kind": null,
+    "request_timeout_seconds": 600.0,
+    "max_output_tokens": 30000,
+    "reasoning_effort": "none",
+    "supports_vision_input": true,
+    "fallback": null,
+    "context_window_tokens": 262144,
+    "context_safety_margin_tokens": 4096,
+    "auto_compact_tokens": 200000,
+    "compact_target_tokens": 150000,
+    "max_input_chars": 600000
+  },
+  "calls_budget": "one run, 600 s, no retry/fallback"
+}

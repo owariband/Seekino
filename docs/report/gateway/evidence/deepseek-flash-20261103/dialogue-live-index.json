@@ -1,0 +1,28 @@
+{
+  "captured_at": "2026-11-03T03:29:04.077726+00:00",
+  "task_id": "93d60de9-b0ab-4aa6-aeea-342935e237b2",
+  "sequence_no": 31,
+  "source_chunk_range_ms": [
+    1860000,
+    1920000
+  ],
+  "mysql_version": 3,
+  "mysql_event_index": 9,
+  "mysql_dialogue_range_ms": [
+    1917740,
+    1920300
+  ],
+  "es_hit": {
+    "_index": "seekino_recovery_events_20261031_test",
+    "_id": "732c39d2b99af8036e25f28398a6dc12124d27466d9189f2bc913e68121cc365",
+    "_score": 0.0,
+    "_source": {
+      "video_chunk_id": "ac65fd73-eeee-50ec-92c1-4aa624c1684f",
+      "parse_task_id": "93d60de9-b0ab-4aa6-aeea-342935e237b2",
+      "version": 3,
+      "timeline_index": 9,
+      "event_type": "DIALOGUE"
+    }
+  },
+  "contract": "ES indexes identity and lexical/vector projection; trusted timestamps are hydrated from this exact MySQL task/chunk/version/timeline_index."
+}

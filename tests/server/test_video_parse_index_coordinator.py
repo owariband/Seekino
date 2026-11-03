@@ -21,12 +21,12 @@ from engine.rag import (
 )
 from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
 from gateway.usage import track_model_call
-from server.model.dto.jobDTO import (
+from server.model.dto.parseContentDTO import (
     IndexableChunkState,
     ChunkIndexingSnapshot,
-    ChunkParseLease,
 )
-from server.model.job import ChunkParseContent
+from server.model.dto.taskDTO import ChunkParseLease
+from server.model.parse_content import ChunkParseContent
 from server.service.video_parse_persistence import INDEX_EMBEDDINGS_DETAIL_KEY
 from server.service.video_parse_index_coordinator import (
     VideoParseIndexCoordinator,

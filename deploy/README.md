@@ -224,6 +224,8 @@ Git 忽略不等于删除或备份；媒体仍须和 MySQL 做配套备份。Doc
 threads `4`、seed `42`、`enable_thinking=false`；GPU offload 参数按新机器后端设置。
 Jev 还需要 `.env.local` 中的 `OPENROUTER_JEV_API_KEY`。
 
+**2026-10-31 更新：** 本机活动 ASR 已切换到 `ggml-large-v3-turbo-q5_0.bin`（574,041,195 字节），上表 ASR FP16 文件大小属于原部署记录。当前运行 PR #18 工作树的启动脚本，显式指定主工作区配置／binary／模型目录并加 `--require-metal`；命令和控制记录见[接线报告](../docs/report/gateway/local/whisper-metal-activation-20261031.md)。旧 WhisperX 来源仅保留给冻结任务，不是新任务默认。
+
 Whisper 使用当前配置的 `http://127.0.0.1:18842/v1`，可在依赖与二进制准备好后运行：
 
 ```bash

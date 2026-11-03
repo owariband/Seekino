@@ -10,6 +10,38 @@
 
 本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
 
+## 网页搜索配置
+
+`web_search.provider` 与 `models.agent` / `models.supervisor` 独立。用户选择免 API key 的
+DDGS 或 DeepSeek 官方 API；省略配置时兼容原来的 DDGS，不根据环境里是否存在 key 自动切换。
+
+```yaml
+# 免 API key；仍需联网。backend 可选 auto 或 DDGS 支持的搜索后端。
+web_search:
+  provider: ddgs
+  backend: auto
+```
+
+```yaml
+# 显式选择 DeepSeek API，key 的值保存在环境变量中。
+web_search:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+```
+
+DDGS 查询限 500 字符，DeepSeek 限 128；Agent 的工具 Schema 跟随所选服务，视频查询仍为 500。
+`backend` 仅用于 DDGS，支持单个名称或逗号分隔的后端列表；不存在或被该版本禁用的后端会明确失败，
+不会由库偷偷改成 auto。auto 下库自行选择/组合后端，日志记录的是所选模式，不声称精确追踪了每条结果的底层引擎。
+
+`base_url` / `api_key_env` 仅用于 DeepSeek，前者为 HTTPS 服务根地址，适配器追加 `/v1/tools/search`。
+连接配置修改后重启 API；仅选择 DeepSeek 时，本地启动器才跟踪搜索 key 的变化。
+两种方式均返回摘要，失败时不自动跨供应商回退。合同和实测见
+[搜索配置 TRD](design/03-product-reassessment/deepseek-web-search-trd.md)。
+
+2026-11-02 本需求的独立测试实例显式选择 DeepSeek Search，生成模型使用 DeepSeek Flash low；
+该选择不改变仓库默认行为、主工作区模型配置或已有视频任务快照。
+
 ## 模型定义与默认引用
 
 `agent`、`vision`、`transcription`、`embedding`、`rerank` 是现有业务使用的默认引用。`models` 也接受任意命名引用，例如 `document_reader`；引用名称不决定供应商和协议。
@@ -54,6 +86,62 @@ models:
 
 普通生成支持文本；接收图片的模型必须声明 `supports_vision_input: true`，且连接适配器支持图片输入。该声明由配置维护者根据模型能力设置，不会从模型名字猜测。为兼容已有版本 2 配置，保留引用 `vision`、`vision_fallback` 未声明该字段时默认允许视觉输入；任意新引用默认为文本。`fallback` 可内联另一份模型绑定，其来源、模型、超时、推理和预算分别保存。
 
+## 模型 stream 配置
+
+`models.<role>.stream` 是模型绑定的严格布尔配置，省略时默认 `true`，创建模型时统一传给协议适配器。它适用于已实现的 Chat Completions / Responses 生成入口，覆盖 Chat、Deep Agents、结构化工具、视觉 JSON/工具轮次和使用 Ark 生成接口的视频转写；不按模型名或 `profile: kimi` 特判。主模型和 fallback 各自配置，例如在原有绑定中添加：
+
+```yaml
+models:
+  vision:
+    source: kimi_coding
+    model: k3.1-pro
+    stream: true
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-1-pro-260628
+      stream: false
+```
+
+也可以在创建时传入 `ModelBinding(source="kimi_coding", model="k3.1-pro", stream=False)`。旧 `agent_model.stream` 和 `agent_model.fallback.stream` 会保留到统一绑定。字符串 `"false"`、数字 `0/1` 和 `null` 都不接受；需要兼容不支持 SSE 的服务时明确配置 `false`，错误时不会自动切换传输方式并重发。
+
+流式请求在 Gateway 收齐和校验后仍返回完整结果，工具参数也必须完整验证后才能执行。末尾 usage 会保留。`stream=true` 可以让响应生成期间持续接收事件，但不会减少输入 context，也不能保证首个事件之前不会超时。它不等于前端逐 token 展示；前端当前仍接收业务进度及答案快照。
+
+新 Parse 任务在配置快照中保存 `stream`，恢复时按快照创建模型。历史快照缺少字段时使用新的默认 `true`，序列化保持原有形状以保护幂等指纹；这意味着加载本次修复的服务后，未配置该字段的旧任务也会使用流式生成。显式 `false` 在普通续跑和 retry 中保留，切换已有任务配置仍按前述 reparse 约定执行。
+
+独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器使用 `query_hook.rewriter_stream`，默认 `true`。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
+
+## Kimi Chat 的 reasoning_effort
+
+Kimi Chat/Agent、Structured Agent 和 Deep Agents 的共享请求 profile 将 `reasoning_effort: none` 作为 `low` 的兼容别名，实际请求显式发送 `reasoning_effort: low`；显式 `low/high/max` 原样发送。此前 `none` 会省略该字段，使供应商采用默认思考档位。此映射不表示关闭思考，不修改保存的配置或历史任务快照。其他供应商及不支持该设置的通用视觉生成入口沿用原合同。
+
+2026-11-02 已用真实 Kimi 请求确认映射；单样本耗时与 reasoning 用量见 [Chat 实测记录](report/server/chat-streaming-live-20261102.md#kimi-low-20261102)。
+
+## 模型 temperature 配置
+
+`models.<role>.temperature` 与内部 `ModelBinding.temperature` 共用同一配置合同：默认 `0.0`，接受 `[0, 2]` 内的有限数值，拒绝字符串、布尔值、`null`、NaN 和无穷。主模型与 fallback 独立配置；未配置的 fallback 使用自己的默认值，不继承主模型的温度。旧 `agent_model.temperature` / `agent_model.fallback.temperature` 同样保留到统一绑定。
+
+```yaml
+models:
+  agent:
+    source: deepseek_api
+    model: deepseek-flash
+    temperature: 0.2
+    fallback:
+      source: ark_default
+      model: doubao-seed-2-0-lite-260428
+      temperature: 0.8
+```
+
+业务代码也可以直接调用 `gateway.create_generative_model(ModelBinding(source="deepseek_api", model="deepseek-flash", temperature=0.2))`，或将同一绑定传给 `create_agent_factory()`。Chat、Deep Agents、结构化 Agent、视觉 JSON/工具轮次、Responses 生成和 Ark 视频转写均使用绑定中的温度。
+
+**`profile: kimi` 固定生效为 `1.0`。** 即使原始配置写了 `0.2`，`GatewayConfig.resolve_model_binding()` 返回的有效值与最终请求仍为 `1.0`；底层 Kimi 适配器也保留这个约束。规则按 source 的 profile 判断，不按 provider 显示名猜测。依据为 `k3.1-pro` 的历史 HTTP 400：`invalid temperature: only 1 is allowed for this model`，见 [接入复验记录](dev/devlog.md)。这里按当前用户要求统一约束 Kimi profile，不推定未来型号能力。
+
+默认 `0` 延续原有多数调用路径的固定值，没有温度对照评测证明它是业务最优值。此前省略温度的普通视觉 / Ark Responses 请求现在明确发送 `0`，Kimi 视觉明确发送 `1`；供应商仍可施加更窄的合法值限制。业务质量需要另行评测。
+
+Parse 默认配置从已解析的模型绑定取得温度；配置 HTTP 接口接受 `vision.temperature`、`asr.temperature`、`fallback.temperature`，OCR 与直接 V2 任务模型也保留该字段。任务快照记录配置，恢复后继续传给 Gateway，Kimi 创建时仍强制 `1`。历史快照缺字段按 `0` 读取，序列化保持原有形状。新快照带有 `temperature`，回滚到旧代码前须检查任务格式兼容性。
+
+直接构造的 Ollama / llama.cpp 生成适配器支持 `temperature`，默认 `0`；独立 Query Hook 使用 `query_hook.rewriter_temperature`。Codex / Claude 原生协议不支持设置温度，非默认值会被明确拒绝，默认 `0` 仅是兼容占位，不会作为采样设置传给 CLI。独立音频 ASR、WhisperX、向量和声纹不会转发此生成参数。本次没有新增网页温度控件。
+
 ## Supervisor harness 与独立模型
 
 顶层 `supervisor_harness` 选择 `deepagents` 或 `codex`，与 `models.supervisor` 一起在 Server 启动时加载。修改 harness、模型或连接配置后重启 Server；`agent_runtime` 中已有的运行预算仍按原规则用于新消息。
@@ -62,7 +150,7 @@ models:
 
 Kimi 继续使用现有 OpenAI 兼容适配器和 `profile: kimi`。在同一份有效 YAML 中将 `models.supervisor.source` 改为 `kimi_coding`、`model` 改为 `k3.1-pro`，保持 `supervisor_harness: deepagents`，并设置 `KIMI_API_KEY`。其他生成式角色也可独立选择相同来源；选择 API 模型名不会自动替换转写或 embedding。
 
-`profile: kimi` 的 `GatewayClient.create_generative_model()` 自动启用 Chat Completions 流式接收，适用于直接 JSON 和视觉工具轮次，无需新增 YAML 开关。它不改变 FPS、模型、reasoning 参数或业务重试预算；流收齐后沿用结果校验。其他 profile 保持原协议。实现与验证见 [Kimi 流式接入 TRD](design/03-product-reassessment/kimi-streaming-trd.md)。
+Kimi 与其他 HTTP 生成模型使用上面的通用 `stream` 配置。2026-10-30 的 Kimi 单 Chunk 真实验证保留在 [历史接入 TRD](design/03-product-reassessment/kimi-streaming-trd.md)，不代表其他供应商或整集解析已经在线验收。
 
 需要 Codex Supervisor 时，在同一份 YAML 中替换以下字段；其他预算字段可沿用原值：
 
@@ -130,7 +218,85 @@ python -m server.cli init-db
 
 `openai_audio` 调用 `POST /audio/transcriptions`。Engine 用 FFmpeg 把每个分析窗口转换为单声道、16 kHz WAV 后上传，临时音频在成功或失败后自动清理。`verbose_json` 支持 `segments[].start/end/text`，时间单位为秒，进入项目后乘以 1000 并舍入为整数毫秒，限制在窗口范围内；已有 `start_seconds` / `end_seconds` 字段名保留。接口仅支持 JSON 文本时，设置 `response_format: json`；这时只有整个窗口级别的时间范围，没有句级时间戳。只兼容聊天接口的服务不能作为该 ASR 来源。没有音轨或抽取失败会报错，不会伪造空转写。
 
-## 本地 WhisperX ASR 与对齐
+## 本机 Apple GPU 测试：whisper.cpp Turbo（2026-10-31）
+
+本机当前默认转写为 `large-v3-turbo-q5_0`＋whisper.cpp Metal，通过既有 `openai_audio` 调用。它不导入 WhisperX／faster-whisper，也不执行声学强制对齐。句段／token 时间由 whisper.cpp 产生，进入 Engine 后仍归一化为整数毫秒；不能标为声学对齐。此处是明确选择的纯转写测试合同。
+
+```yaml
+model_sources:
+  whisper_cpp_local:
+    adapter: openai_audio
+    provider: whisper.cpp
+    base_url: http://127.0.0.1:18842/v1
+    api_key_env: WHISPER_API_KEY
+    response_format: verbose_json
+models:
+  transcription:
+    kind: transcription
+    source: whisper_cpp_local
+    model: large-v3-turbo-q5_0
+    request_timeout_seconds: 1200
+```
+
+`WHISPER_API_KEY=local-whisper` 是 loopback 客户端占位值，不代表原生服务启用了认证。当前主工作区 `.env.local` 选择 `config/local-dev-config.yaml`；切换仅改变该文件的 transcription 默认绑定并增加新来源，其他模型配置保留。旧 `whisperx_local` 仍可供历史冻结任务解析，但不被新任务默认选择，不能直接 Retry 旧 large-v3 任务来获得 Turbo。
+
+在工作树运行以下命令，路径替换为本机实际已准备的文件；`--config` 避免从错误工作树读取默认配置，`--binary`／`--model-dir` 可复用主工作区资产，无需复制权重：
+
+```bash
+uv run --no-sync python scripts/local_whisper.py \
+  --config /absolute/path/to/local-dev-config.yaml \
+  --binary /absolute/path/to/whisper-server \
+  --model-dir /absolute/path/to/whisper-models \
+  --require-metal
+```
+
+脚本根据绑定选择 `ggml-large-v3-turbo-q5_0.bin`，启用 GPU 默认路径和 flash attention，固定 processors=1、CPU threads=6、max-context=0、beam-size=5、best-of=5、无温度 fallback，语言默认 auto（可显式 `--language en`）。`--require-metal` 根据实际 backend 日志拒绝 CPU／非 Metal 回退；`--dry-run` 只检查文件并打印命令，不能作为 GPU 已使用的证据。
+
+WhisperX 的 `batch_size` 和 `compute_type=int8` 不适用于此来源；Q5_0 由权重文件决定。`--threads` 调整 CPU 线程，不是 GPU threads；`--processors=1` 也不是 WhisperX batch_size=1。当前原生 server 以单个模型互斥执行推理请求；ASR 并发与 Kimi／Chunk 并发独立。新建 whisper.cpp 解析任务默认 `scope=video`，读取／提交视频级成果；其他第三方音频源原默认及历史显式 Chunk scope 不变。
+
+启动、60 秒接线检查和完整 116 分 20 秒 Gateway 调用见[10-31 接线报告](report/gateway/local/whisper-metal-activation-20261031.md)。当前 whisper.cpp HTTP 成果身份按声明的来源／模型区分；本机 binary／权重摘要与解码参数保存在服务记录，不能把通用 HTTP 配置等同于已经核实远端权重。模型或服务解码参数变更须创建新解析版本。真实业务库迁移、117 Chunk 全流程和独立对齐另行验收。
+
+## 本机可选说话人分组（2026-11-01）
+
+可在上面的 whisper.cpp 整片转写之后追加 `models.diarization`。该能力调用 pyannote
+community-1 的 PyTorch/MPS Pipeline，不调用 faster-whisper。当前可选 `whisperx`
+依赖已包含所需 pyannote；实测版本为 pyannote.audio 4.0.7、torch/torchaudio 2.8.0。
+先取得模型访问授权并下载完整离线目录；凭据不写入模型配置或任务快照。
+
+```yaml
+model_sources:
+  pyannote_local:
+    adapter: pyannote
+    provider: local
+    device: mps
+    cpu_threads: 6
+    segmentation_batch_size: 32
+    embedding_batch_size: 32
+models:
+  diarization:
+    kind: diarization
+    source: pyannote_local
+    model: /absolute/local/speaker-diarization-community-1
+    request_timeout_seconds: 1200
+```
+
+这是追加配置，保留既有 `models.transcription`；新任务仍须启用 `asr.scope=video`。
+两项 batch 控制 pyannote 的神经网络批次，与 WhisperX 的 ASR batch_size 无关。
+MPS 不可用即失败，不自动落回 CPU；不强制 `num_speakers=1`。本轮单设备串行运行，
+Kimi 的 Chunk 并发独立。模型目录须包含 `config.yaml`、segmentation/embedding 权重
+与 PLDA 文件；首次校验权重摘要有磁盘读取成本。
+
+Server 将原始转写和分组分别保存为 `video_parse_content.asr/diarization`；原文及时间
+不被分组覆写。Preparing 恢复分别验证并复用成果，启用分组后须两者完成才放行 Chunk。
+旧库先执行[成果表迁移](migrations/20261031_video_parse_content.md)；旧任务未冻结分组
+时仍关闭，新解析版本可在同一 Video 内复用身份及摘要匹配的旧 ASR。
+
+Understanding/Refine 获得整片作用域的匿名编号：不覆盖或混合主声源的 cue 保持未知，
+匿名声源不等于具体人物。这条组合没有补上声学强制对齐；whisper.cpp 时间仍是原时间来源。
+VAD/分组资源见[整片实测](report/gateway/local/pyannote-mps-20261101.md)，实际接口验收
+单独记录，不将实验文件自动导入旧任务。
+
+## 可选 WhisperX ASR 与对齐
 
 需要本地低调用成本及字幕字词时间时，推荐可选的 `adapter: whisperx`。项目直接在 Gateway 进程中调用 **WhisperX 3.8.6 的转写和强制对齐**；无需启动兼容 HTTP 服务。WhisperX 内部使用 faster-whisper，用户不需要另写一套 faster-whisper 接线。原 Ark 和 `openai_audio` 仍可选择；未选本地来源时不导入 WhisperX、不加载权重。安装与本地计算仍有磁盘、内存和耗时成本，效果与速度需按自己的素材验证。
 
@@ -141,7 +307,7 @@ uv sync --extra whisperx
 # 已使用 CAM++ 时保留两项：uv sync --extra speaker --extra whisperx
 uv run --no-sync python -m nltk.downloader punkt_tab
 
-# 当前本机部署使用完整 large-v3；CPU/int8 的速度和精度仍需按素材评估。
+# 以下为可选 WhisperX 部署示例；当前本机测试使用上节 Turbo＋Metal。
 # ASR 必须为 CTranslate2 目录，不能填写 whisper.cpp 的 ggml-*.bin。
 uv run --no-sync hf download Systran/faster-whisper-large-v3 --local-dir /opt/seekino/models/whisperx/large-v3
 uv run --no-sync hf download facebook/wav2vec2-base-960h --local-dir /opt/seekino/models/whisperx/align-en
@@ -165,7 +331,7 @@ model_sources:
     provider: local
     device: cpu              # CUDA 环境可设 cuda；当前不支持 MPS
     compute_type: int8       # CPU: int8 / float32；CUDA 可用 float16
-    batch_size: 1            # 本机 16 GB 内存；显存充足时再实测调大
+    batch_size: 1            # 仅 WhisperX/faster-whisper 使用；按目标硬件实测
     cpu_threads: 6
     # language: en          # 不填则自动识别，识别出的语言必须有对齐模型
     alignment_models:
@@ -310,7 +476,7 @@ token 计费。VoiceprintAgent、登记事务及 Refine 准入已接通；`confi
 | 多模态向量 | Ark 多模态向量协议；配置来源可独立选择 Ark 连接 |
 | 声音向量 | `campplus` 进程内 CPU 推理；宿主提供 16 kHz 单声道 PCM16 WAV |
 
-能力注册和供应商适配器属于 Gateway，业务不维护供应商白名单。`openai_vision` 和普通 `openai` Chat 协议不支持 `reasoning_effort` 的非 `none` 设置；DeepSeek profile、Ark 和 Codex 保留各自实现的推理控制。`openai_audio` 不接受生成 token 限额。模型输出预算用于上下文规划；Codex app-server 不保证通过协议硬性截断到此 token 数。
+能力注册和供应商适配器属于 Gateway，业务不维护供应商白名单。`openai_vision` 和 `openai` 的 `standard` profile 不支持 `reasoning_effort` 的非 `none` 设置；`openai` 的 `kimi` profile 在直接 JSON、工具循环及备用模型请求中传递显式 `low/high/max`，例如 `model: k3` 配合 `reasoning_effort: low`。Kimi 的 `null/none` 保持省略请求参数，不能理解为 low 或关闭推理；实际行为由服务端默认决定。DeepSeek profile、Ark 和 Codex 保留各自实现的推理控制。`openai_audio` 不接受生成 token 限额。模型输出预算用于上下文规划；Codex app-server 不保证通过协议硬性截断到此 token 数。
 
 `models.embedding` 保存 `dimensions`、`video_fps`、`input_mode`、可选 `query_instruction` 和 `encoder_model`。Ark 的 `ep-...` 是请求路由，不是向量模型身份，必须声明实际 `encoder_model`；使用直接模型名时，另写的 `encoder_model` 必须与其一致。旧配置的 endpoint 环境覆盖会保留原模型作为 encoder 身份。查询与索引必须使用兼容向量空间；更换实际 encoder 模型需要重新生成索引。
 
@@ -416,6 +582,10 @@ Ollama 不需要 API Key，使用原生 `/api/embed`。文档直接编码，查�
 启动脚本按默认模型来源、独立 Supervisor 的主模型及回退、已启用的解析降级收集密钥，不要求未选中的第三方来源密钥。本机 Codex 来源没有 API key 变量要求；Ark 和 DeepSeek 连接仍分别使用它们声明的变量。密钥摘要用于检测启动配置变化，不输出密钥内容。
 
 兼容性基线保存在 `tests/gateway/fixtures/legacy-config.yaml`；配置测试保护默认迁移、任意引用、能力校验、独立重排/向量绑定、预算完整保留及旧任务冻结规则。
+
+### 解析执行次数（2026-10-31）
+
+视频解析不设置整视频累计模型调用上限。`SEEKINO_MAX_MODEL_CALLS` 已停止读取，新任务配置不再生成 `execution.max_model_calls`；历史冻结快照读取时忽略该字段，不改写其 ASR 模型或已有正文。调用登记继续保留计数、幂等、租约校验与取消；各节点的 `max_retry_count`、执行期限及并发策略照常生效。Chat 的每轮设置属于另一合同。
 
 ### 解析输出预算（2026-10-30）
 

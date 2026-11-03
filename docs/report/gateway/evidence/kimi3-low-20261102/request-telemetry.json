@@ -1,0 +1,2029 @@
+{
+  "captured_at": "2026-11-02T12:36:15.406955+00:00",
+  "task_id": "2eef6cec-f494-407c-8939-cf415de1336e",
+  "stages": {
+    "understand": {
+      "requests": 30,
+      "received_sse": 0,
+      "first_sse_max_seconds": null,
+      "first_sse_median_seconds": null,
+      "completed": 0,
+      "errors": 21,
+      "cancelled_superseded": 0,
+      "cancelled_other": 9,
+      "pending_without_sse": []
+    }
+  },
+  "requests": [
+    {
+      "call_id": "a9198304-20df-40e8-9017-aa2eb62465aa",
+      "stage": "understand",
+      "sequence_no": 0,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622536931577000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622637259898000,
+      "client_elapsed_seconds": 100.328,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "8333d6ef-c41f-426f-8e8f-7fe480922d9f",
+      "stage": "understand",
+      "sequence_no": 1,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622539381039000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622639494214000,
+      "client_elapsed_seconds": 100.113,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "a4552280-7f82-42e6-96ee-04f86c546fdc",
+      "stage": "understand",
+      "sequence_no": 2,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622542056836000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622642168604000,
+      "client_elapsed_seconds": 100.112,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "1e686aa2-4f12-4eeb-adb3-d4b35d9f5812",
+      "stage": "understand",
+      "sequence_no": 3,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622544585587000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622644703401000,
+      "client_elapsed_seconds": 100.118,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "86c99e2d-379f-4a13-8ed2-1106e1dc5603",
+      "stage": "understand",
+      "sequence_no": 4,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622547039993000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622647153234000,
+      "client_elapsed_seconds": 100.113,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "10d7f94e-e86c-4bba-b46e-0b342953c11a",
+      "stage": "understand",
+      "sequence_no": 5,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622549882909000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622650024410000,
+      "client_elapsed_seconds": 100.142,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "eef68313-3b48-450e-acfb-9ce0ba0f1e4f",
+      "stage": "understand",
+      "sequence_no": 6,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622549962264000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622650186588000,
+      "client_elapsed_seconds": 100.224,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "0055118f-64e4-4a5a-9e7b-c087bf04680a",
+      "stage": "understand",
+      "sequence_no": 7,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622552562116000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622652702428000,
+      "client_elapsed_seconds": 100.14,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "4690445d-ce82-4648-aca7-92b3e8add043",
+      "stage": "understand",
+      "sequence_no": 8,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622552588762000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622652794222000,
+      "client_elapsed_seconds": 100.205,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "fbc5594a-8755-404d-a338-676ac991db90",
+      "stage": "understand",
+      "sequence_no": 9,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622554978663000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622655096720000,
+      "client_elapsed_seconds": 100.118,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "63ffcf2d-cb55-4475-950a-9388ae7d9459",
+      "stage": "understand",
+      "sequence_no": 0,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622667357045000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622767417994000,
+      "client_elapsed_seconds": 100.061,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "1c17c4d0-a7ef-42d5-a262-b08575c9e6cb",
+      "stage": "understand",
+      "sequence_no": 1,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622669578145000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622769649987000,
+      "client_elapsed_seconds": 100.072,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "46ba2055-d03b-47d4-86a4-3b999ac6ad4b",
+      "stage": "understand",
+      "sequence_no": 2,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622672246576000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622772310249000,
+      "client_elapsed_seconds": 100.064,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "a81df5b2-9219-4412-bab5-18aba0909129",
+      "stage": "understand",
+      "sequence_no": 3,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622674784373000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622775010257000,
+      "client_elapsed_seconds": 100.226,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "ce702d0c-d66d-4f8d-8604-3f92b5567f07",
+      "stage": "understand",
+      "sequence_no": 4,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622677401667000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622777489389000,
+      "client_elapsed_seconds": 100.088,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "4603afac-340d-4ad0-a986-d49070960a76",
+      "stage": "understand",
+      "sequence_no": 5,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622680361341000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622780523265000,
+      "client_elapsed_seconds": 100.162,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "98fa9a85-a9d6-4c28-acb0-3f9df15da6a5",
+      "stage": "understand",
+      "sequence_no": 6,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622680506863000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622780663523000,
+      "client_elapsed_seconds": 100.157,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "030d34b8-4007-423d-b601-8f11d5cd6de8",
+      "stage": "understand",
+      "sequence_no": 7,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622682788834000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622782905908000,
+      "client_elapsed_seconds": 100.117,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "18ae76bd-ce39-4e34-a1d2-03db8ec22688",
+      "stage": "understand",
+      "sequence_no": 8,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622683137078000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622783271493000,
+      "client_elapsed_seconds": 100.134,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "b46ac808-dc89-48c9-8f3d-e5cf02c96411",
+      "stage": "understand",
+      "sequence_no": 9,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622685180876000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622785242178000,
+      "client_elapsed_seconds": 100.061,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "b12f375d-a8e0-4fde-9bc0-ea736a401b13",
+      "stage": "understand",
+      "sequence_no": 0,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622827712522000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622927782352000,
+      "client_elapsed_seconds": 100.07,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "f3900180-4acc-438a-851c-ffc4a723fa95",
+      "stage": "understand",
+      "sequence_no": 1,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622830049944000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622929291319000,
+      "client_elapsed_seconds": 99.241,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call f3900180-4acc-438a-851c-ffc4a723fa95 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "b462105b-5aa0-4fc9-ad90-8646eebe1272",
+      "stage": "understand",
+      "sequence_no": 2,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622832455139000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622931593716000,
+      "client_elapsed_seconds": 99.139,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call b462105b-5aa0-4fc9-ad90-8646eebe1272 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "6ebc679b-d168-4683-97d5-3c70b0ea6e7b",
+      "stage": "understand",
+      "sequence_no": 3,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622835129294000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622930239066000,
+      "client_elapsed_seconds": 95.11,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 6ebc679b-d168-4683-97d5-3c70b0ea6e7b was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "0c311a26-7092-446e-8101-53a9b17d9ccd",
+      "stage": "understand",
+      "sequence_no": 4,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622837618292000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622932245626000,
+      "client_elapsed_seconds": 94.627,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 0c311a26-7092-446e-8101-53a9b17d9ccd was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "49e76827-ccc5-4352-850c-630783765f75",
+      "stage": "understand",
+      "sequence_no": 5,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622840627802000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622929956715000,
+      "client_elapsed_seconds": 89.329,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 49e76827-ccc5-4352-850c-630783765f75 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "2c97a343-61d2-44c6-bba5-ec59528faf8b",
+      "stage": "understand",
+      "sequence_no": 6,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622840887055000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622930235860000,
+      "client_elapsed_seconds": 89.349,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 2c97a343-61d2-44c6-bba5-ec59528faf8b was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "e04686e3-6c48-435d-9a7c-5db634b213e8",
+      "stage": "understand",
+      "sequence_no": 7,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622842999766000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622927950120000,
+      "client_elapsed_seconds": 84.95,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call e04686e3-6c48-435d-9a7c-5db634b213e8 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "a0849418-0929-4b3a-9005-ffcf6f7f4ee3",
+      "stage": "understand",
+      "sequence_no": 8,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622843370178000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622927960684000,
+      "client_elapsed_seconds": 84.591,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call a0849418-0929-4b3a-9005-ffcf6f7f4ee3 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "627b32ec-2de3-440d-b2e2-860b6590f9b7",
+      "stage": "understand",
+      "sequence_no": 9,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793622845390217000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793622930236030000,
+      "client_elapsed_seconds": 84.846,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 627b32ec-2de3-440d-b2e2-860b6590f9b7 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "OSError",
+            "message": "[Errno 9] Bad file descriptor",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    }
+  ]
+}

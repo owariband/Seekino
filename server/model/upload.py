@@ -124,9 +124,6 @@ class UploadSession(BaseModel):
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error_code: Mapped[str | None] = mapped_column(String(64))
-    job_id: Mapped[str | None] = mapped_column(
-        ForeignKey("series_parse_job.id", ondelete="SET NULL"), index=True
-    )
     initial_task_id: Mapped[str | None] = mapped_column(
         ForeignKey("video_parse_task.id", ondelete="SET NULL"),
         index=True,

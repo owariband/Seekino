@@ -1,0 +1,93 @@
+{
+  "sample_count": 14,
+  "understanding_stage_seconds": {
+    "min": 85.231,
+    "median": 320.173,
+    "mean": 335.174,
+    "max": 563.118
+  },
+  "understanding_model_seconds": {
+    "min": 84.665,
+    "median": 319.612,
+    "mean": 334.626,
+    "max": 562.509
+  },
+  "understanding_prompt_tokens_min_max": [
+    243681,
+    244056
+  ],
+  "understanding_output_tokens": 144985,
+  "understanding_reasoning_tokens": 123355,
+  "completed_execution_logs": [
+    {
+      "execution_id": "5b75b330-2fd6-45f1-9a65-4afe2184146a",
+      "elapsed_seconds": 85.231,
+      "log": "2026-10-31T19:43:57+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=5b75b330-2fd6-45f1-9a65-4afe2184146a lease=5 elapsed_ms=85231 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "3732c10c-327d-4064-bc13-9b31cd325758",
+      "elapsed_seconds": 252.844,
+      "log": "2026-10-31T19:46:42+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=3732c10c-327d-4064-bc13-9b31cd325758 lease=5 elapsed_ms=252844 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "b34a7ca7-e0ad-49a4-8a50-2fa554d9343b",
+      "elapsed_seconds": 328.858,
+      "log": "2026-10-31T19:48:01+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=b34a7ca7-e0ad-49a4-8a50-2fa554d9343b lease=5 elapsed_ms=328858 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "1907d8ce-eac8-4dea-994d-e367ee589837",
+      "elapsed_seconds": 402.178,
+      "log": "2026-10-31T19:49:12+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=1907d8ce-eac8-4dea-994d-e367ee589837 lease=5 elapsed_ms=402178 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "52346a79-1223-47a6-a595-eb1717c786eb",
+      "elapsed_seconds": 284.165,
+      "log": "2026-10-31T19:53:04+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=52346a79-1223-47a6-a595-eb1717c786eb lease=1 elapsed_ms=284165 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "0c8a2456-74f3-453a-851e-b88777943ab6",
+      "elapsed_seconds": 294.313,
+      "log": "2026-10-31T19:53:08+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=0c8a2456-74f3-453a-851e-b88777943ab6 lease=1 elapsed_ms=294313 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "d08a5eda-98de-48fa-96cd-5af87f204477",
+      "elapsed_seconds": 238.367,
+      "log": "2026-10-31T19:53:11+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=d08a5eda-98de-48fa-96cd-5af87f204477 lease=1 elapsed_ms=238367 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "7b1e660e-7744-4409-be91-d73b8d30294b",
+      "elapsed_seconds": 300.702,
+      "log": "2026-10-31T19:53:16+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=7b1e660e-7744-4409-be91-d73b8d30294b lease=1 elapsed_ms=300702 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "42e5eb76-f015-41d9-b26d-2cd086870dd9",
+      "elapsed_seconds": 318.638,
+      "log": "2026-10-31T19:53:19+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=42e5eb76-f015-41d9-b26d-2cd086870dd9 lease=1 elapsed_ms=318638 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "bb23cbd6-f26e-4151-856b-9a2cca560bfe",
+      "elapsed_seconds": 321.709,
+      "log": "2026-10-31T19:53:31+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=bb23cbd6-f26e-4151-856b-9a2cca560bfe lease=1 elapsed_ms=321709 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "98e03cf2-41fe-4011-8bd5-4fb1494a923a",
+      "elapsed_seconds": 381.461,
+      "log": "2026-10-31T19:54:31+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=98e03cf2-41fe-4011-8bd5-4fb1494a923a lease=1 elapsed_ms=381461 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "3e6573e9-7b4a-4d3e-8e28-4b55c28f1f6c",
+      "elapsed_seconds": 440.286,
+      "log": "2026-10-31T19:55:36+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=3e6573e9-7b4a-4d3e-8e28-4b55c28f1f6c lease=1 elapsed_ms=440286 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "7e0319c2-63b9-4e24-a349-726f75ec6d68",
+      "elapsed_seconds": 480.563,
+      "log": "2026-10-31T19:56:08+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=7e0319c2-63b9-4e24-a349-726f75ec6d68 lease=1 elapsed_ms=480563 outcome=completed recorded=True"
+    },
+    {
+      "execution_id": "e02b3bf0-6401-47e2-9246-dee9698a4fa0",
+      "elapsed_seconds": 563.118,
+      "log": "2026-10-31T19:57:30+0800 INFO server.service.video_parse request_id=- event=video_parse_execution_trace task=613f40e2-7bcb-4e38-9ae4-9ad1021afb51 phase=understand execution=e02b3bf0-6401-47e2-9246-dee9698a4fa0 lease=1 elapsed_ms=563118 outcome=completed recorded=True"
+    }
+  ]
+}
