@@ -18,11 +18,13 @@ from engine.parsev2.validation import parse_content_fingerprint
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
-from server.model.dto.jobDTO import PrefixParseLease
-from server.model.job import (
+from server.model.dto.taskDTO import PrefixParseLease
+from server.model.parse_content import (
     ChunkParseContent,
-    ChunkParseTask,
     IntervalParseContent,
+)
+from server.model.task import (
+    ChunkParseTask,
     IntervalParseTask,
     VideoParseTask,
 )
@@ -782,7 +784,6 @@ def _config(*, chunk_count: int = 4, batch_size: int = 4) -> dict:
     })
     config["execution"].update({
         "max_retry_count": 2,
-        "max_model_calls": 3,
     })
     return config
 
@@ -802,6 +803,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
             important_extra_data=None,
             character_bible=[],
         ))
+        session.flush()  # Preserve parent-before-child inserts on MySQL.
         session.add(Video(
             id=video_id,
             series_id=series_id,
@@ -817,6 +819,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
             upload_progress=100,
             parse_progress=0,
         ))
+        session.flush()
         session.add(VideoParseTask(
             id=task_id,
             video_id=video_id,
@@ -1466,31 +1469,38 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
         ) == before
 
 
-def test_model_call_history_and_concurrency_survive_worker_reentry(repository):
+@pytest.mark.parametrize("legacy_limit", [None, 1])
+def test_model_call_history_and_concurrency_survive_worker_reentry(repository, legacy_limit):
     factory, _queue, repo, task_id, lease, _prepared = _prepare(repository, chunk_count=2)
-    # The legacy snapshot value remains visible but never caps cumulative calls.
-    for number in range(1, 5):
+    if legacy_limit is not None:
+        with factory.begin() as session:
+            task = session.get(VideoParseTask, task_id)
+            config = deepcopy(task.parse_config)
+            config["execution"]["max_model_calls"] = legacy_limit
+            task.parse_config = config
+    # Neither a missing field nor a legacy value caps cumulative calls.
+    for number in range(1, 118):
         reservation = repo.reserve_model_call(lease, f"call-{number}", lease_duration=timedelta(minutes=1), now=NOW)
         assert (reservation.used_calls, reservation.active_calls) == (number, number)
-        assert reservation.first_reservation and reservation.max_calls == 3
+        assert reservation.first_reservation
     repeated = repo.reserve_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=30))
-    assert (repeated.used_calls, repeated.active_calls) == (4, 4) and not repeated.first_reservation
+    assert (repeated.used_calls, repeated.active_calls) == (117, 117) and not repeated.first_reservation
     assert repo.renew_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=30))
     assert not repo.renew_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
     repeated = repo.reserve_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
-    assert (repeated.used_calls, repeated.active_calls) == (4, 1) and not repeated.first_reservation
+    assert (repeated.used_calls, repeated.active_calls) == (117, 1) and not repeated.first_reservation
     assert repo.release_model_call(task_id, "call-1", lease.worker_id, now=NOW + timedelta(minutes=2))
     reentered = VideoParsePersistenceService(factory)
     repeated = reentered.reserve_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
-    assert (repeated.used_calls, repeated.active_calls) == (4, 1) and not repeated.first_reservation
-    next_call = reentered.reserve_model_call(lease, "call-5", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
-    assert (next_call.used_calls, next_call.active_calls, next_call.max_calls) == (5, 2, 3)
+    assert (repeated.used_calls, repeated.active_calls) == (117, 1) and not repeated.first_reservation
+    next_call = reentered.reserve_model_call(lease, "call-118", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
+    assert (next_call.used_calls, next_call.active_calls) == (118, 2)
     assert next_call.first_reservation
     with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
         repo.reserve_model_call(replace(lease, worker_id="stale"), "call-1", lease_duration=timedelta(minutes=1), now=NOW)
     with factory() as session:
         calls = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["model_calls"]
-        assert calls["used_call_ids"] == ["call-1", "call-2", "call-3", "call-4", "call-5"]
+        assert calls["used_call_ids"] == [f"call-{n}" for n in range(1, 119)]
 
 
 def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(repository):
@@ -3224,3 +3234,123 @@ def test_prefix_new_content_reopens_completed_parent_without_old_coordinator_bac
         assert (child.phase, child.status) == (3, "QUEUED")
     assert queue.claim_video("new-coordinator", lease_duration=timedelta(minutes=5), now=at) is not None
     assert queue.claim_chunk_index("new-index", lease_duration=timedelta(minutes=5), now=at) is not None
+
+
+@pytest.mark.parametrize("scope,event_type,end_ms,accepted", [
+    ("video", "DIALOGUE", 31_440, True),
+    ("chunk", "DIALOGUE", 31_440, False),
+    ("video", "ACTION", 31_440, False),
+    ("video", "DIALOGUE", 40_001, False),
+])
+def test_direct_refine_persisted_dialogue_bounds_and_prefix(repository, scope, event_type, end_ms, accepted):
+    from agent.video_parse_v2.timelineEvent_canvas import ParseContextCanvas
+    from tests.agent.video_parse_v2.test_framework import _inputs, _lease
+
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        config = deepcopy(task.parse_config)
+        config["models"]["asr"]["scope"] = scope
+        config["compact_enabled"] = True
+        config["prefix_context"] = {"series_compact_max_chars": 1000,
+                                    "video_compact_max_chars": 1000, "max_tool_calls": 1}
+        task.parse_config = config
+    at = NOW + timedelta(minutes=1)
+    lease = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    assert lease is not None and lease.start_sequence_no == 0
+    target = prepared.chunk_parse_task_ids[0]
+    event = {"event_type": event_type, "start_seconds": 29_000, "end_seconds": end_ms,
+             "description": "complete ASR utterance", "participants": [], "visible_persons": []}
+    if event_type == "DIALOGUE":
+        event.update(speaker=None, text_variants=[{"language": "en", "role": "ORIGINAL", "text": "Full utterance."}])
+    options = dict(_refinement_inputs(repo, lease, now=at), interval_content={"updates": []},
+                   member_updates={target: {"timeline": [event]}}, now=at)
+    if not accepted:
+        with pytest.raises(ValueError, match="time range"):
+            repo.commit_interval_refinement(lease, **options)
+        with factory() as session:
+            assert session.get(IntervalParseContent, lease.interval_parse_task_id) is None
+            assert session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target)).version == 1
+        return
+    repo.commit_interval_refinement(lease, **options)
+    _finish_ready_indexes(queue, repo, now=at + timedelta(seconds=1))
+    prefix = repo.claim_next_prefix_any("prefix", lease_duration=timedelta(minutes=5), now=at + timedelta(seconds=2))
+    assert prefix is not None and prefix.sequence_no == 0
+    assert prefix.content_detail["scope"] == [0, 1, 2]
+    canvas = ParseContextCanvas.from_prefix({
+        "chunk_parse_task_id": prefix.chunk_parse_task_id, "video_parse_task_id": task_id,
+        "inputs": _inputs(compact_enabled=True), "lease": _lease(), "sequence_no": 0,
+        "allowed_start_seconds": 0, "allowed_end_seconds": 30_000, "dialogue_bounds": (0, 40_000),
+        "scope": [0, 1, 2], "content": VideoParseResult.model_validate(prefix.content),
+        "content_version": prefix.content_version, "series_prefix_compact": "", "video_prefix_compact": "",
+    })
+    canvas.write(role="prefix", batch_id="compact", expected_revision=canvas.revision,
+                 operations=[{"op": "set_compact", "series_compact": "", "video_compact": "Full utterance retained"}])
+    result = canvas.prefix_result()
+    assert result.update is None
+    repo.commit_prefix(prefix, content_updates={}, video_prefix_compact=result.video_compact,
+                       now=at + timedelta(seconds=3))
+    with factory() as session:
+        stored = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
+        assert stored.content["timeline"][0]["end_seconds"] == 31_440
+        assert stored.version == prefix.content_version == 2
+
+
+@pytest.mark.parametrize("change_content", [False, True])
+def test_refine_receipt_reports_only_committed_body_changes(repository, change_content):
+    factory, queue, repo, _, parent, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, parent, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    lease = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    inputs = _refinement_inputs(repo, lease, now=at)
+    member = lease.chunk_parse_task_ids[0]
+    updates = {member: {"persons": ["corrected person"]}} if change_content else {}
+    receipt = repo.commit_interval_refinement(
+        lease, **inputs, interval_content={}, member_updates=updates, now=at,
+    )
+    assert receipt.changed_member_versions == ({member: 2} if change_content else {})
+    with factory() as session:
+        interval = session.get(IntervalParseTask, lease.interval_parse_task_id)
+        assert interval.status == "COMPLETE" and interval.lease_owner is None
+        for task_id, version in receipt.changed_member_versions.items():
+            row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == task_id))
+            assert row.version == version and row.content["persons"] == ["corrected person"]
+
+
+@pytest.mark.parametrize("scope,mode,event_type,end_ms,accepted", [
+    ("video", "lite", "DIALOGUE", 10_300, True),
+    ("chunk", "lite", "DIALOGUE", 10_300, False),
+    ("video", "none", "DIALOGUE", 10_300, False),
+    ("video", "lite", "ACTION", 10_300, False),
+    ("video", "lite", "DIALOGUE", 40_001, False),
+])
+def test_understanding_commit_uses_frozen_video_dialogue_authority(repository, scope, mode, event_type, end_ms, accepted):
+    factory, queue, repo, task_id, parent_lease, prepared = _prepare(repository)
+    lease = queue.claim_chunk("understanding", lease_duration=timedelta(minutes=5), now=NOW)
+    assert lease is not None and lease.chunk_parse_task_id == prepared.chunk_parse_task_ids[0]
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        config = deepcopy(task.parse_config)
+        config["models"]["asr"].update(scope=scope, mode=mode)
+        task.parse_config = config
+    event = {"event_type": event_type, "start_seconds": 9_000, "end_seconds": end_ms,
+             "description": "complete source cue", "participants": [], "visible_persons": []}
+    if event_type == "DIALOGUE":
+        event.update(speaker=None, text_variants=[{"language": "en", "role": "ORIGINAL", "text": "Full utterance."}])
+    value = {"persons": [], "timeline": [event]}
+    if not accepted:
+        with pytest.raises(ValueError, match="time range"):
+            repo.commit_chunk_result(lease, content=value, now=NOW)
+        with factory() as session:
+            assert session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == lease.chunk_parse_task_id)) is None
+        return
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.commit_chunk_result(replace(lease, lease_version=lease.lease_version + 1), content=value, now=NOW)
+    repo.commit_chunk_result(lease, content=value, now=NOW)
+    with factory() as session:
+        stored = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == lease.chunk_parse_task_id))
+        assert stored.content["timeline"][0]["end_seconds"] == 10_300
+        assert stored.content["timeline"][0]["text_variants"] == event["text_variants"]
+        assert stored.detail["scope"] == [0]
+        assert stored.detail["parse_committed_lease_version"] == lease.lease_version

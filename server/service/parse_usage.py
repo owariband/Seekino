@@ -13,7 +13,14 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import ModelCallUsage, TokenUsage, capture_model_usage, model_call_context
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, PrefixParseLease, VideoParseLease, VideoParseTaskInputState, VideoSummarizeLease
+from ..model.dto.taskDTO import (
+    ChunkParseLease,
+    IntervalParseLease,
+    PrefixParseLease,
+    VideoParseLease,
+    VideoParseTaskInputState,
+    VideoSummarizeLease,
+)
 from ..model.dto.parseUsageDTO import (
     ModelUsageState,
     UsageCostSummary, UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,

@@ -17,7 +17,7 @@ from ..service.access import require_tenant_write
 from ..model.vo.commonVO import Failure, Page
 from .context import get_identity, get_services
 from ..model.vo.uploadVO import UploadCompleteView, UploadSegmentView, UploadSessionView
-from ..model.vo.jobVO import VideoParseTaskView
+from ..model.vo.taskVO import VideoParseTaskView
 from ..utils.time import datetime_to_unix_time_ms
 from .jobs import project_video_parse_task
 
@@ -216,7 +216,6 @@ async def complete_upload(
     return UploadCompleteView(
         upload_session=_upload_view(detail),
         video_id=completed.video_id,
-        job_id=completed.job_id,
         video_parse_task_id=completed.video_parse_task_id,
     )
 
@@ -268,7 +267,6 @@ def project_upload_session(state: UploadSessionState) -> UploadSessionView:
         estimated_remaining_ms=None,
         expires_at=datetime_to_unix_time_ms(state.expires_at),
         video_id=state.video_id,
-        job_id=state.job_id,
         initial_video_parse_task_id=state.initial_video_parse_task_id,
         last_error=error,
         version=state.version,

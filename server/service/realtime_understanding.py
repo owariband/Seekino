@@ -25,7 +25,7 @@ from engine.parsev2.planning import interval_size, plan_chunks, plan_intervals
 from gateway.config import GatewayConfig
 from gateway.multimodal import ImageInput, TextInput
 
-from ..model.dto.jobDTO import ChunkParseLease
+from ..model.dto.taskDTO import ChunkParseLease
 from ..mq.video_parse_queue import MySqlVideoParseQueue
 from .video_parse_persistence import (
     VideoParseConflictError, VideoParseLeaseLostError, VideoParsePersistenceService,

@@ -1,0 +1,37 @@
+{
+  "captured_at": "2026-11-03T03:33:56.483644+00:00",
+  "task_id": "93d60de9-b0ab-4aa6-aeea-342935e237b2",
+  "model": "deepseek-flash",
+  "reasoning_effort": "none",
+  "requests_recorded": 242,
+  "priced_requests": 185,
+  "unknown_cost_requests": 57,
+  "estimated_cny": "21.63012760",
+  "tokens_known": {
+    "input_tokens": 12189246,
+    "output_tokens": 547587,
+    "cached_input_tokens": 1511040,
+    "reasoning_tokens": 0
+  },
+  "stages": {
+    "understand": {
+      "requests": 130,
+      "priced_requests": 109,
+      "estimated_cny": "18.09684496",
+      "input_tokens": 11193116,
+      "output_tokens": 193885,
+      "cached_input_tokens": 1115648,
+      "reasoning_tokens": 0
+    },
+    "refine": {
+      "requests": 112,
+      "priced_requests": 76,
+      "estimated_cny": "3.53328264",
+      "input_tokens": 996130,
+      "output_tokens": 353702,
+      "cached_input_tokens": 395392,
+      "reasoning_tokens": 0
+    }
+  },
+  "policy": "Task ledger only. Missing usage/cached count is unknown, never zero; account delta may include unrelated calls and billing delay. Local ASR/embedding hardware costs excluded."
+}

@@ -14,7 +14,7 @@ from server.api.library import project_series_detail
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
-from server.model.job import VideoParseTask
+from server.model.task import VideoParseTask
 from server.model.upload import UploadSession
 from server.model.tenant import Tenant
 from server.model.user import User
@@ -111,7 +111,6 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert initial.video_count == 1
     assert initial.ready_video_count == 0
     assert initial.videos[0].index_status == VideoIndexStatus.SYNCING
-    assert initial.videos[0].latest_job_id is None
     with factory.begin() as session:
         session.get(VideoParseTask, report.video_parse_task_id).status = "COMPLETE"
     ready = library.get_series(report.series_id, tenant_id="local-default")
@@ -122,7 +121,6 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert detail["videos"][0]["parseStatus"] == "COMPLETE"
     assert detail["videos"][0]["parseProgress"] == 100
     assert detail["videos"][0]["playbackStatus"] == "READY"
-    assert detail["videos"][0]["latestJobId"] is None
     assert detail["videos"][0]["thumbnail"] is None
     assert detail["videos"][0]["displayName"] is None
     assert detail["videos"][0]["description"] is None

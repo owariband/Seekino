@@ -184,7 +184,8 @@ def test_sqlite_source_versions_and_real_library_media_roundtrip(repository, par
     from engine.rag.indexing.events import compute_event_id
     from engine.rag.retrieval.contracts import EventSearchResult, FusedEventHit
     from server.database import create_session_factory
-    from server.model.job import ChunkParseContent, ChunkParseTask
+    from server.model.parse_content import ChunkParseContent
+    from server.model.task import ChunkParseTask
     from server.model.video import Video
     from server.repository.library import LibraryRepository
     from server.service.library import LibraryService

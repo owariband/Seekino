@@ -1,0 +1,220 @@
+{
+  "summary": {
+    "started_at": "2026-11-02T09:36:00.092666+00:00",
+    "source_task_id": "72d0cdc1-f7f4-453e-b64e-8480239ab243",
+    "source_call_id": "cf203b92-2ea5-493b-a2ab-af91c18b57cf",
+    "provider_endpoint": "https://api.kimi.com/coding/v1",
+    "model": "k3.1-pro",
+    "original_request_sha256": "484ce319355d2f67b975bfb6e6b14197db3e681c9d88a845d9bd7216ba620146",
+    "original_image_count": 198,
+    "decodable_image_count": 197,
+    "bad_image": {
+      "timestamp": "timestamp_ms=1696500",
+      "declared_mime": "data:image/jpeg;base64",
+      "size_bytes": 100446,
+      "sha256": "a67d6a14069d17cab0f09561e103a4c045f52af8deb0e0670123647d64740d87",
+      "first_16_bytes_hex": "104a46494600010200000100010000ff",
+      "decodes": false,
+      "decode_error": "UnidentifiedImageError"
+    },
+    "good_control_image": {
+      "timestamp": "timestamp_ms=1696166",
+      "declared_mime": "data:image/jpeg;base64",
+      "size_bytes": 101456,
+      "sha256": "228c4ca538c6c0e0680667f0321e77ee32abe647093081af4cfd87a8244a7b27",
+      "first_16_bytes_hex": "ffd8ffe000104a464946000102000001",
+      "format": "JPEG",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "decodes": true
+    },
+    "network_retries": 0,
+    "database_mutations": 0,
+    "new_asr_calls": 0,
+    "probes": [
+      {
+        "name": "bad_frame_attempt_1",
+        "started_at": "2026-11-02T09:36:00.185856+00:00",
+        "request_sha256": "de49d32c2683581b8632bc2d2a30d7ed8b3b0aadd0194e033fd6d6c10375add8",
+        "changes_from_original": [
+          "Single retained image; short control prompt; no output schema; max_tokens=128; timeout=60; model, endpoint, image bytes, declared MIME, streaming and temperature retained."
+        ],
+        "wall_timeout_seconds": 60,
+        "outcome": "provider_rejected",
+        "http_status": 400,
+        "error_type": "BadRequestError",
+        "error_body": {
+          "message": "Invalid request: unsupported image format: application/octet-stream",
+          "type": "invalid_request_error"
+        },
+        "request_id": null,
+        "elapsed_seconds": 0.808
+      },
+      {
+        "name": "normal_neighbor_control",
+        "started_at": "2026-11-02T09:36:00.995097+00:00",
+        "request_sha256": "5cb52ccd69f808be4323a59668e58b98a0731e0e37ee328d18950b4a237c862f",
+        "changes_from_original": [
+          "Single retained image; short control prompt; no output schema; max_tokens=128; timeout=60; model, endpoint, image bytes, declared MIME, streaming and temperature retained."
+        ],
+        "wall_timeout_seconds": 60,
+        "http_status": 200,
+        "headers_after_seconds": 5.152,
+        "request_id": null,
+        "outcome": "accepted_first_sse_received",
+        "first_sse_after_seconds": 5.155,
+        "first_sse_choices": 1,
+        "elapsed_seconds": 5.155
+      },
+      {
+        "name": "bad_frame_attempt_2",
+        "started_at": "2026-11-02T09:36:06.150688+00:00",
+        "request_sha256": "de49d32c2683581b8632bc2d2a30d7ed8b3b0aadd0194e033fd6d6c10375add8",
+        "changes_from_original": [
+          "Single retained image; short control prompt; no output schema; max_tokens=128; timeout=60; model, endpoint, image bytes, declared MIME, streaming and temperature retained."
+        ],
+        "wall_timeout_seconds": 60,
+        "outcome": "provider_rejected",
+        "http_status": 400,
+        "error_type": "BadRequestError",
+        "error_body": {
+          "message": "Invalid request: unsupported image format: application/octet-stream",
+          "type": "invalid_request_error"
+        },
+        "request_id": null,
+        "elapsed_seconds": 0.564
+      }
+    ],
+    "finished_at": "2026-11-02T09:36:06.716239+00:00"
+  },
+  "request-image-comparison": {
+    "requests": [
+      {
+        "run": "video-asr-api-recovery-20261031",
+        "call_id": "e6c1a2eb-a0ad-4d8d-a9ab-e2fe6527d6c6",
+        "images": 198,
+        "sse_events": 6530,
+        "response_events": 1,
+        "error_events": 0,
+        "event_kinds": [
+          "completed",
+          "request",
+          "response",
+          "sse"
+        ]
+      },
+      {
+        "run": "lets-build-gpt-clean-parse-v6-20261102",
+        "call_id": "cf203b92-2ea5-493b-a2ab-af91c18b57cf",
+        "images": 198,
+        "sse_events": 0,
+        "response_events": 0,
+        "error_events": 1,
+        "event_kinds": [
+          "error",
+          "request"
+        ]
+      }
+    ],
+    "shared_timestamps": 198,
+    "identical_images": 197,
+    "changed_images": [
+      {
+        "timestamp": "timestamp_ms=1696500",
+        "old_size": 100451,
+        "new_size": 100446,
+        "old_sha256": "c1874234ff949cc08d016173c8fb38d14bff37dc8b471d72b4794516ad926ce5",
+        "new_sha256": "a67d6a14069d17cab0f09561e103a4c045f52af8deb0e0670123647d64740d87",
+        "new_equals_old_without_first_5_bytes": true
+      }
+    ]
+  },
+  "origin-trace": {
+    "same_production_sampler": true,
+    "source_video": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/video-asr-api-recovery-20261031/library/test/media/series/34646a50-bdad-5207-837c-5d0e90adcc0f/videos/cd7c4da8-051c-5c6a-b95f-9fdaffefbeee/original/07 - Building GPT.mp4",
+    "timestamps_ms": [
+      1696166,
+      1696500,
+      1696833
+    ],
+    "extraction_seconds": 8.816561250001541,
+    "commands": [
+      [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-i",
+        "/Users/hypnos/workspace/agent/Seekino/outputs/verification/video-asr-api-recovery-20261031/library/test/media/series/34646a50-bdad-5207-837c-5d0e90adcc0f/videos/cd7c4da8-051c-5c6a-b95f-9fdaffefbeee/original/07 - Building GPT.mp4",
+        "-map",
+        "0:v:0",
+        "-/filter:v",
+        "/Users/hypnos/workspace/agent/Seekino/outputs/verification/kimi-image-format-repro-20261102/fresh-extraction/sampling.filter",
+        "-fps_mode",
+        "passthrough",
+        "-enc_time_base",
+        "1:1000",
+        "-q:v",
+        "3",
+        "-frame_pts",
+        "1",
+        "-y",
+        "-to",
+        "1697.000",
+        "/Users/hypnos/workspace/agent/Seekino/outputs/verification/kimi-image-format-repro-20261102/fresh-extraction/frame-%012d.jpg"
+      ]
+    ],
+    "v6_bad_equals_v4_good_without_first_five_bytes": true,
+    "frames": [
+      {
+        "timestamp_ms": 1696166,
+        "file": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/kimi-image-format-repro-20261102/fresh-extraction/frame-000001696195.jpg",
+        "size_bytes": 101456,
+        "sha256": "228c4ca538c6c0e0680667f0321e77ee32abe647093081af4cfd87a8244a7b27",
+        "first_16_bytes_hex": "ffd8ffe000104a464946000102000001",
+        "dimensions": [
+          1280,
+          720
+        ],
+        "decodes": true,
+        "encoding_retains_exact_file_bytes": true,
+        "diagnostics_retains_exact_data_url": true,
+        "exactly_matches_v4_good_frame": false,
+        "v6_bad_is_this_frame_without_five_byte_prefix": false
+      },
+      {
+        "timestamp_ms": 1696500,
+        "file": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/kimi-image-format-repro-20261102/fresh-extraction/frame-000001696528.jpg",
+        "size_bytes": 100451,
+        "sha256": "c1874234ff949cc08d016173c8fb38d14bff37dc8b471d72b4794516ad926ce5",
+        "first_16_bytes_hex": "ffd8ffe000104a464946000102000001",
+        "dimensions": [
+          1280,
+          720
+        ],
+        "decodes": true,
+        "encoding_retains_exact_file_bytes": true,
+        "diagnostics_retains_exact_data_url": true,
+        "exactly_matches_v4_good_frame": true,
+        "v6_bad_is_this_frame_without_five_byte_prefix": true
+      },
+      {
+        "timestamp_ms": 1696833,
+        "file": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/kimi-image-format-repro-20261102/fresh-extraction/frame-000001696862.jpg",
+        "size_bytes": 100668,
+        "sha256": "7fd0c68c57901a5384a3dc92a73930433bac0b6363c3d7b86eec452f897a7a1a",
+        "first_16_bytes_hex": "ffd8ffe000104a464946000102000001",
+        "dimensions": [
+          1280,
+          720
+        ],
+        "decodes": true,
+        "encoding_retains_exact_file_bytes": true,
+        "diagnostics_retains_exact_data_url": true,
+        "exactly_matches_v4_good_frame": false,
+        "v6_bad_is_this_frame_without_five_byte_prefix": false
+      }
+    ]
+  }
+}

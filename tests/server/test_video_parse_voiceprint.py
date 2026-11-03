@@ -13,7 +13,8 @@ from sqlalchemy import event, select
 from engine.parsev2.voiceprint import Voiceprint
 
 from server.constants.parse import VOICEPRINT_REFS_PER_SPEAKER
-from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession
 from server.model.video import Video
 from server.repository.upload import UploadRepository

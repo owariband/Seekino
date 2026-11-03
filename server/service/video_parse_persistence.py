@@ -18,13 +18,17 @@ from agent.video_parse_v2.input import ParseConfig
 from agent.video_summarize.state import VideoSummarizeInput, VideoSummaryResult
 from engine.rag.contracts import VideoChunkEvidence, VideoChunkRetrievalIdentity
 
-from ..constants.parse import MAX_INDEX_GENERATION, RUNTIME_DETAIL_KEY
-from ..model.dto.jobDTO import (
+from ..constants.parse import MAX_INDEX_GENERATION, PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
+from ..model.dto.parseContentDTO import (
     ChunkParseContentState,
-    ChunkExecutionState,
-    ChunkParseLease,
     ChunkIndexingSnapshot,
     IntervalMemberSnapshot,
+    IntervalRefinementCommit,
+    ParseExportChunkSnapshot,
+)
+from ..model.dto.taskDTO import (
+    ChunkExecutionState,
+    ChunkParseLease,
     IntervalParseLease,
     ModelCallReservation,
     PrefixParseLease,
@@ -32,18 +36,18 @@ from ..model.dto.jobDTO import (
     VideoParseTaskInputState,
     VideoParseTaskState,
     VideoParseLease,
-    VideoChunkState,
-    VideoParseRetrievalScope,
-    HydratedRetrievalCandidate,
     RealtimeChunkState,
-    ParseExportChunkSnapshot,
     VideoParseTaskData,
     VideoSummarizeLease,
 )
-from ..model.job import (
-    VideoParseTaskStatus,
+from ..model.dto.libraryDTO import VideoChunkState
+from ..model.dto.searchDTO import (
+    VideoParseRetrievalScope,
+    HydratedRetrievalCandidate,
 )
+from ..model.task import VideoParseTaskStatus
 from ..repository import video_parse_task as task_store
+from ..repository import video_parse_content as result_store
 from ..repository import video_parse_chunk as chunk_store
 from ..repository import video_parse_interval as interval_store
 from ..repository import video_parse_retrieval as read_store
@@ -86,6 +90,7 @@ from . import video_parse_voiceprint as voiceprint_ops
 from . import video_parse_model_calls as execution_ops
 from . import video_parse_read as retrieval_ops
 from . import video_parse_summarize as summary_ops
+from . import video_parse_results as result_ops
 from ..repository.library import LibraryRepository
 
 
@@ -188,6 +193,7 @@ class VideoParsePersistenceService:
                     config = default_parse_config.model_copy(update={
                         "models": default_parse_config.models.model_copy(update={
                             "asr": default_parse_config.models.asr.model_copy(update={"scope": "chunk"}),
+                            "diarization": None,
                         }),
                     })
                     task = VideoParseTaskData(
@@ -514,6 +520,26 @@ class VideoParsePersistenceService:
             session.flush()
             return _task_state(task_store.get_task(session, task.id))
 
+    def load_or_begin_video_asr(self, lease: VideoParseLease, identity: dict,
+                                *, now: datetime | None = None) -> dict | None:
+        with self._session_factory.begin() as session:
+            return result_ops.load_or_begin_asr(session, lease, identity, now=now or now_utc())
+
+    def commit_video_asr(self, lease: VideoParseLease, identity: dict, payload: dict,
+                         *, now: datetime | None = None) -> None:
+        with self._session_factory.begin() as session:
+            result_ops.commit_asr(session, lease, identity, payload, now=now or now_utc())
+
+    def load_or_begin_video_diarization(self, lease: VideoParseLease, identity: dict,
+                                        *, now: datetime | None = None) -> dict | None:
+        with self._session_factory.begin() as session:
+            return result_ops.load_or_begin_diarization(session, lease, identity, now=now or now_utc())
+
+    def commit_video_diarization(self, lease: VideoParseLease, identity: dict, payload: dict,
+                                 *, now: datetime | None = None) -> None:
+        with self._session_factory.begin() as session:
+            result_ops.commit_diarization(session, lease, identity, payload, now=now or now_utc())
+
     def finish_video_asr_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,
     ) -> None:
@@ -525,8 +551,15 @@ class VideoParsePersistenceService:
                 raise VideoParseLeaseLostError("Video ASR preparation is no longer current")
             if not _requires_video_asr(task) or task.status not in {"PREPARING", "PARSING"}:
                 raise VideoParseConflictError("Video ASR preparation is not pending")
+            metadata = result_store.get_metadata(session, task.id)
+            if metadata is None or not (metadata.detail.get("asr") or {}).get("result_sha256"):
+                raise VideoParseConflictError("Video ASR has no committed result")
+            if task.parse_config.get("models", {}).get("diarization") is not None:
+                if not (metadata.detail.get("diarization") or {}).get("result_sha256"):
+                    raise VideoParseConflictError("Video diarization has no committed result")
             detail = _ensure_runtime(task.detail)
             detail[RUNTIME_DETAIL_KEY]["asr_prepared_lease_version"] = lease.lease_version
+            detail[RUNTIME_DETAIL_KEY].pop(PREPARE_FAILURES_KEY, None)
             task.detail = detail
             task.update_time = datetime_to_unix_time_ms(prepared_at)
             task_store.save_task(session, task)
@@ -768,7 +801,7 @@ class VideoParsePersistenceService:
         input_contents: Mapping[str, Mapping[str, Any]],
         detail: Mapping[str, Any] | None = None,
         now: datetime | None = None,
-    ) -> tuple[str, ...]:
+    ) -> IntervalRefinementCommit:
         """Merge independent event edits under current leases and commit once."""
 
         committed_at = now if now is not None else now_utc()
@@ -776,7 +809,7 @@ class VideoParsePersistenceService:
             locked_intervals = _locked_parent_intervals(
                 session, lease.video_parse_task_id
             )
-            interval = content_ops.commit_interval_refinement(
+            interval, changed_versions = content_ops.commit_interval_refinement(
                 session,
                 lease=lease,
                 interval_content=interval_content,
@@ -793,7 +826,9 @@ class VideoParsePersistenceService:
                 committed_at, locked_intervals=locked_intervals,
             )
             summary_ops.mark_summary_ready(session, interval.video_task_id, now=committed_at)
-            return tuple(queued)
+            receipt = IntervalRefinementCommit(tuple(queued), changed_versions)
+        # No notification may escape a transaction that later rolls back.
+        return receipt
 
     def bind_event_index_target(
         self, lease: ChunkParseLease, configured_target: Mapping[str, Any],

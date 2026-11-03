@@ -53,7 +53,11 @@ def install_transport(monkeypatch, module, handler):
     clients = []
 
     def create_client(**kwargs):
-        http = httpx.Client(transport=httpx.MockTransport(handler))
+        supplied = kwargs.pop("http_client", None)
+        hooks = supplied.event_hooks if supplied is not None else {}
+        if supplied is not None:
+            supplied.close()
+        http = httpx.Client(transport=httpx.MockTransport(handler), event_hooks=hooks)
         clients.append(http)
         return OpenAI(**kwargs, http_client=http)
 

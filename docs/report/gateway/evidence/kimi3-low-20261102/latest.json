@@ -1,0 +1,67 @@
+{
+  "captured_at": "2026-11-02T12:36:15.341452+00:00",
+  "task_id": "2eef6cec-f494-407c-8939-cf415de1336e",
+  "version": 8,
+  "status": "PARSING_FAILED",
+  "paused": false,
+  "start_time_ms": 1793622464816,
+  "finish_time_ms": 1793622932250,
+  "wall_elapsed_seconds": 467.434,
+  "processing_duration_ms": 396112,
+  "total_chunks": 117,
+  "understood_chunks": 0,
+  "chunk_states": [
+    {
+      "phase": 1,
+      "status": "FAILED",
+      "count": 10
+    },
+    {
+      "phase": 1,
+      "status": "QUEUED",
+      "count": 107
+    }
+  ],
+  "interval_states": [
+    {
+      "status": "WAITING",
+      "count": 115
+    }
+  ],
+  "stage_completed_attempts": {
+    "understand": {
+      "n": 0,
+      "median_seconds": null,
+      "min_seconds": null,
+      "max_seconds": null,
+      "attempt_outcomes": {
+        "cancelled": 7,
+        "failed": 3
+      }
+    }
+  },
+  "model_completed_requests": {
+    "understand": {
+      "n": 0,
+      "median_seconds": null,
+      "min_seconds": null,
+      "max_seconds": null,
+      "outcomes": {
+        "failed": 30
+      }
+    }
+  },
+  "refine_events": {},
+  "cancel_drain": {
+    "n": 0,
+    "median_seconds": null,
+    "min_seconds": null,
+    "max_seconds": null
+  },
+  "last_error": {
+    "code": "PARSE_NODE_FAILED",
+    "message": "视频理解失败：模型请求超时。本次解析已停止派发，请检查后手动重试。"
+  },
+  "asr_new_calls": 0,
+  "sample_policy": "This task only. Successful attempt latency medians exclude running/failed/cancelled attempts. Parallel request durations never summed as total parse elapsed."
+}

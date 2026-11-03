@@ -1,0 +1,50 @@
+{
+  "video_task_id": "6cf69603-6708-4d24-bee3-2dff0e858ad3",
+  "source_task_id": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+  "duration_ms": 6979873,
+  "cue_count": 2476,
+  "assigned_cues": {
+    "SPEAKER_00": 2474,
+    "null": 2
+  },
+  "unknown_cues": [
+    {
+      "text": "matter",
+      "speaker_id": null,
+      "end_seconds": 3717440,
+      "start_seconds": 3717180
+    },
+    {
+      "text": "Colab.",
+      "speaker_id": null,
+      "end_seconds": 6912240,
+      "start_seconds": 6911840
+    }
+  ],
+  "regular_turns": 1455,
+  "exclusive_turns": 1446,
+  "regular_labels": {
+    "SPEAKER_00": 1446,
+    "SPEAKER_01": 9
+  },
+  "regular_label_duration_ms": {
+    "SPEAKER_00": 5953138,
+    "SPEAKER_01": 1266
+  },
+  "exclusive_labels": {
+    "SPEAKER_00": 1446
+  },
+  "original_text_and_all_times_equal": true,
+  "asr_sha256": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4",
+  "diarization_sha256": "8875920a4ccd7134fa7597d070346529f59fe5b041e53a4bb527500eaa99cd8c",
+  "completed_elapsed_seconds": 425.831,
+  "completed_wall_seconds": 425.828,
+  "segmentation_seconds": 19.615,
+  "embedding_seconds": 398.565,
+  "segmentation_device": "mps:0",
+  "embedding_device": "mps",
+  "callback_observed_mps_tensor_bytes": 32480512,
+  "callback_observed_mps_driver_bytes": 4066492416,
+  "memory_scope": "Callback samples only; not per-second sampling or true peak",
+  "committed_lease_version": 1
+}

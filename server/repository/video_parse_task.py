@@ -7,8 +7,9 @@ from copy import deepcopy
 from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import Session
 
-from ..model.dto.jobDTO import VideoParseTaskData, VideoData, SeriesData
-from ..model.job import VideoParseTask
+from ..model.dto.taskDTO import VideoParseTaskData
+from ..model.dto.libraryDTO import VideoData, SeriesData
+from ..model.task import VideoParseTask
 from ..model.video import Video, Series
 from ..constants.parse import RUNTIME_DETAIL_KEY
 

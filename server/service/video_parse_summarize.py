@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from agent.video_summarize.state import SummaryChunk, VideoSummarizeInput, VideoSummaryResult
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
-from ..model.dto.jobDTO import VideoParseTaskData, VideoSummarizeLease
+from ..repository import video_parse_content as result_store
+from ..model.dto.taskDTO import VideoParseTaskData, VideoSummarizeLease
 from ..repository import video_parse_task as task_store
 from ..repository import video_parse_chunk as chunk_store
 from ..repository import video_parse_interval as interval_store
@@ -202,8 +203,18 @@ def complete_summary(session: Session, library: LibraryRepository, lease: VideoS
                 raise VideoParseSnapshotConflictError("Video summary sources changed before publication")
             library.update_video_metadata(lease.video_id, session=session, display_name=result.title,
                                           description=result.description, cover_uri=cover_uri)
+            stored = result_store.get_metadata(session, task.id, for_update=True)
+            result_detail = deepcopy(stored.detail if stored else {})
+            result_detail["summary"] = {"source_fingerprint": lease.source_fingerprint,
+                                        "committed_lease_version": lease.lease_version,
+                                        "completed_at_ms": datetime_to_unix_time_ms(now)}
+            result_store.save_result(session, task.id, field="summary",
+                                     result={"submission": result.submission.model_dump(mode="json"),
+                                             "cover_uri": cover_uri, "frame_receipts": list(result.frame_receipts)},
+                                     detail=result_detail, now_ms=datetime_to_unix_time_ms(now))
+            state.pop("result", None)
+            state.pop("frame_receipts", None)
             state.update(status="COMPLETE", lease_owner=None, lease_expire_time_ms=None, last_error=None,
-                         result=result.submission.model_dump(mode="json"), frame_receipts=list(result.frame_receipts),
                          applied_episode_order=video.episode_order, episode_order_conflict=conflict,
                          finished_at_ms=datetime_to_unix_time_ms(now))
             _save(session, task, state, now)

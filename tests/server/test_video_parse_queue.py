@@ -23,9 +23,14 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease, VideoParseRetryResult
-from server.model.job import (
-    ChunkParseContent,
+from server.model.dto.taskDTO import (
+    ChunkParseLease,
+    IntervalParseLease,
+    VideoParseLease,
+    VideoParseRetryResult,
+)
+from server.model.parse_content import ChunkParseContent
+from server.model.task import (
     ChunkParseTask,
     IntervalParseTask,
     VideoParseTask,
@@ -129,6 +134,10 @@ def test_video_asr_blocks_resumed_chunks_until_current_lease_is_prepared(reposit
     assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None
     with pytest.raises(VideoParseLeaseLostError):
         repo.finish_video_asr_preparation(replace(lease, worker_id="stale"), now=NOW)
+    from tests.server.test_video_parse_results import identity_for, PAYLOAD
+    identity = identity_for(repo, task_id)
+    repo.load_or_begin_video_asr(lease, identity, now=NOW)
+    repo.commit_video_asr(lease, identity, PAYLOAD, now=NOW)
     repo.finish_video_asr_preparation(lease, now=NOW)
     assert queue.release_execution(lease, now=NOW)
     assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None

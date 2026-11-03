@@ -1,0 +1,17 @@
+{
+  "old_task_id": "d7c13ca5-14f5-4201-8855-a2b94f07e68c",
+  "task_id": "af389a51-8050-4d86-a33f-d3b44dc22a04",
+  "old_content_id": "fdc9d458-475f-452e-bd30-dc3fdef99237",
+  "new_content_id": "a34a479a-cbe4-498e-89bc-108cddb752fa",
+  "content": {
+    "asr": {
+      "equal": true,
+      "sha256": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4"
+    },
+    "diarization": {
+      "equal": true,
+      "sha256": "8875920a4ccd7134fa7597d070346529f59fe5b041e53a4bb527500eaa99cd8c"
+    }
+  },
+  "asr_new_calls": 0
+}

@@ -110,6 +110,8 @@ class ChunkExecution:
     lease: LeaseToken
     background: dict[str, Any] = field(default_factory=dict)
     source_media_ref: str | None = None
+    # Supplied by the host from the frozen ASR scope and source-video duration.
+    dialogue_bounds: tuple[int, int] | None = None
 
 
 class RunState(TypedDict):

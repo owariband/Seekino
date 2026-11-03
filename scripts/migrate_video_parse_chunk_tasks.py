@@ -40,7 +40,7 @@ from engine.parsev2.validation import ValidatedIntervalRefinement
 from server.config.parse_profile import ParseConfig as ServerParseConfig
 from server.database import _normalize_task_check, _schema_structure_differences, create_database_engine, DatabaseEnvironment
 from server.constants.parse import CAPACITY_ACQUIRED_KEY, MAX_INDEX_GENERATION, PREPARE_FAILURES_KEY, RUNTIME_DETAIL_KEY
-from server.model.job import ChunkTask, ChunkTaskPhase, IntervalParseTask, VideoParseTask
+from server.model.task import ChunkTask, ChunkTaskPhase, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession
 from server.utils.retry import task_retry_delay
 

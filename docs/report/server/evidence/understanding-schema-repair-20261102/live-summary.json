@@ -1,0 +1,84 @@
+{
+  "elapsed_seconds": 66.50052094459534,
+  "actual_model_requests": 1,
+  "original_validation_errors": [
+    {
+      "type": "extra_forbidden",
+      "loc": [
+        "timeline",
+        3,
+        "ACTION",
+        "text_variants"
+      ],
+      "msg": "Extra inputs are not permitted"
+    },
+    {
+      "type": "extra_forbidden",
+      "loc": [
+        "timeline",
+        5,
+        "ACTION",
+        "text_variants"
+      ],
+      "msg": "Extra inputs are not permitted"
+    },
+    {
+      "type": "extra_forbidden",
+      "loc": [
+        "timeline",
+        7,
+        "ACTION",
+        "text_variants"
+      ],
+      "msg": "Extra inputs are not permitted"
+    },
+    {
+      "type": "extra_forbidden",
+      "loc": [
+        "timeline",
+        9,
+        "ACTION",
+        "text_variants"
+      ],
+      "msg": "Extra inputs are not permitted"
+    },
+    {
+      "type": "extra_forbidden",
+      "loc": [
+        "timeline",
+        13,
+        "ACTION",
+        "text_variants"
+      ],
+      "msg": "Extra inputs are not permitted"
+    },
+    {
+      "type": "extra_forbidden",
+      "loc": [
+        "timeline",
+        16,
+        "ACTION",
+        "text_variants"
+      ],
+      "msg": "Extra inputs are not permitted"
+    }
+  ],
+  "exactly_matches_removal_of_six_invalid_empty_fields": true,
+  "original_events": 21,
+  "repaired_events": 21,
+  "schema_valid": true,
+  "new_asr_calls": 0,
+  "new_frame_calls": 0,
+  "database_commits": 0,
+  "remaining_budget_seconds": 280.55,
+  "usage": {
+    "completion_tokens": 2293,
+    "prompt_tokens": 7190,
+    "total_tokens": 9483,
+    "completion_tokens_details": {
+      "reasoning_tokens": 202
+    }
+  },
+  "source_invalid_sha256": "7a3d1381275d881fedcbe937b97b6ef2c02a857767a0519023a7bf9c7f9cef2f",
+  "repaired_sha256": "7074806543d06222ff20b9a560e8af4446425d1eb84e7fa108176c8ea86bdf21"
+}

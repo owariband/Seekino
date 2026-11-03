@@ -1,0 +1,46 @@
+{
+  "event_counts": {
+    "SCENE": 8,
+    "ACTION": 9,
+    "DIALOGUE": 16,
+    "ON_SCREEN_TEXT": 10,
+    "EMOTION": 2
+  },
+  "visual_comparison": [
+    {
+      "unchanged_except_person_labels": 10,
+      "removed_or_changed": 0,
+      "added_or_changed": 0
+    },
+    {
+      "unchanged_except_person_labels": 10,
+      "removed_or_changed": 0,
+      "added_or_changed": 0
+    },
+    {
+      "unchanged_except_person_labels": 9,
+      "removed_or_changed": 0,
+      "added_or_changed": 0
+    }
+  ],
+  "cross_boundary_dialogues": [
+    [
+      50400,
+      61180
+    ],
+    [
+      113520,
+      121660
+    ],
+    [
+      178450,
+      181440
+    ]
+  ],
+  "complete_final_asr_cue": true,
+  "known_omission_repaired_once": true,
+  "known_duplicate_removed": true,
+  "schema_and_source_range_valid": true,
+  "model_result_matches_committed_content": true,
+  "same_contents_evidence_background_as_ab": true
+}

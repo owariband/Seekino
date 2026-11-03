@@ -1,0 +1,29 @@
+{
+  "model_requests": 1,
+  "schema_repairs": 0,
+  "tools_offered": 0,
+  "model": "k3.1-pro",
+  "stream": true,
+  "usage": {
+    "completion_tokens": 15176,
+    "prompt_tokens": 11384,
+    "total_tokens": 26560,
+    "completion_tokens_details": {
+      "reasoning_tokens": 10479
+    }
+  },
+  "timing": {
+    "first_sse_seconds": 12.392999,
+    "reasoning_content": {
+      "first_seconds": 12.402881,
+      "last_seconds": 355.174517,
+      "window_seconds": 342.771636
+    },
+    "content": {
+      "first_seconds": 355.179375,
+      "last_seconds": 424.850518,
+      "window_seconds": 69.671143
+    }
+  },
+  "transport_seconds": 424.856526
+}

@@ -36,12 +36,3 @@ def derive_context_snapshot_id(video_id: str, sequence_no: int) -> str:
             f"seekino:context-snapshot:{video_id}:{sequence_no}",
         )
     )
-
-
-def derive_parse_job_id(video_id: str, pipeline_version: str) -> str:
-    return str(
-        uuid5(
-            NAMESPACE_URL,
-            f"seekino:series-parse-job:{video_id}:{pipeline_version.strip()}",
-        )
-    )

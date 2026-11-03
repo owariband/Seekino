@@ -1,18 +1,14 @@
+"""Task state, execution leases and scheduling snapshots."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-from collections.abc import Mapping
-
-from agent.video_parse_v2.input import ParseConfig
-from engine.parsev2.schemas import VideoParseResult
-from engine.rag.contracts import VideoChunkEvidence
-from engine.rag.retrieval.contracts import ChunkRetrievalFacts
-
-from ...utils.time import now_utc
 
 from agent.video_parse_v2.state import ChunkTaskPhase
+from engine.parsev2.schemas import VideoParseResult
+
+from ...utils.time import now_utc
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,26 +138,6 @@ class PreparedVideoParseState:
 
 
 @dataclass(frozen=True, slots=True)
-class VideoChunkState:
-    video_chunk_id: str
-    sequence_no: int
-    start_seconds: int
-    end_seconds: int
-    chunk_media_ref: str
-    analysis_window_media_ref: str
-
-
-@dataclass(frozen=True, slots=True)
-class ChunkParseContentState:
-    chunk_parse_task_id: str
-    video_chunk_id: str
-    sequence_no: int
-    content: dict[str, Any]
-    version: int
-    detail: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
 class ChunkExecutionState:
     chunk_parse_task_id: str
     video_parse_task_id: str
@@ -178,47 +154,12 @@ class ChunkExecutionState:
 
 
 @dataclass(frozen=True, slots=True)
-class IntervalMemberSnapshot:
-    interval_parse_task_id: str
-    video_parse_task_id: str
-    start_sequence_no: int
-    chunk_count: int
-    members: tuple[ChunkParseContentState, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class IndexableChunkState:
-    tenant_id: str
-    series_id: str
-    video_id: str
-    chunk_parse_task_id: str
-    video_chunk_id: str
-    sequence_no: int
-    start_seconds: int
-    end_seconds: int
-    content: dict[str, Any]
-    content_version: int
-    content_detail: dict[str, Any]
-    source_media_ref: str
-    chunk_media_ref: str
-    analysis_window_media_ref: str
-
-
-@dataclass(frozen=True, slots=True)
-class ChunkIndexingSnapshot:
-    video_parse_task_id: str
-    chunk: IndexableChunkState
-    target_index_generation: int
-
-
-@dataclass(frozen=True, slots=True)
 class ModelCallReservation:
     video_parse_task_id: str
     call_id: str
     worker_id: str
     first_reservation: bool
     used_calls: int
-    max_calls: int
     active_calls: int
     lease_expire_time: datetime
 
@@ -269,7 +210,6 @@ class ChunkScheduleState:
     terminal_error: str | None = None
 
 
-# Database snapshots used by transactional services; no ORM or workflow behavior.
 @dataclass(kw_only=True)
 class VideoParseTaskData:
     id: str
@@ -325,19 +265,6 @@ class ChunkParseTaskData:
 
 
 @dataclass(kw_only=True)
-class ChunkParseContentData:
-    id: str
-    chunk_task_id: str
-    content: Any | None = None
-    version: int = 1
-    detail: dict[str, Any] | None = None
-    create_time: int | None = None
-    create_date: datetime | None = None
-    update_time: int | None = None
-    update_date: datetime | None = None
-
-
-@dataclass(kw_only=True)
 class IntervalParseTaskData:
     id: str
     chunk_task_id: str
@@ -361,122 +288,6 @@ class IntervalParseTaskData:
     update_date: datetime | None = None
 
 
-@dataclass(kw_only=True)
-class IntervalParseContentData:
-    interval_task_id: str
-    content: Any
-    detail: dict[str, Any] | None = None
-    create_time: int | None = None
-    create_date: datetime | None = None
-    update_time: int | None = None
-    update_date: datetime | None = None
-
-
-@dataclass(kw_only=True)
-class VideoData:
-    id: str
-    series_id: str
-    episode_order: int
-    upload_sequence: int
-    filename: str
-    source_uri: str
-    proxy_uri: str | None = None
-    hash: str
-    size_bytes: int
-    duration_ms: int
-    upload_status: str
-    parse_status: str
-    upload_progress: int
-    parse_progress: int
-    create_time: int | None = None
-    create_date: datetime | None = None
-    update_time: int | None = None
-    update_date: datetime | None = None
-
-
-@dataclass(kw_only=True)
-class VideoChunkData:
-    id: str
-    video_id: str
-    sequence_no: int
-    start_ms: int
-    end_ms: int
-    window_start_ms: int
-    window_end_ms: int
-    chunk_media_ref: str
-    analysis_window_media_ref: str
-    transcript: list[dict[str, Any]] = field(default_factory=list)
-    baseline_visual_caption: str | None = None
-    keyframe_uris: list[str | dict[str, Any]] = field(default_factory=list)
-    create_time: int | None = None
-    create_date: datetime | None = None
-    update_time: int | None = None
-    update_date: datetime | None = None
-
-
-@dataclass(kw_only=True)
-class SeriesData:
-    id: str
-    tenant_id: str
-    name: str
-    display_name: str | None = None
-    description: str | None = None
-    transcript_language_hint: str | None = None
-    status: str
-    visibility: str = "private"
-    important_extra_data: dict[str, Any] | None = None
-    character_bible: list[dict[str, Any]] = field(default_factory=list)
-    create_time: int | None = None
-    create_date: datetime | None = None
-    update_time: int | None = None
-    update_date: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class VideoParseRetrievalTaskData:
-    """Task fields required to choose and validate a retrieval scope."""
-
-    id: str
-    video_id: str
-    status: str
-    parse_config: dict[str, Any]
-    chunk_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class VideoParseRetrievalChunkData:
-    """Published chunk identity needed to validate retrieval scope coverage."""
-
-    video_task_id: str
-    video_id: str
-    sequence_no: int
-
-
-@dataclass(frozen=True, slots=True)
-class VideoParseRetrievalScope:
-    """Current queryable V2 task set and its shared index contract."""
-
-    series_ids: tuple[str, ...]
-    searched_video_ids: tuple[str, ...]
-    parse_tasks_by_video_id: Mapping[str, str]
-    series_by_video_id: Mapping[str, str]
-    parse_config: ParseConfig
-    index_generation: int
-    partial: bool = False
-    warnings: tuple[str, ...] = ()
-
-    @property
-    def embedding_model(self) -> str:
-        return self.parse_config.models.embedding.model
-
-
-@dataclass(frozen=True, slots=True)
-class HydratedRetrievalCandidate:
-    facts: ChunkRetrievalFacts
-    evidence: VideoChunkEvidence
-    contexts: tuple[ChunkRetrievalFacts, ...] = ()
-
-
 @dataclass(frozen=True, slots=True)
 class RealtimeChunkState:
     chunk_parse_task_id: str
@@ -490,13 +301,3 @@ class RealtimeChunkState:
     last_error: dict | None
     parent_error: str | None = None
     phase: int = ChunkTaskPhase.PARSE
-
-
-@dataclass(frozen=True, slots=True)
-class ParseExportChunkSnapshot:
-    video_id: str
-    parse_task_id: str
-    chunk_id: str
-    chunk_sequence_no: int
-    content_version: int
-    content: VideoParseResult

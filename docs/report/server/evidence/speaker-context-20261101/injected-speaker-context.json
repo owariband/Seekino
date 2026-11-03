@@ -1,0 +1,18 @@
+{
+  "known_speakers": [
+    {
+      "aliases": [
+        "Karpathy",
+        "卡帕西"
+      ],
+      "name": "Andrej Karpathy",
+      "role": "本集课程讲师与主要讲解者"
+    }
+  ],
+  "scope": "video",
+  "scope_id": "c3970da1-53b7-4cf5-9bb2-15bfa01e9947",
+  "voice_group_count": 1,
+  "voice_groups": [
+    "SPEAKER_00"
+  ]
+}

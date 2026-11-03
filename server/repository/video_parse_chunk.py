@@ -11,8 +11,11 @@ from copy import deepcopy
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..model.dto.jobDTO import ChunkParseTaskData, ChunkParseContentData, VideoChunkData
-from ..model.job import ChunkParseTask, ChunkParseContent
+from ..model.dto.taskDTO import ChunkParseTaskData
+from ..model.dto.parseContentDTO import ChunkParseContentData
+from ..model.dto.libraryDTO import VideoChunkData
+from ..model.task import ChunkParseTask
+from ..model.parse_content import ChunkParseContent
 from ..model.video import VideoChunk
 
 
