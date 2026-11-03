@@ -280,3 +280,50 @@ def test_failed_direct_generation_never_commits_and_preserves_original_error_on_
     runtime.commit_chunk_result.assert_not_awaited()
     runtime.notify_chunk_committed.assert_not_awaited()
     runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
+
+
+def test_understanding_stably_orders_events_without_another_model_request():
+    execution = _repair_execution()
+    candidate = _result().model_dump(mode="json")
+    candidate["timeline"].reverse()
+    # Same-time events keep their original relative order, without merging them.
+    tied = {**candidate["timeline"][-1], "description": "Another observation at the same time"}
+    candidate["timeline"].append(tied)
+    original = deepcopy(candidate)
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root=candidate))
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    committed = runtime.commit_chunk_result.await_args.args[1].model_dump(mode="json")
+    assert committed["timeline"] == sorted(original["timeline"], key=lambda e: e["start_seconds"])
+    assert candidate == original
+    runtime.understand_chunk.assert_awaited_once()
+    runtime.repair_chunk_understanding.assert_not_awaited()
+
+
+def test_understanding_sorted_candidate_keeps_other_errors_and_feedback_locations():
+    execution = _repair_execution()
+    candidate = _invalid_candidate()
+    candidate["timeline"].reverse()
+    original = deepcopy(candidate)
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root=candidate))
+    runtime.repair_chunk_understanding.return_value = UnderstandingModelResponse(root=_result().model_dump(mode="json"))
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    prompt = runtime.repair_chunk_understanding.await_args.kwargs["prompt"]
+    assert "timeline.1.ACTION.text_variants" in prompt
+    rejected = json.loads(prompt.split("Rejected response JSON:\n", 1)[1])
+    assert rejected["timeline"] == sorted(original["timeline"], key=lambda e: e["start_seconds"])
+    assert rejected["timeline"][1]["text_variants"] == []
+    assert candidate == original
+    runtime.repair_chunk_understanding.assert_awaited_once()
+    runtime.commit_chunk_result.assert_awaited_once()
+
+
+@pytest.mark.parametrize("invalid_time", [True, "61000", None])
+def test_understanding_normalization_never_coerces_invalid_times(invalid_time):
+    from engine.parsev2.validation import normalize_parse_response
+    candidate = _result().model_dump(mode="json")
+    candidate["timeline"][0]["start_seconds"] = invalid_time
+    original = deepcopy(candidate)
+    normalized = normalize_parse_response(candidate)
+    assert normalized == original
+    with pytest.raises(ValidationError):
+        VideoParseResult.model_validate(normalized)

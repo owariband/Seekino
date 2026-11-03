@@ -77,26 +77,28 @@ class IntervalRefinementResult(_ValidationModel):
     members: list[RefinedMember] = Field(min_length=1)
 
 
-def normalize_refinement_response(value: Any) -> Any:
-    """Order Refine timelines without changing event values or caller input.
+def normalize_parse_response(value: Any) -> Any:
+    """Stably order a result without changing event values or caller input.
 
     The harness validates and, on failure, returns this same value, so error
-    locations always point into the rejected response provided to the model.
+    locations point into the rejected response supplied to the model.
     Canonical VideoParseResult validation remains strict for every caller.
     """
+    timeline = value.get("timeline") if isinstance(value, dict) else None
+    # Never coerce, clip, deduplicate or infer an invalid time value.
+    if isinstance(timeline, list) and all(
+        isinstance(event, dict) and type(event.get("start_seconds")) is int
+        for event in timeline
+    ):
+        return {**value, "timeline": sorted(timeline, key=lambda event: event["start_seconds"])}
+    return value
+
+
+def normalize_refinement_response(value: Any) -> Any:
+    """Apply the same normalization to every member before the Refine gate."""
     if not isinstance(value, dict) or not isinstance(value.get("members"), list):
         return value
-    members = []
-    for member in value["members"]:
-        timeline = member.get("timeline") if isinstance(member, dict) else None
-        # Never coerce, clip, deduplicate or infer an invalid time value.
-        if isinstance(timeline, list) and all(
-            isinstance(event, dict) and type(event.get("start_seconds")) is int
-            for event in timeline
-        ):
-            member = {**member, "timeline": sorted(timeline, key=lambda event: event["start_seconds"])}
-        members.append(member)
-    return {**value, "members": members}
+    return {**value, "members": [normalize_parse_response(member) for member in value["members"]]}
 
 
 class RefinementResultError(ValueError):

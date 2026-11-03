@@ -15,7 +15,7 @@ from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from httpx import TransportError
 
 from engine.parsev2.observations import build_chunk_without_understanding
-from engine.parsev2.validation import validate_result_time_range
+from engine.parsev2.validation import normalize_parse_response, validate_result_time_range
 from engine.parsev2.schemas import VideoParseResult
 
 from ..timelineEvent_canvas import ParseContextCanvas
@@ -175,6 +175,7 @@ class ChunkUnderstandingWorkflow:
                     response = response.model_dump(mode="json")
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Understanding result-gate deadline expired")
+                response = normalize_parse_response(response)
                 return VideoParseResult.model_validate(response)
             except ValidationError as error:
                 if not received_response:
