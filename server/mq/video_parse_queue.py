@@ -161,18 +161,22 @@ class MySqlVideoParseQueue:
         _require_lease_duration(lease_duration)
         claimed_at = now if now is not None else now_utc()
         with self._session_factory() as session:
-            candidates = list(session.scalars(select(VideoParseTask.id).where(
+            candidates = list(session.execute(select(
+                VideoParseTask.id, _capacity_acquired().label("acquired"),
+                (VideoParseTask.status == "PENDING").label("pending"),
+                VideoParseTask.next_execute_time, VideoParseTask.create_date,
+            ).where(
                 VideoParseTask.status.in_(["PENDING", "PREPARING", "PARSING", "INDEXING"]),
                 VideoParseTask.lease_owner.is_(None),
                 VideoParseTask.next_execute_time <= claimed_at,
                 VideoParseTask.is_deleted.is_(False),
                 VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"].as_boolean().is_(True),
-            ).order_by(
-                _capacity_acquired().desc(),
-                (VideoParseTask.status == "PENDING"),
-                VideoParseTask.next_execute_time, VideoParseTask.create_date, VideoParseTask.id,
             )))
-        for candidate_id in candidates:
+        # JSON predicates can make MySQL filesort carry detail even for SELECT id.
+        # Preserve the existing priority using only the projected scalar values.
+        candidates.sort(key=lambda row: (not row.acquired, row.pending, row.next_execute_time,
+                                         row.create_date, row.id))
+        for candidate_id, *_priority in candidates:
             with serialized_transaction(self._session_factory, VIDEO_PARSE_CAPACITY_LOCK_NAME) as session:
                 if session is None:
                     return None
@@ -197,10 +201,11 @@ class MySqlVideoParseQueue:
                 _capacity_acquired(),
                 VideoParseTask.is_deleted.is_(False),
                 VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"].as_boolean().is_(True),
-            ).order_by(VideoParseTask.id)
+            )
             if requested is not None:
                 statement = statement.where(VideoParseTask.id == requested)
-            parents = list(session.scalars(statement))
+            # Sorting these IDs in Python avoids filesort retaining JSON filters.
+            parents = sorted(session.scalars(statement))
         previous = self._last_parent.get(phase)
         if previous in parents:
             offset = parents.index(previous) + 1
