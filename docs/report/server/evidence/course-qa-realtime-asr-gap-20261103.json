@@ -1,0 +1,42 @@
+{
+  "date": "2026-11-03",
+  "user_query": "现在老师在讲什么？",
+  "conversation_id": "cf7fa5a3-3649-4ce8-a2d1-43c8631e6602",
+  "assistant_message_id": "e67fc643-0df8-4fb3-aa13-38427fd64050",
+  "task_id": "2a531c4f-2c73-4cc2-adaf-5156edc26236",
+  "task_status": "PARSING_FAILED",
+  "anchor_ms": 2573152,
+  "lookback_ms": 180000,
+  "requested_window_ms": [
+    2393152,
+    2573152
+  ],
+  "asr_present": true,
+  "content_version": 4,
+  "asr_schema_valid": true,
+  "asr_result_sha256_matches": true,
+  "media_identity_matches": true,
+  "asr_cues_total": 2476,
+  "overlapping_local_cues": 62,
+  "tool_chunk_window_ms": [
+    2460000,
+    2640000
+  ],
+  "tool_chunk_errors": [
+    "full Parse requires retry (PARSING_FAILED)",
+    "full Parse requires retry (PARSING_FAILED)",
+    "full Parse requires retry (PARSING_FAILED)"
+  ],
+  "tool_partial": true,
+  "visual_error": null,
+  "tool_duration_ms": 4034,
+  "query_hook_enabled": false,
+  "query_hook_playback_bypass_in_code": true,
+  "new_model_calls": 0,
+  "raw_local_window_path": "/Users/hypnos/.codex/worktrees/course-qa/Seekino/outputs/verification/course-qa/20261103-realtime-asr-gap/local-asr-window.json",
+  "first_token_ms": null,
+  "tt_ms": null,
+  "ui_tt_reported_seconds": 7,
+  "metrics_note": "User-reported UI duration only; this user session was not instrumented for client FTT/TT.",
+  "local_window_sha256": "41b72be47b0853626def5ba45a2c94c4ded9da17fb27fa0e5f6926562b801124"
+}
