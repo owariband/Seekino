@@ -147,6 +147,8 @@ def test_all_factory_entries_execute_the_configured_transport(monkeypatch, profi
     assert requests and all(request["stream"] is expected for request in requests)
     for request in requests:
         assert request["temperature"] == (1 if profile == "kimi" else temperature or 0)
+        if profile == "kimi" and entry in {"loop", "structured", "supervisor"}:
+            assert request["reasoning_effort"] == "low"
         if "messages" in request:
             assert request.get("stream_options") == ({"include_usage": True} if expected else None)
     assert any(item.usage.input_tokens == 100 and item.usage.output_tokens == 10 for item in usage)

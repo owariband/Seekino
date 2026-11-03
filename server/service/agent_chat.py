@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 from copy import deepcopy
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import asdict, replace
 from queue import Empty, Full, Queue
-from threading import Event, Lock
+from threading import Event, Lock, RLock
 from time import monotonic_ns
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.output import video_range_sources
 from engine.rag.contracts import VideoChunkEvidence
 from gateway.agent_model.contracts import SupervisorSessionContext
+from gateway.model_diagnostics import model_diagnostic_scope
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
@@ -47,6 +49,7 @@ from ..utils.media import image_uri_to_data_url
 from ..utils.validation import canonical_uuid, require_nonempty_text
 from .library import LibraryService
 from .agent_attachments import AgentAttachmentService
+from .agent_chat_stream import ChatSnapshotCoalescer
 from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService
 
@@ -815,8 +818,10 @@ class AgentChatService:
         assert timer is not None
         terminal_timing: AgentMessageTimingState | None = None
         committed_result: AgentMessageSendState | None = None
+        event_lock = RLock()
+        snapshots = ChatSnapshotCoalescer(lambda: self._monotonic_clock() / 1_000_000_000)
 
-        def apply_runtime_event(event):
+        def apply_runtime_event(event, *, allow_cancelled_snapshot: bool = False):
             nonlocal last_phase, evidence_hit_count, snapshot_count, partial_content
             event_type = event["type"]
             if event_type == "answer.progress":
@@ -833,7 +838,7 @@ class AgentChatService:
                 return
             elif event_type == "answer.snapshot":
                 with self._lock:
-                    if execution.cancellation.is_set():
+                    if execution.cancellation.is_set() and not allow_cancelled_snapshot:
                         raise AgentModelInvocationError("Agent execution cancelled")
                     search_result = deepcopy(event["searchResult"])
                     legacy_blocks = (
@@ -848,6 +853,10 @@ class AgentChatService:
                     execution.publish({
                         "type": "answer.snapshot",
                         **_message_pair(AgentMessageSendState(initial.user_message, assistant)),
+                        **({"textStream": {
+                            **event["textStream"],
+                            "serverPublishedMonotonicMs": monotonic_ns() / 1_000_000,
+                        }} if event.get("textStream") is not None else {}),
                     })
                 snapshot_count += 1
                 partial_content = assistant.content or ""
@@ -864,11 +873,29 @@ class AgentChatService:
                 return
             execution.publish(event)
 
+        def flush_snapshot(*, allow_cancelled: bool = False):
+            pending = snapshots.take_pending()
+            if pending is not None:
+                apply_runtime_event(pending, allow_cancelled_snapshot=allow_cancelled)
+
         def publish_runtime(event):
             # Intermediate message delivery observes execution; it does not own
             # the Tool result. Full snapshots and final commit can recover it.
             try:
-                apply_runtime_event(event)
+                with event_lock:
+                    if execution.cancellation.is_set():
+                        raise AgentModelInvocationError("Agent execution cancelled")
+                    if event["type"] == "answer.snapshot":
+                        ready = snapshots.offer(event)
+                        if ready is not None:
+                            apply_runtime_event(ready)
+                    elif event["type"] == "answer.model.completed":
+                        # Mark completion before flushing so it cannot prove live growth.
+                        apply_runtime_event(event)
+                        flush_snapshot()
+                    else:
+                        flush_snapshot()
+                        apply_runtime_event(event)
             except (AgentConflictError, AgentMessageNotFoundError) as exc:
                 execution.cancellation.set()
                 raise AgentModelInvocationError("Agent message is no longer active") from exc
@@ -1041,7 +1068,9 @@ class AgentChatService:
                 )
                 usage = self._parse_usage.capture_chat(context) if self._parse_usage is not None else nullcontext()
                 # This scope belongs to the executor thread that invokes the models.
-                with model_call_context(context), tracing, usage:
+                with model_call_context(context), tracing, usage, model_diagnostic_scope(
+                    os.environ.get("SEEKINO_CHAT_TRACE_DIR"),
+                ):
                     final = runtime.kick(
                         inputs, load_video_context=load_video_context,
                         session_context=session_context, **run_kwargs,
@@ -1110,6 +1139,12 @@ class AgentChatService:
                     conversation_id, assistant_id,
                 )
                 return committed_result
+            try:
+                with event_lock:
+                    # Keep the last validated prefix, including on explicit cancellation.
+                    flush_snapshot(allow_cancelled=True)
+            except Exception:
+                _logger.exception("Could not persist pending Agent text message_id=%s", assistant_id)
             try:
                 runtime.discard_turn(conversation_id, assistant_id)
             except Exception:

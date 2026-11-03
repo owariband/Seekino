@@ -42,6 +42,7 @@ def _model_config(
             api_key_env=fallback.deepseek.api_key_env,
         ),
         video_parser=SimpleNamespace(fallback=fallback),
+        web_search=SimpleNamespace(provider="deepseek", api_key_env="SEARCH_API_KEY"),
         model_dump=lambda mode: {
             "model_sources": [source.model_dump() for source in selected_sources],
             "agent_runtime": {},
@@ -128,6 +129,16 @@ def test_config_digest_tracks_configured_parse_fallback_api_key(monkeypatch) -> 
     monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "second")
 
     assert config_digest() != initial
+
+
+def test_config_digest_tracks_optional_search_key_without_requiring_it(monkeypatch) -> None:
+    monkeypatch.setattr(local_services, "load_config", lambda: _model_config(CodexModelSourceConfig()))
+    monkeypatch.delenv("SEARCH_API_KEY", raising=False)
+    missing = config_digest()
+    monkeypatch.setenv("SEARCH_API_KEY", "first")
+    configured = config_digest()
+    monkeypatch.setenv("SEARCH_API_KEY", "second")
+    assert len({missing, configured, config_digest()}) == 3
 
 
 @pytest.mark.parametrize(
@@ -1078,3 +1089,13 @@ def test_start_initializes_checkpoint_and_event_index_before_api(monkeypatch, tm
 
     assert local_services.main() == 0
     assert events == ["mysql", "es", "initialize", "applications"]
+
+
+def test_ddgs_config_digest_ignores_unused_search_api_key(monkeypatch):
+    config = _model_config(CodexModelSourceConfig())
+    config.web_search.provider = "ddgs"
+    monkeypatch.setattr(local_services, "load_config", lambda: config)
+    monkeypatch.setenv("SEARCH_API_KEY", "first")
+    initial = config_digest()
+    monkeypatch.setenv("SEARCH_API_KEY", "second")
+    assert config_digest() == initial

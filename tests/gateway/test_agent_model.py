@@ -2222,7 +2222,10 @@ def test_deepseek_structured_agent_replays_reasoning_after_tool_call() -> None:
     client.close()
 
 
-def test_kimi_agent_loop_uses_fixed_temperature_and_reasoning_effort() -> None:
+@pytest.mark.parametrize("configured_effort,expected_effort", [
+    ("none", "low"), ("low", "low"), ("high", "high"), ("max", "max"),
+])
+def test_kimi_agent_loop_uses_fixed_temperature_and_reasoning_effort(configured_effort, expected_effort) -> None:
     completions = _FunctionCompletions(_agent_response("ok"))
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     model = OpenAIAgentModel(
@@ -2233,7 +2236,7 @@ def test_kimi_agent_loop_uses_fixed_temperature_and_reasoning_effort() -> None:
         api_key="test-key",
         max_output_tokens=2048,
         request_timeout_seconds=30,
-        reasoning_effort="low",
+        reasoning_effort=configured_effort,
         client=client,
     )
 
@@ -2242,13 +2245,16 @@ def test_kimi_agent_loop_uses_fixed_temperature_and_reasoning_effort() -> None:
     assert len(completions.calls) == 1
     request = completions.calls[0]
     assert request["temperature"] == 1
-    assert request["reasoning_effort"] == "low"
+    assert request["reasoning_effort"] == expected_effort
     assert request["max_completion_tokens"] == 2048
     assert "max_tokens" not in request
     assert "extra_body" not in request
 
 
-def test_kimi_structured_agent_uses_fixed_temperature_and_reasoning_effort() -> None:
+@pytest.mark.parametrize("configured_effort,expected_effort", [
+    ("none", "low"), ("low", "low"), ("high", "high"), ("max", "max"),
+])
+def test_kimi_structured_agent_uses_fixed_temperature_and_reasoning_effort(configured_effort, expected_effort) -> None:
     requests = []
 
     def retrieve(query: str) -> dict:
@@ -2281,7 +2287,7 @@ def test_kimi_structured_agent_uses_fixed_temperature_and_reasoning_effort() -> 
             base_url="https://api.kimi.test/coding/v1",
             request_timeout_seconds=3,
             max_output_tokens=400,
-            reasoning_effort="low",
+            reasoning_effort=configured_effort,
             client=client,
         )
         result = model.run_structured(
@@ -2297,7 +2303,7 @@ def test_kimi_structured_agent_uses_fixed_temperature_and_reasoning_effort() -> 
     assert len(requests) == 2
     for request in requests:
         assert request["temperature"] == 1
-        assert request["reasoning_effort"] == "low"
+        assert request["reasoning_effort"] == expected_effort
         assert request["max_completion_tokens"] == 400
         assert "max_tokens" not in request
         assert "thinking" not in request

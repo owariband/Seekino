@@ -414,7 +414,7 @@ def _build_application_services(
                     else agent_config.supervisor_reasoning_effort
                 ),
             ),
-            WebSearcher(),
+            WebSearcher(gateway_config.web_search),
             realtime_runtime=RealtimeUnderstandingRuntime(
                 host=realtime_service,
                 execution_timeout_seconds=agent_config.execution_timeout_seconds,

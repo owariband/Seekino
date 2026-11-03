@@ -445,6 +445,15 @@ class QueryHookConfig(BaseModel):
     total_timeout_seconds: float = Field(default=8, gt=0)
 
 
+class WebSearchConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["ddgs", "deepseek"] = "ddgs"
+    backend: _NonEmptyString = "auto"
+    base_url: _HttpsBaseUrl = "https://api.deepseek.com"
+    api_key_env: _NonEmptyString = "DEEPSEEK_API_KEY"
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -459,6 +468,7 @@ class GatewayConfig(BaseModel):
     multimodal_embedding: MultimodalEmbeddingConfig
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     query_hook: QueryHookConfig = Field(default_factory=QueryHookConfig)
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     # Runtime tuning is validated by the Server, which owns its constraints.
     agent_runtime: dict[str, object] = Field(default_factory=dict)
     normalized_models: dict[str, EmbeddingModelBinding | ModelBinding] = Field(

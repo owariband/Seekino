@@ -10,6 +10,38 @@
 
 本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
 
+## 网页搜索配置
+
+`web_search.provider` 与 `models.agent` / `models.supervisor` 独立。用户选择免 API key 的
+DDGS 或 DeepSeek 官方 API；省略配置时兼容原来的 DDGS，不根据环境里是否存在 key 自动切换。
+
+```yaml
+# 免 API key；仍需联网。backend 可选 auto 或 DDGS 支持的搜索后端。
+web_search:
+  provider: ddgs
+  backend: auto
+```
+
+```yaml
+# 显式选择 DeepSeek API，key 的值保存在环境变量中。
+web_search:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+```
+
+DDGS 查询限 500 字符，DeepSeek 限 128；Agent 的工具 Schema 跟随所选服务，视频查询仍为 500。
+`backend` 仅用于 DDGS，支持单个名称或逗号分隔的后端列表；不存在或被该版本禁用的后端会明确失败，
+不会由库偷偷改成 auto。auto 下库自行选择/组合后端，日志记录的是所选模式，不声称精确追踪了每条结果的底层引擎。
+
+`base_url` / `api_key_env` 仅用于 DeepSeek，前者为 HTTPS 服务根地址，适配器追加 `/v1/tools/search`。
+连接配置修改后重启 API；仅选择 DeepSeek 时，本地启动器才跟踪搜索 key 的变化。
+两种方式均返回摘要，失败时不自动跨供应商回退。合同和实测见
+[搜索配置 TRD](design/03-product-reassessment/deepseek-web-search-trd.md)。
+
+2026-11-02 本需求的独立测试实例显式选择 DeepSeek Search，生成模型使用 DeepSeek Flash low；
+该选择不改变仓库默认行为、主工作区模型配置或已有视频任务快照。
+
 ## 模型定义与默认引用
 
 `agent`、`vision`、`transcription`、`embedding`、`rerank` 是现有业务使用的默认引用。`models` 也接受任意命名引用，例如 `document_reader`；引用名称不决定供应商和协议。
@@ -77,6 +109,12 @@ models:
 新 Parse 任务在配置快照中保存 `stream`，恢复时按快照创建模型。历史快照缺少字段时使用新的默认 `true`，序列化保持原有形状以保护幂等指纹；这意味着加载本次修复的服务后，未配置该字段的旧任务也会使用流式生成。显式 `false` 在普通续跑和 retry 中保留，切换已有任务配置仍按前述 reparse 约定执行。
 
 独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器使用 `query_hook.rewriter_stream`，默认 `true`。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
+
+## Kimi Chat 的 reasoning_effort
+
+Kimi Chat/Agent、Structured Agent 和 Deep Agents 的共享请求 profile 将 `reasoning_effort: none` 作为 `low` 的兼容别名，实际请求显式发送 `reasoning_effort: low`；显式 `low/high/max` 原样发送。此前 `none` 会省略该字段，使供应商采用默认思考档位。此映射不表示关闭思考，不修改保存的配置或历史任务快照。其他供应商及不支持该设置的通用视觉生成入口沿用原合同。
+
+2026-11-02 已用真实 Kimi 请求确认映射；单样本耗时与 reasoning 用量见 [Chat 实测记录](report/server/chat-streaming-live-20261102.md#kimi-low-20261102)。
 
 ## 模型 temperature 配置
 

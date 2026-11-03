@@ -37,6 +37,8 @@
 
 本机 ASR 性能与恢复边界：[2026-10-30 GPT 整集 Metal 实测](gateway/local/whisper-metal-benchmark-20261030.md)，附[可审阅指标 JSON](gateway/local/whisper-metal-benchmark-20261030.json)。完整 116 分钟音轨转写约 5 分钟；明确区分 CPU WhisperX 的 VAD/对齐、实验落盘与未完成的正式持久恢复。
 
+[2026-11-02 DeepSeek 网页搜索接入](gateway/deepseek-web-search-20261102.md)：独立 dev 基线、官方 HTTP 接入、离线边界与真实页面样本；保留回答质量失败案例。
+
 流式接入：[2026-10-30 正式 Kimi 生成与 Parse 入口验证](gateway/kimi-streaming-20261030.md)。工厂、直接 JSON 与视觉工具 SSE 覆盖；合成图和原 189 帧长 Chunk 均完成，部署与整集效果单独验收。
 
 API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-20261030.md)。两轮各 10 路短文本请求全部通过，关闭重试，保留串行对照、逐请求时间与用量；不等于长视频解析吞吐验收。
@@ -68,6 +70,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 PR 交付核对：[2026-11-01 PR #18 实现提交与整合复核](server/pr18-delivery-20261101.md)，区分已提交代码、基线失败、服务加载与未完成的整课验收。
 
 [2026-11-01 Refine 中断候选的旧实现基线](server/refine-interruption-baseline-20261101.md)：固定 GPT v4 最终进度、成功/失败及含重试等待的中位数、冲突和用量覆盖率；只读留证，新增方案尚未实施。
+
+Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-streaming-20261101.md)。供应商完成前正文持久化、非流式/缓冲反例、浏览器真实增长和 FTT 采证；真实课程模型与部署仍待试点。
 
 背景：2026-10-08–09 的模型用量交接与验收、2026-10-10 的用户/租户交付。不同报告的版本、环境和测试集合分别阅读。
 

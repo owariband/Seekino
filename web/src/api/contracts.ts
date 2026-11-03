@@ -701,9 +701,21 @@ interface AgentAnswerEventBase {
   occurredAt: UnixTimeMs;
 }
 
+export interface AgentTextStream {
+  origin: "provider_delta";
+  callId: string;
+  deltaSequence: number;
+  modelFirstTextMs: number | null;
+  modelElapsedMs: number;
+  providerReceivedMonotonicMs: number;
+  serverPublishedMonotonicMs: number;
+  beforeModelCompleted: boolean;
+}
+
 export type AgentAnswerEvent =
   | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.started" | "answer.snapshot" | "answer.completed";
+      textStream?: AgentTextStream | null;
     })
   | (AgentAnswerEventBase & {
       type: "answer.evidence";
@@ -712,6 +724,7 @@ export type AgentAnswerEvent =
   | (AgentAnswerEventBase & { type: "answer.block"; block: AgentRenderBlock })
   | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase; timing?: AgentMessageTiming | null })
   | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
+  | (AgentAnswerEventBase & { type: "answer.model.completed"; callId: string })
   | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.failed";
       error: Failure;

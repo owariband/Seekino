@@ -1,4 +1,4 @@
-"""Collect Chat Completions SSE before exposing a result or executing tools."""
+"""Forward optional display text while collecting verified results and tools."""
 from __future__ import annotations
 
 import socket
@@ -13,7 +13,8 @@ from openai.lib.streaming.chat import ChatCompletionStreamState
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
-from gateway.model_diagnostics import record_model_event
+from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.model_events import ModelTextDelta, emit_model_text
 from gateway.usage import ModelCallTracker
 from gateway.streaming.first_sse import FirstSSEDeadline
 
@@ -27,22 +28,27 @@ def request_chat_completion(
     if not isinstance(stream, bool):
         raise TypeError("stream must be a boolean")
     request["stream"] = stream
-    usage_call.raise_if_cancelled()
-    if check_control is not None:
-        check_control()
     if stream:
         request["stream_options"] = {**request.get("stream_options", {}), "include_usage": True}
-        return request_chat_stream(
-            completions, usage_call=usage_call, check_control=check_control,
-            first_sse_deadline=first_sse_deadline, **request,
-        )
-    request.pop("stream_options", None)
-    response = completions.create(**request)
-    usage_call.capture_response(response)
-    usage_call.raise_if_cancelled()
-    if check_control is not None:
-        check_control()
-    return response
+    else:
+        request.pop("stream_options", None)
+    with capture_model_diagnostics(usage_call, request):
+        usage_call.raise_if_cancelled()
+        if check_control is not None:
+            check_control()
+        if stream:
+            return request_chat_stream(
+                completions, usage_call=usage_call, check_control=check_control,
+                first_sse_deadline=first_sse_deadline, **request,
+            )
+        record_model_event("chat_transport", {"stream": False, "started_monotonic": monotonic()})
+        response = completions.create(**request)
+        usage_call.capture_response(response)
+        record_model_event("response", response)
+        usage_call.raise_if_cancelled()
+        if check_control is not None:
+            check_control()
+        return response
 
 
 def request_chat_stream(
@@ -66,6 +72,7 @@ def request_chat_stream(
                 raise ModelFailureError("Chat completion stream returned an invalid delta") from error
     response = state.current_completion_snapshot
     response.usage = usage
+    record_model_event("response", response)
     return response
 
 
@@ -92,7 +99,10 @@ def _iter_chat_chunks(
     first_sse_deadline: FirstSSEDeadline | None = None, **request: Any,
 ) -> Iterator[Any]:
     # The SDK decodes SSE. We additionally reject EOF without a terminal choice.
-    deadline = monotonic() + request["timeout"]
+    started_at = monotonic()
+    deadline = started_at + request["timeout"]
+    text_sequence = 0
+    first_text_ms = None
 
     def check() -> None:
         usage_call.raise_if_cancelled()
@@ -114,6 +124,7 @@ def _iter_chat_chunks(
         unregister_startup = usage_call.add_cancel_callback(first_sse_deadline.interrupt)
     try:
         check()
+        record_model_event("chat_transport", {"stream": True, "started_monotonic": started_at})
         stream = completions.create(**request)
         with stream:
             if first_sse_deadline is not None:
@@ -121,6 +132,7 @@ def _iter_chat_chunks(
             usage_call.capture_response(stream.response, include_usage=False)
             unregister = usage_call.add_cancel_callback(lambda: _cancel_chat_stream(stream))
             for chunk in stream:
+                received_at = monotonic()
                 check()
                 if first_sse_deadline is not None:
                     first_sse_deadline.received()
@@ -137,6 +149,22 @@ def _iter_chat_chunks(
                         raise ModelFailureError("Chat completion stream returned an unexpected choice")
                     received_choice = True
                     terminal = choice.finish_reason is not None
+                    text = choice.delta.content
+                    if isinstance(text, str) and text:
+                        elapsed_ms = (received_at - started_at) * 1000
+                        if first_text_ms is None and text.strip():
+                            first_text_ms = elapsed_ms
+                        text_sequence += 1
+                        delta = ModelTextDelta(
+                            text, usage_call.call_id, text_sequence, received_at,
+                            elapsed_ms, first_text_ms, not terminal,
+                        )
+                        record_model_event("chat_text_delta", {
+                            "sequence": text_sequence, "chars": len(text),
+                            "received_monotonic": received_at, "elapsed_ms": elapsed_ms,
+                            "first_text_ms": first_text_ms, "before_completion": not terminal,
+                        })
+                        emit_model_text(delta)
                 yield chunk
             check()
     except Exception as error:
@@ -155,6 +183,10 @@ def _iter_chat_chunks(
             first_sse_deadline.close()
         unregister_startup()
         unregister()
+        record_model_event("chat_transport_end", {
+            "finished_monotonic": monotonic(), "terminal": terminal,
+            "text_deltas": text_sequence, "first_text_ms": first_text_ms,
+        })
     if not received_choice or not terminal:
         raise ModelFailureError(
             "Chat completion stream ended without a terminal choice",
