@@ -39,6 +39,8 @@ const text=async(page,sel)=>(await page.locator(sel).first().textContent()).repl
   ok('Blocked work names its upstream card',(await text(page,'.task-row:has-text("LOOP-04")')).includes('等待 LOOP-03'));
   ok('Repository data wins over a legacy draft',!(await page.locator('body').textContent()).includes('OLD-DRAFT'));
   ok('No save, export, import or editing controls',await page.locator('[data-action="save"],[data-action="add"],[data-action="edit"],[data-action="import"],input[type="file"],#editor-dialog,[draggable="true"]').count()===0);
+  ok('Page is light only',await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme.split(' ').sort().join(' ')==='light only'));
+  ok('Display type uses the serif face',await page.evaluate(()=>/serif/.test(getComputedStyle(document.querySelector('.ms-title')).fontFamily)&&!/serif/.test(getComputedStyle(document.body).fontFamily.replace(/sans-serif/g,''))));
   ok('Desktop overview has no horizontal overflow',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.screenshot({path:output+'/overview.png',fullPage:true});
   await page.locator('.route .chip[data-gate="RT07"]').click();
