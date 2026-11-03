@@ -28,6 +28,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [realtime-asr-evidence-trd.md](realtime-asr-evidence-trd.md) | 2026-11-03，42:53 讲解问答漏读已有 ASR，以及实时/检索路由维度冲突 | 独立语音取证与 action / evidence_sources 正交路由，两项分别验收 | Draft PR #31，设计待评审；基于已合入 dev 的 #18，不接管 #30 |
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
 | [deepseek-web-search-trd.md](deepseek-web-search-trd.md) | 2026-11-02，Chat 更换模型后搜索仍走未固定 backend 的 DDGS | 免 key DDGS 与 DeepSeek API 独立配置，明确请求、费用和错误合同 | 直接向 dev 集成；接口接入与回答、引用质量分别验收 |
 | [handoff_to_new_pc.md](handoff_to_new_pc.md) | 2026-10-26 的多任务交接，含 10-24–25 探索 | 换机前保存真实停点、尝试过程、未完成项与后续理由 | 跨阶段交接；保留三条主线和环境差异，不将局部探针当作完整产品交付 |
