@@ -251,7 +251,7 @@ class DeepSeekMultimodalModel:
 
 
 def _deepseek_response_schema(value: Any) -> Any:
-    """Project union nodes to the DeepSeek Responses schema format."""
+    """Project canonical schemas to DeepSeek's strict Responses format."""
     if isinstance(value, list):
         return [_deepseek_response_schema(item) for item in value]
     if not isinstance(value, dict):
@@ -272,4 +272,7 @@ def _deepseek_response_schema(value: Any) -> Any:
     if "oneOf" in schema:
         schema["anyOf"] = schema.pop("oneOf")
         schema.pop("discriminator", None)
+    if isinstance(schema.get("properties"), dict):
+        # Strict Responses requires every declared property, including defaults.
+        schema["required"] = list(schema["properties"])
     return schema

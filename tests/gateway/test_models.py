@@ -444,6 +444,32 @@ def test_deepseek_rejects_video_without_sending_a_request(tmp_path) -> None:
     assert responses.calls == []
 
 
+def test_deepseek_requires_realtime_captions_without_changing_domain_defaults() -> None:
+    from agent.chat.realtime_understanding.state import VisualObservation
+
+    canonical = VisualObservation.model_json_schema()
+    output = {"summary": "The lecturer demonstrates a generated news article.", "captions": []}
+    responses = FakeDeepSeekResponses(json.dumps(output))
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash", stream=False, base_url="https://api.deepseek.com", api_key="test-key",
+        max_output_tokens=1000, request_timeout_seconds=10,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    result = model.generate(
+        [TextInput("Describe the paused frame")],
+        schema_name="realtime_visual_observation", result_type=VisualObservation,
+    )
+
+    schema = responses.calls[0]["text"]["format"]["schema"]
+    assert schema["required"] == ["summary", "captions"]
+    assert schema["properties"]["captions"]["items"]["required"] == ["frame_index", "caption"]
+    assert result.model_dump() == output
+    assert VisualObservation.model_json_schema() == canonical
+    assert canonical["required"] == ["summary"]
+    assert VisualObservation.model_validate({"summary": "text only"}).captions == []
+
+
 def test_deepseek_projects_real_parse_v2_union_without_mutating_schema(monkeypatch) -> None:
     original_schema = VideoParseResult.model_json_schema()
     original_snapshot = json.dumps(original_schema, sort_keys=True)
@@ -472,7 +498,8 @@ def test_deepseek_projects_real_parse_v2_union_without_mutating_schema(monkeypat
     actual = response_format["schema"]
     timeline = actual["properties"]["timeline"]["items"]
     assert "oneOf" not in timeline and "discriminator" not in timeline
-    assert timeline["anyOf"] == canonical["properties"]["timeline"]["items"]["oneOf"]
+    for projected, original in zip(timeline["anyOf"], canonical["properties"]["timeline"]["items"]["oneOf"], strict=True):
+        assert projected == {**original, "required": list(original["properties"])}
     assert len(timeline["anyOf"]) == 7
     assert timeline["anyOf"][2]["properties"]["event_type"]["const"] == "DIALOGUE"
     assert timeline["anyOf"][2]["properties"]["text_variants"]["minItems"] == 1

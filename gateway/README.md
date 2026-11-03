@@ -182,6 +182,10 @@ VoiceprintAgent 与 Refine 已通过宿主接入此入口；声纹准备按解�
   的 OpenAI-compatible API 返回结构化结果。视频以 raw Base64 放入
   `input_video.data`，不依赖 Server 读取本机文件路径。
 
+DeepSeek 的严格 Responses Schema 在请求侧将对象的所有声明属性列入 `required`，
+包括带默认值的属性（例如实时看帧的 `captions`）。这项转换只作用于 DeepSeek 请求，
+不改变业务 Pydantic 模型的默认值或其他适配器收到的 Schema。
+
 Gateway adapter 内部负责文件检查、MIME 判断、Base64/Data URL 编码、Provider
 payload、网络请求和结果 Schema 校验。Prompt、视频时长探测、抽帧、事件归属、
 业务降级和 checkpoint 由上层程序负责；模型来源之间的 Provider fallback 属于
