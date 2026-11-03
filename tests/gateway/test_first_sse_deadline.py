@@ -27,7 +27,7 @@ def _chunk(delta, finish=None):
 
 
 @contextmanager
-def _server(mode, *, first_delta=None, tls_context=None):
+def _server(mode, *, first_delta=None, tls_context=None, body_delay=0.8):
     state = SimpleNamespace(requests=0, received=Event(), disconnected=Event(), stop=Event(), first_event=Event())
 
     class Handler(BaseHTTPRequestHandler):
@@ -79,7 +79,7 @@ def _server(mode, *, first_delta=None, tls_context=None):
                         if self.connection.recv(1) == b"":
                             state.disconnected.set()
                         return
-                state.stop.wait(0.8)  # Longer than startup budget, less than total budget.
+                state.stop.wait(body_delay)  # Longer than startup budget, less than total budget.
                 if responses:
                     if mode == "nonstream":
                         self.wfile.write(json.dumps(result).encode())
@@ -198,9 +198,13 @@ def test_blocked_first_event_fails_and_releases_connection_before_retry(mode, tm
 
 
 @pytest.mark.parametrize("delta", [{"role": "assistant"}, {"reasoning_content": "thinking"}])
-def test_first_role_or_reasoning_event_disarms_startup_limit(delta, local_server, run_model):
-    with local_server("timely", first_delta=delta) as (url, state):
-        assert run_model(url).answer == "ok"
+def test_first_role_or_reasoning_event_disarms_startup_limit(delta, local_server, run_model, monkeypatch):
+    # The SDK builds a large Responses event union on its first decoded event.
+    # Allow cold decoding under concurrent CPU load; still deliver the body only
+    # after this startup limit, proving that the first event disarms the guard.
+    monkeypatch.setattr("gateway.streaming.first_sse.FIRST_SSE_TIMEOUT_SECONDS", 2.0)
+    with local_server("timely", first_delta=delta, body_delay=2.5) as (url, state):
+        assert run_model(url, timeout=5).answer == "ok"
         assert state.requests == 1
 
 
