@@ -723,6 +723,20 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 验收：Q02 的完整回复最多三句话，包含必要解释与证据边界；Q01 用用户能理解的简短表达说明已知事实及画面暂不可核验的限制。复测成功看帧和视觉不可用两类场景，确保精简没有删掉来源或把推断当成原话；同时保留 FTT、TT 和可用结果时间，不以速度代替内容通过。
 
+### C26：临时实时看帧沿用旧解析任务的模型，当前模型配置不能生效
+
+排序日期：2026-11-03。状态：TODO。`observe_frames()` 从旧任务读取 `parse_config`，`_derive()` 直接使用其 `models.understanding`。固定 Chunk 的版本和补算应保持原任务合同，但临时看帧没有写回基础内容，模型选择仍被旧任务绑住。该行为从 2026-10-10 的初版存在，不是流式 PR 新引入。
+
+验收：当前配置能独立决定临时看帧模型，实际请求参数可核对；已有任务、Chunk 内容与版本不变，缺失基础 Chunk 的补算继续按原合同；派生缓存包含实际模型及参数，切换模型不复用旧结果。QA 仅使用启动入口替换绑定做 DS 实验，未实施产品修复，承接分支待确定。见 [调查和试跑](../report/server/course-qa-realtime-deepseek-20261103.md)。
+
+### C27：DeepSeek 看帧的严格 Schema 被拒，后续带围栏的 JSON 又无法解析
+
+排序日期：2026-11-03。状态：TODO。真实课程 Q01/Q03 的 DeepSeek `/responses` 看帧请求返回 HTTP 400，文字 Chat 成功。定向复现得到 `invalid_request_error`：`Required properties must match all properties in the object`。`VisualObservation` 有默认值的 `captions` 未列入 required，但适配器发送 strict=true。
+
+同图同提示仅补齐 required 后，400 消失，供应商实际返回视觉描述并正常完成；但输出有 Markdown JSON 围栏，被本地直接 JSON 校验拒绝。离线去围栏后通过原 Schema，主要画面事实可核对；原产品仍未修复，不能按看帧成功放行。
+
+验收：在 Gateway 明确处理严格 Schema 和返回格式的兼容，保留领域结果校验；真实课程看帧取得有效结构化观察并能被 Supervisor 使用，实际模型、FTT/TT 与内容质量分别核对。非法输出不能伪装成空成功。该适配器本轮缺失请求/错误体 trace，也需在修复时补足可诊断性。业务修复承接分支待确定；完整正反对照见 [报告](../report/server/course-qa-realtime-deepseek-20261103.md)。
+
 ### B24：模型 stream 被入口写死且正式 Parse 丢失开关
 
 排序日期：2026-10-31。

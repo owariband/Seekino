@@ -63,6 +63,8 @@ Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-stre
 
 课程 QA 跟版：[2026-11-03 DeepSeek Flash 联合复测](server/course-qa-deepseek-20261103.md)。dev 与 PR #18 联合运行，六题真实流式证据、来源定位及取消恢复；视觉额度、重复提交和回答长度仍未通过。
 
+课程 QA 后续：[2026-11-03 实时模型绑定与 DeepSeek 看帧请求失败](server/course-qa-realtime-deepseek-20261103.md)。定位旧任务模型耦合、严格 Schema 400 与返回围栏校验失败；同图对照证明 Flash 能处理图片，完整页面视觉链路仍未通过。
+
 课程闭环：[2026-11-01 独立 QA 首轮](server/course-qa-20261101.md)。真实浏览器三轮、来源跳转与恢复，保留 178 秒出处追问阻断、缓存条件和未提交运行代码的证据边界；不作为整课或七集放行。
 
 课程 QA 补测：[决策记录、时间范围与错误前提](server/course-qa-reasoning-boundaries-20261101.md)。核对 CoT 记录边界及 Q03 已有证据，新增 RT04/RT05 真实 HTTP 内容与 TT 验收；FTT 未采集，内容检查通过但时延未达标。

@@ -4,6 +4,8 @@
 
 [课程 QA TRD](../../design/03-product-reassessment/course-qa-trd.md) · [可复核指标与调用身份](evidence/course-qa-deepseek-20261103.json) · [采证工具](../../../evals/benchmark/course_qa/README.md)。采样跨越 2026-11-02 深夜与 2026-11-03 凌晨，问题状态仍维护在 C21/C22/C23/C25。
 
+后续同日已将实时看帧也切为 DS 试跑，发现模型选择沿用旧任务，以及严格 Schema / 返回围栏兼容错误。见 [后续报告](course-qa-realtime-deepseek-20261103.md)；下文保留本轮 Kimi 视觉条件，不混入新结果。
+
 ## 实际测试的是哪个版本
 
 - QA 文档分支 `chore/course-qa` 已把 `origin/dev` 的 `737f6d7b` 合入，合并提交为 `b0093570`；没有向 dev 合并或推送。

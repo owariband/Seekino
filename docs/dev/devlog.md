@@ -26,6 +26,7 @@
 
 | 记录 | 原问题编号 |
 |---|---|
+| [2026-11-03：旧任务模型绑定和严格 Schema 阻断实时看帧切换](#devlog-realtime-deepseek-schema-20261103) | C26、C27，配置职责与 DeepSeek 图像请求 |
 | [2026-11-03：正文已实时交付，重复取证与回答过长仍影响课程追问](#devlog-course-qa-deepseek-20261103) | C21、C22、C23、C25，DeepSeek Flash 课程跟版 QA |
 | [2026-11-02：推理与供应商接收耗时仍影响首字，关闭推理又暴露回答错误](#devlog-chat-deepseek-20261102) | C23、DeepSeek 速度与质量试跑 |
 | [2026-11-02：Kimi 的 none 被省略，实际仍使用默认思考档位](#devlog-kimi-none-low-20261102) | C23、请求参数与首字等待 |
@@ -135,6 +136,25 @@
 | [日期未明确（2026-10-23归档）：当前播放窗口的按需理解与复用](#devlog-history-60) | 独立实验/设计 |
 
 </details>
+
+<a id="devlog-realtime-deepseek-schema-20261103"></a>
+## 2026-11-03：旧任务模型绑定和严格 Schema 阻断实时看帧切换
+
+### 问题与现状
+
+Chat 切为 DeepSeek 后，临时看帧仍使用课程旧解析任务的 Kimi。源码确认 `_derive()` 读取冻结的 `models.understanding`：基础补算应保持原任务配置，但临时视觉也受此限制。切换模型后又出现 DeepSeek HTTP 400，必须核对请求错误，不能据状态码断言不支持图片。
+
+### 方案候选
+
+本轮在 QA 启动入口只替换临时实时调用的模型参数，保留原数据和业务实现；正式解耦留给独立修复。随后用同一图片、提示和模型做 Schema 对照，唯一请求变化是把 captions 加入 required；供应商完整返回与本地结果校验分别判定。
+
+### 方案验证
+
+真实浏览器三连问完成且流式证据有效，但两次看帧 HTTP 400。定向复现明确返回 `Required properties must match all properties in the object`。补齐 required 后 400 消失，响应识别出 LearnGPT、树叶新闻与讲师画面；返回包含 Markdown JSON 围栏，原适配器仍校验失败。离线去围栏通过原 Schema，仅用于质量评审，不计为产品成功。前后源码、配置和 Chunk 指纹一致，原任务未改。见 [报告与证据](../report/server/course-qa-realtime-deepseek-20261103.md)。
+
+### 指标对比
+
+Q01/Q02/Q03 的 FTT 为 1.263/4.009/2.690 秒，TT 为 11.026/5.354/8.590 秒；首段分别为进度、编号前缀、进度。原 Schema 的诊断请求约 0.342 秒被拒，补齐 required 的两次对照约 6.131/7.040 秒进入本地校验失败，其中后一次保存了正常 response.completed 与原文。这些数字区分请求被拒与取得视觉输出，不是端到端成功性能对照。模型能力可继续测试，正式切换配置和结构化兼容尚未解决；本轮未新增产品补丁或重复全量回归。
 
 <a id="devlog-course-qa-deepseek-20261103"></a>
 ## 2026-11-03：正文已实时交付，重复取证与回答过长仍影响课程追问
