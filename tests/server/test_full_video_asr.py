@@ -309,3 +309,24 @@ def test_cancel_during_episode_preparation_defers_generator_cleanup(tmp_path):
         asyncio.run(cancel())
     finally:
         release.set()
+
+
+@pytest.mark.parametrize("scope,expected", [("video", (0, 180_000)), ("chunk", None)])
+def test_chunk_execution_gets_dialogue_authority_from_source_video(scope, expected):
+    config = _parse_config()
+    config["models"]["asr"].update(scope=scope, mode="lite")
+    inputs = ParseInput(series_id="series", video_id="video", parse_config=config)
+    task_input = SimpleNamespace(duration_seconds=180_000, background={})
+    state = SimpleNamespace(chunk_parse_task_id="chunk", video_parse_task_id="task", sequence_no=1,
+                            start_seconds=60_000, end_seconds=120_000,
+                            analysis_window_start_seconds=60_000, analysis_window_end_seconds=120_000,
+                            source_media_ref="source.mp4", task_input=task_input)
+    binding = SimpleNamespace(lease=SimpleNamespace(chunk_parse_task_id="chunk"), state=None)
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._require_chunk_binding = lambda: binding
+    runtime._persistence = SimpleNamespace(load_chunk_execution=lambda lease: state)
+    runtime._parse_input = lambda source: inputs
+    runtime._lease_token = lambda lease: None
+    execution = asyncio.run(runtime.load_chunk_execution("chunk"))
+    assert execution.dialogue_bounds == expected
+    assert (execution.allowed_start_seconds, execution.allowed_end_seconds) == (60_000, 120_000)

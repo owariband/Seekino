@@ -102,6 +102,16 @@ Credentials remain in application configuration. Recovery uses the task's model
 snapshot rather than current global defaults. A missing explicit Refine model
 means reuse the fixed Understanding binding.
 
+Whole-video ASR cues retain their source timestamps across Chunk boundaries.
+The Server supplies `ChunkExecution.dialogue_bounds` from the frozen ASR scope
+and original video duration; Understanding Prompt, Canvas, result validation and
+the independent database commit gate all honor that same DIALOGUE authority.
+Visual events stay within the Chunk's visual authority, and dialogue outside the
+source video is still invalid. Refinement resolves overlapping complete cues.
+Schema and genuine time errors return the full normalized candidate plus exact
+locations within the existing retry/deadline budget; a legal cross-Chunk cue
+requires no model repair.
+
 ## Main execution
 
 ```text

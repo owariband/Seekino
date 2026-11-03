@@ -150,6 +150,10 @@ def _validate_bounds(start_seconds: int, end_seconds: int) -> None:
         raise ValueError("time bounds must be increasing nonnegative integers")
 
 
+class ResultTimeRangeError(ValueError):
+    """A model event exceeds its authorized range and may be corrected."""
+
+
 def validate_result_time_range(
     result: VideoParseResult,
     *,
@@ -163,12 +167,14 @@ def validate_result_time_range(
     if dialogue_bounds is not None:
         _validate_bounds(*dialogue_bounds)
     validated = VideoParseResult.model_validate(result)
-    for event in validated.timeline:
+    for index, event in enumerate(validated.timeline):
         start, end = (dialogue_bounds if dialogue_bounds is not None
                       and event.event_type == "DIALOGUE" else (start_seconds, end_seconds))
         if event.start_seconds < start or event.end_seconds > end:
-            raise ValueError(
-                "timeline event falls outside the authorized media time range"
+            raise ResultTimeRangeError(
+                f"timeline.{index}.{event.event_type}: timeline event falls outside the authorized media time range; "
+                f"actual=[{event.start_seconds}, {event.end_seconds}) ms, allowed=[{start}, {end}) ms. "
+                "Correct the indicated event timestamps using the supplied evidence."
             )
     return validated
 

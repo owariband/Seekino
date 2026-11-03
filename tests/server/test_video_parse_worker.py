@@ -1410,7 +1410,7 @@ def test_understanding_and_refine_use_direct_json(
     ]
     primary_inputs = requests[0][1]
     assert f"Host visual input range: [{20_000 - overlap_ms}, {30_000 + overlap_ms}) ms" in primary_inputs[-1].text
-    assert "Writable chunk range: [20000, 30000) ms" in primary_inputs[-1].text
+    assert "Writable visual-event range: [20000, 30000) ms" in primary_inputs[-1].text
     assert f"absolute_ms = {20_000 - overlap_ms} + round(local_seconds * 1000)" in primary_inputs[-1].text
     assert "If evidence is missing or conflicting, DIALOGUE.speaker MUST be JSON null" in primary_inputs[-1].text
     assert ("We supplied additional visual context" in primary_inputs[-1].text) is bool(overlap_ms)

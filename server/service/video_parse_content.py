@@ -385,10 +385,18 @@ def commit_chunk_result(
     chunk = chunk_store.get_video_chunk(session, task.chunk_id)
     if chunk is None:
         raise VideoParseConflictError("ChunkParseTask VideoChunk no longer exists")
+    parent = task_store.get_task(session, lease.video_parse_task_id)
+    video = task_store.get_video(session, parent.video_id) if parent is not None else None
+    if video is None:
+        raise VideoParseConflictError("Understanding source video no longer exists")
+    asr = (parent.parse_config.get("models") or {}).get("asr") or {}
+    dialogue_bounds = ((0, video.duration_ms)
+                       if asr.get("scope") == "video" and asr.get("mode") != "none" else None)
     payload = validate_result_time_range(
         VideoParseResult.model_validate(payload),
         start_seconds=chunk.window_start_ms,
         end_seconds=chunk.window_end_ms,
+        dialogue_bounds=dialogue_bounds,
     ).model_dump(mode="json")
     result = chunk_store.get_content(session, task.id, for_update=True)
     result_detail = deepcopy(dict(detail or {}))

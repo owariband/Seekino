@@ -39,8 +39,9 @@ class ASRResult(TypedDict):
 def select_asr_window(result: ASRResult, *, start_ms: int, end_ms: int) -> ASRResult:
     """Select overlapping cues without changing their absolute source times.
 
-    Whole cues supply boundary context; Understanding still writes only inside
-    its authorized window. Copies prevent one consumer from changing the cache.
+    Whole-video dialogue retains complete cue times across Chunk boundaries;
+    the host supplies source-video bounds separately from the visual window.
+    Copies prevent one consumer from changing the cache.
     """
     if type(start_ms) is not int or type(end_ms) is not int or not 0 <= start_ms < end_ms:
         raise ValueError("ASR window must be increasing nonnegative milliseconds")

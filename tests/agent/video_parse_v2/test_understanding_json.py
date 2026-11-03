@@ -327,3 +327,77 @@ def test_understanding_normalization_never_coerces_invalid_times(invalid_time):
     assert normalized == original
     with pytest.raises(ValidationError):
         VideoParseResult.model_validate(normalized)
+
+
+@pytest.mark.parametrize("corrected", [True, False])
+def test_time_range_feedback_retains_candidate_and_honors_retry_limit(corrected):
+    from engine.parsev2.validation import ResultTimeRangeError
+    execution = _repair_execution()
+    candidate = _result().model_dump(mode="json")
+    candidate["timeline"][-1]["end_seconds"] = execution.allowed_end_seconds + 300
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root=candidate))
+    runtime.repair_chunk_understanding.return_value = UnderstandingModelResponse(
+        root=_result().model_dump(mode="json") if corrected else candidate,
+    )
+    if corrected:
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+        runtime.commit_chunk_result.assert_awaited_once()
+        runtime.repair_chunk_understanding.assert_awaited_once()
+    else:
+        with pytest.raises(ResultTimeRangeError):
+            asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+        runtime.commit_chunk_result.assert_not_awaited()
+        assert runtime.repair_chunk_understanding.await_count == 2
+    for call in runtime.repair_chunk_understanding.await_args_list:
+        prompt = call.kwargs["prompt"]
+        assert "timeline.3.ON_SCREEN_TEXT" in prompt
+        assert "actual=[70000, 80300) ms, allowed=[60000, 80000) ms" in prompt
+        assert json.loads(prompt.split("Rejected response JSON:\n", 1)[1]) == candidate
+        assert call.kwargs["remaining_seconds"] <= 120
+    runtime.understand_chunk.assert_awaited_once()
+
+
+def test_unrelated_runtime_value_error_does_not_trigger_model_repair():
+    execution = _repair_execution()
+    runtime = _runtime(execution)
+    runtime.understand_chunk.side_effect = ValueError("invalid local media input")
+    with pytest.raises(ValueError, match="invalid local media input"):
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    runtime.repair_chunk_understanding.assert_not_awaited()
+    runtime.commit_chunk_result.assert_not_awaited()
+
+
+def test_whole_video_cue_survives_understanding_canvas_and_commit_unchanged():
+    execution = replace(_execution(), dialogue_bounds=(0, 120_000))
+    cue = {"start_seconds": 59_700, "end_seconds": 80_300, "text": "A complete utterance crossing the Chunk."}
+    value = _result().model_dump(mode="json")
+    dialogue = value["timeline"][0]
+    dialogue.update(start_seconds=cue["start_seconds"], end_seconds=cue["end_seconds"])
+    dialogue["text_variants"] = [{"language": "en", "role": "ORIGINAL", "text": cue["text"]}]
+    original = deepcopy(value)
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root=value), asr={"transcript": [cue]})
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    actual = runtime.commit_chunk_result.await_args.args[1].model_dump(mode="json")
+    assert actual == original
+    assert runtime.commit_chunk_result.await_args.kwargs["evidence"]["asr"]["transcript"] == [cue]
+    prompt = runtime.understand_chunk.await_args.kwargs["prompt"]
+    assert "DIALOGUE from whole-video ASR may cross Chunk boundaries within [0, 120000) ms" in prompt
+    assert "ASR comes from the complete source video" in prompt
+    assert "Do not split or clip a cue merely to fit the Chunk or a sentence" in prompt
+    assert "Only report events inside" not in prompt
+    assert "fully inside the authorized range" not in prompt
+    runtime.repair_chunk_understanding.assert_not_awaited()
+    runtime.commit_chunk_result.assert_awaited_once()
+
+
+@pytest.mark.parametrize("event_type,end_ms", [("DIALOGUE", 120_001), ("ACTION", 80_300)])
+def test_video_dialogue_authority_does_not_relax_video_or_visual_limits(event_type, end_ms):
+    execution = replace(_execution(), dialogue_bounds=(0, 120_000))
+    event = {"event_type": event_type, "start_seconds": 79_000, "end_seconds": end_ms,
+             "description": "out of range", "participants": [], "visible_persons": []}
+    if event_type == "DIALOGUE":
+        event.update(speaker=None, text_variants=[{"language": "en", "role": "ORIGINAL", "text": "utterance"}])
+    runtime = _runtime(execution, result=UnderstandingModelResponse(root={"persons": [], "timeline": [event]}))
+    with pytest.raises(ValueError, match="time range"):
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(execution.chunk_parse_task_id))
+    runtime.commit_chunk_result.assert_not_awaited()

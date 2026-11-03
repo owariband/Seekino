@@ -1003,6 +1003,8 @@ class VideoParseRuntimeService:
             self._persistence.load_chunk_execution, binding.lease
         )
         binding.state = state
+        inputs = self._parse_input(state.task_input)
+        asr = inputs.parse_config.models.asr
         return ChunkExecution(
             chunk_parse_task_id=state.chunk_parse_task_id,
             video_parse_task_id=state.video_parse_task_id,
@@ -1011,10 +1013,12 @@ class VideoParseRuntimeService:
             chunk_end_seconds=state.end_seconds,
             allowed_start_seconds=state.analysis_window_start_seconds,
             allowed_end_seconds=state.analysis_window_end_seconds,
-            inputs=self._parse_input(state.task_input),
+            inputs=inputs,
             lease=self._lease_token(binding.lease),
             background=state.task_input.background,
             source_media_ref=state.source_media_ref,
+            dialogue_bounds=((0, state.task_input.duration_seconds)
+                             if asr.mode != "none" and asr.scope == "video" else None),
         )
 
     async def prepare_chunk_visual(self, execution: ChunkExecution) -> None:
@@ -1100,14 +1104,14 @@ class VideoParseRuntimeService:
         visual_end = media.visual_end_ms if media.visual_end_ms is not None else execution.allowed_end_seconds
         prompt += (
             f"\nHost visual input range: [{visual_start}, {visual_end}) ms. "
-            f"Writable chunk range: [{execution.allowed_start_seconds}, {execution.allowed_end_seconds}) ms. "
+            f"Writable visual-event range: [{execution.allowed_start_seconds}, {execution.allowed_end_seconds}) ms. "
             f"For native video, absolute_ms = {visual_start} + round(local_seconds * 1000). "
             "ASR/OCR timestamps remain absolute source-video milliseconds."
         )
         if (visual_start, visual_end) != (execution.allowed_start_seconds, execution.allowed_end_seconds):
             prompt += (
                 "\nWe supplied additional visual context outside your chunk to help interpret transitions. "
-                "Use it only as context; do not write events outside the writable chunk. "
+                "Use it only as visual context; do not write visual events outside the writable range. "
                 "Additional images do not establish a voice identity; uncertain speakers must remain null."
             )
         # Bind each absolute timestamp to its image without changing frame selection.

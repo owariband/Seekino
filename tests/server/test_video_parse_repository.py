@@ -3316,3 +3316,41 @@ def test_refine_receipt_reports_only_committed_body_changes(repository, change_c
         for task_id, version in receipt.changed_member_versions.items():
             row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == task_id))
             assert row.version == version and row.content["persons"] == ["corrected person"]
+
+
+@pytest.mark.parametrize("scope,mode,event_type,end_ms,accepted", [
+    ("video", "lite", "DIALOGUE", 10_300, True),
+    ("chunk", "lite", "DIALOGUE", 10_300, False),
+    ("video", "none", "DIALOGUE", 10_300, False),
+    ("video", "lite", "ACTION", 10_300, False),
+    ("video", "lite", "DIALOGUE", 40_001, False),
+])
+def test_understanding_commit_uses_frozen_video_dialogue_authority(repository, scope, mode, event_type, end_ms, accepted):
+    factory, queue, repo, task_id, parent_lease, prepared = _prepare(repository)
+    lease = queue.claim_chunk("understanding", lease_duration=timedelta(minutes=5), now=NOW)
+    assert lease is not None and lease.chunk_parse_task_id == prepared.chunk_parse_task_ids[0]
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        config = deepcopy(task.parse_config)
+        config["models"]["asr"].update(scope=scope, mode=mode)
+        task.parse_config = config
+    event = {"event_type": event_type, "start_seconds": 9_000, "end_seconds": end_ms,
+             "description": "complete source cue", "participants": [], "visible_persons": []}
+    if event_type == "DIALOGUE":
+        event.update(speaker=None, text_variants=[{"language": "en", "role": "ORIGINAL", "text": "Full utterance."}])
+    value = {"persons": [], "timeline": [event]}
+    if not accepted:
+        with pytest.raises(ValueError, match="time range"):
+            repo.commit_chunk_result(lease, content=value, now=NOW)
+        with factory() as session:
+            assert session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == lease.chunk_parse_task_id)) is None
+        return
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.commit_chunk_result(replace(lease, lease_version=lease.lease_version + 1), content=value, now=NOW)
+    repo.commit_chunk_result(lease, content=value, now=NOW)
+    with factory() as session:
+        stored = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == lease.chunk_parse_task_id))
+        assert stored.content["timeline"][0]["end_seconds"] == 10_300
+        assert stored.content["timeline"][0]["text_variants"] == event["text_variants"]
+        assert stored.detail["scope"] == [0]
+        assert stored.detail["parse_committed_lease_version"] == lease.lease_version

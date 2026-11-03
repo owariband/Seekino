@@ -15,7 +15,7 @@ from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from httpx import TransportError
 
 from engine.parsev2.observations import build_chunk_without_understanding
-from engine.parsev2.validation import normalize_parse_response, validate_result_time_range
+from engine.parsev2.validation import ResultTimeRangeError, normalize_parse_response, validate_result_time_range
 from engine.parsev2.schemas import VideoParseResult
 
 from ..timelineEvent_canvas import ParseContextCanvas
@@ -105,6 +105,7 @@ class ChunkUnderstandingWorkflow:
                 "content": VideoParseResult(persons=[], timeline=[]),
             }},
             background=execution.background,
+            dialogue_bounds=execution.dialogue_bounds,
             evidence={"media": {
                 "source_media_ref": execution.source_media_ref,
                 "video_id": execution.inputs.video_id,
@@ -125,6 +126,7 @@ class ChunkUnderstandingWorkflow:
         result = validate_result_time_range(
             result, start_seconds=execution.allowed_start_seconds,
             end_seconds=execution.allowed_end_seconds,
+            dialogue_bounds=execution.dialogue_bounds,
         )
         # Canvas remains the host's validated state, not a model tool workflow.
         # Import names and events together so no partial timeline is published.
@@ -176,9 +178,14 @@ class ChunkUnderstandingWorkflow:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Understanding result-gate deadline expired")
                 response = normalize_parse_response(response)
-                return VideoParseResult.model_validate(response)
-            except ValidationError as error:
-                if not received_response:
+                return validate_result_time_range(
+                    VideoParseResult.model_validate(response),
+                    start_seconds=execution.allowed_start_seconds,
+                    end_seconds=execution.allowed_end_seconds,
+                    dialogue_bounds=execution.dialogue_bounds,
+                )
+            except (ValidationError, ResultTimeRangeError) as error:
+                if not received_response and isinstance(error, ValidationError):
                     response = next((item["input"] for item in error.errors()
                                      if item["type"] == "json_invalid"), None)
                     if isinstance(response, (bytes, bytearray)):
@@ -187,10 +194,10 @@ class ChunkUnderstandingWorkflow:
                         raise
                 if attempt == config.execution.max_retry_count:
                     raise
-                details = "; ".join(
+                details = ("; ".join(
                     f"{'.'.join(map(str, item['loc'])) or 'result'}: {item['msg']}"
                     for item in error.errors(include_input=False, include_url=False)[:6]
-                )[:1800]
+                ) if isinstance(error, ValidationError) else str(error))[:1800]
                 _logger.info(
                     "event=understanding_result_repair chunk=%s repair_attempt=%s "
                     "remaining_seconds=%.3f error=%s",

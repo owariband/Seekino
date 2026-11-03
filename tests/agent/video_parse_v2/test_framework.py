@@ -632,7 +632,7 @@ def test_understanding_receives_whole_video_speakers_and_series_identity_context
     })}}
     before = deepcopy(asr)
     execution = SimpleNamespace(allowed_start_seconds=start_ms, allowed_end_seconds=start_ms+60000,
-                                background=background)
+                                background=background, dialogue_bounds=None)
     prompt = build_understanding_prompt(execution, asr_result=asr, ocr_result=None)
     catalog = json.loads(next(line.split(": ", 1)[1] for line in prompt.splitlines()
                               if line.startswith("all_speakers: ")))
@@ -647,7 +647,7 @@ def test_understanding_receives_whole_video_speakers_and_series_identity_context
 
 @pytest.mark.parametrize("speaker_id,expected_count", [("local-voice", 1), (None, None)])
 def test_understanding_does_not_claim_a_video_speaker_count_from_clip_labels(speaker_id, expected_count):
-    execution = SimpleNamespace(allowed_start_seconds=0, allowed_end_seconds=60000, background={})
+    execution = SimpleNamespace(allowed_start_seconds=0, allowed_end_seconds=60000, background={}, dialogue_bounds=None)
     prompt = build_understanding_prompt(execution, asr_result={"transcript": [
         {"start_seconds": 0, "end_seconds": 1000, "text": "example", "speaker_id": speaker_id}
     ]}, ocr_result=None)
