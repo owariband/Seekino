@@ -160,11 +160,18 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert missing.last_error.code == "MEDIA_MISSING"
 
 
-def test_video_metadata_and_episode_order_share_transaction(repository, parsed_video, tmp_path):
+def test_video_display_and_episode_order_share_transaction(repository, parsed_video, tmp_path):
+    from server.repository import video_parse_content as result_store
+
     factory, videos, library = _library(repository)
     report = parsed_video
     repo = LibraryRepository(factory)
     original = library.get_video(report.video_id, tenant_id="local-default")
+    display = {
+        "title": "本集标题", "title_kind": "official", "description": "本集简介",
+        "episode_order": original.episode_order + 1, "cover_uri": "artifact://video/cover.png",
+        "evidence": [], "frame_receipts": [],
+    }
 
     with pytest.raises(RuntimeError, match="abort publication"):
         with factory.begin() as session:
@@ -172,10 +179,8 @@ def test_video_metadata_and_episode_order_share_transaction(repository, parsed_v
                 repo, session, video_id=report.video_id, tenant_id="local-default",
                 episode_order=original.episode_order + 1, now=now_utc(),
             )
-            repo.update_video_metadata(
-                report.video_id, session=session, display_name="本集标题",
-                description="本集简介", cover_uri="artifact://video/cover.png",
-            )
+            result_store.save_result(session, report.video_parse_task_id, field="display",
+                                     result=display, detail={"display": {}}, now_ms=now_unix_time_ms())
             raise RuntimeError("abort publication")
     unchanged = library.get_video(report.video_id, tenant_id="local-default")
     assert unchanged.episode_order == original.episode_order
@@ -186,18 +191,12 @@ def test_video_metadata_and_episode_order_share_transaction(repository, parsed_v
             repo, session, video_id=report.video_id, tenant_id="local-default",
             episode_order=original.episode_order + 1, now=now_utc(),
         )
-        repo.update_video_metadata(
-            report.video_id, session=session, display_name="本集标题",
-            description="本集简介", cover_uri="artifact://video/cover.png",
-        )
-        repo.update_video_metadata(
-            report.video_id, session=session, display_name=None,
-            description="更新后的简介", cover_uri=None,
-        )
+        result_store.save_result(session, report.video_parse_task_id, field="display",
+                                 result=display, detail={"display": {}}, now_ms=now_unix_time_ms())
     result = library.get_video(report.video_id, tenant_id="local-default")
     assert result.episode_order == result.upload_sequence == original.episode_order + 1
     assert result.display_name == "本集标题"
-    assert result.description == "更新后的简介"
+    assert result.description == "本集简介"
     assert result.cover_uri == "artifact://video/cover.png"
     media = MediaService(library, LocalArtifactStore(tmp_path / "metadata", environment="test"))
     public = library_api.project_video(result, media, access="public").model_dump(by_alias=True)
@@ -205,7 +204,39 @@ def test_video_metadata_and_episode_order_share_transaction(repository, parsed_v
     assert "coverUri" not in public
 
 
+def test_video_display_reads_latest_non_empty_result(repository, parsed_video):
+    from server.repository import video_parse_content as result_store
+
+    factory, _videos, library = _library(repository)
+    report = parsed_video
+    with factory.begin() as session:
+        result_store.save_result(
+            session, report.video_parse_task_id, field="display",
+            result={"title": "旧版标题", "title_kind": "official", "description": "旧版简介",
+                    "episode_order": report.episode_order, "cover_uri": "artifact://old/cover.png",
+                    "evidence": [], "frame_receipts": []},
+            detail={"display": {}}, now_ms=now_unix_time_ms(),
+        )
+    with factory.begin() as session:
+        _add_prefix_task(session, video_id=report.video_id)
+    state = library.get_video(report.video_id, tenant_id="local-default")
+    assert state.display_name == "旧版标题"
+    assert state.description == "旧版简介"
+    assert state.cover_uri == "artifact://old/cover.png"
+
+
+def test_video_without_display_falls_back_to_none(repository, parsed_video):
+    factory, _videos, library = _library(repository)
+    report = parsed_video
+    state = library.get_video(report.video_id, tenant_id="local-default")
+    assert state.display_name is None
+    assert state.description is None
+    assert state.cover_uri is None
+
+
 def test_series_artwork_prefers_summary_covers_and_stays_stable_across_episode_order(repository, seed_video, tmp_path):
+    from server.repository import video_parse_content as result_store
+
     factory, _videos, library = _library(repository)
     first = seed_video(factory, episode_order=1)
     with factory.begin() as session:
@@ -218,10 +249,23 @@ def test_series_artwork_prefers_summary_covers_and_stays_stable_across_episode_o
     frame = store.base_directory / "frame.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-image")
     frame_uri = store.uri_for_path(frame)
+    reports = {second.video_id: second, third.video_id: third}
+
+    def _set_cover(video_id: str, cover_uri: str | None) -> None:
+        item = reports[video_id]
+        with factory.begin() as session:
+            result_store.save_result(
+                session, item.video_parse_task_id, field="display",
+                result={"title": None, "title_kind": "official", "description": None,
+                        "episode_order": item.episode_order, "cover_uri": cover_uri,
+                        "evidence": [], "frame_receipts": []},
+                detail={"display": {}}, now_ms=now_unix_time_ms(),
+            )
+
     with factory.begin() as session:
         session.get(VideoChunk, first.video_chunk_ids[0]).keyframe_uris = [frame_uri]
-        for item in (second, third):
-            session.get(Video, item.video_id).cover_uri = frame_uri
+    for item in (second, third):
+        _set_cover(item.video_id, frame_uri)
     media = MediaService(library, store)
     before = library.get_series(first.series_id, tenant_id="local-default")
     chosen = before.representative_video.video_id
@@ -235,12 +279,10 @@ def test_series_artwork_prefers_summary_covers_and_stays_stable_across_episode_o
         session.get(Video, second.video_id).episode_order = 4
     after = library.get_series(first.series_id, tenant_id="local-default")
     assert after.representative_video.video_id == chosen
-    with factory.begin() as session:
-        session.get(Video, chosen).cover_uri = None
+    _set_cover(chosen, None)
     remaining = library.get_series(first.series_id, tenant_id="local-default").representative_video
     assert remaining.video_id in {second.video_id, third.video_id} - {chosen}
-    with factory.begin() as session:
-        session.get(Video, remaining.video_id).cover_uri = None
+    _set_cover(remaining.video_id, None)
     fallback = library.get_series(first.series_id, tenant_id="local-default")
     assert fallback.representative_video.video_id == first.video_id
 

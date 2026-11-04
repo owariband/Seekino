@@ -15,6 +15,7 @@ from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
 from ..model.dto.libraryDTO import (
     SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoData, VideoSummaryState,
 )
+from ..model.parse_content import VideoParseContent
 from ..model.task import VideoParseTask, VideoParseTaskStatus
 from ..model.upload import UploadSession, UPLOAD_DELETION_PENDING_ERROR_CODE
 from ..model.tenant import Tenant
@@ -133,20 +134,6 @@ class LibraryRepository:
             ):
                 if field in changes:
                     setattr(record, field, changes[field])
-
-    def update_video_metadata(
-        self, video_id: str, *, session: Session,
-        display_name: str | None, description: str | None, cover_uri: str | None,
-    ) -> None:
-        video = session.scalar(select(Video).where(Video.id == video_id).with_for_update())
-        if video is None:
-            raise SeriesNotFoundError("video no longer exists")
-        for field, value in (
-            ("display_name", display_name), ("description", description), ("cover_uri", cover_uri),
-        ):
-            if value is not None:
-                setattr(video, field, value)
-        session.flush()
 
     def update_video_episode_order(
         self,
@@ -501,8 +488,37 @@ class LibraryRepository:
                 if (uri := stored_keyframe_uri(value)) is not None
             )
 
+        # One extra batch query resolves the latest non-empty display result per
+        # video; an older task's display keeps showing while the newest task has
+        # none. Videos without any display fall back to downstream defaults.
+        display_latest = (
+            select(
+                VideoParseTask.video_id,
+                VideoParseContent.display.label("display"),
+                func.row_number().over(
+                    partition_by=VideoParseTask.video_id,
+                    order_by=(
+                        VideoParseTask.version.desc(),
+                        VideoParseTask.id.desc(),
+                    ),
+                ).label("position"),
+            )
+            .join(VideoParseContent, VideoParseContent.video_task_id == VideoParseTask.id)
+            .where(
+                VideoParseTask.video_id.in_([row[0].id for row in rows]),
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.display.isnot(None),
+            )
+            .subquery()
+        )
+        displays = dict(session.execute(
+            select(display_latest.c.video_id, display_latest.c.display)
+            .where(display_latest.c.position == 1)
+        ).all())
+
         states: list[VideoSummaryState] = []
         for video, _task_id, task_status, last_error in rows:
+            display = displays.get(video.id) or {}
             if task_status == VideoParseTaskStatus.COMPLETE.value:
                 index_status = VideoIndexStatus.READY
             elif task_status == VideoParseTaskStatus.INDEXING.value:
@@ -526,6 +542,9 @@ class LibraryRepository:
                 keyframe_uris=tuple(dict.fromkeys(
                     keyframes_by_video.get(video.id, ())
                 )),
+                display_name=display.get("title"),
+                description=display.get("description"),
+                cover_uri=display.get("cover_uri"),
             ))
         return states
 
@@ -578,6 +597,9 @@ class LibraryRepository:
         parse_progress: int | None,
         last_error: str | None,
         keyframe_uris: tuple[str, ...],
+        display_name: str | None = None,
+        description: str | None = None,
+        cover_uri: str | None = None,
     ) -> VideoSummaryState:
         return VideoSummaryState(
             video_id=record.id,
@@ -598,9 +620,9 @@ class LibraryRepository:
             index_status=index_status,
             last_error=last_error,
             keyframe_uris=keyframe_uris,
-            display_name=record.display_name,
-            description=record.description,
-            cover_uri=record.cover_uri,
+            display_name=display_name,
+            description=description,
+            cover_uri=cover_uri,
         )
 
 

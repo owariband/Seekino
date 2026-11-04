@@ -10,7 +10,7 @@
 | 匿名声源分组（11-01 增量） | 无正式持久成果 | `video_parse_content.diarization`，独立 JSON；不改原 ASR |
 | Summary 完整提交与帧回执 | `video_parse_task.detail._worker_runtime_v2.summarize.result/frame_receipts` | `video_parse_content.summary` |
 | Summary 调度、租约、重试、完成与发布回执 | 任务运行状态 | 原位置保留 |
-| 标题、简介、封面 URI 的当前展示值 | `video` | 原位置保留，后续与 Summary 成果在同一事务更新 |
+| 标题、简介、封面 URI 的当前展示值 | `video` | 原位置保留，后续与 Summary 成果在同一事务更新；2026-11-04 起展示值改由 `video_parse_content.display` 提供，见 [20261104 迁移说明](20261104_video_parse_display.md) |
 | 封面图片、原片 | ArtifactStore | 原位置保留 |
 | Chunk 事件与 ES 投影 | 现有 Chunk 成果与索引 | 原位置保留 |
 

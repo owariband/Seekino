@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**视频展示元数据读源切换 TRD。状态：初稿（2026-11-04）。** 分支 `refactor/video-display-source`，PR [#40](https://github.com/owariband/Seekino/pull/40)。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；成果表来源见 [20261031 成果表迁移](../../migrations/20261031_video_parse_content.md)。
+**视频展示元数据读源切换 TRD。状态：实现完成，克隆库演练通过；v11 库尚未迁移（2026-11-04）。** 分支 `refactor/video-display-source`，PR [#40](https://github.com/owariband/Seekino/pull/40)。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；成果表来源见 [20261031 成果表迁移](../../migrations/20261031_video_parse_content.md)。
 
 ## 背景与触发场景
 
@@ -93,9 +93,15 @@ flowchart LR
 
 | 指标 | 基线实测 | 方案实测 | 验收标准 | 判断与证据 |
 | --- | --- | --- | --- | --- |
-| 展示一致 | 迁移前快照 | 待测 | 完全一致 | 未验证 |
-| 重新解析期间展示 | — | 待测 | 沿用上一版 | 未验证 |
-| 列表查询次数 | 2 | 待测 | 3 | 未验证 |
+| 展示一致 | 迁移前 `video` 三列 | 新读取路径在迁移后的克隆库上返回相同值（2/2 Video） | 完全一致 | 达标 |
+| 重新解析期间展示 | — | 单测：最新任务无展示时返回上一任务的展示 | 沿用上一版 | 达标（单测） |
+| 列表查询次数 | 2 | 3（新增一条批量窗口查询，按本批 Video 过滤） | 3 | 达标 |
+
+**验证记录（2026-11-04）：**
+
+- 测试：`tests/server`（`-m "not live_agent"`）2852 passed / 14 failed；同一时刻 `dev`（`07741e35`）为 2846 passed / 14 failed，失败用例列表完全相同（如 `test_refine_video_frames.py` 的 `_refine_subscription`），本 PR 无新增失败。
+- 迁移演练：`outputs/verification/summarize-compact-20261104/rehearse_display.py` 将 v11 库 `seekino_video_asr_recovery_20261031_test` 克隆为 `seekino_display_rehearsal_20261104_test`。预览 `{rename_column: true, rows_to_convert: 2, covers_to_fill: 0, conflicts: 0}`；执行后重跑为 `{rename_column: false, rows_to_convert: 0}`（可重入）。两部 Video 经新读取路径的标题、简介、封面与迁移前 `video` 三列一致。
+- 启动校验：迁移后的克隆库 `create_schema` 通过；未迁移的 v11 库报 `SchemaUpgradeRequiredError`，提示先执行迁移。
 
 # 5. 试点验证与方案取舍
 
