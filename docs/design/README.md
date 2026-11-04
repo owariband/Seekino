@@ -64,6 +64,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 | Parse V2 领域算法 | [video-parse-engine-trd.md](02-agent-harness/video-parse-engine-trd.md) | 领域合同：解析结果 Schema、时间与人物规则、解析和投影边界；旧检索章节结合最新 Event 合同阅读。 |
 | 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 11-01 追加 Kimi 流式推理耗时诊断、全量帧时间配对试点；主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；dev 已接入宿主直接 JSON 与 30k；精简字段/SHOT 兼容迁移及实模验收待完成。 |
 | 解析暂停与继续 | [parse-pause-resume-trd.md](03-product-reassessment/parse-pause-resume-trd.md) | 保留成果、释放容量、撤销租约，任务页显示语音转写与暂停状态。 |
+| 解析任务管理 | [parse-task-control-trd.md](03-product-reassessment/parse-task-control-trd.md) | 任务页默认看进行中；历史版本单独 / 批量删除；运行中删除改为撤销租约后后台清理；替换任务历史版本筛选的交互。 |
 | 模型连接失败恢复 | [model-network-failure-trd.md](03-product-reassessment/model-network-failure-trd.md) | 直接 JSON 的暂态错误分类、有限重试与异常链诊断。 |
 | Kimi 流式接入 | [kimi-streaming-trd.md](03-product-reassessment/kimi-streaming-trd.md) | 正式生成入口的 Chat SSE、完整结果边界、工具推理连续性与真实素材复测。 |
 | 模型 stream / temperature 通用配置 | [model-streaming-trd.md](03-product-reassessment/model-streaming-trd.md) | 默认 stream=true、temperature=0；显式覆盖、Kimi 固定温度、fallback 独立配置、共享协议接收及 Parse 配置快照。 |
