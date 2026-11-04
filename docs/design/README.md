@@ -83,6 +83,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
+| 人物出场全量列举 | [person-appearance-search-trd.md](03-product-reassessment/person-appearance-search-trd.md) | 初稿：按人物列出全部出场片段，MySQL READY 内容为真相来源，不依赖视觉向量。 |
 | 本地文本向量与可选视觉索引 | [local-text-embedding-trd.md](03-product-reassessment/local-text-embedding-trd.md) | 课程实验：Qwen3-Embedding-0.6B、冻结输入模式、纯文本索引与原多模态兼容。 |
 | Event / Sub-Chunk 检索 | [sub-chunk-trd.md](02-agent-harness/sub-chunk-trd.md) | 主 TRD：独立 Event ES 索引、词法与文本／视觉向量、抽帧、发布及恢复合同。 |
 | 视觉媒体输入与检索 | [visual-retrieval-trd.md](02-agent-harness/visual-retrieval-trd.md) | 专项 TRD：文字与视觉查询分工，图片、GIF、MP4 输入及检索接入。 |
