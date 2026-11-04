@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Summarize 长视频超时修复 TRD。状态：初稿（2026-11-04）。** 分支 `fix/summarize-model-timeouts`，PR 待创建后回填。主设计见 [video-summarize-trd.md](video-summarize-trd.md)。
+**Summarize 长视频超时修复 TRD。状态：初稿（2026-11-04）。** 分支 `fix/summarize-model-timeouts`，PR [#38](https://github.com/owariband/Seekino/pull/38)。主设计见 [video-summarize-trd.md](video-summarize-trd.md)。
 
 ## 背景与触发场景
 
