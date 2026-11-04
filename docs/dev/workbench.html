@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-04T13:30:00+08:00",
- "sourceCheckedAt": "2026-11-04T13:30:00+08:00",
- "sourceRef": "1098bae0",
- "revision": 7,
+ "updatedAt": "2026-11-04T13:50:00+08:00",
+ "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
+ "sourceRef": "497a35cf",
+ "revision": 8,
  "categories": [
   {
    "id": "parse",
@@ -551,13 +551,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "id": "S7",
      "title": "对外入口",
      "value": "外部用户不依赖开发机即可完成同一路径。",
-     "gates": [
-      "ON01"
-     ],
-     "cards": [
-      "LOOP-01",
-      "LOOP-09"
-     ]
+     "outOfScope": true,
+     "gates": [],
+     "cards": [],
+     "note": "11-04 决定周四只做本机演示（LOOP-01）；ON01 移到演示之后。"
     },
     {
      "id": "S8",
@@ -573,12 +570,12 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "name": "Let's build GPT",
      "ready": false,
-     "progress": "v11 任务 93d60de9：理解 117/117、Refine 106/115、索引 96/117，Consumer 已停止（2026-11-03 12:26 快照）"
+     "progress": "v11 任务 93d60de9 COMPLETE，系列 READY（11-04 13:17）；待 SE01 真实查询核对"
     },
     {
      "name": "micrograd（反向传播）",
      "ready": false,
-     "progress": "尚未重新解析；计划 0.5 fps（LOOP-04），推理档位取决于 LOOP-10 是否在 11-04 中午前合并"
+     "progress": "11-04 13:38 起以 0.5 fps + none 解析（任务 720608b1），ASR 进行中"
     }
    ],
    "cost": {
@@ -687,8 +684,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "milestone": "M-20261105",
    "title": "《Let's build GPT》任务、内容与索引版本一致并可检索",
    "status": "untested",
-   "note": "v11 任务 93d60de9 在 11-03 12:26 快照为理解 117/117、Refine 106/115、索引 96/117，Consumer 已停止，尚未 READY。",
-   "checkedAt": "2026-11-03",
+   "note": "11-04 13:17：任务 COMPLETE（117/117 索引、115/115 Refine），系列 READY；尚未用真实查询核对可检索，暂保持待测。",
+   "checkedAt": "2026-11-04",
    "links": [
     {
      "label": "持久成果核对",
@@ -917,7 +914,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "milestone": "M-20261105",
    "title": "外部用户通过发布地址走完找课→回看→追问→刷新",
    "status": "untested",
-   "note": "范围取决于 LOOP-01：若周四只做本机演示，本条移出本里程碑。",
+   "note": "11-04 LOOP-01 决定本机演示，本条移出周四里程碑。",
    "checkedAt": null,
    "links": [
     {
@@ -3850,12 +3847,12 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "确定周四“上线”范围：公开地址还是本机演示",
    "category": "platform",
    "type": "task",
-   "status": "todo",
+   "status": "done",
    "priority": "P0",
-   "description": "公开部署要求媒体 Range、真实模型与存储配置、数据归属都在外部环境可用；本机 WhisperX 与 rewriter 会成为部署依赖。本机演示则只需在 dev HEAD 上验收。",
-   "next": "由用户决定；决定后更新 ON01 是否计入门槛，以及 LOOP-09 的范围。",
+   "description": "公开部署要求媒体 Range、真实模型与存储配置、数据归属都在外部环境可用；本机 WhisperX 与 rewriter 会成为部署依赖。本机演示则只需在 dev HEAD 上验收。\n\n11-04 用户决定：周四为本机演示，在 dev HEAD 上验收；公开部署放到演示之后。ON01 移出本里程碑。",
+   "next": "无；公开部署另建需求。",
    "verification": "决定记录在本卡与 MOD-LOOP；未决定前 ON01 保持待测。",
-   "updatedAt": "2026-11-03",
+   "updatedAt": "2026-11-04",
    "tags": [
     "待用户决定"
    ],
@@ -3880,10 +3877,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "合并 #29/#30，GPT v11 完成 Refine 与索引并 READY",
    "category": "parse",
    "type": "task",
-   "status": "progressing",
+   "status": "verifying",
    "priority": "P0",
-   "description": "PR #29 修复 DeepSeek 严格 Schema，PR #30 修复长解析任务查询与 Consumer 恢复。v11 任务 93d60de9 在 11-03 12:26 为理解 117/117、Refine 106/115、索引 96/117；任务查询触发 MySQL 1038，Consumer 已停止，剩余 Refine 与索引不会自动推进。\n\n11-04 12:50：#29、#30 已在本地 dev 合并（6b9fa27c、1098bae0）。#29 的两处代码冲突保留 dev 已有的更严格投影（required + additionalProperties=false），只取 gateway README 说明；#30 仅两处文档冲突，两边都保留。直接覆盖的测试 312 通过、12 跳过（需独立 MySQL 的用例）；全量后端回归 21 失败，与合并前 4af01377 完全相同，不是本次合并引入（QA-02）。尚未 push，本机服务未启动，v11 仍停在 11-03 快照的进度。",
-   "next": "push dev（关闭 #29 / #30）→ 在 dev HEAD 启动服务 → 恢复 v11 剩余约 9 个 Refine 与 21 个索引 Chunk → READY 后用 SE01 真实查询核对。",
+   "description": "PR #29 修复 DeepSeek 严格 Schema，PR #30 修复长解析任务查询与 Consumer 恢复。v11 任务 93d60de9 在 11-03 12:26 为理解 117/117、Refine 106/115、索引 96/117；任务查询触发 MySQL 1038，Consumer 已停止，剩余 Refine 与索引不会自动推进。\n\n11-04 12:50：#29、#30 已在本地 dev 合并（6b9fa27c、1098bae0）。#29 的两处代码冲突保留 dev 已有的更严格投影（required + additionalProperties=false），只取 gateway README 说明；#30 仅两处文档冲突，两边都保留。直接覆盖的测试 312 通过、12 跳过（需独立 MySQL 的用例）；全量后端回归 21 失败，与合并前 4af01377 完全相同，不是本次合并引入（QA-02）。尚未 push，本机服务未启动，v11 仍停在 11-03 快照的进度。\n\n11-04 13:17 只读快照：v11 任务 93d60de9 已 COMPLETE——117/117 Chunk 完成索引、115/115 Refine 区间完成（#30 的恢复运行在 11-03 快照之后跑完）；系列 API 返回 READY 1/1。dev 已 push，#29 / #30 显示 MERGED。运行环境：`outputs/verification/course-loop-dev-20261104/`（control.py、snapshot.py），API / Consumer 在 dev HEAD 497a35cf 的干净工作区，端口 19641，沿用 v11 隔离库 13361 / ES 19231 / 冻结模型配置（query_hook 关闭）。",
+   "next": "LOOP-08 中用 SE01 真实查询核对检索返回 v11 内容后，DP01-GPT 记为通过。",
    "verification": "以任务 READY 且 SE01 真实查询返回对应版本内容为准；PR 合并本身不算完成。",
    "updatedAt": "2026-11-04",
    "tags": [],
@@ -3965,8 +3962,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "category": "parse",
    "type": "task",
    "status": "todo",
-   "priority": "P1",
-   "description": "chunk 53 实测 0.5 fps+medium 最优，但正式链路不接受 medium：server/config/parse_profile.py 的 ParseVisionConfig.reasoning_effort、gateway/openai/profiles.py 与 gateway/openai/structured.py 只允许 none / low / high / max，上传 parseConfig 填 medium 会被拒绝。另外 server 装配时 models.refine=None，Refine 沿用 Understand 的档位（agent/video_parse_v2/refine/agent.py）；前 30 块实测 Refine 用 medium 后成本 +139%。\n\n11-04 12:35 已过中午截止：按原规则 LOOP-04 不再等待，改用当前支持的 0.5 fps + low。medium 是否还值得接入，等 COST-02 的 2×2 对照（0.5 fps + none 从未测过，可能比 medium 更值得做）。",
+   "priority": "P2",
+   "description": "chunk 53 实测 0.5 fps+medium 最优，但正式链路不接受 medium：server/config/parse_profile.py 的 ParseVisionConfig.reasoning_effort、gateway/openai/profiles.py 与 gateway/openai/structured.py 只允许 none / low / high / max，上传 parseConfig 填 medium 会被拒绝。另外 server 装配时 models.refine=None，Refine 沿用 Understand 的档位（agent/video_parse_v2/refine/agent.py）；前 30 块实测 Refine 用 medium 后成本 +139%。\n\n11-04 12:35 已过中午截止：按原规则 LOOP-04 不再等待，改用当前支持的 0.5 fps + low。medium 是否还值得接入，等 COST-02 的 2×2 对照（0.5 fps + none 从未测过，可能比 medium 更值得做）。\n\n11-04 COST-02 回放后，课程默认档位倾向 none（费用约为 low 的 45%），medium 接入的必要性进一步下降。",
    "next": "独立分支与 PR（首个提交为 TRD 初稿或在性能 TRD 中补充本次范围）：放开 medium；Refine 可单独指定档位，默认继承，周四用 none。用一块真实请求核对 DeepSeek 正式链路接受 medium 且 usage 正常记录。",
    "verification": "单测覆盖配置校验与请求参数；一次真实 Understand 返回 reasoning usage，Refine 请求为非思考模式。按前 30 块单价外推 micrograd（约 146 块，预估，未计重试与高峰费率）：Understand+Refine 都用 medium 约 ¥17，Understand medium+Refine none 约 ¥12，3 fps+none 约 ¥21。若 11-04 中午前未合并，LOOP-04 改用当前已支持的 0.5 fps+low 启动。",
    "updatedAt": "2026-11-04",
@@ -3997,10 +3994,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "micrograd 以 0.5 fps 解析至 READY",
    "category": "parse",
    "type": "task",
-   "status": "todo",
+   "status": "progressing",
    "priority": "P0",
-   "description": "反向传播由 Zero to Hero 第 1 集 micrograd 系统讲解，GPT 一集使用 PyTorch autograd，不覆盖示例问题。片长约 2 小时 25 分，解析耗时是最大的排期风险。\n\n11-03 晚：LOOP-03 已给出成本与单块质量结果，阻塞改为 LOOP-10（正式链路尚不接受 medium）。Refine 按区间串行，实测约 49 s/区间，是排期的主要不确定项。",
-   "next": "dev 服务启动后立即上传 micrograd：parseConfig vision.fps=0.5、vision.reasoning_effort=low。预估（未计重试与高峰费率）：Understand 约 146 块 × ¥0.06 ≈ ¥9；Refine 串行约 49 s / 区间，整集 3–4 小时。若 COST-02 回放对照在 Understanding 大量开始前证明 none 质量可接受，暂停后以 none 重新解析（复用同视频 ASR）。记录费用、耗时与进度。",
+   "description": "反向传播由 Zero to Hero 第 1 集 micrograd 系统讲解，GPT 一集使用 PyTorch autograd，不覆盖示例问题。片长约 2 小时 25 分，解析耗时是最大的排期风险。\n\n11-03 晚：LOOP-03 已给出成本与单块质量结果，阻塞改为 LOOP-10（正式链路尚不接受 medium）。Refine 按区间串行，实测约 49 s/区间，是排期的主要不确定项。\n\n11-04 13:18 以 0.5 fps + low 上传（任务 93499703，146 块）；13:38 依 COST-02 回放结果经用户确认改为 0.5 fps + none：先暂停旧任务释放租约，再 reparse 为任务 720608b1（版本 2），ASR 从头开始。系列 “Building micrograd — course loop 20261104”，讲师背景沿用 GPT 系列。运行环境：`outputs/verification/course-loop-dev-20261104/`（control.py、snapshot.py），API / Consumer 在 dev HEAD 497a35cf 的干净工作区，端口 19641，沿用 v11 隔离库 13361 / ES 19231 / 冻结模型配置（query_hook 关闭）。",
+   "next": "跟进 720608b1 至 READY；记录费用（14:00–18:00 为 DeepSeek 高峰 ×2）、耗时与重试。预估（未计修复与高峰）：Understand 146 × ¥0.018 ≈ ¥2.7，高峰约 ¥5.3。",
    "verification": "以任务 READY 且 LP02 所需片段可检索为准。若周三晚仍未 READY，退回只验 GPT 单课的 LP01，并如实说明跨课路径未验证。",
    "updatedAt": "2026-11-04",
    "tags": [
@@ -4020,9 +4017,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    },
    "milestone": "M-20261105",
    "due": "2026-11-04",
-   "blockedBy": [
-    "LOOP-02"
-   ],
+   "blockedBy": [],
    "gates": [
     "DP01-MG",
     "LP02",
@@ -4071,24 +4066,29 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "实时证据不提交视频卡，失败表述准确，回答长度受控",
    "category": "chat",
    "type": "task",
-   "status": "todo",
+   "status": "verifying",
    "priority": "P0",
-   "description": "submit_video_item 不论有无可检索范围都会注册；实时证据不属于可信检索候选，提交必然失败，模型随后误称没有可播放片段。Q01/Q02 回答超出“简短”“三句话”要求，并暴露 PARSING_FAILED 等内部术语。",
-   "next": "只在课程库范围可用时暴露视频卡工具，实时证据统一用时间码链接交付；收紧回答长度与用户可见术语。随后复测 Q01–Q03。",
+   "description": "submit_video_item 不论有无可检索范围都会注册；实时证据不属于可信检索候选，提交必然失败，模型随后误称没有可播放片段。Q01/Q02 回答超出“简短”“三句话”要求，并暴露 PARSING_FAILED 等内部术语。\n\n11-04 PR #33：实时证据改为正文时间码链接交付；仅有当前播放、无可检索系列时不注册视频卡工具；Prompt 增加限定句数时来源内联、禁止内部术语。tests/agent/chat 391 passed。注意 QA 场景带系列范围，工具门控不生效，效果依赖 Prompt 与修正后的工具反馈。",
+   "next": "合并 #33 后在 GPT 课程 90 s 暂停点用真实模型复测 Q01–Q03，统计失败卡片提交、Q02 句数与内部术语。",
    "verification": "Q01–Q03 不再出现不可成功的视频卡提交，Q02 总共不超过三句话，时间链接仍可回看；不以更少证据换取更短回答。",
-   "updatedAt": "2026-11-03",
+   "updatedAt": "2026-11-04",
    "tags": [],
    "related": [
     "C22",
     "C25",
     "MOD-LOOP"
    ],
-   "branch": "",
+   "branch": "fix/watch-answer-delivery",
    "links": [
     {
      "label": "captions 修复后 QA",
      "url": "https://github.com/owariband/Seekino/blob/23c888144a2d1885c8d7647d9dc68604abe275f3/docs/report/server/course-qa-deepseek-caption-20261103.md",
      "kind": "evidence"
+    },
+    {
+     "label": "PR #33",
+     "url": "https://github.com/owariband/Seekino/pull/33",
+     "kind": "pr"
     }
    ],
    "source": {
@@ -4205,11 +4205,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "category": "platform",
    "type": "task",
    "status": "todo",
-   "priority": "P0",
-   "description": "若决定公开访问：部署真实配置，验证页面、API、媒体 Range 与模型可用，执行 ON01。若只做本机演示：本卡关闭，ON01 移出门槛。",
+   "priority": "P2",
+   "description": "若决定公开访问：部署真实配置，验证页面、API、媒体 Range 与模型可用，执行 ON01。若只做本机演示：本卡关闭，ON01 移出门槛。\n\n11-04：LOOP-01 决定本机演示，本卡移出周四里程碑。",
    "next": "等待 LOOP-01。",
    "verification": "ON01 在干净浏览器通过；部署成功不等于学习路径通过。",
-   "updatedAt": "2026-11-03",
+   "updatedAt": "2026-11-04",
    "tags": [
     "视决定"
    ],
@@ -4241,7 +4241,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "todo",
    "priority": "P0",
    "description": "Q01 要求简短、Q02 要求三句话，DeepSeek Flash / low 两轮均超出；Q01 夹带 partial、Chunk、visual_summary 等术语，Q02 在三点外追加来源段。完整分析见 QA 分支 problems C25。",
-   "next": "由 LOOP-06 承接修复。",
+   "next": "由 LOOP-06（PR #33）承接，等待真实模型复测。",
    "verification": "Q02 完整回复最多三句话，Q01 用用户能理解的表达说明已知事实与限制；精简不能删掉来源。",
    "updatedAt": "2026-11-03",
    "tags": [],
@@ -4353,8 +4353,8 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "progressing",
    "priority": "P1",
-   "description": "用户提出课程不需要 RELATION_CHANGE、ACTION 等含糊类型，按视频类型收窄 Event 枚举可减少输出与推理。11-04 核对：前 30 块 60 份课程结果中 EMOTION、RELATION_CHANGE、OTHER 均为 0 次，ACTION 88 次；0.5 fps 下 reasoning token 约占 Understanding 费用一半（chunk 53 low：输出 9,083 中 reasoning 8,299）。因此枚举本身可能只是小杠杆，推理档位（0.5 fps + none 未测）可能更大。TRD 初稿已提交为分支首个提交。",
-   "next": "回放 LOOP-03 保存的请求做 2×2 对照（全枚举 / 课程枚举 × low / none），5 块 × 2 次，预算 ¥3；H2（课程枚举使 reasoning 降 ≥15%）不成立则不实现子集，只记录课程默认档位。",
+   "description": "用户提出课程不需要 RELATION_CHANGE、ACTION 等含糊类型，按视频类型收窄 Event 枚举可减少输出与推理。11-04 核对：前 30 块 60 份课程结果中 EMOTION、RELATION_CHANGE、OTHER 均为 0 次，ACTION 88 次；0.5 fps 下 reasoning token 约占 Understanding 费用一半（chunk 53 low：输出 9,083 中 reasoning 8,299）。因此枚举本身可能只是小杠杆，推理档位（0.5 fps + none 未测）可能更大。TRD 初稿已提交为分支首个提交。\n\n11-04 13:30 2×2 回放（5 块 × 2 次 × 4 组 = 40 次，非高峰，¥1.219）：课程枚举 + low 的 reasoning +15.9%、费用 +9.3%，**否定以枚举子集省钱（H2）**；0.5 fps + none 费用 −54.8%（¥0.0182 vs ¥0.0403 / 块），full-none 单次 Schema 7/10（均为事件越出授权时间窗，可修复），course-none 10/10。一块探索性对照显示课程 ACTION 多为讲师手势，course-none 的 SCENE 教学信息最多；未做质量评分。",
+   "next": "以 micrograd（0.5 fps + none）为试点核对整集费用与 LP02 检索；补 none 的教学质量评分；枚举子集仅在证明能减少噪声事件时再议。",
    "verification": "以 TRD 预设指标为准：单块费用、reasoning token、Schema 通过率 100%、LOOP-03 四项质量评分不低于全枚举 + low、对白覆盖下降 ≤5 个百分点。",
    "updatedAt": "2026-11-04",
    "tags": [
@@ -4373,6 +4373,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD 初稿",
      "url": "https://github.com/owariband/Seekino/blob/feat/parse-event-profile/docs/design/03-product-reassessment/parse-event-profile-trd.md",
      "kind": "design"
+    },
+    {
+     "label": "PR #34",
+     "url": "https://github.com/owariband/Seekino/pull/34",
+     "kind": "pr"
     }
    ]
   },
@@ -4384,7 +4389,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "progressing",
    "priority": "P1",
    "milestone": "M-20261107",
-   "description": "现有检索为相关性设计（top_k 截断），不能回答“全部片段”。每个 Event 已有 speaker / participants / visible_persons，索引投影也有 person_names，缺的是全量枚举、按 character_bible 别名匹配（已见“千早愛音 / 千早爱音”两种写法）、区间合并与展示入口。本地向量为纯文本 Qwen3-Embedding，v1 不做以图搜人。TRD 初稿已提交为分支首个提交。",
+   "description": "现有检索为相关性设计（top_k 截断），不能回答“全部片段”。每个 Event 已有 speaker / participants / visible_persons，索引投影也有 person_names，缺的是全量枚举、按 character_bible 别名匹配（已见“千早愛音 / 千早爱音”两种写法）、区间合并与展示入口。本地向量为纯文本 Qwen3-Embedding，v1 不做以图搜人。TRD 初稿已提交为分支首个提交。\n\n11-04 PR #35：Engine 纯函数 list_person_appearances 与 17 项单测已提交；Service / API / Chat / Web 未接入。",
    "next": "PERSON-02 核对数据 → Engine 纯函数与单测 → Service / API 与授权测试 → PERSON-03 标注测召回 → Chat 工具 → Web 列表。",
    "verification": "第 7 集出场时长召回 ≥80%、区间精确率 ≥85%、结果确定、授权零泄漏；召回低于 60% 时演示只称“解析标注到的片段”。",
    "updatedAt": "2026-11-04",
@@ -4408,6 +4413,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD 初稿",
      "url": "https://github.com/owariband/Seekino/blob/feat/person-appearance-search/docs/design/03-product-reassessment/person-appearance-search-trd.md",
      "kind": "design"
+    },
+    {
+     "label": "PR #35",
+     "url": "https://github.com/owariband/Seekino/pull/35",
+     "kind": "pr"
     }
    ]
   },
