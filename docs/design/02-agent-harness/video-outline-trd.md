@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**视频大纲 TRD。状态：初稿（2026-11-04）。** 分支 `feat/video-outline`，PR 待创建。上游：[summarize-compact-input-trd.md](summarize-compact-input-trd.md)（PR [#39](https://github.com/owariband/Seekino/pull/39)，Summarize 能在长视频上完成）与 [video-display-source-trd.md](video-display-source-trd.md)（PR [#40](https://github.com/owariband/Seekino/pull/40)，成果列改名 `display`、按“最新非空成果”读取）。合并顺序：#39、#40 之后实施本需求。
+**视频大纲 TRD。状态：初稿（2026-11-04）。** 分支 `feat/video-outline`，PR [#41](https://github.com/owariband/Seekino/pull/41)。上游：[summarize-compact-input-trd.md](summarize-compact-input-trd.md)（PR [#39](https://github.com/owariband/Seekino/pull/39)，Summarize 能在长视频上完成）与 [video-display-source-trd.md](video-display-source-trd.md)（PR [#40](https://github.com/owariband/Seekino/pull/40)，成果列改名 `display`、按“最新非空成果”读取）。合并顺序：#39、#40 之后实施本需求。
 
 ## 背景与触发场景
 
