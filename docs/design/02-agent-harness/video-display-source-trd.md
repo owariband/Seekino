@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**视频展示元数据读源切换 TRD。状态：初稿（2026-11-04）。** 分支 `refactor/video-display-source`，PR 待创建。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；成果表来源见 [20261031 成果表迁移](../../migrations/20261031_video_parse_content.md)。
+**视频展示元数据读源切换 TRD。状态：初稿（2026-11-04）。** 分支 `refactor/video-display-source`，PR [#40](https://github.com/owariband/Seekino/pull/40)。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；成果表来源见 [20261031 成果表迁移](../../migrations/20261031_video_parse_content.md)。
 
 ## 背景与触发场景
 
