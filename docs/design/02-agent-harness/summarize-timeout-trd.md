@@ -83,7 +83,7 @@ stateDiagram-v2
 | 连接失败挽回 | 0/1（lease 4） | 单测：连接失败后重试成功即返回结果 | 挽回 | 单测通过（`tests/gateway/test_multimodal_failure_contract.py`） |
 | 非连接错误不重试 | 不重试 | 单测：各类错误只调用一次即上抛 | 保持 | 单测通过 |
 | 预算约束 | — | 单测：剩余预算不足退避时间时直接上抛 | 不超出总预算 | 单测通过 |
-| 真实触发次数 | — | 待统计 | 记录 | 待测 |
+| 真实触发次数 | — | 2026-11-04 v11 两部长视频 Summarize（22 次模型调用，`outputs/verification/summarize-compact-20261104/api.log`）：0 次 | 记录 | 期间未发生连接失败；持续观察 |
 
 # 5. 试点验证与方案取舍
 
