@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-- 分支：`fix/watch-answer-delivery`；PR：待创建（`PR 待创建`）。
+- 分支：`fix/watch-answer-delivery`；PR：[#33](https://github.com/owariband/Seekino/pull/33)。
 - 更新日期：2026-11-04。状态：实现完成，真实模型效果待测。
 - 相关问题：C22（观看追问尝试不可用的视频提交）、C25（回答超长并暴露内部取证术语）。
 
