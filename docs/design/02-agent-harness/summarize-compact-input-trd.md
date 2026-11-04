@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Summarize 压缩输入 TRD。状态：初稿（2026-11-04）。** 分支 `perf/summarize-compact-input`，PR [#39](https://github.com/owariband/Seekino/pull/39)。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；连接抖动重试见 [summarize-timeout-trd.md](summarize-timeout-trd.md)（PR [#38](https://github.com/owariband/Seekino/pull/38)，与本 TRD 无代码依赖）。
+**Summarize 压缩输入 TRD。状态：实现完成，v11 实测达标（2026-11-04）。** 分支 `perf/summarize-compact-input`，PR [#39](https://github.com/owariband/Seekino/pull/39)。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；连接抖动重试见 [summarize-timeout-trd.md](summarize-timeout-trd.md)（PR [#38](https://github.com/owariband/Seekino/pull/38)，与本 TRD 无代码依赖）。
 
 ## 背景与触发场景
 
@@ -37,12 +37,12 @@ Summarize 在视频解析完成后为单个 Video 生成标题、简介、集数
 
 | 指标 | 定义与口径 | 基线 | 目标 / 护栏 | 测量方法 | 证据入口 |
 | --- | --- | --- | --- | --- | --- |
-| 成功率（结果） | 两部长视频各排队一次，是否 `COMPLETE` 且发布 | 0/2 | 2/2 | SQL 查 `_worker_runtime_v2.summarize.status` 与 `video.display_name` | 待测 |
-| 完整耗时（结果） | 领取租约到发布完成的墙钟秒数 | >600 秒（未完成） | 每部 ≤ 120 秒（预期） | api.log | 待测 |
-| 模型调用数（诊断） | 单次执行的 Summarize 模型调用次数 | ≥35（未完成） | ≤ 8（预期） | api.log / model-trace | 待测 |
-| 首轮输入字符（诊断） | 第一次调用的输入字符数 | 5,411（仅 Prompt） | < 200,000 | api.log | 待测 |
-| 标题与简介质量（护栏） | 人工核对：标题是否来自本视频片头屏幕文字或为有依据的生成标题；简介是否覆盖视频主要内容且无编造 | 无（未产出） | 两部均通过人工核对 | 发布结果 + 引用证据 | 待测 |
-| 证据校验不变（护栏） | 现有离线测试 | 通过 | 除阅读覆盖相关用例外全部通过 | `tests/agent/video_summarize`、`tests/server/test_video_summarize_*` | 待测 |
+| 成功率（结果） | 两部长视频各排队一次，是否 `COMPLETE` 且发布 | 0/2 | 2/2 | SQL 查 `_worker_runtime_v2.summarize.status` 与 `video.display_name` | 2/2，均首次即完成（`retry_count=0`） |
+| 完整耗时（结果） | 领取租约到发布完成的墙钟秒数 | >600 秒（未完成） | 每部 ≤ 120 秒 | api.log | 65 秒 / 67 秒 |
+| 模型调用数（诊断） | 单次执行的 Summarize 模型调用次数 | ≥35（未完成） | ≤ 8（预期） | api.log / model-trace | 11 / 11（超出预期值，主要是看帧轮次；耗时已达标，不追加限制） |
+| 首轮输入字符（诊断） | 第一次调用的输入字符数 | 5,411（仅 Prompt） | < 200,000 | api.log | 125,152 / 149,724；单轮最大 148,273 / 167,567；摘要未截断 |
+| 标题与简介质量（护栏） | 人工核对：标题是否来自本视频片头屏幕文字或为有依据的生成标题；简介是否覆盖视频主要内容且无编造 | 无（未产出） | 两部均通过人工核对 | 发布结果 + 引用证据 | 通过（lead 核对，见第 4 节）；两部均为 `generated` 标题，录屏中没有标题卡 |
+| 证据校验不变（护栏） | 现有离线测试 | 通过 | 除阅读覆盖相关用例外全部通过 | `tests/agent/video_summarize`、`tests/server/test_video_summarize_*` | 441 passed；`tests/agent` 711 passed |
 
 # 3. 改造方案与建模
 
@@ -85,20 +85,30 @@ flowchart LR
 
 | 指标 | 基线实测 | 方案实测 | 变化量 | 验收标准 | 判断与证据 |
 | --- | --- | --- | --- | --- | --- |
-| 成功率 | 0/2 | 待测 | 待计算 | 2/2 | 未验证 |
-| 117 Chunk 耗时 / 调用数 | >600 秒 / ≥35 | 待测 | — | ≤120 秒 / ≤8 | 未验证 |
-| 146 Chunk 耗时 / 调用数 | >600 秒 / ≥35 | 待测 | — | ≤120 秒 / ≤8 | 未验证 |
-| 标题与简介人工核对 | — | 待测 | — | 通过 | 未验证 |
+| 成功率 | 0/2 | 2/2 | +2 | 2/2 | 达标 |
+| 117 Chunk 耗时 / 调用数 | >600 秒 / ≥35 | 65 秒 / 11 | 耗时降至约 1/10 以下 | ≤120 秒 / ≤8 | 耗时达标；调用数超出预期值 |
+| 146 Chunk 耗时 / 调用数 | >600 秒 / ≥35 | 67 秒 / 11 | 同上 | ≤120 秒 / ≤8 | 耗时达标；调用数超出预期值 |
+| 标题与简介人工核对 | — | 通过 | — | 通过 | 达标 |
+
+**实测记录（2026-11-04 19:49–19:52，v11 课程库）：** 代码为 dev `07741e35` 合入 #38、#39 的本地实验合并 `12c44469`（`outputs/worktrees/summarize-exp`），模型配置同 `outputs/verification/lets-build-gpt-deepseek-flash-v11-20261103/model-config.yaml`。控制脚本、排队脚本与排队前状态备份在 `outputs/verification/summarize-compact-20261104/`（`requeue.py` 先备份原 `FAILED` 状态，再经 `mark_summary_ready` 重新排队）。日志为同目录 `api.log`，模型 trace 23 份。实验期间无 `multimodal_connect_retry` 事件。
+
+发布结果：
+
+- `93d60de9`（Let's build GPT，117 Chunk）：标题“从零构建 GPT：字符级 Transformer 语言模型代码实战”（`generated`）；简介按顺序覆盖 ChatGPT 示例、Tiny Shakespeare、字符级分词、bigram、自注意力、多头注意力、残差与 LayerNorm、验证损失 1.48、nanoGPT 与 RLHF 三阶段；封面为 Colab 中编码/解码代码的真帧；8 条描述 / 标题证据均引用 Chunk 原文。
+- `720608b1`（micrograd，146 Chunk）：标题“从零实现 micrograd：神经网络与反向传播详解”（`generated`）；简介覆盖自动求导引擎、数值导数、Value 类、手动与自动反向传播、`+=` 梯度累加 bug、MLP 训练与 PyTorch 对照；封面为 micrograd README 页面的真帧。
+
+lead 核对：简介内容与解析事件一致，未见编造；两部视频的录屏中没有标题卡，生成标题符合 Prompt 规则。
 
 # 5. 试点验证与方案取舍
 
-试点即上述两部视频的真实发布：确认资料库显示标题、简介和封面，解析版本不变。代价是两次 Summarize 的模型费用（预期各数次 `deepseek-flash` 调用）。若标题质量不达标，先检查是否由摘要缺失的信息导致（H1 证伪），再决定是否引入解析时 abstract。
+试点即上述两部视频的真实发布，结果已写入 v11 库（`video` 展示列与 `video_parse_content.summary`）。H1 成立：事件描述与屏幕文字足以产出合格的标题、简介与封面，不需要解析时 abstract。H2 部分成立：调用数与 Chunk 数无关（两部都是 11 次），但高于预期的 8 次，多出的是看帧轮次；耗时已达标，不追加看帧上限。H3：首轮 125k–150k 字符，远低于 `maximum_digest_chars=300000`，未触发截断。决定：推广（合并 #39）。
 
 # 6. 结果验收与闭环
 
-待实验完成后填写：逐项对照第 2 节指标，更新 [video-summarize-trd.md](video-summarize-trd.md) 中“提交前检查所有 Chunk 的完整阅读覆盖”的工具合同，并在 devlog 记录。
+第 2 节指标中成功率、耗时、质量与测试护栏均达标；调用数超出预期值但不影响结果。合并后需同步：[video-summarize-trd.md](video-summarize-trd.md) 中“提交前检查所有 Chunk 的完整阅读覆盖”的工具合同，以及 devlog 记录。
 
 ## 调整记录
 
 | 日期 | 原判断或方案 | 新证据 | 调整与原因 | 影响 |
 | --- | --- | --- | --- | --- |
+| 2026-11-04 | 预期调用数 ≤ 8 | 实测两部均 11 次，多为看帧 | 不加看帧上限：耗时已在 70 秒内 | 指标表注明 |
