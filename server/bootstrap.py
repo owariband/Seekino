@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -57,6 +59,8 @@ from .service.video_parse_media import VideoParseMediaService
 from .service.video_summarize import VideoSummarizeService
 from .service.video_frame_reader import VideoFrameReader
 from .service.video_retrieval import VideoParseRetrievalService
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -228,6 +232,8 @@ def _build_application_services(
         job_repository,
         library,
         execution_mode=settings.parse_execution_mode,
+        video_parse_index_store=elasticsearch_store,
+        video_event_index_store=resources.elasticsearch_event_store,
     )
     tracing = None
     parse_usage = ParseUsageService(
@@ -464,6 +470,19 @@ def _build_application_services(
         attachments=agent_attachments,
     )
     construction_cleanup.callback(agent.close)
+
+    async def maintenance() -> None:
+        # Both cleanups are best-effort and isolated so one failure cannot
+        # stall the other's next maintenance cycle.
+        try:
+            await v2_runtime.reap_stale_media()
+        except Exception:
+            _logger.exception("Video Parse V2 media reaper failed")
+        try:
+            await asyncio.to_thread(uploads.reconcile_deletions)
+        except Exception:
+            _logger.exception("upload deletion reconcile failed")
+
     parse_consumer = VideoParseConsumer(
         v2_queue,
         VideoParseConsumerHandlers(
@@ -473,7 +492,7 @@ def _build_application_services(
             refine=v2_runtime.refine,
             index=v2_runtime.index,
             prefix=v2_runtime.run_next_prefix,
-            maintenance=v2_runtime.reap_stale_media,
+            maintenance=maintenance,
             summarize=summary_service.run_next if summary_service is not None else None,
         ),
         worker_id=settings.mq.consumer_id,

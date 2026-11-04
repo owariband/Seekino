@@ -19,7 +19,7 @@ from ..error.auth import AuthError
 from ..service.pagination import decode_cursor, encode_cursor
 from .context import get_identity, get_services, get_sse_config, revalidate_identity
 from ..model.vo.commonVO import Page, Failure
-from ..model.vo.taskVO import VideoParseTaskView
+from ..model.vo.taskVO import VideoParseTaskDeleteResult, VideoParseTaskView
 from ..utils.time import datetime_to_unix_time_ms
 
 _TERMINAL_VIDEO_PARSE_TASK_STATUSES = {
@@ -54,6 +54,30 @@ def set_video_parse_paused(
         video_parse_task_id, tenant_id=tenant_id, paused=paused,
         expected_version=expected_version, expected_lease_version=expected_lease_version,
     ))
+
+
+def delete_video_parse_task(
+    request: Request,
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+    video_parse_task_id: str | None = Query(None, alias="videoParseTaskId"),
+    video_id: str | None = Query(None, alias="videoId"),
+    scope: str | None = Query(None),
+    expected_job_version: int | None = Query(None, alias="expectedJobVersion", ge=1),
+) -> VideoParseTaskDeleteResult:
+    require_tenant_write(get_identity(request), tenant_id)
+    service = get_services(request).jobs
+    if scope == "history":
+        deleted_ids = service.delete_video_parse_task(
+            tenant_id=tenant_id,
+            video_id=video_id,
+        )
+    else:
+        deleted_ids = service.delete_video_parse_task(
+            tenant_id=tenant_id,
+            video_parse_task_id=video_parse_task_id,
+            expected_job_version=expected_job_version,
+        )
+    return VideoParseTaskDeleteResult(deleted_video_parse_task_ids=deleted_ids)
 
 
 def list_video_parse_tasks(
@@ -326,7 +350,15 @@ def project_video_parse_task(
             observation is not None
             and observation.is_latest
             and observation.upload_session_id is not None
-            and not observation.has_active_deletion_lease
+        ),
+        can_delete_version=(
+            observation is not None
+            and not observation.is_latest
+        ),
+        is_superseded=(
+            observation is not None
+            and not observation.is_latest
+            and task.status not in _TERMINAL_VIDEO_PARSE_TASK_STATUSES
         ),
     )
 

@@ -57,7 +57,6 @@ class VideoParseTaskDetail:
     has_active_prefix_lease: bool = False
     has_active_prefix_suffix_lease: bool = False
     has_active_execution_lease: bool = False
-    has_active_deletion_lease: bool = False
     pending_takeover_enabled: bool = False
 
 

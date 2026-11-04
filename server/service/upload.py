@@ -16,7 +16,7 @@ from gateway.model_sources import ModelReference
 from ..config.parse_profile import ParseConfig, index_contract_fingerprint, validate_video_parse_schedule
 from ..config.upload import UploadServiceConfig
 from ..model.identifiers import derive_video_id
-from ..model.upload import UploadSessionStatus, UploadCompletionStage
+from ..model.upload import UploadSessionStatus, UploadCompletionStage, UPLOAD_DELETION_PENDING_ERROR_CODE
 from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadSegmentState, UploadSessionDetail,
     UploadSessionState,
@@ -344,6 +344,14 @@ class UploadService:
             tenant_id=require_nonempty_text(tenant_id, "tenant_id"),
             now=self._now(),
         )
+        if deletion.deferred:
+            # Executions are still draining; their original lease expiry marks
+            # when it is safe to clean external artifacts. Reconcile finishes it.
+            _logger.info(
+                "upload_delete_deferred upload_session_id=%s video_id=%s",
+                session_id, deletion.video_id,
+            )
+            return deletion.session
         try:
             self._artifact_store.delete_upload_staging(session_id)
             if (
@@ -400,7 +408,7 @@ class UploadService:
         failed = 0
         for upload_session_id, tenant_id in pending:
             try:
-                self.delete_session(
+                state = self.delete_session(
                     upload_session_id,
                     tenant_id=tenant_id,
                 )
@@ -411,6 +419,10 @@ class UploadService:
                     upload_session_id,
                 )
             else:
+                if state.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE:
+                    # Fenced leases are still unexpired; wait quietly for the
+                    # next cycle without counting this as completed or failed.
+                    continue
                 completed += 1
         return completed, failed
 

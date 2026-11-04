@@ -177,20 +177,12 @@ class ParseJobRepository:
                 (row[0].id,),
                 observed_at_ms=observed_at_ms,
             )
-            deletion_fenced_video_ids = self._deletion_fenced_video_ids(
-                session,
-                (row[0].video_id,),
-                observed_at_ms=observed_at_ms,
-            )
             tracking = self._video_parse_tracking(session, (row[0],), observed_at_ms)
             return self._video_parse_task_detail(
                 row,
                 tracking=tracking[row[0].id],
                 active_prefix_max_episode=active_prefix_max.get(row[2]),
                 has_active_execution_lease=row[0].id in active_execution_task_ids,
-                has_active_deletion_lease=(
-                    row[0].video_id in deletion_fenced_video_ids
-                ),
                 observed_at_ms=observed_at_ms,
             )
 
@@ -264,11 +256,6 @@ class ParseJobRepository:
                 tuple(row[0].id for row in rows),
                 observed_at_ms=observed_at_ms,
             )
-            deletion_fenced_video_ids = self._deletion_fenced_video_ids(
-                session,
-                tuple({row[0].video_id for row in rows}),
-                observed_at_ms=observed_at_ms,
-            )
             tracking = self._video_parse_tracking(session, [row[0] for row in rows], observed_at_ms)
             return [
                 self._video_parse_task_detail(
@@ -277,9 +264,6 @@ class ParseJobRepository:
                     active_prefix_max_episode=active_prefix_max.get(row[2]),
                     has_active_execution_lease=(
                         row[0].id in active_execution_task_ids
-                    ),
-                    has_active_deletion_lease=(
-                        row[0].video_id in deletion_fenced_video_ids
                     ),
                     observed_at_ms=observed_at_ms,
                 )
@@ -462,46 +446,12 @@ class ParseJobRepository:
         return {*active_chunks, *active_intervals}
 
     @classmethod
-    def _deletion_fenced_video_ids(
-        cls,
-        session: Session,
-        video_ids: tuple[str, ...],
-        *,
-        observed_at_ms: int,
-    ) -> set[str]:
-        if not video_ids:
-            return set()
-        result: set[str] = set()
-        tasks = list(session.scalars(
-            select(VideoParseTask).where(
-                VideoParseTask.video_id.in_(video_ids),
-            )
-        ))
-        observed_at = unix_time_ms_to_datetime(observed_at_ms)
-        for task in tasks:
-            if (
-                task.lease_owner is not None
-                and task.lease_expire_time is not None
-                and task.lease_expire_time > observed_at
-            ) or _has_active_prefix_lease(task, now_ms=observed_at_ms):
-                result.add(task.video_id)
-        video_id_by_task_id = {task.id: task.video_id for task in tasks}
-        for task_id in cls._active_execution_task_ids(
-            session,
-            tuple(video_id_by_task_id),
-            observed_at_ms=observed_at_ms,
-        ):
-            result.add(video_id_by_task_id[task_id])
-        return result
-
-    @classmethod
     def _video_parse_task_detail(
         cls,
         row,
         *,
         active_prefix_max_episode: int | None = None,
         has_active_execution_lease: bool = False,
-        has_active_deletion_lease: bool = False,
         observed_at_ms: int | None = None,
         tracking: dict | None = None,
     ) -> VideoParseTaskDetail:
@@ -542,7 +492,6 @@ class ParseJobRepository:
                 and active_prefix_max_episode >= episode_order
             ),
             has_active_execution_lease=has_active_execution_lease,
-            has_active_deletion_lease=has_active_deletion_lease,
         )
 
     @staticmethod

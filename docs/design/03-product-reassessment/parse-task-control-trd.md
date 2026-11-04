@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 - 需求：解析任务页的任务管理——默认只看正在进行的任务；历史版本可以删除；进行中的任务随时可以暂停、随时可以删除。
-- 状态：初稿，2026-11-04。分支 `fix/parse-task-control`；PR 待创建。工作台卡片待登记（课程闭环里程碑的验收前置）。
+- 状态：初稿，2026-11-04。分支 `fix/parse-task-control`；PR [#36](https://github.com/owariband/Seekino/pull/36)。工作台卡片待登记（课程闭环里程碑的验收前置）。
 - 关联：[解析暂停与继续](parse-pause-resume-trd.md)（暂停语义沿用）、[任务历史版本筛选](task-history-filter-trd.md)（本需求替换其“版本筛选”交互）、[长任务查询与 Consumer 恢复](parse-task-query-recovery-trd.md)（1038 加固另立 `fix/parse-task-json-sort`，不在本次范围）。
 
 **背景与触发场景。** 课程闭环验收前，用户在任务页管理 GPT 与 micrograd 两个视频：GPT 经历 11 次解析版本，micrograd 因改用 reasoning none 重新解析。用户反馈：历史任务删不掉；页面默认显示全部任务而不是正在跑的；正在跑的任务不能按需删除。用户需要以真实用户身份完成项目验收，当前任务页已妨碍验收本身。

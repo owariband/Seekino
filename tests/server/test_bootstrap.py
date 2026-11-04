@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -702,7 +703,24 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert consumer._handlers.refine.__self__ is runtime
         assert consumer._handlers.index.__self__ is runtime
         assert consumer._handlers.prefix.__self__ is runtime
-        assert consumer._handlers.maintenance.__self__ is runtime
+        assert callable(consumer._handlers.maintenance)
+        # The maintenance handler runs both the media reaper and the upload
+        # deletion reconcile, isolated so one failure cannot stall the other.
+        maintenance_calls = []
+
+        async def record_reap():
+            maintenance_calls.append("reap")
+
+        original_reconcile = services.uploads.reconcile_deletions
+        runtime.reap_stale_media = record_reap
+        services.uploads.reconcile_deletions = (
+            lambda *args, **kwargs: maintenance_calls.append("reconcile")
+        )
+        try:
+            asyncio.run(consumer._handlers.maintenance())
+        finally:
+            services.uploads.reconcile_deletions = original_reconcile
+        assert maintenance_calls == ["reap", "reconcile"]
         if summary_mode == "enabled":
             summary = consumer._handlers.summarize.__self__
             assert isinstance(summary, VideoSummarizeService)

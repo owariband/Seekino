@@ -90,6 +90,7 @@ class UploadSessionDeletion:
     video_id: str | None
     video_chunk_ids: tuple[str, ...]
     video_parse_document_keys: tuple[tuple[str, str], ...]
+    deferred: bool = False
 
 
 class UploadSessionCreateRequest(ContractModel):

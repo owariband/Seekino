@@ -334,11 +334,10 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
         tenant_id="local-default",
     )
     assert executing.has_active_execution_lease is True
-    assert executing.has_active_deletion_lease is True
     executing_view = project_video_parse_task(executing)
     assert executing_view.can_retry is False
     assert executing_view.can_reparse is True
-    assert executing_view.can_delete is False
+    assert executing_view.can_delete is True
 
     with factory.begin() as session:
         child = session.get(ChunkParseTask, chunk_task_id)
@@ -351,7 +350,6 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
         tenant_id="local-default",
     )
     assert released.has_active_execution_lease is False
-    assert released.has_active_deletion_lease is False
     released_view = project_video_parse_task(released)
     assert released_view.can_retry is True
     assert released_view.can_delete is True
