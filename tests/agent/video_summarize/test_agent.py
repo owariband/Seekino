@@ -11,7 +11,8 @@ from tests.agent.video_summarize.test_tools import _frame_tool, _inputs, _limits
 def test_completion_response_without_submit_is_not_success():
     class Runtime:
         async def generate_video_summary(self, inputs, *, prompt, tools):
-            assert "EVERY chunk" in prompt
+            assert "UNTRUSTED SOURCE DIGEST" in prompt
+            assert "## chunk 0 ref=chunk-0" in prompt
             assert len(tools) == 3
             return SummaryCompletion(completed=True)
 
