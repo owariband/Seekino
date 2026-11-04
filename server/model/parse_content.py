@@ -25,7 +25,7 @@ class VideoParseContent(BaseModel):
     )
     asr: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     diarization: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    display: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 

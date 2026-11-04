@@ -25,11 +25,19 @@ from server.utils.time import datetime_to_unix_time_ms
 
 def legacy_summary(detail: dict) -> dict | None:
     state = (detail or {}).get(RUNTIME_DETAIL_KEY, {}).get("summarize", {})
-    if not isinstance(state.get("result"), dict):
+    submission = state.get("result")
+    if not isinstance(submission, dict):
         return None
     # Video.cover_uri may already belong to a different parse or a manual edit.
-    return {"submission": deepcopy(state["result"]), "cover_uri": None,
-            "frame_receipts": deepcopy(state.get("frame_receipts", []))}
+    return {
+        "title": submission.get("title"),
+        "title_kind": submission.get("title_kind"),
+        "description": submission.get("description"),
+        "episode_order": submission.get("episode_order"),
+        "cover_uri": None,
+        "evidence": deepcopy(submission.get("evidence", [])),
+        "frame_receipts": deepcopy(state.get("frame_receipts", [])),
+    }
 
 
 def migrate(engine, *, apply: bool = False, writers_stopped: bool = False) -> dict:
@@ -61,21 +69,23 @@ def migrate(engine, *, apply: bool = False, writers_stopped: bool = False) -> di
             if result is None:
                 continue
             metadata = result_store.get_metadata(session, task_id, for_update=True)
-            existing = result_store.load_result(session, task_id, "summary") if metadata else None
+            existing = result_store.load_result(session, task_id, "display") if metadata else None
             if existing is not None and existing != result:
-                raise ValueError(f"existing video Summary differs from legacy result: {task_id}")
+                raise ValueError(f"existing video Display differs from legacy result: {task_id}")
             detail = deepcopy(row.detail)
             state = detail[RUNTIME_DETAIL_KEY]["summarize"]
             if existing is None:
                 result_detail = deepcopy(metadata.detail if metadata else {})
-                result_detail["summary"] = {
+                legacy_submission = state.get("result")
+                result_detail["display"] = {
                     "source_fingerprint": state.get("source_fingerprint"),
                     "committed_lease_version": state.get("lease_version"),
                     "completed_at_ms": state.get("finished_at_ms"),
                     "migrated_from_task_detail": True,
-                    "legacy_cover_uri_unavailable": result["submission"].get("cover") is not None,
+                    "legacy_cover_uri_unavailable": isinstance(legacy_submission, dict)
+                        and legacy_submission.get("cover") is not None,
                 }
-                result_store.save_result(session, task_id, field="summary", result=result,
+                result_store.save_result(session, task_id, field="display", result=result,
                                          detail=result_detail, now_ms=now_ms)
             state.pop("result", None)
             state.pop("frame_receipts", None)

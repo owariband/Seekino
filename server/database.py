@@ -91,7 +91,7 @@ _UTC_TIMESTAMP_COLUMNS = {
 
 _V2_TASK_COLUMNS = {
     "video_parse_content": {
-        "id", "video_task_id", "asr", "diarization", "summary", "version", "detail",
+        "id", "video_task_id", "asr", "diarization", "display", "version", "detail",
         "create_time", "create_date", "update_time", "update_date",
     },
     "video_parse_task": {
@@ -498,6 +498,16 @@ def create_schema(engine: Engine) -> None:
             + ", ".join(sorted(missing_view_columns))
         )
 
+    if "video_parse_content" in existing_tables:
+        result_columns = {
+            column["name"] for column in inspector.get_columns("video_parse_content")
+        }
+        if "summary" in result_columns or "display" not in result_columns:
+            raise SchemaUpgradeRequiredError(
+                "video_parse_content display requires "
+                "scripts/migrate_video_parse_display.py before init-db"
+            )
+
     has_existing_core_schema = bool(
         existing_tables.intersection(
             {"series", "video", "upload_session"}
@@ -544,7 +554,7 @@ def create_schema(engine: Engine) -> None:
     if "video_parse_content" in existing_tables:
         differences = _schema_structure_differences(inspector, existing_tables, (VideoParseContent.__table__,))
         columns = {column["name"]: column for column in inspector.get_columns("video_parse_content")}
-        for name in ("asr", "diarization", "summary", "detail"):
+        for name in ("asr", "diarization", "display", "detail"):
             if name in columns and not isinstance(columns[name]["type"], JSON):
                 differences.add(f"video_parse_content.{name}.type")
         if differences:

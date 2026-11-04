@@ -46,7 +46,7 @@ from server.service.library import LibraryService
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
 from server.utils.media import encode_video_keyframe_image_id, encode_video_cover_image_id
-from server.utils.time import now_utc
+from server.utils.time import now_unix_time_ms, now_utc
 
 
 PUBLIC = "platform-public"
@@ -349,10 +349,19 @@ def test_disabled_publisher_disappears_from_public_detail_media_and_discovery(cl
 
 
 def test_withdrawal_blocks_existing_media_image_chunk_and_range_urls(cloud_library):
+    from server.repository import video_parse_content as result_store
+
     f = cloud_library
     with f.factory.begin() as session:
         chunk = session.get(VideoChunk, f.result.hits[0].evidence.video_chunk_id)
-        session.get(Video, f.prepared.video_id).cover_uri = chunk.keyframe_uris[0]["uri"]
+        result_store.save_result(
+            session, f.prepared.video_parse_task_id, field="display",
+            result={"title": None, "title_kind": "official", "description": None,
+                    "episode_order": f.prepared.episode_order,
+                    "cover_uri": chunk.keyframe_uris[0]["uri"],
+                    "evidence": [], "frame_receipts": []},
+            detail={"display": {}}, now_ms=now_unix_time_ms(),
+        )
     series = f.library.get_series(f.prepared.series_id, tenant_id=PUBLIC)
     endpoints = [
         ("/api/series/get", {"tenantId": PUBLIC, "seriesId": series.series_id}),

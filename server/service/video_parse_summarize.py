@@ -201,16 +201,20 @@ def complete_summary(session: Session, library: LibraryRepository, lease: VideoS
             source = _source(session, task, episode_order=previous_order, lock_background=True)
             if source is None or source[2] != lease.source_fingerprint:
                 raise VideoParseSnapshotConflictError("Video summary sources changed before publication")
-            library.update_video_metadata(lease.video_id, session=session, display_name=result.title,
-                                          description=result.description, cover_uri=cover_uri)
             stored = result_store.get_metadata(session, task.id, for_update=True)
             result_detail = deepcopy(stored.detail if stored else {})
-            result_detail["summary"] = {"source_fingerprint": lease.source_fingerprint,
+            result_detail["display"] = {"source_fingerprint": lease.source_fingerprint,
                                         "committed_lease_version": lease.lease_version,
                                         "completed_at_ms": datetime_to_unix_time_ms(now)}
-            result_store.save_result(session, task.id, field="summary",
-                                     result={"submission": result.submission.model_dump(mode="json"),
-                                             "cover_uri": cover_uri, "frame_receipts": list(result.frame_receipts)},
+            result_store.save_result(session, task.id, field="display",
+                                     result={"title": result.submission.title,
+                                             "title_kind": result.submission.title_kind,
+                                             "description": result.submission.description,
+                                             "episode_order": result.submission.episode_order,
+                                             "cover_uri": cover_uri,
+                                             "evidence": [item.model_dump(mode="json")
+                                                          for item in result.submission.evidence],
+                                             "frame_receipts": list(result.frame_receipts)},
                                      detail=result_detail, now_ms=datetime_to_unix_time_ms(now))
             state.pop("result", None)
             state.pop("frame_receipts", None)

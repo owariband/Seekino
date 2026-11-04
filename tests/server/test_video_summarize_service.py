@@ -401,11 +401,10 @@ def test_real_summary_agent_tools_host_and_sql_complete_offline(tmp_path, monkey
             summary = task.detail[RUNTIME_DETAIL_KEY]["summarize"]
             assert summary["status"] == "COMPLETE"
             from server.repository import video_parse_content as result_store
-            saved = result_store.load_result(session, task_id, "summary")
-            assert saved["submission"]["description"] == expected_description
+            saved = result_store.load_result(session, task_id, "display")
+            assert saved["description"] == expected_description
             assert "result" not in summary and "frame_receipts" not in summary
-            assert video.description == expected_description
-            assert video.display_name is None and video.cover_uri is None and video.episode_order == 1
+            assert video.display_name is None and video.description is None and video.cover_uri is None and video.episode_order == 1
             assert task.status == original_status
             assert len(task.detail[RUNTIME_DETAIL_KEY]["model_calls"]["used_call_ids"]) == 1
         assert model.closed
