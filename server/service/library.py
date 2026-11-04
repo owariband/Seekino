@@ -260,3 +260,19 @@ class LibraryService:
             canonical_uuid(video_id, "video_id"),
             require_nonempty_text(tenant_id, "tenant_id"),
         )
+
+    def get_video_outline(
+        self,
+        video_id: str,
+        *,
+        tenant_id: str,
+        series_ids: list[str],
+    ) -> dict | None:
+        """Read one authorized video's chapter outline for the Supervisor tool."""
+        normalized_video_id = canonical_uuid(video_id, "video_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
+        with self._repository.transaction() as session:
+            return self._repository.video_outline(
+                session, video_id=normalized_video_id, tenant_id=normalized_workspace,
+                series_ids=list(series_ids),
+            )

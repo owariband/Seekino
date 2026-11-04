@@ -11,6 +11,7 @@
 | 展示审计键 | `detail.summary` | `detail.display` |
 | 标题、简介、封面 URI 的当前展示值 | `video` 表三列（展示读取方） | 改由 `video_parse_content.display` 提供，`video` 三列原位置保留但不再读写 |
 | 历史封面 | 旧成果 `cover_uri` 为空、`video.cover_uri` 有值 | 按每个 Video 最新一条展示成果补齐，不覆盖已有封面 |
+| 视频大纲列 | 无 `video_parse_content.outline` 列 | `ALTER TABLE ... ADD COLUMN outline JSON NULL`，幂等，后续 Summarize 写入章节大纲 |
 
 每个 `video_parse_task` 至多一条成果行。展示读取取每个 Video 最新（`video_parse_task.version` 最大、未删除）且 `display` 非空的成果行；没有成果时沿用既有默认回退。`submission.cover` 不再单独保存，其帧证据仍保留在 `evidence` 与 `frame_receipts`。
 
@@ -31,7 +32,7 @@ uv run --no-sync --env-file /absolute/path/to/verified.env python -m scripts.mig
 uv run --no-sync --env-file /absolute/path/to/verified.env python -m scripts.migrate_video_parse_display --apply --writers-stopped
 ```
 
-新代码启动校验要求 `video_parse_content` 存在 `display` 列且不存在旧 `summary` 列，否则拒绝继续并提示先执行本迁移。
+新代码启动校验要求 `video_parse_content` 存在 `display` 与 `outline` 列且不存在旧 `summary` 列，否则拒绝继续并提示先执行本迁移。
 
 ## 历史数据与回退边界
 

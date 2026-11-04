@@ -57,6 +57,7 @@ class AgentRuntime:
         frame_max_height: int | None = None,
         maximum_frame_inspections: int | None = None,
         event_retrieve: Callable[..., EventSearchResult] | None = None,
+        video_outline: Callable[..., dict | None] | None = None,
     ) -> None:
         for name, value, maximum in (
             ("max_model_calls_per_turn", max_model_calls_per_turn, None),
@@ -86,6 +87,7 @@ class AgentRuntime:
         self._query_model = query_model
         self._retrieve = retrieve
         self._event_retrieve = event_retrieve
+        self._video_outline = video_outline
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
         self._limits_enabled = limits_enabled
@@ -140,6 +142,7 @@ class AgentRuntime:
     ) -> list[AgentTool]:
         return build_retrieval_tools(
             self._retrieve, role="supervisor", event_retrieve=self._event_retrieve,
+            video_outline=self._video_outline,
             inputs=inputs, control=control, calls=calls,
             maximum_tool_calls=maximum_tool_calls,
             maximum_result_bytes=min(self._max_tool_result_bytes, maximum_result_bytes)

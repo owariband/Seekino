@@ -109,6 +109,16 @@ def test_old_summary_snapshot_without_digest_limit_falls_back_to_default():
     assert VideoSummarizeConfig(**{"max_retries": 2}).maximum_digest_chars == 300_000
 
 
+def test_video_summarize_maximum_outline_sections_is_positive_integer(monkeypatch):
+    _clean_seekino_environment(monkeypatch)
+    assert VideoSummarizeConfig().maximum_outline_sections == 30
+    monkeypatch.setenv("SEEKINO_SUMMARIZE_MAXIMUM_OUTLINE_SECTIONS", "12")
+    assert ServerSettings.from_environment().summarize.maximum_outline_sections == 12
+    for value in (0, -1, True, 1.5):
+        with pytest.raises(ValueError):
+            VideoSummarizeConfig(maximum_outline_sections=value)
+
+
 def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) -> None:
     _clean_seekino_environment(monkeypatch)
 

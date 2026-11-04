@@ -30,7 +30,7 @@ def _limits(**changes):
     return replace(VideoSummarizeLimits(
         maximum_result_bytes=32_000,
         maximum_read_chars=12_000, maximum_catalog_items=100,
-        maximum_digest_chars=300_000,
+        maximum_digest_chars=300_000, maximum_outline_sections=30,
     ), **changes)
 
 
@@ -71,6 +71,7 @@ def _read_all(tools, inputs=None):
 def _summary(**changes):
     return {
         "title": "出発", "description": "The friends reach a station.", "episode_order": 12,
+        "outline": [{"start_ms": 0, "end_ms": 100_000, "title": "出発", "summary": "The friends reach a station."}],
         "evidence": [
             {"field": "title", "chunk_parse_task_id": "chunk-0", "quote": "第十二話 出発"},
             {"field": "episode_order", "chunk_parse_task_id": "chunk-0", "quote": "第十二話 出発"},
@@ -360,4 +361,43 @@ def test_frame_quote_identifying_a_preview_is_rejected():
                                "quote": "次回予告 第十二話 出発"}
     result = tools["submit_video_summary"].execute(**summary)
     assert result.payload["error"]["code"] == "PREVIEW_EVIDENCE"
+    assert canvas.result is None
+
+
+def _outline_sections():
+    return [
+        {"start_ms": 0, "end_ms": 50_000, "title": "前半", "summary": "The friends reach station 1."},
+        {"start_ms": 50_000, "end_ms": 100_000, "title": "后半", "summary": "The friends reach station 2."},
+    ]
+
+
+def test_valid_outline_is_accepted():
+    canvas, tools = _setup()
+    _read_all(tools)
+    summary = _summary(outline=_outline_sections())
+    assert tools["submit_video_summary"].execute(**summary).success
+    assert [section.start_ms for section in canvas.result.outline] == [0, 50_000]
+
+
+@pytest.mark.parametrize("outline", [
+    [{"start_ms": 50_000, "end_ms": 30_000, "title": "x", "summary": "y"}],
+    [{"start_ms": 50_000, "end_ms": 60_000, "title": "a", "summary": "x"},
+     {"start_ms": 55_000, "end_ms": 70_000, "title": "b", "summary": "y"}],
+    [{"start_ms": 60_000, "end_ms": 70_000, "title": "a", "summary": "x"},
+     {"start_ms": 0, "end_ms": 10_000, "title": "b", "summary": "y"}],
+    [{"start_ms": 0, "end_ms": 100_001, "title": "a", "summary": "x"}],
+])
+def test_invalid_outline_is_rejected(outline):
+    canvas, tools = _setup()
+    _read_all(tools)
+    result = tools["submit_video_summary"].execute(**_summary(outline=outline))
+    assert result.payload["error"]["code"] == "INVALID_OUTLINE"
+    assert canvas.result is None
+
+
+def test_too_many_outline_sections_is_rejected():
+    canvas, tools = _setup(limits=_limits(maximum_outline_sections=1))
+    _read_all(tools)
+    result = tools["submit_video_summary"].execute(**_summary(outline=_outline_sections()))
+    assert result.payload["error"]["code"] == "INVALID_OUTLINE"
     assert canvas.result is None

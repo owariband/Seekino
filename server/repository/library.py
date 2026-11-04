@@ -548,6 +548,86 @@ class LibraryRepository:
             ))
         return states
 
+    def video_outline(
+        self,
+        session: Session,
+        *,
+        video_id: str,
+        tenant_id: str,
+        series_ids: list[str],
+    ) -> dict | None:
+        """Latest non-empty outline, its display title/description, and the video's chunks.
+
+        Returns None when the video is outside the authorized scope. A video inside
+        the scope but without an outline returns {"available": False, "reason": ...}.
+        """
+        video = session.scalar(
+            select(Video)
+            .join(Series, Series.id == Video.series_id)
+            .where(Video.id == video_id, Series.tenant_id == tenant_id)
+        )
+        if video is None or video.series_id not in series_ids:
+            return None
+
+        outline = session.execute(
+            select(VideoParseContent.outline)
+            .join(VideoParseTask, VideoParseTask.id == VideoParseContent.video_task_id)
+            .where(
+                VideoParseTask.video_id == video_id,
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.outline.isnot(None),
+            )
+            .order_by(VideoParseTask.version.desc(), VideoParseTask.id.desc())
+            .limit(1)
+        ).scalar()
+        if outline is None:
+            return {"available": False, "reason": "该视频尚未生成章节大纲。"}
+
+        display = session.execute(
+            select(VideoParseContent.display)
+            .join(VideoParseTask, VideoParseTask.id == VideoParseContent.video_task_id)
+            .where(
+                VideoParseTask.video_id == video_id,
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.display.isnot(None),
+            )
+            .order_by(VideoParseTask.version.desc(), VideoParseTask.id.desc())
+            .limit(1)
+        ).scalar() or {}
+        chunks = session.execute(
+            select(
+                VideoChunk.id.label("id"),
+                VideoChunk.start_ms.label("start_ms"),
+                VideoChunk.end_ms.label("end_ms"),
+            )
+            .where(VideoChunk.video_id == video_id)
+            .order_by(VideoChunk.sequence_no)
+        ).all()
+
+        sections = []
+        for section in outline.get("sections") or ():
+            if not isinstance(section, dict):
+                continue
+            start_ms, end_ms = section.get("start_ms"), section.get("end_ms")
+            if type(start_ms) is not int or type(end_ms) is not int or start_ms >= end_ms:
+                continue
+            sections.append({
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "title": section.get("title"),
+                "summary": section.get("summary"),
+                "video_chunk_ids": [
+                    chunk.id for chunk in chunks
+                    if chunk.start_ms < end_ms and start_ms < chunk.end_ms
+                ],
+            })
+        return {
+            "video_id": video_id,
+            "title": display.get("title"),
+            "description": display.get("description"),
+            "sections": sections,
+        }
+
     @staticmethod
     def _state(
         record: Series,
