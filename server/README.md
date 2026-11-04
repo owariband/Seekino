@@ -107,6 +107,10 @@ MCP SDK 根据服务端函数签名、类型和说明生成工具 JSON Schema，
 
 本版限定直接 loopback 连接，同时检查 Host/Origin 并拒绝转发头；请直接连接 API 端口，不经过 Vite、Nginx 或 Docker 代理。它没有提供 Cloud PAT/OAuth 接入，也不能把此本机端点直接暴露到公网。主合同与验收边界见 [MCP 接入 TRD](../docs/design/03-product-reassessment/mcp-access-trd.md)。
 
+## 长任务查询与调度排序
+
+任务列表先在授权范围内分页取 ID，再读取该页正文；活动 prefix 只投影对应状态。MySQL 的 JSON 筛选也可能使 filesort 携带大字段，因此 Queue 的候选扫描读取轻量标量后在 Python 保持原优先级和轮转，领取仍由原事务/租约校验决定。Consumer 外层失败会记录堆栈，不无限重试。设计、同任务恢复及验证边界见[长任务查询与恢复 TRD](../docs/design/03-product-reassessment/parse-task-query-recovery-trd.md)。
+
 ## 后台任务与共享代码
 
 `server/mq/` 是消息基础设施边界，当前使用 MySQL DB Queue，不依赖外部消息中间件。

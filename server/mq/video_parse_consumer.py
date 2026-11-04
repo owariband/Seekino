@@ -233,6 +233,7 @@ class VideoParseConsumer:
             asyncio.run(self._thread_run())
         except Exception as exc:
             self._failure = exc
+            _logger.exception("Video Parse V2 consumer loop failed")
 
     async def _thread_run(self) -> None:
         self._loop = asyncio.get_running_loop()

@@ -211,6 +211,20 @@ class ParseJobRepository:
         with self._session_factory() as session:
             upload_session_id = self._video_parse_upload_session_id()
             is_latest = self._video_parse_task_is_latest()
+            # Sort only identities. MySQL filesort can otherwise carry the growing
+            # task JSON (model calls and timings) even though it is not a sort key.
+            task_ids = list(session.scalars(
+                select(VideoParseTask.id)
+                .join(Video, Video.id == VideoParseTask.video_id)
+                .join(Series, Series.id == Video.series_id)
+                .where(*self._video_parse_task_workspace_filters(
+                    normalized_workspace, series_id=series_id, statuses=statuses,
+                ))
+                .order_by(VideoParseTask.create_date.desc(), VideoParseTask.id.desc())
+                .limit(limit).offset(offset)
+            ))
+            if not task_ids:
+                return []
             rows = session.execute(
                 select(
                     VideoParseTask,
@@ -229,19 +243,16 @@ class ParseJobRepository:
                 )
                 .join(Series, Series.id == Video.series_id)
                 .where(
+                    VideoParseTask.id.in_(task_ids),
                     *self._video_parse_task_workspace_filters(
                         normalized_workspace,
                         series_id=series_id,
                         statuses=statuses,
                     )
                 )
-                .order_by(
-                    VideoParseTask.create_date.desc(),
-                    VideoParseTask.id.desc(),
-                )
-                .limit(limit)
-                .offset(offset)
             ).all()
+            rows_by_id = {row[0].id: row for row in rows}
+            rows = [rows_by_id[task_id] for task_id in task_ids if task_id in rows_by_id]
             observed_at_ms = now_unix_time_ms()
             active_prefix_max = self._active_prefix_max_episode_by_series(
                 session,
@@ -392,7 +403,8 @@ class ParseJobRepository:
             return {}
         rows = session.execute(
             select(
-                VideoParseTask,
+                VideoParseTask.video_id,
+                VideoParseTask.detail[("_worker_runtime_v2", "prefix")],
                 Video.series_id,
                 Video.episode_order,
             )
@@ -410,15 +422,15 @@ class ParseJobRepository:
                 VideoParseTask.id.desc(),
             )
         ).all()
-        latest_by_video: dict[str, tuple[VideoParseTask, str, int]] = {}
-        for task, series_id, episode_order in rows:
+        latest_by_video: dict[str, tuple[object, str, int]] = {}
+        for video_id, prefix, series_id, episode_order in rows:
             latest_by_video.setdefault(
-                task.video_id,
-                (task, series_id, episode_order),
+                video_id,
+                (prefix, series_id, episode_order),
             )
         result: dict[str, int] = {}
-        for task, series_id, episode_order in latest_by_video.values():
-            if not _has_active_prefix_lease(task, now_ms=observed_at_ms):
+        for prefix, series_id, episode_order in latest_by_video.values():
+            if not _prefix_lease_is_active(prefix, now_ms=observed_at_ms):
                 continue
             result[series_id] = max(result.get(series_id, 0), episode_order)
         return result
@@ -673,6 +685,10 @@ def _has_active_prefix_lease(
     detail = record.detail
     runtime = detail.get("_worker_runtime_v2") if isinstance(detail, dict) else None
     prefix = runtime.get("prefix") if isinstance(runtime, dict) else None
+    return _prefix_lease_is_active(prefix, now_ms=now_ms)
+
+
+def _prefix_lease_is_active(prefix: object, *, now_ms: int | None = None) -> bool:
     if not isinstance(prefix, dict) or prefix.get("lease_owner") is None:
         return False
     expires_at_ms = prefix.get("lease_expire_time_ms")

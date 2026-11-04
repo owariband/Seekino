@@ -391,7 +391,7 @@ def _client(tmp_path: Path):
         library,
         SupervisorRuntime(
             AgentRuntime(_AgentModelStub("query-model-v1"), retrieval.search, retrieval_channel="lexical"),
-            _AgentModelStub("chat-model-v1"), SimpleNamespace(),
+            _AgentModelStub("chat-model-v1"), SimpleNamespace(max_query_chars=500),
             max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
             max_tool_result_bytes=16_384, max_prompt_chars=200_000,
         ),
@@ -1160,7 +1160,7 @@ def test_vision_attachment_send_and_follow_up_keep_images_in_json_and_sse_histor
 
     model = VisionModel()
     service._runtime = SupervisorRuntime(
-        service._runtime._video_runtime, model, SimpleNamespace(),
+        service._runtime._video_runtime, model, SimpleNamespace(max_query_chars=500),
         max_web_results=5, web_timeout_seconds=12,
         execution_timeout_seconds=60, max_tool_result_bytes=16_384, max_prompt_chars=200_000,
     )
@@ -2444,7 +2444,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             pass
 
     service._runtime = SupervisorRuntime(
-        service._runtime._video_runtime, SupervisorModel(), SimpleNamespace(),
+        service._runtime._video_runtime, SupervisorModel(), SimpleNamespace(max_query_chars=500),
         max_web_results=5, web_timeout_seconds=12,
         execution_timeout_seconds=60, max_tool_result_bytes=16_384,
         max_prompt_chars=200_000,

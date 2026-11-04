@@ -1938,3 +1938,29 @@ def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository, r
     queue.reap_expired(now=NOW)
     with factory() as session:
         assert session.get(VideoParseTask, task_id).status == "PARSING_FAILED"
+
+
+def test_consumer_logs_outer_loop_failure_with_traceback(caplog):
+    error = RuntimeError("queue scan failed")
+
+    async def fail():
+        raise error
+
+    async def unused(_lease):
+        pass
+
+    consumer = VideoParseConsumer(
+        object(), VideoParseConsumerHandlers(unused, unused, unused, unused),
+        worker_id="worker", lease_duration=timedelta(seconds=10),
+        heartbeat_interval=timedelta(seconds=1), poll_interval=timedelta(seconds=1),
+        maintenance_interval=timedelta(minutes=5), video_concurrency=1,
+    )
+    consumer._thread_run = fail
+    consumer.start()
+    consumer.close(timeout=2)
+    assert not consumer.running
+    assert consumer.failure is error
+    record = next(item for item in caplog.records if "consumer loop failed" in item.message)
+    assert record.exc_info[1] is error
+    assert "queue scan failed" in caplog.text
+    assert "Traceback" in caplog.text

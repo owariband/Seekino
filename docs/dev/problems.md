@@ -1443,7 +1443,7 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 ### B13：解析启动负载尖峰、Codex 重复加载 MCP 与任务列表过量读取
 
-**11-03 新增独立后端修复（TODO）：** [PR #30](https://github.com/owariband/Seekino/pull/30) 跟进长任务全行排序查询 1038 与 Consumer OperationalError；前者已稳定复现，后者根因待定位。只读交接保留原 v11 成果，当前 Consumer 已停止，不能以等待代替恢复。范围、证据和恢复约束见[交接报告](../report/server/pr18-scope-handoff-20261103.md)。
+**11-03 独立 1038 故障已解决（DONE），B13 其余优化继续按下文跟进：** [PR #30](https://github.com/owariband/Seekino/pull/30) 已修复任务详情/列表及 Consumer 候选扫描的大 JSON 排序；同任务恢复记录了 `_parent_candidates` 的完整异常链，且独立大 JSON 用例复现了 `claim_video`。最终分组去重 645 项通过，正式详情/列表各 5/5 HTTP 200。13:50:14，原 v11 已由 106/115 Refine、96/117 Index 推进到 112/115、103/117，Consumer running，新增音频 0；117 份旧 Chunk ID、106 份旧 Refine、音频和冻结配置均保留。已加载到隔离 API 19621，PR 尚未合入 dev；整课仍执行中，列表统计正文读取与性能目标未在本次收口。见[验收报告](../report/server/parse-task-query-recovery-20261103.md)与[决策记录](devlog.md#devlog-parse-task-query-recovery-20261103)。
 
 排序日期：2026-10-18。
 
@@ -2247,6 +2247,8 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 依据：[Codex 通知处理](../../gateway/codex/client.py)、[等待与异常上抛](../../gateway/codex/agent.py)、[Chat 失败收尾](../../server/service/agent_chat.py)、[消息终态持久化](../../server/repository/agent.py)、[两轮 Chat 与计时](../../outputs/verification/mygo-ep04-speaker-review-20261016/comparison-summary.json)、[逐工具记录](../../outputs/verification/mygo-ep04-speaker-review-20261016/chat-replay-original/tool-timeline.json)。
 
 ### B10：正常停服没有解析任务交接，恢复消耗重试且整集收尾受调度阻塞
+
+**11-03 关联恢复进展：** 本次长任务 Consumer 1038 阻塞已修复并接管原 v11 持续推进；具体完成范围与证据统一见 B13 的 PR #30 记录，不因此关闭 B10 的其他历史生命周期问题。
 
 排序日期：2026-10-14。
 
