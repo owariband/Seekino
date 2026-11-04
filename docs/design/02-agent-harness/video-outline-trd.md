@@ -91,3 +91,4 @@ flowchart LR
 | 日期 | 原判断或方案 | 新证据 | 调整与原因 | 影响 |
 | --- | --- | --- | --- | --- |
 | 2026-11-04 | 大纲随 Summarize 同一调用产出，不增加失败面 | 克隆库实测（`outputs/verification/video-outline-20261104/`）：micrograd 首次排队后成功，13 节大纲覆盖全片；GPT 四次租约失败。失败调用均为 DeepSeek 接受请求后 18 秒内未返回任何字节即断开（`RemoteProtocolError`，共 6 次；正常调用首个 SSE < 1.8 秒），PR #38 的连接重试不覆盖此情形。另外 GPT 某次租约跑了 49 轮，`UNSUPPORTED_EVIDENCE` 拒绝合计 326 次 | Chat 耗时实验暂停；先另立修复“已连接但无任何响应”的重试，再排查证据引用反复被拒的原因 | 第 4 节实验未完成，指标仍为待测 |
+| 2026-11-05 | `reasoning_effort: none` 足以完成 Summarize | 同一克隆库、同一代码（#41 + #42 本地合并 `9ea22f39`）、同一 GPT 视频：`none` 五次租约全部失败（18–49 轮，`UNSUPPORTED_EVIDENCE` 合计 326 次，另有 6 次无响应断开），且 trace 中没有任何推理输出；`high` 首个租约即完成，8 次调用、94 秒、0 次证据拒绝、0 次断开，产出 14 节大纲（0–116 分钟连续覆盖）与生成标题“从零构建字符级 GPT” | Summarize 改用 `high` 作为候选默认，需先合并 #42（思考模式下 `tool_choice` 降为 `auto`）；一次运行的样本有限，Chat 耗时实验将在 `high` 下继续 | 逐次 token 用量未记录在日志中，费用对比未测 |
