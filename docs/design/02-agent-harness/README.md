@@ -35,6 +35,7 @@ hypnos 于 **2026-04-27 入职实习**，这一阶段覆盖实习约四个半月
 | [oldvsnew_chat.md](oldvsnew_chat.md) | 正文调查 2026-09-24 | 比较 V1 产物、compact 与 V2 所需 Timeline | 历史迁移依据 |
 | [voiceprint-trd.md](voiceprint-trd.md) | 正文可见 2026-10-18–22 讨论、实验及后续修订 | 解决原子台词、说话人归属和跨片段身份 | 按每次实验版本阅读；部分证据已退役 |
 | [video-summarize-trd.md](video-summarize-trd.md) | 未单列提出日；含 20261021 迁移引用，Git 首见 10-23；10-29 标题规则修订 | 基于解析证据生成本集标题、简介、封面与真实集数；正式标题优先，无标题时生成内容短标题；未看系列选 Summary 封面、已看显示上次画面 | 初版精确提出日仍不详；10-29 本机 12 秒片 Kimi 与页面验收见正文 |
+| [deepseek-thinking-tool-choice-trd.md](deepseek-thinking-tool-choice-trd.md) | 2026-11-04 | 多模态工具循环在 DeepSeek 思考模式下发送 `tool_choice: required` 被 400 拒绝；与 Chat 路径一致降为 `auto` 并保留必须调用工具的校验 | 初稿 |
 | [video-display-source-trd.md](video-display-source-trd.md) | 2026-11-04 | 展示元数据在 `video` 表与无人读取的成果列 `summary` 各存一份；成果列改名 `display` 并作为唯一展示读源 | 初稿，迁移与验收待测；修订 [20261031 成果表迁移](../../migrations/20261031_video_parse_content.md) 的展示值去向 |
 | [summarize-compact-input-trd.md](summarize-compact-input-trd.md) | 2026-11-04 | 长视频 Summarize 因逐页读完全部 Chunk 正文而超时；改为宿主构造事件描述与屏幕文字摘要直接放入 Prompt | 初稿，实验待测；修订 [video-summarize-trd.md](video-summarize-trd.md) 的完整阅读合同 |
 | [summarize-timeout-trd.md](summarize-timeout-trd.md) | 2026-11-04 | 工具循环一次连接失败即丢弃整次执行；对连接未建立的请求做有限重试 | 实现完成，单测通过；真实触发次数待统计 |
