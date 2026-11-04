@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**DeepSeek 思考模式工具选择 TRD。状态：初稿（2026-11-04）。** 分支 `fix/deepseek-thinking-tool-choice`，PR [#42](https://github.com/owariband/Seekino/pull/42)。关联：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，需要该修复才能比较 Summarize 的思考强度）。
+**DeepSeek 思考模式工具选择 TRD。状态：实现完成，真实运行验证通过（2026-11-05）。** 分支 `fix/deepseek-thinking-tool-choice`，PR [#42](https://github.com/owariband/Seekino/pull/42)。关联：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，需要该修复才能比较 Summarize 的思考强度）。
 
 ## 背景与触发场景
 
@@ -33,8 +33,8 @@ Summarize（以及 Parse 视觉）通过 Gateway 的多模态工具循环 `gener
 
 | 指标 | 定义与口径 | 基线 | 目标 / 护栏 | 测量方法 | 证据入口 |
 | --- | --- | --- | --- | --- | --- |
-| 思考模式可运行（结果） | Summarize 以 `high` 运行时 400 的次数 | 3/3 次租约 400 | 0 | api.log | 待测 |
-| 请求不变（护栏） | `none` 与非 DeepSeek 的 `tool_choice` | `required` | 保持 | 单测 | 待测 |
+| 思考模式可运行（结果） | Summarize 以 `high` 运行时 400 的次数 | 3/3 次租约 400 | 0 | api.log | 0；GPT 视频首个租约即完成，8 次调用均含推理输出 |
+| 请求不变（护栏） | `none` 与非 DeepSeek 的 `tool_choice` | `required` | 保持 | 单测 | 单测通过；`tests/gateway` 仅余 `dev` 上已有的 6 个失败 |
 
 # 3. 改造方案与建模
 
@@ -49,7 +49,7 @@ Summarize（以及 Parse 视觉）通过 Gateway 的多模态工具循环 `gener
 
 | 指标 | 基线实测 | 方案实测 | 验收标准 | 判断与证据 |
 | --- | --- | --- | --- | --- |
-| `high` 下 400 次数 | 3/3 | 待测 | 0 | 未验证 |
+| `high` 下 400 次数 | 3/3 | 0 | 0 | 达标（`outputs/verification/video-outline-20261104/`，本地合并 #41 + #42 的 `9ea22f39`） |
 
 # 5. 试点验证与方案取舍
 
@@ -57,7 +57,7 @@ Summarize（以及 Parse 视觉）通过 Gateway 的多模态工具循环 `gener
 
 # 6. 结果验收与闭环
 
-待实测后填写。
+两项指标达标。降级后未出现“无工具调用即结束”的回合。Summarize 是否默认开启思考由 [video-outline-trd.md](video-outline-trd.md) 的对照结论决定。
 
 ## 调整记录
 
