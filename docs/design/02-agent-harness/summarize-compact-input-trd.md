@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Summarize 压缩输入 TRD。状态：初稿（2026-11-04）。** 分支 `perf/summarize-compact-input`，PR 待创建。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；连接抖动重试见 [summarize-timeout-trd.md](summarize-timeout-trd.md)（PR [#38](https://github.com/owariband/Seekino/pull/38)，与本 TRD 无代码依赖）。
+**Summarize 压缩输入 TRD。状态：初稿（2026-11-04）。** 分支 `perf/summarize-compact-input`，PR [#39](https://github.com/owariband/Seekino/pull/39)。主设计见 [video-summarize-trd.md](video-summarize-trd.md)；连接抖动重试见 [summarize-timeout-trd.md](summarize-timeout-trd.md)（PR [#38](https://github.com/owariband/Seekino/pull/38)，与本 TRD 无代码依赖）。
 
 ## 背景与触发场景
 
