@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 - 需求：按视频类型配置解析档案（Parse Profile）——Event 类型子集、抽帧率与推理档位——降低课程解析成本。
-- 状态：初稿，2026-11-04。分支 `feat/parse-event-profile`；PR 待创建后回填。工作台卡片 COST-02，上游 COST-01（视频类型识别与动态抽帧）、LOOP-03（0.5 fps 实测）、LOOP-10（medium 与 Refine 档位）。
+- 状态：初稿，2026-11-04。分支 `feat/parse-event-profile`；PR [#34](https://github.com/owariband/Seekino/pull/34)。工作台卡片 COST-02，上游 COST-01（视频类型识别与动态抽帧）、LOOP-03（0.5 fps 实测）、LOOP-10（medium 与 Refine 档位）。
 - 依赖：无代码上游；实验复用 LOOP-03 保存的 chunk 53 与前 30 块请求。本 PR 不改变周四两集（GPT、micrograd）的解析配置，见“本次边界”。
 
 **背景与触发场景。** 课程与动画共用同一份 Timeline 合同：[`engine/parsev2/schemas.py`](../../../engine/parsev2/schemas.py) 的 `TimelineEvent` 判别联合固定 7 类（SCENE、ACTION、DIALOGUE、EMOTION、RELATION_CHANGE、ON_SCREEN_TEXT、OTHER），Understanding Prompt（[`agent/video_parse_v2/prompts.py`](../../../agent/video_parse_v2/prompts.py) 第 93 行）要求“组合对白、场景、动作、可观察情绪与关系变化”，结构化输出 Schema 由 [`understanding/response.py`](../../../agent/video_parse_v2/understanding/response.py) 与 [`refine/response.py`](../../../agent/video_parse_v2/refine/response.py) 直接取完整 `model_json_schema()`。用户的判断是：课程不需要 RELATION_CHANGE、ACTION 这类含糊类型，用普通摘要代替即可，能减少模型的输出与推理，从而省钱。
