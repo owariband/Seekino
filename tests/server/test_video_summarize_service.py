@@ -23,7 +23,7 @@ from gateway.usage import TokenUsage, track_model_call
 from server.config.video_summarize import VideoSummarizeConfig
 from server.model.dto.taskDTO import ModelCallReservation
 from server.service.parse_usage import ParseUsageService
-from server.service.video_summarize import VideoSummarizeService
+from server.service.video_summarize import VideoSummarizeService, _summary_execution_timeout
 from server.utils.time import now_utc
 
 
@@ -265,7 +265,10 @@ def test_summary_chat_tools_use_completion_tool_and_require_validated_submission
 @pytest.mark.parametrize("timed_out", [False, True], ids=["shutdown", "timeout"])
 def test_summary_cancellation_keeps_lease_until_provider_really_exits(tmp_path, timed_out):
     service, persistence, model, _, _ = _service(
-        tmp_path, frozen_config=VideoSummarizeConfig(execution_timeout_seconds=0.08 if timed_out else 2),
+        tmp_path, frozen_config=VideoSummarizeConfig(
+            execution_timeout_seconds=0.08 if timed_out else 2,
+            execution_timeout_per_chunk_seconds=0.08 if timed_out else 2,
+        ),
     )
     started, cancelled, finish = (threading.Event() for _ in range(3))
 
@@ -302,6 +305,33 @@ def test_summary_cancellation_keeps_lease_until_provider_really_exits(tmp_path, 
     else:
         assert not persistence.retries
         assert persistence.released == [persistence.lease]
+
+
+@pytest.mark.parametrize(("chunks", "expected"), [(10, 600), (146, 1460)])
+def test_summary_deadline_scales_with_chunk_count(chunks, expected):
+    assert _summary_execution_timeout(VideoSummarizeConfig(), chunks) == expected
+
+
+def test_summary_deadline_uses_loaded_chunks_and_defaults_missing_snapshot_value(tmp_path, monkeypatch):
+    service, persistence, model, _, _ = _service(
+        tmp_path, frozen_config=VideoSummarizeConfig(execution_timeout_seconds=600),
+    )
+    persistence.lease.config_snapshot["limits"].pop("execution_timeout_per_chunk_seconds")
+    persistence.inputs = VideoSummarizeInput(
+        video_id=persistence.lease.video_id, duration_ms=10_000, episode_order=1, background={},
+        chunks=tuple(SummaryChunk(f"chunk-{index}", index, 1, {"timeline": []}) for index in range(146)),
+    )
+    seen, original = [], asyncio.timeout
+
+    def record(seconds):
+        seen.append(seconds)
+        return original(seconds)
+
+    monkeypatch.setattr("server.service.video_summarize.asyncio.timeout", record)
+
+    assert asyncio.run(service.run_next()) is True
+    assert seen == [1460]
+    assert model.options["request_timeout_seconds"] == 1460
 
 
 def test_summary_source_lease_loss_does_not_publish_a_result(tmp_path):

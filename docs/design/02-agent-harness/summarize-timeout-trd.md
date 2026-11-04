@@ -70,9 +70,11 @@ stateDiagram-v2
 
 **方案 B — 执行期限按 Chunk 数缩放：** `VideoSummarizeConfig` 新增 `execution_timeout_per_chunk_seconds`，有效期限 = `max(execution_timeout_seconds, chunk_count × per_chunk)`，系数由实验确定（预期 8–15 秒/Chunk，待测）。保留现有 `execution_timeout_seconds` 作为下限和短视频期限，环境变量 `SEEKINO_SUMMARIZE_EXECUTION_TIMEOUT_PER_CHUNK_SECONDS` 可覆盖。备选是只调大常量：实现更少，但短视频卡住时要等更久才能失败重试，因此不推荐。
 
+实现中确认：工具循环的总时限取 `min(调用方传入值, binding.request_timeout_seconds)`（`gateway/agent_model/multimodal.py:116-122`），因此仅改服务端期限无效。Summarize binding 的 `request_timeout_seconds` 需不低于缩放后的期限：`config.yaml`、`config/local-dev-config.yaml` 由 600 调为 3600，`deploy/cloud/models.example.yaml` 由 180 调为 3600。单次请求仍受剩余总预算约束。不修改 Gateway 的这一合同，因为 Parse 等其他角色依赖它。
+
 **不做：** `stream=false` 对照。首个 SSE 期限不在该路径生效，本次失败也与流式无关；如果实验中出现首包慢的证据，再补这一对照。
 
-**实施边界：** `gateway/agent_model/multimodal.py`（重试）、`server/config/video_summarize.py` 与 `server/service/video_summarize.py`（期限）、对应测试。无数据库变更，无接口变更。
+**实施边界：** `gateway/agent_model/multimodal.py`（重试）、`server/config/video_summarize.py` 与 `server/service/video_summarize.py`（期限）、三份配置中的 Summarize binding 时限、对应测试。无数据库变更，无接口变更。
 
 **验证顺序：** 先补单元测试并通过（A 的重试 / 不重试矩阵，B 的期限计算），再在 v11 库对两部视频重新排队 Summarize 做实测。若 H1 实测耗时超过 3600 秒，则停止并另行处理阅读效率问题。
 
@@ -103,4 +105,5 @@ stateDiagram-v2
 
 | 日期 | 原判断或方案 | 新证据 | 调整与原因 | 影响 |
 | --- | --- | --- | --- | --- |
+| 2026-11-04 | 方案 B 只需改 Summarize 服务期限 | Gateway 以 binding `request_timeout_seconds` 封顶整个工具循环 | 同步调高 Summarize binding 至 3600 秒，Gateway 合同不变 | 部署配置须同步该值，否则长视频仍在 600 秒（云端示例为 180 秒）被截断 |
 | 2026-11-04 | 失败来自 10 秒首 token 检查，需比较 `stream` 与放宽 10 秒 | `FIRST_SSE_TIMEOUT_SECONDS=100`，且不作用于工具路径；trace 显示 `ConnectTimeout` | 改为连接重试 + 期限缩放；不做 stream 对照 | 实验只需比较新旧代码 |

@@ -84,10 +84,12 @@ def test_video_summary_limits_have_independent_environment_settings(monkeypatch)
     _clean_seekino_environment(monkeypatch)
     monkeypatch.setenv("SEEKINO_SUMMARIZE_MAXIMUM_READ_CHARS", "6000")
     monkeypatch.setenv("SEEKINO_SUMMARIZE_EXECUTION_TIMEOUT_SECONDS", "120.5")
+    monkeypatch.setenv("SEEKINO_SUMMARIZE_EXECUTION_TIMEOUT_PER_CHUNK_SECONDS", "12.5")
     monkeypatch.setenv("SEEKINO_SUMMARIZE_ENABLED", "false")
     settings = ServerSettings.from_environment()
     assert settings.summarize.maximum_read_chars == 6000
     assert settings.summarize.execution_timeout_seconds == 120.5
+    assert settings.summarize.execution_timeout_per_chunk_seconds == 12.5
     assert settings.summarize.enabled is False
     assert settings.agent.max_model_calls_per_turn == 6
 
@@ -95,6 +97,8 @@ def test_video_summary_limits_have_independent_environment_settings(monkeypatch)
 @pytest.mark.parametrize("values", [
     {"concurrency": 0}, {"maximum_read_chars": True}, {"max_retries": -1},
     {"execution_timeout_seconds": float("inf")}, {"maximum_result_bytes": 0},
+    {"execution_timeout_per_chunk_seconds": 0}, {"execution_timeout_per_chunk_seconds": -1},
+    {"execution_timeout_per_chunk_seconds": float("inf")}, {"execution_timeout_per_chunk_seconds": True},
     {"retry_initial_delay_seconds": 30, "retry_max_delay_seconds": 10},
 ])
 def test_video_summary_rejects_unbounded_or_invalid_limits(values):

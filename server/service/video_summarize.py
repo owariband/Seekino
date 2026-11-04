@@ -39,6 +39,10 @@ from .video_parse_persistence import VideoParsePersistenceService
 _logger = logging.getLogger(__name__)
 
 
+def _summary_execution_timeout(config: VideoSummarizeConfig, chunk_count: int) -> float:
+    return max(config.execution_timeout_seconds, chunk_count * config.execution_timeout_per_chunk_seconds)
+
+
 @dataclass(frozen=True, slots=True)
 class _SummaryExecution:
     lease: VideoSummarizeLease
@@ -137,14 +141,15 @@ class VideoSummarizeService:
             self._parse_usage.capture_video(lease, lease.task_input, sequence_no=None, category="parse")
             if self._parse_usage is not None else nullcontext()
         )
-        deadline = asyncio.timeout(config.execution_timeout_seconds)
+        deadline: asyncio.Timeout | None = None
         try:
             with usage, model_call_context({
                 "stage": "summarize", "execution_kind": "summarize",
                 "execution_task_id": lease.video_parse_task_id, "retry_count": lease.retry_count,
             }), manager.capture():
+                inputs = await asyncio.to_thread(self._persistence.load_summary_input, lease)
+                deadline = asyncio.timeout(_summary_execution_timeout(config, len(inputs.chunks)))
                 async with deadline:
-                    inputs = await asyncio.to_thread(self._persistence.load_summary_input, lease)
                     source = await run_blocking(self._artifact_store.resolve, lease.task_input.original_source_uri)
                     frames = build_inspect_video_frames_tool(
                         source_path=source, read_bounds=(0, inputs.duration_ms),
@@ -167,7 +172,7 @@ class VideoSummarizeService:
                     await asyncio.to_thread(self._persistence.complete_summary, lease, result, cover_uri=cover_uri)
         except asyncio.CancelledError:
             manager.cancel()
-            if deadline.expired():
+            if deadline is not None and deadline.expired():
                 # BlockingCallCancelled is a CancelledError subclass that Python
                 # 3.12's timeout context does not convert into TimeoutError.
                 await self._retry_after_exit(binding, calls, "TimeoutError")
@@ -213,7 +218,7 @@ class VideoSummarizeService:
                 return model.generate(
                     [TextInput(prompt)], schema_name="VideoSummaryCompletion", result_type=SummaryCompletion,
                     tools=as_langchain_tools(tools), tool_harness="deepagents",
-                    request_timeout_seconds=execution.config.execution_timeout_seconds,
+                    request_timeout_seconds=_summary_execution_timeout(execution.config, len(inputs.chunks)),
                     check_control=execution.manager.check_active,
                 )
             finally:
