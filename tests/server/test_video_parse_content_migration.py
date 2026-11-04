@@ -58,10 +58,12 @@ def test_controlled_migration_dry_run_then_preserves_summary_and_task_audit(repo
         runtime = task.detail[RUNTIME_DETAIL_KEY]
         assert runtime["summarize"] == {k: v for k, v in LEGACY.items() if k not in {"result", "frame_receipts"}}
         assert runtime["other"] == {"preserve": True} and task.detail["keep"] == "audit"
-        assert result_store.load_result(session, task_id, "summary") == {
-            "submission": LEGACY["result"], "frame_receipts": LEGACY["frame_receipts"], "cover_uri": None}
+        assert result_store.load_result(session, task_id, "display") == {
+            "title": None, "title_kind": None, "description": LEGACY["result"]["description"],
+            "episode_order": None, "cover_uri": None, "evidence": [],
+            "frame_receipts": LEGACY["frame_receipts"]}
         assert result_store.load_result(session, task_id, "asr") is None
-        assert result_store.get_metadata(session, task_id).detail["summary"]["legacy_cover_uri_unavailable"] is True
+        assert result_store.get_metadata(session, task_id).detail["display"]["legacy_cover_uri_unavailable"] is True
     assert migrate(engine, apply=True, writers_stopped=True)["migrated"] == 0
 
 
@@ -82,7 +84,7 @@ def test_migration_preserves_existing_asr_and_rolls_back_on_conflicting_summary(
         migrate(engine, apply=True, writers_stopped=True)
     with factory() as session:
         assert session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["summarize"]["result"] == {"description": "different"}
-        assert result_store.load_result(session, task_id, "summary")["submission"] == LEGACY["result"]
+        assert result_store.load_result(session, task_id, "display")["description"] == LEGACY["result"]["description"]
 
 
 def test_summary_failure_rolls_back_video_projection_and_result_together(repository, monkeypatch):
@@ -105,7 +107,7 @@ def test_summary_failure_rolls_back_video_projection_and_result_together(reposit
         video = session.get(Video, lease.video_id)
         assert video.display_name is None and video.cover_uri is None and video.episode_order == 1
         assert session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["summarize"]["status"] == "RUNNING"
-        assert result_store.load_result(session, task_id, "summary") is None
+        assert result_store.load_result(session, task_id, "display") is None
         assert result_store.load_result(session, task_id, "asr") == PAYLOAD
     monkeypatch.setattr(result_store, "save_result", save)
     assert repo.complete_summary(lease, _result(), cover_uri="artifact://cover", now=AT)

@@ -24,18 +24,18 @@ def get_metadata(session: Session, task_id: str, *, for_update: bool = False) ->
                                  version=row.version, detail=deepcopy(row.detail or {})) if row else None
 
 
-def load_result(session: Session, task_id: str, field: Literal["asr", "summary", "diarization"]) -> dict | None:
-    if field not in {"asr", "summary", "diarization"}:
+def load_result(session: Session, task_id: str, field: Literal["asr", "display", "diarization"]) -> dict | None:
+    if field not in {"asr", "display", "diarization"}:
         raise ValueError("unsupported video result")
     value = session.scalar(select(getattr(VideoParseContent, field)).where(
         VideoParseContent.video_task_id == task_id))
     return deepcopy(value)
 
 
-def save_result(session: Session, task_id: str, *, field: Literal["asr", "summary", "diarization"],
+def save_result(session: Session, task_id: str, *, field: Literal["asr", "display", "diarization"],
                 result: dict | None, detail: dict, now_ms: int) -> None:
     """Caller locks the parent task before this row; never rewrites the sibling body."""
-    if field not in {"asr", "summary", "diarization"}:
+    if field not in {"asr", "display", "diarization"}:
         raise ValueError("unsupported video result")
     current = get_metadata(session, task_id, for_update=True)
     if current is None:

@@ -220,8 +220,8 @@ def test_corrupt_asr_is_rebuilt_without_erasing_summary(repository, damage):
         else:
             body = None
         row.asr = body
-        row.summary = {"submission": {"description": "preserved"}}
-        row.detail = {**row.detail, "summary": {"audit": "preserved"}}
+        row.display = {"description": "preserved"}
+        row.detail = {**row.detail, "display": {"audit": "preserved"}}
     assert repo.load_or_begin_video_asr(lease, identity, now=NOW) is None
     # A missing/corrupt body must also revoke the durable completion receipt.
     with pytest.raises(VideoParseConflictError, match="no committed result"):
@@ -230,8 +230,8 @@ def test_corrupt_asr_is_rebuilt_without_erasing_summary(repository, damage):
     repo.finish_video_asr_preparation(lease, now=NOW)
     with factory() as session:
         assert result_store.load_result(session, task_id, "asr") == PAYLOAD
-        assert result_store.load_result(session, task_id, "summary") == {"submission": {"description": "preserved"}}
-        assert result_store.get_metadata(session, task_id).detail["summary"] == {"audit": "preserved"}
+        assert result_store.load_result(session, task_id, "display") == {"description": "preserved"}
+        assert result_store.get_metadata(session, task_id).detail["display"] == {"audit": "preserved"}
 
 
 def test_no_completion_before_atomic_asr_commit_and_idempotent_recovery_does_not_rewrite_json(repository):
