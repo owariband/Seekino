@@ -10,7 +10,7 @@ from agent.utils.tool import build_agent_tool
 from agent.utils.tool_result import JsonToolResult
 from agent.utils.video_frames import InspectVideoFramesArguments
 from agent.video_summarize import SummaryChunk, VideoSummarizeInput, VideoSummarizeLimits
-from agent.video_summarize.state import SummaryCanvas
+from agent.video_summarize.state import SummaryCanvas, build_chunk_digest
 from agent.video_summarize.tools import build_tools
 from gateway.media import ToolImage, ToolImageArtifact
 
@@ -30,6 +30,7 @@ def _limits(**changes):
     return replace(VideoSummarizeLimits(
         maximum_result_bytes=32_000,
         maximum_read_chars=12_000, maximum_catalog_items=100,
+        maximum_digest_chars=300_000,
     ), **changes)
 
 
@@ -95,34 +96,32 @@ def test_three_tools_submit_grounded_summary_and_return_original_cover():
     assert not tools["submit_video_summary"].execute(**{**summary, "description": "replacement"}).success
 
 
-def test_catalog_and_overview_are_not_reading_and_sources_are_frozen():
+def test_catalog_and_overview_do_not_block_submission_and_sources_are_frozen():
     inputs = _inputs()
     canvas, tools = _setup(inputs=inputs)
     inputs.chunks[0].content["timeline"][0]["text"] = "mutated source"
     assert "mutated" not in canvas.sections("chunks", "chunk-0", role="summarize")["content"]
     tools["get_context_canvas"].execute(collection="chunks")
     tools["get_context_canvas"].execute(collection="chunks", reference="chunk-0", section="overview")
-    response = tools["submit_video_summary"].execute(**_summary())
-    assert response.payload["error"]["code"] == "INCOMPLETE_REVIEW"
-    assert canvas.result is None
-
-
-def test_truncated_batch_and_partial_ranges_cannot_skip_unread_chunk_content():
-    inputs = _inputs()
-    canvas, tools = _setup(inputs=inputs, limits=_limits(maximum_result_bytes=700))
-    batch = _read_all(tools, inputs)
-    assert batch.payload["truncated"] is True
-    assert batch.payload["remaining_references"] == ["chunk-1"]
-    assert canvas.unread_chunks() == ["chunk-1"]
-    read = tools["get_context_canvas"]
-    content = canvas.sections("chunks", "chunk-1", role="summarize")["content"]
-    assert read.execute(collection="chunks", reference="chunk-1", char_start=0, char_end=30).success
-    rejected = tools["submit_video_summary"].execute(**_summary())
-    assert not rejected.success
-    assert "['chunk-1']" in rejected.payload["error"]["retry_hint"]
-    assert "chunk-0" not in rejected.payload["error"]["retry_hint"]
-    assert read.execute(collection="chunks", reference="chunk-1", char_start=30, char_end=len(content)).success
     assert tools["submit_video_summary"].execute(**_summary()).success
+    assert canvas.result is not None
+
+
+def test_submit_succeeds_without_any_context_canvas_read():
+    canvas, tools = _setup()
+    assert tools["submit_video_summary"].execute(**_summary()).success
+    assert canvas.result is not None
+
+
+def test_quote_taken_from_digest_passes_evidence_validation():
+    inputs = _inputs()
+    canvas, tools = _setup(inputs=inputs)
+    digest = build_chunk_digest(inputs.chunks, 300_000)
+    assert "text: 第十二話 出発" in digest
+    assert "The friends reach station 1." in digest
+    summary = _summary()
+    assert tools["submit_video_summary"].execute(**summary).success
+    assert canvas.result is not None
 
 
 @pytest.mark.parametrize("changes,code", [

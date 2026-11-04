@@ -18,6 +18,7 @@ class VideoSummarizeConfig:
     maximum_result_bytes: int = 32_000
     maximum_read_chars: int = 12_000
     maximum_catalog_items: int = 100
+    maximum_digest_chars: int = 300_000
     retry_initial_delay_seconds: float = 30
     retry_max_delay_seconds: float = 900
 
@@ -26,6 +27,7 @@ class VideoSummarizeConfig:
             raise ValueError("enabled must be a boolean")
         for name in (
             "concurrency", "frame_max_height", "maximum_result_bytes", "maximum_read_chars", "maximum_catalog_items",
+            "maximum_digest_chars",
         ):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:

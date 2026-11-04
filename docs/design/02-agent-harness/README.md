@@ -35,7 +35,11 @@ hypnos 于 **2026-04-27 入职实习**，这一阶段覆盖实习约四个半月
 | [oldvsnew_chat.md](oldvsnew_chat.md) | 正文调查 2026-09-24 | 比较 V1 产物、compact 与 V2 所需 Timeline | 历史迁移依据 |
 | [voiceprint-trd.md](voiceprint-trd.md) | 正文可见 2026-10-18–22 讨论、实验及后续修订 | 解决原子台词、说话人归属和跨片段身份 | 按每次实验版本阅读；部分证据已退役 |
 | [video-summarize-trd.md](video-summarize-trd.md) | 未单列提出日；含 20261021 迁移引用，Git 首见 10-23；10-29 标题规则修订 | 基于解析证据生成本集标题、简介、封面与真实集数；正式标题优先，无标题时生成内容短标题；未看系列选 Summary 封面、已看显示上次画面 | 初版精确提出日仍不详；10-29 本机 12 秒片 Kimi 与页面验收见正文 |
+<<<<<<< HEAD
 | [video-outline-trd.md](video-outline-trd.md) | 2026-11-04 | 已解析视频的整体性问题耗时 5 分 13 秒，Chat 没有视频级概览；Summarize 产出章节大纲，Chat 先读大纲再精读 | 初稿；依赖 #39、#40，实验待测 |
+=======
+| [summarize-compact-input-trd.md](summarize-compact-input-trd.md) | 2026-11-04 | 长视频 Summarize 因逐页读完全部 Chunk 正文而超时；改为宿主构造事件描述与屏幕文字摘要直接放入 Prompt | 初稿，实验待测；修订 [video-summarize-trd.md](video-summarize-trd.md) 的完整阅读合同 |
+>>>>>>> origin/perf/summarize-compact-input
 | [realtime-parse-trd.md](realtime-parse-trd.md) | 正文含 2026-10-10 记录 | 复用当前播放位置附近的解析，支持临时理解与缓存 | 由早期陪看需求引出的专项技术合同 |
 | [多模态理解解析研究.md](多模态理解解析研究.md) | 初次整理 2026-10-17；声纹更新 10-18；10-24 退役说明 | 拆解视觉、声音、身份与构图理解的能力边界 | 研究、实验、候选方案分开；原实验恢复条件看清理记录 |
 | [RAG_perf_1.md](RAG_perf_1.md) | 含 2026-09-24 复核；首段提出日不详 | 评估多路召回、细粒度定位、重排和时间证据展开 | 技术候选及机制分析，供第三阶段做收益复审 |
