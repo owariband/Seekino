@@ -407,6 +407,24 @@ export function setVideoParsePaused(task: VideoParseTaskView, paused: boolean): 
   );
 }
 
+export function deleteVideoParseVersion(task: VideoParseTaskView): Promise<{ deletedVideoParseTaskIds: string[] }> {
+  return requestJson(
+    `/api/jobs/video-parse/delete?tenantId=${TENANT_QUERY}` +
+      `&videoParseTaskId=${encodeURIComponent(task.videoParseTaskId)}` +
+      `&expectedJobVersion=${encodeURIComponent(String(task.version))}`,
+    { method: "POST" },
+  );
+}
+
+export function deleteVideoParseHistory(videoId: string): Promise<{ deletedVideoParseTaskIds: string[] }> {
+  return requestJson(
+    `/api/jobs/video-parse/delete?tenantId=${TENANT_QUERY}` +
+      `&videoId=${encodeURIComponent(videoId)}` +
+      `&scope=history`,
+    { method: "POST" },
+  );
+}
+
 export function retryUploadParse(
   uploadSessionId: string,
   expectedJobVersion: number,

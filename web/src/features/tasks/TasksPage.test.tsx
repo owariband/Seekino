@@ -111,7 +111,7 @@ describe("V2 task observation", () => {
     expect(await screen.findAllByText("整集语音转写中")).not.toHaveLength(0);
     await userEvent.click(screen.getByRole("button", { name: "暂停解析 gpt.mp4" }));
     expect(await screen.findByRole("button", { name: "继续解析 gpt.mp4" })).toBeEnabled();
-    expect(screen.getByText("已保留解析成果，继续后接着处理")).toBeInTheDocument();
+    expect(screen.getByText("已暂停：进行中的调用会在 1 分钟内停止，已完成的成果保留。")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "继续解析 gpt.mp4" }));
     expect(await screen.findByRole("button", { name: "暂停解析 gpt.mp4" })).toBeEnabled();
     const calls = fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.includes("/control?"));
@@ -120,32 +120,52 @@ describe("V2 task observation", () => {
     expect(current.version).toBe(1);
   });
 
-  it("defaults to current versions across all pages and filters status after version scope", async () => {
+  it("defaults to 进行中 and shows only in-progress latest versions", async () => {
     workspace.displayMode = "release";
-    const old = { ...task("PARSING_FAILED", "old"), videoId: "shared", version: 1 };
-    const latest = { ...task("COMPLETE", "latest"), videoId: "shared", version: 2 };
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), "http://localhost");
-      return response(url.searchParams.has("cursor")
-        ? { items: [latest], total: 2, hasMore: false, nextCursor: null }
-        : { items: [old], total: 2, hasMore: true, nextCursor: "page2" });
-    }));
+    const active = { ...task("PARSING", "active"), videoId: "v-active" };
+    const done = { ...task("COMPLETE", "done"), videoId: "v-done" };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [active, done], total: 2, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+    expect(await screen.findByText(active.originalFilename!)).toBeInTheDocument();
+    expect(screen.queryByText(done.originalFilename!)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "进行中" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("falls back to 全部 on first load when nothing is in progress", async () => {
+    workspace.displayMode = "release";
+    const done = { ...task("COMPLETE", "done"), videoId: "v-done" };
+    const failed = { ...task("PARSING_FAILED", "failed"), videoId: "v-failed" };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [done, failed], total: 2, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+    expect(await screen.findByText(done.originalFilename!)).toBeInTheDocument();
+    expect(screen.getByText(failed.originalFilename!)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "全部" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("renders one card per video and folds historical versions into a counted disclosure", async () => {
+    workspace.displayMode = "release";
+    const latest = { ...task("COMPLETE", "latest"), videoId: "shared", version: 3 };
+    const v2 = { ...task("COMPLETE", "v2"), videoId: "shared", version: 2, originalFilename: "old2.mp4" };
+    const v1 = { ...task("COMPLETE", "v1"), videoId: "shared", version: 1, originalFilename: "old1.mp4" };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [latest, v2, v1], total: 3, hasMore: false, nextCursor: null,
+    })));
     renderPage();
     const user = userEvent.setup();
+
     expect(await screen.findByText(latest.originalFilename!)).toBeInTheDocument();
-    expect(screen.queryByText(old.originalFilename!)).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "解析异常" }));
-    expect(screen.getByText("没有符合当前筛选条件的任务。")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "历史任务" }));
-    expect(screen.getByText(old.originalFilename!)).toBeInTheDocument();
-    expect(screen.getByText("已由版本 2 替代，仅供查看历史记录。")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /重试解析/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /删除任务/ })).not.toBeInTheDocument();
-    expect(screen.queryByText("视频解析失败，请重试")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "全部版本" }));
-    await user.click(screen.getByRole("button", { name: "全部" }));
-    expect(screen.getByText(old.originalFilename!)).toBeInTheDocument();
-    expect(screen.getByText(latest.originalFilename!)).toBeInTheDocument();
+    expect(screen.queryByText("old2.mp4")).not.toBeInTheDocument();
+    expect(screen.queryByText("old1.mp4")).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "历史版本（2）" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("版本 2")).toBeInTheDocument();
+    expect(screen.getByText("版本 1")).toBeInTheDocument();
   });
 
   it("hides internal parsing statistics in release while preserving duration, progress, errors and actions", async () => {
@@ -179,7 +199,7 @@ describe("V2 task observation", () => {
     expect(screen.getByText("解析失败")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: `重试解析 ${failed.originalFilename}` })).toBeEnabled();
     expect(screen.getByRole("button", { name: `整集重新解析 ${failed.originalFilename}` })).toBeEnabled();
-    expect(screen.getByRole("button", { name: `删除任务 ${failed.originalFilename}` })).toBeEnabled();
+    expect(screen.getByRole("button", { name: `删除视频 ${failed.originalFilename}` })).toBeEnabled();
     expect(screen.getByRole("button", { name: "管理上传" })).toBeEnabled();
   });
 
@@ -210,7 +230,7 @@ describe("V2 task observation", () => {
     expect(String(usageCalls[0]![0])).toBe(`/api/usage/overview?tenantId=local-default&runId=${parsing.videoParseTaskId}`);
   });
 
-  it("reads V2 tasks and filters each persisted status without adapting them to V1 jobs", async () => {
+  it("groups tasks by video and filters by the four segment counts", async () => {
     const tasks = [
       task("PENDING"),
       task("PREPARING"),
@@ -221,34 +241,35 @@ describe("V2 task observation", () => {
       task("COMPLETE"),
     ];
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) => response({
-      items: tasks,
-      total: tasks.length,
-      hasMore: false,
-      nextCursor: null,
+      items: tasks, total: tasks.length, hasMore: false, nextCursor: null,
     }));
     vi.stubGlobal("fetch", fetchMock);
-    const { container } = renderPage();
+    renderPage();
     const user = userEvent.setup();
 
     await screen.findByText("pending.mp4");
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "/api/jobs/video-parse/list?tenantId=local-default&limit=100",
     );
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中3");
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("已完成1");
-    expect(screen.getByRole("region", { name: "任务概况" })).not.toHaveTextContent("固定切片");
-    expect(container).not.toHaveTextContent(/任务身份|租约版本|V2 任务状态|持久状态|尝试次数|流水线/);
 
-    for (const [label, filename] of [
-      ["排队中", "pending.mp4"],
-      ["准备中", "preparing.mp4"],
-      ["解析中", "parsing.mp4"],
-      ["发布中", "indexing.mp4"],
-      ["解析异常", "parsing_failed.mp4"],
-      ["索引异常", "indexing_failed.mp4"],
-      ["已完成", "complete.mp4"],
-    ] as const) {
-      await user.click(screen.getByRole("button", { name: label }));
+    for (const filename of ["pending.mp4", "preparing.mp4", "parsing.mp4", "indexing.mp4"]) {
+      expect(screen.getByText(filename)).toBeInTheDocument();
+    }
+    expect(screen.queryByText("parsing_failed.mp4")).not.toBeInTheDocument();
+    expect(screen.queryByText("indexing_failed.mp4")).not.toBeInTheDocument();
+    expect(screen.queryByText("complete.mp4")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "需处理" }));
+    expect(screen.getByText("parsing_failed.mp4")).toBeInTheDocument();
+    expect(screen.getByText("indexing_failed.mp4")).toBeInTheDocument();
+    expect(screen.queryByText("pending.mp4")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "已完成" }));
+    expect(screen.getByText("complete.mp4")).toBeInTheDocument();
+    expect(screen.queryByText("parsing_failed.mp4")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "全部" }));
+    for (const filename of ["pending.mp4", "parsing_failed.mp4", "complete.mp4"]) {
       expect(screen.getByText(filename)).toBeInTheDocument();
     }
   });
@@ -267,8 +288,10 @@ describe("V2 task observation", () => {
       items: tasks, total: tasks.length, hasMore: false, nextCursor: null,
     })));
     renderPage();
+    const user = userEvent.setup();
 
     await screen.findByText("parsing.mp4");
+    await user.click(screen.getByRole("button", { name: "需处理" }));
     expect(screen.queryAllByText("历史租约过期错误")).toHaveLength(0);
     expect(screen.getAllByText("失败原因")).toHaveLength(2);
     expect(screen.getByText("视频解析失败，请重试")).toBeInTheDocument();
@@ -378,8 +401,6 @@ describe("V2 task observation", () => {
     expect(screen.getByLabelText("解析进度")).toHaveTextContent("95%");
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("索引 0 / 24");
     expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "95%" });
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中1");
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("已完成0");
     expect(screen.getByText("00:02")).toBeInTheDocument();
     expect(screen.queryByText("00:02（进行中）")).not.toBeInTheDocument();
 
@@ -393,7 +414,6 @@ describe("V2 task observation", () => {
     await user.click(screen.getByRole("button", { name: "同步状态" }));
     await waitFor(() => expect(screen.getByLabelText("解析进度")).toHaveTextContent("95.2%"));
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("索引 1 / 24");
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中1");
 
     indexing = {
       ...indexing,
@@ -407,8 +427,6 @@ describe("V2 task observation", () => {
     await waitFor(() => expect(screen.getByLabelText("解析进度")).toHaveTextContent("100%"));
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("索引 24 / 24");
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("完成单元 70 / 70");
-    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "100%" });
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("已完成1");
   });
 
   it.each([
@@ -510,7 +528,7 @@ describe("V2 task actions", () => {
     const user = userEvent.setup();
 
     expect(await screen.findByRole("button", {
-      name: `删除任务 ${childStillRunning.originalFilename}`,
+      name: `删除视频 ${childStillRunning.originalFilename}`,
     })).toBeDisabled();
     await user.click(screen.getByRole("button", {
       name: `整集重新解析 ${childStillRunning.originalFilename}`,
@@ -520,7 +538,23 @@ describe("V2 task actions", () => {
     })).toBeEnabled();
   });
 
-  it("deletes the owning upload aggregate and removes every card for that session", async () => {
+  it("enables delete video for a running task and shows the stop-first confirmation", async () => {
+    const running = { ...task("PARSING", "running"), canDelete: true };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [running], total: 1, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+    const user = userEvent.setup();
+
+    const deleteButton = await screen.findByRole("button", {
+      name: `删除视频 ${running.originalFilename}`,
+    });
+    expect(deleteButton).toBeEnabled();
+    await user.click(deleteButton);
+    expect(screen.getByText("将先停止解析，再在后台清理上传文件、解析产物和检索索引；已产生的模型费用不会退回。聊天记录会保留，但旧证据无法再播放。此操作无法撤销。")).toBeInTheDocument();
+  });
+
+  it("deletes the owning upload aggregate and removes the whole video card", async () => {
     const failed = { ...task("PARSING_FAILED", "failed"), version: 2 };
     const sibling = {
       ...task("COMPLETE", "sibling"),
@@ -545,16 +579,9 @@ describe("V2 task actions", () => {
     renderPage();
     const user = userEvent.setup();
 
-    const deleteLatest = await screen.findByRole("button", {
-      name: `删除任务 ${failed.originalFilename}`,
-    });
-    expect(screen.queryByRole("button", {
-      name: `删除任务 ${sibling.originalFilename}`,
-    })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "全部版本" }));
-    expect(screen.getByText(sibling.originalFilename!)).toBeInTheDocument();
-    await user.click(deleteLatest);
+    await user.click(await screen.findByRole("button", {
+      name: `删除视频 ${failed.originalFilename}`,
+    }));
     await user.click(screen.getByRole("button", {
       name: `确认删除 ${failed.originalFilename}`,
     }));
@@ -562,6 +589,93 @@ describe("V2 task actions", () => {
     await waitFor(() => expect(screen.queryByText(failed.originalFilename!)).not.toBeInTheDocument());
     expect(screen.queryByText(sibling.originalFilename!)).not.toBeInTheDocument();
     expect(uploadActions.forgetDeletedSession).toHaveBeenCalledWith(failed.uploadSessionId);
+  });
+
+  it("deletes one historical version with version fencing and removes it", async () => {
+    const latest = { ...task("COMPLETE", "latest"), videoId: "shared", version: 3 };
+    const v2 = { ...task("COMPLETE", "v2"), videoId: "shared", version: 2 };
+    const v1 = { ...task("PARSING", "v1"), videoId: "shared", version: 1, isSuperseded: true };
+    let tasks = [latest, v2, v1];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/jobs/video-parse/list") {
+        return response({ items: tasks, total: tasks.length, hasMore: false, nextCursor: null });
+      }
+      if (url.pathname === "/api/jobs/video-parse/delete") {
+        const id = url.searchParams.get("videoParseTaskId");
+        tasks = tasks.filter((item) => item.videoParseTaskId !== id);
+        return response({ deletedVideoParseTaskIds: [id] });
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "历史版本（2）" }));
+    expect(screen.getByText("版本 2")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "删除版本 2" }));
+    expect(screen.getByText("删除这个历史版本？只删除该版本的解析记录和索引，不影响当前版本与检索。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => expect(screen.queryByText("版本 2")).not.toBeInTheDocument());
+    expect(screen.getByText("版本 1")).toBeInTheDocument();
+    const deleteCalls = fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.includes("/api/jobs/video-parse/delete"));
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0]).toContain("tenantId=local-default");
+    expect(deleteCalls[0]).toContain("videoParseTaskId=task-v2");
+    expect(deleteCalls[0]).toContain("expectedJobVersion=2");
+  });
+
+  it("deletes all historical versions with scope=history", async () => {
+    const latest = { ...task("COMPLETE", "latest"), videoId: "shared", version: 3 };
+    const v2 = { ...task("COMPLETE", "v2"), videoId: "shared", version: 2 };
+    const v1 = { ...task("PARSING_FAILED", "v1"), videoId: "shared", version: 1 };
+    let tasks = [latest, v2, v1];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/jobs/video-parse/list") {
+        return response({ items: tasks, total: tasks.length, hasMore: false, nextCursor: null });
+      }
+      if (url.pathname === "/api/jobs/video-parse/delete") {
+        tasks = tasks.filter((item) => item.version === latest.version);
+        return response({ deletedVideoParseTaskIds: [v2.videoParseTaskId, v1.videoParseTaskId] });
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "历史版本（2）" }));
+    await user.click(screen.getByRole("button", { name: "删除全部历史版本" }));
+    expect(screen.getByText("删除全部历史版本？只删除这些历史版本的解析记录和索引，不影响当前版本与检索。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /历史版本/ })).not.toBeInTheDocument());
+    const deleteCalls = fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.includes("/api/jobs/video-parse/delete"));
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0]).toContain("tenantId=local-default");
+    expect(deleteCalls[0]).toContain("videoId=shared");
+    expect(deleteCalls[0]).toContain("scope=history");
+  });
+
+  it("labels superseded historical rows as 已被新版本替代", async () => {
+    const latest = { ...task("COMPLETE", "latest"), videoId: "shared", version: 2 };
+    const old = { ...task("PARSING", "old"), videoId: "shared", version: 1, isSuperseded: true };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [latest, old], total: 2, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "历史版本（1）" }));
+    expect(screen.getByText("已被新版本替代")).toBeInTheDocument();
+    expect(screen.queryByText("解析中")).not.toBeInTheDocument();
   });
 
   it("retries the same task identity and restores list metadata omitted by the action response", async () => {
