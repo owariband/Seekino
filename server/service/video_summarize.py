@@ -159,6 +159,7 @@ class VideoSummarizeService:
                             maximum_result_bytes=config.maximum_result_bytes,
                             maximum_read_chars=config.maximum_read_chars,
                             maximum_catalog_items=config.maximum_catalog_items,
+                            maximum_digest_chars=config.maximum_digest_chars,
                         ), check_control=manager.check_active,
                     )
                     manager.check_active()

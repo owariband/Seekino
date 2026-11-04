@@ -95,11 +95,18 @@ def test_video_summary_limits_have_independent_environment_settings(monkeypatch)
 @pytest.mark.parametrize("values", [
     {"concurrency": 0}, {"maximum_read_chars": True}, {"max_retries": -1},
     {"execution_timeout_seconds": float("inf")}, {"maximum_result_bytes": 0},
+    {"maximum_digest_chars": 0}, {"maximum_digest_chars": True},
     {"retry_initial_delay_seconds": 30, "retry_max_delay_seconds": 10},
 ])
 def test_video_summary_rejects_unbounded_or_invalid_limits(values):
     with pytest.raises(ValueError):
         VideoSummarizeConfig(**values)
+
+
+def test_old_summary_snapshot_without_digest_limit_falls_back_to_default():
+    # Retried tasks may carry a frozen snapshot predating maximum_digest_chars.
+    assert VideoSummarizeConfig().maximum_digest_chars == 300_000
+    assert VideoSummarizeConfig(**{"max_retries": 2}).maximum_digest_chars == 300_000
 
 
 def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) -> None:

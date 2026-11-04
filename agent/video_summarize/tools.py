@@ -82,7 +82,7 @@ def build_tools(
         maximum_result_bytes=limits.maximum_result_bytes,
         maximum_read_chars=limits.maximum_read_chars,
         maximum_catalog_items=limits.maximum_catalog_items,
-        check_control=check_control, on_read=canvas.record_read,
+        check_control=check_control,
     )
 
     def inspect_frames(**values: Any) -> ToolResult:
@@ -138,15 +138,6 @@ def build_tools(
             ) from error
         bounded_json(submission.model_dump(mode="json"), limits.maximum_result_bytes)
         with canvas._lock:
-            missing = canvas.unread_chunks()
-            if missing:
-                raise AgentToolFeedbackError(
-                    "INCOMPLETE_REVIEW", f"Complete content has not been read for {len(missing)} chunks.",
-                    f"Unread chunk references (first {min(len(missing), 10)}): {missing[:10]}. "
-                    "Read their complete content using references in a batch. Retry remaining_references in smaller batches. "
-                    "Only oversized single sections need reference with char_start/char_end; "
-                    "only returned content ranges count as reviewed; catalogs do not.",
-                )
             if canvas.result is not None:
                 if canvas.result.submission == submission:
                     return JsonToolResult(success=True, payload={"submitted": True, "replayed": True})
@@ -234,7 +225,7 @@ def build_tools(
 
     tools.append(build_agent_tool(
         func=submit_video_summary, name="submit_video_summary",
-        description="Submit this video's grounded metadata after reading every chunk. Only a successful receipt completes the task.",
+        description="Submit this video's grounded metadata after reviewing the digest. Only a successful receipt completes the task.",
         args_schema=VideoSummarySubmission, maximum_result_bytes=limits.maximum_result_bytes,
     ))
     return tools
