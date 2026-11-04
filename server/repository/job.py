@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from typing import NamedTuple
 
 from engine.parsev2.planning import interval_size, plan_intervals
 from sqlalchemy import exists, func, select
@@ -500,11 +501,16 @@ class ParseJobRepository:
         if not task_ids:
             return {}
         chunks, intervals = {}, {}
-        for child, content, sequence, video_id in session.execute(select(
-            ChunkParseTask, ChunkParseContent, VideoChunk.sequence_no, VideoChunk.video_id)
+        # Content detail carries index embeddings (hundreds of KB per chunk); read only
+        # the committed lease bound so polling the task list stays cheap.
+        for child, content_id, has_content, version, bound, sequence, video_id in session.execute(select(
+            ChunkParseTask, ChunkParseContent.id, ChunkParseContent.content,
+            ChunkParseContent.version, ChunkParseContent.detail["parse_committed_lease_version"].as_integer(),
+            VideoChunk.sequence_no, VideoChunk.video_id)
             .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
             .outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
             .where(ChunkParseTask.video_task_id.in_(task_ids))):
+            content = None if content_id is None else _ChunkContentSummary(bool(has_content), version, bound)
             chunks.setdefault(child.video_task_id, []).append((child, content, sequence, video_id))
         for child, content_id, content_detail in session.execute(select(
             IntervalParseTask, IntervalParseContent.interval_task_id, IntervalParseContent.detail)
@@ -526,7 +532,7 @@ class ParseJobRepository:
                 all(video_id == record.video_id for _, _, _, video_id in chunk_rows) and
                 sorted((child.start_sequence_no, child.chunk_count) for child, _, _ in interval_rows)
                 == [(plan.start_sequence_no, plan.chunk_count) for plan in expected])
-            completed_chunks = sum(content is not None and bool(content.content) for _, content, _, _ in chunk_rows)
+            completed_chunks = sum(content is not None and content.has_content for _, content, _, _ in chunk_rows)
             completed_refines = sum(child.status == "COMPLETE" and submitted for child, submitted, _ in interval_rows)
             indexed_chunks = sum(
                 child.phase == ChunkTaskPhase.INDEX and child.status == "COMPLETE" and content is not None
@@ -555,8 +561,7 @@ class ParseJobRepository:
             children = {}
             covered = valid_ledger
             for child, content, _, _ in chunk_rows:
-                detail = content.detail if content is not None and isinstance(content.detail, dict) else {}
-                bound = detail.get("parse_committed_lease_version")
+                bound = content.parse_committed_lease_version if content is not None else None
                 if content is None:
                     bound = child.lease_version if child.phase == ChunkTaskPhase.PARSE else 0
                 elif type(bound) is not int or not 1 <= bound <= child.lease_version:
@@ -625,6 +630,12 @@ class ParseJobRepository:
                       "activeExecutions": active, "effectiveDurationMs": elapsed if spans else None}
             result[record.id] = {"progress": progress, "timing": timing}
         return result
+
+class _ChunkContentSummary(NamedTuple):
+    has_content: bool
+    version: int
+    parse_committed_lease_version: int | None
+
 
 def _has_active_prefix_lease(
     record: VideoParseTask,
