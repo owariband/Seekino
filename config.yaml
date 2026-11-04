@@ -124,7 +124,7 @@ models:
     supports_vision_input: true
     max_output_tokens: 8192
     reasoning_effort: high
-    request_timeout_seconds: 3600
+    request_timeout_seconds: 600
     context_window_tokens: 128000
     context_safety_margin_tokens: 2048
     auto_compact_tokens: 90000

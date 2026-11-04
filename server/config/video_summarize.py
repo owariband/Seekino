@@ -13,7 +13,6 @@ class VideoSummarizeConfig:
     concurrency: int = 1
     max_retries: int = 2
     execution_timeout_seconds: float = 600
-    execution_timeout_per_chunk_seconds: float = 10
     frame_max_height: int = 720
     frame_timeout_seconds: float = 30
     maximum_result_bytes: int = 32_000
@@ -34,8 +33,8 @@ class VideoSummarizeConfig:
         if type(self.max_retries) is not int or self.max_retries < 0:
             raise ValueError("max_retries must be a nonnegative integer")
         for name in (
-            "execution_timeout_seconds", "execution_timeout_per_chunk_seconds",
-            "frame_timeout_seconds", "retry_initial_delay_seconds", "retry_max_delay_seconds",
+            "execution_timeout_seconds", "frame_timeout_seconds",
+            "retry_initial_delay_seconds", "retry_max_delay_seconds",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
