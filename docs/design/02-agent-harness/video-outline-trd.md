@@ -90,3 +90,4 @@ flowchart LR
 
 | 日期 | 原判断或方案 | 新证据 | 调整与原因 | 影响 |
 | --- | --- | --- | --- | --- |
+| 2026-11-04 | 大纲随 Summarize 同一调用产出，不增加失败面 | 克隆库实测（`outputs/verification/video-outline-20261104/`）：micrograd 首次排队后成功，13 节大纲覆盖全片；GPT 四次租约失败。失败调用均为 DeepSeek 接受请求后 18 秒内未返回任何字节即断开（`RemoteProtocolError`，共 6 次；正常调用首个 SSE < 1.8 秒），PR #38 的连接重试不覆盖此情形。另外 GPT 某次租约跑了 49 轮，`UNSUPPORTED_EVIDENCE` 拒绝合计 326 次 | Chat 耗时实验暂停；先另立修复“已连接但无任何响应”的重试，再排查证据引用反复被拒的原因 | 第 4 节实验未完成，指标仍为待测 |
