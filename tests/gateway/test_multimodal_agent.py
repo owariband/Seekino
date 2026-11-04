@@ -141,7 +141,8 @@ def test_multimodal_tools_preserve_native_inputs_controls_and_actual_usage(tmp_p
     first = responses.requests[0]
     assert first["max_output_tokens"] == 65536
     assert 0 < first["timeout"] <= 30
-    assert first["tool_choice"] == "required"
+    # DeepSeek thinking mode rejects forced tool choices, so the request downgrades to auto.
+    assert first["tool_choice"] == ("auto" if provider == "deepseek" and reasoning == "high" else "required")
     if provider == "ark":
         assert first["input"][0]["content"][1]["type"] == "input_video"
         assert first["input"][0]["content"][1]["fps"] == 0.5
@@ -552,7 +553,8 @@ def test_multimodal_request_log_correlates_controls_without_logging_payloads(
     for key in context.keys() - {"authorization"}:
         assert first[key] == (context[key][:256] if isinstance(context[key], str) else context[key])
     assert first["protocol"] == ("chat" if provider == "chat" else "responses")
-    assert [summary["tool_choice"] for summary in summaries] == ["required", "auto"]
+    forced = "auto" if provider == "deepseek" and reasoning == "high" else "required"
+    assert [summary["tool_choice"] for summary in summaries] == [forced, "auto"]
     assert first["tool_count"] == 2
     assert first["tool_names"] == ["get_context_canvas", "write_context_canvas"]
     assert first["max_output_tokens"] == 4096 and 0 < first["timeout"] <= 30

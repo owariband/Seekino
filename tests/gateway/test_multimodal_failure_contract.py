@@ -7,7 +7,9 @@ import pytest
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import BaseModel, ValidationError
 
-from gateway.agent_model.errors import ModelFailureError, ModelFailureReason, QueryModelIncompleteError
+from gateway.agent_model.errors import (
+    MissingRequiredFunctionCallError, ModelFailureError, ModelFailureReason, QueryModelIncompleteError,
+)
 from gateway.agent_model.multimodal import tool_model_session
 from gateway.multimodal import TextInput
 from gateway.openai.multimodal import DeepSeekModelError, DeepSeekMultimodalModel
@@ -187,3 +189,38 @@ def test_tool_loop_checks_control_before_retrying_a_connect_failure(monkeypatch)
 
     assert len(responses.requests) == 1
     assert delays == []
+
+
+def _request_choice(model, choice):
+    with tool_model_session(
+        model, [{"type": "input_text", "text": "Analyze the video."}],
+        schema_name="completion", result_type=Completion, tools=_tools({}, []),
+        request_timeout_seconds=None, check_control=None,
+        context_window_policy=None, max_input_chars=None,
+        fallback_model=None, fallback_inputs=None, fallback_on_error=None,
+    ) as session:
+        session.request_turn([{"role": "user", "content": session.content}], [], choice, 30, set(), False)
+
+
+@pytest.mark.parametrize(("provider", "reasoning", "choice", "sent"), [
+    ("deepseek", "high", "required", "auto"),
+    ("deepseek", "low", "any", "auto"),
+    ("deepseek", "none", "required", "required"),
+    ("deepseek", "high", "auto", "auto"),
+    ("ark", "high", "required", "required"),
+])
+def test_tool_loop_sends_auto_only_for_deepseek_thinking(provider, reasoning, choice, sent):
+    responses = Responses([_response("call-1")])
+
+    _request_choice(_model(provider, responses, reasoning=reasoning, stream=False), choice)
+
+    assert responses.requests[0]["tool_choice"] == sent
+
+
+def test_tool_loop_still_requires_a_tool_call_after_the_deepseek_downgrade():
+    responses = Responses([_response()])
+
+    with pytest.raises(MissingRequiredFunctionCallError):
+        _request_choice(_model("deepseek", responses, reasoning="high", stream=False), "required")
+
+    assert responses.requests[0]["tool_choice"] == "auto"
