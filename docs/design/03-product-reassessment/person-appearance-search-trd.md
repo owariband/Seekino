@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 - 需求：人物出场全量列举——“给我爱音出现的所有片段”，按集、按时间列出全部有来源、可回看的片段。
-- 状态：初稿，2026-11-04。分支 `feat/person-appearance-search`；PR 待创建后回填。工作台卡片 PERSON-01，里程碑 M-20261107（课程闭环之后的第一个演示场景）。
+- 状态：初稿，2026-11-04。分支 `feat/person-appearance-search`；PR [#35](https://github.com/owariband/Seekino/pull/35)。工作台卡片 PERSON-01，里程碑 M-20261107（课程闭环之后的第一个演示场景）。
 - 依赖：不依赖课程闭环的 PR；需要至少一集 MyGO 在当前开发库为 READY（待核对，见“现状证据”）。不改变 Parse Schema、ES 映射与向量合同。
 
 **背景与触发场景。** 动画素材的用户最自然的问题之一是“某个角色出现在哪里”。这是**全量列举**：答案是一个集合，漏一段就是错。现有检索为相关性设计：词法 / 向量多路召回 → RRF → rerank → `top_k` 截断（[`engine/rag/retrieval/rerank.py`](../../../engine/rag/retrieval/rerank.py) 第 168–187 行），Chat 通过 `query_video` 子代理与 `submit_video_item` 提交少量最终片段，后者限定在锚点及相邻两个 Chunk 内（[`agent/chat/supervisor.py`](../../../agent/chat/supervisor.py) 第 946–953 行）。这条链路适合“找最相关的几段”，不适合“全部列出来”。
