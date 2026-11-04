@@ -3,14 +3,17 @@ from __future__ import annotations
 import logging
 import os
 from copy import deepcopy
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import asdict, replace
+from http import HTTPStatus
 from queue import Empty, Full, Queue
 from threading import Event, Lock, RLock
 from time import monotonic_ns
 from uuid import uuid4
+
+from openai import APIConnectionError, APITimeoutError
 
 from agent.chat.common.errors import (
     AgentContextBudgetError, AgentExecutionTimeoutError,
@@ -21,6 +24,7 @@ from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.output import video_range_sources
 from engine.rag.contracts import VideoChunkEvidence
 from gateway.agent_model.contracts import SupervisorSessionContext
+from gateway.agent_model.errors import ModelFailureReason
 from gateway.model_diagnostics import model_diagnostic_scope
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
@@ -1166,7 +1170,7 @@ class AgentChatService:
                 public_message = "已停止生成回答。"
             elif isinstance(exc, AgentModelInvocationError):
                 public_code = "AGENT_MODEL_ERROR"
-                public_message = "这次对话未能完成，请稍后重试。"
+                public_message = _agent_model_failure_message(exc)
             else:
                 public_code = "PROCESSING_FAILED"
                 public_message = "这次对话未能完成，请稍后重试。"
@@ -1225,6 +1229,70 @@ class AgentChatService:
         finally:
             for runtime in self._runtimes:
                 runtime.close()
+
+
+def _agent_model_failure_message(error: BaseException) -> str:
+    """Expose a bounded provider reason without leaking request details."""
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    for current in chain:
+        status_code = getattr(current, "status_code", None)
+        if not isinstance(status_code, int) or isinstance(status_code, bool):
+            continue
+        try:
+            reason = f"{status_code} {HTTPStatus(status_code).phrase}"
+        except ValueError:
+            reason = str(status_code)
+        detail = _provider_message(current)
+        return f"模型暂时不可用，错误：{reason}" + (f"（{detail}）" if detail else "")
+    for current in chain:
+        reason = getattr(current, "reason", None)
+        name = type(current).__name__.lower()
+        if (
+            reason == ModelFailureReason.MODEL_TIMEOUT
+            or reason == ModelFailureReason.MODEL_GATEWAY_TIMEOUT
+            or isinstance(current, (APITimeoutError, TimeoutError))
+            or "timeout" in name
+        ):
+            return "模型暂时不可用，错误：请求超时"
+    for current in chain:
+        reason = getattr(current, "reason", None)
+        name = type(current).__name__.lower()
+        if (
+            reason == ModelFailureReason.MODEL_CONNECTION_ERROR
+            or isinstance(current, (APIConnectionError, ConnectionError))
+            or "connect" in name
+        ):
+            return "模型暂时不可用，错误：无法连接模型服务"
+    return f"模型调用失败，错误：{type(chain[-1]).__name__}"
+
+
+def _provider_message(error: BaseException) -> str:
+    """Read only the provider's human message, never headers or the request."""
+    body = getattr(error, "body", None)
+    message: object = None
+    if isinstance(body, Mapping):
+        nested = body.get("error")
+        if isinstance(nested, Mapping):
+            message = nested.get("message")
+        elif isinstance(nested, str):
+            message = nested
+        if not isinstance(message, str):
+            message = body.get("message")
+    if not isinstance(message, str):
+        candidate = getattr(error, "message", None)
+        if isinstance(candidate, str) and not candidate.lstrip().startswith(
+            ("Error code:", "{", "["),
+        ):
+            message = candidate
+    if not isinstance(message, str):
+        return ""
+    return " ".join(message.split())[:200]
 
 
 def _message_pair(result: AgentMessageSendState) -> dict:

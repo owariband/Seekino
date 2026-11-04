@@ -10,7 +10,9 @@ from queue import Empty
 from threading import Event
 from uuid import uuid4
 
+import httpx
 import pytest
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 
 from tests.server.conftest import set_series_parse_status
 from sqlalchemy import delete, event, func, inspect, select, text
@@ -2957,6 +2959,54 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     assert events[-1]["error"] == asdict(failed.last_error)
     assert "answer.completed" not in {event["type"] for event in events}
     assert query.prompts == [] and chat.prompts == []
+
+
+@pytest.mark.parametrize(("kind", "expected"), [
+    (
+        "rate_limit",
+        "模型暂时不可用，错误：429 Too Many Requests（You've reached your 5-hour usage limit.）",
+    ),
+    ("timeout", "模型暂时不可用，错误：请求超时"),
+    ("connection", "模型暂时不可用，错误：无法连接模型服务"),
+    ("unknown", "模型调用失败，错误：RuntimeError"),
+])
+def test_agent_model_error_exposes_provider_reason(
+    build_service, monkeypatch, kind, expected,
+):
+    request = httpx.Request("POST", "https://api.example.test/v1/chat/completions")
+    provider_error = {
+        "rate_limit": lambda: RateLimitError(
+            "rate limited",
+            response=httpx.Response(429, request=request),
+            body={"error": {"message": "You've reached your 5-hour usage limit."}},
+        ),
+        "timeout": lambda: APITimeoutError(request=request),
+        "connection": lambda: APIConnectionError(request=request),
+        "unknown": lambda: RuntimeError("private upstream failure"),
+    }[kind]()
+    service, conversation, *_ = build_service()
+
+    def fail(*_args, **_kwargs):
+        raise AgentModelInvocationError("Supervisor model failed") from provider_error
+
+    monkeypatch.setattr(service._runtime, "kick", fail)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default",
+        content="你好", idempotency_key="provider-failure", stream=True,
+    )
+    events = _collect(execution)
+    with pytest.raises(AgentModelInvocationError):
+        execution.result()
+
+    failed = service.get_message(
+        conversation.conversation_id, tenant_id="local-default",
+        message_id=execution.initial.assistant_message.message_id,
+    ).assistant_message
+    assert failed.status == "FAILED"
+    assert failed.last_error.code == "AGENT_MODEL_ERROR"
+    assert failed.last_error.message == expected
+    assert events[-1]["type"] == "answer.failed"
+    assert events[-1]["error"] == asdict(failed.last_error)
 
 
 def test_manual_cancel_is_scoped_and_stops_before_the_next_model(build_service):
