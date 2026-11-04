@@ -789,14 +789,16 @@ class SupervisorRuntime:
                 if not video_available:
                     raise AgentToolFeedbackError(
                         "VIDEO_EVIDENCE_UNAVAILABLE", "No video evidence is available.",
-                        "Retrieve video evidence directly or call query_video before submitting video items.",
+                        "Deliver current-video evidence as markdown time-code links in the answer; "
+                        "submit_video_item only accepts retrieval hits.",
                     )
                 try:
                     retrieval_hit(retrieval_calls, video_chunk_id)
                 except UnknownToolItemError as exc:
                     raise AgentToolFeedbackError(
                         "UNKNOWN_ITEM", str(exc),
-                        "Use a video_chunk_id returned by retrieve or search_video_events.",
+                        "Use a video_chunk_id returned by retrieve or search_video_events; "
+                        "current-video evidence is delivered as time-code links, not a card.",
                     ) from exc
                 try:
                     # The tool accepts seconds; canonical evidence and playback storage use milliseconds.
@@ -942,21 +944,30 @@ class SupervisorRuntime:
                             raise AgentToolInvocationError("Realtime context exceeds its output budget")
                 return result
 
+        # Realtime evidence is delivered as markdown time-code links in the answer, never as
+        # video cards. When the frozen playback is the only evidence source (no searchable
+        # series), omit the card tools so the model cannot submit a card that can only fail.
+        video_card_tools = (
+            [
+                build_agent_tool(
+                    func=submit_video_item, name="submit_video_item",
+                    description=(
+                        "Submit a final video selection after checking its source evidence. Times are absolute "
+                        "seconds (decimals allowed) within the anchor or two adjacent retrieved chunks "
+                        "of the same video. For 00:50–01:00, pass start_seconds=50, end_seconds=60. "
+                        "Repeated submission updates the selection in place; only submitted selections are displayed."
+                    ), args_schema=SubmitVideoItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                ),
+                build_agent_tool(
+                    func=remove_video_item, name="remove_video_item",
+                    description="Withdraw a final video selection by video_chunk_id.",
+                    args_schema=RemoveItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                ),
+            ]
+            if (video_available or not realtime_available) else []
+        )
         tools = [
-            build_agent_tool(
-                func=submit_video_item, name="submit_video_item",
-                description=(
-                    "Submit a final video selection after checking its source evidence. Times are absolute "
-                    "seconds (decimals allowed) within the anchor or two adjacent retrieved chunks "
-                    "of the same video. For 00:50–01:00, pass start_seconds=50, end_seconds=60. "
-                    "Repeated submission updates the selection in place; only submitted selections are displayed."
-                ), args_schema=SubmitVideoItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
-            ),
-            build_agent_tool(
-                func=remove_video_item, name="remove_video_item",
-                description="Withdraw a final video selection by video_chunk_id.",
-                args_schema=RemoveItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
-            ),
+            *video_card_tools,
             build_agent_tool(
                 func=search_web, name="search_web",
                 description=(
@@ -1049,7 +1060,7 @@ class SupervisorRuntime:
             "按需直接读取 evidence.transcript 核对对白、evidence.events 核对事件，section 不能简写为 transcript 或 events。"
             "已知 section 不必先 overview，也不要求读完所有 section；省略 end 按预算读取，截断时按提示续读。"
             "对白证据已足够回答出处、原话或说话人时无需抽帧；只有具体视觉主张或证据缺口才看图。"
-            "用 submit_video_item 提交最终片段；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
+            "用 submit_video_item 提交最终片段，video_chunk_id 只能是本轮检索工具返回的值；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
             "例如 00:50–01:00 传 50 和 60。检索证据与 Query 草稿仍使用毫秒，提交前除以 1000；"
             "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文与 claim 使用秒或时间码。"
             "范围须完整覆盖支持主张的必要内容并去掉无关部分，可跨同一视频两个相邻已检索 Chunk。"
@@ -1066,7 +1077,14 @@ class SupervisorRuntime:
              "after_anchor 表示暂停位置之后的证据。"
              "partial 表示采集缺失，omitted_evidence 表示输出为预算省略；据此说明覆盖范围与不确定性。"
              "persons 是整个 Chunk 的人名清单，不证明这些人都在暂停帧中；不得补造或擅自改写事实。"
-             "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。\n"
+             "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。"
+             "当前视频的证据一律以正文中的 Markdown 时间码链接交付，不要用 submit_video_item 提交；"
+             "submit_video_item 只接受本轮检索工具返回的 video_chunk_id。"
+             "时间码链接仍是可回看的依据，即使无法提交视频卡，也不要对用户说没有可播放片段。"
+             "用户要求简短或限定句数时，整条回复（包括来源标注）都必须控制在限内，"
+             "来源写成对应句子里的时间码链接，不另起一段罗列，也不得为缩短而删掉来源。"
+             "chunks、frames、visual_summary、partial、omitted_evidence、after_anchor、PARSING_FAILED、NO_VIDEO_SCOPE 等"
+             "都是内部取证术语，不得写入对用户的回答；覆盖范围或不可核验的限制用普通中文说明。\n"
              if realtime_available else "")
             +
             "你是 seekino 对话助手，负责理解当前请求、按需取证并回应用户。\n"

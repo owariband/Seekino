@@ -2088,6 +2088,102 @@ def test_current_video_tool_is_not_offered_without_playback_context():
     assert "understand_current_video" not in model.prompts[0]
 
 
+class _RealtimeEvidenceStub:
+    """Realtime runtime that returns one evidence chunk and never a retrieval hit."""
+
+    def __init__(self):
+        self.calls = []
+
+    def kick(self, runtime_inputs, **kwargs):
+        self.calls.append((runtime_inputs, kwargs))
+        return SimpleNamespace(
+            frames=(),
+            context=SimpleNamespace(request=SimpleNamespace(anchor_ms=90_123)),
+            as_dict=lambda **kwargs: {
+                "summary": "讲师正在解释概率系统。",
+                "chunks": [], "frames": [], "visual_summary": "", "partial": False,
+                "omitted_evidence": False,
+            },
+        )
+
+
+def _realtime_runtime(model, realtime):
+    return SupervisorRuntime(
+        FakeVideoRuntime(), model, FakeWebSearcher(), realtime_runtime=realtime,
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+    )
+
+
+def _watch_inputs():
+    inputs = _inputs()
+    inputs["extra_context"] = {"playback": {"videoId": "video", "positionSeconds": 90_123}}
+    return inputs
+
+
+def test_watch_turn_with_realtime_evidence_offers_no_video_card_tools():
+    realtime = _RealtimeEvidenceStub()
+
+    class Model:
+        model_name = "text-model"
+        supports_vision_input = False
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            available = {tool.name: tool for tool in tools}
+            assert "understand_current_video" in available
+            assert "submit_video_item" not in available
+            assert "remove_video_item" not in available
+            receipt = json.loads(available["understand_current_video"].invoke({"query": "现在在讲什么？"}))
+            assert "error" not in receipt
+            assert receipt["summary"] == "讲师正在解释概率系统。"
+            handle_text("现在讲的是概率系统，[回看 01:00](seek://90.0) 可定位原句。")
+
+    runtime = _realtime_runtime(Model(), realtime)
+    result = runtime.kick(_watch_inputs(), load_video_context=lambda: [])
+
+    assert result.content == "现在讲的是概率系统，[回看 01:00](seek://90.0) 可定位原句。"
+    assert result.video_result is None
+    assert len(realtime.calls) == 1
+
+
+def test_normal_chat_with_series_scope_still_registers_video_card_tools():
+    class Model:
+        model_name = "text-model"
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            available = {tool.name for tool in tools}
+            assert {"submit_video_item", "remove_video_item"} <= available
+            handle_text("Direct answer.")
+
+    result = _runtime(Model()).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    assert result.content == "Direct answer."
+
+
+def test_realtime_prompt_section_contains_delivery_length_and_no_internal_terms_rules():
+    class Model:
+        model_name = "text-model"
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            self.prompt = prompt
+            handle_text("Answer.")
+
+    model = Model()
+    runtime = _realtime_runtime(model, _RealtimeEvidenceStub())
+    runtime.kick(_watch_inputs(), load_video_context=lambda: [])
+
+    prompt = model.prompt
+    # Realtime evidence is delivered as time-code links, never via submit_video_item.
+    assert "当前视频的证据一律以正文中的 Markdown 时间码链接交付" in prompt
+    assert "submit_video_item 只接受本轮检索工具返回的 video_chunk_id" in prompt
+    # Failed card submission must not be described as "no playable clip".
+    assert "不要对用户说没有可播放片段" in prompt
+    # Length and sentence limits, with sources inline as time-code links.
+    assert "用户要求简短或限定句数时" in prompt
+    assert "不另起一段罗列，也不得为缩短而删掉来源" in prompt
+    # Internal evidence terms and status codes must not leak into user-visible text.
+    assert "都是内部取证术语，不得写入对用户的回答" in prompt
+
+
 def test_supervisor_direct_lookup_uses_atomic_tools_without_query_or_old_graph():
     video = FakeVideoRuntime()
 
