@@ -32,6 +32,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [deepseek-web-search-trd.md](deepseek-web-search-trd.md) | 2026-11-02，Chat 更换模型后搜索仍走未固定 backend 的 DDGS | 免 key DDGS 与 DeepSeek API 独立配置，明确请求、费用和错误合同 | 直接向 dev 集成；接口接入与回答、引用质量分别验收 |
 | [management-workbench-trd.md](management-workbench-trd.md) | 2026-11-02 统一看板；2026-11-03 升级为管理工作台 | 以分类和看板连接分散的问题、PR、TRD 与 devlog；后续加入里程碑、课程闭环地图与验收门槛，服务周四课程闭环验收 | 单文件离线维护；历史 DONE 沿用原验收范围，PR 信息、课程进度与费用按采集时点阅读 |
 | [parse-task-query-recovery-trd.md](parse-task-query-recovery-trd.md) | 2026-11-03，完整课程积累大任务 detail 后查询 1038 | 独立后端查询修复与 Consumer 失败定位 | Draft #30，已整合 #18；排序修复与同 v11 恢复已验证，整课仍在推进 |
+| [parse-event-profile-trd.md](parse-event-profile-trd.md) | 2026-11-04，0.5 fps 后课程成本约一半来自 reasoning，用户提出按类型收窄 Event 枚举 | 任务级解析档案：Event 类型子集 × 推理档位，先回放对照再决定是否接入正式链路 | 初稿；不改变周四两集的解析配置，自动识别仍属 COST-01 |
 | [handoff_to_new_pc.md](handoff_to_new_pc.md) | 2026-10-26 的多任务交接，含 10-24–25 探索 | 换机前保存真实停点、尝试过程、未完成项与后续理由 | 跨阶段交接；保留三条主线和环境差异，不将局部探针当作完整产品交付 |
 | [parse-output-xml.md](parse-output-xml.md) | 2026-10-26 协议设计稿 | 在保留有效信息的前提下降低解析输出负担 | 交接时尚未正式接入；须同时验证内容质量、时间定位与整集耗时 |
 | [video-parse-performance-trd.md](video-parse-performance-trd.md) | 2026-10-28 建立；11-01 补 Kimi 推理耗时与帧时间配对续跑 | 解析异常长的因素拆解、完整/精简 JSON 与 XML 对照、SHOT 候选及宿主 Canvas 接入边界 | 解析性能主入口；最终采用精简 JSON、不换 XML，质量优先并沿用既有并行策略；10-30 dev 已接入直接 JSON 与 30k，精简合同迁移及实模验收待完成 |
