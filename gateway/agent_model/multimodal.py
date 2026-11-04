@@ -338,6 +338,14 @@ def _request_response_with_connect_retry(
     raise AssertionError("unreachable")
 
 
+def _provider_tool_choice(endpoint: _Endpoint, choice: str) -> str:
+    """DeepSeek thinking mode rejects forced tool choices; turn validation still uses the original choice."""
+    if (endpoint.provider == DEEPSEEK_PROVIDER and endpoint.adapter.reasoning_effort in {"low", "high", "max"}
+            and choice not in {"auto", "none"}):
+        return "auto"
+    return choice
+
+
 def _request_turn(
     endpoint: _Endpoint, messages, specs, choice, remaining, seen, visible, *,
     tools: Sequence[BaseTool], schema_name: str, result_type: type[_Result],
@@ -357,7 +365,7 @@ def _request_turn(
     request = {
         "model": endpoint.model, "input": _response_input(messages, endpoint),
         "tools": [{"type": "function", **spec["function"]} for spec in specs],
-        "tool_choice": choice, "timeout": timeout,
+        "tool_choice": _provider_tool_choice(endpoint, choice), "timeout": timeout,
         "temperature": adapter.temperature,
     }
     if enforce_final_schema:
@@ -465,7 +473,7 @@ def _request_chat_turn(
     adapter = endpoint.adapter
     request = {
         "model": endpoint.model, "messages": _chat_input(messages, endpoint),
-        "tools": specs, "tool_choice": choice,
+        "tools": specs, "tool_choice": _provider_tool_choice(endpoint, choice),
         "stream": adapter._stream, "timeout": min(remaining, adapter._request_timeout_seconds),
         "temperature": adapter.temperature,
         adapter._token_parameter: adapter.max_output_tokens,

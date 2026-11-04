@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**DeepSeek 思考模式工具选择 TRD。状态：初稿（2026-11-04）。** 分支 `fix/deepseek-thinking-tool-choice`，PR 待创建。关联：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，需要该修复才能比较 Summarize 的思考强度）。
+**DeepSeek 思考模式工具选择 TRD。状态：初稿（2026-11-04）。** 分支 `fix/deepseek-thinking-tool-choice`，PR [#42](https://github.com/owariband/Seekino/pull/42)。关联：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，需要该修复才能比较 Summarize 的思考强度）。
 
 ## 背景与触发场景
 
