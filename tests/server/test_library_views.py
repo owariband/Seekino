@@ -15,7 +15,7 @@ from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
 from server.model.task import VideoParseTask
-from server.model.upload import UploadSession
+from server.model.upload import UploadSession, UPLOAD_DELETION_PENDING_ERROR_CODE
 from server.model.tenant import Tenant
 from server.model.user import User
 from server.model.video import Series, SeriesVisibility, Video, VideoChunk
@@ -87,6 +87,31 @@ def _add_prefix_task(
         update_time=datetime_to_unix_time_ms(now),
     ))
     return task_id
+
+
+def test_deletion_pending_video_is_hidden_from_series(repository, seed_video):
+    factory, _videos, library = _library(repository)
+    report = seed_video(create_session_factory(repository[0]))
+    with factory.begin() as session:
+        session.add(UploadSession(
+            id=str(uuid4()), tenant_id="local-default", series_id=report.series_id,
+            episode_order=report.episode_order, upload_sequence=report.upload_sequence,
+            filename=report.original_filename, media_type="video/mp4", size_bytes=10,
+            segment_size_bytes=10, segment_count=1, version=1, status="COMPLETED",
+            idempotency_key="deletion-pending", expire_time=now_utc(), finish_time=now_utc(),
+            video_id=report.video_id, last_error_code=UPLOAD_DELETION_PENDING_ERROR_CODE,
+            create_time=now_unix_time_ms(), update_time=now_unix_time_ms(),
+        ))
+    state = library.get_series(report.series_id, tenant_id="local-default")
+    assert state.video_count == 0
+    assert state.videos == ()
+    with factory.begin() as session:
+        upload = session.scalar(select(UploadSession).where(
+            UploadSession.video_id == report.video_id,
+        ))
+        upload.last_error_code = None
+    restored = library.get_series(report.series_id, tenant_id="local-default")
+    assert restored.video_count == 1
 
 
 def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed_video, tmp_path):

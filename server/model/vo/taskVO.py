@@ -47,3 +47,9 @@ class VideoParseTaskView(ContractModel):
     can_retry: bool = False
     can_reparse: bool = False
     can_delete: bool = False
+    can_delete_version: bool = False
+    is_superseded: bool = False
+
+
+class VideoParseTaskDeleteResult(ContractModel):
+    deleted_video_parse_task_ids: list[str] = Field(default_factory=list)

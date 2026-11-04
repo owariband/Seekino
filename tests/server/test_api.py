@@ -485,6 +485,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/video-parse/list",
         "/api/jobs/video-parse/events",
         "/api/jobs/video-parse/control",
+        "/api/jobs/video-parse/delete",
         "/api/usage/overview",
         "/api/videos/content",
         "/api/video-chunks/get",
@@ -556,6 +557,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/jobs/video-parse/events", "get"): {
             "videoParseTaskId", "tenantId",
         },
+        ("/api/jobs/video-parse/delete", "post"): {"tenantId"},
         ("/api/usage/overview", "get"): {"tenantId"},
         ("/api/videos/content", "get"): {"videoId"},
         ("/api/agent/conversations/get", "get"): {"conversationId"},

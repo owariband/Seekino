@@ -58,6 +58,15 @@
   background: var(--teal-wash);
 }
 
+.filterCount {
+  margin-left: 6px;
+  color: var(--ink-faint);
+  font: 500 .6rem/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar .filterActive .filterCount { color: var(--teal-deep); }
+
 .jobList {
   display: grid;
   gap: 14px;
@@ -437,6 +446,124 @@
 
 .empty h2 { margin: 14px 0 4px; color: var(--ink); font: 600 1.35rem/1.2 var(--display); }
 .empty p { max-width: 390px; margin: 0; font-size: .7rem; }
+.emptyAction { margin-top: 14px; }
+
+.history {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.historyToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: .64rem;
+}
+
+.historyToggle svg { transition: transform .15s ease; }
+.historyToggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+
+.historyList {
+  display: grid;
+  gap: 0;
+  margin-top: 8px;
+}
+
+.historyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 0;
+  color: var(--ink-soft);
+  border-top: 1px solid var(--line);
+  font-size: .6rem;
+}
+
+.historyRowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  min-width: 0;
+}
+
+.historyRowVersion { color: var(--ink); font: 600 .62rem/1.4 var(--mono); }
+.historyRowStatus { color: var(--ink-faint); }
+.historyRowStatusSuperseded { color: var(--amber); }
+.historyRowTime { color: var(--ink-faint); }
+.historyRowProgress { color: var(--teal-deep); font-variant-numeric: tabular-nums; }
+
+.historyDelete {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.historyDelete:hover:not(:disabled) { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, var(--line)); }
+.historyDelete:disabled { opacity: .5; cursor: default; }
+
+.historyBulk {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0 2px;
+  border-top: 1px solid var(--line);
+}
+
+.historyDeleteAll {
+  justify-self: start;
+  padding: 0;
+  color: var(--red);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: .6rem;
+}
+
+.historyDeleteAll:hover { color: var(--red); }
+
+.historyConfirm {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--red) 32%, var(--line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--red) 7%, var(--surface-raised));
+  font-size: .6rem;
+}
+
+.historyConfirmActions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.historyConfirmActions > button { padding: 4px 9px; font-size: .6rem; }
+
+.historyError {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--red);
+  font-size: .6rem;
+}
+
 .spinning { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

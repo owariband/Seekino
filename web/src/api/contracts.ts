@@ -340,6 +340,10 @@ export interface VideoParseTaskView {
   canRetry: boolean;
   canReparse: boolean;
   canDelete: boolean;
+  /** True for non-latest versions; the latest version is deleted via the upload session. */
+  canDeleteVersion?: boolean;
+  /** True for non-latest versions that are not COMPLETE/PARSING_FAILED/INDEXING_FAILED. */
+  isSuperseded?: boolean;
 }
 
 export interface UsageTotals {

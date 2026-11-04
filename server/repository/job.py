@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from typing import NamedTuple
 
 from engine.parsev2.planning import interval_size, plan_intervals
 from sqlalchemy import exists, func, select
@@ -177,20 +178,12 @@ class ParseJobRepository:
                 (row[0].id,),
                 observed_at_ms=observed_at_ms,
             )
-            deletion_fenced_video_ids = self._deletion_fenced_video_ids(
-                session,
-                (row[0].video_id,),
-                observed_at_ms=observed_at_ms,
-            )
             tracking = self._video_parse_tracking(session, (row[0],), observed_at_ms)
             return self._video_parse_task_detail(
                 row,
                 tracking=tracking[row[0].id],
                 active_prefix_max_episode=active_prefix_max.get(row[2]),
                 has_active_execution_lease=row[0].id in active_execution_task_ids,
-                has_active_deletion_lease=(
-                    row[0].video_id in deletion_fenced_video_ids
-                ),
                 observed_at_ms=observed_at_ms,
             )
 
@@ -264,11 +257,6 @@ class ParseJobRepository:
                 tuple(row[0].id for row in rows),
                 observed_at_ms=observed_at_ms,
             )
-            deletion_fenced_video_ids = self._deletion_fenced_video_ids(
-                session,
-                tuple({row[0].video_id for row in rows}),
-                observed_at_ms=observed_at_ms,
-            )
             tracking = self._video_parse_tracking(session, [row[0] for row in rows], observed_at_ms)
             return [
                 self._video_parse_task_detail(
@@ -277,9 +265,6 @@ class ParseJobRepository:
                     active_prefix_max_episode=active_prefix_max.get(row[2]),
                     has_active_execution_lease=(
                         row[0].id in active_execution_task_ids
-                    ),
-                    has_active_deletion_lease=(
-                        row[0].video_id in deletion_fenced_video_ids
                     ),
                     observed_at_ms=observed_at_ms,
                 )
@@ -462,46 +447,12 @@ class ParseJobRepository:
         return {*active_chunks, *active_intervals}
 
     @classmethod
-    def _deletion_fenced_video_ids(
-        cls,
-        session: Session,
-        video_ids: tuple[str, ...],
-        *,
-        observed_at_ms: int,
-    ) -> set[str]:
-        if not video_ids:
-            return set()
-        result: set[str] = set()
-        tasks = list(session.scalars(
-            select(VideoParseTask).where(
-                VideoParseTask.video_id.in_(video_ids),
-            )
-        ))
-        observed_at = unix_time_ms_to_datetime(observed_at_ms)
-        for task in tasks:
-            if (
-                task.lease_owner is not None
-                and task.lease_expire_time is not None
-                and task.lease_expire_time > observed_at
-            ) or _has_active_prefix_lease(task, now_ms=observed_at_ms):
-                result.add(task.video_id)
-        video_id_by_task_id = {task.id: task.video_id for task in tasks}
-        for task_id in cls._active_execution_task_ids(
-            session,
-            tuple(video_id_by_task_id),
-            observed_at_ms=observed_at_ms,
-        ):
-            result.add(video_id_by_task_id[task_id])
-        return result
-
-    @classmethod
     def _video_parse_task_detail(
         cls,
         row,
         *,
         active_prefix_max_episode: int | None = None,
         has_active_execution_lease: bool = False,
-        has_active_deletion_lease: bool = False,
         observed_at_ms: int | None = None,
         tracking: dict | None = None,
     ) -> VideoParseTaskDetail:
@@ -542,7 +493,6 @@ class ParseJobRepository:
                 and active_prefix_max_episode >= episode_order
             ),
             has_active_execution_lease=has_active_execution_lease,
-            has_active_deletion_lease=has_active_deletion_lease,
         )
 
     @staticmethod
@@ -551,11 +501,16 @@ class ParseJobRepository:
         if not task_ids:
             return {}
         chunks, intervals = {}, {}
-        for child, content, sequence, video_id in session.execute(select(
-            ChunkParseTask, ChunkParseContent, VideoChunk.sequence_no, VideoChunk.video_id)
+        # Content detail carries index embeddings (hundreds of KB per chunk); read only
+        # the committed lease bound so polling the task list stays cheap.
+        for child, content_id, has_content, version, bound, sequence, video_id in session.execute(select(
+            ChunkParseTask, ChunkParseContent.id, ChunkParseContent.content,
+            ChunkParseContent.version, ChunkParseContent.detail["parse_committed_lease_version"].as_integer(),
+            VideoChunk.sequence_no, VideoChunk.video_id)
             .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
             .outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
             .where(ChunkParseTask.video_task_id.in_(task_ids))):
+            content = None if content_id is None else _ChunkContentSummary(bool(has_content), version, bound)
             chunks.setdefault(child.video_task_id, []).append((child, content, sequence, video_id))
         for child, content_id, content_detail in session.execute(select(
             IntervalParseTask, IntervalParseContent.interval_task_id, IntervalParseContent.detail)
@@ -577,7 +532,7 @@ class ParseJobRepository:
                 all(video_id == record.video_id for _, _, _, video_id in chunk_rows) and
                 sorted((child.start_sequence_no, child.chunk_count) for child, _, _ in interval_rows)
                 == [(plan.start_sequence_no, plan.chunk_count) for plan in expected])
-            completed_chunks = sum(content is not None and bool(content.content) for _, content, _, _ in chunk_rows)
+            completed_chunks = sum(content is not None and content.has_content for _, content, _, _ in chunk_rows)
             completed_refines = sum(child.status == "COMPLETE" and submitted for child, submitted, _ in interval_rows)
             indexed_chunks = sum(
                 child.phase == ChunkTaskPhase.INDEX and child.status == "COMPLETE" and content is not None
@@ -606,8 +561,7 @@ class ParseJobRepository:
             children = {}
             covered = valid_ledger
             for child, content, _, _ in chunk_rows:
-                detail = content.detail if content is not None and isinstance(content.detail, dict) else {}
-                bound = detail.get("parse_committed_lease_version")
+                bound = content.parse_committed_lease_version if content is not None else None
                 if content is None:
                     bound = child.lease_version if child.phase == ChunkTaskPhase.PARSE else 0
                 elif type(bound) is not int or not 1 <= bound <= child.lease_version:
@@ -676,6 +630,12 @@ class ParseJobRepository:
                       "activeExecutions": active, "effectiveDurationMs": elapsed if spans else None}
             result[record.id] = {"progress": progress, "timing": timing}
         return result
+
+class _ChunkContentSummary(NamedTuple):
+    has_content: bool
+    version: int
+    parse_committed_lease_version: int | None
+
 
 def _has_active_prefix_lease(
     record: VideoParseTask,

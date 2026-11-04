@@ -1102,7 +1102,7 @@ def test_delete_fences_in_flight_segment_and_cleans_late_bytes(repository, tmp_p
     assert not (store.base_directory / "staging" / "uploads" / upload.upload_session_id).exists()
 
 
-def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
+def test_delete_rejects_completing_and_defers_running_parse(repository, tmp_path):
     engine, store, upload_repository, service = _upload_service(repository, tmp_path)
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
@@ -1119,16 +1119,20 @@ def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
         lease_duration=timedelta(minutes=5),
     )
     assert lease is not None and lease.video_parse_task_id == completed.video_parse_task_id
-    with pytest.raises(UploadStateError, match="being parsed"):
-        service.delete_session(upload.upload_session_id, tenant_id="local-default")
+    deleted = service.delete_session(upload.upload_session_id, tenant_id="local-default")
+    assert deleted.status == "EXPIRED" and deleted.video_id == completed.video_id
     with create_session_factory(engine)() as session:
         video = session.get(Video, completed.video_id)
         assert video is not None
         assert store.resolve(video.source_uri).exists()
-        assert session.get(UploadSession, upload.upload_session_id).status == "COMPLETED"
+        tombstone = session.get(UploadSession, upload.upload_session_id)
+        assert tombstone.status == "EXPIRED"
+        assert tombstone.last_error_code == "DELETION_PENDING"
+        task = session.get(VideoParseTask, completed.video_parse_task_id)
+        assert task.is_deleted and not task.capacity_acquired
 
 
-def test_delete_rejects_active_v2_prefix_lease(repository, tmp_path):
+def test_delete_defers_active_v2_prefix_lease_and_keeps_fence(repository, tmp_path):
     engine, store, _upload_repository, service = _upload_service(
         repository,
         tmp_path,
@@ -1160,27 +1164,103 @@ def test_delete_rejects_active_v2_prefix_lease(repository, tmp_path):
             },
         }
 
-    with pytest.raises(UploadStateError, match="being parsed"):
-        service.delete_session(
-            upload.upload_session_id,
-            tenant_id="local-default",
-        )
     with pytest.raises(UploadStateError, match="Prefix worker is active"):
         service.reparse(
             upload.upload_session_id,
             tenant_id="local-default",
             expected_job_version=1,
         )
+    deleted = service.delete_session(
+        upload.upload_session_id,
+        tenant_id="local-default",
+    )
+    assert deleted.status == "EXPIRED" and deleted.video_id == completed.video_id
 
     with create_session_factory(engine)() as session:
         task = session.get(
             VideoParseTask,
             completed.video_parse_task_id,
         )
-        assert task.is_deleted is False
+        assert task.is_deleted is True
+        prefix = task.detail["_worker_runtime_v2"]["prefix"]
+        assert prefix["lease_version"] == 2
+        assert prefix["lease_owner"] == "prefix-worker"
+        assert prefix["lease_expire_time_ms"] == 9_999_999_999_999
         assert store.resolve(
             session.get(Video, completed.video_id).source_uri
         ).exists()
+
+
+class _DeleteIndex(_VideoParseIndexStore):
+    def __init__(self):
+        super().__init__(1024, 1024)
+        self.documents = set()
+        self.deleted = []
+
+    def bulk_delete(self, keys, *, refresh=False):
+        self.deleted.append((tuple(keys), refresh))
+        self.documents.difference_update(keys)
+
+    def verify_absent(self, keys):
+        return not self.documents.intersection(keys)
+
+
+def test_delete_with_active_chunk_lease_defers_then_reconciles_after_expiry(repository, tmp_path):
+    parse_index = _DeleteIndex()
+    event_index = _DeleteIndex()
+    now = unix_time_ms_to_datetime(1_789_560_000_000)
+    clock = [now]
+    engine, store, _upload_repository, service = _upload_service(
+        repository, tmp_path, clock=lambda: clock[0],
+        video_parse_index_store=parse_index, video_event_index_store=event_index,
+    )
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
+    factory = create_session_factory(engine)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
+    video_lease = queue.claim_video("prepare", lease_duration=timedelta(minutes=1), now=now)
+    assert video_lease is not None
+    parse_repository = VideoParsePersistenceService(factory)
+    chunks = parse_repository.ensure_video_chunks(video_lease, [(0, 0, 12_000)], now=now)
+    prepared = parse_repository.ensure_parse_tasks(
+        video_lease, [chunks[0].video_chunk_id], [(0, 1)], now=now,
+    )
+    parse_repository.activate_video_task(video_lease, now=now)
+    chunk_lease = queue.claim_chunk("chunk", lease_duration=timedelta(minutes=5), now=now)
+    assert chunk_lease is not None
+    with factory.begin() as session:
+        parent_lease_version = session.get(VideoParseTask, completed.video_parse_task_id).lease_version
+
+    deleted = service.delete_session(upload.upload_session_id, tenant_id="local-default")
+    assert deleted.status == "EXPIRED" and deleted.video_id == completed.video_id
+    # No external cleanup has happened yet; the fence must have bumped versions.
+    assert parse_index.deleted == [] and event_index.deleted == []
+    with factory() as session:
+        task = session.get(VideoParseTask, completed.video_parse_task_id)
+        assert task.is_deleted and task.lease_version == parent_lease_version + 1
+        child = session.get(ChunkParseTask, chunk_lease.chunk_parse_task_id)
+        assert child.lease_version == chunk_lease.lease_version + 1
+        assert session.get(Video, completed.video_id) is not None
+    # The bumped fence rejects the old coordinator and chunk heartbeats.
+    assert not queue.heartbeat_video(video_lease, lease_duration=timedelta(minutes=1), now=now)
+    assert not queue.heartbeat_chunk(chunk_lease, lease_duration=timedelta(minutes=5), now=now)
+
+    # Reconcile before the chunk lease expires: skipped without counting a failure.
+    assert service.reconcile_deletions() == (0, 0)
+    with factory() as session:
+        assert session.get(Video, completed.video_id) is not None
+
+    # After the chunk lease expiry, reconcile completes the external cleanup.
+    clock[0] += timedelta(minutes=6)
+    assert service.reconcile_deletions() == (1, 0)
+    with factory() as session:
+        assert session.get(Video, completed.video_id) is None
+        assert session.get(VideoParseTask, completed.video_parse_task_id) is None
+        assert list(session.scalars(select(ChunkParseTask))) == []
 
 
 @pytest.mark.parametrize(
@@ -2473,12 +2553,12 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
         event_index.documents.add((completed.video_parse_task_id, chunk_id))
     expected_keys = tuple(sorted(parse_index.documents))
     if cleanup_state == "prepare_interrupted":
-        with pytest.raises(UploadStateError, match="being parsed"):
-            service.delete_session(upload.upload_session_id, tenant_id="local-default")
+        deferred = service.delete_session(upload.upload_session_id, tenant_id="local-default")
+        assert deferred.status == "EXPIRED" and deferred.video_id == completed.video_id
         with factory() as session:
             task = session.get(VideoParseTask, completed.video_parse_task_id)
-            assert not task.is_deleted and task.capacity_acquired
-    # A crashed Prepare lease must expire before task-level deletion can fence it.
+            assert task.is_deleted and not task.capacity_acquired
+    # A crashed Prepare lease must expire before task-level deletion can finish.
     clock[0] += timedelta(minutes=2)
     if cleanup_state == "unavailable":
         service._video_parse_index_store = None

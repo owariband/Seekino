@@ -5,6 +5,7 @@ import {
   Pause,
   Play,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
   Clock3,
   RefreshCw,
@@ -12,12 +13,14 @@ import {
   Trash2,
   UploadCloud,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import {
   deleteUploadSession,
+  deleteVideoParseHistory,
+  deleteVideoParseVersion,
   errorMessage,
   listAllVideoParseTasks,
   reparseUpload,
@@ -35,12 +38,11 @@ import { useUploads } from "../uploads/UploadProvider";
 import { ParseUsageDetails } from "./ParseUsageDetails";
 import styles from "./tasks.module.css";
 
-type Filter = "all" | "paused" | VideoParseTaskStatus;
+type Filter = "inProgress" | "needsAttention" | "completed" | "all";
 
 function isPaused(task: VideoParseTaskView): boolean {
   return task.isPaused ?? task.detail.execution_control?.paused ?? false;
 }
-type VersionFilter = "current" | "history" | "all";
 
 const PIPELINE = ["解析画面与对白", "发布检索结果", "可检索"];
 
@@ -70,6 +72,15 @@ const activeStatuses = new Set<VideoParseTaskStatus>([
   "INDEXING",
 ]);
 
+// The 进行中 filter includes PENDING as well; "active" below remains the stage notion
+// (a PENDING task has not started yet and is not "running").
+const inProgressStatuses = new Set<VideoParseTaskStatus>([
+  "PENDING",
+  "PREPARING",
+  "PARSING",
+  "INDEXING",
+]);
+
 function processingDurationText(task: VideoParseTaskView, locale: Locale): string {
   const t = (message: string) => translate(locale, message);
   const timing = task.detail.timing;
@@ -82,6 +93,16 @@ function processingDurationText(task: VideoParseTaskView, locale: Locale): strin
   if (task.attemptCount === 0) return t("未开始");
   if (task.processingDurationMs === 0) return t("未记录");
   return formatDuration(task.processingDurationMs);
+}
+
+function formatCreateTime(timestamp: number, formatLocale: string): string {
+  return new Date(timestamp).toLocaleString(formatLocale, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function mergeTaskProjection(
@@ -101,6 +122,8 @@ function mergeTaskProjection(
     canRetry: updated.canRetry,
     canReparse: updated.canReparse,
     canDelete: updated.canDelete,
+    canDeleteVersion: updated.canDeleteVersion ?? current.canDeleteVersion,
+    isSuperseded: updated.isSuperseded ?? current.isSuperseded,
   };
 }
 
@@ -111,20 +134,88 @@ export function TasksPage() {
   const { forgetDeletedSession, openDialog, syncRequeuedParse } = useUploads();
   const queryClient = useQueryClient();
   const [controllingTaskIds, setControllingTaskIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [filter, setFilter] = useState<Filter>("all");
-  const [versionFilter, setVersionFilter] = useState<VersionFilter>("current");
+  const [filter, setFilter] = useState<Filter>("inProgress");
+  const [initialFilterResolved, setInitialFilterResolved] = useState(false);
+  // Videos seen in progress during this visit stay under 进行中 after they finish or fail,
+  // so a card being watched reaches its final state instead of vanishing.
+  const seenInProgressVideoIds = useRef(new Set<string>());
   const [deletingUploadSessionIds, setDeletingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [retryingUploadSessionIds, setRetryingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [reparsingUploadSessionIds, setReparsingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [confirmingDeleteTaskId, setConfirmingDeleteTaskId] = useState<string | null>(null);
   const [confirmingReparseTaskId, setConfirmingReparseTaskId] = useState<string | null>(null);
+  const [expandedHistoryVideoIds, setExpandedHistoryVideoIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [confirmingDeleteVersionId, setConfirmingDeleteVersionId] = useState<string | null>(null);
+  const [confirmingDeleteHistoryVideoId, setConfirmingDeleteHistoryVideoId] = useState<string | null>(null);
+  const [deletingVersionIds, setDeletingVersionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [deletingHistoryVideoIds, setDeletingHistoryVideoIds] = useState<ReadonlySet<string>>(() => new Set());
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [historyErrors, setHistoryErrors] = useState<Record<string, string>>({});
   const tasksQuery = useQuery({
     queryKey: ["video-parse-tasks"],
     queryFn: ({ signal }) => listAllVideoParseTasks(signal),
     retry: shouldRetryApiRequest,
     refetchInterval: 5_000,
   });
+
+  const tasks = tasksQuery.data ?? [];
+  const tasksByVideo = new Map<string, VideoParseTaskView[]>();
+  for (const task of tasks) {
+    const list = tasksByVideo.get(task.videoId);
+    if (list) list.push(task);
+    else tasksByVideo.set(task.videoId, [task]);
+  }
+  const latestVersionByVideo = new Map<string, number>();
+  for (const [videoId, list] of tasksByVideo) {
+    let latest = 0;
+    for (const task of list) latest = Math.max(latest, task.version);
+    latestVersionByVideo.set(videoId, latest);
+  }
+  const latestTasks = tasks.filter((task) => task.version === latestVersionByVideo.get(task.videoId));
+  const historyByVideo = new Map<string, VideoParseTaskView[]>();
+  for (const [videoId, list] of tasksByVideo) {
+    const latest = latestVersionByVideo.get(videoId)!;
+    historyByVideo.set(videoId, list
+      .filter((task) => task.version !== latest)
+      .sort((a, b) => b.version - a.version));
+  }
+
+  const inProgressCount = latestTasks.filter((task) => inProgressStatuses.has(task.status)).length;
+  const needsAttentionCount = latestTasks.filter((task) => task.status === "PARSING_FAILED" || task.status === "INDEXING_FAILED").length;
+  const completedCount = latestTasks.filter((task) => task.status === "COMPLETE").length;
+  const filterCounts: Record<Filter, number> = {
+    inProgress: inProgressCount,
+    needsAttention: needsAttentionCount,
+    completed: completedCount,
+    all: latestTasks.length,
+  };
+
+  // On the first successful load only, fall back to 全部 when nothing is in progress.
+  useEffect(() => {
+    if (initialFilterResolved || !tasksQuery.isSuccess) return;
+    setInitialFilterResolved(true);
+    if (inProgressCount === 0) setFilter("all");
+  }, [initialFilterResolved, tasksQuery.isSuccess, inProgressCount]);
+
+  for (const task of latestTasks) {
+    if (inProgressStatuses.has(task.status)) seenInProgressVideoIds.current.add(task.videoId);
+  }
+  const visibleTasks = filter === "all"
+    ? latestTasks
+    : latestTasks.filter((task) => {
+      if (filter === "inProgress") return seenInProgressVideoIds.current.has(task.videoId);
+      if (filter === "needsAttention") return task.status === "PARSING_FAILED" || task.status === "INDEXING_FAILED";
+      return task.status === "COMPLETE";
+    });
+
+  const toggleHistory = (videoId: string) => {
+    setExpandedHistoryVideoIds((current) => {
+      const next = new Set(current);
+      if (next.has(videoId)) next.delete(videoId);
+      else next.add(videoId);
+      return next;
+    });
+  };
 
   const togglePause = async (task: VideoParseTaskView) => {
     const id = task.videoParseTaskId;
@@ -184,6 +275,54 @@ export function TasksPage() {
         next.delete(uploadSessionId);
         return next;
       });
+    }
+  };
+
+  const deleteHistoryVersion = async (task: VideoParseTaskView) => {
+    const id = task.videoParseTaskId;
+    if (deletingVersionIds.has(id)) return;
+    setConfirmingDeleteVersionId(null);
+    setDeletingVersionIds((current) => new Set(current).add(id));
+    setHistoryErrors((current) => { const next = { ...current }; delete next[`version:${id}`]; return next; });
+    try {
+      await deleteVideoParseVersion(task);
+      queryClient.setQueryData<VideoParseTaskView[]>(["video-parse-tasks"], (current) =>
+        current?.filter((item) => item.videoParseTaskId !== id));
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["video-parse-tasks"] }),
+        queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
+      ]);
+    } catch (error) {
+      setHistoryErrors((current) => ({
+        ...current,
+        [`version:${id}`]: t("删除失败：{value0}", { value0: errorMessage(error, locale) }),
+      }));
+    } finally {
+      setDeletingVersionIds((current) => { const next = new Set(current); next.delete(id); return next; });
+    }
+  };
+
+  const deleteHistoryForVideo = async (videoId: string) => {
+    if (deletingHistoryVideoIds.has(videoId)) return;
+    setConfirmingDeleteHistoryVideoId(null);
+    setDeletingHistoryVideoIds((current) => new Set(current).add(videoId));
+    setHistoryErrors((current) => { const next = { ...current }; delete next[`history:${videoId}`]; return next; });
+    try {
+      const result = await deleteVideoParseHistory(videoId);
+      const deleted = new Set(result.deletedVideoParseTaskIds);
+      queryClient.setQueryData<VideoParseTaskView[]>(["video-parse-tasks"], (current) =>
+        current?.filter((item) => !deleted.has(item.videoParseTaskId)));
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["video-parse-tasks"] }),
+        queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
+      ]);
+    } catch (error) {
+      setHistoryErrors((current) => ({
+        ...current,
+        [`history:${videoId}`]: t("删除失败：{value0}", { value0: errorMessage(error, locale) }),
+      }));
+    } finally {
+      setDeletingHistoryVideoIds((current) => { const next = new Set(current); next.delete(videoId); return next; });
     }
   };
 
@@ -285,23 +424,6 @@ export function TasksPage() {
     }
   };
 
-  const tasks = tasksQuery.data ?? [];
-  const latestVersionByVideo = new Map<string, number>();
-  for (const task of tasks) {
-    latestVersionByVideo.set(
-      task.videoId,
-      Math.max(latestVersionByVideo.get(task.videoId) ?? 0, task.version),
-    );
-  }
-
-  const scopedTasks = tasks.filter((task) => {
-    const latest = task.version === latestVersionByVideo.get(task.videoId);
-    return versionFilter === "all" || (versionFilter === "current" ? latest : !latest);
-  });
-  const visibleTasks = filter === "all" ? scopedTasks : scopedTasks.filter((task) => filter === "paused" ? isPaused(task) : !isPaused(task) && task.status === filter);
-  const runningCount = scopedTasks.filter((task) => !isPaused(task) && activeStatuses.has(task.status)).length;
-  const completedCount = scopedTasks.filter((task) => task.status === "COMPLETE").length;
-
   return (
     <main className="page">
       <header className={styles.header}>
@@ -316,36 +438,24 @@ export function TasksPage() {
         </div>
       </header>
 
-      <section className={styles.metrics} aria-label={t("任务概况")}>
-        <article><Activity size={17} /><div><span>{t("进行中")}</span><strong>{runningCount}</strong></div></article>
-        <article><CheckCircle2 size={17} /><div><span>{t("已完成")}</span><strong>{completedCount}</strong></div></article>
-      </section>
-
-      <div className={styles.toolbar}>
-        <div role="group" aria-label={t("筛选任务版本")}>
-          {([
-            ["current", t("当前任务")],
-            ["history", t("历史任务")],
-            ["all", t("全部版本")],
-          ] as const).map(([value, label]) => (
-            <button type="button" key={value} aria-pressed={versionFilter === value} className={versionFilter === value ? styles.filterActive : undefined} onClick={() => setVersionFilter(value)}>{label}</button>
-          ))}
-        </div>
-      </div>
       <div className={styles.toolbar}>
         <div role="group" aria-label={t("筛选解析任务")}>
           {([
+            ["inProgress", t("进行中")],
+            ["needsAttention", t("需处理")],
+            ["completed", t("已完成")],
             ["all", t("全部")],
-            ["PENDING", t("排队中")],
-            ["PREPARING", t("准备中")],
-            ["PARSING", t("解析中")],
-            ["paused", t("解析已暂停")],
-            ["INDEXING", t("发布中")],
-            ["PARSING_FAILED", t("解析异常")],
-            ["INDEXING_FAILED", t("索引异常")],
-            ["COMPLETE", t("已完成")],
           ] as const).map(([value, label]) => (
-            <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? styles.filterActive : undefined} onClick={() => setFilter(value)}>{label}</button>
+            <button
+              type="button"
+              key={value}
+              aria-pressed={filter === value}
+              aria-label={label}
+              className={filter === value ? styles.filterActive : undefined}
+              onClick={() => setFilter(value)}
+            >
+              {label}<span className={styles.filterCount}>{filterCounts[value]}</span>
+            </button>
           ))}
         </div>
       </div>
@@ -368,7 +478,7 @@ export function TasksPage() {
           const progressText = progress
             ? progress.percent === null ? "—" : `${Number(progress.percent.toFixed(1))}%`
             : task.status === "COMPLETE" ? "100%" : task.status === "PENDING" ? "0%" : "—";
-          const stageTitle = paused ? t("已保留解析成果，继续后接着处理")
+          const stageTitle = paused ? t("已暂停：进行中的调用会在 1 分钟内停止，已完成的成果保留。")
             : task.activeStage === "asr" ? t("整集语音转写中")
             : activeStatuses.has(task.status)
             ? t("正在{value0}", { value0: t(PIPELINE[currentStageIndex]!) })
@@ -377,11 +487,13 @@ export function TasksPage() {
           const deleting = uploadSessionId ? deletingUploadSessionIds.has(uploadSessionId) : false;
           const retrying = uploadSessionId ? retryingUploadSessionIds.has(uploadSessionId) : false;
           const reparsing = uploadSessionId ? reparsingUploadSessionIds.has(uploadSessionId) : false;
-          const latest = task.version === latestVersionByVideo.get(task.videoId);
           const filename = task.originalFilename || task.videoId;
           const episodeOrder = task.episodeOrder ?? 1;
           const pendingTakeover = task.status === "PENDING" && task.canReparse;
           const failed = task.status === "PARSING_FAILED" || task.status === "INDEXING_FAILED";
+          const activeOrPaused = activeStatuses.has(task.status) || paused;
+          const history = historyByVideo.get(task.videoId) ?? [];
+          const historyOpen = expandedHistoryVideoIds.has(task.videoId);
           return (
             <article className={styles.job} key={task.videoParseTaskId}>
               <header className={styles.jobHeader}>
@@ -389,9 +501,8 @@ export function TasksPage() {
                 {/* The episode names the card; the badge carries status, so only live stages repeat as a subline. */}
                 <div className={styles.jobName}>
                   <h2>{task.seriesName ? `${task.seriesName} · ` : ""}{episodeTitle(episodeOrder, locale)}</h2>
-                  <span className={styles.jobStage}>{t("解析版本 {version}", { version: task.version })} · {latest ? t("当前任务") : t("历史任务")}</span>
-                  {!latest ? <span className={styles.jobStage}>{t("已由版本 {version} 替代，仅供查看历史记录。", { version: latestVersionByVideo.get(task.videoId)! })}</span> : null}
-                  {latest && activeStatuses.has(task.status) ? <span className={styles.jobStage}>{stageTitle}</span> : null}
+                  <span className={styles.jobStage}>{t("解析版本 {version}", { version: task.version })}</span>
+                  {activeStatuses.has(task.status) ? <span className={styles.jobStage}>{stageTitle}</span> : null}
                 </div>
                 <div className={styles.jobActions}>
                   <div className={styles.jobStatus} data-status={paused ? "PAUSED" : task.status}>
@@ -406,7 +517,7 @@ export function TasksPage() {
 
               <div className={styles.jobControls}>
                 <span className={styles.uploadState}><CheckCircle2 size={14} />{t("文件已上传")}</span>
-                {uploadSessionId && latest ? (
+                {uploadSessionId ? (
                   <div className={styles.controlButtons}>
                     {task.canPause || task.canResume ? (
                       <button className="button-secondary" type="button"
@@ -452,10 +563,10 @@ export function TasksPage() {
                         setConfirmingReparseTaskId(null);
                         setConfirmingDeleteTaskId(task.videoParseTaskId);
                       }}
-                      aria-label={t("删除任务 {value0}", { value0: filename })}
-                      title={task.canDelete ? t("删除本次上传及其解析产物") : t("任务正在执行，请稍后再删除")}
+                      aria-label={t("删除视频 {value0}", { value0: filename })}
+                      title={t("删除本次上传及其解析产物")}
                     >
-                      <Trash2 size={14} />{deleting ? t("正在删除…") : t("删除任务")}
+                      <Trash2 size={14} />{deleting ? t("正在删除…") : t("删除视频")}
                     </button>
                   </div>
                 ) : null}
@@ -486,7 +597,9 @@ export function TasksPage() {
                 <div className={styles.deleteConfirmation} role="alert">
                   <div>
                     <strong>{t("确认删除这个视频任务？")}</strong>
-                    <p>{t("上传文件、解析产物和检索索引都会被删除；聊天记录会保留，但旧证据无法再播放。此操作无法撤销。")}</p>
+                    <p>{activeOrPaused
+                      ? t("将先停止解析，再在后台清理上传文件、解析产物和检索索引；已产生的模型费用不会退回。聊天记录会保留，但旧证据无法再播放。此操作无法撤销。")
+                      : t("上传文件、解析产物和检索索引都会被删除；聊天记录会保留，但旧证据无法再播放。此操作无法撤销。")}</p>
                   </div>
                   <div className={styles.confirmActions}>
                     <button className="button-quiet" type="button" onClick={() => setConfirmingDeleteTaskId(null)}>{t("取消")}</button>
@@ -541,17 +654,99 @@ export function TasksPage() {
 
               {failed ? (
                 <div className={styles.jobError}><CircleAlert size={15} /><div><strong>{t("失败原因")}</strong><p>{
-                  (latest ? task.lastError?.message : task.lastError?.message?.replace(/，请重试[。.]?$/, "")) || (!latest ? t("此历史版本解析失败，后续进度请查看当前任务。") : task.status === "INDEXING_FAILED"
+                  task.lastError?.message || (task.status === "INDEXING_FAILED"
                     ? t("检索索引发布失败，请重试")
                     : t("视频解析失败，请重试"))
                 }</p></div></div>
               ) : null}
-              {latest && task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />{t("等待开始解析。")}</p> : null}
+              {task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />{t("等待开始解析。")}</p> : null}
+
+              {history.length ? (
+                <div className={styles.history}>
+                  <button
+                    type="button"
+                    className={styles.historyToggle}
+                    aria-expanded={historyOpen}
+                    onClick={() => toggleHistory(task.videoId)}
+                  >
+                    <ChevronDown size={14} />{t("历史版本（{count}）", { count: history.length })}
+                  </button>
+                  {historyOpen ? (
+                    <div className={styles.historyList}>
+                      {history.map((version) => {
+                        const versionDeleting = deletingVersionIds.has(version.videoParseTaskId);
+                        const versionError = historyErrors[`version:${version.videoParseTaskId}`];
+                        const versionProgress = version.detail.progress?.percent;
+                        return (
+                          <div className={styles.historyRow} key={version.videoParseTaskId}>
+                            <div className={styles.historyRowMeta}>
+                              <span className={styles.historyRowVersion}>{t("版本 {version}", { version: version.version })}</span>
+                              <span className={version.isSuperseded ? styles.historyRowStatusSuperseded : styles.historyRowStatus}>
+                                {version.isSuperseded ? t("已被新版本替代") : t(statusText[version.status])}
+                              </span>
+                              <span className={styles.historyRowTime}>{formatCreateTime(version.createTime, formatLocale)}</span>
+                              {versionProgress != null ? <span className={styles.historyRowProgress}>{`${Number(versionProgress.toFixed(1))}%`}</span> : null}
+                            </div>
+                            <button
+                              type="button"
+                              className={styles.historyDelete}
+                              aria-label={t("删除版本 {version}", { version: version.version })}
+                              disabled={versionDeleting}
+                              onClick={() => setConfirmingDeleteVersionId(version.videoParseTaskId)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            {confirmingDeleteVersionId === version.videoParseTaskId ? (
+                              <div className={styles.historyConfirm} role="alert">
+                                <span>{t("删除这个历史版本？只删除该版本的解析记录和索引，不影响当前版本与检索。")}</span>
+                                <div className={styles.historyConfirmActions}>
+                                  <button className="button-quiet" type="button" onClick={() => setConfirmingDeleteVersionId(null)}>{t("取消")}</button>
+                                  <button className={clsx("button-secondary", styles.confirmDelete)} type="button" onClick={() => void deleteHistoryVersion(version)}>{t("确认删除")}</button>
+                                </div>
+                              </div>
+                            ) : null}
+                            {versionError ? <p className={styles.historyError} role="alert">{versionError}</p> : null}
+                          </div>
+                        );
+                      })}
+                      <div className={styles.historyBulk}>
+                        <button type="button" className={styles.historyDeleteAll} onClick={() => setConfirmingDeleteHistoryVideoId(task.videoId)}>
+                          {t("删除全部历史版本")}
+                        </button>
+                        {confirmingDeleteHistoryVideoId === task.videoId ? (
+                          <div className={styles.historyConfirm} role="alert">
+                            <span>{t("删除全部历史版本？只删除这些历史版本的解析记录和索引，不影响当前版本与检索。")}</span>
+                            <div className={styles.historyConfirmActions}>
+                              <button className="button-quiet" type="button" onClick={() => setConfirmingDeleteHistoryVideoId(null)}>{t("取消")}</button>
+                              <button className={clsx("button-secondary", styles.confirmDelete)} type="button" onClick={() => void deleteHistoryForVideo(task.videoId)}>{t("确认删除")}</button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {historyErrors[`history:${task.videoId}`] ? <p className={styles.historyError} role="alert">{historyErrors[`history:${task.videoId}`]}</p> : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </article>
           );
         })}
         {tasksQuery.isSuccess && visibleTasks.length === 0 ? (
-          <div className={styles.empty}><Activity size={25} strokeWidth={1.4} /><h2>{t("这里暂时很安静")}</h2><p>{tasks.length === 0 ? t("上传视频后，可以在这里查看解析进度。") : t("没有符合当前筛选条件的任务。")}</p></div>
+          <div className={styles.empty}>
+            {filter === "inProgress" ? (
+              <>
+                <Activity size={25} strokeWidth={1.4} />
+                <h2>{t("没有正在进行的解析")}</h2>
+                <button className={clsx("button-primary", styles.emptyAction)} type="button" onClick={() => setFilter("all")}>{t("查看全部")}</button>
+              </>
+            ) : (
+              <>
+                <Activity size={25} strokeWidth={1.4} />
+                <h2>{t("这里暂时很安静")}</h2>
+                <p>{tasks.length === 0 ? t("上传视频后，可以在这里查看解析进度。") : t("没有符合当前筛选条件的任务。")}</p>
+              </>
+            )}
+          </div>
         ) : null}
       </section>
     </main>

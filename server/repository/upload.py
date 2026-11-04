@@ -715,6 +715,7 @@ class UploadRepository:
                     )
 
             v2_tasks: list[VideoParseTask] = []
+            deferred = False
             if video_id is not None:
                 v2_tasks = list(session.scalars(
                     select(VideoParseTask)
@@ -751,10 +752,7 @@ class UploadRepository:
                 active_prefix_lease = any(
                     _has_active_prefix_lease(task, now) for task in v2_tasks
                 )
-                if active_main_lease or active_child_lease or active_prefix_lease:
-                    raise UploadStateError(
-                        "the upload task is being parsed and cannot be deleted"
-                    )
+                deferred = active_main_lease or active_child_lease or active_prefix_lease
                 # The external artifact cleanup happens after this transaction.
                 # Fence every V2 claim during that gap; the final Video delete
                 # removes these rows through their existing cascade.
@@ -762,11 +760,21 @@ class UploadRepository:
                     task.is_deleted = True
                     detail = deepcopy(task.detail or {})
                     runtime = detail.get(RUNTIME_DETAIL_KEY, {})
-                    if _revoke_summary(runtime, pending=False, now=now):
+                    if deferred:
+                        # Bump the fence while keeping owners/expiry: their
+                        # original deadline still marks when the cancelled
+                        # executions are guaranteed gone, so reconcile can wait.
+                        task.lease_version += 1
+                        if _fence_runtime_keep_owners(runtime):
+                            detail[RUNTIME_DETAIL_KEY] = runtime
+                            task.detail = detail
+                    elif _revoke_summary(runtime, pending=False, now=now):
                         detail[RUNTIME_DETAIL_KEY] = runtime
                         task.detail = detail
                     task.capacity_acquired = False
                     task.update_time = datetime_to_unix_time_ms(now)
+                if deferred:
+                    _fence_leased_children(session, v2_task_ids, now)
 
             video_chunk_ids: set[str] = set()
             video_parse_document_keys: set[tuple[str, str]] = set()
@@ -813,6 +821,7 @@ class UploadRepository:
                 video_parse_document_keys=tuple(
                     sorted(video_parse_document_keys)
                 ),
+                deferred=deferred,
             )
 
     def finish_delete_session(
@@ -1460,6 +1469,39 @@ def _revoke_summary(runtime: dict, *, pending: bool, now: datetime) -> bool:
                  lease_owner=None, lease_expire_time_ms=None,
                  next_execute_time_ms=datetime_to_unix_time_ms(now), retry_count=0)
     return True
+
+
+def _fence_runtime_keep_owners(runtime: dict) -> bool:
+    """Fence prefix/summarize claims while keeping their expiry markers.
+
+    Unlike pause, deletion must not clear the owner/expiry fields: they are the
+    durable deadline that tells reconcile when the cancelled executions are
+    guaranteed gone.
+    """
+    changed = False
+    for key in ("prefix", "summarize"):
+        state = runtime.get(key)
+        if isinstance(state, dict):
+            state["lease_version"] = int(state.get("lease_version", 0)) + 1
+            changed = True
+    return changed
+
+
+def _fence_leased_children(session: Session, video_task_ids: list[str], now: datetime) -> None:
+    """Bump every leased child's fence without releasing its owner or expiry."""
+    for video_task_id in video_task_ids:
+        for child in list(session.scalars(select(ChunkParseTask).where(
+            ChunkParseTask.video_task_id == video_task_id,
+            ChunkParseTask.lease_owner.is_not(None),
+        ).with_for_update())):
+            child.lease_version += 1
+            child.update_time = datetime_to_unix_time_ms(now)
+        for interval in list(session.scalars(select(IntervalParseTask).where(
+            IntervalParseTask.video_task_id == video_task_id,
+            IntervalParseTask.lease_owner.is_not(None),
+        ).with_for_update())):
+            interval.lease_version += 1
+            interval.update_time = datetime_to_unix_time_ms(now)
 
 
 def _has_active_prefix_lease(

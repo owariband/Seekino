@@ -61,6 +61,18 @@ def task_data(row: VideoParseTask) -> VideoParseTaskData:
     )
 
 
+def list_tasks(
+    session: Session, video_id: str, *, for_update: bool = False,
+) -> list[VideoParseTaskData]:
+    statement = select(VideoParseTask).where(
+        VideoParseTask.video_id == video_id,
+        VideoParseTask.is_deleted.is_(False),
+    ).order_by(VideoParseTask.version, VideoParseTask.id)
+    if for_update:
+        statement = statement.with_for_update()
+    return [task_data(row) for row in session.scalars(statement)]
+
+
 def get_task(
     session: Session, record_id: str, *, for_update: bool = False,
     skip_locked: bool = False, include_deleted: bool = True,
