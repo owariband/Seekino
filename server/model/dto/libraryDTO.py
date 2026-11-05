@@ -16,18 +16,20 @@ class Character(ContractModel):
     aliases: list[str] = Field(default_factory=list)
 
 
+class SeriesBackground(ContractModel):
+    format: Literal["markdown", "json"] = "markdown"
+    content: str
+
+
 class SeriesCreateRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     transcript_language_hint: str | None = Field(default=None, max_length=64)
-    important_extra_data: dict | None = None
+    important_extra_data: SeriesBackground | None = None
+    # Read-only legacy data: an empty list is accepted for older clients,
+    # non-empty values are rejected by LibraryService.create_series.
     character_bible: list[Character] = Field(default_factory=list)
-
-
-class SeriesBackground(ContractModel):
-    format: Literal["markdown", "json"] = "markdown"
-    content: str
 
 
 class SeriesUpdateRequest(ContractModel):
