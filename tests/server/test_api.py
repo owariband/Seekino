@@ -2476,7 +2476,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             assert snapshots[-1]["searchResult"] == final["searchResult"]
             assert snapshots[-1]["content"] == final["content"]
             assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
-            assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+            assert [event["sequence"] for event in events] == sorted({event["sequence"] for event in events})
         else:
             final = response.json()["assistantMessage"]
         assert "agentReply" not in final["searchResult"]
@@ -2541,7 +2541,7 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     assert events[0]["type"] == "answer.started" and events[-1]["type"] == "answer.completed"
     snapshots = [event["assistantMessage"] for event in events if event["type"] == "answer.snapshot"]
     assert snapshots
-    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+    assert [event["sequence"] for event in events] == sorted({event["sequence"] for event in events})
     assert all(event["conversationId"] == conversation_id for event in events)
     assert len({event["messageId"] for event in events}) == 1
     assert events[0]["assistantMessage"]["status"] == "PROCESSING"

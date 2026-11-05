@@ -3,14 +3,15 @@ from __future__ import annotations
 import logging
 import os
 from copy import deepcopy
+from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import asdict, replace
 from http import HTTPStatus
-from queue import Empty, Full, Queue
-from threading import Event, Lock, RLock
-from time import monotonic_ns
+from queue import Empty
+from threading import Condition, Event, Lock, RLock
+from time import monotonic, monotonic_ns
 from uuid import uuid4
 
 from openai import APIConnectionError, APITimeoutError
@@ -58,6 +59,8 @@ from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService
 
 _logger = logging.getLogger(__name__)
+
+_EVENT_BUFFER_MAXSIZE = 256
 
 
 class AgentAttachmentInputUnavailableError(RuntimeError):
@@ -141,15 +144,16 @@ class AgentMessageExecution:
         self.initial = initial
         self.cancellation = Event()
         self.future: Future[AgentMessageSendState] | None = None
-        self._events: Queue[dict | None] = Queue(maxsize=256)
+        self._events: deque[dict | None] = deque()
         self._lock = Lock()
+        self._events_ready = Condition(self._lock)
         self._attached = stream
         self._sequence = 0
         self.reference_context: dict | None = None
         self.timing = timing
 
     def publish(self, event: dict) -> None:
-        with self._lock:
+        with self._events_ready:
             if not self._attached:
                 return
             self._sequence += 1
@@ -160,13 +164,17 @@ class AgentMessageExecution:
                 "sequence": self._sequence,
                 "occurredAt": now_unix_time_ms(),
             }
-            try:
-                self._events.put_nowait(payload)
-            except Full:
+            if self._coalesces_with_tail(payload):
+                # A snapshot carries the whole answer, so only the newest unsent
+                # one matters. Replacing the tail keeps every other event in order.
+                self._events[-1] = payload
+                self._events_ready.notify()
+                return
+            if len(self._events) >= _EVENT_BUFFER_MAXSIZE:
                 # Stop buffering for a slow consumer; the execution still commits.
                 self._attached = False
                 self._drain()
-                self._events.put_nowait({
+                self._events.append({
                     "type": "answer.interrupted",
                     "conversationId": payload["conversationId"],
                     "messageId": payload["messageId"],
@@ -174,37 +182,48 @@ class AgentMessageExecution:
                     "occurredAt": payload["occurredAt"],
                     "error": {"code": "STREAM_INTERRUPTED", "message": "连接未能及时接收回答，请通过会话快照恢复。"},
                 })
-                self._events.put_nowait(None)
+                self._events.append(None)
+                self._events_ready.notify_all()
+                return
+            self._events.append(payload)
+            self._events_ready.notify()
+
+    def _coalesces_with_tail(self, payload: dict) -> bool:
+        if payload.get("type") != "answer.snapshot" or not self._events:
+            return False
+        tail = self._events[-1]
+        return isinstance(tail, dict) and tail.get("type") == "answer.snapshot"
 
     def finish(self) -> None:
-        with self._lock:
-            if self._attached:
-                try:
-                    self._events.put_nowait(None)
-                except Full:
-                    # The final event is already buffered. A consumer can also
-                    # detect normal task completion once its queue is drained.
-                    pass
+        with self._events_ready:
+            if not self._attached:
+                return
+            if len(self._events) >= _EVENT_BUFFER_MAXSIZE:
+                # The final event is already buffered. A consumer can also
+                # detect normal task completion once its queue is drained.
+                return
+            self._events.append(None)
+            self._events_ready.notify()
 
     def next_event(self, timeout: float = 1) -> dict | None:
-        try:
-            return self._events.get(timeout=timeout)
-        except Empty:
-            if self.future is not None and self.future.done():
-                return None
-            raise
+        deadline = monotonic() + timeout
+        with self._events_ready:
+            while not self._events:
+                if self.future is not None and self.future.done():
+                    return None
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise Empty
+                self._events_ready.wait(remaining)
+            return self._events.popleft()
 
     def detach(self) -> None:
-        with self._lock:
+        with self._events_ready:
             self._attached = False
             self._drain()
 
     def _drain(self) -> None:
-        while True:
-            try:
-                self._events.get_nowait()
-            except Empty:
-                return
+        self._events.clear()
 
     def result(self) -> AgentMessageSendState:
         assert self.future is not None
