@@ -82,6 +82,14 @@ describe("Series background editing", () => {
     expect(mocks.updateSeries).not.toHaveBeenCalled();
   });
 
+  it("labels stored character profiles as read-only legacy data", () => {
+    render(<SeriesBackgroundEditor series={{ ...series, characterBible: [{ name: "高松灯", aliases: ["灯"] }] }} />);
+    expect(screen.getByText("旧版人物资料（只读）")).toBeInTheDocument();
+    expect(screen.getByText("人物设定请写入背景资料。")).toBeInTheDocument();
+    expect(screen.getByText("高松灯")).toBeInTheDocument();
+    expect(screen.getByText("灯")).toBeInTheDocument();
+  });
+
   it("does not interpret JSON text as Markdown and preserves its managed image previews", () => {
     const content = '{"人物":"## 高松灯","参考图":"asset://simg_tomori"}';
     const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { format: "json", content } }} />);
