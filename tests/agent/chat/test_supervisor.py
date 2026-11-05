@@ -1011,6 +1011,25 @@ def test_supervisor_streams_text_and_video_at_their_actual_submission_positions(
     assert "在需要插入视频卡的位置调用 submit_video_item" in model.prompts[0]
 
 
+def test_supervisor_prompt_names_current_video_and_series_without_internal_ids():
+    inputs = _inputs(series_ids=["series"])
+    inputs["current_video"] = {
+        "series": "Course", "seriesDisplayName": "机器学习", "episode": 3,
+        "title": "梯度下降", "positionSeconds": 100,
+    }
+    model = FakeSupervisorModel()
+    _runtime(model).kick(inputs, load_video_context=lambda: [])
+
+    context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
+    assert context["current_video"] == inputs["current_video"]
+    assert "当前打开的视频：机器学习 第 3 集《梯度下降》" in context["video_scope_description"]
+    prompt = model.prompts[0]
+    assert "指代解析" in prompt
+    assert "「这个视频/这一集/刚才/现在」指当前打开的视频" in prompt
+    assert "「系列显示名 第 N 集《标题》」" in prompt
+    assert "不得写出任何内部 id" in prompt
+
+
 def test_supervisor_live_card_revisions_and_removals_keep_the_text_positions():
     model = FakeSupervisorModel(
         calls=("query_video", "submit_video_item", "submit_video_item",

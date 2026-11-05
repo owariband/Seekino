@@ -365,6 +365,7 @@ def _build_application_services(
             retrieval.search,
             event_retrieve=event_retrieval.search if event_retrieval is not None else None,
             video_outline=library.get_video_outline,
+            outline_evidence=parse_persistence.get_chunk_evidence,
             frame_reader=VideoFrameReader(parse_persistence, artifact_store),
             frame_max_height=agent_config.frame_max_height,
             maximum_frame_inspections=agent_config.maximum_frame_inspections,

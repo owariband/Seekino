@@ -4,6 +4,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from engine.rag.contracts import (
+    SelectionReason,
+    VideoChunkCandidate,
     VideoChunkEvidence,
     VideoChunkSearchHit,
 )
@@ -306,6 +308,20 @@ def retrieval_evidence_text(hit: VideoChunkSearchHit) -> str:
         for name in ("evidence.events", "evidence.transcript", "evidence.text",
                      "evidence.series_context", "evidence.metadata")
     )
+
+
+def retrieval_evidence_text_from_evidence(evidence: VideoChunkEvidence) -> str:
+    """Render source evidence for an outline chunk, which has no retrieval ranking."""
+    hit = VideoChunkSearchHit(
+        candidate=VideoChunkCandidate(
+            video_chunk_id=evidence.video_chunk_id, fused_rank=1, fused_score=1.0,
+        ),
+        selection_reason=SelectionReason(
+            summary="章节大纲覆盖的 Chunk。", matched_evidence=[], limitations=[],
+        ),
+        evidence=evidence,
+    )
+    return retrieval_evidence_text(hit)
 
 
 def build_retrieval_checkpoint(calls: list[RetrievalCall], frame_receipts: list[dict]) -> dict:

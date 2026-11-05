@@ -516,6 +516,19 @@ class LibraryRepository:
             .where(display_latest.c.position == 1)
         ).all())
 
+        # One batched query answers "does this video have a chapter outline yet".
+        # Like display, presence is enough for the Supervisor's navigation hint.
+        outline_video_ids = set(session.execute(
+            select(VideoParseTask.video_id)
+            .join(VideoParseContent, VideoParseContent.video_task_id == VideoParseTask.id)
+            .where(
+                VideoParseTask.video_id.in_([row[0].id for row in rows]),
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.outline.isnot(None),
+            )
+            .distinct()
+        ).scalars())
+
         states: list[VideoSummaryState] = []
         for video, _task_id, task_status, last_error in rows:
             display = displays.get(video.id) or {}
@@ -545,6 +558,7 @@ class LibraryRepository:
                 display_name=display.get("title"),
                 description=display.get("description"),
                 cover_uri=display.get("cover_uri"),
+                has_outline=video.id in outline_video_ids,
             ))
         return states
 
@@ -552,28 +566,82 @@ class LibraryRepository:
         self,
         session: Session,
         *,
-        video_id: str,
+        videos: list[dict],
         tenant_id: str,
         series_ids: list[str],
-    ) -> dict | None:
-        """Latest non-empty outline, its display title/description, and the video's chunks.
+    ) -> dict:
+        """Resolve (series name, episode) addresses inside the authorized scope and read outlines.
 
-        Returns None when the video is outside the authorized scope. A video inside
-        the scope but without an outline returns {"available": False, "reason": ...}.
+        Returns ``{"videos": [...]}`` with one entry per request, or
+        ``{"error": {"code", "message", "hint"}}`` when an address cannot be resolved.
+        Addressing stays (series name, episode); ``video_id`` is never returned.
         """
-        video = session.scalar(
-            select(Video)
-            .join(Series, Series.id == Video.series_id)
-            .where(Video.id == video_id, Series.tenant_id == tenant_id)
+        authorized = sorted(
+            session.scalars(
+                select(Series).where(
+                    Series.id.in_(series_ids), Series.tenant_id == tenant_id,
+                )
+            ),
+            key=lambda item: (item.name, item.id),
         )
-        if video is None or video.series_id not in series_ids:
-            return None
+        series_by_id = {item.id: item for item in authorized}
+        series_by_name = {item.name: item for item in authorized}
+        series_names = [item.name for item in authorized]
 
+        resolved: list[tuple[Series, Video, int]] = []
+        for request in videos:
+            series_name = request.get("series")
+            episode = request.get("episode")
+            if series_name is None:
+                if len(series_by_id) != 1:
+                    return _outline_resolution_error(
+                        "AMBIGUOUS_SERIES",
+                        "Multiple series are in scope; name one explicitly.",
+                        "Valid series: " + "、".join(series_names),
+                    )
+                series = next(iter(series_by_id.values()))
+            else:
+                series = series_by_name.get(series_name)
+                if series is None:
+                    return _outline_resolution_error(
+                        "UNKNOWN_SERIES",
+                        f"Series {series_name!r} is not in the conversation's scope.",
+                        "Valid series: " + "、".join(series_names),
+                    )
+            if type(episode) is not int or isinstance(episode, bool) or episode <= 0:
+                return _outline_resolution_error(
+                    "UNKNOWN_EPISODE",
+                    f"Series {series.name!r} has no episode {episode!r}.",
+                    _outline_episode_hint(session, series),
+                )
+            video = session.scalar(
+                select(Video).where(
+                    Video.series_id == series.id, Video.episode_order == episode,
+                )
+            )
+            if video is None:
+                return _outline_resolution_error(
+                    "UNKNOWN_EPISODE",
+                    f"Series {series.name!r} has no episode {episode}.",
+                    _outline_episode_hint(session, series),
+                )
+            resolved.append((series, video, episode))
+        return {"videos": [
+            self._video_outline_result(session, series, video, episode)
+            for series, video, episode in resolved
+        ]}
+
+    @staticmethod
+    def _video_outline_result(
+        session: Session, series: Series, video: Video, episode: int,
+    ) -> dict:
+        """Latest non-empty outline, its display title/description, and the video's chunks."""
+        base = {"series": series.name, "episode": episode}
         outline = session.execute(
             select(VideoParseContent.outline)
             .join(VideoParseTask, VideoParseTask.id == VideoParseContent.video_task_id)
             .where(
-                VideoParseTask.video_id == video_id,
+                VideoParseTask.video_id == video.id,
                 VideoParseTask.is_deleted.is_(False),
                 VideoParseContent.outline.isnot(None),
             )
@@ -581,13 +649,13 @@ class LibraryRepository:
             .limit(1)
         ).scalar()
         if outline is None:
-            return {"available": False, "reason": "该视频尚未生成章节大纲。"}
+            return {**base, "available": False, "reason": "该视频尚未生成章节大纲。"}
 
         display = session.execute(
             select(VideoParseContent.display)
             .join(VideoParseTask, VideoParseTask.id == VideoParseContent.video_task_id)
             .where(
-                VideoParseTask.video_id == video_id,
+                VideoParseTask.video_id == video.id,
                 VideoParseTask.is_deleted.is_(False),
                 VideoParseContent.display.isnot(None),
             )
@@ -600,7 +668,7 @@ class LibraryRepository:
                 VideoChunk.start_ms.label("start_ms"),
                 VideoChunk.end_ms.label("end_ms"),
             )
-            .where(VideoChunk.video_id == video_id)
+            .where(VideoChunk.video_id == video.id)
             .order_by(VideoChunk.sequence_no)
         ).all()
 
@@ -622,7 +690,8 @@ class LibraryRepository:
                 ],
             })
         return {
-            "video_id": video_id,
+            **base,
+            "available": True,
             "title": display.get("title"),
             "description": display.get("description"),
             "sections": sections,
@@ -680,6 +749,7 @@ class LibraryRepository:
         display_name: str | None = None,
         description: str | None = None,
         cover_uri: str | None = None,
+        has_outline: bool = False,
     ) -> VideoSummaryState:
         return VideoSummaryState(
             video_id=record.id,
@@ -703,6 +773,7 @@ class LibraryRepository:
             display_name=display_name,
             description=description,
             cover_uri=cover_uri,
+            has_outline=has_outline,
         )
 
 
@@ -734,3 +805,18 @@ def _v2_error_message(value: object) -> str | None:
         message = value.get("message")
         return message if isinstance(message, str) and message else None
     return None
+
+
+def _outline_resolution_error(code: str, message: str, hint: str) -> dict:
+    return {"error": {"code": code, "message": message, "hint": hint}}
+
+
+def _outline_episode_hint(session: Session, series: Series) -> str:
+    orders = sorted(session.scalars(
+        select(Video.episode_order).where(Video.series_id == series.id)
+    ))
+    if not orders:
+        return f"Series {series.name!r} has no videos yet."
+    if len(orders) == 1:
+        return f"Valid episode: {orders[0]}"
+    return "Valid episodes: " + "、".join(str(order) for order in orders)
