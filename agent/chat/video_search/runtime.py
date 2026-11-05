@@ -58,6 +58,7 @@ class AgentRuntime:
         maximum_frame_inspections: int | None = None,
         event_retrieve: Callable[..., EventSearchResult] | None = None,
         video_outline: Callable[..., dict | None] | None = None,
+        series_overview: Callable[..., dict | None] | None = None,
         outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
     ) -> None:
         for name, value, maximum in (
@@ -89,6 +90,7 @@ class AgentRuntime:
         self._retrieve = retrieve
         self._event_retrieve = event_retrieve
         self._video_outline = video_outline
+        self._series_overview = series_overview
         self._outline_evidence = outline_evidence
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
@@ -144,7 +146,8 @@ class AgentRuntime:
     ) -> list[AgentTool]:
         return build_retrieval_tools(
             self._retrieve, role="supervisor", event_retrieve=self._event_retrieve,
-            video_outline=self._video_outline, outline_evidence=self._outline_evidence,
+            video_outline=self._video_outline, series_overview=self._series_overview,
+            outline_evidence=self._outline_evidence,
             inputs=inputs, control=control, calls=calls,
             maximum_tool_calls=maximum_tool_calls,
             maximum_result_bytes=min(self._max_tool_result_bytes, maximum_result_bytes)

@@ -291,3 +291,22 @@ class LibraryService:
                 session, videos=list(videos), tenant_id=normalized_workspace,
                 series_ids=list(series_ids),
             )
+
+    def get_series_overview(
+        self,
+        series_name: str | None,
+        *,
+        tenant_id: str,
+        series_ids: list[str],
+    ) -> dict:
+        """Read a per-video overview for one or all authorized in-scope series.
+
+        Returns the repository's ``{"series": [...]}`` or ``{"error": {...}}`` result;
+        the Supervisor tool maps the error into AgentToolFeedbackError.
+        """
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
+        with self._repository.transaction() as session:
+            return self._repository.series_overview(
+                session, series_name=series_name, tenant_id=normalized_workspace,
+                series_ids=list(series_ids),
+            )
