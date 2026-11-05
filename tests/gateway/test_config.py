@@ -174,7 +174,7 @@ def test_default_config_uses_canonical_agent_sources() -> None:
 def test_repository_defaults_require_only_api_credentials() -> None:
     config = load_config(Path(__file__).resolve().parents[2] / "config.yaml")
     assert config.supervisor_harness == "deepagents"
-    assert not config.query_hook.enabled
+    assert config.query_hook.enabled
     assert required_api_key_env_names(config) == ("ARK_API_KEY", "DEEPSEEK_API_KEY")
     for binding in config.normalized_models.values():
         assert isinstance(config.source(binding.source), (OpenAIModelSourceConfig, ArkModelSourceConfig))

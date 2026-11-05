@@ -4,7 +4,7 @@
 config_version: 2
 supervisor_harness: deepagents
 query_hook:
-  enabled: false
+  enabled: true
   router_endpoint: https://openrouter.ai/api/alpha/decisions
   router_model: typesafe/jev-1.14
   router_api_key_env: OPENROUTER_JEV_API_KEY

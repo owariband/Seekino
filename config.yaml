@@ -8,7 +8,7 @@ supervisor_harness: deepagents
 # Once per Chat turn: Jev chooses the template; text Qwen fills only retrieval_query.
 # The 8B endpoint is a separate llama-server, started with enable_thinking=false.
 query_hook:
-  enabled: false
+  enabled: true
   router_endpoint: https://openrouter.ai/api/alpha/decisions
   router_model: typesafe/jev-1.14
   router_api_key_env: OPENROUTER_JEV_API_KEY

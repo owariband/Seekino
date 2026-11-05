@@ -3,7 +3,8 @@ config_version: 2
 supervisor_harness: deepagents
 
 query_hook:
-  enabled: false
+  enabled: true
+  router_api_key_env: OPENROUTER_JEV_API_KEY
 
 tracing:
   enabled: false
