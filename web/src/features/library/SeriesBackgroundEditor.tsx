@@ -237,7 +237,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
               >{document.content}</Markdown>
             </div>
           ) : <pre className={styles.backgroundText}>{document.content || t("暂无背景资料")}</pre>}
-          {series.characterBible.length > 0 ? <details className={styles.characters}><summary>{t("人物资料 · {count}", { count: series.characterBible.length })}</summary><ul>{series.characterBible.map((character, index) => <li key={`${character.name}-${index}`}><strong>{character.name}</strong>{character.aliases.length ? <span>{character.aliases.join("、")}</span> : null}</li>)}</ul></details> : null}
+          {series.characterBible.length > 0 ? <details className={styles.characters}><summary>{t("旧版人物资料（只读）")}</summary><p className={styles.backgroundHint}>{t("人物设定请写入背景资料。")}</p><ul>{series.characterBible.map((character, index) => <li key={`${character.name}-${index}`}><strong>{character.name}</strong>{character.aliases.length ? <span>{character.aliases.join("、")}</span> : null}</li>)}</ul></details> : null}
         </>
       )}
       {(editing || document.format === "json") && imageIds.length ? <div className={styles.backgroundImages} aria-label={t("背景参考图")}>{imageIds.map((imageId) => (

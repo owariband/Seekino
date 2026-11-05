@@ -1104,7 +1104,7 @@ def test_series_context_videos_and_current_video_use_series_episode_addressing(b
                 "parseStatus": "PENDING", "hasOutline": False,
             } in videos
             assert all("videoId" not in video for video in videos)
-            assert context["series_context"][0]["displayName"] is None
+            assert context["series_context"][0]["displayName"] == "Test Series"
             assert "当前打开的视频：Test Series 第 1 集《lecture.mp4》" in context["video_scope_description"]
             handle_text("当前视频答疑。")
 
@@ -2206,6 +2206,24 @@ def test_query_agent_receives_series_transcript_language_hint(build_service):
     context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
     assert context["series_context"][0]["transcriptLanguageHint"] == "ja"
     assert "Lexical 通道不会翻译 Query" in query.prompts[-1]
+
+
+@pytest.mark.parametrize("display_name,expected", [
+    (None, "Test Series"),
+    ("乐队资料", "乐队资料"),
+])
+def test_series_context_reports_display_name_without_changing_the_name_key(
+    build_service, display_name, expected,
+):
+    service, conversation, _retrieval, repository, query, *_ = build_service()
+    with repository._session_factory.begin() as session:
+        session.scalar(select(Series)).display_name = display_name
+
+    _send(service, conversation)
+
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+    assert context["series_context"][0]["name"] == "Test Series"
+    assert context["series_context"][0]["displayName"] == expected
 
 
 def test_read_only_message_recovery_by_user_assistant_or_request_key(build_service):

@@ -980,16 +980,42 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
         assert upload.version == 1
 
 
-def test_create_preserves_legacy_freeform_background_and_validates_managed_refs(repository):
+def test_create_normalizes_background_and_rejects_legacy_shapes(repository):
     _factory, _videos, library = _library(repository)
-    legacy = {"seriesBible": "旧Markdown", "arbitrary": {"custom": [1, "freeform"]}}
-    series = library.create_series(tenant_id="local-default", name="Legacy", important_extra_data=legacy)
-    assert series.important_extra_data == legacy
+    created = library.create_series(
+        tenant_id="local-default", name="Managed background",
+        important_extra_data={"content": "# 背景"},
+    )
+    assert created.important_extra_data == {"format": "markdown", "content": "# 背景"}
+    with pytest.raises(ValueError, match="must contain format and content"):
+        library.create_series(
+            tenant_id="local-default", name="Legacy",
+            important_extra_data={"seriesBible": "旧Markdown", "arbitrary": {"custom": [1, "freeform"]}},
+        )
+    with pytest.raises(ValueError, match="not valid JSON"):
+        library.create_series(
+            tenant_id="local-default", name="Invalid JSON",
+            important_extra_data={"format": "json", "content": "{bad"},
+        )
     with pytest.raises(ValueError, match="storage is unavailable"):
         library.create_series(
             tenant_id="local-default", name="Invalid image",
-            important_extra_data={"arbitrary": {"image": "asset://missing"}},
+            important_extra_data={"format": "markdown", "content": "![missing](asset://missing)"},
         )
+    assert library.count_series(tenant_id="local-default") == 1
+
+
+def test_create_rejects_non_empty_character_bible(repository):
+    _factory, _videos, library = _library(repository)
+    with pytest.raises(ValueError, match="important_extra_data"):
+        library.create_series(
+            tenant_id="local-default", name="Legacy characters",
+            character_bible=[{"name": "Anon"}],
+        )
+    accepted = library.create_series(
+        tenant_id="local-default", name="Empty characters", character_bible=[],
+    )
+    assert accepted.character_bible == []
     assert library.count_series(tenant_id="local-default") == 1
 
 
