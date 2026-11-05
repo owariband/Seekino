@@ -5,7 +5,7 @@
 | Requirement | Seekino as asset library + MCP server for an AI video-editing skill: what a **style reference** must contain for an editing agent to learn from it, and which **content-asset** fields the parse is missing |
 | Type | Research + bounded prototype experiment. No production code in this PR |
 | Opened | 2026-11-05 (Asia/Shanghai) |
-| Branch / PR | `docs/editing-skill-style-reference` / PR link to be filled after creation |
+| Branch / PR | `docs/editing-skill-style-reference` / [PR #50](https://github.com/owariband/Seekino/pull/50) |
 | Status | **Draft.** §1 and the experiment plan (§2–§4) are written; nothing has been built or run except the one baseline measurement in §1.4. Scope needs owner confirmation before any tool is built |
 | Related | [MCP access TRD](mcp-access-trd.md) (tool contract this builds on), [shot composition schema draft](../02-agent-harness/shot-composition-schema.md) (2026-10-19, archived experiment), [reference-driven SVG/Three.js research](../../research/2026-10-29-reference-driven-svg-threejs.md), project skill [seekino-short-video](../../../.agents/skills/seekino-short-video/SKILL.md) |
 
