@@ -2173,7 +2173,8 @@ def test_realtime_prompt_section_contains_delivery_length_and_no_internal_terms_
 
     prompt = model.prompt
     # Realtime evidence is delivered as time-code links, never via submit_video_item.
-    assert "当前视频的证据一律以正文中的 Markdown 时间码链接交付" in prompt
+    assert "当前视频的证据一律以正文中的纯文本时间码交付" in prompt
+    assert "不要写成 Markdown 链接或网址" in prompt
     assert "submit_video_item 只接受本轮检索工具返回的 video_chunk_id" in prompt
     # Failed card submission must not be described as "no playable clip".
     assert "不要对用户说没有可播放片段" in prompt
