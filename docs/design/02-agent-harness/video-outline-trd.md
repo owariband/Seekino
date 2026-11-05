@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**视频大纲 TRD。状态：初稿（2026-11-04）。** 分支 `feat/video-outline`，PR [#41](https://github.com/owariband/Seekino/pull/41)。上游：[summarize-compact-input-trd.md](summarize-compact-input-trd.md)（PR [#39](https://github.com/owariband/Seekino/pull/39)，Summarize 能在长视频上完成）与 [video-display-source-trd.md](video-display-source-trd.md)（PR [#40](https://github.com/owariband/Seekino/pull/40)，成果列改名 `display`、按“最新非空成果”读取）。合并顺序：#39、#40 之后实施本需求。
+**视频大纲 TRD。状态：已实现，课程库副本实测达标；演示环境验收待做（2026-11-05）。** 分支 `feat/video-outline`，PR [#41](https://github.com/owariband/Seekino/pull/41)。上游：[summarize-compact-input-trd.md](summarize-compact-input-trd.md)（PR [#39](https://github.com/owariband/Seekino/pull/39)，Summarize 能在长视频上完成）与 [video-display-source-trd.md](video-display-source-trd.md)（PR [#40](https://github.com/owariband/Seekino/pull/40)，成果列改名 `display`、按“最新非空成果”读取）。合并顺序：#39、#40 之后实施本需求。
 
 ## 背景与触发场景
 
@@ -49,7 +49,9 @@
 
 **持久化：** `video_parse_content` 新增可空 JSON 列 `outline`，结构 `{"sections": [...]}`，与 `display` 在同一发布事务写入，`detail.outline` 记录来源指纹与租约版本。迁移沿用 #40 的迁移入口模式（`ADD COLUMN outline JSON NULL`，幂等）。读取规则与 #40 一致：取该 Video 最新且 `outline` 非空的成果，重新解析期间沿用上一版。
 
-**Chat 工具：** Supervisor 新增 `get_video_outline(video_id)`，宿主注入实现（与 `search_video_events` 相同，在 `agent/chat/video_search/tools/registry.py` 注册，Server 在可信授权范围内读取）。返回标题、简介和章节；每节附带覆盖该时间范围的 `video_chunk_id` 列表，便于随后用 `search_video_events(video_chunk_ids=…)` 或 `read_retrieval_evidence` 精读。视频没有大纲时返回明确的“不可用”结果，Supervisor 回到现有检索策略。
+**Chat 工具：** Supervisor 新增 `get_video_outline(videos=[{series, episode}, …])`，一次最多 5 集，宿主注入实现（在 `agent/chat/video_search/tools/registry.py` 注册，Server 在可信授权范围内按“系列名 + 集数”解析到视频，`series` 在范围只有一个系列时可省略）。Agent 不读写、不输出内部 `video_id`：`series_context[].videos` 只列集数、标题、解析状态与 `hasOutline`；系列名或集数无法解析时返回 `UNKNOWN_SERIES` / `AMBIGUOUS_SERIES` / `UNKNOWN_EPISODE` 反馈并列出有效取值。返回每集的标题、简介和章节；每节附带覆盖该时间范围的 `video_chunk_id`。章节 Chunk 可由 `read_retrieval_evidence` 读取源证据核对内容，但只有 `search_video_events(video_chunk_ids=…)` 等检索命中才可提交为视频片段。视频没有大纲时该集返回 `available=false`，Supervisor 回到现有检索策略。
+
+**当前视频与指代：** Server 用已校验的播放上下文生成 `current_video = {series, seriesDisplayName, episode, title, positionSeconds}`（仅在实时理解启用时；未打开视频为空）。Prompt 写明“当前打开的视频”或“当前没有打开的视频”，并规定：「这个视频/这一集/刚才/现在」指 `current_video`；「这个系列/这门课」指当前视频所属系列或范围内唯一系列；没有打开视频且范围内多于一集时先确认是哪一集；多个系列时分别回答或先确认，不混为一谈。
 
 **Prompt 路由：** 在 `agent/chat/supervisor.py` 的检索策略中增加一条：用户询问视频整体内容、结构、章节或概要时，先调用 `get_video_outline`，据此组织回答；需要具体事实或片段时再按章节的 Chunk 精读。现有“具体台词、事件优先 `search_video_events`”规则不变。
 
@@ -75,6 +77,9 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- |
 | 整体性问题耗时 | 5:13；同时段复测 365.5 秒 | 33.0 / 30.3 秒 | 约 −92%（对 5:13）/ −91%（对复测） | ≤ 60 秒 | 达标（两次） |
 | 模型 / 工具调用数 | 31 / 40；复测 66 / 153 | 9 / 7；8 / 8 | 模型调用约 −75%～−88% | 记录 | 两次均先因猜测 `video_id` 得到 `OUT_OF_SCOPE_VIDEO`，再 `retrieve` 找到视频后读大纲；大纲章节的 `video_chunk_id` 直接用于 `read_retrieval_evidence` / `submit_video_item` 时返回 `UNKNOWN_ITEM`（各 1 次） |
+| 整体性问题耗时（修复后，同时段 A/B） | 旧构建 `9ea22f39`：44.2 / 71.7 / 49.5 秒，中位 49.5 | 新构建（#41 修复 + #44 + #33 本地合并 `fefeb66c`）：61.2 / 8.6 / 44.1 秒，中位 44.1 | 中位 −5.4 秒 | ≤ 60 秒 | 中位达标；单次最长 61.2 秒，供应商时段波动大（旧构建前一日 30–33 秒，当日 44–72 秒） |
+| 模型 / 工具调用数（修复后） | 8–11 / 8–12，每次都先 `retrieve` | 2–7 / 1–5，无 `retrieve` | 模型调用约 −40% | 无 `OUT_OF_SCOPE_VIDEO`、无 `UNKNOWN_ITEM` | 达标（修复后 9 个回合 api.log 均无两类错误；`outputs/verification/video-outline-20261104/chat-runs/ab-*.json`、`fix41-*.json`） |
+| 具体问题路由（护栏） | 首个视频工具 `search_video_events` | 3 次中首个视频工具均为 `search_video_events` | — | 保持 | 达标；其中 2 次之后又读大纲并查看画面，耗时 120.4 / 124.7 秒，另 1 次 51.4 秒 |
 | 大纲合理性 | — | 待测 | — | 通过 | 未验证 |
 | Summarize 额外调用 | #39 实测 | 待测 | — | 0 | 未验证 |
 
@@ -84,7 +89,11 @@ flowchart LR
 
 # 6. 结果验收与闭环
 
-待实验完成后填写：对照第 2 节指标，更新 [video-summarize-trd.md](video-summarize-trd.md) 的提交结构，在 devlog 记录 Chat 整体性问题的前后对比。
+**原问题验收：** 整体性问题在课程库副本上从 5:13（同时段复测 6:06）降到中位 44 秒（2026-11-05 同时段 A/B，3 次）；两处合并前缺陷已消除。大纲内容质量与演示环境（19641 切换到 `dev` 后）实测待做。
+
+**最终决定：** 采用并合并。系列级问题由 [series-overview-trd.md](series-overview-trd.md)（PR #44）在本需求的寻址之上实现。
+
+**剩余事项：** 演示环境验收；大纲人工抽查；更新 [video-summarize-trd.md](video-summarize-trd.md) 的提交结构与 devlog；长回答流式中断另见 PR #45；`current_video` 依赖实时理解开关，关闭时 Agent 不知道当前视频，待评估。
 
 ## 调整记录
 
@@ -93,3 +102,4 @@ flowchart LR
 | 2026-11-04 | 大纲随 Summarize 同一调用产出，不增加失败面 | 克隆库实测（`outputs/verification/video-outline-20261104/`）：micrograd 首次排队后成功，13 节大纲覆盖全片；GPT 四次租约失败。失败调用均为 DeepSeek 接受请求后 18 秒内未返回任何字节即断开（`RemoteProtocolError`，共 6 次；正常调用首个 SSE < 1.8 秒），PR #38 的连接重试不覆盖此情形。另外 GPT 某次租约跑了 49 轮，`UNSUPPORTED_EVIDENCE` 拒绝合计 326 次 | Chat 耗时实验暂停；先另立修复“已连接但无任何响应”的重试，再排查证据引用反复被拒的原因 | 第 4 节实验未完成，指标仍为待测 |
 | 2026-11-05 | `reasoning_effort: none` 足以完成 Summarize | 同一克隆库、同一代码（#41 + #42 本地合并 `9ea22f39`）、同一 GPT 视频：`none` 五次租约全部失败（18–49 轮，`UNSUPPORTED_EVIDENCE` 合计 326 次，另有 6 次无响应断开），且 trace 中没有任何推理输出；`high` 首个租约即完成，8 次调用、94 秒、0 次证据拒绝、0 次断开，产出 14 节大纲（0–116 分钟连续覆盖）与生成标题“从零构建字符级 GPT” | Summarize 改用 `high` 作为候选默认，需先合并 #42（思考模式下 `tool_choice` 降为 `auto`）；一次运行的样本有限，Chat 耗时实验将在 `high` 下继续 | 逐次 token 用量未记录在日志中，费用对比未测 |
 | 2026-11-05 | 大纲工具按 `video_id` 读取、章节 Chunk 可直接精读 | 克隆库两次真实对话（见上）：耗时达标，但无播放上下文时 Supervisor 不知道 `video_id`，首次调用必然越界；章节 `video_chunk_id` 未登记为检索条目，不能引用 | 合并前修复两点：让大纲工具在授权范围内可定位视频（无需先检索），并让章节 Chunk 可被精读与引用，或改写 Prompt 不再暗示可直接精读 | 每次约多 2 次模型调用；回答本身不受影响 |
+| 2026-11-05 | 修复两处缺陷：工具按 `video_id` 读取 | 用户决定 Agent 不接触内部 id，跨系列按“系列名 + 集数”寻址 | 工具参数改为 `videos=[{series, episode}]`（≤5），`series_context` 去掉文件名与 id，新增 `current_video` 与指代规则；章节 Chunk 可读不可直接提交 | 第 4 节补同时段 A/B；具体问题仍有 2/3 次额外读大纲、看画面，耗时偏长，未在本需求处理 |
