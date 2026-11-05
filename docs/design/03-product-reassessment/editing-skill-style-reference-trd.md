@@ -61,6 +61,47 @@ Two kinds of asset are involved:
 
 **Implication for rhythm.** Feeding the naive numbers to an editing agent tells it to "cut every 0.1 s". That would be a wrong lesson drawn from correct-looking data. The rhythm layer must separate cuts from flashes and transitions before any number is trusted.
 
+## 1.6 How `motion-showreel` references a target video (studied 2026-11-05)
+
+The owner's framing: learn how the skill makes the AI "reference a target video", identify what that reading produces and reuses for the edit, then add that capability to Seekino so it can support editing effect-heavy videos.
+
+**The process, as written in the skill** (SKILL.md step 1–2, `brief-template.md`, `inspect.mjs`, `lib/frames.mjs`, `audio.mjs`):
+
+| Step | Tool | What the model gets | Where it ends up |
+| --- | --- | --- | --- |
+| 1. See the whole | `inspect.mjs sheet --cells 30` | One contact-sheet PNG with burned-in timestamps | Looked at, not persisted |
+| 2. Find cuts + tempo | `inspect.mjs grid --strips` | Start times (mean gray-diff jump > 2.5× local median, 0.2 s debounce), the largest frame step that holds ≥ 80 % of starts → BPM candidates, **segment lengths in grid steps**, and a 15-frame strip PNG per start "to read the transition mechanism" | Numbers go into `brief.md` `benchmark:`; strips are looked at and discarded |
+| 3. Where things move | `inspect.mjs heat` | One cell per segment: last frame in gray, moved pixels in red | `benchmark:` "motion area per segment" |
+| 4. Music | `audio.mjs beats` | BPM, beats, downbeats, hits, drops, breaks (`beats.json`) | `timeline.js` BPM / beat grid |
+| 5. Write the rules | Model, using `styles/_template.md` | — | Adapted or custom **style card** in `brief.md` `style:`; 2–3 `signals`; which cliché items were flipped; `forbidden:` list |
+| 6. Plan on the grid | Model | — | Storyboard table keyed by `小节.拍` (bar.beat) |
+
+**What is reused for the edit afterwards:**
+
+- `brief.md` — the template calls it "a complete structured prompt when reused later with another subject or tool". It carries `benchmark` (learn / don't learn + measured numbers), the style card, signals and forbidden list.
+- `timeline.js` — the one clock both picture and sound import. It holds `BPM`, `SHOTS`, `CUES`, `HOLDS`, `DROPS`, and `revealOn(hit, dur, reveal)`, which back-computes a transition's start so the new picture appears on the hit. The QA tools read the same file.
+- The segment-length sequence — `craft.md` uses it directly ("shrink steps per segment, 6 → 4 → 4 → 3 → 2 → 1 → 1, to accelerate at constant BPM").
+- What is **not** kept: exemplar moments. The model sees the strips once, and no record links "this technique" to "this exact range of the reference". Nothing compares the finished render back to the reference's numbers either. QA checks the render's own technical health, and review is a human-style read.
+
+**What the skill's own tools report on the P5R opening** (run 2026-11-05, skill commit `2b9a8934`, outputs in session scratch):
+
+| Tool | Result |
+| --- | --- |
+| `grid` | **255 starts; "no regular grid … cut to phrases, or to the voice, not to a fixed beat"** |
+| `motion` | 234 "hard cuts"; **26 "rapid whole-frame change" bursts covering 40.1 s of 94.9 s (42 %)**, mostly one change every 0.08–0.11 s; 2 single-frame flashes; black frames at 22.73–22.87 s and 94.67–94.80 s |
+| `audio.mjs beats` | ≈ 123.89 BPM, 196 beats, first downbeat 1.753 s, 49 bars, 178 hits |
+| Alignment check (own script) | After removing starts inside bursts: 93 starts left. 35 % lie within ±2 frames of a beat, against 27 % for random times. Phase concentration R = 0.09 (0 = random, 1 = locked) |
+
+The skill's reference reading therefore fails on effect-heavy footage. The picture-side detector treats strobe and regeneration as edits, so it finds no grid, and the "segment lengths in steps" it would hand to `craft.md` do not exist. The audio side works. Cuts that line up with the beat cannot be told apart from noise with these detectors. Whether P5R's real cuts are beat-locked is **unknown** until E0 labels them. This is not evidence that they aren't.
+
+**What this means for Seekino.** The parts of the skill's reference reading that break on effect-heavy footage are exactly the parts Seekino can supply as an asset library:
+
+1. **Classification before numbers:** label each event cut / flash / strobe-burst / transition / regen, anchored to the audio beat grid. The rhythm track then holds the segment-length sequence that `grid` could not produce.
+2. **Persisted exemplar moments at exact ranges:** each strip the skill views and throws away becomes a searchable record with a range, a label and keyframes (layer c). This is Seekino's precise-range strength, applied to "how" instead of "what".
+3. **Output in the skill's own formats:** the style card in `_template.md` sections and the rhythm in `timeline.js` shape (`BPM`, `SHOTS`, `CUES`, `HOLDS`, `DROPS`). The editing agent then reuses them without translation.
+
+Rendering and reproducing a technique stay on the user's machine. The measurement is a 160-px grayscale decode plus an audio beat pass, which is light enough for the 4C8G server. That last point is an **expectation**, not yet measured there.
+
 ## 1.5 Scope
 
 **In scope (this TRD):**
@@ -255,3 +296,5 @@ Closing this TRD does **not** mean parse fields, MCP clip/frame tools or the cut
 | --- | --- | --- | --- | --- |
 | 2026-11-05 | Scene detection could feed the rhythm layer directly | Naive detection: 266 detections, median 0.10 s, 188/267 < 0.2 s | Rhythm numbers are gated behind E0 classification | E0 is now the first step |
 | 2026-11-05 | Matting, MyGO data source and judge were open | Owner answers | Minimal local matting on the fixed clip set; owner + VLM blind judging; reuse an existing MyGO parse | No MyGO parse found on 13361. E2/E3 are blocked until the owner names the parse location (possibly native `data/mysql/seekino_development`, which is not running). E0/E1 need only the P5R file and can proceed |
+| 2026-11-05 | The skill's `grid`/`heat` output could seed the rhythm layer | On P5R, `grid` finds 255 starts and no grid; 42 % of the video is strobe bursts; cleaned cuts show no beat phase-locking (R = 0.09) while audio beats are clean (≈ 123.9 BPM) | Rhythm extraction for effect-heavy references is a Seekino capability to build, gated by E0 hand labels; reuse the skill's output formats (`_template.md`, `timeline.js`) rather than inventing new ones | E0 becomes the first build step; §1.6 records the study |
+| 2026-11-05 | MyGO parse location to be named by the owner | Owner: upload and parse any episode, e.g. ep04, without asking | Parse ep04 on a new isolated DB / ES indices / port 19671; v11 and 19641 untouched | Unblocks E2/E3 once the parse finishes |
