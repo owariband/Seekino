@@ -40,6 +40,7 @@ hypnos 于 **2026-04-27 入职实习**，这一阶段覆盖实习约四个半月
 | [video-outline-trd.md](video-outline-trd.md) | 2026-11-04 | 已解析视频的整体性问题耗时 5 分 13 秒，Chat 没有视频级概览；Summarize 产出章节大纲，Chat 先读大纲再精读 | 初稿；依赖 #39、#40，实验待测 |
 | [query-rewriter-model-trd.md](query-rewriter-model-trd.md) | 2026-11-05 | Query Hook 改写器写死本机 Qwen3-8B，算力不足导致改写永远回退；改为模型配置绑定（deepseek-flash）并独立开关 | 初稿；实验待测 |
 | [deepseek-thinking-tool-choice-trd.md](deepseek-thinking-tool-choice-trd.md) | 2026-11-04 | 多模态工具循环在 DeepSeek 思考模式下发送 `tool_choice: required` 被 400 拒绝；与 Chat 路径一致降为 `auto` 并保留必须调用工具的校验 | 初稿 |
+| [outline-first-delegation-trd.md](outline-first-delegation-trd.md) | 2026-11-05 | 有大纲时 Supervisor 仍按“复杂问题”委派 query_video，子任务撞 180 秒超时，路线问题耗时 5–7 分钟；有大纲时先用大纲与 Event 检索直接核验 | 初稿；实验待测 |
 | [video-display-source-trd.md](video-display-source-trd.md) | 2026-11-04 | 展示元数据在 `video` 表与无人读取的成果列 `summary` 各存一份；成果列改名 `display` 并作为唯一展示读源 | 初稿，迁移与验收待测；修订 [20261031 成果表迁移](../../migrations/20261031_video_parse_content.md) 的展示值去向 |
 | [summarize-compact-input-trd.md](summarize-compact-input-trd.md) | 2026-11-04 | 长视频 Summarize 因逐页读完全部 Chunk 正文而超时；改为宿主构造事件描述与屏幕文字摘要直接放入 Prompt | 初稿，实验待测；修订 [video-summarize-trd.md](video-summarize-trd.md) 的完整阅读合同 |
 | [summarize-timeout-trd.md](summarize-timeout-trd.md) | 2026-11-04 | 工具循环一次连接失败即丢弃整次执行；对连接未建立的请求做有限重试 | 实现完成，单测通过；真实触发次数待统计 |
