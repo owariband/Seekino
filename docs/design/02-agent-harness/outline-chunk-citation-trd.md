@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**大纲 Chunk 引用 TRD。状态：初稿（2026-11-05）。** 分支 `fix/outline-chunk-citation`，PR 待创建。上游：[video-outline-trd.md](video-outline-trd.md)（PR #41，已合并）。2026-11-05 发布验收中发现。
+**大纲 Chunk 引用 TRD。状态：初稿（2026-11-05）。** 分支 `fix/outline-chunk-citation`，PR [#46](https://github.com/owariband/Seekino/pull/46)。上游：[video-outline-trd.md](video-outline-trd.md)（PR #41，已合并）。2026-11-05 发布验收中发现。
 
 ## 背景与触发场景
 
