@@ -1,20 +1,14 @@
-"""Provider transport for turn routing and retrieval-slot generation."""
+"""Provider transport for turn routing."""
 
 from __future__ import annotations
 
 import math
 import os
-from typing import TypeVar
 
 import httpx
-from pydantic import BaseModel
 
 from gateway.config import QueryHookConfig
-from gateway.local.llama_cpp import LlamaCppModelError, LlamaCppMultimodalModel
-from gateway.multimodal import TextInput
 from gateway.usage import track_model_call
-
-_Result = TypeVar("_Result", bound=BaseModel)
 
 
 class QueryHookModelError(RuntimeError):
@@ -79,36 +73,3 @@ class QueryHookModels:
                 call.capture_response(result)
                 return choice
 
-    def rewrite(
-        self, prompt: str, result_type: type[_Result], *, timeout_seconds: float,
-    ) -> _Result:
-        timeout = _request_timeout(self._config.rewriter_timeout_seconds, timeout_seconds)
-
-        def check_response(response: httpx.Response) -> None:
-            # Reject upstream errors before the shared adapter includes their body.
-            if not response.is_success:
-                raise QueryHookModelError(f"Rewriter HTTP {response.status_code}")
-
-        with httpx.Client(
-            timeout=timeout, trust_env=False, transport=self._transport,
-            event_hooks={"response": [check_response]},
-        ) as client:
-            model = LlamaCppMultimodalModel(
-                self._config.rewriter_model, base_url=self._config.rewriter_base_url,
-                stream=self._config.rewriter_stream,
-                temperature=self._config.rewriter_temperature,
-                max_output_tokens=self._config.max_output_tokens,
-                request_timeout_seconds=timeout, expected_server_video_fps=0.5, client=client,
-            )
-            try:
-                return model.generate(
-                    [TextInput(prompt)], schema_name="retrieval_slot", result_type=result_type,
-                )
-            except LlamaCppModelError as error:
-                cause = error
-                while cause.__cause__ is not None:
-                    cause = cause.__cause__
-                    if isinstance(cause, QueryHookModelError):
-                        raise cause from None
-                kind = type(cause).__name__
-                raise QueryHookModelError(f"Rewriter failed ({kind})") from None

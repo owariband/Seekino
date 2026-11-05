@@ -5,12 +5,11 @@ config_version: 2
 supervisor_harness: deepagents
 query_hook:
   enabled: true
+  rewriter_enabled: true
   router_endpoint: https://openrouter.ai/api/alpha/decisions
   router_model: typesafe/jev-1.14
   router_api_key_env: OPENROUTER_JEV_API_KEY
   router_timeout_seconds: 3
-  rewriter_base_url: http://127.0.0.1:18841
-  rewriter_model: seekino-qwen3-text-8b-rewriter
   rewriter_timeout_seconds: 4
   max_output_tokens: 256
   history_message_limit: 6
@@ -151,6 +150,12 @@ models:
     auto_compact_tokens: 200000
     compact_target_tokens: 150000
     max_input_chars: 600000
+  query_rewriter:
+    source: deepseek_api
+    model: deepseek-flash
+    reasoning_effort: none
+    max_output_tokens: 256
+    stream: false
 agent_runtime:
   history_message_limit: 12
   default_top_k: 3

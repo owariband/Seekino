@@ -108,7 +108,7 @@ models:
 
 新 Parse 任务在配置快照中保存 `stream`，恢复时按快照创建模型。历史快照缺少字段时使用新的默认 `true`，序列化保持原有形状以保护幂等指纹；这意味着加载本次修复的服务后，未配置该字段的旧任务也会使用流式生成。显式 `false` 在普通续跑和 retry 中保留，切换已有任务配置仍按前述 reparse 约定执行。
 
-独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器使用 `query_hook.rewriter_stream`，默认 `true`。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
+独立音频转写、WhisperX、向量和声纹接口不会转发生成协议的 `stream` 参数。Codex / Claude 原生适配器沿用各自事件协议，绑定显式设置 `false` 会在配置校验时报不支持，避免假装可以关闭。直接创建的 Ollama / llama.cpp 生成适配器同样默认 `stream=True`，可在构造时关闭；独立 Query Hook 改写器现在使用 `models.query_rewriter` 绑定，`stream` 随绑定配置（仓库示例关闭为 `false`）。实现与验收见 [模型 stream TRD](design/03-product-reassessment/model-streaming-trd.md)。
 
 ## Kimi Chat 的 reasoning_effort
 
@@ -140,13 +140,13 @@ models:
 
 Parse 默认配置从已解析的模型绑定取得温度；配置 HTTP 接口接受 `vision.temperature`、`asr.temperature`、`fallback.temperature`，OCR 与直接 V2 任务模型也保留该字段。任务快照记录配置，恢复后继续传给 Gateway，Kimi 创建时仍强制 `1`。历史快照缺字段按 `0` 读取，序列化保持原有形状。新快照带有 `temperature`，回滚到旧代码前须检查任务格式兼容性。
 
-直接构造的 Ollama / llama.cpp 生成适配器支持 `temperature`，默认 `0`；独立 Query Hook 使用 `query_hook.rewriter_temperature`。Codex / Claude 原生协议不支持设置温度，非默认值会被明确拒绝，默认 `0` 仅是兼容占位，不会作为采样设置传给 CLI。独立音频 ASR、WhisperX、向量和声纹不会转发此生成参数。本次没有新增网页温度控件。
+直接构造的 Ollama / llama.cpp 生成适配器支持 `temperature`，默认 `0`；独立 Query Hook 改写器使用 `models.query_rewriter` 绑定的 `temperature`。Codex / Claude 原生协议不支持设置温度，非默认值会被明确拒绝，默认 `0` 仅是兼容占位，不会作为采样设置传给 CLI。独立音频 ASR、WhisperX、向量和声纹不会转发此生成参数。本次没有新增网页温度控件。
 
 ## Supervisor harness 与独立模型
 
 顶层 `supervisor_harness` 选择 `deepagents` 或 `codex`，与 `models.supervisor` 一起在 Server 启动时加载。修改 harness、模型或连接配置后重启 Server；`agent_runtime` 中已有的运行预算仍按原规则用于新消息。
 
-仓库默认配置选择 `deepagents`：Supervisor、视觉、转写和 embedding 使用 Ark API，检索 Agent 和重排使用 DeepSeek API。可选的 `kimi_coding` 和 `codex_local` 来源已经声明，未选中时无需准备对应凭据或登录；查询改写默认关闭，不依赖本机模型权重。
+仓库默认配置选择 `deepagents`：Supervisor、视觉、转写和 embedding 使用 Ark API，检索 Agent 和重排使用 DeepSeek API。可选的 `kimi_coding` 和 `codex_local` 来源已经声明，未选中时无需准备对应凭据或登录；查询改写使用 `models.query_rewriter`（默认 `deepseek-flash`），不依赖本机模型权重。
 
 Kimi 继续使用现有 OpenAI 兼容适配器和 `profile: kimi`。在同一份有效 YAML 中将 `models.supervisor.source` 改为 `kimi_coding`、`model` 改为 `k3.1-pro`，保持 `supervisor_harness: deepagents`，并设置 `KIMI_API_KEY`。其他生成式角色也可独立选择相同来源；选择 API 模型名不会自动替换转写或 embedding。
 

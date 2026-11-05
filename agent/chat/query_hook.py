@@ -60,10 +60,12 @@ class QueryHook:
     def __init__(
         self, config: QueryHookConfig, models: QueryHookModels, *,
         decision_model: GenerativeModel | None = None,
+        rewrite_model: GenerativeModel | None = None,
     ) -> None:
         self._config = config
         self._models = models
         self._decision_model = decision_model
+        self._rewrite_model = rewrite_model
         graph = StateGraph(_HookState)
         graph.add_node("append", self._append)
         if decision_model is not None:
@@ -199,21 +201,34 @@ class QueryHook:
         status = "fallback"
         error = "hook_deadline"
         remaining = self._remaining(state)
-        try:
-            if remaining > 0:
-                prompt = (
-                    f"{SLOT_PROMPT}\n已确定 action：{state['action']}\n\n"
-                    f"近期对话（仅供明确指代参考）：\n{context_json(state['recent_messages'])}\n\n"
-                    f"当前用户消息（仅提取其中的视频查找目标）：\n{state['query']}"
-                )
-                slot = self._models.rewrite(prompt, RetrievalSlot, timeout_seconds=remaining)
-                if self._remaining(state) > 0:
-                    query = slot.retrieval_query
-                    status = "completed"
-                    error = None
-        except QueryHookModelError as exc:
-            state["control"].check()
-            error = str(exc)
+        if self._rewrite_model is None or not self._config.rewriter_enabled:
+            status, error = "skipped", "disabled"
+        else:
+            try:
+                if remaining > 0:
+                    prompt = (
+                        f"{SLOT_PROMPT}\n已确定 action：{state['action']}\n\n"
+                        f"近期对话（仅供明确指代参考）：\n{context_json(state['recent_messages'])}\n\n"
+                        f"当前用户消息（仅提取其中的视频查找目标）：\n{state['query']}"
+                    )
+                    slot = self._rewrite_model.generate(
+                        [TextInput(prompt)], schema_name="retrieval_slot",
+                        result_type=RetrievalSlot, max_model_calls=1,
+                        request_timeout_seconds=min(
+                            remaining, self._config.rewriter_timeout_seconds,
+                        ),
+                        check_control=state["control"].check,
+                    )
+                    if self._remaining(state) > 0:
+                        query = slot.retrieval_query
+                        status = "completed"
+                        error = None
+            except ModelCallControlError:
+                raise
+            except Exception as exc:
+                # This optional rewrite may fail open; cancellation and admission may not.
+                state["control"].check()
+                error = type(exc).__name__
         _logger.log(
             logging.WARNING if status == "fallback" else logging.INFO,
             "event=query_hook_rewrite conversation_id=%s message_id=%s status=%s duration_ms=%.1f error=%s",
