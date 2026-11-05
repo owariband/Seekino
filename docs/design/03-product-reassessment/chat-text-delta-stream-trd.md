@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Chat 正文增量交付 TRD。状态：初稿，实验待测（2026-11-05）。** 分支 `perf/chat-text-delta-stream`，PR 待创建。关联：[chat-streaming-trd.md](chat-streaming-trd.md)（PR #25，流式交付合同，本需求替换其中“每个 delta 持久化完整快照”的做法）；[chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md)（PR #45，缓冲内合并快照，保留）。无代码依赖；与未合并的 #46、#48 同改 `agent/chat/supervisor.py` 的不同位置，建议在其后合并。2026-11-05 发布验收阻塞项：正文流速严重拖慢 Chat 体验。
+**Chat 正文增量交付 TRD。状态：初稿，实验待测（2026-11-05）。** 分支 `perf/chat-text-delta-stream`，PR [#49](https://github.com/owariband/Seekino/pull/49)。关联：[chat-streaming-trd.md](chat-streaming-trd.md)（PR #25，流式交付合同，本需求替换其中“每个 delta 持久化完整快照”的做法）；[chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md)（PR #45，缓冲内合并快照，保留）。无代码依赖；与未合并的 #46、#48 同改 `agent/chat/supervisor.py` 的不同位置，建议在其后合并。2026-11-05 发布验收阻塞项：正文流速严重拖慢 Chat 体验。
 
 ## 背景与触发场景
 

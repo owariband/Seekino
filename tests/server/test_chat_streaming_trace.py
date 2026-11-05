@@ -9,7 +9,7 @@ def evidence():
     source = {"callId": "call", "deltaSequence": 1, "serverPublishedMonotonicMs": 1200, "beforeModelCompleted": True}
     base = {"requestId": "request", "messageId": "message", "conversationId": "conversation",
             "source": source, "firstProviderTextReceivedMs": 240, "firstTextRenderedMs": 260}
-    browser = [{**base, "stage": "answer.snapshot"},
+    browser = [{**base, "stage": "answer.delta"},
                {**base, "stage": "text.rendered", "renderedChars": 5},
                {**base, "stage": "text.rendered", "renderedChars": 10},
                {**base, "stage": "answer.model.completed", "callId": "call"},

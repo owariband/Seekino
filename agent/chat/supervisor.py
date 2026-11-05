@@ -313,7 +313,13 @@ class SupervisorRuntime:
             )
             return evidence, selection
 
+        # Public render blocks of the most recent snapshot; a delta reuses them
+        # and only replaces/extends the trailing Markdown block, never rebuilding
+        # the search result.
+        last_snapshot_blocks: tuple[dict, ...] = ()
+
         def publish_snapshot(*, completed: bool = False, text_stream: dict | None = None) -> tuple[dict, ...]:
+            nonlocal last_snapshot_blocks
             content = answer_markdown()
             search_result = None
             if completed and video_result is not None:
@@ -339,7 +345,8 @@ class SupervisorRuntime:
                 "renderBlocks": public_blocks,
                 **({"textStream": text_stream} if text_stream is not None else {}),
             })
-            return tuple(public_blocks)
+            last_snapshot_blocks = tuple(public_blocks)
+            return last_snapshot_blocks
 
         def accept_tool_activity(
             call_id: str, name: str, status: ToolCallStatus,
@@ -378,6 +385,9 @@ class SupervisorRuntime:
         stream_call_id: str | None = None
         stream_text = ""
         stream_prefix: list = []
+        # Visible text already delivered for the current model call, so each delta
+        # sends only the growth. It resets with the other stream_* variables.
+        stream_sent = ""
 
         def visible_text(value: str, *, final: bool) -> str:
             if web_search_attempted:
@@ -403,33 +413,67 @@ class SupervisorRuntime:
             return candidate
 
         def accept_text_delta(delta: ModelTextDelta) -> None:
-            nonlocal stream_call_id, stream_text, stream_prefix
+            nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
             with tool_lock:
                 control.check()
                 if stream_call_id is None:
                     stream_call_id = delta.call_id
                     stream_prefix = list(render_blocks)
+                    stream_sent = ""
                 elif delta.call_id != stream_call_id:
                     raise AgentModelInvocationError("A new model call replaced an unfinished streamed answer")
                 stream_text += delta.text
                 value = visible_text(stream_text, final=False)
                 if not value.strip():
                     return
-                candidate = text_blocks(stream_prefix, value)
-                if candidate == render_blocks:
-                    return
-                render_blocks[:] = candidate
-                publish_snapshot(text_stream={
+                text_stream = {
                     "origin": "provider_delta", "callId": delta.call_id,
                     "deltaSequence": delta.sequence,
                     "modelFirstTextMs": delta.first_text_ms,
                     "modelElapsedMs": delta.elapsed_ms,
                     "providerReceivedMonotonicMs": delta.received_at * 1000,
                     "beforeModelCompleted": delta.before_completion,
+                }
+                if not value.startswith(stream_sent):
+                    # Visible text was rewritten (e.g. a held-back URL resolved to a
+                    # masked link). Correct the whole body with one snapshot.
+                    candidate = text_blocks(stream_prefix, value)
+                    if candidate == render_blocks:
+                        stream_sent = value
+                        return
+                    render_blocks[:] = candidate
+                    stream_sent = value
+                    publish_snapshot(text_stream=text_stream)
+                    return
+                piece = value[len(stream_sent):]
+                if not piece:
+                    return
+                # The first piece joins a trailing Markdown block with the same
+                # separator text_blocks uses; otherwise it opens a new block.
+                joins = stream_prefix and isinstance(stream_prefix[-1], MarkdownRenderBlock)
+                new_block = not stream_sent and not joins
+                if stream_sent:
+                    render_blocks[-1] = MarkdownRenderBlock(markdown=render_blocks[-1].markdown + piece)
+                else:
+                    render_blocks[:] = [*stream_prefix[:-1], MarkdownRenderBlock(
+                        markdown=stream_prefix[-1].markdown + "\n\n" + value,
+                    )] if joins else [*stream_prefix, MarkdownRenderBlock(markdown=value)]
+                    piece = piece if new_block else "\n\n" + piece
+                stream_sent = value
+                content = answer_markdown()
+                if len(content) > 20_000:
+                    raise ValueError("Chat Markdown exceeds 20000 characters")
+                public = list(last_snapshot_blocks[:len(render_blocks) - 1])
+                public.append({"type": "markdown", "markdown": render_blocks[-1].markdown})
+                control.publish(inputs, {
+                    "type": "answer.delta", "callId": delta.call_id,
+                    "delta": piece, "newBlock": new_block,
+                    "content": content, "renderBlocks": public,
+                    "textStream": text_stream,
                 })
 
         def accept_text(value: str) -> None:
-            nonlocal stream_call_id, stream_text, stream_prefix
+            nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
             with tool_lock:
                 control.check()
                 if stream_call_id is not None:
@@ -437,11 +481,11 @@ class SupervisorRuntime:
                         raise AgentModelInvocationError("Completed model text differs from its streamed body")
                     control.publish(inputs, {"type": "answer.model.completed", "callId": stream_call_id})
                     candidate = text_blocks(stream_prefix, visible_text(value, final=True)) if value.strip() else stream_prefix
-                    stream_call_id, stream_text, stream_prefix = None, "", []
-                    if candidate != render_blocks:
-                        render_blocks[:] = candidate
-                        # A flush after completion is not a live provider delta.
-                        publish_snapshot()
+                    stream_call_id, stream_text, stream_prefix, stream_sent = None, "", [], ""
+                    render_blocks[:] = candidate
+                    # Deltas do not refresh the cached public blocks; the call's
+                    # completion snapshot does. It is not a live provider delta.
+                    publish_snapshot()
                     return
                 value = visible_text(value.strip(), final=True)
                 if not value:

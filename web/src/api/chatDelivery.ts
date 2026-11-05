@@ -45,17 +45,20 @@ export function beginChatDelivery(conversationId: string, requestId: string, now
         if (observations.size > 64) observations.delete(observations.keys().next().value!);
       } else if (event.messageId !== measurement.messageId) return;
       sequence = event.sequence;
-      if (event.type === "answer.snapshot" && event.assistantMessage.messageId === event.messageId
-        && event.assistantMessage.status === "PROCESSING" && event.assistantMessage.content?.trim()) {
-        const source = event.textStream;
-        if (measurement.firstProviderTextReceivedMs === null && source?.origin === "provider_delta"
-          && source.beforeModelCompleted && source.callId && source.deltaSequence > 0
-          && source.modelFirstTextMs !== null && Number.isFinite(source.modelFirstTextMs)) {
-          measurement.firstProviderTextReceivedMs = at - now;
-          measurement.source = source;
-          measurement.fttValidity = "requires_trace";
-          measurement.fttReason = "Correlate provider trace and browser growth before certifying FTT";
-        }
+      // First provider text is carried on the live delta now; a snapshot with a
+      // textStream still counts when the transport delivered it as a snapshot.
+      const source: AgentTextStream | null | undefined = event.type === "answer.snapshot"
+        ? (event.assistantMessage.messageId === event.messageId
+           && event.assistantMessage.status === "PROCESSING"
+           && Boolean(event.assistantMessage.content?.trim()) ? event.textStream : null)
+        : event.type === "answer.delta" ? event.textStream : null;
+      if (source && measurement.firstProviderTextReceivedMs === null && source.origin === "provider_delta"
+        && source.beforeModelCompleted && source.callId && source.deltaSequence > 0
+        && source.modelFirstTextMs !== null && Number.isFinite(source.modelFirstTextMs)) {
+        measurement.firstProviderTextReceivedMs = at - now;
+        measurement.source = source;
+        measurement.fttValidity = "requires_trace";
+        measurement.fttReason = "Correlate provider trace and browser growth before certifying FTT";
       }
       if (event.type === "answer.completed" && event.assistantMessage.status === "COMPLETED") {
         measurement.status = "completed";

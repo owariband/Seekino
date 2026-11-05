@@ -44,4 +44,20 @@ describe("Chat delivery evidence", () => {
     trace.receive(event("answer.snapshot", 3, "late", source), 140);
     expect(trace.measurement).toMatchObject({ firstProviderTextReceivedMs: null, fttMs: null, ttMs: null, terminationMs: 30 });
   });
+
+  it("records first provider text from a live answer.delta", () => {
+    const trace = beginChatDelivery("conv", "request", 100);
+    trace.receive(event("answer.started", 1), 105);
+    const delta = {
+      type: "answer.delta", sequence: 2, conversationId: "conv", messageId: "answer",
+      occurredAt: 1, callId: "call-1", newBlock: true, delta: "Hello", textStream: source,
+    } as AgentAnswerEvent;
+    trace.receive(delta, 125);
+    expect(trace.measurement.firstProviderTextReceivedMs).toBe(25);
+    expect(trace.measurement.firstTextRenderedMs).toBeNull();
+    trace.rendered(5, 140);
+    trace.receive(event("answer.completed", 3, "Hello"), 200);
+    expect(trace.measurement).toMatchObject({ firstTextRenderedMs: 40, ttMs: 100,
+      fttMs: null, fttValidity: "requires_trace", status: "completed" });
+  });
 });

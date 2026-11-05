@@ -340,7 +340,16 @@ export function useAgentConversation(requestedId: string | null = null) {
           : current.progress;
         return { ...current, progress, messages: current.messages.map((message) => {
           if (message.messageId !== event.messageId || message.status !== "PROCESSING") return message;
-          if (event.type === "answer.delta") return { ...message, content: (message.content ?? "") + event.delta };
+          if (event.type === "answer.delta") {
+            const content = (message.content ?? "") + (event.newBlock && message.content ? "\n\n" : "") + event.delta;
+            // The server sets newBlock whenever the answer does not end with Markdown.
+            const blocks = event.newBlock
+              ? [...message.renderBlocks, { type: "markdown" as const, markdown: "" }]
+              : [...message.renderBlocks];
+            const last = blocks.at(-1);
+            if (last?.type === "markdown") blocks[blocks.length - 1] = { ...last, markdown: last.markdown + event.delta };
+            return { ...message, content, renderBlocks: blocks };
+          }
           if (event.type === "answer.block") return { ...message, renderBlocks: [...message.renderBlocks, event.block] };
           if (event.type === "answer.evidence") return { ...message, searchResult: event.searchResult };
           if (event.type === "answer.progress") return {
