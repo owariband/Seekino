@@ -56,6 +56,8 @@ Two kinds of asset are involved:
 | Parse schema has no framing / camera / overlay fields | Read | [schemas.py](../../../engine/parsev2/schemas.py) |
 | MCP exposes 3 tools; no clip or frame tool | Read on `origin/dev` 4eb4231b | `server/api/mcp.py` |
 | A composition schema (shot_size, vertical_angle, subject cell/scale, …) was drafted for *similar-shot search* and tagged on a MyGO shot gallery | Draft; experiment archived 2026-10-24 into a git-ignored ZIP | [shot-composition-schema.md](../02-agent-harness/shot-composition-schema.md) |
+| A 60 s Anon short was made on 2026-10-29 **without** Seekino. The main rework came from the gap between "event nearby" and "usable shot range": a practice clip crossed a cut into another character, and the hand-hold's key second was hard to find. Information it actually consumed: shot boundaries, action phase times, subject/face/hand regions and subtitle band for text placement, short previews plus consecutive keyframes, beat candidates | Single case, one agent, not blind (it had already seen the references). Episode 11 missing | `outputs/anon-baseline-20261029/analysis/research-findings.md` (git-ignored) |
+| No MyGO series exists in any database on the running MySQL (13361) | Read-only scan, 2026-11-05: 11 `seekino_*` databases, none with a MyGO series | — |
 
 **Implication for rhythm.** Feeding the naive numbers to an editing agent tells it to "cut every 0.1 s". That would be a wrong lesson drawn from correct-looking data. The rhythm layer must separate cuts from flashes and transitions before any number is trusted.
 
@@ -204,7 +206,11 @@ Plan only. All results below are **待测** (to be measured).
 | WITH | Same | Same + P5R style pack | Same fixed clip set |
 | WITH − c *(optional ablation)* | Same | Pack without technique moments | Same |
 
-Same model, same skill version, same seeds where the renderer allows. k = 3 renders per arm.
+Same model, same skill version, same seeds where the renderer allows. k = 3 renders per arm. Each render runs in a **fresh agent context** that has not seen the other arm, the reference contact sheets or the 10-29 baseline. The 10-29 run showed that prior exposure contaminates the comparison.
+
+Matting (owner decision 2026-11-05): one local anime segmentation model, applied only to the fixed clip set and identical for both arms. Matte quality is reported as a confound. It is not tuned per arm.
+
+Judging (owner decision 2026-11-05): the owner blind-judges the randomized pairs as the primary signal. A VLM judges the same pairs in both orders as a secondary check, and disagreements are reported.
 
 | Metric | Reference | WITHOUT | WITH | Δ (WITH − WITHOUT) | Criterion | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -219,6 +225,8 @@ Same model, same skill version, same seeds where the renderer allows. k = 3 rend
 One JSONL record per wanted-but-unanswerable query:
 `{query_wanted, purpose_in_edit, what_retrieve_returned, workaround, implied_field}`.
 Example of the expected shape: "爱音 full body, static camera, ≥2 s, no subtitle overlay" → implied fields `shot_scale`, `camera_motion`, `overlay_text`, `clean_duration`.
+
+Seed categories come from the 10-29 baseline: shot boundary, action phase, subject region / safe area, short preview, beat candidates. E3 confirms, drops or extends them. They are not assumed to be correct.
 
 # 5. 试点验证与方案取舍
 
@@ -246,3 +254,4 @@ Closing this TRD does **not** mean parse fields, MCP clip/frame tools or the cut
 | Date | Earlier view | New evidence | Decision | Effect |
 | --- | --- | --- | --- | --- |
 | 2026-11-05 | Scene detection could feed the rhythm layer directly | Naive detection: 266 detections, median 0.10 s, 188/267 < 0.2 s | Rhythm numbers are gated behind E0 classification | E0 is now the first step |
+| 2026-11-05 | Matting, MyGO data source and judge were open | Owner answers | Minimal local matting on the fixed clip set; owner + VLM blind judging; reuse an existing MyGO parse | No MyGO parse found on 13361. E2/E3 are blocked until the owner names the parse location (possibly native `data/mysql/seekino_development`, which is not running). E0/E1 need only the P5R file and can proceed |
