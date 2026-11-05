@@ -616,16 +616,20 @@ def test_server_coalesces_text_and_keeps_pending_body_at_terminal_boundary(build
             assert stored().content == "甲乙丙" and stored().status == "FAILED"
         events = _collect(execution)
         snapshots = [e for e in events if e["type"] == "answer.snapshot"]
-        assert snapshots[0]["assistantMessage"]["content"] == "甲"
-        assert snapshots[0]["textStream"]["deltaSequence"] == 1
+        # With no consumer during generation, the buffer collapses adjacent
+        # unsent snapshots, so only the newest one before each boundary arrives.
         assert snapshots[-1]["assistantMessage"]["content"] == stored().content
         assert "textStream" not in snapshots[-1]
         if outcome == "complete":
             live = [e for e in snapshots if "textStream" in e]
-            assert [e["textStream"]["deltaSequence"] for e in live] == [1, 4]
+            assert [e["textStream"]["deltaSequence"] for e in live] == [4]
+            assert live[0]["assistantMessage"]["content"] == "甲乙丙丁"
             boundary = next(i for i, e in enumerate(events) if e["type"] == "answer.model.completed")
             assert events[boundary + 1]["assistantMessage"]["content"] == "甲乙丙丁戊"
             assert "textStream" not in events[boundary + 1]
+        else:
+            assert len(snapshots) == 1
+            assert snapshots[0]["assistantMessage"]["content"] == "甲乙丙"
     finally:
         client.close()
 
@@ -670,6 +674,8 @@ def test_server_flushes_before_tools_and_delivers_first_text_of_next_model_call(
     snapshots = [e for e in events if e["type"] == "answer.snapshot"]
     assert [e["textStream"]["callId"] for e in snapshots if "textStream" in e] == ["first", "second"]
     first_done = next(i for i, e in enumerate(events) if e["type"] == "answer.model.completed")
+    # The unsent boundary flush is superseded by the tool snapshot with the same
+    # body, so the prefix still follows the model boundary.
     assert events[first_done + 1]["assistantMessage"]["content"] == "我先查一下。"
     assert "textStream" not in events[first_done + 1]
 
