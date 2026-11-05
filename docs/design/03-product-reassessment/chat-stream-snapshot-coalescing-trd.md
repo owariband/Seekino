@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Chat 流式快照合并 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-stream-snapshot-coalescing`，PR [#45](https://github.com/owariband/Seekino/pull/45)。关联：[chat-streaming-trd.md](chat-streaming-trd.md)（PR #25，流式交付合同）。无合并顺序依赖；2026-11-05 发布验收阻塞项。
+**Chat 流式快照合并 TRD。状态：已实现，课程库副本实测达标；演示环境验收待做（2026-11-05）。** 分支 `fix/chat-stream-snapshot-coalescing`，PR [#45](https://github.com/owariband/Seekino/pull/45)。关联：[chat-streaming-trd.md](chat-streaming-trd.md)（PR #25，流式交付合同）。无合并顺序依赖；2026-11-05 发布验收阻塞项。
 
 ## 背景与触发场景
 
@@ -54,7 +54,17 @@
 
 # 4. 对照实验与结果分析
 
-计划：单元测试覆盖积压合并、终止事件、停止读取断开；19642 上以相同问题复测至少 6 个回合，统计中断次数。结果：待测。
+单元测试（提交 `51babf2f`）：新增 `tests/server/test_agent_message_stream_buffer.py` 覆盖积压合并、只合并尾部快照、非快照事件填满仍断开；`test_agent_chat_service.py` 两处“无消费者时读取全部快照”的断言改为只断言边界前的最新快照；`test_api.py` 两处“sequence 连续”断言改为“严格递增”（前端只要求递增：`web/src/api/chatDelivery.ts:40`、`web/src/features/search/useAgentConversation.ts:309`）。相关 278 passed；全量后端失败集合与 `dev` 相同（20 个既有失败）。快照携带完整正文，`textStream` 只用于首字计时（`chatDelivery.ts:47-58`），合并不丢正文。
+
+真实回合（实验 API 19642，#44 + #33 + #45 本地合并 `0634d289`，课程库副本，`chat_turn.py` 串行）：
+
+| 指标 | 修复前（同一副本，同日） | 修复后 | 判断 |
+| --- | --- | --- | --- |
+| 中断率 | 3 / 11 回合 | 0 / 8 回合（另 Q01–Q03 共 12 轮全部完成） | 达标 |
+| 客户端收到的快照数 / 回合 | 数百至 1135 | 72–388 | 下降 |
+| 回合耗时 | — | 整体视频 9.3 / 32.7 秒；系列 9.4 / 25.8 秒；双系列 12.9 / 14.3 秒；具体问题 75.8 / 66.9 秒 | 记录 |
+
+原始记录：`outputs/verification/video-outline-20261104/chat-runs/s45-*.json`。
 
 # 5. 试点验证与方案取舍
 
@@ -62,4 +72,4 @@
 
 # 6. 结果验收与闭环
 
-待实施。
+**原问题验收：** 持续读取的客户端在 20 个真实回合中未再收到中断；停止读取仍断开由单元测试覆盖。**决定：** 采用。**剩余事项：** 演示环境浏览器复核；每事件两次来源权限复核的读取成本未优化。
