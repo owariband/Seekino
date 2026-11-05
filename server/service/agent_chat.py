@@ -992,6 +992,7 @@ class AgentChatService:
             ]
             series_context = deepcopy([{
                 "seriesId": item.series_id, "name": item.name,
+                "displayName": item.display_name or item.name,
                 "description": item.description,
                 "transcriptLanguageHint": item.transcript_language_hint,
                 "importantExtraData": item.important_extra_data,
