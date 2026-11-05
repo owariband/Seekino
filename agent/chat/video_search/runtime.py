@@ -7,7 +7,7 @@ from math import isfinite
 from threading import Event
 from time import monotonic
 
-from engine.rag.contracts import VideoChunkSearchResult
+from engine.rag.contracts import VideoChunkEvidence, VideoChunkSearchResult
 from engine.rag.retrieval.contracts import EventSearchResult
 from gateway.agent_model.contracts import StructuredToolAgentModel
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
@@ -58,6 +58,7 @@ class AgentRuntime:
         maximum_frame_inspections: int | None = None,
         event_retrieve: Callable[..., EventSearchResult] | None = None,
         video_outline: Callable[..., dict | None] | None = None,
+        outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
     ) -> None:
         for name, value, maximum in (
             ("max_model_calls_per_turn", max_model_calls_per_turn, None),
@@ -88,6 +89,7 @@ class AgentRuntime:
         self._retrieve = retrieve
         self._event_retrieve = event_retrieve
         self._video_outline = video_outline
+        self._outline_evidence = outline_evidence
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
         self._limits_enabled = limits_enabled
@@ -142,7 +144,7 @@ class AgentRuntime:
     ) -> list[AgentTool]:
         return build_retrieval_tools(
             self._retrieve, role="supervisor", event_retrieve=self._event_retrieve,
-            video_outline=self._video_outline,
+            video_outline=self._video_outline, outline_evidence=self._outline_evidence,
             inputs=inputs, control=control, calls=calls,
             maximum_tool_calls=maximum_tool_calls,
             maximum_result_bytes=min(self._max_tool_result_bytes, maximum_result_bytes)

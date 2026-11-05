@@ -263,16 +263,19 @@ class LibraryService:
 
     def get_video_outline(
         self,
-        video_id: str,
+        videos: list[dict],
         *,
         tenant_id: str,
         series_ids: list[str],
-    ) -> dict | None:
-        """Read one authorized video's chapter outline for the Supervisor tool."""
-        normalized_video_id = canonical_uuid(video_id, "video_id")
+    ) -> dict:
+        """Resolve (series name, episode) addresses and read their chapter outlines.
+
+        Returns the repository's ``{"videos": [...]}`` or ``{"error": {...}}`` result;
+        the Supervisor tool maps the error into AgentToolFeedbackError.
+        """
         normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         with self._repository.transaction() as session:
             return self._repository.video_outline(
-                session, video_id=normalized_video_id, tenant_id=normalized_workspace,
+                session, videos=list(videos), tenant_id=normalized_workspace,
                 series_ids=list(series_ids),
             )
