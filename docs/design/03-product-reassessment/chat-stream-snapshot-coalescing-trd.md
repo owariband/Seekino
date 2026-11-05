@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Chat 流式快照合并 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-stream-snapshot-coalescing`，PR 待创建。关联：[chat-streaming-trd.md](chat-streaming-trd.md)（PR #25，流式交付合同）。无合并顺序依赖；2026-11-05 发布验收阻塞项。
+**Chat 流式快照合并 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-stream-snapshot-coalescing`，PR [#45](https://github.com/owariband/Seekino/pull/45)。关联：[chat-streaming-trd.md](chat-streaming-trd.md)（PR #25，流式交付合同）。无合并顺序依赖；2026-11-05 发布验收阻塞项。
 
 ## 背景与触发场景
 
