@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 - 分支：`fix/watch-answer-delivery`；PR：[#33](https://github.com/owariband/Seekino/pull/33)。
-- 更新日期：2026-11-04。状态：实现完成，真实模型效果待测。
+- 更新日期：2026-11-05。状态：实现完成，课程库副本真实模型复测基本达标；演示环境与浏览器点击验收待做。PR [#33](https://github.com/owariband/Seekino/pull/33)。
 - 相关问题：C22（观看追问尝试不可用的视频提交）、C25（回答超长并暴露内部取证术语）。
 
 **背景与触发场景：** 课程 QA 的观看模式（Q01–Q03），学习者在 01:30 暂停讲座后连续追问。客户端冻结了播放位置，`realtime_available` 为真；该课程尚未 READY、未进入可检索范围，`video_available = bool(inputs["series_ids"])` 为假，两者可在同一会话内同时成立（源码 `agent/chat/supervisor.py` 约 233/249 行）。
@@ -59,7 +59,17 @@
 
 **实际结果（单元测试）：** 修改前 `tests/agent/chat` 388 passed；修改后 391 passed（新增 3 条用例，8.41 秒）。新增用例断言：(1) 观看轮 + 实时证据 + 无检索命中时不提供 `submit_video_item`/`remove_video_item`，且 `understand_current_video` 可用、证据可用、正文时间码链接交付、`video_result is None`；(2) 普通对话带 series 范围仍注册卡片工具；(3) `realtime_available` 提示段包含时间码链接交付规则、长度规则与禁止内部术语规则，以及失败不得称“没有可播放片段”。
 
-**真实模型结果：** 待测。由 lead 重跑 Q01–Q03，按上表记录四项主指标与护栏。
+**真实模型结果（2026-11-05，课程库副本，实验 API 19642，GPT 视频 90 s 暂停，系列在检索范围内，同一会话连续 Q01→Q03；问题原文取自 `origin/chore/course-qa:evals/benchmark/course_qa/cases.json` v2；脚本 `outputs/verification/video-outline-20261104/watch_turns.py`）：**
+
+| 轮次（构建） | Q01 / Q02 / Q03 完成耗时 | 失败卡片提交 | Q02 句数 | 内部术语 | “没有可播放片段” | 时间码形式 |
+| --- | --- | --- | --- | --- | --- | --- |
+| watch-44-33-1（#44 + #33 `fefeb66c`） | 16.8 / 3.4 / 4.6 秒 | 0 | 3 句 + 另起 1 句“依据来自…” | 0 | 否 | `[01:29–02:04](#t=89.6-124.9)` |
+| watch-45-1、-2（再加 #45 `0634d289`） | 16.4 / 13.3 / 3.8；13.0 / 7.5 / 21.0 秒 | 0（一次 `read_retrieval_evidence` 读实时 Chunk 得 `UNKNOWN_ITEM`，随后检索并提交成功） | 第 1 轮：过程说明 1 句 + 3 句；第 2 轮：3 句，来源句内 | 0 | 否 | 出现编造网址 `https://video/90000?t=89.6`、`video?t=59.7` |
+| watch-33b-1、-2（本次修订 `073a9ad1` 合入 `83b6fce1`） | 14.1 / 3.3 / 14.9；11.6 / 5.2 / 6.8 秒 | 第 2 轮 Q03 1 次（提交上一轮证据的 Chunk，`UNKNOWN_ITEM`；回答未受影响，未误称无片段） | 两轮均 3 句，来源句内，无过程说明 | 0 | 否 | 纯文本 `01:29–01:31` |
+
+历史对照：Q03 曾需 178 秒（课程 QA 2026-11-03）。
+
+**发现并修订：** Markdown 时间码链接在网页端不可跳转。回答渲染器对带 `href` 的链接输出外部 `<a target="_blank">` 且不把其中时间码变成跳转按钮（`web/src/features/search/SearchPage.tsx` 的 `answerComponents.a`，`WithTimes link={false}`）；只有纯文本时间码经 `MEDIA_TIMESTAMP_PATTERN` 变成跳转按钮。模型据“Markdown 时间码链接”编造了 `#t=…`、`https://video/…` 等地址。Prompt 改为纯文本时间码、禁止链接与网址；限定句数时不写工具前过程说明。
 
 # 5. 试点验证与方案取舍
 
@@ -67,13 +77,13 @@
 
 # 6. 结果验收与闭环
 
-**原问题验收：** 单元测试已证明注册与提示合同（如上）；真实模型的失败卡片数、Q02 句数、内部术语数、时间码链接跳转四项仍待测，暂不标记“问题已解决”。
+**原问题验收：** Q02 句数、内部术语、“没有可播放片段”三项在最新两轮达标；失败卡片提交由两组共 5 次降到 1/6 轮各 1 次（未达 0，未影响回答）；时间码已改为网页可识别的纯文本，浏览器点击跳转（PB01）待在演示环境复核。
 
 **最终决定：** 实现完成、单元测试通过；真实模型效果待测，待 lead 重跑后闭环。
 
-**项目实际状态：** `agent/chat/supervisor.py` 已改，`tests/agent/chat/test_supervisor.py` 已加 3 条用例；未部署、未合并。
+**项目实际状态：** `agent/chat/supervisor.py` 已改，`tests/agent/chat/test_supervisor.py` 已加用例（`tests/agent/chat` 391 passed）；已在实验 API 19642 部署验证，未合并。
 
-**剩余事项：** lead 用真实模型重跑 Q01–Q03，记录四项主指标与 PB01 护栏；确认后回填本 TRD 第 4/6 节并更新 problems.md 的 C22/C25 状态。当前 PR 待创建。
+**剩余事项：** 演示环境浏览器复核 PB01；跨轮复用上一轮证据提交卡片仍偶发 1 次，后续可让 `submit_video_item` 的反馈直接给出本轮可用 Chunk；更新 problems.md 的 C22/C25 状态。
 
 ## 决策记录
 
