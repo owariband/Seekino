@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**大纲 Chunk 引用 TRD。状态：初稿（2026-11-05）。** 分支 `fix/outline-chunk-citation`，PR [#46](https://github.com/owariband/Seekino/pull/46)。上游：[video-outline-trd.md](video-outline-trd.md)（PR #41，已合并）。2026-11-05 发布验收中发现。
+**大纲 Chunk 引用 TRD。状态：已实现，演示环境验收通过（2026-11-05）。** 分支 `fix/outline-chunk-citation`，PR [#46](https://github.com/owariband/Seekino/pull/46)。上游：[video-outline-trd.md](video-outline-trd.md)（PR #41，已合并）。2026-11-05 发布验收中发现。
 
 ## 背景与触发场景
 
@@ -44,7 +44,19 @@
 
 # 4. 对照实验与结果分析
 
-计划：单元测试覆盖读后可提交、未读拒绝、时间范围校验；19641 上复测 LP02 与 SE02，记录工具调用、耗时与回答内部术语。结果：待测。
+计划：单元测试覆盖读后可提交、未读拒绝、时间范围校验；19641 上复测 LP02 与 SE02，记录工具调用、耗时与回答内部术语。
+
+**测试（提交 `933e7a86`）：** 全量 `tests/agent tests/server tests/gateway -m "not live_agent"` 20 failed / 5327 passed，失败集合与 `dev` `978be570` 完全一致。
+
+**演示环境（19641，`dev` + #46 + #47 集成构建，后加 #48；v11 课程库；单轮串行；记录 `outputs/verification/course-loop-dev-20261104/gates/``loop08-*.json`）：**
+
+| 指标 | 基线 loop08-1（`dev`） | 本方案 loop08-2…7 |
+| --- | --- | --- |
+| LP02 回答出现内部术语 | 1/1（“大纲里的 Chunk 不能直接作为片段提交”） | 0/6 |
+| 读取大纲源证据后提交片段 | 不可行（`UNKNOWN_ITEM`） | loop08-2 LP01 对 4 个读后 Chunk 提交均成功 |
+| SE02 / LP02 回答完成 | 1/1 | 6/6、6/6 |
+
+耗时不在本需求范围内：loop08-2…4 中 LP/SE 回合偶发委派 `query_video` 导致 311–431 秒，由 [outline-first-delegation-trd.md](outline-first-delegation-trd.md)（PR #48）处理。
 
 # 5. 试点验证与方案取舍
 
@@ -52,4 +64,8 @@
 
 # 6. 结果验收与闭环
 
-待实施。
+**原问题验收：** 大纲 Chunk 读取源证据后可作为片段提交；LP02 不再向用户解释工具限制。
+
+**最终决定：** 采用。
+
+**剩余事项：** 回合过程叙述仍可能提到“子任务超时”等过程（loop08-2 LP02，在委派 `query_video` 时出现；#48 后未再出现）；浏览器内卡片点击回看未在本需求单独验证，归入 LOOP-08 PB01/PB02。
