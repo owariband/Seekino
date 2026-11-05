@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**系列概览 TRD。状态：初稿（2026-11-05）。** 分支 `feat/series-overview`，PR 待创建。上游：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，视频大纲与按“系列名 + 集数”寻址）。合并顺序：#41 之后合并本需求；本分支自 #41 分支切出。本需求是 2026-11-05 发布验收的阻塞项。
+**系列概览 TRD。状态：初稿（2026-11-05）。** 分支 `feat/series-overview`，PR [#44](https://github.com/owariband/Seekino/pull/44)。上游：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，视频大纲与按“系列名 + 集数”寻址）。合并顺序：#41 之后合并本需求；本分支自 #41 分支切出。本需求是 2026-11-05 发布验收的阻塞项。
 
 ## 背景与触发场景
 
