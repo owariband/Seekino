@@ -276,7 +276,7 @@ class RetrievalTraceEntry(_AgentContractModel):
 
 class AgentFinalOutput(VideoChunkSearchEvidence):
     render_blocks: list[FinalRenderBlock] = Field(min_length=1, max_length=200)
-    retrieval_trace: list[RetrievalTraceEntry] = Field(min_length=1)
+    retrieval_trace: list[RetrievalTraceEntry] = Field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

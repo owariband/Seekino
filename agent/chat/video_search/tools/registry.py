@@ -38,6 +38,7 @@ def build_retrieval_tools(
     video_outline: Callable[..., dict | None] | None = None,
     series_overview: Callable[..., dict | None] | None = None,
     outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
+    outline_evidence_registry: dict[str, VideoChunkEvidence] | None = None,
     budget: _ToolCallBudget | None = None,
 ) -> list[AgentTool]:
     role_label = "Query" if role == "query" else "Supervisor"
@@ -59,6 +60,7 @@ def build_retrieval_tools(
             calls=calls, control=control, maximum_result_bytes=maximum_result_bytes,
             maximum_read_chars=maximum_read_chars, budget=budget,
             outline_evidence=outline_evidence, outline_chunk_ids=outline_chunk_ids,
+            outline_evidence_registry=outline_evidence_registry,
             tenant_id=inputs["tenant_id"], series_ids=list(inputs["series_ids"]),
         ),
     ]

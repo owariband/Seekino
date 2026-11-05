@@ -270,6 +270,7 @@ def build_read_retrieval_evidence_tool(
     budget: _ToolCallBudget | None = None,
     outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
     outline_chunk_ids: set[str] | None = None,
+    outline_evidence_registry: dict[str, VideoChunkEvidence] | None = None,
     tenant_id: str | None = None,
     series_ids: list[str] | None = None,
 ) -> AgentTool:
@@ -281,7 +282,7 @@ def build_read_retrieval_evidence_tool(
             hit = retrieval_hit(calls, video_chunk_id)
         except UnknownToolItemError:
             # Outline chunk ids are not retrieval hits; their source evidence is
-            # fetched on demand and remains non-citable until search_video_events.
+            # fetched on demand and becomes citable once read successfully this turn.
             if (
                 outline_evidence is None
                 or outline_chunk_ids is None
@@ -310,6 +311,8 @@ def build_read_retrieval_evidence_tool(
                     "The outline chunk is outside the conversation's scope.",
                     "Read this section with search_video_events(video_chunk_ids=[...]) instead.",
                 )
+            if outline_evidence_registry is not None:
+                outline_evidence_registry[video_chunk_id] = evidence
             content = retrieval_evidence_text_from_evidence(evidence)
         if hit is not None:
             content = retrieval_evidence_text(hit)
