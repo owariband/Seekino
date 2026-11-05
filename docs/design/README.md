@@ -69,6 +69,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 | Kimi 流式接入 | [kimi-streaming-trd.md](03-product-reassessment/kimi-streaming-trd.md) | 正式生成入口的 Chat SSE、完整结果边界、工具推理连续性与真实素材复测。 |
 | 模型 stream / temperature 通用配置 | [model-streaming-trd.md](03-product-reassessment/model-streaming-trd.md) | 默认 stream=true、temperature=0；显式覆盖、Kimi 固定温度、fallback 独立配置、共享协议接收及 Parse 配置快照。 |
 | 本地 ASR、字幕证据与失败恢复 | [local-whisperx-asr-trd.md](03-product-reassessment/local-whisperx-asr-trd.md) | WhisperX/整片复用的原实现；10-30 续版跟进视频级持久成果、Metal 正式接线与跨失败恢复，实测和待实施分开。 |
+| 课程解析档案 | [parse-event-profile-trd.md](03-product-reassessment/parse-event-profile-trd.md) | 初稿：任务级 Event 类型子集与推理档位对照，承接 COST-01 / LOOP-03。 |
 | Parse XML v2 历史方案 | [parse-output-xml.md](03-product-reassessment/parse-output-xml.md) | 2026-10-26 协议原稿；新候选与验证口径见解析性能主 TRD，保留历史设计来源。 |
 | 声纹与台词归属 | [voiceprint-trd.md](02-agent-harness/voiceprint-trd.md) | 专项 TRD：声纹准备、比较、原子台词及说话人归属；保留历次实验的适用边界。 |
 | 整集摘要 | [video-summarize-trd.md](02-agent-harness/video-summarize-trd.md) | 专项 TRD：优先正式标题、无标题时生成内容短标题，事实简介、封面与真实集数的证据约束、职责及发布流程；系列默认封面与观看进度展示。 |
