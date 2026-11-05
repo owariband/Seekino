@@ -54,7 +54,6 @@ from ..utils.media import image_uri_to_data_url
 from ..utils.validation import canonical_uuid, require_nonempty_text
 from .library import LibraryService
 from .agent_attachments import AgentAttachmentService
-from .agent_chat_stream import ChatSnapshotCoalescer
 from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService
 
@@ -165,9 +164,6 @@ class AgentMessageExecution:
                 "occurredAt": now_unix_time_ms(),
             }
             if self._coalesces_with_tail(payload):
-                # A snapshot carries the whole answer, so only the newest unsent
-                # one matters. Replacing the tail keeps every other event in order.
-                self._events[-1] = payload
                 self._events_ready.notify()
                 return
             if len(self._events) >= _EVENT_BUFFER_MAXSIZE:
@@ -189,10 +185,31 @@ class AgentMessageExecution:
             self._events_ready.notify()
 
     def _coalesces_with_tail(self, payload: dict) -> bool:
-        if payload.get("type") != "answer.snapshot" or not self._events:
+        if not self._events:
             return False
         tail = self._events[-1]
-        return isinstance(tail, dict) and tail.get("type") == "answer.snapshot"
+        if not isinstance(tail, dict):
+            return False
+        if payload.get("type") == "answer.snapshot" and tail.get("type") == "answer.snapshot":
+            # A snapshot carries the whole answer, so only the newest unsent one
+            # matters. Replacing the tail keeps every other event in order.
+            self._events[-1] = payload
+            return True
+        # Adjacent deltas of the same model call merge into one event so a slow
+        # consumer does not buffer hundreds of tiny frames; a newBlock True delta
+        # opens a new block and must not be folded into the previous one.
+        if (
+            payload.get("type") == "answer.delta"
+            and tail.get("type") == "answer.delta"
+            and payload.get("callId") == tail.get("callId")
+            and not payload.get("newBlock")
+        ):
+            tail["delta"] += payload["delta"]
+            tail["textStream"] = payload["textStream"]
+            tail["sequence"] = payload["sequence"]
+            tail["occurredAt"] = payload["occurredAt"]
+            return True
+        return False
 
     def finish(self) -> None:
         with self._events_ready:
@@ -837,12 +854,15 @@ class AgentChatService:
         evidence_hit_count = 0
         snapshot_count = 0
         partial_content = ""
+        # Latest delta body awaiting its next interval persist; snapshots and the
+        # terminal events already persist the full answer, so they clear it.
+        pending_text_blocks: list[dict] | None = None
+        last_text_persist_ns = self._monotonic_clock()
         timer = execution.timing
         assert timer is not None
         terminal_timing: AgentMessageTimingState | None = None
         committed_result: AgentMessageSendState | None = None
         event_lock = RLock()
-        snapshots = ChatSnapshotCoalescer(lambda: self._monotonic_clock() / 1_000_000_000)
 
         def apply_runtime_event(event, *, allow_cancelled_snapshot: bool = False):
             nonlocal last_phase, evidence_hit_count, snapshot_count, partial_content
@@ -896,29 +916,45 @@ class AgentChatService:
                 return
             execution.publish(event)
 
-        def flush_snapshot(*, allow_cancelled: bool = False):
-            pending = snapshots.take_pending()
-            if pending is not None:
-                apply_runtime_event(pending, allow_cancelled_snapshot=allow_cancelled)
+        def persist_pending_text():
+            # Flush the interval-buffered delta body so a failure path still has
+            # the latest visible prefix; snapshots and terminals already do this.
+            nonlocal pending_text_blocks, last_text_persist_ns
+            if pending_text_blocks is None:
+                return
+            # Content is derived from the render blocks by the repository.
+            self._repository.checkpoint_assistant_message(
+                assistant_id, render_blocks=pending_text_blocks, now=self._clock(),
+            )
+            pending_text_blocks = None
+            last_text_persist_ns = self._monotonic_clock()
 
         def publish_runtime(event):
             # Intermediate message delivery observes execution; it does not own
             # the Tool result. Full snapshots and final commit can recover it.
+            nonlocal partial_content, pending_text_blocks
             try:
                 with event_lock:
                     if execution.cancellation.is_set():
                         raise AgentModelInvocationError("Agent execution cancelled")
-                    if event["type"] == "answer.snapshot":
-                        ready = snapshots.offer(event)
-                        if ready is not None:
-                            apply_runtime_event(ready)
-                    elif event["type"] == "answer.model.completed":
-                        # Mark completion before flushing so it cannot prove live growth.
-                        apply_runtime_event(event)
-                        flush_snapshot()
-                    else:
-                        flush_snapshot()
-                        apply_runtime_event(event)
+                    if event["type"] == "answer.delta":
+                        partial_content = event["content"]
+                        pending_text_blocks = event["renderBlocks"]
+                        if self._monotonic_clock() - last_text_persist_ns >= 1_000_000_000:
+                            persist_pending_text()
+                        execution.publish({
+                            "type": "answer.delta", "callId": event["callId"],
+                            "delta": event["delta"], "newBlock": event["newBlock"],
+                            "textStream": {
+                                **event["textStream"],
+                                "serverPublishedMonotonicMs": monotonic_ns() / 1_000_000,
+                            },
+                        })
+                        return
+                    # Snapshots and terminal events persist the full answer, so the
+                    # buffered delta body is already covered once they are applied.
+                    pending_text_blocks = None
+                    apply_runtime_event(event)
             except (AgentConflictError, AgentMessageNotFoundError) as exc:
                 execution.cancellation.set()
                 raise AgentModelInvocationError("Agent message is no longer active") from exc
@@ -1181,8 +1217,8 @@ class AgentChatService:
                 return committed_result
             try:
                 with event_lock:
-                    # Keep the last validated prefix, including on explicit cancellation.
-                    flush_snapshot(allow_cancelled=True)
+                    # Keep the last persisted prefix, including on explicit cancellation.
+                    persist_pending_text()
             except Exception:
                 _logger.exception("Could not persist pending Agent text message_id=%s", assistant_id)
             try:

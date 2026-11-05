@@ -2516,3 +2516,118 @@ def test_web_auth_failure_is_non_retryable_tool_feedback():
     assert model.tool_results[0]["error"]["code"] == "WEB_SEARCH_FAILED"
     assert model.tool_results[0]["error"]["retryable"] is False
     assert result.content == "Search is unavailable."
+
+
+def test_streaming_deltas_reassemble_to_the_final_markdown_and_blocks():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+
+            def delta(text, call, sequence):
+                handle_text_delta(ModelTextDelta(text, call, sequence, monotonic(), sequence, 1, True))
+
+            delta("First", "call-1", 1)
+            delta(" paragraph.", "call-1", 2)
+            handle_text("First paragraph.")
+            delta("Second", "call-2", 1)
+            delta(" paragraph.", "call-2", 2)
+            handle_text("Second paragraph.")
+
+    events = []
+    result = _runtime(Model()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+
+    assert result.content == "First paragraph.\n\nSecond paragraph."
+    deltas = [event for event in events if event["type"] == "answer.delta"]
+    # A fresh markdown block has no separator; a continuation after an existing
+    # markdown block carries the "\n\n" separator and never opens a new block.
+    assert [event["delta"] for event in deltas if event["callId"] == "call-1"] == ["First", " paragraph."]
+    assert [event["newBlock"] for event in deltas if event["callId"] == "call-1"] == [True, False]
+    assert [event["delta"] for event in deltas if event["callId"] == "call-2"] == ["\n\nSecond", " paragraph."]
+    assert [event["newBlock"] for event in deltas if event["callId"] == "call-2"] == [False, False]
+    assert [block["type"] for block in result.render_blocks] == ["markdown"]
+    assert result.render_blocks[0]["markdown"] == result.content
+    assert "".join(event["delta"] for event in deltas).replace("\n\n", "") == "First paragraph.Second paragraph."
+
+
+def test_streaming_delta_after_a_card_opens_a_new_markdown_block():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+            available = {tool.name: tool for tool in tools}
+            available["query_video"].invoke({"query": "find the cup"})
+
+            def delta(text, call, sequence):
+                handle_text_delta(ModelTextDelta(text, call, sequence, monotonic(), sequence, 1, True))
+
+            delta("Before.", "call-1", 1)
+            handle_text("Before.")
+            available["submit_video_item"].invoke({
+                "video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.018,
+                "claim": "Card.",
+            })
+            delta("After.", "call-2", 1)
+            handle_text("After.")
+
+    events = []
+    result = _runtime(Model()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=events.append,
+    )
+
+    assert result.content == "Before.\n\nAfter."
+    deltas = [event for event in events if event["type"] == "answer.delta"]
+    after = [event for event in deltas if event["callId"] == "call-2"]
+    assert [event["delta"] for event in after] == ["After."]
+    assert [event["newBlock"] for event in after] == [True]
+    assert [block["type"] for block in result.render_blocks] == ["tool", "markdown", "video", "markdown"]
+    assert result.render_blocks[1]["markdown"] == "Before."
+    assert result.render_blocks[3]["markdown"] == "After."
+
+
+def test_streaming_delta_enforces_the_markdown_limit_before_publishing():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+            handle_text_delta(ModelTextDelta("x" * 20_001, "call", 1, monotonic(), 1, 1, True))
+
+    events = []
+    with pytest.raises(AgentModelInvocationError) as raised:
+        _runtime(Model()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+    assert "20000 characters" in str(raised.value.__cause__)
+    assert [event for event in events if event["type"] == "answer.delta"] == []
+
+
+def test_streaming_web_url_tail_is_held_back_and_masked_only_at_completion():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+            available = {tool.name: tool for tool in tools}
+            available["search_web"].invoke({"query": "source"})
+            parts = ["Source [ref](ht", "tps:/", "/example.org/source", ") and https://unverified.invalid/end."]
+            for index, part in enumerate(parts, 1):
+                handle_text_delta(ModelTextDelta(part, "call", index, monotonic(), index, 1, True))
+            handle_text("".join(parts))
+
+    events = []
+    result = _runtime(Model()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+    assert result.content.startswith("Source [ref](https://example.org/source) and [未核实链接]")
+    # The unverified URL never leaks into a streamed delta, and the masked form
+    # arrives via the completion snapshot rather than a raw delta.
+    assert all("unverified.invalid" not in event.get("content", "") for event in events)
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots and "未核实链接" in snapshots[-1]["content"]

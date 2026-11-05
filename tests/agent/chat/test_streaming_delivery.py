@@ -55,18 +55,20 @@ def wire_model(script, *, stream=True, fallback=None):
     return model, requests, wire, client
 
 
-def test_provider_text_reaches_snapshots_before_terminal_and_keeps_whitespace(tmp_path):
+def test_provider_text_reaches_deltas_before_terminal_and_keeps_whitespace(tmp_path):
     events = []
-    def snapshots():
-        return [e for e in events if e["type"] == "answer.snapshot"]
+    def deltas():
+        return [e for e in events if e["type"] == "answer.delta"]
     def script():
         yield chunk(delta={"role": "assistant", "reasoning_content": "private"})
-        assert snapshots() == []
+        assert deltas() == []
         yield chunk("Hello ")
-        assert snapshots()[-1]["content"] == "Hello "
-        assert snapshots()[-1]["textStream"]["beforeModelCompleted"]
+        assert deltas()[-1]["delta"] == "Hello "
+        assert deltas()[-1]["newBlock"]
+        assert deltas()[-1]["textStream"]["beforeModelCompleted"]
         yield chunk("world")
-        assert snapshots()[-1]["content"] == "Hello world"
+        assert deltas()[-1]["delta"] == "world"
+        assert not deltas()[-1]["newBlock"]
         assert not any(e["type"] == "answer.model.completed" for e in events)
         yield chunk(delta={}, finish="stop")
         yield b"data: [DONE]\n\n"
@@ -78,7 +80,8 @@ def test_provider_text_reaches_snapshots_before_terminal_and_keeps_whitespace(tm
         assert result.content == "Hello world"
         assert requests[0]["stream"] is True and wire.closed
         model.confirm_turn("conversation", "answer", result.content)
-        source = snapshots()[0]["textStream"]
+        assert "".join(e["delta"] for e in deltas()) == "Hello world"
+        source = deltas()[0]["textStream"]
         trace = [json.loads(line) for line in (tmp_path / "trace" / source["callId"] / "events.jsonl").read_text().splitlines()]
         assert all("monotonic_ns" in e for e in trace)
         assert next(e for e in trace if e["event"] == "request")["payload"]["request"]["stream"] is True
@@ -168,7 +171,7 @@ def test_partial_stream_failure_keeps_body_and_does_not_replay_fallback():
     try:
         with pytest.raises(Exception, match="Supervisor model"):
             _runtime(model).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
-        assert [e["content"] for e in events if e["type"] == "answer.snapshot"] == ["Partial answer"]
+        assert [e["content"] for e in events if e["type"] == "answer.delta"] == ["Partial answer"]
         assert fallback_calls == [] and len(requests) == 1 and wire.closed
         assert model.session_store.pending == {}
     finally:

@@ -13,7 +13,7 @@ from pathlib import Path
 
 def verify(browser: list[dict], provider: list[dict]) -> dict:
     result = {"ftt_ms": None, "valid": False, "reason": "missing live provider body evidence"}
-    candidate = next((e for e in browser if e.get("stage") == "answer.snapshot" and e.get("source")), None)
+    candidate = next((e for e in browser if e.get("stage") in {"answer.snapshot", "answer.delta"} and e.get("source")), None)
     if candidate is None:
         return result
     source = candidate["source"]

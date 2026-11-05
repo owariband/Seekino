@@ -185,6 +185,9 @@ class AgentAnswerBlockView(AgentAnswerEventView):
 class AgentAnswerDeltaView(AgentAnswerEventView):
     type: Literal["answer.delta"] = "answer.delta"
     delta: str
+    call_id: str
+    new_block: bool
+    text_stream: AgentTextStreamView | None = None
 
 
 class AgentAnswerCompletedView(AgentAnswerEventView, AgentMessageSendView):

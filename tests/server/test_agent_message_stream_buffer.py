@@ -92,6 +92,23 @@ def test_snapshot_already_taken_by_the_consumer_is_not_replaced():
     assert events[-1] is None
 
 
+def test_adjacent_same_call_deltas_merge_but_new_block_or_call_breaks_them():
+    execution = _execution()
+    execution.publish({"type": "answer.delta", "callId": "call-1", "delta": "第", "newBlock": True, "textStream": {"deltaSequence": 1}})
+    execution.publish({"type": "answer.delta", "callId": "call-1", "delta": "一", "newBlock": False, "textStream": {"deltaSequence": 2}})
+    execution.publish({"type": "answer.delta", "callId": "call-1", "delta": "段", "newBlock": False, "textStream": {"deltaSequence": 3}})
+    execution.publish({"type": "answer.delta", "callId": "call-1", "delta": "第二段", "newBlock": True, "textStream": {"deltaSequence": 4}})
+    execution.publish({"type": "answer.delta", "callId": "call-2", "delta": "新调用", "newBlock": False, "textStream": {"deltaSequence": 5}})
+    execution.finish()
+
+    events = _read_events(execution)
+    deltas = [event for event in events[:-1] if event["type"] == "answer.delta"]
+    assert [event["delta"] for event in deltas] == ["第一段", "第二段", "新调用"]
+    assert [event["newBlock"] for event in deltas] == [True, True, False]
+    assert [event["textStream"]["deltaSequence"] for event in deltas] == [3, 4, 5]
+    assert events[-1] is None
+
+
 def test_slow_consumer_still_interrupts_when_non_snapshot_events_fill_the_buffer():
     execution = _execution()
     for _ in range(300):
