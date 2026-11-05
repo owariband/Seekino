@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**系列概览 TRD。状态：初稿（2026-11-05）。** 分支 `feat/series-overview`，PR [#44](https://github.com/owariband/Seekino/pull/44)。上游：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，视频大纲与按“系列名 + 集数”寻址）。合并顺序：#41 之后合并本需求；本分支自 #41 分支切出。本需求是 2026-11-05 发布验收的阻塞项。
+**系列概览 TRD。状态：已实现，课程库副本实测达标；演示环境验收待做（2026-11-05）。** 分支 `feat/series-overview`，PR [#44](https://github.com/owariband/Seekino/pull/44)。上游：[video-outline-trd.md](video-outline-trd.md)（PR [#41](https://github.com/owariband/Seekino/pull/41)，视频大纲与按“系列名 + 集数”寻址）。合并顺序：#41 之后合并本需求；本分支自 #41 分支切出。本需求是 2026-11-05 发布验收的阻塞项。
 
 ## 背景与触发场景
 
@@ -25,7 +25,7 @@ Chat 的检索范围是系列级：请求携带 `series_ids`，未打开视频�
 - 系列上下文构造：`server/service/agent_chat.py:986-1004`。
 - Supervisor 范围描述只有系列名：`agent/chat/supervisor.py:1018-1032`；背景资料不等于视频证据的规则：`agent/chat/supervisor.py:1114-1116`。
 - 各集 Summarize 成果（`display.title/description`、`outline.sections`）已持久化在 `video_parse_content`（#40、#41）。
-- 基线实测：待测（#41 构建上同一问题，见第 4 节）。
+- 基线实测：#41 修复前构建上同一问题 45.5 秒、7 次模型调用，先 `retrieve` 再读大纲（见第 4 节）。
 
 ## 本次边界
 
@@ -48,8 +48,8 @@ Chat 的检索范围是系列级：请求携带 `series_ids`，未打开视频�
 
 | 指标 | 定义与口径 | 基线 | 目标 / 护栏 | 测量方法 | 证据入口 |
 | --- | --- | --- | --- | --- | --- |
-| 系列整体问题耗时（结果） | “和我说说这个系列都讲了些什么”从提交到回答完成 | 待测（#41 构建） | ≤ 60 秒（预期） | `chat_turn.py` + api.log | `outputs/verification/video-outline-20261104/chat-runs/` |
-| 模型 / 工具调用数（诊断） | 同一回合 Supervisor 与 Query 模型调用、工具调用 | 待测 | 模型调用 ≤ 10（预期） | 同上 | 同上 |
+| 系列整体问题耗时（结果） | “和我说说这个系列都讲了些什么”从提交到回答完成 | 45.5 秒（#41 修复前构建，单次） | ≤ 60 秒（预期） | `chat_turn.py` + api.log | `outputs/verification/video-outline-20261104/chat-runs/` |
+| 模型 / 工具调用数（诊断） | 同一回合 Supervisor 与 Query 模型调用、工具调用 | 7 / 5 | 模型调用 ≤ 10（预期） | 同上 | 同上 |
 | 回答覆盖（结果） | 回答提到的集数 / 已有 `display` 的集数；不编造未摘要的集 | 待测 | 已摘要集全部提及；未摘要集标为未生成 | 人工核对 | 同上 |
 | 视频问题路由（护栏） | 打开视频时“这个视频讲了什么”首个视频工具为 `get_video_outline` | #41 已通过 | 保持 | 同上 | 同上 |
 | 具体问题路由（护栏） | 具体台词问题首个视频工具为 `search_video_events` | #41 已通过 | 保持 | 同上 | 同上 |
@@ -108,10 +108,15 @@ sequenceDiagram
 
 | 用例 | 基线（#41 构建） | 本方案 | 判断 |
 | --- | --- | --- | --- |
-| Q1 “和我说说这个系列都讲了些什么”（未打开视频） | 待测 | 待测 | 未验证 |
-| Q2 打开某集后“这个视频讲了什么” | #41 已测 30–33 秒 | 待测 | 未验证 |
-| Q3 具体台词问题 | #41 路由通过 | 待测 | 未验证 |
-| Q4 两个系列在范围内问“这个系列讲了什么” | 待测 | 待测 | 未验证 |
+| Q1 “和我说说这个系列都讲了些什么”（单系列范围，未打开视频） | 45.5 秒，7 次模型调用，先 `retrieve` | 45.9 秒，8 次模型调用；`get_series_overview` → `get_video_outline`；SSE 在途中收到 `answer.interrupted`（见 PR #45），服务端正常完成 | 路由达标；中断另行修复 |
+| Q2 “和我说说这个视频讲了些什么” | 同时段旧构建中位 49.5 秒 | 中位 44.1 秒（见 [video-outline-trd.md](video-outline-trd.md) 第 4 节） | 达标 |
+| Q3 具体问题路由 | `search_video_events` 优先 | 保持 | 达标 |
+| Q4 两个系列在范围内问“这个系列讲了什么” | — | 12.8 秒，5 次模型调用；先说明范围内有两个系列且未打开视频，再按系列分别梳理 | 达标 |
+| Q5 两个系列在范围内问“这两门课分别讲了什么？” | — | 13.4 秒，4 次模型调用；按课程分节，先给出两课主题差异 | 达标 |
+
+条件：课程库副本 `seekino_display_rehearsal_20261104_test`（两个系列各 1 集，均有 `display` 与大纲），实验 API 19642，代码为 #44 + #33 本地合并 `fefeb66c`，模型配置 `outputs/verification/video-outline-20261104/model-config-summarize-high.yaml`，单次样本。原始记录：`outputs/verification/video-outline-20261104/chat-runs/ov-*.json`。回答中未出现内部 id。
+
+局限：每个系列只有 1 集，“按集组织”“未摘要的集标为尚未生成”在真实多集系列上未验证，仅有单元测试覆盖。
 
 # 5. 试点验证与方案取舍
 
@@ -119,4 +124,8 @@ sequenceDiagram
 
 # 6. 结果验收与闭环
 
-待实施。验收时逐项对照第 2 节指标，记录实际版本、配置与证据入口。
+**原问题验收：** 系列整体问题在课程库副本上通过工具直接取得各集概要，多系列问题 13 秒左右分系列回答。演示环境验收与多集系列验证待做。
+
+**最终决定：** 采用，在 #41 之后合并。
+
+**剩余事项：** 演示环境（19641 切换到 `dev`）复测 Q1、Q4；多集系列验证；长回答的流式中断由 PR #45 处理。
