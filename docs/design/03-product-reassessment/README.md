@@ -28,6 +28,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md) | 2026-11-05，长回答流式交付途中被判为慢消费者并断开 | 合并缓冲中相邻的未发送快照，持续读取的客户端不再收到中断 | 初稿；实验待测 |
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
 | [deepseek-web-search-trd.md](deepseek-web-search-trd.md) | 2026-11-02，Chat 更换模型后搜索仍走未固定 backend 的 DDGS | 免 key DDGS 与 DeepSeek API 独立配置，明确请求、费用和错误合同 | 直接向 dev 集成；接口接入与回答、引用质量分别验收 |
 | [management-workbench-trd.md](management-workbench-trd.md) | 2026-11-02 统一看板；2026-11-03 升级为管理工作台 | 以分类和看板连接分散的问题、PR、TRD 与 devlog；后续加入里程碑、课程闭环地图与验收门槛，服务周四课程闭环验收 | 单文件离线维护；历史 DONE 沿用原验收范围，PR 信息、课程进度与费用按采集时点阅读 |
