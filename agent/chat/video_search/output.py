@@ -4,6 +4,9 @@ from collections.abc import Sequence
 
 from engine.rag.contracts import (
     AgentReply,
+    SelectionReason,
+    VideoChunkCandidate,
+    VideoChunkEvidence,
     VideoChunkSearchHit,
     VideoChunkSearchResult,
 )
@@ -351,4 +354,22 @@ def retrieval_hit(calls: Sequence[RetrievalCall], video_chunk_id: str) -> VideoC
     raise UnknownToolItemError(
         f"Unknown retrieved video_chunk_id {video_chunk_id!r}",
         "Use a video_chunk_id returned by retrieve or search_video_events.",
+    )
+
+
+def outline_evidence_hit(evidence: VideoChunkEvidence) -> VideoChunkSearchHit:
+    """Project outline source evidence read this turn into the citable hit shape.
+
+    An outline chunk has no retrieval ranking, so its candidate and selection
+    reason are synthetic; the canonical evidence is the real source snapshot.
+    """
+
+    return VideoChunkSearchHit(
+        candidate=VideoChunkCandidate(
+            video_chunk_id=evidence.video_chunk_id, fused_rank=1, fused_score=1.0,
+        ),
+        selection_reason=SelectionReason(
+            summary="章节大纲覆盖的 Chunk。", matched_evidence=[], limitations=[],
+        ),
+        evidence=evidence,
     )

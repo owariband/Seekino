@@ -653,6 +653,97 @@ def test_supervisor_reads_source_evidence_and_owns_final_selection():
     assert not hasattr(video.last_result, "canvas")
 
 
+def _outline_video_runtime():
+    """Video runtime whose AgentRuntime resolves outline chunks and their evidence."""
+
+    video = FakeVideoRuntime()
+
+    def video_outline(videos, *, tenant_id, series_ids):
+        return {"videos": [{
+            "series": "Course", "episode": 1, "available": True,
+            "title": "课程标题", "description": "课程简介",
+            "sections": [
+                {"start_ms": 0, "end_ms": 10_000, "title": "开场", "summary": "老师介绍课程目标。",
+                 "video_chunk_ids": ["chunk-1"]},
+            ],
+        }]}
+
+    def outline_evidence(video_chunk_id, *, tenant_id):
+        return _hit(video_chunk_id).evidence
+
+    video.runtime = AgentRuntime(
+        video.query, video.retrieval.search, retrieval_channel="lexical",
+        video_outline=video_outline, outline_evidence=outline_evidence,
+    )
+    return video
+
+
+def test_supervisor_reads_outline_chunk_and_submits_it_into_the_final_result():
+    model = FakeSupervisorModel(
+        calls=("get_video_outline", "read_retrieval_evidence", "submit_video_item"),
+        arguments=(
+            {"videos": [{"series": "Course", "episode": 1}]},
+            {"video_chunk_id": "chunk-1"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
+             "claim": "Read outline chunk source evidence."},
+        ),
+        answer="The outline chunk is verified and submitted.",
+    )
+    result = _runtime(model, video=_outline_video_runtime()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert all("error" not in receipt for receipt in model.tool_results)
+    assert [hit.candidate.video_chunk_id for hit in result.video_result.hits] == ["chunk-1"]
+    assert result.video_result.hits[0].selection_reason.summary == "Read outline chunk source evidence."
+    selected = next(block for block in result.video_result.render_blocks if block.type == "video")
+    assert (selected.start_seconds, selected.end_seconds) == (11, 19)
+
+
+def test_supervisor_cannot_submit_an_outline_chunk_without_reading_its_evidence():
+    model = FakeSupervisorModel(
+        calls=("get_video_outline", "submit_video_item"),
+        arguments=(
+            {"videos": [{"series": "Course", "episode": 1}]},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
+             "claim": "Submitted without reading."},
+        ),
+        answer="The outline chunk cannot be submitted without reading its evidence.",
+    )
+    result = _runtime(model, video=_outline_video_runtime()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert model.tool_results[1]["error"]["code"] == "UNKNOWN_ITEM"
+    assert "read_retrieval_evidence" in model.tool_results[1]["error"]["retry_hint"]
+    assert result.video_result is None
+
+
+def test_supervisor_rejects_outline_chunk_submission_outside_its_evidence():
+    model = FakeSupervisorModel(
+        calls=("get_video_outline", "read_retrieval_evidence", "submit_video_item"),
+        arguments=(
+            {"videos": [{"series": "Course", "episode": 1}]},
+            {"video_chunk_id": "chunk-1"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.021, "end_seconds": 0.022,
+             "claim": "Outside the outline chunk evidence."},
+        ),
+        answer="The requested range is outside the chunk evidence.",
+    )
+    result = _runtime(model, video=_outline_video_runtime()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert model.tool_results[2]["error"]["code"] == "INVALID_VIDEO_RANGE"
+    assert result.video_result is None
+
+
+def test_supervisor_prompt_allows_read_outline_submission_and_hides_tool_failures():
+    model = FakeSupervisorModel()
+    _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    prompt = model.prompts[0]
+    assert ("read_retrieval_evidence 可读取大纲 Chunk 的源证据，读取后即可作为视频片段提交；"
+            "仅凭大纲摘要不能提交。") in prompt
+    assert "工具报错、调用限制和内部字段名不写进给用户的回答，换用其他工具继续即可。" in prompt
+
+
 def test_successful_searches_accumulate_evidence_and_trace_while_failed_search_preserves_previous_evidence():
     first, second = _hit("chunk-1"), _hit("chunk-2")
 

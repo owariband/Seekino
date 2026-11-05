@@ -19,6 +19,8 @@ from gateway.media import ToolImageArtifact
 from gateway.model_events import ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
+from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
+
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
 from .query_hook import QueryHook
@@ -35,7 +37,7 @@ from .video_search.errors import VideoSearchFailure, VideoSearchFailureCode, Vid
 from .video_search.runtime import AgentRuntime
 from .video_search.output import (
     build_chat_output, build_chat_snapshot, build_retrieval_trace, merge_retrieval_calls,
-    retrieval_hit, validate_result, video_range_sources,
+    outline_evidence_hit, retrieval_hit, validate_result, video_range_sources,
 )
 from .video_search.state import (
     AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock,
@@ -234,6 +236,7 @@ class SupervisorRuntime:
         query_reports: dict[str, dict] = {}
         frame_receipts: dict[str, dict] = {}
         retrieval_calls: list[RetrievalCall] = []
+        outline_evidence_registry: dict[str, VideoChunkEvidence] = {}
         query_warnings: list[str] = []
         submitted_items: dict[str, SelectedVideoRange] = {}
         submitted_sources: dict[str, list[str]] = {}
@@ -291,9 +294,33 @@ class SupervisorRuntime:
                     answer.append(block)
             return answer
 
+        def citable_result() -> VideoChunkSearchResult:
+            # Retrieval hits and outline chunks whose source evidence was read this
+            # turn are equally citable; both project into the same final hit shape.
+            by_id: dict[str, VideoChunkSearchHit] = {}
+            merged = None
+            if any(call.status != "error" for call in retrieval_calls):
+                merged = merge_retrieval_calls(inputs, retrieval_calls)
+                for hit in merged.hits:
+                    by_id[hit.candidate.video_chunk_id] = hit
+            for chunk_id, evidence in outline_evidence_registry.items():
+                by_id.setdefault(chunk_id, outline_evidence_hit(evidence))
+            hits = list(by_id.values())
+            if merged is not None:
+                return merged.model_copy(update={
+                    "hits": hits,
+                    "agent_reply": merged.agent_reply.model_copy(update={"result_count": len(hits)}),
+                }, deep=True)
+            return VideoChunkSearchResult(
+                query="read outline chunk source evidence",
+                series_ids=list(inputs["series_ids"]),
+                agent_reply=AgentReply(message="已读取大纲 Chunk 源证据。", result_count=len(hits)),
+                hits=hits,
+            )
+
         def accepted_video_evidence():
             assert video_available
-            available = merge_retrieval_calls(inputs, retrieval_calls)
+            available = citable_result()
             if query_warnings:
                 available = available.model_copy(update={
                     "partial": True,
@@ -302,8 +329,9 @@ class SupervisorRuntime:
             source_ids = list(dict.fromkeys(
                 identifier for sources in submitted_sources.values() for identifier in sources
             ))
+            hits_by_id = {hit.candidate.video_chunk_id: hit for hit in available.hits}
             evidence = available.model_copy(update={
-                "hits": [retrieval_hit(retrieval_calls, identifier) for identifier in source_ids],
+                "hits": [hits_by_id[identifier] for identifier in source_ids],
                 "agent_reply": available.agent_reply.model_copy(update={"result_count": len(source_ids)}),
             }, deep=True)
             selection = QueryDraft(
@@ -318,7 +346,7 @@ class SupervisorRuntime:
             search_result = None
             if completed and video_result is not None:
                 search_result = video_result.model_dump(mode="json", by_alias=True)
-            elif any(call.status != "error" for call in retrieval_calls):
+            elif any(call.status != "error" for call in retrieval_calls) or submitted_items:
                 evidence, selection = accepted_video_evidence()
                 search_result = build_chat_snapshot(
                     evidence, selection, answer_blocks(render_blocks),
@@ -795,17 +823,18 @@ class SupervisorRuntime:
                 try:
                     retrieval_hit(retrieval_calls, video_chunk_id)
                 except UnknownToolItemError as exc:
-                    raise AgentToolFeedbackError(
-                        "UNKNOWN_ITEM", str(exc),
-                        "Use a video_chunk_id returned by retrieve or search_video_events; "
-                        "current-video evidence is delivered as time-code links, not a card.",
-                    ) from exc
+                    if outline_evidence_registry.get(video_chunk_id) is None:
+                        raise AgentToolFeedbackError(
+                            "UNKNOWN_ITEM", str(exc),
+                            "Read the chunk with read_retrieval_evidence first, or use an id "
+                            "from retrieve/search_video_events.",
+                        ) from exc
                 try:
                     # The tool accepts seconds; canonical evidence and playback storage use milliseconds.
                     start_ms, end_ms = round(start_seconds * 1000), round(end_seconds * 1000)
                     source_ids = video_range_sources(
                         {hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
-                         for hit in merge_retrieval_calls(inputs, retrieval_calls).hits},
+                         for hit in citable_result().hits},
                         video_chunk_id, start_ms, end_ms, allow_adjacent=True,
                     )
                 except (ValueError, OverflowError) as exc:
@@ -1001,6 +1030,7 @@ class SupervisorRuntime:
                 supports_vision_input=self.supports_vision_input,
                 frame_session=self._video_runtime.new_frame_session(), budget=tool_budget,
                 maximum_result_bytes=self._max_tool_result_bytes,
+                outline_evidence_registry=outline_evidence_registry,
             )
             for direct in direct_tools:
                 def invoke_direct(*args, _tool=direct, **kwargs):
@@ -1132,7 +1162,7 @@ class SupervisorRuntime:
             "两者不一致时说明差异；未生成摘要的集明确标为尚未生成，不得补造内容。"
             "多个系列时按系列分别组织，用显示名称称呼系列。"
             "需要具体事实或片段时，用章节的 video_chunk_ids 调用 search_video_events 精读，命中结果才可提交为视频片段；"
-            "read_retrieval_evidence 可直接读取大纲 Chunk 的源证据核对内容，但读取结果和大纲摘要都不能直接提交视频片段。"
+            "read_retrieval_evidence 可读取大纲 Chunk 的源证据，读取后即可作为视频片段提交；仅凭大纲摘要不能提交。"
             "没有大纲时回到下述检索策略。"
             "具体台词、动作、情绪或局部事件优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
             "台词检索保留用户提供的原话或译文短语，不先扩写成带人物、剧情假设的长查询。"
@@ -1159,6 +1189,7 @@ class SupervisorRuntime:
             "准备核验什么，让用户及时知道任务已开始。工具状态由系统根据真实调用展示，"
             "不要输出工具 JSON、模拟进度或反复播报工具操作。得到证据后，如仍需继续核验，"
             "可简短说明已发现的内容和下一步核验目标；不泄露内部推理或未经核实的结论。"
+            "工具报错、调用限制和内部字段名不写进给用户的回答，换用其他工具继续即可。"
             + "所有正文要与提交的 claim 和时间一致，整体不能只有完成确认。"
             +
             "实时理解和网页结果如有使用，应融入这份最终回答并区分来源与不确定性。"
@@ -1236,7 +1267,7 @@ class SupervisorRuntime:
             render_blocks.append(MarkdownRenderBlock(markdown=f"{source_heading}：\n" + links))
         rendered = ChatRenderDraft(blocks=answer_blocks(render_blocks))
         content = rendered.answer_markdown
-        if any(call.status != "error" for call in retrieval_calls):
+        if any(call.status != "error" for call in retrieval_calls) or submitted_items:
             # Reuse the existing render contract with Supervisor selections, never child render blocks.
             evidence, selection = accepted_video_evidence()
             validate_result(evidence, inputs)

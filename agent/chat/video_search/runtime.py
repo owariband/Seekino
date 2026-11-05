@@ -143,11 +143,13 @@ class AgentRuntime:
         maximum_tool_calls: int | None = None, supports_vision_input: bool = False,
         frame_session: FrameInspectionSession | None = None, budget: _ToolCallBudget | None = None,
         maximum_result_bytes: int | None = None,
+        outline_evidence_registry: dict[str, VideoChunkEvidence] | None = None,
     ) -> list[AgentTool]:
         return build_retrieval_tools(
             self._retrieve, role="supervisor", event_retrieve=self._event_retrieve,
             video_outline=self._video_outline, series_overview=self._series_overview,
             outline_evidence=self._outline_evidence,
+            outline_evidence_registry=outline_evidence_registry,
             inputs=inputs, control=control, calls=calls,
             maximum_tool_calls=maximum_tool_calls,
             maximum_result_bytes=min(self._max_tool_result_bytes, maximum_result_bytes)
