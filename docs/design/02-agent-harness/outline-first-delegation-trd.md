@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**大纲优先、减少 query_video 委派 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-outline-first-delegation`，PR 待创建。关联：[video-outline-trd.md](video-outline-trd.md)（#41，已合并，大纲与按“系列名 + 集数”寻址）；[outline-chunk-citation-trd.md](outline-chunk-citation-trd.md)（#46，大纲 Chunk 读后可引用）；[query-rewriter-model-trd.md](query-rewriter-model-trd.md)（#47，改写器）。无代码依赖，可独立合并；验收在 `dev` + #46 + #47 本地集成构建上进行。本需求属于 2026-11-05 发布验收发现的体验问题。
+**大纲优先、减少 query_video 委派 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-outline-first-delegation`，PR [#48](https://github.com/owariband/Seekino/pull/48)。关联：[video-outline-trd.md](video-outline-trd.md)（#41，已合并，大纲与按“系列名 + 集数”寻址）；[outline-chunk-citation-trd.md](outline-chunk-citation-trd.md)（#46，大纲 Chunk 读后可引用）；[query-rewriter-model-trd.md](query-rewriter-model-trd.md)（#47，改写器）。无代码依赖，可独立合并；验收在 `dev` + #46 + #47 本地集成构建上进行。本需求属于 2026-11-05 发布验收发现的体验问题。
 
 ## 背景与触发场景
 
