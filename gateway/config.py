@@ -425,18 +425,13 @@ class QueryHookConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     enabled: bool = False
+    rewriter_enabled: bool = Field(default=True, strict=True)
     router_endpoint: Annotated[_HttpsBaseUrl, AfterValidator(_query_hook_url)] = (
         "https://openrouter.ai/api/alpha/decisions"
     )
     router_model: _NonEmptyString = "typesafe/jev-1.14"
     router_api_key_env: _NonEmptyString = "OPENROUTER_JEV_API_KEY"
     router_timeout_seconds: float = Field(default=3, gt=0)
-    rewriter_base_url: Annotated[_NonEmptyString, AfterValidator(_query_hook_url)] = (
-        "http://127.0.0.1:18841"
-    )
-    rewriter_model: _NonEmptyString = "seekino-qwen3-text-8b-rewriter"
-    rewriter_stream: bool = Field(default=True, strict=True)
-    rewriter_temperature: float = Field(default=0.0, ge=0, le=2, strict=True, allow_inf_nan=False)
     rewriter_timeout_seconds: float = Field(default=4, gt=0)
     max_output_tokens: int = Field(default=256, ge=1, strict=True)
     history_message_limit: int = Field(default=6, ge=1, strict=True)

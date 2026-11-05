@@ -6,7 +6,7 @@ import yaml
 from pydantic import ValidationError
 
 from gateway.config import (
-    AgentFallbackConfig, AgentModelConfig, EmbeddingModelBinding, GatewayConfig, ModelBinding, QueryHookConfig, load_config,
+    AgentFallbackConfig, AgentModelConfig, EmbeddingModelBinding, GatewayConfig, ModelBinding, load_config,
     required_api_key_env_names, resolve_source_api_key,
 )
 from gateway.model_sources import ModelReference, ModelReferenceType
@@ -38,10 +38,9 @@ def test_yaml_temperature_survives_resolution_projection_and_freezing(role, temp
 
 
 @pytest.mark.parametrize("value", [True, False, "0.2", None, -0.1, 2.1, float("nan"), float("inf"), float("-inf")])
-@pytest.mark.parametrize("schema", [ModelBinding, AgentModelConfig, AgentFallbackConfig, QueryHookConfig])
+@pytest.mark.parametrize("schema", [ModelBinding, AgentModelConfig, AgentFallbackConfig])
 def test_temperature_rejects_invalid_values_at_configuration_boundary(schema, value):
-    data = ({"rewriter_temperature": value} if schema is QueryHookConfig else
-            {"source": "source", "model": "model", "temperature": value})
+    data = {"source": "source", "model": "model", "temperature": value}
     if schema is AgentModelConfig:
         data.update(max_output_tokens=1024, request_timeout_seconds=30)
     with pytest.raises(ValidationError, match="temperature"):

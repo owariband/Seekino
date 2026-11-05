@@ -211,6 +211,15 @@ def _build_application_services(
         if gateway_config.query_hook.enabled and "query_hook" in gateway_config.normalized_models
         else None
     )
+    rewrite_model = (
+        gateway_client.create_generative_model("query_rewriter")
+        if (
+            gateway_config.query_hook.enabled
+            and gateway_config.query_hook.rewriter_enabled
+            and "query_rewriter" in gateway_config.normalized_models
+        )
+        else None
+    )
     auth = AuthService(
         IdentityRepository(session_factory), settings.auth,
         redis=resources.redis_client,
@@ -441,6 +450,7 @@ def _build_application_services(
             query_hook=QueryHook(
                 gateway_config.query_hook, QueryHookModels(gateway_config.query_hook),
                 decision_model=query_hook_model,
+                rewrite_model=rewrite_model,
             ) if gateway_config.query_hook.enabled else None,
         )
 

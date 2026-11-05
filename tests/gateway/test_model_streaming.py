@@ -10,12 +10,11 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ValidationError
 
 from gateway.agent_model.context import ContextWindowPolicy
-from gateway.config import ArkModelSourceConfig, ModelBinding, OpenAIModelSourceConfig, QueryHookConfig, load_config
+from gateway.config import ArkModelSourceConfig, ModelBinding, OpenAIModelSourceConfig, load_config
 from gateway.local.llama_cpp import LlamaCppMultimodalModel
 from gateway.local.ollama import OllamaMultimodalModel
 from gateway.model_factory import GatewayClient
 from gateway.multimodal import TextInput
-from gateway.query_hook import QueryHookModels
 from gateway.usage import capture_model_usage
 
 
@@ -226,22 +225,6 @@ def test_local_compatible_models_use_the_same_default_and_override(setting, temp
 def test_stream_configuration_rejects_non_boolean_values(value):
     with pytest.raises(ValidationError):
         ModelBinding(source="selected", model="model", stream=value)
-
-
-@pytest.mark.parametrize("setting", [None, True, False])
-@pytest.mark.parametrize("temperature", [None, 0.2])
-def test_query_rewriter_uses_its_creation_time_stream_setting(setting, temperature):
-    requests = []
-    def respond(request):
-        body = json.loads(request.content)
-        requests.append(body)
-        return _wire(body)
-    config = QueryHookConfig(**({} if setting is None else {"rewriter_stream": setting}),
-                             **({} if temperature is None else {"rewriter_temperature": temperature}))
-    model = QueryHookModels(config, transport=httpx.MockTransport(respond))
-    assert model.rewrite("answer", Answer, timeout_seconds=3).answer == "ok"
-    assert len(requests) == 1 and requests[0]["stream"] is (setting is not False)
-    assert requests[0]["temperature"] == (temperature or 0)
 
 
 @pytest.mark.parametrize("protocol", [b"HTTP/1.0", b"HTTP/1.1", b"HTTP/2", None])

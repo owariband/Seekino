@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 from threading import Event
 from time import monotonic
@@ -15,10 +16,10 @@ from tests.agent.chat.test_supervisor import FakeSupervisorModel, FakeVideoRunti
 
 
 class Models:
-    def __init__(self, action="retrieve", query="真是高高在上呢"):
-        self.action, self.query = action, query
+    def __init__(self, action="retrieve"):
+        self.action = action
         self.calls = []
-        self.route_error = self.rewrite_error = None
+        self.route_error = None
 
     def route(self, state, question, *, timeout_seconds):
         self.calls.append(("route", deepcopy(state), timeout_seconds))
@@ -27,12 +28,19 @@ class Models:
         with track_model_call(provider="fake", model="jev", operation="query_hook_route"):
             return self.action
 
-    def rewrite(self, prompt, result_type, *, timeout_seconds):
-        self.calls.append(("rewrite", prompt, timeout_seconds))
-        if self.rewrite_error:
-            raise self.rewrite_error
-        with track_model_call(provider="fake", model="8b", operation="retrieval_slot"):
-            return result_type(retrieval_query=self.query)
+
+class RewriteModel:
+    def __init__(self, query="真是高高在上呢"):
+        self.query = query
+        self.calls = []
+        self.error = None
+
+    def generate(self, inputs, **options):
+        self.calls.append((inputs, options))
+        if self.error:
+            raise self.error
+        with track_model_call(provider="fake", model="rewriter", operation="query_hook_rewrite"):
+            return options["result_type"](retrieval_query=self.query)
 
 
 class DecisionModel:
@@ -121,38 +129,62 @@ def test_combined_late_result_is_discarded_and_parent_deadline_is_not_swallowed(
     assert len(model.calls) == 1
 
 
-def hook(models, **config):
-    return QueryHook(QueryHookConfig(enabled=True, **config), models)
+def hook(models, rewrite=None, **config):
+    rewrite_model = RewriteModel() if rewrite is None else rewrite
+    return QueryHook(QueryHookConfig(enabled=True, **config), models, rewrite_model=rewrite_model)
+
+
+def test_rewrite_injects_slot_options_into_injected_model():
+    models = Models("retrieve")
+    rewrite = RewriteModel("原句不是你说的那样")
+    inputs = _inputs()
+    usage = []
+    before = hook(models, rewrite)
+    with capture_model_usage(usage.append):
+        output = before(inputs, ExecutionControl(None))
+    assert output.startswith(inputs["user_message"] + "\n\n")
+    assert "候选检索用语：\"原句不是你说的那样\"" in output
+    assert len(rewrite.calls) == 1
+    prompt, options = rewrite.calls[0][0], rewrite.calls[0][1]
+    assert "已确定 action：retrieve" in prompt[0].text
+    assert options["schema_name"] == "retrieval_slot"
+    assert options["result_type"] is RetrievalSlot
+    assert options["max_model_calls"] == 1
+    assert options["request_timeout_seconds"] == 4
+    assert callable(options["check_control"])
+    assert [c.operation for c in usage] == ["query_hook_route", "query_hook_rewrite"]
+    assert all(call.context["stage"] == "query_hook" for call in usage)
 
 
 @pytest.mark.parametrize("action", ["respond", "retrieve", "mixed"])
-def test_template_branch_preserves_original_and_never_asks_8b_to_route(action):
+def test_template_branch_preserves_original_and_rewrites_only_after_route(action):
     models = Models(action)
+    rewrite = RewriteModel()
     inputs = _inputs()
     inputs["user_message"] = "真是高高在上呢 哪里出现过  "
     original = deepcopy(inputs)
-    output = hook(models)(inputs, ExecutionControl(None))
+    output = hook(models, rewrite)(inputs, ExecutionControl(None))
     assert inputs == original
     assert output.startswith(inputs["user_message"] + "\n\n")
     assert "不评价上一轮检索是否正确" in output
     assert "不约束后续轮次" in output
     assert "以用户原文为准" in output
-    assert [call[0] for call in models.calls] == (
-        ["route"] if action == "respond" else ["route", "rewrite"]
-    )
+    assert [call[0] for call in models.calls] == ["route"]
     if action != "respond":
-        assert f"已确定 action：{action}" in models.calls[1][1]
+        assert f"已确定 action：{action}" in rewrite.calls[0][0][0].text
         assert "真是高高在上呢" in output
     else:
+        assert not rewrite.calls
         assert "不新增视频检索" in output
         assert "候选检索用语：" not in output
 
 
 def test_mixed_does_not_force_response_order_or_rewrite_response_task():
-    models = Models("mixed", "她后来参加活动的画面")
+    models = Models("mixed")
+    rewrite = RewriteModel("她后来参加活动的画面")
     inputs = _inputs()
     inputs["user_message"] = "先找她后来参加活动的画面，再把刚才那段解释改成一句话。"
-    output = hook(models)(inputs, ExecutionControl(None))
+    output = hook(models, rewrite)(inputs, ExecutionControl(None))
     assert inputs["user_message"] in output
     assert "先后顺序遵循当前原文" in output
     assert "候选检索用语：\"她后来参加活动的画面\"" in output
@@ -165,8 +197,9 @@ def test_route_failure_uses_original_and_rewrite_failure_retains_template():
     assert hook(models)(inputs, ExecutionControl(None)) == inputs["user_message"]
     assert len(models.calls) == 1
     models.route_error = None
-    models.rewrite_error = QueryHookModelError("unavailable")
-    output = hook(models)(inputs, ExecutionControl(None))
+    rewrite = RewriteModel()
+    rewrite.error = RuntimeError("unavailable")
+    output = hook(models, rewrite)(inputs, ExecutionControl(None))
     assert "简单检索" in output
     assert "候选检索用语：" not in output
 
@@ -174,9 +207,44 @@ def test_route_failure_uses_original_and_rewrite_failure_retains_template():
 @pytest.mark.parametrize("stage", ["route", "rewrite"])
 def test_admission_failures_are_not_silently_bypassed(stage):
     models = Models()
-    setattr(models, f"{stage}_error", ModelCallControlError("quota exhausted"))
-    with pytest.raises(ModelCallControlError):
-        hook(models)(_inputs(), ExecutionControl(None))
+    if stage == "route":
+        models.route_error = ModelCallControlError("quota exhausted")
+        with pytest.raises(ModelCallControlError):
+            hook(models)(_inputs(), ExecutionControl(None))
+    else:
+        rewrite = RewriteModel()
+        rewrite.error = ModelCallControlError("quota exhausted")
+        with pytest.raises(ModelCallControlError):
+            hook(models, rewrite)(_inputs(), ExecutionControl(None))
+
+
+def test_disabled_rewriter_skips_model_call_and_logs_once(caplog):
+    models = Models("retrieve")
+    rewrite = RewriteModel()
+    inputs = _inputs()
+    with caplog.at_level(logging.INFO):
+        output = hook(models, rewrite, rewriter_enabled=False)(inputs, ExecutionControl(None))
+    assert [call[0] for call in models.calls] == ["route"]
+    assert not rewrite.calls
+    assert "简单检索" in output
+    assert "候选检索用语：" not in output
+    assert caplog.text.count("event=query_hook_rewrite") == 1
+    assert "status=skipped" in caplog.text
+    assert "error=disabled" in caplog.text
+
+
+def test_missing_rewrite_model_skips_and_logs_once(caplog):
+    models = Models("retrieve")
+    inputs = _inputs()
+    before = QueryHook(QueryHookConfig(enabled=True), models)
+    with caplog.at_level(logging.INFO):
+        output = before(inputs, ExecutionControl(None))
+    assert [call[0] for call in models.calls] == ["route"]
+    assert "简单检索" in output
+    assert "候选检索用语：" not in output
+    assert caplog.text.count("event=query_hook_rewrite") == 1
+    assert "status=skipped" in caplog.text
+    assert "error=disabled" in caplog.text
 
 
 def test_cancel_during_route_stops_before_rewrite_or_supervisor():
@@ -256,7 +324,8 @@ def test_disabled_hook_has_no_provider_calls():
 
 def test_each_turn_is_independent_and_usage_keeps_parent_identity():
     models = Models("retrieve")
-    before = hook(models)
+    rewrite = RewriteModel()
+    before = hook(models, rewrite)
     inputs = _inputs()
     usage = []
     with capture_model_usage(usage.append), model_call_context({"tenant_id": "tenant", "run_id": "run"}):
@@ -265,7 +334,7 @@ def test_each_turn_is_independent_and_usage_keeps_parent_identity():
         second = before(inputs, ExecutionControl(None))
     assert "简单检索" in first and "简单回应" in second
     assert "候选检索用语：" not in second
-    assert [call.model for call in usage] == ["jev", "8b", "jev"]
+    assert [call.model for call in usage] == ["jev", "rewriter", "jev"]
     assert all(call.context["stage"] == "query_hook" for call in usage)
     assert all(call.context["tenant_id"] == "tenant" and call.context["run_id"] == "run" for call in usage)
 
@@ -279,6 +348,7 @@ def test_empty_or_excessive_slot_cannot_be_appended(query):
 @pytest.mark.parametrize("combined", [False, True])
 def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_original(combined):
     models = Models("retrieve")
+    rewrite = RewriteModel()
     supervisor = FakeSupervisorModel(calls=("query_video",))
     video = FakeVideoRuntime()
     runtime = SupervisorRuntime(
@@ -286,14 +356,16 @@ def test_supervisor_receives_append_once_while_tools_history_and_inputs_keep_ori
         max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
         max_tool_result_bytes=4096, max_prompt_chars=10000,
         query_hook=QueryHook(QueryHookConfig(enabled=True), models,
-            decision_model=DecisionModel("retrieve", "真是高高在上呢") if combined else None),
+            decision_model=DecisionModel("retrieve", "真是高高在上呢") if combined else None,
+            rewrite_model=None if combined else rewrite),
     )
     inputs = _inputs(series_ids=["series"])
     inputs["history"] = [{"role": "user", "content": "原始历史", "messageId": "old"}]
     original = deepcopy(inputs)
     runtime.kick(inputs, load_video_context=lambda: [])
     assert inputs == original
-    assert [call[0] for call in models.calls] == ([] if combined else ["route", "rewrite"])
+    assert [call[0] for call in models.calls] == ([] if combined else ["route"])
+    assert len(rewrite.calls) == (0 if combined else 1)
     sent = supervisor.runs[0][2]
     assert sent.startswith(inputs["user_message"] + "\n\n")
     assert sent.count("[本轮处理说明｜应用生成]") == 1
