@@ -248,7 +248,8 @@ def test_shared_harness_preserves_media_system_reasoning_and_only_bound_tools(tm
         anchor = next(item for item in request["input"] if item.get("role") == "user")
         expected = ["input_text", "input_video"] if provider == "ark" else ["input_text", "input_image", "input_text", "input_image"]
         assert [item["type"] for item in anchor["content"]] == expected
-        assert request["tool_choice"] == "required"
+        # _model defaults to high reasoning; DeepSeek thinking mode rejects forced tool choices.
+        assert request["tool_choice"] == ("auto" if provider == "deepseek" else "required")
         assert "text" not in request
         assert {tool["name"] for tool in request["tools"]} == {"get_context_canvas", "write_context_canvas", "CanvasCompletion"}
         completion = next(tool for tool in request["tools"] if tool["name"] == "CanvasCompletion")
