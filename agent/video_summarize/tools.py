@@ -73,6 +73,32 @@ def _frame_image(canvas: SummaryCanvas, inspection_id: str, frame_index: int) ->
     return inspection[1].images[frame_index]
 
 
+def _validate_outline_sections(submission: VideoSummarySubmission, *, duration_ms: int, maximum_sections: int) -> None:
+    if len(submission.outline) > maximum_sections:
+        raise AgentToolFeedbackError(
+            "INVALID_OUTLINE", "The chapter outline exceeds the configured section limit.",
+            f"Use at most {maximum_sections} sections, ordered by start_ms without overlaps.",
+        )
+    previous_end: int | None = None
+    for section in submission.outline:
+        if section.start_ms >= section.end_ms:
+            raise AgentToolFeedbackError(
+                "INVALID_OUTLINE", "A chapter section must start before it ends.",
+                "Give every section a start_ms strictly below its end_ms.",
+            )
+        if previous_end is not None and section.start_ms < previous_end:
+            raise AgentToolFeedbackError(
+                "INVALID_OUTLINE", "Chapter sections overlap or are not sorted by start_ms.",
+                "Order sections by start_ms and keep each end_ms at or below the next section's start_ms.",
+            )
+        previous_end = section.end_ms
+    if previous_end is not None and previous_end > duration_ms:
+        raise AgentToolFeedbackError(
+            "INVALID_OUTLINE", "A chapter section extends past the video duration.",
+            f"Keep every section's end_ms within the video duration ({duration_ms} ms).",
+        )
+
+
 def build_tools(
     canvas: SummaryCanvas, *, inputs: VideoSummarizeInput, inspect_video_frames: AgentTool,
     limits: VideoSummarizeLimits, check_control: Callable[[], None],
@@ -137,6 +163,9 @@ def build_tools(
                 "Follow the submit_video_summary schema; omit unsupported optional fields.",
             ) from error
         bounded_json(submission.model_dump(mode="json"), limits.maximum_result_bytes)
+        _validate_outline_sections(
+            submission, duration_ms=inputs.duration_ms, maximum_sections=limits.maximum_outline_sections,
+        )
         with canvas._lock:
             if canvas.result is not None:
                 if canvas.result.submission == submission:

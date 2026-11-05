@@ -24,6 +24,9 @@ class RunInputs(TypedDict):
     tenant_id: str
     series_ids: list[str]
     series_context: list[dict]
+    # The video the user currently has open, addressed as (series name, episode).
+    # Built by the server from validated playback; None when no video is open.
+    current_video: NotRequired[dict | None]
     user_message: str
     # The user's own words when a Supervisor rewrote user_message into a search sub-query.
     original_user_message: NotRequired[str]

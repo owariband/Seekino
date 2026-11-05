@@ -1088,6 +1088,50 @@ def test_playback_uses_current_episode_without_changing_request_idempotency(buil
     assert context["playback"]["episodeOrder"] == 99
 
 
+def test_series_context_videos_and_current_video_use_series_episode_addressing(build_service):
+    class CurrentVideoModel(_DirectSupervisorModel):
+        def run_agent(self, prompt, *, handle_text, **_kwargs):
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            current = context["current_video"]
+            assert current["series"] == "Test Series"
+            assert current["seriesDisplayName"] == "Test Series"
+            assert current["episode"] == 1
+            assert current["title"] == "lecture.mp4"
+            assert current["positionSeconds"] == 123_456
+            videos = context["series_context"][0]["videos"]
+            assert {
+                "episodeOrder": 1, "title": "lecture.mp4",
+                "parseStatus": "PENDING", "hasOutline": False,
+            } in videos
+            assert all("videoId" not in video for video in videos)
+            assert context["series_context"][0]["displayName"] == "Test Series"
+            assert "当前打开的视频：Test Series 第 1 集《lecture.mp4》" in context["video_scope_description"]
+            handle_text("当前视频答疑。")
+
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=CurrentVideoModel(), realtime_runtime=object(),
+    )
+    video_id = str(uuid4())
+    with repository._session_factory.begin() as session:
+        series = session.query(Series).one()
+        series_id = series.id
+        session.add(Video(
+            id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
+            filename="lecture.mp4", source_uri="source/lecture.mp4",
+            hash="a" * 64, size_bytes=1, duration_ms=300_000,
+            upload_status="UPLOADED", parse_status="PENDING",
+            upload_progress=100, parse_progress=0,
+        ))
+    playback = {
+        "seriesId": series_id, "videoId": video_id, "episodeOrder": 1,
+        "positionSeconds": 123_456,
+    }
+    completed = _send(
+        service, conversation, series_ids=[series_id], extra_context={"playback": playback},
+    )
+    assert completed.assistant_message.content == "当前视频答疑。"
+
+
 @pytest.mark.parametrize("include_other_unready", [False, True])
 def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
     build_service, include_other_unready,

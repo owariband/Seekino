@@ -203,9 +203,12 @@ def complete_summary(session: Session, library: LibraryRepository, lease: VideoS
                 raise VideoParseSnapshotConflictError("Video summary sources changed before publication")
             stored = result_store.get_metadata(session, task.id, for_update=True)
             result_detail = deepcopy(stored.detail if stored else {})
-            result_detail["display"] = {"source_fingerprint": lease.source_fingerprint,
-                                        "committed_lease_version": lease.lease_version,
-                                        "completed_at_ms": datetime_to_unix_time_ms(now)}
+            audit = {"source_fingerprint": lease.source_fingerprint,
+                     "committed_lease_version": lease.lease_version,
+                     "completed_at_ms": datetime_to_unix_time_ms(now)}
+            result_detail["display"] = audit
+            result_detail["outline"] = audit
+            now_ms = datetime_to_unix_time_ms(now)
             result_store.save_result(session, task.id, field="display",
                                      result={"title": result.submission.title,
                                              "title_kind": result.submission.title_kind,
@@ -215,7 +218,11 @@ def complete_summary(session: Session, library: LibraryRepository, lease: VideoS
                                              "evidence": [item.model_dump(mode="json")
                                                           for item in result.submission.evidence],
                                              "frame_receipts": list(result.frame_receipts)},
-                                     detail=result_detail, now_ms=datetime_to_unix_time_ms(now))
+                                     detail=result_detail, now_ms=now_ms)
+            result_store.save_result(session, task.id, field="outline",
+                                     result={"sections": [section.model_dump(mode="json")
+                                                         for section in result.outline]},
+                                     detail=result_detail, now_ms=now_ms)
             state.pop("result", None)
             state.pop("frame_receipts", None)
             state.update(status="COMPLETE", lease_owner=None, lease_expire_time_ms=None, last_error=None,

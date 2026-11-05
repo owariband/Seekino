@@ -60,6 +60,14 @@ def test_startup_guard_rejects_legacy_summary_column(repository):
         create_schema(engine)
 
 
+def test_startup_guard_rejects_missing_outline_column(repository):
+    engine = repository[0]
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE video_parse_content DROP COLUMN outline"))
+    with pytest.raises(SchemaUpgradeRequiredError, match="migrate_video_parse_display"):
+        create_schema(engine)
+
+
 def test_display_migration_preview_rename_convert_and_cover_fill(repository):
     engine = repository[0]
     factory, task_id, _video_id = _legacy_display_db(
@@ -67,8 +75,8 @@ def test_display_migration_preview_rename_convert_and_cover_fill(repository):
     )
     plan = migrate(engine)
     assert plan == {
-        "apply": False, "rename_column": True, "rows_to_convert": 1,
-        "covers_to_fill": 1, "conflicts": 0,
+        "apply": False, "rename_column": True, "add_outline_column": False,
+        "rows_to_convert": 1, "covers_to_fill": 1, "conflicts": 0,
     }
     assert {"summary"} <= {column["name"] for column in inspect(engine).get_columns("video_parse_content")}
     with pytest.raises(ValueError, match="writers-stopped"):
@@ -107,10 +115,23 @@ def test_display_migration_idempotent_rerun(repository):
     assert migrate(engine, apply=True, writers_stopped=True)["rows_to_convert"] == 1
     rerun = migrate(engine)
     assert rerun == {
-        "apply": False, "rename_column": False, "rows_to_convert": 0,
-        "covers_to_fill": 0, "conflicts": 0,
+        "apply": False, "rename_column": False, "add_outline_column": False,
+        "rows_to_convert": 0, "covers_to_fill": 0, "conflicts": 0,
     }
     assert migrate(engine, apply=True, writers_stopped=True)["rows_to_convert"] == 0
     with factory() as session:
         assert result_store.load_result(session, task_id, "display") == {
             **CONVERTED, "cover_uri": "artifact://cover"}
+
+
+def test_display_migration_adds_outline_column_idempotently(repository):
+    engine = repository[0]
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE video_parse_content DROP COLUMN outline"))
+    assert migrate(engine)["add_outline_column"] is True
+    assert "outline" not in {column["name"] for column in inspect(engine).get_columns("video_parse_content")}
+    with pytest.raises(ValueError, match="writers-stopped"):
+        migrate(engine, apply=True)
+    assert migrate(engine, apply=True, writers_stopped=True)["add_outline_column"] is True
+    assert "outline" in {column["name"] for column in inspect(engine).get_columns("video_parse_content")}
+    assert migrate(engine)["add_outline_column"] is False

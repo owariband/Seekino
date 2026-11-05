@@ -51,6 +51,7 @@ def _saved_summary(factory, task_id):
 def _result(*, order=3):
     return VideoSummaryResult(VideoSummarySubmission(
         title="迷路", description="两人终于在街角相遇。", episode_order=order,
+        outline=[{"start_ms": 0, "end_ms": 1000, "title": "相遇", "summary": "两人终于在街角相遇。"}],
         evidence=[{"field": "description", "chunk_parse_task_id": "source", "quote": "相遇"}],
     ), None, ({"inspection_id": "receipt", "frames": [{"requested_timestamp_ms": 1000}]},))
 
@@ -138,6 +139,21 @@ def test_publish_metadata_and_episode_order_atomically_and_preserve_runtime_sibl
     assert _claim(repo) is None
 
 
+def test_publish_persists_outline_with_both_audit_keys(repository):
+    factory, _queue, repo, task_id, _video_lease = _ready(repository)
+    lease = _claim(repo)
+    assert repo.complete_summary(lease, _result(), cover_uri=None, now=AT)
+    with factory() as session:
+        metadata = result_store.get_metadata(session, task_id)
+        assert metadata.detail["display"]["committed_lease_version"] == lease.lease_version
+        assert metadata.detail["outline"]["committed_lease_version"] == lease.lease_version
+        assert metadata.detail["outline"]["source_fingerprint"] == lease.source_fingerprint
+        assert "completed_at_ms" in metadata.detail["outline"]
+        saved = result_store.load_result(session, task_id, "outline")
+        assert saved == {"sections": [
+            {"start_ms": 0, "end_ms": 1000, "title": "相遇", "summary": "两人终于在街角相遇。"}]}
+
+
 def test_occupied_episode_keeps_existing_order_and_saves_other_metadata(repository):
     factory, _queue, repo, task_id, _video_lease = _ready(repository)
     lease = _claim(repo)
@@ -160,6 +176,7 @@ def test_generated_title_is_published_with_provenance_without_changing_episode_o
     lease = _claim(repo)
     result = VideoSummaryResult(VideoSummarySubmission(
         title="街角的重逢", title_kind="generated", description="两人终于在街角相遇。",
+        outline=[{"start_ms": 0, "end_ms": 1000, "title": "重逢", "summary": "两人终于在街角相遇。"}],
         evidence=[{"field": "title", "chunk_parse_task_id": "source", "quote": "在街角相遇"},
                   {"field": "description", "chunk_parse_task_id": "source", "quote": "在街角相遇"}],
     ), None)

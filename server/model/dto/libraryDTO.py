@@ -71,6 +71,7 @@ class VideoSummaryState:
     display_name: str | None = None
     description: str | None = None
     cover_uri: str | None = None
+    has_outline: bool = False
 
 
 @dataclass(frozen=True, slots=True)

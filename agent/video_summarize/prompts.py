@@ -63,6 +63,12 @@ inspected frame. Avoid credits, transitions, spoilers and next-episode previews.
 Use cover={{"inspection_id":...,"frame_index":...}} and matching cover evidence;
 never invent an image URL or a receipt. If no useful inspected frame exists, use null.
 
+From the digest, divide the video into its main chapters in time order
+(typically 3-15 for a long video, fewer for short ones). Each outline section
+uses the digest's millisecond times for start_ms/end_ms, a short title, and a
+1-3 sentence factual summary. Cover the whole video without overlaps. Outline
+sections need no evidence items; they are navigation only, never verified claims.
+
 Submit with submit_video_summary after reviewing the digest. Each evidence item
 has field, quote, and EITHER chunk_parse_task_id OR inspection_id plus frame_index.
 For an official title, quote the actual title text; for a generated title, quote

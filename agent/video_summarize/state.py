@@ -44,11 +44,12 @@ class VideoSummarizeLimits:
     maximum_read_chars: int
     maximum_catalog_items: int
     maximum_digest_chars: int
+    maximum_outline_sections: int
 
     def __post_init__(self) -> None:
         if any(type(value) is not int or value < 1 for value in (
             self.maximum_result_bytes, self.maximum_read_chars, self.maximum_catalog_items,
-            self.maximum_digest_chars,
+            self.maximum_digest_chars, self.maximum_outline_sections,
         )):
             raise ValueError("summarize limits must be positive integers supplied by the host")
 
@@ -150,6 +151,15 @@ class SummaryEvidence(BaseModel):
         return self
 
 
+class OutlineSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    start_ms: int = Field(ge=0, strict=True)
+    end_ms: int = Field(gt=0, strict=True)
+    title: str = Field(min_length=1, max_length=120)
+    summary: str = Field(min_length=1, max_length=1000)
+
+
 class VideoSummarySubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -161,6 +171,7 @@ class VideoSummarySubmission(BaseModel):
     description: str = Field(min_length=1)
     episode_order: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
     cover: FrameReference | None = None
+    outline: list[OutlineSection] = Field(min_length=1)
     evidence: list[SummaryEvidence] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -197,6 +208,10 @@ class VideoSummaryResult:
     @property
     def cover(self) -> FrameReference | None:
         return self.submission.cover
+
+    @property
+    def outline(self) -> list[OutlineSection]:
+        return self.submission.outline
 
     @property
     def evidence(self) -> list[SummaryEvidence]:

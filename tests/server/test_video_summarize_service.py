@@ -138,6 +138,7 @@ def _service(tmp_path, *, frozen_config=None, cover=None):
         description="A concise episode description.", evidence=[SummaryEvidence(
             field="description", chunk_parse_task_id="chunk", quote="A scene.",
         )],
+        outline=[{"start_ms": 0, "end_ms": 10_000, "title": "场景", "summary": "A scene."}],
     ), cover_image=cover)
 
     async def invoke(inputs, **kwargs):
@@ -218,6 +219,7 @@ def test_summary_chat_tools_use_completion_tool_and_require_validated_submission
         *([call("submit", "submit_video_summary", {
             "description": description,
             "evidence": [{"field": "description", "chunk_parse_task_id": "chunk", "quote": description}],
+            "outline": [{"start_ms": 0, "end_ms": 10_000, "title": "场景", "summary": description}],
         })] if submit else []),
         call("complete", "SummaryCompletion", {"completed": True}),
     ])
@@ -379,6 +381,7 @@ def test_real_summary_agent_tools_host_and_sql_complete_offline(tmp_path, monkey
                     receipt = json.loads(tools["submit_video_summary"].invoke({
                         "description": quote,
                         "evidence": [{"field": "description", "chunk_parse_task_id": references[0], "quote": quote}],
+                        "outline": [{"start_ms": 1000, "end_ms": 4000, "title": "动作", "summary": quote}],
                     }))
                     assert receipt == {"submitted": True}
                 return options["result_type"](completed=True)

@@ -999,8 +999,9 @@ class AgentChatService:
                 "characterBible": item.character_bible,
                 "videos": [{
                     "episodeOrder": video.episode_order,
-                    "originalFilename": video.original_filename,
+                    "title": (video.display_name or "").strip() or video.original_filename,
                     "parseStatus": video.parse_status,
+                    "hasOutline": video.has_outline,
                 } for video in item.videos],
             } for item in series])
 
@@ -1011,6 +1012,7 @@ class AgentChatService:
                 ])
 
             extra_context = deepcopy(initial.user_message.extra_context)
+            current_video = None
             if runtime.realtime_enabled and isinstance(extra_context, dict):
                 playback = extra_context.get("playback")
                 if isinstance(playback, dict):
@@ -1018,10 +1020,24 @@ class AgentChatService:
                     # Episode order may change after submission. Preserve the original
                     # request for idempotency and give the Agent the current identity.
                     playback["episodeOrder"] = video.episode_order
+                    current_series = next(
+                        (item for item in series if item.series_id == video.series_id), None
+                    )
+                    current_video = {
+                        "series": current_series.name if current_series is not None else None,
+                        "seriesDisplayName": (
+                            (current_series.display_name or current_series.name)
+                            if current_series is not None else None
+                        ),
+                        "episode": video.episode_order,
+                        "title": (video.display_name or "").strip() or video.original_filename,
+                        "positionSeconds": playback.get("positionSeconds"),
+                    }
 
             inputs = RunInputs(
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
                 tenant_id=tenant_id, series_ids=list(initial.user_message.series_ids),
+                current_video=current_video,
                 user_message=initial.user_message.content or "",
                 attachments=[dict(ref) for ref in initial.user_message.attachments],
                 image_urls=[image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)

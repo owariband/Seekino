@@ -69,6 +69,7 @@ def migrate(engine, *, apply: bool = False, writers_stopped: bool = False) -> di
         raise ValueError("video_parse_content has both summary and display columns; resolve manually")
     rename_column = "summary" in columns and "display" not in columns
     content_column = "display" if "display" in columns else "summary"
+    add_outline_column = "outline" not in columns
 
     with Session(engine) as session:
         content_rows = _load_content_rows(session, content_column)
@@ -133,6 +134,7 @@ def migrate(engine, *, apply: bool = False, writers_stopped: bool = False) -> di
     plan = {
         "apply": apply,
         "rename_column": rename_column,
+        "add_outline_column": add_outline_column,
         "rows_to_convert": len(converted_by_id),
         "covers_to_fill": covers_to_fill,
         "conflicts": conflicts,
@@ -150,6 +152,9 @@ def migrate(engine, *, apply: bool = False, writers_stopped: bool = False) -> di
             connection.execute(
                 text("ALTER TABLE video_parse_content RENAME COLUMN summary TO display")
             )
+    if add_outline_column:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE video_parse_content ADD COLUMN outline JSON NULL"))
 
     writes: dict[str, dict] = {content_id: {"display": display}
                                for content_id, display in converted_by_id.items()}

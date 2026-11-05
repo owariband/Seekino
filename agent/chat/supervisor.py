@@ -1020,9 +1020,17 @@ class SupervisorRuntime:
             for item in inputs["series_context"]
             if isinstance(item, dict) and item.get("seriesId") in inputs["series_ids"]
         ]
+        display_names = {
+            item.get("seriesId"): item.get("displayName")
+            for item in inputs["series_context"]
+            if isinstance(item, dict)
+        }
         scope_description = (
             "本次可检索的视频系列："
-            + "、".join(str(item["name"] or item["seriesId"]) for item in scope)
+            + "、".join(
+                str(display_names.get(item["seriesId"]) or item["name"] or item["seriesId"])
+                for item in scope
+            )
             + "。视频工具仅可检索这些系列。"
             if scope else
             "当前没有可检索的视频系列；当前播放视频可通过 understand_current_video 取得基础证据。"
@@ -1030,6 +1038,19 @@ class SupervisorRuntime:
             "当前没有可检索的视频系列。用户询问本地视频内容时，请先告知目前"
             "没有可核验的视频证据；网页资料不能代替视频证据。"
         )
+        current_video = inputs.get("current_video")
+        if isinstance(current_video, dict) and current_video.get("episode"):
+            current_label = (
+                str(current_video.get("seriesDisplayName") or current_video.get("series") or "")
+            )
+            current_episode = current_video.get("episode")
+            current_title = str(current_video.get("title") or "").strip()
+            scope_description += (
+                f"当前打开的视频：{current_label} 第 {current_episode} 集"
+                f"{('《' + current_title + '》') if current_title else ''}。"
+            )
+        else:
+            scope_description += "当前没有打开的视频。"
         reference = inputs.get("reference_context") or {}
         evidence = reference.get("evidence") if isinstance(reference, dict) else None
         reference_summary = {
@@ -1085,6 +1106,10 @@ class SupervisorRuntime:
             "本轮的限制只适用于本轮，不自行扩展成长久禁止检索的偏好。\n"
             "以下视频检索和核验策略仅在当前任务需要新的视频证据时适用。\n"
             "需要检索时采用贪心原则：选能回答当前问题的最小粒度工具，取得充分证据就停止扩搜并交付。"
+            "用户询问视频整体内容、结构、章节或概要时，先调用 get_video_outline，按章节组织回答；"
+            "需要具体事实或片段时，用章节的 video_chunk_ids 调用 search_video_events 精读，命中结果才可提交为视频片段；"
+            "read_retrieval_evidence 可直接读取大纲 Chunk 的源证据核对内容，但读取结果和大纲摘要都不能直接提交视频片段。"
+            "没有大纲时回到下述检索策略。"
             "具体台词、动作、情绪或局部事件优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
             "台词检索保留用户提供的原话或译文短语，不先扩写成带人物、剧情假设的长查询。"
             "命中结果包含真实证据；内容截断或缺少上下文时用 read_retrieval_evidence 续读。排名第一本身不等于证据充分。"
@@ -1099,6 +1124,11 @@ class SupervisorRuntime:
             "先读 video_scope_description，确认本次可检索的视频范围。没有可检索"
             "系列时仍可直接聊天或搜索网页；当前播放工具取得的真实证据可独立用于答疑。"
             "若没有任何本地视频证据，先说明无法核验该视频，不得用网页信息冒充视频证据。"
+            "指代解析：「这个视频/这一集/刚才/现在」指当前打开的视频（current_video），"
+            "「这个系列/这门课」指当前视频所属系列，或范围内唯一的系列。"
+            "用户问「这个视频」但当前没有打开视频时：范围内若只有一集就直接用这一集，否则列出几集请用户确认。"
+            "范围内有多个系列、问题未指明系列且没有打开视频时，先问清是哪个系列或按系列分别回答，绝不把多个系列混为一谈。"
+            "向用户称呼视频一律用「系列显示名 第 N 集《标题》」，不得写出任何内部 id。"
             + video_delivery
             + "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
             "调用耗时的视频检索、网页搜索或当前视频理解工具前，先用一句简短自然的正文说明"
@@ -1119,6 +1149,7 @@ class SupervisorRuntime:
                 "user_message": inputs["user_message"],
                 "video_scope": scope,
                 "video_scope_description": scope_description,
+                "current_video": inputs.get("current_video"),
                 "series_context": inputs["series_context"],
                 "video_reference": reference_summary,
                 "extra_context": inputs.get("extra_context"),

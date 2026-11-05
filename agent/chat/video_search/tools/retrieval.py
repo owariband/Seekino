@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
-from engine.rag.contracts import VideoChunkSearchResult
+from engine.rag.contracts import VideoChunkEvidence, VideoChunkSearchResult
 from engine.rag.retrieval.fusion import (
     AGENT_RETRIEVAL_STRATEGY_VERSION,
     normalize_hybrid_retrieval_weights,
@@ -14,7 +14,7 @@ from engine.rag.retrieval.fusion import (
 
 from ...common.errors import (
     AgentModelInvocationError, AgentToolFeedbackError, AgentToolInvocationError,
-    AgentToolOutputError,
+    AgentToolOutputError, UnknownToolItemError,
 )
 from ...common.state import ExecutionControl, RunInputs
 from ...common.tool import AgentTool, build_agent_tool
@@ -22,7 +22,7 @@ from ...common.tool_output import cursor_position, page_items
 from ...common.tool_result import TextToolResult, ToolResult
 from ..errors import VideoRetrievalError
 from ..output import merge_retrieval_calls, retrieval_hit, validate_result
-from ..context import retrieval_evidence_text
+from ..context import retrieval_evidence_text, retrieval_evidence_text_from_evidence
 from ..state import (
     LexicalRetrievalChannelWeights,
     RetrievalCall,
@@ -268,10 +268,52 @@ def build_read_retrieval_evidence_tool(
     *, calls: list[RetrievalCall], control: ExecutionControl,
     maximum_result_bytes: int, maximum_read_chars: int = 16_384,
     budget: _ToolCallBudget | None = None,
+    outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
+    outline_chunk_ids: set[str] | None = None,
+    tenant_id: str | None = None,
+    series_ids: list[str] | None = None,
 ) -> AgentTool:
     def read_retrieval_evidence(video_chunk_id: str, cursor: str | None = None) -> ToolResult:
         _start_tool_call(control, budget, "read_retrieval_evidence")
-        content = retrieval_evidence_text(retrieval_hit(calls, video_chunk_id))
+        hit = None
+        content = None
+        try:
+            hit = retrieval_hit(calls, video_chunk_id)
+        except UnknownToolItemError:
+            # Outline chunk ids are not retrieval hits; their source evidence is
+            # fetched on demand and remains non-citable until search_video_events.
+            if (
+                outline_evidence is None
+                or outline_chunk_ids is None
+                or tenant_id is None
+                or video_chunk_id not in outline_chunk_ids
+            ):
+                raise
+            try:
+                evidence = outline_evidence(video_chunk_id, tenant_id=tenant_id)
+            except AgentModelInvocationError:
+                raise
+            except Exception as exc:
+                control.check()
+                raise AgentToolFeedbackError(
+                    "OUTLINE_EVIDENCE_UNAVAILABLE",
+                    "The outline chunk's source evidence is unavailable.",
+                    "Read this section with search_video_events(video_chunk_ids=[...]) instead.",
+                ) from exc
+            if (
+                not isinstance(evidence, VideoChunkEvidence)
+                or evidence.tenant_id != tenant_id
+                or (series_ids is not None and evidence.series_id not in series_ids)
+            ):
+                raise AgentToolFeedbackError(
+                    "OUTLINE_EVIDENCE_UNAVAILABLE",
+                    "The outline chunk is outside the conversation's scope.",
+                    "Read this section with search_video_events(video_chunk_ids=[...]) instead.",
+                )
+            content = retrieval_evidence_text_from_evidence(evidence)
+        if hit is not None:
+            content = retrieval_evidence_text(hit)
+        assert content is not None
         part_size = max(1, min(maximum_read_chars, (maximum_result_bytes - 384) // 8))
         parts = [{"text": content[start:start + part_size]}
                  for start in range(0, len(content), part_size)]
