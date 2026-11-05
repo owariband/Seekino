@@ -631,6 +631,82 @@ class LibraryRepository:
             for series, video, episode in resolved
         ]}
 
+    def series_overview(
+        self,
+        session: Session,
+        *,
+        series_name: str | None,
+        tenant_id: str,
+        series_ids: list[str],
+    ) -> dict:
+        """Read a per-video overview for one or all authorized in-scope series.
+
+        Returns ``{"series": [...]}`` with one entry per authorized series, or
+        ``{"error": {"code", "message", "hint"}}`` when the named series cannot be
+        resolved. Each video carries its episode, summarized title/description and
+        outline availability; ``video_id`` is never returned.
+        """
+        authorized = sorted(
+            session.scalars(
+                select(Series).where(
+                    Series.id.in_(series_ids), Series.tenant_id == tenant_id,
+                )
+            ),
+            key=lambda item: (item.name, item.id),
+        )
+        series_by_name = {item.name: item for item in authorized}
+        series_names = [item.name for item in authorized]
+
+        if series_name is None:
+            selected = authorized
+        else:
+            series = series_by_name.get(series_name)
+            if series is None:
+                return _outline_resolution_error(
+                    "UNKNOWN_SERIES",
+                    f"Series {series_name!r} is not in the conversation's scope.",
+                    "Valid series: " + "、".join(series_names),
+                )
+            selected = [series]
+
+        videos = self._video_states(
+            session, tenant_id=tenant_id,
+            series_ids=[item.id for item in selected],
+        )
+        videos_by_series: dict[str, list[VideoSummaryState]] = {}
+        for video in videos:
+            videos_by_series.setdefault(video.series_id, []).append(video)
+        return {"series": [
+            self._series_overview_result(item, videos_by_series.get(item.id, ()))
+            for item in selected
+        ]}
+
+    @staticmethod
+    def _series_overview_result(
+        series: Series, videos: list[VideoSummaryState],
+    ) -> dict:
+        """One series' videos as (episode, title, description, summarized, hasOutline)."""
+        items = []
+        for video in videos:
+            title = (video.display_name or "").strip()
+            description = video.description
+            summarized = bool(title or (description or "").strip())
+            if not summarized:
+                title = video.original_filename
+                description = None
+            items.append({
+                "episode": video.episode_order,
+                "title": title,
+                "description": description,
+                "summarized": summarized,
+                "hasOutline": video.has_outline,
+            })
+        return {
+            "series": series.name,
+            "displayName": series.display_name or series.name,
+            "videos": items,
+        }
+
     @staticmethod
     def _video_outline_result(
         session: Session, series: Series, video: Video, episode: int,

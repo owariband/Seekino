@@ -14,6 +14,7 @@ from .frames import build_inspect_video_frames_tool
 from .retrieval import build_retrieve_tool, build_read_retrieval_evidence_tool
 from .event_retrieval import build_search_video_events_tool
 from .video_outline import build_get_video_outline_tool
+from .series_overview import build_get_series_overview_tool
 from .shared import _ToolCallBudget
 
 
@@ -35,6 +36,7 @@ def build_retrieval_tools(
     supports_vision_input: bool = False,
     event_retrieve: Callable[..., EventSearchResult] | None = None,
     video_outline: Callable[..., dict | None] | None = None,
+    series_overview: Callable[..., dict | None] | None = None,
     outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
     budget: _ToolCallBudget | None = None,
 ) -> list[AgentTool]:
@@ -71,6 +73,11 @@ def build_retrieval_tools(
             video_outline, inputs=inputs, control=control,
             maximum_result_bytes=maximum_result_bytes, budget=budget,
             outline_chunk_ids=outline_chunk_ids,
+        ))
+    if role == "supervisor" and series_overview is not None:
+        tools.append(build_get_series_overview_tool(
+            series_overview, inputs=inputs, control=control,
+            maximum_result_bytes=maximum_result_bytes, budget=budget,
         ))
     if supports_vision_input and frame_reader is not None and frame_session is not None:
         tools.append(build_inspect_video_frames_tool(

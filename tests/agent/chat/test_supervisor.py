@@ -1030,6 +1030,15 @@ def test_supervisor_prompt_names_current_video_and_series_without_internal_ids()
     assert "不得写出任何内部 id" in prompt
 
 
+def test_supervisor_prompt_routes_series_questions_to_get_series_overview():
+    model = FakeSupervisorModel()
+    _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    prompt = model.prompts[0]
+    assert "用户询问系列/课程整体内容（如「这个系列讲了什么」）时，先调用 get_series_overview" in prompt
+    assert "get_series_overview 的各集标题与简介来自视频摘要" in prompt
+    assert "多个系列时按系列分别组织，用显示名称称呼系列" in prompt
+
+
 def test_supervisor_live_card_revisions_and_removals_keep_the_text_positions():
     model = FakeSupervisorModel(
         calls=("query_video", "submit_video_item", "submit_video_item",
