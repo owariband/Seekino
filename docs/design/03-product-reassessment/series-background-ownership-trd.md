@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**系列背景资料归属 TRD。状态：初稿（2026-11-05）。** 分支 `refactor/series-background-ownership`，PR 待创建。关联：[series-background-api.md](../01-mvp/series-background-api.md)（原背景接口合同）；[series-overview-trd.md](../02-agent-harness/series-overview-trd.md)（`feat/series-overview`，Chat 系列概览读取这些字段）。无合并顺序依赖。
+**系列背景资料归属 TRD。状态：初稿（2026-11-05）。** 分支 `refactor/series-background-ownership`，PR [#43](https://github.com/owariband/Seekino/pull/43)。关联：[series-background-api.md](../01-mvp/series-background-api.md)（原背景接口合同）；[series-overview-trd.md](../02-agent-harness/series-overview-trd.md)（`feat/series-overview`，PR [#44](https://github.com/owariband/Seekino/pull/44)，Chat 系列概览读取这些字段）。无合并顺序依赖。
 
 ## 背景与触发场景
 
