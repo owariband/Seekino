@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Chat 思考过程展示 TRD。状态：初稿（2026-11-05）。** 分支 `feat/chat-reasoning-display`，PR 待创建。依赖：[chat-answer-shape-trd.md](chat-answer-shape-trd.md)（PR [#51](https://github.com/owariband/Seekino/pull/51)，完成状态行与视频卡版式在该分支调整，本分支基于它，须在 #51 之后合并）；[chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md)（PR #49，正文增量交付，本需求沿用其事件通路，不改正文合同）。触发：2026-11-06 面向面试官演示。
+**Chat 思考过程展示 TRD。状态：初稿（2026-11-05）。** 分支 `feat/chat-reasoning-display`，PR [#54](https://github.com/owariband/Seekino/pull/54)。依赖：[chat-answer-shape-trd.md](chat-answer-shape-trd.md)（PR [#51](https://github.com/owariband/Seekino/pull/51)，完成状态行与视频卡版式在该分支调整，本分支基于它，须在 #51 之后合并）；[chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md)（PR #49，正文增量交付，本需求沿用其事件通路，不改正文合同）。触发：2026-11-06 面向面试官演示。
 
 ## 背景与触发场景
 

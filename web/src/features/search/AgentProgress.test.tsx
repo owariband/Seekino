@@ -46,31 +46,23 @@ describe("Agent execution timeline", () => {
     }
   });
 
-  it("cheers once when a live answer completes, then falls asleep on the bubble", () => {
-    vi.useFakeTimers();
-    try {
-      const view = render(<AgentProgress message={message} steps={[]} />);
-      view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
-      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "happy");
-      act(() => { vi.advanceTimersByTime(4_000); });
-      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "sleep");
-      view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} kinoAwake />);
-      expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "look");
-    } finally {
-      vi.useRealTimers();
-    }
+  it("drops the mascot once a live answer completes", () => {
+    const view = render(<AgentProgress message={message} steps={[]} />);
+    expect(view.container.querySelector("[data-kino]")).not.toBeNull();
+    view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
+    expect(view.container.querySelector("[data-kino]")).toBeNull();
   });
 
-  it("sleeps without a reaction on an answer that was already settled", () => {
+  it("does not perch on an answer that was already settled", () => {
     const view = render(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
-    expect(view.container.querySelector("[data-kino]")).toHaveAttribute("data-kino-state", "sleep");
+    expect(view.container.querySelector("[data-kino]")).toBeNull();
   });
 
   // The app renders inside StrictMode, which runs mount effects twice in development.
   it.each([false, true])("leaps from the previous bubble onto a new turn's bubble, then gets to work (strict mode: %s)", (strict) => {
     vi.useFakeTimers();
     try {
-      const settled = { ...message, messageId: "previous", status: "COMPLETED" as const, phase: null };
+      const settled = { ...message, messageId: "previous", status: "FAILED" as const, phase: null };
       const live = { ...message, messageId: "next" };
       const Thread = ({ next }: { next: boolean }) => <div data-kino-stage="">
         <article data-id="previous"><AgentProgress message={settled} steps={[]} kinoHost={!next} /></article>
@@ -154,7 +146,7 @@ describe("Agent execution timeline", () => {
         ...message, status: "COMPLETED", phase: null,
         timing: { startedAt, totalDurationMs: 62_900, stages: [{ phase: "EVALUATING", durationMs: 62_900 }] },
       }} steps={[]} />);
-      expect(screen.getByText("已完成 · 总耗时 01:02")).toBeInTheDocument();
+      expect(screen.getByText("已完成 · 用时 01:02")).toBeInTheDocument();
       expect(view.container).not.toHaveTextContent(/毫秒|\d+\.\d+\s*秒/);
     } finally {
       view.unmount();
@@ -210,7 +202,7 @@ describe("Agent execution timeline", () => {
       },
     }} steps={[]} />);
 
-    expect(screen.getByText("已完成 · 总耗时 00:04")).toBeInTheDocument();
+    expect(screen.getByText("已完成 · 用时 00:04")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("回答过程"));
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(6);
@@ -245,5 +237,39 @@ describe("Agent execution timeline", () => {
     expect(rows[2]).toHaveTextContent("进行中 · 00:02");
     view.unmount();
     vi.useRealTimers();
+  });
+
+  it("shows collapsible reasoning above a live answer, collapsed by default", async () => {
+    render(<AgentProgress message={message} steps={[]} reasoning="先思考。再思考。" />);
+    const panel = screen.getByLabelText("思考过程").closest("details")!;
+    expect(panel).not.toHaveAttribute("open");
+    expect(screen.getByText("思考中…")).toBeInTheDocument();
+    expect(screen.getByText("先思考。再思考。")).not.toBeVisible();
+    await userEvent.click(screen.getByLabelText("思考过程"));
+    expect(screen.getByText("先思考。再思考。")).toBeVisible();
+  });
+
+  it("replaces the completed box with a slim reasoning row, collapsed by default", async () => {
+    const completed = {
+      ...message, status: "COMPLETED" as const, phase: null,
+      timing: { startedAt: Date.now(), totalDurationMs: 89_000, stages: [] },
+    };
+    render(<AgentProgress message={completed} steps={[]} reasoning="先思考。" />);
+    const panel = screen.getByLabelText("思考过程").closest("details")!;
+    expect(panel).not.toHaveAttribute("open");
+    expect(screen.getByText("已思考（用时 01:29）")).toBeInTheDocument();
+    expect(screen.queryByText("已完成")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("思考过程"));
+    expect(screen.getByText("先思考。")).toBeVisible();
+  });
+
+  it("shows a slim completed row without reasoning and no chevron", () => {
+    const completed = {
+      ...message, status: "COMPLETED" as const, phase: null,
+      timing: { startedAt: Date.now(), totalDurationMs: 89_000, stages: [] },
+    };
+    render(<AgentProgress message={completed} steps={[]} />);
+    expect(screen.getByRole("status", { name: "回答状态" })).toHaveTextContent("已完成 · 用时 01:29");
+    expect(screen.queryByLabelText("思考过程")).not.toBeInTheDocument();
   });
 });

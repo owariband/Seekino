@@ -16,7 +16,7 @@ from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessio
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
-from gateway.model_events import ModelTextDelta
+from gateway.model_events import ModelReasoningDelta, ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
@@ -499,6 +499,14 @@ class SupervisorRuntime:
                     "content": content, "renderBlocks": public,
                     "textStream": text_stream,
                 })
+
+        def accept_reasoning_delta(delta: ModelReasoningDelta) -> None:
+            # Reasoning is displayed above the answer, never merged into render blocks
+            # or persisted answer text; it shares no call-id ordering with the body.
+            control.publish(inputs, {
+                "type": "answer.reasoning.delta", "callId": delta.call_id,
+                "delta": delta.text,
+            })
 
         def accept_text(value: str) -> None:
             nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
@@ -1278,7 +1286,8 @@ class SupervisorRuntime:
                     max_model_calls_per_turn if self._limits_enabled else None
                 ),
                 handle_text=accept_text,
-                **({"handle_text_delta": accept_text_delta}
+                **({"handle_text_delta": accept_text_delta,
+                    "handle_reasoning_delta": accept_reasoning_delta}
                    if getattr(self._model, "supports_text_deltas", False) else {}),
                 request_timeout_seconds=control.remaining_seconds(),
                 check_control=control.check,

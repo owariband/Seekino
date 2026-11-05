@@ -155,6 +155,7 @@ function renderPage(
     conversationId: "conversation-1",
     messages: [message],
     progress: {},
+    reasoning: {},
     loading: false,
     searching: false,
     cancelling: false,
@@ -431,7 +432,7 @@ describe("Search assistant presentation", () => {
     renderPage(assistantMessage("占位"));
     cleanup();
     mocks.useAgentConversation.mockReturnValue({
-      conversationId: "conversation-1", messages: [], progress: {}, loading: false, searching: false, error: null, send: mocks.send,
+      conversationId: "conversation-1", messages: [], progress: {}, reasoning: {}, loading: false, searching: false, error: null, send: mocks.send,
     });
     render(<SearchPage />);
     const user = userEvent.setup();
