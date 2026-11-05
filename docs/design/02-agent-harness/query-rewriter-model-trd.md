@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**查询改写模型 TRD。状态：初稿（2026-11-05）。** 分支 `feat/query-rewriter-model`，PR 待创建。关联：Query Hook 现有实现（`agent/chat/query_hook.py`、`gateway/query_hook.py`、`gateway/config.py` 的 `QueryHookConfig`）。无合并顺序依赖。
+**查询改写模型 TRD。状态：初稿（2026-11-05）。** 分支 `feat/query-rewriter-model`，PR [#47](https://github.com/owariband/Seekino/pull/47)。关联：Query Hook 现有实现（`agent/chat/query_hook.py`、`gateway/query_hook.py`、`gateway/config.py` 的 `QueryHookConfig`）。无合并顺序依赖。
 
 ## 背景与触发场景
 
