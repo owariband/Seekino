@@ -39,7 +39,10 @@ def create_series(request: Request, body: SeriesCreateRequest) -> SeriesView:
         name=body.name,
         description=body.description,
         transcript_language_hint=body.transcript_language_hint,
-        important_extra_data=body.important_extra_data,
+        important_extra_data=(
+            body.important_extra_data.model_dump()
+            if body.important_extra_data is not None else None
+        ),
         character_bible=[item.model_dump() for item in body.character_bible],
     )
     return _series_view(state, get_services(request).media)

@@ -860,6 +860,52 @@ def test_series_background_json_patch_and_clear(tmp_path: Path) -> None:
     assert cleared_background.json()["description"] is None
 
 
+@pytest.mark.parametrize("document,expected_status", [
+    ({"format": "json", "content": "{bad json"}, 400),
+    ({"format": "json", "content": '{"number": NaN}'}, 400),
+    ({"format": "unsupported", "content": "background"}, 422),
+    ({"format": "markdown", "content": 42}, 422),
+    ({"format": "markdown", "content": "background", "characters": []}, 422),
+    ({"content": "![missing](asset://missingImage)"}, 400),
+    ({"seriesBible": "旧Markdown"}, 422),
+])
+def test_series_create_rejects_invalid_background(tmp_path, document, expected_status):
+    client, _retrieval, _jobs = _client(tmp_path)
+    result = client.post("/api/series/create", json={
+        "tenantId": "local-default", "name": "Invalid background",
+        "importantExtraData": document,
+    })
+    assert result.status_code == expected_status, result.text
+    assert client.app.state.services.library.count_series(tenant_id="local-default") == 0
+
+
+def test_series_create_accepts_and_normalizes_container_background(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    created = client.post("/api/series/create", json={
+        "tenantId": "local-default", "name": "Managed background",
+        "importantExtraData": {"content": "# 背景"},
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["importantExtraData"] == {"format": "markdown", "content": "# 背景"}
+
+
+def test_series_create_rejects_non_empty_character_bible(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    result = client.post("/api/series/create", json={
+        "tenantId": "local-default", "name": "Legacy characters",
+        "characterBible": [{"name": "若叶睦", "aliases": ["睦"]}],
+    })
+    assert result.status_code == 400, result.text
+    assert result.json()["code"] == "INVALID_REQUEST"
+    assert "important_extra_data" in result.json()["message"]
+    assert client.app.state.services.library.count_series(tenant_id="local-default") == 0
+    accepted = client.post("/api/series/create", json={
+        "tenantId": "local-default", "name": "Empty characters", "characterBible": [],
+    })
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["characterBible"] == []
+
+
 def test_series_transcript_language_hint_create_update_and_clear(tmp_path: Path) -> None:
     client, _retrieval, _jobs = _client(tmp_path)
     created = client.post(

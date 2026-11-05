@@ -330,6 +330,8 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "图片暂时无法预览": "Image preview is temporarily unavailable",
   "暂无背景资料": "No background notes yet",
   "人物资料 · {count}": "Character profiles · {count}",
+  "旧版人物资料（只读）": "Legacy character profiles (read-only)",
+  "人物设定请写入背景资料。": "Put character settings in the background notes.",
   "图片引用": "Image reference",
   "视频观看": "Watch videos",
   "继续观看推荐": "Continue watching recommendations",

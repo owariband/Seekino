@@ -67,6 +67,11 @@ class LibraryService:
     ) -> SeriesState:
         normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         normalized_name = require_nonempty_text(name, "name")
+        if character_bible:
+            raise ValueError(
+                "character_bible is read-only legacy data; put character settings in "
+                "important_extra_data"
+            )
         normalized_description = None
         if description is not None:
             normalized_description = description.strip() or None
@@ -74,16 +79,18 @@ class LibraryService:
             transcript_language_hint
         )
         series_id = derive_series_id(normalized_workspace, normalized_name)
-        self._validate_background_images(
-            series_id, prepare_background_text(character_bible or [], important_extra_data),
-        )
+        normalized_extra_data = None
+        if important_extra_data is not None:
+            normalized_extra_data = self._normalize_important_extra_data(
+                series_id, important_extra_data,
+            )
         created = self._repository.create_series(
             series_id=series_id,
             tenant_id=normalized_workspace,
             name=normalized_name,
             description=normalized_description,
             transcript_language_hint=normalized_language_hint,
-            important_extra_data=important_extra_data,
+            important_extra_data=normalized_extra_data,
             character_bible=character_bible or [],
         )
         return self._repository.get_series(created.series_id, normalized_workspace)
@@ -126,19 +133,9 @@ class LibraryService:
                 normalized["transcript_language_hint"]
             )
         if "important_extra_data" in normalized and normalized["important_extra_data"] is not None:
-            document = normalized["important_extra_data"]
-            if not isinstance(document, dict) or document.keys() - {"format", "content"}:
-                raise ValueError("important_extra_data must contain format and content")
-            document_format = document.get("format", "markdown")
-            content = document.get("content")
-            if document_format not in ("markdown", "json") or not isinstance(content, str):
-                raise ValueError("background must have a supported format and text content")
-            normalized["important_extra_data"] = {"format": document_format, "content": content}
-            try:
-                background_text = prepare_background_text([], normalized["important_extra_data"])
-            except ValueError as exc:
-                raise ValueError("background content is not valid JSON") from exc
-            self._validate_background_images(series.series_id, background_text)
+            normalized["important_extra_data"] = self._normalize_important_extra_data(
+                series.series_id, normalized["important_extra_data"],
+            )
         self._repository.update_series(
             series.series_id, tenant_id=series.tenant_id, changes=normalized,
         )
@@ -176,6 +173,21 @@ class LibraryService:
             normalized_video_id,
             normalized_workspace,
         )
+
+    def _normalize_important_extra_data(self, series_id: str, document: dict) -> dict:
+        if not isinstance(document, dict) or document.keys() - {"format", "content"}:
+            raise ValueError("important_extra_data must contain format and content")
+        document_format = document.get("format", "markdown")
+        content = document.get("content")
+        if document_format not in ("markdown", "json") or not isinstance(content, str):
+            raise ValueError("background must have a supported format and text content")
+        normalized = {"format": document_format, "content": content}
+        try:
+            background_text = prepare_background_text([], normalized)
+        except ValueError as exc:
+            raise ValueError("background content is not valid JSON") from exc
+        self._validate_background_images(series_id, background_text)
+        return normalized
 
     def _validate_background_images(self, series_id: str, text: str | None) -> None:
         image_ids = extract_background_image_ids(text or "")
