@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -392,6 +393,7 @@ def test_process_assembly_receives_runtime_configuration(
             "auto_compact_tokens": 22_000,
             "compact_target_tokens": 12_000,
         }
+    configuration["web_search"] = {"provider": "deepseek", "api_key_env": "SEARCH_ONLY_KEY", "base_url": "https://search.example.com"}
     config_path = tmp_path / "models.yaml"
     config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
     monkeypatch.setenv("SEEKINO_MODEL_CONFIG", str(config_path))
@@ -501,6 +503,11 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.parse_consumer._worker_id == settings.mq.consumer_id
         assert services.parse_consumer._poll_interval.total_seconds() == settings.mq.poll_interval_seconds
         assert services.parse_consumer._lease_duration == settings.mq.lease_duration
+        search_config = services.agent._runtime._web_searcher._config
+        assert search_config.provider == "deepseek"
+        assert services.agent._runtime._web_searcher.max_query_chars == 128
+        assert search_config.api_key_env == "SEARCH_ONLY_KEY"
+        assert search_config.base_url == "https://search.example.com"
         runtime = services.agent._runtime._video_runtime
         assert isinstance(runtime._frame_reader, VideoFrameReader)
         assert runtime._frame_reader._persistence is services.retrieval._persistence
@@ -696,7 +703,24 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert consumer._handlers.refine.__self__ is runtime
         assert consumer._handlers.index.__self__ is runtime
         assert consumer._handlers.prefix.__self__ is runtime
-        assert consumer._handlers.maintenance.__self__ is runtime
+        assert callable(consumer._handlers.maintenance)
+        # The maintenance handler runs both the media reaper and the upload
+        # deletion reconcile, isolated so one failure cannot stall the other.
+        maintenance_calls = []
+
+        async def record_reap():
+            maintenance_calls.append("reap")
+
+        original_reconcile = services.uploads.reconcile_deletions
+        runtime.reap_stale_media = record_reap
+        services.uploads.reconcile_deletions = (
+            lambda *args, **kwargs: maintenance_calls.append("reconcile")
+        )
+        try:
+            asyncio.run(consumer._handlers.maintenance())
+        finally:
+            services.uploads.reconcile_deletions = original_reconcile
+        assert maintenance_calls == ["reap", "reconcile"]
         if summary_mode == "enabled":
             summary = consumer._handlers.summarize.__self__
             assert isinstance(summary, VideoSummarizeService)

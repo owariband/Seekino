@@ -117,15 +117,11 @@ class _ParseChatModel(BaseChatModel):
 class _ParseControlMiddleware(AgentMiddleware):
     """Keep recoverable failures in the same draft and serialize mutations."""
 
-    def __init__(
-        self, model: _ParseChatModel, *, completion_name: str, business_tools: Sequence[BaseTool],
-        stop_feedback: Callable[[], str | None] | None = None,
-    ) -> None:
+    def __init__(self, model: _ParseChatModel, *, completion_name: str, business_tools: Sequence[BaseTool]) -> None:
         self._model = model
         self._completion_name = completion_name
         self._business_names = {tool.name for tool in business_tools}
         self._business_used = False
-        self._stop_feedback = stop_feedback
         self._tool_lock = Lock()
         self._images: list[dict[str, Any]] = []
 
@@ -175,14 +171,8 @@ class _ParseControlMiddleware(AgentMiddleware):
             return {"structured_response": None, "messages": deferred}
         if state.get("structured_response") is not None:
             if self._business_used:
-                if self._stop_feedback is None:
-                    return None
-                feedback = self._stop_feedback()
-                self._model.check()
-                if not feedback:
-                    return None
-            else:
-                feedback = "Read the supplied evidence with the available Canvas tools before completing."
+                return None
+            feedback = "Read the supplied evidence with the available Canvas tools before completing."
         elif message.tool_calls:
             return None
         else:
@@ -210,7 +200,6 @@ def generate_with_deepagents(
     fallback_model: Any | None,
     fallback_inputs: Sequence[MultimodalInput] | None,
     fallback_on_error: Callable[[BaseException], bool] | None,
-    stop_feedback: Callable[[], str | None] | None = None,
 ) -> _Result:
     """Run one isolated analysis, using the same harness for every parse stage."""
     validate_generate_request(inputs, schema_name)
@@ -252,10 +241,7 @@ def generate_with_deepagents(
                     backend=backend, system_prompt="", tools=["read_file"],
                     tool_token_limit_before_evict=None, human_message_token_limit_before_evict=None,
                 ),
-                _ParseControlMiddleware(
-                    model, completion_name=result_type.__name__, business_tools=tools,
-                    stop_feedback=stop_feedback,
-                ),
+                _ParseControlMiddleware(model, completion_name=result_type.__name__, business_tools=tools),
             ],
             name="seekino_parse",
         )

@@ -20,7 +20,8 @@ from gateway.multimodal import ImageInput
 from gateway.errors import ContentFilterError
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_database_engine, create_schema, create_session_factory
-from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
@@ -31,6 +32,17 @@ from server.service.upload import UploadService
 from server.service.video_parse import VideoParseRuntimeService
 from server.storage.artifact import LocalArtifactStore
 from server.utils.time import now_utc
+
+
+def test_realtime_only_task_keeps_chunk_asr_with_video_scoped_defaults(realtime):
+    config = realtime.config.model_copy(update={"models": realtime.config.models.model_copy(update={
+        "asr": realtime.config.models.asr.model_copy(update={"scope": "video"}),
+    })})
+    task = realtime.repository.ensure_realtime_task(
+        tenant_id="mine", video_id=realtime.video_id, default_parse_config=config,
+    )
+    assert task.task.parse_config["models"]["asr"].get("scope", "chunk") == "chunk"
+    assert config.models.asr.scope == "video"
 
 
 class _ParseRuntime:

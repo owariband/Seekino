@@ -11,7 +11,8 @@ from sqlalchemy import select
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
 from engine.parsev2.planning import interval_size, plan_intervals
-from server.model.job import ChunkParseContent, ChunkParseTask, IntervalParseContent, IntervalParseTask, ParseJobStage, ParseJobStatus, SeriesParseJob, VideoParseTask
+from server.model.parse_content import ChunkParseContent, IntervalParseContent
+from server.model.task import ChunkParseTask, IntervalParseTask, VideoParseTask
 from server.model.upload import UploadSession, UploadSessionStatus
 from server.model.video import Series, VideoChunk, Video
 from server.repository.job import ParseJobNotFoundError, ParseJobRepository
@@ -23,7 +24,7 @@ from server.utils.time import datetime_to_unix_time_ms
 
 
 def _seed_v2_tracking(repository, *, chunk_count=2, completed_chunks=2, submitted_refines=0):
-    jobs, _, _, video_id, now_ms = _seed_job(repository)
+    jobs, video_id, now_ms = _seed_video(repository)
     factory = create_session_factory(repository[0])
     config = default_video_parse_v2_config().model_dump(mode="json")
     now = datetime.fromtimestamp(now_ms / 1000, tz=UTC)
@@ -91,10 +92,9 @@ def _store_timing(factory, task_id, entries):
         task.detail = {**task.detail, "_worker_runtime_v2": {"execution_timing": {"version": 1, "entries": entries}}}
 
 
-def _seed_job(
+def _seed_video(
     repository,
     *,
-    max_attempts: int = 3,
     tenant_id: str = "local-default",
     duration_seconds: int = 60,
 ):
@@ -102,7 +102,6 @@ def _seed_job(
     session_factory = create_session_factory(engine)
     series_id = str(uuid4())
     video_id = str(uuid4())
-    job_id = str(uuid4())
     now = datetime_to_unix_time_ms(datetime(2026, 9, 14, 10, 0, 0, tzinfo=UTC))
     with session_factory.begin() as session:
         session.add(
@@ -129,37 +128,20 @@ def _seed_job(
                 size_bytes=100,
                 duration_ms=duration_seconds,
                 upload_status="COMPLETED",
-                parse_status="QUEUED",
+                parse_status="PENDING",
                 upload_progress=100,
                 parse_progress=0,
             )
         )
-        session.add(
-            SeriesParseJob(
-                id=job_id,
-                series_id=series_id,
-                video_id=video_id,
-                pipeline_version="pipeline-v1",
-                status=ParseJobStatus.QUEUED.value,
-                stage=ParseJobStage.QUEUED.value,
-                progress=0,
-                attempt_count=0,
-                max_attempts=max_attempts,
-                next_execute_time=now,
-                lease_version=0,
-            )
-        )
     return (
         ParseJobRepository(session_factory),
-        None,
-        job_id,
         video_id,
         now,
     )
 
 
 def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(repository):
-    jobs, _queue, job_id, video_id, _now = _seed_job(repository)
+    jobs, video_id, _now = _seed_video(repository)
     engine, _video_repository = repository
     factory = create_session_factory(engine)
     first_id, second_id = str(uuid4()), str(uuid4())
@@ -221,7 +203,6 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
                 expire_time=second_time,
                 finish_time=first_time,
                 video_id=video_id,
-                job_id=job_id,
                 initial_task_id=first_id,
                 create_time=datetime_to_unix_time_ms(first_time),
                 update_time=datetime_to_unix_time_ms(first_time),
@@ -353,11 +334,10 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
         tenant_id="local-default",
     )
     assert executing.has_active_execution_lease is True
-    assert executing.has_active_deletion_lease is True
     executing_view = project_video_parse_task(executing)
     assert executing_view.can_retry is False
     assert executing_view.can_reparse is True
-    assert executing_view.can_delete is False
+    assert executing_view.can_delete is True
 
     with factory.begin() as session:
         child = session.get(ChunkParseTask, chunk_task_id)
@@ -370,7 +350,6 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
         tenant_id="local-default",
     )
     assert released.has_active_execution_lease is False
-    assert released.has_active_deletion_lease is False
     released_view = project_video_parse_task(released)
     assert released_view.can_retry is True
     assert released_view.can_delete is True
@@ -391,7 +370,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
             size_bytes=100,
             duration_ms=60,
             upload_status="COMPLETED",
-            parse_status="QUEUED",
+            parse_status="PENDING",
             upload_progress=100,
             parse_progress=0,
         ))
@@ -516,6 +495,25 @@ def test_v2_timing_unions_parallel_spans_and_preserves_zero(repository, elapsed,
     assert listed.task.detail == detail.task.detail
     with factory() as session:
         assert session.get(VideoParseTask, task_id).processing_duration_ms == 0
+
+
+@pytest.mark.parametrize("record_asr", [False, True])
+def test_full_video_asr_is_included_in_total_and_missing_samples_remain_incomplete(repository, record_asr):
+    jobs, factory, task_id, chunks, _, _ = _seed_v2_tracking(repository)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.parse_config = {**parent.parse_config, "models": {
+            **parent.parse_config["models"], "asr": {**parent.parse_config["models"]["asr"], "scope": "video"}}}
+        parent.lease_version = 2  # A later coordinator may resume only indexing.
+    entries = {f"understand:{child}:1": _timing_entry("understand", child, started=3000 + i * 500)
+               for i, child in enumerate(chunks)}
+    if record_asr:
+        entries[f"asr:{task_id}:1"] = {**_timing_entry("asr", task_id, started=1000, elapsed=2000),
+                                       "execution_kind": "video"}
+    _store_timing(factory, task_id, entries)
+    timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert timing["effectiveDurationMs"] == (3500 if record_asr else 1500)
+    assert timing["complete"] is record_asr
 
 
 def test_v2_old_attempts_have_unknown_timing_and_unready_topology_has_no_percent(repository):

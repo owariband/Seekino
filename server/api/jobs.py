@@ -10,15 +10,16 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..config.sse import SSEConfig
-from ..model.job import VideoParseTaskStatus
-from ..model.dto.jobDTO import VideoParseTaskDetail, VideoParseTaskState
+from ..model.task import VideoParseTaskStatus
+from ..model.dto.taskDTO import VideoParseTaskDetail, VideoParseTaskState
 from ..service.job import ParseJobService
+from ..service.parse_control import is_paused, ACTIVE_STATUSES
 from ..service.access import require_tenant_write
 from ..error.auth import AuthError
 from ..service.pagination import decode_cursor, encode_cursor
 from .context import get_identity, get_services, get_sse_config, revalidate_identity
 from ..model.vo.commonVO import Page, Failure
-from ..model.vo.jobVO import VideoParseTaskView
+from ..model.vo.taskVO import VideoParseTaskDeleteResult, VideoParseTaskView
 from ..utils.time import datetime_to_unix_time_ms
 
 _TERMINAL_VIDEO_PARSE_TASK_STATUSES = {
@@ -38,6 +39,45 @@ def get_video_parse_task(
         tenant_id=tenant_id,
     )
     return project_video_parse_task(state)
+
+
+def set_video_parse_paused(
+    request: Request,
+    video_parse_task_id: str = Query(alias="videoParseTaskId"),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+    paused: bool = Query(),
+    expected_version: int = Query(alias="expectedJobVersion", ge=1),
+    expected_lease_version: int = Query(alias="expectedLeaseVersion", ge=0),
+) -> VideoParseTaskView:
+    require_tenant_write(get_identity(request), tenant_id)
+    return project_video_parse_task(get_services(request).jobs.set_paused(
+        video_parse_task_id, tenant_id=tenant_id, paused=paused,
+        expected_version=expected_version, expected_lease_version=expected_lease_version,
+    ))
+
+
+def delete_video_parse_task(
+    request: Request,
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+    video_parse_task_id: str | None = Query(None, alias="videoParseTaskId"),
+    video_id: str | None = Query(None, alias="videoId"),
+    scope: str | None = Query(None),
+    expected_job_version: int | None = Query(None, alias="expectedJobVersion", ge=1),
+) -> VideoParseTaskDeleteResult:
+    require_tenant_write(get_identity(request), tenant_id)
+    service = get_services(request).jobs
+    if scope == "history":
+        deleted_ids = service.delete_video_parse_task(
+            tenant_id=tenant_id,
+            video_id=video_id,
+        )
+    else:
+        deleted_ids = service.delete_video_parse_task(
+            tenant_id=tenant_id,
+            video_parse_task_id=video_parse_task_id,
+            expected_job_version=expected_job_version,
+        )
+    return VideoParseTaskDeleteResult(deleted_video_parse_task_ids=deleted_ids)
 
 
 def list_video_parse_tasks(
@@ -187,6 +227,16 @@ def project_video_parse_task(
 ) -> VideoParseTaskView:
     observation = state if isinstance(state, VideoParseTaskDetail) else None
     task = observation.task if observation is not None else state
+    paused = is_paused(task)
+    runtime = task.detail.get("_worker_runtime_v2", {})
+    controllable = (observation is not None and observation.is_latest
+                    and task.status in ACTIVE_STATUSES and runtime.get("accepted") is True)
+    active_stage = None
+    if task.status == "PREPARING" and task.lease_owner and not paused:
+        entry = runtime.get("execution_timing", {}).get("entries", {}).get(
+            f"asr:{task.video_parse_task_id}:{task.lease_version}", {})
+        if entry.get("outcome") == "running":
+            active_stage = "asr"
     error = None
     if task.last_error is not None:
         error = Failure(
@@ -201,6 +251,9 @@ def project_video_parse_task(
         stage = {"asr": "语音转写", "visual": "画面准备", "ocr": "画面文字识别",
                  "understanding": "视频理解", "commit": "结果提交"}.get(task.last_error.get("stage"), "解析")
         reason = {"model_timeout": "模型请求超时", "timeout": "执行超时",
+                  "model_connection_error": "模型服务连接异常（网络连接中断或不可达）",
+                  "model_gateway_timeout": "模型服务网关超时（HTTP 504）",
+                  "model_service_unavailable": "模型服务暂不可用或请求受限",
                   "output_token_limit": "模型输出被截断", "loop_limit": "模型调用次数耗尽",
                   "required_tool_missing": "模型未提交必要结果",
                   "invalid_model_response": "模型返回不符合结果要求"}.get(task.last_error.get("reason"), "执行异常")
@@ -259,6 +312,10 @@ def project_video_parse_task(
         duration_seconds=(
             observation.duration_seconds if observation is not None else None
         ),
+        is_paused=paused,
+        can_pause=bool(controllable and not paused),
+        can_resume=bool(controllable and paused),
+        active_stage=active_stage,
         can_retry=(
             observation is not None
             and observation.is_latest
@@ -272,7 +329,8 @@ def project_video_parse_task(
             }
         ),
         can_reparse=(
-            observation is not None
+            not paused
+            and observation is not None
             and observation.is_latest
             and not observation.has_active_prefix_suffix_lease
             and observation.upload_session_id is not None
@@ -292,7 +350,15 @@ def project_video_parse_task(
             observation is not None
             and observation.is_latest
             and observation.upload_session_id is not None
-            and not observation.has_active_deletion_lease
+        ),
+        can_delete_version=(
+            observation is not None
+            and not observation.is_latest
+        ),
+        is_superseded=(
+            observation is not None
+            and not observation.is_latest
+            and task.status not in _TERMINAL_VIDEO_PARSE_TASK_STATUSES
         ),
     )
 

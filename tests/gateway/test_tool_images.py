@@ -1,3 +1,4 @@
+# Complete-response contract cases explicitly select stream=False; see test_model_streaming.py for default SSE integration.
 from __future__ import annotations
 
 import asyncio
@@ -74,13 +75,13 @@ def test_provider_receives_actual_images_only_when_supported(
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     if provider == "openai":
         model = OpenAIAgentModel(
-            "configured-model", base_url="https://example.org", api_key="test",
+            "configured-model", stream=False, base_url="https://example.org", api_key="test",
             max_output_tokens=1024, request_timeout_seconds=30, client=client,
             supports_vision_input=vision,
         )
     else:
         model = ArkFunctionCallingModel(
-            "configured-model", fallback_model=None, max_output_tokens=1024,
+            "configured-model", stream=False, fallback_model=None, max_output_tokens=1024,
             request_timeout_seconds=30, client=client, supports_vision_input=vision,
         )
     answers = []
@@ -136,12 +137,12 @@ def test_provider_fallback_preserves_images_or_rejects_unsupported_input(
         primary = Responses(primary_responses)
         fallback = Responses(fallback_responses)
         model = OpenAIAgentModel(
-            "primary-vision", base_url="https://example.org", api_key="test",
+            "primary-vision", stream=False, base_url="https://example.org", api_key="test",
             max_output_tokens=1024, request_timeout_seconds=30,
             client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
             supports_vision_input=True,
             fallback_adapter=ArkFunctionCallingFallback(
-                "fallback", max_output_tokens=1024, request_timeout_seconds=30,
+                "fallback", stream=False, max_output_tokens=1024, request_timeout_seconds=30,
                 client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
                 supports_vision_input=fallback_vision,
             ),
@@ -149,7 +150,7 @@ def test_provider_fallback_preserves_images_or_rejects_unsupported_input(
     else:
         primary = fallback = Responses(primary_responses + fallback_responses)
         model = ArkFunctionCallingModel(
-            "primary-vision", fallback_model="fallback", max_output_tokens=1024,
+            "primary-vision", stream=False, fallback_model="fallback", max_output_tokens=1024,
             request_timeout_seconds=30,
             client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
             supports_vision_input=True, fallback_supports_vision_input=fallback_vision,
@@ -217,8 +218,8 @@ def test_agent_loop_current_and_historical_images_require_explicit_support(tmp_p
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     common = dict(max_output_tokens=1024, request_timeout_seconds=30, client=client,
                   supports_vision_input=vision)
-    model = (OpenAIAgentModel("configured-model", base_url="https://example.test", api_key="test", **common)
-             if provider == "openai" else ArkFunctionCallingModel("configured-model", fallback_model=None, **common))
+    model = (OpenAIAgentModel("configured-model", stream=False, base_url="https://example.test", api_key="test", **common)
+             if provider == "openai" else ArkFunctionCallingModel("configured-model", stream=False, fallback_model=None, **common))
     history = [{"role": "user", "content": "Earlier", "imageUrls": ["data:image/png;base64,AAAA"]},
                {"role": "assistant", "content": "Earlier answer"}]
     before = deepcopy(history)
@@ -275,7 +276,7 @@ def test_structured_tool_images_survive_batches_and_state_reentry(tmp_path, prov
     client = (Ark(api_key="test", http_client=http) if provider == "ark"
               else OpenAI(api_key="test", base_url="https://example.test/v1", http_client=http))
     model_type = ArkStructuredToolAgentModel if provider == "ark" else OpenAIStructuredToolAgentModel
-    model = model_type("vision", request_timeout_seconds=3, max_output_tokens=400, client=client,
+    model = model_type("vision", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=client,
                        supports_vision_input=True, max_input_chars=4000)
     try:
         assert model.run_structured("Review frames", tools=[_tool(tmp_path)], result_type=ImageReview,
@@ -314,9 +315,9 @@ def test_structured_tool_images_reach_fallback_or_fail_explicitly(tmp_path, fall
                      http_client=httpx.Client(transport=httpx.MockTransport(respond)))
     fallback = Ark(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(respond)))
     model = OpenAIStructuredToolAgentModel(
-        "primary", request_timeout_seconds=3, max_output_tokens=400, client=primary,
+        "primary", stream=False, request_timeout_seconds=3, max_output_tokens=400, client=primary,
         supports_vision_input=True, fallback_adapter=ArkStructuredFallback(
-            "fallback", max_output_tokens=400, request_timeout_seconds=3, client=fallback,
+            "fallback", stream=False, max_output_tokens=400, request_timeout_seconds=3, client=fallback,
             supports_vision_input=fallback_vision,
         ),
     )

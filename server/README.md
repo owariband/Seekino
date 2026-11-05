@@ -5,7 +5,7 @@ Server 的正式 Upload-to-Search 链路只使用 V2、MySQL 和 Elasticsearch�
 ES 保存同版本的检索投影。API、Agent Chat 和 CLI 共用 V2 检索 Service；
 `SEEKINO_PARSE_EXECUTION_MODE` 只接受 `v2`，启动必须显式配置 ES。
 模型协议由 Gateway 实现，Server 进程内复用 Engine 的领域转换、索引投影和融合能力。
-V1 解析、旧 Consumer、Qdrant 客户端及离线导入工具已删除；历史表的 ORM 映射仅供已有数据清理使用。
+V1 解析、旧 Consumer、Qdrant 客户端及离线导入工具已删除。旧 `SeriesParseJob`／`VideoChunkCheckpoint` 和专用用量模型也已退出；已有库按[退役迁移说明](../docs/migrations/20261031_retired_parse_models.md)处理，新库不再创建这三张旧表。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
 AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
@@ -27,6 +27,14 @@ DB Queue 按持久状态领取可执行任务；提交后的通知用于唤醒 V
 Elasticsearch 的连接、写入和恢复位于 `server/storage/`；业务正文与任务版本的 durable
 source 始终是 MySQL，ES 是可按当前合同重建的派生数据。
 
+## Chat 正文流式与计时证据
+
+Deep Agents 的实时正文仍通过持久化后的累积 `answer.snapshot` 发送，`textStream` 可选字段携带模型调用和增量来源；非流式、恢复快照及完成后补发不伪造来源。新增 `answer.model.completed` 仅表示一次模型调用结束，整轮完成仍等待原业务校验和持久提交。
+
+`service/agent_chat_stream.py` 在写库前合并普通正文快照：每次模型调用首段立即保存，后续在增量到达时按 50 ms 间隔选择最新快照。业务边界刷新暂存正文，模型完成后的刷新不带实时来源；取消/失败也保存已接收的合法前缀。该策略由 Server 执行，Supervisor 只组装并校验回答。断开 SSE 不自动重跑请求；现有权限、版本与恢复合同继续生效，无数据库 Schema 迁移。
+
+Server 可通过 `SEEKINO_CHAT_TRACE_DIR` 开启 Chat 诊断，在调用作用域内向 Gateway 注入目录；Gateway 不通过 Chat 消息身份选择采集策略。有效 FTT 需关联供应商 trace 与浏览器实际展示，不能用服务端快照耗时替代。设计与验收见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
+
 ## 模型 Token 用量
 
 `GET /api/usage/overview?workspaceId=...` 从 `model_usage` 查询最近 30 天已记录调用。
@@ -42,7 +50,7 @@ SDK 明细替代父用量，缓存和推理子集不重复加入总量；未知�
 
 新表沿用现有模型登记和 init-db，真实建表须先核实操作授权。默认 `tracing.enabled=false`，
 bootstrap 不装配 Langfuse writer/reader；可选模块和空凭据字段保留。
-冻结的 V1 旧链不注入新统计；旧表、价格历史不删除、不回填、不与新统计合并。
+V1 用量不并入新统计；本轮退役迁移删除旧 Job 用量，现行 V2 用量和 `model_usage` 保留。
 `model_usage` 没有业务对象外键，删除视频/消息不级联删除已记录用量。
 预算、租约、heartbeat、取消和模型控制仍由原执行管理器负责。
 详细合同见 [模型 Token 用量](../docs/parse-model-usage.md)。
@@ -63,7 +71,7 @@ API 不查询业务事实后自行判断归属或状态。Content-Range 语法�
 workspace 归属、会话总大小、分片范围、缺片计算、Job 归属和 READY 检索 Scope 由
 Service 负责；Repository 保留事务内的状态与并发约束。
 
-HTTP 专用 Request/View 定义于 `server/model/dto/` 和 `server/model/vo/`，
+请求参数与跨层数据快照定义于 `server/model/dto/`，HTTP 响应 View 定义于 `server/model/vo/`，
 `server/api/schema.py` 保留兼容聚合；API、CLI、Agent 共用的检索证据和
 应用报告留在 `server/schema.py`。`server/api/app.py` 只创建应用、配置生命周期与中间件、
 注册异常处理和 Router。
@@ -98,6 +106,10 @@ codex -c 'mcp_servers.seekino.url="http://127.0.0.1:9621/mcp"' \
 MCP SDK 根据服务端函数签名、类型和说明生成工具 JSON Schema，通过 `tools/list` 提供给客户端；实际请求通过 `tools/call` 调用现有 Service。协议客户端测试不等于真实素材可用，正式演示还需要已解析并完成 Event 索引的视频和对应媒体。
 
 本版限定直接 loopback 连接，同时检查 Host/Origin 并拒绝转发头；请直接连接 API 端口，不经过 Vite、Nginx 或 Docker 代理。它没有提供 Cloud PAT/OAuth 接入，也不能把此本机端点直接暴露到公网。主合同与验收边界见 [MCP 接入 TRD](../docs/design/03-product-reassessment/mcp-access-trd.md)。
+
+## 长任务查询与调度排序
+
+任务列表先在授权范围内分页取 ID，再读取该页正文；活动 prefix 只投影对应状态。MySQL 的 JSON 筛选也可能使 filesort 携带大字段，因此 Queue 的候选扫描读取轻量标量后在 Python 保持原优先级和轮转，领取仍由原事务/租约校验决定。Consumer 外层失败会记录堆栈，不无限重试。设计、同任务恢复及验证边界见[长任务查询与恢复 TRD](../docs/design/03-product-reassessment/parse-task-query-recovery-trd.md)。
 
 ## 后台任务与共享代码
 
@@ -147,13 +159,31 @@ Understanding 子图各节点按冻结配置对暂态错误有限重试；最终
 兄弟任务失去续租资格，迟到提交被拒绝；任务 API/SSE 返回失败阶段与受控错误原因。
 原生 ASR 已进入的阻塞推理需返回控制点后才响应取消。进程崩溃恢复及 Index/Refine 重试独立保留。
 
-V1 Job 与 V2 Task SSE 都忽略纯心跳变化，并在发送终态快照后关闭。快照中的
+现行任务模型统一放在 `model/task.py`，任务进度计算位于 `model/task_progress.py`；Video／Chunk／Interval 成果统一放在 `model/parse_content.py`。旧 `legacy_parse.py` 已删除。DTO 按任务、成果、素材、检索分别归入 `taskDTO.py`、`parseContentDTO.py`、`libraryDTO.py`、`searchDTO.py`，任务 VO 位于 `vo/taskVO.py`；调用方直接引用具体模块。单纯文件归类保持原合同；随后退出 V1 兼容会移除旧 `job_id` 数据库列及 HTTP `jobId`／`latestJobId`，前后端须同步升级。现行 `videoParseTaskId` 与任务版本／租约合同保留。
+
+2026-10-31 本机测试默认已切换到 whisper.cpp Turbo Q5_0＋Metal；新任务保持整片 ASR，WhisperX batch_size 不参与该路径。启动入口支持 `--require-metal`，具体配置、CPU 线程与时间来源边界见[本地模型配置](../docs/model-config.md#本机-apple-gpu-测试whispercpp-turbo2026-10-31)。这次纯转写测试不执行声学强制对齐。
+
+完成成果由 `video_parse_content` 保存，每个解析任务至多一行；`asr`、可选 `diarization` 与 `summary` 为独立 JSON 列，任务 detail 保留调度与完成状态。准备入口通过 `service/video_parse_results.py` 校验媒体／冻结模型／Schema／摘要和租约，有效 ASR 在创建 Provider 前复用；完成提交后清理内存不影响持久结果。`repository/video_parse_content.py` 分别读取元数据或所需正文，普通任务查询与心跳不加载 ASR。Summary 成果、Video 当前展示字段和完成回执同事务提交。旧库须先执行[受控迁移](../docs/migrations/20261031_video_parse_content.md)，历史缺失 ASR 不自动回填。
+
+启用冻结的 `models.diarization` 时，准备链先提交原始 ASR，再调用本地 pyannote 并独立提交
+分组；失败只重做缺失阶段，门禁须等待两项成果。Engine 仅在内存副本上合并匿名编号，
+以任务 ID 标识整片作用域，Chunk evidence 记录本次实际输入。新解析版本可在同一 Video
+内查找身份、Schema 和摘要均匹配的既有成果，复制时仍使用当前合法租约并记录来源任务；
+旧 Chunk 成果保留在旧版本，不能自动充当新输入的解析结果。
+
+V2 Task SSE 忽略纯心跳变化，并在发送终态快照后关闭。快照中的
 `canRetry` / `canReparse` / `canDelete` 只代表该次读取时的精确租约门禁；终态后租约变化
 不会延长 SSE，客户端应重新 GET/list。Web TasksPage 每 5 秒刷新列表，UploadProvider
-则订阅当前 V1 Job 或 V2 Task 的单任务 SSE。Agent SSE 仍返回完整 Message 快照，包含
+则订阅当前 V2 Task 的单任务 SSE。Agent SSE 仍返回完整 Message 快照，包含
 500 条之后的消息以及同一条消息的状态变化。保活按单调时钟的经过时间计算，
 不是固定轮询次数。完整快照仍有随聊天长度增长的读取和传输成本，后续如改增量协议，
 须另行设计状态更新游标，不能只按 sequenceNo 跳过已有的 PROCESSING 消息。
+
+Refine 执行在读取成员快照前注册进程内订阅。事务成功后仅通知正文确实变更且成员相交的执行；
+通知只减少旧快照计算，不能作为完成事实或替代租约/版本校验。当前请求独立取消并等待旧流退出，
+最近完整候选与具体冲突返回 Agent，再读取新版本继续；原尝试期限不重置。更新不会重跑音频或
+Understanding。相关实现与未完成的真实并发验收见
+[Refine 冲突恢复报告](../docs/report/server/refine-conflict-recovery-20261102.md)。
 
 ## 数据库隔离
 
@@ -196,7 +226,7 @@ uv run python -m server.cli init-db
 历史 Schema 保留六个视频领域模型：`Series`、`Video`、
 `VideoChunk`、`VideoChunkInfo`、`ContextSnapshot`、
 `VideoChunkEmbedding`；另有 `UploadSession/UploadSegment`、
-`SeriesParseJob/VideoChunkCheckpoint` 和 `IndexSyncIntent`，没有 `Episode` 表。所有
+`IndexSyncIntent`，没有 `Episode` 表。旧 `SeriesParseJob/VideoChunkCheckpoint` 已退出。所有
 MySQL 表使用 InnoDB。正式 V2 状态由 VideoParseTask、ChunkParseTask、IntervalParseTask
 及对应成果表承载；Prefix 的 lease/cursor 保存在 VideoParseTask.detail，
 索引缓存与 receipt 保存在 Chunk 成果 detail。
@@ -430,3 +460,7 @@ uv run python -m server.cli hydrate \
   00000000-0000-0000-0000-000000000000 \
   11111111-1111-1111-1111-111111111111
 ```
+
+### 解析暂停与继续
+
+任务控制使用 `POST /api/jobs/video-parse/control`，参数为 `tenantId`、`videoParseTaskId`、`paused`、`expectedJobVersion`、`expectedLeaseVersion`。仅当前正式活动任务可以操作，冲突返回 409；读取投影提供 `isPaused/canPause/canResume/activeStage`。暂停保留版本与已提交结果，撤销在途租约并释放容量；原生模型调用可能在返回到取消检查点后才真正退出。详见[设计](../docs/design/03-product-reassessment/parse-pause-resume-trd.md)。

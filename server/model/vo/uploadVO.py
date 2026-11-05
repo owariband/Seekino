@@ -30,7 +30,6 @@ class UploadSessionView(ContractModel):
     estimated_remaining_ms: int | None = Field(ge=0)
     expires_at: UnixTimeMs
     video_id: str | None
-    job_id: str | None
     initial_video_parse_task_id: str | None
     last_error: Failure | None
     version: int = Field(ge=1)
@@ -51,5 +50,4 @@ class UploadSegmentView(ContractModel):
 class UploadCompleteView(ContractModel):
     upload_session: UploadSessionView
     video_id: str
-    job_id: str | None
     video_parse_task_id: str

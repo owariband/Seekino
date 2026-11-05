@@ -1,0 +1,229 @@
+{
+  "persons": [
+    "Andrej Karpathy"
+  ],
+  "timeline": [
+    {
+      "start_seconds": 0,
+      "end_seconds": 60000,
+      "description": "Safari 录屏展示 ChatGPT 网页，右下角固定画中画显示 Andrej Karpathy 在室内讲解并配合手势。网页从起始页进入新对话，随后切换到较早的历史会话。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "SCENE"
+    },
+    {
+      "start_seconds": 0,
+      "end_seconds": 833,
+      "description": "Andrej Karpathy 在右下角画中画中向镜头挥手致意。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "ACTION"
+    },
+    {
+      "start_seconds": 0,
+      "end_seconds": 11060,
+      "description": "Andrej Karpathy 开场介绍 ChatGPT 已广受关注，并概括其通过文本任务与 AI 交互的方式。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "DIALOGUE",
+      "speaker": "Andrej Karpathy",
+      "text_variants": [
+        {
+          "language": "en",
+          "role": "ORIGINAL",
+          "text": "Hi everyone. So by now you have probably heard of ChatGPT. It has taken the world and the AI community by storm, and it is a system that allows you to interact with an AI and give it text-based tasks."
+        }
+      ]
+    },
+    {
+      "start_seconds": 0,
+      "end_seconds": 21166,
+      "description": "chat.openai.com 的 ChatGPT 起始页显示示例、能力和限制三栏内容。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "ON_SCREEN_TEXT",
+      "language": "en",
+      "text": "ChatGPT\nExamples\nCapabilities\nLimitations"
+    },
+    {
+      "start_seconds": 11060,
+      "end_seconds": 20200,
+      "description": "他以让 ChatGPT 写一首关于理解 AI、改善世界并促进繁荣的俳句为例，说明文本提示的使用。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "DIALOGUE",
+      "speaker": "Andrej Karpathy",
+      "text_variants": [
+        {
+          "language": "en",
+          "role": "ORIGINAL",
+          "text": "So for example, we can ask ChatGPT to write us a small haiku about how important it is that people understand AI, and that they can use it to improve the world and make it more prosperous."
+        }
+      ]
+    },
+    {
+      "start_seconds": 12166,
+      "end_seconds": 21166,
+      "description": "他在底部输入框中输入俳句提示词，随后提交，页面切换为新对话视图。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "ACTION"
+    },
+    {
+      "start_seconds": 20200,
+      "end_seconds": 26020,
+      "description": "提交提示后，他读出 ChatGPT 正在生成的第一首俳句。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "DIALOGUE",
+      "speaker": "Andrej Karpathy",
+      "text_variants": [
+        {
+          "language": "en",
+          "role": "ORIGINAL",
+          "text": "So when we run this, AI knowledge brings prosperity for all to see, embrace its power."
+        }
+      ]
+    },
+    {
+      "start_seconds": 22833,
+      "end_seconds": 39500,
+      "description": "ChatGPT 逐词生成并完整显示第一首三行俳句，之后该结果一直保留在当前会话页面。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "ON_SCREEN_TEXT",
+      "language": "en",
+      "text": "AI knowledge brings\nProsperity for all to see\nEmbrace its power"
+    },
+    {
+      "start_seconds": 26140,
+      "end_seconds": 35980,
+      "description": "他评价生成结果不错，并指出 ChatGPT 的文字是从左到右按顺序逐步生成的。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "DIALOGUE",
+      "speaker": "Andrej Karpathy",
+      "text_variants": [
+        {
+          "language": "en",
+          "role": "ORIGINAL",
+          "text": "Okay, not bad. And so you could see that ChatGPT went from left to right and generated all these words sort of sequentially."
+        }
+      ]
+    },
+    {
+      "start_seconds": 27166,
+      "end_seconds": 28833,
+      "description": "Andrej Karpathy 看着第一首俳句的生成结果露出笑容，随后短暂发笑。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "EMOTION"
+    },
+    {
+      "start_seconds": 35980,
+      "end_seconds": 47640,
+      "description": "他说明较早曾对完全相同的提示词得到略有不同的结果，并读出另一首俳句进行比较。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "DIALOGUE",
+      "speaker": "Andrej Karpathy",
+      "text_variants": [
+        {
+          "language": "en",
+          "role": "ORIGINAL",
+          "text": "Now, I asked it already the exact same prompt a little bit earlier, and it generated a slightly different outcome. AI's power to grow. Ignorance holds us back, learn. Prosperity waits."
+        }
+      ]
+    },
+    {
+      "start_seconds": 39166,
+      "end_seconds": 39500,
+      "description": "他点击左侧历史会话“AI's Power Prosperity”，调出此前针对同一提示词生成的另一首俳句。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "ACTION"
+    },
+    {
+      "start_seconds": 39500,
+      "end_seconds": 60000,
+      "description": "较早会话中显示同一提示词的另一版三行俳句，与刚刚生成的结果措辞不同。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "ON_SCREEN_TEXT",
+      "language": "en",
+      "text": "AI's power to grow\nIgnorance holds us back, learn\nProsperity waits"
+    },
+    {
+      "start_seconds": 47640,
+      "end_seconds": 59670,
+      "description": "他比较两次生成结果，解释 ChatGPT 是概率系统，同一提示词可以产生多个不同回答。",
+      "participants": [
+        "Andrej Karpathy"
+      ],
+      "visible_persons": [
+        "Andrej Karpathy"
+      ],
+      "event_type": "DIALOGUE",
+      "speaker": "Andrej Karpathy",
+      "text_variants": [
+        {
+          "language": "en",
+          "role": "ORIGINAL",
+          "text": "So pretty good in both cases and slightly different. So you can see that ChatGPT is a probabilistic system, and for any one prompt, it can give us multiple answers sort of replying to it."
+        }
+      ]
+    }
+  ]
+}

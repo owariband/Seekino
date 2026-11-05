@@ -24,21 +24,37 @@ from engine.parsev2.validation import (
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
 from ..model.identifiers import derive_video_chunk_id
-from ..model.dto.jobDTO import (
-    ChunkParseContentState, ChunkExecutionState, ChunkParseLease,
-    IndexableChunkState, ChunkIndexingSnapshot, VideoParseTaskState,
-    VideoParseLease, VideoChunkState, IntervalMemberSnapshot, IntervalParseLease, RealtimeChunkState,
-    ChunkParseTaskData,
+from ..model.dto.parseContentDTO import (
+    ChunkParseContentState,
+    IndexableChunkState,
+    ChunkIndexingSnapshot,
+    IntervalMemberSnapshot,
     ChunkParseContentData,
-    IntervalParseTaskData,
     IntervalParseContentData,
+)
+from ..model.dto.taskDTO import (
+    ChunkExecutionState,
+    ChunkParseLease,
+    VideoParseTaskState,
+    VideoParseLease,
+    IntervalParseLease,
+    RealtimeChunkState,
+    ChunkParseTaskData,
+    IntervalParseTaskData,
     VideoParseTaskData,
+)
+from ..model.dto.libraryDTO import (
+    VideoChunkState,
     VideoChunkData,
     VideoData,
 )
-from ..model.job import (
-    ChunkTaskPhase, ChunkParseTaskStatus, IntervalParseTaskStatus,
-    VideoParseTaskStatus, interval_full_ready_mask, interval_ready_mask_bit,
+from ..model.task import (
+    ChunkTaskPhase,
+    ChunkParseTaskStatus,
+    IntervalParseTaskStatus,
+    VideoParseTaskStatus,
+    interval_full_ready_mask,
+    interval_ready_mask_bit,
     validate_interval_parse_task_members,
 )
 from ..repository import video_parse_chunk as chunk_store
@@ -369,10 +385,18 @@ def commit_chunk_result(
     chunk = chunk_store.get_video_chunk(session, task.chunk_id)
     if chunk is None:
         raise VideoParseConflictError("ChunkParseTask VideoChunk no longer exists")
+    parent = task_store.get_task(session, lease.video_parse_task_id)
+    video = task_store.get_video(session, parent.video_id) if parent is not None else None
+    if video is None:
+        raise VideoParseConflictError("Understanding source video no longer exists")
+    asr = (parent.parse_config.get("models") or {}).get("asr") or {}
+    dialogue_bounds = ((0, video.duration_ms)
+                       if asr.get("scope") == "video" and asr.get("mode") != "none" else None)
     payload = validate_result_time_range(
         VideoParseResult.model_validate(payload),
         start_seconds=chunk.window_start_ms,
         end_seconds=chunk.window_end_ms,
+        dialogue_bounds=dialogue_bounds,
     ).model_dump(mode="json")
     result = chunk_store.get_content(session, task.id, for_update=True)
     result_detail = deepcopy(dict(detail or {}))
@@ -905,7 +929,7 @@ def commit_interval_refinement(
     input_contents: Mapping[str, Mapping[str, Any]],
     detail: Mapping[str, Any] | None,
     committed_at: datetime,
-) -> IntervalParseTaskData:
+) -> tuple[IntervalParseTaskData, dict[str, int]]:
     """Persist members and result under the caller's parent/Interval locks.
 
     The caller advances ready Chunks before committing this same transaction.
@@ -924,9 +948,6 @@ def commit_interval_refinement(
     if (set(input_versions) != expected_members or set(input_fingerprints) != expected_members
             or set(input_contents) != expected_members):
         raise VideoParseConflictError("refinement input identity must cover every Interval member")
-    voiceprint_decisions = deepcopy(dict(detail or {}).get("voiceprint_decisions", []))
-    if any(record["member_chunk_id"] not in expected_members for record in voiceprint_decisions):
-        raise VideoParseConflictError("voice decision refers to a nonmember Chunk")
     for chunk_task, _chunk, result in rows:
         version = input_versions[chunk_task.id]
         if (type(version) is not int or version < 1
@@ -956,6 +977,8 @@ def commit_interval_refinement(
     chunk_duration_ms = chunk_duration * 1000
     start_ms = consulted_scope[0] * chunk_duration_ms
     end_ms = min(video.duration_ms, (consulted_scope[-1] + 1) * chunk_duration_ms)
+    asr = (parent.parse_config.get("models") or {}).get("asr") or {}
+    dialogue_bounds = (0, video.duration_ms) if asr.get("scope") == "video" else None
     candidates = {}
     for chunk_task, chunk, result in rows:
         base = deepcopy(dict(input_contents[chunk_task.id]))
@@ -965,12 +988,13 @@ def commit_interval_refinement(
             raise VideoParseConflictError("refinement can only commit persons and timeline")
         proposed = validate_result_time_range(
             VideoParseResult.model_validate({**base, **deepcopy(dict(changed))}),
-            start_seconds=start_ms, end_seconds=end_ms,
+            start_seconds=start_ms, end_seconds=end_ms, dialogue_bounds=dialogue_bounds,
         ).model_dump(mode="json")
         try:
             merged = merge_refinement_content(base, current, proposed)
             candidates[chunk_task.id] = validate_result_time_range(
                 VideoParseResult.model_validate(merged), start_seconds=start_ms, end_seconds=end_ms,
+                dialogue_bounds=dialogue_bounds,
             ).model_dump(mode="json")
         except (RefinementMergeConflictError, ValidationError) as error:
             context = {"chunk_task_id": chunk_task.id, "chunk_id": chunk.id,
@@ -988,24 +1012,13 @@ def commit_interval_refinement(
             raise VideoParseSnapshotConflictError(
                 f"Refine concurrent event edits conflict: {message}", reason=reason, context=context,
             ) from error
-    for record in voiceprint_decisions:
-        matching = [event for event in candidates[record["member_chunk_id"]]["timeline"]
-                    if event["event_type"] == "DIALOGUE" and (
-                        event["start_seconds"], event["end_seconds"]
-                    ) == (record["start_ms"], record["end_ms"])]
-        if len(matching) != 1 or matching[0]["speaker"] != record["final_speaker"]:
-            raise VideoParseSnapshotConflictError(
-                "Merged Refine speaker contradicts its voice decision",
-                reason="voice_decision_merge_conflict",
-                context={"chunk_task_id": record["member_chunk_id"],
-                         "event_ref": record["event_ref"]},
-            )
     member_scope = list(
         range(
             interval.start_sequence_no,
             interval.start_sequence_no + interval.chunk_count,
         )
     )
+    changed_member_versions = {}
     for chunk_task, _chunk, result in rows:
         current = deepcopy(dict(result.content or {}))
         updated = candidates[chunk_task.id]
@@ -1013,17 +1026,11 @@ def commit_interval_refinement(
         if content_changed:
             result.content = updated
             result.version += 1
+            changed_member_versions[chunk_task.id] = result.version
         current_detail = deepcopy(dict(result.detail or {}))
         current_detail["scope"] = _ordered_int_union(
             current_detail.get("scope"), member_scope
         )
-        decisions = [record for record in voiceprint_decisions
-                     if record["member_chunk_id"] == chunk_task.id]
-        if decisions:
-            current_detail["voiceprint_decisions"] = [
-                *current_detail.get("voiceprint_decisions", []),
-                *[{**record, "interval_parse_task_id": interval.id} for record in decisions],
-            ]
         result.detail = current_detail
         result.update_time = datetime_to_unix_time_ms(committed_at)
         chunk_store.save_content(session, result)
@@ -1049,4 +1056,4 @@ def commit_interval_refinement(
 
     session.flush()
 
-    return interval
+    return interval, changed_member_versions

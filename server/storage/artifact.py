@@ -114,11 +114,9 @@ class ArtifactStore(Protocol):
 
     def resolve(self, uri: str) -> Path: ...
 
-    def work_directory(self, job_id: str) -> Path: ...
 
     def delete_upload_staging(self, upload_session_id: str) -> None: ...
 
-    def delete_job_artifacts(self, job_id: str) -> None: ...
 
     def delete_video_artifacts(self, series_id: str, video_id: str) -> None: ...
 
@@ -528,11 +526,6 @@ class LocalArtifactStore:
             raise FileNotFoundError(path)
         return path
 
-    def work_directory(self, job_id: str) -> Path:
-        canonical_job_id = canonical_uuid(job_id, "job_id")
-        directory = self._path(PurePosixPath("jobs", canonical_job_id))
-        directory.mkdir(parents=True, exist_ok=True)
-        return directory
 
     def delete_upload_staging(self, upload_session_id: str) -> None:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
@@ -540,9 +533,6 @@ class LocalArtifactStore:
 
         self._delete_tree(directory)
 
-    def delete_job_artifacts(self, job_id: str) -> None:
-        canonical_job_id = canonical_uuid(job_id, "job_id")
-        self._delete_tree(self._path(PurePosixPath("jobs", canonical_job_id)))
 
     def delete_video_artifacts(self, series_id: str, video_id: str) -> None:
         canonical_series_id = canonical_uuid(series_id, "series_id")

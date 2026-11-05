@@ -15,7 +15,7 @@ from ..constants.parse import (
     RUNTIME_DETAIL_KEY,
     VIDEO_PARSE_CAPACITY_LOCK_NAME,
 )
-from ..model.dto.jobDTO import (
+from ..model.dto.taskDTO import (
     ChunkScheduleEntryState,
     ChunkScheduleState,
     ChunkParseLease,
@@ -24,11 +24,13 @@ from ..model.dto.jobDTO import (
     VideoParseLease,
     VideoParseRetryResult,
 )
-from ..model.job import (
+from ..model.parse_content import (
     ChunkParseContent,
+    IntervalParseContent,
+)
+from ..model.task import (
     ChunkParseTask,
     ChunkParseTaskStatus,
-    IntervalParseContent,
     IntervalParseTask,
     IntervalParseTaskStatus,
     VideoParseTask,
@@ -36,6 +38,7 @@ from ..model.job import (
     interval_full_ready_mask,
 )
 from ..model.video import VideoChunk
+from ..service.parse_control import is_paused
 from ..service.video_parse_task import (
     _aggregate_video_task,
     _advance_ready_chunks,
@@ -45,6 +48,8 @@ from ..service.video_parse_task import (
     _latest_video_task_id,
     _submitted_intervals_by_member,
     _video_failure_status as _task_failure_status,
+    _requires_video_asr,
+    _video_asr_prepared,
 )
 from ..repository import video_parse_task as task_store
 from ..service.video_parse_voiceprint import _record_voiceprint_failure as _voiceprint_failure
@@ -97,7 +102,7 @@ class MySqlVideoParseQueue:
                 or_(VideoParseTask.lease_owner.is_(None), VideoParseTask.lease_expire_time <= claimed_at),
                 VideoParseTask.next_execute_time <= claimed_at,
             ).with_for_update(skip_locked=True))
-            if task is None or _latest_video_task_id(session, task.video_id) != task.id:
+            if task is None or is_paused(task) or _latest_video_task_id(session, task.video_id) != task.id:
                 return None
             runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
             if (not _accepted(task) and runtime.get("realtime_only") is not True
@@ -126,7 +131,7 @@ class MySqlVideoParseQueue:
             parent = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.id == parent_id,
             ).with_for_update(skip_locked=True))
-            if (parent is None or parent.is_deleted
+            if (parent is None or parent.is_deleted or is_paused(parent)
                 or _latest_video_task_id(session, parent.video_id) != parent.id
                 or _video_failure_status(parent) is not None):
                 return None
@@ -136,7 +141,7 @@ class MySqlVideoParseQueue:
                 and parent.status == "PENDING"
             )):
                 return None
-            if not _phase_capacity(session, parent, "parse"):
+            if not _phase_capacity(session, parent, "parse", now=claimed_at):
                 return None
             child = session.scalar(select(ChunkParseTask).where(
                 ChunkParseTask.id == chunk_parse_task_id,
@@ -156,18 +161,22 @@ class MySqlVideoParseQueue:
         _require_lease_duration(lease_duration)
         claimed_at = now if now is not None else now_utc()
         with self._session_factory() as session:
-            candidates = list(session.scalars(select(VideoParseTask.id).where(
+            candidates = list(session.execute(select(
+                VideoParseTask.id, _capacity_acquired().label("acquired"),
+                (VideoParseTask.status == "PENDING").label("pending"),
+                VideoParseTask.next_execute_time, VideoParseTask.create_date,
+            ).where(
                 VideoParseTask.status.in_(["PENDING", "PREPARING", "PARSING", "INDEXING"]),
                 VideoParseTask.lease_owner.is_(None),
                 VideoParseTask.next_execute_time <= claimed_at,
                 VideoParseTask.is_deleted.is_(False),
                 VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"].as_boolean().is_(True),
-            ).order_by(
-                _capacity_acquired().desc(),
-                (VideoParseTask.status == "PENDING"),
-                VideoParseTask.next_execute_time, VideoParseTask.create_date, VideoParseTask.id,
             )))
-        for candidate_id in candidates:
+        # JSON predicates can make MySQL filesort carry detail even for SELECT id.
+        # Preserve the existing priority using only the projected scalar values.
+        candidates.sort(key=lambda row: (not row.acquired, row.pending, row.next_execute_time,
+                                         row.create_date, row.id))
+        for candidate_id, *_priority in candidates:
             with serialized_transaction(self._session_factory, VIDEO_PARSE_CAPACITY_LOCK_NAME) as session:
                 if session is None:
                     return None
@@ -178,7 +187,7 @@ class MySqlVideoParseQueue:
                     VideoParseTask.next_execute_time <= claimed_at,
                     VideoParseTask.is_deleted.is_(False),
                 ).with_for_update(skip_locked=True))
-                if (parent is None or not _accepted(parent)
+                if (parent is None or is_paused(parent) or not _accepted(parent)
                     or _video_failure_status(parent) is not None
                     or not self._acquire_capacity(session, parent)):
                     continue
@@ -192,10 +201,11 @@ class MySqlVideoParseQueue:
                 _capacity_acquired(),
                 VideoParseTask.is_deleted.is_(False),
                 VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"].as_boolean().is_(True),
-            ).order_by(VideoParseTask.id)
+            )
             if requested is not None:
                 statement = statement.where(VideoParseTask.id == requested)
-            parents = list(session.scalars(statement))
+            # Sorting these IDs in Python avoids filesort retaining JSON filters.
+            parents = sorted(session.scalars(statement))
         previous = self._last_parent.get(phase)
         if previous in parents:
             offset = parents.index(previous) + 1
@@ -230,7 +240,7 @@ class MySqlVideoParseQueue:
                     VideoParseTask.id == parent_id,
                 ).with_for_update(skip_locked=True))
                 if (not _eligible_parent(parent) or phase == ChunkTaskPhase.PARSE and parent.status != "PARSING"
-                    or not _phase_capacity(session, parent, stage)):
+                    or not _phase_capacity(session, parent, stage, now=claimed_at)):
                     continue
                 children = list(session.scalars(select(ChunkParseTask).join(
                     VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
@@ -305,7 +315,7 @@ class MySqlVideoParseQueue:
                     or (parent.parse_config.get("voiceprint") is not None
                         or parent.parse_config.get("voiceprint_mode", "off") != "off")
                     and dict((parent.detail or {}).get("voiceprint") or {}).get("ready") is not True
-                    or not _phase_capacity(session, parent, "refine")):
+                    or not _phase_capacity(session, parent, "refine", now=claimed_at)):
                     continue
                 candidates = list(session.scalars(select(IntervalParseTask).where(
                     IntervalParseTask.video_task_id == parent.id,
@@ -601,21 +611,11 @@ class MySqlVideoParseQueue:
             prepare_failure_count = None
             retry_at = failed_at + timedelta(seconds=execution["retry_initial_delay_seconds"])
             exhausted = False
-            if task.status == "PREPARING":
-                detail = _ensure_runtime(task.detail)
-                runtime = detail[RUNTIME_DETAIL_KEY]
-                failures = runtime.get(PREPARE_FAILURES_KEY, 0)
-                if type(failures) is not int or failures < 0:
-                    raise ValueError("persisted Prepare failure count must be a nonnegative integer")
-                failures += 1
-                prepare_failure_count = failures
-                runtime[PREPARE_FAILURES_KEY] = failures
-                task.detail = detail
-                exhausted = failures > execution["max_retry_count"]
-                retry_at = failed_at + task_retry_delay(
-                    execution["retry_initial_delay_seconds"], execution["retry_max_delay_seconds"],
-                    failures,
-                )
+            if task.status == "PREPARING" or (
+                task.status == "PARSING" and _requires_video_asr(task) and not _video_asr_prepared(task)
+            ):
+                prepare_failure_count, exhausted = _record_prepare_failure(task, failed_at)
+                retry_at = task.next_execute_time
             elif task.status == "PARSING":
                 # An error loading/binding the snapshot can roll back the active
                 # marker itself. Real coordinator failures still have a finite budget.
@@ -678,15 +678,11 @@ class MySqlVideoParseQueue:
 
     def retry_interval(
         self, lease: IntervalParseLease, *, error: str, retry_at: datetime,
-        now: datetime | None = None, provider_retry_exhausted: bool = False,
+        now: datetime | None = None,
     ) -> bool:
-        return self._retry_child(
-            lease, error=error, retry_at=retry_at, now=now, terminal=provider_retry_exhausted,
-        )
+        return self._retry_child(lease, error=error, retry_at=retry_at, now=now)
 
-    def _retry_child(
-        self, lease, *, error: str, retry_at: datetime, now: datetime | None, terminal: bool = False,
-    ) -> bool:
+    def _retry_child(self, lease, *, error: str, retry_at: datetime, now: datetime | None) -> bool:
         failed_at = now if now is not None else now_utc()
         model = ChunkParseTask if isinstance(lease, ChunkParseLease) else IntervalParseTask
         task_id = lease.chunk_parse_task_id if isinstance(lease, ChunkParseLease) else lease.interval_parse_task_id
@@ -699,7 +695,7 @@ class MySqlVideoParseQueue:
             child = session.scalar(select(model).where(model.id == task_id).with_for_update())
             if not _matches_child(child, parent, lease, failed_at, allow_deadline=True):
                 return False
-            _fail_child(child, parent, failed_at, error, retry_at=retry_at, terminal=terminal)
+            _fail_child(child, parent, failed_at, error, retry_at=retry_at)
             _aggregate_video_task(session, parent.id, failed_at, release_terminal_lease=True)
             return True
 
@@ -811,11 +807,16 @@ class MySqlVideoParseQueue:
                     continue
                 # Waiting coordinators are free to resume; interrupted voice preparation
                 # spends the same finite failure budget as an explicit execution error.
-                failures, exhausted = _record_voiceprint_failure(session, task, reaped_at)
+                asr_pending = (task.status in {"PREPARING", "PARSING"}
+                               and _requires_video_asr(task) and not _video_asr_prepared(task))
+                failures, exhausted = (_record_prepare_failure(task, reaped_at) if asr_pending
+                                       else _record_voiceprint_failure(session, task, reaped_at))
                 if failures is None:
                     task.next_execute_time = reaped_at
                 elif (task.last_error or {}).get("code") != "PARSE_NODE_FAILED":
-                    task.last_error = _error_detail("Voiceprint preparation coordinator lease expired")
+                    task.last_error = _error_detail(
+                        "Video ASR preparation coordinator lease expired" if asr_pending
+                        else "Voiceprint preparation coordinator lease expired")
                 task.lease_owner = None
                 task.lease_expire_time = None
                 task.heartbeat_time = None
@@ -958,12 +959,17 @@ def _capacity_acquired():
 
 
 def _eligible_parent(parent: VideoParseTask | None) -> bool:
-    return bool(parent is not None and not parent.is_deleted and _accepted(parent)
+    return bool(parent is not None and not parent.is_deleted and not is_paused(parent) and _accepted(parent)
                 and parent.capacity_acquired and parent.status in {"PARSING", "INDEXING"}
                 and _video_failure_status(parent) is None)
 
 
-def _phase_capacity(session: Session, parent: VideoParseTask, phase: str) -> bool:
+def _phase_capacity(session: Session, parent: VideoParseTask, phase: str, *, now: datetime) -> bool:
+    if phase == "parse" and _requires_video_asr(parent) and (
+        not _video_asr_prepared(parent) or parent.lease_owner is None
+        or parent.lease_expire_time is None or parent.lease_expire_time <= now
+    ):
+        return False
     execution = _execution_config(parent.parse_config)
     if phase == "refine":
         statement = select(func.count(IntervalParseTask.id)).where(
@@ -1043,11 +1049,10 @@ def _matches_child(task, parent: VideoParseTask, lease, now: datetime, *, allow_
 
 
 def _fail_child(child, parent: VideoParseTask, now: datetime, error: str,
-                *, retry_at: datetime | None = None, terminal: bool = False) -> None:
+                *, retry_at: datetime | None = None) -> None:
     execution = _execution_config(parent.parse_config)
-    if not terminal:
-        child.retry_count += 1
-    exhausted = terminal or child.retry_count > execution["max_retry_count"]
+    child.retry_count += 1
+    exhausted = child.retry_count > execution["max_retry_count"]
     if isinstance(child, ChunkParseTask):
         child.status = "FAILED" if exhausted else "QUEUED"
     else:
@@ -1060,6 +1065,22 @@ def _fail_child(child, parent: VideoParseTask, now: datetime, error: str,
     child.finish_time = now if exhausted else None
     child.last_error = _error_detail(error)
     child.update_time = datetime_to_unix_time_ms(now)
+
+
+def _record_prepare_failure(task: VideoParseTask, now: datetime) -> tuple[int, bool]:
+    detail = _ensure_runtime(task.detail)
+    runtime = detail[RUNTIME_DETAIL_KEY]
+    failures = runtime.get(PREPARE_FAILURES_KEY, 0)
+    if type(failures) is not int or failures < 0:
+        raise ValueError("persisted Prepare failure count must be a nonnegative integer")
+    failures += 1
+    runtime[PREPARE_FAILURES_KEY] = failures
+    task.detail = detail
+    execution = _execution_config(task.parse_config)
+    task.next_execute_time = now + task_retry_delay(
+        execution["retry_initial_delay_seconds"], execution["retry_max_delay_seconds"], failures,
+    )
+    return failures, failures > execution["max_retry_count"]
 
 
 def _record_voiceprint_failure(session: Session, parent: VideoParseTask, now: datetime, *, pending_failure: bool = False):

@@ -1,0 +1,195 @@
+# 本机开发环境完整模型配置；各角色通过 models 选择供应商。
+# 256K 本地预算使短片固定图片前缀低于压缩目标；仍需实测长视频。
+# 密钥由 .env.local 注入；转写使用本地 WhisperX，文本向量使用本地 llama.cpp。
+config_version: 2
+supervisor_harness: deepagents
+query_hook:
+  enabled: true
+  rewriter_enabled: true
+  router_endpoint: https://openrouter.ai/api/alpha/decisions
+  router_model: typesafe/jev-1.14
+  router_api_key_env: OPENROUTER_JEV_API_KEY
+  router_timeout_seconds: 3
+  rewriter_timeout_seconds: 4
+  max_output_tokens: 256
+  history_message_limit: 6
+  history_max_chars: 2000
+  query_max_chars: 2000
+  total_timeout_seconds: 8
+tracing:
+  enabled: false
+  environment: development
+model_sources:
+  deepseek_api:
+    adapter: openai
+    provider: deepseek
+    profile: deepseek
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+  ark_default:
+    adapter: ark
+    provider: ark
+    api_key_env: ARK_API_KEY
+  kimi_coding:
+    adapter: openai
+    provider: kimi
+    profile: kimi
+    base_url: https://api.kimi.com/coding/v1
+    api_key_env: KIMI_API_KEY
+  codex_local:
+    adapter: codex_app_server
+    provider: codex
+    max_concurrency: 10
+  # 已部署本地 ASR；依赖和权重准备见 docs/model-config.md。
+  # Current local ASR: Turbo Q5_0 on whisper.cpp Metal; no WhisperX batching/alignment.
+  whisper_cpp_local:
+    adapter: openai_audio
+    provider: whisper.cpp
+    base_url: http://127.0.0.1:18842/v1
+    api_key_env: WHISPER_API_KEY
+    response_format: verbose_json
+  # Historical frozen tasks only; not selected by models.transcription below.
+  whisperx_local:
+    adapter: whisperx
+    provider: local
+    device: cpu
+    compute_type: int8
+    batch_size: 1
+    cpu_threads: 6
+    alignment_models:
+      en: /Users/hypnos/workspace/agent/Seekino/outputs/local-models/whisperx/align-en
+      zh: /Users/hypnos/workspace/agent/Seekino/outputs/local-models/whisperx/align-zh
+      ja: /Users/hypnos/workspace/agent/Seekino/outputs/local-models/whisperx/align-ja
+  llama_embedding_local:
+    adapter: llama_cpp_embedding
+    provider: llama_cpp
+    base_url: http://127.0.0.1:18843
+models:
+  agent:
+    source: kimi_coding
+    model: k3.1-pro
+    max_output_tokens: 8192
+    request_timeout_seconds: 180
+    reasoning_effort: none
+    context_window_tokens: 262144
+    context_safety_margin_tokens: 4096
+    auto_compact_tokens: 200000
+    compact_target_tokens: 150000
+    max_input_chars: 600000
+  supervisor:
+    source: kimi_coding
+    model: k3.1-pro
+    supports_vision_input: true
+    reasoning_effort: none
+    max_output_tokens: 8192
+    request_timeout_seconds: 1200
+    context_window_tokens: 262144
+    context_safety_margin_tokens: 4096
+    auto_compact_tokens: 200000
+    compact_target_tokens: 150000
+    max_input_chars: 600000
+  transcription:
+    kind: transcription
+    source: whisper_cpp_local
+    model: large-v3-turbo-q5_0
+    request_timeout_seconds: 1200
+  vision:
+    source: kimi_coding
+    model: k3.1-pro
+    supports_vision_input: true
+    max_output_tokens: 30000
+    reasoning_effort: none
+    request_timeout_seconds: 600
+    context_window_tokens: 262144
+    context_safety_margin_tokens: 4096
+    auto_compact_tokens: 200000
+    compact_target_tokens: 150000
+    max_input_chars: 600000
+  vision_fallback:
+    source: kimi_coding
+    model: k3.1-pro
+    reasoning_effort: none
+    max_output_tokens: 30000
+    request_timeout_seconds: 1200
+    context_window_tokens: 262144
+    context_safety_margin_tokens: 4096
+    auto_compact_tokens: 200000
+    compact_target_tokens: 150000
+    max_input_chars: 600000
+  # 独立 OCR 关闭；Understanding 仍读取全部配置帧，音频使用 WhisperX。
+  summarize:
+    source: kimi_coding
+    model: k3.1-pro
+    supports_vision_input: true
+    max_output_tokens: 8192
+    reasoning_effort: none
+    request_timeout_seconds: 600
+    context_window_tokens: 262144
+    context_safety_margin_tokens: 4096
+    auto_compact_tokens: 200000
+    compact_target_tokens: 150000
+    max_input_chars: 600000
+  embedding:
+    kind: embedding
+    source: llama_embedding_local
+    model: seekino-qwen3-embedding-0.6b
+    dimensions: 1024
+    input_mode: text
+    video_fps: 1.0
+    query_instruction: Given a question about a machine learning course, retrieve relevant lecture passages that answer the question.
+    request_timeout_seconds: 120
+  rerank:
+    kind: rerank
+    source: kimi_coding
+    model: k3.1-pro
+    reasoning_effort: none
+    max_output_tokens: 8192
+    request_timeout_seconds: 180
+    context_window_tokens: 262144
+    context_safety_margin_tokens: 4096
+    auto_compact_tokens: 200000
+    compact_target_tokens: 150000
+    max_input_chars: 600000
+  query_rewriter:
+    source: deepseek_api
+    model: deepseek-flash
+    reasoning_effort: none
+    max_output_tokens: 256
+    stream: false
+agent_runtime:
+  history_message_limit: 12
+  default_top_k: 3
+  maximum_top_k: 20
+  max_loop_turns: 3
+  max_model_calls_per_turn: 6
+  maximum_model_calls_per_turn: 12
+  max_tool_calls_per_turn: 24
+  maximum_tool_calls_per_turn: 48
+  limits_enabled: false
+  total_timeout_enabled: true
+  query_reasoning_effort: low
+  supervisor_reasoning_effort: none
+  web_search_max_results: 5
+  web_search_timeout_seconds: 12
+  max_output_tokens: 8192
+  max_prompt_chars: 200000
+  context_window_tokens: 64000
+  context_safety_margin_tokens: 4096
+  auto_compact_tokens: 48000
+  compact_target_tokens: 24000
+  max_tool_result_bytes: 16384
+  max_catalog_items_per_page: 20
+  stage_timeout_seconds: 480
+  supervisor_timeout_seconds: 1200
+  execution_timeout_seconds: 1200
+  maximum_concurrent_kicks: 4
+  maximum_parallel_queries: 3
+video_parser:
+  transcript_fps: 1.0
+  video_fps: 3.0
+  fallback:
+    enabled: true
+    frame_fps: 0.5
+    group_duration_seconds: 30
+    max_frames_per_group: 15
+    max_height: 720

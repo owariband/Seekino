@@ -19,12 +19,7 @@ from server.model.agent import (
     AgentConversation,
     AgentMessage,
 )
-from server.model.parse_usage import (
-    ModelUsage,
-    ParseModelCall,
-    ParseUsageAttempt,
-    VideoParseUsageAttempt,
-)
+from server.model.parse_usage import ModelUsage, ParseModelCall, VideoParseUsageAttempt
 from server.model.upload import UploadSegment, UploadSession
 from server.model.video import (
     Series,
@@ -34,13 +29,13 @@ from server.model.video import (
     VideoChunk,
     Video,
 )
-from server.model.job import (
+from server.model.parse_content import (
     ChunkParseContent,
-    ChunkParseTask,
     IntervalParseContent,
+)
+from server.model.task import (
+    ChunkParseTask,
     IntervalParseTask,
-    SeriesParseJob,
-    VideoChunkCheckpoint,
     VideoParseTask,
     interval_full_ready_mask,
     interval_ready_mask_bit,
@@ -116,12 +111,12 @@ def test_model_usage_mysql_ddl_has_identity_and_common_audit_columns() -> None:
     }
 
 
-def test_create_schema_registers_twenty_four_tables_and_identity_is_repeatable() -> None:
+def test_create_schema_registers_twenty_two_tables_and_identity_is_repeatable() -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
     create_schema(engine)
     tables = inspect(engine).get_table_names()
-    assert len(tables) == 24 and {"user", "tenant"}.issubset(tables)
+    assert len(tables) == 22 and {"user", "tenant", "video_parse_content"}.issubset(tables)
 
 
 def test_conversation_detail_is_nullable_json() -> None:
@@ -292,7 +287,7 @@ def test_mysql_schema_rejects_audit_dates_without_datetime3(monkeypatch, reflect
     assert inspect(engine).get_table_names() == ["series"]
 
 
-def test_create_schema_rejects_old_twenty_two_tables_without_adding_identity() -> None:
+def test_create_schema_rejects_schema_without_adding_missing_identity() -> None:
     from server.model.tenant import Tenant
     from server.model.user import User
 
@@ -300,10 +295,10 @@ def test_create_schema_rejects_old_twenty_two_tables_without_adding_identity() -
     create_schema(engine)
     Tenant.__table__.drop(engine)
     User.__table__.drop(engine)
-    assert len(inspect(engine).get_table_names()) == 22
+    assert len(inspect(engine).get_table_names()) == 20
     with pytest.raises(SchemaUpgradeRequiredError, match="20261010_user_tenant_identity.sql"):
         create_schema(engine)
-    assert len(inspect(engine).get_table_names()) == 22
+    assert len(inspect(engine).get_table_names()) == 20
 
 
 def test_create_schema_requires_new_migration_for_existing_identity_profile_drift(monkeypatch) -> None:
@@ -344,7 +339,7 @@ def test_create_schema_rejects_legacy_workspace_scope_before_mutation(table_name
 
 @pytest.mark.parametrize("table_name,column_name", [
     ("series", "tenant_id"), ("agent_conversation", "owner_id"),
-    ("upload_session", "creator_id"), ("series_parse_job", "creator_id"),
+    ("upload_session", "creator_id"),
     ("video_parse_task", "creator_id"),
 ])
 def test_create_schema_requires_identity_business_columns(monkeypatch, table_name, column_name) -> None:
@@ -566,11 +561,6 @@ def test_mysql_schema_uses_innodb_json_and_integer_media_milliseconds() -> None:
             dialect=mysql.dialect()
         )
     )
-    checkpoint_ddl = str(
-        CreateTable(VideoChunkCheckpoint.__table__).compile(
-            dialect=mysql.dialect()
-        )
-    )
 
     assert "ENGINE=InnoDB" in chunk_ddl
     assert "CHARSET=utf8mb4" in chunk_ddl
@@ -580,9 +570,6 @@ def test_mysql_schema_uses_innodb_json_and_integer_media_milliseconds() -> None:
     assert "start_ms BIGINT" in chunk_ddl
     assert "all_time_events JSON" in info_ddl
     assert "video_compact LONGTEXT" in info_ddl
-    assert "start_ms BIGINT" in checkpoint_ddl
-    assert "end_ms BIGINT" in checkpoint_ddl
-    assert "ck_video_chunk_checkpoint_range" in checkpoint_ddl
 
 
 @pytest.mark.parametrize("old_rows", [0, 1])
@@ -774,11 +761,6 @@ def test_mysql_audit_columns_are_common_and_business_timestamp_types_are_preserv
     segment_ddl = str(
         CreateTable(UploadSegment.__table__).compile(dialect=mysql.dialect())
     )
-    attempt_ddl = str(
-        CreateTable(ParseUsageAttempt.__table__).compile(
-            dialect=mysql.dialect()
-        )
-    )
     video_attempt_ddl = str(
         CreateTable(VideoParseUsageAttempt.__table__).compile(
             dialect=mysql.dialect()
@@ -790,21 +772,16 @@ def test_mysql_audit_columns_are_common_and_business_timestamp_types_are_preserv
     series_ddl = str(
         CreateTable(Series.__table__).compile(dialect=mysql.dialect())
     )
-    legacy_job_ddl = str(
-        CreateTable(SeriesParseJob.__table__).compile(dialect=mysql.dialect())
-    )
 
-    for ddl in (video_ddl, chunk_ddl, upload_ddl, segment_ddl, attempt_ddl,
-                video_attempt_ddl, call_ddl, series_ddl, legacy_job_ddl):
+    for ddl in (video_ddl, chunk_ddl, upload_ddl, segment_ddl,
+                video_attempt_ddl, call_ddl, series_ddl):
         assert "create_time BIGINT" in ddl
         assert "update_time BIGINT" in ddl
         assert "create_date DATETIME(3)" in ddl
         assert "update_date DATETIME(3)" in ddl
     assert "expire_time TIMESTAMP(3) NOT NULL" in upload_ddl
-    assert "start_time TIMESTAMP(3) NOT NULL" in attempt_ddl
     assert "start_time TIMESTAMP(3) NOT NULL" in video_attempt_ddl
     assert "start_time TIMESTAMP(3) NOT NULL" in call_ddl
-    assert "next_execute_time BIGINT NOT NULL" in legacy_job_ddl
 
 
 def test_utc_timestamp_bind_normalizes_timezone_and_millisecond_precision() -> None:
@@ -1249,11 +1226,8 @@ def test_create_schema_rejects_v2_worker_runtime_structure_drift(
                     for column in columns
                     if column["name"] != "execution_task_id"
                 ]
-            next(
-                column
-                for column in columns
-                if column["name"] == "execution_kind"
-            )["nullable"] = False
+            target = next(column for column in columns if column["name"] == "execution_kind")
+            target["nullable"] = not target["nullable"]
             return columns
 
         monkeypatch.setattr(inspector, "get_columns", get_columns)
@@ -1522,27 +1496,6 @@ def test_create_schema_rejects_old_message_fields_before_missing_extra_context()
         assert connection.execute(
             text("SELECT message_id FROM agent_message")
         ).scalar_one() == "existing-message"
-
-
-def test_create_schema_requires_checkpoint_range_migration() -> None:
-    engine = create_database_engine(
-        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
-    )
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "CREATE TABLE video_chunk_checkpoint "
-                "(job_id TEXT, sequence_no INTEGER, stage TEXT)"
-            )
-        )
-
-    with pytest.raises(
-        SchemaUpgradeRequiredError,
-        match="BaseModel schema.*video_chunk_checkpoint.create_time.missing",
-    ):
-        create_schema(engine)
-
-    assert set(inspect(engine).get_table_names()) == {"video_chunk_checkpoint"}
 
 
 @pytest.mark.parametrize(

@@ -14,8 +14,8 @@ from server.api.library import project_series_detail
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
-from server.model.job import VideoParseTask
-from server.model.upload import UploadSession
+from server.model.task import VideoParseTask
+from server.model.upload import UploadSession, UPLOAD_DELETION_PENDING_ERROR_CODE
 from server.model.tenant import Tenant
 from server.model.user import User
 from server.model.video import Series, SeriesVisibility, Video, VideoChunk
@@ -89,6 +89,31 @@ def _add_prefix_task(
     return task_id
 
 
+def test_deletion_pending_video_is_hidden_from_series(repository, seed_video):
+    factory, _videos, library = _library(repository)
+    report = seed_video(create_session_factory(repository[0]))
+    with factory.begin() as session:
+        session.add(UploadSession(
+            id=str(uuid4()), tenant_id="local-default", series_id=report.series_id,
+            episode_order=report.episode_order, upload_sequence=report.upload_sequence,
+            filename=report.original_filename, media_type="video/mp4", size_bytes=10,
+            segment_size_bytes=10, segment_count=1, version=1, status="COMPLETED",
+            idempotency_key="deletion-pending", expire_time=now_utc(), finish_time=now_utc(),
+            video_id=report.video_id, last_error_code=UPLOAD_DELETION_PENDING_ERROR_CODE,
+            create_time=now_unix_time_ms(), update_time=now_unix_time_ms(),
+        ))
+    state = library.get_series(report.series_id, tenant_id="local-default")
+    assert state.video_count == 0
+    assert state.videos == ()
+    with factory.begin() as session:
+        upload = session.scalar(select(UploadSession).where(
+            UploadSession.video_id == report.video_id,
+        ))
+        upload.last_error_code = None
+    restored = library.get_series(report.series_id, tenant_id="local-default")
+    assert restored.video_count == 1
+
+
 def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed_video, tmp_path):
     factory, videos, library = _library(repository)
     report = parsed_video
@@ -111,7 +136,6 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert initial.video_count == 1
     assert initial.ready_video_count == 0
     assert initial.videos[0].index_status == VideoIndexStatus.SYNCING
-    assert initial.videos[0].latest_job_id is None
     with factory.begin() as session:
         session.get(VideoParseTask, report.video_parse_task_id).status = "COMPLETE"
     ready = library.get_series(report.series_id, tenant_id="local-default")
@@ -122,7 +146,6 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert detail["videos"][0]["parseStatus"] == "COMPLETE"
     assert detail["videos"][0]["parseProgress"] == 100
     assert detail["videos"][0]["playbackStatus"] == "READY"
-    assert detail["videos"][0]["latestJobId"] is None
     assert detail["videos"][0]["thumbnail"] is None
     assert detail["videos"][0]["displayName"] is None
     assert detail["videos"][0]["description"] is None
@@ -137,11 +160,18 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, parsed
     assert missing.last_error.code == "MEDIA_MISSING"
 
 
-def test_video_metadata_and_episode_order_share_transaction(repository, parsed_video, tmp_path):
+def test_video_display_and_episode_order_share_transaction(repository, parsed_video, tmp_path):
+    from server.repository import video_parse_content as result_store
+
     factory, videos, library = _library(repository)
     report = parsed_video
     repo = LibraryRepository(factory)
     original = library.get_video(report.video_id, tenant_id="local-default")
+    display = {
+        "title": "本集标题", "title_kind": "official", "description": "本集简介",
+        "episode_order": original.episode_order + 1, "cover_uri": "artifact://video/cover.png",
+        "evidence": [], "frame_receipts": [],
+    }
 
     with pytest.raises(RuntimeError, match="abort publication"):
         with factory.begin() as session:
@@ -149,10 +179,8 @@ def test_video_metadata_and_episode_order_share_transaction(repository, parsed_v
                 repo, session, video_id=report.video_id, tenant_id="local-default",
                 episode_order=original.episode_order + 1, now=now_utc(),
             )
-            repo.update_video_metadata(
-                report.video_id, session=session, display_name="本集标题",
-                description="本集简介", cover_uri="artifact://video/cover.png",
-            )
+            result_store.save_result(session, report.video_parse_task_id, field="display",
+                                     result=display, detail={"display": {}}, now_ms=now_unix_time_ms())
             raise RuntimeError("abort publication")
     unchanged = library.get_video(report.video_id, tenant_id="local-default")
     assert unchanged.episode_order == original.episode_order
@@ -163,18 +191,12 @@ def test_video_metadata_and_episode_order_share_transaction(repository, parsed_v
             repo, session, video_id=report.video_id, tenant_id="local-default",
             episode_order=original.episode_order + 1, now=now_utc(),
         )
-        repo.update_video_metadata(
-            report.video_id, session=session, display_name="本集标题",
-            description="本集简介", cover_uri="artifact://video/cover.png",
-        )
-        repo.update_video_metadata(
-            report.video_id, session=session, display_name=None,
-            description="更新后的简介", cover_uri=None,
-        )
+        result_store.save_result(session, report.video_parse_task_id, field="display",
+                                 result=display, detail={"display": {}}, now_ms=now_unix_time_ms())
     result = library.get_video(report.video_id, tenant_id="local-default")
     assert result.episode_order == result.upload_sequence == original.episode_order + 1
     assert result.display_name == "本集标题"
-    assert result.description == "更新后的简介"
+    assert result.description == "本集简介"
     assert result.cover_uri == "artifact://video/cover.png"
     media = MediaService(library, LocalArtifactStore(tmp_path / "metadata", environment="test"))
     public = library_api.project_video(result, media, access="public").model_dump(by_alias=True)
@@ -182,7 +204,39 @@ def test_video_metadata_and_episode_order_share_transaction(repository, parsed_v
     assert "coverUri" not in public
 
 
+def test_video_display_reads_latest_non_empty_result(repository, parsed_video):
+    from server.repository import video_parse_content as result_store
+
+    factory, _videos, library = _library(repository)
+    report = parsed_video
+    with factory.begin() as session:
+        result_store.save_result(
+            session, report.video_parse_task_id, field="display",
+            result={"title": "旧版标题", "title_kind": "official", "description": "旧版简介",
+                    "episode_order": report.episode_order, "cover_uri": "artifact://old/cover.png",
+                    "evidence": [], "frame_receipts": []},
+            detail={"display": {}}, now_ms=now_unix_time_ms(),
+        )
+    with factory.begin() as session:
+        _add_prefix_task(session, video_id=report.video_id)
+    state = library.get_video(report.video_id, tenant_id="local-default")
+    assert state.display_name == "旧版标题"
+    assert state.description == "旧版简介"
+    assert state.cover_uri == "artifact://old/cover.png"
+
+
+def test_video_without_display_falls_back_to_none(repository, parsed_video):
+    factory, _videos, library = _library(repository)
+    report = parsed_video
+    state = library.get_video(report.video_id, tenant_id="local-default")
+    assert state.display_name is None
+    assert state.description is None
+    assert state.cover_uri is None
+
+
 def test_series_artwork_prefers_summary_covers_and_stays_stable_across_episode_order(repository, seed_video, tmp_path):
+    from server.repository import video_parse_content as result_store
+
     factory, _videos, library = _library(repository)
     first = seed_video(factory, episode_order=1)
     with factory.begin() as session:
@@ -195,10 +249,23 @@ def test_series_artwork_prefers_summary_covers_and_stays_stable_across_episode_o
     frame = store.base_directory / "frame.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-image")
     frame_uri = store.uri_for_path(frame)
+    reports = {second.video_id: second, third.video_id: third}
+
+    def _set_cover(video_id: str, cover_uri: str | None) -> None:
+        item = reports[video_id]
+        with factory.begin() as session:
+            result_store.save_result(
+                session, item.video_parse_task_id, field="display",
+                result={"title": None, "title_kind": "official", "description": None,
+                        "episode_order": item.episode_order, "cover_uri": cover_uri,
+                        "evidence": [], "frame_receipts": []},
+                detail={"display": {}}, now_ms=now_unix_time_ms(),
+            )
+
     with factory.begin() as session:
         session.get(VideoChunk, first.video_chunk_ids[0]).keyframe_uris = [frame_uri]
-        for item in (second, third):
-            session.get(Video, item.video_id).cover_uri = frame_uri
+    for item in (second, third):
+        _set_cover(item.video_id, frame_uri)
     media = MediaService(library, store)
     before = library.get_series(first.series_id, tenant_id="local-default")
     chosen = before.representative_video.video_id
@@ -212,12 +279,10 @@ def test_series_artwork_prefers_summary_covers_and_stays_stable_across_episode_o
         session.get(Video, second.video_id).episode_order = 4
     after = library.get_series(first.series_id, tenant_id="local-default")
     assert after.representative_video.video_id == chosen
-    with factory.begin() as session:
-        session.get(Video, chosen).cover_uri = None
+    _set_cover(chosen, None)
     remaining = library.get_series(first.series_id, tenant_id="local-default").representative_video
     assert remaining.video_id in {second.video_id, third.video_id} - {chosen}
-    with factory.begin() as session:
-        session.get(Video, remaining.video_id).cover_uri = None
+    _set_cover(remaining.video_id, None)
     fallback = library.get_series(first.series_id, tenant_id="local-default")
     assert fallback.representative_video.video_id == first.video_id
 
@@ -915,16 +980,42 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
         assert upload.version == 1
 
 
-def test_create_preserves_legacy_freeform_background_and_validates_managed_refs(repository):
+def test_create_normalizes_background_and_rejects_legacy_shapes(repository):
     _factory, _videos, library = _library(repository)
-    legacy = {"seriesBible": "旧Markdown", "arbitrary": {"custom": [1, "freeform"]}}
-    series = library.create_series(tenant_id="local-default", name="Legacy", important_extra_data=legacy)
-    assert series.important_extra_data == legacy
+    created = library.create_series(
+        tenant_id="local-default", name="Managed background",
+        important_extra_data={"content": "# 背景"},
+    )
+    assert created.important_extra_data == {"format": "markdown", "content": "# 背景"}
+    with pytest.raises(ValueError, match="must contain format and content"):
+        library.create_series(
+            tenant_id="local-default", name="Legacy",
+            important_extra_data={"seriesBible": "旧Markdown", "arbitrary": {"custom": [1, "freeform"]}},
+        )
+    with pytest.raises(ValueError, match="not valid JSON"):
+        library.create_series(
+            tenant_id="local-default", name="Invalid JSON",
+            important_extra_data={"format": "json", "content": "{bad"},
+        )
     with pytest.raises(ValueError, match="storage is unavailable"):
         library.create_series(
             tenant_id="local-default", name="Invalid image",
-            important_extra_data={"arbitrary": {"image": "asset://missing"}},
+            important_extra_data={"format": "markdown", "content": "![missing](asset://missing)"},
         )
+    assert library.count_series(tenant_id="local-default") == 1
+
+
+def test_create_rejects_non_empty_character_bible(repository):
+    _factory, _videos, library = _library(repository)
+    with pytest.raises(ValueError, match="important_extra_data"):
+        library.create_series(
+            tenant_id="local-default", name="Legacy characters",
+            character_bible=[{"name": "Anon"}],
+        )
+    accepted = library.create_series(
+        tenant_id="local-default", name="Empty characters", character_bible=[],
+    )
+    assert accepted.character_bible == []
     assert library.count_series(tenant_id="local-default") == 1
 
 

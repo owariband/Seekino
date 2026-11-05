@@ -1,0 +1,26 @@
+{
+  "context_window_tokens": 262144,
+  "context_safety_margin_tokens": 4096,
+  "auto_compact_tokens": 200000,
+  "compact_target_tokens": 150000,
+  "max_input_chars": 600000,
+  "supports_vision_input": true,
+  "source": "kimi_coding",
+  "model": "k3.1-pro",
+  "request_timeout_seconds": 600.0,
+  "max_output_tokens": 30000,
+  "reasoning_effort": "none",
+  "fallback": {
+    "context_window_tokens": 262144,
+    "context_safety_margin_tokens": 4096,
+    "auto_compact_tokens": 200000,
+    "compact_target_tokens": 150000,
+    "max_input_chars": 600000,
+    "supports_vision_input": true,
+    "source": "kimi_coding",
+    "model": "k3.1-pro",
+    "request_timeout_seconds": 1200.0,
+    "max_output_tokens": 30000,
+    "reasoning_effort": "none"
+  }
+}

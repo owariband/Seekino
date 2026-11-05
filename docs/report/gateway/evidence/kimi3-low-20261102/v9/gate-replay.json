@@ -1,0 +1,309 @@
+{
+  "raw_response_audit": [
+    {
+      "sequence_no": 0,
+      "call_id": "a7f75233-89c8-4497-ae7b-77231a27ce56",
+      "images": 189,
+      "repair": false,
+      "events": 1,
+      "dialogue": 0,
+      "persons": [
+        "И"
+      ],
+      "content_chars": 195,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 1,
+      "call_id": "8e46012f-5a6a-4b5d-a44d-1a404be3b219",
+      "images": 198,
+      "repair": false,
+      "events": 22,
+      "dialogue": 21,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "content_chars": 7494,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 1,
+      "call_id": "ac741288-0b7f-402c-b406-4d21acd7fb34",
+      "images": 0,
+      "repair": true,
+      "events": 0,
+      "dialogue": 0,
+      "persons": [
+        "Y"
+      ],
+      "content_chars": 31,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 3,
+      "call_id": "ea90e368-9e4c-4198-9bc3-bb6814fa5bc7",
+      "images": 198,
+      "repair": false,
+      "events": 26,
+      "dialogue": 24,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "content_chars": 8510,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 4,
+      "call_id": "d2a3ed1d-8bcb-4ce4-b804-b42bfdee438d",
+      "images": 198,
+      "repair": false,
+      "events": 17,
+      "dialogue": 12,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "content_chars": 5546,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 4,
+      "call_id": "a72f73db-a296-467f-84ac-76a2e8e7752a",
+      "images": 0,
+      "repair": true,
+      "events": 0,
+      "dialogue": 0,
+      "persons": [
+        "<"
+      ],
+      "content_chars": 40,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 5,
+      "call_id": "e380ac0b-34d8-4ef5-a664-2c508a8a4941",
+      "images": 198,
+      "repair": false,
+      "events": 17,
+      "dialogue": 13,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "content_chars": 6291,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 5,
+      "call_id": "f337b9d1-1d6e-489f-afbc-562219becfb2",
+      "images": 0,
+      "repair": true,
+      "events": 17,
+      "dialogue": 13,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "content_chars": 6291,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 6,
+      "call_id": "262b0b21-0372-41eb-846e-d71ece4c2624",
+      "images": 198,
+      "repair": false,
+      "events": 0,
+      "dialogue": 0,
+      "persons": [
+        "A"
+      ],
+      "content_chars": 33,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 7,
+      "call_id": "61e40bcc-1b10-47cd-a5bc-e7510b0fe72b",
+      "images": 198,
+      "repair": false,
+      "events": 0,
+      "dialogue": 0,
+      "persons": [
+        "/"
+      ],
+      "content_chars": 33,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 8,
+      "call_id": "7a29f668-6305-4cb8-a7c8-e54f93dd70fe",
+      "images": 198,
+      "repair": false,
+      "events": 8,
+      "dialogue": 8,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "content_chars": 3753,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    },
+    {
+      "sequence_no": 9,
+      "call_id": "580a77b8-ad89-4ea2-b3a9-4b060358b36f",
+      "images": 198,
+      "repair": false,
+      "events": 1,
+      "dialogue": 1,
+      "persons": [
+        "卡"
+      ],
+      "content_chars": 241,
+      "raw_sse_equals_response": true,
+      "finish_reason": "stop",
+      "max_tokens": 30000
+    }
+  ],
+  "input_and_gate_audit": {
+    "input_checks": [
+      {
+        "sequence_no": 0,
+        "call_id": "a7f75233-89c8-4497-ae7b-77231a27ce56",
+        "repair": false,
+        "asr_cues": 22,
+        "asr_nonblank_cues": 22,
+        "asr_chars": 1018,
+        "output_events": 1
+      },
+      {
+        "sequence_no": 1,
+        "call_id": "8e46012f-5a6a-4b5d-a44d-1a404be3b219",
+        "repair": false,
+        "asr_cues": 21,
+        "asr_nonblank_cues": 21,
+        "asr_chars": 980,
+        "output_events": 22
+      },
+      {
+        "sequence_no": 1,
+        "call_id": "ac741288-0b7f-402c-b406-4d21acd7fb34",
+        "repair": true,
+        "asr_cues": 21,
+        "asr_nonblank_cues": 21,
+        "asr_chars": 980,
+        "output_events": 0
+      },
+      {
+        "sequence_no": 3,
+        "call_id": "ea90e368-9e4c-4198-9bc3-bb6814fa5bc7",
+        "repair": false,
+        "asr_cues": 23,
+        "asr_nonblank_cues": 23,
+        "asr_chars": 1024,
+        "output_events": 26
+      },
+      {
+        "sequence_no": 4,
+        "call_id": "d2a3ed1d-8bcb-4ce4-b804-b42bfdee438d",
+        "repair": false,
+        "asr_cues": 25,
+        "asr_nonblank_cues": 25,
+        "asr_chars": 980,
+        "output_events": 17
+      },
+      {
+        "sequence_no": 4,
+        "call_id": "a72f73db-a296-467f-84ac-76a2e8e7752a",
+        "repair": true,
+        "asr_cues": 25,
+        "asr_nonblank_cues": 25,
+        "asr_chars": 980,
+        "output_events": 0
+      },
+      {
+        "sequence_no": 5,
+        "call_id": "e380ac0b-34d8-4ef5-a664-2c508a8a4941",
+        "repair": false,
+        "asr_cues": 21,
+        "asr_nonblank_cues": 21,
+        "asr_chars": 955,
+        "output_events": 17
+      },
+      {
+        "sequence_no": 5,
+        "call_id": "f337b9d1-1d6e-489f-afbc-562219becfb2",
+        "repair": true,
+        "asr_cues": 21,
+        "asr_nonblank_cues": 21,
+        "asr_chars": 955,
+        "output_events": 17
+      },
+      {
+        "sequence_no": 6,
+        "call_id": "262b0b21-0372-41eb-846e-d71ece4c2624",
+        "repair": false,
+        "asr_cues": 24,
+        "asr_nonblank_cues": 24,
+        "asr_chars": 1004,
+        "output_events": 0
+      },
+      {
+        "sequence_no": 7,
+        "call_id": "61e40bcc-1b10-47cd-a5bc-e7510b0fe72b",
+        "repair": false,
+        "asr_cues": 21,
+        "asr_nonblank_cues": 21,
+        "asr_chars": 960,
+        "output_events": 0
+      },
+      {
+        "sequence_no": 8,
+        "call_id": "7a29f668-6305-4cb8-a7c8-e54f93dd70fe",
+        "repair": false,
+        "asr_cues": 24,
+        "asr_nonblank_cues": 24,
+        "asr_chars": 1044,
+        "output_events": 8
+      },
+      {
+        "sequence_no": 9,
+        "call_id": "580a77b8-ad89-4ea2-b3a9-4b060358b36f",
+        "repair": false,
+        "asr_cues": 24,
+        "asr_nonblank_cues": 24,
+        "asr_chars": 965,
+        "output_events": 1
+      }
+    ],
+    "empty_response_passes_schema_and_time_gate": true,
+    "sorting_replay": {
+      "sequence_no": 1,
+      "original_events": 22,
+      "sorted_events": 22,
+      "schema_valid_after_stable_sort": true,
+      "all_event_values_preserved": true,
+      "canonical_time_check_error": "timeline event falls outside the authorized media time range",
+      "min_start": 59670,
+      "max_end": 120000
+    },
+    "paid_model_calls": 0,
+    "business_code_changed": false
+  }
+}

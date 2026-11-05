@@ -11,7 +11,6 @@ from uuid import uuid4
 import pytest
 import httpx
 from arkruntime._exceptions import ArkAPIError
-from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
 from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
 from gateway.errors import SSEProxyError
 
@@ -24,9 +23,14 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease, VideoParseRetryResult
-from server.model.job import (
-    ChunkParseContent,
+from server.model.dto.taskDTO import (
+    ChunkParseLease,
+    IntervalParseLease,
+    VideoParseLease,
+    VideoParseRetryResult,
+)
+from server.model.parse_content import ChunkParseContent
+from server.model.task import (
     ChunkParseTask,
     IntervalParseTask,
     VideoParseTask,
@@ -108,6 +112,65 @@ def _prepare(factory, queue, task_id: str, *, chunk_count: int):
     return repo, lease, prepared
 
 
+def _whole_video_asr_task(factory):
+    task_id = _task(factory, chunk_count=2, accepted=True)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        config = deepcopy(task.parse_config)
+        config["models"]["asr"].update(mode="lite", scope="video")
+        config["execution"]["max_retry_count"] = 1
+        task.parse_config = config
+    return task_id
+
+
+def test_video_asr_blocks_resumed_chunks_until_current_lease_is_prepared(repository):
+    from dataclasses import replace
+
+    engine, _ = repository
+    factory = create_session_factory(engine)
+    task_id = _whole_video_asr_task(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=1)
+    repo, lease, prepared = _prepare(factory, queue, task_id, chunk_count=2)
+    assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.finish_video_asr_preparation(replace(lease, worker_id="stale"), now=NOW)
+    from tests.server.test_video_parse_results import identity_for, PAYLOAD
+    identity = identity_for(repo, task_id)
+    repo.load_or_begin_video_asr(lease, identity, now=NOW)
+    repo.commit_video_asr(lease, identity, PAYLOAD, now=NOW)
+    repo.finish_video_asr_preparation(lease, now=NOW)
+    assert queue.release_execution(lease, now=NOW)
+    assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None
+    resumed = queue.claim_video("resumed", lease_duration=timedelta(minutes=5), now=NOW)
+    assert resumed.lease_version > lease.lease_version
+    assert queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW) is None
+    repo.finish_video_asr_preparation(resumed, now=NOW)
+    child = queue.claim_chunk("chunk", lease_duration=timedelta(minutes=1), now=NOW)
+    assert child.chunk_parse_task_id == prepared.chunk_parse_task_ids[0]
+
+
+@pytest.mark.parametrize("failure", ["provider", "expired_lease"])
+def test_resumed_video_asr_failure_has_a_finite_prepare_budget(repository, failure):
+    engine, _ = repository
+    factory = create_session_factory(engine)
+    task_id = _whole_video_asr_task(factory)
+    queue = MySqlVideoParseQueue(factory, video_concurrency=1)
+    repo, lease, _ = _prepare(factory, queue, task_id, chunk_count=2)
+    clock = NOW
+    for attempt in range(2):
+        if failure == "provider":
+            result = queue.retry_video(lease, error="ASR failed", now=clock)
+            assert result.prepare_failure_count == attempt + 1
+        else:
+            clock = lease.lease_expire_time + timedelta(seconds=1)
+            assert queue.reap_expired_videos(now=clock) == 1
+        clock += timedelta(minutes=10)
+        lease = queue.claim_video("resumed", lease_duration=timedelta(minutes=5), now=clock)
+        assert (lease is None) == (attempt == 1)
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).status == "PARSING_FAILED"
+
+
 def test_video_claim_requires_explicit_v2_acceptance(repository):
     engine, _unused = repository
     factory = create_session_factory(engine)
@@ -121,82 +184,6 @@ def test_video_claim_requires_explicit_v2_acceptance(repository):
     assert lease is not None and lease.video_parse_task_id == accepted_id
     with factory() as session:
         assert session.get(VideoParseTask, legacy_id).status == "PENDING"
-
-
-def test_refine_provider_exhaustion_is_terminal_without_spending_logic_retry(repository):
-    engine, _unused = repository
-    factory = create_session_factory(engine)
-    task_id = _task(factory, chunk_count=1, accepted=True)
-    with factory.begin() as session:
-        parent = session.get(VideoParseTask, task_id)
-        config = deepcopy(parent.parse_config)
-        config["execution"]["max_retry_count"] = 5
-        parent.parse_config = config
-    queue = MySqlVideoParseQueue(factory, video_concurrency=3)
-    repo, _video, _prepared = _prepare(factory, queue, task_id, chunk_count=1)
-    chunk = queue.claim_chunk("understand", lease_duration=timedelta(minutes=1), now=NOW)
-    repo.commit_chunk_result(chunk, content={"persons": [], "timeline": []}, now=NOW)
-    lease = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
-    assert lease is not None
-    assert repo.reserve_refine_provider_retry(lease, max_retries=2, now=NOW) == 1
-    assert repo.reserve_refine_provider_retry(lease, max_retries=2, now=NOW) == 2
-    assert queue.retry_interval(
-        lease, error="provider exhausted", retry_at=NOW, now=NOW, provider_retry_exhausted=True,
-    )
-    with factory() as session:
-        interval = session.get(IntervalParseTask, lease.interval_parse_task_id)
-        assert interval.status == "PARSING_FAILED" and interval.retry_count == 0
-        assert interval.finish_time == NOW and interval.lease_owner is None and interval.lease_expire_time is None
-        parent = session.get(VideoParseTask, task_id)
-        assert parent.detail["_worker_runtime_v2"]["refine_provider_retries"] == {interval.id: 2}
-        assert parent.status == "PARSING_FAILED"
-    assert queue.claim_interval_refine("again", lease_duration=timedelta(minutes=1), now=NOW) is None
-    assert not queue.retry_interval(
-        lease, error="stale provider exhausted", retry_at=NOW, now=NOW, provider_retry_exhausted=True,
-    )
-
-
-@pytest.mark.parametrize("recorded", [True, False])
-def test_consumer_reports_separate_terminal_provider_budget(monkeypatch, caplog, recorded):
-    lease = IntervalParseLease(
-        "interval", "task", ("chunk",), 0, 1, "REFINING", "worker", 1,
-        NOW + timedelta(minutes=1), 0, 5, 2.5, 7.0,
-    )
-    calls = []
-
-    class Queue:
-        @staticmethod
-        def heartbeat_interval(*_args, **_kwargs):
-            return True
-
-        @staticmethod
-        def retry_interval(actual, **options):
-            calls.append((actual, options))
-            return recorded
-
-    async def fail(_lease):
-        raise RefineProviderRetryExhaustedError("provider exhausted", reason="provider_capacity", retries=2)
-
-    monkeypatch.setattr("server.mq.video_parse_consumer.now_utc", lambda: NOW)
-    caplog.set_level(logging.WARNING, logger="server.mq.video_parse_consumer")
-    consumer = VideoParseConsumer(
-        Queue(), VideoParseConsumerHandlers(fail, fail, fail, fail), worker_id="worker",
-        lease_duration=timedelta(minutes=5), heartbeat_interval=timedelta(seconds=1),
-        poll_interval=timedelta(seconds=2), maintenance_interval=timedelta(minutes=5), video_concurrency=3,
-    )
-    asyncio.run(consumer._run_interval(lease, fail))
-    assert calls == [(lease, {
-        "error": "provider exhausted", "retry_at": NOW + timedelta(seconds=2.5), "provider_retry_exhausted": True,
-    })]
-    message = next(record.getMessage() for record in caplog.records if record.levelno == logging.WARNING)
-    assert 'provider_retries=2' in message and 'retry_budget="provider"' in message and 'retry_at=null' in message
-    assert 'attempt=1' in message and 'max_retry_count=5' in message
-    terminal = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
-    if recorded:
-        assert len(terminal) == 1 and 'terminal_reason="provider_retry_budget_exhausted"' in terminal[0]
-        assert "child_retry_budget_exhausted" not in terminal[0]
-    else:
-        assert terminal == []
 
 
 def test_claim_enforces_ninety_percent_batch_gate_without_dispatch(repository):
@@ -1087,6 +1074,10 @@ def test_consumer_logs_retry_cause_without_sensitive_payloads(
     if phase == "understand":
         assert calls == [(lease, {"error": str(error), "stage": "understanding", "reason": "model_timeout"})]
         assert "video_parse_node_failed" in caplog.text
+        assert "event=video_parse_v2_terminal_error" in caplog.text
+        assert f'root_error_type="{type(deepest).__name__}"' in caplog.text
+        assert 'root_status_code=502' in caplog.text
+        assert 'error_chain=' in caplog.text
         assert "private" not in caplog.text
         assert "video_parse_v2_retry" not in caplog.text
         return
@@ -1908,7 +1899,13 @@ def test_finalize_sweep_skips_no_op_updates_and_pages_every_task_by_id(repositor
         assert session.get(VideoParseTask, second).update_time == stamps[second][0]
 
 
-def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
+@pytest.mark.parametrize("reason,message", [
+    ("model_timeout", "模型请求超时"),
+    ("model_connection_error", "模型服务连接异常"),
+    ("model_gateway_timeout", "模型服务网关超时"),
+    ("model_service_unavailable", "模型服务暂不可用"),
+])
+def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository, reason, message):
     from server.repository.video_parse_task import task_data
     from server.service.video_parse_task import _task_state
     from server.api.jobs import project_video_parse_task
@@ -1921,7 +1918,7 @@ def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
     sibling = queue.claim_chunk("second", lease_duration=timedelta(minutes=1), now=NOW)
     assert first and sibling
     assert queue.fail_chunk(first, error="private provider token", stage="understanding",
-                            reason="model_timeout", now=NOW)
+                            reason=reason, now=NOW)
     queue.retry_video(video_lease, error="coordinator stopped after node failure", now=NOW)
     assert not queue.heartbeat_chunk(sibling, lease_duration=timedelta(minutes=1), now=NOW)
     assert queue.claim_chunk("new", lease_duration=timedelta(minutes=1), now=NOW) is None
@@ -1931,7 +1928,7 @@ def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
         parent = session.get(VideoParseTask, task_id)
         view = project_video_parse_task(_task_state(task_data(parent)))
         assert view.last_error.code == "PARSE_NODE_FAILED"
-        assert "视频理解" in view.last_error.message and "超时" in view.last_error.message
+        assert "视频理解" in view.last_error.message and message in view.last_error.message
         assert "private" not in view.last_error.message
     from server.service.video_parse_content import _locked_chunk_lease
     from server.service.video_parse_errors import VideoParseLeaseLostError
@@ -1941,3 +1938,29 @@ def test_final_node_failure_fences_siblings_and_exposes_safe_error(repository):
     queue.reap_expired(now=NOW)
     with factory() as session:
         assert session.get(VideoParseTask, task_id).status == "PARSING_FAILED"
+
+
+def test_consumer_logs_outer_loop_failure_with_traceback(caplog):
+    error = RuntimeError("queue scan failed")
+
+    async def fail():
+        raise error
+
+    async def unused(_lease):
+        pass
+
+    consumer = VideoParseConsumer(
+        object(), VideoParseConsumerHandlers(unused, unused, unused, unused),
+        worker_id="worker", lease_duration=timedelta(seconds=10),
+        heartbeat_interval=timedelta(seconds=1), poll_interval=timedelta(seconds=1),
+        maintenance_interval=timedelta(minutes=5), video_concurrency=1,
+    )
+    consumer._thread_run = fail
+    consumer.start()
+    consumer.close(timeout=2)
+    assert not consumer.running
+    assert consumer.failure is error
+    record = next(item for item in caplog.records if "consumer loop failed" in item.message)
+    assert record.exc_info[1] is error
+    assert "queue scan failed" in caplog.text
+    assert "Traceback" in caplog.text

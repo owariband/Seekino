@@ -14,7 +14,7 @@ function video(videoId = "video-1", playbackStatus: VideoSummary["playbackStatus
     uploadStatus: "COMPLETED", parseStatus: "SUCCEEDED", uploadProgress: 100, parseProgress: 100,
     indexStatus: "READY", playbackStatus,
     playbackUrl: playbackStatus === "READY" ? `/api/videos/content?videoId=${videoId}` : null,
-    playbackUrlExpiresAt: null, thumbnail: null, latestJobId: null, lastError: null,
+    playbackUrlExpiresAt: null, thumbnail: null, lastError: null,
   };
 }
 

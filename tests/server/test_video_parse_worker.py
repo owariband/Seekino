@@ -17,13 +17,14 @@ from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import GenerativeModelConfig, ParseInput
 from agent.video_parse_v2.prompts import build_understanding_prompt
-from agent.video_parse_v2.errors import RefineProviderRetryExhaustedError
 from agent.video_parse_v2.state import ChunkExecution, LeaseToken
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion, ParseContextCanvas
 from engine.common.transcription import TranscriptAnalysis
 from engine.parsev2.observations import OCRResult
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
-from engine.parsev2.validation import IntervalRefinementProposal
+from agent.video_parse_v2.refine.response import RefineModelResponse
+from agent.video_parse_v2.understanding.response import UnderstandingModelResponse
+from engine.parsev2.validation import IntervalRefinementProposal, IntervalRefinementResult
 from engine.rag import (
     ChunkIndexingContract,
     EncoderContract,
@@ -38,7 +39,6 @@ from gateway.config import (
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 from gateway.errors import ContentFilterError
-from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.model_factory import GatewayClient
 from gateway.usage import TokenUsage, capture_model_usage, model_call_context, track_model_call
@@ -54,9 +54,9 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.dto.jobDTO import IntervalParseLease, PrefixParseLease, VideoParseLease
-from server.model.job import (
-    ChunkParseContent,
+from server.model.dto.taskDTO import PrefixParseLease, VideoParseLease
+from server.model.parse_content import ChunkParseContent
+from server.model.task import (
     ChunkParseTask,
     IntervalParseTask,
     VideoParseTask,
@@ -100,6 +100,13 @@ from server.storage.elasticsearch import (
 )
 from server.utils.time import datetime_to_unix_time_ms
 
+
+
+def _complete_refine_prompt(prompt):
+    data = json.loads(prompt.split("Input: ", 1)[1])
+    return IntervalRefinementResult.model_validate({"members": [
+        {"sequence_no": member["sequence_no"], **member["content"]} for member in data["members"]
+    ]})
 
 class _ArtifactResolver:
     @staticmethod
@@ -459,7 +466,7 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
     monkeypatch.setattr(runtime, "_ensure_chunk_media", MethodType(prepared_media, runtime))
     monkeypatch.setattr("gateway.transcription.transcribe_audio", transcribe)
     monkeypatch.setattr("gateway.local.whisperx.WhisperXRuntime.transcribe",
-                        lambda self, path, check: transcribe(path))
+                        lambda self, path, check, progress=None: transcribe(path))
     monkeypatch.setattr("gateway.transcription.ArkMultimodalModel", build_model)
     result = asyncio.run(runtime.transcribe_chunk(execution))
 
@@ -481,6 +488,7 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
         })]
     elif adapter == "ark":
         assert calls == [("frozen-speech", {
+            "stream": True, "temperature": 0.0,
             "request_timeout_seconds": 45, "max_output_tokens": 2048,
             "reasoning_effort": None, "api_key": "test-key",
         })]
@@ -798,7 +806,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert list((tmp_path / "media-work").rglob("episode.json"))
         with track_model_call(provider="fixture", model="vision", operation="video_parse") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
-        assert options["result_type"] is VideoParseResult
+        assert options["result_type"] is UnderstandingModelResponse
         assert not options.get("tools") and "canvas" not in options
         return VideoParseResult(persons=[], timeline=[ActionEvent(
             event_type="ACTION", start_seconds=1000, end_seconds=4000,
@@ -808,7 +816,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     async def generate_text(_self, _binding, _prompt, **_options):
         with track_model_call(provider="fixture", model="refine", operation="chat") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
-        return CanvasCompletion(complete=True)
+        return _complete_refine_prompt(_prompt)
 
     def build_index_coordinator(_self, inputs, *, check_active, index_generation):
         model = inputs.parse_config.models.embedding
@@ -1078,7 +1086,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         model_calls["understanding"] += 1
         state = _self._require_chunk_binding().state
         assert state is not None
-        assert options["result_type"] is VideoParseResult
+        assert options["result_type"] is UnderstandingModelResponse
         assert not options.get("tools") and "canvas" not in options
         return VideoParseResult(persons=[], timeline=[ActionEvent(
             event_type="ACTION", start_seconds=state.start_seconds + 1000,
@@ -1088,7 +1096,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
 
     async def generate_text(_self, _binding, _prompt, **_options):
         model_calls["refine"] += 1
-        return CanvasCompletion(complete=True)
+        return _complete_refine_prompt(_prompt)
 
     def build_index_coordinator(_self, inputs, *, check_active, index_generation):
         return VideoParseIndexCoordinator(
@@ -1273,6 +1281,11 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             assert deleted.json()["initialVideoParseTaskId"] is None
     finally:
         consumer.close(timeout=2)
+        # Cancelling a reparse may leave __enter__ in a blocking media thread.
+        # ExecutionCalls owns its deferred __exit__ after Consumer stops.
+        cleanup_deadline = time.monotonic() + 2
+        while list(media.base_directory.rglob(".lease.json")) and time.monotonic() < cleanup_deadline:
+            time.sleep(0.01)
         engine.dispose()
     assert consumer.failure is None
     assert list(media.base_directory.rglob(".lease.json")) == []
@@ -1286,7 +1299,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
 ])
 @pytest.mark.parametrize("explicit_refine", [False, True])
 @pytest.mark.parametrize("overlap_ms", [0, 3000])
-def test_understanding_uses_direct_json_and_refine_retains_canvas_tools(
+def test_understanding_and_refine_use_direct_json(
     monkeypatch, tmp_path, source, visual_mode, explicit_refine, overlap_ms,
 ):
     requests = []
@@ -1298,7 +1311,16 @@ def test_understanding_uses_direct_json_and_refine_retains_canvas_tools(
             self.options = _options
 
         def generate(self, request_inputs, **options):
-            assert options["result_type"] is VideoParseResult
+            if options["result_type"] is RefineModelResponse:
+                assert not options["tools"] and options["context_checkpoint"] is None
+                requests.append((self.name, list(request_inputs), options))
+                return RefineModelResponse.model_validate({"members": [{
+                    "sequence_no": 2, "persons": [], "timeline": [{
+                        "event_type": "ACTION", "start_seconds": 21000, "end_seconds": 23000,
+                        "description": "A refined supported action.", "participants": [], "visible_persons": [],
+                    }],
+                }]})
+            assert options["result_type"] is UnderstandingModelResponse
             assert not options["tools"]
             assert options["context_checkpoint"] is None
             assert options["max_model_calls"] is None
@@ -1311,34 +1333,8 @@ def test_understanding_uses_direct_json_and_refine_retains_canvas_tools(
         def close(self):
             closed.append(self.name)
 
-    def generate_with_deepagents(adapter, request_inputs, **options):
-        if source == "deepseek_api":
-            assert adapter.options["base_url"] == "https://api.deepseek.com"
-            assert adapter.options["reasoning_effort"] == "none"
-        requests.append((adapter.name, list(request_inputs), options))
-        tools = {tool.name: tool for tool in options["tools"]}
-        assert set(tools) == {"get_context_canvas", "write_context_canvas", "inspect_video_frames"}
-        evidence = json.loads(tools["get_context_canvas"].invoke({
-            "collection": "evidence", "reference": "member", "section": "asr",
-        }))
-        assert "transcript" in evidence["content"]
-        events = json.loads(tools["get_context_canvas"].invoke({"collection": "events"}))
-        # The direct result is available to the existing Refine Canvas.
-        event_ref = events["items"][0]["reference"]
-        item = json.loads(tools["get_context_canvas"].invoke({
-            "collection": "events", "reference": event_ref,
-        }))
-        assert "A supported test action." in item["content"]
-        receipt = json.loads(tools["write_context_canvas"].invoke({
-            "batch_id": "refine-action", "expected_revision": item["revision"],
-            "operations": [{"op": "patch_event", "event_ref": event_ref,
-                            "fields": {"description": "A refined supported action."}}],
-        }))
-        assert receipt["revision"] > item["revision"]
-        assert options["result_type"] is CanvasCompletion
-        assert options["max_model_calls"] is None
-        assert options["context_checkpoint"] is not None
-        return CanvasCompletion(complete=True)
+    def generate_with_deepagents(*args, **kwargs):
+        raise AssertionError("Direct Refine must not enter the Canvas tool harness")
 
     monkeypatch.setenv("ARK_API_KEY", "fake-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-deepseek-key")
@@ -1404,37 +1400,41 @@ def test_understanding_uses_direct_json_and_refine_retains_canvas_tools(
     ))
     runtime._artifact_store = _ArtifactResolver()
     monkeypatch.setattr(runtime, "_require_interval_token", lambda *_args, **_kwargs: object())
-    assert asyncio.run(runtime.generate_interval_refinement(
+    refined = asyncio.run(_bound_refine_generation(runtime,
         {"inputs": inputs, "video_parse_task_id": "video-task", "interval_parse_task_id": "interval",
          "lease": execution.lease, "member_bounds": {"member": (20_000, 30_000)}},
-        prompt="refine this interval", canvas=refine_canvas,
-    )).complete
+        prompt="refine this interval", remaining_seconds=17,
+    ))
     assert [request[0] for request in requests] == [
         "understanding-model", "refine-model" if explicit_refine else "understanding-model",
     ]
     primary_inputs = requests[0][1]
     assert f"Host visual input range: [{20_000 - overlap_ms}, {30_000 + overlap_ms}) ms" in primary_inputs[-1].text
-    assert "Writable chunk range: [20000, 30000) ms" in primary_inputs[-1].text
+    assert "Writable visual-event range: [20000, 30000) ms" in primary_inputs[-1].text
     assert f"absolute_ms = {20_000 - overlap_ms} + round(local_seconds * 1000)" in primary_inputs[-1].text
-    assert "Prefer leaving a low-confidence or conflicting attribution unknown" in primary_inputs[-1].text
+    assert "If evidence is missing or conflicting, DIALOGUE.speaker MUST be JSON null" in primary_inputs[-1].text
     assert ("We supplied additional visual context" in primary_inputs[-1].text) is bool(overlap_ms)
     if visual_mode == "video":
         assert primary_inputs[0] == VideoInput(media.visual_video_path or media.video_path,
                                               inputs.parse_config.visual_input.fps)
     else:
-        assert primary_inputs[:-1] == [ImageInput(path=path) for _timestamp, path in media.frames]
-        assert primary_inputs[-1].text.endswith("Ordered frame timestamps: [21000, 22000]")
+        assert primary_inputs[:-1] == [
+            TextInput("timestamp_ms=21000"), ImageInput(path=media.frames[0][1]),
+            TextInput("timestamp_ms=22000"), ImageInput(path=media.frames[1][1]),
+        ]
+        assert "Ordered frame timestamps:" not in primary_inputs[-1].text
     assert requests[1][1] == [TextInput("refine this interval")]
-    assert requests[1][2]["fallback_inputs"] is None
-    assert refine_canvas.result("member").timeline[0].description == "A refined supported action."
+    assert requests[1][2].get("fallback_inputs") is None
+    assert IntervalRefinementResult.model_validate(refined.root).members[0].timeline[0].description == "A refined supported action."
+    assert refine_canvas.result("member").timeline[0].description == "A supported test action."
     assert closed == ["fallback-model", "understanding-model"] + (
         ["refine-model"] if explicit_refine else ["fallback-model", "understanding-model"]
     )
     runtime._gateway.close()
 
 
-@pytest.mark.parametrize("tool_harness,with_feedback", [("legacy", False), ("deepagents", False), ("deepagents", True)])
-def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool_harness, with_feedback):
+@pytest.mark.parametrize("tool_harness", ["legacy", "deepagents"])
+def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool_harness):
     captured = {}
     closed = []
 
@@ -1478,11 +1478,9 @@ def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool
         fallback={"source": "ark_default", "model": "fallback-model", "request_timeout_seconds": 17,
                   "max_output_tokens": 2048, "reasoning_effort": "none"},
     )
-    feedback = lambda: None
     result = asyncio.run(runtime._generate_text_structured(
-        binding, "refine", tools=(_read_context_tool(),), result_type=CanvasCompletion, max_model_calls=100,
+        binding, "refine", tools=(_read_context_tool(),), result_type=CanvasCompletion,
         tool_harness=tool_harness,
-        **({"stop_feedback": feedback, "enforce_model_call_limit": True} if with_feedback else {}),
     ))
     assert result.complete
     assert captured["harness"] == tool_harness
@@ -1490,11 +1488,7 @@ def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch, tool
     assert captured["fallback"][1]["request_timeout_seconds"] == 17
     assert captured["fallback"][1]["max_output_tokens"] == 2048
     assert captured["fallback"][1]["reasoning_effort"] == "none"
-    assert captured["generate"]["max_model_calls"] == (100 if with_feedback else None)
-    if with_feedback:
-        assert captured["generate"]["stop_feedback"] is feedback
-    else:
-        assert "stop_feedback" not in captured["generate"]
+    assert captured["generate"]["max_model_calls"] is None
     assert captured["generate"]["request_timeout_seconds"] == 61
     assert captured["generate"]["context_window_policy"].output_reserve_tokens == 4096
     assert captured["generate"]["fallback_on_error"](ContentFilterError("filtered"))
@@ -1776,8 +1770,8 @@ def test_voiceprint_host_tools_bind_original_audio_and_persist_before_notificati
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
     result = asyncio.run(host.runtime.generate_voiceprint_preparation(host.snapshot, prompt="prepare", canvas=host.canvas))
     assert result.complete and host.state.closed
-    assert observed["enforce_model_call_limit"] is True
-    assert observed["max_model_calls"] == host.snapshot["inputs"].parse_config.execution.max_model_calls
+    assert "max_model_calls" not in observed
+    assert "enforce_model_call_limit" not in observed
     assert host.state.stages[0]["stage"] == "voiceprint"
     command = host.state.commands[0]
     assert command[command.index("-i") + 1] == str(host.original)
@@ -2537,265 +2531,6 @@ def _b0_embedding(encoder, *, start_ms, **_options):
     ), hashlib.sha256(str(index).encode()).hexdigest()
 
 
-def _b0_hygiene_snapshot(host):
-    from copy import deepcopy
-    from engine.parsev2.schemas import DialogueEvent
-
-    snapshot = _b0_snapshot(host)
-    member = snapshot["member_contents"]["chunk"]
-    member.persons.append("C")
-    for index in range(9, 13):
-        source = deepcopy(snapshot["sources"]["chunk:0"])
-        source.update(source_id=f"chunk:{index}", position=index, event_index=index, speaker="C",
-                      start_ms=index * 2000, end_ms=index * 2000 + 1700,
-                      event_fingerprint=hashlib.sha256(str(index).encode()).hexdigest())
-        source["text_variants"] = [{"language": "ja", "role": "ORIGINAL", "text": str(index)}]
-        snapshot["sources"][source["source_id"]] = source
-        member.timeline.append(DialogueEvent(
-            event_type="DIALOGUE", speaker="C", start_seconds=source["start_ms"], end_seconds=source["end_ms"],
-            description="independent C reference", participants=["C"], visible_persons=[],
-            text_variants=source["text_variants"],
-        ))
-        snapshot["member_evidence"]["chunk"]["evidence"]["asr"]["transcript"].append({
-            "start_seconds": source["start_ms"], "end_seconds": source["end_ms"], "text": str(index),
-        })
-    return snapshot
-
-
-def _b0_hygiene_embedding(encoder, *, start_ms, **options):
-    if 9 <= start_ms // 2000 < 13:
-        from gateway.speaker_embedding import SpeakerEmbeddingResult
-
-        return SpeakerEmbeddingResult(
-            model=encoder.model_name, encoder_revision=encoder.encoder_revision,
-            vector=[0.8, 0.6] + [0.0] * 190, duration_ms=1700,
-        ), hashlib.sha256(str(start_ms // 2000).encode()).hexdigest()
-    return _b0_embedding(encoder, start_ms=start_ms, **options)
-
-
-def test_b0_preparation_runs_two_pass_hygiene_once_and_keeps_label_provenance(monkeypatch, voiceprint_host):
-    from copy import deepcopy
-    import engine.parsev2.voiceprint_matching as matching
-    from server.constants.parse import VOICEPRINT_B0_METHOD_VERSION
-
-    host = voiceprint_host
-    snapshot = _b0_hygiene_snapshot(host)
-    before = deepcopy(snapshot)
-    batches = []
-    actual = matching.score_voiceprint_batch
-
-    def collect(samples, **parameters):
-        batches.append((deepcopy(samples), parameters))
-        return actual(samples, **parameters)
-
-    monkeypatch.setattr(matching, "score_voiceprint_batch", collect)
-    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
-                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
-    result = host.runtime._collect_voiceprint_scores(
-        snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
-    )
-    assert snapshot == before and len(batches) == 1 and len(batches[0][0]) == 13
-    assert result["method_version"] == VOICEPRINT_B0_METHOD_VERSION
-    assert result["hygiene"] == {
-        "passes": 2, "pass1_flag_count": 1, "pass2_flag_count": 1, "changed_flag_count": 0,
-        "newly_flagged_ids": [], "cleared_flag_ids": [], "excluded_reference_ids": ["chunk:7"],
-    }
-    target = result["lines"][7]
-    assert target["label_doubtful"] and target["label_rank"] == target["label_count"] == 3
-    assert target["label_score"] == 0 and target["label_margin"] == 1
-    assert target["label_ref_count"] == 3 and target["label_ref_consistency"] == 1
-    assert target["label_ref_higher_count"] == 3 and target["label_ref_higher_fraction"] == 1
-    assert target["label_doubtful_basis"] == "rank_margin_only_few_refs"
-    assert target["understanding_speaker"] == "B" and target["candidates"][0]["speaker"] == "A"
-    assert target["band"] == "ACCEPT" and target["conflict"] is True
-    assert next(sample for sample in result["samples"] if sample["id"] == "chunk:7")["label"] == "B"
-    assert all("chunk:7" not in candidate["reference_ids"]
-               for line in result["lines"] for candidate in line["candidates"])
-    assert len(result["samples"]) == 12 and len(result["lines"]) == 13
-    assert all(result["parameters"][key] == value for key, value in batches[0][1].items()
-               if key not in {"model", "encoder_revision"})
-
-
-def test_b0_compare_uses_frozen_pass_one_exclusions_and_legacy_artifact_pool(monkeypatch, voiceprint_host):
-    from server.model.dto.jobDTO import IntervalParseLease
-    from server.constants.parse import (
-        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
-        VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
-    )
-
-    host = voiceprint_host
-    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
-                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
-    prepared = host.runtime._collect_voiceprint_scores(
-        _b0_hygiene_snapshot(host), host.encoder, host.source, host.lease, check_active=lambda: None,
-    )
-    lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
-                               "REFINING", "worker", 1, datetime.now(UTC), 0, 3, 1.0, 2.0)
-    for sample in prepared["samples"]:
-        sample["label_doubtful"] = sample["label"] == "A"
-    scored = host.runtime._compare_speaker_b0(
-        host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
-        check_active=lambda: None, parameters=prepared["parameters"], lines=prepared["lines"],
-        excluded_reference_ids=prepared["hygiene"]["excluded_reference_ids"], method_version=VOICEPRINT_B0_METHOD_VERSION,
-    )
-    assert scored["method_version"] == VOICEPRINT_B0_METHOD_VERSION
-    assert scored["candidates"][0]["speaker"] == "A"
-    assert "chunk:7" not in next(row for row in scored["candidates"] if row["speaker"] == "B")["reference_ids"]
-    assert scored["label_score"] is None and scored["label_rank"] is None and scored["label_doubtful"] is False
-    assert not {"band", "conflict", "review_reason"}.intersection(scored)
-    legacy_parameters = {key: value for key, value in prepared["parameters"].items() if not key.startswith("label_")}
-    legacy = host.runtime._compare_speaker_b0(
-        host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
-        check_active=lambda: None, parameters=legacy_parameters, lines=prepared["lines"],
-        method_version=VOICEPRINT_B0_LEGACY_METHOD_VERSION,
-    )
-    assert legacy["method_version"] == VOICEPRINT_B0_LEGACY_METHOD_VERSION
-    assert "chunk:7" in next(row for row in legacy["candidates"] if row["speaker"] == "B")["reference_ids"]
-    assert legacy["label_score"] is None and legacy["label_rank"] is None
-    coherence_parameters = {key: value for key, value in prepared["parameters"].items()
-                            if key not in {"label_min_ref_higher_fraction", "label_tail_min_refs"}}
-    coherence_parameters["label_min_consistency"] = 0.7
-    coherence = host.runtime._compare_speaker_b0(
-        host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
-        check_active=lambda: None, parameters=coherence_parameters, lines=prepared["lines"],
-        excluded_reference_ids=prepared["hygiene"]["excluded_reference_ids"],
-        method_version=VOICEPRINT_B0_COHERENCE_METHOD_VERSION,
-    )
-    assert coherence["method_version"] == VOICEPRINT_B0_COHERENCE_METHOD_VERSION
-    assert coherence["candidates"] == scored["candidates"]
-    assert coherence["gap"] == scored["gap"]
-    inclusive_parameters = {key: value for key, value in prepared["parameters"].items()
-                            if key != "label_tail_min_refs"}
-    inclusive = host.runtime._compare_speaker_b0(
-        host.encoder, host.source, lease, prepared["samples"], start_ms=38000, end_ms=39700,
-        check_active=lambda: None, parameters=inclusive_parameters, lines=prepared["lines"],
-        excluded_reference_ids=prepared["hygiene"]["excluded_reference_ids"],
-        method_version=VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
-    )
-    assert inclusive["method_version"] == VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION
-    assert inclusive["candidates"] == scored["candidates"] and inclusive["gap"] == scored["gap"]
-
-
-@pytest.mark.parametrize("method,threshold,expected", [
-    ("legacy", None, False), ("coherence", 0.7, False), ("coherence", 0.5, True),
-    ("inclusive_tail", 0.95, True), ("loo_tail", 0.95, True),
-])
-def test_b0_scoring_dispatch_preserves_frozen_v1_v2_v3_and_v4_policies(monkeypatch, voiceprint_host, method, threshold, expected):
-    from copy import deepcopy
-    from server.constants.parse import (
-        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
-        VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
-    )
-
-    host = voiceprint_host
-    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
-                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
-    prepared = host.runtime._collect_voiceprint_scores(
-        _b0_hygiene_snapshot(host), host.encoder, host.source, host.lease, check_active=lambda: None,
-    )
-    samples = deepcopy(prepared["samples"])
-    for index, sample in enumerate(row for row in samples if row["label"] == "B" and row["id"] != "chunk:7"):
-        sample["vector"] = [0.0] * 192
-        sample["vector"][index + 1] = 1.0
-    query = next(row for row in samples if row["id"] == "chunk:7")
-    parameters = {key: value for key, value in prepared["parameters"].items() if not key.startswith("label_")}
-    if method != "legacy":
-        parameters.update({key: value for key, value in prepared["parameters"].items()
-                           if key.startswith("label_") and key not in {"label_min_ref_higher_fraction", "label_tail_min_refs"}})
-        parameters["label_min_consistency" if method == "coherence" else "label_min_ref_higher_fraction"] = threshold
-        if method == "loo_tail":
-            parameters["label_tail_min_refs"] = prepared["parameters"]["label_tail_min_refs"]
-    version = {"legacy": VOICEPRINT_B0_LEGACY_METHOD_VERSION, "coherence": VOICEPRINT_B0_COHERENCE_METHOD_VERSION,
-               "inclusive_tail": VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION, "loo_tail": VOICEPRINT_B0_METHOD_VERSION}[method]
-    monkeypatch.setattr(VideoParseRuntimeService, "_voiceprint_parameters",
-                        staticmethod(lambda: pytest.fail("Frozen scoring used current defaults")))
-    result = host.runtime._score_voiceprint_sample(query, samples, parameters=parameters, method_version=version)
-    assert result["method_version"] == version and result["label_doubtful"] is expected
-    assert result["label_ref_count"] == 3
-    assert result["label_ref_higher_count"] == (0 if method == "loo_tail" else 3)
-    assert result["label_ref_higher_fraction"] == (0 if method == "loo_tail" else 1)
-    assert result["label_doubtful_basis"] == ("rank_margin_only_few_refs" if method == "loo_tail" else None)
-    assert result["label_ref_consistency"] == pytest.approx(1 / (3 ** 0.5))
-    assert result["label_rank"] == 3 and result["label_margin"] == 1
-    assert [row["speaker"] for row in result["candidates"]] == ["A", "C", "B"]
-    assert result["band"] == "ACCEPT" and result["conflict"] is True
-
-
-@pytest.mark.parametrize("method,missing", [
-    ("unknown", None), ("legacy", None), ("coherence", None),
-    ("coherence", "label_min_consistency"), ("inclusive_tail", "label_min_ref_higher_fraction"),
-    ("loo_tail", "label_min_ref_higher_fraction"), ("loo_tail", "label_tail_min_refs"),
-])
-def test_b0_frozen_method_does_not_invent_missing_policy_or_accept_unknown_versions(method, missing):
-    from server.constants.parse import (
-        VOICEPRINT_B0_COHERENCE_METHOD_VERSION, VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
-        VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION,
-    )
-
-    version = {"legacy": VOICEPRINT_B0_LEGACY_METHOD_VERSION, "coherence": VOICEPRINT_B0_COHERENCE_METHOD_VERSION,
-               "inclusive_tail": VOICEPRINT_B0_INCLUSIVE_TAIL_METHOD_VERSION,
-               "loo_tail": VOICEPRINT_B0_METHOD_VERSION, "unknown": "B0-unknown"}[method]
-    parameters = None
-    if missing is not None:
-        parameters = VideoParseRuntimeService._voiceprint_parameters()
-        if method == "coherence":
-            parameters.pop("label_min_ref_higher_fraction")
-            parameters.pop("label_tail_min_refs")
-        else:
-            parameters.pop(missing)
-            if method == "inclusive_tail":
-                parameters.pop("label_tail_min_refs")
-    query = {"id": "query", "model": "campplus", "encoder_revision": "frozen",
-             "start_ms": 0, "end_ms": 300, "label": "A"}
-    message = "Unsupported frozen B0 scoring method" if method == "unknown" else (
-        "frozen parameters" if parameters is None else "parameters are incomplete"
-    )
-    with pytest.raises(ValueError, match=message):
-        VideoParseRuntimeService._score_voiceprint_sample(query, [], parameters=parameters, method_version=version)
-
-
-@pytest.mark.parametrize("reference_count,aligned,basis", [
-    (1, False, None), (2, False, None), (3, False, "rank_margin_only_few_refs"),
-    (7, False, "rank_margin_only_few_refs"), (8, False, None), (8, True, "tail"),
-])
-def test_b0_loo_tail_keeps_three_reference_minimum_and_eight_reference_tail_gate(
-    monkeypatch, voiceprint_host, reference_count, aligned, basis,
-):
-    from copy import deepcopy
-    from server.constants.parse import VOICEPRINT_B0_METHOD_VERSION
-
-    host = voiceprint_host
-    monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
-                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
-    prepared = host.runtime._collect_voiceprint_scores(
-        _b0_hygiene_snapshot(host), host.encoder, host.source, host.lease, check_active=lambda: None,
-    )
-    template = next(row for row in prepared["samples"] if row["id"] == "chunk:4")
-    samples = [deepcopy(row) for row in prepared["samples"] if row["label"] != "B"]
-    raw_count = reference_count + (1 if reference_count >= 7 else 0)
-    for index in range(raw_count):
-        vector = [0.0] * 192
-        vector[1 if aligned else index + 1] = 1.0
-        samples.append({**deepcopy(template), "id": f"B-{index}", "cue_ids": [f"B-cue-{index}"],
-                        "pcm_sha256": hashlib.sha256(f"B-pcm-{index}".encode()).hexdigest(),
-                        "start_ms": 30000 + index * 2000, "end_ms": 31700 + index * 2000,
-                        "vector": vector})
-    query = {**deepcopy(template), "id": "target", "cue_ids": ["target-cue"], "vector": [1.0] + [0.0] * 191,
-             "pcm_sha256": hashlib.sha256(b"target-pcm").hexdigest(), "start_ms": 100000, "end_ms": 101700}
-    result = host.runtime._score_voiceprint_sample(
-        query, samples, parameters=prepared["parameters"], method_version=VOICEPRINT_B0_METHOD_VERSION,
-    )
-    assert result["label_ref_count"] == reference_count
-    assert result["label_doubtful"] is (basis is not None) and result["label_doubtful_basis"] == basis
-    if reference_count == 1:
-        assert result["label_ref_higher_count"] is result["label_ref_higher_fraction"] is None
-    else:
-        assert result["label_ref_higher_fraction"] == (1 if aligned else 0)
-    assert result["label_rank"] == 3 and result["label_margin"] == 1
-    assert [row["speaker"] for row in result["candidates"]] == ["A", "C", "B"]
-    assert result["band"] == "ACCEPT" and result["conflict"] is True
-
-
 def test_b0_collection_retains_short_lines_and_original_labels_without_mutation(monkeypatch, voiceprint_host):
     from copy import deepcopy
 
@@ -2985,15 +2720,14 @@ def test_b0_actual_encoder_contract_failure_never_publishes(
     assert not any(path.exists() for path in host.state.audio_paths)
 
 
-@pytest.mark.parametrize("doubtful", [False, True])
-def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, voiceprint_host, doubtful):
+def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, voiceprint_host):
     from agent.video_parse_v2.refine.agent import IntervalRefine
-    from server.model.dto.jobDTO import IntervalParseLease
+    from server.model.dto.taskDTO import IntervalParseLease
 
     host = voiceprint_host
-    prepared_snapshot = _b0_hygiene_snapshot(host) if doubtful else _b0_snapshot(host)
+    prepared_snapshot = _b0_snapshot(host)
     monkeypatch.setattr(host.runtime, "_embed_voiceprint_sample",
-                        lambda encoder, _source, _lease, **options: _b0_hygiene_embedding(encoder, **options))
+                        lambda encoder, _source, _lease, **options: _b0_embedding(encoder, **options))
     prepared = host.runtime._collect_voiceprint_scores(
         prepared_snapshot, host.encoder, host.source, host.lease, check_active=lambda: None,
     )
@@ -3003,10 +2737,8 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
                              parse_config=prepared_snapshot["inputs"].parse_config.model_dump(mode="json")),
     )
     content = prepared_snapshot["member_contents"]["chunk"].model_dump(mode="json")
-    previous = _voice_decision_record("member", content["timeline"][7], decision="keep", final_speaker="B")
-    previous["interval_parse_task_id"] = "earlier-window"
     member = SimpleNamespace(chunk_parse_task_id="member", sequence_no=0, version=1,
-                             detail={"voiceprint_decisions": [previous]}, content=content)
+                             detail={}, content=content)
     lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
                                "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
     interval = SimpleNamespace(interval_parse_task_id=lease.interval_parse_task_id,
@@ -3021,34 +2753,19 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
     monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", load_scoring)
     committed = []
 
-    async def generate(snapshot, *, prompt, canvas):
-        assert snapshot["member_evidence"]["member"]["voiceprint"]["lines"] == prepared["lines"]
+    async def generate(snapshot, *, prompt, remaining_seconds):
         evidence = snapshot["member_evidence"]["member"]["voiceprint"]
-        assert evidence["previous_decisions"] == [previous]
-        assert evidence["doubtful_labels"] == ([prepared["lines"][7]["id"]] if doubtful else [])
-        for line in evidence["lines"]:
-            for candidate in line["candidates"]:
-                assert all(reference_id in evidence["samples"] for reference_id in candidate["reference_ids"])
+        assert evidence["lines"] == prepared["lines"]
         assert all("vector" not in row and "text_variants" not in row for row in evidence["samples"].values())
-        target = canvas.items("events")[7][1]
-        assert target["event"]["speaker"] == "A"
-        assert target["event"]["speaker_source"] == "voice_default"
-        assert target["voice_evidence"]["understanding_speaker"] == "B"
-        assert target["voice_evidence"]["label_doubtful"] is doubtful
-        assert target["voice_evidence"]["label_rank"] == (3 if doubtful else 2)
-        assert target["voice_evidence"]["label_count"] == (3 if doubtful else 2)
-        assert canvas.voiceprint_review_status()["missing"] == [canvas.items("events")[7][0]]
-        assert "ACCEPT" in prompt and "event_ref" in prompt
+        data = json.loads(prompt.split("Input: ", 1)[1])
+        target = data["members"][0]["content"]["timeline"][7]
+        assert target["speaker"] == "A" and "speaker_source" not in target
+        assert "ACCEPT" in prompt and "get_context_canvas" not in prompt
         assert snapshot["member_contents"]["member"].timeline[7].speaker == "B"
-        canvas.write(role="refine", batch_id="resolve-voice", expected_revision=canvas.revision, operations=[{
-            "op": "voice_decision", "event_ref": canvas.items("events")[7][0],
-            "decision": "voice_top1", "reason": "Voice evidence supports the prepared speaker.",
-        }])
-        assert canvas.finish_voiceprint_review()["ready"]
-        return CanvasCompletion(complete=True)
+        return _complete_refine_prompt(prompt)
 
-    async def commit(snapshot, result, *, voiceprint_decisions):
-        committed.append((snapshot, result, voiceprint_decisions))
+    async def commit(snapshot, result):
+        committed.append((snapshot, result))
         return True
 
     async def notify(_snapshot):
@@ -3060,447 +2777,33 @@ def test_b0_member_evidence_is_loaded_before_actual_refine_prompt(monkeypatch, v
     asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(lease.interval_parse_task_id))
     assert len(committed) == 1
     assert committed[0][1].updates[0].timeline[7].speaker == "A"
-    assert committed[0][2][0]["decision"] == "voice_top1"
-    assert committed[0][2][0]["final_speaker"] == "A"
-    assert member.detail["voiceprint_decisions"] == [previous]
 
 
-def _voice_review_input(host, mode):
-    from tests.agent.video_parse_v2.test_context_canvas import _voice_snapshot
-    from server.model.dto.jobDTO import IntervalParseLease
 
-    snapshot = _voice_snapshot(mode, "CONFLICT")
-    inputs = _b0_snapshot(host)["inputs"]
-    snapshot.update(
-        inputs=inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={
-            "voiceprint_mode": mode,
-        })}), video_parse_task_id=host.lease.video_parse_task_id,
-        member_fingerprints={"member": "frozen-base"},
-    )
-    snapshot["member_contents"] = {
-        member: VideoParseResult.model_validate(content) for member, content in snapshot["member_contents"].items()
-    }
-    lease = IntervalParseLease(snapshot["interval_parse_task_id"], host.lease.video_parse_task_id,
-                               ("member",), 0, 1, "REFINING", "worker", 2,
-                               datetime.now(UTC) + timedelta(minutes=1), 0, 3, 1.0, 2.0)
-    snapshot["lease"] = LeaseToken(owner=lease.worker_id, version=lease.lease_version,
-                                   expires_at=lease.lease_expire_time)
-    return snapshot, lease, ParseContextCanvas.from_refine(snapshot)
-
-
-@pytest.mark.parametrize("mode", ["flag", "prefill"])
-@pytest.mark.parametrize("outcome", ["bypass", "missing", "inconsistent", "accepted", "contradiction", "restored", "interval_changed"])
-def test_refine_voice_gate_checks_live_canvas_before_accepting_completion(monkeypatch, voiceprint_host, caplog, mode, outcome):
-    from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
-
-    host = voiceprint_host
-    caplog.set_level("INFO", logger="server.service.video_parse")
-    snapshot, lease, canvas = _voice_review_input(host, mode)
-    reference = canvas.items("events")[0][0]
-    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
-    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
-
-    async def scoring(_lease):
-        return {"samples": [], "lines": []}
-
-    async def generate(_binding, _prompt, *, tools, **options):
-        assert options["tool_harness"] == "deepagents"
-        assert callable(options["stop_feedback"]) and options["enforce_model_call_limit"] is True
-        bound = {tool.name: tool for tool in tools}
-        finish = bound["finish_voiceprint_review"]
-        revision = canvas.revision
-        invalid = json.loads(finish.invoke({"complete": False}))
-        assert invalid["error"]["code"] == "INVALID_ARGUMENTS"
-        assert invalid["error"]["retry_hint"] and canvas.revision == revision
-        if outcome == "bypass":
-            return CanvasCompletion(complete=True)
-        missing = json.loads(finish.invoke({"complete": True}))
-        assert missing["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
-        assert missing["error"]["retryable"] is True and missing["error"]["retry_hint"]
-        assert reference in missing["error"]["message"] and "missing_decision" in missing["error"]["message"]
-        status = canvas.voiceprint_review_status()
-        assert status["ready"] is False and status["missing"] == [reference] and status["inconsistent"] == []
-        if outcome == "missing":
-            return CanvasCompletion(complete=True)
-        if outcome == "interval_changed":
-            canvas.write(role="refine", batch_id="changed-audio", expected_revision=canvas.revision, operations=[{
-                "op": "patch_event", "event_ref": reference, "fields": {"end_seconds": 3100},
-            }])
-            assert json.loads(finish.invoke({"complete": True}))["ready"]
-            assert canvas.voiceprint_decisions() == []
-            return CanvasCompletion(complete=True)
-        decision = "voice_top1" if outcome == "inconsistent" else "keep"
-        operation = {"op": "voice_decision", "event_ref": reference, "decision": decision,
-                     "reason": "The supplied frame shows the named person speaking."}
-        receipt = json.loads(bound["write_context_canvas"].invoke({
-            "batch_id": "voice-choice", "expected_revision": canvas.revision, "operations": [operation],
-        }))
-        assert "error" not in receipt
-        resolved = json.loads(finish.invoke({"complete": True}))
-        if outcome == "inconsistent":
-            assert resolved["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
-            assert resolved["error"]["retryable"] is True and resolved["error"]["retry_hint"]
-            assert "voice_top1_speaker_mismatch" in resolved["error"]["message"]
-            assert reference in resolved["error"]["message"]
-            status = canvas.voiceprint_review_status()
-            assert status["missing"] == [] and status["inconsistent"] == [reference] and status["ready"] is False
-            return CanvasCompletion(complete=True)
-        assert resolved["ready"] and canvas.voiceprint_review_passed()
-        if outcome in {"contradiction", "restored"}:
-            canvas.write(role="refine", batch_id="speaker-after-gate", expected_revision=canvas.revision, operations=[{
-                "op": "patch_event", "event_ref": reference, "fields": {"speaker": "立希"},
-            }])
-            assert canvas.voiceprint_review_status()["missing"] == [reference]
-            if outcome == "restored":
-                canvas.write(role="refine", batch_id="restore-choice", expected_revision=canvas.revision, operations=[
-                    {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爱音"}}, operation,
-                ])
-                assert canvas.voiceprint_review_status()["ready"]
-            assert not canvas.voiceprint_review_passed()
-        return CanvasCompletion(complete=True)
-
-    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", scoring)
-    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
-    if outcome in {"accepted", "interval_changed"}:
-        assert asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas)).complete
-        assert canvas.voiceprint_review_passed()
-    else:
-        with pytest.raises(QueryModelIncompleteError) as caught:
-            asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas))
-        assert caught.value.reason == ModelFailureReason.REQUIRED_TOOL_MISSING
-    assert host.state.closed
-    messages = [record.getMessage() for record in caplog.records]
-    checked = [message for message in messages if message.startswith("event=refine_voice_review_checked ")]
-    unresolved = [message for message in messages if message.startswith("event=refine_voice_review_unresolved ")]
-    rejected = [message for message in messages if message.startswith("event=refine_voice_review_completion_rejected ")]
-    if outcome == "bypass":
-        assert checked == unresolved == [] and len(rejected) == 1
-    else:
-        assert any(message.endswith(f"ready=False missing=['{reference}'] inconsistent=[]") for message in checked)
-        assert len(unresolved) == (2 if outcome == "inconsistent" else 1)
-    assert len(rejected) == (0 if outcome in {"accepted", "interval_changed"} else 1)
-    for message in unresolved + rejected:
-        assert f"task={snapshot['video_parse_task_id']} interval={snapshot['interval_parse_task_id']} details=" in message
-        details = json.loads(message.split(" details=", 1)[1])
-        assert details["canvas_id"] == canvas.id
-        assert type(details["revision"]) is int and details["revision"] <= canvas.revision
-        assert not details["gate_accepted"]
-        assert details["gate_failure"]
-        assert all(key not in message for key in ("text_variants", "声の証拠", '"text"', '"vector"', '"prompt"'))
-    if outcome == "inconsistent":
-        details = json.loads(unresolved[-1].split(" details=", 1)[1])
-        assert details["inconsistent"] == [reference] and details["missing"] == []
-        event = details["events"][0]
-        assert event["event_ref"] == reference and event["member_chunk_id"] == "member"
-        assert event["start_ms"] == 1000 and event["end_ms"] == 3000
-        assert event["decision"] == "voice_top1" and event["voice_top1"] == "爽世"
-        assert event["understanding_speaker"] == event["draft_speaker"] == "爱音"
-        assert event["expected_speaker"] == "爽世" and event["problem"] == "voice_top1_speaker_mismatch"
-        assert event["reason"] == "The supplied frame shows the named person speaking."
-    if outcome == "bypass":
-        details = json.loads(rejected[0].split(" details=", 1)[1])
-        assert details["missing"] == [reference]
-        assert details["events"][0]["event_ref"] == reference
-    if outcome == "restored":
-        details = json.loads(rejected[0].split(" details=", 1)[1])
-        assert details["ready"] and details["missing"] == details["inconsistent"] == []
-
-
-@pytest.mark.parametrize("mode", ["off", "flag", "prefill"])
-def test_refine_voice_decisions_reach_commit_detail_only_when_enabled(monkeypatch, voiceprint_host, mode):
-    from gateway.agent_model.errors import QueryModelIncompleteError
-
-    host = voiceprint_host
-    snapshot, lease, canvas = _voice_review_input(host, mode)
-    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
-    commits = []
-    host.runtime._persistence.commit_interval_refinement = lambda *_args, **options: commits.append(options)
-    if mode == "off":
-        asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result()))
-        assert set(commits[0]["detail"]) == {"input_versions", "input_scopes"}
-    else:
-        with pytest.raises(QueryModelIncompleteError):
-            asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result()))
-        assert commits == []
-        reference = canvas.items("events")[0][0]
-        canvas.write(role="refine", batch_id="keep", expected_revision=canvas.revision, operations=[{
-            "op": "voice_decision", "event_ref": reference, "decision": "keep",
-            "reason": "The original speaker is visibly speaking.",
-        }])
-        assert canvas.finish_voiceprint_review()["ready"]
-        records = canvas.voiceprint_decisions()
-        asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result(), voiceprint_decisions=records))
-        assert commits[0]["detail"]["voiceprint_decisions"] == records
-        assert set(records[0]) == {"event_ref", "member_chunk_id", "start_ms", "end_ms", "understanding_speaker",
-                                   "voice_top1", "gap", "band", "decision", "reason", "final_speaker"}
-
-
-def test_refine_off_exposes_no_gate_and_preserves_completion(monkeypatch, voiceprint_host, caplog):
-    host = voiceprint_host
-    caplog.set_level("INFO", logger="server.service.video_parse")
-    snapshot, lease, canvas = _voice_review_input(host, "off")
-    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
-    host.runtime._persistence.load_voiceprint_references = lambda _lease: []
-
-    async def generate(_binding, _prompt, *, tools, **_options):
-        assert {tool.name for tool in tools} == {"get_context_canvas", "write_context_canvas", "compare_speaker"}
-        assert "stop_feedback" not in _options and "enforce_model_call_limit" not in _options
-        return CanvasCompletion(complete=True)
-
-    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
-    before = canvas.snapshot()
-    assert asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas)).complete
-    assert canvas.snapshot() == before
-    assert all(not record.getMessage().startswith((
-        "event=refine_voice_review_checked ", "event=refine_voice_review_unresolved ",
-        "event=refine_voice_review_completion_rejected ",
-        "event=refine_voice_review_completion_deferred ",
-    )) for record in caplog.records)
-
-
-@pytest.mark.parametrize("mode", ["flag", "prefill"])
-@pytest.mark.parametrize("issue", ["missing", "inconsistent", "gate_invalidated"])
-def test_refine_repairs_voice_review_before_completion_without_a_worker_retry(monkeypatch, voiceprint_host, caplog, mode, issue):
-    from unittest.mock import AsyncMock
-    from agent.video_parse_v2.refine.agent import IntervalRefine
-
-    host = voiceprint_host
-    snapshot, lease, _canvas = _voice_review_input(host, mode)
-    inputs = snapshot["inputs"]
-    snapshot["inputs"] = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={
-        "execution": inputs.parse_config.execution.model_copy(update={"max_retry_count": 0}),
-    })})
-    original = snapshot["member_contents"]["member"].model_dump(mode="json")
-    loaded = AsyncMock(return_value=snapshot)
-    committed = AsyncMock(return_value=True)
-    notified = AsyncMock()
-    generated = []
-    monkeypatch.setattr(host.runtime, "load_refine_input", loaded)
-    monkeypatch.setattr(host.runtime, "commit_interval_refinement", committed)
-    monkeypatch.setattr(host.runtime, "notify_interval_committed", notified)
-    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
-    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
-    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", AsyncMock(return_value={"samples": [], "lines": []}))
-
-    async def generate(_binding, _prompt, *, tools, canvas, max_model_calls, **options):
-        generated.append(canvas.id)
-        assert options["enforce_model_call_limit"] is True and options["tool_harness"] == "deepagents"
-        assert max_model_calls == snapshot["inputs"].parse_config.execution.max_model_calls
-        bound = {tool.name: tool for tool in tools}
-        reference = canvas.items("events")[0][0]
-        operation = {"op": "voice_decision", "event_ref": reference,
-                     "decision": "keep" if issue == "gate_invalidated" else "voice_top1",
-                     "reason": "The inspected frame identifies the person speaking."}
-        if issue != "missing":
-            receipt = json.loads(bound["write_context_canvas"].invoke({
-                "batch_id": "first-choice", "expected_revision": canvas.revision, "operations": [operation],
-            }))
-            assert "error" not in receipt
-        checked = json.loads(bound["finish_voiceprint_review"].invoke({"complete": True}))
-        if issue == "gate_invalidated":
-            assert checked["ready"]
-            canvas.write(role="refine", batch_id="edit-after-gate", expected_revision=canvas.revision, operations=[{
-                "op": "patch_event", "event_ref": reference, "fields": {"speaker": "立希"},
-            }])
-            canvas.write(role="refine", batch_id="restore-choice", expected_revision=canvas.revision, operations=[
-                {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爱音"}}, operation,
-            ])
-            assert canvas.voiceprint_review_status()["ready"] and not canvas.voiceprint_review_passed()
-        else:
-            assert checked["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
-            assert checked["error"]["retryable"] and checked["error"]["retry_hint"]
-            assert reference in checked["error"]["message"]
-            assert ("missing_decision" if issue == "missing" else "voice_top1_speaker_mismatch") in checked["error"]["message"]
-        before = canvas.snapshot()
-        feedback = options["stop_feedback"]()
-        assert feedback and "current draft" in feedback and "finish_voiceprint_review" in feedback
-        assert canvas.snapshot() == before
-        committed.assert_not_awaited()
-        if issue != "gate_invalidated":
-            receipt = json.loads(bound["write_context_canvas"].invoke({
-                "batch_id": "correct-choice", "expected_revision": canvas.revision, "operations": [
-                    {"op": "persons", "member_ref": "member", "action": "add", "values": ["爽世"]},
-                    {"op": "event_array", "event_ref": reference, "field": "participants", "action": "add", "values": ["爽世"]},
-                    {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爽世"}}, operation,
-                ],
-            }))
-            assert "error" not in receipt
-        assert json.loads(bound["finish_voiceprint_review"].invoke({"complete": True}))["ready"]
-        assert options["stop_feedback"]() is None
-        return CanvasCompletion(complete=True)
-
-    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
-    caplog.set_level("INFO", logger="server.service.video_parse")
-    asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(snapshot["interval_parse_task_id"]))
-    loaded.assert_awaited_once()
-    committed.assert_awaited_once()
-    notified.assert_awaited_once_with(snapshot)
-    assert len(generated) == 1 and host.state.closed
-    decisions = committed.await_args.kwargs["voiceprint_decisions"]
-    assert len(decisions) == 1
-    assert decisions[0]["decision"] == ("keep" if issue == "gate_invalidated" else "voice_top1")
-    assert decisions[0]["final_speaker"] == ("爱音" if issue == "gate_invalidated" else "爽世")
-    assert snapshot["member_contents"]["member"].model_dump(mode="json") == original
-    assert snapshot["inputs"].parse_config.execution.max_retry_count == 0
-    messages = [record.getMessage() for record in caplog.records]
-    assert sum(message.startswith("event=refine_voice_review_completion_deferred ") for message in messages) == 1
-    assert not any(message.startswith("event=refine_voice_review_completion_rejected ") for message in messages)
-
-
-def test_refine_voice_feedback_reaches_the_running_native_codex_session(monkeypatch, voiceprint_host):
-    from unittest.mock import AsyncMock
-    from agent.video_parse_v2.refine.agent import IntervalRefine
-    from gateway.codex.agent import CodexAgentModel
-    from tests.gateway.test_codex_model import _FakeSession, _turn
-
-    host = voiceprint_host
-    snapshot, lease, _canvas = _voice_review_input(host, "prefill")
-    inputs = snapshot["inputs"]
-    snapshot["inputs"] = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={
-        "execution": inputs.parse_config.execution.model_copy(update={"max_retry_count": 0}),
-        "models": inputs.parse_config.models.model_copy(update={
-            "refine": inputs.parse_config.models.understanding.model_copy(update={
-                "source": "codex_local", "fallback": None, "supports_vision_input": False,
-            }),
-        }),
-    })})
-    sessions = []
-
-    class Session(_FakeSession):
-        def __init__(self, **options):
-            super().__init__([])
-            assert options["max_model_calls"] == snapshot["inputs"].parse_config.execution.max_model_calls
-            self.tools = {tool.name: tool for tool in options["tools"]}
-            sessions.append(self)
-
-        def run_turn(self, prompt, *, output_schema=None):
-            assert not self.closed
-            self.prompts.append((prompt, output_schema))
-            catalog = json.loads(self.tools["get_context_canvas"].invoke({"collection": "events"}))
-            reference = catalog["items"][0]["reference"]
-            decision = {"op": "voice_decision", "event_ref": reference, "decision": "voice_top1",
-                        "reason": "The inspected frame identifies the person speaking."}
-            operations = [decision]
-            if len(self.prompts) == 2:
-                assert reference in prompt and "voice_top1_speaker_mismatch" in prompt
-                operations = [
-                    {"op": "persons", "member_ref": "member", "action": "add", "values": ["爽世"]},
-                    {"op": "event_array", "event_ref": reference, "field": "participants", "action": "add", "values": ["爽世"]},
-                    {"op": "patch_event", "event_ref": reference, "fields": {"speaker": "爽世"}}, decision,
-                ]
-            receipt = json.loads(self.tools["write_context_canvas"].invoke({
-                "batch_id": "native-choice-" + str(len(self.prompts)),
-                "expected_revision": catalog["revision"], "operations": operations,
-            }))
-            assert "error" not in receipt
-            checked = json.loads(self.tools["finish_voiceprint_review"].invoke({"complete": True}))
-            if len(self.prompts) == 1:
-                assert checked["error"]["code"] == "VOICEPRINT_REVIEW_REQUIRED"
-            else:
-                assert len(self.prompts) == 2 and checked["ready"]
-            self.tool_call_count += 3
-            self.successful_tool_call_count += 2
-            return _turn('{"complete":true}')
-
-    monkeypatch.setattr("gateway.codex.agent.CodexAgentModel", lambda **options: CodexAgentModel(
-        **options, session_factory=Session,
-    ))
-    host.runtime._gateway_config = load_config()
-    host.runtime._gateway = GatewayClient(host.runtime._gateway_config)
-    committed = AsyncMock(return_value=True)
-    notified = AsyncMock()
-    monkeypatch.setattr(host.runtime, "load_refine_input", AsyncMock(return_value=snapshot))
-    monkeypatch.setattr(host.runtime, "commit_interval_refinement", committed)
-    monkeypatch.setattr(host.runtime, "notify_interval_committed", notified)
-    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
-    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
-    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", AsyncMock(return_value={"samples": [], "lines": []}))
-    try:
-        asyncio.run(IntervalRefine(runtime=host.runtime).InvokeRefine(snapshot["interval_parse_task_id"]))
-    finally:
-        host.runtime._gateway.close()
-    assert len(sessions) == 1 and len(sessions[0].prompts) == 2 and sessions[0].closed
-    assert sessions[0].prompts[0][1] == sessions[0].prompts[1][1]
-    assert sessions[0].prompts[0][1]["properties"]["complete"] == {
-        "type": "boolean", "const": True, "title": "Complete",
-    }
-    committed.assert_awaited_once()
-    notified.assert_awaited_once_with(snapshot)
-    assert committed.await_args.kwargs["voiceprint_decisions"][0]["final_speaker"] == "爽世"
-
-
-@pytest.mark.parametrize("new_method", [False, True])
-def test_b0_compare_tool_keeps_large_provenance_in_paginated_evidence(monkeypatch, voiceprint_host, new_method):
-    from server.model.dto.jobDTO import IntervalParseLease
-    from server.constants.parse import VOICEPRINT_B0_LEGACY_METHOD_VERSION, VOICEPRINT_B0_METHOD_VERSION
-
+def test_refine_uses_retained_voice_evidence_without_starting_speaker_encoder(monkeypatch, voiceprint_host):
     host = voiceprint_host
     snapshot = _b0_snapshot(host)
-    samples = []
-    for index in range(200):
-        name = "A" if index < 100 else "B"
-        samples.append({
-            "id": f"ref-{index}", "source_id": f"ref-{index}", "chunk_id": "chunk",
-            "source_version": 1, "event_fingerprint": hashlib.sha256(f"event{index}".encode()).hexdigest(),
-            "start_ms": index * 100, "end_ms": index * 100 + 500,
-            "cue_ids": [f"cue-{index}"], "label": name, "song": False, "overlap": False,
-            "pcm_sha256": hashlib.sha256(str(index).encode()).hexdigest(),
-            "model": host.encoder.model_name, "encoder_revision": host.encoder.encoder_revision,
-            "vector": ([1.0, 0.0] if name == "A" else [0.0, 1.0]) + [0.0] * 190,
-            "text_variants": [{"text": "source provenance " * 30}],
-            "label_doubtful": index == 100,
-        })
-    prepared = {"samples": samples, "lines": samples,
-                "parameters": host.runtime._voiceprint_parameters(),
-                "method_version": VOICEPRINT_B0_METHOD_VERSION if new_method else VOICEPRINT_B0_LEGACY_METHOD_VERSION,
-                "model": {"name": host.encoder.model_name, "encoder_revision": host.encoder.encoder_revision}}
-    if new_method:
-        prepared["hygiene"] = {"excluded_reference_ids": ["ref-0"]}
-    else:
-        prepared["parameters"] = {key: value for key, value in prepared["parameters"].items()
-                                  if not key.startswith("label_")}
-    lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
-                               "REFINING", "worker", 2, datetime.now(UTC), 0, 3, 1.0, 2.0)
-    async def load_scoring(_lease):
-        return prepared
-
-    monkeypatch.setattr(host.runtime, "_load_voiceprint_scoring", load_scoring)
-    monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_options: lease)
-    monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
-    canvas = ParseContextCanvas(scope="refine:b0-budget", members={"member": {
-        "sequence_no": 0, "version": 1, "bounds": (0, 60000),
-        "content": VideoParseResult(persons=[], timeline=[]),
-    }})
-    canvas.register_evidence("member", {"voiceprint": {"mode": "prefill", "lines": []}})
-    canvas._apply_voiceprint()
-    refine_input = {"inputs": snapshot["inputs"], "video_parse_task_id": lease.video_parse_task_id,
-                    "interval_parse_task_id": lease.interval_parse_task_id, "lease": object(),
-                    "member_bounds": {"member": (0, 60000)}}
-
-    async def generate(_binding, _prompt, *, tools, **_options):
-        compare = next(tool for tool in tools if tool.name == "compare_speaker")
-        content = compare.invoke({"start_ms": 47100, "end_ms": 48800})
-        result = json.loads(content)
-        assert len(content.encode()) < 32000
-        assert result["candidates"][0]["speaker"] == "A"
-        assert result["method_version"] == prepared["method_version"]
-        assert result["revision"] == canvas.revision
-        assert "src" not in result["candidates"][0] and "reference_ids" not in result["candidates"][0]
-        full = canvas.get("evidence", result["evidence_ref"])[result["evidence_section"]]
-        assert len(json.dumps(full).encode()) > 32000
-        assert len(full["candidates"][0]["reference_ids"]) == 80
-        assert ("ref-0" not in full["candidates"][0]["reference_ids"]) is new_method
-        assert "ref-100" in full["candidates"][1]["reference_ids"]
-        assert all(reference_id in full["samples"] for reference_id in full["candidates"][0]["reference_ids"])
-        assert all("vector" not in ref and "text_variants" not in ref for ref in full["samples"].values())
-        assert not {"band", "conflict", "review_reason"}.intersection(result)
-        assert not {"band", "conflict", "review_reason"}.intersection(full)
-        finish = next(tool for tool in tools if tool.name == "finish_voiceprint_review")
-        assert json.loads(finish.invoke({"complete": True}))["ready"]
-        return CanvasCompletion(complete=True)
-
+    snapshot["interval_parse_task_id"] = "interval"
+    snapshot["member_sequence_nos"] = {"chunk": 0}
+    snapshot["member_versions"] = {"chunk": 1}
+    snapshot["member_bounds"] = {"chunk": (0, 60_000)}
+    snapshot["member_scopes"] = {"chunk": "chunk"}
+    snapshot["start_sequence_no"] = 0
+    snapshot["chunk_count"] = 1
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    from agent.video_parse_v2.prompts import build_refine_prompt
+    prompt = build_refine_prompt(snapshot=snapshot, canvas=canvas)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Refine must use retained evidence without new voice inference")
+    monkeypatch.setattr(host.runtime, "_speaker_encoder", forbidden)
+    async def generate(binding, supplied, *, tools, result_type, **options):
+        assert supplied == prompt and tools == ()
+        assert result_type is RefineModelResponse and "canvas" not in options
+        assert options["schema_name"] == "IntervalRefinementResult"
+        return _complete_refine_prompt(supplied)
     monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
-    asyncio.run(host.runtime.generate_interval_refinement(refine_input, prompt="refine", canvas=canvas))
+    result = asyncio.run(_bound_refine_generation(host.runtime, snapshot, prompt=prompt, remaining_seconds=60))
+    assert len(result.members) == 1
 
 
 @pytest.mark.parametrize("damage", [None, "bytes", "task", "counts", "model"])
@@ -3568,7 +2871,7 @@ def test_b0_published_artifact_manifest_and_refine_load_use_same_bytes(repositor
 
 
 def test_compare_speaker_excludes_self_overlap_duplicate_and_encoder_mismatch(voiceprint_host):
-    from server.model.dto.jobDTO import IntervalParseLease
+    from server.model.dto.taskDTO import IntervalParseLease
 
     host = voiceprint_host
     lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, (), 0, 1,
@@ -3610,8 +2913,8 @@ def test_compare_speaker_without_eligible_references_does_not_extract_audio(monk
     assert result["quality"]["reason"] == "no_eligible_reference"
 
 
-def test_refine_compare_tool_tracks_references_for_diagnostics_only(monkeypatch, voiceprint_host):
-    from server.model.dto.jobDTO import IntervalParseLease
+def test_direct_refine_commit_keeps_snapshot_identity_without_reference_dependencies(monkeypatch, voiceprint_host):
+    from server.model.dto.taskDTO import IntervalParseLease
 
     host = voiceprint_host
     lease = IntervalParseLease(str(uuid4()), host.lease.video_parse_task_id, ("member",), 0, 1,
@@ -3619,7 +2922,15 @@ def test_refine_compare_tool_tracks_references_for_diagnostics_only(monkeypatch,
     reference = _voice_reference(host.encoder, "爽世", "soyo")
     host.runtime._persistence.load_voiceprint_references = lambda _lease: [reference]
     committed = []
-    host.runtime._persistence.commit_interval_refinement = lambda _lease, **values: committed.append(values)
+    from server.model.dto.parseContentDTO import IntervalRefinementCommit
+    from server.service.video_parse_refine_updates import RefineContentUpdates
+    host.runtime._refine_updates = RefineContentUpdates()
+
+    def commit(_lease, **values):
+        committed.append(values)
+        return IntervalRefinementCommit((), {})
+
+    host.runtime._persistence.commit_interval_refinement = commit
     monkeypatch.setattr(host.runtime, "_require_interval_token", lambda *_args, **_kwargs: lease)
     monkeypatch.setattr(host.runtime, "_require_interval_active", lambda _lease: None)
     canvas = ParseContextCanvas(scope="refine:voice", members={"member": {
@@ -3635,17 +2946,6 @@ def test_refine_compare_tool_tracks_references_for_diagnostics_only(monkeypatch,
         "member_scopes": {"member": [0]},
     }
 
-    async def generate(_binding, _prompt, *, tools, **_options):
-        compare = next(tool for tool in tools if tool.name == "compare_speaker")
-        rejected = json.loads(compare.invoke({"start_ms": 10_000, "end_ms": 11_000}))
-        assert rejected["error"]["code"] == "INVALID_VOICEPRINT_TARGET"
-        result = json.loads(compare.invoke({"start_ms": 47_100, "end_ms": 48_800}))
-        assert result["candidates"][0]["speaker"] == "爽世"
-        return CanvasCompletion(complete=True)
-
-    monkeypatch.setattr(host.runtime, "_generate_text_structured", generate)
-    asyncio.run(host.runtime.generate_interval_refinement(snapshot, prompt="refine", canvas=canvas))
-    assert host.state.closed and snapshot["voiceprint_references"] == [reference]
     canvas.write(role="refine", batch_id="refined-event", expected_revision=canvas.revision, operations=[{
         "op": "add_event", "member_ref": "member", "key": "action",
         "event": {"event_type": "ACTION", "start_seconds": 47_100, "end_seconds": 48_800,
@@ -3659,7 +2959,7 @@ def test_refine_compare_tool_tracks_references_for_diagnostics_only(monkeypatch,
 
 @pytest.mark.parametrize("structured", [False, True])
 def test_refine_commit_conflict_logs_reason_and_safe_context(monkeypatch, voiceprint_host, caplog, structured):
-    from server.model.dto.jobDTO import IntervalParseLease
+    from server.model.dto.taskDTO import IntervalParseLease
     from server.service.video_parse_persistence import VideoParseSnapshotConflictError
 
     host = voiceprint_host
@@ -3692,7 +2992,10 @@ def test_refine_commit_conflict_logs_reason_and_safe_context(monkeypatch, voicep
     }
 
     with caplog.at_level("INFO", logger="server.service.video_parse"):
-        assert asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result())) is False
+        from agent.video_parse_v2.refine.input import RefineInputChanged
+        with pytest.raises(RefineInputChanged) as caught:
+            asyncio.run(host.runtime.commit_interval_refinement(snapshot, canvas.interval_result()))
+        assert caught.value.reason == error.reason and caught.value.context == context
     message = next(record.getMessage() for record in caplog.records if "event=refine_commit_conflict" in record.getMessage())
     assert f"task={lease.video_parse_task_id}" in message and "video=video" in message
     assert f"interval {lease.interval_parse_task_id}" in message and "lease=2" in message
@@ -3708,7 +3011,7 @@ def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch
 
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._model_manager = ContextVar("budget-manager", default=None)
-    generated = AsyncMock(return_value=CanvasCompletion(complete=True))
+    generated = AsyncMock(return_value=IntervalRefinementResult(members=[{"sequence_no": 0, "persons": [], "timeline": []}]))
     monkeypatch.setattr(runtime, "_generate_text_structured", generated)
     config = default_video_parse_v2_config()
     config = config.model_copy(update={"models": config.models.model_copy(update={
@@ -3718,16 +3021,15 @@ def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch
     })})
     assert config.models.refine is None
 
-    asyncio.run(runtime.generate_interval_refinement(
+    asyncio.run(_bound_refine_generation(runtime,
         {"inputs": SimpleNamespace(parse_config=config)}, prompt="refine",
-        canvas=ParseContextCanvas(scope="refine:budget", members={"member": {
-            "sequence_no": 0, "version": 1, "bounds": (0, 20_000),
-            "content": VideoParseResult(persons=[], timeline=[]),
-        }}),
+        remaining_seconds=45,
     ))
 
     binding = generated.await_args.args[0]
-    assert generated.await_args.kwargs["tool_harness"] == "deepagents"
+    assert generated.await_args.kwargs["tools"] == ()
+    assert "canvas" not in generated.await_args.kwargs
+    assert binding.request_timeout_seconds <= 45
     assert binding.max_output_tokens == 65536
     assert binding.reasoning_effort == "none"
     assert config.models.asr.reasoning_effort is None
@@ -3756,15 +3058,15 @@ def test_prefix_zero_and_single_tool_budgets_keep_canvas_facts(monkeypatch, maxi
     assert "original" in prompt
     calls = []
 
-    async def generate(_binding, _prompt, *, tools, result_type, max_model_calls, **options):
+    async def generate(_binding, _prompt, *, tools, result_type, **options):
         calls.append("generate")
         assert options.get("tool_harness", "legacy") == "legacy"
         if maximum_tools == 0:
-            assert not tools and result_type is PrefixCompactCompletion and max_model_calls == 1
+            assert not tools and result_type is PrefixCompactCompletion
             with pytest.raises(ValueError):
                 result_type.model_validate({"complete": True, "series_compact": "summary", "video_compact": "summary", "timeline": []})
             return PrefixCompactCompletion(complete=True, series_compact="series", video_compact="video")
-        assert result_type is CanvasCompletion and max_model_calls == inputs.parse_config.execution.max_model_calls
+        assert result_type is CanvasCompletion and "max_model_calls" not in options
         write = next(tool for tool in tools if tool.name == "write_context_canvas")
         result = write.invoke({
             "batch_id": "one-batch", "expected_revision": canvas.revision,
@@ -3816,8 +3118,9 @@ def test_canvas_input_rejects_invalid_persisted_scope_before_deriving_bounds(mon
 
 
 @pytest.mark.parametrize("max_output_tokens", [None, 65_536, 131_072])
-@pytest.mark.parametrize("enforce_model_call_limit", [False, True])
-def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatch, max_output_tokens, enforce_model_call_limit):
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("temperature", [0, 0.8])
+def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatch, max_output_tokens, stream, temperature):
     captured = {}
 
     class Model:
@@ -3833,7 +3136,8 @@ def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatc
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._gateway_config = load_config()
     runtime._gateway = GatewayClient(runtime._gateway_config)
-    binding = GenerativeModelConfig(source="ark_default", model="model", request_timeout_seconds=60,
+    binding = GenerativeModelConfig(source="ark_default", model="model", request_timeout_seconds=60, stream=stream,
+                                    temperature=temperature,
                                     max_output_tokens=max_output_tokens, reasoning_effort="none",
                                     context_window_tokens=262144 if max_output_tokens == 131072 else 128000)
     expected = runtime._gateway_config.resolve_model_binding(
@@ -3843,18 +3147,19 @@ def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatc
     check_control = lambda: checked.append("checked")
     context_checkpoint = lambda: []
     result = runtime._invoke_multimodal(binding, [TextInput("refine")], schema_name="CanvasCompletion", result_type=CanvasCompletion,
-                                       tools=(_read_context_tool(),), max_model_calls=100,
-                                       check_control=check_control, context_checkpoint=context_checkpoint,
-                                       enforce_model_call_limit=enforce_model_call_limit)
+                                       tools=(_read_context_tool(),),
+                                       check_control=check_control, context_checkpoint=context_checkpoint)
     assert result.complete
     assert captured["constructed"]["max_output_tokens"] == expected.max_output_tokens
+    assert captured["constructed"]["stream"] is stream
+    assert captured["constructed"]["temperature"] == temperature
     assert captured["constructed"]["reasoning_effort"] == "none"
     policy = captured["generated"]["context_window_policy"]
     assert policy.output_reserve_tokens == expected.max_output_tokens
     assert policy.auto_compact_tokens < policy.maximum_input_tokens
     assert policy.compact_target_tokens < policy.auto_compact_tokens
     assert captured["generated"]["max_input_chars"] == expected.max_input_chars
-    assert captured["generated"]["max_model_calls"] == (100 if enforce_model_call_limit else None)
+    assert captured["generated"]["max_model_calls"] is None
     assert captured["generated"]["request_timeout_seconds"] == 60
     checked.clear()
     captured["generated"]["check_control"]()
@@ -3958,7 +3263,7 @@ def test_prefix_cancellation_releases_lease_only_after_execution_exits(monkeypat
 @pytest.mark.parametrize("initial_receipt", [True, False, None])
 def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch, initial_receipt):
     from threading import Event
-    from server.model.dto.jobDTO import ChunkParseLease
+    from server.model.dto.taskDTO import ChunkParseLease
 
     managers = []
     first_check = Event()
@@ -4136,10 +3441,10 @@ def test_media_reaper_uses_exact_queue_identity_and_fails_closed():
     }
 
 
-@pytest.mark.parametrize("kind", ["chunk", "refine", "index", "video"])
+@pytest.mark.parametrize("kind", ["chunk", "refine", "index", "video", "asr"])
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
 def test_execution_timing_records_short_runs_without_changing_results(monkeypatch, kind, outcome):
-    from server.model.dto.jobDTO import ChunkParseLease, IntervalParseLease
+    from server.model.dto.taskDTO import ChunkParseLease, IntervalParseLease
 
     samples = []
     clock = [10.0]
@@ -4178,7 +3483,8 @@ def test_execution_timing_records_short_runs_without_changing_results(monkeypatc
 
     async def execute():
         async with runtime._model_stage(lease, None, sequence_no=None,
-                category="embedding" if kind == "index" else "parse", check_active=lambda: None):
+                category="embedding" if kind == "index" else "parse", check_active=lambda: None,
+                stage="asr" if kind == "asr" else None):
             clock[0] += 0.025
             if outcome != "completed":
                 raise error
@@ -4203,7 +3509,7 @@ def test_execution_timing_records_short_runs_without_changing_results(monkeypatc
 
 
 def test_execution_timing_heartbeats_and_storage_errors_preserve_business_work(monkeypatch, caplog):
-    from server.model.dto.jobDTO import ChunkParseLease
+    from server.model.dto.taskDTO import ChunkParseLease
 
     samples, managers = [], []
     clock = [10.0]
@@ -4361,292 +3667,18 @@ def test_cancelled_parallel_calls_keep_the_lease_until_every_call_exits():
     asyncio.run(execute())
 
 
-def _voice_decision_record(member_ref, event, *, decision="voice_top1", final_speaker="A"):
-    return {"event_ref": "event:reviewed", "member_chunk_id": member_ref,
-            "start_ms": event["start_seconds"], "end_ms": event["end_seconds"],
-            "understanding_speaker": "B", "voice_top1": "A", "gap": 0.08,
-            "band": "CONFLICT", "decision": decision,
-            "reason": "The visible speaker is A.", "final_speaker": final_speaker}
+async def _bound_refine_generation(runtime, snapshot, **kwargs):
+    """Adapter-only tests enter the same request scope as the Refine worker."""
+    from server.service.video_parse_refine_updates import RefineSubscription
+    from tests.server.test_video_parse_model_calls import _manager, _Repository
 
-
-@pytest.mark.parametrize("doubtful", [False, True])
-def test_voice_decision_commit_persists_fields_and_member_history_atomically(repository, doubtful):
-    from copy import deepcopy
-    from server.model.job import IntervalParseContent
-    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
-
-    factory, repo, prepared, first, _second = _overlapping_refinements(repository)
-    at = NOW + timedelta(minutes=1)
-    inputs = _refinement_inputs(repo, first, now=at)
-    member = prepared.chunk_parse_task_ids[1]
-    timeline = deepcopy(inputs["input_contents"][member]["timeline"])
-    timeline[0].update(speaker="A", participants=["A", "B"])
-    record = _voice_decision_record(member, timeline[0])
-    if doubtful:
-        record.update(label_score=0.2, label_rank=3, label_count=5, label_margin=0.6,
-                      label_ref_count=5, label_ref_consistency=0.8, label_doubtful=True,
-                      label_ref_higher_count=5, label_ref_higher_fraction=1,
-                      label_doubtful_basis="rank_margin_only_few_refs",
-                      evidence_type="visible_speaking")
-    original = deepcopy(record)
-    repo.commit_interval_refinement(
-        first, **inputs, interval_content={}, member_updates={member: {"timeline": timeline}},
-        detail={"voiceprint_decisions": [record], "unrelated": "retained"}, now=at,
-    )
-    assert record == original
-    with factory() as session:
-        interval = session.get(IntervalParseContent, first.interval_parse_task_id)
-        assert interval.detail["voiceprint_decisions"] == [record]
-        assert interval.detail["unrelated"] == "retained"
-        rows = {row.chunk_task_id: row for row in session.scalars(select(ChunkParseContent))}
-        assert rows[member].content["timeline"][0]["speaker"] == record["final_speaker"]
-        assert rows[member].detail["voiceprint_decisions"] == [
-            {**record, "interval_parse_task_id": first.interval_parse_task_id},
-        ]
-        assert all("voiceprint_decisions" not in row.detail for key, row in rows.items() if key != member)
-
-
-def test_voice_decision_overlap_history_remains_information_for_fresh_window(repository):
-    from server.model.job import IntervalParseContent
-    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
-
-    factory, repo, prepared, first, second = _overlapping_refinements(repository)
-    at = NOW + timedelta(minutes=1)
-    inputs = _refinement_inputs(repo, first, now=at)
-    member = prepared.chunk_parse_task_ids[1]
-    event = inputs["input_contents"][member]["timeline"][0]
-    record = _voice_decision_record(member, event, decision="keep", final_speaker="B")
-    repo.commit_interval_refinement(
-        first, **inputs, interval_content={}, member_updates={},
-        detail={"voiceprint_decisions": [record]}, now=at,
-    )
-    loaded = repo.load_interval_members(second, now=at)
-    previous = next(row.detail["voiceprint_decisions"] for row in loaded.members
-                    if row.chunk_parse_task_id == member)
-    assert previous == [{**record, "interval_parse_task_id": first.interval_parse_task_id}]
-    snapshot = {
-        "interval_parse_task_id": second.interval_parse_task_id,
-        "start_sequence_no": second.start_sequence_no, "chunk_count": second.chunk_count,
-        "member_sequence_nos": {row.chunk_parse_task_id: row.sequence_no for row in loaded.members},
-        "member_versions": {row.chunk_parse_task_id: row.version for row in loaded.members},
-        "member_scopes": {row.chunk_parse_task_id: row.detail["scope"] for row in loaded.members},
-        "member_bounds": {row.chunk_parse_task_id: (0, 40_000) for row in loaded.members},
-        "member_contents": {row.chunk_parse_task_id: row.content for row in loaded.members},
-        "write_bounds": (10_000, 40_000),
-        "member_evidence": {member: {"voiceprint": {
-            "mode": "flag", "previous_decisions": previous, "method_version": "B0-trim20-v1",
-            "lines": [{"id": "line:overlap", "position": 0,
-                       "start_ms": record["start_ms"], "end_ms": record["end_ms"],
-                       "duration_ms": record["end_ms"] - record["start_ms"],
-                       "understanding_speaker": "B", "band": "CONFLICT", "conflict": True,
-                       "gap": 0.08, "candidates": [{"speaker": "A", "similarity": 0.8}]}],
-        }}},
-    }
-    canvas = ParseContextCanvas.from_refine(snapshot)
-    assert canvas.get("evidence", member)["voiceprint"]["previous_decisions"] == previous
-    assert len(canvas.voiceprint_review()["conflicts"]) == 1
-    reference = canvas.voiceprint_review()["conflicts"][0]["event_ref"]
-    assert canvas.voiceprint_review_status()["missing"] == [reference]
-    assert not canvas.voiceprint_review_passed()
-    with factory() as session:
-        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
-
-
-def test_voice_decision_concurrent_keep_rejects_merged_speaker_and_rolls_back(repository):
-    from copy import deepcopy
-    from server.model.job import IntervalParseContent
-    from server.service.video_parse_errors import VideoParseSnapshotConflictError
-    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
-
-    factory, repo, prepared, first, second = _overlapping_refinements(repository)
-    at = NOW + timedelta(minutes=1)
-    first_inputs = _refinement_inputs(repo, first, now=at)
-    stale_inputs = _refinement_inputs(repo, second, now=at)
-    member = prepared.chunk_parse_task_ids[1]
-    timeline = deepcopy(first_inputs["input_contents"][member]["timeline"])
-    timeline[0].update(speaker="A", participants=["A", "B"])
-    first_record = _voice_decision_record(member, timeline[0])
-    repo.commit_interval_refinement(
-        first, **first_inputs, interval_content={}, member_updates={member: {"timeline": timeline}},
-        detail={"voiceprint_decisions": [first_record]}, now=at,
-    )
-    with factory() as session:
-        before = {row.chunk_task_id: (deepcopy(row.content), row.version, deepcopy(row.detail))
-                  for row in session.scalars(select(ChunkParseContent))}
-    stale_record = _voice_decision_record(member, timeline[0], decision="keep", final_speaker="B")
-    with pytest.raises(VideoParseSnapshotConflictError) as rejected:
-        repo.commit_interval_refinement(
-            second, **stale_inputs, interval_content={}, member_updates={},
-            detail={"voiceprint_decisions": [stale_record]}, now=at,
-        )
-    assert rejected.value.reason == "voice_decision_merge_conflict"
-    assert rejected.value.context == {"chunk_task_id": member, "event_ref": "event:reviewed"}
-    with factory() as session:
-        after = {row.chunk_task_id: (row.content, row.version, row.detail)
-                 for row in session.scalars(select(ChunkParseContent))}
-        assert after == before
-        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
-        assert session.get(IntervalParseTask, second.interval_parse_task_id).status == "REFINING"
-
-
-def test_voice_decision_commit_rejects_nonmember_record_atomically(repository):
-    from server.model.job import IntervalParseContent
-    from server.service.video_parse_errors import VideoParseConflictError
-    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
-
-    factory, repo, prepared, first, _second = _overlapping_refinements(repository)
-    at = NOW + timedelta(minutes=1)
-    inputs = _refinement_inputs(repo, first, now=at)
-    member = prepared.chunk_parse_task_ids[1]
-    record = _voice_decision_record("outside", inputs["input_contents"][member]["timeline"][0])
-    with pytest.raises(VideoParseConflictError, match="nonmember Chunk"):
-        repo.commit_interval_refinement(
-            first, **inputs, interval_content={}, member_updates={},
-            detail={"voiceprint_decisions": [record]}, now=at,
-        )
-    with factory() as session:
-        assert session.get(IntervalParseContent, first.interval_parse_task_id) is None
-        assert all("voiceprint_decisions" not in row.detail
-                   for row in session.scalars(select(ChunkParseContent)))
-
-
-def test_voice_decision_off_commit_preserves_existing_detail_shape(repository):
-    from server.model.job import IntervalParseContent
-    from tests.server.test_video_parse_repository import NOW, _overlapping_refinements, _refinement_inputs
-
-    factory, repo, _prepared, first, _second = _overlapping_refinements(repository)
-    at = NOW + timedelta(minutes=1)
-    repo.commit_interval_refinement(
-        first, **_refinement_inputs(repo, first, now=at), interval_content={},
-        member_updates={}, detail={"existing": "unchanged"}, now=at,
-    )
-    with factory() as session:
-        assert session.get(IntervalParseContent, first.interval_parse_task_id).detail == {
-            "existing": "unchanged", "refinement_committed_lease_version": first.lease_version,
-        }
-        assert all("voiceprint_decisions" not in row.detail
-                   for row in session.scalars(select(ChunkParseContent)))
-
-
-@pytest.fixture
-def refine_provider_retry_host(monkeypatch):
-    runtime = object.__new__(VideoParseRuntimeService)
-    runtime._interval_lease = ContextVar("test_refine_provider_lease", default=None)
-    lease = IntervalParseLease(
-        "interval", "task", ("member",), 0, 1, "REFINING", "worker", 1,
-        datetime.now(UTC) + timedelta(minutes=5), 0, 0, 1.0, 2.0,
-    )
-    host = SimpleNamespace(
-        runtime=runtime, lease=lease, mode="prefill", errors=[], calls=0, reservations=0,
-        sleeps=[], checks=0, stages=0, stop=False,
-    )
-
-    def reserve(actual, *, max_retries):
-        assert actual is lease and max_retries == 2
-        if host.reservations >= max_retries:
-            return None
-        host.reservations += 1
-        return host.reservations
-
-    runtime._persistence = SimpleNamespace(
-        load_task_input=lambda _task: SimpleNamespace(task=SimpleNamespace(parse_config={
-            "voiceprint_mode": host.mode,
-        })), reserve_refine_provider_retry=reserve,
-    )
-
-    def check_active():
-        host.checks += 1
-        if host.stop:
-            raise TimeoutError("interval execution deadline elapsed")
-
-    @asynccontextmanager
-    async def stage(actual, _task, **_options):
-        assert actual is lease and runtime._interval_lease.get() is lease
-        host.stages += 1
-        yield SimpleNamespace(check_active=check_active)
-
-    async def invoke(interval_id):
-        assert interval_id == lease.interval_parse_task_id
-        host.calls += 1
-        if host.errors:
-            raise host.errors.pop(0)
-
-    async def sleep(delay):
-        host.sleeps.append(delay)
-
-    runtime._model_stage = stage
-    runtime.agent = SimpleNamespace(interval_refine=SimpleNamespace(InvokeRefine=invoke))
-    monkeypatch.setattr("server.service.video_parse.asyncio.sleep", sleep)
-    return host
-
-
-@pytest.mark.parametrize("mode", ["flag", "prefill"])
-def test_refine_provider_retries_capacity_and_rate_limit_with_separate_budget(refine_provider_retry_host, mode):
-    host = refine_provider_retry_host
-    host.mode = mode
-    host.errors = [
-        ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY),
-        ModelFailureError("rate", reason=ModelFailureReason.PROVIDER_RATE_LIMIT),
-    ]
-    asyncio.run(host.runtime.refine(host.lease))
-    assert host.calls == 3 and host.reservations == 2 and host.stages == 1
-    assert host.sleeps == [1.0] * 120
-    assert host.lease.retry_count == 0 and host.lease.max_retry_count == 0
-    assert host.runtime._interval_lease.get() is None
-
-
-def test_refine_provider_retry_budget_does_not_reset_after_logic_failure(refine_provider_retry_host):
-    host = refine_provider_retry_host
-    logic = ModelFailureError("missing decision", reason=ModelFailureReason.REQUIRED_TOOL_MISSING)
-    host.errors = [ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY), logic]
-    with pytest.raises(ModelFailureError) as caught:
-        asyncio.run(host.runtime.refine(host.lease))
-    assert caught.value is logic
-    assert host.reservations == 1 and len(host.sleeps) == 30
-    host.errors = [ModelFailureError("rate", reason=ModelFailureReason.PROVIDER_RATE_LIMIT)]
-    asyncio.run(host.runtime.refine(host.lease))
-    assert host.reservations == 2 and len(host.sleeps) == 120
-    final = ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY)
-    host.errors = [final]
-    with pytest.raises(RefineProviderRetryExhaustedError) as caught:
-        asyncio.run(host.runtime.refine(host.lease))
-    assert caught.value.__cause__ is final
-    assert caught.value.provider_retries == 2 and caught.value.reason == ModelFailureReason.PROVIDER_CAPACITY
-    assert not caught.value.retryable and host.lease.retry_count == 0
-    assert host.calls == 5 and host.reservations == 2 and len(host.sleeps) == 120
-
-
-@pytest.mark.parametrize("mode,reason", [
-    ("off", ModelFailureReason.PROVIDER_CAPACITY),
-    ("off", ModelFailureReason.PROVIDER_RATE_LIMIT),
-    ("flag", ModelFailureReason.REQUIRED_TOOL_MISSING),
-    ("prefill", ModelFailureReason.INVALID_MODEL_RESPONSE),
-])
-def test_refine_provider_retries_leave_off_mode_and_logic_errors_unchanged(refine_provider_retry_host, mode, reason):
-    host = refine_provider_retry_host
-    host.mode = mode
-    error = ModelFailureError("original error", reason=reason)
-    host.errors = [error]
-    with pytest.raises(ModelFailureError) as caught:
-        asyncio.run(host.runtime.refine(host.lease))
-    assert caught.value is error
-    assert host.calls == 1 and host.reservations == 0 and host.sleeps == []
-    assert host.runtime._interval_lease.get() is None
-
-
-@pytest.mark.parametrize("stop", ["deadline", "cancel"])
-def test_refine_provider_backoff_obeys_deadline_and_cancellation(refine_provider_retry_host, monkeypatch, stop):
-    host = refine_provider_retry_host
-    host.errors = [ModelFailureError("capacity", reason=ModelFailureReason.PROVIDER_CAPACITY)]
-
-    async def interrupted_sleep(delay):
-        host.sleeps.append(delay)
-        if stop == "cancel":
-            raise asyncio.CancelledError
-        host.stop = True
-
-    monkeypatch.setattr("server.service.video_parse.asyncio.sleep", interrupted_sleep)
-    with pytest.raises(asyncio.CancelledError if stop == "cancel" else TimeoutError):
-        asyncio.run(host.runtime.refine(host.lease))
-    assert host.calls == 1 and host.reservations == 1 and host.sleeps == [1.0]
-    assert host.runtime._interval_lease.get() is None
+    snapshot = {"video_parse_task_id": "video-task", "interval_parse_task_id": "interval",
+                "member_versions": {"member": 1}, **snapshot}
+    runtime._refine_subscription = ContextVar("test-refine-subscription", default=RefineSubscription(
+        snapshot["video_parse_task_id"], snapshot["interval_parse_task_id"], tuple(snapshot["member_versions"]),
+    ))
+    token = runtime._model_manager.set(_manager(_Repository()))
+    try:
+        return await runtime.generate_interval_refinement(snapshot, **kwargs)
+    finally:
+        runtime._model_manager.reset(token)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal
 
-from engine.rag.contracts import VideoChunkSearchResult
+from engine.rag.contracts import VideoChunkEvidence, VideoChunkSearchResult
 from engine.rag.retrieval.contracts import EventSearchResult
 
 from ...common.state import ExecutionControl, RunInputs
@@ -13,6 +13,8 @@ from ..frame_evidence import FrameInspectionSession, FrameReader
 from .frames import build_inspect_video_frames_tool
 from .retrieval import build_retrieve_tool, build_read_retrieval_evidence_tool
 from .event_retrieval import build_search_video_events_tool
+from .video_outline import build_get_video_outline_tool
+from .series_overview import build_get_series_overview_tool
 from .shared import _ToolCallBudget
 
 
@@ -33,11 +35,16 @@ def build_retrieval_tools(
     frame_max_height: int | None = None,
     supports_vision_input: bool = False,
     event_retrieve: Callable[..., EventSearchResult] | None = None,
+    video_outline: Callable[..., dict | None] | None = None,
+    series_overview: Callable[..., dict | None] | None = None,
+    outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
+    outline_evidence_registry: dict[str, VideoChunkEvidence] | None = None,
     budget: _ToolCallBudget | None = None,
 ) -> list[AgentTool]:
     role_label = "Query" if role == "query" else "Supervisor"
     if budget is None and maximum_tool_calls is not None:
         budget = _ToolCallBudget(maximum_tool_calls, role_label)
+    outline_chunk_ids: set[str] = set()
     tools = [
         build_retrieve_tool(
             search,
@@ -52,6 +59,9 @@ def build_retrieval_tools(
         build_read_retrieval_evidence_tool(
             calls=calls, control=control, maximum_result_bytes=maximum_result_bytes,
             maximum_read_chars=maximum_read_chars, budget=budget,
+            outline_evidence=outline_evidence, outline_chunk_ids=outline_chunk_ids,
+            outline_evidence_registry=outline_evidence_registry,
+            tenant_id=inputs["tenant_id"], series_ids=list(inputs["series_ids"]),
         ),
     ]
     if event_retrieve is not None:
@@ -59,6 +69,17 @@ def build_retrieval_tools(
             event_retrieve, inputs=inputs, control=control, calls=calls,
             role=role, maximum_result_bytes=maximum_result_bytes,
             maximum_catalog_items=maximum_catalog_items, budget=budget,
+        ))
+    if role == "supervisor" and video_outline is not None:
+        tools.append(build_get_video_outline_tool(
+            video_outline, inputs=inputs, control=control,
+            maximum_result_bytes=maximum_result_bytes, budget=budget,
+            outline_chunk_ids=outline_chunk_ids,
+        ))
+    if role == "supervisor" and series_overview is not None:
+        tools.append(build_get_series_overview_tool(
+            series_overview, inputs=inputs, control=control,
+            maximum_result_bytes=maximum_result_bytes, budget=budget,
         ))
     if supports_vision_input and frame_reader is not None and frame_session is not None:
         tools.append(build_inspect_video_frames_tool(

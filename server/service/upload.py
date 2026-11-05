@@ -16,12 +16,12 @@ from gateway.model_sources import ModelReference
 from ..config.parse_profile import ParseConfig, index_contract_fingerprint, validate_video_parse_schedule
 from ..config.upload import UploadServiceConfig
 from ..model.identifiers import derive_video_id
-from ..model.upload import UploadSessionStatus, UploadCompletionStage
+from ..model.upload import UploadSessionStatus, UploadCompletionStage, UPLOAD_DELETION_PENDING_ERROR_CODE
 from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadSegmentState, UploadSessionDetail,
     UploadSessionState,
 )
-from ..model.dto.jobDTO import VideoParseTaskState
+from ..model.dto.taskDTO import VideoParseTaskState
 from ..repository import video_parse_task as task_store
 from ..repository.upload import (
     UploadConflictError,
@@ -344,6 +344,14 @@ class UploadService:
             tenant_id=require_nonempty_text(tenant_id, "tenant_id"),
             now=self._now(),
         )
+        if deletion.deferred:
+            # Executions are still draining; their original lease expiry marks
+            # when it is safe to clean external artifacts. Reconcile finishes it.
+            _logger.info(
+                "upload_delete_deferred upload_session_id=%s video_id=%s",
+                session_id, deletion.video_id,
+            )
+            return deletion.session
         try:
             self._artifact_store.delete_upload_staging(session_id)
             if (
@@ -368,8 +376,6 @@ class UploadService:
                         self._video_event_index_store.bulk_delete(keys, refresh="wait_for")
                         if not self._video_event_index_store.verify_absent(keys):
                             raise RuntimeError("Event index cleanup was not visible")
-            for job_id in deletion.job_ids:
-                self._artifact_store.delete_job_artifacts(job_id)
             if deletion.video_id is not None:
                 self._artifact_store.delete_video_artifacts(
                     deletion.session.series_id,
@@ -377,8 +383,8 @@ class UploadService:
                 )
         except Exception:
             _logger.exception(
-                "upload_cleanup_failed upload_session_id=%s video_id=%s job_id=%s",
-                session_id, deletion.video_id, deletion.job_id,
+                "upload_cleanup_failed upload_session_id=%s video_id=%s",
+                session_id, deletion.video_id,
             )
             raise
         state = self._repository.finish_delete_session(
@@ -402,7 +408,7 @@ class UploadService:
         failed = 0
         for upload_session_id, tenant_id in pending:
             try:
-                self.delete_session(
+                state = self.delete_session(
                     upload_session_id,
                     tenant_id=tenant_id,
                 )
@@ -413,6 +419,10 @@ class UploadService:
                     upload_session_id,
                 )
             else:
+                if state.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE:
+                    # Fenced leases are still unexpired; wait quietly for the
+                    # next cycle without counting this as completed or failed.
+                    continue
                 completed += 1
         return completed, failed
 
@@ -536,7 +546,6 @@ class UploadService:
             return CompletedUploadState(
                 session=claim.session,
                 video_id=claim.session.video_id,
-                job_id=claim.existing_job_id,
                 video_parse_task_id=claim.existing_video_parse_task_id,
             )
         assert claim.completion_token is not None
@@ -616,8 +625,8 @@ class UploadService:
 
         self._artifact_store.delete_upload_staging(session_id)
         _logger.info(
-            "upload_completed upload_session_id=%s video_id=%s job_id=%s video_parse_task_id=%s duration_ms=%.1f",
-            session_id, completed.video_id, completed.job_id,
+            "upload_completed upload_session_id=%s video_id=%s video_parse_task_id=%s duration_ms=%.1f",
+            session_id, completed.video_id,
             completed.video_parse_task_id,
             (time.perf_counter() - started_at) * 1000,
         )

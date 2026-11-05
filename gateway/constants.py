@@ -22,5 +22,6 @@ DEEPSEEK_PROVIDER: Final = "deepseek"
 OPENAI_STANDARD_PROFILE: Final = "standard"
 OPENAI_DEEPSEEK_PROFILE: Final = "deepseek"
 OPENAI_KIMI_PROFILE: Final = "kimi"
+KIMI_FIXED_TEMPERATURE: Final = 1.0
 
 ARK_OPENAI_BASE_URL: Final = "https://ark.cn-beijing.volces.com/api/v3"

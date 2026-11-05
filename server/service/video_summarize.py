@@ -25,7 +25,7 @@ from gateway.multimodal import TextInput, adapter_capabilities
 from gateway.usage import model_call_context
 
 from ..config.video_summarize import VideoSummarizeConfig
-from ..model.dto.jobDTO import VideoSummarizeLease
+from ..model.dto.taskDTO import VideoSummarizeLease
 from ..storage.artifact import ArtifactStore
 from ..utils.execution import ExecutionCalls, execution_calls, run_blocking
 from ..utils.retry import task_retry_delay
@@ -159,6 +159,8 @@ class VideoSummarizeService:
                             maximum_result_bytes=config.maximum_result_bytes,
                             maximum_read_chars=config.maximum_read_chars,
                             maximum_catalog_items=config.maximum_catalog_items,
+                            maximum_digest_chars=config.maximum_digest_chars,
+                            maximum_outline_sections=config.maximum_outline_sections,
                         ), check_control=manager.check_active,
                     )
                     manager.check_active()

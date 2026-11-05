@@ -98,7 +98,6 @@ const video = (videoId: string, episodeOrder: number): VideoSummary => ({
   playbackUrl: `/api/videos/content?videoId=${videoId}&tenantId=local-default&variant=playback`,
   playbackUrlExpiresAt: null,
   thumbnail: null,
-  latestJobId: null,
   lastError: null,
 });
 

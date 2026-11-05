@@ -16,7 +16,10 @@ from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessio
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from gateway.model_events import ModelTextDelta
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
+
+from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
 
 from agent.utils.tool import AgentTool
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
@@ -34,7 +37,7 @@ from .video_search.errors import VideoSearchFailure, VideoSearchFailureCode, Vid
 from .video_search.runtime import AgentRuntime
 from .video_search.output import (
     build_chat_output, build_chat_snapshot, build_retrieval_trace, merge_retrieval_calls,
-    retrieval_hit, validate_result, video_range_sources,
+    outline_evidence_hit, retrieval_hit, validate_result, video_range_sources,
 )
 from .video_search.state import (
     AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock,
@@ -159,6 +162,12 @@ class SupervisorRuntime:
         self._realtime_runtime = realtime_runtime
         self._model = supervisor_model
         self._web_searcher = web_searcher
+        self._web_search_arguments = create_model(
+            "WebSearchArguments", __base__=SearchArguments,
+            query=(Annotated[str, StringConstraints(
+                strip_whitespace=True, min_length=1, max_length=web_searcher.max_query_chars,
+            )], ...),
+        )
         self._max_web_results = max_web_results
         self._web_timeout_seconds = web_timeout_seconds
         self._execution_timeout_seconds = execution_timeout_seconds
@@ -227,6 +236,7 @@ class SupervisorRuntime:
         query_reports: dict[str, dict] = {}
         frame_receipts: dict[str, dict] = {}
         retrieval_calls: list[RetrievalCall] = []
+        outline_evidence_registry: dict[str, VideoChunkEvidence] = {}
         query_warnings: list[str] = []
         submitted_items: dict[str, SelectedVideoRange] = {}
         submitted_sources: dict[str, list[str]] = {}
@@ -284,9 +294,33 @@ class SupervisorRuntime:
                     answer.append(block)
             return answer
 
+        def citable_result() -> VideoChunkSearchResult:
+            # Retrieval hits and outline chunks whose source evidence was read this
+            # turn are equally citable; both project into the same final hit shape.
+            by_id: dict[str, VideoChunkSearchHit] = {}
+            merged = None
+            if any(call.status != "error" for call in retrieval_calls):
+                merged = merge_retrieval_calls(inputs, retrieval_calls)
+                for hit in merged.hits:
+                    by_id[hit.candidate.video_chunk_id] = hit
+            for chunk_id, evidence in outline_evidence_registry.items():
+                by_id.setdefault(chunk_id, outline_evidence_hit(evidence))
+            hits = list(by_id.values())
+            if merged is not None:
+                return merged.model_copy(update={
+                    "hits": hits,
+                    "agent_reply": merged.agent_reply.model_copy(update={"result_count": len(hits)}),
+                }, deep=True)
+            return VideoChunkSearchResult(
+                query="read outline chunk source evidence",
+                series_ids=list(inputs["series_ids"]),
+                agent_reply=AgentReply(message="已读取大纲 Chunk 源证据。", result_count=len(hits)),
+                hits=hits,
+            )
+
         def accepted_video_evidence():
             assert video_available
-            available = merge_retrieval_calls(inputs, retrieval_calls)
+            available = citable_result()
             if query_warnings:
                 available = available.model_copy(update={
                     "partial": True,
@@ -295,8 +329,9 @@ class SupervisorRuntime:
             source_ids = list(dict.fromkeys(
                 identifier for sources in submitted_sources.values() for identifier in sources
             ))
+            hits_by_id = {hit.candidate.video_chunk_id: hit for hit in available.hits}
             evidence = available.model_copy(update={
-                "hits": [retrieval_hit(retrieval_calls, identifier) for identifier in source_ids],
+                "hits": [hits_by_id[identifier] for identifier in source_ids],
                 "agent_reply": available.agent_reply.model_copy(update={"result_count": len(source_ids)}),
             }, deep=True)
             selection = QueryDraft(
@@ -306,12 +341,18 @@ class SupervisorRuntime:
             )
             return evidence, selection
 
-        def publish_snapshot(*, completed: bool = False) -> tuple[dict, ...]:
+        # Public render blocks of the most recent snapshot; a delta reuses them
+        # and only replaces/extends the trailing Markdown block, never rebuilding
+        # the search result.
+        last_snapshot_blocks: tuple[dict, ...] = ()
+
+        def publish_snapshot(*, completed: bool = False, text_stream: dict | None = None) -> tuple[dict, ...]:
+            nonlocal last_snapshot_blocks
             content = answer_markdown()
             search_result = None
             if completed and video_result is not None:
                 search_result = video_result.model_dump(mode="json", by_alias=True)
-            elif any(call.status != "error" for call in retrieval_calls):
+            elif any(call.status != "error" for call in retrieval_calls) or submitted_items:
                 evidence, selection = accepted_video_evidence()
                 search_result = build_chat_snapshot(
                     evidence, selection, answer_blocks(render_blocks),
@@ -330,8 +371,10 @@ class SupervisorRuntime:
             control.publish(inputs, {
                 "type": "answer.snapshot", "content": content, "searchResult": search_result,
                 "renderBlocks": public_blocks,
+                **({"textStream": text_stream} if text_stream is not None else {}),
             })
-            return tuple(public_blocks)
+            last_snapshot_blocks = tuple(public_blocks)
+            return last_snapshot_blocks
 
         def accept_tool_activity(
             call_id: str, name: str, status: ToolCallStatus,
@@ -367,26 +410,115 @@ class SupervisorRuntime:
                     return
                 publish_snapshot()
 
-        def accept_text(value: str) -> None:
+        stream_call_id: str | None = None
+        stream_text = ""
+        stream_prefix: list = []
+        # Visible text already delivered for the current model call, so each delta
+        # sends only the growth. It resets with the other stream_* variables.
+        stream_sent = ""
+
+        def visible_text(value: str, *, final: bool) -> str:
+            if web_search_attempted:
+                if not final:
+                    # A URL (including its scheme) may span provider chunks. Keep
+                    # the unfinished token private until its boundary is known.
+                    tail = re.search(r"(?:https?://[^\s<>\])]*|https?:/?/?|https?|htt|ht|h)$", value)
+                    if tail is not None:
+                        value = value[:tail.start()]
+                value = _URL.sub(
+                    lambda match: match.group() if match.group() in web_sources else "[未核实链接]",
+                    value,
+                )
+            return value
+
+        def text_blocks(prefix: list, value: str) -> list:
+            candidate = list(prefix)
+            if candidate and isinstance(candidate[-1], MarkdownRenderBlock):
+                candidate[-1] = MarkdownRenderBlock(markdown=candidate[-1].markdown + "\n\n" + value)
+            else:
+                candidate.append(MarkdownRenderBlock(markdown=value))
+            ChatRenderDraft.validate_prefix(answer_blocks(candidate))
+            return candidate
+
+        def accept_text_delta(delta: ModelTextDelta) -> None:
+            nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
             with tool_lock:
                 control.check()
-                value = value.strip()
+                if stream_call_id is None:
+                    stream_call_id = delta.call_id
+                    stream_prefix = list(render_blocks)
+                    stream_sent = ""
+                elif delta.call_id != stream_call_id:
+                    raise AgentModelInvocationError("A new model call replaced an unfinished streamed answer")
+                stream_text += delta.text
+                value = visible_text(stream_text, final=False)
+                if not value.strip():
+                    return
+                text_stream = {
+                    "origin": "provider_delta", "callId": delta.call_id,
+                    "deltaSequence": delta.sequence,
+                    "modelFirstTextMs": delta.first_text_ms,
+                    "modelElapsedMs": delta.elapsed_ms,
+                    "providerReceivedMonotonicMs": delta.received_at * 1000,
+                    "beforeModelCompleted": delta.before_completion,
+                }
+                if not value.startswith(stream_sent):
+                    # Visible text was rewritten (e.g. a held-back URL resolved to a
+                    # masked link). Correct the whole body with one snapshot.
+                    candidate = text_blocks(stream_prefix, value)
+                    if candidate == render_blocks:
+                        stream_sent = value
+                        return
+                    render_blocks[:] = candidate
+                    stream_sent = value
+                    publish_snapshot(text_stream=text_stream)
+                    return
+                piece = value[len(stream_sent):]
+                if not piece:
+                    return
+                # The first piece joins a trailing Markdown block with the same
+                # separator text_blocks uses; otherwise it opens a new block.
+                joins = stream_prefix and isinstance(stream_prefix[-1], MarkdownRenderBlock)
+                new_block = not stream_sent and not joins
+                if stream_sent:
+                    render_blocks[-1] = MarkdownRenderBlock(markdown=render_blocks[-1].markdown + piece)
+                else:
+                    render_blocks[:] = [*stream_prefix[:-1], MarkdownRenderBlock(
+                        markdown=stream_prefix[-1].markdown + "\n\n" + value,
+                    )] if joins else [*stream_prefix, MarkdownRenderBlock(markdown=value)]
+                    piece = piece if new_block else "\n\n" + piece
+                stream_sent = value
+                content = answer_markdown()
+                if len(content) > 20_000:
+                    raise ValueError("Chat Markdown exceeds 20000 characters")
+                public = list(last_snapshot_blocks[:len(render_blocks) - 1])
+                public.append({"type": "markdown", "markdown": render_blocks[-1].markdown})
+                control.publish(inputs, {
+                    "type": "answer.delta", "callId": delta.call_id,
+                    "delta": piece, "newBlock": new_block,
+                    "content": content, "renderBlocks": public,
+                    "textStream": text_stream,
+                })
+
+        def accept_text(value: str) -> None:
+            nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
+            with tool_lock:
+                control.check()
+                if stream_call_id is not None:
+                    if value != stream_text:
+                        raise AgentModelInvocationError("Completed model text differs from its streamed body")
+                    control.publish(inputs, {"type": "answer.model.completed", "callId": stream_call_id})
+                    candidate = text_blocks(stream_prefix, visible_text(value, final=True)) if value.strip() else stream_prefix
+                    stream_call_id, stream_text, stream_prefix, stream_sent = None, "", [], ""
+                    render_blocks[:] = candidate
+                    # Deltas do not refresh the cached public blocks; the call's
+                    # completion snapshot does. It is not a live provider delta.
+                    publish_snapshot()
+                    return
+                value = visible_text(value.strip(), final=True)
                 if not value:
                     return
-                if web_search_attempted:
-                    value = _URL.sub(
-                        lambda match: match.group() if match.group() in web_sources else "[未核实链接]",
-                        value,
-                    )
-                candidate = list(render_blocks)
-                if candidate and isinstance(candidate[-1], MarkdownRenderBlock):
-                    candidate[-1] = MarkdownRenderBlock(
-                        markdown=candidate[-1].markdown + "\n\n" + value,
-                    )
-                else:
-                    candidate.append(MarkdownRenderBlock(markdown=value))
-                ChatRenderDraft.validate_prefix(answer_blocks(candidate))
-                render_blocks[:] = candidate
+                render_blocks[:] = text_blocks(render_blocks, value)
                 publish_snapshot()
 
         def publish_child_progress(event: dict) -> None:
@@ -429,8 +561,8 @@ class SupervisorRuntime:
                         success=False,
                         payload={"error": ToolError(
                             code="WEB_SEARCH_FAILED",
-                            message="Web search is temporarily unavailable.",
-                            retryable=True,
+                            message="Web search is unavailable.",
+                            retryable=exc.retryable,
                             retry_hint=(
                                 "Answer from other available sources or explain the limitation."
                             ),
@@ -729,21 +861,24 @@ class SupervisorRuntime:
                 if not video_available:
                     raise AgentToolFeedbackError(
                         "VIDEO_EVIDENCE_UNAVAILABLE", "No video evidence is available.",
-                        "Retrieve video evidence directly or call query_video before submitting video items.",
+                        "Deliver current-video evidence as markdown time-code links in the answer; "
+                        "submit_video_item only accepts retrieval hits.",
                     )
                 try:
                     retrieval_hit(retrieval_calls, video_chunk_id)
                 except UnknownToolItemError as exc:
-                    raise AgentToolFeedbackError(
-                        "UNKNOWN_ITEM", str(exc),
-                        "Use a video_chunk_id returned by retrieve or search_video_events.",
-                    ) from exc
+                    if outline_evidence_registry.get(video_chunk_id) is None:
+                        raise AgentToolFeedbackError(
+                            "UNKNOWN_ITEM", str(exc),
+                            "Read the chunk with read_retrieval_evidence first, or use an id "
+                            "from retrieve/search_video_events.",
+                        ) from exc
                 try:
                     # The tool accepts seconds; canonical evidence and playback storage use milliseconds.
                     start_ms, end_ms = round(start_seconds * 1000), round(end_seconds * 1000)
                     source_ids = video_range_sources(
                         {hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
-                         for hit in merge_retrieval_calls(inputs, retrieval_calls).hits},
+                         for hit in citable_result().hits},
                         video_chunk_id, start_ms, end_ms, allow_adjacent=True,
                     )
                 except (ValueError, OverflowError) as exc:
@@ -882,25 +1017,38 @@ class SupervisorRuntime:
                             raise AgentToolInvocationError("Realtime context exceeds its output budget")
                 return result
 
+        # Realtime evidence is delivered as markdown time-code links in the answer, never as
+        # video cards. When the frozen playback is the only evidence source (no searchable
+        # series), omit the card tools so the model cannot submit a card that can only fail.
+        video_card_tools = (
+            [
+                build_agent_tool(
+                    func=submit_video_item, name="submit_video_item",
+                    description=(
+                        "Submit a final video selection after checking its source evidence. Times are absolute "
+                        "seconds (decimals allowed) within the anchor or two adjacent retrieved chunks "
+                        "of the same video. For 00:50–01:00, pass start_seconds=50, end_seconds=60. "
+                        "Repeated submission updates the selection in place; only submitted selections are displayed."
+                    ), args_schema=SubmitVideoItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                ),
+                build_agent_tool(
+                    func=remove_video_item, name="remove_video_item",
+                    description="Withdraw a final video selection by video_chunk_id.",
+                    args_schema=RemoveItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                ),
+            ]
+            if (video_available or not realtime_available) else []
+        )
         tools = [
-            build_agent_tool(
-                func=submit_video_item, name="submit_video_item",
-                description=(
-                    "Submit a final video selection after checking its source evidence. Times are absolute "
-                    "seconds (decimals allowed) within the anchor or two adjacent retrieved chunks "
-                    "of the same video. For 00:50–01:00, pass start_seconds=50, end_seconds=60. "
-                    "Repeated submission updates the selection in place; only submitted selections are displayed."
-                ), args_schema=SubmitVideoItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
-            ),
-            build_agent_tool(
-                func=remove_video_item, name="remove_video_item",
-                description="Withdraw a final video selection by video_chunk_id.",
-                args_schema=RemoveItemArguments, maximum_result_bytes=self._max_tool_result_bytes,
-            ),
+            *video_card_tools,
             build_agent_tool(
                 func=search_web, name="search_web",
-                description="Search the public web. Cite only URLs returned by this tool.",
-                args_schema=SearchArguments, maximum_result_bytes=self._max_tool_result_bytes,
+                description=(
+                    f"Search the public web using a query of at most {self._web_searcher.max_query_chars} characters. "
+                    "Use site:domain when a specific source is requested. "
+                    "Returns summaries, not full page text. Cite only URLs returned by this tool."
+                ),
+                args_schema=self._web_search_arguments, maximum_result_bytes=self._max_tool_result_bytes,
             ),
             build_agent_tool(
                 func=query_video, name="query_video",
@@ -926,6 +1074,7 @@ class SupervisorRuntime:
                 supports_vision_input=self.supports_vision_input,
                 frame_session=self._video_runtime.new_frame_session(), budget=tool_budget,
                 maximum_result_bytes=self._max_tool_result_bytes,
+                outline_evidence_registry=outline_evidence_registry,
             )
             for direct in direct_tools:
                 def invoke_direct(*args, _tool=direct, **kwargs):
@@ -956,9 +1105,17 @@ class SupervisorRuntime:
             for item in inputs["series_context"]
             if isinstance(item, dict) and item.get("seriesId") in inputs["series_ids"]
         ]
+        display_names = {
+            item.get("seriesId"): item.get("displayName")
+            for item in inputs["series_context"]
+            if isinstance(item, dict)
+        }
         scope_description = (
             "本次可检索的视频系列："
-            + "、".join(str(item["name"] or item["seriesId"]) for item in scope)
+            + "、".join(
+                str(display_names.get(item["seriesId"]) or item["name"] or item["seriesId"])
+                for item in scope
+            )
             + "。视频工具仅可检索这些系列。"
             if scope else
             "当前没有可检索的视频系列；当前播放视频可通过 understand_current_video 取得基础证据。"
@@ -966,6 +1123,19 @@ class SupervisorRuntime:
             "当前没有可检索的视频系列。用户询问本地视频内容时，请先告知目前"
             "没有可核验的视频证据；网页资料不能代替视频证据。"
         )
+        current_video = inputs.get("current_video")
+        if isinstance(current_video, dict) and current_video.get("episode"):
+            current_label = (
+                str(current_video.get("seriesDisplayName") or current_video.get("series") or "")
+            )
+            current_episode = current_video.get("episode")
+            current_title = str(current_video.get("title") or "").strip()
+            scope_description += (
+                f"当前打开的视频：{current_label} 第 {current_episode} 集"
+                f"{('《' + current_title + '》') if current_title else ''}。"
+            )
+        else:
+            scope_description += "当前没有打开的视频。"
         reference = inputs.get("reference_context") or {}
         evidence = reference.get("evidence") if isinstance(reference, dict) else None
         reference_summary = {
@@ -985,7 +1155,7 @@ class SupervisorRuntime:
             "按需直接读取 evidence.transcript 核对对白、evidence.events 核对事件，section 不能简写为 transcript 或 events。"
             "已知 section 不必先 overview，也不要求读完所有 section；省略 end 按预算读取，截断时按提示续读。"
             "对白证据已足够回答出处、原话或说话人时无需抽帧；只有具体视觉主张或证据缺口才看图。"
-            "用 submit_video_item 提交最终片段；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
+            "用 submit_video_item 提交最终片段，video_chunk_id 只能是本轮检索工具返回的值；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
             "例如 00:50–01:00 传 50 和 60。检索证据与 Query 草稿仍使用毫秒，提交前除以 1000；"
             "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文与 claim 使用秒或时间码。"
             "范围须完整覆盖支持主张的必要内容并去掉无关部分，可跨同一视频两个相邻已检索 Chunk。"
@@ -1002,7 +1172,14 @@ class SupervisorRuntime:
              "after_anchor 表示暂停位置之后的证据。"
              "partial 表示采集缺失，omitted_evidence 表示输出为预算省略；据此说明覆盖范围与不确定性。"
              "persons 是整个 Chunk 的人名清单，不证明这些人都在暂停帧中；不得补造或擅自改写事实。"
-             "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。\n"
+             "只有实际收到图片输入才可说自己看过原图；文字模型使用 caption、OCR 和画面观察。"
+             "当前视频的证据一律以正文中的纯文本时间码交付（如 01:29–02:05），不要写成 Markdown 链接或网址，界面会把时间码变成可回看的跳转；不要用 submit_video_item 提交；"
+             "submit_video_item 只接受本轮检索工具返回的 video_chunk_id。"
+             "时间码仍是可回看的依据，即使无法提交视频卡，也不要对用户说没有可播放片段。"
+             "用户要求简短或限定句数时，整条回复（包括来源标注）都必须控制在限内，"
+             "来源写成对应句子里的时间码，不另起一段罗列，也不得为缩短而删掉来源；调用工具前的过程说明同样计入句数，限定句数时直接调用工具、不写过程说明。"
+             "chunks、frames、visual_summary、partial、omitted_evidence、after_anchor、PARSING_FAILED、NO_VIDEO_SCOPE 等"
+             "都是内部取证术语，不得写入对用户的回答；覆盖范围或不可核验的限制用普通中文说明。\n"
              if realtime_available else "")
             +
             "你是 seekino 对话助手，负责理解当前请求、按需取证并回应用户。\n"
@@ -1021,12 +1198,23 @@ class SupervisorRuntime:
             "本轮的限制只适用于本轮，不自行扩展成长久禁止检索的偏好。\n"
             "以下视频检索和核验策略仅在当前任务需要新的视频证据时适用。\n"
             "需要检索时采用贪心原则：选能回答当前问题的最小粒度工具，取得充分证据就停止扩搜并交付。"
+            "用户询问视频整体内容、结构、章节或概要时，先调用 get_video_outline，按章节组织回答；"
+            "用户询问系列/课程整体内容（如「这个系列讲了什么」）时，先调用 get_series_overview，按集组织系列脉络；"
+            "需要某几集的细节时，再用 get_video_outline 一次读取多集（最多 5 集）。"
+            "两层来源：series_context 中的简介与背景资料是用户填写的设定，用于术语、人物和意图框架；"
+            "get_series_overview 的各集标题与简介来自视频摘要，才代表视频实际讲了什么。"
+            "两者不一致时说明差异；未生成摘要的集明确标为尚未生成，不得补造内容。"
+            "多个系列时按系列分别组织，用显示名称称呼系列。"
+            "需要具体事实或片段时，用章节的 video_chunk_ids 调用 search_video_events 精读，命中结果才可提交为视频片段；"
+            "read_retrieval_evidence 可读取大纲 Chunk 的源证据，读取后即可作为视频片段提交；仅凭大纲摘要不能提交。"
+            "没有大纲时回到下述检索策略。"
             "具体台词、动作、情绪或局部事件优先直接调用 search_video_events，不先用 retrieve 粗搜 Chunk。"
             "台词检索保留用户提供的原话或译文短语，不先扩写成带人物、剧情假设的长查询。"
             "命中结果包含真实证据；内容截断或缺少上下文时用 read_retrieval_evidence 续读。排名第一本身不等于证据充分。"
             "Event 工具不可用、索引未覆盖、候选不足或需要更广上下文时，再用 retrieve 扩大到 Chunk；"
             "未覆盖或部分覆盖不能解释成没有匹配。只缺局部上下文时先读取已命中 Chunk，不重新广搜。"
-            "复杂问题可直接把可独立调查的目标交给 query_video，按需先取线索，无需逐级试遍工具；"
+            "视频有大纲时，路线、对比等跨章节问题由你用大纲和 search_video_events 直接核验，不委派 query_video；"
+            "没有大纲且有多个可独立调查的目标时，可直接交给 query_video，按需先取线索，无需逐级试遍工具；"
             "多个独立目标通过 queries 一次并行委派，有依赖的调查按顺序开展。"
             "Query 只调查自己的目标，你负责跨报告的时间顺序、冲突、不确定性与最终结论。"
             "attachments 从当前或 history_attachments 的 mediaUri 复制，只给子任务必要图片；"
@@ -1035,12 +1223,18 @@ class SupervisorRuntime:
             "先读 video_scope_description，确认本次可检索的视频范围。没有可检索"
             "系列时仍可直接聊天或搜索网页；当前播放工具取得的真实证据可独立用于答疑。"
             "若没有任何本地视频证据，先说明无法核验该视频，不得用网页信息冒充视频证据。"
+            "指代解析：「这个视频/这一集/刚才/现在」指当前打开的视频（current_video），"
+            "「这个系列/这门课」指当前视频所属系列，或范围内唯一的系列。"
+            "用户问「这个视频」但当前没有打开视频时：范围内若只有一集就直接用这一集，否则列出几集请用户确认。"
+            "范围内有多个系列、问题未指明系列且没有打开视频时，先问清是哪个系列或按系列分别回答，绝不把多个系列混为一谈。"
+            "向用户称呼视频一律用「系列显示名 第 N 集《标题》」，不得写出任何内部 id。"
             + video_delivery
             + "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
             "调用耗时的视频检索、网页搜索或当前视频理解工具前，先用一句简短自然的正文说明"
             "准备核验什么，让用户及时知道任务已开始。工具状态由系统根据真实调用展示，"
             "不要输出工具 JSON、模拟进度或反复播报工具操作。得到证据后，如仍需继续核验，"
             "可简短说明已发现的内容和下一步核验目标；不泄露内部推理或未经核实的结论。"
+            "工具报错、调用限制和内部字段名不写进给用户的回答，换用其他工具继续即可。"
             + "所有正文要与提交的 claim 和时间一致，整体不能只有完成确认。"
             +
             "实时理解和网页结果如有使用，应融入这份最终回答并区分来源与不确定性。"
@@ -1055,6 +1249,7 @@ class SupervisorRuntime:
                 "user_message": inputs["user_message"],
                 "video_scope": scope,
                 "video_scope_description": scope_description,
+                "current_video": inputs.get("current_video"),
                 "series_context": inputs["series_context"],
                 "video_reference": reference_summary,
                 "extra_context": inputs.get("extra_context"),
@@ -1079,6 +1274,8 @@ class SupervisorRuntime:
                     max_model_calls_per_turn if self._limits_enabled else None
                 ),
                 handle_text=accept_text,
+                **({"handle_text_delta": accept_text_delta}
+                   if getattr(self._model, "supports_text_deltas", False) else {}),
                 request_timeout_seconds=control.remaining_seconds(),
                 check_control=control.check,
                 max_input_chars=self._max_prompt_chars,
@@ -1115,7 +1312,7 @@ class SupervisorRuntime:
             render_blocks.append(MarkdownRenderBlock(markdown=f"{source_heading}：\n" + links))
         rendered = ChatRenderDraft(blocks=answer_blocks(render_blocks))
         content = rendered.answer_markdown
-        if any(call.status != "error" for call in retrieval_calls):
+        if any(call.status != "error" for call in retrieval_calls) or submitted_items:
             # Reuse the existing render contract with Supervisor selections, never child render blocks.
             evidence, selection = accepted_video_evidence()
             validate_result(evidence, inputs)

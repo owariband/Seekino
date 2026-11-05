@@ -7,7 +7,7 @@ from math import isfinite
 from threading import Event
 from time import monotonic
 
-from engine.rag.contracts import VideoChunkSearchResult
+from engine.rag.contracts import VideoChunkEvidence, VideoChunkSearchResult
 from engine.rag.retrieval.contracts import EventSearchResult
 from gateway.agent_model.contracts import StructuredToolAgentModel
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
@@ -57,6 +57,9 @@ class AgentRuntime:
         frame_max_height: int | None = None,
         maximum_frame_inspections: int | None = None,
         event_retrieve: Callable[..., EventSearchResult] | None = None,
+        video_outline: Callable[..., dict | None] | None = None,
+        series_overview: Callable[..., dict | None] | None = None,
+        outline_evidence: Callable[..., VideoChunkEvidence] | None = None,
     ) -> None:
         for name, value, maximum in (
             ("max_model_calls_per_turn", max_model_calls_per_turn, None),
@@ -86,6 +89,9 @@ class AgentRuntime:
         self._query_model = query_model
         self._retrieve = retrieve
         self._event_retrieve = event_retrieve
+        self._video_outline = video_outline
+        self._series_overview = series_overview
+        self._outline_evidence = outline_evidence
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
         self._limits_enabled = limits_enabled
@@ -137,9 +143,13 @@ class AgentRuntime:
         maximum_tool_calls: int | None = None, supports_vision_input: bool = False,
         frame_session: FrameInspectionSession | None = None, budget: _ToolCallBudget | None = None,
         maximum_result_bytes: int | None = None,
+        outline_evidence_registry: dict[str, VideoChunkEvidence] | None = None,
     ) -> list[AgentTool]:
         return build_retrieval_tools(
             self._retrieve, role="supervisor", event_retrieve=self._event_retrieve,
+            video_outline=self._video_outline, series_overview=self._series_overview,
+            outline_evidence=self._outline_evidence,
+            outline_evidence_registry=outline_evidence_registry,
             inputs=inputs, control=control, calls=calls,
             maximum_tool_calls=maximum_tool_calls,
             maximum_result_bytes=min(self._max_tool_result_bytes, maximum_result_bytes)

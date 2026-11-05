@@ -1,0 +1,22 @@
+{
+  "audio_seconds": 120,
+  "cpu_inference_seconds": 62.86421174999941,
+  "mps_inference_seconds": 11.607226832999913,
+  "cpu_total_seconds": 66.7141477920004,
+  "mps_total_seconds": 14.721987082999476,
+  "cpu_speaker_count": 1,
+  "mps_speaker_count": 1,
+  "mismatch_frames_20ms": 0,
+  "mismatch_fraction": 0.0,
+  "cpu_peak_rss_gib": 2.644805908203125,
+  "mps_peak_rss_gib": 0.8675537109375,
+  "mps_peak_tensor_gib": 0.6765706539154053,
+  "mps_peak_driver_gib": 3.4120635986328125,
+  "device": {
+    "segmentation": "mps:0",
+    "embedding": "mps"
+  },
+  "passed": true,
+  "quality_scope": "CPU/MPS consistency on first 120 seconds only; not human diarization accuracy acceptance",
+  "warnings": "Both preflights emitted numpy clustering matmul warnings; full run must verify finite speaker embeddings."
+}

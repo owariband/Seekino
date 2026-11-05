@@ -29,7 +29,6 @@ from .errors import (
     ModelInputTooLargeError,
     OpenAIFunctionCallingError,
     QueryModelIncompleteError,
-    provider_failure_reason,
 )
 
 _logger = logging.getLogger(__name__)
@@ -97,9 +96,6 @@ def _failure_reason_for_exception(exc: BaseException) -> ModelFailureReason:
     existing_reason = getattr(exc, "reason", None)
     if isinstance(existing_reason, ModelFailureReason):
         return existing_reason
-    provider_reason = provider_failure_reason(exc)
-    if provider_reason is not None:
-        return provider_reason
     if isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower():
         return ModelFailureReason.MODEL_TIMEOUT
     return ModelFailureReason.INVALID_MODEL_RESPONSE
@@ -651,7 +647,7 @@ def _validated_agent_turn(
     assistant_message = {
         "role": "assistant", "content": content, "tool_calls": rendered_calls,
     }
-    if provider_label == "DeepSeek" and isinstance(reasoning_content, str):
+    if isinstance(reasoning_content, str):
         assistant_message["reasoning_content"] = reasoning_content
     return finish_reason, content, assistant_message, validated_calls
 

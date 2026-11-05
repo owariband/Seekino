@@ -1,0 +1,11 @@
+{
+  "same_images_and_order": true,
+  "image_count_before": 189,
+  "image_count_after": 189,
+  "text_chars_before": 13323,
+  "text_chars_after": 14567,
+  "same_model": true,
+  "stream_before": true,
+  "stream_after": true,
+  "request_parameters_equal_except_messages": true
+}

@@ -1,0 +1,75 @@
+{
+  "new": {
+    "call_id": "fdc4e02f-ae06-4b29-88ca-4e9d6ebbcf25",
+    "sequence_no": 0,
+    "stream": true,
+    "image_count": 189,
+    "request_to_complete_seconds": 260.989669,
+    "reasoning_first_seconds": 50.788143,
+    "reasoning_last_seconds": 231.290734,
+    "reasoning_chars": 22028,
+    "content_first_seconds": 231.375231,
+    "content_last_seconds": 260.981669,
+    "content_chars": 5328,
+    "first_sse_seconds": 50.780702,
+    "usage": {
+      "completion_tokens": 6949,
+      "prompt_tokens": 233207,
+      "total_tokens": 240156,
+      "completion_tokens_details": {
+        "reasoning_tokens": 5358
+      }
+    },
+    "input_has_video_scope": true
+  },
+  "historical_same_chunk": {
+    "call_id": "8f5c9522-cdb4-4ced-837c-7340dd6c0a50",
+    "sequence_no": 0,
+    "stream": false,
+    "image_count": 189,
+    "request_to_complete_seconds": 234.165792,
+    "usage": {
+      "completion_tokens": 7025,
+      "prompt_tokens": 232862,
+      "total_tokens": 239887,
+      "completion_tokens_details": {
+        "reasoning_tokens": 5475
+      },
+      "prompt_tokens_details": {
+        "cached_tokens": 232862
+      },
+      "cached_tokens": 232862
+    },
+    "input_has_video_scope": false
+  },
+  "comparison_limits": [
+    "Different date/network/concurrency; old stream=false",
+    "Historical comparison is not a causal speaker-label experiment"
+  ],
+  "chunk": {
+    "sequence_no": 0,
+    "event_counts": {
+      "SCENE": 2,
+      "ACTION": 4,
+      "ON_SCREEN_TEXT": 5,
+      "DIALOGUE": 6,
+      "EMOTION": 1
+    },
+    "persons": [
+      "右下角男性讲解者"
+    ],
+    "dialogue_speakers": {
+      "null": 6
+    },
+    "speaker_scope": "video",
+    "speaker_scope_id": "6cf69603-6708-4d24-bee3-2dff0e858ad3",
+    "speaker_ids": [
+      "SPEAKER_00"
+    ],
+    "input_cue_count": 22,
+    "input_speaker_ids": {
+      "SPEAKER_00": 22
+    }
+  },
+  "observation": "Anonymous groups reach Understanding, but mapping-to-person discussion remains; no demonstrated latency benefit"
+}

@@ -1,0 +1,47 @@
+{
+  "task_id": "6cf69603-6708-4d24-bee3-2dff0e858ad3",
+  "status": "PARSING",
+  "is_paused": true,
+  "lease_version": 5,
+  "active_chunk_leases": 0,
+  "chunk_status_counts": [
+    {
+      "video_task_id": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+      "status": "QUEUED",
+      "count": 87
+    },
+    {
+      "video_task_id": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+      "status": "WAITING",
+      "count": 29
+    },
+    {
+      "video_task_id": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+      "status": "COMPLETE",
+      "count": 1
+    },
+    {
+      "video_task_id": "6cf69603-6708-4d24-bee3-2dff0e858ad3",
+      "status": "QUEUED",
+      "count": 116
+    },
+    {
+      "video_task_id": "6cf69603-6708-4d24-bee3-2dff0e858ad3",
+      "status": "WAITING",
+      "count": 1
+    }
+  ],
+  "asr_new_requests": 0,
+  "audio_rows": [
+    {
+      "video_task_id": "613f40e2-7bcb-4e38-9ae4-9ad1021afb51",
+      "cue_count": 2476,
+      "sha": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4"
+    },
+    {
+      "video_task_id": "6cf69603-6708-4d24-bee3-2dff0e858ad3",
+      "cue_count": 2476,
+      "sha": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4"
+    }
+  ]
+}

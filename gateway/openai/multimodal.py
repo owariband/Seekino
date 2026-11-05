@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from time import monotonic
 from typing import Any, Literal, TypeVar
 
-from openai import APIError, OpenAI
+from openai import APIError, DefaultHttpxClient, OpenAI
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
+from gateway.agent_model.errors import ModelFailureError
+from gateway.openai.errors import transient_failure_reason
 from gateway.agent_model.fallback import log_model_fallback
 from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.schema_normalization import inline_schema_refs
 from gateway.media import encode_media_file
+from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.streaming.first_sse import FirstSSEDeadline
 from gateway.multimodal import (
     DeadlineAwareMultimodalModel,
     MultimodalInput,
@@ -22,6 +27,8 @@ from gateway.multimodal import (
     validate_generate_request,
 )
 from gateway.usage import track_model_call
+from gateway.streaming.responses import request_response
+from gateway.errors import SSEProxyError, ContentFilterError
 
 
 _MAX_DEEPSEEK_INLINE_IMAGE_BYTES = 32 * 1024 * 1024
@@ -50,6 +57,8 @@ class DeepSeekMultimodalModel:
         reasoning_effort: Literal["none", "low", "high", "max"] = "none",
         fallback_model: DeadlineAwareMultimodalModel | None = None,
         client: Any | None = None,
+        stream: bool = True,
+        temperature: float = 0.0,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -67,6 +76,8 @@ class DeepSeekMultimodalModel:
         ):
             raise ValueError("fallback_model must use the ark provider")
 
+        self._stream = stream
+        self.temperature = temperature
         self.model_name = model
         self.primary_model_name = model
         self.fallback_model_name = (
@@ -76,6 +87,7 @@ class DeepSeekMultimodalModel:
             fallback_model.provider_name if fallback_model is not None else None
         )
         self.base_url = base_url.rstrip("/")
+        self._api_key = api_key
         self.max_output_tokens = max_output_tokens
         self.reasoning_effort = reasoning_effort
         self._request_timeout_seconds = request_timeout_seconds
@@ -165,31 +177,47 @@ class DeepSeekMultimodalModel:
             if request_timeout_seconds <= 0:
                 raise ValueError("request_timeout_seconds must be greater than zero")
             effective_timeout = min(effective_timeout, request_timeout_seconds)
+        request = dict(
+            model=self.model_name,
+            input=[{"role": "user", "content": content}],
+            text={"format": {"type": "json_schema", "name": schema_name,
+                             "schema": schema, "strict": True}},
+            reasoning={"effort": self.reasoning_effort},
+            temperature=self.temperature,
+            max_output_tokens=self.max_output_tokens,
+            timeout=effective_timeout,
+        )
+        # Startup cancellation must own its HTTP/1 connection, not interrupt
+        # other requests using the adapter's shared client.
+        first_sse = FirstSSEDeadline(effective_timeout) if self._stream and self._owns_client else None
+        client_scope = (
+            OpenAI(base_url=self.base_url, api_key=self._api_key,
+                   timeout=effective_timeout, max_retries=0,
+                   http_client=DefaultHttpxClient(
+                       http2=False, event_hooks={"request": [first_sse.on_request]},
+                   )) if first_sse is not None else nullcontext(self._client)
+        )
         try:
-            with track_model_call(
-                provider=self.provider_name,
-                model=self.model_name,
-                operation=schema_name,
-            ) as call:
+            with client_scope as client, track_model_call(
+                provider=self.provider_name, model=self.model_name, operation=schema_name,
+            ) as call, capture_model_diagnostics(call, {**request, "stream": self._stream}):
                 try:
-                    response = self._client.responses.create(
-                        model=self.model_name,
-                        input=[{"role": "user", "content": content}],
-                        text={
-                            "format": {
-                                "type": "json_schema",
-                                "name": schema_name,
-                                "schema": schema,
-                                "strict": True,
-                            }
-                        },
-                        reasoning={"effort": self.reasoning_effort},
-                        temperature=0,
-                        max_output_tokens=self.max_output_tokens,
-                        timeout=effective_timeout,
+                    response, output_text = request_response(
+                        client.responses, stream=self._stream, usage_call=call,
+                        check_control=check_control, first_sse_deadline=first_sse, **request,
                     )
-                except APIError as error:
-                    call.capture_response(error)
+                    if self._stream:
+                        record_model_event("response", response)
+                except ContentFilterError:
+                    raise
+                except (APIError, SSEProxyError) as error:
+                    call.capture_response(error, include_usage=False)
+                    call.raise_if_cancelled()
+                    reason = transient_failure_reason(error) if isinstance(error, APIError) else None
+                    if reason is not None:
+                        raise ModelFailureError(
+                            "Responses model request failed", reason=reason,
+                        ) from error
                     raise DeepSeekModelError(
                         f"DeepSeek request failed for model {self.model_name}: {error}"
                     ) from error
@@ -201,17 +229,19 @@ class DeepSeekMultimodalModel:
                     )
                 if getattr(response, "status", None) not in {None, "completed"}:
                     raise DeepSeekModelError("DeepSeek response did not complete")
-                output_text = getattr(response, "output_text", None)
                 if not isinstance(output_text, str) or not output_text.strip():
                     raise DeepSeekModelError("DeepSeek returned no output text")
 
                 try:
                     return result_type.model_validate_json(output_text)
+                except ValidationError:
+                    # Preserve raw candidate and locations for the caller's result gate.
+                    raise
                 except (ValueError, TypeError) as error:
                     raise DeepSeekModelError(
                         f"DeepSeek output does not match schema {schema_name}"
                     ) from error
-        except DeepSeekModelError as error:
+        except (DeepSeekModelError, ModelFailureError, ValidationError) as error:
             if self._fallback_model is None:
                 raise
             fallback_timeout = effective_timeout - (
@@ -243,7 +273,7 @@ class DeepSeekMultimodalModel:
 
 
 def _deepseek_response_schema(value: Any) -> Any:
-    """Project union nodes to the DeepSeek Responses schema format."""
+    """Project strict object requirements and unions without changing domain schemas."""
     if isinstance(value, list):
         return [_deepseek_response_schema(item) for item in value]
     if not isinstance(value, dict):
@@ -264,4 +294,9 @@ def _deepseek_response_schema(value: Any) -> Any:
     if "oneOf" in schema:
         schema["anyOf"] = schema.pop("oneOf")
         schema.pop("discriminator", None)
+    if isinstance(schema.get("properties"), dict):
+        # Strict Responses schemas require every declared property. Existing
+        # nullable types stay nullable; the domain model keeps its defaults.
+        schema["required"] = list(schema["properties"])
+        schema.setdefault("additionalProperties", False)
     return schema

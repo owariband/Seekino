@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from collections.abc import Sequence
 
 from agent.common.chunk_understanding import (
@@ -10,7 +11,6 @@ from agent.common.chunk_understanding import (
 )
 from engine.parsev2.observations import ASRResult, OCRResult
 from agent.utils.context_canvas import ContextCanvas
-from server.constants.parse import VOICEPRINT_B0_VOICE_TOP1_MIN_LEAD, VOICEPRINT_DECISION_REASON_MAX_CHARS
 
 from .state import ChunkExecution
 from .timelineEvent_canvas import ParseContextCanvas
@@ -36,6 +36,32 @@ def build_ocr_prompt(frame_timestamps: Sequence[int]) -> str:
     )
 
 
+def _all_speakers(asr_result: ASRResult, background: dict) -> dict:
+    """Keep whole-video voice groups distinct from background-provided people."""
+    whole_video = (asr_result.get("speaker_scope") == "video"
+                   and bool(asr_result.get("speaker_scope_id"))
+                   and "speaker_ids" in asr_result)
+    voice_groups = (list(asr_result["speaker_ids"]) if whole_video else sorted({
+        cue["speaker_id"] for cue in asr_result["transcript"] if cue.get("speaker_id")
+    }))
+    document = background.get("important_extra_data") or {}
+    people = []
+    if document.get("format") == "json" and isinstance(document.get("content"), str):
+        try:
+            content = json.loads(document["content"])
+        except ValueError:
+            content = None
+        if isinstance(content, dict) and isinstance(content.get("all_speakers"), list):
+            people = content["all_speakers"]
+    return {
+        "scope": "video" if whole_video else "input_clip",
+        "scope_id": asr_result["speaker_scope_id"] if whole_video else None,
+        "voice_groups": voice_groups,
+        "voice_group_count": len(voice_groups) if whole_video or voice_groups else None,
+        "known_speakers": people,
+    }
+
+
 def build_understanding_prompt(
     execution: ChunkExecution,
     *,
@@ -55,32 +81,37 @@ def build_understanding_prompt(
         "You are the understanding model for one fixed video chunk. Interpret the supplied media and observations and return one complete JSON object matching VideoParseResult.",
         "Return only the JSON object with persons and timeline, without Markdown fences, commentary or a completion receipt. No tools are available. The host validates and saves the complete result.",
         "Interpretation responsibilities:",
-        "Mandatory speaker rule: if the available evidence cannot reliably identify who is speaking, DIALOGUE.speaker MUST be JSON null. Prefer leaving a low-confidence or conflicting attribution unknown to assigning the wrong person. Do not fill a name by guessing from conversational order, a visible or mentioned person, or a plausible plot. Keep intelligible dialogue even when its speaker is unknown; null is an accepted result, not a gap that must be filled.",
+        "Speaker attribution uses all_speakers, the supplied Series background and the media together. An explicit background voice-to-person correspondence is identity evidence. For a background-identified sole lecturer or narrator, a matching single dominant whole-video voice and consistent media support that named attribution; use the supplied name and reuse it across utterances, without requiring new voiceprint verification for each cue. A cast list, a name merely mentioned in speech, or a voice count alone is insufficient. If evidence is missing or conflicting, DIALOGUE.speaker MUST be JSON null; keep intelligible dialogue and continue without repeatedly debating the missing identity.",
         "ASR has the evidence shape {\"transcript\":[{\"start_seconds\":integer,\"end_seconds\":integer,\"text\":string,\"speaker_id\":string|null}]}; older observations may omit speaker_id. It is not a timelineEvent payload. Do not copy the raw ASR result into timeline or mechanically convert each cue without understanding it.",
-        "ASR speaker_id labels such as speaker1 and speaker2 group anonymous voices within the current input clip only; the same label in another chunk does not identify the same person. Use these voice groups when attributing dialogue and apply an evidence-supported voice-to-person mapping consistently within this clip. Do not merge different voice groups or assign a name merely because that person is visible or mentioned in the dialogue. Missing/null speaker_id provides no voice identity evidence. Labels are not person names or spoken words: do not register them as persons or prefix ORIGINAL text with them; use speaker=null when the real person's identity is uncertain.",
-        "Review every ASR utterance against the available media and visible subtitles. Resolve wording and attribution where supported; preserve each ASR cue as a separate DIALOGUE with its original start_seconds/end_seconds and omit confirmed recognition noise. Do not merge, split, expand, shorten or shift ASR intervals. Lack of a visible speaker is not a reason to drop dialogue; use speaker=null when attribution is uncertain.",
-        "ASR voice grouping is fallible: one cue may merge different speakers. If a turn change is evident inside a cue, describe the mixed speech and leave unresolved speaker null, while preserving the original cue interval. Only Refine may split, merge or otherwise adjust dialogue intervals.",
-        "Each DIALOGUE represents one ASR cue when available, or one supported native-video utterance otherwise, with a factual description of who says what in context and text_variants containing the supported wording. Use ORIGINAL for source-language text and TRANSLATION only for an evidenced translation; use a BCP 47 language tag or und when unknown. Do not invent translations or missing words.",
+        "ASR speaker_id labels group anonymous voices. When speaker_scope=video, speaker_scope_id identifies one whole-video grouping and speaker_ids lists its dominant voice groups: the same label within that scope is the same candidate voice across chunks. Otherwise labels are scoped only to the current input clip. Reuse these supplied groups; do not rediscover speaker count from frames. Voice grouping alone does not establish a named or visible person; combine it with the explicit identity context supplied in all_speakers and Series background. Once that context supports a mapping, reuse it rather than treating each cue as a new identity problem. Keep unresolved or conflicting mappings null and continue; do not explain missing identity in event descriptions. Missing/null speaker_id remains unknown. Do not register anonymous IDs as persons, prefix dialogue with them, or infer a person merely from visibility or mention.",
+        "Review every ASR utterance against the available media and visible subtitles. Resolve wording, timing and attribution where supported; preserve supported dialogue as DIALOGUE and omit confirmed recognition noise. Lack of a visible speaker is not a reason to drop dialogue; use speaker=null when attribution is uncertain.",
+        "ASR voice grouping is fallible: one cue may merge different speakers. Do not attribute an entire cue to its first speaker when a turn change is evident. Separate the utterances where their boundaries are supported, and leave any unresolved speaker null.",
+        ("ASR comes from the complete source video. Trust its supplied wording and timestamps by default; preserve the complete cue as DIALOGUE even when it extends beyond this Chunk's pictures. Do not split or clip a cue merely to fit the Chunk or a sentence; Refine will reconcile overlaps."
+         if execution.dialogue_bounds is not None else
+         "Each DIALOGUE represents one supported utterance within the authorized clip."),
+        "DIALOGUE includes a factual description and the supported wording in text_variants. Use ORIGINAL for source-language text and TRANSLATION only for an evidenced translation; use a BCP 47 language tag or und when unknown. Do not invent translations or missing words.",
         "Combine dialogue with significant scene changes, actions, observable emotions and supported relationship changes. Use SCENE, ACTION, EMOTION, RELATION_CHANGE, ON_SCREEN_TEXT or OTHER as appropriate; do not force every event type into every chunk or repeat one sustained event for every frame.",
         "OCR evidence has {\"lines\":[{\"start_seconds\":integer,\"end_seconds\":integer,\"text\":string,\"language\":string|null}]}. Use it to understand visible text. Ordinary dialogue subtitles belong to the same DIALOGUE and its text_variants, not a duplicate ON_SCREEN_TEXT; reserve ON_SCREEN_TEXT for non-dialogue text such as signs or titles.",
         "Write self-contained, factual descriptions in Simplified Chinese. Explain the observed interaction or action, rather than merely restating the transcript. Background helps identify people and terms; do not turn background knowledge into unobserved events, motives or inner thoughts.",
         "Use consistent, evidence-supported person names or neutral visual labels. Every named person referenced by a DIALOGUE must be registered in persons; a known speaker must also be in participants. participants describe semantic involvement and visible_persons describe actual visual presence; off-screen speakers need not be visible_persons.",
 
-        "Time authority:",
-        "ASR/OCR and stored events are already normalized to absolute integer source-video milliseconds. Use their timestamps directly.",
-        "When usable ASR cues are available, every new DIALOGUE must exactly match one original cue interval from this member. If ASR is unavailable or empty, supported native-video dialogue may be created with observed bounds. After a DIALOGUE is created, its bounds are read-only in Understanding; only Refine may change them.",
-        "The host supplies the actual visual input range and native-video start separately. Extra visual context before or after the authorized chunk is provided only to help interpret this chunk; do not write those outside events or expand the writable range. For NEW native-video observations, convert local seconds exactly once using the host-supplied visual start, not the writable chunk start.",
+        "The host supplies the actual visual input range and native-video start separately. Extra visual context before or after the authorized chunk is provided only to help interpret this chunk; do not write those outside visual events or expand the visual range. For NEW native-video observations, convert local seconds exactly once using the host-supplied visual start, not the writable chunk start.",
         "For ordered frames, including a visual fallback, the host-supplied frame timestamp list is already absolute milliseconds: do not add the clip offset or convert it again. Images contain no audio; do not claim to have heard speech from sampled frames.",
-        "For every written event, start_seconds and end_seconds are integer milliseconds with start < end, fully inside the authorized range; these legacy field names do not mean seconds.",
+        "For every written event, start_seconds and end_seconds are integer milliseconds with start < end; these legacy field names do not mean seconds. Apply the separate visual and DIALOGUE ranges supplied below.",
 
         "Order timeline by start_seconds. Check dialogue coverage, visual facts, person references, duplicate utterances and authorized time bounds before returning. An empty timeline is valid only when the supplied inputs support no event.",
         "speaker_source is host-owned provenance; omit it from your output.",
         "OCR null means no separate OCR evidence is available. You may read text directly from the supplied media; do not claim an OCR service ran.",
+        "all_speakers: " + json.dumps(
+            _all_speakers(asr_result, execution.background),
+            ensure_ascii=False, allow_nan=False, sort_keys=True,
+        ),
         build_chunk_understanding_prompt(
             start_ms=execution.allowed_start_seconds,
             end_ms=execution.allowed_end_seconds,
             asr_result=transcript,
             ocr_result=ocr_result,
+            dialogue_bounds=execution.dialogue_bounds,
         ),
         "Background context: " + json.dumps(
             execution.background, ensure_ascii=False, allow_nan=False, sort_keys=True,
@@ -91,7 +122,7 @@ def build_understanding_prompt(
 def _canvas_instructions() -> str:
     return "\n".join((
         "Accurate facts live in ContextCanvas, not the conversation or compressed summaries.",
-        "ASR speaker_id labels such as speaker1/speaker2 are anonymous voices scoped to one evidence member's input clip, not global person identities. Matching labels across chunks do not establish the same person; preserve unknown attribution when no supported voice-to-person mapping is available.",
+        "ASR speaker_id labels are anonymous voices. When evidence explicitly declares speaker_scope=video, matching speaker_scope_id and speaker_id refer to the same candidate voice across members of that scope. Without that declaration, labels remain local to one input clip. Use the supplied Series background as identity evidence: an explicit voice/person correspondence, or a background-identified sole lecturer with a matching single dominant whole-video voice and consistent media, can support a named speaker. Reuse that supported mapping across members; do not remove it merely because ASR uses anonymous IDs or no biometric verification was run. A cast list or voice count alone is insufficient. Missing or conflicting mappings remain null without repeated visual searches or uncertainty explanations in event descriptions.",
         "Use get_context_canvas for complete catalogs and evidence/event reads. Batch with references=[...]; section defaults to content. The Tool first tries all requested items. On truncated=true, returned items are complete: read remaining_references in smaller batches. Skip overview when the section is known. Only oversized single sections need reference with char_start/char_end character offsets. Catalogs are returned in full unless their byte budget is exceeded; only then pass next_cursor as catalog_cursor.",
         "Use write_context_canvas for explicit atomic batches; omitted events and fields remain unchanged.",
         "Address only the supplied opaque member/event references. Never guess an event by array index or mutable timestamp.",
@@ -103,49 +134,39 @@ def _canvas_instructions() -> str:
     ))
 
 
-def build_refine_prompt(
-    *,
-    start_sequence_no: int,
-    chunk_count: int,
-    canvas: ParseContextCanvas,
-) -> str:
-    """Expose member content and scope while keeping write authority explicit."""
-
-    end_sequence_no = start_sequence_no + chunk_count
-    voiceprint = canvas.voiceprint_review()
-    voice_instructions = () if voiceprint is None else (
-        "Prepared B0 voice evidence is available in each member's evidence/voiceprint section and bound to each event's voice_evidence with the current event_ref. The event summary contains its original Understanding speaker, unchanged candidate ranking, cosine gap, duration and band. Read full reference sources and provenance through get_context_canvas collection=evidence, reference=voice_evidence.evidence_ref, section=voiceprint, matching line_id. Similarity is not a probability or calibrated confidence.",
-        "Review every supplied voice default and every line in the explicit conflict and ACCEPT-disagreement lists below. In flag mode the program preserves every speaker. In prefill mode only ACCEPT lines have a voice top1 default in the working draft; leaving it unchanged accepts it. Modify speaker only for supported exceptions; an explicit null remains null. Candidates are evidence, and you may choose a person outside the top three. The program records speaker_source; do not set it yourself.",
-        "Conversational context alone does not override a voice disagreement: it needs specific evidence, such as the speaker being addressed by name or visibly speaking. A single frame that does not show someone cannot by itself exclude an off-screen speaker. Record a brief factual correction basis without exposing hidden reasoning.",
-        "Voice evidence applies only to its recorded start_ms/end_ms. Editing text or speaker does not invalidate it. A changed audio interval invalidates the old scores and removes an unreviewed voice default: use compare_speaker for the new interval or explicitly select a supported speaker/null. Never reuse an old score as if it described the new interval.",
-        "compare_speaker returns a compact ranking and an evidence_ref/evidence_section for full immutable provenance through get_context_canvas. It also returns the current Canvas revision; use that revision for subsequent writes.",
-        f"For every event in conflicts, accept_disagreements or doubtful_labels inside this window's write bounds whose voice_evidence is still valid, record a decision through write_context_canvas with op=voice_decision, event_ref, decision=keep|voice_top1|other|null and a nonblank reason of 1-{VOICEPRINT_DECISION_REASON_MAX_CHARS} characters.",
-        "The decision must match the final speaker: keep equals understanding_speaker; voice_top1 equals candidates[0].speaker; other is a named speaker different from both; null means speaker is null. Edit speaker explicitly when needed, then record the decision. A contradictory later speaker edit invalidates the recorded decision; record a replacement and pass the gate again.",
-        f"For keep on a label_doubtful line, supply evidence_type=named_address|visible_speaking|text_identity and cite the concrete identity observation in reason. For null on a required line with gap >= {VOICEPRINT_B0_VOICE_TOP1_MIN_LEAD:.2f} or band=ACCEPT, supply evidence_type=contradiction and cite the specific contradiction, very short audio, singing or overlap in reason. contradiction is not identity evidence for keep; evidence_type is optional otherwise.",
-        "Earlier windows' committed decisions are information only: resolve every required conflict within this window again. An audio interval change invalidates old voice evidence and removes its decision requirement.",
-        "Call finish_voiceprint_review after resolving all required events and before CanvasCompletion. If ready=false, correct every missing or inconsistent event_ref and retry the gate; CanvasCompletion is accepted only after the gate passes.",
-        "Each dialogue line may carry label_doubtful. It means the line sounds clearly unlike the labeled character's other lines; it does not prove who did speak. On a doubtful line, keep the label only with specific evidence: the speaker is addressed by name, is visibly speaking, or the text identifies them. ASR speaker groups and turn order are not identity evidence; they are frequently wrong when two characters alternate.",
-        f"The voice ranking is audio evidence. On a CONFLICT or label_doubtful line, choose the voice's top candidate when it leads the runner-up by at least {VOICEPRINT_B0_VOICE_TOP1_MIN_LEAD:.2f} (or the line is ACCEPT) and nothing specific contradicts it: someone else is addressed by name or visibly speaking, or the candidate is clearly absent from the scene. Choose null only when the lead is below that value, the line is very short, singing or overlapping, or specific evidence contradicts the top candidate. Keep the original label only with specific evidence for it.",
-        "Required voice review lists: " + json.dumps(voiceprint, ensure_ascii=False, sort_keys=True),
+def build_refine_prompt(*, snapshot, canvas: ParseContextCanvas) -> str:
+    """Use the measured complete-JSON task; keep immutable evidence off the edit surface."""
+    members = []
+    duration = snapshot["inputs"].parse_config.chunk_duration * 1000
+    for ref, sequence in sorted(snapshot["member_sequence_nos"].items(), key=lambda item: item[1]):
+        evidence = deepcopy(snapshot.get("member_evidence", {}).get(ref, {}))
+        for cue in (evidence.get("asr") or {}).get("transcript", []):
+            cue.pop("words", None)
+        members.append({
+            "sequence_no": sequence,
+            "nominal_chunk_range_ms": [sequence * duration,
+                                      min((sequence + 1) * duration, snapshot["member_bounds"][ref][1])],
+            "content": canvas.result(ref).model_dump(mode="json", exclude={"timeline": {"__all__": {"speaker_source"}}}),
+            "evidence": evidence,
+        })
+    dialogue_bounds = snapshot.get("dialogue_bounds")
+    time_rule = (
+        f"Complete ASR dialogue may extend beyond nominal chunk boundaries; keep it within source-video {list(dialogue_bounds)} ms."
+        if dialogue_bounds is not None else
+        "Keep dialogue within the supplied member time range; no whole-video ASR authority is available."
     )
     return "\n".join((
-        f"Refine the fixed Interval [{start_sequence_no}, {end_sequence_no}).",
-        _canvas_instructions(),
-        "Read member scopes, current events and original ASR/OCR separately through get_context_canvas. Prefer evidence section asr_transcript for cue text and boundaries; full section asr retains word alignment for precision checks.",
-        "Correct existing events or add supported omissions with write_context_canvas. Preserve unrelated events and existing time bounds unless evidence establishes a timing correction.",
-        "Resolve names, references and cross-boundary events only from supplied evidence. Missing original observations are unavailable evidence, not permission to invent them.",
-        "Review unresolved speakers, apparent speaker changes and conflicts between ASR voice groups and surrounding events. When inspect_video_frames is available, use it to examine relevant source frames; narrow start_ms/end_ms and choose frame_count=1–4 inside its authorized range.",
-        ("Frame observations can support visual identity and conversational context, but contain no audio. Do not claim voice confirmation from still images or force an uncertain speaker into a named person. Correct attribution only when the supplied evidence supports it; otherwise retain null and explain the remaining uncertainty in the event description."
-         if voiceprint is None else
-         "Frame observations can support visual identity and conversational context, but contain no audio. Do not claim voice confirmation from still images. Apply the voice ranking and null decision rules below, and explain any remaining uncertainty in the event description."),
-        ("When compare_speaker is available, call it for unresolved dialogue or a named speaker whose attribution conflicts with other evidence. Use the exact target utterance's start_ms/end_ms; narrow merged speech where evidence establishes the boundary. Compare its candidate similarities, margin, reference identity evidence and source/duration quality. Cosine similarity is not a probability: 0.8 does not mean 80% certainty. No reference, close candidates or weak evidence may leave speaker=null. Write any supported correction through write_context_canvas."
-         if voiceprint is None else
-         "When compare_speaker is available, call it for unresolved dialogue or a named speaker whose attribution conflicts with other evidence. Use the exact target utterance's start_ms/end_ms; narrow merged speech where evidence establishes the boundary. Compare its candidate similarities, margin, reference identity evidence and source/duration quality. Cosine similarity is not a probability: 0.8 does not mean 80% certainty. Apply the voice ranking and null decision rules below. Write any supported correction through write_context_canvas."),
-        *voice_instructions,
-        "After reviewing the relevant members, call the CanvasCompletion tool with {\"complete\":true}. The program assembles the result from Canvas; do not return the completion receipt or events as prose or JSON in your final text.",
-        canvas.checkpoint(),
+        "Refine these adjacent chunks as one continuous excerpt. Return one complete IntervalRefinementResult JSON object, with no tools or commentary.",
+        "The ASR comes from the source video. Prefer its dialogue wording and timestamps. Preserve complete dialogue across nominal chunk boundaries; do not truncate or split merely to fit a chunk. Remove repeated dialogue across adjacent chunks and repair genuine omissions or continuity errors using the supplied ASR. Keep each retained dialogue once, in a relevant member. Prefer existing event grouping; do not reconstruct every sentence's word-level timing.",
+        "Use the supplied background for supported speaker names. Preserve existing visual facts; no new visual or voice evidence is available. Do not invent visual changes or reinterpret unidentified voices without evidence.",
+        "Make only supported corrections. Keep unrelated events and their content unchanged. Maintain persons, participants and visible_persons consistently; a named speaker must be a participant. Omit host-owned speaker_source.",
+        "All timestamps are absolute integer source-video milliseconds, including legacy *_seconds fields. Do not multiply or divide by 1000 or apply an offset again. Preserve existing time bounds unless supplied evidence supports a correction.",
+        time_rule,
+        "Prepared voiceprint evidence, when present, applies only to its recorded audio interval. A supplied prefilled speaker is a draft, not certainty; explicitly retain or correct it using the evidence. Do not reuse a score for changed audio bounds.",
+        "Edit the supplied JSON directly. Return every input sequence_no exactly once, each with complete persons and timeline. Omitted events are removed, so preserve every unrelated event. Return only the members array wrapped in IntervalRefinementResult.",
+        "Input: " + json.dumps({"background": snapshot.get("background", {}), "members": members},
+                              ensure_ascii=False, allow_nan=False, sort_keys=True),
     ))
-
 
 def build_voiceprint_prompt(*, max_tool_calls: int, canvas: ContextCanvas) -> str:
     return "\n".join((
