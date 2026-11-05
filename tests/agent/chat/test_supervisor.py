@@ -1101,7 +1101,7 @@ def test_supervisor_streams_text_and_video_at_their_actual_submission_positions(
     assert "Grounded answer." not in "\n".join(event["content"] for event in snapshots)
     assert "先用 submit_video_item 提交全部视频卡，再写正文" in model.prompts[0]
     assert "在对应推荐或要点的下方单独一行写 [[视频N]]" in model.prompts[0]
-    assert "已提交为视频卡的片段，正文不再写时间码或时间范围" in model.prompts[0]
+    assert "只写标记不会生成视频卡" in model.prompts[0]
     assert "claim 是视频卡标题" in model.prompts[0]
 
 
