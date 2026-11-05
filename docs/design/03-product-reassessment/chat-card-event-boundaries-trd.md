@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Chat 视频卡范围对齐 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-card-event-boundaries`，PR 待创建。关联：[chat-answer-shape-trd.md](chat-answer-shape-trd.md)（并行，回答形态，同改 `agent/chat/supervisor.py` 系统提示的不同句子）；PR #46（大纲 Chunk 读取源证据后可提交视频卡，已合并）。触发：2026-11-06 面向面试官演示；精确时间定位是 Seekino 的核心卖点。
+**Chat 视频卡范围对齐 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-card-event-boundaries`，PR [#52](https://github.com/owariband/Seekino/pull/52)。关联：[chat-answer-shape-trd.md](chat-answer-shape-trd.md)（并行，回答形态，同改 `agent/chat/supervisor.py` 系统提示的不同句子）；PR #46（大纲 Chunk 读取源证据后可提交视频卡，已合并）。触发：2026-11-06 面向面试官演示；精确时间定位是 Seekino 的核心卖点。
 
 ## 背景与触发场景
 
