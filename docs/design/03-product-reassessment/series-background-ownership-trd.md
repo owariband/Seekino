@@ -79,7 +79,9 @@
 
 # 4. 对照实验与结果分析
 
-计划：H1 用只读 SQL 统计各库 `character_bible` 非空的系列；护栏“背景文字不变”对 v11 副本所有系列计算改动前后 `prepare_background_text` 并逐字节比较。结果：待测。
+计划：H1 用只读 SQL 统计各库 `character_bible` 非空的系列；护栏“背景文字不变”对 v11 副本所有系列计算改动前后 `prepare_background_text` 并逐字节比较。
+
+**H1 实测（2026-11-05，只读 SQL，MySQL 13361）：** v11 课程库 `seekino_video_asr_recovery_20261031_test` 与副本 `seekino_display_rehearsal_20261104_test` 各 2 个系列，`json_length(character_bible)` 均为 0，`important_extra_data` 键均为 `["format", "content"]`，`display_name` 均为空。H1 在课程库成立，无需迁移；开发库与 MyGO 库未统计。护栏比对：待测。
 
 # 5. 试点验证与方案取舍
 
