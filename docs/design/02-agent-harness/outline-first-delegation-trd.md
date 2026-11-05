@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**大纲优先、减少 query_video 委派 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-outline-first-delegation`，PR [#48](https://github.com/owariband/Seekino/pull/48)。关联：[video-outline-trd.md](video-outline-trd.md)（#41，已合并，大纲与按“系列名 + 集数”寻址）；[outline-chunk-citation-trd.md](outline-chunk-citation-trd.md)（#46，大纲 Chunk 读后可引用）；[query-rewriter-model-trd.md](query-rewriter-model-trd.md)（#47，改写器）。无代码依赖，可独立合并；验收在 `dev` + #46 + #47 本地集成构建上进行。本需求属于 2026-11-05 发布验收发现的体验问题。
+**大纲优先、减少 query_video 委派 TRD。状态：已实现，演示环境验收通过（2026-11-05）。** 分支 `fix/chat-outline-first-delegation`，PR [#48](https://github.com/owariband/Seekino/pull/48)。关联：[video-outline-trd.md](video-outline-trd.md)（#41，已合并，大纲与按“系列名 + 集数”寻址）；[outline-chunk-citation-trd.md](outline-chunk-citation-trd.md)（#46，大纲 Chunk 读后可引用）；[query-rewriter-model-trd.md](query-rewriter-model-trd.md)（#47，改写器）。无代码依赖，可独立合并；验收在 `dev` + #46 + #47 本地集成构建上进行。本需求属于 2026-11-05 发布验收发现的体验问题。
 
 ## 背景与触发场景
 
@@ -62,10 +62,28 @@
 
 计划：同一演示环境与模型配置，集成构建加入本改动后，LP01、LP02、SE02 各运行 3 次，对比第 1 节基线。
 
+**结果（集成构建 `3ca4bcfc` = `dev` + #46 + #47 + 本需求，记录 `outputs/verification/course-loop-dev-20261104/gates/``loop08-{5,6,7}.json`）：**
+
+| 指标 | 基线（loop08-2…4，9 回合） | 本方案（loop08-5…7，9 回合） |
+| --- | --- | --- |
+| 委派率 | 3/9 | 0/9 |
+| SE02 耗时 | 85.2、91.8、311.7 秒 | 53.0、68.8、77.6 秒 |
+| LP01 耗时 | 39.3、62.0、431.0 秒 | 75.3、80.7、148.9 秒 |
+| LP02 耗时 | 159.2、213.9、391.1 秒 | 56.2、233.1、262.5 秒 |
+| 回答内部术语 | 0/9 | 0/9 |
+
+**测试：** `tests/agent/chat -m "not live_agent"` 403 passed。
+
+LP02 仍有 2/3 超过 240 秒目标。拆解 loop08-5 LP02（262.5 秒）：工具调用在 3 分 10 秒内完成，其中读完检索结果到首次提交前模型思考约 57 秒，随后 8 次 `submit_video_item` 串行、每次间隔约 15 秒，最后生成 2,000 余字回答约 70 秒；首段文字在第 4 秒左右即开始流式显示。耗时来自跨两个系列、6–8 张卡片的路线逐张提交与长回答生成，不是委派问题。
+
 # 5. 试点验证与方案取舍
 
 演示环境即试点。若委派率仍大于 0，改为在有大纲的范围内不向 Supervisor 暴露 `query_video`；回退方式为恢复原句。
 
 # 6. 结果验收与闭环
 
-待实验完成后填写。
+**原问题验收：** 有大纲的课程问题不再委派 `query_video`，5–7 分钟的长尾消失（9 回合最长 262.5 秒）。
+
+**最终决定：** 采用。
+
+**剩余事项：** 跨系列路线（LP02）耗时 56–263 秒，主要来自逐张提交卡片与长回答，发布后另立需求评估批量提交或限制卡片数；`get_video_outline` 一次读两集大纲时频繁 `OUTLINE_TOO_LARGE` 后逐集重读。
