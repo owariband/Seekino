@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**系列背景资料归属 TRD。状态：初稿（2026-11-05）。** 分支 `refactor/series-background-ownership`，PR [#43](https://github.com/owariband/Seekino/pull/43)。关联：[series-background-api.md](../01-mvp/series-background-api.md)（原背景接口合同）；[series-overview-trd.md](../02-agent-harness/series-overview-trd.md)（`feat/series-overview`，PR [#44](https://github.com/owariband/Seekino/pull/44)，Chat 系列概览读取这些字段）。无合并顺序依赖。
+**系列背景资料归属 TRD。状态：已实现，单元测试通过；界面实际使用待验收（2026-11-05）。** 分支 `refactor/series-background-ownership`，PR [#43](https://github.com/owariband/Seekino/pull/43)。关联：[series-background-api.md](../01-mvp/series-background-api.md)（原背景接口合同）；[series-overview-trd.md](../02-agent-harness/series-overview-trd.md)（`feat/series-overview`，PR [#44](https://github.com/owariband/Seekino/pull/44)，Chat 系列概览读取这些字段）。无合并顺序依赖。
 
 ## 背景与触发场景
 
@@ -81,7 +81,11 @@
 
 计划：H1 用只读 SQL 统计各库 `character_bible` 非空的系列；护栏“背景文字不变”对 v11 副本所有系列计算改动前后 `prepare_background_text` 并逐字节比较。
 
-**H1 实测（2026-11-05，只读 SQL，MySQL 13361）：** v11 课程库 `seekino_video_asr_recovery_20261031_test` 与副本 `seekino_display_rehearsal_20261104_test` 各 2 个系列，`json_length(character_bible)` 均为 0，`important_extra_data` 键均为 `["format", "content"]`，`display_name` 均为空。H1 在课程库成立，无需迁移；开发库与 MyGO 库未统计。护栏比对：待测。
+**H1 实测（2026-11-05，只读 SQL，MySQL 13361）：** v11 课程库 `seekino_video_asr_recovery_20261031_test` 与副本 `seekino_display_rehearsal_20261104_test` 各 2 个系列，`json_length(character_bible)` 均为 0，`important_extra_data` 键均为 `["format", "content"]`，`display_name` 均为空。H1 在课程库成立，无需迁移；开发库与 MyGO 库未统计。
+
+**护栏“背景文字不变”：** 本次未修改 `engine/common/background.py`，也不改写已有数据；已有系列的背景文字按构造不变，未做逐系列实测比对。
+
+**测试（提交 `17e6e874`）：** `tests/server -k "library or series or agent_chat"` 278 passed（改动前 266）；全量 `tests/agent tests/server tests/gateway -m "not live_agent"` 20 failed / 5281 passed，失败集合与 `dev` `cd6bed14` 完全一致（20 failed / 5269 passed）；`npm --prefix web run typecheck` 通过，`web` library 测试 36 passed。
 
 # 5. 试点验证与方案取舍
 
@@ -89,4 +93,13 @@
 
 # 6. 结果验收与闭环
 
-待实施。
+| 目标 | 结果 | 证据 |
+| --- | --- | --- |
+| 可写背景容器只剩一个 | 创建拒绝非空 `character_bible`；更新本就不接受 | `server/service/library.py` 创建路径；`tests/server/test_api.py` |
+| 创建与更新校验一致 | 共用 `_normalize_important_extra_data` | `tests/server/test_library_views.py` |
+| Agent 拿到显示名称 | `series_context[].displayName`（缺省 `name`） | `tests/server/test_agent_chat_service.py` |
+| 界面区分旧人物资料 | 标注“旧版人物资料（只读）”并提示写入背景资料 | `SeriesBackgroundEditor.test.tsx` |
+
+**决定：** 采用。Prompt 使用 `displayName` 称呼系列由 [series-overview-trd.md](../02-agent-harness/series-overview-trd.md) 一并接入。
+
+**剩余事项：** `docs/design/01-mvp/frontend-api.md` 的创建示例仍包含 `seriesBible`、`characterBible`，待更新；`character_bible` 列的删除需用户另行确认；开发库与 MyGO 库的使用统计未做。
