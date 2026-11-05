@@ -764,7 +764,7 @@ describe("Search assistant presentation", () => {
     expect(screen.queryByRole("status", { name: "搜索网页资料" })).not.toBeInTheDocument();
   });
 
-  it("renders persisted Markdown and trusted video references in agent-selected order", () => {
+  it("renders persisted Markdown and places unmarked video references after the text in submission order", () => {
     const hits = [searchHit("chunk-1", 1, "第一段首帧"), searchHit("chunk-2", 2, "第二段首帧")];
     const message = {
       ...assistantMessage("兼容正文", hits),
@@ -783,9 +783,9 @@ describe("Search assistant presentation", () => {
     const secondPreview = screen.getByRole("img", { name: /00:22–00:25 视频片段预览/ });
     const bridge = screen.getByText("两段之间的解释");
     const firstPreview = screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ });
-    expect(introduction.compareDocumentPosition(secondPreview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(secondPreview.compareDocumentPosition(bridge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(bridge.compareDocumentPosition(firstPreview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(introduction.compareDocumentPosition(bridge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bridge.compareDocumentPosition(secondPreview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(secondPreview.compareDocumentPosition(firstPreview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getAllByRole("img")).toHaveLength(2);
     expect(screen.queryByText("兼容正文")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
@@ -858,7 +858,7 @@ describe("Search assistant presentation", () => {
     expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /00:12–00:18 视频片段预览/ })).toBeInTheDocument();
-    expect(screen.getByText("1 段")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("检索助手提交的视频片段")).toHaveLength(1);
   });
 
   it("renders two source chunks as one final clip with the full playback and reference range", async () => {
@@ -876,8 +876,6 @@ describe("Search assistant presentation", () => {
     const user = userEvent.setup();
 
     expect(screen.getAllByLabelText("检索助手提交的视频片段")).toHaveLength(1);
-    expect(screen.getByText("1 段")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("检索助手提交的视频片段")).getByText("1")).toBeInTheDocument();
     expect(screen.getByText("09:24–10:56")).toBeInTheDocument();
     expect(screen.getAllByRole("img")).toHaveLength(1);
     await user.click(screen.getByRole("img", { name: /09:24–10:56 视频片段预览/ }));
@@ -941,7 +939,6 @@ describe("Search assistant presentation", () => {
     renderPage(assistantMessage("找到两个候选片段。", hits));
     const user = userEvent.setup();
 
-    expect(screen.getByRole("heading", { name: "视频片段" })).toBeInTheDocument();
     expect(screen.getAllByRole("img")).toHaveLength(2);
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ }).querySelector("video")).not.toHaveAttribute("autoplay");
@@ -1022,6 +1019,57 @@ describe("Search assistant presentation", () => {
     expect(view.container.querySelector("video")).toBeNull();
     expect(screen.getByRole("img", { name: "已登记首帧" })).toHaveAttribute("src", hit.evidence.thumbnail!.url);
     expect(screen.getByRole("img", { name: "已登记首帧" })).toHaveAttribute("loading", "lazy");
+  });
+
+  it("places a card between the text before and after its marker", () => {
+    const hit = searchHit("chunk-1", 1, "标记首帧");
+    const message = {
+      ...assistantMessage("", [hit]),
+      renderBlocks: [
+        { type: "markdown" as const, markdown: "## 推荐一\n\n这段推荐的内容。\n\n[[视频1]]\n\n后面的说明。" },
+        { type: "video" as const, videoChunkId: "chunk-1", startSeconds: 12_000, endSeconds: 15_000 },
+      ],
+    };
+    renderPage(message);
+
+    const before = screen.getByText("这段推荐的内容。");
+    const card = screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ });
+    const after = screen.getByText("后面的说明。");
+    expect(before.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders a card without a marker after the text", () => {
+    const hit = searchHit("chunk-1", 1, "未引用首帧");
+    const message = {
+      ...assistantMessage("", [hit]),
+      renderBlocks: [
+        { type: "markdown" as const, markdown: "只有文字，没有标记。" },
+        { type: "video" as const, videoChunkId: "chunk-1", startSeconds: 12_000, endSeconds: 15_000 },
+      ],
+    };
+    renderPage(message);
+
+    const text = screen.getByText("只有文字，没有标记。");
+    const card = screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ });
+    expect(text.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("never shows marker text or an incomplete trailing marker prefix", () => {
+    const hit = searchHit("chunk-1", 1, "标记首帧");
+    const message = {
+      ...assistantMessage("", [hit]),
+      renderBlocks: [
+        { type: "markdown" as const, markdown: "第一段内容。\n\n[[视频1]]\n\n结尾还没写完 [[视" },
+        { type: "video" as const, videoChunkId: "chunk-1", startSeconds: 12_000, endSeconds: 15_000 },
+      ],
+    };
+    renderPage(message);
+
+    expect(screen.getByText(/结尾还没写完/)).toBeInTheDocument();
+    expect(screen.queryByText(/\[\[视频1\]\]/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\[\[视/)).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /00:12–00:15 视频片段预览/ })).toBeInTheDocument();
   });
 });
 

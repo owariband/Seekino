@@ -10,7 +10,7 @@ import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import { useWorkspace } from "../../app/workspace";
 import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, mediaUrl, TENANT_ID } from "../../api/client";
-import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference, SeriesSummary } from "../../api/contracts";
+import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
 import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
 import { Kino } from "../../shared/kino/Kino";
@@ -34,6 +34,37 @@ const toolLabels: Record<Extract<AgentRenderBlock, { type: "tool" }>["tool"], st
   search_web: "搜索网页资料",
   understand_current_video: "查看当前视频",
 };
+
+type ToolBlock = Extract<AgentRenderBlock, { type: "tool" }>;
+type VideoBlock = Extract<AgentRenderBlock, { type: "video" }>;
+
+// A marker line is a whole line `[[视频N]]`; N is the 1-based position of the
+// card among the message's video blocks, in render-block order.
+const MARKER_LINE = /^\s*\[\[视频(\d+)\]\]\s*$/gm;
+// While the marker is still streaming, its trailing prefix must not be shown.
+const TRAILING_MARKER_PREFIX = /\[\[视(?:频\d*(?:\]\]?)?)?$/;
+
+// Cards are submitted before the text; each marker line pulls its card up to
+// where the text refers to it, and cards no marker names follow the text.
+function placeVideoBlocks(blocks: AgentRenderBlock[]): AgentRenderBlock[] {
+  const videos = blocks.filter((block): block is VideoBlock => block.type === "video");
+  const placed = new Set<VideoBlock>();
+  const result: AgentRenderBlock[] = [];
+  for (const block of blocks) {
+    if (block.type === "video") continue;
+    if (block.type !== "markdown") { result.push(block); continue; }
+    let cursor = 0;
+    const text = (value: string) => { if (value.trim()) result.push({ type: "markdown", markdown: value }); };
+    for (const match of block.markdown.matchAll(MARKER_LINE)) {
+      text(block.markdown.slice(cursor, match.index));
+      const video = videos[Number(match[1]) - 1];
+      if (video && !placed.has(video)) { placed.add(video); result.push(video); }
+      cursor = match.index! + match[0].length;
+    }
+    text(block.markdown.slice(cursor).replace(TRAILING_MARKER_PREFIX, ""));
+  }
+  return [...result, ...videos.filter((video) => !placed.has(video))];
+}
 
 function MessageAttachment({ attachment, index }: { attachment: AgentAttachmentView; index: number }) {
   const { t } = useI18n();
@@ -208,6 +239,58 @@ function MarkdownAnswer({ markdown, conversationId, messageId }: { markdown: str
     <div ref={element} className={styles.answerText}>
       <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} skipHtml urlTransform={defaultUrlTransform} components={answerComponents}>{markdown}</Markdown>
     </div>
+  );
+}
+
+function ToolRow({ block, message, displayMode }: { block: ToolBlock; message: AgentMessageView; displayMode: DisplayMode }) {
+  const { t } = useI18n();
+  if (displayMode !== "debug" && message.status !== "PROCESSING") return null;
+  const active = message.status === "PROCESSING" && block.status === "inProgress";
+  const status = block.status === "completed" ? t("已完成") : block.status === "failed" ? t("调用失败") : active ? t("进行中") : t("未确认完成");
+  return <div className={styles.toolCall} role="status" aria-label={t(toolLabels[block.tool])} data-status={block.status} data-active={active}>
+    <div className={styles.toolCallHeading}><span>{t(toolLabels[block.tool])}</span><small>{status}</small></div>
+    {displayMode === "debug" && typeof block.query === "string" && block.query.trim() ? <p>{block.tool === "search_web" ? t("搜索词") : block.tool === "understand_current_video" ? t("核验目标") : t("检索目标")}{t("：")}{block.query}</p> : null}
+  </div>;
+}
+
+function VideoBlockCard({ message, block, hit, displayMode, selected, onOpenVideo, onSelect }: {
+  message: AgentMessageView;
+  block: VideoBlock;
+  hit: VideoChunkSearchHit;
+  displayMode: DisplayMode;
+  selected: boolean;
+  onOpenVideo?: SearchPageProps["onOpenVideo"];
+  onSelect: (selection: { conversationId: string; messageId: string; chunkId: string }) => void;
+}) {
+  const { t, locale } = useI18n();
+  const explanation = explainHit(hit, locale);
+  const rangeLabel = formatTimeRange(block.startSeconds, block.endSeconds);
+  const thumbnailUrl = hit.evidence.thumbnail ? mediaUrl(hit.evidence.thumbnail.url) : null;
+  const open = () => onOpenVideo
+    ? onOpenVideo({ tenantId: hit.evidence.tenantId, seriesId: hit.evidence.seriesId, videoId: hit.evidence.videoId, startSeconds: block.startSeconds })
+    : onSelect({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId });
+  return (
+    <section className={styles.renderVideoCard} aria-label={t("检索助手提交的视频片段")}>
+      <button type="button" className={`${styles.videoCard} ${selected ? styles.videoCardSelected : ""}`} onClick={open} aria-pressed={selected} title={onOpenVideo ? t("打开整集并定位到片段") : undefined}>
+        {hit.evidence.playbackStatus === "READY" && hit.evidence.playbackUrl ? (
+          <span className={styles.videoCardThumb} role="img" aria-label={t("{value0} {value1} {value2} 视频片段预览", { value0: hit.evidence.seriesName, value1: episodeLabel(hit.evidence.episodeOrder), value2: rangeLabel })}>
+            <PlaybackFrame className={styles.candidatePreviewFrame} src={mediaUrl(hit.evidence.playbackUrl)} positionSeconds={block.startSeconds} />
+            <Play className={styles.candidatePreviewPlay} size={42} fill="currentColor" aria-hidden="true" />
+          </span>
+        ) : thumbnailUrl ? (
+          <img className={styles.videoCardThumbImg} src={thumbnailUrl} alt={hit.evidence.thumbnail?.alt || t("{value0} 视频片段首帧", { value0: hit.evidence.seriesName })} loading="lazy" />
+        ) : (
+          <span className={styles.videoCardThumbFallback} role="img" aria-label={displayMode === "debug" ? t("该片段暂无首帧缩略图") : t("播放所选片段")}>
+            <Play size={22} fill="currentColor" aria-hidden="true" />
+            <span>{hit.evidence.playbackStatus === "READY" ? displayMode === "debug" ? t("暂无首帧 · 点击加载视频") : t("播放片段") : t("视频暂不可播放")}</span>
+          </span>
+        )}
+        <span className={styles.videoCardBody}>
+          <strong className={styles.videoCardTitle}>{displayMode === "debug" ? explanation.summary : formatTimeText(explanation.summary)}</strong>
+          <small className={styles.videoCardMeta}>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)} · <time>{rangeLabel}</time></small>
+        </span>
+      </button>
+    </section>
   );
 }
 
@@ -755,64 +838,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
                     {displayMode === "debug" && message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : message.searchResult?.partial ? <p className={styles.resultWarnings} role="status">{t("本次回答仅覆盖当前可检索的视频。")}</p> : null}
-                    {messageRenderBlocks(message).map((block, index, blocks) => {
+                    {placeVideoBlocks(messageRenderBlocks(message)).map((block, index) => {
                       if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} conversationId={message.conversationId} messageId={message.messageId} /></SeekContext.Provider>;
-                      if (block.type === "tool") {
-                        if (displayMode !== "debug" && message.status !== "PROCESSING") return null;
-                        const active = message.status === "PROCESSING" && block.status === "inProgress";
-                        const status = block.status === "completed" ? t("已完成") : block.status === "failed" ? t("调用失败") : active ? t("进行中") : t("未确认完成");
-                        return <div key={`tool:${block.callId}`} className={styles.toolCall} role="status" aria-label={t(toolLabels[block.tool])} data-status={block.status} data-active={active}>
-                          <div className={styles.toolCallHeading}><span>{t(toolLabels[block.tool])}</span><small>{status}</small></div>
-                          {displayMode === "debug" && typeof block.query === "string" && block.query.trim() ? <p>{block.tool === "search_web" ? t("搜索词") : block.tool === "understand_current_video" ? t("核验目标") : t("检索目标")}{t("：")}{block.query}</p> : null}
-                        </div>;
-                      }
+                      if (block.type === "tool") return <ToolRow key={`tool:${block.callId}`} block={block} message={message} displayMode={displayMode} />;
                       const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
                       if (!hit) return null;
-                      const explanation = explainHit(hit, locale);
-                      const playbackRange = { startSeconds: block.startSeconds, endSeconds: block.endSeconds };
                       const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
-                      const thumbnailUrl = hit.evidence.thumbnail ? mediaUrl(hit.evidence.thumbnail.url) : null;
-                      const videoIndex = blocks.slice(0, index).filter((item) => item.type === "video").length;
-                      return (
-                        <section key={`video:${block.videoChunkId}:${playbackRange.startSeconds}:${playbackRange.endSeconds}:${index}`} className={`${styles.candidatesPanel} ${styles.renderVideoBlock}`} aria-label={t("检索助手提交的视频片段")}>
-                          {videoIndex === 0 ? <div className={styles.candidateHeading}><h2>{t("视频片段")}</h2><span>{t("{count} 段", { count: blocks.filter((item) => item.type === "video").length })}</span></div> : null}
-                          <div className={styles.candidateList}>
-                            <button
-                              type="button"
-                              className={selected ? styles.candidateSelected : styles.candidate}
-                              onClick={() => {
-                                if (onOpenVideo) {
-                                  onOpenVideo({ tenantId: hit.evidence.tenantId, seriesId: hit.evidence.seriesId, videoId: hit.evidence.videoId, startSeconds: playbackRange.startSeconds });
-                                } else {
-                                  setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId });
-                                }
-                              }}
-                              aria-pressed={selected}
-                              title={onOpenVideo ? t("打开整集并定位到片段") : undefined}
-                            >
-                              <div className={styles.candidateTop}>
-                                <span className={styles.rank}>{videoIndex + 1}</span>
-                                <span>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)}</span>
-                                <time>{formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds)}</time>
-                              </div>
-                              {hit.evidence.playbackStatus === "READY" && hit.evidence.playbackUrl ? (
-                                <span className={`${styles.candidateThumbnail} ${styles.candidatePreview}`} role="img" aria-label={t("{value0} {value1} {value2} 视频片段预览", { value0: hit.evidence.seriesName, value1: episodeLabel(hit.evidence.episodeOrder), value2: formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds) })}>
-                                  <PlaybackFrame className={styles.candidatePreviewFrame} src={mediaUrl(hit.evidence.playbackUrl)} positionSeconds={playbackRange.startSeconds} />
-                                  <Play className={styles.candidatePreviewPlay} size={42} fill="currentColor" aria-hidden="true" />
-                                </span>
-                              ) : thumbnailUrl ? (
-                                <img className={styles.candidateThumbnail} src={thumbnailUrl} alt={hit.evidence.thumbnail?.alt || t("{value0} 视频片段首帧", { value0: hit.evidence.seriesName })} loading="lazy" />
-                              ) : (
-                                <span className={displayMode === "debug" ? styles.candidateThumbnailFallback : styles.whyLine} role="img" aria-label={displayMode === "debug" ? t("该片段暂无首帧缩略图") : t("播放所选片段")}>
-                                  <Play size={22} fill="currentColor" aria-hidden="true" />
-                                  <span>{hit.evidence.playbackStatus === "READY" ? displayMode === "debug" ? t("暂无首帧 · 点击加载视频") : t("播放片段") : t("视频暂不可播放")}</span>
-                                </span>
-                              )}
-                              <strong>{displayMode === "debug" ? explanation.summary : formatTimeText(explanation.summary)}</strong>
-                            </button>
-                          </div>
-                        </section>
-                      );
+                      return <VideoBlockCard key={`video:${block.videoChunkId}`} message={message} block={block} hit={hit} displayMode={displayMode} selected={selected} onOpenVideo={onOpenVideo} onSelect={setSelection} />;
                     })}
                     {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
