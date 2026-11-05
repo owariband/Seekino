@@ -35,6 +35,7 @@ hypnos 于 **2026-04-27 入职实习**，这一阶段覆盖实习约四个半月
 | [oldvsnew_chat.md](oldvsnew_chat.md) | 正文调查 2026-09-24 | 比较 V1 产物、compact 与 V2 所需 Timeline | 历史迁移依据 |
 | [voiceprint-trd.md](voiceprint-trd.md) | 正文可见 2026-10-18–22 讨论、实验及后续修订 | 解决原子台词、说话人归属和跨片段身份 | 按每次实验版本阅读；部分证据已退役 |
 | [video-summarize-trd.md](video-summarize-trd.md) | 未单列提出日；含 20261021 迁移引用，Git 首见 10-23；10-29 标题规则修订 | 基于解析证据生成本集标题、简介、封面与真实集数；正式标题优先，无标题时生成内容短标题；未看系列选 Summary 封面、已看显示上次画面 | 初版精确提出日仍不详；10-29 本机 12 秒片 Kimi 与页面验收见正文 |
+| [outline-first-delegation-trd.md](outline-first-delegation-trd.md) | 2026-11-05 | 有大纲时 Supervisor 仍按“复杂问题”委派 query_video，子任务撞 180 秒超时，路线问题耗时 5–7 分钟；有大纲时先用大纲与 Event 检索直接核验 | 初稿；实验待测 |
 | [series-overview-trd.md](series-overview-trd.md) | 2026-11-05 | 系列级整体问题没有各集概要可读，只能逐集检索拼凑；Chat 按需拼接各集 `display` 形成系列概览，区分用户背景资料与视频摘要 | 初稿；依赖 #41，实验待测 |
 | [video-outline-trd.md](video-outline-trd.md) | 2026-11-04 | 已解析视频的整体性问题耗时 5 分 13 秒，Chat 没有视频级概览；Summarize 产出章节大纲，Chat 先读大纲再精读 | 初稿；依赖 #39、#40，实验待测 |
 | [deepseek-thinking-tool-choice-trd.md](deepseek-thinking-tool-choice-trd.md) | 2026-11-04 | 多模态工具循环在 DeepSeek 思考模式下发送 `tool_choice: required` 被 400 拒绝；与 Chat 路径一致降为 `auto` 并保留必须调用工具的校验 | 初稿 |
