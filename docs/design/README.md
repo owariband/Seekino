@@ -104,7 +104,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
-| 剪辑技能风格参考 | [editing-skill-style-reference-trd.md](03-product-reassessment/editing-skill-style-reference-trd.md) | 研究 TRD：风格包（风格卡、节奏轨、手法片段、结构）迁移实验，以及剪辑 Agent 查询缺口驱动的解析字段提案。 |
+| 剪辑参考一次解析、多次召回 | [editing-skill-style-reference-trd.md](03-product-reassessment/editing-skill-style-reference-trd.md) | 方向 TRD：结构 pass（类 ASR）、剪辑标注 pass（类 Summarize）、投影与 MCP 召回；最小验证 V0–V3 与分步集成顺序。 |
 | Agent Runtime | [agent-runtime-design.md](01-mvp/agent-runtime-design.md) | Runtime 结构与执行边界的设计记录，含旧 Session / 多 Agent 历史方案。 |
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |
 | 当前播放位置理解 | [realtime-parse-trd.md](02-agent-harness/realtime-parse-trd.md) | 专项 TRD：实时理解、临时解析与 Supervisor 接线；附执行流程图。 |
