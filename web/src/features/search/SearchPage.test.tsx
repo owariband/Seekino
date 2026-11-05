@@ -628,6 +628,14 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText("危险链接").closest("a")).toBeNull();
   });
 
+  it("renders single newlines in answers as line breaks", () => {
+    renderPage(assistantMessage("**标题**\n正文"));
+    const title = screen.getByText("标题");
+    expect(title.tagName).toBe("STRONG");
+    expect(title.nextSibling?.nodeName).toBe("BR");
+    expect(title.parentElement?.textContent?.replace(/\s/g, "")).toBe("标题正文");
+  });
+
   it("renders a live tool between Markdown and video parts in the message body", () => {
     const hit = searchHit("chunk-1", 1, "演出画面");
     renderPage({
@@ -651,6 +659,31 @@ describe("Search assistant presentation", () => {
     expect(tool).toHaveAttribute("data-active", "true");
     expect(tool.closest("details")).toBeNull();
     expect(screen.queryByText("兼容正文")).not.toBeInTheDocument();
+  });
+
+  it("hides a completed answer's tool rows in release and keeps them in debug", () => {
+    const view = renderPage({
+      ...assistantMessage("回答正文"),
+      renderBlocks: [
+        { type: "markdown", markdown: "回答正文" },
+        { type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "completed" },
+      ],
+    });
+    expect(screen.getByText("回答正文")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "查找视频资料" })).not.toBeInTheDocument();
+
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "debug", series: [series], isLoading: false });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("status", { name: "查找视频资料" })).toHaveTextContent("已完成");
+  });
+
+  it("keeps an in-progress tool row visible in release mode", () => {
+    renderPage({
+      ...assistantMessage(""),
+      status: "PROCESSING",
+      renderBlocks: [{ type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "inProgress" }],
+    });
+    expect(screen.getByRole("status", { name: "查找视频资料" })).toHaveTextContent("进行中");
   });
 
   it.each(["completed", "failed"] as const)("updates a web tool to %s in place without video evidence", (status) => {
@@ -716,7 +749,7 @@ describe("Search assistant presentation", () => {
         { type: "markdown", markdown: "已保留的说明" },
         { type: "tool", callId: "current-video", tool: "understand_current_video", status: "inProgress" },
       ],
-    });
+    }, [series], {}, "debug");
     const tool = screen.getByRole("status", { name: "查看当前视频" });
     expect(tool).toHaveAttribute("data-status", "inProgress");
     expect(tool).toHaveAttribute("data-active", "false");

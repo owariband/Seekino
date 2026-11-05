@@ -3,6 +3,7 @@ import { ArrowUp, ChevronDown, History, LoaderCircle, Play, Plus, SlidersHorizon
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link, useInRouterContext, useLocation, useNavigate } from "react-router";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
 import { useI18n } from "../../app/i18n";
@@ -205,7 +206,7 @@ function MarkdownAnswer({ markdown, conversationId, messageId }: { markdown: str
   }, [markdown, conversationId, messageId]);
   return (
     <div ref={element} className={styles.answerText}>
-      <Markdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={defaultUrlTransform} components={answerComponents}>{markdown}</Markdown>
+      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} skipHtml urlTransform={defaultUrlTransform} components={answerComponents}>{markdown}</Markdown>
     </div>
   );
 }
@@ -745,7 +746,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       {message.attachments.map((attachment, index) => <MessageAttachment key={`${attachment.mediaUri}:${attachment.previewUrl}`} attachment={attachment} index={index} />)}
                     </div> : null}
                     <p>{message.content}</p>
-                    {message.seriesIds.length ? <small className={styles.messageScope}>{t("可用视频范围：")}{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join(locale === "en" ? ", " : "、")}</small> : null}
+                    {displayMode === "debug" && message.seriesIds.length ? <small className={styles.messageScope}>{t("可用视频范围：")}{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join(locale === "en" ? ", " : "、")}</small> : null}
                   </div>
                 ) : (
                   <div>
@@ -757,6 +758,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {messageRenderBlocks(message).map((block, index, blocks) => {
                       if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} conversationId={message.conversationId} messageId={message.messageId} /></SeekContext.Provider>;
                       if (block.type === "tool") {
+                        if (displayMode !== "debug" && message.status !== "PROCESSING") return null;
                         const active = message.status === "PROCESSING" && block.status === "inProgress";
                         const status = block.status === "completed" ? t("已完成") : block.status === "failed" ? t("调用失败") : active ? t("进行中") : t("未确认完成");
                         return <div key={`tool:${block.callId}`} className={styles.toolCall} role="status" aria-label={t(toolLabels[block.tool])} data-status={block.status} data-active={active}>

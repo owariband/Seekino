@@ -421,7 +421,7 @@ def test_supervisor_shows_opening_and_running_tool_before_search_finishes():
     assert result.content.startswith(opening + "\n\nThe verified explanation.")
     assert "Official page" not in json.dumps(finished)
     assert "https://example.org/source" not in json.dumps(finished)
-    assert "简短" in model.prompts[0] and "内部推理" in model.prompts[0]
+    assert "不写「我先看一下」" in model.prompts[0] and "内部推理" in model.prompts[0]
 
 
 @pytest.mark.parametrize("tool_name", ["search_web", "query_video"])

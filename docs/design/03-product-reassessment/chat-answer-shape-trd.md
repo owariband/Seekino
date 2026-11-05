@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**Chat 回答形态 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-answer-shape`，PR 待创建。关联：[chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md)（PR #49，正文增量交付，已合并，本需求不改其交付合同）；并行需求 [chat-card-event-boundaries-trd.md](chat-card-event-boundaries-trd.md)（视频卡范围对齐，独立分支，同改 `agent/chat/supervisor.py` 的不同位置）。触发：2026-11-06 面向面试官演示，回答的可读性与观感直接决定演示效果。
+**Chat 回答形态 TRD。状态：初稿（2026-11-05）。** 分支 `fix/chat-answer-shape`，PR [#51](https://github.com/owariband/Seekino/pull/51)。关联：[chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md)（PR #49，正文增量交付，已合并，本需求不改其交付合同）；并行需求 [chat-card-event-boundaries-trd.md](chat-card-event-boundaries-trd.md)（视频卡范围对齐，独立分支，同改 `agent/chat/supervisor.py` 的不同位置）。触发：2026-11-06 面向面试官演示，回答的可读性与观感直接决定演示效果。
 
 ## 背景与触发场景
 
