@@ -38,34 +38,6 @@ const toolLabels: Record<Extract<AgentRenderBlock, { type: "tool" }>["tool"], st
 type ToolBlock = Extract<AgentRenderBlock, { type: "tool" }>;
 type VideoBlock = Extract<AgentRenderBlock, { type: "video" }>;
 
-// A marker line is a whole line `[[视频N]]`; N is the 1-based position of the
-// card among the message's video blocks, in render-block order.
-const MARKER_LINE = /^\s*\[\[视频(\d+)\]\]\s*$/gm;
-// While the marker is still streaming, its trailing prefix must not be shown.
-const TRAILING_MARKER_PREFIX = /\[\[视(?:频\d*(?:\]\]?)?)?$/;
-
-// Cards are submitted before the text; each marker line pulls its card up to
-// where the text refers to it, and cards no marker names follow the text.
-function placeVideoBlocks(blocks: AgentRenderBlock[]): AgentRenderBlock[] {
-  const videos = blocks.filter((block): block is VideoBlock => block.type === "video");
-  const placed = new Set<VideoBlock>();
-  const result: AgentRenderBlock[] = [];
-  for (const block of blocks) {
-    if (block.type === "video") continue;
-    if (block.type !== "markdown") { result.push(block); continue; }
-    let cursor = 0;
-    const text = (value: string) => { if (value.trim()) result.push({ type: "markdown", markdown: value }); };
-    for (const match of block.markdown.matchAll(MARKER_LINE)) {
-      text(block.markdown.slice(cursor, match.index));
-      const video = videos[Number(match[1]) - 1];
-      if (video && !placed.has(video)) { placed.add(video); result.push(video); }
-      cursor = match.index! + match[0].length;
-    }
-    text(block.markdown.slice(cursor).replace(TRAILING_MARKER_PREFIX, ""));
-  }
-  return [...result, ...videos.filter((video) => !placed.has(video))];
-}
-
 function MessageAttachment({ attachment, index }: { attachment: AgentAttachmentView; index: number }) {
   const { t } = useI18n();
   const [failed, setFailed] = useState(false);
@@ -838,7 +810,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
                     {displayMode === "debug" && message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : message.searchResult?.partial ? <p className={styles.resultWarnings} role="status">{t("本次回答仅覆盖当前可检索的视频。")}</p> : null}
-                    {placeVideoBlocks(messageRenderBlocks(message)).map((block, index) => {
+                    {messageRenderBlocks(message).map((block, index) => {
                       if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} conversationId={message.conversationId} messageId={message.messageId} /></SeekContext.Provider>;
                       if (block.type === "tool") return <ToolRow key={`tool:${block.callId}`} block={block} message={message} displayMode={displayMode} />;
                       const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
