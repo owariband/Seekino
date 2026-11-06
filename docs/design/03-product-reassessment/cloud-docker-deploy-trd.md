@@ -2,6 +2,13 @@
 
 需求：用 Docker 将 `main` 的服务部署到云服务器，对公网提供样例库的观看、检索与问答。状态：TRD 初稿，2026-11-06。分支 `chore/cloud-docker-deploy`，[PR #57](https://github.com/owariband/Seekino/pull/57)。2026-11-06 修订：两台服务器拓扑与范围收窄，见 §3。
 
+2026-11-06 运行配置与首次启动续作：分支 `chore/cloud-runtime-startup`，PR 待创建，沿用本 TRD。
+CPU 已由 #58/#59 修复并部署 main `0282fcb0`，镜像验收见 [构建修复 TRD](docker-web-assets-trd.md)。
+本次已授权从本机 `.env.local` 派生私有 `.env.cloud`、通过 SSH 传输并启动 CPU；
+调整生产数据库/索引/容器路径、独立生成会话和数据库凭据，移除本机下载代理。
+显式记录 cloud 环境文件的忽略规则，真实凭据只保留在权限 600 的私有文件。
+本机 SMTP 与管理员邮箱为空，首次验证使用游客；GPU 重启后复查已有服务，不改向量合同。
+
 **背景与触发场景。** Seekino 的第一个对外用途是简历筛选：面试官打开公开链接，自行浏览课程、检索并提问。演示目前只运行在本机——API 19641 从 detached worktree `outputs/worktrees/run-dev` 启动，数据在 v11 隔离库（MySQL 13361、ES 19231、本机媒体）。部署目标为两台服务器：一台 CPU 服务器（4C8G 量级，运行 Seekino Docker 栈）和一台待租用的 GPU 服务器（自托管模型）；两台都尚未交付 SSH。早先检查过的那台服务器已不是部署目标，此前对它的只读检查不再作为现状依据（2026-11-06 用户确认）。
 
 **实际与期望。** 期望：服务器上一条 compose 命令起完整栈，公网 HTTPS 同源提供 Web 与 API，`SEEKINO_AUTH_MODE=cloud` + `SEEKINO_PUBLIC_LIBRARY_ONLY=true`，游客与邮箱用户可观看、检索、问答。实际缺口（源码与模板核对，见 [cloud 首发说明](../../../deploy/cloud/README.md)）：
@@ -98,3 +105,9 @@ flowchart LR
 # 6. 结果验收与闭环
 
 状态（2026-11-06）：叠加 Compose、合并环境模板与拓扑说明已完成，静态检查通过（本机 `docker compose ... config` 仅渲染配置，不启动容器）；尚未在任何服务器上构建或启动，§2 指标均待测。验收以 §2 指标逐项回填，证据放 `docs/report/deploy/cloud-docker-20261106/`。部署完成、门禁通过与对外稳定分别报告。
+
+2026-11-06 首次启动验证计划：核对私有 env 被 Git/Docker 排除、有效配置不含本机路径、
+生产数据与开发数据物理隔离；依次验证 MySQL/ES/Redis、初始化、API /healthz、HTTPS Web、
+游客会话与只读资料入口，并核对未授权管理调用被拒。模型只核对已有 GPU 服务与接口，
+不导入素材或迁移本机数据库；真实解析、检索质量与公网可信 TLS 仍需独立证据。
+本轮开始时 MySQL/ES/Redis 已健康，API/Web 与模型接入仍待验；自签证书仅用于试运行。
