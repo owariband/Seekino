@@ -2785,3 +2785,10 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 配置 SMTP 后恢复既有表单，本地资料上传不受远端邮件配置影响。HTTP、前端和两种视口
 回归通过；部署与发布范围见 [TRD](../design/03-product-reassessment/smtp-login-availability-trd.md)，
 当前状态统一维护在工作台 DEPLOY-04。
+
+<a id="chat-layout-01"></a>
+## CHAT-LAYOUT-01：对话历史浮层遮挡正文，初次提问的欢迎区与输入框分离
+
+2026-11-07：独立 `/search` 将历史放在右上浮层，初次打开时欢迎区居中但输入框贴底，宽屏正文和输入框最大 880px。截图与 `db180245` 的 SearchPage/CSS 均可核对，影响历史切换和首次输入的视觉焦点。
+
+验收：桌面约 248px 左侧历史、约 760px 输入/正文；草稿欢迎语紧邻输入；首次发送不重挂载 textarea、不丢焦点；手机抽屉可关闭且焦点受限；继续遵守 #66 无操作不创建会话。当前状态统一见[工作台](workbench.html) CHAT-LAYOUT-01；设计见[TRD](../design/03-product-reassessment/chat-sidebar-layout-trd.md)，本轮证据见[验收报告](../report/web/chat-sidebar-layout-20261107.md)。

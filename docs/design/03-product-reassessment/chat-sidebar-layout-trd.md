@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 - 需求：独立对话页的左侧历史、居中草稿与简洁输入栏。
-- 分支：`feat/chat-sidebar-layout`；PR：待创建。
+- 分支：`feat/chat-sidebar-layout`；PR：[ #67](https://github.com/owariband/Seekino/pull/67)。
 - 日期：2026-11-07；当前执行状态见[工作台](../../dev/workbench.html) `CHAT-LAYOUT-01`。
 
 当前 `/search` 通过 `SearchPage.tsx` 展示右上角历史弹层，欢迎区占据剩余高度，输入框固定底部且宽达 880px。用户截图中历史列表遮挡正文，初次提问的欢迎语和输入框相距很远，输入框背景与留白偏重。目标是参考用户提供的 Claude 截图的层级、比例和紧凑度，保留 Seekino 品牌与真实数据。
@@ -49,3 +49,7 @@
 # 6. 结果验收与闭环
 
 初稿：实现、截图、交互验收均待完成。闭环时回填本轮命令、截图入口、运行版本和未覆盖范围；PR 与工作台保持关联。仅在本机验收完成后报告布局效果，不将静态检查等同于视觉验收。
+
+## 2026-11-07 实现与验证记录
+
+采用现有 SearchPage 的历史处理与 composer，仅分离独立/embedded 布局。实测左栏 248px、输入最大 760px，草稿高 106px，正式输入约 58px。593 项单测、typecheck、build 及 3 项隔离浏览器用例通过；真实历史读取过程 create=0。首次发送同一 textarea 节点与焦点保留。详见[验收报告](../../report/web/chat-sidebar-layout-20261107.md)。Kino 联合验证待完成；远端发布和真实模型不在本轮范围。

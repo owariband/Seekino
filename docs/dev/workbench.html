@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T03:10:00+08:00",
+ "updatedAt": "2026-11-07T03:19:03+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 16,
+ "revision": 17,
  "categories": [
   {
    "id": "parse",
@@ -4647,11 +4647,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "独立对话页：左侧历史与居中草稿",
    "category": "chat",
    "type": "requirement",
-   "status": "progressing",
+   "status": "verifying",
    "priority": "P1",
    "description": "历史浮层遮挡正文，欢迎区与输入框脱节；调整比例和对话过渡，保留延迟创建。",
-   "next": "实现独立页布局并验证桌面、窄屏、发送过渡和 Kino 集成。",
-   "verification": "初稿：待验证；不变更模型、API 或历史数据。",
+   "next": "同步 Kino 运行工作区并检查独立页与浮窗联合效果。",
+   "verification": "593 项单测（含单独重跑代理 8 项）、typecheck、build、3 项 Playwright 用例通过；真实历史查看 create=0，Kino 联合验证待完成。",
    "updatedAt": "2026-11-07",
    "tags": [
     "UI"
@@ -4665,6 +4665,16 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD",
      "url": "https://github.com/owariband/Seekino/blob/feat/chat-sidebar-layout/docs/design/03-product-reassessment/chat-sidebar-layout-trd.md",
      "kind": "trd"
+    },
+    {
+     "label": "PR #67",
+     "url": "https://github.com/owariband/Seekino/pull/67",
+     "kind": "pr"
+    },
+    {
+     "label": "验收报告",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-sidebar-layout/docs/report/web/chat-sidebar-layout-20261107.md",
+     "kind": "source"
     }
    ]
   }
