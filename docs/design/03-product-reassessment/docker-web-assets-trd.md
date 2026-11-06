@@ -42,7 +42,8 @@ CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm 
 `assets/mascot/seekino-logo.svg` 及其父目录，避免把持久媒体变成构建输入。
 
 保留源码软链接，不复制维护第二份 Logo，不在服务器手工替换 Logo。
-网络代理通过仓库外 Compose build 覆盖配置提供，不提交临时代理和 apt 镜像源替换。
+网络代理通过仓库外 Compose build 覆盖配置提供。API 增加可选 `DEBIAN_MIRROR` 构建参数，
+默认保留官方源；受限环境指定镜像主机名，免于服务器修改源码。不提交临时代理地址。
 
 依赖：[云部署 TRD](cloud-docker-deploy-trd.md)、[PR #57](https://github.com/owariband/Seekino/pull/57)。
 #57 已进 dev，尚未进 main。先合入本修复到 dev，再用独立发布 PR 将 dev 树发布至 main，
@@ -57,6 +58,11 @@ CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm 
 2026-11-06 构建上下文实测：只允许 assets 父目录仍会包含其余子目录；第一次探针捕获
 `assets/library/DO_NOT_PACKAGE.txt`。随后显式排除 assets 子树，再放行两份目标；第二次
 Docker scratch 导出只含 PNG/SVG，测试标记未进入。此失败与修正保留为输入隔离证据。
+
+同日修复候选 b38d32ed 的 Web 镜像构建成功；临时 loopback HTTP 首页、PNG、SVG 均为 200，
+两份图片 SHA-256 与源码一致。API 官方 apt 源虽能取得 InRelease，小请求可达，
+但直连大索引超过 3 分钟未推进，代理下载也有中断；据此补充可选镜像构建参数，
+避免依赖服务器临时源码补丁。新增参数路径的完整 API 构建待测。
 构建前后日志、文件清单和提交号保存在忽略的验收目录；执行后回填实测结果。
 
 # 5. 试点验证与方案取舍

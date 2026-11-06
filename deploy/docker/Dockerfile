@@ -9,7 +9,11 @@ RUN npm run build
 
 FROM python:3.12-slim-bookworm AS api
 COPY --from=ghcr.io/astral-sh/uv:0.11.24 /uv /uvx /usr/local/bin/
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates git \
+ARG DEBIAN_MIRROR
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy \

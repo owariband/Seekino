@@ -412,3 +412,8 @@ Web 构建阶段保留 `/build/web` 与 `/build/assets` 的仓库目录关系，
 软链接解析。`.dockerignore` 只允许两份已跟踪的发布 Logo，不允许 `assets/library` 或本机素材
 进入上下文。新增跨目录发布资源时须同步构建输入并验证最终镜像；宿主机 Vite 构建不能
 替代 Docker 验收。修复与发布验证见 [TRD](../docs/design/03-product-reassessment/docker-web-assets-trd.md)。
+
+API 构建默认使用 Debian 官方源。网络受限时可传入 `DEBIAN_MIRROR` 构建参数
+（仅镜像主机名，如 `mirrors.tencentyun.com`），替换 apt 的下载主机；不需要修改服务器
+源码。该参数只影响镜像构建，不是应用运行配置。代理与构建参数由部署环境配置，
+不能将本机代理地址或凭据写入 Dockerfile。
