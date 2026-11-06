@@ -123,6 +123,12 @@ Secure 属性，上游 HTTPS 校验保持开启。登录、退出和远端失联
 返回同上游的绝对 `/api` 媒体地址，配置 `VITE_REMOTE_API_ORIGIN` 可将它映射到该代理。
 实际验证码登录还需要远端身份服务、Redis 和 SMTP 正常运行。
 
+身份接口的 `emailLoginEnabled` 反映账号服务是否配置邮件发送器。SMTP host 留空时，
+账号入口显示“游客模式”和“登录 / 注册（暂未开放）”，登录弹窗只提供说明及“继续体验”，
+不收集邮箱或请求验证码。配置 SMTP 并重启后，重新加载身份即可恢复表单；这不代表邮件
+连通性已经验证。本机上传继续按本机权限工作。设计与验收见
+[SMTP 登录提示](../docs/design/03-product-reassessment/smtp-login-availability-trd.md)。
+
 验证：
 
 ```bash

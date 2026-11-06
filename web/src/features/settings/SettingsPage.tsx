@@ -224,7 +224,8 @@ export function SettingsPage() {
   const accountLabel = accountStatus === "unconfigured" ? t("未连接账号服务")
     : accountStatus === "checking" ? t("正在连接")
     : accountStatus === "unavailable" ? t("连接不可用")
-    : accountIdentity && !accountIdentity.isGuest ? accountIdentity.email : t("未登录");
+    : accountIdentity && !accountIdentity.isGuest ? accountIdentity.email
+    : t(accountIdentity?.emailLoginEnabled === false ? "游客模式" : "未登录");
 
   return (
     <main className="page">

@@ -60,7 +60,7 @@ import type { ApiConnection, AuthIdentity, DataSource, UploadSessionView } from 
 
 const localIdentity: AuthIdentity = {
   userId: "local", email: null, isGuest: false, tenantId: "local-default", publicTenantId: "local-default",
-  mode: "local", csrfToken: "", permissions: { canUpload: true, canManage: true, canConfigure: true },
+  mode: "local", csrfToken: "", emailLoginEnabled: false, permissions: { canUpload: true, canManage: true, canConfigure: true },
 };
 afterEach(() => {
   clearDataSource();

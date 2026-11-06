@@ -43,7 +43,7 @@ const series: SeriesView = {
 };
 const localIdentity: AuthIdentity = {
   userId: "local-user", email: null, isGuest: false, tenantId: "local-default",
-  publicTenantId: "public-courses", mode: "local", csrfToken: "",
+  publicTenantId: "public-courses", mode: "local", csrfToken: "", emailLoginEnabled: false,
   permissions: { canUpload: true, canManage: true, canConfigure: true },
 };
 const localSource: DataSource = {

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T00:11:15+08:00",
+ "updatedAt": "2026-11-07T01:06:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 13,
+ "revision": 15,
  "categories": [
   {
    "id": "parse",
@@ -4593,6 +4593,46 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "运行配置 #61",
      "url": "https://github.com/owariband/Seekino/pull/61",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-04",
+   "title": "SMTP 留空时提前说明登录注册未开放",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "账号服务提供 emailLoginEnabled；空配置展示游客模式和未开放说明，不收集邮箱；配置后保留原验证码流程。",
+   "next": "候选已通过实机验收，完成 main 发布 #63 后核对正式运行提交。",
+   "verification": "后端 94 passed、7 skipped；前端 181 passed、类型检查与构建通过。候选 f811903f 五服务 healthy；真实 HTTPS 能力/权限通过，Chrome 桌面/手机均显示未开放，零浏览器邮件请求与页面异常。首次权限失败已回退并修正后复验。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "身份",
+    "前端"
+   ],
+   "related": [
+    "DEPLOY-02",
+    "DEPLOY-03",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/email-login-availability",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/email-login-availability/docs/design/03-product-reassessment/smtp-login-availability-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #65",
+     "url": "https://github.com/owariband/Seekino/pull/65",
      "kind": "pr"
     },
     {
