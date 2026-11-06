@@ -2,7 +2,8 @@
 
 需求：用 Docker 将 `main` 的服务部署到云服务器，对公网提供样例库的观看、检索与问答。状态：TRD 初稿，2026-11-06。分支 `chore/cloud-docker-deploy`，[PR #57](https://github.com/owariband/Seekino/pull/57)。2026-11-06 修订：两台服务器拓扑与范围收窄，见 §3。
 
-2026-11-06 运行配置与首次启动续作：分支 `chore/cloud-runtime-startup`，PR 待创建，沿用本 TRD。
+2026-11-06 运行配置与首次启动续作：分支 `chore/cloud-runtime-startup`，
+[PR #61](https://github.com/owariband/Seekino/pull/61)，沿用本 TRD。
 CPU 已由 #58/#59 修复并部署 main `0282fcb0`，镜像验收见 [构建修复 TRD](docker-web-assets-trd.md)。
 本次已授权从本机 `.env.local` 派生私有 `.env.cloud`、通过 SSH 传输并启动 CPU；
 调整生产数据库/索引/容器路径、独立生成会话和数据库凭据，移除本机下载代理。
