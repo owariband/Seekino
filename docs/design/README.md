@@ -119,6 +119,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 用户与租户 | [user-tenant-trd.md](02-agent-harness/user-tenant-trd.md) | 主 TRD：游客、用户、租户身份、资源归属与隔离边界。 |
 | Series 共享 | [series-sharing-trd.md](02-agent-harness/series-sharing-trd.md) | 专项 TRD：Series 共享、团队范围与访问合同。 |
 | Docker 发布资源与 main 构建 | [docker-web-assets-trd.md](03-product-reassessment/docker-web-assets-trd.md) | PNG/SVG 软链接的构建输入、镜像验证和 CPU 源码提交对齐；关联云部署 PR #57。 |
+| 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
 | 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |
 
