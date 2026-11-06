@@ -2756,3 +2756,12 @@ Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐�
 ## 迁移后新增问题分析
 
 2026-11-02 起的新问题在此按稳定编号记录完整分析，当前执行状态见 [管理工作台](workbench.html)。既有问题继续在原条目补充有日期的证据。
+
+### DEPLOY-01：Docker 构建遗漏 Logo 软链接目标，阻断 main 发布
+
+2026-11-06：CPU 镜像构建通过依赖安装后，Vite 报 `ENOENT /build/public/assets/seekino-logo.png`。
+main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /build，PNG/SVG 两份软链接
+目标均无法保持原路径。服务器无 Git 元数据，另有临时 apt 修改，不能直接作为 main 验收。
+验收要求：正式 Dockerfile 构建成功，两份发布资源与源文件哈希一致且 HTTP 可访问，
+不引入本地媒体和密钥，最终 CPU HEAD 对齐 main。当前状态见工作台 DEPLOY-01；
+方案与证据见 [TRD](../design/03-product-reassessment/docker-web-assets-trd.md)。

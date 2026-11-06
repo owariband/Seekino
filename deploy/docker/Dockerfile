@@ -1,14 +1,19 @@
 # syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS web-build
-WORKDIR /build
+WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY assets/ /build/assets/
 RUN npm run build
 
 FROM python:3.12-slim-bookworm AS api
 COPY --from=ghcr.io/astral-sh/uv:0.11.24 /uv /uvx /usr/local/bin/
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates git \
+ARG DEBIAN_MIRROR
+RUN if [ -n "$DEBIAN_MIRROR" ]; then \
+      sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy \
@@ -30,6 +35,6 @@ EXPOSE 9621
 CMD ["python", "-m", "server.main"]
 
 FROM nginx:1.28-alpine AS web
-COPY --from=web-build /build/dist/ /usr/share/nginx/html/
+COPY --from=web-build /build/web/dist/ /usr/share/nginx/html/
 COPY deploy/docker/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

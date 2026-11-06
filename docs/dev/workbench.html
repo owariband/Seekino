@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-04T13:50:00+08:00",
+ "updatedAt": "2026-11-06T22:50:11+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 8,
+ "revision": 10,
  "categories": [
   {
    "id": "parse",
@@ -4484,6 +4484,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ],
    "branch": "",
    "links": []
+  },
+  {
+   "id": "DEPLOY-01",
+   "title": "Docker 发布资源完整性与 CPU main 源码对齐",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "Web 发布资源软链接在 Docker 中缺失；服务器副本含临时修改，需以明确 main 提交验收。",
+   "next": "完成 #58 → dev、#59 → main 发布后，核对 main SHA 并切换 CPU 正式源码。",
+   "verification": "候选 090782a0 的 API/Web 实机构建通过；首页及两 Logo HTTP 200、哈希一致；媒体排除探针通过；初始化回归 6 passed。main 发布和正式切换待验。",
+   "updatedAt": "2026-11-06",
+   "tags": [
+    "发布",
+    "Docker"
+   ],
+   "related": [
+    "MOD-PLATFORM"
+   ],
+   "branch": "fix/docker-web-assets",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/docker-web-assets/docs/design/03-product-reassessment/docker-web-assets-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #58",
+     "url": "https://github.com/owariband/Seekino/pull/58",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #59",
+     "url": "https://github.com/owariband/Seekino/pull/59",
+     "kind": "pr"
+    }
+   ]
   }
  ]
 }</script>

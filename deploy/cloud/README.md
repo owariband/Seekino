@@ -1,7 +1,7 @@
 # 云端样例库首发
 
 首发开放已解析、已发布的样例，用户可观看、检索和问答，管理员负责上传与资料管理。
-复制 [环境模板](first-release.env.example) 到服务器的私有配置文件，填入生产连接和凭据，
+复制 [环境模板](env.cloud.example) 到服务器的私有配置文件，填入生产连接和凭据，
 并将示例域名替换为实际 HTTPS 地址。
 
 `SEEKINO_PUBLIC_LIBRARY_ONLY=true` 只作用于 cloud 身份：普通邮箱用户仍可登录和保存自己的
@@ -30,3 +30,18 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
 发布验收至少覆盖游客和普通邮箱用户的观看、检索、问答，普通用户直接调用上传/任务/资料修改
 接口的拒绝，以及管理员的上传、发布和撤回。真实 SMTP、模型调用、服务器重启后的对话恢复
 与公开入口仍须在实际服务器上验证；配置模板不代表云端部署已完成。
+
+## 服务器拓扑
+
+| 服务器 | 运行内容 |
+| --- | --- |
+| CPU 服务器 | 根 [Compose](../../compose.yaml) 叠加 [compose.prod.yaml](compose.prod.yaml)：web（Nginx 终止 TLS，复用 [Nginx 模板](../nginx/nginx.conf.template)）、API、MySQL、Elasticsearch、Redis。只有 443 对外，API 仅发布在 loopback，数据库与索引不发布端口。 |
+| GPU 服务器 | 自托管模型：查询 embedding（与样例索引相同的 Qwen3-Embedding-0.6B Q8 GGUF，llama.cpp，1024 维）、WhisperX 转写（OpenAI `/v1/audio/transcriptions` 兼容服务）、替换 Jev 的路由模型。 |
+
+服务器的模型 YAML（`SEEKINO_MODEL_CONFIG`）指向的 `base_url`：
+
+- `llama_cpp_embedding` 来源：`https://<GPU 主机>`；`openai_audio` 转写来源：`https://<GPU 主机>/v1`。
+  非 loopback 地址必须是 HTTPS（`gateway/config.py` 的 `_https_base_url` / `_audio_base_url`），
+  因此 GPU 服务器需要提供 TLS 入口。
+- DeepSeek、Kimi 等对话与重排模型仍使用各自的公网 HTTPS API。
+- 查询路由当前仍为 OpenRouter 上的 Jev；改为 GPU 上的路由模型需要单独修改 `gateway/query_hook.py`。

@@ -16,6 +16,12 @@
 !server/**
 !web/
 !web/**
+!assets/
+assets/**
+!assets/seekino-logo.png
+!assets/mascot/
+assets/mascot/**
+!assets/mascot/seekino-logo.svg
 !deploy/
 !deploy/docker/
 !deploy/docker/Dockerfile

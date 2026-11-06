@@ -1,7 +1,8 @@
 # 1. 问题与现状
 
 需求：Docker 发布资源完整性与 CPU 服务器 main 源码对齐。记录日期：2026-11-06。
-工作分支：`fix/docker-web-assets`；PR：首个设计提交推送后回填。
+工作分支：`fix/docker-web-assets`；[PR #58](https://github.com/owariband/Seekino/pull/58)。
+发布分支：`chore/release-main-docker-fix`；[main 发布 PR #59](https://github.com/owariband/Seekino/pull/59)。
 当前进度以 [管理工作台](../../dev/workbench.html) 的 `DEPLOY-01` 为准。
 
 CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm run build` 报
@@ -14,7 +15,7 @@ CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm 
 只有 Dockerfile 不同：服务器临时替换了 apt 源。API 镜像成功不能代替 main 的原样构建验收。
 此前网络与构建原始记录保存在本机忽略目录 `outputs/ops/cpu-download-proxy/`。
 
-本次只修复发布资源进入 Docker 构建的路径，验证 API/Web 镜像，并将 CPU 源码切换为
+本次修复发布资源的构建路径，提供无需修改源码的 apt 镜像参数，验证 API/Web 镜像，并将 CPU 源码切换为
 可追溯的 main 提交。保留已有私有配置、媒体、数据库卷和代理；不改变模型、权限和业务逻辑。
 密钥配置、真实模型接入、数据迁移和公网业务验收不由镜像构建成功推定完成。
 
@@ -42,7 +43,8 @@ CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm 
 `assets/mascot/seekino-logo.svg` 及其父目录，避免把持久媒体变成构建输入。
 
 保留源码软链接，不复制维护第二份 Logo，不在服务器手工替换 Logo。
-网络代理通过仓库外 Compose build 覆盖配置提供，不提交临时代理和 apt 镜像源替换。
+网络代理通过仓库外 Compose build 覆盖配置提供。API 增加可选 `DEBIAN_MIRROR` 构建参数，
+默认保留官方源；受限环境指定镜像主机名，免于服务器修改源码。不提交临时代理地址。
 
 依赖：[云部署 TRD](cloud-docker-deploy-trd.md)、[PR #57](https://github.com/owariband/Seekino/pull/57)。
 #57 已进 dev，尚未进 main。先合入本修复到 dev，再用独立发布 PR 将 dev 树发布至 main，
@@ -53,7 +55,34 @@ CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm 
 计划在同一 CPU Docker 环境比较旧构建失败和修复后的构建。依赖缓存、代理和网络波动
 只影响耗时，不作为本次性能收益；验收比较构建退出状态、资源哈希、HTTP 响应及源码一致性。
 运行现有 `tests/server/test_docker_deployment.py`，验证初始化顺序、失败关闭和配置保留。
-构建前后日志、文件清单和提交号保存在忽略的验收目录；执行后回填实测结果。
+
+2026-11-06 构建上下文实测：只允许 assets 父目录仍会包含其余子目录；第一次探针捕获
+`assets/library/DO_NOT_PACKAGE.txt`。随后显式排除 assets 子树，再放行两份目标；第二次
+Docker scratch 导出只含 PNG/SVG，测试标记未进入。此失败与修正保留为输入隔离证据。
+
+同日修复候选 b38d32ed 的 Web 镜像构建成功；临时 loopback HTTP 首页、PNG、SVG 均为 200，
+两份图片 SHA-256 与源码一致。API 官方 apt 源虽能取得 InRelease，小请求可达，
+但直连大索引超过 3 分钟未推进，代理下载也有中断；据此补充可选镜像构建参数，
+避免依赖服务器临时源码补丁。
+
+最终实现候选 `090782a0a8ed652424d276be888408eaf51f974b` 使用同一 CPU 的 Docker 构建，
+通过仓库外 Compose build 参数指定 `DEBIAN_MIRROR=mirrors.tencentyun.com` 及下载代理，
+源码无补丁，API/Web 构建整体退出码为 0。验收结果如下：
+
+| 检查 | 实测结果 |
+| --- | --- |
+| API 镜像 | `sha256:4ff28940143c944f717215c902055595eb00bc7642bb4a3ef5cbb451e1684366` |
+| Web 镜像 | `sha256:17a2005b2d44a157607cf84b4d81ebd3f0d5ee12760f5b376a051e4a61c215b7` |
+| Web 临时 HTTP | 首页、`/assets/seekino-logo.png`、`/assets/seekino-logo.svg` 均为 200 |
+| PNG SHA-256 | `3cebaabe9a01bd439ba65e0534d9fdd0646be207574a0d95975a8c1a09beb2c9`，与源码一致 |
+| SVG SHA-256 | `4e5c67beeaa20033fcea456e779d60bac238cfba8cf6dbf46f55677fc194e220`，与源码一致 |
+| API 无网络运行 | `fastapi` / `openai` 导入通过；运行环境无 HTTP_PROXY / HTTPS_PROXY / DEBIAN_MIRROR |
+| Docker 初始化回归 | `tests/server/test_docker_deployment.py`，6 passed，最终一次 2.05 秒 |
+| 构建输入隔离 | scratch 导出仅两份 Logo，`assets/library/DO_NOT_PACKAGE.txt` 未进入 |
+
+构建日志、资源 HTTP/hash JSON 和源码清单保存在本机忽略目录
+`outputs/verification/docker-web-assets-20261106/`；服务器原始日志保存在
+`~/seekino-download-proxy/`。本轮没有测试业务 API、真实模型或公网域名。
 
 # 5. 试点验证与方案取舍
 
@@ -64,6 +93,8 @@ CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm 
 
 # 6. 结果验收与闭环
 
-初稿时尚未实施。需要分别记录：修复提交、相关测试、候选镜像验证、发布 PR/main SHA、
-CPU 源码切换与最终镜像验证。服务启动、TLS、GPU 模型和真实业务效果单独报告，
-未验证项不标通过。最终证据与剩余事项回填本节，状态只在管理工作台维护。
+2026-11-06：上述候选的 API/Web 实机构建、资源 HTTP/hash、构建输入隔离及 6 项初始化
+回归均已通过。发布通过 #58 → dev → #59 → main 进行，并保留 main 的 `.gitignore`。
+本文记录时 main 合并及 CPU 正式源码切换尚待执行，不能将候选验证写成部署完成。
+切换时必须记录远端 main SHA、CPU HEAD、tracked diff、最终镜像及旧源码备份路径。
+服务启动、TLS、GPU 模型和真实业务效果单独报告，未验证项不标通过；状态只在管理工作台维护。
