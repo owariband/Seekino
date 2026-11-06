@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 需求：Docker 发布资源完整性与 CPU 服务器 main 源码对齐。记录日期：2026-11-06。
-工作分支：`fix/docker-web-assets`；PR：首个设计提交推送后回填。
+工作分支：`fix/docker-web-assets`；[PR #58](https://github.com/owariband/Seekino/pull/58)。
 当前进度以 [管理工作台](../../dev/workbench.html) 的 `DEPLOY-01` 为准。
 
 CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm run build` 报
@@ -64,6 +64,6 @@ CPU 构建在网络代理恢复后通过 Python 依赖安装，但 Web 的 `npm 
 
 # 6. 结果验收与闭环
 
-初稿时尚未实施。需要分别记录：修复提交、相关测试、候选镜像验证、发布 PR/main SHA、
+2026-11-06：构建路径修复已实施；现有 Docker 初始化测试 6 passed（3.33 秒）。真实镜像验证待执行。需要分别记录：修复提交、相关测试、候选镜像验证、发布 PR/main SHA、
 CPU 源码切换与最终镜像验证。服务启动、TLS、GPU 模型和真实业务效果单独报告，
 未验证项不标通过。最终证据与剩余事项回填本节，状态只在管理工作台维护。

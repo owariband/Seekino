@@ -405,3 +405,10 @@ docker compose --env-file .env.local stop mysql elasticsearch
 
 使用已有的带密码 MySQL 或带 API Key / HTTPS 的 ES 时，先自行启动对应实例，
 再通过 `.env.local` 配置连接信息；脚本不会改写这些凭证。
+
+## Docker 发布资源构建
+
+Web 构建阶段保留 `/build/web` 与 `/build/assets` 的仓库目录关系，供 public 下的 Logo
+软链接解析。`.dockerignore` 只允许两份已跟踪的发布 Logo，不允许 `assets/library` 或本机素材
+进入上下文。新增跨目录发布资源时须同步构建输入并验证最终镜像；宿主机 Vite 构建不能
+替代 Docker 验收。修复与发布验证见 [TRD](../docs/design/03-product-reassessment/docker-web-assets-trd.md)。
