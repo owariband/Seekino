@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-06T23:02:32+08:00",
+ "updatedAt": "2026-11-07T00:03:50+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 11,
+ "revision": 12,
  "categories": [
   {
    "id": "parse",
@@ -4524,6 +4524,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "部署 main 提交",
      "url": "https://github.com/owariband/Seekino/commit/0282fcb0da58a4292007732c931823dc11720a22",
      "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-02",
+   "title": "无 SMTP 的 cloud 游客启动",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "邮件配置缺失阻断整个身份服务；现已分离可选邮件能力，候选已实机健康。",
+   "next": "完成 main 发布 #63 并核对正式运行提交。",
+   "verification": "相关回归 99 passed、7 skipped；8 项 Agent 夹具错误在基线复现。CPU 五服务 healthy，HTTPS/游客通过，管理和 CSRF 403、未配置邮件 503。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "身份"
+   ],
+   "related": [
+    "MOD-PLATFORM"
+   ],
+   "branch": "fix/cloud-guest-without-smtp",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-guest-without-smtp/docs/design/03-product-reassessment/cloud-guest-without-smtp-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "修复 #62",
+     "url": "https://github.com/owariband/Seekino/pull/62",
+     "kind": "pr"
+    },
+    {
+     "label": "发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
     }
    ]
   }

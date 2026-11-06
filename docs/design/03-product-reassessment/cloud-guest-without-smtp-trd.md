@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 需求：云端缺少 SMTP 时允许游客服务启动，邮箱认证明确不可用。日期：2026-11-06。
-分支：`fix/cloud-guest-without-smtp`；PR 待创建。依赖 [云部署 TRD](cloud-docker-deploy-trd.md)、
+分支：`fix/cloud-guest-without-smtp`；[修复 PR #62](https://github.com/owariband/Seekino/pull/62)；[main 发布 #63](https://github.com/owariband/Seekino/pull/63)。依赖 [云部署 TRD](cloud-docker-deploy-trd.md)、
 云端运行配置续作 #61；当前任务状态以 [管理工作台](../../dev/workbench.html) 为准。
 
 CPU main `0282fcb0` 的 MySQL、Elasticsearch、Redis 已健康，初始化退出码 0，
@@ -49,3 +49,18 @@ CPU 新生产空库试运行：健康检查、游客 cookie/CSRF、公开资料�
 待验证：直接回归、相关权限回归、CPU 候选运行、main 发布和最终健康状态。
 完成标准是无 SMTP 的游客应用可用且邮箱接口明确拒绝；不代表真实邮件可用、模型链路完成、
 样例数据已迁移或公网证书可信。后续结果回填本节，进度统一在管理工作台维护。
+
+2026-11-07 实测：新增 HTTP 用例在旧构造器复现 SMTP ValueError；修复后通过，验证游客
+Secure/HttpOnly cookie、稳定身份、CSRF 拒绝、邮件 send/verify 的 503、没有验证码 Redis 写入
+且没有邮箱用户创建。组合认证/访问/资料权限/初始化检查 99 passed、7 skipped（真实隔离 Redis
+未配置）；另外 8 项 cloud Agent 用例因测试夹具缺少 WebSearcher.max_query_chars 失败，
+在未修改的基线同样 8 failed，列为既有测试缺口，不宣称全套通过。
+
+候选 `f269f1ecd4ea2e2ae957a22c0abf50b8908a240b` 在 CPU 构建与起栈均退出 0，
+API/Web/MySQL/ES/Redis 五个服务 healthy。HTTPS 首页、/healthz、parseConsumer running、
+游客会话、公开空资料库通过；带 tenantId 的管理读取 403，缺 CSRF 的邮箱请求 403，
+正确 CSRF 的邮件 send/verify 均 503 EMAIL_UNAVAILABLE，跨站创建游客 403。
+首次实机脚本漏传管理接口必需 tenantId 得到 422，补齐参数后验证权限，未修改接口。
+证据：本机 `outputs/ops/cloud-runtime/candidate-runtime-verification.json`，服务器
+`~/seekino-cloud-runtime/runtime-verification.json`。未发送邮件、未调用模型；#63 合并与
+正式 main 镜像切换待执行，不能把候选镜像当成最终 main。
