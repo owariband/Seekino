@@ -112,3 +112,22 @@ flowchart LR
 游客会话与只读资料入口，并核对未授权管理调用被拒。模型只核对已有 GPU 服务与接口，
 不导入素材或迁移本机数据库；真实解析、检索质量与公网可信 TLS 仍需独立证据。
 本轮开始时 MySQL/ES/Redis 已健康，API/Web 与模型接入仍待验；自签证书仅用于试运行。
+
+
+2026-11-07 运行实测补充：本地 `.env.local` 已派生为权限 600 的 `.env.cloud` 并通过 SSH
+传入 CPU；模型 API keys 保持一致，生产库/ES 索引、容器路径、独立数据库和会话凭据已装配，
+本机下载代理未进入 API 运行环境。原 `.env.*` 已覆盖 cloud 文件，本次额外添加显式忽略项。
+MySQL/ES/Redis 健康，初始化退出 0；空 SMTP 暴露的身份服务启动问题由
+[独立修复 #62](https://github.com/owariband/Seekino/pull/62) 处理，详见
+[游客启动 TRD](cloud-guest-without-smtp-trd.md)。
+
+候选 f269f1ec 的五服务均 healthy，HTTPS 首页/健康/游客/公开空资料库通过，管理与 CSRF
+请求正确拒绝，邮箱未配置时明确 503。公网域名与 IP 的 /healthz 从本机直连均 200，
+使用显式信任的短期自签证书验证；浏览器默认仍不信任该证书。SMTP、管理员邮箱为空，
+没有发送邮件；Qwen 模型与 1024 维合同保留，模型接口明确未接通。GPU 重启后 SSH 可用，
+模型文件存在，但虚拟环境缺少 PyTorch/WhisperX/FastAPI 等依赖，llama-server 不存在，
+没有模型监听；本次没有改动 GPU 环境、导入样例或调用真实模型。
+
+原始无密钥证据在本机 `outputs/ops/cloud-runtime/`：`candidate-runtime-verification.json`、
+`external-health-verification.json`、`state.json`。候选已运行；正式 main 发布 #63 和
+最终源码/镜像对齐待完成。公开样例观看/检索/问答以及可信 TLS 不由健康检查推定达标。

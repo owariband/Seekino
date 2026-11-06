@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T00:03:50+08:00",
+ "updatedAt": "2026-11-07T00:11:15+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 12,
+ "revision": 13,
  "categories": [
   {
    "id": "parse",
@@ -4559,6 +4559,44 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     },
     {
      "label": "发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-03",
+   "title": "CPU 私有云配置与空库启动验收",
+   "category": "platform",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "本地私有 env 已派生为生产配置并经 SSH 传输；CPU 五服务健康，候选镜像游客链路已验证。",
+   "next": "main 发布 #63 合并后切换正式镜像并核对提交。SMTP/管理员、GPU 依赖、可信 TLS 与样例迁移另行完成。",
+   "verification": "两端 env 权限 600 且被 Git 忽略；HTTPS 首页/健康/游客/空公开库通过；管理和 CSRF 403、邮箱禁用 503；公网域名/IP 健康 200；重启数 0。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "运行配置"
+   ],
+   "related": [
+    "MOD-PLATFORM",
+    "DEPLOY-02"
+   ],
+   "branch": "chore/cloud-runtime-startup",
+   "links": [
+    {
+     "label": "云部署 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/chore/cloud-runtime-startup/docs/design/03-product-reassessment/cloud-docker-deploy-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "运行配置 #61",
+     "url": "https://github.com/owariband/Seekino/pull/61",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #63",
      "url": "https://github.com/owariband/Seekino/pull/63",
      "kind": "pr"
     }
