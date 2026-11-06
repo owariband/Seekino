@@ -6,7 +6,7 @@
 | Type | Feature direction + minimal validation. This PR holds the TRD only; each integration step gets its own branch + PR with a TRD-first commit (§3.8) |
 | Opened / revised | Opened 2026-11-05. Direction rewritten 2026-11-06 after four rounds of owner review (decision log) |
 | Branch / PR | `docs/editing-skill-style-reference` / [PR #50](https://github.com/owariband/Seekino/pull/50) |
-| Status | Final design agreed with the owner 2026-11-07: `edit_reference` profile inside the existing parse task + template library. E0 measured in a standalone script; **nothing is wired into Seekino yet**. E1–E3 running |
+| Status | Final design agreed with the owner 2026-11-07. E0, E1, E3 measured in standalone scripts (pass, with adjustments); E2 running; **nothing is wired into Seekino yet** |
 | Related | [MCP access TRD](mcp-access-trd.md); [Sub-Chunk / Event TRD](../02-agent-harness/sub-chunk-trd.md); [PR #34](https://github.com/owariband/Seekino/pull/34) (course parse profile, the base for per-type schema config); [PR #53](https://github.com/owariband/Seekino/pull/53) (ASR blank-word fix found while parsing MyGO) |
 
 ## 1.1 Why Seekino needs edit analysis
@@ -181,7 +181,7 @@ flowchart LR
 
 | Stage | Responsibility under `edit_reference` | Existing entry point extended |
 | --- | --- | --- |
-| Prepare | Scan the whole video (port of the skill's `diffProfile` / `findStarts`: 160 px grayscale, native fps, mean gray-diff > 2.5× local median, 0.2 s debounce, flash test); group starts into candidate segments; score and group by visual signature; keep **K ≈ 6–8 representatives**; add every native frame inside each pick (capped) plus a few calm frames to the owning chunk's frame list | `VideoParseMediaService.prepare_episode` (`server/service/video_parse_media.py`): the per-chunk `frames` list in `episode.json` and the single `extract_video_frames_batch` call |
+| Prepare | Scan the whole video (port of the skill's `diffProfile` / `findStarts`: 160 px grayscale, native fps, mean gray-diff > 2.5× local median, 0.2 s debounce, flash test); group starts into candidate segments and split any longer than 3 s at their largest gap; score and group by visual signature; keep **K ≈ 6–8 representatives**; inside each pick run a fine detector (no debounce, threshold max(8, 4 × pick median)) whose starts are the allowed step boundaries; add every native frame inside each pick (capped) plus a few calm frames to the owning chunk's frame list | `VideoParseMediaService.prepare_episode` (`server/service/video_parse_media.py`): the per-chunk `frames` list in `episode.json` and the single `extract_video_frames_batch` call |
 | Understanding | High-frame-rate visual analysis of the picks in that chunk; one observation per pick. Chunks with no pick commit `{"observations": []}` without a model call | `agent/video_parse_v2/understanding/` workflow and response gate; `prompts.build_understanding_prompt` |
 | Refine | One window over all chunks; input is the chunk observations plus scan facts (text only); consolidates names into `technique_key`s and writes the style card | `IntervalRefine` (`agent/video_parse_v2/refine/`), `prompts.build_refine_prompt`, `commit_interval_refinement` (`server/service/video_parse_content.py`) |
 | Indexing | Project observations to a separate derived edit-reference ES index | `engine/rag/indexing/` projection + pipeline |
@@ -355,13 +355,32 @@ Python port of `lib/frames.mjs` `diffProfile` + `findStarts`, plus a grouping ru
 
 Decisions: the scan belongs to `edit_reference` only; dense reading goes to representatives, not all candidates. 4C8G cost is expected to be small but not measured there.
 
-## E1 Representative picks
+## E1 Representative picks (done, 2026-11-07)
 
-Score candidates, group by visual signature, pick K = 6–8 on P5R, show the picks on one contact sheet. Pass: the picks cover the style's devices (lead review, then owner); dense frames ≤ 2× today's 286.
+Script and outputs: `outputs/verification/edit-reference-20261107/` (git-ignored): `scripts/scan_pick.py`, `p5r-scan.json`, `e1-picks-sheet.jpg`.
 
-## E3 Model-written observation
+- Selection: score = change density × length fit (0.8–3 s) + 2 × flashes; diversity by greedy farthest-point on palette histogram + 32×18 thumbnail, K = 8.
+- **First run missed the 34.2 s ladder**: it sat inside a 5 s merged candidate (33.9–38.97 s, 20 starts) that the length rule penalised. Fix: split candidates longer than 3 s at their largest internal gap. After the split: 31 candidates, and the ladder (`seg-0033900`, 33900–35033) is picked.
+- Final picks cover 8 distinct devices: red/black geometric cuts (167–1300), clap → magenta starburst (12200–13133), mask close-up → step-out with comic slogan boxes (13500–14700), yellow halftone silhouettes → red/white strobe (18200–19400), purple slash combo (28367–29500), orange star speed bands → circle wipe (30833–32467), red-ground step-out ladder (33900–35033), glow push-in → burst (82833–84067). Not picked: ransom-note lettering (15000–17233), red/black spiral (≈ 66 s).
+- Dense frames: **288** (budget ≤ 572 = 2 × 286). Scan + pick: 4.7 s wall on this Mac.
+- Verdict: pass on lead review; owner review of the sheet pending.
 
-One call to the current understanding model per pick, with its native frames and measured starts, using the draft prompt and schema. Compare with the hand spec: technique named, step count, step frame counts (±1 frame), role.
+## E3 Model-written observation (done, 2026-11-07)
+
+`scripts/e3_observe.py`: one call per pick to the current understanding binding (`vision` = deepseek-flash, via `GatewayClient`), all native frames of the pick at 480p (27–49 frames), draft `TechniqueObservation` schema. Ground truth for the ladder: the 30 fps strip `e3/ladder-strip.jpg` and the per-frame change profile.
+
+| Run | Boundary rule | Ladder steps written | Verdict |
+| --- | --- | --- | --- |
+| `e3/` | Boundaries ∈ scan starts (0.2 s debounce) | INSERT 7, INSERT 6, "ECU" 7, MS 7, FULL 7; easing `EASE_OUT` | Fail: ECU/CU/MCU merged; easing wrong |
+| `e3b/` | Any frame, scan starts as hints; easing defined | Same steps; easing `STEPPED` | Fail on steps |
+| `e3c/` | **Fine in-pick starts** (no debounce, threshold max(8, 4 × pick median)) | INSERT 13, **ECU 2, CU 2, MCU 3, MS 2+3, FULL 2+3, WIDE 2+2**, all CUT; `STEPPED`, camera `PULL` | **Pass**: matches the strip frame for frame |
+
+Findings:
+- Root cause of the misses was the measurement, not the model: inside a burst the change profile is isolated spikes (13–46 against < 1), and the skill's 0.2 s debounce suppresses every rung after the first. **Prepare therefore keeps a second, fine detector inside picks**, and its starts are the allowed step boundaries.
+- Look, summary, signals and slots were accurate on all 8 picks (lead review against the frames).
+- Names and roles are unstable across runs (the ladder was "拉镜登场" / INTRO, then "连续推近" / ACCENT, contradicting its own steps). This is Refine's job: consolidate names and roles across observations, helped by a host-derived framing direction (wider → pull, tighter → push).
+- Pose changes on twos within one framing are written as separate steps; acceptable, can be merged in Refine.
+- Calls took 7.7–27.4 s each.
 
 ## E2 A/B on one promo beat
 
@@ -382,7 +401,9 @@ Reparse ep04 with `keyframe_ms` / `clean`; rerun the same 4 queries against the 
 | --- | --- | --- | --- |
 | Detector starts on P5R | Skill `grid`: 255 | Port: 255 | Matched |
 | Detector precision on scripted animation | — | 0/8 | Drove the profile-only decision |
-| E1, E3, E2 | — | — | Pending |
+| E1 picks cover the style; dense frames | ≤ 572 | 8 devices incl. the ladder; 288 frames | Pass (lead); owner pending |
+| E3 ladder steps vs 30 fps truth | Hand / strip | Frame-exact after fine detector | Pass, with Prepare and Refine adjustments |
+| E2 | — | — | Running |
 
 # 5. 试点验证与方案取舍
 
@@ -424,3 +445,4 @@ Acceptance returns to §1.1: the promo exists, made through MCP, and the dual re
 | 2026-11-07 | Template row holds spec / slots / refs; latest version is default; versions fully immutable | Owner review | Version holds the complete contract; explicit `default_version_id`; `evaluation` and `check` append-only with attribution; server-side source snapshots with stale states; client checks shown as client-reported | §3.4, §3.5 |
 | 2026-11-07 | Cut-out could be a Seekino capability | Owner: Seekino Server never does cut-out, rendering or code execution | Templates only declare slots; preparation is local | §1.5 |
 | 2026-11-07 | E2 arm A uses the static style library | A stronger, realistic baseline is the skill reading the reference itself | Arm A gets the P5R video and reads it its own way | §4 E2 |
+| 2026-11-07 | Scan starts (0.2 s debounce) are the step boundaries | E3: rungs 2–3 frames apart are suppressed by the debounce; long merged candidates hide techniques | Prepare splits candidates > 3 s and runs a fine in-pick detector whose starts are the boundaries; Refine consolidates names and roles | §3.3, E1, E3 |
