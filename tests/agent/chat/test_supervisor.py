@@ -421,7 +421,7 @@ def test_supervisor_shows_opening_and_running_tool_before_search_finishes():
     assert result.content.startswith(opening + "\n\nThe verified explanation.")
     assert "Official page" not in json.dumps(finished)
     assert "https://example.org/source" not in json.dumps(finished)
-    assert "简短" in model.prompts[0] and "内部推理" in model.prompts[0]
+    assert "不写「我先看一下」" in model.prompts[0] and "内部推理" in model.prompts[0]
 
 
 @pytest.mark.parametrize("tool_name", ["search_web", "query_video"])
@@ -1099,7 +1099,9 @@ def test_supervisor_streams_text_and_video_at_their_actual_submission_positions(
     assert snapshots[-1]["searchResult"] == result.video_result.model_dump(mode="json", by_alias=True)
     assert not {"answer.block", "answer.delta", "answer.evidence"} & {event["type"] for event in events}
     assert "Grounded answer." not in "\n".join(event["content"] for event in snapshots)
-    assert "在需要插入视频卡的位置调用 submit_video_item" in model.prompts[0]
+    assert "先写这一条的正文，紧接着调用 submit_video_item 提交它的视频卡" in model.prompts[0]
+    assert "正文和小标题都不再写时间码" in model.prompts[0]
+    assert "claim 是视频卡标题" in model.prompts[0]
 
 
 def test_supervisor_prompt_names_current_video_and_series_without_internal_ids():
