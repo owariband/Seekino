@@ -45,3 +45,17 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
   因此 GPU 服务器需要提供 TLS 入口。
 - DeepSeek、Kimi 等对话与重排模型仍使用各自的公网 HTTPS API。
 - 查询路由当前仍为 OpenRouter 上的 Jev；改为 GPU 上的路由模型需要单独修改 `gateway/query_hook.py`。
+
+
+## 从本机私有配置启动
+
+从 `.env.local` 派生的 `.env.cloud` 只能经私有通道传到服务器；文件权限使用 600，
+不要提交真实配置。`.env.*` 已覆盖该文件，仓库另有显式 `.env.cloud` 忽略项。
+复制时核对 production 数据库与 ES 索引、容器内路径、独立会话密钥和数据库密码；
+移除只在本机可用的 HTTP_PROXY/HTTPS_PROXY 及 Mac 路径。模型 YAML 独立挂载，保持已有
+embedding 模型、维度和编码合同；运行环境可校验通过不代表模型端点已经连通。
+
+未配置 SMTP 时可以启动游客功能，邮箱验证码发送和验证明确返回 503 EMAIL_UNAVAILABLE，
+不会放宽 CSRF 或管理权限。该启动缺陷与验证见
+[游客启动 TRD](../../docs/design/03-product-reassessment/cloud-guest-without-smtp-trd.md)。
+私有配置、可信 TLS、管理员/邮箱、模型接口与已有样例数据需要分别验收。
