@@ -24,7 +24,12 @@ from agent.chat.common.state import AnswerPhase
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.context import _project_stored_search_result
 from agent.chat.video_search.runtime import AgentRuntime
-from gateway.agent_model.errors import ModelInputTooLargeError
+from gateway.agent_model.errors import (
+    ModelFailureError,
+    ModelFailureReason,
+    ModelInputTooLargeError,
+    OpenAIFunctionCallingError,
+)
 from gateway.web_search import WebSearchHit, WebSearcher
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
 from server.api.agent import _agent_message_view
@@ -3031,6 +3036,37 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     assert query.prompts == [] and chat.prompts == []
 
 
+def _network_failure() -> OpenAIFunctionCallingError:
+    """An exhausted Chat first-SSE reconnect, whose cause chain mixes timeouts and connections."""
+    connection = ModelFailureError(
+        "Chat completion stream read failed", reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
+    )
+    connection.__cause__ = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body",
+    )
+    timeout = ModelFailureError(
+        "No first SSE event within 15 seconds", reason=ModelFailureReason.MODEL_TIMEOUT,
+    )
+    timeout.__cause__ = connection
+    error = OpenAIFunctionCallingError(
+        "deepseek request failed for model deepseek-flash",
+        reason=ModelFailureReason.MODEL_NETWORK_ERROR,
+    )
+    error.__cause__ = timeout
+    return error
+
+
+def _stream_drop() -> OpenAIFunctionCallingError:
+    error = OpenAIFunctionCallingError(
+        "deepseek request failed for model deepseek-flash",
+        reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
+    )
+    error.__cause__ = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body",
+    )
+    return error
+
+
 @pytest.mark.parametrize(("kind", "expected"), [
     (
         "rate_limit",
@@ -3038,6 +3074,8 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     ),
     ("timeout", "模型暂时不可用，错误：请求超时"),
     ("connection", "模型暂时不可用，错误：无法连接模型服务"),
+    ("network", "模型暂时不可用，错误：网络错误（多次重连未收到模型响应）"),
+    ("stream_drop", "模型暂时不可用，错误：模型服务中途断开了响应"),
     ("unknown", "模型调用失败，错误：RuntimeError"),
 ])
 def test_agent_model_error_exposes_provider_reason(
@@ -3052,6 +3090,8 @@ def test_agent_model_error_exposes_provider_reason(
         ),
         "timeout": lambda: APITimeoutError(request=request),
         "connection": lambda: APIConnectionError(request=request),
+        "network": lambda: _network_failure(),
+        "stream_drop": lambda: _stream_drop(),
         "unknown": lambda: RuntimeError("private upstream failure"),
     }[kind]()
     service, conversation, *_ = build_service()
