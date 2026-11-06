@@ -98,3 +98,21 @@ flowchart LR
 # 6. 结果验收与闭环
 
 状态（2026-11-06）：叠加 Compose、合并环境模板与拓扑说明已完成，静态检查通过（本机 `docker compose ... config` 仅渲染配置，不启动容器）；尚未在任何服务器上构建或启动，§2 指标均待测。验收以 §2 指标逐项回填，证据放 `docs/report/deploy/cloud-docker-20261106/`。部署完成、门禁通过与对外稳定分别报告。
+
+# 7. 部署 TODO（2026-11-06 用户决定后整理）
+
+已定：
+- 查询 embedding 与本机一致，使用 Qwen3-Embedding-0.6B Q8 GGUF（llama.cpp，1024 维，`pooling last`，`input_mode: text`），运行在 GPU 服务器；不使用豆包 embedding。该模型只接受文本（`gateway/config.py` 要求 llama.cpp 来源为 `input_mode=text`，`server/service/upload.py` 要求与索引模式一致）；视觉内容经视觉模型写成文字描述后再向量化，按图向量检索需换多模态 embedding 并重建索引，不在本次范围。
+- 查询路由保留 OpenRouter 上的 Jev，不替换；GPU 服务器不部署路由模型。§3 修订中“替换 Jev 的路由模型”一项作废。
+- 云端数据不迁移：管理员账号建好后，从本机以管理员身份上传全部课程视频，在云端重新解析（CPU 服务器调用 GPU 的 WhisperX 与 embedding、DeepSeek 视觉 API；解析并发保持 1）。
+
+待做（按顺序）：
+1. [ ] 用户提供 CPU / GPU 两台服务器的 SSH 别名（当前 `~/.ssh/config` 没有 `seekino`，只有旧的 `seekino-server`）；连上后先只读检查（CPU / 内存 / 磁盘 / Docker；GPU 型号、显存、驱动）。
+2. [ ] 域名与证书：CPU 服务器公网 HTTPS 入口；国内机房确认是否需要备案。
+3. [ ] GPU 服务器：llama.cpp `llama-server` 运行同一 GGUF（端口 18843）；WhisperX 包一层 OpenAI `/v1/audio/transcriptions`（`verbose_json` + 词级时间）HTTP 服务（端口 18844）。两者只监听 GPU 本机 loopback。
+4. [ ] CPU → GPU 连接：推荐 SSH 隧道——CPU 侧隧道容器把 GPU 的 18843 / 18844 映射为 API 容器内的 `http://127.0.0.1:18843`、`http://127.0.0.1:18844/v1`。理由：`gateway/config.py` 只允许 loopback 使用 http，其余必须 HTTPS；`llama_cpp_embedding` 来源没有 API key 字段，不能裸露到公网；隧道无需代码改动、无需 GPU 域名，GPU 只开放 SSH。备选：同 VPC 私网 IP + 放宽私网 http 校验（需改代码）；或 GPU 侧 HTTPS + 鉴权。
+5. [ ] 服务器模型 YAML：由 `deploy/cloud/models.example.yaml` 改成 embedding 走 `llama_cpp_embedding`（Qwen）、转写走 `openai_audio`（GPU WhisperX）、对话 / 视觉走 DeepSeek、rerank 走 Kimi、`query_hook` 保留 Jev（`OPENROUTER_JEV_API_KEY`）。
+6. [ ] CPU 服务器：填写私有 `.env.cloud`，`docker compose --env-file deploy/cloud/.env.cloud -f compose.yaml -f deploy/cloud/compose.prod.yaml up -d --build`，核对 HTTPS `/healthz`。
+7. [ ] 管理员：设置 `SEEKINO_AUTH_ADMIN_EMAILS` 后首次邮箱验证（需 SMTP；或决定首发只开放游客）。
+8. [ ] 从本机以管理员上传全部课程视频，跟踪解析到 READY，系列发布。
+9. [ ] 公网验收：游客 / 邮箱用户观看、检索、问答；普通用户调用上传 / 任务 / 资料修改接口被拒；管理员上传、发布、撤回；LOOP-08 门禁；`docker stats` 内存峰值；重启后数据与对话仍在；记录 `event=chat_first_sse_retry` 与 `first_event_ms`（#55 首次真实 DeepSeek 校验）。
