@@ -5074,9 +5074,45 @@ DEBIAN_MIRROR 构建参数，默认仍为官方源，使服务器无需改 Docke
 本文记录时正式 main 合并和 CPU 目录切换尚待执行。镜像 ID、哈希及证据目录见
 [TRD](../design/03-product-reassessment/docker-web-assets-trd.md)。
 
+2026-11-06 23:00（UTC+8）补充：#58 和 #59 已分别合入 dev 与 main。CPU 正式目录已切换为
+main `0282fcb0da58a4292007732c931823dc11720a22`，与远端一致，工作树干净；旧目录和旧 API
+镜像保留回退。从真实 main 构建的两镜像成功，图片 HTTP/hash、无网络依赖导入再次通过。
+生产 Compose 在隔离占位配置下解析成功，并核对 cloud 身份与数据库私有端口。
+最终证据为同一验收目录的 main-verification.json、main-deployment.json 和 build-main.log。
+
 ### 指标对比
 
 此次影响的是发布能否构建和可追溯性，不改变模型调用，故以构建结果和资源完整性作为指标。
 旧版 Web 构建失败；修复版 API/Web 均构建成功，两份发布资源验证通过，初始化回归 6/6 通过。
 实现增加两份已跟踪图片和一个可选构建参数，保持私有媒体排除。缓存和网络不同，不据此
 宣称构建性能提升；没有收费模型调用，也没有测试业务模型效果或公网访问。
+源码从无 Git 的副本变为可核验的远端 main 提交，移除了正式目录中的手工 apt 补丁。
+本轮完成源码和镜像交付；私有 .env.cloud 尚未配置，业务容器、数据库初始化与真实模型链路未启动或验收。
+
+
+<a id="devlog-cloud-guest-smtp-20261107"></a>
+## 2026-11-07：邮件配置被绑定到游客服务构造，阻断云端 API 启动
+
+### 问题与现状
+
+DEPLOY-02：生产数据库初始化已成功，但 cloud AuthService 在 SMTP 为空时直接抛错。
+部署模板允许游客模式，本地私有配置却没有 SMTP，因此复制密钥仍不能启动 API。
+
+### 方案候选
+
+在 AuthService 装配时将邮件发送器设为可选，发送/验证邮箱前返回 EMAIL_UNAVAILABLE；
+继续执行游客身份、CSRF、Redis 和权限合同，不伪造 SMTP，也不改成 local 身份。
+保留有 SMTP 或注入发送器的既有处理与邮件失败清理。
+
+### 方案验证
+
+新增 HTTP 用例先复现旧启动失败，随后验证游客 cookie、身份、权限和邮箱禁用。
+相关组合 99 passed、7 skipped；8 项 Agent 夹具错误在未修改基线同样失败，与本修复无关。
+CPU 候选 f269f1ec 构建/起栈退出 0，五服务 healthy，HTTPS 首页、健康与游客资料读取通过，
+管理/CSRF/跨站请求 403，邮箱明确 503。一次探针因缺 tenantId 得到 422，修正请求后验权通过。
+详见 [TRD](../design/03-product-reassessment/cloud-guest-without-smtp-trd.md)；main 发布 #63 待合并。
+
+### 指标对比
+
+原 API 构造失败、Web 未起；候选 API/Web 健康且游客会话通过，保持公开资料为空、无管理权限。
+本轮未发送邮件、未调用模型，不能据此判断 SMTP/GPU 可用、素材检索质量或公网证书可信。
