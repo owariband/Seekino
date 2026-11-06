@@ -31,8 +31,8 @@ from server.database import (
     create_session_factory,
 )
 from server.model.agent import AgentConversation
-from server.model.dto.jobDTO import VideoParseLease
-from server.model.job import VideoParseTask
+from server.model.dto.taskDTO import VideoParseLease
+from server.model.task import VideoParseTask
 from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.agent import AgentRepository

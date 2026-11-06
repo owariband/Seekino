@@ -13,16 +13,18 @@ from sqlalchemy.orm import Session
 from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
 
 from ..constants.parse import RUNTIME_DETAIL_KEY, CAPACITY_ACQUIRED_KEY
-from ..model.dto.jobDTO import (
+from ..model.dto.taskDTO import (
     IntervalParseTaskData,
-    SeriesData,
-    VideoData,
     VideoParseLease,
     VideoParseTaskData,
     VideoParseTaskInputState,
     VideoParseTaskState,
 )
-from ..model.job import (
+from ..model.dto.libraryDTO import (
+    SeriesData,
+    VideoData,
+)
+from ..model.task import (
     ChunkTaskPhase,
     ChunkParseTaskStatus,
     VideoParseTaskStatus,
@@ -184,6 +186,17 @@ def _video_failure_status(task: VideoParseTaskData) -> str | None:
         VideoParseTaskStatus.PARSING_FAILED.value,
         VideoParseTaskStatus.INDEXING_FAILED.value,
     } else None
+
+
+def _requires_video_asr(task: VideoParseTaskData) -> bool:
+    asr = (task.parse_config.get("models") or {}).get("asr") or {}
+    return asr.get("mode") != "none" and asr.get("scope") == "video"
+
+
+def _video_asr_prepared(task: VideoParseTaskData) -> bool:
+    # This is a lease-scoped dispatch receipt, never a durable transcript.
+    runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY) or {}
+    return runtime.get("asr_prepared_lease_version") == task.lease_version
 
 
 def _aggregate_video_task(

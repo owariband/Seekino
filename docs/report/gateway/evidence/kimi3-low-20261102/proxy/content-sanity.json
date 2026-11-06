@@ -1,0 +1,185 @@
+{
+  "captured_at": 1793626271.967654,
+  "current_persisted_content": [
+    {
+      "sequence_no": 0,
+      "version": 1,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 1,
+      "dialogue_events": 0,
+      "persons": [
+        "И"
+      ]
+    },
+    {
+      "sequence_no": 1,
+      "version": 1,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 0,
+      "dialogue_events": 0,
+      "persons": [
+        "Y"
+      ]
+    },
+    {
+      "sequence_no": 3,
+      "version": 2,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 25,
+      "dialogue_events": 23,
+      "persons": [
+        "Andrej Karpathy"
+      ]
+    },
+    {
+      "sequence_no": 4,
+      "version": 2,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 10,
+      "dialogue_events": 10,
+      "persons": [
+        "Andrej Karpathy"
+      ]
+    },
+    {
+      "sequence_no": 5,
+      "version": 2,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 17,
+      "dialogue_events": 13,
+      "persons": [
+        "Andrej Karpathy"
+      ]
+    },
+    {
+      "sequence_no": 6,
+      "version": 2,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 1,
+      "dialogue_events": 1,
+      "persons": [
+        "A"
+      ]
+    },
+    {
+      "sequence_no": 7,
+      "version": 1,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 0,
+      "dialogue_events": 0,
+      "persons": [
+        "/"
+      ]
+    },
+    {
+      "sequence_no": 8,
+      "version": 2,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 0,
+      "dialogue_events": 0,
+      "persons": [
+        "A"
+      ]
+    },
+    {
+      "sequence_no": 9,
+      "version": 1,
+      "keys": [
+        "persons",
+        "timeline"
+      ],
+      "events": 1,
+      "dialogue_events": 1,
+      "persons": [
+        "卡"
+      ]
+    }
+  ],
+  "note": "Counts and names are sanity checks, not manual quality acceptance; current versions may include Refine changes.",
+  "samples": [
+    {
+      "call_id": "a7f75233-89c8-4497-ae7b-77231a27ce56",
+      "sequence_no": 0,
+      "max_tokens": 30000,
+      "finish_reason": "stop",
+      "output_chars": 195,
+      "event_count": 1,
+      "persons": [
+        "И"
+      ],
+      "output": {
+        "persons": [
+          "И"
+        ],
+        "timeline": [
+          {
+            "description": "А",
+            "end_seconds": 1000,
+            "event_type": "SCENE",
+            "participants": [],
+            "start_seconds": 0,
+            "visible_persons": []
+          }
+        ]
+      }
+    },
+    {
+      "call_id": "8e46012f-5a6a-4b5d-a44d-1a404be3b219",
+      "sequence_no": 1,
+      "max_tokens": 30000,
+      "finish_reason": "stop",
+      "output_chars": 7494,
+      "event_count": 22,
+      "persons": [
+        "Andrej Karpathy"
+      ],
+      "output": null
+    },
+    {
+      "call_id": "ac741288-0b7f-402c-b406-4d21acd7fb34",
+      "sequence_no": 1,
+      "max_tokens": 30000,
+      "finish_reason": "stop",
+      "output_chars": 31,
+      "event_count": 0,
+      "persons": [
+        "Y"
+      ],
+      "output": {
+        "persons": [
+          "Y"
+        ],
+        "timeline": []
+      },
+      "feedback": "result: Value error, timeline must be ordered by start_seconds",
+      "rejected_json_included": true,
+      "instruction": "Correct only invalid fields; preserve other observations, wording and timestamps; return complete JSON.",
+      "image_count": 0
+    }
+  ],
+  "interpretation": "The initial response for sequence 1 contained 7494 characters; its repair input included the full rejected JSON and sorting hint, but the repair response was an empty timeline. Schema acceptance is insufficient for content coverage. Root cause of minimal outputs is not yet isolated."
+}

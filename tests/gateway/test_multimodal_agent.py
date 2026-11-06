@@ -7,15 +7,12 @@ from types import SimpleNamespace
 from time import monotonic
 
 import pytest
-import httpx
-from openai import APIStatusError, RateLimitError
 from pydantic import BaseModel
 
 from agent.utils.tool import build_agent_tool
 from agent.utils.tool_result import JsonToolResult
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.errors import ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError
-from gateway.agent_model.tool_loop import _failure_reason_for_exception
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.errors import ContentFilterError
 from gateway.media import ToolImageArtifact
@@ -78,17 +75,17 @@ def _response(call_id=None, name="get_context_canvas", *, status="completed", in
     )
 
 
-def _model(provider, responses, *, budget=65536, reasoning="high", timeout=30):
+def _model(provider, responses, *, budget=65536, reasoning="high", timeout=30, stream=True):
     client = SimpleNamespace(responses=responses)
     if provider == "ark":
         return ArkMultimodalModel(
             "ark-vision", max_output_tokens=budget, reasoning_effort=reasoning,
-            request_timeout_seconds=timeout, client=client,
+            request_timeout_seconds=timeout, client=client, stream=stream,
         )
     return DeepSeekMultimodalModel(
         "deepseek-vision", base_url="https://example.invalid", api_key="offline",
         max_output_tokens=budget, reasoning_effort=reasoning,
-        request_timeout_seconds=timeout, client=client,
+        request_timeout_seconds=timeout, client=client, stream=stream,
     )
 
 
@@ -144,7 +141,8 @@ def test_multimodal_tools_preserve_native_inputs_controls_and_actual_usage(tmp_p
     first = responses.requests[0]
     assert first["max_output_tokens"] == 65536
     assert 0 < first["timeout"] <= 30
-    assert first["tool_choice"] == "required"
+    # DeepSeek thinking mode rejects forced tool choices, so the request downgrades to auto.
+    assert first["tool_choice"] == ("auto" if provider == "deepseek" and reasoning == "high" else "required")
     if provider == "ark":
         assert first["input"][0]["content"][1]["type"] == "input_video"
         assert first["input"][0]["content"][1]["fps"] == 0.5
@@ -424,7 +422,7 @@ def test_responses_and_chat_fallback_share_history_and_endpoint_settings(
         chat=SimpleNamespace(completions=chat), close=lambda: closed.append(True),
     ))
     vision = OpenAIVisionModel(
-        "portable-vision", provider="portable", base_url="https://offline.invalid", api_key="offline",
+        "portable-vision", stream=False, provider="portable", base_url="https://offline.invalid", api_key="offline",
         max_output_tokens=8192, token_parameter="max_completion_tokens", response_format="json_object",
         request_timeout_seconds=7,
     )
@@ -519,7 +517,7 @@ def test_multimodal_request_log_correlates_controls_without_logging_payloads(
             chat=SimpleNamespace(completions=responses), close=lambda: None,
         ))
         model = OpenAIVisionModel(
-            "portable-vision", provider="portable", base_url="https://offline.invalid",
+            "portable-vision", stream=False, provider="portable", base_url="https://offline.invalid",
             api_key="API_KEY_SECRET", max_output_tokens=4096,
             token_parameter="max_completion_tokens", request_timeout_seconds=30,
         )
@@ -555,7 +553,8 @@ def test_multimodal_request_log_correlates_controls_without_logging_payloads(
     for key in context.keys() - {"authorization"}:
         assert first[key] == (context[key][:256] if isinstance(context[key], str) else context[key])
     assert first["protocol"] == ("chat" if provider == "chat" else "responses")
-    assert [summary["tool_choice"] for summary in summaries] == ["required", "auto"]
+    forced = "auto" if provider == "deepseek" and reasoning == "high" else "required"
+    assert [summary["tool_choice"] for summary in summaries] == [forced, "auto"]
     assert first["tool_count"] == 2
     assert first["tool_names"] == ["get_context_canvas", "write_context_canvas"]
     assert first["max_output_tokens"] == 4096 and 0 < first["timeout"] <= 30
@@ -602,12 +601,12 @@ def test_parse_diagnostics_restore_each_round_and_exclude_chat(monkeypatch, tmp_
         assert all(payload["context"][key] == value for key, value in context.items())
         assert payload["context"]["agent_round"] == round_no
         restored = restore_diagnostic_media(payload["request"], directory)
-        assert restored == {**actual_request, "stream": provider == "ark"}
+        assert restored == {**actual_request, "stream": True}
         assert restored["tools"][0]["parameters"]["properties"]["value"]["type"] == "string"
         assert restored["text"]["format"]["schema"] == Completion.model_json_schema()
         assert restored["input"][0]["content"][-1]["text"] == prompt
         assert any(event["event"] == "response" for event in events)
-        assert any(event["event"] == "sse" for event in events) == (provider == "ark")
+        assert any(event["event"] == "sse" for event in events) is True
         saved.append(restored)
     assert len({call.context["agent_run_id"] for call in usage}) == 1
     second = saved[1]["input"]
@@ -626,7 +625,7 @@ def test_parse_diagnostics_restore_each_round_and_exclude_chat(monkeypatch, tmp_
         chat=SimpleNamespace(completions=chat), close=lambda: None,
     ))
     vision = OpenAIVisionModel(
-        "portable-vision", provider="portable", base_url="https://offline.invalid", api_key="offline",
+        "portable-vision", stream=False, provider="portable", base_url="https://offline.invalid", api_key="offline",
         request_timeout_seconds=30,
     )
     assert vision.generate([TextInput("Ordinary Chat.")], schema_name="completion", result_type=Completion,
@@ -705,51 +704,3 @@ def test_parse_diagnostics_keep_response_when_final_schema_validation_fails(monk
     assert events[0]["payload"]["context"]["agent_round"] == 2
     assert events[-1]["event"] == "error"
     assert [item["type"] for item in events[-1]["payload"]["chain"]] == ["QueryModelIncompleteError", "ValidationError"]
-
-
-@pytest.mark.parametrize("status,code,expected", [
-    (429, "rate_limit_exceeded", ModelFailureReason.PROVIDER_RATE_LIMIT),
-    (429, None, ModelFailureReason.PROVIDER_RATE_LIMIT),
-    (503, None, ModelFailureReason.PROVIDER_CAPACITY),
-    (429, "insufficient_quota", ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (429, "AccountOverdueError", ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (401, None, ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (403, "rate_limit_exceeded", ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (400, "bad_request", ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (400, "unknown_provider_code", ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (429, "unknown_provider_code", ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (503, "upstream_error", ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (503, "bad_request", ModelFailureReason.INVALID_MODEL_RESPONSE),
-])
-def test_multimodal_structured_provider_failure_does_not_retry_or_use_message(
-    status, code, expected,
-):
-    response = httpx.Response(status, request=httpx.Request("POST", "https://example.invalid"))
-    error_type = RateLimitError if status == 429 else APIStatusError
-    error = error_type(
-        "Selected model is at capacity. Please try a different model.",
-        response=response, body={"code": code},
-    )
-    responses = Responses([error])
-    with pytest.raises(QueryModelIncompleteError) as caught:
-        _model("deepseek", responses).generate(
-            [TextInput("Validate the completion.")], schema_name="canvas_completion",
-            result_type=Completion, tools=_tools({}, []), max_model_calls=2,
-        )
-    assert caught.value.reason == expected
-    assert caught.value.__cause__ is error
-    assert len(responses.requests) == 1
-
-
-@pytest.mark.parametrize("code,status,body,expected", [
-    (None, None, None, ModelFailureReason.PROVIDER_CAPACITY),
-    ("other", None, None, ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (None, 400, None, ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (None, None, {"error": {"code": "rate_limit_exceeded"}}, ModelFailureReason.PROVIDER_RATE_LIMIT),
-    (None, None, {"error": {"code": "insufficient_quota"}}, ModelFailureReason.INVALID_MODEL_RESPONSE),
-    (None, None, {"error": {"code": "unknown"}}, ModelFailureReason.INVALID_MODEL_RESPONSE),
-])
-def test_provider_code_precedence_for_unstructured_and_nested_errors(code, status, body, expected):
-    error = RuntimeError("Selected model is at capacity. Please try a different model.")
-    error.code, error.status_code, error.body = code, status, body
-    assert _failure_reason_for_exception(error) == expected

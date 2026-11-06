@@ -15,7 +15,6 @@ from ..model.dto.libraryDTO import (
     VideoEpisodeUpdateRequest,
     VideoSummaryState,
 )
-from ..model.job import ParseJobStatus
 from ..model.video import SeriesVisibility
 from ..service.media import MediaService
 from ..service.access import is_series_member, require_admin, require_tenant_read, require_tenant_write, series_access
@@ -40,7 +39,10 @@ def create_series(request: Request, body: SeriesCreateRequest) -> SeriesView:
         name=body.name,
         description=body.description,
         transcript_language_hint=body.transcript_language_hint,
-        important_extra_data=body.important_extra_data,
+        important_extra_data=(
+            body.important_extra_data.model_dump()
+            if body.important_extra_data is not None else None
+        ),
         character_bible=[item.model_dump() for item in body.character_bible],
     )
     return _series_view(state, get_services(request).media)
@@ -209,12 +211,11 @@ def project_video(state: VideoSummaryState, media: MediaService, *, access: Lite
         total_bytes=state.total_bytes if access == "member" else None,
         duration_seconds=state.duration_seconds, upload_status=state.upload_status,
         upload_progress=state.upload_progress,
-        parse_status=ParseJobStatus.SUCCEEDED if state.parse_status == "COMPLETED" else state.parse_status,
+        parse_status=state.parse_status,
         parse_progress=state.parse_progress, index_status=state.index_status,
         playback_status=playback.status, playback_url=playback.url,
         playback_url_expires_at=playback.expires_at,
         thumbnail=ImageAsset.model_validate(asdict(thumbnail)) if thumbnail else None,
-        latest_job_id=state.latest_job_id if access == "member" else None,
         last_error=error if access == "member" else None,
     )
 

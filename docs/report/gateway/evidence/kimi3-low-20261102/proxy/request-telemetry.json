@@ -1,0 +1,2128 @@
+{
+  "captured_at": "2026-11-02T13:48:28.246893+00:00",
+  "task_id": "2eef6cec-f494-407c-8939-cf415de1336e",
+  "stages": {
+    "refine": {
+      "requests": 12,
+      "received_sse": 12,
+      "first_sse_max_seconds": 17.955,
+      "first_sse_median_seconds": 6.8225,
+      "completed": 5,
+      "errors": 0,
+      "cancelled_superseded": 4,
+      "cancelled_other": 3,
+      "pending_without_sse": []
+    },
+    "understand": {
+      "requests": 29,
+      "received_sse": 12,
+      "first_sse_max_seconds": 73.655,
+      "first_sse_median_seconds": 48.3685,
+      "completed": 12,
+      "errors": 8,
+      "cancelled_superseded": 0,
+      "cancelled_other": 9,
+      "pending_without_sse": []
+    }
+  },
+  "requests": [
+    {
+      "call_id": "a7f75233-89c8-4497-ae7b-77231a27ce56",
+      "stage": "understand",
+      "sequence_no": 0,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625863880271000,
+      "first_sse_ns": 1793625904986880000,
+      "first_sse_seconds": 41.107,
+      "sse_count": 138,
+      "terminal_ns": 1793625914851385000,
+      "client_elapsed_seconds": 50.971,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 309,
+        "prompt_tokens": 233592,
+        "total_tokens": 233901,
+        "completion_tokens_details": {
+          "reasoning_tokens": 241
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 233592
+        },
+        "cached_tokens": 233592
+      }
+    },
+    {
+      "call_id": "8e46012f-5a6a-4b5d-a44d-1a404be3b219",
+      "stage": "understand",
+      "sequence_no": 1,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625863942119000,
+      "first_sse_ns": 1793625920027992000,
+      "first_sse_seconds": 56.086,
+      "sse_count": 1099,
+      "terminal_ns": 1793626037277241000,
+      "client_elapsed_seconds": 173.335,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 3539,
+        "prompt_tokens": 244433,
+        "total_tokens": 247972,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1525
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "717ddfda-1a2a-4a43-9a5f-47b83602eccf",
+      "stage": "understand",
+      "sequence_no": 2,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625866401567000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793625966522297000,
+      "client_elapsed_seconds": 100.121,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "ea90e368-9e4c-4198-9bc3-bb6814fa5bc7",
+      "stage": "understand",
+      "sequence_no": 3,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625869057926000,
+      "first_sse_ns": 1793625941120835000,
+      "first_sse_seconds": 72.063,
+      "sse_count": 991,
+      "terminal_ns": 1793626043198125000,
+      "client_elapsed_seconds": 174.14,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 3071,
+        "prompt_tokens": 244502,
+        "total_tokens": 247573,
+        "completion_tokens_details": {
+          "reasoning_tokens": 771
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "a678cc7c-9329-438b-bf30-2f89468d156f",
+      "stage": "understand",
+      "sequence_no": 4,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625869092910000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793625969287094000,
+      "client_elapsed_seconds": 100.194,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "e380ac0b-34d8-4ef5-a664-2c508a8a4941",
+      "stage": "understand",
+      "sequence_no": 5,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625871709732000,
+      "first_sse_ns": 1793625931866565000,
+      "first_sse_seconds": 60.157,
+      "sse_count": 584,
+      "terminal_ns": 1793625994581367000,
+      "client_elapsed_seconds": 122.872,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 1832,
+        "prompt_tokens": 244432,
+        "total_tokens": 246264,
+        "completion_tokens_details": {
+          "reasoning_tokens": 64
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "262b0b21-0372-41eb-846e-d71ece4c2624",
+      "stage": "understand",
+      "sequence_no": 6,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625871732862000,
+      "first_sse_ns": 1793625922136985000,
+      "first_sse_seconds": 50.404,
+      "sse_count": 117,
+      "terminal_ns": 1793625931052976000,
+      "client_elapsed_seconds": 59.32,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 325,
+        "prompt_tokens": 244540,
+        "total_tokens": 244865,
+        "completion_tokens_details": {
+          "reasoning_tokens": 313
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "fc8a3f52-f01b-4d8d-b9e7-1c9e77f1abdb",
+      "stage": "understand",
+      "sequence_no": 7,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625874309410000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793625974455691000,
+      "client_elapsed_seconds": 100.146,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "ce1aa103-5c5f-401a-b399-4c26ce78a258",
+      "stage": "understand",
+      "sequence_no": 8,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625874339961000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793625974543637000,
+      "client_elapsed_seconds": 100.204,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "e07718db-94fa-42fb-89bc-aced76581e45",
+      "stage": "understand",
+      "sequence_no": 9,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625876781330000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793625976913674000,
+      "client_elapsed_seconds": 100.132,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "f337b9d1-1d6e-489f-afbc-562219becfb2",
+      "stage": "understand",
+      "sequence_no": 5,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625994601016000,
+      "first_sse_ns": 1793626002370803000,
+      "first_sse_seconds": 7.77,
+      "sse_count": 1798,
+      "terminal_ns": 1793626028621600000,
+      "client_elapsed_seconds": 34.021,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 1807,
+        "prompt_tokens": 6597,
+        "total_tokens": 8404,
+        "completion_tokens_details": {
+          "reasoning_tokens": 35
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "b97f129a-136b-4acd-a37d-bcf0e5bb8e55",
+      "stage": "understand",
+      "sequence_no": 2,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625996797094000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626094075190000,
+      "client_elapsed_seconds": 97.278,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "Vision model request failed",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_connection_error",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "d2a3ed1d-8bcb-4ce4-b804-b42bfdee438d",
+      "stage": "understand",
+      "sequence_no": 4,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793625999728656000,
+      "first_sse_ns": 1793626049010601000,
+      "first_sse_seconds": 49.282,
+      "sse_count": 541,
+      "terminal_ns": 1793626100434020000,
+      "client_elapsed_seconds": 100.705,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 1677,
+        "prompt_tokens": 244544,
+        "total_tokens": 246221,
+        "completion_tokens_details": {
+          "reasoning_tokens": 202
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "61e40bcc-1b10-47cd-a5bc-e7510b0fe72b",
+      "stage": "understand",
+      "sequence_no": 7,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626004663272000,
+      "first_sse_ns": 1793626051256998000,
+      "first_sse_seconds": 46.594,
+      "sse_count": 308,
+      "terminal_ns": 1793626066819299000,
+      "client_elapsed_seconds": 62.156,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 1020,
+        "prompt_tokens": 244410,
+        "total_tokens": 245430,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1008
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "7a29f668-6305-4cb8-a7c8-e54f93dd70fe",
+      "stage": "understand",
+      "sequence_no": 8,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626005041047000,
+      "first_sse_ns": 1793626078695813000,
+      "first_sse_seconds": 73.655,
+      "sse_count": 464,
+      "terminal_ns": 1793626142321876000,
+      "client_elapsed_seconds": 137.281,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 1349,
+        "prompt_tokens": 244541,
+        "total_tokens": 245890,
+        "completion_tokens_details": {
+          "reasoning_tokens": 304
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "757eb6a6-6805-4416-8016-7480c47c266f",
+      "stage": "understand",
+      "sequence_no": 9,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626007010343000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626107291451000,
+      "client_elapsed_seconds": 100.281,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "ac741288-0b7f-402c-b406-4d21acd7fb34",
+      "stage": "understand",
+      "sequence_no": 1,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626037297326000,
+      "first_sse_ns": 1793626045015792000,
+      "first_sse_seconds": 7.718,
+      "sse_count": 20,
+      "terminal_ns": 1793626046298107000,
+      "client_elapsed_seconds": 9.001,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 41,
+        "prompt_tokens": 6843,
+        "total_tokens": 6884,
+        "completion_tokens_details": {
+          "reasoning_tokens": 31
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1024
+        },
+        "cached_tokens": 1024
+      }
+    },
+    {
+      "call_id": "fb9d36c6-f764-408b-8359-205c6e65f13d",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "84fc537b-abb5-48f7-9bc9-2e8504b276b2",
+      "refine_generation": 1,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626068074084000,
+      "first_sse_ns": 1793626071420038000,
+      "first_sse_seconds": 3.346,
+      "sse_count": 1466,
+      "terminal_ns": 1793626171775290000,
+      "client_elapsed_seconds": 103.701,
+      "outcome": "cancelled_superseded",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call fb9d36c6-f764-408b-8359-205c6e65f13d was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null,
+      "cancel_drain_seconds": 0.018
+    },
+    {
+      "call_id": "a72f73db-a296-467f-84ac-76a2e8e7752a",
+      "stage": "understand",
+      "sequence_no": 4,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626100455486000,
+      "first_sse_ns": 1793626107942606000,
+      "first_sse_seconds": 7.487,
+      "sse_count": 20,
+      "terminal_ns": 1793626108482809000,
+      "client_elapsed_seconds": 8.027,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 28,
+        "prompt_tokens": 6415,
+        "total_tokens": 6443,
+        "completion_tokens_details": {
+          "reasoning_tokens": 10
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 1024
+        },
+        "cached_tokens": 1024
+      }
+    },
+    {
+      "call_id": "62f6a847-6d0d-470e-9962-d168bcf30471",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "bac3d188-c626-42e8-878d-d28eb527e435",
+      "refine_generation": 1,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626110170644000,
+      "first_sse_ns": 1793626115919870000,
+      "first_sse_seconds": 5.749,
+      "sse_count": 5758,
+      "terminal_ns": 1793626191499162000,
+      "client_elapsed_seconds": 81.329,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 5768,
+        "prompt_tokens": 11265,
+        "total_tokens": 17033,
+        "completion_tokens_details": {
+          "reasoning_tokens": 774
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "ba3eab20-261a-40bc-b2f5-96c63c6d72c4",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "dbd5b912-2876-4217-848d-1fb014dd49dd",
+      "refine_generation": 1,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626110780155000,
+      "first_sse_ns": 1793626122472039000,
+      "first_sse_seconds": 11.692,
+      "sse_count": 346,
+      "terminal_ns": 1793626148035383000,
+      "client_elapsed_seconds": 37.255,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 1446,
+        "prompt_tokens": 8534,
+        "total_tokens": 9980,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1406
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "40c61c44-1a8c-408d-a994-9436df375d44",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "7ae332c1-e5ac-427b-b6b9-afb4bfa1fcd7",
+      "refine_generation": 1,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626144050423000,
+      "first_sse_ns": 1793626147192068000,
+      "first_sse_seconds": 3.142,
+      "sse_count": 295,
+      "terminal_ns": 1793626171744367000,
+      "client_elapsed_seconds": 27.694,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 1088,
+        "prompt_tokens": 7635,
+        "total_tokens": 8723,
+        "completion_tokens_details": {
+          "reasoning_tokens": 953
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "ef2d0154-9655-43bd-96dd-cc59243aad08",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "dbd5b912-2876-4217-848d-1fb014dd49dd",
+      "refine_generation": 2,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626148056576000,
+      "first_sse_ns": 1793626166011629000,
+      "first_sse_seconds": 17.955,
+      "sse_count": 340,
+      "terminal_ns": 1793626171775420000,
+      "client_elapsed_seconds": 23.719,
+      "outcome": "cancelled_superseded",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call ef2d0154-9655-43bd-96dd-cc59243aad08 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null,
+      "cancel_drain_seconds": 0.016
+    },
+    {
+      "call_id": "a47b5a24-a432-42c4-9ef9-0ca7a509ed60",
+      "stage": "understand",
+      "sequence_no": 2,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626154265520000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626254633942000,
+      "client_elapsed_seconds": 100.368,
+      "outcome": "error",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelFailureError",
+            "message": "No first SSE event within 100 seconds",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": "model_timeout",
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "580a77b8-ad89-4ea2-b3a9-4b060358b36f",
+      "stage": "understand",
+      "sequence_no": 9,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626167621817000,
+      "first_sse_ns": 1793626215076800000,
+      "first_sse_seconds": 47.455,
+      "sse_count": 37,
+      "terminal_ns": 1793626216897608000,
+      "client_elapsed_seconds": 49.276,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 88,
+        "prompt_tokens": 244507,
+        "total_tokens": 244595,
+        "completion_tokens_details": {
+          "reasoning_tokens": 22
+        },
+        "prompt_tokens_details": {}
+      }
+    },
+    {
+      "call_id": "0d6886dc-2b02-4181-974b-e11d41f77144",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "dbd5b912-2876-4217-848d-1fb014dd49dd",
+      "refine_generation": 3,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626171835628000,
+      "first_sse_ns": 1793626177634124000,
+      "first_sse_seconds": 5.798,
+      "sse_count": 20,
+      "terminal_ns": 1793626191538513000,
+      "client_elapsed_seconds": 19.703,
+      "outcome": "cancelled_superseded",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 0d6886dc-2b02-4181-974b-e11d41f77144 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "peer closed connection without sending complete message body (incomplete chunked read)",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "peer closed connection without sending complete message body (incomplete chunked read)",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "peer closed connection without sending complete message body (incomplete chunked read)",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null,
+      "cancel_drain_seconds": 0.018
+    },
+    {
+      "call_id": "3820749b-e234-456a-9700-9c977a84164e",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "84fc537b-abb5-48f7-9bc9-2e8504b276b2",
+      "refine_generation": 2,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626171841479000,
+      "first_sse_ns": 1793626175179800000,
+      "first_sse_seconds": 3.338,
+      "sse_count": 182,
+      "terminal_ns": 1793626191538331000,
+      "client_elapsed_seconds": 19.697,
+      "outcome": "cancelled_superseded",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 3820749b-e234-456a-9700-9c977a84164e was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ReadError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "BrokenPipeError",
+            "message": "[Errno 32] Broken pipe",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null,
+      "cancel_drain_seconds": 0.016
+    },
+    {
+      "call_id": "1d3f6a73-09d9-47ee-9e11-45130cc0e03d",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "84fc537b-abb5-48f7-9bc9-2e8504b276b2",
+      "refine_generation": 3,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626191600837000,
+      "first_sse_ns": 1793626198250282000,
+      "first_sse_seconds": 6.649,
+      "sse_count": 211,
+      "terminal_ns": 1793626212889912000,
+      "client_elapsed_seconds": 21.289,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 491,
+        "prompt_tokens": 8568,
+        "total_tokens": 9059,
+        "completion_tokens_details": {
+          "reasoning_tokens": 416
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 768
+        },
+        "cached_tokens": 768
+      }
+    },
+    {
+      "call_id": "84501565-dd35-49f6-9aae-948c379fca8e",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "dbd5b912-2876-4217-848d-1fb014dd49dd",
+      "refine_generation": 4,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626191607677000,
+      "first_sse_ns": 1793626200488087000,
+      "first_sse_seconds": 8.88,
+      "sse_count": 3723,
+      "terminal_ns": 1793626254921335000,
+      "client_elapsed_seconds": 63.314,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 84501565-dd35-49f6-9aae-948c379fca8e was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ModelCallCancelledError",
+            "message": "Parse V2 execution lease was lost",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "VideoParseLeaseLostError",
+            "message": "Interval lease is no longer current",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "f6602119-aa11-4da6-8a74-679afb577e4d",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "84fc537b-abb5-48f7-9bc9-2e8504b276b2",
+      "refine_generation": 4,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626212912192000,
+      "first_sse_ns": 1793626224208830000,
+      "first_sse_seconds": 11.297,
+      "sse_count": 52,
+      "terminal_ns": 1793626227205546000,
+      "client_elapsed_seconds": 14.293,
+      "outcome": "completed",
+      "error": null,
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": "k3",
+      "usage": {
+        "completion_tokens": 141,
+        "prompt_tokens": 8722,
+        "total_tokens": 8863,
+        "completion_tokens_details": {
+          "reasoning_tokens": 123
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 6144
+        },
+        "cached_tokens": 6144
+      }
+    },
+    {
+      "call_id": "c17b597b-2ca2-4f89-82ad-d29b6a616e84",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "f3282251-82af-4e6a-8b11-c809b74e9876",
+      "refine_generation": 1,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626218907779000,
+      "first_sse_ns": 1793626228736458000,
+      "first_sse_seconds": 9.829,
+      "sse_count": 340,
+      "terminal_ns": 1793626258985751000,
+      "client_elapsed_seconds": 40.078,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call c17b597b-2ca2-4f89-82ad-d29b6a616e84 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "peer closed connection without sending complete message body (incomplete chunked read)",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "peer closed connection without sending complete message body (incomplete chunked read)",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "peer closed connection without sending complete message body (incomplete chunked read)",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "4da3d762-4fe5-4708-892b-43f9295a3be7",
+      "stage": "understand",
+      "sequence_no": 10,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626219619060000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626258763167000,
+      "client_elapsed_seconds": 39.144,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 4da3d762-4fe5-4708-892b-43f9295a3be7 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "3dbd9284-a89c-474c-9a13-df5f95b1dcf7",
+      "stage": "understand",
+      "sequence_no": 11,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626219692374000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626259263781000,
+      "client_elapsed_seconds": 39.571,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 3dbd9284-a89c-474c-9a13-df5f95b1dcf7 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "4fe06e80-7751-42f1-9320-b6e53e8db9c4",
+      "stage": "understand",
+      "sequence_no": 12,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626222412916000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626256863655000,
+      "client_elapsed_seconds": 34.451,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 4fe06e80-7751-42f1-9320-b6e53e8db9c4 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "3ef6b5b9-31ed-419a-b11d-b77958ceea48",
+      "stage": "understand",
+      "sequence_no": 13,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626222441780000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626256955199000,
+      "client_elapsed_seconds": 34.513,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 3ef6b5b9-31ed-419a-b11d-b77958ceea48 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "11aac485-c6db-4b72-8977-065d591d0e3b",
+      "stage": "understand",
+      "sequence_no": 14,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626225220329000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626259451016000,
+      "client_elapsed_seconds": 34.231,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 11aac485-c6db-4b72-8977-065d591d0e3b was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "fff2d86f-76f1-44bf-967d-158703b562f1",
+      "stage": "understand",
+      "sequence_no": 15,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626225243346000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626259539330000,
+      "client_elapsed_seconds": 34.296,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call fff2d86f-76f1-44bf-967d-158703b562f1 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "56d65ed7-6280-468b-95d9-27d22d96ca63",
+      "stage": "refine",
+      "sequence_no": null,
+      "interval_task_id": "84fc537b-abb5-48f7-9bc9-2e8504b276b2",
+      "refine_generation": 5,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626227231170000,
+      "first_sse_ns": 1793626234227664000,
+      "first_sse_seconds": 6.996,
+      "sse_count": 180,
+      "terminal_ns": 1793626256889178000,
+      "client_elapsed_seconds": 29.658,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 56d65ed7-6280-468b-95d9-27d22d96ca63 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "ModelCallCancelledError",
+            "message": "Parse V2 execution lease was lost",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "VideoParseLeaseLostError",
+            "message": "Interval lease is no longer current",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "54d841f8-6e8c-4d1b-bf97-b3e03f7b9729",
+      "stage": "understand",
+      "sequence_no": 16,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626229875092000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626259402109000,
+      "client_elapsed_seconds": 29.527,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call 54d841f8-6e8c-4d1b-bf97-b3e03f7b9729 was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "fd31f97d-63a0-4182-bdf8-f1a90488918e",
+      "stage": "understand",
+      "sequence_no": 17,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626232646168000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626256799705000,
+      "client_elapsed_seconds": 24.154,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call fd31f97d-63a0-4182-bdf8-f1a90488918e was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    },
+    {
+      "call_id": "b3180291-d05f-434d-9f5f-5324381f3f8d",
+      "stage": "understand",
+      "sequence_no": 18,
+      "interval_task_id": null,
+      "refine_generation": null,
+      "retry_count": 0,
+      "stream": true,
+      "started_ns": 1793626232715055000,
+      "first_sse_ns": null,
+      "first_sse_seconds": null,
+      "sse_count": 0,
+      "terminal_ns": 1793626257216608000,
+      "client_elapsed_seconds": 24.502,
+      "outcome": "cancelled_other",
+      "error": {
+        "chain": [
+          {
+            "type": "ModelCallCancelledError",
+            "message": "model call b3180291-d05f-434d-9f5f-5324381f3f8d was cancelled",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "APIConnectionError",
+            "message": "Connection error.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          },
+          {
+            "type": "RemoteProtocolError",
+            "message": "Server disconnected without sending a response.",
+            "code": null,
+            "status_code": null,
+            "response_id": null,
+            "request_id": null,
+            "reason": null,
+            "partial_output_chars": null
+          }
+        ]
+      },
+      "model": "k3",
+      "reasoning_effort": "low",
+      "response_model": null,
+      "usage": null
+    }
+  ]
+}

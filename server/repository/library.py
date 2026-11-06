@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
-from ..model.dto.jobDTO import VideoData
-from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoSummaryState
-from ..model.job import VideoParseTask, VideoParseTaskStatus
-from ..model.upload import UploadSession
+from ..model.dto.libraryDTO import (
+    SeriesLastSearchState, SeriesPublisherState, SeriesState, VideoData, VideoSummaryState,
+)
+from ..model.parse_content import VideoParseContent
+from ..model.task import VideoParseTask, VideoParseTaskStatus
+from ..model.upload import UploadSession, UPLOAD_DELETION_PENDING_ERROR_CODE
 from ..model.tenant import Tenant
 from ..model.user import User
 from ..model.video import Series, SeriesVisibility, VideoIndexStatus, Video, VideoChunk
@@ -132,20 +134,6 @@ class LibraryRepository:
             ):
                 if field in changes:
                     setattr(record, field, changes[field])
-
-    def update_video_metadata(
-        self, video_id: str, *, session: Session,
-        display_name: str | None, description: str | None, cover_uri: str | None,
-    ) -> None:
-        video = session.scalar(select(Video).where(Video.id == video_id).with_for_update())
-        if video is None:
-            raise SeriesNotFoundError("video no longer exists")
-        for field, value in (
-            ("display_name", display_name), ("description", description), ("cover_uri", cover_uri),
-        ):
-            if value is not None:
-                setattr(video, field, value)
-        session.flush()
 
     def update_video_episode_order(
         self,
@@ -455,6 +443,13 @@ class LibraryRepository:
             .where(VideoParseTask.is_deleted.is_(False))
             .subquery()
         )
+        # A video whose upload is deletion-pending is fenced from query and
+        # publication; hide it from library/series listings until reconcile
+        # finishes and the Video row is removed.
+        deletion_pending = select(UploadSession.id).where(
+            UploadSession.video_id == Video.id,
+            UploadSession.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE,
+        ).correlate(Video).exists()
         statement = (
             select(
                 Video,
@@ -468,7 +463,7 @@ class LibraryRepository:
                 (latest.c.video_id == Video.id)
                 & (latest.c.position == 1),
             )
-            .where(Series.tenant_id == tenant_id)
+            .where(Series.tenant_id == tenant_id, ~deletion_pending)
             .order_by(Video.episode_order, Video.id)
         )
         if series_ids is not None:
@@ -493,8 +488,50 @@ class LibraryRepository:
                 if (uri := stored_keyframe_uri(value)) is not None
             )
 
+        # One extra batch query resolves the latest non-empty display result per
+        # video; an older task's display keeps showing while the newest task has
+        # none. Videos without any display fall back to downstream defaults.
+        display_latest = (
+            select(
+                VideoParseTask.video_id,
+                VideoParseContent.display.label("display"),
+                func.row_number().over(
+                    partition_by=VideoParseTask.video_id,
+                    order_by=(
+                        VideoParseTask.version.desc(),
+                        VideoParseTask.id.desc(),
+                    ),
+                ).label("position"),
+            )
+            .join(VideoParseContent, VideoParseContent.video_task_id == VideoParseTask.id)
+            .where(
+                VideoParseTask.video_id.in_([row[0].id for row in rows]),
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.display.isnot(None),
+            )
+            .subquery()
+        )
+        displays = dict(session.execute(
+            select(display_latest.c.video_id, display_latest.c.display)
+            .where(display_latest.c.position == 1)
+        ).all())
+
+        # One batched query answers "does this video have a chapter outline yet".
+        # Like display, presence is enough for the Supervisor's navigation hint.
+        outline_video_ids = set(session.execute(
+            select(VideoParseTask.video_id)
+            .join(VideoParseContent, VideoParseContent.video_task_id == VideoParseTask.id)
+            .where(
+                VideoParseTask.video_id.in_([row[0].id for row in rows]),
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.outline.isnot(None),
+            )
+            .distinct()
+        ).scalars())
+
         states: list[VideoSummaryState] = []
         for video, _task_id, task_status, last_error in rows:
+            display = displays.get(video.id) or {}
             if task_status == VideoParseTaskStatus.COMPLETE.value:
                 index_status = VideoIndexStatus.READY
             elif task_status == VideoParseTaskStatus.INDEXING.value:
@@ -503,12 +540,11 @@ class LibraryRepository:
                 index_status = VideoIndexStatus.FAILED
             else:
                 index_status = VideoIndexStatus.NOT_READY
-            parse_status = task_status or video.parse_status
+            parse_status = task_status or VideoParseTaskStatus.PENDING.value
             states.append(self._video_state(
                 video,
                 tenant_id=tenant_id,
                 index_status=index_status,
-                latest_job_id=None,
                 parse_status=parse_status,
                 parse_progress=(
                     100
@@ -519,8 +555,223 @@ class LibraryRepository:
                 keyframe_uris=tuple(dict.fromkeys(
                     keyframes_by_video.get(video.id, ())
                 )),
+                display_name=display.get("title"),
+                description=display.get("description"),
+                cover_uri=display.get("cover_uri"),
+                has_outline=video.id in outline_video_ids,
             ))
         return states
+
+    def video_outline(
+        self,
+        session: Session,
+        *,
+        videos: list[dict],
+        tenant_id: str,
+        series_ids: list[str],
+    ) -> dict:
+        """Resolve (series name, episode) addresses inside the authorized scope and read outlines.
+
+        Returns ``{"videos": [...]}`` with one entry per request, or
+        ``{"error": {"code", "message", "hint"}}`` when an address cannot be resolved.
+        Addressing stays (series name, episode); ``video_id`` is never returned.
+        """
+        authorized = sorted(
+            session.scalars(
+                select(Series).where(
+                    Series.id.in_(series_ids), Series.tenant_id == tenant_id,
+                )
+            ),
+            key=lambda item: (item.name, item.id),
+        )
+        series_by_id = {item.id: item for item in authorized}
+        series_by_name = {item.name: item for item in authorized}
+        series_names = [item.name for item in authorized]
+
+        resolved: list[tuple[Series, Video, int]] = []
+        for request in videos:
+            series_name = request.get("series")
+            episode = request.get("episode")
+            if series_name is None:
+                if len(series_by_id) != 1:
+                    return _outline_resolution_error(
+                        "AMBIGUOUS_SERIES",
+                        "Multiple series are in scope; name one explicitly.",
+                        "Valid series: " + "、".join(series_names),
+                    )
+                series = next(iter(series_by_id.values()))
+            else:
+                series = series_by_name.get(series_name)
+                if series is None:
+                    return _outline_resolution_error(
+                        "UNKNOWN_SERIES",
+                        f"Series {series_name!r} is not in the conversation's scope.",
+                        "Valid series: " + "、".join(series_names),
+                    )
+            if type(episode) is not int or isinstance(episode, bool) or episode <= 0:
+                return _outline_resolution_error(
+                    "UNKNOWN_EPISODE",
+                    f"Series {series.name!r} has no episode {episode!r}.",
+                    _outline_episode_hint(session, series),
+                )
+            video = session.scalar(
+                select(Video).where(
+                    Video.series_id == series.id, Video.episode_order == episode,
+                )
+            )
+            if video is None:
+                return _outline_resolution_error(
+                    "UNKNOWN_EPISODE",
+                    f"Series {series.name!r} has no episode {episode}.",
+                    _outline_episode_hint(session, series),
+                )
+            resolved.append((series, video, episode))
+        return {"videos": [
+            self._video_outline_result(session, series, video, episode)
+            for series, video, episode in resolved
+        ]}
+
+    def series_overview(
+        self,
+        session: Session,
+        *,
+        series_name: str | None,
+        tenant_id: str,
+        series_ids: list[str],
+    ) -> dict:
+        """Read a per-video overview for one or all authorized in-scope series.
+
+        Returns ``{"series": [...]}`` with one entry per authorized series, or
+        ``{"error": {"code", "message", "hint"}}`` when the named series cannot be
+        resolved. Each video carries its episode, summarized title/description and
+        outline availability; ``video_id`` is never returned.
+        """
+        authorized = sorted(
+            session.scalars(
+                select(Series).where(
+                    Series.id.in_(series_ids), Series.tenant_id == tenant_id,
+                )
+            ),
+            key=lambda item: (item.name, item.id),
+        )
+        series_by_name = {item.name: item for item in authorized}
+        series_names = [item.name for item in authorized]
+
+        if series_name is None:
+            selected = authorized
+        else:
+            series = series_by_name.get(series_name)
+            if series is None:
+                return _outline_resolution_error(
+                    "UNKNOWN_SERIES",
+                    f"Series {series_name!r} is not in the conversation's scope.",
+                    "Valid series: " + "、".join(series_names),
+                )
+            selected = [series]
+
+        videos = self._video_states(
+            session, tenant_id=tenant_id,
+            series_ids=[item.id for item in selected],
+        )
+        videos_by_series: dict[str, list[VideoSummaryState]] = {}
+        for video in videos:
+            videos_by_series.setdefault(video.series_id, []).append(video)
+        return {"series": [
+            self._series_overview_result(item, videos_by_series.get(item.id, ()))
+            for item in selected
+        ]}
+
+    @staticmethod
+    def _series_overview_result(
+        series: Series, videos: list[VideoSummaryState],
+    ) -> dict:
+        """One series' videos as (episode, title, description, summarized, hasOutline)."""
+        items = []
+        for video in videos:
+            title = (video.display_name or "").strip()
+            description = video.description
+            summarized = bool(title or (description or "").strip())
+            if not summarized:
+                title = video.original_filename
+                description = None
+            items.append({
+                "episode": video.episode_order,
+                "title": title,
+                "description": description,
+                "summarized": summarized,
+                "hasOutline": video.has_outline,
+            })
+        return {
+            "series": series.name,
+            "displayName": series.display_name or series.name,
+            "videos": items,
+        }
+
+    @staticmethod
+    def _video_outline_result(
+        session: Session, series: Series, video: Video, episode: int,
+    ) -> dict:
+        """Latest non-empty outline, its display title/description, and the video's chunks."""
+        base = {"series": series.name, "episode": episode}
+        outline = session.execute(
+            select(VideoParseContent.outline)
+            .join(VideoParseTask, VideoParseTask.id == VideoParseContent.video_task_id)
+            .where(
+                VideoParseTask.video_id == video.id,
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.outline.isnot(None),
+            )
+            .order_by(VideoParseTask.version.desc(), VideoParseTask.id.desc())
+            .limit(1)
+        ).scalar()
+        if outline is None:
+            return {**base, "available": False, "reason": "该视频尚未生成章节大纲。"}
+
+        display = session.execute(
+            select(VideoParseContent.display)
+            .join(VideoParseTask, VideoParseTask.id == VideoParseContent.video_task_id)
+            .where(
+                VideoParseTask.video_id == video.id,
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseContent.display.isnot(None),
+            )
+            .order_by(VideoParseTask.version.desc(), VideoParseTask.id.desc())
+            .limit(1)
+        ).scalar() or {}
+        chunks = session.execute(
+            select(
+                VideoChunk.id.label("id"),
+                VideoChunk.start_ms.label("start_ms"),
+                VideoChunk.end_ms.label("end_ms"),
+            )
+            .where(VideoChunk.video_id == video.id)
+            .order_by(VideoChunk.sequence_no)
+        ).all()
+
+        sections = []
+        for section in outline.get("sections") or ():
+            if not isinstance(section, dict):
+                continue
+            start_ms, end_ms = section.get("start_ms"), section.get("end_ms")
+            if type(start_ms) is not int or type(end_ms) is not int or start_ms >= end_ms:
+                continue
+            sections.append({
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "title": section.get("title"),
+                "summary": section.get("summary"),
+                "video_chunk_ids": [
+                    chunk.id for chunk in chunks
+                    if chunk.start_ms < end_ms and start_ms < chunk.end_ms
+                ],
+            })
+        return {
+            **base,
+            "available": True,
+            "title": display.get("title"),
+            "description": display.get("description"),
+            "sections": sections,
+        }
 
     @staticmethod
     def _state(
@@ -567,11 +818,14 @@ class LibraryRepository:
         *,
         tenant_id: str,
         index_status: VideoIndexStatus,
-        latest_job_id: str | None,
         parse_status: str,
         parse_progress: int | None,
         last_error: str | None,
         keyframe_uris: tuple[str, ...],
+        display_name: str | None = None,
+        description: str | None = None,
+        cover_uri: str | None = None,
+        has_outline: bool = False,
     ) -> VideoSummaryState:
         return VideoSummaryState(
             video_id=record.id,
@@ -590,12 +844,12 @@ class LibraryRepository:
             upload_progress=record.upload_progress,
             parse_progress=parse_progress,
             index_status=index_status,
-            latest_job_id=latest_job_id,
             last_error=last_error,
             keyframe_uris=keyframe_uris,
-            display_name=record.display_name,
-            description=record.description,
-            cover_uri=record.cover_uri,
+            display_name=display_name,
+            description=description,
+            cover_uri=cover_uri,
+            has_outline=has_outline,
         )
 
 
@@ -627,3 +881,18 @@ def _v2_error_message(value: object) -> str | None:
         message = value.get("message")
         return message if isinstance(message, str) and message else None
     return None
+
+
+def _outline_resolution_error(code: str, message: str, hint: str) -> dict:
+    return {"error": {"code": code, "message": message, "hint": hint}}
+
+
+def _outline_episode_hint(session: Session, series: Series) -> str:
+    orders = sorted(session.scalars(
+        select(Video.episode_order).where(Video.series_id == series.id)
+    ))
+    if not orders:
+        return f"Series {series.name!r} has no videos yet."
+    if len(orders) == 1:
+        return f"Valid episode: {orders[0]}"
+    return "Valid episodes: " + "、".join(str(order) for order in orders)

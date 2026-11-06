@@ -1,0 +1,16 @@
+{
+  "task_id": "2eef6cec-f494-407c-8939-cf415de1336e",
+  "source_task_id": "60bede4d-39c6-48ef-a4a6-a57e7b9a6e24",
+  "artifacts": {
+    "asr": {
+      "equal_to_v7": true,
+      "canonical_sha256": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4"
+    },
+    "diarization": {
+      "equal_to_v7": true,
+      "canonical_sha256": "8875920a4ccd7134fa7597d070346529f59fe5b041e53a4bb527500eaa99cd8c"
+    }
+  },
+  "checked_at": 1793622532.4125829,
+  "new_asr_calls": 0
+}

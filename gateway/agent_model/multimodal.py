@@ -6,22 +6,24 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 import json
 import logging
-from time import monotonic
+from time import monotonic, sleep
 from types import SimpleNamespace
 from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
+import httpx
 from arkruntime._exceptions import ArkError
 from langchain_core.tools import BaseTool
-from openai import APIError
+from openai import APIConnectionError, APIError
 from pydantic import BaseModel
 
-from gateway.ark.sse import request_sse_response
+from gateway.streaming.responses import request_response
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
 from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.media import encode_media_file
 from gateway.multimodal import ImageInput, MultimodalInput, TextInput, VideoInput
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.streaming.chat import request_chat_completion
 from gateway.usage import ModelCallControlError, model_call_context, track_model_call
 
 from .context import ContextCheckpoint, ContextWindowOverflow, ContextWindowPolicy, preflight_context
@@ -34,6 +36,7 @@ from .tool_loop import (
 
 _Result = TypeVar("_Result", bound=BaseModel)
 _logger = logging.getLogger(__name__)
+_CONNECT_RETRY_DELAYS = (1.0, 2.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +298,54 @@ def _log_multimodal_request(endpoint, call, request, *, schema_name, result_type
                  json.dumps(summary, ensure_ascii=True, separators=(",", ":")))
 
 
+def _connection_never_established(error: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _request_response_with_connect_retry(
+    endpoint: _Endpoint, call: Any, check_control: Callable[[], None] | None,
+    request: dict[str, Any], *, schema_name: str,
+) -> tuple[Any, str]:
+    """Retry only when the connection failed before the provider received the request."""
+    budget, started = request["timeout"], monotonic()
+    for attempt, delay in enumerate((*_CONNECT_RETRY_DELAYS, None)):
+        try:
+            return request_response(
+                endpoint.client.responses, stream=endpoint.adapter._stream, usage_call=call,
+                check_control=check_control, **request,
+            )
+        except APIConnectionError as error:
+            if (delay is None or not _connection_never_established(error)
+                    or budget - (monotonic() - started) <= delay):
+                raise
+            call.raise_if_cancelled()
+            if check_control is not None:
+                check_control()
+            _logger.warning(
+                "event=multimodal_connect_retry provider=%s model=%s schema_name=%s "
+                "attempt=%s max_attempts=%s backoff_seconds=%s error_type=%s",
+                endpoint.provider, endpoint.model, schema_name[:128],
+                attempt + 1, len(_CONNECT_RETRY_DELAYS) + 1, delay, type(error).__name__,
+            )
+            sleep(delay)
+    raise AssertionError("unreachable")
+
+
+def _provider_tool_choice(endpoint: _Endpoint, choice: str) -> str:
+    """DeepSeek thinking mode rejects forced tool choices; turn validation still uses the original choice."""
+    if (endpoint.provider == DEEPSEEK_PROVIDER and endpoint.adapter.reasoning_effort in {"low", "high", "max"}
+            and choice not in {"auto", "none"}):
+        return "auto"
+    return choice
+
+
 def _request_turn(
     endpoint: _Endpoint, messages, specs, choice, remaining, seen, visible, *,
     tools: Sequence[BaseTool], schema_name: str, result_type: type[_Result],
@@ -314,7 +365,8 @@ def _request_turn(
     request = {
         "model": endpoint.model, "input": _response_input(messages, endpoint),
         "tools": [{"type": "function", **spec["function"]} for spec in specs],
-        "tool_choice": choice, "timeout": timeout,
+        "tool_choice": _provider_tool_choice(endpoint, choice), "timeout": timeout,
+        "temperature": adapter.temperature,
     }
     if enforce_final_schema:
         schema = result_type.model_json_schema()
@@ -331,11 +383,9 @@ def _request_turn(
         request["thinking"] = {"type": "disabled"}
     elif adapter.reasoning_effort is not None:
         request["reasoning"] = {"effort": adapter.reasoning_effort}
-    if endpoint.provider == DEEPSEEK_PROVIDER:
-        request["temperature"] = 0
     with model_call_context({"agent_round": round_no}), track_model_call(
         provider=endpoint.provider, model=endpoint.model, operation=schema_name,
-    ) as call, capture_model_diagnostics(call, {**request, "stream": endpoint.provider == ARK_PROVIDER}):
+    ) as call, capture_model_diagnostics(call, {**request, "stream": adapter._stream}):
         close = getattr(endpoint.client, "close", None)
         unregister = call.add_cancel_callback(close) if callable(close) else lambda: None
         try:
@@ -344,15 +394,9 @@ def _request_turn(
                 check_control()
             _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
-                if endpoint.provider == ARK_PROVIDER:
-                    response, text = request_sse_response(
-                        endpoint.client.responses, usage_call=call,
-                        check_control=check_control, **request,
-                    )
-                else:
-                    response = endpoint.client.responses.create(**request)
-                    call.capture_response(response)
-                    text = _response_text(response)
+                response, text = _request_response_with_connect_retry(
+                    endpoint, call, check_control, request, schema_name=schema_name,
+                )
                 record_model_event("response", response)
             except Exception as error:
                 call.capture_response(error, include_usage=False)
@@ -429,10 +473,15 @@ def _request_chat_turn(
     adapter = endpoint.adapter
     request = {
         "model": endpoint.model, "messages": _chat_input(messages, endpoint),
-        "tools": specs, "tool_choice": choice,
-        "stream": False, "timeout": min(remaining, adapter._request_timeout_seconds),
+        "tools": specs, "tool_choice": _provider_tool_choice(endpoint, choice),
+        "stream": adapter._stream, "timeout": min(remaining, adapter._request_timeout_seconds),
+        "temperature": adapter.temperature,
         adapter._token_parameter: adapter.max_output_tokens,
     }
+    if adapter.reasoning_effort is not None:
+        request["reasoning_effort"] = adapter.reasoning_effort
+    if adapter._stream:
+        request["stream_options"] = {"include_usage": True}
     if enforce_final_schema:
         request["response_format"] = ({"type": "json_schema", "json_schema": {
             "name": schema_name, "strict": True, "schema": result_type.model_json_schema(),
@@ -447,9 +496,13 @@ def _request_chat_turn(
                 check_control()
             _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
-                response = endpoint.client.chat.completions.create(**request)
+                response = request_chat_completion(
+                    endpoint.client.chat.completions, usage_call=call,
+                    check_control=check_control, **request,
+                )
             except APIError as error:
                 call.capture_response(error)
+                call.raise_if_cancelled()
                 if getattr(error, "code", None) == "content_filter":
                     raise ContentFilterError("Vision output rejected", code="content_filter") from error
                 raise QueryModelIncompleteError(
@@ -467,6 +520,10 @@ def _request_chat_turn(
                 require_tool_call=enforce_final_schema and choice == "required",
                 require_visible_text_on_stop=enforce_final_schema and visible,
             )
+            if adapter._stream:
+                reasoning = getattr(response.choices[0].message, "reasoning_content", None)
+                if isinstance(reasoning, str):
+                    turn[2]["reasoning_content"] = reasoning
             parsed = None
             if enforce_final_schema and turn[0] == "stop":
                 try:
@@ -571,12 +628,3 @@ def _plain(value: Any) -> Any:
     if isinstance(value, SimpleNamespace):
         return _plain(vars(value))
     return value
-
-
-def _response_text(response: Any) -> str:
-    text = _field(response, "output_text")
-    if isinstance(text, str):
-        return text
-    return "".join(_field(content, "text", "") for item in _field(response, "output", []) or []
-                   if _field(item, "type") == "message" for content in _field(item, "content", []) or []
-                   if _field(content, "type") == "output_text")

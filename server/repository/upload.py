@@ -21,27 +21,26 @@ from ..constants.parse import (
     VOICEPRINT_PREPARATION_KEY as _VOICEPRINT_PREPARATION_KEY,
 )
 
-from ..model.dto.jobDTO import VideoParseTaskState
+from ..model.dto.taskDTO import VideoParseTaskState
 from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadCompletionClaim, UploadSegmentState,
     UploadSessionDeletion, UploadSessionState,
 )
 from ..model.index_sync import IndexSyncIntent
-from ..model.job import (
+from ..model.parse_content import (
     ChunkParseContent,
+    IntervalParseContent,
+)
+from ..model.task import (
     ChunkTaskPhase,
     ChunkParseTask,
     ChunkParseTaskStatus,
-    IntervalParseContent,
     IntervalParseTask,
     IntervalParseTaskStatus,
-    SeriesParseJob,
     VideoParseTask,
     VideoParseTaskStatus,
     validate_interval_parse_task_members,
 )
-from ..model.job import VideoChunkCheckpoint
-from ..model.parse_usage import ParseModelCall, ParseUsageAttempt
 from ..model.upload import (
     UPLOAD_DELETION_PENDING_ERROR_CODE,
     UploadSegment,
@@ -391,8 +390,9 @@ class UploadRepository:
             task.last_error = None
             detail = deepcopy(dict(task.detail or {}))
             runtime = dict(detail.get(RUNTIME_DETAIL_KEY) or {})
-            if not prepared:
-                runtime.pop(PREPARE_FAILURES_KEY, None)
+            # Explicit retry grants a fresh preparation budget even with existing
+            # topology: a new coordinator must prepare media and reuse ASR again.
+            runtime.pop(PREPARE_FAILURES_KEY, None)
             # Voice preparation happens after topology preparation, inside PARSING.
             phase = dict(runtime.get(_VOICEPRINT_PREPARATION_KEY) or {})
             if phase:
@@ -700,43 +700,22 @@ class UploadRepository:
                 raise UploadCompletionInProgressError("upload completion is already in progress")
 
             video_id = upload.video_id
-            job_id = upload.job_id
-            if video_id is not None or job_id is not None:
+            if video_id is not None:
                 shared_upload = session.scalar(
                     select(UploadSession.id.label("upload_session_id"))
                     .where(
                         UploadSession.id != upload_session_id,
-                        or_(
-                            UploadSession.video_id == video_id
-                            if video_id is not None else False,
-                            UploadSession.job_id == job_id
-                            if job_id is not None else False,
-                        ),
+                        UploadSession.video_id == video_id,
                     )
                     .with_for_update()
                 )
                 if shared_upload is not None:
                     raise UploadConflictError(
-                        "another upload session references this task's Video or ParseJob"
+                        "another upload session references this task's Video"
                     )
 
-            jobs: list[SeriesParseJob] = []
-            if video_id is not None:
-                jobs = list(session.scalars(
-                    select(SeriesParseJob)
-                    .where(SeriesParseJob.video_id == video_id)
-                    .order_by(SeriesParseJob.id)
-                    .with_for_update()
-                ))
-            elif job_id is not None:
-                job = session.scalar(
-                    select(SeriesParseJob)
-                    .where(SeriesParseJob.id == job_id)
-                    .with_for_update()
-                )
-                if job is not None:
-                    jobs = [job]
             v2_tasks: list[VideoParseTask] = []
+            deferred = False
             if video_id is not None:
                 v2_tasks = list(session.scalars(
                     select(VideoParseTask)
@@ -773,10 +752,7 @@ class UploadRepository:
                 active_prefix_lease = any(
                     _has_active_prefix_lease(task, now) for task in v2_tasks
                 )
-                if active_main_lease or active_child_lease or active_prefix_lease:
-                    raise UploadStateError(
-                        "the upload task is being parsed and cannot be deleted"
-                    )
+                deferred = active_main_lease or active_child_lease or active_prefix_lease
                 # The external artifact cleanup happens after this transaction.
                 # Fence every V2 claim during that gap; the final Video delete
                 # removes these rows through their existing cascade.
@@ -784,16 +760,21 @@ class UploadRepository:
                     task.is_deleted = True
                     detail = deepcopy(task.detail or {})
                     runtime = detail.get(RUNTIME_DETAIL_KEY, {})
-                    if _revoke_summary(runtime, pending=False, now=now):
+                    if deferred:
+                        # Bump the fence while keeping owners/expiry: their
+                        # original deadline still marks when the cancelled
+                        # executions are guaranteed gone, so reconcile can wait.
+                        task.lease_version += 1
+                        if _fence_runtime_keep_owners(runtime):
+                            detail[RUNTIME_DETAIL_KEY] = runtime
+                            task.detail = detail
+                    elif _revoke_summary(runtime, pending=False, now=now):
                         detail[RUNTIME_DETAIL_KEY] = runtime
                         task.detail = detail
                     task.capacity_acquired = False
                     task.update_time = datetime_to_unix_time_ms(now)
-
-            job_ids = tuple(sorted(
-                {job.id for job in jobs}
-                | ({job_id} if job_id is not None else set())
-            ))
+                if deferred:
+                    _fence_leased_children(session, v2_task_ids, now)
 
             video_chunk_ids: set[str] = set()
             video_parse_document_keys: set[tuple[str, str]] = set()
@@ -814,13 +795,6 @@ class UploadRepository:
                         )
                     )
                 ).all())
-            if job_ids:
-                video_chunk_ids.update(session.scalars(
-                    select(VideoChunkCheckpoint.chunk_id.label("video_chunk_id")).where(
-                        VideoChunkCheckpoint.job_id.in_(job_ids)
-                    )
-                ))
-
             changed = upload.status != UploadSessionStatus.EXPIRED.value
             # Retain the allocated order and idempotency key to fence late requests.
             upload.expire_time = min(upload.expire_time, now)
@@ -831,7 +805,7 @@ class UploadRepository:
             upload.completion_stage = None
             upload.last_error = None
             # This marker is the durable cleanup identity for both unfinished
-            # uploads (which have no Video/Job IDs) and completed ones.
+            # uploads (which have no Video ID) and completed ones.
             upload.last_error_code = UPLOAD_DELETION_PENDING_ERROR_CODE
             removed = session.execute(delete(UploadSegment).where(
                 UploadSegment.session_id == upload_session_id
@@ -843,12 +817,11 @@ class UploadRepository:
             return UploadSessionDeletion(
                 session=self._snapshot(session, upload, segments=[]),
                 video_id=video_id,
-                job_id=job_id,
-                job_ids=job_ids,
                 video_chunk_ids=tuple(sorted(video_chunk_ids)),
                 video_parse_document_keys=tuple(
                     sorted(video_parse_document_keys)
                 ),
+                deferred=deferred,
             )
 
     def finish_delete_session(
@@ -866,34 +839,16 @@ class UploadRepository:
                 raise UploadStateError("upload session deletion is no longer current")
             if (
                 upload.video_id is None
-                and upload.job_id is None
                 and upload.initial_task_id is None
             ):
                 upload.last_error_code = None
                 session.flush()
                 return self._snapshot(session, upload, segments=[])
-            if (
-                upload.video_id != deletion.video_id
-                or upload.job_id != deletion.job_id
-            ):
+            if upload.video_id != deletion.video_id:
                 raise UploadConflictError(
                     "upload session deletion targets changed during cleanup"
                 )
 
-            if deletion.job_ids:
-                session.execute(delete(ParseModelCall).where(
-                    ParseModelCall.job_id.in_(deletion.job_ids)
-                ))
-                session.execute(delete(ParseUsageAttempt).where(
-                    ParseUsageAttempt.job_id.in_(deletion.job_ids)
-                ))
-                session.execute(delete(VideoChunkCheckpoint).where(
-                    VideoChunkCheckpoint.job_id.in_(deletion.job_ids)
-                ))
-                session.execute(delete(SeriesParseJob).where(
-                    SeriesParseJob.id.in_(deletion.job_ids)
-                ))
-            upload.job_id = None
             upload.video_id = None
             upload.initial_task_id = None
             session.flush()
@@ -1012,18 +967,10 @@ class UploadRepository:
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
             if upload.status == UploadSessionStatus.COMPLETED.value:
-                job_id = upload.job_id
-                if job_id is None and upload.video_id is not None:
-                    job_id = session.scalar(
-                        select(SeriesParseJob.id.label("job_id")).where(
-                            SeriesParseJob.video_id == upload.video_id
-                        )
-                    )
                 result = UploadCompletionClaim(
                     session=self._snapshot(session, upload),
                     segments=tuple(self._segment_snapshots(session, upload)),
                     completion_token=None,
-                    existing_job_id=job_id,
                     existing_video_parse_task_id=(
                         upload.initial_task_id
                     ),
@@ -1069,7 +1016,6 @@ class UploadRepository:
                     session=self._snapshot(session, upload),
                     segments=tuple(segments),
                     completion_token=completion_token,
-                    existing_job_id=None,
                     existing_video_parse_task_id=None,
                 )
         if expired:
@@ -1278,7 +1224,6 @@ class UploadRepository:
             upload.last_error = None
             upload.last_error_code = None
             upload.sha256 = content_hash
-            upload.job_id = None
             upload.initial_task_id = video_parse_task_id
             upload.parse_config = parse_config
             upload.completion_stage = None
@@ -1288,7 +1233,6 @@ class UploadRepository:
             return CompletedUploadState(
                 session=self._snapshot(session, upload),
                 video_id=video_id,
-                job_id=None,
                 video_parse_task_id=video_parse_task_id,
             )
 
@@ -1379,7 +1323,6 @@ class UploadRepository:
             updated_at=upload.update_date,
             content_sha256=upload.sha256,
             completion_stage=upload.completion_stage,
-            job_id=upload.job_id,
             initial_video_parse_task_id=upload.initial_task_id,
             parse_config=upload.parse_config,
             detail=upload.detail,
@@ -1462,6 +1405,23 @@ class UploadRepository:
                 ).encode()).hexdigest()
                 if record.request_fingerprint == legacy_hash:
                     return
+                # Removing the retired call cap must not break replay of a
+                # previously accepted upload. Reconstruct only that old field,
+                # then compare the entire request hash; other changes still fail.
+                stored_execution = (record.parse_config or {}).get("execution", {})
+                if "max_model_calls" in stored_execution:
+                    for candidate, field in ((requested, "parse_config"),
+                                             (legacy_request, "video_parse_config")):
+                        historical = deepcopy(candidate)
+                        execution = historical[field].get("execution", {})
+                        if "max_model_calls" not in execution:
+                            execution["max_model_calls"] = stored_execution["max_model_calls"]
+                            historical[field]["execution"] = execution
+                        historical_hash = hashlib.sha256(json.dumps(
+                            historical, sort_keys=True, separators=(",", ":"),
+                        ).encode()).hexdigest()
+                        if record.request_fingerprint == historical_hash:
+                            return
             # Historical rows predate both episode_order and the V2 snapshot in
             # the fingerprint.  They are replayable only with their persisted
             # order; changing that value is always a conflict.
@@ -1509,6 +1469,39 @@ def _revoke_summary(runtime: dict, *, pending: bool, now: datetime) -> bool:
                  lease_owner=None, lease_expire_time_ms=None,
                  next_execute_time_ms=datetime_to_unix_time_ms(now), retry_count=0)
     return True
+
+
+def _fence_runtime_keep_owners(runtime: dict) -> bool:
+    """Fence prefix/summarize claims while keeping their expiry markers.
+
+    Unlike pause, deletion must not clear the owner/expiry fields: they are the
+    durable deadline that tells reconcile when the cancelled executions are
+    guaranteed gone.
+    """
+    changed = False
+    for key in ("prefix", "summarize"):
+        state = runtime.get(key)
+        if isinstance(state, dict):
+            state["lease_version"] = int(state.get("lease_version", 0)) + 1
+            changed = True
+    return changed
+
+
+def _fence_leased_children(session: Session, video_task_ids: list[str], now: datetime) -> None:
+    """Bump every leased child's fence without releasing its owner or expiry."""
+    for video_task_id in video_task_ids:
+        for child in list(session.scalars(select(ChunkParseTask).where(
+            ChunkParseTask.video_task_id == video_task_id,
+            ChunkParseTask.lease_owner.is_not(None),
+        ).with_for_update())):
+            child.lease_version += 1
+            child.update_time = datetime_to_unix_time_ms(now)
+        for interval in list(session.scalars(select(IntervalParseTask).where(
+            IntervalParseTask.video_task_id == video_task_id,
+            IntervalParseTask.lease_owner.is_not(None),
+        ).with_for_update())):
+            interval.lease_version += 1
+            interval.update_time = datetime_to_unix_time_ms(now)
 
 
 def _has_active_prefix_lease(

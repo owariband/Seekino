@@ -73,6 +73,32 @@ def _frame_image(canvas: SummaryCanvas, inspection_id: str, frame_index: int) ->
     return inspection[1].images[frame_index]
 
 
+def _validate_outline_sections(submission: VideoSummarySubmission, *, duration_ms: int, maximum_sections: int) -> None:
+    if len(submission.outline) > maximum_sections:
+        raise AgentToolFeedbackError(
+            "INVALID_OUTLINE", "The chapter outline exceeds the configured section limit.",
+            f"Use at most {maximum_sections} sections, ordered by start_ms without overlaps.",
+        )
+    previous_end: int | None = None
+    for section in submission.outline:
+        if section.start_ms >= section.end_ms:
+            raise AgentToolFeedbackError(
+                "INVALID_OUTLINE", "A chapter section must start before it ends.",
+                "Give every section a start_ms strictly below its end_ms.",
+            )
+        if previous_end is not None and section.start_ms < previous_end:
+            raise AgentToolFeedbackError(
+                "INVALID_OUTLINE", "Chapter sections overlap or are not sorted by start_ms.",
+                "Order sections by start_ms and keep each end_ms at or below the next section's start_ms.",
+            )
+        previous_end = section.end_ms
+    if previous_end is not None and previous_end > duration_ms:
+        raise AgentToolFeedbackError(
+            "INVALID_OUTLINE", "A chapter section extends past the video duration.",
+            f"Keep every section's end_ms within the video duration ({duration_ms} ms).",
+        )
+
+
 def build_tools(
     canvas: SummaryCanvas, *, inputs: VideoSummarizeInput, inspect_video_frames: AgentTool,
     limits: VideoSummarizeLimits, check_control: Callable[[], None],
@@ -82,7 +108,7 @@ def build_tools(
         maximum_result_bytes=limits.maximum_result_bytes,
         maximum_read_chars=limits.maximum_read_chars,
         maximum_catalog_items=limits.maximum_catalog_items,
-        check_control=check_control, on_read=canvas.record_read,
+        check_control=check_control,
     )
 
     def inspect_frames(**values: Any) -> ToolResult:
@@ -137,16 +163,10 @@ def build_tools(
                 "Follow the submit_video_summary schema; omit unsupported optional fields.",
             ) from error
         bounded_json(submission.model_dump(mode="json"), limits.maximum_result_bytes)
+        _validate_outline_sections(
+            submission, duration_ms=inputs.duration_ms, maximum_sections=limits.maximum_outline_sections,
+        )
         with canvas._lock:
-            missing = canvas.unread_chunks()
-            if missing:
-                raise AgentToolFeedbackError(
-                    "INCOMPLETE_REVIEW", f"Complete content has not been read for {len(missing)} chunks.",
-                    f"Unread chunk references (first {min(len(missing), 10)}): {missing[:10]}. "
-                    "Read their complete content using references in a batch. Retry remaining_references in smaller batches. "
-                    "Only oversized single sections need reference with char_start/char_end; "
-                    "only returned content ranges count as reviewed; catalogs do not.",
-                )
             if canvas.result is not None:
                 if canvas.result.submission == submission:
                     return JsonToolResult(success=True, payload={"submitted": True, "replayed": True})
@@ -234,7 +254,7 @@ def build_tools(
 
     tools.append(build_agent_tool(
         func=submit_video_summary, name="submit_video_summary",
-        description="Submit this video's grounded metadata after reading every chunk. Only a successful receipt completes the task.",
+        description="Submit this video's grounded metadata after reviewing the digest. Only a successful receipt completes the task.",
         args_schema=VideoSummarySubmission, maximum_result_bytes=limits.maximum_result_bytes,
     ))
     return tools

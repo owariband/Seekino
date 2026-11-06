@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-02",
+  "sourceRef": "56e7977721e51a61b20894c9d38fa775d9300c70",
+  "githubBlobTargets": 44,
+  "verification": "40 targets checked against local Git objects or the new worktree files; 4 targets checked using GitHub fetch_file at their exact PR head. Existing local-source heading and line fragments checked.",
+  "remoteBlobs": {
+    "parse-half-episode-ab-trd.md": "cb274e5f97de180dc85802c7d9467dd2304ebfec",
+    "parse-half-episode-ab-20261030.md": "2a6a6367e0f61a04a16e4e8c81a2aa4e31c64fe2",
+    "apple-gpu-asr-alignment-trd.md": "e5c840f91e7bd5d75a56684ecaa1f974050f0e1b",
+    "whisperx-cpp-gpt-validation-20261031.md": "2f0233d68a0f4ad8001889b6cd731418a160b6f3"
+  },
+  "problemsHistoricalBodyUnchanged": true,
+  "problemsHistoricalBodySha256": "baf55d9b2b90c17a4c746c5ecdd5c9d966c6b646ee4013147f3d73b9221953b2",
+  "devlogHistoricalBodyUnchanged": true,
+  "limitations": [
+    "GitHub URL target existence was checked; every external link was not clicked in a live browser.",
+    "Historical business acceptance was not rerun."
+  ]
+}

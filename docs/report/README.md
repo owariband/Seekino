@@ -11,7 +11,15 @@
 | gateway/bridge/report_docs/ | [gateway/bridge/](gateway/bridge/) | 3 |
 | server/report_docs/ | [server/](server/) | 5 |
 
-设计按发展阶段进入 [设计索引](../design/README.md)，报告按负责模块进入本目录。报告中的时间、分支、测试数量及“已完成/待验收”是原记录的快照；今天的状态看 [problems](../dev/problems.md)，决策与验证沿革看 [devlog](../dev/devlog.md)。
+设计按发展阶段进入 [设计索引](../design/README.md)，报告按负责模块进入本目录。报告中的时间、分支、测试数量及“已完成/待验收”是原记录的快照；今天的状态看 [管理工作台](../dev/workbench.html)，问题分析看 [problems](../dev/problems.md)，决策与验证沿革看 [devlog](../dev/devlog.md)。
+
+## Docs / dev / workbench
+
+[2026-11-03 管理工作台与课程闭环地图](docs/dev/workbench/README.md)：同步 Kimi 工作区 revision 4，新增里程碑概览、闭环地图、验收门槛与四列看板，36 项浏览器检查。门槛结果引用已有 QA 报告，未重跑业务验收。
+
+## Docs / dev / kanban
+
+[2026-11-02 单文件项目看板设计与验收](docs/dev/kanban/README.md)：真实条目导入、唯一状态入口迁移、桌面/移动端与离线保存重开验证。历史业务状态未重新验收。
 
 ## Agent / video_parse_v2
 
@@ -30,6 +38,16 @@
 - [video-parse-v2-migration-stages.svg](agent/video_parse_v2/video-parse-v2-migration-stages.svg)
 
 ## Gateway
+
+[2026-11-03 Flash逐块费用、耗时与质量审计](gateway/deepseek-flash-chunk-audit-20261103.md)，附[117块及115个Refine区间明细](gateway/deepseek-flash-chunk-audit-20261103.html)。只读真实任务；区分none／low、共享Refine费用、原话丢失和时间错配，不把结构通过写成质量通过。
+
+[2026-11-03 DeepSeek Flash 整课费用与恢复](gateway/deepseek-flash-parse-20261103.md)：按同一任务记录协议接线、网络恢复、纯排序与完整 ASR 对白权限修复；保留真实提交／索引身份证据、分段用时及未知用量，不以运行快照替代整课验收。
+
+本机 ASR 性能与恢复边界：[2026-10-30 GPT 整集 Metal 实测](gateway/local/whisper-metal-benchmark-20261030.md)，附[可审阅指标 JSON](gateway/local/whisper-metal-benchmark-20261030.json)。完整 116 分钟音轨转写约 5 分钟；明确区分 CPU WhisperX 的 VAD/对齐、实验落盘与未完成的正式持久恢复。
+
+[2026-11-02 DeepSeek 网页搜索接入](gateway/deepseek-web-search-20261102.md)：独立 dev 基线、官方 HTTP 接入、离线边界与真实页面样本；保留回答质量失败案例。
+
+流式接入：[2026-10-30 正式 Kimi 生成与 Parse 入口验证](gateway/kimi-streaming-20261030.md)。工厂、直接 JSON 与视觉工具 SSE 覆盖；合成图和原 189 帧长 Chunk 均完成，部署与整集效果单独验收。
 
 API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-20261030.md)。两轮各 10 路短文本请求全部通过，关闭重试，保留串行对照、逐请求时间与用量；不等于长视频解析吞吐验收。
 
@@ -55,6 +73,16 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 ## Server
 
+[PR #18 范围收口与现有任务交接](server/pr18-scope-handoff-20261103.md)：已验证的解析修复收口，后端查询与 Consumer 转 PR #30；保留同一 v11 任务、音频与 Chunk 成果。
+
+[长任务 MySQL 排序与 Consumer 恢复验收](server/parse-task-query-recovery-20261103.md)：PR #30 的 1038 根因、645 项分组回归、原 v11 持久成果核对及隔离 API 接管证据。
+
+PR 交付核对：[2026-11-01 PR #18 实现提交与整合复核](server/pr18-delivery-20261101.md)，区分已提交代码、基线失败、服务加载与未完成的整课验收。
+
+[2026-11-01 Refine 中断候选的旧实现基线](server/refine-interruption-baseline-20261101.md)：固定 GPT v4 最终进度、成功/失败及含重试等待的中位数、冲突和用量覆盖率；只读留证，新增方案尚未实施。
+
+Chat 正文流式与计量：[2026-11-01 实施与隔离验收](server/chat-streaming-20261101.md)。供应商完成前正文持久化、非流式/缓冲反例、浏览器真实增长和 FTT 采证；真实课程模型与部署仍待试点。
+
 背景：2026-10-08–09 的模型用量交接与验收、2026-10-10 的用户/租户交付。不同报告的版本、环境和测试集合分别阅读。
 
 - [model-token-usage-stages-evidence.md](server/model-token-usage-stages-evidence.md)
@@ -68,5 +96,5 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 1. 新报告放到与实际负责模块对应的路径，如 docs/report/gateway/bridge/；不要在代码模块下重新建立 report_docs。
 2. 文首说明报告时点、范围、代码或环境基线，以及尚未验证的事项；整理日期与实验/提出日期分开。
 3. 可编辑场景和导出图与报告共同维护；跳转链接指向现有设计、代码或证据。图中的旧目录文字和历史修改树保留原记录含义。
-4. 不在报告中再维护一套实时任务状态；与设计、problems、devlog 建立链接。
+4. 不在报告中再维护一套实时任务状态；与看板、设计、problems、devlog 建立链接。
 5. 历史迁移清单、来源校验值及基准快照仍保留原路径，本索引提供原 report_docs 到新目录的对照。

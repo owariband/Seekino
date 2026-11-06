@@ -14,22 +14,28 @@ from engine.rag.indexing.projection import project_chunk_index
 from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
-from ..model.job import ChunkTaskPhase, ChunkParseTaskStatus, VideoParseTaskStatus
+from ..model.task import ChunkTaskPhase, ChunkParseTaskStatus, VideoParseTaskStatus
 from ..error.retrieval import SeriesNotReadyError, SeriesScopeNotFoundError, VideoChunkNotFoundError
 from ..repository import video_parse_retrieval as read_store
 from ..repository import video_parse_task as task_store
-from ..model.dto.jobDTO import (
+from ..model.dto.parseContentDTO import (
     ChunkParseContentData,
+    ParseExportChunkSnapshot,
+)
+from ..model.dto.taskDTO import (
     ChunkParseTaskData,
+    VideoParseTaskData,
+)
+from ..model.dto.libraryDTO import (
     SeriesData,
     VideoChunkData,
     VideoData,
-    VideoParseTaskData,
+)
+from ..model.dto.searchDTO import (
     VideoParseRetrievalChunkData,
     VideoParseRetrievalTaskData,
     VideoParseRetrievalScope,
     HydratedRetrievalCandidate,
-    ParseExportChunkSnapshot,
 )
 from .video_parse_errors import VideoParseTaskNotFoundError, VideoParseConflictError
 from ..utils.time import datetime_to_unix_time_ms

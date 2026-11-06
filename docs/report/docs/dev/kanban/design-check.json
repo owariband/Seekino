@@ -1,0 +1,37 @@
+{
+  "method": "Original huashu-design COLLECT_JS and judge(), executed with installed Node Playwright / Chrome; Python CLI collection unavailable.",
+  "results": [
+    {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "red": [],
+      "yellow": [
+        "模板装饰：「A · B · C」中点连接 3 处；等宽小字标签 18 处",
+        "标题字体是 Inter（UI 小字体当 display）"
+      ],
+      "small": [],
+      "lowContrast": [],
+      "bodySmall": [],
+      "broken": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "red": [],
+      "yellow": [
+        "模板装饰：「A · B · C」中点连接 3 处；等宽小字标签 18 处",
+        "标题字体是 Inter（UI 小字体当 display）"
+      ],
+      "small": [],
+      "lowContrast": [],
+      "bodySmall": [],
+      "broken": [],
+      "errors": []
+    }
+  ]
+}

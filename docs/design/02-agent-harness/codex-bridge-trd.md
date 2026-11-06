@@ -1,25 +1,25 @@
 # Seekino 本地 Agent 接入 TRD：Codex / Claude Code 与既有 Supervisor
 
 更新日期：2026-10-21。原方案日期：2026-10-10。
-状态：本次明确本地与云端的产品目的，维护设计和源码现状；没有实施云端 Pi Host。
+状态：本次明确本地与云端各自的产品目标，并同步设计说明与源码现状；未实施云端 Pi Host。
 
-**当前产品决定：本地由用户连接自己安装、认证的 Codex 或 Claude Code，自行使用其原生运行时；云端由 Seekino 提供 Pi harness，并负责多用户资源效率与隔离。** 本地不要求用户安装 Pi。本地原生 runtime 可以按自身机制创建进程，其内存、进程数量和内部调度不属于云端 Pi Host 的优化职责。
+**当前产品决定：本地由用户连接自己安装并已完成认证的 Codex 或 Claude Code，使用其原生运行时；云端由 Seekino 提供 Pi harness，并负责多用户场景下的资源利用与隔离。** 本地不要求用户安装 Pi。本地原生 runtime 可以按自身机制创建进程，其内存、进程数量和内部调度不属于云端 Pi Host 的优化职责。
 
-Seekino 在本地负责公开协议接入、会话交接、业务工具、界面，以及自身创建连接的关闭。原生模型循环、压缩、内部调度和进程结构由外部 runtime 及其上游维护；集成不以改写或控制这些内部实现为前提。用户已有 CLI 进程不由 Seekino 接管。此边界适用于第三方运行时，不以其全部组件是否开源作为前提。
+Seekino 在本地负责公开协议接入、会话交接、业务工具和界面，并关闭自身创建的连接。原生模型循环、压缩、内部调度和进程结构由外部 runtime 及其上游维护；集成不以改写或控制这些内部实现为前提。用户已有 CLI 进程不由 Seekino 接管。此边界适用于第三方运行时，不以其全部组件是否开源作为前提。
 
-云端目标是让 4 CPU / 8 GB 等受限服务器通过一个 Node Pi Host 支持多个独立长期对话，用户可配置自己的模型 API；凭据、对话和一次性任务的具体边界统一维护在 [云端 Pi Host TRD](pi-host-trd.md)。本文件只负责本地接入，不能将本地一会话一原生进程的模式直接作为云端方案。
+云端目标是在 4 CPU / 8 GB 等受限服务器上，通过一个 Node Pi Host 支持多个独立的长期对话，用户可配置自己的模型 API。凭据、对话和一次性任务的具体边界统一维护在 [云端 Pi Host TRD](pi-host-trd.md)。本文件只负责本地接入，不能把本地每个会话对应一个原生进程的模式直接作为云端方案。
 
-2026-10-21 源码核对：已有 [Deep Agents 接线](../../../gateway/agent_model/deepagents.py)、[Codex Supervisor](../../../gateway/codex/supervisor.py)、[ACP Client](../../../gateway/bridge/client.py) 和 [runtimeSessions 读写](../../../server/service/agent_chat.py)。因此原稿的“两类接入尚未实施”不再准确；这些文件存在也不代表本地完整 Bridge 或真实数据库迁移已通过验收。
+2026-10-21 源码核对：已有 [Deep Agents 接线](../../../gateway/agent_model/deepagents.py)、[Codex Supervisor](../../../gateway/codex/supervisor.py)、[ACP Client](../../../gateway/bridge/client.py) 和 [runtimeSessions 读写](../../../server/service/agent_chat.py)。因此原稿的“两类接入尚未实施”不再准确，但文件存在并不等于本地 Bridge 已完整接入，也不代表真实数据库迁移已验收通过。
 
 下面保留 2026-10-10 的接入设计与历史 check-out，便于追踪既有实现。原“local 默认 Deep Agents”“先执行 D01”和批次进度均是历史记录，**不作为本次产品默认、当前开发顺序或新增实施授权**。当前本地目标以上述决定为准，云端以独立 Pi TRD 为准。
 
-历史 ACP 基线：[5 批阶段图](../../report/gateway/bridge/agent-bridge-stages.svg)、[可编辑场景](../../report/gateway/bridge/agent-bridge-stages.excalidraw)、[批次索引](../../report/gateway/bridge/agent-bridge-stages.md)。原图的 37 文件、P01–P05 和本文后续 44 文件预算均属于历史范围；不用于描述云端 Pi 或判定当前实现进度。本次不重新导出阶段图。
+历史 ACP 基线：[5 批阶段图](../../report/gateway/bridge/agent-bridge-stages.svg)、[可编辑场景](../../report/gateway/bridge/agent-bridge-stages.excalidraw)、[批次索引](../../report/gateway/bridge/agent-bridge-stages.md)。原图列出的 37 个文件、P01–P05 和本文后续 44 个文件的预算均属于历史范围，不用于描述云端 Pi 或判定当前实现进度。本次不重新导出阶段图。
 
 ## 1. 历史接入目标与范围（2026-10-10）
 
-localhost 提供三种会话运行方式：默认的 Seekino Supervisor 使用 Deep Agents SDK 和用户配置的模型 API；用户也可选择自己安装、认证的 Codex 或 Claude runtime，经 ACP Bridge 结合视频内容操作本机文件。Seekino 提供会话界面、身份与资源管理及视频工具。
+localhost 提供三种会话运行方式：默认的 Seekino Supervisor 使用 Deep Agents SDK 和用户配置的模型 API；用户也可选择自己安装并已完成认证的 Codex 或 Claude runtime，通过 ACP Bridge 结合视频内容操作本机文件。Seekino 提供会话界面、身份与资源管理及视频工具。
 
-用户已明确选择复用成熟 harness，不再为 Supervisor 维护自研模型/工具循环。Supervisor 保留视频业务规则与结果投影，执行机制交给 Deep Agents。外部接入层保持通用，Codex 与 Claude 使用同一 ACP Client，分别使用上游 codex-acp 与 claude-agent-acp；选择 Bridge 后由对应原生 runtime 担任主 Agent。现有受限模型组件、视频 Chat/解析仍使用的公共循环保持其现有职责。云端新能力、Pi、远程主机与完整文件管理器不属于本次范围。
+用户已明确选择复用成熟 harness，不再为 Supervisor 维护自研模型/工具循环。Supervisor 保留视频业务规则与结果投影，执行机制交给 Deep Agents。外部接入层保持通用，Codex 与 Claude 使用同一 ACP Client，分别使用上游 codex-acp 与 claude-agent-acp；选择 Bridge 后由对应原生 runtime 担任主 Agent。现有受限模型组件以及视频 Chat／解析共用的模型循环，继续保持现有职责。云端新能力、Pi、远程主机与完整文件管理器不属于本次范围。
 
 已确认的用户体验：
 
@@ -33,7 +33,7 @@ localhost 提供三种会话运行方式：默认的 Seekino Supervisor 使用 D
 
 ## 2. 层级与复用方案
 
-外部接入归属 **gateway/bridge**，内置 harness 接线归属 **gateway/agent_model**。沿用用户指定的 codex-bridge-trd.md 文件名，在此统一维护两类 SDK 的职责与宿主合同。
+外部接入代码放在 **gateway/bridge**，内置 harness 接线放在 **gateway/agent_model**。沿用用户指定的 codex-bridge-trd.md 文件名，在此统一维护两类 SDK 的职责与宿主合同。
 
 | 层级 | 职责 | 实现方式 |
 | --- | --- | --- |
@@ -44,15 +44,15 @@ localhost 提供三种会话运行方式：默认的 Seekino Supervisor 使用 D
 | server | local 检查、目录、Conversation 绑定、持久消息、执行快照、HTTP/SSE 和 MCP 权限 | 沿用现有 service/repository/API 层级 |
 | web | Agent/目录选择、输出与工具活动、交互回答、停止、重连 | 扩展现有聊天组件，按当前连接查询后端能力 |
 
-AgentModelFactory 新增 Supervisor 的 Deep Agents 装配入口；原 build_structured/build_loop 及 gateway/codex、gateway/claude_code 继续服务尚未迁移的模型子任务。ACP 不塞进模型 factory。两种 SDK 各自接线，在 Server 复用会话、消息和事件合同，不另造通用 harness 框架。
+AgentModelFactory 新增 Supervisor 的 Deep Agents 装配入口；原 build_structured/build_loop 及 gateway/codex、gateway/claude_code 继续服务尚未迁移的模型子任务。ACP 不放入模型工厂。两种 SDK 分别接线，Server 复用会话、消息和事件合同，不另造通用 harness 框架。
 
 ### 2.1 SDK 接入边界
 
-内置路径为 Supervisor → gateway/agent_model 的薄接线 → create_deep_agent → 已配置 API 模型与业务工具。历史消息改为 SDK messages 输入，自动摘要与大结果卸载直接使用 SDK middleware。保留已核验视频答案、来源校验、当次资源范围和视频任务预算；这些由 Seekino 工具与宿主执行。
+内置路径为 Supervisor → gateway/agent_model 的薄接线 → create_deep_agent → 已配置 API 模型与业务工具。历史消息改用 SDK 的 messages 格式传入，自动摘要与大结果卸载直接使用 SDK middleware。保留已核验视频答案、来源校验、当次资源范围和视频任务预算；这些由 Seekino 工具与宿主执行。
 
 外部路径为 bridge.py → gateway/bridge → ACP Python SDK → 对应适配器 → 原生 runtime。会话、工具循环、压缩、文件和命令执行由 Codex/Claude 负责。共享视频工具在 Python 内直接调用，外部通过 MCP 调用。
 
-首批 Supervisor 使用 StateBackend 的虚拟文件，不接本机 shell，也不新增文件代理。已有视频 graph 继续作为业务工具；不将 Query/Evaluator/Chat 审核门槛替换为通用 task 分派。SDK 默认工具需按 harness profile 明确配置，传入业务 tools 不是默认工具的白名单。[Deep Agents 定制](https://docs.langchain.com/oss/python/deepagents/customization)、[Backend](https://docs.langchain.com/oss/python/deepagents/backends)
+首批 Supervisor 使用 StateBackend 的虚拟文件，不接本机 shell，也不新增文件代理。已有视频 graph 继续作为业务工具；不将 Query/Evaluator/Chat 审核门槛替换为通用 task 分派。SDK 默认工具需按 harness profile 明确配置，业务 tools 的传入不能替代默认工具白名单的显式配置。[Deep Agents 定制](https://docs.langchain.com/oss/python/deepagents/customization)、[Backend](https://docs.langchain.com/oss/python/deepagents/backends)
 
 依据：[Gateway 职责](../../../gateway/README.md)、[模型合同](../../../gateway/agent_model/contracts.py)、[受限 Codex 会话](../../../gateway/codex/client.py)、[受限 Claude 模型](../../../gateway/claude_code/agent.py)、[Supervisor](../../../agent/chat/supervisor.py)、[聊天服务](../../../server/service/agent_chat.py)。
 
@@ -100,9 +100,9 @@ flowchart LR
 
 每个活跃 Bridge Conversation 持有一个 adapter 子进程和一个 session，按需启动。进程释放后保留外部持久 session；后续请求加载它。不同 Conversation 的执行互相隔离，同一 Conversation 串行执行 prompt。
 
-ACP 操作必须由持续存在的 asyncio loop 托管，不能每条消息临时 asyncio.run 后关闭进程。为兼容当前同步 kick/ThreadPoolExecutor 路径，通用 Client 在接入边界维护一个长期 I/O loop，通过 run_coroutine_threadsafe 调度。回调只投递事件、等待交互或提交业务任务，不在 I/O loop 上执行阻塞的视频 graph。
+ACP 操作必须由持续存在的 asyncio loop 托管，不能每处理一条消息都临时调用 asyncio.run，并在结束后关闭进程。为兼容当前同步 kick/ThreadPoolExecutor 路径，通用 Client 在接入边界维护一个长期 I/O loop，通过 run_coroutine_threadsafe 调度。回调只投递事件、等待交互或提交业务任务，不在 I/O loop 上执行阻塞的视频 graph。
 
-服务关闭先取消活跃 prompt、结束待交互、回收本服务启动的 adapter，最后关闭视频与数据库资源。释放进程不删除用户的 session，不接管用户已有 CLI/桌面会话。
+关闭服务时，先取消活跃 prompt、结束待交互、回收本服务启动的 adapter，最后关闭视频与数据库资源。释放进程不删除用户的 session，不接管用户已有 CLI/桌面会话。
 
 首版 ACP Client 不声明文件与终端执行能力；Codex/Claude 使用自身原生文件与 shell 工具。Seekino 接收执行事件与审批，避免增加文件代理或终端执行器。
 
@@ -110,9 +110,9 @@ ACP 操作必须由持续存在的 asyncio loop 托管，不能每条消息临�
 
 ### 5.1 启动配置与环境
 
-ServerSettings 从本机环境解析允许的 Agent 启动 profile，Bridge 接收校验后的 command/args/env。固定适配器包与版本不放 web/package.json。创建 API 只接收 Agent 选择和 cwd；浏览器不能提交任意启动命令、环境变量、外部 session ID 或整个 detail。模型 config.yaml 保持现有职责，不将进程命令加入其 agent_runtime 或网页全局设置白名单。
+ServerSettings 从本机环境解析允许的 Agent 启动 profile，Bridge 接收校验后的 command/args/env。固定版本的适配器包不写入 web/package.json。创建 API 只接收 Agent 选择和 cwd；浏览器不能提交任意启动命令、环境变量、外部 session ID 或整个 detail。模型 config.yaml 保持现有职责，不将进程命令加入其 agent_runtime 或网页全局设置白名单。
 
-首版解析用户 Codex 的绝对路径并显式传 CODEX_PATH。适配器未设置此变量时会使用自带 Codex，不能将这种行为描述为用户的安装。[codex-acp 配置](https://github.com/agentclientprotocol/codex-acp)
+首版解析用户 Codex 的绝对路径并显式传 CODEX_PATH。适配器未设置此变量时会使用自带 Codex，因此不能把适配器自带 Codex 说成用户已安装的版本。[codex-acp 配置](https://github.com/agentclientprotocol/codex-acp)
 
 Claude 使用另一个允许的启动 profile；通过上游 CLAUDE_CODE_EXECUTABLE 选择用户实际 CLI，核对其 SDK 支持的认证和 user/project/local 设置来源。配置目录、模型凭据和代理的继承按实际 SDK/adapter 能力处理，不复制 Codex 的环境名单或假定两者完全相同。[Claude adapter](https://github.com/agentclientprotocol/claude-agent-acp)、[Claude 接线源码](https://github.com/agentclientprotocol/claude-agent-acp/blob/main/src/acp-agent.ts)
 
@@ -122,17 +122,17 @@ ACP SDK 默认只继承精简环境；宿主必须显式保留实际使用的 CO
 
 ### 5.2 工作目录
 
-省略 cwd 时从项目位置明确解析 root，不依赖 Server 启动目录。指定目录应存在、是目录、可访问且规范化为真实绝对路径；网页显示 Server 确认值。
+省略 cwd 时从项目位置明确解析 root，不依赖 Server 启动目录。指定目录必须存在、可访问，且确实是目录；Server 将其规范化为真实绝对路径，网页显示 Server 确认的值。
 
-目录与 Agent 在创建时写入绑定，后续消息不能改变。新 session、load 和 resume 均显式传保存的 cwd 与当前业务 MCP 配置。路径校验与执行沙箱是不同职责。
+创建 Conversation 时绑定目录与 Agent，后续消息不能改变。新 session、load 和 resume 均显式传保存的 cwd 与当前业务 MCP 配置。路径校验与执行沙箱是不同职责。
 
 ### 5.3 各 runtime 权限的边界
 
 当前上游 codex-acp 没有完整的 inherit 权限模式。它按 AgentMode 在 prompt 中设置审批、reviewer 和 sandbox，且将传入 workspace 配置为 trusted。CODEX_CONFIG 不能保证覆盖 turn 级权限预设。
 
-默认 agent 模式的 on-request / auto_review / workspace-write 三项与用户之前选择的 Approve for me 一致，但额外 writable roots、网络设置和项目 trust 可能不同。因此目标表述为：使用用户安装和登录，读取其适用模型/指令配置，同时明确显示并验证适配器实际执行模式；不承诺所有原生设置原样继承。[模式源码](https://github.com/agentclientprotocol/codex-acp/blob/main/src/AgentMode.ts)、[会话与 turn 配置](https://github.com/agentclientprotocol/codex-acp/blob/main/src/CodexAcpClient.ts)
+默认 agent 模式的 on-request / auto_review / workspace-write 三项配置与用户此前选择的 Approve for me 一致，但额外 writable roots、网络设置和项目 trust 可能不同。因此目标表述为：使用用户安装和登录，读取其适用模型/指令配置，同时明确显示并验证适配器实际执行模式；不承诺所有原生设置原样继承。[模式源码](https://github.com/agentclientprotocol/codex-acp/blob/main/src/AgentMode.ts)、[会话与 turn 配置](https://github.com/agentclientprotocol/codex-acp/blob/main/src/CodexAcpClient.ts)
 
-首批先验证这一组合。额外可写目录、网络或受管权限存在不兼容时明确报告，不静默切换 full-access。完整个人权限继承作为上游 TODO；若必须修补适配器，另核对该兼容补丁，不将 provider 逻辑放回 agent/chat。
+首批先验证这一组合。如果额外可写目录、网络设置或受管权限不兼容，必须明确报告，不静默切换 full-access。完整个人权限继承作为上游 TODO；若必须修补适配器，另核对该兼容补丁，不将 provider 逻辑放回 agent/chat。
 
 上述 auto_review/workspace-write 限制只描述 Codex。Claude 单独验收其实际设置来源、permission mode、目录与审批往返；不将 Codex 模式映射套给 Claude。内置 Supervisor 的 StateBackend 是虚拟状态，真实资源访问仍受 Seekino 业务工具检查约束，SDK 文件权限不能代替自定义工具的鉴权。
 
@@ -142,9 +142,9 @@ ACP SDK 默认只继承精简环境；宿主必须显式保留实际使用的 CO
 
 ## 6. Conversation detail 与会话恢复
 
-当前已有可空 JSON ORM、内部 State 和 Repository 读取，创建绑定、更新绑定和网页投影尚未实现。旧库迁移见 [conversation.detail SQL](../../migrations/20261010_agent_conversation_detail.sql)；当前未执行迁移。
+当前已有可空 JSON 字段的 ORM 映射、内部 State 和 Repository 读取逻辑，创建绑定、更新绑定和网页投影尚未实现。旧库迁移见 [conversation.detail SQL](../../migrations/20261010_agent_conversation_detail.sql)；当前未执行迁移。
 
-字段评审状态：用户要求涉及模型字段的设计先交由其 review。以下 JSON 结构与第 8、9 节的数据合同均为评审稿，尚未定稿；P02/P04 涉及字段的实现以前述 review 为前置。P01 的通用协议验证可以独立进行。既有 detail ORM/SQL 的准备状态不变。
+涉及模型字段的设计必须先由用户评审。以下 JSON 结构与第 8、9 节的数据合同均为评审稿，尚未定稿；P02/P04 涉及字段的实现以前述评审为前置。P01 的通用协议验证可以独立进行。既有 detail ORM/SQL 的准备状态不变。
 
 建议内部合同：
 
@@ -160,17 +160,17 @@ ACP SDK 默认只继承精简环境；宿主必须显式保留实际使用的 CO
 }
 ```
 
-type=bridge 表示外部运行方式，agent 表示所选 Agent；旧会话没有此绑定时仍使用 Supervisor。未创建外部 session 时 sessionId 可为空。消息仍是 USER/ASSISTANT，不新增 bridge role 或 is_bridge。
+type=bridge 表示外部运行方式，agent 表示所选 Agent；旧会话没有这项绑定时，仍使用 Supervisor。未创建外部 session 时 sessionId 可为空。消息仍是 USER/ASSISTANT，不新增 bridge role 或 is_bridge。
 
 ACP sessionId 是不透明恢复键。Codex 的 thread/session 内部映射由上游适配器拥有；Seekino 不要求所有 Agent 同时提供 threadId，也不依赖两种 ID 相等。
 
-environment 由 Server 在创建时记录；执行时以当前 AuthConfig/AuthIdentity.mode 为权威。cloud 不因 metadata 写了 local 而启动 Bridge。能力查询使用浏览器当前选中的 Server，不能从网页域名判断运行环境。
+environment 由 Server 在创建时记录；执行时以当前 AuthConfig/AuthIdentity.mode 为权威。即使 metadata 写成 local，cloud 环境也不得启动 Bridge。能力查询使用浏览器当前选中的 Server，不能从网页域名判断运行环境。
 
-第一次发送的顺序是：校验身份与目录 → 建立外部 session → 在租户/所有者约束下锁定 Conversation 并合并写入 sessionId → 成功提交绑定 → prompt。绑定写入失败不能开始文件任务。JSON 重新赋值，保留未知元信息；会话幂等比较包含已绑定 Agent 和目录。
+首次发送消息的顺序是：校验身份与目录 → 建立外部 session → 在租户/所有者约束下锁定 Conversation 并合并写入 sessionId → 成功提交绑定 → prompt。绑定写入失败不能开始文件任务。JSON 重新赋值，保留未知元信息；会话幂等比较包含已绑定 Agent 和目录。
 
-已有进程复用同一 session；进程丢失则 initialize 后按能力调用 resume_session，或 load_session。load 会通过 session_update 回放历史，恢复阶段应识别回放，避免再次插入 Seekino 消息或追加到当前回答。恢复后不重新发送全量聊天历史。[ACP 会话设置](https://agentclientprotocol.com/protocol/v1/session-setup)
+进程仍存在时复用同一 session；进程丢失后，先 initialize，再按能力调用 resume_session 或 load_session。load 会通过 session_update 回放历史，恢复阶段应识别回放，避免再次插入 Seekino 消息或追加到当前回答。恢复后不重新发送全量聊天历史。[ACP 会话设置](https://agentclientprotocol.com/protocol/v1/session-setup)
 
-服务崩溃或进程失联后不自动重发可能已修改文件的 prompt。ACP 恢复并不保证能查询所有 provider 的旧 turn 终态；不能确认时将该消息标记为结果未知/执行中断，保留 session，供用户核对后发新任务。缺失 session 或目录时明确失败，不自动新建并重放。
+服务崩溃或进程失联后不自动重发可能已修改文件的 prompt。ACP 恢复并不保证能查询所有 provider 的旧 turn 终态；不能确认时将该消息标记为结果未知/执行中断，保留 session，供用户核对后再发起新任务。缺失 session 或目录时明确失败，不自动新建并重放。
 
 <a id="bridge-field-review"></a>
 
@@ -203,7 +203,7 @@ environment 由 Server 在创建时记录；执行时以当前 AuthConfig/AuthId
 }
 ```
 
-Conversation 查询 VO 增加可选 environment 和经过白名单过滤的 runtime 视图，仅返回 type/agent/cwd，不公开整个 detail 或 sessionId。旧记录的 environment 无法从缺失元信息可靠推断时返回 null；执行能力由当前 Server 确定，runtime 缺失投影为 supervisor。前端对可选字段保持旧响应兼容。
+Conversation 查询 VO 增加可选 environment 和经过白名单过滤的 runtime 视图，仅返回 type/agent/cwd，不公开整个 detail 或 sessionId。旧记录如果因元信息缺失而无法可靠推断 environment，则返回 null；执行能力由当前 Server 确定，runtime 缺失投影为 supervisor。前端对可选字段保持旧响应兼容。
 
 ### 6.3 Deep Agents 会话与存储边界
 
@@ -211,17 +211,17 @@ D01 不新增业务表、列、索引、PK/FK、状态枚举或 DTO/VO 字段。
 
 首批采用 SDK InMemorySaver，保留同进程多轮状态，不引入持久 checkpoint 数据库。动态 tenant/actor、视频 scope/reference/playback、取消、deadline 与用量归属属于当次 context。每轮 graph 绑定当次业务工具闭包，复用 Saver；不得复用捕获旧资源范围或播放位置的闭包。
 
-冷 thread 才从当前 SQL 中已完成的历史初始化，沿用 history_message_limit 和稳定业务 message ID；已有 thread 只追加当前轮，避免每轮重复回灌最近历史。删除 Conversation 成功后清理对应 SDK thread；配置重载复用 Saver。取消、工具失败、SQL 保存失败时，不直接 resume 半轮或重放工具；用 SDK 状态 API 回到已提交边界，必要时清空 thread 后从 SQL 已完成消息重建。
+只有冷启动的 thread 才从 SQL 中已完成的历史消息初始化，沿用 history_message_limit 和稳定业务 message ID；已有 thread 只追加当前轮，避免每轮重复回灌最近历史。删除 Conversation 成功后清理对应 SDK thread；配置重载复用 Saver。取消、工具失败、SQL 保存失败时，不直接 resume 半轮或重放工具；用 SDK 状态 API 回到已提交边界，必要时清空 thread 后从 SQL 已完成消息重建。
 
 模型图完成不等于业务消息提交成功。宿主在 SQL 成功提交后确认本轮，并将最终呈现的已核验视频答案与补充内容同步为 thread 的助手消息；不能只留下模型草稿或网页补充。D01 的直接回归必须证明该成功边界、失败清理及历史去重。
 
-服务重启会丢 SDK 摘要、工具轨迹和虚拟文件，只能从已完成业务消息初始化新执行；不承诺恢复旧工具调用或待审批 checkpoint。若后续要求完整跨重启恢复，需先提交上游 durable saver 的存储位置、SDK 表结构、保留/删除策略和恢复语义供用户 review，不自建 checkpoint 引擎。[SDK checkpointer 接口](https://docs.langchain.com/oss/python/deepagents/customization)、[持久恢复与审批](https://docs.langchain.com/oss/python/deepagents/human-in-the-loop)
+服务重启会丢 SDK 摘要、工具轨迹和虚拟文件，只能从已完成业务消息初始化新执行；不承诺恢复旧工具调用或待审批 checkpoint。若后续要求完整跨重启恢复，需先将上游 durable saver 的存储位置、SDK 表结构、保留/删除策略和恢复语义提交给用户评审，不自建 checkpoint 引擎。[SDK checkpointer 接口](https://docs.langchain.com/oss/python/deepagents/customization)、[持久恢复与审批](https://docs.langchain.com/oss/python/deepagents/human-in-the-loop)
 
 <a id="bridge-mcp"></a>
 
 ## 7. 视频能力通过 MCP 提供
 
-首版挂载本机 Streamable HTTP MCP endpoint，复用当前 MCP SDK。codex-acp 支持 HTTP 和 stdio MCP，不支持旧 SSE MCP；Claude adapter 也通过 ACP 提供的 MCP 配置接入。两家均在创建与恢复时注入当前业务连接配置，各自实测 transport 和认证，不将一种适配器通过当作另一种已验收。
+首版挂载本机 Streamable HTTP MCP endpoint，复用当前 MCP SDK。codex-acp 支持 HTTP 和 stdio MCP，不支持旧 SSE MCP；Claude adapter 也通过 ACP 提供的 MCP 配置接入。两种适配器都在创建和恢复会话时注入当前业务连接配置，分别实测 transport 和认证，不把一种适配器通过当作另一种已验收。
 
 server/api/agent_mcp.py 只负责 MCP 注册与宿主上下文入口；共享视频逻辑由 agent/chat/common/video_tools.py 从现有 Supervisor 提取，保留原缓存、预算、取消、图像与已核验答案行为。使用 api/app.py 组合当前应用与 MCP lifespan，不新起一套视频 Server。
 
@@ -229,7 +229,7 @@ server/api/agent_mcp.py 只负责 MCP 注册与宿主上下文入口；共享视
 
 本机 MCP 使用服务端生成的会话凭据关联执行。凭据只在内存和进程连接配置中使用，执行结束后停止授权工具调用；它不写入 detail、消息或日志。请求进入时捕获当前执行，调用前检查身份、资源范围与取消状态；旧执行未结束前不启动同一 session 下一轮。
 
-同步视频任务在工作线程执行并传递 tracing/usage 的 contextvars。MCP 等待不会阻塞 ACP 回调。已核验答案与证据由宿主保存并按原渲染块呈现；主 Agent 的解释作为补充，不能替换已核验答案。
+同步视频任务在工作线程中执行，并传递 tracing/usage 所需的 contextvars。MCP 等待不会阻塞 ACP 回调。已核验答案与证据由宿主保存并按原渲染块呈现；主 Agent 的解释作为补充，不能替换已核验答案。
 
 MCPServer 的工具、类型和 transport 直接复用 SDK；当前环境是 MCP 2.x，实施时按安装 API 写，不复制旧 FastMCP 示例。[MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 
@@ -247,9 +247,9 @@ D01 沿用现有 answer.*、消息状态和界面，SDK 原生流在接线层投
 | 用户问题 | 通过 ACP create_elicitation 显示文本/选项等受支持的表单；不伪造空回答 |
 | 停止 | 向当前 session 发 cancel，取消视频任务并结束待交互；继续观察实际终态 |
 
-ACP 0.12.1 的 elicitation 能力属于实验接口。必须实现并声明所支持的 form/url 能力；未实现的形式明确拒绝，不宣告全量支持。特别验证 Codex 原生提问是否被完整映射。[适配器问询实现](https://github.com/agentclientprotocol/codex-acp/blob/main/src/CodexElicitationHandler.ts)
+ACP 0.12.1 的 elicitation 能力属于实验接口。必须实现并声明所支持的 form/url 能力；不支持的表单形式必须明确拒绝，不能宣称全部支持。特别验证 Codex 原生提问是否被完整映射。[适配器问询实现](https://github.com/agentclientprotocol/codex-acp/blob/main/src/CodexElicitationHandler.ts)
 
-待交互记录绑定本服务进程、ACP session、Seekino message 和交互 ID。回复、停止与订阅均重新鉴权；过期、跨用户和重复回复不能产生第二次有效响应。prompt 终态、取消和进程退出均清理等待。人工等待不消耗视频子任务执行预算。
+待交互记录绑定本服务进程、ACP session、Seekino message 和交互 ID。回复、停止与订阅均重新鉴权；过期、跨用户和重复回复不能产生第二次有效响应。prompt 结束、取消或进程退出时，都要清理等待中的交互。人工等待不消耗视频子任务执行预算。
 
 复用原 message 状态与阶段，不扩 SQL 状态枚举。Gateway 不生成产品数据库状态；Server 在完成或失败时持久化实际结果。
 
@@ -270,7 +270,7 @@ ACP 0.12.1 的 elicitation 能力属于实验接口。必须实现并声明所�
 
 tool/plan 的状态只用于 UI；建议映射为 PENDING/RUNNING/COMPLETED/FAILED 中实际适用项，具体上游映射由 P01 验证后纳入字段定稿。不把这些状态加入 AgentMessage 的 SQL status 或 phase。
 
-审批与问询等待时，持久 message.status 仍为 PROCESSING。显式停止先发出取消请求并继续观察实际终态，不立即写 FAILED；仅在实际取消成立，或进程被终止/结果无法确认时，建议落 FAILED，并使用既有 lastError 分别表达 EXECUTION_CANCELLED / EXECUTION_INTERRUPTED。如果正常完成先发生则保持 COMPLETED。SSE 断线本身不改变任务状态。此终态映射也属于用户 review 内容。modelName 沿用实际可观测的模型名，缺失时 null，不将 codex 这个 Agent 名伪装为模型名。
+审批与问询等待时，持久 message.status 仍为 PROCESSING。显式停止先发出取消请求并继续观察实际终态，不立即写 FAILED；仅在实际取消成立，或进程被终止/结果无法确认时，建议落 FAILED，并使用既有 lastError 分别表达 EXECUTION_CANCELLED / EXECUTION_INTERRUPTED。如果任务先正常完成，则保持 COMPLETED。SSE 断线本身不改变任务状态。此终态映射也属于用户 review 内容。modelName 沿用实际可观测的模型名，缺失时 null，不将 codex 这个 Agent 名伪装为模型名。
 
 <a id="bridge-recovery"></a>
 
@@ -284,9 +284,9 @@ tool/plan 的状态只用于 UI；建议映射为 PENDING/RUNNING/COMPLETED/FAIL
 2. 回复某个待处理交互。
 3. 停止当前执行。
 
-具体路由沿用 server/router/agent.py 的 action 风格，产品合同沿用 answer.*；浏览器不直接处理 provider 原生消息。建立订阅与快照读取必须具有原子交接或补发机制，避免快照和增量之间丢事件。
+具体路由沿用 server/router/agent.py 的 action 风格，产品合同沿用 answer.*；浏览器不直接处理 provider 原生消息。建立订阅和读取快照时，必须通过原子交接或补发机制避免事件丢失。
 
-断开 SSE 只解除订阅，任务继续。刷新先恢复快照与 lastSequence，再接增量并去重，待审批卡片仍可回答。切换连接/身份隔离旧回调，不能重发 prompt。任务终态从数据库恢复，活跃快照由当前服务内存维护；服务重启按第 6 节处理中断。
+断开 SSE 只解除订阅，任务继续。刷新先恢复快照与 lastSequence，再接增量并去重，待审批卡片仍可回答。切换连接或身份后，必须隔离旧回调，不能重发 prompt。任务终态从数据库恢复，活跃快照由当前服务内存维护；服务重启按第 6 节处理中断。
 
 停止优先走 ACP cancel；失去响应才终止该会话进程。停止不撤销已完成的文件修改。完成后检查实际文件和 runtime 状态，不能以助手文字作为执行成功证据。
 
@@ -300,11 +300,11 @@ tool/plan 的状态只用于 UI；建议映射为 PENDING/RUNNING/COMPLETED/FAIL
 
 旧 Supervisor Conversation 继续可用，底层改为 Deep Agents，不保留第二条自研 Supervisor 作为默认回退。受限 Codex/Claude 模型、视频 graph 与历史消息读取继续承担原职责；公共 tool_loop.py 仍被视频 Chat/解析消费，本批不全局删除。共享视频工具的提取必须保持旧测试与已核验结果约束。
 
-Deep Agents 模型调用含摘要/附加调用，均走现有 usage/tracing；实际 fallback provider 如实归因。停止/deadline 在模型与工具边界传递，执行线程内 scope 不因 SDK 接入丢失。ToolNode 可能并发工具调用，须保留当前完整原问题一次执行、缓存复用和 scope 约束；LangChain artifact 不自动成为模型可见原图，薄媒体投影须保持原图与文字 fallback 行为。
+Deep Agents 模型调用含摘要/附加调用，均走现有 usage/tracing；实际 fallback provider 如实归因。停止/deadline 在模型与工具边界传递，执行线程内 scope 不因 SDK 接入丢失。ToolNode 可能并发工具调用，须保留当前“完整原问题只执行一次”、缓存复用和 scope 约束；LangChain artifact 不自动成为模型可见原图，薄媒体投影须保持原图与文字 fallback 行为。
 
 主 Agent 可观测 usage 按 session/prompt 归因，缺失值保持未知，不虚构内部模型调用。视频任务沿用现有 usage 路径，两类来源避免重复累计。
 
-未安装适配器或 Codex、未登录、协议不兼容、目录无效、审批拒绝、问询不支持、MCP/工具失败和恢复失败返回可理解的错误。选择 Bridge 后不静默退回 Supervisor。
+未安装适配器或 Codex、未登录、协议不兼容、目录无效、审批拒绝、问询不支持、MCP/工具失败和恢复失败时，返回易于理解的错误信息。选择 Bridge 后不静默退回 Supervisor。
 
 当前前端支持多个本地/远程连接，新增接口继续走 businessContext、凭据、CSRF 与 scope cancellation。无需重构 AuthProvider、AppShell、main.tsx 或远端代理。
 
@@ -312,12 +312,12 @@ Deep Agents 模型调用含摘要/附加调用，均走现有 usage/tracing；�
 
 ## 11. 历史 Check-out：职责、方向与当时授权（2026-10-10）
 
-- 主要职责：接入两类成熟 SDK；gateway/agent_model 负责内置 Supervisor，gateway/bridge 负责外部 runtime，并核对 Agent/Server/Web 必需的宿主接线。范围来自用户最新的“直接换成 deepagents”与“两种 sdk 接入维护到 trd 后 check-out”；不重写完整 harness 或 provider 协议适配器。
+- 主要职责：接入两类成熟 SDK；gateway/agent_model 负责内置 Supervisor，gateway/bridge 负责外部 runtime，并检查 Agent、Server 和 Web 所需的宿主接线。范围来自用户最新的“直接换成 deepagents”与“两种 sdk 接入维护到 trd 后 check-out”；不重写完整 harness 或 provider 协议适配器。
 - 开发方向：local 默认内置 Deep Agents Supervisor，可选 Codex/Claude ACP Bridge。先切内置 Supervisor，再接通用 ACP Client、后端绑定、共享 MCP 与界面。视频搜索审核图、解析调度与尚未迁移的模型消费者继续保持现有职责。
-- 下一步：D01 按第 12.1 节 14 文件完成 SDK 装配、默认模型/fallback、线程状态、已有输出、取消和用量回归；通过后进入 ACP 兼容验证。原 ACP 地图当前 P01 未实施，本次新增 D01 不被旧地图的 37 文件预算覆盖。
+- 下一步：D01 按第 12.1 节的 14 个文件完成 SDK 装配、默认模型/fallback、线程状态、已有输出、取消和用量回归；通过后进入 ACP 兼容验证。原 ACP 地图当前 P01 未实施，本次新增 D01 不被旧地图的 37 个文件预算覆盖。
 - 用户边界决策：Deep Agents 替换、local 默认、Codex/Claude 可选、项目 root 和 Conversation/session 绑定已明确，D01 无关键未决项。ACP 第 6.1/6.2、8.1、9.1 节字段仍待用户 review；完整权限继承及各家兼容性是调查/验收项，不要求用户重新选择已确认方向。
 
-本轮按“维护 TRD 后 check-out”交付文档和开发前范围，生产实现尚未开始。D01 已有明确技术方向且无字段阻塞；以下为本次首次展开的实施树，依照项目变更门禁在实施前核对本树授权。ACP 字段依赖只限制对应后端/UI 接线，不阻塞 D01 或独立协议验证。其他并行工作区改动保持原样。
+本轮按“维护 TRD 后 check-out”交付文档和开发前范围，生产实现尚未开始。D01 的技术方向明确，不受字段评审阻塞；以下为本次首次展开的实施树，依照项目变更门禁在实施前核对本树授权。ACP 字段依赖只限制对应后端/UI 接线，不阻塞 D01 或独立协议验证。其他并行工作区改动保持原样。
 
 <a id="bridge-first-batch"></a>
 
@@ -356,13 +356,13 @@ Seekino/
         └── [M] test_agent_chat_service.py  ← 保存边界/去重/失败/断线；影响：宿主合同保持
 ```
 
-D01 共 14 文件：生产 6、依赖 2、测试 5、说明 1；A 2、M 12，无删除文件。生产预计新增 500–900 行、删除/替换 120–250 行，测试新增 300–500 行；文档与锁文件另计。新增的是 SDK/模型/宿主接线，不包含自研 agent loop、context compaction 或 checkpoint 存储引擎。无需改产品 API、DTO/VO、数据库 Schema 或前端；已有 config.yaml 模型来源继续有效。
+D01 共涉及 14 个文件：生产 6、依赖 2、测试 5、说明 1；A 2、M 12，无删除文件。生产预计新增 500–900 行、删除/替换 120–250 行，测试新增 300–500 行；文档与锁文件另计。新增的是 SDK/模型/宿主接线，不包含自研 agent loop、context compaction 或 checkpoint 存储引擎。无需改产品 API、DTO/VO、数据库 Schema 或前端；已有 config.yaml 模型来源继续有效。
 
 直接验收：当前 DeepSeek/API 与 Ark fallback 参数和实际用量正确；直接问答、视频检索、当前画面、网页补充保留原行为；两会话隔离、连续两轮、摘要后继续、scope 变化、SQL 保存失败、取消、删除与热配置正确。第一批使用 SDK 内存状态，重启只从 SQL 已完成消息重新初始化，不宣称完整恢复。
 
 ### 12.2 ACP P01：通用 Client 与两家适配器兼容验证
 
-沿用原 ACP P01 的五文件边界。SDK 客户端不为 Codex/Claude 各写一份；测试参数化两家能力差异。首次接入依次验证 Codex 和 Claude，未安装或未验收的 profile 不在网页宣告可用。
+沿用原 ACP P01 的五个文件边界。SDK 客户端不为 Codex/Claude 各写一份；测试参数化两家能力差异。首次接入依次验证 Codex 和 Claude，未安装或未验收的 profile 不在网页宣告可用。
 
 ```text
 Seekino/
@@ -377,15 +377,15 @@ Seekino/
         └── [A] test_bridge.py  ← fake ACP 回归；影响：仅验证宿主接线
 ```
 
-ACP P01 共 5 文件：生产接线 2、依赖 2、测试 1；新增 3、修改 2。接线预计新增 180–320 行，测试新增 180–300 行，锁文件变化以实际解析为准。依赖文件与 D01 重合，合并统计不重复计数；无产品 API 或数据库变更。
+ACP P01 共涉及 5 个文件：生产接线 2、依赖 2、测试 1；新增 3、修改 2。接线预计新增 180–320 行，测试新增 180–300 行，锁文件变化以实际解析为准。依赖文件与 D01 重合，合并统计不重复计数；无产品 API 或数据库变更。
 
-ACP P01 完成条件：离线验证回调不阻塞、事件归属、取消与退出清理；按 runtime 分别在本机隔离目录验证两轮同 session、文件修改、进程重建恢复、实际审批模式与问询。替身通过不等于任何一家原生接入通过，P01 通过不等于完整网页接入完成。之后沿用 ACP P02→P03/P04→P05 的业务依赖，启动 profile 配置补入 P02。
+ACP P01 完成条件：离线验证回调不阻塞、事件归属、取消与退出清理；按 runtime 分别在本机隔离目录验证两轮同 session、文件修改、进程重建恢复、实际审批模式与问询。替身通过不等于任何一家原生接入通过，P01 通过不等于完整网页接入完成。后续按 ACP P02→P03/P04→P05 的业务依赖推进；启动 profile 配置补入 P02。
 
 <a id="bridge-full-scope"></a>
 
 ## 13. 历史两类 SDK 完整预计修改树
 
-以下包含 D01 与 ACP 首版，不额外叠加统计。此前 37 文件只对应 Codex 基线；本次增加内置 harness 必需的 5 个唯一文件与 Server 启动配置/测试 2 个文件，共 44 个唯一文件。Claude 复用已有 ACP、业务、MCP、DTO/UI 和参数化测试文件，不新增 provider 业务文件。实施前若新证据要求扩围则更新 check-out。
+以下包含 D01 与 ACP 首版，不额外叠加统计。此前 37 个文件只对应 Codex 基线；本次新增内置 harness 必需的 5 个独立文件，以及 Server 启动配置和测试的 2 个文件，合计 44 个独立文件。Claude 复用已有 ACP、业务、MCP、DTO/UI 和参数化测试文件，不新增 provider 业务文件。实施前若新证据要求扩围则更新 check-out。
 
 ```text
 Seekino/
@@ -461,9 +461,9 @@ Seekino/
         └── [M] test_cloud_agent_runtime.py  ← cloud 拒绝 Bridge；影响：环境边界有效
 ```
 
-完整两类 SDK 范围共 44 文件：生产 24、依赖 2、测试 16、文档 2；A 10、M 34、D/R 0。D01 的重复文件不再加一遍；本轮维护的 TRD/旧计划索引单独统计，不将旧图列为新实现文件。
+两类 SDK 的完整范围共 44 个文件：生产 24、依赖 2、测试 16、文档 2；A 10、M 34、D/R 0。D01 的重复文件不再加一遍；本轮维护的 TRD/旧计划索引单独统计，不将旧图列为新实现文件。
 
-粗估生产新增 1,800–3,200 行、删除/搬移 300–600 行，测试新增 1,200–1,800 行；文档和锁文件另计。此预算包含内置 SDK 接线与两家 adapter 的参数化回归，并非已经写入的行数。SDK 省掉循环/上下文/协议/provider 适配实现；MCP、界面、权限、消息事务与恢复仍须宿主接线。
+粗估生产新增 1,800–3,200 行、删除/搬移 300–600 行，测试新增 1,200–1,800 行；文档和锁文件另计。此预算包含内置 SDK 接线与两家 adapter 的参数化回归，并非已经写入的行数。SDK 省去了自行实现模型循环、上下文管理、协议处理和 provider 适配的工作；MCP、界面、权限、消息事务与恢复仍须宿主接线。
 
 产品接口以可选字段和新增操作扩展，旧调用继续可用。无需新增数据库字段：复用此前准备的 detail 迁移。server/main.py 与 api/schema.py 不在必要范围；MCP 生命周期在 app.py 组合，新 VO 从定义模块导入。
 
@@ -494,7 +494,7 @@ Seekino/
 .venv/bin/python -m pytest tests/gateway/test_deepagents.py tests/gateway/test_agent_factory.py tests/agent/chat/test_supervisor.py tests/server/test_bootstrap.py tests/server/test_agent_chat_service.py -q
 ```
 
-依赖升级后追加现有 tests/gateway/test_agent_model.py 验证原结构化/工具模型合同；原视频 Chat/解析循环行为按受影响用例回归。D01 的真实 local 验收使用当前 API 来源与隔离会话，分别记录长对话、工具、图像、fallback、取消和用量；测试构造通过不能替代真实调用证据。完整 ACP 接线后的直接检查：
+依赖升级后追加现有 tests/gateway/test_agent_model.py 验证原结构化/工具模型合同；原视频 Chat/解析循环行为按受影响用例回归。D01 的真实 local 验收使用当前 API 来源与隔离会话，分别记录长对话、工具、图像、fallback、取消和用量；测试替身通过不能替代真实调用证据。完整 ACP 接线后的直接检查：
 
 ```text
 .venv/bin/python -m pytest tests/gateway/test_bridge.py tests/agent/chat/test_bridge.py tests/agent/chat/test_supervisor.py tests/server/test_agent_mcp.py tests/server/test_config.py tests/server/test_bootstrap.py tests/server/test_agent_chat_service.py tests/server/test_api.py tests/server/test_sse_events.py tests/server/test_cloud_agent_runtime.py -q
@@ -505,7 +505,7 @@ npm --prefix web run test -- src/api/client.test.ts src/features/search/useAgent
 外部 TODO：
 
 - SDK/模型兼容：接入 Agent 负责验证固定 Deep Agents 与 LangChain 组合、当前模型/fallback、多模态工具投影和摘要用量；未实测不能标记 D01 运行通过。
-- 上游 ACP/适配器：分别验证固定版本与本机 Codex/Claude、实验 elicitation、native 工具及 resume 能力；上游维护者负责协议能力，接入 Agent 负责实测；限制对应 runtime 的真实接入验收，不阻塞文档维护。
+- 上游 ACP/适配器：分别验证固定版本与本机 Codex/Claude、实验 elicitation、native 工具及 resume 能力；上游维护者负责协议能力，接入 Agent 负责实测；只限制对应 runtime 的真实接入验收，不阻塞文档维护。
 - 上游权限继承：目前无完整 inherit 模式。自定义 writable roots/network/trust 的兼容需要上游能力或独立兼容补丁；未完成前不宣称完整继承。
 - 本机数据库：detail SQL 尚未执行；接入现有库前需单独执行已准备迁移并验证字段。
 - 用户字段 review：ACP 第 6.1/6.2、8.1、9.1 节仍是草案；仅限制对应绑定/API/UI 实现，不阻塞无新增字段的 D01。
@@ -513,14 +513,14 @@ npm --prefix web run test -- src/api/client.test.ts src/features/search/useAgent
 
 ## 15. 维护记录
 
-2026-10-21：明确本地用户自带 Codex / Claude Code、云端托管 Pi 的目的；补充当前源码已有接线的事实；将原默认和 check-out 标为历史，并链接独立云端设计。本次仅维护文档，未修改 runtime 代码或执行迁移、重启、commit、push。
+2026-10-21：明确本地使用用户自带 Codex / Claude Code、云端托管 Pi 的产品分工；补充当前源码已有接线的事实；将原默认和 check-out 标为历史，并链接独立云端设计。本次仅维护文档，未修改 runtime 代码或执行迁移、重启、commit、push。
 
 以下为 2026-10-10 历史维护记录：
 
-此前 TRD/check-out 维护只移动并更新一份 TRD，替换原生 Codex 协议自研方案为 ACP SDK + 上游适配器，视频工具改用 MCP，补齐 generic session、有效权限限制、流恢复与逐文件 check-out。
+此前 TRD/check-out 维护只移动并更新一份 TRD，将原生 Codex 协议的自研方案替换为 ACP SDK + 上游适配器，视频工具改用 MCP，补齐 generic session、有效权限限制、流恢复与逐文件 check-out。
 
-此前 plan-map 新增阶段 SVG、可编辑场景和轻量索引，共 4 个规划产物；旧 ACP 5 批实现仍未开始，原 5/13/6/11/2 分配仅对应 Codex 的 37 文件基线。
+此前 plan-map 新增阶段 SVG、可编辑场景和轻量索引，共 4 个规划产物；旧 ACP 5 批实现仍未开始，原 5/13/6/11/2 分配仅对应 Codex 的 37 个文件基线。
 
-本次维护 2 份既有文档：本 TRD 补齐 Deep Agents Supervisor、两家 ACP profile、线程/成功边界、14 文件 D01、44 文件总量和独立验收；旧阶段索引增加适用范围说明。没有修改或重新导出 SVG/场景，不把旧图当作两类 SDK 的全量计划。
+本次维护 2 份既有文档：在本 TRD 中补齐 Deep Agents Supervisor、两家 ACP profile、线程/成功边界、14 个文件的 D01、44 个文件的总量和独立验收；旧阶段索引增加适用范围说明。没有修改或重新导出 SVG/场景，不把旧图当作两类 SDK 的全量计划。
 
 生产实现、测试源码、项目依赖与数据库保持本轮前状态；未安装项目依赖、迁移、重启、commit 或 push。design 目录受现有 **/design/ 忽略规则影响，本 TRD 是本地设计文件；本次不调整忽略或暂存策略。文档完成不等于 SDK 接入运行通过。

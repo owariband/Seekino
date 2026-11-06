@@ -10,6 +10,7 @@ from gateway.config import (
     CodexModelSourceConfig,
     OpenAIAudioSourceConfig,
     OpenAIModelSourceConfig,
+    QueryHookConfig,
     TracingConfig,
     agent_api_key_env_names,
     load_config,
@@ -174,7 +175,7 @@ def test_default_config_uses_canonical_agent_sources() -> None:
 def test_repository_defaults_require_only_api_credentials() -> None:
     config = load_config(Path(__file__).resolve().parents[2] / "config.yaml")
     assert config.supervisor_harness == "deepagents"
-    assert not config.query_hook.enabled
+    assert config.query_hook.enabled
     assert required_api_key_env_names(config) == ("ARK_API_KEY", "DEEPSEEK_API_KEY")
     for binding in config.normalized_models.values():
         assert isinstance(config.source(binding.source), (OpenAIModelSourceConfig, ArkModelSourceConfig))
@@ -552,3 +553,66 @@ def test_pi_configuration_is_rejected(tmp_path, field):
     _write_config(config_path, payload)
     with pytest.raises(ValidationError):
         load_config(config_path)
+
+
+def test_web_search_configuration_is_independent_of_chat_model(tmp_path):
+    payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    payload["web_search"] = {"provider": "deepseek", "base_url": "https://search.example.com/", "api_key_env": "SEARCH_KEY"}
+    path = tmp_path / "model-config.yaml"
+    path.write_text(yaml.safe_dump(payload))
+    config = load_config(path)
+    assert config.web_search.base_url == "https://search.example.com"
+    assert config.web_search.api_key_env == "SEARCH_KEY"
+    assert config.model_dump()["web_search"]["provider"] == "deepseek"
+
+
+@pytest.mark.parametrize("options", [
+    {"provider": "unknown"}, {"api_key_env": ""}, {"base_url": "http://example.com"},
+    {"base_url": "https://user:key@example.com"}, {"base_url": "https://example.com?key=secret"},
+])
+def test_web_search_configuration_rejects_invalid_provider_or_credentials(options):
+    from gateway.config import WebSearchConfig
+    with pytest.raises(ValidationError):
+        WebSearchConfig(**options)
+
+
+def test_omitted_search_config_keeps_keyless_ddgs_default(tmp_path):
+    payload = _config_payload()
+    path = tmp_path / "default-search.yaml"
+    _write_config(path, payload)
+    config = load_config(path)
+    assert config.web_search.provider == "ddgs"
+    assert config.web_search.backend == "auto"
+    payload["web_search"] = {"provider": "ddgs", "backend": "duckduckgo"}
+    _write_config(path, payload)
+    assert load_config(path).web_search.backend == "duckduckgo"
+
+
+def test_query_hook_rewriter_enabled_defaults_to_true_and_rejects_non_bool():
+    assert QueryHookConfig().rewriter_enabled is True
+    assert QueryHookConfig(rewriter_enabled=False).rewriter_enabled is False
+    with pytest.raises(ValidationError):
+        QueryHookConfig(rewriter_enabled="false")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("rewriter_base_url", "http://127.0.0.1:18841"),
+    ("rewriter_model", "seekino-qwen3-text-8b-rewriter"),
+    ("rewriter_stream", False),
+    ("rewriter_temperature", 0.0),
+])
+def test_query_hook_config_rejects_removed_llama_cpp_fields(field, value):
+    with pytest.raises(ValidationError):
+        QueryHookConfig.model_validate({field: value})
+
+
+def test_default_config_binds_query_rewriter_to_deepseek_flash():
+    config = load_config()
+    assert config.query_hook.enabled
+    assert config.query_hook.rewriter_enabled
+    binding = config.resolve_model_binding("query_rewriter", environ={})
+    assert binding.model == "deepseek-flash"
+    assert binding.source == "deepseek_api"
+    assert binding.reasoning_effort == "none"
+    assert binding.max_output_tokens == 256
+    assert binding.stream is False

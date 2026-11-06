@@ -331,7 +331,7 @@ describe("Conversation state", () => {
         stream.emit({ ...event, userMessage: { ...event.userMessage, seriesIds: ["A", "B"] }, assistantMessage: { ...event.assistantMessage, seriesIds: ["A", "B"] } });
       }
       stream.emit({ type: "answer.evidence", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, searchResult: searchResult() });
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, delta: "跨动画回答" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, callId: "call-1", newBlock: true, delta: "跨动画回答" });
       stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, phase: "RESPONDING" });
       snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A")] });
     });
@@ -462,19 +462,19 @@ describe("Conversation state", () => {
       stream.emit(answerSnapshot(message("conv-A", { version: 3, content: "旧正文" }), 3));
       stream.emit(answerSnapshot(message("conv-A", { version: 5, content: "重复序号" }), 3));
       stream.emit({ ...answerSnapshot(message("conv-A", { version: 5, content: "错误消息" }), 4), messageId: "other" });
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, delta: "后续正文" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, callId: "call-1", newBlock: false, delta: "后续正文" });
       stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 5, block: video });
     });
     expect(result.current.messages[1]?.content).toBe(before.markdown + "后续正文");
-    expect(result.current.messages[1]?.renderBlocks).toEqual([before, video]);
-    const replacement = message("conv-A", { version: 5, content: "修订正文", renderBlocks: [] });
+    expect(result.current.messages[1]?.renderBlocks).toEqual([{ ...before, markdown: before.markdown + "后续正文" }, video]);
+    const replacement = message("conv-A", { version: 5, content: "修订正文", renderBlocks: [{ type: "markdown", markdown: "修订正文" }] });
     act(() => {
       stream.emit(answerSnapshot(replacement, 6));
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 7, delta: "继续" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 7, callId: "call-1", newBlock: false, delta: "继续" });
       stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 8, block: video });
     });
     expect(result.current.messages[1]?.content).toBe("修订正文继续");
-    expect(result.current.messages[1]?.renderBlocks).toEqual([video]);
+    expect(result.current.messages[1]?.renderBlocks).toEqual([{ type: "markdown", markdown: "修订正文继续" }, video]);
   });
 
   it("does not advance the version of a stream prefix when a newer watch snapshot is held back", async () => {
@@ -572,11 +572,11 @@ describe("Conversation state", () => {
     const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk", startSeconds: 12, endSeconds: 15 } } as VideoChunkSearchHit;
     act(() => {
       stream.emit({ type: "answer.evidence", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, searchResult: searchResult(["A"], [hit]) });
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, delta: "第一段" });
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, delta: "重复" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, callId: "call-1", newBlock: true, delta: "第一段" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, callId: "call-1", newBlock: false, delta: "重复" });
       stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", delta: "缺序号" } as unknown as AgentAnswerEvent);
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "wrong", sequence: 4, delta: "其他消息" });
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-B", messageId: "assistant", sequence: 4, delta: "其他会话" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "wrong", sequence: 4, callId: "call-1", newBlock: false, delta: "其他消息" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-B", messageId: "assistant", sequence: 4, callId: "call-1", newBlock: false, delta: "其他会话" });
       snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A")] });
     });
     expect(result.current.messages[1]?.content).toBe("第一段");
@@ -586,12 +586,47 @@ describe("Conversation state", () => {
     act(() => {
       stream.emit({ ...started("conv-A"), type: "answer.completed", sequence: 4, assistantMessage: final } as AgentAnswerEvent);
       snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A")] });
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 5, delta: "迟到" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 5, callId: "call-1", newBlock: false, delta: "迟到" });
       stream.finish();
     });
     await waitFor(() => expect(result.current.searching).toBe(false));
     expect(result.current.messages[1]?.content).toBe("完整回答");
     expect(result.current.messages[1]?.status).toBe("COMPLETED");
+  });
+
+  it("streams markdown deltas into content and render blocks", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    act(() => {
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, callId: "call-1", newBlock: true, delta: "第一段" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, callId: "call-1", newBlock: false, delta: "补充" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, callId: "call-2", newBlock: true, delta: "第二段" });
+    });
+    expect(result.current.messages[1]?.content).toBe("第一段补充\n\n第二段");
+    expect(result.current.messages[1]?.renderBlocks).toEqual([
+      { type: "markdown", markdown: "第一段补充" },
+      { type: "markdown", markdown: "第二段" },
+    ]);
+  });
+
+  it("accumulates reasoning per message and keeps it after the answer completes", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    act(() => {
+      stream.emit({ type: "answer.reasoning.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, callId: "call-1", delta: "先想" });
+      stream.emit({ type: "answer.reasoning.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, callId: "call-1", delta: "一想" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, callId: "call-1", newBlock: true, delta: "回答" });
+    });
+    expect(result.current.reasoning.assistant).toBe("先想一想");
+    expect(result.current.messages[1]?.content).toBe("回答");
+    const final = message("conv-A", { status: "COMPLETED", content: "回答" });
+    act(() => {
+      stream.emit({ ...started("conv-A"), type: "answer.completed", sequence: 5, assistantMessage: final } as AgentAnswerEvent);
+      stream.finish();
+    });
+    await waitFor(() => expect(result.current.searching).toBe(false));
+    expect(result.current.messages[1]?.content).toBe("回答");
+    expect(result.current.reasoning.assistant).toBe("先想一想");
   });
 
   it("closes only the old subscriptions on switching and ignores all late callbacks", async () => {
@@ -605,7 +640,7 @@ describe("Conversation state", () => {
     expect(oldStream.signal.aborted).toBe(true);
     expect(close).toHaveBeenCalledOnce();
     act(() => {
-      oldStream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, delta: "迟到回答" });
+      oldStream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, callId: "call-1", newBlock: true, delta: "迟到回答" });
       oldSnapshot({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A", { status: "COMPLETED", content: "旧会话快照" })] });
       oldStream.finish();
     });
@@ -674,7 +709,7 @@ describe("Conversation state", () => {
     const stream = await send(result);
     vi.mocked(listAgentMessages).mockResolvedValue(page([message("conv-A")]));
     act(() => {
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, delta: "部分回答" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, callId: "call-1", newBlock: true, delta: "部分回答" });
       stream.emit({ type: "answer.interrupted", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, error: { code: "STREAM_INTERRUPTED", message: "订阅中断，正在恢复" } });
       stream.finish();
     });
@@ -706,7 +741,7 @@ describe("Conversation state", () => {
     const stream = await send(result);
     vi.mocked(listAgentMessages).mockResolvedValue(page([message("conv-A")]));
     act(() => {
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, delta: "部分正文" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, callId: "call-1", newBlock: true, delta: "部分正文" });
       stream.emit({ type: "answer.interrupted", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, error: { code: "AGENT_EXECUTION_ERROR", message: "失败状态保存失败" } });
       stream.finish();
     });
@@ -753,7 +788,7 @@ describe("Conversation state", () => {
     act(() => {
       stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, phase: "RETRIEVING" });
       snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A", { version: 3, phase: "EVALUATING", content: "已保存前缀" })] });
-      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, delta: "已保存前缀" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, callId: "call-1", newBlock: true, delta: "已保存前缀" });
     });
     expect(result.current.messages[1]?.content).toBe("已保存前缀");
     expect(result.current.messages[1]?.phase).toBe("RETRIEVING");

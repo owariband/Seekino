@@ -1,0 +1,125 @@
+Traceback (most recent call last):
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/cursors.py", line 159, in execute
+    result = self._query(query)
+             ^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/cursors.py", line 330, in _query
+    conn.query(q)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 582, in query
+    self._affected_rows = self._read_query_result(unbuffered=unbuffered)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 847, in _read_query_result
+    result.read()
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 1252, in read
+    self._read_result_packet(first_packet)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 1329, in _read_result_packet
+    self._read_rowdata_packet()
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 1376, in _read_rowdata_packet
+    packet = self.connection._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 803, in _read_packet
+    packet.raise_for_error()
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/protocol.py", line 219, in raise_for_error
+    err.raise_mysql_exception(self._data)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/err.py", line 154, in raise_mysql_exception
+    raise errorclass(errno, errval, sqlstate=sqlstate)
+pymysql.err.OperationalError: (1038, 'Out of sort memory, consider increasing server sort buffer size')
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/hypnos/.codex/worktrees/parse-task-query-recovery/Seekino/server/mq/video_parse_consumer.py", line 233, in _thread_main
+    asyncio.run(self._thread_run())
+  File "/Users/hypnos/.local/share/uv/python/cpython-3.12.16-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.local/share/uv/python/cpython-3.12.16-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.local/share/uv/python/cpython-3.12.16-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.codex/worktrees/parse-task-query-recovery/Seekino/server/mq/video_parse_consumer.py", line 244, in _thread_run
+    await self.run_forever(self._stop_async)
+  File "/Users/hypnos/.codex/worktrees/parse-task-query-recovery/Seekino/server/mq/video_parse_consumer.py", line 297, in run_forever
+    worked = await self.run_once()
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.codex/worktrees/parse-task-query-recovery/Seekino/server/mq/video_parse_consumer.py", line 287, in run_once
+    lease = await asyncio.to_thread(claim, self._worker_id, lease_duration=self._lease_duration)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.local/share/uv/python/cpython-3.12.16-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.local/share/uv/python/cpython-3.12.16-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.codex/worktrees/parse-task-query-recovery/Seekino/server/mq/video_parse_queue.py", line 221, in claim_chunk_index
+    return self._claim_chunk(worker_id, phase=ChunkTaskPhase.INDEX, lease_duration=lease_duration,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.codex/worktrees/parse-task-query-recovery/Seekino/server/mq/video_parse_queue.py", line 232, in _claim_chunk
+    for parent_id in self._parent_candidates(stage, video_parse_task_id):
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/.codex/worktrees/parse-task-query-recovery/Seekino/server/mq/video_parse_queue.py", line 203, in _parent_candidates
+    parents = list(session.scalars(statement))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2481, in scalars
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2271, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 306, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1421, in execute
+    return meth(
+           ^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 526, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1643, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1848, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1988, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/cursors.py", line 159, in execute
+    result = self._query(query)
+             ^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/cursors.py", line 330, in _query
+    conn.query(q)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 582, in query
+    self._affected_rows = self._read_query_result(unbuffered=unbuffered)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 847, in _read_query_result
+    result.read()
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 1252, in read
+    self._read_result_packet(first_packet)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 1329, in _read_result_packet
+    self._read_rowdata_packet()
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 1376, in _read_rowdata_packet
+    packet = self.connection._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/connections.py", line 803, in _read_packet
+    packet.raise_for_error()
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/protocol.py", line 219, in raise_for_error
+    err.raise_mysql_exception(self._data)
+  File "/Users/hypnos/workspace/agent/Seekino/.venv/lib/python3.12/site-packages/pymysql/err.py", line 154, in raise_mysql_exception
+    raise errorclass(errno, errval, sqlstate=sqlstate)
+sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1038, 'Out of sort memory, consider increasing server sort buffer size')
+[SQL: SELECT video_parse_task.id
+FROM video_parse_task
+WHERE video_parse_task.status IN (%(status_1_1)s, %(status_1_2)s) AND CASE JSON_EXTRACT(JSON_EXTRACT(video_parse_task.detail, %(detail_1)s), %(param_1)s) WHEN 'null' THEN NULL WHEN true THEN true ELSE false END IS true AND video_parse_task.is_deleted IS false AND CASE JSON_EXTRACT(JSON_EXTRACT(video_parse_task.detail, %(detail_2)s), %(param_2)s) WHEN 'null' THEN NULL WHEN true THEN true ELSE false END IS true ORDER BY video_parse_task.id]
+[parameters: {'detail_1': '$."_worker_runtime_v2"', 'param_1': '$."capacity_acquired"', 'detail_2': '$."_worker_runtime_v2"', 'param_2': '$."accepted"', 'status_1_1': 'PARSING', 'status_1_2': 'INDEXING'}]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)

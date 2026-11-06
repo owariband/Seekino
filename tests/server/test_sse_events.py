@@ -13,7 +13,7 @@ from server.api import jobs as jobs_api
 from server.config.parse_profile import default_video_parse_v2_config
 from server.config.sse import SSEConfig
 from server.model.dto.agentDTO import AgentMessageState
-from server.model.dto.jobDTO import VideoParseTaskDetail, VideoParseTaskState
+from server.model.dto.taskDTO import VideoParseTaskDetail, VideoParseTaskState
 from server.repository.agent import AgentConversationNotFoundError
 from server.utils.time import timedelta_to_ms
 
@@ -519,7 +519,8 @@ def test_answer_stream_whitelists_events_keeps_alive_and_detaches(monkeypatch):
         {"type": "internal.plan", "private": "hidden"},
         "idle", "idle",
         {"type": "answer.delta", "conversationId": _CONVERSATION_ID,
-         "messageId": "message-1", "sequence": 1, "occurredAt": 1789473600000, "delta": "用户正文"},
+         "messageId": "message-1", "sequence": 1, "occurredAt": 1789473600000,
+         "callId": "call-1", "delta": "用户正文", "newBlock": True},
         None,
     ], clock)
     events = asyncio.run(_collect(agent_api._answer_events(
@@ -532,6 +533,25 @@ def test_answer_stream_whitelists_events_keeps_alive_and_detaches(monkeypatch):
     assert _payload(events[1])["delta"] == "用户正文"
     assert _payload(events[1])["occurredAt"] == 1789473600000
     assert "hidden" not in "".join(events)
+
+
+def test_answer_stream_delivers_reasoning_delta(monkeypatch):
+    clock = _Clock()
+    _patch_runtime(monkeypatch, agent_api, clock)
+    execution = _AnswerExecution([
+        {"type": "answer.reasoning.delta", "conversationId": _CONVERSATION_ID,
+         "messageId": "message-1", "sequence": 1, "occurredAt": 1789473600000,
+         "callId": "call-1", "delta": "先思考"},
+        None,
+    ], clock)
+    events = asyncio.run(_collect(agent_api._answer_events(
+        _Request(100), execution,
+        SSEConfig(poll_interval_seconds=0.1, keepalive_interval_seconds=2),
+    )))
+    assert execution.detached
+    assert len(events) == 1 and events[0].startswith("event: answer.reasoning.delta\nid: message-1:1\n")
+    assert _payload(events[0])["delta"] == "先思考"
+    assert _payload(events[0])["callId"] == "call-1"
 
 
 def test_answer_stream_disconnect_only_detaches_consumer(monkeypatch):

@@ -33,6 +33,19 @@ class Unserializable:
         raise AssertionError("diagnostics must not serialize disabled requests")
 
 
+def test_host_diagnostic_scope_uses_opaque_context_and_does_not_leak(tmp_path):
+    with model_call_context({"opaque_owner": "owner-A"}):
+        with diagnostics.model_diagnostic_scope(tmp_path):
+            call = ModelCallTracker(provider="offline", model="model", operation="generate")
+            with diagnostics.capture_model_diagnostics(call, {"stream": True}):
+                diagnostics.record_model_event("response", {"content": "answer"})
+        following = ModelCallTracker(provider="offline", model="model", operation="generate")
+        with diagnostics.capture_model_diagnostics(following, Unserializable()):
+            pass
+    assert _events(tmp_path / call.call_id)[0]["payload"]["context"] == {"opaque_owner": "owner-A"}
+    assert not (tmp_path / following.call_id).exists()
+
+
 @pytest.mark.parametrize("enabled,context", [
     (False, {"video_parse_task_id": "parse-disabled"}),
     (True, {"assistant_message_id": "chat"}),

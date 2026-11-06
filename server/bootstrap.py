@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -57,6 +59,8 @@ from .service.video_parse_media import VideoParseMediaService
 from .service.video_summarize import VideoSummarizeService
 from .service.video_frame_reader import VideoFrameReader
 from .service.video_retrieval import VideoParseRetrievalService
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -207,6 +211,15 @@ def _build_application_services(
         if gateway_config.query_hook.enabled and "query_hook" in gateway_config.normalized_models
         else None
     )
+    rewrite_model = (
+        gateway_client.create_generative_model("query_rewriter")
+        if (
+            gateway_config.query_hook.enabled
+            and gateway_config.query_hook.rewriter_enabled
+            and "query_rewriter" in gateway_config.normalized_models
+        )
+        else None
+    )
     auth = AuthService(
         IdentityRepository(session_factory), settings.auth,
         redis=resources.redis_client,
@@ -228,6 +241,8 @@ def _build_application_services(
         job_repository,
         library,
         execution_mode=settings.parse_execution_mode,
+        video_parse_index_store=elasticsearch_store,
+        video_event_index_store=resources.elasticsearch_event_store,
     )
     tracing = None
     parse_usage = ParseUsageService(
@@ -358,6 +373,9 @@ def _build_application_services(
             ),
             retrieval.search,
             event_retrieve=event_retrieval.search if event_retrieval is not None else None,
+            video_outline=library.get_video_outline,
+            series_overview=library.get_series_overview,
+            outline_evidence=parse_persistence.get_chunk_evidence,
             frame_reader=VideoFrameReader(parse_persistence, artifact_store),
             frame_max_height=agent_config.frame_max_height,
             maximum_frame_inspections=agent_config.maximum_frame_inspections,
@@ -414,7 +432,7 @@ def _build_application_services(
                     else agent_config.supervisor_reasoning_effort
                 ),
             ),
-            WebSearcher(),
+            WebSearcher(gateway_config.web_search),
             realtime_runtime=RealtimeUnderstandingRuntime(
                 host=realtime_service,
                 execution_timeout_seconds=agent_config.execution_timeout_seconds,
@@ -432,6 +450,7 @@ def _build_application_services(
             query_hook=QueryHook(
                 gateway_config.query_hook, QueryHookModels(gateway_config.query_hook),
                 decision_model=query_hook_model,
+                rewrite_model=rewrite_model,
             ) if gateway_config.query_hook.enabled else None,
         )
 
@@ -464,6 +483,19 @@ def _build_application_services(
         attachments=agent_attachments,
     )
     construction_cleanup.callback(agent.close)
+
+    async def maintenance() -> None:
+        # Both cleanups are best-effort and isolated so one failure cannot
+        # stall the other's next maintenance cycle.
+        try:
+            await v2_runtime.reap_stale_media()
+        except Exception:
+            _logger.exception("Video Parse V2 media reaper failed")
+        try:
+            await asyncio.to_thread(uploads.reconcile_deletions)
+        except Exception:
+            _logger.exception("upload deletion reconcile failed")
+
     parse_consumer = VideoParseConsumer(
         v2_queue,
         VideoParseConsumerHandlers(
@@ -473,7 +505,7 @@ def _build_application_services(
             refine=v2_runtime.refine,
             index=v2_runtime.index,
             prefix=v2_runtime.run_next_prefix,
-            maintenance=v2_runtime.reap_stale_media,
+            maintenance=maintenance,
             summarize=summary_service.run_next if summary_service is not None else None,
         ),
         worker_id=settings.mq.consumer_id,

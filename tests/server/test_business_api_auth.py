@@ -91,6 +91,7 @@ _ROUTES = [
     ("GET", "/api/jobs/video-parse/get", {"videoParseTaskId": "task"}),
     ("GET", "/api/jobs/video-parse/list", {}),
     ("GET", "/api/jobs/video-parse/events", {"videoParseTaskId": "task"}),
+    ("POST", "/api/jobs/video-parse/delete", {"videoParseTaskId": "task", "expectedJobVersion": 1}),
 ]
 
 

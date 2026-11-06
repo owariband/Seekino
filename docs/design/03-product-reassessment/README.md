@@ -2,7 +2,7 @@
 
 整理日期：2026-10-28（Asia/Shanghai）。归类依据：文档最初要解决的问题、正文日期、MDV 版本元数据及 Git 历史；文件修改时间不作为提出时间。
 
-阶段归属与当前有效性分开记录。跨阶段修订的文档保留一份正文；表中“后续”说明演进，不把旧文中的“当前”“已完成”解释为今天的状态。实施状态仍由 [problems](../../dev/problems.md) 维护，决策和验证见 [devlog](../../dev/devlog.md)。
+阶段归属与当前有效性分开记录。跨阶段修订的文档保留一份正文；表中“后续”说明演进，不把旧文中的“当前”“已完成”解释为今天的状态。实施状态由 [管理工作台](../../dev/workbench.html) 维护，问题分析见 [problems](../../dev/problems.md)，决策和验证见 [devlog](../../dev/devlog.md)。
 
 ## 本阶段的提出背景
 
@@ -28,11 +28,26 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md) | 2026-11-05，长回答流式交付途中被判为慢消费者并断开 | 合并缓冲中相邻的未发送快照，持续读取的客户端不再收到中断 | 初稿；实验待测 |
+| [series-background-ownership-trd.md](series-background-ownership-trd.md) | 2026-11-05，系列概览讨论中发现简介、背景资料与人物资料归属不清 | 系列只保留“简介 + 一份背景资料”由用户维护，`character_bible` 转为只读兼容，Agent 使用显示名称 | 初稿；实验待测 |
+| [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
+| [chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md) | 2026-11-05，已有检索结果后正文每秒约 9 字到达页面 | 正文以增量事件交付、按间隔持久化，正文速度回到供应商水平 | 已实现，演示环境验收通过（2026-11-05）；正文 228–311 字/秒，9 回合最长 112 秒 |
+| [chat-answer-shape-trd.md](chat-answer-shape-trd.md) | 2026-11-05，回答含过程播报、长段与完成后的工具行 | 回答先结论、短段列表，完成后只留正文与视频片段 | 初稿；九门禁对照待测 |
+| [chat-reasoning-display-trd.md](chat-reasoning-display-trd.md) | 2026-11-05，长回合 50–110 秒期间用户看不到系统在想什么 | 实时转发 Supervisor 思考增量，回答上方默认折叠展示 | 初稿；依赖 #51 |
+| [chat-card-event-boundaries-trd.md](chat-card-event-boundaries-trd.md) | 2026-11-05，学习路线类视频卡常用整分钟或半句起止 | 视频卡起止落在讲解句子或事件边界 | 初稿；离线回放 68→79/104，门禁对照待测 |
+| [deepseek-web-search-trd.md](deepseek-web-search-trd.md) | 2026-11-02，Chat 更换模型后搜索仍走未固定 backend 的 DDGS | 免 key DDGS 与 DeepSeek API 独立配置，明确请求、费用和错误合同 | 直接向 dev 集成；接口接入与回答、引用质量分别验收 |
+| [management-workbench-trd.md](management-workbench-trd.md) | 2026-11-02 统一看板；2026-11-03 升级为管理工作台 | 以分类和看板连接分散的问题、PR、TRD 与 devlog；后续加入里程碑、课程闭环地图与验收门槛，服务周四课程闭环验收 | 单文件离线维护；历史 DONE 沿用原验收范围，PR 信息、课程进度与费用按采集时点阅读 |
+| [parse-task-query-recovery-trd.md](parse-task-query-recovery-trd.md) | 2026-11-03，完整课程积累大任务 detail 后查询 1038 | 独立后端查询修复与 Consumer 失败定位 | Draft #30，已整合 #18；排序修复与同 v11 恢复已验证，整课仍在推进 |
+| [watch-answer-delivery-trd.md](watch-answer-delivery-trd.md) | 2026-11-04，课程 QA 的 Q01–Q03 仍因失败视频卡、超长回答与内部术语未通过 | 实时证据改用时间码链接交付，限定句数与用户可见术语 | 实现与单测完成；真实模型复测待执行 |
 | [handoff_to_new_pc.md](handoff_to_new_pc.md) | 2026-10-26 的多任务交接，含 10-24–25 探索 | 换机前保存真实停点、尝试过程、未完成项与后续理由 | 跨阶段交接；保留三条主线和环境差异，不将局部探针当作完整产品交付 |
 | [parse-output-xml.md](parse-output-xml.md) | 2026-10-26 协议设计稿 | 在保留有效信息的前提下降低解析输出负担 | 交接时尚未正式接入；须同时验证内容质量、时间定位与整集耗时 |
-| [video-parse-performance-trd.md](video-parse-performance-trd.md) | 2026-10-28 建立；10-29 补两轮实模证据 | 解析异常长的因素拆解、完整/精简 JSON 与 XML 对照、SHOT 候选及宿主 Canvas 接入边界 | 解析性能主入口；最终采用精简 JSON、不换 XML，质量优先并沿用既有并行策略；10-30 dev 已接入直接 JSON 与 30k，精简合同迁移及实模验收待完成 |
+| [video-parse-performance-trd.md](video-parse-performance-trd.md) | 2026-10-28 建立；11-01 补 Kimi 推理耗时与帧时间配对续跑 | 解析异常长的因素拆解、完整/精简 JSON 与 XML 对照、SHOT 候选及宿主 Canvas 接入边界 | 解析性能主入口；最终采用精简 JSON、不换 XML，质量优先并沿用既有并行策略；10-30 dev 已接入直接 JSON 与 30k，精简合同迁移及实模验收待完成 |
 | [local-text-embedding-trd.md](local-text-embedding-trd.md) | 2026-10-29，课程 P0 与本地运行需求 | 本地 Qwen 文本向量和可关闭的视觉索引，保留 OCR/VLM | 实验与兼容性分别验证，不把本地编码通过视为全课程质量通过 |
-| [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29，本地 ASR 与字幕需求 | 正式 Gateway 可选 WhisperX 转写及强制对齐，保留字词时间证据 | 代码与离线回归、真实模型效果、播放器字幕分别验收 |
+| [parse-pause-resume-trd.md](parse-pause-resume-trd.md) | 2026-10-30，单集优先解析 | 持久暂停、继续、租约隔离和实际阶段显示 | 已实操释放非目标任务容量，整集完成另行验收 |
+| [model-network-failure-trd.md](model-network-failure-trd.md) | 2026-10-30，Karpathy 连接异常 | SDK 分类、节点重试、可诊断日志 | 区分连接异常、网关超时与整集闭环验收 |
+| [kimi-streaming-trd.md](kimi-streaming-trd.md) | 2026-10-30，长 Chunk 504 与历史流式成功记录 | 正式 Kimi 生成入口接入 Chat SSE，收齐后校验和执行工具 | 单独验证代码接入、流式接口兼容性、真实素材效果与部署 |
+| [model-streaming-trd.md](model-streaming-trd.md) | 2026-10-31，默认 stream 被 profile / 入口写死，temperature 缺少创建时配置 | 通用模型配置、默认 stream=true / temperature=0、Kimi 固定温度、独立 fallback、共享协议接收与 Parse 快照 | 承接 Kimi 接入修复；隔离 HTTP 验证与真实部署、供应商效果分开验收 |
+| [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29 本地 ASR；10-30 故障续版与 10-31 存储／GPU 测试 | 视频级 ASR／Summary 持久成果、Task／成果归类及 Turbo＋Metal 本地测试接线 | 存储与恢复隔离验证通过；Turbo＋Metal 正式 Gateway 短样本与完整 116 分 20 秒 ASR 均通过，业务库迁移、独立对齐及完整课程闭环待验 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 
 ## 本次讨论确定的复审问题
@@ -69,3 +84,5 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 相关原始调研仍在研究目录：[OmniScript](../../research/2026-10-24-omniscript.md)、[Supervisor / Sandbox](../../research/2026-10-25-supervisor-sandbox-langsmith.md)、[本地 Sandbox / DeepAgents](../../research/2026-10-26-local-sandbox-deepagents.md)。本次归档不更新外部论文或工具的事实判断；部分旧实验材料已缺失，复跑前按原交接核对输入与证据。
 
 [返回设计总索引](../README.md) · [报告索引](../../report/README.md)
+
+- [任务历史版本筛选](task-history-filter-trd.md)：2026-10-30，默认当前版本、历史追溯与操作权限说明。

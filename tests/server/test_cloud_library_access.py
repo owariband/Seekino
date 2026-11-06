@@ -24,7 +24,7 @@ from server.database import create_schema, create_session_factory
 from server.model.agent import AgentConversation, AgentMessage
 from server.model.dto.agentDTO import AgentMessageState
 from server.model.dto.authDTO import AuthIdentity
-from server.model.job import VideoParseTask
+from server.model.task import VideoParseTask
 from server.model.tenant import Tenant
 from server.model.upload import UploadSession
 from server.model.user import User
@@ -46,7 +46,7 @@ from server.service.library import LibraryService
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
 from server.utils.media import encode_video_keyframe_image_id, encode_video_cover_image_id
-from server.utils.time import now_utc
+from server.utils.time import now_unix_time_ms, now_utc
 
 
 PUBLIC = "platform-public"
@@ -282,7 +282,7 @@ def test_owner_shares_safe_public_detail_and_can_revoke_media(cloud_library):
         assert detail["transcriptLanguageHint"] is None
         assert detail["importantExtraData"] is None
         assert detail["characterBible"] == [] and detail["pendingUploads"] == []
-        for field in ("originalFilename", "totalBytes", "latestJobId", "lastError"):
+        for field in ("originalFilename", "totalBytes", "lastError"):
             assert detail["videos"][0][field] is None
         assert "owner background secret" not in response.text and "owner character secret" not in response.text
         assert f.client.get("/api/series/list", params={"tenantId": "tenant-alice"}).status_code == 404
@@ -349,10 +349,19 @@ def test_disabled_publisher_disappears_from_public_detail_media_and_discovery(cl
 
 
 def test_withdrawal_blocks_existing_media_image_chunk_and_range_urls(cloud_library):
+    from server.repository import video_parse_content as result_store
+
     f = cloud_library
     with f.factory.begin() as session:
         chunk = session.get(VideoChunk, f.result.hits[0].evidence.video_chunk_id)
-        session.get(Video, f.prepared.video_id).cover_uri = chunk.keyframe_uris[0]["uri"]
+        result_store.save_result(
+            session, f.prepared.video_parse_task_id, field="display",
+            result={"title": None, "title_kind": "official", "description": None,
+                    "episode_order": f.prepared.episode_order,
+                    "cover_uri": chunk.keyframe_uris[0]["uri"],
+                    "evidence": [], "frame_receipts": []},
+            detail={"display": {}}, now_ms=now_unix_time_ms(),
+        )
     series = f.library.get_series(f.prepared.series_id, tenant_id=PUBLIC)
     endpoints = [
         ("/api/series/get", {"tenantId": PUBLIC, "seriesId": series.series_id}),

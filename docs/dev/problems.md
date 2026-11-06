@@ -1,17 +1,19 @@
 # 项目问题清单
 
+> **2026-11-02 起，模块、需求与任务的当前状态统一维护在 [管理工作台](workbench.html)（2026-11-03 由项目看板改名）。** 本文件保存完整问题分析、验收条件和有日期的历史事实；下面“已解决 / TODO”两大分区保留迁移前归档，不代表今天的完整状态。查找卡片时沿用 B/C/F 编号；没有旧编号的两项分别映射为 `LEGACY-NETWORK` 和 `LEGACY-HISTORY`。迁移范围与校验见 [验收记录](../report/docs/dev/kanban/README.md)。
+
 > 2026-10-24 旧实验退役说明：下文保留当时的观察；声纹、检测、图片出处实验的原始材料已删除，链接转到[结论摘要](design-experiment-cleanup.md#第四轮旧实验整体退役构图研究仅留本地归档)。构图／shot-tags 数据仅保存在被 Git 忽略的本地归档中，详见[恢复说明](design-experiment-cleanup.md#本地归档与恢复)。
 
 整理日期：2026-10-20。本次仅整理文档结构与排序，不代表重新验收历史问题。
 
 **维护规则（后续 Agent 补写或更新时必须遵守）**
 
-1. **问题只分为“已解决”和“TODO（待修复解决）”两大块。** 原文明确主体问题已修复或疑问已澄清的条目归入“已解决”；尚未修复、仅部分完成，或同条目仍包含未解决主体问题的条目归入 TODO。代码修复、服务加载、真实模型／浏览器验收和性能收益必须分别说明，不能因归入“已解决”就宣称全部验收通过。
-2. **两大块内部都按“排序日期”从新到旧排列，不再按 frontend、backend 或 Chat 分组。** 每条保留 `### 编号：标题`，紧接一行 `排序日期：YYYY-MM-DD。`；排序日期取该条最新的实质进展日期（诊断、实施、复核或验收），优先使用条目明确记录，缺失时可继承原所属章节的明确日期。不要把引用文件名、历史故障时间或本次排版日期当作更新日期。
-3. **同日按问题编号字母顺序、再按数字升序排列；无法确定日期的条目标为“日期待确认”，放在所属块末尾。** 不得根据条目位置或整份文档的更新日期补造日期。后续补齐有依据的日期后，再移到正确位置。
-4. **新增或更新后立即重新排序，不能一律追加到文末。** 补充进展时保留原日期与证据，更新该条排序日期并移动整个条目；状态改变时整体迁入对应大块。一个编号只保留一份正文，F（frontend）、B（backend）、C（Chat）编号保持不变，不因移动重新编号。
+1. **当前执行状态只在看板维护。** TODO 表示未推进，PROGRESSING 表示实施或验收中，DONE 按卡片约定范围判断。代码修复、服务加载、真实模型／浏览器验收和性能收益分别说明；历史“已解决”不表示本次重新验收通过。
+2. **保留原两大分区、条目顺序、编号、排序日期和正文。** 它们记录迁移前的归档情况，后续不因卡片移动而迁移整段分析。不得把引用文件名、本次整理日期或卡片编辑日期当作历史验证日期。
+3. **已有条目追加有日期的进展，当前结论与旧结论分开。** 无日期的历史记录继续标为待核对；无法判断是否仍在推进时，在看板说明缺口和下一步，不猜测执行人、优先级或完成状态。
+4. **新增详细分析放在文末的“迁移后新增问题分析”区，沿用稳定编号。** 先在看板建立卡片，再按同一编号记录分析并互相链接；一个编号只保留一份正文，不因分类或状态改变重新编号。不是每个模块或任务都必须另写问题长文。
 5. **不得丢失或以摘要替换已有内容。** 问题现象、根因、方案、已做与待办、日志／样本 ID、代码、表格、链接、验证结果和证据边界均须保留；相互矛盾的历史状态用日期和说明区分，以最新实质记录为准，不悄悄删除旧结论。新增有日期的进展放在条目现状附近，并保持其独立记录按日期倒序；已有根因→方案→验收等完整叙述不拆散。
-6. **交付前核对完整性。** 确认问题编号无遗漏或重复、两块日期均为降序、无日期条目位于末尾，正文和引用未因重排丢失。整理前的完整旧文档（含历史更新、联调表和能力边界）已归档至 [problem_backup.md](problem_backup.md)，该备份已废弃、不再维护，后续只更新本文件。旧记录中的历史“待实施／未重启”不能直接当作当前部署状态。
+6. **交付前核对完整性。** 确认问题编号无遗漏或重复、已有正文和引用未丢失，看板卡片能找到对应来源。整理前的完整旧文档（含历史更新、联调表和能力边界）已归档至 [problem_backup.md](problem_backup.md)，该备份已废弃、不再维护。旧记录中的历史“待实施／未重启”不能直接当作当前部署状态。
 
 ## 已解决
 
@@ -160,7 +162,7 @@ Library 原先只挑第一部有关键帧的视频；现在优先从已发布 Su
 4. **无实际状态变化的聚合仍写更新时间。** Consumer 每次 `run_once()` 先 `reap_expired()`，后者对 PARSING / INDEXING 父任务执行 `_finalize_draining_videos() → _aggregate_video_task()`；聚合末尾无条件设置 `update_time`。成功派发后可立即进入下一轮，从而产生仅更新时间的重复 UPDATE。这与 311,808 bytes 的时间字段样本吻合；本轮未逐条归因所有无变化更新的调用栈。
 5. **`ROW + FULL` 再记录完整旧行与新行。** 即使只改更新时间或删除一个小 slot，未变化的正文、配置和大 detail 也进入 before / after；而改变整个 detail 时，本就需要保存的大缓存再次形成双份镜像。原生启动使用 `--no-defaults` 且此前未指定保留期，沿用 **30 天**，将持续写入放大进一步累积为磁盘占用。
 
-关键调用位置：[逐 Event／逐帧保存](../../server/service/video_parse_index_coordinator.py) 的 `_index_events()`；[整包缓存、调用占位和无条件时间更新](../../server/repository/video_parse.py) 的 `save_index_embeddings()`、`reserve_model_call()`、`release_model_call()`、`_aggregate_video_task()`；[队列聚合](../../server/mq/video_parse_queue.py) 的 `reap_expired()`／`_finalize_draining_videos()`；[Consumer 循环](../../server/mq/video_parse_consumer.py) 的 `run_once()`；[缓存字段](../../server/model/job.py) 的 `ChunkParseContent.detail` 与 [字符串编码](../../server/model/types.py)。MySQL before / after 行镜像语义见 [官方 `binlog_row_image` 说明](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#sysvar_binlog_row_image)。
+关键调用位置：[逐 Event／逐帧保存](../../server/service/video_parse_index_coordinator.py) 的 `_index_events()`；[整包缓存、调用占位和无条件时间更新](../../server/repository/video_parse.py) 的 `save_index_embeddings()`、`reserve_model_call()`、`release_model_call()`、`_aggregate_video_task()`；[队列聚合](../../server/mq/video_parse_queue.py) 的 `reap_expired()`／`_finalize_draining_videos()`；[Consumer 循环](../../server/mq/video_parse_consumer.py) 的 `run_once()`；[缓存字段](../../server/model/parse_content.py) 的 `ChunkParseContent.detail` 与 [字符串编码](../../server/model/types.py)。MySQL before / after 行镜像语义见 [官方 `binlog_row_image` 说明](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#sysvar_binlog_row_image)。
 
 #### 踩坑教训：batch 要减少重复写入，不能只减少 commit
 
@@ -616,7 +618,7 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 - 成功、失败重试、最终 Lease 过期以及“过期后再次执行仍保持 incomplete”均有回归覆盖。
 - 全量测试结果为 `841 passed, 8 skipped`；本地 MySQL、Qdrant、API、Web 均已启动，`GET /healthz` 返回 `status=ok`，Parse Consumer 为 `running`。
 
-依据：[job.py](../../server/model/job.py) 的 Job 字段；[consumer.py](../../server/mq/consumer.py) 的单调计时；[mysql_queue.py](../../server/mq/mysql_queue.py) 的原子累计、重试与 Lease 过期处理；[job.py](../../server/service/job.py) 的公开完整性语义；[20260919_parse_job_processing_timing.sql](../migrations/20260919_parse_job_processing_timing.sql) 的受控迁移。
+依据：[2026-10-30 的 Job 模型](https://github.com/owariband/Seekino/blob/67223c16/server/model/job.py)的历史字段（该模型已于 10-31 退出）；[consumer.py](../../server/mq/consumer.py) 的单调计时；[mysql_queue.py](../../server/mq/mysql_queue.py) 的原子累计、重试与 Lease 过期处理；[job.py](../../server/service/job.py) 的公开完整性语义；[20260919_parse_job_processing_timing.sql](../migrations/20260919_parse_job_processing_timing.sql) 的受控迁移。
 
 ### F01：新建聊天、历史对话切换与删除
 
@@ -638,6 +640,71 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 ## TODO（待修复解决）
 
+### B23：今日课程闭环与 11 月 2 日发布验收
+
+排序日期：2026-11-01。
+
+状态：TODO。用户本轮将近期交付收敛为“追问闭环 + 可演示”；剪辑 reverse／特效风格模仿因独立开发的时间、经济成本与 ROI 暂停，角色画面召回可供外部 Coding Agent 筛选立绘；Agent Sandbox 暂不作为本次发布前置。相关历史研究保留，延期不代表能力已实现。
+
+**11-01 期限更正：** 用户说明所引用计划写于 10 月 31 日。因此用户目标为 **今天 11 月 1 日修复 ASR 与解析耗时、完成目标 7 集 Karpathy 解析并跑通问答闭环；明天 11 月 2 日上线并进入知乎公开宣传。** 上一轮 Agent 错按 11 月 1 日换算，把交付推迟一天，已纠正。先验收完整 GPT 单集再扩展是执行次序建议，不代表用户同意缩减今天的目标。这是交付目标，尚未验证完成。各模块实现继续归属 B07、B20、C17 等既有需求与对应 PR，不把发布安排混成一次架构重写。
+
+本轮真实盘点：PR #18 隔离任务 `613f40e2-7bcb-4e38-9ae4-9ad1021afb51` 持久暂停，租约 22；116 分 20 秒、117 Chunk。整片 Turbo ASR 2,476 段已保存，speaker_id 全为空；前 30 分钟已有 30 个 Chunk／379 条事件（193 DIALOGUE、79 ACTION、61 ON_SCREEN_TEXT、44 SCENE、2 EMOTION）；Refine 3/115，完成区间为 00:00–03:00、03:00–06:00、09:00–12:00；ES 仅有开头 1 分钟的 1 Chunk／16 Event，Summary 尚未生成。已有成果可作为恢复和对照基线，不能当成整课可检索。
+
+通过真实 `POST /api/agent/messages/send` 请求“找到讲师让 ChatGPT 写俳句的片段”，返回 **409 SERIES_NOT_READY**，消息数为 0，模型尚未执行。因此当前闭环的直接前置是课程完成精修、索引和建库；只增加说话人标签无法解除该门禁。已有 PARTIAL/READY 交互问题继续关联 F02，不在此偷偷放宽授权与范围合同。API PID 2908、代理 PID 2777 健康；本轮未重启或恢复解析。首次按进程关键词筛选误判 API 已退出，随后按记录 PID、端口和健康接口纠正，以后者为准。
+
+今天的执行次序：先用已提交成果验证 Refine 输入与提交方式的最小修复，核对耗时、最终 Schema、时间范围和版本冲突；再恢复完整 GPT 课程到 READY；随后做检索、原片回看、同一会话连续追问及刷新恢复。whisper.cpp 转写已经正式接入；VAD／对齐／pyannote 分组属于组合试跑与新增验收，不得把未执行的步骤标成完成，也不得将新标签冒充旧冻结输入。已有 30 个 Chunk 保留，输入合同变化后的重算范围需要明确。
+
+验收：完整 GPT 课程可检索、来源及时间可回看、至少 5 个课程问题与连续追问有真实记录；分别记录首段可见答案、总耗时、失败、证据正确性与工具调用，样本不足不报告 p95。问答模型替换先在相同问题与证据上对照，不同时替换全部角色。7 集扩展以单集闭环的实际时长与稳定性为依据；目标和未验证缺口持续更新本条。
+
+证据：[本轮盘点摘要](../report/server/evidence/course-demo-readiness-20261101/readiness-summary.json)、[问答入口错误](../report/server/evidence/course-demo-readiness-20261101/chat-readiness-response.json)、[本轮决策记录](devlog.md#devlog-demo-deadline-20261101)。
+
+<a id="chat-streaming-c23"></a>
+### C23：Chat 正文没有端到端流式交付，整包正文到达时间被误标为 FTT
+
+排序日期：2026-11-01。
+
+状态：TODO。沿用课程 QA 的 C23；原始产品要求见 [Chat 流式 PRD](https://github.com/owariband/Seekino/blob/chore/course-qa/docs/design/03-product-reassessment/chat-streaming-prd.md)，实施由 [Chat 流式 TRD](../design/03-product-reassessment/chat-streaming-trd.md) / [PR #25](https://github.com/owariband/Seekino/pull/25) 承接。PR #25 已于 2026-11-02 直接合入 dev（`2cd27caa`），不依赖 ASR PR #18；待验收范围继续保留。
+
+课程 QA 的 9.173 / 29.576 / 27.231 秒是非流式完整正文到达耗时，真实 FTT 未采集，旧标注撤回。仅启用供应商 stream=true 仍会被 Gateway 收齐和 after_model 发布挡住。
+
+2026-11-01 进展：已接通 Deep Agents 的可展示正文增量、持久快照与调用来源，保留完整工具校验；浏览器分别采集接收、可见 DOM 和 TT，离线校验原始供应商正文与完成前展示后才输出有效 FTT。非流式、收齐缓冲、缺证、reasoning/空包反例不得填数。隔离回归和验证边界见[实施报告](../report/server/chat-streaming-20261101.md)及 [devlog](devlog.md#devlog-chat-streaming-delivery-20261101)。
+
+2026-11-02：增量合同从供应商协议文件独立为 Gateway 通用事件，Supervisor 移除发布频率控制，Server 负责快照合并和终态前缀保存；Chat 诊断目录由 Server 注入。相关回归 596 passed / 1 skipped，见[边界复核记录](../report/server/chat-streaming-20261101.md#boundary-review-20261102)。
+
+2026-11-02 真实试跑：本 worktree 独立 API/Web、专用 MySQL/ES 测试数据已启动；Chrome 长回答在模型完成前增长 15 次，首 token 27.211 s（`**`）、可读文字 32.811 s、TT 61.594 s；工具场景进度 13.234 s、TT 145.758 s。Gateway 接收记录已有 3.5–6.3 s 的批次空档。见[真实运行报告](../report/server/chat-streaming-live-20261102.md)。
+
+2026-11-02 后续：已将 Kimi Chat/Agent 的 `none` 映射为显式 `low`；415 项回归通过，独立实例真实请求确认生效。长解释单样本首 token 23.248 s、TT 52.186 s、reasoning 513 tokens，见[复测](../report/server/chat-streaming-live-20261102.md#kimi-low-20261102)。
+
+2026-11-02 DeepSeek 试跑：独立实例已切至 low；相同矩阵题首 token 4.758 s、TT 14.569 s，关闭推理为 0.769 / 7.989 s。四次普通 Chat 的流式核验通过；数学正确，但工具题措辞和引用未全部通过，详见[记录](../report/server/chat-streaming-live-20261102.md#deepseek-20261102)。本轮未修改业务实现，保留质量缺口。
+
+待验收：正常观看页、Q02/Q03 同条件各至少三个样本、内容与原片来源质量及性能目标。需明确格式前缀与可读正文的计量，并定位批量接收原因；不能用上述普通 Chat 试跑关闭 C23 或宣称提速达标。
+
+<a id="deepseek-web-search-c24"></a>
+### C24：Chat 缺少搜索配置，用户无法选择免 key 或 API 接入
+
+排序日期：2026-11-02。状态：TODO（免 key / API 选择已验证，回答与引用质量待验收）。
+
+[TRD](../design/03-product-reassessment/deepseek-web-search-trd.md) / [PR #28](https://github.com/owariband/Seekino/pull/28) 直接向 dev 集成，无 #18/#25 合并依赖。已支持默认 DDGS 免 key、显式选择 DeepSeek，保留结果与视频查询合同；配置修正回归 604 passed / 1 skipped，两种真实探针各返回 5 条。首版 DeepSeek 接入曾有 432 项回归通过。独立 DeepSeek low 页面两轮 9 次 Search 均成功，另有 1 次成功探针；单次搜索 0.303–0.839 s，整轮 12.859/13.765 s，不构成稳定性能对照。
+
+过滤说明能引导模型使用官方域名，但第二轮仍有 3 处未核实链接和不准确表述。接口接通不代表答案通过；下一步核对返回 URL、模型引用及过滤结果，改善摘要证据使用后再验收。原始样本与限制见[报告](../report/gateway/deepseek-web-search-20261102.md)；主环境未部署；2026-11-02 决定通过 PR #28 向 dev 集成搜索配置，质量待验收事实继续保留。
+
+### B24：模型 stream 被入口写死且正式 Parse 丢失开关
+
+排序日期：2026-10-31。
+
+状态：TODO（[PR #22](https://github.com/owariband/Seekino/pull/22) 已实现并完成隔离验证，PR 集成、服务加载和新增线上验收待完成）。用户要求在创建模型时统一配置 stream，默认 true、显式 false；此前 Chat / Structured 固定 false，PR #20 又仅对 Kimi 视觉启用 true。旧前端 SSE 只证明业务事件连接存在，不证明模型请求流式。
+
+本次在 `ModelBinding`、旧 Agent 投影、工厂、共享 Chat Completions / Responses 接收器中统一开关，主模型与 fallback 独立保存。Parse profile 和持久快照补齐字段，恢复后传至正式 runtime 创建；历史快照缺省按 true 执行，序列化形状不变。流收齐后继续原 Schema / 工具验证，不执行半截工具参数，不自动改成非流式重发。
+
+Gateway 回归 1345 passed，另 5 个失败均在未改业务代码的 `dev` 同环境复现；Parse 配置 / runtime 相关 397 passed，配置 HTTP / 上传服务隔离回归另有 113 passed，前端 typecheck 通过。本轮没有新真实模型请求、服务重启或任务变更，不能据此宣称所有供应商在线兼容或整集稳定。代码来源归因、配置兼容与验证证据见 [TRD](../design/03-product-reassessment/model-streaming-trd.md)、[实施记录](../report/gateway/model-streaming-20261031.md)、[devlog](devlog.md#devlog-model-streaming-20261031)。
+
+2026-10-31 同一 PR 补齐用户要求的 `temperature`：内部创建 / YAML 默认 0，可显式配置，Kimi profile 固定 1，主模型与 fallback 独立传递，Parse 配置与旧快照兼容。新增温度后最终 Gateway 为 1548 passed、仍有上述 5 项基线失败；Parse 配置 / runtime 425 passed，HTTP / SQLite 上传 113 passed，前端 typecheck 通过。配置功能已实现；PR 集成与服务加载仍待完成，不声称默认温度已通过业务质量评测。见[温度配置记录](devlog.md#devlog-model-temperature-20261031)。
+
+### 模型暂态连接失败导致 Karpathy 整集停止（2026-10-30）
+
+直接 JSON 链路漏识别 SDK 连接/超时/504，节点未重试且用户只看到执行异常。修复增加明确原因、有限重试、逐请求 trace 和脱敏终止日志；隔离验证见 [TRD](../design/03-product-reassessment/model-network-failure-trd.md)。EP1 已恢复原 v3，整集成功与稳定性尚待正式验收。历史同时断连的责任端无法由旧日志补推，模型单次输入和耗时仍需独立评测。
+
+
 以下保留未修复、部分完成或同条目仍有主体问题未解决的记录，已实施的阶段性修复与历史证据一并保留。
 
 
@@ -645,11 +712,28 @@ checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复
 
 排序日期：2026-10-30。
 
+10-30 续版关联：节点内重试不重复本轮 ASR，但 GPT 实测在最终网络失败后退出协调器，完整转写缓存仍被清理。跨协调器/跨重启复用由 [B20](#b20本地-whisperx-正式接入与字幕时间证据)的新跟进承接；暂停和网络分类继续保留原职责，不把新 PR 扩成全部任务控制重写。
+
+2026-10-30 暂停控制进展：新增 [暂停/继续设计](../design/03-product-reassessment/parse-pause-resume-trd.md)、持久控制 API 与任务页入口，隔离测试通过。开发库 Micrograd 已暂停（容量已释放、活动 Chunk 租约归零），Building GPT 保持原进程进行整集 ASR。旧 Consumer 通过未来调度时间兼容暂停，正式新入口同时检查 paused。13:56 本机 5173 浏览器验收通过，进行中为 1、ASR 阶段与暂停/继续入口准确，幂等暂停成功、旧租约返回 409；未中断 GPT 的原进程。Understanding 失败的阶段复用仍属本条待办，不能由暂停能力推定解决。
+
+
 状态：TODO（节点重试和最终失败停止已实现；真实运行验收、手动暂停与任务清理未完成）。hypnos 发现解析持续空转，要求 Understanding 内部 node 自行有限重试，Consumer 收到最终异常后停止该视频任务并返回前端错误。原实现 Consumer 重新排队整个 Chunk，导致成功但尚未提交的 ASR 可能重复执行。
 
 2026-10-30：拆分 ASR、视觉准备、OCR、理解节点；暂态错误只重试失败节点，成功观察保存在本次子图状态内。最终失败持久化 `PARSE_NODE_FAILED`，停止新派发、拒绝兄弟任务续租和迟到提交，沿用任务通知与 API/SSE 展示阶段及原因。进程崩溃的租约回收仍独立存在；本地原生 ASR 已进入的阻塞调用不保证立即取消。未重启服务、未变更真实任务，未声称内存峰值已经实测改善。
 
 仍待：真实失败到前端验收；指定视频暂停、一键全量暂停和保留素材的无用任务清理。设计见 [失败边界](../design/03-product-reassessment/video-parse-performance-trd.md#61-2026-10-30understanding-节点重试与最终失败边界)，验证见 [devlog](devlog.md#devlog-node-retry-20261030)。
+
+### B23：正式 Kimi 长 Chunk 仍使用非流式调用并反复 504
+
+排序日期：2026-10-30。
+
+状态：TODO（`fix/kimi-streaming` / [PR #20](https://github.com/owariband/Seekino/pull/20) 已接入流式，真实首个 Chunk 已通过；服务加载与整集验收待完成）。MyGO EP04 首个 0–63 秒 Chunk 的 3 / 1 / 0.5 fps 非流式请求分别在 301.732 / 419.475 / 337.148 秒返回 504；当时均未取得 usage，不能声称降帧改善成功率或量化 context 使用量。历史流式成功实验使用 `k3` / Responses，与当前 `k3.1-pro` / Chat 请求存在差异，调查应优先核对协议接线。
+
+修复让 `profile: kimi` 的直接 JSON、legacy / Deep Agents 视觉工具轮次统一使用 `stream=True`，保留完整结果/工具校验、推理连续性和末尾 usage，EOF / 读取失败不返回半截结果。2026-10-30 22:59，通过正式工厂入口发送一张合成红蓝图：首片 5.520 秒、总计 7.431 秒、110 个分片，JSON 通过，242 input + 122 output tokens，该小图只证明接口兼容。
+
+23:18–23:23，取得用户新增单次授权后，直接调用正式 `ParseAgent.chunk_workflow.InvokeUnderstanding()`，经 Server/Gateway 使用原 3 fps / 189 帧和缓存 ASR；实际模型请求与原基线核对一致（仅流式及传输控制不同）。首片 28.729 秒，338.941 秒成功；Schema、0–60000 ms 时间范围和 Canvas 导入通过，产出 21 个事件。输入 238222 tokens（配置窗口 90.874%），输出 11618（含 reasoning 9250）。只调用一次、无重试，保存本地结果；未修改正式任务、未重启服务，不代表 HTTP/数据库提交、Refine、索引或整集质量验收。
+
+协议及相关回归 281 passed，另 1 个 Ark → DeepSeek fallback context 用例失败，在未修改的 `dev` / `df83c3f9` 同样复现，未夹带修复；另有 22 项 Parse Prompt/服务层测试通过。证据见 [TRD](../design/03-product-reassessment/kimi-streaming-trd.md)、[实施记录](../report/gateway/kimi-streaming-20261030.md)、[devlog](devlog.md#devlog-kimi-streaming-20261030)。
 
 ### B15：localhost MCP 与外部 Agent 素材取用闭环
 
@@ -700,6 +784,66 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 [直连接入记录](devlog.md#devlog-llama-cpp-embedding-20261029)。
 
 ### B20：本地 WhisperX 正式接入与字幕时间证据
+
+**11-03 收口与分工：** #18 的音频持久恢复、解析 Agent 工具／Prompt、直接 JSON Refine 及请求控制按已有证据收口；本问题的性能、内容质量及产品验收仍保持后续状态，不据此关闭整个主题。传统任务查询 1038 与 Consumer 故障转 [PR #30](https://github.com/owariband/Seekino/pull/30)。当前 v11 的 117 理解／106 Refine／96 索引及音频摘要已留存，Git 合并不清空这些成果。[交接](../report/server/pr18-scope-handoff-20261103.md)。
+
+**11-03 11:53质量核对：** 117块Understanding完成，但全课未完成。319次出站均deepseek-flash／none；已知费用约¥31.26，69次未知。第10／25／60块虽已索引，仍将ASR只保留为ACTION概述而丢失原文对白；第53块合并文字却套用较早cue时间，起点相对ASR提前21.04秒。两类缺陷都通过结构门禁，必须另行验证原话覆盖与时间对应。本轮只读留证，未切换档位或重跑数据。[逐块审计](../report/gateway/deepseek-flash-chunk-audit-20261103.md)。
+
+**11-03 Flash v11与对白范围修复：** 新网络恢复原隔离存储与进程后，正式任务保留既有成果；因原始ASR cue末端1920300超过Chunk末端1920000而停止，确认Understanding仍有旧严格包含规则。已贯通Prompt／Canvas／业务校验／数据库提交的整片对白权限，602项回归通过，9b0eb280加载API后继续同一个v11；恢复时保留31理解／28Refine／28索引，新ASR=0。11:29已核实该跨界cue原样落库且ES身份对应同一正文版本，新纠错0；完整课程及人工质量仍待验，不把部分速度或费用写成整集成功。[Flash费用与恢复](../report/gateway/deepseek-flash-parse-20261103.md)。
+
+**11-02 v10 模型对照的音频复用：** K3.1 Pro low新任务 `af389a51-8050-4d86-a33f-d3b44dc22a04` 的ASR／独立分组JSON及摘要均与v9相同，新转写0；20份理解原始响应非空，18份落库，后续因五小时额度429终止。上游恢复通过不等于全文质量／对齐／检索问答已验收，B20保持未完成。[证据](../report/gateway/kimi31-pro-low-parse-20261102.md)。
+
+**11-02 直连 v9 复验：** 新任务 `d7c13ca5-14f5-4201-8855-a2b94f07e68c` 的 ASR/独立分组与 v8 JSON及摘要逐项一致，新转写0；下游19理解/8 Refine/3索引后因错误时间事件终止。空timeline不是上游ASR正文丢失，整课与人工质量仍未通过。[报告](../report/gateway/kimi3-low-parse-20261102.md#v9-empty-results)。
+
+**11-02 21:56 v8 代理恢复后的音频复用：** 经正式 retry 恢复同一任务，完整音频成果仍命中，新 ASR=0；下游在 9 个 Understanding/2 个 Refine 后失败，且存在已提交空 timeline。音频复用与下游内容质量分别验收，完整课程、声学对齐及检索回看追问仍 TODO。[本轮报告](../report/gateway/kimi3-low-parse-20261102.md#proxy-retry)。
+
+**11-02 v8 音频复用：** K3 low 新任务 `2eef6cec-f494-407c-8939-cf415de1336e` 从 v7 校验复用 ASR 与独立分组，持久正文逐项相等、摘要相等，新 ASR=0。下游 100 秒首响应失败没有触发本地音频重算；完整课程仍未完成。[证据](../report/gateway/evidence/kimi3-low-20261102/audio-reuse.json)。
+
+**11-02 17:53 v7音频复用核实：** 新完整117块任务`60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`已从v6校验复用2476条ASR和独立说话人分组，正文分别相等、两项元数据记录来源任务，新转写0。本轮无本地模型重算，不能用风扇观感判断是否有ASR输入；下游重做，完整课程、对齐及质量验收仍未完成。[记录](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-fresh-run)。
+
+**11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
+**11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
+**11-01 19:12 全课续跑：** 已按明确选择将单块实验的Understanding并发恢复为10，通过正式reparse创建v4 `2a531c4f-2c73-4cc2-adaf-5156edc26236`，其余冻结配置不变；ASR/分组跨版本复用且正文一致，新增转写0。首轮10个真实Kimi流式请求均收到SSE，任务PARSING未暂停。独立采集本任务各阶段完成样本的中位数及失败数；整课117块、115个Refine区间、索引与问答仍待完成，状态保持TODO。[启动记录](../report/server/refine-direct-integration-20261101.md#后续10-路整课续跑启动2026-11-01-1912asiashanghai)。
+
+**11-01 Refine正式接入：** 工作树已改为无模型工具的完整JSON，Refine/Engine业务门禁及Server版本/租约提交、Prefix跨界对白规则贯通；原API19621恢复。原真实前三块的隔离库副本经正式Consumer/Kimi/事务425.011秒完成、1次请求/零修正/零新ASR，版本2/1/1→3/2/2，45事件及已知补漏/去重/29视觉事件保留通过。516项相关回归通过。耗时高于历史247秒，不承诺稳定提速；原任务仍暂停且数据不变，副本试点未完成整课及真实索引/回看/追问，状态仍TODO。[接入报告](../report/server/refine-direct-integration-20261101.md)。
+
+**11-01 完整对白与 Refine 对照：** 用户允许整片 ASR 对白超过名义 Chunk，Prompt 仅保留“整片 ASR”这一来源背景。真实对照中 Understanding 保全尾部 14 词，但耗时 272.583→318.592 秒、对白 6→22 条；不能称提速。Refine 直接 JSON 593.679→246.963 秒，已知漏句/去重和 29 个视觉事件保留检查通过；正式多层范围校验与直接 JSON 接线尚未改。实验无新增转写，来源成果不变，最新任务仍暂停 1/117。状态保持 TODO，详见[报告](../report/server/prompt-refine-ab-20261101.md)与[devlog](devlog.md#devlog-prompt-refine-ab-20261101)。
+
+**11-01 课程人物背景后续：** 按用户要求通过正式 Series API 补充 Karpathy 的课程来源与讲师背景；每次 Understanding 注入全片 all_speakers，Prompt/Refine 允许使用明确课程人物对应。v3 首块 9/9 对话归为 Andrej Karpathy，上一轮缺背景的 6/6 null 得到修正；ASR/分组新增调用均 0，157 项 Agent 回归通过（43 项定向有重叠）。耗时 260.990→311.469 秒，主要 reasoning 增长，未证明提速。新版本暂停在 1/117；整课/Refine 质量、时长和闭环仍 TODO。见[真实试点](../report/server/speaker-context-20261101.md)、[devlog](devlog.md#devlog-speaker-context-20261101)。
+
+**11-01 组合链路试点：** PR #18 工作区已接入可选 pyannote MPS 准备阶段，原始 ASR/分组独立 JSON 持久化、合法租约提交和恢复；同 Video 的新版本严格验证后可复用旧 ASR。隔离 API 新任务 `6cf69603-6708-4d24-bee3-2dff0e858ad3` 整集分组 425.828 秒，SIGKILL 重启及暂停继续后两项命中；新增转写 0、分组加载 1 次。首个 Understanding 的 22 条输入均带全片声源 scope，18 个事件已提交；6 个对话 speaker 仍为 null，请求耗时 260.990 秒，未证明人物映射或下游提速。新任务暂停在 1/117，旧 30/117 保留。226 项定向与 726 项关联后端回归通过，配置合同独立类型检查通过；主开发部署、声学对齐、人工质量、Refine 与整课闭环仍 TODO。见[真实 API 报告](../report/server/video-diarization-api-20261101.md)、[devlog](devlog.md#devlog-video-diarization-api-20261101)。
+
+**11-01 音频实验更新：** Hugging Face 授权已解决；整集 6,979.941625 秒音轨的 pyannote MPS 按排除休眠的单调时钟计，推理 426.240 秒，含初始化共 429.427 秒；机器中途休眠，含休眠日历总耗时约 1718.468 秒。自动得到 2 个匿名声源簇，未强制说话人数；第二簇仅 9 个重叠小段、合计 1.266 秒，exclusive 输出仅一个主簇，未人工回听确认为第二个人。2,476 条原转写中 2474 条按直接时间重叠获得标签，2 条保持未知。 既有 Schema 校验通过，文本与 token 时间不变。CPU VAD 推理 268.170 秒；MPS 分组 OS 峰值 RSS 1.679 GiB、driver 分配 3.699 GiB，口径不能相加。结果独立保存，正式冻结 ASR 未覆盖，生产接线、强制对齐、人工分组质量与整课闭环仍待验。见[报告](../report/gateway/local/pyannote-mps-20261101.md)。
+
+**11-01 续跑更新：** 10-31 已做 Kimi stream=true 正式续跑，保留 20/117 Understanding、1/115 Refine，ASR 新增转写 0；下文“尚未流式对照/6 个成果”是较早历史时点。当前下游慢推理、600 秒预算和重叠提交冲突关联 [B07](#b07视频解析成本高昂且耗时超过片长数倍)。11-01 全量帧 timestamp 配对续跑约 10 分钟，新增 10 个 Understanding、2 个 Refine，暂停保留 30/117、3/115，Indexed 1/117；ASR 原行/SHA 不变、此次新增转写 0。Refine 600 秒总预算再次耗尽，完整课闭环仍 TODO。见[报告](../report/server/kimi-parse-trace-20261101.md)。
+
+**10-31 Kimi 与调用限制复核：** 实际 44 条 Kimi trace 均为 `stream:false`；完整记录共 9 次上游 nginx 504，约 312–356 秒，每次带 189–198 张图片。尚未做流式对照，不能宣称根因已修复。按用户要求清掉视频级 `max_model_calls` 配置、校验和传参；基线累计拒绝逻辑已停用，先前据残留字段推断 100 次必然阻止整课不准确。新 API 默认无该字段，旧快照读取兼容，节点重试／期限／租约保留。改动已加载 19621，旧任务仍暂停、ASR 行／SHA 不变、新增转写 0。组合回归 1,043 passed／2 failed／10 skipped；两项 Worker 偶发失败单独复验通过，修改前对照未复现，根因待查，不据此宣布稳定。完整课程、流式对照、人工 ASR 质量／对齐仍未验；B20 保持 TODO。证据见[实机报告](../report/server/video-asr-api-recovery-20261031.md)。
+
+**10-31 真实解析 API／进程恢复验收：** 已从 PR #18 worktree 启动完整 API＋Consumer，使用独立 MySQL／ES，经正式上传接口创建完整 GPT 117 Chunk 任务 `613f40e2-7bcb-4e38-9ae4-9ad1021afb51`。整片 ASR 由 runtime 持久提交；暂停继续、SIGINT、SIGKILL、受控 Understanding 503 后 Retry 共 8 次读取既有成果，累计转写始终 1 次、恢复新增 0 次，12 个快照的行／摘要一致。实测发现并修复媒体准备取消清理竞态、准备成功与显式 Retry 的旧失败预算未重置，442 项回归通过，修复已加载到测试 API，恢复后真实提交 6／117 个 Chunk；Kimi 另有 8 次真实 504，任务经 API 暂停保留成果。完整 117 Chunk 闭环尚未验收；该轮关于“100 次必然阻止整课”的判断已被下述源码复核纠正。旧开发库未迁移、未 commit／push；B20 仍为 TODO。详见[实机恢复报告](../report/server/video-asr-api-recovery-20261031.md)。
+
+**10-31 本地 GPU 测试切换：** 用户恢复并限定为 whisper.cpp 纯转写测试。活动来源已改为 `whisper_cpp_local`／`large-v3-turbo-q5_0`，本机服务已在 18842 启动；实际日志确认 M5／Metal，未加载 WhisperX。新任务默认整片 ASR，启动可强制拒绝 CPU 回退；WhisperX batch_size 不参与此路径。60 秒正式 Gateway 调用 2.856 秒、22 段，短样本采样峰值 RSS 0.781 GiB；381 项直接回归通过，3 项扩展 Gateway 默认配置失败在原 HEAD 同样复现。随后按用户要求补验完整 6,979.94 秒音频：178.696 秒返回 2,476 段，117／117 分钟覆盖，峰值 RSS 1.534 GiB；声学强制对齐未执行，业务库仍未迁移，API／Consumer 和旧任务未启动；117 Chunk 后续业务闭环及独立对齐未验，B20 保持 TODO。见[本轮报告](../report/gateway/local/whisper-metal-activation-20261031.md)。
+
+**10-31 存储迁移进展：** 用户确定采用任务／成果分离，在该存储阶段暂停 Whisper 后端工作（同日后续测试切换见上条）。PR #18 工作区已实现 `video_parse_content`（ASR 与 Summary 正文直接用 MySQL JSON）、当前租约下提交与恢复校验、Summary 原子发布和历史迁移脚本。现行任务归入 `task.py`，Video／Chunk／Interval 成果归入 `parse_content.py`；按用户后续要求，旧 Job／Checkpoint 及其专用用量模型、兼容引用和 V1 测试构造已删除，不保留 `legacy_parse.py`。本轮回归最终保留的 Server 通过项为 2,725 项（全量后另移除 1 项旧 ID 用例，现行 11 项定向复验通过），前端 153 项及隔离 MySQL 36 项通过，应用类型检查通过；新库 22 表，受控迁移已验证 V2 数据保留与中断重入。此前计数模型和独立进程恢复验证的新增转写均为 0。开发库未迁移，未 commit／push、部署或重启服务；旧内存 ASR 无法回填，Metal／对齐与整课闭环仍待验，B20 保持 TODO。历史过程及跳过范围见 [devlog](devlog.md#devlog-video-parse-content-20261031)，部署按[成果迁移](../migrations/20261031_video_parse_content.md)与[旧模型退役](../migrations/20261031_retired_parse_models.md)说明。
+
+**10-30 新一轮跟进：** #12 整片前置复用与 #15 阶段日志均已合入 dev；需求仍为 TODO。[Draft PR #18](https://github.com/owariband/Seekino/pull/18)（`fix/video-asr-recovery`）围绕“长视频 ASR 代价高，且下游失败后成果不可复用”开启 Draft 跟进，当前提交背景续版、修复方案与实测证据。拟按 `video_parse_content` 独立保存完成产物，补租约安全发布/恢复、正式 Metal 转写与独立对齐，并通过完整课程验收。下一项是完成后重启/失败重试的复现与持久化修复；这些实现及运行切换尚未完成。沿用[原主设计](../design/03-product-reassessment/local-whisperx-asr-trd.md)，关联 B07、B22 和模型网络问题，不新建重复状态入口。
+
+**10-30 晚选型进展：** 用户基于同一完整 GPT 课程、同 Q5_0 的受控实验，确定 `large-v3-turbo Q5_0 + whisper.cpp Metal` 为本机后续默认 ASR：Turbo 182.360 秒、Full 495.115 秒，RSS 采样峰值 2.525 / 3.276 GiB；抽查两边各有错误，未完成人工质量验收。日语 `ja` 属模型支持，本轮 Turbo 日语及独立对齐待验。该决定尚未切换正式配置；持久恢复、正式接入和完整课程闭环仍待完成，B20 保持 TODO。见 [TRD 选型](../design/03-product-reassessment/local-whisperx-asr-trd.md#asr-model-selection-20261030)、[决策 devlog](devlog.md#devlog-asr-turbo-selection-20261030)。
+
+2026-10-29 整片增量：新建 WhisperX 任务支持默认视频级转写，原 Chunk ASR 节点改为读取相交 cues，保留绝对时间及只读证据；旧任务缺省仍逐块执行。内存缓存随协调器租约释放，重启会重新转写；未实现持久 ASR checkpoint。ASR 时间加入既有有效总时长。代码与离线验证已完成，真实整片识别质量、资源、吞吐和运行部署仍待验收；没有启动全量解析。[设计](../design/03-product-reassessment/local-whisperx-asr-trd.md#视频级转写与-chunk-读取)、[本次验证](devlog.md#devlog-full-video-asr-20261029)。
+
+2026-10-30 增补：独立 [PR #12](https://github.com/owariband/Seekino/pull/12)（由 #9 迁移至 `feat/full-video-asr`，实现与验证保留）同步 dev 的直接 JSON 与节点重试修复，扩展离线验证为 10 个 Chunk 并发且一个理解节点暂态失败，仍仅进行一次整片 ASR。运行服务未部署；当前本机 1,200 秒 ASR 超时是否覆盖长课程待测，旧任务需新解析版本才能采用 video scope。B07/B22 的实现和隔离验证不能替代课程全链路稳定性验收。
+
+同日落地补强：复现并修复恢复时 Chunk 提前领取、视频 ASR 失败/过期租约未进入有限准备预算的问题。当前租约的 ASR 与媒体准备完成后才写入派发回执；新租约不复用旧回执。观看问答新建的按需任务保持 chunk scope。测试与实机小样本边界继续记录于同一 devlog；此增量尚未合并或部署。
+
+2026-10-30 13:26 上线进展：用户明确要求上线后，PR #12 合入 dev `029faa34`，本机演示 API 已重启加载。完整《Let's build GPT》新任务 v5 冻结 `models.asr.scope=video`、Parse 并发 10、ASR 超时 14,400 秒；正式日志已进入视频级 `asr` 阶段，输入为 6,979.873 秒完整音轨。原逐块版本成果保留；整集转写、10 路真实 Understanding、最终索引及课程检索追问尚未完成，不将本次部署记为整集验收通过。[部署证据与边界](devlog.md#devlog-full-video-asr-rollout-20261030)。
+
+同日可观测性补充：WhisperX Adapter 新增关联调用／任务 context 的阶段、30 秒存活及转写／对齐进度日志；85 项定向回归通过。当前已启动的整片调用无法补入新的回调，使用每 30 秒读取任务及进程状态的独立日志保持本轮可追踪，不重启 API。百分比只代表对应阶段的上游片段比例，尚无回调时保留未知；本轮整集耗时仍待测。[验证与生效边界](devlog.md#devlog-whisperx-progress-20261030)。
+
+2026-10-30 14:46 核验：GPT 整片 WhisperX 已于 14:42:41 完成，实际 76 分 31.557 秒，随后真实启动 10 个 Understanding 调用。用户质疑时长后实测本机 M5 Metal：同一 GPT 60 秒音频为 3.760／3.474 秒，300 秒音频为 12.992 秒；同 Turbo Q5 模型的 CPU 60 秒对照为 17.196 秒。四次归一化校验通过。GPU 使用独立 whisper.cpp，未切换正式 WhisperX、未做强制对齐或整集 GPU 验收；本机性能适配和完整闭环仍待解决。[实测报告](../report/gateway/local/whisper-metal-benchmark-20261030.md)。
+
+同日 15:08 全量补验：116 分 20 秒 GPT 原音轨的 Metal Turbo Q5 单路转写实际 293.578 秒，含提取和启动约 5 分钟，2,476 cues 全量归一化通过，完整原始/规范化结果已落盘；尚无强制对齐和人工质量验收。正式任务此前因 Kimi 504 后重试 DNS 失败停止，保留 8/117 Chunk。协调器退出就清理整片内存转写，失败重试也会重做；视频级 ASR 持久化和正式 Metal 接线是待解决的恢复/性能阻塞，实验文件不冒充生产 checkpoint。详细证据续记同一报告。
 
 排序日期：2026-10-29。状态：TODO（正式接入、三语实机部署与 Karpathy 任务提交已完成；完整系列效果及字幕消费待验收）。
 
@@ -889,130 +1033,17 @@ Whisper/音轨对齐由另一项工作处理，因此不再执行课程、回看
 
 ### B12：ASR 匿名说话人分组不准，Refine 看帧后仍未纠正目标归属
 
-2026-10-30 合并说明：hypnos 确认后续已通过等待全量 Chunk 完成后的程序处理解决，以下为 PR #5 的历史排查记录，不作为当前未解决状态。
-
-#### 2026-10-19：排查链路、音频区间漂移与当前结论
-
-**固定验收对象与统计边界**
-
-- 仅针对隔离 EP04 系列 `bdbf28ae-5404-58e4-8c98-699433499ffc`、视频 `0019c16c-a7b7-5f6c-8275-5019869c1207`。用户确认约 `47.4–48.7s` 的「祥ちゃんも悪くない」是**长崎爽世**，约 `293.5–296.0s` 的「長崎そよちゃんと…」是**千早爱音**。真值指目标台词，不代表包含它的十几秒长片段全由此人发声。
-- 下表时间均为原视频绝对秒；新证据字段使用整数 `start_ms/end_ms`。历史 `start_seconds/end_seconds` 在当前 V2 实际存毫秒，不能再次乘除 1000。top1/gap 是声学排名及 cosine 分差，不是正确概率。
-- 版本号指实际解析任务版本，不把离线算法、Refine replay 或裁剪变体另算生产版本。失败任务只能说明已保存部分；任务 COMPLETE 也不能替代人物正确性验收。尚无全片人工真值，不能认定“除了两句都对”。
-
-**排查如何转向，哪些结论不能混在一起**
-
-1. 最早围绕声源质量排查：参考人物错标、稀有人物参考不足、单质心与多参考、聚类方案，之后选择 CAM++／B0 trimmed centroid。旧 v11 声库确实把爱音目标句收进祥子参考、爽世目标句收进灯参考；这些不是假问题，但优化参考并没有校验目标音频是否包含多个人。
-2. 后来修 Refine 的证据供给与决策：预先评分、flag/prefill、强制逐冲突记录、完成门禁、label_doubtful、tail 检验、top1 lead 提示与重叠窗口反馈。这解决“模型可能完全不调声音工具”和“声音正确但未采用”的部分流程缺口，却仍默认一个 DIALOGUE 可以用一个 speaker 表达。把候选排名改对、把结果填入 Canvas、最终提交正确，是三个不同验收点。
-3. 用户听出约 `45–48s` 和 `292–297s` 可能有尾音、短促「啊？」、交替说话，提出裁掉末尾对照。实际做了固定尾裁实验，但选用的是 v12 原始短区间；这两条短区间的 top1 本来已正确。此前用这个结果回答后续版本的长区间问题，属于**输入基线未对齐**，不能据此说之前的错误不存在或已修复。
-4. 继续回溯 v11 起每轮的 ASR、首次 Understanding、声纹 artifact 和最终事件，才发现目标所指已从约 1～2 秒短句扩大为 3.6、7.2、11.4、13.3 秒。评分对象变了，参考池与 Understanding 标签也随每轮变化；相同 B0 算法并不意味着实际比较了同一音频、同一声库。
-5. 当前有直接证据的主输入缺陷是：**ASR 有时直接跨说话人合并；Understanding 又会把本来分开的 ASR cues 合成一个长 DIALOGUE；B0 对长事件整体编码，Refine 往往只改这一整段的单一姓名或 null。** 因而排查重点应先保护音频分人边界，再评估人物匹配。固定裁尾没有稳定改善，不等于已证明短语气词、重叠或毫秒级边界不重要。
-
-**v11～v18 实际任务索引**
-
-| 版本 | task_id | 本轮状态／证据适用范围 |
-| --- | --- | --- |
-| v11 | `0f681291-4f52-4254-a3be-91c1ee835c3c` | COMPLETE；旧 VoiceprintAgent 参考池，以下声学排名为后续离线复核 |
-| v12 | `cc57cf42-4c69-427d-b6a0-e9523f22bc8e` | COMPLETE；B0 初次生产接入的比较基线 |
-| v13 | `9dd66201-3b6a-45b8-a2f6-dcd0d5513f74` | PARSING_FAILED；24 个 Chunk ASR 均因 `403 AccountOverdueError` 失败，无 Understanding／Refine 可评 |
-| v14 | `58288805-6e51-4f4d-9fee-21e38104114e` | PARSING_FAILED；已有局部评分／Refine，不作为全片成功样本 |
-| v15 | `080731f4-ac5c-49ed-9caa-3921212f0ceb` | PARSING_FAILED；同上 |
-| v16 | `54371266-091e-418d-af3f-8740f85e53f4` | PARSING_FAILED；爽世所在 Chunk 未贡献准备评分 |
-| v17 | `9bb8aa31-8217-4c67-9b86-19bc8782348a` | PARSING_FAILED；已有局部评分／Refine |
-| v18 | `b8d48ae8-e352-48e4-b9b5-a7444c4ca036` | 此前终态数据库核对为 COMPLETE；准备 artifact 可复核。目录中的 `latest.json` 是较早 PARSING 快照，不能单独证明终态 |
-
-**爽世目标句：原始 ASR → 实际评分区间 → 人物结果**
-
-| 版本 | 原始 ASR 区间（秒） | Understanding／评分区间（秒） | top1 / gap | 已保存人物或限制 |
-| --- | --- | --- | --- | --- |
-| v11 | 47.5–48.8 | 47.5–48.8（离线复核） | 祥子 / 0.121401 | 最终灯；旧池复核，不能冒充生产 B0 调用记录 |
-| v12 | 47.4–48.7 | 47.4–48.7 | 爽世 / 0.062722，CONFLICT | Understanding 爱音 → 最终爽世，`refine_edit` |
-| v13 | 无有效结果 | 无 | 无 | ASR 失败，不造分数 |
-| v14 | 47.3–48.8 | 47.3–48.8 | 爽世 / 0.104821，CONFLICT | Understanding 爱音 → Refine null；理由 `label doubtful, speaker unresolved` |
-| v15 | **35.4–48.7** | **35.4–48.7，13.3s** | 爱音 / 0.198523，ACCEPT | Understanding 灯 → 爱音，`voice_default`；ASR 已跨前文合并 |
-| v16 | 留存 ASR 38.7–48.7 | **无该句的准备评分** | 无 | 对应 Chunk 失败；后来留存长事件不能倒推为本轮声纹输入 |
-| v17 | **45.2–48.8** | **45.2–48.8，3.6s** | 爱音 / 0.132242，band=null | Understanding／最终爱音；长段包含前一句与爽世目标句 |
-| v18 | **35.3–48.5** | **35.3–48.5，13.2s** | 爱音 / 0.091359，band=null | Understanding／最终爱音；未拆出爽世目标短句 |
-
-**爱音目标句：原始 ASR → 实际评分区间 → 人物结果**
-
-| 版本 | 目标 ASR cue（秒） | Understanding／评分区间（秒） | top1 / gap | 已保存人物或限制 |
-| --- | --- | --- | --- | --- |
-| v11 | 293.5–296.0 | 293.5–296.0（离线复核） | 爱音 / 0.151062 | 最终祥子；声学复核正确不代表 Refine 当时采用 |
-| v12 | 293.5–296.0 | 293.5–296.0 | 爱音 / 0.063694，CONFLICT | Understanding／最终祥子；top1 正确，决策未纠正 |
-| v13 | 无有效结果 | 无 | 无 | ASR 失败 |
-| v14 | 293.4–296.0 | **288.8–296.0，7.2s** | 爱音 / 0.135117，CONFLICT | Understanding 睦 → 爱音；姓名纠正不能证明长区间单人 |
-| v15 | 293.5–295.3 | **291.3–299.0，7.7s** | 爱音 / 0.037342，NO_VOICE | Understanding／最终 null；另有 295.4–299.0 事件，与长段重叠 |
-| v16 | 293.6–296.0 | 293.6–296.0 | 爱音 / 0.033992，NO_VOICE | Understanding／最终 null；说明区间合并不是全部错误的唯一原因 |
-| v17 | 293.9–295.3 | **289.6–296.8，7.2s** | 爱音 / 0.105198，CONFLICT | Understanding null → 爱音；仍把多个短应答合成一句 |
-| v18 | 293.4–295.7 | **284.3–295.7，11.4s** | 爽世 / 0.010109，NO_VOICE | Understanding 睦 → 最终 null；不能当作爱音短句本身的评分 |
-
-v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的准备结果。各轮参考池并未冻结，不能把跨轮分差变化全部归因于区间。另用同一份 v11 数据离线运行 B0 时，两句 top1 分别为爽世／爱音，gap 为 `0.081574/0.119693`；这是算法对照，不是新一轮生产解析。
-
-依据：[v11 逐句复核](../../outputs/verification/speaker-agreement-20261018/v11-lines.jsonl)、[旧参考池快照](../../outputs/verification/speaker-algo-20261018/source-snapshot.json)、[算法对照](../../outputs/verification/speaker-algo-20261018/report.md)、[v12 实际接入验收](../../outputs/verification/speaker-b0-integration-20261019/actual-test-summary.md)、[v13 失败](../../outputs/verification/speaker-voice-decisions-20261019-v13/run-failure-report.md)、[v14 终态报告](../../outputs/verification/speaker-voice-loo-luna-20261019-v14/terminal-voice-report.md)、[v15 报告](../../outputs/verification/speaker-voice-ranking-retry-20261019-v15/ranking-voice-report.json)、[v16 报告](../../outputs/verification/speaker-voice-lead005-20261019-v16/ranking-voice-report.json)、[v17 报告](../../outputs/verification/speaker-voice-feedback-20261019-v17/ranking-voice-report.json)、[v18 首次 Understanding](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/original-known-cases.json)、[v18 声纹索引](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/manifest.json)。
-
-**谁合并了区间：已定位到生成层，不能笼统归罪 Refine**
-
-- **ASR 已经合并爽世侧。** v15 原始模型输出就是 `35.4–48.7s`；v17 是 `45.2–48.8s`；v18 是 `35.3–48.5s`。这些范围不是声纹程序、数据库或 Refine 后来扩大的。v17/v18 的首 Chunk 视频内容 SHA 和规范化请求 SHA 相同，ASR 返回边界仍不同，属于相同输入下实际生成结果不稳定；这不证明具体是哪种模型内部机制导致。
-- 当前 ASR 使用豆包多模态视频转写 `doubao-seed-2-0-lite-260428`，Prompt 虽已要求按声音分 `speaker1/2`、换人拆条，但不是经过独立验收的专用 diarization／强制对齐模型。`engine/common/transcription.py` 的后处理只转换时间、裁范围、过滤与排序，Server 只加 Chunk 偏移；未找到 Python 主动拼接 ASR 行的逻辑。视频抽样 `fps=1` 不能解释为音频只能精确到一秒。
-- **Understanding 又扩大爱音侧。** v18 ASR 目标仍是 `293.4–295.7s`，但 `before_any_refine=true` 的首次 Understanding 已保存为 `284.3–295.7s`。v17 原 ASR 分开的 `289.6–290.1`「うん」、`291.5–292.7`「長崎？」、`293.9–295.3` 目标句、`295.4–296.8`「あ…」，被 Understanding 合为 `289.6–296.8s`。这是 Refine 前就存在的跨 cue 合并；生成的 description 中的人物名也不是真值。
-- **B0 忠实评分了错误粒度。** 准备阶段读取 Understanding DIALOGUE 的完整 start/end。当前直接编码上限为 30 秒，上述所有长段均落在整段单向量路径，没有内部换人切分；来源 cue IDs 只用于追溯和排除，不能把整段还原成目标短句。整段 top1 即使是某个真实参与者，也不能表示每一句都由其说出。范围调整后旧声音证据失效的机制，无法防止准备前就已合并的范围。
-- **Refine 决策仍是另一层未完成项。** v12 爱音句已是正确 top1，最终却保留祥子；另有 v15 `212.8–214.8s` 短应答，较早提交的 seq3 窗口记录 `voice_top1`／爽世，reason 却写“未达置信改写门槛，故撤回改名并保留原理解”，与其决策含义矛盾；较晚提交的 seq1 窗口又记录 null，reason 为“爽世领先原标签爱音仅0.082，低于0.10阈值；短促重复肯定语音不足以可靠确认。”后者虽填了 `evidence_type=contradiction`，文字仍未指出具体反证。结构化一致性通过不等于 reason 内容有说服力。窗口能看到 scope、更新来源与已有 reason，不代表这些信息构成禁止后写的锁；现有事件／字段合并也不等于人物共识投票。必须按真实提交先后核对，不能按窗口空间顺序假定“全部上下文已达成人物共识”。此例与两个固定验收句分开记录，不拿生成标签充当人工真值；原始记录见 [v15 逐窗口决策 TSV](../../outputs/verification/speaker-voice-ranking-retry-20261019-v15/ranking-voice-window-records.tsv)。
-
-依据：[v17/v18 原始 ASR 对照](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/upstream-v17-v18-asr-comparison.json)、[v17 首次 Understanding](../../outputs/verification/speaker-voice-feedback-20261019-v17/understanding-snapshot.json)、[v18 首次 Understanding](../../outputs/verification/speaker-voice-feedback-c4-20261019-v18/understanding-snapshot.json)、[ASR 生成及规范化](../../engine/common/transcription.py)、[转写适配](../../gateway/transcription.py)、[声纹准备／直接编码](../../server/service/video_parse.py)、[媒体切片](../../server/service/video_parse_media.py)、[声纹时长常量](../../server/constants/parse.py)。
-
-**裁尾实验：实际支持什么，不支持什么**
-
-- 实验固定 v12 artifact（SHA256 `d74a30b5a3fcc60475dd48cb256ff188fb3eb12e1f5066dbc9b528a0ae14edbd`）、CAM++192/L2 encoder 和每组引用集合，排除目标自身、同 cue、重叠与重复 PCM。包含两条 v12 原句、用户近似范围、v17 宽范围及六个候选同人对照，共 **12 组 × 5 个尾裁长度 = 60 个变体；57 个评分、3 个因不足 400ms 明确不可编码**。原始 PCM、向量、top3 重现及组内 kept reference IDs 不变断言通过；12 组完整音频各额外重复编码一次，每组两次向量逐分量一致。
-
-| 对照 | 完整结果 | 裁尾结果 | 能得出的结论 |
-| --- | --- | --- | --- |
-| 爱音 v12，293.5–296.0s | 爱音，gap 0.063694 | 裁 1s 后仍爱音，gap 0.064896；向量 cosine 0.937040 | 固定裁尾未带来预期的大幅改善 |
-| 爽世 v12，47.4–48.7s | 爽世，gap 0.062722 | 裁 0.5s 后仍爽世，gap 降至 0.027858；裁 1s 后剩 300ms，不可编码 | 裁短可削弱证据；不能盲目统一裁一秒 |
-| 候选同人对照 | 六条按预定条件选择，未经人工确认 | 可裁 1s 的四条 cosine 为 0.796348–0.983656；全部 28 个可评分控制变体保持原 top1 | 向量变化本身不足以证明多人；此处不是人工准确率 |
-| 同一 v12 来源池，爽世短句与宽区间 | 47.4–48.7s top1 爽世 0.767560 | 45.2–48.8s top1 爱音 0.794759，gap 0.076922 | 短／长范围排名不同；按各自完整范围排除后引用数为 314／313，**不是仅改变波形的严格单变量对照**，也不要与 v17 自己池的 gap 0.132242 混用 |
-
-尚未人工逐毫秒标注或专门移除中间语气词，固定截掉末尾未必碰到真正干扰；缩短也改变音素、时长及参考可靠性。因此本轮结论是“不能靠固定裁尾或向量漂移判断换人”，而非“已排除短语气词影响”。相较于该未证实假设，数秒至十几秒跨 cue 合并已有直接上游证据，应优先处理。
-
-依据：[实验报告](../../outputs/verification/speaker-tail-crop-20261019/report.md)、[协议](../../outputs/verification/speaker-tail-crop-20261019/protocol.json)、[完整 TSV](../../outputs/verification/speaker-tail-crop-20261019/results.tsv)、[对照试听页](../../outputs/verification/speaker-tail-crop-20261019/listening.html)。首次实验因 ffmpeg 输入侧 `-to` 与生产输出侧 `-t` 参数不一致触发 `AssertionError: control_soyo_1300`；已对齐提取方式、保留断言并完整复跑通过，失败日志也保留，未通过弱化检查制造重现。
-
-**已做但未部署：撤掉 Understanding 改台词区间的权限**
-
-- 用户已明确要求只允许 Refine 调整台词时间。隔离工作树 `/private/tmp/anivag-understanding-asr-bounds-20261019` 基于 PR #5 分支 tip `504b9b4`，有四个未提交文件：`timelineEvent_canvas.py`、`prompts.py`、`test_context_canvas.py`、`test_framework.py`。不是主工作区已部署的修复。
-- 宿主检查 Understanding 新 DIALOGUE 必须对应本 Chunk 一条有效 ASR cue 的完整区间，既有 DIALOGUE 时间只读；试图合并、拆分、扩大或绕过类型修改会得到可恢复工具反馈，不能只靠 Prompt。Refine 保留时间调整能力，原声音证据随区间变化失效；无可用 ASR 的既有回退路径保留。
-- 前一轮代码验证记录：新增 34 个用例，要求的八组共 **1155 passed、0 failed**（engine 218、agent 329、voiceprint 115、worker 220、queue 131、repository 125、artifact 12、model_calls 5）。本次文档维护未重跑；单测不证明真实人物归因正确。**尚未 commit/push、重启或重新解析，未验证真实音频效果。该限制只能防止 Understanding 二次合并，不能修复 ASR 本来已合并的 cue。**
-
-**下一步工具职责与论文依据：尚未实现或实测**
-
-需要的是对音频做 **speaker segmentation／diarization** 的独立工具：判断区间内是否单人、何时换人、何处重叠。必须同时覆盖先后换人 `A→B→A` 和同时两人发声；只做 overlap detection 会漏掉依次说话。输出应保留匿名 speaker 活动区间、切换／重叠位置、方法及不确定性，而非直接承诺“这是爽世”。整段 `compare_speaker` 回答“更像谁”，不能代替“是否混了多个人”。
-
-| 论文／官方实现 | 与本问题直接相关的能力 | 边界 |
-| --- | --- | --- |
-| Bredin & Laurent，2021，[End-to-end speaker segmentation for overlap-aware resegmentation](https://arxiv.org/abs/2104.04045) | 在局部音频中联合表示语音活动、换人及重叠，可用于已有分段的重新切分 | 约 16ms 是输出步长，不是边界准确率保证；未证明 EP04 语气词可稳定分出 |
-| Plaquet & Bredin，2023，[Powerset multi-class cross entropy loss for neural speaker diarization](https://arxiv.org/abs/2310.13025) | 将无声、单人、多人同时活动的组合设为类别，改进局部说话人活动预测 | **不是将两个人的声纹向量混成一个新人物模板**，也不是音轨分离或真名识别；仍需全局关联及本域验证 |
-| [pyannote Community-1 官方模型卡](https://huggingface.co/pyannote/speaker-diarization-community-1) | 可本地运行的完整匿名分人候选，支持下载后离线运行，适合作为旁路对照 | 首次需取得模型访问权限；保留 regular 输出的重叠信息，exclusive 输出不能证明本来只有一人；本轮未下载、运行或验收 |
-
-建议先离线测实际失败的 v15/v17/v18 **完整长区间**，同时保留 v12 原始短句与人工确认的普通单人对照；人工分别标记发声边界、匿名同人关系、姓名和重叠，再看换人漏检、单人误报、短应答与边界误差。随后才在同一冻结 CAM++／B0 参考池中比较切分前后排名，继续排除目标自身／同 cue／重叠／重复 PCM，避免把参考池变化误当分段收益。不得只测两个目标或只看标签一致率后宣称全片准确。
-
-若验证有效，保护参考池的程序检查必须发生在 B0 收集／编码之前；只给 Refine 一个可选工具，既可能不调用，也无法撤销已经混入声库的长音频。Understanding 可以读取声学证据并命名，时间调整权限仍遵守用户要求留给 Refine；确认混人的整段不能直接作为单人物参考。具体模型、阈值、分段与文本对齐方式待离线结果决定，本项尚未增加生产接线、Worker 或调度阶段。详细研究笔记见 [本地论文与实现调研](../../outputs/verification/speaker-diarization-research-20261019/report.md)。
-
-**尚未解决与交接要求**
-
-- ASR 匿名分组与换人边界不稳定，Understanding 限权尚未部署，专门分段模型还没在两个目标上跑过；现有整段 B0 分数不能作为混合音频里某一句的身份证明。
-- 参考错名、短语音／声态变化、稀有角色与参考数量仍有误差；纠正区间后也不能预设 B0 必然正确。已有正确 top1 却被 Refine 保留错名／写 null，以及重叠窗口覆盖，需单独按动作与提交链验收。
-- 后续每次报告至少携带 task/version、原 ASR cue、首次 Understanding、实际编码范围、参考 artifact checksum、top3/gap、逐窗口 decision/reason 和最终来源，不能再只拿台词文本或一个时间点跨版本比较。人物效果验收以人工听音为准，不能把“八组测试通过”或“解析 COMPLETE”说成两个经典错例已稳定修好。
-- 本次只维护本文件，保留下方历史。链接中的 `outputs/verification/` 属于被 Git 忽略的本地证据，未随文档自动加入 PR；文档落盘、证据可复现、纳入提交及生产部署是四件事。本次无生产改动、API／数据库写入、重启、重解析、迁移、commit、push 或 merge。
-
-#### 2026-10-20：限权修复与排查记录交付，运行效果仍待验收
-
-- 10 月 19 日的临时工作树已不存在；本轮从原始执行记录恢复五份 patch，并与历史 Git blob／最终 diff 核对一致，没有另写一版修复。恢复位置为 `/private/tmp/anivag-voice-handoff-20261020`，基于 PR #5 的 `504b9b4`；临时路径不作为长期交付依据。
-- 限权修复已提交为 `7ea879b`（`fix(parse): preserve ASR dialogue intervals in Understanding`），四文件 `+321/-4`，其中生产代码 `+38/-4`、测试新增 283 行。交付分支为 `claude/refine-voice-conflict-decisions`，PR #5 保持未合并；上文“未提交”是 10 月 19 日的历史状态，当前为**已提交、未部署／未实音频验收**。
-- 本轮重新运行八组测试：engine 218、agent 329、voiceprint 115、worker 220、queue 131、repository 125、artifact 12、model_calls 5，共 **1155 passed、0 failed、1 条第三方弃用警告，27.02 秒**。命令为项目 `.venv/bin/python -m pytest` 加上述八组路径、`-q`；首次沙箱运行因 `Network access to "openaipublic.blob.core.windows.net" was blocked: domain is not on the allowlist for the current sandbox mode.` 中断，允许公开 tokenizer 依赖下载后完整复跑通过，未改测试或断言。
-- 本轮只提交四文件限权修复与本条 B12 文档更新，不包含同文件其他工作线的 B14 内容、离线音频／outputs 或主工作区其他改动。未重启 API、重解析、迁移或合并；不把单测通过视为两个固定错例已修复。下一步仍是验证独立的换人／重叠检测，ASR 已合并的 cue 不在此次限权修复能力内。
-
-
 排序日期：2026-10-19。
 
 优先级：高。类型：解析语义质量、音频分段、证据供给与可观测性。状态：**截至 2026-10-22 仍未全面闭环；v25 两句固定目标本轮均正确**。历史 v5 曾纠正爽世单例，不代表后续版本稳定识别正确；v11～v18 暴露参考错名、跨人合并及 Refine 决策三类问题。最新归因与未完成项见下，旧轮次记录保留。记录日期：2026-10-16；更新日期：2026-10-22。
+
+#### 2026-10-31：整片 speaker 分组与身份映射候选（TODO，先评估现有体系）
+
+用户提出的方向：在完整视频范围内先将 speaker1／2／3 分组，再保留各 speaker 已识别为何人，为后续 Agent 提供统一线索，减小跨 Chunk 身份归因和纠错的难度。**先核验现有体系效果是否足够，只有不足时才决定是否引入；本轮不改模型或解析流程。**
+
+- 技术前提待验证：整片 ASR scope 本身不等于已完成说话人聚类；匿名 speaker 分组与人物命名是两个步骤。当前本地 [WhisperX Adapter](../../gateway/local/whisperx.py) 调用转写和强制对齐，没有调用 diarization；[WhisperX v3.8.6 官方示例](https://github.com/m-bain/whisperX/tree/v3.8.6#python-usage-)也将 `DiarizationPipeline` 与标签分配列为独立步骤。不得把“完整视频转写”写成“已天然稳定区分所有 speaker”。
+- 验证顺序：先在代表性多说话人素材上评估当前归因结果，再决定是否比较整片 diarization／跨窗口聚类和 speaker→人物映射。沿用本节的已知错误案例，检查跨 Chunk 身份一致性、错归率、未知归属及短句／重叠语音，并记录新增耗时和内存；阈值在实验前确定，不用单人课程或两句固定目标代替整集质量验收。
+- 复用已有 [speaker attribution 调研](../research/2026-10-16-speaker-attribution.md)，不另起一套默认并行链路；若现有方法已满足目标则不调整。候选方案不能覆盖原始 ASR 证据，也不作为本次 `video_parse_content` 持久恢复的实施前提。
 
 #### 2026-10-22 后续：声纹预填最短时长调整为严格 >500ms（已实现，未部署）
 
@@ -1412,6 +1443,8 @@ v11 分数来自旧声库离线质心复核；v12 起表中为各任务自己的
 
 ### B13：解析启动负载尖峰、Codex 重复加载 MCP 与任务列表过量读取
 
+**11-03 独立 1038 故障已解决（DONE），B13 其余优化继续按下文跟进：** [PR #30](https://github.com/owariband/Seekino/pull/30) 已修复任务详情/列表及 Consumer 候选扫描的大 JSON 排序；同任务恢复记录了 `_parent_candidates` 的完整异常链，且独立大 JSON 用例复现了 `claim_video`。最终分组去重 645 项通过，正式详情/列表各 5/5 HTTP 200。13:50:14，原 v11 已由 106/115 Refine、96/117 Index 推进到 112/115、103/117，Consumer running，新增音频 0；117 份旧 Chunk ID、106 份旧 Refine、音频和冻结配置均保留。已加载到隔离 API 19621，PR 尚未合入 dev；整课仍执行中，列表统计正文读取与性能目标未在本次收口。见[验收报告](../report/server/parse-task-query-recovery-20261103.md)与[决策记录](devlog.md#devlog-parse-task-query-recovery-20261103)。
+
 排序日期：2026-10-18。
 
 - 状态：2026-10-18 MCP 实例开关已实现，并完成 bundled Codex 无推理启动/恢复验证；任务列表轻量投影尚未实施。未重启现有服务，真实解析负载收益尚未验收。历史现场任务为隔离第四集 v10 `6ec42661-5938-4857-b7d0-d4a9d2eb77e2`；接手后只读详情已确认 COMPLETE、70/70 单元完成、lastError=null，不能沿用此前 PARSING 状态。
@@ -1606,6 +1639,54 @@ Context Canvas 是**执行期、位于模型消息之外的宿主状态**，以 
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
+**11-03 收口与分工：** #18 的音频持久恢复、解析 Agent 工具／Prompt、直接 JSON Refine 及请求控制按已有证据收口；本问题的性能、内容质量及产品验收仍保持后续状态，不据此关闭整个主题。传统任务查询 1038 与 Consumer 故障转 [PR #30](https://github.com/owariband/Seekino/pull/30)。当前 v11 的 117 理解／106 Refine／96 索引及音频摘要已留存，Git 合并不清空这些成果。[交接](../report/server/pr18-scope-handoff-20261103.md)。
+
+**11-03 11:53质量核对：** 117块Understanding完成，但全课未完成。319次出站均deepseek-flash／none；已知费用约¥31.26，69次未知。第10／25／60块虽已索引，仍将ASR只保留为ACTION概述而丢失原文对白；第53块合并文字却套用较早cue时间，起点相对ASR提前21.04秒。两类缺陷都通过结构门禁，必须另行验证原话覆盖与时间对应。本轮只读留证，未切换档位或重跑数据。[逐块审计](../report/gateway/deepseek-flash-chunk-audit-20261103.md)。
+
+**11-03 Flash v11与对白范围修复：** 新网络恢复原隔离存储与进程后，正式任务保留既有成果；因原始ASR cue末端1920300超过Chunk末端1920000而停止，确认Understanding仍有旧严格包含规则。已贯通Prompt／Canvas／业务校验／数据库提交的整片对白权限，602项回归通过，9b0eb280加载API后继续同一个v11；恢复时保留31理解／28Refine／28索引，新ASR=0。11:29已核实该跨界cue原样落库且ES身份对应同一正文版本，新纠错0；完整课程及人工质量仍待验，不把部分速度或费用写成整集成功。[Flash费用与恢复](../report/gateway/deepseek-flash-parse-20261103.md)。
+
+**11-02 K3.1 Pro low 的 v10 对照终态：** 新建任务 `af389a51-8050-4d86-a33f-d3b44dc22a04`，全图／直连／10路及原门禁不变。对应前20块空timeline由K3的2份变0、单字／占位persons由4份变0；18份落库，另外2份排序错误与1份Refine多余content字段均带原JSON／提示进入修正，但遇到五小时额度429。410.168秒后18理解／5 Refine／3索引停止，54调用为26返回／20额度拒绝／8更新取消，新ASR=0；已知输入4,943,606 tokens，另外28次usage未知。当前已停止，不自动重试。局部模型表现改善，空内容门禁、Understanding排序与时间规则、额度分类及完整闭环仍TODO。[模型对照与证据](../report/gateway/kimi31-pro-low-parse-20261102.md)。
+
+**11-02 直连 v9 终态与空结果定位：** 已通过正式 reparse 重开完整117块，任务 `d7c13ca5-14f5-4201-8855-a2b94f07e68c` 保持 k3 low/直连/10路，14分38秒后停在19理解/8 Refine/3索引，新ASR=0。致命原因是sequence27在27:00–28:00范围输出0–1ms OTHER，触发时间门禁，不是504。首块22条ASR却返回空timeline，原始SSE即如此；结构/时间遍历允许空数组，缺少内容检查，且稳定排序仅接Refine、范围ValueError在修正循环外。strict true/false的固定文本对照均保留22事件，不能据此关闭strict；模型极短输出诱因仍未定位。业务门禁修复未实施，未再次重开，B07仍TODO。[证据](../report/gateway/kimi3-low-parse-20261102.md#v9-empty-results)。
+
+**11-02 22:14 直连复测与取舍更正：** 同一原始 189 图请求显式禁用环境/端口代理，客户端第 2.577 秒发送完成、54.477 秒收到 SSE，HTTP 200/返回 k3。早先慢上传不是新增代理的充分依据；已撤回本轮专用分流并恢复 API 的 Kimi 直连。没有再次启动整课，9/117 理解、2/115 Refine、0 索引仍是前次失败的提交数；空 timeline、十路稳定性与完整闭环仍 TODO。[直连证据](../report/gateway/kimi3-low-parse-20261102.md#direct-retest)。
+
+**11-02 21:56 代理修正与 v8 重试终态：** 单图实测证明 K3 可读图片；API 的 NO_PROXY 与 Clash GeoIP CN 两层绕过使大图直连。已改为既有 AI 代理组，原 14.55 MB 输入在客户端第 1.958 秒完成发送、42.445 秒收到 SSE。正式 retry 同一 v8 后 453.009 秒失败，9/117 Understanding、2/115 Refine、0/117 Index、新 ASR=0；仍有 7 次 100 秒首 SSE 期限和 1 次响应前断连。抽查发现空 timeline/单字人物名被提交，sequence 1 修正请求已包含完整原 JSON 与排序提示却仍丢空内容；不能用成功计数/更低耗时宣称质量通过。任务已停止，不再重试；下步限定复核该固定样本与内容门禁，B07 仍 TODO。[实测和证据](../report/gateway/kimi3-low-parse-20261102.md#proxy-retry)。
+
+**11-02 20:35 K3 low 整课复验失败：** 参数缺口已补齐，452 项定向回归通过，代码 `2aaf9fa9` 已加载隔离 API；v8 `2eef6cec-f494-407c-8939-cf415de1336e` 实际请求均为 k3 / low / stream=true。467.434 秒后停在 0/117 Understanding，30 请求无 SSE（21 次 100 秒期限、9 次取消），Refine 未开始，usage 未知；不同于 v7 的额度 429。小文本 K3 low 在 10.276 秒成功；原始 Chunk 单路传输对照保留独立证据，不替代整课验收。没有再开新版本，下一步定位大视觉请求等待；时间合同、JPEG、质量与闭环仍 TODO。[报告](../report/gateway/kimi3-low-parse-20261102.md)。
+
+**11-02 首 SSE 期限与 token 核对：** 当前 Parse 的无工具 OpenAI vision 入口已设 100 秒首事件期限，超时回到原有限重试；HTTP/HTTPS 故障注入和相关回归去重 401 项通过，隔离 API 已重启，未重新解析。v7 实际是 `k3.1-pro` 且未显式 low；三轮重开已有 usage 的 56 次累计 12,259,858 input / 429,877 output tokens，另 62 次费用未知。显式 effort 贯通、Understanding 时间合同冲突与整课闭环仍未完成，B07 保持 TODO。[报告](../report/gateway/first-sse-timeout-20261102.md)。
+
+**11-02 18:01 v7失败与接入核验：** 515.164秒后失败，10/117理解、0/115 Refine、0索引；Understanding阶段中位264.465秒、69条对白具名且无格式重试。8次Refine请求为7次Kimi五小时额度429及1次断连，没有模型输出，不能验收冲突优化。正式Understanding仍限制所有事件在Chunk内，与完整跨界ASR/语义完整话语要求冲突；实验候选未贯通到该Prompt和宿主门禁，此项保持TODO。额度耗尽错误分类也待完善；本轮没有重试任务。[证据](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-quota-terminal)。
+
+**11-02 17:53 v7重新整课解析：** v6因sequence28单帧缺少JPEG头五字节失败，842.076秒、20/117理解、3/115 Refine、1/117索引；截头程序来源未定位。已按正式reparse创建v7 `60bede4d-39c6-48ef-a4a6-a57e7b9a6e24`，实现和冻结配置不变、图片重新生成、音频复用新转写0；目标帧发布后正常，实际发送与整课验收仍待观察。旧版本保留失败，B07保持TODO。[记录](../report/server/lets-build-gpt-clean-parse-20261102.md#v7-fresh-run)。
+
+**11-02 16:06 v6独立续跑：** Understanding格式反馈修复`f3a3d43e`已加载，通过正式reparse新建`72d0cdc1-f7f4-453e-b64e-8480239ab243`；117块重新解析，10/10/1并发及其他冻结配置与v5一致，ASR/分组复用相等、新转写0。v5失败存档，新版本采集目录独立；完整课程、性能和产品闭环仍待验。[v6记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
+**11-02 Understanding反馈修复：** 已补完整候选、字段路径和有限文本修正，共用原请求期限；390项相关回归通过。v5真实错误重放1次Kimi请求/66.501秒，只删6个非法空字段，原21个事件及其他合法内容一致。未改写v5终态，需新版本全课验收；状态保持TODO。[证据](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
+**11-02 15:24 新试验终态：** v5因Understanding sequence13的6个ACTION额外空text_variants触发严格Schema拒绝，第一次错误没有guide修正就终止全视频；711.418秒、19理解/2Refine/0索引。8次Refine定向更新取消已真实接通，整体收益被新的Understanding门禁缺口阻断。保留v5失败证据，下一步补原JSON+字段路径的有限文本修正，另开解析版本计时；仍在#18范围内。[终态记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
+**11-02 15:14 新版本全课对照：** 已从#18源码`1c3aaa6c`启动API，经正式reparse新建v5 `87f63b1f-1f7a-4d1f-bb05-fed572790a52`。完整117块重新Understanding/Refine/Index，冻结ParseConfig与v4一致；两份音频成果校验复用，新转写0。首批10路stream=true且全部收到SSE，完成率、冲突收益、完整索引及问答尚待验收。[运行记录](../report/server/lets-build-gpt-clean-parse-20261102.md)。
+
+**11-02 冲突恢复实现与归属更正：** 改动统一归回 [PR #18](https://github.com/owariband/Seekino/pull/18)，撤回 #26 的独立跟踪；该缺陷属于 #18 尚未完成的解析验收。已补提交后共享成员通知、请求范围取消及最近完整候选/错误位置续接，保留租约、三方合并与原期限。真实本地 HTTP 暴露 close 后阻塞读不退出，已补 HTTP/1 唤醒和嵌套清理顺序；HTTP/HTTPS 的 2+6 次验证全部可释放旧额度并继续新请求。相关扩展回归按唯一用例合并 2229 通过，5 项上游已有失败在 b01afce9 重现。原隔离服务现已停止，本轮没有重启 API 或真实模型调用；真实 Kimi 并发收益、内容质量和整课交付仍未验，B07 保持 TODO。[实现报告](../report/server/refine-conflict-recovery-20261102.md)、[TRD §3.13/4.18/6.9](../design/03-product-reassessment/video-parse-performance-trd.md)、[devlog](devlog.md#devlog-refine-conflict-recovery-20261102)。
+
+**11-01 21:56 基线与新方案评审：** v4重新查询为PARSING_FAILED：Understanding81/117、Refine53/115、Indexed47/117，运行约99分钟，新增ASR0。Refine成功尝试p50 247.989s（n=53），同53个成功区间首次执行至提交p50 820.336s；49次时间线冲突、39次Schema拒绝与36次超时存在共现。最后一批租约丢失根因未定位，现API仍未加载此前反馈/排序修复。已冻结[完整基线](../report/server/refine-interruption-baseline-20261101.md)；提交后通知、保存context、仅中断请求再重发为待review候选，未开发/部署/试跑，两组对照须先共同包含既有修复。完整课程及检索回看追问仍未验收，B07保持TODO。见[TRD §1.9–6.6](../design/03-product-reassessment/video-parse-performance-trd.md)、[devlog](devlog.md#devlog-refine-interruption-baseline-20261101)。
+
+**11-01 Refine反馈补强：** 已修复“仅带错误、没有上一份完整JSON”的修正上下文；纯排序由宿主确定性归一化，其他Schema/成员/时间/版本/租约校验保留。519项回归通过，2份真实错误输出（41/38事件）只重排即通过结构门禁、无额外模型请求。当前API未重启以保留整课在途请求；新行为接入、真实修正耗时/用量及共享Chunk冲突仍待验，B07保持TODO。见[devlog](devlog.md#devlog-refine-feedback-repair-20261101)。
+
+**11-01 19:12 全课续跑：** 已按明确选择将单块实验的Understanding并发恢复为10，通过正式reparse创建v4 `2a531c4f-2c73-4cc2-adaf-5156edc26236`，其余冻结配置不变；ASR/分组跨版本复用且正文一致，新增转写0。首轮10个真实Kimi流式请求均收到SSE，任务PARSING未暂停。独立采集本任务各阶段完成样本的中位数及失败数；整课117块、115个Refine区间、索引与问答仍待完成，状态保持TODO。[启动记录](../report/server/refine-direct-integration-20261101.md#后续10-路整课续跑启动2026-11-01-1912asiashanghai)。
+
+**11-01 Refine正式接入：** 工作树已改为无模型工具的完整JSON，Refine/Engine业务门禁及Server版本/租约提交、Prefix跨界对白规则贯通；原API19621恢复。原真实前三块的隔离库副本经正式Consumer/Kimi/事务425.011秒完成、1次请求/零修正/零新ASR，版本2/1/1→3/2/2，45事件及已知补漏/去重/29视觉事件保留通过。516项相关回归通过。耗时高于历史247秒，不承诺稳定提速；原任务仍暂停且数据不变，副本试点未完成整课及真实索引/回看/追问，状态仍TODO。[接入报告](../report/server/refine-direct-integration-20261101.md)。
+
+#### 2026-11-01：完整 ASR Prompt 与 Refine JSON 对照
+
+状态：TODO（四组实模实验完成，正式接线与整课未验收）。同输入下 Refine Canvas→JSON 为 593.679→246.963 秒（本样本 −58.40%）、8→1 次模型请求；主要漏句/重复修复、原 29 个非对白事件保留检查均通过，逐字转写与人工质量仍有边界。Canvas 593.382 秒处于模型请求内，本地/轮间差额约 0.297 秒，问题主要是多轮规划和交互。Understanding 简化 Prompt 完整保全跨界 ASR，却由 272.583 增至 318.592 秒并产生 22 条 cue 级对白，提速假设未成立。每组一次、固定顺序，旧 Understanding SSE/usage 采集缺失，不外推稳定百分比。优先收敛 Refine 直接 JSON 方案，不扩大并行路线；详见[主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md)、[报告](../report/server/prompt-refine-ab-20261101.md)、[devlog](devlog.md#devlog-prompt-refine-ab-20261101)。
+
+#### 2026-11-01：Kimi 流式推理耗时与逐帧时间配对
+
+状态：TODO。10-31 流式续跑的 14 个成功 Understanding 阶段中位数 320.173 秒、最慢 563.118 秒；输入每块 198 图，已上报 output 中 85.1% 为 reasoning。Refine 5 次超时分为 1 次零 SSE 和 4 次多轮 600 秒总预算耗尽，另 2 次已完成分析因重叠 Chunk 提交冲突重算；并发流式可用不等于整集效率已验收。11-01 按用户要求仅将全量帧改为 timestamp_ms 与图片相邻，保留 FPS/overlap/模型/并发/期限，54 项定向回归通过；正式 API 实跑约 10 分钟，20 个请求全部 198 图/198 相邻标签，10 个新成功 Understanding 阶段 p50/mean 为 378.931/380.706 秒。推理流平均 179.634 秒，但首 SSE 前等待增至 174.702 秒，未观察到整体提速。Refine 约 600 秒超时再现后已暂停，保留 30/117 Understanding、3/115 Refine、1/117 Indexed，新增 ASR 0。新旧成功 Chunk 不同，不认定因果提速或质量改善。见[主 TRD](../design/03-product-reassessment/video-parse-performance-trd.md#16-2026-11-01-续版kimi-parse-推理耗时调查)、[报告](../report/server/kimi-parse-trace-20261101.md)与[devlog](devlog.md#devlog-kimi-timestamp-pairs-20261101)。
+
 排序日期：2026-10-17。
 
 优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：2026-10-12 已取得真实整集完成的耗时收敛里程碑；历史问题、已实施修复与仍待优化的边界按下列日期分别记录。
@@ -1719,7 +1800,7 @@ Codex invocation 包含整个 native agent 执行，不等于一次底层采样�
 
 本轮权重调整的离线验证：后端 Job Repository **32 passed**，TasksPage **18 passed**，覆盖 95% 解析／5% 索引、持久成果计数、未知拓扑及完成后 100%。没有新增真实模型调用、任务重试、服务重启、数据库迁移、commit 或 push；上述 EP03 运行证据来自本轮只读核验的既有任务。
 
-依据：该 Parse Task 的最终 API 快照、ModelUsage／execution_timing 一致快照，以及 `outputs/local-services/api.log` 中 `14:45:27–15:13:43 +0800` 的记录；[Canvas 批读工具](../../agent/utils/context_canvas_tools.py)、[Refine 读取指引](../../agent/video_parse_v2/prompts.py)、[索引版本策略](../../server/service/video_parse_index_coordinator.py)、[ES 就绪验证](../../server/storage/elasticsearch.py)、[执行计时](../../server/service/video_parse.py)、[计时持久化与快照提交](../../server/repository/video_parse.py)、[进度权重](../../server/model/job_progress.py)、[任务汇总](../../server/repository/job.py)。下方历史条目及 B08 中“尚未恢复”的描述保留其采集时点，真实恢复与新集完成的最新结果以上述日期条目为准。
+依据：该 Parse Task 的最终 API 快照、ModelUsage／execution_timing 一致快照，以及 `outputs/local-services/api.log` 中 `14:45:27–15:13:43 +0800` 的记录；[Canvas 批读工具](../../agent/utils/context_canvas_tools.py)、[Refine 读取指引](../../agent/video_parse_v2/prompts.py)、[索引版本策略](../../server/service/video_parse_index_coordinator.py)、[ES 就绪验证](../../server/storage/elasticsearch.py)、[执行计时](../../server/service/video_parse.py)、[计时持久化与快照提交](../../server/repository/video_parse.py)、[进度权重](../../server/model/task_progress.py)、[任务汇总](../../server/repository/job.py)。下方历史条目及 B08 中“尚未恢复”的描述保留其采集时点，真实恢复与新集完成的最新结果以上述日期条目为准。
 
 #### 2026-10-11：Refine 单项读取反复等待原生 PostToolUse，耗尽整次执行预算
 
@@ -2166,6 +2247,8 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 依据：[Codex 通知处理](../../gateway/codex/client.py)、[等待与异常上抛](../../gateway/codex/agent.py)、[Chat 失败收尾](../../server/service/agent_chat.py)、[消息终态持久化](../../server/repository/agent.py)、[两轮 Chat 与计时](../../outputs/verification/mygo-ep04-speaker-review-20261016/comparison-summary.json)、[逐工具记录](../../outputs/verification/mygo-ep04-speaker-review-20261016/chat-replay-original/tool-timeline.json)。
 
 ### B10：正常停服没有解析任务交接，恢复消耗重试且整集收尾受调度阻塞
+
+**11-03 关联恢复进展：** 本次长任务 Consumer 1038 阻塞已修复并接管原 v11 持续推进；具体完成范围与证据统一见 B13 的 PR #30 记录，不因此关闭 B10 的其他历史生命周期问题。
 
 排序日期：2026-10-14。
 
@@ -2665,3 +2748,11 @@ Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐�
 - 现状：TasksPage 的任务列表使用 jobs/list 每 5 秒轮询，工具栏却写着“SSE 实时更新”。上传面板订阅指定 Job SSE 是另一条已实现路径。
 - 修复方向：文案准确说明定期刷新。不要为匹配文案增加当前未实现的 Workspace 级 SSE。
 - 依据：[TasksPage.tsx](../../web/src/features/tasks/TasksPage.tsx)。
+
+### 2026-10-30：任务页混淆当前与历史解析版本
+
+状态：TODO（实现、21 项任务页回归、构建与独立真实 API 预览通过，待合并部署）。旧版本不可重试是既有权限约束，但列表缺少版本区分；新增当前／历史／全部版本筛选，默认只显示最新版本，历史显示替代说明。删除仍是上传聚合粒度，本次不删除任何记录或视频。设计与证据见 [TRD](../design/03-product-reassessment/task-history-filter-trd.md)。
+
+## 迁移后新增问题分析
+
+2026-11-02 起的新问题在此按稳定编号记录完整分析，当前执行状态见 [管理工作台](workbench.html)。既有问题继续在原条目补充有日期的证据。

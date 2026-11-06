@@ -32,7 +32,7 @@ const pendingUpload: UploadSessionView = {
   totalSizeBytes: 10, contentSha256: null, preferredSegmentSizeBytes: 10, totalSegments: 1,
   status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0, missingSegmentNumbers: [0],
   completionStage: null, completionProgress: null, estimatedRemainingMs: null, expiresAt: 100,
-  videoId: null, jobId: null, lastError: null, version: 1, createdAt: 1, updatedAt: 1,
+  videoId: null, lastError: null, version: 1, createdAt: 1, updatedAt: 1,
 };
 
 const initialMessageOptions: AgentMessageOptions = {
@@ -106,7 +106,6 @@ const videoWithoutProgress: VideoSummary = {
   playbackUrl: "/api/videos/content?videoId=video-without-progress",
   playbackUrlExpiresAt: null,
   thumbnail: null,
-  latestJobId: "job-without-ranges",
   lastError: null,
 };
 
@@ -1512,7 +1511,7 @@ describe("application shell", () => {
   it("allows multi-selection and keeps a running answer and its scope when the next selection changes", async () => {
     const secondSeries = { ...apiSeries, seriesId: "second-series", name: "第二部动画" };
     const unreadySeries = { ...apiSeries, seriesId: "unready-series", name: "解析中的动画", status: "INDEXING" as const };
-    const { fetchMock, finishAnswer } = renderApp([apiSeries, secondSeries, unreadySeries]);
+    const { fetchMock, finishAnswer } = renderApp([apiSeries, secondSeries, unreadySeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     await user.click(await screen.findByLabelText("选择检索视频系列"));
     const firstChoice = await screen.findByRole("checkbox", { name: new RegExp(apiSeries.name) });

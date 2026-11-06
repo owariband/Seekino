@@ -1,0 +1,9 @@
+{
+  "task_id": "2a531c4f-2c73-4cc2-adaf-5156edc26236",
+  "source_task_id": "c3970da1-53b7-4cf5-9bb2-15bfa01e9947",
+  "asr_body_equal": true,
+  "diarization_body_equal": true,
+  "new_asr_calls": 0,
+  "asr_sha256": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4",
+  "diarization_sha256": "8875920a4ccd7134fa7597d070346529f59fe5b041e53a4bb527500eaa99cd8c"
+}

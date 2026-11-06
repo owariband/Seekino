@@ -10,7 +10,9 @@ from queue import Empty
 from threading import Event
 from uuid import uuid4
 
+import httpx
 import pytest
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 
 from tests.server.conftest import set_series_parse_status
 from sqlalchemy import delete, event, func, inspect, select, text
@@ -22,7 +24,12 @@ from agent.chat.common.state import AnswerPhase
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.context import _project_stored_search_result
 from agent.chat.video_search.runtime import AgentRuntime
-from gateway.agent_model.errors import ModelInputTooLargeError
+from gateway.agent_model.errors import (
+    ModelFailureError,
+    ModelFailureReason,
+    ModelInputTooLargeError,
+    OpenAIFunctionCallingError,
+)
 from gateway.web_search import WebSearchHit, WebSearcher
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
 from server.api.agent import _agent_message_view
@@ -35,7 +42,8 @@ from server.model.agent import (
     AgentMessage,
 )
 from server.model.video import Series, Video
-from server.model.job import ChunkParseContent, ChunkParseTask, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import ChunkParseTask, VideoParseTask
 from server.model.dto.agentDTO import AgentMessageTimingState, AgentStageTimingState
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
@@ -459,6 +467,8 @@ class _VideoSupervisorModel(_DirectSupervisorModel):
 
 
 class _WebSearcherStub:
+    max_query_chars = 500
+
     def search(self, _query, *, max_results, timeout_seconds):
         assert max_results == 5
         assert timeout_seconds > 0
@@ -501,6 +511,180 @@ def test_direct_supervisor_streams_persisted_prefix_without_replaying_final_text
     assert all(message["status"] == "PROCESSING" for message in snapshots)
     assert not {"answer.evidence", "answer.block", "answer.delta"} & {event["type"] for event in events}
     assert events[-1]["type"] == "answer.completed"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_provider_delta_is_published_and_persisted_at_interval(build_service, cancel, tmp_path, monkeypatch):
+    from tests.agent.chat.test_streaming_delivery import chunk, wire_model
+    from server.model.vo.agentVO import AgentAnswerDeltaView
+
+    entered, release = Event(), Event()
+    monkeypatch.setenv("SEEKINO_CHAT_TRACE_DIR", str(tmp_path / "chat-trace"))
+    clock = [1_000_000_000]
+    def script():
+        yield chunk(delta={"role": "assistant"})
+        yield chunk("正文先到 ")
+        entered.set()
+        assert release.wait(5), "test did not release provider"
+        clock[0] += 1_500_000_000
+        yield chunk("后文完成")
+        yield chunk(delta={}, finish="stop")
+        yield b"data: [DONE]\n\n"
+    model, requests, wire, client = wire_model(script)
+    service, conversation, *_ = build_service(supervisor_model=model,
+        service_kwargs={"monotonic_clock": lambda: clock[0]})
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="你好",
+                                      idempotency_key="provider-stream", stream=True)
+    try:
+        assert entered.wait(5)
+        while (event := execution.next_event(timeout=2))["type"] != "answer.delta":
+            pass
+        assert event["delta"] == "正文先到 " and event["newBlock"] is True
+        assert not {"searchResult", "content", "renderBlocks"} & set(event)
+        assert not execution.future.done()
+        persisted = service.get_message(conversation.conversation_id, tenant_id="local-default",
+                                       message_id=execution.initial.assistant_message.message_id).assistant_message
+        # The first delta lands before the 1 s interval, so the DB is untouched.
+        assert persisted.status == "PROCESSING" and not persisted.content
+        view = AgentAnswerDeltaView.model_validate(event).model_dump(mode="json", by_alias=True)
+        assert view["textStream"]["origin"] == "provider_delta"
+        assert view["textStream"]["serverPublishedMonotonicMs"] >= view["textStream"]["providerReceivedMonotonicMs"]
+        trace = tmp_path / "chat-trace" / view["textStream"]["callId"] / "events.jsonl"
+        assert any(json.loads(line)["event"] == "chat_text_delta" for line in trace.read_text().splitlines())
+        execution.detach()
+        assert not execution.cancellation.is_set()
+        if cancel:
+            service.cancel_message(conversation.conversation_id, tenant_id="local-default", message_id=persisted.message_id)
+    finally:
+        release.set()
+    try:
+        if cancel:
+            with pytest.raises(AgentModelInvocationError):
+                execution.result()
+            completed = service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=persisted.message_id).assistant_message
+            assert completed.content == "正文先到 " and completed.status == "FAILED"
+            assert completed.last_error.code == "AGENT_CANCELLED"
+        else:
+            completed = execution.result().assistant_message
+            assert completed.content == "正文先到 后文完成" and completed.status == "COMPLETED"
+        assert len(requests) == 1 and requests[0]["stream"] and wire.closed
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("outcome", ["complete", "failure", "cancel"])
+def test_server_persists_delta_text_at_interval_and_terminal_boundary(build_service, outcome):
+    import httpx
+    from tests.agent.chat.test_streaming_delivery import chunk, wire_model
+
+    clock = [1_000_000_000]
+    entered, release = Event(), Event()
+
+    def stored():
+        return service.get_message(conversation.conversation_id, tenant_id="local-default",
+            message_id=execution.initial.assistant_message.message_id).assistant_message
+
+    def script():
+        yield chunk(delta={"role": "assistant"})
+        yield chunk("甲")
+        yield chunk("乙")
+        assert stored().content is None
+        clock[0] += 1_500_000_000
+        yield chunk("丙")
+        assert stored().content == "甲乙丙"
+        yield chunk("丁")
+        assert stored().content == "甲乙丙"
+        entered.set()
+        assert release.wait(5)
+        if outcome == "failure":
+            raise httpx.ReadError("provider disconnected with a pending body")
+        if outcome == "complete":
+            clock[0] += 1_500_000_000
+            yield chunk("戊")
+            assert stored().content == "甲乙丙丁戊"
+        yield chunk(delta={}, finish="stop")
+        yield b"data: [DONE]\n\n"
+
+    model, _, _, client = wire_model(script)
+    service, conversation, *_ = build_service(supervisor_model=model,
+        service_kwargs={"monotonic_clock": lambda: clock[0]})
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="你好",
+        idempotency_key="interval-body", stream=True)
+    try:
+        try:
+            assert entered.wait(5)
+            assert stored().status == "PROCESSING"
+            if outcome == "cancel":
+                service.cancel_message(conversation.conversation_id, tenant_id="local-default",
+                    message_id=execution.initial.assistant_message.message_id)
+        finally:
+            release.set()
+        if outcome == "complete":
+            assert execution.result().assistant_message.content == "甲乙丙丁戊"
+        else:
+            with pytest.raises(AgentModelInvocationError):
+                execution.result()
+            assert stored().status == "FAILED"
+            assert stored().content == "甲乙丙丁"
+        events = _collect(execution)
+        deltas = [e for e in events if e["type"] == "answer.delta"]
+        assert deltas and all(not {"searchResult", "content", "renderBlocks"} & set(e) for e in deltas)
+    finally:
+        client.close()
+
+
+def test_server_deltas_before_tools_and_text_of_next_model_call(build_service):
+    from time import monotonic
+    from gateway.model_events import ModelTextDelta
+    from tests.agent.chat.test_supervisor import FakeWebSearcher
+
+    entered, release = Event(), Event()
+    clock = [1_000_000_000]
+
+    class Model(_DirectSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, _prompt, *, tools, handle_text, handle_text_delta, **_kwargs):
+            def text(value, call, sequence):
+                handle_text_delta(ModelTextDelta(value, call, sequence, monotonic(), sequence, 1, True))
+            text("我先", "first", 1)
+            text("查一下。", "first", 2)
+            handle_text("我先查一下。")
+            {tool.name: tool for tool in tools}["search_web"].invoke({"query": "source"})
+            text("结果", "second", 1)
+            entered.set()
+            assert release.wait(5)
+            text("如下。", "second", 2)
+            handle_text("结果如下。")
+
+    service, conversation, *_ = build_service(supervisor_model=Model(), web_searcher=FakeWebSearcher(),
+        service_kwargs={"monotonic_clock": lambda: clock[0]})
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="查一下",
+        idempotency_key="deltas-tools", stream=True)
+    try:
+        assert entered.wait(5)
+        stored = service.get_message(conversation.conversation_id, tenant_id="local-default",
+            message_id=execution.initial.assistant_message.message_id).assistant_message
+        # The tool snapshot persists the prefix; the following "结果" delta has
+        # not crossed the 1 s interval yet.
+        assert stored.content == "我先查一下。"
+        assert next(block for block in stored.render_blocks if block["type"] == "tool")["status"] == "completed"
+    finally:
+        release.set()
+    # Completion appends the web source list after the streamed body.
+    assert execution.result().assistant_message.content.startswith("我先查一下。\n\n结果如下。")
+    events = _collect(execution)
+    deltas = [e for e in events if e["type"] == "answer.delta"]
+    # Collected after completion, so adjacent deltas of one model call are merged in the buffer.
+    assert [e["delta"] for e in deltas] == ["我先查一下。", "结果如下。"]
+    assert [e["callId"] for e in deltas] == ["first", "second"]
+    assert [e["newBlock"] for e in deltas] == [True, True]
+    assert all(not {"searchResult", "content", "renderBlocks"} & set(e) for e in deltas)
+    snapshots = [e for e in events if e["type"] == "answer.snapshot"]
+    assert not any("textStream" in e for e in snapshots)
+    boundary = next(i for i, e in enumerate(events) if e["type"] == "answer.model.completed")
+    assert events[boundary + 1]["type"] == "answer.snapshot"
+    assert events[boundary + 1]["assistantMessage"]["content"] == "我先查一下。"
 
 
 def test_supervisor_prefix_is_readable_before_model_completion_and_survives_disconnect(build_service):
@@ -915,6 +1099,50 @@ def test_playback_uses_current_episode_without_changing_request_idempotency(buil
     _send(service, conversation, key="after-renumbering", series_ids=[series_id], extra_context=context)
     assert seen[-1]["episodeOrder"] == 2
     assert context["playback"]["episodeOrder"] == 99
+
+
+def test_series_context_videos_and_current_video_use_series_episode_addressing(build_service):
+    class CurrentVideoModel(_DirectSupervisorModel):
+        def run_agent(self, prompt, *, handle_text, **_kwargs):
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            current = context["current_video"]
+            assert current["series"] == "Test Series"
+            assert current["seriesDisplayName"] == "Test Series"
+            assert current["episode"] == 1
+            assert current["title"] == "lecture.mp4"
+            assert current["positionSeconds"] == 123_456
+            videos = context["series_context"][0]["videos"]
+            assert {
+                "episodeOrder": 1, "title": "lecture.mp4",
+                "parseStatus": "PENDING", "hasOutline": False,
+            } in videos
+            assert all("videoId" not in video for video in videos)
+            assert context["series_context"][0]["displayName"] == "Test Series"
+            assert "当前打开的视频：Test Series 第 1 集《lecture.mp4》" in context["video_scope_description"]
+            handle_text("当前视频答疑。")
+
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=CurrentVideoModel(), realtime_runtime=object(),
+    )
+    video_id = str(uuid4())
+    with repository._session_factory.begin() as session:
+        series = session.query(Series).one()
+        series_id = series.id
+        session.add(Video(
+            id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
+            filename="lecture.mp4", source_uri="source/lecture.mp4",
+            hash="a" * 64, size_bytes=1, duration_ms=300_000,
+            upload_status="UPLOADED", parse_status="PENDING",
+            upload_progress=100, parse_progress=0,
+        ))
+    playback = {
+        "seriesId": series_id, "videoId": video_id, "episodeOrder": 1,
+        "positionSeconds": 123_456,
+    }
+    completed = _send(
+        service, conversation, series_ids=[series_id], extra_context={"playback": playback},
+    )
+    assert completed.assistant_message.content == "当前视频答疑。"
 
 
 @pytest.mark.parametrize("include_other_unready", [False, True])
@@ -1993,6 +2221,24 @@ def test_query_agent_receives_series_transcript_language_hint(build_service):
     assert "Lexical 通道不会翻译 Query" in query.prompts[-1]
 
 
+@pytest.mark.parametrize("display_name,expected", [
+    (None, "Test Series"),
+    ("乐队资料", "乐队资料"),
+])
+def test_series_context_reports_display_name_without_changing_the_name_key(
+    build_service, display_name, expected,
+):
+    service, conversation, _retrieval, repository, query, *_ = build_service()
+    with repository._session_factory.begin() as session:
+        session.scalar(select(Series)).display_name = display_name
+
+    _send(service, conversation)
+
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+    assert context["series_context"][0]["name"] == "Test Series"
+    assert context["series_context"][0]["displayName"] == expected
+
+
 def test_read_only_message_recovery_by_user_assistant_or_request_key(build_service):
     service, conversation, retrieval, *_ = build_service()
     result = _send(service, conversation)
@@ -2788,6 +3034,89 @@ def test_codex_connection_error_fails_before_deadline_and_publishes_terminal_eve
     assert events[-1]["error"] == asdict(failed.last_error)
     assert "answer.completed" not in {event["type"] for event in events}
     assert query.prompts == [] and chat.prompts == []
+
+
+def _network_failure() -> OpenAIFunctionCallingError:
+    """An exhausted Chat first-SSE reconnect, whose cause chain mixes timeouts and connections."""
+    connection = ModelFailureError(
+        "Chat completion stream read failed", reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
+    )
+    connection.__cause__ = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body",
+    )
+    timeout = ModelFailureError(
+        "No first SSE event within 15 seconds", reason=ModelFailureReason.MODEL_TIMEOUT,
+    )
+    timeout.__cause__ = connection
+    error = OpenAIFunctionCallingError(
+        "deepseek request failed for model deepseek-flash",
+        reason=ModelFailureReason.MODEL_NETWORK_ERROR,
+    )
+    error.__cause__ = timeout
+    return error
+
+
+def _stream_drop() -> OpenAIFunctionCallingError:
+    error = OpenAIFunctionCallingError(
+        "deepseek request failed for model deepseek-flash",
+        reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
+    )
+    error.__cause__ = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body",
+    )
+    return error
+
+
+@pytest.mark.parametrize(("kind", "expected"), [
+    (
+        "rate_limit",
+        "模型暂时不可用，错误：429 Too Many Requests（You've reached your 5-hour usage limit.）",
+    ),
+    ("timeout", "模型暂时不可用，错误：请求超时"),
+    ("connection", "模型暂时不可用，错误：无法连接模型服务"),
+    ("network", "模型暂时不可用，错误：网络错误（多次重连未收到模型响应）"),
+    ("stream_drop", "模型暂时不可用，错误：模型服务中途断开了响应"),
+    ("unknown", "模型调用失败，错误：RuntimeError"),
+])
+def test_agent_model_error_exposes_provider_reason(
+    build_service, monkeypatch, kind, expected,
+):
+    request = httpx.Request("POST", "https://api.example.test/v1/chat/completions")
+    provider_error = {
+        "rate_limit": lambda: RateLimitError(
+            "rate limited",
+            response=httpx.Response(429, request=request),
+            body={"error": {"message": "You've reached your 5-hour usage limit."}},
+        ),
+        "timeout": lambda: APITimeoutError(request=request),
+        "connection": lambda: APIConnectionError(request=request),
+        "network": lambda: _network_failure(),
+        "stream_drop": lambda: _stream_drop(),
+        "unknown": lambda: RuntimeError("private upstream failure"),
+    }[kind]()
+    service, conversation, *_ = build_service()
+
+    def fail(*_args, **_kwargs):
+        raise AgentModelInvocationError("Supervisor model failed") from provider_error
+
+    monkeypatch.setattr(service._runtime, "kick", fail)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default",
+        content="你好", idempotency_key="provider-failure", stream=True,
+    )
+    events = _collect(execution)
+    with pytest.raises(AgentModelInvocationError):
+        execution.result()
+
+    failed = service.get_message(
+        conversation.conversation_id, tenant_id="local-default",
+        message_id=execution.initial.assistant_message.message_id,
+    ).assistant_message
+    assert failed.status == "FAILED"
+    assert failed.last_error.code == "AGENT_MODEL_ERROR"
+    assert failed.last_error.message == expected
+    assert events[-1]["type"] == "answer.failed"
+    assert events[-1]["error"] == asdict(failed.last_error)
 
 
 def test_manual_cancel_is_scoped_and_stops_before_the_next_model(build_service):

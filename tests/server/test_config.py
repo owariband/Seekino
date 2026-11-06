@@ -59,6 +59,27 @@ def _clean_seekino_environment(monkeypatch) -> None:
     )
 
 
+def test_retired_video_call_limit_is_not_in_new_settings_or_snapshots(monkeypatch):
+    _clean_seekino_environment(monkeypatch)
+    monkeypatch.setenv("SEEKINO_MAX_MODEL_CALLS", "retired-setting")
+    settings = ServerSettings.from_environment()
+    assert not hasattr(settings.parse, "max_model_calls")
+    config = default_video_parse_v2_config()
+    assert "max_model_calls" not in config.execution.model_dump()
+
+
+@pytest.mark.parametrize("name", ["max_model_calls", "maxModelCalls"])
+def test_legacy_upload_profile_discards_video_call_limit(name):
+    from server.config.parse_profile import ParseExecutionConfig
+
+    config = ParseExecutionConfig.model_validate({
+        "request_timeout_seconds": 60, "max_attempts": 3, name: 1,
+    })
+    assert "max_model_calls" not in config.model_dump()
+    assert "maxModelCalls" not in config.model_dump(by_alias=True)
+    assert config.max_attempts == 3
+
+
 def test_video_summary_limits_have_independent_environment_settings(monkeypatch):
     _clean_seekino_environment(monkeypatch)
     monkeypatch.setenv("SEEKINO_SUMMARIZE_MAXIMUM_READ_CHARS", "6000")
@@ -74,11 +95,28 @@ def test_video_summary_limits_have_independent_environment_settings(monkeypatch)
 @pytest.mark.parametrize("values", [
     {"concurrency": 0}, {"maximum_read_chars": True}, {"max_retries": -1},
     {"execution_timeout_seconds": float("inf")}, {"maximum_result_bytes": 0},
+    {"maximum_digest_chars": 0}, {"maximum_digest_chars": True},
     {"retry_initial_delay_seconds": 30, "retry_max_delay_seconds": 10},
 ])
 def test_video_summary_rejects_unbounded_or_invalid_limits(values):
     with pytest.raises(ValueError):
         VideoSummarizeConfig(**values)
+
+
+def test_old_summary_snapshot_without_digest_limit_falls_back_to_default():
+    # Retried tasks may carry a frozen snapshot predating maximum_digest_chars.
+    assert VideoSummarizeConfig().maximum_digest_chars == 300_000
+    assert VideoSummarizeConfig(**{"max_retries": 2}).maximum_digest_chars == 300_000
+
+
+def test_video_summarize_maximum_outline_sections_is_positive_integer(monkeypatch):
+    _clean_seekino_environment(monkeypatch)
+    assert VideoSummarizeConfig().maximum_outline_sections == 30
+    monkeypatch.setenv("SEEKINO_SUMMARIZE_MAXIMUM_OUTLINE_SECTIONS", "12")
+    assert ServerSettings.from_environment().summarize.maximum_outline_sections == 12
+    for value in (0, -1, True, 1.5):
+        with pytest.raises(ValueError):
+            VideoSummarizeConfig(maximum_outline_sections=value)
 
 
 def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) -> None:
@@ -620,6 +658,34 @@ def test_request_generation_uses_the_es_version_boundary():
         validate_video_parse_schedule(config.model_copy(update={
             "indexing": config.indexing.model_copy(update={"index_generation": MAX_INDEX_GENERATION + 1}),
         }))
+
+
+@pytest.mark.parametrize(("adapter", "provider", "expected_scope"), [
+    ("whisperx", "local", "video"),
+    ("openai_audio", "whisper.cpp", "video"),
+    ("openai_audio", "other-provider", "chunk"),
+])
+def test_audio_defaults_freeze_scope_and_explicit_chunk_scope_round_trips(monkeypatch, adapter, provider, expected_scope):
+    from gateway.config import OpenAIAudioSourceConfig, WhisperXSourceConfig
+    _clean_seekino_environment(monkeypatch)
+    settings, gateway = ServerSettings.from_environment(), load_config()
+    binding = gateway.resolve_model_binding("transcription").model_copy(update={"source": "local_asr"})
+    source = (WhisperXSourceConfig(alignment_models={"en": "/align"}) if adapter == "whisperx"
+              else OpenAIAudioSourceConfig(provider=provider, base_url="http://127.0.0.1:18842/v1", api_key_env="KEY"))
+    gateway = gateway.model_copy(update={
+        "model_sources": {**gateway.model_sources, "local_asr": source},
+        "normalized_models": {**gateway.normalized_models, "transcription": binding},
+    })
+    profile = ParseConfig.from_defaults(
+        runtime=settings.parse, gateway=gateway, upload=settings.upload, images=settings.images,
+        embedding_model=settings.video_embedding_model, embedding_dimensions=settings.text_vector_dimensions,
+        embedding_fps=settings.video_embedding_fps,
+    )
+    assert profile.asr.scope == expected_scope
+    assert profile.to_video_parse_v2().models.asr.model_dump().get("scope", "chunk") == expected_scope
+    old = profile.model_copy(update={"asr": profile.asr.model_copy(update={"scope": "chunk"})})
+    assert "scope" not in old.model_dump()["asr"]
+    assert "scope" not in old.to_video_parse_v2().models.asr.model_dump()
 
 
 def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):

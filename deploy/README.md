@@ -214,15 +214,14 @@ Git 忽略不等于删除或备份；媒体仍须和 MySQL 做配套备份。Doc
 
 | 能力 | 必需文件与关联依赖 | 恢复依据 |
 |---|---|---|
-| 查询改写 | `outputs/models/Qwen3-8B-GGUF-local/b968826d9c46dd6066d109eabc6255188de91218/Qwen3-8B-Q4_K_M.gguf`，约 4.68 GiB；匹配的 `llama-server` | 同目录 `manifest.json` 记录官方 Qwen/Qwen3-8B revision、转换器版本、量化参数及 SHA-256；详见 [查询改写实验记录](../evals/benchmark/intent_routing/README.md) |
+| 查询改写 | 无本地权重；改用 `models.query_rewriter` 绑定（默认 `deepseek-flash` API） | 不再依赖本机 Qwen3-8B llama-server；历史权重与实验见 [查询改写实验记录](../evals/benchmark/intent_routing/README.md) |
 | ASR | `outputs/local-models/whisper/ggml-large-v3-turbo.bin`，约 1.51 GiB；`outputs/tools/whisper.cpp/build/bin/whisper-server` | 本次 whisper.cpp 源码为 `48f628a`；保留版本，按其 `models/download-ggml-model.sh` 获取 `large-v3-turbo`，用 [启动脚本](../scripts/local_whisper.py) 读取当前模型绑定 |
 | 声纹 | `outputs/local-models/campplus/campplus_cn_common.bin`，约 27 MiB；`outputs/local-models/campplus/3D-Speaker` 中的 `speakerlab` 和 `speaker` 可选依赖（extra） | [CAM++ 适配器](../gateway/local/campplus.py) 校验权重和源码 SHA；恢复相同实现，修正 `PYTHONPATH` 与 YAML 中的 `checkpoint_path`，不能只复制权重 |
 
-查询改写的本机启动记录在 `outputs/local-services/query-hook/runtime.json`。
-恢复时使用其中的 command 语义，不复用旧 PID 和 `/opt/homebrew`、`/Users/...` 路径：
-端口 `18841`、alias `seekino-qwen3-text-8b-rewriter`、context `8192`、parallel `1`、
-threads `4`、seed `42`、`enable_thinking=false`；GPU offload 参数按新机器后端设置。
+查询改写现在使用 `models.query_rewriter` 绑定（默认 `deepseek-flash` API），不再启动本机 `18841` 的 Qwen3-8B llama-server。
 Jev 还需要 `.env.local` 中的 `OPENROUTER_JEV_API_KEY`。
+
+**2026-10-31 更新：** 本机活动 ASR 已切换到 `ggml-large-v3-turbo-q5_0.bin`（574,041,195 字节），上表 ASR FP16 文件大小属于原部署记录。当前运行 PR #18 工作树的启动脚本，显式指定主工作区配置／binary／模型目录并加 `--require-metal`；命令和控制记录见[接线报告](../docs/report/gateway/local/whisper-metal-activation-20261031.md)。旧 WhisperX 来源仅保留给冻结任务，不是新任务默认。
 
 Whisper 使用当前配置的 `http://127.0.0.1:18842/v1`，可在依赖与二进制准备好后运行：
 

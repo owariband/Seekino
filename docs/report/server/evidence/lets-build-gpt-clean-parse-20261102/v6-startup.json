@@ -1,0 +1,29 @@
+{
+  "task_id": "72d0cdc1-f7f4-453e-b64e-8480239ab243",
+  "version": 6,
+  "previous_failed_task_id": "87f63b1f-1f7a-4d1f-bb05-fed572790a52",
+  "started_at": 1793606775.528517,
+  "code_commit": "f3a3d43e0f3c91cfa4c3743cad684564bc521d52",
+  "chunk_count": 117,
+  "interval_count": 115,
+  "source_duration_ms": 6979873,
+  "parse_config_identical_to_v5": true,
+  "execution": {
+    "parse_concurrency": 10,
+    "refine_concurrency": 10,
+    "index_concurrency": 1,
+    "parse_execution_timeout_seconds": 1800.0,
+    "refine_execution_timeout_seconds": 1800.0,
+    "index_execution_timeout_seconds": 1800.0,
+    "max_retry_count": 2,
+    "retry_initial_delay_seconds": 30.0,
+    "retry_max_delay_seconds": 900.0
+  },
+  "new_asr_calls": 0,
+  "asr_body_equal": true,
+  "diarization_body_equal": true,
+  "asr_sha256": "1910697d9ea39ce5c671a3be13327ebda4518dd310c61152f1f9877adcf597c4",
+  "diarization_sha256": "8875920a4ccd7134fa7597d070346529f59fe5b041e53a4bb527500eaa99cd8c",
+  "raw_directory": "/Users/hypnos/workspace/agent/Seekino/outputs/verification/lets-build-gpt-clean-parse-v6-20261102",
+  "validation_boundary": "New API version created and audio reuse verified; full-course parsing is not yet complete."
+}

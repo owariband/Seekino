@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -15,18 +16,20 @@ class Character(ContractModel):
     aliases: list[str] = Field(default_factory=list)
 
 
+class SeriesBackground(ContractModel):
+    format: Literal["markdown", "json"] = "markdown"
+    content: str
+
+
 class SeriesCreateRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     transcript_language_hint: str | None = Field(default=None, max_length=64)
-    important_extra_data: dict | None = None
+    important_extra_data: SeriesBackground | None = None
+    # Read-only legacy data: an empty list is accepted for older clients,
+    # non-empty values are rejected by LibraryService.create_series.
     character_bible: list[Character] = Field(default_factory=list)
-
-
-class SeriesBackground(ContractModel):
-    format: Literal["markdown", "json"] = "markdown"
-    content: str
 
 
 class SeriesUpdateRequest(ContractModel):
@@ -63,12 +66,12 @@ class VideoSummaryState:
     upload_progress: int
     parse_progress: int | None
     index_status: VideoIndexStatus
-    latest_job_id: str | None
     last_error: str | None
     keyframe_uris: tuple[str, ...] = ()
     display_name: str | None = None
     description: str | None = None
     cover_uri: str | None = None
+    has_outline: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,3 +111,73 @@ class SeriesState:
     videos: tuple[VideoSummaryState, ...] = ()
     pending_uploads: tuple[UploadSessionState, ...] = ()
     representative_video: VideoSummaryState | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VideoChunkState:
+    video_chunk_id: str
+    sequence_no: int
+    start_seconds: int
+    end_seconds: int
+    chunk_media_ref: str
+    analysis_window_media_ref: str
+
+
+@dataclass(kw_only=True)
+class VideoData:
+    id: str
+    series_id: str
+    episode_order: int
+    upload_sequence: int
+    filename: str
+    source_uri: str
+    proxy_uri: str | None = None
+    hash: str
+    size_bytes: int
+    duration_ms: int
+    upload_status: str
+    parse_status: str
+    upload_progress: int
+    parse_progress: int
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class VideoChunkData:
+    id: str
+    video_id: str
+    sequence_no: int
+    start_ms: int
+    end_ms: int
+    window_start_ms: int
+    window_end_ms: int
+    chunk_media_ref: str
+    analysis_window_media_ref: str
+    transcript: list[dict[str, Any]] = field(default_factory=list)
+    baseline_visual_caption: str | None = None
+    keyframe_uris: list[str | dict[str, Any]] = field(default_factory=list)
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None
+
+
+@dataclass(kw_only=True)
+class SeriesData:
+    id: str
+    tenant_id: str
+    name: str
+    display_name: str | None = None
+    description: str | None = None
+    transcript_language_hint: str | None = None
+    status: str
+    visibility: str = "private"
+    important_extra_data: dict[str, Any] | None = None
+    character_bible: list[dict[str, Any]] = field(default_factory=list)
+    create_time: int | None = None
+    create_date: datetime | None = None
+    update_time: int | None = None
+    update_date: datetime | None = None

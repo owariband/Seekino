@@ -9,8 +9,10 @@ from sqlalchemy import select
 
 from agent.video_summarize.state import VideoSummaryResult, VideoSummarySubmission
 from server.constants.parse import RUNTIME_DETAIL_KEY
-from server.model.job import ChunkParseContent, VideoParseTask
+from server.model.parse_content import ChunkParseContent
+from server.model.task import VideoParseTask
 from server.model.video import Video
+from server.repository import video_parse_content as result_store
 from server.service.video_parse_errors import VideoParseLeaseLostError, VideoParseSnapshotConflictError
 from tests.server.test_video_parse_repository import (
     NOW, _prepare, _commit_all_chunks, _refinement_inputs, _finish_ready_indexes,
@@ -41,9 +43,15 @@ def _state(factory, task_id):
         return deepcopy(session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["summarize"])
 
 
+def _saved_summary(factory, task_id):
+    with factory() as session:
+        return result_store.load_result(session, task_id, "display")
+
+
 def _result(*, order=3):
     return VideoSummaryResult(VideoSummarySubmission(
         title="迷路", description="两人终于在街角相遇。", episode_order=order,
+        outline=[{"start_ms": 0, "end_ms": 1000, "title": "相遇", "summary": "两人终于在街角相遇。"}],
         evidence=[{"field": "description", "chunk_parse_task_id": "source", "quote": "相遇"}],
     ), None, ({"inspection_id": "receipt", "frames": [{"requested_timestamp_ms": 1000}]},))
 
@@ -116,11 +124,34 @@ def test_publish_metadata_and_episode_order_atomically_and_preserve_runtime_sibl
     with factory() as session:
         video = session.get(Video, lease.video_id)
         assert (video.episode_order, video.upload_sequence) == (3, 3)
-        assert (video.display_name, video.description, video.cover_uri) == ("迷路", "两人终于在街角相遇。", "artifact://cover.jpg")
+        assert video.display_name is None and video.description is None and video.cover_uri is None
         assert session.get(VideoParseTask, task_id).detail[RUNTIME_DETAIL_KEY]["other_phase"] == {"new": True}
     assert _state(factory, task_id)["status"] == "COMPLETE"
-    assert _state(factory, task_id)["frame_receipts"] == list(_result().frame_receipts)
+    saved = _saved_summary(factory, task_id)
+    assert saved["title"] == "迷路"
+    assert saved["title_kind"] == "official"
+    assert saved["description"] == "两人终于在街角相遇。"
+    assert saved["episode_order"] == 3
+    assert saved["cover_uri"] == "artifact://cover.jpg"
+    assert saved["evidence"] == _result().submission.model_dump(mode="json")["evidence"]
+    assert saved["frame_receipts"] == list(_result().frame_receipts)
+    assert not {"result", "frame_receipts"}.intersection(_state(factory, task_id))
     assert _claim(repo) is None
+
+
+def test_publish_persists_outline_with_both_audit_keys(repository):
+    factory, _queue, repo, task_id, _video_lease = _ready(repository)
+    lease = _claim(repo)
+    assert repo.complete_summary(lease, _result(), cover_uri=None, now=AT)
+    with factory() as session:
+        metadata = result_store.get_metadata(session, task_id)
+        assert metadata.detail["display"]["committed_lease_version"] == lease.lease_version
+        assert metadata.detail["outline"]["committed_lease_version"] == lease.lease_version
+        assert metadata.detail["outline"]["source_fingerprint"] == lease.source_fingerprint
+        assert "completed_at_ms" in metadata.detail["outline"]
+        saved = result_store.load_result(session, task_id, "outline")
+        assert saved == {"sections": [
+            {"start_ms": 0, "end_ms": 1000, "title": "相遇", "summary": "两人终于在街角相遇。"}]}
 
 
 def test_occupied_episode_keeps_existing_order_and_saves_other_metadata(repository):
@@ -135,8 +166,9 @@ def test_occupied_episode_keeps_existing_order_and_saves_other_metadata(reposito
     assert repo.complete_summary(lease, _result(), cover_uri=None, now=AT)
     with factory() as session:
         video = session.get(Video, lease.video_id)
-        assert video.episode_order == 1 and video.display_name == "迷路"
+        assert video.episode_order == 1 and video.display_name is None
     assert _state(factory, task_id)["episode_order_conflict"]
+    assert _saved_summary(factory, task_id)["title"] == "迷路"
 
 
 def test_generated_title_is_published_with_provenance_without_changing_episode_order(repository):
@@ -144,15 +176,17 @@ def test_generated_title_is_published_with_provenance_without_changing_episode_o
     lease = _claim(repo)
     result = VideoSummaryResult(VideoSummarySubmission(
         title="街角的重逢", title_kind="generated", description="两人终于在街角相遇。",
+        outline=[{"start_ms": 0, "end_ms": 1000, "title": "重逢", "summary": "两人终于在街角相遇。"}],
         evidence=[{"field": "title", "chunk_parse_task_id": "source", "quote": "在街角相遇"},
                   {"field": "description", "chunk_parse_task_id": "source", "quote": "在街角相遇"}],
     ), None)
     assert repo.complete_summary(lease, result, cover_uri=None, now=AT)
     with factory() as session:
         video = session.get(Video, lease.video_id)
-        assert video.display_name == "街角的重逢"
+        assert video.display_name is None
         assert video.episode_order == 1
-    saved = _state(factory, task_id)["result"]
+    saved = _saved_summary(factory, task_id)
+    assert saved["title"] == "街角的重逢"
     assert saved["title_kind"] == "generated"
     assert saved["evidence"] == result.submission.model_dump(mode="json")["evidence"]
 

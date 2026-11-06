@@ -1,0 +1,46 @@
+{
+  "get": [
+    {
+      "status_code": 200,
+      "ms": 1694.7
+    },
+    {
+      "status_code": 200,
+      "ms": 2225.5
+    },
+    {
+      "status_code": 200,
+      "ms": 2259.5
+    },
+    {
+      "status_code": 200,
+      "ms": 1374.2
+    },
+    {
+      "status_code": 200,
+      "ms": 2109.1
+    }
+  ],
+  "list": [
+    {
+      "status_code": 200,
+      "ms": 2653.6
+    },
+    {
+      "status_code": 200,
+      "ms": 5133.4
+    },
+    {
+      "status_code": 200,
+      "ms": 3753.4
+    },
+    {
+      "status_code": 200,
+      "ms": 4202.4
+    },
+    {
+      "status_code": 200,
+      "ms": 2830.9
+    }
+  ]
+}

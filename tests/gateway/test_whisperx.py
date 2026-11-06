@@ -38,6 +38,8 @@ def local_asr(tmp_path, monkeypatch):
         assert samples.shape == (16000,)
         assert str(samples.dtype) == "float32"
         calls.append(("transcribe", kwargs))
+        for percent in (1, 2, 6, 100):
+            kwargs["progress_callback"](percent)
         return raw
 
     def load_model(*args, **kwargs):
@@ -52,6 +54,8 @@ def local_asr(tmp_path, monkeypatch):
         assert segments is raw["segments"]
         assert (model, metadata, device) == ("aligner", {"language": "en"}, "cpu")
         calls.append(("align", kwargs))
+        for percent in (10, 50, 100):
+            kwargs["progress_callback"](percent)
         return aligned
 
     module = SimpleNamespace(load_model=load_model, load_align_model=load_align_model, align=align)
@@ -123,7 +127,10 @@ def test_gateway_reuses_local_model_and_alignment_across_chunk_handles(local_asr
         "language_code": "en", "device": "cpu",
         "model_name": env.source.alignment_models["en"], "model_cache_only": True,
     })
-    assert env.calls[3] == ("align", {"interpolate_method": "nearest", "return_char_alignments": False})
+    assert callable(env.calls[3][1]["progress_callback"])
+    assert {key: value for key, value in env.calls[3][1].items() if key != "progress_callback"} == {
+        "interpolate_method": "nearest", "return_char_alignments": False,
+    }
     words = result["segments"][0]["words"]
     assert words[0] == env.aligned["segments"][0]["words"][0]
     assert words[1] == {"word": "2026"}
@@ -255,7 +262,8 @@ def test_timeout_rejects_late_native_result_before_alignment(local_asr, monkeypa
         model.close()
 
 
-def test_timeout_applies_while_waiting_for_shared_runtime(local_asr):
+def test_timeout_applies_while_waiting_for_shared_runtime(local_asr, caplog):
+    caplog.set_level("INFO", logger="gateway.local.whisperx")
     binding = local_asr.binding.model_copy(update={"request_timeout_seconds": 0.01})
     runtime = WhisperXRuntime(binding.model, local_asr.source)
     model = WhisperXTranscriptionModel(binding, local_asr.source, runtime=runtime)
@@ -268,6 +276,11 @@ def test_timeout_applies_while_waiting_for_shared_runtime(local_asr):
         runtime._lock.release()
         model.close()
         runtime.close()
+    records = _progress_records(caplog)
+    assert records[-1]["phase"] == "waiting_for_runtime"
+    assert records[-1]["status"] == "failed"
+    assert records[-1]["error_type"] == "TimeoutError"
+    assert records[-1]["phase_percent"] is None
 
 
 @pytest.mark.parametrize("fields", [
@@ -300,3 +313,100 @@ def test_yaml_selects_whisperx_through_formal_model_binding_without_ml_install(t
             ))
     finally:
         client.close()
+
+
+def _progress_records(caplog):
+    import json
+    return [json.loads(record.getMessage().split("summary=", 1)[1])
+            for record in caplog.records if "event=local_asr_progress summary=" in record.getMessage()]
+
+
+def test_progress_correlates_calls_and_distinguishes_transcription_from_alignment(local_asr, caplog):
+    from gateway.usage import capture_model_usage, model_call_context
+    caplog.set_level("INFO", logger="gateway.local.whisperx")
+    calls = []
+    model = WhisperXTranscriptionModel(local_asr.binding, local_asr.source)
+    with capture_model_usage(calls.append), model_call_context({"run_id": "course-run", "stage": "asr"}):
+        result = model.transcribe(local_asr.audio)
+    model.close()
+    records = _progress_records(caplog)
+    assert result["segments"][0]["words"][1] == {"word": "2026"}
+    assert {row["call_id"] for row in records} == {calls[0].call_id}
+    assert all(row["context"] == {"run_id": "course-run", "stage": "asr"} for row in records)
+    assert [row["phase"] for row in records if row["status"] == "phase_started"] == [
+        "read_audio", "load_model", "transcribe", "load_aligner", "align", "normalize",
+    ]
+    transcript = [row for row in records if row["phase"] == "transcribe" and row["status"] == "progress"]
+    assert [row["phase_percent"] for row in transcript] == [1, 6, 100]
+    assert all(row["progress_basis"] == "upstream_segments" for row in transcript)
+    alignment_start = next(row for row in records if row["phase"] == "align" and row["status"] == "phase_started")
+    assert alignment_start["phase_percent"] is None
+    assert alignment_start["audio_duration_seconds"] == 1
+    assert alignment_start["language"] == "en"
+    assert records[-1]["status"] == "completed" and records[-1]["phase"] == "normalize"
+    assert sum(row["status"] == "completed" for row in records) == 1
+    assert "Hello 2026" not in caplog.text and str(local_asr.audio) not in caplog.text
+
+
+def test_progress_records_alignment_failure_without_completed_call(local_asr, caplog):
+    caplog.set_level("INFO", logger="gateway.local.whisperx")
+    def fail(*args, **kwargs):
+        kwargs["progress_callback"](25)
+        raise RuntimeError("private transcript must not appear in progress logs")
+    local_asr.module.align = fail
+    model = WhisperXTranscriptionModel(local_asr.binding, local_asr.source)
+    with pytest.raises(RuntimeError):
+        model.transcribe(local_asr.audio)
+    model.close()
+    records = _progress_records(caplog)
+    assert records[-1]["status"] == "failed" and records[-1]["phase"] == "align"
+    assert records[-1]["phase_percent"] == 25
+    assert records[-1]["error_type"] == "RuntimeError"
+    assert not any(row["status"] == "completed" for row in records)
+    assert "private transcript" not in caplog.text
+
+
+def test_progress_heartbeat_continues_without_upstream_callbacks_and_stops(local_asr, monkeypatch, caplog):
+    import logging
+    from threading import Event, Thread, enumerate as threads
+    from gateway.local import whisperx as adapter
+    caplog.set_level("INFO", logger="gateway.local.whisperx")
+    monkeypatch.setattr(adapter, "_PROGRESS_INTERVAL_SECONDS", 0.01)
+    seen, release = Event(), Event()
+    errors = []
+
+    class Observe(logging.Handler):
+        def emit(self, record):
+            import json
+            row = json.loads(record.getMessage().split("summary=", 1)[1])
+            if row["phase"] == "transcribe" and row["status"] == "heartbeat":
+                assert row["phase_percent"] is None
+                seen.set()
+
+    def transcribe(*args, **kwargs):
+        assert release.wait(2)
+        return local_asr.raw
+
+    local_asr.module.load_model = lambda *args, **kwargs: SimpleNamespace(transcribe=transcribe)
+    observer = Observe()
+    adapter._logger.addHandler(observer)
+    model = WhisperXTranscriptionModel(local_asr.binding, local_asr.source)
+
+    def run():
+        try:
+            model.transcribe(local_asr.audio)
+        except BaseException as error:
+            errors.append(error)
+
+    worker = Thread(target=run)
+    worker.start()
+    try:
+        assert seen.wait(1)
+    finally:
+        release.set()
+        worker.join(2)
+        model.close()
+        adapter._logger.removeHandler(observer)
+    assert not worker.is_alive() and not errors
+    call_id = _progress_records(caplog)[0]["call_id"]
+    assert not any(t.name == f"whisperx-progress-{call_id[:8]}" for t in threads())

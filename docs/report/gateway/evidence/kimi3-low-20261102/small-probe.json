@@ -1,0 +1,75 @@
+{
+  "purpose": "text-only control; excluded from parse completion and latency metrics",
+  "model": "k3",
+  "reasoning_effort": "low",
+  "max_output_tokens": 512,
+  "outcome": "completed",
+  "summary": "ok",
+  "elapsed_seconds": 10.276,
+  "phases": [
+    {
+      "event": "connection.connect_tcp.started",
+      "elapsed_seconds": 0.892
+    },
+    {
+      "event": "connection.connect_tcp.complete",
+      "elapsed_seconds": 1.975
+    },
+    {
+      "event": "connection.start_tls.started",
+      "elapsed_seconds": 1.975
+    },
+    {
+      "event": "connection.start_tls.complete",
+      "elapsed_seconds": 2.37
+    },
+    {
+      "event": "http11.send_request_headers.started",
+      "elapsed_seconds": 2.37
+    },
+    {
+      "event": "http11.send_request_headers.complete",
+      "elapsed_seconds": 2.37
+    },
+    {
+      "event": "http11.send_request_body.started",
+      "elapsed_seconds": 2.37
+    },
+    {
+      "event": "http11.send_request_body.complete",
+      "elapsed_seconds": 2.37
+    },
+    {
+      "event": "http11.receive_response_headers.started",
+      "elapsed_seconds": 2.37
+    },
+    {
+      "event": "http11.receive_response_headers.complete",
+      "elapsed_seconds": 9.031
+    },
+    {
+      "event": "http11.receive_response_body.started",
+      "elapsed_seconds": 9.031
+    },
+    {
+      "event": "http11.response_closed.started",
+      "elapsed_seconds": 10.276
+    },
+    {
+      "event": "http11.response_closed.complete",
+      "elapsed_seconds": 10.276
+    },
+    {
+      "event": "http11.receive_response_body.failed",
+      "elapsed_seconds": 10.276
+    }
+  ],
+  "usage": [
+    {
+      "status": "completed",
+      "model": "k3",
+      "input_tokens": 182,
+      "output_tokens": 49
+    }
+  ]
+}

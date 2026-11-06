@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import logging
+import os
 from copy import deepcopy
-from collections.abc import Callable
+from collections import deque
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import asdict, replace
-from queue import Empty, Full, Queue
-from threading import Event, Lock
-from time import monotonic_ns
+from http import HTTPStatus
+from queue import Empty
+from threading import Condition, Event, Lock, RLock
+from time import monotonic, monotonic_ns
 from uuid import uuid4
+
+from httpx import RemoteProtocolError
+from openai import APIConnectionError, APITimeoutError
 
 from agent.chat.common.errors import (
     AgentContextBudgetError, AgentExecutionTimeoutError,
@@ -20,6 +26,8 @@ from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.output import video_range_sources
 from engine.rag.contracts import VideoChunkEvidence
 from gateway.agent_model.contracts import SupervisorSessionContext
+from gateway.agent_model.errors import ModelFailureReason
+from gateway.model_diagnostics import model_diagnostic_scope
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
@@ -51,6 +59,8 @@ from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService
 
 _logger = logging.getLogger(__name__)
+
+_EVENT_BUFFER_MAXSIZE = 256
 
 
 class AgentAttachmentInputUnavailableError(RuntimeError):
@@ -134,15 +144,16 @@ class AgentMessageExecution:
         self.initial = initial
         self.cancellation = Event()
         self.future: Future[AgentMessageSendState] | None = None
-        self._events: Queue[dict | None] = Queue(maxsize=256)
+        self._events: deque[dict | None] = deque()
         self._lock = Lock()
+        self._events_ready = Condition(self._lock)
         self._attached = stream
         self._sequence = 0
         self.reference_context: dict | None = None
         self.timing = timing
 
     def publish(self, event: dict) -> None:
-        with self._lock:
+        with self._events_ready:
             if not self._attached:
                 return
             self._sequence += 1
@@ -153,13 +164,14 @@ class AgentMessageExecution:
                 "sequence": self._sequence,
                 "occurredAt": now_unix_time_ms(),
             }
-            try:
-                self._events.put_nowait(payload)
-            except Full:
+            if self._coalesces_with_tail(payload):
+                self._events_ready.notify()
+                return
+            if len(self._events) >= _EVENT_BUFFER_MAXSIZE:
                 # Stop buffering for a slow consumer; the execution still commits.
                 self._attached = False
                 self._drain()
-                self._events.put_nowait({
+                self._events.append({
                     "type": "answer.interrupted",
                     "conversationId": payload["conversationId"],
                     "messageId": payload["messageId"],
@@ -167,37 +179,78 @@ class AgentMessageExecution:
                     "occurredAt": payload["occurredAt"],
                     "error": {"code": "STREAM_INTERRUPTED", "message": "连接未能及时接收回答，请通过会话快照恢复。"},
                 })
-                self._events.put_nowait(None)
+                self._events.append(None)
+                self._events_ready.notify_all()
+                return
+            self._events.append(payload)
+            self._events_ready.notify()
+
+    def _coalesces_with_tail(self, payload: dict) -> bool:
+        if not self._events:
+            return False
+        tail = self._events[-1]
+        if not isinstance(tail, dict):
+            return False
+        if payload.get("type") == "answer.snapshot" and tail.get("type") == "answer.snapshot":
+            # A snapshot carries the whole answer, so only the newest unsent one
+            # matters. Replacing the tail keeps every other event in order.
+            self._events[-1] = payload
+            return True
+        # Adjacent deltas of the same model call merge into one event so a slow
+        # consumer does not buffer hundreds of tiny frames; a newBlock True delta
+        # opens a new block and must not be folded into the previous one.
+        if (
+            payload.get("type") == "answer.delta"
+            and tail.get("type") == "answer.delta"
+            and payload.get("callId") == tail.get("callId")
+            and not payload.get("newBlock")
+        ):
+            tail["delta"] += payload["delta"]
+            tail["textStream"] = payload["textStream"]
+            tail["sequence"] = payload["sequence"]
+            tail["occurredAt"] = payload["occurredAt"]
+            return True
+        if (
+            payload.get("type") == "answer.reasoning.delta"
+            and tail.get("type") == "answer.reasoning.delta"
+            and payload.get("callId") == tail.get("callId")
+        ):
+            tail["delta"] += payload["delta"]
+            tail["sequence"] = payload["sequence"]
+            tail["occurredAt"] = payload["occurredAt"]
+            return True
+        return False
 
     def finish(self) -> None:
-        with self._lock:
-            if self._attached:
-                try:
-                    self._events.put_nowait(None)
-                except Full:
-                    # The final event is already buffered. A consumer can also
-                    # detect normal task completion once its queue is drained.
-                    pass
+        with self._events_ready:
+            if not self._attached:
+                return
+            if len(self._events) >= _EVENT_BUFFER_MAXSIZE:
+                # The final event is already buffered. A consumer can also
+                # detect normal task completion once its queue is drained.
+                return
+            self._events.append(None)
+            self._events_ready.notify()
 
     def next_event(self, timeout: float = 1) -> dict | None:
-        try:
-            return self._events.get(timeout=timeout)
-        except Empty:
-            if self.future is not None and self.future.done():
-                return None
-            raise
+        deadline = monotonic() + timeout
+        with self._events_ready:
+            while not self._events:
+                if self.future is not None and self.future.done():
+                    return None
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise Empty
+                self._events_ready.wait(remaining)
+            return self._events.popleft()
 
     def detach(self) -> None:
-        with self._lock:
+        with self._events_ready:
             self._attached = False
             self._drain()
 
     def _drain(self) -> None:
-        while True:
-            try:
-                self._events.get_nowait()
-            except Empty:
-                return
+        self._events.clear()
 
     def result(self) -> AgentMessageSendState:
         assert self.future is not None
@@ -811,12 +864,17 @@ class AgentChatService:
         evidence_hit_count = 0
         snapshot_count = 0
         partial_content = ""
+        # Latest delta body awaiting its next interval persist; snapshots and the
+        # terminal events already persist the full answer, so they clear it.
+        pending_text_blocks: list[dict] | None = None
+        last_text_persist_ns = self._monotonic_clock()
         timer = execution.timing
         assert timer is not None
         terminal_timing: AgentMessageTimingState | None = None
         committed_result: AgentMessageSendState | None = None
+        event_lock = RLock()
 
-        def apply_runtime_event(event):
+        def apply_runtime_event(event, *, allow_cancelled_snapshot: bool = False):
             nonlocal last_phase, evidence_hit_count, snapshot_count, partial_content
             event_type = event["type"]
             if event_type == "answer.progress":
@@ -833,7 +891,7 @@ class AgentChatService:
                 return
             elif event_type == "answer.snapshot":
                 with self._lock:
-                    if execution.cancellation.is_set():
+                    if execution.cancellation.is_set() and not allow_cancelled_snapshot:
                         raise AgentModelInvocationError("Agent execution cancelled")
                     search_result = deepcopy(event["searchResult"])
                     legacy_blocks = (
@@ -848,6 +906,10 @@ class AgentChatService:
                     execution.publish({
                         "type": "answer.snapshot",
                         **_message_pair(AgentMessageSendState(initial.user_message, assistant)),
+                        **({"textStream": {
+                            **event["textStream"],
+                            "serverPublishedMonotonicMs": monotonic_ns() / 1_000_000,
+                        }} if event.get("textStream") is not None else {}),
                     })
                 snapshot_count += 1
                 partial_content = assistant.content or ""
@@ -864,11 +926,52 @@ class AgentChatService:
                 return
             execution.publish(event)
 
+        def persist_pending_text():
+            # Flush the interval-buffered delta body so a failure path still has
+            # the latest visible prefix; snapshots and terminals already do this.
+            nonlocal pending_text_blocks, last_text_persist_ns
+            if pending_text_blocks is None:
+                return
+            # Content is derived from the render blocks by the repository.
+            self._repository.checkpoint_assistant_message(
+                assistant_id, render_blocks=pending_text_blocks, now=self._clock(),
+            )
+            pending_text_blocks = None
+            last_text_persist_ns = self._monotonic_clock()
+
         def publish_runtime(event):
             # Intermediate message delivery observes execution; it does not own
             # the Tool result. Full snapshots and final commit can recover it.
+            nonlocal partial_content, pending_text_blocks
             try:
-                apply_runtime_event(event)
+                with event_lock:
+                    if execution.cancellation.is_set():
+                        raise AgentModelInvocationError("Agent execution cancelled")
+                    if event["type"] == "answer.reasoning.delta":
+                        # Reasoning is display-only; never persisted into the answer.
+                        execution.publish({
+                            "type": "answer.reasoning.delta", "callId": event["callId"],
+                            "delta": event["delta"],
+                        })
+                        return
+                    if event["type"] == "answer.delta":
+                        partial_content = event["content"]
+                        pending_text_blocks = event["renderBlocks"]
+                        if self._monotonic_clock() - last_text_persist_ns >= 1_000_000_000:
+                            persist_pending_text()
+                        execution.publish({
+                            "type": "answer.delta", "callId": event["callId"],
+                            "delta": event["delta"], "newBlock": event["newBlock"],
+                            "textStream": {
+                                **event["textStream"],
+                                "serverPublishedMonotonicMs": monotonic_ns() / 1_000_000,
+                            },
+                        })
+                        return
+                    # Snapshots and terminal events persist the full answer, so the
+                    # buffered delta body is already covered once they are applied.
+                    pending_text_blocks = None
+                    apply_runtime_event(event)
             except (AgentConflictError, AgentMessageNotFoundError) as exc:
                 execution.cancellation.set()
                 raise AgentModelInvocationError("Agent message is no longer active") from exc
@@ -961,14 +1064,16 @@ class AgentChatService:
             ]
             series_context = deepcopy([{
                 "seriesId": item.series_id, "name": item.name,
+                "displayName": item.display_name or item.name,
                 "description": item.description,
                 "transcriptLanguageHint": item.transcript_language_hint,
                 "importantExtraData": item.important_extra_data,
                 "characterBible": item.character_bible,
                 "videos": [{
                     "episodeOrder": video.episode_order,
-                    "originalFilename": video.original_filename,
+                    "title": (video.display_name or "").strip() or video.original_filename,
                     "parseStatus": video.parse_status,
+                    "hasOutline": video.has_outline,
                 } for video in item.videos],
             } for item in series])
 
@@ -979,6 +1084,7 @@ class AgentChatService:
                 ])
 
             extra_context = deepcopy(initial.user_message.extra_context)
+            current_video = None
             if runtime.realtime_enabled and isinstance(extra_context, dict):
                 playback = extra_context.get("playback")
                 if isinstance(playback, dict):
@@ -986,10 +1092,24 @@ class AgentChatService:
                     # Episode order may change after submission. Preserve the original
                     # request for idempotency and give the Agent the current identity.
                     playback["episodeOrder"] = video.episode_order
+                    current_series = next(
+                        (item for item in series if item.series_id == video.series_id), None
+                    )
+                    current_video = {
+                        "series": current_series.name if current_series is not None else None,
+                        "seriesDisplayName": (
+                            (current_series.display_name or current_series.name)
+                            if current_series is not None else None
+                        ),
+                        "episode": video.episode_order,
+                        "title": (video.display_name or "").strip() or video.original_filename,
+                        "positionSeconds": playback.get("positionSeconds"),
+                    }
 
             inputs = RunInputs(
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
                 tenant_id=tenant_id, series_ids=list(initial.user_message.series_ids),
+                current_video=current_video,
                 user_message=initial.user_message.content or "",
                 attachments=[dict(ref) for ref in initial.user_message.attachments],
                 image_urls=[image_uri_to_data_url(ref["mediaUri"], resolve=resolve_attachment)
@@ -1041,7 +1161,9 @@ class AgentChatService:
                 )
                 usage = self._parse_usage.capture_chat(context) if self._parse_usage is not None else nullcontext()
                 # This scope belongs to the executor thread that invokes the models.
-                with model_call_context(context), tracing, usage:
+                with model_call_context(context), tracing, usage, model_diagnostic_scope(
+                    os.environ.get("SEEKINO_CHAT_TRACE_DIR"),
+                ):
                     final = runtime.kick(
                         inputs, load_video_context=load_video_context,
                         session_context=session_context, **run_kwargs,
@@ -1111,6 +1233,12 @@ class AgentChatService:
                 )
                 return committed_result
             try:
+                with event_lock:
+                    # Keep the last persisted prefix, including on explicit cancellation.
+                    persist_pending_text()
+            except Exception:
+                _logger.exception("Could not persist pending Agent text message_id=%s", assistant_id)
+            try:
                 runtime.discard_turn(conversation_id, assistant_id)
             except Exception:
                 _logger.warning(
@@ -1131,7 +1259,7 @@ class AgentChatService:
                 public_message = "已停止生成回答。"
             elif isinstance(exc, AgentModelInvocationError):
                 public_code = "AGENT_MODEL_ERROR"
-                public_message = "这次对话未能完成，请稍后重试。"
+                public_message = _agent_model_failure_message(exc)
             else:
                 public_code = "PROCESSING_FAILED"
                 public_message = "这次对话未能完成，请稍后重试。"
@@ -1190,6 +1318,76 @@ class AgentChatService:
         finally:
             for runtime in self._runtimes:
                 runtime.close()
+
+
+def _agent_model_failure_message(error: BaseException) -> str:
+    """Expose a bounded provider reason without leaking request details."""
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    for current in chain:
+        status_code = getattr(current, "status_code", None)
+        if not isinstance(status_code, int) or isinstance(status_code, bool):
+            continue
+        try:
+            reason = f"{status_code} {HTTPStatus(status_code).phrase}"
+        except ValueError:
+            reason = str(status_code)
+        detail = _provider_message(current)
+        return f"模型暂时不可用，错误：{reason}" + (f"（{detail}）" if detail else "")
+    for current in chain:
+        if getattr(current, "reason", None) == ModelFailureReason.MODEL_NETWORK_ERROR:
+            return "模型暂时不可用，错误：网络错误（多次重连未收到模型响应）"
+    for current in chain:
+        if isinstance(current, RemoteProtocolError):
+            return "模型暂时不可用，错误：模型服务中途断开了响应"
+    for current in chain:
+        reason = getattr(current, "reason", None)
+        name = type(current).__name__.lower()
+        if (
+            reason == ModelFailureReason.MODEL_TIMEOUT
+            or reason == ModelFailureReason.MODEL_GATEWAY_TIMEOUT
+            or isinstance(current, (APITimeoutError, TimeoutError))
+            or "timeout" in name
+        ):
+            return "模型暂时不可用，错误：请求超时"
+    for current in chain:
+        reason = getattr(current, "reason", None)
+        name = type(current).__name__.lower()
+        if (
+            reason == ModelFailureReason.MODEL_CONNECTION_ERROR
+            or isinstance(current, (APIConnectionError, ConnectionError))
+            or "connect" in name
+        ):
+            return "模型暂时不可用，错误：无法连接模型服务"
+    return f"模型调用失败，错误：{type(chain[-1]).__name__}"
+
+
+def _provider_message(error: BaseException) -> str:
+    """Read only the provider's human message, never headers or the request."""
+    body = getattr(error, "body", None)
+    message: object = None
+    if isinstance(body, Mapping):
+        nested = body.get("error")
+        if isinstance(nested, Mapping):
+            message = nested.get("message")
+        elif isinstance(nested, str):
+            message = nested
+        if not isinstance(message, str):
+            message = body.get("message")
+    if not isinstance(message, str):
+        candidate = getattr(error, "message", None)
+        if isinstance(candidate, str) and not candidate.lstrip().startswith(
+            ("Error code:", "{", "["),
+        ):
+            message = candidate
+    if not isinstance(message, str):
+        return ""
+    return " ".join(message.split())[:200]
 
 
 def _message_pair(result: AgentMessageSendState) -> dict:

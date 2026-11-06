@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .parse_control import is_paused
+
 import hashlib
 import json
 from copy import deepcopy
@@ -15,7 +17,8 @@ from sqlalchemy.orm import Session
 from agent.video_summarize.state import SummaryChunk, VideoSummarizeInput, VideoSummaryResult
 
 from ..constants.parse import RUNTIME_DETAIL_KEY
-from ..model.dto.jobDTO import VideoParseTaskData, VideoSummarizeLease
+from ..repository import video_parse_content as result_store
+from ..model.dto.taskDTO import VideoParseTaskData, VideoSummarizeLease
 from ..repository import video_parse_task as task_store
 from ..repository import video_parse_chunk as chunk_store
 from ..repository import video_parse_interval as interval_store
@@ -53,7 +56,7 @@ def current_summary_lease(task: VideoParseTaskData | None, lease: VideoSummarize
 def _source(session: Session, task: VideoParseTaskData, *, episode_order: int | None = None,
             lock_background: bool = False):
     runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY, {})
-    if (task.is_deleted or runtime.get("accepted") is not True
+    if (task.is_deleted or is_paused(task) or runtime.get("accepted") is not True
             or task_store.latest_video_task_id(session, task.video_id) != task.id):
         return None
     video = task_store.get_video(session, task.video_id)
@@ -198,10 +201,31 @@ def complete_summary(session: Session, library: LibraryRepository, lease: VideoS
             source = _source(session, task, episode_order=previous_order, lock_background=True)
             if source is None or source[2] != lease.source_fingerprint:
                 raise VideoParseSnapshotConflictError("Video summary sources changed before publication")
-            library.update_video_metadata(lease.video_id, session=session, display_name=result.title,
-                                          description=result.description, cover_uri=cover_uri)
+            stored = result_store.get_metadata(session, task.id, for_update=True)
+            result_detail = deepcopy(stored.detail if stored else {})
+            audit = {"source_fingerprint": lease.source_fingerprint,
+                     "committed_lease_version": lease.lease_version,
+                     "completed_at_ms": datetime_to_unix_time_ms(now)}
+            result_detail["display"] = audit
+            result_detail["outline"] = audit
+            now_ms = datetime_to_unix_time_ms(now)
+            result_store.save_result(session, task.id, field="display",
+                                     result={"title": result.submission.title,
+                                             "title_kind": result.submission.title_kind,
+                                             "description": result.submission.description,
+                                             "episode_order": result.submission.episode_order,
+                                             "cover_uri": cover_uri,
+                                             "evidence": [item.model_dump(mode="json")
+                                                          for item in result.submission.evidence],
+                                             "frame_receipts": list(result.frame_receipts)},
+                                     detail=result_detail, now_ms=now_ms)
+            result_store.save_result(session, task.id, field="outline",
+                                     result={"sections": [section.model_dump(mode="json")
+                                                         for section in result.outline]},
+                                     detail=result_detail, now_ms=now_ms)
+            state.pop("result", None)
+            state.pop("frame_receipts", None)
             state.update(status="COMPLETE", lease_owner=None, lease_expire_time_ms=None, last_error=None,
-                         result=result.submission.model_dump(mode="json"), frame_receipts=list(result.frame_receipts),
                          applied_episode_order=video.episode_order, episode_order_conflict=conflict,
                          finished_at_ms=datetime_to_unix_time_ms(now))
             _save(session, task, state, now)

@@ -51,7 +51,7 @@ UploadProvider ───── 3 文件并行、3 分片 worker、暂停恢复�
 - 问画面：Agent 对话、结构化视频片段窗口、逐条选择理由、原始证据、上下文与原视频跳时播放。
 - 资料库：Series 创建/选择、Episode 状态、上传入口。
 - 传输案台：批次总进度、每个视频独立进度、最多 3 文件并行；刷新页面后可重新选择同名同大小的原文件，只补服务端缺失分片，合并中的会话可直接继续合并。
-- 解析任务：阶段时间线、进度、Chunk checkpoint、用量、错误与自动重试状态；以 UploadSession 为整任务删除粒度，FAILED 主任务可手动重试并沿用检查点。
+- 解析任务默认显示每个视频的最新解析版本，可切换历史任务或全部版本；历史卡显示替代说明且不提供修改操作。阶段时间线、进度、Chunk checkpoint、用量、错误与自动重试状态；以 UploadSession 为整任务删除粒度，FAILED 主任务可手动重试并沿用检查点。
 - 设置：白天/黑夜主题、API 连接信息与数据边界说明。
 
 观看首页和系列页使用服务返回的 Summary 推荐封面；未观看时保持静态图，观看后显示上次播放位置。没有 Summary 图片时回退原片预览。观看历史沿用按身份隔离的浏览器本地存储，尚不跨设备同步，封面预览不写入观看历史。
@@ -131,3 +131,9 @@ npm test
 npm run build
 npm run test:e2e
 ```
+
+## Chat 流式验收采证
+
+正常 Chat 请求通过 `seekino:chat-delivery` 浏览器事件区分发出、实时正文接收、可见 DOM 观察、模型轮次完成及持久终态。DOM 观察使用提交后的下一动画帧，并不声称精确测得物理屏幕绘制。记录不包含正文；失败/中断只有终止耗时，没有成功 TT。
+
+单独浏览器记录保留候选 `firstProviderTextReceivedMs`，`fttMs` 为 null；结合独立 `SEEKINO_CHAT_TRACE_DIR` 中的原始请求/SSE，由 `scripts/verify_chat_streaming_trace.py` 核验身份与完成前交付后才填写有效 FTT。旧服务、非流式和缺少来源的快照不能计为真实首字。采集方法、模拟与真实验证边界见 [实施报告](../docs/report/server/chat-streaming-20261101.md)。

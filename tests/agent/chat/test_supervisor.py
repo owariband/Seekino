@@ -103,9 +103,10 @@ class SuccessiveVideoRuntime(FakeVideoRuntime):
 
 
 class FakeWebSearcher:
-    def __init__(self, *, fail=False):
+    def __init__(self, *, fail=False, max_query_chars=500):
         self.calls = []
         self.fail = fail
+        self.max_query_chars = max_query_chars
 
     def search(self, query, *, max_results, timeout_seconds):
         self.calls.append((query, max_results, timeout_seconds))
@@ -420,7 +421,7 @@ def test_supervisor_shows_opening_and_running_tool_before_search_finishes():
     assert result.content.startswith(opening + "\n\nThe verified explanation.")
     assert "Official page" not in json.dumps(finished)
     assert "https://example.org/source" not in json.dumps(finished)
-    assert "简短" in model.prompts[0] and "内部推理" in model.prompts[0]
+    assert "不写「我先看一下」" in model.prompts[0] and "内部推理" in model.prompts[0]
 
 
 @pytest.mark.parametrize("tool_name", ["search_web", "query_video"])
@@ -650,6 +651,97 @@ def test_supervisor_reads_source_evidence_and_owns_final_selection():
     assert result.video_result.hits[0].selection_reason.summary == "Supervisor checked the original text evidence."
     assert video.last_result.retrieval_result.hits[0].evidence.start_seconds == 10
     assert not hasattr(video.last_result, "canvas")
+
+
+def _outline_video_runtime():
+    """Video runtime whose AgentRuntime resolves outline chunks and their evidence."""
+
+    video = FakeVideoRuntime()
+
+    def video_outline(videos, *, tenant_id, series_ids):
+        return {"videos": [{
+            "series": "Course", "episode": 1, "available": True,
+            "title": "课程标题", "description": "课程简介",
+            "sections": [
+                {"start_ms": 0, "end_ms": 10_000, "title": "开场", "summary": "老师介绍课程目标。",
+                 "video_chunk_ids": ["chunk-1"]},
+            ],
+        }]}
+
+    def outline_evidence(video_chunk_id, *, tenant_id):
+        return _hit(video_chunk_id).evidence
+
+    video.runtime = AgentRuntime(
+        video.query, video.retrieval.search, retrieval_channel="lexical",
+        video_outline=video_outline, outline_evidence=outline_evidence,
+    )
+    return video
+
+
+def test_supervisor_reads_outline_chunk_and_submits_it_into_the_final_result():
+    model = FakeSupervisorModel(
+        calls=("get_video_outline", "read_retrieval_evidence", "submit_video_item"),
+        arguments=(
+            {"videos": [{"series": "Course", "episode": 1}]},
+            {"video_chunk_id": "chunk-1"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
+             "claim": "Read outline chunk source evidence."},
+        ),
+        answer="The outline chunk is verified and submitted.",
+    )
+    result = _runtime(model, video=_outline_video_runtime()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert all("error" not in receipt for receipt in model.tool_results)
+    assert [hit.candidate.video_chunk_id for hit in result.video_result.hits] == ["chunk-1"]
+    assert result.video_result.hits[0].selection_reason.summary == "Read outline chunk source evidence."
+    selected = next(block for block in result.video_result.render_blocks if block.type == "video")
+    assert (selected.start_seconds, selected.end_seconds) == (11, 19)
+
+
+def test_supervisor_cannot_submit_an_outline_chunk_without_reading_its_evidence():
+    model = FakeSupervisorModel(
+        calls=("get_video_outline", "submit_video_item"),
+        arguments=(
+            {"videos": [{"series": "Course", "episode": 1}]},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.011, "end_seconds": 0.019,
+             "claim": "Submitted without reading."},
+        ),
+        answer="The outline chunk cannot be submitted without reading its evidence.",
+    )
+    result = _runtime(model, video=_outline_video_runtime()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert model.tool_results[1]["error"]["code"] == "UNKNOWN_ITEM"
+    assert "read_retrieval_evidence" in model.tool_results[1]["error"]["retry_hint"]
+    assert result.video_result is None
+
+
+def test_supervisor_rejects_outline_chunk_submission_outside_its_evidence():
+    model = FakeSupervisorModel(
+        calls=("get_video_outline", "read_retrieval_evidence", "submit_video_item"),
+        arguments=(
+            {"videos": [{"series": "Course", "episode": 1}]},
+            {"video_chunk_id": "chunk-1"},
+            {"video_chunk_id": "chunk-1", "start_seconds": 0.021, "end_seconds": 0.022,
+             "claim": "Outside the outline chunk evidence."},
+        ),
+        answer="The requested range is outside the chunk evidence.",
+    )
+    result = _runtime(model, video=_outline_video_runtime()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert model.tool_results[2]["error"]["code"] == "INVALID_VIDEO_RANGE"
+    assert result.video_result is None
+
+
+def test_supervisor_prompt_allows_read_outline_submission_and_hides_tool_failures():
+    model = FakeSupervisorModel()
+    _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    prompt = model.prompts[0]
+    assert ("read_retrieval_evidence 可读取大纲 Chunk 的源证据，读取后即可作为视频片段提交；"
+            "仅凭大纲摘要不能提交。") in prompt
+    assert "工具报错、调用限制和内部字段名不写进给用户的回答，换用其他工具继续即可。" in prompt
 
 
 def test_successful_searches_accumulate_evidence_and_trace_while_failed_search_preserves_previous_evidence():
@@ -1007,7 +1099,37 @@ def test_supervisor_streams_text_and_video_at_their_actual_submission_positions(
     assert snapshots[-1]["searchResult"] == result.video_result.model_dump(mode="json", by_alias=True)
     assert not {"answer.block", "answer.delta", "answer.evidence"} & {event["type"] for event in events}
     assert "Grounded answer." not in "\n".join(event["content"] for event in snapshots)
-    assert "在需要插入视频卡的位置调用 submit_video_item" in model.prompts[0]
+    assert "先写这一条的正文，紧接着调用 submit_video_item 提交它的视频卡" in model.prompts[0]
+    assert "正文和小标题都不再写时间码" in model.prompts[0]
+    assert "claim 是视频卡标题" in model.prompts[0]
+
+
+def test_supervisor_prompt_names_current_video_and_series_without_internal_ids():
+    inputs = _inputs(series_ids=["series"])
+    inputs["current_video"] = {
+        "series": "Course", "seriesDisplayName": "机器学习", "episode": 3,
+        "title": "梯度下降", "positionSeconds": 100,
+    }
+    model = FakeSupervisorModel()
+    _runtime(model).kick(inputs, load_video_context=lambda: [])
+
+    context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
+    assert context["current_video"] == inputs["current_video"]
+    assert "当前打开的视频：机器学习 第 3 集《梯度下降》" in context["video_scope_description"]
+    prompt = model.prompts[0]
+    assert "指代解析" in prompt
+    assert "「这个视频/这一集/刚才/现在」指当前打开的视频" in prompt
+    assert "「系列显示名 第 N 集《标题》」" in prompt
+    assert "不得写出任何内部 id" in prompt
+
+
+def test_supervisor_prompt_routes_series_questions_to_get_series_overview():
+    model = FakeSupervisorModel()
+    _runtime(model).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    prompt = model.prompts[0]
+    assert "用户询问系列/课程整体内容（如「这个系列讲了什么」）时，先调用 get_series_overview" in prompt
+    assert "get_series_overview 的各集标题与简介来自视频摘要" in prompt
+    assert "多个系列时按系列分别组织，用显示名称称呼系列" in prompt
 
 
 def test_supervisor_live_card_revisions_and_removals_keep_the_text_positions():
@@ -1930,7 +2052,7 @@ def test_provider_gets_initial_background_captions_and_updated_warm_turn(tmp_pat
         _completion(content="Next turn explanation."),
     ])
     adapter = OpenAIAgentModel(
-        "text-model", base_url="https://unused.invalid", api_key="test", client=client,
+        "text-model", base_url="https://unused.invalid", api_key="test", client=client, stream=False,
         request_timeout_seconds=30, provider_name="test", max_output_tokens=1000,
     )
     model = DeepAgentsSupervisorModel(
@@ -2085,6 +2207,103 @@ def test_current_video_tool_is_not_offered_without_playback_context():
     )
     runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
     assert "understand_current_video" not in model.prompts[0]
+
+
+class _RealtimeEvidenceStub:
+    """Realtime runtime that returns one evidence chunk and never a retrieval hit."""
+
+    def __init__(self):
+        self.calls = []
+
+    def kick(self, runtime_inputs, **kwargs):
+        self.calls.append((runtime_inputs, kwargs))
+        return SimpleNamespace(
+            frames=(),
+            context=SimpleNamespace(request=SimpleNamespace(anchor_ms=90_123)),
+            as_dict=lambda **kwargs: {
+                "summary": "讲师正在解释概率系统。",
+                "chunks": [], "frames": [], "visual_summary": "", "partial": False,
+                "omitted_evidence": False,
+            },
+        )
+
+
+def _realtime_runtime(model, realtime):
+    return SupervisorRuntime(
+        FakeVideoRuntime(), model, FakeWebSearcher(), realtime_runtime=realtime,
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+    )
+
+
+def _watch_inputs():
+    inputs = _inputs()
+    inputs["extra_context"] = {"playback": {"videoId": "video", "positionSeconds": 90_123}}
+    return inputs
+
+
+def test_watch_turn_with_realtime_evidence_offers_no_video_card_tools():
+    realtime = _RealtimeEvidenceStub()
+
+    class Model:
+        model_name = "text-model"
+        supports_vision_input = False
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            available = {tool.name: tool for tool in tools}
+            assert "understand_current_video" in available
+            assert "submit_video_item" not in available
+            assert "remove_video_item" not in available
+            receipt = json.loads(available["understand_current_video"].invoke({"query": "现在在讲什么？"}))
+            assert "error" not in receipt
+            assert receipt["summary"] == "讲师正在解释概率系统。"
+            handle_text("现在讲的是概率系统，[回看 01:00](seek://90.0) 可定位原句。")
+
+    runtime = _realtime_runtime(Model(), realtime)
+    result = runtime.kick(_watch_inputs(), load_video_context=lambda: [])
+
+    assert result.content == "现在讲的是概率系统，[回看 01:00](seek://90.0) 可定位原句。"
+    assert result.video_result is None
+    assert len(realtime.calls) == 1
+
+
+def test_normal_chat_with_series_scope_still_registers_video_card_tools():
+    class Model:
+        model_name = "text-model"
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            available = {tool.name for tool in tools}
+            assert {"submit_video_item", "remove_video_item"} <= available
+            handle_text("Direct answer.")
+
+    result = _runtime(Model()).kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    assert result.content == "Direct answer."
+
+
+def test_realtime_prompt_section_contains_delivery_length_and_no_internal_terms_rules():
+    class Model:
+        model_name = "text-model"
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            self.prompt = prompt
+            handle_text("Answer.")
+
+    model = Model()
+    runtime = _realtime_runtime(model, _RealtimeEvidenceStub())
+    runtime.kick(_watch_inputs(), load_video_context=lambda: [])
+
+    prompt = model.prompt
+    # Realtime evidence is delivered as time-code links, never via submit_video_item.
+    assert "当前视频的证据一律以正文中的纯文本时间码交付" in prompt
+    assert "不要写成 Markdown 链接或网址" in prompt
+    assert "submit_video_item 只接受本轮检索工具返回的 video_chunk_id" in prompt
+    # Failed card submission must not be described as "no playable clip".
+    assert "不要对用户说没有可播放片段" in prompt
+    # Length and sentence limits, with sources inline as time-code links.
+    assert "用户要求简短或限定句数时" in prompt
+    assert "不另起一段罗列，也不得为缩短而删掉来源" in prompt
+    # Internal evidence terms and status codes must not leak into user-visible text.
+    assert "都是内部取证术语，不得写入对用户的回答" in prompt
 
 
 def test_supervisor_direct_lookup_uses_atomic_tools_without_query_or_old_graph():
@@ -2267,3 +2486,150 @@ def test_query_batch_does_not_multiply_a_smaller_model_allowance():
     )
     assert model.tool_results[0]["error"]["code"] == "QUERY_BUDGET_EXCEEDED"
     assert video.calls == []
+
+
+@pytest.mark.parametrize("provider,limit", [("ddgs", 500), ("deepseek", 128)])
+def test_web_schema_and_execution_use_selected_provider_limit(provider, limit):
+    from pydantic import ValidationError
+    from agent.chat.supervisor import VideoSearchArguments
+    from gateway.config import WebSearchConfig
+    from gateway.web_search import WebSearcher
+    selected = WebSearcher(WebSearchConfig(provider=provider))
+    web = FakeWebSearcher(max_query_chars=selected.max_query_chars)
+    model = FakeSupervisorModel(calls=("search_web", "search_web"), queries=("界" * limit, "界" * (limit + 1)))
+    runtime = _runtime(model, web=web)
+    schema = runtime._web_search_arguments
+    assert schema.model_json_schema()["properties"]["query"]["maxLength"] == limit
+    assert schema(query="界" * limit).query == "界" * limit
+    with pytest.raises(ValidationError):
+        schema(query="界" * (limit + 1))
+    assert VideoSearchArguments(query="界" * 500).query == "界" * 500
+    runtime.kick(_inputs(), load_video_context=lambda: [])
+    assert len(web.calls) == 1 and web.calls[0][0] == "界" * limit
+    assert model.tool_results[1]["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_web_auth_failure_is_non_retryable_tool_feedback():
+    class UnauthorizedWebSearcher(FakeWebSearcher):
+        def search(self, *args, **kwargs):
+            raise WebSearchError("DeepSeek search returned HTTP 401", retryable=False)
+    model = FakeSupervisorModel(calls=("search_web",), answer="Search is unavailable.")
+    result = _runtime(model, web=UnauthorizedWebSearcher()).kick(_inputs(), load_video_context=lambda: [])
+    assert model.tool_results[0]["error"]["code"] == "WEB_SEARCH_FAILED"
+    assert model.tool_results[0]["error"]["retryable"] is False
+    assert result.content == "Search is unavailable."
+
+
+def test_streaming_deltas_reassemble_to_the_final_markdown_and_blocks():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+
+            def delta(text, call, sequence):
+                handle_text_delta(ModelTextDelta(text, call, sequence, monotonic(), sequence, 1, True))
+
+            delta("First", "call-1", 1)
+            delta(" paragraph.", "call-1", 2)
+            handle_text("First paragraph.")
+            delta("Second", "call-2", 1)
+            delta(" paragraph.", "call-2", 2)
+            handle_text("Second paragraph.")
+
+    events = []
+    result = _runtime(Model()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+
+    assert result.content == "First paragraph.\n\nSecond paragraph."
+    deltas = [event for event in events if event["type"] == "answer.delta"]
+    # A fresh markdown block has no separator; a continuation after an existing
+    # markdown block carries the "\n\n" separator and never opens a new block.
+    assert [event["delta"] for event in deltas if event["callId"] == "call-1"] == ["First", " paragraph."]
+    assert [event["newBlock"] for event in deltas if event["callId"] == "call-1"] == [True, False]
+    assert [event["delta"] for event in deltas if event["callId"] == "call-2"] == ["\n\nSecond", " paragraph."]
+    assert [event["newBlock"] for event in deltas if event["callId"] == "call-2"] == [False, False]
+    assert [block["type"] for block in result.render_blocks] == ["markdown"]
+    assert result.render_blocks[0]["markdown"] == result.content
+    assert "".join(event["delta"] for event in deltas).replace("\n\n", "") == "First paragraph.Second paragraph."
+
+
+def test_streaming_delta_after_a_card_opens_a_new_markdown_block():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+            available = {tool.name: tool for tool in tools}
+            available["query_video"].invoke({"query": "find the cup"})
+
+            def delta(text, call, sequence):
+                handle_text_delta(ModelTextDelta(text, call, sequence, monotonic(), sequence, 1, True))
+
+            delta("Before.", "call-1", 1)
+            handle_text("Before.")
+            available["submit_video_item"].invoke({
+                "video_chunk_id": "chunk-1", "start_seconds": 0.012, "end_seconds": 0.018,
+                "claim": "Card.",
+            })
+            delta("After.", "call-2", 1)
+            handle_text("After.")
+
+    events = []
+    result = _runtime(Model()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [], emit=events.append,
+    )
+
+    assert result.content == "Before.\n\nAfter."
+    deltas = [event for event in events if event["type"] == "answer.delta"]
+    after = [event for event in deltas if event["callId"] == "call-2"]
+    assert [event["delta"] for event in after] == ["After."]
+    assert [event["newBlock"] for event in after] == [True]
+    assert [block["type"] for block in result.render_blocks] == ["tool", "markdown", "video", "markdown"]
+    assert result.render_blocks[1]["markdown"] == "Before."
+    assert result.render_blocks[3]["markdown"] == "After."
+
+
+def test_streaming_delta_enforces_the_markdown_limit_before_publishing():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+            handle_text_delta(ModelTextDelta("x" * 20_001, "call", 1, monotonic(), 1, 1, True))
+
+    events = []
+    with pytest.raises(AgentModelInvocationError) as raised:
+        _runtime(Model()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+    assert "20000 characters" in str(raised.value.__cause__)
+    assert [event for event in events if event["type"] == "answer.delta"] == []
+
+
+def test_streaming_web_url_tail_is_held_back_and_masked_only_at_completion():
+    from gateway.model_events import ModelTextDelta
+
+    class Model(FakeSupervisorModel):
+        supports_text_deltas = True
+
+        def run_agent(self, prompt, *, tools, handle_text, handle_text_delta, **kwargs):
+            from time import monotonic
+            available = {tool.name: tool for tool in tools}
+            available["search_web"].invoke({"query": "source"})
+            parts = ["Source [ref](ht", "tps:/", "/example.org/source", ") and https://unverified.invalid/end."]
+            for index, part in enumerate(parts, 1):
+                handle_text_delta(ModelTextDelta(part, "call", index, monotonic(), index, 1, True))
+            handle_text("".join(parts))
+
+    events = []
+    result = _runtime(Model()).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+    assert result.content.startswith("Source [ref](https://example.org/source) and [未核实链接]")
+    # The unverified URL never leaks into a streamed delta, and the masked form
+    # arrives via the completion snapshot rather than a raw delta.
+    assert all("unverified.invalid" not in event.get("content", "") for event in events)
+    snapshots = [event for event in events if event["type"] == "answer.snapshot"]
+    assert snapshots and "未核实链接" in snapshots[-1]["content"]

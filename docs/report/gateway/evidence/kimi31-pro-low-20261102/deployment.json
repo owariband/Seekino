@@ -1,0 +1,19 @@
+{
+  "head": "e2d4acafcf7e8c9b707e1d78ba7d480af68508e8",
+  "api_pid": 35460,
+  "previous_api_pid": 32447,
+  "health": {
+    "status": "ok",
+    "serverTime": 1793632975408,
+    "components": {
+      "parseConsumer": {
+        "status": "running",
+        "failure": null
+      }
+    }
+  },
+  "no_proxy": "localhost,127.0.0.1,::1,api.kimi.com",
+  "effective_kimi_pool": "ConnectionPool",
+  "model_config_sha256": "42b928f31acbeb3f43d3d735c0be0f91a6c2ba263b0f1e2e5a74e2018f062231",
+  "at": 1793632975.4480598
+}

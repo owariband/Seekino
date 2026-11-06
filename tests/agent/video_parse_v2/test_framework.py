@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -8,7 +9,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agent.common.chunk_understanding import understand_chunk
-from agent.utils.errors import AgentToolFeedbackError
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion
 from agent.video_parse_v2.prompts import build_understanding_prompt
@@ -94,7 +94,6 @@ def _inputs(**switches: bool) -> ParseInput:
                 "refine_execution_timeout_seconds": 1800,
                 "index_execution_timeout_seconds": 1800, "max_retry_count": 0,
                 "retry_initial_delay_seconds": 1, "retry_max_delay_seconds": 30,
-                "max_model_calls": 100,
             },
         },
     })
@@ -270,7 +269,7 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             assert f"[{offset_ms}, {offset_ms + 20_000})" in kwargs["prompt"]
             assert "integer source-video milliseconds" in kwargs["prompt"]
             assert "speaker_id" in kwargs["prompt"]
-            assert "current input clip only" in kwargs["prompt"]
+            assert "Otherwise labels are scoped only to the current input clip" in kwargs["prompt"]
             assert "DIALOGUE.speaker MUST be JSON null" in kwargs["prompt"]
             time_contract = kwargs["prompt"].lower()
             assert "already normalized" in time_contract
@@ -301,61 +300,6 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
         task_id
     ))
     assert calls[-3:] == ["commit", "notify", "cleanup"]
-
-
-@pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
-@pytest.mark.parametrize("merged", [False, True])
-def test_direct_chunk_workflow_preserves_asr_bounds_and_rejects_merged_dialogue(offset_ms, merged):
-    task_id = "chunk-task-0"
-    execution = ChunkExecution(
-        task_id, "video-task-1", int(offset_ms != 0), offset_ms, offset_ms + 20_000,
-        offset_ms, offset_ms + 20_000, _inputs(), _lease(),
-    )
-    asr_result = {"transcript": [
-        {"start_seconds": offset_ms + 1000, "end_seconds": offset_ms + 3000,
-         "text": "それで灯ちゃんたち傷つけて", "speaker_id": "speaker1"},
-        {"start_seconds": offset_ms + 3500, "end_seconds": offset_ms + 4500,
-         "text": "祥ちゃんも悪くない", "speaker_id": "speaker2"},
-    ]}
-    events = [{
-        "event_type": "DIALOGUE", "start_seconds": cue["start_seconds"],
-        "end_seconds": cue["end_seconds"], "description": cue["text"],
-        "participants": [], "visible_persons": [], "speaker": None,
-        "text_variants": [{"language": "ja", "role": "ORIGINAL", "text": cue["text"]}],
-    } for cue in asr_result["transcript"]]
-    if merged:
-        events = [{**events[0], "end_seconds": events[-1]["end_seconds"]}]
-
-    async def understand(loaded, *, prompt, **kwargs):
-        assert loaded is execution and kwargs["asr_result"] is asr_result
-        assert "canvas" not in kwargs
-        assert "exactly match one original cue interval" in prompt
-        return VideoParseResult.model_validate({"persons": [], "timeline": events})
-
-    runtime = SimpleNamespace(
-        load_chunk_execution=AsyncMock(return_value=execution),
-        prepare_chunk_visual=AsyncMock(), transcribe_chunk=AsyncMock(return_value=asr_result),
-        understand_chunk=AsyncMock(side_effect=understand), commit_chunk_result=AsyncMock(),
-        notify_chunk_committed=AsyncMock(), cleanup_chunk_execution=AsyncMock(),
-    )
-    run = ChunkUnderstandingWorkflow(runtime=runtime).InvokeUnderstanding(task_id)
-    if merged:
-        with pytest.raises(AgentToolFeedbackError) as error:
-            asyncio.run(run)
-        assert error.value.code == "ASR_DIALOGUE_RANGE_REQUIRED"
-        runtime.commit_chunk_result.assert_not_awaited()
-        runtime.notify_chunk_committed.assert_not_awaited()
-    else:
-        asyncio.run(run)
-        runtime.commit_chunk_result.assert_awaited_once()
-        result = runtime.commit_chunk_result.await_args.args[1]
-        assert [(event.start_seconds, event.end_seconds) for event in result.timeline] == [
-            (cue["start_seconds"], cue["end_seconds"]) for cue in asr_result["transcript"]
-        ]
-        assert runtime.commit_chunk_result.await_args.kwargs["evidence"]["asr"] == asr_result
-        runtime.notify_chunk_committed.assert_awaited_once_with(execution)
-    runtime.understand_chunk.assert_awaited_once()
-    runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
 
 @pytest.mark.parametrize("ocr_enabled", [False, True])
@@ -551,13 +495,13 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
         "member_versions": {task_id: 2},
         "member_scopes": {task_id: [0, 1]},
     }
-    async def refine(_snapshot, *, canvas, prompt):
-        reference = canvas.items("events")[0][0]
-        canvas.write(role="refine", batch_id="refine", expected_revision=canvas.revision, operations=[
-            {"op": "persons", "member_ref": task_id, "action": "set", "values": ["爱音"]},
-            {"op": "patch_event", "event_ref": reference, "fields": {"description": "爱音推门走进房间"}},
-        ])
-        return CanvasCompletion(complete=True)
+    async def refine(_snapshot, *, prompt, remaining_seconds):
+        assert remaining_seconds > 0
+        body = json.loads(prompt.split("Input: ", 1)[1])
+        member = body["members"][0]
+        content = member["content"]
+        content["timeline"][0]["description"] = "爱音推门走进房间"
+        return {"members": [{"sequence_no": member["sequence_no"], **content}]}
 
     runtime = SimpleNamespace(
         load_refine_input=AsyncMock(return_value=snapshot),
@@ -568,10 +512,10 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
     asyncio.run(IntervalRefine(runtime=runtime).InvokeRefine("interval-1"))
 
     prompt = runtime.generate_interval_refinement.await_args.kwargs["prompt"]
-    assert '"scope": [0, 1]' in prompt
-    assert f'"start_ms": {offset_ms}' in prompt
-    assert f'"end_ms": {offset_ms + 20_000}' in prompt
-    assert "Matching labels across chunks do not establish the same person" in prompt
+    data = json.loads(prompt.split("Input: ", 1)[1])
+    assert data["members"][0]["sequence_no"] == sequence_no
+    assert data["members"][0]["content"] == snapshot["member_contents"][task_id].model_dump(mode="json")
+    assert "get_context_canvas" not in prompt and "write_context_canvas" not in prompt
     time_contract = prompt.lower()
     assert "absolute integer source-video milliseconds" in time_contract
     assert "legacy" in time_contract
@@ -584,6 +528,7 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
     assert validated.updates[0].timeline[0].end_seconds == offset_ms + 3000
     assert snapshot["member_contents"][task_id] == _result(offset_ms=offset_ms)
     runtime.notify_interval_committed.assert_awaited_once_with(snapshot)
+
 
 
 def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
@@ -633,7 +578,11 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
 
 
 @pytest.mark.parametrize("recover", [True, False])
-def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover):
+@pytest.mark.parametrize("reason", [None, "model_connection_error", "model_timeout", "model_gateway_timeout", "model_service_unavailable"])
+def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover, reason):
+    from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
+    error = (ModelFailureError("provider failure", reason=ModelFailureReason(reason))
+             if reason else TimeoutError("provider timeout"))
     inputs = _inputs()
     policy = inputs.parse_config.execution.model_copy(update={
         "max_retry_count": 2, "retry_initial_delay_seconds": 0.001, "retry_max_delay_seconds": 0.001,
@@ -646,7 +595,7 @@ def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover)
         runtime.commit_chunk_result.assert_not_awaited()
         attempts.append(kwargs["asr_result"])
         if not recover or len(attempts) < 2:
-            raise TimeoutError("provider timeout")
+            raise error
         return _result()
     runtime = SimpleNamespace(
         load_chunk_execution=AsyncMock(return_value=execution), prepare_chunk_visual=AsyncMock(),
@@ -660,7 +609,7 @@ def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover)
         runtime.commit_chunk_result.assert_awaited_once()
         assert runtime.commit_chunk_result.await_args.args[1] == _result()
     else:
-        with pytest.raises(TimeoutError) as failure:
+        with pytest.raises(type(error)) as failure:
             asyncio.run(run)
         assert failure.value.parse_node_stage == "understanding"
         runtime.commit_chunk_result.assert_not_awaited()
@@ -669,3 +618,41 @@ def test_node_retry_reuses_asr_and_commits_only_completed_understanding(recover)
     runtime.transcribe_chunk.assert_awaited_once()
     runtime.prepare_chunk_visual.assert_awaited_once()
     runtime.cleanup_chunk_execution.assert_awaited_once()
+
+
+@pytest.mark.parametrize("start_ms", [0, 60000])
+def test_understanding_receives_whole_video_speakers_and_series_identity_context(start_ms):
+    from copy import deepcopy
+    asr = {"speaker_scope": "video", "speaker_scope_id": "video-grouping-1",
+           "speaker_ids": ["SPEAKER_00", "SPEAKER_01"], "transcript": [
+               {"start_seconds": start_ms, "end_seconds": start_ms+1000,
+                "text": "example", "speaker_id": "SPEAKER_00"}]}
+    background = {"important_extra_data": {"format": "json", "content": json.dumps({
+        "all_speakers": [{"name": "Andrej Karpathy", "role": "course lecturer"}]
+    })}}
+    before = deepcopy(asr)
+    execution = SimpleNamespace(allowed_start_seconds=start_ms, allowed_end_seconds=start_ms+60000,
+                                background=background, dialogue_bounds=None)
+    prompt = build_understanding_prompt(execution, asr_result=asr, ocr_result=None)
+    catalog = json.loads(next(line.split(": ", 1)[1] for line in prompt.splitlines()
+                              if line.startswith("all_speakers: ")))
+    # A voice absent from this window must remain in the whole-video catalog.
+    assert catalog == {"scope": "video", "scope_id": "video-grouping-1",
+                       "voice_groups": ["SPEAKER_00", "SPEAKER_01"], "voice_group_count": 2,
+                       "known_speakers": [{"name": "Andrej Karpathy", "role": "course lecturer"}]}
+    assert asr == before
+    assert "A cast list" in prompt and "voice count alone is insufficient" in prompt
+    assert "without requiring new voiceprint verification for each cue" in prompt
+
+
+@pytest.mark.parametrize("speaker_id,expected_count", [("local-voice", 1), (None, None)])
+def test_understanding_does_not_claim_a_video_speaker_count_from_clip_labels(speaker_id, expected_count):
+    execution = SimpleNamespace(allowed_start_seconds=0, allowed_end_seconds=60000, background={}, dialogue_bounds=None)
+    prompt = build_understanding_prompt(execution, asr_result={"transcript": [
+        {"start_seconds": 0, "end_seconds": 1000, "text": "example", "speaker_id": speaker_id}
+    ]}, ocr_result=None)
+    catalog = json.loads(next(line.split(": ", 1)[1] for line in prompt.splitlines()
+                              if line.startswith("all_speakers: ")))
+    assert catalog["scope"] == "input_clip" and catalog["scope_id"] is None
+    assert catalog["voice_group_count"] == expected_count
+    assert catalog["known_speakers"] == []

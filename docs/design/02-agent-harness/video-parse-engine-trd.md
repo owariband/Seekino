@@ -1,7 +1,21 @@
+# 1. 问题与现状
+
+解析结果最终要服务检索。若 Schema 只规定模型输出什么，却没有说明字段怎样变成词项、向量和可回源证据，Engine 与 Harness 就容易各自理解，检索结果也无法稳定核对。本文明确 Engine 如何约束解析结果，以及这些结果如何进入索引和查询。
+
+## 思路与证据入口
+
+| 流程 | 本文对应内容 |
+| --- | --- |
+| 影响因素与评价指标 | Schema 职责与不变量见 §1.1、§1.6；检索表示和消费方见 §2.1、§2.2 |
+| 方案设计 | 解析 Schema 见 §1；检索策略与索引输入见 §2.3 |
+| 对照实验与结果 | 召回收益的验证方法见 §2.3.8；实现和恢复记录见 §2.3.10–2.3.12 |
+| 试点验证与取舍 | 真实查询和检索效果仍需按 §2.3.8 验证，本文不把设计写成已经达标 |
+| 结果与最终决定 | 当前不进入 Schema 的内容见 §1.8；后续职责和研究方向见 §1.9、§3 |
+
 > **Event 检索最终合同（2026-10-17）**：以 [Sub-Chunk / Event TRD](sub-chunk-trd.md) 为准。完整、有序的 Chunk Timeline 保持唯一权威；不新增 Event / Frame SQL 表或 Frame Index。现有 Chunk INDEX 派生独立 Event ES 的词法、文本向量及抽帧视觉向量，首次 INDEX 在任务 detail 冻结目标，不改变 ParseConfig。Agent 可直接细搜；旧研究不替代本轮运行验收。
 > 任务与恢复以 [Parse Agent TRD 当前基线](video-parse-harness-trd.md) 为准：Interval 仅 Refine，现有 ChunkTask 的 INDEX 阶段承担 Chunk/Event 索引。本文件 §2.3 中遗留的 Interval 索引状态与调度描述被该基线取代；历史样例及“当前使用 Qdrant”的文字保留其原记录时点，不表示现在的实现状态。
 
-# 零、整体原则和架构设计
+# 方案设计：Schema 如何服务解析与检索
 
 > **文字、图片与 GIF 共享同一条外层检索流程（目标设计，尚未全部实现）：**
 > 把输入变成检索信号 → 多路召回候选 → 归并到 Chunk → 核验命中证据和时间。
@@ -17,15 +31,9 @@
 上述内容定义检索目标与外层编排；ES Index 的字段、粒度和各路实现仍需结合
 RAGFlow 的分片与索引链路另行设计，不能把本表当作已落地的索引结构。
 
-一整个agent for：一个video解析
-要求：engine提供内部schema
-不管engine怎么换策略，我们同一套agent harness都可以被复用填写同样的schema内容
+一个 Video 对应一个解析 Agent。Engine 提供统一 Schema 和检索投影，Harness 负责执行并填写结果；调整 Harness 的解析策略不能改变这套输出合同。
 
-因此我们的engine主要起到这么一个指引harness体系收敛方向 + embedding indexing的作用
-
-职责归属：为harness提供收敛target（解析结果本质为了更好的RAG服务），并针对更好的更有效的RAG提出相应的embedding 策略（例如提出要向量化的内容？——就是设计相关的schema）
-
-> so, Engine 所拥有的稳定领域合同最重要；Schema 是这个合同的主体，但不是全部。
+Engine 的职责因此分为两部分：用 Schema 约束解析结果，用检索投影说明哪些字段需要生成词项、向量和其他索引输入。稳定的领域合同是 Harness 与检索之间的共同依据。
 
 
 # 一、解析schema设计

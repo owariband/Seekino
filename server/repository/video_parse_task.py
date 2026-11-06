@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import Session
 
-from ..model.dto.jobDTO import VideoParseTaskData, VideoData, SeriesData
-from ..model.job import VideoParseTask
+from ..model.dto.taskDTO import VideoParseTaskData
+from ..model.dto.libraryDTO import VideoData, SeriesData
+from ..model.task import VideoParseTask
 from ..model.video import Video, Series
 from ..constants.parse import RUNTIME_DETAIL_KEY
 
@@ -19,6 +20,7 @@ def list_due_summary_task_ids(session: Session, now_ms: int, *, limit: int = 64)
     status = summary["status"].as_string()
     return list(session.scalars(select(VideoParseTask.id).where(
         VideoParseTask.is_deleted.is_(False),
+        func.coalesce(VideoParseTask.detail["execution_control"]["paused"].as_boolean(), False).is_(False),
         or_(
             and_(status.in_(["PENDING", "RETRY_WAIT"]),
                  summary["next_execute_time_ms"].as_integer() <= now_ms),
@@ -57,6 +59,18 @@ def task_data(row: VideoParseTask) -> VideoParseTaskData:
         update_time=row.update_time,
         update_date=row.update_date,
     )
+
+
+def list_tasks(
+    session: Session, video_id: str, *, for_update: bool = False,
+) -> list[VideoParseTaskData]:
+    statement = select(VideoParseTask).where(
+        VideoParseTask.video_id == video_id,
+        VideoParseTask.is_deleted.is_(False),
+    ).order_by(VideoParseTask.version, VideoParseTask.id)
+    if for_update:
+        statement = statement.with_for_update()
+    return [task_data(row) for row in session.scalars(statement)]
 
 
 def get_task(

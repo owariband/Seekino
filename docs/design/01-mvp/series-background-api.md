@@ -31,7 +31,7 @@
 }
 ```
 
-`workspaceId` 和 `seriesId` 必填。`description`、`transcriptLanguageHint`、`importantExtraData` 可分别更新：省略表示保留原值，显式 `null` 表示清空。只有这三个字段可更新；该接口不修改 Series 名称、视频的集数或上传顺序。简介去除首尾空白，空简介按 `null` 保存；背景正文按原文保存。
+`workspaceId` 和 `seriesId` 必填。`displayName`、`description`、`transcriptLanguageHint`、`importantExtraData`、`visibility` 可分别更新：省略表示保留原值，显式 `null` 表示清空。该接口不修改 Series 名称（`name`）、视频的集数或上传顺序。简介去除首尾空白，空简介按 `null` 保存；背景正文按原文保存。
 
 `transcriptLanguageHint` 使用常见 BCP-47 形式，例如日语 `ja`、简体中文 `zh-Hans`。它立即用于 Query Agent 组织同语言 Transcript-heavy 检索，不会改变已保存 ASR、触发重新解析或证明具体原台词存在。
 
@@ -50,7 +50,7 @@
 
 成功返回 `200` 和现有 `SeriesDetail`，包含完整 `importantExtraData`、简介与视频列表。`GET /api/series/get?workspaceId=local-default&seriesId=<series UUID>` 使用同一读取结构，JSON 正文的空格、换行和自定义字段保留，便于继续编辑。更新在所属 workspace 的 Series 行锁事务中提交，任一背景校验失败均不会写入该次简介或背景改动。
 
-旧数据兼容：创建接口的任意 `importantExtraData` JSON、旧 `seriesBible` 文本和 `characterBible` 仍可读取。Worker 准备背景时使用新容器正文，并兼容旧字段；旧 JSON 的其他自定义信息也会进入背景文字。
+旧数据兼容：已有系列的任意 `importantExtraData` JSON、旧 `seriesBible` 文本和 `characterBible` 仍可读取，Worker 准备背景时继续兼容这些字段，旧 JSON 的其他自定义信息也会进入背景文字。新写入（创建与更新）只接受 `{format, content}` 容器；`characterBible` 是只读旧数据：创建接口拒绝非空值并提示将人物设定写入 `importantExtraData`，更新接口也不接受该字段。
 
 ## 上传参考图片
 

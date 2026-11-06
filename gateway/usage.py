@@ -290,7 +290,7 @@ class ModelCallTracker:
     def add_cancel_callback(
         self, callback: Callable[[], None]
     ) -> Callable[[], None]:
-        """Register a best-effort transport closer for this one request."""
+        """Register a best-effort closer; inner resources close before their clients."""
 
         if not callable(callback):
             raise TypeError("cancel callback must be callable")
@@ -318,7 +318,7 @@ class ModelCallTracker:
             if self._cancelled.is_set():
                 return
             self._cancelled.set()
-            callbacks = tuple(self._cancel_callbacks.values())
+            callbacks = tuple(reversed(self._cancel_callbacks.values()))
             self._cancel_callbacks.clear()
         for callback in callbacks:
             self._run_cancel_callback(callback)
