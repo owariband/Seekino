@@ -2,7 +2,7 @@
 
 - 需求：对话在首次发送时才创建（Fix）
 - 状态：实现完成，本机验证通过，待合并 · 2026-11-07
-- 分支：`fix/chat-lazy-conversation`；PR：待创建
+- 分支：`fix/chat-lazy-conversation`；PR：[ #66](https://github.com/owariband/Seekino/pull/66)
 
 **背景与触发场景。** 对话页 `/search` 与观看页陪看对话共用 `web/src/features/search/useAgentConversation.ts`。挂载时如果本机没有记住的对话（或记住的对话已 404），`ensureConversation()` 立刻调用 `POST /api/agent/conversations/create`。此外，“新对话”按钮（`SearchPage.tsx` 的 `createConversation`）和删除当前对话后的补位（`deleteConversation`）也会立即创建。
 
@@ -66,3 +66,7 @@ stateDiagram-v2
 
 - 原问题：打开页面、按“新对话”、删除最后一个对话都不再创建空对话；对话在首次发送或首次附件时创建。
 - 已实现、已本机验证；未部署。已存在的空对话不在本次清理范围内。未覆盖：远端 / 访客来源下的真实账号。
+
+## 2026-11-07 集成复核
+
+本轮在 `fix/chat-lazy-conversation` 重新执行 web 全量测试（30 文件、593 用例）、typecheck、build，均通过。此前实现留在独立工作区，5188 的 `feat/kino-chat-entry` 未接入，仍运行立即创建逻辑；本次通过 PR #66 向 dev 集成，再同步该 UI 分支。既有空会话不清理，远端部署与访客实机仍不在本轮验证范围。
