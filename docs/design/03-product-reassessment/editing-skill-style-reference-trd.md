@@ -2,11 +2,11 @@
 
 | Item | Value |
 | --- | --- |
-| Requirement | **Dual recall for AI video editing.** Seekino parses a video once and keeps two kinds of editing material recallable at exact ranges: **character material** (for example 爱音 frames ready for cut-out) and **editing-style references** (highlight techniques with their motion spec, plus code versions that grow with every use). An editing agent in Claude Code or Codex recalls both through MCP instead of re-reading references and asking the user to point at frames |
-| Type | Feature direction + minimal validation. This PR holds the TRD only; each integration step gets its own TRD + PR (§3.6) |
+| Requirement | **Dual recall for AI video editing.** Seekino parses a video once and keeps two kinds of editing material recallable at exact ranges: **character material** (for example 爱音 frames ready for cut-out) and **editing-style references** (highlight techniques with their motion spec, plus implementation versions and the experience behind them). An editing agent in Claude Code or Codex recalls both through MCP instead of re-reading references and asking the user to point at frames |
+| Type | Feature direction + minimal validation. This PR holds the TRD only; each integration step gets its own branch + PR with a TRD-first commit (§3.8) |
 | Opened / revised | Opened 2026-11-05. Direction rewritten 2026-11-06 after four rounds of owner review (decision log) |
 | Branch / PR | `docs/editing-skill-style-reference` / [PR #50](https://github.com/owariband/Seekino/pull/50) |
-| Status | Direction settled with the owner. E0 (highlight detector on P5R and ep04) measured in a standalone script; **nothing is wired into Seekino yet**. E1–E4 not started |
+| Status | Final design agreed with the owner 2026-11-07: `edit_reference` profile inside the existing parse task + template library. E0 measured in a standalone script; **nothing is wired into Seekino yet**. E1–E3 running |
 | Related | [MCP access TRD](mcp-access-trd.md); [Sub-Chunk / Event TRD](../02-agent-harness/sub-chunk-trd.md); [PR #34](https://github.com/owariband/Seekino/pull/34) (course parse profile, the base for per-type schema config); [PR #53](https://github.com/owariband/Seekino/pull/53) (ASR blank-word fix found while parsing MyGO) |
 
 ## 1.1 Why Seekino needs edit analysis
@@ -82,20 +82,22 @@ Together they remove most of the manual guidance an AI edit needs today: the use
 ## 1.5 Scope
 
 In scope:
-- An **editing-material parse profile** (opt-in) that detects candidate highlights in code, picks a few representative ones, reads only those at full frame rate, and stores techniques and a style card.
-- `keyframe_ms` on visual events for character material recall.
-- A motion library (techniques + append-only code versions) and the MCP tools for both recalls.
+- An **`edit_reference` parse profile** inside the existing parse task. A video parsed with it (for example P5R) gets representative highlights picked in Prepare, high-frame-rate visual analysis of those picks in Understanding, consolidation of observations and a style card in one whole-video Refine window, and indexing.
+- A template library: reusable templates, immutable versions holding their complete contract and code, append-only evaluations and checks, an explicit default version, and server-side source snapshots.
+- MCP tools for finding templates and observations, reading versions, style cards, saving versions and appending notes.
 - The promo as the acceptance case.
 
 Out of scope here:
 - The automatic content-type judgment (editing material / scripted animation / course). It gets its own TRD on top of PR #34; until then the profile is chosen explicitly in `parse_config`.
-- Rendering or reproducing techniques on the server. Code is written and rendered on the user's machine.
+- `keyframe_ms` for character material on the `content` profile. It changes the content schema and stays a later step (E4), after this sequence.
+- Cut-outs, rendering, previews and running template code. These belong to the user's local workflow through tools and skills. Seekino Server provides materials, reference evidence, template retrieval and persistence only.
 - Rhythm/beat-grid extraction as a goal in itself.
 
 Must stay unchanged:
-- **Scripted animation and courses parse exactly as today** unless the profile is switched on. The detector is **off by default**.
-- Fixed 60 s chunks, the Refine sliding window and the video-level summarize stage. No new standalone pass.
-- Exact ranges, never widened. No rendering on the 4C8G server. Cut-out is client-side.
+- **One video has one current parse task**, as today. A video is parsed with one profile; switching profile is a reparse. No second task runs alongside it.
+- **The `content` profile behaves exactly as today** for scripted animation and courses. The scan runs only under `edit_reference`.
+- The existing parse task, scheduling, leases, retries, Consumer, chunk topology, Refine window mechanism, result storage and indexing infrastructure. No new task infrastructure and no new parse-result tables.
+- Exact ranges, never widened. No rendering on the 4C8G server.
 - Copyright: the owner decided on 2026-11-05 that it is not a concern for this non-commercial promo.
 
 # 2. 影响因素、假设与评价指标
@@ -110,7 +112,7 @@ Ordered by how badly the direction fails if they are false:
 | H2 | A style is uniform enough across a video that **6–8 representative highlights** carry it; reading the whole video densely adds little | Owner judgement; P5R contact sheet shows a few repeating devices | E1: representative picks on one sheet, owner judges coverage |
 | H3 | A cheap code detector (the skill's `diffProfile` + `findStarts`, ported) finds candidate highlights on editing material | E0: port matches the skill's 255 starts on P5R. On ep04 it fires on ordinary dialogue cutting (0/8 random segments were real highlights) | E0 done; it is why the profile is opt-in for editing material only |
 | H4 | The existing understanding model, given full-frame-rate frames of a picked segment, writes a technique spec close to a hand-written one | None | E3: one model call per picked segment, compare with the hand index |
-| H5 | `keyframe_ms` lifts character material usable-as-returned from 1/8 | 1/8 baseline measured | E4: reparse ep04 with the field, rerun the same 4 queries |
+| H5 | `keyframe_ms` lifts character material usable-as-returned from 1/8 (later step, content profile) | 1/8 baseline measured | E4: reparse ep04 with the field, rerun the same 4 queries |
 | H6 | A second edit reusing library entries and code versions costs clearly less than the first | None | E2 second beat |
 
 ## 2.2 Metrics
@@ -134,140 +136,214 @@ Ordered by how badly the direction fails if they are false:
 
 | The skill has | Its limit | Seekino parses and stores | Recall |
 | --- | --- | --- | --- |
-| 45 static text style files | Fixed, no real frames, no P5 | **Style card** per reference video, written in the skill's own `styles/_template.md` sections, each signal pointing at exemplar ranges | `get_style_card` |
-| `inspect.mjs grid / heat / motion` per brief | Run on every edit, discarded | **Detector results** stored once per video (change starts, flashes, candidate segments, picked representatives) | Inputs to parse; listed in the card |
-| Strips viewed once in step 2 | No link from technique to range | **TECHNIQUE events**: name, exact range, measured motion spec | `find_motion` / `retrieve` |
-| Style frames drawn from text (step 3) | Can't be checked against a source | Recalled **reference highlights**; the agent renders ours next to them | `read_evidence` clip |
-| Motion code in one film's folder | Lost after delivery | **Motion library**: append-only code versions per technique, with provenance and a check result | `get_motion`, `add_motion_version` |
-| AI-generated or hand-found character frames | Manual, error-prone (1/8) | **`keyframe_ms`** on visual events | `retrieve` |
-| `timeline.js` `HOLDS` / `DROPS` | Declared by hand | Highlight marks map onto them (a held hero frame → `HOLDS`; an impact → `DROPS`) | In the technique spec |
+| 45 static text style files | Fixed, no real frames, no P5 | **Style card** per reference video, in the skill's own `styles/_template.md` sections, each signal citing exemplar segments | `get_style_card` |
+| `inspect.mjs grid / heat / motion` per brief | Run on every edit, discarded | The same measurement, run once in Prepare; its facts (pick ranges, measured starts, palette) are copied into the parse result | Part of each observation and the card |
+| Strips viewed once in step 2 | No link from technique to range | **Technique observations**: name, exact range, measured motion spec | `find_edit_templates` (parse-derived side) |
+| Style frames drawn from text (step 3) | Can't be checked against a source | Recalled reference segments; the agent renders ours next to them | `read_evidence` clip |
+| Motion code in one film's folder | Lost after delivery | **Template library**: immutable versions with complete contract + code, accumulated evaluations and checks | `get_edit_template`, `save_edit_template_version` |
+| `timeline.js` `HOLDS` / `DROPS` | Declared by hand | Observation roles (`ACCENT`, holds in the spec) map onto them | In the spec |
 
-The goal is a complete loop: references and footage are parsed once; every edit recalls from them; every edit writes its motion back; the next edit starts further ahead. That loop is why the features in §3.3 are needed.
+The goal is a loop: references are parsed once; every edit recalls from them; every edit saves its implementation and experience back; the next edit starts further ahead.
 
 ## 3.2 Architecture
 
 ```mermaid
 flowchart LR
-  subgraph Parse["Parse V2 (fixed architecture)"]
-    P[Prepare<br/>single decode] -->|profile=editing_material only| D[Highlight detector<br/>+ representative pick]
-    P --> U[Chunk Understanding<br/>60 s, parallel]
-    D -->|full-rate frames for picks| U
-    U --> R[Refine<br/>180 s sliding window]
-    R --> V[Video level<br/>summarize / outline / style card]
+  subgraph Task["One existing parse task, parse_config.profile = edit_reference"]
+    P[Prepare<br/>scan whole video, pick K representatives,<br/>plan native frames for picks] --> U[Chunk Understanding<br/>parallel; only chunks with picks call the model]
+    U --> R[Refine<br/>one window over all chunks:<br/>consolidate observations + style card]
+    R --> I[Indexing<br/>observations → edit-reference ES index]
   end
-  subgraph Store["Seekino stores"]
-    E[(Timeline events<br/>+ TECHNIQUE, keyframe_ms)]
-    C[(Style card)]
-    M[(Motion library<br/>techniques + code versions)]
+  subgraph Store["Existing result storage"]
+    C[(chunk_parse_content<br/>observations)]
+    W[(interval_parse_content<br/>Refine result incl. style card)]
   end
-  R --> E
-  V --> C
-  E --> M
-  subgraph MCP["MCP dual recall"]
-    T1[retrieve / read_evidence<br/>character material]
-    T2[get_style_card / find_motion / get_motion]
-    T3[add_motion_version]
+  U --> C
+  R --> C & W
+  subgraph Lib["Template library (new, independent lifecycle)"]
+    T[(edit_template)]
+    V[(edit_template_version)]
   end
-  E --> T1
-  C --> T2
-  M --> T2
-  A[Claude Code / Codex<br/>+ motion-showreel] --> T1 & T2
-  A -->|clip media URL, inspect locally at full fps,<br/>write + render code| A
-  A --> T3 --> M
+  subgraph MCP["MCP"]
+    M1[find / get / list / style card]
+    M2[save version / append note / set default]
+  end
+  I --> M1
+  W --> M1
+  T & V --> M1
+  A[Claude Code / Codex + motion-showreel<br/>local: cut-out, code, render, checks] --> M1
+  A --> M2 --> V
 ```
 
-## 3.3 Parse changes, inside the fixed architecture
+## 3.3 The `edit_reference` profile inside the existing parse task
 
-**Per-type profile.** A `parse_config` field selects the profile. Defaults keep today's behaviour.
+**Stage responsibilities**
 
-| Profile | Detector | Events | Notes |
-| --- | --- | --- | --- |
-| Scripted animation (default for series) | **Off** (can be switched on) | Current schema + `keyframe_ms` | MyGO |
-| Editing material (opt-in) | On | Current schema without speaker attribution and `RELATION_CHANGE`, + TECHNIQUE | Openings, PVs, MADs, references like P5R |
-| Course | Off | `DIALOGUE` + `ACTION` (what the teacher is doing) + per-chunk abstract | Builds on PR #34 |
+| Stage | Responsibility under `edit_reference` | Existing entry point extended |
+| --- | --- | --- |
+| Prepare | Scan the whole video (port of the skill's `diffProfile` / `findStarts`: 160 px grayscale, native fps, mean gray-diff > 2.5× local median, 0.2 s debounce, flash test); group starts into candidate segments; score and group by visual signature; keep **K ≈ 6–8 representatives**; add every native frame inside each pick (capped) plus a few calm frames to the owning chunk's frame list | `VideoParseMediaService.prepare_episode` (`server/service/video_parse_media.py`): the per-chunk `frames` list in `episode.json` and the single `extract_video_frames_batch` call |
+| Understanding | High-frame-rate visual analysis of the picks in that chunk; one observation per pick. Chunks with no pick commit `{"observations": []}` without a model call | `agent/video_parse_v2/understanding/` workflow and response gate; `prompts.build_understanding_prompt` |
+| Refine | One window over all chunks; input is the chunk observations plus scan facts (text only); consolidates names into `technique_key`s and writes the style card | `IntervalRefine` (`agent/video_parse_v2/refine/`), `prompts.build_refine_prompt`, `commit_interval_refinement` (`server/service/video_parse_content.py`) |
+| Indexing | Project observations to a separate derived edit-reference ES index | `engine/rag/indexing/` projection + pipeline |
+| Summarize | Not scheduled; the card comes from Refine | Summarize scheduling (`server/service/video_parse_summarize.py`) |
 
-The automatic type judgment comes later in its own TRD; the first version sets the profile explicitly at upload.
+The scan needs no durable storage. It is deterministic and cheap (1.7 s on P5R), so each Prepare lease recomputes it, as the frame plan is rebuilt today. The facts worth keeping are copied into the result by the host.
 
-**Editing-material profile, step by step:**
+**Profile selection.** `parse_config.profile: "content" | "edit_reference"`, default `content`, frozen with the task like the rest of `parse_config` and part of the indexing contract fingerprint. Set at upload or on a reparse request. The profile abstraction covers only the actual differences:
 
-1. **Prepare: scan the whole video cheaply.** Run a port of the skill's `diffProfile` / `findStarts` (160 px grayscale, native fps, mean gray-diff > 2.5× local median, 0.2 s debounce, flash test) inside the existing single decode. Group starts into candidate segments: at least 3 starts each ≤ 0.5 s apart, or a flash, padded 0.25 s. Store the result per video, as ASR is stored.
-2. **Pick representatives.** Score each segment by change density and flashes. Group segments by a cheap visual signature (palette histogram + tiny grayscale thumbnail). Keep the best one per group, **K ≈ 6–8**. Because a video's style is broadly uniform, this is enough even when the whole video is high quality, and it caps the cost.
-3. **Chunk Understanding.** Frames as today everywhere, plus **every native frame inside the picked segments** of that chunk. The model also gets the measured starts for those segments. It writes one TECHNIQUE event per picked segment.
-4. **Refine.** Merges techniques that cross a chunk boundary, aligns technique names across neighbours, and may also receive the full-rate frames of a picked segment.
-5. **Video level.** Writes the style card: look constants (palette from the stored scan, texture, type), the technique list with exemplar ranges, what not to copy, and the cliché version, in `_template.md` sections.
+| Difference | `content` | `edit_reference` |
+| --- | --- | --- |
+| Chunk result model | `VideoParseResult` | `EditReferenceChunkResult` |
+| Refine result model / fields Refine may change | `IntervalRefinementResult` / `persons`, `timeline` | `EditReferenceRefinement` / model-written observation fields + `technique_key`; plus `style_card` |
+| Validation | `validate_result_time_range` | Each observation range equals its host segment; step boundaries are measured starts or segment edges and tile the segment |
+| Merge identity | Event refs | Host `segment_id`; Refine may edit, not add or remove |
+| Frame plan | Uniform | Scan → picks → native frames for picks |
+| Prompts | Today's | New Understanding and Refine prompts |
+| Projection | Event index | Edit-reference index |
+| Config defaults | Today's | ASR `none`, voiceprint / prefix / Summarize off, OCR optional, `interval_duration = 63 × chunk_duration` |
 
-**Data contracts (drafts; each integration TRD fixes the final shape):**
+`content` wraps today's code unchanged.
+
+**Reading by profile.** Videos with different profiles share a library and must never be read as each other's schema. Read paths that turn chunk content into events check the task's profile first: chat, `retrieve`, `read_evidence`, outlines, DTOs. An `edit_reference` video contributes no content events.
+
+**The whole-video Refine window and the 63-chunk limit.** `plan_intervals` already returns one window covering every chunk when `chunk_count ≤ size` (`engine/parsev2/planning.py`). With `interval_duration = 63 × chunk_duration`, every `edit_reference` video up to 63 chunks gets exactly one window. The limit is the **reach of one window**, because Refine readiness is a 63-bit mask (`MAX_INTERVAL_CHUNKS`):
+
+- It does not limit tasks, windows per task, or highlight segments per window. A window holds up to 63 chunks and every observation in them.
+- With 60 s chunks one window reaches 63 min. P5R (95 s) is 2 chunks.
+- v1 rejects `edit_reference` for longer videos at task creation, because a longer video would need several windows and nothing would merge their cards. A later version can use larger chunks for this profile (120 s → 126 min), since only chunks with picks call the model.
+- Refine waits for every chunk, so a failing chunk delays the card until retries succeed, with today's retry semantics.
+- Model input does not grow with window span: at most K observations plus scan facts.
+
+**Result schema (draft; the implementation PR fixes the final shape):**
 
 ```python
-class TechniqueEvent(TimelineEventBase):        # editing-material profile only
-    event_type: Literal["TECHNIQUE"]
-    name: str                                    # e.g. "阶梯式拉远亮相" (step-out ladder)
-    look: dict                                   # ground / subject treatment / texture, short values
-    spec: dict                                   # measured: fps, steps [{framing, frames}], easing, accent
-    needs: list[str]                             # material it needs, e.g. "full-body cut-out of the subject"
+class TechniqueObservation(BaseModel):
+    # host-written from the scan; the model cannot change these
+    segment_id: str; start_ms: int; end_ms: int
+    measured: Measured                  # starts_ms, flashes_ms, palette:[{hex, share}]
+    # model-written
+    name: str                           # short Chinese, e.g. "阶梯式拉远亮相"
+    summary: str                        # one Chinese sentence, in order
+    role: Literal["INTRO","TRANSITION","ACCENT","TITLE","LOOP","OUTRO"]
+    look: Look                          # ground, subject_treatment, texture, type_treatment
+    motion: Motion                      # steps:[{start_ms,end_ms,framing,subject,enter}], frame counts derived by host;
+                                        # easing, hold_frames, camera
+    slots: list[Slot]                   # declared materials, e.g. {name:"subject_cutout", kind:"image", requirement:"full body, transparent"}
+    signals: list[str]
+    technique_key: str | None           # assigned by Refine across segments
 
-# visual events (SCENE / ACTION / EMOTION), all profiles:
-keyframe_ms: int | None    # one supplied frame time inside the event where the named person is clearly visible
-clean: bool                # host-computed: keyframe_ms lies outside every ASR cue (no burned-in subtitle)
+class EditReferenceChunkResult(BaseModel):
+    observations: list[TechniqueObservation]
+
+class EditReferenceRefinement(BaseModel):
+    members: list[EditReferenceRefinedMember]   # {sequence_no, observations}
+    style_card: StyleCard               # _template.md sections; signals cite segment_ids;
+                                        # palette numbers copied from the scan, not model-written
 ```
 
-Example entry, hand-written from the 34.2–35.2 s strip:
+Member observations commit to `chunk_parse_content.content` through the existing commit path. The whole Refine result, including `style_card`, is already stored in `interval_parse_content.content`; with one window per task, that row is the video's card.
+
+Example observation, hand-written from P5R 34.2–35.2 s (the target for E3):
 
 ```yaml
-technique: step-out-ladder            # 阶梯式拉远亮相
-ref: {video: P5R-opening, range_ms: [34200, 35200]}
+name: 阶梯式拉远亮相            # step-out ladder
+range_ms: [34200, 35200]
 look: {ground: "#c00000 flat", subject: "cut-out, black/teal line art", texture: none}
-spec:
+motion:
   fps: 30
   steps: [{framing: ECU, frames: 3}, {framing: CU, frames: 4}, {framing: MCU, frames: 2},
           {framing: MS, frames: 3}, {framing: FULL, frames: 10, drift: slow}]
-  easing: none                         # hard steps; the P5 feel comes from this
+  easing: none                  # hard steps
   accent: {insert_flash: 2f, then: "reveal + glow"}
-needs: ["full-body cut-out of the character"]
+slots: ["subject_cutout: full body"]
 ```
 
-**Motion library** (outside the parse path): one table of techniques (linked to their TECHNIQUE event and range) and an append-only table of versions (code text, params, the edit it was made for, `based_on`, render-vs-reference check result). Parse writes the spec only; the server cannot render, so code written there could not be checked. The first agent that uses a technique writes and checks v1 locally and adds it.
+## 3.4 Template library
 
-**MCP:**
-- `retrieve` gains filters for `TECHNIQUE` and for `keyframe_ms` / `clean`.
-- New tools: `get_style_card(video)`, `find_motion(query)`, `get_motion(id, version)`, `add_motion_version(...)`, `get_outline(video)` (the outline already exists).
-- No frame-strip tool: `read_evidence` media URLs already let the agent clip and inspect at full frame rate.
+Its lifecycle is independent of parsing: deleting or reparsing a source video must not delete code an agent created. It is written by agents through MCP, not by parse leases. One template can cite several videos. So it gets its own two tables.
 
-## 3.4 Rejected options
+**`edit_template`: stable identity**
+
+| Column | Notes |
+| --- | --- |
+| `id`, `tenant_id`, `creator_id` | |
+| `name`, `description`, `tags` (JSON) | |
+| `default_version_id` | Nullable; changed only by an explicit action |
+| `revision` | Optimistic lock for changing the default |
+| `is_deleted`, standard audit fields | |
+
+**`edit_template_version`: one reproducible revision**
+
+| Column | Mutability | Content |
+| --- | --- | --- |
+| `id`, `template_id`, `version_no` (unique per template) | Immutable | |
+| `parent_version_id` | Immutable | Derivation only; no claim of quality or compatibility |
+| `spec`, `visual_requirements`, `slots`, `params_schema` (JSON) | Immutable | The complete contract of this revision |
+| `files` (JSON `{path: text}`), `entry` | Immutable | Text only; v1 cap 1 MB, re-measured against the first real templates |
+| `runtime` (JSON) | Immutable | Engine and commit, dependencies, fps, canvas |
+| `sources` (JSON) | Immutable | Server-built snapshot: `series_id`, `video_id`, `parse_task_id`, chunk content version, `segment_id`, range, `technique_key`, the observation as it was |
+| `content_hash` | Immutable | sha256 over all immutable columns, checked on read |
+| `author`, `created_at` | Immutable | |
+| `check` (JSON list) | Append-only | Checks reported by the local workflow: who, what, method, conditions, result, evidence; marked `reported_by: client` |
+| `evaluation` (JSON list) | Append-only | Experience: author, kind (`revision_rationale` / `usage_feedback` / `default_selection`), `about_version_id`, context, and separate `user_feedback`, `agent_judgment`, `changes`, `verified`, `unverified` |
+
+Rules:
+- The repository exposes insert-version, append-note and set-default only. Appends run in the Service inside one row-locked transaction; existing entries are never edited or removed.
+- Saving never moves the default. A creation pins an exact `version_id` in its local project.
+- A complaint never invalidates a version or promotes its successor.
+- `sources` store IDs without foreign keys. On read each source reports `current`, `superseded`, `content_changed` or `unavailable`; the saved snapshot is always returned and newer evidence is never substituted.
+- Checks are shown as client-reported, never as server-verified quality.
+
+## 3.5 MCP behaviour
+
+| Tool | Behaviour |
+| --- | --- |
+| `find_edit_templates(query, tags?, series_ids?, include_parse_techniques=true, top_k)` | `templates`: library rows with default-version summary, check summary, latest evaluation highlights. `techniques`: parse-derived observations from the edit-reference index with ranges, `segment_id`, style-card ref. Library search is MySQL in v1 |
+| `get_edit_template(template_id, version_id?)` | Full version: contract, files, runtime, sources with status, check, evaluation, lineage. Defaults to `default_version_id`; without one, returns the version list. Includes `successor_notes`: evaluation entries from descendants that explain a revision away from this version or target it, with links |
+| `list_edit_template_versions(template_id)` | Version number, id, parent, author, time, `is_default`, latest check / evaluation summary |
+| `get_style_card(video_id)` | Card from the video's current `edit_reference` task, with exemplar segment refs and task identity |
+| `save_edit_template_version(template_id or new_template, parent_version_id?, spec, visual_requirements, slots, params_schema, files, entry, runtime, source_refs, check?, evaluation)` | Appends a version. The server builds `sources` from the refs. A `revision_rationale` entry is required when a parent is given. Never changes the default |
+| `append_edit_template_note(version_id, kind, entry)` | Adds a timestamped, attributed evaluation or check entry |
+| `set_default_edit_template_version(template_id, version_id, reason)` | Explicit, guarded by `revision`; records a `default_selection` entry |
+
+Write tools run only under MCP's current local mode (loopback-only `_LocalOnly`, `server/api/mcp.py`). Cloud access belongs to the MCP access TRD.
+
+## 3.6 Rejected options
 
 | Option | Why not |
 | --- | --- |
-| A `SHOT` event type (cut-to-cut, framing, expression, pose, camera) | Describes footage, not how to reproduce a look; the style is in the motion. Only `keyframe_ms` survives, for character material |
-| Parse every video at 30 fps | ≈ 42,600 frames for ep04 against 4,265 today, for no use outside highlights |
-| Dense frames on every detected segment | P5R: 29 segments, 72 % of the video. ep04: 115 segments, 11 %, mostly ordinary cutting. Representatives (§3.3 step 2) replace this |
-| Detector on by default | Fires on ordinary anime cutting (0/8 real on ep04); animation keeps today's schema |
-| A separate structure or labelling pass | The architecture is fixed: detection lives in Prepare, labels in Understanding / Refine, the card at video level |
-| A frame-strip MCP tool | `read_evidence` already serves the source media |
-| Parse writes motion code | Unverifiable on a server that cannot render |
+| A `SHOT` / `TECHNIQUE` event inside the content timeline schema | Editing references need their own schema; the profile selects it |
+| A separate editing task type with its own tables | The existing parse task, storage and Refine window already fit; a different schema doesn't justify new infrastructure |
+| A content task and an edit-reference task current on the same video | Never required; one video, one current task, one profile |
+| A global consolidation pass outside Refine | It is a Refine window covering the whole video |
+| Parse every video at 30 fps / dense frames on every candidate | ep04 ≈ 42,600 frames; P5R candidates cover 72 %. Representatives replace both |
+| Template spec / slots / refs on the template row | An old code version could be served with a newer incompatible contract; the version carries its full contract |
+| Latest version as default | A newer version can be tailored to one edit; the default is explicit |
+| Server-side cut-out, rendering or code execution | Creative execution is local |
 
-## 3.5 Validation first, then development
+## 3.7 Validation first, then development
 
-1. **Validate the idea without touching parse** (§4 E1, E2). The style recall is simulated by a hand-written P5R index served with real media URLs. If B does not win, stop here and record why.
-2. **Check the parse can produce what was hand-written** (E3, E4): one model call per picked segment; `keyframe_ms` on ep04.
-3. **Develop** in the order of §3.6, each step its own TRD + PR.
-4. **Make the promo** through MCP only, log every recall Seekino could not serve, and **come back to this TRD**: adjust the design and architecture for each new problem, with a decision-log row.
+1. **E1, E3** (§4): picks on P5R; model-written observation against the hand spec. Gate for building the profile.
+2. **E2**: the A/B with two fresh agents. Gate for building at all.
+3. If a gate fails, report the evidence and the needed adjustment before building.
+4. Then develop in the order of §3.8, each step its own branch and PR with a TRD-first commit.
+5. Make the promo through MCP only, log every gap, and return to this TRD.
 
-## 3.6 Integration sequence (after validation)
+## 3.8 Integration sequence
 
-| Step | Change | Module | Done when |
+| Step | Branch | Change | Gate |
 | --- | --- | --- | --- |
-| 1 | Profile field in `parse_config`; detector + representative pick in Prepare; stored scan result | `server/service/video_parse_media.py`, `agent/video_parse_v2/prepare.py`, engine | Profile off: ep04 parse config and events unchanged; on: P5R scan stored, K picks |
-| 2 | TECHNIQUE event + full-rate frames for picks in Understanding / Refine | `engine/parsev2/schemas.py`, prompts | P5R parse yields TECHNIQUE events matching E3 |
-| 3 | `keyframe_ms` / `clean` | schemas, prompts, host post-processing | E4 target met |
-| 4 | Style card at video level | summarize / outline stage | Card matches the hand card on main signals |
-| 5 | Motion library + MCP tools; projection of new fields | server, `server/api/mcp.py`, `engine/rag/indexing/projection.py` | Promo made through MCP only |
-| 6 | Content-type judgment | Separate TRD on top of PR #34 | — |
+| 1 | `refactor/parse-profile` | `parse_config.profile`, a registry sized to §3.3's differences, `content` wrapping today's code, profile check on read paths | Existing tests pass unmodified |
+| 2 | `feat/edit-reference-profile` | Scan + picks in Prepare, observation / Refine / card schemas and prompts, whole-video window, empty-chunk commit, Summarize skip, edit-reference index | P5R on the isolated instance matches E3; it never appears as content events |
+| 3 | `feat/edit-template-library` | Two tables, Service, seven MCP tools | Append-only enforced; `content_hash` checked; saves never move the default; `successor_notes` shown; stale-source states reported |
+| 4 | — | Promo through MCP | §5 |
+| Later | own TRD | Content-type judgment on top of PR #34; `keyframe_ms` for content (E4) | — |
 
 # 4. 对照实验与结果分析
 
 ## E0 Highlight detector (done, standalone script)
 
-Python port of `lib/frames.mjs` `diffProfile` + `findStarts`, plus the grouping rule in §3.3. Script: `scripts/highlight_scan.py` (session scratch). Not wired into Seekino.
+Python port of `lib/frames.mjs` `diffProfile` + `findStarts`, plus a grouping rule (at least 3 starts each ≤ 0.5 s apart, or a flash, padded 0.25 s). Not wired into Seekino.
 
 | | P5R opening (95 s, 30 fps) | MyGO ep04 (24 min, 23.976 fps) |
 | --- | --- | --- |
@@ -275,64 +351,56 @@ Python port of `lib/frames.mjs` `diffProfile` + `findStarts`, plus the grouping 
 | Change starts | **255** (same as the skill's `grid`) | 1055 |
 | Candidate segments | 29 | 115 |
 | Share of the video | 72 % | 11 % (161 s) |
-| Extra frames if all segments went to native fps | ≈ 2,000 (today 286) | ≈ 3,900 (today 4,265) |
 | Real highlights in a random sample | Whole opening is effect-heavy | **0 / 8**: head turns, walk-ins, cuts to close-up |
 
-Decisions from E0: the detector belongs to the editing-material profile only, off by default; dense reading goes to representatives, not to all segments. 4C8G cost is **expected** to be small (one 160 px decode) but is not measured there.
+Decisions: the scan belongs to `edit_reference` only; dense reading goes to representatives, not all candidates. 4C8G cost is expected to be small but not measured there.
 
-## E1 Representative picks (next)
+## E1 Representative picks
 
-Add scoring + grouping to the scan script, pick K = 6–8 on P5R, show the picks on one contact sheet. Pass: the owner accepts that they cover the style; dense frames ≤ 2× today's 286.
+Score candidates, group by visual signature, pick K = 6–8 on P5R, show the picks on one contact sheet. Pass: the picks cover the style's devices (lead review, then owner); dense frames ≤ 2× today's 286.
+
+## E3 Model-written observation
+
+One call to the current understanding model per pick, with its native frames and measured starts, using the draft prompt and schema. Compare with the hand spec: technique named, step count, step frame counts (±1 frame), role.
 
 ## E2 A/B on one promo beat
 
-- **Brief:** an 8–10 s "爱音's entrance" beat, P5 style, minimal SFX. Same model, same `motion-showreel`, same 爱音 cut-out.
-- **A:** the skill as shipped, with its closest static styles (`comic-pop` + `editorial-collage`).
-- **B:** the skill plus a hand-written P5R index (the E1 picks written as TECHNIQUE entries + a style card), served with `read_evidence`-style media URLs; 爱音 material from today's ep04 MCP.
-- Two **fresh** agents. The author of this TRD has already seen P5R, so running either arm itself would contaminate it.
-- Then B makes a second beat, "Kino's arrival", reusing the entries and its own v1 code.
-- Metrics: §2.2. Pass: owner prefers B and B is clearly cheaper; otherwise stop and record.
+- **Brief:** an 8–10 s "爱音's entrance" beat, P5 style, minimal SFX. Same model, same `motion-showreel`, same 爱音 cut-out prepared locally beforehand.
+- **A:** the skill as shipped, given the P5R video and reading it its own way (`sheet`, `grid --strips`, `heat`).
+- **B:** the skill plus recall: a hand-built style card and observations for the E1 picks, with the source path and exact ranges in place of `read_evidence` URLs.
+- Two fresh agents; the author of this TRD has seen P5R and would contaminate either arm.
+- Then B makes a second beat, "Kino's arrival", reusing the entries and its own first-beat code.
+- Pass: B clearly cheaper (tokens, time, reference views) with technique fidelity at least as good as A; owner blind pick recorded.
 
-## E3 Model-written spec
+## E4 Character material (later, content profile)
 
-One call to the current understanding model per picked segment, with its native frames and measured starts. Compare with the hand index (technique named, step count, frame counts).
-
-## E4 Character material
-
-Reparse ep04 on the isolated instance with `keyframe_ms` / `clean`; rerun the same 4 queries; usable-as-returned against the 1/8 baseline.
+Reparse ep04 with `keyframe_ms` / `clean`; rerun the same 4 queries against the 1/8 baseline.
 
 ## Results
 
 | Metric | Baseline | With change | Status |
 | --- | --- | --- | --- |
 | Detector starts on P5R | Skill `grid`: 255 | Port: 255 | Matched |
-| Detector precision on scripted animation | — | 0/8 | Drove the opt-in decision |
-| Material usable as returned | 1/8 | — | E4 pending |
-| E1, E2, E3 | — | — | Pending |
+| Detector precision on scripted animation | — | 0/8 | Drove the profile-only decision |
+| E1, E3, E2 | — | — | Pending |
 
 # 5. 试点验证与方案取舍
 
-The pilot is the promo itself, made after integration steps 1–5:
-- P5R parsed with the editing-material profile.
-- MyGO ep04 (later more episodes) parsed with the animation profile + `keyframe_ms`.
-- The course library with the course profile (Kino's recall cards cite exact course timestamps from `get_outline`).
+The pilot is the promo, made after steps 1–3:
+- P5R parsed with `edit_reference`.
+- MyGO episodes and the course library with `content`.
 
-The agent makes the full promo through MCP + Claude Code only. Logged: every recall Seekino could not serve, tokens, time, and how many times the owner had to step in.
+The agent makes the full promo through MCP + Claude Code, with cut-out and rendering local. Logged: every recall Seekino could not serve, tokens, time, and how often the owner had to step in.
 
-Go / no-go for wider use:
-- Promo accepted by the owner.
-- Second-use cost clearly below first use.
-- Profile off leaves animation and course parses unchanged.
-
-Rollback: the profile is opt-in; switching it off restores today's parse.
+Go / no-go: promo accepted by the owner; second-use cost clearly below first use; `content` parses unchanged. Rollback: `edit_reference` is opt-in per task; the library is additive.
 
 # 6. 结果验收与闭环
 
-Not closed. As of 2026-11-06:
-- Settled: direction, profiles, detector placement, the representative approach and the motion library.
+Not closed. As of 2026-11-07:
+- Settled: the `edit_reference` profile inside the existing parse task, stage responsibilities, the whole-video Refine window, and the template library contract.
 - Measured: E0.
 - Nothing implemented in Seekino; PR #53 is a separate fix.
-- Open: the chunk-boundary repair failure on ep04 (not root-caused); the content-type judgment TRD.
+- Open: E1–E3; the chunk-boundary repair failure on ep04 (not root-caused); the content-type judgment TRD.
 
 Acceptance returns to §1.1: the promo exists, made through MCP, and the dual recall is what made it.
 
@@ -350,3 +418,9 @@ Acceptance returns to §1.1: the promo exists, made through MCP, and the dual re
 | 2026-11-05 | Change parse first | Owner: validate fastest | Hand-written index + A/B with fresh agents before any parse change | §3.5, E2 |
 | 2026-11-06 | — | Skill bundles 0 images; 45 static style files; step 3 renders from text | Positioning: Seekino makes the skill dynamic through dual recall (character material + style reference) | §1.2, §1.3 |
 | 2026-11-06 | Dense frames on all detected segments | E0: P5R 72 %, ep04 11 % with 0/8 real | Code detects candidates, then K representatives get full-rate frames in Understanding / Refine; detector opt-in for editing material, off by default; animation keeps today's schema; per-type profile planned on top of PR #34 | §3.3, E1 |
+| 2026-11-06 | `TECHNIQUE` inside the content timeline; dense frames via the content pipeline | Owner: editing references need their own schema and mechanism | First proposal (separate task type and tables) rejected by owner 2026-11-07: reuse the existing parse task, leases, Understanding, Refine and storage; a profile selects schema, prompts, frame strategy, validation, projection | §3.3 |
+| 2026-11-07 | Global consolidation as a separate pass | Owner: it is a Refine window covering the whole video; coverage and model input are separate concerns | `interval_duration = 63 × chunk_duration` → one window via existing `plan_intervals`; input is observations + scan facts. 63-chunk reach documented | §3.3 |
+| 2026-11-07 | A content task and an edit-reference task current on the same video, needing a `profile` column and per-(video, profile) latest-task selection | Owner: never requested; one video is parsed with one profile in one task | Dual-task coexistence and its column, migration and test withdrawn. Coexistence now means only: read paths check the task's profile so videos of different profiles are not misread | §1.5, §3.3 |
+| 2026-11-07 | Template row holds spec / slots / refs; latest version is default; versions fully immutable | Owner review | Version holds the complete contract; explicit `default_version_id`; `evaluation` and `check` append-only with attribution; server-side source snapshots with stale states; client checks shown as client-reported | §3.4, §3.5 |
+| 2026-11-07 | Cut-out could be a Seekino capability | Owner: Seekino Server never does cut-out, rendering or code execution | Templates only declare slots; preparation is local | §1.5 |
+| 2026-11-07 | E2 arm A uses the static style library | A stronger, realistic baseline is the skill reading the reference itself | Arm A gets the P5R video and reads it its own way | §4 E2 |
