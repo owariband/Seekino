@@ -2,7 +2,7 @@
 
 需求：Parse 模型正文先在内存累积，新增中途草稿保存；未保存正文达到 1,024 个 UTF-8 字节或模型调用退出时写库。日期：2026-11-07。
 
-- 工作分支：`feat/parse-output-drafts`；基于 `dev` 的 `416abffa`，目标 `dev`；PR 待创建后回填。首提交仅包含本 TRD。
+- 工作分支：`feat/parse-output-drafts`；基于 `dev` 的 `416abffa`，目标 `dev`；[Draft PR #64](https://github.com/owariband/Seekino/pull/64)。首提交仅包含本 TRD。
 - 上游：[模型流式合同](model-streaming-trd.md)、[暂停与恢复](parse-pause-resume-trd.md)；既有能力已在基线中，无需依赖诊断分支。
 - 相关调查：`perf/parse-claim-diagnostics` / `fe1fe70f`。本次不改该 worktree，不恢复已暂停的真实任务。
 - 当前状态入口：[管理工作台](../../dev/workbench.html)。实施证据在后续提交回填到本设计。
@@ -35,7 +35,7 @@ Server 持有草稿 buffer 和持久化策略；Gateway 只提供供应商无关
 3. 调用正常结束、失败、取消时保存余量和明确终态。`completed` 只表示模型调用结束，不能代表整个 Parse 完成或 JSON 业务校验通过；取消/失败保留已收到的前缀。没有收到正文的调用不创建空草稿。硬杀进程只能保留最后成功保存的前缀，不能保证未刷新的内存数据。
 4. 复用 `observe_model_text` 和 Gateway usage observer 的 `on_start` / finish 生命周期，以调用 UUID 归属正文；通过现有 Parse owner scope 接入。补齐当前 HTTP Chat Completions / Responses 的通用正文观察（含非流式完成时一次交付，`before_completion=false`），不将延迟交付伪装成实时事件。不采集 prompt、密钥、reasoning 或工具参数；原生 SDK/CLI 未提供该观察的路径不宣称支持中途保存。
 5. 草稿是辅助记录，保存失败记录带调用 ID 的告警，不中断原模型结果。失败后本调用停止中途重试，退出时可做一次最终尝试，避免故障期间退化为逐 token 重试数据库。保持现有输出预算和完整性校验，不引入无限后台队列。
-6. 所有 Parse / Summarize 注入生成和帧工具的高频 `check_control` 改为 `manager.raise_if_cancelled`。调用接纳、独立周期 heartbeat 和正式提交仍做持久检查；通过 manager.cancel 关闭活动传输。草稿保存不承担续租。
+6. Parse / Summarize 注入生成调用的高频 `check_control` 改为 `manager.raise_if_cancelled`；Canvas / 帧工具边界原有持久检查保留。调用接纳、独立周期 heartbeat 和正式提交仍做持久检查；通过 manager.cancel 关闭活动传输。草稿保存不承担续租。
 
 选择独立调用快照的理由是隔离多个子任务写入且实现简单；代价是每次保存会重写该调用已生成的正文，后续只有测得单调用大文本写入成为瓶颈才考虑追加分片。仅节流续租不能满足新增草稿保存需求；继续写父 JSON 则会重新引入共享锁；按时间刷新与本次明确的按大小要求不符。
 
@@ -43,9 +43,11 @@ Schema 为新增表，无旧列改写。使用既有显式 `init-db` 注册新�
 
 # 4. 对照实验与结果分析
 
-待实现后记录实际命令和结果。计划使用无真实供应商请求的模拟 Chat / Responses 流，检查中途 SQL 写入、累计字节、最终正文、异常前缀、tenant/call 隔离和本地取消。再回归 Parse worker、model call manager、summary 与 usage，验证实际装配链路。
+2026-11-07：实现已通过隔离验证。最终定向回归 **941 passed，64 warnings，25.68 秒**；涵盖草稿保存、真实 SDK 模拟传输、Parse Worker、Summary、usage、schema 与 Chat 交付。命令、证据及限制见 [实施报告](../../report/server/service/parse-output-drafts-20261107.md)。
 
-比较旧 `check_active` 与新 `raise_if_cancelled` 在相同 N 次回调下的持久检查次数，同时分别验证周期心跳仍有效。该计数对照只能证明访问次数变化，不能代替 MySQL 持锁分布或整集耗时。
+同一条模拟 SSE 流收到 65 段正文，旧接收回调额外触发 69 次持久检查，新回调 0 次；两组均保留 1 次调用接纳与 1 次显式周期心跳。两组草稿均在 1,024、2,048 字节保存中途快照，结束保存 2,051 字节。该计数对照不能代替 MySQL 持锁分布或整集耗时。
+
+回归发现新增非流式正文观察会被 Chat 标为实时来源，因此 Chat 入口仅接收 `before_completion=true` 的实时增量；完整响应继续走原有交付。租户/任务归属由 Server scope 固定，元数据增加 refine generation，拒绝上下文覆盖归属。既有断流、取消和正式结果边界保持。
 
 # 5. 试点验证与方案取舍
 
@@ -55,4 +57,4 @@ Schema 为新增表，无旧列改写。使用既有显式 `init-db` 注册新�
 
 # 6. 结果验收与闭环
 
-初稿：实现、测试、真实效果、部署均待验证，不将方案当作已交付结果。后续在本文件更新实际结果、相关文档索引及工作台；使用同一 PR 交付，不混入独立调度或超时修复。
+2026-11-07：代码与 941 项隔离回归完成，正式装配已接入同一草稿服务；[PR #64](https://github.com/owariband/Seekino/pull/64) 尚未合并部署。设计索引、模块 README、问题记录、devlog 和工作台已同步。真实 MySQL 建表/运行、整集并发与耗时未验证，解析继续保持暂停；本次未修改并发配置、领取顺序或超时重试策略。

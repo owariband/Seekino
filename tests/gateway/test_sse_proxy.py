@@ -8,6 +8,7 @@ from arkruntime.types.responses.response_stream_event import ResponseStreamEvent
 from gateway.streaming.responses import request_response_json, request_sse_response, request_sse_text
 from gateway.errors import SSEProxyError
 from gateway.model_diagnostics import capture_model_diagnostics
+from gateway.model_events import observe_model_text
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
 
 
@@ -526,3 +527,113 @@ def test_text_stream_does_not_synthesize_deltas_from_completed_response() -> Non
     with pytest.raises(SSEProxyError, match="no text deltas"):
         list(request_sse_text(FakeResponses(provider), model="test", input=[]))
     assert provider.closed is True
+
+
+def test_sse_text_deltas_are_observed_once_before_completion() -> None:
+    stream = FakeStream([
+        _delta("第一段", 0),
+        _delta("第二段", 1),
+        SimpleNamespace(
+            type="response.completed", sequence_number=2,
+            response=_output_response("response-live", "第一段第二段"),
+        ),
+    ])
+    observed = []
+    with track_model_call(provider="ark", model="test", operation="understand") as call:
+        with observe_model_text(observed.append):
+            _, text = request_sse_response(
+                FakeResponses(stream), usage_call=call, model="test", input=[],
+            )
+    assert text == "第一段第二段"
+    assert [delta.text for delta in observed] == ["第一段", "第二段"]
+    assert [delta.sequence for delta in observed] == [1, 2]
+    assert all(delta.call_id == call.call_id for delta in observed)
+    assert all(delta.before_completion for delta in observed)
+    assert observed[0].first_text_ms is not None
+
+
+def test_sse_terminal_only_text_is_observed_once_after_verification() -> None:
+    stream = FakeStream([
+        SimpleNamespace(
+            type="response.completed", sequence_number=0,
+            response=_output_response("response-terminal", "完整正文"),
+        ),
+    ])
+    observed = []
+    with track_model_call(provider="ark", model="test", operation="understand") as call:
+        with observe_model_text(observed.append):
+            _, text = request_sse_response(
+                FakeResponses(stream), usage_call=call, model="test", input=[],
+            )
+    assert text == "完整正文"
+    assert len(observed) == 1
+    delta = observed[0]
+    assert (delta.text, delta.sequence, delta.call_id) == ("完整正文", 1, call.call_id)
+    assert delta.before_completion is False and delta.first_text_ms is None
+
+
+def test_sse_terminal_response_does_not_duplicate_streamed_text() -> None:
+    stream = FakeStream([
+        _delta("完整正文", 0),
+        SimpleNamespace(
+            type="response.completed", sequence_number=1,
+            response=_output_response("response-live", "完整正文"),
+        ),
+    ])
+    observed = []
+    with track_model_call(provider="ark", model="test", operation="understand") as call:
+        with observe_model_text(observed.append):
+            request_sse_response(
+                FakeResponses(stream), usage_call=call, model="test", input=[],
+            )
+    assert [delta.text for delta in observed] == ["完整正文"]
+
+
+def test_failed_sse_keeps_observed_prefix_without_a_terminal_observation() -> None:
+    stream = FakeStream([
+        _delta("partial", 0),
+        SimpleNamespace(
+            type="response.failed", sequence_number=1,
+            response=SimpleNamespace(
+                id="response-failed",
+                error=SimpleNamespace(code="server_error", message="stream failed"),
+            ),
+        ),
+    ])
+    observed = []
+    with track_model_call(provider="ark", model="test", operation="understand") as call:
+        with observe_model_text(observed.append), pytest.raises(SSEProxyError, match="stream failed"):
+            request_sse_response(
+                FakeResponses(stream), usage_call=call, model="test", input=[],
+            )
+    assert [delta.text for delta in observed] == ["partial"]
+    assert observed[0].before_completion is True
+
+
+class _FixedResponses:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return self.response
+
+
+def test_nonstream_response_text_is_observed_once_without_realtime_metadata() -> None:
+    from gateway.streaming.responses import request_response
+
+    response = _output_response("response-nonstream", "完整正文")
+    provider = _FixedResponses(response)
+    observed = []
+    with track_model_call(provider="ark", model="test", operation="understand") as call:
+        with observe_model_text(observed.append):
+            terminal, text = request_response(
+                provider, stream=False, usage_call=call, model="test", input=[],
+            )
+    assert terminal is response and text == "完整正文"
+    assert provider.calls == [{"stream": False, "model": "test", "input": []}]
+    assert len(observed) == 1
+    delta = observed[0]
+    assert (delta.text, delta.sequence, delta.call_id) == ("完整正文", 1, call.call_id)
+    assert delta.before_completion is False and delta.first_text_ms is None

@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-04T13:50:00+08:00",
+ "updatedAt": "2026-11-07T00:39:21+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 8,
+ "revision": 9,
  "categories": [
   {
    "id": "parse",
@@ -4484,6 +4484,44 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ],
    "branch": "",
    "links": []
+  },
+  {
+   "id": "PARSE-DRAFT-01",
+   "title": "Parse 按正文大小保存草稿并解耦 SSE 续租",
+   "category": "parse",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "模型正文新增独立调用草稿，1024 UTF-8 字节或调用退出保存；移除逐 SSE 持久续租。",
+   "next": "评审 PR #64；部署时先初始化新表，再验证短素材并发；真实解析本轮保持暂停。",
+   "verification": "941 项隔离回归通过；65 段模拟正文的接收路径额外持久检查 69→0，保留接纳与周期检查。未部署，真实 MySQL 持锁与整集耗时未测。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "草稿",
+    "租约",
+    "隔离验证"
+   ],
+   "related": [
+    "MOD-PARSE"
+   ],
+   "branch": "feat/parse-output-drafts",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "../design/03-product-reassessment/parse-output-drafts-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #64",
+     "url": "https://github.com/owariband/Seekino/pull/64",
+     "kind": "pr"
+    },
+    {
+     "label": "验证报告",
+     "url": "../report/server/service/parse-output-drafts-20261107.md",
+     "kind": "evidence"
+    }
+   ]
   }
  ]
 }</script>

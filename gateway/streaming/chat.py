@@ -41,13 +41,15 @@ def request_chat_completion(
                 completions, usage_call=usage_call, check_control=check_control,
                 first_sse_deadline=first_sse_deadline, **request,
             )
-        record_model_event("chat_transport", {"stream": False, "started_monotonic": monotonic()})
+        started_at = monotonic()
+        record_model_event("chat_transport", {"stream": False, "started_monotonic": started_at})
         response = completions.create(**request)
         usage_call.capture_response(response)
         record_model_event("response", response)
         usage_call.raise_if_cancelled()
         if check_control is not None:
             check_control()
+        _emit_completed_chat_text(response, usage_call=usage_call, started_at=started_at)
         return response
 
 
@@ -204,6 +206,23 @@ def _iter_chat_chunks(
             "Chat completion stream ended without a terminal choice",
             reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
         )
+
+
+def _emit_completed_chat_text(
+    response: Any, *, usage_call: ModelCallTracker, started_at: float,
+) -> None:
+    """Observe one non-streamed turn without pretending it arrived in real time."""
+    choices = getattr(response, "choices", None) or ()
+    if not choices:
+        return
+    text = getattr(getattr(choices[0], "message", None), "content", None)
+    if not isinstance(text, str) or not text:
+        return
+    received_at = monotonic()
+    emit_model_text(ModelTextDelta(
+        text, usage_call.call_id, 1, received_at,
+        (received_at - started_at) * 1000, None, False,
+    ))
 
 
 def _cancel_chat_stream(stream: Any) -> None:

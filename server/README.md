@@ -35,6 +35,14 @@ Deep Agents 的实时正文仍通过持久化后的累积 `answer.snapshot` 发�
 
 Server 可通过 `SEEKINO_CHAT_TRACE_DIR` 开启 Chat 诊断，在调用作用域内向 Gateway 注入目录；Gateway 不通过 Chat 消息身份选择采集策略。有效 FTT 需关联供应商 trace 与浏览器实际展示，不能用服务端快照耗时替代。设计与验收见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
 
+## Parse 模型正文草稿
+
+Server 在 Parse 调用作用域内观察 HTTP Chat Completions / Responses 正文，按调用 UUID 在内存累积；每新增至少 1,024 个 UTF-8 字节保存一次累计快照，调用退出时保存余量及终态。`parse_model_output_draft` 独立于父任务和正式解析结果，不包含指向父任务的外键；草稿读取以 tenant、Parse task 和 call ID 限定。非流式调用只在完整响应后保存，未暴露通用正文观察的 SDK/CLI 路径不提供中途草稿。
+
+`streaming` / `completed` / `failed` / `cancelled` 描述模型调用草稿；`completed` 不等于 Parse 业务结果通过校验或已提交。reasoning、工具参数和 prompt 不写入正文草稿。写库异常保留原模型处理路径并记录告警，本调用暂停中途重试、退出时最多再尝试一次。新增表通过显式 `init-db` 注册，运行库建表与服务加载单独验收；本次不会自动恢复暂停任务。设计、验证与运行边界见 [Parse 草稿 TRD](../docs/design/03-product-reassessment/parse-output-drafts-trd.md)。
+
+模型流中的 `check_control` 仅检查本地取消状态；租约仍由独立周期心跳续期，调用接纳、工具边界和正式提交继续保留持久检查。草稿保存不续租，也不作为任务恢复的已完成事实。
+
 ## 模型 Token 用量
 
 `GET /api/usage/overview?workspaceId=...` 从 `model_usage` 查询最近 30 天已记录调用。

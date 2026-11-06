@@ -20,6 +20,7 @@ from server.model.agent import (
     AgentMessage,
 )
 from server.model.parse_usage import ModelUsage, ParseModelCall, VideoParseUsageAttempt
+from server.model.parse_output_draft import ParseModelOutputDraft
 from server.model.upload import UploadSegment, UploadSession
 from server.model.video import (
     Series,
@@ -111,12 +112,30 @@ def test_model_usage_mysql_ddl_has_identity_and_common_audit_columns() -> None:
     }
 
 
-def test_create_schema_registers_twenty_two_tables_and_identity_is_repeatable() -> None:
+def test_parse_output_draft_mysql_ddl_has_longtext_and_no_parent_foreign_key() -> None:
+    table = ParseModelOutputDraft.__table__
+    ddl = str(CreateTable(table).compile(dialect=mysql.dialect()))
+    assert tuple(table.columns.keys()) == (
+        "id", "tenant_id", "video_task_id", "user_id", "text", "status",
+        "metadata", "start_time", "create_time", "create_date", "update_time", "update_date",
+    )
+    assert {column.name for column in table.columns if column.nullable} == {
+        "user_id", "start_time", "create_time", "create_date", "update_time", "update_date",
+    }
+    assert not table.foreign_keys
+    assert "text LONGTEXT NOT NULL" in ddl
+    assert "start_time TIMESTAMP(3)" in ddl
+    assert "metadata JSON NOT NULL" in ddl
+    assert "ck_parse_model_output_draft_status" in ddl
+    assert "FOREIGN KEY" not in ddl
+
+
+def test_create_schema_registers_twenty_three_tables_and_identity_is_repeatable() -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
     create_schema(engine)
     tables = inspect(engine).get_table_names()
-    assert len(tables) == 22 and {"user", "tenant", "video_parse_content"}.issubset(tables)
+    assert len(tables) == 23 and {"user", "tenant", "video_parse_content", "parse_model_output_draft"}.issubset(tables)
 
 
 def test_conversation_detail_is_nullable_json() -> None:
@@ -295,10 +314,10 @@ def test_create_schema_rejects_schema_without_adding_missing_identity() -> None:
     create_schema(engine)
     Tenant.__table__.drop(engine)
     User.__table__.drop(engine)
-    assert len(inspect(engine).get_table_names()) == 20
+    assert len(inspect(engine).get_table_names()) == 21
     with pytest.raises(SchemaUpgradeRequiredError, match="20261010_user_tenant_identity.sql"):
         create_schema(engine)
-    assert len(inspect(engine).get_table_names()) == 20
+    assert len(inspect(engine).get_table_names()) == 21
 
 
 def test_create_schema_requires_new_migration_for_existing_identity_profile_drift(monkeypatch) -> None:

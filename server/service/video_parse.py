@@ -2006,7 +2006,7 @@ class VideoParseRuntimeService:
                 schema_name=schema_name, result_type=result_type,
                 tools=tools,
                 context_checkpoint=canvas.checkpoint if canvas is not None else None,
-                check_control=manager.check_active if manager is not None else None,
+                check_control=manager.raise_if_cancelled if manager is not None else None,
                 fallback_inputs=fallback_inputs,
                 tool_harness=tool_harness,
             )
@@ -2014,7 +2014,7 @@ class VideoParseRuntimeService:
             self._invoke_multimodal, binding, inputs,
             schema_name=schema_name, result_type=result_type,
             fallback_inputs=fallback_inputs,
-            check_control=manager.check_active if manager is not None else None,
+            check_control=manager.raise_if_cancelled if manager is not None else None,
         )
 
     async def _generate_text_structured(
