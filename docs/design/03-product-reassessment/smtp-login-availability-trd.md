@@ -1,7 +1,7 @@
 # 1. 问题与现状
 
 需求：SMTP 留空时，登录入口明确显示尚未开放。日期：2026-11-07。
-分支：`feat/email-login-availability`；PR：创建后回填。
+分支：`feat/email-login-availability`；[PR #65](https://github.com/owariband/Seekino/pull/65)。
 上游：[无 SMTP 游客启动 #62](https://github.com/owariband/Seekino/pull/62)，
 [原设计](cloud-guest-without-smtp-trd.md)；发布依赖 [main PR #63](https://github.com/owariband/Seekino/pull/63)。
 当前任务状态统一见 [管理工作台](../../dev/workbench.html) DEPLOY-04。

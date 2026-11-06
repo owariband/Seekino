@@ -34,6 +34,7 @@ interface AuthContextValue {
 const localIdentity: AuthIdentity = {
   userId: "local", email: null, isGuest: false, tenantId: TENANT_ID,
   publicTenantId: TENANT_ID, mode: "local", csrfToken: "",
+  emailLoginEnabled: false,
   permissions: { canUpload: true, canManage: true, canConfigure: true },
 };
 const defaultSource: DataSource = {
