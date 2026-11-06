@@ -28,6 +28,7 @@ docs/ui-design/
 **/.DS_Store
 .env
 .env.*
+.env.cloud
 !.env.example
 .venv/
 **/__pycache__/

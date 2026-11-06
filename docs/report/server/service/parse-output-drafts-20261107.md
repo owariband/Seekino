@@ -29,6 +29,8 @@
 
 使用仓库已有 Python 3.12 虚拟环境。最终 **941 passed，64 warnings，25.68 秒**；告警来自已有 SQLite expression index reflection 和 Starlette/AnyIO 弃用提示。原始日志在实施 worktree 的 `outputs/verification/parse-output-drafts-20261107/pytest.txt`，未将运行输出提交 Git。
 
+推送时 `dev` 已前进至 `c3a79cbe`，整合后保留双方设计、devlog、问题和工作台卡片；冲突仅发生在这些追加文档，Parse 实现无冲突。上游另有认证修复，因此追加运行 `tests/server/test_auth.py tests/server/test_bootstrap.py -m 'not live_agent' -q`：**150 passed、7 skipped、16.80 秒**，日志为同目录 `integrated-dev-pytest.txt`；跳过项不计为通过。
+
 ```bash
 python -m pytest \
   tests/server/test_parse_output_draft.py tests/server/test_parse_model_streaming.py \

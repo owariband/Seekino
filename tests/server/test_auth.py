@@ -120,8 +120,7 @@ def test_configuration_has_explicit_cloud_requirements(identities, monkeypatch):
     with pytest.raises(ValueError, match="caller-provided Redis client"):
         AuthService(repository, config, email_sender=CapturingEmailSender())
     borrowed_redis = StubRedis()
-    with pytest.raises(ValueError, match="SMTP"):
-        AuthService(repository, config, redis=borrowed_redis)
+    AuthService(repository, config, redis=borrowed_redis)
     assert not borrowed_redis.closed
     monkeypatch.setenv("SEEKINO_AUTH_MODE", "cloud")
     monkeypatch.setenv("SEEKINO_AUTH_SECRET_KEY", "x" * 32)
@@ -137,6 +136,35 @@ def test_configuration_has_explicit_cloud_requirements(identities, monkeypatch):
     assert "x" * 32 not in repr(parsed)
     with pytest.raises(ValueError):
         SMTPConfig(host="smtp.example.com", sender="bad\r\nheader")
+
+
+def test_cloud_without_smtp_serves_guests_and_rejects_email_login(identities):
+    repository, sessions = identities
+    redis = StubRedis()
+    service = AuthService(repository, AuthConfig(mode="cloud", secret_key="x" * 32), redis=redis)
+    service.bootstrap()
+    with TestClient(_app(service), base_url="https://testserver") as client:
+        assert client.get("/api/auth/me").status_code == 401
+        response = client.post("/api/auth/guest")
+        assert response.status_code == 200
+        guest = response.json()
+        assert guest["isGuest"] and guest["mode"] == "cloud"
+        assert guest["permissions"] == {"canUpload": False, "canManage": False, "canConfigure": False}
+        assert "Secure" in response.headers["set-cookie"] and "HttpOnly" in response.headers["set-cookie"]
+        assert client.get("/api/auth/me").json()["userId"] == guest["userId"]
+        before = list(redis.calls)
+        for route, body in [
+            ("send", {"email": "guest@example.com"}),
+            ("verify", {"email": "guest@example.com", "code": "123456"}),
+        ]:
+            assert client.post(f"/api/auth/email/{route}", json=body).status_code == 403
+            disabled = client.post(f"/api/auth/email/{route}", json=body, headers={"X-CSRF-Token": guest["csrfToken"]})
+            assert disabled.status_code == 503 and disabled.json()["code"] == "EMAIL_UNAVAILABLE"
+        assert redis.calls == before
+        assert client.get("/api/auth/me").json()["isGuest"]
+    with sessions() as session:
+        users = list(session.scalars(select(User)))
+        assert len(users) == 1 and users[0].is_anonymous and users[0].email is None
 
 
 def test_redis_timeout_loads_from_environment_and_requires_positive_integer(monkeypatch):
