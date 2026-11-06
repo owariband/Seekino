@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import { useWorkspace } from "../../app/workspace";
-import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, mediaUrl, TENANT_ID } from "../../api/client";
+import { deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, mediaUrl, TENANT_ID } from "../../api/client";
 import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
 import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
@@ -300,7 +300,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [conversationListError, setConversationListError] = useState<string | null>(null);
   const [conversationActionError, setConversationActionError] = useState<string | null>(null);
-  const [creatingConversation, setCreatingConversation] = useState(false);
+  const [preparingAttachments, setPreparingAttachments] = useState(false);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [conversationStatus, setConversationStatus] = useState("");
@@ -360,11 +360,29 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
   }, []);
-  const { conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
+  const { conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error, clear: clearConversation, ensureConversationId, send, stop } = useAgentConversation(requestedConversationId);
+  const creatingConversation = preparingAttachments || (searching && !conversationId);
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
   const kinoHostId = messages.findLast((message) => message.role === "ASSISTANT")?.messageId ?? null;
   const attachments = useAgentAttachments(conversationId);
+  const [pendingFiles, setPendingFiles] = useState<{ conversationId: string; files: File[] } | null>(null);
+  useEffect(() => {
+    if (!pendingFiles) return;
+    if (pendingFiles.conversationId === conversationId) attachments.addFiles(pendingFiles.files);
+    setPendingFiles(null);
+  }, [pendingFiles, conversationId, attachments.addFiles]);
+  const addFiles = async (files: File[]) => {
+    if (!files.length) return;
+    if (conversationId) { attachments.addFiles(files); return; }
+    setPreparingAttachments(true);
+    try {
+      const id = await ensureConversationId();
+      if (id) setPendingFiles((current) => ({ conversationId: id, files: [...(current?.conversationId === id ? current.files : []), ...files] }));
+    } finally {
+      setPreparingAttachments(false);
+    }
+  };
   const draftContextRef = useRef({ conversationId, identityKey: identityStorageKey("agent-draft") });
   draftContextRef.current = { conversationId, identityKey: identityStorageKey("agent-draft") };
   useReportAssistantBusy(searching || messages.some((message) => message.status === "PROCESSING"));
@@ -383,8 +401,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     && (!selectedSeriesIds.length || selectedSeriesIds.includes(referenceHit.evidence.seriesId)));
   const scopeValid = (!requiresExplicitScope || selectedSeriesIds.length > 0)
     && selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.tenantId === sourceTenantId && isSearchable(item.status)));
-  const canAttach = Boolean(!loading && conversationId && !deletedConversationIdsRef.current.has(conversationId) && mode === "live");
-  const canSend = Boolean(query.trim() && canAttach && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
+  const canAttach = Boolean(!loading && (!conversationId || !deletedConversationIdsRef.current.has(conversationId)) && mode === "live");
+  const canSend = Boolean(query.trim() && canAttach && !creatingConversation && !pendingFiles && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
 
   useEffect(() => {
     scopeTouchedRef.current = false;
@@ -477,11 +495,11 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
   useEffect(() => {
     const target = focusAfterMutationRef.current;
-    if (target === "composer" && !loading && conversationId) {
+    if (target === "composer" && !loading && !error) {
       focusAfterMutationRef.current = null;
       setConversationStatus(t("对话已打开"));
       composerRef.current?.focus();
-    } else if (target === "composer" && !loading && !conversationId) {
+    } else if (target === "composer" && !loading && error) {
       focusAfterMutationRef.current = null;
       setConversationStatus(error ? t("打开对话失败：{value0}", { value0: error }) : t("打开对话失败"));
       if (conversationFailureRef.current) conversationFailureRef.current.focus();
@@ -537,7 +555,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       ...(sourceTenantId ? { sourceTenantId } : {}),
       attachments: attachments.items.map((item) => ({ mediaUri: item.attachment!.mediaUri })),
       onAccepted: () => {
-        if (draftContextRef.current.conversationId !== context.conversationId
+        if ((context.conversationId !== null && draftContextRef.current.conversationId !== context.conversationId)
           || identityStorageKey("agent-draft") !== context.identityKey) return;
         if (draftRevisionRef.current === revision) {
           setQuery("");
@@ -591,24 +609,14 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       composerRef.current?.focus();
       return;
     }
-    setCreatingConversation(true);
     setConfirmingDeleteId(null);
     setConversationActionError(null);
-    try {
-      const conversation = await createAgentConversation(crypto.randomUUID());
-      deletedConversationIdsRef.current.delete(conversation.conversationId);
-      replaceConversations([conversation, ...conversationsRef.current.filter((item) => item.conversationId !== conversation.conversationId)]);
-      followThread.current = true;
-      focusAfterMutationRef.current = "composer";
-      setRequestedConversationId(conversation.conversationId);
-      setConversationStatus(t("已新建对话"));
-      closeConversationPicker();
-    } catch (failure) {
-      setConversationActionError(t("新建对话失败：{value0}", { value0: errorMessage(failure, locale) }));
-      if (conversationPickerRef.current) conversationPickerRef.current.open = true;
-    } finally {
-      setCreatingConversation(false);
-    }
+    clearConversation();
+    followThread.current = true;
+    focusAfterMutationRef.current = "composer";
+    setRequestedConversationId("");
+    setConversationStatus(t("已新建对话"));
+    closeConversationPicker();
   };
 
   const deleteConversation = async (conversation: AgentConversationView) => {
@@ -623,23 +631,16 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       deletedConversationIdsRef.current.add(conversation.conversationId);
       conversationListRequestRef.current += 1;
       setConversationsLoading(false);
-      let remaining = conversationsRef.current.filter((item) => item.conversationId !== conversation.conversationId);
+      const remaining = conversationsRef.current.filter((item) => item.conversationId !== conversation.conversationId);
       replaceConversations(remaining);
       setConfirmingDeleteId(null);
       setConversationStatus(t("已删除对话：{value0}", { value0: conversation.title }));
       if (deletingCurrentConversation) {
         clearConversation();
-        let next = remaining[0];
-        if (!next) {
-          next = await createAgentConversation(crypto.randomUUID());
-          deletedConversationIdsRef.current.delete(next.conversationId);
-          remaining = [next];
-          replaceConversations(remaining);
-          setConversationStatus(t("已删除对话：{value0}；已创建新的空对话", { value0: conversation.title }));
-        }
+        const next = remaining[0];
         followThread.current = true;
         focusAfterMutationRef.current = "composer";
-        setRequestedConversationId(next.conversationId);
+        setRequestedConversationId(next?.conversationId ?? "");
         closeConversationPicker();
       } else {
         focusAfterMutationRef.current = "picker";
@@ -785,7 +786,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 <Kino interactive perch dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
                 <p>{embedded ? t("看到哪里，问到哪里。回答里的时间点可以直接点击跳转。") : t("描述记得的画面、台词或人物关系，一起把那一刻找回来。")}</p>
                 <div className={styles.examples} aria-label={t("试试这样问")}>
-                  {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || !conversationId} onClick={() => {
+                  {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || loading} onClick={() => {
                     pendingExampleRef.current = true;
                     draftRevisionRef.current += 1;
                     setQuery(t(example));
@@ -860,7 +861,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                   const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
                   if (!canAttach || !files.length) return;
                   if (!event.clipboardData.getData("text/plain")) event.preventDefault();
-                  attachments.addFiles(files);
+                  void addFiles(files);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -878,7 +879,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                   <input ref={attachmentInputRef} type="file" hidden multiple accept={AGENT_ATTACHMENT_ACCEPT} aria-label={t("选择聊天图片")} disabled={!canAttach} onChange={(event) => {
                     const files = Array.from(event.target.files ?? []);
                     event.target.value = "";
-                    attachments.addFiles(files);
+                    void addFiles(files);
                     composerRef.current?.focus();
                   }} />
                   <details
