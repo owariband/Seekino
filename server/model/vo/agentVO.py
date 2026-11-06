@@ -190,6 +190,12 @@ class AgentAnswerDeltaView(AgentAnswerEventView):
     text_stream: AgentTextStreamView | None = None
 
 
+class AgentAnswerReasoningDeltaView(AgentAnswerEventView):
+    type: Literal["answer.reasoning.delta"] = "answer.reasoning.delta"
+    delta: str
+    call_id: str
+
+
 class AgentAnswerCompletedView(AgentAnswerEventView, AgentMessageSendView):
     type: Literal["answer.completed"] = "answer.completed"
 

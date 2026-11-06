@@ -44,7 +44,7 @@ from gateway.ark.agent import (
 from gateway.media import ToolImageArtifact, prepare_input_messages, require_vision_input
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.usage import capture_model_usage
-from gateway.model_events import ModelTextDelta, observe_model_text
+from gateway.model_events import ModelReasoningDelta, ModelTextDelta, observe_model_reasoning, observe_model_text
 
 from .context import ContextWindowPolicy, measure_context
 from .contracts import AgentLoopModel, SupervisorSessionContext
@@ -364,11 +364,16 @@ class _HostControlMiddleware(AgentMiddleware):
 class _PublicTextMiddleware(AgentMiddleware):
     """Observe only the model call inside summarization, not its private work."""
 
-    def __init__(self, observer: Callable[[ModelTextDelta], None] | None) -> None:
+    def __init__(
+        self,
+        observer: Callable[[ModelTextDelta], None] | None,
+        reasoning_observer: Callable[[ModelReasoningDelta], None] | None = None,
+    ) -> None:
         self._observer = observer
+        self._reasoning_observer = reasoning_observer
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        with observe_model_text(self._observer):
+        with observe_model_text(self._observer), observe_model_reasoning(self._reasoning_observer):
             return handler(request)
 
 
@@ -412,6 +417,7 @@ class DeepAgentsSupervisorModel:
         image_urls: Sequence[str] = (),
         session_context: SupervisorSessionContext | None = None,
         handle_text_delta: Callable[[ModelTextDelta], None] | None = None,
+        handle_reasoning_delta: Callable[[ModelReasoningDelta], None] | None = None,
     ) -> None:
         del session_context
         if not prompt.strip() or not thread_id or not message_id:
@@ -455,6 +461,10 @@ class DeepAgentsSupervisorModel:
                 model._delivered_text = True
                 assert handle_text_delta is not None
                 handle_text_delta(delta)
+            def deliver_reasoning(delta: ModelReasoningDelta) -> None:
+                check()
+                assert handle_reasoning_delta is not None
+                handle_reasoning_delta(delta)
             if self._context_window_policy is not None:
                 model._maximum_input_tokens = self._context_window_policy.maximum_input_tokens
                 # Application compaction thresholds are not the model's actual capacity.
@@ -479,6 +489,7 @@ class DeepAgentsSupervisorModel:
             # images still participate in its budget; observe text only inside it.
             middleware.append(_PublicTextMiddleware(
                 deliver_delta if handle_text_delta is not None else None,
+                deliver_reasoning if handle_reasoning_delta is not None else None,
             ))
             def build_graph(checkpointer):
                 return create_deep_agent(

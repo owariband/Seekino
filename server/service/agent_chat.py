@@ -209,6 +209,15 @@ class AgentMessageExecution:
             tail["sequence"] = payload["sequence"]
             tail["occurredAt"] = payload["occurredAt"]
             return True
+        if (
+            payload.get("type") == "answer.reasoning.delta"
+            and tail.get("type") == "answer.reasoning.delta"
+            and payload.get("callId") == tail.get("callId")
+        ):
+            tail["delta"] += payload["delta"]
+            tail["sequence"] = payload["sequence"]
+            tail["occurredAt"] = payload["occurredAt"]
+            return True
         return False
 
     def finish(self) -> None:
@@ -937,6 +946,13 @@ class AgentChatService:
                 with event_lock:
                     if execution.cancellation.is_set():
                         raise AgentModelInvocationError("Agent execution cancelled")
+                    if event["type"] == "answer.reasoning.delta":
+                        # Reasoning is display-only; never persisted into the answer.
+                        execution.publish({
+                            "type": "answer.reasoning.delta", "callId": event["callId"],
+                            "delta": event["delta"],
+                        })
+                        return
                     if event["type"] == "answer.delta":
                         partial_content = event["content"]
                         pending_text_blocks = event["renderBlocks"]

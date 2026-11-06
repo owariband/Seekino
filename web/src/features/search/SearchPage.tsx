@@ -360,7 +360,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
   }, []);
-  const { conversationId, messages, progress, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
+  const { conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
   const kinoHostId = messages.findLast((message) => message.role === "ASSISTANT")?.messageId ?? null;
@@ -805,7 +805,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                   </div>
                 ) : (
                   <div>
-                    <AgentProgress message={message} steps={progress[message.messageId] ?? []} displayMode={displayMode}
+                    <AgentProgress message={message} steps={progress[message.messageId] ?? []} reasoning={reasoning[message.messageId] ?? ""} displayMode={displayMode}
                       kinoHost={message.messageId === kinoHostId} kinoAwake={connecting} />
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || t("本次回答未完成")}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>{t("未生成回答")}</p> : null}
