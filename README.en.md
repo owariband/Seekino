@@ -23,7 +23,7 @@
 
 > **Can't get through the lecture slides?** A 116-min course video is daunting, and you can't tell which "knowledge" inside is the part you want. Even searching at 3× speed still takes 30+ min!
 >
-> **Editing footage hard to manage?** You keep asking the agent to re-parse the same reference clip and animation source, you still find and supply most character art yourself, and the motion effects and animations you've analysed are never kept. `TODO`
+> **Editing footage hard to manage?** You keep asking the agent to re-parse the same reference clip and animation source, you still find and supply most character art yourself, and the motion effects and animations you've analysed are never kept. 🚧
 
 **Parse a video once, then locate and reuse it again and again.** Jump around a video as freely as you skim text, and hand "what I'm watching right now" to the agent as easily as you'd paste a paragraph.
 
@@ -38,20 +38,26 @@ Seekino gives you flexible video positioning: it recalls the clips you need, wit
 
 ### 1.1. Retrieval support
 
-- **Can't find that iconic anime scene any more?** — Upload an image or describe your vague impression, and Seekino locates it in seconds
-- **Want to study a course without taking screenshots?** — Ask while you watch; the AI knows where you are and what's confusing you
-- **Need your own "crash course route"?** — Give your question; the AI "browses" the video's outline and tailors a route for you
-- **Need editing footage but don't want to scrub for it?** — Seekino provides MCP, so your Claude Code fetches the clips you need; you just give a vague impression and review
-- **Need references for editing, but past results can't be reused?** — Seekino stores your past motion-effect analyses in depth and lets MCP "update your own editing reference experience", so your editing know-how compounds `TODO`
+| Your problem | What Seekino does |
+| --- | --- |
+| Can't find that iconic anime scene any more? | Upload an image or describe your vague impression, and Seekino locates it in seconds |
+| Want to study a course without taking screenshots? | Ask while you watch; the AI knows where you are and what's confusing you |
+| Need your own "crash course route"? | Give your question; the AI "browses" the video's outline and tailors a route for you |
+| Need editing footage but don't want to scrub for it? | Seekino provides MCP, so your Claude Code fetches the clips you need; you just give a vague impression and review |
+| Need references for editing, but past results can't be reused? 🚧 | Seekino stores your past motion-effect analyses in depth and lets MCP "update your own editing reference experience", so your editing know-how compounds |
 
 ### 1.2. Parsing support
 
-- **Have to babysit a long video while it parses?** — Upload once. Seekino transcribes the whole video and parses it in parallel chunks; progress is visible in Parse Tasks, failures can be retried, and you can search as soon as it's done
-- **Long courses too expensive to parse?** — Every stage can use a different model (Kimi, Doubao, DeepSeek…), and every call records its tokens and estimated cost, so you always know what you're spending
-- **A sentence cut in half?** — Sliding-window Refine re-reads adjacent chunks together, fills dropped lines, removes duplicates and joins sentences across the cut
-- **Can't tell who's speaking?** — Whole-video speaker grouping, series background notes and voiceprints identify the speaker; without enough evidence it stays blank instead of guessing
-- **Just want to know what the video is about first?** — After parsing, Seekino writes a video outline and a series overview, so you see the structure first and dive in where it matters
-- **Courses, films and editing footage all parsed the same way?** — Seekino recognises the parse type and controls cost per type; you can customise it too `TODO`
+| Your problem | What Seekino does |
+| --- | --- |
+| Have to babysit a long video while it parses? | Upload once. Seekino transcribes the whole video and parses it in parallel chunks; progress is visible in Parse Tasks, failures can be retried, and you can search as soon as it's done |
+| Long courses too expensive to parse? | Every stage can use a different model (Kimi, Doubao, DeepSeek…), and every call records its tokens and estimated cost, so you always know what you're spending |
+| A sentence cut in half? | Sliding-window Refine re-reads adjacent chunks together, fills dropped lines, removes duplicates and joins sentences across the cut |
+| Can't tell who's speaking? | Whole-video speaker grouping, series background notes and voiceprints identify the speaker; without enough evidence it stays blank instead of guessing |
+| Just want to know what the video is about first? | After parsing, Seekino writes a video outline and a series overview, so you see the structure first and dive in where it matters |
+| Courses, films and editing footage all parsed the same way? 🚧 | Seekino recognises the parse type and controls cost per type; you can customise it too |
+
+<sub>🚧 = not implemented yet.</sub>
 
 <details>
 <summary>Screenshots (2026-10-25, local build, real footage)</summary>
@@ -72,53 +78,72 @@ To offer public Q&A that casual users can try on a lightweight cloud server, and
   <img src="docs/architecture/fig03.png" width="960" alt="Seekino macro architecture" />
 </p>
 
-<sub>Every figure is editable in [docs/architecture/seekino-figures.drawio](docs/architecture/seekino-figures.drawio) (12 tabs). Items marked `TODO` are not implemented yet or not yet measured on the current build.</sub>
+<sub>Every figure is editable in [docs/architecture/seekino-figures.drawio](docs/architecture/seekino-figures.drawio) (12 tabs). 🚧 = not implemented yet; TBD = not yet measured on the current build.</sub>
 
 ### 2.1. Parsing
 
-**ASR.** The parsing layer uses WhisperX for ASR by default, and you can swap in an ASR API.
+#### Parallel parsing
 
-**Parallel parsing.** To work across many scenarios and model APIs at a cost every user can afford, Seekino parses fixed 60 s chunks in parallel (10 at a time by default). A hook recognises the parse type and routes to one of three parse modes, each with its own cost control (user-customisable): course, script (scripted film and TV) and clip (editing footage). `TODO: parse-type hook`
+The parsing layer uses WhisperX for ASR by default, and you can swap in an ASR API.
+
+To work across many scenarios and model APIs at a cost every user can afford, Seekino cuts each video into fixed 60 s chunks and parses them in parallel (10 at a time by default). A hook recognises the parse type and routes to one of three parse modes, each with its own cost control (user-customisable) 🚧:
+
+- **course**: lectures and courses
+- **script**: scripted film and TV
+- **clip**: editing footage
 
 <p align="center">
   <img src="docs/architecture/fig06.png" width="960" alt="Fixed 60 s chunks parsed in parallel" />
 </p>
 
-**Paying back what chunking costs.** In parallel, a single chunk loses the context of its neighbours, and fixed chunking cuts through sentences and actions. Two passes repair this:
+#### Paying back what chunking costs
 
-- **Sliding-window Refine:** every three adjacent chunks are re-read together to fill dropped lines, remove duplicates and join dialogue across the cut
-- **Tail Summary:** after parsing, the whole timeline is read once more to write the video outline and the series overview
+In parallel, a single chunk loses the context of its neighbours, and fixed chunking cuts through sentences and actions. Two passes repair this:
+
+| Pass | What it does |
+| --- | --- |
+| Sliding-window Refine | Re-reads every three adjacent chunks together to fill dropped lines, remove duplicates and join dialogue across the cut |
+| Tail Summary | After parsing, reads the whole timeline once more to write the video outline and the series overview |
 
 <p align="center">
   <img src="docs/architecture/fig05.png" width="960" alt="Parse V2 stages" />
 </p>
 
-**Results.** Understanding of one 1-min chunk at 3 FPS (max height 720) on the course *Let's build GPT* (116 min, 117 chunks), medians of successful runs:
+#### Results
+
+Understanding of one 1-min chunk at 3 FPS (max height 720) on the course *Let's build GPT* (116 min, 117 chunks), medians of successful runs:
 
 | Model | FTT | TT | Input tokens / chunk | Est. cost / chunk |
 | --- | ---: | ---: | ---: | ---: |
-| Kimi k3.1-pro | 43.4 s | 320.2 s | ≈244k | `TODO` |
-| Kimi k3.1-pro (low) | `TODO` | 105.5 s | ≈244k | `TODO` |
-| Doubao Seed 2.1 Pro | `TODO` | `TODO` | `TODO` | `TODO` |
-| DeepSeek Flash (non-thinking) | `TODO` | 31.8 s | `TODO` | ≈¥0.22 |
+| Kimi k3.1-pro | 43.4 s | 320.2 s | ≈244k | TBD |
+| Kimi k3.1-pro (low) | TBD | 105.5 s | ≈244k | TBD |
+| Doubao Seed 2.1 Pro | TBD | TBD | TBD | TBD |
+| DeepSeek Flash (non-thinking) | TBD | 31.8 s | TBD | ≈¥0.22 |
 
 <sub>FTT: time to first token; TT: total time per chunk. The DeepSeek cost comes from incomplete usage records. Sources: [Kimi trace](docs/report/server/kimi-parse-trace-20261101.md) · [DeepSeek Flash audit](docs/report/gateway/deepseek-flash-chunk-audit-20261103.md) · [devlog](docs/dev/devlog.md)</sub>
 
-**Why parallel.** Whatever the model, the time a long video takes stays under control: it grows with chunks ÷ concurrency, not with one serial pass over the whole video.
+The benefit of parallel parsing: whatever the model, the time a long video takes stays under control. It grows with chunks ÷ concurrency, not with one serial pass over the whole video.
 
-**Challenge: concurrent Refine conflicts.** Adjacent windows share chunks, so two of them can edit the same content at once. We moved from pessimistic locking, where tools forcibly controlled the agent's output, to optimistic, non-blocking control: as soon as the first overlapping window commits, the others are interrupted and receive a new message:
+#### Challenge: concurrent Refine conflicts
+
+Adjacent windows share chunks, so two of them can edit the same content at once. We moved from pessimistic locking, where tools forcibly controlled the agent's output, to optimistic, non-blocking control: as soon as the first overlapping window commits, the others are interrupted and receive a new message:
 
 > Chunk 13, shared by window [12, 14], has been updated; the new window JSON is: {…}
 
-The agent is freed from the endless fail-and-retry tool pipeline, and time and token use both drop:
+The agent is freed from the endless fail-and-retry tool pipeline, and time and token use both drop. On the same 3 chunks:
 
-- Same 3 chunks: the Canvas-tool approach took 8 requests, 593.7 s and 314,671 input tokens; direct JSON took 1 request, 247.0 s and 11,307 input tokens, with the same 45 events and 16 dialogue lines
-- Before optimistic control, one full-course run had 49 commits rejected for conflicts after generation had already finished, and failed attempts took 57% of all Refine time; an interrupted request now exits in about 1 ms (local SSE test)
-- Whole-course time and token savings on real models: `TODO`
+| Approach | Model requests | Time | Input tokens | Result |
+| --- | ---: | ---: | ---: | --- |
+| Canvas tools, step-by-step reads and writes | 8 | 593.7 s | 314,671 | 45 events, 16 dialogue lines |
+| One complete JSON | 1 | 247.0 s | 11,307 | 45 events, 16 dialogue lines |
+
+Before optimistic control, one full-course run had 49 commits rejected for conflicts after generation had already finished, and failed attempts took 57% of all Refine time. An interrupted request now exits in about 1 ms (local SSE test). Whole-course time and token savings on real models are TBD.
 
 Today's models are capable enough to justify the optimistic view; so far only DS Flash non-thinking has produced unreliable output.
 
-**Gate.** Free of the Canvas tools, the agent still must not break the JSON structure. A JSON gate checks every output against JSON and the schema. When a check fails, the gate returns a guide message together with the agent's own last full output, so it fixes only what's wrong:
+#### Gate
+
+Free of the Canvas tools, the agent still must not break the JSON structure. A JSON gate checks every output against JSON and the schema. When a check fails, the gate returns a guide message together with the agent's own last full output, so it fixes only what's wrong:
 
 > field `members.0.content` is wrong: xxx, please fix it
 
@@ -130,46 +155,65 @@ Problems the host can fix deterministically, such as unsorted times, are fixed d
 
 ### 2.2. Building retrieval
 
-**Vectors designed for multimodal input.** To support gif, jpg, text and other input, the stored vectors are designed around it. The retrieval unit changed from the 1-min chunk to the Event (one action, shot or line), so a short line isn't diluted inside a one-minute vector. Each Event is stored on three channels: lexical (BM25), semantic (text vectors) and visual (frame vectors). `TODO: gif input; text and still images work today`
+#### Vectors designed for multimodal input
 
-**Keeping strong hits with ||L<sub>∞</sub>||.** Plain weighted RRF uses fixed weights, which can push a channel's hit 1, a result that should match, out of the top 10 after weighting. Taking the maximum across channels keeps such a result from being filtered out at the end, so retrieval stays reliable. `TODO: not adopted yet; fusion is currently weighted RRF with query-adaptive weights, and this must be added`
+To support gif, jpg, text and other input, the stored vectors are designed around it. The retrieval unit changed from the 1-min chunk to the Event (one action, shot or line), so a short line isn't diluted inside a one-minute vector. Each Event is stored on three channels:
 
-**A hit is not a fact.** Before results are returned, each one is checked against the timeline of its parse task and content version: a vector hit is only a candidate, and only a checked hit is a fact.
+| Channel | What it stores | Good at |
+| --- | --- | --- |
+| Lexical | Event text and dialogue (BM25) | exact quotes, names, terms |
+| Semantic | Text vectors of the description and dialogue | paraphrases, vague descriptions |
+| Visual | Frame vectors | visual descriptions, image queries |
+
+Text and still images work today; gif input 🚧.
+
+#### Keeping strong hits with ‖L<sub>∞</sub>‖ 🚧
+
+Plain weighted RRF uses fixed weights, which can push a channel's hit 1, a result that should match, out of the top 10 after weighting. Taking the maximum across channels keeps such a result from being filtered out at the end, so retrieval stays reliable. Fusion is currently weighted RRF with query-adaptive weights; this must be added.
+
+#### A hit is not a fact
+
+Before results are returned, each one is checked against the timeline of its parse task and content version: a vector hit is only a candidate, and only a checked hit is a fact.
 
 <p align="center">
   <img src="docs/architecture/fig10.png" width="960" alt="Why the retrieval unit changed from chunk to Event" />
 </p>
 
-**Top-down and bottom-up.** There are two common ways to retrieve:
+#### Top-down and bottom-up
 
-- **Top-down:** read the video outline together with the user's vague intent, such as "I want to build a GPT; which points should I focus on mastering?", plan at the macro level how to help, then go deeper into selected chunks through the outline to find specific Events as evidence
-- **Bottom-up:** locate the Event directly, then go back to its chunk and use the context to answer more fully
+- **Top-down** (the whole, a route): read the video outline with the user's vague intent, e.g. "I want to build a GPT; which points should I focus on mastering?", plan at the macro level how to help, then go deeper into selected chunks through the outline to find specific Events as evidence.
+- **Bottom-up** (a line, a scene): locate the Event directly, then go back to its chunk and use the context to answer more fully.
 
-The agent chooses per question: questions about the whole or about a route go top-down; searches for a line or a scene go bottom-up.
+The agent picks the approach for each question.
 
 ### 2.3. Retrieval Q&A
 
-**Decide whether to search at all.** The same words can be a new search or just a reply to the last answer. Before each turn reaches the Supervisor, it passes through a query router and rewriter:
+#### Decide whether to search at all
 
-- **Route:** Jev-1.14 decides whether the message is respond (just reply), retrieve (search) or mixed (both), with a 3 s timeout
-- **Rewrite:** for retrieve / mixed, DeepSeek Flash writes only the part to search as `retrieval_query`, keeping quoted lines verbatim and never guessing names, episodes or plot, with a 4 s timeout
-- **Fallback:** an 8 s total budget; any timeout, error or invalid output falls back to the raw message, so it can only help, never get in the way
+The same words can be a new search or just a reply to the last answer. Before each turn reaches the Supervisor, it passes through a query router and rewriter:
+
+| Step | What it does |
+| --- | --- |
+| Route<br><sub>Jev-1.14 · 3 s</sub> | Decides whether the message is respond (just reply), retrieve (search) or mixed (both) |
+| Rewrite<br><sub>DeepSeek Flash · 4 s</sub> | For retrieve / mixed, writes only the part to search as `retrieval_query`; quoted lines stay verbatim, and names, episodes or plot are never guessed |
+| Fallback<br><sub>8 s total budget</sub> | Any timeout, error or invalid output falls back to the raw message, so it can only help, never get in the way |
 
 <p align="center">
   <img src="docs/architecture/fig07.png" width="960" alt="Query router and rewrite" />
 </p>
 
-**Answer with clips.** The Supervisor calls tools as needed:
-- it delegates to the video-search agent to recall Events;
-- it reads the video outline and the series overview;
-- it understands what you're watching at your current playback position;
-- it searches the web for background.
+#### Answer with clips
+
+The Supervisor calls tools as needed:
+
+- delegate to the video-search agent to recall Events
+- read the video outline and the series overview
+- understand what you're watching at your current playback position
+- search the web for background
 
 Each clip appears as a playable card under the text that cites it, snapped to sentence and Event boundaries; click it to go back to the original and check.
 
-**Streaming.** Answers stream as they're generated, with the reasoning folded away; if the first token hasn't arrived in 15 s, the client backs off and reconnects, up to 3 times.
-
-**Results.** Turn latency, pass rate and token cost before and after the router: `TODO`
+Answers stream as they're generated, with the reasoning folded away. If the first token hasn't arrived in 15 s, the client backs off and reconnects, up to 3 times. Turn latency, pass rate and token cost before and after the router are TBD.
 
 <details>
 <summary>Problems we hit, effects, and metrics still to measure</summary>
