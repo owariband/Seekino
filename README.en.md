@@ -4,95 +4,205 @@
 
 <h1 align="center">Seekino</h1>
 
-<p align="center"><strong>A personal video library for everyone.</strong></p>
-<p align="center">Analyze your videos, find footage in natural language, and trace every clip back to the original.</p>
+<p align="center"><strong>Parse a video once. Find, jump and ask inside it like text, forever after.</strong></p>
+<p align="center">A personal video library: natural-language and image search, clip-level answers, and every result traced back to the original timestamp.</p>
 
 <p align="center">
   English · <a href="README.md">简体中文</a>
 </p>
 
 <p align="center">
-  <a href="#under-construction">Under construction</a> ·
-  <a href="#what-it-does">What it does</a> ·
-  <a href="#screenshots">Screenshots</a> ·
-  <a href="#how-to-use-it">How to use it</a> ·
-  <a href="#api-integration">API integration</a> ·
-  <a href="#quick-start">Quick start</a> ·
+  <a href="#1-highlights">Highlights</a> ·
+  <a href="#2-technical-architecture">Architecture</a> ·
+  <a href="#3-deployment">Deployment</a> ·
+  <a href="#api-integration">API &amp; MCP</a> ·
   <a href="#references">References</a>
 </p>
 
-Seekino (formerly Seekino) turns your videos into a searchable footage library. Import videos, analyze visuals and dialogue, describe what you need, and retrieve clips with timestamps that lead back to the original. Video analysis and retrieval are also available through APIs for your own tools and workflows.
+## 1. Highlights
 
-## Under construction
+- **Can't sit through the slides?** A 116-minute course is daunting, and you don't know which part holds the knowledge you actually need. Even at 3× speed that is still 30+ minutes of watching.
+- **Editing footage is hard to keep track of** *(direction, in progress)*. Every edit, you ask the agent to parse the same reference clip or animation source again. You still hunt down most character art yourself. And the motion-effect and animation references you already analysed are gone the next time you need them.
 
-Import, analysis, retrieval and viewing Q&A are available today. We are continuing work on:
+**Seekino parses a video once, then lets you locate and reuse it again and again.** You can jump around a video the way you skim text, and hand "what I'm watching right now" to the agent the way you would paste a paragraph.
 
-1. **Sandbox integration**: connect the platform's Agent to creative workflows, using retrieved footage for reference edits.
-2. **An MCP interface**: let external agents such as Codex and Claude Code search the footage library for material.
-3. **Video analysis improvements**: improve content understanding and structured analysis, while reducing processing time and cost.
-4. **Retrieval improvements**: improve footage matching, temporal localization and context linking.
-5. **Configurability and ease of use**: improve model configuration, deployment and the everyday experience.
+- **Courses:** ask one sentence and land on the point you want in about a dozen seconds, with no speed-watching.
+- **Editing:** each piece of footage is parsed once and reused many times, so it grows into your own editing library.
 
-**Feedback and discussion are welcome. If you are interested, join us in building Seekino!**
+Seekino's job is precise positioning: it recalls the exact clip, with its source video and time range, so you can check it against the original.
 
-## What it does
+<p align="center">
+  <img src="docs/architecture/fig01.png" width="960" alt="From remembering a moment to a verifiable clip" />
+</p>
 
-| Capability | What you can do |
-| --- | --- |
-| Organize and analyze footage | Group videos into series, add character and background notes, and analyze visuals, dialogue and events to build a searchable index. |
-| Retrieve clips in natural language | Describe a scene, action, line or relationship. Search across videos in selected series and keep asking follow-up questions. |
-| Preview and verify | See the source video, time range, selection reason and context. Play the retrieved clip or jump back to the full video. |
-| Ask while watching | Open the side panel to ask about the current frame, characters or nearby dialogue. |
-| Connect your own tools | Use HTTP APIs for uploads, analysis tasks, retrieval and Agent conversations. |
+### 1.1. Retrieval support
 
-For example, ask the MyGO library: "**Which performances are the most hype? Recommend 3 and explain why.**" The answer provides clips with sources, timestamps and reasons, so you can check the original footage and decide whether it fits your edit. The demo below uses MyGO anime footage; results on other kinds of video still need to be evaluated with your own material.
+| You want to… | What Seekino does | Status |
+| --- | --- | --- |
+| Find an iconic anime scene you can't place any more | Describe your vague impression, or attach a screenshot, and get the episode and second. | Text ✅ · still image in chat ✅ · GIF ⏳ |
+| Study a course without screenshotting it | Ask while watching. The question carries the current video and playback position, so the AI knows where you are and what confused you. | ✅ |
+| Get a "crash route" through a course for your own goal | Give your question. The AI browses the series overview and the video outline, then plans which sections to watch and in what order. | ✅ |
+| Pull editing material without scrubbing by hand | Seekino exposes an MCP server. Claude Code, Codex or any MCP client can fetch clips for a brief; you give a vague impression and review the picks. | ✅ read-only: `list_series`, `retrieve`, `read_evidence` |
+| Reuse what you learned from past editing references | Store motion-effect analyses as reusable style references that an MCP client can recall and update, so editing experience compounds. | ⏳ planned |
 
-## Screenshots
+### 1.2. Parsing support
 
-These screenshots were taken on **2026-10-25** from Seekino running locally, using real videos, existing analysis results and conversation records. They show the current web interface; the hosted demo is not live yet.
+| You want to… | What Seekino does | Status |
+| --- | --- | --- |
+| Make a long video searchable without babysitting it | Upload once. Seekino transcribes the whole video, cuts it into fixed 60 s chunks, parses them in parallel, and you can track progress and retry failed tasks. | ✅ |
+| Keep a 2-hour course affordable | Pick the model per stage (Kimi, Doubao, DeepSeek, Codex…) in one `config.yaml`; every model call records tokens and estimated cost. | ✅ |
+| Not lose sentences that cross a chunk boundary | Adjacent chunks are re-read together in a sliding Refine window that fills dropped lines, removes duplicates and stitches cross-boundary dialogue. | ✅ |
+| Know who is speaking | Whole-video speaker grouping, series background notes and optional voiceprints feed speaker attribution; unknown speakers stay unnamed rather than guessed. | ✅ |
+| Get the shape of the video, not just its moments | After parsing, a separate Summarize pass writes a chaptered video outline and a series overview that chat can browse. | ✅ |
+| Spend less on footage that needs less | A parse-type hook picks one of three parse modes, course, script (剧本类影视作品) or clip, each with its own frame rate and model budget; you can override it. | ⏳ planned |
 
-### Organize your footage
+<details>
+<summary>Screenshots (2026-10-25, local build, real footage)</summary>
 
-Manage videos by series and check upload, analysis and search availability. Add background notes to help the analysis understand characters and content.
+**Organize your footage.** Manage videos by series and check upload, analysis and search availability. Add background notes to help the analysis understand characters and content.
 
 ![Seekino library: video series, analysis status and management controls](assets/screenshots/library.jpg)
 
-### Describe a scene and retrieve matching clips
-
-Search across videos in natural language. Expand a result to preview the clip, see why it was selected and check its original timestamps. Quote a clip to ask a follow-up question.
+**Describe a scene and retrieve matching clips.** Expand a result to preview the clip, see why it was selected and check its original timestamps. Quote a clip to ask a follow-up question.
 
 ![Seekino search: a natural-language question, retrieved clips and selection reasons](assets/screenshots/search-results.jpg)
 
-### Return to the original and check the context
-
-The player and Q&A panel sit side by side. Questions carry the current video and playback position, and video timestamps in answers are clickable.
+**Return to the original and check the context.** The player and Q&A panel sit side by side. Questions carry the current video and playback position, and video timestamps in answers are clickable.
 
 ![Seekino viewing Q&A: original video player and conversation panel](assets/screenshots/watch-chat.jpg)
 
-<details>
-<summary>More screens: browse footage and choose an episode</summary>
-
-The viewing home page provides series and playback entry points, with support for resuming where you left off.
-
 ![Seekino viewing home: video series and playback entry points](assets/screenshots/watch-home.jpg)
-
-The series page lists videos in episode order so you can choose the original footage to inspect.
 
 ![Seekino series page: footage overview and episode selection](assets/screenshots/series.jpg)
 
 </details>
 
-## How to use it
+**How to use it today.** A hosted sample library (admins upload, visitors watch, search and ask) is being prepared; there is no public URL yet. You can self-host a personal library now; see [Deployment](#3-deployment). Analysis, retrieval and answers can be wrong, so check them against the original footage. Known issues are in the [issue list](docs/dev/problems.md) (in Chinese).
 
-**A hosted sample library is being prepared for release.** Admins will upload and maintain pre-analyzed footage, while visitors can watch, search and ask questions. There is no public demo URL yet.
+## 2. Technical architecture
 
-**You can currently self-host a personal library.** See [Quick start](#quick-start) for setup. The basic workflow is:
+Seekino has two audiences. Casual users should be able to try public Q&A on a lightweight cloud server; heavy users should be able to self-host their own video knowledge base. To serve both, Seekino is built as three stages, parsing, retrieval and Q&A, that meet only through two stores: MySQL holds business facts, tasks and versions; Elasticsearch holds the derived search projection.
 
-1. Create a video series as a collection. Add a description, spoken language, background notes and reference images as needed.
-2. Upload videos and track indexing in Parse Tasks. Chunked uploads support pause and resume; failed analysis tasks show errors and available retry actions.
-3. Describe the footage you want in search, or play a video and ask in the side panel. Follow clips in the answer back to the original video to verify them.
+<p align="center">
+  <img src="docs/architecture/fig03.png" width="960" alt="Seekino system overview: runtime layers, offline parse loop and online chat loop" />
+</p>
 
-Management and upload permissions depend on the deployment mode and your identity. Self-hosting requires storage, a database and model configuration. When using remote models, the relevant audio, video, frames or text are sent to the configured provider and may incur API charges.
+<details>
+<summary>Model stack and product loop</summary>
+
+![Models Seekino integrated or evaluated, by phase](docs/architecture/fig04.png)
+
+![Product loop: import, parse, index, retrieve, watch and ask, create](docs/architecture/fig02.png)
+
+</details>
+
+All figures are editable in one draw.io file: [docs/architecture/seekino-figures.drawio](docs/architecture/seekino-figures.drawio) (12 tabs). Numbers marked **TODO** have not been measured on the current build.
+
+### 2.1. Parsing
+
+**Transcription.** The whole video is transcribed once before any chunk is parsed. WhisperX (local, with word-level alignment) is the default, and it can be replaced with an ASR API, such as Doubao, through `models.transcription`.
+
+**Parallel parsing on fixed chunks.** To work across many scenarios and many model APIs while staying affordable, Seekino cuts every video on a fixed 60 s grid (integer milliseconds, left-closed right-open) and runs Understanding on the chunks in parallel (10 at a time by default). Each chunk sees its frames, ±3 s of visual context and the transcript lines that fall inside it.
+
+<p align="center">
+  <img src="docs/architecture/fig06.png" width="960" alt="Fixed 60 s chunks parsed in parallel" />
+</p>
+
+Fixed chunks cost something: a single chunk loses its neighbours' context, and a cut can fall mid-sentence or mid-action. Two passes repair this:
+
+- **Sliding-window Refine.** Each window re-reads three adjacent chunks together (a 117-chunk course has 115 windows). It fills dropped lines, removes duplicated dialogue and stitches sentences across the boundary.
+- **Tail summary.** After parsing, an independent Summarize pass reads the whole timeline and writes the chaptered video outline and the series overview.
+
+<p align="center">
+  <img src="docs/architecture/fig05.png" width="960" alt="Parse V2 stages" />
+</p>
+
+**Measured per-chunk Understanding.** Same course (*Let's build GPT*, 116 min 20 s, 117 chunks), 3 FPS, max height 720. Values are medians of successful attempts; failed and cancelled attempts are reported separately in the linked evidence.
+
+| Model (setting) | Time per 1-min chunk, p50 | First token, p50 | Input tokens / chunk | Est. cost / chunk | Evidence |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Kimi k3.1-pro (default effort) | 320.2 s (n=14) | 43.4 s (n=10) | ≈244 k (198 frames) | TODO | [trace](docs/report/server/kimi-parse-trace-20261101.md) |
+| Kimi k3.1-pro (low) | 105.5 s (n=18) | TODO | ≈244 k | TODO | [devlog 11-02](docs/dev/devlog.md) |
+| DeepSeek Flash (reasoning off) | 31.8 s (n=117) | TODO | TODO | ≈¥0.22 (partial usage) | [audit](docs/report/gateway/deepseek-flash-chunk-audit-20261103.md) |
+| Doubao Seed 2.1 Pro | TODO | TODO | TODO | TODO | TODO |
+
+**Why parallel instead of serial.** With a fixed grid and a bounded worker pool, wall time grows with *chunks ÷ concurrency*, not with the model's speed on the whole video. A slow model makes each chunk slower, but a long video no longer turns into one long serial wait. Whole-course wall time on the current build: TODO.
+
+**Challenge: concurrent Refine windows.** Neighbouring windows share chunks, so two windows can edit the same chunk at once. We went through three designs:
+
+1. **Pessimistic, tool-driven.** The model edited the timeline through fine-grained Canvas read/write tools, so the host could control every write. On the same three chunks this took 8 model requests, 593.7 s and 314,671 input tokens; most of the time went into planning tool calls, not into fixing content.
+2. **One JSON per window.** The model gets the full window and returns one complete JSON: 1 request, 247.0 s, 11,307 input tokens, with the same 45 events and 16 dialogue lines (n=1 paired run). Without tools, though, windows built on stale snapshots: in one full-course run 49 commits were rejected as conflicts after the model had already finished generating, and failed attempts took 57% of all Refine attempt time.
+3. **Optimistic and non-blocking (current).** Windows run without locks. When the first overlapping window commits, the host immediately interrupts the other windows that share a chunk, keeps their latest candidate, and sends a new message: *chunk N was updated; here is the new window JSON*. The model continues from the new snapshot instead of failing a commit and starting over. In local HTTP/SSE tests, an interrupted request now exits in about 1 ms instead of hanging until its deadline. Real-model time and token savings: TODO.
+
+This frees the agent from an endless fail-and-retry tool loop. Current models are capable enough to support the optimistic view; in our runs, DeepSeek Flash with reasoning off is the one that still returns unreliable output.
+
+**Gate.** Without Canvas tools, nothing stops a model from breaking the JSON structure, so every Refine output passes a JSON gate before it can commit. Ordering problems the host can fix deterministically (for example, unsorted times) are fixed without another model call. Anything else goes back to the model with its own last output and the exact failing field, for example `members.0.content: …`, and an instruction to fix only that. Membership, time ranges, task lease and content version are still checked by the server at commit time, so the stored result is always well-formed and legal.
+
+<p align="center">
+  <img src="docs/architecture/fig09.png" width="960" alt="Refine before and after: Canvas tools versus one JSON with a deterministic gate" />
+</p>
+
+### 2.2. Building retrieval
+
+**What one vector represents.** The retrieval unit is the **Event** (one action, shot or line inside a chunk), not the 60 s chunk: a one-minute chunk encoded as a single vector dilutes a short target line. Each Event is indexed on three channels so text and image queries can both reach it:
+
+| Channel | Built from | Serves |
+| --- | --- | --- |
+| Lexical | Event text and dialogue (Elasticsearch BM25) | exact quotes, names, terms |
+| Semantic | Text embeddings of the description and dialogue, per language and role | paraphrased, vague descriptions |
+| Vision | Frame embeddings (`doubao-embedding-vision`, 1024-d) | visual descriptions and image queries |
+
+The channels are fused with **weighted reciprocal-rank fusion**, with weights adapted to the query, then reranked (falling back to the fused order if reranking fails). Every hit is verified against the stored Timeline of its parse task and content version before it is returned: a vector match is a candidate, not a fact.
+
+**TODO: max-rank guard.** Fixed-weight RRF can push a hit that one channel ranked #1 (say, an exact quote found by lexical search) out of the final top 10 once the weights are applied. The planned fix keeps each channel's top hit in the result, i.e. it takes the maximum over channels (‖·‖∞) rather than only the weighted sum, so a strong single-channel match is never filtered out at the end. Not implemented yet.
+
+<p align="center">
+  <img src="docs/architecture/fig10.png" width="960" alt="Why the retrieval unit changed from chunk to Event" />
+</p>
+
+**Two ways to retrieve.**
+
+- **Top-down.** For broad intent, such as *"I want to build a GPT; which points should I master?"*, the agent first reads the series overview and the video outline, plans the answer at the macro level, then opens only the chunks it needs and cites specific Events as evidence.
+- **Bottom-up.** For a specific moment, such as a line, a shot or an action, the agent retrieves Events directly, then reads the surrounding chunk to answer with context.
+
+The agent chooses between them per question; a course question about structure starts top-down, a quote or scene search starts bottom-up.
+
+### 2.3. Retrieval Q&A
+
+**Route before you search.** In chat, the same words can be a new search or just feedback on the last answer. Once per turn, before the main agent runs, a query hook decides:
+
+1. **Route.** Jev-1.14 (via OpenRouter, 3 s timeout) labels the message *respond*, *retrieve* or *mixed*.
+2. **Rewrite.** For *retrieve* or *mixed*, DeepSeek Flash (`models.query_rewriter`, reasoning off, 4 s timeout) writes only the search part as a clean `retrieval_query`, keeping quoted lines verbatim and never guessing names or episodes.
+3. **Append.** A fixed per-turn note is appended to the unchanged user text.
+
+The whole hook has an 8 s budget; any timeout, provider error or invalid output falls back to the raw message, so it can only help. It is on by default and needs `OPENROUTER_JEV_API_KEY`; rewriting can be switched off on its own.
+
+<p align="center">
+  <img src="docs/architecture/fig07.png" width="960" alt="Query router and rewrite before the chat supervisor" />
+</p>
+
+**Answer with clips, not claims.** The chat Supervisor plans the turn and calls tools:
+
+- `query_video` delegates the search to a video-search agent, which retrieves Events, browses outlines and inspects frames.
+- `get_series_overview` and `get_video_outline` read the course structure (top-down).
+- `understand_current_video` answers from the video you are watching, around your playback position.
+- `search_web` supplies background the footage doesn't contain.
+- `submit_video_item` attaches a playable clip card.
+
+Cards snap to sentence and Event boundaries and appear inline under the text that cites them. Answers stream token by token, with the model's reasoning in a collapsed panel; if no first token arrives within 15 s, the client reconnects with backoff, up to 3 times.
+
+**Effect.** Turn latency, strict pass rate and token cost of the router A/B are in Fig. 7(c) and Fig. 11; all values are TODO on the current build.
+
+<details>
+<summary>Problems we hit, measured effect, and what is still unmeasured</summary>
+
+![Problems to fixes](docs/architecture/fig08.png)
+
+![Measured effect, normalized to each baseline](docs/architecture/fig11.png)
+
+![Planned measurements](docs/architecture/fig12.png)
+
+</details>
 
 ## API integration
 
@@ -104,6 +214,7 @@ The web interface and external tools use the same service APIs. Your tools can c
 | Track analysis tasks | `GET /api/jobs/video-parse/get`, `GET /api/jobs/video-parse/events` |
 | Retrieve footage | `POST /api/search`, returning source clips, time ranges and evidence. |
 | Find footage through Agent chat | `/api/agent/conversations/*` and `/api/agent/messages/*`, with ongoing conversations and streamed answers. |
+| Let an external agent fetch clips (MCP) | Streamable HTTP at `/mcp` (local auth mode), tools `list_series`, `retrieve`, `read_evidence`. |
 
 After starting the service, inspect requests and responses in the [OpenAPI docs](http://127.0.0.1:9621/docs). See [Server](server/README.md) for integration details. The current scope field is `tenantId`. Video time fields use integer milliseconds relative to the original video, including fields that retain legacy `*Seconds` names; follow the current contract when integrating.
 
@@ -111,9 +222,11 @@ After starting the service, inspect requests and responses in the [OpenAPI docs]
 
 A separate experiment has already connected retrieval, clip preparation and HyperFrames composition into an offline HTML short video. See the [short-video experiment workflow](.agents/skills/seekino-short-video/SKILL.md). It explores reusing retrieved footage; check its scripts and configuration against the current API before using them.
 
-The project is still evolving. Analysis, retrieval and answers can be inaccurate, so check them against the original footage. Known issues and planned work are listed in the [issue list](docs/dev/problems.md) (in Chinese).
 
-## Quick start
+## 3. Deployment
+
+Self-hosting is the way to run Seekino today; a cloud Docker deployment for the public demo is in progress.
+
 
 The recommended first install runs **Web, API, video processing, MySQL and Elasticsearch in Docker**, with **DeepAgents** and API models by default. Local mode needs no application login.
 
