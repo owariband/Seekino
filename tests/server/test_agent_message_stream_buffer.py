@@ -109,6 +109,20 @@ def test_adjacent_same_call_deltas_merge_but_new_block_or_call_breaks_them():
     assert events[-1] is None
 
 
+def test_adjacent_same_call_reasoning_deltas_merge():
+    execution = _execution()
+    execution.publish({"type": "answer.reasoning.delta", "callId": "call-1", "delta": "先想"})
+    execution.publish({"type": "answer.reasoning.delta", "callId": "call-1", "delta": "一想"})
+    execution.publish({"type": "answer.reasoning.delta", "callId": "call-2", "delta": "换一轮"})
+    execution.finish()
+
+    events = _read_events(execution)
+    deltas = [event for event in events[:-1] if event["type"] == "answer.reasoning.delta"]
+    assert [event["delta"] for event in deltas] == ["先想一想", "换一轮"]
+    assert [event["callId"] for event in deltas] == ["call-1", "call-2"]
+    assert events[-1] is None
+
+
 def test_slow_consumer_still_interrupts_when_non_snapshot_events_fill_the_buffer():
     execution = _execution()
     for _ in range(300):

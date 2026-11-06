@@ -609,6 +609,26 @@ describe("Conversation state", () => {
     ]);
   });
 
+  it("accumulates reasoning per message and keeps it after the answer completes", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    act(() => {
+      stream.emit({ type: "answer.reasoning.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, callId: "call-1", delta: "先想" });
+      stream.emit({ type: "answer.reasoning.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, callId: "call-1", delta: "一想" });
+      stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, callId: "call-1", newBlock: true, delta: "回答" });
+    });
+    expect(result.current.reasoning.assistant).toBe("先想一想");
+    expect(result.current.messages[1]?.content).toBe("回答");
+    const final = message("conv-A", { status: "COMPLETED", content: "回答" });
+    act(() => {
+      stream.emit({ ...started("conv-A"), type: "answer.completed", sequence: 5, assistantMessage: final } as AgentAnswerEvent);
+      stream.finish();
+    });
+    await waitFor(() => expect(result.current.searching).toBe(false));
+    expect(result.current.messages[1]?.content).toBe("回答");
+    expect(result.current.reasoning.assistant).toBe("先想一想");
+  });
+
   it("closes only the old subscriptions on switching and ignores all late callbacks", async () => {
     const { result, rerender } = await ready();
     const oldStream = await send(result);

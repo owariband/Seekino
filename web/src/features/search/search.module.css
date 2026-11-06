@@ -57,16 +57,16 @@
 .thread { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 28px; overflow-y: auto; overscroll-behavior: contain; padding: 20px 8px 28px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .agentMessage, .userMessage { width: min(100%, 880px); min-width: 0; align-self: center; overflow-wrap: anywhere; }
 .agentMessage > div { display: grid; min-width: 0; }
-.answerText { min-width: 0; color: var(--ink); font-size: .9rem; line-height: 1.85; }
+.answerText { min-width: 0; color: var(--ink); font-size: .9rem; line-height: 1.75; }
 .answerText > :first-child { margin-top: 0; }
 .answerText > :last-child { margin-bottom: 0; }
-.answerText :is(h1, h2, h3, h4) { margin: 1.35em 0 .55em; color: var(--ink); font-weight: 600; line-height: 1.45; }
+.answerText :is(h1, h2, h3, h4) { margin: 1.3em 0 .55em; color: var(--ink); font-weight: 600; line-height: 1.45; }
 .answerText h1 { font-size: 1.18rem; }
 .answerText h2 { font-size: 1.05rem; }
-.answerText :is(h3, h4) { font-size: .94rem; }
+.answerText :is(h3, h4) { font-size: .95rem; }
 .answerText :is(p, ul, ol, blockquote, pre) { margin: .7em 0; }
 .answerText :is(ul, ol) { padding-left: 1.45rem; }
-.answerText li + li { margin-top: .28em; }
+.answerText li + li { margin-top: .25em; }
 .answerText blockquote { padding-left: 12px; color: var(--ink-soft); border-left: 2px solid var(--line-strong); }
 .answerText a { color: var(--teal-deep); text-decoration: underline; text-underline-offset: 3px; }
 .timeLink { display: inline; margin: 0 1px; padding: 0 5px; color: var(--teal-deep); border-radius: 5px; background: var(--teal-wash); box-shadow: inset 0 0 0 1px var(--line-strong); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
@@ -219,6 +219,20 @@
 .candidateEmpty { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--ink-faint); font-size: .8rem; line-height: 1.6; }
 .resultWarnings { margin-bottom: 12px; color: var(--amber); font-size: .75rem; line-height: 1.6; }
 .resultWarnings p { margin: 4px 0; }
+
+.renderVideoCard { margin: 12px 0; }
+.videoCard { display: flex; width: 100%; min-width: 0; align-items: center; gap: 14px; padding: 10px; color: var(--ink); border: 1px solid var(--line); border-radius: 14px; cursor: pointer; background: var(--surface); text-align: left; transition: border-color 160ms ease, background-color 160ms ease; }
+.videoCard:hover { background: var(--surface-muted); }
+.videoCardSelected { border-color: var(--teal-deep); }
+.videoCardSelected:hover { background: var(--surface); }
+.videoCardThumb { position: relative; flex: 0 0 168px; width: 168px; height: 95px; overflow: hidden; border-radius: 10px; background: var(--surface-muted); }
+.videoCardThumbImg { flex: 0 0 168px; width: 168px; height: 95px; object-fit: cover; border-radius: 10px; background: var(--surface-muted); }
+.videoCardThumbFallback { display: flex; flex: 0 0 168px; width: 168px; height: 95px; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--ink-soft); border-radius: 10px; background: var(--surface-muted); }
+.videoCardThumbFallback svg { color: var(--teal-deep); }
+.videoCardThumbFallback span { font-size: .7rem; }
+.videoCardBody { display: flex; min-width: 0; flex: 1; flex-direction: column; justify-content: center; gap: 6px; }
+.videoCardTitle { display: -webkit-box; margin: 0; overflow: hidden; color: var(--ink); font-size: .9rem; font-weight: 400; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.videoCardMeta { color: var(--ink-soft); font-size: .72rem; line-height: 1.4; }
 
 .evidenceColumn { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
 .evidenceHeader { display: flex; min-height: 52px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
@@ -577,6 +591,8 @@
 
 @media (max-width: 760px) {
   .candidate, .candidateSelected { grid-template-columns: 96px minmax(0, 1fr); gap: 6px 10px; padding: 12px; }
+  .videoCard { gap: 10px; }
+  :is(.videoCardThumb, .videoCardThumbImg, .videoCardThumbFallback) { flex-basis: 96px; width: 96px; height: 54px; }
   .page { height: calc(100dvh - var(--app-header-height, 76px)); padding: 20px 18px 24px; }
   .pageHeader { min-height: 30px; align-items: flex-start; margin-bottom: 12px; }
   .chatHeading { display: grid; gap: 2px; }
@@ -647,6 +663,9 @@
 .embeddedPage .candidateHeading { margin-bottom: 7px; }
 .embeddedPage .candidateList { grid-template-columns: minmax(0, 1fr); }
 .embeddedPage .candidate, .embeddedPage .candidateSelected { grid-template-columns: 96px minmax(0, 1fr); gap: 4px 10px; padding: 9px; border-radius: 9px; }
+.embeddedPage .videoCard { gap: 10px; padding: 9px; border-radius: 10px; }
+.embeddedPage :is(.videoCardThumb, .videoCardThumbImg, .videoCardThumbFallback) { flex-basis: 96px; width: 96px; height: 54px; }
+.embeddedPage .videoCardTitle { font-size: .82rem; }
 .embeddedPage .candidateTop { display: flex; grid-column: 2; flex-wrap: wrap; gap: 2px 7px; align-items: baseline; }
 .embeddedPage .candidateTop time { grid-column: auto; }
 .embeddedPage .rank { width: 17px; height: 17px; grid-row: auto; border-radius: 4px; font-size: .58rem; }
@@ -684,3 +703,16 @@
   .toolCall[data-active="true"] .toolCallHeading > span { animation: none; color: var(--ink-soft); background: none; }
   .conversationPicker > summary svg, .conversationChoice, .deleteConversation, .conversationMenuClose { transition: none; }
 }
+
+.reasoningDetails { margin: 0 0 20px; }
+.reasoningDetails summary { display: flex; align-items: center; gap: 8px; color: var(--ink-faint); cursor: pointer; list-style: none; font-size: .72rem; }
+.reasoningDetails summary::-webkit-details-marker { display: none; }
+.reasoningDetails summary:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.reasoningChevron { flex: 0 0 auto; color: var(--ink-faint); }
+.reasoningDetails[open] .reasoningChevron { transform: rotate(180deg); }
+.reasoningText { margin-top: 8px; padding-left: 12px; color: var(--ink-soft); border-left: 2px solid var(--line); font-size: .8rem; line-height: 1.7; white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
+.reasoningDetailsInCard { margin: 0; }
+.reasoningDetailsInCard summary { padding: 0 22px 12px; }
+.reasoningDetailsInCard .reasoningText { margin: 0 22px 14px; }
+.completedRow { margin: 0 0 20px; }
+.completedRow p { margin: 0; color: var(--ink-faint); font-size: .72rem; line-height: 1.6; }

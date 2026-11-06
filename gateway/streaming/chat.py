@@ -14,7 +14,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
-from gateway.model_events import ModelTextDelta, emit_model_text
+from gateway.model_events import ModelReasoningDelta, ModelTextDelta, emit_model_reasoning, emit_model_text
 from gateway.usage import ModelCallTracker
 from gateway.streaming.first_sse import FirstSSEDeadline
 
@@ -102,6 +102,7 @@ def _iter_chat_chunks(
     started_at = monotonic()
     deadline = started_at + request["timeout"]
     text_sequence = 0
+    reasoning_sequence = 0
     first_text_ms = None
 
     def check() -> None:
@@ -150,6 +151,16 @@ def _iter_chat_chunks(
                     received_choice = True
                     terminal = choice.finish_reason is not None
                     text = choice.delta.content
+                    reasoning = getattr(choice.delta, "reasoning_content", None)
+                    if isinstance(reasoning, str) and reasoning:
+                        reasoning_sequence += 1
+                        record_model_event("chat_reasoning_delta", {
+                            "sequence": reasoning_sequence, "chars": len(reasoning),
+                            "received_monotonic": received_at,
+                        })
+                        emit_model_reasoning(ModelReasoningDelta(
+                            reasoning, usage_call.call_id, reasoning_sequence, received_at,
+                        ))
                     if isinstance(text, str) and text:
                         elapsed_ms = (received_at - started_at) * 1000
                         if first_text_ms is None and text.strip():
@@ -185,7 +196,8 @@ def _iter_chat_chunks(
         unregister()
         record_model_event("chat_transport_end", {
             "finished_monotonic": monotonic(), "terminal": terminal,
-            "text_deltas": text_sequence, "first_text_ms": first_text_ms,
+            "text_deltas": text_sequence, "reasoning_deltas": reasoning_sequence,
+            "first_text_ms": first_text_ms,
         })
     if not received_choice or not terminal:
         raise ModelFailureError(

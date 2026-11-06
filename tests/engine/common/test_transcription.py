@@ -62,8 +62,19 @@ def test_aligned_words_convert_once_clamp_and_preserve_unknown_times():
     }]}
 
 
+def test_blank_whisper_words_are_dropped_without_failing_the_cue():
+    result = normalize_transcription({"segments": [{
+        "start": 114, "end": 116, "text": "そう",
+        "words": [
+            {"word": " ", "start": 114.42, "end": 114.42, "probability": 0.19},
+            {"word": "そう", "start": 114.5, "end": 115},
+        ],
+    }]}, duration_seconds=200000)
+    assert [word.text for word in result.transcript[0].words] == ["そう"]
+
+
 @pytest.mark.parametrize("word", [
-    None, {"word": " "}, {"word": "bad", "start": True, "end": 1},
+    None, {"word": None}, {"word": "bad", "start": True, "end": 1},
     {"word": "bad", "start": float("nan"), "end": 1},
     {"word": "bad", "start": 1, "end": 0.5},
     {"word": "bad", "score": float("nan")},

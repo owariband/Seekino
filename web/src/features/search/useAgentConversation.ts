@@ -145,6 +145,7 @@ interface ConversationState {
   conversationId: string | null;
   messages: AgentMessageView[];
   progress: Record<string, AgentProgressEvent[]>;
+  reasoning: Record<string, string>;
   loading: boolean;
   sending: boolean;
   cancellingMessageId: string | null;
@@ -169,14 +170,14 @@ export function useAgentConversation(requestedId: string | null = null) {
   localeRef.current = locale;
   const t = (message: string) => translate(localeRef.current, message);
   const [state, setState] = useState<ConversationState>({
-    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
 
   useEffect(() => {
     const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null, identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null };
     activeRef.current = active;
-    setState({ requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, cancellingMessageId: null, error: null });
+    setState({ requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null });
     void (async () => {
       try {
         const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
@@ -218,6 +219,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       conversationId: null,
       messages: [],
       progress: {},
+      reasoning: {},
       loading: false,
       sending: false,
       cancellingMessageId: null,
@@ -297,6 +299,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     let messageId: string | null = null;
     const idempotencyKey = crypto.randomUUID();
     let sequence = -1;
+    let reasoningCallId: string | null = null;
     let accepted = false;
     let rejected = false;
     const accept = () => {
@@ -319,8 +322,21 @@ export function useAgentConversation(requestedId: string | null = null) {
       sequence = event.sequence;
       if (event.type === "answer.started") accept();
       if (event.type === "answer.interrupted") active.recoveryMessageId = event.messageId;
+      // Each model round thinks separately; keep its reasoning as its own paragraph.
+      const reasoningDelta = event.type !== "answer.reasoning.delta" ? ""
+        : reasoningCallId !== null && reasoningCallId !== event.callId ? `\n\n${event.delta}` : event.delta;
+      if (event.type === "answer.reasoning.delta") reasoningCallId = event.callId;
       setState((current) => {
         if (current.conversationId !== conversationId) return current;
+        if (event.type === "answer.reasoning.delta") {
+          return {
+            ...current,
+            reasoning: {
+              ...current.reasoning,
+              [event.messageId]: (current.reasoning[event.messageId] ?? "") + reasoningDelta,
+            },
+          };
+        }
         if (event.type === "answer.started" || event.type === "answer.snapshot" || event.type === "answer.completed") {
           const phase = event.assistantMessage.phase;
           const progress = event.type === "answer.started" && phase && !current.progress[event.messageId]
@@ -418,7 +434,7 @@ export function useAgentConversation(requestedId: string | null = null) {
   }, [requestedId, state.requestedId, state.messages]);
 
   const visible = state.requestedId === requestedId ? state : {
-    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
   };
   return {
     ...visible,
