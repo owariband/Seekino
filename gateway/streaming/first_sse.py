@@ -17,12 +17,18 @@ FIRST_SSE_TIMEOUT_SECONDS = 100.0
 class FirstSSEDeadline:
     """One request, one dedicated HTTP/1 client; never closes a shared HTTP/2 socket."""
 
-    def __init__(self, request_timeout_seconds: float) -> None:
-        self.limit = min(FIRST_SSE_TIMEOUT_SECONDS, request_timeout_seconds)
+    def __init__(
+        self, request_timeout_seconds: float, *, limit_seconds: float | None = None,
+    ) -> None:
+        self.limit = min(
+            limit_seconds if limit_seconds is not None else FIRST_SSE_TIMEOUT_SECONDS,
+            request_timeout_seconds,
+        )
         self._lock = Lock()
         self._timer: Timer | None = None
         self._network: Any = None
         self._received = False
+        self._received_at: float | None = None
         self._expired = False
         self._started = 0.0
         self._original_timeouts: dict[str, Any] = {}
@@ -74,9 +80,25 @@ class FirstSSEDeadline:
         self.raise_if_expired()
         with self._lock:
             if not self._expired:
+                if self._received_at is None:
+                    self._received_at = monotonic()
                 self._received = True
         self.close()
         self.raise_if_expired()
+
+    def received_event(self) -> bool:
+        with self._lock:
+            return self._received
+
+    def expired(self) -> bool:
+        with self._lock:
+            return self._expired
+
+    def first_event_ms(self) -> float | None:
+        with self._lock:
+            if self._received_at is None:
+                return None
+            return (self._received_at - self._started) * 1000
 
     def raise_if_expired(self) -> None:
         with self._lock:

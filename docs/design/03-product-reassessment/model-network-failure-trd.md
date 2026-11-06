@@ -18,9 +18,9 @@ Karpathy v3 任务在直接 JSON 理解链路失败。OpenAI SDK 的 APIConnecti
 
 同轮账单调查：v7 的 10 个成功 Understanding 实报输入 2,434,057、输出 84,920、其中 reasoning 68,116 tokens；实际模型 `k3.1-pro`，请求未传 `reasoning_effort=low`，冻结值 `none` 在此适配器仅表示省略参数。v7 于五小时额度耗尽后失败，不能把订阅用量百分比当作本任务的费用。本轮不更换模型、图片采样或旧任务冻结配置，也不追加真实模型调用。
 
-## 1.2 11-06：Chat 首个 SSE 15 秒内未到即退避重连（PR 待回填）
+## 1.2 11-06：Chat 首个 SSE 15 秒内未到即退避重连（PR #55）
 
-分支 `fix/chat-first-token-retry`，PR 创建后回填链接。
+分支 `fix/chat-first-token-retry`，[PR #55](https://github.com/owariband/Seekino/pull/55)。
 
 背景：Seekino 将作为简历筛选阶段的公开演示，面试官会在无人陪同下自行提问。11-05 晚 LOOP-08 门禁 32 个 Chat 回合中约 9 个失败，均发生在本次模型调用还没有任何输出时。Supervisor 走 `gateway/agent_model/deepagents.py` → `OpenAIAgentModel._request_turn` → `request_chat_completion`；这条链路没有首事件期限（§1.1 的 `FirstSSEDeadline` 只接在 Parse vision 通道），唯一上限是 1200 秒调用预算。
 
@@ -133,4 +133,9 @@ K3 low 的新 v8 首轮 30 请求无 SSE、0/117 Understanding，实际等待不
 
 ## 6.4 11-06 Chat 首事件重连（§1.2）
 
-状态：TRD 初稿，实现与验证待进行。
+状态：已实现，离线验证通过；真实 DeepSeek 门禁复跑待进行（2026-11-06）。
+
+- 实现：`OpenAIAgentModel._create_completion` 在流式且自持客户端时，每次尝试新建独占 HTTP/1 客户端并挂 15 秒 `FirstSSEDeadline`（新增 `limit_seconds`，Parse 默认 100 秒不变）；首事件前超时或断连按 1/2/4 秒退避重连，共 4 次请求，均受原调用总预算约束；耗尽抛 `MODEL_NETWORK_ERROR`。成功调用记录 `event=chat_first_sse ... first_event_ms`，重连记录 `event=chat_first_sse_retry`。
+- 文案：耗尽显示「模型暂时不可用，错误：网络错误（多次重连未收到模型响应）」；`RemoteProtocolError` 显示「模型暂时不可用，错误：模型服务中途断开了响应」。
+- 验证：`tests/gateway/test_chat_first_sse_retry.py` 8 项用本地真实 HTTP 服务覆盖只发 keep-alive、首事件前断连、首次静默后恢复、首事件后断流不重试、402 不重试并保留供应商消息、退避中取消、失败尝试无正文增量、deepagents Supervisor 路径。相关回归 647 passed、1 skipped；`test_kimi_streaming` 的 deepagents 用例偶发写入顺序不一致，未改动的 dev 上同样 1/10 失败，属既有问题。
+- 未验证：真实 DeepSeek 下的失败率、最坏等待与成功调用首事件 p50/p95（§2 护栏）需在门禁复跑中补测。

@@ -14,6 +14,7 @@ from threading import Condition, Event, Lock, RLock
 from time import monotonic, monotonic_ns
 from uuid import uuid4
 
+from httpx import RemoteProtocolError
 from openai import APIConnectionError, APITimeoutError
 
 from agent.chat.common.errors import (
@@ -1322,6 +1323,12 @@ def _agent_model_failure_message(error: BaseException) -> str:
             reason = str(status_code)
         detail = _provider_message(current)
         return f"模型暂时不可用，错误：{reason}" + (f"（{detail}）" if detail else "")
+    for current in chain:
+        if getattr(current, "reason", None) == ModelFailureReason.MODEL_NETWORK_ERROR:
+            return "模型暂时不可用，错误：网络错误（多次重连未收到模型响应）"
+    for current in chain:
+        if isinstance(current, RemoteProtocolError):
+            return "模型暂时不可用，错误：模型服务中途断开了响应"
     for current in chain:
         reason = getattr(current, "reason", None)
         name = type(current).__name__.lower()
