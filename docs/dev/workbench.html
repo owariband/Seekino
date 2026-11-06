@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T01:06:00+08:00",
+ "updatedAt": "2026-11-07T03:10:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 15,
+ "revision": 16,
  "categories": [
   {
    "id": "parse",
@@ -4639,6 +4639,32 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "main 发布 #63",
      "url": "https://github.com/owariband/Seekino/pull/63",
      "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-LAYOUT-01",
+   "title": "独立对话页：左侧历史与居中草稿",
+   "category": "chat",
+   "type": "requirement",
+   "status": "progressing",
+   "priority": "P1",
+   "description": "历史浮层遮挡正文，欢迎区与输入框脱节；调整比例和对话过渡，保留延迟创建。",
+   "next": "实现独立页布局并验证桌面、窄屏、发送过渡和 Kino 集成。",
+   "verification": "初稿：待验证；不变更模型、API 或历史数据。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "feat/chat-sidebar-layout",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-sidebar-layout/docs/design/03-product-reassessment/chat-sidebar-layout-trd.md",
+     "kind": "trd"
     }
    ]
   }
