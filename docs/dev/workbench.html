@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-06T22:50:11+08:00",
+ "updatedAt": "2026-11-07T01:06:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 10,
+ "revision": 15,
  "categories": [
   {
    "id": "parse",
@@ -4490,11 +4490,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "Docker 发布资源完整性与 CPU main 源码对齐",
    "category": "platform",
    "type": "requirement",
-   "status": "verifying",
+   "status": "done",
    "priority": "P0",
-   "description": "Web 发布资源软链接在 Docker 中缺失；服务器副本含临时修改，需以明确 main 提交验收。",
-   "next": "完成 #58 → dev、#59 → main 发布后，核对 main SHA 并切换 CPU 正式源码。",
-   "verification": "候选 090782a0 的 API/Web 实机构建通过；首页及两 Logo HTTP 200、哈希一致；媒体排除探针通过；初始化回归 6 passed。main 发布和正式切换待验。",
+   "description": "Docker 发布资源及可选 Debian 镜像构建修复已发布；CPU 正式源码为远端 main 0282fcb0，工作树干净，旧目录和镜像保留回退。",
+   "next": "本需求已验收。正式业务启动仍需私有 .env.cloud、TLS 和模型配置；公网及业务链路另行验收。",
+   "verification": "main 0282fcb0：API/Web 构建退出码 0；首页与两 Logo HTTP 200、哈希一致；媒体排除、无网络依赖导入和占位生产 Compose 检查通过；初始化回归 6 passed；CPU HEAD 与远端 main 一致。",
    "updatedAt": "2026-11-06",
    "tags": [
     "发布",
@@ -4518,6 +4518,126 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "main 发布 #59",
      "url": "https://github.com/owariband/Seekino/pull/59",
+     "kind": "pr"
+    },
+    {
+     "label": "部署 main 提交",
+     "url": "https://github.com/owariband/Seekino/commit/0282fcb0da58a4292007732c931823dc11720a22",
+     "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-02",
+   "title": "无 SMTP 的 cloud 游客启动",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "邮件配置缺失阻断整个身份服务；现已分离可选邮件能力，候选已实机健康。",
+   "next": "完成 main 发布 #63 并核对正式运行提交。",
+   "verification": "相关回归 99 passed、7 skipped；8 项 Agent 夹具错误在基线复现。CPU 五服务 healthy，HTTPS/游客通过，管理和 CSRF 403、未配置邮件 503。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "身份"
+   ],
+   "related": [
+    "MOD-PLATFORM"
+   ],
+   "branch": "fix/cloud-guest-without-smtp",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-guest-without-smtp/docs/design/03-product-reassessment/cloud-guest-without-smtp-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "修复 #62",
+     "url": "https://github.com/owariband/Seekino/pull/62",
+     "kind": "pr"
+    },
+    {
+     "label": "发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-03",
+   "title": "CPU 私有云配置与空库启动验收",
+   "category": "platform",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P0",
+   "description": "本地私有 env 已派生为生产配置并经 SSH 传输；CPU 五服务健康，候选镜像游客链路已验证。",
+   "next": "main 发布 #63 合并后切换正式镜像并核对提交。SMTP/管理员、GPU 依赖、可信 TLS 与样例迁移另行完成。",
+   "verification": "两端 env 权限 600 且被 Git 忽略；HTTPS 首页/健康/游客/空公开库通过；管理和 CSRF 403、邮箱禁用 503；公网域名/IP 健康 200；重启数 0。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "运行配置"
+   ],
+   "related": [
+    "MOD-PLATFORM",
+    "DEPLOY-02"
+   ],
+   "branch": "chore/cloud-runtime-startup",
+   "links": [
+    {
+     "label": "云部署 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/chore/cloud-runtime-startup/docs/design/03-product-reassessment/cloud-docker-deploy-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "运行配置 #61",
+     "url": "https://github.com/owariband/Seekino/pull/61",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-04",
+   "title": "SMTP 留空时提前说明登录注册未开放",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "账号服务提供 emailLoginEnabled；空配置展示游客模式和未开放说明，不收集邮箱；配置后保留原验证码流程。",
+   "next": "候选已通过实机验收，完成 main 发布 #63 后核对正式运行提交。",
+   "verification": "后端 94 passed、7 skipped；前端 181 passed、类型检查与构建通过。候选 f811903f 五服务 healthy；真实 HTTPS 能力/权限通过，Chrome 桌面/手机均显示未开放，零浏览器邮件请求与页面异常。首次权限失败已回退并修正后复验。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "身份",
+    "前端"
+   ],
+   "related": [
+    "DEPLOY-02",
+    "DEPLOY-03",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/email-login-availability",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/email-login-availability/docs/design/03-product-reassessment/smtp-login-availability-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #65",
+     "url": "https://github.com/owariband/Seekino/pull/65",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
      "kind": "pr"
     }
    ]

@@ -52,14 +52,18 @@ function AccountControls({ onLogin, mobile = false }: { onLogin: () => void; mob
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ failure: unknown } | null>(null);
   const signedIn = accountIdentity && !accountIdentity.isGuest;
+  const loginUnavailable = accountIdentity?.emailLoginEnabled === false;
+  const guestLabel = t(loginUnavailable ? "游客模式" : "未登录");
+  const loginLabel = t(loginUnavailable ? "登录 / 注册（暂未开放）" : "登录");
   return <section id="seekino-account-panel" className={styles.account} aria-label={t("当前账号")}>
-    {!mobile ? <header><strong>{signedIn ? accountIdentity.email || t("已登录") : t("未登录")}</strong><span>{t("账号与资料来源")}</span></header> : null}
+    {!mobile ? <header><strong>{signedIn ? accountIdentity.email || t("已登录") : guestLabel}</strong><span>{t("账号与资料来源")}</span></header> : null}
     <div className={styles.accountAction}>
       {accountStatus === "unconfigured" ? <span title={t("连接账号服务后，可登录并访问远端资料")}>{t("未连接账号服务")}</span>
         : accountStatus === "checking" ? <span>{t("连接中…")}</span>
         : accountStatus === "unavailable" ? <button type="button" title={accountError ?? undefined} onClick={retryAccount}>{t("重新连接")}</button>
-        : !signedIn ? <button className={mobile ? styles.mobileIdentity : undefined} type="button" onClick={onLogin} aria-label={t("登录")}>
-          {mobile ? <><span className={styles.avatar}><UserRound size={21} aria-hidden="true" /></span><strong>{t("未登录")}</strong></> : t("登录")}
+        : !signedIn ? <button className={mobile ? styles.mobileIdentity : undefined} type="button" onClick={onLogin} aria-label={loginLabel}>
+          {mobile ? <><span className={styles.avatar}><UserRound size={21} aria-hidden="true" /></span>
+            <span className={styles.identityLabel}><strong>{guestLabel}</strong>{loginUnavailable ? <small>{loginLabel}</small> : null}</span></> : loginLabel}
         </button>
         : <button className={mobile ? styles.mobileIdentity : undefined} type="button" disabled={busy} aria-label={mobile ? t(busy ? "退出中…" : "退出") : undefined} onClick={async () => {
           setBusy(true); setError(null);
@@ -107,6 +111,7 @@ export function AppShell() {
     staleTime: 0,
   });
   const signedIn = accountIdentity && !accountIdentity.isGuest;
+  const uploadPrompt = !signedIn ? accountIdentity?.emailLoginEnabled === false ? "个人上传暂未开放" : "登录后上传远端视频" : "进入我的资料";
   const visibleNavigation = canManage ? navigation : [];
   const uploadAction = canUpload ? openDialog : !signedIn ? openLogin : () => {
     const personalSource = sources.find((source) => source.kind === "personal");
@@ -181,8 +186,8 @@ export function AppShell() {
         <div className={styles.headerActions}>
           <span id="watch-header-actions" style={{ display: "contents" }} />
           <button className={styles.uploadButton} type="button" onClick={uploadAction}
-            aria-label={canUpload ? activeCount > 0 ? t("并行传输 · {count} 项进行中，{progress}%", { count: activeCount, progress: overallProgress }) : t("并行传输 · 打开上传案台") : t(!signedIn ? "登录后上传远端视频" : "进入我的资料")}
-            title={t(canUpload ? "上传视频与管理并行传输" : !signedIn ? "登录后上传远端视频" : "进入我的资料")}>
+            aria-label={canUpload ? activeCount > 0 ? t("并行传输 · {count} 项进行中，{progress}%", { count: activeCount, progress: overallProgress }) : t("并行传输 · 打开上传案台") : t(uploadPrompt)}
+            title={t(canUpload ? "上传视频与管理并行传输" : uploadPrompt)}>
             <ArrowUpFromLine size={19} strokeWidth={1.7} aria-hidden="true" /><span>{canUpload ? activeCount > 0 ? `${overallProgress}%` : t("上传") : t(!signedIn ? "上传" : "我的资料")}</span>
             {canUpload && activeCount > 0 ? <i style={{ width: `${overallProgress}%` }} aria-hidden="true" /> : null}
           </button>
@@ -228,7 +233,7 @@ export function AppShell() {
           <div className={styles.drawerActions}>
             <button className={styles.accountLink} type="button" onClick={() => { closeMobileMenu(); uploadAction(); }}>
               <ArrowUpFromLine size={20} aria-hidden="true" />
-              {t(canUpload ? "上传" : !signedIn ? "登录后上传远端视频" : "进入我的资料")}
+              {t(canUpload ? "上传" : uploadPrompt)}
               {canUpload && activeCount > 0 ? <span>{overallProgress}%</span> : null}
             </button>
           </div>

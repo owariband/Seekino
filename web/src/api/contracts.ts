@@ -10,6 +10,7 @@ export interface AuthIdentity {
   publicTenantId: string;
   mode: "local" | "cloud";
   csrfToken: string;
+  emailLoginEnabled: boolean;
   permissions: { canUpload: boolean; canManage: boolean; canConfigure: boolean };
 }
 

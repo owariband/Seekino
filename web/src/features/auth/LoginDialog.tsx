@@ -19,18 +19,19 @@ export function LoginDialog() {
   const panelRef = useRef<HTMLDivElement>(null);
   const requestVersion = useRef(0);
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000));
+  const loginUnavailable = accountIdentity?.emailLoginEnabled === false;
 
   useEffect(() => {
     ++requestVersion.current;
     setBusy(false);
     setCode(""); setSentEmail(null); setError(null);
-  }, [accountIdentity?.userId]);
+  }, [accountIdentity?.userId, loginUnavailable]);
 
   useEffect(() => {
     if (!loginOpen) return;
     setNow(Date.now());
     const previous = document.activeElement as HTMLElement | null;
-    panelRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+    panelRef.current?.querySelector<HTMLElement>(loginUnavailable ? "button[data-continue]" : "input")?.focus();
     const keyboard = (event: KeyboardEvent) => {
       if (event.key === "Escape") { closeLogin(); return; }
       if (event.key !== "Tab") return;
@@ -47,7 +48,7 @@ export function LoginDialog() {
       document.removeEventListener("keydown", keyboard);
       previous?.focus();
     };
-  }, [loginOpen, closeLogin]);
+  }, [loginOpen, closeLogin, loginUnavailable]);
 
   useEffect(() => {
     if (!loginOpen || retryAt <= Date.now()) return;
@@ -95,10 +96,12 @@ export function LoginDialog() {
   return <div className={styles.backdrop} onClick={(event) => { if (event.target === event.currentTarget) closeLogin(); }}>
     <div ref={panelRef} className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="login-heading">
       <header>
-        <div><h2 id="login-heading">{t("邮箱登录")}</h2><p>{t("登录后可访问你的远端资料。本机资料仍保留在本机。")}</p></div>
+        <div><h2 id="login-heading">{t(loginUnavailable ? "登录与注册暂未开放" : "邮箱登录")}</h2>
+          <p>{t(loginUnavailable ? "你可以继续以游客身份使用 Seekino。" : "登录后可访问你的远端资料。本机资料仍保留在本机。")}</p></div>
         <button className={styles.close} type="button" onClick={closeLogin} aria-label={t("关闭登录")}><X size={18} /></button>
       </header>
-      <form onSubmit={(event) => void verify(event)}>
+      {loginUnavailable ? <button className="button-primary" type="button" data-continue onClick={closeLogin}>{t("继续体验")}</button>
+        : <form onSubmit={(event) => void verify(event)}>
         <label><span>{t("邮箱")}</span><input className="field" type="email" autoComplete="email" required value={email}
           onChange={(event) => { setEmail(event.target.value); setError(null); }} /></label>
         <button className="button-secondary" type="button" disabled={busy || remaining > 0} onClick={() => void send()}>
@@ -113,7 +116,7 @@ export function LoginDialog() {
           {busy ? t("处理中…") : t("登录")}
         </button>
         <button className={styles.guestLink} type="button" onClick={closeLogin}>{t("继续使用")}</button>
-      </form>
+      </form>}
     </div>
   </div>;
 }

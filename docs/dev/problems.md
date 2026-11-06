@@ -2765,3 +2765,23 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 验收要求：正式 Dockerfile 构建成功，两份发布资源与源文件哈希一致且 HTTP 可访问，
 不引入本地媒体和密钥，最终 CPU HEAD 对齐 main。当前状态见工作台 DEPLOY-01；
 方案与证据见 [TRD](../design/03-product-reassessment/docker-web-assets-trd.md)。
+
+2026-11-06 实测补充：#58 修复和 #59 发布已合并，CPU HEAD 对齐 main `0282fcb0`，
+工作树干净；该提交的 API/Web 构建成功，两份资源 HTTP 200 且哈希一致，媒体排除探针通过。
+旧目录及旧 API 镜像保留回退。运行配置、业务容器启动与公网访问不在此次构建和源码验收结论内。
+
+
+### DEPLOY-02：SMTP 被误作整个 cloud 身份服务的启动前提
+
+2026-11-06/07：CPU main 0282fcb0 初始化成功后，AuthService 构造器因 SMTP 为空抛错，
+与云端模板允许游客启动的说明矛盾。修复将邮件能力与游客启动分离，在发送/验证邮箱前明确
+拒绝不可用能力，保留签名、Redis、CSRF 与权限约束。HTTP 回归和 CPU 候选实测通过，
+状态见工作台 DEPLOY-02；[TRD 与证据](../design/03-product-reassessment/cloud-guest-without-smtp-trd.md)。
+
+### DEPLOY-04：账号界面缺少邮件能力信息，游客填写后才发现登录尚未开放
+
+2026-11-07：无 SMTP 的候选已可提供游客服务，但身份响应未提供邮件能力，前端始终展示
+验证码表单和“登录后上传”提示。验收要求是在填写前显示未开放说明，打开/关闭不请求邮件，
+配置 SMTP 后恢复既有表单，本地资料上传不受远端邮件配置影响。HTTP、前端和两种视口
+回归通过；部署与发布范围见 [TRD](../design/03-product-reassessment/smtp-login-availability-trd.md)，
+当前状态统一维护在工作台 DEPLOY-04。

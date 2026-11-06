@@ -120,8 +120,7 @@ def test_configuration_has_explicit_cloud_requirements(identities, monkeypatch):
     with pytest.raises(ValueError, match="caller-provided Redis client"):
         AuthService(repository, config, email_sender=CapturingEmailSender())
     borrowed_redis = StubRedis()
-    with pytest.raises(ValueError, match="SMTP"):
-        AuthService(repository, config, redis=borrowed_redis)
+    AuthService(repository, config, redis=borrowed_redis)
     assert not borrowed_redis.closed
     monkeypatch.setenv("SEEKINO_AUTH_MODE", "cloud")
     monkeypatch.setenv("SEEKINO_AUTH_SECRET_KEY", "x" * 32)
@@ -137,6 +136,47 @@ def test_configuration_has_explicit_cloud_requirements(identities, monkeypatch):
     assert "x" * 32 not in repr(parsed)
     with pytest.raises(ValueError):
         SMTPConfig(host="smtp.example.com", sender="bad\r\nheader")
+
+
+def test_cloud_without_smtp_serves_guests_and_rejects_email_login(identities):
+    repository, sessions = identities
+    redis = StubRedis()
+    service = AuthService(repository, AuthConfig(mode="cloud", secret_key="x" * 32), redis=redis)
+    service.bootstrap()
+    with TestClient(_app(service), base_url="https://testserver") as client:
+        assert client.get("/api/auth/me").status_code == 401
+        response = client.post("/api/auth/guest")
+        assert response.status_code == 200
+        guest = response.json()
+        assert guest["isGuest"] and guest["mode"] == "cloud"
+        assert guest["emailLoginEnabled"] is False
+        assert guest["permissions"] == {"canUpload": False, "canManage": False, "canConfigure": False}
+        assert "Secure" in response.headers["set-cookie"] and "HttpOnly" in response.headers["set-cookie"]
+        me = client.get("/api/auth/me").json()
+        assert me["userId"] == guest["userId"] and me["emailLoginEnabled"] is False
+        before = list(redis.calls)
+        for route, body in [
+            ("send", {"email": "guest@example.com"}),
+            ("verify", {"email": "guest@example.com", "code": "123456"}),
+        ]:
+            assert client.post(f"/api/auth/email/{route}", json=body).status_code == 403
+            disabled = client.post(f"/api/auth/email/{route}", json=body, headers={"X-CSRF-Token": guest["csrfToken"]})
+            assert disabled.status_code == 503 and disabled.json()["code"] == "EMAIL_UNAVAILABLE"
+        assert redis.calls == before
+        assert client.get("/api/auth/me").json()["isGuest"]
+    with sessions() as session:
+        users = list(session.scalars(select(User)))
+        assert len(users) == 1 and users[0].is_anonymous and users[0].email is None
+
+
+def test_smtp_configuration_enables_email_login_without_sending_mail(identities):
+    repository, _ = identities
+    service = AuthService(repository, AuthConfig(mode="cloud", secret_key="x" * 32,
+        smtp=SMTPConfig(host="smtp.example.com", sender="seekino@example.com")), redis=StubRedis())
+    service.bootstrap()
+    with TestClient(_app(service), base_url="https://testserver") as client:
+        assert client.post("/api/auth/guest").json()["emailLoginEnabled"] is True
+        assert client.get("/api/auth/me").json()["emailLoginEnabled"] is True
 
 
 def test_redis_timeout_loads_from_environment_and_requires_positive_integer(monkeypatch):
@@ -453,6 +493,7 @@ def test_cloud_api_explicit_guest_cookie_csrf_and_login(cloud):
         assert client.post("/api/auth/guest", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
         first = client.post("/api/auth/guest")
         assert first.status_code == 200 and first.json()["isGuest"]
+        assert first.json()["emailLoginEnabled"] is True
         assert "HttpOnly" in first.headers["set-cookie"] and "SameSite=lax" in first.headers["set-cookie"]
         assert first.headers["cache-control"] == "no-store"
         assert client.get("/api/auth/me").json()["userId"] == first.json()["userId"]
@@ -464,9 +505,11 @@ def test_cloud_api_explicit_guest_cookie_csrf_and_login(cloud):
         assert "code" not in sent.json()
         verified = client.post("/api/auth/email/verify", json={"email": "api@example.com", "code": sender.messages[-1][1]}, headers=headers)
         assert verified.status_code == 200 and verified.json()["isGuest"] is False
+        assert verified.json()["emailLoginEnabled"] is True
         assert client.post("/api/auth/logout", headers=headers).status_code == 403
         logout = client.post("/api/auth/logout", headers={"X-CSRF-Token": verified.json()["csrfToken"]})
         assert logout.status_code == 200 and logout.json()["isGuest"]
+        assert logout.json()["emailLoginEnabled"] is True
 
 
 @pytest.mark.parametrize("email", ["x", "a@localhost", "a\r\n@x.com", ".a@example.com", "a..b@example.com", "a@-host.com", "用户@example.com"])
