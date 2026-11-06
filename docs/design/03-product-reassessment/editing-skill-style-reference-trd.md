@@ -466,5 +466,4 @@ Acceptance returns to §1.1: the promo exists, made through MCP, and the dual re
 | 2026-11-07 | Cut-out could be a Seekino capability | Owner: Seekino Server never does cut-out, rendering or code execution | Templates only declare slots; preparation is local | §1.5 |
 | 2026-11-07 | E2 arm A uses the static style library | A stronger, realistic baseline is the skill reading the reference itself | Arm A gets the P5R video and reads it its own way | §4 E2 |
 | 2026-11-07 | Scan starts (0.2 s debounce) are the step boundaries | E3: rungs 2–3 frames apart are suppressed by the debounce; long merged candidates hide techniques | Prepare splits candidates > 3 s and runs a fine in-pick detector whose starts are the boundaries; Refine consolidates names and roles | §3.3, E1, E3 |
-
 | 2026-11-07 | Recall makes the editing agent cheaper (H1), and a saved version makes the next beat cheaper (H6) | E2: B +7 % tokens / +11 % time; B2 +21 % / +3 %; reference reading is a small share of cost | Implementation held; evidence returned to owner. Measured value is fidelity, consistency and carried experience, not cost | §4 E2 |
