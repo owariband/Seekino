@@ -103,9 +103,7 @@ class AuthService:
         self.redis = redis
         if config.mode == "cloud" and self.redis is None:
             raise ValueError("cloud authentication requires a caller-provided Redis client")
-        if config.mode == "cloud" and email_sender is None and not config.smtp.host:
-            raise ValueError("cloud email login requires SMTP configuration")
-        self._email_sender = email_sender or SMTPEmailSender(config.smtp)
+        self._email_sender = email_sender or (SMTPEmailSender(config.smtp) if config.smtp.host else None)
 
     def bootstrap(self) -> None:
         self.repository.bootstrap(local_tenant_id=self.config.local_tenant_id, public_tenant_id=self.config.public_tenant_id, mode=self.config.mode)
@@ -150,6 +148,8 @@ class AuthService:
 
     def send_email_code(self, identity: AuthIdentity, email: str, ip_address: str | None = None) -> int:
         self._require_guest(identity)
+        if self._email_sender is None:
+            raise AuthError("邮箱登录尚未配置，请使用游客模式", status_code=503, code="EMAIL_UNAVAILABLE")
         email = normalize_email(email)
         code = f"{secrets.randbelow(1_000_000):06d}"
         digest = self._code_digest(identity, email, code)
@@ -170,6 +170,8 @@ class AuthService:
 
     def verify_email_code(self, identity: AuthIdentity, email: str, code: str, ip_address: str | None = None) -> AuthCredentials:
         self._require_guest(identity)
+        if self._email_sender is None:
+            raise AuthError("邮箱登录尚未配置，请使用游客模式", status_code=503, code="EMAIL_UNAVAILABLE")
         email = normalize_email(email)
         if not re.fullmatch(r"[0-9]{6}", code, flags=re.ASCII):
             raise ValueError("验证码必须为六位数字")
