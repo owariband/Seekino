@@ -16,7 +16,7 @@ from gateway.agent_model.contracts import SupervisorAgentModel, SupervisorSessio
 from gateway.agent_model.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from gateway.media import ToolImageArtifact
-from gateway.model_events import ModelTextDelta
+from gateway.model_events import ModelReasoningDelta, ModelTextDelta
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 from engine.rag.contracts import AgentReply, VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
@@ -37,7 +37,7 @@ from .video_search.errors import VideoSearchFailure, VideoSearchFailureCode, Vid
 from .video_search.runtime import AgentRuntime
 from .video_search.output import (
     build_chat_output, build_chat_snapshot, build_retrieval_trace, merge_retrieval_calls,
-    outline_evidence_hit, retrieval_hit, validate_result, video_range_sources,
+    outline_evidence_hit, retrieval_hit, snap_video_range, validate_result, video_range_sources,
 )
 from .video_search.state import (
     AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock,
@@ -500,6 +500,14 @@ class SupervisorRuntime:
                     "textStream": text_stream,
                 })
 
+        def accept_reasoning_delta(delta: ModelReasoningDelta) -> None:
+            # Reasoning is displayed above the answer, never merged into render blocks
+            # or persisted answer text; it shares no call-id ordering with the body.
+            control.publish(inputs, {
+                "type": "answer.reasoning.delta", "callId": delta.call_id,
+                "delta": delta.text,
+            })
+
         def accept_text(value: str) -> None:
             nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
             with tool_lock:
@@ -876,10 +884,12 @@ class SupervisorRuntime:
                 try:
                     # The tool accepts seconds; canonical evidence and playback storage use milliseconds.
                     start_ms, end_ms = round(start_seconds * 1000), round(end_seconds * 1000)
+                    evidence_by_id = {
+                        hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
+                        for hit in citable_result().hits
+                    }
                     source_ids = video_range_sources(
-                        {hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
-                         for hit in citable_result().hits},
-                        video_chunk_id, start_ms, end_ms, allow_adjacent=True,
+                        evidence_by_id, video_chunk_id, start_ms, end_ms, allow_adjacent=True,
                     )
                 except (ValueError, OverflowError) as exc:
                     raise AgentToolFeedbackError(
@@ -888,6 +898,9 @@ class SupervisorRuntime:
                         "of the same source video, without an uncovered gap. "
                         "Divide evidence timestamps in milliseconds by 1000 before submitting.",
                     ) from exc
+                start_ms, end_ms = snap_video_range(
+                    evidence_by_id, source_ids, start_ms, end_ms,
+                )
                 item = SelectedVideoRange(
                     video_chunk_id=video_chunk_id, start_seconds=start_ms,
                     end_seconds=end_ms,
@@ -1157,11 +1170,15 @@ class SupervisorRuntime:
             "对白证据已足够回答出处、原话或说话人时无需抽帧；只有具体视觉主张或证据缺口才看图。"
             "用 submit_video_item 提交最终片段，video_chunk_id 只能是本轮检索工具返回的值；其 start_seconds/end_seconds 使用原视频绝对秒数，允许小数，"
             "例如 00:50–01:00 传 50 和 60。检索证据与 Query 草稿仍使用毫秒，提交前除以 1000；"
-            "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文与 claim 使用秒或时间码。"
+            "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文提到未提交为视频卡的时间时使用时间码。"
             "范围须完整覆盖支持主张的必要内容并去掉无关部分，可跨同一视频两个相邻已检索 Chunk。"
+            "起止以证据中讲解句子或事件的起止为准，不要直接使用 Chunk 的整分钟边界；"
+            "需要一整段讲解时，从该段第一句开始、到最后一句结束。"
             "重复 ID 会原位更新，remove_video_item 可撤回；未提交的候选不会自动显示。"
-            "普通正文与选段按产生顺序展示；在需要插入视频卡的位置调用 submit_video_item，"
-            "可交替写正文和提交视频卡。"
+            "正文与视频卡按产生顺序实时展示：需要视频卡的要点，先写这一条的正文，紧接着调用 submit_video_item 提交它的视频卡，再写下一条；"
+            "同一处需要多张视频卡时可在一次回复中并行提交。"
+            "已提交为视频卡的片段，正文和小标题都不再写时间码或时间范围，视频卡会显示时间。"
+            "claim 是视频卡标题，约 30 字以内，说明这段讲了什么，不写时间码。"
             "证据不足或矛盾时说明缺口，必要时澄清或只对具体缺口补查，不把候选自检当独立事实证明。"
         )
         prompt = (
@@ -1230,10 +1247,13 @@ class SupervisorRuntime:
             "向用户称呼视频一律用「系列显示名 第 N 集《标题》」，不得写出任何内部 id。"
             + video_delivery
             + "已经输出的正文会保留，结束时只写尚未表达的内容或收尾，不要重复整篇回答。"
-            "调用耗时的视频检索、网页搜索或当前视频理解工具前，先用一句简短自然的正文说明"
-            "准备核验什么，让用户及时知道任务已开始。工具状态由系统根据真实调用展示，"
-            "不要输出工具 JSON、模拟进度或反复播报工具操作。得到证据后，如仍需继续核验，"
-            "可简短说明已发现的内容和下一步核验目标；不泄露内部推理或未经核实的结论。"
+            "正文只写给用户的回答：不写「我先看一下」「已经拿到了」「我再核对」之类的过程说明或进度播报，"
+            "直接调用工具即可，界面会根据真实调用显示查找状态；不要输出工具 JSON 或模拟进度，"
+            "不泄露内部推理或未经核实的结论。"
+            "回答结构：先用一两句话直接回答问题；要点和步骤用 Markdown 列表，"
+            "不要用「→」把多个步骤串成一长句，单段不超过约 120 字；加粗小标题后空一行再写正文。"
+            "以视频证据为主，视频没有覆盖的内容用一两句说明并标明来自通用知识；"
+            "除非用户要求详细，不展开成教程，整条回答控制在约 800 字以内。"
             "工具报错、调用限制和内部字段名不写进给用户的回答，换用其他工具继续即可。"
             + "所有正文要与提交的 claim 和时间一致，整体不能只有完成确认。"
             +
@@ -1274,7 +1294,8 @@ class SupervisorRuntime:
                     max_model_calls_per_turn if self._limits_enabled else None
                 ),
                 handle_text=accept_text,
-                **({"handle_text_delta": accept_text_delta}
+                **({"handle_text_delta": accept_text_delta,
+                    "handle_reasoning_delta": accept_reasoning_delta}
                    if getattr(self._model, "supports_text_deltas", False) else {}),
                 request_timeout_seconds=control.remaining_seconds(),
                 check_control=control.check,

@@ -14,6 +14,7 @@ from threading import Condition, Event, Lock, RLock
 from time import monotonic, monotonic_ns
 from uuid import uuid4
 
+from httpx import RemoteProtocolError
 from openai import APIConnectionError, APITimeoutError
 
 from agent.chat.common.errors import (
@@ -206,6 +207,15 @@ class AgentMessageExecution:
         ):
             tail["delta"] += payload["delta"]
             tail["textStream"] = payload["textStream"]
+            tail["sequence"] = payload["sequence"]
+            tail["occurredAt"] = payload["occurredAt"]
+            return True
+        if (
+            payload.get("type") == "answer.reasoning.delta"
+            and tail.get("type") == "answer.reasoning.delta"
+            and payload.get("callId") == tail.get("callId")
+        ):
+            tail["delta"] += payload["delta"]
             tail["sequence"] = payload["sequence"]
             tail["occurredAt"] = payload["occurredAt"]
             return True
@@ -937,6 +947,13 @@ class AgentChatService:
                 with event_lock:
                     if execution.cancellation.is_set():
                         raise AgentModelInvocationError("Agent execution cancelled")
+                    if event["type"] == "answer.reasoning.delta":
+                        # Reasoning is display-only; never persisted into the answer.
+                        execution.publish({
+                            "type": "answer.reasoning.delta", "callId": event["callId"],
+                            "delta": event["delta"],
+                        })
+                        return
                     if event["type"] == "answer.delta":
                         partial_content = event["content"]
                         pending_text_blocks = event["renderBlocks"]
@@ -1322,6 +1339,12 @@ def _agent_model_failure_message(error: BaseException) -> str:
             reason = str(status_code)
         detail = _provider_message(current)
         return f"模型暂时不可用，错误：{reason}" + (f"（{detail}）" if detail else "")
+    for current in chain:
+        if getattr(current, "reason", None) == ModelFailureReason.MODEL_NETWORK_ERROR:
+            return "模型暂时不可用，错误：网络错误（多次重连未收到模型响应）"
+    for current in chain:
+        if isinstance(current, RemoteProtocolError):
+            return "模型暂时不可用，错误：模型服务中途断开了响应"
     for current in chain:
         reason = getattr(current, "reason", None)
         name = type(current).__name__.lower()

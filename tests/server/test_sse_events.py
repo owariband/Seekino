@@ -535,6 +535,25 @@ def test_answer_stream_whitelists_events_keeps_alive_and_detaches(monkeypatch):
     assert "hidden" not in "".join(events)
 
 
+def test_answer_stream_delivers_reasoning_delta(monkeypatch):
+    clock = _Clock()
+    _patch_runtime(monkeypatch, agent_api, clock)
+    execution = _AnswerExecution([
+        {"type": "answer.reasoning.delta", "conversationId": _CONVERSATION_ID,
+         "messageId": "message-1", "sequence": 1, "occurredAt": 1789473600000,
+         "callId": "call-1", "delta": "先思考"},
+        None,
+    ], clock)
+    events = asyncio.run(_collect(agent_api._answer_events(
+        _Request(100), execution,
+        SSEConfig(poll_interval_seconds=0.1, keepalive_interval_seconds=2),
+    )))
+    assert execution.detached
+    assert len(events) == 1 and events[0].startswith("event: answer.reasoning.delta\nid: message-1:1\n")
+    assert _payload(events[0])["delta"] == "先思考"
+    assert _payload(events[0])["callId"] == "call-1"
+
+
 def test_answer_stream_disconnect_only_detaches_consumer(monkeypatch):
     clock = _Clock()
     _patch_runtime(monkeypatch, agent_api, clock)

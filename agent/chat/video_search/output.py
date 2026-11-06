@@ -107,6 +107,38 @@ def video_range_sources(
     return ordered
 
 
+def snap_video_range(
+    evidence_by_id: dict[str, dict],
+    source_ids: Sequence[str],
+    start_seconds: int,
+    end_seconds: int,
+) -> tuple[int, int]:
+    """Move a validated range onto the spoken or event boundaries it covers."""
+    candidates: list[tuple[int, int]] = []
+    for identifier in source_ids:
+        evidence = evidence_by_id[identifier]
+        chunk_start, chunk_end = evidence["startSeconds"], evidence["endSeconds"]
+        # Transcript cues are aliased views; timeline events stay raw parse dumps.
+        spans = [(item["startSeconds"], item["endSeconds"]) for item in evidence["transcript"]]
+        spans += [(item["start_seconds"], item["end_seconds"]) for item in evidence["allTimeEvents"]]
+        # Whole-chunk summary events would widen a precise card to the full chunk.
+        candidates += [span for span in spans if span[1] - span[0] < chunk_end - chunk_start]
+    starts = [
+        candidate_start for candidate_start, candidate_end in candidates
+        if candidate_start <= start_seconds < candidate_end
+    ]
+    ends = [
+        candidate_end for candidate_start, candidate_end in candidates
+        if candidate_start < end_seconds <= candidate_end
+    ]
+    start_seconds = max(starts, default=start_seconds)
+    end_seconds = min(ends, default=end_seconds)
+    return (
+        max(start_seconds, min(evidence_by_id[identifier]["startSeconds"] for identifier in source_ids)),
+        min(end_seconds, max(evidence_by_id[identifier]["endSeconds"] for identifier in source_ids)),
+    )
+
+
 def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
     scope = set(inputs["series_ids"])
     if set(result.series_ids) != scope:

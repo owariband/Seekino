@@ -55,6 +55,36 @@ def wire_model(script, *, stream=True, fallback=None):
     return model, requests, wire, client
 
 
+def test_provider_reasoning_reaches_reasoning_deltas_without_touching_answer():
+    events = []
+    def reasoning_deltas():
+        return [e for e in events if e["type"] == "answer.reasoning.delta"]
+    def answer_deltas():
+        return [e for e in events if e["type"] == "answer.delta"]
+    def script():
+        yield chunk(delta={"role": "assistant", "reasoning_content": "deliberate "})
+        assert reasoning_deltas()[-1]["delta"] == "deliberate "
+        assert answer_deltas() == []
+        yield chunk(delta={"reasoning_content": "carefully"})
+        assert reasoning_deltas()[-1]["delta"] == "carefully"
+        yield chunk("Answer")
+        assert "deliberate" not in answer_deltas()[-1]["delta"]
+        yield chunk(delta={}, finish="stop")
+        yield b"data: [DONE]\n\n"
+
+    model, requests, wire, client = wire_model(script)
+    try:
+        with model_call_context({"assistant_message_id": "answer", "conversation_id": "conversation"}):
+            result = _runtime(model).kick(_inputs(), load_video_context=lambda: [], emit=events.append)
+        assert result.content == "Answer"
+        assert "".join(e["delta"] for e in reasoning_deltas()) == "deliberate carefully"
+        assert all(e["callId"] for e in reasoning_deltas())
+        assert not any("deliberate" in e["delta"] for e in answer_deltas())
+        model.confirm_turn("conversation", "answer", result.content)
+    finally:
+        client.close()
+
+
 def test_provider_text_reaches_deltas_before_terminal_and_keeps_whitespace(tmp_path):
     events = []
     def deltas():

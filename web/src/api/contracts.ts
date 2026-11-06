@@ -728,6 +728,7 @@ export type AgentAnswerEvent =
   | (AgentAnswerEventBase & { type: "answer.block"; block: AgentRenderBlock })
   | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase; timing?: AgentMessageTiming | null })
   | (AgentAnswerEventBase & { type: "answer.delta"; delta: string; callId: string; newBlock: boolean; textStream?: AgentTextStream | null })
+  | (AgentAnswerEventBase & { type: "answer.reasoning.delta"; delta: string; callId: string })
   | (AgentAnswerEventBase & { type: "answer.model.completed"; callId: string })
   | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.failed";

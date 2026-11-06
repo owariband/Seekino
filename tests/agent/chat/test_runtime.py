@@ -201,6 +201,66 @@ def test_final_range_rejects_invalid_explicit_source_ids(sources):
         video_range_sources(evidence, "chunk-1", 12, 18, source_video_chunk_ids=sources)
 
 
+def _snap_evidence(
+    chunk_id: str, start_seconds: int, end_seconds: int, *,
+    transcript: tuple[tuple[int, int], ...] = (),
+    events: tuple[tuple[int, int], ...] = (),
+) -> dict:
+    return {
+        "videoChunkId": chunk_id, "startSeconds": start_seconds, "endSeconds": end_seconds,
+        "transcript": [
+            {"startSeconds": start, "endSeconds": end} for start, end in transcript
+        ],
+        "allTimeEvents": [
+            {"start_seconds": start, "end_seconds": end} for start, end in events
+        ],
+    }
+
+
+def test_snap_video_range_aligns_sentences_without_widening_to_a_whole_chunk_event():
+    from agent.chat.video_search.output import snap_video_range
+
+    evidence = {"chunk-1": _snap_evidence(
+        "chunk-1", 3_420_000, 3_480_000,
+        transcript=((3_420_000, 3_421_580), (3_421_960, 3_426_780), (3_428_400, 3_433_380)),
+        events=((3_420_000, 3_480_000),),
+    )}
+    assert snap_video_range(evidence, ["chunk-1"], 3_420_000, 3_426_800) == (3_420_000, 3_426_800)
+    assert snap_video_range(evidence, ["chunk-1"], 3_423_000, 3_430_000) == (3_421_960, 3_433_380)
+
+
+def test_snap_video_range_clamps_a_sentence_crossing_the_chunk_end():
+    from agent.chat.video_search.output import snap_video_range
+
+    evidence = {"chunk-1": _snap_evidence(
+        "chunk-1", 0, 60_000, transcript=((59_000, 61_000),),
+    )}
+    assert snap_video_range(evidence, ["chunk-1"], 59_500, 60_000) == (59_000, 60_000)
+
+
+def test_snap_video_range_keeps_a_start_in_a_sentence_gap():
+    from agent.chat.video_search.output import snap_video_range
+
+    evidence = {"chunk-1": _snap_evidence(
+        "chunk-1", 0, 10_000, transcript=((1_000, 2_000), (4_000, 5_000)),
+    )}
+    assert snap_video_range(evidence, ["chunk-1"], 3_000, 3_500) == (3_000, 3_500)
+
+
+def test_snap_video_range_uses_candidates_from_adjacent_source_chunks():
+    from agent.chat.video_search.output import snap_video_range
+
+    evidence = {
+        "chunk-1": _snap_evidence(
+            "chunk-1", 0, 10_000, transcript=((9_000, 10_000),), events=((0, 10_000),),
+        ),
+        "chunk-2": _snap_evidence(
+            "chunk-2", 10_000, 20_000, transcript=((10_000, 11_000),), events=((10_000, 20_000),),
+        ),
+    }
+    assert snap_video_range(evidence, ["chunk-1", "chunk-2"], 9_500, 10_500) == (9_000, 11_000)
+
+
 def _selected_range(chunk_id: str, *, start_seconds: int = 11, end_seconds: int = 19) -> dict:
     return {
         "video_chunk_id": chunk_id,
