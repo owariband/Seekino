@@ -19,6 +19,7 @@ class AuthIdentityView(ContractModel):
     public_tenant_id: str
     mode: Literal["local", "cloud"]
     csrf_token: str
+    email_login_enabled: bool
     permissions: AuthPermissions
 
 

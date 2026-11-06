@@ -6,6 +6,7 @@ async function mockService(page: Page, guest = false) {
   const identity: AuthIdentity = {
     userId: guest ? "locale-guest" : "local", email: null, isGuest: guest,
     tenantId: guest ? null : "local-default", publicTenantId: "public", mode: guest ? "cloud" : "local", csrfToken: "",
+    emailLoginEnabled: guest,
     permissions: { canUpload: !guest, canManage: !guest, canConfigure: !guest },
   };
   const requests: string[] = [];

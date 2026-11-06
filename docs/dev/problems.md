@@ -2777,3 +2777,11 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 与云端模板允许游客启动的说明矛盾。修复将邮件能力与游客启动分离，在发送/验证邮箱前明确
 拒绝不可用能力，保留签名、Redis、CSRF 与权限约束。HTTP 回归和 CPU 候选实测通过，
 状态见工作台 DEPLOY-02；[TRD 与证据](../design/03-product-reassessment/cloud-guest-without-smtp-trd.md)。
+
+### DEPLOY-04：账号界面缺少邮件能力信息，游客填写后才发现登录尚未开放
+
+2026-11-07：无 SMTP 的候选已可提供游客服务，但身份响应未提供邮件能力，前端始终展示
+验证码表单和“登录后上传”提示。验收要求是在填写前显示未开放说明，打开/关闭不请求邮件，
+配置 SMTP 后恢复既有表单，本地资料上传不受远端邮件配置影响。HTTP、前端和两种视口
+回归通过；部署与发布范围见 [TRD](../design/03-product-reassessment/smtp-login-availability-trd.md)，
+当前状态统一维护在工作台 DEPLOY-04。

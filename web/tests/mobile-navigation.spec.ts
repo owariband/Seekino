@@ -2,11 +2,11 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import type { AgentConversationView, AgentMessageView, AuthIdentity, DisplayMode, SeriesView } from "../src/api/contracts";
 
-async function mockService(page: Page, guest = true, { displayMode = "release", series = [] }: { displayMode?: DisplayMode; series?: SeriesView[] } = {}) {
+async function mockService(page: Page, guest = true, { displayMode = "release", series = [], emailLoginEnabled = true }: { displayMode?: DisplayMode; series?: SeriesView[]; emailLoginEnabled?: boolean } = {}) {
   const identity: AuthIdentity = {
     userId: guest ? "mobile-guest" : "mobile-member", email: guest ? null : "viewer@example.com",
     isGuest: guest, tenantId: guest ? null : "personal", publicTenantId: "public",
-    mode: "cloud", csrfToken: "",
+    mode: "cloud", csrfToken: "", emailLoginEnabled,
     permissions: { canUpload: !guest, canManage: !guest, canConfigure: false },
   };
   const conversations: AgentConversationView[] = ["雨天演出片段", "角色关系梳理"].map((title, index) => ({
@@ -71,6 +71,34 @@ async function mockService(page: Page, guest = true, { displayMode = "release", 
 }
 
 test.use({ viewport: { width: 390, height: 844 } });
+
+for (const width of [390, 1280]) {
+  test(`explains unavailable email login without requests at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    const mock = await mockService(page, true, { emailLoginEnabled: false });
+    await page.goto("/settings");
+    await expect(page.getByText("游客模式", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: width < 600 ? "打开侧边栏" : "打开账号菜单", exact: true }).click();
+    const account = page.getByRole("region", { name: "当前账号", exact: true });
+    await expect(account.getByText("游客模式", { exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`account-${width}.png`) });
+    await account.getByRole("button", { name: "登录 / 注册（暂未开放）", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "登录与注册暂未开放", exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "继续体验", exact: true })).toBeFocused();
+    await page.screenshot({ path: testInfo.outputPath(`login-unavailable-${width}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await dialog.getByRole("button", { name: "继续体验", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    if (width < 600) await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
+    await page.getByRole("button", { name: "个人上传暂未开放", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    expect(mock.requests.filter((path) => path.startsWith("/api/auth/email/"))).toEqual([]);
+    expect(mock.unexpected).toEqual([]);
+    expect(mock.errors).toEqual([]);
+  });
+}
 
 test("keeps the mobile composer compact, grows for long drafts and shrinks after clearing", async ({ page }, testInfo) => {
   const mock = await mockService(page);
