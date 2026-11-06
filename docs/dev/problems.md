@@ -2765,3 +2765,7 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 验收要求：正式 Dockerfile 构建成功，两份发布资源与源文件哈希一致且 HTTP 可访问，
 不引入本地媒体和密钥，最终 CPU HEAD 对齐 main。当前状态见工作台 DEPLOY-01；
 方案与证据见 [TRD](../design/03-product-reassessment/docker-web-assets-trd.md)。
+
+2026-11-06 实测补充：#58 修复和 #59 发布已合并，CPU HEAD 对齐 main `0282fcb0`，
+工作树干净；该提交的 API/Web 构建成功，两份资源 HTTP 200 且哈希一致，媒体排除探针通过。
+旧目录及旧 API 镜像保留回退。运行配置、业务容器启动与公网访问不在此次构建和源码验收结论内。
