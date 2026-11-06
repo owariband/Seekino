@@ -6,7 +6,7 @@
 | Type | Feature direction + minimal validation. This PR holds the TRD only; each integration step gets its own branch + PR with a TRD-first commit (§3.8) |
 | Opened / revised | Opened 2026-11-05. Direction rewritten 2026-11-06 after four rounds of owner review (decision log) |
 | Branch / PR | `docs/editing-skill-style-reference` / [PR #50](https://github.com/owariband/Seekino/pull/50) |
-| Status | Final design agreed with the owner 2026-11-07. E0, E1, E3 measured in standalone scripts (pass, with adjustments); E2 running; **nothing is wired into Seekino yet** |
+| Status | Final design agreed with the owner 2026-11-07. E0, E1, E3 pass (standalone scripts, with adjustments); **E2 cost gate failed** — implementation held pending owner decision; nothing is wired into Seekino |
 | Related | [MCP access TRD](mcp-access-trd.md); [Sub-Chunk / Event TRD](../02-agent-harness/sub-chunk-trd.md); [PR #34](https://github.com/owariband/Seekino/pull/34) (course parse profile, the base for per-type schema config); [PR #53](https://github.com/owariband/Seekino/pull/53) (ASR blank-word fix found while parsing MyGO) |
 
 ## 1.1 Why Seekino needs edit analysis
@@ -382,14 +382,33 @@ Findings:
 - Pose changes on twos within one framing are written as separate steps; acceptable, can be merged in Refine.
 - Calls took 7.7–27.4 s each.
 
-## E2 A/B on one promo beat
+## E2 A/B on two promo beats (done, 2026-11-07) — cost gate failed
 
-- **Brief:** an 8–10 s "爱音's entrance" beat, P5 style, minimal SFX. Same model, same `motion-showreel`, same 爱音 cut-out prepared locally beforehand.
-- **A:** the skill as shipped, given the P5R video and reading it its own way (`sheet`, `grid --strips`, `heat`).
-- **B:** the skill plus recall: a hand-built style card and observations for the E1 picks, with the source path and exact ranges in place of `read_evidence` URLs.
-- Two fresh agents; the author of this TRD has seen P5R and would contaminate either arm.
-- Then B makes a second beat, "Kino's arrival", reusing the entries and its own first-beat code.
-- Pass: B clearly cheaper (tokens, time, reference views) with technique fidelity at least as good as A; owner blind pick recorded.
+Four fresh Claude Code agents (same model, same `motion-showreel` at `2b9a893`, same 爱音 cut-outs, BGM off, minimal synthesised SFX, all confirmations pre-approved). Evidence: `outputs/verification/edit-reference-20261107/e2/` (renders, briefs, logs, review logs, contact sheets; blind copies `blind-beat*-{left,right}.mp4`).
+
+- **Beat 1, 「爱音登场」:** A gets the P5R video and reads it the skill's way; B gets the recall pack (style card + 8 observations with exact ranges).
+- **Beat 2, 「Kino 登场」:** A2 again reads the video from scratch; B2 gets the recall pack plus B's beat as a library version (complete contract, code, check, evaluation).
+
+| Arm | Tokens | Tool calls | Wall time | Reference images viewed | Techniques reproduced |
+| --- | --- | --- | --- | --- | --- |
+| A | 180,923 | 55 | 11.4 min | 6 (1 sheet + 5 strips) | Spiral, ransom-note lettering, starburst, 2–3-frame holds, 8-frame grid timing (grid median) |
+| B | 193,002 (+7 %) | 58 | 12.6 min (+11 %) | 3 strips + 2 recall files | Geometric hard cuts at measured frame counts, **step-out ladder at measured rungs**, colour swap, slogan box |
+| A2 | 186,661 | 59 | 14.1 min | 6 (1 sheet + 4 strips + heat) | Ransom-note lettering, ink wipe, strobe, whip pan, spiral, cubes |
+| B2 | 226,328 (+21 %) | 66 | 14.6 min (+3 %) | 1 strip + recall + v1 | Reused v1 cuts, bar prop, slogan box; ladder on Kino (vector); speed bands + crescent wipe; colour swap rebuilt as a zoom per v1's evaluation |
+
+Results against §2.2:
+- **Cost: fail on both beats.** Recall reduced reference views (6 → 3 → 1) but not tokens or time. Building, rendering and self-review dominate (55–66 tool calls in every arm); the skill's own reference reading of a 95 s video is cheap (6 images). The library did not lower the second beat's cost: B2 read and adapted v1's code and wrote a v2 contract, which cost more than A2 starting fresh.
+- **Fidelity: B arms reproduce measured techniques frame-exactly** (ladder rungs 2/2/3/2/3; geometric steps 4/1/1/3/2/2/2/3/1/2). A arms reproduce the look well from a contact sheet and a few strips, with grid-median timing, and never used the ladder.
+- **Experience carried over:** B2 acted on v1's evaluation (burst read as a pulse → rebuilt; raster ladder soft → vector subject; hold too long → shortened), and its v2 evaluation separates changes, verified and unverified items. A2 had no such input.
+- **Consistency:** B1 → B2 share opening, prop and slogan system; A → A2 share palette and lettering but differ in grammar.
+- **Owner blind pick:** pending.
+
+Interpretation (inference, not yet tested):
+- On a single short reference, Seekino's recall does not save work, because reference reading is a small part of the cost. Its measured benefits are precision of timing, consistency across beats, and accumulated experience, all of which need the owner's judgment to count.
+- Savings are plausible only where the skill's own reading becomes expensive or impossible: long or many references, or cross-reference search ("a character intro from any of my references"). Not tested.
+- Whole-beat templates reuse poorly: a new beat changes semantics, so the agent re-reads and rewrites. Technique-level components (e.g. `ladder(subject, steps)`) might reuse better. Not tested.
+
+Decision: per §3.7, implementation is **not started**; returned to the owner with this evidence (decision log).
 
 ## E4 Character material (later, content profile)
 
@@ -403,7 +422,8 @@ Reparse ep04 with `keyframe_ms` / `clean`; rerun the same 4 queries against the 
 | Detector precision on scripted animation | — | 0/8 | Drove the profile-only decision |
 | E1 picks cover the style; dense frames | ≤ 572 | 8 devices incl. the ladder; 288 frames | Pass (lead); owner pending |
 | E3 ladder steps vs 30 fps truth | Hand / strip | Frame-exact after fine detector | Pass, with Prepare and Refine adjustments |
-| E2 | — | — | Running |
+| E2 cost (tokens, time) | A / A2 | B +7 % / +11 %; B2 +21 % / +3 % | **Fail** |
+| E2 fidelity (measured steps) | A: grid-median timing | B: frame-exact ladder and cuts | Better in B; owner blind pick pending |
 
 # 5. 试点验证与方案取舍
 
@@ -446,3 +466,4 @@ Acceptance returns to §1.1: the promo exists, made through MCP, and the dual re
 | 2026-11-07 | Cut-out could be a Seekino capability | Owner: Seekino Server never does cut-out, rendering or code execution | Templates only declare slots; preparation is local | §1.5 |
 | 2026-11-07 | E2 arm A uses the static style library | A stronger, realistic baseline is the skill reading the reference itself | Arm A gets the P5R video and reads it its own way | §4 E2 |
 | 2026-11-07 | Scan starts (0.2 s debounce) are the step boundaries | E3: rungs 2–3 frames apart are suppressed by the debounce; long merged candidates hide techniques | Prepare splits candidates > 3 s and runs a fine in-pick detector whose starts are the boundaries; Refine consolidates names and roles | §3.3, E1, E3 |
+\n| 2026-11-07 | Recall makes the editing agent cheaper (H1), and a saved version makes the next beat cheaper (H6) | E2: B +7 % tokens / +11 % time; B2 +21 % / +3 %; reference reading is a small share of cost | Implementation held; evidence returned to owner. Measured value is fidelity, consistency and carried experience, not cost | §4 E2 |\n
