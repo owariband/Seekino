@@ -37,7 +37,7 @@ from .video_search.errors import VideoSearchFailure, VideoSearchFailureCode, Vid
 from .video_search.runtime import AgentRuntime
 from .video_search.output import (
     build_chat_output, build_chat_snapshot, build_retrieval_trace, merge_retrieval_calls,
-    outline_evidence_hit, retrieval_hit, validate_result, video_range_sources,
+    outline_evidence_hit, retrieval_hit, snap_video_range, validate_result, video_range_sources,
 )
 from .video_search.state import (
     AgentFinalOutput, ChatRenderBlock, ChatRenderDraft, ChatVideoBlock,
@@ -876,10 +876,12 @@ class SupervisorRuntime:
                 try:
                     # The tool accepts seconds; canonical evidence and playback storage use milliseconds.
                     start_ms, end_ms = round(start_seconds * 1000), round(end_seconds * 1000)
+                    evidence_by_id = {
+                        hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
+                        for hit in citable_result().hits
+                    }
                     source_ids = video_range_sources(
-                        {hit.candidate.video_chunk_id: hit.evidence.model_dump(by_alias=True)
-                         for hit in citable_result().hits},
-                        video_chunk_id, start_ms, end_ms, allow_adjacent=True,
+                        evidence_by_id, video_chunk_id, start_ms, end_ms, allow_adjacent=True,
                     )
                 except (ValueError, OverflowError) as exc:
                     raise AgentToolFeedbackError(
@@ -888,6 +890,9 @@ class SupervisorRuntime:
                         "of the same source video, without an uncovered gap. "
                         "Divide evidence timestamps in milliseconds by 1000 before submitting.",
                     ) from exc
+                start_ms, end_ms = snap_video_range(
+                    evidence_by_id, source_ids, start_ms, end_ms,
+                )
                 item = SelectedVideoRange(
                     video_chunk_id=video_chunk_id, start_seconds=start_ms,
                     end_seconds=end_ms,
@@ -1159,6 +1164,8 @@ class SupervisorRuntime:
             "例如 00:50–01:00 传 50 和 60。检索证据与 Query 草稿仍使用毫秒，提交前除以 1000；"
             "例如证据 54600–56000 毫秒，提交 54.6–56 秒。正文提到未提交为视频卡的时间时使用时间码。"
             "范围须完整覆盖支持主张的必要内容并去掉无关部分，可跨同一视频两个相邻已检索 Chunk。"
+            "起止以证据中讲解句子或事件的起止为准，不要直接使用 Chunk 的整分钟边界；"
+            "需要一整段讲解时，从该段第一句开始、到最后一句结束。"
             "重复 ID 会原位更新，remove_video_item 可撤回；未提交的候选不会自动显示。"
             "正文与视频卡按产生顺序实时展示：需要视频卡的要点，先写这一条的正文，紧接着调用 submit_video_item 提交它的视频卡，再写下一条；"
             "同一处需要多张视频卡时可在一次回复中并行提交。"
