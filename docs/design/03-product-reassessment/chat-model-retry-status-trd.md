@@ -2,7 +2,7 @@
 
 2026-11-07 local 会话 d14c64d2 的两轮回答耗时 53.57 s 和 62.32 s。首 SSE 超时分别触发一次和两次，每次等待约 15 s。Gateway 记录 chat_first_sse_retry，浏览器只看到当前阶段，用户无法判断模型是否正在恢复。原始记录位于本机 outputs/verification/parse-output-drafts-live-20261107/api.log。
 
-分支为 fix/chat-model-retry-status，目标分支为 dev。沿用[现有流式交付设计](chat-streaming-trd.md)，本次交付模型重试的用户反馈。整轮 30 s 是另行验证的性能目标。
+分支为 fix/chat-model-retry-status，通过 [PR #71](https://github.com/owariband/Seekino/pull/71) 向 dev 集成。沿用[现有流式交付设计](chat-streaming-trd.md)，本次交付模型重试的用户反馈。整轮 30 s 是另行验证的性能目标。
 
 ## 2. 影响因素、假设与评价指标
 
