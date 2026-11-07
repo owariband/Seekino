@@ -20,6 +20,9 @@ import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { FOCUS_SEARCH_EVENT, loadConversations } from "./conversationNavigation";
+import { chatModelOptions, type ChatModelOption } from "./chatModelOptions";
+import { SettingsLink } from "../settings/SettingsLink";
+import { usePublishChatSettings } from "../settings/activeChatSettings";
 import { explainHit } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
 import { AGENT_ATTACHMENT_ACCEPT, useAgentAttachments } from "./useAgentAttachments";
@@ -27,7 +30,7 @@ import styles from "./search.module.css";
 
 type MessageOptionOverrides = Omit<AgentMessageRunOptions, "topK">;
 type SelectedMessageOptions = Required<MessageOptionOverrides>;
-type ChatModelOption = NonNullable<AgentMessageOptions["chatModels"]>[number];
+
 
 const DEFAULT_CHAT_MODEL_ID = "default";
 const SIDEBAR_WIDTH_KEY = "seekino-search-sidebar-width";
@@ -112,16 +115,6 @@ function storedMessageOptionOverrides(options: AgentMessageOptions): MessageOpti
   } catch {
     return {};
   }
-}
-
-function chatModelOptions(options: AgentMessageOptions | null): ChatModelOption[] {
-  const seen = new Set<string>();
-  return (options?.chatModels ?? []).filter((model) => {
-    if (!model || typeof model.id !== "string" || typeof model.label !== "string"
-      || !model.id.trim() || !model.label.trim() || seen.has(model.id)) return false;
-    seen.add(model.id);
-    return true;
-  });
 }
 
 function savedSidebarWidth(): number {
@@ -444,6 +437,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     && !modelOptions.some((model) => model.id === modelId);
   const showModelChooser = !embedded && (modelOptions.length > 1 || modelSelectionInvalid);
   const creatingConversation = preparingAttachments || (searching && !conversationId);
+  usePublishChatSettings(!embedded, { modelId, modelSaving, modelError, selectModel,
+    loading: loading || creatingConversation || mode !== "live" });
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
   const kinoHostId = messages.findLast((message) => message.role === "ASSISTANT")?.messageId ?? null;
@@ -1162,6 +1157,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               </div> : null}
               <textarea
                 ref={composerRef}
+                data-standalone-composer={embedded ? undefined : true}
                 value={query}
                 onChange={(event) => { draftRevisionRef.current += 1; setQuery(event.target.value); }}
                 onPaste={(event) => {
@@ -1194,6 +1190,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 {answerSettingsPicker}
               </div>
               {modelChooser}
+              {inRouter && modelOptions.length > 0 ? <SettingsLink className={styles.modelSettingsLink} section="models"
+                aria-label={t("回答模型设置")} title={t("回答模型设置")}><SlidersHorizontal size={15} aria-hidden="true" /></SettingsLink> : null}
             </div> : null}
             {!embedded && (modelError || modelSelectionInvalid) ? (
               <p className={`${styles.messageError} ${styles.modelError}`} role="alert">

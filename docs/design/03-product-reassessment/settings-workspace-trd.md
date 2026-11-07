@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-分支 `feat/settings-workspace`，基线 [#68](https://github.com/owariband/Seekino/pull/68) 的会话模型选择，合并顺序为 #67、#68、本需求。PR 创建后回填。工作台编号 SETTINGS-UI-01。
+分支 `feat/settings-workspace`，基线 [#68](https://github.com/owariband/Seekino/pull/68) 的会话模型选择，合并顺序为 #67、#68、本需求。[设置工作区 PR #72](https://github.com/owariband/Seekino/pull/72)。工作台编号 SETTINGS-UI-01。
 
 `web/src/features/settings/SettingsPage.tsx` 把外观、语言、连接和管理员表单排在一页。聊天输入是组件内的草稿，从聊天跳转到设置可能丢失输入。Kino 偏好分散在播放页。希望结合 Chatbox 的分类导航、字段行和场景内设置，让同一个选择仍然写到正确的设备、会话或全局配置中。保留居中 Kino、延迟创建、播放器浮窗、已有权限与保存合同。此轮调整前端，模型连接与密钥仍由当前服务端配置管理。
 

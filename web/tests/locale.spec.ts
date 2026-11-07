@@ -63,7 +63,7 @@ test("switches EN/ZH immediately and retains the choice after a reload", async (
   expect(mock.requests.length).toBe(requestsBeforeSwitch);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-  await expect(page.getByRole("radio", { name: "EN English" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "EN English" })).toBeChecked();
   await page.screenshot({ path: "/private/tmp/seekino-locale-y_vrdu2o/settings-en-desktop.png", fullPage: true });
   expect(mock.unexpected).toEqual([]);
   expect(mock.errors).toEqual([]);

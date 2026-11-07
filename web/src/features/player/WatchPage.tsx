@@ -11,13 +11,14 @@ import { Mascot } from "../../shared/Mascot";
 import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
 import { PlaybackFrame } from "./PlaybackFrame";
+import { useWatchPreferences } from "./watchPreferences";
+import { useAssistantBusy } from "../../shared/assistantActivity";
 import { useI18n } from "../../app/i18n";
 import { seriesPath, watchPath } from "../library/seriesLinks";
 import { useAuth } from "../auth/AuthProvider";
 import styles from "./watch.module.css";
 
 const PANEL_WIDTH_KEY = "seekino-watch-panel-width";
-const PAUSE_ON_SEND_KEY = "seekino-watch-pause-on-send";
 const MIN_PANEL_WIDTH = 320;
 
 type PlaybackExtraContext = {
@@ -66,10 +67,8 @@ export function WatchPage() {
   const resumeAfterChatRef = useRef(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<"chat" | "episodes">("chat");
-  const [pauseOnSend, setPauseOnSend] = useState(() => {
-    try { return window.localStorage.getItem(PAUSE_ON_SEND_KEY) !== "false"; }
-    catch { return true; }
-  });
+  const { pauseOnSend, setPauseOnSend, fadeDelay, setFadeDelay } = useWatchPreferences();
+  const assistantBusy = useAssistantBusy();
   const [panelWidth, setPanelWidth] = useState(savedPanelWidth);
   const [resizing, setResizing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
@@ -194,10 +193,6 @@ export function WatchPage() {
   }, [panelWidth]);
 
   useEffect(() => {
-    try { window.localStorage.setItem(PAUSE_ON_SEND_KEY, String(pauseOnSend)); } catch { /* The setting still works for this visit. */ }
-  }, [pauseOnSend]);
-
-  useEffect(() => {
     const closeSettingsOutside = (event: globalThis.PointerEvent) => {
       const settings = settingsRef.current;
       if (settings?.open && event.target instanceof Node && !settings.contains(event.target)) settings.open = false;
@@ -271,7 +266,8 @@ export function WatchPage() {
       </div>
 
       <WatchPanelPortal>
-      <aside id="watch-side-panel" className={styles.sidePanel} aria-label={t("观看侧栏")} data-open={panelOpen} aria-hidden={!panelOpen} inert={!panelOpen} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); closePanel(); } }}>
+      <aside id="watch-side-panel" className={styles.sidePanel} data-fade={pageFullscreen && panelOpen && !assistantBusy}
+        style={{ "--kino-fade-delay": `${fadeDelay}s` } as CSSProperties} aria-label={t("观看侧栏")} data-open={panelOpen} aria-hidden={!panelOpen} inert={!panelOpen} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); closePanel(); } }}>
         {panelOpen ? <div
           className={styles.resizeHandle}
           role="separator"
@@ -312,6 +308,13 @@ export function WatchPage() {
           }}>
             <summary role="button" aria-label={t("观看设置")} title={t("观看设置")}><Settings2 size={16} aria-hidden="true" /></summary>
             <div className={styles.watchSettingsPopover}>
+              <label className={styles.fadePreference}><span>{t("自动淡化时间（秒）")}</span>
+                <input type="number" min={1} step="any" defaultValue={fadeDelay} key={fadeDelay} onBlur={event => {
+                  const seconds = event.currentTarget.valueAsNumber;
+                  if (Number.isFinite(seconds) && seconds >= 1) setFadeDelay(seconds);
+                  else event.currentTarget.value = String(fadeDelay);
+                }} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+              </label>
               <label className={styles.pauseOnSend}>
                 <span>{t("发送问题时暂停视频")}</span>
                 <input type="checkbox" role="switch" checked={pauseOnSend} onChange={(event) => setPauseOnSend(event.target.checked)} />
