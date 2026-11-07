@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { rememberChatModel } from "../settings/usePersonalChatModels";
 import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import {
@@ -197,6 +198,8 @@ export function useAgentConversation(requestedId: string | null = null) {
     draftDefault.current = { scope, id };
     const active = activeRef.current;
     if (active?.identityKey === scope && !active.conversationId && !active.explicitDraftModel && !active.creating && id !== active.modelId) {
+      // A changed effective model changes the payload of the next lazy create.
+      if (active.modelId !== DEFAULT_MODEL_ID) active.creationKey = crypto.randomUUID();
       active.modelId = id;
       setState((current) => ({ ...current, modelId: id }));
     }
@@ -218,7 +221,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     if (active.creating) return active.creating;
     const key = active.creationKey ??= storedIdentity(active.identityKey).key;
     const creationKey = `${active.identityKey}:${key}`;
-    const modelId = active.explicitDraftModel ? active.modelId : undefined;
+    const modelId = active.explicitDraftModel || active.modelId !== DEFAULT_MODEL_ID ? active.modelId : undefined;
     active.creating = (async () => {
       let creation = creations.get(creationKey);
       if (!creation) {
@@ -234,6 +237,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         active.conversationId = conversation.conversationId;
         const createdModelId = conversationModelId(conversation);
         active.modelId = createdModelId;
+        rememberChatModel(createdModelId);
         setState((current) => ({ ...current, conversationId: conversation.conversationId, modelId: createdModelId, error: null }));
         subscribe(active, conversation.conversationId);
         return conversation.conversationId;
@@ -377,6 +381,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       // A changed create payload needs its own idempotency key, including across open chat views.
       active.creationKey = crypto.randomUUID();
       active.modelId = next;
+      rememberChatModel(next);
       setState((current) => ({ ...current, modelId: next, modelError: null }));
       return;
     }
@@ -391,6 +396,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       if (activeRef.current !== active || active.identityKey !== conversationStorageKey()) return;
       const savedModelId = conversationModelId(conversation);
       active.modelId = savedModelId;
+      rememberChatModel(savedModelId);
       active.modelSaving = false;
       setState((current) => ({ ...current, modelId: savedModelId, modelSaving: false, modelError: null }));
     } catch (error) {

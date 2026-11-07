@@ -333,14 +333,12 @@ class AgentChatService:
         return self._active_maximum_concurrent_kicks
 
     def message_options(self, *, owner_user_id: str | None = None) -> AgentMessageOptionsState:
-        runtime, config, _ = self._current_config()
+        _, config, _ = self._current_config()
         personal = self._personal_models.list(owner_user_id) if owner_user_id and self._personal_models else None
         return AgentMessageOptionsState(
             new_chat_model_id=personal.default_model_id if personal else "default",
-            chat_models=(AgentModelOptionState("default", runtime.model_name),
-                         *(AgentModelOptionState(model.id, f"{connection.name} · {model.model_id}")
-                           for connection in (personal.connections if personal else ()) for model in connection.models),
-                         *(AgentModelOptionState(ref, choice.label) for ref, choice in self._model_choices.items())),
+            chat_models=tuple(AgentModelOptionState(model.id, f"{connection.name} · {model.model_id}")
+                              for connection in (personal.connections if personal else ()) for model in connection.models),
             top_k=AgentIntegerOptionState(
                 default_value=config.default_top_k,
                 minimum=1,
@@ -394,17 +392,20 @@ class AgentChatService:
                     self._config_revision = revision
             return self._runtime, self._config, self._executor
 
-    def _require_model_choice(self, model_id: str, owner: str) -> None:
-        if model_id.startswith("personal:") and self._personal_models:
-            if any(m.id == model_id for c in self._personal_models.list(owner).connections for m in c.models):
-                return
-        if model_id != "default" and model_id not in self._model_choices:
-            raise ValueError("该回答模型当前不可用，请重新选择。")
+    def _model_choice(self, requested: str | None, owner: str) -> tuple[str, bool]:
+        if self._personal_models is not None:
+            settings = self._personal_models.list(owner)
+            selected = settings.default_model_id if requested is None else requested
+            return selected, any(model.id == selected for item in settings.connections for model in item.models)
+        selected = requested or "default"
+        return selected, selected == "default" or selected in self._model_choices
 
     def set_conversation_model(
         self, conversation_id: str, *, tenant_id: str, owner_user_id: str, model_id: str,
     ) -> AgentConversationState:
-        self._require_model_choice(model_id, owner_user_id)
+        _, available = self._model_choice(model_id, owner_user_id)
+        if not available:
+            raise ValueError("该回答模型当前不可用，请在模型设置中配置并选择模型。")
         return self._repository.set_conversation_model(
             canonical_uuid(conversation_id, "conversation_id"),
             require_nonempty_text(tenant_id, "tenant_id", maximum=64),
@@ -425,13 +426,9 @@ class AgentChatService:
             "tenant_id",
             maximum=64,
         )
-        inherit_model = model_id is None
-        if inherit_model:
-            model_id = self._personal_models.list(owner_user_id).default_model_id if self._personal_models else "default"
-        else:
-            self._require_model_choice(model_id, owner_user_id)
+        selected, available = self._model_choice(model_id, owner_user_id)
         return self._repository.create_conversation(
-            model_id=model_id, inherit_model=inherit_model,
+            model_id=selected, inherit_model=model_id is None, model_available=available,
             conversation_id=str(uuid4()),
             tenant_id=normalized_workspace,
             title="新对话" if title is None else require_nonempty_text(title, "title", maximum=255),
@@ -703,6 +700,8 @@ class AgentChatService:
                 source_tenant_id=normalized_source if normalized_source != normalized_workspace else None,
             )
             if started is None:
+                if self._personal_models is not None and not model_id.startswith("personal:"):
+                    raise ValueError("请先为这个对话选择自己配置的回答模型。")
                 if attachment_references:
                     if self._attachments is None:
                         raise AgentAttachmentInputUnavailableError("附件存储服务尚未配置。")
@@ -728,12 +727,15 @@ class AgentChatService:
                     owner_user_id=owner_user_id,
                     source_tenant_id=normalized_source,
                 )
-                if model_id.startswith("personal:") and self._personal_models and self._personal_runtime_factory:
+                if self._personal_models is not None:
+                    if self._personal_runtime_factory is None:
+                        raise RuntimeError("个人回答模型暂时不可用")
                     target = self._personal_models.resolve(owner_user_id, model_id)
                     runtime = self._personal_runtime_factory(target, config)
                     personal_resources.callback(runtime.close)
                 elif model_id != "default":
-                    self._require_model_choice(model_id, owner_user_id)
+                    if model_id not in self._model_choices:
+                        raise ValueError("该回答模型当前不可用，请重新选择。")
                     cache_key = (model_id, config)
                     if cache_key not in self._model_runtimes:
                         alternative = self._model_choices[model_id].build_runtime(config)

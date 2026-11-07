@@ -1,3 +1,4 @@
+import { configuredModels, firstModel } from "../test/personalModelFixtures";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -137,7 +138,7 @@ function renderApp(
   let messageOptions = initialMessageOptions;
   let globalSettings = initialGlobalSettings;
   const now = Date.parse("2026-09-15T00:00:00Z");
-  const conversation: AgentConversationView = { conversationId: "conversation", tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  const conversation: AgentConversationView = { modelId: firstModel, conversationId: "conversation", tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
   let conversations: AgentConversationView[] = [conversation];
   const conversationMessages = new Map<string, AgentMessageView[]>();
   const assistantMessage: AgentMessageView = {
@@ -233,6 +234,7 @@ function renderApp(
       conversationMessages.delete(String(conversationId));
       return jsonResponse(deleted);
     }
+    if (url.includes("/api/agent/model-connections")) return jsonResponse(configuredModels);
     if (url.includes("/api/agent/messages/options")) {
       return jsonResponse(messageOptions);
     }
@@ -1074,7 +1076,7 @@ describe("application shell", () => {
     expect(await screen.findByText("回答已完成")).toHaveAttribute("role", "status");
     const creation = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/conversations/create"));
     expect(String(creation?.[0])).toBe("/api/agent/conversations/create");
-    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ tenantId: "local-default" });
+    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ tenantId: "local-default", modelId: firstModel });
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/sessions/"))).toBe(false);
     const sendCall = fetchMock.mock.calls.find(([input]) =>
       String(input).includes("/api/agent/messages/send?conversationId=conversation"),

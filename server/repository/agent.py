@@ -64,6 +64,7 @@ class AgentRepository:
         title_is_auto: bool = False,
         model_id: str = "default",
         inherit_model: bool = False,
+        model_available: bool = True,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         # Idempotency compares the requested setting, even when the personal default has since changed.
@@ -90,6 +91,9 @@ class AgentRepository:
                             )
                         return self._conversation_summary(session, existing)
 
+                    # Completed creates remain replayable after a model or its connection is removed.
+                    if not model_available:
+                        raise ValueError("请先配置并选择可用的回答模型。")
                     record = AgentConversation(
                         id=conversation_id,
                         tenant_id=tenant_id,

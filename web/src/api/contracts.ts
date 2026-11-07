@@ -639,7 +639,7 @@ export interface AgentMessageOptions {
   maxLoopTurns: AgentIntegerOption;
   maxModelCallsPerTurn: AgentIntegerOption;
   maxToolCallsPerTurn: AgentIntegerOption;
-  /** Selectable answer models; the first entry has id "default". */
+  /** Models from the current user’s saved connections. Empty until the user configures one. */
   chatModels?: { id: string; label: string }[];
 }
 

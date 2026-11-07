@@ -3949,7 +3949,7 @@ def test_model_selection_is_owned_by_one_conversation_and_freezes_each_answer(bu
     changes = dict(tenant_id=second.tenant_id, owner_user_id=second.owner_user_id)
     assert second.model_id == "fast"
     assert first.model_id == "default"
-    assert [choice.id for choice in service.message_options().chat_models] == ["default", "fast"]
+    assert not service.message_options().chat_models
     with pytest.raises(AgentConversationNotFoundError):
         service.set_conversation_model(second.conversation_id, tenant_id=second.tenant_id,
                                        owner_user_id="another-owner", model_id="default")
@@ -3996,6 +3996,9 @@ def test_personal_default_is_inherited_once_and_personal_runtime_is_scoped(build
     service, first, _, repo, *_ = build_service(supervisor_model=_DirectSupervisorModel())
     connections = PersonalModelConnections(repo._session_factory, key_file=tmp_path / "key", signing_secret="", allow_local=True)
     service._personal_models = connections
+    with pytest.raises(ValueError, match="选择"):
+        _send(service, first)
+    assert service.list_messages(first.conversation_id, tenant_id=first.tenant_id) == []
     built = []
 
     def build(target, config):
@@ -4018,9 +4021,12 @@ def test_personal_default_is_inherited_once_and_personal_runtime_is_scoped(build
         service.create_conversation(**create, model_id="default")
     with pytest.raises(ValueError):
         service.create_conversation(tenant_id=first.tenant_id, owner_user_id="someone-else", model_id=ref, idempotency_key="wrong")
+    explicit = dict(tenant_id=first.tenant_id, idempotency_key="explicit-personal", model_id=ref)
+    chosen = service.create_conversation(**explicit)
     answer = _send(service, second)
     assert answer.assistant_message.model_name == "org/private" and built[0][1] == "test"
     connections.delete(first.owner_user_id, cid, 1)
+    assert service.create_conversation(**explicit).conversation_id == chosen.conversation_id
     assert service.create_conversation(**create).model_id == ref
     assert _send(service, second).assistant_message.message_id == answer.assistant_message.message_id
     from server.service.personal_models import PersonalModelNotFoundError

@@ -1,3 +1,4 @@
+import { configuredModels } from "../src/test/personalModelFixtures";
 import { expect, test } from "@playwright/test";
 
 // Isolated browser fixtures: layout checks must never create real chat records.
@@ -6,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/healthz", (route) => route.fulfill({ json: { status: "ok" } }));
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/api/agent/model-connections") return route.fulfill({ json: { connections: [], defaultModelId: "default" } });
+    if (path === "/api/agent/model-connections") return route.fulfill({ json: configuredModels });
     if (!path.startsWith("/api/")) return route.continue();
     if (path === "/api/auth/me") return route.fulfill({ json: {
       userId: "local", email: null, isGuest: false, tenantId: "local-default", publicTenantId: "public",
@@ -35,7 +36,7 @@ test("opens settings above the draft, edits its model and returns to the same te
   await page.getByRole("link", { name: "回答模型设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置", exact: true });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("combobox", { name: "当前对话模型" }).selectOption("alternate");
+  await dialog.getByRole("combobox", { name: "当前对话模型" }).selectOption("personal:test-second");
   await dialog.getByRole("button", { name: "观看与 Kino" }).click();
   const delay = dialog.getByRole("spinbutton");
   await delay.fill("1.5");
@@ -48,7 +49,7 @@ test("opens settings above the draft, edits its model and returns to the same te
   await expect(input).toHaveValue("这里有一段未发送的草稿");
   expect(await input.evaluate((node, previous) => node === previous, original)).toBe(true);
   expect(await input.evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd])).toEqual([2, 5]);
-  await expect(page.getByRole("combobox", { name: "回答模型" })).toHaveValue("alternate");
+  await expect(page.getByRole("combobox", { name: "回答模型" })).toHaveValue("personal:test-second");
   expect(writes).toEqual([]);
 });
 
@@ -66,6 +67,7 @@ test("opens a standalone mobile settings directory with authentic device prefere
   await expect(page.getByRole("spinbutton")).toHaveValue("2.5");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   await page.getByRole("button", { name: "返回设置分类" }).click();
+  await page.route("**/api/agent/model-connections", (route) => route.fulfill({ json: { connections: [], defaultModelId: "default" } }));
   await navigation.getByRole("button", { name: "回答模型" }).click();
   const protocol = page.getByRole("combobox", { name: "接口协议", exact: true });
   await expect(protocol).toBeVisible();

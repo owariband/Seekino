@@ -1,12 +1,13 @@
 import { Cable, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, getAgentMessageOptions, getPersonalModelSettings, removePersonalModelConnection,
+import { errorMessage, getPersonalModelSettings, removePersonalModelConnection,
   savePersonalModelConnection, savePersonalModelDefault, testPersonalModelConnection } from "../../api/client";
 import type { PersonalModelConnection, PersonalModelSettings } from "../../api/contracts";
 import { useI18n } from "../../app/i18n";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
 import { useActiveChatSettings } from "./activeChatSettings";
+import { PersonalModelSelect } from "./PersonalModelSelect";
 import { PersonalConnectionForm, protocols } from "./PersonalConnectionForm";
 import styles from "./personal.module.css";
 
@@ -23,7 +24,6 @@ function ConnectionSettings() {
   const { t, locale } = useI18n();
   const chat = useActiveChatSettings();
   const [settings, setSettings] = useState<PersonalModelSettings | null>(null);
-  const [legacy, setLegacy] = useState<{ id: string; label: string }[]>([]);
   const [edit, setEdit] = useState<{ id: string; previous?: PersonalModelConnection } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -33,7 +33,6 @@ function ConnectionSettings() {
   const inFlight = useRef(false);
   const localeRef = useRef(locale);
   localeRef.current = locale;
-  const fromChat = Boolean(chat);
 
   useEffect(() => {
     const lifetime = new AbortController();
@@ -44,12 +43,8 @@ function ConnectionSettings() {
       setSettings(saved);
       if (!saved.connections.length) setEdit({ id: crypto.randomUUID() });
     }).catch((e) => { if (!lifetime.signal.aborted) setError(errorMessage(e, localeRef.current)); });
-    // Old chats can still have a platform model selected.
-    if (fromChat) void getAgentMessageOptions().then((options) => {
-      if (!lifetime.signal.aborted) setLegacy((options.chatModels ?? []).filter((m) => m.id !== "default" && !m.id.startsWith("personal:")));
-    }).catch(() => {});
     return () => { lifetime.abort(); };
-  }, [fromChat, refresh]);
+  }, [refresh]);
 
   async function action<T>(run: (signal: AbortSignal) => Promise<T>, done: (value: T) => void) {
     const signal = controller.current?.signal;
@@ -102,18 +97,14 @@ function ConnectionSettings() {
         <label className={styles.field}><span>{t("新对话默认模型")}</span>
           <select aria-label={t("新对话默认模型")} disabled={busy} value={settings.defaultModelId}
             onChange={(e) => { const id = e.target.value; void action((signal) => savePersonalModelDefault(id, signal), saved); }}>
-            <option value="default">{t("跟随服务默认")}</option>{personalChoices}
+            <option value="default">{t("使用最近选择的模型")}</option>{personalChoices}
           </select>
         </label>
       </div>}
-      {chat && (!edit || !settings.connections.length) && <div className={styles.modelSelection}>
+      {chat && !edit && settings.connections.length > 0 && <div className={styles.modelSelection}>
         <label className={styles.field}><span>{t("当前对话模型")}</span>
-          <select aria-label={t("当前对话模型")} disabled={busy || chat.modelSaving || chat.loading} value={chat.modelId} onChange={(e) => void chat.selectModel(e.target.value)}>
-            <option value="default">{t("跟随服务默认")}</option>{personalChoices}
-            {legacy.length > 0 && <optgroup label={t("平台提供的模型")}>{legacy.map((m) => <option value={m.id} key={m.id}>{m.label}</option>)}</optgroup>}
-            {chat.modelId !== "default" && !legacy.some((m) => m.id === chat.modelId) && !settings.connections.some((c) => c.models.some((m) => m.id === chat.modelId))
-              && <option disabled value={chat.modelId}>{t("已保存的模型（当前不可用）")}</option>}
-          </select>
+          <PersonalModelSelect connections={settings.connections} value={chat.modelId} label={t("当前对话模型")}
+            placeholder={t("选择模型")} disabled={busy || chat.modelSaving || chat.loading} onChange={(id) => void chat.selectModel(id)} />
         </label>
         {chat.modelError && <p className={styles.error} role="alert">{chat.modelError}</p>}
       </div>}

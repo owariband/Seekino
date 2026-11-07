@@ -3092,7 +3092,7 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
         response = client.get("/api/agent/messages/options")
         assert response.status_code == 200
         assert response.json() == {
-            "chatModels": [{"id": "default", "label": service.model_name}],
+            "chatModels": [],
             "newChatModelId": "default",
             "topK": {"defaultValue": 5, "minimum": 1, "maximum": 7},
             "maxModelCallsPerTurn": {
@@ -3263,6 +3263,12 @@ def test_personal_connection_settings_round_trip_without_admin_configuration(tmp
     endpoint = f"{path}?connectionId={connection_id}"
     try:
         assert client.get(path).json() == {"connections": [], "defaultModelId": "default"}
+        services.agent._model_choices["hosted"] = ChatModelChoice("Platform model", lambda _: pytest.fail("unexpected hosted execution"))
+        assert client.get("/api/agent/messages/options").json()["chatModels"] == []
+        for i, model in enumerate(({}, {"modelId": "default"}, {"modelId": "hosted"})):
+            assert client.post("/api/agent/conversations/create", json={"tenantId": "local-default", **model},
+                               headers={"Idempotency-Key": f"unconfigured-{i}"}).status_code == 400
+        assert client.get("/api/agent/conversations/list", params={"tenantId": "local-default"}).json()["total"] == 0
         body = {"name": "Any service", "protocol": "openai_responses", "baseUrl": "https://example.org/own/v1",
                 "modelIds": ["team/arbitrary"], "revision": 0, "apiKey": "test-secret"}
         saved = client.put(endpoint, json=body)
@@ -3270,7 +3276,8 @@ def test_personal_connection_settings_round_trip_without_admin_configuration(tmp
         ref = saved.json()["connections"][0]["models"][0]["id"]
         assert client.put(endpoint, json=body).status_code == 409
         assert client.patch(path + "/default", json={"modelId": ref}).json()["defaultModelId"] == ref
-        assert client.get("/api/agent/messages/options").json()["newChatModelId"] == ref
+        options = client.get("/api/agent/messages/options").json()
+        assert options["newChatModelId"] == ref and [m["id"] for m in options["chatModels"]] == [ref]
         def fail_probe(*args, **kwargs):
             raise RuntimeError("test-secret")
         monkeypatch.setattr("gateway.personal_models.probe_personal_model", fail_probe)
