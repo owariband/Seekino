@@ -5,19 +5,32 @@ import type { PersonalModelConnection, PersonalModelSettings } from "../../api/c
 const recentKey = () => identityStorageKey("seekino-recent-chat-model");
 
 export function rememberChatModel(id: string) {
-  if (!id.startsWith("personal:")) return;
+  if (!id.startsWith("personal:") && !id.startsWith("yaml:")) return;
   try { localStorage.setItem(recentKey(), id); } catch { /* Storage is optional. */ }
 }
 
 export function containsModel(connections: readonly PersonalModelConnection[], id: string) {
-  return connections.some((connection) => connection.models.some((model) => model.id === id));
+  return connections.some((connection) => connection.models.some((model) => model.id === id && model.available !== false));
+}
+
+export function savedChatModelId(connections: readonly PersonalModelConnection[], id: string) {
+  for (const connection of connections) {
+    const match = connection.models.find((model) => model.available !== false && model.aliases?.includes(id));
+    if (match) return match.id;
+  }
+  return id;
 }
 
 export function preferredChatModel(settings: PersonalModelSettings) {
   if (containsModel(settings.connections, settings.defaultModelId)) return settings.defaultModelId;
   let recent: string | null = null;
   try { recent = localStorage.getItem(recentKey()); } catch { /* Storage is optional. */ }
-  return recent && containsModel(settings.connections, recent) ? recent : "default";
+  if (recent && containsModel(settings.connections, recent)) return recent;
+  for (const connection of settings.connections) {
+    const primary = connection.models.find((model) => model.isYamlDefault && model.available !== false);
+    if (primary) return primary.id;
+  }
+  return "default";
 }
 
 type Catalog = { scope: string; settings: PersonalModelSettings } | { scope: string; error: unknown };

@@ -745,11 +745,12 @@ export type AgentAnswerEvent =
 export type PersonalModelProtocol = "openai_chat" | "openai_responses" | "anthropic_messages" | "gemini";
 
 export interface PersonalModelConnection {
+  origin?: "personal" | "yaml";
   connectionId: string;
   name: string;
-  protocol: PersonalModelProtocol;
+  protocol: PersonalModelProtocol | "codex";
   baseUrl: string;
-  models: { id: string; modelId: string }[];
+  models: { id: string; modelId: string; label?: string | null; available?: boolean; aliases?: string[]; isYamlDefault?: boolean }[];
   supportsVision: boolean;
   hasApiKey: boolean;
   revision: number;

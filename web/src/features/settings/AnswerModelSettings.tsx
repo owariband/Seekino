@@ -8,7 +8,7 @@ import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
 import { useActiveChatSettings } from "./activeChatSettings";
 import { PersonalModelSelect } from "./PersonalModelSelect";
-import { PersonalConnectionForm, protocols } from "./PersonalConnectionForm";
+import { MASKED_API_KEY, PersonalConnectionForm, protocols } from "./PersonalConnectionForm";
 import styles from "./personal.module.css";
 
 export function AnswerModelSettings({ active }: { active: boolean }) {
@@ -24,7 +24,9 @@ function ConnectionSettings() {
   const { t, locale } = useI18n();
   const chat = useActiveChatSettings();
   const [settings, setSettings] = useState<PersonalModelSettings | null>(null);
-  const [edit, setEdit] = useState<{ id: string; previous?: PersonalModelConnection } | null>(null);
+  const [emptyDraftId] = useState(() => crypto.randomUUID());
+  const [chosenEditor, setEdit] = useState<{ id: string; previous?: PersonalModelConnection } | null>(null);
+  const edit = chosenEditor ?? (settings?.connections.length === 0 ? { id: emptyDraftId, previous: undefined } : null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -41,7 +43,6 @@ function ConnectionSettings() {
     getPersonalModelSettings(lifetime.signal).then((saved) => {
       if (lifetime.signal.aborted) return;
       setSettings(saved);
-      if (!saved.connections.length) setEdit({ id: crypto.randomUUID() });
     }).catch((e) => { if (!lifetime.signal.aborted) setError(errorMessage(e, localeRef.current)); });
     return () => { lifetime.abort(); };
   }, [refresh]);
@@ -69,8 +70,9 @@ function ConnectionSettings() {
     setError(""); setFeedback("");
     setEdit({ id: previous?.connectionId ?? crypto.randomUUID(), previous });
   };
-  const personalChoices = settings?.connections.map((c) => <optgroup key={c.connectionId} label={c.name}>
-    {c.models.map((m) => <option value={m.id} key={m.id}>{m.modelId}</option>)}
+  const yamlDefault = settings?.connections.flatMap((connection) => connection.models).find((model) => model.isYamlDefault && model.available !== false);
+  const personalChoices = settings?.connections.filter((c) => c.models.some((m) => m.available !== false)).map((c) => <optgroup key={c.connectionId} label={c.name}>
+    {c.models.filter((m) => m.available !== false).map((m) => <option value={m.id} key={m.id}>{m.modelId}</option>)}
   </optgroup>);
   return <div className={styles.workspace}>
     {error && <p className={styles.error} role="alert">{error} {!settings && <button type="button" className={styles.button}
@@ -90,14 +92,14 @@ function ConnectionSettings() {
         </div>
         <div className={styles.list}>{settings.connections.map((c) => <ConnectionCard key={c.connectionId} connection={c} busy={busy}
           edit={() => open(c)} remove={() => void action((signal) => removePersonalModelConnection(c.connectionId, c.revision, signal), (value) => {
-            saved(value); setFeedback(t("已删除连接")); if (!value.connections.length) open();
+            saved(value); setFeedback(t("已删除连接")); if (!value.connections.length) setEdit(null);
           })} test={(model) => void action((signal) => testPersonalModelConnection(c.connectionId, model, signal), () => setFeedback(t("已收到模型回复")))} />)}</div>
       </>}
       {!edit && <div className={styles.modelSelection}>
         <label className={styles.field}><span>{t("新对话默认模型")}</span>
           <select aria-label={t("新对话默认模型")} disabled={busy} value={settings.defaultModelId}
             onChange={(e) => { const id = e.target.value; void action((signal) => savePersonalModelDefault(id, signal), saved); }}>
-            <option value="default">{t("使用最近选择的模型")}</option>{personalChoices}
+            <option value="default">{yamlDefault ? t("最近选择或 YAML 默认（{value0}）", { value0: yamlDefault.modelId }) : t("使用最近选择的模型")}</option>{personalChoices}
           </select>
         </label>
       </div>}
@@ -118,17 +120,29 @@ function ConnectionCard({ connection: c, busy, edit, remove, test }: {
   const { t } = useI18n();
   const [confirm, setConfirm] = useState(false);
   const [choice, setChoice] = useState("");
-  const selected = c.models.find((m) => m.id === choice) ?? c.models[0];
+  const selected = c.models.find((m) => m.id === choice && m.available !== false) ?? c.models.find((m) => m.available !== false) ?? c.models[0];
+  const fromYaml = c.origin === "yaml";
+  const protocolLabel = c.protocol === "codex" ? "Codex CLI" : protocols[c.protocol].label;
   return <article className={styles.card}>
-    <h4 className={styles.title}><Cable size={18} aria-hidden="true" />{c.name}</h4>
-    <div className={styles.meta}>{protocols[c.protocol].label} · {c.baseUrl}</div>
+    <div className={styles.connectionHeading}>
+      <h4 className={styles.title}><Cable size={18} aria-hidden="true" />{c.name}</h4>
+      {fromYaml && <span className={styles.source}>{t("来自 YAML")}</span>}
+    </div>
+    <div className={styles.meta}>{protocolLabel}{c.baseUrl ? ` · ${c.baseUrl}` : ""}</div>
+    {c.protocol !== "codex" && <div className={styles.credential}>
+      <span>API Key</span>{c.hasApiKey ? <span aria-label={t("API Key 已配置")} className={styles.keyMask}>{MASKED_API_KEY}</span>
+        : <span>{t("未设置")}</span>}
+    </div>}
     <div className={styles.row}>
       {c.models.length > 1 ? <select aria-label={t("测试使用的模型")} value={selected?.id ?? ""} disabled={busy} onChange={(e) => setChoice(e.target.value)}>
-        {c.models.map((m) => <option value={m.id} key={m.id}>{m.modelId}</option>)}</select> : <span className={styles.meta}>{selected?.modelId}</span>}
+        {c.models.map((m) => <option value={m.id} key={m.id} disabled={m.available === false}>{m.label ? `${m.label} · ${m.modelId}` : m.modelId}</option>)}</select> : <span className={styles.meta}>{selected?.modelId}</span>}
       <div className={styles.actions}>
-        <button type="button" className={styles.button} disabled={busy || !selected} onClick={() => selected && test(selected.id)}>{t("测试连接")}</button>
-        <button type="button" className={styles.button} disabled={busy} onClick={edit}>{t("编辑")}</button>
-        <button type="button" className={styles.button} disabled={busy} onClick={() => setConfirm(true)}>{t("删除")}</button>
+        {c.protocol !== "codex" && <button type="button" className={styles.button} disabled={busy || !selected || selected.available === false}
+          onClick={() => selected && test(selected.id)}>{t("测试连接")}</button>}
+        {!fromYaml && <>
+          <button type="button" className={styles.button} disabled={busy} onClick={edit}>{t("编辑")}</button>
+          <button type="button" className={styles.button} disabled={busy} onClick={() => setConfirm(true)}>{t("删除")}</button>
+        </>}
       </div>
     </div>
     {confirm && <div className={styles.row}><span>{t("删除这个模型服务？")}</span>

@@ -547,23 +547,43 @@ class GatewayConfig(BaseModel):
             if binding.fallback.fallback is not None:
                 raise ValueError("Supervisor models support one configured fallback")
 
-    def available_supervisor_choices(self, *, environ: Mapping[str, str] | None = None) -> dict[str, ModelBinding]:
-        environment = os.environ if environ is None else environ
+    def configured_supervisor_choices(
+        self, *, discover: bool = False, environ: Mapping[str, str] | None = None,
+    ) -> dict[str, ModelBinding]:
+        """Preserve explicit chat bindings first; local model settings can discover additional compatible models."""
         choices = {}
-        for ref in self.supervisor_choices:
-            binding = self.resolve_model_binding(ref, environ=environment)
-            source = self.source(binding.source)
+        refs = dict.fromkeys([*self.supervisor_choices, *self.normalized_models] if discover else self.supervisor_choices)
+        for ref in refs:
+            raw = self.normalized_models[ref]
+            if isinstance(raw, EmbeddingModelBinding) or raw.kind not in {None, "generative"}:
+                continue
+            if discover and ref in {"default", "supervisor"}:
+                continue  # The running Supervisor already has its effective primary binding.
+            source = self.source(raw.source)
             if self.supervisor_harness == "codex":
                 if not isinstance(source, CodexModelSourceConfig):
                     continue
             elif not isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
                 continue
-            self._validate_supervisor_binding(ref)
-            key_names = (source_api_key_env_name(self.source(part.source))
-                         for part in (binding, binding.fallback) if part is not None)
-            if all(not name or environment.get(name, "").strip() for name in key_names):
-                choices[ref] = binding
+            try:
+                self._validate_supervisor_binding(ref)
+            except ValueError:
+                if ref in self.supervisor_choices:
+                    raise
+                # A parse binding can have a fallback that is unsuitable for chat.
+                continue
+            choices[ref] = self.resolve_model_binding(ref, environ=environ)
         return choices
+
+    def chat_credentials_ready(self, binding: ModelBinding, *, environ: Mapping[str, str] | None = None) -> bool:
+        environment = os.environ if environ is None else environ
+        key_names = (source_api_key_env_name(self.source(part.source))
+                     for part in (binding, binding.fallback) if part is not None)
+        return all(not name or environment.get(name, "").strip() for name in key_names)
+
+    def available_supervisor_choices(self, *, environ: Mapping[str, str] | None = None) -> dict[str, ModelBinding]:
+        return {ref: binding for ref, binding in self.configured_supervisor_choices(environ=environ).items()
+                if self.chat_credentials_ready(binding, environ=environ)}
 
     def source(self, name: str) -> ModelSourceConfig:
         try:

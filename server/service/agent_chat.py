@@ -336,9 +336,9 @@ class AgentChatService:
         _, config, _ = self._current_config()
         personal = self._personal_models.list(owner_user_id) if owner_user_id and self._personal_models else None
         return AgentMessageOptionsState(
-            new_chat_model_id=personal.default_model_id if personal else "default",
+            new_chat_model_id=self._personal_models.default_for_chat(owner_user_id, personal) if personal else "default",
             chat_models=tuple(AgentModelOptionState(model.id, f"{connection.name} · {model.model_id}")
-                              for connection in (personal.connections if personal else ()) for model in connection.models),
+                              for connection in (personal.connections if personal else ()) for model in connection.models if model.available),
             top_k=AgentIntegerOptionState(
                 default_value=config.default_top_k,
                 minimum=1,
@@ -395,8 +395,10 @@ class AgentChatService:
     def _model_choice(self, requested: str | None, owner: str) -> tuple[str, bool]:
         if self._personal_models is not None:
             settings = self._personal_models.list(owner)
-            selected = settings.default_model_id if requested is None else requested
-            return selected, any(model.id == selected for item in settings.connections for model in item.models)
+            selected = self._personal_models.default_for_chat(owner, settings) if requested is None else requested
+            if self._personal_models.yaml_binding(owner, selected):
+                return selected, True
+            return selected, any(model.id == selected and model.available for item in settings.connections for model in item.models)
         selected = requested or "default"
         return selected, selected == "default" or selected in self._model_choices
 
@@ -700,7 +702,9 @@ class AgentChatService:
                 source_tenant_id=normalized_source if normalized_source != normalized_workspace else None,
             )
             if started is None:
-                if self._personal_models is not None and not model_id.startswith("personal:"):
+                yaml_model = self._personal_models.yaml_binding(owner_user_id, model_id) if self._personal_models else None
+                runtime_ref = yaml_model.runtime_ref if yaml_model else model_id
+                if self._personal_models is not None and yaml_model is None and not model_id.startswith("personal:"):
                     raise ValueError("请先为这个对话选择自己配置的回答模型。")
                 if attachment_references:
                     if self._attachments is None:
@@ -727,18 +731,18 @@ class AgentChatService:
                     owner_user_id=owner_user_id,
                     source_tenant_id=normalized_source,
                 )
-                if self._personal_models is not None:
+                if self._personal_models is not None and yaml_model is None:
                     if self._personal_runtime_factory is None:
                         raise RuntimeError("个人回答模型暂时不可用")
                     target = self._personal_models.resolve(owner_user_id, model_id)
                     runtime = self._personal_runtime_factory(target, config)
                     personal_resources.callback(runtime.close)
-                elif model_id != "default":
-                    if model_id not in self._model_choices:
+                elif runtime_ref != "default":
+                    if runtime_ref not in self._model_choices:
                         raise ValueError("该回答模型当前不可用，请重新选择。")
-                    cache_key = (model_id, config)
+                    cache_key = (runtime_ref, config)
                     if cache_key not in self._model_runtimes:
-                        alternative = self._model_choices[model_id].build_runtime(config)
+                        alternative = self._model_choices[runtime_ref].build_runtime(config)
                         self._model_runtimes[cache_key] = alternative
                         self._runtimes.append(alternative)
                     runtime = self._model_runtimes[cache_key]

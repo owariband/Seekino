@@ -14,14 +14,15 @@ type Props = {
 
 export function PersonalModelSelect({ connections, value, label, placeholder, onChange, disabled, busy }: Props) {
   const isKnown = containsModel(connections, value);
+  const groups = connections.filter((connection) => connection.models.some((m) => m.available !== false));
   return (
     <select aria-label={label} aria-busy={busy || undefined} disabled={disabled || busy}
       value={isKnown ? value : ""} onChange={(event) => onChange(event.currentTarget.value)}>
       {!isKnown && <option value="" disabled hidden>{placeholder}</option>}
-      {connections.map((connection) => (
+      {groups.map((connection) => (
         <optgroup key={connection.connectionId} label={connection.name}>
-          {connection.models.map((model) => (
-            <option key={model.id} value={model.id}>{model.modelId}</option>
+          {connection.models.filter((m) => m.available !== false).map((model) => (
+            <option key={model.id} value={model.id}>{model.label ? `${model.label} · ${model.modelId}` : model.modelId}</option>
           ))}
         </optgroup>
       ))}

@@ -4033,3 +4033,32 @@ def test_personal_default_is_inherited_once_and_personal_runtime_is_scoped(build
     with pytest.raises(PersonalModelNotFoundError):
         _send(service, second, key="deleted-model")
     assert len(built) == 1
+
+
+def test_local_yaml_default_alternatives_and_old_chats_use_the_configured_runtime(build_service, local_yaml_chat_catalog, tmp_path):
+    from server.service.personal_models import PersonalModelConnections
+
+    default, alternate = _DirectSupervisorModel(), _DirectSupervisorModel()
+    default.model_name, alternate.model_name = "team/home", "team/alternative"
+    def build(config):
+        return _chat_runtime(AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical"), alternate)
+    service, old, _, repo, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"my-alternative": ChatModelChoice("My alternative", build)},
+        "personal_runtime_factory": lambda *_: pytest.fail("YAML model routed to the personal HTTP adapter"),
+    })
+    service._personal_models = PersonalModelConnections(repo._session_factory, key_file=tmp_path / "key",
+                                                        signing_secret="", allow_local=True, yaml_models=local_yaml_chat_catalog)
+    owner = old.owner_user_id
+    options = service.message_options(owner_user_id=owner)
+    assert options.new_chat_model_id == local_yaml_chat_catalog.default_id
+    assert options.new_chat_model_id in [m.id for m in options.chat_models]
+    assert old.model_id == "default" and _send(service, old).assistant_message.model_name == default.model_name
+    new = service.create_conversation(tenant_id=old.tenant_id, idempotency_key="with-yaml")
+    assert new.model_id == options.new_chat_model_id
+    alternate_id = local_yaml_chat_catalog.find("my-alternative").option.id
+    service.set_conversation_model(new.conversation_id, tenant_id=old.tenant_id, owner_user_id=owner, model_id=alternate_id)
+    assert _send(service, new).assistant_message.model_name == alternate.model_name
+    assert len(default.turns) == len(alternate.turns) == 1
+    for identity in ["my-alternative", alternate_id, options.new_chat_model_id]:
+        with pytest.raises(ValueError, match="回答模型"):
+            service.create_conversation(tenant_id=old.tenant_id, owner_user_id="other", idempotency_key="other", model_id=identity)

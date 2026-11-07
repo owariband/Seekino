@@ -14,6 +14,8 @@ from pydantic import SecretStr
 from sqlalchemy.orm import Session, sessionmaker
 
 from gateway.personal_endpoint import PersonalModelTarget, normalize_personal_endpoint
+from ..constants.identity import LOCAL_USER_ID
+from .yaml_chat_models import YamlChatBinding, YamlChatModels
 from ..model.dto.personal_model import (
     PersonalModelConnectionSave, PersonalModelConnectionView, PersonalModelOption, PersonalModelSettingsView,
 )
@@ -43,11 +45,13 @@ def _retained_default(records: list[dict], current: str) -> str:
 
 
 class PersonalModelConnections:
-    def __init__(self, session_factory: sessionmaker[Session], *, key_file: Path, signing_secret: str, allow_local: bool):
+    def __init__(self, session_factory: sessionmaker[Session], *, key_file: Path, signing_secret: str, allow_local: bool,
+                 yaml_models: YamlChatModels | None = None):
         self._repo = PersonalModelRepository(session_factory)
         self._key_file = key_file
         self._master = hmac.digest(signing_secret.encode(), b"seekino/personal-model-connections/v1", hashlib.sha256) if signing_secret else None
         self.allow_local = allow_local
+        self._yaml = yaml_models if allow_local else None
 
     def _cipher(self) -> AESGCM:
         if self._master:
@@ -70,11 +74,33 @@ class PersonalModelConnections:
             raise RuntimeError("模型凭证保护密钥不可用")
         return AESGCM(key)
 
+    def yaml_binding(self, owner: str, model_id: str) -> YamlChatBinding | None:
+        return self._yaml.find(model_id) if self._yaml and owner == LOCAL_USER_ID else None
+
+    def default_for_chat(self, owner: str, settings: PersonalModelSettingsView) -> str:
+        if settings.default_model_id != "default":
+            return settings.default_model_id
+        return (self._yaml.default_id or "default") if self._yaml and owner == LOCAL_USER_ID else "default"
+
+    def _default(self, owner: str, records: list[dict], current: str) -> str:
+        return current if self.yaml_binding(owner, current) else _retained_default(records, current)
+
+    def _view(self, owner: str, records: list[dict], default: str) -> PersonalModelSettingsView:
+        view = _view(records, self._default(owner, records, default))
+        if self._yaml and owner == LOCAL_USER_ID:
+            view.connections = [*self._yaml.connections.values(), *view.connections]
+        return view
+
+    def _check_personal(self, owner: str, cid: str) -> None:
+        if self._yaml and owner == LOCAL_USER_ID and cid in self._yaml.connections:
+            raise ValueError("此连接由 YAML 配置，请在配置文件中修改")
+
     def list(self, owner: str) -> PersonalModelSettingsView:
-        return _view(*self._repo.read(owner))
+        return self._view(owner, *self._repo.read(owner))
 
     def save(self, owner: str, connection_id: str, body: PersonalModelConnectionSave) -> PersonalModelSettingsView:
         cid = str(UUID(connection_id))
+        self._check_personal(owner, cid)
         url = normalize_personal_endpoint(body.base_url, allow_local=self.allow_local)
 
         def change(records: list[dict], default: str) -> Preferences:
@@ -98,10 +124,11 @@ class PersonalModelConnections:
             record = dict(id=cid, name=body.name, protocol=body.protocol, url=url, models=body.model_ids,
                           vision=body.supports_vision, key=key, revision=body.revision + 1)
             updated = [record if r["id"] == cid else r for r in records] if previous else [*records, record]
-            return updated, _retained_default(updated, default)
-        return _view(*self._repo.update(owner, change))
+            return updated, self._default(owner, updated, default)
+        return self._view(owner, *self._repo.update(owner, change))
 
     def delete(self, owner: str, connection_id: str, revision: int) -> PersonalModelSettingsView:
+        self._check_personal(owner, connection_id)
         def change(records: list[dict], default: str) -> Preferences:
             record = next((r for r in records if r["id"] == connection_id), None)
             if not record:
@@ -109,17 +136,26 @@ class PersonalModelConnections:
             if revision != record["revision"]:
                 raise PersonalModelConflictError()
             updated = [r for r in records if r["id"] != connection_id]
-            return updated, _retained_default(updated, default)
-        return _view(*self._repo.update(owner, change))
+            return updated, self._default(owner, updated, default)
+        return self._view(owner, *self._repo.update(owner, change))
 
     def set_default(self, owner: str, model_id: str) -> PersonalModelSettingsView:
+        configured = self.yaml_binding(owner, model_id) if model_id != "default" else None
+        if configured:
+            model_id = configured.option.id
         def change(records: list[dict], _: str) -> Preferences:
-            if _retained_default(records, model_id) != model_id:
+            if self._default(owner, records, model_id) != model_id:
                 raise PersonalModelNotFoundError()
             return records, model_id
-        return _view(*self._repo.update(owner, change))
+        return self._view(owner, *self._repo.update(owner, change))
 
     def resolve(self, owner: str, model_id: str, *, connection_id: str | None = None) -> PersonalModelTarget:
+        yaml_model = self.yaml_binding(owner, model_id)
+        if yaml_model:
+            if connection_id and yaml_model.connection.connection_id != connection_id:
+                raise PersonalModelNotFoundError()
+            assert self._yaml is not None
+            return self._yaml.probe_target(yaml_model)
         for r in self._repo.read(owner)[0]:
             if connection_id and r["id"] != connection_id:
                 continue

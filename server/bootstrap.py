@@ -56,6 +56,7 @@ from .service.library import LibraryService
 from .service.media import MediaService
 from .service.mcp_retrieval import McpRetrievalService
 from .service.personal_models import PersonalModelConnections
+from .service.yaml_chat_models import YamlChatModels
 from .service.parse_usage import ParseUsageService
 from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
@@ -481,15 +482,22 @@ def _build_application_services(
             query_runtime.close()
             raise
 
+    yaml_models = YamlChatModels(gateway_config, supervisor_binding) if settings.auth.mode == "local" else None
+    available_bindings = gateway_config.available_supervisor_choices()
+    if yaml_models:
+        available_bindings.update({
+            model.runtime_ref: model.binding for model in yaml_models.models.values()
+            if model.runtime_ref != "default" and model.option.available
+        })
     model_choices = {
         ref: ChatModelChoice(
-            label=gateway_config.supervisor_choices[ref],
+            label=gateway_config.supervisor_choices.get(ref, binding.model),
             build_runtime=partial(
                 build_chat_runtime, binding=binding,
                 model_factory=gateway_client.create_agent_factory(binding),
             ),
         )
-        for ref, binding in gateway_config.available_supervisor_choices().items()
+        for ref, binding in available_bindings.items()
     }
     runtime = build_chat_runtime(settings.agent)
 
@@ -503,6 +511,7 @@ def _build_application_services(
     )
     personal_models = PersonalModelConnections(
         session_factory, key_file=settings.artifact_root.parent / ".seekino-secrets" / "personal-models.key",
+        yaml_models=yaml_models,
         signing_secret=settings.auth.secret_key if settings.auth.mode == "cloud" else "", allow_local=settings.auth.mode == "local",
     )
     agent = AgentChatService(

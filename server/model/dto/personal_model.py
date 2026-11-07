@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, StringConstraints, field_validator
 
@@ -28,12 +28,17 @@ class PersonalModelConnectionSave(ContractModel):
 class PersonalModelOption(ContractModel):
     id: str
     model_id: str
+    label: str | None = None
+    available: bool = True
+    aliases: list[str] = Field(default_factory=list)
+    is_yaml_default: bool = False
 
 
 class PersonalModelConnectionView(ContractModel):
+    origin: Literal["personal", "yaml"] = "personal"
     connection_id: str
     name: str
-    protocol: PersonalProtocol
+    protocol: PersonalProtocol | Literal["codex"]
     base_url: str
     models: list[PersonalModelOption]
     supports_vision: bool

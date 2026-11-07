@@ -20,7 +20,7 @@ import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { FOCUS_SEARCH_EVENT, loadConversations } from "./conversationNavigation";
-import { containsModel, preferredChatModel, rememberChatModel, usePersonalChatModels } from "../settings/usePersonalChatModels";
+import { containsModel, preferredChatModel, rememberChatModel, savedChatModelId, usePersonalChatModels } from "../settings/usePersonalChatModels";
 import { PersonalModelSelect } from "../settings/PersonalModelSelect";
 import { SettingsLink } from "../settings/SettingsLink";
 import { usePublishChatSettings } from "../settings/activeChatSettings";
@@ -428,12 +428,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   }, []);
   const {
     conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error,
-    modelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
+    modelId: storedModelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
     clear: clearConversation, ensureConversationId, applyDraftDefault, selectModel, send, stop,
   } = useAgentConversation(requestedConversationId);
   const personalSettings = modelCatalog && "settings" in modelCatalog ? modelCatalog.settings : null;
   const connections = personalSettings?.connections ?? [];
-  const hasModels = connections.some((connection) => connection.models.length > 0);
+  const modelId = conversationId ? savedChatModelId(connections, storedModelId) : storedModelId;
+  const hasModels = connections.some((connection) => connection.models.some((model) => model.available !== false));
   const modelSelected = containsModel(connections, modelId);
   const modelSelectionInvalid = Boolean(personalSettings && modelId !== DEFAULT_CHAT_MODEL_ID && !modelSelected);
   const draftModelId = personalSettings ? preferredChatModel(personalSettings) : DEFAULT_CHAT_MODEL_ID;

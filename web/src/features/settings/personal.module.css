@@ -121,3 +121,9 @@
   .actions { justify-content: stretch; }
   .actions > * { flex: 1 1 auto; }
 }
+
+.connectionHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.source, .credential { color: var(--ink-soft); font-size: .78rem; }
+.source { white-space: nowrap; }
+.credential { display: flex; align-items: center; gap: 10px; }
+.keyMask { color: var(--ink); letter-spacing: .1em; }

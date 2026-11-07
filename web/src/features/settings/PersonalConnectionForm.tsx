@@ -3,6 +3,8 @@ import type { PersonalModelConnection, PersonalModelConnectionInput, PersonalMod
 import { useI18n } from "../../app/i18n";
 import styles from "./personal.module.css";
 
+export const MASKED_API_KEY = "••••••••";
+
 export const protocols = {
   openai_chat: { label: "OpenAI Chat Completions", url: "https://api.openai.com/v1" },
   openai_responses: { label: "OpenAI Responses", url: "https://api.openai.com/v1" },
@@ -18,7 +20,7 @@ export function PersonalConnectionForm({ connection, busy, cancel, save }: {
 }) {
   const { t } = useI18n();
   const id = useId();
-  const [protocol, setProtocol] = useState<PersonalModelProtocol>(connection?.protocol ?? "openai_chat");
+  const [protocol, setProtocol] = useState<PersonalModelProtocol>(connection && connection.protocol !== "codex" ? connection.protocol : "openai_chat");
   const [name, setName] = useState(connection?.name ?? "");
   const [url, setUrl] = useState(connection?.baseUrl ?? protocols[protocol].url);
   const [key, setKey] = useState("");
@@ -60,7 +62,8 @@ export function PersonalConnectionForm({ connection, busy, cancel, save }: {
     <label className={styles.field}><span>API Key</span>
       <input dir="ltr" type="password" autoComplete="new-password" maxLength={8192} disabled={busy || clearKey}
         value={key} onChange={(e) => setKey(e.target.value)}
-        placeholder={t(connection?.hasApiKey ? "已保存，留空保留原密钥" : "服务无需密钥时可留空")} />
+        aria-label="API Key" placeholder={connection?.hasApiKey && !clearKey ? MASKED_API_KEY : t("服务无需密钥时可留空")} />
+      {connection?.hasApiKey && !clearKey && <small>{t("已保存，留空保留原密钥")}</small>}
     </label>
     {connection?.hasApiKey ? <label className={styles.checks}><input type="checkbox" checked={clearKey} disabled={busy}
       onChange={(e) => { setClearKey(e.target.checked); setKey(""); }} />{t("清除已保存的密钥")}</label> : null}
