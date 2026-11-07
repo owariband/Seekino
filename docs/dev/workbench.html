@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T12:33:09+08:00",
+ "updatedAt": "2026-11-07T14:00:44+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 16,
+ "revision": 17,
  "categories": [
   {
    "id": "parse",
@@ -4674,6 +4674,48 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "pr"
     }
    ]
+  },
+  {
+   "id": "PARSE-QUEUE-01",
+   "title": "按已提交块和窗口派发，缩短索引等待",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "micrograd 定向领取、共享容量、有限等锁与索引收尾。",
+   "next": "以相同上游配置核对整集耗时和跨集长时间运行。",
+   "verification": "隔离 MySQL 竞争、真实索引试点与完整解析分别计量，见验证记录。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "解析调度",
+    "索引"
+   ],
+   "related": [
+    "MOD-PARSE"
+   ],
+   "branch": "perf/parse-ready-dispatch",
+   "links": [
+    {
+     "label": "PR #70",
+     "url": "https://github.com/owariband/Seekino/pull/70",
+     "kind": "pr"
+    },
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/design/03-product-reassessment/parse-ready-dispatch-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "验证记录",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/README.md",
+     "kind": "source"
+    }
+   ],
+   "source": {
+    "ref": "perf/parse-ready-dispatch",
+    "path": "docs/dev/problems.md",
+    "line": 2796
+   }
   }
  ]
 }</script>

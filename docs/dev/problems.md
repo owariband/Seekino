@@ -2792,3 +2792,7 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 证书访问，HTTP 缺少返回 HTTPS 地址的入口。验收以原域名、路径和查询参数经过一次 308
 抵达 HTTPS 页面为准。实机结果见[云部署 TRD](../design/03-product-reassessment/cloud-docker-deploy-trd.md)
 和[验收记录](devlog.md#devlog-cloud-http-redirect-20261107)。
+
+### PARSE-QUEUE-01：提交时已知就绪任务，重新锁读整集使索引难以填满并发
+
+micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选和聚合含向量的详情。仅用内存找到候选时，短暂的父锁仍会使已知工作被跳过。验收需要分别核对定向领取数、实际索引吞吐、版本对应、ES 可见性与恢复，与整集模型耗时分开计量。见 [专项 TRD](../design/03-product-reassessment/parse-ready-dispatch-trd.md)、[验证记录](../report/server/mq/parse-ready-dispatch/README.md) 和 [工作台](workbench.html)。
