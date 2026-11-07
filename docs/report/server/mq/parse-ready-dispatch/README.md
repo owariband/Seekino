@@ -2,6 +2,8 @@
 
 2026-11-07，macOS arm64、本机 MySQL 8.4.13。改前代码为 `e3255fb1`，最终实现为 `0941b20b`（[PR #70](https://github.com/owariband/Seekino/pull/70)）。[TRD](../../../../design/03-product-reassessment/parse-ready-dispatch-trd.md) 记录预先定义的目标。
 
+另一次验证从 ASR 开始重跑了 MyGO 第 3 集，记录了相同 SSE 的 MySQL 回放、失效窗口占用模型连接的原因和整集验收结果，见[动画验证记录](animation.md)。
+
 ## 业务基线
 
 micrograd v5 的任务 `68602d50-8da7-4d68-982e-0550ce7f8e6c` 有 146 块、144 个窗口，understand、refine、index 都允许同时运行 10 个。整集从开始到完成用了 90 分 04.884 秒，最后一个 refine 后约 39 分钟才收尾。历史诊断记录了 26,821 个候选行次与 454 次成功领取（含再次领取）。4,520 次索引模型调用累计 191.445 秒。子任务详情共有 104,550,235 字节，其中索引向量缓存 101,877,643 字节。原始记录在本地 `outputs/verification/parse-output-drafts-live-20261107/` 的 `comparison.json`、`final-integrity.json` 和 `db-snapshots.jsonl`。

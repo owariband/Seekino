@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T14:00:44+08:00",
+ "updatedAt": "2026-11-07T15:29:37+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 19,
+ "revision": 20,
  "categories": [
   {
    "id": "parse",
@@ -4682,9 +4682,9 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "type": "requirement",
    "status": "verifying",
    "priority": "P1",
-   "description": "micrograd 定向领取、共享容量、有限等锁与索引收尾。",
-   "next": "以相同上游配置核对整集耗时和跨集长时间运行。",
-   "verification": "隔离 MySQL 竞争、真实索引试点与完整解析分别计量，见验证记录。",
+   "description": "按块和窗口的已提交状态领取，移除逐个 SSE 的 MySQL 续租并及时释放失效请求。",
+   "next": "用保留的任务核验剩余窗口的完成情况。20 分钟指标需要同条件从零到完成的计时，四集并发吞吐另测。",
+   "verification": "相同 9,071 个事件的流控制 SQL 降为 0。MyGO 第 3 集到达 10/10/1，但模型报错后最终失败，20 分钟指标未通过。",
    "updatedAt": "2026-11-07",
    "tags": [
     "解析调度",
@@ -4704,6 +4704,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "TRD",
      "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/design/03-product-reassessment/parse-ready-dispatch-trd.md",
      "kind": "trd"
+    },
+    {
+     "label": "动画实跑",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/animation.md",
+     "kind": "report"
     },
     {
      "label": "验证记录",

@@ -2796,3 +2796,5 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 ### PARSE-QUEUE-01：提交时已知就绪任务，重新锁读整集使索引难以填满并发
 
 micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选和聚合含向量的详情。仅用内存找到候选时，短暂的父锁仍会使已知工作被跳过。验收需要分别核对定向领取数、实际索引吞吐、版本对应、ES 可见性与恢复，与整集模型耗时分开计量。见 [专项 TRD](../design/03-product-reassessment/parse-ready-dispatch-trd.md)、[验证记录](../report/server/mq/parse-ready-dispatch/README.md) 和 [工作台](workbench.html)。
+
+同日核对 MyGO。四集并跑时约 143 万次块与窗口续租放大了数据库负担。第 3 集另有失效流等待 TLS 读取、供应端错误与重试。验收追加相同 SSE 回放、真实连接取消耗时、24 块/22 窗的 3 FPS 整集检验，时长和失败证据见[第 3 集实跑](../report/server/mq/parse-ready-dispatch/animation.md)。
