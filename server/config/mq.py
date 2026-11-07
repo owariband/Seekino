@@ -13,6 +13,7 @@ class MQConsumerConfig:
     poll_interval_seconds: float = 2.0
     retry_base: timedelta = timedelta(seconds=30)
     retry_max: timedelta = timedelta(minutes=15)
+    max_running_children: int = 0  # Zero keeps the per-video phase limits alone.
 
     def __post_init__(self) -> None:
         if not self.consumer_id.strip():
