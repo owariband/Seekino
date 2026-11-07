@@ -154,6 +154,8 @@ Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与进程内 Consumer
 Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `SEEKINO_MQ_*` 配置；旧的
 `SEEKINO_WORKER_*` 名称暂时作为兼容回退。冻结 Index Sync 的配置不再由正式 Settings 暴露。
 
+部署可用 `SEEKINO_MQ_MAX_RUNNING_CHILDREN` 给共享任务库中的理解、Refine 和索引设置合计租约上限，包含实时领取和历史快照。默认 0 沿用各视频自己的阶段额度；小型 CPU 云部署设为 2，并把新视频准入限制为 1。领取在原容量互斥事务内计数并提交，已有租约继续按原规则回收。[CPU 云部署](../deploy/cloud/README.md)
+
 Understanding 子图各节点按冻结配置对暂态错误有限重试；最终 Parse 异常由 Consumer
 记录 `PARSE_NODE_FAILED` 并通知任务订阅，不再重排整个 Chunk。该视频停止新派发，
 兄弟任务失去续租资格，迟到提交被拒绝；任务 API/SSE 返回失败阶段与受控错误原因。

@@ -116,6 +116,8 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 
 ## 用户、协作与运行形态
 
+小型 CPU 主机的容器预算、跨视频租约上限及远端 CUDA 接线见[云端 CPU 预算](03-product-reassessment/cloud-cpu-budget-trd.md)。
+
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 用户与租户 | [user-tenant-trd.md](02-agent-harness/user-tenant-trd.md) | 主 TRD：游客、用户、租户身份、资源归属与隔离边界。 |

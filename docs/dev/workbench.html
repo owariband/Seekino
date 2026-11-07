@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T12:33:09+08:00",
+ "updatedAt": "2026-11-07T15:04:57+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 18,
+ "revision": 19,
  "categories": [
   {
    "id": "parse",
@@ -4694,6 +4694,40 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "PR #71",
      "url": "https://github.com/owariband/Seekino/pull/71",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-06",
+   "title": "限制 4 核 CPU 主机资源并将转写、向量和路由接入 CUDA",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "云端生产 Compose 为 API/FFmpeg、ES、MySQL、Redis、Web 设置硬额度，历史任务、实时和后台领取共享两个子租约。",
+   "next": "发布包含该配置的 API 镜像，配置真实 GPU 地址，在同配额隔离库依次验证一集与三集。",
+   "verification": "Compose 与正式配置装配验证通过。MySQL 实测并发领取与释放，CPU 实机在隔离容器按配额抽帧。真实 CUDA 端点和整集上线负载待测。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "CPU",
+    "CUDA"
+   ],
+   "related": [
+    "MOD-PLATFORM",
+    "DEPLOY-03"
+   ],
+   "branch": "perf/cloud-cpu-resource-budget",
+   "links": [
+    {
+     "label": "CPU 主机预算与模型接线",
+     "url": "https://github.com/owariband/Seekino/blob/perf/cloud-cpu-resource-budget/docs/design/03-product-reassessment/cloud-cpu-budget-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "配置与运行入口 #73",
+     "url": "https://github.com/owariband/Seekino/pull/73",
      "kind": "pr"
     }
    ]

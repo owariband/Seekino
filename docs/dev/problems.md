@@ -2792,3 +2792,7 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 证书访问，HTTP 缺少返回 HTTPS 地址的入口。验收以原域名、路径和查询参数经过一次 308
 抵达 HTTPS 页面为准。实机结果见[云部署 TRD](../design/03-product-reassessment/cloud-docker-deploy-trd.md)
 和[验收记录](devlog.md#devlog-cloud-http-redirect-20261107)。
+
+### DEPLOY-06：缺少容器与跨视频并发上限，批量解析会挤占云端前台服务
+
+4 核 CPU 主机可见 7,429 MiB，原 API 与 ES 没有容器级内存上限。视频默认值可被私有 env 和任务快照覆盖，三集样本同时出现 13 个理解及 Refine 在途任务。CUDA 主机承担转写、向量和路由后，媒体准备和队列仍在 CPU 主机运行。验收要求常驻容器的内存预算可核算，既有任务和实时领取同受总量约束，并在真实三集试点中记录可检索状态、峰值和 OOM 计数。[预算设计](../design/03-product-reassessment/cloud-cpu-budget-trd.md) · [工作台](workbench.html)

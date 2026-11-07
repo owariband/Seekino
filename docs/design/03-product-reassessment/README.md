@@ -28,6 +28,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [cloud-cpu-budget-trd.md](cloud-cpu-budget-trd.md) | 2026-11-07，4 核 CPU 主机及多集解析实测 | 将 CPU 栈限制在宿主预算内，WhisperX、Qwen 和 StartLux 由 CUDA 服务提供 | 容器、租约、远端协议与整集试点分别验收 |
 | [docker-web-assets-trd.md](docker-web-assets-trd.md) | 2026-11-06，CPU 构建暴露发布 Logo 软链接缺失 | 保留构建目录关系、限制发布资源输入，并验证 main 部署来源 | 设计与证据见正文；当前状态见工作台 DEPLOY-01 |
 | [cloud-guest-without-smtp-trd.md](cloud-guest-without-smtp-trd.md) | 2026-11-06，SMTP 留空导致整个 cloud API 无法启动 | 游客启动与邮件能力分离，未配置邮件时明确拒绝邮箱认证 | 当前状态见工作台 DEPLOY-02 |
 | [smtp-login-availability-trd.md](smtp-login-availability-trd.md) | 2026-11-07，邮件未配置仍展示验证码表单，用户填写后才知道不可用 | 由账号服务传递可用能力，空配置展示游客模式和未开放说明 | 当前状态见工作台 DEPLOY-04；依赖 #62，随 #63 发布 |

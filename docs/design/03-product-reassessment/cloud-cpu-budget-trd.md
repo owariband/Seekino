@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-**4 核 CPU 主机的容器预算与远端 CUDA 接入**，2026-11-07。分支 `perf/cloud-cpu-resource-budget`，PR 在创建后回填，目标分支 `dev`。承接已集成的[云端部署设计](cloud-docker-deploy-trd.md)及 [PR #57](https://github.com/owariband/Seekino/pull/57)。本次交付生产 Compose、CPU 宿主端模型接线和解析准入，可独立于队列性能优化 [PR #70](https://github.com/owariband/Seekino/pull/70) 集成。
+**4 核 CPU 主机的容器预算与远端 CUDA 接入**，2026-11-07。分支 `perf/cloud-cpu-resource-budget`，[PR #73](https://github.com/owariband/Seekino/pull/73)，目标分支 `dev`。承接已集成的[云端部署设计](cloud-docker-deploy-trd.md)及 [PR #57](https://github.com/owariband/Seekino/pull/57)。本次交付生产 Compose、CPU 宿主端模型接线和解析准入，可独立于队列性能优化 [PR #70](https://github.com/owariband/Seekino/pull/70) 集成。
 
 CPU 主机现有 4 个逻辑核、7,429 MiB 内存。只读采样中 MemAvailable 为 4,349 MiB，API 容器使用约 266 MiB，ES 约 1.52 GiB，MySQL 约 524 MiB。API 和 ES 的 Docker 硬内存限制均为 0，主机自启动以来 OOM kill 为 0。此前 Mac 上三集同时有 5 个理解任务和 8 个 Refine 窗口，单次理解的图像编码量中位约 21 MiB。这些样本说明在哪里会产生负载，Linux 并行整集的峰值待测。
 
@@ -26,10 +26,21 @@ CPU 主机现有 4 个逻辑核、7,429 MiB 内存。只读采样中 MemAvailabl
 
 计划使用同一份仅含占位凭据并含高并发值的 env 分别渲染基础 Compose 和生产叠加文件。核算 cgroup 上限、实际应用环境、端口与容器依赖。再用高并发冻结任务及多个消费者验证容量与恢复，通过 Gateway 传输测试区分 Jev 与 StartLux 请求。静态合同和模拟传输的结果分别记录。
 
+2026-11-07，配置与实现 `9efe15a7` 的定向回归 455 项通过，真实 MySQL 8.4 隔离库的租约集成回归 13 项通过。扩大到 Gateway 旧模型迁移套件时有 3 项失败，在干净基线 `eefcfefd` 上逐项复现。[原始数值与用例](../../report/deploy/cloud-cpu-budget-20261107.json)
+
+| 同口径检查 | 原行为 | 本次结果 |
+|---|---|---|
+| 私有 env 中视频/理解/Refine 为 3/10/10 | 基础 Compose 使用所给值 | 生产 Compose 与 Server 装配为 1/1/1，索引与 ASR 默认也为 1 |
+| 不同视频与不同阶段同时领取 | 既有 3 集各阶段可并行领取；对照用例累计 90 个在途租约 | 六个真实消费者竞争三个已准入的历史父任务，仅得两个子租约，释放后可补位；实时、Refine、索引互限在回归中覆盖 |
+| 部署用样例索引的编码指纹 | 既有云端 Qwen 文本合同 | 公开 GPU 模板与现有云端绑定在相同解析参数下得到相同完整指纹 |
+| StartLux CPU 侧接线 | Jev 请求携带模型名并以 OpenRouter 计量 | 核对请求字段和来源后回放既有 13 个样例、10 轮 MLX 响应，130/130 匹配历史路由标签；本次未发起 CUDA 推理 |
+
 # 5. 试点验证与方案取舍
 
 在相同 CPU/内存配额、隔离的业务库及 ES 索引上，由部署维护者用真实 GPU 私有地址先接通三个服务，再跑一集、同时提交三集。记录初始/结束 OOM 与重启数、任务可检索状态及每集耗时。若租约饥饿、容器被杀或前台请求持续不可用，保留证据并回退本次部署配置。限制并发预期牺牲批量吞吐，实际代价待测。
 
+已在目标 Linux 主机用隔离容器分别做组件试点。API 复用现场已有镜像，仅跑相同的媒体函数。60 秒 720p 合成视频抽出 180 帧，内核 `cpu.max=150000 100000`、`memory.max=2415919104`、`memory.swap.max=0`，含生成素材在内 7.16 秒，峰值 176.6 MiB。ES 8.19.22 在 2 GiB 限制下以 1 GiB 堆启动，写入并查到 1 个文档，峰值 1,429 MiB。MySQL 空库建表读写峰值 478.7 MiB，Redis AOF 读写峰值 5.9 MiB。四项 OOM kill 增量均为 0。首轮 ES 无网络探针缺少可解析的本机名，补上容器回环映射后在同额配额通过。各试点顺序执行，采样不代表整栈同跑峰值。
+
 # 6. 结果验收与闭环
 
-本稿记录设计与验收口径。Compose、隔离队列及远端协议验证完成后回填同一文档；生产切换与真实 GPU 整集试点保留各自的执行证据。任务状态在[项目工作台](../../dev/workbench.html)统一维护。
+配置、队列准入和 StartLux 接线可进入发布评审。目标主机的组件隔离试点已完成；新生产栈切换、真实 CUDA 端点与三集完整 Upload-to-Search 仍待验收。应用镜像和 Compose 需一起发布；可按[操作说明](../../../deploy/cloud/README.md)核对与回退。任务状态在[项目工作台](../../dev/workbench.html)的 DEPLOY-06 维护。

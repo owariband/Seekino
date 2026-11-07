@@ -10,6 +10,10 @@
 
 本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
 
+## 查询意图路由
+
+查询意图路由在 `query_hook` 中独立绑定。原配置默认使用 OpenRouter Jev。CUDA 上的 StartLux Decision 使用 `router_provider: startlux`、完整 HTTPS `router_endpoint` 及 GPU 已加载的 `router_model`。该接口通过服务端启动参数选择权重，Seekino 用配置名记录用量，并以 `think_mode: never` 发送路由问题。模板使用独立的 `STARTLUX_API_KEY`，私网入口支持显式关闭 Bearer。视觉、对话、查询改写分别按自己的模型绑定执行。[CPU/GPU 配置示例](../deploy/cloud/models.example.yaml)
+
 ## 网页搜索配置
 
 `web_search.provider` 与 `models.agent` / `models.supervisor` 独立。用户选择免 API key 的

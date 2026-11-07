@@ -17,6 +17,10 @@
 
 [2026-11-03 管理工作台与课程闭环地图](docs/dev/workbench/README.md)：同步 Kimi 工作区 revision 4，新增里程碑概览、闭环地图、验收门槛与四列看板，36 项浏览器检查。门槛结果引用已有 QA 报告，未重跑业务验收。
 
+## 云部署
+
+- [4 核 CPU 宿主资源采样](deploy/cloud-cpu-budget-20261107.json)记录隔离容器的实际 cgroup 配额与媒体负载、网关回放和 MySQL 竞争验证。
+
 ## Docs / dev / kanban
 
 [2026-11-02 单文件项目看板设计与验收](docs/dev/kanban/README.md)：真实条目导入、唯一状态入口迁移、桌面/移动端与离线保存重开验证。历史业务状态未重新验收。
