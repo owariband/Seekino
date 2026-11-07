@@ -2806,3 +2806,5 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 ### CHAT-PERSONAL-MODELS-01 · 回答模型设置只展示平台名单
 
 2026-11-07。设置页消费服务端 YAML 的选项，用户无法填写自己的 API 地址、协议及模型 ID。验收须从普通用户的设置入口创建连接，在指定会话发送后核对供应端收到的模型和结果，并确认另一个会话沿用原选择。见[设计与验证](../design/03-product-reassessment/personal-model-connections-trd.md)及[工作台](workbench.html)。
+
+2026-11-07 本机来源补充。仅读取个人数据库连接会遗漏本机用户在 YAML 配置的回答模型。验收同时覆盖已配置机器（显示实际绑定和密钥掩码）与真正无配置的个人账号，见[本机 YAML 验收](../report/web/personal-model-connections-20261107.md#本机-yaml-连接的自动识别与凭据掩码)。
