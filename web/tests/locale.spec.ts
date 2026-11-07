@@ -20,7 +20,7 @@ async function mockService(page: Page, guest = false) {
     const emptyPage = { items: [], total: 0, hasMore: false, nextCursor: null };
     if (path === "/api/auth/me") return route.fulfill({ json: identity });
     if (path === "/api/system/runtime-config") return route.fulfill({ json: { displayMode: guest ? "debug" : "release" } });
-    if (["/api/series/list", "/api/jobs/list", "/api/jobs/video-parse/list", "/api/agent/conversations/list", "/api/agent/messages/list"].includes(path)) {
+    if (["/api/series/list", "/api/series/public", "/api/jobs/list", "/api/jobs/video-parse/list", "/api/agent/conversations/list", "/api/agent/messages/list"].includes(path)) {
       return route.fulfill({ json: emptyPage });
     }
     if (path === "/api/agent/conversations/create") return route.fulfill({ json: {

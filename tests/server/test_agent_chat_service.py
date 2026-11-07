@@ -3968,3 +3968,22 @@ def test_model_selection_is_owned_by_one_conversation_and_freezes_each_answer(bu
     assert service.create_conversation(**create).model_id == "default"
     with pytest.raises(AgentConflictError):
         service.create_conversation(**{**create, "model_id": "default"})
+
+
+def test_model_change_between_resolving_and_recording_rejects_the_unstarted_turn(build_service, monkeypatch):
+    default = _DirectSupervisorModel()
+    service, chat, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"alternate": ChatModelChoice("Alternate", lambda _: pytest.fail("unexpected execution"))},
+    })
+    start = service._repository.start_message
+
+    def change_before_insert(**kwargs):
+        service.set_conversation_model(chat.conversation_id, tenant_id=chat.tenant_id,
+                                       owner_user_id=chat.owner_user_id, model_id="alternate")
+        return start(**kwargs)
+
+    monkeypatch.setattr(service._repository, "start_message", change_before_insert)
+    with pytest.raises(AgentConflictError, match="model changed"):
+        _send(service, chat)
+    assert service.get_conversation(chat.conversation_id, tenant_id=chat.tenant_id).message_count == 0
+    assert not default.turns
