@@ -39,7 +39,7 @@ type SettingsSectionDefinition = {
 const settingsSections: ReadonlyArray<SettingsSectionDefinition> = [
   { id: "appearance", label: "外观与语言", summary: "主题与界面语言", description: "主题与界面语言会立即生效，并保存在此浏览器。", icon: Palette },
   { id: "watch", label: "观看与 Kino", summary: "Kino 与播放偏好", description: "调整 Kino 侧栏的自动淡化与发送消息时的播放行为。", icon: Clapperboard },
-  { id: "models", label: "回答模型", summary: "服务默认与当前对话", description: "查看服务提供的回答模型。", icon: Sparkles },
+  { id: "models", label: "回答模型", summary: "个人模型服务", description: "连接自己的模型服务，选择用于回答的模型。", icon: Sparkles },
   { id: "connection", label: "账号与连接", summary: "资料来源、账号与状态", description: "账号登录与资料来源分别管理，登录不会移动本机资料。", icon: Server },
   { id: "agent", label: "Agent 运行", summary: "全局默认与运行参数", description: "保存到服务端 config.yaml，供所有工作区后续新请求使用。", icon: SlidersHorizontal },
 ];

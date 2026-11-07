@@ -38,6 +38,7 @@ from ..error.retrieval import (
     VideoChunkNotFoundError,
 )
 from ..service.video_parse_persistence import VideoParseConflictError, VideoParseTaskNotFoundError
+from ..service.personal_models import PersonalModelConflictError, PersonalModelNotFoundError
 from ..service.media import MediaMissingError, MediaNotReadyError
 from ..service.agent_chat import AgentAttachmentInputUnavailableError
 from ..error.auth import AuthError
@@ -57,6 +58,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _error_response(request, exc.status_code, exc.code, str(exc), headers=headers)
 
     not_found = (
+        PersonalModelNotFoundError,
         AgentConversationNotFoundError,
         AgentMessageNotFoundError,
         ParseJobNotFoundError,
@@ -69,6 +71,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         FileNotFoundError,
     )
     conflict = (
+        PersonalModelConflictError,
         GlobalAgentSettingsConflictError,
         AgentConflictError,
         AgentMessageInProgressError,

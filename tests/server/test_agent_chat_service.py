@@ -3987,3 +3987,41 @@ def test_model_change_between_resolving_and_recording_rejects_the_unstarted_turn
         _send(service, chat)
     assert service.get_conversation(chat.conversation_id, tenant_id=chat.tenant_id).message_count == 0
     assert not default.turns
+
+
+def test_personal_default_is_inherited_once_and_personal_runtime_is_scoped(build_service, tmp_path):
+    from server.model.dto.personal_model import PersonalModelConnectionSave
+    from server.service.personal_models import PersonalModelConnections
+
+    service, first, _, repo, *_ = build_service(supervisor_model=_DirectSupervisorModel())
+    connections = PersonalModelConnections(repo._session_factory, key_file=tmp_path / "key", signing_secret="", allow_local=True)
+    service._personal_models = connections
+    built = []
+
+    def build(target, config):
+        model = _DirectSupervisorModel()
+        model.model_name = target.model_id
+        built.append((model, target.api_key.get_secret_value()))
+        return _chat_runtime(AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical"), model)
+
+    service._personal_runtime_factory = build
+    cid = str(uuid4())
+    fields = dict(name="Personal", protocol="openai_chat", base_url="http://localhost:8100/v1", model_ids=["org/private"], api_key="test", revision=0)
+    ref = connections.save(first.owner_user_id, cid, PersonalModelConnectionSave(**fields)).connections[0].models[0].id
+    connections.set_default(first.owner_user_id, ref)
+    assert service.message_options(owner_user_id=first.owner_user_id).new_chat_model_id == ref
+    assert service.message_options(owner_user_id="someone-else").new_chat_model_id == "default"
+    create = dict(tenant_id=first.tenant_id, idempotency_key="new-inherited")
+    second = service.create_conversation(**create)
+    assert first.model_id == "default" and second.model_id == ref
+    with pytest.raises(ValueError):
+        service.create_conversation(tenant_id=first.tenant_id, owner_user_id="someone-else", model_id=ref, idempotency_key="wrong")
+    answer = _send(service, second)
+    assert answer.assistant_message.model_name == "org/private" and built[0][1] == "test"
+    connections.delete(first.owner_user_id, cid, 1)
+    assert service.create_conversation(**create).model_id == ref
+    assert _send(service, second).assistant_message.message_id == answer.assistant_message.message_id
+    from server.service.personal_models import PersonalModelNotFoundError
+    with pytest.raises(PersonalModelNotFoundError):
+        _send(service, second, key="deleted-model")
+    assert len(built) == 1

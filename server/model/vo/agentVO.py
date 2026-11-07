@@ -28,6 +28,7 @@ class AgentModelOptionView(ContractModel):
 
 class AgentMessageOptionsView(ContractModel):
     chat_models: list[AgentModelOptionView]
+    new_chat_model_id: str = "default"
     top_k: AgentIntegerOptionView
     max_model_calls_per_turn: AgentIntegerOptionView
     max_tool_calls_per_turn: AgentIntegerOptionView

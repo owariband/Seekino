@@ -6,7 +6,7 @@ from copy import deepcopy
 from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from queue import Empty
@@ -28,6 +28,7 @@ from engine.rag.contracts import VideoChunkEvidence
 from gateway.agent_model.contracts import SupervisorSessionContext
 from gateway.agent_model.errors import ModelFailureReason
 from gateway.model_diagnostics import model_diagnostic_scope
+from gateway.personal_endpoint import PersonalModelTarget
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
@@ -56,6 +57,7 @@ from ..utils.media import image_uri_to_data_url
 from ..utils.validation import canonical_uuid, require_nonempty_text
 from .library import LibraryService
 from .agent_attachments import AgentAttachmentService
+from .personal_models import PersonalModelConnections
 from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService
 
@@ -278,6 +280,9 @@ class AgentChatService:
         runtime_factory: Callable[[AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
         model_choices: Mapping[str, ChatModelChoice] | None = None,
+        personal_models: PersonalModelConnections | None = None,
+        personal_runtime_factory: Callable[[PersonalModelTarget, AgentServiceConfig], SupervisorRuntime] | None = None,
+        delete_personal_thread: Callable[[str], None] | None = None,
         tracing: LangfuseTracing | None = None,
         parse_usage: ParseUsageService | None = None,
         attachments: AgentAttachmentService | None = None,
@@ -294,6 +299,9 @@ class AgentChatService:
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
         self._config_revision = config_revision
+        self._personal_models = personal_models
+        self._personal_runtime_factory = personal_runtime_factory
+        self._delete_personal_thread = delete_personal_thread
         self._model_choices = dict(model_choices or {})
         self._model_runtimes: dict[tuple[str, AgentServiceConfig], SupervisorRuntime] = {}
         self._runtimes = [runtime]
@@ -324,10 +332,14 @@ class AgentChatService:
     def active_maximum_concurrent_kicks(self) -> int:
         return self._active_maximum_concurrent_kicks
 
-    def message_options(self) -> AgentMessageOptionsState:
+    def message_options(self, *, owner_user_id: str | None = None) -> AgentMessageOptionsState:
         runtime, config, _ = self._current_config()
+        personal = self._personal_models.list(owner_user_id) if owner_user_id and self._personal_models else None
         return AgentMessageOptionsState(
+            new_chat_model_id=personal.default_model_id if personal else "default",
             chat_models=(AgentModelOptionState("default", runtime.model_name),
+                         *(AgentModelOptionState(model.id, f"{connection.name} · {model.model_id}")
+                           for connection in (personal.connections if personal else ()) for model in connection.models),
                          *(AgentModelOptionState(ref, choice.label) for ref, choice in self._model_choices.items())),
             top_k=AgentIntegerOptionState(
                 default_value=config.default_top_k,
@@ -382,14 +394,17 @@ class AgentChatService:
                     self._config_revision = revision
             return self._runtime, self._config, self._executor
 
-    def _require_model_choice(self, model_id: str) -> None:
+    def _require_model_choice(self, model_id: str, owner: str) -> None:
+        if model_id.startswith("personal:") and self._personal_models:
+            if any(m.id == model_id for c in self._personal_models.list(owner).connections for m in c.models):
+                return
         if model_id != "default" and model_id not in self._model_choices:
             raise ValueError("该回答模型当前不可用，请重新选择。")
 
     def set_conversation_model(
         self, conversation_id: str, *, tenant_id: str, owner_user_id: str, model_id: str,
     ) -> AgentConversationState:
-        self._require_model_choice(model_id)
+        self._require_model_choice(model_id, owner_user_id)
         return self._repository.set_conversation_model(
             canonical_uuid(conversation_id, "conversation_id"),
             require_nonempty_text(tenant_id, "tenant_id", maximum=64),
@@ -402,7 +417,7 @@ class AgentChatService:
         tenant_id: str,
         title: str | None = None,
         idempotency_key: str,
-        model_id: str = "default",
+        model_id: str | None = None,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         normalized_workspace = require_nonempty_text(
@@ -410,9 +425,13 @@ class AgentChatService:
             "tenant_id",
             maximum=64,
         )
-        self._require_model_choice(model_id)
+        inherit_model = model_id is None
+        if inherit_model:
+            model_id = self._personal_models.list(owner_user_id).default_model_id if self._personal_models else "default"
+        else:
+            self._require_model_choice(model_id, owner_user_id)
         return self._repository.create_conversation(
-            model_id=model_id,
+            model_id=model_id, inherit_model=inherit_model,
             conversation_id=str(uuid4()),
             tenant_id=normalized_workspace,
             title="新对话" if title is None else require_nonempty_text(title, "title", maximum=255),
@@ -486,6 +505,8 @@ class AgentChatService:
             runtime = self._runtime
             try:
                 runtime.delete_thread(normalized_conversation_id)
+                if self._delete_personal_thread:
+                    self._delete_personal_thread(normalized_conversation_id)
             except Exception:
                 _logger.warning(
                     "Could not delete Supervisor thread conversation_id=%s",
@@ -666,7 +687,7 @@ class AgentChatService:
         normalized_key = require_nonempty_text(idempotency_key, "idempotency_key", maximum=128)
         timing_started_at: int | None = None
         timing_started_ns: int | None = None
-        with self._lock:
+        with self._lock, ExitStack() as personal_resources:
             if self._closed:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
             started, model_id = self._repository.get_message_start_context(
@@ -707,8 +728,12 @@ class AgentChatService:
                     owner_user_id=owner_user_id,
                     source_tenant_id=normalized_source,
                 )
-                if model_id != "default":
-                    self._require_model_choice(model_id)
+                if model_id.startswith("personal:") and self._personal_models and self._personal_runtime_factory:
+                    target = self._personal_models.resolve(owner_user_id, model_id)
+                    runtime = self._personal_runtime_factory(target, config)
+                    personal_resources.callback(runtime.close)
+                elif model_id != "default":
+                    self._require_model_choice(model_id, owner_user_id)
                     cache_key = (model_id, config)
                     if cache_key not in self._model_runtimes:
                         alternative = self._model_choices[model_id].build_runtime(config)
@@ -762,6 +787,9 @@ class AgentChatService:
                     owner_user_id=owner_user_id, conversation_tenant_id=normalized_workspace,
                     playback_series_id=playback_series_id,
                 )
+                if model_id.startswith("personal:"):
+                    resources = personal_resources.pop_all()
+                    execution.future.add_done_callback(lambda _: resources.close())
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
                 assert execution.timing is not None

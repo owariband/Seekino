@@ -63,8 +63,11 @@ class AgentRepository:
         idempotency_key: str,
         title_is_auto: bool = False,
         model_id: str = "default",
+        inherit_model: bool = False,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
+        # Idempotency compares the requested setting, even when the personal default has since changed.
+        initial_model = "default" if inherit_model else model_id
         for attempt in range(2):
             try:
                 with self._session_factory.begin() as session:
@@ -78,7 +81,7 @@ class AgentRepository:
                     if existing is not None:
                         if (existing.title_is_auto != title_is_auto
                                 or (not title_is_auto and existing.title != title)
-                                or (existing.detail or {}).get("initialModelId", "default") != model_id):
+                                or (existing.detail or {}).get("initialModelId", "default") != initial_model):
                             raise AgentConflictError(
                                 "the conversation idempotency key is already used "
                                 "with different fields"
@@ -93,7 +96,7 @@ class AgentRepository:
                         title_is_auto=title_is_auto,
                         idempotency_key=idempotency_key,
                         next_message_sequence=0,
-                        detail={"modelId": model_id, "initialModelId": model_id} if model_id != "default" else None,
+                        detail={"modelId": model_id, "initialModelId": initial_model} if model_id != "default" else None,
                     )
                     session.add(record)
                     session.flush()

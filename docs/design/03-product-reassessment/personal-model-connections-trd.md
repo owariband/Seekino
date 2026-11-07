@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-分支 `feat/personal-model-connections`，依赖 [#72](https://github.com/owariband/Seekino/pull/72) 的模型设置页和 [#68](https://github.com/owariband/Seekino/pull/68) 的会话选择。PR 创建后回填。管理工作台编号 CHAT-PERSONAL-MODELS-01。
+分支 `feat/personal-model-connections`，依赖 [#72](https://github.com/owariband/Seekino/pull/72) 的模型设置页和 [#68](https://github.com/owariband/Seekino/pull/68) 的会话选择。当前 PR [#74](https://github.com/owariband/Seekino/pull/74)。管理工作台编号 CHAT-PERSONAL-MODELS-01。
 
 现有设置只列出管理员 YAML 开放的模型。普通用户打开设置无法添加自己的 API 服务，也不能决定请求使用哪种协议、目标地址和模型 ID。目标是从设置完成个人连接配置，在聊天中真正由指定的模型回答。
 

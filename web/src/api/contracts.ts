@@ -634,6 +634,7 @@ export interface AgentIntegerOption {
 }
 
 export interface AgentMessageOptions {
+  newChatModelId?: string;
   topK: AgentIntegerOption;
   maxLoopTurns: AgentIntegerOption;
   maxModelCallsPerTurn: AgentIntegerOption;
@@ -740,3 +741,31 @@ export type AgentAnswerEvent =
       error: Failure;
     })
   | (AgentAnswerEventBase & { type: "answer.interrupted"; error: Failure });
+
+export type PersonalModelProtocol = "openai_chat" | "openai_responses" | "anthropic_messages" | "gemini";
+
+export interface PersonalModelConnection {
+  connectionId: string;
+  name: string;
+  protocol: PersonalModelProtocol;
+  baseUrl: string;
+  models: { id: string; modelId: string }[];
+  supportsVision: boolean;
+  hasApiKey: boolean;
+  revision: number;
+}
+
+export interface PersonalModelSettings {
+  connections: PersonalModelConnection[];
+  defaultModelId: string;
+}
+
+export interface PersonalModelConnectionInput {
+  name: string;
+  protocol: PersonalModelProtocol;
+  baseUrl: string;
+  modelIds: string[];
+  supportsVision: boolean;
+  revision: number;
+  apiKey?: string;
+}

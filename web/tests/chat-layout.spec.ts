@@ -6,6 +6,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/healthz", (route) => route.fulfill({ json: { status: "ok" } }));
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/agent/model-connections") return route.fulfill({ json: { connections: [], defaultModelId: "default" } });
     if (!path.startsWith("/api/")) return route.continue();
     if (path === "/api/auth/me") return route.fulfill({ json: {
       userId: "local", email: null, isGuest: false, tenantId: "local-default", publicTenantId: "public",
@@ -34,7 +35,7 @@ test("opens settings above the draft, edits its model and returns to the same te
   await page.getByRole("link", { name: "回答模型设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置", exact: true });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("radio", { name: /Second model/ }).check();
+  await dialog.getByRole("combobox", { name: "当前对话模型" }).selectOption("alternate");
   await dialog.getByRole("button", { name: "观看与 Kino" }).click();
   const delay = dialog.getByRole("spinbutton");
   await delay.fill("1.5");

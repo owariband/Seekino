@@ -429,7 +429,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const {
     conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error,
     modelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
-    clear: clearConversation, ensureConversationId, selectModel, send, stop,
+    clear: clearConversation, ensureConversationId, applyDraftDefault, selectModel, send, stop,
   } = useAgentConversation(requestedConversationId);
   const scopedChatModels = chatModelsScope === optionScope ? chatModels : [];
   const modelOptions = scopedChatModels.some((model) => model.id === DEFAULT_CHAT_MODEL_ID) ? scopedChatModels : [];
@@ -510,7 +510,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const activeConversation = conversations.find((item) => item.conversationId === conversationId) ?? null;
 
   useEffect(() => {
-    if (embedded && displayMode !== "debug") return;
     let active = true;
     const scope = optionScope;
     const refresh = () => {
@@ -530,6 +529,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           });
         }
         setMessageOptionConfig(options);
+        applyDraftDefault?.(options.newChatModelId || DEFAULT_CHAT_MODEL_ID);
         setChatModels(chatModelOptions(options));
         setChatModelsScope(scope);
         setMessageOptionsError(null);
@@ -542,8 +542,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     };
     refresh();
     window.addEventListener("focus", refresh);
-    return () => { active = false; window.removeEventListener("focus", refresh); };
-  }, [displayMode, embedded, optionScope]);
+    window.addEventListener("seekino:model-connections-changed", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("seekino:model-connections-changed", refresh);
+    };
+  }, [displayMode, optionScope, applyDraftDefault]);
 
   useEffect(() => {
     if (!messageOptionOverrides) return;
@@ -694,7 +699,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     if (currentConversationCanBeReused) {
       // Reusing an empty conversation keeps lazy creation, but a stale non-default
       // preference must not leak into the fresh chat.
-      if (conversationId && modelId !== DEFAULT_CHAT_MODEL_ID) void selectModel(DEFAULT_CHAT_MODEL_ID);
+      const defaultId = messageOptionConfig?.newChatModelId || DEFAULT_CHAT_MODEL_ID;
+      if (conversationId && modelId !== defaultId) void selectModel(defaultId);
       closeConversationPicker();
       composerRef.current?.focus();
       return;

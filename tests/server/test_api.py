@@ -502,6 +502,9 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/messages/get",
         "/api/agent/messages/options",
         "/api/agent/global-settings",
+        "/api/agent/model-connections",
+        "/api/agent/model-connections/default",
+        "/api/agent/model-connections/test",
         "/api/agent/messages/send",
         "/api/agent/messages/cancel",
         "/api/agent/messages/events",
@@ -3090,6 +3093,7 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
         assert response.status_code == 200
         assert response.json() == {
             "chatModels": [{"id": "default", "label": service.model_name}],
+            "newChatModelId": "default",
             "topK": {"defaultValue": 5, "minimum": 1, "maximum": 7},
             "maxModelCallsPerTurn": {
                 "defaultValue": 8,
@@ -3244,3 +3248,35 @@ def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
         }
     finally:
         service.close()
+
+
+def test_personal_connection_settings_round_trip_without_admin_configuration(tmp_path, monkeypatch):
+    from server.service.personal_models import PersonalModelConnections
+
+    client, _, _ = _client(tmp_path)
+    services = client.app.state.services
+    store = PersonalModelConnections(services.agent._repository._session_factory, key_file=tmp_path / "key",
+                                     signing_secret="", allow_local=True)
+    services.personal_models = services.agent._personal_models = store
+    path = "/api/agent/model-connections"
+    connection_id = str(uuid4())
+    endpoint = f"{path}?connectionId={connection_id}"
+    try:
+        assert client.get(path).json() == {"connections": [], "defaultModelId": "default"}
+        body = {"name": "Any service", "protocol": "openai_responses", "baseUrl": "https://example.org/own/v1",
+                "modelIds": ["team/arbitrary"], "revision": 0, "apiKey": "test-secret"}
+        saved = client.put(endpoint, json=body)
+        assert saved.status_code == 200 and "test-secret" not in saved.text
+        ref = saved.json()["connections"][0]["models"][0]["id"]
+        assert client.put(endpoint, json=body).status_code == 409
+        assert client.patch(path + "/default", json={"modelId": ref}).json()["defaultModelId"] == ref
+        assert client.get("/api/agent/messages/options").json()["newChatModelId"] == ref
+        def fail_probe(*args, **kwargs):
+            raise RuntimeError("test-secret")
+        monkeypatch.setattr("gateway.personal_models.probe_personal_model", fail_probe)
+        bad = client.post(path + "/test", params={"connectionId": connection_id}, json={"modelId": ref})
+        assert bad.status_code == 502 and "test-secret" not in bad.text
+        assert client.post(path + "/test", params={"connectionId": str(uuid4())}, json={"modelId": ref}).status_code == 404
+        assert client.delete(endpoint + "&revision=1").json()["connections"] == []
+    finally:
+        services.agent.close()
