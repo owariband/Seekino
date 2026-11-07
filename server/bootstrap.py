@@ -41,6 +41,7 @@ from .repository.identity import IdentityRepository
 from .repository.job import ParseJobRepository
 from .repository.library import LibraryRepository
 from .repository.model_usage import ModelUsageRepository
+from .repository.parse_output_draft import ParseOutputDraftRepository
 from .repository.upload import UploadRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.video_parse_dispatch import ParseDispatch
@@ -52,6 +53,7 @@ from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.mcp_retrieval import McpRetrievalService
+from .service.parse_output_draft import ParseOutputDraftService
 from .service.parse_usage import ParseUsageService
 from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
@@ -248,6 +250,7 @@ def _build_application_services(
     tracing = None
     parse_usage = ParseUsageService(
         ModelUsageRepository(session_factory),
+        drafts=ParseOutputDraftService(ParseOutputDraftRepository(session_factory)),
         pricing=load_model_pricing(settings.model_pricing_path),
     )
     construction_cleanup.callback(parse_usage.close)

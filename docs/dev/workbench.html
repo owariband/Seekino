@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T15:29:37+08:00",
+ "updatedAt": "2026-11-07T16:09:46+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 20,
+ "revision": 21,
  "categories": [
   {
    "id": "parse",
@@ -4742,6 +4742,44 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "PR #71",
      "url": "https://github.com/owariband/Seekino/pull/71",
      "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "PARSE-DRAFT-01",
+   "title": "Parse 按正文大小保存草稿并解耦 SSE 续租",
+   "category": "parse",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "模型正文新增独立调用草稿，1024 UTF-8 字节或调用退出保存；移除逐 SSE 持久续租。",
+   "next": "部署时按现有 init-db 流程初始化草稿表。两项改动同时启用后的整集耗时与多集吞吐仍待实测。",
+   "verification": "初版 941 项隔离回归通过。与 #70 联合验证时，1,548 项相关回归和 31 项真实 MySQL 用例通过。9,071 个 SSE 事件产生 30 次中途草稿保存和 2 次结束保存，流回调父行加锁及续租更新均为 0。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "草稿",
+    "租约",
+    "隔离验证"
+   ],
+   "related": [
+    "MOD-PARSE"
+   ],
+   "branch": "feat/parse-output-drafts",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "../design/03-product-reassessment/parse-output-drafts-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #64",
+     "url": "https://github.com/owariband/Seekino/pull/64",
+     "kind": "pr"
+    },
+    {
+     "label": "验证报告",
+     "url": "../report/server/service/parse-output-drafts-20261107.md",
+     "kind": "evidence"
     }
    ]
   }
