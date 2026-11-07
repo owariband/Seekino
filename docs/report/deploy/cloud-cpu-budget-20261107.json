@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-07",
+  "implementation": "9efe15a7",
+  "base": "eefcfefd",
+  "production_host_baseline": {
+    "logical_cpus": 4, "ram_mib": 7429, "available_mib": 4349,
+    "swap_used_mib": 0, "oom_kill_since_boot": 0,
+    "api_and_es_memory_limit_bytes": 0
+  },
+  "compose_render": {
+    "docker_compose_version": "5.6.1",
+    "old_private_env_video_parse_refine": [3, 10, 10],
+    "effective_video_parse_refine_index_asr": [1, 1, 1, 1, 1],
+    "total_child_leases": 2, "steady_cpu_quota": 3.75, "steady_memory_mib": 5824,
+    "initialize_mib": 512, "host_margin_mib": 1605, "margin_with_initialize_mib": 1093
+  },
+  "isolated_linux_probes": {
+    "scope": "Existing target host images, disposable containers run separately with no external network or production volumes. CPU quota tuples are quota and period in microseconds.",
+    "api_media": {
+      "image": "seekino-api:email-f811903f",
+      "workload": "Generate a 60 s 1280x720 24 FPS H.264 testsrc2 video, then call engine.common.frame_sampler.extract_video_frames_batch on 180 timestamps at 3 FPS.",
+      "cpu_max": [150000, 100000], "memory_max_bytes": 2415919104, "memory_swap_max_bytes": 0,
+      "memory_peak_bytes": 185208832, "oom_kill_delta": 0, "frames": 180, "elapsed_s": 7.16
+    },
+    "elasticsearch": {
+      "image": "docker.elastic.co/elasticsearch/elasticsearch:8.19.22",
+      "workload": "Start a one-node cluster with its default image entrypoint, index one document with refresh, then count it.",
+      "cpu_max": [100000, 100000], "memory_max_bytes": 2147483648, "memory_swap_max_bytes": 0,
+      "heap_max_bytes": 1073741824, "memory_peak_bytes": 1498423296, "oom_kill": 0, "visible_documents": 1,
+      "initial_probe_correction": "Network-none probes initially lacked a resolvable container hostname. The original entrypoint exited 1 with UnknownHostException, OOMKilled=false. An explicit hostname mapped to 127.0.0.1 fixed the isolation fixture at the same CPU and memory quotas."
+    },
+    "mysql": {
+      "image": "mysql:8.4", "workload": "Initialize a fresh data directory, create one InnoDB table, insert and count one row.",
+      "cpu_max": [75000, 100000], "memory_max_bytes": 1207959552, "memory_swap_max_bytes": 0,
+      "memory_peak_bytes": 501932032, "oom_kill": 0, "rows": 1
+    },
+    "redis": {
+      "image": "redis:7.4-alpine", "workload": "SET/GET one synthetic key and read the applied settings.",
+      "cpu_max": [25000, 100000], "memory_max_bytes": 201326592, "memory_swap_max_bytes": 0,
+      "memory_peak_bytes": 6160384, "oom_kill": 0, "appendonly": "yes",
+      "maxmemory_bytes": 67108864, "maxmemory_policy": "noeviction"
+    }
+  },
+  "application_checks": {
+    "focused_tests_passed": 455, "mysql_integration_tests_passed": 13,
+    "mysql_competing_consumers": 6, "legacy_parents_admitted": 3, "leases_granted": 2,
+    "startlux_recorded_mlx_responses_replayed": 130, "matched_route_labels": 130,
+    "sample_text_index_fingerprint_matches_existing_cloud_binding": true,
+    "additional_gateway_suite_failures_also_on_base": [
+      "test_default_model_migration_preserves_asr_embedding_agent_and_parse_strategy",
+      "test_independent_supervisor_keeps_agent_models_and_environment_overrides_separate",
+      "test_codex_supervisor_without_independent_binding_requires_the_agent_source_to_match"
+    ]
+  },
+  "not_measured": ["combined production load", "live GPU throughput and accuracy", "complete three-video upload-to-search run"]
+}

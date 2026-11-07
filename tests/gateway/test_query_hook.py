@@ -32,6 +32,37 @@ def _invoke(models, *, timeout=10):
     return models.route({"query": "private-user-text"}, {"type": "choice"}, timeout_seconds=timeout)
 
 
+@pytest.mark.parametrize("credential", [None, "TEST_STARTLUX_KEY"])
+def test_startlux_routes_with_its_native_protocol_and_dedicated_credentials(credential, monkeypatch):
+    config = QueryHookConfig(
+        router_provider="startlux", router_model="StartLux-Decision-v1.1-4B-AutoThink",
+        router_endpoint="https://router.gpu.example.com/v1/systemone",
+        **({"router_api_key_env": credential} if credential else {}),
+    )
+    monkeypatch.setenv("OPENROUTER_JEV_API_KEY", "unrelated-secret")
+    monkeypatch.setenv("TEST_STARTLUX_KEY", "dedicated-key")
+    usages = []
+
+    def respond(request):
+        assert str(request.url) == config.router_endpoint
+        assert request.headers.get("authorization") == ("Bearer dedicated-key" if credential else None)
+        assert json.loads(request.content) == {
+            "state": {"query": "private-user-text"}, "questions": {"route": {"type": "choice"}},
+            "think_mode": "never",
+        }
+        return httpx.Response(200, json={"answers": {"route": {"type": "choice", "choice": "mixed"}},
+                                         "usage": {"input_tokens": 258, "output_tokens": 0}})
+
+    with capture_model_usage(usages.append):
+        assert _invoke(QueryHookModels(config, transport=httpx.MockTransport(respond))) == "mixed"
+    assert usages[0].provider == "startlux" and usages[0].usage.total_tokens == 258
+
+
+def test_startlux_requires_a_separate_endpoint_and_model():
+    with pytest.raises(ValidationError, match="router_endpoint and router_model"):
+        QueryHookConfig(router_provider="startlux")
+
+
 def test_query_hook_defaults_are_disabled_and_survive_gateway_loading():
     config = QueryHookConfig()
     assert not config.enabled

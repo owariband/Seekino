@@ -1,17 +1,30 @@
-# API-backed starting profile. Verify these model IDs or replace them with your endpoints.
+# CPU host. Replace the three example GPU hostnames in the private mounted YAML.
 config_version: 2
 supervisor_harness: deepagents
 
 query_hook:
   enabled: true
   rewriter_enabled: true
-  router_api_key_env: OPENROUTER_JEV_API_KEY
+  router_provider: startlux
+  router_endpoint: https://router.gpu.example.com/v1/systemone
+  router_model: StartLux-Decision-v1.1-4B-AutoThink
+  router_api_key_env: STARTLUX_API_KEY
 
 tracing:
   enabled: false
   environment: production
 
 model_sources:
+  whisperx_gpu:
+    adapter: openai_audio
+    provider: whisperx
+    base_url: https://asr.gpu.example.com/v1
+    api_key_env: WHISPER_API_KEY
+  # Source name is part of the existing sample library's index fingerprint.
+  llama_embedding_local:
+    adapter: llama_cpp_embedding
+    provider: llama_cpp
+    base_url: https://embedding.gpu.example.com
   deepseek_api:
     adapter: openai
     provider: deepseek
@@ -42,9 +55,9 @@ models:
     request_timeout_seconds: 180
   transcription:
     kind: transcription
-    source: ark_default
-    model: doubao-seed-2-0-lite-260428
-    request_timeout_seconds: 600
+    source: whisperx_gpu
+    model: large-v3
+    request_timeout_seconds: 1200
   vision:
     source: ark_default
     model: doubao-seed-2-1-pro-260628
@@ -65,9 +78,11 @@ models:
     request_timeout_seconds: 180
   embedding:
     kind: embedding
-    source: ark_default
-    model: doubao-embedding-vision-250615
+    source: llama_embedding_local
+    model: seekino-qwen3-embedding-0.6b
     dimensions: 1024
+    input_mode: text
+    query_instruction: Given a question about a machine learning course, retrieve relevant lecture passages that answer the question.
     video_fps: 1.0
     request_timeout_seconds: 600
   rerank:

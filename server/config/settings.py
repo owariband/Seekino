@@ -224,6 +224,7 @@ class ServerSettings:
                 ),
                 retry_base=timedelta(seconds=retry_base_seconds),
                 retry_max=timedelta(seconds=retry_max_seconds),
+                max_running_children=_environment_nonnegative_int("SEEKINO_MQ_MAX_RUNNING_CHILDREN", 0),
             ),
             allowed_origins=origins,
             model_config_path=(

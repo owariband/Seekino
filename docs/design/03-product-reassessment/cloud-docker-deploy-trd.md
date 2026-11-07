@@ -1,5 +1,7 @@
 # 1. 问题与现状
 
+2026-11-07 的后续需求将整集解析的 CPU 协调和媒体处理纳入小型主机，推理委托给独立 CUDA 主机和既有 API。服务限额、旧任务准入及试点边界见[CPU 主机预算与 GPU 接线](cloud-cpu-budget-trd.md)。
+
 需求：用 Docker 将 `main` 的服务部署到云服务器，对公网提供样例库的观看、检索与问答。状态：TRD 初稿，2026-11-06。分支 `chore/cloud-docker-deploy`，[PR #57](https://github.com/owariband/Seekino/pull/57)。2026-11-06 修订：两台服务器拓扑与范围收窄，见 §3。
 
 2026-11-06 运行配置与首次启动续作：分支 `chore/cloud-runtime-startup`，

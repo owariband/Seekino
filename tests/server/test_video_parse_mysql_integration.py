@@ -296,6 +296,29 @@ def test_mysql_three_video_admissions_are_atomic_and_recovery_precedes_new_work(
         assert sum(row.capacity_acquired for row in rows) == 3
 
 
+def test_mysql_deployment_budget_serializes_child_admission_across_videos(mysql_capacity):
+    _engine, factory, create_task, connections = mysql_capacity
+    seed = MySqlVideoParseQueue(factory, video_concurrency=3)
+    parents = []
+    for _ in range(3):
+        task_id = create_task(chunk_count=4)
+        _prepare(factory, seed, task_id, chunk_count=4)
+        parents.append(task_id)
+    queues = [MySqlVideoParseQueue(factory, video_concurrency=1, max_running_children=2)
+              for _ in range(6)]
+
+    def claim(worker, attempt):
+        return queues[worker].claim_chunk(f"worker-{worker}", video_parse_task_id=parents[worker % 3],
+            lease_duration=timedelta(minutes=5), now=NOW)
+
+    leases = [lease for lease in _race(claim, attempts=6) if lease is not None]
+    assert len(leases) == 2
+    assert len(connections) >= 2
+    assert queues[0].release_execution(leases[0], now=NOW)
+    assert queues[1].claim_chunk("replacement", lease_duration=timedelta(minutes=5), now=NOW) is not None
+    assert queues[2].claim_chunk("full", lease_duration=timedelta(minutes=5), now=NOW) is None
+
+
 def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capacity):
     _engine, factory, create_task, connections = mysql_capacity
     # More than ten eligible candidates in each phase proves the limits, while

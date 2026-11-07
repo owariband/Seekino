@@ -1551,6 +1551,34 @@ def test_service_capacity_recovers_before_admitting_new_video(repository):
     assert replacement.claim_video("fourth", lease_duration=timedelta(minutes=1), now=later) is None
 
 
+def test_deployment_child_budget_covers_restored_tasks_realtime_refine_and_index(repository):
+    engine, _unused = repository
+    factory = create_session_factory(engine)
+    original = MySqlVideoParseQueue(factory, video_concurrency=3)
+    first = _task(factory, chunk_count=1, accepted=True)
+    repo, _, _ = _prepare(factory, original, first, chunk_count=1)
+    second = _task(factory, chunk_count=2, accepted=True)
+    _, _, prepared = _prepare(factory, original, second, chunk_count=2)
+    opts = {"lease_duration": timedelta(minutes=5), "now": NOW}
+    chunk = original.claim_chunk("old-worker", video_parse_task_id=first, **opts)
+
+    queue = MySqlVideoParseQueue(factory, video_concurrency=1, max_running_children=1)
+    realtime_id = prepared.chunk_parse_task_ids[0]
+    assert queue.claim_realtime_chunk(realtime_id, "realtime", **opts) is None
+    repo.commit_chunk_result(chunk, content={"persons": [], "timeline": []}, now=NOW)
+    interval = queue.claim_interval_refine("refine", video_parse_task_id=first, **opts)
+    assert interval is not None
+    assert queue.claim_chunk("parse", video_parse_task_id=second, **opts) is None
+    repo.commit_interval_refinement(interval, **_refinement_inputs(repo, interval, now=NOW),
+        interval_content={"updates": []}, member_updates={}, now=NOW)
+    index = queue.claim_chunk_index("index", video_parse_task_id=first, **opts)
+    assert index is not None
+    assert queue.claim_realtime_chunk(realtime_id, "realtime", **opts) is None
+    assert queue.release_execution(index, now=NOW)
+    assert queue.claim_realtime_chunk(realtime_id, "realtime", **opts) is not None
+    assert queue.claim_chunk_index("index", video_parse_task_id=first, **opts) is None
+
+
 def test_chunk_claims_rotate_between_admitted_videos(repository):
     engine, _unused = repository
     factory = create_session_factory(engine)

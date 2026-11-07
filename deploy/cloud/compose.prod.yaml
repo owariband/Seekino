@@ -12,6 +12,14 @@ x-production: &production
     SEEKINO_AUTH_REDIS_URL: redis://redis:6379/0
     SEEKINO_MODEL_CONFIG: /etc/seekino/models.yaml
     SEEKINO_ALLOWED_ORIGINS: https://${SEEKINO_PUBLIC_HOST:?}
+    # This overlay targets the 4-core host, including env files copied from development.
+    SEEKINO_VIDEO_CONCURRENCY: "1"
+    SEEKINO_PARSE_CONCURRENCY: "1"
+    SEEKINO_REFINE_CONCURRENCY: "1"
+    SEEKINO_INDEX_CONCURRENCY: "1"
+    SEEKINO_ASR_CONCURRENCY: "1"
+    SEEKINO_MQ_MAX_RUNNING_CHILDREN: "2"
+    SEEKINO_MODEL_TRACE_DIR: ""
     # The API port is published on loopback only; the TLS proxy reaches it through Docker's gateway.
     FORWARDED_ALLOW_IPS: "*"
   volumes:
@@ -26,11 +34,20 @@ x-production: &production
 services:
   initialize:
     <<: *production
+    cpus: 0.50
+    mem_limit: 512m
+    memswap_limit: 512m
 
   api:
     <<: *production
+    cpus: 1.50
+    mem_limit: 2304m
+    memswap_limit: 2304m
 
   web:
+    cpus: 0.25
+    mem_limit: 128m
+    memswap_limit: 128m
     # TLS entry: renders the shared deploy/nginx template inside the web image.
     network_mode: host
     ports: !reset []
@@ -59,11 +76,18 @@ services:
       test: [CMD-SHELL, 'kill -0 "$$(cat /etc/nginx/nginx.pid)"']
 
   redis:
+    cpus: 0.25
+    mem_limit: 192m
+    memswap_limit: 192m
+    command: [redis-server, --appendonly, "yes", --appendfsync, everysec, --maxmemory, 64mb, --maxmemory-policy, noeviction]
     profiles: !reset []
     restart: unless-stopped
     ports: !reset []
 
   mysql:
+    cpus: 0.75
+    mem_limit: 1152m
+    memswap_limit: 1152m
     restart: unless-stopped
     environment: !override
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
@@ -75,6 +99,9 @@ services:
       test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -e "SELECT 1"']
 
   elasticsearch:
+    cpus: 1.00
+    mem_limit: 2g
+    memswap_limit: 2g
     restart: unless-stopped
     environment:
       # Security stays off only because no port is published outside the Compose network.

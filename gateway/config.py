@@ -426,11 +426,14 @@ class QueryHookConfig(BaseModel):
 
     enabled: bool = False
     rewriter_enabled: bool = Field(default=True, strict=True)
+    router_provider: Literal["openrouter", "startlux"] = "openrouter"
     router_endpoint: Annotated[_HttpsBaseUrl, AfterValidator(_query_hook_url)] = (
         "https://openrouter.ai/api/alpha/decisions"
     )
     router_model: _NonEmptyString = "typesafe/jev-1.14"
-    router_api_key_env: _NonEmptyString = "OPENROUTER_JEV_API_KEY"
+    router_api_key_env: _NonEmptyString | None = Field(
+        default_factory=lambda data: "OPENROUTER_JEV_API_KEY" if data.get("router_provider") == "openrouter" else None,
+    )
     router_timeout_seconds: float = Field(default=3, gt=0)
     rewriter_timeout_seconds: float = Field(default=4, gt=0)
     max_output_tokens: int = Field(default=256, ge=1, strict=True)
@@ -438,6 +441,14 @@ class QueryHookConfig(BaseModel):
     history_max_chars: int = Field(default=2000, ge=1, strict=True)
     query_max_chars: int = Field(default=2000, ge=1, strict=True)
     total_timeout_seconds: float = Field(default=8, gt=0)
+
+    @model_validator(mode="after")
+    def validate_router_binding(self) -> QueryHookConfig:
+        if self.router_provider == "startlux" and not {"router_endpoint", "router_model"} <= self.model_fields_set:
+            raise ValueError("StartLux requires its own router_endpoint and router_model")
+        if self.router_provider == "openrouter" and self.router_api_key_env is None:
+            raise ValueError("OpenRouter requires router_api_key_env")
+        return self
 
 
 class WebSearchConfig(BaseModel):

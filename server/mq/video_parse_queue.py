@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
 
@@ -64,13 +66,39 @@ class MySqlVideoParseQueue:
 
     def __init__(
         self, session_factory: sessionmaker[Session], *, video_concurrency: int,
+        max_running_children: int = 0,
     ) -> None:
         self._session_factory = session_factory
         self.video_concurrency = video_concurrency
         if type(self.video_concurrency) is not int or self.video_concurrency <= 0:
             raise ValueError("video_concurrency must be a positive integer")
+        if type(max_running_children) is not int or max_running_children < 0:
+            raise ValueError("max_running_children must be a nonnegative integer")
+        self._max_running_children = max_running_children
         self._last_parent: dict[str, str] = {}
         self._finalize_after: str | None = None
+
+    @contextmanager
+    def _child_claim_transaction(self, *, admit_video: bool = False) -> Iterator[Session | None]:
+        # Realtime can also admit a video. Hold the existing capacity mutex through commit
+        # whenever a claim consumes a shared slot, including across different parents.
+        transaction = (
+            serialized_transaction(self._session_factory, VIDEO_PARSE_CAPACITY_LOCK_NAME)
+            if admit_video or self._max_running_children else self._session_factory.begin()
+        )
+        with transaction as session:
+            if session is not None and self._max_running_children:
+                running_chunks = select(func.count(ChunkParseTask.id)).where(
+                    ChunkParseTask.status == "RUNNING",
+                ).scalar_subquery()
+                running_intervals = select(func.count(IntervalParseTask.id)).where(
+                    IntervalParseTask.status == "REFINING",
+                ).scalar_subquery()
+                running = session.execute(select(running_chunks + running_intervals)).scalar_one()
+                if running >= self._max_running_children:
+                    yield None
+                    return
+            yield session
 
     def _acquire_capacity(self, session: Session, parent: VideoParseTask) -> bool:
         """Called only inside the serialized service admission transaction."""
@@ -125,7 +153,7 @@ class MySqlVideoParseQueue:
             ))
         if parent_id is None:
             return None
-        with serialized_transaction(self._session_factory, VIDEO_PARSE_CAPACITY_LOCK_NAME) as session:
+        with self._child_claim_transaction(admit_video=True) as session:
             if session is None:
                 return None
             parent = session.scalar(select(VideoParseTask).where(
@@ -235,7 +263,9 @@ class MySqlVideoParseQueue:
         claimed_at = now if now is not None else now_utc()
         stage = "parse" if phase == ChunkTaskPhase.PARSE else "index"
         for parent_id in self._parent_candidates(stage, video_parse_task_id):
-            with self._session_factory.begin() as session:
+            with self._child_claim_transaction() as session:
+                if session is None:
+                    return None
                 parent = session.scalar(select(VideoParseTask).where(
                     VideoParseTask.id == parent_id,
                 ).with_for_update(skip_locked=True))
@@ -307,7 +337,9 @@ class MySqlVideoParseQueue:
         _require_lease_duration(lease_duration)
         claimed_at = now if now is not None else now_utc()
         for parent_id in self._parent_candidates("refine", video_parse_task_id):
-            with self._session_factory.begin() as session:
+            with self._child_claim_transaction() as session:
+                if session is None:
+                    return None
                 parent = session.scalar(select(VideoParseTask).where(
                     VideoParseTask.id == parent_id,
                 ).with_for_update(skip_locked=True))

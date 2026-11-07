@@ -299,7 +299,10 @@ def _build_application_services(
         ).sparse_embedding,
         video_event_index_store=event_store,
     )
-    v2_queue = MySqlVideoParseQueue(session_factory, video_concurrency=settings.parse.video_concurrency)
+    v2_queue = MySqlVideoParseQueue(
+        session_factory, video_concurrency=settings.parse.video_concurrency,
+        max_running_children=settings.mq.max_running_children,
+    )
     v2_runtime = VideoParseRuntimeService(
         parse_persistence,
         v2_queue,
