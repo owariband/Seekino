@@ -45,7 +45,7 @@ test("renders growing snapshots before model completion and records distinct rec
   });
   await page.goto("/search");
   const composer = page.getByRole("textbox", { name: "向 Seekino 助手提问" });
-  await expect(page.getByRole("heading", { name: "今天，想发现什么？" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "戳一戳 Kino" })).toBeVisible();
   expect(creations).toBe(0);
   const originalComposer = await composer.elementHandle();
   await composer.fill("请逐步解释矩阵");
@@ -81,7 +81,7 @@ test("renders growing snapshots before model completion and records distinct rec
   await writeFile(testInfo.outputPath("browser-simulated.json"), JSON.stringify(evidence, null, 2));
   await page.getByRole("button", { name: "新建对话", exact: true }).click();
   await page.getByRole("button", { name: "新建对话", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "今天，想发现什么？" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "戳一戳 Kino" })).toBeVisible();
   expect(creations).toBe(1);
   await testInfo.attach("simulated-browser-delivery", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
 });

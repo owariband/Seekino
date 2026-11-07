@@ -1219,7 +1219,7 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
-    expect(await screen.findByText("今天，想发现什么？")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "戳一戳 Kino" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
@@ -1425,7 +1425,7 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: /^删除对话 新对话，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 新对话，/ }));
-    expect(await screen.findByText("今天，想发现什么？")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "戳一戳 Kino" })).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2);
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveFocus();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/delete"))).toHaveLength(2);
@@ -1524,7 +1524,7 @@ describe("application shell", () => {
     await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
-    await screen.findByText("今天，想发现什么？");
+    await screen.findByRole("button", { name: "戳一戳 Kino" });
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^删除对话 Test，/ })).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "不能发给已删除的对话");

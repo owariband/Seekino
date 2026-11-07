@@ -676,7 +676,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     }
   };
 
-  const draftLayout = !messages.length && !searching && !loading;
+  const showWelcome = !messages.length && !loading && (embedded || !searching);
   const newConversationButton = (
     <button
       className={styles.newConversation}
@@ -775,7 +775,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
   const Root = embedded ? "section" : "main";
   return (
-    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : styles.standalonePage}`} data-draft={!embedded && draftLayout} data-sidebar={!embedded && !compactLayout && sidebarOpen}>
+    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : styles.standalonePage}`} data-draft={!embedded && showWelcome} data-sidebar={!embedded && !compactLayout && sidebarOpen}>
       {embedded ? (
         <header className={styles.pageHeader}>
           <div className={styles.chatHeading}>
@@ -823,22 +823,18 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             onClick={() => compactLayout ? setHistoryDrawerOpen(true) : setSidebarOpen((open) => !open)}>
             <PanelLeft size={19} aria-hidden="true" />
           </button>
-          <span className={styles.currentTitle}>{!draftLayout ? activeConversation?.title ?? t("Seekino 助手") : ""}</span>
+          <span className={styles.currentTitle}>{!showWelcome ? activeConversation?.title ?? t("Seekino 助手") : ""}</span>
           <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
         </header>
       </>}
 
       <div className={selectedHit && !onOpenVideo ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
         <section className={styles.agentPanel} aria-label={t("与 Seekino 助手对话")}>
-          {!embedded && draftLayout ? <div className={styles.draftWelcome}>
-            <Kino state="idle" width={38} scale={2} ground={false} />
-            <h2>{t("今天，想发现什么？")}</h2>
-          </div> : null}
           <div className={styles.thread} ref={threadRef} data-kino-stage="" onScroll={(event) => {
             const thread = event.currentTarget;
             followThread.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
           }}>
-            {embedded && !messages.length && !loading ? (
+            {showWelcome ? (
               <div className={styles.welcome}>
                 <Kino interactive perch dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
                 <p>{embedded ? t("看到哪里，问到哪里。回答里的时间点可以直接点击跳转。") : t("描述记得的画面、台词或人物关系，一起把那一刻找回来。")}</p>
@@ -928,7 +924,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={embedded ? t("提问视频内容，或聊聊其他问题…") : draftLayout ? t("从一个问题开始…") : t("继续提问…")}
+                placeholder={embedded ? t("提问视频内容，或聊聊其他问题…") : showWelcome ? t("从一个问题开始…") : t("继续提问…")}
                 rows={1}
                 aria-label={t("向 Seekino 助手提问")}
               />
@@ -1052,13 +1048,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 )}
               </div>
             </form>
-            {!embedded && draftLayout ? <div className={styles.draftSuggestions} aria-label={t("试试这样问")}>
-              {EXAMPLE_QUESTIONS.map((example) => <button key={example} type="button" disabled={mode !== "live" || loading} onClick={() => {
-                pendingExampleRef.current = true;
-                draftRevisionRef.current += 1;
-                setQuery(t(example));
-              }}>{t(example)}</button>)}
-            </div> : null}
             <p className={styles.keyboardHint}>{t("Enter 发送 · Shift + Enter 换行")}</p>
             {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
             {(!scopeValid || !referenceScopeValid) && !workspaceLoading ? <p className={styles.messageError} role="alert">{t(requiresExplicitScope && !series.some((item) => isSearchable(item.status)) ? "暂无可体验的公开系列" : "所选视频系列暂不可检索，请重新选择范围。")}</p> : null}

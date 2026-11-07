@@ -22,7 +22,11 @@ test("keeps a bounded centered draft and an independently collapsible history ra
   let creates = 0;
   page.on("request", (request) => { if (request.url().includes("/conversations/create")) creates++; });
   await page.goto("/search");
-  await expect(page.getByRole("heading", { name: "今天，想发现什么？" })).toBeVisible();
+  const kino = page.getByRole("button", { name: "戳一戳 Kino" });
+  await expect(kino).toBeVisible();
+  await expect(page.getByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。", { exact: true })).toBeVisible();
+  await kino.click();
+  await expect(kino.locator("svg")).toHaveAttribute("data-kino-state", /jump|happy/);
   const sidebar = page.getByRole("complementary", { name: "对话侧栏" });
   const input = page.getByRole("textbox", { name: "向 Seekino 助手提问" });
   const bounds = (await input.boundingBox())!;
@@ -47,7 +51,7 @@ test("keeps a bounded centered draft and an independently collapsible history ra
 test("opens mobile history as a modal, traps focus and closes by Escape and backdrop", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/search");
-  await expect(page.getByRole("heading", { name: "今天，想发现什么？" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "戳一戳 Kino" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   const trigger = page.getByRole("button", { name: "打开对话记录", exact: true });
   await trigger.click();

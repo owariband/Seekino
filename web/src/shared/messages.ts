@@ -396,7 +396,6 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "边看边聊": "Chat while watching",
   "收起对话记录": "Collapse conversation history",
   "对话侧栏": "Conversation sidebar",
-  "今天，想发现什么？": "What will you discover today?",
   "从一个问题开始…": "Start with a question…",
   "继续提问…": "Reply…",
   "发送问题时暂停视频": "Pause video when sending a message",

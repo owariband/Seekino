@@ -767,15 +767,9 @@
 .standalonePage .composer > .draftContext { grid-column: 1 / -1; }
 .standalonePage[data-draft="true"] .agentPanel { justify-content: center; padding-bottom: clamp(24px, 9vh, 100px); }
 .standalonePage[data-draft="true"] .thread { flex: 0 0 auto; padding: 0; }
-.standalonePage[data-draft="true"] .thread:empty { display: none; }
-.draftWelcome { display: flex; align-self: center; align-items: center; justify-content: center; gap: 16px; margin-bottom: 26px; }
-.draftWelcome h2 { margin: 0; color: var(--ink); font: 400 clamp(1.6rem, 2.4vw, 2.15rem)/1.4 var(--sans); letter-spacing: -.035em; }
-.draftWelcome > svg { flex: 0 0 auto; }
+.standalonePage .welcome { padding: 8px 0 20px; }
+.standalonePage .welcome p { text-wrap: balance; }
 .standalonePage[data-draft="true"] .composer textarea { min-height: 106px; }
-.draftSuggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 22px; }
-.draftSuggestions button { min-height: 30px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-faint); background: transparent; font-size: .68rem; cursor: pointer; }
-.draftSuggestions button:hover:not(:disabled) { color: var(--ink); background: var(--surface-muted); }
-.draftSuggestions button:disabled { opacity: .5; cursor: not-allowed; }
 .standalonePage[data-draft="true"] .keyboardHint { display: none; }
 .historyDrawer { position: fixed; inset: 0 auto 0 0; width: min(288px, calc(100vw - 48px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-right: 1px solid var(--line); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 .historyDrawer::backdrop { background: rgb(0 0 0 / 35%); }
@@ -791,10 +785,6 @@
   .sidebarContent > .newConversation { width: auto; min-height: 42px; }
   .standalonePage .composer textarea { font-size: 16px; }
   .standalonePage .keyboardHint { display: none; }
-  .draftWelcome { gap: 8px; margin-bottom: 22px; }
-  .draftWelcome h2 { font-size: clamp(1.25rem, 5vw, 1.8rem); }
-  .draftWelcome > svg { width: 56px; height: auto; }
-  .draftSuggestions { gap: 8px; margin-top: 18px; }
   .standalonePage[data-draft="true"] .agentPanel { padding-bottom: 4vh; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -804,7 +794,4 @@
 .draftContext { display: grid; grid-column: 1 / -1; gap: 8px; }
 @media (max-height: 650px) {
   .standalonePage[data-draft="true"] .agentPanel { justify-content: flex-start; overflow-y: auto; padding-bottom: 12px; }
-  .draftWelcome { margin-top: 12px; margin-bottom: 16px; }
-  .draftWelcome h2 { font-size: 1.35rem; }
-  .draftSuggestions { margin-top: 12px; }
 }
