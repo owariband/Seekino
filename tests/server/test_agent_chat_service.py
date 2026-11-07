@@ -687,6 +687,39 @@ def test_server_deltas_before_tools_and_text_of_next_model_call(build_service):
     assert events[boundary + 1]["assistantMessage"]["content"] == "我先查一下。"
 
 
+def test_retry_snapshot_survives_reload_until_last_call_recovers(build_service):
+    from gateway.model_events import emit_model_retry
+
+    entered, release = Event(), Event()
+
+    class RetryingSupervisor(_DirectSupervisorModel):
+        def run_agent(self, prompt, **kwargs):
+            emit_model_retry("first", True)
+            emit_model_retry("second", True)
+            emit_model_retry("first", False)
+            entered.set()
+            assert release.wait(5)
+            emit_model_retry("second", False)
+            return super().run_agent(prompt, **kwargs)
+
+    service, conversation, *_ = build_service(supervisor_model=RetryingSupervisor())
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="你好",
+        idempotency_key="retry-status", stream=True,
+    )
+    try:
+        assert entered.wait(5)
+        while (event := execution.next_event(timeout=2))["type"] != "answer.snapshot":
+            pass
+        assert event["assistantMessage"]["reconnecting"]
+        assert service.list_all_messages(
+            conversation.conversation_id, tenant_id="local-default",
+        )[-1].reconnecting
+    finally:
+        release.set()
+    assert not execution.result().assistant_message.reconnecting
+
+
 def test_supervisor_prefix_is_readable_before_model_completion_and_survives_disconnect(build_service):
     entered, release = Event(), Event()
 

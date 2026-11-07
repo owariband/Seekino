@@ -102,6 +102,7 @@ class AgentAttachmentUploadView(AgentAttachmentView):
 
 
 class AgentMessageView(ContractModel):
+    reconnecting: bool = False
     message_id: str
     conversation_id: str
     series_ids: list[str]

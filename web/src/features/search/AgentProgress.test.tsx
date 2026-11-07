@@ -105,6 +105,26 @@ describe("Agent execution timeline", () => {
     expect(screen.queryByText("已完成")).not.toBeInTheDocument();
   });
 
+  it.each(["release", "debug"] as const)("shows the exact lowercase reconnect label in %s only while processing and retrying", (displayMode) => {
+    const view = render(<AgentProgress displayMode={displayMode} message={{ ...message, reconnecting: true }} steps={[]} />);
+    const status = () => screen.getByRole("status", { name: "回答状态" });
+    expect(status().textContent).toBe("reconnect");
+    view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message, reconnecting: true, timing: {
+      startedAt: Date.now(), totalDurationMs: 42_298, stages: [],
+    } }} steps={[]} />);
+    expect(status().textContent).toBe("reconnect");
+    // A recovery snapshot without the transient flag restores the normal active label.
+    view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message, reconnecting: false }} steps={[]} />);
+    expect(status()).toHaveTextContent(displayMode === "debug" ? "核验资料" : "处理中");
+    view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message }} steps={[]} />);
+    expect(status()).toHaveTextContent(displayMode === "debug" ? "核验资料" : "处理中");
+    // Terminal states never keep the retry label, even if a stale flag survives.
+    view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message, reconnecting: true, status: "FAILED", phase: null }} steps={[]} />);
+    expect(status()).toHaveTextContent("回答未完成");
+    view.rerender(<AgentProgress displayMode={displayMode} message={{ ...message, reconnecting: true, status: "COMPLETED", phase: null }} steps={[]} />);
+    expect(status()).toHaveTextContent("已完成");
+  });
+
   it("keeps PPE details opt-in, preserves expansion during updates, and collapses on completion", async () => {
     const view = render(<AgentProgress displayMode="debug" message={message} steps={steps} />);
     const card = screen.getByLabelText("回答过程").closest("details")!;

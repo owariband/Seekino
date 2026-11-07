@@ -13,7 +13,7 @@ from langchain_core.tools import StructuredTool
 
 from gateway.agent_model.deepagents import DeepAgentSessionStore, DeepAgentsSupervisorModel
 from gateway.agent_model.errors import ModelFailureReason, OpenAIFunctionCallingError
-from gateway.model_events import observe_model_text
+from gateway.model_events import observe_model_retry, observe_model_text
 from gateway.openai import agent as openai_agent_module
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.usage import ModelCallCancelledError, control_model_calls
@@ -172,7 +172,11 @@ def test_closed_before_first_event_retries_and_recovers():
 def test_stalled_first_attempt_uses_second_stream():
     with _server(["stall", "stream"]) as (url, state):
         model = _chat_model(url)
-        texts = _run_loop(model)
+        observations = []
+        with observe_model_retry(lambda call, active: observations.append((call, active))):
+            texts = _run_loop(model)
+        assert observations[0][1] is True
+        assert observations[1] == (observations[0][0], False)
     assert texts == ["answer text"]
     assert state.requests == 2
 

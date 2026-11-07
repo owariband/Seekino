@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool
 from openai import APIConnectionError, APIError, DefaultHttpxClient, OpenAI
 
 from gateway.errors import ContentFilterError
+from gateway.model_events import emit_model_retry
 from gateway.model_diagnostics import record_model_event
 from gateway.streaming.chat import request_chat_completion
 from gateway.streaming.first_sse import FirstSSEDeadline
@@ -313,9 +314,12 @@ class OpenAIAgentModel:
         **tool_options: Any,
     ) -> Any:
         if self._stream and self._client is None:
-            return self._create_streaming_completion_with_retry(
-                usage_call, messages=messages, timeout=timeout, **tool_options,
-            )
+            try:
+                return self._create_streaming_completion_with_retry(
+                    usage_call, messages=messages, timeout=timeout, **tool_options,
+                )
+            finally:
+                emit_model_retry(usage_call.call_id, False)
         return self._request_completion(
             client, usage_call, first_sse_deadline=None,
             messages=messages, timeout=timeout, **tool_options,
@@ -337,6 +341,7 @@ class OpenAIAgentModel:
                 break
             first_sse = FirstSSEDeadline(
                 remaining, limit_seconds=CHAT_FIRST_SSE_TIMEOUT_SECONDS,
+                on_first_event=(lambda: emit_model_retry(usage_call.call_id, False)) if attempt > 1 else None,
             )
             with OpenAI(
                 api_key=self._api_key,
@@ -359,6 +364,7 @@ class OpenAIAgentModel:
                         raise
                     if attempt == MAX_CHAT_FIRST_SSE_ATTEMPTS:
                         break
+                    emit_model_retry(usage_call.call_id, True)
                     record_model_event("chat_first_sse_retry", {
                         "attempt": attempt,
                         "reason": retry_reason,

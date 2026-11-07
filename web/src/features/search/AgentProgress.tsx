@@ -39,6 +39,7 @@ export function AgentProgress({ message, steps, reasoning = "", displayMode = "r
 }) {
   const { t } = useI18n();
   const processing = message.status === "PROCESSING";
+  const reconnecting = processing && message.reconnecting === true;
   const failed = message.status === "FAILED";
   const completed = message.status === "COMPLETED";
   const hasReasoning = reasoning.trim().length > 0;
@@ -86,8 +87,9 @@ export function AgentProgress({ message, steps, reasoning = "", displayMode = "r
     ? <ProgressMascot phase={processing ? currentPhase : null} settled={!processing} awake={kinoAwake} arriving={processing}
       farewell={farewell} onFarewellDone={() => setFarewell(null)} />
     : null;
-  const status = failed ? t("回答未完成") : processing ? displayMode === "debug" && currentPhase ? t(phases[currentPhase].label) : t("处理中") : t("已完成");
-  const timingStatus = elapsedMs === null
+  // A retrying model call is a brief protocol state: show only the literal lowercase token.
+  const status = failed ? t("回答未完成") : reconnecting ? "reconnect" : processing ? displayMode === "debug" && currentPhase ? t(phases[currentPhase].label) : t("处理中") : t("已完成");
+  const timingStatus = reconnecting || elapsedMs === null
     ? status
     : `${status} · ${processing ? t("已用") : t("总耗时")} ${formatDuration(elapsedMs)}`;
   const durationLabel = elapsedMs === null ? "" : formatDuration(elapsedMs);
