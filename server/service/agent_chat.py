@@ -7,7 +7,7 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from queue import Empty
 from threading import Condition, Event, Lock, RLock
@@ -38,6 +38,7 @@ from ..model.dto.agentDTO import (
     AgentConversationState,
     AgentIntegerOptionState,
     AgentMessageOptionsState,
+    AgentModelOptionState,
     AgentMessageSendState,
     AgentMessageState,
     AgentMessageTimingState,
@@ -257,6 +258,12 @@ class AgentMessageExecution:
         return self.future.result()
 
 
+@dataclass(frozen=True, slots=True)
+class ChatModelChoice:
+    label: str
+    build_runtime: Callable[[AgentServiceConfig], SupervisorRuntime]
+
+
 class AgentChatService:
     """Own conversations, message transactions, and in-process execution tasks."""
 
@@ -270,6 +277,7 @@ class AgentChatService:
         config_loader: Callable[[], tuple[AgentServiceConfig, str]] | None = None,
         runtime_factory: Callable[[AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
+        model_choices: Mapping[str, ChatModelChoice] | None = None,
         tracing: LangfuseTracing | None = None,
         parse_usage: ParseUsageService | None = None,
         attachments: AgentAttachmentService | None = None,
@@ -286,6 +294,8 @@ class AgentChatService:
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
         self._config_revision = config_revision
+        self._model_choices = dict(model_choices or {})
+        self._model_runtimes: dict[tuple[str, AgentServiceConfig], SupervisorRuntime] = {}
         self._runtimes = [runtime]
         self._active_maximum_concurrent_kicks = self._config.maximum_concurrent_kicks
         self._clock = clock
@@ -315,8 +325,10 @@ class AgentChatService:
         return self._active_maximum_concurrent_kicks
 
     def message_options(self) -> AgentMessageOptionsState:
-        _, config, _ = self._current_config()
+        runtime, config, _ = self._current_config()
         return AgentMessageOptionsState(
+            chat_models=(AgentModelOptionState("default", runtime.model_name),
+                         *(AgentModelOptionState(ref, choice.label) for ref, choice in self._model_choices.items())),
             top_k=AgentIntegerOptionState(
                 default_value=config.default_top_k,
                 minimum=1,
@@ -370,12 +382,27 @@ class AgentChatService:
                     self._config_revision = revision
             return self._runtime, self._config, self._executor
 
+    def _require_model_choice(self, model_id: str) -> None:
+        if model_id != "default" and model_id not in self._model_choices:
+            raise ValueError("该回答模型当前不可用，请重新选择。")
+
+    def set_conversation_model(
+        self, conversation_id: str, *, tenant_id: str, owner_user_id: str, model_id: str,
+    ) -> AgentConversationState:
+        self._require_model_choice(model_id)
+        return self._repository.set_conversation_model(
+            canonical_uuid(conversation_id, "conversation_id"),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
+            owner_user_id=owner_user_id, model_id=model_id,
+        )
+
     def create_conversation(
         self,
         *,
         tenant_id: str,
         title: str | None = None,
         idempotency_key: str,
+        model_id: str = "default",
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         normalized_workspace = require_nonempty_text(
@@ -383,7 +410,9 @@ class AgentChatService:
             "tenant_id",
             maximum=64,
         )
+        self._require_model_choice(model_id)
         return self._repository.create_conversation(
+            model_id=model_id,
             conversation_id=str(uuid4()),
             tenant_id=normalized_workspace,
             title="新对话" if title is None else require_nonempty_text(title, "title", maximum=255),
@@ -640,7 +669,7 @@ class AgentChatService:
         with self._lock:
             if self._closed:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
-            started = self._repository.find_idempotent_message(
+            started, model_id = self._repository.get_message_start_context(
                 conversation_id=normalized_conversation_id,
                 tenant_id=normalized_workspace, content=normalized_content,
                 requested_top_k=requested_top_k, idempotency_key=normalized_key,
@@ -678,11 +707,20 @@ class AgentChatService:
                     owner_user_id=owner_user_id,
                     source_tenant_id=normalized_source,
                 )
+                if model_id != "default":
+                    self._require_model_choice(model_id)
+                    cache_key = (model_id, config)
+                    if cache_key not in self._model_runtimes:
+                        alternative = self._model_choices[model_id].build_runtime(config)
+                        self._model_runtimes[cache_key] = alternative
+                        self._runtimes.append(alternative)
+                    runtime = self._model_runtimes[cache_key]
                 timing_started_at = self._clock()
                 timing_started_ns = self._monotonic_clock()
                 started = self._repository.start_message(
                     conversation_id=normalized_conversation_id,
                     tenant_id=normalized_workspace, content=normalized_content,
+                    expected_model_id=model_id,
                     model_name=require_nonempty_text(runtime.model_name, "chat_model.model_name", maximum=255),
                     requested_top_k=requested_top_k, idempotency_key=normalized_key,
                     series_ids=scope, requested_series_ids=requested_scope,

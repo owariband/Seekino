@@ -56,7 +56,7 @@ from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
 from server.service.agent_chat import (
-    AgentAttachmentInputUnavailableError, AgentChatService, _validated_stored_video_range,
+    AgentAttachmentInputUnavailableError, AgentChatService, ChatModelChoice, _validated_stored_video_range,
 )
 from server.service.library import LibraryService
 
@@ -3930,3 +3930,60 @@ def test_private_conversation_can_use_one_public_source_and_replay_checks_source
             private.conversation_id, tenant_id="personal-tenant", source_tenant_id="another-source",
             owner_user_id="user-A", content="public course question", idempotency_key="source-message",
         )
+
+
+def test_model_selection_is_owned_by_one_conversation_and_freezes_each_answer(build_service):
+    default = _DirectSupervisorModel()
+    alternate = _DirectSupervisorModel()
+    alternate.model_name = "alternate-model"
+
+    def alternative_runtime(config):
+        query = AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical")
+        return _chat_runtime(query, alternate)
+
+    service, first, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"fast": ChatModelChoice("Fast", alternative_runtime)},
+    })
+    create = dict(tenant_id=first.tenant_id, idempotency_key="second-chat", model_id="fast")
+    second = service.create_conversation(**create)
+    changes = dict(tenant_id=second.tenant_id, owner_user_id=second.owner_user_id)
+    assert second.model_id == "fast"
+    assert first.model_id == "default"
+    assert [choice.id for choice in service.message_options().chat_models] == ["default", "fast"]
+    with pytest.raises(AgentConversationNotFoundError):
+        service.set_conversation_model(second.conversation_id, tenant_id=second.tenant_id,
+                                       owner_user_id="another-owner", model_id="default")
+    with pytest.raises(ValueError, match="回答模型"):
+        service.set_conversation_model(second.conversation_id, **changes, model_id="unknown")
+    assert _send(service, first).assistant_message.model_name == default.model_name
+    before = _send(service, second)
+    assert before.assistant_message.model_name == alternate.model_name
+    assert alternate.turns[0][0] == second.conversation_id
+    service.set_conversation_model(second.conversation_id, **changes, model_id="default")
+    assert service.get_conversation(second.conversation_id, **changes).model_id == "default"
+    assert _send(service, second).assistant_message.message_id == before.assistant_message.message_id
+    assert _send(service, second, key="next").assistant_message.model_name == default.model_name
+    assert len(alternate.turns) == 1
+    assert len(default.turns) == 2
+    assert service.create_conversation(**create).model_id == "default"
+    with pytest.raises(AgentConflictError):
+        service.create_conversation(**{**create, "model_id": "default"})
+
+
+def test_model_change_between_resolving_and_recording_rejects_the_unstarted_turn(build_service, monkeypatch):
+    default = _DirectSupervisorModel()
+    service, chat, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"alternate": ChatModelChoice("Alternate", lambda _: pytest.fail("unexpected execution"))},
+    })
+    start = service._repository.start_message
+
+    def change_before_insert(**kwargs):
+        service.set_conversation_model(chat.conversation_id, tenant_id=chat.tenant_id,
+                                       owner_user_id=chat.owner_user_id, model_id="alternate")
+        return start(**kwargs)
+
+    monkeypatch.setattr(service._repository, "start_message", change_before_insert)
+    with pytest.raises(AgentConflictError, match="model changed"):
+        _send(service, chat)
+    assert service.get_conversation(chat.conversation_id, tenant_id=chat.tenant_id).message_count == 0
+    assert not default.turns

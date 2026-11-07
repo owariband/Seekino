@@ -10,6 +10,17 @@
 
 本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
 
+## 当前对话的回答模型
+
+独立聊天页的回答模型菜单读取 `GET /api/agent/messages/options`。默认项沿用启动时选定的 Supervisor。要开放其他选项，在同一份配置中用 `supervisor_choices` 将已有的生成模型绑定映射为菜单名称。例如，仓库配置允许把已有的 `models.agent` 用作某个对话的回答模型。
+
+```yaml
+supervisor_choices:
+  agent: DeepSeek Flash
+```
+
+菜单仅列出与当前 Supervisor harness 兼容且具备所需凭据的选项。普通聊天用户可以为自己的会话选择这些模型。草稿选择在首次发送或添加图片时随会话创建，已有会话通过 `PATCH /api/agent/conversations/model` 保存。之后的回答读取该会话的选择，历史回答保留发送时的模型名称。服务下线某个选项后，曾使用它的对话可重新选择默认项。
+
 ## 网页搜索配置
 
 `web_search.provider` 与 `models.agent` / `models.supervisor` 独立。用户选择免 API key 的

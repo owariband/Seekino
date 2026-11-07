@@ -69,6 +69,10 @@ class AgentConversation(BaseModel):
     last_message_time: Mapped[int | None] = mapped_column(BigInteger)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
+    @property
+    def model_id(self) -> str:
+        return (self.detail or {}).get("modelId", "default")
+
 
 class AgentMessage(BaseModel):
     __tablename__ = "agent_message"

@@ -714,3 +714,18 @@ def test_model_reference_default_preserves_explicit_and_direct_identity(
 def test_endpoint_model_reference_rejects_endpoint_as_default_identity():
     with pytest.raises(ValueError):
         ModelReference.resolve("ep-legacy", default_encoder_model="ep-another-endpoint")
+
+
+def test_chat_choices_only_offer_declared_compatible_bindings_with_credentials():
+    data = payload()
+    data["supervisor_choices"] = {"agent": "Fast"}
+    config = GatewayConfig.model_validate(data)
+    assert config.available_supervisor_choices(environ={}) == {}
+    keys = {name: "test" for name in required_api_key_env_names(config)}
+    assert config.available_supervisor_choices(environ=keys) == {"agent": config.resolve_model_binding("agent", environ=keys)}
+    data["supervisor_choices"] = {"embedding": "Wrong role"}
+    with pytest.raises(ValidationError, match="requires a generative model"):
+        GatewayConfig.model_validate(data)
+    data["supervisor_choices"] = {"unknown": "Missing"}
+    with pytest.raises(ValidationError, match="configured alternative"):
+        GatewayConfig.model_validate(data)

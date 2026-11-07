@@ -207,7 +207,9 @@ test("keeps watch as the home page and navigates between watch and the assistant
     releaseSearch();
   }
   await expect(input).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Seekino 助手", exact: true })).toBeHidden();
+  const assistantHeading = page.getByRole("heading", { name: "Seekino 助手", exact: true });
+  await expect(assistantHeading).toHaveClass(/sr-only/);
+  expect((await assistantHeading.boundingBox())!.height).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "搜索名场面", exact: true }).click();
   await expect(input).toBeFocused();
   await trigger.click();
@@ -346,6 +348,8 @@ for (const touch of [false, true]) {
       const settings = page.getByRole("group", { name: "本次回答设置", exact: true });
       const historyTrigger = page.getByLabel("打开对话记录", { exact: true });
       const history = page.getByRole("region", { name: "对话记录", exact: true });
+      const collapseHistory = page.getByLabel("收起对话记录", { exact: true });
+      if (!touch) await activate(collapseHistory);
 
       await activate(scopeTrigger);
       for (const name of ["系列甲", "系列乙"]) {
@@ -372,12 +376,15 @@ for (const touch of [false, true]) {
       await expect(history).toBeVisible();
       await activate(history.getByText("对话记录", { exact: true }));
       await expect(history).toBeVisible();
-      if (!touch) {
-        await activate(historyTrigger);
-        await expect(history).toBeHidden();
-        await activate(historyTrigger);
+      if (touch) {
+        const drawer = page.getByRole("dialog", { name: "对话侧栏", exact: true });
+        const bounds = (await drawer.boundingBox())!;
+        await page.touchscreen.tap(bounds.x + bounds.width + 8, bounds.y + 50);
+      } else {
+        await dismissOutside();
+        await expect(history).toBeVisible();
+        await activate(collapseHistory);
       }
-      await dismissOutside();
       await expect(history).toBeHidden();
       await activate(scopeTrigger);
       for (const name of ["系列甲", "系列乙"]) {
