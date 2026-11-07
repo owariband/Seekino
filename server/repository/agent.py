@@ -79,9 +79,11 @@ class AgentRepository:
                         )
                     )
                     if existing is not None:
+                        initial = existing.detail or {}
                         if (existing.title_is_auto != title_is_auto
                                 or (not title_is_auto and existing.title != title)
-                                or (existing.detail or {}).get("initialModelId", "default") != initial_model):
+                                or initial.get("initialModelId", "default") != initial_model
+                                or (initial.get("initialModelInherited") and not inherit_model)):
                             raise AgentConflictError(
                                 "the conversation idempotency key is already used "
                                 "with different fields"
@@ -96,7 +98,10 @@ class AgentRepository:
                         title_is_auto=title_is_auto,
                         idempotency_key=idempotency_key,
                         next_message_sequence=0,
-                        detail={"modelId": model_id, "initialModelId": initial_model} if model_id != "default" else None,
+                        detail=({
+                            "modelId": model_id, "initialModelId": initial_model,
+                            **({"initialModelInherited": True} if inherit_model else {}),
+                        } if model_id != "default" else None),
                     )
                     session.add(record)
                     session.flush()

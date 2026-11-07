@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import type { PersonalModelConnection, PersonalModelConnectionInput, PersonalModelProtocol } from "../../api/contracts";
 import { useI18n } from "../../app/i18n";
 import styles from "./personal.module.css";
@@ -17,6 +17,7 @@ export function PersonalConnectionForm({ connection, busy, cancel, save }: {
   save: (data: PersonalModelConnectionInput) => void;
 }) {
   const { t } = useI18n();
+  const id = useId();
   const [protocol, setProtocol] = useState<PersonalModelProtocol>(connection?.protocol ?? "openai_chat");
   const [name, setName] = useState(connection?.name ?? "");
   const [url, setUrl] = useState(connection?.baseUrl ?? protocols[protocol].url);
@@ -44,7 +45,7 @@ export function PersonalConnectionForm({ connection, busy, cancel, save }: {
   return <form className={styles.form} onSubmit={submit}>
     <div className={styles.row}>
       <label className={styles.field}><span>{t("接口协议")}</span>
-        <select value={protocol} disabled={busy} onChange={(e) => selectProtocol(e.target.value as PersonalModelProtocol)}>
+        <select aria-label={t("接口协议")} value={protocol} disabled={busy} onChange={(e) => selectProtocol(e.target.value as PersonalModelProtocol)}>
           {Object.entries(protocols).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}
         </select>
       </label>
@@ -53,8 +54,8 @@ export function PersonalConnectionForm({ connection, busy, cancel, save }: {
       </label>
     </div>
     <label className={styles.field}><span>Base URL</span>
-      <input dir="ltr" type="url" required spellCheck={false} maxLength={2048} disabled={busy} value={url} onChange={(e) => setUrl(e.target.value)} />
-      <small>{t("可以填写官方、兼容或自托管服务的 API 地址。")}</small>
+      <input aria-label="Base URL" aria-describedby={id + "-url"} dir="ltr" type="url" required spellCheck={false} maxLength={2048} disabled={busy} value={url} onChange={(e) => setUrl(e.target.value)} />
+      <small id={id + "-url"}>{t("可以填写官方、兼容或自托管服务的 API 地址。")}</small>
     </label>
     <label className={styles.field}><span>API Key</span>
       <input dir="ltr" type="password" autoComplete="new-password" maxLength={8192} disabled={busy || clearKey}
@@ -64,8 +65,8 @@ export function PersonalConnectionForm({ connection, busy, cancel, save }: {
     {connection?.hasApiKey ? <label className={styles.checks}><input type="checkbox" checked={clearKey} disabled={busy}
       onChange={(e) => { setClearKey(e.target.checked); setKey(""); }} />{t("清除已保存的密钥")}</label> : null}
     <label className={styles.field}><span>{t("模型 ID")}</span>
-      <textarea dir="ltr" required spellCheck={false} rows={2} value={models} disabled={busy} onChange={(e) => setModels(e.target.value)} />
-      <small>{t("填写服务提供的模型 ID，每行一个。")}</small>
+      <textarea aria-label={t("模型 ID")} aria-describedby={id + "-models"} dir="ltr" required spellCheck={false} rows={2} value={models} disabled={busy} onChange={(e) => setModels(e.target.value)} />
+      <small id={id + "-models"}>{t("填写服务提供的模型 ID，每行一个。")}</small>
     </label>
     <label className={styles.checks}><input type="checkbox" checked={vision} disabled={busy} onChange={(e) => setVision(e.target.checked)} />
       {t("模型支持图片输入")}</label>

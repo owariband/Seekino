@@ -435,6 +435,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const modelOptions = scopedChatModels.some((model) => model.id === DEFAULT_CHAT_MODEL_ID) ? scopedChatModels : [];
   const modelSelectionInvalid = !embedded && modelOptions.length > 0 && modelId !== DEFAULT_CHAT_MODEL_ID
     && !modelOptions.some((model) => model.id === modelId);
+  const personalModels = modelOptions.filter((model) => model.id.startsWith("personal:"));
+  const platformModels = modelOptions.filter((model) => model.id !== DEFAULT_CHAT_MODEL_ID && !model.id.startsWith("personal:"));
   const showModelChooser = !embedded && (modelOptions.length > 1 || modelSelectionInvalid);
   const creatingConversation = preparingAttachments || (searching && !conversationId);
   usePublishChatSettings(!embedded, { modelId, modelSaving, modelError, selectModel,
@@ -989,7 +991,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
         title={modelSaving ? t("正在保存回答模型…") : t("仅影响这个对话之后发送的问题")}
       >
         {modelSelectionInvalid ? <option value={modelId} disabled>{t("已保存的模型（当前不可用）")}</option> : null}
-        {modelOptions.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+        <option value={DEFAULT_CHAT_MODEL_ID}>{t("跟随服务默认")}</option>
+        {personalModels.length > 0 && <optgroup label={t("我的模型服务")}>
+          {personalModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+        </optgroup>}
+        {platformModels.length > 0 && <optgroup label={t("平台提供的模型")}>
+          {platformModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+        </optgroup>}
       </select>
       {modelSaving ? <LoaderCircle size={13} className={styles.spinning} aria-hidden="true" /> : null}
     </label>
@@ -1196,7 +1204,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 {answerSettingsPicker}
               </div>
               {modelChooser}
-              {inRouter && modelOptions.length > 0 ? <SettingsLink className={styles.modelSettingsLink} section="models"
+              {inRouter ? <SettingsLink className={styles.modelSettingsLink} section="models"
                 aria-label={t("回答模型设置")} title={t("回答模型设置")}><SlidersHorizontal size={15} aria-hidden="true" /></SettingsLink> : null}
             </div> : null}
             {!embedded && (modelError || modelSelectionInvalid) ? (

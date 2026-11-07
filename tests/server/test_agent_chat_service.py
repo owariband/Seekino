@@ -4014,6 +4014,8 @@ def test_personal_default_is_inherited_once_and_personal_runtime_is_scoped(build
     create = dict(tenant_id=first.tenant_id, idempotency_key="new-inherited")
     second = service.create_conversation(**create)
     assert first.model_id == "default" and second.model_id == ref
+    with pytest.raises(AgentConflictError):
+        service.create_conversation(**create, model_id="default")
     with pytest.raises(ValueError):
         service.create_conversation(tenant_id=first.tenant_id, owner_user_id="someone-else", model_id=ref, idempotency_key="wrong")
     answer = _send(service, second)

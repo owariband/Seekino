@@ -74,3 +74,18 @@ def test_upstream_cannot_echo_credentials_through_model_errors():
         with pytest.raises(PersonalModelRequestError, match="401") as error:
             _PersonalChatModel(target, client, 64)._generate([HumanMessage("hello")])
         assert "personal-key" not in str(error.value)
+
+
+def test_compatible_chat_endpoint_can_require_legacy_token_limit():
+    bodies = []
+    def legacy(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "max_completion_tokens" in body:
+            return httpx.Response(400, json={"error": {"message": "Unrecognized parameter max_completion_tokens"}})
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "accepted"}}]})
+
+    target = PersonalModelTarget("openai_chat", "https://example.org/v1", "custom", SecretStr(""), False)
+    with httpx.Client(transport=httpx.MockTransport(legacy)) as client:
+        assert _PersonalChatModel(target, client, 32)._generate([HumanMessage("Hi")]).generations[0].text == "accepted"
+    assert bodies[0]["max_completion_tokens"] == bodies[1]["max_tokens"] == 32

@@ -100,7 +100,7 @@ function ConnectionSettings() {
       </>}
       {!edit && <div className={styles.modelSelection}>
         <label className={styles.field}><span>{t("新对话默认模型")}</span>
-          <select disabled={busy} value={settings.defaultModelId}
+          <select aria-label={t("新对话默认模型")} disabled={busy} value={settings.defaultModelId}
             onChange={(e) => { const id = e.target.value; void action((signal) => savePersonalModelDefault(id, signal), saved); }}>
             <option value="default">{t("跟随服务默认")}</option>{personalChoices}
           </select>
@@ -108,7 +108,7 @@ function ConnectionSettings() {
       </div>}
       {chat && (!edit || !settings.connections.length) && <div className={styles.modelSelection}>
         <label className={styles.field}><span>{t("当前对话模型")}</span>
-          <select disabled={busy || chat.modelSaving || chat.loading} value={chat.modelId} onChange={(e) => void chat.selectModel(e.target.value)}>
+          <select aria-label={t("当前对话模型")} disabled={busy || chat.modelSaving || chat.loading} value={chat.modelId} onChange={(e) => void chat.selectModel(e.target.value)}>
             <option value="default">{t("跟随服务默认")}</option>{personalChoices}
             {legacy.length > 0 && <optgroup label={t("平台提供的模型")}>{legacy.map((m) => <option value={m.id} key={m.id}>{m.label}</option>)}</optgroup>}
             {chat.modelId !== "default" && !legacy.some((m) => m.id === chat.modelId) && !settings.connections.some((c) => c.models.some((m) => m.id === chat.modelId))

@@ -1,6 +1,7 @@
 """User-owned chat endpoints, using the same Deep Agents loop and tool history as hosted models."""
 from __future__ import annotations
 
+from time import monotonic
 from urllib.parse import quote
 
 import httpx
@@ -40,8 +41,19 @@ class _PersonalChatModel(BaseChatModel):
         self._http.close()
 
     def _post(self, path: str, headers: dict, payload: dict, timeout: float | None) -> dict:
-        response = self._http.post(self._target.base_url + path, headers=headers, json=payload,
-                                   timeout=timeout if timeout is not None else self._http.timeout)
+        url = self._target.base_url + path
+        timeout = timeout if timeout is not None else self._http.timeout.read
+        start = monotonic()
+        response = self._http.post(url, headers=headers, json=payload, timeout=timeout)
+        # Some compatible Chat Completions servers still require the older token limit field.
+        if path == "/chat/completions" and response.status_code in {400, 422} and "max_completion_tokens" in payload:
+            detail = response.text[:4000].lower()
+            if "max_completion_tokens" in detail and any(word in detail for word in ("unsupported", "not supported", "unknown", "unrecognized", "extra", "unexpected")):
+                remaining = None if timeout is None else timeout - (monotonic() - start)
+                if remaining is None or remaining > 0:
+                    legacy = {**payload}
+                    legacy["max_tokens"] = legacy.pop("max_completion_tokens")
+                    response = self._http.post(url, headers=headers, json=legacy, timeout=remaining)
         if not response.is_success:
             raise PersonalModelRequestError(f"模型接口返回 HTTP {response.status_code}")
         return response.json()
@@ -107,7 +119,7 @@ class _PersonalChatModel(BaseChatModel):
 
                 history = convert_to_openai_messages(messages)
                 _copy_assistant_reasoning(messages, history)
-                payload.update(messages=history, max_tokens=self._max_output)
+                payload.update(messages=history, max_completion_tokens=self._max_output)
                 data = self._post("/chat/completions", headers, payload, timeout)
                 return _result(_convert_dict_to_message(data["choices"][0]["message"]))
             raise PersonalModelRequestError("未知模型接口协议")

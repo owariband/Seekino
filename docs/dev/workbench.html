@@ -4751,6 +4751,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "source"
     }
    ]
+  },
+  {
+   "id": "CHAT-PERSONAL-MODELS-01",
+   "title": "自定义个人模型协议、地址与模型 ID",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "按用户配置模型连接，在当前聊天选择并通过真实协议回答。",
+   "next": "本地试点已验收，依赖 #72 后合并 #74。",
+   "verification": "四种协议完成本地 API 收发和工具合同测试。Chrome 核对服务编辑、选模、实际发送、删除和 320px 手机布局。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "feat/personal-model-connections",
+   "links": [
+    {
+     "label": "设计",
+     "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/design/03-product-reassessment/personal-model-connections-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #74",
+     "url": "https://github.com/owariband/Seekino/pull/74",
+     "kind": "pr"
+    },
+    {
+     "label": "验收",
+     "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/report/web/personal-model-connections-20261107.md",
+     "kind": "source"
+    }
+   ]
   }
  ]
 }</script>

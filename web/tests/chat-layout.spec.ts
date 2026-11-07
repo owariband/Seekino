@@ -67,8 +67,13 @@ test("opens a standalone mobile settings directory with authentic device prefere
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   await page.getByRole("button", { name: "返回设置分类" }).click();
   await navigation.getByRole("button", { name: "回答模型" }).click();
-  await expect(page.getByText("Second model", { exact: true })).toBeVisible();
-  await expect(page.getByRole("radio", { name: /Second model/ })).toHaveCount(0);
+  const protocol = page.getByRole("combobox", { name: "接口协议", exact: true });
+  await expect(protocol).toBeVisible();
+  await protocol.selectOption("gemini");
+  await expect(page.getByRole("textbox", { name: "Base URL", exact: true })).toHaveValue("https://generativelanguage.googleapis.com/v1beta");
+  await expect(page.getByRole("textbox", { name: "模型 ID", exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "保存连接" })).toBeEnabled();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
 });
 
 test("keeps a bounded centered draft and an independently collapsible history rail", async ({ page }, testInfo) => {
