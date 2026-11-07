@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-2026-11-07，分支 `perf/frame-link-lease-checks`，目标 `dev`。MyGO 第 3 集在 `19054aad` 上的 30 个主理解请求共使用了 5,931 张已抽取的帧图。把一块的 198 帧和一份音频硬链接到 worker 临时目录时，实测取得 200 次父行锁、200 次子行锁。媒体服务对每个文件调用 `check_active()`，实际执行的是 chunk 续租事务。这个成本随文件数增长。[上游解析调度设计](parse-ready-dispatch-trd.md) · [已合入的 PR #70](https://github.com/owariband/Seekino/pull/70)
+2026-11-07，分支 `perf/frame-link-lease-checks`，目标 `dev`，[PR #75](https://github.com/owariband/Seekino/pull/75)。MyGO 第 3 集在 `19054aad` 上的 30 个主理解请求共使用了 5,931 张已抽取的帧图。把一块的 198 帧和一份音频硬链接到 worker 临时目录时，实测取得 200 次父行锁、200 次子行锁。媒体服务对每个文件调用 `check_active()`，实际执行的是 chunk 续租事务。这个成本随文件数增长。[上游解析调度设计](parse-ready-dispatch-trd.md) · [已合入的 PR #70](https://github.com/owariband/Seekino/pull/70)
 
 # 2. 影响因素与指标
 
