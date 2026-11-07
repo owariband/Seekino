@@ -1,8 +1,6 @@
 """Forward optional display text while collecting verified results and tools."""
 from __future__ import annotations
 
-import socket
-
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from time import monotonic
@@ -16,6 +14,7 @@ from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.model_events import ModelReasoningDelta, ModelTextDelta, emit_model_reasoning, emit_model_text
 from gateway.usage import ModelCallTracker
+from gateway.streaming import cancel_http_stream
 from gateway.streaming.first_sse import FirstSSEDeadline
 
 
@@ -131,7 +130,7 @@ def _iter_chat_chunks(
             if first_sse_deadline is not None:
                 first_sse_deadline.attach_response(stream.response)
             usage_call.capture_response(stream.response, include_usage=False)
-            unregister = usage_call.add_cancel_callback(lambda: _cancel_chat_stream(stream))
+            unregister = usage_call.add_cancel_callback(lambda: cancel_http_stream(stream))
             for chunk in stream:
                 received_at = monotonic()
                 check()
@@ -204,25 +203,3 @@ def _iter_chat_chunks(
             "Chat completion stream ended without a terminal choice",
             reason=ModelFailureReason.MODEL_CONNECTION_ERROR,
         )
-
-
-def _cancel_chat_stream(stream: Any) -> None:
-    """Wake a blocked HTTP/1 read before closing the response and its client.
-
-    Closing a socket from another thread alone may leave recv blocked. HTTP/2
-    connections can be multiplexed, so never shut down their shared socket.
-    """
-    try:
-        response = getattr(stream, "response", None)
-        extensions = getattr(response, "extensions", {})
-        if (not getattr(response, "is_closed", False)
-                and extensions.get("http_version") in {b"HTTP/1.0", b"HTTP/1.1"}):
-            network = extensions.get("network_stream")
-            sock = network.get_extra_info("socket") if network is not None else None
-            if sock is not None:
-                sock.shutdown(socket.SHUT_RDWR)
-    except (AttributeError, OSError):
-        # SDK/test transports may not expose a socket, or it may already be closed.
-        pass
-    finally:
-        stream.close()
