@@ -27,6 +27,7 @@ from agent.chat.video_search.output import video_range_sources
 from engine.rag.contracts import VideoChunkEvidence
 from gateway.agent_model.contracts import SupervisorSessionContext
 from gateway.agent_model.errors import ModelFailureReason
+from gateway.model_events import observe_model_retry
 from gateway.model_diagnostics import model_diagnostic_scope
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
@@ -939,6 +940,31 @@ class AgentChatService:
             pending_text_blocks = None
             last_text_persist_ns = self._monotonic_clock()
 
+        retrying_calls: dict[str, dict[str, int]] = {}
+
+        def publish_retry(call_id: str, attempt: int, maximum: int) -> None:
+            with event_lock:
+                if execution.cancellation.is_set():
+                    return
+                previous = next(reversed(retrying_calls.values()), None)
+                retrying_calls.pop(call_id, None)
+                if attempt:
+                    retrying_calls[call_id] = {"attempt": attempt, "maximum": maximum}
+                current = next(reversed(retrying_calls.values()), None)
+                if previous == current:
+                    return
+                try:
+                    persist_pending_text()
+                    assistant = self._repository.checkpoint_assistant_message(
+                        assistant_id, now=self._clock(), model_retry=current or {},
+                    )
+                    execution.publish({
+                        "type": "answer.snapshot",
+                        **_message_pair(AgentMessageSendState(initial.user_message, assistant)),
+                    })
+                except Exception:
+                    _logger.exception("agent_retry_status_update_failed message_id=%s", assistant_id)
+
         def publish_runtime(event):
             # Intermediate message delivery observes execution; it does not own
             # the Tool result. Full snapshots and final commit can recover it.
@@ -1161,7 +1187,7 @@ class AgentChatService:
                 )
                 usage = self._parse_usage.capture_chat(context) if self._parse_usage is not None else nullcontext()
                 # This scope belongs to the executor thread that invokes the models.
-                with model_call_context(context), tracing, usage, model_diagnostic_scope(
+                with model_call_context(context), observe_model_retry(publish_retry), tracing, usage, model_diagnostic_scope(
                     os.environ.get("SEEKINO_CHAT_TRACE_DIR"),
                 ):
                     final = runtime.kick(
