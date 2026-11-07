@@ -116,3 +116,91 @@ def test_rebuild_reopens_current_index_and_ignores_a_late_receipt(repository):
     assert replacement.lease_version > old.lease_version
     _finish_index(repo, replacement, now=NOW)
     assert repo.aggregate_task(parent, now=NOW).status == "COMPLETE"
+
+
+def test_refine_prefers_free_members_and_still_fills_overlap_slots(repository):
+    factory = create_session_factory(repository[0])
+    queue, repo, _parent, _ = _ready(factory, 9)
+    claim = dict(lease_duration=DURATION, now=NOW)
+    for _ in range(9):
+        repo.commit_chunk_result(queue.claim_chunk("parse", **claim), content=RESULT, now=NOW)
+    leases = [queue.claim_interval_refine("refine", **claim) for _ in range(4)]
+    assert [lease.start_sequence_no for lease in leases] == [0, 3, 6, 1]
+
+
+def test_pause_skips_recovery_aggregation_until_resumed(repository, monkeypatch):
+    from server.mq import video_parse_queue as queue_module
+    from server.service.parse_control import set_paused
+
+    factory = create_session_factory(repository[0])
+    queue, _, parent, _ = _ready(factory, 3)
+    task_id = parent.video_parse_task_id
+    visited = []
+    aggregate = queue_module._aggregate_video_task
+    def counted(session, key, *args, **kwargs):
+        visited.append(key)
+        return aggregate(session, key, *args, **kwargs)
+    monkeypatch.setattr(queue_module, "_aggregate_video_task", counted)
+    for paused in (True, False):
+        with factory.begin() as session:
+            row = session.get(VideoParseTask, task_id)
+            set_paused(session, task_id, tenant_id="mine", paused=paused, expected_version=row.version,
+                       expected_lease_version=row.lease_version, now=NOW)
+        queue.reap_expired(now=NOW)
+        assert visited == ([] if paused else [task_id])
+
+
+def test_active_chunk_timing_never_fetches_content_and_late_receipt_reads_only_version(repository):
+    engine, _ = repository
+    queue, repo, _, _ = _ready(create_session_factory(engine), 1)
+    lease = queue.claim_chunk("parse", lease_duration=DURATION, now=NOW)
+    statements = []
+    def observe(_conn, _cursor, sql, *_):
+        if "from chunk_parse_content" in sql.lower():
+            statements.append(sql.lower())
+    event.listen(engine, "before_cursor_execute", observe)
+    try:
+        assert repo.record_execution_timing(lease, started_at_ms=123, elapsed_ms=100, now=NOW)
+        assert statements == []
+        repo.commit_chunk_result(lease, content=RESULT, now=NOW)
+        statements.clear()
+        assert repo.record_execution_timing(lease, started_at_ms=123, elapsed_ms=999,
+                                           finished=True, outcome="completed", now=NOW)
+        assert len(statements) == 1 and "json_extract" in statements[0]
+        assert "chunk_parse_content.content," not in statements[0]
+    finally:
+        event.remove(engine, "before_cursor_execute", observe)
+
+
+def test_understand_uses_one_snapshot_per_bound_lease(repository):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from contextvars import ContextVar
+    from types import SimpleNamespace
+
+    from server.service.video_parse import VideoParseRuntimeService
+
+    queue, repo, _, _ = _ready(create_session_factory(repository[0]), 2)
+    leases = [queue.claim_chunk("parse", lease_duration=DURATION, now=NOW) for _ in range(2)]
+    snapshots = {lease.chunk_parse_task_id: repo.load_chunk_execution(lease, now=NOW) for lease in leases}
+    reads = []
+    def load(lease):
+        reads.append(lease)
+        return snapshots[lease.chunk_parse_task_id]
+
+    @asynccontextmanager
+    async def model_stage(*_args, **_kwargs):
+        yield
+
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._chunk_binding = ContextVar("snapshot-test", default=None)
+    runtime._persistence = SimpleNamespace(load_chunk_execution=load)
+    runtime._model_stage = model_stage
+    async def invoke(chunk_id):
+        first = await runtime.load_chunk_execution(chunk_id)
+        assert first == await runtime.load_chunk_execution(chunk_id)
+        assert first.chunk_parse_task_id == chunk_id
+    runtime.agent = SimpleNamespace(chunk_workflow=SimpleNamespace(InvokeUnderstanding=invoke))
+    for lease in leases:
+        asyncio.run(runtime.understand(lease))
+    assert reads == leases

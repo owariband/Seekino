@@ -140,6 +140,21 @@ def get_content(
     return content_data(row) if row is not None else None
 
 
+def lease_committed(session: Session, task_id: str, phase: int, version: int) -> bool:
+    # Only the receipt is needed; detail also holds potentially large vectors.
+    if phase == ChunkTaskPhase.PARSE:
+        receipt = session.scalar(select(ChunkParseContent.detail["parse_committed_lease_version"]).where(
+            ChunkParseContent.chunk_task_id == task_id,
+        ))
+        return receipt == version
+    if phase == ChunkTaskPhase.INDEX:
+        receipts = session.scalar(select(ChunkParseContent.detail["index_committed_lease_versions"]).where(
+            ChunkParseContent.chunk_task_id == task_id,
+        ))
+        return isinstance(receipts, list) and version in receipts
+    return False
+
+
 def get_video_chunk(
     session: Session, chunk_id: str, *, for_update: bool = False,
 ) -> VideoChunkData | None:

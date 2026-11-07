@@ -596,13 +596,7 @@ class MySqlVideoParseQueue:
                 if (child is None or child.video_task_id != lease.video_parse_task_id
                     or child.chunk_id != lease.video_chunk_id):
                     return False
-                content = session.scalar(select(ChunkParseContent).where(
-                    ChunkParseContent.chunk_task_id == child.id,
-                ))
-                detail = content.detail if content is not None and isinstance(content.detail, dict) else {}
-                if lease.phase == ChunkTaskPhase.PARSE:
-                    return detail.get("parse_committed_lease_version") == lease.lease_version
-                return lease.phase == ChunkTaskPhase.INDEX and lease.lease_version in detail.get("index_committed_lease_versions", [])
+                return chunk_store.lease_committed(session, child.id, lease.phase, lease.lease_version)
 
             interval = session.get(
                 IntervalParseTask, lease.interval_parse_task_id
@@ -612,16 +606,8 @@ class MySqlVideoParseQueue:
                 or interval.video_task_id != lease.video_parse_task_id
             ):
                 return False
-            result = session.get(IntervalParseContent, interval.id)
-            if result is None:
-                return False
-            detail = result.detail if isinstance(result.detail, dict) else {}
-            if lease.phase == IntervalParseTaskStatus.REFINING.value:
-                return (
-                    detail.get("refinement_committed_lease_version")
-                    == lease.lease_version
-                )
-            return False
+            return (lease.phase == IntervalParseTaskStatus.REFINING.value
+                    and interval_store.refine_lease_committed(session, interval.id, lease.lease_version))
 
     def retry_video(
         self, lease: VideoParseLease, *, error: str,
@@ -798,6 +784,7 @@ class MySqlVideoParseQueue:
             query = select(VideoParseTask.id).where(
                 VideoParseTask.status.in_(["PARSING", "INDEXING"]),
                 VideoParseTask.is_deleted.is_(False),
+                func.coalesce(VideoParseTask.detail["execution_control"]["paused"].as_boolean(), False).is_(False),
             )
             if after is not None:
                 query = query.where(VideoParseTask.id > after)
@@ -814,7 +801,7 @@ class MySqlVideoParseQueue:
                     VideoParseTask.id == task_id, VideoParseTask.is_deleted.is_(False),
                     VideoParseTask.status.in_(["PARSING", "INDEXING"]),
                 ).with_for_update(skip_locked=True))
-                if task is not None:
+                if task is not None and not is_paused(task):
                     if _video_failure_status(task) is None:
                         waiting = list(session.scalars(select(ChunkParseTask.id).where(
                             ChunkParseTask.video_task_id == task.id,

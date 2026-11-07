@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from threading import Lock
@@ -90,7 +90,13 @@ class EpisodeReadyTasks:
             return ()
         due = (key for key, when in self.ready[stage].items() if when <= now)
         if stage == "refine":
-            return tuple(sorted(due, key=lambda key: self.windows[key].start_sequence_no))
+            # Shared members can supersede a neighbouring model request on commit.
+            occupied = Counter(member for window_id in self.running[stage]
+                               for member in self.windows[window_id].chunk_task_ids)
+            def priority(key):
+                window = self.windows[key]
+                return sum(occupied[member] for member in window.chunk_task_ids), window.start_sequence_no
+            return tuple(sorted(due, key=priority))
         if stage == "parse":
             due = (key for key in due if self.chunks[key].sequence_no < self.open_batches * self.batch_size)
         return tuple(sorted(due, key=lambda key: self.chunks[key].sequence_no))

@@ -69,6 +69,12 @@ def get_content(session: Session, interval_task_id: str) -> IntervalParseContent
     return content_data(row) if row is not None else None
 
 
+def refine_lease_committed(session: Session, task_id: str, version: int) -> bool:
+    return session.scalar(select(IntervalParseContent.detail["refinement_committed_lease_version"]).where(
+        IntervalParseContent.interval_task_id == task_id,
+    )) == version
+
+
 def list_tasks(
     session: Session, video_task_id: str, *, for_update: bool = False,
     start_range: tuple[int, int] | None = None,

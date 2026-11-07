@@ -1010,10 +1010,10 @@ class VideoParseRuntimeService:
         binding = self._require_chunk_binding()
         if binding.lease.chunk_parse_task_id != chunk_parse_task_id:
             raise VideoParseLeaseLostError("Chunk lease targets another task")
-        state = await asyncio.to_thread(
-            self._persistence.load_chunk_execution, binding.lease
-        )
-        binding.state = state
+        state = binding.state
+        if state is None:
+            state = await asyncio.to_thread(self._persistence.load_chunk_execution, binding.lease)
+            binding.state = state
         inputs = self._parse_input(state.task_input)
         asr = inputs.parse_config.models.asr
         return ChunkExecution(
@@ -2017,7 +2017,7 @@ class VideoParseRuntimeService:
                 schema_name=schema_name, result_type=result_type,
                 tools=tools,
                 context_checkpoint=canvas.checkpoint if canvas is not None else None,
-                check_control=manager.check_active if manager is not None else None,
+                check_control=manager.raise_if_cancelled if manager is not None else None,
                 fallback_inputs=fallback_inputs,
                 tool_harness=tool_harness,
             )
@@ -2025,7 +2025,7 @@ class VideoParseRuntimeService:
             self._invoke_multimodal, binding, inputs,
             schema_name=schema_name, result_type=result_type,
             fallback_inputs=fallback_inputs,
-            check_control=manager.check_active if manager is not None else None,
+            check_control=manager.raise_if_cancelled if manager is not None else None,
         )
 
     async def _generate_text_structured(
