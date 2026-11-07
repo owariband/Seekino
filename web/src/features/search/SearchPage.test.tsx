@@ -1192,7 +1192,6 @@ describe("Lazy conversation lifecycle", () => {
     render(<SearchPage />);
     const user = userEvent.setup();
     await screen.findByText("Saved answer");
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 Saved，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Saved，/ }));
     await waitFor(() => expect(screen.queryByText("Saved answer")).not.toBeInTheDocument());
