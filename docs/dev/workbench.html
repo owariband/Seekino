@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T01:06:00+08:00",
+ "updatedAt": "2026-11-07T12:33:09+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 15,
+ "revision": 16,
  "categories": [
   {
    "id": "parse",
@@ -4638,6 +4638,39 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "main 发布 #63",
      "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-05",
+   "title": "云端 HTTP 链接自动跳转 HTTPS",
+   "category": "platform",
+   "type": "task",
+   "status": "done",
+   "priority": "P1",
+   "description": "当前 CPU 的 80 端口返回 308，目标为配置的公开域名并保留原始路径和查询参数。",
+   "next": "后续前端版本同步时带上 #69 的部署配置。HTTPS 公信证书按独立事项处理。",
+   "verification": "配置 a907e45e 在当前 Web 镜像隔离预检及 CPU 实机通过。公网直连/系统代理共六组请求均一次 308 到 HTTPS 200，Chrome 实测同一导航链。五服务健康，使用测试证书。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "Nginx"
+   ],
+   "related": [
+    "MOD-PLATFORM",
+    "DEPLOY-03"
+   ],
+   "branch": "fix/cloud-http-redirect",
+   "links": [
+    {
+     "label": "云部署 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-http-redirect/docs/design/03-product-reassessment/cloud-docker-deploy-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "修复 #69",
+     "url": "https://github.com/owariband/Seekino/pull/69",
      "kind": "pr"
     }
    ]

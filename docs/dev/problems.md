@@ -2785,3 +2785,10 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 配置 SMTP 后恢复既有表单，本地资料上传不受远端邮件配置影响。HTTP、前端和两种视口
 回归通过；部署与发布范围见 [TRD](../design/03-product-reassessment/smtp-login-availability-trd.md)，
 当前状态统一维护在工作台 DEPLOY-04。
+
+### DEPLOY-05：云端 80 端口未监听，访客用 HTTP 打开链接得到 502
+
+2026-11-07 的客户端代理记录和公网复现均定位到 80 连接被拒绝。443 的站点已可通过测试
+证书访问，HTTP 缺少返回 HTTPS 地址的入口。验收以原域名、路径和查询参数经过一次 308
+抵达 HTTPS 页面为准。实机结果见[云部署 TRD](../design/03-product-reassessment/cloud-docker-deploy-trd.md)
+和[验收记录](devlog.md#devlog-cloud-http-redirect-20261107)。
