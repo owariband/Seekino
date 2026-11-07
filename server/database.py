@@ -628,11 +628,10 @@ def create_schema(engine: Engine) -> None:
             column["name"]: column["type"]
             for column in inspector.get_columns(table.name)
         }
-        if not isinstance(columns.get("text"), Text):
+        expected_text_type = LONGTEXT if engine.dialect.name == "mysql" else Text
+        if not isinstance(columns.get("text"), expected_text_type):
             incompatible_drafts.add(f"{table.name}.text.type")
         if engine.dialect.name == "mysql":
-            if not isinstance(columns.get("text"), LONGTEXT):
-                incompatible_drafts.add(f"{table.name}.text.type")
             if inspector.get_table_options(table.name).get("mysql_collate") != "utf8mb4_bin":
                 incompatible_drafts.add(f"{table.name}.collation")
             for column in inspector.get_columns(table.name):
