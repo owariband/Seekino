@@ -36,6 +36,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md) | 2026-11-05，长回答流式交付途中被判为慢消费者并断开 | 合并缓冲中相邻的未发送快照，持续读取的客户端不再收到中断 | 初稿；实验待测 |
 | [series-background-ownership-trd.md](series-background-ownership-trd.md) | 2026-11-05，系列概览讨论中发现简介、背景资料与人物资料归属不清 | 系列只保留“简介 + 一份背景资料”由用户维护，`character_bible` 转为只读兼容，Agent 使用显示名称 | 初稿；实验待测 |
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
+| [Chat 模型重试提示](chat-model-retry-status-trd.md) | 2026-11-07，local 观看问答 | 等待期间显示模型重试次数 | [PR #71](https://github.com/owariband/Seekino/pull/71) |
 | [chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md) | 2026-11-05，已有检索结果后正文每秒约 9 字到达页面 | 正文以增量事件交付、按间隔持久化，正文速度回到供应商水平 | 已实现，演示环境验收通过（2026-11-05）；正文 228–311 字/秒，9 回合最长 112 秒 |
 | [chat-lazy-conversation-trd.md](chat-lazy-conversation-trd.md) | 2026-11-07，打开对话页即在服务端创建对话，空“新对话”在记录中堆积 | 草稿态，首次发送或首次附件时才创建 | 实现完成、本机验证通过；待合并 |
 | [chat-answer-shape-trd.md](chat-answer-shape-trd.md) | 2026-11-05，回答含过程播报、长段与完成后的工具行 | 回答先结论、短段列表，完成后只留正文与视频片段 | 初稿；九门禁对照待测 |
