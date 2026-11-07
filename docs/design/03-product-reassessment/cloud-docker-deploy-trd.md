@@ -10,6 +10,11 @@ CPU 已由 #58/#59 修复并部署 main `0282fcb0`，镜像验收见 [构建修�
 显式记录 cloud 环境文件的忽略规则，真实凭据只保留在权限 600 的私有文件。
 本机 SMTP 与管理员邮箱为空，首次验证使用游客；GPU 重启后复查已有服务，不改向量合同。
 
+2026-11-07 的 HTTP 入口修复沿用本 TRD，工作分支为 `fix/cloud-http-redirect`，PR 创建后回填。
+云端候选仅在 443 提供服务。11:49 的客户端代理记录显示到 80 的连接被拒绝，公网直连 HTTP
+同样失败，经代理访问得到 502。使用测试证书访问 HTTPS 首页和健康接口均为 200。
+从 HTTP 打开原链接的访客需要被带到同一 HTTPS 页面，路径和查询参数应完整保留。
+
 **背景与触发场景。** Seekino 的第一个对外用途是简历筛选：面试官打开公开链接，自行浏览课程、检索并提问。演示目前只运行在本机——API 19641 从 detached worktree `outputs/worktrees/run-dev` 启动，数据在 v11 隔离库（MySQL 13361、ES 19231、本机媒体）。部署目标为两台服务器：一台 CPU 服务器（4C8G 量级，运行 Seekino Docker 栈）和一台待租用的 GPU 服务器（自托管模型）；两台都尚未交付 SSH。早先检查过的那台服务器已不是部署目标，此前对它的只读检查不再作为现状依据（2026-11-06 用户确认）。
 
 **实际与期望。** 期望：服务器上一条 compose 命令起完整栈，公网 HTTPS 同源提供 Web 与 API，`SEEKINO_AUTH_MODE=cloud` + `SEEKINO_PUBLIC_LIBRARY_ONLY=true`，游客与邮箱用户可观看、检索、问答。实际缺口（源码与模板核对，见 [cloud 首发说明](../../../deploy/cloud/README.md)）：
@@ -33,6 +38,7 @@ CPU 已由 #58/#59 修复并部署 main `0282fcb0`，镜像验收见 [构建修�
 | 本机数据可原样迁移 | 假设：mysqldump + ES snapshot（或 reindex）+ 媒体 rsync 一致 | 行数、文档数、媒体文件数与 sha 抽样对齐；迁移后门禁通过 | 记录差异，回到迁移脚本 |
 | 服务器能拉取镜像与模型依赖 | 未知：国内机器访问 Docker Hub / ghcr / npm / PyPI 可能受限 | 首次构建实测 | 配镜像源，或本机 buildx 构建 amd64 后传输 |
 | DeepSeek / Kimi 从服务器可达 | 假设可达 | 健康检查后的真实问答 | 配出口代理 |
+| 浏览器从 HTTP 进入 | CPU 上的 80 没有监听，代理返回 502 | 公网直连和经代理均返回 308，Location 指向公开域名并保留原 URI，跟随后原 HTTPS 路由可用 | 分别核对监听、服务器本机和公网入站 |
 
 | 指标 | 类型 | 定义 | 基线 | 目标 | 方法 |
 |---|---|---|---|---|---|
@@ -85,6 +91,12 @@ flowchart LR
 - **模型 base_url：** 服务器模型 YAML 中 `llama_cpp_embedding` 指向 `https://<GPU 主机>`，`openai_audio` 指向 `https://<GPU 主机>/v1`；非 loopback 地址必须是 HTTPS（`gateway/config.py` `_https_base_url` / `_audio_base_url`），因此 GPU 侧需要 TLS 入口。路由仍为 OpenRouter Jev，替换需改 `gateway/query_hook.py`，不在本 PR。
 - **环境模板：** `first-release.env.example` 与新模板合并为唯一的 `deploy/cloud/env.cloud.example`；由叠加文件固定的连接项（数据库、Redis、模型路径、来源）不再出现在模板中。
 - 拓扑说明写在 [cloud 首发说明](../../../deploy/cloud/README.md#服务器拓扑)。
+
+HTTP 入口续作在 cloud 的 Web Nginx 内增加 80 监听，返回 308，目标固定为部署配置中的
+`SEEKINO_PUBLIC_HOST` 与原始请求 URI。HTTPS 继续处理业务请求。本地原生模板使用独立
+配置前缀。CPU 试点只应用部署配置，沿用现场 Web 镜像，前端代码随既有发布安排同步。
+先用相同镜像校验 Nginx 配置，再检验首页、带编码路径和查询参数的地址、非 GET 方法、
+不同 Host 以及 HTTPS 健康。保留现场原 Compose 配置供回退。
 
 **实施边界。** 新增文件均在 `deploy/cloud/`；可能需要小改 `deploy/docker/nginx.conf` 以支持 443（或为 cloud 新建一份）；不改应用代码。如果发现 cloud 模式在容器内需要代码改动，单独开 PR。
 
