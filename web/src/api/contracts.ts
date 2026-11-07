@@ -608,7 +608,7 @@ export interface AgentMessageView {
   status: "PROCESSING" | "COMPLETED" | "FAILED";
   phase: AnswerPhase | null;
   /** Set only while a PROCESSING answer waits for a provider retry. */
-  reconnecting?: boolean;
+  modelRetry?: { attempt: number; maximum: number } | null;
   version: number;
   reference: EvidenceReference | null;
   attachments: AgentAttachmentView[];

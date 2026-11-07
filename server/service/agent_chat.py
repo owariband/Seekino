@@ -940,23 +940,23 @@ class AgentChatService:
             pending_text_blocks = None
             last_text_persist_ns = self._monotonic_clock()
 
-        retrying_calls: set[str] = set()
+        retrying_calls: dict[str, dict[str, int]] = {}
 
-        def publish_retry(call_id: str, reconnecting: bool) -> None:
+        def publish_retry(call_id: str, attempt: int, maximum: int) -> None:
             with event_lock:
                 if execution.cancellation.is_set():
                     return
-                was_retrying = bool(retrying_calls)
-                if reconnecting:
-                    retrying_calls.add(call_id)
-                else:
-                    retrying_calls.discard(call_id)
-                if was_retrying == bool(retrying_calls):
+                previous = next(reversed(retrying_calls.values()), None)
+                retrying_calls.pop(call_id, None)
+                if attempt:
+                    retrying_calls[call_id] = {"attempt": attempt, "maximum": maximum}
+                current = next(reversed(retrying_calls.values()), None)
+                if previous == current:
                     return
                 try:
                     persist_pending_text()
                     assistant = self._repository.checkpoint_assistant_message(
-                        assistant_id, now=self._clock(), reconnecting=bool(retrying_calls),
+                        assistant_id, now=self._clock(), model_retry=current or {},
                     )
                     execution.publish({
                         "type": "answer.snapshot",

@@ -72,13 +72,13 @@ def emit_model_reasoning(delta: ModelReasoningDelta) -> None:
         observer(delta)
 
 
-_retry_observer: ContextVar[Callable[[str, bool], None] | None] = ContextVar(
+_retry_observer: ContextVar[Callable[[str, int, int], None] | None] = ContextVar(
     "model_retry_observer", default=None,
 )
 
 
 @contextmanager
-def observe_model_retry(observer: Callable[[str, bool], None]) -> Iterator[None]:
+def observe_model_retry(observer: Callable[[str, int, int], None]) -> Iterator[None]:
     token = _retry_observer.set(observer)
     try:
         yield
@@ -86,7 +86,7 @@ def observe_model_retry(observer: Callable[[str, bool], None]) -> Iterator[None]
         _retry_observer.reset(token)
 
 
-def emit_model_retry(call_id: str, reconnecting: bool) -> None:
+def emit_model_retry(call_id: str, attempt: int, maximum: int) -> None:
     observer = _retry_observer.get()
     if observer is not None:
-        observer(call_id, reconnecting)
+        observer(call_id, attempt, maximum)

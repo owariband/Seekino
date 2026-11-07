@@ -319,7 +319,7 @@ class OpenAIAgentModel:
                     usage_call, messages=messages, timeout=timeout, **tool_options,
                 )
             finally:
-                emit_model_retry(usage_call.call_id, False)
+                emit_model_retry(usage_call.call_id, 0, MAX_CHAT_FIRST_SSE_ATTEMPTS - 1)
         return self._request_completion(
             client, usage_call, first_sse_deadline=None,
             messages=messages, timeout=timeout, **tool_options,
@@ -341,7 +341,7 @@ class OpenAIAgentModel:
                 break
             first_sse = FirstSSEDeadline(
                 remaining, limit_seconds=CHAT_FIRST_SSE_TIMEOUT_SECONDS,
-                on_first_event=(lambda: emit_model_retry(usage_call.call_id, False)) if attempt > 1 else None,
+                on_first_event=(lambda: emit_model_retry(usage_call.call_id, 0, MAX_CHAT_FIRST_SSE_ATTEMPTS - 1)) if attempt > 1 else None,
             )
             with OpenAI(
                 api_key=self._api_key,
@@ -364,7 +364,7 @@ class OpenAIAgentModel:
                         raise
                     if attempt == MAX_CHAT_FIRST_SSE_ATTEMPTS:
                         break
-                    emit_model_retry(usage_call.call_id, True)
+                    emit_model_retry(usage_call.call_id, attempt, MAX_CHAT_FIRST_SSE_ATTEMPTS - 1)
                     record_model_event("chat_first_sse_retry", {
                         "attempt": attempt,
                         "reason": retry_reason,

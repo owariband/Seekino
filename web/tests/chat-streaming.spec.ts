@@ -51,23 +51,27 @@ test("renders growing snapshots before model completion and records distinct rec
   const pair = { assistantMessage: message, userMessage: { ...message, messageId: "user", role: "USER", status: "COMPLETED", content: "请逐步解释矩阵" } };
   await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: 1, type: "answer.started" });
   await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: 2, type: "answer.snapshot",
-    assistantMessage: { ...message, phase: "RESPONDING", reconnecting: true, version: 2 } });
-  await expect(page.getByText("reconnect", { exact: true })).toBeVisible();
+    assistantMessage: { ...message, phase: "RESPONDING", modelRetry: { attempt: 1, maximum: 3 }, version: 2 } });
+  await expect(page.getByText("reconnecting 1/3", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("model-reconnect.png") });
+  await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: 3, type: "answer.snapshot",
+    assistantMessage: { ...message, phase: "RESPONDING", modelRetry: { attempt: 2, maximum: 3 }, version: 3 } });
+  await expect(page.getByText("reconnecting 2/3", { exact: true })).toBeVisible();
+  await expect(page.getByText("reconnecting 1/3", { exact: true })).toHaveCount(0);
   const source = { origin: "provider_delta", callId: "mock-call", deltaSequence: 1, modelFirstTextMs: 20,
     modelElapsedMs: 20, providerReceivedMonotonicMs: 100, serverPublishedMonotonicMs: 101, beforeModelCompleted: true };
   for (const [index, content] of ["矩阵把多个数按行列组织。", "矩阵把多个数按行列组织。向量可以看作只有一列的矩阵。"].entries()) {
-    await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: index + 3, type: "answer.snapshot",
-      assistantMessage: { ...message, content, version: index + 3, renderBlocks: [{ type: "markdown", markdown: content }] },
+    await page.evaluate((event) => window.chatEmit!(event), { ...base, ...pair, sequence: index + 4, type: "answer.snapshot",
+      assistantMessage: { ...message, content, version: index + 4, renderBlocks: [{ type: "markdown", markdown: content }] },
       textStream: { ...source, deltaSequence: index + 1 } });
-    await expect(page.getByText("reconnect", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("reconnecting 2/3", { exact: true })).toHaveCount(0);
     await expect(page.getByText(content, { exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.chatEvidence.filter((e) => e.stage === "text.rendered").length)).toBe(index + 1);
   }
   await page.screenshot({ path: testInfo.outputPath("before-model-completion.png") });
-  await page.evaluate((event) => window.chatEmit!(event), { ...base, sequence: 5, type: "answer.model.completed", callId: "mock-call" });
+  await page.evaluate((event) => window.chatEmit!(event), { ...base, sequence: 6, type: "answer.model.completed", callId: "mock-call" });
   await page.evaluate((event) => { window.chatEmit!(event); window.chatEmit!(null); }, { ...base, ...pair,
-    sequence: 6, type: "answer.completed", assistantMessage: { ...message, status: "COMPLETED", version: 5,
+    sequence: 7, type: "answer.completed", assistantMessage: { ...message, status: "COMPLETED", version: 6,
       content: "矩阵把多个数按行列组织。向量可以看作只有一列的矩阵。" } });
   const evidence = await page.evaluate(() => window.chatEvidence);
   expect(evidence.at(-1)).toMatchObject({ status: "completed", fttMs: null, fttValidity: "requires_trace" });
