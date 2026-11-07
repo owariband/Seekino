@@ -739,7 +739,9 @@ def test_cloud_yaml_settings_permissions_and_chat_projection(cloud_api, yaml_mod
                     supportsVision=row.supports_vision, revision=row.revision)
         result = client.get(path)
         options = client.get("/api/agent/messages/options")
-        assert "/api/agent/model-connections" not in client.get("/openapi.json").json()["paths"]
+        schema = client.get("/openapi.json").json()
+        assert "/api/agent/model-connections" not in schema["paths"]
+        assert "PersonalModelConnectionSave" not in schema["components"]["schemas"]
         if role == "admin":
             assert result.status_code == 200 and row.base_url in result.text
             assert ref in options.text and "synthetic-private-key" not in result.text

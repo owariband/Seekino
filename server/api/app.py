@@ -14,7 +14,7 @@ from ..config import ServerSettings
 from ..config.auth import AuthConfig
 from ..config.retrieval import RetrievalConfig
 from ..config.sse import SSEConfig
-from ..router import router
+from ..router import router, settings_router
 from .errors import register_exception_handlers
 from ..model.vo.commonVO import ApiError
 from ..utils.logging import request_id_context
@@ -118,21 +118,20 @@ def build_app(
                             "Content-Disposition", "X-Export-Summary"],
         )
     register_exception_handlers(app)
-    app.include_router(router, responses={
+    errors = {
         code: {"model": ApiError}
         for code in (400, 401, 403, 404, 409, 410, 422, 429, 500, 502, 503)
-    })
+    }
+    app.include_router(router, responses=errors)
+    app.include_router(settings_router, responses=errors, include_in_schema=auth_config.mode == "local")
     if mcp_app is not None:
         app.mount("/", mcp_app)
+    if auth_config.mode == "cloud":
+        return app
     generate_openapi = app.openapi
 
     def configured_openapi():
         schema = generate_openapi()
-        if auth_config.mode == "cloud":
-            for path in list(schema["paths"]):
-                if path.startswith("/api/agent/model-connections") or path == "/api/agent/global-settings":
-                    del schema["paths"][path]
-            return schema
         properties = schema["components"]["schemas"]["AgentMessageSendRequest"]["properties"]
         options = services.agent.message_options()
         for field_name, option in (

@@ -104,3 +104,16 @@ def test_old_personal_models_remain_owner_only_for_existing_conversations(tmp_pa
     with pytest.raises(PersonalModelNotFoundError):
         legacy.resolve("bob", ref)
     db.dispose()
+
+
+def test_legacy_yaml_honors_chat_override_before_and_after_an_edit(tmp_path):
+    from pathlib import Path
+    path = tmp_path / "v1.yaml"
+    path.write_bytes((Path(__file__).parents[1] / "gateway/fixtures/legacy-config.yaml").read_bytes())
+    env = {"SEEKINO_AGENT_CHAT_MODEL": "deployment/override", "DEEPSEEK_API_KEY": "fake", "ARK_API_KEY": "fake"}
+    store = ModelSettings(path, allow_local=True, environ=env)
+    assert store.catalog().find("default").binding.model == "deployment/override"
+    store.save(str(uuid4()), PersonalModelConnectionSave(name="added", protocol="gemini",
+               base_url="https://api.example.test", model_ids=["another/model"], revision=0))
+    assert load_config(path).config_version == 2
+    assert ModelSettings(path, allow_local=True, environ=env).catalog().find("default").binding.model == "deployment/override"

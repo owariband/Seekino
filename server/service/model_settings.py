@@ -49,7 +49,11 @@ class ModelSettings:
     def _catalog(self, data: dict, raw: bytes) -> YamlChatModels:
         try:
             config = config_from_document(data, self.path)
-            catalog = YamlChatModels(config, config.resolve_model_binding("supervisor", environ=self.environ), environ=self.environ)
+            independent = "supervisor" in config.normalized_models
+            primary = config.resolve_model_binding("supervisor" if independent else "agent", environ=self.environ)
+            if not independent:
+                primary = primary.model_copy(update={"reasoning_effort": None})
+            catalog = YamlChatModels(config, primary, environ=self.environ)
         except (ValueError, KeyError, TypeError):
             # Pydantic diagnostics include raw inputs, sometimes an entire model source.
             raise ValueError("模型配置与所选协议或现有用途不兼容，请检查配置") from None
