@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
-from functools import partial
 
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.query_hook import QueryHook
@@ -15,7 +14,7 @@ from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.deepagents import DeepAgentSessionStore
 from gateway.agent_model.factory import AgentModelFactory
 from gateway.config import (
-    ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, ModelBinding, load_config,
+    ChatAPISourceConfig, ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, ModelBinding, load_config,
 )
 from gateway.model_factory import GatewayClient
 from gateway.multimodal import adapter_capabilities
@@ -48,15 +47,16 @@ from .repository.model_usage import ModelUsageRepository
 from .repository.upload import UploadRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.agent_checkpoint import create_agent_checkpoint_store
-from .service.agent_chat import AgentChatService, ChatModelChoice
+from .service.agent_chat import AgentChatService
 from .service.agent_attachments import AgentAttachmentService
 from .service.auth import AuthService
 from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.mcp_retrieval import McpRetrievalService
-from .service.personal_models import PersonalModelConnections
-from .service.yaml_chat_models import YamlChatModels
+from .service.model_settings import ModelSettings
+from .service.personal_models import LegacyPersonalModels
+from .service.yaml_chat_models import YamlChatBinding
 from .service.parse_usage import ParseUsageService
 from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
@@ -86,7 +86,7 @@ class ApplicationServices:
     auth: AuthService | None = None
     agent_attachments: AgentAttachmentService | None = None
     mcp_retrieval: McpRetrievalService | None = None
-    personal_models: PersonalModelConnections | None = None
+    model_settings: ModelSettings | None = None
     supervisor_sessions: DeepAgentSessionStore | None = None
     _closed: bool = field(default=False, init=False, repr=False)
 
@@ -405,6 +405,7 @@ def _build_application_services(
     def build_supervisor_runtime(
         video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
         binding: ModelBinding, model_factory: AgentModelFactory, target: PersonalModelTarget | None,
+        harness: str,
     ) -> SupervisorRuntime:
         _validate_cloud_agent_timeout(settings, agent_config)
         if settings.auth.mode == "cloud":
@@ -440,7 +441,7 @@ def _build_application_services(
             )
         else:
             supervisor = model_factory.build_supervisor(
-                harness=gateway_config.supervisor_harness, mcp=gateway_config.supervisor_harness == "codex",
+                harness=harness, mcp=harness == "codex",
                 model=binding.model, **model_limits,
                 reasoning_effort=binding.reasoning_effort if binding.reasoning_effort is not None else agent_config.supervisor_reasoning_effort,
             )
@@ -474,31 +475,35 @@ def _build_application_services(
     def build_chat_runtime(
         agent_config: AgentServiceConfig, *, binding: ModelBinding = supervisor_binding,
         model_factory: AgentModelFactory = supervisor_model_factory, target: PersonalModelTarget | None = None,
+        harness: str = gateway_config.supervisor_harness,
     ) -> SupervisorRuntime:
         query_runtime = build_agent_runtime(agent_config)
         try:
-            return build_supervisor_runtime(query_runtime, agent_config, binding, model_factory, target)
+            return build_supervisor_runtime(query_runtime, agent_config, binding, model_factory, target, harness)
         except Exception:
             query_runtime.close()
             raise
 
-    yaml_models = YamlChatModels(gateway_config, supervisor_binding) if settings.auth.mode == "local" else None
-    available_bindings = gateway_config.available_supervisor_choices()
-    if yaml_models:
-        available_bindings.update({
-            model.runtime_ref: model.binding for model in yaml_models.models.values()
-            if model.runtime_ref != "default" and model.option.available
-        })
-    model_choices = {
-        ref: ChatModelChoice(
-            label=gateway_config.supervisor_choices.get(ref, binding.model),
-            build_runtime=partial(
-                build_chat_runtime, binding=binding,
-                model_factory=gateway_client.create_agent_factory(binding),
-            ),
-        )
-        for ref, binding in available_bindings.items()
-    }
+    model_settings = ModelSettings(settings.model_config_path, allow_local=settings.auth.mode == "local")
+
+    @contextmanager
+    def configured_runtime(selection: YamlChatBinding, config: AgentServiceConfig):
+        # Bind each turn to one validated document, including credentials. Its
+        # resources outlive streaming and are closed after the worker finishes.
+        with ExitStack() as resources:
+            source = selection.config.source(selection.binding.source)
+            if isinstance(source, ChatAPISourceConfig):
+                target = selection.target(environ=model_settings.environ)
+                runtime = build_chat_runtime(config, binding=selection.binding, target=target)
+            else:
+                client = GatewayClient(selection.config, supervisor_sessions=supervisor_sessions)
+                resources.callback(client.close)
+                factory = client.create_agent_factory(selection.binding)
+                runtime = build_chat_runtime(config, binding=selection.binding, model_factory=factory,
+                                             harness=selection.config.supervisor_harness)
+            resources.callback(runtime.close)
+            yield runtime
+
     runtime = build_chat_runtime(settings.agent)
 
     def load_agent_config() -> tuple[AgentServiceConfig, str]:
@@ -509,18 +514,17 @@ def _build_application_services(
     agent_attachments = AgentAttachmentService(
         agent_repository, artifact_store, config=settings.images,
     )
-    personal_models = PersonalModelConnections(
+    legacy_models = LegacyPersonalModels(
         session_factory, key_file=settings.artifact_root.parent / ".seekino-secrets" / "personal-models.key",
-        yaml_models=yaml_models,
-        signing_secret=settings.auth.secret_key if settings.auth.mode == "cloud" else "", allow_local=settings.auth.mode == "local",
+        signing_secret=settings.auth.secret_key if settings.auth.mode == "cloud" else "",
     )
     agent = AgentChatService(
         agent_repository, library, runtime,
         config=settings.agent,
         config_loader=load_agent_config,
         runtime_factory=build_chat_runtime,
-        model_choices=model_choices,
-        personal_models=personal_models,
+        model_settings=model_settings, configured_runtime=configured_runtime,
+        legacy_personal_models=legacy_models,
         personal_runtime_factory=lambda target, config: build_chat_runtime(config, target=target),
         delete_personal_thread=supervisor_sessions.delete_thread if gateway_config.supervisor_harness != "deepagents" else None,
         config_revision=config_revision,
@@ -573,7 +577,7 @@ def _build_application_services(
         media=media,
         retrieval=retrieval,
         agent=agent,
-        personal_models=personal_models,
+        model_settings=model_settings,
         supervisor_sessions=supervisor_sessions,
         agent_attachments=agent_attachments,
         parse_consumer=parse_consumer,

@@ -49,3 +49,9 @@ class PersonalModelConnectionView(ContractModel):
 class PersonalModelSettingsView(ContractModel):
     connections: list[PersonalModelConnectionView]
     default_model_id: str = "default"
+    revision: int = 0
+
+
+class ModelDefaultSave(ContractModel):
+    model_id: ModelName
+    revision: int | None = Field(default=None, ge=0)

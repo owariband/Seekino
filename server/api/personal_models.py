@@ -1,48 +1,46 @@
 from uuid import UUID
 
-from fastapi import HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 
 from ..model.dto.agentDTO import AgentConversationModelRequest
-from ..model.dto.personal_model import PersonalModelConnectionSave, PersonalModelSettingsView
-from ..service.personal_models import PersonalModelConnections
-from .context import get_identity, get_services
+from ..model.dto.personal_model import ModelDefaultSave, PersonalModelConnectionSave, PersonalModelSettingsView
+from ..service.model_settings import ModelSettings, PersonalModelNotFoundError
+from .context import get_services, require_config_access
 
 
-def _context(request: Request) -> tuple[str, PersonalModelConnections]:
-    identity = get_identity(request)
-    if identity.mode == "local" and (not request.client or request.client.host not in {"127.0.0.1", "::1", "testclient"}):
-        raise HTTPException(403, "请从本机管理个人模型连接")
-    service = get_services(request).personal_models
+def settings_service(request: Request, _=Depends(require_config_access)) -> ModelSettings:
+    service = get_services(request).model_settings
     if service is None:
-        raise HTTPException(503, "个人模型设置暂时不可用")
-    return identity.user_id, service
+        raise HTTPException(503, "模型设置暂时不可用")
+    return service
 
 
-def list_connections(request: Request) -> PersonalModelSettingsView:
-    owner, service = _context(request)
-    return service.list(owner)
+def list_connections(service: ModelSettings = Depends(settings_service)) -> PersonalModelSettingsView:
+    return service.catalog().settings()
 
 
-def save_connection(request: Request, body: PersonalModelConnectionSave, connection_id: UUID = Query(alias="connectionId")) -> PersonalModelSettingsView:
-    owner, service = _context(request)
-    return service.save(owner, str(connection_id), body)
+def save_connection(body: PersonalModelConnectionSave, connection_id: UUID = Query(alias="connectionId"),
+                    service: ModelSettings = Depends(settings_service)) -> PersonalModelSettingsView:
+    return service.save(str(connection_id), body)
 
 
-def delete_connection(request: Request, connection_id: UUID = Query(alias="connectionId"), revision: int = Query(ge=1)) -> PersonalModelSettingsView:
-    owner, service = _context(request)
-    return service.delete(owner, str(connection_id), revision)
+def delete_connection(connection_id: UUID = Query(alias="connectionId"), revision: int = Query(ge=1),
+                      service: ModelSettings = Depends(settings_service)) -> PersonalModelSettingsView:
+    return service.delete(str(connection_id), revision)
 
 
-def set_default(request: Request, body: AgentConversationModelRequest) -> PersonalModelSettingsView:
-    owner, service = _context(request)
-    return service.set_default(owner, body.model_id)
+def set_default(body: ModelDefaultSave, service: ModelSettings = Depends(settings_service)) -> PersonalModelSettingsView:
+    return service.set_default(body.model_id, body.revision)
 
 
-def test_connection(request: Request, body: AgentConversationModelRequest, connection_id: UUID = Query(alias="connectionId")) -> dict[str, bool]:
-    owner, service = _context(request)
+def test_connection(body: AgentConversationModelRequest, connection_id: UUID = Query(alias="connectionId"),
+                    service: ModelSettings = Depends(settings_service)) -> dict[str, bool]:
     from gateway.personal_models import PersonalModelRequestError, probe_personal_model
-
-    target = service.resolve(owner, body.model_id, connection_id=str(connection_id))
+    catalog = service.catalog()
+    binding = catalog.find(body.model_id)
+    if not binding or binding.connection.connection_id != str(connection_id):
+        raise PersonalModelNotFoundError()
+    target = binding.target(environ=service.environ)
     try:
         probe_personal_model(target, allow_local=service.allow_local)
     except PersonalModelRequestError as exc:

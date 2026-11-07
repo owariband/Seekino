@@ -38,14 +38,14 @@ type Catalog = { scope: string; settings: PersonalModelSettings } | { scope: str
 export function usePersonalChatModels(scope: string, enabled: boolean) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) { setCatalog(null); return; }
     let pending: AbortController;
     const refresh = () => {
       pending?.abort();
       pending = new AbortController();
       const { signal } = pending;
       void getPersonalModelSettings(signal).then((settings) => {
-        if (!Array.isArray(settings?.connections)) throw new Error("无法读取个人模型服务");
+        if (!Array.isArray(settings?.connections)) throw new Error("无法读取已配置的模型服务");
         if (!signal.aborted) setCatalog({ scope, settings });
       }).catch((error) => {
         if (!signal.aborted) setCatalog({ scope, error });

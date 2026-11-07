@@ -3250,40 +3250,34 @@ def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
         service.close()
 
 
-def test_personal_connection_settings_round_trip_without_admin_configuration(tmp_path, monkeypatch):
-    from server.service.personal_models import PersonalModelConnections
-
+def test_model_settings_api_updates_active_yaml(tmp_path, yaml_model_settings, monkeypatch):
+    import yaml
     client, _, _ = _client(tmp_path)
     services = client.app.state.services
-    store = PersonalModelConnections(services.agent._repository._session_factory, key_file=tmp_path / "key",
-                                     signing_secret="", allow_local=True)
-    services.personal_models = services.agent._personal_models = store
+    services.model_settings = services.agent._model_settings = yaml_model_settings
     path = "/api/agent/model-connections"
-    connection_id = str(uuid4())
-    endpoint = f"{path}?connectionId={connection_id}"
+    cid = str(uuid4())
+    endpoint = f"{path}?connectionId={cid}"
     try:
-        assert client.get(path).json() == {"connections": [], "defaultModelId": "default"}
-        services.agent._model_choices["hosted"] = ChatModelChoice("Platform model", lambda _: pytest.fail("unexpected hosted execution"))
-        assert client.get("/api/agent/messages/options").json()["chatModels"] == []
-        for i, model in enumerate(({}, {"modelId": "default"}, {"modelId": "hosted"})):
-            assert client.post("/api/agent/conversations/create", json={"tenantId": "local-default", **model},
-                               headers={"Idempotency-Key": f"unconfigured-{i}"}).status_code == 400
-        assert client.get("/api/agent/conversations/list", params={"tenantId": "local-default"}).json()["total"] == 0
+        initial = client.get(path).json()
+        assert initial["connections"] and all(c["origin"] == "yaml" for c in initial["connections"])
         body = {"name": "Any service", "protocol": "openai_responses", "baseUrl": "https://example.org/own/v1",
-                "modelIds": ["team/arbitrary"], "revision": 0, "apiKey": "test-secret"}
+                "modelIds": ["team/arbitrary"], "revision": 0, "apiKey": "synthetic-secret"}
         saved = client.put(endpoint, json=body)
-        assert saved.status_code == 200 and "test-secret" not in saved.text
-        ref = saved.json()["connections"][0]["models"][0]["id"]
+        assert saved.status_code == 200 and "synthetic-secret" not in saved.text
+        ref = next(c for c in saved.json()["connections"] if c["connectionId"] == cid)["models"][0]["id"]
         assert client.put(endpoint, json=body).status_code == 409
-        assert client.patch(path + "/default", json={"modelId": ref}).json()["defaultModelId"] == ref
-        options = client.get("/api/agent/messages/options").json()
-        assert options["newChatModelId"] == ref and [m["id"] for m in options["chatModels"]] == [ref]
+        default = client.patch(path + "/default", json={"modelId": ref, "revision": saved.json()["revision"]})
+        assert default.json()["defaultModelId"] == ref
+        document = yaml.safe_load(yaml_model_settings.path.read_bytes())
+        assert document["models"][document["chat_default_model"]]["model"] == "team/arbitrary"
+        assert client.get("/api/agent/messages/options").json()["newChatModelId"] == ref
         def fail_probe(*args, **kwargs):
-            raise RuntimeError("test-secret")
+            raise RuntimeError("synthetic-secret")
         monkeypatch.setattr("gateway.personal_models.probe_personal_model", fail_probe)
-        bad = client.post(path + "/test", params={"connectionId": connection_id}, json={"modelId": ref})
-        assert bad.status_code == 502 and "test-secret" not in bad.text
-        assert client.post(path + "/test", params={"connectionId": str(uuid4())}, json={"modelId": ref}).status_code == 404
-        assert client.delete(endpoint + "&revision=1").json()["connections"] == []
+        failed = client.post(path + "/test", params={"connectionId": cid}, json={"modelId": ref})
+        assert failed.status_code == 502 and "synthetic-secret" not in failed.text
+        assert client.delete(f"{endpoint}&revision={default.json()['revision']}").status_code == 200
+        assert cid not in yaml_model_settings.catalog().connections
     finally:
         services.agent.close()

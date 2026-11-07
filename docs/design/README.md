@@ -100,7 +100,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 独立对话页布局 | [chat-sidebar-layout-trd.md](03-product-reassessment/chat-sidebar-layout-trd.md) | 左侧历史、居中草稿、简洁输入栏；依赖 #66，状态见工作台 CHAT-LAYOUT-01。 |
-| 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 普通用户配置 API 协议、地址与多个模型 ID，按会话执行。 |
+| 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 本机或 cloud 管理员编辑 YAML 中的协议、地址和模型，聊天按会话选模。 |
 | 设置工作区 | [settings-workspace-trd.md](03-product-reassessment/settings-workspace-trd.md) | 分类设置、保留聊天草稿、共享 Kino 偏好及 Flash 与 Pro 同题对照。 |
 | 对话回答模型与输入区 | [chat-composer-models-trd.md](03-product-reassessment/chat-composer-models-trd.md) | 当前对话保存回答模型，输入面板支持附件，桌面历史可调宽。依赖 #67。 |
 | 观看回答交付 | [watch-answer-delivery-trd.md](03-product-reassessment/watch-answer-delivery-trd.md) | 修复：实时证据不提交视频卡、失败表述准确、回答长度与用户可见术语受控（LOOP-06 / C22 / C25）。 |

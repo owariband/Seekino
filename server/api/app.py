@@ -128,6 +128,11 @@ def build_app(
 
     def configured_openapi():
         schema = generate_openapi()
+        if auth_config.mode == "cloud":
+            for path in list(schema["paths"]):
+                if path.startswith("/api/agent/model-connections") or path == "/api/agent/global-settings":
+                    del schema["paths"][path]
+            return schema
         properties = schema["components"]["schemas"]["AgentMessageSendRequest"]["properties"]
         options = services.agent.message_options()
         for field_name, option in (

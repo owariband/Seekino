@@ -759,6 +759,7 @@ export interface PersonalModelConnection {
 export interface PersonalModelSettings {
   connections: PersonalModelConnection[];
   defaultModelId: string;
+  revision?: number;
 }
 
 export interface PersonalModelConnectionInput {

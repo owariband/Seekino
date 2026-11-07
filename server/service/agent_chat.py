@@ -6,7 +6,7 @@ from copy import deepcopy
 from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import ExitStack, nullcontext
+from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from queue import Empty
@@ -57,7 +57,9 @@ from ..utils.media import image_uri_to_data_url
 from ..utils.validation import canonical_uuid, require_nonempty_text
 from .library import LibraryService
 from .agent_attachments import AgentAttachmentService
-from .personal_models import PersonalModelConnections
+from .personal_models import LegacyPersonalModels
+from .model_settings import ModelSettings, PersonalModelNotFoundError
+from .yaml_chat_models import YamlChatBinding
 from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService
 
@@ -280,7 +282,9 @@ class AgentChatService:
         runtime_factory: Callable[[AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
         model_choices: Mapping[str, ChatModelChoice] | None = None,
-        personal_models: PersonalModelConnections | None = None,
+        model_settings: ModelSettings | None = None,
+        configured_runtime: Callable[[YamlChatBinding, AgentServiceConfig], AbstractContextManager] | None = None,
+        legacy_personal_models: LegacyPersonalModels | None = None,
         personal_runtime_factory: Callable[[PersonalModelTarget, AgentServiceConfig], SupervisorRuntime] | None = None,
         delete_personal_thread: Callable[[str], None] | None = None,
         tracing: LangfuseTracing | None = None,
@@ -299,7 +303,9 @@ class AgentChatService:
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
         self._config_revision = config_revision
-        self._personal_models = personal_models
+        self._model_settings = model_settings
+        self._configured_runtime = configured_runtime
+        self._legacy_personal_models = legacy_personal_models
         self._personal_runtime_factory = personal_runtime_factory
         self._delete_personal_thread = delete_personal_thread
         self._model_choices = dict(model_choices or {})
@@ -334,9 +340,10 @@ class AgentChatService:
 
     def message_options(self, *, owner_user_id: str | None = None) -> AgentMessageOptionsState:
         _, config, _ = self._current_config()
-        personal = self._personal_models.list(owner_user_id) if owner_user_id and self._personal_models else None
+        catalog = self._model_settings.catalog() if owner_user_id and self._model_settings else None
+        personal = catalog.settings() if catalog else None
         return AgentMessageOptionsState(
-            new_chat_model_id=self._personal_models.default_for_chat(owner_user_id, personal) if personal else "default",
+            new_chat_model_id=catalog.new_chat_id() if catalog else "default",
             chat_models=tuple(AgentModelOptionState(model.id, f"{connection.name} · {model.model_id}")
                               for connection in (personal.connections if personal else ()) for model in connection.models if model.available),
             top_k=AgentIntegerOptionState(
@@ -393,12 +400,10 @@ class AgentChatService:
             return self._runtime, self._config, self._executor
 
     def _model_choice(self, requested: str | None, owner: str) -> tuple[str, bool]:
-        if self._personal_models is not None:
-            settings = self._personal_models.list(owner)
-            selected = self._personal_models.default_for_chat(owner, settings) if requested is None else requested
-            if self._personal_models.yaml_binding(owner, selected):
-                return selected, True
-            return selected, any(model.id == selected and model.available for item in settings.connections for model in item.models)
+        if self._model_settings is not None:
+            catalog = self._model_settings.catalog()
+            selected = requested or catalog.new_chat_id()
+            return selected, catalog.find(selected) is not None
         selected = requested or "default"
         return selected, selected == "default" or selected in self._model_choices
 
@@ -702,10 +707,9 @@ class AgentChatService:
                 source_tenant_id=normalized_source if normalized_source != normalized_workspace else None,
             )
             if started is None:
-                yaml_model = self._personal_models.yaml_binding(owner_user_id, model_id) if self._personal_models else None
-                runtime_ref = yaml_model.runtime_ref if yaml_model else model_id
-                if self._personal_models is not None and yaml_model is None and not model_id.startswith("personal:"):
-                    raise ValueError("请先为这个对话选择自己配置的回答模型。")
+                yaml_model = self._model_settings.catalog().find(model_id) if self._model_settings else None
+                if self._model_settings and yaml_model is None and not model_id.startswith("personal:"):
+                    raise ValueError("已保存的回答模型当前不可用，请重新选择。")
                 if attachment_references:
                     if self._attachments is None:
                         raise AgentAttachmentInputUnavailableError("附件存储服务尚未配置。")
@@ -731,21 +735,25 @@ class AgentChatService:
                     owner_user_id=owner_user_id,
                     source_tenant_id=normalized_source,
                 )
-                if self._personal_models is not None and yaml_model is None:
-                    if self._personal_runtime_factory is None:
-                        raise RuntimeError("个人回答模型暂时不可用")
-                    target = self._personal_models.resolve(owner_user_id, model_id)
+                if yaml_model and self._configured_runtime:
+                    runtime = personal_resources.enter_context(self._configured_runtime(yaml_model, config))
+                elif model_id.startswith("personal:"):
+                    if not self._legacy_personal_models or not self._personal_runtime_factory:
+                        raise PersonalModelNotFoundError()
+                    target = self._legacy_personal_models.resolve(owner_user_id, model_id)
                     runtime = self._personal_runtime_factory(target, config)
                     personal_resources.callback(runtime.close)
-                elif runtime_ref != "default":
-                    if runtime_ref not in self._model_choices:
-                        raise ValueError("该回答模型当前不可用，请重新选择。")
-                    cache_key = (runtime_ref, config)
-                    if cache_key not in self._model_runtimes:
-                        alternative = self._model_choices[runtime_ref].build_runtime(config)
-                        self._model_runtimes[cache_key] = alternative
-                        self._runtimes.append(alternative)
-                    runtime = self._model_runtimes[cache_key]
+                else:
+                    runtime_ref = yaml_model.runtime_ref if yaml_model else model_id
+                    if runtime_ref != "default":
+                        if runtime_ref not in self._model_choices:
+                            raise ValueError("该回答模型当前不可用，请重新选择。")
+                        cache_key = (runtime_ref, config)
+                        if cache_key not in self._model_runtimes:
+                            alternative = self._model_choices[runtime_ref].build_runtime(config)
+                            self._model_runtimes[cache_key] = alternative
+                            self._runtimes.append(alternative)
+                        runtime = self._model_runtimes[cache_key]
                 timing_started_at = self._clock()
                 timing_started_ns = self._monotonic_clock()
                 started = self._repository.start_message(
@@ -793,7 +801,7 @@ class AgentChatService:
                     owner_user_id=owner_user_id, conversation_tenant_id=normalized_workspace,
                     playback_series_id=playback_series_id,
                 )
-                if model_id.startswith("personal:"):
+                if self._model_settings or model_id.startswith("personal:"):
                     resources = personal_resources.pop_all()
                     execution.future.add_done_callback(lambda _: resources.close())
             except Exception:

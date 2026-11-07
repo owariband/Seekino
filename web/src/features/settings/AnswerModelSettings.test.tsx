@@ -5,10 +5,11 @@ import * as api from "../../api/client";
 import type { PersonalModelConnection, PersonalModelSettings } from "../../api/contracts";
 import { configuredModels } from "../../test/personalModelFixtures";
 import { AnswerModelSettings } from "./AnswerModelSettings";
+import { PersonalConnectionForm } from "./PersonalConnectionForm";
 import { preferredChatModel, rememberChatModel, savedChatModelId } from "./usePersonalChatModels";
 
 vi.mock("../../app/workspace", () => ({ useWorkspace: () => ({ mode: "live" }) }));
-vi.mock("../auth/AuthProvider", () => ({ useAuth: () => ({ scopeKey: "local" }) }));
+vi.mock("../auth/AuthProvider", () => ({ useAuth: () => ({ scopeKey: "local", canConfigure: true }) }));
 
 const yamlModel = { id: "yaml:test-primary", modelId: "my/team-model", isYamlDefault: true, aliases: ["default"] };
 const yamlConnection: PersonalModelConnection = {
@@ -18,21 +19,28 @@ const yamlConnection: PersonalModelConnection = {
 beforeEach(() => { localStorage.clear(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it("shows configured YAML connections with a credential mask instead of prompting to set them up again", async () => {
+it("shows configured YAML connections as editable with a credential mask instead of an origin badge", async () => {
   vi.spyOn(api, "getPersonalModelSettings").mockResolvedValue({ defaultModelId: "default", connections: [yamlConnection] });
   render(<AnswerModelSettings active />);
   const card = await screen.findByRole("article");
   expect(within(card).getByRole("heading", { name: "home_proxy" })).toBeVisible();
-  expect(within(card).getByText("来自 YAML")).toBeVisible();
+  expect(within(card).queryByText("来自 YAML")).not.toBeInTheDocument();
   expect(within(card).getByLabelText("API Key 已配置")).toHaveTextContent("••••••••");
   expect(within(card).getByText("my/team-model")).toBeVisible();
   expect(within(card).getByRole("button", { name: "测试连接" })).toBeEnabled();
-  expect(within(card).queryByRole("button", { name: "删除" })).not.toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "编辑" })).toBeEnabled();
+  expect(within(card).getByRole("button", { name: "删除" })).toBeEnabled();
   expect(screen.queryByRole("textbox", { name: "API Key" })).not.toBeInTheDocument();
   expect((screen.getByRole("combobox", { name: "新对话默认模型" }) as HTMLSelectElement).selectedOptions[0]?.textContent).toContain(yamlModel.modelId);
 });
 
-it("displays a saved personal key as a mask and omits it from an unchanged edit", async () => {
+it("does not repeat shared model IDs when opening the connection form", () => {
+  const shared = { ...yamlConnection, models: [yamlModel, { ...yamlModel }] };
+  render(<PersonalConnectionForm connection={shared} busy={false} save={() => undefined} />);
+  expect(screen.getByLabelText("模型 ID")).toHaveValue(yamlModel.modelId);
+});
+
+it("displays a saved configured key as a mask and omits it from an unchanged edit", async () => {
   vi.spyOn(api, "getPersonalModelSettings").mockResolvedValue(configuredModels);
   const save = vi.spyOn(api, "savePersonalModelConnection").mockResolvedValue(configuredModels);
   render(<AnswerModelSettings active />);

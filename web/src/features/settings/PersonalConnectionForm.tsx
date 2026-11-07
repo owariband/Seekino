@@ -25,7 +25,7 @@ export function PersonalConnectionForm({ connection, busy, cancel, save }: {
   const [url, setUrl] = useState(connection?.baseUrl ?? protocols[protocol].url);
   const [key, setKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
-  const [models, setModels] = useState(connection?.models.map((m) => m.modelId).join("\n") ?? "");
+  const [models, setModels] = useState(() => Array.from(new Set(connection?.models.map((m) => m.modelId) ?? [])).join("\n"));
   const [vision, setVision] = useState(connection?.supportsVision ?? false);
   const [error, setError] = useState("");
   const destinationChanged = connection && (connection.protocol !== protocol || connection.baseUrl !== url.trim().replace(/\/+$/, ""));

@@ -179,7 +179,7 @@ function renderPage(
 }
 
 beforeEach(() => {
-  mocks.useAuth.mockReturnValue({ canManage: true, activeSource: { kind: "local" }, scopeKey: "local" });
+  mocks.useAuth.mockReturnValue({ canManage: true, canConfigure: true, activeSource: { kind: "local" }, scopeKey: "local" });
   mocks.send.mockReset();
   mocks.send.mockImplementation((_content, _scope, _reference, _options, _context, submission) => submission?.onAccepted?.());
   mocks.stop.mockReset();
@@ -343,6 +343,17 @@ describe("Search assistant presentation", () => {
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(mocks.send).toHaveBeenLastCalledWith("继续", [], null, {}, null, expect.objectContaining({ attachments: [], onAccepted: expect.any(Function) }));
+  });
+
+  it("lets a cloud guest send through the default without fetching or showing model settings", async () => {
+    mocks.useAuth.mockReturnValue({ canManage: false, canConfigure: false, activeSource: { kind: "public" }, scopeKey: "guest" });
+    renderPage(assistantMessage("可以提问"));
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续{Enter}");
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(api.getPersonalModelSettings).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: /配置模型|回答模型设置/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "回答模型" })).not.toBeInTheDocument();
   });
 
   it("offers setup with no personal models and retains the question without sending", async () => {

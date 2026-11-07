@@ -944,9 +944,9 @@ export function removePersonalModelConnection(id: string, revision: number, sign
     { method: "DELETE", signal });
 }
 
-export function savePersonalModelDefault(modelId: string, signal?: AbortSignal) {
+export function savePersonalModelDefault(modelId: string, signal?: AbortSignal, revision?: number) {
   return requestJson<PersonalModelSettings>(personalModelsPath + "/default", {
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId }), signal,
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId, revision }), signal,
   });
 }
 

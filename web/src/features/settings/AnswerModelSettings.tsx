@@ -1,6 +1,6 @@
 import { Cable, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, getPersonalModelSettings, removePersonalModelConnection,
+import { ApiClientError, errorMessage, getPersonalModelSettings, removePersonalModelConnection,
   savePersonalModelConnection, savePersonalModelDefault, testPersonalModelConnection } from "../../api/client";
 import type { PersonalModelConnection, PersonalModelSettings } from "../../api/contracts";
 import { useI18n } from "../../app/i18n";
@@ -12,10 +12,10 @@ import { MASKED_API_KEY, PersonalConnectionForm, protocols } from "./PersonalCon
 import styles from "./personal.module.css";
 
 export function AnswerModelSettings({ active }: { active: boolean }) {
-  const { scopeKey } = useAuth();
+  const { scopeKey, canConfigure } = useAuth();
   const { mode } = useWorkspace();
   const { t } = useI18n();
-  if (!active) return null;
+  if (!active || !canConfigure) return null;
   if (mode !== "live") return <p role="status" className={styles.feedback}>{t(mode === "offline" ? "当前资料连接不可用。" : "正在连接…")}</p>;
   return <ConnectionSettings key={scopeKey} />;
 }
@@ -31,6 +31,7 @@ function ConnectionSettings() {
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [conflict, setConflict] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const inFlight = useRef(false);
   const localeRef = useRef(locale);
@@ -51,12 +52,15 @@ function ConnectionSettings() {
     const signal = controller.current?.signal;
     if (!signal || signal.aborted || inFlight.current) return;
     inFlight.current = true;
-    setBusy(true); setError(""); setFeedback("");
+    setBusy(true); setError(""); setFeedback(""); setConflict(false);
     try {
       const result = await run(signal);
       if (!signal.aborted) done(result);
     } catch (e) {
-      if (!signal.aborted) setError(errorMessage(e, localeRef.current));
+      if (!signal.aborted) {
+        setError(errorMessage(e, localeRef.current));
+        setConflict(e instanceof ApiClientError && e.status === 409);
+      }
     } finally {
       inFlight.current = false;
       if (!signal.aborted) setBusy(false);
@@ -67,7 +71,7 @@ function ConnectionSettings() {
     window.dispatchEvent(new Event("seekino:model-connections-changed"));
   }
   const open = (previous?: PersonalModelConnection) => {
-    setError(""); setFeedback("");
+    setError(""); setFeedback(""); setConflict(false);
     setEdit({ id: previous?.connectionId ?? crypto.randomUUID(), previous });
   };
   const yamlDefault = settings?.connections.flatMap((connection) => connection.models).find((model) => model.isYamlDefault && model.available !== false);
@@ -75,8 +79,8 @@ function ConnectionSettings() {
     {c.models.filter((m) => m.available !== false).map((m) => <option value={m.id} key={m.id}>{m.modelId}</option>)}
   </optgroup>);
   return <div className={styles.workspace}>
-    {error && <p className={styles.error} role="alert">{error} {!settings && <button type="button" className={styles.button}
-      onClick={() => setRefresh((n) => n + 1)}>{t("重试")}</button>}</p>}
+    {error && <p className={styles.error} role="alert">{error} {(!settings || conflict) && <button type="button" className={styles.button}
+      onClick={() => { setEdit(null); setConflict(false); setRefresh((n) => n + 1); }}>{t(conflict ? "重新载入设置" : "重试")}</button>}</p>}
     {feedback && <p className={styles.feedback} role="status">{feedback}</p>}
     {!settings && !error && <p className={styles.feedback} role="status">{t("正在读取模型服务…")}</p>}
     {settings && <>
@@ -87,7 +91,7 @@ function ConnectionSettings() {
             saved(value); setEdit(null); setFeedback(t("已保存连接"));
           })} />
       </> : <>
-        <div className={styles.toolbar}><h3 className={styles.lead}>{t("我的模型服务")}</h3>
+        <div className={styles.toolbar}><h3 className={styles.lead}>{t("已配置的模型服务")}</h3>
           <button type="button" className={styles.primary} disabled={busy} onClick={() => open()}><Plus size={16} />{t("添加模型服务")}</button>
         </div>
         <div className={styles.list}>{settings.connections.map((c) => <ConnectionCard key={c.connectionId} connection={c} busy={busy}
@@ -98,7 +102,7 @@ function ConnectionSettings() {
       {!edit && <div className={styles.modelSelection}>
         <label className={styles.field}><span>{t("新对话默认模型")}</span>
           <select aria-label={t("新对话默认模型")} disabled={busy} value={settings.defaultModelId}
-            onChange={(e) => { const id = e.target.value; void action((signal) => savePersonalModelDefault(id, signal), saved); }}>
+            onChange={(e) => { const id = e.target.value; void action((signal) => savePersonalModelDefault(id, signal, settings.revision), saved); }}>
             <option value="default">{yamlDefault ? t("最近选择或 YAML 默认（{value0}）", { value0: yamlDefault.modelId }) : t("使用最近选择的模型")}</option>{personalChoices}
           </select>
         </label>
@@ -121,12 +125,10 @@ function ConnectionCard({ connection: c, busy, edit, remove, test }: {
   const [confirm, setConfirm] = useState(false);
   const [choice, setChoice] = useState("");
   const selected = c.models.find((m) => m.id === choice && m.available !== false) ?? c.models.find((m) => m.available !== false) ?? c.models[0];
-  const fromYaml = c.origin === "yaml";
   const protocolLabel = c.protocol === "codex" ? "Codex CLI" : protocols[c.protocol].label;
   return <article className={styles.card}>
     <div className={styles.connectionHeading}>
       <h4 className={styles.title}><Cable size={18} aria-hidden="true" />{c.name}</h4>
-      {fromYaml && <span className={styles.source}>{t("来自 YAML")}</span>}
     </div>
     <div className={styles.meta}>{protocolLabel}{c.baseUrl ? ` · ${c.baseUrl}` : ""}</div>
     {c.protocol !== "codex" && <div className={styles.credential}>
@@ -139,7 +141,7 @@ function ConnectionCard({ connection: c, busy, edit, remove, test }: {
       <div className={styles.actions}>
         {c.protocol !== "codex" && <button type="button" className={styles.button} disabled={busy || !selected || selected.available === false}
           onClick={() => selected && test(selected.id)}>{t("测试连接")}</button>}
-        {!fromYaml && <>
+        {c.protocol !== "codex" && <>
           <button type="button" className={styles.button} disabled={busy} onClick={edit}>{t("编辑")}</button>
           <button type="button" className={styles.button} disabled={busy} onClick={() => setConfirm(true)}>{t("删除")}</button>
         </>}

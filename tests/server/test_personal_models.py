@@ -1,98 +1,106 @@
+import json
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select
+import yaml
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from gateway.config import load_config, resolve_source_api_key
+from server.config.yaml_document import GlobalAgentSettingsConflictError
 from server.model.dto.personal_model import PersonalModelConnectionSave
 from server.model.personal_models import PersonalModelPreferences
-from server.service.personal_models import PersonalModelConnections, PersonalModelConflictError, PersonalModelNotFoundError
+from server.service.model_settings import ModelSettings, PersonalModelNotFoundError
 
 
-def test_personal_connections_are_owned_encrypted_and_versioned(tmp_path):
+def _input(connection, **updates):
+    fields = dict(name=connection.name, protocol=connection.protocol, base_url=connection.base_url,
+                  model_ids=list(dict.fromkeys(m.model_id for m in connection.models)),
+                  supports_vision=connection.supports_vision, revision=connection.revision)
+    return PersonalModelConnectionSave(**(fields | updates))
+
+
+def test_native_settings_edit_active_yaml_and_preserve_env_secret(yaml_model_settings):
+    store = yaml_model_settings
+    before = yaml.safe_load(store.path.read_bytes())
+    store.path.write_text("# keep operator note\n" + store.path.read_text())
+    row = next(c for c in store.catalog().connections.values() if c.name == "my-endpoint")
+    assert row.origin == "yaml" and row.has_api_key and row.models[0].is_yaml_default
+    assert [m.model_id for m in row.models] == ["team/home", "team/alternative", "team/discovered"]
+    assert not any(x in store.catalog().settings().model_dump_json() for x in ("synthetic-private-key", "TEST_LOCAL_PROVIDER_KEY"))
+    submitted = _input(row, name="团队接口", model_ids=[m.model_id for m in row.models] + ["team/new"])
+    store.save(row.connection_id, submitted)
+    assert store.path.read_text().startswith("# keep operator note")
+    current = yaml.safe_load(store.path.read_bytes())
+    assert current["model_sources"]["my-endpoint"] == before["model_sources"]["my-endpoint"] | {"display_name": "团队接口"}
+    assert all(current["models"][k] == v for k, v in before["models"].items())
+    assert all(current[k] == v for k, v in before.items() if k not in {"models", "model_sources"})
+    with pytest.raises(GlobalAgentSettingsConflictError):
+        store.save(row.connection_id, submitted)
+    reloaded = ModelSettings(store.path, allow_local=True, environ=store.environ)
+    row = reloaded.catalog().connections[row.connection_id]
+    assert row.name == "团队接口" and row.models[-1].model_id == "team/new"
+    assert reloaded.catalog().find("my-alternative").target(environ=store.environ).api_key.get_secret_value() == "synthetic-private-key"
+    with pytest.raises(ValueError, match="API Key"):
+        store.save(row.connection_id, _input(row, base_url="https://different.example"))
+    assert not (store.path.parent / ".seekino-secrets").exists()
+    with pytest.raises(ValueError, match="引用"):
+        store.delete(row.connection_id, row.revision)
+    store.save(row.connection_id, _input(row, api_key="rotated-synthetic-key"))
+    config = load_config(store.path)
+    assert resolve_source_api_key(config.source("my-endpoint"), environ={}) == "rotated-synthetic-key"
+    assert all(v not in store.path.read_text() for v in ("synthetic-private-key", "rotated-synthetic-key"))
+    assert (store.path.parent / ".seekino-secrets/model-config.key").stat().st_mode & 0o777 == 0o600
+    assert store.catalog().find("my-alternative").target(environ={}).api_key.get_secret_value() == "rotated-synthetic-key"
+
+
+@pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses", "anthropic_messages", "gemini"])
+def test_yaml_managed_protocol_default_conflict_and_removal(yaml_model_settings, protocol):
+    store = yaml_model_settings
+    cid = str(uuid4())
+    body = PersonalModelConnectionSave(name="Team", protocol=protocol, base_url="https://api.example.test/v1",
+                                       api_key="example-write-only", model_ids=["team/any"], revision=0)
+    added = store.save(cid, body)
+    row = next(c for c in added.connections if c.connection_id == cid)
+    model_id = row.models[0].id
+    assert "example-write-only" not in added.model_dump_json() + store.path.read_text()
+    assert store.catalog().find(model_id).target().protocol == protocol
+    assert store.set_default(model_id, added.revision).default_model_id == model_id
+    with pytest.raises(GlobalAgentSettingsConflictError):
+        store.set_default("default", added.revision)
+    data = yaml.safe_load(store.path.read_bytes())
+    assert data["models"][data["chat_default_model"]]["model"] == "team/any"
+    reload = ModelSettings(store.path, allow_local=False, environ={})
+    assert reload.catalog().new_chat_id() == model_id
+    row = reload.catalog().connections[cid]
+    changed = reload.save(cid, _input(row, model_ids=["renamed"], api_key=""))
+    assert changed.default_model_id != model_id and reload.catalog().find(changed.default_model_id).target().api_key.get_secret_value() == ""
+    assert reload.delete(cid, changed.revision).default_model_id == "default"
+    assert not any(c.connection_id == cid for c in store.catalog().settings().connections)
+    with pytest.raises(PersonalModelNotFoundError):
+        store.set_default(model_id)
+
+
+def test_old_personal_models_remain_owner_only_for_existing_conversations(tmp_path):
+    import base64
+    from uuid import UUID, uuid5
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from server.service.personal_models import LegacyPersonalModels
     db = create_engine("sqlite://")
     PersonalModelPreferences.__table__.create(db)
     sessions = sessionmaker(db)
-    path = tmp_path / "vault" / "secret"
-    store = PersonalModelConnections(sessions, key_file=path, signing_secret="", allow_local=True)
     cid = str(uuid4())
-    fields = dict(name="My service", protocol="openai_chat", base_url="http://localhost:4242/v1", model_ids=["org/custom"], revision=0)
-    assert not store.list("alice").connections and not path.exists()
-    added = store.save("alice", cid, PersonalModelConnectionSave(**fields, api_key="test-only-secret"))
-    assert "test-only-secret" not in added.model_dump_json() and added.connections[0].has_api_key
-    with sessions() as session:
-        assert "test-only-secret" not in str(session.scalar(select(PersonalModelPreferences)).connections)
-    assert path.stat().st_mode & 0o777 == 0o600
-    ref = added.connections[0].models[0].id
-    assert store.set_default("alice", ref).default_model_id == ref
-    assert not store.list("bob").connections
+    path = tmp_path / "old.key"
+    path.write_bytes(AESGCM.generate_key(bit_length=256))
+    nonce = b"test-nonce12"
+    aad = json.dumps(["alice", cid, "gemini", "https://team.example"]).encode()
+    sealed = base64.b64encode(nonce + AESGCM(path.read_bytes()).encrypt(nonce, b"old-synthetic", aad)).decode()
+    with sessions.begin() as session:
+        session.add(PersonalModelPreferences(owner_id="alice", default_model="default", revision=1, connections=[
+            dict(id=cid, protocol="gemini", url="https://team.example", models=["old"], key=sealed, vision=False)]))
+    legacy = LegacyPersonalModels(sessions, key_file=path, signing_secret="")
+    ref = f"personal:{uuid5(UUID(cid), 'old')}"
+    assert legacy.resolve("alice", ref).api_key.get_secret_value() == "old-synthetic"
     with pytest.raises(PersonalModelNotFoundError):
-        store.resolve("bob", ref)
-    with pytest.raises(PersonalModelNotFoundError):
-        store.set_default("bob", ref)
-    with pytest.raises(PersonalModelNotFoundError):
-        store.resolve("alice", ref, connection_id=str(uuid4()))
-    fields.update(revision=1, model_ids=["other", "org/custom"])
-    assert store.save("alice", cid, PersonalModelConnectionSave(**fields)).connections[0].models[1].id == ref
-    assert store.resolve("alice", ref).api_key.get_secret_value() == "test-only-secret"
-    with pytest.raises(PersonalModelConflictError):
-        store.save("alice", cid, PersonalModelConnectionSave(**fields))
-    with pytest.raises(PersonalModelConflictError):
-        store.delete("alice", cid, 1)
-    fields.update(revision=2, base_url="https://proxy.example/v1")
-    with pytest.raises(ValueError, match="API Key"):
-        store.save("alice", cid, PersonalModelConnectionSave(**fields))
-    updated = store.save("alice", cid, PersonalModelConnectionSave(**fields, api_key=""))
-    assert not updated.connections[0].has_api_key and updated.default_model_id == ref
-    with pytest.raises(PersonalModelNotFoundError):
-        store.delete("bob", cid, 3)
-    assert store.delete("alice", cid, 3).default_model_id == "default"
-    with pytest.raises(PersonalModelNotFoundError):
-        store.resolve("alice", ref)
-
-
-def test_yaml_settings_are_scoped_masked_and_never_seed_the_database(local_yaml_chat_catalog, tmp_path):
-    from server.constants.identity import LOCAL_USER_ID
-
-    engine = create_engine("sqlite://")
-    PersonalModelPreferences.__table__.create(engine)
-    sessions = sessionmaker(engine)
-    def make_store(local):
-        return PersonalModelConnections(sessions, key_file=tmp_path / "vault" / "key", signing_secret="", allow_local=local,
-                                        yaml_models=local_yaml_chat_catalog)
-
-    store = make_store(True)
-    settings = store.list(LOCAL_USER_ID)
-    connection = next(c for c in settings.connections if c.name == "my-endpoint")
-    assert connection.origin == "yaml" and connection.has_api_key
-    assert connection.protocol == "openai_chat" and connection.base_url == "https://chat.example.test/v1"
-    assert [m.model_id for m in connection.models] == ["team/home", "team/alternative", "team/discovered"]
-    assert connection.models[1].label == "My alternative"
-    assert settings.connections[0] == connection
-    assert "synthetic-private-key" not in settings.model_dump_json() and "TEST_LOCAL_PROVIDER_KEY" not in settings.model_dump_json()
-    assert any(not c.has_api_key and not any(m.available for m in c.models) for c in settings.connections if c.name != connection.name)
-    home, alternative, _ = connection.models
-    assert store.default_for_chat(LOCAL_USER_ID, settings) == home.id and home.is_yaml_default
-    assert store.resolve(LOCAL_USER_ID, alternative.id, connection_id=connection.connection_id).api_key.get_secret_value() == "synthetic-private-key"
-    with pytest.raises(PersonalModelNotFoundError):
-        store.resolve(LOCAL_USER_ID, alternative.id, connection_id=str(uuid4()))
-    for other, owner in [(store, "other"), (make_store(False), LOCAL_USER_ID)]:
-        assert not other.list(owner).connections and other.yaml_binding(owner, alternative.id) is None
-        with pytest.raises(PersonalModelNotFoundError):
-            other.resolve(owner, alternative.id)
-        with pytest.raises(PersonalModelNotFoundError):
-            other.set_default(owner, alternative.id)
-    with sessions() as session:
-        assert session.scalar(select(PersonalModelPreferences)) is None
-    assert not (tmp_path / "vault" / "key").exists()
-    body = PersonalModelConnectionSave(name="personal", protocol="openai_chat", base_url="https://other.example",
-                                       model_ids=["same/name"], revision=0)
-    with pytest.raises(ValueError, match="YAML"):
-        store.save(LOCAL_USER_ID, connection.connection_id, body)
-    with pytest.raises(ValueError, match="YAML"):
-        store.delete(LOCAL_USER_ID, connection.connection_id, 1)
-    store.set_default(LOCAL_USER_ID, alternative.id)
-    personal_id = str(uuid4())
-    assert store.save(LOCAL_USER_ID, personal_id, body).default_model_id == alternative.id
-    assert store.delete(LOCAL_USER_ID, personal_id, 1).default_model_id == alternative.id
-    engine.dispose()
+        legacy.resolve("bob", ref)
+    db.dispose()

@@ -317,7 +317,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const { mode, displayMode, series: workspaceSeries, isLoading: workspaceLoading } = useWorkspace();
   const series = suppliedSeries ? [suppliedSeries, ...workspaceSeries.filter((item) => item.seriesId !== suppliedSeries.seriesId
     && (!captureExtraContext || item.tenantId === suppliedSeries.tenantId))] : workspaceSeries;
-  const { canManage, activeSource, scopeKey } = useAuth();
+  const { canConfigure, canManage, activeSource, scopeKey } = useAuth();
   const optionScope = scopeKey ?? "";
   const requiresExplicitScope = activeSource.kind === "public" || Boolean(suppliedSeries && suppliedSeries.tenantId !== TENANT_ID);
   const inRouter = useInRouterContext();
@@ -340,7 +340,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
   const [messageOptionOverrides, setMessageOptionOverrides] = useState<MessageOptionOverrides | null>(null);
   const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
-  const modelCatalog = usePersonalChatModels(optionScope, mode === "live");
+  const modelCatalog = usePersonalChatModels(optionScope, canConfigure === true && mode === "live");
   const customLoopTurnsRef = useRef(100);
   const messageOptionsRequestRef = useRef(0);
   const messageOptions = messageOptionConfig && messageOptionOverrides
@@ -433,9 +433,12 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   } = useAgentConversation(requestedConversationId);
   const personalSettings = modelCatalog && "settings" in modelCatalog ? modelCatalog.settings : null;
   const connections = personalSettings?.connections ?? [];
-  const modelId = conversationId ? savedChatModelId(connections, storedModelId) : storedModelId;
+  // Guests chat through the server's opaque default and never load model connections.
+  const modelId = canConfigure
+    ? (conversationId ? savedChatModelId(connections, storedModelId) : storedModelId)
+    : DEFAULT_CHAT_MODEL_ID;
   const hasModels = connections.some((connection) => connection.models.some((model) => model.available !== false));
-  const modelSelected = containsModel(connections, modelId);
+  const modelSelected = !canConfigure || containsModel(connections, modelId);
   const modelSelectionInvalid = Boolean(personalSettings && modelId !== DEFAULT_CHAT_MODEL_ID && !modelSelected);
   const draftModelId = personalSettings ? preferredChatModel(personalSettings) : DEFAULT_CHAT_MODEL_ID;
   useEffect(() => {
@@ -444,7 +447,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     applyDraftDefault?.(preferredChatModel(personalSettings));
   }, [applyDraftDefault, personalSettings, conversationId, modelSelected, modelId, modelSaving, loading]);
   const creatingConversation = preparingAttachments || (searching && !conversationId);
-  usePublishChatSettings(true, { modelId, modelSaving, modelError, selectModel,
+  usePublishChatSettings(canConfigure === true, { modelId, modelSaving, modelError, selectModel,
     loading: loading || creatingConversation || mode !== "live" });
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
@@ -979,7 +982,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     return inRouter ? <SettingsLink className={className} section="models" aria-label={label} title={label}>{content}</SettingsLink>
       : <a className={className} href="/settings?section=models" aria-label={label} title={label}>{content}</a>;
   };
-  const modelChooser = hasModels ? <>
+  const modelChooser = !canConfigure ? null : hasModels ? <>
     <div className={styles.modelPicker}>
       <PersonalModelSelect connections={connections} value={modelId} label={t("回答模型")} placeholder={t("选择模型")}
         disabled={modelSaving || loading || creatingConversation} busy={modelSaving} onChange={(id) => void selectModel(id)} />
@@ -1189,10 +1192,10 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               </div>
               {modelChooser}
             </div> : null}
-            {modelCatalog && "error" in modelCatalog && <p className={styles.messageError} role="alert">
+            {canConfigure && modelCatalog && "error" in modelCatalog && <p className={styles.messageError} role="alert">
               {t("读取模型设置失败：{value0}", { value0: errorMessage(modelCatalog.error, locale) })}
             </p>}
-            {(modelError || modelSelectionInvalid) ? (
+            {canConfigure && (modelError || modelSelectionInvalid) ? (
               <p className={`${styles.messageError} ${styles.modelError}`} role="alert">
                 {modelError ?? t("已保存的模型当前不可用，请重新选择。")}
               </p>

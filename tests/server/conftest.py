@@ -118,11 +118,10 @@ def parsed_video(repository, seed_video):
 
 
 @pytest.fixture
-def local_yaml_chat_catalog(tmp_path):
+def yaml_model_settings(tmp_path):
     from pathlib import Path
     import yaml
-    from gateway.config import load_config
-    from server.service.yaml_chat_models import YamlChatModels
+    from server.service.model_settings import ModelSettings
 
     data = yaml.safe_load((Path(__file__).parents[2] / "config.yaml").read_text())
     data["supervisor_harness"] = "deepagents"
@@ -141,6 +140,4 @@ def local_yaml_chat_catalog(tmp_path):
     data["supervisor_choices"] = {"my-alternative": "My alternative"}
     path = tmp_path / "models.yaml"
     path.write_text(yaml.safe_dump(data))
-    config = load_config(path)
-    env = {"TEST_LOCAL_PROVIDER_KEY": "synthetic-private-key"}
-    return YamlChatModels(config, config.resolve_model_binding("supervisor", environ=env), environ=env)
+    return ModelSettings(path, allow_local=True, environ={"TEST_LOCAL_PROVIDER_KEY": "synthetic-private-key"})
