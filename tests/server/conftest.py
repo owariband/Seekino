@@ -115,3 +115,32 @@ def seed_video(tmp_path):
 @pytest.fixture
 def parsed_video(repository, seed_video):
     return seed_video(create_session_factory(repository[0]))
+
+
+@pytest.fixture
+def local_yaml_chat_catalog(tmp_path):
+    from pathlib import Path
+    import yaml
+    from gateway.config import load_config
+    from server.service.yaml_chat_models import YamlChatModels
+
+    data = yaml.safe_load((Path(__file__).parents[2] / "config.yaml").read_text())
+    data["supervisor_harness"] = "deepagents"
+    data["model_sources"]["my-endpoint"] = {
+        "adapter": "openai", "provider": "my-provider", "base_url": "https://chat.example.test/v1",
+        "api_key_env": "TEST_LOCAL_PROVIDER_KEY",
+    }
+    primary = {"source": "my-endpoint", "model": "team/home", "supports_vision_input": True}
+    data["models"].update({
+        "supervisor": primary,
+        "same-model-other-role": primary,
+        "my-alternative": {**primary, "model": "team/alternative"},
+        "custom-unlisted": {**primary, "model": "team/discovered"},
+        "ranking-only": {**primary, "model": "team/ranking-only", "kind": "rerank"},
+    })
+    data["supervisor_choices"] = {"my-alternative": "My alternative"}
+    path = tmp_path / "models.yaml"
+    path.write_text(yaml.safe_dump(data))
+    config = load_config(path)
+    env = {"TEST_LOCAL_PROVIDER_KEY": "synthetic-private-key"}
+    return YamlChatModels(config, config.resolve_model_binding("supervisor", environ=env), environ=env)

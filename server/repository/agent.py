@@ -63,8 +63,12 @@ class AgentRepository:
         idempotency_key: str,
         title_is_auto: bool = False,
         model_id: str = "default",
+        inherit_model: bool = False,
+        model_available: bool = True,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
+        # Idempotency compares the requested setting, even when the personal default has since changed.
+        initial_model = "default" if inherit_model else model_id
         for attempt in range(2):
             try:
                 with self._session_factory.begin() as session:
@@ -76,15 +80,20 @@ class AgentRepository:
                         )
                     )
                     if existing is not None:
+                        initial = existing.detail or {}
                         if (existing.title_is_auto != title_is_auto
                                 or (not title_is_auto and existing.title != title)
-                                or (existing.detail or {}).get("initialModelId", "default") != model_id):
+                                or initial.get("initialModelId", "default") != initial_model
+                                or (initial.get("initialModelInherited") and not inherit_model)):
                             raise AgentConflictError(
                                 "the conversation idempotency key is already used "
                                 "with different fields"
                             )
                         return self._conversation_summary(session, existing)
 
+                    # Completed creates remain replayable after a model or its connection is removed.
+                    if not model_available:
+                        raise ValueError("请先配置并选择可用的回答模型。")
                     record = AgentConversation(
                         id=conversation_id,
                         tenant_id=tenant_id,
@@ -93,7 +102,10 @@ class AgentRepository:
                         title_is_auto=title_is_auto,
                         idempotency_key=idempotency_key,
                         next_message_sequence=0,
-                        detail={"modelId": model_id, "initialModelId": model_id} if model_id != "default" else None,
+                        detail=({
+                            "modelId": model_id, "initialModelId": initial_model,
+                            **({"initialModelInherited": True} if inherit_model else {}),
+                        } if model_id != "default" else None),
                     )
                     session.add(record)
                     session.flush()

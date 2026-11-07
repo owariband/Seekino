@@ -833,6 +833,13 @@
   .standalonePage[data-draft="true"] .agentPanel { justify-content: flex-start; overflow-y: auto; padding-bottom: 12px; }
 }
 
+.configureModel {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: auto; min-height: 30px;
+  padding: 0 8px; border-radius: 7px; color: var(--ink-soft); font-size: .75rem; text-decoration: none;
+}
+.configureModel:hover, .configureModel:focus-visible { color: var(--teal-deep); background: var(--teal-wash); }
+@media (max-width: 760px) { .configureModel { min-height: 44px; } }
+
 .modelSettingsLink { display: inline-grid; width: 30px; height: 30px; place-items: center; color: var(--ink-soft); border-radius: 7px; }
 .modelSettingsLink:hover, .modelSettingsLink:focus-visible { color: var(--teal-deep); background: var(--teal-wash); }
 @media (max-width: 760px) { .modelSettingsLink { width: 44px; height: 44px; } }

@@ -4,22 +4,27 @@
 
 `config.yaml` 的版本 2 把连接信息放在 `model_sources`，把模型定义放在 `models`。业务向 Gateway 传模型引用；Gateway 解析配置、校验能力并创建适配器。`agent_runtime` 保留运行参数，`video_parser` 保留采样和降级策略。密钥仍写在 `.env.local`，不要写进 YAML。
 
-配置存储仍是本地 YAML，通过 `SEEKINO_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑和 API `retry` 都保留任务保存的模型与解析配置快照。要切换已有视频的解析模型，须调用 `reparse` 并显式传入新的 `parseConfig`；可先通过 `GET /api/uploads/parse-config` 读取服务当前加载的默认配置。未提供 `parseConfig` 的 `reparse` 沿用最近一次任务的配置快照，仅将索引 generation 更新为当前生效版本。连接定义的变更仍需重启 Gateway 所在服务。这里没有引入数据库模型管理、HTTP CRUD 或云端配置。
+平台配置存储在本地 YAML，通过 `SEEKINO_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑和 API `retry` 都保留任务保存的模型与解析配置快照。要切换已有视频的解析模型，须调用 `reparse` 并显式传入新的 `parseConfig`；可先通过 `GET /api/uploads/parse-config` 读取服务当前加载的默认配置。未提供 `parseConfig` 的 `reparse` 沿用最近一次任务的配置快照，仅将索引 generation 更新为当前生效版本。连接定义的变更仍需重启 Gateway 所在服务。个人聊天 API 连接另由下述用户设置管理。
 
 本机开发配置使用 `config/local-dev-config.yaml`（2026-10-29 从 `local-kimi.yaml` 更名），由 `.env.local` 的 `SEEKINO_MODEL_CONFIG` 指向。它是完整开发环境配置，各角色可选择不同供应商；Kimi 只是其中部分角色的当前选择，不属于文件作用域。新名字不改变已选择的模型。
 
 本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
 
+## 个人聊天模型服务
+
+在「设置 → 回答模型 → 添加模型服务」选择接口协议，输入服务的 Base URL、API Key 和一个或多个模型 ID。模型 ID 按服务商文档原样填写。保存后点「测试连接」会发送一条简短文本请求。支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 及实现这些协议的兼容服务。本机模式支持本地无密钥服务。云端自定义地址需要公网 HTTPS。
+
+个人配置以账户为范围保存在 MySQL。API Key 由服务端加密，读取接口只返回是否已配置。云端保护密钥从部署的 Auth Secret 派生，本地在媒体根目录的上一级创建 `.seekino-secrets/personal-models.key`。备份和恢复个人连接时需保留相应密钥。已部署实例运行现有的 `init-db` 流程以创建新增表。
+
+「新对话默认模型」用于后续新建的聊天。在聊天中选择模型，只影响此聊天后续的问题。删除模型或连接后，使用它的聊天可在输入区重新选模型。聊天主回答使用选定的协议和凭据，视频解析、检索和子工具使用平台配置。
+
 ## 当前对话的回答模型
 
-独立聊天页的回答模型菜单读取 `GET /api/agent/messages/options`。默认项沿用启动时选定的 Supervisor。要开放其他选项，在同一份配置中用 `supervisor_choices` 将已有的生成模型绑定映射为菜单名称。例如，仓库配置允许把已有的 `models.agent` 用作某个对话的回答模型。
+网页聊天和观看浮窗从 `GET /api/agent/model-connections` 读取当前身份的可用连接。本机模式把正在运行的 Gateway 从 YAML 加载的回答模型与本地用户在网页保存的连接合并，按服务分组。YAML 的来源名、实际 Base URL、模型 ID 和凭据是否已配置由服务端生成。设置页用固定的八个圆点表示已配置的 API Key；实际凭据通过该来源引用的环境变量在服务端解析。修改 YAML 后按现有方式重启，页面读取新生效的绑定。
 
-```yaml
-supervisor_choices:
-  agent: DeepSeek Flash
-```
+当前 Supervisor 是 YAML 的默认项。显式 `supervisor_choices` 与其他适配当前聊天 harness 的生成模型可被发现，同一来源的重复模型按绑定去重。显式命名且推理或回退配置不同的预设保留独立选项。嵌入、转写和重排不会成为回答模型。缺少所需凭据的绑定在设置中可见，选模仅提供可执行项。云端用户使用自己的连接，部署机器的配置与凭据由部署者管理。
 
-菜单仅列出与当前 Supervisor harness 兼容且具备所需凭据的选项。普通聊天用户可以为自己的会话选择这些模型。草稿选择在首次发送或添加图片时随会话创建，已有会话通过 `PATCH /api/agent/conversations/model` 保存。之后的回答读取该会话的选择，历史回答保留发送时的模型名称。服务下线某个选项后，曾使用它的对话可重新选择默认项。
+新聊天优先使用个人显式默认值，然后读取此浏览器在当前身份和资料来源下最近使用的有效模型，本机再回退到已配置的 YAML 默认回答模型。没有可用配置时，输入区的「配置模型」打开个人设置。已有会话只在选模时保存自身的选择，曾保存为服务默认或具名 YAML 引用的本地聊天会匹配现有 YAML 绑定。历史回答保留发送时的模型名。
 
 ## 网页搜索配置
 

@@ -301,6 +301,7 @@ def create_schema(engine: Engine) -> None:
     from .model import index_sync as _index_sync_models  # noqa: F401
     from .model import task as _task_models  # noqa: F401
     from .model import parse_content as _parse_content_models  # noqa: F401
+    from .model import personal_models as _personal_models  # noqa: F401
     from .model import parse_usage as _parse_usage_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401
     from .model import video as _video_models  # noqa: F401

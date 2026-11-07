@@ -28,7 +28,7 @@ class AgentAttachmentReference(ContractModel):
 class AgentConversationCreateRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    model_id: str = Field(default="default", min_length=1, max_length=128)
+    model_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AgentConversationModelRequest(ContractModel):
@@ -114,6 +114,7 @@ class AgentMessageOptionsState:
     max_tool_calls_per_turn: AgentIntegerOptionState
     max_loop_turns: AgentIntegerOptionState
     chat_models: tuple[AgentModelOptionState, ...] = ()
+    new_chat_model_id: str = "default"
 
 
 @dataclass(frozen=True, slots=True)

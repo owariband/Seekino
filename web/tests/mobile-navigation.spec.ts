@@ -1,3 +1,4 @@
+import { configuredModels } from "../src/test/personalModelFixtures";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import type { AgentConversationView, AgentMessageView, AuthIdentity, DisplayMode, SeriesView } from "../src/api/contracts";
@@ -21,7 +22,7 @@ async function mockService(page: Page, guest = true, { displayMode = "release", 
       renderBlocks: [], timing: null, lastError: null, createdAt: 0, updatedAt: 0,
     })),
   ]));
-  const emptyConversation: AgentConversationView = {
+  const emptyConversation: AgentConversationView = { modelId: configuredModels.defaultModelId,
     conversationId: "mobile-conversation", tenantId: guest ? "public" : "personal", title: "新对话",
     messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: 0, updatedAt: 0,
   };
@@ -43,6 +44,7 @@ async function mockService(page: Page, guest = true, { displayMode = "release", 
       const selected = series.find((item) => item.seriesId === url.searchParams.get("seriesId"));
       if (selected) return route.fulfill({ json: selected });
     }
+    if (path === "/api/agent/model-connections") return route.fulfill({ json: configuredModels });
     if (path === "/api/agent/messages/options") return route.fulfill({ json: {
       topK: { defaultValue: 10, minimum: 1, maximum: 20 },
       maxLoopTurns: { defaultValue: 10, minimum: 1, maximum: 100 },

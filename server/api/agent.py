@@ -113,7 +113,7 @@ def patch_agent_global_settings(
 def get_agent_message_options(request: Request) -> AgentMessageOptionsView:
     services = get_services(request)
     identity = get_identity(request)
-    options = services.agent.message_options()
+    options = services.agent.message_options(owner_user_id=identity.user_id)
     if identity.mode == "cloud" and identity.is_guest:
         cap = services.auth.config.guest_max_model_calls
         def bounded(option, maximum):

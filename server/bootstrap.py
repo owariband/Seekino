@@ -12,12 +12,15 @@ from agent.chat.query_hook import QueryHook
 from agent.chat.realtime_understanding import RealtimeUnderstandingRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from gateway.agent_model.context import ContextWindowPolicy
+from gateway.agent_model.deepagents import DeepAgentSessionStore
 from gateway.agent_model.factory import AgentModelFactory
 from gateway.config import (
     ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, ModelBinding, load_config,
 )
 from gateway.model_factory import GatewayClient
 from gateway.multimodal import adapter_capabilities
+from gateway.personal_endpoint import PersonalModelTarget
+from sqlalchemy.engine import make_url
 from gateway.query_hook import QueryHookModels
 from gateway.tracing import LangfuseTracing
 from gateway.web_search import WebSearcher
@@ -52,6 +55,8 @@ from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.mcp_retrieval import McpRetrievalService
+from .service.personal_models import PersonalModelConnections
+from .service.yaml_chat_models import YamlChatModels
 from .service.parse_usage import ParseUsageService
 from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
@@ -81,6 +86,8 @@ class ApplicationServices:
     auth: AuthService | None = None
     agent_attachments: AgentAttachmentService | None = None
     mcp_retrieval: McpRetrievalService | None = None
+    personal_models: PersonalModelConnections | None = None
+    supervisor_sessions: DeepAgentSessionStore | None = None
     _closed: bool = field(default=False, init=False, repr=False)
 
     def start(self) -> None:
@@ -94,6 +101,8 @@ class ApplicationServices:
         # Register in reverse shutdown order so all business users finish
         # before the process releases their shared Caller resources.
         with ExitStack() as cleanup:
+            if self.supervisor_sessions is not None:
+                cleanup.callback(self.supervisor_sessions.close)
             if self.parse_usage is not None:
                 cleanup.callback(self.parse_usage.close)
             if self.tracing is not None:
@@ -186,10 +195,11 @@ def _build_application_services(
         settings.agent_fallback_model
         or (configured_fallback.model if configured_fallback is not None else None)
     )
-    supervisor_sessions = None
-    if gateway_config.supervisor_harness == "deepagents":
+    if gateway_config.supervisor_harness == "deepagents" or make_url(settings.database_url).get_backend_name() == "mysql":
         supervisor_sessions = create_agent_checkpoint_store(settings.database_url, engine=resources.engine)
-        construction_cleanup.callback(supervisor_sessions.close)
+    else:
+        supervisor_sessions = DeepAgentSessionStore()
+    construction_cleanup.callback(supervisor_sessions.close)
     gateway_client = GatewayClient(gateway_config, supervisor_sessions=supervisor_sessions)
     construction_cleanup.callback(gateway_client.close)
     agent_binding = gateway_config.resolve_model_binding("agent")
@@ -394,7 +404,7 @@ def _build_application_services(
         )
     def build_supervisor_runtime(
         video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
-        binding: ModelBinding, model_factory: AgentModelFactory,
+        binding: ModelBinding, model_factory: AgentModelFactory, target: PersonalModelTarget | None,
     ) -> SupervisorRuntime:
         _validate_cloud_agent_timeout(settings, agent_config)
         if settings.auth.mode == "cloud":
@@ -417,23 +427,25 @@ def _build_application_services(
             auto_compact_tokens=agent_config.auto_compact_tokens,
             compact_target_tokens=agent_config.compact_target_tokens,
         )
+        model_limits = dict(
+            request_timeout_seconds=request_timeout, max_output_tokens=max_output_tokens,
+            max_input_chars=agent_config.max_prompt_chars, context_window_policy=context_window_policy,
+            total_timeout_enabled=agent_config.total_timeout_enabled,
+        )
+        if target:
+            from gateway.personal_models import build_personal_supervisor
+
+            supervisor = build_personal_supervisor(
+                target, session_store=supervisor_sessions, allow_local=settings.auth.mode == "local", **model_limits,
+            )
+        else:
+            supervisor = model_factory.build_supervisor(
+                harness=gateway_config.supervisor_harness, mcp=gateway_config.supervisor_harness == "codex",
+                model=binding.model, **model_limits,
+                reasoning_effort=binding.reasoning_effort if binding.reasoning_effort is not None else agent_config.supervisor_reasoning_effort,
+            )
         return SupervisorRuntime(
-            video_runtime,
-            model_factory.build_supervisor(
-                harness=gateway_config.supervisor_harness,
-                mcp=gateway_config.supervisor_harness == "codex",
-                model=binding.model,
-                request_timeout_seconds=request_timeout,
-                max_output_tokens=max_output_tokens,
-                max_input_chars=agent_config.max_prompt_chars,
-                context_window_policy=context_window_policy,
-                total_timeout_enabled=agent_config.total_timeout_enabled,
-                reasoning_effort=(
-                    binding.reasoning_effort
-                    if binding.reasoning_effort is not None
-                    else agent_config.supervisor_reasoning_effort
-                ),
-            ),
+            video_runtime, supervisor,
             WebSearcher(gateway_config.web_search),
             realtime_runtime=RealtimeUnderstandingRuntime(
                 host=realtime_service,
@@ -461,24 +473,31 @@ def _build_application_services(
 
     def build_chat_runtime(
         agent_config: AgentServiceConfig, *, binding: ModelBinding = supervisor_binding,
-        model_factory: AgentModelFactory = supervisor_model_factory,
+        model_factory: AgentModelFactory = supervisor_model_factory, target: PersonalModelTarget | None = None,
     ) -> SupervisorRuntime:
         query_runtime = build_agent_runtime(agent_config)
         try:
-            return build_supervisor_runtime(query_runtime, agent_config, binding, model_factory)
+            return build_supervisor_runtime(query_runtime, agent_config, binding, model_factory, target)
         except Exception:
             query_runtime.close()
             raise
 
+    yaml_models = YamlChatModels(gateway_config, supervisor_binding) if settings.auth.mode == "local" else None
+    available_bindings = gateway_config.available_supervisor_choices()
+    if yaml_models:
+        available_bindings.update({
+            model.runtime_ref: model.binding for model in yaml_models.models.values()
+            if model.runtime_ref != "default" and model.option.available
+        })
     model_choices = {
         ref: ChatModelChoice(
-            label=gateway_config.supervisor_choices[ref],
+            label=gateway_config.supervisor_choices.get(ref, binding.model),
             build_runtime=partial(
                 build_chat_runtime, binding=binding,
                 model_factory=gateway_client.create_agent_factory(binding),
             ),
         )
-        for ref, binding in gateway_config.available_supervisor_choices().items()
+        for ref, binding in available_bindings.items()
     }
     runtime = build_chat_runtime(settings.agent)
 
@@ -490,12 +509,20 @@ def _build_application_services(
     agent_attachments = AgentAttachmentService(
         agent_repository, artifact_store, config=settings.images,
     )
+    personal_models = PersonalModelConnections(
+        session_factory, key_file=settings.artifact_root.parent / ".seekino-secrets" / "personal-models.key",
+        yaml_models=yaml_models,
+        signing_secret=settings.auth.secret_key if settings.auth.mode == "cloud" else "", allow_local=settings.auth.mode == "local",
+    )
     agent = AgentChatService(
         agent_repository, library, runtime,
         config=settings.agent,
         config_loader=load_agent_config,
         runtime_factory=build_chat_runtime,
         model_choices=model_choices,
+        personal_models=personal_models,
+        personal_runtime_factory=lambda target, config: build_chat_runtime(config, target=target),
+        delete_personal_thread=supervisor_sessions.delete_thread if gateway_config.supervisor_harness != "deepagents" else None,
         config_revision=config_revision,
         tracing=tracing,
         parse_usage=parse_usage,
@@ -546,6 +573,8 @@ def _build_application_services(
         media=media,
         retrieval=retrieval,
         agent=agent,
+        personal_models=personal_models,
+        supervisor_sessions=supervisor_sessions,
         agent_attachments=agent_attachments,
         parse_consumer=parse_consumer,
         parse_usage=parse_usage,

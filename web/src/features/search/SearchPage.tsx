@@ -20,7 +20,8 @@ import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { FOCUS_SEARCH_EVENT, loadConversations } from "./conversationNavigation";
-import { chatModelOptions, type ChatModelOption } from "./chatModelOptions";
+import { containsModel, preferredChatModel, rememberChatModel, savedChatModelId, usePersonalChatModels } from "../settings/usePersonalChatModels";
+import { PersonalModelSelect } from "../settings/PersonalModelSelect";
 import { SettingsLink } from "../settings/SettingsLink";
 import { usePublishChatSettings } from "../settings/activeChatSettings";
 import { explainHit } from "./explain";
@@ -339,8 +340,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
   const [messageOptionOverrides, setMessageOptionOverrides] = useState<MessageOptionOverrides | null>(null);
   const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
-  const [chatModels, setChatModels] = useState<ChatModelOption[]>([]);
-  const [chatModelsScope, setChatModelsScope] = useState(optionScope);
+  const modelCatalog = usePersonalChatModels(optionScope, mode === "live");
   const customLoopTurnsRef = useRef(100);
   const messageOptionsRequestRef = useRef(0);
   const messageOptions = messageOptionConfig && messageOptionOverrides
@@ -428,16 +428,23 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   }, []);
   const {
     conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error,
-    modelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
-    clear: clearConversation, ensureConversationId, selectModel, send, stop,
+    modelId: storedModelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
+    clear: clearConversation, ensureConversationId, applyDraftDefault, selectModel, send, stop,
   } = useAgentConversation(requestedConversationId);
-  const scopedChatModels = chatModelsScope === optionScope ? chatModels : [];
-  const modelOptions = scopedChatModels.some((model) => model.id === DEFAULT_CHAT_MODEL_ID) ? scopedChatModels : [];
-  const modelSelectionInvalid = !embedded && modelOptions.length > 0 && modelId !== DEFAULT_CHAT_MODEL_ID
-    && !modelOptions.some((model) => model.id === modelId);
-  const showModelChooser = !embedded && (modelOptions.length > 1 || modelSelectionInvalid);
+  const personalSettings = modelCatalog && "settings" in modelCatalog ? modelCatalog.settings : null;
+  const connections = personalSettings?.connections ?? [];
+  const modelId = conversationId ? savedChatModelId(connections, storedModelId) : storedModelId;
+  const hasModels = connections.some((connection) => connection.models.some((model) => model.available !== false));
+  const modelSelected = containsModel(connections, modelId);
+  const modelSelectionInvalid = Boolean(personalSettings && modelId !== DEFAULT_CHAT_MODEL_ID && !modelSelected);
+  const draftModelId = personalSettings ? preferredChatModel(personalSettings) : DEFAULT_CHAT_MODEL_ID;
+  useEffect(() => {
+    if (!personalSettings) return;
+    if (conversationId && modelSelected && !loading && !modelSaving) rememberChatModel(modelId);
+    applyDraftDefault?.(preferredChatModel(personalSettings));
+  }, [applyDraftDefault, personalSettings, conversationId, modelSelected, modelId, modelSaving, loading]);
   const creatingConversation = preparingAttachments || (searching && !conversationId);
-  usePublishChatSettings(!embedded, { modelId, modelSaving, modelError, selectModel,
+  usePublishChatSettings(true, { modelId, modelSaving, modelError, selectModel,
     loading: loading || creatingConversation || mode !== "live" });
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
@@ -450,7 +457,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     setPendingFiles(null);
   }, [pendingFiles, conversationId, attachments.addFiles]);
   const addFiles = async (files: File[]) => {
-    if (!files.length) return;
+    if (!files.length || !modelSelected || modelSaving) return;
     if (conversationId) { attachments.addFiles(files); return; }
     setPreparingAttachments(true);
     try {
@@ -478,8 +485,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     && (!selectedSeriesIds.length || selectedSeriesIds.includes(referenceHit.evidence.seriesId)));
   const scopeValid = (!requiresExplicitScope || selectedSeriesIds.length > 0)
     && selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.tenantId === sourceTenantId && isSearchable(item.status)));
-  const canAttach = Boolean(!loading && (!conversationId || !deletedConversationIdsRef.current.has(conversationId)) && mode === "live");
-  const canSend = Boolean(query.trim() && canAttach && !creatingConversation && !pendingFiles && !searching && !modelSaving && !modelSelectionInvalid && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
+  const canAttach = Boolean(modelSelected && !modelSaving && !loading && (!conversationId || !deletedConversationIdsRef.current.has(conversationId)) && mode === "live");
+  const canSend = Boolean(query.trim() && canAttach && !creatingConversation && !pendingFiles && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
 
   useEffect(() => {
     scopeTouchedRef.current = false;
@@ -510,40 +517,36 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const activeConversation = conversations.find((item) => item.conversationId === conversationId) ?? null;
 
   useEffect(() => {
-    if (embedded && displayMode !== "debug") return;
+    if (displayMode !== "debug") return;
     let active = true;
-    const scope = optionScope;
     const refresh = () => {
       const requestId = ++messageOptionsRequestRef.current;
       void getAgentMessageOptions().then((options) => {
         if (!active || requestId !== messageOptionsRequestRef.current) return;
-        if (displayMode === "debug") {
-          setMessageOptionOverrides((current) => {
-            const overrides = current === null
-              ? storedMessageOptionOverrides(options)
-              : boundedMessageOptionOverrides(current, options);
-            if (overrides.maxLoopTurns) customLoopTurnsRef.current = overrides.maxLoopTurns;
-            else if (current === null || customLoopTurnsRef.current < options.maxLoopTurns.minimum || customLoopTurnsRef.current > options.maxLoopTurns.maximum) {
-              customLoopTurnsRef.current = options.maxLoopTurns.defaultValue;
-            }
-            return overrides;
-          });
-        }
+        setMessageOptionOverrides((current) => {
+          const overrides = current === null
+            ? storedMessageOptionOverrides(options)
+            : boundedMessageOptionOverrides(current, options);
+          if (overrides.maxLoopTurns) customLoopTurnsRef.current = overrides.maxLoopTurns;
+          else if (current === null || customLoopTurnsRef.current < options.maxLoopTurns.minimum || customLoopTurnsRef.current > options.maxLoopTurns.maximum) {
+            customLoopTurnsRef.current = options.maxLoopTurns.defaultValue;
+          }
+          return overrides;
+        });
         setMessageOptionConfig(options);
-        setChatModels(chatModelOptions(options));
-        setChatModelsScope(scope);
         setMessageOptionsError(null);
       }).catch((failure) => {
         if (!active || requestId !== messageOptionsRequestRef.current) return;
         setMessageOptionsError(errorMessage(failure, localeRef.current));
-        setChatModels([]);
-        setChatModelsScope(scope);
       });
     };
     refresh();
     window.addEventListener("focus", refresh);
-    return () => { active = false; window.removeEventListener("focus", refresh); };
-  }, [displayMode, embedded, optionScope]);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [displayMode, optionScope]);
 
   useEffect(() => {
     if (!messageOptionOverrides) return;
@@ -687,14 +690,12 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     const currentConversationCanBeReused = Boolean(
       !error
       && conversationId
+      && modelId === draftModelId
       && !deletedConversationIdsRef.current.has(conversationId)
       && messages.length === 0
       && (!activeConversation || activeConversation.messageCount === 0),
     );
     if (currentConversationCanBeReused) {
-      // Reusing an empty conversation keeps lazy creation, but a stale non-default
-      // preference must not leak into the fresh chat.
-      if (conversationId && modelId !== DEFAULT_CHAT_MODEL_ID) void selectModel(DEFAULT_CHAT_MODEL_ID);
       closeConversationPicker();
       composerRef.current?.focus();
       return;
@@ -971,23 +972,20 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       <ArrowUp size={19} aria-hidden="true" />
     </button>
   );
-  const modelChooser = showModelChooser ? (
-    <label className={styles.modelPicker}>
-      <span>{t("回答模型")}</span>
-      <select
-        aria-label={t("回答模型")}
-        value={modelId}
-        onChange={(event) => { const next = event.currentTarget.value; void selectModel(next); }}
-        disabled={modelSaving || loading || creatingConversation}
-        aria-busy={modelSaving || undefined}
-        title={modelSaving ? t("正在保存回答模型…") : t("仅影响这个对话之后发送的问题")}
-      >
-        {modelSelectionInvalid ? <option value={modelId} disabled>{t("已保存的模型（当前不可用）")}</option> : null}
-        {modelOptions.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-      </select>
-      {modelSaving ? <LoaderCircle size={13} className={styles.spinning} aria-hidden="true" /> : null}
-    </label>
-  ) : null;
+  const modelSettingsLink = (text: boolean) => {
+    const label = t(text ? "配置模型" : "回答模型设置");
+    const content = <><SlidersHorizontal size={15} aria-hidden="true" />{text ? label : null}</>;
+    const className = text ? styles.configureModel : styles.modelSettingsLink;
+    return inRouter ? <SettingsLink className={className} section="models" aria-label={label} title={label}>{content}</SettingsLink>
+      : <a className={className} href="/settings?section=models" aria-label={label} title={label}>{content}</a>;
+  };
+  const modelChooser = hasModels ? <>
+    <div className={styles.modelPicker}>
+      <PersonalModelSelect connections={connections} value={modelId} label={t("回答模型")} placeholder={t("选择模型")}
+        disabled={modelSaving || loading || creatingConversation} busy={modelSaving} onChange={(id) => void selectModel(id)} />
+    </div>
+    {modelSettingsLink(false)}
+  </> : modelSettingsLink(true);
 
   const Root = embedded ? "section" : "main";
   return (
@@ -1179,7 +1177,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               <div className={styles.composerToolbar}>
                 <div className={styles.composerControls}>
                   {attachmentControls}
-                  {embedded ? <>{scopePicker}{answerSettingsPicker}</> : null}
+                  {embedded ? <>{scopePicker}{answerSettingsPicker}{modelChooser}</> : null}
                 </div>
                 {sendControl}
               </div>
@@ -1190,10 +1188,11 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 {answerSettingsPicker}
               </div>
               {modelChooser}
-              {inRouter && modelOptions.length > 0 ? <SettingsLink className={styles.modelSettingsLink} section="models"
-                aria-label={t("回答模型设置")} title={t("回答模型设置")}><SlidersHorizontal size={15} aria-hidden="true" /></SettingsLink> : null}
             </div> : null}
-            {!embedded && (modelError || modelSelectionInvalid) ? (
+            {modelCatalog && "error" in modelCatalog && <p className={styles.messageError} role="alert">
+              {t("读取模型设置失败：{value0}", { value0: errorMessage(modelCatalog.error, locale) })}
+            </p>}
+            {(modelError || modelSelectionInvalid) ? (
               <p className={`${styles.messageError} ${styles.modelError}`} role="alert">
                 {modelError ?? t("已保存的模型当前不可用，请重新选择。")}
               </p>

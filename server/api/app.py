@@ -100,7 +100,7 @@ def build_app(
             CORSMiddleware,
             allow_origins=list(origins),
             allow_credentials=True,
-            allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=[
                 "Content-Type",
                 "Content-Range",
