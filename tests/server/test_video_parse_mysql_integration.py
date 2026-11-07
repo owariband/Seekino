@@ -296,7 +296,10 @@ def test_mysql_three_video_admissions_are_atomic_and_recovery_precedes_new_work(
         assert sum(row.capacity_acquired for row in rows) == 3
 
 
-def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capacity):
+@pytest.mark.parametrize("tracked", [False, True])
+def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capacity, tracked):
+    from server.service.video_parse_dispatch import ParseDispatch
+
     _engine, factory, create_task, connections = mysql_capacity
     # More than ten eligible candidates in each phase proves the limits, while
     # overlapping Refine windows retain the production dependency topology.
@@ -316,7 +319,10 @@ def test_mysql_concurrent_consumers_share_independent_phase_capacity(mysql_capac
             repo.commit_interval_refinement(lease, **_refinement_inputs(repo, lease, now=NOW),
                 interval_content={"updates": []}, member_updates={}, now=NOW)
 
-    queues = [MySqlVideoParseQueue(factory, video_concurrency=3) for _ in range(6)]
+    queues = [MySqlVideoParseQueue(
+        factory, video_concurrency=3,
+        dispatch=ParseDispatch(factory, reconcile_interval=timedelta(seconds=60)) if tracked else None,
+    ) for _ in range(6)]
 
     def claim(worker, attempt):
         methods = (queues[worker].claim_chunk, queues[worker].claim_interval_refine,
@@ -506,3 +512,40 @@ def test_mysql_deadline_recovery_fences_heartbeat_and_late_commit(mysql_capacity
                 ChunkParseTask, ChunkParseTask.id == ChunkParseContent.chunk_task_id,
             ).where(ChunkParseTask.video_task_id == task_id)) == 1
     assert len(connections) >= 2
+
+
+@pytest.mark.parametrize("release_before_timeout", [True, False])
+def test_known_ready_claim_waits_for_parent_and_restores_connection(mysql_capacity, release_before_timeout):
+    from server.service.video_parse_dispatch import ParseDispatch
+
+    engine, factory, create_task, _ = mysql_capacity
+    dispatch = ParseDispatch(factory, reconcile_interval=timedelta(minutes=1))
+    queue = MySqlVideoParseQueue(factory, video_concurrency=1, dispatch=dispatch)
+    task_id = create_task(chunk_count=1)
+    _prepare(factory, queue, task_id, chunk_count=1)
+    assert dispatch.candidates(task_id, "parse", NOW)[1]
+    waiting = Event()
+    restored = []
+
+    def observe(_conn, _cursor, sql, params, _context, _many):
+        if sql == "SET SESSION innodb_lock_wait_timeout = 1":
+            waiting.set()
+        if sql.startswith("SET SESSION innodb_lock_wait_timeout = %("):
+            restored.append(params["old"])
+
+    event.listen(engine, "after_cursor_execute", observe)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with factory.begin() as holder:
+                holder.scalar(select(VideoParseTask.id).where(VideoParseTask.id == task_id).with_for_update())
+                attempt = pool.submit(queue.claim_chunk, "other", lease_duration=timedelta(minutes=1), now=NOW)
+                assert waiting.wait(5)
+                if not release_before_timeout:
+                    assert attempt.result(timeout=5) is None
+            if release_before_timeout:
+                assert attempt.result(timeout=5).video_parse_task_id == task_id
+            else:
+                assert queue.claim_chunk("recovered", lease_duration=timedelta(minutes=1), now=NOW)
+        assert restored == [3]
+    finally:
+        event.remove(engine, "after_cursor_execute", observe)

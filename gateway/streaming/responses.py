@@ -16,6 +16,7 @@ from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.model_events import ModelTextDelta, emit_model_text
 from gateway.usage import ModelCallTracker, track_model_call
+from gateway.streaming import cancel_http_stream
 from gateway.streaming.first_sse import FirstSSEDeadline
 
 _logger = logging.getLogger(__name__)
@@ -175,7 +176,7 @@ def _request_sse_text(
     usage_call.capture_response(getattr(stream, "response", None))
     close = getattr(stream, "close", None)
     unregister_cancel = (
-        usage_call.add_cancel_callback(close) if callable(close) else lambda: None
+        usage_call.add_cancel_callback(lambda: cancel_http_stream(stream)) if callable(close) else lambda: None
     )
     text_parts: dict[tuple[int, str, int], list[str]] = {}
     emitted_parts: list[str] = []

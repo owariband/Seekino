@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T00:43:14+08:00",
+ "updatedAt": "2026-11-07T16:09:46+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 14,
+ "revision": 21,
  "categories": [
   {
    "id": "parse",
@@ -4603,6 +4603,149 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ]
   },
   {
+   "id": "DEPLOY-04",
+   "title": "SMTP 留空时提前说明登录注册未开放",
+   "category": "platform",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "账号服务提供 emailLoginEnabled；空配置展示游客模式和未开放说明，不收集邮箱；配置后保留原验证码流程。",
+   "next": "候选已通过实机验收，完成 main 发布 #63 后核对正式运行提交。",
+   "verification": "后端 94 passed、7 skipped；前端 181 passed、类型检查与构建通过。候选 f811903f 五服务 healthy；真实 HTTPS 能力/权限通过，Chrome 桌面/手机均显示未开放，零浏览器邮件请求与页面异常。首次权限失败已回退并修正后复验。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "身份",
+    "前端"
+   ],
+   "related": [
+    "DEPLOY-02",
+    "DEPLOY-03",
+    "MOD-PLATFORM"
+   ],
+   "branch": "feat/email-login-availability",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/email-login-availability/docs/design/03-product-reassessment/smtp-login-availability-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #65",
+     "url": "https://github.com/owariband/Seekino/pull/65",
+     "kind": "pr"
+    },
+    {
+     "label": "main 发布 #63",
+     "url": "https://github.com/owariband/Seekino/pull/63",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "DEPLOY-05",
+   "title": "云端 HTTP 链接自动跳转 HTTPS",
+   "category": "platform",
+   "type": "task",
+   "status": "done",
+   "priority": "P1",
+   "description": "当前 CPU 的 80 端口返回 308，目标为配置的公开域名并保留原始路径和查询参数。",
+   "next": "后续前端版本同步时带上 #69 的部署配置。HTTPS 公信证书按独立事项处理。",
+   "verification": "配置 a907e45e 在当前 Web 镜像隔离预检及 CPU 实机通过。公网直连/系统代理共六组请求均一次 308 到 HTTPS 200，Chrome 实测同一导航链。五服务健康，使用测试证书。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "cloud",
+    "Nginx"
+   ],
+   "related": [
+    "MOD-PLATFORM",
+    "DEPLOY-03"
+   ],
+   "branch": "fix/cloud-http-redirect",
+   "links": [
+    {
+     "label": "云部署 TRD",
+     "url": "https://github.com/owariband/Seekino/blob/fix/cloud-http-redirect/docs/design/03-product-reassessment/cloud-docker-deploy-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "修复 #69",
+     "url": "https://github.com/owariband/Seekino/pull/69",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "PARSE-QUEUE-01",
+   "title": "按已提交块和窗口派发，缩短索引等待",
+   "category": "parse",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "按块和窗口的已提交状态领取，移除逐个 SSE 的 MySQL 续租并及时释放失效请求。",
+   "next": "用保留的任务核验剩余窗口的完成情况。20 分钟指标需要同条件从零到完成的计时，四集并发吞吐另测。",
+   "verification": "相同 9,071 个事件的流控制 SQL 降为 0。MyGO 第 3 集到达 10/10/1，但模型报错后最终失败，20 分钟指标未通过。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "解析调度",
+    "索引"
+   ],
+   "related": [
+    "MOD-PARSE"
+   ],
+   "branch": "perf/parse-ready-dispatch",
+   "links": [
+    {
+     "label": "PR #70",
+     "url": "https://github.com/owariband/Seekino/pull/70",
+     "kind": "pr"
+    },
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/design/03-product-reassessment/parse-ready-dispatch-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "动画实跑",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/animation.md",
+     "kind": "report"
+    },
+    {
+     "label": "验证记录",
+     "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/README.md",
+     "kind": "source"
+    }
+   ],
+   "source": {
+    "ref": "perf/parse-ready-dispatch",
+    "path": "docs/dev/problems.md",
+    "line": 2796
+   }
+  },
+  {
+   "id": "CHAT-RECONNECT",
+   "title": "Chat 在工具调用行显示 reconnecting 与重试次数",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "在回答内容中用工具调用行显示真实重试次数。",
+   "next": "合并后在 local 观看问答复验。",
+   "verification": "本机模拟 HTTP、服务快照、组件和 Chromium 模拟流已验证。",
+   "updatedAt": "2026-11-07",
+   "related": [
+    "MOD-CHAT"
+   ],
+   "branch": "fix/chat-model-retry-status",
+   "links": [
+    {
+     "label": "PR #71",
+     "url": "https://github.com/owariband/Seekino/pull/71",
+     "kind": "pr"
+    }
+   ]
+  },
+  {
    "id": "PARSE-DRAFT-01",
    "title": "Parse 按正文大小保存草稿并解耦 SSE 续租",
    "category": "parse",
@@ -4610,7 +4753,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "模型正文新增独立调用草稿，1024 UTF-8 字节或调用退出保存；移除逐 SSE 持久续租。",
-   "next": "评审 PR #64；部署时先初始化新表，再验证短素材并发；真实解析本轮保持暂停。",
+   "next": "部署时按现有 init-db 流程初始化草稿表。两项改动同时启用后的整集耗时与多集吞吐仍待实测。",
    "verification": "941 项隔离回归通过；65 段模拟正文的接收路径额外持久检查 69→0，保留接纳与周期检查。未部署，真实 MySQL 持锁与整集耗时未测。",
    "updatedAt": "2026-11-07",
    "tags": [

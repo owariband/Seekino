@@ -5,6 +5,7 @@ import type { AuthIdentity, SeriesView } from "../src/api/contracts";
 const guest: AuthIdentity = {
   userId: "guest-a", email: null, isGuest: true, tenantId: null,
   publicTenantId: "platform-public", mode: "cloud", csrfToken: "csrf-guest-a",
+  emailLoginEnabled: true,
   permissions: { canUpload: false, canManage: false, canConfigure: false },
 };
 const member: AuthIdentity = {

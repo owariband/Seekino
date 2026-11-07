@@ -26,7 +26,8 @@ import type {
 } from "../../api/contracts";
 
 interface StoredIdentity { key: string; id?: string }
-const conversations = new Map<string, Promise<AgentConversationView>>();
+const conversations = new Map<string, Promise<AgentConversationView | null>>();
+const creations = new Map<string, Promise<AgentConversationView>>();
 const conversationStorageKey = () => identityStorageKey("seekino-agent-conversation");
 
 function storedIdentity(storageKey: string): StoredIdentity {
@@ -42,7 +43,7 @@ function storedIdentity(storageKey: string): StoredIdentity {
   return identity;
 }
 
-async function ensureConversation(): Promise<AgentConversationView> {
+async function restoreConversation(): Promise<AgentConversationView | null> {
   const storageKey = conversationStorageKey();
   const tenantId = TENANT_ID;
   const pending = conversations.get(storageKey);
@@ -69,7 +70,7 @@ async function ensureConversation(): Promise<AgentConversationView> {
       identity = { key: crypto.randomUUID() };
       localStorage.setItem(storageKey, JSON.stringify(identity));
     }
-    return createAgentConversation(identity.key);
+    return null;
   })();
   conversations.set(storageKey, promise);
   try { return await promise; }
@@ -162,8 +163,11 @@ interface ActiveConversation {
   identityKey: string;
   recoveryMessageId: string | null;
   streamedMessageId: string | null;
+  creationKey?: string;
+  creating?: Promise<string | null>;
 }
 
+// null restores the saved conversation; an empty string selects a fresh local draft.
 export function useAgentConversation(requestedId: string | null = null) {
   const { locale } = useI18n();
   const localeRef = useRef(locale);
@@ -174,13 +178,62 @@ export function useAgentConversation(requestedId: string | null = null) {
   });
   const activeRef = useRef<ActiveConversation | null>(null);
 
+  const subscribe = (active: ActiveConversation, conversationId: string) => {
+    active.unsubscribe = subscribeAgentMessages(conversationId, (snapshot) => {
+      if (activeRef.current !== active) return;
+      const recovered = snapshot.messages.some((message) => message.messageId === active.recoveryMessageId && message.status !== "PROCESSING");
+      if (recovered) active.recoveryMessageId = null;
+      setState((current) => ({ ...current, error: recovered ? null : current.error, messages: mergeMessages(current.messages, snapshot.messages, conversationId, active.sending ? active.streamedMessageId : null) }));
+    });
+  };
+
+  const ensureConversationId = useCallback(async (): Promise<string | null> => {
+    const active = activeRef.current;
+    if (!active || active.identityKey !== conversationStorageKey()) return null;
+    if (active.conversationId) return active.conversationId;
+    if (active.creating) return active.creating;
+    const key = active.creationKey ??= storedIdentity(active.identityKey).key;
+    const pendingKey = `${active.identityKey}:${key}`;
+    active.creating = (async () => {
+      try {
+        let pending = creations.get(pendingKey);
+        if (!pending) {
+          pending = createAgentConversation(key);
+          creations.set(pendingKey, pending);
+        }
+        const conversation = await pending;
+        if (activeRef.current !== active || active.identityKey !== conversationStorageKey()) return null;
+        if (conversation.tenantId !== TENANT_ID) throw new Error(t("对话不属于当前工作区"));
+        localStorage.setItem(active.identityKey, JSON.stringify({ key, id: conversation.conversationId }));
+        rememberConversation(conversation.conversationId);
+        active.conversationId = conversation.conversationId;
+        setState((current) => ({ ...current, conversationId: conversation.conversationId, error: null }));
+        subscribe(active, conversation.conversationId);
+        return conversation.conversationId;
+      } catch (error) {
+        if (activeRef.current === active) setState((current) => ({ ...current, error: errorMessage(error, localeRef.current) }));
+        return null;
+      } finally {
+        creations.delete(pendingKey);
+        active.creating = undefined;
+      }
+    })();
+    return active.creating;
+  }, []);
+
   useEffect(() => {
     const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null, identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null };
     activeRef.current = active;
     setState({ requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null });
     void (async () => {
       try {
-        const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
+        const conversation = requestedId ? await getAgentConversation(requestedId) : requestedId === "" ? null : await restoreConversation();
+        if (activeRef.current !== active) return;
+        active.creationKey = requestedId === "" ? crypto.randomUUID() : storedIdentity(active.identityKey).key;
+        if (!conversation) {
+          setState((current) => ({ ...current, loading: false }));
+          return;
+        }
         if (conversation.tenantId !== TENANT_ID) throw new Error(t("对话不属于当前工作区"));
         if (activeRef.current !== active) return;
         rememberConversation(conversation.conversationId);
@@ -188,21 +241,16 @@ export function useAgentConversation(requestedId: string | null = null) {
         const messages = await loadMessages(conversation.conversationId, localeRef.current);
         if (activeRef.current !== active) return;
         setState((current) => ({ ...current, conversationId: conversation.conversationId, messages, loading: false }));
-        active.unsubscribe = subscribeAgentMessages(conversation.conversationId, (snapshot) => {
-          if (activeRef.current !== active) return;
-          const recovered = snapshot.messages.some((message) => message.messageId === active.recoveryMessageId && message.status !== "PROCESSING");
-          if (recovered) active.recoveryMessageId = null;
-          setState((current) => ({ ...current, error: recovered ? null : current.error, messages: mergeMessages(current.messages, snapshot.messages, conversation.conversationId, active.sending ? active.streamedMessageId : null) }));
-        });
+        subscribe(active, conversation.conversationId);
       } catch (error) {
         if (activeRef.current === active) setState((current) => ({ ...current, loading: false, error: errorMessage(error, localeRef.current) }));
       }
     })();
     return () => {
-      if (activeRef.current === active) activeRef.current = null;
-      active.controller.abort();
-      active.unsubscribe?.();
-      active.unsubscribe = undefined;
+      const current = activeRef.current;
+      activeRef.current = null;
+      current?.controller.abort();
+      current?.unsubscribe?.();
     };
   }, [requestedId]);
 
@@ -214,6 +262,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       active.unsubscribe?.();
       active.unsubscribe = undefined;
     }
+    activeRef.current = { conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null, identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null, creationKey: crypto.randomUUID() };
     setState((current) => ({
       requestedId: current.requestedId,
       conversationId: null,
@@ -281,8 +330,8 @@ export function useAgentConversation(requestedId: string | null = null) {
     submission?: { attachments?: AgentAttachmentReference[]; sourceTenantId?: string; onAccepted?: () => void },
   ) => {
     const active = activeRef.current;
-    if (!content.trim() || !active?.conversationId || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
-    const conversationId = active.conversationId;
+    if (!content.trim() || !active || state.loading || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
+    let conversationId = active.conversationId ?? "";
     const scope = [...seriesIds];
     const frozenReference = reference ? { ...reference } : null;
     const frozenOptions = { ...options };
@@ -378,6 +427,8 @@ export function useAgentConversation(requestedId: string | null = null) {
       });
     };
     try {
+      conversationId = await ensureConversationId() ?? "";
+      if (!conversationId || signal.aborted || activeRef.current !== active) return;
       await streamAgentMessage(
         conversationId,
         content.trim(),
@@ -400,7 +451,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     } finally {
       if (active.sendController !== sendController) return;
       // A clean EOF can also lose the first event; only the request key proves acceptance.
-      if (!accepted && !rejected && activeRef.current === active && !signal.aborted) {
+      if (conversationId && !accepted && !rejected && activeRef.current === active && !signal.aborted) {
         try {
           const pair = await getAgentMessage(conversationId, { idempotencyKey });
           if (activeRef.current === active && active.sendController === sendController && !signal.aborted && pair.userMessage.conversationId === conversationId && pair.assistantMessage.conversationId === conversationId) {
@@ -418,6 +469,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       active.streamedMessageId = null;
       if (activeRef.current === active) {
         setState((current) => ({ ...current, sending: false }));
+        if (!conversationId) return;
         // The HTTP subscription can end while the service still owns the Kick.
         try {
           const messages = await loadMessages(conversationId, localeRef.current);
@@ -431,7 +483,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         }
       }
     }
-  }, [requestedId, state.requestedId, state.messages]);
+  }, [ensureConversationId, requestedId, state.loading, state.requestedId, state.messages]);
 
   const visible = state.requestedId === requestedId ? state : {
     requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
@@ -441,6 +493,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     searching: visible.sending || visible.messages.some((message) => message.status === "PROCESSING"),
     cancelling: Boolean(visible.cancellingMessageId),
     clear,
+    ensureConversationId,
     send,
     stop,
   };

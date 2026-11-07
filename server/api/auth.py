@@ -36,7 +36,7 @@ def _check_write(request: Request, service: AuthService) -> AuthIdentity:
 
 
 def _view(service: AuthService, identity: AuthIdentity, csrf_token: str) -> AuthIdentityView:
-    return AuthIdentityView(user_id=identity.user_id, email=identity.email, is_guest=identity.is_guest, tenant_id=identity.tenant_id, public_tenant_id=identity.public_tenant_id, mode=identity.mode, csrf_token=csrf_token, permissions=service.permissions(identity))
+    return AuthIdentityView(user_id=identity.user_id, email=identity.email, is_guest=identity.is_guest, tenant_id=identity.tenant_id, public_tenant_id=identity.public_tenant_id, mode=identity.mode, csrf_token=csrf_token, email_login_enabled=service.email_login_enabled, permissions=service.permissions(identity))
 
 
 def _apply_credentials(request: Request, response: Response, service: AuthService, credentials: AuthCredentials) -> AuthIdentityView:

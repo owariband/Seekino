@@ -118,6 +118,7 @@ class VideoParseIndexCoordinator:
         media_service: VideoParseMediaService,
         contract: ChunkIndexingContract,
         check_active: Callable[[], None] | None = None,
+        check_cancelled: Callable[[], None] | None = None,
         event_store: ElasticsearchVideoEventStore | None = None,
         event_target: Mapping[str, Any] | None = None,
     ) -> None:
@@ -148,6 +149,7 @@ class VideoParseIndexCoordinator:
         self._media_resolver = media_resolver
         self._media_service = media_service
         self._check_active = check_active or (lambda: None)
+        self._check_cancelled = check_cancelled or self._check_active
         self.contract = contract
         if (event_store is None) != (event_target is None):
             raise ValueError("Event store and frozen target must be provided together")
@@ -276,7 +278,7 @@ class VideoParseIndexCoordinator:
         flushed_at = time.monotonic()
         try:
             for plan in plans:
-                self._check_active()
+                self._check_cancelled()
                 semantic_inputs = {
                     _event_semantic_key(item.source): hashlib.sha256(
                         item.request.semantic_text.encode("utf-8")
@@ -320,7 +322,7 @@ class VideoParseIndexCoordinator:
                     continue
                 semantic = []
                 for item in plan.semantic_requests:
-                    self._check_active()
+                    self._check_cancelled()
                     key = _event_semantic_key(item.source)
                     artifact, cached_text = None, semantic_cache.get(key)
                     if isinstance(cached_text, Mapping) and cached_text.get("input_sha256") == semantic_inputs[key]:
@@ -351,7 +353,7 @@ class VideoParseIndexCoordinator:
                         frame_cache = dict(frame_cache) if isinstance(frame_cache, Mapping) else {}
                         artifacts = []
                         for request, (_, path) in zip(requests, paths, strict=True):
-                            self._check_active()
+                            self._check_cancelled()
                             key = request.encoder_id + ":" + request.input_sha256
                             vector = image_vectors.get(key, frame_cache.get(key))
                             artifact = None
@@ -489,7 +491,7 @@ class VideoParseIndexCoordinator:
                 with parse_chunk_scope(chunk.sequence_no, category="embedding"):
                     response = self._embedder.embed_text(request.semantic_text or "")
                 artifact = _accept_result(request, response)
-                self._check_active()
+                self._check_cancelled()
                 artifacts[request.channel] = artifact
                 representations[_receipt_key(request)] = _representation(artifact)
                 self._save_representations(lease, chunk, representations, receipt=receipt)
@@ -500,7 +502,7 @@ class VideoParseIndexCoordinator:
                 with parse_chunk_scope(chunk.sequence_no, category="embedding"):
                     response = self._embedder.embed_video(video_path)
                 artifact = _accept_result(request, response)
-                self._check_active()
+                self._check_cancelled()
                 artifacts[request.channel] = artifact
                 representations[_receipt_key(request)] = _representation(artifact)
                 self._save_representations(lease, chunk, representations, receipt=receipt)
@@ -524,7 +526,7 @@ class VideoParseIndexCoordinator:
                         )
                     except ValueError as exc:
                         raise VideoParseIndexCoordinationError(str(exc)) from exc
-                    self._check_active()
+                    self._check_cancelled()
                 representations["sparse"] = {
                     "channel": "sparse", "weights": dict(sparse_artifact.token_weights),
                 }
@@ -596,7 +598,7 @@ class VideoParseIndexCoordinator:
         *,
         receipt: Mapping[str, Any],
     ) -> None:
-        self._check_active()
+        self._check_cancelled()
         self._persistence.save_index_embeddings(
             lease,
             chunk.chunk_parse_task_id,

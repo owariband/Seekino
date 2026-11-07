@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -687,6 +687,49 @@ describe("Search assistant presentation", () => {
     expect(screen.getByRole("status", { name: "查找视频资料" })).toHaveTextContent("进行中");
   });
 
+  it("shows an active model retry row after the answer blocks and updates it in place", () => {
+    const message: AgentMessageView = {
+      ...assistantMessage("先说明。"),
+      status: "PROCESSING",
+      modelRetry: { attempt: 1, maximum: 3 },
+      renderBlocks: [
+        { type: "markdown", markdown: "先说明。" },
+        { type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "completed" },
+      ],
+    };
+    const view = renderPage(message);
+    const row = screen.getByRole("status", { name: "reconnecting 1/3" });
+    expect(row).toHaveAttribute("data-active", "true");
+    expect(row).toHaveTextContent("reconnecting 1/3");
+    expect(screen.getByRole("status", { name: "查找视频资料" }).compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const conversation = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, modelRetry: { attempt: 2, maximum: 3 } }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("status", { name: "reconnecting 2/3" })).toBe(row);
+    expect(row).toHaveTextContent("reconnecting 2/3");
+    expect(row).not.toHaveTextContent("reconnecting 1/3");
+
+    // A recovery snapshot clears the row without waiting for the answer to finish.
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, modelRetry: null }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText(/reconnecting/)).not.toBeInTheDocument();
+
+    // Terminal states also drop a retry value that survived in the snapshot.
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, status: "COMPLETED", phase: null, modelRetry: { attempt: 2, maximum: 3 } }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText(/reconnecting/)).not.toBeInTheDocument();
+  });
+
   it.each(["completed", "failed"] as const)("updates a web tool to %s in place without video evidence", (status) => {
     const tool: AgentRenderBlock = { type: "tool", callId: "web-lookup", tool: "search_web", status: "inProgress", query: "<img src=x onerror=alert(1)>" };
     const before: AgentRenderBlock = { type: "markdown", markdown: "我先搜索网页。" };
@@ -1145,5 +1188,91 @@ describe("Chat image attachments", () => {
     fireEvent.error(screen.getByRole("img", { name: "图片 1" }));
     expect(screen.getByRole("img", { name: "图片 1：附件暂不可用" })).toBeInTheDocument();
     expect(screen.getByText("这张图出自哪里？")).toBeInTheDocument();
+  });
+});
+
+
+describe("Lazy conversation lifecycle", () => {
+  const saved = { conversationId: "conversation-1", tenantId: "local-default", title: "Saved", messageCount: 1, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  beforeEach(async () => {
+    localStorage.clear();
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
+    const actual = await vi.importActual<typeof import("./useAgentConversation")>("./useAgentConversation");
+    mocks.useAgentConversation.mockImplementation(actual.useAgentConversation);
+    vi.spyOn(api, "getAgentConversation").mockResolvedValue(saved);
+    vi.spyOn(api, "createAgentConversation").mockResolvedValue({ ...saved, conversationId: "conversation-2", messageCount: 0 });
+    vi.spyOn(api, "listAgentConversations").mockResolvedValue({ items: [saved], total: 1, hasMore: false, nextCursor: null });
+    vi.spyOn(api, "listAgentMessages").mockResolvedValue({ items: [assistantMessage("Saved answer")], total: 1, hasMore: false, nextCursor: null });
+    vi.spyOn(api, "subscribeAgentMessages").mockReturnValue(() => {});
+    vi.spyOn(api, "streamAgentMessage").mockImplementation(async (id, content, _key, emit) => {
+      const assistant = { ...assistantMessage("Answer"), conversationId: id };
+      emit({ type: "answer.started", conversationId: id, messageId: assistant.messageId, sequence: 1, occurredAt: now,
+        assistantMessage: assistant, userMessage: { ...assistant, messageId: "user", role: "USER", sequenceNo: 0, content } });
+    });
+  });
+
+  it("opens a fresh draft without creating and creates with a new key on send", async () => {
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: saved.conversationId }));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe(saved.conversationId);
+    expect(screen.queryByText("Saved answer")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "First question");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(api.streamAgentMessage).toHaveBeenCalledOnce());
+    expect(api.createAgentConversation).toHaveBeenCalledOnce();
+    expect(vi.mocked(api.createAgentConversation).mock.calls[0]![0]).not.toBe("saved-key");
+    expect(vi.mocked(api.streamAgentMessage).mock.calls[0]![0]).toBe("conversation-2");
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveValue("");
+  });
+
+  it("deletes the only conversation into a draft without creating", async () => {
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: saved.conversationId }));
+    vi.spyOn(api, "deleteAgentConversation").mockResolvedValue(saved);
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^删除对话 Saved，/ }));
+    await user.click(screen.getByRole("button", { name: /^确认删除对话 Saved，/ }));
+    await waitFor(() => expect(screen.queryByText("Saved answer")).not.toBeInTheDocument());
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toBeEnabled();
+  });
+
+  it("enables example questions in a draft and sends the selected question", async () => {
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    const example = await screen.findByRole("button", { name: "下雨天有人在门口等待的画面" });
+    await waitFor(() => expect(example).toBeEnabled());
+    expect(api.createAgentConversation).not.toHaveBeenCalled();
+    await user.click(example);
+    await waitFor(() => expect(api.streamAgentMessage).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.streamAgentMessage).mock.calls[0]![1]).toBe("下雨天有人在门口等待的画面");
+  });
+
+  it("creates before uploading the first attachment in a draft", async () => {
+    vi.spyOn(api, "uploadAgentAttachment").mockRejectedValue(new Error("upload unavailable"));
+    render(<SearchPage />);
+    await waitFor(() => expect(screen.getByLabelText("选择聊天图片")).toBeEnabled());
+    const file = new File(["image"], "image.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("选择聊天图片"), { target: { files: [file] } });
+    await waitFor(() => expect(api.uploadAgentAttachment).toHaveBeenCalledOnce());
+    expect(api.createAgentConversation).toHaveBeenCalledOnce();
+    expect(api.uploadAgentAttachment).toHaveBeenCalledWith("conversation-2", file, expect.any(AbortSignal));
+  });
+
+  it("retains the typed question when draft creation fails", async () => {
+    vi.mocked(api.createAgentConversation).mockRejectedValue(new Error("creation unavailable"));
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "Keep this question");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("creation unavailable");
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveValue("Keep this question");
+    expect(api.streamAgentMessage).not.toHaveBeenCalled();
   });
 });
