@@ -3,7 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from agent.video_parse_v2.scheduler import claimable_chunk_sequences, chunk_index_ready
@@ -46,12 +47,14 @@ from ..service.video_parse_task import (
     _error_detail,
     _execution_config,
     _latest_video_task_id,
-    _submitted_intervals_by_member,
+    _interval_size,
     _video_failure_status as _task_failure_status,
     _requires_video_asr,
     _video_asr_prepared,
 )
 from ..repository import video_parse_task as task_store
+from ..repository import video_parse_chunk as chunk_store, video_parse_interval as interval_store
+from ..service.video_parse_dispatch import EpisodeReadyTasks, ParseDispatch
 from ..service.video_parse_voiceprint import _record_voiceprint_failure as _voiceprint_failure
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from ..utils.validation import require_nonempty_text
@@ -63,9 +66,10 @@ class MySqlVideoParseQueue:
     """DB-backed V2 delivery with independent phase leases and fencing."""
 
     def __init__(
-        self, session_factory: sessionmaker[Session], *, video_concurrency: int,
+        self, session_factory: sessionmaker[Session], *, video_concurrency: int, dispatch: ParseDispatch | None = None,
     ) -> None:
         self._session_factory = session_factory
+        self.dispatch = dispatch
         self.video_concurrency = video_concurrency
         if type(self.video_concurrency) is not int or self.video_concurrency <= 0:
             raise ValueError("video_concurrency must be a positive integer")
@@ -151,7 +155,10 @@ class MySqlVideoParseQueue:
             ).with_for_update(skip_locked=True))
             if child is None or not self._acquire_capacity(session, parent):
                 return None
-            return _claim_chunk_row(child, parent, worker, claimed_at, lease_duration)
+            lease = _claim_chunk_row(child, parent, worker, claimed_at, lease_duration)
+        if self.dispatch is not None:
+            self.dispatch.after_commit(lease, EpisodeReadyTasks.lease_state)
+        return lease
 
     def claim_video(
         self, worker_id: str, *, lease_duration: timedelta,
@@ -206,6 +213,8 @@ class MySqlVideoParseQueue:
                 statement = statement.where(VideoParseTask.id == requested)
             # Sorting these IDs in Python avoids filesort retaining JSON filters.
             parents = sorted(session.scalars(statement))
+        if self.dispatch is not None and requested is None:
+            self.dispatch.retain(parents)
         previous = self._last_parent.get(phase)
         if previous in parents:
             offset = parents.index(previous) + 1
@@ -235,69 +244,77 @@ class MySqlVideoParseQueue:
         claimed_at = now if now is not None else now_utc()
         stage = "parse" if phase == ChunkTaskPhase.PARSE else "index"
         for parent_id in self._parent_candidates(stage, video_parse_task_id):
+            generation, candidates = (self.dispatch.candidates(parent_id, stage, claimed_at)
+                                      if self.dispatch is not None else (None, ()))
+            if generation is not None and not candidates:
+                continue
             with self._session_factory.begin() as session:
-                parent = session.scalar(select(VideoParseTask).where(
-                    VideoParseTask.id == parent_id,
-                ).with_for_update(skip_locked=True))
+                parent = _claim_parent(session, parent_id, ready_work=generation is not None)
                 if (not _eligible_parent(parent) or phase == ChunkTaskPhase.PARSE and parent.status != "PARSING"
                     or not _phase_capacity(session, parent, stage, now=claimed_at)):
                     continue
-                children = list(session.scalars(select(ChunkParseTask).join(
-                    VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
-                ).where(
-                    ChunkParseTask.video_task_id == parent.id,
-                    ChunkParseTask.phase == phase, ChunkParseTask.status == "QUEUED",
-                    ChunkParseTask.next_execute_time <= claimed_at,
-                ).order_by(VideoChunk.sequence_no).with_for_update(skip_locked=True)))
-                for child in children:
-                    chunk = session.get(VideoChunk, child.chunk_id)
-                    if phase == ChunkTaskPhase.PARSE and not _chunk_claim_allowed(session, parent, chunk.sequence_no, claimed_at):
-                        continue
-                    if phase == ChunkTaskPhase.INDEX:
-                        content = session.scalar(select(ChunkParseContent).where(
-                            ChunkParseContent.chunk_task_id == child.id,
-                        ))
-                        covering = _submitted_intervals_by_member(session, parent.id).get(child.id, ())
-                        if not chunk_index_ready(content is not None and content.content is not None, [
-                            item.status == "COMPLETE" and session.get(IntervalParseContent, item.id) is not None
-                            for item in covering
-                        ]):
-                            continue
-                    lease = _claim_chunk_row(child, parent, worker, claimed_at, lease_duration)
+                if phase == ChunkTaskPhase.PARSE and not _dispatch_due(parent, claimed_at):
+                    continue
+                if generation != parent.lease_version:
                     if phase == ChunkTaskPhase.PARSE:
+                        rows = chunk_store.list_progress(session, parent_id)
+                        allowed = claimable_chunk_sequences(
+                            [(c.sequence_no, c.phase, c.status, c.has_content) for c in rows],
+                            parent.parse_config["batch_max_size"],
+                            terminal_failures_ready=parent.parse_config.get("voiceprint_mode", "off") != "off",
+                        )
+                        candidates = (c.id for c in rows if c.sequence_no in allowed and c.next_execute_time <= claimed_at)
+                    else:
+                        candidates = list(session.scalars(select(ChunkParseTask.id).join(
+                            VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
+                        ).where(ChunkParseTask.video_task_id == parent.id, ChunkParseTask.phase == phase,
+                                ChunkParseTask.status == "QUEUED", ChunkParseTask.next_execute_time <= claimed_at
+                        ).order_by(VideoChunk.sequence_no)))
+                lease = None
+                for key in candidates:
+                    child = session.scalar(select(ChunkParseTask).where(
+                        ChunkParseTask.id == key, ChunkParseTask.video_task_id == parent.id,
+                        ChunkParseTask.phase == phase, ChunkParseTask.status == "QUEUED",
+                        ChunkParseTask.next_execute_time <= claimed_at,
+                    ).with_for_update(skip_locked=True))
+                    if child is None:
+                        continue
+                    if (phase == ChunkTaskPhase.INDEX and generation != parent.lease_version
+                            and not _index_claim_ready(session, parent, child)):
+                        continue
+                    lease = _claim_chunk_row(child, parent, worker, claimed_at, lease_duration)
+                    if phase == ChunkTaskPhase.PARSE and parent.parse_config["dispatch_interval_seconds"] > 0:
                         _record_chunk_dispatch(parent, claimed_at)
-                    self._last_parent[stage] = parent.id
-                    return lease
+                    break
+            if lease is not None:
+                self._last_parent[stage] = parent_id
+                if self.dispatch is not None:
+                    self.dispatch.after_commit(lease, EpisodeReadyTasks.lease_state)
+                return lease
         return None
 
     def load_chunk_schedule(
         self, video_parse_task_id: str, *, now: datetime | None = None,
     ) -> ChunkScheduleState:
         loaded_at = now if now is not None else now_utc()
+        if self.dispatch is not None:
+            snapshot = self.dispatch.schedule(video_parse_task_id)
+            if snapshot is not None:
+                return snapshot
         with self._session_factory() as session:
             parent = session.get(VideoParseTask, video_parse_task_id)
             if parent is None or parent.is_deleted:
                 return ChunkScheduleState((), 1.0, "VideoParseTask does not exist")
-            rows = list(session.execute(select(ChunkParseTask, VideoChunk, ChunkParseContent).join(
-                VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
-            ).outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id).where(
-                ChunkParseTask.video_task_id == video_parse_task_id,
-            ).order_by(VideoChunk.sequence_no)))
+            rows = chunk_store.list_progress(session, video_parse_task_id)
             terminal = None
             if _video_failure_status(parent) is not None:
                 terminal = "VideoParseTask is draining after a terminal failure"
-            elif any(task.status == "FAILED" and (
-                parent.parse_config.get("voiceprint_mode", "off") == "off"
-                or task.phase != ChunkTaskPhase.PARSE
-            ) for task, _chunk, _content in rows):
+            elif any(c.status == "FAILED" and (parent.parse_config.get("voiceprint_mode", "off") == "off"
+                                              or c.phase != ChunkTaskPhase.PARSE) for c in rows):
                 terminal = "a Chunk stage exhausted its retry budget"
             return ChunkScheduleState(tuple(ChunkScheduleEntryState(
-                chunk_parse_task_id=task.id, sequence_no=chunk.sequence_no,
-                status=task.status, phase=task.phase,
-                understanding_committed=content is not None and content.content is not None,
-            ) for task, chunk, content in rows), _schedule_wait_seconds(
-                parent, [(task, chunk) for task, chunk, _content in rows], loaded_at,
-            ), terminal)
+                c.id, c.sequence_no, c.status, c.phase, c.has_content,
+            ) for c in rows), _schedule_wait_seconds(parent, rows, loaded_at), terminal)
 
     def claim_interval_refine(
         self, worker_id: str, *, lease_duration: timedelta,
@@ -307,24 +324,33 @@ class MySqlVideoParseQueue:
         _require_lease_duration(lease_duration)
         claimed_at = now if now is not None else now_utc()
         for parent_id in self._parent_candidates("refine", video_parse_task_id):
+            generation, keys = (self.dispatch.candidates(parent_id, "refine", claimed_at)
+                                if self.dispatch is not None else (None, ()))
+            if generation is not None and not keys:
+                continue
             with self._session_factory.begin() as session:
-                parent = session.scalar(select(VideoParseTask).where(
-                    VideoParseTask.id == parent_id,
-                ).with_for_update(skip_locked=True))
+                parent = _claim_parent(session, parent_id, ready_work=generation is not None)
                 if (not _eligible_parent(parent)
                     or (parent.parse_config.get("voiceprint") is not None
                         or parent.parse_config.get("voiceprint_mode", "off") != "off")
                     and dict((parent.detail or {}).get("voiceprint") or {}).get("ready") is not True
                     or not _phase_capacity(session, parent, "refine", now=claimed_at)):
                     continue
-                candidates = list(session.scalars(select(IntervalParseTask).where(
-                    IntervalParseTask.video_task_id == parent.id,
-                    IntervalParseTask.status == "WAITING",
-                    IntervalParseTask.next_execute_time <= claimed_at,
-                ).order_by(IntervalParseTask.start_sequence_no).with_for_update(skip_locked=True)))
-                for interval in candidates:
-                    if (interval.ready_mask != interval_full_ready_mask(interval.chunk_count)
-                        or session.get(IntervalParseContent, interval.id) is not None):
+                if generation != parent.lease_version:
+                    rows = session.execute(select(
+                        IntervalParseTask.id, IntervalParseTask.ready_mask, IntervalParseTask.chunk_count,
+                    ).where(IntervalParseTask.video_task_id == parent.id, IntervalParseTask.status == "WAITING",
+                            IntervalParseTask.next_execute_time <= claimed_at).order_by(IntervalParseTask.start_sequence_no))
+                    keys = [key for key, mask, size in rows if mask == interval_full_ready_mask(size)]
+                lease = None
+                for key in keys:
+                    interval = session.scalar(select(IntervalParseTask).where(
+                        IntervalParseTask.id == key, IntervalParseTask.video_task_id == parent.id,
+                        IntervalParseTask.status == "WAITING", IntervalParseTask.next_execute_time <= claimed_at,
+                    ).with_for_update(skip_locked=True))
+                    if (interval is None or interval.ready_mask != interval_full_ready_mask(interval.chunk_count)
+                        or session.scalar(select(IntervalParseContent.interval_task_id).where(
+                            IntervalParseContent.interval_task_id == key)) is not None):
                         continue
                     contents = session.execute(select(ChunkParseContent.chunk_task_id).where(
                         ChunkParseContent.chunk_task_id.in_(interval.chunk_task_ids),
@@ -343,8 +369,7 @@ class MySqlVideoParseQueue:
                     interval.last_error = None
                     interval.update_time = datetime_to_unix_time_ms(claimed_at)
                     session.flush()
-                    self._last_parent["refine"] = parent.id
-                    return IntervalParseLease(
+                    lease = IntervalParseLease(
                         interval_parse_task_id=interval.id, video_parse_task_id=parent.id,
                         chunk_parse_task_ids=tuple(interval.chunk_task_ids),
                         start_sequence_no=interval.start_sequence_no, chunk_count=interval.chunk_count,
@@ -355,6 +380,12 @@ class MySqlVideoParseQueue:
                         retry_initial_delay_seconds=execution["retry_initial_delay_seconds"],
                         retry_max_delay_seconds=execution["retry_max_delay_seconds"],
                     )
+                    break
+            if lease is not None:
+                self._last_parent["refine"] = parent_id
+                if self.dispatch is not None:
+                    self.dispatch.after_commit(lease, EpisodeReadyTasks.lease_state)
+                return lease
         return None
 
     def heartbeat_video(
@@ -668,7 +699,9 @@ class MySqlVideoParseQueue:
                 parent.last_error = {"code": "PARSE_NODE_FAILED", "stage": stage, "reason": reason}
             _aggregate_video_task(session, parent.id, failed_at,
                                   release_terminal_lease=True, failure_status="PARSING_FAILED")
-            return True
+        if self.dispatch is not None:
+            self.dispatch.invalidate(lease.video_parse_task_id)
+        return True
 
     def retry_chunk(
         self, lease: ChunkParseLease, *, error: str, retry_at: datetime,
@@ -697,7 +730,13 @@ class MySqlVideoParseQueue:
                 return False
             _fail_child(child, parent, failed_at, error, retry_at=retry_at)
             _aggregate_video_task(session, parent.id, failed_at, release_terminal_lease=True)
-            return True
+            queued = child.status in ("WAITING", "QUEUED")
+        if self.dispatch is not None:
+            if queued:
+                self.dispatch.after_commit(lease, EpisodeReadyTasks.lease_state, retry_at=retry_at)
+            else:
+                self.dispatch.invalidate(lease.video_parse_task_id)
+        return True
 
     def release_execution(self, lease, *, now: datetime | None = None) -> bool:
         """Return stopped work; unfinished voice execution retains its failure outcome."""
@@ -735,7 +774,9 @@ class MySqlVideoParseQueue:
                 session, parent, released_at,
                 failure_status="PARSING_FAILED" if exhausted else None,
             )
-            return True
+        if self.dispatch is not None:
+            self.dispatch.invalidate(lease.video_parse_task_id)
+        return True
 
     def reap_expired(
         self, *, now: datetime | None = None, limit: int = 100,
@@ -826,6 +867,8 @@ class MySqlVideoParseQueue:
                     session, task, reaped_at, failure_status="PARSING_FAILED" if exhausted else None,
                 )
                 changed += 1
+            if self.dispatch is not None:
+                self.dispatch.invalidate(task_id)
         return changed
 
     def reap_expired_chunks(self, *, now: datetime | None = None, limit: int = 100) -> int:
@@ -867,6 +910,8 @@ class MySqlVideoParseQueue:
                 _fail_child(child, parent, reaped_at, error)
                 _aggregate_video_task(session, parent.id, reaped_at, release_terminal_lease=True)
                 changed += 1
+            if self.dispatch is not None:
+                self.dispatch.invalidate(parent_id)
         return changed
 
 
@@ -887,37 +932,43 @@ def _aggregate_released_video(
         )
 
 
-def _chunk_claim_allowed(
-    session: Session,
-    parent: VideoParseTask,
-    candidate_sequence: int,
-    now: datetime,
-) -> bool:
-    if _video_failure_status(parent) is not None:
-        return False
-    batch_size = parent.parse_config["batch_max_size"]
-    rows = list(session.execute(
-        select(VideoChunk.sequence_no, ChunkParseTask.phase, ChunkParseTask.status,
-               ChunkParseContent.content.is_not(None))
-        .join(ChunkParseTask, ChunkParseTask.chunk_id == VideoChunk.id)
-        .outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
-        .where(ChunkParseTask.video_task_id == parent.id)
-        .order_by(VideoChunk.sequence_no)
-    ))
-    if candidate_sequence not in claimable_chunk_sequences(
-        rows, batch_size,
-        terminal_failures_ready=parent.parse_config.get("voiceprint_mode", "off") != "off",
-    ):
-        return False
-    dispatch_interval = parent.parse_config["dispatch_interval_seconds"]
-    runtime = _ensure_runtime(parent.detail)[RUNTIME_DETAIL_KEY]
-    scheduler = runtime.get("chunk_scheduler", {})
+def _claim_parent(session: Session, parent_id: str, *, ready_work: bool) -> VideoParseTask | None:
+    statement = select(VideoParseTask).where(VideoParseTask.id == parent_id)
+    parent = session.scalar(statement.with_for_update(skip_locked=True))
+    if parent is not None or not ready_work or session.get_bind().dialect.name != "mysql":
+        return parent
+    # A known ready child should get a turn behind short model/heartbeat writes.
+    # Scope the wait to this lock and restore the pooled connection's setting.
+    previous = int(session.scalar(text("SELECT @@SESSION.innodb_lock_wait_timeout")))
+    session.execute(text("SET SESSION innodb_lock_wait_timeout = 1"))
+    try:
+        return session.scalar(statement.with_for_update())
+    except OperationalError as error:
+        if error.orig.args[0] != 1205:  # ER_LOCK_WAIT_TIMEOUT
+            raise
+        return None
+    finally:
+        session.execute(text("SET SESSION innodb_lock_wait_timeout = :old"), {"old": previous})
+
+
+def _index_claim_ready(session, parent, child):
+    sequence = session.scalar(select(VideoChunk.sequence_no).where(VideoChunk.id == child.chunk_id))
+    size = _interval_size(parent.parse_config)
+    covering = interval_store.list_tasks(session, parent.id, start_range=(max(0, sequence - size + 1), sequence))
+    covering = [window for window in covering if child.id in window.chunk_task_ids]
+    submitted = interval_store.list_content_ids(session, [window.id for window in covering])
+    base = session.scalar(select(chunk_store.has_parse_content()).where(ChunkParseContent.chunk_task_id == child.id))
+    return chunk_index_ready(bool(base), [w.status == "COMPLETE" and w.id in submitted for w in covering])
+
+
+def _dispatch_due(parent: VideoParseTask, now: datetime) -> bool:
+    interval = parent.parse_config["dispatch_interval_seconds"]
+    if interval <= 0:
+        return True
+    runtime = (parent.detail or {}).get(RUNTIME_DETAIL_KEY, {})
+    scheduler = runtime.get("chunk_scheduler") or {}
     last_ms = scheduler.get("last_dispatch_time_ms") if isinstance(scheduler, dict) else None
-    if isinstance(last_ms, int):
-        next_ms = last_ms + int(dispatch_interval * 1000)
-        if datetime_to_unix_time_ms(now) < next_ms:
-            return False
-    return True
+    return not isinstance(last_ms, int) or datetime_to_unix_time_ms(now) >= last_ms + int(interval * 1000)
 
 
 def _record_chunk_dispatch(parent: VideoParseTask, now: datetime) -> None:
@@ -933,12 +984,12 @@ def _record_chunk_dispatch(parent: VideoParseTask, now: datetime) -> None:
 
 def _schedule_wait_seconds(
     parent: VideoParseTask,
-    rows: list[tuple[ChunkParseTask, VideoChunk]],
+    rows: list[chunk_store.ChunkProgress],
     now: datetime,
 ) -> float:
     due = [
         task.next_execute_time
-        for task, _chunk in rows
+        for task in rows
         if task.status == ChunkParseTaskStatus.QUEUED.value
         and task.next_execute_time > now
     ]

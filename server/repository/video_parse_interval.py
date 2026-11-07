@@ -71,13 +71,23 @@ def get_content(session: Session, interval_task_id: str) -> IntervalParseContent
 
 def list_tasks(
     session: Session, video_task_id: str, *, for_update: bool = False,
+    start_range: tuple[int, int] | None = None,
 ) -> list[IntervalParseTaskData]:
-    statement = select(IntervalParseTask).where(
-        IntervalParseTask.video_task_id == video_task_id,
-    ).order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id)
+    statement = select(IntervalParseTask).where(IntervalParseTask.video_task_id == video_task_id)
+    if start_range is not None:
+        statement = statement.where(IntervalParseTask.start_sequence_no.between(*start_range))
+    statement = statement.order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id)
     if for_update:
         statement = statement.with_for_update()
     return [task_data(row) for row in session.scalars(statement)]
+
+
+def has_unfinished_window(session: Session, video_task_id: str) -> bool:
+    # Current read under the parent lock also sees other window commits that
+    # happened after a repeatable-read snapshot was established.
+    return session.scalar(select(IntervalParseTask.id).where(
+        IntervalParseTask.video_task_id == video_task_id, IntervalParseTask.status != "COMPLETE",
+    ).limit(1).with_for_update()) is not None
 
 
 def list_content_ids(session: Session, interval_ids: Sequence[str], *, for_update: bool = False) -> set[str]:

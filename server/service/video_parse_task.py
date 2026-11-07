@@ -151,11 +151,11 @@ def _advance_ready_chunks(
     intervals = (list(locked_intervals) if locked_intervals is not None
                  else _locked_parent_intervals(session, video_parse_task_id))
     refined = interval_store.list_content_ids(session, [item.id for item in intervals])
-    rows = chunk_store.list_task_content_rows(session, video_parse_task_id, task_ids=member_ids, for_update=True)
+    rows = chunk_store.lock_tasks_with_content(session, video_parse_task_id, member_ids)
     queued = []
-    for child, content in rows:
+    for child, present in rows:
         covering = [item for item in intervals if child.id in item.chunk_task_ids]
-        if not chunk_index_ready(bool(content.content), [
+        if not chunk_index_ready(present, [
             item.status == "COMPLETE" and item.id in refined for item in covering
         ]):
             continue
@@ -207,9 +207,8 @@ def _aggregate_video_task(
     session.flush()
     before = deepcopy(task)
     runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
-    chunk_rows = chunk_store.list_task_chunk_content_rows(session, task.id, include_missing_content=True)
+    chunks = chunk_store.list_progress(session, task.id)
     intervals = interval_store.list_tasks(session, task.id)
-    chunks = [child for child, _chunk, _content in chunk_rows]
     if (runtime.get("realtime_only") is True and runtime.get("accepted") is not True
         and failure_status is None and _video_failure_status(task) is None):
         task.status = "PREPARING" if task.status == "PREPARING" or task.lease_owner is not None else "PENDING"
@@ -219,7 +218,7 @@ def _aggregate_video_task(
         _touch_if_modified(session, task, before, now)
         return task
     refined = interval_store.list_content_ids(session, [item.id for item in intervals])
-    topology_complete = _topology_complete(task, chunk_rows, intervals)
+    topology_complete = _topology_complete(task, [(item.id, item.video_id, item.sequence_no) for item in chunks], intervals)
     recorded_failure = _video_failure_status(task) or (
         task.status if task.status in {"PARSING_FAILED", "INDEXING_FAILED"} else None
     )
@@ -233,13 +232,11 @@ def _aggregate_video_task(
                        or any(item.phase == ChunkTaskPhase.INDEX and item.status == "FAILED" for item in chunks))
     status = summarize_video_task(
         topology_complete=topology_complete,
-        understanding_complete=all(content is not None and bool(content.content)
-                                   for _, _, content in chunk_rows),
+        understanding_complete=all(item.has_content for item in chunks),
         refinement_complete=all(item.status == "COMPLETE" and item.id in refined for item in intervals),
         indexing_complete=all(
-            child.phase == ChunkTaskPhase.INDEX and child.status == "COMPLETE" and content is not None
-            and child.indexed_content_version == content.version
-            for child, _, content in chunk_rows
+            child.phase == ChunkTaskPhase.INDEX and child.status == "COMPLETE" and child.content_version is not None
+            and child.indexed_content_version == child.content_version for child in chunks
         ),
         parsing_failed=parsing_failed, indexing_failed=indexing_failed,
     )
@@ -277,18 +274,18 @@ def _aggregate_video_task(
     return task
 
 
-def _topology_complete(task: VideoParseTaskData, chunk_rows: Sequence, intervals: Sequence[IntervalParseTaskData]) -> bool:
-    """Check the same committed coverage for aggregation and Video summarization."""
-    chunks = [child for child, _chunk, _content in chunk_rows]
+def _topology_complete(
+    task: VideoParseTaskData, chunks: Sequence[tuple[str, str, int]], intervals: Sequence[IntervalParseTaskData],
+) -> bool:
+    """Verify each persisted window against the ordered source chunks."""
     expected = _interval_specs(task.chunk_count, _interval_size(task.parse_config))
+    ids = [child_id for child_id, _, _ in chunks]
     return (
         task.chunk_count > 0 and len(chunks) == task.chunk_count
-        and [chunk.sequence_no for _, chunk, _ in chunk_rows] == list(range(task.chunk_count))
-        and all(chunk.video_id == task.video_id for _, chunk, _ in chunk_rows)
+        and all(video_id == task.video_id and seq == i for i, (_, video_id, seq) in enumerate(chunks))
         and [(item.start_sequence_no, item.chunk_count) for item in intervals] == list(expected)
-        and all(tuple(item.chunk_task_ids) == tuple(
-            child.id for child in chunks[item.start_sequence_no:item.start_sequence_no + item.chunk_count]
-        ) for item in intervals)
+        and all(list(item.chunk_task_ids) == ids[item.start_sequence_no:item.start_sequence_no + item.chunk_count]
+                for item in intervals)
     )
 
 
