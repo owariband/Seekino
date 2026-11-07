@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T16:09:46+08:00",
+ "updatedAt": "2026-11-07T23:32:30+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 21,
+ "revision": 22,
  "categories": [
   {
    "id": "parse",
@@ -4684,7 +4684,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "priority": "P1",
    "description": "按块和窗口的已提交状态领取，移除逐个 SSE 的 MySQL 续租并及时释放失效请求。",
    "next": "用保留的任务核验剩余窗口的完成情况。20 分钟指标需要同条件从零到完成的计时，四集并发吞吐另测。",
-   "verification": "相同 9,071 个事件的流控制 SQL 降为 0。MyGO 第 3 集到达 10/10/1，但模型报错后最终失败，20 分钟指标未通过。",
+   "verification": "相同 9,071 个事件的流控制 SQL 降为 0。MyGO 第 3 集到达 10/10/1，但模型报错后最终失败，20 分钟指标未通过。 已备 198 帧及音频的交付中，整集和块行锁各从 200 次降到 2 次，最后一个文件链接后失租的交付被拦截。",
    "updatedAt": "2026-11-07",
    "tags": [
     "解析调度",
@@ -4714,6 +4714,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "验证记录",
      "url": "https://github.com/owariband/Seekino/blob/perf/parse-ready-dispatch/docs/report/server/mq/parse-ready-dispatch/README.md",
      "kind": "source"
+    },
+    {
+     "label": "帧文件租约 #75",
+     "url": "https://github.com/owariband/Seekino/pull/75",
+     "kind": "pr"
     }
    ],
    "source": {
