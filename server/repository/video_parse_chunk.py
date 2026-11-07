@@ -7,16 +7,55 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from copy import deepcopy
+from datetime import datetime
+from typing import NamedTuple
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.orm import Session
 
 from ..model.dto.taskDTO import ChunkParseTaskData
 from ..model.dto.parseContentDTO import ChunkParseContentData
 from ..model.dto.libraryDTO import VideoChunkData
-from ..model.task import ChunkParseTask
+from ..model.task import ChunkParseTask, ChunkTaskPhase
 from ..model.parse_content import ChunkParseContent
 from ..model.video import VideoChunk
+
+
+class ChunkProgress(NamedTuple):
+    id: str
+    video_id: str
+    sequence_no: int
+    phase: int
+    status: str
+    lease_owner: str | None
+    lease_version: int
+    next_execute_time: datetime
+    has_content: bool
+    content_version: int | None
+    indexed_content_version: int | None
+
+
+def has_parse_content():
+    # Persisted parse results are JSON objects. Legacy empty objects and JSON
+    # null must remain incomplete, including on SQLite where JSON is text.
+    content = ChunkParseContent.content
+    return content.is_not(None) & cast(content, String).not_in(("null", "{}", "[]", '""', "false", "0"))
+
+
+def list_progress(
+    session: Session, video_task_id: str, *, task_ids: Sequence[str] | None = None,
+) -> list[ChunkProgress]:
+    statement = select(
+        ChunkParseTask.id, VideoChunk.video_id, VideoChunk.sequence_no, ChunkParseTask.phase,
+        ChunkParseTask.status, ChunkParseTask.lease_owner, ChunkParseTask.lease_version,
+        ChunkParseTask.next_execute_time, has_parse_content(), ChunkParseContent.version,
+        ChunkParseTask.indexed_content_version,
+    ).join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id).outerjoin(
+        ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id,
+    ).where(ChunkParseTask.video_task_id == video_task_id).order_by(VideoChunk.sequence_no)
+    if task_ids is not None:
+        statement = statement.where(ChunkParseTask.id.in_(task_ids))
+    return [ChunkProgress(*row) for row in session.execute(statement)]
 
 
 def task_data(row: ChunkParseTask) -> ChunkParseTaskData:
@@ -101,6 +140,21 @@ def get_content(
     return content_data(row) if row is not None else None
 
 
+def lease_committed(session: Session, task_id: str, phase: int, version: int) -> bool:
+    # Only the receipt is needed; detail also holds potentially large vectors.
+    if phase == ChunkTaskPhase.PARSE:
+        receipt = session.scalar(select(ChunkParseContent.detail["parse_committed_lease_version"]).where(
+            ChunkParseContent.chunk_task_id == task_id,
+        ))
+        return receipt == version
+    if phase == ChunkTaskPhase.INDEX:
+        receipts = session.scalar(select(ChunkParseContent.detail["index_committed_lease_versions"]).where(
+            ChunkParseContent.chunk_task_id == task_id,
+        ))
+        return isinstance(receipts, list) and version in receipts
+    return False
+
+
 def get_video_chunk(
     session: Session, chunk_id: str, *, for_update: bool = False,
 ) -> VideoChunkData | None:
@@ -178,6 +232,24 @@ def list_task_chunk_content_rows(
         statement = statement.with_for_update()
     return [(task_data(task), video_chunk_data(chunk), content_data(content) if content is not None else None)
             for task, chunk, content in session.execute(statement)]
+
+
+def lock_tasks_with_content(
+    session: Session, video_task_id: str, task_ids: Sequence[str],
+) -> list[tuple[ChunkParseTaskData, bool]]:
+    statement = select(ChunkParseTask, has_parse_content()).join(
+        ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id,
+    ).where(
+        ChunkParseTask.video_task_id == video_task_id, ChunkParseTask.id.in_(task_ids),
+    ).order_by(ChunkParseTask.id).with_for_update()
+    return [(task_data(task), present) for task, present in session.execute(statement)]
+
+
+def has_pending_index(session: Session, video_task_id: str) -> bool:
+    return session.scalar(select(ChunkParseTask.id).where(
+        ChunkParseTask.video_task_id == video_task_id, ChunkParseTask.phase == ChunkTaskPhase.INDEX,
+        ChunkParseTask.status.in_(("RUNNING", "QUEUED")),
+    ).limit(1)) is not None
 
 
 def list_task_content_rows(

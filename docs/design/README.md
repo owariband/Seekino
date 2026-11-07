@@ -61,6 +61,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 |---|---|---|
 | 长任务查询与 Consumer 恢复 | [parse-task-query-recovery-trd.md](03-product-reassessment/parse-task-query-recovery-trd.md) | PR #30：大 JSON 查询 1038、Consumer 异常定位与同任务成果保留；依赖 #18，当前仅设计。 |
 | Parse V2 任务编排 | [video-parse-harness-trd.md](02-agent-harness/video-parse-harness-trd.md) | 主 TRD：任务与成果、Prepare、调度、租约、Refine、Prefix 和恢复；同一 ChunkTask 承担 Parse / Index。 |
+| 已提交任务的派发与索引收尾 | [解析就绪调度 TRD](03-product-reassessment/parse-ready-dispatch-trd.md) | 按块和窗口领取，在进程接管时恢复，并用同一集对照 MySQL 与实际索引耗时。 |
 | Parse V2 领域算法 | [video-parse-engine-trd.md](02-agent-harness/video-parse-engine-trd.md) | 领域合同：解析结果 Schema、时间与人物规则、解析和投影边界；旧检索章节结合最新 Event 合同阅读。 |
 | 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 11-01 追加 Kimi 流式推理耗时诊断、全量帧时间配对试点；主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；dev 已接入宿主直接 JSON 与 30k；精简字段/SHOT 兼容迁移及实模验收待完成。 |
 | 解析暂停与继续 | [parse-pause-resume-trd.md](03-product-reassessment/parse-pause-resume-trd.md) | 保留成果、释放容量、撤销租约，任务页显示语音转写与暂停状态。 |
