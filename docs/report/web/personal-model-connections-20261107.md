@@ -13,3 +13,15 @@
 | 布局及回归 | 浏览器验证桌面 1280px、手机 320px；手机无横向溢出。独立前端 612 项单测、17 项相关 Chrome 用例及生产构建通过。Kino 联合工作树 620 项前端单测通过。服务及网关相关回归 412 项通过、1 项跳过 |
 
 供应商验证使用本机可控的 HTTP 服务和测试密钥。未对四家厂商逐一使用付费账户验收。自定义回答模型在收到每次模型调用的完整输出后展示文本。
+
+## 聊天框的个人候选与首次发送
+
+原聊天菜单把部署 YAML 的选项合并进用户候选，导致空账户也看见豆包和 Kimi。修订后，聊天框和会话设置共用按个人连接分组的选择器。Chatbox 对自定义供应商检查其保存的模型，Chatbox AI 自营目录有独立来源。发送判定在缺少模型时返回 block。[供应商过滤](https://github.com/chatboxai/chatbox/blob/d17455c5ca8fd3ff44385c6d4d2118599e4c970f/src/renderer/hooks/useProviders.ts#L20-L52) · [自营目录](https://github.com/chatboxai/chatbox/blob/d17455c5ca8fd3ff44385c6d4d2118599e4c970f/src/renderer/components/ModelSelectorV2/index.tsx#L128-L167) · [发送判断](https://github.com/chatboxai/chatbox/blob/d17455c5ca8fd3ff44385c6d4d2118599e4c970f/src/renderer/components/InputBox/submitAction.ts#L58-L72)
+
+本机 5188 的 Chrome 验收使用此前未保存个人连接的账号。在草稿输入文字后按 Enter，创建会话和消息请求均为 0。点「配置模型」后添加自己的服务和两个模型 ID，选第二个并关闭设置，原文字仍在。显式发送后创建 1 个会话、提交 1 条消息。本机 HTTP 接收器核对了凭据与所选模型，回答在聊天正文显示。新草稿继承该模型，另设个人默认后，新草稿采用新的默认值，已发送会话仍保存原选择。验收数据已清理。
+
+![未配置时的聊天输入区](assets/personal-picker-empty-20261107.png)
+
+![已选个人模型的聊天输入区](assets/personal-picker-configured-20261107.png)
+
+修订后的独立前端 613 项单测通过，含原播放器改动的 kino-entry 621 项通过，构建及 18 项浏览器回归通过。相关服务端回归 397 项通过、1 项跳过。网页外的调用也不能在个人模型模式下使用旧部署 ID 发起新回答。
