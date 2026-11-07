@@ -61,6 +61,7 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 |---|---|---|
 | 长任务查询与 Consumer 恢复 | [parse-task-query-recovery-trd.md](03-product-reassessment/parse-task-query-recovery-trd.md) | PR #30：大 JSON 查询 1038、Consumer 异常定位与同任务成果保留；依赖 #18，当前仅设计。 |
 | Parse V2 任务编排 | [video-parse-harness-trd.md](02-agent-harness/video-parse-harness-trd.md) | 主 TRD：任务与成果、Prepare、调度、租约、Refine、Prefix 和恢复；同一 ChunkTask 承担 Parse / Index。 |
+| 已准备素材的批次租约校验 | [帧文件交付 TRD](03-product-reassessment/parse-media-link-lease-trd.md) | 在硬链接前后核验 chunk 租约，记录锁次数和失租交付结果。 |
 | 已提交任务的派发与索引收尾 | [解析就绪调度 TRD](03-product-reassessment/parse-ready-dispatch-trd.md) | 按块和窗口领取，在进程接管时恢复，并用同一集对照 MySQL 与实际索引耗时。 |
 | Parse V2 领域算法 | [video-parse-engine-trd.md](02-agent-harness/video-parse-engine-trd.md) | 领域合同：解析结果 Schema、时间与人物规则、解析和投影边界；旧检索章节结合最新 Event 合同阅读。 |
 | Parse 模型输出草稿 | [parse-output-drafts-trd.md](03-product-reassessment/parse-output-drafts-trd.md) | 1,024 字节或调用退出保存独立草稿，SSE 只检查本地取消；设计与隔离验证，部署/整集性能另验。 |

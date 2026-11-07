@@ -2799,6 +2799,8 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 同日核对 MyGO。四集并跑时约 143 万次块与窗口续租放大了数据库负担。第 3 集另有失效流等待 TLS 读取、供应端错误与重试。验收追加相同 SSE 回放、真实连接取消耗时、24 块/22 窗的 3 FPS 整集检验，时长和失败证据见[第 3 集实跑](../report/server/mq/parse-ready-dispatch/animation.md)。
 
+合并版复测还发现，已抽取的 198 帧与一份音频在创建硬链接时会触发 200 次父行和 200 次子行加锁。五轮同输入比较中，在整批链接前和媒体交付前各校验一次，两种锁均降至 2 次，最后一个文件链接期间被暂停的任务在交付前被拦住。见[帧文件交付 TRD](../design/03-product-reassessment/parse-media-link-lease-trd.md)。
+
 ### PARSE-DRAFT-01：SSE 控制检查逐事件续租，模型正文缺少中途草稿
 
 2026-11-07：核对实际调用链，正文由 Gateway 内存收集，完整校验后才进入正式结果；高频数据库写入来自 SSE `check_control → manager.check_active → _require_*_active → _heartbeat_child`，每次涉及父行锁及子任务续租。正文 buffer 与租约 heartbeat 是独立职责，不能靠新增 buffer 自动消除原回调的数据库访问。
