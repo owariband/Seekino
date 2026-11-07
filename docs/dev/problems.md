@@ -2797,3 +2797,8 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 ## CHAT-COMPOSER-02　对话共用一个回答模型，历史宽度固定
 
 2026-11-07。独立页共用启动时的 Supervisor，图片入口位于输入面板外，桌面侧栏固定 248px。验收要求是两个对话能分别选择回答模型，回到原对话能继续使用其选择，打开草稿与切模型均不创建空对话。桌面历史需支持拖动和键盘，播放器要保留单行输入。见[设计与验证](../design/03-product-reassessment/chat-composer-models-trd.md)及[工作台](workbench.html)。
+
+<a id="settings-ui-01"></a>
+## SETTINGS-UI-01　设置长页混合多个作用范围，从聊天进入会丢失草稿上下文
+
+2026-11-07。外观与语言属于设备，回答模型属于会话，全局运行参数属于服务。原设置入口的页面跳转卸载聊天输入。验收要求是可按范围找到配置，从设置返回保留草稿和选区，且两个 Kino 入口互通。本机结果见[设置验收](../report/web/settings-workspace-20261107.md)，状态见[工作台](workbench.html)。

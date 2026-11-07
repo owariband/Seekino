@@ -205,3 +205,9 @@
 @media (max-width: 760px) { .hero { min-height: 590px; height: auto; align-items: end; padding: 230px var(--home-gutter) 70px; } .heroFrame { bottom: 130px; } .hero::before { background: linear-gradient(0deg, #10251f 12%, rgb(5 16 13 / 88%) 40%, rgb(5 16 13 / 4%) 85%); } .hero::after { height: 80px; } .heroContent { width: 100%; } .heroContent h2 { margin: 14px 0; font-size: clamp(2rem, 8vw, 3.5rem); } .heroContent > p { margin: 16px 0 22px; font-size: .85rem; -webkit-line-clamp: 2; } .heroMeta { font-size: .72rem; } .heroPlay, .heroBrowse { padding-inline: 18px; font-size: .8rem; } .heroProgress { margin-top: 22px; } }
 @media (max-width: 580px) { .homeGrid { gap: 24px; } .seriesCards { grid-auto-columns: 76%; gap: 16px; } .seriesCards strong { font-size: .9rem; } .seriesCards small { font-size: .7rem; } .homeEpisode { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; padding-inline: 8px; } .homeEpisodeNumber { font-size: .68rem; } .coverFallback { padding: 15px; gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .seriesCover, .sidePanel[data-open="false"], .videoPlayerControls { transition: none; } }
+
+.fadePreference { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; color: var(--ink-soft); font-size: .75rem; }
+.fadePreference input { width: 5em; padding: 4px 6px; color: var(--ink); background: var(--canvas); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.sidePanel[data-fade="true"]:not(:hover):not(:focus-within) { animation: watch-panel-fade 160ms ease var(--kino-fade-delay) forwards; }
+@keyframes watch-panel-fade { to { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .sidePanel[data-fade="true"] { animation-duration: 1ms; } }

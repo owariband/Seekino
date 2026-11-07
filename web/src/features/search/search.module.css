@@ -832,3 +832,7 @@
 @media (max-height: 650px) {
   .standalonePage[data-draft="true"] .agentPanel { justify-content: flex-start; overflow-y: auto; padding-bottom: 12px; }
 }
+
+.modelSettingsLink { display: inline-grid; width: 30px; height: 30px; place-items: center; color: var(--ink-soft); border-radius: 7px; }
+.modelSettingsLink:hover, .modelSettingsLink:focus-visible { color: var(--teal-deep); background: var(--teal-wash); }
+@media (max-width: 760px) { .modelSettingsLink { width: 44px; height: 44px; } }

@@ -13,8 +13,61 @@ test.beforeEach(async ({ page }) => {
       permissions: { canUpload: true, canManage: true, canConfigure: true },
     } });
     if (path === "/api/system/runtime-config") return route.fulfill({ json: { displayMode: "release" } });
+    if (path === "/api/agent/messages/options") return route.fulfill({ json: {
+      chatModels: [{ id: "default", label: "Default model" }, { id: "alternate", label: "Second model" }],
+      ...Object.fromEntries(["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"]
+        .map(name => [name, { defaultValue: 4, minimum: 1, maximum: 10 }])),
+    } });
     return route.fulfill({ json: { items: [], total: 0, hasMore: false, nextCursor: null } });
   });
+});
+
+test("opens settings above the draft, edits its model and returns to the same textarea", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const writes: string[] = [];
+  page.on("request", r => { if (r.method() !== "GET" && r.url().includes("/api/agent/")) writes.push(r.url()); });
+  await page.goto("/search");
+  const input = page.getByRole("textbox", { name: "向 Seekino 助手提问" });
+  await input.fill("这里有一段未发送的草稿");
+  const original = await input.elementHandle();
+  await input.evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(2, 5));
+  await page.getByRole("link", { name: "回答模型设置" }).click();
+  const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("radio", { name: /Second model/ }).check();
+  await dialog.getByRole("button", { name: "观看与 Kino" }).click();
+  const delay = dialog.getByRole("spinbutton");
+  await delay.fill("1.5");
+  await delay.press("Tab");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("seekino-watch-fade-delay"))).toBe("1.5");
+  await dialog.getByRole("switch", { name: "发送问题时暂停视频" }).uncheck();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/search$/);
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("这里有一段未发送的草稿");
+  expect(await input.evaluate((node, previous) => node === previous, original)).toBe(true);
+  expect(await input.evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd])).toEqual([2, 5]);
+  await expect(page.getByRole("combobox", { name: "回答模型" })).toHaveValue("alternate");
+  expect(writes).toEqual([]);
+});
+
+test("opens a standalone mobile settings directory with authentic device preferences", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.addInitScript(() => {
+    localStorage.setItem("seekino-watch-fade-delay", "2.5");
+    localStorage.setItem("seekino-watch-pause-on-send", "false");
+  });
+  await page.goto("/settings");
+  const navigation = page.getByRole("navigation", { name: "设置分类" });
+  await expect(navigation).toBeVisible();
+  await navigation.getByRole("button", { name: "观看与 Kino" }).click();
+  await expect(page.getByRole("switch", { name: "发送问题时暂停视频" })).not.toBeChecked();
+  await expect(page.getByRole("spinbutton")).toHaveValue("2.5");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  await page.getByRole("button", { name: "返回设置分类" }).click();
+  await navigation.getByRole("button", { name: "回答模型" }).click();
+  await expect(page.getByText("Second model", { exact: true })).toBeVisible();
+  await expect(page.getByRole("radio", { name: /Second model/ })).toHaveCount(0);
 });
 
 test("keeps a bounded centered draft and an independently collapsible history rail", async ({ page }, testInfo) => {

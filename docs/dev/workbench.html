@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-07T03:21:39+08:00",
+ "updatedAt": "2026-11-07T14:57:11+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 18,
+ "revision": 19,
  "categories": [
   {
    "id": "parse",
@@ -4711,6 +4711,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     {
      "label": "验收记录",
      "url": "https://github.com/owariband/Seekino/blob/feat/chat-composer-models/docs/report/web/chat-composer-models-20261107.md",
+     "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "SETTINGS-UI-01",
+   "title": "分类设置、草稿返回与 Kino 偏好",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "将设备偏好、会话模型和管理员配置接到响应式设置页，保留正在输入的聊天。",
+   "next": "本机验收完成，依赖 #68 后集成 #72。",
+   "verification": "5188 核对模型、焦点、原选区、手机目录及观看偏好同步。619 项联合单测和 18 项相关浏览器用例通过。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "CHAT-COMPOSER-02",
+    "MOD-CHAT"
+   ],
+   "branch": "feat/settings-workspace",
+   "links": [
+    {
+     "label": "设计",
+     "url": "https://github.com/owariband/Seekino/blob/feat/settings-workspace/docs/design/03-product-reassessment/settings-workspace-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #72",
+     "url": "https://github.com/owariband/Seekino/pull/72",
+     "kind": "pr"
+    },
+    {
+     "label": "试验与验收",
+     "url": "https://github.com/owariband/Seekino/blob/feat/settings-workspace/docs/report/web/settings-workspace-20261107.md",
      "kind": "source"
     }
    ]
