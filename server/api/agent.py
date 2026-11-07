@@ -17,6 +17,7 @@ from agent.chat.video_search.output import video_range_sources
 from ..config.sse import SSEConfig
 from ..model.dto.agentDTO import (
     AgentConversationCreateRequest,
+    AgentConversationModelRequest,
     AgentGlobalSettingsPatchRequest,
     AgentMessageSendRequest,
     AgentMessageState,
@@ -137,7 +138,21 @@ def create_agent_conversation(
         tenant_id=body.tenant_id,
         owner_user_id=identity.user_id,
         title=body.title,
+        model_id=body.model_id,
         idempotency_key=idempotency_key,
+    )
+    return AgentConversationView.model_validate(state)
+
+
+def patch_agent_conversation_model(
+    request: Request, body: AgentConversationModelRequest,
+    conversation_id: str = Query(alias="conversationId"),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+) -> AgentConversationView:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
+    state = get_services(request).agent.set_conversation_model(
+        conversation_id, tenant_id=tenant_id, owner_user_id=identity.user_id, model_id=body.model_id,
     )
     return AgentConversationView.model_validate(state)
 

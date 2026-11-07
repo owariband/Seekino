@@ -21,7 +21,13 @@ class AgentIntegerOptionView(ContractModel):
     maximum: int = Field(gt=0)
 
 
+class AgentModelOptionView(ContractModel):
+    id: str
+    label: str
+
+
 class AgentMessageOptionsView(ContractModel):
+    chat_models: list[AgentModelOptionView]
     top_k: AgentIntegerOptionView
     max_model_calls_per_turn: AgentIntegerOptionView
     max_tool_calls_per_turn: AgentIntegerOptionView
@@ -73,6 +79,7 @@ class AgentMessageTimingView(ContractModel):
 
 
 class AgentConversationView(ContractModel):
+    model_id: str = "default"
     conversation_id: str
     tenant_id: str
     title: str

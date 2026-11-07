@@ -28,6 +28,11 @@ class AgentAttachmentReference(ContractModel):
 class AgentConversationCreateRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     title: str | None = Field(default=None, min_length=1, max_length=255)
+    model_id: str = Field(default="default", min_length=1, max_length=128)
+
+
+class AgentConversationModelRequest(ContractModel):
+    model_id: str = Field(min_length=1, max_length=128)
 
 
 class AgentMessageSendRequest(ContractModel):
@@ -97,11 +102,18 @@ class AgentIntegerOptionState:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentModelOptionState:
+    id: str
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentMessageOptionsState:
     top_k: AgentIntegerOptionState
     max_model_calls_per_turn: AgentIntegerOptionState
     max_tool_calls_per_turn: AgentIntegerOptionState
     max_loop_turns: AgentIntegerOptionState
+    chat_models: tuple[AgentModelOptionState, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +147,7 @@ class AgentConversationState:
     last_message_preview: str | None = None
     owner_user_id: str = LOCAL_USER_ID
     detail: dict[str, Any] | None = None
+    model_id: str = "default"
 
 
 @dataclass(frozen=True, slots=True)

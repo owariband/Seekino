@@ -533,12 +533,27 @@ export function searchVideos(
 
 export function createAgentConversation(
   idempotencyKey: string,
+  modelId = "default",
 ): Promise<AgentConversationView> {
   return requestJson("/api/agent/conversations/create", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ tenantId: TENANT_ID }),
+    body: JSON.stringify({ tenantId: TENANT_ID, ...(modelId === "default" ? {} : { modelId }) }),
   });
+}
+
+export function updateAgentConversationModel(
+  conversationId: string,
+  modelId: string,
+): Promise<AgentConversationView> {
+  return requestJson(
+    `/api/agent/conversations/model?conversationId=${encodeURIComponent(conversationId)}&tenantId=${TENANT_QUERY}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelId }),
+    },
+  );
 }
 
 export function listAgentConversations(limit = 100, cursor?: string): Promise<Page<AgentConversationView>> {

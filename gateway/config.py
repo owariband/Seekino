@@ -454,6 +454,7 @@ class GatewayConfig(BaseModel):
 
     config_version: Literal[1, 2] = 1
     supervisor_harness: Literal["deepagents", "codex"] = "deepagents"
+    supervisor_choices: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
         default_factory=_default_model_sources
@@ -511,10 +512,16 @@ class GatewayConfig(BaseModel):
         for ref, binding in self.normalized_models.items():
             self._validate_binding(binding, ref=ref)
         self._validate_supervisor_binding()
+        for ref in self.supervisor_choices:
+            if ref in {"default", "supervisor"} or len(ref) > 128 or ref not in self.normalized_models:
+                raise ValueError(f"supervisor_choices must reference a configured alternative in models: {ref!r}")
+            binding = self.normalized_models[ref]
+            if binding.kind not in {None, "generative"}:
+                raise ValueError(f"supervisor_choices.{ref} requires a generative model")
         return self
 
-    def _validate_supervisor_binding(self) -> None:
-        binding = self.normalized_models.get("supervisor")
+    def _validate_supervisor_binding(self, ref: str = "supervisor") -> None:
+        binding = self.normalized_models.get(ref)
         if binding is None:
             # Legacy model-component configurations keep their existing
             # validation; the internal Deep Agents builder checks its source.
@@ -539,6 +546,24 @@ class GatewayConfig(BaseModel):
                 raise ValueError("deepagents Supervisor fallback requires an Ark API source")
             if binding.fallback.fallback is not None:
                 raise ValueError("Supervisor models support one configured fallback")
+
+    def available_supervisor_choices(self, *, environ: Mapping[str, str] | None = None) -> dict[str, ModelBinding]:
+        environment = os.environ if environ is None else environ
+        choices = {}
+        for ref in self.supervisor_choices:
+            binding = self.resolve_model_binding(ref, environ=environment)
+            source = self.source(binding.source)
+            if self.supervisor_harness == "codex":
+                if not isinstance(source, CodexModelSourceConfig):
+                    continue
+            elif not isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
+                continue
+            self._validate_supervisor_binding(ref)
+            key_names = (source_api_key_env_name(self.source(part.source))
+                         for part in (binding, binding.fallback) if part is not None)
+            if all(not name or environment.get(name, "").strip() for name in key_names):
+                choices[ref] = binding
+        return choices
 
     def source(self, name: str) -> ModelSourceConfig:
         try:

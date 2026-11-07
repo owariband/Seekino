@@ -565,6 +565,8 @@ export interface VideoSearchRequest {
 export interface AgentConversationView {
   conversationId: string;
   tenantId: string;
+  /** Legacy responses omit this; the backend then uses "default". */
+  modelId?: string;
   title: string;
   messageCount: number;
   lastMessagePreview: string | null;
@@ -636,6 +638,8 @@ export interface AgentMessageOptions {
   maxLoopTurns: AgentIntegerOption;
   maxModelCallsPerTurn: AgentIntegerOption;
   maxToolCallsPerTurn: AgentIntegerOption;
+  /** Selectable answer models; the first entry has id "default". */
+  chatModels?: { id: string; label: string }[];
 }
 
 export type AgentReasoningEffort = "none" | "low" | "high" | "max";

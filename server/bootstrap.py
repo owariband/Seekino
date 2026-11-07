@@ -5,6 +5,7 @@ import logging
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
+from functools import partial
 
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.query_hook import QueryHook
@@ -13,7 +14,7 @@ from agent.chat.video_search.runtime import AgentRuntime
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
 from gateway.config import (
-    ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, load_config,
+    ClaudeCodeModelSourceConfig, CodexModelSourceConfig, GatewayConfig, ModelBinding, load_config,
 )
 from gateway.model_factory import GatewayClient
 from gateway.multimodal import adapter_capabilities
@@ -44,7 +45,7 @@ from .repository.model_usage import ModelUsageRepository
 from .repository.upload import UploadRepository
 from .service.video_parse_persistence import VideoParsePersistenceService
 from .service.agent_checkpoint import create_agent_checkpoint_store
-from .service.agent_chat import AgentChatService
+from .service.agent_chat import AgentChatService, ChatModelChoice
 from .service.agent_attachments import AgentAttachmentService
 from .service.auth import AuthService
 from .service.job import ParseJobService
@@ -393,6 +394,7 @@ def _build_application_services(
         )
     def build_supervisor_runtime(
         video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
+        binding: ModelBinding, model_factory: AgentModelFactory,
     ) -> SupervisorRuntime:
         _validate_cloud_agent_timeout(settings, agent_config)
         if settings.auth.mode == "cloud":
@@ -401,12 +403,12 @@ def _build_application_services(
             timeout for timeout in (
                 settings.agent_request_timeout_seconds,
                 agent_config.execution_timeout_seconds if agent_config.total_timeout_enabled else None,
-                supervisor_binding.request_timeout_seconds,
+                binding.request_timeout_seconds,
             ) if timeout is not None
         )
         max_output_tokens = min(
             agent_config.max_output_tokens,
-            supervisor_binding.max_output_tokens,
+            binding.max_output_tokens,
         )
         context_window_policy = ContextWindowPolicy(
             context_window_tokens=agent_config.context_window_tokens,
@@ -417,18 +419,18 @@ def _build_application_services(
         )
         return SupervisorRuntime(
             video_runtime,
-            supervisor_model_factory.build_supervisor(
+            model_factory.build_supervisor(
                 harness=gateway_config.supervisor_harness,
                 mcp=gateway_config.supervisor_harness == "codex",
-                model=supervisor_binding.model if independent_supervisor else chat_model_name,
+                model=binding.model,
                 request_timeout_seconds=request_timeout,
                 max_output_tokens=max_output_tokens,
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 total_timeout_enabled=agent_config.total_timeout_enabled,
                 reasoning_effort=(
-                    supervisor_binding.reasoning_effort
-                    if independent_supervisor and supervisor_binding.reasoning_effort is not None
+                    binding.reasoning_effort
+                    if binding.reasoning_effort is not None
                     else agent_config.supervisor_reasoning_effort
                 ),
             ),
@@ -454,14 +456,30 @@ def _build_application_services(
             ) if gateway_config.query_hook.enabled else None,
         )
 
-    def build_chat_runtime(agent_config: AgentServiceConfig) -> SupervisorRuntime:
+    if not independent_supervisor:
+        supervisor_binding = supervisor_binding.model_copy(update={"model": chat_model_name, "reasoning_effort": None})
+
+    def build_chat_runtime(
+        agent_config: AgentServiceConfig, *, binding: ModelBinding = supervisor_binding,
+        model_factory: AgentModelFactory = supervisor_model_factory,
+    ) -> SupervisorRuntime:
         query_runtime = build_agent_runtime(agent_config)
         try:
-            return build_supervisor_runtime(query_runtime, agent_config)
+            return build_supervisor_runtime(query_runtime, agent_config, binding, model_factory)
         except Exception:
             query_runtime.close()
             raise
 
+    model_choices = {
+        ref: ChatModelChoice(
+            label=gateway_config.supervisor_choices[ref],
+            build_runtime=partial(
+                build_chat_runtime, binding=binding,
+                model_factory=gateway_client.create_agent_factory(binding),
+            ),
+        )
+        for ref, binding in gateway_config.available_supervisor_choices().items()
+    }
     runtime = build_chat_runtime(settings.agent)
 
     def load_agent_config() -> tuple[AgentServiceConfig, str]:
@@ -477,6 +495,7 @@ def _build_application_services(
         config=settings.agent,
         config_loader=load_agent_config,
         runtime_factory=build_chat_runtime,
+        model_choices=model_choices,
         config_revision=config_revision,
         tracing=tracing,
         parse_usage=parse_usage,

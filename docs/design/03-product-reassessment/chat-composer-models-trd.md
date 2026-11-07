@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-分支 `feat/chat-composer-models`。上游 [#67](https://github.com/owariband/Seekino/pull/67) 提供独立对话页和居中 Kino。先合入 #67，再向 dev 集成本需求。状态见[工作台](../../dev/workbench.html) `CHAT-COMPOSER-02`。
+分支 `feat/chat-composer-models`，[PR #68](https://github.com/owariband/Seekino/pull/68)。上游 [#67](https://github.com/owariband/Seekino/pull/67) 提供独立对话页和居中 Kino。先合入 #67，再向 dev 集成本需求。状态见[工作台](../../dev/workbench.html) `CHAT-COMPOSER-02`。
 
 `/search` 的附件按钮与系列选择同处框外，历史栏固定 248px。`server/bootstrap.py` 在启动时创建一个回答模型，`server/service/agent_chat.py` 将其用于每一轮。参考截图要求附件与内容就近操作、框外选回答模型、拖动历史栏边缘。已存在的上传方式、服务端身份与数据范围、消息幂等和居中 Kino 是验收护栏。
 
@@ -16,11 +16,11 @@
 
 在独立页调整 composer 的控制布局。系列与模型各位于外侧工具行的一端，防止控件挤占文字。侧栏沿用播放器的指针捕获与键盘调宽交互。观看浮窗沿用独立的单行样式。
 
-`GET /api/agent/messages/options` 公布当前默认与显式允许的模型，返回选项标识和名称。可选的 `modelId` 随每条消息传入，Service 校验并选择这次执行的 Supervisor runtime，使用已有请求幂等及 `modelName` 记录。模型来源、凭据、推理参数和能力由服务端已有模型绑定解析。默认走原有配置，切换模型不修改全局配置、Query Agent、索引或解析任务。沿用现有 harness、消息归属与运行限制。
+`GET /api/agent/messages/options` 公布当前默认与显式允许的模型，返回选项标识和名称。选择保存在当前对话的 `detail.modelId` 中。已有对话通过带归属校验的 `PATCH /api/agent/conversations/model` 更新；草稿只在首次发送或上传时把 `modelId` 随原创建请求保存。发送消息沿用既有合同，Service 从对话中读取选择，冻结本次 Supervisor runtime，并将其名称写入既有 `modelName`。模型来源、凭据、推理参数和能力由服务端已有模型绑定解析。默认走原有配置，切换模型不修改全局配置、Query Agent、索引或解析任务。沿用现有 harness、消息归属与运行限制。
 
 # 4. 对照实验与结果分析
 
-计划对比首次和后续发送的请求载荷与实际 runtime，检查无选择、无效选择、重复请求、并发不同会话的隔离。浏览器测量实际控件位置和拖动宽度，覆盖桌面和窄屏。初稿各项结果待测。
+计划对比两个会话的设置与实际 runtime，检查从草稿创建、切换后恢复、无效选择、重复请求、不同会话隔离以及发送时的竞争更新。浏览器测量实际控件位置和拖动宽度，覆盖桌面和窄屏。初稿各项结果待测。
 
 # 5. 试点验证与方案取舍
 
