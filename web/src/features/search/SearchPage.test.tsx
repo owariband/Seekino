@@ -230,13 +230,34 @@ describe("Search assistant presentation", () => {
       expect.objectContaining({ sourceTenantId: "tenant-alice" }));
   });
 
-  it("keeps an empty public source from sending an unbounded search", async () => {
+  it.each([false, true])("shows a public catalog with no searchable series beside its control (has pending series=%s)", async (pending) => {
     mocks.useAuth.mockReturnValue({ canManage: false, activeSource: { kind: "public" } });
-    renderPage(assistantMessage("可以提问"), []);
+    renderPage(assistantMessage("可以提问"), pending ? [{ ...series, status: "EMPTY" }] : []);
     await userEvent.setup().type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "查找这段");
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-    expect(screen.getByText("暂无可体验的公开系列")).toHaveAttribute("role", "alert");
+    const picker = screen.getByLabelText("选择检索视频系列");
+    const notice = screen.getByText("暂无可体验的公开系列");
+    expect(picker).toHaveAccessibleDescription(notice.textContent!);
+    expect(picker.closest("details")?.nextElementSibling).toBe(notice);
+    expect(notice).toHaveAttribute("role", "status");
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a loading or failed public catalog from a successful empty result", () => {
+    mocks.useAuth.mockReturnValue({ canManage: false, activeSource: { kind: "public" } });
+    const view = renderPage(assistantMessage("可以提问"), []);
+    const workspace = mocks.useWorkspace.mock.results.at(-1)!.value;
+    mocks.useWorkspace.mockReturnValue({ ...workspace, isLoading: true });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText("暂无可体验的公开系列")).not.toBeInTheDocument();
+    mocks.useWorkspace.mockReturnValue({ ...workspace, error: new Error("catalog unavailable") });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent("catalog unavailable");
+    expect(screen.queryByText("暂无可体验的公开系列")).not.toBeInTheDocument();
+    mocks.useWorkspace.mockReturnValue({ ...workspace, series: [series] });
+    view.rerender(<SearchPage />);
+    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent(series.name);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([true, false])("keeps a historical reference on its actual publisher (available=%s)", async (available) => {

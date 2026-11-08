@@ -62,6 +62,37 @@ test("opens settings above the draft, edits its model and returns to the same te
   expect(writes).toEqual([]);
 });
 
+test("keeps the public scope notice next to its picker in the compact navigation layout", async ({ page }, testInfo) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({ json: {
+    mode: "cloud", isGuest: true, userId: "guest", email: null, tenantId: null, publicTenantId: "public",
+    csrfToken: "", emailLoginEnabled: false,
+    permissions: { canUpload: false, canManage: false, canConfigure: false },
+  } }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/search");
+  const header = page.getByRole("banner", { name: "全站导航" });
+  const home = header.getByRole("link", { name: "Seekino 首页" });
+  const scope = page.getByLabel("选择检索视频系列", { exact: true });
+  const notice = page.getByText("暂无可体验的公开系列", { exact: true });
+  await expect(scope).toHaveAccessibleDescription("暂无可体验的公开系列");
+  await expect(home).toHaveText("Seekino");
+  await expect(home.locator("svg, img")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "戳一戳 Kino" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "对话侧栏" })).toBeVisible();
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    const bar = (await header.boundingBox())!;
+    expect(bar.height).toBe(width === 1440 ? 64 : 56);
+    expect((await home.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const control = (await scope.boundingBox())!;
+    const status = (await notice.boundingBox())!;
+    expect(status.x).toBeGreaterThanOrEqual(control.x + control.width);
+    expect(Math.abs((control.y + control.height / 2) - (status.y + status.height / 2))).toBeLessThan(2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    await page.screenshot({ path: testInfo.outputPath(`public-${width}.png`) });
+  }
+});
+
 test("opens a standalone mobile settings directory with authentic device preferences", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 700 });
   await page.addInitScript(() => {

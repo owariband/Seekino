@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-08T17:02:10+08:00",
+ "updatedAt": "2026-11-08T18:39:27+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 25,
+ "revision": 26,
  "categories": [
   {
    "id": "parse",
@@ -4785,6 +4785,37 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "验证报告",
      "url": "../report/server/service/parse-output-drafts-20261107.md",
      "kind": "evidence"
+    }
+   ]
+  },
+  {
+   "id": "CHAT-HEADER-01",
+   "title": "紧凑顶栏与公开系列空态",
+   "category": "chat",
+   "type": "task",
+   "status": "verifying",
+   "priority": "P2",
+   "description": "让游客在范围控件旁看到无可检索系列的原因，精简桌面和手机导航。",
+   "next": "通过发布 PR 进入 main 后，在 CPU 公网复验新顶栏和范围状态。",
+   "verification": "已在 CPU main 核对真实左侧栏与手机抽屉。微调构建在 1440、390、320px 通过，624 项单测、23 项浏览器用例通过。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "CHAT-LAYOUT-01"
+   ],
+   "branch": "fix/chat-header-scope",
+   "links": [
+    {
+     "label": "PR #78",
+     "url": "https://github.com/owariband/Seekino/pull/78",
+     "kind": "pr"
+    },
+    {
+     "label": "设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/fix/chat-header-scope/docs/design/03-product-reassessment/chat-header-scope-trd.md",
+     "kind": "trd"
     }
    ]
   },
