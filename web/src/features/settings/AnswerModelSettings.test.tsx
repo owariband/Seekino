@@ -31,12 +31,12 @@ it("shows configured YAML connections as editable with a credential mask instead
   expect(within(card).getByRole("button", { name: "编辑" })).toBeEnabled();
   expect(within(card).getByRole("button", { name: "删除" })).toBeEnabled();
   expect(screen.queryByRole("textbox", { name: "API Key" })).not.toBeInTheDocument();
-  expect((screen.getByRole("combobox", { name: "新对话默认模型" }) as HTMLSelectElement).selectedOptions[0]?.textContent).toContain(yamlModel.modelId);
+  expect(screen.queryByRole("combobox", { name: "新对话默认模型" })).not.toBeInTheDocument();
 });
 
 it("does not repeat shared model IDs when opening the connection form", () => {
   const shared = { ...yamlConnection, models: [yamlModel, { ...yamlModel }] };
-  render(<PersonalConnectionForm connection={shared} busy={false} save={() => undefined} />);
+  render(<PersonalConnectionForm id={shared.connectionId} connection={shared} busy={false} save={() => undefined} />);
   expect(screen.getByLabelText("模型 ID")).toHaveValue(yamlModel.modelId);
 });
 
@@ -65,4 +65,41 @@ it("selects the YAML default on first use, then honors a valid recent choice or 
   expect(preferredChatModel({ ...settings, connections: [yamlConnection] })).toBe(yamlModel.id);
   rememberChatModel(yamlModel.id);
   expect(preferredChatModel({ ...settings, connections: [] })).toBe("default");
+});
+
+it("offers compatible registrations per role and saves the selected service with its revision", async () => {
+  const visual = { id: "visual:batch", modelId: "same-name", roles: ["vision", "ocr"] as ("vision"|"ocr")[] };
+  const audio = { id: "audio:only", modelId: "speech-only", roles: ["transcription"] as "transcription"[] };
+  const before: PersonalModelSettings = {
+    defaultModelId: "default", revision: 41, connections: [{ ...yamlConnection, models: [visual, audio] }],
+    roles: [{ role: "vision", modelId: null, overridden: false, activation: "restart" },
+      { role: "transcription", modelId: audio.id, overridden: false, activation: "restart" }],
+  };
+  vi.spyOn(api, "getPersonalModelSettings").mockResolvedValue(before);
+  const set = vi.spyOn(api, "saveModelRole").mockResolvedValue({ ...before, revision: 42,
+    roles: [{ role: "vision", modelId: visual.id, overridden: true, activation: "restart" }] });
+  render(<AnswerModelSettings active section="roles" />);
+  const picker = await screen.findByRole("combobox", { name: "画面理解" });
+  expect(within(picker).queryByText(/speech-only/)).toBeNull();
+  await userEvent.selectOptions(picker, visual.id);
+  expect(set).toHaveBeenCalledWith("vision", visual.id, 41, expect.any(AbortSignal));
+  await waitFor(() => expect(picker).toHaveValue(visual.id));
+  await userEvent.selectOptions(picker, "");
+  expect(set).toHaveBeenLastCalledWith("vision", null, 42, expect.any(AbortSignal));
+});
+
+it("discovers model IDs into a draft and saves per-model types only after confirmation", async () => {
+  const save = vi.fn();
+  const fetchIds = vi.spyOn(api, "discoverModelIds").mockResolvedValue({ modelIds: ["my-vector"] });
+  render(<PersonalConnectionForm id="draft" busy={false} save={save} />);
+  await userEvent.type(screen.getByLabelText("服务名称"), "我的连接");
+  await userEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
+  expect(fetchIds).toHaveBeenCalledWith("draft", expect.not.objectContaining({ apiKey: expect.anything() }), expect.any(AbortSignal));
+  await userEvent.selectOptions(await screen.findByLabelText("从服务添加模型"), "my-vector");
+  await userEvent.selectOptions(screen.getByLabelText("模型类型"), "embedding");
+  await userEvent.type(screen.getByLabelText("向量维度"), "768");
+  expect(save).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "保存连接" }));
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ modelIds: ["my-vector"],
+    models: [{ modelId: "my-vector", kind: "embedding", dimensions: 768 }] }));
 });

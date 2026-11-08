@@ -9,7 +9,7 @@ from typing import Literal, Protocol, TypeVar
 from pydantic import BaseModel
 
 from gateway.ark.multimodal import ArkMultimodalModel
-from gateway.config import ArkModelSourceConfig, ModelBinding, OpenAIAudioSourceConfig, WhisperXSourceConfig
+from gateway.config import ArkModelSourceConfig, ChatAPISourceConfig, ModelBinding, OpenAIAudioSourceConfig, WhisperXSourceConfig
 from gateway.multimodal import MultimodalInput
 from gateway.openai.audio import transcribe_audio
 
@@ -42,7 +42,7 @@ class VideoTranscriptionModel(Protocol):
 class _AudioTranscriptionModel:
     input_mode = "audio"
 
-    def __init__(self, binding, source, *, api_key: str):
+    def __init__(self, binding, source, *, api_key: str | None, allow_local: bool | None = None):
         if binding.request_timeout_seconds is None:
             raise ValueError("audio transcription requires a configured request timeout")
         self.provider_name = source.provider
@@ -50,6 +50,7 @@ class _AudioTranscriptionModel:
         self._binding = binding
         self._source = source
         self._api_key = api_key
+        self._allow_local = allow_local
         self._closed = False
 
     def transcribe(self, audio_path: str | Path) -> dict:
@@ -60,7 +61,8 @@ class _AudioTranscriptionModel:
             Path(audio_path), model=self.model_name, provider=self.provider_name,
             base_url=self._source.base_url, api_key=self._api_key,
             timeout=self._binding.request_timeout_seconds,
-            response_format=self._source.response_format,
+            response_format=getattr(self._source, "response_format", "verbose_json"),
+            **({"allow_local": self._allow_local} if self._allow_local is not None else {}),
         )
 
     def close(self) -> None:
@@ -101,17 +103,18 @@ class _VideoTranscriptionModel:
 
 def build_transcription_model(
     binding: ModelBinding,
-    source: ArkModelSourceConfig | OpenAIAudioSourceConfig | WhisperXSourceConfig,
+    source: ArkModelSourceConfig | ChatAPISourceConfig | OpenAIAudioSourceConfig | WhisperXSourceConfig,
     *,
     api_key: str | None,
     local_runtime=None,
+    allow_local: bool | None = None,
 ) -> AudioTranscriptionModel | VideoTranscriptionModel:
     """Bind the provider transport without introducing ASR prompt or timing rules."""
     if isinstance(source, WhisperXSourceConfig):
         from gateway.local.whisperx import WhisperXTranscriptionModel
         return WhisperXTranscriptionModel(binding, source, runtime=local_runtime)
-    if isinstance(source, OpenAIAudioSourceConfig):
-        return _AudioTranscriptionModel(binding, source, api_key=api_key)
+    if isinstance(source, OpenAIAudioSourceConfig) or (isinstance(source, ChatAPISourceConfig) and source.protocol == "openai_chat"):
+        return _AudioTranscriptionModel(binding, source, api_key=api_key, allow_local=allow_local)
     if isinstance(source, ArkModelSourceConfig):
         return _VideoTranscriptionModel(binding, source, api_key=api_key)
     raise TypeError(f"unsupported transcription adapter {source.adapter!r}")

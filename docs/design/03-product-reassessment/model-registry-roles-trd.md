@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-工作分支 `feat/model-registry-roles`，依赖 [模型设置 #74](https://github.com/owariband/Seekino/pull/74) 的 YAML 编辑、密钥保护和 cloud 权限。首个提交为本文，PR 创建后回填。聊天设置能够登记连接，画面解析、转写、OCR、向量和重排仍靠运维编辑具名绑定。相同模型使用两把 Key 时，用户需要按连接区分计费和用途。
+工作分支 `feat/model-registry-roles`，依赖 [模型设置 #74](https://github.com/owariband/Seekino/pull/74) 的 YAML 编辑、密钥保护和 cloud 权限。本需求对应 [PR #76](https://github.com/owariband/Seekino/pull/76)，首个提交为本文。聊天设置能够登记连接，画面解析、转写、OCR、向量和重排仍靠运维编辑具名绑定。相同模型使用两把 Key 时，用户需要按连接区分计费和用途。
 
 # 2. 影响因素、假设与评价指标
 

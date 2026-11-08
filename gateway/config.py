@@ -121,7 +121,7 @@ class ChatSourceCredentials(BaseModel):
 
 
 class ChatAPISourceConfig(ChatSourceCredentials):
-    """An HTTP protocol configured exclusively for interactive chat."""
+    """A registered HTTP model service. The binding kind selects generation, ASR or embeddings."""
     model_config = ConfigDict(extra="forbid")
     adapter: Literal["chat_api"] = "chat_api"
     provider: _NonEmptyString = "chat_api"
@@ -152,13 +152,14 @@ class ArkModelSourceConfig(ChatSourceCredentials):
     api_key_env: _NonEmptyString | None = "ARK_API_KEY"
 
 
-class OllamaEmbeddingSourceConfig(BaseModel):
+class OllamaEmbeddingSourceConfig(ChatSourceCredentials):
     """Ollama's native text embedding API; local HTTP needs no API key."""
 
     model_config = ConfigDict(extra="forbid")
 
     adapter: Literal["ollama_embedding"] = "ollama_embedding"
     provider: Literal["ollama"] = "ollama"
+    api_key_env: _NonEmptyString | None = Field(default=None, exclude_if=lambda v: v is None)
     base_url: _AudioBaseUrl
 
 
@@ -172,14 +173,14 @@ class LlamaCppEmbeddingSourceConfig(BaseModel):
     base_url: _AudioBaseUrl
 
 
-class OpenAIAudioSourceConfig(BaseModel):
+class OpenAIAudioSourceConfig(ChatSourceCredentials):
     """Audio Transcriptions protocol, independent of Chat Completions."""
 
     model_config = ConfigDict(extra="forbid")
     adapter: Literal["openai_audio"] = "openai_audio"
     provider: _NonEmptyString
     base_url: _AudioBaseUrl
-    api_key_env: _NonEmptyString
+    api_key_env: _NonEmptyString | None
     response_format: Literal["verbose_json", "json"] = "verbose_json"
 
 
@@ -479,12 +480,17 @@ class WebSearchConfig(BaseModel):
     api_key_env: _NonEmptyString = "DEEPSEEK_API_KEY"
 
 
+ParseModelRole = Literal["vision", "transcription", "ocr", "embedding", "rerank"]
+ModelRole = Literal["chat", "vision", "transcription", "ocr", "embedding", "rerank"]
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     config_version: Literal[1, 2] = 1
     supervisor_harness: Literal["deepagents", "codex"] = "deepagents"
     chat_default_model: _NonEmptyString | None = None
+    model_roles: dict[ParseModelRole, _NonEmptyString] = Field(default_factory=dict)
     supervisor_choices: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
@@ -714,12 +720,14 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{ref} {kind} does not support fallback")
         if kind == "embedding" and binding.supports_vision_input:
             raise ValueError(f"{ref} embedding does not use generative supports_vision_input")
+        if isinstance(source, ChatAPISourceConfig) and kind in {"embedding", "transcription"} and source.protocol != "openai_chat":
+            raise ValueError(f"{ref}: {source.protocol} does not support {kind}")
         if not getattr(capabilities, kind):
             raise ValueError(f"{ref} does not support adapter {source.adapter!r} for {kind}")
         if kind == "embedding" and not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"{ref} embedding binding requires dimensions and video_fps")
         if isinstance(binding, EmbeddingModelBinding):
-            if isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig)):
+            if isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig, ChatAPISourceConfig)):
                 if binding.input_mode != "text":
                     raise ValueError(f"{source.adapter} requires input_mode=text")
             elif binding.query_instruction is not None:
@@ -819,7 +827,8 @@ class GatewayConfig(BaseModel):
             "agent_fallback": ("SEEKINO_AGENT_FALLBACK_MODEL",),
             "rerank": ("SEEKINO_RERANK_MODEL",),
         }
-        selected = next((environment[key].strip() for key in model_keys.get(ref, ()) if environment.get(key, "").strip()), None)
+        keys = () if ref in self.model_roles else model_keys.get(ref, ())
+        selected = next((environment[key].strip() for key in keys if environment.get(key, "").strip()), None)
         updates = {"model": selected} if selected else {}
         if configured_ref == "agent" and binding.fallback is not None:
             fallback_model = environment.get("SEEKINO_AGENT_FALLBACK_MODEL", "").strip()
@@ -849,7 +858,7 @@ class GatewayConfig(BaseModel):
         if not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"model binding {ref!r} is not an embedding binding")
         environment = os.environ if environ is None else environ
-        selected = environment.get("SEEKINO_VIDEO_EMBEDDING_MODEL", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        selected = environment.get("SEEKINO_VIDEO_EMBEDDING_MODEL", "").strip() if ref == "embedding" and "embedding" not in self.model_roles else ""
         fps = environment.get("SEEKINO_VIDEO_EMBEDDING_FPS", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
         # Import only after config types are initialized: model_sources consumes them.
         from gateway.model_sources import ModelReference, ModelReferenceType
@@ -906,6 +915,7 @@ def source_api_key_env_name(source: ModelSourceConfig) -> str | None:
         (
             OpenAIModelSourceConfig,
             ChatAPISourceConfig,
+            OllamaEmbeddingSourceConfig,
             ArkModelSourceConfig,
             OpenAIAudioSourceConfig,
             OpenAIVisionSourceConfig,
@@ -971,6 +981,8 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
     """Translate new YAML at the boundary; existing consumers keep their DTOs."""
     result = dict(value)
     if "models" not in result:
+        if result.get("model_roles") and "normalized_models" not in result:
+            raise ValueError("model_roles requires version 2 model bindings")
         return result
     if result.get("config_version") != 2:
         raise ValueError("models requires config_version: 2")
@@ -1000,6 +1012,26 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
             else ModelBinding
         )
         bindings[ref] = binding_type.model_validate(values)
+    roles = result.get("model_roles", {})
+    if not isinstance(roles, Mapping):
+        raise ValueError("model_roles must be a mapping")
+    registered = bindings.copy()
+    for role, ref in roles.items():
+        if role not in {"vision", "transcription", "ocr", "embedding", "rerank"} or not isinstance(ref, str) or ref not in registered:
+            raise ValueError("用途必须引用一个已注册的模型")
+        selected = registered[ref]
+        kind = selected.kind or "generative"
+        if role in {"vision", "ocr"}:
+            if kind != "generative" or not selected.supports_vision_input:
+                raise ValueError("画面解析和 OCR 需要支持图像输入的生成模型")
+            if role == "vision" and ref != "vision" and "fallback" not in selected.model_fields_set:
+                # A replacement registration inherits only its own fallback.
+                selected = selected.model_copy(update={"fallback": None})
+        elif role == "rerank" and kind in {"generative", "rerank"}:
+            selected = selected.model_copy(update={"kind": "rerank"})
+        elif kind != role:
+            raise ValueError("模型类型不支持所选用途")
+        bindings[role] = selected
     result["normalized_models"] = bindings
     if "agent" in models:
         if "agent_model" in result or "agent_chat" in result:
@@ -1022,7 +1054,7 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
         raise ValueError("video_parser must be a mapping")
     parser = dict(result.get("video_parser", {}))
     for stage, legacy in (("transcription", "transcript"), ("vision", "video")):
-        if stage not in models:
+        if stage not in bindings:
             continue
         binding = bindings[stage]
         if any(

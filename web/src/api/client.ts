@@ -1,4 +1,4 @@
-import type { PersonalModelConnectionInput, PersonalModelSettings } from "./contracts";
+import type { ModelRole, PersonalModelConnectionInput, PersonalModelSettings } from "./contracts";
 import { beginChatDelivery } from "./chatDelivery";
 import { translate, type Locale } from "../shared/messages";
 
@@ -947,6 +947,18 @@ export function removePersonalModelConnection(id: string, revision: number, sign
 export function savePersonalModelDefault(modelId: string, signal?: AbortSignal, revision?: number) {
   return requestJson<PersonalModelSettings>(personalModelsPath + "/default", {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId, revision }), signal,
+  });
+}
+
+export function saveModelRole(role: ModelRole, modelId: string | null, revision: number, signal?: AbortSignal) {
+  return requestJson<PersonalModelSettings>(personalModelsPath + "/roles", {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role, modelId, revision }), signal,
+  });
+}
+
+export function discoverModelIds(id: string, endpoint: Pick<PersonalModelConnectionInput, "protocol" | "baseUrl" | "revision" | "apiKey">, signal?: AbortSignal) {
+  return requestJson<{ modelIds: string[] }>(personalModelsPath + "/discover?" + new URLSearchParams({ connectionId: id }), {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(endpoint), signal,
   });
 }
 

@@ -243,13 +243,13 @@ def _endpoint(
     enforce_final_schema: bool = True, media_message_id: str | None = None,
 ) -> _Endpoint:
     protocol = getattr(adapter, "_tool_protocol", "responses")
-    if protocol != "chat" and adapter.provider_name not in {ARK_PROVIDER, DEEPSEEK_PROVIDER}:
+    if protocol not in {"chat", "registered"} and adapter.provider_name not in {ARK_PROVIDER, DEEPSEEK_PROVIDER}:
         raise TypeError("multimodal tools require a supported Responses or Vision adapter")
     client = getattr(adapter, "_client", None)
     if client is None:
         client = adapter._new_client()
         cleanup.callback(client.close)
-    if protocol == "chat":
+    if protocol in {"chat", "registered"}:
         content = _chat_content(content)
         if enforce_final_schema and adapter._format == "json_object":
             content.append({"type": "text", "text": "Return only JSON matching this schema: " + json.dumps(schema, ensure_ascii=False)})
@@ -353,6 +353,25 @@ def _request_turn(
     round_no: int = 1,
     enforce_final_schema: bool = True,
 ):
+    if endpoint.protocol == "registered":
+        with model_call_context({"agent_round": round_no}), track_model_call(
+            provider=endpoint.provider, model=endpoint.model, operation=schema_name,
+        ) as call:
+            unregister = call.add_cancel_callback(endpoint.client.close)
+            try:
+                call.raise_if_cancelled()
+                if check_control:
+                    check_control()
+                response = endpoint.adapter.tool_completion(endpoint.client, _chat_input(messages, endpoint), specs, choice, remaining)
+                call.raise_if_cancelled()
+                turn = _validated_agent_turn(response, tools=tools, seen_tool_call_ids=seen, provider_label=endpoint.provider,
+                    model_name=endpoint.model, max_output_tokens=endpoint.adapter.max_output_tokens,
+                    error_type=QueryModelIncompleteError, require_tool_call=enforce_final_schema and choice == "required",
+                    require_visible_text_on_stop=enforce_final_schema and visible)
+                parsed = result_type.model_validate_json(turn[1]) if enforce_final_schema and turn[0] == "stop" else None
+                return turn, parsed, _response_input_tokens(response)
+            finally:
+                unregister()
     if endpoint.protocol == "chat":
         return _request_chat_turn(
             endpoint, messages, specs, choice, remaining, seen, visible,

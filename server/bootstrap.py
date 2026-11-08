@@ -140,9 +140,13 @@ def prepare_service_configuration(
         )
     _validate_cloud_agent_timeout(settings, settings.agent)
     gateway_config = load_config(settings.model_config_path)
+    return gateway_config, _parse_defaults(settings, gateway_config)
+
+
+def _parse_defaults(settings: ServerSettings, gateway_config: GatewayConfig) -> ParseConfig:
     _validate_cloud_supervisor_harness(settings, gateway_config)
     validate_rerank_source(gateway_config, settings.retrieval)
-    parse_defaults = ParseConfig.from_defaults(
+    return ParseConfig.from_defaults(
         runtime=settings.parse,
         mq=settings.mq,
         gateway=gateway_config,
@@ -154,7 +158,6 @@ def prepare_service_configuration(
         sparse_enabled=settings.retrieval.sparse_weight > 0,
         index_generation=settings.elasticsearch.index_generation,
     )
-    return gateway_config, parse_defaults
 
 
 def _validate_cloud_supervisor_harness(settings: ServerSettings, config: GatewayConfig) -> None:
@@ -200,7 +203,7 @@ def _build_application_services(
     else:
         supervisor_sessions = DeepAgentSessionStore()
     construction_cleanup.callback(supervisor_sessions.close)
-    gateway_client = GatewayClient(gateway_config, supervisor_sessions=supervisor_sessions)
+    gateway_client = GatewayClient(gateway_config, supervisor_sessions=supervisor_sessions, allow_local_endpoints=settings.auth.mode == "local")
     construction_cleanup.callback(gateway_client.close)
     agent_binding = gateway_config.resolve_model_binding("agent")
     if fallback_agent_model is not None and agent_binding.fallback is not None:
@@ -484,7 +487,8 @@ def _build_application_services(
             query_runtime.close()
             raise
 
-    model_settings = ModelSettings(settings.model_config_path, allow_local=settings.auth.mode == "local")
+    model_settings = ModelSettings(settings.model_config_path, allow_local=settings.auth.mode == "local",
+                                   validate_deployment=lambda config: _parse_defaults(settings, config))
 
     @contextmanager
     def configured_runtime(selection: YamlChatBinding, config: AgentServiceConfig):
@@ -496,7 +500,7 @@ def _build_application_services(
                 target = selection.target(environ=model_settings.environ)
                 runtime = build_chat_runtime(config, binding=selection.binding, target=target)
             else:
-                client = GatewayClient(selection.config, supervisor_sessions=supervisor_sessions)
+                client = GatewayClient(selection.config, supervisor_sessions=supervisor_sessions, allow_local_endpoints=model_settings.allow_local)
                 resources.callback(client.close)
                 factory = client.create_agent_factory(selection.binding)
                 runtime = build_chat_runtime(config, binding=selection.binding, model_factory=factory,

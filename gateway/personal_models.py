@@ -62,6 +62,7 @@ class _PersonalChatModel(BaseChatModel):
         target = self._target
         key = target.api_key.get_secret_value()
         tools = kwargs.get("tools") or []
+        choice = kwargs.get("tool_choice") if tools else None
         timeout = kwargs.get("timeout")
         try:
             if target.protocol == "gemini":
@@ -78,6 +79,8 @@ class _PersonalChatModel(BaseChatModel):
                     payload["systemInstruction"] = wire(system)
                 if tools:
                     payload["tools"] = [wire(tool) for tool in convert_to_genai_function_declarations(tools)]
+                if isinstance(choice, str) and choice in {"required", "auto", "none"}:
+                    payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY" if choice == "required" else choice.upper()}}
                 path = "/models/" + quote(target.model_id.removeprefix("models/"), safe="/") + ":generateContent"
                 data = self._post(path, {"x-goog-api-key": key} if key else {}, payload, timeout)
                 return _response_to_result(GenerateContentResponse.model_validate(data))
@@ -92,6 +95,8 @@ class _PersonalChatModel(BaseChatModel):
                     payload["system"] = system
                 if tools:
                     payload["tools"] = [convert_to_anthropic_tool(tool) for tool in tools]
+                if isinstance(choice, str) and choice in {"required", "auto", "none"}:
+                    payload["tool_choice"] = {"type": "any" if choice == "required" else choice}
                 headers = {"anthropic-version": "2023-06-01"}
                 if key:
                     headers["x-api-key"] = key
@@ -105,6 +110,8 @@ class _PersonalChatModel(BaseChatModel):
             payload = {"model": target.model_id}
             if tools:
                 payload["tools"] = [convert_to_openai_tool(tool) for tool in tools]
+            if choice:
+                payload["tool_choice"] = choice
             if target.protocol == "openai_responses":
                 from langchain_openai.chat_models.base import _construct_responses_api_payload, _construct_lc_result_from_responses_api
                 from openai._models import construct_type_unchecked

@@ -6,6 +6,7 @@
 }
 .workspace {
   display: flex; flex-direction: column; gap: 16px;
+  container-type: inline-size;
   width: 100%; max-width: 760px; min-width: 0; padding: 0;
   color: var(--ink); font: inherit; line-height: 1.45; overflow-wrap: anywhere;
 }
@@ -127,3 +128,30 @@
 .source { white-space: nowrap; }
 .credential { display: flex; align-items: center; gap: 10px; }
 .keyMask { color: var(--ink); letter-spacing: .1em; }
+
+.registryHeading, .roleGroup > h3 { margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.registryHeading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.registryHeading h4 { font-size: .94rem; margin: 0; }
+.modelRow { margin: 0; min-width: 0; padding: 12px 14px; display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; }
+.modelInputs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(105px, .56fr) auto; align-items: end; gap: 8px; }
+.iconButton, .addModel { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--teal-deep); border: 0; font: inherit; cursor: pointer; }
+.iconButton { width: 36px; height: 44px; color: var(--ink-soft); }
+.addModel { align-self: start; min-height: 36px; padding: 0 4px; font-weight: 600; font-size: .85rem; }
+.addModel:hover, .iconButton:hover { color: var(--ink); }
+.modelList { display: grid; gap: 6px; }
+.modelItem { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; font-size: .84rem; }
+.modelItem > span { min-width: 0; overflow-wrap: anywhere; }
+.modelItem small, .roleNote { color: var(--ink-soft); font-size: .76rem; line-height: 1.5; }
+.modelItem small { flex-shrink: 0; }
+.roleGroup { display: grid; gap: 12px; }
+.roleRow { display: grid; grid-template-columns: minmax(8rem, .65fr) minmax(0, 1.35fr); align-items: center; gap: 16px; }
+.roleRow > label { font-size: .9rem; font-weight: 550; }
+.roleNote { margin: 0; }
+@container (max-width: 470px) {
+  .roleRow { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 5px; }
+}
+@media (max-width: 560px) {
+  .modelInputs { grid-template-columns: minmax(0, 1fr) minmax(90px, .7fr) auto; }
+  .roleRow { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .connectionHeading { flex-wrap: wrap; }
+}

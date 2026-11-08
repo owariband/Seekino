@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from pydantic import BaseModel
 
 from gateway.config import (
-    AgentFallbackConfig, AgentModelConfig, ArkModelSourceConfig,
+    AgentFallbackConfig, AgentModelConfig, ArkModelSourceConfig, ChatAPISourceConfig,
     ClaudeCodeModelSourceConfig, CodexModelSourceConfig, EmbeddingModelBinding,
     GatewayConfig, ModelBinding, ModelSourceConfig, OpenAIModelSourceConfig,
-    OpenAIVisionSourceConfig, WhisperXSourceConfig, resolve_source_api_key,
+    OllamaEmbeddingSourceConfig, OpenAIAudioSourceConfig, OpenAIVisionSourceConfig, WhisperXSourceConfig, resolve_source_api_key,
 )
 from gateway.errors import ContentFilterError
 from gateway.multimodal import (
@@ -312,10 +312,12 @@ class GatewayClient:
 
     def __init__(
         self, config: GatewayConfig, *, environ: Mapping[str, str] | None = None,
-        supervisor_sessions: DeepAgentSessionStore | None = None,
+        supervisor_sessions: DeepAgentSessionStore | None = None, allow_local_endpoints: bool | None = None,
     ) -> None:
         self.config = config
         self._environ = os.environ if environ is None else environ
+        self._allow_local_endpoints = (self._environ.get("SEEKINO_AUTH_MODE", "local") == "local"
+                                       if allow_local_endpoints is None else allow_local_endpoints)
         self._resources: set[_OwnedResource] = set()
         self._codex_executors: dict[str, ThreadPoolExecutor] = {}
         self._whisperx_runtimes: dict[tuple[str, str], Any] = {}
@@ -391,6 +393,9 @@ class GatewayClient:
                 **common, api_key=key, reasoning_effort=binding.reasoning_effort, stream=binding.stream,
                 temperature=binding.temperature,
             )
+        elif isinstance(source, ChatAPISourceConfig):
+            from gateway.registered_multimodal import RegisteredMultimodalModel
+            delegate = RegisteredMultimodalModel(binding, source, api_key=key, allow_local=self._allow_local_endpoints)
         elif isinstance(source, OpenAIModelSourceConfig) and source.profile == "deepseek":
             from gateway.openai.multimodal import DeepSeekMultimodalModel
             delegate = DeepSeekMultimodalModel(
@@ -449,8 +454,12 @@ class GatewayClient:
         self._check_open()
         binding = self.config.resolve_embedding_binding(ref, environ=self._environ)
         source = self.config.source(binding.source)
+        options = {}
+        if isinstance(source, ChatAPISourceConfig) or (isinstance(source, OllamaEmbeddingSourceConfig) and
+                (binding.source.startswith("service_") or source.api_key_env or source.encrypted_api_key or not self._allow_local_endpoints)):
+            options["allow_local"] = self._allow_local_endpoints
         return self._own(
-            build_embedding_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ)),
+            build_embedding_model(binding, source, api_key=resolve_source_api_key(source, environ=self._environ), **options),
             source=binding.source,
         )
 
@@ -465,6 +474,8 @@ class GatewayClient:
         binding = self._binding(ref, "transcription")
         source = self.config.source(binding.source)
         options = {}
+        if isinstance(source, (ChatAPISourceConfig, OpenAIAudioSourceConfig)):
+            options["allow_local"] = self._allow_local_endpoints
         if isinstance(source, WhisperXSourceConfig):
             from gateway.local.whisperx import WhisperXRuntime
             with self._lock:

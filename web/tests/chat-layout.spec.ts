@@ -68,7 +68,7 @@ test("opens a standalone mobile settings directory with authentic device prefere
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   await page.getByRole("button", { name: "返回设置分类" }).click();
   await page.route("**/api/agent/model-connections", (route) => route.fulfill({ json: { connections: [], defaultModelId: "default" } }));
-  await navigation.getByRole("button", { name: "回答模型" }).click();
+  await navigation.getByRole("button", { name: "模型服务" }).click();
   const protocol = page.getByRole("combobox", { name: "接口协议", exact: true });
   await expect(protocol).toBeVisible();
   await protocol.selectOption("gemini");

@@ -105,5 +105,9 @@ class _EndpointTransport(httpx.HTTPTransport):
 
 
 def personal_http_client(target: PersonalModelTarget, *, allow_local: bool, timeout: float) -> httpx.Client:
-    url = httpx.URL(normalize_personal_endpoint(target.base_url, allow_local=allow_local))
+    return endpoint_http_client(target.base_url, allow_local=allow_local, timeout=timeout)
+
+
+def endpoint_http_client(base_url: str, *, allow_local: bool, timeout: float) -> httpx.Client:
+    url = httpx.URL(normalize_personal_endpoint(base_url, allow_local=allow_local))
     return httpx.Client(transport=_EndpointTransport(url, allow_local), timeout=timeout, trust_env=False, follow_redirects=False)

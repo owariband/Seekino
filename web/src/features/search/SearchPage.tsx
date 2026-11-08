@@ -979,8 +979,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     const label = t(text ? "配置模型" : "回答模型设置");
     const content = <><SlidersHorizontal size={15} aria-hidden="true" />{text ? label : null}</>;
     const className = text ? styles.configureModel : styles.modelSettingsLink;
-    return inRouter ? <SettingsLink className={className} section="models" aria-label={label} title={label}>{content}</SettingsLink>
-      : <a className={className} href="/settings?section=models" aria-label={label} title={label}>{content}</a>;
+    const section = text ? "models" : "model-roles";
+    return inRouter ? <SettingsLink className={className} section={section} aria-label={label} title={label}>{content}</SettingsLink>
+      : <a className={className} href={`/settings?section=${section}`} aria-label={label} title={label}>{content}</a>;
   };
   const modelChooser = !canConfigure ? null : hasModels ? <>
     <div className={styles.modelPicker}>

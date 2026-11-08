@@ -9,6 +9,7 @@ import {
   Palette,
   Server,
   ShieldCheck,
+  Workflow,
   SlidersHorizontal,
   Sparkles,
   Sun,
@@ -28,7 +29,7 @@ import { AnswerModelSettings } from "./AnswerModelSettings";
 import { GlobalAgentSettings } from "./GlobalAgentSettings";
 import styles from "./settings.module.css";
 
-type SettingsSection = "appearance" | "watch" | "models" | "connection" | "agent";
+type SettingsSection = "appearance" | "watch" | "models" | "model-roles" | "connection" | "agent";
 type SettingsSectionDefinition = {
   id: SettingsSection;
   label: string;
@@ -39,7 +40,8 @@ type SettingsSectionDefinition = {
 const settingsSections: ReadonlyArray<SettingsSectionDefinition> = [
   { id: "appearance", label: "外观与语言", summary: "主题与界面语言", description: "主题与界面语言会立即生效，并保存在此浏览器。", icon: Palette },
   { id: "watch", label: "观看与 Kino", summary: "Kino 与播放偏好", description: "调整 Kino 侧栏的自动淡化与发送消息时的播放行为。", icon: Clapperboard },
-  { id: "models", label: "回答模型", summary: "已配置的模型服务", description: "修改会保存到当前服务使用的 YAML 配置文件。", icon: Sparkles },
+  { id: "models", label: "模型服务", summary: "连接、凭据与模型", description: "添加服务连接，登记该连接可用的模型。", icon: Sparkles },
+  { id: "model-roles", label: "模型用途", summary: "聊天、解析与检索", description: "为每个用途选择已注册的模型。", icon: Workflow },
   { id: "connection", label: "账号与连接", summary: "资料来源、账号与状态", description: "账号登录与资料来源分别管理，登录不会移动本机资料。", icon: Server },
   { id: "agent", label: "Agent 运行", summary: "全局默认与运行参数", description: "保存到服务端 config.yaml，供所有工作区后续新请求使用。", icon: SlidersHorizontal },
 ];
@@ -296,7 +298,7 @@ export function SettingsPage({ onClose }: { onClose?: () => void } = {}) {
   const showModels = canConfigure === true;
   const sectionAvailable = requestedSection !== null
     && (requestedSection !== "agent" || showAgent)
-    && (requestedSection !== "models" || showModels);
+    && ((requestedSection !== "models" && requestedSection !== "model-roles") || showModels);
   const section: SettingsSection | null = sectionAvailable ? requestedSection : compact ? null : "appearance";
 
   useEffect(() => {
@@ -337,7 +339,7 @@ export function SettingsPage({ onClose }: { onClose?: () => void } = {}) {
   };
 
   const visibleSections = settingsSections.filter((definition) =>
-    (definition.id !== "agent" || showAgent) && (definition.id !== "models" || showModels));
+    (definition.id !== "agent" || showAgent) && ((definition.id !== "models" && definition.id !== "model-roles") || showModels));
   const agentMounted = showAgent && (agentVisited || section === "agent");
   const definitionFor = (id: SettingsSection) => settingsSections.find((definition) => definition.id === id)!;
   const headingRef = (id: SettingsSection) => (node: HTMLHeadingElement | null) => {
@@ -391,6 +393,9 @@ export function SettingsPage({ onClose }: { onClose?: () => void } = {}) {
           </SectionShell>
           {showModels ? <SectionShell definition={definitionFor("models")} hidden={section !== "models"} headingRef={headingRef("models")}>
             <AnswerModelSettings active={section === "models"} />
+          </SectionShell> : null}
+          {showModels ? <SectionShell definition={definitionFor("model-roles")} hidden={section !== "model-roles"} headingRef={headingRef("model-roles")}>
+            <AnswerModelSettings active={section === "model-roles"} section="roles" openServices={() => openSection("models")} />
           </SectionShell> : null}
           <SectionShell definition={definitionFor("connection")} hidden={section !== "connection"} headingRef={headingRef("connection")}>
             <ConnectionContent showDebug={showAgent} />

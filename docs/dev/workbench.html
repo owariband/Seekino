@@ -4753,6 +4753,25 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    ]
   },
   {
+   "id": "MODEL-REGISTRY-ROLES-01",
+   "title": "模型服务注册与用途分配",
+   "category": "chat",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "复用模型服务及独立凭据，为聊天、解析和检索分配模型。",
+   "next": "复核本机入口后按 #74、#76 顺序集成。",
+   "verification": "覆盖独立 Key 的请求、六类用途、配置重读、权限和浏览器操作。",
+   "updatedAt": "2026-11-08",
+   "tags": ["UI"],
+   "related": ["MOD-CHAT", "CHAT-PERSONAL-MODELS-01"],
+   "branch": "feat/model-registry-roles",
+   "links": [
+    {"label":"设计","url":"https://github.com/owariband/Seekino/blob/feat/model-registry-roles/docs/design/03-product-reassessment/model-registry-roles-trd.md","kind":"trd"},
+    {"label":"PR #76","url":"https://github.com/owariband/Seekino/pull/76","kind":"pr"}
+   ]
+  },
+  {
    "id": "CHAT-PERSONAL-MODELS-01",
    "title": "自定义个人模型协议、地址与模型 ID",
    "category": "chat",

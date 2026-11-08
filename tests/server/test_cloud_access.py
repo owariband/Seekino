@@ -742,6 +742,7 @@ def test_cloud_yaml_settings_permissions_and_chat_projection(cloud_api, yaml_mod
         schema = client.get("/openapi.json").json()
         assert "/api/agent/model-connections" not in schema["paths"]
         assert "PersonalModelConnectionSave" not in schema["components"]["schemas"]
+        assert path + "/roles" not in schema["paths"] and path + "/discover" not in schema["paths"]
         if role == "admin":
             assert result.status_code == 200 and row.base_url in result.text
             assert ref in options.text and "synthetic-private-key" not in result.text
@@ -753,6 +754,9 @@ def test_cloud_yaml_settings_permissions_and_chat_projection(cloud_api, yaml_mod
         for r in (result, client.put(endpoint, json=body, headers=headers),
                   client.delete(endpoint + "&revision=1", headers=headers),
                   client.patch(path + "/default", json={"modelId": ref}, headers=headers),
+                  client.patch(path + "/roles", json={"role":"vision", "modelId":ref, "revision":row.revision}, headers=headers),
+                  client.post(path + "/discover", params={"connectionId":row.connection_id},
+                              json={"protocol":row.protocol,"baseUrl":row.base_url,"revision":row.revision}, headers=headers),
                   client.post(endpoint.replace(path, path + "/test"), json={"modelId": ref}, headers=headers)):
             assert r.status_code == 403 and all(value not in r.text for value in (ref, row.base_url, row.name))
         assert yaml_model_settings.path.read_bytes() == before
