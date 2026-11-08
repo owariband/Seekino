@@ -2806,3 +2806,10 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-07：核对实际调用链，正文由 Gateway 内存收集，完整校验后才进入正式结果；高频数据库写入来自 SSE `check_control → manager.check_active → _require_*_active → _heartbeat_child`，每次涉及父行锁及子任务续租。正文 buffer 与租约 heartbeat 是独立职责，不能靠新增 buffer 自动消除原回调的数据库访问。
 
 本次新增每调用独立草稿，以未保存的 UTF-8 正文字节数达到 1,024 或调用退出为保存条件。逐 SSE 回调只读取本地取消状态；周期续租、模型调用接纳和正式结果提交仍验证持久租约/版本。验收检查阈值前不写库、阈值及退出保存、失败/取消前缀、调用与租户隔离，以及模拟流中额外续租次数。真实并发和整集耗时另测，真实解析保持暂停。设计与证据见 [TRD](../design/03-product-reassessment/parse-output-drafts-trd.md)、[PR #64](https://github.com/owariband/Seekino/pull/64)；当前状态见 [工作台](workbench.html)。
+
+<a id="chat-layout-01"></a>
+## CHAT-LAYOUT-01：对话历史浮层遮挡正文，初次提问的欢迎区与输入框分离
+
+2026-11-07：独立 `/search` 将历史放在右上浮层，初次打开时欢迎区居中但输入框贴底，宽屏正文和输入框最大 880px。截图与 `db180245` 的 SearchPage/CSS 均可核对，影响历史切换和首次输入的视觉焦点。
+
+验收：桌面约 248px 左侧历史、约 760px 输入/正文；草稿欢迎语紧邻输入；首次发送不重挂载 textarea、不丢焦点；手机抽屉可关闭且焦点受限；继续遵守 #66 无操作不创建会话。当前状态统一见[工作台](workbench.html) CHAT-LAYOUT-01；设计见[TRD](../design/03-product-reassessment/chat-sidebar-layout-trd.md)，本轮证据见[验收报告](../report/web/chat-sidebar-layout-20261107.md)。

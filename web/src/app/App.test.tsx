@@ -1219,7 +1219,7 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
-    expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "戳一戳 Kino" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
@@ -1232,7 +1232,6 @@ describe("application shell", () => {
     expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2");
     expect(composer).toHaveValue("");
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation"));
@@ -1256,7 +1255,6 @@ describe("application shell", () => {
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(0);
     expect(screen.queryByText("暂时无法恢复当前对话")).not.toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation"));
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toBeEnabled();
@@ -1277,7 +1275,6 @@ describe("application shell", () => {
       return original(input, init);
     });
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
     const failure = (await screen.findByText("无法打开选中的对话")).closest("p")!;
     await waitFor(() => expect(failure).toHaveFocus());
@@ -1287,8 +1284,7 @@ describe("application shell", () => {
   it("closes history accessibly and restores focus when cancelling deletion", async () => {
     renderApp();
     const user = userEvent.setup();
-    const history = await screen.findByLabelText("打开对话记录");
-    await user.click(history);
+    const history = await screen.findByRole("button", { name: "收起对话记录" });
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     const confirmation = screen.getByRole("button", { name: /^确认删除对话 Test，/ });
     const cancellation = screen.getByRole("button", { name: "取消" });
@@ -1303,7 +1299,7 @@ describe("application shell", () => {
     expect(history).toHaveFocus();
 
     await user.click(history);
-    await user.click(screen.getByRole("button", { name: "关闭对话记录" }));
+    await user.click(screen.getByRole("button", { name: "收起对话记录" }));
     expect(history).toHaveFocus();
   });
 
@@ -1314,7 +1310,6 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     const deletion = await screen.findByRole("button", { name: /^删除对话 雨天门口，/ });
     expect(deletion).toBeDisabled();
     expect(deletion).toHaveAttribute("title", "当前回答进行中，完成后才能删除");
@@ -1353,7 +1348,6 @@ describe("application shell", () => {
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "新对话");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     await creationStarted;
-    await user.click(screen.getByLabelText("打开对话记录"));
     const deletion = await screen.findByRole("button", { name: /^删除对话 雨天门口，/ });
     expect(deletion).toBeDisabled();
     expect(deletion).toHaveAttribute("title", "请等待当前对话操作完成");
@@ -1398,10 +1392,8 @@ describe("application shell", () => {
       return original(input, init);
     });
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
     await selectionStarted;
-    await user.click(screen.getByLabelText("打开对话记录"));
     expect(screen.getByRole("button", { name: /^删除对话 雨天门口，/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^删除对话 新对话，/ })).toBeDisabled();
 
@@ -1425,7 +1417,6 @@ describe("application shell", () => {
     await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 雨天门口，/ }));
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/conversations/delete"))).toBe(false);
     await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
@@ -1434,7 +1425,7 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: /^删除对话 新对话，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 新对话，/ }));
-    expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "戳一戳 Kino" })).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2);
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveFocus();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/delete"))).toHaveLength(2);
@@ -1473,10 +1464,8 @@ describe("application shell", () => {
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
     holdNextList = true;
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
     await listStarted;
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(screen.getByRole("button", { name: /^删除对话 雨天门口，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
@@ -1499,7 +1488,6 @@ describe("application shell", () => {
     });
     const user = userEvent.setup();
     await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
 
@@ -1534,10 +1522,9 @@ describe("application shell", () => {
     await screen.findByText("这是 Agent Chat");
     act(finishAnswer);
     await screen.findByText("这是 Agent Chat 保存的完整回答。");
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
-    await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。");
+    await screen.findByRole("button", { name: "戳一戳 Kino" });
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^删除对话 Test，/ })).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "不能发给已删除的对话");

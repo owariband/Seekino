@@ -1,5 +1,5 @@
 import { markChatTextRendered } from "../../api/chatDelivery";
-import { ArrowUp, ChevronDown, History, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ChevronDown, History, PanelLeft, PanelLeftClose, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link, useInRouterContext, useLocation, useNavigate } from "react-router";
@@ -333,6 +333,24 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const conversationPickerRef = useRef<HTMLDetailsElement>(null);
+  const historyToggleRef = useRef<HTMLButtonElement>(null);
+  const historyDialogRef = useRef<HTMLDialogElement>(null);
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia("(max-width: 900px)").matches);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  useEffect(() => {
+    if (embedded) return;
+    const media = window.matchMedia("(max-width: 900px)");
+    const sync = () => { setCompactLayout(media.matches); setHistoryDrawerOpen(false); };
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, [embedded]);
+  useEffect(() => {
+    if (embedded || !compactLayout || !historyDrawerOpen) return;
+    const dialog = historyDialogRef.current!;
+    dialog.showModal();
+    return () => { dialog.close(); };
+  }, [embedded, compactLayout, historyDrawerOpen]);
   const scopePickerRef = useRef<HTMLDetailsElement>(null);
   const answerSettingsRef = useRef<HTMLDetailsElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
@@ -510,12 +528,12 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       focusAfterMutationRef.current = null;
       setConversationStatus(error ? t("打开对话失败：{value0}", { value0: error }) : t("打开对话失败"));
       if (conversationFailureRef.current) conversationFailureRef.current.focus();
-      else conversationPickerRef.current?.querySelector<HTMLElement>("summary")?.focus();
+      else (embedded ? conversationPickerRef.current?.querySelector<HTMLElement>("summary") : historyToggleRef.current)?.focus();
     } else if (target === "picker" && !creatingConversation && !deletingConversationId) {
       focusAfterMutationRef.current = null;
-      conversationPickerRef.current?.querySelector<HTMLElement>("summary")?.focus();
+      (embedded ? conversationPickerRef.current?.querySelector<HTMLElement>("summary") : historyToggleRef.current)?.focus();
     }
-  }, [conversationId, creatingConversation, deletingConversationId, error, loading]);
+  }, [conversationId, creatingConversation, deletingConversationId, embedded, error, loading]);
 
   useEffect(() => { void refreshConversations(true); }, [refreshConversations]);
 
@@ -576,8 +594,10 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
   const closeConversationPicker = useCallback((restoreFocus = false) => {
     conversationPickerRef.current?.removeAttribute("open");
-    if (restoreFocus) conversationPickerRef.current?.querySelector<HTMLElement>("summary")?.focus();
-  }, []);
+    setHistoryDrawerOpen(false);
+    if (!embedded && !compactLayout && restoreFocus) setSidebarOpen(false);
+    if (restoreFocus) (embedded ? conversationPickerRef.current?.querySelector<HTMLElement>("summary") : historyToggleRef.current)?.focus();
+  }, [embedded, compactLayout]);
 
   const selectConversation = useCallback((conversation: Pick<AgentConversationView, "conversationId" | "title">) => {
     if (creatingConversation || deletingConversationId) return;
@@ -663,124 +683,157 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     }
   };
 
+  const showWelcome = !messages.length && !loading && (embedded || !searching);
+  const newConversationButton = (
+    <button
+      className={styles.newConversation}
+      type="button"
+      onClick={() => void createConversation()}
+      disabled={mode !== "live" || loading || creatingConversation || Boolean(deletingConversationId)}
+      aria-label={t("新建对话")}
+    >
+      {creatingConversation ? <LoaderCircle size={15} className={styles.spinning} aria-hidden="true" /> : <Plus size={15} aria-hidden="true" />}
+      <span>{creatingConversation ? t("正在新建") : t("新对话")}</span>
+    </button>
+  );
+  const conversationMenu = (
+    <section className={styles.conversationMenu} aria-label={t("对话记录")}>
+      <header>
+        <div><strong>{t("对话记录")}</strong><small>{conversations.length ? t("{value0} 个对话", { value0: conversations.length }) : t("暂无记录")}</small></div>
+        {conversationsLoading ? <LoaderCircle size={14} className={styles.spinning} aria-label={t("正在读取对话记录")} /> : null}
+        {embedded ? <button className={styles.conversationMenuClose} type="button" onClick={() => closeConversationPicker(true)} aria-label={t("关闭对话记录")}>
+          <X size={14} aria-hidden="true" />
+        </button> : null}
+      </header>
+      {conversationActionError || conversationListError ? <p className={styles.conversationError} role="alert">{conversationActionError ?? conversationListError}</p> : null}
+      <ul className={styles.conversationList}>
+        {conversations.map((conversation) => {
+          const current = conversation.conversationId === conversationId;
+          const deleting = deletingConversationId === conversation.conversationId;
+          const cannotDelete = current && searching;
+          const mutationLocked = loading || creatingConversation || Boolean(deletingConversationId);
+          const accessibleName = conversationAccessibleName(conversation, locale, formatLocale);
+          return (
+            <li key={conversation.conversationId} className={current ? styles.conversationCurrent : undefined}>
+              <button
+                className={styles.conversationChoice}
+                title={`${conversation.title} · ${conversationTime(conversation, formatLocale)}`}
+                type="button"
+                onClick={() => selectConversation(conversation)}
+                aria-current={current ? "true" : undefined}
+                aria-label={t("打开对话 {value0}", { value0: accessibleName })}
+                disabled={creatingConversation || Boolean(deletingConversationId)}
+              >
+                <span><strong>{conversation.title}</strong><time>{conversationTime(conversation, formatLocale)}</time></span>
+                <small>{conversation.lastMessagePreview || (conversation.messageCount ? t("{value0} 条消息", { value0: conversation.messageCount }) : t("还没有消息"))}</small>
+              </button>
+              <button
+                className={styles.deleteConversation}
+                type="button"
+                onClick={(event) => {
+                  deleteTriggerRef.current = event.currentTarget;
+                  setConfirmingDeleteId(conversation.conversationId);
+                }}
+                disabled={mode !== "live" || mutationLocked || cannotDelete}
+                aria-label={t("删除对话 {value0}", { value0: accessibleName })}
+                title={cannotDelete ? t("当前回答进行中，完成后才能删除") : mutationLocked ? t("请等待当前对话操作完成") : t("删除对话")}
+              >
+                {deleting ? <LoaderCircle size={14} className={styles.spinning} aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}
+              </button>
+              {cannotDelete ? <small className={styles.deleteHint}>{t("回答完成后可删除")}</small> : null}
+              {confirmingDeleteId === conversation.conversationId ? (
+                <div className={styles.deleteConfirmation} role="group" aria-label={t("确认删除对话 {value0}", { value0: accessibleName })} aria-describedby={deleteWarningId}>
+                  <p id={deleteWarningId}>{t("删除后，这个对话及其中的全部消息都无法恢复。")}</p>
+                  <div>
+                    <button ref={deleteCancelRef} type="button" aria-describedby={deleteWarningId} onClick={() => {
+                      setConfirmingDeleteId(null);
+                      deleteTriggerRef.current?.focus();
+                    }}>{t("取消")}</button>
+                    <button
+                      type="button"
+                      disabled={mutationLocked || cannotDelete}
+                      onClick={() => void deleteConversation(conversation)}
+                      aria-label={t("确认删除对话 {value0}", { value0: accessibleName })}
+                      aria-describedby={deleteWarningId}
+                      title={cannotDelete ? t("当前回答进行中，完成后才能删除") : undefined}
+                    >{t("确认删除")}</button>
+                  </div>
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {!conversationsLoading && !conversations.length ? <p className={styles.conversationEmpty}>{t("还没有可显示的对话。")}</p> : null}
+    </section>
+  );
+  const sidebarContent = <div className={styles.sidebarContent} onKeyDown={(event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    if (confirmingDeleteId) { setConfirmingDeleteId(null); deleteTriggerRef.current?.focus(); }
+    else closeConversationPicker(true);
+  }}>
+    <header className={styles.sidebarHeading}><h1>{t("Seekino 助手")}</h1>
+      {compactLayout ? <button type="button" className={styles.historyToggle} aria-label={t("关闭对话记录")} onClick={() => closeConversationPicker(true)}><PanelLeftClose size={18} aria-hidden="true" /></button> : null}
+    </header>
+    {newConversationButton}
+    {conversationMenu}
+  </div>;
+
   const Root = embedded ? "section" : "main";
   return (
-    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : "page"}`}>
-      <header className={styles.pageHeader}>
-        <div className={styles.chatHeading}>
-          {embedded ? (
+    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : styles.standalonePage}`} data-draft={!embedded && showWelcome} data-sidebar={!embedded && !compactLayout && sidebarOpen}>
+      {embedded ? (
+        <header className={styles.pageHeader}>
+          <div className={styles.chatHeading}>
             <h2 className={styles.chatTitle} title={activeConversation?.title ?? t("当前对话")}>
               {activeConversation?.title ?? t("当前对话")}
             </h2>
-          ) : (
-            <>
-              <h1 className={styles.chatTitle}>{t("Seekino 助手")}</h1>
-              {activeConversation ? <span title={activeConversation.title}>{activeConversation.title}</span> : null}
-            </>
-          )}
-        </div>
-        <div className={styles.conversationActions}>
-          <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
-          <details
-            className={styles.conversationPicker}
-            ref={conversationPickerRef}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.preventDefault();
-              if (confirmingDeleteId) {
-                setConfirmingDeleteId(null);
-                deleteTriggerRef.current?.focus();
-                return;
-              }
-              closeConversationPicker(true);
-            }}
-          >
-            <summary aria-label={t("打开对话记录")}>
-              <History size={15} aria-hidden="true" />
-              <span>{t("对话记录")}</span>
-              <ChevronDown size={13} aria-hidden="true" />
-            </summary>
-            <section className={styles.conversationMenu} aria-label={t("对话记录")}>
-              <header>
-                <div><strong>{t("对话记录")}</strong><small>{conversations.length ? t("{value0} 个对话", { value0: conversations.length }) : t("暂无记录")}</small></div>
-                {conversationsLoading ? <LoaderCircle size={14} className={styles.spinning} aria-label={t("正在读取对话记录")} /> : null}
-                <button className={styles.conversationMenuClose} type="button" onClick={() => closeConversationPicker(true)} aria-label={t("关闭对话记录")}>
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </header>
-              {conversationActionError || conversationListError ? <p className={styles.conversationError} role="alert">{conversationActionError ?? conversationListError}</p> : null}
-              <ul className={styles.conversationList}>
-                {conversations.map((conversation) => {
-                  const current = conversation.conversationId === conversationId;
-                  const deleting = deletingConversationId === conversation.conversationId;
-                  const cannotDelete = current && searching;
-                  const mutationLocked = loading || creatingConversation || Boolean(deletingConversationId);
-                  const accessibleName = conversationAccessibleName(conversation, locale, formatLocale);
-                  return (
-                    <li key={conversation.conversationId} className={current ? styles.conversationCurrent : undefined}>
-                      <button
-                        className={styles.conversationChoice}
-                        type="button"
-                        onClick={() => selectConversation(conversation)}
-                        aria-current={current ? "true" : undefined}
-                        aria-label={t("打开对话 {value0}", { value0: accessibleName })}
-                        disabled={creatingConversation || Boolean(deletingConversationId)}
-                      >
-                        <span><strong>{conversation.title}</strong><time>{conversationTime(conversation, formatLocale)}</time></span>
-                        <small>{conversation.lastMessagePreview || (conversation.messageCount ? t("{value0} 条消息", { value0: conversation.messageCount }) : t("还没有消息"))}</small>
-                      </button>
-                      <button
-                        className={styles.deleteConversation}
-                        type="button"
-                        onClick={(event) => {
-                          deleteTriggerRef.current = event.currentTarget;
-                          setConfirmingDeleteId(conversation.conversationId);
-                        }}
-                        disabled={mode !== "live" || mutationLocked || cannotDelete}
-                        aria-label={t("删除对话 {value0}", { value0: accessibleName })}
-                        title={cannotDelete ? t("当前回答进行中，完成后才能删除") : mutationLocked ? t("请等待当前对话操作完成") : t("删除对话")}
-                      >
-                        {deleting ? <LoaderCircle size={14} className={styles.spinning} aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}
-                      </button>
-                      {cannotDelete ? <small className={styles.deleteHint}>{t("回答完成后可删除")}</small> : null}
-                      {confirmingDeleteId === conversation.conversationId ? (
-                        <div className={styles.deleteConfirmation} role="group" aria-label={t("确认删除对话 {value0}", { value0: accessibleName })} aria-describedby={deleteWarningId}>
-                          <p id={deleteWarningId}>{t("删除后，这个对话及其中的全部消息都无法恢复。")}</p>
-                          <div>
-                            <button ref={deleteCancelRef} type="button" aria-describedby={deleteWarningId} onClick={() => {
-                              setConfirmingDeleteId(null);
-                              deleteTriggerRef.current?.focus();
-                            }}>{t("取消")}</button>
-                            <button
-                              type="button"
-                              disabled={mutationLocked || cannotDelete}
-                              onClick={() => void deleteConversation(conversation)}
-                              aria-label={t("确认删除对话 {value0}", { value0: accessibleName })}
-                              aria-describedby={deleteWarningId}
-                              title={cannotDelete ? t("当前回答进行中，完成后才能删除") : undefined}
-                            >{t("确认删除")}</button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-              {!conversationsLoading && !conversations.length ? <p className={styles.conversationEmpty}>{t("还没有可显示的对话。")}</p> : null}
-            </section>
-          </details>
-          <button
-            className={styles.newConversation}
-            type="button"
-            onClick={() => void createConversation()}
-            disabled={mode !== "live" || loading || creatingConversation || Boolean(deletingConversationId)}
-            aria-label={t("新建对话")}
-          >
-            {creatingConversation ? <LoaderCircle size={15} className={styles.spinning} aria-hidden="true" /> : <Plus size={15} aria-hidden="true" />}
-            <span>{creatingConversation ? t("正在新建") : t("新对话")}</span>
+          </div>
+          <div className={styles.conversationActions}>
+            <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
+            <details
+              className={styles.conversationPicker}
+              ref={conversationPickerRef}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                if (confirmingDeleteId) {
+                  setConfirmingDeleteId(null);
+                  deleteTriggerRef.current?.focus();
+                  return;
+                }
+                closeConversationPicker(true);
+              }}
+            >
+              <summary aria-label={t("打开对话记录")}>
+                <History size={15} aria-hidden="true" />
+                <span>{t("对话记录")}</span>
+                <ChevronDown size={13} aria-hidden="true" />
+              </summary>
+              {conversationMenu}
+            </details>
+            {newConversationButton}
+          </div>
+        </header>
+      ) : <>
+        {compactLayout ? <dialog ref={historyDialogRef} className={styles.historyDrawer} aria-label={t("对话侧栏")}
+          onCancel={(event) => { event.preventDefault(); closeConversationPicker(true); }}
+          onClose={() => setHistoryDrawerOpen(false)}
+          onClick={(event) => { if (event.target === event.currentTarget) closeConversationPicker(true); }}>
+          {historyDrawerOpen ? sidebarContent : null}
+        </dialog> : <aside className={styles.historySidebar} aria-label={t("对话侧栏")} hidden={!sidebarOpen}>{sidebarContent}</aside>}
+        <header className={styles.pageHeader}>
+          {compactLayout ? <h1 className="sr-only">{t("Seekino 助手")}</h1> : null}
+          <button ref={historyToggleRef} className={styles.historyToggle} type="button" aria-label={t(!compactLayout && sidebarOpen ? "收起对话记录" : "打开对话记录")}
+            aria-expanded={compactLayout ? historyDrawerOpen : sidebarOpen}
+            onClick={() => compactLayout ? setHistoryDrawerOpen(true) : setSidebarOpen((open) => !open)}>
+            <PanelLeft size={19} aria-hidden="true" />
           </button>
-        </div>
-      </header>
+          <span className={styles.currentTitle}>{!showWelcome ? activeConversation?.title ?? t("Seekino 助手") : ""}</span>
+          <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
+        </header>
+      </>}
 
       <div className={selectedHit && !onOpenVideo ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
         <section className={styles.agentPanel} aria-label={t("与 Seekino 助手对话")}>
@@ -788,7 +841,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             const thread = event.currentTarget;
             followThread.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
           }}>
-            {!messages.length && !loading ? (
+            {showWelcome ? (
               <div className={styles.welcome}>
                 <Kino interactive perch dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
                 <p>{embedded ? t("看到哪里，问到哪里。回答里的时间点可以直接点击跳转。") : t("描述记得的画面、台词或人物关系，一起把那一刻找回来。")}</p>
@@ -845,6 +898,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
           <div className={styles.composerArea}>
             <form className={styles.composer} onSubmit={submit}>
+              {attachments.items.length || reference ? <div className={styles.draftContext}>
               {attachments.items.length ? <ul className={styles.draftAttachments} aria-label={t("待发送图片")}>
                 {attachments.items.map((item) => <li key={item.id} className={styles.draftAttachment}>
                   <img src={item.previewUrl} alt={item.file.name || t("待发送图片")} />
@@ -861,6 +915,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 </li>)}
               </ul> : null}
               {reference ? <div className={styles.referenceChip}><span>{t("已引用{reference}", { reference: referenceHit && referenceRange ? ` ${referenceHit.evidence.seriesName} · ${episodeLabel(referenceHit.evidence.episodeOrder)} · ${formatTimeRange(referenceRange.startSeconds, referenceRange.endSeconds)}` : t("选中片段") })}</span><button type="button" onClick={() => { draftRevisionRef.current += 1; setReference(null); }} aria-label={t("取消引用")}><X size={13} /></button></div> : null}
+              </div> : null}
               <textarea
                 ref={composerRef}
                 value={query}
@@ -877,7 +932,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={t("提问视频内容，或聊聊其他问题…")}
+                placeholder={embedded ? t("提问视频内容，或聊聊其他问题…") : showWelcome ? t("从一个问题开始…") : t("继续提问…")}
                 rows={1}
                 aria-label={t("向 Seekino 助手提问")}
               />
