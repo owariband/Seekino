@@ -13,6 +13,7 @@ def _service(**overrides):
     return SimpleNamespace(**{
         "list_series": lambda **kwargs: {"items": [], "next_offset": None},
         "retrieve": lambda **kwargs: {"items": [], "top_k_unit": "distinct_chunks"},
+        "browse_events": lambda **kwargs: {"items": [], "next_cursor": None},
         "read_evidence": lambda **kwargs: {
             "matched_event": {"start_ms": 1000, "end_ms": 3000},
             "media": {"original_url": "/api/videos/content?videoId=video&variant=original", "playback_url": None},
@@ -50,7 +51,7 @@ def test_2025_client_handshake_discovers_generated_schemas_and_structured_result
         response = client.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert response.status_code == 202
         tools = {tool["name"]: tool for tool in _rpc(client, "tools/list").json()["result"]["tools"]}
-        assert set(tools) == {"list_series", "retrieve", "read_evidence"}
+        assert set(tools) == {"list_series", "retrieve", "read_evidence", "browse_events"}
         assert all(tool["description"] and tool["outputSchema"] for tool in tools.values())
         schema = tools["retrieve"]["inputSchema"]
         assert schema["required"] == ["query"]
@@ -58,6 +59,10 @@ def test_2025_client_handshake_discovers_generated_schemas_and_structured_result
         assert "tenant_id" not in schema["properties"]
         assert schema["properties"]["top_k"]["maximum"] == 20
         assert tools["retrieve"]["annotations"]["readOnlyHint"] is True
+        assert tools["browse_events"]["annotations"]["readOnlyHint"] is True
+        assert tools["browse_events"]["inputSchema"]["required"] == ["series_id"]
+        assert "tenant_id" not in tools["browse_events"]["inputSchema"]["properties"]
+        assert _call(client, "browse_events", {"series_id": "series"})["structuredContent"]["next_cursor"] is None
         assert _call(client, "retrieve", {"query": "someone runs"})["structuredContent"]["top_k_unit"] == "distinct_chunks"
         evidence = _call(client, "read_evidence", {"evidence_ref": "ref"})["structuredContent"]
         assert evidence["media"]["original_url"] == "http://127.0.0.1:9621/api/videos/content?videoId=video&variant=original"

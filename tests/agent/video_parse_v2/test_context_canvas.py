@@ -295,6 +295,20 @@ def test_refine_prompt_exposes_original_voice_evidence_without_canvas_navigation
 
 
 
+def test_anime_refine_keeps_visual_boundaries_separate_from_asr_timing():
+    from agent.video_parse_v2.prompts import build_refine_prompt
+
+    snapshot = _voice_snapshot("flag", "CONFLICT")
+    canvas = ParseContextCanvas.from_refine(snapshot)
+    base = build_refine_prompt(snapshot=snapshot, canvas=canvas)
+    inputs = snapshot["inputs"]
+    snapshot["inputs"] = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={"content_kind": "anime"})})
+    anime = build_refine_prompt(snapshot=snapshot, canvas=canvas)
+    assert "recorded anime reaction changes" in anime
+    assert "recorded anime reaction changes" not in base
+    assert anime.split("Input: ", 1)[1] == base.split("Input: ", 1)[1]
+
+
 @pytest.mark.parametrize("error", [RuntimeError("failed"), TimeoutError("expired"), asyncio.CancelledError()])
 def test_failed_refine_never_commits_prefilled_draft(error):
     runtime = SimpleNamespace(

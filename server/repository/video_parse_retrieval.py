@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from copy import deepcopy
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, load_only
 
 from ..model.dto.parseContentDTO import ChunkParseContentData
@@ -19,6 +19,7 @@ from ..model.dto.libraryDTO import (
     VideoData,
 )
 from ..model.dto.searchDTO import (
+    PublishedTimelineChunk,
     VideoParseRetrievalChunkData,
     VideoParseRetrievalTaskData,
 )
@@ -77,6 +78,31 @@ def list_indexed_chunk_rows(
     return [VideoParseRetrievalChunkData(
         video_task_id=row.video_task_id, video_id=row.video_id, sequence_no=row.sequence_no,
     ) for row in rows]
+
+
+def list_published_timeline_chunks(
+    session: Session, *, workspace: str, series_id: str, task_status: str, phase: int, status: str,
+) -> list[PublishedTimelineChunk]:
+    """Read lightweight publication identities in viewing order, across encoder generations."""
+    newer = aliased(VideoParseTask)
+    array_length = func.json_array_length if session.get_bind().dialect.name == "sqlite" else func.json_length
+    rows = session.execute(select(
+        Video.id, VideoParseTask.id, VideoChunk.id, ChunkParseContent.version,
+        VideoParseTask.parse_config["indexing"]["index_generation"].as_integer(),
+        array_length(ChunkParseContent.content, "$.timeline"),
+    ).select_from(Series).join(Video, Video.series_id == Series.id).join(
+        VideoParseTask, VideoParseTask.video_id == Video.id,
+    ).join(ChunkParseTask, ChunkParseTask.video_task_id == VideoParseTask.id).join(
+        VideoChunk, and_(VideoChunk.id == ChunkParseTask.chunk_id, VideoChunk.video_id == Video.id),
+    ).join(ChunkParseContent, and_(ChunkParseContent.chunk_task_id == ChunkParseTask.id,
+                                   ChunkParseContent.version == ChunkParseTask.indexed_content_version)).where(
+        Series.tenant_id == workspace, Series.id == series_id,
+        VideoParseTask.status == task_status, VideoParseTask.is_deleted.is_(False),
+        ChunkParseTask.phase == phase, ChunkParseTask.status == status,
+        ~exists(select(newer.id).where(newer.video_id == Video.id, newer.is_deleted.is_(False),
+                                       newer.version > VideoParseTask.version).correlate(Video, VideoParseTask)),
+    ).order_by(Video.episode_order, Video.id, VideoChunk.sequence_no, VideoChunk.id))
+    return [PublishedTimelineChunk(*row) for row in rows]
 
 
 def load_task_chunk_rows(
