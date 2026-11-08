@@ -1,4 +1,4 @@
-import { Cable, Plus } from "lucide-react";
+import { Cable, ChevronDown, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError, errorMessage, getPersonalModelSettings, removePersonalModelConnection,
   savePersonalModelConnection, saveModelRole, testPersonalModelConnection } from "../../api/client";
@@ -30,6 +30,7 @@ function ConnectionSettings({ section, openServices }: SectionProps) {
   const [emptyDraftId] = useState(() => crypto.randomUUID());
   const [chosenEditor, setEdit] = useState<{ id: string; previous?: PersonalModelConnection } | null>(null);
   const edit = chosenEditor ?? (settings?.connections.length === 0 ? { id: emptyDraftId, previous: undefined } : null);
+  const [expanded, setExpanded] = useState<string | null | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -87,15 +88,17 @@ function ConnectionSettings({ section, openServices }: SectionProps) {
         <div className={styles.toolbar}><h3 className={styles.lead}>{t(edit.previous ? "编辑模型服务" : "添加模型服务")}</h3></div>
         <PersonalConnectionForm key={edit.id} id={edit.id} connection={edit.previous} busy={busy} cancel={settings.connections.length ? () => setEdit(null) : undefined}
           save={(body) => void action((signal) => savePersonalModelConnection(edit.id, body, signal), (value) => {
-            saved(value); setEdit(null); setFeedback(t("已保存连接"));
+            saved(value); setExpanded(edit.id); setEdit(null); setFeedback(t("已保存连接"));
           })} />
       </> : <>
-        <div className={styles.toolbar}><h3 className={styles.lead}>{t("已配置的模型服务")}</h3>
+        <div className={styles.toolbar}><h3 className={styles.lead}>{t("{n} 个服务连接", { n: settings.connections.length })}</h3>
           <button type="button" className={styles.primary} disabled={busy} onClick={() => open()}><Plus size={16} />{t("添加模型服务")}</button>
         </div>
-        <div className={styles.list}>{settings.connections.map((c) => <ConnectionCard key={c.connectionId} connection={c} busy={busy}
+        <div className={styles.list}>{settings.connections.map((c, index) => <ConnectionCard key={c.connectionId} connection={c} busy={busy}
+          expanded={expanded === undefined ? index === 0 : expanded === c.connectionId}
+          toggle={(open) => setExpanded(open ? c.connectionId : null)}
           edit={() => open(c)} remove={() => void action((signal) => removePersonalModelConnection(c.connectionId, c.revision, signal), (value) => {
-            saved(value); setFeedback(t("已删除连接")); if (!value.connections.length) setEdit(null);
+            saved(value); setExpanded(undefined); setFeedback(t("已删除连接")); if (!value.connections.length) setEdit(null);
           })} test={(model) => void action((signal) => testPersonalModelConnection(c.connectionId, model, signal), () => setFeedback(t("已收到模型回复")))} />)}</div>
       </>)}
       {section === "roles" && <ModelRoleSettings settings={settings} busy={busy} openServices={openServices}
@@ -116,7 +119,8 @@ function ConnectionSettings({ section, openServices }: SectionProps) {
   </div>;
 }
 
-function ConnectionCard({ connection: c, busy, edit, remove, test }: {
+function ConnectionCard({ connection: c, expanded, toggle, busy, edit, remove, test }: {
+  expanded: boolean; toggle: (open: boolean) => void;
   connection: PersonalModelConnection; busy: boolean; edit: () => void; remove: () => void; test: (model: string) => void;
 }) {
   const { t } = useI18n();
@@ -126,15 +130,20 @@ function ConnectionCard({ connection: c, busy, edit, remove, test }: {
   const selected = testModels.find((m) => m.id === choice) ?? testModels.find((m) => m.available !== false) ?? testModels[0];
   const editable = c.editable ?? c.protocol !== "codex";
   const hasCredentials = c.hasApiKey || ["openai_chat", "openai_responses", "anthropic_messages", "gemini", "ark", "openai_audio"].includes(c.protocol);
-  return <article className={styles.card}>
-    <div className={styles.connectionHeading}>
-      <h4 className={styles.title}><Cable size={17} aria-hidden="true" />{c.name}</h4>
-      <span className={styles.source}>{t(protocolName(c.protocol))}</span>
-    </div>
+  return <article className={styles.card} data-expanded={expanded}>
+    <h4 className={styles.connectionTitle}><button className={styles.disclosure} type="button" aria-label={c.name}
+      aria-expanded={expanded} aria-controls={`models-${c.connectionId}`} onClick={() => { setConfirm(false); toggle(!expanded); }}>
+      <Cable size={17} aria-hidden="true" /><span>{c.name}</span>
+      <small aria-hidden="true">{t(protocolName(c.protocol))} · {t("{n} 个模型", { n: c.models.length })}</small>
+      <ChevronDown className={styles.chevron} size={16} aria-hidden="true" />
+    </button></h4>
+    <div className={styles.serviceDetails} id={`models-${c.connectionId}`} hidden={!expanded}>
+    <div className={styles.endpointLine}>
     {c.baseUrl && <div className={styles.meta} dir="ltr">{c.baseUrl}</div>}
     {hasCredentials && <div className={styles.credential}><span>API Key</span>
       {c.hasApiKey ? <span aria-label={t("API Key 已配置")} className={styles.keyMask}>{MASKED_API_KEY}</span> : <span>{t("未设置")}</span>}
     </div>}
+    </div>
     <div className={styles.modelList}>{c.models.map((m) => <div key={m.id} className={styles.modelItem}>
       <span dir="ltr">{m.modelId}</span><small>{t(modelKinds[m.kind ?? "generative"] ?? m.kind ?? "")}
         {m.supportsVision ? ` · ${t("图像")}` : ""}{m.dimensions ? ` · ${m.dimensions}D` : ""}</small>
@@ -159,5 +168,6 @@ function ConnectionCard({ connection: c, busy, edit, remove, test }: {
       <div className={styles.actions}><button type="button" className={styles.button} onClick={() => setConfirm(false)} disabled={busy}>{t("取消")}</button>
         <button type="button" className={styles.danger} onClick={remove} disabled={busy}>{t("确认删除")}</button></div>
     </div>}
+    </div>
   </article>;
 }

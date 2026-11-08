@@ -193,3 +193,32 @@ def test_native_audio_and_ollama_connections_support_custom_models_and_credentia
     for role, c in (("transcription",audio),("embedding",vector)):
         store.assign(role, None, store.catalog().revision)
         assert c.connection_id not in {row.connection_id for row in store.delete(c.connection_id, store.catalog().revision).connections}
+
+
+def test_assigning_an_environment_selected_model_preserves_the_displayed_model_id(yaml_model_settings):
+    store = ModelSettings(yaml_model_settings.path, allow_local=True, environ={
+        **yaml_model_settings.environ, "ARK_API_KEY":"fake", "DEEPSEEK_API_KEY":"fake", "SEEKINO_VIDEO_MODEL":"env/visual",
+    })
+    base = store.catalog().settings()
+    current = next(r for r in base.roles if r.role == "vision")
+    selected = store.catalog().models[current.model_id]
+    assert selected.option.model_id == "env/visual"
+    store.assign("ocr", current.model_id, base.revision)
+    assert load_config(store.path).resolve_model_binding("ocr", environ={}).model == "env/visual"
+
+
+def test_yaml_source_without_models_is_visible_and_can_register_its_first_model(yaml_model_settings):
+    store = yaml_model_settings
+    original = yaml.safe_load(store.path.read_bytes())
+    original["model_sources"]["speech-server"] = {
+        "adapter":"openai_audio", "provider":"whisper.cpp", "base_url":"http://localhost:8001/v1", "api_key_env":None,
+    }
+    store.path.write_text(yaml.safe_dump(original))
+    row = next(c for c in store.catalog().connections.values() if c.name == "speech-server")
+    assert row.models == [] and row.model_kinds == ["transcription"]
+    store.save(row.connection_id, PersonalModelConnectionSave(name=row.name, protocol=row.protocol, base_url=row.base_url,
+               model_ids=["my-whisper"], models=[{"model_id":"my-whisper","kind":"transcription"}], revision=row.revision))
+    option = store.catalog().connections[row.connection_id].models[0]
+    assert option.roles == ["transcription"]
+    store.assign("transcription", option.id, store.catalog().revision)
+    assert load_config(store.path).resolve_model_binding("transcription").source == "speech-server"

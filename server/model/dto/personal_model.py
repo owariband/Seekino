@@ -28,7 +28,7 @@ class RegisteredModelInput(ContractModel):
 
 
 class ModelConnectionEndpoint(ContractModel):
-    protocol: RegistryProtocol
+    protocol: RegistryProtocol | Literal["openai_vision", "llama_cpp_embedding"]
     base_url: str = Field(min_length=1, max_length=2048)
     revision: int = Field(ge=0)
     api_key: SecretStr | None = Field(default=None, max_length=8192)

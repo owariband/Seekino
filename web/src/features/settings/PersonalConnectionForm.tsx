@@ -96,7 +96,7 @@ export function PersonalConnectionForm({ id, connection, busy, cancel, save }: {
     request.current = controller;
     setError(""); setDiscovering(true); setSuggestions(null);
     try {
-      const result = await discoverModelIds(id, { protocol, baseUrl: url.trim(), revision: connection?.revision ?? 0, ...credentials() }, controller.signal);
+      const result = await discoverModelIds(id, { protocol: native?.protocol ?? protocol, baseUrl: url.trim(), revision: connection?.revision ?? 0, ...credentials() }, controller.signal);
       if (!controller.signal.aborted) setSuggestions(result.modelIds);
     } catch (e) {
       if (!controller.signal.aborted) setError(errorMessage(e, locale));
@@ -122,7 +122,7 @@ export function PersonalConnectionForm({ id, connection, busy, cancel, save }: {
   return <form className={styles.form} onSubmit={submit}>
     {native ? <div className={styles.connectionHeading}><strong>{native.name}</strong><span className={styles.meta}>{protocolName(native.protocol)}</span></div> : <><div className={styles.row}>
       <label className={styles.field}><span>{t("服务名称")}</span><input required maxLength={255} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} /></label>
-      <label className={styles.field}><span>{t("接口协议")}</span><select value={protocol} disabled={busy} onChange={(e) => changeProtocol(e.target.value as PersonalModelProtocol)}>
+      <label className={styles.field}><span>{t("接口协议")}</span><select aria-label={t("接口协议")} value={protocol} disabled={busy} onChange={(e) => changeProtocol(e.target.value as PersonalModelProtocol)}>
         {Object.entries(protocols).map(([code, p]) => <option key={code} value={code}>{t(p.label)}</option>)}
       </select></label>
     </div>
@@ -135,11 +135,11 @@ export function PersonalConnectionForm({ id, connection, busy, cancel, save }: {
       onChange={(e) => { setClearKey(e.target.checked); setKey(""); }} />{t("清除已保存的密钥")}</label>}
     </>}
     <div className={styles.registryHeading}><h4>{t("已注册模型")}</h4>
-      {!native && protocol !== "ark" && <button type="button" className={styles.button} disabled={busy || discovering || !url.trim()} onClick={() => void discover()}>
+      {(native ? native.discoverable === true : protocol !== "ark") && <button type="button" className={styles.button} disabled={busy || discovering || !url.trim()} onClick={() => void discover()}>
         {t(discovering ? "正在获取…" : "获取模型列表")}</button>}
     </div>
     {suggestions !== null && (suggestions.length
-      ? <label className={styles.field}><span>{t("从服务添加模型")}</span><select value="" disabled={busy || rows.length >= 64} onChange={(e) => {
+      ? <label className={styles.field}><span>{t("从服务添加模型")}</span><select aria-label={t("从服务添加模型")} value="" disabled={busy || rows.length >= 64} onChange={(e) => {
         const value = e.target.value; if (!value) return;
         const empty = rows.find((r) => !r.modelId); if (empty) update(empty, { modelId: value });
         else setRows([...rows, modelRow(allowedKinds[0]!, value)]);
@@ -148,7 +148,7 @@ export function PersonalConnectionForm({ id, connection, busy, cancel, save }: {
     {rows.map((r, index) => <fieldset className={styles.modelRow} key={r.key} disabled={busy}>
       <div className={styles.modelInputs}>
         <label className={styles.field}><span>{t("模型 ID")}</span><input dir="ltr" required maxLength={255} spellCheck={false} aria-label={index === 0 ? t("模型 ID") : t("模型 ID {n}", { n: index + 1 })} value={r.modelId} onChange={(e) => update(r, { modelId: e.target.value })} /></label>
-        <label className={styles.field}><span>{t("模型类型")}</span><select value={r.kind} onChange={(e) => update(r, { kind: e.target.value as RegistryModelKind })}>
+        <label className={styles.field}><span>{t("模型类型")}</span><select aria-label={t("模型类型")} value={r.kind} onChange={(e) => update(r, { kind: e.target.value as RegistryModelKind })}>
           {allowedKinds.map((kind) => <option key={kind} value={kind}>{t(modelKinds[kind]!)}</option>)}
         </select></label>
         {rows.length > 1 && <button type="button" className={styles.iconButton} aria-label={t("移除模型 {n}", { n: index + 1 })} onClick={() => setRows(rows.filter((item) => item.key !== r.key))}><X size={16} /></button>}

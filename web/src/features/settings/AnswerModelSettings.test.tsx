@@ -103,3 +103,16 @@ it("discovers model IDs into a draft and saves per-model types only after confir
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ modelIds: ["my-vector"],
     models: [{ modelId: "my-vector", kind: "embedding", dimensions: 768 }] }));
 });
+
+it("opens one service at a time while keeping other connection names in view", async () => {
+  const second = { ...yamlConnection, connectionId: "other", name: "Batch service" };
+  vi.spyOn(api, "getPersonalModelSettings").mockResolvedValue({ defaultModelId: "default", connections: [yamlConnection, second] });
+  render(<AnswerModelSettings active />);
+  const first = await screen.findByRole("button", { name: yamlConnection.name, exact: true });
+  const batch = screen.getByRole("button", { name: second.name, exact: true });
+  expect(first).toHaveAttribute("aria-expanded", "true");
+  expect(batch).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(batch);
+  expect(first).toHaveAttribute("aria-expanded", "false");
+  expect(batch).toHaveAttribute("aria-expanded", "true");
+});

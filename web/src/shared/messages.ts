@@ -281,6 +281,8 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "修改会保存到当前服务使用的 YAML 配置文件。": "Changes are saved to the YAML configuration used by this server.",
   "重新载入设置": "Reload settings",
   "OpenAI 兼容接口": "OpenAI-compatible API",
+  "{n} 个服务连接": "{n} service connections",
+  "{n} 个模型": "{n} models",
   "模型服务": "Model services",
   "模型用途": "Model assignments",
   "连接、凭据与模型": "Connections, credentials and models",

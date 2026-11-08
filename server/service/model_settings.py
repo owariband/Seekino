@@ -127,6 +127,15 @@ class ModelSettings:
             if ref not in data["models"]:
                 # V1 files can include a role synthesized by Gateway defaults.
                 data["models"][ref] = catalog.definitions.normalized_models[ref].model_dump(exclude_none=True)
+            declaration = data["models"][ref]
+            if declaration["model"] != selection.option.model_id:
+                # An environment override on the original role is not applied to another role.
+                # Register the displayed effective model so the selection and the request agree.
+                ref = "model_" + uuid5(UUID(selection.connection.connection_id), f"effective:{ref}:{selection.option.model_id}").hex
+                desired = {**declaration, "model": selection.option.model_id}
+                if ref in data["models"] and data["models"][ref] != desired:
+                    raise ValueError("这个模型引用已由其他配置使用")
+                data["models"][ref] = desired
             data.setdefault("model_roles", {})[role] = ref
         return self._change(edit)
 
@@ -137,6 +146,9 @@ class ModelSettings:
         if body.revision != (current.revision if current else 0):
             raise self._conflict()
         url = normalize_personal_endpoint(body.base_url, allow_local=self.allow_local)
+        if body.protocol in {"openai_vision", "llama_cpp_embedding"} and (
+                not current or current.protocol != body.protocol or current.base_url != url):
+            raise ValueError("请选择已配置的原生模型服务")
         if "api_key" in body.model_fields_set:
             key = body.api_key.get_secret_value() if body.api_key else ""
         elif current and current.has_api_key:
@@ -258,7 +270,13 @@ class ModelSettings:
     @staticmethod
     def _update_models(models, data, catalog, cid, name, body):
         previous = catalog.connections.get(cid)
-        old = {(m.model_id, m.kind): m for m in previous.models} if previous else {}
+        old = {}
+        visual = set()
+        for option in previous.models if previous else ():
+            key = (option.model_id, option.kind)
+            old.setdefault(key, option)
+            if option.supports_vision:
+                visual.add(key)
         requested = {(m.model_id, m.kind): m for m in body.models or ()}
         if body.models is None:
             # Older clients do not send capabilities. Keep existing per-model metadata.
@@ -267,7 +285,7 @@ class ModelSettings:
                 for m in existing:
                     requested[mid, m.kind] = RegisteredModelInput(model_id=mid, kind=m.kind,
                         supports_vision=(body.supports_vision if previous and body.supports_vision != previous.supports_vision
-                                         and m.kind == "generative" else m.supports_vision), dimensions=m.dimensions)
+                                         and m.kind == "generative" else (mid, m.kind) in visual), dimensions=m.dimensions)
                 if not existing:
                     requested[mid, "generative"] = RegisteredModelInput(model_id=mid, supports_vision=body.supports_vision)
             for key, m in old.items():
@@ -302,7 +320,7 @@ class ModelSettings:
                 binding["model"] = rename[key][0]
             new_key = rename.get(key, key)
             model = requested[new_key]
-            if model.kind == "generative" and old[key].supports_vision != model.supports_vision:
+            if model.kind == "generative" and (key in visual) != model.supports_vision:
                 binding["supports_vision_input"] = model.supports_vision
             if model.dimensions is not None and old[key].dimensions != model.dimensions:
                 binding["dimensions"] = model.dimensions

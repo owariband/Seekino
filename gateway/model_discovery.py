@@ -12,6 +12,8 @@ def discover_models(protocol: str, base_url: str, api_key: str | None, *, allow_
         raise ValueError("请使用方舟推理接入点的模型 ID")
     if protocol == "ollama_embedding":
         path, items, field = "/api/tags", "models", "name"
+    elif protocol == "llama_cpp_embedding":
+        path, items, field = ("/models" if base_url.endswith("/v1") else "/v1/models"), "data", "id"
     elif protocol == "gemini":
         path, items, field = "/models", "models", "name"
         if api_key:
