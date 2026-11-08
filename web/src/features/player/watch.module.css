@@ -1,4 +1,4 @@
-.page { --watch-gutter: clamp(16px, 3cqw, 64px); --watch-edge-fade: 12px; width: 100%; max-width: none; min-height: calc(100cqh - var(--app-header-height, 76px)); padding: 0 0 64px; background: var(--canvas); }
+.page { --watch-gutter: clamp(16px, 3cqw, 64px); --watch-edge-fade: 12px; width: 100%; max-width: none; min-height: calc(100cqh - var(--app-header-height, 64px)); padding: 0 0 64px; background: var(--canvas); }
 .page[data-fullscreen="true"] { height: 100cqh; overflow: hidden; padding: 0; background: #090c0b; }
 .page[data-fullscreen="true"] .viewer { height: 100cqh; }
 .page[data-fullscreen="true"] .watchDetails { display: none; }
@@ -6,7 +6,7 @@
 .panelToggle:hover, .panelToggle[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
 .floatingTools { position: absolute; z-index: 10; top: 12px; left: 16px; }
 .floatingTools .panelToggle { color: #f7f8f7; background: rgb(9 12 11 / 75%); }
-.layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 76px); background: var(--stage); }
+.layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 64px); background: var(--stage); }
 .viewer { width: 100%; min-width: 0; aspect-ratio: 16 / 9; }
 .resizeHandle { position: absolute; z-index: 46; top: 0; left: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .resizeHandle::before { position: absolute; top: 35%; bottom: 35%; left: 4px; width: 2px; border-radius: 2px; background: var(--line-strong); content: ""; }
@@ -159,7 +159,7 @@
 .shelfControls button { display: grid; width: 36px; height: 36px; place-items: center; color: var(--ink); border: 1px solid var(--line); border-radius: 50%; background: var(--surface); cursor: pointer; }
 .shelfControls button:hover:not(:disabled) { color: var(--teal-deep); border-color: var(--teal); }
 .shelfControls button:disabled { opacity: .3; cursor: default; }
-.seriesCards { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(240px, 28%, 400px); gap: clamp(18px, 1.6vw, 32px); overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scroll-padding-inline: 4px; scroll-margin-top: calc(var(--app-header-height, 76px) + 32px); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding: 4px 4px 18px; margin: -4px; }
+.seriesCards { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(240px, 28%, 400px); gap: clamp(18px, 1.6vw, 32px); overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scroll-padding-inline: 4px; scroll-margin-top: calc(var(--app-header-height, 64px) + 32px); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding: 4px 4px 18px; margin: -4px; }
 .seriesCard, .seriesCardActive { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 0 0 12px; color: var(--ink); border-bottom: 2px solid transparent; background: transparent; cursor: pointer; text-align: left; scroll-snap-align: start; }
 .seriesCardActive { border-bottom-color: var(--teal); }
 .seriesCardLink { display: grid; gap: 14px; min-width: 0; color: inherit; text-decoration: none; }
@@ -180,7 +180,7 @@
 .seriesCard > span:last-child, .seriesCardActive > span:last-child { display: grid; width: 100%; min-width: 0; gap: 7px; }
 .seriesCards strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 1rem; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
 .seriesCards small { color: var(--ink-soft); font-size: .72rem; }
-.homeEpisodes { scroll-margin-top: calc(var(--app-header-height, 76px) + 24px); }
+.homeEpisodes { scroll-margin-top: calc(var(--app-header-height, 64px) + 24px); }
 .homeEpisodes:focus { outline: none; }
 .homeEpisodesHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 0; border-top: 1px solid var(--line); }
 .homeEpisodesHeader > div { min-width: 0; }

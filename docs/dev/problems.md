@@ -2814,6 +2814,10 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 验收：桌面约 248px 左侧历史、约 760px 输入/正文；草稿欢迎语紧邻输入；首次发送不重挂载 textarea、不丢焦点；手机抽屉可关闭且焦点受限；继续遵守 #66 无操作不创建会话。当前状态统一见[工作台](workbench.html) CHAT-LAYOUT-01；设计见[TRD](../design/03-product-reassessment/chat-sidebar-layout-trd.md)，本轮证据见[验收报告](../report/web/chat-sidebar-layout-20261107.md)。
 
+### CHAT-HEADER-01 · 空范围提示远离选集控件，顶栏重复占用空间
+
+2026-11-08。游客看到的空目录说明被排在输入框底部，无法就近判断范围控件是否有可检索的系列。结合顶栏精简，用桌面与窄屏检查状态位置、发送限制和首页链接，并在 CPU 上核对历史栏实际位置。[设计与验收](../design/03-product-reassessment/chat-header-scope-trd.md)
+
 <a id="chat-composer-02"></a>
 ## CHAT-COMPOSER-02　对话共用一个回答模型，历史宽度固定
 
