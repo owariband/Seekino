@@ -831,7 +831,8 @@ def test_content_change_reencodes_all_representations(tmp_path):
     assert len(store.bulk_calls) == 2
 
 
-def test_lost_execution_lease_stops_before_external_write_or_complete(tmp_path):
+@pytest.mark.parametrize("separate_local_check", [False, True])
+def test_lost_execution_lease_stops_before_external_write_or_complete(tmp_path, separate_local_check):
     ids, media, snapshot = _fixture(tmp_path)
     repository = _Repository(snapshot)
     store = _Store()
@@ -847,6 +848,7 @@ def test_lost_execution_lease_stops_before_external_write_or_complete(tmp_path):
         media_service=_media_service(tmp_path),
         contract=_contract(),
         check_active=check_active,
+        check_cancelled=(lambda: None) if separate_local_check else None,
     )
 
     with pytest.raises(RuntimeError, match="lease lost"):

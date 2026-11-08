@@ -35,8 +35,12 @@ HTTPS、媒体、SSE 及请求来源校验参照 [Nginx 入口](../nginx/README.
 
 | 服务器 | 运行内容 |
 | --- | --- |
-| CPU 服务器 | 根 [Compose](../../compose.yaml) 叠加 [compose.prod.yaml](compose.prod.yaml)：web（Nginx 终止 TLS，复用 [Nginx 模板](../nginx/nginx.conf.template)）、API、MySQL、Elasticsearch、Redis。只有 443 对外，API 仅发布在 loopback，数据库与索引不发布端口。 |
+| CPU 服务器 | 根 [Compose](../../compose.yaml) 叠加 [compose.prod.yaml](compose.prod.yaml) 运行 Web、API、MySQL、Elasticsearch 和 Redis。Web 复用 [Nginx 模板](../nginx/nginx.conf.template)，80 将请求重定向到公开域名的 HTTPS 地址，443 提供页面与 API。API 仅发布在 loopback，数据库与索引只使用内部网络。 |
 | GPU 服务器 | 自托管模型：查询 embedding（与样例索引相同的 Qwen3-Embedding-0.6B Q8 GGUF，llama.cpp，1024 维）、WhisperX 转写（OpenAI `/v1/audio/transcriptions` 兼容服务）、替换 Jev 的路由模型。 |
+
+云端入站使用 TCP 80 和 443。设置 `SEEKINO_PUBLIC_HOST` 为公开域名，80 对收到的请求
+返回 308 并保留路径和查询参数。可用 `curl -I 'http://你的域名/settings?lang=zh'`
+检查 `Location`，再用浏览器的默认证书信任设置访问对应 HTTPS 地址。
 
 服务器的模型 YAML（`SEEKINO_MODEL_CONFIG`）指向的 `base_url`：
 

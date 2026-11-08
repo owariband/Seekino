@@ -628,6 +628,7 @@ def _agent_message_view(
         message_id=state.message_id, conversation_id=state.conversation_id,
         series_ids=list(state.series_ids), sequence_no=state.sequence_no,
         role=state.role, status=state.status, phase=state.phase, version=state.version,
+        model_retry=state.model_retry,
         reference=state.reference, content=state.content, model_name=None if _managed_chat(identity) else state.model_name,
         attachments=attachments,
         search_result=result, render_blocks=render_blocks,

@@ -216,7 +216,7 @@ class VideoSummarizeService:
                     [TextInput(prompt)], schema_name="VideoSummaryCompletion", result_type=SummaryCompletion,
                     tools=as_langchain_tools(tools), tool_harness="deepagents",
                     request_timeout_seconds=execution.config.execution_timeout_seconds,
-                    check_control=execution.manager.check_active,
+                    check_control=execution.manager.raise_if_cancelled,
                 )
             finally:
                 model.close()

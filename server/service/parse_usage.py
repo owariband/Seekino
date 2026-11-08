@@ -31,6 +31,7 @@ from ..repository.model_usage import ModelUsageRepository
 from ..utils.time import datetime_to_unix_time_ms, now_utc, unix_time_ms_to_datetime
 from ..utils.validation import require_nonempty_text
 from .model_pricing import estimate_model_cost
+from .parse_output_draft import ParseOutputDraftService
 
 _logger = logging.getLogger(__name__)
 _TOKEN_FIELDS = (
@@ -53,9 +54,11 @@ class ParseUsageService:
         self, repository: ModelUsageRepository, *, tracing: LangfuseTracing | None = None,
         clock: Callable[[], datetime] = now_utc,
         pricing: ModelPricingConfig | None = None,
+        drafts: ParseOutputDraftService | None = None,
     ) -> None:
         self._repository, self._tracing, self._clock = repository, tracing, clock
         self._pricing = pricing if pricing is not None else ModelPricingConfig()
+        self._drafts = drafts
         # Gateway de-duplicates subscribers by callable identity across nested scopes.
         self._observer = self._record_call
         self._owner: ContextVar[tuple[str, str, str, str | None] | None] = ContextVar("local_usage_owner", default=None)
@@ -88,9 +91,17 @@ class ParseUsageService:
             "category": category,
         }
         tracing = self._tracing.scope(context) if self._tracing is not None else nullcontext()
+        drafts = (
+            self._drafts.capture(
+                tenant_id=task_input.tenant_id,
+                video_task_id=lease.video_parse_task_id, actor_user_id=actor_user_id,
+            )
+            if category == "parse" and self._drafts is not None
+            else nullcontext()
+        )
         owner_token = self._owner.set((task_input.tenant_id, "video_parse", lease.video_parse_task_id, actor_user_id))
         try:
-            with model_call_context(context), tracing, capture_model_usage(self._observer, combine=True):
+            with model_call_context(context), tracing, capture_model_usage(self._observer, combine=True), drafts:
                 yield
         finally:
             self._owner.reset(owner_token)
