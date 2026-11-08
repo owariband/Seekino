@@ -6,7 +6,7 @@
 | Type | Feature direction + minimal validation. This PR holds the TRD only; each integration step gets its own branch + PR with a TRD-first commit (§3.8) |
 | Opened / revised | Opened 2026-11-05. Direction rewritten 2026-11-06 after four rounds of owner review (decision log) |
 | Branch / PR | `docs/editing-skill-style-reference` / [PR #50](https://github.com/owariband/Seekino/pull/50) |
-| Status | Final design agreed with the owner 2026-11-07. E0, E1, E3 pass (standalone scripts, with adjustments); **E2 cost gate failed** — implementation held pending owner decision; nothing is wired into Seekino |
+| Status | Final design agreed with the owner 2026-11-07. E0, E1, E3 pass (standalone scripts, with adjustments); **E2 cost gate failed**. On 2026-11-08 the owner commissioned the animation-material pilot in §4 E4 after reviewing the separate Weekend trial |
 | Related | [MCP access TRD](mcp-access-trd.md); [Sub-Chunk / Event TRD](../02-agent-harness/sub-chunk-trd.md); [PR #34](https://github.com/owariband/Seekino/pull/34) (course parse profile, the base for per-type schema config); [PR #53](https://github.com/owariband/Seekino/pull/53) (ASR blank-word fix found while parsing MyGO) |
 
 ## 1.1 Why Seekino needs edit analysis
@@ -83,19 +83,19 @@ Together they remove most of the manual guidance an AI edit needs today: the use
 
 In scope:
 - An **`edit_reference` parse profile** inside the existing parse task. A video parsed with it (for example P5R) gets representative highlights picked in Prepare, high-frame-rate visual analysis of those picks in Understanding, consolidation of observations and a style card in one whole-video Refine window, and indexing.
-- A template library: reusable templates, immutable versions holding their complete contract and code, append-only evaluations and checks, an explicit default version, and server-side source snapshots.
+- A deferred template-library design, pending a technique-level reuse test after the MCP pilot: reusable templates, immutable versions holding their complete contract and code, append-only evaluations and checks, an explicit default version, and server-side source snapshots.
 - MCP tools for finding templates and observations, reading versions, style cards, saving versions and appending notes.
-- The promo as the acceptance case.
+- The promo as the acceptance case. The first delivery is a character reaction discoverable by expression and a way to browse the full authorized candidate set through MCP.
 
 Out of scope here:
 - The automatic content-type judgment (editing material / scripted animation / course). It gets its own TRD on top of PR #34; until then the profile is chosen explicitly in `parse_config`.
-- `keyframe_ms` for character material on the `content` profile. It changes the content schema and stays a later step (E4), after this sequence.
+- A persistent `keyframe_ms` on the shared content schema requires the separate representative-frame comparison. The first E4 run changes animation prompt selection and measures retrieval and visual evidence independently.
 - Cut-outs, rendering, previews and running template code. These belong to the user's local workflow through tools and skills. Seekino Server provides materials, reference evidence, template retrieval and persistence only.
 - Rhythm/beat-grid extraction as a goal in itself.
 
 Must stay unchanged:
 - **One video has one current parse task**, as today. A video is parsed with one profile; switching profile is a reparse. No second task runs alongside it.
-- **The `content` profile behaves exactly as today** for scripted animation and courses. The scan runs only under `edit_reference`.
+- Existing content tasks and courses retain their saved prompt behaviour. An explicitly selected anime content kind asks for visible expression changes within the ordinary content timeline. The editing-reference detector remains opt-in.
 - The existing parse task, scheduling, leases, retries, Consumer, chunk topology, Refine window mechanism, result storage and indexing infrastructure. No new task infrastructure and no new parse-result tables.
 - Exact ranges, never widened. No rendering on the 4C8G server.
 - Copyright: the owner decided on 2026-11-05 that it is not a concern for this non-commercial promo.
@@ -296,6 +296,8 @@ Rules:
 
 ## 3.5 MCP behaviour
 
+For a character reaction, start with the visible action and the character’s names. Collect several candidates, follow neighbouring evidence, and inspect thumbnails or source clips before choosing. If ranked retrieval misses the expression, browse all published candidate events in the chosen series, optionally filtering for visible names. A page-size or response-byte limit bounds a single response. An explicit continuation must reach the last result. The tool must preserve local tenant, current task/version and source ranges on every page. Finding the known frame by exhaustive browsing is scored separately from finding it in the original ranked query.
+
 | Tool | Behaviour |
 | --- | --- |
 | `find_edit_templates(query, tags?, series_ids?, include_parse_techniques=true, top_k)` | `templates`: library rows with default-version summary, check summary, latest evaluation highlights. `techniques`: parse-derived observations from the edit-reference index with ranges, `segment_id`, style-card ref. Library search is MySQL in v1 |
@@ -333,10 +335,11 @@ Write tools run only under MCP's current local mode (loopback-only `_LocalOnly`,
 
 | Step | Branch | Change | Gate |
 | --- | --- | --- | --- |
+| 0 | `feat/anime-material-recall` | Explicit animation prompt in the existing parse task, whole-EP04 pilot, broad MCP recall and complete paged browsing | §4 E4, five-episode scope and verified source frames |
 | 1 | `refactor/parse-profile` | `parse_config.profile`, a registry sized to §3.3's differences, `content` wrapping today's code, profile check on read paths | Existing tests pass unmodified |
 | 2 | `feat/edit-reference-profile` | Scan + picks in Prepare, observation / Refine / card schemas and prompts, whole-video window, empty-chunk commit, Summarize skip, edit-reference index | P5R on the isolated instance matches E3; it never appears as content events |
-| 3 | `feat/edit-template-library` | Two tables, Service, seven MCP tools | Append-only enforced; `content_hash` checked; saves never move the default; `successor_notes` shown; stale-source states reported |
-| 4 | — | Promo through MCP | §5 |
+| 3 | read-only reference lookup and pilot | A fresh editor uses MCP for character material and viewable P5R exemplars, and chooses whether to borrow a technique | §5 |
+| Deferred | `feat/edit-template-library` | Test reuse of one technique-level component before building the two tables and write tools | Measured reuse benefit plus the version invariants in §3.4 |
 | Later | own TRD | Content-type judgment on top of PR #34; `keyframe_ms` for content (E4) | — |
 
 # 4. 对照实验与结果分析
@@ -410,9 +413,11 @@ Interpretation (inference, not yet tested):
 
 Decision: per §3.7, implementation is **not started**; returned to the owner with this evidence (decision log).
 
-## E4 Character material (later, content profile)
+## E4 Character material (whole-episode prompt pilot)
 
-Reparse ep04 with `keyframe_ms` / `clean`; rerun the same 4 queries against the 1/8 baseline.
+**Codex follow-up, 2026-11-08.** In the separate Weekend A/B/C trial the owner preferred film 2 with the revised P5R notes. All arms received the same preselected character pack. Neither the 941732 ms half-body nor the 943401 ms close-up appeared in that pack. EP04’s original Understanding request contained the clenched teeth in three consecutive 3 fps close-ups. Its published descriptions recorded a raised fist and placed the smile at 943166 ms. The three completed text-only Refine windows retained both descriptions. [Previous measurements and blind-review evidence](https://github.com/owariband/Seekino/pull/50#issuecomment-6708274214).
+
+Freeze the five-episode scope, 3 fps inputs, provider and reasoning setting. Reparse only the whole fourth episode under an explicit anime prompt with no character, episode, timestamp or desired expression in its instructions. Replay the unhinted editing query and the archived expression query with the same top_k. Count a ranked hit when a returned EP04 event contains 941732 or 943401 ms and its visual description and source frame support the reaction. Record the first rank, exact event bounds, task version and observed frame. Inspect the return to the smile separately. Compare exhaustive MCP coverage independently, including duplicated or skipped events and stale cursors after a reparse. A pass by enumeration alone is a ranked miss. The earlier 1/8 usable-as-returned baseline and four-query keyframe test remain separate gates for a stored representative frame.
 
 ## Results
 
@@ -433,15 +438,14 @@ The pilot is the promo, made after steps 1–3:
 
 The agent makes the full promo through MCP + Claude Code, with cut-out and rendering local. Logged: every recall Seekino could not serve, tokens, time, and how often the owner had to step in.
 
-Go / no-go: promo accepted by the owner; second-use cost clearly below first use; `content` parses unchanged. Rollback: `edit_reference` is opt-in per task; the library is additive.
+Go / no-go for dual recall: the editor independently finds the character reaction, sees the P5R 33900–35033 ms exemplar (cut at 34333 ms), chooses whether to use it and the owner accepts the cut. Second-use savings gate the template library separately. Existing generic content and course requests remain compatible. Rollback: `edit_reference` is opt-in per task; the library is additive.
 
 # 6. 结果验收与闭环
 
 Not closed. As of 2026-11-07:
 - Settled: the `edit_reference` profile inside the existing parse task, stage responsibilities, the whole-video Refine window, and the template library contract.
-- Measured: E0.
-- Nothing implemented in Seekino; PR #53 is a separate fix.
-- Open: E1–E3; the chunk-boundary repair failure on ep04 (not root-caused); the content-type judgment TRD.
+- Measured: E0/E1/E3 in standalone experiments, E2 cost miss, and the separate Weekend blind preference. P5R style-card consolidation was manual.
+- The E4 character pilot and paged MCP access are the next integration step. Automatic type classification and autonomous P5R recall remain to be demonstrated. PR #53 is a separate fix.
 
 Acceptance returns to §1.1: the promo exists, made through MCP, and the dual recall is what made it.
 
@@ -467,3 +471,4 @@ Acceptance returns to §1.1: the promo exists, made through MCP, and the dual re
 | 2026-11-07 | E2 arm A uses the static style library | A stronger, realistic baseline is the skill reading the reference itself | Arm A gets the P5R video and reads it its own way | §4 E2 |
 | 2026-11-07 | Scan starts (0.2 s debounce) are the step boundaries | E3: rungs 2–3 frames apart are suppressed by the debounce; long merged candidates hide techniques | Prepare splits candidates > 3 s and runs a fine in-pick detector whose starts are the boundaries; Refine consolidates names and roles | §3.3, E1, E3 |
 | 2026-11-07 | Recall makes the editing agent cheaper (H1), and a saved version makes the next beat cheaper (H6) | E2: B +7 % tokens / +11 % time; B2 +21 % / +3 %; reference reading is a small share of cost | Implementation held; evidence returned to owner. Measured value is fidelity, consistency and carried experience, not cost | §4 E2 |
+| 2026-11-08 | Character material and representative frames could wait until after template storage | Weekend film 2 won its own review with a shared character pack; three clearly sampled clenched-teeth frames were described as a smile | Codex follow-up: whole-episode anime prompt pilot, unchanged query, and exhaustive MCP browsing; defer template storage until measured technique reuse | §3.5, §3.8, E4, §5 |
