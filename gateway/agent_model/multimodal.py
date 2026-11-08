@@ -363,13 +363,14 @@ def _request_turn(
                 if check_control:
                     check_control()
                 response = endpoint.adapter.tool_completion(endpoint.client, _chat_input(messages, endpoint), specs, choice, remaining)
+                endpoint.client.capture_usage(call)
                 call.raise_if_cancelled()
                 turn = _validated_agent_turn(response, tools=tools, seen_tool_call_ids=seen, provider_label=endpoint.provider,
                     model_name=endpoint.model, max_output_tokens=endpoint.adapter.max_output_tokens,
                     error_type=QueryModelIncompleteError, require_tool_call=enforce_final_schema and choice == "required",
                     require_visible_text_on_stop=enforce_final_schema and visible)
                 parsed = result_type.model_validate_json(turn[1]) if enforce_final_schema and turn[0] == "stop" else None
-                return turn, parsed, _response_input_tokens(response)
+                return turn, parsed, call.usage.input_tokens if call.usage else None
             finally:
                 unregister()
     if endpoint.protocol == "chat":

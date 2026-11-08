@@ -40,6 +40,11 @@ class _PersonalChatModel(BaseChatModel):
     def close(self) -> None:
         self._http.close()
 
+    _receipt: dict = PrivateAttr(default_factory=dict)
+
+    def capture_usage(self, tracker) -> None:
+        tracker.capture_response(self._receipt)
+
     def _post(self, path: str, headers: dict, payload: dict, timeout: float | None) -> dict:
         url = self._target.base_url + path
         timeout = timeout if timeout is not None else self._http.timeout.read
@@ -56,7 +61,17 @@ class _PersonalChatModel(BaseChatModel):
                     response = self._http.post(url, headers=headers, json=legacy, timeout=remaining)
         if not response.is_success:
             raise PersonalModelRequestError(f"模型接口返回 HTTP {response.status_code}")
-        return response.json()
+        data = response.json()
+        usage = data.get("usage")
+        if self._target.protocol == "gemini":
+            metadata = data.get("usageMetadata")
+            if isinstance(metadata, dict):
+                outputs = [metadata.get(k) for k in ("candidatesTokenCount", "thoughtsTokenCount")]
+                usage = {"input_tokens": metadata.get("promptTokenCount"), "total_tokens": metadata.get("totalTokenCount"),
+                         "output_tokens": sum(n for n in outputs if type(n) is int)}
+        self._receipt = {"model": data.get("model") or self._target.model_id, "usage": usage,
+                         "request_id": response.headers.get("x-request-id")}
+        return data
 
     def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
         target = self._target

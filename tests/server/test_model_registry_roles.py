@@ -46,7 +46,8 @@ def test_registry_resolves_separate_keys_and_reaches_the_selected_transports(yam
             text = '{"scores":[{"index":0,"score":0.8}]}'
         else:
             text = '{"text":"sample frame"}'
-        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                                         "usage": {"prompt_tokens":7, "completion_tokens":1, "total_tokens":8}})
     monkeypatch.setattr("gateway.personal_endpoint._EndpointTransport", lambda *_: httpx.MockTransport(respond))
     gen = {"model_id": "work/vision", "kind": "generative", "supports_vision": True}
     a = register(store, "Live", "secret-live", [gen])
@@ -74,7 +75,11 @@ def test_registry_resolves_separate_keys_and_reaches_the_selected_transports(yam
     try:
         for role in ("vision", "ocr"):
             model = client.create_generative_model(role)
-            assert model.generate([ImageInput(image)], schema_name="read", result_type=Reading).text == "sample frame"
+            from gateway.usage import capture_model_usage
+            calls = []
+            with capture_model_usage(calls.append):
+                assert model.generate([ImageInput(image)], schema_name="read", result_type=Reading).text == "sample frame"
+            assert calls[0].usage.total_tokens == 8
             sent = json.loads(requests[-1][2])
             assert sent["model"] == "work/vision" and "data:image/png;base64," in json.dumps(sent)
             model.close()

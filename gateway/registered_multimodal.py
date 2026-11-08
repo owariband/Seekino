@@ -46,6 +46,7 @@ class RegisteredMultimodalModel:
                 try:
                     call.raise_if_cancelled()
                     message = client.invoke([HumanMessage(content=content)], timeout=request_timeout_seconds)
+                    client.capture_usage(call)
                     call.raise_if_cancelled()
                     return result_type.model_validate_json(message.text)
                 finally:
