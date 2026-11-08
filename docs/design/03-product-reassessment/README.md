@@ -97,3 +97,4 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [任务历史版本筛选](task-history-filter-trd.md)：2026-10-30，默认当前版本、历史追溯与操作权限说明。
 
 - [独立对话页布局](chat-sidebar-layout-trd.md)：左侧历史与居中草稿，状态见[工作台](../../dev/workbench.html) CHAT-LAYOUT-01。
+- [对话回答模型与输入区](chat-composer-models-trd.md) 记录会话级模型选择、附件位置和侧栏调宽。状态见[工作台](../../dev/workbench.html) CHAT-COMPOSER-02。

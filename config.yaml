@@ -4,6 +4,9 @@ config_version: 2
 
 # Select the primary chat harness at startup; model bindings stay independent.
 supervisor_harness: deepagents
+# These existing model bindings can also answer an individual conversation.
+supervisor_choices:
+  agent: DeepSeek Flash
 
 # Once per Chat turn: Jev chooses the template; models.query_rewriter fills retrieval_query.
 query_hook:

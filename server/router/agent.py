@@ -63,6 +63,12 @@ router.add_api_route(
     response_model=AgentConversationView,
 )
 router.add_api_route(
+    "/api/agent/conversations/model",
+    agent.patch_agent_conversation_model,
+    methods=["PATCH"],
+    response_model=AgentConversationView,
+)
+router.add_api_route(
     "/api/agent/conversations/delete",
     agent.delete_agent_conversation,
     methods=["POST"],

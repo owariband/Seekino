@@ -51,7 +51,7 @@ from server.schema import (
     VideoChunkSearchHit,
     VideoChunkSearchResult,
 )
-from server.service.agent_chat import AgentChatService
+from server.service.agent_chat import AgentChatService, ChatModelChoice
 from server.service.agent_attachments import AgentAttachmentService
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
@@ -495,6 +495,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/conversations/list",
         "/api/agent/conversations/get",
         "/api/agent/conversations/delete",
+        "/api/agent/conversations/model",
         "/api/agent/attachments/upload",
         "/api/agent/attachments/content",
         "/api/agent/messages/list",
@@ -3046,6 +3047,30 @@ def test_upload_list_has_precise_total_and_cursor_bound_to_workspace(tmp_path):
         client.app.state.services.agent.close()
 
 
+def test_conversation_model_http_round_trip_leaves_other_conversations_unchanged(tmp_path):
+    client, _, _ = _client(tmp_path)
+    service = client.app.state.services.agent
+    try:
+        service._model_choices["alternate"] = ChatModelChoice("Alternate", lambda _: service._runtime)
+        tenant = {"tenantId": "local-default"}
+        first = client.post("/api/agent/conversations/create", json={**tenant, "modelId": "alternate"},
+                            headers={"Idempotency-Key": "first-model"})
+        other = client.post("/api/agent/conversations/create", json=tenant,
+                            headers={"Idempotency-Key": "second-model"})
+        assert first.json()["modelId"] == "alternate" and other.json()["modelId"] == "default"
+        target = {**tenant, "conversationId": other.json()["conversationId"]}
+        path = "/api/agent/conversations/model"
+        assert client.patch(path, params=target, json={"modelId": "unknown"}).status_code == 400
+        assert client.patch(path, params=target, json={"modelId": "alternate"}).json()["modelId"] == "alternate"
+        assert client.get("/api/agent/conversations/get", params=target).json()["modelId"] == "alternate"
+        assert client.patch(path, params=target, json={"modelId": "default"}).json()["modelId"] == "default"
+        models = {row["conversationId"]: row["modelId"] for row in
+                  client.get("/api/agent/conversations/list", params=tenant).json()["items"]}
+        assert models == {first.json()["conversationId"]: "alternate", other.json()["conversationId"]: "default"}
+    finally:
+        service.close()
+
+
 def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_path):
     from dataclasses import replace
 
@@ -3064,6 +3089,7 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
         response = client.get("/api/agent/messages/options")
         assert response.status_code == 200
         assert response.json() == {
+            "chatModels": [{"id": "default", "label": service.model_name}],
             "topK": {"defaultValue": 5, "minimum": 1, "maximum": 7},
             "maxModelCallsPerTurn": {
                 "defaultValue": 8,

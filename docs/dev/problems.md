@@ -2813,3 +2813,8 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-07：独立 `/search` 将历史放在右上浮层，初次打开时欢迎区居中但输入框贴底，宽屏正文和输入框最大 880px。截图与 `db180245` 的 SearchPage/CSS 均可核对，影响历史切换和首次输入的视觉焦点。
 
 验收：桌面约 248px 左侧历史、约 760px 输入/正文；草稿欢迎语紧邻输入；首次发送不重挂载 textarea、不丢焦点；手机抽屉可关闭且焦点受限；继续遵守 #66 无操作不创建会话。当前状态统一见[工作台](workbench.html) CHAT-LAYOUT-01；设计见[TRD](../design/03-product-reassessment/chat-sidebar-layout-trd.md)，本轮证据见[验收报告](../report/web/chat-sidebar-layout-20261107.md)。
+
+<a id="chat-composer-02"></a>
+## CHAT-COMPOSER-02　对话共用一个回答模型，历史宽度固定
+
+2026-11-07。独立页共用启动时的 Supervisor，图片入口位于输入面板外，桌面侧栏固定 248px。验收要求是两个对话能分别选择回答模型，回到原对话能继续使用其选择，打开草稿与切模型均不创建空对话。桌面历史需支持拖动和键盘，播放器要保留单行输入。见[设计与验证](../design/03-product-reassessment/chat-composer-models-trd.md)及[工作台](workbench.html)。

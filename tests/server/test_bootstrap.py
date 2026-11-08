@@ -375,6 +375,11 @@ def test_process_assembly_receives_runtime_configuration(
         "max_output_tokens": 8192, "request_timeout_seconds": 180,
         "fallback": {"source": "ark_default", "model": "doubao-seed-2-0-lite-260428"},
     }
+    configuration["models"]["chat_choice"] = {
+        "source": "ark_default", "model": "alternate-supervisor-model",
+        "reasoning_effort": "low", "max_output_tokens": 512,
+    }
+    configuration["supervisor_choices"] = {"chat_choice": "Alternate"}
     if supervisor_backend == "legacy":
         configuration.pop("supervisor_harness", None)
         configuration["models"].pop("supervisor", None)
@@ -609,6 +614,19 @@ def test_process_assembly_receives_runtime_configuration(
             assert services.agent.active_maximum_concurrent_kicks == 2
         finally:
             replacement_supervisor.close()
+        if supervisor_backend == "codex":
+            assert not services.agent._model_choices
+        else:
+            alternative = services.agent._model_choices["chat_choice"].build_runtime(updated)
+            try:
+                assert alternative.model_name == "alternate-supervisor-model"
+                assert alternative._model.provider_name == "ark"
+                assert alternative._model.session_store is supervisor_model.session_store
+                assert alternative._video_runtime._query_model.model_name == expected_models[0]
+                assert supervisor_builds[-1]["max_output_tokens"] == 512
+                assert supervisor_builds[-1]["reasoning_effort"] == "low"
+            finally:
+                alternative.close()
         app = create_app(services, settings=settings)
         assert app.state.sse_config == settings.sse
     finally:

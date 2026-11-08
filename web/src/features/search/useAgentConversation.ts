@@ -14,6 +14,7 @@ import {
   streamAgentMessage,
   subscribeAgentMessages,
   TENANT_ID,
+  updateAgentConversationModel,
 } from "../../api/client";
 import type {
   AgentAnswerEvent,
@@ -28,6 +29,11 @@ import type {
 interface StoredIdentity { key: string; id?: string }
 const conversations = new Map<string, Promise<AgentConversationView | null>>();
 const creations = new Map<string, Promise<AgentConversationView>>();
+const DEFAULT_MODEL_ID = "default";
+
+function conversationModelId(conversation: Pick<AgentConversationView, "modelId">): string {
+  return typeof conversation.modelId === "string" && conversation.modelId.trim() ? conversation.modelId : DEFAULT_MODEL_ID;
+}
 const conversationStorageKey = () => identityStorageKey("seekino-agent-conversation");
 
 function storedIdentity(storageKey: string): StoredIdentity {
@@ -151,6 +157,9 @@ interface ConversationState {
   sending: boolean;
   cancellingMessageId: string | null;
   error: string | null;
+  modelId: string;
+  modelSaving: boolean;
+  modelError: string | null;
 }
 export type AgentProgressEvent = Extract<AgentAnswerEvent, { type: "answer.progress" }>;
 interface ActiveConversation {
@@ -163,6 +172,8 @@ interface ActiveConversation {
   identityKey: string;
   recoveryMessageId: string | null;
   streamedMessageId: string | null;
+  modelId: string;
+  modelSaving: boolean;
   creationKey?: string;
   creating?: Promise<string | null>;
 }
@@ -175,6 +186,7 @@ export function useAgentConversation(requestedId: string | null = null) {
   const t = (message: string) => translate(localeRef.current, message);
   const [state, setState] = useState<ConversationState>({
     requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+    modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
 
@@ -193,28 +205,31 @@ export function useAgentConversation(requestedId: string | null = null) {
     if (active.conversationId) return active.conversationId;
     if (active.creating) return active.creating;
     const key = active.creationKey ??= storedIdentity(active.identityKey).key;
-    const pendingKey = `${active.identityKey}:${key}`;
+    const creationKey = `${active.identityKey}:${key}`;
+    const modelId = active.modelId;
     active.creating = (async () => {
+      let creation = creations.get(creationKey);
+      if (!creation) {
+        creation = createAgentConversation(key, modelId);
+        creations.set(creationKey, creation);
+      }
       try {
-        let pending = creations.get(pendingKey);
-        if (!pending) {
-          pending = createAgentConversation(key);
-          creations.set(pendingKey, pending);
-        }
-        const conversation = await pending;
+        const conversation = await creation;
         if (activeRef.current !== active || active.identityKey !== conversationStorageKey()) return null;
         if (conversation.tenantId !== TENANT_ID) throw new Error(t("对话不属于当前工作区"));
         localStorage.setItem(active.identityKey, JSON.stringify({ key, id: conversation.conversationId }));
         rememberConversation(conversation.conversationId);
         active.conversationId = conversation.conversationId;
-        setState((current) => ({ ...current, conversationId: conversation.conversationId, error: null }));
+        const createdModelId = conversationModelId(conversation);
+        active.modelId = createdModelId;
+        setState((current) => ({ ...current, conversationId: conversation.conversationId, modelId: createdModelId, error: null }));
         subscribe(active, conversation.conversationId);
         return conversation.conversationId;
       } catch (error) {
         if (activeRef.current === active) setState((current) => ({ ...current, error: errorMessage(error, localeRef.current) }));
         return null;
       } finally {
-        creations.delete(pendingKey);
+        if (creations.get(creationKey) === creation) creations.delete(creationKey);
         active.creating = undefined;
       }
     })();
@@ -222,9 +237,16 @@ export function useAgentConversation(requestedId: string | null = null) {
   }, []);
 
   useEffect(() => {
-    const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null, identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null };
+    const active: ActiveConversation = {
+      conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null,
+      identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null,
+      modelId: DEFAULT_MODEL_ID, modelSaving: false,
+    };
     activeRef.current = active;
-    setState({ requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null });
+    setState({
+      requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+      modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
+    });
     void (async () => {
       try {
         const conversation = requestedId ? await getAgentConversation(requestedId) : requestedId === "" ? null : await restoreConversation();
@@ -238,9 +260,11 @@ export function useAgentConversation(requestedId: string | null = null) {
         if (activeRef.current !== active) return;
         rememberConversation(conversation.conversationId);
         active.conversationId = conversation.conversationId;
+        const restoredModelId = conversationModelId(conversation);
+        active.modelId = restoredModelId;
         const messages = await loadMessages(conversation.conversationId, localeRef.current);
         if (activeRef.current !== active) return;
-        setState((current) => ({ ...current, conversationId: conversation.conversationId, messages, loading: false }));
+        setState((current) => ({ ...current, conversationId: conversation.conversationId, messages, modelId: restoredModelId, loading: false }));
         subscribe(active, conversation.conversationId);
       } catch (error) {
         if (activeRef.current === active) setState((current) => ({ ...current, loading: false, error: errorMessage(error, localeRef.current) }));
@@ -262,7 +286,11 @@ export function useAgentConversation(requestedId: string | null = null) {
       active.unsubscribe?.();
       active.unsubscribe = undefined;
     }
-    activeRef.current = { conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null, identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null, creationKey: crypto.randomUUID() };
+    activeRef.current = {
+      conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null,
+      identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null,
+      modelId: DEFAULT_MODEL_ID, modelSaving: false, creationKey: crypto.randomUUID(),
+    };
     setState((current) => ({
       requestedId: current.requestedId,
       conversationId: null,
@@ -273,6 +301,9 @@ export function useAgentConversation(requestedId: string | null = null) {
       sending: false,
       cancellingMessageId: null,
       error: null,
+      modelId: DEFAULT_MODEL_ID,
+      modelSaving: false,
+      modelError: null,
     }));
   }, []);
 
@@ -321,6 +352,39 @@ export function useAgentConversation(requestedId: string | null = null) {
     }
   }, [requestedId, state.messages, state.requestedId]);
 
+  const selectModel = useCallback(async (modelId: string) => {
+    const active = activeRef.current;
+    const next = modelId.trim();
+    if (!next || !active || active.creating || active.modelSaving || state.loading
+      || state.requestedId !== requestedId || active.identityKey !== conversationStorageKey()) return;
+    if (next === active.modelId) return;
+    if (!active.conversationId) {
+      // A changed create payload needs its own idempotency key, including across open chat views.
+      active.creationKey = crypto.randomUUID();
+      active.modelId = next;
+      setState((current) => ({ ...current, modelId: next, modelError: null }));
+      return;
+    }
+    const conversationId = active.conversationId;
+    const previousModelId = active.modelId;
+    active.modelId = next;
+    active.modelSaving = true;
+    setState((current) => ({ ...current, modelId: next, modelSaving: true, modelError: null }));
+    try {
+      const conversation = await updateAgentConversationModel(conversationId, next);
+      if (activeRef.current !== active || active.identityKey !== conversationStorageKey()) return;
+      const savedModelId = conversationModelId(conversation);
+      active.modelId = savedModelId;
+      active.modelSaving = false;
+      setState((current) => ({ ...current, modelId: savedModelId, modelSaving: false, modelError: null }));
+    } catch (error) {
+      if (activeRef.current !== active || active.identityKey !== conversationStorageKey()) return;
+      active.modelId = previousModelId;
+      active.modelSaving = false;
+      setState((current) => ({ ...current, modelId: previousModelId, modelSaving: false, modelError: errorMessage(error, localeRef.current) }));
+    }
+  }, [requestedId, state.loading, state.requestedId]);
+
   const send = useCallback(async (
     content: string,
     seriesIds: string[] = [],
@@ -330,7 +394,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     submission?: { attachments?: AgentAttachmentReference[]; sourceTenantId?: string; onAccepted?: () => void },
   ) => {
     const active = activeRef.current;
-    if (!content.trim() || !active || state.loading || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
+    if (!content.trim() || !active || state.loading || state.requestedId !== requestedId || active.sending || active.modelSaving || state.messages.some((message) => message.status === "PROCESSING")) return;
     let conversationId = active.conversationId ?? "";
     const scope = [...seriesIds];
     const frozenReference = reference ? { ...reference } : null;
@@ -487,6 +551,7 @@ export function useAgentConversation(requestedId: string | null = null) {
 
   const visible = state.requestedId === requestedId ? state : {
     requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
+    modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
   };
   return {
     ...visible,
@@ -494,6 +559,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     cancelling: Boolean(visible.cancellingMessageId),
     clear,
     ensureConversationId,
+    selectModel,
     send,
     stop,
   };

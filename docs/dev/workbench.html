@@ -4823,6 +4823,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "source"
     }
    ]
+  },
+  {
+   "id": "CHAT-COMPOSER-02",
+   "title": "会话级回答模型、附件输入与可调历史栏",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "在聊天框下方选择当前会话的回答模型；输入面板内添加图片，桌面历史栏可调宽。",
+   "next": "本机已接入，按依赖 #67 → #68 集成。",
+   "verification": "本机 5188 已验证三个模型选项、单行回复、桌面拖动与窄屏抽屉；草稿选择不创建会话。隔离执行验证两会话路由、幂等和并发改模。",
+   "updatedAt": "2026-11-07",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "CHAT-LAYOUT-01"
+   ],
+   "branch": "feat/chat-composer-models",
+   "links": [
+    {
+     "label": "TRD",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-composer-models/docs/design/03-product-reassessment/chat-composer-models-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #68",
+     "url": "https://github.com/owariband/Seekino/pull/68",
+     "kind": "pr"
+    },
+    {
+     "label": "验收记录",
+     "url": "https://github.com/owariband/Seekino/blob/feat/chat-composer-models/docs/report/web/chat-composer-models-20261107.md",
+     "kind": "source"
+    }
+   ]
   }
  ]
 }</script>

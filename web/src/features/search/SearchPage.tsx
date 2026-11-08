@@ -1,6 +1,7 @@
 import { markChatTextRendered } from "../../api/chatDelivery";
 import { ArrowUp, ChevronDown, History, PanelLeft, PanelLeftClose, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link, useInRouterContext, useLocation, useNavigate } from "react-router";
 import remarkBreaks from "remark-breaks";
@@ -26,6 +27,14 @@ import styles from "./search.module.css";
 
 type MessageOptionOverrides = Omit<AgentMessageRunOptions, "topK">;
 type SelectedMessageOptions = Required<MessageOptionOverrides>;
+type ChatModelOption = NonNullable<AgentMessageOptions["chatModels"]>[number];
+
+const DEFAULT_CHAT_MODEL_ID = "default";
+const SIDEBAR_WIDTH_KEY = "seekino-search-sidebar-width";
+const SIDEBAR_MIN_WIDTH = 176;
+const SIDEBAR_MAX_WIDTH = 440;
+const SIDEBAR_DEFAULT_WIDTH = 248;
+const SIDEBAR_VIEWPORT_RESERVE = 560;
 
 const EXAMPLE_QUESTIONS = ["下雨天有人在门口等待的画面", "乐队第一次站上舞台演出", "两个人在天台吵架的那一段"];
 const EMBEDDED_EXAMPLE_QUESTIONS = ["刚才发生了什么？", "现在画面里的人是谁？", "前面有类似的场景吗？"];
@@ -102,6 +111,29 @@ function storedMessageOptionOverrides(options: AgentMessageOptions): MessageOpti
     return boundedMessageOptionOverrides(previousOverrides, options);
   } catch {
     return {};
+  }
+}
+
+function chatModelOptions(options: AgentMessageOptions | null): ChatModelOption[] {
+  const seen = new Set<string>();
+  return (options?.chatModels ?? []).filter((model) => {
+    if (!model || typeof model.id !== "string" || typeof model.label !== "string"
+      || !model.id.trim() || !model.label.trim() || seen.has(model.id)) return false;
+    seen.add(model.id);
+    return true;
+  });
+}
+
+function savedSidebarWidth(): number {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (stored === null || !stored.trim()) return SIDEBAR_DEFAULT_WIDTH;
+    const width = Number(stored);
+    return Number.isFinite(width)
+      ? Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
+      : SIDEBAR_DEFAULT_WIDTH;
+  } catch {
+    return SIDEBAR_DEFAULT_WIDTH;
   }
 }
 
@@ -298,7 +330,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const { mode, displayMode, series: workspaceSeries, isLoading: workspaceLoading } = useWorkspace();
   const series = suppliedSeries ? [suppliedSeries, ...workspaceSeries.filter((item) => item.seriesId !== suppliedSeries.seriesId
     && (!captureExtraContext || item.tenantId === suppliedSeries.tenantId))] : workspaceSeries;
-  const { canManage, activeSource } = useAuth();
+  const { canManage, activeSource, scopeKey } = useAuth();
+  const optionScope = scopeKey ?? "";
   const requiresExplicitScope = activeSource.kind === "public" || Boolean(suppliedSeries && suppliedSeries.tenantId !== TENANT_ID);
   const inRouter = useInRouterContext();
   const [requestedConversationId, setRequestedConversationId] = useState<string | null>(navigation?.conversationId ?? null);
@@ -320,6 +353,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
   const [messageOptionOverrides, setMessageOptionOverrides] = useState<MessageOptionOverrides | null>(null);
   const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
+  const [chatModels, setChatModels] = useState<ChatModelOption[]>([]);
+  const [chatModelsScope, setChatModelsScope] = useState(optionScope);
   const customLoopTurnsRef = useRef(100);
   const messageOptionsRequestRef = useRef(0);
   const messageOptions = messageOptionConfig && messageOptionOverrides
@@ -338,6 +373,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia("(max-width: 900px)").matches);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const maxSidebarWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, viewportWidth - SIDEBAR_VIEWPORT_RESERVE));
+  const visibleSidebarWidth = Math.min(sidebarWidth, maxSidebarWidth);
+  const sidebarStyle = embedded ? undefined : ({ "--history-sidebar-width": `${visibleSidebarWidth}px` } as CSSProperties);
   useEffect(() => {
     if (embedded) return;
     const media = window.matchMedia("(max-width: 900px)");
@@ -351,6 +393,19 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     dialog.showModal();
     return () => { dialog.close(); };
   }, [embedded, compactLayout, historyDrawerOpen]);
+  useEffect(() => {
+    try { window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)); } catch { /* Resizing still works without storage. */ }
+  }, [sidebarWidth]);
+  useEffect(() => {
+    const sync = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+  useEffect(() => {
+    if (!compactLayout && sidebarOpen) return;
+    sidebarDragRef.current = null;
+    setSidebarResizing(false);
+  }, [compactLayout, sidebarOpen]);
   const scopePickerRef = useRef<HTMLDetailsElement>(null);
   const answerSettingsRef = useRef<HTMLDetailsElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
@@ -385,7 +440,16 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
   }, []);
-  const { conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error, clear: clearConversation, ensureConversationId, send, stop } = useAgentConversation(requestedConversationId);
+  const {
+    conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error,
+    modelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
+    clear: clearConversation, ensureConversationId, selectModel, send, stop,
+  } = useAgentConversation(requestedConversationId);
+  const scopedChatModels = chatModelsScope === optionScope ? chatModels : [];
+  const modelOptions = scopedChatModels.some((model) => model.id === DEFAULT_CHAT_MODEL_ID) ? scopedChatModels : [];
+  const modelSelectionInvalid = !embedded && modelOptions.length > 0 && modelId !== DEFAULT_CHAT_MODEL_ID
+    && !modelOptions.some((model) => model.id === modelId);
+  const showModelChooser = !embedded && (modelOptions.length > 1 || modelSelectionInvalid);
   const creatingConversation = preparingAttachments || (searching && !conversationId);
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
@@ -427,7 +491,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const scopeValid = (!requiresExplicitScope || selectedSeriesIds.length > 0)
     && selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.tenantId === sourceTenantId && isSearchable(item.status)));
   const canAttach = Boolean(!loading && (!conversationId || !deletedConversationIdsRef.current.has(conversationId)) && mode === "live");
-  const canSend = Boolean(query.trim() && canAttach && !creatingConversation && !pendingFiles && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
+  const canSend = Boolean(query.trim() && canAttach && !creatingConversation && !pendingFiles && !searching && !modelSaving && !modelSelectionInvalid && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
 
   useEffect(() => {
     scopeTouchedRef.current = false;
@@ -458,32 +522,40 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const activeConversation = conversations.find((item) => item.conversationId === conversationId) ?? null;
 
   useEffect(() => {
-    if (displayMode !== "debug") return;
+    if (embedded && displayMode !== "debug") return;
     let active = true;
+    const scope = optionScope;
     const refresh = () => {
       const requestId = ++messageOptionsRequestRef.current;
       void getAgentMessageOptions().then((options) => {
         if (!active || requestId !== messageOptionsRequestRef.current) return;
-        setMessageOptionOverrides((current) => {
-          const overrides = current === null
-            ? storedMessageOptionOverrides(options)
-            : boundedMessageOptionOverrides(current, options);
-          if (overrides.maxLoopTurns) customLoopTurnsRef.current = overrides.maxLoopTurns;
-          else if (current === null || customLoopTurnsRef.current < options.maxLoopTurns.minimum || customLoopTurnsRef.current > options.maxLoopTurns.maximum) {
-            customLoopTurnsRef.current = options.maxLoopTurns.defaultValue;
-          }
-          return overrides;
-        });
+        if (displayMode === "debug") {
+          setMessageOptionOverrides((current) => {
+            const overrides = current === null
+              ? storedMessageOptionOverrides(options)
+              : boundedMessageOptionOverrides(current, options);
+            if (overrides.maxLoopTurns) customLoopTurnsRef.current = overrides.maxLoopTurns;
+            else if (current === null || customLoopTurnsRef.current < options.maxLoopTurns.minimum || customLoopTurnsRef.current > options.maxLoopTurns.maximum) {
+              customLoopTurnsRef.current = options.maxLoopTurns.defaultValue;
+            }
+            return overrides;
+          });
+        }
         setMessageOptionConfig(options);
+        setChatModels(chatModelOptions(options));
+        setChatModelsScope(scope);
         setMessageOptionsError(null);
       }).catch((failure) => {
-        if (active && requestId === messageOptionsRequestRef.current) setMessageOptionsError(errorMessage(failure, localeRef.current));
+        if (!active || requestId !== messageOptionsRequestRef.current) return;
+        setMessageOptionsError(errorMessage(failure, localeRef.current));
+        setChatModels([]);
+        setChatModelsScope(scope);
       });
     };
     refresh();
     window.addEventListener("focus", refresh);
     return () => { active = false; window.removeEventListener("focus", refresh); };
-  }, [displayMode]);
+  }, [displayMode, embedded, optionScope]);
 
   useEffect(() => {
     if (!messageOptionOverrides) return;
@@ -570,7 +642,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     setPlaybackContextError(null);
     followThread.current = true;
     setConversationStatus(t("正在发送问题"));
-    const options = displayMode === "debug" && messageOptionOverrides
+    const options: AgentMessageRunOptions = displayMode === "debug" && messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
     const revision = draftRevisionRef.current;
@@ -632,6 +704,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       && (!activeConversation || activeConversation.messageCount === 0),
     );
     if (currentConversationCanBeReused) {
+      // Reusing an empty conversation keeps lazy creation, but a stale non-default
+      // preference must not leak into the fresh chat.
+      if (conversationId && modelId !== DEFAULT_CHAT_MODEL_ID) void selectModel(DEFAULT_CHAT_MODEL_ID);
       closeConversationPicker();
       composerRef.current?.focus();
       return;
@@ -780,9 +855,155 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     {conversationMenu}
   </div>;
 
+  const resizeSidebar = (clientX: number) => {
+    const drag = sidebarDragRef.current;
+    if (!drag) return;
+    setSidebarWidth(Math.round(Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxSidebarWidth, drag.startWidth + clientX - drag.startX))));
+  };
+  const endSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    sidebarDragRef.current = null;
+    setSidebarResizing(false);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const attachmentControls = <>
+    <button className={styles.addAttachment} type="button" disabled={!canAttach} onClick={() => attachmentInputRef.current?.click()} aria-label={t("添加图片")} title={t("添加图片（也可粘贴）")}><Plus size={21} aria-hidden="true" /></button>
+    <input ref={attachmentInputRef} type="file" hidden multiple accept={AGENT_ATTACHMENT_ACCEPT} aria-label={t("选择聊天图片")} disabled={!canAttach} onChange={(event) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      void addFiles(files);
+      composerRef.current?.focus();
+    }} />
+  </>;
+  const scopePicker = <details
+    className={styles.scopePicker}
+    ref={scopePickerRef}
+    onToggle={(event) => {
+      if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
+    }}
+  >
+    <summary aria-label={t("选择检索视频系列")}><span>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
+      ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? t("已选 1 个系列")
+      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}</span><ChevronDown size={13} aria-hidden="true" /></summary>
+    <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
+      {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
+      {series.map((item) => (
+        <label key={item.seriesId}>
+          <input
+            type="checkbox"
+            checked={selectedSeriesIds.includes(item.seriesId)}
+            disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
+            onChange={(event) => {
+              scopeTouchedRef.current = true;
+              setSelectedSeriesIds((current) => event.target.checked
+                ? [...current.filter((id) => series.some((candidate) => candidate.seriesId === id && candidate.tenantId === item.tenantId)), item.seriesId]
+                : current.filter((id) => id !== item.seriesId));
+            }}
+          />
+          <span>{item.name}</span>
+          <small>{isSearchable(item.status) ? t("{value0} 个视频可检索", { value0: item.readyVideoCount }) : t("暂不可检索")}</small>
+        </label>
+      ))}
+      {!series.length ? <p>{t("资料库还没有视频系列")}</p> : null}
+    </div>
+  </details>;
+  const answerSettingsPicker = displayMode === "debug" ? <details
+    className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
+    ref={answerSettingsRef}
+    onToggle={(event) => {
+      if (event.currentTarget.open) scopePickerRef.current?.removeAttribute("open");
+    }}
+  >
+    <summary aria-label={t("配置本次回答")}>
+      <SlidersHorizontal size={13} aria-hidden="true" />
+      <span>{t("回答设置")}</span>
+      <small>{messageOptionSummary}</small>
+      <ChevronDown size={13} aria-hidden="true" />
+    </summary>
+    <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label={t("本次回答设置")}>
+      <header>
+        <div><strong>{t("本次回答")}</strong><small>{t("自动使用全局运行限制；自定义可限制最多轮次。")}</small></div>
+        <button
+          type="button"
+          disabled={!messageOptionConfig || !messageOptions || searching}
+          onClick={() => {
+            if (!messageOptionConfig) return;
+            customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
+            setMessageOptionOverrides({});
+          }}
+        >{t("恢复默认")}</button>
+      </header>
+      {messageOptionConfig && messageOptions ? (
+        <>
+          <div className={styles.answerMode}>
+            <span><strong>{t("运行轮次")}</strong><small>{t("自定义最多可设 {count} 轮", { count: messageOptionConfig.maxLoopTurns.maximum })}</small></span>
+            <div className={styles.answerModeChoices} role="group" aria-label={t("运行轮次模式")}>
+              <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
+                if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
+                setMessageOptionOverrides((current) => {
+                  if (!current) return current;
+                  const next = { ...current };
+                  delete next.maxLoopTurns;
+                  return next;
+                });
+              }}>{t("自动")}</button>
+              <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
+                setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns: customLoopTurnsRef.current }));
+              }}>{t("自定义")}</button>
+            </div>
+          </div>
+          {messageOptions.maxLoopTurns > 0 ? (
+            <label className={styles.answerSettingRow}>
+              <span><strong>{t("最多轮次")}</strong><small>{t("检索与核验的循环上限")}</small></span>
+              <span className={styles.answerSettingValue}>{messageOptions.maxLoopTurns}</span>
+              <input
+                aria-label={t("最多运行轮次")}
+                type="range"
+                min={messageOptionConfig.maxLoopTurns.minimum}
+                max={messageOptionConfig.maxLoopTurns.maximum}
+                value={messageOptions.maxLoopTurns}
+                onChange={(event) => {
+                  const maxLoopTurns = event.currentTarget.valueAsNumber;
+                  customLoopTurnsRef.current = maxLoopTurns;
+                  setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns }));
+                }}
+              />
+            </label>
+          ) : null}
+        </>
+      ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? t("暂时无法读取设置：{value0}", { value0: messageOptionsError }) : t("正在读取服务端限制…")}</p>}
+    </div>
+  </details> : null;
+  const sendControl = searching ? (
+    <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? t("正在停止") : t("停止生成")} title={cancelling ? t("正在停止") : t("停止生成")}>
+      {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
+    </button>
+  ) : (
+    <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label={t("发送问题")}>
+      <ArrowUp size={19} aria-hidden="true" />
+    </button>
+  );
+  const modelChooser = showModelChooser ? (
+    <label className={styles.modelPicker}>
+      <span>{t("回答模型")}</span>
+      <select
+        aria-label={t("回答模型")}
+        value={modelId}
+        onChange={(event) => { const next = event.currentTarget.value; void selectModel(next); }}
+        disabled={modelSaving || loading || creatingConversation}
+        aria-busy={modelSaving || undefined}
+        title={modelSaving ? t("正在保存回答模型…") : t("仅影响这个对话之后发送的问题")}
+      >
+        {modelSelectionInvalid ? <option value={modelId} disabled>{t("已保存的模型（当前不可用）")}</option> : null}
+        {modelOptions.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+      </select>
+      {modelSaving ? <LoaderCircle size={13} className={styles.spinning} aria-hidden="true" /> : null}
+    </label>
+  ) : null;
+
   const Root = embedded ? "section" : "main";
   return (
-    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : styles.standalonePage}`} data-draft={!embedded && showWelcome} data-sidebar={!embedded && !compactLayout && sidebarOpen}>
+    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : styles.standalonePage}`} data-draft={!embedded && showWelcome} data-sidebar={!embedded && !compactLayout && sidebarOpen} data-resizing={!embedded && sidebarResizing ? "true" : undefined} style={sidebarStyle}>
       {embedded ? (
         <header className={styles.pageHeader}>
           <div className={styles.chatHeading}>
@@ -822,7 +1043,38 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           onClose={() => setHistoryDrawerOpen(false)}
           onClick={(event) => { if (event.target === event.currentTarget) closeConversationPicker(true); }}>
           {historyDrawerOpen ? sidebarContent : null}
-        </dialog> : <aside className={styles.historySidebar} aria-label={t("对话侧栏")} hidden={!sidebarOpen}>{sidebarContent}</aside>}
+        </dialog> : <aside id="search-history-sidebar" className={styles.historySidebar} aria-label={t("对话侧栏")} hidden={!sidebarOpen}>
+          {sidebarOpen ? <div
+            className={styles.historyResize}
+            role="separator"
+            tabIndex={0}
+            aria-label={t("调整对话侧栏宽度")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={Math.round(maxSidebarWidth)}
+            aria-valuenow={Math.round(visibleSidebarWidth)}
+            title={t("调整对话侧栏宽度")}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              event.currentTarget.focus({ preventScroll: true });
+              sidebarDragRef.current = { startX: event.clientX, startWidth: visibleSidebarWidth };
+              setSidebarResizing(true);
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+            }}
+            onPointerMove={(event) => { if (sidebarDragRef.current) resizeSidebar(event.clientX); }}
+            onPointerUp={endSidebarResize}
+            onPointerCancel={endSidebarResize}
+            onLostPointerCapture={() => { sidebarDragRef.current = null; setSidebarResizing(false); }}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              const delta = event.key === "ArrowRight" ? 24 : -24;
+              setSidebarWidth(Math.round(Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxSidebarWidth, visibleSidebarWidth + delta))));
+            }}
+          /> : null}
+          {sidebarContent}
+        </aside>}
         <header className={styles.pageHeader}>
           {compactLayout ? <h1 className="sr-only">{t("Seekino 助手")}</h1> : null}
           <button ref={historyToggleRef} className={styles.historyToggle} type="button" aria-label={t(!compactLayout && sidebarOpen ? "收起对话记录" : "打开对话记录")}
@@ -938,124 +1190,24 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               />
               <div className={styles.composerToolbar}>
                 <div className={styles.composerControls}>
-                  <button className={styles.addAttachment} type="button" disabled={!canAttach} onClick={() => attachmentInputRef.current?.click()} aria-label={t("添加图片")} title={t("添加图片（也可粘贴）")}><Plus size={21} aria-hidden="true" /></button>
-                  <input ref={attachmentInputRef} type="file" hidden multiple accept={AGENT_ATTACHMENT_ACCEPT} aria-label={t("选择聊天图片")} disabled={!canAttach} onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    event.target.value = "";
-                    void addFiles(files);
-                    composerRef.current?.focus();
-                  }} />
-                  <details
-                    className={styles.scopePicker}
-                    ref={scopePickerRef}
-                    onToggle={(event) => {
-                      if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
-                    }}
-                  >
-                    <summary aria-label={t("选择检索视频系列")}><span>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
-                      ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? t("已选 1 个系列")
-                      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}</span><ChevronDown size={13} aria-hidden="true" /></summary>
-                    <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
-                      {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
-                      {series.map((item) => (
-                        <label key={item.seriesId}>
-                          <input
-                            type="checkbox"
-                            checked={selectedSeriesIds.includes(item.seriesId)}
-                            disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
-                            onChange={(event) => {
-                              scopeTouchedRef.current = true;
-                              setSelectedSeriesIds((current) => event.target.checked
-                                ? [...current.filter((id) => series.some((candidate) => candidate.seriesId === id && candidate.tenantId === item.tenantId)), item.seriesId]
-                                : current.filter((id) => id !== item.seriesId));
-                            }}
-                          />
-                          <span>{item.name}</span>
-                          <small>{isSearchable(item.status) ? t("{value0} 个视频可检索", { value0: item.readyVideoCount }) : t("暂不可检索")}</small>
-                        </label>
-                      ))}
-                      {!series.length ? <p>{t("资料库还没有视频系列")}</p> : null}
-                    </div>
-                  </details>
-                  {displayMode === "debug" ? <details
-                    className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
-                    ref={answerSettingsRef}
-                    onToggle={(event) => {
-                      if (event.currentTarget.open) scopePickerRef.current?.removeAttribute("open");
-                    }}
-                  >
-                    <summary aria-label={t("配置本次回答")}>
-                      <SlidersHorizontal size={13} aria-hidden="true" />
-                      <span>{t("回答设置")}</span>
-                      <small>{messageOptionSummary}</small>
-                      <ChevronDown size={13} aria-hidden="true" />
-                    </summary>
-                    <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label={t("本次回答设置")}>
-                      <header>
-                        <div><strong>{t("本次回答")}</strong><small>{t("自动使用全局运行限制；自定义可限制最多轮次。")}</small></div>
-                        <button
-                          type="button"
-                          disabled={!messageOptionConfig || !messageOptions || searching}
-                          onClick={() => {
-                            if (!messageOptionConfig) return;
-                            customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
-                            setMessageOptionOverrides({});
-                          }}
-                        >{t("恢复默认")}</button>
-                      </header>
-                      {messageOptionConfig && messageOptions ? (
-                        <>
-                          <div className={styles.answerMode}>
-                            <span><strong>{t("运行轮次")}</strong><small>{t("自定义最多可设 {count} 轮", { count: messageOptionConfig.maxLoopTurns.maximum })}</small></span>
-                            <div className={styles.answerModeChoices} role="group" aria-label={t("运行轮次模式")}>
-                              <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
-                                if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
-                                setMessageOptionOverrides((current) => {
-                                  if (!current) return current;
-                                  const next = { ...current };
-                                  delete next.maxLoopTurns;
-                                  return next;
-                                });
-                              }}>{t("自动")}</button>
-                              <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
-                                setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns: customLoopTurnsRef.current }));
-                              }}>{t("自定义")}</button>
-                            </div>
-                          </div>
-                          {messageOptions.maxLoopTurns > 0 ? (
-                            <label className={styles.answerSettingRow}>
-                              <span><strong>{t("最多轮次")}</strong><small>{t("检索与核验的循环上限")}</small></span>
-                              <span className={styles.answerSettingValue}>{messageOptions.maxLoopTurns}</span>
-                              <input
-                                aria-label={t("最多运行轮次")}
-                                type="range"
-                                min={messageOptionConfig.maxLoopTurns.minimum}
-                                max={messageOptionConfig.maxLoopTurns.maximum}
-                                value={messageOptions.maxLoopTurns}
-                                onChange={(event) => {
-                                  const maxLoopTurns = event.currentTarget.valueAsNumber;
-                                  customLoopTurnsRef.current = maxLoopTurns;
-                                  setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns }));
-                                }}
-                              />
-                            </label>
-                          ) : null}
-                        </>
-                      ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? t("暂时无法读取设置：{value0}", { value0: messageOptionsError }) : t("正在读取服务端限制…")}</p>}
-                    </div>
-                  </details> : null}
+                  {attachmentControls}
+                  {embedded ? <>{scopePicker}{answerSettingsPicker}</> : null}
                 </div>
-                {searching ? (
-                  <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? t("正在停止") : t("停止生成")} title={cancelling ? t("正在停止") : t("停止生成")}>
-                    {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
-                  </button>
-                ) : (
-                  <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label={t("发送问题")}>
-                    <ArrowUp size={19} aria-hidden="true" />
-                  </button>
-                )}
+                {sendControl}
               </div>
             </form>
+            {!embedded ? <div className={styles.composerOptions}>
+              <div className={styles.composerOptionsStart}>
+                {scopePicker}
+                {answerSettingsPicker}
+              </div>
+              {modelChooser}
+            </div> : null}
+            {!embedded && (modelError || modelSelectionInvalid) ? (
+              <p className={`${styles.messageError} ${styles.modelError}`} role="alert">
+                {modelError ?? t("已保存的模型当前不可用，请重新选择。")}
+              </p>
+            ) : null}
             <p className={styles.keyboardHint}>{t("Enter 发送 · Shift + Enter 换行")}</p>
             {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
             {(!scopeValid || !referenceScopeValid) && !workspaceLoading ? <p className={styles.messageError} role="alert">{t(requiresExplicitScope && !series.some((item) => isSearchable(item.status)) ? "暂无可体验的公开系列" : "所选视频系列暂不可检索，请重新选择范围。")}</p> : null}
