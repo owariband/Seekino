@@ -50,6 +50,7 @@ export const englishMessages: Readonly<Record<string, string>> = {
   "{name} 分享": "Shared by {name}",
   "每次可选择同一分享者的系列": "Select series from one publisher at a time",
   "请选择要检索的公开系列": "Choose a public series to search",
+  "公开系列": "Public series",
   "暂无可体验的公开系列": "No public series available yet",
   "{value0}：{value1}": "{value0}: {value1}",
   "Seekino · 观看与发现": "Seekino · Watch and Discover",
