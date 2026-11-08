@@ -1,3 +1,4 @@
+import type { PersonalModelConnectionInput, PersonalModelSettings } from "./contracts";
 import { beginChatDelivery } from "./chatDelivery";
 import { translate, type Locale } from "../shared/messages";
 
@@ -533,12 +534,12 @@ export function searchVideos(
 
 export function createAgentConversation(
   idempotencyKey: string,
-  modelId = "default",
+  modelId?: string,
 ): Promise<AgentConversationView> {
   return requestJson("/api/agent/conversations/create", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ tenantId: TENANT_ID, ...(modelId === "default" ? {} : { modelId }) }),
+    body: JSON.stringify({ tenantId: TENANT_ID, ...(modelId === undefined ? {} : { modelId }) }),
   });
 }
 
@@ -926,4 +927,31 @@ export function errorMessage(error: unknown, locale: Locale = "zh"): string {
   }
   if (error instanceof Error) return translate(locale, error.message);
   return translate(locale, "发生了无法识别的错误");
+}
+
+const personalModelsPath = "/api/agent/model-connections";
+export const getPersonalModelSettings = (signal?: AbortSignal) =>
+  requestJson<PersonalModelSettings>(personalModelsPath, { signal, cache: "no-store" });
+
+export function savePersonalModelConnection(id: string, body: PersonalModelConnectionInput, signal?: AbortSignal) {
+  return requestJson<PersonalModelSettings>(personalModelsPath + "?" + new URLSearchParams({ connectionId: id }), {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+  });
+}
+
+export function removePersonalModelConnection(id: string, revision: number, signal?: AbortSignal) {
+  return requestJson<PersonalModelSettings>(personalModelsPath + "?" + new URLSearchParams({ connectionId: id, revision: String(revision) }),
+    { method: "DELETE", signal });
+}
+
+export function savePersonalModelDefault(modelId: string, signal?: AbortSignal, revision?: number) {
+  return requestJson<PersonalModelSettings>(personalModelsPath + "/default", {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId, revision }), signal,
+  });
+}
+
+export function testPersonalModelConnection(id: string, modelId: string, signal?: AbortSignal) {
+  return requestJson<{ ok: boolean }>(personalModelsPath + "/test?" + new URLSearchParams({ connectionId: id }), {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId }), signal,
+  });
 }

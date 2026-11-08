@@ -3983,7 +3983,7 @@ def test_model_selection_is_owned_by_one_conversation_and_freezes_each_answer(bu
     changes = dict(tenant_id=second.tenant_id, owner_user_id=second.owner_user_id)
     assert second.model_id == "fast"
     assert first.model_id == "default"
-    assert [choice.id for choice in service.message_options().chat_models] == ["default", "fast"]
+    assert not service.message_options().chat_models
     with pytest.raises(AgentConversationNotFoundError):
         service.set_conversation_model(second.conversation_id, tenant_id=second.tenant_id,
                                        owner_user_id="another-owner", model_id="default")
@@ -4021,3 +4021,43 @@ def test_model_change_between_resolving_and_recording_rejects_the_unstarted_turn
         _send(service, chat)
     assert service.get_conversation(chat.conversation_id, tenant_id=chat.tenant_id).message_count == 0
     assert not default.turns
+
+
+def test_yaml_default_and_next_turn_observe_saved_config_without_changing_other_chats(build_service, yaml_model_settings):
+    from contextlib import contextmanager
+    from server.model.dto.personal_model import PersonalModelConnectionSave
+    store = yaml_model_settings
+    targets = []
+    @contextmanager
+    def build(selection, config):
+        target = selection.target(environ=store.environ)
+        targets.append((target.model_id, target.api_key.get_secret_value()))
+        supervisor = _DirectSupervisorModel()
+        supervisor.model_name = target.model_id
+        runtime = _chat_runtime(AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical"), supervisor)
+        try:
+            yield runtime
+        finally:
+            runtime.close()
+
+    service, first, *_ = build_service(service_kwargs={"model_settings": store, "configured_runtime": build})
+    owner = first.owner_user_id
+    initial = store.catalog().new_chat_id()
+    alternate = store.catalog().find("my-alternative")
+    assert service.message_options(owner_user_id=owner).new_chat_model_id == initial
+    store.set_default(alternate.option.id)
+    args = dict(tenant_id=first.tenant_id, idempotency_key="new-inherited")
+    second = service.create_conversation(**args)
+    assert first.model_id == initial and second.model_id == alternate.option.id
+    assert _send(service, first).assistant_message.model_name == "team/home"
+    answered = _send(service, second)
+    assert answered.assistant_message.model_name == "team/alternative"
+    row = store.catalog().connections[alternate.connection.connection_id]
+    store.save(row.connection_id, PersonalModelConnectionSave(name=row.name, protocol=row.protocol, base_url=row.base_url,
+               model_ids=[m.model_id for m in row.models], supports_vision=row.supports_vision, revision=row.revision, api_key="fresh-key"))
+    assert _send(service, second, key="after-save").assistant_message.model_name == "team/alternative"
+    assert targets == [("team/home", "synthetic-private-key"), ("team/alternative", "synthetic-private-key"), ("team/alternative", "fresh-key")]
+    service.set_conversation_model(second.conversation_id, tenant_id=first.tenant_id, owner_user_id=owner, model_id=initial)
+    assert _send(service, second).assistant_message.message_id == answered.assistant_message.message_id
+    assert service.create_conversation(**args).conversation_id == second.conversation_id
+    assert len(targets) == 3

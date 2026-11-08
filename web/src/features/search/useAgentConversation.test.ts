@@ -109,7 +109,7 @@ describe("Conversation state", () => {
     const key = JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).key;
     act(() => { void result.current.send("query"); void result.current.send("query"); });
     await waitFor(() => expect(streamAgentMessage).toHaveBeenCalledOnce());
-    expect(createAgentConversation).toHaveBeenCalledExactlyOnceWith(key, "default");
+    expect(createAgentConversation).toHaveBeenCalledExactlyOnceWith(key, undefined);
     expect(result.current.conversationId).toBe("conv-A");
     expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!)).toEqual({ key, id: "conv-A" });
     expect(subscribeAgentMessages).toHaveBeenCalledOnce();
@@ -731,6 +731,23 @@ describe("Conversation state", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("updates untouched drafts from personal defaults while keeping an explicit choice", async () => {
+    const { result } = renderHook(() => useAgentConversation(""));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.applyDraftDefault("personal:first"));
+    expect(result.current.modelId).toBe("personal:first");
+    await act(async () => { await result.current.selectModel("personal:chosen"); });
+    act(() => result.current.applyDraftDefault("personal:next"));
+    expect(result.current.modelId).toBe("personal:chosen");
+    expect(createAgentConversation).not.toHaveBeenCalled();
+    await act(async () => { await result.current.ensureConversationId(); });
+    expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String), "personal:chosen");
+    act(() => result.current.applyDraftDefault("personal:latest"));
+    expect(result.current.modelId).not.toBe("personal:latest");
+    act(() => result.current.clear());
+    expect(result.current.modelId).toBe("personal:latest");
+  });
+
   it("restores a saved Conversation on remount and waits for a running Kick snapshot", async () => {
     localStorage.setItem("seekino-agent-session:local-default", JSON.stringify({ key: "legacy-key", id: "legacy" }));
     const first = renderHook(() => useAgentConversation());
@@ -741,7 +758,7 @@ describe("Conversation state", () => {
     const { result } = await ready();
     expect(getAgentConversation).toHaveBeenCalledWith("conv-A");
     expect(createAgentConversation).toHaveBeenCalledOnce();
-    expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String), "default");
+    expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String), undefined);
     expect(localStorage.getItem("seekino-agent-session:local-default")).toBeNull();
     expect(result.current.searching).toBe(true);
     act(() => { void result.current.send("second query"); });
@@ -976,7 +993,7 @@ describe("Conversation answer model", () => {
     await waitFor(() => expect(createAgentConversation).toHaveBeenCalledTimes(2));
     const calls = vi.mocked(createAgentConversation).mock.calls;
     expect(calls[0]![0]).not.toBe(calls[1]![0]);
-    expect(calls.map(([, modelId]) => modelId).sort()).toEqual(["alternate", "default"]);
+    expect(calls.map(([, modelId]) => modelId).sort()).toEqual(["alternate", undefined]);
     await act(async () => {
       finishA(conversation("conv-A", "alternate"));
       finishB(conversation("conv-B", "default"));

@@ -502,6 +502,9 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/messages/get",
         "/api/agent/messages/options",
         "/api/agent/global-settings",
+        "/api/agent/model-connections",
+        "/api/agent/model-connections/default",
+        "/api/agent/model-connections/test",
         "/api/agent/messages/send",
         "/api/agent/messages/cancel",
         "/api/agent/messages/events",
@@ -3089,7 +3092,8 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
         response = client.get("/api/agent/messages/options")
         assert response.status_code == 200
         assert response.json() == {
-            "chatModels": [{"id": "default", "label": service.model_name}],
+            "chatModels": [],
+            "newChatModelId": "default",
             "topK": {"defaultValue": 5, "minimum": 1, "maximum": 7},
             "maxModelCallsPerTurn": {
                 "defaultValue": 8,
@@ -3244,3 +3248,36 @@ def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
         }
     finally:
         service.close()
+
+
+def test_model_settings_api_updates_active_yaml(tmp_path, yaml_model_settings, monkeypatch):
+    import yaml
+    client, _, _ = _client(tmp_path)
+    services = client.app.state.services
+    services.model_settings = services.agent._model_settings = yaml_model_settings
+    path = "/api/agent/model-connections"
+    cid = str(uuid4())
+    endpoint = f"{path}?connectionId={cid}"
+    try:
+        initial = client.get(path).json()
+        assert initial["connections"] and all(c["origin"] == "yaml" for c in initial["connections"])
+        body = {"name": "Any service", "protocol": "openai_responses", "baseUrl": "https://example.org/own/v1",
+                "modelIds": ["team/arbitrary"], "revision": 0, "apiKey": "synthetic-secret"}
+        saved = client.put(endpoint, json=body)
+        assert saved.status_code == 200 and "synthetic-secret" not in saved.text
+        ref = next(c for c in saved.json()["connections"] if c["connectionId"] == cid)["models"][0]["id"]
+        assert client.put(endpoint, json=body).status_code == 409
+        default = client.patch(path + "/default", json={"modelId": ref, "revision": saved.json()["revision"]})
+        assert default.json()["defaultModelId"] == ref
+        document = yaml.safe_load(yaml_model_settings.path.read_bytes())
+        assert document["models"][document["chat_default_model"]]["model"] == "team/arbitrary"
+        assert client.get("/api/agent/messages/options").json()["newChatModelId"] == ref
+        def fail_probe(*args, **kwargs):
+            raise RuntimeError("synthetic-secret")
+        monkeypatch.setattr("gateway.personal_models.probe_personal_model", fail_probe)
+        failed = client.post(path + "/test", params={"connectionId": cid}, json={"modelId": ref})
+        assert failed.status_code == 502 and "synthetic-secret" not in failed.text
+        assert client.delete(f"{endpoint}&revision={default.json()['revision']}").status_code == 200
+        assert cid not in yaml_model_settings.catalog().connections
+    finally:
+        services.agent.close()

@@ -12,6 +12,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StringConstraints,
     model_serializer,
     model_validator,
@@ -95,13 +96,41 @@ class DeepSeekModelConfig(BaseModel):
     vision_source: _NonEmptyString | None = None
     model: _NonEmptyString
     base_url: _HttpsBaseUrl
-    api_key_env: _NonEmptyString
+    api_key_env: _NonEmptyString | None
     reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     max_output_tokens: int = Field(ge=256, le=262_144)
     request_timeout_seconds: float = Field(gt=0)
 
 
-class OpenAIModelSourceConfig(BaseModel):
+class ChatSourceCredentials(BaseModel):
+    display_name: _NonEmptyString | None = Field(default=None, exclude=True)
+    encrypted_api_key: _NonEmptyString | None = Field(default=None, repr=False, exclude=True)
+    _config_path: Path | None = PrivateAttr(default=None)
+    _source_name: str = PrivateAttr(default="")
+
+    def credential_destination(self) -> tuple[str, ...]:
+        return (self._source_name, self.adapter, getattr(self, "protocol", ""), getattr(self, "base_url", ""))
+
+    def saved_key(self) -> str | None:
+        if self.encrypted_api_key is None:
+            return None
+        if self._config_path is None:
+            raise RuntimeError("模型凭证缺少配置文件路径")
+        from .model_credentials import unseal
+        return unseal(self._config_path, self.credential_destination(), self.encrypted_api_key)
+
+
+class ChatAPISourceConfig(ChatSourceCredentials):
+    """An HTTP protocol configured exclusively for interactive chat."""
+    model_config = ConfigDict(extra="forbid")
+    adapter: Literal["chat_api"] = "chat_api"
+    provider: _NonEmptyString = "chat_api"
+    protocol: Literal["openai_chat", "openai_responses", "anthropic_messages", "gemini"]
+    base_url: _NonEmptyString
+    api_key_env: _NonEmptyString | None = None
+
+
+class OpenAIModelSourceConfig(ChatSourceCredentials):
     model_config = ConfigDict(extra="forbid")
 
     adapter: Literal[OPENAI_ADAPTER] = OPENAI_ADAPTER
@@ -112,15 +141,15 @@ class OpenAIModelSourceConfig(BaseModel):
         OPENAI_KIMI_PROFILE,
     ] = OPENAI_STANDARD_PROFILE
     base_url: _HttpsBaseUrl
-    api_key_env: _NonEmptyString
+    api_key_env: _NonEmptyString | None
 
 
-class ArkModelSourceConfig(BaseModel):
+class ArkModelSourceConfig(ChatSourceCredentials):
     model_config = ConfigDict(extra="forbid")
 
     adapter: Literal[ARK_ADAPTER] = ARK_ADAPTER
     provider: Literal[ARK_PROVIDER] = ARK_PROVIDER
-    api_key_env: _NonEmptyString = "ARK_API_KEY"
+    api_key_env: _NonEmptyString | None = "ARK_API_KEY"
 
 
 class OllamaEmbeddingSourceConfig(BaseModel):
@@ -241,6 +270,7 @@ class ClaudeCodeModelSourceConfig(BaseModel):
 
 ModelSourceConfig = (
     OpenAIModelSourceConfig
+    | ChatAPISourceConfig
     | ArkModelSourceConfig
     | CodexModelSourceConfig
     | ClaudeCodeModelSourceConfig
@@ -454,6 +484,7 @@ class GatewayConfig(BaseModel):
 
     config_version: Literal[1, 2] = 1
     supervisor_harness: Literal["deepagents", "codex"] = "deepagents"
+    chat_default_model: _NonEmptyString | None = None
     supervisor_choices: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
@@ -547,23 +578,55 @@ class GatewayConfig(BaseModel):
             if binding.fallback.fallback is not None:
                 raise ValueError("Supervisor models support one configured fallback")
 
-    def available_supervisor_choices(self, *, environ: Mapping[str, str] | None = None) -> dict[str, ModelBinding]:
-        environment = os.environ if environ is None else environ
+    def configured_supervisor_choices(
+        self, *, discover: bool = False, environ: Mapping[str, str] | None = None,
+    ) -> dict[str, ModelBinding]:
+        """Preserve explicit chat bindings first; local model settings can discover additional compatible models."""
         choices = {}
-        for ref in self.supervisor_choices:
-            binding = self.resolve_model_binding(ref, environ=environment)
-            source = self.source(binding.source)
+        refs = dict.fromkeys([*self.supervisor_choices, *self.normalized_models] if discover else self.supervisor_choices)
+        for ref in refs:
+            raw = self.normalized_models[ref]
+            if isinstance(raw, EmbeddingModelBinding) or raw.kind not in {None, "generative"}:
+                continue
+            if discover and ref in {"default", "supervisor"}:
+                continue  # The running Supervisor already has its effective primary binding.
+            source = self.source(raw.source)
+            if isinstance(source, ChatAPISourceConfig):
+                choices[ref] = self.resolve_model_binding(ref, environ=environ)
+                continue
             if self.supervisor_harness == "codex":
                 if not isinstance(source, CodexModelSourceConfig):
                     continue
             elif not isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
                 continue
-            self._validate_supervisor_binding(ref)
-            key_names = (source_api_key_env_name(self.source(part.source))
-                         for part in (binding, binding.fallback) if part is not None)
-            if all(not name or environment.get(name, "").strip() for name in key_names):
-                choices[ref] = binding
+            try:
+                self._validate_supervisor_binding(ref)
+            except ValueError:
+                if ref in self.supervisor_choices:
+                    raise
+                # A parse binding can have a fallback that is unsuitable for chat.
+                continue
+            choices[ref] = self.resolve_model_binding(ref, environ=environ)
         return choices
+
+    def chat_credentials_ready(self, binding: ModelBinding, *, environ: Mapping[str, str] | None = None) -> bool:
+        environment = os.environ if environ is None else environ
+        for part in (binding, binding.fallback):
+            if part is None:
+                continue
+            source = self.source(part.source)
+            if isinstance(source, ChatSourceCredentials) and source.encrypted_api_key:
+                continue
+            name = source_api_key_env_name(source)
+            if name and not environment.get(name, "").strip():
+                return False
+            if not name and isinstance(source, (ArkModelSourceConfig, OpenAIModelSourceConfig)):
+                return False
+        return True
+
+    def available_supervisor_choices(self, *, environ: Mapping[str, str] | None = None) -> dict[str, ModelBinding]:
+        return {ref: binding for ref, binding in self.configured_supervisor_choices(environ=environ).items()
+                if self.chat_credentials_ready(binding, environ=environ)}
 
     def source(self, name: str) -> ModelSourceConfig:
         try:
@@ -842,6 +905,7 @@ def source_api_key_env_name(source: ModelSourceConfig) -> str | None:
         source,
         (
             OpenAIModelSourceConfig,
+            ChatAPISourceConfig,
             ArkModelSourceConfig,
             OpenAIAudioSourceConfig,
             OpenAIVisionSourceConfig,
@@ -859,6 +923,8 @@ def source_api_key_env_name(source: ModelSourceConfig) -> str | None:
 def resolve_source_api_key(
     source: ModelSourceConfig, *, environ: Mapping[str, str] | None = None,
 ) -> str | None:
+    if isinstance(source, ChatSourceCredentials) and source.encrypted_api_key:
+        return source.saved_key()
     name = source_api_key_env_name(source)
     if name is None:
         return None
@@ -1168,4 +1234,13 @@ def load_config(config_path: str | Path | None = None) -> GatewayConfig:
 
     if not isinstance(payload, dict):
         raise ValueError(f"gateway config must be a YAML mapping: {path}")
-    return GatewayConfig.model_validate(payload)
+    return config_from_document(payload, path)
+
+
+def config_from_document(payload: Mapping, path: Path) -> GatewayConfig:
+    config = GatewayConfig.model_validate(payload)
+    for name, source in config.model_sources.items():
+        if isinstance(source, ChatSourceCredentials) and source.encrypted_api_key:
+            source._config_path = path
+            source._source_name = name
+    return config

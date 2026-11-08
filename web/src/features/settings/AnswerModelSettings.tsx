@@ -1,146 +1,155 @@
-import { CircleAlert, LoaderCircle } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
-import { errorMessage, getAgentMessageOptions } from "../../api/client";
+import { Cable, Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ApiClientError, errorMessage, getPersonalModelSettings, removePersonalModelConnection,
+  savePersonalModelConnection, savePersonalModelDefault, testPersonalModelConnection } from "../../api/client";
+import type { PersonalModelConnection, PersonalModelSettings } from "../../api/contracts";
 import { useI18n } from "../../app/i18n";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
-import { chatModelOptions, type ChatModelOption } from "../search/chatModelOptions";
 import { useActiveChatSettings } from "./activeChatSettings";
-import styles from "./settings.module.css";
-
-type ModelCatalog =
-  | { status: "loading"; scope: string }
-  | { status: "ready"; scope: string; models: ChatModelOption[] }
-  | { status: "error"; scope: string; failure: unknown };
-
-function ModelChoiceRow({
-  interactive,
-  checked,
-  disabled,
-  radioName,
-  value,
-  label,
-  meta,
-  onSelect,
-}: {
-  interactive: boolean;
-  checked: boolean;
-  disabled: boolean;
-  radioName: string;
-  value: string;
-  label: string;
-  meta: string | null;
-  onSelect: () => void;
-}) {
-  const content = (
-    <>
-      {interactive ? <input className={styles.choiceInput} type="radio" name={radioName} value={value}
-        checked={checked} disabled={disabled} aria-label={label} onChange={onSelect} /> : null}
-      <span className={styles.choiceText}>
-        <span className={styles.choiceLabel}>{label}</span>
-        {meta ? <span className={styles.choiceMeta}>{meta}</span> : null}
-      </span>
-    </>
-  );
-  return interactive
-    ? <label className={styles.choiceRow} data-checked={checked || undefined}>{content}</label>
-    : <div className={styles.choiceRow} data-readonly="true">{content}</div>;
-}
+import { PersonalModelSelect } from "./PersonalModelSelect";
+import { MASKED_API_KEY, PersonalConnectionForm, protocols } from "./PersonalConnectionForm";
+import styles from "./personal.module.css";
 
 export function AnswerModelSettings({ active }: { active: boolean }) {
-  const { t, locale } = useI18n();
+  const { scopeKey, canConfigure } = useAuth();
   const { mode } = useWorkspace();
-  const { scopeKey } = useAuth();
-  const activeChat = useActiveChatSettings();
-  const radioName = useId();
-  const [opened, setOpened] = useState(active);
-  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
-  const requestRef = useRef(0);
+  const { t } = useI18n();
+  if (!active || !canConfigure) return null;
+  if (mode !== "live") return <p role="status" className={styles.feedback}>{t(mode === "offline" ? "当前资料连接不可用。" : "正在连接…")}</p>;
+  return <ConnectionSettings key={scopeKey} />;
+}
+
+function ConnectionSettings() {
+  const { t, locale } = useI18n();
+  const chat = useActiveChatSettings();
+  const [settings, setSettings] = useState<PersonalModelSettings | null>(null);
+  const [emptyDraftId] = useState(() => crypto.randomUUID());
+  const [chosenEditor, setEdit] = useState<{ id: string; previous?: PersonalModelConnection } | null>(null);
+  const edit = chosenEditor ?? (settings?.connections.length === 0 ? { id: emptyDraftId, previous: undefined } : null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const [conflict, setConflict] = useState(false);
+  const controller = useRef<AbortController | null>(null);
+  const inFlight = useRef(false);
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
 
   useEffect(() => {
-    if (active) setOpened(true);
-  }, [active]);
+    const lifetime = new AbortController();
+    controller.current = lifetime;
+    setError("");
+    getPersonalModelSettings(lifetime.signal).then((saved) => {
+      if (lifetime.signal.aborted) return;
+      setSettings(saved);
+    }).catch((e) => { if (!lifetime.signal.aborted) setError(errorMessage(e, localeRef.current)); });
+    return () => { lifetime.abort(); };
+  }, [refresh]);
 
-  useEffect(() => {
-    if (!opened || mode !== "live") return;
-    const requestId = ++requestRef.current;
-    const scope = scopeKey;
-    setCatalog({ status: "loading", scope });
-    void getAgentMessageOptions().then((options) => {
-      if (requestId !== requestRef.current) return;
-      setCatalog({ status: "ready", scope, models: chatModelOptions(options) });
-    }).catch((failure: unknown) => {
-      if (requestId !== requestRef.current) return;
-      setCatalog({ status: "error", scope, failure });
-    });
-    return () => { requestRef.current += 1; };
-  }, [opened, mode, scopeKey, retryCount]);
-
-  const scopedCatalog = catalog?.scope === scopeKey ? catalog : null;
-  const live = mode === "live";
-  const models = live && scopedCatalog?.status === "ready" ? scopedCatalog.models : null;
-  const loading = live && (!scopedCatalog || scopedCatalog.status === "loading");
-  const failure = live && scopedCatalog?.status === "error" ? scopedCatalog.failure : null;
-  const choices = models ?? [];
-  const defaultModel = choices.find((model) => model.id === "default");
-  const availableModels = choices.filter((model) => model.id !== "default");
-  const defaultLabel = defaultModel && defaultModel.label !== "default" ? defaultModel.label : null;
-  const interactive = Boolean(activeChat && defaultModel);
-  const busy = Boolean(activeChat && (activeChat.modelSaving || activeChat.loading));
-  const activeModelId = activeChat?.modelId ?? "default";
-  const modelError = activeChat?.modelError ?? null;
-  const activeModel = choices.find((model) => model.id === activeModelId);
-  const activeModelUnknown = Boolean(activeChat && defaultModel && activeModelId !== "default" && !activeModel);
-  const chooseModel = (id: string) => {
-    if (!activeChat || activeChat.modelSaving || activeChat.loading) return;
-    void activeChat.selectModel(id).catch(() => { /* The hook exposes the failure through modelError. */ });
+  async function action<T>(run: (signal: AbortSignal) => Promise<T>, done: (value: T) => void) {
+    const signal = controller.current?.signal;
+    if (!signal || signal.aborted || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true); setError(""); setFeedback(""); setConflict(false);
+    try {
+      const result = await run(signal);
+      if (!signal.aborted) done(result);
+    } catch (e) {
+      if (!signal.aborted) {
+        setError(errorMessage(e, localeRef.current));
+        setConflict(e instanceof ApiClientError && e.status === 409);
+      }
+    } finally {
+      inFlight.current = false;
+      if (!signal.aborted) setBusy(false);
+    }
+  }
+  function saved(value: PersonalModelSettings) {
+    setSettings(value);
+    window.dispatchEvent(new Event("seekino:model-connections-changed"));
+  }
+  const open = (previous?: PersonalModelConnection) => {
+    setError(""); setFeedback(""); setConflict(false);
+    setEdit({ id: previous?.connectionId ?? crypto.randomUUID(), previous });
   };
-
-  return (
-    <>
-      {activeChat?.modelSaving ? <p className={styles.modelSaving} role="status">
-        <LoaderCircle className={styles.spinner} size={14} aria-hidden="true" />{t("正在保存回答模型…")}
-      </p> : null}
-      {!activeChat ? <p className={styles.modelState}>{t("在聊天中打开模型设置，可更改该对话的回答模型。")}</p> : null}
-      {modelError ? <p className={styles.inlineAlert} role="alert">
-        <CircleAlert size={15} aria-hidden="true" />{modelError}
-      </p> : null}
-      {activeModelUnknown && !modelError ? <p className={styles.inlineAlert} role="alert">
-        <CircleAlert size={15} aria-hidden="true" />{t("已保存的模型当前不可用，请重新选择。")}
-        <code>{activeModelId}</code>
-      </p> : null}
-
-      {mode === "checking" ? <p className={styles.modelState} role="status">{t("正在检查资料连接…")}</p> : null}
-      {mode === "offline" ? <p className={styles.modelState}>{t("资料连接不可用，暂时无法读取模型列表。")}</p> : null}
-      {live && loading ? <p className={styles.modelState} role="status">
-        <LoaderCircle className={styles.spinner} size={14} aria-hidden="true" />{t("正在读取可用模型…")}
-      </p> : null}
-      {failure ? <div className={styles.modelFailure} role="alert">
-        <span>{t("读取可用模型失败：{error}", { error: errorMessage(failure, locale) })}</span>
-        <button className="button-secondary" type="button" onClick={() => setRetryCount((current) => current + 1)}>{t("重试")}</button>
-      </div> : null}
-
-      {models && !defaultModel ? <p className={styles.modelState}>{t("此服务未提供可选模型列表。")}</p> : null}
-      {models && defaultModel ? (
-        <div className={styles.modelChoices} role={interactive ? "radiogroup" : "group"}
-          aria-label={t("回答模型")} aria-busy={busy || undefined}>
-          <h3 className={styles.groupTitle}>{t(interactive ? "此对话的回答模型" : "服务默认")}</h3>
-          <div className={styles.group}>
-            <ModelChoiceRow interactive={interactive} checked={interactive && activeModelId === "default"}
-              disabled={!interactive || busy} radioName={radioName} value="default" label={interactive ? t("跟随服务默认") : (defaultLabel ?? t("服务默认"))}
-              meta={interactive ? defaultLabel : null} onSelect={() => chooseModel("default")} />
-          </div>
-          <h3 className={styles.groupTitle}>{t("可用模型")}</h3>
-          <div className={styles.group}>
-            {availableModels.length ? availableModels.map((model) => (
-              <ModelChoiceRow key={model.id} interactive={interactive} checked={interactive && activeModelId === model.id}
-                disabled={!interactive || busy} radioName={radioName} value={model.id} label={model.label} meta={null}
-                onSelect={() => chooseModel(model.id)} />
-            )) : <p className={styles.emptyModels}>{t("服务端没有提供其他可选模型。")}</p>}
-          </div>
+  const yamlDefault = settings?.connections.flatMap((connection) => connection.models).find((model) => model.isYamlDefault && model.available !== false);
+  const personalChoices = settings?.connections.filter((c) => c.models.some((m) => m.available !== false)).map((c) => <optgroup key={c.connectionId} label={c.name}>
+    {c.models.filter((m) => m.available !== false).map((m) => <option value={m.id} key={m.id}>{m.modelId}</option>)}
+  </optgroup>);
+  return <div className={styles.workspace}>
+    {error && <p className={styles.error} role="alert">{error} {(!settings || conflict) && <button type="button" className={styles.button}
+      onClick={() => { setEdit(null); setConflict(false); setRefresh((n) => n + 1); }}>{t(conflict ? "重新载入设置" : "重试")}</button>}</p>}
+    {feedback && <p className={styles.feedback} role="status">{feedback}</p>}
+    {!settings && !error && <p className={styles.feedback} role="status">{t("正在读取模型服务…")}</p>}
+    {settings && <>
+      {edit ? <>
+        <div className={styles.toolbar}><h3 className={styles.lead}>{t(edit.previous ? "编辑模型服务" : "添加模型服务")}</h3></div>
+        <PersonalConnectionForm key={edit.id} connection={edit.previous} busy={busy} cancel={settings.connections.length ? () => setEdit(null) : undefined}
+          save={(body) => void action((signal) => savePersonalModelConnection(edit.id, body, signal), (value) => {
+            saved(value); setEdit(null); setFeedback(t("已保存连接"));
+          })} />
+      </> : <>
+        <div className={styles.toolbar}><h3 className={styles.lead}>{t("已配置的模型服务")}</h3>
+          <button type="button" className={styles.primary} disabled={busy} onClick={() => open()}><Plus size={16} />{t("添加模型服务")}</button>
         </div>
-      ) : null}
-    </>
-  );
+        <div className={styles.list}>{settings.connections.map((c) => <ConnectionCard key={c.connectionId} connection={c} busy={busy}
+          edit={() => open(c)} remove={() => void action((signal) => removePersonalModelConnection(c.connectionId, c.revision, signal), (value) => {
+            saved(value); setFeedback(t("已删除连接")); if (!value.connections.length) setEdit(null);
+          })} test={(model) => void action((signal) => testPersonalModelConnection(c.connectionId, model, signal), () => setFeedback(t("已收到模型回复")))} />)}</div>
+      </>}
+      {!edit && <div className={styles.modelSelection}>
+        <label className={styles.field}><span>{t("新对话默认模型")}</span>
+          <select aria-label={t("新对话默认模型")} disabled={busy} value={settings.defaultModelId}
+            onChange={(e) => { const id = e.target.value; void action((signal) => savePersonalModelDefault(id, signal, settings.revision), saved); }}>
+            <option value="default">{yamlDefault ? t("最近选择或 YAML 默认（{value0}）", { value0: yamlDefault.modelId }) : t("使用最近选择的模型")}</option>{personalChoices}
+          </select>
+        </label>
+      </div>}
+      {chat && !edit && settings.connections.length > 0 && <div className={styles.modelSelection}>
+        <label className={styles.field}><span>{t("当前对话模型")}</span>
+          <PersonalModelSelect connections={settings.connections} value={chat.modelId} label={t("当前对话模型")}
+            placeholder={t("选择模型")} disabled={busy || chat.modelSaving || chat.loading} onChange={(id) => void chat.selectModel(id)} />
+        </label>
+        {chat.modelError && <p className={styles.error} role="alert">{chat.modelError}</p>}
+      </div>}
+    </>}
+  </div>;
+}
+
+function ConnectionCard({ connection: c, busy, edit, remove, test }: {
+  connection: PersonalModelConnection; busy: boolean; edit: () => void; remove: () => void; test: (model: string) => void;
+}) {
+  const { t } = useI18n();
+  const [confirm, setConfirm] = useState(false);
+  const [choice, setChoice] = useState("");
+  const selected = c.models.find((m) => m.id === choice && m.available !== false) ?? c.models.find((m) => m.available !== false) ?? c.models[0];
+  const protocolLabel = c.protocol === "codex" ? "Codex CLI" : protocols[c.protocol].label;
+  return <article className={styles.card}>
+    <div className={styles.connectionHeading}>
+      <h4 className={styles.title}><Cable size={18} aria-hidden="true" />{c.name}</h4>
+    </div>
+    <div className={styles.meta}>{protocolLabel}{c.baseUrl ? ` · ${c.baseUrl}` : ""}</div>
+    {c.protocol !== "codex" && <div className={styles.credential}>
+      <span>API Key</span>{c.hasApiKey ? <span aria-label={t("API Key 已配置")} className={styles.keyMask}>{MASKED_API_KEY}</span>
+        : <span>{t("未设置")}</span>}
+    </div>}
+    <div className={styles.row}>
+      {c.models.length > 1 ? <select aria-label={t("测试使用的模型")} value={selected?.id ?? ""} disabled={busy} onChange={(e) => setChoice(e.target.value)}>
+        {c.models.map((m) => <option value={m.id} key={m.id} disabled={m.available === false}>{m.label ? `${m.label} · ${m.modelId}` : m.modelId}</option>)}</select> : <span className={styles.meta}>{selected?.modelId}</span>}
+      <div className={styles.actions}>
+        {c.protocol !== "codex" && <button type="button" className={styles.button} disabled={busy || !selected || selected.available === false}
+          onClick={() => selected && test(selected.id)}>{t("测试连接")}</button>}
+        {c.protocol !== "codex" && <>
+          <button type="button" className={styles.button} disabled={busy} onClick={edit}>{t("编辑")}</button>
+          <button type="button" className={styles.button} disabled={busy} onClick={() => setConfirm(true)}>{t("删除")}</button>
+        </>}
+      </div>
+    </div>
+    {confirm && <div className={styles.row}><span>{t("删除这个模型服务？")}</span>
+      <div className={styles.actions}><button type="button" className={styles.button} onClick={() => setConfirm(false)} disabled={busy}>{t("取消")}</button>
+        <button type="button" className={styles.danger} onClick={remove} disabled={busy}>{t("确认删除")}</button></div>
+    </div>}
+  </article>;
 }

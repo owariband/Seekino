@@ -1,3 +1,4 @@
+import { configuredModels } from "../src/test/personalModelFixtures";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { AuthIdentity } from "../src/api/contracts";
@@ -27,6 +28,7 @@ async function mockService(page: Page, guest = false) {
       conversationId: "locale-conversation", tenantId: "local-default", title: "原始对话名称",
       messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: 0, updatedAt: 0,
     } });
+    if (path === "/api/agent/model-connections") return route.fulfill({ json: configuredModels });
     if (path === "/api/agent/messages/options") return route.fulfill({ json: Object.fromEntries(
       ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"].map((name) => [name, { defaultValue: 3, minimum: 1, maximum: 30 }]),
     ) });

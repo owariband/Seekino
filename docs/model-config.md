@@ -2,24 +2,27 @@
 
 真实模型评测约定（2026-10-25）：后续生成式模型测试使用 Kimi K3.1 Pro（`k3.1-pro`），不再调用 GPT 系列，包括测试链路中的子任务、视觉理解、摘要、fallback 和额外 judge。历史 GPT benchmark 保留作只读对照；向量、ASR 和既有专用意图路由保持各自配置。开跑前核对实际生效配置及环境覆盖，运行后核对真实调用模型。该约定不自动切换正在运行的业务服务。
 
-`config.yaml` 的版本 2 把连接信息放在 `model_sources`，把模型定义放在 `models`。业务向 Gateway 传模型引用；Gateway 解析配置、校验能力并创建适配器。`agent_runtime` 保留运行参数，`video_parser` 保留采样和降级策略。密钥仍写在 `.env.local`，不要写进 YAML。
+`config.yaml` 的版本 2 把连接信息放在 `model_sources`，把模型定义放在 `models`。业务向 Gateway 传模型引用；Gateway 解析配置、校验能力并创建适配器。`agent_runtime` 保留运行参数，`video_parser` 保留采样和降级策略。已有密钥由 YAML 引用环境变量。网页新录入的密钥以密文保存在配置中。
 
-配置存储仍是本地 YAML，通过 `SEEKINO_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑和 API `retry` 都保留任务保存的模型与解析配置快照。要切换已有视频的解析模型，须调用 `reparse` 并显式传入新的 `parseConfig`；可先通过 `GET /api/uploads/parse-config` 读取服务当前加载的默认配置。未提供 `parseConfig` 的 `reparse` 沿用最近一次任务的配置快照，仅将索引 generation 更新为当前生效版本。连接定义的变更仍需重启 Gateway 所在服务。这里没有引入数据库模型管理、HTTP CRUD 或云端配置。
+平台配置存储在本地 YAML，通过 `SEEKINO_MODEL_CONFIG` 选择文件，未设置时读取仓库 `config.yaml`。修改文件后重启服务以加载新配置。已有任务的正常续跑和 API `retry` 都保留任务保存的模型与解析配置快照。要切换已有视频的解析模型，须调用 `reparse` 并显式传入新的 `parseConfig`；可先通过 `GET /api/uploads/parse-config` 读取服务当前加载的默认配置。未提供 `parseConfig` 的 `reparse` 沿用最近一次任务的配置快照，仅将索引 generation 更新为当前生效版本。连接定义的变更仍需重启 Gateway 所在服务。个人聊天 API 连接另由下述用户设置管理。
 
 本机开发配置使用 `config/local-dev-config.yaml`（2026-10-29 从 `local-kimi.yaml` 更名），由 `.env.local` 的 `SEEKINO_MODEL_CONFIG` 指向。它是完整开发环境配置，各角色可选择不同供应商；Kimi 只是其中部分角色的当前选择，不属于文件作用域。新名字不改变已选择的模型。
 
 本机独立 OCR 当前关闭：不要在这份开发配置的 `models` 中添加 `ocr` 绑定，除非明确要重新启用。默认 Parse profile 以该绑定是否存在决定 OCR 开关；已创建任务保留自己的 `ocr_enabled` 快照，改 YAML 或普通重试不会更新旧任务，改变配置应创建新的解析版本。
 
+## 网页模型设置
+
+「设置 → 回答模型」读取服务实际加载的配置文件。路径由 `SEEKINO_MODEL_CONFIG` 指定，省略时使用项目的 `config.yaml`。本机回环访问者和 cloud 管理员可通过 API 修改 `model_sources`、`models` 与新对话默认引用 `chat_default_model`。保存时校验整份配置并原子替换文件，过期的编辑会返回 409。直接编辑同一文件后，重新打开设置即可看到变更。
+
+编辑已有服务可以保留其协议特性、模型参数、回退配置及环境变量凭证。添加聊天专用服务时选择 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 或 Google Gemini，填写 Base URL 与服务商实际接受的模型 ID。它们保存为 `model_sources` 中的 `chat_api` 来源与 `models` 中的具名绑定。共享给解析或索引的服务需要保留其业务引用。云端新增服务使用公网 HTTPS，本机支持回环服务。
+
+读取接口只返回 `hasApiKey`。编辑时留空可保留原有凭证，也可以显式清除或替换。通过网页录入的密钥采用 AES-GCM 加密，解密密钥位于生效 YAML 同目录的 `.seekino-secrets/model-config.key`，文件权限为 0600。恢复此类配置时需同时恢复密钥文件，使用环境变量的来源继续读取自己的 `api_key_env`。
+
 ## 当前对话的回答模型
 
-独立聊天页的回答模型菜单读取 `GET /api/agent/messages/options`。默认项沿用启动时选定的 Supervisor。要开放其他选项，在同一份配置中用 `supervisor_choices` 将已有的生成模型绑定映射为菜单名称。例如，仓库配置允许把已有的 `models.agent` 用作某个对话的回答模型。
+服务器根据生效配置识别可用于回答的绑定。设置页能看到缺少凭证的来源，聊天中的选择器只显示可执行项。管理员可以指定新对话默认模型，也可以在输入框里只切换当前对话。每轮发送时按该会话的引用解析配置，正在执行的请求保留开始时的目标。删除已用模型后，管理者可在聊天框重新选模。
 
-```yaml
-supervisor_choices:
-  agent: DeepSeek Flash
-```
-
-菜单仅列出与当前 Supervisor harness 兼容且具备所需凭据的选项。普通聊天用户可以为自己的会话选择这些模型。草稿选择在首次发送或添加图片时随会话创建，已有会话通过 `PATCH /api/agent/conversations/model` 保存。之后的回答读取该会话的选择，历史回答保留发送时的模型名称。服务下线某个选项后，曾使用它的对话可重新选择默认项。
+cloud 中的游客与普通账号使用部署默认模型。模型服务的读写、测试以及全局 Agent 参数接口需要管理员身份。公共聊天接口保留消息额度与状态，返回通用默认标记，并隐去实际模型名称。历史版本写过的个人连接仅用于其原所有者已有会话的兼容读取。
 
 ## 网页搜索配置
 

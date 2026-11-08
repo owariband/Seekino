@@ -130,12 +130,13 @@ def test_parse_output_draft_mysql_ddl_has_longtext_and_no_parent_foreign_key() -
     assert "FOREIGN KEY" not in ddl
 
 
-def test_create_schema_registers_twenty_three_tables_and_identity_is_repeatable() -> None:
+def test_create_schema_registers_twenty_four_tables_and_identity_is_repeatable() -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
     create_schema(engine)
     tables = inspect(engine).get_table_names()
-    assert len(tables) == 23 and {"user", "tenant", "video_parse_content", "parse_model_output_draft"}.issubset(tables)
+    assert len(tables) == 24
+    assert {"user", "tenant", "video_parse_content", "parse_model_output_draft", "personal_model_preferences"}.issubset(tables)
 
 
 def test_conversation_detail_is_nullable_json() -> None:
@@ -312,12 +313,13 @@ def test_create_schema_rejects_schema_without_adding_missing_identity() -> None:
 
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
+    remaining_tables = set(inspect(engine).get_table_names()) - {"tenant", "user"}
     Tenant.__table__.drop(engine)
     User.__table__.drop(engine)
-    assert len(inspect(engine).get_table_names()) == 21
+    assert set(inspect(engine).get_table_names()) == remaining_tables
     with pytest.raises(SchemaUpgradeRequiredError, match="20261010_user_tenant_identity.sql"):
         create_schema(engine)
-    assert len(inspect(engine).get_table_names()) == 21
+    assert set(inspect(engine).get_table_names()) == remaining_tables
 
 
 def test_create_schema_requires_new_migration_for_existing_identity_profile_drift(monkeypatch) -> None:

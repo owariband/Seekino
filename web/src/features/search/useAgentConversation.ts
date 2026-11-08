@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { rememberChatModel } from "../settings/usePersonalChatModels";
 import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import {
@@ -174,6 +175,7 @@ interface ActiveConversation {
   streamedMessageId: string | null;
   modelId: string;
   modelSaving: boolean;
+  explicitDraftModel?: boolean;
   creationKey?: string;
   creating?: Promise<string | null>;
 }
@@ -189,6 +191,19 @@ export function useAgentConversation(requestedId: string | null = null) {
     modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
+
+  const draftDefault = useRef({ scope: conversationStorageKey(), id: DEFAULT_MODEL_ID });
+  const applyDraftDefault = useCallback((id: string) => {
+    const scope = conversationStorageKey();
+    draftDefault.current = { scope, id };
+    const active = activeRef.current;
+    if (active?.identityKey === scope && !active.conversationId && !active.explicitDraftModel && !active.creating && id !== active.modelId) {
+      // A changed effective model changes the payload of the next lazy create.
+      if (active.modelId !== DEFAULT_MODEL_ID) active.creationKey = crypto.randomUUID();
+      active.modelId = id;
+      setState((current) => ({ ...current, modelId: id }));
+    }
+  }, []);
 
   const subscribe = (active: ActiveConversation, conversationId: string) => {
     active.unsubscribe = subscribeAgentMessages(conversationId, (snapshot) => {
@@ -206,7 +221,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     if (active.creating) return active.creating;
     const key = active.creationKey ??= storedIdentity(active.identityKey).key;
     const creationKey = `${active.identityKey}:${key}`;
-    const modelId = active.modelId;
+    const modelId = active.explicitDraftModel || active.modelId !== DEFAULT_MODEL_ID ? active.modelId : undefined;
     active.creating = (async () => {
       let creation = creations.get(creationKey);
       if (!creation) {
@@ -222,6 +237,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         active.conversationId = conversation.conversationId;
         const createdModelId = conversationModelId(conversation);
         active.modelId = createdModelId;
+        rememberChatModel(createdModelId);
         setState((current) => ({ ...current, conversationId: conversation.conversationId, modelId: createdModelId, error: null }));
         subscribe(active, conversation.conversationId);
         return conversation.conversationId;
@@ -237,15 +253,16 @@ export function useAgentConversation(requestedId: string | null = null) {
   }, []);
 
   useEffect(() => {
+    const defaultId = draftDefault.current.scope === conversationStorageKey() ? draftDefault.current.id : DEFAULT_MODEL_ID;
     const active: ActiveConversation = {
       conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null,
       identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null,
-      modelId: DEFAULT_MODEL_ID, modelSaving: false,
+      modelId: defaultId, modelSaving: false,
     };
     activeRef.current = active;
     setState({
       requestedId, conversationId: null, messages: [], progress: {}, reasoning: {}, loading: true, sending: false, cancellingMessageId: null, error: null,
-      modelId: DEFAULT_MODEL_ID, modelSaving: false, modelError: null,
+      modelId: defaultId, modelSaving: false, modelError: null,
     });
     void (async () => {
       try {
@@ -286,10 +303,11 @@ export function useAgentConversation(requestedId: string | null = null) {
       active.unsubscribe?.();
       active.unsubscribe = undefined;
     }
+    const defaultId = draftDefault.current.scope === conversationStorageKey() ? draftDefault.current.id : DEFAULT_MODEL_ID;
     activeRef.current = {
       conversationId: null, controller: new AbortController(), sending: false, sendController: null, cancellingMessageId: null,
       identityKey: conversationStorageKey(), recoveryMessageId: null, streamedMessageId: null,
-      modelId: DEFAULT_MODEL_ID, modelSaving: false, creationKey: crypto.randomUUID(),
+      modelId: defaultId, modelSaving: false, creationKey: crypto.randomUUID(),
     };
     setState((current) => ({
       requestedId: current.requestedId,
@@ -301,7 +319,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       sending: false,
       cancellingMessageId: null,
       error: null,
-      modelId: DEFAULT_MODEL_ID,
+      modelId: defaultId,
       modelSaving: false,
       modelError: null,
     }));
@@ -357,14 +375,17 @@ export function useAgentConversation(requestedId: string | null = null) {
     const next = modelId.trim();
     if (!next || !active || active.creating || active.modelSaving || state.loading
       || state.requestedId !== requestedId || active.identityKey !== conversationStorageKey()) return;
-    if (next === active.modelId) return;
     if (!active.conversationId) {
+      if (active.explicitDraftModel && next === active.modelId) return;
+      active.explicitDraftModel = true;
       // A changed create payload needs its own idempotency key, including across open chat views.
       active.creationKey = crypto.randomUUID();
       active.modelId = next;
+      rememberChatModel(next);
       setState((current) => ({ ...current, modelId: next, modelError: null }));
       return;
     }
+    if (next === active.modelId) return;
     const conversationId = active.conversationId;
     const previousModelId = active.modelId;
     active.modelId = next;
@@ -375,6 +396,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       if (activeRef.current !== active || active.identityKey !== conversationStorageKey()) return;
       const savedModelId = conversationModelId(conversation);
       active.modelId = savedModelId;
+      rememberChatModel(savedModelId);
       active.modelSaving = false;
       setState((current) => ({ ...current, modelId: savedModelId, modelSaving: false, modelError: null }));
     } catch (error) {
@@ -559,6 +581,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     cancelling: Boolean(visible.cancellingMessageId),
     clear,
     ensureConversationId,
+    applyDraftDefault,
     selectModel,
     send,
     stop,

@@ -1,3 +1,4 @@
+import { configuredModels } from "../src/test/personalModelFixtures";
 import { expect, test } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 
@@ -25,7 +26,7 @@ test("renders growing snapshots before model completion and records distinct rec
     };
   });
   const conversation = { conversationId: "stream-conv", tenantId: "local-default", title: "流式验收",
-    messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: 0, updatedAt: 0 };
+    modelId: configuredModels.defaultModelId, messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: 0, updatedAt: 0 };
   await page.route("**/healthz", (route) => route.fulfill({ json: { status: "ok" } }));
   let creations = 0;
   await page.route("**/api/**", (route) => {
@@ -36,6 +37,7 @@ test("renders growing snapshots before model completion and records distinct rec
       tenantId: "local-default", publicTenantId: "public", mode: "local", csrfToken: "",
       permissions: { canUpload: true, canManage: true, canConfigure: true } } });
     if (path === "/api/system/runtime-config") return route.fulfill({ json: { displayMode: "release" } });
+    if (path === "/api/agent/model-connections") return route.fulfill({ json: configuredModels });
     if (path === "/api/agent/messages/options") return route.fulfill({ json: Object.fromEntries(
       ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"].map((name) => [name, { defaultValue: 3, minimum: 1, maximum: 30 }]),
     ) });

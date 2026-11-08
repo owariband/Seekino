@@ -4897,6 +4897,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "kind": "source"
     }
    ]
+  },
+  {
+   "id": "CHAT-PERSONAL-MODELS-01",
+   "title": "自定义个人模型协议、地址与模型 ID",
+   "category": "chat",
+   "type": "requirement",
+   "status": "done",
+   "priority": "P1",
+   "description": "从设置写回生效 YAML，当前会话独立选模，cloud 管理配置按身份隔离。",
+   "next": "本地试点已验收，依赖 #72 后合并 #74。",
+   "verification": "四种协议完成本地 API 收发和工具合同测试。Chrome 核对服务编辑、选模、实际发送、删除和 320px 手机布局。 无配置账号首次发问前创建 0 个聊天。本机补验识别 3 个 YAML 回答模型与 3 个密钥掩码，默认及历史选择使用生效绑定。后续复验覆盖文件写回、密钥轮换及 cloud 游客禁止访问管理接口。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-CHAT",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "feat/personal-model-connections",
+   "links": [
+    {
+     "label": "设计",
+     "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/design/03-product-reassessment/personal-model-connections-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #74",
+     "url": "https://github.com/owariband/Seekino/pull/74",
+     "kind": "pr"
+    },
+    {
+     "label": "验收",
+     "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/report/web/personal-model-connections-20261107.md",
+     "kind": "source"
+    }
+   ]
   }
  ]
 }</script>
