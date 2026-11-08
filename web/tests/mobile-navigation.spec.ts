@@ -76,7 +76,7 @@ for (const width of [390, 1280]) {
   test(`explains unavailable email login without requests at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     const mock = await mockService(page, true, { emailLoginEnabled: false });
-    await page.goto("/settings");
+    await page.goto("/settings?section=connection");
     await expect(page.getByText("游客模式", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: width < 600 ? "打开侧边栏" : "打开账号菜单", exact: true }).click();
     const account = page.getByRole("region", { name: "当前账号", exact: true });

@@ -433,7 +433,7 @@ describe("application shell", () => {
     await user.click(screen.getByRole("link", { name: "设置" }));
     expect(await screen.findByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "切换至黑夜模式" }));
+    await user.click(screen.getByRole("radio", { name: "黑夜模式" }));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
@@ -441,7 +441,8 @@ describe("application shell", () => {
     const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings" });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
 
-    expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "外观与语言" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
     expect(screen.getByText("资料来源")).toBeInTheDocument();
     expect(screen.getByText("本机资料")).toBeInTheDocument();
@@ -452,6 +453,7 @@ describe("application shell", () => {
     expect(screen.queryByRole("heading", { name: "数据边界" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/global-settings"))).toBe(false);
 
+    await userEvent.setup().click(screen.getByRole("button", { name: "外观与语言" }));
     await userEvent.setup().click(screen.getByRole("radio", { name: "黑夜模式" }));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     const runtimeRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/system/runtime-config"));
@@ -461,15 +463,19 @@ describe("application shell", () => {
   it("switches the interface immediately, preserves settings edits and restores the saved language", async () => {
     const view = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Agent 运行" }));
     await screen.findByRole("heading", { name: "全局 Agent 配置" });
     const historyInput = await screen.findByRole("spinbutton", { name: /历史消息数量/ });
     await user.clear(historyInput);
     await user.type(historyInput, "18");
+    await user.click(screen.getByRole("button", { name: "外观与语言" }));
     await user.click(screen.getByRole("radio", { name: "EN English" }));
     expect(screen.getByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Language" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Interface language" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Agent runtime" }));
     expect(screen.getByRole("spinbutton", { name: /History message count/ })).toHaveValue(18);
-    expect(screen.getByRole("radio", { name: "EN English" })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: "Appearance & language" }));
+    expect(screen.getByRole("radio", { name: "EN English" })).toBeChecked();
     expect(document.documentElement).toHaveAttribute("lang", "en");
     expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("en");
     await user.click(screen.getByRole("button", { name: "Open account menu" }));
@@ -496,7 +502,7 @@ describe("application shell", () => {
     const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
     expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "语言" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "界面语言" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "数据边界" })).not.toBeInTheDocument();
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
@@ -521,8 +527,10 @@ describe("application shell", () => {
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
 
     await act(async () => { resolveConfig({ displayMode: "debug" }); });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Agent 运行" }));
     expect(await screen.findByRole("heading", { name: "全局 Agent 配置" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "数据边界" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
+    expect(screen.getByText("数据边界")).toBeVisible();
     expect(screen.getByText("资料地址")).toBeInTheDocument();
     expect(screen.getByText("资料空间")).toBeInTheDocument();
 
@@ -544,6 +552,7 @@ describe("application shell", () => {
   ])("keeps release when runtime configuration has %s", async (_name, runtimeConfig) => {
     const { queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
@@ -552,6 +561,7 @@ describe("application shell", () => {
   it("keeps release and normal navigation when runtime configuration fails", async () => {
     const { queryClient } = renderApp([apiSeries], { initialPath: "/settings", failRuntimeConfig: true });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("error"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
     await userEvent.setup().click(screen.getAllByRole("link", { name: /资料库/ })[0]!);
@@ -560,13 +570,15 @@ describe("application shell", () => {
 
   it("returns to release after a failed runtime configuration refresh", async () => {
     const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Agent 运行" }));
     await screen.findByRole("heading", { name: "全局 Agent 配置" });
     const original = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (input, init) => String(input).includes("/api/system/runtime-config")
       ? new Response(null, { status: 503 }) : original(input, init));
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["runtime-config"] }); });
-    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument());
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
   });
 
@@ -671,6 +683,8 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await user.click(await screen.findByText("高级", { exact: true }));
     const concurrency = await screen.findByRole("spinbutton", { name: /并行任务上限/ });
     await waitFor(() => expect(concurrency).toBeEnabled());
     expect(concurrency).toHaveValue(4);
@@ -703,7 +717,9 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
-    await user.click(screen.getByText("工具输出"));
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await user.click(await screen.findByText("高级", { exact: true }));
+    expect(screen.getByText("工具输出")).toBeVisible();
     expect(screen.getByText(/read 工具按片段内容的字符范围读取，不按行读取/)).toBeInTheDocument();
     const readLimit = await screen.findByRole("spinbutton", { name: /read 单次最多读取字符数/ });
     await waitFor(() => expect(readLimit).toBeEnabled());
@@ -728,7 +744,8 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
-    await screen.findByRole("spinbutton", { name: /并行任务上限/ });
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await screen.findByRole("spinbutton", { name: /历史消息数量/ });
     await user.click(screen.getByText("模型思考"));
     const query = screen.getByRole("combobox", { name: /Query 检索/ });
     const supervisor = screen.getByRole("combobox", { name: /Supervisor 回答/ });
@@ -760,6 +777,8 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await user.click(await screen.findByText("高级", { exact: true }));
     const timeout = await screen.findByRole("spinbutton", { name: /Supervisor 超时/ });
     await waitFor(() => expect(timeout).toBeEnabled());
     fireEvent.input(timeout, { target: { value: "240" } });
