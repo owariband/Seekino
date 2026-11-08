@@ -492,7 +492,7 @@ class AgentRepository:
         self, message_id: str, *, now: int, phase: str | None = None,
         content: str | None = None, search_result: dict | None = None,
         timing: AgentMessageTimingState | None = None,
-        render_blocks: list[dict] | None = None,
+        render_blocks: list[dict] | None = None, model_retry: dict[str, int] | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
             record = session.get(AgentMessage, message_id, with_for_update=True)
@@ -508,6 +508,8 @@ class AgentRepository:
                 self._apply_render_blocks(record, render_blocks)
                 if render_blocks is not None else False
             )
+            if model_retry is not None and (record.detail or {}).get("modelRetry") != (model_retry or None):
+                changes["detail"] = {**(record.detail or {}), "modelRetry": model_retry or None}
             if changes:
                 for name, value in changes.items():
                     setattr(record, name, value)
@@ -850,6 +852,7 @@ class AgentRepository:
             ),
             created_at=record.create_time,
             updated_at=record.update_time,
+            model_retry=(record.detail or {}).get("modelRetry") if record.status == "PROCESSING" else None,
             phase=AnswerPhase(record.phase) if record.phase is not None else None,
             version=record.version,
             reference=record.reference,

@@ -72,7 +72,7 @@ def _source(session: Session, task: VideoParseTaskData, *, episode_order: int | 
     if any(item.id not in refined for item in intervals):
         return None
     rows = chunk_store.list_task_chunk_content_rows(session, task.id, include_missing_content=True, for_update=True)
-    if (not _topology_complete(task, rows, intervals)
+    if (not _topology_complete(task, [(child.id, chunk.video_id, chunk.sequence_no) for child, chunk, _ in rows], intervals)
             or not all(content is not None and bool(content.content) for _, _, content in rows)):
         return None
     if episode_order is not None:

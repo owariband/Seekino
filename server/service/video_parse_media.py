@@ -188,10 +188,10 @@ class VideoParseMediaService:
             paths = {row[key] for key in ("video_path", "audio_path", "visual_video_path") if row[key] is not None}
             paths.update(path for key in ("frames", "ocr_frames") for _, path in row[key] or [])
             for name in paths:
-                check_active()
                 target = directory / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 os.link(episode / name, target)
+            check_active()
             yield PreparedVideoParseMedia(
                 directory / row["video_path"] if row["video_path"] is not None else None,
                 directory / row["audio_path"],

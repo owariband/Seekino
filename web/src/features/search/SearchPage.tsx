@@ -251,6 +251,13 @@ function ToolRow({ block, message, displayMode }: { block: ToolBlock; message: A
   </div>;
 }
 
+function ModelRetryRow({ retry }: { retry: NonNullable<AgentMessageView["modelRetry"]> }) {
+  const label = `reconnecting ${retry.attempt}/${retry.maximum}`;
+  return <div className={styles.toolCall} role="status" aria-label={label} data-status="inProgress" data-active="true">
+    <div className={styles.toolCallHeading}><span>{label}</span></div>
+  </div>;
+}
+
 function VideoBlockCard({ message, block, hit, displayMode, selected, onOpenVideo, onSelect }: {
   message: AgentMessageView;
   block: VideoBlock;
@@ -1121,6 +1128,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
                       return <VideoBlockCard key={`video:${block.videoChunkId}`} message={message} block={block} hit={hit} displayMode={displayMode} selected={selected} onOpenVideo={onOpenVideo} onSelect={setSelection} />;
                     })}
+                    {message.status === "PROCESSING" && message.modelRetry ? <ModelRetryRow retry={message.modelRetry} /> : null}
                     {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
                         <Kino state="think" width={38} scale={2} ground={false} />

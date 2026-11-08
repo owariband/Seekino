@@ -115,6 +115,7 @@ from ..utils.execution import (
     BlockingCallCancelled, ExecutionCalls, cleanup_execution, execution_calls, run_blocking,
 )
 from .parse_usage import ParseUsageService
+from .video_parse_content import EVENT_INDEX_TARGET_DETAIL_KEY
 from .video_parse_index_coordinator import (
     VideoParseIndexCoordinator,
 )
@@ -144,6 +145,8 @@ class _ChunkBinding:
 class VideoParseRuntimeService:
     """Run Parse with its transactional service, media and Gateway dependencies."""
 
+    _dispatch = None
+
     def __init__(
         self,
         persistence: VideoParsePersistenceService,
@@ -172,6 +175,7 @@ class VideoParseRuntimeService:
             raise ValueError("Event indexing requires both a store and its configured contract")
         self._persistence = persistence
         self._queue = queue
+        self._dispatch = getattr(queue, "dispatch", None)
         self._artifact_store = artifact_store
         self._media_service = media_service
         self._gateway_config = gateway_config
@@ -381,7 +385,8 @@ class VideoParseRuntimeService:
                     inputs,
                     check_active=manager.check_active,
                     index_generation=task_input.task.target_index_generation,
-                    **({"lease": lease} if self._event_store is not None else {}),
+                    **({"lease": lease, "frozen_target": task_input.task.detail.get(EVENT_INDEX_TARGET_DETAIL_KEY)}
+                       if self._event_store is not None else {}),
                 )
                 try:
                     await self._run_blocking(coordinator.index_chunk, lease)
@@ -580,7 +585,13 @@ class VideoParseRuntimeService:
         self, video_parse_task_id: str, lease: LeaseToken
     ) -> VideoTaskStatus:
         current = self._require_video_token(video_parse_task_id, lease)
+        if self._dispatch is not None:
+            active = await asyncio.to_thread(self._dispatch.active_status, current)
+            if active is not None:
+                return VideoTaskStatus(active)
         state = await asyncio.to_thread(self._persistence.aggregate_task, current)
+        if self._dispatch is not None:
+            self._dispatch.invalidate(video_parse_task_id)
         return VideoTaskStatus(state.status)
 
     # Agent runtime: Voiceprint preparation -------------------------------
@@ -999,10 +1010,10 @@ class VideoParseRuntimeService:
         binding = self._require_chunk_binding()
         if binding.lease.chunk_parse_task_id != chunk_parse_task_id:
             raise VideoParseLeaseLostError("Chunk lease targets another task")
-        state = await asyncio.to_thread(
-            self._persistence.load_chunk_execution, binding.lease
-        )
-        binding.state = state
+        state = binding.state
+        if state is None:
+            state = await asyncio.to_thread(self._persistence.load_chunk_execution, binding.lease)
+            binding.state = state
         inputs = self._parse_input(state.task_input)
         asr = inputs.parse_config.models.asr
         return ChunkExecution(
@@ -2006,7 +2017,7 @@ class VideoParseRuntimeService:
                 schema_name=schema_name, result_type=result_type,
                 tools=tools,
                 context_checkpoint=canvas.checkpoint if canvas is not None else None,
-                check_control=manager.check_active if manager is not None else None,
+                check_control=manager.raise_if_cancelled if manager is not None else None,
                 fallback_inputs=fallback_inputs,
                 tool_harness=tool_harness,
             )
@@ -2014,7 +2025,7 @@ class VideoParseRuntimeService:
             self._invoke_multimodal, binding, inputs,
             schema_name=schema_name, result_type=result_type,
             fallback_inputs=fallback_inputs,
-            check_control=manager.check_active if manager is not None else None,
+            check_control=manager.raise_if_cancelled if manager is not None else None,
         )
 
     async def _generate_text_structured(
@@ -2087,6 +2098,7 @@ class VideoParseRuntimeService:
         check_active: Callable[[], None],
         index_generation: int,
         lease: ChunkParseLease | None = None,
+        frozen_target: dict[str, object] | None = None,
     ) -> tuple[VideoParseIndexCoordinator, EmbeddingModel]:
         embedding = inputs.parse_config.models.embedding
         definition = EmbeddingModelBinding.model_validate(embedding.model_dump(exclude_none=True))
@@ -2119,12 +2131,14 @@ class VideoParseRuntimeService:
                     raise ValueError("task encoder differs from the configured Event index")
                 configured = {"index_name": self._event_store.index_name,
                               "contract_id": event_contract.contract_id, "contract": event_contract.as_dict()}
-                frozen = self._persistence.bind_event_index_target(lease, configured)
+                frozen = (frozen_target if frozen_target is not None
+                          else self._persistence.bind_event_index_target(lease, configured))
                 accepted = EventIndexingContract.model_validate(frozen["contract"])
                 if (accepted.semantic_encoder != event_contract.semantic_encoder
                         or accepted.vision_encoder != event_contract.vision_encoder):
                     raise ValueError("Event encoder differs from the frozen task target")
                 event_options = {"event_store": self._event_store, "event_target": frozen}
+            manager = self._model_manager.get()
             coordinator = VideoParseIndexCoordinator(
                 self._persistence,
                 self._elasticsearch_store,
@@ -2132,6 +2146,7 @@ class VideoParseRuntimeService:
                 media_resolver=self._artifact_store.resolve,
                 media_service=self._media_service,
                 check_active=check_active,
+                check_cancelled=manager.raise_if_cancelled if manager is not None else check_active,
                 **event_options,
                 contract=ChunkIndexingContract(
                     retrieval_contract_id=PARSE_RETRIEVAL_CONTRACT,
