@@ -2,7 +2,7 @@
   display: flex;
   width: 100%;
   max-width: 1840px;
-  height: calc(100dvh - var(--app-header-height, 76px));
+  height: calc(100dvh - var(--app-header-height, 64px));
   min-height: 0;
   flex-direction: column;
   padding-bottom: 26px;
@@ -157,6 +157,7 @@
 .attachmentUnavailable { display: grid; min-height: 90px; gap: 6px; align-content: center; padding: 14px; color: var(--ink-soft); border: 1px dashed var(--line-strong); border-radius: 10px; font-size: .75rem; }
 .attachmentUnavailable small { font-size: .65rem; }
 .scopePicker { position: relative; }
+.scopeEmpty { min-width: 0; color: var(--ink-soft); font-size: .75rem; line-height: 1.45; overflow-wrap: anywhere; }
 .scopePicker summary { display: flex; min-height: 34px; align-items: center; gap: 10px; padding: 0 12px; color: var(--ink-soft); border-radius: 10px; cursor: pointer; list-style: none; background: var(--surface); font-size: .74rem; }
 .scopePicker summary::-webkit-details-marker { display: none; }
 .scopePicker summary:hover, .scopePicker[open] summary { color: var(--ink); background: var(--surface-muted); }
@@ -586,14 +587,14 @@
 
 @media (max-width: 1100px) {
   .withEvidence { grid-template-columns: minmax(0, 1fr); }
-  .evidenceColumn { position: fixed; z-index: 35; top: calc(var(--app-header-height, 76px) + 12px); right: 20px; bottom: 28px; width: min(440px, calc(100vw - 40px)); box-shadow: var(--shadow); }
+  .evidenceColumn { position: fixed; z-index: 35; top: calc(var(--app-header-height, 64px) + 12px); right: 20px; bottom: 28px; width: min(440px, calc(100vw - 40px)); box-shadow: var(--shadow); }
 }
 
 @media (max-width: 760px) {
   .candidate, .candidateSelected { grid-template-columns: 96px minmax(0, 1fr); gap: 6px 10px; padding: 12px; }
   .videoCard { gap: 10px; }
   :is(.videoCardThumb, .videoCardThumbImg, .videoCardThumbFallback) { flex-basis: 96px; width: 96px; height: 54px; }
-  .page { height: calc(100dvh - var(--app-header-height, 76px)); padding: 20px 18px 24px; }
+  .page { height: calc(100dvh - var(--app-header-height, 64px)); padding: 20px 18px 24px; }
   .pageHeader { min-height: 30px; align-items: flex-start; margin-bottom: 12px; }
   .chatHeading { display: grid; gap: 2px; }
   .page:not(.embeddedPage) .chatTitle { display: none; }
@@ -602,7 +603,7 @@
   .conversationPicker > summary span, .newConversation span { display: none; }
   .conversationPicker > summary, .newConversation { width: 44px; min-height: 44px; justify-content: center; padding: 0; }
   .conversationPicker > summary svg:last-child { display: none; }
-  .conversationMenu { position: fixed; top: calc(var(--app-header-height, 76px) + 12px); right: 12px; bottom: 12px; left: 12px; width: auto; max-height: none; }
+  .conversationMenu { position: fixed; top: calc(var(--app-header-height, 64px) + 12px); right: 12px; bottom: 12px; left: 12px; width: auto; max-height: none; }
   .conversationMenuClose, .deleteConversation { width: 44px; height: 44px; }
   .conversationList > li { grid-template-columns: minmax(0, 1fr) 44px; }
   .deleteConfirmation button { min-height: 44px; padding-inline: 13px; }
@@ -625,7 +626,7 @@
   .answerSettings { position: fixed; right: 12px; bottom: 24px; left: 12px; width: auto; max-width: none; }
   .keyboardHint { display: none; }
   .candidateList { grid-template-columns: minmax(0, 1fr); }
-  .evidenceColumn { top: calc(var(--app-header-height, 76px) + 12px); right: 12px; bottom: 24px; left: 12px; width: auto; }
+  .evidenceColumn { top: calc(var(--app-header-height, 64px) + 12px); right: 12px; bottom: 24px; left: 12px; width: auto; }
   .playerHeading { padding: 16px 18px; }
   .clipControls { grid-template-columns: 44px minmax(0, 1fr); padding-inline: 10px; }
   .clipTime { grid-column: 2; margin-top: -14px; text-align: left; }
@@ -681,6 +682,7 @@
 .embeddedPage .composer textarea { min-height: 38px; max-height: 130px; font-size: .82rem; line-height: 1.5; }
 .embeddedPage .composerToolbar { position: relative; min-height: 30px; align-items: center; gap: 6px; margin-top: 0; }
 .embeddedPage .composerControls { min-width: 0; flex: 1; flex-wrap: nowrap; gap: 2px; }
+.embeddedPage .composerControls:has(.scopeEmpty) { flex-wrap: wrap; column-gap: 6px; }
 .embeddedPage .addAttachment, .embeddedPage .sendButton { width: 30px; height: 30px; padding: 0; }
 .embeddedPage .addAttachment svg { width: 18px; height: 18px; }
 .embeddedPage .composerControls > .scopePicker { min-width: 0; max-width: 100%; flex: 0 1 auto; }

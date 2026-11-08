@@ -103,6 +103,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 独立对话页布局 | [chat-sidebar-layout-trd.md](03-product-reassessment/chat-sidebar-layout-trd.md) | 左侧历史、居中草稿、简洁输入栏；依赖 #66，状态见工作台 CHAT-LAYOUT-01。 |
+| 聊天页顶栏与公开范围 | [chat-header-scope-trd.md](03-product-reassessment/chat-header-scope-trd.md) | 紧凑的 Seekino 字标导航、公开系列空态及 CPU 侧栏实测。 |
 | 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 本机或 cloud 管理员编辑 YAML 中的协议、地址和模型，聊天按会话选模。 |
 | 模型注册与用途 | [model-registry-roles-trd.md](03-product-reassessment/model-registry-roles-trd.md) | 具名连接、按模型登记能力、六个用途的 YAML 绑定与权限。 |
 | 设置工作区 | [settings-workspace-trd.md](03-product-reassessment/settings-workspace-trd.md) | 分类设置、保留聊天草稿、共享 Kino 偏好及 Flash 与 Pro 同题对照。 |

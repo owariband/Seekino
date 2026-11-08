@@ -21,7 +21,6 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
 import { FOCUS_SEARCH_EVENT, loadConversations } from "../features/search/conversationNavigation";
 import { useUploads } from "../features/uploads/UploadProvider";
-import { useAssistantBusy } from "../shared/assistantActivity";
 import { Mascot } from "../shared/Mascot";
 import { useAuth } from "../features/auth/AuthProvider";
 import { errorMessage } from "../api/client";
@@ -102,7 +101,6 @@ export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
-  const assistantBusy = useAssistantBusy();
   const { activeCount, overallProgress, openDialog } = useUploads();
   const { accountIdentity, canUpload, canManage, openLogin, sources, selectSource, scopeKey } = useAuth();
   const conversationList = useQuery({
@@ -169,7 +167,6 @@ export function AppShell() {
           <Menu size={22} aria-hidden="true" />
         </button>
         <NavLink className={styles.brand} to="/watch" aria-label={t("Seekino 首页")}>
-          <Mascot className={styles.brandMark} mood={assistantBusy ? "seek" : "hop"} size={40} />
           <strong>Seek<span className={styles.brandI}>i</span>no</strong>
         </NavLink>
         <nav className={styles.navigation} aria-label={t("主导航")}>
@@ -220,7 +217,7 @@ export function AppShell() {
         {mobileMenuOpen ? <div className={styles.drawerContent}>
           <header className={styles.drawerHeader}>
             <NavLink className={styles.brand} to="/watch" aria-label={t("Seekino 首页")} onClick={closeMobileMenu}>
-              <Mascot className={styles.brandMark} size={32} /><strong>Seek<span className={styles.brandI}>i</span>no</strong>
+              <strong>Seek<span className={styles.brandI}>i</span>no</strong>
             </NavLink>
             <button className={styles.iconButton} type="button" onClick={closeMobileMenu} aria-label={t("关闭侧边栏")}><X size={20} aria-hidden="true" /></button>
           </header>
