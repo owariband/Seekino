@@ -321,7 +321,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const { t, locale, formatLocale } = useI18n();
   const localeRef = useRef(locale);
   localeRef.current = locale;
-  const { mode, displayMode, series: workspaceSeries, isLoading: workspaceLoading } = useWorkspace();
+  const { mode, displayMode, series: workspaceSeries, isLoading: workspaceLoading, error: workspaceError } = useWorkspace();
   const series = suppliedSeries ? [suppliedSeries, ...workspaceSeries.filter((item) => item.seriesId !== suppliedSeries.seriesId
     && (!captureExtraContext || item.tenantId === suppliedSeries.tenantId))] : workspaceSeries;
   const { canConfigure, canManage, activeSource, scopeKey } = useAuth();
@@ -400,6 +400,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     setSidebarResizing(false);
   }, [compactLayout, sidebarOpen]);
   const scopePickerRef = useRef<HTMLDetailsElement>(null);
+  const scopeStatusId = useId();
   const answerSettingsRef = useRef<HTMLDetailsElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -487,6 +488,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     composerRef.current?.form?.requestSubmit();
   }, [query]);
   const isSearchable = (status: string) => status === "READY";
+  const emptyPublicScope = requiresExplicitScope && mode === "live" && !workspaceLoading && !workspaceError
+    && !series.some((item) => isSearchable(item.status));
   const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
   const sourceTenantId = series.find((item) => item.seriesId === selectedSeriesIds[0])?.tenantId;
   const referenceMessage = reference ? messages.find((message) => message.messageId === reference.messageId) : null;
@@ -874,38 +877,48 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       composerRef.current?.focus();
     }} />
   </>;
-  const scopePicker = <details
-    className={styles.scopePicker}
-    ref={scopePickerRef}
-    onToggle={(event) => {
-      if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
-    }}
-  >
-    <summary aria-label={t("选择检索视频系列")}><span>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
-      ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? t("已选 1 个系列")
-      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}</span><ChevronDown size={13} aria-hidden="true" /></summary>
-    <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
-      {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
-      {series.map((item) => (
-        <label key={item.seriesId}>
-          <input
-            type="checkbox"
-            checked={selectedSeriesIds.includes(item.seriesId)}
-            disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
-            onChange={(event) => {
-              scopeTouchedRef.current = true;
-              setSelectedSeriesIds((current) => event.target.checked
-                ? [...current.filter((id) => series.some((candidate) => candidate.seriesId === id && candidate.tenantId === item.tenantId)), item.seriesId]
-                : current.filter((id) => id !== item.seriesId));
-            }}
-          />
-          <span>{item.name}</span>
-          <small>{isSearchable(item.status) ? t("{value0} 个视频可检索", { value0: item.readyVideoCount }) : t("暂不可检索")}</small>
-        </label>
-      ))}
-      {!series.length ? <p>{t("资料库还没有视频系列")}</p> : null}
-    </div>
-  </details>;
+  const namedSeries = (embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
+    ? series.find((item) => item.seriesId === selectedSeriesIds[0])
+    : undefined;
+  const scopeLabel = selectedSeriesIds.length
+    ? namedSeries?.name ?? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length })
+    : requiresExplicitScope ? t(emptyPublicScope ? "公开系列" : "请选择要检索的公开系列") : t("全部视频系列");
+  const scopePicker = <>
+    <details
+      className={styles.scopePicker}
+      ref={scopePickerRef}
+      onToggle={(event) => {
+        if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
+      }}
+    >
+      <summary aria-label={t("选择检索视频系列")} aria-describedby={emptyPublicScope ? scopeStatusId : undefined}>
+        <span>{scopeLabel}</span>
+        <ChevronDown size={13} aria-hidden="true" />
+      </summary>
+      <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
+        {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
+        {series.map((item) => (
+          <label key={item.seriesId}>
+            <input
+              type="checkbox"
+              checked={selectedSeriesIds.includes(item.seriesId)}
+              disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
+              onChange={(event) => {
+                scopeTouchedRef.current = true;
+                setSelectedSeriesIds((current) => event.target.checked
+                  ? [...current.filter((id) => series.some((candidate) => candidate.seriesId === id && candidate.tenantId === item.tenantId)), item.seriesId]
+                  : current.filter((id) => id !== item.seriesId));
+              }}
+            />
+            <span>{item.name}</span>
+            <small>{isSearchable(item.status) ? t("{value0} 个视频可检索", { value0: item.readyVideoCount }) : t("暂不可检索")}</small>
+          </label>
+        ))}
+        {!series.length && !workspaceError && <p>{t(workspaceLoading ? "正在读取视频系列…" : "资料库还没有视频系列")}</p>}
+      </div>
+    </details>
+    {emptyPublicScope && <span id={scopeStatusId} className={styles.scopeEmpty} role="status">{t("暂无可体验的公开系列")}</span>}
+  </>;
   const answerSettingsPicker = displayMode === "debug" ? <details
     className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
     ref={answerSettingsRef}
@@ -1211,7 +1224,11 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             ) : null}
             <p className={styles.keyboardHint}>{t("Enter 发送 · Shift + Enter 换行")}</p>
             {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
-            {(!scopeValid || !referenceScopeValid) && !workspaceLoading ? <p className={styles.messageError} role="alert">{t(requiresExplicitScope && !series.some((item) => isSearchable(item.status)) ? "暂无可体验的公开系列" : "所选视频系列暂不可检索，请重新选择范围。")}</p> : null}
+            {!workspaceLoading && ((!scopeValid && !emptyPublicScope) || !referenceScopeValid) ? <p className={styles.messageError} role="alert">
+              {workspaceError && !series.length
+                ? t("读取视频系列失败：{message}", { message: errorMessage(workspaceError, locale) })
+                : t("所选视频系列暂不可检索，请重新选择范围。")}
+            </p> : null}
             {embedded && initialSeriesId && !workspaceLoading && initialSeries?.status !== "READY" ? (
               <p className={styles.scopeNotice} role="status">
                 <span className={styles.scopeChip}>{t("检索范围：")}{selectedSeriesIds.length ? selectedSeriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join(locale === "en" ? ", " : "、") : t("全部系列")}</span>

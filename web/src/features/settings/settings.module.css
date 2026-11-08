@@ -46,7 +46,7 @@
 
 .rail {
   position: sticky;
-  top: calc(var(--app-header-height, 76px) + 24px);
+  top: calc(var(--app-header-height, 64px) + 24px);
   min-width: 0;
   padding-inline-end: clamp(12px, 1.7vw, 24px);
   border-inline-end: 1px solid var(--line);

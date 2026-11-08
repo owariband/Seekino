@@ -97,6 +97,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 - [任务历史版本筛选](task-history-filter-trd.md)：2026-10-30，默认当前版本、历史追溯与操作权限说明。
 
 - [独立对话页布局](chat-sidebar-layout-trd.md)：左侧历史与居中草稿，状态见[工作台](../../dev/workbench.html) CHAT-LAYOUT-01。
+- [聊天页顶栏与公开范围](chat-header-scope-trd.md)，2026-11-08。游客视角下的紧凑导航、选择器空态与独立聊天侧栏。
 - [个人模型服务](personal-model-connections-trd.md) 记录生效 YAML 的管理接口、凭证掩码、cloud 权限和会话选模。依赖设置工作区 #72。
 - [模型注册与用途](model-registry-roles-trd.md) 延伸 #74，将同一组注册模型接入聊天、解析和检索。
 - [设置工作区](settings-workspace-trd.md) 记录会话内打开设置、设备偏好、管理员配置和设计样稿对照。
