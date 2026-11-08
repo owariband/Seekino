@@ -1,4 +1,4 @@
-import { Cable, ChevronDown, Plus } from "lucide-react";
+import { AudioLines, Cable, ChevronRight, Layers, Pencil, Plus, SquareTerminal, Trash2, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError, errorMessage, getPersonalModelSettings, removePersonalModelConnection,
   savePersonalModelConnection, saveModelRole, testPersonalModelConnection } from "../../api/client";
@@ -13,17 +13,17 @@ import { ModelRoleSettings } from "./ModelRoleSettings";
 import { chatConnections } from "./usePersonalChatModels";
 import styles from "./personal.module.css";
 
-type SectionProps = { section?: "services" | "roles"; openServices?: () => void };
-export function AnswerModelSettings({ active, section = "services", openServices }: SectionProps & { active: boolean }) {
+type SectionProps = { section?: "services" | "roles" };
+export function AnswerModelSettings({ active, section = "services" }: SectionProps & { active: boolean }) {
   const { scopeKey, canConfigure } = useAuth();
   const { mode } = useWorkspace();
   const { t } = useI18n();
   if (!active || !canConfigure) return null;
   if (mode !== "live") return <p role="status" className={styles.feedback}>{t(mode === "offline" ? "当前资料连接不可用。" : "正在连接…")}</p>;
-  return <ConnectionSettings key={`${scopeKey}:${section}`} section={section} openServices={openServices} />;
+  return <ConnectionSettings key={`${scopeKey}:${section}`} section={section} />;
 }
 
-function ConnectionSettings({ section, openServices }: SectionProps) {
+function ConnectionSettings({ section }: SectionProps) {
   const { t, locale } = useI18n();
   const chat = useActiveChatSettings();
   const [settings, setSettings] = useState<PersonalModelSettings | null>(null);
@@ -101,7 +101,7 @@ function ConnectionSettings({ section, openServices }: SectionProps) {
             saved(value); setExpanded(undefined); setFeedback(t("已删除连接")); if (!value.connections.length) setEdit(null);
           })} test={(model) => void action((signal) => testPersonalModelConnection(c.connectionId, model, signal), () => setFeedback(t("已收到模型回复")))} />)}</div>
       </>)}
-      {section === "roles" && <ModelRoleSettings settings={settings} busy={busy} openServices={openServices}
+      {section === "roles" && <ModelRoleSettings settings={settings} busy={busy}
         choose={(role, id) => {
           if (settings.revision === undefined) return;
           void action((signal) => saveModelRole(role, id, settings.revision!, signal), (next) => {
@@ -119,6 +119,13 @@ function ConnectionSettings({ section, openServices }: SectionProps) {
   </div>;
 }
 
+const protocolIcons: Partial<Record<PersonalModelConnection["protocol"], LucideIcon>> = {
+  openai_audio: AudioLines, whisperx: AudioLines,
+  ollama_embedding: Layers, llama_cpp_embedding: Layers,
+  pyannote: AudioLines, campplus: AudioLines,
+  codex: SquareTerminal, claude_sdk: SquareTerminal,
+};
+
 function ConnectionCard({ connection: c, expanded, toggle, busy, edit, remove, test }: {
   expanded: boolean; toggle: (open: boolean) => void;
   connection: PersonalModelConnection; busy: boolean; edit: () => void; remove: () => void; test: (model: string) => void;
@@ -130,12 +137,19 @@ function ConnectionCard({ connection: c, expanded, toggle, busy, edit, remove, t
   const selected = testModels.find((m) => m.id === choice) ?? testModels.find((m) => m.available !== false) ?? testModels[0];
   const editable = c.editable ?? c.protocol !== "codex";
   const hasCredentials = c.hasApiKey || ["openai_chat", "openai_responses", "anthropic_messages", "gemini", "ark", "openai_audio"].includes(c.protocol);
-  return <article className={styles.card} data-expanded={expanded}>
-    <h4 className={styles.connectionTitle}><button className={styles.disclosure} type="button" aria-label={c.name}
+  const nameId = `service-name-${c.connectionId}`;
+  const protocolId = `service-protocol-${c.connectionId}`;
+  const countId = `service-count-${c.connectionId}`;
+  const Icon = protocolIcons[c.protocol] ?? Cable;
+  return <article className={styles.card}>
+    <h4 className={styles.connectionTitle} aria-labelledby={nameId}><button className={styles.disclosure} type="button"
+      aria-labelledby={nameId} aria-describedby={`${protocolId} ${countId}`}
       aria-expanded={expanded} aria-controls={`models-${c.connectionId}`} onClick={() => { setConfirm(false); toggle(!expanded); }}>
-      <Cable size={17} aria-hidden="true" /><span>{c.name}</span>
-      <small aria-hidden="true">{t(protocolName(c.protocol))} · {t("{n} 个模型", { n: c.models.length })}</small>
-      <ChevronDown className={styles.chevron} size={16} aria-hidden="true" />
+      <span className={styles.serviceIcon}><Icon size={17} aria-hidden="true" /></span>
+      <span id={nameId} className={styles.serviceName}>{c.name}</span>
+      <small id={protocolId} className={styles.protocol}>{t(protocolName(c.protocol))}</small>
+      <small id={countId} className={styles.count}>{t("{n} 个模型", { n: c.models.length })}</small>
+      <ChevronRight className={styles.chevron} size={16} aria-hidden="true" />
     </button></h4>
     <div className={styles.serviceDetails} id={`models-${c.connectionId}`} hidden={!expanded}>
     <div className={styles.endpointLine}>
@@ -159,8 +173,8 @@ function ConnectionCard({ connection: c, expanded, toggle, busy, edit, remove, t
         {!editable && !["campplus", "pyannote"].includes(c.protocol) &&
           <button type="button" className={styles.button} disabled={busy} onClick={edit}>{t("管理模型")}</button>}
         {editable && <>
-          <button type="button" className={styles.button} disabled={busy} onClick={edit}>{t("编辑")}</button>
-          <button type="button" className={styles.button} disabled={busy} onClick={() => setConfirm(true)}>{t("删除")}</button>
+          <button type="button" className={styles.button} disabled={busy} onClick={edit}><Pencil size={13} aria-hidden="true" />{t("编辑")}</button>
+          <button type="button" className={styles.remove} disabled={busy} onClick={() => setConfirm(true)}><Trash2 size={13} aria-hidden="true" />{t("删除")}</button>
         </>}
       </div>
     </div>

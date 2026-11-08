@@ -71,7 +71,8 @@ it("offers compatible registrations per role and saves the selected service with
   const visual = { id: "visual:batch", modelId: "same-name", roles: ["vision", "ocr"] as ("vision"|"ocr")[] };
   const audio = { id: "audio:only", modelId: "speech-only", roles: ["transcription"] as "transcription"[] };
   const before: PersonalModelSettings = {
-    defaultModelId: "default", revision: 41, connections: [{ ...yamlConnection, models: [visual, audio] }],
+    defaultModelId: "default", revision: 41, connections: [{ ...yamlConnection, models: [visual, audio] },
+      { ...yamlConnection, connectionId: "studio", name: "Studio", models: [{ ...visual, id: "visual:studio" }] }],
     roles: [{ role: "vision", modelId: null, overridden: false, activation: "restart" },
       { role: "transcription", modelId: audio.id, overridden: false, activation: "restart" }],
   };
@@ -81,9 +82,12 @@ it("offers compatible registrations per role and saves the selected service with
   render(<AnswerModelSettings active section="roles" />);
   const picker = await screen.findByRole("combobox", { name: "画面理解" });
   expect(within(picker).queryByText(/speech-only/)).toBeNull();
+  expect(within(picker).getAllByRole("option", { name: visual.modelId })).toHaveLength(2);
+  expect(screen.getByRole("combobox", { name: "语音转写" })).toHaveAccessibleDescription("原配置 · home_proxy");
   await userEvent.selectOptions(picker, visual.id);
   expect(set).toHaveBeenCalledWith("vision", visual.id, 41, expect.any(AbortSignal));
   await waitFor(() => expect(picker).toHaveValue(visual.id));
+  expect(picker).toHaveAccessibleDescription("home_proxy");
   await userEvent.selectOptions(picker, "");
   expect(set).toHaveBeenLastCalledWith("vision", null, 42, expect.any(AbortSignal));
 });

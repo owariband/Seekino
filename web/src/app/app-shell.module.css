@@ -251,5 +251,24 @@
   .brandI { background: none; -webkit-text-fill-color: currentColor; }
 }
 
-.settingsOverlay { position: fixed; inset: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; overflow: auto; overscroll-behavior: contain; color: var(--ink); background: var(--canvas); border: 0; }
-.settingsOverlay::backdrop { background: var(--canvas); }
+.settingsOverlay {
+  position: fixed;
+  inset: 0;
+  width: min(1024px, calc(100% - 48px));
+  height: min(800px, calc(100dvh - 64px));
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-large);
+  background: var(--canvas);
+  box-shadow: var(--shadow);
+}
+.settingsOverlay::backdrop { background: rgb(9 22 19 / 56%); }
+@media (max-width: 760px) {
+  .settingsOverlay { width: 100%; height: 100dvh; overflow: auto; border: 0; border-radius: 0; }
+}

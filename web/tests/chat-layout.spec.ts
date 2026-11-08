@@ -36,7 +36,16 @@ test("opens settings above the draft, edits its model and returns to the same te
   await page.getByRole("link", { name: "回答模型设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置", exact: true });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("combobox", { name: "当前对话模型" }).selectOption("personal:test-second");
+  const bounds = (await dialog.boundingBox())!;
+  expect(bounds.x).toBeGreaterThan(0);
+  expect(bounds.y).toBeGreaterThan(0);
+  const model = dialog.getByRole("combobox", { name: "当前对话模型" });
+  await model.click();
+  await expect.poll(() => model.evaluate((select) => select.matches(":open"))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => model.evaluate((select) => select.matches(":open"))).toBe(false);
+  await model.selectOption("personal:test-second");
   await dialog.getByRole("button", { name: "观看与 Kino" }).click();
   const delay = dialog.getByRole("spinbutton");
   await delay.fill("1.5");
@@ -76,6 +85,28 @@ test("opens a standalone mobile settings directory with authentic device prefere
   await expect(page.getByRole("textbox", { name: "模型 ID", exact: true })).toHaveValue("");
   await expect(page.getByRole("button", { name: "保存连接" })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+});
+
+test("opens a narrow-screen assignment menu wide enough to read the model and source", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  const source = configuredModels.connections[0]!;
+  const model = { ...source.models[0]!, modelId: "team/long-embedding-variant", roles: ["embedding"] };
+  await page.route("**/api/agent/model-connections", (route) => route.fulfill({ json: {
+    ...configuredModels, connections: [{ ...source, models: [model] }],
+    roles: [{ role: "embedding", modelId: model.id, overridden: false, activation: "reindex" }],
+  } }));
+  await page.goto("/settings?section=model-roles");
+  const picker = page.getByRole("combobox", { name: "索引向量" });
+  await expect(picker).toHaveAccessibleDescription("原配置 · My API");
+  await picker.click();
+  const option = picker.getByRole("option", { name: model.modelId, exact: true });
+  await expect(option).toBeVisible();
+  const bounds = (await option.boundingBox())!;
+  expect(bounds.width).toBeGreaterThan(240);
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+  await page.keyboard.press("Escape");
+  await expect(picker).toHaveValue("");
 });
 
 test("keeps a bounded centered draft and an independently collapsible history rail", async ({ page }, testInfo) => {

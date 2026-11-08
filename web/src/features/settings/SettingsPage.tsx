@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  ArrowUpRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -63,25 +64,26 @@ function SectionShell({
   definition,
   hidden,
   headingRef,
+  action,
   children,
 }: {
   definition: SettingsSectionDefinition;
   hidden: boolean;
   headingRef: (node: HTMLHeadingElement | null) => void;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   const { t } = useI18n();
-  const Icon = definition.icon;
   return (
     <section className={styles.panel} hidden={hidden} aria-labelledby={`settings-${definition.id}-heading`}>
       <header className={styles.panelHeader}>
-        <span className={styles.panelIcon}><Icon size={18} aria-hidden="true" /></span>
         <div className={styles.panelHeadingText}>
           <h2 id={`settings-${definition.id}-heading`} className={styles.panelHeading} tabIndex={-1} ref={headingRef}>
             {t(definition.label)}
           </h2>
           <p className={styles.panelDescription}>{t(definition.description)}</p>
         </div>
+        {action}
       </header>
       {children}
     </section>
@@ -350,33 +352,33 @@ export function SettingsPage({ onClose }: { onClose?: () => void } = {}) {
   const Root = onClose ? "div" : "main";
   return (
     <Root className={`page ${styles.page}`}>
-      <header className={styles.header}>
-        <h1 className={styles.title}>{t("设置")}</h1>
-        {onClose ? <button className={styles.closeButton} type="button" onClick={onClose} aria-label={t("关闭设置")} title={t("关闭设置")}>
-          <X size={20} aria-hidden="true" />
-        </button> : null}
-      </header>
+      {onClose ? <button className={styles.closeButton} type="button" onClick={onClose} aria-label={t("关闭设置")} title={t("关闭设置")}>
+        <X size={20} aria-hidden="true" />
+      </button> : null}
 
       <div className={styles.workspace} data-mobile-view={section ? "detail" : "directory"}>
-        <nav className={styles.navigation} aria-label={t("设置分类")} hidden={compact && section !== null}>
-          <h2 className={styles.navHeading} ref={directoryHeadingRef} tabIndex={-1}>{t("设置分类")}</h2>
-          <div className={styles.navList}>
-            {visibleSections.map((definition) => {
-              const Icon = definition.icon;
-              const active = section === definition.id;
-              return <button className={styles.navItem} key={definition.id} type="button"
-                aria-label={t(definition.label)} aria-current={active ? "page" : undefined}
-                onClick={() => openSection(definition.id)}>
-                <Icon className={styles.navIcon} size={18} aria-hidden="true" />
-                <span className={styles.navText}>
-                  <span className={styles.navLabel}>{t(definition.label)}</span>
-                  <span className={styles.navSummary}>{t(definition.summary)}</span>
-                </span>
-                <ChevronRight className={styles.navChevron} size={16} aria-hidden="true" />
-              </button>;
-            })}
-          </div>
-        </nav>
+        <div className={styles.rail}>
+          <h1 className={styles.title}>{t("设置")}</h1>
+          <nav className={styles.navigation} aria-label={t("设置分类")} hidden={compact && section !== null}>
+            <h2 className={styles.navHeading} ref={directoryHeadingRef} tabIndex={-1}>{t("设置分类")}</h2>
+            <div className={styles.navList}>
+              {visibleSections.map((definition) => {
+                const Icon = definition.icon;
+                const active = section === definition.id;
+                return <button className={styles.navItem} key={definition.id} type="button"
+                  aria-label={t(definition.label)} aria-current={active ? "page" : undefined}
+                  onClick={() => openSection(definition.id)}>
+                  <Icon className={styles.navIcon} size={18} aria-hidden="true" />
+                  <span className={styles.navText}>
+                    <span className={styles.navLabel}>{t(definition.label)}</span>
+                    <span className={styles.navSummary}>{t(definition.summary)}</span>
+                  </span>
+                  <ChevronRight className={styles.navChevron} size={16} aria-hidden="true" />
+                </button>;
+              })}
+            </div>
+          </nav>
+        </div>
 
         <div className={styles.detail} hidden={compact && section === null}>
           {compact && section ? <div className={styles.backRow}>
@@ -394,8 +396,11 @@ export function SettingsPage({ onClose }: { onClose?: () => void } = {}) {
           {showModels ? <SectionShell definition={definitionFor("models")} hidden={section !== "models"} headingRef={headingRef("models")}>
             <AnswerModelSettings active={section === "models"} />
           </SectionShell> : null}
-          {showModels ? <SectionShell definition={definitionFor("model-roles")} hidden={section !== "model-roles"} headingRef={headingRef("model-roles")}>
-            <AnswerModelSettings active={section === "model-roles"} section="roles" openServices={() => openSection("models")} />
+          {showModels ? <SectionShell definition={definitionFor("model-roles")} hidden={section !== "model-roles"} headingRef={headingRef("model-roles")}
+            action={<button type="button" className={styles.sectionLink} onClick={() => openSection("models")}>
+              {t("管理模型服务")}<ArrowUpRight size={15} aria-hidden="true" />
+            </button>}>
+            <AnswerModelSettings active={section === "model-roles"} section="roles" />
           </SectionShell> : null}
           <SectionShell definition={definitionFor("connection")} hidden={section !== "connection"} headingRef={headingRef("connection")}>
             <ConnectionContent showDebug={showAgent} />
