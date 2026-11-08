@@ -56,7 +56,7 @@ from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
 from server.service.agent_chat import (
-    AgentAttachmentInputUnavailableError, AgentChatService, _validated_stored_video_range,
+    AgentAttachmentInputUnavailableError, AgentChatService, ChatModelChoice, _validated_stored_video_range,
 )
 from server.service.library import LibraryService
 
@@ -685,6 +685,40 @@ def test_server_deltas_before_tools_and_text_of_next_model_call(build_service):
     boundary = next(i for i, e in enumerate(events) if e["type"] == "answer.model.completed")
     assert events[boundary + 1]["type"] == "answer.snapshot"
     assert events[boundary + 1]["assistantMessage"]["content"] == "我先查一下。"
+
+
+def test_retry_snapshot_survives_reload_until_last_call_recovers(build_service):
+    from gateway.model_events import emit_model_retry
+
+    entered, release = Event(), Event()
+
+    class RetryingSupervisor(_DirectSupervisorModel):
+        def run_agent(self, prompt, **kwargs):
+            emit_model_retry("first", 1, 3)
+            emit_model_retry("second", 1, 3)
+            emit_model_retry("second", 2, 3)
+            emit_model_retry("first", 0, 3)
+            entered.set()
+            assert release.wait(5)
+            emit_model_retry("second", 0, 3)
+            return super().run_agent(prompt, **kwargs)
+
+    service, conversation, *_ = build_service(supervisor_model=RetryingSupervisor())
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default", content="你好",
+        idempotency_key="retry-status", stream=True,
+    )
+    try:
+        assert entered.wait(5)
+        while (event := execution.next_event(timeout=2))["type"] != "answer.snapshot":
+            pass
+        assert event["assistantMessage"]["model_retry"] == {"attempt": 2, "maximum": 3}
+        assert service.list_all_messages(
+            conversation.conversation_id, tenant_id="local-default",
+        )[-1].model_retry == {"attempt": 2, "maximum": 3}
+    finally:
+        release.set()
+    assert not execution.result().assistant_message.model_retry
 
 
 def test_supervisor_prefix_is_readable_before_model_completion_and_survives_disconnect(build_service):
@@ -3930,3 +3964,100 @@ def test_private_conversation_can_use_one_public_source_and_replay_checks_source
             private.conversation_id, tenant_id="personal-tenant", source_tenant_id="another-source",
             owner_user_id="user-A", content="public course question", idempotency_key="source-message",
         )
+
+
+def test_model_selection_is_owned_by_one_conversation_and_freezes_each_answer(build_service):
+    default = _DirectSupervisorModel()
+    alternate = _DirectSupervisorModel()
+    alternate.model_name = "alternate-model"
+
+    def alternative_runtime(config):
+        query = AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical")
+        return _chat_runtime(query, alternate)
+
+    service, first, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"fast": ChatModelChoice("Fast", alternative_runtime)},
+    })
+    create = dict(tenant_id=first.tenant_id, idempotency_key="second-chat", model_id="fast")
+    second = service.create_conversation(**create)
+    changes = dict(tenant_id=second.tenant_id, owner_user_id=second.owner_user_id)
+    assert second.model_id == "fast"
+    assert first.model_id == "default"
+    assert not service.message_options().chat_models
+    with pytest.raises(AgentConversationNotFoundError):
+        service.set_conversation_model(second.conversation_id, tenant_id=second.tenant_id,
+                                       owner_user_id="another-owner", model_id="default")
+    with pytest.raises(ValueError, match="回答模型"):
+        service.set_conversation_model(second.conversation_id, **changes, model_id="unknown")
+    assert _send(service, first).assistant_message.model_name == default.model_name
+    before = _send(service, second)
+    assert before.assistant_message.model_name == alternate.model_name
+    assert alternate.turns[0][0] == second.conversation_id
+    service.set_conversation_model(second.conversation_id, **changes, model_id="default")
+    assert service.get_conversation(second.conversation_id, **changes).model_id == "default"
+    assert _send(service, second).assistant_message.message_id == before.assistant_message.message_id
+    assert _send(service, second, key="next").assistant_message.model_name == default.model_name
+    assert len(alternate.turns) == 1
+    assert len(default.turns) == 2
+    assert service.create_conversation(**create).model_id == "default"
+    with pytest.raises(AgentConflictError):
+        service.create_conversation(**{**create, "model_id": "default"})
+
+
+def test_model_change_between_resolving_and_recording_rejects_the_unstarted_turn(build_service, monkeypatch):
+    default = _DirectSupervisorModel()
+    service, chat, *_ = build_service(supervisor_model=default, service_kwargs={
+        "model_choices": {"alternate": ChatModelChoice("Alternate", lambda _: pytest.fail("unexpected execution"))},
+    })
+    start = service._repository.start_message
+
+    def change_before_insert(**kwargs):
+        service.set_conversation_model(chat.conversation_id, tenant_id=chat.tenant_id,
+                                       owner_user_id=chat.owner_user_id, model_id="alternate")
+        return start(**kwargs)
+
+    monkeypatch.setattr(service._repository, "start_message", change_before_insert)
+    with pytest.raises(AgentConflictError, match="model changed"):
+        _send(service, chat)
+    assert service.get_conversation(chat.conversation_id, tenant_id=chat.tenant_id).message_count == 0
+    assert not default.turns
+
+
+def test_yaml_default_and_next_turn_observe_saved_config_without_changing_other_chats(build_service, yaml_model_settings):
+    from contextlib import contextmanager
+    from server.model.dto.personal_model import PersonalModelConnectionSave
+    store = yaml_model_settings
+    targets = []
+    @contextmanager
+    def build(selection, config):
+        target = selection.target(environ=store.environ)
+        targets.append((target.model_id, target.api_key.get_secret_value()))
+        supervisor = _DirectSupervisorModel()
+        supervisor.model_name = target.model_id
+        runtime = _chat_runtime(AgentRuntime(_QueryModel(), _RetrievalStub().search, retrieval_channel="lexical"), supervisor)
+        try:
+            yield runtime
+        finally:
+            runtime.close()
+
+    service, first, *_ = build_service(service_kwargs={"model_settings": store, "configured_runtime": build})
+    owner = first.owner_user_id
+    initial = store.catalog().new_chat_id()
+    alternate = store.catalog().find("my-alternative")
+    assert service.message_options(owner_user_id=owner).new_chat_model_id == initial
+    store.set_default(alternate.option.id)
+    args = dict(tenant_id=first.tenant_id, idempotency_key="new-inherited")
+    second = service.create_conversation(**args)
+    assert first.model_id == initial and second.model_id == alternate.option.id
+    assert _send(service, first).assistant_message.model_name == "team/home"
+    answered = _send(service, second)
+    assert answered.assistant_message.model_name == "team/alternative"
+    row = store.catalog().connections[alternate.connection.connection_id]
+    store.save(row.connection_id, PersonalModelConnectionSave(name=row.name, protocol=row.protocol, base_url=row.base_url,
+               model_ids=[m.model_id for m in row.models], supports_vision=row.supports_vision, revision=row.revision, api_key="fresh-key"))
+    assert _send(service, second, key="after-save").assistant_message.model_name == "team/alternative"
+    assert targets == [("team/home", "synthetic-private-key"), ("team/alternative", "synthetic-private-key"), ("team/alternative", "fresh-key")]
+    service.set_conversation_model(second.conversation_id, tenant_id=first.tenant_id, owner_user_id=owner, model_id=initial)
+    assert _send(service, second).assistant_message.message_id == answered.assistant_message.message_id
+    assert service.create_conversation(**args).conversation_id == second.conversation_id
+    assert len(targets) == 3

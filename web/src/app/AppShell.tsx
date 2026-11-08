@@ -28,6 +28,7 @@ import { errorMessage } from "../api/client";
 import { useI18n } from "./i18n";
 import { useTheme } from "./theme";
 import { useWorkspace } from "./workspace";
+import { SettingsLink } from "../features/settings/SettingsLink";
 import styles from "./app-shell.module.css";
 
 const navigation = [
@@ -44,7 +45,7 @@ const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigat
 
 export type WatchPanelLayout = { open: boolean; width: number; resizing: boolean };
 
-function AccountControls({ onLogin, mobile = false }: { onLogin: () => void; mobile?: boolean }) {
+function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () => void; onSettings: () => void; mobile?: boolean }) {
   const { t, locale } = useI18n();
   const { theme, toggleTheme } = useTheme();
   const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout, canManage } = useAuth();
@@ -80,7 +81,7 @@ function AccountControls({ onLogin, mobile = false }: { onLogin: () => void; mob
     {error ? <p role="alert">{errorMessage(error.failure, locale)}</p> : null}
     <nav className={styles.accountLinks} aria-label={t("管理")}>
       {canManage ? managementLinks.map(({ to, label, icon: Icon }) => <NavLink key={to} className={styles.accountLink} to={to}><Icon size={17} aria-hidden="true" />{t(label)}</NavLink>) : null}
-      <NavLink className={styles.accountLink} to="/settings"><Settings size={17} aria-hidden="true" />{t("设置")}</NavLink>
+      <SettingsLink className={styles.accountLink} onClick={onSettings}><Settings size={17} aria-hidden="true" />{t("设置")}</SettingsLink>
     </nav>
     <div className={clsx(styles.runtime, styles[`runtime${mode}`])}><i aria-hidden="true" /><span>{t(mode === "live" ? "资料已连接" : mode === "offline" ? "资料连接不可用" : "检查资料连接")}</span></div>
     {mobile ? <button className={clsx(styles.iconButton, styles.accountTheme)} type="button" onClick={toggleTheme}
@@ -136,6 +137,7 @@ export function AppShell() {
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (event.target instanceof Element && event.target.closest("dialog[data-settings-overlay]")) return;
       event.preventDefault();
       if (location.pathname === "/search") window.dispatchEvent(new Event(FOCUS_SEARCH_EVENT));
       else navigate("/search", { state: { focusComposer: true } });
@@ -200,7 +202,8 @@ export function AppShell() {
             <button className={styles.accountTrigger} type="button" ref={avatarRef} onClick={() => setAccountOpen((open) => !open)} aria-label={t("打开账号菜单")} aria-expanded={accountOpen} aria-controls="seekino-account-panel" title={signedIn ? accountIdentity.email || t("我的账号") : t("登录与账号")}>
               <span className={styles.avatar}>{signedIn && accountIdentity.email ? accountIdentity.email.slice(0, 1).toUpperCase() : <UserRound size={21} strokeWidth={1.6} aria-hidden="true" />}</span><ChevronDown size={13} aria-hidden="true" />
             </button>
-            {accountOpen ? <AccountControls onLogin={() => { avatarRef.current?.focus(); setAccountOpen(false); openLogin(); }} /> : null}
+            {accountOpen ? <AccountControls onLogin={() => { avatarRef.current?.focus(); setAccountOpen(false); openLogin(); }}
+              onSettings={() => { avatarRef.current?.focus(); setAccountOpen(false); }} /> : null}
           </div>
         </div>
       </header>
@@ -249,7 +252,7 @@ export function AppShell() {
               <span>{conversation.title}</span>
             </Link>) : <p>{t("还没有可显示的对话。")}</p>}
           </nav>
-          <AccountControls mobile onLogin={() => { closeMobileMenu(); openLogin(); }} />
+          <AccountControls mobile onLogin={() => { closeMobileMenu(); openLogin(); }} onSettings={closeMobileMenu} />
         </div> : null}
       </dialog>
     </div>

@@ -1,6 +1,7 @@
 import { markChatTextRendered } from "../../api/chatDelivery";
-import { ArrowUp, ChevronDown, History, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ChevronDown, History, PanelLeft, PanelLeftClose, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link, useInRouterContext, useLocation, useNavigate } from "react-router";
 import remarkBreaks from "remark-breaks";
@@ -9,7 +10,7 @@ import remarkGfm from "remark-gfm";
 import { useI18n } from "../../app/i18n";
 import { translate, type Locale } from "../../shared/messages";
 import { useWorkspace } from "../../app/workspace";
-import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, mediaUrl, TENANT_ID } from "../../api/client";
+import { deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, mediaUrl, TENANT_ID } from "../../api/client";
 import type { AgentAttachmentView, AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
 import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
@@ -19,6 +20,10 @@ import { PlaybackFrame } from "../player/PlaybackFrame";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { FOCUS_SEARCH_EVENT, loadConversations } from "./conversationNavigation";
+import { containsModel, preferredChatModel, rememberChatModel, savedChatModelId, usePersonalChatModels } from "../settings/usePersonalChatModels";
+import { PersonalModelSelect } from "../settings/PersonalModelSelect";
+import { SettingsLink } from "../settings/SettingsLink";
+import { usePublishChatSettings } from "../settings/activeChatSettings";
 import { explainHit } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
 import { AGENT_ATTACHMENT_ACCEPT, useAgentAttachments } from "./useAgentAttachments";
@@ -26,6 +31,14 @@ import styles from "./search.module.css";
 
 type MessageOptionOverrides = Omit<AgentMessageRunOptions, "topK">;
 type SelectedMessageOptions = Required<MessageOptionOverrides>;
+
+
+const DEFAULT_CHAT_MODEL_ID = "default";
+const SIDEBAR_WIDTH_KEY = "seekino-search-sidebar-width";
+const SIDEBAR_MIN_WIDTH = 176;
+const SIDEBAR_MAX_WIDTH = 440;
+const SIDEBAR_DEFAULT_WIDTH = 248;
+const SIDEBAR_VIEWPORT_RESERVE = 560;
 
 const EXAMPLE_QUESTIONS = ["下雨天有人在门口等待的画面", "乐队第一次站上舞台演出", "两个人在天台吵架的那一段"];
 const EMBEDDED_EXAMPLE_QUESTIONS = ["刚才发生了什么？", "现在画面里的人是谁？", "前面有类似的场景吗？"];
@@ -102,6 +115,19 @@ function storedMessageOptionOverrides(options: AgentMessageOptions): MessageOpti
     return boundedMessageOptionOverrides(previousOverrides, options);
   } catch {
     return {};
+  }
+}
+
+function savedSidebarWidth(): number {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (stored === null || !stored.trim()) return SIDEBAR_DEFAULT_WIDTH;
+    const width = Number(stored);
+    return Number.isFinite(width)
+      ? Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
+      : SIDEBAR_DEFAULT_WIDTH;
+  } catch {
+    return SIDEBAR_DEFAULT_WIDTH;
   }
 }
 
@@ -225,6 +251,13 @@ function ToolRow({ block, message, displayMode }: { block: ToolBlock; message: A
   </div>;
 }
 
+function ModelRetryRow({ retry }: { retry: NonNullable<AgentMessageView["modelRetry"]> }) {
+  const label = `reconnecting ${retry.attempt}/${retry.maximum}`;
+  return <div className={styles.toolCall} role="status" aria-label={label} data-status="inProgress" data-active="true">
+    <div className={styles.toolCallHeading}><span>{label}</span></div>
+  </div>;
+}
+
 function VideoBlockCard({ message, block, hit, displayMode, selected, onOpenVideo, onSelect }: {
   message: AgentMessageView;
   block: VideoBlock;
@@ -291,7 +324,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const { mode, displayMode, series: workspaceSeries, isLoading: workspaceLoading } = useWorkspace();
   const series = suppliedSeries ? [suppliedSeries, ...workspaceSeries.filter((item) => item.seriesId !== suppliedSeries.seriesId
     && (!captureExtraContext || item.tenantId === suppliedSeries.tenantId))] : workspaceSeries;
-  const { canManage, activeSource } = useAuth();
+  const { canConfigure, canManage, activeSource, scopeKey } = useAuth();
+  const optionScope = scopeKey ?? "";
   const requiresExplicitScope = activeSource.kind === "public" || Boolean(suppliedSeries && suppliedSeries.tenantId !== TENANT_ID);
   const inRouter = useInRouterContext();
   const [requestedConversationId, setRequestedConversationId] = useState<string | null>(navigation?.conversationId ?? null);
@@ -300,7 +334,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [conversationListError, setConversationListError] = useState<string | null>(null);
   const [conversationActionError, setConversationActionError] = useState<string | null>(null);
-  const [creatingConversation, setCreatingConversation] = useState(false);
+  const [preparingAttachments, setPreparingAttachments] = useState(false);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [conversationStatus, setConversationStatus] = useState("");
@@ -313,6 +347,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
   const [messageOptionOverrides, setMessageOptionOverrides] = useState<MessageOptionOverrides | null>(null);
   const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
+  const modelCatalog = usePersonalChatModels(optionScope, canConfigure === true && mode === "live");
   const customLoopTurnsRef = useRef(100);
   const messageOptionsRequestRef = useRef(0);
   const messageOptions = messageOptionConfig && messageOptionOverrides
@@ -326,6 +361,44 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const conversationPickerRef = useRef<HTMLDetailsElement>(null);
+  const historyToggleRef = useRef<HTMLButtonElement>(null);
+  const historyDialogRef = useRef<HTMLDialogElement>(null);
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia("(max-width: 900px)").matches);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const maxSidebarWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, viewportWidth - SIDEBAR_VIEWPORT_RESERVE));
+  const visibleSidebarWidth = Math.min(sidebarWidth, maxSidebarWidth);
+  const sidebarStyle = embedded ? undefined : ({ "--history-sidebar-width": `${visibleSidebarWidth}px` } as CSSProperties);
+  useEffect(() => {
+    if (embedded) return;
+    const media = window.matchMedia("(max-width: 900px)");
+    const sync = () => { setCompactLayout(media.matches); setHistoryDrawerOpen(false); };
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, [embedded]);
+  useEffect(() => {
+    if (embedded || !compactLayout || !historyDrawerOpen) return;
+    const dialog = historyDialogRef.current!;
+    dialog.showModal();
+    return () => { dialog.close(); };
+  }, [embedded, compactLayout, historyDrawerOpen]);
+  useEffect(() => {
+    try { window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)); } catch { /* Resizing still works without storage. */ }
+  }, [sidebarWidth]);
+  useEffect(() => {
+    const sync = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+  useEffect(() => {
+    if (!compactLayout && sidebarOpen) return;
+    sidebarDragRef.current = null;
+    setSidebarResizing(false);
+  }, [compactLayout, sidebarOpen]);
   const scopePickerRef = useRef<HTMLDetailsElement>(null);
   const answerSettingsRef = useRef<HTMLDetailsElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
@@ -360,11 +433,50 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
   }, []);
-  const { conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error, clear: clearConversation, send, stop } = useAgentConversation(requestedConversationId);
+  const {
+    conversationId, messages, progress, reasoning, loading, searching, cancelling = false, error,
+    modelId: storedModelId = DEFAULT_CHAT_MODEL_ID, modelSaving = false, modelError = null,
+    clear: clearConversation, ensureConversationId, applyDraftDefault, selectModel, send, stop,
+  } = useAgentConversation(requestedConversationId);
+  const personalSettings = modelCatalog && "settings" in modelCatalog ? modelCatalog.settings : null;
+  const connections = personalSettings?.connections ?? [];
+  // Guests chat through the server's opaque default and never load model connections.
+  const modelId = canConfigure
+    ? (conversationId ? savedChatModelId(connections, storedModelId) : storedModelId)
+    : DEFAULT_CHAT_MODEL_ID;
+  const hasModels = connections.some((connection) => connection.models.some((model) => model.available !== false));
+  const modelSelected = !canConfigure || containsModel(connections, modelId);
+  const modelSelectionInvalid = Boolean(personalSettings && modelId !== DEFAULT_CHAT_MODEL_ID && !modelSelected);
+  const draftModelId = personalSettings ? preferredChatModel(personalSettings) : DEFAULT_CHAT_MODEL_ID;
+  useEffect(() => {
+    if (!personalSettings) return;
+    if (conversationId && modelSelected && !loading && !modelSaving) rememberChatModel(modelId);
+    applyDraftDefault?.(preferredChatModel(personalSettings));
+  }, [applyDraftDefault, personalSettings, conversationId, modelSelected, modelId, modelSaving, loading]);
+  const creatingConversation = preparingAttachments || (searching && !conversationId);
+  usePublishChatSettings(canConfigure === true, { modelId, modelSaving, modelError, selectModel,
+    loading: loading || creatingConversation || mode !== "live" });
   const connecting = searching && !messages.some((message) => message.status === "PROCESSING");
   // Kino perches on the newest assistant bubble and leaps to the next one when a new turn starts.
   const kinoHostId = messages.findLast((message) => message.role === "ASSISTANT")?.messageId ?? null;
   const attachments = useAgentAttachments(conversationId);
+  const [pendingFiles, setPendingFiles] = useState<{ conversationId: string; files: File[] } | null>(null);
+  useEffect(() => {
+    if (!pendingFiles) return;
+    if (pendingFiles.conversationId === conversationId) attachments.addFiles(pendingFiles.files);
+    setPendingFiles(null);
+  }, [pendingFiles, conversationId, attachments.addFiles]);
+  const addFiles = async (files: File[]) => {
+    if (!files.length || !modelSelected || modelSaving) return;
+    if (conversationId) { attachments.addFiles(files); return; }
+    setPreparingAttachments(true);
+    try {
+      const id = await ensureConversationId();
+      if (id) setPendingFiles((current) => ({ conversationId: id, files: [...(current?.conversationId === id ? current.files : []), ...files] }));
+    } finally {
+      setPreparingAttachments(false);
+    }
+  };
   const draftContextRef = useRef({ conversationId, identityKey: identityStorageKey("agent-draft") });
   draftContextRef.current = { conversationId, identityKey: identityStorageKey("agent-draft") };
   useReportAssistantBusy(searching || messages.some((message) => message.status === "PROCESSING"));
@@ -383,8 +495,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     && (!selectedSeriesIds.length || selectedSeriesIds.includes(referenceHit.evidence.seriesId)));
   const scopeValid = (!requiresExplicitScope || selectedSeriesIds.length > 0)
     && selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.tenantId === sourceTenantId && isSearchable(item.status)));
-  const canAttach = Boolean(!loading && conversationId && !deletedConversationIdsRef.current.has(conversationId) && mode === "live");
-  const canSend = Boolean(query.trim() && canAttach && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
+  const canAttach = Boolean(modelSelected && !modelSaving && !loading && (!conversationId || !deletedConversationIdsRef.current.has(conversationId)) && mode === "live");
+  const canSend = Boolean(query.trim() && canAttach && !creatingConversation && !pendingFiles && !searching && scopeValid && referenceScopeValid && attachments.items.every((item) => item.status === "ready"));
 
   useEffect(() => {
     scopeTouchedRef.current = false;
@@ -434,13 +546,17 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
         setMessageOptionConfig(options);
         setMessageOptionsError(null);
       }).catch((failure) => {
-        if (active && requestId === messageOptionsRequestRef.current) setMessageOptionsError(errorMessage(failure, localeRef.current));
+        if (!active || requestId !== messageOptionsRequestRef.current) return;
+        setMessageOptionsError(errorMessage(failure, localeRef.current));
       });
     };
     refresh();
     window.addEventListener("focus", refresh);
-    return () => { active = false; window.removeEventListener("focus", refresh); };
-  }, [displayMode]);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [displayMode, optionScope]);
 
   useEffect(() => {
     if (!messageOptionOverrides) return;
@@ -477,20 +593,20 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
   useEffect(() => {
     const target = focusAfterMutationRef.current;
-    if (target === "composer" && !loading && conversationId) {
+    if (target === "composer" && !loading && !error) {
       focusAfterMutationRef.current = null;
       setConversationStatus(t("对话已打开"));
       composerRef.current?.focus();
-    } else if (target === "composer" && !loading && !conversationId) {
+    } else if (target === "composer" && !loading && error) {
       focusAfterMutationRef.current = null;
       setConversationStatus(error ? t("打开对话失败：{value0}", { value0: error }) : t("打开对话失败"));
       if (conversationFailureRef.current) conversationFailureRef.current.focus();
-      else conversationPickerRef.current?.querySelector<HTMLElement>("summary")?.focus();
+      else (embedded ? conversationPickerRef.current?.querySelector<HTMLElement>("summary") : historyToggleRef.current)?.focus();
     } else if (target === "picker" && !creatingConversation && !deletingConversationId) {
       focusAfterMutationRef.current = null;
-      conversationPickerRef.current?.querySelector<HTMLElement>("summary")?.focus();
+      (embedded ? conversationPickerRef.current?.querySelector<HTMLElement>("summary") : historyToggleRef.current)?.focus();
     }
-  }, [conversationId, creatingConversation, deletingConversationId, error, loading]);
+  }, [conversationId, creatingConversation, deletingConversationId, embedded, error, loading]);
 
   useEffect(() => { void refreshConversations(true); }, [refreshConversations]);
 
@@ -527,7 +643,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     setPlaybackContextError(null);
     followThread.current = true;
     setConversationStatus(t("正在发送问题"));
-    const options = displayMode === "debug" && messageOptionOverrides
+    const options: AgentMessageRunOptions = displayMode === "debug" && messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
     const revision = draftRevisionRef.current;
@@ -537,7 +653,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       ...(sourceTenantId ? { sourceTenantId } : {}),
       attachments: attachments.items.map((item) => ({ mediaUri: item.attachment!.mediaUri })),
       onAccepted: () => {
-        if (draftContextRef.current.conversationId !== context.conversationId
+        if ((context.conversationId !== null && draftContextRef.current.conversationId !== context.conversationId)
           || identityStorageKey("agent-draft") !== context.identityKey) return;
         if (draftRevisionRef.current === revision) {
           setQuery("");
@@ -551,8 +667,10 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
   const closeConversationPicker = useCallback((restoreFocus = false) => {
     conversationPickerRef.current?.removeAttribute("open");
-    if (restoreFocus) conversationPickerRef.current?.querySelector<HTMLElement>("summary")?.focus();
-  }, []);
+    setHistoryDrawerOpen(false);
+    if (!embedded && !compactLayout && restoreFocus) setSidebarOpen(false);
+    if (restoreFocus) (embedded ? conversationPickerRef.current?.querySelector<HTMLElement>("summary") : historyToggleRef.current)?.focus();
+  }, [embedded, compactLayout]);
 
   const selectConversation = useCallback((conversation: Pick<AgentConversationView, "conversationId" | "title">) => {
     if (creatingConversation || deletingConversationId) return;
@@ -582,6 +700,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     const currentConversationCanBeReused = Boolean(
       !error
       && conversationId
+      && modelId === draftModelId
       && !deletedConversationIdsRef.current.has(conversationId)
       && messages.length === 0
       && (!activeConversation || activeConversation.messageCount === 0),
@@ -591,24 +710,14 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       composerRef.current?.focus();
       return;
     }
-    setCreatingConversation(true);
     setConfirmingDeleteId(null);
     setConversationActionError(null);
-    try {
-      const conversation = await createAgentConversation(crypto.randomUUID());
-      deletedConversationIdsRef.current.delete(conversation.conversationId);
-      replaceConversations([conversation, ...conversationsRef.current.filter((item) => item.conversationId !== conversation.conversationId)]);
-      followThread.current = true;
-      focusAfterMutationRef.current = "composer";
-      setRequestedConversationId(conversation.conversationId);
-      setConversationStatus(t("已新建对话"));
-      closeConversationPicker();
-    } catch (failure) {
-      setConversationActionError(t("新建对话失败：{value0}", { value0: errorMessage(failure, locale) }));
-      if (conversationPickerRef.current) conversationPickerRef.current.open = true;
-    } finally {
-      setCreatingConversation(false);
-    }
+    clearConversation();
+    followThread.current = true;
+    focusAfterMutationRef.current = "composer";
+    setRequestedConversationId("");
+    setConversationStatus(t("已新建对话"));
+    closeConversationPicker();
   };
 
   const deleteConversation = async (conversation: AgentConversationView) => {
@@ -623,23 +732,16 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
       deletedConversationIdsRef.current.add(conversation.conversationId);
       conversationListRequestRef.current += 1;
       setConversationsLoading(false);
-      let remaining = conversationsRef.current.filter((item) => item.conversationId !== conversation.conversationId);
+      const remaining = conversationsRef.current.filter((item) => item.conversationId !== conversation.conversationId);
       replaceConversations(remaining);
       setConfirmingDeleteId(null);
       setConversationStatus(t("已删除对话：{value0}", { value0: conversation.title }));
       if (deletingCurrentConversation) {
         clearConversation();
-        let next = remaining[0];
-        if (!next) {
-          next = await createAgentConversation(crypto.randomUUID());
-          deletedConversationIdsRef.current.delete(next.conversationId);
-          remaining = [next];
-          replaceConversations(remaining);
-          setConversationStatus(t("已删除对话：{value0}；已创建新的空对话", { value0: conversation.title }));
-        }
+        const next = remaining[0];
         followThread.current = true;
         focusAfterMutationRef.current = "composer";
-        setRequestedConversationId(next.conversationId);
+        setRequestedConversationId(next?.conversationId ?? "");
         closeConversationPicker();
       } else {
         focusAfterMutationRef.current = "picker";
@@ -655,124 +757,332 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     }
   };
 
+  const showWelcome = !messages.length && !loading && (embedded || !searching);
+  const newConversationButton = (
+    <button
+      className={styles.newConversation}
+      type="button"
+      onClick={() => void createConversation()}
+      disabled={mode !== "live" || loading || creatingConversation || Boolean(deletingConversationId)}
+      aria-label={t("新建对话")}
+    >
+      {creatingConversation ? <LoaderCircle size={15} className={styles.spinning} aria-hidden="true" /> : <Plus size={15} aria-hidden="true" />}
+      <span>{creatingConversation ? t("正在新建") : t("新对话")}</span>
+    </button>
+  );
+  const conversationMenu = (
+    <section className={styles.conversationMenu} aria-label={t("对话记录")}>
+      <header>
+        <div><strong>{t("对话记录")}</strong><small>{conversations.length ? t("{value0} 个对话", { value0: conversations.length }) : t("暂无记录")}</small></div>
+        {conversationsLoading ? <LoaderCircle size={14} className={styles.spinning} aria-label={t("正在读取对话记录")} /> : null}
+        {embedded ? <button className={styles.conversationMenuClose} type="button" onClick={() => closeConversationPicker(true)} aria-label={t("关闭对话记录")}>
+          <X size={14} aria-hidden="true" />
+        </button> : null}
+      </header>
+      {conversationActionError || conversationListError ? <p className={styles.conversationError} role="alert">{conversationActionError ?? conversationListError}</p> : null}
+      <ul className={styles.conversationList}>
+        {conversations.map((conversation) => {
+          const current = conversation.conversationId === conversationId;
+          const deleting = deletingConversationId === conversation.conversationId;
+          const cannotDelete = current && searching;
+          const mutationLocked = loading || creatingConversation || Boolean(deletingConversationId);
+          const accessibleName = conversationAccessibleName(conversation, locale, formatLocale);
+          return (
+            <li key={conversation.conversationId} className={current ? styles.conversationCurrent : undefined}>
+              <button
+                className={styles.conversationChoice}
+                title={`${conversation.title} · ${conversationTime(conversation, formatLocale)}`}
+                type="button"
+                onClick={() => selectConversation(conversation)}
+                aria-current={current ? "true" : undefined}
+                aria-label={t("打开对话 {value0}", { value0: accessibleName })}
+                disabled={creatingConversation || Boolean(deletingConversationId)}
+              >
+                <span><strong>{conversation.title}</strong><time>{conversationTime(conversation, formatLocale)}</time></span>
+                <small>{conversation.lastMessagePreview || (conversation.messageCount ? t("{value0} 条消息", { value0: conversation.messageCount }) : t("还没有消息"))}</small>
+              </button>
+              <button
+                className={styles.deleteConversation}
+                type="button"
+                onClick={(event) => {
+                  deleteTriggerRef.current = event.currentTarget;
+                  setConfirmingDeleteId(conversation.conversationId);
+                }}
+                disabled={mode !== "live" || mutationLocked || cannotDelete}
+                aria-label={t("删除对话 {value0}", { value0: accessibleName })}
+                title={cannotDelete ? t("当前回答进行中，完成后才能删除") : mutationLocked ? t("请等待当前对话操作完成") : t("删除对话")}
+              >
+                {deleting ? <LoaderCircle size={14} className={styles.spinning} aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}
+              </button>
+              {cannotDelete ? <small className={styles.deleteHint}>{t("回答完成后可删除")}</small> : null}
+              {confirmingDeleteId === conversation.conversationId ? (
+                <div className={styles.deleteConfirmation} role="group" aria-label={t("确认删除对话 {value0}", { value0: accessibleName })} aria-describedby={deleteWarningId}>
+                  <p id={deleteWarningId}>{t("删除后，这个对话及其中的全部消息都无法恢复。")}</p>
+                  <div>
+                    <button ref={deleteCancelRef} type="button" aria-describedby={deleteWarningId} onClick={() => {
+                      setConfirmingDeleteId(null);
+                      deleteTriggerRef.current?.focus();
+                    }}>{t("取消")}</button>
+                    <button
+                      type="button"
+                      disabled={mutationLocked || cannotDelete}
+                      onClick={() => void deleteConversation(conversation)}
+                      aria-label={t("确认删除对话 {value0}", { value0: accessibleName })}
+                      aria-describedby={deleteWarningId}
+                      title={cannotDelete ? t("当前回答进行中，完成后才能删除") : undefined}
+                    >{t("确认删除")}</button>
+                  </div>
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {!conversationsLoading && !conversations.length ? <p className={styles.conversationEmpty}>{t("还没有可显示的对话。")}</p> : null}
+    </section>
+  );
+  const sidebarContent = <div className={styles.sidebarContent} onKeyDown={(event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    if (confirmingDeleteId) { setConfirmingDeleteId(null); deleteTriggerRef.current?.focus(); }
+    else closeConversationPicker(true);
+  }}>
+    <header className={styles.sidebarHeading}><h1>{t("Seekino 助手")}</h1>
+      {compactLayout ? <button type="button" className={styles.historyToggle} aria-label={t("关闭对话记录")} onClick={() => closeConversationPicker(true)}><PanelLeftClose size={18} aria-hidden="true" /></button> : null}
+    </header>
+    {newConversationButton}
+    {conversationMenu}
+  </div>;
+
+  const resizeSidebar = (clientX: number) => {
+    const drag = sidebarDragRef.current;
+    if (!drag) return;
+    setSidebarWidth(Math.round(Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxSidebarWidth, drag.startWidth + clientX - drag.startX))));
+  };
+  const endSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    sidebarDragRef.current = null;
+    setSidebarResizing(false);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const attachmentControls = <>
+    <button className={styles.addAttachment} type="button" disabled={!canAttach} onClick={() => attachmentInputRef.current?.click()} aria-label={t("添加图片")} title={t("添加图片（也可粘贴）")}><Plus size={21} aria-hidden="true" /></button>
+    <input ref={attachmentInputRef} type="file" hidden multiple accept={AGENT_ATTACHMENT_ACCEPT} aria-label={t("选择聊天图片")} disabled={!canAttach} onChange={(event) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      void addFiles(files);
+      composerRef.current?.focus();
+    }} />
+  </>;
+  const scopePicker = <details
+    className={styles.scopePicker}
+    ref={scopePickerRef}
+    onToggle={(event) => {
+      if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
+    }}
+  >
+    <summary aria-label={t("选择检索视频系列")}><span>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
+      ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? t("已选 1 个系列")
+      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}</span><ChevronDown size={13} aria-hidden="true" /></summary>
+    <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
+      {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
+      {series.map((item) => (
+        <label key={item.seriesId}>
+          <input
+            type="checkbox"
+            checked={selectedSeriesIds.includes(item.seriesId)}
+            disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
+            onChange={(event) => {
+              scopeTouchedRef.current = true;
+              setSelectedSeriesIds((current) => event.target.checked
+                ? [...current.filter((id) => series.some((candidate) => candidate.seriesId === id && candidate.tenantId === item.tenantId)), item.seriesId]
+                : current.filter((id) => id !== item.seriesId));
+            }}
+          />
+          <span>{item.name}</span>
+          <small>{isSearchable(item.status) ? t("{value0} 个视频可检索", { value0: item.readyVideoCount }) : t("暂不可检索")}</small>
+        </label>
+      ))}
+      {!series.length ? <p>{t("资料库还没有视频系列")}</p> : null}
+    </div>
+  </details>;
+  const answerSettingsPicker = displayMode === "debug" ? <details
+    className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
+    ref={answerSettingsRef}
+    onToggle={(event) => {
+      if (event.currentTarget.open) scopePickerRef.current?.removeAttribute("open");
+    }}
+  >
+    <summary aria-label={t("配置本次回答")}>
+      <SlidersHorizontal size={13} aria-hidden="true" />
+      <span>{t("回答设置")}</span>
+      <small>{messageOptionSummary}</small>
+      <ChevronDown size={13} aria-hidden="true" />
+    </summary>
+    <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label={t("本次回答设置")}>
+      <header>
+        <div><strong>{t("本次回答")}</strong><small>{t("自动使用全局运行限制；自定义可限制最多轮次。")}</small></div>
+        <button
+          type="button"
+          disabled={!messageOptionConfig || !messageOptions || searching}
+          onClick={() => {
+            if (!messageOptionConfig) return;
+            customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
+            setMessageOptionOverrides({});
+          }}
+        >{t("恢复默认")}</button>
+      </header>
+      {messageOptionConfig && messageOptions ? (
+        <>
+          <div className={styles.answerMode}>
+            <span><strong>{t("运行轮次")}</strong><small>{t("自定义最多可设 {count} 轮", { count: messageOptionConfig.maxLoopTurns.maximum })}</small></span>
+            <div className={styles.answerModeChoices} role="group" aria-label={t("运行轮次模式")}>
+              <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
+                if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
+                setMessageOptionOverrides((current) => {
+                  if (!current) return current;
+                  const next = { ...current };
+                  delete next.maxLoopTurns;
+                  return next;
+                });
+              }}>{t("自动")}</button>
+              <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
+                setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns: customLoopTurnsRef.current }));
+              }}>{t("自定义")}</button>
+            </div>
+          </div>
+          {messageOptions.maxLoopTurns > 0 ? (
+            <label className={styles.answerSettingRow}>
+              <span><strong>{t("最多轮次")}</strong><small>{t("检索与核验的循环上限")}</small></span>
+              <span className={styles.answerSettingValue}>{messageOptions.maxLoopTurns}</span>
+              <input
+                aria-label={t("最多运行轮次")}
+                type="range"
+                min={messageOptionConfig.maxLoopTurns.minimum}
+                max={messageOptionConfig.maxLoopTurns.maximum}
+                value={messageOptions.maxLoopTurns}
+                onChange={(event) => {
+                  const maxLoopTurns = event.currentTarget.valueAsNumber;
+                  customLoopTurnsRef.current = maxLoopTurns;
+                  setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns }));
+                }}
+              />
+            </label>
+          ) : null}
+        </>
+      ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? t("暂时无法读取设置：{value0}", { value0: messageOptionsError }) : t("正在读取服务端限制…")}</p>}
+    </div>
+  </details> : null;
+  const sendControl = searching ? (
+    <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? t("正在停止") : t("停止生成")} title={cancelling ? t("正在停止") : t("停止生成")}>
+      {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
+    </button>
+  ) : (
+    <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label={t("发送问题")}>
+      <ArrowUp size={19} aria-hidden="true" />
+    </button>
+  );
+  const modelSettingsLink = (text: boolean) => {
+    const label = t(text ? "配置模型" : "回答模型设置");
+    const content = <><SlidersHorizontal size={15} aria-hidden="true" />{text ? label : null}</>;
+    const className = text ? styles.configureModel : styles.modelSettingsLink;
+    const section = text ? "models" : "model-roles";
+    return inRouter ? <SettingsLink className={className} section={section} aria-label={label} title={label}>{content}</SettingsLink>
+      : <a className={className} href={`/settings?section=${section}`} aria-label={label} title={label}>{content}</a>;
+  };
+  const modelChooser = !canConfigure ? null : hasModels ? <>
+    <div className={styles.modelPicker}>
+      <PersonalModelSelect connections={connections} value={modelId} label={t("回答模型")} placeholder={t("选择模型")}
+        disabled={modelSaving || loading || creatingConversation} busy={modelSaving} onChange={(id) => void selectModel(id)} />
+    </div>
+    {modelSettingsLink(false)}
+  </> : modelSettingsLink(true);
+
   const Root = embedded ? "section" : "main";
   return (
-    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : "page"}`}>
-      <header className={styles.pageHeader}>
-        <div className={styles.chatHeading}>
-          {embedded ? (
+    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : styles.standalonePage}`} data-draft={!embedded && showWelcome} data-sidebar={!embedded && !compactLayout && sidebarOpen} data-resizing={!embedded && sidebarResizing ? "true" : undefined} style={sidebarStyle}>
+      {embedded ? (
+        <header className={styles.pageHeader}>
+          <div className={styles.chatHeading}>
             <h2 className={styles.chatTitle} title={activeConversation?.title ?? t("当前对话")}>
               {activeConversation?.title ?? t("当前对话")}
             </h2>
-          ) : (
-            <>
-              <h1 className={styles.chatTitle}>{t("Seekino 助手")}</h1>
-              {activeConversation ? <span title={activeConversation.title}>{activeConversation.title}</span> : null}
-            </>
-          )}
-        </div>
-        <div className={styles.conversationActions}>
-          <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
-          <details
-            className={styles.conversationPicker}
-            ref={conversationPickerRef}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
+          </div>
+          <div className={styles.conversationActions}>
+            <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
+            <details
+              className={styles.conversationPicker}
+              ref={conversationPickerRef}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                if (confirmingDeleteId) {
+                  setConfirmingDeleteId(null);
+                  deleteTriggerRef.current?.focus();
+                  return;
+                }
+                closeConversationPicker(true);
+              }}
+            >
+              <summary aria-label={t("打开对话记录")}>
+                <History size={15} aria-hidden="true" />
+                <span>{t("对话记录")}</span>
+                <ChevronDown size={13} aria-hidden="true" />
+              </summary>
+              {conversationMenu}
+            </details>
+            {newConversationButton}
+          </div>
+        </header>
+      ) : <>
+        {compactLayout ? <dialog ref={historyDialogRef} className={styles.historyDrawer} aria-label={t("对话侧栏")}
+          onCancel={(event) => { event.preventDefault(); closeConversationPicker(true); }}
+          onClose={() => setHistoryDrawerOpen(false)}
+          onClick={(event) => { if (event.target === event.currentTarget) closeConversationPicker(true); }}>
+          {historyDrawerOpen ? sidebarContent : null}
+        </dialog> : <aside id="search-history-sidebar" className={styles.historySidebar} aria-label={t("对话侧栏")} hidden={!sidebarOpen}>
+          {sidebarOpen ? <div
+            className={styles.historyResize}
+            role="separator"
+            tabIndex={0}
+            aria-label={t("调整对话侧栏宽度")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={Math.round(maxSidebarWidth)}
+            aria-valuenow={Math.round(visibleSidebarWidth)}
+            title={t("调整对话侧栏宽度")}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
               event.preventDefault();
-              if (confirmingDeleteId) {
-                setConfirmingDeleteId(null);
-                deleteTriggerRef.current?.focus();
-                return;
-              }
-              closeConversationPicker(true);
+              event.currentTarget.focus({ preventScroll: true });
+              sidebarDragRef.current = { startX: event.clientX, startWidth: visibleSidebarWidth };
+              setSidebarResizing(true);
+              event.currentTarget.setPointerCapture?.(event.pointerId);
             }}
-          >
-            <summary aria-label={t("打开对话记录")}>
-              <History size={15} aria-hidden="true" />
-              <span>{t("对话记录")}</span>
-              <ChevronDown size={13} aria-hidden="true" />
-            </summary>
-            <section className={styles.conversationMenu} aria-label={t("对话记录")}>
-              <header>
-                <div><strong>{t("对话记录")}</strong><small>{conversations.length ? t("{value0} 个对话", { value0: conversations.length }) : t("暂无记录")}</small></div>
-                {conversationsLoading ? <LoaderCircle size={14} className={styles.spinning} aria-label={t("正在读取对话记录")} /> : null}
-                <button className={styles.conversationMenuClose} type="button" onClick={() => closeConversationPicker(true)} aria-label={t("关闭对话记录")}>
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </header>
-              {conversationActionError || conversationListError ? <p className={styles.conversationError} role="alert">{conversationActionError ?? conversationListError}</p> : null}
-              <ul className={styles.conversationList}>
-                {conversations.map((conversation) => {
-                  const current = conversation.conversationId === conversationId;
-                  const deleting = deletingConversationId === conversation.conversationId;
-                  const cannotDelete = current && searching;
-                  const mutationLocked = loading || creatingConversation || Boolean(deletingConversationId);
-                  const accessibleName = conversationAccessibleName(conversation, locale, formatLocale);
-                  return (
-                    <li key={conversation.conversationId} className={current ? styles.conversationCurrent : undefined}>
-                      <button
-                        className={styles.conversationChoice}
-                        type="button"
-                        onClick={() => selectConversation(conversation)}
-                        aria-current={current ? "true" : undefined}
-                        aria-label={t("打开对话 {value0}", { value0: accessibleName })}
-                        disabled={creatingConversation || Boolean(deletingConversationId)}
-                      >
-                        <span><strong>{conversation.title}</strong><time>{conversationTime(conversation, formatLocale)}</time></span>
-                        <small>{conversation.lastMessagePreview || (conversation.messageCount ? t("{value0} 条消息", { value0: conversation.messageCount }) : t("还没有消息"))}</small>
-                      </button>
-                      <button
-                        className={styles.deleteConversation}
-                        type="button"
-                        onClick={(event) => {
-                          deleteTriggerRef.current = event.currentTarget;
-                          setConfirmingDeleteId(conversation.conversationId);
-                        }}
-                        disabled={mode !== "live" || mutationLocked || cannotDelete}
-                        aria-label={t("删除对话 {value0}", { value0: accessibleName })}
-                        title={cannotDelete ? t("当前回答进行中，完成后才能删除") : mutationLocked ? t("请等待当前对话操作完成") : t("删除对话")}
-                      >
-                        {deleting ? <LoaderCircle size={14} className={styles.spinning} aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}
-                      </button>
-                      {cannotDelete ? <small className={styles.deleteHint}>{t("回答完成后可删除")}</small> : null}
-                      {confirmingDeleteId === conversation.conversationId ? (
-                        <div className={styles.deleteConfirmation} role="group" aria-label={t("确认删除对话 {value0}", { value0: accessibleName })} aria-describedby={deleteWarningId}>
-                          <p id={deleteWarningId}>{t("删除后，这个对话及其中的全部消息都无法恢复。")}</p>
-                          <div>
-                            <button ref={deleteCancelRef} type="button" aria-describedby={deleteWarningId} onClick={() => {
-                              setConfirmingDeleteId(null);
-                              deleteTriggerRef.current?.focus();
-                            }}>{t("取消")}</button>
-                            <button
-                              type="button"
-                              disabled={mutationLocked || cannotDelete}
-                              onClick={() => void deleteConversation(conversation)}
-                              aria-label={t("确认删除对话 {value0}", { value0: accessibleName })}
-                              aria-describedby={deleteWarningId}
-                              title={cannotDelete ? t("当前回答进行中，完成后才能删除") : undefined}
-                            >{t("确认删除")}</button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-              {!conversationsLoading && !conversations.length ? <p className={styles.conversationEmpty}>{t("还没有可显示的对话。")}</p> : null}
-            </section>
-          </details>
-          <button
-            className={styles.newConversation}
-            type="button"
-            onClick={() => void createConversation()}
-            disabled={mode !== "live" || loading || creatingConversation || Boolean(deletingConversationId)}
-            aria-label={t("新建对话")}
-          >
-            {creatingConversation ? <LoaderCircle size={15} className={styles.spinning} aria-hidden="true" /> : <Plus size={15} aria-hidden="true" />}
-            <span>{creatingConversation ? t("正在新建") : t("新对话")}</span>
+            onPointerMove={(event) => { if (sidebarDragRef.current) resizeSidebar(event.clientX); }}
+            onPointerUp={endSidebarResize}
+            onPointerCancel={endSidebarResize}
+            onLostPointerCapture={() => { sidebarDragRef.current = null; setSidebarResizing(false); }}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              const delta = event.key === "ArrowRight" ? 24 : -24;
+              setSidebarWidth(Math.round(Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxSidebarWidth, visibleSidebarWidth + delta))));
+            }}
+          /> : null}
+          {sidebarContent}
+        </aside>}
+        <header className={styles.pageHeader}>
+          {compactLayout ? <h1 className="sr-only">{t("Seekino 助手")}</h1> : null}
+          <button ref={historyToggleRef} className={styles.historyToggle} type="button" aria-label={t(!compactLayout && sidebarOpen ? "收起对话记录" : "打开对话记录")}
+            aria-expanded={compactLayout ? historyDrawerOpen : sidebarOpen}
+            onClick={() => compactLayout ? setHistoryDrawerOpen(true) : setSidebarOpen((open) => !open)}>
+            <PanelLeft size={19} aria-hidden="true" />
           </button>
-        </div>
-      </header>
+          <span className={styles.currentTitle}>{!showWelcome ? activeConversation?.title ?? t("Seekino 助手") : ""}</span>
+          <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
+        </header>
+      </>}
 
       <div className={selectedHit && !onOpenVideo ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
         <section className={styles.agentPanel} aria-label={t("与 Seekino 助手对话")}>
@@ -780,12 +1090,12 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             const thread = event.currentTarget;
             followThread.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
           }}>
-            {!messages.length && !loading ? (
+            {showWelcome ? (
               <div className={styles.welcome}>
                 <Kino interactive perch dozeAfterMs={45_000} width={embedded ? 48 : 64} scale={embedded ? 2 : 3} title={t("戳一戳 Kino")} />
                 <p>{embedded ? t("看到哪里，问到哪里。回答里的时间点可以直接点击跳转。") : t("描述记得的画面、台词或人物关系，一起把那一刻找回来。")}</p>
                 <div className={styles.examples} aria-label={t("试试这样问")}>
-                  {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || !conversationId} onClick={() => {
+                  {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || loading} onClick={() => {
                     pendingExampleRef.current = true;
                     draftRevisionRef.current += 1;
                     setQuery(t(example));
@@ -818,6 +1128,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
                       return <VideoBlockCard key={`video:${block.videoChunkId}`} message={message} block={block} hit={hit} displayMode={displayMode} selected={selected} onOpenVideo={onOpenVideo} onSelect={setSelection} />;
                     })}
+                    {message.status === "PROCESSING" && message.modelRetry ? <ModelRetryRow retry={message.modelRetry} /> : null}
                     {message.status === "COMPLETED" && message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
                         <Kino state="think" width={38} scale={2} ground={false} />
@@ -836,6 +1147,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
 
           <div className={styles.composerArea}>
             <form className={styles.composer} onSubmit={submit}>
+              {attachments.items.length || reference ? <div className={styles.draftContext}>
               {attachments.items.length ? <ul className={styles.draftAttachments} aria-label={t("待发送图片")}>
                 {attachments.items.map((item) => <li key={item.id} className={styles.draftAttachment}>
                   <img src={item.previewUrl} alt={item.file.name || t("待发送图片")} />
@@ -852,15 +1164,17 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 </li>)}
               </ul> : null}
               {reference ? <div className={styles.referenceChip}><span>{t("已引用{reference}", { reference: referenceHit && referenceRange ? ` ${referenceHit.evidence.seriesName} · ${episodeLabel(referenceHit.evidence.episodeOrder)} · ${formatTimeRange(referenceRange.startSeconds, referenceRange.endSeconds)}` : t("选中片段") })}</span><button type="button" onClick={() => { draftRevisionRef.current += 1; setReference(null); }} aria-label={t("取消引用")}><X size={13} /></button></div> : null}
+              </div> : null}
               <textarea
                 ref={composerRef}
+                data-standalone-composer={embedded ? undefined : true}
                 value={query}
                 onChange={(event) => { draftRevisionRef.current += 1; setQuery(event.target.value); }}
                 onPaste={(event) => {
                   const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
                   if (!canAttach || !files.length) return;
                   if (!event.clipboardData.getData("text/plain")) event.preventDefault();
-                  attachments.addFiles(files);
+                  void addFiles(files);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -868,130 +1182,33 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={t("提问视频内容，或聊聊其他问题…")}
+                placeholder={embedded ? t("提问视频内容，或聊聊其他问题…") : showWelcome ? t("从一个问题开始…") : t("继续提问…")}
                 rows={1}
                 aria-label={t("向 Seekino 助手提问")}
               />
               <div className={styles.composerToolbar}>
                 <div className={styles.composerControls}>
-                  <button className={styles.addAttachment} type="button" disabled={!canAttach} onClick={() => attachmentInputRef.current?.click()} aria-label={t("添加图片")} title={t("添加图片（也可粘贴）")}><Plus size={21} aria-hidden="true" /></button>
-                  <input ref={attachmentInputRef} type="file" hidden multiple accept={AGENT_ATTACHMENT_ACCEPT} aria-label={t("选择聊天图片")} disabled={!canAttach} onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    event.target.value = "";
-                    attachments.addFiles(files);
-                    composerRef.current?.focus();
-                  }} />
-                  <details
-                    className={styles.scopePicker}
-                    ref={scopePickerRef}
-                    onToggle={(event) => {
-                      if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
-                    }}
-                  >
-                    <summary aria-label={t("选择检索视频系列")}><span>{(embedded || requiresExplicitScope) && selectedSeriesIds.length === 1
-                      ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? t("已选 1 个系列")
-                      : selectedSeriesIds.length ? t("已选 {value0} 个系列", { value0: selectedSeriesIds.length }) : requiresExplicitScope ? t("请选择要检索的公开系列") : t("全部视频系列")}</span><ChevronDown size={13} aria-hidden="true" /></summary>
-                    <div className={styles.scopeOptions} role="group" aria-label={t("检索视频系列多选")}>
-                      {requiresExplicitScope ? <p>{t("每次可选择同一分享者的系列")}</p> : <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>{t("检索全部视频系列")}</button>}
-                      {series.map((item) => (
-                        <label key={item.seriesId}>
-                          <input
-                            type="checkbox"
-                            checked={selectedSeriesIds.includes(item.seriesId)}
-                            disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
-                            onChange={(event) => {
-                              scopeTouchedRef.current = true;
-                              setSelectedSeriesIds((current) => event.target.checked
-                                ? [...current.filter((id) => series.some((candidate) => candidate.seriesId === id && candidate.tenantId === item.tenantId)), item.seriesId]
-                                : current.filter((id) => id !== item.seriesId));
-                            }}
-                          />
-                          <span>{item.name}</span>
-                          <small>{isSearchable(item.status) ? t("{value0} 个视频可检索", { value0: item.readyVideoCount }) : t("暂不可检索")}</small>
-                        </label>
-                      ))}
-                      {!series.length ? <p>{t("资料库还没有视频系列")}</p> : null}
-                    </div>
-                  </details>
-                  {displayMode === "debug" ? <details
-                    className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
-                    ref={answerSettingsRef}
-                    onToggle={(event) => {
-                      if (event.currentTarget.open) scopePickerRef.current?.removeAttribute("open");
-                    }}
-                  >
-                    <summary aria-label={t("配置本次回答")}>
-                      <SlidersHorizontal size={13} aria-hidden="true" />
-                      <span>{t("回答设置")}</span>
-                      <small>{messageOptionSummary}</small>
-                      <ChevronDown size={13} aria-hidden="true" />
-                    </summary>
-                    <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label={t("本次回答设置")}>
-                      <header>
-                        <div><strong>{t("本次回答")}</strong><small>{t("自动使用全局运行限制；自定义可限制最多轮次。")}</small></div>
-                        <button
-                          type="button"
-                          disabled={!messageOptionConfig || !messageOptions || searching}
-                          onClick={() => {
-                            if (!messageOptionConfig) return;
-                            customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
-                            setMessageOptionOverrides({});
-                          }}
-                        >{t("恢复默认")}</button>
-                      </header>
-                      {messageOptionConfig && messageOptions ? (
-                        <>
-                          <div className={styles.answerMode}>
-                            <span><strong>{t("运行轮次")}</strong><small>{t("自定义最多可设 {count} 轮", { count: messageOptionConfig.maxLoopTurns.maximum })}</small></span>
-                            <div className={styles.answerModeChoices} role="group" aria-label={t("运行轮次模式")}>
-                              <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
-                                if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
-                                setMessageOptionOverrides((current) => {
-                                  if (!current) return current;
-                                  const next = { ...current };
-                                  delete next.maxLoopTurns;
-                                  return next;
-                                });
-                              }}>{t("自动")}</button>
-                              <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
-                                setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns: customLoopTurnsRef.current }));
-                              }}>{t("自定义")}</button>
-                            </div>
-                          </div>
-                          {messageOptions.maxLoopTurns > 0 ? (
-                            <label className={styles.answerSettingRow}>
-                              <span><strong>{t("最多轮次")}</strong><small>{t("检索与核验的循环上限")}</small></span>
-                              <span className={styles.answerSettingValue}>{messageOptions.maxLoopTurns}</span>
-                              <input
-                                aria-label={t("最多运行轮次")}
-                                type="range"
-                                min={messageOptionConfig.maxLoopTurns.minimum}
-                                max={messageOptionConfig.maxLoopTurns.maximum}
-                                value={messageOptions.maxLoopTurns}
-                                onChange={(event) => {
-                                  const maxLoopTurns = event.currentTarget.valueAsNumber;
-                                  customLoopTurnsRef.current = maxLoopTurns;
-                                  setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns }));
-                                }}
-                              />
-                            </label>
-                          ) : null}
-                        </>
-                      ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? t("暂时无法读取设置：{value0}", { value0: messageOptionsError }) : t("正在读取服务端限制…")}</p>}
-                    </div>
-                  </details> : null}
+                  {attachmentControls}
+                  {embedded ? <>{scopePicker}{answerSettingsPicker}{modelChooser}</> : null}
                 </div>
-                {searching ? (
-                  <button className={styles.sendButton} type="button" disabled={cancelling || !messages.some((message) => message.role === "ASSISTANT" && message.status === "PROCESSING")} onClick={() => void stop?.()} aria-label={cancelling ? t("正在停止") : t("停止生成")} title={cancelling ? t("正在停止") : t("停止生成")}>
-                    {cancelling ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <Square size={16} aria-hidden="true" />}
-                  </button>
-                ) : (
-                  <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label={t("发送问题")}>
-                    <ArrowUp size={19} aria-hidden="true" />
-                  </button>
-                )}
+                {sendControl}
               </div>
             </form>
+            {!embedded ? <div className={styles.composerOptions}>
+              <div className={styles.composerOptionsStart}>
+                {scopePicker}
+                {answerSettingsPicker}
+              </div>
+              {modelChooser}
+            </div> : null}
+            {canConfigure && modelCatalog && "error" in modelCatalog && <p className={styles.messageError} role="alert">
+              {t("读取模型设置失败：{value0}", { value0: errorMessage(modelCatalog.error, locale) })}
+            </p>}
+            {canConfigure && (modelError || modelSelectionInvalid) ? (
+              <p className={`${styles.messageError} ${styles.modelError}`} role="alert">
+                {modelError ?? t("已保存的模型当前不可用，请重新选择。")}
+              </p>
+            ) : null}
             <p className={styles.keyboardHint}>{t("Enter 发送 · Shift + Enter 换行")}</p>
             {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
             {(!scopeValid || !referenceScopeValid) && !workspaceLoading ? <p className={styles.messageError} role="alert">{t(requiresExplicitScope && !series.some((item) => isSearchable(item.status)) ? "暂无可体验的公开系列" : "所选视频系列暂不可检索，请重新选择范围。")}</p> : null}

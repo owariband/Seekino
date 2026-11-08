@@ -14,6 +14,7 @@ from ..api.schema import (
 )
 
 router = APIRouter()
+settings_router = APIRouter()
 router.add_api_route(
     "/api/agent/attachments/upload",
     agent.upload_agent_attachment,
@@ -25,13 +26,13 @@ router.add_api_route(
     agent.get_agent_attachment_content,
     methods=["GET"],
 )
-router.add_api_route(
+settings_router.add_api_route(
     "/api/agent/global-settings",
     agent.get_agent_global_settings,
     methods=["GET"],
     response_model=AgentGlobalSettingsView,
 )
-router.add_api_route(
+settings_router.add_api_route(
     "/api/agent/global-settings",
     agent.patch_agent_global_settings,
     methods=["PATCH"],
@@ -60,6 +61,12 @@ router.add_api_route(
     "/api/agent/conversations/get",
     agent.get_agent_conversation,
     methods=["GET"],
+    response_model=AgentConversationView,
+)
+router.add_api_route(
+    "/api/agent/conversations/model",
+    agent.patch_agent_conversation_model,
+    methods=["PATCH"],
     response_model=AgentConversationView,
 )
 router.add_api_route(

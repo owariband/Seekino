@@ -66,9 +66,13 @@ def test_episode_prepares_before_consumers_and_links_survive_owner_cleanup(tmp_p
             assert len(commands) == 2  # one whole audio decode and one whole video decode
             assert not list(manifest.parent.glob("*.mp4"))
         before = len(commands)
+        audio = manifest.parent / rows[0]["audio_path"]
+        lease_checks = []
         consumer = service.use_episode_chunk(MediaLeaseIdentity(task, str(uuid4()), 2),
-            video_lease_version=1, sequence_no=0, start_ms=0, end_ms=1000, check_active=lambda: None)
+            video_lease_version=1, sequence_no=0, start_ms=0, end_ms=1000,
+            check_active=lambda: lease_checks.append(audio.stat().st_nlink))
         media = consumer.__enter__()
+        assert lease_checks == [1, 2]
         assert (media.video_path is not None) is video_required
         assert len(commands) == before
         assert (media.visual_start_ms, media.visual_end_ms) == (0, 1500)
@@ -77,6 +81,32 @@ def test_episode_prepares_before_consumers_and_links_survive_owner_cleanup(tmp_p
     assert media.audio_path.is_file() and all(path.is_file() for _, path in media.frames)
     consumer.__exit__(None, None, None)
     assert not media.audio_path.exists()
+
+
+def test_episode_chunk_rejects_lost_lease_after_last_link(tmp_path):
+    service = VideoParseMediaService(tmp_path / "media", command_runner=_fake_runner([]),
+                                     probe_duration=lambda _: 1000)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    chunk = _identity()
+    task = chunk.video_parse_task_id
+    owner = MediaLeaseIdentity(task, task, 1, execution_kind="video")
+    with service.prepare_episode(owner, source_video=source, duration_ms=1000, chunk_duration=1,
+                                 visual_mode="video", frame_fps=1, max_height=72, ocr_enabled=False,
+                                 overlap_ms=0, check_active=lambda: None) as manifest:
+        row = json.loads(manifest.read_text())["chunks"][0]
+        sources = [manifest.parent / row[key] for key in ("audio_path", "video_path")]
+
+        def check_active():
+            if all(path.stat().st_nlink == 2 for path in sources):
+                raise RuntimeError("lease lost")
+
+        with pytest.raises(RuntimeError, match="lease lost"):
+            with service.use_episode_chunk(chunk, video_lease_version=1, sequence_no=0,
+                                           start_ms=0, end_ms=1000, check_active=check_active):
+                pytest.fail("lost lease delivered linked media")
+        assert all(path.stat().st_nlink == 1 for path in sources)
+        assert not (service.base_directory / task / f"chunk-{chunk.execution_task_id}").exists()
 
 
 def test_episode_wait_stops_when_producer_has_failed(tmp_path):

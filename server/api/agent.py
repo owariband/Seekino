@@ -17,20 +17,21 @@ from agent.chat.video_search.output import video_range_sources
 from ..config.sse import SSEConfig
 from ..model.dto.agentDTO import (
     AgentConversationCreateRequest,
+    AgentConversationModelRequest,
     AgentGlobalSettingsPatchRequest,
     AgentMessageSendRequest,
     AgentMessageState,
 )
 from ..service.agent_chat import AgentChatService, AgentMessageExecution
 from ..service.agent_attachments import AgentAttachmentService
-from ..service.access import is_series_member, model_query, require_admin, require_tenant_read
+from ..service.access import is_series_member, model_query, require_tenant_read
 from ..error.auth import AuthError
 from ..model.dto.authDTO import AuthIdentity
 from ..service.media import MediaMissingError, MediaNotReadyError, MediaService
 from ..utils.time import now_unix_time_ms
 from ..model.vo.commonVO import Page
 from .search import search_evidence_fields
-from .context import get_identity, get_services, get_sse_config, revalidate_identity
+from .context import get_identity, get_services, get_sse_config, require_config_access, revalidate_identity
 from ..model.vo.agentVO import (
     AgentAttachmentUploadView,
     AgentAttachmentView,
@@ -69,7 +70,7 @@ _logger = logging.getLogger(__name__)
 
 
 def get_agent_global_settings(request: Request) -> AgentGlobalSettingsView:
-    require_admin(get_identity(request))
+    require_config_access(request)
     config, revision = read_global_agent_settings(request.app.state.model_config_path)
     return AgentGlobalSettingsView(
         revision=revision,
@@ -85,17 +86,13 @@ def patch_agent_global_settings(
     request: Request,
     body: AgentGlobalSettingsPatchRequest,
 ) -> AgentGlobalSettingsView:
-    identity = get_identity(request)
-    require_admin(identity)
+    identity = require_config_access(request)
     if identity.mode == "cloud" and "execution_timeout_seconds" in body.values:
         timeout = body.values["execution_timeout_seconds"]
         if isinstance(timeout, bool) or not isinstance(timeout, (float, int)):
             raise ValueError("执行超时必须是正数")
         if timeout >= get_services(request).auth.config.query_lease_seconds:
             raise ValueError("执行超时必须小于查询并发租约有效期")
-    client_host = request.client.host if request.client else None
-    if identity.mode == "local" and client_host not in {"127.0.0.1", "::1", "testclient"}:
-        raise HTTPException(status_code=403, detail="全局设置只允许从本机修改")
     config, revision = patch_global_agent_settings(
         body.values, body.revision, request.app.state.model_config_path,
     )
@@ -109,10 +106,26 @@ def patch_agent_global_settings(
     )
 
 
+def _managed_chat(identity: AuthIdentity | None) -> bool:
+    return identity is not None and identity.mode == "cloud" and (identity.is_guest or identity.role != "admin" or identity.auth_level != "email")
+
+
+def _public_failure(error):
+    code = error["code"] if isinstance(error, dict) else error.code
+    return {"code": code, "message": "回答已中断，请稍后重试"}
+
+
+def _conversation_view(state, identity: AuthIdentity) -> AgentConversationView:
+    view = AgentConversationView.model_validate(state)
+    if _managed_chat(identity):
+        view.model_id = "default"
+    return view
+
+
 def get_agent_message_options(request: Request) -> AgentMessageOptionsView:
     services = get_services(request)
     identity = get_identity(request)
-    options = services.agent.message_options()
+    options = services.agent.message_options(owner_user_id=None if _managed_chat(identity) else identity.user_id)
     if identity.mode == "cloud" and identity.is_guest:
         cap = services.auth.config.guest_max_model_calls
         def bounded(option, maximum):
@@ -133,13 +146,32 @@ def create_agent_conversation(
 ) -> AgentConversationView:
     identity = get_identity(request)
     require_tenant_read(identity, body.tenant_id)
+    managed = _managed_chat(identity)
+    if managed and body.model_id not in {None, "default"}:
+        require_config_access(request)
     state = get_services(request).agent.create_conversation(
         tenant_id=body.tenant_id,
         owner_user_id=identity.user_id,
         title=body.title,
+        model_id=None if managed else body.model_id,
         idempotency_key=idempotency_key,
     )
-    return AgentConversationView.model_validate(state)
+    return _conversation_view(state, identity)
+
+
+def patch_agent_conversation_model(
+    request: Request, body: AgentConversationModelRequest,
+    conversation_id: str = Query(alias="conversationId"),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
+) -> AgentConversationView:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
+    if _managed_chat(identity):
+        require_config_access(request)
+    state = get_services(request).agent.set_conversation_model(
+        conversation_id, tenant_id=tenant_id, owner_user_id=identity.user_id, model_id=body.model_id,
+    )
+    return _conversation_view(state, identity)
 
 
 def list_agent_conversations(
@@ -157,7 +189,7 @@ def list_agent_conversations(
         owner_user_id=identity.user_id,
     )
     return Page[AgentConversationView](
-        items=[AgentConversationView.model_validate(item) for item in page.items],
+        items=[_conversation_view(item, identity) for item in page.items],
         total=page.total, next_cursor=page.next_cursor, has_more=page.has_more,
     )
 
@@ -174,7 +206,7 @@ def get_agent_conversation(
         tenant_id=tenant_id,
         owner_user_id=identity.user_id,
     )
-    return AgentConversationView.model_validate(state)
+    return _conversation_view(state, identity)
 
 
 def delete_agent_conversation(
@@ -189,7 +221,7 @@ def delete_agent_conversation(
         tenant_id=tenant_id,
         owner_user_id=identity.user_id,
     )
-    return AgentConversationView.model_validate(state)
+    return _conversation_view(state, identity)
 
 
 async def upload_agent_attachment(
@@ -596,14 +628,15 @@ def _agent_message_view(
         message_id=state.message_id, conversation_id=state.conversation_id,
         series_ids=list(state.series_ids), sequence_no=state.sequence_no,
         role=state.role, status=state.status, phase=state.phase, version=state.version,
-        reference=state.reference, content=state.content, model_name=state.model_name,
+        model_retry=state.model_retry,
+        reference=state.reference, content=state.content, model_name=None if _managed_chat(identity) else state.model_name,
         attachments=attachments,
         search_result=result, render_blocks=render_blocks,
         timing=(
             AgentMessageTimingView.model_validate(state.timing)
             if state.timing is not None else None
         ),
-        last_error=state.last_error, created_at=state.created_at,
+        last_error=_public_failure(state.last_error) if _managed_chat(identity) and state.last_error else state.last_error, created_at=state.created_at,
         updated_at=state.updated_at,
     )
 
@@ -794,6 +827,8 @@ async def _answer_events(
                         data[field], media=media, tenant_id=chat_tenant_id or tenant_id,
                         identity=identity, attachment_service=attachment_service,
                     )
+            if _managed_chat(identity) and data.get("error"):
+                data["error"] = _public_failure(data["error"])
             if event_type == "answer.evidence":
                 if media is None or tenant_id is None:
                     raise ValueError("evidence projection requires the source Tenant and media service")

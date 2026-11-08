@@ -7,7 +7,7 @@ from enum import StrEnum
 from gateway.config import (
     ArkModelSourceConfig,
     ModelSourceConfig,
-    source_api_key_env_name,
+    source_api_key_env_name, resolve_source_api_key,
 )
 
 
@@ -53,7 +53,7 @@ class ModelReference:
 
 def source_key(source: ModelSourceConfig) -> str:
     name = source_api_key_env_name(source)
-    key = os.getenv(name or "", "").strip()
+    key = resolve_source_api_key(source) if getattr(source, "encrypted_api_key", None) else os.getenv(name or "", "").strip()
     if not key:
         raise RuntimeError(
             f"model API key environment variable {name!r} is not configured"
@@ -64,5 +64,5 @@ def source_key(source: ModelSourceConfig) -> str:
 def ark_options(source: ArkModelSourceConfig) -> dict[str, str]:
     # Legacy calls resolve ARK_API_KEY lazily inside the SDK, as before.
     return (
-        {} if source.api_key_env == "ARK_API_KEY" else {"api_key": source_key(source)}
+        {} if source.api_key_env == "ARK_API_KEY" and not source.encrypted_api_key else {"api_key": source_key(source)}
     )

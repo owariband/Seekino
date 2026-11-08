@@ -33,6 +33,8 @@ _ADAPTER_CAPABILITIES = {
         generative=True, rerank=True, transcription=True, embedding=True, sparse_embedding=True,
         visual_input_mode="video", transcription_input_mode="video",
     ),
+    "chat_api": AdapterCapabilities(generative=True, rerank=True, transcription=True, embedding=True,
+                                    visual_input_mode="ordered_frames", transcription_input_mode="audio", supports_reasoning_effort=False),
     "openai": AdapterCapabilities(
         generative=True, rerank=True, visual_input_mode="ordered_frames",
     ),

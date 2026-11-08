@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from ..bootstrap import ApplicationServices
 from ..config.sse import SSEConfig
@@ -48,3 +48,12 @@ def revalidate_identity(request: Request) -> AuthIdentity:
     if service is None:
         return get_identity(request)
     return service.authenticate(request.cookies.get(service.config.cookie_name))
+
+
+def require_config_access(request: Request) -> AuthIdentity:
+    from ..service.access import require_admin
+    identity = get_identity(request)
+    require_admin(identity)
+    if identity.mode == "local" and (not request.client or request.client.host not in {"127.0.0.1", "::1", "testclient"}):
+        raise HTTPException(403, "配置管理只允许从本机访问")
+    return identity

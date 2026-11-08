@@ -1,3 +1,4 @@
+import { configuredModels, firstModel } from "../test/personalModelFixtures";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -137,7 +138,7 @@ function renderApp(
   let messageOptions = initialMessageOptions;
   let globalSettings = initialGlobalSettings;
   const now = Date.parse("2026-09-15T00:00:00Z");
-  const conversation: AgentConversationView = { conversationId: "conversation", tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  const conversation: AgentConversationView = { modelId: firstModel, conversationId: "conversation", tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
   let conversations: AgentConversationView[] = [conversation];
   const conversationMessages = new Map<string, AgentMessageView[]>();
   const assistantMessage: AgentMessageView = {
@@ -233,6 +234,7 @@ function renderApp(
       conversationMessages.delete(String(conversationId));
       return jsonResponse(deleted);
     }
+    if (url.includes("/api/agent/model-connections")) return jsonResponse(configuredModels);
     if (url.includes("/api/agent/messages/options")) {
       return jsonResponse(messageOptions);
     }
@@ -433,7 +435,7 @@ describe("application shell", () => {
     await user.click(screen.getByRole("link", { name: "设置" }));
     expect(await screen.findByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "切换至黑夜模式" }));
+    await user.click(screen.getByRole("radio", { name: "黑夜模式" }));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
@@ -441,7 +443,8 @@ describe("application shell", () => {
     const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings" });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
 
-    expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "外观与语言" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
     expect(screen.getByText("资料来源")).toBeInTheDocument();
     expect(screen.getByText("本机资料")).toBeInTheDocument();
@@ -452,6 +455,7 @@ describe("application shell", () => {
     expect(screen.queryByRole("heading", { name: "数据边界" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/global-settings"))).toBe(false);
 
+    await userEvent.setup().click(screen.getByRole("button", { name: "外观与语言" }));
     await userEvent.setup().click(screen.getByRole("radio", { name: "黑夜模式" }));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     const runtimeRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/system/runtime-config"));
@@ -461,15 +465,19 @@ describe("application shell", () => {
   it("switches the interface immediately, preserves settings edits and restores the saved language", async () => {
     const view = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Agent 运行" }));
     await screen.findByRole("heading", { name: "全局 Agent 配置" });
     const historyInput = await screen.findByRole("spinbutton", { name: /历史消息数量/ });
     await user.clear(historyInput);
     await user.type(historyInput, "18");
+    await user.click(screen.getByRole("button", { name: "外观与语言" }));
     await user.click(screen.getByRole("radio", { name: "EN English" }));
     expect(screen.getByRole("heading", { name: "Settings", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Language" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Interface language" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Agent runtime" }));
     expect(screen.getByRole("spinbutton", { name: /History message count/ })).toHaveValue(18);
-    expect(screen.getByRole("radio", { name: "EN English" })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: "Appearance & language" }));
+    expect(screen.getByRole("radio", { name: "EN English" })).toBeChecked();
     expect(document.documentElement).toHaveAttribute("lang", "en");
     expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("en");
     await user.click(screen.getByRole("button", { name: "Open account menu" }));
@@ -496,7 +504,7 @@ describe("application shell", () => {
     const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
     expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "语言" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "界面语言" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "数据边界" })).not.toBeInTheDocument();
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
@@ -521,8 +529,10 @@ describe("application shell", () => {
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
 
     await act(async () => { resolveConfig({ displayMode: "debug" }); });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Agent 运行" }));
     expect(await screen.findByRole("heading", { name: "全局 Agent 配置" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "数据边界" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
+    expect(screen.getByText("数据边界")).toBeVisible();
     expect(screen.getByText("资料地址")).toBeInTheDocument();
     expect(screen.getByText("资料空间")).toBeInTheDocument();
 
@@ -544,6 +554,7 @@ describe("application shell", () => {
   ])("keeps release when runtime configuration has %s", async (_name, runtimeConfig) => {
     const { queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
@@ -552,6 +563,7 @@ describe("application shell", () => {
   it("keeps release and normal navigation when runtime configuration fails", async () => {
     const { queryClient } = renderApp([apiSeries], { initialPath: "/settings", failRuntimeConfig: true });
     await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("error"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
     await userEvent.setup().click(screen.getAllByRole("link", { name: /资料库/ })[0]!);
@@ -560,13 +572,15 @@ describe("application shell", () => {
 
   it("returns to release after a failed runtime configuration refresh", async () => {
     const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Agent 运行" }));
     await screen.findByRole("heading", { name: "全局 Agent 配置" });
     const original = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (input, init) => String(input).includes("/api/system/runtime-config")
       ? new Response(null, { status: 503 }) : original(input, init));
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["runtime-config"] }); });
-    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument());
     expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "账号与连接" }));
     expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
   });
 
@@ -671,6 +685,8 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await user.click(await screen.findByText("高级", { exact: true }));
     const concurrency = await screen.findByRole("spinbutton", { name: /并行任务上限/ });
     await waitFor(() => expect(concurrency).toBeEnabled());
     expect(concurrency).toHaveValue(4);
@@ -703,7 +719,9 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
-    await user.click(screen.getByText("工具输出"));
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await user.click(await screen.findByText("高级", { exact: true }));
+    expect(screen.getByText("工具输出")).toBeVisible();
     expect(screen.getByText(/read 工具按片段内容的字符范围读取，不按行读取/)).toBeInTheDocument();
     const readLimit = await screen.findByRole("spinbutton", { name: /read 单次最多读取字符数/ });
     await waitFor(() => expect(readLimit).toBeEnabled());
@@ -728,7 +746,8 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
-    await screen.findByRole("spinbutton", { name: /并行任务上限/ });
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await screen.findByRole("spinbutton", { name: /历史消息数量/ });
     await user.click(screen.getByText("模型思考"));
     const query = screen.getByRole("combobox", { name: /Query 检索/ });
     const supervisor = screen.getByRole("combobox", { name: /Supervisor 回答/ });
@@ -760,6 +779,8 @@ describe("application shell", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
     await user.click(screen.getByRole("link", { name: "设置" }));
+    await user.click(await screen.findByRole("button", { name: "Agent 运行" }));
+    await user.click(await screen.findByText("高级", { exact: true }));
     const timeout = await screen.findByRole("spinbutton", { name: /Supervisor 超时/ });
     await waitFor(() => expect(timeout).toBeEnabled());
     fireEvent.input(timeout, { target: { value: "240" } });
@@ -1055,7 +1076,7 @@ describe("application shell", () => {
     expect(await screen.findByText("回答已完成")).toHaveAttribute("role", "status");
     const creation = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/conversations/create"));
     expect(String(creation?.[0])).toBe("/api/agent/conversations/create");
-    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ tenantId: "local-default" });
+    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ tenantId: "local-default", modelId: firstModel });
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/sessions/"))).toBe(false);
     const sendCall = fetchMock.mock.calls.find(([input]) =>
       String(input).includes("/api/agent/messages/send?conversationId=conversation"),
@@ -1203,13 +1224,13 @@ describe("application shell", () => {
     expect(screen.queryByText("回答已完成")).not.toBeInTheDocument();
   });
 
-  it("creates, lists, and switches between Conversations without duplicating an empty one", async () => {
+  it("creates on first send, lists, and switches between Conversations without duplicating a draft", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
     const composer = await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(0);
 
     await user.type(composer, "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
@@ -1218,32 +1239,43 @@ describe("application shell", () => {
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
-    expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
+    expect(await screen.findByRole("button", { name: "戳一戳 Kino" })).toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
+    await user.type(composer, "新对话");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2);
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2");
+    expect(composer).toHaveValue("");
+
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation"));
   });
 
   it("reuses the recovered empty Conversation when the history list is unavailable", async () => {
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "recovered-empty", id: "conversation" }));
     const { fetchMock } = renderApp([apiSeries], { failConversationList: true });
     const user = userEvent.setup();
     await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
     await user.click(screen.getByRole("button", { name: "新建对话" }));
 
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(0);
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveFocus();
   });
 
-  it("loads Conversation history on mount even when automatic creation fails", async () => {
-    renderApp([apiSeries], { failInitialConversationCreation: true });
+  it("loads Conversation history on mount without automatic creation", async () => {
+    const { fetchMock } = renderApp([apiSeries], { failInitialConversationCreation: true });
     const user = userEvent.setup();
-    expect(await screen.findByText("暂时无法恢复当前对话")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/conversations/list"))).toBe(true));
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(0);
+    expect(screen.queryByText("暂时无法恢复当前对话")).not.toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation"));
     expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toBeEnabled();
@@ -1252,7 +1284,7 @@ describe("application shell", () => {
   it("focuses the readable error when an explicit Conversation switch fails", async () => {
     const { fetchMock } = renderApp([apiSeries], { failInitialConversationCreation: true });
     const user = userEvent.setup();
-    await screen.findByText("暂时无法恢复当前对话");
+    await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
     const original = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (input, init) => {
       if (String(input).includes("/api/agent/conversations/get")) {
@@ -1264,7 +1296,6 @@ describe("application shell", () => {
       return original(input, init);
     });
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
     const failure = (await screen.findByText("无法打开选中的对话")).closest("p")!;
     await waitFor(() => expect(failure).toHaveFocus());
@@ -1274,8 +1305,7 @@ describe("application shell", () => {
   it("closes history accessibly and restores focus when cancelling deletion", async () => {
     renderApp();
     const user = userEvent.setup();
-    const history = await screen.findByLabelText("打开对话记录");
-    await user.click(history);
+    const history = await screen.findByRole("button", { name: "收起对话记录" });
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     const confirmation = screen.getByRole("button", { name: /^确认删除对话 Test，/ });
     const cancellation = screen.getByRole("button", { name: "取消" });
@@ -1290,7 +1320,7 @@ describe("application shell", () => {
     expect(history).toHaveFocus();
 
     await user.click(history);
-    await user.click(screen.getByRole("button", { name: "关闭对话记录" }));
+    await user.click(screen.getByRole("button", { name: "收起对话记录" }));
     expect(history).toHaveFocus();
   });
 
@@ -1301,7 +1331,6 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     const deletion = await screen.findByRole("button", { name: /^删除对话 雨天门口，/ });
     expect(deletion).toBeDisabled();
     expect(deletion).toHaveAttribute("title", "当前回答进行中，完成后才能删除");
@@ -1310,7 +1339,7 @@ describe("application shell", () => {
     await waitFor(() => expect(deletion).toBeEnabled());
   });
 
-  it("locks deletion while a new Conversation request is in flight", async () => {
+  it("locks deletion while the first-send Conversation request is in flight", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
     await user.type(await screen.findByRole("textbox", { name: "向 Seekino 助手提问" }), "雨天门口");
@@ -1337,8 +1366,9 @@ describe("application shell", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "新对话");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
     await creationStarted;
-    await user.click(screen.getByLabelText("打开对话记录"));
     const deletion = await screen.findByRole("button", { name: /^删除对话 雨天门口，/ });
     expect(deletion).toBeDisabled();
     expect(deletion).toHaveAttribute("title", "请等待当前对话操作完成");
@@ -1346,6 +1376,9 @@ describe("application shell", () => {
 
     act(releaseCreation);
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await waitFor(() => expect(deletion).toBeEnabled());
   });
 
   it("locks every deletion target while an explicitly selected Conversation is loading", async () => {
@@ -1357,6 +1390,11 @@ describe("application shell", () => {
     act(finishAnswer);
     await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "新对话");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
     const original = fetchMock.getMockImplementation()!;
@@ -1375,10 +1413,8 @@ describe("application shell", () => {
       return original(input, init);
     });
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
     await selectionStarted;
-    await user.click(screen.getByLabelText("打开对话记录"));
     expect(screen.getByRole("button", { name: /^删除对话 雨天门口，/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^删除对话 新对话，/ })).toBeDisabled();
 
@@ -1386,7 +1422,7 @@ describe("application shell", () => {
     await waitFor(() => expect(screen.getByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument());
   });
 
-  it("deletes only after confirmation and replaces the final active Conversation", async () => {
+  it("deletes only after confirmation and leaves a draft after the final active Conversation", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
     await user.type(await screen.findByRole("textbox", { name: "向 Seekino 助手提问" }), "雨天门口");
@@ -1395,9 +1431,13 @@ describe("application shell", () => {
     act(finishAnswer);
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "新对话");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 雨天门口，/ }));
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/conversations/delete"))).toBe(false);
     await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
@@ -1406,8 +1446,9 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: /^删除对话 新对话，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 新对话，/ }));
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(3));
-    await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-3"));
+    expect(await screen.findByRole("button", { name: "戳一戳 Kino" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2);
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" })).toHaveFocus();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/delete"))).toHaveLength(2);
   });
 
@@ -1436,13 +1477,16 @@ describe("application shell", () => {
     act(finishAnswer);
     await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "新对话");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
 
     holdNextList = true;
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
     await listStarted;
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(screen.getByRole("button", { name: /^删除对话 雨天门口，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
@@ -1465,7 +1509,6 @@ describe("application shell", () => {
     });
     const user = userEvent.setup();
     await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
-    await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
 
@@ -1474,8 +1517,8 @@ describe("application shell", () => {
     expect(screen.getByRole("button", { name: /^删除对话 Test，/ })).toBeInTheDocument();
   });
 
-  it("can create again when replacing the deleted final Conversation fails once", async () => {
-    const { fetchMock } = renderApp();
+  it("retries a failed first-send creation after deleting the final Conversation", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
     const original = fetchMock.getMockImplementation()!;
     let failReplacement = false;
     fetchMock.mockImplementation(async (input, init) => {
@@ -1494,18 +1537,32 @@ describe("application shell", () => {
       return original(input, init);
     });
     const user = userEvent.setup();
-    await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
-    await user.click(screen.getByLabelText("打开对话记录"));
+    const composer = await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
+    await user.type(composer, "Test");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
-    expect(await screen.findByText("对话已删除，但新对话创建失败：暂时无法新建对话")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "戳一戳 Kino" });
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^删除对话 Test，/ })).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "不能发给已删除的对话");
-    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(await screen.findByText("暂时无法新建对话")).toBeInTheDocument();
+    expect(composer).toHaveValue("不能发给已删除的对话");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"))).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).id).toBe("conversation-2"));
-    expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+    expect(composer).toHaveValue("");
+    const sends = fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"));
+    expect(sends).toHaveLength(2);
+    expect(String(sends[1]?.[0])).toContain("conversationId=conversation-2");
+    expect(JSON.parse(String(sends[1]?.[1]?.body)).content).toBe("不能发给已删除的对话");
+    act(finishAnswer);
   });
 
   it("allows multi-selection and keeps a running answer and its scope when the next selection changes", async () => {
@@ -1576,8 +1633,8 @@ describe("application shell", () => {
   it("lets the Supervisor answer without video scope when no animation is ready", async () => {
     const { fetchMock, finishAnswer } = renderApp([{ ...apiSeries, status: "INDEXING" }]);
     const user = userEvent.setup();
-    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/list"))).toBe(true));
-    const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
+    const composer = await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/list"))).toBe(false);
     await user.type(composer, "雨天门口{Enter}");
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"))).toHaveLength(1));
     const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send"));

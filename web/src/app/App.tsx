@@ -1,11 +1,14 @@
-import { lazy } from "react";
-import { Navigate, Route, Routes } from "react-router";
+import { lazy, Suspense, useLayoutEffect, useRef } from "react";
+import { type Location, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
 import { WatchHomePage } from "../features/player/WatchHomePage";
 import { UploadDialog } from "../features/uploads/UploadDialog";
 import { UploadProvider } from "../features/uploads/UploadProvider";
 import { useAuth } from "../features/auth/AuthProvider";
 import { AppShell } from "./AppShell";
+import { useI18n } from "./i18n";
+import { ActiveChatSettingsProvider } from "../features/settings/activeChatSettings";
+import styles from "./app-shell.module.css";
 
 const LibraryPage = lazy(() => import("../features/library/LibraryPage").then((module) => ({ default: module.LibraryPage })));
 const WatchPage = lazy(() => import("../features/player/WatchPage").then((module) => ({ default: module.WatchPage })));
@@ -15,24 +18,61 @@ const SettingsPage = lazy(() => import("../features/settings/SettingsPage").then
 const TasksPage = lazy(() => import("../features/tasks/TasksPage").then((module) => ({ default: module.TasksPage })));
 const UsagePage = lazy(() => import("../features/usage/UsagePage").then((module) => ({ default: module.UsagePage })));
 
+function SettingsOverlay({ origin }: { origin: Location }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const navigate = useNavigate();
+  const { t } = useI18n();
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current!;
+    const composer = origin.pathname === "/search"
+      ? document.querySelector<HTMLTextAreaElement>("textarea[data-standalone-composer]") : null;
+    const range = composer && [composer.selectionStart, composer.selectionEnd, composer.selectionDirection] as const;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      if (composer?.isConnected && range) {
+        composer.focus({ preventScroll: true });
+        composer.setSelectionRange(...range);
+      }
+    };
+  }, [origin]);
+  return <dialog data-settings-overlay className={styles.settingsOverlay} ref={dialogRef} aria-label={t("设置")}
+    onCancel={event => { event.preventDefault(); navigate(-1); }}>
+    <Suspense fallback={<p role="status">{t("正在加载…")}</p>}>
+      <SettingsPage onClose={() => navigate(-1)} />
+    </Suspense>
+  </dialog>;
+}
+
 export function App() {
   const { canManage, canUpload } = useAuth();
+  const location = useLocation();
+  const originRef = useRef<Location | null>(null);
+  useLayoutEffect(() => {
+    if (location.pathname !== "/settings") originRef.current = location;
+  }, [location]);
+  // A direct visit or reload opens standalone settings. Only a live origin can preserve an in-memory draft.
+  const origin = location.pathname === "/settings" && location.state?.settingsFrom === originRef.current?.key
+    ? originRef.current : null;
   return (
     <UploadProvider>
-      <Routes>
-        <Route element={<AppShell />}>
-          <Route index element={<Navigate to="/watch" replace />} />
-          <Route path="watch" element={<WatchHomePage />} />
-          <Route path="series/:seriesId" element={<SeriesPage />} />
-          <Route path="search" element={<RoutedSearchPage />} />
-          <Route path="library" element={canManage ? <LibraryPage /> : <Navigate to="/watch" replace />} />
-          <Route path="watch/:seriesId/:videoId" element={<WatchPage />} />
-          <Route path="tasks" element={canManage ? <TasksPage /> : <Navigate to="/watch" replace />} />
-          <Route path="usage" element={canManage ? <UsagePage /> : <Navigate to="/watch" replace />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/watch" replace />} />
-        </Route>
-      </Routes>
+      <ActiveChatSettingsProvider>
+        <Routes location={origin ?? location}>
+          <Route element={<AppShell />}>
+            <Route index element={<Navigate to="/watch" replace />} />
+            <Route path="watch" element={<WatchHomePage />} />
+            <Route path="series/:seriesId" element={<SeriesPage />} />
+            <Route path="search" element={<RoutedSearchPage />} />
+            <Route path="library" element={canManage ? <LibraryPage /> : <Navigate to="/watch" replace />} />
+            <Route path="watch/:seriesId/:videoId" element={<WatchPage />} />
+            <Route path="tasks" element={canManage ? <TasksPage /> : <Navigate to="/watch" replace />} />
+            <Route path="usage" element={canManage ? <UsagePage /> : <Navigate to="/watch" replace />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/watch" replace />} />
+          </Route>
+        </Routes>
+        {origin && <SettingsOverlay origin={origin} />}
+      </ActiveChatSettingsProvider>
       {canUpload ? <UploadDialog /> : null}
     </UploadProvider>
   );

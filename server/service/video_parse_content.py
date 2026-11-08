@@ -376,9 +376,6 @@ def commit_chunk_result(
     committed_at: datetime,
     payload: dict[str, Any],
 ) -> tuple[str, ...]:
-    intervals = _locked_parent_intervals(
-        session, lease.video_parse_task_id
-    )
     task = _locked_chunk_lease(session, lease, committed_at)
     if lease.phase != ChunkTaskPhase.PARSE:
         raise VideoParseLeaseLostError("only Parse leases can commit understanding")
@@ -386,6 +383,10 @@ def commit_chunk_result(
     if chunk is None:
         raise VideoParseConflictError("ChunkParseTask VideoChunk no longer exists")
     parent = task_store.get_task(session, lease.video_parse_task_id)
+    intervals = interval_store.list_tasks(
+        session, task.video_task_id, for_update=True,
+        start_range=(max(0, chunk.sequence_no - _interval_size(parent.parse_config) + 1), chunk.sequence_no),
+    )
     video = task_store.get_video(session, parent.video_id) if parent is not None else None
     if video is None:
         raise VideoParseConflictError("Understanding source video no longer exists")
@@ -606,9 +607,12 @@ def complete_chunk_indexing(
     chunk_store.save_content(session, content)
     chunk_store.save_task(session, child)
     session.flush()
-    # The queue can also finish this aggregation if the coordinator exits.
-    parent = _aggregate_video_task(session, parent.id, completed_at)
-    session.flush()
+    # An active INDEXING parent with another durable queued/running index
+    # cannot finish on this receipt. Full verification still owns the last one.
+    if (parent.status != "INDEXING" or _video_failure_status(parent) is not None
+            or not chunk_store.has_pending_index(session, parent.id)):
+        _aggregate_video_task(session, parent.id, completed_at)
+        session.flush()
     return _task_state(task_store.get_task(session, parent.id))
 
 

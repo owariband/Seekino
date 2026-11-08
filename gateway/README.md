@@ -57,6 +57,7 @@ Server 负责快照合并、消息持久化和页面 SSE，计时与交付合同
 FTT 采证、兼容路径和未部署边界见 [Chat 流式 TRD](../docs/design/03-product-reassessment/chat-streaming-trd.md)。
 配置、完整性验证及线上效果边界见
 [模型 stream 设计](../docs/design/03-product-reassessment/model-streaming-trd.md)。
+Parse 使用同一正文观察接口保存独立调用草稿；Responses 增量与 Chat 一样携带调用和序号，非流式或仅终态正文的观察标记 `before_completion=false`，不能据此计算实时首字。保存阈值、数据库和调用归属属于 Server，Gateway 不承担草稿或租约写入策略。
 
 模型取消回调按资源嵌套逆序执行，先处理后来注册的流，再关闭客户端。同步 Chat SSE
 在取消已取得的 HTTP/1 响应时先唤醒 socket 阻塞读，再关闭流，避免仅 `close()` 后读线程

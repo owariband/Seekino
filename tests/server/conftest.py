@@ -115,3 +115,29 @@ def seed_video(tmp_path):
 @pytest.fixture
 def parsed_video(repository, seed_video):
     return seed_video(create_session_factory(repository[0]))
+
+
+@pytest.fixture
+def yaml_model_settings(tmp_path):
+    from pathlib import Path
+    import yaml
+    from server.service.model_settings import ModelSettings
+
+    data = yaml.safe_load((Path(__file__).parents[2] / "config.yaml").read_text())
+    data["supervisor_harness"] = "deepagents"
+    data["model_sources"]["my-endpoint"] = {
+        "adapter": "openai", "provider": "my-provider", "base_url": "https://chat.example.test/v1",
+        "api_key_env": "TEST_LOCAL_PROVIDER_KEY",
+    }
+    primary = {"source": "my-endpoint", "model": "team/home", "supports_vision_input": True}
+    data["models"].update({
+        "supervisor": primary,
+        "same-model-other-role": primary,
+        "my-alternative": {**primary, "model": "team/alternative"},
+        "custom-unlisted": {**primary, "model": "team/discovered"},
+        "ranking-only": {**primary, "model": "team/ranking-only", "kind": "rerank"},
+    })
+    data["supervisor_choices"] = {"my-alternative": "My alternative"}
+    path = tmp_path / "models.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return ModelSettings(path, allow_local=True, environ={"TEST_LOCAL_PROVIDER_KEY": "synthetic-private-key"})
