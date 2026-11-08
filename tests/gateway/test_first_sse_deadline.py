@@ -250,3 +250,42 @@ def test_owner_cancellation_remains_cancellation(mode, local_server, run_model):
         thread.join(1)
         assert not thread.is_alive() and released == calls
         assert state.disconnected.wait(0.5)
+
+
+def test_superseded_request_releases_worker_while_waiting_for_next_event(local_server, run_model, monkeypatch):
+    from httpcore._backends.sync import SyncStream
+    from gateway.streaming.first_sse import FirstSSEDeadline
+
+    decoded, reading = Event(), Event()
+    received = FirstSSEDeadline.received
+    read = SyncStream.read
+
+    def after_event(deadline):
+        received(deadline)
+        decoded.set()
+
+    def await_body(stream, *args, **kwargs):
+        if decoded.is_set():
+            reading.set()
+        return read(stream, *args, **kwargs)
+
+    monkeypatch.setattr(FirstSSEDeadline, "received", after_event)
+    monkeypatch.setattr(SyncStream, "read", await_body)
+    calls, released, cancel_at = [], [], []
+    with local_server("timely", body_delay=1.8) as (url, state):
+        def supersede():
+            if reading.wait(2):
+                # Give recv time to block after entering the observed read.
+                state.stop.wait(0.05)
+                cancel_at.append(monotonic())
+                calls[0].cancel()
+
+        thread = Thread(target=supersede, daemon=True)
+        thread.start()
+        with control_model_calls(SimpleNamespace(acquire=calls.append, release=released.append)):
+            with pytest.raises(ModelCallCancelledError):
+                run_model(url, timeout=4)
+        finished = monotonic()
+        thread.join(1)
+        assert len(cancel_at) == 1 and released == calls and not thread.is_alive()
+        assert finished - cancel_at[0] < 0.7, "obsolete stream retained the running worker"

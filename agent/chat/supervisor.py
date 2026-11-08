@@ -442,6 +442,8 @@ class SupervisorRuntime:
 
         def accept_text_delta(delta: ModelTextDelta) -> None:
             nonlocal stream_call_id, stream_text, stream_prefix, stream_sent
+            if not delta.before_completion:
+                return  # Completed responses are published by accept_text after validation.
             with tool_lock:
                 control.check()
                 if stream_call_id is None:

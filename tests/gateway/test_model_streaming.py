@@ -14,6 +14,7 @@ from gateway.config import ArkModelSourceConfig, ModelBinding, OpenAIModelSource
 from gateway.local.llama_cpp import LlamaCppMultimodalModel
 from gateway.local.ollama import OllamaMultimodalModel
 from gateway.model_factory import GatewayClient
+from gateway.model_events import observe_model_text
 from gateway.multimodal import TextInput
 from gateway.usage import capture_model_usage
 
@@ -200,6 +201,30 @@ def test_video_transcription_generation_uses_its_binding_stream_setting(monkeypa
     assert requests[0]["temperature"] == 0.2
 
 
+@pytest.mark.parametrize("profile", ["standard", "kimi", "deepseek", "ark"])
+@pytest.mark.parametrize("setting", [True, False], ids=["streaming", "nonstream"])
+def test_generative_transport_observes_visible_text_once(monkeypatch, profile, setting):
+    gateway, _requests = _setup(monkeypatch, profile)
+    binding = ModelBinding(
+        source="selected", model="test-model", max_output_tokens=1024, stream=setting,
+    )
+    observed = []
+    try:
+        with observe_model_text(observed.append):
+            assert _run(gateway, binding, "json") == "ok"
+    finally:
+        gateway.close()
+    assert "".join(delta.text for delta in observed) == '{"answer":"ok"}'
+    if setting:
+        assert [delta.sequence for delta in observed] == list(range(1, len(observed) + 1))
+        assert all(delta.before_completion for delta in observed)
+        assert observed[0].first_text_ms is not None
+    else:
+        assert len(observed) == 1 and observed[0].sequence == 1
+        assert observed[0].before_completion is False
+        assert observed[0].first_text_ms is None
+
+
 @pytest.mark.parametrize("setting", [None, True, False])
 @pytest.mark.parametrize("temperature", [None, 0.8])
 @pytest.mark.parametrize("model_type", [OllamaMultimodalModel, LlamaCppMultimodalModel])
@@ -233,7 +258,7 @@ def test_stream_configuration_rejects_non_boolean_values(value):
 def test_stream_cancel_wakes_http1_reads_without_killing_multiplexed_connections(protocol, already_closed, response_closed):
     import socket
     from types import SimpleNamespace
-    from gateway.streaming.chat import _cancel_chat_stream
+    from gateway.streaming import cancel_http_stream
 
     operations = []
 
@@ -248,5 +273,5 @@ def test_stream_cancel_wakes_http1_reads_without_killing_multiplexed_connections
             get_extra_info=lambda key: SimpleNamespace(shutdown=shutdown) if key == "socket" else None,
         )}), close=lambda: operations.append("close"),
     )
-    _cancel_chat_stream(stream)
+    cancel_http_stream(stream)
     assert operations == (["shutdown", "close"] if not response_closed and protocol in {b"HTTP/1.0", b"HTTP/1.1"} else ["close"])

@@ -67,7 +67,7 @@ from .video_parse_task import (
     _task_input_state,
     _task_state,
     _locked_video_lease,
-    _locked_parent_intervals,
+    _locked_parent_task,
     _advance_ready_chunks,
     _aggregate_video_task,
     _interval_specs,
@@ -78,6 +78,7 @@ from .video_parse_task import (
     _requires_video_asr,
     _video_failure_status,
 )
+from .video_parse_dispatch import EpisodeReadyTasks, ParseDispatch
 from .video_parse_content import (
     _normalize_event_index_target,
     INDEX_EMBEDDINGS_DETAIL_KEY,
@@ -103,8 +104,9 @@ class VideoParsePersistenceService:
     explicitly persist their changes through SQL repositories in that Session.
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: sessionmaker[Session], *, dispatch: ParseDispatch | None = None) -> None:
         self._session_factory = session_factory
+        self._dispatch = dispatch
 
     def load_export_snapshot(
         self,
@@ -754,13 +756,16 @@ class VideoParsePersistenceService:
         if not payload:
             raise ValueError("content must not be empty")
         with self._session_factory.begin() as session:
-            return content_ops.commit_chunk_result(
+            touched = content_ops.commit_chunk_result(
                 session,
                 lease=lease,
                 detail=detail,
                 committed_at=committed_at,
                 payload=payload,
             )
+        if self._dispatch is not None:
+            self._dispatch.after_commit(lease, EpisodeReadyTasks.understood, committed_at, touched)
+        return touched
 
     def load_chunk_execution(
         self,
@@ -806,8 +811,12 @@ class VideoParsePersistenceService:
 
         committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            locked_intervals = _locked_parent_intervals(
-                session, lease.video_parse_task_id
+            parent = _locked_parent_task(session, lease.video_parse_task_id)
+            size = _interval_size(parent.parse_config)
+            locked_intervals = interval_store.list_tasks(
+                session, parent.id, for_update=True,
+                start_range=(max(0, lease.start_sequence_no - size + 1),
+                             lease.start_sequence_no + lease.chunk_count - 1),
             )
             interval, changed_versions = content_ops.commit_interval_refinement(
                 session,
@@ -825,9 +834,11 @@ class VideoParsePersistenceService:
                 session, interval.video_task_id, interval.chunk_task_ids,
                 committed_at, locked_intervals=locked_intervals,
             )
-            summary_ops.mark_summary_ready(session, interval.video_task_id, now=committed_at)
+            if not interval_store.has_unfinished_window(session, interval.video_task_id):
+                summary_ops.mark_summary_ready(session, interval.video_task_id, now=committed_at)
             receipt = IntervalRefinementCommit(tuple(queued), changed_versions)
-        # No notification may escape a transaction that later rolls back.
+        if self._dispatch is not None:
+            self._dispatch.after_commit(lease, EpisodeReadyTasks.refined, receipt.ready_chunk_ids, committed_at)
         return receipt
 
     def bind_event_index_target(
@@ -869,7 +880,7 @@ class VideoParsePersistenceService:
             raise VideoParseConflictError("indexed Chunk versions must be positive integers")
         completed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            return content_ops.complete_chunk_indexing(
+            state = content_ops.complete_chunk_indexing(
                 session,
                 lease=lease,
                 content_version=content_version,
@@ -877,6 +888,9 @@ class VideoParsePersistenceService:
                 event_target=event_target,
                 completed_at=completed_at,
             )
+        if self._dispatch is not None:
+            self._dispatch.after_commit(lease, EpisodeReadyTasks.lease_state, indexed_version=content_version)
+        return state
 
     def save_index_embeddings(
         self,
@@ -917,12 +931,15 @@ class VideoParsePersistenceService:
         """Requeue released Chunks while preserving Parse and Refine results."""
         requested_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            return content_ops.request_index_rebuild(
+            reset = content_ops.request_index_rebuild(
                 session,
                 video_parse_task_id=video_parse_task_id,
                 event_target=event_target,
                 requested_at=requested_at,
             )
+        if reset and self._dispatch is not None:
+            self._dispatch.refresh_indexes(video_parse_task_id, reset)
+        return reset
 
     def aggregate_task(
         self,
@@ -1143,7 +1160,7 @@ class VideoParsePersistenceService:
     ) -> tuple[str, ...]:
         committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
-            return prefix_ops.commit_prefix(
+            reset = prefix_ops.commit_prefix(
                 session,
                 lease=lease,
                 content_updates=content_updates,
@@ -1153,6 +1170,9 @@ class VideoParsePersistenceService:
                 input_fingerprint=input_fingerprint,
                 committed_at=committed_at,
             )
+        if reset and self._dispatch is not None:
+            self._dispatch.refresh_indexes(lease.video_parse_task_id, reset)
+        return reset
 
     def retry_prefix(
         self,

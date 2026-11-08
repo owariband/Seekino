@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+from contextvars import ContextVar
 from datetime import timedelta
 from copy import deepcopy
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
+from agent.video_parse_v2.input import GenerativeModelConfig
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
+from gateway.config import ModelBinding
+from gateway.multimodal import TextInput
 from gateway.usage import ModelCallCancelledError, ModelCallTracker
 from server.model.dto.taskDTO import ModelCallReservation, VideoParseLease
+from server.service.video_parse import VideoParseRuntimeService
 from server.service.video_parse_model_calls import (
     ModelCallAdmissionError,
     VideoParseModelCallManager,
@@ -296,3 +303,121 @@ def test_request_cancel_fences_admission_race(during_reservation):
         scope.acquire(call)
     assert len(repository.reserved) == len(repository.released) == int(during_reservation)
     manager.raise_if_cancelled()
+
+
+class _Answer(BaseModel):
+    answer: str
+
+
+class _FakeGenerativeModel:
+    def __init__(self, checks: int) -> None:
+        self.checks = checks
+        self.closed = False
+
+    def generate(self, inputs, *, schema_name, result_type, tools=(), max_model_calls=None,
+                 check_control=None, context_checkpoint=None, fallback_inputs=None,
+                 tool_harness="legacy", **_request):
+        assert check_control is not None
+        for _ in range(self.checks):
+            check_control()
+        return result_type(completed=True) if schema_name == "VideoSummaryCompletion" else result_type(answer="ok")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeGateway:
+    def __init__(self, checks: int = 5) -> None:
+        self.checks = checks
+        self.models: list[_FakeGenerativeModel] = []
+
+    def create_generative_model(self, binding, mcp: bool = False) -> _FakeGenerativeModel:
+        model = _FakeGenerativeModel(self.checks)
+        self.models.append(model)
+        return model
+
+
+def _runtime_with(gateway) -> VideoParseRuntimeService:
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._gateway = gateway
+    runtime._model_manager = ContextVar("test_model_manager", default=None)
+    return runtime
+
+
+def _parse_binding() -> GenerativeModelConfig:
+    return GenerativeModelConfig(
+        source="test", model="model", request_timeout_seconds=10,
+    )
+
+
+def test_generate_multimodal_control_callback_skips_durable_lease_checks():
+    durable = []
+    manager = _manager(
+        _Repository(), check_active=lambda: durable.append("durable"),
+    )
+    gateway = _FakeGateway(checks=5)
+    runtime = _runtime_with(gateway)
+    runtime._model_manager.set(manager)
+
+    result = asyncio.run(runtime._generate_multimodal(
+        _parse_binding(), [TextInput("question")],
+        schema_name="Answer", result_type=_Answer,
+    ))
+
+    assert result.answer == "ok"
+    assert gateway.models[0].closed
+    # Five per-SSE callbacks did not touch the execution lease.
+    assert durable == []
+    assert manager.heartbeat() is True
+    assert durable == ["durable"]
+    for _ in range(5):
+        manager.check_active()
+    assert durable == ["durable"] * 6
+
+
+def test_generate_multimodal_local_cancel_closes_without_durable_checks():
+    durable = []
+    manager = _manager(
+        _Repository(), check_active=lambda: durable.append("durable"),
+    )
+    manager.cancel()
+    gateway = _FakeGateway()
+    runtime = _runtime_with(gateway)
+    runtime._model_manager.set(manager)
+
+    with pytest.raises(ModelCallCancelledError):
+        asyncio.run(runtime._generate_multimodal(
+            _parse_binding(), [TextInput("question")],
+            schema_name="Answer", result_type=_Answer,
+        ))
+
+    assert gateway.models[0].closed
+    assert durable == []
+
+
+def test_summary_generation_callback_skips_durable_lease_checks():
+    from server.service.video_summarize import _SummaryExecution, VideoSummarizeService
+
+    durable = []
+    manager = _manager(
+        _Repository(), check_active=lambda: durable.append("durable"),
+    )
+    gateway = _FakeGateway(checks=5)
+    runtime = object.__new__(VideoSummarizeService)
+    runtime._gateway = gateway
+    runtime._execution = ContextVar("test_summary_execution", default=None)
+    runtime._execution.set(_SummaryExecution(
+        lease=SimpleNamespace(video_id="video"),
+        config=SimpleNamespace(execution_timeout_seconds=10),
+        model=ModelBinding(source="test", model="model"),
+        manager=manager,
+    ))
+
+    result = asyncio.run(runtime.generate_video_summary(
+        SimpleNamespace(video_id="video"), prompt="prompt", tools=[],
+    ))
+
+    assert result.completed is True
+    assert durable == ["durable"]  # Only the pre-generation boundary check.
+    assert manager.heartbeat() is True
+    assert durable == ["durable", "durable"]

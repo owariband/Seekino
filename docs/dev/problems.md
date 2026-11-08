@@ -2786,6 +2786,27 @@ main 的 `.dockerignore` 排除根 assets，Web 构建又把 web 平铺到 /buil
 回归通过；部署与发布范围见 [TRD](../design/03-product-reassessment/smtp-login-availability-trd.md)，
 当前状态统一维护在工作台 DEPLOY-04。
 
+### DEPLOY-05：云端 80 端口未监听，访客用 HTTP 打开链接得到 502
+
+2026-11-07 的客户端代理记录和公网复现均定位到 80 连接被拒绝。443 的站点已可通过测试
+证书访问，HTTP 缺少返回 HTTPS 地址的入口。验收以原域名、路径和查询参数经过一次 308
+抵达 HTTPS 页面为准。实机结果见[云部署 TRD](../design/03-product-reassessment/cloud-docker-deploy-trd.md)
+和[验收记录](devlog.md#devlog-cloud-http-redirect-20261107)。
+
+### PARSE-QUEUE-01：提交时已知就绪任务，重新锁读整集使索引难以填满并发
+
+micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选和聚合含向量的详情。仅用内存找到候选时，短暂的父锁仍会使已知工作被跳过。验收需要分别核对定向领取数、实际索引吞吐、版本对应、ES 可见性与恢复，与整集模型耗时分开计量。见 [专项 TRD](../design/03-product-reassessment/parse-ready-dispatch-trd.md)、[验证记录](../report/server/mq/parse-ready-dispatch/README.md) 和 [工作台](workbench.html)。
+
+同日核对 MyGO。四集并跑时约 143 万次块与窗口续租放大了数据库负担。第 3 集另有失效流等待 TLS 读取、供应端错误与重试。验收追加相同 SSE 回放、真实连接取消耗时、24 块/22 窗的 3 FPS 整集检验，时长和失败证据见[第 3 集实跑](../report/server/mq/parse-ready-dispatch/animation.md)。
+
+合并版复测还发现，已抽取的 198 帧与一份音频在创建硬链接时会触发 200 次父行和 200 次子行加锁。五轮同输入比较中，在整批链接前和媒体交付前各校验一次，两种锁均降至 2 次，最后一个文件链接期间被暂停的任务在交付前被拦住。见[帧文件交付 TRD](../design/03-product-reassessment/parse-media-link-lease-trd.md)。
+
+### PARSE-DRAFT-01：SSE 控制检查逐事件续租，模型正文缺少中途草稿
+
+2026-11-07：核对实际调用链，正文由 Gateway 内存收集，完整校验后才进入正式结果；高频数据库写入来自 SSE `check_control → manager.check_active → _require_*_active → _heartbeat_child`，每次涉及父行锁及子任务续租。正文 buffer 与租约 heartbeat 是独立职责，不能靠新增 buffer 自动消除原回调的数据库访问。
+
+本次新增每调用独立草稿，以未保存的 UTF-8 正文字节数达到 1,024 或调用退出为保存条件。逐 SSE 回调只读取本地取消状态；周期续租、模型调用接纳和正式结果提交仍验证持久租约/版本。验收检查阈值前不写库、阈值及退出保存、失败/取消前缀、调用与租户隔离，以及模拟流中额外续租次数。真实并发和整集耗时另测，真实解析保持暂停。设计与证据见 [TRD](../design/03-product-reassessment/parse-output-drafts-trd.md)、[PR #64](https://github.com/owariband/Seekino/pull/64)；当前状态见 [工作台](workbench.html)。
+
 <a id="chat-layout-01"></a>
 ## CHAT-LAYOUT-01：对话历史浮层遮挡正文，初次提问的欢迎区与输入框分离
 

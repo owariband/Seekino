@@ -13,7 +13,7 @@ from langchain_core.tools import StructuredTool
 
 from gateway.agent_model.deepagents import DeepAgentSessionStore, DeepAgentsSupervisorModel
 from gateway.agent_model.errors import ModelFailureReason, OpenAIFunctionCallingError
-from gateway.model_events import observe_model_text
+from gateway.model_events import observe_model_retry, observe_model_text
 from gateway.openai import agent as openai_agent_module
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.usage import ModelCallCancelledError, control_model_calls
@@ -153,10 +153,13 @@ def test_keep_alive_only_exhausts_reconnects_with_network_error():
     with _server(["keep_alive"]) as (url, state):
         model = _chat_model(url)
         started = monotonic()
-        with pytest.raises(OpenAIFunctionCallingError) as caught:
+        observations = []
+        with observe_model_retry(lambda *event: observations.append(event)), pytest.raises(OpenAIFunctionCallingError) as caught:
             _run_loop(model)
         elapsed = monotonic() - started
     assert caught.value.reason == ModelFailureReason.MODEL_NETWORK_ERROR
+    assert [(attempt, maximum) for _, attempt, maximum in observations] == [(1, 3), (2, 3), (3, 3), (0, 3)]
+    assert len({call for call, _, _ in observations}) == 1
     assert state.requests == 4
     assert elapsed < 4 * 0.3 + 1.0
 
@@ -172,7 +175,11 @@ def test_closed_before_first_event_retries_and_recovers():
 def test_stalled_first_attempt_uses_second_stream():
     with _server(["stall", "stream"]) as (url, state):
         model = _chat_model(url)
-        texts = _run_loop(model)
+        observations = []
+        with observe_model_retry(lambda *event: observations.append(event)):
+            texts = _run_loop(model)
+        assert observations[0][1:] == (1, 3)
+        assert observations[1] == (observations[0][0], 0, 3)
     assert texts == ["answer text"]
     assert state.requests == 2
 

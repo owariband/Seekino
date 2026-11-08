@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL
 
 from server.caller.mysql import create_database_engine
-from server.database import DatabaseEnvironment, create_schema, create_session_factory
+from server.database import DatabaseEnvironment, SchemaUpgradeRequiredError, create_schema, create_session_factory
 from server.service.video_parse_persistence import VideoParsePersistenceService
 from tests.server import test_video_parse_results as asr
 from tests.server import test_video_parse_content_migration as migration
@@ -54,6 +54,15 @@ def test_mysql_idempotence_and_narrow_updates(mysql_repository):
 
 def test_mysql_migration(mysql_repository):
     migration.test_controlled_migration_dry_run_then_preserves_summary_and_task_audit(mysql_repository)
+
+
+def test_mysql_draft_schema_reopens_longtext_and_rejects_shorter_text(mysql_repository):
+    engine, _ = mysql_repository
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE parse_model_output_draft MODIFY COLUMN text TEXT NOT NULL"))
+    with pytest.raises(SchemaUpgradeRequiredError, match=r"parse_model_output_draft\.text\.type"):
+        create_schema(engine)
 
 
 def test_mysql_migration_conflict(mysql_repository):
