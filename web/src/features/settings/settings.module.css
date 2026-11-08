@@ -1,31 +1,26 @@
 .page {
-  width: min(100%, 1160px);
-  max-width: 1160px;
+  position: relative;
+  width: min(100%, 1136px);
+  max-width: 1136px;
   min-width: 0;
-  padding: 30px clamp(22px, 3vw, 40px) 56px;
-}
-
-.header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  margin: 0 0 28px;
+  padding: clamp(32px, 5dvh, 56px) clamp(22px, 3vw, 40px) 52px;
 }
 
 .title {
-  margin: 0;
-  font: 600 clamp(1.5rem, 2.2vw, 1.85rem)/1.2 var(--display);
+  margin: 3px 12px 25px;
+  font: 600 1.45rem/1.25 var(--display);
   letter-spacing: -0.02em;
 }
 
 .closeButton {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
   display: grid;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   flex: none;
-  margin: -7px -7px 0 0;
   place-items: center;
   color: var(--ink-soft);
   border: 1px solid transparent;
@@ -43,16 +38,18 @@
 
 .workspace {
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
-  gap: clamp(28px, 4vw, 52px);
+  grid-template-columns: clamp(180px, 17vw, 224px) minmax(0, 1fr);
+  gap: clamp(28px, 4.4vw, 64px);
   align-items: start;
   min-width: 0;
 }
 
-.navigation {
+.rail {
   position: sticky;
-  top: 24px;
+  top: calc(var(--app-header-height, 76px) + 24px);
   min-width: 0;
+  padding-inline-end: clamp(12px, 1.7vw, 24px);
+  border-inline-end: 1px solid var(--line);
 }
 
 .navHeading {
@@ -62,11 +59,12 @@
 
 .navList {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 .navItem {
+  position: relative;
   display: flex;
   width: 100%;
   min-width: 0;
@@ -75,7 +73,7 @@
   gap: 10px;
   padding: 10px 12px;
   color: var(--ink-soft);
-  border-radius: 9px;
+  border-radius: var(--radius-small);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -90,8 +88,18 @@
 }
 
 .navItem[aria-current="page"] {
-  color: var(--ink);
-  background: var(--teal-wash);
+  color: var(--teal-deep);
+  background: color-mix(in srgb, var(--teal) 10%, transparent);
+}
+
+.navItem[aria-current="page"]::before {
+  position: absolute;
+  left: 0;
+  width: 3px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--teal);
+  content: "";
 }
 
 .navIcon {
@@ -170,20 +178,11 @@
 
 .panelHeader {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 0 0 24px;
-}
-
-.panelIcon {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  flex: none;
-  place-items: center;
-  color: var(--teal-deep);
-  border-radius: 10px;
-  background: var(--teal-wash);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 0 28px;
 }
 
 .panelHeadingText {
@@ -192,17 +191,99 @@
 
 .panelHeading {
   margin: 0;
-  font: 600 1.2rem/1.3 var(--display);
-  letter-spacing: -0.01em;
+  font: 600 clamp(1.55rem, 2.2vw, 1.9rem)/1.22 var(--display);
+  letter-spacing: -0.025em;
   overflow-wrap: anywhere;
 }
 
 .panelDescription {
-  margin: 4px 0 0;
-  color: var(--ink-faint);
-  font-size: 0.8rem;
+  margin: 7px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.sectionLink {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  color: var(--teal-deep);
+  border-radius: var(--radius-small);
+  background: transparent;
+  font-size: .82rem;
+  cursor: pointer;
+}
+
+.sectionLink:hover { background: var(--teal-wash); }
+
+:global([data-theme="dark"]) .page { color-scheme: dark; }
+
+/* Keep the native option groups, keyboard navigation and mobile fallback. */
+@supports (appearance: base-select) and selector(::picker(select)) {
+  .page select,
+  .page select::picker(select) {
+    appearance: base-select;
+  }
+
+  .page select::picker(select) {
+    max-inline-size: min(36rem, calc(100vw - 24px));
+    max-block-size: min(22rem, 52dvh);
+    margin-block: 5px;
+    padding: 6px;
+    overflow: auto;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-small);
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .page select::picker-icon {
+    align-self: center;
+    width: 7px;
+    height: 7px;
+    margin: -3px 3px 0 8px;
+    color: var(--ink-soft);
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+    content: "";
+  }
+
+  .page select:open::picker-icon { transform: rotate(225deg); }
+
+  .page optgroup {
+    padding: 6px 4px 2px;
+    color: var(--ink-soft);
+    font: 600 .74rem/1.5 var(--sans);
+    overflow-wrap: anywhere;
+  }
+
+  .page optgroup + optgroup { border-block-start: 1px solid var(--line); }
+
+  .page option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 7px 10px;
+    color: var(--ink);
+    border-radius: 7px;
+    font: 450 .85rem/1.4 var(--sans);
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .page option[hidden] { display: none; }
+  .page option:checked { color: var(--teal-deep); background: var(--teal-wash); }
+  .page option::checkmark { order: 1; margin-inline-start: auto; color: var(--teal-deep); }
+  .page option:is(:hover, :focus-visible) { background: var(--surface-muted); }
+  .page option:disabled { color: var(--ink-faint); }
 }
 
 .group {
@@ -843,6 +924,10 @@
   transform: rotate(180deg);
 }
 
+.disclosureSummary:hover, .agentSummary:hover { background: var(--surface-muted); }
+.disclosure[open] > summary, .agentDisclosure[open] > summary { color: var(--teal-deep); background: var(--teal-wash); }
+.disclosureSummary:focus-visible, .agentSummary:focus-visible { outline-offset: -3px; }
+
 .agentFields {
   padding: 0 16px 6px;
 }
@@ -977,6 +1062,31 @@
   to { transform: rotate(360deg); }
 }
 
+@media (min-width: 761px) {
+  :global([data-settings-overlay]) .page {
+    height: 100%;
+    padding: 42px 16px 12px 24px;
+  }
+  :global([data-settings-overlay]) .workspace {
+    height: 100%;
+    grid-template-columns: clamp(168px, 16vw, 200px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: clamp(24px, 3vw, 42px);
+  }
+  :global([data-settings-overlay]) .rail {
+    position: static;
+    max-height: 100%;
+    overflow-y: auto;
+  }
+  :global([data-settings-overlay]) .detail {
+    max-height: 100%;
+    padding: 0 22px 20px 2px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+  }
+}
+
 @media (max-width: 760px) {
   .page {
     width: 100%;
@@ -984,8 +1094,15 @@
     padding: 22px 18px 40px;
   }
 
-  .header {
-    margin-bottom: 20px;
+  .title { margin: 0 0 24px; }
+  .closeButton { width: 44px; height: 44px; }
+  .rail { position: static; padding: 0; border: 0; }
+  .workspace[data-mobile-view="detail"] .rail {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 
   .workspace {
@@ -1024,6 +1141,7 @@
   .navItem + .navItem {
     border-top: 1px solid var(--line);
   }
+  .navItem[aria-current="page"]::before { display: none; }
 
   .navSummary {
     display: block;
@@ -1052,6 +1170,28 @@
 
   .panelHeader {
     margin-bottom: 20px;
+  }
+
+  .panelHeader:has(.sectionLink) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 8px;
+  }
+  .panelHeader:has(.sectionLink) .panelHeadingText { display: contents; }
+  .panelHeader:has(.sectionLink) .panelDescription { grid-area: 2 / 1 / 3 / -1; margin-top: 0; }
+  .sectionLink { grid-area: 1 / 2; min-height: 44px; padding: 0 4px; }
+  .page option { min-height: 44px; }
+
+  @supports (appearance: base-select) and selector(::picker(select)) {
+    .page select::picker(select) {
+      position-area: bottom span-all;
+      position-try-fallbacks: flip-block;
+      inset-inline: auto;
+      justify-self: center;
+      inline-size: min(calc(100vw - 36px), 32rem);
+      min-inline-size: 0;
+      max-inline-size: none;
+    }
   }
 
   .row {

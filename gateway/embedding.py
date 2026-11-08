@@ -68,7 +68,7 @@ def describe_embedding_model(
 ) -> EmbeddingModelInfo:
     """Describe the configured encoder without allocating a client or reading keys."""
     from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
-    from gateway.config import ArkModelSourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
+    from gateway.config import ArkModelSourceConfig, ChatAPISourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
 
     if isinstance(source, OllamaEmbeddingSourceConfig):
         from gateway.local.embedding import ollama_encoder_revision
@@ -78,6 +78,9 @@ def describe_embedding_model(
         from gateway.local.llama_cpp_embedding import llama_cpp_encoder_revision
 
         revision = llama_cpp_encoder_revision(binding.query_instruction)
+    elif isinstance(source, ChatAPISourceConfig) and source.protocol == "openai_chat":
+        from hashlib import sha256
+        revision = "gateway-openai-embeddings-v1:" + sha256(source.base_url.encode()).hexdigest()
     elif isinstance(source, ArkModelSourceConfig):
         revision = DOUBAO_MULTIMODAL_EMBEDDING_REVISION
     else:
@@ -132,6 +135,7 @@ def build_embedding_model(
     source: ModelSourceConfig,
     *,
     api_key: str | None,
+    allow_local: bool | None = None,
 ) -> EmbeddingModel:
     """Construct the configured encoder without resolving names or credentials."""
     from arkruntime import Ark
@@ -140,17 +144,35 @@ def build_embedding_model(
         DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
         DoubaoMultimodalEmbedder,
     )
-    from gateway.config import ArkModelSourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
+    from gateway.config import ArkModelSourceConfig, ChatAPISourceConfig, OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig
+
+    from gateway.personal_endpoint import endpoint_http_client
+    if isinstance(source, ChatAPISourceConfig) and source.protocol == "openai_chat":
+        from gateway.local.llama_cpp_embedding import OpenAITextEmbedder
+        timeout = binding.request_timeout_seconds or 600
+        http = endpoint_http_client(source.base_url, allow_local=bool(allow_local), timeout=timeout)
+        if api_key:
+            http.headers["Authorization"] = "Bearer " + api_key
+        delegate = OpenAITextEmbedder(binding.model, base_url=source.base_url, dimensions=binding.dimensions,
+                                      request_timeout_seconds=timeout, client=http)
+        return _OwnedEmbeddingModel(delegate, delegate, binding=binding, source=source,
+                                    encoder_revision=describe_embedding_model(binding, source).encoder_revision)
 
     if isinstance(source, OllamaEmbeddingSourceConfig):
         from gateway.local.embedding import OllamaTextEmbedder, ollama_encoder_revision
 
         if binding.input_mode != "text":
             raise ValueError("ollama_embedding requires input_mode=text")
+        http = None
+        if allow_local is not None or api_key:
+            http = endpoint_http_client(source.base_url, allow_local=bool(allow_local), timeout=binding.request_timeout_seconds or 600)
+            if api_key:
+                http.headers["Authorization"] = "Bearer " + api_key
         delegate = OllamaTextEmbedder(
             binding.model, base_url=source.base_url, dimensions=binding.dimensions,
             query_instruction=binding.query_instruction,
             request_timeout_seconds=binding.request_timeout_seconds or 600,
+            **({"client": http} if http is not None else {}),
         )
         return _OwnedEmbeddingModel(
             delegate, delegate, binding=binding, source=source,

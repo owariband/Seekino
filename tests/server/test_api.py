@@ -504,6 +504,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/global-settings",
         "/api/agent/model-connections",
         "/api/agent/model-connections/default",
+        "/api/agent/model-connections/roles",
+        "/api/agent/model-connections/discover",
         "/api/agent/model-connections/test",
         "/api/agent/messages/send",
         "/api/agent/messages/cancel",

@@ -188,10 +188,12 @@ test("logs in by email, isolates public and personal data, then resets to a new 
 
 test("a cloud guest opening model settings sees no model controls or configuration requests", async ({ page }) => {
   const mock = await mockCloud(page);
-  await page.goto("/settings?section=models");
-  await expect(page.getByRole("heading", { name: "外观与语言", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "回答模型", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "添加模型服务", exact: true })).toHaveCount(0);
+  for (const section of ["models", "model-roles"]) {
+    await page.goto(`/settings?section=${section}`);
+    await expect(page.getByRole("heading", { name: "外观与语言", exact: true })).toBeVisible();
+    for (const name of ["模型服务", "模型用途"]) await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "添加模型服务", exact: true })).toHaveCount(0);
+  }
   expect(mock.requests.filter(({ path }) => path.includes("/model-connections") || path.endsWith("/global-settings"))).toEqual([]);
   expect(mock.pageErrors).toEqual([]);
 });

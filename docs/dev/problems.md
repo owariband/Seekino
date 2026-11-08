@@ -2824,6 +2824,12 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 2026-11-07。外观与语言属于设备，回答模型属于会话，全局运行参数属于服务。原设置入口的页面跳转卸载聊天输入。验收要求是可按范围找到配置，从设置返回保留草稿和选区，且两个 Kino 入口互通。本机结果见[设置验收](../report/web/settings-workspace-20261107.md)，状态见[工作台](workbench.html)。
 
+### MODEL-REGISTRY-ROLES-01 · 模型服务页面只投影聊天绑定
+
+2026-11-08。视频理解、转写与检索已有各自的 Gateway 绑定，网页却只能登记聊天模型。验收要求同地址下两把凭据能独立配置，解析和聊天从各自连接发起请求，专属能力不会进入无关下拉框。参见[设计与验证](../design/03-product-reassessment/model-registry-roles-trd.md)。
+
+同日复查。原用途控件把来源放在模型名前，窄屏打开长 ID 时辨认困难。现按连接分组展示选项，在用途行分列模型和来源。[设置展开栏验收](../report/web/model-registry-roles-20261108.md#设置展开栏)
+
 ### CHAT-PERSONAL-MODELS-01 · 回答模型设置只展示平台名单
 
 2026-11-07。设置页消费服务端 YAML 的选项，用户无法填写自己的 API 地址、协议及模型 ID。验收须从普通用户的设置入口创建连接，在指定会话发送后核对供应端收到的模型和结果，并确认另一个会话沿用原选择。见[设计与验证](../design/03-product-reassessment/personal-model-connections-trd.md)及[工作台](workbench.html)。

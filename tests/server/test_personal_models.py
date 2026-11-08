@@ -26,7 +26,8 @@ def test_native_settings_edit_active_yaml_and_preserve_env_secret(yaml_model_set
     store.path.write_text("# keep operator note\n" + store.path.read_text())
     row = next(c for c in store.catalog().connections.values() if c.name == "my-endpoint")
     assert row.origin == "yaml" and row.has_api_key and row.models[0].is_yaml_default
-    assert [m.model_id for m in row.models] == ["team/home", "team/alternative", "team/discovered"]
+    assert [m.model_id for m in row.models if "chat" in m.roles] == ["team/home", "team/alternative", "team/discovered"]
+    assert [m.model_id for m in row.models if m.kind == "rerank"] == ["team/ranking-only"]
     assert not any(x in store.catalog().settings().model_dump_json() for x in ("synthetic-private-key", "TEST_LOCAL_PROVIDER_KEY"))
     submitted = _input(row, name="团队接口", model_ids=[m.model_id for m in row.models] + ["team/new"])
     store.save(row.connection_id, submitted)
@@ -39,7 +40,7 @@ def test_native_settings_edit_active_yaml_and_preserve_env_secret(yaml_model_set
         store.save(row.connection_id, submitted)
     reloaded = ModelSettings(store.path, allow_local=True, environ=store.environ)
     row = reloaded.catalog().connections[row.connection_id]
-    assert row.name == "团队接口" and row.models[-1].model_id == "team/new"
+    assert row.name == "团队接口" and "team/new" in {m.model_id for m in row.models}
     assert reloaded.catalog().find("my-alternative").target(environ=store.environ).api_key.get_secret_value() == "synthetic-private-key"
     with pytest.raises(ValueError, match="API Key"):
         store.save(row.connection_id, _input(row, base_url="https://different.example"))

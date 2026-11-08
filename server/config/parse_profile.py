@@ -508,7 +508,9 @@ class ParseConfig(ContractModel):
             else vision_binding.fallback is not None
         )
         fallback_binding = vision_binding.fallback
-        if fallback_binding is None and "vision_fallback" in gateway.normalized_models:
+        if "vision" in gateway.model_roles and not fallback_binding:
+            fallback_enabled = False
+        if fallback_binding is None and "vision" not in gateway.model_roles and "vision_fallback" in gateway.normalized_models:
             fallback_binding = gateway.resolve_model_binding("vision_fallback")
         if fallback_enabled and fallback_binding is None:
             raise ValueError("enabled visual fallback requires a configured model")
@@ -520,8 +522,10 @@ class ParseConfig(ContractModel):
         if capabilities.visual_input_mode == "ordered_frames":
             vision_input_mode = "ordered_frames"
             vision_max_frames = vision_max_frames or parser.max_frames_per_window
+        if "embedding" in gateway.model_roles and embedding_binding.dimensions != embedding_dimensions:
+            raise ValueError(f"所选模型为 {embedding_binding.dimensions} 维，部署索引为 {embedding_dimensions} 维。请先切换匹配的索引配置。")
         effective_embedding = resolve_embedding_config(
-            gateway, model=embedding_model if embedding_model is not None else embedding_binding.model,
+            gateway, model=embedding_binding.model if "embedding" in gateway.model_roles else embedding_model or embedding_binding.model,
             dimensions=embedding_dimensions,
             video_fps=embedding_fps if embedding_fps is not None else embedding_binding.video_fps,
         )
@@ -551,7 +555,7 @@ class ParseConfig(ContractModel):
                 temperature=asr_binding.temperature,
                 mode=runtime.asr_mode,
                 scope="video" if whole_video_asr else "chunk",
-                model=runtime.transcript_model or asr_binding.model,
+                model=asr_binding.model if "transcription" in gateway.model_roles else runtime.transcript_model or asr_binding.model,
                 fps=runtime.transcript_fps or float(os.getenv("SEEKINO_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,
                 max_output_tokens=runtime.transcript_max_output_tokens or asr_binding.max_output_tokens,
@@ -559,7 +563,7 @@ class ParseConfig(ContractModel):
             ),
             vision=ParseVisionConfig(
                 source=vision_binding.source,
-                model=runtime.video_model or vision_binding.model,
+                model=vision_binding.model if "vision" in gateway.model_roles else runtime.video_model or vision_binding.model,
                 fps=runtime.video_fps or float(os.getenv("SEEKINO_VIDEO_FPS") or parser.video_fps),
                 input_mode=vision_input_mode,
                 max_frames_per_window=vision_max_frames,

@@ -346,7 +346,7 @@ class AgentChatService:
         return AgentMessageOptionsState(
             new_chat_model_id=catalog.new_chat_id() if catalog else "default",
             chat_models=tuple(AgentModelOptionState(model.id, f"{connection.name} · {model.model_id}")
-                              for connection in (personal.connections if personal else ()) for model in connection.models if model.available),
+                              for connection in (personal.connections if personal else ()) for model in connection.models if model.available and "chat" in model.roles),
             top_k=AgentIntegerOptionState(
                 default_value=config.default_top_k,
                 minimum=1,

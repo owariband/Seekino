@@ -9,6 +9,12 @@ export function rememberChatModel(id: string) {
   try { localStorage.setItem(recentKey(), id); } catch { /* Storage is optional. */ }
 }
 
+export function chatConnections(connections: readonly PersonalModelConnection[]) {
+  return connections.map((connection) => ({ ...connection,
+    models: connection.models.filter((model) => !model.roles || model.roles.includes("chat")),
+  })).filter((connection) => connection.models.length > 0);
+}
+
 export function containsModel(connections: readonly PersonalModelConnection[], id: string) {
   return connections.some((connection) => connection.models.some((model) => model.id === id && model.available !== false));
 }
@@ -46,7 +52,7 @@ export function usePersonalChatModels(scope: string, enabled: boolean) {
       const { signal } = pending;
       void getPersonalModelSettings(signal).then((settings) => {
         if (!Array.isArray(settings?.connections)) throw new Error("无法读取已配置的模型服务");
-        if (!signal.aborted) setCatalog({ scope, settings });
+        if (!signal.aborted) setCatalog({ scope, settings: { ...settings, connections: chatConnections(settings.connections) } });
       }).catch((error) => {
         if (!signal.aborted) setCatalog({ scope, error });
       });

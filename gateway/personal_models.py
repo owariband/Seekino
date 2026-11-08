@@ -40,6 +40,11 @@ class _PersonalChatModel(BaseChatModel):
     def close(self) -> None:
         self._http.close()
 
+    _receipt: dict = PrivateAttr(default_factory=dict)
+
+    def capture_usage(self, tracker) -> None:
+        tracker.capture_response(self._receipt)
+
     def _post(self, path: str, headers: dict, payload: dict, timeout: float | None) -> dict:
         url = self._target.base_url + path
         timeout = timeout if timeout is not None else self._http.timeout.read
@@ -56,12 +61,23 @@ class _PersonalChatModel(BaseChatModel):
                     response = self._http.post(url, headers=headers, json=legacy, timeout=remaining)
         if not response.is_success:
             raise PersonalModelRequestError(f"模型接口返回 HTTP {response.status_code}")
-        return response.json()
+        data = response.json()
+        usage = data.get("usage")
+        if self._target.protocol == "gemini":
+            metadata = data.get("usageMetadata")
+            if isinstance(metadata, dict):
+                outputs = [metadata.get(k) for k in ("candidatesTokenCount", "thoughtsTokenCount")]
+                usage = {"input_tokens": metadata.get("promptTokenCount"), "total_tokens": metadata.get("totalTokenCount"),
+                         "output_tokens": sum(n for n in outputs if type(n) is int)}
+        self._receipt = {"model": data.get("model") or self._target.model_id, "usage": usage,
+                         "request_id": response.headers.get("x-request-id")}
+        return data
 
     def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
         target = self._target
         key = target.api_key.get_secret_value()
         tools = kwargs.get("tools") or []
+        choice = kwargs.get("tool_choice") if tools else None
         timeout = kwargs.get("timeout")
         try:
             if target.protocol == "gemini":
@@ -78,6 +94,8 @@ class _PersonalChatModel(BaseChatModel):
                     payload["systemInstruction"] = wire(system)
                 if tools:
                     payload["tools"] = [wire(tool) for tool in convert_to_genai_function_declarations(tools)]
+                if isinstance(choice, str) and choice in {"required", "auto", "none"}:
+                    payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY" if choice == "required" else choice.upper()}}
                 path = "/models/" + quote(target.model_id.removeprefix("models/"), safe="/") + ":generateContent"
                 data = self._post(path, {"x-goog-api-key": key} if key else {}, payload, timeout)
                 return _response_to_result(GenerateContentResponse.model_validate(data))
@@ -92,6 +110,8 @@ class _PersonalChatModel(BaseChatModel):
                     payload["system"] = system
                 if tools:
                     payload["tools"] = [convert_to_anthropic_tool(tool) for tool in tools]
+                if isinstance(choice, str) and choice in {"required", "auto", "none"}:
+                    payload["tool_choice"] = {"type": "any" if choice == "required" else choice}
                 headers = {"anthropic-version": "2023-06-01"}
                 if key:
                     headers["x-api-key"] = key
@@ -105,6 +125,8 @@ class _PersonalChatModel(BaseChatModel):
             payload = {"model": target.model_id}
             if tools:
                 payload["tools"] = [convert_to_openai_tool(tool) for tool in tools]
+            if choice:
+                payload["tool_choice"] = choice
             if target.protocol == "openai_responses":
                 from langchain_openai.chat_models.base import _construct_responses_api_payload, _construct_lc_result_from_responses_api
                 from openai._models import construct_type_unchecked
