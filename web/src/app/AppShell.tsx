@@ -28,6 +28,7 @@ import { errorMessage } from "../api/client";
 import { useI18n } from "./i18n";
 import { useTheme } from "./theme";
 import { useWorkspace } from "./workspace";
+import { SettingsLink } from "../features/settings/SettingsLink";
 import styles from "./app-shell.module.css";
 
 const navigation = [
@@ -44,7 +45,7 @@ const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigat
 
 export type WatchPanelLayout = { open: boolean; width: number; resizing: boolean };
 
-function AccountControls({ onLogin, mobile = false }: { onLogin: () => void; mobile?: boolean }) {
+function AccountControls({ onLogin, onSettings, mobile = false }: { onLogin: () => void; onSettings: () => void; mobile?: boolean }) {
   const { t, locale } = useI18n();
   const { theme, toggleTheme } = useTheme();
   const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout, canManage } = useAuth();
@@ -52,14 +53,18 @@ function AccountControls({ onLogin, mobile = false }: { onLogin: () => void; mob
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ failure: unknown } | null>(null);
   const signedIn = accountIdentity && !accountIdentity.isGuest;
+  const loginUnavailable = accountIdentity?.emailLoginEnabled === false;
+  const guestLabel = t(loginUnavailable ? "游客模式" : "未登录");
+  const loginLabel = t(loginUnavailable ? "登录 / 注册（暂未开放）" : "登录");
   return <section id="seekino-account-panel" className={styles.account} aria-label={t("当前账号")}>
-    {!mobile ? <header><strong>{signedIn ? accountIdentity.email || t("已登录") : t("未登录")}</strong><span>{t("账号与资料来源")}</span></header> : null}
+    {!mobile ? <header><strong>{signedIn ? accountIdentity.email || t("已登录") : guestLabel}</strong><span>{t("账号与资料来源")}</span></header> : null}
     <div className={styles.accountAction}>
       {accountStatus === "unconfigured" ? <span title={t("连接账号服务后，可登录并访问远端资料")}>{t("未连接账号服务")}</span>
         : accountStatus === "checking" ? <span>{t("连接中…")}</span>
         : accountStatus === "unavailable" ? <button type="button" title={accountError ?? undefined} onClick={retryAccount}>{t("重新连接")}</button>
-        : !signedIn ? <button className={mobile ? styles.mobileIdentity : undefined} type="button" onClick={onLogin} aria-label={t("登录")}>
-          {mobile ? <><span className={styles.avatar}><UserRound size={21} aria-hidden="true" /></span><strong>{t("未登录")}</strong></> : t("登录")}
+        : !signedIn ? <button className={mobile ? styles.mobileIdentity : undefined} type="button" onClick={onLogin} aria-label={loginLabel}>
+          {mobile ? <><span className={styles.avatar}><UserRound size={21} aria-hidden="true" /></span>
+            <span className={styles.identityLabel}><strong>{guestLabel}</strong>{loginUnavailable ? <small>{loginLabel}</small> : null}</span></> : loginLabel}
         </button>
         : <button className={mobile ? styles.mobileIdentity : undefined} type="button" disabled={busy} aria-label={mobile ? t(busy ? "退出中…" : "退出") : undefined} onClick={async () => {
           setBusy(true); setError(null);
@@ -76,7 +81,7 @@ function AccountControls({ onLogin, mobile = false }: { onLogin: () => void; mob
     {error ? <p role="alert">{errorMessage(error.failure, locale)}</p> : null}
     <nav className={styles.accountLinks} aria-label={t("管理")}>
       {canManage ? managementLinks.map(({ to, label, icon: Icon }) => <NavLink key={to} className={styles.accountLink} to={to}><Icon size={17} aria-hidden="true" />{t(label)}</NavLink>) : null}
-      <NavLink className={styles.accountLink} to="/settings"><Settings size={17} aria-hidden="true" />{t("设置")}</NavLink>
+      <SettingsLink className={styles.accountLink} onClick={onSettings}><Settings size={17} aria-hidden="true" />{t("设置")}</SettingsLink>
     </nav>
     <div className={clsx(styles.runtime, styles[`runtime${mode}`])}><i aria-hidden="true" /><span>{t(mode === "live" ? "资料已连接" : mode === "offline" ? "资料连接不可用" : "检查资料连接")}</span></div>
     {mobile ? <button className={clsx(styles.iconButton, styles.accountTheme)} type="button" onClick={toggleTheme}
@@ -107,6 +112,7 @@ export function AppShell() {
     staleTime: 0,
   });
   const signedIn = accountIdentity && !accountIdentity.isGuest;
+  const uploadPrompt = !signedIn ? accountIdentity?.emailLoginEnabled === false ? "个人上传暂未开放" : "登录后上传远端视频" : "进入我的资料";
   const visibleNavigation = canManage ? navigation : [];
   const uploadAction = canUpload ? openDialog : !signedIn ? openLogin : () => {
     const personalSource = sources.find((source) => source.kind === "personal");
@@ -131,6 +137,7 @@ export function AppShell() {
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (event.target instanceof Element && event.target.closest("dialog[data-settings-overlay]")) return;
       event.preventDefault();
       if (location.pathname === "/search") window.dispatchEvent(new Event(FOCUS_SEARCH_EVENT));
       else navigate("/search", { state: { focusComposer: true } });
@@ -181,8 +188,8 @@ export function AppShell() {
         <div className={styles.headerActions}>
           <span id="watch-header-actions" style={{ display: "contents" }} />
           <button className={styles.uploadButton} type="button" onClick={uploadAction}
-            aria-label={canUpload ? activeCount > 0 ? t("并行传输 · {count} 项进行中，{progress}%", { count: activeCount, progress: overallProgress }) : t("并行传输 · 打开上传案台") : t(!signedIn ? "登录后上传远端视频" : "进入我的资料")}
-            title={t(canUpload ? "上传视频与管理并行传输" : !signedIn ? "登录后上传远端视频" : "进入我的资料")}>
+            aria-label={canUpload ? activeCount > 0 ? t("并行传输 · {count} 项进行中，{progress}%", { count: activeCount, progress: overallProgress }) : t("并行传输 · 打开上传案台") : t(uploadPrompt)}
+            title={t(canUpload ? "上传视频与管理并行传输" : uploadPrompt)}>
             <ArrowUpFromLine size={19} strokeWidth={1.7} aria-hidden="true" /><span>{canUpload ? activeCount > 0 ? `${overallProgress}%` : t("上传") : t(!signedIn ? "上传" : "我的资料")}</span>
             {canUpload && activeCount > 0 ? <i style={{ width: `${overallProgress}%` }} aria-hidden="true" /> : null}
           </button>
@@ -195,7 +202,8 @@ export function AppShell() {
             <button className={styles.accountTrigger} type="button" ref={avatarRef} onClick={() => setAccountOpen((open) => !open)} aria-label={t("打开账号菜单")} aria-expanded={accountOpen} aria-controls="seekino-account-panel" title={signedIn ? accountIdentity.email || t("我的账号") : t("登录与账号")}>
               <span className={styles.avatar}>{signedIn && accountIdentity.email ? accountIdentity.email.slice(0, 1).toUpperCase() : <UserRound size={21} strokeWidth={1.6} aria-hidden="true" />}</span><ChevronDown size={13} aria-hidden="true" />
             </button>
-            {accountOpen ? <AccountControls onLogin={() => { avatarRef.current?.focus(); setAccountOpen(false); openLogin(); }} /> : null}
+            {accountOpen ? <AccountControls onLogin={() => { avatarRef.current?.focus(); setAccountOpen(false); openLogin(); }}
+              onSettings={() => { avatarRef.current?.focus(); setAccountOpen(false); }} /> : null}
           </div>
         </div>
       </header>
@@ -228,7 +236,7 @@ export function AppShell() {
           <div className={styles.drawerActions}>
             <button className={styles.accountLink} type="button" onClick={() => { closeMobileMenu(); uploadAction(); }}>
               <ArrowUpFromLine size={20} aria-hidden="true" />
-              {t(canUpload ? "上传" : !signedIn ? "登录后上传远端视频" : "进入我的资料")}
+              {t(canUpload ? "上传" : uploadPrompt)}
               {canUpload && activeCount > 0 ? <span>{overallProgress}%</span> : null}
             </button>
           </div>
@@ -244,7 +252,7 @@ export function AppShell() {
               <span>{conversation.title}</span>
             </Link>) : <p>{t("还没有可显示的对话。")}</p>}
           </nav>
-          <AccountControls mobile onLogin={() => { closeMobileMenu(); openLogin(); }} />
+          <AccountControls mobile onLogin={() => { closeMobileMenu(); openLogin(); }} onSettings={closeMobileMenu} />
         </div> : null}
       </dialog>
     </div>

@@ -1,3 +1,4 @@
+import { configuredModels } from "../src/test/personalModelFixtures";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { AuthIdentity } from "../src/api/contracts";
@@ -6,6 +7,7 @@ async function mockService(page: Page, guest = false) {
   const identity: AuthIdentity = {
     userId: guest ? "locale-guest" : "local", email: null, isGuest: guest,
     tenantId: guest ? null : "local-default", publicTenantId: "public", mode: guest ? "cloud" : "local", csrfToken: "",
+    emailLoginEnabled: guest,
     permissions: { canUpload: !guest, canManage: !guest, canConfigure: !guest },
   };
   const requests: string[] = [];
@@ -19,13 +21,17 @@ async function mockService(page: Page, guest = false) {
     const emptyPage = { items: [], total: 0, hasMore: false, nextCursor: null };
     if (path === "/api/auth/me") return route.fulfill({ json: identity });
     if (path === "/api/system/runtime-config") return route.fulfill({ json: { displayMode: guest ? "debug" : "release" } });
-    if (["/api/series/list", "/api/jobs/list", "/api/jobs/video-parse/list", "/api/agent/conversations/list", "/api/agent/messages/list"].includes(path)) {
+    if (["/api/series/list", "/api/series/public", "/api/jobs/list", "/api/jobs/video-parse/list", "/api/agent/conversations/list", "/api/agent/messages/list"].includes(path)) {
       return route.fulfill({ json: emptyPage });
     }
     if (path === "/api/agent/conversations/create") return route.fulfill({ json: {
       conversationId: "locale-conversation", tenantId: "local-default", title: "原始对话名称",
       messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: 0, updatedAt: 0,
     } });
+    if (path === "/api/agent/model-connections") return route.fulfill({ json: configuredModels });
+    if (path === "/api/agent/messages/options") return route.fulfill({ json: Object.fromEntries(
+      ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"].map((name) => [name, { defaultValue: 3, minimum: 1, maximum: 30 }]),
+    ) });
     if (path === "/api/agent/messages/events") return route.fulfill({
       contentType: "text/event-stream", body: ": ready\n\n",
     });
@@ -59,7 +65,7 @@ test("switches EN/ZH immediately and retains the choice after a reload", async (
   expect(mock.requests.length).toBe(requestsBeforeSwitch);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-  await expect(page.getByRole("radio", { name: "EN English" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "EN English" })).toBeChecked();
   await page.screenshot({ path: "/private/tmp/seekino-locale-y_vrdu2o/settings-en-desktop.png", fullPage: true });
   expect(mock.unexpected).toEqual([]);
   expect(mock.errors).toEqual([]);

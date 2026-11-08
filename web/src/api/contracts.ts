@@ -10,6 +10,7 @@ export interface AuthIdentity {
   publicTenantId: string;
   mode: "local" | "cloud";
   csrfToken: string;
+  emailLoginEnabled: boolean;
   permissions: { canUpload: boolean; canManage: boolean; canConfigure: boolean };
 }
 
@@ -564,6 +565,8 @@ export interface VideoSearchRequest {
 export interface AgentConversationView {
   conversationId: string;
   tenantId: string;
+  /** Legacy responses omit this; the backend then uses "default". */
+  modelId?: string;
   title: string;
   messageCount: number;
   lastMessagePreview: string | null;
@@ -606,6 +609,8 @@ export interface AgentMessageView {
   role: "USER" | "ASSISTANT";
   status: "PROCESSING" | "COMPLETED" | "FAILED";
   phase: AnswerPhase | null;
+  /** Set only while a PROCESSING answer waits for a provider retry. */
+  modelRetry?: { attempt: number; maximum: number } | null;
   version: number;
   reference: EvidenceReference | null;
   attachments: AgentAttachmentView[];
@@ -631,10 +636,13 @@ export interface AgentIntegerOption {
 }
 
 export interface AgentMessageOptions {
+  newChatModelId?: string;
   topK: AgentIntegerOption;
   maxLoopTurns: AgentIntegerOption;
   maxModelCallsPerTurn: AgentIntegerOption;
   maxToolCallsPerTurn: AgentIntegerOption;
+  /** Models from the current user’s saved connections. Empty until the user configures one. */
+  chatModels?: { id: string; label: string }[];
 }
 
 export type AgentReasoningEffort = "none" | "low" | "high" | "max";
@@ -735,3 +743,55 @@ export type AgentAnswerEvent =
       error: Failure;
     })
   | (AgentAnswerEventBase & { type: "answer.interrupted"; error: Failure });
+
+export type PersonalModelProtocol = "openai_chat" | "openai_responses" | "anthropic_messages" | "gemini" | "ark" | "openai_audio" | "ollama_embedding";
+export type ModelRole = "chat" | "vision" | "transcription" | "ocr" | "embedding" | "rerank";
+export type RegistryModelKind = "generative" | "transcription" | "embedding" | "rerank";
+
+export interface RegisteredModelInput {
+  modelId: string;
+  kind: RegistryModelKind;
+  supportsVision?: boolean;
+  dimensions?: number;
+}
+
+export interface ModelRoleSetting {
+  role: ModelRole;
+  modelId: string | null;
+  overridden: boolean;
+  activation: "immediate" | "restart" | "reindex";
+}
+
+export interface PersonalModelConnection {
+  origin?: "personal" | "yaml";
+  connectionId: string;
+  name: string;
+  protocol: PersonalModelProtocol | "codex" | "openai_vision" | "llama_cpp_embedding" | "whisperx" | "pyannote" | "campplus" | "claude_sdk";
+  editable?: boolean;
+  discoverable?: boolean;
+  modelKinds?: RegistryModelKind[];
+  baseUrl: string;
+  models: { id: string; modelId: string; label?: string | null; available?: boolean; aliases?: string[]; isYamlDefault?: boolean;
+    roles?: ModelRole[]; testable?: boolean; kind?: string; supportsVision?: boolean; dimensions?: number | null }[];
+  supportsVision: boolean;
+  hasApiKey: boolean;
+  revision: number;
+}
+
+export interface PersonalModelSettings {
+  connections: PersonalModelConnection[];
+  defaultModelId: string;
+  roles?: ModelRoleSetting[];
+  revision?: number;
+}
+
+export interface PersonalModelConnectionInput {
+  name: string;
+  protocol: PersonalModelConnection["protocol"];
+  baseUrl: string;
+  modelIds: string[];
+  models?: RegisteredModelInput[];
+  supportsVision: boolean;
+  revision: number;
+  apiKey?: string;
+}

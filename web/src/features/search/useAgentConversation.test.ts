@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiClientError, cancelAgentMessage, createAgentConversation, getAgentConversation, getAgentMessage,
-  listAgentMessages, streamAgentMessage, subscribeAgentMessages,
+  listAgentMessages, streamAgentMessage, subscribeAgentMessages, updateAgentConversationModel,
 } from "../../api/client";
 import type {
   AgentAnswerEvent, AgentConversationView, AgentMessageEventView, AgentMessageSendView,
@@ -17,14 +17,17 @@ import {
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
   cancelAgentMessage: vi.fn(), createAgentConversation: vi.fn(), getAgentConversation: vi.fn(), getAgentMessage: vi.fn(),
-  listAgentMessages: vi.fn(), streamAgentMessage: vi.fn(), subscribeAgentMessages: vi.fn(),
+  listAgentMessages: vi.fn(), streamAgentMessage: vi.fn(), subscribeAgentMessages: vi.fn(), updateAgentConversationModel: vi.fn(),
 }));
 
 const now = Date.parse("2026-09-15T00:00:00Z");
 function page<T>(items: T[]) { return { items, total: items.length, hasMore: false, nextCursor: null }; }
 function searchResult(seriesIds = ["A", "B"], hits: VideoChunkSearchHit[] = []) { return { seriesIds, searchedVideoIds: ["video"], partial: false, warnings: [], hits }; }
-function conversation(conversationId = "conv-A"): AgentConversationView {
-  return { conversationId, tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+function conversation(conversationId = "conv-A", modelId?: string): AgentConversationView {
+  return {
+    conversationId, tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now,
+    ...(modelId ? { modelId } : {}),
+  };
 }
 function message(conversationId: string, overrides: Partial<AgentMessageView> = {}): AgentMessageView {
   return {
@@ -62,6 +65,7 @@ beforeEach(() => {
   vi.mocked(cancelAgentMessage).mockReset();
   vi.mocked(getAgentMessage).mockReset().mockRejectedValue(new ApiClientError(404, { message: "missing" }));
   vi.mocked(createAgentConversation).mockImplementation(async () => conversation());
+  vi.mocked(updateAgentConversationModel).mockReset().mockImplementation(async (id, modelId) => conversation(id, modelId));
   vi.mocked(getAgentConversation).mockImplementation(async (id) => conversation(id));
   vi.mocked(listAgentMessages).mockResolvedValue(page([]));
   vi.mocked(subscribeAgentMessages).mockImplementation((id, onSnapshot) => {
@@ -77,6 +81,7 @@ afterEach(() => {
 });
 
 async function ready(conversationId: string | null = null) {
+  if (!conversationId && !localStorage.getItem("seekino-agent-conversation:local-default")) localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: "conv-A" }));
   const rendered = renderHook(({ id }) => useAgentConversation(id), { initialProps: { id: conversationId } });
   await waitFor(() => expect(rendered.result.current.conversationId).toBe(conversationId ?? "conv-A"));
   return rendered;
@@ -89,6 +94,41 @@ async function send(result: { current: ReturnType<typeof useAgentConversation> }
 }
 
 describe("Conversation state", () => {
+  it("mounts an unremembered conversation as a usable draft", async () => {
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.conversationId).toBeNull();
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.error).toBeNull();
+    expect(createAgentConversation).not.toHaveBeenCalled();
+  });
+
+  it("creates and remembers one conversation before the first draft send", async () => {
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const key = JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).key;
+    act(() => { void result.current.send("query"); void result.current.send("query"); });
+    await waitFor(() => expect(streamAgentMessage).toHaveBeenCalledOnce());
+    expect(createAgentConversation).toHaveBeenCalledExactlyOnceWith(key, undefined);
+    expect(result.current.conversationId).toBe("conv-A");
+    expect(JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!)).toEqual({ key, id: "conv-A" });
+    expect(subscribeAgentMessages).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a failed creation in draft and retries with the same key", async () => {
+    vi.mocked(createAgentConversation).mockRejectedValueOnce(new Error("creation failed"));
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { await result.current.send("query"); });
+    expect(result.current.conversationId).toBeNull();
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.error).toBe("creation failed");
+    expect(result.current.sending).toBe(false);
+    expect(streamAgentMessage).not.toHaveBeenCalled();
+    await send(result);
+    expect(vi.mocked(createAgentConversation).mock.calls[0]).toEqual(vi.mocked(createAgentConversation).mock.calls[1]);
+  });
+
   it("passes a public source tenant without changing the conversation or attachments", async () => {
     const { result } = await ready();
     act(() => { void result.current.send("查找这段", ["shared-series"], null, {}, null, {
@@ -342,7 +382,7 @@ describe("Conversation state", () => {
     });
     expect(stream.signal.aborted).toBe(false);
     expect(close).not.toHaveBeenCalled();
-    expect(createAgentConversation).toHaveBeenCalledOnce();
+    expect(createAgentConversation).not.toHaveBeenCalled();
     expect(result.current.messages[1]?.content).toBe("跨动画回答");
     expect(result.current.messages[1]?.phase).toBe("RESPONDING");
     expect(result.current.messages[1]?.searchResult?.seriesIds).toEqual(["A", "B"]);
@@ -561,7 +601,9 @@ describe("Conversation state", () => {
   it("uses a new creation key for an unfinished legacy request with the old scope payload", async () => {
     localStorage.setItem("seekino-selected-series", "old-series");
     localStorage.setItem("seekino-agent-conversation:local-default:old-series", JSON.stringify({ key: "old-key" }));
-    await ready();
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await send(result);
     expect(createAgentConversation).toHaveBeenCalledOnce();
     expect(vi.mocked(createAgentConversation).mock.calls[0]![0]).not.toBe("old-key");
   });
@@ -667,6 +709,8 @@ describe("Conversation state", () => {
       finishAutomaticCreation = resolve;
     }));
     const rendered = renderHook(({ id }) => useAgentConversation(id), { initialProps: { id: null as string | null } });
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    act(() => { void rendered.result.current.send("query"); });
     await waitFor(() => expect(createAgentConversation).toHaveBeenCalledOnce());
 
     rendered.rerender({ id: "conv-B" });
@@ -687,14 +731,34 @@ describe("Conversation state", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("updates untouched drafts from personal defaults while keeping an explicit choice", async () => {
+    const { result } = renderHook(() => useAgentConversation(""));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.applyDraftDefault("personal:first"));
+    expect(result.current.modelId).toBe("personal:first");
+    await act(async () => { await result.current.selectModel("personal:chosen"); });
+    act(() => result.current.applyDraftDefault("personal:next"));
+    expect(result.current.modelId).toBe("personal:chosen");
+    expect(createAgentConversation).not.toHaveBeenCalled();
+    await act(async () => { await result.current.ensureConversationId(); });
+    expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String), "personal:chosen");
+    act(() => result.current.applyDraftDefault("personal:latest"));
+    expect(result.current.modelId).not.toBe("personal:latest");
+    act(() => result.current.clear());
+    expect(result.current.modelId).toBe("personal:latest");
+  });
+
   it("restores a saved Conversation on remount and waits for a running Kick snapshot", async () => {
     localStorage.setItem("seekino-agent-session:local-default", JSON.stringify({ key: "legacy-key", id: "legacy" }));
-    const first = await ready(); first.unmount();
+    const first = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    await act(async () => { await first.result.current.ensureConversationId(); });
+    first.unmount();
     vi.mocked(listAgentMessages).mockResolvedValue(page([message("conv-A")]));
     const { result } = await ready();
     expect(getAgentConversation).toHaveBeenCalledWith("conv-A");
     expect(createAgentConversation).toHaveBeenCalledOnce();
-    expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String));
+    expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String), undefined);
     expect(localStorage.getItem("seekino-agent-session:local-default")).toBeNull();
     expect(result.current.searching).toBe(true);
     act(() => { void result.current.send("second query"); });
@@ -763,13 +827,18 @@ describe("Conversation state", () => {
     const first = await ready(); first.unmount();
     const savedKey = JSON.parse(localStorage.getItem("seekino-agent-conversation:local-default")!).key;
     vi.mocked(getAgentConversation).mockRejectedValue(new ApiClientError(404, { message: "deleted" }));
-    const second = await ready();
-    expect(vi.mocked(createAgentConversation).mock.calls[1]![0]).not.toBe(savedKey);
+    const second = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(second.result.current.loading).toBe(false));
+    expect(second.result.current.conversationId).toBeNull();
+    expect(second.result.current.error).toBeNull();
+    expect(createAgentConversation).not.toHaveBeenCalled();
+    await act(async () => { await second.result.current.ensureConversationId(); });
+    expect(vi.mocked(createAgentConversation).mock.calls[0]![0]).not.toBe(savedKey);
     second.unmount();
     vi.mocked(getAgentConversation).mockRejectedValue(new TypeError("network down"));
     const { result } = renderHook(() => useAgentConversation());
     await waitFor(() => expect(result.current.error).toBe("network down"));
-    expect(createAgentConversation).toHaveBeenCalledTimes(2);
+    expect(createAgentConversation).toHaveBeenCalledOnce();
   });
 
   it("restores messages beyond the first page using the server cursor and a fixed filter", async () => {
@@ -810,5 +879,139 @@ describe("Conversation state", () => {
     act(() => snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A", { status: "FAILED", content: "old result", version: 4 })] }));
     expect(result.current.messages[0]?.content).toBe("new result");
     expect(result.current.messages[0]?.version).toBe(5);
+  });
+});
+
+describe("Conversation answer model", () => {
+  it("keeps a draft choice local and creates the conversation with it on first send", async () => {
+    vi.mocked(createAgentConversation).mockResolvedValueOnce(conversation("conv-A", "alternate"));
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => { void result.current.selectModel("alternate"); });
+    expect(result.current.modelId).toBe("alternate");
+    expect(createAgentConversation).not.toHaveBeenCalled();
+    expect(updateAgentConversationModel).not.toHaveBeenCalled();
+    act(() => { void result.current.send("query"); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    expect(createAgentConversation).toHaveBeenCalledExactlyOnceWith(expect.any(String), "alternate");
+    expect(result.current.modelId).toBe("alternate");
+    expect(result.current.modelSaving).toBe(false);
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![7]).toEqual({});
+  });
+
+  it("creates one conversation with the draft model when attaching before the first send", async () => {
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => { void result.current.selectModel("alternate"); });
+    let first: string | null = null;
+    let second: string | null = null;
+    await act(async () => {
+      [first, second] = await Promise.all([result.current.ensureConversationId(), result.current.ensureConversationId()]);
+    });
+    expect(first).toBe("conv-A");
+    expect(second).toBe("conv-A");
+    expect(createAgentConversation).toHaveBeenCalledOnce();
+    expect(vi.mocked(createAgentConversation).mock.calls[0]![1]).toBe("alternate");
+    expect(streamAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it("restores each conversation's saved model and defaults legacy responses", async () => {
+    localStorage.setItem("seekino-agent-conversation:local-default", JSON.stringify({ key: "saved-key", id: "conv-A" }));
+    vi.mocked(getAgentConversation).mockImplementation(async (id) => id === "conv-A" ? conversation("conv-A", "alternate") : conversation(id));
+    const { result, rerender } = renderHook(({ id }) => useAgentConversation(id), { initialProps: { id: null as string | null } });
+    await waitFor(() => expect(result.current.conversationId).toBe("conv-A"));
+    expect(result.current.modelId).toBe("alternate");
+    rerender({ id: "conv-B" });
+    await waitFor(() => expect(result.current.conversationId).toBe("conv-B"));
+    expect(result.current.modelId).toBe("default");
+    rerender({ id: "" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.conversationId).toBeNull();
+    expect(result.current.modelId).toBe("default");
+  });
+
+  it("persists an existing conversation's model change and blocks sending until the PATCH finishes", async () => {
+    let finish!: (value: AgentConversationView) => void;
+    vi.mocked(updateAgentConversationModel).mockImplementationOnce(() => new Promise<AgentConversationView>((resolve) => { finish = resolve; }));
+    const { result } = await ready();
+    expect(result.current.modelId).toBe("default");
+    act(() => { void result.current.selectModel("alternate"); });
+    expect(result.current.modelId).toBe("alternate");
+    expect(result.current.modelSaving).toBe(true);
+    act(() => { void result.current.send("query"); });
+    expect(streamAgentMessage).not.toHaveBeenCalled();
+    await act(async () => finish(conversation("conv-A", "alternate")));
+    expect(result.current.modelSaving).toBe(false);
+    expect(result.current.modelId).toBe("alternate");
+    expect(updateAgentConversationModel).toHaveBeenCalledWith("conv-A", "alternate");
+    act(() => { void result.current.send("query"); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![7]).toEqual({});
+  });
+
+  it("shows a failed model change and restores the previous server selection", async () => {
+    vi.mocked(getAgentConversation).mockResolvedValue(conversation("conv-A", "alternate"));
+    const { result } = await ready();
+    expect(result.current.modelId).toBe("alternate");
+    vi.mocked(updateAgentConversationModel).mockRejectedValueOnce(new Error("模型切换失败"));
+    await act(async () => { await result.current.selectModel("default"); });
+    expect(result.current.modelId).toBe("alternate");
+    expect(result.current.modelSaving).toBe(false);
+    expect(result.current.modelError).toBe("模型切换失败");
+    act(() => { void result.current.send("query"); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![7]).toEqual({});
+  });
+
+  it("ignores a model change that finishes after switching conversations", async () => {
+    let finish!: (value: AgentConversationView) => void;
+    vi.mocked(updateAgentConversationModel).mockImplementationOnce(() => new Promise<AgentConversationView>((resolve) => { finish = resolve; }));
+    const { result, rerender } = await ready("conv-A");
+    act(() => { void result.current.selectModel("alternate"); });
+    expect(result.current.modelSaving).toBe(true);
+    rerender({ id: "conv-B" });
+    await waitFor(() => expect(result.current.conversationId).toBe("conv-B"));
+    expect(result.current.modelId).toBe("default");
+    await act(async () => finish(conversation("conv-A", "alternate")));
+    expect(result.current.modelId).toBe("default");
+    expect(result.current.modelSaving).toBe(false);
+    expect(result.current.modelError).toBeNull();
+  });
+
+  it("does not share a pending creation across drafts that chose different models", async () => {
+    let finishA!: (value: AgentConversationView) => void;
+    let finishB!: (value: AgentConversationView) => void;
+    vi.mocked(createAgentConversation)
+      .mockImplementationOnce(() => new Promise<AgentConversationView>((resolve) => { finishA = resolve; }))
+      .mockImplementationOnce(() => new Promise<AgentConversationView>((resolve) => { finishB = resolve; }));
+    const first = renderHook(() => useAgentConversation());
+    const second = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    await waitFor(() => expect(second.result.current.loading).toBe(false));
+    act(() => { void first.result.current.selectModel("alternate"); });
+    act(() => { void first.result.current.send("first"); void second.result.current.send("second"); });
+    await waitFor(() => expect(createAgentConversation).toHaveBeenCalledTimes(2));
+    const calls = vi.mocked(createAgentConversation).mock.calls;
+    expect(calls[0]![0]).not.toBe(calls[1]![0]);
+    expect(calls.map(([, modelId]) => modelId).sort()).toEqual(["alternate", undefined]);
+    await act(async () => {
+      finishA(conversation("conv-A", "alternate"));
+      finishB(conversation("conv-B", "default"));
+    });
+    await waitFor(() => expect(streams.size).toBe(2));
+    expect(first.result.current.modelId).toBe("alternate");
+    expect(second.result.current.modelId).toBe("default");
+  });
+
+  it("resets a new draft to the default model", async () => {
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => { void result.current.selectModel("alternate"); });
+    expect(result.current.modelId).toBe("alternate");
+    act(() => result.current.clear());
+    expect(result.current.modelId).toBe("default");
+    expect(result.current.modelSaving).toBe(false);
+    expect(result.current.modelError).toBeNull();
+    expect(createAgentConversation).not.toHaveBeenCalled();
   });
 });

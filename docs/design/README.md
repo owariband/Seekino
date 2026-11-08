@@ -61,7 +61,10 @@ TRD 必须以 `# 1. 问题与现状` 开头，清晰呈现问题识别、因素�
 |---|---|---|
 | 长任务查询与 Consumer 恢复 | [parse-task-query-recovery-trd.md](03-product-reassessment/parse-task-query-recovery-trd.md) | PR #30：大 JSON 查询 1038、Consumer 异常定位与同任务成果保留；依赖 #18，当前仅设计。 |
 | Parse V2 任务编排 | [video-parse-harness-trd.md](02-agent-harness/video-parse-harness-trd.md) | 主 TRD：任务与成果、Prepare、调度、租约、Refine、Prefix 和恢复；同一 ChunkTask 承担 Parse / Index。 |
+| 已准备素材的批次租约校验 | [帧文件交付 TRD](03-product-reassessment/parse-media-link-lease-trd.md) | 在硬链接前后核验 chunk 租约，记录锁次数和失租交付结果。 |
+| 已提交任务的派发与索引收尾 | [解析就绪调度 TRD](03-product-reassessment/parse-ready-dispatch-trd.md) | 按块和窗口领取，在进程接管时恢复，并用同一集对照 MySQL 与实际索引耗时。 |
 | Parse V2 领域算法 | [video-parse-engine-trd.md](02-agent-harness/video-parse-engine-trd.md) | 领域合同：解析结果 Schema、时间与人物规则、解析和投影边界；旧检索章节结合最新 Event 合同阅读。 |
+| Parse 模型输出草稿 | [parse-output-drafts-trd.md](03-product-reassessment/parse-output-drafts-trd.md) | 1,024 字节或调用退出保存独立草稿，SSE 只检查本地取消；设计与隔离验证，部署/整集性能另验。 |
 | 视频解析性能与输出协议 | [video-parse-performance-trd.md](03-product-reassessment/video-parse-performance-trd.md) | 11-01 追加 Kimi 流式推理耗时诊断、全量帧时间配对试点；主 TRD：两轮协议证据与最终取舍——精简 Schema、继续 JSON，质量优先并沿用既有并行策略；dev 已接入宿主直接 JSON 与 30k；精简字段/SHOT 兼容迁移及实模验收待完成。 |
 | 解析暂停与继续 | [parse-pause-resume-trd.md](03-product-reassessment/parse-pause-resume-trd.md) | 保留成果、释放容量、撤销租约，任务页显示语音转写与暂停状态。 |
 | 解析任务管理 | [parse-task-control-trd.md](03-product-reassessment/parse-task-control-trd.md) | 任务页默认看进行中；历史版本单独 / 批量删除；运行中删除改为撤销租约后后台清理；替换任务历史版本筛选的交互。 |
@@ -99,8 +102,15 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
+| 独立对话页布局 | [chat-sidebar-layout-trd.md](03-product-reassessment/chat-sidebar-layout-trd.md) | 左侧历史、居中草稿、简洁输入栏；依赖 #66，状态见工作台 CHAT-LAYOUT-01。 |
+| 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 本机或 cloud 管理员编辑 YAML 中的协议、地址和模型，聊天按会话选模。 |
+| 模型注册与用途 | [model-registry-roles-trd.md](03-product-reassessment/model-registry-roles-trd.md) | 具名连接、按模型登记能力、六个用途的 YAML 绑定与权限。 |
+| 设置工作区 | [settings-workspace-trd.md](03-product-reassessment/settings-workspace-trd.md) | 分类设置、保留聊天草稿、共享 Kino 偏好及 Flash 与 Pro 同题对照。 |
+| 对话回答模型与输入区 | [chat-composer-models-trd.md](03-product-reassessment/chat-composer-models-trd.md) | 当前对话保存回答模型，输入面板支持附件，桌面历史可调宽。依赖 #67。 |
 | 观看回答交付 | [watch-answer-delivery-trd.md](03-product-reassessment/watch-answer-delivery-trd.md) | 修复：实时证据不提交视频卡、失败表述准确、回答长度与用户可见术语受控（LOOP-06 / C22 / C25）。 |
+| 对话延迟创建 | [chat-lazy-conversation-trd.md](03-product-reassessment/chat-lazy-conversation-trd.md) | 修复：打开页面、新对话、删除补位不再创建空对话，首次发送时才创建；实现完成，待合并。 |
 | Chat 正文流式与真实 FTT | [chat-streaming-trd.md](03-product-reassessment/chat-streaming-trd.md) | 承接课程 PRD：正文增量交付、调用来源、浏览器采证及非流式/缓冲反例；关联 #18 / #25。 |
+| Chat 模型重试提示 | [设计](03-product-reassessment/chat-model-retry-status-trd.md) | 首次响应超时后的重试次数与恢复反馈。 |
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
@@ -119,6 +129,8 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | 用户与租户 | [user-tenant-trd.md](02-agent-harness/user-tenant-trd.md) | 主 TRD：游客、用户、租户身份、资源归属与隔离边界。 |
 | Series 共享 | [series-sharing-trd.md](02-agent-harness/series-sharing-trd.md) | 专项 TRD：Series 共享、团队范围与访问合同。 |
 | Docker 发布资源与 main 构建 | [docker-web-assets-trd.md](03-product-reassessment/docker-web-assets-trd.md) | PNG/SVG 软链接的构建输入、镜像验证和 CPU 源码提交对齐；关联云部署 PR #57。 |
+| 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |
+| SMTP 决定登录入口 | [smtp-login-availability-trd.md](03-product-reassessment/smtp-login-availability-trd.md) | 身份接口传递邮件能力；未配置时提前说明登录注册尚未开放，保留游客体验。 |
 | Local / Cloud | [local-cloud-trd.md](02-agent-harness/local-cloud-trd.md) | 运行形态设计：身份、配置归属、本地接入和云端部署边界。 |
 | 项目管理工作台 | [management-workbench-trd.md](03-product-reassessment/management-workbench-trd.md) | 单文件离线管理工作台：里程碑概览、课程闭环地图、验收门槛与四列看板，统一模块、需求、任务，关联 PR/TRD 和历史证据；2026-11-02 看板版本保留在同一 TRD。 |
 

@@ -28,12 +28,19 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 
 | 文档 | 时间归属与证据 | 提出时的视角与背景 | 本次整理时的阅读边界 |
 |---|---|---|---|
+| [parse-media-link-lease-trd.md](parse-media-link-lease-trd.md) | 2026-11-07，198 帧交付逐个触发 chunk 续租 | 清单就绪后与交付前各校验一次 | [PR #75](https://github.com/owariband/Seekino/pull/75) |
+| [parse-ready-dispatch-trd.md](parse-ready-dispatch-trd.md) | 2026-11-07，micrograd 的索引在 refine 结束后继续约 39 分钟 | 提交后按 ID 派发、有限等锁与轻量收尾；记录同一素材的真实索引对照 | [PR #70](https://github.com/owariband/Seekino/pull/70) |
+| [parse-output-drafts-trd.md](parse-output-drafts-trd.md) | 2026-11-07，SSE 逐事件续租与模型正文草稿需求澄清 | 内存累积正文，每 1,024 新字节或退出时保存独立调用草稿；续租继续由周期心跳驱动 | PR #64；隔离验证与真实解析效果分别验收 |
 | [docker-web-assets-trd.md](docker-web-assets-trd.md) | 2026-11-06，CPU 构建暴露发布 Logo 软链接缺失 | 保留构建目录关系、限制发布资源输入，并验证 main 部署来源 | 设计与证据见正文；当前状态见工作台 DEPLOY-01 |
+| [cloud-guest-without-smtp-trd.md](cloud-guest-without-smtp-trd.md) | 2026-11-06，SMTP 留空导致整个 cloud API 无法启动 | 游客启动与邮件能力分离，未配置邮件时明确拒绝邮箱认证 | 当前状态见工作台 DEPLOY-02 |
+| [smtp-login-availability-trd.md](smtp-login-availability-trd.md) | 2026-11-07，邮件未配置仍展示验证码表单，用户填写后才知道不可用 | 由账号服务传递可用能力，空配置展示游客模式和未开放说明 | 当前状态见工作台 DEPLOY-04；依赖 #62，随 #63 发布 |
 | [cloud-docker-deploy-trd.md](cloud-docker-deploy-trd.md) | 2026-11-06，简历筛选需要公开演示，但云服务器上没有任何服务 | 用 Docker 在 4C8G 服务器部署发布后的 `main`，迁移演示数据，经公网 HTTPS 提供观看、检索与问答 | 初稿；实施与验收待进行 |
 | [chat-stream-snapshot-coalescing-trd.md](chat-stream-snapshot-coalescing-trd.md) | 2026-11-05，长回答流式交付途中被判为慢消费者并断开 | 合并缓冲中相邻的未发送快照，持续读取的客户端不再收到中断 | 初稿；实验待测 |
 | [series-background-ownership-trd.md](series-background-ownership-trd.md) | 2026-11-05，系列概览讨论中发现简介、背景资料与人物资料归属不清 | 系列只保留“简介 + 一份背景资料”由用户维护，`character_bible` 转为只读兼容，Agent 使用显示名称 | 初稿；实验待测 |
 | [chat-streaming-trd.md](chat-streaming-trd.md) | 2026-11-01，课程 QA 撤回错误 FTT 后独立承接 | 模型正文在生成过程中交付，首字计量能关联实际请求、增量和浏览器展示 | PR #25 直接合入 dev，不依赖 #18；隔离验证与真实试点、性能和部署分开判断 |
+| [Chat 模型重试提示](chat-model-retry-status-trd.md) | 2026-11-07，local 观看问答 | 等待期间显示模型重试次数 | [PR #71](https://github.com/owariband/Seekino/pull/71) |
 | [chat-text-delta-stream-trd.md](chat-text-delta-stream-trd.md) | 2026-11-05，已有检索结果后正文每秒约 9 字到达页面 | 正文以增量事件交付、按间隔持久化，正文速度回到供应商水平 | 已实现，演示环境验收通过（2026-11-05）；正文 228–311 字/秒，9 回合最长 112 秒 |
+| [chat-lazy-conversation-trd.md](chat-lazy-conversation-trd.md) | 2026-11-07，打开对话页即在服务端创建对话，空“新对话”在记录中堆积 | 草稿态，首次发送或首次附件时才创建 | 实现完成、本机验证通过；待合并 |
 | [chat-answer-shape-trd.md](chat-answer-shape-trd.md) | 2026-11-05，回答含过程播报、长段与完成后的工具行 | 回答先结论、短段列表，完成后只留正文与视频片段 | 初稿；九门禁对照待测 |
 | [chat-reasoning-display-trd.md](chat-reasoning-display-trd.md) | 2026-11-05，长回合 50–110 秒期间用户看不到系统在想什么 | 实时转发 Supervisor 思考增量，回答上方默认折叠展示 | 初稿；依赖 #51 |
 | [chat-card-event-boundaries-trd.md](chat-card-event-boundaries-trd.md) | 2026-11-05，学习路线类视频卡常用整分钟或半句起止 | 视频卡起止落在讲解句子或事件边界 | 初稿；离线回放 68→79/104，门禁对照待测 |
@@ -88,3 +95,9 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 [返回设计总索引](../README.md) · [报告索引](../../report/README.md)
 
 - [任务历史版本筛选](task-history-filter-trd.md)：2026-10-30，默认当前版本、历史追溯与操作权限说明。
+
+- [独立对话页布局](chat-sidebar-layout-trd.md)：左侧历史与居中草稿，状态见[工作台](../../dev/workbench.html) CHAT-LAYOUT-01。
+- [个人模型服务](personal-model-connections-trd.md) 记录生效 YAML 的管理接口、凭证掩码、cloud 权限和会话选模。依赖设置工作区 #72。
+- [模型注册与用途](model-registry-roles-trd.md) 延伸 #74，将同一组注册模型接入聊天、解析和检索。
+- [设置工作区](settings-workspace-trd.md) 记录会话内打开设置、设备偏好、管理员配置和设计样稿对照。
+- [对话回答模型与输入区](chat-composer-models-trd.md) 记录会话级模型选择、附件位置和侧栏调宽。状态见[工作台](../../dev/workbench.html) CHAT-COMPOSER-02。

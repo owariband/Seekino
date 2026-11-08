@@ -95,6 +95,23 @@ Docker scratch 导出只含 PNG/SVG，测试标记未进入。此失败与修正
 
 2026-11-06：上述候选的 API/Web 实机构建、资源 HTTP/hash、构建输入隔离及 6 项初始化
 回归均已通过。发布通过 #58 → dev → #59 → main 进行，并保留 main 的 `.gitignore`。
-本文记录时 main 合并及 CPU 正式源码切换尚待执行，不能将候选验证写成部署完成。
+候选验收时 main 合并及 CPU 正式源码切换尚待执行，不能将候选验证写成部署完成。
 切换时必须记录远端 main SHA、CPU HEAD、tracked diff、最终镜像及旧源码备份路径。
 服务启动、TLS、GPU 模型和真实业务效果单独报告，未验证项不标通过；状态只在管理工作台维护。
+
+2026-11-06 23:00（UTC+8）补充：#58 已合入 dev，#59 经本次明确授权合入 main。
+CPU 的 `/home/ubuntu/seekino` 已切换为带 Git 元数据的 `main` 分支，HEAD 与远端均为
+`0282fcb0da58a4292007732c931823dc11720a22`，`git status --porcelain` 为空；main 原有
+`.gitignore` 保持不变。从该 main 的干净预备目录构建 API/Web，退出码 0，镜像 ID 与第 4 节
+候选完全一致；最终 main 的临时 HTTP、图片哈希与 API 无网络导入再次通过。
+
+生产 Compose 用隔离的占位配置成功解析，并检查 production/cloud 身份、数据库不发布端口、
+API 仅绑定 loopback；该检查没有使用真实凭据，也没有初始化数据库。两镜像保留
+`main-0282fcb0` 标签，默认 `seekino-api:local` / `seekino-web:local` 已指向对应镜像。
+旧源码（含 `.release` 旧提交标记）保留在 `/home/ubuntu/seekino-before-main-20261106-150017Z`，
+旧 API 镜像保留 `seekino-api:before-main-20261106-150017Z` 标签，数据未删除。
+
+最终原始证据在上述本机验收目录的 `main-verification.json`、`main-deployment.json`、
+`build-main.log`；同名原件位于服务器 `~/seekino-download-proxy/`。本需求的源码来源、
+构建与发布资源验收完成。服务器还没有私有 `.env.cloud`，本轮未启动业务容器，
+未复制 API/SMTP 凭据；公网、数据库初始化和 GPU/真实模型链路未验收。

@@ -383,23 +383,13 @@ def record_execution_timing(
         committed = False
     elif isinstance(lease, ChunkParseLease):
         active = _matching_chunk_lease(child, lease, sampled_at)
-        result = chunk_store.get_content(session, child.id)
-        receipt = result.detail if result is not None and isinstance(result.detail, dict) else {}
-        committed = child.chunk_id == lease.video_chunk_id and (
-            receipt.get("parse_committed_lease_version") == lease.lease_version
-            if lease.phase == ChunkTaskPhase.PARSE else lease.lease_version in receipt.get("index_committed_lease_versions", [])
-        )
+        committed = (not active and finished and child.chunk_id == lease.video_chunk_id
+                     and chunk_store.lease_committed(session, task_id, lease.phase, lease.lease_version))
     else:
         active = _matching_interval_lease(child, lease, sampled_at)
-        content = interval_store.get_content(session, task_id) if finished else None
-        receipt = content.detail if content is not None and isinstance(content.detail, dict) else {}
-        committed_version = receipt.get("refinement_committed_lease_version") == lease.lease_version
-        committed = bool(
-            committed_version
-            and tuple(child.chunk_task_ids) == lease.chunk_parse_task_ids
-            and child.start_sequence_no == lease.start_sequence_no
-            and child.chunk_count == lease.chunk_count
-        )
+        committed = (not active and finished and tuple(child.chunk_task_ids) == lease.chunk_parse_task_ids
+                     and child.start_sequence_no == lease.start_sequence_no and child.chunk_count == lease.chunk_count
+                     and interval_store.refine_lease_committed(session, task_id, lease.lease_version))
     if not active and not (finished and committed):
         return False
     detail = deepcopy(dict(parent.detail or {}))

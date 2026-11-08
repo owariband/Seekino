@@ -116,7 +116,11 @@ Conversation 创建幂等范围应包含 `(tenant_id, owner_user_id, idempotency
 
 发送和验证分别按邮箱、游客及来源 IP 限流；默认发送窗口 3600 秒，邮箱/游客/IP 上限 5/10/30；验证窗口 300 秒，上限 20/30/100。游客创建本身按 IP 限制 30 次/3600 秒。Redis 不可用时拒绝认证及需要额度准入的云端模型工作，不放行无状态验证码。
 
-配置清单已写入 [.env.example](../../../.env.example)。cloud 必须设置至少 32 字节的签名秘密、Redis 和 SMTP host/sender，缺失时启动失败。SMTP 服务商与真实发信验收仍待部署配置；秘密通过运行环境注入，不写入文档或源码。
+配置清单已写入 [.env.example](../../../.env.example)。cloud 必须设置至少 32 字节的签名秘密和 Redis。
+2026-11-07 的[游客启动修订](../03-product-reassessment/cloud-guest-without-smtp-trd.md)将 SMTP
+改为邮件认证的可选依赖，留空不再阻断游客服务。身份响应通过 `emailLoginEnabled` 告知前端
+是否展示邮箱表单，未配置时显示登录注册暂未开放，详见[提示设计与验收](../03-product-reassessment/smtp-login-availability-trd.md)。
+SMTP 服务商与真实发信验收仍待部署配置；秘密通过运行环境注入，不写入文档或源码。
 
 ### 5.2 凭据、退出与失效
 

@@ -42,6 +42,14 @@ services:
       - sh
       - -ec
       - |
+        mkdir -p /etc/nginx/seekino-cloud.d
+        cat > /etc/nginx/seekino-cloud.d/http-redirect.conf <<'NGINX'
+        server {
+            listen 0.0.0.0:80;
+            server_name ${SEEKINO_PUBLIC_HOST:?};
+            return 308 https://$$server_name$$request_uri;
+        }
+        NGINX
         sed -e 's|@BIND@|0.0.0.0|' -e 's|@PORT@|443|' -e "s|@API_PORT@|$${SEEKINO_HTTP_PORT}|" \
           -e 's|@WEB_ROOT@|/usr/share/nginx/html|' /etc/seekino/nginx.conf.template > /etc/nginx/seekino.conf
         exec nginx -p /etc/nginx/ -c seekino.conf -g 'daemon off;'

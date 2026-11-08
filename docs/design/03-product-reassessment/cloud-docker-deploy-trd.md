@@ -2,6 +2,19 @@
 
 需求：用 Docker 将 `main` 的服务部署到云服务器，对公网提供样例库的观看、检索与问答。状态：TRD 初稿，2026-11-06。分支 `chore/cloud-docker-deploy`，[PR #57](https://github.com/owariband/Seekino/pull/57)。2026-11-06 修订：两台服务器拓扑与范围收窄，见 §3。
 
+2026-11-06 运行配置与首次启动续作：分支 `chore/cloud-runtime-startup`，
+[PR #61](https://github.com/owariband/Seekino/pull/61)，沿用本 TRD。
+CPU 已由 #58/#59 修复并部署 main `0282fcb0`，镜像验收见 [构建修复 TRD](docker-web-assets-trd.md)。
+本次已授权从本机 `.env.local` 派生私有 `.env.cloud`、通过 SSH 传输并启动 CPU；
+调整生产数据库/索引/容器路径、独立生成会话和数据库凭据，移除本机下载代理。
+显式记录 cloud 环境文件的忽略规则，真实凭据只保留在权限 600 的私有文件。
+本机 SMTP 与管理员邮箱为空，首次验证使用游客；GPU 重启后复查已有服务，不改向量合同。
+
+2026-11-07 的 HTTP 入口修复沿用本 TRD，工作分支为 `fix/cloud-http-redirect`，[修复 PR #69](https://github.com/owariband/Seekino/pull/69)。
+云端候选仅在 443 提供服务。11:49 的客户端代理记录显示到 80 的连接被拒绝，公网直连 HTTP
+同样失败，经代理访问得到 502。使用测试证书访问 HTTPS 首页和健康接口均为 200。
+从 HTTP 打开原链接的访客需要被带到同一 HTTPS 页面，路径和查询参数应完整保留。
+
 **背景与触发场景。** Seekino 的第一个对外用途是简历筛选：面试官打开公开链接，自行浏览课程、检索并提问。演示目前只运行在本机——API 19641 从 detached worktree `outputs/worktrees/run-dev` 启动，数据在 v11 隔离库（MySQL 13361、ES 19231、本机媒体）。部署目标为两台服务器：一台 CPU 服务器（4C8G 量级，运行 Seekino Docker 栈）和一台待租用的 GPU 服务器（自托管模型）；两台都尚未交付 SSH。早先检查过的那台服务器已不是部署目标，此前对它的只读检查不再作为现状依据（2026-11-06 用户确认）。
 
 **实际与期望。** 期望：服务器上一条 compose 命令起完整栈，公网 HTTPS 同源提供 Web 与 API，`SEEKINO_AUTH_MODE=cloud` + `SEEKINO_PUBLIC_LIBRARY_ONLY=true`，游客与邮箱用户可观看、检索、问答。实际缺口（源码与模板核对，见 [cloud 首发说明](../../../deploy/cloud/README.md)）：
@@ -25,6 +38,7 @@
 | 本机数据可原样迁移 | 假设：mysqldump + ES snapshot（或 reindex）+ 媒体 rsync 一致 | 行数、文档数、媒体文件数与 sha 抽样对齐；迁移后门禁通过 | 记录差异，回到迁移脚本 |
 | 服务器能拉取镜像与模型依赖 | 未知：国内机器访问 Docker Hub / ghcr / npm / PyPI 可能受限 | 首次构建实测 | 配镜像源，或本机 buildx 构建 amd64 后传输 |
 | DeepSeek / Kimi 从服务器可达 | 假设可达 | 健康检查后的真实问答 | 配出口代理 |
+| 浏览器从 HTTP 进入 | CPU 上的 80 没有监听，代理返回 502 | 公网直连和经代理均返回 308，Location 指向公开域名并保留原 URI，跟随后原 HTTPS 路由可用 | 分别核对监听、服务器本机和公网入站 |
 
 | 指标 | 类型 | 定义 | 基线 | 目标 | 方法 |
 |---|---|---|---|---|---|
@@ -78,11 +92,27 @@ flowchart LR
 - **环境模板：** `first-release.env.example` 与新模板合并为唯一的 `deploy/cloud/env.cloud.example`；由叠加文件固定的连接项（数据库、Redis、模型路径、来源）不再出现在模板中。
 - 拓扑说明写在 [cloud 首发说明](../../../deploy/cloud/README.md#服务器拓扑)。
 
+HTTP 入口续作在 cloud 的 Web Nginx 内增加 80 监听，返回 308，目标固定为部署配置中的
+`SEEKINO_PUBLIC_HOST` 与原始请求 URI。HTTPS 继续处理业务请求。本地原生模板使用独立
+配置前缀。CPU 试点只应用部署配置，沿用现场 Web 镜像，前端代码随既有发布安排同步。
+先用相同镜像校验 Nginx 配置，再检验首页、带编码路径和查询参数的地址、非 GET 方法、
+不同 Host 以及 HTTPS 健康。保留现场原 Compose 配置供回退。
+
 **实施边界。** 新增文件均在 `deploy/cloud/`；可能需要小改 `deploy/docker/nginx.conf` 以支持 443（或为 cloud 新建一份）；不改应用代码。如果发现 cloud 模式在容器内需要代码改动，单独开 PR。
 
 **验证顺序。** ① 本机 Docker 起 cloud 栈（空库）→ 健康检查与游客登录；② 服务器构建与起栈（空库）→ 公网 HTTPS 健康检查；③ 迁移数据 → 计数对齐；④ 公网门禁与权限清单。任一步失败先回到对应因素，不跳步。
 
 # 4. 对照实验与结果分析
+
+2026-11-07 的 HTTP 入口试点使用配置提交 `a907e45e` 和现场候选 Web 镜像。隔离网络中
+GET、HEAD、POST 均收到 308，非站点 Host 也落到配置的公开域名。编码路径和查询串按原样
+保留。本地原生配置前缀仅渲染既有 TLS 监听，Nginx 配置检查通过。
+
+| 公网入口 | 修改前 | 修改后实测 |
+| --- | --- | --- |
+| 直连 HTTP | 80 连接被拒绝 | 首页、带查询参数的设置页和健康页均为 308 |
+| 经 Mac 系统代理访问 HTTP | 502 | 同样三个地址均为 308 |
+| 跟随跳转 | HTTP 入口无法抵达页面 | 上述六组均一次跳转到对应 HTTPS URL 并返回 200，验证时显式信任现有测试证书 |
 
 计划：嵌入一致性——同 10 条查询在本机与云端 embedding 服务的向量余弦（期望 ≥ 0.999）；检索一致性——同查询的 top-10 Chunk ID 重合率（期望 10/10）；问答——LOOP-08 四题在公网与本机的打分对照；性能——云端检索与首字时间 p50/p95（样本少，只作诊断，不宣称尾部）。结果待测。
 
@@ -98,3 +128,34 @@ flowchart LR
 # 6. 结果验收与闭环
 
 状态（2026-11-06）：叠加 Compose、合并环境模板与拓扑说明已完成，静态检查通过（本机 `docker compose ... config` 仅渲染配置，不启动容器）；尚未在任何服务器上构建或启动，§2 指标均待测。验收以 §2 指标逐项回填，证据放 `docs/report/deploy/cloud-docker-20261106/`。部署完成、门禁通过与对外稳定分别报告。
+
+2026-11-06 首次启动验证计划：核对私有 env 被 Git/Docker 排除、有效配置不含本机路径、
+生产数据与开发数据物理隔离；依次验证 MySQL/ES/Redis、初始化、API /healthz、HTTPS Web、
+游客会话与只读资料入口，并核对未授权管理调用被拒。模型只核对已有 GPU 服务与接口，
+不导入素材或迁移本机数据库；真实解析、检索质量与公网可信 TLS 仍需独立证据。
+本轮开始时 MySQL/ES/Redis 已健康，API/Web 与模型接入仍待验；自签证书仅用于试运行。
+
+
+2026-11-07 运行实测补充：本地 `.env.local` 已派生为权限 600 的 `.env.cloud` 并通过 SSH
+传入 CPU；模型 API keys 保持一致，生产库/ES 索引、容器路径、独立数据库和会话凭据已装配，
+本机下载代理未进入 API 运行环境。原 `.env.*` 已覆盖 cloud 文件，本次额外添加显式忽略项。
+MySQL/ES/Redis 健康，初始化退出 0；空 SMTP 暴露的身份服务启动问题由
+[独立修复 #62](https://github.com/owariband/Seekino/pull/62) 处理，详见
+[游客启动 TRD](cloud-guest-without-smtp-trd.md)。
+
+候选 f269f1ec 的五服务均 healthy，HTTPS 首页/健康/游客/公开空资料库通过，管理与 CSRF
+请求正确拒绝，邮箱未配置时明确 503。公网域名与 IP 的 /healthz 从本机直连均 200，
+使用显式信任的短期自签证书验证；浏览器默认仍不信任该证书。SMTP、管理员邮箱为空，
+没有发送邮件；Qwen 模型与 1024 维合同保留，模型接口明确未接通。GPU 重启后 SSH 可用，
+模型文件存在，但虚拟环境缺少 PyTorch/WhisperX/FastAPI 等依赖，llama-server 不存在，
+没有模型监听；本次没有改动 GPU 环境、导入样例或调用真实模型。
+
+原始无密钥证据在本机 `outputs/ops/cloud-runtime/`：`candidate-runtime-verification.json`、
+`external-health-verification.json`、`state.json`。候选已运行；正式 main 发布 #63 和
+最终源码/镜像对齐待完成。公开样例观看/检索/问答以及可信 TLS 不由健康检查推定达标。
+
+2026-11-07 12:30（UTC+8）验收了当前 CPU 入口的自动跳转。Chrome 经系统代理打开 HTTP
+健康页，实际导航链为 308、200，查询参数完整。现场只重新创建 Web 容器，镜像 ID 与原候选
+相同，另外四个服务的容器 ID 一致。现用启动配置会重新生成跳转规则，之前的配置已备份。
+证据见本机 `outputs/ops/cloud-runtime/http-redirect/a907e45e/`；当前任务见工作台 DEPLOY-05。
+正式应用版本按前端同步安排发布，当前 HTTPS 使用自签证书。

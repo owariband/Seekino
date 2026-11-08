@@ -173,6 +173,7 @@ class VideoParseConsumer:
         self._next_maintenance_at = 0.0
         self._video_concurrency = video_concurrency
         self._phase_cursor = 0
+        self._next_reap_at = 0.0
         self._video_tasks: set[asyncio.Task[None]] = set()
         self._work_tasks: set[asyncio.Task[None]] = set()
         self._prefix_task: asyncio.Task[None] | None = None
@@ -247,7 +248,9 @@ class VideoParseConsumer:
             self._stop_async = None
 
     async def run_once(self) -> bool:
-        await asyncio.to_thread(self._queue.reap_expired)
+        if time.monotonic() >= self._next_reap_at:
+            await asyncio.to_thread(self._queue.reap_expired)
+            self._next_reap_at = time.monotonic() + min(self._heartbeat_interval, self._maintenance_interval).total_seconds()
         await self._run_maintenance_if_due()
         self._video_tasks = {task for task in self._video_tasks if not task.done()}
         self._work_tasks = {task for task in self._work_tasks if not task.done()}
@@ -292,18 +295,30 @@ class VideoParseConsumer:
         return False
 
     async def run_forever(self, stop: asyncio.Event) -> None:
+        dispatch = getattr(self._queue, "dispatch", None)
+        wake = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        stop_waiter = asyncio.create_task(stop.wait())
+        stop_waiter.add_done_callback(lambda _: wake.set())
+        if dispatch is not None:
+            dispatch.wake = lambda: loop.call_soon_threadsafe(wake.set)
         try:
             while not stop.is_set():
-                worked = await self.run_once()
-                if worked:
+                wake.clear()
+                if await self.run_once():
                     continue
+                delay = self._poll_interval.total_seconds()
+                if dispatch is not None:
+                    delay = dispatch.next_delay(now_utc(), delay)
                 try:
-                    await asyncio.wait_for(
-                        stop.wait(), timeout=self._poll_interval.total_seconds()
-                    )
+                    await asyncio.wait_for(wake.wait(), timeout=delay)
                 except TimeoutError:
                     pass
         finally:
+            if dispatch is not None:
+                dispatch.wake = None
+            stop_waiter.cancel()
+            await asyncio.gather(stop_waiter, return_exceptions=True)
             pending = tuple(self._video_tasks | self._work_tasks)
             for task in pending:
                 task.cancel()

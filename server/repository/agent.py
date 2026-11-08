@@ -62,8 +62,13 @@ class AgentRepository:
         title: str,
         idempotency_key: str,
         title_is_auto: bool = False,
+        model_id: str = "default",
+        inherit_model: bool = False,
+        model_available: bool = True,
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
+        # Idempotency compares the requested setting, even when the personal default has since changed.
+        initial_model = "default" if inherit_model else model_id
         for attempt in range(2):
             try:
                 with self._session_factory.begin() as session:
@@ -75,25 +80,20 @@ class AgentRepository:
                         )
                     )
                     if existing is not None:
-                        if existing.title_is_auto != title_is_auto or (
-                            not title_is_auto and existing.title != title
-                        ):
+                        initial = existing.detail or {}
+                        if (existing.title_is_auto != title_is_auto
+                                or (not title_is_auto and existing.title != title)
+                                or initial.get("initialModelId", "default") != initial_model
+                                or (initial.get("initialModelInherited") and not inherit_model)):
                             raise AgentConflictError(
                                 "the conversation idempotency key is already used "
                                 "with different fields"
                             )
-                        message_count = session.scalar(
-                            select(func.count(AgentMessage.id)).where(
-                                AgentMessage.conversation_id
-                                == existing.id
-                            )
-                        )
-                        return self._conversation_state(
-                            existing,
-                            message_count=int(message_count or 0),
-                            last_message_preview=session.scalar(self._preview_query(existing.id)),
-                        )
+                        return self._conversation_summary(session, existing)
 
+                    # Completed creates remain replayable after a model or its connection is removed.
+                    if not model_available:
+                        raise ValueError("请先配置并选择可用的回答模型。")
                     record = AgentConversation(
                         id=conversation_id,
                         tenant_id=tenant_id,
@@ -102,6 +102,10 @@ class AgentRepository:
                         title_is_auto=title_is_auto,
                         idempotency_key=idempotency_key,
                         next_message_sequence=0,
+                        detail=({
+                            "modelId": model_id, "initialModelId": initial_model,
+                            **({"initialModelInherited": True} if inherit_model else {}),
+                        } if model_id != "default" else None),
                     )
                     session.add(record)
                     session.flush()
@@ -165,16 +169,29 @@ class AgentRepository:
                 tenant_id,
                 owner_user_id=owner_user_id,
             )
-            message_count = session.scalar(
-                select(func.count(AgentMessage.id)).where(
-                    AgentMessage.conversation_id == conversation_id
-                )
-            )
-            return self._conversation_state(
-                record,
-                message_count=int(message_count or 0),
-                last_message_preview=session.scalar(self._preview_query(conversation_id)),
-            )
+            return self._conversation_summary(session, record)
+
+    def _conversation_summary(self, session: Session, record: AgentConversation) -> AgentConversationState:
+        count = session.scalar(select(func.count(AgentMessage.id)).where(AgentMessage.conversation_id == record.id))
+        return self._conversation_state(
+            record, message_count=int(count or 0),
+            last_message_preview=session.scalar(self._preview_query(record.id)),
+        )
+
+    def set_conversation_model(
+        self, conversation_id: str, tenant_id: str, *, model_id: str, owner_user_id: str,
+    ) -> AgentConversationState:
+        with self._session_factory.begin() as session:
+            record = self._require_conversation(session, conversation_id, tenant_id,
+                                                for_update=True, owner_user_id=owner_user_id)
+            detail = dict(record.detail or {})
+            if model_id == "default":
+                detail.pop("modelId", None)
+            else:
+                detail["modelId"] = model_id
+            record.detail = detail or None
+            session.flush()
+            return self._conversation_summary(session, record)
 
     @contextmanager
     def lock_conversation(
@@ -395,7 +412,7 @@ class AgentRepository:
             sessions[key] = deepcopy(state)
             record.detail = detail
 
-    def find_idempotent_message(
+    def get_message_start_context(
         self,
         *,
         conversation_id: str,
@@ -410,10 +427,10 @@ class AgentRepository:
         owner_user_id: str = LOCAL_USER_ID,
         source_tenant_id: str | None = None,
         attachments: list[dict[str, str]] | None = None,
-    ) -> StartedAgentMessageState | None:
+    ) -> tuple[StartedAgentMessageState | None, str]:
         with self._session_factory() as session:
-            self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
-            return self._find_idempotent_message(
+            conversation = self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
+            replay = self._find_idempotent_message(
                 session,
                 conversation_id=conversation_id,
                 content=content,
@@ -426,6 +443,7 @@ class AgentRepository:
                 source_tenant_id=source_tenant_id,
                 attachments=attachments,
             )
+            return replay, conversation.model_id
 
     def get_message_pair(
         self, conversation_id: str, tenant_id: str, *,
@@ -474,7 +492,7 @@ class AgentRepository:
         self, message_id: str, *, now: int, phase: str | None = None,
         content: str | None = None, search_result: dict | None = None,
         timing: AgentMessageTimingState | None = None,
-        render_blocks: list[dict] | None = None,
+        render_blocks: list[dict] | None = None, model_retry: dict[str, int] | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
             record = session.get(AgentMessage, message_id, with_for_update=True)
@@ -490,6 +508,8 @@ class AgentRepository:
                 self._apply_render_blocks(record, render_blocks)
                 if render_blocks is not None else False
             )
+            if model_retry is not None and (record.detail or {}).get("modelRetry") != (model_retry or None):
+                changes["detail"] = {**(record.detail or {}), "modelRetry": model_retry or None}
             if changes:
                 for name, value in changes.items():
                     setattr(record, name, value)
@@ -513,6 +533,7 @@ class AgentRepository:
         tenant_id: str,
         content: str,
         model_name: str,
+        expected_model_id: str | None = None,
         requested_top_k: int,
         requested_run_options: dict[str, int],
         idempotency_key: str,
@@ -550,6 +571,10 @@ class AgentRepository:
             )
             if existing is not None:
                 return existing
+
+            if (expected_model_id is not None
+                    and conversation.model_id != expected_model_id):
+                raise AgentConflictError("the conversation model changed before the message was accepted")
 
             processing = session.scalar(
                 select(AgentMessage.id.label("message_id")).where(
@@ -805,6 +830,7 @@ class AgentRepository:
             updated_at=record.update_time,
             last_message_preview=last_message_preview,
             detail=record.detail,
+            model_id=record.model_id,
         )
 
     @staticmethod
@@ -826,6 +852,7 @@ class AgentRepository:
             ),
             created_at=record.create_time,
             updated_at=record.update_time,
+            model_retry=(record.detail or {}).get("modelRetry") if record.status == "PROCESSING" else None,
             phase=AnswerPhase(record.phase) if record.phase is not None else None,
             version=record.version,
             reference=record.reference,

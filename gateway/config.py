@@ -12,6 +12,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StringConstraints,
     model_serializer,
     model_validator,
@@ -95,13 +96,41 @@ class DeepSeekModelConfig(BaseModel):
     vision_source: _NonEmptyString | None = None
     model: _NonEmptyString
     base_url: _HttpsBaseUrl
-    api_key_env: _NonEmptyString
+    api_key_env: _NonEmptyString | None
     reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     max_output_tokens: int = Field(ge=256, le=262_144)
     request_timeout_seconds: float = Field(gt=0)
 
 
-class OpenAIModelSourceConfig(BaseModel):
+class ChatSourceCredentials(BaseModel):
+    display_name: _NonEmptyString | None = Field(default=None, exclude=True)
+    encrypted_api_key: _NonEmptyString | None = Field(default=None, repr=False, exclude=True)
+    _config_path: Path | None = PrivateAttr(default=None)
+    _source_name: str = PrivateAttr(default="")
+
+    def credential_destination(self) -> tuple[str, ...]:
+        return (self._source_name, self.adapter, getattr(self, "protocol", ""), getattr(self, "base_url", ""))
+
+    def saved_key(self) -> str | None:
+        if self.encrypted_api_key is None:
+            return None
+        if self._config_path is None:
+            raise RuntimeError("模型凭证缺少配置文件路径")
+        from .model_credentials import unseal
+        return unseal(self._config_path, self.credential_destination(), self.encrypted_api_key)
+
+
+class ChatAPISourceConfig(ChatSourceCredentials):
+    """A registered HTTP model service. The binding kind selects generation, ASR or embeddings."""
+    model_config = ConfigDict(extra="forbid")
+    adapter: Literal["chat_api"] = "chat_api"
+    provider: _NonEmptyString = "chat_api"
+    protocol: Literal["openai_chat", "openai_responses", "anthropic_messages", "gemini"]
+    base_url: _NonEmptyString
+    api_key_env: _NonEmptyString | None = None
+
+
+class OpenAIModelSourceConfig(ChatSourceCredentials):
     model_config = ConfigDict(extra="forbid")
 
     adapter: Literal[OPENAI_ADAPTER] = OPENAI_ADAPTER
@@ -112,24 +141,25 @@ class OpenAIModelSourceConfig(BaseModel):
         OPENAI_KIMI_PROFILE,
     ] = OPENAI_STANDARD_PROFILE
     base_url: _HttpsBaseUrl
-    api_key_env: _NonEmptyString
+    api_key_env: _NonEmptyString | None
 
 
-class ArkModelSourceConfig(BaseModel):
+class ArkModelSourceConfig(ChatSourceCredentials):
     model_config = ConfigDict(extra="forbid")
 
     adapter: Literal[ARK_ADAPTER] = ARK_ADAPTER
     provider: Literal[ARK_PROVIDER] = ARK_PROVIDER
-    api_key_env: _NonEmptyString = "ARK_API_KEY"
+    api_key_env: _NonEmptyString | None = "ARK_API_KEY"
 
 
-class OllamaEmbeddingSourceConfig(BaseModel):
+class OllamaEmbeddingSourceConfig(ChatSourceCredentials):
     """Ollama's native text embedding API; local HTTP needs no API key."""
 
     model_config = ConfigDict(extra="forbid")
 
     adapter: Literal["ollama_embedding"] = "ollama_embedding"
     provider: Literal["ollama"] = "ollama"
+    api_key_env: _NonEmptyString | None = Field(default=None, exclude_if=lambda v: v is None)
     base_url: _AudioBaseUrl
 
 
@@ -143,14 +173,14 @@ class LlamaCppEmbeddingSourceConfig(BaseModel):
     base_url: _AudioBaseUrl
 
 
-class OpenAIAudioSourceConfig(BaseModel):
+class OpenAIAudioSourceConfig(ChatSourceCredentials):
     """Audio Transcriptions protocol, independent of Chat Completions."""
 
     model_config = ConfigDict(extra="forbid")
     adapter: Literal["openai_audio"] = "openai_audio"
     provider: _NonEmptyString
     base_url: _AudioBaseUrl
-    api_key_env: _NonEmptyString
+    api_key_env: _NonEmptyString | None
     response_format: Literal["verbose_json", "json"] = "verbose_json"
 
 
@@ -241,6 +271,7 @@ class ClaudeCodeModelSourceConfig(BaseModel):
 
 ModelSourceConfig = (
     OpenAIModelSourceConfig
+    | ChatAPISourceConfig
     | ArkModelSourceConfig
     | CodexModelSourceConfig
     | ClaudeCodeModelSourceConfig
@@ -449,11 +480,18 @@ class WebSearchConfig(BaseModel):
     api_key_env: _NonEmptyString = "DEEPSEEK_API_KEY"
 
 
+ParseModelRole = Literal["vision", "transcription", "ocr", "embedding", "rerank"]
+ModelRole = Literal["chat", "vision", "transcription", "ocr", "embedding", "rerank"]
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     config_version: Literal[1, 2] = 1
     supervisor_harness: Literal["deepagents", "codex"] = "deepagents"
+    chat_default_model: _NonEmptyString | None = None
+    model_roles: dict[ParseModelRole, _NonEmptyString] = Field(default_factory=dict)
+    supervisor_choices: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
         default_factory=_default_model_sources
@@ -511,10 +549,16 @@ class GatewayConfig(BaseModel):
         for ref, binding in self.normalized_models.items():
             self._validate_binding(binding, ref=ref)
         self._validate_supervisor_binding()
+        for ref in self.supervisor_choices:
+            if ref in {"default", "supervisor"} or len(ref) > 128 or ref not in self.normalized_models:
+                raise ValueError(f"supervisor_choices must reference a configured alternative in models: {ref!r}")
+            binding = self.normalized_models[ref]
+            if binding.kind not in {None, "generative"}:
+                raise ValueError(f"supervisor_choices.{ref} requires a generative model")
         return self
 
-    def _validate_supervisor_binding(self) -> None:
-        binding = self.normalized_models.get("supervisor")
+    def _validate_supervisor_binding(self, ref: str = "supervisor") -> None:
+        binding = self.normalized_models.get(ref)
         if binding is None:
             # Legacy model-component configurations keep their existing
             # validation; the internal Deep Agents builder checks its source.
@@ -539,6 +583,56 @@ class GatewayConfig(BaseModel):
                 raise ValueError("deepagents Supervisor fallback requires an Ark API source")
             if binding.fallback.fallback is not None:
                 raise ValueError("Supervisor models support one configured fallback")
+
+    def configured_supervisor_choices(
+        self, *, discover: bool = False, environ: Mapping[str, str] | None = None,
+    ) -> dict[str, ModelBinding]:
+        """Preserve explicit chat bindings first; local model settings can discover additional compatible models."""
+        choices = {}
+        refs = dict.fromkeys([*self.supervisor_choices, *self.normalized_models] if discover else self.supervisor_choices)
+        for ref in refs:
+            raw = self.normalized_models[ref]
+            if isinstance(raw, EmbeddingModelBinding) or raw.kind not in {None, "generative"}:
+                continue
+            if discover and ref in {"default", "supervisor"}:
+                continue  # The running Supervisor already has its effective primary binding.
+            source = self.source(raw.source)
+            if isinstance(source, ChatAPISourceConfig):
+                choices[ref] = self.resolve_model_binding(ref, environ=environ)
+                continue
+            if self.supervisor_harness == "codex":
+                if not isinstance(source, CodexModelSourceConfig):
+                    continue
+            elif not isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
+                continue
+            try:
+                self._validate_supervisor_binding(ref)
+            except ValueError:
+                if ref in self.supervisor_choices:
+                    raise
+                # A parse binding can have a fallback that is unsuitable for chat.
+                continue
+            choices[ref] = self.resolve_model_binding(ref, environ=environ)
+        return choices
+
+    def chat_credentials_ready(self, binding: ModelBinding, *, environ: Mapping[str, str] | None = None) -> bool:
+        environment = os.environ if environ is None else environ
+        for part in (binding, binding.fallback):
+            if part is None:
+                continue
+            source = self.source(part.source)
+            if isinstance(source, ChatSourceCredentials) and source.encrypted_api_key:
+                continue
+            name = source_api_key_env_name(source)
+            if name and not environment.get(name, "").strip():
+                return False
+            if not name and isinstance(source, (ArkModelSourceConfig, OpenAIModelSourceConfig)):
+                return False
+        return True
+
+    def available_supervisor_choices(self, *, environ: Mapping[str, str] | None = None) -> dict[str, ModelBinding]:
+        return {ref: binding for ref, binding in self.configured_supervisor_choices(environ=environ).items()
+                if self.chat_credentials_ready(binding, environ=environ)}
 
     def source(self, name: str) -> ModelSourceConfig:
         try:
@@ -626,12 +720,14 @@ class GatewayConfig(BaseModel):
             raise ValueError(f"{ref} {kind} does not support fallback")
         if kind == "embedding" and binding.supports_vision_input:
             raise ValueError(f"{ref} embedding does not use generative supports_vision_input")
+        if isinstance(source, ChatAPISourceConfig) and kind in {"embedding", "transcription"} and source.protocol != "openai_chat":
+            raise ValueError(f"{ref}: {source.protocol} does not support {kind}")
         if not getattr(capabilities, kind):
             raise ValueError(f"{ref} does not support adapter {source.adapter!r} for {kind}")
         if kind == "embedding" and not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"{ref} embedding binding requires dimensions and video_fps")
         if isinstance(binding, EmbeddingModelBinding):
-            if isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig)):
+            if isinstance(source, (OllamaEmbeddingSourceConfig, LlamaCppEmbeddingSourceConfig, ChatAPISourceConfig)):
                 if binding.input_mode != "text":
                     raise ValueError(f"{source.adapter} requires input_mode=text")
             elif binding.query_instruction is not None:
@@ -731,7 +827,8 @@ class GatewayConfig(BaseModel):
             "agent_fallback": ("SEEKINO_AGENT_FALLBACK_MODEL",),
             "rerank": ("SEEKINO_RERANK_MODEL",),
         }
-        selected = next((environment[key].strip() for key in model_keys.get(ref, ()) if environment.get(key, "").strip()), None)
+        keys = () if ref in self.model_roles else model_keys.get(ref, ())
+        selected = next((environment[key].strip() for key in keys if environment.get(key, "").strip()), None)
         updates = {"model": selected} if selected else {}
         if configured_ref == "agent" and binding.fallback is not None:
             fallback_model = environment.get("SEEKINO_AGENT_FALLBACK_MODEL", "").strip()
@@ -761,7 +858,7 @@ class GatewayConfig(BaseModel):
         if not isinstance(binding, EmbeddingModelBinding):
             raise ValueError(f"model binding {ref!r} is not an embedding binding")
         environment = os.environ if environ is None else environ
-        selected = environment.get("SEEKINO_VIDEO_EMBEDDING_MODEL", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        selected = environment.get("SEEKINO_VIDEO_EMBEDDING_MODEL", "").strip() if ref == "embedding" and "embedding" not in self.model_roles else ""
         fps = environment.get("SEEKINO_VIDEO_EMBEDDING_FPS", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
         # Import only after config types are initialized: model_sources consumes them.
         from gateway.model_sources import ModelReference, ModelReferenceType
@@ -817,6 +914,8 @@ def source_api_key_env_name(source: ModelSourceConfig) -> str | None:
         source,
         (
             OpenAIModelSourceConfig,
+            ChatAPISourceConfig,
+            OllamaEmbeddingSourceConfig,
             ArkModelSourceConfig,
             OpenAIAudioSourceConfig,
             OpenAIVisionSourceConfig,
@@ -834,6 +933,8 @@ def source_api_key_env_name(source: ModelSourceConfig) -> str | None:
 def resolve_source_api_key(
     source: ModelSourceConfig, *, environ: Mapping[str, str] | None = None,
 ) -> str | None:
+    if isinstance(source, ChatSourceCredentials) and source.encrypted_api_key:
+        return source.saved_key()
     name = source_api_key_env_name(source)
     if name is None:
         return None
@@ -880,6 +981,8 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
     """Translate new YAML at the boundary; existing consumers keep their DTOs."""
     result = dict(value)
     if "models" not in result:
+        if result.get("model_roles") and "normalized_models" not in result:
+            raise ValueError("model_roles requires version 2 model bindings")
         return result
     if result.get("config_version") != 2:
         raise ValueError("models requires config_version: 2")
@@ -909,6 +1012,26 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
             else ModelBinding
         )
         bindings[ref] = binding_type.model_validate(values)
+    roles = result.get("model_roles", {})
+    if not isinstance(roles, Mapping):
+        raise ValueError("model_roles must be a mapping")
+    registered = bindings.copy()
+    for role, ref in roles.items():
+        if role not in {"vision", "transcription", "ocr", "embedding", "rerank"} or not isinstance(ref, str) or ref not in registered:
+            raise ValueError("用途必须引用一个已注册的模型")
+        selected = registered[ref]
+        kind = selected.kind or "generative"
+        if role in {"vision", "ocr"}:
+            if kind != "generative" or not selected.supports_vision_input:
+                raise ValueError("画面解析和 OCR 需要支持图像输入的生成模型")
+            if role == "vision" and ref != "vision" and "fallback" not in selected.model_fields_set:
+                # A replacement registration inherits only its own fallback.
+                selected = selected.model_copy(update={"fallback": None})
+        elif role == "rerank" and kind in {"generative", "rerank"}:
+            selected = selected.model_copy(update={"kind": "rerank"})
+        elif kind != role:
+            raise ValueError("模型类型不支持所选用途")
+        bindings[role] = selected
     result["normalized_models"] = bindings
     if "agent" in models:
         if "agent_model" in result or "agent_chat" in result:
@@ -931,7 +1054,7 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
         raise ValueError("video_parser must be a mapping")
     parser = dict(result.get("video_parser", {}))
     for stage, legacy in (("transcription", "transcript"), ("vision", "video")):
-        if stage not in models:
+        if stage not in bindings:
             continue
         binding = bindings[stage]
         if any(
@@ -1143,4 +1266,13 @@ def load_config(config_path: str | Path | None = None) -> GatewayConfig:
 
     if not isinstance(payload, dict):
         raise ValueError(f"gateway config must be a YAML mapping: {path}")
-    return GatewayConfig.model_validate(payload)
+    return config_from_document(payload, path)
+
+
+def config_from_document(payload: Mapping, path: Path) -> GatewayConfig:
+    config = GatewayConfig.model_validate(payload)
+    for name, source in config.model_sources.items():
+        if isinstance(source, ChatSourceCredentials) and source.encrypted_api_key:
+            source._config_path = path
+            source._source_name = name
+    return config
