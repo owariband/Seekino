@@ -5,6 +5,7 @@ import logging
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, nullcontext
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -13,7 +14,9 @@ from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 
 from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.model_events import ModelTextDelta, emit_model_text
 from gateway.usage import ModelCallTracker, track_model_call
+from gateway.streaming import cancel_http_stream
 from gateway.streaming.first_sse import FirstSSEDeadline
 
 _logger = logging.getLogger(__name__)
@@ -54,6 +57,7 @@ def request_response(
     usage_call.raise_if_cancelled()
     if check_control is not None:
         check_control()
+    started_at = monotonic()
     response = responses.create(stream=False, **request)
     usage_call.capture_response(response)
     record_model_event("response", response)
@@ -66,7 +70,9 @@ def request_response(
                 or getattr(getattr(response, "incomplete_details", None), "reason", None))
         error_type = ContentFilterError if code in _OUTPUT_CONTENT_FILTER_CODES else SSEProxyError
         raise error_type(f"Responses request did not complete: {status}", code=code, response_id=getattr(response, "id", None))
-    return response, _extract_response_text(response)
+    output_text = _extract_response_text(response)
+    _emit_completed_text(output_text, usage_call=usage_call, started_at=started_at)
+    return response, output_text
 
 
 def request_sse_response(
@@ -138,6 +144,7 @@ def _request_sse_text(
     usage_call.raise_if_cancelled()
     if check_control is not None:
         check_control()
+    started_at = monotonic()
     unregister_startup = lambda: None
     if first_sse_deadline is not None:
         first_sse_deadline.start()
@@ -169,7 +176,7 @@ def _request_sse_text(
     usage_call.capture_response(getattr(stream, "response", None))
     close = getattr(stream, "close", None)
     unregister_cancel = (
-        usage_call.add_cancel_callback(close) if callable(close) else lambda: None
+        usage_call.add_cancel_callback(lambda: cancel_http_stream(stream)) if callable(close) else lambda: None
     )
     text_parts: dict[tuple[int, str, int], list[str]] = {}
     emitted_parts: list[str] = []
@@ -177,6 +184,8 @@ def _request_sse_text(
     completed_response: object | None = None
     response_id: str | None = None
     last_sequence = -1
+    text_sequence = 0
+    first_text_ms: float | None = None
     event_counts: Counter[str] = Counter()
     stream_item_counts: Counter[str] = Counter()
 
@@ -185,6 +194,7 @@ def _request_sse_text(
             first_sse_deadline.attach_response(stream.response)
         for event in stream:
             usage_call.raise_if_cancelled()
+            received_at = monotonic()
             if first_sse_deadline is not None:
                 first_sse_deadline.received()
             if check_control is not None:
@@ -226,6 +236,14 @@ def _request_sse_text(
                         raise SSEProxyError("Responses SSE delta must be text")
                     text_parts.setdefault(key, []).append(delta)
                     emitted_parts.append(delta)
+                    elapsed_ms = (received_at - started_at) * 1000
+                    if first_text_ms is None and delta.strip():
+                        first_text_ms = elapsed_ms
+                    text_sequence += 1
+                    emit_model_text(ModelTextDelta(
+                        delta, usage_call.call_id, text_sequence, received_at,
+                        elapsed_ms, first_text_ms, True,
+                    ))
                     yield delta
                 continue
 
@@ -438,6 +456,7 @@ def _request_sse_text(
         metadata["output_text"] = output_text
     if not text_parts:
         if allow_terminal_text:
+            _emit_completed_text(output_text, usage_call=usage_call, started_at=started_at)
             yield output_text
             return
         raise SSEProxyError(
@@ -450,6 +469,19 @@ def _request_sse_text(
             response_id=response_id,
             partial_output_chars=_output_length(text_parts),
         )
+
+
+def _emit_completed_text(
+    text: str, *, usage_call: ModelCallTracker, started_at: float,
+) -> None:
+    """Observe text delivered only at or after completion, never as live output."""
+    if not text:
+        return
+    received_at = monotonic()
+    emit_model_text(ModelTextDelta(
+        text, usage_call.call_id, 1, received_at,
+        (received_at - started_at) * 1000, None, False,
+    ))
 
 
 def _output_length(

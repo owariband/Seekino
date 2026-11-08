@@ -27,6 +27,8 @@ http {
     client_body_temp_path client_temp;
     proxy_temp_path proxy_temp;
 
+    include seekino-cloud.d/*.conf;
+
     server {
         listen @BIND@:@PORT@ ssl;
         server_name localhost;

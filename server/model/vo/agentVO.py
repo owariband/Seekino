@@ -108,7 +108,13 @@ class AgentAttachmentUploadView(AgentAttachmentView):
     preview_url: str
 
 
+class AgentModelRetryView(ContractModel):
+    attempt: int = Field(gt=0)
+    maximum: int = Field(gt=0)
+
+
 class AgentMessageView(ContractModel):
+    model_retry: AgentModelRetryView | None = None
     message_id: str
     conversation_id: str
     series_ids: list[str]

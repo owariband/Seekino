@@ -11,10 +11,11 @@ from sqlalchemy import (
     JSON,
     String,
     Table,
+    Text,
     UniqueConstraint,
     inspect,
 )
-from sqlalchemy.dialects.mysql import DATETIME, TIMESTAMP
+from sqlalchemy.dialects.mysql import DATETIME, LONGTEXT, TIMESTAMP
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -50,6 +51,7 @@ _UNIX_TIME_MS_COLUMNS = {
     "interval_parse_task": {"create_time", "update_time"},
     "model_usage": {"create_time", "update_time"},
     "parse_model_call": {"create_time", "update_time"},
+    "parse_model_output_draft": {"create_time", "update_time"},
     "series": {"create_time", "update_time"},
     "tenant": {"create_time", "update_time"},
     "upload_segment": {"create_time", "update_time"},
@@ -78,6 +80,7 @@ _UTC_TIMESTAMP_COLUMNS = {
     },
     "model_usage": {"start_time"},
     "parse_model_call": {"start_time"},
+    "parse_model_output_draft": {"start_time"},
     "upload_session": {"completion_start_time", "expire_time", "finish_time"},
     "video_parse_task": {
         "finish_time",
@@ -301,6 +304,7 @@ def create_schema(engine: Engine) -> None:
     from .model import index_sync as _index_sync_models  # noqa: F401
     from .model import task as _task_models  # noqa: F401
     from .model import parse_content as _parse_content_models  # noqa: F401
+    from .model import parse_output_draft as _parse_output_draft_models  # noqa: F401
     from .model import parse_usage as _parse_usage_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401
     from .model import video as _video_models  # noqa: F401
@@ -567,6 +571,7 @@ def create_schema(engine: Engine) -> None:
         ParseModelCall,
         VideoParseUsageAttempt,
     )
+    from .model.parse_output_draft import ParseModelOutputDraft
 
     worker_runtime_tables = (
         VideoParseUsageAttempt.__table__,
@@ -612,6 +617,33 @@ def create_schema(engine: Engine) -> None:
             raise SchemaUpgradeRequiredError(
                 "model_usage schema requires a controlled upgrade before init-db; incompatible: "
                 + ", ".join(sorted(incompatible_usage))
+            )
+
+    if ParseModelOutputDraft.__tablename__ in existing_tables:
+        table = ParseModelOutputDraft.__table__
+        incompatible_drafts = _schema_structure_differences(
+            inspector, existing_tables, (table,),
+        )
+        columns = {
+            column["name"]: column["type"]
+            for column in inspector.get_columns(table.name)
+        }
+        expected_text_type = LONGTEXT if engine.dialect.name == "mysql" else Text
+        if not isinstance(columns.get("text"), expected_text_type):
+            incompatible_drafts.add(f"{table.name}.text.type")
+        if engine.dialect.name == "mysql":
+            if inspector.get_table_options(table.name).get("mysql_collate") != "utf8mb4_bin":
+                incompatible_drafts.add(f"{table.name}.collation")
+            for column in inspector.get_columns(table.name):
+                if column["name"] in {"id", "tenant_id", "video_task_id", "user_id"} and getattr(
+                    column["type"], "collation", None,
+                ) not in {None, "utf8mb4_bin"}:
+                    incompatible_drafts.add(f"{table.name}.{column['name']}.collation")
+        if incompatible_drafts:
+            raise SchemaUpgradeRequiredError(
+                "parse_model_output_draft schema requires a controlled upgrade "
+                "before init-db; incompatible: "
+                + ", ".join(sorted(incompatible_drafts))
             )
 
     incompatible_task_checks: set[str] = set()

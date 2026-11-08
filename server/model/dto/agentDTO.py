@@ -172,6 +172,7 @@ class AgentMessageState:
     source_tenant_id: str | None = None
     attachments: tuple[dict[str, str], ...] = ()
     render_blocks: tuple[dict[str, Any], ...] | None = None
+    model_retry: dict[str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)

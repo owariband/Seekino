@@ -800,6 +800,49 @@ describe("Search assistant presentation", () => {
     expect(screen.getByRole("status", { name: "查找视频资料" })).toHaveTextContent("进行中");
   });
 
+  it("shows an active model retry row after the answer blocks and updates it in place", () => {
+    const message: AgentMessageView = {
+      ...assistantMessage("先说明。"),
+      status: "PROCESSING",
+      modelRetry: { attempt: 1, maximum: 3 },
+      renderBlocks: [
+        { type: "markdown", markdown: "先说明。" },
+        { type: "tool", callId: "video-lookup", tool: "search_video_graph", status: "completed" },
+      ],
+    };
+    const view = renderPage(message);
+    const row = screen.getByRole("status", { name: "reconnecting 1/3" });
+    expect(row).toHaveAttribute("data-active", "true");
+    expect(row).toHaveTextContent("reconnecting 1/3");
+    expect(screen.getByRole("status", { name: "查找视频资料" }).compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const conversation = mocks.useAgentConversation.mock.results.at(-1)!.value;
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, modelRetry: { attempt: 2, maximum: 3 } }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole("status", { name: "reconnecting 2/3" })).toBe(row);
+    expect(row).toHaveTextContent("reconnecting 2/3");
+    expect(row).not.toHaveTextContent("reconnecting 1/3");
+
+    // A recovery snapshot clears the row without waiting for the answer to finish.
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, modelRetry: null }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText(/reconnecting/)).not.toBeInTheDocument();
+
+    // Terminal states also drop a retry value that survived in the snapshot.
+    mocks.useAgentConversation.mockReturnValue({
+      ...conversation,
+      messages: [{ ...message, status: "COMPLETED", phase: null, modelRetry: { attempt: 2, maximum: 3 } }],
+    });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText(/reconnecting/)).not.toBeInTheDocument();
+  });
+
   it.each(["completed", "failed"] as const)("updates a web tool to %s in place without video evidence", (status) => {
     const tool: AgentRenderBlock = { type: "tool", callId: "web-lookup", tool: "search_web", status: "inProgress", query: "<img src=x onerror=alert(1)>" };
     const before: AgentRenderBlock = { type: "markdown", markdown: "我先搜索网页。" };

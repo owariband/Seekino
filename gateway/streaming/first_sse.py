@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import socket
+from collections.abc import Callable
 from threading import Lock, Timer
 from time import monotonic
 from typing import Any
@@ -19,7 +20,9 @@ class FirstSSEDeadline:
 
     def __init__(
         self, request_timeout_seconds: float, *, limit_seconds: float | None = None,
+        on_first_event: Callable[[], None] | None = None,
     ) -> None:
+        self._on_first_event = on_first_event
         self.limit = min(
             limit_seconds if limit_seconds is not None else FIRST_SSE_TIMEOUT_SECONDS,
             request_timeout_seconds,
@@ -85,6 +88,10 @@ class FirstSSEDeadline:
                 self._received = True
         self.close()
         self.raise_if_expired()
+
+        if self._on_first_event is not None:
+            notify, self._on_first_event = self._on_first_event, None
+            notify()
 
     def received_event(self) -> bool:
         with self._lock:

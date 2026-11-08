@@ -73,6 +73,8 @@ API 并发：[2026-10-30 Kimi Code 10 路并发实测](gateway/kimi-concurrency-
 
 ## Server
 
+[2026-11-07 Parse 输出草稿与 SSE 续租解耦](server/service/parse-output-drafts-20261107.md)：1,024 字节或退出保存；模拟接收路径额外持久检查 69→0，941 项回归通过；真实并发与整集用时未测。
+
 [PR #18 范围收口与现有任务交接](server/pr18-scope-handoff-20261103.md)：已验证的解析修复收口，后端查询与 Consumer 转 PR #30；保留同一 v11 任务、音频与 Chunk 成果。
 
 [长任务 MySQL 排序与 Consumer 恢复验收](server/parse-task-query-recovery-20261103.md)：PR #30 的 1038 根因、645 项分组回归、原 v11 持久成果核对及隔离 API 接管证据。
