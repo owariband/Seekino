@@ -277,6 +277,53 @@ test("shows guest sign-in and only exposes management tabs for a private source"
   expect(member.errors).toEqual([]);
 });
 
+test("fades the home artwork with the page and respects reduced motion", async ({ page }) => {
+  const series: SeriesView = {
+    seriesId: "theme-series", tenantId: "personal", name: "系列甲", description: null,
+    visibility: "private", access: "member", publisher: null, status: "READY",
+    videoCount: 1, readyVideoCount: 1, failedVideoCount: 0, pendingUploadCount: 0,
+    cover: { imageId: "cover", url: "/media-placeholder.svg", expiresAt: null },
+    lastSearch: null, createdAt: 0, updatedAt: 0, transcriptLanguageHint: null,
+    importantExtraData: null, characterBible: [], videos: [], pendingUploads: [],
+  };
+  await mockService(page, false, { series: [series] });
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
+  await page.goto("/watch");
+  const covers = page.locator('main img[src="/media-placeholder.svg"]');
+  await expect(covers).toHaveCount(2);
+  const appearance = () => covers.evaluateAll(images => ({
+    canvas: getComputedStyle(document.body).backgroundColor,
+    filters: images.map(image => getComputedStyle(image.parentElement!).filter),
+  }));
+  const day = await appearance();
+  await page.getByRole("button", { name: "打开侧边栏" }).click();
+  const toggle = page.getByRole("dialog", { name: "手机导航" }).getByRole("button", { name: /^切换至(?:黑夜|白天)模式$/ });
+
+  // Sample the same point on slow and fast machines.
+  await toggle.evaluate(async button => {
+    (button as HTMLButtonElement).click();
+    await new Promise(requestAnimationFrame);
+    const fade = document.documentElement.getAnimations().find(animation => animation instanceof CSSTransition);
+    if (!fade?.effect) throw new Error("Expected a theme transition");
+    fade.pause();
+    fade.currentTime = Number(fade.effect.getTiming().duration) / 2;
+  });
+  const midway = await appearance();
+  await page.evaluate(() => document.documentElement.getAnimations().forEach(animation => animation.finish()));
+  const night = await appearance();
+  expect(night.filters).toEqual(["brightness(0.84)", "brightness(0.84)"]);
+  expect(midway.canvas).not.toBe(day.canvas);
+  expect(midway.canvas).not.toBe(night.canvas);
+  expect(midway.filters[0]).toBe(midway.filters[1]);
+  expect(midway.filters[0]).not.toBe(day.filters[0]);
+  expect(midway.filters[0]).not.toBe(night.filters[0]);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await toggle.click();
+  expect(await appearance()).toEqual(day);
+  expect(await page.locator("html").evaluate(root => root.getAnimations().length)).toBe(0);
+});
+
 test("opens and switches drawer history without creating a blank conversation or losing the draft", async ({ page }) => {
   const mock = await mockService(page);
   await page.goto("/watch");
