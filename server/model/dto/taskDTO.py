@@ -73,6 +73,7 @@ class VideoParseTaskInputState:
     duration_seconds: int
     tenant_id: str = ""
     background: dict[str, Any] = field(default_factory=dict)
+    series_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

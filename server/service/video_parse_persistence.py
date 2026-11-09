@@ -65,7 +65,9 @@ from .video_parse_errors import (
     ModelCallBudgetExhaustedError,
     ModelCallLeaseConflictError,
 )
+from .video_parse_routing import ContentRoute
 from .video_parse_task import (
+    _awaits_content_route,
     _task_input_state,
     _task_state,
     _locked_video_lease,
@@ -556,6 +558,32 @@ class VideoParsePersistenceService:
                                  *, now: datetime | None = None) -> None:
         with self._session_factory.begin() as session:
             result_ops.commit_diarization(session, lease, identity, payload, now=now or now_utc())
+
+    def commit_content_route(self, lease: VideoParseLease, decision: ContentRoute,
+                             *, now: datetime | None = None) -> ParseConfig:
+        committed_at = now or now_utc()
+        with self._session_factory.begin() as session:
+            task = _locked_video_lease(session, lease, committed_at)
+            if (task.is_deleted or _latest_video_task_id(session, task.video_id) != task.id
+                    or _video_failure_status(task) is not None):
+                raise VideoParseLeaseLostError("Video content routing is no longer current")
+            config = ParseConfig.model_validate(task.parse_config)
+            if not _awaits_content_route(task):
+                return config
+            if task.status not in {"PREPARING", "PARSING"}:
+                raise VideoParseConflictError("Video content routing is not pending")
+            fps = 0.5 if decision.kind == "course" else 3.0
+            config = config.model_copy(update={
+                "content_kind": decision.kind, "visual_input": config.visual_input.model_copy(update={"fps": fps}),
+            })
+            task.parse_config = config.model_dump(mode="json")
+            task.detail = _ensure_runtime(task.detail)
+            task.detail[RUNTIME_DETAIL_KEY]["content_route"] = {
+                "kind": decision.kind, "basis": decision.basis, "model": decision.model, "fps": fps,
+            }
+            task.update_time = datetime_to_unix_time_ms(committed_at)
+            task_store.save_task(session, task)
+            return config
 
     def finish_video_asr_preparation(
         self, lease: VideoParseLease, *, now: datetime | None = None,

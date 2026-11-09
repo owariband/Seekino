@@ -223,12 +223,14 @@ def test_scheduler_observes_progress_without_a_dispatch_permission() -> None:
 
 
 @pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
-@pytest.mark.parametrize("content_kind", [None, "anime"])
+@pytest.mark.parametrize("content_kind", [None, "anime", "script", "course", "clip"])
 def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms, content_kind) -> None:
     sequence_no = int(offset_ms != 0)
     task_id = f"chunk-task-{sequence_no}"
     inputs = _inputs(ocr_enabled=True)
-    inputs = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={"content_kind": content_kind})})
+    inputs = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={
+        "content_kind": content_kind, "auto_content_kind": content_kind in {"script", "course", "clip"},
+    })})
     execution = ChunkExecution(
         task_id, "video-task-1", sequence_no, offset_ms, offset_ms + 20_000,
         offset_ms, offset_ms + 20_000, inputs, _lease(),
@@ -265,7 +267,9 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms, con
             assert build_understanding_prompt(
                 execution, asr_result=asr_result, ocr_result=kwargs["ocr_result"],
             ) == kwargs["prompt"]
-            assert ("first observed frame of the new expression" in kwargs["prompt"]) == (content_kind == "anime")
+            assert ("first observed frame of the new expression" in kwargs["prompt"]) == (content_kind in {"anime", "script"})
+            assert ("concept being taught" in kwargs["prompt"]) == (content_kind == "course")
+            assert ("observable shot transitions" in kwargs["prompt"]) == (content_kind == "clip")
             assert kwargs["ocr_result"].lines[0].text == "screen text"
             assert kwargs["asr_result"] is asr_result
             assert '"text": "screen text"' in kwargs["prompt"]

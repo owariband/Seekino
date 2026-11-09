@@ -41,6 +41,7 @@ from ..model.task import (
 from ..model.video import VideoChunk
 from ..service.parse_control import is_paused
 from ..service.video_parse_task import (
+    _awaits_content_route,
     _aggregate_video_task,
     _advance_ready_chunks,
     _ensure_runtime,
@@ -628,9 +629,7 @@ class MySqlVideoParseQueue:
             prepare_failure_count = None
             retry_at = failed_at + timedelta(seconds=execution["retry_initial_delay_seconds"])
             exhausted = False
-            if task.status == "PREPARING" or (
-                task.status == "PARSING" and _requires_video_asr(task) and not _video_asr_prepared(task)
-            ):
+            if task.status == "PREPARING" or task.status == "PARSING" and _awaits_preparation(task):
                 prepare_failure_count, exhausted = _record_prepare_failure(task, failed_at)
                 retry_at = task.next_execute_time
             elif task.status == "PARSING":
@@ -835,15 +834,14 @@ class MySqlVideoParseQueue:
                     continue
                 # Waiting coordinators are free to resume; interrupted voice preparation
                 # spends the same finite failure budget as an explicit execution error.
-                asr_pending = (task.status in {"PREPARING", "PARSING"}
-                               and _requires_video_asr(task) and not _video_asr_prepared(task))
-                failures, exhausted = (_record_prepare_failure(task, reaped_at) if asr_pending
+                preparation_pending = task.status in {"PREPARING", "PARSING"} and _awaits_preparation(task)
+                failures, exhausted = (_record_prepare_failure(task, reaped_at) if preparation_pending
                                        else _record_voiceprint_failure(session, task, reaped_at))
                 if failures is None:
                     task.next_execute_time = reaped_at
                 elif (task.last_error or {}).get("code") != "PARSE_NODE_FAILED":
                     task.last_error = _error_detail(
-                        "Video ASR preparation coordinator lease expired" if asr_pending
+                        "Video preparation coordinator lease expired" if preparation_pending
                         else "Voiceprint preparation coordinator lease expired")
                 task.lease_owner = None
                 task.lease_expire_time = None
@@ -1002,7 +1000,13 @@ def _eligible_parent(parent: VideoParseTask | None) -> bool:
                 and _video_failure_status(parent) is None)
 
 
+def _awaits_preparation(parent: VideoParseTask) -> bool:
+    return _awaits_content_route(parent) or (_requires_video_asr(parent) and not _video_asr_prepared(parent))
+
+
 def _phase_capacity(session: Session, parent: VideoParseTask, phase: str, *, now: datetime) -> bool:
+    if _awaits_content_route(parent):
+        return False
     if phase == "parse" and _requires_video_asr(parent) and (
         not _video_asr_prepared(parent) or parent.lease_owner is None
         or parent.lease_expire_time is None or parent.lease_expire_time <= now

@@ -16,17 +16,55 @@ from .state import ChunkExecution
 from .timelineEvent_canvas import ParseContextCanvas
 
 
-_ANIME_REACTIONS = (
-    "For animated character reactions, write what an editor can actually see in the event description: "
+_REACTION_DETAILS = (
+    "write what an editor can actually see in the event description: "
     "identify the visible person, the change in their face (eyes, brows or mouth when legible), "
     "and the separate hand or body action when it contributes. Describe the specific pose and expression "
     "that distinguishes the shot. Use dialogue and subtitles to explain a supported emotional change. "
-    "If the face is obscured or ambiguous, describe only the visible cues.",
+    "If the face is obscured or ambiguous, describe only the visible cues."
+)
+_REACTION_BOUNDARIES = (
     "Compare the frames on both sides of each meaningful reaction change. Give a visually distinct "
     "reaction its own time range, including short held close-ups. Use the first observed frame of the "
     "new expression for its start; the previous expression extends to that boundary. Dialogue cues "
-    "can cross a visual transition. Keep a sustained expression in one event.",
+    "can cross a visual transition. Keep a sustained expression in one event."
 )
+
+_COURSE_UNDERSTANDING = (
+    "Record the concept being taught and the visible example, board, slide, code or demonstration "
+    "that supports it. Date a new step by the observed change; transcribe legible terms exactly.",
+)
+_CLIP_UNDERSTANDING = (
+    "This is an edited piece. Record observable shot transitions, framing changes, title cards, "
+    "graphics and repeated visual beats with their source time ranges. Mark changes at sampled frames. "
+    "Describe what the editor can rewatch; do not infer unobserved cuts, exact native-frame timing, "
+    "intent or a required recipe for another film.",
+)
+
+
+def _content_instructions(config):
+    if config.content_kind in {"script", "anime"}:
+        medium = "animated" if config.content_kind == "anime" else "scripted"
+        return (f"For {medium} character reactions, " + _REACTION_DETAILS, _REACTION_BOUNDARIES)
+    if config.content_kind == "course" and config.auto_content_kind:
+        return _COURSE_UNDERSTANDING
+    if config.content_kind == "clip":
+        return _CLIP_UNDERSTANDING
+    return ()
+
+
+def _refine_content_instructions(config):
+    if config.content_kind in {"script", "anime"}:
+        medium = "anime" if config.content_kind == "anime" else "scripted"
+        return (f"Keep the recorded {medium} reaction changes and their visible facial cues, gestures and "
+                "visual boundaries when reconciling adjacent members. A dialogue cue alone cannot date "
+                "a change of expression.",)
+    if config.content_kind == "clip":
+        return ("Preserve observed edits, titles and changes in framing with their visual boundaries; "
+                "align dialogue without moving a cut to the nearest spoken word.",)
+    if config.content_kind == "course" and config.auto_content_kind:
+        return ("Preserve the order of demonstrated steps, exact technical terms and changes in examples.",)
+    return ()
 
 
 def build_ocr_prompt(frame_timestamps: Sequence[int]) -> str:
@@ -103,7 +141,7 @@ def build_understanding_prompt(
          "Each DIALOGUE represents one supported utterance within the authorized clip."),
         "DIALOGUE includes a factual description and the supported wording in text_variants. Use ORIGINAL for source-language text and TRANSLATION only for an evidenced translation; use a BCP 47 language tag or und when unknown. Do not invent translations or missing words.",
         "Combine dialogue with significant scene changes, actions, observable emotions and supported relationship changes. Use SCENE, ACTION, EMOTION, RELATION_CHANGE, ON_SCREEN_TEXT or OTHER as appropriate; do not force every event type into every chunk or repeat one sustained event for every frame.",
-        *(_ANIME_REACTIONS if execution.inputs.parse_config.content_kind == "anime" else ()),
+        *_content_instructions(execution.inputs.parse_config),
         "OCR evidence has {\"lines\":[{\"start_seconds\":integer,\"end_seconds\":integer,\"text\":string,\"language\":string|null}]}. Use it to understand visible text. Ordinary dialogue subtitles belong to the same DIALOGUE and its text_variants, not a duplicate ON_SCREEN_TEXT; reserve ON_SCREEN_TEXT for non-dialogue text such as signs or titles.",
         "Write self-contained, factual descriptions in Simplified Chinese. Explain the observed interaction or action, rather than merely restating the transcript. Background helps identify people and terms; do not turn background knowledge into unobserved events, motives or inner thoughts.",
         "Use consistent, evidence-supported person names or neutral visual labels. Every named person referenced by a DIALOGUE must be registered in persons; a known speaker must also be in participants. participants describe semantic involvement and visible_persons describe actual visual presence; off-screen speakers need not be visible_persons.",
@@ -174,9 +212,7 @@ def build_refine_prompt(*, snapshot, canvas: ParseContextCanvas) -> str:
         "Use the supplied background for supported speaker names. Preserve existing visual facts; no new visual or voice evidence is available. Do not invent visual changes or reinterpret unidentified voices without evidence.",
         "Make only supported corrections. Keep unrelated events and their content unchanged. Maintain persons, participants and visible_persons consistently; a named speaker must be a participant. Omit host-owned speaker_source.",
         "All timestamps are absolute integer source-video milliseconds, including legacy *_seconds fields. Do not multiply or divide by 1000 or apply an offset again. Preserve existing time bounds unless supplied evidence supports a correction.",
-        *(("Keep the recorded anime reaction changes and their visible facial cues, gestures and "
-           "visual boundaries when reconciling adjacent members. A dialogue cue alone cannot date "
-           "a change of expression.",) if snapshot["inputs"].parse_config.content_kind == "anime" else ()),
+        *_refine_content_instructions(snapshot["inputs"].parse_config),
         time_rule,
         "Prepared voiceprint evidence, when present, applies only to its recorded audio interval. A supplied prefilled speaker is a draft, not certainty; explicitly retain or correct it using the evidence. Do not reuse a score for changed audio bounds.",
         "Edit the supplied JSON directly. Return every input sequence_no exactly once, each with complete persons and timeline. Omitted events are removed, so preserve every unrelated event. Return only the members array wrapped in IntervalRefinementResult.",

@@ -2846,6 +2846,8 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 
 2026-11-08。旧 EP04 的 198 张目标分块输入图里可见咬牙，但两条视觉事件把脸部信息省略，且提前描述笑容。验收使用同一五集库和原句，核对命中区间的原片，同时通过 MCP 翻完所有发布事件验证覆盖。状态见[管理工作台](workbench.html)，口径和边界见 [E4 专项 TRD](../design/03-product-reassessment/anime-material-recall-trd.md)。
 
+2026-11-09。普通上传自动选择剧情、课程或剪辑策略，显式配置优先。分流及恢复见[验收记录](../report/agent/video_parse_v2/content-routing-20261109.md)。
+
 ### WATCH-THEME-01：明暗切换时首页封面与页面亮度脱节
 
 2026-11-09，在公开课程首页切换主题，画布和顶栏一步换色，推荐大图与系列缩略图维持原亮度。验收要求用同一封面看到渐变的中间状态，连点能改变方向，减弱动态效果时直接到达终点，正片保留原色。[专项 TRD](../design/03-product-reassessment/theme-transition-trd.md) · [工作台](workbench.html)
