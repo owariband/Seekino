@@ -1,0 +1,58 @@
+{
+  "date": "2026-11-09",
+  "baseline_commit": "3a77ec11",
+  "branch": "feat/mcp-source-clips",
+  "method": "FastAPI TestClient: MCP and returned download URL; real MySQL clone with super_read_only and local UNIX socket; no ES/model or live Cloud",
+  "source": {
+    "series": "MyGO",
+    "episode": 4,
+    "content_version": 3,
+    "retrieved_range_ms": [
+      943166,
+      944500
+    ],
+    "original_bytes": 377755091
+  },
+  "request_ms": [
+    939188,
+    943901
+  ],
+  "http_status": 200,
+  "mp4": {
+    "bytes": 1713836,
+    "sha256": "766a04bbb8d5599c1f2b9a81abd37c3270abbf592f774b6ffd94b4208a17ea9f",
+    "streams": [
+      {
+        "codec_name": "h264",
+        "codec_type": "video",
+        "width": 1920,
+        "height": 1080,
+        "start_time": "0.000250",
+        "duration": "4.712750",
+        "nb_frames": "113"
+      },
+      {
+        "codec_name": "aac",
+        "codec_type": "audio",
+        "start_time": "0.000000",
+        "duration": "4.713000",
+        "nb_frames": "222"
+      }
+    ],
+    "duration_s": "4.713000"
+  },
+  "checked_source_frames": 113,
+  "max_timestamp_error_us": 0.333,
+  "max_frame_luma_mae_192x108": 0.3921,
+  "audio_correlation_16khz": 0.999846,
+  "encode_and_download_s_one_local_run": 0.976,
+  "local_artifacts": "outputs/verification/mcp-source-clips-20261109/ (pilot.py, verification.json, mygo-ep04-reaction.mp4)",
+  "test_boundaries": [
+    "synthetic 5 fps silent source, non-aligned cuts, Cloud 60000 ms accepted, 60001 ms rejected; source version change / revocation / missing identity deny the same URL",
+    "local service accepts 60001 ms; bounds are video-relative, not restricted to matched event or chunk"
+  ],
+  "not_measured": [
+    "fresh independent editor with no prior timecode",
+    "production Cloud MCP or concurrent encoding throughput"
+  ]
+}

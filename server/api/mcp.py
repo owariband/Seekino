@@ -29,6 +29,8 @@ _ERRORS = {
     "EVIDENCE_STALE": "The source changed. Run retrieve again for current evidence.",
     "INVALID_EVIDENCE_REF": "Use an evidence_ref returned by retrieve or read_evidence.",
     "EVIDENCE_SCOPE_MISMATCH": "This evidence is unavailable in the current library.",
+    "INVALID_CLIP_RANGE": "Supply start_ms and end_ms together, with 0 <= start_ms < end_ms <= duration_ms.",
+    "CLIP_TOO_LONG": "Cloud clips may be at most 60,000 milliseconds. Choose a shorter range.",
 }
 _MAX_RESULT_BYTES = 131072
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -88,8 +90,12 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
             "not proof of unrecorded visual details. Use read_evidence for current source "
             "context and media URLs. All video times are integer milliseconds; intervals "
             "include start_ms and exclude end_ms. For editing, collect different candidate shots, "
-            "try the character’s names and observable cues, and inspect nearby frames in the source before "
-            "choosing. Ranked results are only a shortlist. Use browse_events for every published event in "
+            "try the character’s names and observable cues, and watch the source before choosing. "
+            "When a gesture or expression change carries the scene, watch the lead-in and follow-through. "
+            "Call read_evidence with your chosen start_ms and end_ms and download media.clip_url. "
+            "Use the continuous footage as is, or keep its motion with your own local cutout tools. "
+            "A still can emphasize a chosen beat. Ranked results are only a shortlist. "
+            "Use browse_events for every published event in "
             "a series or every tagged appearance of a character. Follow next_cursor through the final page."
         ),
     )
@@ -110,11 +116,12 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
             media = dict(result["media"])
             request = ctx.request_context.request
             base_url = request.state.mcp_base_url
-            for key in ("original_url", "playback_url"):
+            for key in ("original_url", "playback_url", "clip_url"):
                 value = media.get(key)
                 if value is not None:
                     parsed = urlsplit(value)
-                    if parsed.scheme or parsed.netloc or parsed.path != "/api/videos/content" or parsed.fragment:
+                    path = "/api/videos/clip" if key == "clip_url" else "/api/videos/content"
+                    if parsed.scheme or parsed.netloc or parsed.path != path or parsed.fragment:
                         raise ToolError("RETRIEVAL_FAILED: Invalid media reference.")
                     media[key] = base_url + value
             result["media"] = media
@@ -184,12 +191,18 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
         evidence_ref: Annotated[str, Field(min_length=1, max_length=4096,
                                           description="Copy an evidence_ref or next_evidence_ref exactly; do not construct one.")],
         ctx: Context,
+        start_ms: Annotated[int | None, Field(ge=0, strict=True, description="Optional inclusive start on the source video, "
+                                             "in milliseconds. Supply both bounds to download a clip.")] = None,
+        end_ms: Annotated[int | None, Field(gt=0, strict=True, description="Exclusive source end in milliseconds. "
+                                           "May span adjacent events in the same video; Cloud limit: 60,000 ms per clip.")] = None,
     ) -> dict[str, Any]:
         """Read current evidence and media for an opaque reference from retrieve or browse_events. Follow
         next_evidence_ref to continue bounded context. A stale reference requires a new retrieval.
-        Media URLs serve source videos; use the returned millisecond boundaries when clipping.
+        Omit both bounds to review source context. Supply both to get a downloadable MP4 at media.clip_url
+        for your chosen source range, with its original motion and audio when present.
         """
-        return await invoke(ctx, service.read_evidence, evidence_ref=evidence_ref)
+        return await invoke(ctx, service.read_evidence, evidence_ref=evidence_ref,
+                            start_ms=start_ms, end_ms=end_ms, cloud=auth_mode == "cloud")
 
     app = server.streamable_http_app(
         streamable_http_path="/mcp", json_response=True, stateless_http=True,

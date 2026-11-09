@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
-from fastapi import Query, Request
+from fastapi import Depends, Query, Request
 from fastapi.responses import FileResponse, Response
 
 from .context import get_identity, get_services
@@ -60,6 +63,24 @@ def get_video_content(
     )
     return FileResponse(media.path, media_type=media.media_type, content_disposition_type="inline",
                         headers={"Cache-Control": "private, no-store"} if identity.mode == "cloud" else None)
+
+
+def _clip_output() -> Iterator[Path]:
+    # The request-scoped dependency stays alive until FileResponse finishes sending.
+    with TemporaryDirectory(prefix="seekino-clip-") as directory:
+        yield Path(directory) / "clip.mp4"
+
+
+def get_video_clip(
+    request: Request, evidence_ref: str = Query(alias="evidenceRef", min_length=1, max_length=4096),
+    start_ms: int = Query(alias="startMs", ge=0), end_ms: int = Query(alias="endMs", gt=0),
+    output: Path = Depends(_clip_output, scope="request"),
+) -> FileResponse:
+    get_services(request).media.write_evidence_clip(
+        get_identity(request), evidence_ref, start_ms=start_ms, end_ms=end_ms, destination=output,
+    )
+    return FileResponse(output, media_type="video/mp4", filename=f"clip-{start_ms}-{end_ms}.mp4",
+                        headers={"Cache-Control": "private, no-store"})
 
 
 def get_image_content(

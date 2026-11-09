@@ -59,6 +59,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [local-whisperx-asr-trd.md](local-whisperx-asr-trd.md) | 2026-10-29 本地 ASR；10-30 故障续版与 10-31 存储／GPU 测试 | 视频级 ASR／Summary 持久成果、Task／成果归类及 Turbo＋Metal 本地测试接线 | 存储与恢复隔离验证通过；Turbo＋Metal 正式 Gateway 短样本与完整 116 分 20 秒 ASR 均通过，业务库迁移、独立对齐及完整课程闭环待验 |
 | [mcp-access-trd.md](mcp-access-trd.md) | 2026-10-28，外部 Agent 素材库与演示需求 | 将首要交付收敛为 localhost MCP，Cloud 保留 Chat 与后续轻量 HTML 作品 | 区分协议与隔离测试、真实 Codex 连接、真实素材到作品；不把历史 Sandbox 探针当作已交付能力 |
 | [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |
+| [按证据下载连续原片](mcp-source-clips-trd.md) | 2026-11-09，EP04 命中后的静帧选择 | 编辑自选入出点，服务端返回一段 MP4 | 单独核验取片、Cloud 限时及独立编辑成片。 |
 
 ## 本次讨论确定的复审问题
 

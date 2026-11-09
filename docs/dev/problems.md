@@ -2845,3 +2845,7 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ## EDIT-ANIME-01 · 动画反应被概括成手势，剪辑原句漏掉正面特写
 
 2026-11-08。旧 EP04 的 198 张目标分块输入图里可见咬牙，但两条视觉事件把脸部信息省略，且提前描述笑容。验收使用同一五集库和原句，核对命中区间的原片，同时通过 MCP 翻完所有发布事件验证覆盖。状态见[管理工作台](workbench.html)，口径和边界见 [E4 专项 TRD](../design/03-product-reassessment/anime-material-recall-trd.md)。
+
+## EDIT-CLIP-01 · 剪辑命中给了整集地址，编辑还需自己裁出连续表演
+
+2026-11-09。《Weekend》的导演委托明确要求选一张原帧，虽然紧邻的画面包含完整抬手动作，交付却偏向静帧。验收分开看：先从同一命中自选跨事件范围并取得可独立播放的原片，再让没看过时间码的新编辑自主取用。[取片合同](../design/03-product-reassessment/mcp-source-clips-trd.md) · [工作台](workbench.html)。
