@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-08T19:10:36+08:00",
+ "updatedAt": "2026-11-09T20:38:55+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 27,
+ "revision": 28,
  "categories": [
   {
    "id": "parse",
@@ -5019,6 +5019,39 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "E4 实测",
      "kind": "evidence",
      "url": "https://github.com/owariband/Seekino/blob/feat/anime-material-recall/docs/report/agent/video_parse_v2/anime-material-recall-20261108.json"
+    }
+   ]
+  },
+  {
+   "id": "WATCH-THEME-01",
+   "title": "观看首页明暗切换时同步调整页面与视频封面",
+   "category": "library",
+   "type": "task",
+   "status": "verifying",
+   "priority": "unset",
+   "description": "让顶栏、页面和首页预览图一起渐变，正片保留原色。",
+   "next": "在 dev 预览确认 360 ms 时长及夜间封面亮度。",
+   "verification": "Chrome 桌面与 390px 视口已验证双向渐变、快速反向、设置、偏好恢复、减弱动态效果与播放器。视觉 review 待确认。",
+   "updatedAt": "2026-11-09",
+   "tags": [
+    "UI"
+   ],
+   "related": [
+    "MOD-LIBRARY",
+    "F09",
+    "SETTINGS-UI-01"
+   ],
+   "branch": "fix/theme-transition",
+   "links": [
+    {
+     "label": "设计与验收",
+     "url": "https://github.com/owariband/Seekino/blob/dev/docs/design/03-product-reassessment/theme-transition-trd.md",
+     "kind": "trd"
+    },
+    {
+     "label": "PR #80",
+     "url": "https://github.com/owariband/Seekino/pull/80",
+     "kind": "pr"
     }
    ]
   }

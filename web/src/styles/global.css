@@ -1,5 +1,13 @@
 @layer reset, tokens, base, utilities;
 
+/* One registered percentage owns every theme fade: the browser interpolates it and
+   the palette/artwork values derived from it follow without per-property transitions. */
+@property --night-mix {
+  syntax: "<percentage>";
+  inherits: true;
+  initial-value: 0%;
+}
+
 @layer reset {
   *,
   *::before,
@@ -44,30 +52,33 @@
 @layer tokens {
   :root {
     font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    color: #17312b;
-    background: #e4eae5;
+    color: var(--ink);
+    background: var(--canvas);
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     /* Rounded where the platform has one, so headings share the mascot's soft geometry. */
     --display: ui-rounded, "SF Pro Rounded", "Nunito", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-    /* A soft grey-green rather than near-white, so the mascots' cream bellies stand out; cards are off-white to avoid glare. */
-    --canvas: #e4eae5;
-    --surface: #ebf0ec;
-    --surface-raised: #f6f8f5;
-    --surface-muted: #d9e1db;
-    --ink: #17312b;
-    --ink-soft: #566b65;
-    --ink-faint: #85938e;
-    --line: rgba(36, 73, 64, 0.15);
-    --line-strong: rgba(35, 140, 120, 0.38);
-    --teal: #238c78;
-    --teal-deep: #126b5d;
-    --teal-soft: #d9eee7;
-    --teal-wash: #eaf5f0;
-    --amber: #b97828;
-    --red: #b9564d;
+    /* A soft grey-green rather than near-white, so the mascots' cream bellies stand out; cards are off-white to avoid glare.
+       Each token pairs its day and night color, and one shared mix carries the whole palette through a theme change. */
+    --night-mix: 0%;
+    --canvas: color-mix(in srgb, #e4eae5, #121816 var(--night-mix));
+    --canvas-glow: color-mix(in srgb, rgb(35 140 120 / 7%), transparent var(--night-mix));
+    --surface: color-mix(in srgb, #ebf0ec, #1a2220 var(--night-mix));
+    --surface-raised: color-mix(in srgb, #f6f8f5, #222c29 var(--night-mix));
+    --surface-muted: color-mix(in srgb, #d9e1db, #28332f var(--night-mix));
+    --ink: color-mix(in srgb, #17312b, #e7efec var(--night-mix));
+    --ink-soft: color-mix(in srgb, #566b65, #b7c6c1 var(--night-mix));
+    --ink-faint: color-mix(in srgb, #85938e, #8a9b96 var(--night-mix));
+    --line: color-mix(in srgb, rgb(36 73 64 / 15%), rgb(160 205 192 / 14%) var(--night-mix));
+    --line-strong: color-mix(in srgb, rgb(35 140 120 / 38%), rgb(116 197 186 / 42%) var(--night-mix));
+    --teal: color-mix(in srgb, #238c78, #74c5ba var(--night-mix));
+    --teal-deep: color-mix(in srgb, #126b5d, #8dd3c8 var(--night-mix));
+    --teal-soft: color-mix(in srgb, #d9eee7, #213330 var(--night-mix));
+    --teal-wash: color-mix(in srgb, #eaf5f0, #1f2e2a var(--night-mix));
+    --amber: color-mix(in srgb, #b97828, #d9b26f var(--night-mix));
+    --red: color-mix(in srgb, #b9564d, #f28b82 var(--night-mix));
     --shadow: 0 22px 70px rgba(28, 65, 56, 0.08);
     --shadow-small: 0 10px 35px rgba(28, 65, 56, 0.08);
     --radius-large: 24px;
@@ -77,32 +88,22 @@
     --brand: #74c5ba;
     --brand-shade: #349489;
     --brand-ink: #0b3b33;
-    --brand-wordmark: var(--brand-ink);
-    --stage: #0c1412;
+    --brand-wordmark: color-mix(in srgb, var(--brand-ink), var(--brand) var(--night-mix));
+    --stage: color-mix(in srgb, #0c1412, #080d0c var(--night-mix));
   }
 
+  /* Night flips the shared progress; fixed-depth tokens keep their own rules. */
   :root[data-theme="dark"] {
-    color: #e7efec;
-    background: #121816;
-    --canvas: #121816;
-    --surface: #1a2220;
-    --surface-raised: #222c29;
-    --surface-muted: #28332f;
-    --ink: #e7efec;
-    --ink-soft: #b7c6c1;
-    --ink-faint: #8a9b96;
-    --line: rgba(160, 205, 192, 0.14);
-    --line-strong: rgba(116, 197, 186, 0.42);
-    --teal: #74c5ba;
-    --teal-deep: #8dd3c8;
-    --teal-soft: #213330;
-    --teal-wash: #1f2e2a;
-    --amber: #d9b26f;
-    --red: #f28b82;
+    --night-mix: 100%;
     --shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
     --shadow-small: 0 8px 24px rgba(0, 0, 0, 0.26);
-    --brand-wordmark: var(--brand);
-    --stage: #080d0c;
+  }
+
+  /* First paint has no earlier value to fade from; later toggles reverse through the same native transition. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root {
+      transition: --night-mix 360ms cubic-bezier(.4, 0, .2, 1);
+    }
   }
 }
 
@@ -110,13 +111,9 @@
   body {
     color: var(--ink);
     background:
-      radial-gradient(circle at 88% 2%, color-mix(in srgb, var(--teal) 7%, transparent), transparent 26rem),
+      radial-gradient(circle at 88% 2%, var(--canvas-glow), transparent 26rem),
       var(--canvas);
     line-height: 1.55;
-  }
-
-  :root[data-theme="dark"] body {
-    background: var(--canvas);
   }
 
   ::selection {
@@ -277,7 +274,7 @@
       scroll-behavior: auto !important;
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
+      transition-duration: 0s !important;
     }
   }
 }
