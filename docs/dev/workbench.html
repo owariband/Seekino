@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-09T16:46:34+08:00",
+ "updatedAt": "2026-11-09T20:38:55+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 27,
+ "revision": 28,
  "categories": [
   {
    "id": "parse",
@@ -4982,6 +4982,43 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "验收",
      "url": "https://github.com/owariband/Seekino/blob/feat/personal-model-connections/docs/report/web/personal-model-connections-20261107.md",
      "kind": "source"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-ANIME-01",
+   "title": "按表情找动画素材并浏览角色全部已标注出镜",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "动画任务记录可回看的表情、姿态与视觉转折。MCP 在常规排序外可翻完整个系列或一个角色的发布事件。",
+   "next": "审阅 #77。新编辑从 MCP 自主选镜、搭配 P5R 范例的成片验收沿 #50 推进。",
+   "verification": "EP04 完整重解析 24 个分块与 22 个 Refine 窗口。原剪辑查询由未命中变为第 4，表情查询为第 3。五集 2,916 个发布事件及 Anon 的 1,211 个出镜事件均逐页与 MySQL 对账。",
+   "updatedAt": "2026-11-08",
+   "tags": [
+    "动画演示"
+   ],
+   "related": [
+    "PERSON-01",
+    "MOD-SEARCH"
+   ],
+   "branch": "feat/anime-material-recall",
+   "links": [
+    {
+     "label": "实现 PR #77",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/77"
+    },
+    {
+     "label": "主设计 #50",
+     "kind": "design",
+     "url": "https://github.com/owariband/Seekino/pull/50"
+    },
+    {
+     "label": "E4 实测",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/feat/anime-material-recall/docs/report/agent/video_parse_v2/anime-material-recall-20261108.json"
     }
    ]
   },

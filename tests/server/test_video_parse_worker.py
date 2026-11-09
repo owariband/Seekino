@@ -370,9 +370,15 @@ def _create_task(factory, source: Path) -> str:
     return task_id
 
 
-@pytest.mark.parametrize("adapter", ["openai_audio", "ark", "none", "whisperx"])
+@pytest.mark.parametrize("adapter,auth_mode", [
+    pytest.param("openai_audio", "local", id="openai_audio"),
+    pytest.param("openai_audio", "cloud", id="openai_audio-cloud"),
+    pytest.param("ark", "local", id="ark"),
+    pytest.param("none", "local", id="none"),
+    pytest.param("whisperx", "local", id="whisperx"),
+])
 def test_transcription_uses_frozen_source_prepared_media_and_absolute_milliseconds(
-    monkeypatch, tmp_path, adapter,
+    monkeypatch, tmp_path, adapter, auth_mode,
 ):
     source = (
         WhisperXSourceConfig(alignment_models={"en": "/models/align-en"})
@@ -383,6 +389,7 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
         if adapter == "openai_audio"
         else ArkModelSourceConfig(api_key_env="TEST_ASR_KEY")
     )
+    monkeypatch.setenv("SEEKINO_AUTH_MODE", auth_mode)
     monkeypatch.setenv("TEST_ASR_KEY", "test-key")
     monkeypatch.delenv("UNUSED_ASR_KEY", raising=False)
     gateway = load_config()
@@ -484,7 +491,7 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
         assert calls == [("audio", {
             "model": "frozen-speech", "provider": "speech",
             "base_url": "https://speech.example/v1", "api_key": "test-key",
-            "timeout": 45, "response_format": "verbose_json",
+            "timeout": 45, "response_format": "verbose_json", "allow_local": auth_mode == "local",
         })]
     elif adapter == "ark":
         assert calls == [("frozen-speech", {

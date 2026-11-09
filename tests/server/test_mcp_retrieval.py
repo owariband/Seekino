@@ -138,6 +138,67 @@ def test_truncation_is_explicit_and_result_does_not_expose_unbounded_source():
     assert len(json.dumps(read, ensure_ascii=False).encode()) < 48_000
 
 
+def test_ranked_page_can_be_read_to_the_last_hit():
+    events = [{"event_type": "ACTION", "start_seconds": 1, "end_seconds": 4,
+               "description": "走" * 1500 + str(i), "participants": [], "visible_persons": []} for i in range(17)]
+    service, *_ = _service(events)
+    first = service.retrieve("走")
+    assert first["next_cursor"] and first["returned_event_count"] < len(events)
+    pages = [first]
+    while pages[-1]["next_cursor"]:
+        pages.append(service.retrieve("走", cursor=pages[-1]["next_cursor"]))
+    ids = [r["event_id"] for page in pages for r in page["items"]]
+    assert len(set(ids)) == len(ids) == len(events)
+    assert pages[-1]["next_cursor"] is None
+    with pytest.raises(ValueError, match="INVALID_CURSOR"):
+        service.retrieve("different", cursor=first["next_cursor"])
+
+
+def test_browse_pages_every_published_event_and_invalidates_stale_cursors(repository, parsed_video):
+    from sqlalchemy import select
+    from server.database import create_session_factory
+    from server.model.parse_content import ChunkParseContent
+    from server.model.task import ChunkParseTask
+
+    engine, persistence = repository
+    library = Mock()
+    library.get_series.return_value = SimpleNamespace(character_bible=[], important_extra_data={
+        "format": "markdown", "content": "| 标准名 | 别名 |\n| --- | --- |\n| 廉 | Ren |"})
+    service = McpRetrievalService(library=library, media=Mock(), event_retrieval=None,
+                                 parse_persistence=persistence, local_tenant_id=parsed_video.tenant_id)
+    series = parsed_video.series_id
+    with create_session_factory(engine).begin() as session:
+        for i, chunk_id in enumerate(parsed_video.video_chunk_ids):
+            child = session.scalar(select(ChunkParseTask).where(ChunkParseTask.chunk_id == chunk_id))
+            content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id))
+            event = {**content.content["timeline"][0], "participants": ["廉"], "visible_persons": ["廉"] if i == 0 else []}
+            content.content = {"persons": ["廉"], "timeline": [event]}
+    first = service.browse_events(series, limit=1)
+    assert first["next_cursor"] and first["published_event_count"] > 1
+    pages = [first]
+    while pages[-1]["next_cursor"]:
+        pages.append(service.browse_events(series, limit=1, cursor=pages[-1]["next_cursor"]))
+    cards = [item for page in pages for item in page["items"]]
+    assert len(cards) == len({card["event_id"] for card in cards}) == first["published_event_count"]
+    assert cards[0]["video_chunk_id"] == parsed_video.video_chunk_ids[0]
+    assert not service.browse_events(series, ["absent"])["items"]
+    by_alias = service.browse_events(series, ["Ren"])
+    assert by_alias["resolved_visible_names"] == ["Ren", "廉"]
+    assert [item["event_id"] for item in by_alias["items"]] == [cards[0]["event_id"]]
+    with pytest.raises(ValueError, match="INVALID_CURSOR"):
+        service.browse_events(series, ["absent"], cursor=first["next_cursor"])
+    other = McpRetrievalService(library=Mock(), media=Mock(), event_retrieval=None,
+                               parse_persistence=persistence, local_tenant_id="another-tenant")
+    with pytest.raises(ValueError, match="INVALID_ARGUMENT"):
+        other.browse_events(series, cursor=first["next_cursor"])
+    with create_session_factory(engine).begin() as session:
+        child = session.scalar(select(ChunkParseTask).where(ChunkParseTask.chunk_id == cards[0]["video_chunk_id"]))
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id))
+        child.indexed_content_version = content.version = content.version + 1
+    with pytest.raises(ValueError, match="INVALID_CURSOR"):
+        service.browse_events(series, cursor=first["next_cursor"])
+
+
 def test_missing_media_preserves_readable_source_and_reports_unavailability():
     service, _, _, media, _, _, _ = _service()
     ref = service.retrieve("杯子")["items"][0]["evidence_ref"]

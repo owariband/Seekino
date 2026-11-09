@@ -25,6 +25,7 @@ _ERRORS = {
     "EVENT_INDEX_NOT_READY": "The event index is not ready. Finish indexing before retrying.",
     "NO_SEARCHABLE_SERIES": "No searchable series are available in this local library.",
     "SERIES_SELECTION_REQUIRED": "Use list_series and choose a smaller set of series_ids.",
+    "INVALID_CURSOR": "The publication or filters changed, or the cursor is invalid. Restart from the first page.",
     "EVIDENCE_STALE": "The source changed. Run retrieve again for current evidence.",
     "INVALID_EVIDENCE_REF": "Use an evidence_ref returned by retrieve or read_evidence.",
     "EVIDENCE_SCOPE_MISMATCH": "This evidence is unavailable in the current library.",
@@ -86,7 +87,10 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
             "Search the local video library using retrieve. Results are indexed evidence, "
             "not proof of unrecorded visual details. Use read_evidence for current source "
             "context and media URLs. All video times are integer milliseconds; intervals "
-            "include start_ms and exclude end_ms."
+            "include start_ms and exclude end_ms. For editing, collect different candidate shots, "
+            "try the character’s names and observable cues, and inspect nearby frames in the source before "
+            "choosing. Ranked results are only a shortlist. Use browse_events for every published event in "
+            "a series or every tagged appearance of a character. Follow next_cursor through the final page."
         ),
     )
     annotations = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
@@ -142,15 +146,38 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
             max_length=7, description="Optional Timeline event categories to include.")] = None,
         speaker: Annotated[str | None, Field(min_length=1, max_length=255,
                                             description="Filter reliable DIALOGUE speakers by name, not visible people.")] = None,
+        cursor: Annotated[str | None, Field(min_length=1, max_length=512,
+                                            description="Replay the same search with next_cursor to continue.")] = None,
     ) -> dict[str, Any]:
         """Retrieve event evidence by natural language, dialogue or action. top_k counts distinct chunks,
         not events. Omit series_ids to search the accessible local library. Read returned evidence_ref
-        with read_evidence for verified source context and downloadable media. Times are milliseconds.
+        with read_evidence for verified source context and downloadable media. Follow next_cursor for more
+        ranked hits. For all candidate shots in a series, use browse_events. Times are milliseconds.
         """
         return await invoke(
             ctx, service.retrieve, query=query, series_ids=series_ids, top_k=top_k,
-            event_types=event_types, speaker=speaker,
+            event_types=event_types, speaker=speaker, cursor=cursor,
         )
+
+    @server.tool(annotations=annotations, structured_output=True)
+    async def browse_events(
+        series_id: Annotated[str, Field(min_length=1, max_length=64, description="An accessible ID from list_series.")],
+        ctx: Context,
+        visible_names: Annotated[list[Annotated[str, Field(min_length=1, max_length=255)]] | None, Field(
+            min_length=1, max_length=32, description="Any of these on-screen names. Copy character names from "
+            "event.visible_persons and include known aliases. Omit to browse every event.")] = None,
+        limit: Annotated[int, Field(ge=1, le=50, strict=True, description="Maximum cards on this page.")] = 24,
+        cursor: Annotated[str | None, Field(min_length=1, max_length=512,
+                                            description="Pass the previous next_cursor with the same filters.")] = None,
+    ) -> dict[str, Any]:
+        """Enumerate all published source events in episode order, independent of ranked search.
+        For a character shot, inspect several candidates through read_evidence and review source frames.
+        Names filter recorded on-screen appearances; unambiguous aliases declared in the series background
+        are included. Use the stored spelling from a ranked hit for ambiguous or undocumented aliases.
+        Continue through empty pages until next_cursor is null. Omit the name filter to include untagged shots.
+        """
+        return await invoke(ctx, service.browse_events, series_id=series_id, visible_names=visible_names,
+                            limit=limit, cursor=cursor)
 
     @server.tool(annotations=annotations, structured_output=True)
     async def read_evidence(
@@ -158,7 +185,7 @@ def create_mcp_app(service: McpRetrievalService, *, auth_mode: str) -> Starlette
                                           description="Copy an evidence_ref or next_evidence_ref exactly; do not construct one.")],
         ctx: Context,
     ) -> dict[str, Any]:
-        """Read current evidence and media for an opaque reference returned by retrieve. Follow
+        """Read current evidence and media for an opaque reference from retrieve or browse_events. Follow
         next_evidence_ref to continue bounded context. A stale reference requires a new retrieval.
         Media URLs serve source videos; use the returned millisecond boundaries when clipping.
         """

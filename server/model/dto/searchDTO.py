@@ -44,6 +44,16 @@ class VideoParseRetrievalChunkData:
 
 
 @dataclass(frozen=True, slots=True)
+class PublishedTimelineChunk:
+    video_id: str
+    parse_task_id: str
+    video_chunk_id: str
+    content_version: int
+    index_generation: int
+    event_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class VideoParseRetrievalScope:
     """Current queryable V2 task set and its shared index contract."""
 

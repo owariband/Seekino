@@ -41,11 +41,13 @@ from ..model.dto.taskDTO import (
     VideoSummarizeLease,
 )
 from ..model.dto.libraryDTO import VideoChunkState
+from ..error.retrieval import SeriesScopeNotFoundError
 from ..model.dto.searchDTO import (
+    PublishedTimelineChunk,
     VideoParseRetrievalScope,
     HydratedRetrievalCandidate,
 )
-from ..model.task import VideoParseTaskStatus
+from ..model.task import ChunkParseTaskStatus, ChunkTaskPhase, VideoParseTaskStatus
 from ..repository import video_parse_task as task_store
 from ..repository import video_parse_content as result_store
 from ..repository import video_parse_chunk as chunk_store
@@ -278,6 +280,19 @@ class VideoParsePersistenceService:
                 workspace=workspace,
             )
         return self.hydrate_retrieval_evidence([(chunk_id, identity)])[0]
+
+    def list_published_timeline_chunks(
+        self, *, series_id: str, tenant_id: str,
+    ) -> list[PublishedTimelineChunk]:
+        series_id = canonical_uuid(series_id, "series_id")
+        tenant_id = require_nonempty_text(tenant_id, "tenant_id")
+        with self._session_factory() as session:
+            if not read_store.list_series_ids(session, series_ids=[series_id], workspace=tenant_id):
+                raise SeriesScopeNotFoundError("Series unavailable in this workspace")
+            return read_store.list_published_timeline_chunks(
+                session, workspace=tenant_id, series_id=series_id, task_status=VideoParseTaskStatus.COMPLETE.value,
+                phase=ChunkTaskPhase.INDEX, status=ChunkParseTaskStatus.COMPLETE.value,
+            )
 
     def resolve_retrieval_scope(
         self,
