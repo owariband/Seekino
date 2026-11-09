@@ -424,10 +424,10 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
 <script id="workbench-data" type="application/json">{
  "schemaVersion": 2,
  "project": "Seekino",
- "updatedAt": "2026-11-09T20:38:55+08:00",
+ "updatedAt": "2026-11-09T22:32:49+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 28,
+ "revision": 29,
  "categories": [
   {
    "id": "parse",
@@ -3437,12 +3437,12 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "title": "课程视频动态抽帧与解析成本优化",
    "category": "parse",
    "type": "requirement",
-   "status": "todo",
+   "status": "progressing",
    "priority": "P1",
    "description": "116 分钟《Let's build GPT》使用 DeepSeek Flash 的成本接近 ¥40，7 集约为 ¥280，当前难以负担。现阶段假设是课程画面变化程度和频率较低，3 fps 的图片输入占据主要成本；目标是将单集成本降至约 ¥40/3（约 ¥13.3）。11-03 已有部分实测，见 LOOP-03：Understand 同费率节省 50.7%，未达 2/3，原因是推理输出增加；Refine 沿用 medium 时成本 +139%。",
-   "next": "评审并设计 ASR 完成后的视频类型识别：结合 Series 背景介绍与 Jev 区分课程静态画面和动画、演出等复杂内容；用户未显式配置时，课程默认 0.5 fps、动画默认 3 fps。对照全量低成本 OCR + ASR、低帧率 VLM 摘要及按画面变化补帧；用户显式配置始终优先。",
-   "verification": "分别记录图片数量、输入 token、模型费用、OCR/ASR 成本、耗时与内容质量，验证 3 fps 降至 0.5 fps 是否能实际节省约 2/3，并单独 A/B 验证推理档位（chunk 53 已测 low / medium / high，medium 最优但只有一块样本）。不预设低推理档能够减少错误，也不预设 Jev 无法联网会影响分类；使用代表性课程与动画样本验收。分类依据和最终 fps 应写入任务快照，保证重试可复现。",
-   "updatedAt": "2026-11-03",
+   "next": "在实际发布后核对 CPU 默认上传的任务类型和有效帧率，继续按原口径对照整集费用与课程质量。",
+   "verification": "分别记录图片数量、输入 token、模型费用、OCR/ASR 成本、耗时与内容质量，验证 3 fps 降至 0.5 fps 是否能实际节省约 2/3，并单独 A/B 验证推理档位（chunk 53 已测 low / medium / high，medium 最优但只有一块样本）。不预设低推理档能够减少错误，也不预设 Jev 无法联网会影响分类；使用代表性课程与动画样本验收。分类依据和最终 fps 应写入任务快照，保证重试可复现。 2026-11-09 普通上传路由已实测，14 条真实输入取得 13 个正确结果和 1 次供应端断线，详见 #82。",
+   "updatedAt": "2026-11-09",
    "tags": [
     "成本优化",
     "待评审",
@@ -3455,7 +3455,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
     "MOD-PARSE",
     "MOD-LOOP"
    ],
-   "branch": "",
+   "branch": "feat/parse-pre-hook-router",
    "links": [
     {
      "label": "性能 TRD",
@@ -3466,6 +3466,11 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "成本记录",
      "url": "https://github.com/owariband/Seekino/blob/99e27b04/docs/report/gateway/deepseek-flash-parse-20261103.md",
      "kind": "evidence"
+    },
+    {
+     "label": "默认上传解析路由 #82",
+     "kind": "pr",
+     "url": "https://github.com/owariband/Seekino/pull/82"
     }
    ],
    "source": {
@@ -4993,7 +4998,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
    "status": "verifying",
    "priority": "P1",
    "description": "动画任务记录可回看的表情、姿态与视觉转折。MCP 在常规排序外可翻完整个系列或一个角色的发布事件。",
-   "next": "审阅 #77。新编辑从 MCP 自主选镜、搭配 P5R 范例的成片验收沿 #50 推进。",
+   "next": "新编辑从 MCP 自主选镜、搭配 P5R 范例的成片验收沿 #50 推进。",
    "verification": "EP04 完整重解析 24 个分块与 22 个 Refine 窗口。原剪辑查询由未命中变为第 4，表情查询为第 3。五集 2,916 个发布事件及 Anon 的 1,211 个出镜事件均逐页与 MySQL 对账。",
    "updatedAt": "2026-11-08",
    "tags": [

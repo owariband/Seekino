@@ -59,6 +59,7 @@ def _task_input_state(
         total_bytes=video.size_bytes,
         duration_seconds=video.duration_ms,
         tenant_id=tenant_id,
+        series_name=series.name if series is not None else None,
         background=(
             {"series_id": series.id, "description": series.description,
              "important_extra_data": deepcopy(series.important_extra_data),
@@ -186,6 +187,10 @@ def _video_failure_status(task: VideoParseTaskData) -> str | None:
         VideoParseTaskStatus.PARSING_FAILED.value,
         VideoParseTaskStatus.INDEXING_FAILED.value,
     } else None
+
+
+def _awaits_content_route(task: VideoParseTaskData) -> bool:
+    return task.parse_config.get("auto_content_kind") is True and task.parse_config.get("content_kind") is None
 
 
 def _requires_video_asr(task: VideoParseTaskData) -> bool:

@@ -309,6 +309,22 @@ def test_anime_refine_keeps_visual_boundaries_separate_from_asr_timing():
     assert anime.split("Input: ", 1)[1] == base.split("Input: ", 1)[1]
 
 
+@pytest.mark.parametrize("kind,marker", [
+    ("script", "recorded scripted reaction changes"),
+    ("course", "order of demonstrated steps"),
+    ("clip", "Preserve observed edits"),
+])
+def test_routed_refine_preserves_evidence_for_the_selected_kind(kind, marker):
+    from agent.video_parse_v2.prompts import build_refine_prompt
+
+    snapshot = _voice_snapshot("flag", "CONFLICT")
+    inputs = snapshot["inputs"]
+    snapshot["inputs"] = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(
+        update={"content_kind": kind, "auto_content_kind": True})})
+    prompt = build_refine_prompt(snapshot=snapshot, canvas=ParseContextCanvas.from_refine(snapshot))
+    assert marker in prompt
+
+
 @pytest.mark.parametrize("error", [RuntimeError("failed"), TimeoutError("expired"), asyncio.CancelledError()])
 def test_failed_refine_never_commits_prefilled_draft(error):
     runtime = SimpleNamespace(

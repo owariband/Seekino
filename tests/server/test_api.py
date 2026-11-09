@@ -1890,6 +1890,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         params={**params, "tenantId": "other-workspace"},
     ).status_code == 404
     replacement_config = dict(old_config)
+    assert old_config["auto_content_kind"] is True
     replacement_config["batch_max_size"] = 4
     reparsed = client.post(
         "/api/uploads/reparse",
@@ -1904,7 +1905,8 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         "version": 2,
     }.items() <= reparsed.json().items()
     assert reparsed.json()["videoParseTaskId"] != old_task_id
-    assert reparsed.json()["parseConfig"] == replacement_config
+    expected_config = {key: value for key, value in replacement_config.items() if key != "auto_content_kind"}
+    assert reparsed.json()["parseConfig"] == expected_config
     for field in ("nextExecuteTime", "createTime", "updateTime"):
         assert type(reparsed.json()[field]) is int
     with jobs_repository._session_factory() as session:
@@ -1919,7 +1921,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_previous_task(tmp_p
         )
         assert old_task.parse_config == old_config
         assert new_task.version == 2
-        assert new_task.parse_config == replacement_config
+        assert new_task.parse_config == expected_config
     duplicate = client.post("/api/uploads/reparse", params=params)
     assert duplicate.status_code == 409
     with jobs_repository._session_factory() as session:

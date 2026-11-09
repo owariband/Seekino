@@ -24,6 +24,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
+from agent.video_parse_v2.content_route import routing_evidence
 from agent.utils.context_canvas_tools import build_context_canvas_tools
 from agent.utils.context_canvas import ContextCanvas
 from agent.utils.errors import AgentToolFeedbackError
@@ -57,6 +58,7 @@ from agent.video_parse_v2.state import (
 )
 from engine.common.transcription import TranscriptAnalysis, VideoASRAgent, normalize_transcription
 from .video_parse_results import build_asr_identity, build_diarization_identity
+from .video_parse_routing import classify_video, preview_times
 from engine.parsev2.diarization import normalize_diarization, assign_video_speakers
 from engine.parsev2.observations import ASRResult, OCRResult, select_asr_window
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
@@ -229,6 +231,8 @@ class VideoParseRuntimeService:
                         and task_input.task.status in {"PENDING", "PREPARING", "PARSING"}):
                     video_asr = True
                     await self._prepare_video_asr(lease, task_input, config.models.asr, config.models.diarization)
+                if config.auto_content_kind and config.content_kind is None:
+                    config = await self._route_video_content(lease, task_input, config)
                 visual = config.visual_input
                 video_required = visual.mode == "video"
                 if not video_required and not video_asr and config.models.asr.mode != "none":
@@ -269,6 +273,31 @@ class VideoParseRuntimeService:
                     self._video_transcripts.pop((lease.video_parse_task_id, lease.lease_version), None)
                 self._video_lease.reset(token)
                 execution_calls.reset(calls_token)
+
+    async def _route_video_content(self, lease, task_input, config):
+        transcript = self._video_transcripts.get((lease.video_parse_task_id, lease.lease_version), {})
+        evidence = routing_evidence(task_input.original_filename, task_input.duration_seconds,
+                                    task_input.background, transcript.get("transcript", []), series_name=task_input.series_name)
+
+        def check_active():
+            self._require_video_active(lease)
+
+        def prepare_frames():
+            # Seek by source time rather than decoding the whole video at a provisional FPS.
+            return self._media_service.prepare_event_frames(
+                MediaLeaseIdentity(lease.video_parse_task_id, lease.video_parse_task_id,
+                                   lease.lease_version, execution_kind="video"),
+                source_video=self._artifact_store.resolve(task_input.inference_proxy_uri or task_input.original_source_uri),
+                timestamps_ms=preview_times(task_input.duration_seconds),
+                max_height=min(config.visual_input.max_height, 360), check_active=check_active,
+            )
+
+        async with self._model_stage(lease, task_input, sequence_no=None, category="parse",
+                                     stage="content_route", check_active=check_active):
+            decision = await self._run_blocking(classify_video, evidence, gateway=self._gateway,
+                                                visual_model=config.models.understanding,
+                                                prepare_frames=prepare_frames, check_active=check_active)
+        return await asyncio.to_thread(self._persistence.commit_content_route, lease, decision)
 
     async def _prepare_video_asr(self, lease, task_input, model, diarization_model=None) -> None:
         """Recover each audio stage before publishing media to Chunk consumers."""

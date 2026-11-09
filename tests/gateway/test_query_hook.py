@@ -32,6 +32,20 @@ def _invoke(models, *, timeout=10):
     return models.route({"query": "private-user-text"}, {"type": "choice"}, timeout_seconds=timeout)
 
 
+def test_video_question_validates_its_own_labels(config):
+    from agent.video_parse_v2.content_route import TYPE_QUESTION
+
+    def ask(choice):
+        models = QueryHookModels(config, transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json=_decision(choice))))
+        return models.route({"transcript": []}, TYPE_QUESTION, timeout_seconds=2,
+                            choices=tuple(TYPE_QUESTION["criteria"]), operation="video_content_route")
+
+    assert ask("clip") == "clip"
+    with pytest.raises(QueryHookModelError, match="invalid decision"):
+        ask("retrieve")
+
+
 def test_query_hook_defaults_are_disabled_and_survive_gateway_loading():
     config = QueryHookConfig()
     assert not config.enabled

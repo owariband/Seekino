@@ -1,6 +1,6 @@
 # 1. 问题与现状
 
-普通上传 MyGO 需要在同一个 Parse V2 任务中自动选中剧情片策略。课程和已经剪好的 OP、MAD 也要得到各自的解析策略。分支 `feat/parse-pre-hook-router` 承接 [#77 动画召回](https://github.com/owariband/Seekino/pull/77)，以 [#50 双召回设计](https://github.com/owariband/Seekino/pull/50) 和[工作台 COST-01](../../dev/workbench.html) 为依据。两条分支按依赖顺序合入 dev。本 PR 创建后回填链接。
+普通上传 MyGO 需要在同一个 Parse V2 任务中自动选中剧情片策略。课程和已经剪好的 OP、MAD 也要得到各自的解析策略。分支 `feat/parse-pre-hook-router` 对应 [PR #82](https://github.com/owariband/Seekino/pull/82)，承接 [#77 动画召回](https://github.com/owariband/Seekino/pull/77)，以 [#50 双召回设计](https://github.com/owariband/Seekino/pull/50) 和[工作台 COST-01](../../dev/workbench.html) 为依据。两条分支按依赖顺序合入 dev。
 
 2026-11-09，CPU 的普通上传在完成时即创建解析任务，线上使用 DeepSeek Flash、720p、3 fps，GPU WhisperX 的兼容接口配置为按块转写。#77 只在显式传入 anime 时照顾正片角色表演。把分类仅挂在整片 ASR 回调会漏掉现有 CPU 配置。使用已剪好的视频作为参考还需要 #50 的代表片段和全片参考卡，该设计有单独的验收。
 
@@ -23,7 +23,7 @@
 
 # 4. 对照实验与结果分析
 
-使用相同源片信息和部署配置比较无自动策略、显式策略和默认上传。覆盖有整片转写、CPU 按块转写、无对白，以及历史配置和显式覆盖。检查任务提交、子任务领取和过期租约。真实分类与替代模型的流水线测试分开记录。当前自动分流结果待测。
+默认上传保留自动开关。Prepare 可将全片转写抽成至多八段交给已有文本路由，或在原片的三个位置取最高 360p 的画面交给任务的视觉模型。文件名、系列名、系列介绍与单段文字均有长度上限。模型失败时沿用 Prepare 的重试预算，分块等待判定提交。显式传入完整配置优先，历史快照继续使用原配置。实际抽帧、分块读取及重复 Prepare 均验证了同一结果。[实测记录](../../report/agent/video_parse_v2/content-routing-20261109.md)
 
 # 5. 试点验证与方案取舍
 
@@ -31,4 +31,4 @@
 
 # 6. 结果验收与闭环
 
-合入 dev 前核对普通上传路径到实际的准备、Understanding 和 Refine，确认三个路由、显式优先和恢复保护。模型效果、失败样本与生产发布状态在试验后回填。
+普通上传、类型冻结、三个策略的帧率和两阶段提示、失败重试、旧租约拒写均通过本机验收。官方 DeepSeek Flash 在 14 个真实样本的首次调用中取得 13 个正确答案，1 次连接中断。用户的生产素材库没有参与写入。生产发布和全系列重解析独立于本次 dev 集成。
