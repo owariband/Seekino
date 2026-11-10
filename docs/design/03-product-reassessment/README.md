@@ -63,6 +63,7 @@ hypnos 于 **2026-04-27 入职实习**，到这次面试复盘时已接近半年
 | [本机 MCP 接口与整体验收](mcp-edit-references-trd.md) | #50 接口部分 | 由同一客户端查表演、查手法、取两段原片 | [可复跑测试](../../../tests/server/test_editing_mcp_flow.py) |
 | [代表片段与全片风格卡](edit-reference-profile-trd.md) | #50 解析部分 | 从原片生成手法依据 | 同一功能的解析合同 |
 | [解析结果用途](parse-result-profile-trd.md) | #50 上传部分 | 同库正片与剪辑参考的配置及读取隔离 | 同一功能的上传合同 |
+| [《Weekend Study》宣传片剧本](editing-promo-weekend-study.md) | #50 试点成片，片主 2026-11-10 批准 | 一条 prompt 经 MCP 取材、本地抠像渲染 | 剧本、实测数字与占位项；成片待制作 |
 | [动画表情素材召回](anime-material-recall-trd.md) | 2026-11-08，五集盲评漏选爱音反应 | 剪辑 Agent 按画面表情找素材 | 单独核验语义排名、全量翻页与原片画面。 |
 | [上传视频自动判型](parse-pre-hook-router-trd.md) | 2026-11-09，CPU 普通上传需要自动选策略 | 沿用 Parse V2 及显式覆盖 | [#82](https://github.com/owariband/Seekino/pull/82) |
 | [公开观看、对话与逐集检索](public-course-readiness-trd.md) | 2026-11-10，追加 E08 导致七集已就绪课程消失 | 显式可见性、逐集资料依赖和撤回校验 | [系列分享 §3.7](../02-agent-harness/series-sharing-trd.md#37-首版公开条件整个系列都已就绪) |
