@@ -97,7 +97,7 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 | `list_series` | `offset=0, limit=20`，分页列出本地系列与状态，`next_offset` 用于续页 |
 | `retrieve` | `query` 必填，可选 `series_ids`、`top_k=5`、`event_types`、`speaker`；返回 Event 证据及 `evidence_ref`。使用相同条件和 `next_cursor` 继续读取排序结果 |
 | `browse_events` | 指定 `series_id`，按集和时间翻完已发布事件。可用 `visible_names` 筛选出镜角色，自动展开明确的系列别名。单页 `limit` 为 1–50，传回 `next_cursor` 直到为空 |
-| `read_evidence` | 接收 `evidence_ref`，重验当前任务/内容版本，返回事件、分页 Chunk 上下文与媒体 URL |
+| `read_evidence` | 接收 `evidence_ref`，核对来源及发布版本。可成对传 `start_ms`、`end_ms`，返回该段独立 MP4 的 `media.clip_url` |
 
 使用剪辑素材策略解析后，可以搜索“镜头向右横移，灯塔从左边出画，小船在右边入画”。命中的 `SCENE.camera_ref` 给出镜头方向、速度类别、起幅、落幅和画面依据。对这条事件调用 `read_evidence`，适合二维复现的运镜会附带 `camera_replay`，其中有版本化 ES 模块、入口 `cameraAt(elapsedMs, params, world, viewport)` 和原片时长。返回值是新画面中的裁取矩形，可直接用于 Canvas 的 `drawImage`。
 
@@ -105,7 +105,11 @@ Service 负责；Repository 保留事务内的状态与并发约束。
 
 `top_k` 是不同 Chunk 的数量（最多 20），不是 Event 数量；同一 Chunk 可以包含多条命中事件。默认搜索本地 READY 系列，超过 50 个时先用 `list_series` 选择范围。Event 索引未覆盖会返回 `EVENT_INDEX_NOT_READY`，不会伪装成“没有匹配”。
 
-视频时间全部使用整数毫秒，区间左闭右开。`read_evidence` 的 `next_evidence_ref` 继续读取同一来源版本的上下文；`EVIDENCE_STALE` 表示需要重新检索。`original_url` 可用于下载原片，`playback_url` 仅在编解码检查通过时提供；地址指向本机 API，源媒体缺失时返回警告。外部 Agent 自行下载、按毫秒区间剪辑，MCP 不运行制作代码。
+视频时间全部使用原片整数毫秒，区间左闭右开。`next_evidence_ref` 续读同一来源版本的上下文；`EVIDENCE_STALE` 表示需要重新检索。本机不传时间时仍返回 `original_url` 和可用的 `playback_url`。传入时间可以跨同一原片的事件或分块；下载时重验权限和出处，使用本机 FFmpeg 从原片生成 H.264 MP4，保留首条音轨（若有）。源文件缺失时不返回有效下载链接。
+
+给编辑 Agent 的提示：**当手势或表情的变化承载剧情时，回看命中前后，从起势到收势选一段。把原片起止毫秒和这条 `evidence_ref` 交给 `read_evidence`，下载 `media.clip_url`。可以直接剪这段原片；需要换背景时，用你本地的工具抠出连续动作。需要强调某一拍时再定格。** 取片不需要人物名。
+
+Cloud 模式的片段下载沿用媒体访问权限，每次最多 **60,000 ms（含）**；超限会报错，不静默截断。本地没有这一分钟限制。[取片合同](../docs/design/03-product-reassessment/mcp-source-clips-trd.md)与官方 Cloud MCP 的连接、鉴权交付分开；本分支不新增公网 MCP 入口。
 
 在已恢复正常 API/数据库/ES/媒体的本机，可为一次 Codex 会话临时配置：
 

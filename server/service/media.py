@@ -9,7 +9,7 @@ from typing import Literal
 from urllib.parse import urlencode
 
 from ..config.media import ImageUploadConfig
-from ..constants.media import SERIES_IMAGE_ID_PREFIX
+from ..constants.media import CLOUD_CLIP_MAX_MS, SERIES_IMAGE_ID_PREFIX
 from ..utils.validation import canonical_uuid
 from ..constants.identity import LOCAL_USER_ID
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
@@ -40,6 +40,14 @@ from ..utils.media import (
 )
 from .library import LibraryService
 from .access import series_access, require_tenant_read
+from .mcp_evidence import EvidenceRef, StaleEvidenceError
+
+
+def validate_clip_range(start_ms: int | None, end_ms: int | None, *, duration_ms: int, cloud: bool) -> None:
+    if type(start_ms) is not int or type(end_ms) is not int or not 0 <= start_ms < end_ms <= duration_ms:
+        raise ValueError("INVALID_CLIP_RANGE: Supply both start_ms and end_ms within the source duration.")
+    if cloud and end_ms - start_ms > CLOUD_CLIP_MAX_MS:
+        raise ValueError("CLIP_TOO_LONG: Cloud clips may be at most 60,000 milliseconds.")
 
 
 class MediaMissingError(FileNotFoundError):
@@ -224,6 +232,28 @@ class MediaService:
             raise MediaNotReadyError("原视频尚无可确认兼容浏览器的播放媒体")
         return self.get_original(video_id, tenant_id=tenant_id)
 
+    def write_evidence_clip(
+        self, identity: AuthIdentity, evidence_ref: str, *, start_ms: int, end_ms: int, destination: Path,
+    ) -> None:
+        """Recheck access and the publication when downloading, including on replayed URLs."""
+        ref = EvidenceRef.decode(evidence_ref)
+        tenant_id = ref.identity.tenant_id
+        cloud = identity.mode == "cloud"
+        if cloud:
+            series = self._library.get_series(ref.identity.series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
+            self.require_readable_series(identity, series)
+        elif tenant_id != identity.tenant_id:
+            raise SeriesNotFoundError("视频资源不存在")
+        if self._parse_persistence is None:
+            raise MediaNotReadyError("片段证据读取尚未装配")
+        try:
+            evidence = ref.resolve(self._parse_persistence, tenant_id=tenant_id)
+        except StaleEvidenceError as error:
+            raise VideoParseConflictError("EVIDENCE_STALE: 来源版本已变化，请重新检索") from error
+        validate_clip_range(start_ms, end_ms, duration_ms=evidence.duration_seconds, cloud=cloud)
+        source = self.get_original(evidence.video_id, tenant_id=tenant_id, video=evidence)
+        _encode_source_clip(source.path, destination, start_ms, end_ms, cloud=cloud)
+
     def thumbnail_view(
         self, video_id: str, *, tenant_id: str, video: VideoSummaryState | None = None,
     ) -> ImageReference | None:
@@ -367,6 +397,34 @@ class MediaService:
             )
         except VideoParseConflictError as error:
             raise MediaNotReadyError("片段的最新 V2 证据尚不可读取") from error
+
+
+def _encode_source_clip(source: Path, output: Path, start_ms: int, end_ms: int, *, cloud: bool) -> None:
+    start, end = f"{start_ms / 1000:.3f}", f"{end_ms / 1000:.3f}"
+    start_us, end_us = start_ms * 1000, end_ms * 1000
+    # Keep source frame timestamps and audio alignment across non-keyframe cuts.
+    # Cap the last packet's display duration when the cut falls inside a frame.
+    try:
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-nostdin", "-copyts", "-start_at_zero", "-ss", start,
+            "-protocol_whitelist", "file", "-format_whitelist", "mov,avi", "-threads", "2", "-i", str(source),
+            "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "-1", "-map_chapters", "-1",
+            "-vf", f"settb=1/1000000,trim=start_pts={start_us}:end_pts={end_us},setpts=PTS-{start_us},"
+                   "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-af", f"aresample=48000,atrim=start={start}:end={end},asetpts=PTS-{start_ms * 48}",
+            "-fps_mode:v", "passthrough", "-enc_time_base:v", "1:1000000",
+            "-c:v", "libx264", "-bf", "0", "-threads", "2", "-preset", "veryfast", "-crf", "18",
+            "-pix_fmt", "yuv420p", "-bsf:v", f"setts=duration='min(DURATION,max(1,{end_us - start_us}-PTS))'",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-movie_timescale", "1000000", str(output),
+        ], check=True, timeout=180 if cloud else None, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        video = subprocess.run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=index",
+            "-of", "csv=p=0", str(output),
+        ], check=True, capture_output=True, timeout=15)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise MediaNotReadyError("无法生成此视频片段") from error
+    if not video.stdout.strip():
+        raise ValueError("INVALID_CLIP_RANGE: The selected range contains no source video frame.")
 
 
 def _media_type(path: Path) -> str:

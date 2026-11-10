@@ -488,6 +488,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/video-parse/delete",
         "/api/usage/overview",
         "/api/videos/content",
+        "/api/videos/clip",
         "/api/video-chunks/get",
         "/api/media/images/content",
         "/api/search",

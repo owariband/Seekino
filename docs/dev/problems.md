@@ -2855,3 +2855,7 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 ## EDIT-CAMERA-01 · 剪辑素材缺少可检索和连续回放的镜头运动
 
 2026-11-10。单看构图和主体动作，解析会把向左移的镜头说成向右，也会把同一次横移按“灯亮”和“船入画”拆成两次起步。验收需要从原片取得同一镜头的方向、起落幅、节奏与证据，从已发布事件取回可运行的代码，再逐帧与已知镜头位置对照。固定机位下移动的小船与硬切是反例。[设计](../design/03-product-reassessment/clip-camera-reference-trd.md) · [实测](../report/agent/video_parse_v2/clip-camera-reference-20261110.md) · [工作台](workbench.html)
+
+## EDIT-CLIP-01 · 剪辑命中给了整集地址，编辑还需自己裁出连续表演
+
+2026-11-09。《Weekend》的导演委托明确要求选一张原帧，虽然紧邻的画面包含完整抬手动作，交付却偏向静帧。验收分开看：先从同一命中自选跨事件范围并取得可独立播放的原片，再让没看过时间码的新编辑自主取用。[取片合同](../design/03-product-reassessment/mcp-source-clips-trd.md) · [工作台](workbench.html)。

@@ -427,7 +427,7 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
  "updatedAt": "2026-11-10T11:35:00+08:00",
  "sourceCheckedAt": "2026-11-04T13:50:00+08:00",
  "sourceRef": "497a35cf",
- "revision": 31,
+ "revision": 32,
  "categories": [
   {
    "id": "parse",
@@ -5090,6 +5090,38 @@ dialog::backdrop{background:rgba(20,20,19,.28)}
      "label": "PR #80",
      "url": "https://github.com/owariband/Seekino/pull/80",
      "kind": "pr"
+    }
+   ]
+  },
+  {
+   "id": "EDIT-CLIP-01",
+   "title": "编辑自选连续原片入出点并下载 MP4",
+   "category": "search",
+   "type": "requirement",
+   "status": "verifying",
+   "priority": "P1",
+   "description": "编辑从现有证据指定同一视频的起止毫秒；Cloud 每次最多 60 秒，分割和合成由编辑本地完成。",
+   "next": "与 #77 集成，Cloud MCP 会话接入同一媒体权限后验证公网取片；让未见目标时间的新编辑用在成片中。",
+   "verification": "EP04 已归档命中通过真实 MySQL 副本和 MCP/HTTP 取回 4.713 秒、113 帧带声 MP4。隔离 Cloud 测过 60 秒边界、撤销访问和旧版本。",
+   "updatedAt": "2026-11-09",
+   "tags": [
+    "连续原片"
+   ],
+   "related": [
+    "EDIT-ANIME-01",
+    "B15"
+   ],
+   "branch": "feat/mcp-source-clips",
+   "links": [
+    {
+     "label": "取片合同",
+     "kind": "trd",
+     "url": "https://github.com/owariband/Seekino/blob/feat/mcp-source-clips/docs/design/03-product-reassessment/mcp-source-clips-trd.md"
+    },
+    {
+     "label": "EP04 实测",
+     "kind": "evidence",
+     "url": "https://github.com/owariband/Seekino/blob/feat/mcp-source-clips/docs/report/server/mcp-source-clips-20261109.json"
     }
    ]
   }
