@@ -6,7 +6,7 @@
 
 ## 1. 结论
 
-`Tenant` 继续负责内容归属和授权，不引入所有人共享的默认 Tenant。新增**系列级读取规则**：调用者是系列所属 Tenant 的成员，或者系列已公开、内容已就绪且发布者有效，就可以读取该系列。可见性存为 `series.visibility ∈ {private, public}`；`private` 表示仅所属 Tenant 的成员可读，个人 Tenant 中只有所有者可读，未来团队 Tenant 中则是全团队可读。
+`Tenant` 继续负责内容归属和授权，不引入所有人共享的默认 Tenant。新增**系列级读取规则**：调用者是系列所属 Tenant 的成员，或者系列已显式公开且发布者有效，就可以读取该系列。可见性存为 `series.visibility ∈ {private, public}`；`private` 表示仅所属 Tenant 的成员可读，个人 Tenant 中只有所有者可读，未来团队 Tenant 中则是全团队可读。
 
 因此，首版不必增加 `team` 可见性，也不必为每个系列单独保存所有者。第二阶段接入团队成员时，只需把 `tenant_id == identity.tenant_id` 这一成员判断改为查询成员关系，共享规则本身不变。
 
@@ -56,7 +56,6 @@ can_read_series(identity, series):
     local mode                                   -> allow
     is_member(identity, series.tenant_id)        -> allow (full view)
     series.visibility == 'public'
-      and publication_ready(series)
       and tenant.status == ACTIVE
       and (tenant.type == 'public' or owner user.status == ACTIVE)
                                                  -> allow (public view)
@@ -69,7 +68,7 @@ can_manage_series(identity, series):
     otherwise                                    -> 404
 ```
 
-- **修改可见性**需要通过 `can_manage_series`。设为 `public` 时，还要像原来一样满足 `publication_ready(series, require_published=False)`。
+- **修改可见性**需要通过 `can_manage_series`。管理者可在任意解析阶段显式设为 `public` 或撤回。
 - **管理员下架：**管理员可以把任意系列改为 `private`，用于撤下用户公开的内容。管理员对非所属 Tenant 执行下架时，只能提交可见性字段；接口返回 `204`，不返回系列数据，也不因此获得私有内容的读取权限。
 - **Tenant 级资源仍仅成员可用：**上传会话、解析任务、解析与模型用量、对话继续使用 `require_tenant_read`／`require_tenant_write`。公开系列只开放自身的 Series、Video、图片、Chunk 和证据读取，不会同时开放同一 Tenant 下的其他系列、上传、任务、用量或对话。
 - **检查顺序：**先按 `(series_id, tenant_id)` 查出系列，确认保存的 `tenant_id` 一致，再执行 `can_read_series`。不能像原来一样，在查询系列之前就被 Tenant 权限挡住。
@@ -78,7 +77,7 @@ can_manage_series(identity, series):
 
 ### 3.3 公开访问者能看到什么
 
-公开访问者可以看到标题、简介、封面、已就绪视频、时长，以及播放和缩略图。管理字段（`latest_job_id`、`last_error`、`original_filename`、`total_bytes`、`important_extra_data`、转写提示）返回 null；`pending_uploads` 和 `character_bible` 返回空值。Chunk、检索、Agent 历史和 SSE 证据中也不能暴露原始文件名。`variant=original` 仅成员可用，公开访问者使用 `playback`。
+公开访问者可以看到标题、简介、封面、已入库的视频、时长及逐集可用的播放和缩略图。管理字段（`latest_job_id`、`last_error`、`original_filename`、`total_bytes`、`important_extra_data`、转写提示）返回 null；`pending_uploads` 和 `character_bible` 返回空值。Chunk、检索、Agent 历史和 SSE 证据中也不能暴露原始文件名。`variant=original` 仅成员可用，公开访问者使用 `playback`。
 
 这里限制的是接口返回内容，不是另建一套供模型使用的保密上下文。解析和 Agent 推理仍会使用系列背景与人物信息；已知图片 URL 在所属系列公开后仍可读取，这些信息也可能影响生成答案。如果要在公开推理中隐藏部分背景，需要另行设计模型和工具的输入策略，不属于本批后端改动。
 
@@ -101,8 +100,8 @@ can_manage_series(identity, series):
 
 | 接口 | 修改 |
 |---|---|
-| `POST /api/series/update` | 用 `visibility` 替代 `isPublished`。所有者可管理自己的系列，管理员也可改为 `private` 下架。内容未就绪时不能公开。成员修改后返回系列详情；非成员管理员下架返回 `204`。 |
-| 新增 `GET /api/series/public` | 分页列出跨 Tenant 的公开且已就绪系列，并返回 `publisher`。游标范围不能包含调用者自己的 Tenant。 |
+| `POST /api/series/update` | 用 `visibility` 替代 `isPublished`。所有者可管理自己的系列，管理员也可改为 `private` 下架。空系列和处理中系列均可显式公开。成员修改后返回系列详情；非成员管理员下架返回 `204`。 |
+| 新增 `GET /api/series/public` | 分页列出跨 Tenant 的显式公开且发布者有效的系列，并返回 `publisher`。游标范围不能包含调用者自己的 Tenant。 |
 | `GET` 系列列表／详情 | 增加 `publisher` 和 `access: "member" \| "public"`，前端据此隐藏编辑、上传和任务控件。`tenantId` 继续作为寻址参数，并核对它与保存值一致。 |
 | 检索／Agent 发送 | `sourceTenantId` 可以指向其他用户的 Tenant，但必须显式提供 `seriesIds`，并逐个通过 `can_read_series`。只有平台公共 Tenant 仍允许空 `seriesIds` 表示“全部公开系列”，避免借此枚举其他 Tenant。 |
 | 媒体／图片／Chunk | URL 不变；授权改用 `can_read_series`，`original` 仅成员可用。 |
@@ -119,12 +118,14 @@ can_manage_series(identity, series):
 
 ### 3.7 首版公开条件：整个系列都已就绪
 
-`publication_ready` 要求整个系列全部就绪。用户向已公开系列添加第 5 集后，前 4 集也会暂时对外隐藏，直到新集处理完成。可以选择：
+2026-10-19 的首版决定如下，2026-11-10 的修订见本节末尾。首版的 `publication_ready` 要求整个系列全部就绪。用户向已公开系列添加第 5 集后，前 4 集也会暂时对外隐藏，直到新集处理完成。可以选择：
 
 1. 保持整系列就绪（当前行为，最简单，但需要说明这种使用体验）。
 2. 至少一集就绪就公开系列，公开访问和检索只覆盖已就绪视频。ES 已按 `(video_id, parse_task_id)` 限定范围，因此不必修改索引。
 
-第一阶段选择方案 1。方案 2 留作后续改进，不影响当前权限规则的正确性。
+第一阶段选择方案 1，方案 2 当时留作后续改进。
+
+2026-11-10 修订。首次发布和后续读取均按显式可见性、有效发布者和读者权限执行。每集按原片提供播放。普通聊天可使用当前课程，包括零索引课程。需要检索时逐集判断最新索引状态，反馈实际覆盖、指定集处理中或依赖不可用。撤回后的新 Range 请求、历史证据和后续对话重新鉴权。六阶段设计、现场基线和验收见[公开课程解析期间的访问](../03-product-reassessment/public-course-readiness-trd.md)。
 
 ### 3.8 验收矩阵
 
@@ -209,5 +210,5 @@ ES `_scope_query`、`_TrustedScope` 和 Agent `sourceTenantId` 目前都假设�
 1. 第一阶段 Schema 与迁移、`can_read_series`／`can_manage_series`、第 3.2 节全部入口、公开字段投影和管理员下架。
 2. 发布者合同（确认昵称规则、头像图片 ID）和 `GET /api/series/public`。
 3. 前端可见性控件、发布者署名、按 `access` 控制界面和公开发现列表。
-4. 如决定采用，再调整第 3.7 节的就绪粒度。
+4. 公开读取和逐集工具覆盖的后续修订见第 3.7 节。
 5. 角色矩阵确认后再实施第二阶段团队模型。跨发布者检索（第 5 节）可独立推进，不依赖第二阶段。

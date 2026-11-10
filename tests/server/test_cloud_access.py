@@ -270,7 +270,7 @@ def _course(api, *, tenant_id=None):
             chunk_count=1, version=1, max_attempts=3, is_test=True,
         ))
     state = api.services.library.get_series(series.series_id, tenant_id=tenant_id)
-    assert api.services.media.publication_ready(state)
+    assert state.visibility == SeriesVisibility.PUBLIC and state.publisher_active
     return series.series_id, video_id
 
 

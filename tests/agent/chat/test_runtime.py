@@ -802,12 +802,13 @@ def test_failed_event_attempt_is_traced_but_does_not_satisfy_real_retrieval(fail
         raise failure
 
     runtime, _query, evaluator, chat, retrieval = _runtime(query=FallbackQuery(), event_retrieve=fail)
+    missing_index = isinstance(failure, EventIndexNotReadyError)
     if not fallback:
         with pytest.raises(VideoSearchFailure) as captured:
             runtime.kick(_inputs())
-        assert captured.value.code == VideoSearchFailureCode.RETRIEVAL_FAILED
+        assert captured.value.code == (VideoSearchFailureCode.EVENT_INDEX_NOT_READY if missing_index else VideoSearchFailureCode.RETRIEVAL_FAILED)
         assert captured.value.phase == VideoSearchFailurePhase.RETRIEVAL
-        assert captured.value.retryable
+        assert captured.value.retryable is (not missing_index)
         assert evaluator.contexts == chat.contexts == retrieval.calls == []
         return
     result = runtime.kick(_inputs())
@@ -820,7 +821,9 @@ def test_failed_event_attempt_is_traced_but_does_not_satisfy_real_retrieval(fail
     assert trace[0]["granularity"] == "event" and trace[0]["role"] == "query"
     assert trace[0]["strategyVersion"] == EVENT_RETRIEVAL_STRATEGY_VERSION
     assert trace[0]["effectiveFilters"] == {"speaker": "speaker", "event_types": ["DIALOGUE"], "video_chunk_ids": []}
-    assert trace[0]["error"]["message"] == str(failure)
+    assert trace[0]["error"]["message"] == (
+        "所选范围暂时无法检索事件" if missing_index else "Event retrieval did not complete for the requested scope."
+    )
     assert trace[0]["resultCount"] == 0
     assert trace[1]["query"] == "query-1-0" and "status" not in trace[1]
 

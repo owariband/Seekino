@@ -135,6 +135,9 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
   }
 
   const explanation = explainHit(hit, locale);
+  const cameraEvents = evidence.allTimeEvents.filter(event =>
+    event.cameraDescription && event.startSeconds < playbackRange.endSeconds && event.endSeconds > playbackRange.startSeconds
+  );
   const seekClip = (relativeSeconds: number) => {
     const video = videoRef.current;
     if (!video || !mediaReady) return;
@@ -272,6 +275,20 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
               <ScanSearch size={17} />
               <div><span>{t("画面 / Visual event")}</span><p>{evidence.baselineVisualCaption || evidence.allTimeEventText || t("暂无画面描述")}</p></div>
             </section>
+          </div>
+        ) : null}
+
+        {activeTab !== "context" && cameraEvents.length > 0 ? (
+          <div className={styles.quoteStack}>
+            {cameraEvents.map((event, index) => (
+              <section key={index}>
+                <ScanSearch size={17} />
+                <div>
+                  <span>{t("运镜")} · {formatTimeRange(event.startSeconds, event.endSeconds)}</span>
+                  <p>{event.cameraDescription}</p>
+                </div>
+              </section>
+            ))}
           </div>
         ) : null}
 

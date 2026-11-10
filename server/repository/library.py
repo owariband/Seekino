@@ -17,14 +17,14 @@ from ..model.dto.libraryDTO import (
 )
 from ..model.parse_content import VideoParseContent
 from ..model.task import VideoParseTask, VideoParseTaskStatus
-from ..model.upload import UploadSession, UPLOAD_DELETION_PENDING_ERROR_CODE
+from ..model.upload import UploadSession
 from ..model.tenant import Tenant
 from ..model.user import User
 from ..model.video import Series, SeriesVisibility, VideoIndexStatus, Video, VideoChunk
 from ..utils.media import stored_keyframe_uri
 from ..utils.time import now_utc
 from .identity import default_public_nickname
-from .upload import UploadRepository
+from .upload import UploadRepository, video_deletion_pending
 from .video_parse_task import video_data
 
 
@@ -443,13 +443,6 @@ class LibraryRepository:
             .where(VideoParseTask.is_deleted.is_(False))
             .subquery()
         )
-        # A video whose upload is deletion-pending is fenced from query and
-        # publication; hide it from library/series listings until reconcile
-        # finishes and the Video row is removed.
-        deletion_pending = select(UploadSession.id).where(
-            UploadSession.video_id == Video.id,
-            UploadSession.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE,
-        ).correlate(Video).exists()
         statement = (
             select(
                 Video,
@@ -463,7 +456,7 @@ class LibraryRepository:
                 (latest.c.video_id == Video.id)
                 & (latest.c.position == 1),
             )
-            .where(Series.tenant_id == tenant_id, ~deletion_pending)
+            .where(Series.tenant_id == tenant_id, ~video_deletion_pending())
             .order_by(Video.episode_order, Video.id)
         )
         if series_ids is not None:

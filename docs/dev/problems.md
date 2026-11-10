@@ -2841,3 +2841,23 @@ micrograd v5 共 146 块，整集 90 分 04.884 秒。调度反复锁取候选�
 2026-11-08。此前模型设置的读取与写入分属 YAML 和个人记录。本次改为可配置身份编辑生效文件，cloud 浏览者只能使用部署默认模型。复验覆盖云端直达权限、磁盘写回和独立对话执行。[验收](../report/web/personal-model-connections-20261107.md#yaml-写回与-cloud-权限)
 
 2026-11-07 本机来源补充。仅读取个人数据库连接会遗漏本机用户在 YAML 配置的回答模型。验收同时覆盖已配置机器（显示实际绑定和密钥掩码）与真正无配置的个人账号，见[本机 YAML 验收](../report/web/personal-model-connections-20261107.md#本机-yaml-连接的自动识别与凭据掩码)。
+
+## EDIT-ANIME-01 · 动画反应被概括成手势，剪辑原句漏掉正面特写
+
+2026-11-08。旧 EP04 的 198 张目标分块输入图里可见咬牙，但两条视觉事件把脸部信息省略，且提前描述笑容。验收使用同一五集库和原句，核对命中区间的原片，同时通过 MCP 翻完所有发布事件验证覆盖。状态见[管理工作台](workbench.html)，口径和边界见 [E4 专项 TRD](../design/03-product-reassessment/anime-material-recall-trd.md)。
+
+2026-11-09。普通上传自动选择剧情、课程或剪辑策略，显式配置优先。分流及恢复见[验收记录](../report/agent/video_parse_v2/content-routing-20261109.md)。
+
+### WATCH-THEME-01：明暗切换时首页封面与页面亮度脱节
+
+2026-11-09，在公开课程首页切换主题，画布和顶栏一步换色，推荐大图与系列缩略图维持原亮度。验收要求用同一封面看到渐变的中间状态，连点能改变方向，减弱动态效果时直接到达终点，正片保留原色。[专项 TRD](../design/03-product-reassessment/theme-transition-trd.md) · [工作台](workbench.html)
+
+## EDIT-CAMERA-01 · 剪辑素材缺少可检索和连续回放的镜头运动
+
+2026-11-10。单看构图和主体动作，解析会把向左移的镜头说成向右，也会把同一次横移按“灯亮”和“船入画”拆成两次起步。验收需要从原片取得同一镜头的方向、起落幅、节奏与证据，从已发布事件取回可运行的代码，再逐帧与已知镜头位置对照。固定机位下移动的小船与硬切是反例。[设计](../design/03-product-reassessment/clip-camera-reference-trd.md) · [实测](../report/agent/video_parse_v2/clip-camera-reference-20261110.md) · [工作台](workbench.html)
+
+## PUBLIC-COURSE-01 · 追加一集导致已公开的课程无法观看和提问
+
+2026-11-10，Karpathy 课程八集已上传，前七集可搜，E08 索引 114/134。游客打开首页后看不到课程，详情和搜索返回 404。首次发布与游客读取共用全量就绪要求，零索引课程另受前端选课和发送范围限制。验收要求是逐集播放、无索引时连续对话、检索如实给出覆盖范围，撤回后媒体与历史证据重新鉴权。[专项设计与现场基线](../design/03-product-reassessment/public-course-readiness-trd.md) · [工作台](workbench.html)
+
+同日复核还发现 Event 工具在缩小片段范围前生成了覆盖信息，并要求所有候选视频都具备事件索引。已授权课程中缺少某个集号也会终止对话。补充验收直接对照送给 ES 的来源集合、游客看到的提示，以及刷新后恢复的回答。[逐集对照与浏览器结果](../design/03-product-reassessment/public-course-readiness-trd.md#5-试点验证与方案取舍)

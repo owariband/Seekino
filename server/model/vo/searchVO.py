@@ -20,6 +20,7 @@ class VisualEventView(ContractModel):
     description: str
     start_seconds: int = Field(ge=0)
     end_seconds: int = Field(gt=0)
+    camera_description: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class VideoChunkEvidenceView(ContractModel):
@@ -72,6 +73,7 @@ class SearchEvidenceFieldsView(ContractModel):
     searched_video_ids: list[str]
     partial: bool
     warnings: list[str]
+    coverage_messages: list[str] = Field(default_factory=list)
     hits: list[SearchHitView]
 
 

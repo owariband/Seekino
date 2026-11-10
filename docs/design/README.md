@@ -103,6 +103,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 独立对话页布局 | [chat-sidebar-layout-trd.md](03-product-reassessment/chat-sidebar-layout-trd.md) | 左侧历史、居中草稿、简洁输入栏；依赖 #66，状态见工作台 CHAT-LAYOUT-01。 |
+| 公开课程解析期间的访问 | [公开观看、对话与逐集检索](03-product-reassessment/public-course-readiness-trd.md) | 显式公开、原片播放、零索引对话、按集覆盖和撤回校验。 |
 | 聊天页顶栏与公开范围 | [chat-header-scope-trd.md](03-product-reassessment/chat-header-scope-trd.md) | 紧凑的 Seekino 字标导航、公开系列空态及 CPU 侧栏实测。 |
 | 个人模型服务 | [personal-model-connections-trd.md](03-product-reassessment/personal-model-connections-trd.md) | 本机或 cloud 管理员编辑 YAML 中的协议、地址和模型，聊天按会话选模。 |
 | 模型注册与用途 | [model-registry-roles-trd.md](03-product-reassessment/model-registry-roles-trd.md) | 具名连接、按模型登记能力、六个用途的 YAML 绑定与权限。 |
@@ -115,6 +116,9 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Chat 工具与证据交付 | [agent-chat-delivery-contract.md](01-mvp/agent-chat-delivery-contract.md) | 交付合同与演进记录：Query / Evaluator、业务工具、证据核准及答案交付；Event 工具结合 Sub-Chunk TRD 阅读。 |
 | 网页搜索供应商 | [deepseek-web-search-trd.md](03-product-reassessment/deepseek-web-search-trd.md) | 主 TRD：可选免 key DDGS / DeepSeek API、查询边界、错误处理与真实入口验证。 |
 | 外部 Agent MCP 接入 | [mcp-access-trd.md](03-product-reassessment/mcp-access-trd.md) | 主 TRD：localhost 工具发现、Event 召回、版本化证据与媒体取用；外部 Agent 承担制作。 |
+| 动画表情素材召回 | [E4 专项](03-product-reassessment/anime-material-recall-trd.md) | 动画表情提示词、整集对照与 MCP 全量素材浏览。 |
+| 上传视频自动判型 | [解析前置路由](03-product-reassessment/parse-pre-hook-router-trd.md) | 普通上传在抽帧前判断剧情、课程或剪辑成片，并保存生效策略。 |
+| 剪辑素材的运镜参考 | [描述、检索与回放](03-product-reassessment/clip-camera-reference-trd.md) | 解析来源镜头的取景和节奏，通过同一条发布事件取回可运行的二维镜头与参数。 |
 | Agent Runtime | [agent-runtime-design.md](01-mvp/agent-runtime-design.md) | Runtime 结构与执行边界的设计记录，含旧 Session / 多 Agent 历史方案。 |
 | ContextCanvas | [context-canvas-design.md](02-agent-harness/context-canvas-design.md) | 专项设计：Parse / Chat 共用上下文工作区、工具协议、读取与修改边界。 |
 | 当前播放位置理解 | [realtime-parse-trd.md](02-agent-harness/realtime-parse-trd.md) | 专项 TRD：实时理解、临时解析与 Supervisor 接线；附执行流程图。 |
@@ -128,6 +132,7 @@ Event / Sub-Chunk 的实施入口是 [sub-chunk-trd.md](02-agent-harness/sub-chu
 | Feature / 主题 | 文档 | 内容与定位 |
 |---|---|---|
 | 用户与租户 | [user-tenant-trd.md](02-agent-harness/user-tenant-trd.md) | 主 TRD：游客、用户、租户身份、资源归属与隔离边界。 |
+| 首页明暗主题切换 | [theme-transition-trd.md](03-product-reassessment/theme-transition-trd.md) | 全站换色、首页封面亮度及减弱动态效果。 |
 | Series 共享 | [series-sharing-trd.md](02-agent-harness/series-sharing-trd.md) | 专项 TRD：Series 共享、团队范围与访问合同。 |
 | Docker 发布资源与 main 构建 | [docker-web-assets-trd.md](03-product-reassessment/docker-web-assets-trd.md) | PNG/SVG 软链接的构建输入、镜像验证和 CPU 源码提交对齐；关联云部署 PR #57。 |
 | 云端无 SMTP 的游客启动 | [cloud-guest-without-smtp-trd.md](03-product-reassessment/cloud-guest-without-smtp-trd.md) | 邮件能力可选，游客身份仍保留签名、Redis、CSRF 与权限校验。 |

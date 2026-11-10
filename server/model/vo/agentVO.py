@@ -94,6 +94,7 @@ class AgentConversationView(ContractModel):
 
 class AgentSearchEvidenceView(SearchEvidenceFieldsView):
     retrieval_trace: list[RetrievalTraceEntry]
+    had_candidates: bool | None = None
 
 
 class AgentAttachmentView(ContractModel):

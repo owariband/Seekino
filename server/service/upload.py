@@ -154,7 +154,10 @@ class UploadService:
             raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
         def resolve_config() -> dict:
-            return self._resolve_parse_config(parse_config or self._parse_defaults).model_dump(mode="json")
+            snapshot = self._resolve_parse_config(parse_config or self._parse_defaults)
+            return snapshot.model_copy(update={
+                "auto_content_kind": parse_config is None and snapshot.content_kind is None,
+            }).model_dump(mode="json")
 
         # Fingerprint the submitted form; normalized execution settings may change
         # independently, but a replay must return the original accepted snapshot.
@@ -291,6 +294,8 @@ class UploadService:
             if isinstance(parse_config, ParseConfig):
                 return self._resolve_parse_config(parse_config).model_dump(mode="json")
             selected = VideoParseV2Config.model_validate(snapshot)
+            if parse_config is not None:
+                selected = selected.model_copy(update={"auto_content_kind": False})
             if parse_config is None:
                 # A new parse version adopts the active index generation, while
                 # retry keeps its existing task snapshot and never enters here.

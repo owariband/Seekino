@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from agent.chat.common.errors import AgentContextBudgetError, AgentModelInvocationError
+from engine.rag.retrieval.contracts import EpisodeNotFoundError
 
 from ..config.global_agent_settings import GlobalAgentSettingsConflictError
 from ..model.vo.commonVO import ApiError, FieldError
@@ -33,6 +34,7 @@ from ..repository.upload import (
     UploadStateError,
 )
 from ..error.retrieval import (
+    RetrievalUnavailableError,
     SeriesNotReadyError,
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
@@ -78,7 +80,6 @@ def register_exception_handlers(app: FastAPI) -> None:
         RetrievalIndexConsistencyError,
         SeriesConflictError,
         VideoEpisodeOrderConflictError,
-        SeriesNotReadyError,
         UploadCompletionInProgressError,
         UploadConflictError,
         UploadStateError,
@@ -146,12 +147,17 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         return _error_response(request, 502, "AGENT_MODEL_ERROR", "Agent 服务暂时无法完成回答，请稍后重试")
 
+    @app.exception_handler(SeriesNotReadyError)
+    async def scope_not_ready_handler(request: Request, exc: SeriesNotReadyError) -> JSONResponse:
+        return _error_response(request, 409, "SERIES_NOT_READY", exc.public_message)
+
     for exception_type, status, code, message in (
+        (EpisodeNotFoundError, 404, EpisodeNotFoundError.code, EpisodeNotFoundError.public_message),
         (AgentAttachmentInputUnavailableError, 409, "ATTACHMENT_INPUT_UNAVAILABLE",
          "附件已上传，当前回答服务尚未接入附件输入。"),
         (AgentReferenceInvalidError, 400, "REFERENCE_INVALID", "所引用的候选片段无效，请重新选择"),
         (AgentMessageInProgressError, 409, "MESSAGE_IN_PROGRESS", "当前对话的回答仍在生成，请等待完成"),
-        (SeriesNotReadyError, 409, "SERIES_NOT_READY", "所选系列尚未完成建库，请稍后重试"),
+        (RetrievalUnavailableError, 503, "RETRIEVAL_UNAVAILABLE", RetrievalUnavailableError.public_message),
         (UploadChecksumMismatchError, 422, "CHECKSUM_MISMATCH", "文件校验失败，请检查并重新上传"),
         (MediaMissingError, 410, "MEDIA_MISSING", "原媒体文件已丢失"),
         (MediaNotReadyError, 409, "MEDIA_NOT_READY", "媒体正在准备或尚无兼容格式"),

@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from ...schema import ContractModel
-from ..video import SeriesVisibility, VideoIndexStatus
+from ..video import COMPLETE_VIDEO_UPLOAD_STATUSES, SeriesVisibility, VideoIndexStatus
 from .uploadDTO import UploadSessionState
 
 
@@ -72,6 +72,12 @@ class VideoSummaryState:
     description: str | None = None
     cover_uri: str | None = None
     has_outline: bool = False
+
+    @property
+    def chat_title(self) -> str:
+        if self.display_name and self.display_name.strip():
+            return self.display_name.strip()
+        return self.original_filename if self.upload_status in COMPLETE_VIDEO_UPLOAD_STATUSES else f"第 {self.episode_order} 集"
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from engine.parsev2.camera import SampledPan
 from engine.rag.indexing.projection import LexicalField
 
 _MAX_UNIX_TIME_MS = 9_223_372_036_854_775_807
@@ -84,6 +85,7 @@ class VideoChunkEvidence(_RetrievalContractModel):
     keyframe_uris: list[VideoChunkKeyframeReference]
 
     all_time_events: list[dict[str, Any]]
+    camera_hints: list[SampledPan] = Field(default_factory=list, exclude_if=lambda value: not value)
     all_time_event_text: str
     retrieval_text: str
     video_compact: str
@@ -193,6 +195,7 @@ class VideoChunkSearchEvidence(_RetrievalContractModel):
     searched_video_ids: list[str] | None = None
     partial: bool = False
     warnings: list[str] = Field(default_factory=list)
+    coverage_messages: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_result_contract(self) -> "VideoChunkSearchEvidence":

@@ -11,6 +11,7 @@ from pydantic import Field, model_serializer, model_validator
 
 from engine.common.config import VideoParseRuntimeConfig
 from agent.video_parse_v2.input import (
+    ContentKind,
     ASRModelConfig as VideoParseV2ASRModelConfig,
     EmbeddingModelConfig as VideoParseV2EmbeddingModelConfig,
     ExecutionConfig as VideoParseV2ExecutionConfig,
@@ -317,6 +318,7 @@ class ParseExecutionConfig(ContractModel):
 
 class ParseConfig(ContractModel):
     version: Literal[2] = 2
+    content_kind: ContentKind | None = None
     window: ParseWindowConfig
     asr: ParseASRConfig
     diarization: VideoParseV2DiarizationModelConfig | None = None
@@ -329,8 +331,11 @@ class ParseConfig(ContractModel):
     indexing: VideoParseV2IndexingConfig | None = None
 
     @model_serializer(mode="wrap")
-    def serialize_optional_ocr(self, handler):
+    def serialize_optional_fields(self, handler):
         values = handler(self)
+        if self.content_kind is None:
+            values.pop("content_kind", None)
+            values.pop("contentKind", None)
         if self.ocr is None:
             values.pop("ocr", None)
         if self.diarization is None:
@@ -371,6 +376,7 @@ class ParseConfig(ContractModel):
         if self.indexing is None or any(getattr(self.execution, name) is None for name in _EXECUTION_POLICY_FIELDS):
             raise ValueError("parse execution configuration must be resolved before creating a V2 task")
         return VideoParseV2Config(
+            content_kind=self.content_kind,
             chunk_duration=self.window.chunk_duration_seconds,
             interval_duration=self.window.chunk_duration_seconds * 3,
             batch_max_size=self.execution.batch_max_size,
